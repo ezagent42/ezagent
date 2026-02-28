@@ -25,4 +25,5 @@ tokio = { version = "1", features = ["full"] }
 async-trait = "0.1"
 thiserror = "2"
 ezagent-protocol = { path = "crates/ezagent-protocol" }
+base64 = "0.22"
 ezagent-backend = { path = "crates/ezagent-backend" }

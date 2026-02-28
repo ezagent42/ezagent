@@ -1,0 +1,27 @@
+{
+  "room_id": "01957a3b-0000-7000-8000-000000000005",
+  "name": "Sync Test Room",
+  "created_by": "@alice:relay-a.example.com",
+  "membership": {
+    "policy": "invite",
+    "members": {
+      "@alice:relay-a.example.com": "owner",
+      "@bob:relay-a.example.com": "member"
+    }
+  },
+  "power_levels": {
+    "default": 0,
+    "admin": 100,
+    "users": {
+      "@alice:relay-a.example.com": 100,
+      "@bob:relay-a.example.com": 0
+    }
+  },
+  "relays": [
+    {
+      "endpoint": "tcp/127.0.0.1:7447",
+      "role": "primary"
+    }
+  ],
+  "enabled_extensions": []
+}
