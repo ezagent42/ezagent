@@ -510,15 +510,16 @@ fn tc_0_sync_007_ytext_collaborative_editing() {
 // TC-0-SYNC-008: Zenoh QoS -- Send 10 Messages
 //
 // Send 10 messages via pub/sub with QoS parameters:
-//   priority = Data, congestion_control = Block.
+//   priority = Data, congestion_control = Block, reliability = Reliable.
 // All 10 received without loss or duplication.
 //
 // Uses the raw Zenoh session to set QoS (the NetworkBackend::publish
 // trait method does not expose QoS knobs). This verifies QoS at the
 // Zenoh API level.
 //
-// NOTE: Zenoh defaults to reliable delivery for pub/sub on the same
-// session, so explicit reliability setting is not required.
+// priority and congestion_control are set explicitly. reliability=Reliable
+// is the Zenoh default for pub/sub (the explicit API is behind the
+// `unstable` feature flag, so we rely on the default).
 // ---------------------------------------------------------------------------
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tc_0_sync_008_zenoh_qos_10_messages() {
@@ -536,13 +537,17 @@ async fn tc_0_sync_008_zenoh_qos_10_messages() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Publish 10 messages with QoS parameters as specified by spec:
-    //   priority = Data, congestion_control = Block.
+    //   priority = Data, congestion_control = Block, reliability = Reliable.
     for i in 0..n {
         let payload = i.to_be_bytes();
         net.session()
             .put(topic, payload.to_vec())
             .priority(Priority::Data)
             .congestion_control(CongestionControl::Block)
+            // NOTE: reliability=Reliable is the default for Zenoh pub/sub.
+            // The explicit `.reliability(Reliability::Reliable)` API is gated
+            // behind zenoh's `unstable` feature flag (zenoh_macros::unstable),
+            // so we rely on the default which satisfies the spec requirement.
             .await
             .expect("publish with QoS");
         // Small delay between publishes.
