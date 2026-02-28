@@ -1,7 +1,15 @@
+//! ezagent-py — PyO3 bridge to Rust engine.
+//!
+//! Minimal Phase 0 verification: CRDT Y.Map roundtrip (TC-PY-001)
+//! and Ed25519 sign/verify (TC-PY-002).
+
 use pyo3::prelude::*;
 use yrs::{Doc, Map, Transact};
 
-/// TC-PY-001: Verify CRDT map operations work across Python/Rust boundary.
+/// Insert a key-value pair into a CRDT Y.Map and read it back (TC-PY-001).
+///
+/// Verifies that yrs CRDT operations work correctly across the
+/// Python/Rust FFI boundary.
 #[pyfunction]
 fn crdt_map_roundtrip(key: String, value: String) -> PyResult<String> {
     let doc = Doc::new();
@@ -18,17 +26,19 @@ fn crdt_map_roundtrip(key: String, value: String) -> PyResult<String> {
     Ok(result)
 }
 
-/// TC-PY-002: Verify Ed25519 sign/verify works from Python.
+/// Generate an Ed25519 keypair, sign a message, and verify (TC-PY-002).
+///
+/// Returns `True` if verification succeeds. Raises `ValueError` on failure.
 #[pyfunction]
 fn crypto_sign_verify(message: Vec<u8>) -> PyResult<bool> {
-    use ezagent_protocol::{Keypair, PublicKey};
+    use ezagent_protocol::Keypair;
     let keypair = Keypair::generate();
     let signature = keypair.sign(&message);
-    let pubkey: PublicKey = keypair.public_key();
-    match pubkey.verify(&message, &signature) {
-        Ok(()) => Ok(true),
-        Err(_) => Ok(false),
-    }
+    let pubkey = keypair.public_key();
+    pubkey
+        .verify(&message, &signature)
+        .map(|()| true)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("verification failed: {e}")))
 }
 
 #[pymodule]
