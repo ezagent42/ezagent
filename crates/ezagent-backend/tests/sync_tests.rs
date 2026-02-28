@@ -358,9 +358,18 @@ fn tc_0_sync_005_offline_reconnect_recovery() {
 // ---------------------------------------------------------------------------
 // TC-0-SYNC-006: Router Storage Persistence (via Queryable)
 //
-// A "router" peer holds state and registers as queryable. New peer P3
-// queries and recovers full state.
-// Uses a single Zenoh session with queryable + query on the same session.
+// Spec: P1 connects to RELAY-A, writes set("persist","true") -> P1
+// disconnects -> new Peer P3 first-connects -> P3 queries full state.
+//
+// In Phase 0 verification the router IS the storage — it holds the
+// CRDT doc in an Arc<YrsBackend> and serves it via a Zenoh queryable.
+// "P1 disconnects" is simulated by dropping the P1 reference after
+// writing; the data remains in the router's Arc'd CRDT backend.
+//
+// NOTE: peer_isolated disables multicast scouting, so cross-session
+// query won't discover a remote queryable. We use the same session to
+// verify queryable semantics. Full cross-network queryable behaviour
+// is verified in TC-0-P2P-002 and TC-0-P2P-003.
 // ---------------------------------------------------------------------------
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tc_0_sync_006_router_storage_persistence() {
@@ -370,7 +379,7 @@ async fn tc_0_sync_006_router_storage_persistence() {
     let crdt_router = Arc::new(YrsBackend::new());
     let crdt_p3 = YrsBackend::new();
 
-    // Router writes data.
+    // P1 writes data to the router's CRDT backend.
     {
         let doc = crdt_router.get_or_create_doc(doc_id);
         let map = doc.get_or_insert_map("data");
@@ -378,30 +387,34 @@ async fn tc_0_sync_006_router_storage_persistence() {
         map.insert(&mut txn, "persistent_key", "persistent_value");
         map.insert(&mut txn, "count", "42");
     }
+    // P1's role is done — it wrote data to the router's storage.
+    // The router (RELAY-A) retains the data in its CRDT backend.
 
-    // Single Zenoh session acts as the bus.
-    let net = ZenohBackend::new(ZenohConfig::peer_isolated())
+    // Router's Zenoh session — registers queryable.
+    let net_router = ZenohBackend::new(ZenohConfig::peer_isolated())
         .await
-        .expect("session");
+        .expect("router session");
 
-    // Router registers queryable.
     let crdt_for_handler = Arc::clone(&crdt_router);
     let doc_id_owned = doc_id.to_string();
-    net.register_queryable(
-        query_key,
-        Arc::new(move |_payload: Vec<u8>| {
-            crdt_for_handler
-                .encode_state(&doc_id_owned, None)
-                .unwrap_or_default()
-        }),
-    )
-    .await
-    .expect("register queryable");
+    net_router
+        .register_queryable(
+            query_key,
+            Arc::new(move |_payload: Vec<u8>| {
+                crdt_for_handler
+                    .encode_state(&doc_id_owned, None)
+                    .unwrap_or_default()
+            }),
+        )
+        .await
+        .expect("register queryable");
 
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    // P3 queries via the same session (like querying a co-located router).
-    let state_bytes = net
+    // P3 queries the router. Since peer_isolated disables multicast
+    // scouting, we query via the same session to verify queryable
+    // semantics. Cross-network query is verified in TC-0-P2P-002/003.
+    let state_bytes = net_router
         .query(query_key, None)
         .await
         .expect("query should succeed");
@@ -411,7 +424,7 @@ async fn tc_0_sync_006_router_storage_persistence() {
         .apply_update(doc_id, &state_bytes)
         .expect("apply state");
 
-    // Verify P3 has complete data.
+    // Verify P3 has complete data after "P1 disconnected".
     let doc_p3 = crdt_p3.get_or_create_doc(doc_id);
     let map_p3 = doc_p3.get_or_insert_map("data");
     let txn = doc_p3.transact();
@@ -496,11 +509,21 @@ fn tc_0_sync_007_ytext_collaborative_editing() {
 // ---------------------------------------------------------------------------
 // TC-0-SYNC-008: Zenoh QoS -- Send 10 Messages
 //
-// Send 10 messages via pub/sub. All 10 received without loss or
-// duplication.  Uses a single Zenoh session for reliable delivery.
+// Send 10 messages via pub/sub with QoS parameters:
+//   priority = Data, congestion_control = Block.
+// All 10 received without loss or duplication.
+//
+// Uses the raw Zenoh session to set QoS (the NetworkBackend::publish
+// trait method does not expose QoS knobs). This verifies QoS at the
+// Zenoh API level.
+//
+// NOTE: Zenoh defaults to reliable delivery for pub/sub on the same
+// session, so explicit reliability setting is not required.
 // ---------------------------------------------------------------------------
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tc_0_sync_008_zenoh_qos_10_messages() {
+    use zenoh::qos::{CongestionControl, Priority};
+
     let topic = "ezagent/test/sync-008/qos";
     let n = 10u32;
 
@@ -512,10 +535,16 @@ async fn tc_0_sync_008_zenoh_qos_10_messages() {
     let mut rx = net.subscribe(topic).await.expect("subscribe");
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    // Publish 10 messages with sequential payloads.
+    // Publish 10 messages with QoS parameters as specified by spec:
+    //   priority = Data, congestion_control = Block.
     for i in 0..n {
         let payload = i.to_be_bytes();
-        net.publish(topic, &payload).await.expect("publish");
+        net.session()
+            .put(topic, payload.to_vec())
+            .priority(Priority::Data)
+            .congestion_control(CongestionControl::Block)
+            .await
+            .expect("publish with QoS");
         // Small delay between publishes.
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
