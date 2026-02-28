@@ -1,0 +1,28 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/ezagent-protocol",
+    "crates/ezagent-backend",
+    "crates/ezagent-py",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ed25519-dalek = { version = "2", features = ["serde", "rand_core"] }
+rand = "0.8"
+uuid = { version = "1", features = ["v7", "serde"] }
+yrs = { version = "0.21", features = ["sync"] }
+zenoh = "1.1"
+pyo3 = { version = "0.23", features = ["extension-module"] }
+pyo3-async-runtimes = { version = "0.23", features = ["tokio-runtime"] }
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+thiserror = "2"
+ezagent-protocol = { path = "crates/ezagent-protocol" }
+ezagent-backend = { path = "crates/ezagent-backend" }
