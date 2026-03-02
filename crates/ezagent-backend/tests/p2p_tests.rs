@@ -17,12 +17,15 @@ use ezagent_backend::{CrdtBackend, NetworkBackend, YrsBackend, ZenohBackend, Zen
 // scouting enabled, no router). P1 publishes, P2 receives via the
 // scouted peer link.
 //
-// NOTE: Multicast scouting may not work reliably in all CI/test
-// environments (containers, restricted networks). If the message is
-// not received within timeout, the test prints a skip message rather
-// than hard-failing.
+// NOTE: Multicast scouting requires a network environment that supports
+// UDP multicast (224.0.0.224:7446). This is NOT available in most CI
+// environments, containers, or restricted networks.
+//
+// This test is #[ignore]'d by default. Run explicitly with:
+//   cargo test -- --ignored tc_0_p2p_001
 // ---------------------------------------------------------------------------
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires multicast scouting — run: cargo test -- --ignored tc_0_p2p_001"]
 async fn tc_0_p2p_001_lan_scouting() {
     let topic = "ezagent/test/p2p-001/scouting";
 
@@ -43,23 +46,16 @@ async fn tc_0_p2p_001_lan_scouting() {
     net_p1.publish(topic, payload).await.expect("publish");
 
     // P2 should receive via multicast-scouted peer link.
-    match tokio::time::timeout(Duration::from_secs(3), rx.recv()).await {
-        Ok(Some(received)) => {
-            assert_eq!(received, payload.to_vec(), "scouted message mismatch");
-        }
-        Ok(None) => {
-            eprintln!(
-                "SKIPPING TC-0-P2P-001: channel closed — multicast scouting \
-                 may not be available"
-            );
-        }
-        Err(_) => {
-            eprintln!(
-                "SKIPPING TC-0-P2P-001: no message received within 3s — \
-                 multicast scouting may not be available in this environment"
-            );
-        }
-    }
+    let received = tokio::time::timeout(Duration::from_secs(3), rx.recv())
+        .await
+        .expect(
+            "TC-0-P2P-001 FAILED: no message within 3s — \
+             multicast scouting not available in this environment",
+        )
+        .expect("TC-0-P2P-001 FAILED: channel closed before message received");
+
+    assert_eq!(received, payload.to_vec(), "scouted message mismatch");
+    eprintln!("TC-0-P2P-001: multicast scouting verified");
 }
 
 // ---------------------------------------------------------------------------
@@ -144,37 +140,33 @@ async fn tc_0_p2p_002_peer_as_queryable() {
 // TC-0-P2P-003: Relay Fallback
 //
 // Both peers connect to router at tcp/127.0.0.1:7447. P1 publishes,
-// P2 receives via router. SKIP gracefully if zenohd not running.
+// P2 receives via router. Requires zenohd running locally.
+//
+// This test is #[ignore]'d by default. Run explicitly with:
+//   zenohd -l tcp/0.0.0.0:7447 &
+//   cargo test -- --ignored tc_0_p2p_003
 // ---------------------------------------------------------------------------
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires zenohd router — run: zenohd -l tcp/0.0.0.0:7447 &"]
 async fn tc_0_p2p_003_relay_fallback() {
     let router_endpoint = "tcp/127.0.0.1:7447";
 
-    // Try to connect to the router. If it's not running, skip gracefully.
-    // Zenoh peer_with_router may still open a session even if the router
-    // is unreachable (it keeps retrying in the background), so we detect
-    // failure via a pub/sub timeout instead.
-    let net_p1_result = ZenohBackend::new(ZenohConfig::peer_with_router(router_endpoint)).await;
-    let net_p1 = match net_p1_result {
-        Ok(backend) => backend,
-        Err(e) => {
-            eprintln!(
-                "SKIPPING TC-0-P2P-003: zenohd not running at {router_endpoint} ({e})"
-            );
-            return; // graceful skip
-        }
-    };
+    let net_p1 = ZenohBackend::new(ZenohConfig::peer_with_router(router_endpoint))
+        .await
+        .unwrap_or_else(|e| {
+            panic!(
+                "TC-0-P2P-003 FAILED: cannot connect to zenohd at {router_endpoint}: {e}\n\
+                 → Start router first: zenohd -l tcp/0.0.0.0:7447 &"
+            )
+        });
 
-    let net_p2_result = ZenohBackend::new(ZenohConfig::peer_with_router(router_endpoint)).await;
-    let net_p2 = match net_p2_result {
-        Ok(backend) => backend,
-        Err(e) => {
-            eprintln!(
-                "SKIPPING TC-0-P2P-003: zenohd not running at {router_endpoint} ({e})"
-            );
-            return; // graceful skip
-        }
-    };
+    let net_p2 = ZenohBackend::new(ZenohConfig::peer_with_router(router_endpoint))
+        .await
+        .unwrap_or_else(|e| {
+            panic!(
+                "TC-0-P2P-003 FAILED: cannot connect P2 to zenohd at {router_endpoint}: {e}"
+            )
+        });
 
     let topic = "ezagent/test/p2p-003/relay";
 
@@ -184,23 +176,14 @@ async fn tc_0_p2p_003_relay_fallback() {
     let payload = b"relayed-message";
     net_p1.publish(topic, payload).await.expect("publish");
 
-    match tokio::time::timeout(Duration::from_secs(3), rx.recv()).await {
-        Ok(Some(received)) => {
-            assert_eq!(received, payload.to_vec(), "relayed message mismatch");
-            eprintln!("TC-0-P2P-003: relay fallback verified via {router_endpoint}");
-        }
-        Ok(None) => {
-            eprintln!(
-                "SKIPPING TC-0-P2P-003: channel closed -- router may not be routing"
-            );
-        }
-        Err(_) => {
-            // Zenoh sessions connected but routing did not happen within timeout.
-            // This is expected when zenohd is not running. Count as graceful skip.
-            eprintln!(
-                "SKIPPING TC-0-P2P-003: connected but no message received within 3s \
-                 (zenohd likely not running at {router_endpoint})"
-            );
-        }
-    }
+    let received = tokio::time::timeout(Duration::from_secs(3), rx.recv())
+        .await
+        .expect(
+            "TC-0-P2P-003 FAILED: no message within 3s — \
+             zenohd may not be routing correctly",
+        )
+        .expect("TC-0-P2P-003 FAILED: channel closed before message received");
+
+    assert_eq!(received, payload.to_vec(), "relayed message mismatch");
+    eprintln!("TC-0-P2P-003: relay fallback verified via {router_endpoint}");
 }

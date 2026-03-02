@@ -44,7 +44,29 @@ Mid-layer:    Identity, Room, Message, Timeline
 - 单元测试与源码同文件（`#[cfg(test)]` 模块）
 - 集成测试放在 `tests/` 目录
 - Fixture 数据参考 `docs/plan/fixtures.md`
-- 运行测试：`cargo test`（Rust）、`uv run pytest`（Python）
+
+#### 两级测试策略
+
+```bash
+# 确定性测试（默认，CI 安全）
+cargo test                    # Rust 确定性测试
+uv run pytest                 # Python 测试
+
+# 环境依赖测试（需要本地基础设施）
+cargo test -- --ignored       # 运行所有被 #[ignore] 标记的测试
+```
+
+**环境依赖测试清单：**
+
+| 测试 | 依赖 | 启动命令 |
+|------|------|----------|
+| `tc_0_p2p_001_lan_scouting` | UDP multicast (224.0.0.224:7446) | 需要支持 multicast 的网络环境 |
+| `tc_0_p2p_003_relay_fallback` | `zenohd` router | `zenohd -l tcp/0.0.0.0:7447 &` |
+
+**编写环境依赖测试的规范：**
+- 使用 `#[ignore = "reason — run: command"]` 标注
+- 显式运行时（`--ignored`），环境不满足必须 **hard-fail**（`panic!` + 清晰错误信息），禁止 graceful skip 假阳性
+- 在此表格中登记新增的环境依赖测试
 
 ## 关键概念
 
