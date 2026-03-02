@@ -31,3 +31,5 @@ ezagent-backend = { path = "crates/ezagent-backend" }
 ezagent-engine = { path = "crates/ezagent-engine" }
 sha2 = "0.10"
 ulid = "1"
+rocksdb = "0.22"
+tempfile = "3"
