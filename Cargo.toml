@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/ezagent-protocol",
     "crates/ezagent-backend",
+    "crates/ezagent-engine",
     "crates/ezagent-py",
 ]
 
@@ -27,3 +28,6 @@ thiserror = "2"
 ezagent-protocol = { path = "crates/ezagent-protocol" }
 base64 = "0.22"
 ezagent-backend = { path = "crates/ezagent-backend" }
+ezagent-engine = { path = "crates/ezagent-engine" }
+sha2 = "0.10"
+ulid = "1"
