@@ -13,3 +13,4 @@ pub mod engine;
 pub mod operations;
 pub mod events;
 pub mod error;
+pub mod sync;
