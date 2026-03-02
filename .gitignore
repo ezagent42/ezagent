@@ -1,0 +1,55 @@
+# Created by https://www.toptal.com/developers/gitignore/api/rust,python
+# Tailored for ezagent: Rust core + Python (PyO3) bindings
+
+### Rust ###
+# Compiled output
+debug/
+target/
+
+# Rustfmt backup files
+**/*.rs.bk
+
+# MSVC Windows debugging symbols
+*.pdb
+
+# Note: Cargo.lock is tracked intentionally for reproducible builds.
+# For libraries, the Rust convention is to gitignore it, but this project
+# chose to commit it — do NOT add Cargo.lock here.
+
+### Python ###
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C/Rust extensions (PyO3 compiled .so / .dylib / .pyd)
+*.so
+*.dylib
+*.pyd
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+
+# Unit test / coverage reports
+htmlcov/
+.coverage
+.coverage.*
+.pytest_cache/
+coverage.xml
+*.cover
+
+# mypy / pyright / ruff
+.mypy_cache/
+.dmypy.json
+.ruff_cache/
+pyrightconfig.json
+
+# uv lock file — uncomment if you want to track it for reproducible installs
+uv.lock
