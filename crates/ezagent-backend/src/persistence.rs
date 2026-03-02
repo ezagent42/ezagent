@@ -38,19 +38,10 @@ const CF_META: &str = "meta";
 /// Metadata stored per document in the `meta` column family.
 ///
 /// Serialized as JSON for simplicity and debuggability.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Default)]
 struct DocMeta {
     update_count: u64,
     last_snapshot_time: u64,
-}
-
-impl Default for DocMeta {
-    fn default() -> Self {
-        Self {
-            update_count: 0,
-            last_snapshot_time: 0,
-        }
-    }
 }
 
 /// RocksDB-backed persistent CRDT backend.
