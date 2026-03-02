@@ -96,7 +96,11 @@ pub fn message_datatype() -> DatatypeDeclaration {
     DatatypeDeclaration {
         id: "message".to_string(),
         version: "0.1.0".to_string(),
-        dependencies: vec!["identity".to_string(), "timeline".to_string()],
+        dependencies: vec![
+            "identity".to_string(),
+            "room".to_string(),
+            "timeline".to_string(),
+        ],
         data_entries: vec![DataEntry {
             id: "immutable_content".to_string(),
             storage_type: StorageType::Blob,
@@ -106,6 +110,7 @@ pub fn message_datatype() -> DatatypeDeclaration {
             sync_strategy: SyncMode::Eager,
         }],
         indexes: vec![],
+        hooks: vec![],
         is_builtin: true,
     }
 }
@@ -616,8 +621,8 @@ mod tests {
         assert_eq!(dt.version, "0.1.0");
         assert_eq!(
             dt.dependencies,
-            vec!["identity", "timeline"],
-            "message must depend on identity and timeline"
+            vec!["identity", "room", "timeline"],
+            "message must depend on identity, room, and timeline"
         );
         assert!(dt.is_builtin, "message must be a built-in datatype");
         assert!(dt.indexes.is_empty(), "message declares no indexes");
@@ -737,7 +742,7 @@ mod tests {
             "resolve_content should succeed even when content is missing"
         );
         assert!(
-            ctx.data.get("resolved_content").is_none(),
+            !ctx.data.contains_key("resolved_content"),
             "resolved_content should not be set when content is missing"
         );
     }

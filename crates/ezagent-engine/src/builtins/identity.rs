@@ -17,8 +17,7 @@ use crate::hooks::phase::{HookContext, HookDeclaration, HookPhase, TriggerEvent}
 use crate::hooks::executor::HookFn;
 use crate::registry::datatype::*;
 
-/// Timestamp tolerance for signature verification: +/- 5 minutes in milliseconds.
-const TIMESTAMP_TOLERANCE_MS: i64 = 5 * 60 * 1000;
+use crate::TIMESTAMP_TOLERANCE_MS;
 
 /// The Identity datatype declaration.
 ///
@@ -39,6 +38,7 @@ pub fn identity_datatype() -> DatatypeDeclaration {
             sync_strategy: SyncMode::Eager,
         }],
         indexes: vec![],
+        hooks: vec![],
         is_builtin: true,
     }
 }
@@ -182,33 +182,42 @@ pub fn verify_signature_hook(cache: PublicKeyCache) -> (HookDeclaration, HookFn)
         })?;
 
         // Extract the signed envelope from context data.
-        if let Some(envelope_json) = ctx.data.get("signed_envelope").cloned() {
-            let envelope: SignedEnvelope =
-                serde_json::from_value(envelope_json).map_err(|e| {
-                    EngineError::Protocol(ezagent_protocol::ProtocolError::Serialization(
-                        e.to_string(),
-                    ))
-                })?;
-
-            // Verify the cryptographic signature.
-            envelope.verify(&pubkey)?;
-
-            // Verify timestamp is within +/- 5 minutes of current time.
-            let now_ms = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis() as i64;
-            let delta_ms = (now_ms - envelope.timestamp).abs();
-            if delta_ms > TIMESTAMP_TOLERANCE_MS {
-                return Err(EngineError::Protocol(
-                    ezagent_protocol::ProtocolError::TimestampOutOfRange { delta_ms },
+        let envelope_json = match ctx.data.get("signed_envelope").cloned() {
+            Some(val) => val,
+            None => {
+                ctx.data
+                    .insert("signature_verified".into(), serde_json::json!(false));
+                return Err(EngineError::SignatureVerificationFailed(
+                    "no signed envelope present".into(),
                 ));
             }
+        };
 
-            // Mark verification as successful.
-            ctx.data
-                .insert("signature_verified".into(), serde_json::json!(true));
+        let envelope: SignedEnvelope =
+            serde_json::from_value(envelope_json).map_err(|e| {
+                EngineError::Protocol(ezagent_protocol::ProtocolError::Serialization(
+                    e.to_string(),
+                ))
+            })?;
+
+        // Verify the cryptographic signature.
+        envelope.verify(&pubkey)?;
+
+        // Verify timestamp is within +/- 5 minutes of current time.
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+        let delta_ms = (now_ms - envelope.timestamp).abs();
+        if delta_ms > TIMESTAMP_TOLERANCE_MS {
+            return Err(EngineError::Protocol(
+                ezagent_protocol::ProtocolError::TimestampOutOfRange { delta_ms },
+            ));
         }
+
+        // Mark verification as successful.
+        ctx.data
+            .insert("signature_verified".into(), serde_json::json!(true));
 
         Ok(())
     });

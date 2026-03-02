@@ -118,8 +118,8 @@ pub struct IndexDeclaration {
 
 /// A complete Datatype declaration (bus-spec §3.5).
 ///
-/// A Datatype bundles together data entries, indexes, and metadata about
-/// dependencies and built-in status. The Engine loads datatypes in
+/// A Datatype bundles together data entries, indexes, hooks, and metadata
+/// about dependencies and built-in status. The Engine loads datatypes in
 /// topological order according to their declared dependencies.
 #[derive(Debug, Clone)]
 pub struct DatatypeDeclaration {
@@ -133,6 +133,8 @@ pub struct DatatypeDeclaration {
     pub data_entries: Vec<DataEntry>,
     /// The indexes declared by this Datatype.
     pub indexes: Vec<IndexDeclaration>,
+    /// The hook declarations associated with this Datatype.
+    pub hooks: Vec<crate::hooks::HookDeclaration>,
     /// Whether this is a built-in datatype (identity, room, timeline, message).
     pub is_builtin: bool,
 }
@@ -144,7 +146,7 @@ mod tests {
     /// TC-1-ENGINE-006: all five storage types are distinct.
     #[test]
     fn tc_1_engine_006_five_storage_types() {
-        let types = vec![
+        let types = [
             StorageType::CrdtMap,
             StorageType::CrdtArray,
             StorageType::CrdtText,

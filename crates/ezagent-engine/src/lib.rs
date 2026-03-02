@@ -14,3 +14,6 @@ pub mod operations;
 pub mod events;
 pub mod error;
 pub mod sync;
+
+/// Timestamp tolerance for signature verification: +/- 5 minutes in milliseconds.
+pub const TIMESTAMP_TOLERANCE_MS: i64 = 5 * 60 * 1000;

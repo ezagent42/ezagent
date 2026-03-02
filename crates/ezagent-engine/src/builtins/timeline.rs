@@ -45,6 +45,9 @@ pub enum RefStatus {
 ///
 /// Each ref points to a content object and carries metadata about the
 /// author, content type, creation time, and current status.
+///
+/// The `ext` field captures any `ext.*` namespaced fields from extensions,
+/// preserving them across serialization round-trips.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimelineRef {
     /// ULID identifier for this ref (time-sortable).
@@ -61,6 +64,10 @@ pub struct TimelineRef {
     pub status: RefStatus,
     /// Optional cryptographic signature.
     pub signature: Option<String>,
+    /// Extension-owned extra fields (`ext.*` namespace). Preserved across
+    /// serialization round-trips so that unknown extension data is not lost.
+    #[serde(flatten)]
+    pub ext: std::collections::HashMap<String, serde_json::Value>,
 }
 
 // ---------------------------------------------------------------------------
@@ -305,6 +312,7 @@ pub fn timeline_datatype() -> DatatypeDeclaration {
             sync_strategy: SyncMode::Eager,
         }],
         indexes: vec![],
+        hooks: vec![],
         is_builtin: true,
     }
 }
@@ -385,6 +393,7 @@ pub fn generate_ref_hook() -> (HookDeclaration, HookFn) {
             created_at: created_at.clone(),
             status: RefStatus::Active,
             signature: None,
+            ext: std::collections::HashMap::new(),
         };
 
         // Store results in context.
@@ -666,6 +675,7 @@ mod tests {
             created_at: "2026-03-01T00:00:00Z".to_string(),
             status: RefStatus::Active,
             signature: None,
+            ext: std::collections::HashMap::new(),
         }
     }
 
@@ -679,6 +689,7 @@ mod tests {
             created_at: "2026-03-01T00:00:00Z".to_string(),
             status: RefStatus::Active,
             signature: None,
+            ext: std::collections::HashMap::new(),
         }
     }
 
@@ -1056,6 +1067,7 @@ mod tests {
             created_at: "2026-03-01T12:00:00Z".to_string(),
             status: RefStatus::Active,
             signature: Some("sig-data".to_string()),
+            ext: std::collections::HashMap::new(),
         };
 
         let json = serde_json::to_string(&tref).expect("serialize ref");
@@ -1069,6 +1081,47 @@ mod tests {
         assert_eq!(tref.created_at, roundtripped.created_at);
         assert_eq!(tref.status, roundtripped.status);
         assert_eq!(tref.signature, roundtripped.signature);
+    }
+
+    /// Verify that ext.* fields survive serialization round-trip on TimelineRef.
+    #[test]
+    fn timeline_ref_ext_fields_roundtrip() {
+        let mut ext = std::collections::HashMap::new();
+        ext.insert(
+            "ext.reactions".to_string(),
+            serde_json::json!({"thumbs_up": 5}),
+        );
+        ext.insert(
+            "ext.threads".to_string(),
+            serde_json::json!({"reply_count": 3}),
+        );
+
+        let tref = TimelineRef {
+            ref_id: "01HXYZ".to_string(),
+            author: "@alice:relay.com".to_string(),
+            content_type: "immutable".to_string(),
+            content_id: "hash-abc".to_string(),
+            created_at: "2026-03-01T00:00:00Z".to_string(),
+            status: RefStatus::Active,
+            signature: None,
+            ext: ext.clone(),
+        };
+
+        let json = serde_json::to_string(&tref).expect("serialize ref with ext");
+        let roundtripped: TimelineRef =
+            serde_json::from_str(&json).expect("deserialize ref with ext");
+
+        assert_eq!(
+            roundtripped.ext.get("ext.reactions"),
+            ext.get("ext.reactions"),
+            "ext.reactions must survive roundtrip"
+        );
+        assert_eq!(
+            roundtripped.ext.get("ext.threads"),
+            ext.get("ext.threads"),
+            "ext.threads must survive roundtrip"
+        );
+        assert_eq!(roundtripped.ext.len(), 2);
     }
 
     /// ShardManager find_ref returns None for missing ref.

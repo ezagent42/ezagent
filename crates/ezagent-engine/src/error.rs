@@ -38,6 +38,12 @@ pub enum EngineError {
     #[error("invalid namespace: {0}")]
     InvalidNamespace(String),
 
+    #[error("signature verification failed: {0}")]
+    SignatureVerificationFailed(String),
+
+    #[error("not implemented")]
+    NotImplemented,
+
     #[error("protocol error: {0}")]
     Protocol(#[from] ezagent_protocol::ProtocolError),
 

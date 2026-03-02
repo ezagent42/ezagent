@@ -13,8 +13,7 @@ use ezagent_protocol::{Keypair, SignedEnvelope};
 use crate::builtins::identity::PublicKeyCache;
 use crate::error::EngineError;
 
-/// Timestamp tolerance for envelope verification: +/- 5 minutes in milliseconds.
-const TIMESTAMP_TOLERANCE_MS: i64 = 5 * 60 * 1000;
+use crate::TIMESTAMP_TOLERANCE_MS;
 
 /// Wraps a CRDT update in a [`SignedEnvelope`] for secure transmission.
 ///

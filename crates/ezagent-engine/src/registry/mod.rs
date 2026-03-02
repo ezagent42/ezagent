@@ -141,6 +141,7 @@ mod tests {
                 sync_strategy: SyncMode::default(),
             }],
             indexes: vec![],
+            hooks: vec![],
             is_builtin: true,
         }
     }
@@ -160,6 +161,7 @@ mod tests {
                 sync_strategy: SyncMode::default(),
             }],
             indexes: vec![],
+            hooks: vec![],
             is_builtin: false,
         }
     }
@@ -192,6 +194,7 @@ mod tests {
                 sync_strategy: SyncMode::Eager,
             }],
             indexes: vec![],
+            hooks: vec![],
             is_builtin: true,
         };
 
@@ -237,6 +240,7 @@ mod tests {
             dependencies: vec!["b".to_string()],
             data_entries: vec![],
             indexes: vec![],
+            hooks: vec![],
             is_builtin: false,
         };
         let b = DatatypeDeclaration {
@@ -245,6 +249,7 @@ mod tests {
             dependencies: vec!["a".to_string()],
             data_entries: vec![],
             indexes: vec![],
+            hooks: vec![],
             is_builtin: false,
         };
 
@@ -423,6 +428,7 @@ mod tests {
                 refresh: RefreshStrategy::OnChange,
                 operation_id: None,
             }],
+            hooks: vec![],
             is_builtin: true,
         };
 

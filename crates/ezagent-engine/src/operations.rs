@@ -86,6 +86,7 @@ impl Engine {
                 shard_max_refs: 10000,
             },
             enabled_extensions: vec![],
+            extra: HashMap::new(),
         })
     }
 
@@ -142,6 +143,14 @@ impl Engine {
         ctx.data
             .insert("media_refs".into(), serde_json::json!(content.media_refs));
 
+        // Provide membership context so the room.check_room_write hook
+        // (fail-closed) allows the write. In a full implementation, the
+        // membership data would be read from the room store.
+        ctx.data.insert(
+            "members".into(),
+            serde_json::json!({ entity_id.to_string(): "Member" }),
+        );
+
         self.run_pre_send(&mut ctx)?;
 
         Ok(content)
@@ -156,6 +165,167 @@ impl Engine {
             identity_initialized: self.entity_id().is_some(),
             registered_datatypes: self.registry.ids(),
         }
+    }
+
+    // -----------------------------------------------------------------
+    // Stub operations — not yet implemented (Phase 2+)
+    // -----------------------------------------------------------------
+
+    /// identity.get_pubkey -- Retrieve the public key for the given entity.
+    ///
+    /// # Errors
+    ///
+    /// Returns `EngineError::NotImplemented` (stub).
+    pub fn identity_get_pubkey(&self, _entity_id: &str) -> Result<String, EngineError> {
+        Err(EngineError::NotImplemented)
+    }
+
+    /// room.list -- List all known room IDs.
+    ///
+    /// # Errors
+    ///
+    /// Returns `EngineError::NotImplemented` (stub).
+    pub fn room_list(&self) -> Result<Vec<String>, EngineError> {
+        Err(EngineError::NotImplemented)
+    }
+
+    /// room.get -- Retrieve room configuration as JSON.
+    ///
+    /// # Errors
+    ///
+    /// Returns `EngineError::NotImplemented` (stub).
+    pub fn room_get(&self, _room_id: &str) -> Result<serde_json::Value, EngineError> {
+        Err(EngineError::NotImplemented)
+    }
+
+    /// room.update_config -- Apply partial updates to a room's configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns `EngineError::NotImplemented` (stub).
+    pub fn room_update_config(
+        &mut self,
+        _room_id: &str,
+        _updates: serde_json::Value,
+    ) -> Result<(), EngineError> {
+        Err(EngineError::NotImplemented)
+    }
+
+    /// room.join -- Join a room as the local identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns `EngineError::NotImplemented` (stub).
+    pub fn room_join(&mut self, _room_id: &str) -> Result<(), EngineError> {
+        Err(EngineError::NotImplemented)
+    }
+
+    /// room.leave -- Leave a room as the local identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns `EngineError::NotImplemented` (stub).
+    pub fn room_leave(&mut self, _room_id: &str) -> Result<(), EngineError> {
+        Err(EngineError::NotImplemented)
+    }
+
+    /// room.invite -- Invite an entity to a room.
+    ///
+    /// # Errors
+    ///
+    /// Returns `EngineError::NotImplemented` (stub).
+    pub fn room_invite(
+        &mut self,
+        _room_id: &str,
+        _entity_id: &str,
+    ) -> Result<(), EngineError> {
+        Err(EngineError::NotImplemented)
+    }
+
+    /// room.members -- List members of a room.
+    ///
+    /// # Errors
+    ///
+    /// Returns `EngineError::NotImplemented` (stub).
+    pub fn room_members(&self, _room_id: &str) -> Result<Vec<String>, EngineError> {
+        Err(EngineError::NotImplemented)
+    }
+
+    /// timeline.list -- List timeline shard IDs for a room.
+    ///
+    /// # Errors
+    ///
+    /// Returns `EngineError::NotImplemented` (stub).
+    pub fn timeline_list(&self, _room_id: &str) -> Result<Vec<String>, EngineError> {
+        Err(EngineError::NotImplemented)
+    }
+
+    /// timeline.get_ref -- Retrieve a timeline ref by ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns `EngineError::NotImplemented` (stub).
+    pub fn timeline_get_ref(
+        &self,
+        _room_id: &str,
+        _ref_id: &str,
+    ) -> Result<serde_json::Value, EngineError> {
+        Err(EngineError::NotImplemented)
+    }
+
+    /// message.delete -- Soft-delete a message by ref ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns `EngineError::NotImplemented` (stub).
+    pub fn message_delete(
+        &mut self,
+        _room_id: &str,
+        _ref_id: &str,
+    ) -> Result<(), EngineError> {
+        Err(EngineError::NotImplemented)
+    }
+
+    /// annotation.list -- List annotations on a timeline ref.
+    ///
+    /// # Errors
+    ///
+    /// Returns `EngineError::NotImplemented` (stub).
+    pub fn annotation_list(
+        &self,
+        _room_id: &str,
+        _ref_id: &str,
+    ) -> Result<Vec<String>, EngineError> {
+        Err(EngineError::NotImplemented)
+    }
+
+    /// annotation.add -- Add an annotation to a timeline ref.
+    ///
+    /// # Errors
+    ///
+    /// Returns `EngineError::NotImplemented` (stub).
+    pub fn annotation_add(
+        &mut self,
+        _room_id: &str,
+        _ref_id: &str,
+        _key: &str,
+        _value: &str,
+    ) -> Result<(), EngineError> {
+        Err(EngineError::NotImplemented)
+    }
+
+    /// annotation.remove -- Remove an annotation from a timeline ref.
+    ///
+    /// # Errors
+    ///
+    /// Returns `EngineError::NotImplemented` (stub).
+    pub fn annotation_remove(
+        &mut self,
+        _room_id: &str,
+        _ref_id: &str,
+        _key: &str,
+    ) -> Result<(), EngineError> {
+        Err(EngineError::NotImplemented)
     }
 }
 

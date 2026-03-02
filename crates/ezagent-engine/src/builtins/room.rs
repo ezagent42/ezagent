@@ -84,6 +84,10 @@ pub struct RoomConfig {
     pub timeline: TimelineConfig,
     /// List of extension IDs currently enabled in this room.
     pub enabled_extensions: Vec<String>,
+    /// Extension-owned extra fields (`ext.*` namespace). Preserved across
+    /// serialization round-trips so that unknown extension data is not lost.
+    #[serde(flatten)]
+    pub extra: HashMap<String, serde_json::Value>,
 }
 
 /// Membership section of the room configuration.
@@ -138,6 +142,7 @@ pub fn room_datatype() -> DatatypeDeclaration {
             sync_strategy: SyncMode::Eager,
         }],
         indexes: vec![],
+        hooks: vec![],
         is_builtin: true,
     }
 }
@@ -207,9 +212,23 @@ pub fn check_room_write_hook() -> (HookDeclaration, HookFn) {
 
         let members = parse_members(ctx);
 
-        // If the members map is empty, skip the check (no membership data available).
         if members.is_empty() {
-            return Ok(());
+            // If the operation is not room-scoped (no room_id), skip the
+            // membership check — this hook cannot apply.
+            if ctx.room_id.is_none() {
+                return Ok(());
+            }
+            // Fail-closed: room-scoped write with no membership data
+            // available must be denied.
+            let room_id = ctx.room_id.clone().unwrap_or_default();
+            ctx.reject("NOT_A_MEMBER");
+            return Err(EngineError::NotAMember {
+                entity_id: signer_id,
+                room_id: format!(
+                    "{} — no membership data available — write denied (fail-closed)",
+                    room_id
+                ),
+            });
         }
 
         if !members.contains_key(&signer_id) {
@@ -445,6 +464,7 @@ mod tests {
                 shard_max_refs: 10000,
             },
             enabled_extensions: vec!["EXT-01".to_string(), "EXT-03".to_string()],
+            extra: HashMap::new(),
         };
 
         // Serialize to JSON.
@@ -783,17 +803,38 @@ mod tests {
         assert_eq!(removed_arr, vec!["@bob:relay.example.com"]);
     }
 
-    /// check_room_write skips when no members data is provided.
+    /// check_room_write rejects when no members data is provided but room_id
+    /// is set (fail-closed).
     #[test]
-    fn check_room_write_skips_without_members() {
+    fn check_room_write_rejects_without_members_fail_closed() {
         let (_decl, handler) = check_room_write_hook();
 
         let mut ctx = HookContext::new("message".to_string(), TriggerEvent::Insert);
         ctx.signer_id = Some("@anyone:relay.com".to_string());
-        // No "members" in ctx.data.
+        ctx.room_id = Some("R-alpha".to_string());
+        // No "members" in ctx.data — room-scoped write must be denied.
 
         let result = (handler)(&mut ctx);
-        assert!(result.is_ok(), "should skip check when no members data");
+        assert!(result.is_err(), "should reject when no members data (fail-closed)");
+        assert!(ctx.rejected, "context should be rejected");
+        assert_eq!(
+            ctx.rejection_reason.as_deref(),
+            Some("NOT_A_MEMBER"),
+            "rejection reason must be NOT_A_MEMBER"
+        );
+    }
+
+    /// check_room_write skips when no members data and no room_id (not room-scoped).
+    #[test]
+    fn check_room_write_skips_without_room_id() {
+        let (_decl, handler) = check_room_write_hook();
+
+        let mut ctx = HookContext::new("message".to_string(), TriggerEvent::Insert);
+        ctx.signer_id = Some("@anyone:relay.com".to_string());
+        // No "members" in ctx.data and no room_id — not room-scoped.
+
+        let result = (handler)(&mut ctx);
+        assert!(result.is_ok(), "should skip check when not room-scoped");
         assert!(!ctx.rejected);
     }
 
@@ -837,5 +878,65 @@ mod tests {
             let roundtripped: Role = serde_json::from_str(&json).expect("deserialize role");
             assert_eq!(role, &roundtripped);
         }
+    }
+
+    /// Verify that unknown ext.* fields survive RoomConfig serialization round-trip.
+    #[test]
+    fn room_config_ext_fields_roundtrip() {
+        let mut members = HashMap::new();
+        members.insert("@alice:relay.example.com".to_string(), Role::Owner);
+
+        let mut extra = HashMap::new();
+        extra.insert(
+            "ext.polls".to_string(),
+            serde_json::json!({"active_polls": 3}),
+        );
+        extra.insert(
+            "ext.custom".to_string(),
+            serde_json::json!({"setting": "value"}),
+        );
+
+        let config = RoomConfig {
+            room_id: "R-test".to_string(),
+            name: "Test Room".to_string(),
+            created_by: "@alice:relay.example.com".to_string(),
+            created_at: "2026-03-01T00:00:00Z".to_string(),
+            membership: MembershipConfig {
+                policy: MembershipPolicy::Open,
+                members,
+            },
+            power_levels: PowerLevelConfig {
+                default: 0,
+                events_default: 0,
+                admin: 50,
+                users: HashMap::new(),
+            },
+            relays: vec![],
+            timeline: TimelineConfig {
+                shard_max_refs: 10000,
+            },
+            enabled_extensions: vec![],
+            extra: extra.clone(),
+        };
+
+        let json = serde_json::to_string(&config).expect("serialize config with ext fields");
+        let roundtripped: RoomConfig =
+            serde_json::from_str(&json).expect("deserialize config with ext fields");
+
+        assert_eq!(
+            roundtripped.extra.get("ext.polls"),
+            extra.get("ext.polls"),
+            "ext.polls must survive roundtrip"
+        );
+        assert_eq!(
+            roundtripped.extra.get("ext.custom"),
+            extra.get("ext.custom"),
+            "ext.custom must survive roundtrip"
+        );
+        assert_eq!(roundtripped.extra.len(), 2);
+
+        // Verify the core fields are still intact.
+        assert_eq!(roundtripped.room_id, "R-test");
+        assert_eq!(roundtripped.name, "Test Room");
     }
 }
