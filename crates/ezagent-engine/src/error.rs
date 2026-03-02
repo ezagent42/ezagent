@@ -32,6 +32,12 @@ pub enum EngineError {
     #[error("extension disabled: {extension} in room {room_id}")]
     ExtensionDisabled { extension: String, room_id: String },
 
+    #[error("invalid annotation key: {0}")]
+    InvalidAnnotationKey(String),
+
+    #[error("invalid namespace: {0}")]
+    InvalidNamespace(String),
+
     #[error("protocol error: {0}")]
     Protocol(#[from] ezagent_protocol::ProtocolError),
 
