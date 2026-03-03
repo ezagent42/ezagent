@@ -853,6 +853,7 @@ dependencies = [
  "ezagent-ext-threads",
  "ezagent-ext-watch",
  "ezagent-protocol",
+ "hex",
  "libloading",
  "log",
  "rand 0.8.5",

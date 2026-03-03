@@ -60,3 +60,4 @@ tempfile = "3"
 clap = { version = "4", features = ["derive"] }
 tabled = "0.17"
 dirs = "6"
+hex = "0.4"
