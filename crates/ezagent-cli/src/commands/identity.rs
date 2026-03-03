@@ -26,13 +26,24 @@ pub fn whoami() -> i32 {
             let kp = ezagent_protocol::Keypair::from_bytes(&bytes);
             hex::encode(&kp.public_key().as_bytes()[..8])
         }
-        Err(_) => "unknown".to_string(),
+        Err(e) => {
+            eprintln!("warning: could not load keypair: {e}");
+            "unknown".to_string()
+        }
     };
 
+    // Extract the relay domain from the endpoint (strip "tls/" prefix and ":port" suffix).
     let relay = config
         .relay
         .as_ref()
-        .map(|r| r.endpoint.clone())
+        .map(|r| {
+            let ep = &r.endpoint;
+            let stripped = ep.strip_prefix("tls/").unwrap_or(ep);
+            match stripped.rfind(':') {
+                Some(pos) => stripped[..pos].to_string(),
+                None => stripped.to_string(),
+            }
+        })
         .unwrap_or_else(|| "none".to_string());
 
     println!("Entity ID:  {}", config.identity.entity_id);

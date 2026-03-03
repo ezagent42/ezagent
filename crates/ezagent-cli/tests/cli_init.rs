@@ -151,7 +151,11 @@ fn tc_4_cli_004_identity_whoami() {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("@alice:relay-a.example.com"), "stdout: {stdout}");
-    assert!(stdout.contains("relay-a.example.com"), "stdout: {stdout}");
+    assert!(
+        stdout.contains("Relay:      relay-a.example.com"),
+        "relay should show domain only, stdout: {stdout}"
+    );
+    assert!(stdout.contains("Public Key:"), "stdout: {stdout}");
     assert_eq!(output.status.code(), Some(0));
 }
 
