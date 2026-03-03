@@ -1,5 +1,6 @@
 mod commands;
 mod config;
+mod exit_codes;
 mod output;
 
 use clap::{Parser, Subcommand};

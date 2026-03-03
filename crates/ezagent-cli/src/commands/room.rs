@@ -22,7 +22,7 @@ pub fn create(name: &str) -> i32 {
         }
         Err(e) => {
             eprintln!("{e}");
-            1
+            crate::exit_codes::error_to_exit_code(&e)
         }
     }
 }
@@ -45,7 +45,7 @@ pub fn list(json: bool, quiet: bool) -> i32 {
         Ok(r) => r,
         Err(e) => {
             eprintln!("{e}");
-            return 1;
+            return crate::exit_codes::error_to_exit_code(&e);
         }
     };
 
@@ -115,7 +115,7 @@ pub fn show(room_id: &str) -> i32 {
         },
         Err(e) => {
             eprintln!("{e}");
-            1
+            crate::exit_codes::error_to_exit_code(&e)
         }
     }
 }
@@ -136,7 +136,7 @@ pub fn invite(room_id: &str, entity_id: &str) -> i32 {
         }
         Err(e) => {
             eprintln!("{e}");
-            1
+            crate::exit_codes::error_to_exit_code(&e)
         }
     }
 }

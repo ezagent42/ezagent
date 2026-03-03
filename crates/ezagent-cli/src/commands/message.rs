@@ -34,7 +34,7 @@ pub fn send(room_id: &str, body: &str) -> i32 {
         }
         Err(e) => {
             eprintln!("{e}");
-            1
+            crate::exit_codes::error_to_exit_code(&e)
         }
     }
 }
@@ -56,7 +56,7 @@ pub fn list(room_id: &str, limit: Option<usize>, before: Option<&str>, json: boo
         Ok(r) => r,
         Err(e) => {
             eprintln!("{e}");
-            return 1;
+            return crate::exit_codes::error_to_exit_code(&e);
         }
     };
 
