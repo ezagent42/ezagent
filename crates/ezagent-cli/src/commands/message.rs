@@ -8,7 +8,8 @@ use crate::output::OutputFormat;
 
 /// `ezagent send <room_id> --body "text"`
 ///
-/// Sends a message to the given room and prints the content ID to stdout.
+/// Sends a message to the given room and prints the timeline ref_id to stdout.
+/// The ref_id can be used as a cursor with `ezagent messages --before <ref_id>`.
 /// Returns 0 on success, 1 on error.
 pub fn send(room_id: &str, body: &str) -> i32 {
     let (engine, _cfg) = match init_engine() {
@@ -17,8 +18,18 @@ pub fn send(room_id: &str, body: &str) -> i32 {
     };
     let body_val = serde_json::json!(body);
     match engine.message_send(room_id, body_val, "text/plain") {
-        Ok(content) => {
-            println!("{}", content.content_id);
+        Ok(_content) => {
+            // Fetch the most recent timeline ref for this room (the one we just created).
+            match engine.timeline_list(room_id) {
+                Ok(refs) => {
+                    if let Some(last_ref) = refs.last() {
+                        println!("{last_ref}");
+                    }
+                }
+                Err(e) => {
+                    eprintln!("warning: message sent but failed to retrieve ref_id: {e}");
+                }
+            }
             0
         }
         Err(e) => {
@@ -30,8 +41,10 @@ pub fn send(room_id: &str, body: &str) -> i32 {
 
 /// `ezagent messages <room_id> [--limit N] [--before REF_ID] [--json]`
 ///
-/// Lists messages for the given room. Supports pagination via `--limit` and
-/// `--before`. Returns 0 on success, 1 on error.
+/// Lists messages for the given room. Timeline refs are returned in
+/// insertion order (oldest first). Pagination: `--before REF_ID` excludes
+/// that ref and all newer ones; `--limit N` takes the N most recent of
+/// the remaining refs. Returns 0 on success, 1 on error.
 pub fn list(room_id: &str, limit: Option<usize>, before: Option<&str>, json: bool) -> i32 {
     let (engine, _cfg) = match init_engine() {
         Ok(v) => v,
@@ -64,11 +77,16 @@ pub fn list(room_id: &str, limit: Option<usize>, before: Option<&str>, json: boo
         filtered
     };
 
-    // Collect timeline ref details.
-    let details: Vec<serde_json::Value> = limited
-        .iter()
-        .filter_map(|ref_id| engine.timeline_get_ref(room_id, ref_id).ok())
-        .collect();
+    // Collect timeline ref details, warning on individual fetch failures.
+    let mut details: Vec<serde_json::Value> = Vec::with_capacity(limited.len());
+    for ref_id in &limited {
+        match engine.timeline_get_ref(room_id, ref_id) {
+            Ok(v) => details.push(v),
+            Err(e) => {
+                eprintln!("warning: failed to load ref {ref_id}: {e}");
+            }
+        }
+    }
 
     match format {
         OutputFormat::Json => match serde_json::to_string_pretty(&details) {
