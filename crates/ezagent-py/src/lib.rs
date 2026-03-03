@@ -2,6 +2,10 @@
 //!
 //! Minimal Phase 0 verification: CRDT Y.Map roundtrip (TC-PY-001)
 //! and Ed25519 sign/verify (TC-PY-002).
+//!
+//! Phase 3: Full Engine operations API via `PyEngine` (engine_bridge module).
+
+mod engine_bridge;
 
 use pyo3::prelude::*;
 use yrs::{Doc, Map, Transact};
@@ -45,5 +49,6 @@ fn crypto_sign_verify(message: Vec<u8>) -> PyResult<bool> {
 fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(crdt_map_roundtrip, m)?)?;
     m.add_function(wrap_pyfunction!(crypto_sign_verify, m)?)?;
+    m.add_class::<engine_bridge::PyEngine>()?;
     Ok(())
 }

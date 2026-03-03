@@ -1058,9 +1058,11 @@ name = "ezagent-py"
 version = "0.1.0"
 dependencies = [
  "ezagent-backend",
+ "ezagent-engine",
  "ezagent-protocol",
  "pyo3",
  "pyo3-async-runtimes",
+ "serde_json",
  "tokio",
  "yrs",
 ]
