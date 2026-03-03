@@ -26,3 +26,21 @@ log = { workspace = true }
 [dev-dependencies]
 tokio = { workspace = true }
 tempfile = { workspace = true }
+serde_json = { workspace = true }
+ezagent-ext-reactions = { path = "../ezagent-ext-reactions" }
+ezagent-ext-channels = { path = "../ezagent-ext-channels" }
+ezagent-ext-moderation = { path = "../ezagent-ext-moderation" }
+ezagent-ext-receipts = { path = "../ezagent-ext-receipts" }
+ezagent-ext-presence = { path = "../ezagent-ext-presence" }
+ezagent-ext-media = { path = "../ezagent-ext-media" }
+ezagent-ext-drafts = { path = "../ezagent-ext-drafts" }
+ezagent-ext-profile = { path = "../ezagent-ext-profile" }
+ezagent-ext-link-preview = { path = "../ezagent-ext-link-preview" }
+ezagent-ext-mutable = { path = "../ezagent-ext-mutable" }
+ezagent-ext-reply-to = { path = "../ezagent-ext-reply-to" }
+ezagent-ext-command = { path = "../ezagent-ext-command" }
+ezagent-ext-collab = { path = "../ezagent-ext-collab" }
+ezagent-ext-cross-room-ref = { path = "../ezagent-ext-cross-room-ref" }
+ezagent-ext-threads = { path = "../ezagent-ext-threads" }
+ezagent-ext-watch = { path = "../ezagent-ext-watch" }
+ezagent-ext-runtime = { path = "../ezagent-ext-runtime" }
