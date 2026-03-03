@@ -1,0 +1,21 @@
+[package]
+name = "ezagent-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "ezagent"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+tabled = { workspace = true }
+dirs = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+tokio = { workspace = true }
+ezagent-engine = { workspace = true }
+ezagent-backend = { workspace = true }
+ezagent-protocol = { workspace = true }
