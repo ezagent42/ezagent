@@ -67,6 +67,15 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Subscribe to real-time events
+    Events {
+        /// Filter events by room ID
+        #[arg(long)]
+        room: Option<String>,
+        /// Output events as JSON Lines
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -125,6 +134,13 @@ fn main() {
             before,
             json,
         } => commands::message::list(&room_id, limit, before.as_deref(), json),
+        Commands::Events { room, json } => {
+            let rt = tokio::runtime::Runtime::new().unwrap_or_else(|e| {
+                eprintln!("Failed to create runtime: {e}");
+                process::exit(1);
+            });
+            rt.block_on(commands::events::run(room.as_deref(), json))
+        }
     };
     process::exit(exit_code);
 }
