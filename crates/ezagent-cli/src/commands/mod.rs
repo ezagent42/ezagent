@@ -4,3 +4,4 @@ pub mod identity;
 pub mod init;
 pub mod message;
 pub mod room;
+pub mod status;

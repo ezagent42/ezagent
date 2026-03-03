@@ -76,6 +76,8 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Show connection and identity status
+    Status,
 }
 
 #[derive(Subcommand)]
@@ -141,6 +143,7 @@ fn main() {
             });
             rt.block_on(commands::events::run(room.as_deref(), json))
         }
+        Commands::Status => commands::status::run(),
     };
     process::exit(exit_code);
 }
