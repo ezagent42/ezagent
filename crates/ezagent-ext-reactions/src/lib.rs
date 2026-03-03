@@ -41,21 +41,8 @@ pub struct ReactionsExtension {
 impl Default for ReactionsExtension {
     fn default() -> Self {
         Self {
-            manifest: ExtensionManifest {
-                name: "reactions".to_string(),
-                version: "0.1.0".to_string(),
-                api_version: 1,
-                datatype_declarations: vec![],
-                hook_declarations: vec![
-                    "reactions.inject".to_string(),
-                    "reactions.emit".to_string(),
-                ],
-                ext_dependencies: vec![],
-                uri_paths: vec![UriPath {
-                    pattern: "/r/{room_id}/m/{ref_id}/reactions".to_string(),
-                    description: "Reaction list for a message".to_string(),
-                }],
-            },
+            manifest: ExtensionManifest::from_toml(include_str!("../manifest.toml"))
+                .expect("bundled manifest.toml must be valid"),
         }
     }
 }
@@ -154,8 +141,8 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            err.contains("does not match signer"),
-            "expected signer mismatch error, got: {err}"
+            matches!(err, hooks::ReactionHookError::SignerMismatch { .. }),
+            "expected SignerMismatch error, got: {err}"
         );
 
         // Bob's reaction key with Bob as signer — should succeed.
@@ -237,22 +224,12 @@ mod tests {
         assert_eq!(emit["priority"], 40);
     }
 
-    /// Verify the manifest matches what manifest.toml would parse to.
+    /// Verify the Rust manifest matches the shipped manifest.toml exactly.
     #[test]
     fn manifest_matches_toml() {
+        let from_toml = ExtensionManifest::from_toml(include_str!("../manifest.toml"))
+            .expect("manifest.toml should parse");
         let ext = ReactionsExtension::default();
-        let m = ext.manifest();
-
-        // These should match manifest.toml values.
-        assert_eq!(m.name, "reactions");
-        assert_eq!(m.version, "0.1.0");
-        assert_eq!(m.api_version, 1);
-        assert!(m.datatype_declarations.is_empty());
-        assert_eq!(
-            m.hook_declarations,
-            vec!["reactions.inject", "reactions.emit"]
-        );
-        assert!(m.ext_dependencies.is_empty());
-        assert_eq!(m.uri_paths.len(), 1);
+        assert_eq!(ext.manifest(), &from_toml);
     }
 }

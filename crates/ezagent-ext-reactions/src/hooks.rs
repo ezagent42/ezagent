@@ -15,6 +15,22 @@
 //! The boundary between emoji and entity_id is located at the first `:@`
 //! occurrence, since entity IDs always start with `@`.
 
+/// Errors from reaction hook validation.
+#[derive(Debug, thiserror::Error)]
+pub enum ReactionHookError {
+    /// The reaction key does not contain the `:@` boundary.
+    #[error("invalid reaction key format: '{key}', expected '{{emoji}}:{{entity_id}}'")]
+    InvalidKeyFormat { key: String },
+
+    /// The emoji portion of the key is empty.
+    #[error("empty emoji in reaction key")]
+    EmptyEmoji,
+
+    /// The entity_id in the reaction key does not match the signer.
+    #[error("reaction key entity_id '{entity_id}' does not match signer '{signer_id}'")]
+    SignerMismatch { entity_id: String, signer_id: String },
+}
+
 /// Validate a reaction key format: `{emoji}:{entity_id}`.
 ///
 /// Returns `Ok((emoji, entity_id))` on success. The entity_id starts with `@`,
@@ -22,29 +38,24 @@
 ///
 /// # Errors
 ///
-/// Returns `Err` if:
+/// Returns [`ReactionHookError`] if:
 /// - The key does not contain `:@`
 /// - The emoji portion is empty
-/// - The entity_id portion is empty
-pub fn parse_reaction_key(key: &str) -> Result<(&str, &str), String> {
+pub fn parse_reaction_key(key: &str) -> Result<(&str, &str), ReactionHookError> {
     // The entity_id starts with '@', so we split on the first ':@'
     // to handle emojis that might contain ':'
     // Format: {emoji}:{entity_id} where entity_id = @local:relay
-    // Find the first occurrence of ':@' which marks emoji:entity_id boundary
     if let Some(pos) = key.find(":@") {
         let emoji = &key[..pos];
         let entity_id = &key[pos + 1..]; // includes the '@'
         if emoji.is_empty() {
-            return Err("empty emoji in reaction key".to_string());
-        }
-        if entity_id.is_empty() {
-            return Err("empty entity_id in reaction key".to_string());
+            return Err(ReactionHookError::EmptyEmoji);
         }
         Ok((emoji, entity_id))
     } else {
-        Err(format!(
-            "invalid reaction key format: '{key}', expected '{{emoji}}:{{entity_id}}'"
-        ))
+        Err(ReactionHookError::InvalidKeyFormat {
+            key: key.to_string(),
+        })
     }
 }
 
@@ -56,14 +67,18 @@ pub fn parse_reaction_key(key: &str) -> Result<(&str, &str), String> {
 ///
 /// # Errors
 ///
-/// Returns `Err` if the key is malformed or the entity_id does not match
-/// the `signer_id`.
-pub fn validate_reaction_signer(key: &str, signer_id: &str) -> Result<(), String> {
+/// Returns [`ReactionHookError`] if the key is malformed or the entity_id
+/// does not match the `signer_id`.
+pub fn validate_reaction_signer(
+    key: &str,
+    signer_id: &str,
+) -> Result<(), ReactionHookError> {
     let (_, entity_id) = parse_reaction_key(key)?;
     if entity_id != signer_id {
-        return Err(format!(
-            "reaction key entity_id '{entity_id}' does not match signer '{signer_id}'"
-        ));
+        return Err(ReactionHookError::SignerMismatch {
+            entity_id: entity_id.to_string(),
+            signer_id: signer_id.to_string(),
+        });
     }
     Ok(())
 }
@@ -109,7 +124,7 @@ mod tests {
     fn parse_missing_colon_at() {
         let err = parse_reaction_key("👍bob:relay.example.com").unwrap_err();
         assert!(
-            err.contains("invalid reaction key format"),
+            matches!(err, ReactionHookError::InvalidKeyFormat { .. }),
             "unexpected error: {err}"
         );
     }
@@ -118,7 +133,7 @@ mod tests {
     fn parse_empty_key() {
         let err = parse_reaction_key("").unwrap_err();
         assert!(
-            err.contains("invalid reaction key format"),
+            matches!(err, ReactionHookError::InvalidKeyFormat { .. }),
             "unexpected error: {err}"
         );
     }
@@ -127,7 +142,7 @@ mod tests {
     fn parse_empty_emoji() {
         let err = parse_reaction_key(":@bob:relay.example.com").unwrap_err();
         assert!(
-            err.contains("empty emoji"),
+            matches!(err, ReactionHookError::EmptyEmoji),
             "unexpected error: {err}"
         );
     }
@@ -137,7 +152,7 @@ mod tests {
         // Just an emoji with no entity part
         let err = parse_reaction_key("👍").unwrap_err();
         assert!(
-            err.contains("invalid reaction key format"),
+            matches!(err, ReactionHookError::InvalidKeyFormat { .. }),
             "unexpected error: {err}"
         );
     }
@@ -147,7 +162,7 @@ mod tests {
         // Has colon but entity_id doesn't start with @
         let err = parse_reaction_key("👍:bob:relay.example.com").unwrap_err();
         assert!(
-            err.contains("invalid reaction key format"),
+            matches!(err, ReactionHookError::InvalidKeyFormat { .. }),
             "unexpected error: {err}"
         );
     }
@@ -171,7 +186,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            err.contains("does not match signer"),
+            matches!(err, ReactionHookError::SignerMismatch { .. }),
             "unexpected error: {err}"
         );
     }
@@ -184,7 +199,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            err.contains("does not match signer"),
+            matches!(err, ReactionHookError::SignerMismatch { .. }),
             "unexpected error: {err}"
         );
     }
@@ -193,7 +208,7 @@ mod tests {
     fn validate_signer_malformed_key() {
         let err = validate_reaction_signer("invalid-key", "@bob:relay.example.com").unwrap_err();
         assert!(
-            err.contains("invalid reaction key format"),
+            matches!(err, ReactionHookError::InvalidKeyFormat { .. }),
             "unexpected error: {err}"
         );
     }
