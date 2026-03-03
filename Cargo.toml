@@ -4,6 +4,7 @@ members = [
     "crates/ezagent-protocol",
     "crates/ezagent-backend",
     "crates/ezagent-engine",
+    "crates/ezagent-ext-api",
     "crates/ezagent-py",
 ]
 
@@ -25,6 +26,10 @@ pyo3-async-runtimes = { version = "0.23", features = ["tokio-runtime"] }
 tokio = { version = "1", features = ["full"] }
 async-trait = "0.1"
 thiserror = "2"
+toml = "0.8"
+libloading = "0.8"
+log = "0.4"
+ezagent-ext-api = { path = "crates/ezagent-ext-api" }
 ezagent-protocol = { path = "crates/ezagent-protocol" }
 base64 = "0.22"
 ezagent-backend = { path = "crates/ezagent-backend" }
