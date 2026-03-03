@@ -19,6 +19,7 @@ use crate::hooks::HookExecutor;
 use crate::index::IndexBuilder;
 use crate::loader;
 use crate::registry::DatatypeRegistry;
+use crate::uri_registry::UriPathRegistry;
 
 use crate::builtins::identity::PublicKeyCache;
 
@@ -45,6 +46,8 @@ pub struct Engine {
     keypair: Option<Arc<Keypair>>,
     /// The local entity ID, set via `init_identity`.
     entity_id: Option<EntityId>,
+    /// URI path registry mapping extension patterns to extension IDs.
+    pub uri_registry: UriPathRegistry,
     /// Extensions that have been successfully loaded, keyed by name.
     loaded_extensions: HashMap<String, loader::LoadedExtension>,
     /// Loaded dynamic libraries kept alive for the lifetime of the Engine.
@@ -128,6 +131,7 @@ impl Engine {
             pubkey_cache,
             keypair: None,
             entity_id: None,
+            uri_registry: UriPathRegistry::new(),
             loaded_extensions: HashMap::new(),
             loaded_libraries: Vec::new(),
         })
