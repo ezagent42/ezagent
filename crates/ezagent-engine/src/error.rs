@@ -41,6 +41,26 @@ pub enum EngineError {
     #[error("signature verification failed: {0}")]
     SignatureVerificationFailed(String),
 
+    #[error("extension not loaded: {0}")]
+    ExtensionNotLoaded(String),
+
+    #[error("extension load failed: {name} — {reason}")]
+    ExtensionLoadFailed { name: String, reason: String },
+
+    #[error("URI path conflict: pattern '{pattern}' claimed by both '{ext_a}' and '{ext_b}'")]
+    UriPathConflict {
+        pattern: String,
+        ext_a: String,
+        ext_b: String,
+    },
+
+    #[error("incompatible API version for extension '{name}': expected {expected}, got {got}")]
+    IncompatibleApiVersion {
+        name: String,
+        got: u32,
+        expected: u32,
+    },
+
     #[error("not implemented")]
     NotImplemented,
 

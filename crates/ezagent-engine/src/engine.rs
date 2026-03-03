@@ -7,6 +7,8 @@
 //! 3. Provides write/read pipeline methods that run hooks in the correct order
 //! 4. Holds references to the Identity state (keypair, pubkey cache)
 
+use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 
 use ezagent_protocol::{EntityId, Keypair};
@@ -15,6 +17,7 @@ use crate::error::EngineError;
 use crate::hooks::phase::{HookContext, HookPhase};
 use crate::hooks::HookExecutor;
 use crate::index::IndexBuilder;
+use crate::loader;
 use crate::registry::DatatypeRegistry;
 
 use crate::builtins::identity::PublicKeyCache;
@@ -42,6 +45,15 @@ pub struct Engine {
     keypair: Option<Arc<Keypair>>,
     /// The local entity ID, set via `init_identity`.
     entity_id: Option<EntityId>,
+    /// Extensions that have been successfully loaded, keyed by name.
+    loaded_extensions: HashMap<String, loader::LoadedExtension>,
+    /// Loaded dynamic libraries kept alive for the lifetime of the Engine.
+    ///
+    /// Libraries must remain loaded as long as any extension code may be called.
+    /// Dropping a `Library` would unmap the shared object, causing use-after-free
+    /// if any function pointers or vtable entries from that library are still in use.
+    #[allow(dead_code)]
+    loaded_libraries: Vec<libloading::Library>,
 }
 
 impl Engine {
@@ -116,6 +128,8 @@ impl Engine {
             pubkey_cache,
             keypair: None,
             entity_id: None,
+            loaded_extensions: HashMap::new(),
+            loaded_libraries: Vec::new(),
         })
     }
 
@@ -231,6 +245,150 @@ impl Engine {
         enabled_extensions: &[String],
     ) -> Result<Vec<String>, EngineError> {
         self.registry.load_order_for_room(enabled_extensions)
+    }
+
+    /// Check whether a named extension has been loaded.
+    pub fn is_extension_loaded(&self, name: &str) -> bool {
+        self.loaded_extensions.contains_key(name)
+    }
+
+    /// Return the names of all currently loaded extensions.
+    pub fn loaded_extensions(&self) -> Vec<String> {
+        self.loaded_extensions.keys().cloned().collect()
+    }
+
+    /// Load extensions from a directory.
+    ///
+    /// Orchestrates the full extension loading pipeline:
+    ///
+    /// 1. **Scan** -- discover `manifest.toml` files in `{dir}/*/`.
+    /// 2. **Filter** -- reject extensions with incompatible API versions.
+    /// 3. **Resolve** -- topologically sort by declared dependencies.
+    /// 4. **Load** -- for each extension in order, compute the library path,
+    ///    open the shared library via `libloading`, look up the entry symbol,
+    ///    create a `RegistrationContext` and call the entry function, then
+    ///    process any registered datatypes/hooks from the context. On success
+    ///    the extension is recorded; on failure the error is collected and
+    ///    loading continues to the next extension.
+    ///
+    /// Returns all errors encountered during the pipeline. Errors are
+    /// non-fatal: each failing extension is skipped but does not prevent
+    /// other extensions from loading.
+    pub fn load_extensions(&mut self, dir: &Path) -> Vec<loader::ExtensionLoadError> {
+        let mut all_errors: Vec<loader::ExtensionLoadError> = Vec::new();
+
+        // Step 1: Scan.
+        let (scanned, scan_errors) = loader::scan_manifests(dir);
+        all_errors.extend(scan_errors);
+
+        // Step 2: Filter by API version.
+        let (compatible, version_errors) = loader::filter_api_version(scanned);
+        all_errors.extend(version_errors);
+
+        // Step 3: Resolve topological order.
+        let order = match loader::resolve_extension_order(&compatible) {
+            Ok(order) => order,
+            Err(dep_errors) => {
+                all_errors.extend(dep_errors);
+                return all_errors;
+            }
+        };
+
+        // Build a lookup from name to (path, manifest) for the loading phase.
+        let manifest_map: HashMap<String, (std::path::PathBuf, ezagent_ext_api::ExtensionManifest)> =
+            compatible
+                .into_iter()
+                .map(|(path, manifest)| (manifest.name.clone(), (path, manifest)))
+                .collect();
+
+        // Step 4: Load each extension in topological order.
+        for ext_name in &order {
+            let (ext_path, manifest) = match manifest_map.get(ext_name) {
+                Some(entry) => entry,
+                None => continue,
+            };
+
+            let lib_name = loader::lib_filename(ext_name);
+            let lib_path = ext_path.join(&lib_name);
+
+            // 4a-b: Open the shared library.
+            let lib = match unsafe { libloading::Library::new(&lib_path) } {
+                Ok(lib) => lib,
+                Err(e) => {
+                    all_errors.push(loader::ExtensionLoadError {
+                        name: ext_name.clone(),
+                        reason: format!("failed to load library '{}': {}", lib_path.display(), e),
+                    });
+                    continue;
+                }
+            };
+
+            // 4c: Look up the entry symbol.
+            let entry_fn: libloading::Symbol<'_, ezagent_ext_api::ExtEntryFn> =
+                match unsafe { lib.get(ezagent_ext_api::ENTRY_SYMBOL.as_bytes()) } {
+                    Ok(sym) => sym,
+                    Err(e) => {
+                        all_errors.push(loader::ExtensionLoadError {
+                            name: ext_name.clone(),
+                            reason: format!(
+                                "symbol '{}' not found: {}",
+                                ezagent_ext_api::ENTRY_SYMBOL,
+                                e
+                            ),
+                        });
+                        continue;
+                    }
+                };
+
+            // 4d: Create registration context and call the entry function.
+            let mut ctx = ezagent_ext_api::RegistrationContext::new();
+            unsafe {
+                entry_fn(&mut ctx as *mut ezagent_ext_api::RegistrationContext);
+            }
+
+            // Check for errors reported by the extension.
+            if let Some(ext_err) = ctx.last_error() {
+                all_errors.push(loader::ExtensionLoadError {
+                    name: ext_name.clone(),
+                    reason: format!("registration error: {ext_err}"),
+                });
+                continue;
+            }
+
+            // 4e: Process registered datatypes (best-effort JSON deserialization).
+            // Datatype and hook registration from JSON is deferred to the
+            // integration phase (Task 4). For now, log the registrations.
+            for dt_json in ctx.datatype_jsons() {
+                log::debug!(
+                    "extension '{}' registered datatype JSON: {}",
+                    ext_name,
+                    dt_json
+                );
+            }
+
+            for hook_json in ctx.hook_jsons() {
+                log::debug!(
+                    "extension '{}' registered hook JSON: {}",
+                    ext_name,
+                    hook_json
+                );
+            }
+
+            // 4f: Record success.
+            self.loaded_extensions.insert(
+                ext_name.clone(),
+                loader::LoadedExtension {
+                    name: ext_name.clone(),
+                    version: manifest.version.clone(),
+                    manifest: manifest.clone(),
+                },
+            );
+
+            // Keep the library alive for the lifetime of the Engine.
+            self.loaded_libraries.push(lib);
+        }
+
+        all_errors
     }
 }
 
@@ -382,6 +540,21 @@ mod tests {
         // No identity initialized yet.
         assert!(engine.entity_id().is_none());
         assert!(engine.keypair().is_none());
+    }
+
+    /// engine_no_extensions_loaded_by_default — loaded_extensions is empty after Engine::new().
+    #[test]
+    fn engine_no_extensions_loaded_by_default() {
+        let engine = Engine::new().expect("Engine::new() should succeed");
+
+        assert!(
+            engine.loaded_extensions().is_empty(),
+            "no extensions should be loaded by default"
+        );
+        assert!(
+            !engine.is_extension_loaded("reactions"),
+            "random extension should not be loaded"
+        );
     }
 
     /// load_order_for_room returns builtins-only when no extensions are enabled.

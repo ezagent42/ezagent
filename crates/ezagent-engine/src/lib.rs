@@ -10,6 +10,7 @@ pub mod annotation;
 pub mod index;
 pub mod builtins;
 pub mod engine;
+pub mod loader;
 pub mod operations;
 pub mod events;
 pub mod error;
