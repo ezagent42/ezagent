@@ -45,6 +45,28 @@ enum Commands {
         #[arg(long)]
         quiet: bool,
     },
+    /// Send a message to a room
+    Send {
+        /// Room ID to send to
+        room_id: String,
+        /// Message body text
+        #[arg(long)]
+        body: String,
+    },
+    /// List messages in a room
+    Messages {
+        /// Room ID to list messages from
+        room_id: String,
+        /// Maximum number of messages to display
+        #[arg(long)]
+        limit: Option<usize>,
+        /// Show messages before this ref ID
+        #[arg(long)]
+        before: Option<String>,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -96,6 +118,13 @@ fn main() {
             }
         },
         Commands::Rooms { json, quiet } => commands::room::list(json, quiet),
+        Commands::Send { room_id, body } => commands::message::send(&room_id, &body),
+        Commands::Messages {
+            room_id,
+            limit,
+            before,
+            json,
+        } => commands::message::list(&room_id, limit, before.as_deref(), json),
     };
     process::exit(exit_code);
 }
