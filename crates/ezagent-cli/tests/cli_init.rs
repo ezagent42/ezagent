@@ -129,3 +129,45 @@ fn tc_4_cli_003b_init_force_overwrites() {
     let config = fs::read_to_string(home.join("config.toml")).unwrap();
     assert!(config.contains("@bob:relay-a.example.com"));
 }
+
+/// TC-4-CLI-004: ezagent identity whoami shows identity info.
+#[test]
+#[ignore = "requires built binary -- run: cargo build -p ezagent-cli"]
+fn tc_4_cli_004_identity_whoami() {
+    let tmp = TempDir::new().unwrap();
+
+    // Init first.
+    Command::new(ezagent_bin())
+        .env("EZAGENT_HOME", tmp.path())
+        .args(["init", "--relay", "relay-a.example.com", "--name", "alice"])
+        .output()
+        .expect("init");
+
+    let output = Command::new(ezagent_bin())
+        .env("EZAGENT_HOME", tmp.path())
+        .args(["identity", "whoami"])
+        .output()
+        .expect("whoami");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("@alice:relay-a.example.com"), "stdout: {stdout}");
+    assert!(stdout.contains("relay-a.example.com"), "stdout: {stdout}");
+    assert_eq!(output.status.code(), Some(0));
+}
+
+/// TC-4-CLI-005: ezagent identity whoami fails when not initialized.
+#[test]
+#[ignore = "requires built binary -- run: cargo build -p ezagent-cli"]
+fn tc_4_cli_005_identity_whoami_not_initialized() {
+    let tmp = TempDir::new().unwrap();
+
+    let output = Command::new(ezagent_bin())
+        .env("EZAGENT_HOME", tmp.path())
+        .args(["identity", "whoami"])
+        .output()
+        .expect("whoami");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Not initialized"), "stderr: {stderr}");
+    assert_eq!(output.status.code(), Some(1));
+}

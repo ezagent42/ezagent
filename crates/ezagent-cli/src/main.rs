@@ -24,6 +24,17 @@ enum Commands {
         #[arg(long)]
         force: bool,
     },
+    /// Identity management
+    Identity {
+        #[command(subcommand)]
+        action: IdentityCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum IdentityCommands {
+    /// Show current identity information
+    Whoami,
 }
 
 fn main() {
@@ -35,6 +46,9 @@ fn main() {
             ca_cert,
             force,
         } => commands::init::run(&relay, &name, ca_cert.as_deref(), force),
+        Commands::Identity { action } => match action {
+            IdentityCommands::Whoami => commands::identity::whoami(),
+        },
     };
     process::exit(exit_code);
 }
