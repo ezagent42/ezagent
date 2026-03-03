@@ -1,0 +1,13 @@
+[extension]
+name = "moderation"
+version = "0.1.0"
+api_version = "1"
+
+[datatypes]
+declarations = ["moderation_overlay"]
+
+[hooks]
+declarations = ["moderation.emit_action", "moderation.merge_overlay"]
+
+[dependencies]
+extensions = []

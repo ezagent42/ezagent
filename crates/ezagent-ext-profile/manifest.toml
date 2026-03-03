@@ -1,0 +1,17 @@
+[extension]
+name = "profile"
+version = "0.1.0"
+api_version = "1"
+
+[datatypes]
+declarations = ["entity_profile"]
+
+[hooks]
+declarations = ["profile.validate_fields", "profile.validate_writer"]
+
+[dependencies]
+extensions = []
+
+[[uri.paths]]
+pattern = "/@{entity_id}/profile"
+description = "Entity profile page"

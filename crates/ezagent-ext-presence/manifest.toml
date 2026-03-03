@@ -1,0 +1,13 @@
+[extension]
+name = "presence"
+version = "0.1.0"
+api_version = "1"
+
+[datatypes]
+declarations = ["presence_token", "awareness_state"]
+
+[hooks]
+declarations = ["presence.online_change", "presence.typing_change"]
+
+[dependencies]
+extensions = []

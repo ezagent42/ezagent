@@ -1,0 +1,13 @@
+[extension]
+name = "read-receipts"
+version = "0.1.0"
+api_version = "1"
+
+[datatypes]
+declarations = ["read_receipts"]
+
+[hooks]
+declarations = ["receipts.auto_mark", "receipts.update_unread"]
+
+[dependencies]
+extensions = []

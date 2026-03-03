@@ -1,0 +1,17 @@
+[extension]
+name = "media"
+version = "0.2.0"
+api_version = "1"
+
+[datatypes]
+declarations = ["global_blob", "blob_ref"]
+
+[hooks]
+declarations = ["media.upload"]
+
+[dependencies]
+extensions = []
+
+[[uri.paths]]
+pattern = "/r/{room_id}/blob/{blob_id}"
+description = "Blob storage within a room"

@@ -745,11 +745,84 @@ dependencies = [
 ]
 
 [[package]]
+name = "ezagent-ext-channels"
+version = "0.1.0"
+dependencies = [
+ "ezagent-ext-api",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "ezagent-ext-drafts"
+version = "0.1.0"
+dependencies = [
+ "ezagent-ext-api",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "ezagent-ext-link-preview"
+version = "0.1.0"
+dependencies = [
+ "ezagent-ext-api",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "ezagent-ext-media"
+version = "0.1.0"
+dependencies = [
+ "ezagent-ext-api",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "ezagent-ext-moderation"
+version = "0.1.0"
+dependencies = [
+ "ezagent-ext-api",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "ezagent-ext-presence"
+version = "0.1.0"
+dependencies = [
+ "ezagent-ext-api",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "ezagent-ext-profile"
+version = "0.1.0"
+dependencies = [
+ "ezagent-ext-api",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "ezagent-ext-reactions"
 version = "0.1.0"
 dependencies = [
  "ezagent-ext-api",
  "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "ezagent-ext-receipts"
+version = "0.1.0"
+dependencies = [
+ "ezagent-ext-api",
+ "serde_json",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

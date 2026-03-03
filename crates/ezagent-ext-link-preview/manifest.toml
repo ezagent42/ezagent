@@ -1,0 +1,13 @@
+[extension]
+name = "link-preview"
+version = "0.1.0"
+api_version = "1"
+
+[datatypes]
+declarations = []
+
+[hooks]
+declarations = ["link_preview.extract"]
+
+[dependencies]
+extensions = []

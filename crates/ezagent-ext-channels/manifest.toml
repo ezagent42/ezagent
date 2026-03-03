@@ -1,0 +1,17 @@
+[extension]
+name = "channels"
+version = "0.1.0"
+api_version = "1"
+
+[datatypes]
+declarations = []
+
+[hooks]
+declarations = ["channels.inject_tags", "channels.update_activity", "channels.aggregate"]
+
+[dependencies]
+extensions = []
+
+[[uri.paths]]
+pattern = "/r/{room_id}/c/{channel_name}"
+description = "Channel view within a room"

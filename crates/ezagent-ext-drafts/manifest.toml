@@ -1,0 +1,13 @@
+[extension]
+name = "drafts"
+version = "0.1.0"
+api_version = "1"
+
+[datatypes]
+declarations = ["draft"]
+
+[hooks]
+declarations = ["drafts.clear_on_send", "drafts.validate_writer"]
+
+[dependencies]
+extensions = []
