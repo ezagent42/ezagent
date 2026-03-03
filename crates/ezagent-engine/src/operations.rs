@@ -14,6 +14,7 @@ use crate::builtins::room::{
 use crate::builtins::timeline::{RefStatus, TimelineRef};
 use crate::engine::Engine;
 use crate::error::EngineError;
+use crate::events::EngineEvent;
 use crate::hooks::phase::{HookContext, TriggerEvent};
 use ezagent_protocol::{EntityId, Keypair};
 
@@ -187,6 +188,11 @@ impl Engine {
                 .insert(entity_id.clone(), crate::builtins::room::Role::Member);
         });
         if found {
+            // Emit RoomMemberJoined event after store update.
+            self.event_stream.emit(EngineEvent::RoomMemberJoined {
+                room_id: room_id.to_string(),
+                entity_id: entity_id.clone(),
+            });
             Ok(())
         } else {
             Err(EngineError::DatatypeNotFound(format!("room {room_id}")))
@@ -211,6 +217,11 @@ impl Engine {
             r.membership.members.remove(&entity_id);
         });
         if found {
+            // Emit RoomMemberLeft event after store update.
+            self.event_stream.emit(EngineEvent::RoomMemberLeft {
+                room_id: room_id.to_string(),
+                entity_id: entity_id.clone(),
+            });
             Ok(())
         } else {
             Err(EngineError::DatatypeNotFound(format!("room {room_id}")))
@@ -231,6 +242,11 @@ impl Engine {
                 .insert(entity_id.to_string(), crate::builtins::room::Role::Member);
         });
         if found {
+            // Emit RoomMemberJoined event after store update.
+            self.event_stream.emit(EngineEvent::RoomMemberJoined {
+                room_id: room_id.to_string(),
+                entity_id: entity_id.to_string(),
+            });
             Ok(())
         } else {
             Err(EngineError::DatatypeNotFound(format!("room {room_id}")))
@@ -331,7 +347,16 @@ impl Engine {
             signature: None,
             ext: HashMap::new(),
         };
+        let ref_id = tref.ref_id.clone();
         self.store.insert_timeline_ref(room_id, tref);
+
+        // Emit MessageNew event after store operations are complete.
+        self.event_stream.emit(EngineEvent::MessageNew {
+            room_id: room_id.to_string(),
+            ref_id,
+            author: entity_id.to_string(),
+            content_id: content.content_id.clone(),
+        });
 
         Ok(content)
     }
@@ -386,6 +411,18 @@ impl Engine {
         }
         // For the in-memory store, we could update the status, but EngineStore
         // doesn't expose a direct update_timeline_ref method. For now, acknowledge.
+
+        // Emit MessageDeleted event.
+        let author = self
+            .entity_id()
+            .map(|e| e.to_string())
+            .unwrap_or_default();
+        self.event_stream.emit(EngineEvent::MessageDeleted {
+            room_id: room_id.to_string(),
+            ref_id: ref_id.to_string(),
+            author,
+        });
+
         Ok(())
     }
 

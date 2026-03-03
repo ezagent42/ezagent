@@ -252,4 +252,76 @@ impl PyEngine {
         let s = self.inner.status();
         Ok((s.identity_initialized, s.registered_datatypes))
     }
+
+    /// Subscribe to the engine event stream.
+    ///
+    /// Returns a ``PyEventReceiver`` that can be polled to get events as JSON
+    /// strings. Each call to ``next_event()`` blocks the calling thread until
+    /// an event is available, the channel closes, or the timeout expires.
+    ///
+    /// Returns:
+    ///     PyEventReceiver instance.
+    fn subscribe_events(&self) -> PyResult<PyEventReceiver> {
+        let rx = self.inner.event_stream.subscribe();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .map_err(|e| PyRuntimeError::new_err(format!("failed to create runtime: {e}")))?;
+        Ok(PyEventReceiver { rx, rt })
+    }
+}
+
+/// Python-facing event receiver that blocks on recv and returns JSON strings.
+///
+/// Wraps a ``tokio::sync::broadcast::Receiver`` and a single-threaded tokio
+/// ``Runtime``. Each call to ``next_event()`` blocks the calling thread until
+/// an event is available, the channel closes, or the timeout expires.
+///
+/// The class is marked ``unsendable`` because the tokio ``Receiver`` is not
+/// ``Send``.
+#[pyclass(unsendable)]
+pub struct PyEventReceiver {
+    rx: tokio::sync::broadcast::Receiver<ezagent_engine::events::EngineEvent>,
+    rt: tokio::runtime::Runtime,
+}
+
+#[pymethods]
+impl PyEventReceiver {
+    /// Block until the next event arrives and return it as a JSON string.
+    ///
+    /// Returns ``None`` if the channel is closed (no more events will arrive)
+    /// or the timeout expires before an event is received.
+    /// Skips lagged events silently.
+    ///
+    /// Args:
+    ///     timeout_ms: Maximum time to wait in milliseconds (default 5000).
+    ///
+    /// Returns:
+    ///     JSON string of the event, or ``None`` on timeout / channel close.
+    #[pyo3(signature = (timeout_ms=5000))]
+    fn next_event(&mut self, timeout_ms: u64) -> PyResult<Option<String>> {
+        let timeout = std::time::Duration::from_millis(timeout_ms);
+        loop {
+            let result = self.rt.block_on(async {
+                tokio::time::timeout(timeout, self.rx.recv()).await
+            });
+            match result {
+                Ok(Ok(event)) => {
+                    let json = serde_json::to_string(&event)
+                        .map_err(|e| PyRuntimeError::new_err(format!("{e}")))?;
+                    return Ok(Some(json));
+                }
+                Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => {
+                    // Skip lagged events, try again.
+                    continue;
+                }
+                Ok(Err(tokio::sync::broadcast::error::RecvError::Closed)) => {
+                    return Ok(None);
+                }
+                Err(_timeout) => {
+                    return Ok(None);
+                }
+            }
+        }
+    }
 }

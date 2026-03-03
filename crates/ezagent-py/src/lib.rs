@@ -50,5 +50,6 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(crdt_map_roundtrip, m)?)?;
     m.add_function(wrap_pyfunction!(crypto_sign_verify, m)?)?;
     m.add_class::<engine_bridge::PyEngine>()?;
+    m.add_class::<engine_bridge::PyEventReceiver>()?;
     Ok(())
 }

@@ -14,6 +14,7 @@ use std::sync::Arc;
 use ezagent_protocol::{EntityId, Keypair};
 
 use crate::error::EngineError;
+use crate::events::EventStream;
 use crate::hooks::phase::{HookContext, HookPhase};
 use crate::hooks::HookExecutor;
 use crate::index::IndexBuilder;
@@ -47,6 +48,8 @@ pub struct Engine {
     keypair: Option<Arc<Keypair>>,
     /// The local entity ID, set via `init_identity`.
     entity_id: Option<EntityId>,
+    /// Event stream for broadcasting engine events to subscribers.
+    pub event_stream: EventStream,
     /// In-memory state store for rooms, messages, timeline refs, and annotations.
     pub store: EngineStore,
     /// URI path registry mapping extension patterns to extension IDs.
@@ -134,6 +137,7 @@ impl Engine {
             pubkey_cache,
             keypair: None,
             entity_id: None,
+            event_stream: EventStream::default(),
             store: EngineStore::new(),
             uri_registry: UriPathRegistry::new(),
             loaded_extensions: HashMap::new(),

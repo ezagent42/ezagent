@@ -285,3 +285,136 @@ def test_timeline_get_ref_nonexistent():
     engine = PyEngine()
     with pytest.raises(RuntimeError):
         engine.timeline_get_ref("room", "nonexistent-ref")
+
+
+# ---------------------------------------------------------------------------
+# EventStream / PyEventReceiver tests (Task 24)
+# ---------------------------------------------------------------------------
+
+
+def test_subscribe_events():
+    """subscribe_events returns a PyEventReceiver."""
+    engine = PyEngine()
+    engine.identity_init("@alice:relay.example.com", os.urandom(32))
+    rx = engine.subscribe_events()
+    assert rx is not None
+
+
+def test_event_receiver_timeout():
+    """next_event returns None on timeout (no events)."""
+    engine = PyEngine()
+    rx = engine.subscribe_events()
+    # Short timeout since no events will arrive.
+    result = rx.next_event(100)
+    assert result is None
+
+
+def test_event_on_message_send():
+    """message_send emits a message.new event."""
+    engine = PyEngine()
+    engine.identity_init("@alice:relay.example.com", os.urandom(32))
+
+    room_json = engine.room_create("Chat")
+    room = json.loads(room_json)
+    room_id = room["room_id"]
+
+    # Subscribe BEFORE sending.
+    rx = engine.subscribe_events()
+
+    # Send a message.
+    engine.message_send(room_id, '"Hello!"', "text/plain")
+
+    # Should receive the event.
+    event_json = rx.next_event(1000)
+    assert event_json is not None
+    event = json.loads(event_json)
+    assert event["type"] == "message.new"
+    assert event["room_id"] == room_id
+    assert event["author"] == "@alice:relay.example.com"
+
+
+def test_event_on_room_invite():
+    """room_invite emits a room.member_joined event."""
+    engine = PyEngine()
+    engine.identity_init("@alice:relay.example.com", os.urandom(32))
+
+    room_json = engine.room_create("Team")
+    room = json.loads(room_json)
+    room_id = room["room_id"]
+
+    rx = engine.subscribe_events()
+
+    engine.room_invite(room_id, "@bob:relay.example.com")
+
+    event_json = rx.next_event(1000)
+    assert event_json is not None
+    event = json.loads(event_json)
+    assert event["type"] == "room.member_joined"
+    assert event["room_id"] == room_id
+    assert event["entity_id"] == "@bob:relay.example.com"
+
+
+def test_event_on_room_join():
+    """room_join emits a room.member_joined event."""
+    engine = PyEngine()
+    engine.identity_init("@alice:relay.example.com", os.urandom(32))
+
+    room_json = engine.room_create("Club")
+    room = json.loads(room_json)
+    room_id = room["room_id"]
+
+    # Leave first so we can join.
+    engine.room_leave(room_id)
+
+    rx = engine.subscribe_events()
+    engine.room_join(room_id)
+
+    event_json = rx.next_event(1000)
+    assert event_json is not None
+    event = json.loads(event_json)
+    assert event["type"] == "room.member_joined"
+    assert event["entity_id"] == "@alice:relay.example.com"
+
+
+def test_event_on_room_leave():
+    """room_leave emits a room.member_left event."""
+    engine = PyEngine()
+    engine.identity_init("@alice:relay.example.com", os.urandom(32))
+
+    room_json = engine.room_create("Club")
+    room = json.loads(room_json)
+    room_id = room["room_id"]
+
+    rx = engine.subscribe_events()
+    engine.room_leave(room_id)
+
+    event_json = rx.next_event(1000)
+    assert event_json is not None
+    event = json.loads(event_json)
+    assert event["type"] == "room.member_left"
+    assert event["entity_id"] == "@alice:relay.example.com"
+
+
+def test_event_on_message_delete():
+    """message_delete emits a message.deleted event."""
+    engine = PyEngine()
+    engine.identity_init("@alice:relay.example.com", os.urandom(32))
+
+    room_json = engine.room_create("Del")
+    room = json.loads(room_json)
+    room_id = room["room_id"]
+
+    engine.message_send(room_id, '"test"', "text/plain")
+    refs = engine.timeline_list(room_id)
+    assert len(refs) == 1
+    ref_id = refs[0]
+
+    rx = engine.subscribe_events()
+    engine.message_delete(room_id, ref_id)
+
+    event_json = rx.next_event(1000)
+    assert event_json is not None
+    event = json.loads(event_json)
+    assert event["type"] == "message.deleted"
+    assert event["room_id"] == room_id
+    assert event["ref_id"] == ref_id

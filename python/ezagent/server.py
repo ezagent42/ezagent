@@ -36,7 +36,7 @@ import json
 import threading
 from typing import Callable, Optional
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Response, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from ezagent._native import PyEngine
@@ -883,3 +883,59 @@ def list_room_views(room_id: str):
             }
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# WebSocket Event Stream (Task 25)
+# ---------------------------------------------------------------------------
+
+
+@app.websocket("/ws")
+async def ws_events(websocket: WebSocket, room: Optional[str] = None):
+    """WebSocket endpoint for real-time event streaming.
+
+    Optionally filter by room_id via ``?room=<room_id>`` query parameter.
+    Events are sent as JSON objects matching the EngineEvent format.
+
+    The handler uses a background thread to poll ``PyEventReceiver`` (which
+    is ``unsendable`` and must stay on the thread that created it) and relays
+    events to the async WebSocket via an ``asyncio.Queue``.
+    """
+    import asyncio
+
+    await websocket.accept()
+
+    queue: asyncio.Queue = asyncio.Queue()
+    stop = threading.Event()
+    loop = asyncio.get_event_loop()
+
+    def _poll_events():
+        """Background thread: create engine + subscriber and poll events."""
+        engine = get_engine()
+        rx = engine.subscribe_events()
+        while not stop.is_set():
+            event_json = rx.next_event(500)
+            if event_json is not None:
+                loop.call_soon_threadsafe(queue.put_nowait, event_json)
+
+    thread = threading.Thread(target=_poll_events, daemon=True)
+    thread.start()
+
+    try:
+        while True:
+            event_json = await queue.get()
+
+            # Apply room filter if specified.
+            if room is not None:
+                event_data = json.loads(event_json)
+                if event_data.get("room_id") != room:
+                    continue
+
+            await websocket.send_text(event_json)
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        stop.set()
+        thread.join(timeout=2)
