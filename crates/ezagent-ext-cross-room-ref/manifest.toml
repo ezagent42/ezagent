@@ -1,0 +1,13 @@
+[extension]
+name = "cross-room-ref"
+version = "0.1.0"
+api_version = "1"
+
+[datatypes]
+declarations = []
+
+[hooks]
+declarations = ["cross_room.resolve_preview"]
+
+[dependencies]
+extensions = ["reply-to", "room"]

@@ -1,0 +1,13 @@
+[extension]
+name = "command"
+version = "0.1.0"
+api_version = "1"
+
+[datatypes]
+declarations = []
+
+[hooks]
+declarations = ["command.validate", "command.dispatch", "command.result_notify"]
+
+[dependencies]
+extensions = ["timeline", "room"]

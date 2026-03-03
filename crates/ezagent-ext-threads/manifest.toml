@@ -1,0 +1,17 @@
+[extension]
+name = "threads"
+version = "0.1.0"
+api_version = "1"
+
+[datatypes]
+declarations = []
+
+[hooks]
+declarations = ["threads.inject", "threads.filter"]
+
+[dependencies]
+extensions = ["reply-to"]
+
+[[uri.paths]]
+pattern = "/r/{room_id}/m/{ref_id}/thread"
+description = "Thread sub-conversation view"

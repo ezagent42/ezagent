@@ -1,0 +1,13 @@
+[extension]
+name = "mutable"
+version = "0.1.0"
+api_version = "1"
+
+[datatypes]
+declarations = ["mutable_content"]
+
+[hooks]
+declarations = ["mutable.validate_edit", "mutable.status_update"]
+
+[dependencies]
+extensions = ["message"]

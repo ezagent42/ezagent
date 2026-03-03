@@ -1,0 +1,17 @@
+[extension]
+name = "runtime"
+version = "0.1.0"
+api_version = "1"
+
+[datatypes]
+declarations = []
+
+[hooks]
+declarations = ["runtime.namespace_check", "runtime.local_sw_check", "runtime.sw_message_index"]
+
+[dependencies]
+extensions = ["channels", "reply-to", "command"]
+
+[[uri.paths]]
+pattern = "/r/{room_id}/sw/{namespace}"
+description = "Socialware namespace within a room"

@@ -1,0 +1,13 @@
+[extension]
+name = "reply-to"
+version = "0.1.0"
+api_version = "1"
+
+[datatypes]
+declarations = []
+
+[hooks]
+declarations = ["reply_to.inject"]
+
+[dependencies]
+extensions = ["timeline"]

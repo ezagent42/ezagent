@@ -1,0 +1,13 @@
+[extension]
+name = "collab"
+version = "0.1.0"
+api_version = "1"
+
+[datatypes]
+declarations = ["collab_acl"]
+
+[hooks]
+declarations = ["collab.check_acl"]
+
+[dependencies]
+extensions = ["mutable", "room"]
