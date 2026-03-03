@@ -745,6 +745,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ezagent-ext-test-dummy"
+version = "0.1.0"
+dependencies = [
+ "ezagent-ext-api",
+]
+
+[[package]]
 name = "ezagent-protocol"
 version = "0.1.0"
 dependencies = [

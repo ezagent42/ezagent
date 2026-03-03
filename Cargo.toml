@@ -5,6 +5,7 @@ members = [
     "crates/ezagent-backend",
     "crates/ezagent-engine",
     "crates/ezagent-ext-api",
+    "crates/ezagent-ext-test-dummy",
     "crates/ezagent-py",
 ]
 
