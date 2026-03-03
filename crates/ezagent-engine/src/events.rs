@@ -13,8 +13,10 @@ use tokio::sync::broadcast;
 
 /// Event types emitted by the engine.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
 pub enum EngineEvent {
     /// A new message was added to a room's timeline.
+    #[serde(rename = "message.new")]
     MessageNew {
         /// The room containing the message.
         room_id: String,
@@ -26,6 +28,7 @@ pub enum EngineEvent {
         content_id: String,
     },
     /// A message was deleted (soft-delete) from a room's timeline.
+    #[serde(rename = "message.deleted")]
     MessageDeleted {
         /// The room containing the deleted message.
         room_id: String,
@@ -35,6 +38,7 @@ pub enum EngineEvent {
         author: String,
     },
     /// A member joined a room.
+    #[serde(rename = "room.member_joined")]
     RoomMemberJoined {
         /// The room the member joined.
         room_id: String,
@@ -42,6 +46,7 @@ pub enum EngineEvent {
         entity_id: String,
     },
     /// A member left a room.
+    #[serde(rename = "room.member_left")]
     RoomMemberLeft {
         /// The room the member left.
         room_id: String,
@@ -219,6 +224,38 @@ mod tests {
             }
             _ => panic!("both subscribers should receive RoomMemberJoined"),
         }
+    }
+
+    /// EngineEvent JSON uses internally-tagged format with "type" field.
+    #[test]
+    fn engine_event_json_type_field() {
+        let event = EngineEvent::MessageNew {
+            room_id: "R-alpha".to_string(),
+            ref_id: "ref-001".to_string(),
+            author: "@alice:relay.com".to_string(),
+            content_id: "hash123".to_string(),
+        };
+        let json = serde_json::to_string(&event).expect("serialize");
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("parse");
+        assert_eq!(parsed.get("type").and_then(|v| v.as_str()), Some("message.new"));
+        assert_eq!(parsed.get("room_id").and_then(|v| v.as_str()), Some("R-alpha"));
+
+        let deleted = EngineEvent::MessageDeleted {
+            room_id: "R-beta".to_string(),
+            ref_id: "ref-002".to_string(),
+            author: "@bob:relay.com".to_string(),
+        };
+        let json2 = serde_json::to_string(&deleted).expect("serialize");
+        let parsed2: serde_json::Value = serde_json::from_str(&json2).expect("parse");
+        assert_eq!(parsed2.get("type").and_then(|v| v.as_str()), Some("message.deleted"));
+
+        let joined = EngineEvent::RoomMemberJoined {
+            room_id: "R-gamma".to_string(),
+            entity_id: "@carol:relay.com".to_string(),
+        };
+        let json3 = serde_json::to_string(&joined).expect("serialize");
+        let parsed3: serde_json::Value = serde_json::from_str(&json3).expect("parse");
+        assert_eq!(parsed3.get("type").and_then(|v| v.as_str()), Some("room.member_joined"));
     }
 
     /// EngineEvent serde roundtrip.
