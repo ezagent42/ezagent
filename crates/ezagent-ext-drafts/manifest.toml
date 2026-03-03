@@ -4,10 +4,10 @@ version = "0.1.0"
 api_version = "1"
 
 [datatypes]
-declarations = ["draft"]
+declarations = ["user_draft"]
 
 [hooks]
-declarations = ["drafts.clear_on_send", "drafts.validate_writer"]
+declarations = ["drafts.clear_on_send"]
 
 [dependencies]
 extensions = []

@@ -5,7 +5,7 @@
 //! - Entity type validation: must be "human" or "agent".
 
 /// The set of valid entity types.
-const VALID_ENTITY_TYPES: &[&str] = &["human", "agent"];
+const VALID_ENTITY_TYPES: &[&str] = &["human", "agent", "service"];
 
 /// Errors from profile hook validation.
 #[derive(Debug, thiserror::Error)]
@@ -18,7 +18,7 @@ pub enum ProfileHookError {
     },
 
     /// The entity type is not valid.
-    #[error("invalid entity type '{entity_type}': expected 'human' or 'agent'")]
+    #[error("invalid entity type '{entity_type}': expected 'human', 'agent', or 'service'")]
     InvalidEntityType { entity_type: String },
 }
 
@@ -126,6 +126,11 @@ mod tests {
     }
 
     #[test]
+    fn valid_service_type() {
+        validate_entity_type("service").unwrap();
+    }
+
+    #[test]
     fn invalid_empty_type() {
         let err = validate_entity_type("").unwrap_err();
         assert!(
@@ -148,5 +153,6 @@ mod tests {
         assert!(validate_entity_type("Human").is_err());
         assert!(validate_entity_type("AGENT").is_err());
         assert!(validate_entity_type("Agent").is_err());
+        assert!(validate_entity_type("Service").is_err());
     }
 }

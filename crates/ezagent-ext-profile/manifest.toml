@@ -7,7 +7,7 @@ api_version = "1"
 declarations = ["entity_profile"]
 
 [hooks]
-declarations = ["profile.validate_fields", "profile.validate_writer"]
+declarations = ["profile.validate_fields", "profile.validate_writer", "profile.index_update"]
 
 [dependencies]
 extensions = []

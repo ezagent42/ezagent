@@ -6,8 +6,10 @@
 //!
 //! # Hooks
 //!
-//! - **`link_preview.extract`** (AfterRead, priority 30) — Extracts
-//!   URLs from message text for preview generation.
+//! - **`link-preview.extract`** (PreSend, priority 25) — Scans message
+//!   body for URLs and writes placeholder preview entries.
+//! - **`link-preview.fetch`** (AfterWrite, priority 50) — Asynchronously
+//!   fetches Open Graph metadata for extracted URLs.
 //!
 //! # Rules
 //!
@@ -21,9 +23,9 @@ use ezagent_ext_api::prelude::*;
 
 /// The Link Preview extension plugin.
 ///
-/// Implements [`ExtensionPlugin`] to register the `link_preview.extract`
-/// hook with the Engine. The extension declares no datatypes — link
-/// previews are annotations on existing Refs.
+/// Implements [`ExtensionPlugin`] to register the `link-preview.extract`
+/// and `link-preview.fetch` hooks with the Engine. The extension declares
+/// no datatypes — link previews are annotations on existing Refs.
 pub struct LinkPreviewExtension {
     manifest: ExtensionManifest,
 }
@@ -43,9 +45,14 @@ impl ExtensionPlugin for LinkPreviewExtension {
     }
 
     fn register(&self, ctx: &mut RegistrationContext) -> Result<(), ExtError> {
-        // AfterRead hook for URL extraction.
+        // PreSend hook for URL extraction and placeholder creation.
         ctx.register_hook_json(
-            r#"{"id":"link_preview.extract","phase":"AfterRead","priority":30}"#,
+            r#"{"id":"link-preview.extract","phase":"PreSend","priority":25}"#,
+        )?;
+
+        // AfterWrite hook for async metadata fetching.
+        ctx.register_hook_json(
+            r#"{"id":"link-preview.fetch","phase":"AfterWrite","priority":50}"#,
         )?;
 
         Ok(())
@@ -112,14 +119,15 @@ mod tests {
         assert_eq!(m.version, "0.1.0");
         assert_eq!(m.api_version, 1);
         assert!(m.datatype_declarations.is_empty());
-        assert_eq!(m.hook_declarations.len(), 1);
-        assert_eq!(m.hook_declarations[0], "link_preview.extract");
+        assert_eq!(m.hook_declarations.len(), 2);
+        assert_eq!(m.hook_declarations[0], "link-preview.extract");
+        assert_eq!(m.hook_declarations[1], "link-preview.fetch");
         assert!(m.ext_dependencies.is_empty());
         assert!(m.uri_paths.is_empty());
 
         let mut ctx = RegistrationContext::new();
         ext.register(&mut ctx).expect("register should succeed");
-        assert_eq!(ctx.hook_jsons().len(), 1);
+        assert_eq!(ctx.hook_jsons().len(), 2);
         assert!(ctx.datatype_jsons().is_empty());
         assert!(ctx.last_error().is_none());
     }
@@ -132,13 +140,19 @@ mod tests {
         ext.register(&mut ctx).expect("register should succeed");
 
         let hooks = ctx.hook_jsons();
-        assert_eq!(hooks.len(), 1);
+        assert_eq!(hooks.len(), 2);
 
         let extract: serde_json::Value =
             serde_json::from_str(&hooks[0]).expect("extract hook JSON should be valid");
-        assert_eq!(extract["id"], "link_preview.extract");
-        assert_eq!(extract["phase"], "AfterRead");
-        assert_eq!(extract["priority"], 30);
+        assert_eq!(extract["id"], "link-preview.extract");
+        assert_eq!(extract["phase"], "PreSend");
+        assert_eq!(extract["priority"], 25);
+
+        let fetch: serde_json::Value =
+            serde_json::from_str(&hooks[1]).expect("fetch hook JSON should be valid");
+        assert_eq!(fetch["id"], "link-preview.fetch");
+        assert_eq!(fetch["phase"], "AfterWrite");
+        assert_eq!(fetch["priority"], 50);
     }
 
     /// Verify the Rust manifest matches the shipped manifest.toml exactly.

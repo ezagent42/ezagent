@@ -5,14 +5,12 @@
 //!
 //! # Hooks
 //!
-//! - **`drafts.clear_on_send`** (AfterWrite, priority 35) — Clears
+//! - **`drafts.clear_on_send`** (PreSend, priority 90) — Clears
 //!   the draft for a room after a message is sent.
-//! - **`drafts.validate_writer`** (PreSend, priority 25) — Validates
-//!   that the draft writer matches the signer.
 //!
 //! # Datatypes
 //!
-//! - `draft` — Per-entity draft storage.
+//! - `user_draft` — Per-entity draft storage.
 //!
 //! # Rules
 //!
@@ -26,7 +24,7 @@ use ezagent_ext_api::prelude::*;
 /// The Drafts extension plugin.
 ///
 /// Implements [`ExtensionPlugin`] to register the `drafts.clear_on_send`
-/// and `drafts.validate_writer` hooks with the Engine.
+/// hook with the Engine.
 pub struct DraftsExtension {
     manifest: ExtensionManifest,
 }
@@ -46,14 +44,9 @@ impl ExtensionPlugin for DraftsExtension {
     }
 
     fn register(&self, ctx: &mut RegistrationContext) -> Result<(), ExtError> {
-        // AfterWrite hook for clearing draft on send.
+        // PreSend hook for clearing draft on send.
         ctx.register_hook_json(
-            r#"{"id":"drafts.clear_on_send","phase":"AfterWrite","priority":35}"#,
-        )?;
-
-        // PreSend hook for validating draft ownership.
-        ctx.register_hook_json(
-            r#"{"id":"drafts.validate_writer","phase":"PreSend","priority":25}"#,
+            r#"{"id":"drafts.clear_on_send","phase":"PreSend","priority":90}"#,
         )?;
 
         Ok(())
@@ -101,16 +94,15 @@ mod tests {
         assert_eq!(m.version, "0.1.0");
         assert_eq!(m.api_version, 1);
         assert_eq!(m.datatype_declarations.len(), 1);
-        assert_eq!(m.datatype_declarations[0], "draft");
-        assert_eq!(m.hook_declarations.len(), 2);
+        assert_eq!(m.datatype_declarations[0], "user_draft");
+        assert_eq!(m.hook_declarations.len(), 1);
         assert_eq!(m.hook_declarations[0], "drafts.clear_on_send");
-        assert_eq!(m.hook_declarations[1], "drafts.validate_writer");
         assert!(m.ext_dependencies.is_empty());
         assert!(m.uri_paths.is_empty());
 
         let mut ctx = RegistrationContext::new();
         ext.register(&mut ctx).expect("register should succeed");
-        assert_eq!(ctx.hook_jsons().len(), 2);
+        assert_eq!(ctx.hook_jsons().len(), 1);
         assert!(ctx.datatype_jsons().is_empty());
         assert!(ctx.last_error().is_none());
     }
@@ -123,19 +115,13 @@ mod tests {
         ext.register(&mut ctx).expect("register should succeed");
 
         let hooks = ctx.hook_jsons();
-        assert_eq!(hooks.len(), 2);
+        assert_eq!(hooks.len(), 1);
 
         let clear: serde_json::Value =
             serde_json::from_str(&hooks[0]).expect("clear_on_send hook JSON should be valid");
         assert_eq!(clear["id"], "drafts.clear_on_send");
-        assert_eq!(clear["phase"], "AfterWrite");
-        assert_eq!(clear["priority"], 35);
-
-        let validate: serde_json::Value =
-            serde_json::from_str(&hooks[1]).expect("validate_writer hook JSON should be valid");
-        assert_eq!(validate["id"], "drafts.validate_writer");
-        assert_eq!(validate["phase"], "PreSend");
-        assert_eq!(validate["priority"], 25);
+        assert_eq!(clear["phase"], "PreSend");
+        assert_eq!(clear["priority"], 90);
     }
 
     /// Verify the Rust manifest matches the shipped manifest.toml exactly.

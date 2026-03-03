@@ -10,6 +10,8 @@
 //!   profile fields including entity_type.
 //! - **`profile.validate_writer`** (PreSend, priority 20) — Validates
 //!   that the profile writer matches the entity.
+//! - **`profile.index_update`** (AfterWrite, priority 50) — Notifies
+//!   Relay-side index when a profile changes.
 //!
 //! # Datatypes
 //!
@@ -31,8 +33,8 @@ use ezagent_ext_api::prelude::*;
 
 /// The Profile extension plugin.
 ///
-/// Implements [`ExtensionPlugin`] to register the `profile.validate_fields`
-/// and `profile.validate_writer` hooks with the Engine.
+/// Implements [`ExtensionPlugin`] to register the `profile.validate_fields`,
+/// `profile.validate_writer`, and `profile.index_update` hooks with the Engine.
 pub struct ProfileExtension {
     manifest: ExtensionManifest,
 }
@@ -60,6 +62,11 @@ impl ExtensionPlugin for ProfileExtension {
         // PreSend hook for writer validation.
         ctx.register_hook_json(
             r#"{"id":"profile.validate_writer","phase":"PreSend","priority":20}"#,
+        )?;
+
+        // AfterWrite hook for index update notification.
+        ctx.register_hook_json(
+            r#"{"id":"profile.index_update","phase":"AfterWrite","priority":50}"#,
         )?;
 
         Ok(())
@@ -102,6 +109,7 @@ mod tests {
     fn tc_2_ext13_003_valid_entity_types() {
         assert!(hooks::validate_entity_type("human").is_ok());
         assert!(hooks::validate_entity_type("agent").is_ok());
+        assert!(hooks::validate_entity_type("service").is_ok());
     }
 
     /// TC-2-EXT13-004: Verify invalid entity types are rejected.
@@ -130,16 +138,17 @@ mod tests {
         assert_eq!(m.api_version, 1);
         assert_eq!(m.datatype_declarations.len(), 1);
         assert_eq!(m.datatype_declarations[0], "entity_profile");
-        assert_eq!(m.hook_declarations.len(), 2);
+        assert_eq!(m.hook_declarations.len(), 3);
         assert_eq!(m.hook_declarations[0], "profile.validate_fields");
         assert_eq!(m.hook_declarations[1], "profile.validate_writer");
+        assert_eq!(m.hook_declarations[2], "profile.index_update");
         assert!(m.ext_dependencies.is_empty());
         assert_eq!(m.uri_paths.len(), 1);
         assert_eq!(m.uri_paths[0].pattern, "/@{entity_id}/profile");
 
         let mut ctx = RegistrationContext::new();
         ext.register(&mut ctx).expect("register should succeed");
-        assert_eq!(ctx.hook_jsons().len(), 2);
+        assert_eq!(ctx.hook_jsons().len(), 3);
         assert!(ctx.datatype_jsons().is_empty());
         assert!(ctx.last_error().is_none());
     }
@@ -152,7 +161,7 @@ mod tests {
         ext.register(&mut ctx).expect("register should succeed");
 
         let hooks = ctx.hook_jsons();
-        assert_eq!(hooks.len(), 2);
+        assert_eq!(hooks.len(), 3);
 
         let fields: serde_json::Value =
             serde_json::from_str(&hooks[0]).expect("validate_fields hook JSON should be valid");
@@ -165,6 +174,12 @@ mod tests {
         assert_eq!(writer["id"], "profile.validate_writer");
         assert_eq!(writer["phase"], "PreSend");
         assert_eq!(writer["priority"], 20);
+
+        let index: serde_json::Value =
+            serde_json::from_str(&hooks[2]).expect("index_update hook JSON should be valid");
+        assert_eq!(index["id"], "profile.index_update");
+        assert_eq!(index["phase"], "AfterWrite");
+        assert_eq!(index["priority"], 50);
     }
 
     /// Verify the Rust manifest matches the shipped manifest.toml exactly.

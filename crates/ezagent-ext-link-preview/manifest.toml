@@ -7,7 +7,7 @@ api_version = "1"
 declarations = []
 
 [hooks]
-declarations = ["link_preview.extract"]
+declarations = ["link-preview.extract", "link-preview.fetch"]
 
 [dependencies]
 extensions = []
