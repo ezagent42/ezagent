@@ -14,6 +14,7 @@ pub mod index;
 pub mod loader;
 pub mod operations;
 pub mod registry;
+pub mod store;
 pub mod sync;
 pub mod uri_registry;
 
