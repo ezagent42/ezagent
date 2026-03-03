@@ -821,9 +821,11 @@ dependencies = [
  "ezagent-backend",
  "ezagent-engine",
  "ezagent-protocol",
+ "hex",
  "serde",
  "serde_json",
  "tabled",
+ "tempfile",
  "tokio",
  "toml",
 ]

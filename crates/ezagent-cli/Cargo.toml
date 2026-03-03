@@ -19,3 +19,5 @@ tokio = { workspace = true }
 ezagent-engine = { workspace = true }
 ezagent-backend = { workspace = true }
 ezagent-protocol = { workspace = true }
+hex = { workspace = true }
+tempfile = { workspace = true }
