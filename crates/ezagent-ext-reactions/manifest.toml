@@ -1,0 +1,17 @@
+[extension]
+name = "reactions"
+version = "0.1.0"
+api_version = "1"
+
+[datatypes]
+declarations = []
+
+[hooks]
+declarations = ["reactions.inject", "reactions.emit"]
+
+[dependencies]
+extensions = []
+
+[[uri.paths]]
+pattern = "/r/{room_id}/m/{ref_id}/reactions"
+description = "Reaction list for a message"
