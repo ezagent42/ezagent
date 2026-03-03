@@ -129,9 +129,8 @@ mod tests {
         assert_eq!(m.hook_declarations[1], "watch.set_channel");
         assert_eq!(m.hook_declarations[2], "watch.check_ref_watchers");
         assert_eq!(m.hook_declarations[3], "watch.check_channel_watchers");
-        assert_eq!(m.ext_dependencies.len(), 2);
-        assert_eq!(m.ext_dependencies[0], "timeline");
-        assert_eq!(m.ext_dependencies[1], "reply-to");
+        assert_eq!(m.ext_dependencies.len(), 1);
+        assert_eq!(m.ext_dependencies[0], "reply-to");
         assert!(m.uri_paths.is_empty());
 
         let mut ctx = RegistrationContext::new();

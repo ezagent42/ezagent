@@ -10,4 +10,4 @@ declarations = []
 declarations = ["cross_room.resolve_preview"]
 
 [dependencies]
-extensions = ["reply-to", "room"]
+extensions = ["reply-to"]

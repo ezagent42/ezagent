@@ -10,4 +10,4 @@ declarations = []
 declarations = ["reply_to.inject"]
 
 [dependencies]
-extensions = ["timeline"]
+extensions = []

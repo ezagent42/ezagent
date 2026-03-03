@@ -144,9 +144,8 @@ mod tests {
         assert_eq!(m.api_version, 1);
         assert_eq!(m.hook_declarations.len(), 1);
         assert_eq!(m.hook_declarations[0], "collab.check_acl");
-        assert_eq!(m.ext_dependencies.len(), 2);
+        assert_eq!(m.ext_dependencies.len(), 1);
         assert_eq!(m.ext_dependencies[0], "mutable");
-        assert_eq!(m.ext_dependencies[1], "room");
         assert!(m.uri_paths.is_empty());
 
         let mut ctx = RegistrationContext::new();

@@ -10,4 +10,4 @@ declarations = ["collab_acl"]
 declarations = ["collab.check_acl"]
 
 [dependencies]
-extensions = ["mutable", "room"]
+extensions = ["mutable"]

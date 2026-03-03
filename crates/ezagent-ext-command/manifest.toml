@@ -10,4 +10,4 @@ declarations = []
 declarations = ["command.validate", "command.dispatch", "command.result_notify"]
 
 [dependencies]
-extensions = ["timeline", "room"]
+extensions = []

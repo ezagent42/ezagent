@@ -97,9 +97,8 @@ mod tests {
         assert!(m.datatype_declarations.is_empty());
         assert_eq!(m.hook_declarations.len(), 1);
         assert_eq!(m.hook_declarations[0], "cross_room.resolve_preview");
-        assert_eq!(m.ext_dependencies.len(), 2);
+        assert_eq!(m.ext_dependencies.len(), 1);
         assert_eq!(m.ext_dependencies[0], "reply-to");
-        assert_eq!(m.ext_dependencies[1], "room");
         assert!(m.uri_paths.is_empty());
 
         let mut ctx = RegistrationContext::new();

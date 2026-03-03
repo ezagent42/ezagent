@@ -85,8 +85,7 @@ mod tests {
         assert!(m.datatype_declarations.is_empty());
         assert_eq!(m.hook_declarations.len(), 1);
         assert_eq!(m.hook_declarations[0], "reply_to.inject");
-        assert_eq!(m.ext_dependencies.len(), 1);
-        assert_eq!(m.ext_dependencies[0], "timeline");
+        assert!(m.ext_dependencies.is_empty());
         assert!(m.uri_paths.is_empty());
 
         let mut ctx = RegistrationContext::new();

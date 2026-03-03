@@ -114,9 +114,7 @@ mod tests {
         assert_eq!(m.hook_declarations[0], "command.validate");
         assert_eq!(m.hook_declarations[1], "command.dispatch");
         assert_eq!(m.hook_declarations[2], "command.result_notify");
-        assert_eq!(m.ext_dependencies.len(), 2);
-        assert_eq!(m.ext_dependencies[0], "timeline");
-        assert_eq!(m.ext_dependencies[1], "room");
+        assert!(m.ext_dependencies.is_empty());
         assert!(m.uri_paths.is_empty());
 
         let mut ctx = RegistrationContext::new();

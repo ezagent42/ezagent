@@ -10,4 +10,4 @@ declarations = ["mutable_content"]
 declarations = ["mutable.validate_edit", "mutable.status_update"]
 
 [dependencies]
-extensions = ["message"]
+extensions = []

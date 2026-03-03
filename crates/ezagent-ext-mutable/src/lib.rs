@@ -115,8 +115,7 @@ mod tests {
         assert_eq!(m.hook_declarations.len(), 2);
         assert_eq!(m.hook_declarations[0], "mutable.validate_edit");
         assert_eq!(m.hook_declarations[1], "mutable.status_update");
-        assert_eq!(m.ext_dependencies.len(), 1);
-        assert_eq!(m.ext_dependencies[0], "message");
+        assert!(m.ext_dependencies.is_empty());
         assert!(m.uri_paths.is_empty());
 
         let mut ctx = RegistrationContext::new();

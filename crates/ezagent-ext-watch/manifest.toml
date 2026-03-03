@@ -10,4 +10,4 @@ declarations = []
 declarations = ["watch.set_ref", "watch.set_channel", "watch.check_ref_watchers", "watch.check_channel_watchers"]
 
 [dependencies]
-extensions = ["timeline", "reply-to"]
+extensions = ["reply-to"]
