@@ -161,6 +161,7 @@ cargo test -- --ignored       # 运行所有被 #[ignore] 标记的测试
 |------|------|----------|
 | `tc_0_p2p_001_lan_scouting` | UDP multicast (224.0.0.224:7446) | 需要支持 multicast 的网络环境 |
 | `tc_0_p2p_003_relay_fallback` | `zenohd` router | `zenohd -l tcp/0.0.0.0:7447 &` |
+| `end_to_end_extension_loading` | `cargo build -p ezagent-ext-test-dummy` | `cargo test -p ezagent-engine --test extension_loader_tests -- --ignored` |
 
 **编写环境依赖测试的规范：**
 - 使用 `#[ignore = "reason — run: command"]` 标注
