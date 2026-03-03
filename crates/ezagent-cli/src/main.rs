@@ -76,6 +76,15 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Start the HTTP API server
+    Start {
+        /// Listen port (default: 8080, overridden by EZAGENT_PORT env var)
+        #[arg(long)]
+        port: Option<u16>,
+        /// Disable static UI file serving
+        #[arg(long)]
+        no_ui: bool,
+    },
     /// Show connection and identity status
     Status,
 }
@@ -143,6 +152,7 @@ fn main() {
             });
             rt.block_on(commands::events::run(room.as_deref(), json))
         }
+        Commands::Start { port, no_ui } => commands::start::run(port, no_ui),
         Commands::Status => commands::status::run(),
     };
     process::exit(exit_code);
