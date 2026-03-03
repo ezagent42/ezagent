@@ -1,9 +1,11 @@
+mod commands;
 mod config;
 
 use clap::{Parser, Subcommand};
+use std::process;
 
 #[derive(Parser)]
-#[command(name = "ezagent", about = "EZAgent42 — Programmable Organization OS")]
+#[command(name = "ezagent", about = "EZAgent42 -- Programmable Organization OS")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -26,9 +28,13 @@ enum Commands {
 
 fn main() {
     let cli = Cli::parse();
-    match cli.command {
-        Commands::Init { relay, name, .. } => {
-            println!("TODO: init --relay {relay} --name {name}");
-        }
-    }
+    let exit_code = match cli.command {
+        Commands::Init {
+            relay,
+            name,
+            ca_cert,
+            force,
+        } => commands::init::run(&relay, &name, ca_cert.as_deref(), force),
+    };
+    process::exit(exit_code);
 }
