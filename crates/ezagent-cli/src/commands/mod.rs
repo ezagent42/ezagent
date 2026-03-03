@@ -3,6 +3,7 @@ pub mod events;
 pub mod identity;
 pub mod init;
 pub mod message;
+pub mod open;
 pub mod room;
 pub mod start;
 pub mod status;

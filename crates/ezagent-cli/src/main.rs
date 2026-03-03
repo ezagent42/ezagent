@@ -86,6 +86,11 @@ enum Commands {
         #[arg(long)]
         no_ui: bool,
     },
+    /// Open an ezagent:// URI
+    Open {
+        /// The ezagent:// URI to open
+        uri: String,
+    },
     /// Show connection and identity status
     Status,
 }
@@ -153,6 +158,7 @@ fn main() {
             });
             rt.block_on(commands::events::run(room.as_deref(), json))
         }
+        Commands::Open { uri } => commands::open::run(&uri),
         Commands::Start { port, no_ui } => commands::start::run(port, no_ui),
         Commands::Status => commands::status::run(),
     };
