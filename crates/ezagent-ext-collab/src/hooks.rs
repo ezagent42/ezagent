@@ -87,13 +87,11 @@ fn acl_mode_rank(mode: &str) -> Option<u8> {
 ///
 /// Returns [`CollabHookError::InvalidAclMode`] if either mode is
 /// invalid or if the transition would be a downgrade.
-pub fn validate_acl_upgrade(
-    current_mode: &str,
-    new_mode: &str,
-) -> Result<(), CollabHookError> {
-    let current_rank = acl_mode_rank(current_mode).ok_or_else(|| CollabHookError::InvalidAclMode {
-        mode: current_mode.to_string(),
-    })?;
+pub fn validate_acl_upgrade(current_mode: &str, new_mode: &str) -> Result<(), CollabHookError> {
+    let current_rank =
+        acl_mode_rank(current_mode).ok_or_else(|| CollabHookError::InvalidAclMode {
+            mode: current_mode.to_string(),
+        })?;
     let new_rank = acl_mode_rank(new_mode).ok_or_else(|| CollabHookError::InvalidAclMode {
         mode: new_mode.to_string(),
     })?;
@@ -115,20 +113,13 @@ mod tests {
 
     #[test]
     fn owner_matches_signer() {
-        validate_acl_owner(
-            "@alice:relay.example.com",
-            "@alice:relay.example.com",
-        )
-        .unwrap();
+        validate_acl_owner("@alice:relay.example.com", "@alice:relay.example.com").unwrap();
     }
 
     #[test]
     fn owner_does_not_match_signer() {
-        let err = validate_acl_owner(
-            "@alice:relay.example.com",
-            "@bob:relay.example.com",
-        )
-        .unwrap_err();
+        let err =
+            validate_acl_owner("@alice:relay.example.com", "@bob:relay.example.com").unwrap_err();
         assert!(
             matches!(err, CollabHookError::NotOwner { .. }),
             "unexpected error: {err}"

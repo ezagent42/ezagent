@@ -133,7 +133,10 @@ async fn tc_0_p2p_002_peer_as_queryable() {
     // State vectors must converge (spec: P3 sv == P1 sv).
     let sv_p1 = crdt_p1.state_vector(doc_id).expect("sv p1");
     let sv_p3 = crdt_p3.state_vector(doc_id).expect("sv p3");
-    assert_eq!(sv_p1, sv_p3, "state vectors must converge after query recovery");
+    assert_eq!(
+        sv_p1, sv_p3,
+        "state vectors must converge after query recovery"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -163,9 +166,7 @@ async fn tc_0_p2p_003_relay_fallback() {
     let net_p2 = ZenohBackend::new(ZenohConfig::peer_with_router(router_endpoint))
         .await
         .unwrap_or_else(|e| {
-            panic!(
-                "TC-0-P2P-003 FAILED: cannot connect P2 to zenohd at {router_endpoint}: {e}"
-            )
+            panic!("TC-0-P2P-003 FAILED: cannot connect P2 to zenohd at {router_endpoint}: {e}")
         });
 
     let topic = "ezagent/test/p2p-003/relay";

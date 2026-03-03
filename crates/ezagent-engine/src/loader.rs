@@ -382,7 +382,9 @@ extensions = [{deps_str}]
 
         assert_eq!(version_errors.len(), 1);
         assert_eq!(version_errors[0].name, "future");
-        assert!(version_errors[0].reason.contains("incompatible API version"));
+        assert!(version_errors[0]
+            .reason
+            .contains("incompatible API version"));
     }
 
     /// TC-2-LOADER-004: topological ordering respects dependencies.
@@ -397,8 +399,7 @@ extensions = [{deps_str}]
 
         let (manifests, _) = scan_manifests(dir);
 
-        let order = resolve_extension_order(&manifests)
-            .expect("resolution should succeed");
+        let order = resolve_extension_order(&manifests).expect("resolution should succeed");
 
         let mut_pos = order.iter().position(|n| n == "mutable").unwrap();
         let col_pos = order.iter().position(|n| n == "collab").unwrap();
@@ -457,7 +458,10 @@ extensions = [{deps_str}]
     #[test]
     fn lib_filename_replaces_dashes() {
         let name = lib_filename("my-cool-ext");
-        assert!(name.contains("my_cool_ext"), "dashes should become underscores: {name}");
+        assert!(
+            name.contains("my_cool_ext"),
+            "dashes should become underscores: {name}"
+        );
     }
 
     /// resolve_extension_order with no extensions returns empty order.
@@ -480,8 +484,7 @@ extensions = [{deps_str}]
         write_manifest(dir, "mu", &[]);
 
         let (manifests, _) = scan_manifests(dir);
-        let order = resolve_extension_order(&manifests)
-            .expect("resolution should succeed");
+        let order = resolve_extension_order(&manifests).expect("resolution should succeed");
 
         assert_eq!(order, vec!["alpha", "mu", "zeta"]);
     }

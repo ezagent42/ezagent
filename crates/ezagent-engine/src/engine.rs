@@ -159,8 +159,7 @@ impl Engine {
             .insert(&entity_id.to_string(), keypair.public_key());
 
         // Register identity hooks.
-        let (decl, handler) =
-            crate::builtins::identity::sign_envelope_hook(Arc::clone(&keypair));
+        let (decl, handler) = crate::builtins::identity::sign_envelope_hook(Arc::clone(&keypair));
         self.hook_executor.register(decl, handler)?;
         let (decl, handler) =
             crate::builtins::identity::verify_signature_hook(self.pubkey_cache.clone());
@@ -299,11 +298,13 @@ impl Engine {
         };
 
         // Build a lookup from name to (path, manifest) for the loading phase.
-        let manifest_map: HashMap<String, (std::path::PathBuf, ezagent_ext_api::ExtensionManifest)> =
-            compatible
-                .into_iter()
-                .map(|(path, manifest)| (manifest.name.clone(), (path, manifest)))
-                .collect();
+        let manifest_map: HashMap<
+            String,
+            (std::path::PathBuf, ezagent_ext_api::ExtensionManifest),
+        > = compatible
+            .into_iter()
+            .map(|(path, manifest)| (manifest.name.clone(), (path, manifest)))
+            .collect();
 
         // Step 4: Load each extension in topological order.
         for ext_name in &order {
@@ -413,9 +414,15 @@ mod tests {
     fn engine_initializes_with_all_builtins() {
         let engine = Engine::new().expect("Engine::new() should succeed");
 
-        assert!(engine.has_datatype("identity"), "identity must be registered");
+        assert!(
+            engine.has_datatype("identity"),
+            "identity must be registered"
+        );
         assert!(engine.has_datatype("room"), "room must be registered");
-        assert!(engine.has_datatype("timeline"), "timeline must be registered");
+        assert!(
+            engine.has_datatype("timeline"),
+            "timeline must be registered"
+        );
         assert!(engine.has_datatype("message"), "message must be registered");
 
         // Verify that non-existent datatypes return false.
@@ -427,7 +434,10 @@ mod tests {
     fn engine_load_order_is_correct() {
         let engine = Engine::new().expect("Engine::new() should succeed");
 
-        let order = engine.registry.load_order().expect("load_order should succeed");
+        let order = engine
+            .registry
+            .load_order()
+            .expect("load_order should succeed");
         assert_eq!(
             order,
             vec!["identity", "room", "timeline", "message"],
@@ -452,20 +462,32 @@ mod tests {
             engine.entity_id().map(|e| e.to_string()),
             Some("@alice:relay.example.com".to_string())
         );
-        assert!(engine.keypair().is_some(), "keypair should be set after init_identity");
+        assert!(
+            engine.keypair().is_some(),
+            "keypair should be set after init_identity"
+        );
 
         // Verify the public key is cached.
         let cached_pk = engine.pubkey_cache.get("@alice:relay.example.com");
-        assert!(cached_pk.is_some(), "public key should be cached after init_identity");
+        assert!(
+            cached_pk.is_some(),
+            "public key should be cached after init_identity"
+        );
 
         // Test that the sign hook works by running pre_send.
         let mut ctx = HookContext::new("message".to_string(), TriggerEvent::Insert);
         ctx.signer_id = Some("@alice:relay.example.com".to_string());
-        ctx.data.insert("payload".into(), serde_json::json!("test data"));
-        ctx.data.insert("doc_id".into(), serde_json::json!("rooms/r1/messages"));
+        ctx.data
+            .insert("payload".into(), serde_json::json!("test data"));
+        ctx.data
+            .insert("doc_id".into(), serde_json::json!("rooms/r1/messages"));
 
         let result = engine.run_pre_send(&mut ctx);
-        assert!(result.is_ok(), "pre_send should succeed after init_identity: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "pre_send should succeed after init_identity: {:?}",
+            result.err()
+        );
 
         // The sign hook should have produced a signed_envelope.
         assert!(
@@ -490,11 +512,17 @@ mod tests {
         let mut ctx = HookContext::new("message".to_string(), TriggerEvent::Insert);
         assert!(ctx.signer_id.is_none(), "signer_id should start as None");
 
-        ctx.data.insert("payload".into(), serde_json::json!("auto-sign test"));
-        ctx.data.insert("doc_id".into(), serde_json::json!("rooms/r1/messages"));
+        ctx.data
+            .insert("payload".into(), serde_json::json!("auto-sign test"));
+        ctx.data
+            .insert("doc_id".into(), serde_json::json!("rooms/r1/messages"));
 
         let result = engine.run_pre_send(&mut ctx);
-        assert!(result.is_ok(), "pre_send should succeed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "pre_send should succeed: {:?}",
+            result.err()
+        );
 
         // The signer_id should have been auto-set from the engine's entity_id.
         assert_eq!(
@@ -514,7 +542,10 @@ mod tests {
 
         let result = engine.run_after_write(&mut ctx);
         assert!(result.is_ok(), "after_write should succeed");
-        assert!(ctx.read_only, "context should be read_only after run_after_write");
+        assert!(
+            ctx.read_only,
+            "context should be read_only after run_after_write"
+        );
     }
 
     /// engine_after_read_sets_read_only — run_after_read marks ctx as read_only.
@@ -527,7 +558,10 @@ mod tests {
 
         let result = engine.run_after_read(&mut ctx);
         assert!(result.is_ok(), "after_read should succeed");
-        assert!(ctx.read_only, "context should be read_only after run_after_read");
+        assert!(
+            ctx.read_only,
+            "context should be read_only after run_after_read"
+        );
     }
 
     /// engine_default_impl — Default trait works.

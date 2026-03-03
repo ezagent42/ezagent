@@ -57,9 +57,7 @@ pub fn validate_command(ns: &str, action: &str, invoke_id: &str) -> Result<(), C
     // Validate namespace format: lowercase alphanumeric only.
     for ch in ns.chars() {
         if !matches!(ch, 'a'..='z' | '0'..='9') {
-            return Err(CommandHookError::InvalidNamespaceFormat {
-                ns: ns.to_string(),
-            });
+            return Err(CommandHookError::InvalidNamespaceFormat { ns: ns.to_string() });
         }
     }
 

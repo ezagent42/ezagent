@@ -134,8 +134,10 @@ impl Engine {
         ctx.data.insert("body".into(), content.body.clone());
         ctx.data
             .insert("author".into(), serde_json::json!(content.author));
-        ctx.data
-            .insert("content_type".into(), serde_json::json!(content.content_type));
+        ctx.data.insert(
+            "content_type".into(),
+            serde_json::json!(content.content_type),
+        );
         ctx.data
             .insert("format".into(), serde_json::json!(content.format));
         ctx.data
@@ -234,11 +236,7 @@ impl Engine {
     /// # Errors
     ///
     /// Returns `EngineError::NotImplemented` (stub).
-    pub fn room_invite(
-        &mut self,
-        _room_id: &str,
-        _entity_id: &str,
-    ) -> Result<(), EngineError> {
+    pub fn room_invite(&mut self, _room_id: &str, _entity_id: &str) -> Result<(), EngineError> {
         Err(EngineError::NotImplemented)
     }
 
@@ -278,11 +276,7 @@ impl Engine {
     /// # Errors
     ///
     /// Returns `EngineError::NotImplemented` (stub).
-    pub fn message_delete(
-        &mut self,
-        _room_id: &str,
-        _ref_id: &str,
-    ) -> Result<(), EngineError> {
+    pub fn message_delete(&mut self, _room_id: &str, _ref_id: &str) -> Result<(), EngineError> {
         Err(EngineError::NotImplemented)
     }
 
@@ -377,7 +371,9 @@ mod tests {
             .expect("identity_init should succeed");
 
         // After init, whoami should return the entity ID.
-        let whoami = engine.identity_whoami().expect("whoami should succeed after init");
+        let whoami = engine
+            .identity_whoami()
+            .expect("whoami should succeed after init");
         assert_eq!(
             whoami, "@alice:relay.example.com",
             "whoami must return the initialized entity ID"
@@ -401,8 +397,9 @@ mod tests {
             .expect("identity_init should succeed");
 
         // Create a room.
-        let room =
-            engine.room_create("Alpha Room").expect("room_create should succeed");
+        let room = engine
+            .room_create("Alpha Room")
+            .expect("room_create should succeed");
 
         // Verify fields.
         assert!(!room.room_id.is_empty(), "room_id should be set");
@@ -413,9 +410,7 @@ mod tests {
         // Creator should be Owner.
         assert_eq!(room.membership.members.len(), 1);
         assert_eq!(
-            room.membership
-                .members
-                .get("@alice:relay.example.com"),
+            room.membership.members.get("@alice:relay.example.com"),
             Some(&crate::builtins::room::Role::Owner),
             "creator must be Owner"
         );
@@ -454,11 +449,7 @@ mod tests {
 
         // Send a message.
         let content = engine
-            .message_send(
-                "R-alpha",
-                serde_json::json!("Hello, world!"),
-                "text/plain",
-            )
+            .message_send("R-alpha", serde_json::json!("Hello, world!"), "text/plain")
             .expect("message_send should succeed");
 
         // content_id should be a 64-character hex string (SHA-256).
@@ -495,9 +486,13 @@ mod tests {
 
         let status = engine.status();
         assert!(!status.identity_initialized);
-        assert!(status.registered_datatypes.contains(&"identity".to_string()));
+        assert!(status
+            .registered_datatypes
+            .contains(&"identity".to_string()));
         assert!(status.registered_datatypes.contains(&"room".to_string()));
-        assert!(status.registered_datatypes.contains(&"timeline".to_string()));
+        assert!(status
+            .registered_datatypes
+            .contains(&"timeline".to_string()));
         assert!(status.registered_datatypes.contains(&"message".to_string()));
 
         // After identity init, status should reflect it.

@@ -250,9 +250,7 @@ fn tc_2_interact_003_no_duplicate_hooks_or_datatypes() {
     let mut seen_hooks: HashMap<&str, &str> = HashMap::new();
     for (hook_id, ext_name) in &all_hooks {
         if let Some(prev_ext) = seen_hooks.insert(hook_id.as_str(), ext_name.as_str()) {
-            panic!(
-                "duplicate hook ID '{hook_id}': declared by both '{prev_ext}' and '{ext_name}'"
-            );
+            panic!("duplicate hook ID '{hook_id}': declared by both '{prev_ext}' and '{ext_name}'");
         }
     }
 
@@ -311,9 +309,7 @@ fn tc_2_interact_004_hook_priority_ranges() {
                 .as_str()
                 .expect("hook should have 'id'")
                 .to_string();
-            let phase = parsed["phase"]
-                .as_str()
-                .expect("hook should have 'phase'");
+            let phase = parsed["phase"].as_str().expect("hook should have 'phase'");
             let priority = parsed["priority"]
                 .as_i64()
                 .expect("hook should have 'priority'");
@@ -411,7 +407,10 @@ fn tc_2_interact_005_full_manifest_registry() {
     );
 
     // Collect all names.
-    let names: Vec<String> = extensions.iter().map(|e| e.manifest().name.clone()).collect();
+    let names: Vec<String> = extensions
+        .iter()
+        .map(|e| e.manifest().name.clone())
+        .collect();
 
     // Verify all unique.
     let unique_names: HashSet<&str> = names.iter().map(|n| n.as_str()).collect();
@@ -464,11 +463,17 @@ fn tc_2_interact_005_full_manifest_registry() {
     );
 
     // Verify URI paths: these extensions should have URI paths.
-    let extensions_with_uri: HashSet<&str> =
-        ["reactions", "threads", "media", "profile", "channels", "runtime"]
-            .iter()
-            .copied()
-            .collect();
+    let extensions_with_uri: HashSet<&str> = [
+        "reactions",
+        "threads",
+        "media",
+        "profile",
+        "channels",
+        "runtime",
+    ]
+    .iter()
+    .copied()
+    .collect();
 
     for ext in &extensions {
         let m = ext.manifest();

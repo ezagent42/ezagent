@@ -73,9 +73,7 @@ impl IndexBuilder {
                 RefreshStrategy::Periodic { interval_secs } => {
                     match entry.last_refresh {
                         None => true, // Never refreshed — needs refresh.
-                        Some(last) => {
-                            now.duration_since(last).as_secs() >= *interval_secs
-                        }
+                        Some(last) => now.duration_since(last).as_secs() >= *interval_secs,
                     }
                 }
             })
@@ -118,7 +116,10 @@ mod tests {
         let entry = entry.unwrap();
         assert_eq!(entry.declaration.id, "idx-1");
         assert_eq!(entry.declaration.input, "messages");
-        assert!(entry.last_refresh.is_none(), "newly registered index should have no last_refresh");
+        assert!(
+            entry.last_refresh.is_none(),
+            "newly registered index should have no last_refresh"
+        );
 
         // Non-existent index returns None.
         assert!(builder.get("nonexistent").is_none());
@@ -138,7 +139,11 @@ mod tests {
         // After marking refreshed, OnChange should STILL need refresh.
         builder.mark_refreshed("on-change-idx");
         let needing = builder.indexes_needing_refresh();
-        assert_eq!(needing.len(), 1, "OnChange should always appear in refresh list");
+        assert_eq!(
+            needing.len(),
+            1,
+            "OnChange should always appear in refresh list"
+        );
         assert_eq!(needing[0].declaration.id, "on-change-idx");
     }
 

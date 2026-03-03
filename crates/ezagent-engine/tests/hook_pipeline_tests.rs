@@ -6,9 +6,7 @@
 
 use std::sync::Arc;
 
-use ezagent_engine::hooks::{
-    HookContext, HookDeclaration, HookExecutor, HookPhase, TriggerEvent,
-};
+use ezagent_engine::hooks::{HookContext, HookDeclaration, HookExecutor, HookPhase, TriggerEvent};
 
 /// Helper: create a `HookDeclaration` with common defaults.
 fn make_decl(
@@ -52,7 +50,13 @@ fn setup_executor() -> HookExecutor {
 fn tc_1_hook_001_pre_send_modifies_data() {
     let mut executor = setup_executor();
 
-    let decl = make_decl("timeline.inject_ref_id", HookPhase::PreSend, "message", 10, "timeline");
+    let decl = make_decl(
+        "timeline.inject_ref_id",
+        HookPhase::PreSend,
+        "message",
+        10,
+        "timeline",
+    );
     let handler = Arc::new(|ctx: &mut HookContext| {
         ctx.data.insert(
             "ref_id".to_string(),
@@ -88,9 +92,7 @@ fn tc_1_hook_002_pre_send_rejects_write() {
     ctx.signer_id = Some("@mallory:relay-a.com".to_string());
     ctx.room_id = Some("R-alpha".to_string());
 
-    let err = executor
-        .execute(HookPhase::PreSend, &mut ctx)
-        .unwrap_err();
+    let err = executor.execute(HookPhase::PreSend, &mut ctx).unwrap_err();
     let msg = err.to_string();
     assert!(
         msg.contains("NOT_A_MEMBER"),
@@ -145,12 +147,12 @@ fn tc_1_hook_004_same_priority_alphabetical_tiebreak() {
     let mut executor = HookExecutor::new();
     // Set up an extended dependency order including extensions.
     executor.set_dependency_order(&[
-        "identity".to_string(),   // 0
-        "room".to_string(),       // 1
-        "timeline".to_string(),   // 2
-        "message".to_string(),    // 3
-        "channels".to_string(),   // 4
-        "reply-to".to_string(),   // 5
+        "identity".to_string(), // 0
+        "room".to_string(),     // 1
+        "timeline".to_string(), // 2
+        "message".to_string(),  // 3
+        "channels".to_string(), // 4
+        "reply-to".to_string(), // 5
     ]);
     executor.set_builtin_ids(vec![
         "identity".to_string(),
@@ -159,13 +161,25 @@ fn tc_1_hook_004_same_priority_alphabetical_tiebreak() {
         "message".to_string(),
     ]);
 
-    let decl_reply = make_decl("reply-to.enrich", HookPhase::PreSend, "message", 10, "reply-to");
+    let decl_reply = make_decl(
+        "reply-to.enrich",
+        HookPhase::PreSend,
+        "message",
+        10,
+        "reply-to",
+    );
     let handler_reply = Arc::new(|ctx: &mut HookContext| {
         ctx.executed_hooks.push("reply-to".to_string());
         Ok(())
     });
 
-    let decl_channels = make_decl("channels.route", HookPhase::PreSend, "message", 10, "channels");
+    let decl_channels = make_decl(
+        "channels.route",
+        HookPhase::PreSend,
+        "message",
+        10,
+        "channels",
+    );
     let handler_channels = Arc::new(|ctx: &mut HookContext| {
         ctx.executed_hooks.push("channels".to_string());
         Ok(())
@@ -190,7 +204,13 @@ fn tc_1_hook_004_same_priority_alphabetical_tiebreak() {
 fn tc_1_hook_005_after_write_cannot_modify_trigger_data() {
     let mut executor = setup_executor();
 
-    let decl = make_decl("room.update_index", HookPhase::AfterWrite, "message", 10, "room");
+    let decl = make_decl(
+        "room.update_index",
+        HookPhase::AfterWrite,
+        "message",
+        10,
+        "room",
+    );
     let handler = Arc::new(|ctx: &mut HookContext| {
         // Attempt to modify — in real code, read_only would be enforced.
         // The hook returns an error to simulate failure.
@@ -242,7 +262,13 @@ fn tc_1_hook_006_sign_envelope_runs_last() {
     });
 
     // Register another hook at p=0.
-    let decl_validate = make_decl("message.validate", HookPhase::PreSend, "message", 0, "message");
+    let decl_validate = make_decl(
+        "message.validate",
+        HookPhase::PreSend,
+        "message",
+        0,
+        "message",
+    );
     let handler_validate = Arc::new(|ctx: &mut HookContext| {
         ctx.executed_hooks.push("validate".to_string());
         Ok(())
@@ -292,7 +318,13 @@ fn tc_1_hook_006_sign_envelope_runs_last() {
 fn tc_1_hook_007_after_read_cannot_modify_crdt() {
     let mut executor = setup_executor();
 
-    let decl = make_decl("message.enhance_display", HookPhase::AfterRead, "message", 10, "message");
+    let decl = make_decl(
+        "message.enhance_display",
+        HookPhase::AfterRead,
+        "message",
+        10,
+        "message",
+    );
     let handler = Arc::new(|ctx: &mut HookContext| {
         // AfterRead hooks may add enhanced display fields.
         ctx.data.insert(
@@ -404,7 +436,13 @@ fn tc_1_hook_009_after_write_error_continues_chain() {
 fn tc_1_hook_010_after_read_error_returns_raw() {
     let mut executor = setup_executor();
 
-    let decl = make_decl("message.broken_enhancer", HookPhase::AfterRead, "message", 10, "message");
+    let decl = make_decl(
+        "message.broken_enhancer",
+        HookPhase::AfterRead,
+        "message",
+        10,
+        "message",
+    );
     let handler = Arc::new(|ctx: &mut HookContext| {
         ctx.executed_hooks.push("broken_enhancer".to_string());
         Err(ezagent_engine::error::EngineError::PermissionDenied(
@@ -438,7 +476,13 @@ fn tc_1_hook_010_after_read_error_returns_raw() {
 fn tc_1_hook_011_extension_cannot_register_global() {
     let mut executor = setup_executor();
 
-    let decl = make_decl("ext_reactions.global", HookPhase::PreSend, "*", 10, "reactions");
+    let decl = make_decl(
+        "ext_reactions.global",
+        HookPhase::PreSend,
+        "*",
+        10,
+        "reactions",
+    );
     let handler = Arc::new(|_ctx: &mut HookContext| Ok(()));
 
     let err = executor.register(decl, handler).unwrap_err();
@@ -454,7 +498,13 @@ fn tc_1_hook_011_extension_cannot_register_global() {
 fn builtin_can_register_global_hook() {
     let mut executor = setup_executor();
 
-    let decl = make_decl("identity.verify_sig", HookPhase::AfterWrite, "*", 0, "identity");
+    let decl = make_decl(
+        "identity.verify_sig",
+        HookPhase::AfterWrite,
+        "*",
+        0,
+        "identity",
+    );
     let handler = Arc::new(|_ctx: &mut HookContext| Ok(()));
 
     assert!(

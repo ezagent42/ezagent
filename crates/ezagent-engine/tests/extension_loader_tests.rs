@@ -36,8 +36,7 @@ declarations = []
 [dependencies]
 extensions = []
 "#;
-    fs::write(ext_dir.join("manifest.toml"), manifest_toml)
-        .expect("failed to write manifest.toml");
+    fs::write(ext_dir.join("manifest.toml"), manifest_toml).expect("failed to write manifest.toml");
 
     let (found, errors) = loader::scan_manifests(tmp.path());
 
@@ -117,13 +116,18 @@ api_version = "999"
     assert_eq!(compatible.len(), 2);
 
     // Step 3: Resolve order.
-    let order =
-        loader::resolve_extension_order(&compatible).expect("resolution should succeed");
+    let order = loader::resolve_extension_order(&compatible).expect("resolution should succeed");
     assert_eq!(order.len(), 2);
 
     // alpha must come before beta.
-    let alpha_pos = order.iter().position(|n| n == "alpha").expect("alpha in order");
-    let beta_pos = order.iter().position(|n| n == "beta").expect("beta in order");
+    let alpha_pos = order
+        .iter()
+        .position(|n| n == "alpha")
+        .expect("alpha in order");
+    let beta_pos = order
+        .iter()
+        .position(|n| n == "beta")
+        .expect("beta in order");
     assert!(
         alpha_pos < beta_pos,
         "alpha ({alpha_pos}) must load before beta ({beta_pos})"
@@ -205,23 +209,22 @@ fn end_to_end_extension_loading() {
         "manifest.toml not found at {}",
         manifest_src.display()
     );
-    fs::copy(&manifest_src, ext_dir.join("manifest.toml"))
-        .expect("failed to copy manifest.toml");
+    fs::copy(&manifest_src, ext_dir.join("manifest.toml")).expect("failed to copy manifest.toml");
 
     // Symlink the cdylib with the name the loader expects.
     #[cfg(unix)]
-    std::os::unix::fs::symlink(&cdylib_path, ext_dir.join(&expected_lib_name))
-        .unwrap_or_else(|e| {
+    std::os::unix::fs::symlink(&cdylib_path, ext_dir.join(&expected_lib_name)).unwrap_or_else(
+        |e| {
             panic!(
                 "failed to symlink {} -> {}: {e}",
                 cdylib_path.display(),
                 ext_dir.join(&expected_lib_name).display()
             )
-        });
+        },
+    );
 
     #[cfg(windows)]
-    fs::copy(&cdylib_path, ext_dir.join(&expected_lib_name))
-        .expect("failed to copy cdylib");
+    fs::copy(&cdylib_path, ext_dir.join(&expected_lib_name)).expect("failed to copy cdylib");
 
     // Load extensions through the Engine.
     let mut engine = Engine::new().expect("Engine::new() should succeed");

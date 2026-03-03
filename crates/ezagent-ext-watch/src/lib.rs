@@ -50,14 +50,10 @@ impl ExtensionPlugin for WatchExtension {
 
     fn register(&self, ctx: &mut RegistrationContext) -> Result<(), ExtError> {
         // PreSend hook for ref watch validation.
-        ctx.register_hook_json(
-            r#"{"id":"watch.set_ref","phase":"PreSend","priority":30}"#,
-        )?;
+        ctx.register_hook_json(r#"{"id":"watch.set_ref","phase":"PreSend","priority":30}"#)?;
 
         // PreSend hook for channel watch validation.
-        ctx.register_hook_json(
-            r#"{"id":"watch.set_channel","phase":"PreSend","priority":30}"#,
-        )?;
+        ctx.register_hook_json(r#"{"id":"watch.set_channel","phase":"PreSend","priority":30}"#)?;
 
         // AfterWrite hook for checking ref watchers.
         ctx.register_hook_json(
@@ -83,21 +79,15 @@ mod tests {
     /// TC-2-EXT14-001: Verify watch owner validation accepts matching signer.
     #[test]
     fn tc_2_ext14_001_valid_watch_owner() {
-        hooks::validate_watch_owner(
-            "@alice:relay.example.com",
-            "@alice:relay.example.com",
-        )
-        .unwrap();
+        hooks::validate_watch_owner("@alice:relay.example.com", "@alice:relay.example.com")
+            .unwrap();
     }
 
     /// TC-2-EXT14-002: Verify watch owner validation rejects mismatching signer.
     #[test]
     fn tc_2_ext14_002_signer_mismatch() {
-        let err = hooks::validate_watch_owner(
-            "@alice:relay.example.com",
-            "@bob:relay.example.com",
-        )
-        .unwrap_err();
+        let err = hooks::validate_watch_owner("@alice:relay.example.com", "@bob:relay.example.com")
+            .unwrap_err();
         assert!(
             matches!(err, hooks::WatchHookError::SignerMismatch { .. }),
             "expected SignerMismatch error, got: {err}"
@@ -168,8 +158,8 @@ mod tests {
         assert_eq!(check_ref["phase"], "AfterWrite");
         assert_eq!(check_ref["priority"], 45);
 
-        let check_channel: serde_json::Value =
-            serde_json::from_str(&hooks[3]).expect("check_channel_watchers hook JSON should be valid");
+        let check_channel: serde_json::Value = serde_json::from_str(&hooks[3])
+            .expect("check_channel_watchers hook JSON should be valid");
         assert_eq!(check_channel["id"], "watch.check_channel_watchers");
         assert_eq!(check_channel["phase"], "AfterWrite");
         assert_eq!(check_channel["priority"], 46);

@@ -86,10 +86,9 @@ mod tests {
 
     #[test]
     fn invalid_missing_prefix() {
-        let err = validate_blob_hash(
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        )
-        .unwrap_err();
+        let err =
+            validate_blob_hash("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+                .unwrap_err();
         assert!(
             matches!(err, MediaHookError::InvalidBlobHash { .. }),
             "unexpected error: {err}"
@@ -98,10 +97,7 @@ mod tests {
 
     #[test]
     fn invalid_wrong_prefix() {
-        let err = validate_blob_hash(
-            "md5:e3b0c44298fc1c149afbf4c8996fb924",
-        )
-        .unwrap_err();
+        let err = validate_blob_hash("md5:e3b0c44298fc1c149afbf4c8996fb924").unwrap_err();
         assert!(
             matches!(err, MediaHookError::InvalidBlobHash { .. }),
             "unexpected error: {err}"

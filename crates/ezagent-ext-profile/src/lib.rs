@@ -83,21 +83,16 @@ mod tests {
     /// TC-2-EXT13-001: Verify profile writer validation accepts matching signer.
     #[test]
     fn tc_2_ext13_001_valid_profile_writer() {
-        hooks::validate_profile_writer(
-            "@alice:relay.example.com",
-            "@alice:relay.example.com",
-        )
-        .unwrap();
+        hooks::validate_profile_writer("@alice:relay.example.com", "@alice:relay.example.com")
+            .unwrap();
     }
 
     /// TC-2-EXT13-002: Verify profile writer validation rejects mismatched signer.
     #[test]
     fn tc_2_ext13_002_invalid_profile_writer() {
-        let err = hooks::validate_profile_writer(
-            "@alice:relay.example.com",
-            "@bob:relay.example.com",
-        )
-        .unwrap_err();
+        let err =
+            hooks::validate_profile_writer("@alice:relay.example.com", "@bob:relay.example.com")
+                .unwrap_err();
         assert!(
             matches!(err, hooks::ProfileHookError::WriterMismatch { .. }),
             "expected WriterMismatch error, got: {err}"

@@ -45,9 +45,7 @@ impl ExtensionPlugin for DraftsExtension {
 
     fn register(&self, ctx: &mut RegistrationContext) -> Result<(), ExtError> {
         // PreSend hook for clearing draft on send.
-        ctx.register_hook_json(
-            r#"{"id":"drafts.clear_on_send","phase":"PreSend","priority":90}"#,
-        )?;
+        ctx.register_hook_json(r#"{"id":"drafts.clear_on_send","phase":"PreSend","priority":90}"#)?;
 
         Ok(())
     }
@@ -63,21 +61,15 @@ mod tests {
     /// TC-2-EXT12-001: Verify draft owner validation accepts matching signer.
     #[test]
     fn tc_2_ext12_001_valid_draft_owner() {
-        hooks::validate_draft_owner(
-            "@alice:relay.example.com",
-            "@alice:relay.example.com",
-        )
-        .unwrap();
+        hooks::validate_draft_owner("@alice:relay.example.com", "@alice:relay.example.com")
+            .unwrap();
     }
 
     /// TC-2-EXT12-002: Verify draft owner validation rejects mismatched signer.
     #[test]
     fn tc_2_ext12_002_invalid_draft_owner() {
-        let err = hooks::validate_draft_owner(
-            "@alice:relay.example.com",
-            "@bob:relay.example.com",
-        )
-        .unwrap_err();
+        let err = hooks::validate_draft_owner("@alice:relay.example.com", "@bob:relay.example.com")
+            .unwrap_err();
         assert!(
             matches!(err, hooks::DraftHookError::OwnerMismatch { .. }),
             "expected OwnerMismatch error, got: {err}"

@@ -46,9 +46,7 @@ impl ExtensionPlugin for LinkPreviewExtension {
 
     fn register(&self, ctx: &mut RegistrationContext) -> Result<(), ExtError> {
         // PreSend hook for URL extraction and placeholder creation.
-        ctx.register_hook_json(
-            r#"{"id":"link-preview.extract","phase":"PreSend","priority":25}"#,
-        )?;
+        ctx.register_hook_json(r#"{"id":"link-preview.extract","phase":"PreSend","priority":25}"#)?;
 
         // AfterWrite hook for async metadata fetching.
         ctx.register_hook_json(
@@ -79,9 +77,8 @@ mod tests {
     /// TC-2-EXT16-002: Verify multiple URL extraction.
     #[test]
     fn tc_2_ext16_002_multiple_urls() {
-        let urls = hooks::extract_urls(
-            "See https://example.com and http://other.org/path for more",
-        );
+        let urls =
+            hooks::extract_urls("See https://example.com and http://other.org/path for more");
         assert_eq!(urls, vec!["https://example.com", "http://other.org/path"]);
     }
 

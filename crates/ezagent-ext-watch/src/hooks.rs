@@ -17,7 +17,10 @@
 pub enum WatchHookError {
     /// The watch entity_id does not match the signer.
     #[error("watch entity '{watch_entity}' does not match signer '{signer}'")]
-    SignerMismatch { watch_entity: String, signer: String },
+    SignerMismatch {
+        watch_entity: String,
+        signer: String,
+    },
 
     /// The watch entity_id is empty.
     #[error("watch entity_id must not be empty")]
@@ -35,10 +38,7 @@ pub enum WatchHookError {
 /// Returns [`WatchHookError`] if:
 /// - `watch_entity_id` is empty
 /// - `watch_entity_id` does not match `signer`
-pub fn validate_watch_owner(
-    watch_entity_id: &str,
-    signer: &str,
-) -> Result<(), WatchHookError> {
+pub fn validate_watch_owner(watch_entity_id: &str, signer: &str) -> Result<(), WatchHookError> {
     if watch_entity_id.is_empty() {
         return Err(WatchHookError::EmptyEntityId);
     }
@@ -59,20 +59,13 @@ mod tests {
 
     #[test]
     fn matching_entity_and_signer() {
-        validate_watch_owner(
-            "@alice:relay.example.com",
-            "@alice:relay.example.com",
-        )
-        .unwrap();
+        validate_watch_owner("@alice:relay.example.com", "@alice:relay.example.com").unwrap();
     }
 
     #[test]
     fn mismatching_entity_and_signer() {
-        let err = validate_watch_owner(
-            "@alice:relay.example.com",
-            "@bob:relay.example.com",
-        )
-        .unwrap_err();
+        let err =
+            validate_watch_owner("@alice:relay.example.com", "@bob:relay.example.com").unwrap_err();
         assert!(
             matches!(err, WatchHookError::SignerMismatch { .. }),
             "unexpected error: {err}"
@@ -90,11 +83,8 @@ mod tests {
 
     #[test]
     fn different_relay_domain() {
-        let err = validate_watch_owner(
-            "@alice:relay-a.example.com",
-            "@alice:relay-b.example.com",
-        )
-        .unwrap_err();
+        let err = validate_watch_owner("@alice:relay-a.example.com", "@alice:relay-b.example.com")
+            .unwrap_err();
         assert!(
             matches!(err, WatchHookError::SignerMismatch { .. }),
             "unexpected error: {err}"

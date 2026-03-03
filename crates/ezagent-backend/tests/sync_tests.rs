@@ -199,14 +199,8 @@ fn tc_0_sync_003_same_key_concurrent_lww() {
     let map2 = doc2.get_or_insert_map("data");
     let txn1 = doc1.transact();
     let txn2 = doc2.transact();
-    let val1 = map1
-        .get(&txn1, "color")
-        .expect("p1 color")
-        .to_string(&txn1);
-    let val2 = map2
-        .get(&txn2, "color")
-        .expect("p2 color")
-        .to_string(&txn2);
+    let val1 = map1.get(&txn1, "color").expect("p1 color").to_string(&txn1);
+    let val2 = map2.get(&txn2, "color").expect("p2 color").to_string(&txn2);
     assert_eq!(val1, val2, "both peers must converge to same value");
     assert!(
         val1 == "red" || val1 == "blue",
@@ -328,10 +322,7 @@ fn tc_0_sync_005_offline_reconnect_recovery() {
     let map_p2 = doc_p2.get_or_insert_map("data");
     let txn = doc_p2.transact();
     assert_eq!(
-        map_p2
-            .get(&txn, "shared")
-            .expect("shared")
-            .to_string(&txn),
+        map_p2.get(&txn, "shared").expect("shared").to_string(&txn),
         "initial"
     );
     assert_eq!(
@@ -436,10 +427,7 @@ async fn tc_0_sync_006_router_storage_persistence() {
         "persistent_value"
     );
     assert_eq!(
-        map_p3
-            .get(&txn, "count")
-            .expect("count")
-            .to_string(&txn),
+        map_p3.get(&txn, "count").expect("count").to_string(&txn),
         "42"
     );
 }

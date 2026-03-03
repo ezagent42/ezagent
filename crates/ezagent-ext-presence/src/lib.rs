@@ -73,21 +73,16 @@ mod tests {
     /// TC-2-EXT09-001: Verify presence writer validation accepts matching signer.
     #[test]
     fn tc_2_ext09_001_valid_presence_writer() {
-        hooks::validate_presence_writer(
-            "@alice:relay.example.com",
-            "@alice:relay.example.com",
-        )
-        .unwrap();
+        hooks::validate_presence_writer("@alice:relay.example.com", "@alice:relay.example.com")
+            .unwrap();
     }
 
     /// TC-2-EXT09-002: Verify presence writer validation rejects mismatched signer.
     #[test]
     fn tc_2_ext09_002_invalid_presence_writer() {
-        let err = hooks::validate_presence_writer(
-            "@alice:relay.example.com",
-            "@bob:relay.example.com",
-        )
-        .unwrap_err();
+        let err =
+            hooks::validate_presence_writer("@alice:relay.example.com", "@bob:relay.example.com")
+                .unwrap_err();
         assert!(
             matches!(err, hooks::PresenceHookError::WriterMismatch { .. }),
             "expected WriterMismatch error, got: {err}"

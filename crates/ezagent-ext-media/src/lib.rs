@@ -51,9 +51,7 @@ impl ExtensionPlugin for MediaExtension {
 
     fn register(&self, ctx: &mut RegistrationContext) -> Result<(), ExtError> {
         // PreSend hook for blob hash validation.
-        ctx.register_hook_json(
-            r#"{"id":"media.upload","phase":"PreSend","priority":20}"#,
-        )?;
+        ctx.register_hook_json(r#"{"id":"media.upload","phase":"PreSend","priority":20}"#)?;
 
         Ok(())
     }
@@ -87,9 +85,7 @@ mod tests {
         );
 
         // Wrong prefix.
-        assert!(hooks::validate_blob_hash(
-            "md5:e3b0c44298fc1c149afbf4c8996fb924"
-        ).is_err());
+        assert!(hooks::validate_blob_hash("md5:e3b0c44298fc1c149afbf4c8996fb924").is_err());
 
         // Too short hex.
         assert!(hooks::validate_blob_hash("sha256:abcd").is_err());
@@ -97,7 +93,8 @@ mod tests {
         // Non-hex characters.
         assert!(hooks::validate_blob_hash(
             "sha256:g3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-        ).is_err());
+        )
+        .is_err());
 
         // Empty.
         assert!(hooks::validate_blob_hash("").is_err());
@@ -108,7 +105,8 @@ mod tests {
         // Uppercase hex.
         assert!(hooks::validate_blob_hash(
             "sha256:E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
-        ).is_err());
+        )
+        .is_err());
     }
 
     /// TC-2-EXT10-003: Verify manifest, datatypes, and hook registration.

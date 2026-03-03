@@ -8,7 +8,9 @@
 #[derive(Debug, thiserror::Error)]
 pub enum PresenceHookError {
     /// The presence key's entity does not match the signer.
-    #[error("presence writer mismatch: key entity '{key_entity}' does not match signer '{signer}'")]
+    #[error(
+        "presence writer mismatch: key entity '{key_entity}' does not match signer '{signer}'"
+    )]
     WriterMismatch { key_entity: String, signer: String },
 }
 
@@ -22,10 +24,7 @@ pub enum PresenceHookError {
 ///
 /// Returns [`PresenceHookError::WriterMismatch`] if the key entity does
 /// not match the signer.
-pub fn validate_presence_writer(
-    key_entity: &str,
-    signer: &str,
-) -> Result<(), PresenceHookError> {
+pub fn validate_presence_writer(key_entity: &str, signer: &str) -> Result<(), PresenceHookError> {
     if key_entity != signer {
         return Err(PresenceHookError::WriterMismatch {
             key_entity: key_entity.to_string(),
@@ -41,11 +40,7 @@ mod tests {
 
     #[test]
     fn valid_matching_writer() {
-        validate_presence_writer(
-            "@alice:relay.example.com",
-            "@alice:relay.example.com",
-        )
-        .unwrap();
+        validate_presence_writer("@alice:relay.example.com", "@alice:relay.example.com").unwrap();
     }
 
     #[test]
@@ -59,11 +54,8 @@ mod tests {
 
     #[test]
     fn invalid_different_entity() {
-        let err = validate_presence_writer(
-            "@alice:relay.example.com",
-            "@bob:relay.example.com",
-        )
-        .unwrap_err();
+        let err = validate_presence_writer("@alice:relay.example.com", "@bob:relay.example.com")
+            .unwrap_err();
         assert!(
             matches!(err, PresenceHookError::WriterMismatch { .. }),
             "unexpected error: {err}"
@@ -72,11 +64,9 @@ mod tests {
 
     #[test]
     fn invalid_different_relay() {
-        let err = validate_presence_writer(
-            "@alice:relay-a.example.com",
-            "@alice:relay-b.example.com",
-        )
-        .unwrap_err();
+        let err =
+            validate_presence_writer("@alice:relay-a.example.com", "@alice:relay-b.example.com")
+                .unwrap_err();
         assert!(
             matches!(err, PresenceHookError::WriterMismatch { .. }),
             "unexpected error: {err}"

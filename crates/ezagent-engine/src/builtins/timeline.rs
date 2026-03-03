@@ -304,9 +304,7 @@ pub fn timeline_datatype() -> DatatypeDeclaration {
         data_entries: vec![DataEntry {
             id: "timeline_index".to_string(),
             storage_type: StorageType::CrdtArray,
-            key_pattern: KeyPattern::new(
-                "ezagent/{room_id}/index/{shard_id}/{state|updates}",
-            ),
+            key_pattern: KeyPattern::new("ezagent/{room_id}/index/{shard_id}/{state|updates}"),
             persistent: true,
             writer_rule: WriterRule::SignerInMembers,
             sync_strategy: SyncMode::Eager,
@@ -397,8 +395,7 @@ pub fn generate_ref_hook() -> (HookDeclaration, HookFn) {
         };
 
         // Store results in context.
-        ctx.data
-            .insert("ref_id".into(), serde_json::json!(ref_id));
+        ctx.data.insert("ref_id".into(), serde_json::json!(ref_id));
         ctx.data
             .insert("status".into(), serde_json::json!("Active"));
         ctx.data
@@ -580,25 +577,21 @@ pub fn timeline_pagination_hook() -> (HookDeclaration, HookFn) {
 
     let handler: HookFn = Arc::new(|ctx: &mut HookContext| {
         // Parse shards from context data.
-        let shards: Vec<TimelineShard> = if let Some(shards_val) = ctx.data.get("shards").cloned()
-        {
+        let shards: Vec<TimelineShard> = if let Some(shards_val) = ctx.data.get("shards").cloned() {
             parse_shards_from_json(&shards_val)
         } else {
             Vec::new()
         };
 
         // Parse cursor from context data.
-        let cursor: Option<PaginationCursor> =
-            ctx.data.get("cursor").cloned().and_then(|v| {
-                serde_json::from_value(v).ok()
-            });
+        let cursor: Option<PaginationCursor> = ctx
+            .data
+            .get("cursor")
+            .cloned()
+            .and_then(|v| serde_json::from_value(v).ok());
 
         // Parse limit from context data.
-        let limit = ctx
-            .data
-            .get("limit")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(50) as usize;
+        let limit = ctx.data.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
 
         // Run pagination.
         let result = paginate(&shards, cursor.as_ref(), limit);
@@ -722,10 +715,7 @@ mod tests {
 
         // Verify two ULIDs are different.
         let tref2 = make_ulid_ref("@alice:relay.example.com");
-        assert_ne!(
-            tref.ref_id, tref2.ref_id,
-            "two ULIDs should be different"
-        );
+        assert_ne!(tref.ref_id, tref2.ref_id, "two ULIDs should be different");
 
         // Verify both are valid ULIDs with timestamps.
         let ulid1 = ulid::Ulid::from_string(&tref.ref_id).unwrap();
@@ -798,9 +788,7 @@ mod tests {
         assert_eq!(sm.total_refs(), 2);
 
         // Find the ref and soft-delete it.
-        let tref = sm
-            .find_ref_mut("ref-to-delete")
-            .expect("ref should exist");
+        let tref = sm.find_ref_mut("ref-to-delete").expect("ref should exist");
         assert_eq!(tref.status, RefStatus::Active);
 
         // Only the original author can delete — simulate author check.
@@ -808,7 +796,9 @@ mod tests {
         tref.status = RefStatus::DeletedByAuthor;
 
         // Verify the ref is still present but marked as deleted.
-        let deleted = sm.find_ref("ref-to-delete").expect("ref should still exist");
+        let deleted = sm
+            .find_ref("ref-to-delete")
+            .expect("ref should still exist");
         assert_eq!(deleted.status, RefStatus::DeletedByAuthor);
 
         // Total refs unchanged — soft delete doesn't remove.
@@ -952,8 +942,8 @@ mod tests {
             .data
             .get("timeline_ref")
             .expect("timeline_ref should be in context");
-        let tref: TimelineRef = serde_json::from_value(ref_val.clone())
-            .expect("timeline_ref should deserialize");
+        let tref: TimelineRef =
+            serde_json::from_value(ref_val.clone()).expect("timeline_ref should deserialize");
         assert_eq!(tref.ref_id, ref_id);
         assert_eq!(tref.author, "@alice:relay.example.com");
         assert_eq!(tref.content_type, "immutable");
@@ -977,10 +967,8 @@ mod tests {
         // Test detecting a new ref.
         let tref = make_ref("ref-new-001", "@alice:relay.com");
         let mut ctx = HookContext::new("timeline_index".to_string(), TriggerEvent::Insert);
-        ctx.data.insert(
-            "timeline_ref".into(),
-            serde_json::to_value(&tref).unwrap(),
-        );
+        ctx.data
+            .insert("timeline_ref".into(), serde_json::to_value(&tref).unwrap());
 
         let result = (handler)(&mut ctx);
         assert!(result.is_ok());
@@ -1050,8 +1038,7 @@ mod tests {
     fn ref_status_serde_roundtrip() {
         for status in &[RefStatus::Active, RefStatus::DeletedByAuthor] {
             let json = serde_json::to_string(status).expect("serialize status");
-            let roundtripped: RefStatus =
-                serde_json::from_str(&json).expect("deserialize status");
+            let roundtripped: RefStatus = serde_json::from_str(&json).expect("deserialize status");
             assert_eq!(status, &roundtripped);
         }
     }
@@ -1071,8 +1058,7 @@ mod tests {
         };
 
         let json = serde_json::to_string(&tref).expect("serialize ref");
-        let roundtripped: TimelineRef =
-            serde_json::from_str(&json).expect("deserialize ref");
+        let roundtripped: TimelineRef = serde_json::from_str(&json).expect("deserialize ref");
 
         assert_eq!(tref.ref_id, roundtripped.ref_id);
         assert_eq!(tref.author, roundtripped.author);
@@ -1196,13 +1182,8 @@ mod tests {
         let (_decl, handler) = timeline_pagination_hook();
 
         // Build shards as JSON.
-        let shard1_refs = vec![
-            make_ref("r1", "@a:r.com"),
-            make_ref("r2", "@b:r.com"),
-        ];
-        let shard2_refs = vec![
-            make_ref("r3", "@c:r.com"),
-        ];
+        let shard1_refs = vec![make_ref("r1", "@a:r.com"), make_ref("r2", "@b:r.com")];
+        let shard2_refs = vec![make_ref("r3", "@c:r.com")];
 
         let shards_json = serde_json::json!([
             {

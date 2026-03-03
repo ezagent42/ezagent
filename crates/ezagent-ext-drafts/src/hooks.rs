@@ -8,7 +8,9 @@
 #[derive(Debug, thiserror::Error)]
 pub enum DraftHookError {
     /// The draft's entity_id does not match the signer.
-    #[error("draft owner mismatch: draft entity '{draft_entity_id}' does not match signer '{signer}'")]
+    #[error(
+        "draft owner mismatch: draft entity '{draft_entity_id}' does not match signer '{signer}'"
+    )]
     OwnerMismatch {
         draft_entity_id: String,
         signer: String,
@@ -25,10 +27,7 @@ pub enum DraftHookError {
 ///
 /// Returns [`DraftHookError::OwnerMismatch`] if the draft entity_id
 /// does not match the signer.
-pub fn validate_draft_owner(
-    draft_entity_id: &str,
-    signer: &str,
-) -> Result<(), DraftHookError> {
+pub fn validate_draft_owner(draft_entity_id: &str, signer: &str) -> Result<(), DraftHookError> {
     if draft_entity_id != signer {
         return Err(DraftHookError::OwnerMismatch {
             draft_entity_id: draft_entity_id.to_string(),
@@ -44,11 +43,7 @@ mod tests {
 
     #[test]
     fn valid_matching_owner() {
-        validate_draft_owner(
-            "@alice:relay.example.com",
-            "@alice:relay.example.com",
-        )
-        .unwrap();
+        validate_draft_owner("@alice:relay.example.com", "@alice:relay.example.com").unwrap();
     }
 
     #[test]
@@ -62,11 +57,8 @@ mod tests {
 
     #[test]
     fn invalid_different_entity() {
-        let err = validate_draft_owner(
-            "@alice:relay.example.com",
-            "@bob:relay.example.com",
-        )
-        .unwrap_err();
+        let err =
+            validate_draft_owner("@alice:relay.example.com", "@bob:relay.example.com").unwrap_err();
         assert!(
             matches!(err, DraftHookError::OwnerMismatch { .. }),
             "unexpected error: {err}"
@@ -75,11 +67,8 @@ mod tests {
 
     #[test]
     fn invalid_different_relay() {
-        let err = validate_draft_owner(
-            "@alice:relay-a.example.com",
-            "@alice:relay-b.example.com",
-        )
-        .unwrap_err();
+        let err = validate_draft_owner("@alice:relay-a.example.com", "@alice:relay-b.example.com")
+            .unwrap_err();
         assert!(
             matches!(err, DraftHookError::OwnerMismatch { .. }),
             "unexpected error: {err}"

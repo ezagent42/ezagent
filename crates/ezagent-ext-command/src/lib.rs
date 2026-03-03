@@ -49,14 +49,10 @@ impl ExtensionPlugin for CommandExtension {
 
     fn register(&self, ctx: &mut RegistrationContext) -> Result<(), ExtError> {
         // PreSend hook for command validation.
-        ctx.register_hook_json(
-            r#"{"id":"command.validate","phase":"PreSend","priority":35}"#,
-        )?;
+        ctx.register_hook_json(r#"{"id":"command.validate","phase":"PreSend","priority":35}"#)?;
 
         // AfterWrite hook for command dispatch.
-        ctx.register_hook_json(
-            r#"{"id":"command.dispatch","phase":"AfterWrite","priority":42}"#,
-        )?;
+        ctx.register_hook_json(r#"{"id":"command.dispatch","phase":"AfterWrite","priority":42}"#)?;
 
         // AfterWrite hook for result notification.
         ctx.register_hook_json(

@@ -72,21 +72,15 @@ mod tests {
     /// TC-2-EXT01-001: Verify author validation accepts matching signer.
     #[test]
     fn tc_2_ext01_001_author_can_edit() {
-        hooks::validate_edit_author(
-            "@alice:relay.example.com",
-            "@alice:relay.example.com",
-        )
-        .unwrap();
+        hooks::validate_edit_author("@alice:relay.example.com", "@alice:relay.example.com")
+            .unwrap();
     }
 
     /// TC-2-EXT01-002: Verify non-author is rejected.
     #[test]
     fn tc_2_ext01_002_non_author_rejected() {
-        let err = hooks::validate_edit_author(
-            "@alice:relay.example.com",
-            "@bob:relay.example.com",
-        )
-        .unwrap_err();
+        let err = hooks::validate_edit_author("@alice:relay.example.com", "@bob:relay.example.com")
+            .unwrap_err();
         assert!(
             matches!(err, hooks::MutableHookError::NotAuthor { .. }),
             "expected NotAuthor error, got: {err}"

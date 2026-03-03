@@ -284,10 +284,7 @@ pub fn validate_content_ref_hook() -> (HookDeclaration, HookFn) {
             .and_then(|v| v.as_str())
             .unwrap_or("");
 
-        let signer_id = ctx
-            .signer_id
-            .clone()
-            .unwrap_or_default();
+        let signer_id = ctx.signer_id.clone().unwrap_or_default();
 
         if content_author != signer_id {
             ctx.reject("AUTHOR_MISMATCH");
@@ -347,8 +344,7 @@ pub fn resolve_content_hook() -> (HookDeclaration, HookFn) {
             .cloned();
 
         if let Some(content) = resolved {
-            ctx.data
-                .insert("resolved_content".into(), content);
+            ctx.data.insert("resolved_content".into(), content);
         }
 
         Ok(())
@@ -475,10 +471,11 @@ mod tests {
             .insert("content_type".into(), serde_json::json!("immutable"));
         ctx.data
             .insert("format".into(), serde_json::json!("text/plain"));
-        ctx.data
-            .insert("media_refs".into(), serde_json::json!([]));
-        ctx.data
-            .insert("created_at".into(), serde_json::json!("2026-03-01T12:00:00Z"));
+        ctx.data.insert("media_refs".into(), serde_json::json!([]));
+        ctx.data.insert(
+            "created_at".into(),
+            serde_json::json!("2026-03-01T12:00:00Z"),
+        );
 
         // Execute the hook.
         let result = (handler)(&mut ctx);
@@ -490,7 +487,11 @@ mod tests {
             .get("content_id")
             .expect("content_id must be set by hook");
         let hash_str = content_id.as_str().expect("content_id must be a string");
-        assert_eq!(hash_str.len(), 64, "SHA-256 hex digest must be 64 characters");
+        assert_eq!(
+            hash_str.len(),
+            64,
+            "SHA-256 hex digest must be 64 characters"
+        );
 
         // Verify determinism: compute the same hash manually.
         let expected_content = MessageContent {
@@ -544,8 +545,7 @@ mod tests {
         ctx.room_id = Some("R-alpha".to_string());
         ctx.data
             .insert("content_id".into(), serde_json::json!(hash));
-        ctx.data
-            .insert("content_store".into(), content_store);
+        ctx.data.insert("content_store".into(), content_store);
 
         // Execute the hook.
         let result = (handler)(&mut ctx);
@@ -584,8 +584,7 @@ mod tests {
         ctx.room_id = Some("R-alpha".to_string());
         ctx.data
             .insert("content_id".into(), serde_json::json!(hash));
-        ctx.data
-            .insert("content_store".into(), content_store);
+        ctx.data.insert("content_store".into(), content_store);
 
         // Execute the hook.
         let result = (handler)(&mut ctx);
@@ -707,8 +706,7 @@ mod tests {
         let mut ctx = HookContext::new("timeline_index".to_string(), TriggerEvent::Any);
         ctx.data
             .insert("content_id".into(), serde_json::json!(hash));
-        ctx.data
-            .insert("content_store".into(), content_store);
+        ctx.data.insert("content_store".into(), content_store);
 
         let result = (handler)(&mut ctx);
         assert!(result.is_ok(), "resolve_content should succeed");
@@ -729,10 +727,8 @@ mod tests {
         let (_decl, handler) = resolve_content_hook();
 
         let mut ctx = HookContext::new("timeline_index".to_string(), TriggerEvent::Any);
-        ctx.data.insert(
-            "content_id".into(),
-            serde_json::json!("nonexistent_hash"),
-        );
+        ctx.data
+            .insert("content_id".into(), serde_json::json!("nonexistent_hash"));
         ctx.data
             .insert("content_store".into(), serde_json::json!({}));
 
@@ -754,7 +750,10 @@ mod tests {
         assert_eq!(hex_encode(&[0x00]), "00");
         assert_eq!(hex_encode(&[0xff]), "ff");
         assert_eq!(hex_encode(&[0xde, 0xad, 0xbe, 0xef]), "deadbeef");
-        assert_eq!(hex_encode(&[0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef]), "0123456789abcdef");
+        assert_eq!(
+            hex_encode(&[0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef]),
+            "0123456789abcdef"
+        );
     }
 
     /// MessageContent serde roundtrip.
@@ -766,8 +765,7 @@ mod tests {
         content.signature = Some("sig-placeholder".to_string());
 
         let json = serde_json::to_string(&content).expect("serialize");
-        let roundtripped: MessageContent =
-            serde_json::from_str(&json).expect("deserialize");
+        let roundtripped: MessageContent = serde_json::from_str(&json).expect("deserialize");
 
         assert_eq!(roundtripped.content_id, content.content_id);
         assert_eq!(roundtripped.content_type, "immutable");
@@ -776,9 +774,6 @@ mod tests {
         assert_eq!(roundtripped.format, "text/plain");
         assert_eq!(roundtripped.media_refs, vec!["blob/abc123"]);
         assert_eq!(roundtripped.created_at, "2026-03-01T12:00:00Z");
-        assert_eq!(
-            roundtripped.signature.as_deref(),
-            Some("sig-placeholder")
-        );
+        assert_eq!(roundtripped.signature.as_deref(), Some("sig-placeholder"));
     }
 }

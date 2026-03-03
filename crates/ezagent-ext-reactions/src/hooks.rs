@@ -28,7 +28,10 @@ pub enum ReactionHookError {
 
     /// The entity_id in the reaction key does not match the signer.
     #[error("reaction key entity_id '{entity_id}' does not match signer '{signer_id}'")]
-    SignerMismatch { entity_id: String, signer_id: String },
+    SignerMismatch {
+        entity_id: String,
+        signer_id: String,
+    },
 }
 
 /// Validate a reaction key format: `{emoji}:{entity_id}`.
@@ -69,10 +72,7 @@ pub fn parse_reaction_key(key: &str) -> Result<(&str, &str), ReactionHookError> 
 ///
 /// Returns [`ReactionHookError`] if the key is malformed or the entity_id
 /// does not match the `signer_id`.
-pub fn validate_reaction_signer(
-    key: &str,
-    signer_id: &str,
-) -> Result<(), ReactionHookError> {
+pub fn validate_reaction_signer(key: &str, signer_id: &str) -> Result<(), ReactionHookError> {
     let (_, entity_id) = parse_reaction_key(key)?;
     if entity_id != signer_id {
         return Err(ReactionHookError::SignerMismatch {
@@ -98,8 +98,7 @@ mod tests {
 
     #[test]
     fn parse_valid_text_emoji() {
-        let (emoji, entity_id) =
-            parse_reaction_key(":thumbsup::@alice:relay.example.com").unwrap();
+        let (emoji, entity_id) = parse_reaction_key(":thumbsup::@alice:relay.example.com").unwrap();
         assert_eq!(emoji, ":thumbsup:");
         assert_eq!(entity_id, "@alice:relay.example.com");
     }
@@ -107,8 +106,7 @@ mod tests {
     #[test]
     fn parse_valid_compound_emoji() {
         // Emoji with ZWJ sequences
-        let (emoji, entity_id) =
-            parse_reaction_key("👨‍👩‍👧‍👦:@carol:relay-b.example.com").unwrap();
+        let (emoji, entity_id) = parse_reaction_key("👨‍👩‍👧‍👦:@carol:relay-b.example.com").unwrap();
         assert_eq!(emoji, "👨‍👩‍👧‍👦");
         assert_eq!(entity_id, "@carol:relay-b.example.com");
     }
@@ -171,20 +169,15 @@ mod tests {
 
     #[test]
     fn validate_signer_matching() {
-        validate_reaction_signer(
-            "👍:@bob:relay-a.example.com",
-            "@bob:relay-a.example.com",
-        )
-        .unwrap();
+        validate_reaction_signer("👍:@bob:relay-a.example.com", "@bob:relay-a.example.com")
+            .unwrap();
     }
 
     #[test]
     fn validate_signer_mismatch() {
-        let err = validate_reaction_signer(
-            "👍:@bob:relay-a.example.com",
-            "@alice:relay-a.example.com",
-        )
-        .unwrap_err();
+        let err =
+            validate_reaction_signer("👍:@bob:relay-a.example.com", "@alice:relay-a.example.com")
+                .unwrap_err();
         assert!(
             matches!(err, ReactionHookError::SignerMismatch { .. }),
             "unexpected error: {err}"
@@ -193,11 +186,9 @@ mod tests {
 
     #[test]
     fn validate_signer_different_relay() {
-        let err = validate_reaction_signer(
-            "👍:@bob:relay-a.example.com",
-            "@bob:relay-b.example.com",
-        )
-        .unwrap_err();
+        let err =
+            validate_reaction_signer("👍:@bob:relay-a.example.com", "@bob:relay-b.example.com")
+                .unwrap_err();
         assert!(
             matches!(err, ReactionHookError::SignerMismatch { .. }),
             "unexpected error: {err}"

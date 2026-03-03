@@ -181,17 +181,14 @@ fn path_matches_pattern(path: &str, pattern: &str) -> bool {
         return false;
     }
 
-    path_segs
-        .iter()
-        .zip(pattern_segs.iter())
-        .all(|(ps, pt)| {
-            if contains_placeholder(pt) {
-                let prefix = placeholder_prefix(pt).unwrap_or("");
-                ps.starts_with(prefix)
-            } else {
-                ps == pt
-            }
-        })
+    path_segs.iter().zip(pattern_segs.iter()).all(|(ps, pt)| {
+        if contains_placeholder(pt) {
+            let prefix = placeholder_prefix(pt).unwrap_or("");
+            ps.starts_with(prefix)
+        } else {
+            ps == pt
+        }
+    })
 }
 
 #[cfg(test)]
@@ -266,8 +263,7 @@ mod tests {
             .unwrap();
         reg.register("/r/{room_id}/c/{channel_name}", "channels")
             .unwrap();
-        reg.register("/@{entity_id}/profile", "profile")
-            .unwrap();
+        reg.register("/@{entity_id}/profile", "profile").unwrap();
 
         // Concrete path matching reactions.
         assert_eq!(
@@ -320,9 +316,7 @@ mod tests {
             .expect_err("same structure with different placeholder names should conflict");
 
         match err {
-            EngineError::UriPathConflict {
-                ext_a, ext_b, ..
-            } => {
+            EngineError::UriPathConflict { ext_a, ext_b, .. } => {
                 assert_eq!(ext_a, "ext-a");
                 assert_eq!(ext_b, "ext-b");
             }
@@ -392,9 +386,18 @@ mod tests {
     /// path_matches_pattern helper: unit-level tests.
     #[test]
     fn path_matches_pattern_unit() {
-        assert!(path_matches_pattern("/r/abc/m/ref1/reactions", "/r/{room_id}/m/{ref_id}/reactions"));
-        assert!(!path_matches_pattern("/r/abc/m/ref1", "/r/{room_id}/m/{ref_id}/reactions"));
-        assert!(!path_matches_pattern("/r/abc/m/ref1/thread", "/r/{room_id}/m/{ref_id}/reactions"));
+        assert!(path_matches_pattern(
+            "/r/abc/m/ref1/reactions",
+            "/r/{room_id}/m/{ref_id}/reactions"
+        ));
+        assert!(!path_matches_pattern(
+            "/r/abc/m/ref1",
+            "/r/{room_id}/m/{ref_id}/reactions"
+        ));
+        assert!(!path_matches_pattern(
+            "/r/abc/m/ref1/thread",
+            "/r/{room_id}/m/{ref_id}/reactions"
+        ));
         assert!(path_matches_pattern("/a/b", "/{x}/{y}"));
         assert!(path_matches_pattern("/a/b", "/a/b"));
         assert!(!path_matches_pattern("/a/b", "/a/c"));

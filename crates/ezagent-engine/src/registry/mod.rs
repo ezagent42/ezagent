@@ -169,11 +169,15 @@ mod tests {
     /// Helper: register the four built-in datatypes into a registry.
     fn register_builtins(reg: &mut DatatypeRegistry) {
         reg.register(builtin_decl("identity", vec![])).unwrap();
-        reg.register(builtin_decl("room", vec!["identity"])).unwrap();
+        reg.register(builtin_decl("room", vec!["identity"]))
+            .unwrap();
         reg.register(builtin_decl("timeline", vec!["identity", "room"]))
             .unwrap();
-        reg.register(builtin_decl("message", vec!["identity", "room", "timeline"]))
-            .unwrap();
+        reg.register(builtin_decl(
+            "message",
+            vec!["identity", "room", "timeline"],
+        ))
+        .unwrap();
     }
 
     /// TC-1-ENGINE-001: register a built-in datatype, verify fields.
@@ -262,7 +266,10 @@ mod tests {
             msg.contains("circular dependency"),
             "expected CircularDependency, got: {msg}"
         );
-        assert!(msg.contains('a') && msg.contains('b'), "cycle should mention a and b: {msg}");
+        assert!(
+            msg.contains('a') && msg.contains('b'),
+            "cycle should mention a and b: {msg}"
+        );
     }
 
     /// TC-1-ENGINE-004: extension filtering by enabled_extensions.
@@ -284,9 +291,7 @@ mod tests {
         assert!(!order_none.contains(&"collaborative".to_string()));
 
         // Room with mutable enabled.
-        let order_mut = reg
-            .load_order_for_room(&["mutable".to_string()])
-            .unwrap();
+        let order_mut = reg.load_order_for_room(&["mutable".to_string()]).unwrap();
         assert!(order_mut.contains(&"mutable".to_string()));
         assert!(!order_mut.contains(&"collaborative".to_string()));
         // mutable should come after message.

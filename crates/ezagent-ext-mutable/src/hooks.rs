@@ -44,20 +44,13 @@ mod tests {
 
     #[test]
     fn author_matches_signer() {
-        validate_edit_author(
-            "@alice:relay.example.com",
-            "@alice:relay.example.com",
-        )
-        .unwrap();
+        validate_edit_author("@alice:relay.example.com", "@alice:relay.example.com").unwrap();
     }
 
     #[test]
     fn author_does_not_match_signer() {
-        let err = validate_edit_author(
-            "@alice:relay.example.com",
-            "@bob:relay.example.com",
-        )
-        .unwrap_err();
+        let err =
+            validate_edit_author("@alice:relay.example.com", "@bob:relay.example.com").unwrap_err();
         assert!(
             matches!(err, MutableHookError::NotAuthor { .. }),
             "unexpected error: {err}"
@@ -66,11 +59,8 @@ mod tests {
 
     #[test]
     fn author_different_relay() {
-        let err = validate_edit_author(
-            "@alice:relay-a.example.com",
-            "@alice:relay-b.example.com",
-        )
-        .unwrap_err();
+        let err = validate_edit_author("@alice:relay-a.example.com", "@alice:relay-b.example.com")
+            .unwrap_err();
         assert!(
             matches!(err, MutableHookError::NotAuthor { .. }),
             "unexpected error: {err}"

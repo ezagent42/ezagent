@@ -81,11 +81,7 @@ impl HookExecutor {
     ///
     /// Returns `EngineError::ExtensionCannotRegisterGlobalHook` if a non-builtin
     /// datatype attempts to register a global hook (`trigger_datatype: "*"`).
-    pub fn register(
-        &mut self,
-        decl: HookDeclaration,
-        handler: HookFn,
-    ) -> Result<(), EngineError> {
+    pub fn register(&mut self, decl: HookDeclaration, handler: HookFn) -> Result<(), EngineError> {
         // Enforce global hook restriction (bus-spec SS3.2.4).
         if decl.trigger_datatype == "*" && !self.builtin_ids.contains(&decl.source) {
             return Err(EngineError::ExtensionCannotRegisterGlobalHook);
@@ -143,8 +139,16 @@ impl HookExecutor {
             }
 
             // 2. Dependency topology order (lower index = earlier dependency).
-            let dep_a = self.dependency_order.get(&decl_a.source).copied().unwrap_or(usize::MAX);
-            let dep_b = self.dependency_order.get(&decl_b.source).copied().unwrap_or(usize::MAX);
+            let dep_a = self
+                .dependency_order
+                .get(&decl_a.source)
+                .copied()
+                .unwrap_or(usize::MAX);
+            let dep_b = self
+                .dependency_order
+                .get(&decl_b.source)
+                .copied()
+                .unwrap_or(usize::MAX);
             let dep_cmp = dep_a.cmp(&dep_b);
             if dep_cmp != std::cmp::Ordering::Equal {
                 return dep_cmp;

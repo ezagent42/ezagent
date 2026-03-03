@@ -54,9 +54,7 @@ impl ExtensionPlugin for CollabExtension {
 
     fn register(&self, ctx: &mut RegistrationContext) -> Result<(), ExtError> {
         // PreSend hook for ACL validation.
-        ctx.register_hook_json(
-            r#"{"id":"collab.check_acl","phase":"PreSend","priority":25}"#,
-        )?;
+        ctx.register_hook_json(r#"{"id":"collab.check_acl","phase":"PreSend","priority":25}"#)?;
 
         Ok(())
     }
@@ -72,21 +70,14 @@ mod tests {
     /// TC-2-EXT02-001: Verify owner can write in owner_only mode.
     #[test]
     fn tc_2_ext02_001_owner_can_write() {
-        hooks::validate_acl_owner(
-            "@alice:relay.example.com",
-            "@alice:relay.example.com",
-        )
-        .unwrap();
+        hooks::validate_acl_owner("@alice:relay.example.com", "@alice:relay.example.com").unwrap();
     }
 
     /// TC-2-EXT02-002: Verify non-owner is rejected in owner_only mode.
     #[test]
     fn tc_2_ext02_002_non_owner_rejected() {
-        let err = hooks::validate_acl_owner(
-            "@alice:relay.example.com",
-            "@bob:relay.example.com",
-        )
-        .unwrap_err();
+        let err = hooks::validate_acl_owner("@alice:relay.example.com", "@bob:relay.example.com")
+            .unwrap_err();
         assert!(
             matches!(err, hooks::CollabHookError::NotOwner { .. }),
             "expected NotOwner error, got: {err}"

@@ -42,9 +42,7 @@ impl ExtensionPlugin for ReplyToExtension {
 
     fn register(&self, ctx: &mut RegistrationContext) -> Result<(), ExtError> {
         // PreSend hook for injecting reply-to annotation.
-        ctx.register_hook_json(
-            r#"{"id":"reply_to.inject","phase":"PreSend","priority":30}"#,
-        )?;
+        ctx.register_hook_json(r#"{"id":"reply_to.inject","phase":"PreSend","priority":30}"#)?;
 
         Ok(())
     }

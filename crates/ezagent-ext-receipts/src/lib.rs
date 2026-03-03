@@ -48,9 +48,7 @@ impl ExtensionPlugin for ReceiptsExtension {
 
     fn register(&self, ctx: &mut RegistrationContext) -> Result<(), ExtError> {
         // AfterRead hook for auto-marking read position.
-        ctx.register_hook_json(
-            r#"{"id":"receipts.auto_mark","phase":"AfterRead","priority":70}"#,
-        )?;
+        ctx.register_hook_json(r#"{"id":"receipts.auto_mark","phase":"AfterRead","priority":70}"#)?;
 
         // AfterWrite hook for updating unread counts.
         ctx.register_hook_json(
@@ -71,21 +69,16 @@ mod tests {
     /// TC-2-EXT08-001: Verify receipt writer validation accepts matching signer.
     #[test]
     fn tc_2_ext08_001_valid_receipt_writer() {
-        hooks::validate_receipt_writer(
-            "@alice:relay.example.com",
-            "@alice:relay.example.com",
-        )
-        .unwrap();
+        hooks::validate_receipt_writer("@alice:relay.example.com", "@alice:relay.example.com")
+            .unwrap();
     }
 
     /// TC-2-EXT08-002: Verify receipt writer validation rejects mismatched signer.
     #[test]
     fn tc_2_ext08_002_invalid_receipt_writer() {
-        let err = hooks::validate_receipt_writer(
-            "@alice:relay.example.com",
-            "@bob:relay.example.com",
-        )
-        .unwrap_err();
+        let err =
+            hooks::validate_receipt_writer("@alice:relay.example.com", "@bob:relay.example.com")
+                .unwrap_err();
         assert!(
             matches!(err, hooks::ReceiptHookError::WriterMismatch { .. }),
             "expected WriterMismatch error, got: {err}"

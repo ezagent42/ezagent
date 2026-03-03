@@ -63,7 +63,9 @@ pub fn resolve_load_order(
         neighbors.sort();
 
         for neighbor in neighbors {
-            let deg = in_degree.get_mut(neighbor).expect("in_degree entry must exist");
+            let deg = in_degree
+                .get_mut(neighbor)
+                .expect("in_degree entry must exist");
             *deg -= 1;
             if *deg == 0 {
                 // Insert into queue maintaining sorted order.

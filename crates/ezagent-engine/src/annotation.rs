@@ -29,9 +29,7 @@ use crate::error::EngineError;
 /// or if the entity_id portion does not start with `@`.
 pub fn validate_annotation_key(key: &str) -> Result<(String, String), EngineError> {
     let colon_pos = key.find(':').ok_or_else(|| {
-        EngineError::InvalidAnnotationKey(format!(
-            "key must contain ':' separator, got '{key}'"
-        ))
+        EngineError::InvalidAnnotationKey(format!("key must contain ':' separator, got '{key}'"))
     })?;
 
     let semantic = &key[..colon_pos];
@@ -132,20 +130,19 @@ mod tests {
     /// TC-1-ANNOT-003: writer restriction passes when signer matches key entity.
     #[test]
     fn tc_1_annot_003_writer_restriction_ok() {
-        let result = check_annotation_writer(
-            "note:@bob:relay.example.com",
-            "@bob:relay.example.com",
+        let result =
+            check_annotation_writer("note:@bob:relay.example.com", "@bob:relay.example.com");
+        assert!(
+            result.is_ok(),
+            "expected Ok for matching signer, got {result:?}"
         );
-        assert!(result.is_ok(), "expected Ok for matching signer, got {result:?}");
     }
 
     /// TC-1-ANNOT-004: writer restriction denied when signer doesn't match.
     #[test]
     fn tc_1_annot_004_writer_restriction_denied() {
-        let result = check_annotation_writer(
-            "note:@bob:relay.example.com",
-            "@alice:relay.example.com",
-        );
+        let result =
+            check_annotation_writer("note:@bob:relay.example.com", "@alice:relay.example.com");
         assert!(result.is_err(), "expected Err for mismatched signer");
         let err = result.unwrap_err();
         assert!(
@@ -159,12 +156,18 @@ mod tests {
     fn tc_1_annot_005_namespace_validation() {
         // Valid namespace
         let result = validate_namespace("ext.reactions");
-        assert!(result.is_ok(), "expected Ok for 'ext.reactions', got {result:?}");
+        assert!(
+            result.is_ok(),
+            "expected Ok for 'ext.reactions', got {result:?}"
+        );
         assert_eq!(result.unwrap(), "reactions");
 
         // Invalid namespace — no "ext." prefix
         let result = validate_namespace("invalid");
-        assert!(result.is_err(), "expected Err for namespace without 'ext.' prefix");
+        assert!(
+            result.is_err(),
+            "expected Err for namespace without 'ext.' prefix"
+        );
         let err = result.unwrap_err();
         assert!(
             matches!(err, EngineError::InvalidNamespace(_)),

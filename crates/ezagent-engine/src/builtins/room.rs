@@ -331,14 +331,10 @@ pub fn extension_loader_hook() -> (HookDeclaration, HookFn) {
         if !added.is_empty() || !removed.is_empty() {
             let room_id = ctx.room_id.clone().unwrap_or_default();
             // Store the diff in context for downstream consumers.
-            ctx.data.insert(
-                "extensions_added".into(),
-                serde_json::json!(added),
-            );
-            ctx.data.insert(
-                "extensions_removed".into(),
-                serde_json::json!(removed),
-            );
+            ctx.data
+                .insert("extensions_added".into(), serde_json::json!(added));
+            ctx.data
+                .insert("extensions_removed".into(), serde_json::json!(removed));
             eprintln!(
                 "[room.extension_loader] room={}: added={:?}, removed={:?}",
                 room_id, added, removed
@@ -388,19 +384,21 @@ pub fn member_change_notify_hook() -> (HookDeclaration, HookFn) {
         let old_members = extract_member_keys(ctx.data.get("old_members"));
         let new_members = extract_member_keys(ctx.data.get("members"));
 
-        let added: Vec<&String> = new_members.iter().filter(|m| !old_members.contains(m)).collect();
-        let removed: Vec<&String> = old_members.iter().filter(|m| !new_members.contains(m)).collect();
+        let added: Vec<&String> = new_members
+            .iter()
+            .filter(|m| !old_members.contains(m))
+            .collect();
+        let removed: Vec<&String> = old_members
+            .iter()
+            .filter(|m| !new_members.contains(m))
+            .collect();
 
         if !added.is_empty() || !removed.is_empty() {
             let room_id = ctx.room_id.clone().unwrap_or_default();
-            ctx.data.insert(
-                "members_added".into(),
-                serde_json::json!(added),
-            );
-            ctx.data.insert(
-                "members_removed".into(),
-                serde_json::json!(removed),
-            );
+            ctx.data
+                .insert("members_added".into(), serde_json::json!(added));
+            ctx.data
+                .insert("members_removed".into(), serde_json::json!(removed));
             eprintln!(
                 "[room.member_change_notify] room={}: added={:?}, removed={:?}",
                 room_id, added, removed
@@ -482,11 +480,17 @@ mod tests {
         assert_eq!(deserialized.membership.policy, MembershipPolicy::Invite);
         assert_eq!(deserialized.membership.members.len(), 2);
         assert_eq!(
-            deserialized.membership.members.get("@alice:relay.example.com"),
+            deserialized
+                .membership
+                .members
+                .get("@alice:relay.example.com"),
             Some(&Role::Owner)
         );
         assert_eq!(
-            deserialized.membership.members.get("@bob:relay.example.com"),
+            deserialized
+                .membership
+                .members
+                .get("@bob:relay.example.com"),
             Some(&Role::Member)
         );
         assert_eq!(deserialized.power_levels.default, 0);
@@ -495,10 +499,7 @@ mod tests {
         assert!(deserialized.power_levels.users.is_empty());
         assert_eq!(deserialized.relays, vec!["relay.example.com"]);
         assert_eq!(deserialized.timeline.shard_max_refs, 10000);
-        assert_eq!(
-            deserialized.enabled_extensions,
-            vec!["EXT-01", "EXT-03"]
-        );
+        assert_eq!(deserialized.enabled_extensions, vec!["EXT-01", "EXT-03"]);
     }
 
     /// TC-1-ROOM-002: MembershipPolicy variants Open, Knock, Invite are distinct.
@@ -622,7 +623,10 @@ mod tests {
         );
 
         let result = (handler)(&mut ctx);
-        assert!(result.is_err(), "Member should be rejected for config changes");
+        assert!(
+            result.is_err(),
+            "Member should be rejected for config changes"
+        );
         assert!(ctx.rejected, "context should be rejected");
         assert_eq!(
             ctx.rejection_reason.as_deref(),
@@ -755,14 +759,20 @@ mod tests {
         assert!(result.is_ok());
 
         // EXT-04, EXT-05 were added.
-        let added = ctx.data.get("extensions_added").expect("should have extensions_added");
+        let added = ctx
+            .data
+            .get("extensions_added")
+            .expect("should have extensions_added");
         let added_arr: Vec<String> = serde_json::from_value(added.clone()).unwrap();
         assert!(added_arr.contains(&"EXT-04".to_string()));
         assert!(added_arr.contains(&"EXT-05".to_string()));
         assert_eq!(added_arr.len(), 2);
 
         // EXT-03 was removed.
-        let removed = ctx.data.get("extensions_removed").expect("should have extensions_removed");
+        let removed = ctx
+            .data
+            .get("extensions_removed")
+            .expect("should have extensions_removed");
         let removed_arr: Vec<String> = serde_json::from_value(removed.clone()).unwrap();
         assert_eq!(removed_arr, vec!["EXT-03"]);
     }
@@ -793,12 +803,18 @@ mod tests {
         assert!(result.is_ok());
 
         // @carol was added.
-        let added = ctx.data.get("members_added").expect("should have members_added");
+        let added = ctx
+            .data
+            .get("members_added")
+            .expect("should have members_added");
         let added_arr: Vec<String> = serde_json::from_value(added.clone()).unwrap();
         assert_eq!(added_arr, vec!["@carol:relay.example.com"]);
 
         // @bob was removed.
-        let removed = ctx.data.get("members_removed").expect("should have members_removed");
+        let removed = ctx
+            .data
+            .get("members_removed")
+            .expect("should have members_removed");
         let removed_arr: Vec<String> = serde_json::from_value(removed.clone()).unwrap();
         assert_eq!(removed_arr, vec!["@bob:relay.example.com"]);
     }
@@ -815,7 +831,10 @@ mod tests {
         // No "members" in ctx.data — room-scoped write must be denied.
 
         let result = (handler)(&mut ctx);
-        assert!(result.is_err(), "should reject when no members data (fail-closed)");
+        assert!(
+            result.is_err(),
+            "should reject when no members data (fail-closed)"
+        );
         assert!(ctx.rejected, "context should be rejected");
         assert_eq!(
             ctx.rejection_reason.as_deref(),

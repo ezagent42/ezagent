@@ -53,9 +53,7 @@ impl ExtensionPlugin for ChannelsExtension {
 
     fn register(&self, ctx: &mut RegistrationContext) -> Result<(), ExtError> {
         // PreSend hook for tag validation and injection.
-        ctx.register_hook_json(
-            r#"{"id":"channels.inject_tags","phase":"PreSend","priority":30}"#,
-        )?;
+        ctx.register_hook_json(r#"{"id":"channels.inject_tags","phase":"PreSend","priority":30}"#)?;
 
         // AfterWrite hook for activity index updates.
         ctx.register_hook_json(
@@ -63,9 +61,7 @@ impl ExtensionPlugin for ChannelsExtension {
         )?;
 
         // AfterRead hook for channel aggregation view.
-        ctx.register_hook_json(
-            r#"{"id":"channels.aggregate","phase":"AfterRead","priority":50}"#,
-        )?;
+        ctx.register_hook_json(r#"{"id":"channels.aggregate","phase":"AfterRead","priority":50}"#)?;
 
         Ok(())
     }

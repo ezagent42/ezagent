@@ -248,8 +248,7 @@ mod tests {
 
         for event in &events {
             let json = serde_json::to_string(event).expect("serialize event");
-            let roundtripped: EngineEvent =
-                serde_json::from_str(&json).expect("deserialize event");
+            let roundtripped: EngineEvent = serde_json::from_str(&json).expect("deserialize event");
 
             // Verify roundtrip by re-serializing and comparing JSON.
             let json2 = serde_json::to_string(&roundtripped).expect("re-serialize");

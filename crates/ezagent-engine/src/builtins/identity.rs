@@ -10,11 +10,11 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ezagent_protocol::{Keypair, KeyPattern, PublicKey, SignedEnvelope};
+use ezagent_protocol::{KeyPattern, Keypair, PublicKey, SignedEnvelope};
 
 use crate::error::EngineError;
-use crate::hooks::phase::{HookContext, HookDeclaration, HookPhase, TriggerEvent};
 use crate::hooks::executor::HookFn;
+use crate::hooks::phase::{HookContext, HookDeclaration, HookPhase, TriggerEvent};
 use crate::registry::datatype::*;
 
 use crate::TIMESTAMP_TOLERANCE_MS;
@@ -171,9 +171,7 @@ pub fn verify_signature_hook(cache: PublicKeyCache) -> (HookDeclaration, HookFn)
         let signer_id = ctx
             .signer_id
             .as_ref()
-            .ok_or_else(|| {
-                EngineError::PermissionDenied("no signer_id for verification".into())
-            })?
+            .ok_or_else(|| EngineError::PermissionDenied("no signer_id for verification".into()))?
             .clone();
 
         // Look up the public key for this signer.
@@ -193,12 +191,11 @@ pub fn verify_signature_hook(cache: PublicKeyCache) -> (HookDeclaration, HookFn)
             }
         };
 
-        let envelope: SignedEnvelope =
-            serde_json::from_value(envelope_json).map_err(|e| {
-                EngineError::Protocol(ezagent_protocol::ProtocolError::Serialization(
-                    e.to_string(),
-                ))
-            })?;
+        let envelope: SignedEnvelope = serde_json::from_value(envelope_json).map_err(|e| {
+            EngineError::Protocol(ezagent_protocol::ProtocolError::Serialization(
+                e.to_string(),
+            ))
+        })?;
 
         // Verify the cryptographic signature.
         envelope.verify(&pubkey)?;
@@ -235,13 +232,25 @@ mod tests {
     fn tc_1_ident_002_keypair_generation() {
         let kp = Keypair::generate();
         let pk = kp.public_key();
-        assert_eq!(pk.as_bytes().len(), 32, "Ed25519 public key must be 32 bytes");
+        assert_eq!(
+            pk.as_bytes().len(),
+            32,
+            "Ed25519 public key must be 32 bytes"
+        );
 
         // Verify the keypair can also be reconstructed from bytes.
         let secret_bytes = kp.to_bytes();
-        assert_eq!(secret_bytes.len(), 32, "Ed25519 secret key must be 32 bytes");
+        assert_eq!(
+            secret_bytes.len(),
+            32,
+            "Ed25519 secret key must be 32 bytes"
+        );
         let kp2 = Keypair::from_bytes(&secret_bytes);
-        assert_eq!(kp2.public_key(), pk, "reconstructed keypair must have same public key");
+        assert_eq!(
+            kp2.public_key(),
+            pk,
+            "reconstructed keypair must have same public key"
+        );
     }
 
     /// TC-1-IDENT-003: Insert and retrieve public keys from the PublicKeyCache.
@@ -317,14 +326,10 @@ mod tests {
         // Create a context with signer, payload, and doc_id.
         let mut ctx = HookContext::new("message".to_string(), TriggerEvent::Insert);
         ctx.signer_id = Some("@alice:relay.com".to_string());
-        ctx.data.insert(
-            "payload".into(),
-            serde_json::json!("hello world"),
-        );
-        ctx.data.insert(
-            "doc_id".into(),
-            serde_json::json!("rooms/abc/messages"),
-        );
+        ctx.data
+            .insert("payload".into(), serde_json::json!("hello world"));
+        ctx.data
+            .insert("doc_id".into(), serde_json::json!("rooms/abc/messages"));
 
         // Execute the hook.
         let result = (handler)(&mut ctx);
@@ -332,7 +337,10 @@ mod tests {
 
         // Verify signed_envelope is in context.
         let envelope_val = ctx.data.get("signed_envelope");
-        assert!(envelope_val.is_some(), "signed_envelope must be in context data");
+        assert!(
+            envelope_val.is_some(),
+            "signed_envelope must be in context data"
+        );
 
         // Deserialize and verify the envelope contents.
         let envelope: SignedEnvelope =
@@ -374,7 +382,10 @@ mod tests {
 
         // Execute the hook.
         let result = (handler)(&mut ctx);
-        assert!(result.is_ok(), "verify_signature should succeed for valid envelope");
+        assert!(
+            result.is_ok(),
+            "verify_signature should succeed for valid envelope"
+        );
 
         // Verify the flag was set.
         let verified = ctx.data.get("signature_verified");
@@ -467,7 +478,11 @@ mod tests {
         assert_eq!(envelope.signer_id, "@alice:relay.com");
         assert_eq!(envelope.doc_id, "rooms/room-1/messages");
         assert_eq!(envelope.payload, b"crdt-update-payload");
-        assert_eq!(envelope.signature.len(), 64, "Ed25519 signature must be 64 bytes");
+        assert_eq!(
+            envelope.signature.len(),
+            64,
+            "Ed25519 signature must be 64 bytes"
+        );
     }
 
     /// TC-1-SIGN-002: Sign, modify payload, verify should fail.
@@ -687,10 +702,8 @@ mod tests {
         let result = (handler)(&mut ctx);
         assert!(result.is_ok(), "sign_envelope should handle empty payload");
 
-        let envelope: SignedEnvelope = serde_json::from_value(
-            ctx.data.get("signed_envelope").unwrap().clone(),
-        )
-        .unwrap();
+        let envelope: SignedEnvelope =
+            serde_json::from_value(ctx.data.get("signed_envelope").unwrap().clone()).unwrap();
         assert_eq!(envelope.signer_id, "@bob:relay.io");
         assert_eq!(envelope.doc_id, "");
         assert!(envelope.payload.is_empty());

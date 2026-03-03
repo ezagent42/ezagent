@@ -89,8 +89,8 @@ impl RocksDbBackend {
                 .ok_or_else(|| BackendError::Crdt("missing 'docs' column family".into()))?;
             let iter = db.iterator_cf(&cf_docs, rocksdb::IteratorMode::Start);
             for item in iter {
-                let (key, value) = item
-                    .map_err(|e| BackendError::Crdt(format!("RocksDB iterator error: {e}")))?;
+                let (key, value) =
+                    item.map_err(|e| BackendError::Crdt(format!("RocksDB iterator error: {e}")))?;
                 let doc_id = String::from_utf8(key.to_vec())
                     .map_err(|e| BackendError::Serialization(format!("invalid doc_id: {e}")))?;
 
@@ -114,15 +114,13 @@ impl RocksDbBackend {
 
         // Apply pending updates for each doc.
         {
-            let cf_pending = db
-                .cf_handle(CF_PENDING)
-                .ok_or_else(|| {
-                    BackendError::Crdt("missing 'pending_updates' column family".into())
-                })?;
+            let cf_pending = db.cf_handle(CF_PENDING).ok_or_else(|| {
+                BackendError::Crdt("missing 'pending_updates' column family".into())
+            })?;
             let iter = db.iterator_cf(&cf_pending, rocksdb::IteratorMode::Start);
             for item in iter {
-                let (key, value) = item
-                    .map_err(|e| BackendError::Crdt(format!("RocksDB iterator error: {e}")))?;
+                let (key, value) =
+                    item.map_err(|e| BackendError::Crdt(format!("RocksDB iterator error: {e}")))?;
                 let doc_id = String::from_utf8(key.to_vec())
                     .map_err(|e| BackendError::Serialization(format!("invalid doc_id: {e}")))?;
 
@@ -162,13 +160,12 @@ impl RocksDbBackend {
                 .ok_or_else(|| BackendError::Crdt("missing 'meta' column family".into()))?;
             let iter = db.iterator_cf(&cf_meta, rocksdb::IteratorMode::Start);
             for item in iter {
-                let (key, value) = item
-                    .map_err(|e| BackendError::Crdt(format!("RocksDB iterator error: {e}")))?;
+                let (key, value) =
+                    item.map_err(|e| BackendError::Crdt(format!("RocksDB iterator error: {e}")))?;
                 let doc_id = String::from_utf8(key.to_vec())
                     .map_err(|e| BackendError::Serialization(format!("invalid doc_id: {e}")))?;
-                let meta: DocMeta = serde_json::from_slice(&value).map_err(|e| {
-                    BackendError::Serialization(format!("decode doc meta: {e}"))
-                })?;
+                let meta: DocMeta = serde_json::from_slice(&value)
+                    .map_err(|e| BackendError::Serialization(format!("decode doc meta: {e}")))?;
                 // Use meta count if we don't already have a count from pending updates.
                 update_counts_map.entry(doc_id).or_insert(meta.update_count);
             }
@@ -225,7 +222,10 @@ impl RocksDbBackend {
     /// update counter.
     fn maybe_snapshot(&self, doc_id: &str) -> Result<(), BackendError> {
         let count = {
-            let counts = self.update_counts.read().expect("update_counts lock poisoned");
+            let counts = self
+                .update_counts
+                .read()
+                .expect("update_counts lock poisoned");
             counts.get(doc_id).copied().unwrap_or(0)
         };
 
@@ -236,9 +236,9 @@ impl RocksDbBackend {
         // Perform snapshot: encode full state and write to docs CF.
         let state_bytes = {
             let docs = self.docs.read().expect("docs lock poisoned");
-            let doc = docs.get(doc_id).ok_or_else(|| {
-                BackendError::DocNotFound(doc_id.to_string())
-            })?;
+            let doc = docs
+                .get(doc_id)
+                .ok_or_else(|| BackendError::DocNotFound(doc_id.to_string()))?;
             let txn = doc.transact();
             txn.encode_state_as_update_v1(&StateVector::default())
         };
@@ -250,9 +250,7 @@ impl RocksDbBackend {
         let cf_pending = self
             .db
             .cf_handle(CF_PENDING)
-            .ok_or_else(|| {
-                BackendError::Crdt("missing 'pending_updates' column family".into())
-            })?;
+            .ok_or_else(|| BackendError::Crdt("missing 'pending_updates' column family".into()))?;
         let cf_meta = self
             .db
             .cf_handle(CF_META)
@@ -270,7 +268,10 @@ impl RocksDbBackend {
 
         // Reset the update count.
         {
-            let mut counts = self.update_counts.write().expect("update_counts lock poisoned");
+            let mut counts = self
+                .update_counts
+                .write()
+                .expect("update_counts lock poisoned");
             counts.insert(doc_id.to_string(), 0);
         }
 
@@ -299,9 +300,7 @@ impl RocksDbBackend {
         let cf_pending = self
             .db
             .cf_handle(CF_PENDING)
-            .ok_or_else(|| {
-                BackendError::Crdt("missing 'pending_updates' column family".into())
-            })?;
+            .ok_or_else(|| BackendError::Crdt("missing 'pending_updates' column family".into()))?;
 
         // Read existing pending updates (if any).
         let mut pending: Vec<Vec<u8>> = match self
@@ -309,9 +308,8 @@ impl RocksDbBackend {
             .get_cf(&cf_pending, doc_id.as_bytes())
             .map_err(|e| BackendError::Crdt(format!("pending read error: {e}")))?
         {
-            Some(bytes) => serde_json::from_slice(&bytes).map_err(|e| {
-                BackendError::Serialization(format!("decode pending: {e}"))
-            })?,
+            Some(bytes) => serde_json::from_slice(&bytes)
+                .map_err(|e| BackendError::Serialization(format!("decode pending: {e}")))?,
             None => Vec::new(),
         };
 
@@ -339,9 +337,8 @@ impl RocksDbBackend {
             .get_cf(&cf_meta, doc_id.as_bytes())
             .map_err(|e| BackendError::Crdt(format!("meta read error: {e}")))?
         {
-            Some(bytes) => serde_json::from_slice(&bytes).map_err(|e| {
-                BackendError::Serialization(format!("decode meta: {e}"))
-            })?,
+            Some(bytes) => serde_json::from_slice(&bytes)
+                .map_err(|e| BackendError::Serialization(format!("decode meta: {e}")))?,
             None => DocMeta::default(),
         };
 
@@ -368,9 +365,9 @@ impl RocksDbBackend {
 
         let state_bytes = {
             let docs = self.docs.read().expect("docs lock poisoned");
-            let doc = docs.get(doc_id).ok_or_else(|| {
-                BackendError::DocNotFound(doc_id.to_string())
-            })?;
+            let doc = docs
+                .get(doc_id)
+                .ok_or_else(|| BackendError::DocNotFound(doc_id.to_string()))?;
             let txn = doc.transact();
             txn.encode_state_as_update_v1(&StateVector::default())
         };
@@ -386,7 +383,10 @@ impl RocksDbBackend {
     ///
     /// Useful for tests to verify snapshot behavior.
     pub fn pending_update_count(&self, doc_id: &str) -> u64 {
-        let counts = self.update_counts.read().expect("update_counts lock poisoned");
+        let counts = self
+            .update_counts
+            .read()
+            .expect("update_counts lock poisoned");
         counts.get(doc_id).copied().unwrap_or(0)
     }
 }
@@ -447,8 +447,7 @@ impl CrdtBackend for RocksDbBackend {
         }
 
         let doc = self.get_or_create_doc(doc_id);
-        let decoded =
-            Update::decode_v1(update).map_err(|e| BackendError::Crdt(e.to_string()))?;
+        let decoded = Update::decode_v1(update).map_err(|e| BackendError::Crdt(e.to_string()))?;
         {
             let mut txn = doc.transact_mut();
             txn.apply_update(decoded)
@@ -460,7 +459,10 @@ impl CrdtBackend for RocksDbBackend {
 
         // Increment update count.
         let new_count = {
-            let mut counts = self.update_counts.write().expect("update_counts lock poisoned");
+            let mut counts = self
+                .update_counts
+                .write()
+                .expect("update_counts lock poisoned");
             let count = counts.entry(doc_id.to_string()).or_insert(0);
             *count += 1;
             *count
@@ -528,7 +530,9 @@ mod tests {
             // Instead, let's just directly use the encode_state to verify and
             // persist through a snapshot.
             let backend2_doc_id = "test-room-persist";
-            backend.apply_update(backend2_doc_id, &state).expect("apply_update failed");
+            backend
+                .apply_update(backend2_doc_id, &state)
+                .expect("apply_update failed");
         }
 
         // Phase 2: Reopen and verify.
@@ -603,7 +607,10 @@ mod tests {
             .db
             .cf_handle(CF_PENDING)
             .expect("missing pending CF");
-        let pending = backend.db.get_cf(&cf_pending, doc_id.as_bytes()).expect("read pending");
+        let pending = backend
+            .db
+            .get_cf(&cf_pending, doc_id.as_bytes())
+            .expect("read pending");
         assert!(
             pending.is_none(),
             "pending updates should be cleared after snapshot"

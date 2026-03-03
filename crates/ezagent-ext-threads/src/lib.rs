@@ -49,14 +49,10 @@ impl ExtensionPlugin for ThreadsExtension {
 
     fn register(&self, ctx: &mut RegistrationContext) -> Result<(), ExtError> {
         // PreSend hook for injecting thread annotation.
-        ctx.register_hook_json(
-            r#"{"id":"threads.inject","phase":"PreSend","priority":30}"#,
-        )?;
+        ctx.register_hook_json(r#"{"id":"threads.inject","phase":"PreSend","priority":30}"#)?;
 
         // AfterRead hook for filtering thread view.
-        ctx.register_hook_json(
-            r#"{"id":"threads.filter","phase":"AfterRead","priority":50}"#,
-        )?;
+        ctx.register_hook_json(r#"{"id":"threads.filter","phase":"AfterRead","priority":50}"#)?;
 
         Ok(())
     }

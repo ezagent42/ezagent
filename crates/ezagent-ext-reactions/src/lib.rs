@@ -54,14 +54,10 @@ impl ExtensionPlugin for ReactionsExtension {
 
     fn register(&self, ctx: &mut RegistrationContext) -> Result<(), ExtError> {
         // Register the PreSend hook for validation and injection.
-        ctx.register_hook_json(
-            r#"{"id":"reactions.inject","phase":"PreSend","priority":30}"#,
-        )?;
+        ctx.register_hook_json(r#"{"id":"reactions.inject","phase":"PreSend","priority":30}"#)?;
 
         // Register the AfterWrite hook for event emission.
-        ctx.register_hook_json(
-            r#"{"id":"reactions.emit","phase":"AfterWrite","priority":40}"#,
-        )?;
+        ctx.register_hook_json(r#"{"id":"reactions.emit","phase":"AfterWrite","priority":40}"#)?;
 
         Ok(())
     }
@@ -95,10 +91,7 @@ mod tests {
 
         // Verify URI paths.
         assert_eq!(m.uri_paths.len(), 1);
-        assert_eq!(
-            m.uri_paths[0].pattern,
-            "/r/{room_id}/m/{ref_id}/reactions"
-        );
+        assert_eq!(m.uri_paths[0].pattern, "/r/{room_id}/m/{ref_id}/reactions");
         assert_eq!(m.uri_paths[0].description, "Reaction list for a message");
 
         // Verify registration succeeds and registers 2 hooks.
@@ -116,14 +109,12 @@ mod tests {
     /// entity_id are correctly extracted.
     #[test]
     fn tc_2_ext03_002_validate_reaction_key_parsing() {
-        let (emoji, entity_id) =
-            hooks::parse_reaction_key("👍:@bob:relay-a.example.com").unwrap();
+        let (emoji, entity_id) = hooks::parse_reaction_key("👍:@bob:relay-a.example.com").unwrap();
         assert_eq!(emoji, "👍");
         assert_eq!(entity_id, "@bob:relay-a.example.com");
 
         // Additional valid key patterns.
-        let (emoji, entity_id) =
-            hooks::parse_reaction_key("❤️:@alice:relay.example.com").unwrap();
+        let (emoji, entity_id) = hooks::parse_reaction_key("❤️:@alice:relay.example.com").unwrap();
         assert_eq!(emoji, "❤️");
         assert_eq!(entity_id, "@alice:relay.example.com");
     }
@@ -146,11 +137,8 @@ mod tests {
         );
 
         // Bob's reaction key with Bob as signer — should succeed.
-        hooks::validate_reaction_signer(
-            "👍:@bob:relay-a.example.com",
-            "@bob:relay-a.example.com",
-        )
-        .unwrap();
+        hooks::validate_reaction_signer("👍:@bob:relay-a.example.com", "@bob:relay-a.example.com")
+            .unwrap();
     }
 
     /// TC-2-EXT03-004: Reactions don't affect Bus signature.

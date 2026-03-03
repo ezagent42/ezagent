@@ -19,12 +19,7 @@ use crate::TIMESTAMP_TOLERANCE_MS;
 ///
 /// Signs the payload with the provided keypair and attaches the signer's
 /// entity ID and target document ID.
-pub fn wrap_update(
-    keypair: &Keypair,
-    signer: &str,
-    doc_id: &str,
-    update: &[u8],
-) -> SignedEnvelope {
+pub fn wrap_update(keypair: &Keypair, signer: &str, doc_id: &str, update: &[u8]) -> SignedEnvelope {
     SignedEnvelope::sign(
         keypair,
         signer.to_string(),
@@ -52,9 +47,9 @@ pub fn unwrap_update(
     let signer_id = &envelope.signer_id;
 
     // Look up public key for the signer.
-    let pubkey = cache.get(signer_id).ok_or_else(|| {
-        EngineError::PermissionDenied(format!("no public key for {}", signer_id))
-    })?;
+    let pubkey = cache
+        .get(signer_id)
+        .ok_or_else(|| EngineError::PermissionDenied(format!("no public key for {}", signer_id)))?;
 
     // Verify the cryptographic signature (also validates envelope version).
     envelope.verify(&pubkey)?;
@@ -217,7 +212,10 @@ mod tests {
         // Unwrap and verify roundtrip.
         let recovered = unwrap_update(&envelope, &cache)
             .expect("unwrap_update should succeed for valid envelope");
-        assert_eq!(recovered, payload, "payload must survive wrap/unwrap roundtrip");
+        assert_eq!(
+            recovered, payload,
+            "payload must survive wrap/unwrap roundtrip"
+        );
     }
 
     /// TC-1-SYNC-002: Tampering with the envelope payload causes unwrap to
@@ -279,7 +277,10 @@ mod tests {
         );
 
         // Test the timestamp tolerance constant.
-        assert_eq!(TIMESTAMP_TOLERANCE_MS, 300_000, "tolerance must be 5 minutes");
+        assert_eq!(
+            TIMESTAMP_TOLERANCE_MS, 300_000,
+            "tolerance must be 5 minutes"
+        );
 
         // Verify that the tolerance logic rejects old timestamps.
         // We simulate by checking the delta calculation directly.
@@ -315,10 +316,7 @@ mod tests {
         );
 
         // Both empty -> UpToDate.
-        assert_eq!(
-            compare_state_vectors(b"", b""),
-            SyncDecision::UpToDate
-        );
+        assert_eq!(compare_state_vectors(b"", b""), SyncDecision::UpToDate);
 
         // Local empty, remote has data -> NeedRemoteState.
         assert_eq!(
@@ -418,12 +416,15 @@ mod tests {
             assert_eq!(
                 update.doc_id,
                 format!("doc/{}", i),
-                "update at position {} should be doc/{}", i, i
+                "update at position {} should be doc/{}",
+                i,
+                i
             );
             assert_eq!(
                 update.envelope.payload,
                 format!("update-{}", i).as_bytes(),
-                "payload at position {} must match", i
+                "payload at position {} must match",
+                i
             );
         }
 

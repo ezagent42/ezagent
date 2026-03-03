@@ -125,10 +125,7 @@ impl ExtensionManifest {
                 .datatypes
                 .and_then(|d| d.declarations)
                 .unwrap_or_default(),
-            hook_declarations: raw
-                .hooks
-                .and_then(|h| h.declarations)
-                .unwrap_or_default(),
+            hook_declarations: raw.hooks.and_then(|h| h.declarations).unwrap_or_default(),
             ext_dependencies: raw
                 .dependencies
                 .and_then(|d| d.extensions)

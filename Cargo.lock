@@ -717,6 +717,23 @@ dependencies = [
  "ed25519-dalek",
  "ezagent-backend",
  "ezagent-ext-api",
+ "ezagent-ext-channels",
+ "ezagent-ext-collab",
+ "ezagent-ext-command",
+ "ezagent-ext-cross-room-ref",
+ "ezagent-ext-drafts",
+ "ezagent-ext-link-preview",
+ "ezagent-ext-media",
+ "ezagent-ext-moderation",
+ "ezagent-ext-mutable",
+ "ezagent-ext-presence",
+ "ezagent-ext-profile",
+ "ezagent-ext-reactions",
+ "ezagent-ext-receipts",
+ "ezagent-ext-reply-to",
+ "ezagent-ext-runtime",
+ "ezagent-ext-threads",
+ "ezagent-ext-watch",
  "ezagent-protocol",
  "libloading",
  "log",
@@ -746,6 +763,33 @@ dependencies = [
 
 [[package]]
 name = "ezagent-ext-channels"
+version = "0.1.0"
+dependencies = [
+ "ezagent-ext-api",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "ezagent-ext-collab"
+version = "0.1.0"
+dependencies = [
+ "ezagent-ext-api",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "ezagent-ext-command"
+version = "0.1.0"
+dependencies = [
+ "ezagent-ext-api",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "ezagent-ext-cross-room-ref"
 version = "0.1.0"
 dependencies = [
  "ezagent-ext-api",
@@ -790,6 +834,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ezagent-ext-mutable"
+version = "0.1.0"
+dependencies = [
+ "ezagent-ext-api",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "ezagent-ext-presence"
 version = "0.1.0"
 dependencies = [
@@ -826,10 +879,46 @@ dependencies = [
 ]
 
 [[package]]
+name = "ezagent-ext-reply-to"
+version = "0.1.0"
+dependencies = [
+ "ezagent-ext-api",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "ezagent-ext-runtime"
+version = "0.1.0"
+dependencies = [
+ "ezagent-ext-api",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "ezagent-ext-test-dummy"
 version = "0.1.0"
 dependencies = [
  "ezagent-ext-api",
+]
+
+[[package]]
+name = "ezagent-ext-threads"
+version = "0.1.0"
+dependencies = [
+ "ezagent-ext-api",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "ezagent-ext-watch"
+version = "0.1.0"
+dependencies = [
+ "ezagent-ext-api",
+ "serde_json",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

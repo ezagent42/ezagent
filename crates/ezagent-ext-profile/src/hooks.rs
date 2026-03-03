@@ -32,10 +32,7 @@ pub enum ProfileHookError {
 ///
 /// Returns [`ProfileHookError::WriterMismatch`] if the profile entity
 /// does not match the signer.
-pub fn validate_profile_writer(
-    profile_entity: &str,
-    signer: &str,
-) -> Result<(), ProfileHookError> {
+pub fn validate_profile_writer(profile_entity: &str, signer: &str) -> Result<(), ProfileHookError> {
     if profile_entity != signer {
         return Err(ProfileHookError::WriterMismatch {
             profile_entity: profile_entity.to_string(),
@@ -71,11 +68,7 @@ mod tests {
 
     #[test]
     fn valid_matching_writer() {
-        validate_profile_writer(
-            "@alice:relay.example.com",
-            "@alice:relay.example.com",
-        )
-        .unwrap();
+        validate_profile_writer("@alice:relay.example.com", "@alice:relay.example.com").unwrap();
     }
 
     #[test]
@@ -89,11 +82,8 @@ mod tests {
 
     #[test]
     fn invalid_different_entity() {
-        let err = validate_profile_writer(
-            "@alice:relay.example.com",
-            "@bob:relay.example.com",
-        )
-        .unwrap_err();
+        let err = validate_profile_writer("@alice:relay.example.com", "@bob:relay.example.com")
+            .unwrap_err();
         assert!(
             matches!(err, ProfileHookError::WriterMismatch { .. }),
             "unexpected error: {err}"
@@ -102,11 +92,9 @@ mod tests {
 
     #[test]
     fn invalid_different_relay() {
-        let err = validate_profile_writer(
-            "@alice:relay-a.example.com",
-            "@alice:relay-b.example.com",
-        )
-        .unwrap_err();
+        let err =
+            validate_profile_writer("@alice:relay-a.example.com", "@alice:relay-b.example.com")
+                .unwrap_err();
         assert!(
             matches!(err, ProfileHookError::WriterMismatch { .. }),
             "unexpected error: {err}"

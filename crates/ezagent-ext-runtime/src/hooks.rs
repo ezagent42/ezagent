@@ -50,16 +50,12 @@ pub enum RuntimeHookError {
 /// namespace is empty, too long, or contains invalid characters.
 pub fn validate_namespace_format(ns: &str) -> Result<(), RuntimeHookError> {
     if ns.is_empty() || ns.len() > MAX_NAMESPACE_LENGTH {
-        return Err(RuntimeHookError::InvalidNamespaceFormat {
-            ns: ns.to_string(),
-        });
+        return Err(RuntimeHookError::InvalidNamespaceFormat { ns: ns.to_string() });
     }
 
     for ch in ns.chars() {
         if !matches!(ch, 'a'..='z' | '0'..='9') {
-            return Err(RuntimeHookError::InvalidNamespaceFormat {
-                ns: ns.to_string(),
-            });
+            return Err(RuntimeHookError::InvalidNamespaceFormat { ns: ns.to_string() });
         }
     }
 
