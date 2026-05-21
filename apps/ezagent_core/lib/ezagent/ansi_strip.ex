@@ -3,7 +3,7 @@ defmodule Ezagent.AnsiStrip do
   Cheap ANSI escape stripper — ported from old esr (PR-24 step 2) per
   Phase 4-completion PR 8 cc-pty enhancement.
 
-  Used by `Ezagent.PluginCc.PtyServer` to detect claude's
+  Used by `Ezagent.Domain.Pty.Server` to detect claude's
   `--dangerously-load-development-channels` dialog text in raw PTY
   stdout (ANSI codes interleave between words so we can't substring-
   match the raw bytes).

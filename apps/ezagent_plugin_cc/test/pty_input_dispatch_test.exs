@@ -41,10 +41,10 @@ defmodule Ezagent.PluginCc.PtyInputDispatchTest do
     {:ok, _kind_pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
 
     {:ok, pty_pid} =
-      DynamicSupervisor.start_child(
-        EzagentPluginCc.PtyServerSupervisor,
-        {Ezagent.PluginCc.PtyServer, %{agent_uri: agent_uri, cwd: File.cwd!(), test_mode: true}}
-      )
+      Ezagent.Domain.Pty.start(agent_uri, %{
+        cwd: File.cwd!(),
+        test_mode: true
+      })
 
     on_exit(fn ->
       if Process.alive?(pty_pid), do: Process.exit(pty_pid, :shutdown)
@@ -127,7 +127,7 @@ defmodule Ezagent.PluginCc.PtyInputDispatchTest do
   end
 
   test "PubSub output topic broadcasts on chunk arrival", %{agent_uri: agent_uri, pty_pid: pid} do
-    Phoenix.PubSub.subscribe(EzagentCore.PubSub, Ezagent.PluginCc.PtyServer.output_topic(agent_uri))
+    Phoenix.PubSub.subscribe(EzagentCore.PubSub, Ezagent.Domain.Pty.Server.output_topic(agent_uri))
 
     # Simulate a stdout chunk arrival (the erlexec :stdout message shape).
     send(pid, {:stdout, 0, "hello from pty\n"})

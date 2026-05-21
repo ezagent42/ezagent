@@ -235,7 +235,7 @@ defmodule EzagentPluginLiveview.AgentNewLiveTest do
       assert is_pid(agent_pid)
       assert Process.alive?(agent_pid)
 
-      assert {:ok, pty_pid} = Ezagent.PluginCc.PtyServer.find_by_agent_uri(agent_uri),
+      assert {:ok, pty_pid} = Ezagent.Domain.Pty.lookup(agent_uri),
              "PtyServer must be alive after create_agent (V1 fix invariant 2/2)"
 
       assert is_pid(pty_pid)

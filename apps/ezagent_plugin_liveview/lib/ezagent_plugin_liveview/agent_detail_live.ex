@@ -101,7 +101,7 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
     # reference here is the documented exception per invariant 8:
     # there's no domain-wide "restart agent" abstraction yet (V2
     # work — see Lifecycle Behavior contract in v2-feedback-log).
-    case Ezagent.PluginCc.PtyServer.find_by_agent_uri(socket.assigns.agent_uri) do
+    case Ezagent.Domain.Pty.lookup(socket.assigns.agent_uri) do
       {:ok, pid} ->
         # Supervisor terminates → restart via :permanent restart spec.
         # GenServer.stop(:normal) would suppress restart; use :shutdown

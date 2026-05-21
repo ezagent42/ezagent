@@ -10,7 +10,7 @@ defmodule Ezagent.Invariants.SingleSpawnEntryTest do
   future "I'll just call start_child directly for my new plugin's
   Kind" drift is impossible without conscious test edits.
 
-  Sidecar / infrastructure processes (e.g., `Ezagent.PluginCc.PtyServer`,
+  Sidecar / infrastructure processes (e.g., `Ezagent.Domain.Pty.Server`,
   plugin per-app `DynamicSupervisor` declarations in `Application`
   child lists) are exempt — they're not Kinds and have their own
   supervision concerns. The exemption table is
@@ -110,10 +110,15 @@ defmodule Ezagent.Invariants.SingleSpawnEntryTest do
   # updating the moduledoc.
   defp allowed_sidecar_paths do
     [
-      # PtyServer is a sidecar managed by the cc.agent Template (PR-D2
-      # architecture: ezagent_plugin_cc spawns a node-pty subprocess
-      # alongside the agent Kind, not a Kind itself).
-      "apps/ezagent_plugin_cc/lib/ezagent/template/cc_agent.ex"
+      # Ezagent.Domain.Pty.start/2 is the facade over the Domain.Pty
+      # supervision tree (Domain.Pty PR-A 2026-05-21 SPEC v1 §3.1).
+      # The Server it starts is a sidecar managed by per-flavor
+      # Templates (cc.agent today; echo-with-pty / future plugins
+      # later) — NOT a Kind. Pre-PR-A this exemption pointed at
+      # cc_agent.ex's inline DynamicSupervisor.start_child; the PR
+      # collapsed all start_child callsites for PtyServer down to this
+      # one facade.
+      "apps/ezagent_domain_pty/lib/ezagent/domain/pty.ex"
     ]
   end
 end

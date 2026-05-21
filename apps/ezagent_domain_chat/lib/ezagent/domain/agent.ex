@@ -14,10 +14,18 @@ defmodule Ezagent.Domain.Agent do
   Domain.Agent is the unifying domain model over the various agent
   flavors (cc, echo, curl, future). The Agent Kind itself lives in
   `Ezagent.Entity.Agent` here in `ezagent_domain_chat`, so the facade
-  belongs in the same app. Plugin-specific knowledge (cc →
-  `PtyServer.find_by_agent_uri`, echo → just Kind alive-or-not) stays
-  in the respective plugin module; Domain.Agent's job is to know
-  WHICH plugin to ask and unify the response format.
+  belongs in the same app. Plugin-specific knowledge (echo → just
+  Kind alive-or-not; cc → query the Domain.Pty facade) stays here as
+  a thin per-flavor dispatch; Domain.Agent's job is to know WHICH
+  domain primitive to ask and unify the response format.
+
+  ## Domain.Pty PR-A (2026-05-21 SPEC v1)
+
+  cc-flavor lifecycle now queries `Ezagent.Domain.Pty.{lookup,status}`
+  instead of the old `Ezagent.PluginCc.PtyServer.{find_by_agent_uri,status}`.
+  Code.ensure_loaded? still guards in case ezagent_domain_pty isn't
+  loaded (test isolation contexts); the dep graph makes it always
+  loaded in production builds.
 
   ## V2 (deferred)
 
@@ -74,17 +82,17 @@ defmodule Ezagent.Domain.Agent do
   # ── flavor → plugin lifecycle helper dispatch ────────────────────
 
   defp delegate_alive_status("cc", agent_uri) do
-    # cc plugin's deeper lifecycle = PtyServer.
-    # PtyServer.find_by_agent_uri + status returns the operator-facing
+    # cc-flavor deeper lifecycle = Domain.Pty's PtyServer.
+    # Domain.Pty.lookup + Server.status returns the operator-facing
     # snapshot. Post-V1-fix (Allen 2026-05-21) cc agents are always
     # local-pty — a missing PtyServer when the Kind is alive is now
     # always a transient state (between Kind spawn and PtyServer
     # start, or a crash that left the Kind up).
-    if Code.ensure_loaded?(Ezagent.PluginCc.PtyServer) do
-      case Ezagent.PluginCc.PtyServer.find_by_agent_uri(agent_uri) do
+    if Code.ensure_loaded?(Ezagent.Domain.Pty) do
+      case Ezagent.Domain.Pty.lookup(agent_uri) do
         {:ok, pid} ->
           try do
-            %{phase: :alive, flavor: "cc", detail: Ezagent.PluginCc.PtyServer.status(pid)}
+            %{phase: :alive, flavor: "cc", detail: Ezagent.Domain.Pty.Server.status(pid)}
           catch
             _, reason ->
               %{phase: :error, flavor: "cc", detail: %{error: inspect(reason)}}
@@ -97,7 +105,7 @@ defmodule Ezagent.Domain.Agent do
           %{phase: :registered, flavor: "cc", detail: %{note: "no PtyServer"}}
       end
     else
-      %{phase: :registered, flavor: "cc", detail: %{note: "PluginCc not loaded"}}
+      %{phase: :registered, flavor: "cc", detail: %{note: "Domain.Pty not loaded"}}
     end
   end
 
