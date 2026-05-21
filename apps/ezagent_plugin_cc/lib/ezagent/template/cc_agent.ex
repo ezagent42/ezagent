@@ -57,9 +57,10 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   The cc-specific claude invocation (mcp.json generation, settings
   override path, `--dangerously-load-development-channels`,
   `--permission-mode bypassPermissions`) used to live inside
-  `Ezagent.PluginCc.PtyServer.spawn_claude_directly/1`. It now lives
-  here (`build_claude_cmd/1`) because Domain.Pty.Server is Tier-2 and
-  cannot reference cc-plugin modules like `EzagentPluginCc.McpConfigWriter`.
+  `Ezagent.PluginCc.PtyServer.spawn_claude_directly/1` (historical).
+  It now lives here (`build_claude_cmd/1`) because Domain.Pty.Server
+  is Tier-2 and cannot reference cc-plugin modules like
+  `EzagentPluginCc.McpConfigWriter`.
   The cmd string is supplied as `cmd_override` on the Server init
   args; Server just runs whatever string the caller hands it under
   erlexec's PTY.

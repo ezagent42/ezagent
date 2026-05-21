@@ -362,7 +362,7 @@ because claude TUI specifically needs a real PTY).
 |---|----------|----------|-----------|
 | 1 | App name | **`ezagent_domain_pty`** | Matches `Ezagent.Domain.Pty` module namespace; "terminal" is UI, PTY is the runtime |
 | 2 | TerminalLive route | **`/identities/agents/:uri/terminal`** | Original draft `/terminal/:agent_uri` was verb-first — violates the codebase's resource-first URL convention. The chosen path is the same shape Phase 8b had before retiring it, and matches sibling `/identities/agents/:uri/caps` + `/:uri/api-keys`. See §13 for the LV-URL ↔ URI mapping convention |
-| 3 | Echo PTY enablement | **AgentNewLive "with PTY" checkbox** for echo flavor (consistent with cc which requires a cwd field) — operator self-service, not admin-only template config |
+| 3 | Echo PTY enablement | **DEFERRED — future work** (PR-D 2026-05-22 follow-up). Original decision was to add an AgentNewLive "with PTY" checkbox, but echo plugin doesn't currently have a `echo.agent` Template Class (it uses direct `Ezagent.SpawnRegistry.spawn/1` per `EzagentPluginEcho.Application` moduledoc). Adding the checkbox requires: (a) introduce an `echo.agent` Template Class with a `with_pty: bool` field, (b) wire `AgentNewLive` to route echo creation through `Workspace.add_template` (parallel to cc.agent flow), (c) update the Echo Application moduledoc. Out of scope for PR-D; tracked for a separate echo-template PR. cc flavor flow (the production user of PTY) ships and works through this PR unchanged |
 | 4 | Activity Bar inclusion | **NO** — terminal is a sub-view of an agent, not a top-level activity. Reaching via `/identities/agents/:uri/terminal` (or the inline expander on agent detail page) is structurally correct; Activity Bar stays 4 items (Sessions / Identities / Routing / Plugins) |
 
 ## 11. Verification checklist
@@ -377,8 +377,9 @@ After all 4 PRs land:
 4. ✅ `/terminal/<encoded-cc-agent-uri>` renders xterm.js terminal
 5. ✅ `/identities/agents/<cc-agent-uri>` shows inline terminal
    button (expandable)
-6. ✅ AgentNewLive for echo flavor offers "with PTY" checkbox; when
-   checked, echo agent gets a `/bin/bash` PtyServer
+6. ⏭️ DEFERRED — AgentNewLive "with PTY" checkbox for echo flavor.
+   See §10 row 3 — needs an `echo.agent` Template Class first
+   (tracked as a follow-up PR; not blocking V1 Domain.Pty).
 7. ✅ `Ezagent.Domain.Agent.lifecycle_status/1` reports
    `phase: :alive` for cc agents AND echo-with-pty agents uniformly
 8. ✅ Invariant test `no_pty_in_plugin_cc_test.exs` passes
