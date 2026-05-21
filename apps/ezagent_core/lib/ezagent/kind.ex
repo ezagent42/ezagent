@@ -37,7 +37,7 @@ defmodule Ezagent.Kind do
   Kind modules is caught by the CI gate
   `Ezagent.Invariants.SingleSpawnEntryTest` plus the runtime invariant
   `Ezagent.Invariants.KindProvenanceTest`. Sidecars
-  (`Ezagent.PluginCc.PtyServer` and friends) are NOT Kinds and are
+  (`Ezagent.Domain.Pty.Server` and friends) are NOT Kinds and are
   exempt.
   """
 

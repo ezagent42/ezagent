@@ -149,7 +149,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
       assert is_pid(agent_pid)
       assert Process.alive?(agent_pid)
 
-      assert {:ok, pty_pid} = Ezagent.PluginCc.PtyServer.find_by_agent_uri(agent_uri),
+      assert {:ok, pty_pid} = Ezagent.Domain.Pty.lookup(agent_uri),
              "PtyServer must be alive after cc.agent.instantiate (V1 fix invariant)"
 
       assert is_pid(pty_pid)
@@ -188,7 +188,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
   end
 
   defp list_pty_pids_for(agent_uri_str) do
-    Ezagent.PluginCc.PtyServer.list_agents()
+    Ezagent.Domain.Pty.Server.list_agents()
     |> Enum.filter(fn a -> URI.to_string(a.agent_uri) == agent_uri_str end)
     |> Enum.map(& &1.pid)
   end

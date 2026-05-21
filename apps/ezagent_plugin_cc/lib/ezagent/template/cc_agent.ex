@@ -46,11 +46,23 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   `instantiate/3` first looks up `agent_uri` in `KindRegistry`.
   If alive, returns the existing URI — no respawn, no PTY waste.
   Otherwise spawns the Agent Kind via `SpawnRegistry.spawn/1` then
-  starts the PtyServer under `EzagentPluginCc.PtyServerSupervisor`.
-  Both layers are atomically dedup'd: Agent Kind via
-  `KindRegistry` (entity:// spawn fn returns `{:error,
-  {:already_started, _}}` for duplicates), PtyServer via its `:via
-  Registry` (`EzagentPluginCc.PtyServerRegistry`).
+  starts the PtyServer via `Ezagent.Domain.Pty.start/2` (facade over
+  the `ezagent_domain_pty` Tier-2 app). Both layers are atomically
+  dedup'd: Agent Kind via `KindRegistry` (entity:// spawn fn returns
+  `{:error, {:already_started, _}}` for duplicates), PtyServer via the
+  Domain.Pty :via Registry (`EzagentDomainPty.Registry`).
+
+  ## Domain.Pty PR-A (2026-05-21 SPEC v1)
+
+  The cc-specific claude invocation (mcp.json generation, settings
+  override path, `--dangerously-load-development-channels`,
+  `--permission-mode bypassPermissions`) used to live inside
+  `Ezagent.PluginCc.PtyServer.spawn_claude_directly/1`. It now lives
+  here (`build_claude_cmd/1`) because Domain.Pty.Server is Tier-2 and
+  cannot reference cc-plugin modules like `EzagentPluginCc.McpConfigWriter`.
+  The cmd string is supplied as `cmd_override` on the Server init
+  args; Server just runs whatever string the caller hands it under
+  erlexec's PTY.
   """
 
   @behaviour Ezagent.Kind.Template
@@ -176,10 +188,24 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   end
 
   defp ensure_pty_server(agent_uri, cwd) do
-    case DynamicSupervisor.start_child(
-           EzagentPluginCc.PtyServerSupervisor,
-           {Ezagent.PluginCc.PtyServer, %{agent_uri: agent_uri, cwd: cwd}}
-         ) do
+    # Domain.Pty PR-A: route through the facade instead of
+    # DynamicSupervisor.start_child on EzagentPluginCc.PtyServerSupervisor.
+    # The cmd string (claude + flags + mcp config path) is built here
+    # in the cc plugin and handed to Server as :cmd_override, keeping
+    # ezagent_domain_pty Tier-2.
+    #
+    # In `:test` env we deliberately SKIP the McpConfigWriter side
+    # effect — the Server short-circuits `:exec.run/2` via `test_mode:
+    # true` (Mix.env() default), so the cmd string is never spawned;
+    # building it would write `~/.ezagent/bridge.mcp.json` to disk on
+    # every test, which the pre-Domain.Pty-PR-A path also avoided.
+    params =
+      case Mix.env() do
+        :test -> %{cwd: cwd, test_mode: true}
+        _ -> %{cwd: cwd, cmd_override: build_claude_cmd(agent_uri)}
+      end
+
+    case Ezagent.Domain.Pty.start(agent_uri, params) do
       {:ok, _pid} ->
         :ok
 
@@ -198,6 +224,32 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
     end
   end
 
+  # Phase 6 PR 23 + Domain.Pty PR-A (2026-05-21): build the full
+  # claude invocation cc agents run under PTY. Moved here from
+  # `Ezagent.PluginCc.PtyServer.spawn_claude_directly/1` so the Server
+  # module (now `Ezagent.Domain.Pty.Server`) stays Tier-2 — no
+  # dependency on cc-plugin modules like `McpConfigWriter`.
+  defp build_claude_cmd(agent_uri) do
+    {:ok, mcp_path} =
+      EzagentPluginCc.McpConfigWriter.write!(
+        agent_uri: URI.to_string(agent_uri)
+      )
+
+    # Phase 6 PR 23: operator's ~/.claude/settings.json may have
+    # `remoteControlAtStartup: true` (cc-openclaw + others enable
+    # it). That redirects interactive I/O to claude.ai cloud session
+    # — local PTY becomes a passive observer. Override to false via
+    # --settings on a plugin-shipped JSON.
+    settings_path =
+      :code.priv_dir(:ezagent_plugin_cc)
+      |> Path.join("claude-pty-settings.json")
+
+    "claude --permission-mode bypassPermissions " <>
+      "--dangerously-load-development-channels server:esr-bridge " <>
+      "--settings #{settings_path} " <>
+      "--mcp-config #{mcp_path}"
+  end
+
   defp agent_kind_alive?(agent_uri) do
     case Ezagent.KindRegistry.lookup(agent_uri) do
       {:ok, _pid} -> true
@@ -205,12 +257,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
     end
   end
 
-  defp pty_server_alive?(agent_uri) do
-    case Ezagent.PluginCc.PtyServer.find_by_agent_uri(agent_uri) do
-      {:ok, _pid} -> true
-      :error -> false
-    end
-  end
+  defp pty_server_alive?(agent_uri), do: Ezagent.Domain.Pty.alive?(agent_uri)
 
   # --- Ezagent.UI.Form ---------------------------------------------------------
 

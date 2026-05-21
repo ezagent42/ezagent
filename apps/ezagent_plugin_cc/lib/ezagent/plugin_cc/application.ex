@@ -6,7 +6,6 @@ defmodule EzagentPluginCc.Application do
 
   Responsibilities:
 
-  - Run PTY-managed `claude` processes via erlexec (`PtyServer`)
   - Host the v2 Phoenix.Channel WS bridge at `/cc_socket`
     (`Socket` + `Channel` + `BridgeRegistry`)
   - Mint + persist per-instance connect tokens (`TokenStore`)
@@ -15,6 +14,12 @@ defmodule EzagentPluginCc.Application do
   - Register the unified `cc.agent` Template Class (PR-D2,
     Allen 2026-05-19 — replaces the pre-existing cc.pty +
     cc.channel_instance split)
+
+  PTY runtime (PtyServer + Supervisor + Registry) moved to the new
+  `ezagent_domain_pty` Tier-2 app in PR-A of the Domain.Pty SPEC
+  (2026-05-21). cc plugin now spawns its claude PTY by building the
+  full cmd string and calling `Ezagent.Domain.Pty.start/2`; the
+  Server/Supervisor/Registry boot here is gone.
 
   ## Why the unified template
 
@@ -34,18 +39,15 @@ defmodule EzagentPluginCc.Application do
   ## Boot order
 
   1. Init BridgeRegistry (ETS table for agent_uri → Channel pid)
-  2. Start PtyServerRegistry (:via name source for PtyServers) +
-     PtyServerSupervisor (DynamicSupervisor)
-  3. Register the `cc.agent` Template Class
-  4. Register `Ezagent.Behavior.Pty` on `Ezagent.Entity.Agent` so
+  2. Register the `cc.agent` Template Class
+  3. Register `Ezagent.Behavior.Pty` on `Ezagent.Entity.Agent` so
      `entity://agent/default/cc_<X>?action=pty.write` dispatches resolve.
      (PR #146: previously a synthetic `pty-input://default` singleton;
      dissolved per SPEC v2 §5.7 — PTY input now dispatches to the
      agent itself.)
-  5. Re-run `Workspace.Loader.load_all/0` to instantiate any
+  4. Re-run `Workspace.Loader.load_all/0` to instantiate any
      cc.agent templates that were skipped during boot before this
-     plugin was up. Idempotent at supervisor layer via the
-     PtyServer :via Registry.
+     plugin was up. Idempotent via the Domain.Pty :via Registry.
   """
 
   use Application
@@ -56,12 +58,14 @@ defmodule EzagentPluginCc.Application do
   def start(_type, _args) do
     :ok = BridgeRegistry.init()
 
-    children = [
-      # PR-D2: PtyServer registers under :via Registry keyed by
-      # agent_uri so spawn-with-same-uri collapses atomically.
-      {Registry, keys: :unique, name: EzagentPluginCc.PtyServerRegistry},
-      {DynamicSupervisor, name: EzagentPluginCc.PtyServerSupervisor, strategy: :one_for_one}
-    ]
+    # Domain.Pty PR-A (2026-05-21): the PtyServerRegistry +
+    # PtyServerSupervisor children moved to EzagentDomainPty.Application.
+    # cc plugin's Application now boots ONLY a placeholder supervisor —
+    # all stateful children (Bridge/Token/Socket) are either ETS-backed
+    # (BridgeRegistry above) or pulled in via the umbrella's lifecycle
+    # (Socket via EzagentWeb.Endpoint). Keeping an empty Supervisor
+    # makes Application.stop work as the umbrella expects.
+    children = []
 
     case Supervisor.start_link(children, strategy: :one_for_one, name: __MODULE__) do
       {:ok, sup_pid} ->

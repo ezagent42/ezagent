@@ -1,6 +1,18 @@
-defmodule Ezagent.PluginCc.PtyServer do
+defmodule Ezagent.Domain.Pty.Server do
   @moduledoc """
-  PTY-managed child process running `claude` directly.
+  PTY-managed child process running an arbitrary command (cc plugin
+  uses this for `claude`; future plugins use it for `/bin/bash`, an
+  echo runner, etc.).
+
+  Promoted from `Ezagent.PluginCc.PtyServer` to the Domain.Pty app per
+  SPEC v1 §3.1 (Domain.Pty architecture, 2026-05-21). Module body is
+  unchanged from the original cc-plugin implementation modulo the
+  Registry/Supervisor name renames (now `EzagentDomainPty.{Registry,
+  Supervisor}`); semantics, auto-prompt scanner, status snapshot,
+  trigger_redraw and snapshot_buffer all preserve their pre-move
+  behavior so the cc plugin (and tests) keep working unchanged.
+
+  ## Background — same as the pre-move docstring
 
   Phase 4-completion PR 8: ESR's first plugin-managed child process.
   Uses `:exec.run/2` (erlexec) for PTY allocation (claude TUI needs
@@ -83,7 +95,7 @@ defmodule Ezagent.PluginCc.PtyServer do
 
   @doc "Build the :via tuple for an agent_uri (used as a process name)."
   def via(%URI{} = agent_uri) do
-    {:via, Registry, {EzagentPluginCc.PtyServerRegistry, URI.to_string(agent_uri)}}
+    {:via, Registry, {EzagentDomainPty.Registry, URI.to_string(agent_uri)}}
   end
 
   @doc """
@@ -131,7 +143,7 @@ defmodule Ezagent.PluginCc.PtyServer do
   def find_by_agent_uri(%URI{} = agent_uri) do
     target = URI.to_string(agent_uri)
 
-    sup_pid = Process.whereis(EzagentPluginCc.PtyServerSupervisor)
+    sup_pid = Process.whereis(EzagentDomainPty.Supervisor)
 
     if sup_pid do
       DynamicSupervisor.which_children(sup_pid)
@@ -246,7 +258,7 @@ defmodule Ezagent.PluginCc.PtyServer do
 
   @doc "List all live PtyServer agent_uris under the DynamicSupervisor."
   def list_agents do
-    sup_pid = Process.whereis(EzagentPluginCc.PtyServerSupervisor)
+    sup_pid = Process.whereis(EzagentDomainPty.Supervisor)
 
     if sup_pid do
       DynamicSupervisor.which_children(sup_pid)
@@ -335,42 +347,39 @@ defmodule Ezagent.PluginCc.PtyServer do
     end
   end
 
-  # Generates mcp.json via the in-process v2 McpConfigWriter (with the
-  # agent_uri + connect token baked in so the Python WS bridge
-  # authenticates deterministically against /cc_socket), then runs
-  # `claude --permission-mode bypassPermissions
-  # --dangerously-load-development-channels server:esr-bridge
-  # --mcp-config <path>` under erlexec's PTY.
+  # Spawns the configured child command under erlexec's PTY.
   #
-  # Phase 7 PR 32b (rebrand-3): cut over from v1 prototype writer
-  # (HTTP/SSE) to v2 writer (Phoenix Channel WebSocket). v1 plugin
-  # is still in the tree as a defensive fallback until PR 32c
-  # deletes it, but PtyServer no longer calls into v1 from this
-  # commit forward.
+  # Domain.Pty move (2026-05-21 SPEC v1, PR-A): the cmd string is
+  # supplied by the caller (cc plugin's `Template.CcAgent` builds the
+  # `claude --mcp-config ...` invocation; future plugins like an echo
+  # shell agent would supply `"/bin/bash -i"`). This keeps
+  # `ezagent_domain_pty` Tier-2 — no plugin deps. The legacy
+  # `cmd_override` arg is still honored for back-compat with existing
+  # callers/tests; in practice cc.agent's `Ezagent.Domain.Pty.start/2`
+  # path always supplies `cmd_override`.
+  #
+  # Phase 7 PR 32b (rebrand-3) — cc-side context: cut over from v1
+  # prototype writer (HTTP/SSE) to v2 writer (Phoenix Channel
+  # WebSocket). The MCP config writer + claude invocation is built by
+  # the cc plugin and passed in as `cmd_override`; this Server module
+  # no longer references any cc-plugin module.
   defp spawn_claude_directly(state) do
     cmd_str =
       case state.cmd_override do
-        nil ->
-          {:ok, mcp_path} =
-            EzagentPluginCc.McpConfigWriter.write!(
-              agent_uri: URI.to_string(state.agent_uri)
-            )
-
-          # Phase 6 PR 23: operator's ~/.claude/settings.json may have
-          # `remoteControlAtStartup: true` (cc-openclaw + others enable
-          # it). That redirects interactive I/O to claude.ai cloud
-          # session — local PTY becomes a passive observer, keystrokes
-          # go nowhere, channel notifications never render. Override
-          # to false via --settings.
-          settings_path = pty_settings_path()
-
-          "claude --permission-mode bypassPermissions " <>
-            "--dangerously-load-development-channels server:esr-bridge " <>
-            "--settings #{settings_path} " <>
-            "--mcp-config #{mcp_path}"
-
         cmd when is_binary(cmd) ->
           cmd
+
+        nil ->
+          # No cmd supplied. The pre-move behavior built a `claude ...`
+          # invocation here; that lived in plugin_cc and could not move
+          # to Tier-2 Domain.Pty. Callers MUST now supply `cmd_override`
+          # (or the eventual `:cmd` field PR-D adds). Crash explicitly
+          # rather than masking the misuse — `feedback_let_it_crash_no_workarounds`.
+          raise ArgumentError,
+                "Ezagent.Domain.Pty.Server: no `cmd_override` provided for " <>
+                  "agent_uri=#{URI.to_string(state.agent_uri)}. Callers must build " <>
+                  "the command string and pass it as :cmd_override; cc plugin's " <>
+                  "Template.CcAgent does this via Ezagent.Domain.Pty.start/2."
       end
 
     env = build_env(state)
@@ -391,11 +400,6 @@ defmodule Ezagent.PluginCc.PtyServer do
       {:ok, exec_pid, os_pid} -> {:ok, exec_pid, os_pid}
       err -> err
     end
-  end
-
-  defp pty_settings_path do
-    :code.priv_dir(:ezagent_plugin_cc)
-    |> Path.join("claude-pty-settings.json")
   end
 
   defp build_env(state) do

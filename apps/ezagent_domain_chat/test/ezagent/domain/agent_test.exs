@@ -8,8 +8,8 @@ defmodule Ezagent.Domain.AgentTest do
   ## Why this matters (Allen's Q3)
 
   Pre-fix, `AgentDetailLive.load_status/1` directly called
-  `Ezagent.PluginCc.PtyServer.find_by_agent_uri` — a Domain UI
-  importing Plugin internals. Per `ezagent-developer` skill
+  `Ezagent.Domain.Pty.lookup` (originally `Ezagent.PluginCc.PtyServer.find_by_agent_uri`
+  pre-Domain.Pty-PR-A) — a Domain UI importing Plugin internals. Per `ezagent-developer` skill
   invariant 8 (plugin authoring contract), Domain UI MUST NOT
   import Plugin module functions. `Ezagent.Domain.Agent
   .lifecycle_status/1` is the sanctioned boundary: it

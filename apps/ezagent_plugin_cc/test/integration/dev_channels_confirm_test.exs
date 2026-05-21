@@ -20,7 +20,7 @@ defmodule Ezagent.PluginCc.DevChannelsConfirmTest do
   use ExUnit.Case, async: false
   require Logger
 
-  alias Ezagent.PluginCc.PtyServer
+  alias Ezagent.Domain.Pty.Server, as: PtyServer
 
   @moduletag :requires_exec
 

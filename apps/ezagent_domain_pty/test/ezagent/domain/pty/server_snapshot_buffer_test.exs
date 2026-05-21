@@ -1,6 +1,6 @@
-defmodule Ezagent.PluginCc.SnapshotBufferTest do
+defmodule Ezagent.Domain.Pty.Server.SnapshotBufferTest do
   @moduledoc """
-  PR #128 — verify the ttyd-style initial-render helpers on PtyServer:
+  Verify the ttyd-style initial-render helpers on `Ezagent.Domain.Pty.Server`:
 
   - `snapshot_buffer/2` returns the current pty_buffer for a live PtyServer,
     bounded to the requested byte cap
@@ -10,26 +10,26 @@ defmodule Ezagent.PluginCc.SnapshotBufferTest do
 
   We don't exercise the actual SIGWINCH delivery here — that requires
   a real PTY, which `:test_mode` deliberately avoids.
+
+  Moved from `apps/ezagent_plugin_cc/test/ezagent/plugin_cc/snapshot_buffer_test.exs`
+  to the new ezagent_domain_pty app per SPEC v1 (2026-05-21) §3.1.
   """
   use ExUnit.Case, async: false
 
-  alias Ezagent.PluginCc.PtyServer
+  alias Ezagent.Domain.Pty.Server, as: PtyServer
 
   setup do
     # Tests run under Mix.env() == :test, so PtyServer's test_mode
     # short-circuits the real :exec spawn. We can still get_state on
     # the GenServer to verify the snapshot path.
-    agent_uri = URI.new!("entity://agent/default/test_snapshot-test-#{System.unique_integer([:positive])}")
+    agent_uri =
+      URI.new!("entity://agent/default/test_snapshot-test-#{System.unique_integer([:positive])}")
 
-    {:ok, pid} =
-      DynamicSupervisor.start_child(
-        EzagentPluginCc.PtyServerSupervisor,
-        {PtyServer, %{agent_uri: agent_uri, cwd: "/tmp", test_mode: true}}
-      )
+    {:ok, pid} = Ezagent.Domain.Pty.start(agent_uri, %{cwd: "/tmp", test_mode: true})
 
     on_exit(fn ->
       if Process.alive?(pid) do
-        _ = DynamicSupervisor.terminate_child(EzagentPluginCc.PtyServerSupervisor, pid)
+        _ = DynamicSupervisor.terminate_child(EzagentDomainPty.Supervisor, pid)
       end
     end)
 
@@ -55,7 +55,9 @@ defmodule Ezagent.PluginCc.SnapshotBufferTest do
     end
 
     test "returns :error for unknown agent_uri" do
-      ghost = URI.new!("entity://agent/default/test_does-not-exist-#{System.unique_integer([:positive])}")
+      ghost =
+        URI.new!("entity://agent/default/test_does-not-exist-#{System.unique_integer([:positive])}")
+
       assert :error = PtyServer.snapshot_buffer(ghost)
     end
   end
@@ -66,7 +68,9 @@ defmodule Ezagent.PluginCc.SnapshotBufferTest do
     end
 
     test "returns :error for unknown agent_uri" do
-      ghost = URI.new!("entity://agent/default/test_does-not-exist-#{System.unique_integer([:positive])}")
+      ghost =
+        URI.new!("entity://agent/default/test_does-not-exist-#{System.unique_integer([:positive])}")
+
       assert :error = PtyServer.trigger_redraw(ghost)
     end
   end

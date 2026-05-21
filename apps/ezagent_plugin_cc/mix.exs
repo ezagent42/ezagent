@@ -34,6 +34,11 @@ defmodule EzagentPluginCc.MixProject do
       # Phase 8b — PtyView implements Ezagent.UI.SessionView. domain_ui
       # is a library (no Application); only contributes module references.
       {:ezagent_domain_ui, in_umbrella: true},
+      # Domain.Pty PR-A (2026-05-21 SPEC v1): PTY runtime
+      # (Server/Supervisor/Registry) moved to ezagent_domain_pty.
+      # cc.agent template now calls Ezagent.Domain.Pty.start/2 with
+      # the full claude cmd string built here in the cc plugin.
+      {:ezagent_domain_pty, in_umbrella: true},
       # Deliberately NOT depending on ezagent_domain_chat: chat depends
       # on us (Chat.invoke(:receive) calls EzagentPluginCc.BridgeRegistry.lookup),
       # so a reverse dep would cycle. The Channel module references
@@ -44,9 +49,10 @@ defmodule EzagentPluginCc.MixProject do
       # /cc_socket in EzagentWeb.Endpoint.
       {:phoenix, "~> 1.8.0"},
       # YAML parsing for TokenStore's cc-channels.yaml persistence.
-      {:yaml_elixir, "~> 2.9"},
-      # PTY-side dep: erlexec for the Claude Code TUI lifecycle.
-      {:erlexec, "~> 2.1"}
+      {:yaml_elixir, "~> 2.9"}
+      # erlexec is no longer a direct dep — Ezagent.Domain.Pty.Server
+      # (now in ezagent_domain_pty) is the sole :exec.run/2 caller.
+      # cc plugin reaches PTY via the Ezagent.Domain.Pty facade only.
     ]
   end
 end

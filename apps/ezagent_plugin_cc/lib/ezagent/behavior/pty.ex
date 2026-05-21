@@ -1,7 +1,7 @@
 defmodule Ezagent.Behavior.Pty do
   @moduledoc """
   Pty Behavior — `:write` action for an Agent Kind backed by a local
-  `Ezagent.PluginCc.PtyServer`.
+  `Ezagent.Domain.Pty.Server`.
 
   ## PR #146 (SPEC v2 §5.7) — agent-direct dispatch
 
@@ -12,7 +12,15 @@ defmodule Ezagent.Behavior.Pty do
 
   The Agent Kind hosts this Behavior; `ctx.self_uri` (injected by
   `Ezagent.Kind.Runtime`) is the agent URI used to locate the
-  `PtyServer` via `EzagentPluginCc.PtyServerRegistry`.
+  PtyServer via the `Ezagent.Domain.Pty.lookup/1` facade
+  (`EzagentDomainPty.Registry` is the underlying :via name source).
+
+  ## Domain.Pty PR-A (2026-05-21 SPEC v1)
+
+  PtyServer (now `Ezagent.Domain.Pty.Server`) moved out of the cc
+  plugin into the Tier-2 `ezagent_domain_pty` app. This Behavior
+  module stays in the cc plugin for PR-A (moves in PR-B); only the
+  underlying calls switch to the Domain.Pty facade.
 
   ## Critical invariant (IMPLEMENTATION_ROADMAP §1.3 #1)
 
@@ -44,9 +52,9 @@ defmodule Ezagent.Behavior.Pty do
   def invoke(:write, slice, %{bytes: bytes}, ctx) when is_binary(bytes) do
     case Map.get(ctx, :self_uri) do
       %URI{} = agent_uri ->
-        case Ezagent.PluginCc.PtyServer.find_by_agent_uri(agent_uri) do
+        case Ezagent.Domain.Pty.lookup(agent_uri) do
           {:ok, pid} ->
-            case Ezagent.PluginCc.PtyServer.write_input(pid, bytes) do
+            case Ezagent.Domain.Pty.Server.write_input(pid, bytes) do
               :ok ->
                 # `slice` may be `%{}` on first write — the host Agent
                 # Kind doesn't list `Behavior.Pty` in `behaviors/0`

@@ -52,10 +52,10 @@ defmodule EzagentPluginLiveview.EntitiesLiveTest do
       URI.parse("entity://agent/default/test_pty-status-test-#{System.unique_integer([:positive])}")
 
     {:ok, pid} =
-      DynamicSupervisor.start_child(
-        EzagentPluginCc.PtyServerSupervisor,
-        {Ezagent.PluginCc.PtyServer, %{agent_uri: agent_uri, cwd: File.cwd!(), test_mode: true}}
-      )
+      Ezagent.Domain.Pty.start(agent_uri, %{
+        cwd: File.cwd!(),
+        test_mode: true
+      })
 
     Process.sleep(50)
 
