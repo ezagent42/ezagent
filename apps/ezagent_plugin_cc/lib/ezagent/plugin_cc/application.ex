@@ -27,8 +27,8 @@ defmodule EzagentPluginCc.Application do
   defined). cc plugin's `start/2` no longer references the PTY
   Behavior at all.
 
-  PR-C (2026-05-21) moved `EzagentPluginCc.Views.PtyView` to
-  `EzagentDomainUi.Pty.TerminalView` (Tier-2) with cross-flavor
+  PR-C (2026-05-21) moved `EzagentPluginCc.Views.PtyView` (historical)
+  to `EzagentDomainUi.Pty.TerminalView` (Tier-2) with cross-flavor
   detection. The SessionView registration moved to
   `EzagentDomainUi.Application.start/2`. cc plugin no longer hosts a
   terminal view module nor a `register_session_views/0` step.
@@ -58,9 +58,9 @@ defmodule EzagentPluginCc.Application do
 
   (`Ezagent.Behavior.Pty` Agent-Kind registration moved to
   `EzagentDomainChat.Application.start/2` in PR-B — see that module
-  for the binding. `EzagentPluginCc.Views.PtyView` SessionView
-  registration moved to `EzagentDomainUi.Application.start/2` in PR-C
-  alongside the module relocation.)
+  for the binding. `EzagentPluginCc.Views.PtyView` (historical)
+  SessionView registration moved to `EzagentDomainUi.Application.start/2`
+  in PR-C alongside the module relocation.)
   """
 
   use Application

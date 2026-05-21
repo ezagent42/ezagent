@@ -11,9 +11,24 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
   Phase 8c PR-H — inline `style=""` violations replaced with
   `EzagentDomainUi` atoms + Tailwind tokens so a future Tailwind theme
   swap can't break this page.
+
+  Domain.Pty PR-D (2026-05-21) — per SPEC §5.3 the kludgy
+  "Open terminal (in Sessions)" jump button is replaced with an
+  INLINE collapsible terminal panel (`<details>` element). The panel
+  is rendered ONLY when `Ezagent.Domain.Pty.alive?/1` returns true
+  for this agent — per `feedback_ui_no_misleading_buttons` we don't
+  surface terminal UI when there's nothing behind it. The panel also
+  links to the standalone `/identities/agents/:uri/terminal`
+  (TerminalLive) for full-window focus.
+
+  Inline terminal event seam: `pty_input` keystrokes dispatch through
+  `?action=pty.write`; `pty_resize` is a no-op (TUI manages its own
+  resize server-side); `{:pty_output, _, chunk}` PubSub messages are
+  forwarded to xterm via `push_event "pty_chunk"`.
   """
   use Phoenix.LiveView
   alias EzagentDomainUi.IdeShell
+  alias EzagentDomainUi.Pty.Terminal
   use EzagentDomainUi.Components
   import Phoenix.Component
 
@@ -25,6 +40,16 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
           # 2-second polling matches operator scan rate without
           # hammering :sys.get_state on a busy PTY.
           :timer.send_interval(2000, :refresh)
+
+          # Domain.Pty PR-D — subscribe to this agent's PTY output
+          # stream so the inline terminal (when expanded by the
+          # operator) can render fresh chunks. Subscription is cheap
+          # even when the terminal `<details>` is collapsed; if PTY
+          # isn't alive the topic just has no broadcaster.
+          Phoenix.PubSub.subscribe(
+            EzagentCore.PubSub,
+            Ezagent.Domain.Pty.Server.output_topic(agent_uri)
+          )
         end
 
         {:ok,
@@ -93,6 +118,14 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
      |> assign(:bridge_entry, load_bridge_entry(socket.assigns.agent_uri))}
   end
 
+  # Domain.Pty PR-D — fan-out PTY stdout/stderr chunks from the
+  # `Ezagent.Domain.Pty.Server` PubSub broadcast through to xterm via
+  # `push_event "pty_chunk"`. The xterm hook in
+  # `EzagentDomainUi.Pty.Terminal.mount/1` listens for this event.
+  def handle_info({:pty_output, _agent_uri, chunk}, socket) when is_binary(chunk) do
+    {:noreply, Phoenix.LiveView.push_event(socket, "pty_chunk", %{bytes: chunk})}
+  end
+
   @impl true
   def handle_event("restart", _params, socket) do
     # cc-specific operation — restart is currently only meaningful for
@@ -119,6 +152,60 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
       :error ->
         {:noreply, assign(socket, :flash_error, "no live PtyServer for this agent")}
     end
+  end
+
+  # Domain.Pty PR-D — inline terminal event seam. The xterm hook
+  # pushes `pty_input` for every keystroke and `pty_resize` on size
+  # changes. Same shape as `EzagentPluginLiveview.AdminLive` (the
+  # Sessions view-switcher) and `TerminalLive` (the standalone page).
+  def handle_event("pty_input", %{"bytes" => bytes}, socket) when is_binary(bytes) do
+    target =
+      URI.parse(URI.to_string(socket.assigns.agent_uri) <> "?action=pty.write")
+
+    inv = %Ezagent.Invocation{
+      target: target,
+      mode: :cast,
+      args: %{bytes: bytes},
+      ctx: pty_ctx(socket)
+    }
+
+    case Ezagent.Invocation.dispatch(inv) do
+      :ok -> {:noreply, socket}
+      {:ok, _} -> {:noreply, socket}
+
+      {:error, :unauthorized} ->
+        {:noreply,
+         assign(socket, :flash_error, "Unauthorized — need agent.pty.write cap on this agent.")}
+
+      {:error, :cross_workspace_denied} ->
+        {:noreply,
+         assign(
+           socket,
+           :flash_error,
+           "Cross-workspace denied — your workspace differs from this agent's workspace."
+         )}
+
+      {:error, reason} ->
+        {:noreply, assign(socket, :flash_error, "PTY input failed: #{inspect(reason)}")}
+    end
+  end
+
+  # TUI manages its own resize on the server side via :exec.winsz/3 —
+  # matches admin_live convention. Kept as a handler so the hook's
+  # pushEvent doesn't generate `[unhandled]` warnings.
+  def handle_event("pty_resize", _params, socket), do: {:noreply, socket}
+
+  defp pty_ctx(socket) do
+    caller = socket.assigns[:current_entity_uri] || Ezagent.Entity.User.admin_uri()
+
+    caps =
+      if URI.to_string(caller) == URI.to_string(Ezagent.Entity.User.admin_uri()) do
+        Ezagent.Entity.User.admin_caps()
+      else
+        Ezagent.Identity.list_caps_for(caller)
+      end
+
+    %{caller: caller, caps: caps, reply: :ignore}
   end
 
   @impl true
@@ -250,10 +337,6 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
                 </table>
 
                 <div class="mt-3 flex gap-2">
-                  <a
-                    href="/sessions"
-                    class="inline-flex items-center justify-center px-3.5 py-1.5 rounded-md text-xs font-medium bg-emerald-600 text-emerald-50 hover:bg-emerald-700 dark:hover:bg-emerald-500 shadow-sm no-underline"
-                  >📺 Open terminal (in Sessions)</a>
                   <.button
                     variant="outline"
                     size="sm"
@@ -264,6 +347,38 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
                     data-confirm="Restart PtyServer for this agent? (supervisor will respawn)"
                   >Restart</.button>
                 </div>
+              </.card>
+
+              <%!-- Domain.Pty PR-D (2026-05-21) — inline terminal panel.
+                   Replaces the previous "Open terminal (in Sessions)"
+                   jump (kludgy — chat panel competing for focus). Only
+                   rendered when PTY is alive (per `feedback_ui_no_misleading_buttons`
+                   we don't show "Terminal" UI when there's nothing
+                   behind it). Collapsed `<details>` so the terminal
+                   doesn't take focus when the operator just wanted to
+                   eyeball status. --%>
+              <.card :if={Ezagent.Domain.Pty.alive?(@agent_uri)} id="agent-inline-terminal" class="mt-6">
+                <details class="text-zinc-900 dark:text-zinc-100">
+                  <summary class="cursor-pointer text-sm font-medium select-none">
+                    Terminal
+                    <span class="ml-2 text-xs text-zinc-500 dark:text-zinc-400">
+                      (click to expand · live PTY)
+                    </span>
+                  </summary>
+                  <div class="mt-3 space-y-2">
+                    <div class="text-xs">
+                      <a
+                        href={"/identities/agents/" <> URI.encode_www_form(URI.to_string(@agent_uri)) <> "/terminal"}
+                        class="text-blue-600 dark:text-blue-400 hover:text-blue-700 no-underline"
+                      >
+                        Open in full page →
+                      </a>
+                    </div>
+                    <div class="h-[420px] bg-black rounded-md overflow-hidden">
+                      <Terminal.mount agent_uri={@agent_uri} class="h-full" />
+                    </div>
+                  </div>
+                </details>
               </.card>
 
               <%!-- Phase 8b §1.10 — CC Bridges (v2) panel relocated from admin_live --%>

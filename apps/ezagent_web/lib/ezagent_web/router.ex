@@ -110,9 +110,14 @@ defmodule EzagentWeb.Router do
       # `:uri` param for AgentDetailLive.
       live "/identities/agents/new", AgentNewLive
       live "/identities/agents/:uri", AgentDetailLive
-      # Phase 8b — `/identities/agents/:uri/terminal` retired. PTY is
-      # now accessed via the SessionEditor view-switcher on /sessions
-      # (terminal view registers via Ezagent.UI.SessionViewRegistry).
+      # Domain.Pty PR-D (2026-05-21) — standalone PTY terminal page.
+      # Resource-first per SPEC §10 decision 2; sibling to /:uri/caps
+      # and /:uri/api-keys. Bridge pattern per SPEC §13: `:uri` is the
+      # URL-encoded canonical entity URI string, decoded + URI.new'd
+      # at mount. Previously retired in Phase 8b in favor of the
+      # SessionEditor view-switcher; brought back in V1 Domain.Pty so
+      # operators can open a focused terminal without the chat panel.
+      live "/identities/agents/:uri/terminal", TerminalLive
 
       # Plugins Activity.
       live "/plugins", PluginsLive
