@@ -203,7 +203,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
     params =
       case Mix.env() do
         :test -> %{cwd: cwd, test_mode: true}
-        _ -> %{cwd: cwd, cmd_override: build_claude_cmd(agent_uri)}
+        _ -> %{cwd: cwd, cmd_override: build_claude_cmd(agent_uri, cwd)}
       end
 
     case Ezagent.Domain.Pty.start(agent_uri, params) do
@@ -230,10 +230,11 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   # `Ezagent.PluginCc.PtyServer.spawn_claude_directly/1` so the Server
   # module (now `Ezagent.Domain.Pty.Server`) stays Tier-2 — no
   # dependency on cc-plugin modules like `McpConfigWriter`.
-  defp build_claude_cmd(agent_uri) do
+  defp build_claude_cmd(agent_uri, agent_cwd \\ nil) do
     {:ok, mcp_path} =
       EzagentPluginCc.McpConfigWriter.write!(
-        agent_uri: URI.to_string(agent_uri)
+        agent_uri: URI.to_string(agent_uri),
+        agent_cwd: agent_cwd
       )
 
     # Phase 6 PR 23: operator's ~/.claude/settings.json may have

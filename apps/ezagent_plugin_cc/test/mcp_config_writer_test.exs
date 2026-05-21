@@ -113,4 +113,55 @@ defmodule EzagentPluginCc.McpConfigWriterTest do
     assert File.exists?(path), "expected v2 bridge script at #{path}"
     assert Path.basename(path) == "ezagent_mcp_bridge.py"
   end
+
+  # Allen 2026-05-21: claude's --dangerously-load-development-channels
+  # looks up the server name in the cwd-level .mcp.json BEFORE
+  # --mcp-config <abs>. Agents whose cwd ≠ ezagent repo root saw
+  # "server:esr-bridge · no MCP server configured with that name".
+  describe "agent_cwd option (regression — cwd-level .mcp.json)" do
+    test "write!/1 with :agent_cwd ALSO writes .mcp.json to that dir", %{out_dir: out_dir} do
+      agent_cwd = Path.join(System.tmp_dir!(), "esr-agent-cwd-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(agent_cwd)
+      on_exit(fn -> File.rm_rf(agent_cwd) end)
+
+      {:ok, _path} =
+        McpConfigWriter.write!(
+          agent_uri: "entity://agent/default/cc_cwdtest",
+          dir: out_dir,
+          agent_cwd: agent_cwd
+        )
+
+      cwd_mcp = Path.join(agent_cwd, ".mcp.json")
+      assert File.exists?(cwd_mcp), "expected .mcp.json written to agent cwd"
+
+      decoded = cwd_mcp |> File.read!() |> Jason.decode!()
+      assert get_in(decoded, ["mcpServers", "esr-bridge"]) != nil
+    end
+
+    test "write!/1 with non-existent :agent_cwd creates the dir + writes", %{out_dir: out_dir} do
+      agent_cwd = Path.join(System.tmp_dir!(), "esr-agent-nocwd-#{System.unique_integer([:positive])}")
+      refute File.exists?(agent_cwd)
+      on_exit(fn -> File.rm_rf(agent_cwd) end)
+
+      {:ok, _path} =
+        McpConfigWriter.write!(
+          agent_uri: "entity://agent/default/cc_mkdir",
+          dir: out_dir,
+          agent_cwd: agent_cwd
+        )
+
+      assert File.exists?(Path.join(agent_cwd, ".mcp.json"))
+    end
+
+    test "write!/1 without :agent_cwd skips the cwd write (back-compat)", %{out_dir: out_dir} do
+      # No agent_cwd → only ~/.ezagent + git-root copies, no crash.
+      {:ok, path} =
+        McpConfigWriter.write!(
+          agent_uri: "entity://agent/default/cc_nocwd",
+          dir: out_dir
+        )
+
+      assert File.exists?(path)
+    end
+  end
 end
