@@ -15,12 +15,21 @@ defmodule Ezagent.Behavior.Pty do
   PtyServer via the `Ezagent.Domain.Pty.lookup/1` facade
   (`EzagentDomainPty.Registry` is the underlying :via name source).
 
-  ## Domain.Pty PR-A (2026-05-21 SPEC v1)
+  ## Domain.Pty PR-A / PR-B (2026-05-21 SPEC v1)
 
   PtyServer (now `Ezagent.Domain.Pty.Server`) moved out of the cc
-  plugin into the Tier-2 `ezagent_domain_pty` app. This Behavior
-  module stays in the cc plugin for PR-A (moves in PR-B); only the
-  underlying calls switch to the Domain.Pty facade.
+  plugin into the Tier-2 `ezagent_domain_pty` app in PR-A. PR-B
+  (this PR) moves this Behavior module into the same app — the
+  module atom name `Ezagent.Behavior.Pty` is unchanged, so all
+  existing DB cap grants (`caps_json` references the string
+  `"Elixir.Ezagent.Behavior.Pty"`) continue to resolve.
+
+  The Behavior MODULE lives in `ezagent_domain_pty`; the
+  REGISTRATION (binding Agent Kind → :write → this module) happens
+  in `EzagentDomainChat.Application.start/2` where the
+  `Ezagent.Entity.Agent` Kind is defined. `ezagent_domain_chat`
+  gains `:ezagent_domain_pty` as an in-umbrella dep so this
+  module is loadable at registration time.
 
   ## Critical invariant (IMPLEMENTATION_ROADMAP §1.3 #1)
 

@@ -19,8 +19,11 @@ defmodule EzagentDomainPty.Application do
   2. `EzagentDomainPty.Supervisor` — `DynamicSupervisor` parenting the
      PtyServer GenServers.
 
-  No other state. Behavior/View registration stays in the cc plugin in
-  PR-A; PR-B moves `Ezagent.Behavior.Pty` here.
+  No other state. PR-B (2026-05-21) moved `Ezagent.Behavior.Pty` into
+  this app — the Behavior module lives here, but its Agent-Kind
+  registration runs from `EzagentDomainChat.Application.start/2`
+  (where `Ezagent.Entity.Agent` is defined). View registration moves
+  to `ezagent_domain_ui` in PR-C.
   """
 
   use Application
