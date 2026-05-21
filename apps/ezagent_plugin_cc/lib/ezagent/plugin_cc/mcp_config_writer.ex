@@ -54,6 +54,11 @@ defmodule EzagentPluginCc.McpConfigWriter do
   - `:ws_url` — override the WebSocket endpoint URL (defaults to
     `EZAGENT_BRIDGE_WS_URL` env / `:ws_url` app config /
     `ws://127.0.0.1:10042/cc_socket/websocket`).
+  - `:agent_cwd` — agent's working directory. When provided, ALSO
+    writes `.mcp.json` to that directory. Without this, Claude
+    launched with cwd=<agent_cwd> can't find the project-level
+    `.mcp.json` and prints "server:esr-bridge · no MCP server
+    configured with that name" warning (Allen 2026-05-21).
   """
   @spec write!(keyword()) :: {:ok, String.t()}
   def write!(opts) do
@@ -69,6 +74,7 @@ defmodule EzagentPluginCc.McpConfigWriter do
 
     script_path = Keyword.get(opts, :script_path, bridge_script_path())
     ws_url = Keyword.get(opts, :ws_url, resolve_ws_url())
+    agent_cwd = Keyword.get(opts, :agent_cwd)
 
     env = %{
       "EZAGENT_BRIDGE_WS_URL" => ws_url,
@@ -104,6 +110,35 @@ defmodule EzagentPluginCc.McpConfigWriter do
         root = String.trim(root)
         project_mcp = Path.join(root, ".mcp.json")
         File.write!(project_mcp, encoded)
+
+      _ ->
+        :ok
+    end
+
+    # Allen 2026-05-21: also write to the agent's actual working
+    # directory. Claude's `--dangerously-load-development-channels`
+    # flag triggers a name lookup in the cwd-level `.mcp.json` BEFORE
+    # `--mcp-config <abs>` is consulted. Without this third write,
+    # any agent whose cwd ≠ the ezagent repo root sees the warning
+    # "server:esr-bridge · no MCP server configured with that name".
+    # Messages still flow via the WS bridge (channel ≠ MCP server)
+    # but the warning is real diagnostic noise.
+    case agent_cwd do
+      cwd when is_binary(cwd) and cwd != "" ->
+        if File.dir?(cwd) do
+          agent_mcp = Path.join(cwd, ".mcp.json")
+          File.write!(agent_mcp, encoded)
+        else
+          # cwd doesn't exist yet; agent template will create it.
+          # Try once with mkdir_p; tolerate failure (cosmetic warning
+          # only — bridge still works via WS).
+          try do
+            File.mkdir_p!(cwd)
+            File.write!(Path.join(cwd, ".mcp.json"), encoded)
+          rescue
+            _ -> :ok
+          end
+        end
 
       _ ->
         :ok
