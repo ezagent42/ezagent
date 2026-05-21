@@ -28,7 +28,14 @@ defmodule EzagentPluginEcho.MixProject do
 
   defp deps do
     [
-      {:ezagent_core, in_umbrella: true}
+      {:ezagent_core, in_umbrella: true},
+      # Domain.Pty SPEC v1 §4 cross-flavor opt-in
+      # (`Ezagent.PluginEcho.Template.EchoAgent`): when an echo agent
+      # template sets `with_pty: true`, instantiate calls
+      # `Ezagent.Domain.Pty.start/2` to attach a `/bin/bash -i` PTY
+      # sidecar — surfacing the agent in the SessionView Terminal tab
+      # + `/identities/agents/:uri/terminal` standalone page.
+      {:ezagent_domain_pty, in_umbrella: true}
     ]
   end
 end
