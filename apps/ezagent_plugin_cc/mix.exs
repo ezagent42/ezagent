@@ -31,9 +31,11 @@ defmodule EzagentPluginCc.MixProject do
       {:ezagent_core, in_umbrella: true},
       {:ezagent_domain_identity, in_umbrella: true},
       {:ezagent_domain_workspace, in_umbrella: true},
-      # Phase 8b — PtyView implements Ezagent.UI.SessionView. domain_ui
-      # is a library (no Application); only contributes module references.
-      {:ezagent_domain_ui, in_umbrella: true},
+      # Domain.Pty PR-C (2026-05-21): the PTY SessionView moved out of
+      # cc plugin to EzagentDomainUi.Pty.TerminalView. cc plugin no
+      # longer depends on domain_ui — no module reference remains. If
+      # a future cc-specific component needs it, re-add this dep then.
+      # {:ezagent_domain_ui, in_umbrella: true},
       # Domain.Pty PR-A (2026-05-21 SPEC v1): PTY runtime
       # (Server/Supervisor/Registry) moved to ezagent_domain_pty.
       # cc.agent template now calls Ezagent.Domain.Pty.start/2 with

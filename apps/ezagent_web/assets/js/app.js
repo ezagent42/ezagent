@@ -26,6 +26,7 @@ import {hooks as colocatedHooks} from "phoenix-colocated/ezagent_web"
 import topbar from "../vendor/topbar"
 import {MentionAutocomplete} from "./hooks/mention_autocomplete"
 import {CountUp} from "./hooks/count_up"
+import {PtyTerminal} from "./hooks/pty_terminal"
 
 // Auto-scroll messages stream on new inserts AND preserve visual
 // position on history prepend.
@@ -75,54 +76,9 @@ const ScrollOnUpdate = {
   }
 }
 
-// Phase 5 PR 4: Pty-Web xterm.js hook.
-//
-// Mounts an xterm.js Terminal inside `this.el`, subscribes to PubSub
-// output via `handleEvent("pty_chunk", ...)`, and routes every
-// keystroke through `pushEvent("pty_input", {bytes})` — which the LV
-// then dispatches via Ezagent.Invocation.dispatch (CapBAC + audit + ...).
-//
-// CRITICAL: xterm input MUST go through pushEvent → LV → Invocation.dispatch.
-// Never write to a PubSub topic directly from the JS side. The
-// agents_pty_input_dispatch_test asserts the audit row count matches
-// the input byte count — any future regression that bypasses dispatch
-// will fail that test.
-const PtyTerminal = {
-  mounted() {
-    const term = new window.Terminal({
-      fontFamily: '"SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace',
-      fontSize: 13,
-      theme: {background: "#1e1e1e", foreground: "#d4d4d4"},
-      cursorBlink: true
-    })
-    const fitAddon = new window.FitAddon.FitAddon()
-    term.loadAddon(fitAddon)
-    term.open(this.el)
-    fitAddon.fit()
-
-    // Send window size to backend so PtyServer can :exec.winsz/3.
-    this.pushEvent("pty_resize", {cols: term.cols, rows: term.rows})
-
-    // Keystrokes → LV. NEVER PubSub directly (invariant #1).
-    term.onData((data) => {
-      this.pushEvent("pty_input", {bytes: data})
-    })
-
-    // Resize events also go to LV (which dispatches via Invocation).
-    window.addEventListener("resize", () => {
-      fitAddon.fit()
-      this.pushEvent("pty_resize", {cols: term.cols, rows: term.rows})
-    })
-
-    // PubSub output chunks arrive via LV → pushEvent.
-    this.handleEvent("pty_chunk", ({bytes}) => term.write(bytes))
-
-    this.term = term
-  },
-  destroyed() {
-    if (this.term) this.term.dispose()
-  }
-}
+// Domain.Pty PR-C (2026-05-21): the xterm.js PtyTerminal hook moved
+// to apps/ezagent_web/assets/js/hooks/pty_terminal.js. Import is at
+// the top of this file alongside the other hooks.
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {

@@ -207,19 +207,22 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
     #
     # This test fails on the buggy code path (terminal click → view
     # stays as ConversationView's empty/dot-grid state) and passes on
-    # the fix (terminal click → PtyView's "Terminal —" marker appears).
+    # the fix (terminal click → TerminalView's "Terminal —" marker appears).
     #
-    # We join cc_demo to the main session so PtyView's `applies_to?/1`
-    # returns true (it scans for any `entity://agent/<ws>/cc_*` member).
-    # Without this join the view-switcher falls back to ConversationView
-    # regardless of the bug, masking it.
-    test "terminal icon click flips the rendered view to PtyView (V1 UI fix)", %{conn: conn} do
+    # We join a PTY-backed agent to the main session so TerminalView's
+    # `applies_to?/1` returns true. After Domain.Pty PR-C the detection
+    # is cross-flavor — `Ezagent.Domain.Pty.alive?/1` for ANY member —
+    # so we explicitly start a Domain.Pty.Server in test_mode below.
+    test "terminal icon click flips the rendered view to TerminalView (V1 UI fix)", %{conn: conn} do
       session_uri = URI.new!("session://default/default/main")
 
-      # Spawn a real cc agent + join it as a member so PtyView applies.
+      # Spawn a real cc agent + start its PTY sidecar + join it as a
+      # member so TerminalView applies.
       name = "cc_demo-uifix-#{System.unique_integer([:positive])}"
       agent_uri = URI.parse("entity://agent/default/#{name}")
       {:ok, _kind_pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
+      {:ok, _pty_pid} = Ezagent.Domain.Pty.start(agent_uri, %{cwd: "/tmp", test_mode: true})
+      on_exit(fn -> Ezagent.Domain.Pty.stop(agent_uri) end)
 
       join_target = URI.new!("#{URI.to_string(session_uri)}?action=chat.join")
 
@@ -269,14 +272,17 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
     end
 
     # Sibling invariant — `switch_view` (the header view-switcher
-    # buttons) has the same bug shape. Once the cc agent joins, the
-    # view-switcher gets a "Terminal" button alongside "Chat"; clicking
-    # it MUST also re-resolve `:view_module`, not just flip `:current_view`.
-    test "switch_view to :pty flips the rendered view to PtyView", %{conn: conn} do
+    # buttons) has the same bug shape. Once the PTY-backed agent
+    # joins, the view-switcher gets a "Terminal" button alongside
+    # "Chat"; clicking it MUST also re-resolve `:view_module`, not
+    # just flip `:current_view`.
+    test "switch_view to :pty flips the rendered view to TerminalView", %{conn: conn} do
       session_uri = URI.new!("session://default/default/main")
       name = "cc_demo-switchview-#{System.unique_integer([:positive])}"
       agent_uri = URI.parse("entity://agent/default/#{name}")
       {:ok, _kind_pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
+      {:ok, _pty_pid} = Ezagent.Domain.Pty.start(agent_uri, %{cwd: "/tmp", test_mode: true})
+      on_exit(fn -> Ezagent.Domain.Pty.stop(agent_uri) end)
 
       join_target = URI.new!("#{URI.to_string(session_uri)}?action=chat.join")
 

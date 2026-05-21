@@ -27,6 +27,12 @@ defmodule EzagentPluginCc.Application do
   defined). cc plugin's `start/2` no longer references the PTY
   Behavior at all.
 
+  PR-C (2026-05-21) moved `EzagentPluginCc.Views.PtyView` to
+  `EzagentDomainUi.Pty.TerminalView` (Tier-2) with cross-flavor
+  detection. The SessionView registration moved to
+  `EzagentDomainUi.Application.start/2`. cc plugin no longer hosts a
+  terminal view module nor a `register_session_views/0` step.
+
   ## Why the unified template
 
   Pre-PR-D2 the operator had to add TWO templates per CC agent —
@@ -52,7 +58,9 @@ defmodule EzagentPluginCc.Application do
 
   (`Ezagent.Behavior.Pty` Agent-Kind registration moved to
   `EzagentDomainChat.Application.start/2` in PR-B — see that module
-  for the binding.)
+  for the binding. `EzagentPluginCc.Views.PtyView` SessionView
+  registration moved to `EzagentDomainUi.Application.start/2` in PR-C
+  alongside the module relocation.)
   """
 
   use Application
@@ -75,7 +83,6 @@ defmodule EzagentPluginCc.Application do
     case Supervisor.start_link(children, strategy: :one_for_one, name: __MODULE__) do
       {:ok, sup_pid} ->
         :ok = register_template_classes()
-        :ok = register_session_views()
 
         # Boot-ordering fix: chat plugin's Application.start calls
         # Ezagent.Workspace.Loader.load_all/0 BEFORE this plugin
@@ -88,15 +95,6 @@ defmodule EzagentPluginCc.Application do
       other ->
         other
     end
-  end
-
-  # Phase 8b — register the PTY SessionView (admin_live calls
-  # `Ezagent.UI.SessionViewRegistry.applicable_views/1` to decide
-  # which view-switcher buttons show up).
-  defp register_session_views do
-    :ok = Ezagent.UI.SessionViewRegistry.init()
-    :ok = Ezagent.UI.SessionViewRegistry.register(EzagentPluginCc.Views.PtyView)
-    :ok
   end
 
   defp register_template_classes do
