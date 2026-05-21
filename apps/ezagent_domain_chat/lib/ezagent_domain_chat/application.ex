@@ -442,6 +442,20 @@ defmodule EzagentDomainChat.Application do
       :ok = BehaviorRegistry.register(Session, action, RB)
     end)
 
+    # Domain.Pty PR-B (2026-05-21 SPEC v1) — register the PTY Behavior
+    # on the Agent Kind. Behavior module lives in ezagent_domain_pty;
+    # the Kind ↔ Behavior binding happens here because this is where
+    # `Ezagent.Entity.Agent` is defined. Previously registered from
+    # `EzagentPluginCc.Application.start/2` (PR #146); moved here so
+    # the PTY runtime is no longer plugin-cc-specific (any flavor whose
+    # template `spawns_with: [Ezagent.Domain.Pty.Server]` reuses the
+    # same dispatch path).
+    alias Ezagent.Behavior.Pty, as: PtyB
+
+    Enum.each(PtyB.actions(), fn action ->
+      :ok = BehaviorRegistry.register(Agent, action, PtyB)
+    end)
+
     :ok
   end
 

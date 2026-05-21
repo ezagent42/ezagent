@@ -34,6 +34,12 @@ defmodule EzagentDomainChat.MixProject do
       # order also enforces start order: identity → workspace → chat.
       {:ezagent_domain_identity, in_umbrella: true},
       {:ezagent_domain_workspace, in_umbrella: true},
+      # Domain.Pty PR-B (2026-05-21 SPEC v1): Chat's Application
+      # registers `Ezagent.Behavior.Pty` against `Ezagent.Entity.Agent`
+      # — the Kind ↔ Behavior binding belongs in the app that defines
+      # the Kind. Behavior module itself lives in ezagent_domain_pty.
+      # Tier-2 sibling dep (no cycle: domain_pty → core only).
+      {:ezagent_domain_pty, in_umbrella: true},
       # Chat.invoke(:receive) for Agent dispatches to the v2 CC channel
       # BridgeRegistry. v1 prototype dep + fallback branch removed in
       # PR 32c (rebrand-4) after PtyServer cutover landed in PR 32b.

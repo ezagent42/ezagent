@@ -1,4 +1,4 @@
-defmodule Ezagent.PluginCc.PtyInputDispatchTest do
+defmodule Ezagent.Behavior.PtyTest do
   @moduledoc """
   PR #146 (SPEC v2 §5.7) invariant — PTY input goes through
   `Ezagent.Invocation.dispatch` against the agent's own URI (per
@@ -7,6 +7,11 @@ defmodule Ezagent.PluginCc.PtyInputDispatchTest do
   The previous synthetic `pty-input://default` singleton Kind is
   dissolved. Dispatch target is now:
   `entity://agent/<flavor>_<name>?action=pty.write`.
+
+  Domain.Pty PR-B (2026-05-21 SPEC v1): test moved from
+  `apps/ezagent_plugin_cc/test/pty_input_dispatch_test.exs` to
+  `apps/ezagent_domain_pty/test/ezagent/behavior/pty_test.exs`
+  alongside the Behavior module move. Test logic unchanged.
 
   Sends N writes via dispatch and asserts:
   1. The slice counter (write_calls, total_bytes) reflects every write

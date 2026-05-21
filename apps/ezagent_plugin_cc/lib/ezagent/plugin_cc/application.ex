@@ -21,6 +21,12 @@ defmodule EzagentPluginCc.Application do
   full cmd string and calling `Ezagent.Domain.Pty.start/2`; the
   Server/Supervisor/Registry boot here is gone.
 
+  PR-B (2026-05-21) further moved `Ezagent.Behavior.Pty` itself into
+  `ezagent_domain_pty`, and the Agent-Kind ↔ :write registration moved
+  to `EzagentDomainChat.Application.start/2` (where the Agent Kind is
+  defined). cc plugin's `start/2` no longer references the PTY
+  Behavior at all.
+
   ## Why the unified template
 
   Pre-PR-D2 the operator had to add TWO templates per CC agent —
@@ -40,14 +46,13 @@ defmodule EzagentPluginCc.Application do
 
   1. Init BridgeRegistry (ETS table for agent_uri → Channel pid)
   2. Register the `cc.agent` Template Class
-  3. Register `Ezagent.Behavior.Pty` on `Ezagent.Entity.Agent` so
-     `entity://agent/default/cc_<X>?action=pty.write` dispatches resolve.
-     (PR #146: previously a synthetic `pty-input://default` singleton;
-     dissolved per SPEC v2 §5.7 — PTY input now dispatches to the
-     agent itself.)
-  4. Re-run `Workspace.Loader.load_all/0` to instantiate any
+  3. Re-run `Workspace.Loader.load_all/0` to instantiate any
      cc.agent templates that were skipped during boot before this
      plugin was up. Idempotent via the Domain.Pty :via Registry.
+
+  (`Ezagent.Behavior.Pty` Agent-Kind registration moved to
+  `EzagentDomainChat.Application.start/2` in PR-B — see that module
+  for the binding.)
   """
 
   use Application
@@ -70,7 +75,6 @@ defmodule EzagentPluginCc.Application do
     case Supervisor.start_link(children, strategy: :one_for_one, name: __MODULE__) do
       {:ok, sup_pid} ->
         :ok = register_template_classes()
-        :ok = register_pty_behavior_on_agent()
         :ok = register_session_views()
 
         # Boot-ordering fix: chat plugin's Application.start calls
@@ -104,19 +108,4 @@ defmodule EzagentPluginCc.Application do
     :ok
   end
 
-  # PR #146 (SPEC v2 §5.7) — synthetic `pty-input://default` singleton
-  # dissolved. Register `Behavior.Pty` on `Ezagent.Entity.Agent` so
-  # xterm.js LV input dispatches to the agent's own URI:
-  # `entity://agent/default/cc_<X>?action=pty.write`.
-  defp register_pty_behavior_on_agent do
-    alias Ezagent.BehaviorRegistry
-    alias Ezagent.Behavior.Pty, as: PtyB
-    alias Ezagent.Entity.Agent, as: AgentK
-
-    Enum.each(PtyB.actions(), fn action ->
-      :ok = BehaviorRegistry.register(AgentK, action, PtyB)
-    end)
-
-    :ok
-  end
 end
