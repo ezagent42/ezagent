@@ -120,7 +120,14 @@ apps/ezagent_web/assets/js/hooks/
 
 ### 3.3 新 LV: `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/terminal_live.ex`
 
-Allen 想要的独立 "Terminal 页"。URL: `/terminal/:agent_uri`。
+Allen 想要的独立 "Terminal 页"。URL:
+`/identities/agents/:uri/terminal`。
+
+**路径形态说明 (Allen review 2026-05-21 15:13)**: 原 draft 用
+`/terminal/:agent_uri`（动词在前）。违反代码库 resource-first URL
+约定。Phase 8b 实际上**曾经有** `/identities/agents/:uri/terminal`，
+后来为 SessionView-only 模式而废弃；V1 把独立页面带回，**用同样的
+URL 形态**。LV-URL ↔ URI-system 映射约定见 **§13**。
 
 ```elixir
 defmodule EzagentPluginLiveview.TerminalLive do
@@ -140,9 +147,10 @@ defmodule EzagentPluginLiveview.TerminalLive do
 end
 ```
 
-router 新增:
+router 新增（跟现有 `/identities/agents/:uri/caps` 和 `/:uri/api-keys`
+兄弟）:
 ```elixir
-live "/terminal/:agent_uri", TerminalLive
+live "/identities/agents/:uri/terminal", TerminalLive
 ```
 
 ### 3.4 cc plugin 收缩
@@ -220,12 +228,14 @@ Agent 时显示 "Terminal" tab。迁移后:
 
 ### 5.2 独立 Terminal 页（新增）
 
-URL: `/terminal/:agent_uri`（URL-encoded agent URI）。
+URL: `/identities/agents/:uri/terminal`（URL-encoded entity URI 作
+`:uri` path segment —— 跟兄弟 `/identities/agents/:uri/caps` 和
+`/:uri/api-keys` 一致约定）。
 
 Use case（Allen #3 — agent detail 页）:
 - 当前 `/identities/agents/:uri` "Open terminal" 按钮跳到 /sessions
   + 切到 PTY view —— 笨拙
-- 本 SPEC 之后: 按钮 → `/terminal/:agent_uri` 直接
+- 本 SPEC 之后: 按钮 → `/identities/agents/:uri/terminal`
 - 独立页 = 全屏聚焦 terminal，无 chat 干扰
 
 渲染在 `IdeShell`（workspace 表面），所以导航 + 侧栏仍工作；主窗口 = terminal。
@@ -334,23 +344,14 @@ D 后: cc plugin 小 ~40%（PtyServer + supervisor + registry + view + behavior 
 erlexec 是 scope 内**唯一** PTY backend（不做 native `Port.open(:spawn)`
 因为 claude TUI 明确需要真 PTY）。
 
-## 10. Allen 待决问题
+## 10. 决策（Allen 2026-05-21 review）
 
-1. **App 名**: `ezagent_domain_pty` 还是 `ezagent_domain_terminal`？
-   我**倾向 `ezagent_domain_pty`**（匹配 `Ezagent.Domain.Pty` 模块
-   namespace；"terminal" 是 UI；PTY 是 runtime）。
-2. **TerminalLive 路由形态**: `/terminal/:agent_uri` 还是
-   `/agents/:agent_uri/terminal`？我倾向前者（更简洁 AND 因为
-   "terminal" 是 top-level activity，跟 /sessions, /workspaces,
-   /identities 同级）。要不要加进 Activity Bar 你定。
-3. **Echo agent 默认开 PTY?** 今天 echo agent 无 PTY。本 SPEC 后
-   echo template 默认 `with_pty: false`，operator 可翻。AgentNewLive
-   表单要不要给 echo flavor 加 "with PTY" checkbox？还是只 admin
-   能配 template？我倾向 operator-checkbox（跟 cc 需要 cwd 一致）。
-4. **`/terminal/:agent_uri` 进 Activity Bar?** 当前 bar:
-   Sessions / Identities / Routing / Plugins。加 Terminal 是 5 项。
-   power user 可能有用作为 quick-access。或者不进 activity bar 只通过
-   /identities/agents/:uri detail 页到达。
+| # | 问题 | 决策 | 理由 |
+|---|------|------|------|
+| 1 | App 名 | **`ezagent_domain_pty`** | 匹配 `Ezagent.Domain.Pty` namespace；"terminal" 是 UI，PTY 是 runtime |
+| 2 | TerminalLive 路由 | **`/identities/agents/:uri/terminal`** | 原 draft `/terminal/:agent_uri` 动词在前 —— 违反代码库 resource-first URL 约定。选择路径是 Phase 8b 废弃前的形态，跟兄弟 `/identities/agents/:uri/caps` + `/:uri/api-keys` 一致。LV-URL ↔ URI 映射约定见 §13 |
+| 3 | Echo PTY 启用 | **AgentNewLive "with PTY" checkbox** for echo flavor（跟 cc 需要 cwd 一致）—— operator 自助，不是 admin-only template config |
+| 4 | 进 Activity Bar | **不** —— terminal 是 agent 的 sub-view，不是 top-level activity。通过 `/identities/agents/:uri/terminal`（或 agent detail 页内嵌展开）到达更结构正确；Activity Bar 维持 4 项（Sessions / Identities / Routing / Plugins）|
 
 ## 11. 验证清单
 
@@ -368,6 +369,73 @@ erlexec 是 scope 内**唯一** PTY backend（不做 native `Port.open(:spawn)`
 7. ✅ `Ezagent.Domain.Agent.lifecycle_status/1` 对 cc + echo-with-pty
    agent 都报 `phase: :alive`，格式一致
 8. ✅ Invariant test `no_pty_in_plugin_cc_test.exs` 通过
+
+## 13. LV URL ↔ URI 系统映射约定
+
+Allen Feishu 2026-05-21 15:17: "`/identities/agents/:uri/terminal`
+这里是 LiveView 的 URL，还是我们的 URI 系统？现在 LiveView URL 和
+URI 的关系是什么？"
+
+**三层**对应清晰:
+
+| 层 | 例 | 用途 |
+|---|---|---|
+| 浏览器 URL | `/identities/agents/entity%3A%2F%2Fagent%2Fdefault%2Fcc_demo/terminal` | bookmark / nav / 分享 |
+| LV `:uri` 参数 | `entity://agent/default/cc_demo` | 桥接（Phoenix Router 自动 URL-decode）|
+| 内部 URI 系统 | `%URI{scheme: "entity", host: "agent", path: "/default/cc_demo"}` | dispatch / cap matching / KindRegistry lookup |
+
+**Mount-time 桥接**（`AgentDetailLive`、`EntityCapsLive`、未来
+`TerminalLive` 用的模式）:
+
+```elixir
+def mount(%{"uri" => encoded_uri}, _session, socket) do
+  decoded = URI.decode_www_form(encoded_uri)
+
+  case URI.new(decoded) do
+    {:ok, %URI{scheme: "entity", host: "agent", path: "/" <> _name} = agent_uri} ->
+      {:ok, assign(socket, :agent_uri, agent_uri)}
+
+    _ ->
+      {:ok, socket |> put_flash(:error, "Invalid agent URI") |> push_navigate(to: ~p"/identities")}
+  end
+end
+```
+
+**这个桥接就是架构 seam**。seam 上方（浏览器/URL）一切都是 HTTP 层
+addressing —— 字符串、URL-encoding、可 bookmark 路径。seam 下方
+（LV/dispatch）一切都是 `%URI{}` struct 流过 Ezagent 内部 addressing
+contract（cap、KindRegistry、Behavior dispatch、persistence）。
+
+**ezagent 强制的约定**:
+
+1. **LV 路由总是用 `:uri` 作 path 段名** for entity URI（跨所有
+   `/identities/agents/:uri/*` 和 `/identities/users/:uri/*` 路由
+   一致）
+2. **`:uri` 值是 URL-encoded 的 canonical entity URI 字符串** —
+   不是 DB ID，不是 slug，不是 short identifier
+3. **LV mount/3 总是 URL-decode + URI.new() + pattern-match**
+   on 预期 scheme/host 形态；无效 → flash + redirect
+4. **进入 LV 后，只用 `%URI{}` struct** —— encoded 字符串不泄露
+   到 mount 之外
+5. **超链接通过 URI.encode_www_form(URI.to_string(uri)) 构造**
+   URL —— 永不手写 path 字符串
+
+**Trade-off（V1 不修）**:
+- 浏览器 URL 难看 (`entity%3A%2F%2Fagent...`) 因为 URL-encoding
+- 任何 URI scheme 改动（如 Phase 9 的 2→3 segment 迁移）会破坏 bookmark
+- 备选 "flat path" 映射 (`/identities/agents/default/cc_demo` →
+  重构 `entity://agent/default/cc_demo`) 会更干净但需要改所有
+  link-builder。留 V2 考虑。
+
+**为什么现在写这节**: V1 Domain.Pty 加了第三个 `/identities/agents/:uri/*`
+sub-view 路由。不写这节，未来 contributor 可能不一致地重新发明桥接
+（用不同 param 名、在 helper 里 decode、手写 path）。把 seam 写
+文档化让模式可复制。
+
+**main 上的参考实现**:
+- `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/agent_detail_live.ex` — `parse_agent_uri/1` 模式
+- `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/entity_caps_live.ex` — `/identities/agents/:uri/caps` 同样模式
+- `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/user_api_keys_live.ex` — user 同样模式
 
 ## 12. 超出范围（V2+）
 

@@ -125,13 +125,22 @@ session with an Agent member whose template declares PTY).
 
 ### 3.3 New LV: `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/terminal_live.ex`
 
-The standalone "Terminal page" Allen requested. URL: `/terminal/:agent_uri`.
+The standalone "Terminal page" Allen requested. URL:
+`/identities/agents/:uri/terminal`.
+
+**Path shape note (Allen review 2026-05-21 15:13)**: original draft
+used `/terminal/:agent_uri` (verb-first). That violated the
+codebase's resource-first URL convention. Phase 8b actually had
+`/identities/agents/:uri/terminal` before retiring it for the
+SessionView-only pattern; V1 brings the standalone page back at the
+same URL shape. See **§13** for the LV-URL ↔ URI-system mapping
+convention this follows.
 
 ```elixir
 defmodule EzagentPluginLiveview.TerminalLive do
   @moduledoc """
   Standalone PTY terminal page for any agent whose template declares
-  PTY in `spawns_with`. URL: /terminal/<encoded-agent-uri>.
+  PTY in `spawns_with`. URL: /identities/agents/<encoded-agent-uri>/terminal.
 
   Renders inside IdeShell (full workspace surface) so the operator
   has navigation context. The terminal occupies the main window;
@@ -146,9 +155,10 @@ defmodule EzagentPluginLiveview.TerminalLive do
 end
 ```
 
-Router addition:
+Router addition (sibling to existing `/identities/agents/:uri/caps`
+and `/:uri/api-keys`):
 ```elixir
-live "/terminal/:agent_uri", TerminalLive
+live "/identities/agents/:uri/terminal", TerminalLive
 ```
 
 ### 3.4 cc plugin shrinks
@@ -228,12 +238,14 @@ session member is an Agent backed by PTY. After migration:
 
 ### 5.2 Standalone Terminal page (new)
 
-URL: `/terminal/:agent_uri` (URL-encoded agent URI).
+URL: `/identities/agents/:uri/terminal` (URL-encoded entity URI in
+`:uri` path segment — same convention as the sibling
+`/identities/agents/:uri/caps` and `/:uri/api-keys` routes).
 
 Use case (Allen's #3 — agent detail page):
 - Today `/identities/agents/:uri` "Open terminal" button jumps to
   /sessions and switches to PTY view — kludgy
-- After this SPEC: button → `/terminal/:agent_uri` directly
+- After this SPEC: button → `/identities/agents/:uri/terminal`
 - Standalone page = full focus on terminal; no chat distraction
 
 Rendered inside `IdeShell` (workspace surface) so nav + sidebars
@@ -344,26 +356,14 @@ Per Allen's audit ask:
 erlexec is the ONLY PTY backend in scope (no native `Port.open(:spawn)`
 because claude TUI specifically needs a real PTY).
 
-## 10. Open questions for Allen
+## 10. Decisions (Allen 2026-05-21 review)
 
-1. **App name**: `ezagent_domain_pty` or `ezagent_domain_terminal`?
-   I prefer **`ezagent_domain_pty`** (matches `Ezagent.Domain.Pty`
-   module namespace; "terminal" is UI; PTY is the runtime).
-2. **TerminalLive route shape**: `/terminal/:agent_uri` OR
-   `/agents/:agent_uri/terminal`? I prefer the former for brevity
-   AND because "terminal" is a top-level activity (next to /sessions,
-   /workspaces, /identities). Could add to Activity Bar if you want.
-3. **Auto-enable PTY for echo agent?** Today echo agents have no
-   PTY. With this SPEC, echo template gets `with_pty: false` default
-   but operator can flip. Should the AgentNewLive form expose a
-   "with PTY" checkbox for echo flavor? Or admin-only template
-   config? I lean operator-checkbox (consistent with cc which
-   requires a cwd).
-4. **Should /terminal/:agent_uri appear in Activity Bar?** Current
-   bar: Sessions / Identities / Routing / Plugins. Adding Terminal
-   makes 5 items. Could be useful as a quick-access surface for
-   power users. Or leave it out of activity bar and only reach via
-   /identities/agents/:uri detail page.
+| # | Question | Decision | Rationale |
+|---|----------|----------|-----------|
+| 1 | App name | **`ezagent_domain_pty`** | Matches `Ezagent.Domain.Pty` module namespace; "terminal" is UI, PTY is the runtime |
+| 2 | TerminalLive route | **`/identities/agents/:uri/terminal`** | Original draft `/terminal/:agent_uri` was verb-first — violates the codebase's resource-first URL convention. The chosen path is the same shape Phase 8b had before retiring it, and matches sibling `/identities/agents/:uri/caps` + `/:uri/api-keys`. See §13 for the LV-URL ↔ URI mapping convention |
+| 3 | Echo PTY enablement | **AgentNewLive "with PTY" checkbox** for echo flavor (consistent with cc which requires a cwd field) — operator self-service, not admin-only template config |
+| 4 | Activity Bar inclusion | **NO** — terminal is a sub-view of an agent, not a top-level activity. Reaching via `/identities/agents/:uri/terminal` (or the inline expander on agent detail page) is structurally correct; Activity Bar stays 4 items (Sessions / Identities / Routing / Plugins) |
 
 ## 11. Verification checklist
 
@@ -382,6 +382,79 @@ After all 4 PRs land:
 7. ✅ `Ezagent.Domain.Agent.lifecycle_status/1` reports
    `phase: :alive` for cc agents AND echo-with-pty agents uniformly
 8. ✅ Invariant test `no_pty_in_plugin_cc_test.exs` passes
+
+## 13. LV URL ↔ URI system mapping convention
+
+Allen Feishu 2026-05-21 15:17: "`/identities/agents/:uri/terminal`
+这里是 LiveView 的 URL，还是我们的 URI 系统？现在 LiveView URL 和
+URI 的关系是什么？"
+
+**Three layers** with a clear mapping:
+
+| Layer | Example | Purpose |
+|---|---|---|
+| Browser URL | `/identities/agents/entity%3A%2F%2Fagent%2Fdefault%2Fcc_demo/terminal` | Bookmark / nav / share |
+| LV `:uri` param | `entity://agent/default/cc_demo` | Bridge (URL-decoded automatically by Phoenix Router) |
+| Internal URI system | `%URI{scheme: "entity", host: "agent", path: "/default/cc_demo"}` | dispatch / cap matching / KindRegistry lookup |
+
+**Mount-time bridge** (the pattern used by `AgentDetailLive`,
+`EntityCapsLive`, future `TerminalLive`):
+
+```elixir
+def mount(%{"uri" => encoded_uri}, _session, socket) do
+  decoded = URI.decode_www_form(encoded_uri)
+
+  case URI.new(decoded) do
+    {:ok, %URI{scheme: "entity", host: "agent", path: "/" <> _name} = agent_uri} ->
+      # use agent_uri throughout the LV: dispatch, status, etc.
+      {:ok, assign(socket, :agent_uri, agent_uri)}
+
+    _ ->
+      {:ok, socket |> put_flash(:error, "Invalid agent URI") |> push_navigate(to: ~p"/identities")}
+  end
+end
+```
+
+**The bridge IS the architectural seam.** Above the seam (browser /
+URL), everything is HTTP-layer addressing — strings, URL-encoding,
+bookmarkable paths. Below the seam (LV / dispatch), everything is
+`%URI{}` structs flowing through Ezagent's internal addressing
+contracts (caps, KindRegistry, Behavior dispatch, persistence).
+
+**Conventions ezagent enforces**:
+
+1. **LV routes ALWAYS use `:uri` as the path segment name** for
+   entity URIs (consistent across all `/identities/agents/:uri/*`
+   and `/identities/users/:uri/*` routes)
+2. **`:uri` value is the URL-encoded canonical entity URI string**
+   — NOT a database ID, NOT a slug, NOT a short identifier
+3. **LV mount/3 ALWAYS URL-decodes + URI.new() + pattern-matches**
+   on the expected scheme/host shape; invalid → flash + redirect
+4. **Once inside the LV, only the `%URI{}` struct is used** — the
+   encoded string never leaks past mount
+5. **Hyperlinks construct the URL via URI.encode_www_form(URI.to_string(uri))**
+   — never hand-construct path strings
+
+**Trade-off acknowledged** (won't fix in V1):
+- Browser URLs are ugly (`entity%3A%2F%2Fagent...`) due to URL-encoding
+- Any future URI scheme change (like Phase 9's 2→3 segment migration)
+  breaks bookmarks
+- Alternative "flat path" mapping (`/identities/agents/default/cc_demo`
+  → reconstructed `entity://agent/default/cc_demo`) would be cleaner
+  but requires every existing link-builder to change. Defer to V2
+  consideration.
+
+**Why surface this convention now**: V1 Domain.Pty adds the third
+`/identities/agents/:uri/*` sub-view route. Without writing this
+section, future contributors might reinvent the bridge inconsistently
+(e.g., use a different param name, or decode in a helper, or
+hand-construct paths). Documenting the seam makes the pattern
+copyable.
+
+**Reference implementations** in main:
+- `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/agent_detail_live.ex` — `parse_agent_uri/1` pattern
+- `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/entity_caps_live.ex` — same pattern for `/identities/agents/:uri/caps`
+- `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/user_api_keys_live.ex` — same pattern for users
 
 ## 12. Out of scope (V2+)
 
