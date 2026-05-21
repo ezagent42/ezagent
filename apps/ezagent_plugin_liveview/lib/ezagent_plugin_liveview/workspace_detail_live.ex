@@ -188,6 +188,41 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
     end
   end
 
+  def handle_event("remove_template", %{"name" => tmpl_name}, socket) do
+    case Ezagent.Workspace.remove_template(socket.assigns.name, tmpl_name) do
+      :ok ->
+        {:noreply,
+         socket
+         |> assign(:workspace, Ezagent.Workspace.Store.get_by_name(socket.assigns.name))
+         |> assign(:flash_error, nil)}
+
+      {:error, reason} ->
+        {:noreply, assign(socket, :flash_error, "remove_template failed: #{inspect(reason)}")}
+    end
+  end
+
+  def handle_event("remove_member", %{"member_uri" => uri_str}, socket) do
+    case URI.new(uri_str) do
+      {:ok, uri} ->
+        case Ezagent.Workspace.remove_member(socket.assigns.name, uri) do
+          :ok ->
+            {:noreply,
+             socket
+             |> assign(:workspace, Ezagent.Workspace.Store.get_by_name(socket.assigns.name))
+             |> assign(:flash_error, nil)}
+
+          {:error, reason} ->
+            {:noreply, assign(socket, :flash_error, "remove failed: #{inspect(reason)}")}
+        end
+
+      _ ->
+        {:noreply, assign(socket, :flash_error, "Bad URI")}
+    end
+  end
+
+  # Helpers for handle_event("add_template", ...) — kept below the
+  # handle_event/3 clauses so they group contiguously (clause-grouping
+  # warning).
   defp do_add_template(socket, tmpl_name, tmpl) do
     case Ezagent.Workspace.add_template(socket.assigns.name, tmpl_name, tmpl) do
       :ok ->
@@ -221,38 +256,6 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
 
       _ ->
         {:error, :missing_class}
-    end
-  end
-
-  def handle_event("remove_template", %{"name" => tmpl_name}, socket) do
-    case Ezagent.Workspace.remove_template(socket.assigns.name, tmpl_name) do
-      :ok ->
-        {:noreply,
-         socket
-         |> assign(:workspace, Ezagent.Workspace.Store.get_by_name(socket.assigns.name))
-         |> assign(:flash_error, nil)}
-
-      {:error, reason} ->
-        {:noreply, assign(socket, :flash_error, "remove_template failed: #{inspect(reason)}")}
-    end
-  end
-
-  def handle_event("remove_member", %{"member_uri" => uri_str}, socket) do
-    case URI.new(uri_str) do
-      {:ok, uri} ->
-        case Ezagent.Workspace.remove_member(socket.assigns.name, uri) do
-          :ok ->
-            {:noreply,
-             socket
-             |> assign(:workspace, Ezagent.Workspace.Store.get_by_name(socket.assigns.name))
-             |> assign(:flash_error, nil)}
-
-          {:error, reason} ->
-            {:noreply, assign(socket, :flash_error, "remove failed: #{inspect(reason)}")}
-        end
-
-      _ ->
-        {:noreply, assign(socket, :flash_error, "Bad URI")}
     end
   end
 

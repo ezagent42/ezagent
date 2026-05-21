@@ -408,8 +408,7 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
 
               <.card :if={is_map(s) and Map.get(s, :recent_output, []) != []} class="mt-6 bg-zinc-900 dark:bg-zinc-950 border-zinc-700 dark:border-zinc-800">
                 <h2 class="text-sm font-medium mb-2 text-zinc-200">Recent PTY output (last 50 lines)</h2>
-                <pre class="font-mono text-[11px] whitespace-pre-wrap m-0 max-h-[360px] overflow-y-auto text-zinc-200"><%= for line <- s.recent_output do %>{line}
-<% end %></pre>
+                <pre class="font-mono text-[11px] whitespace-pre-wrap m-0 max-h-[360px] overflow-y-auto text-zinc-200">{Enum.join(s.recent_output, "\n")}</pre>
               </.card>
             <% @status.phase == :alive -> %>
               <%!-- echo / curl / other flavors — Kind alive, no

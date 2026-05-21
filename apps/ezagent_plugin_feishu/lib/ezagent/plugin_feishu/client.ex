@@ -308,6 +308,31 @@ defmodule EzagentPluginFeishu.Client do
     send_typed_message(state, chat_id, "file", %{file_key: file_key})
   end
 
+  def handle_call(:status, _from, state) do
+    s = %{
+      configured: state.app_id != nil,
+      app_id_prefix: state.app_id && String.slice(state.app_id, 0..14),
+      token_minted: state.token != nil
+    }
+
+    {:reply, s, state}
+  end
+
+  def handle_call(:peek_token, _from, %__MODULE__{app_id: nil} = state),
+    do: {:reply, {:error, :credentials_not_configured}, state}
+
+  def handle_call(:peek_token, _from, state) do
+    case ensure_token(state) do
+      {:ok, token, new_state} -> {:reply, {:ok, token}, new_state}
+      err -> {:reply, err, state}
+    end
+  end
+
+  # Helper for the send_image/send_file handle_call clauses — kept
+  # below the handle_call/3 clauses so they group contiguously
+  # (clause-grouping warning). Phase 6 PR 17: react/2 moved out of
+  # the GenServer mailbox; see the public react/2 +
+  # http_post_json_direct/3 above.
   defp send_typed_message(%__MODULE__{app_id: nil} = state, _, _, _),
     do: {:reply, {:error, :credentials_not_configured}, state}
 
@@ -332,29 +357,6 @@ defmodule EzagentPluginFeishu.Client do
 
       err ->
         {:reply, err, state}
-    end
-  end
-
-  # Phase 6 PR 17: react/2 moved out of the GenServer mailbox; see
-  # the public react/2 + http_post_json_direct/3 above.
-
-  def handle_call(:status, _from, state) do
-    s = %{
-      configured: state.app_id != nil,
-      app_id_prefix: state.app_id && String.slice(state.app_id, 0..14),
-      token_minted: state.token != nil
-    }
-
-    {:reply, s, state}
-  end
-
-  def handle_call(:peek_token, _from, %__MODULE__{app_id: nil} = state),
-    do: {:reply, {:error, :credentials_not_configured}, state}
-
-  def handle_call(:peek_token, _from, state) do
-    case ensure_token(state) do
-      {:ok, token, new_state} -> {:reply, {:ok, token}, new_state}
-      err -> {:reply, err, state}
     end
   end
 

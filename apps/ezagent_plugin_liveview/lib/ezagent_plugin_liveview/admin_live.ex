@@ -531,6 +531,29 @@ defmodule EzagentPluginLiveview.AdminLive do
     end
   end
 
+  # Phase 5 PR 5 — paginate history backwards. Kept here so all
+  # handle_event/3 clauses group contiguously (clause-grouping warning).
+  def handle_event("load_older_messages", _params, socket) do
+    case socket.assigns.oldest_cursor do
+      nil ->
+        {:noreply, socket}
+
+      %DateTime{} = cursor ->
+        older =
+          socket.assigns.current_session_uri
+          |> Ezagent.MessageStore.older_than(cursor, @message_limit)
+          |> Enum.reverse()
+          |> messages_to_rows()
+
+        socket =
+          Enum.reduce(older, socket, fn row, acc ->
+            stream_insert(acc, :messages, row, at: 0)
+          end)
+
+        {:noreply, assign(socket, :oldest_cursor, oldest_cursor(older) || cursor)}
+    end
+  end
+
   defp dispatch_session_routing(socket, action, args) do
     session_uri = socket.assigns.current_session_uri
 
@@ -594,28 +617,6 @@ defmodule EzagentPluginLiveview.AdminLive do
     {:ok, String.to_existing_atom(s)}
   rescue
     ArgumentError -> {:error, {:unknown_table, s}}
-  end
-
-  # Phase 5 PR 5 — paginate history backwards.
-  def handle_event("load_older_messages", _params, socket) do
-    case socket.assigns.oldest_cursor do
-      nil ->
-        {:noreply, socket}
-
-      %DateTime{} = cursor ->
-        older =
-          socket.assigns.current_session_uri
-          |> Ezagent.MessageStore.older_than(cursor, @message_limit)
-          |> Enum.reverse()
-          |> messages_to_rows()
-
-        socket =
-          Enum.reduce(older, socket, fn row, acc ->
-            stream_insert(acc, :messages, row, at: 0)
-          end)
-
-        {:noreply, assign(socket, :oldest_cursor, oldest_cursor(older) || cursor)}
-    end
   end
 
   # --- Render -----------------------------------------------------------
