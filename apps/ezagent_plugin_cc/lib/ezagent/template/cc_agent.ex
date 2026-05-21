@@ -230,7 +230,9 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   # `Ezagent.PluginCc.PtyServer.spawn_claude_directly/1` so the Server
   # module (now `Ezagent.Domain.Pty.Server`) stays Tier-2 — no
   # dependency on cc-plugin modules like `McpConfigWriter`.
-  defp build_claude_cmd(agent_uri, agent_cwd \\ nil) do
+  # `agent_cwd` is always supplied by the sole caller
+  # (ensure_pty_server/2) — no default, per dead-code audit 2026-05-21.
+  defp build_claude_cmd(agent_uri, agent_cwd) do
     {:ok, mcp_path} =
       EzagentPluginCc.McpConfigWriter.write!(
         agent_uri: URI.to_string(agent_uri),

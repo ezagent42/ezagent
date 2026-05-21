@@ -49,7 +49,16 @@ defmodule Mix.Tasks.Ezagent.User.Token do
 
     cond do
       opts[:mint] ->
+        # `Token.mint/2` returns `{plain, row}` on success OR
+        # `{:error, reason}` (unsupported entity URI). Both are
+        # 2-tuples — the `{:error, _}` clause MUST come first, else
+        # `{plain, row}` swallows it (binds plain=:error, row=reason)
+        # and `row.id` crashes confusingly instead of the clean
+        # Mix.raise. (dead-code audit 2026-05-21)
         case Ezagent.Entity.Token.mint(uri, label: opts[:label]) do
+          {:error, reason} ->
+            Mix.raise("mint failed: #{inspect(reason)}")
+
           {plain, row} ->
             Mix.shell().info("Minted token id=#{row.id} for #{uri_str}.")
             Mix.shell().info("")
@@ -57,9 +66,6 @@ defmodule Mix.Tasks.Ezagent.User.Token do
             Mix.shell().info("")
             Mix.shell().info("Record this token now — it won't be shown again.")
             Mix.shell().info("Use via: EZAGENT_USER_TOKEN=<token> mix esr ...")
-
-          {:error, reason} ->
-            Mix.raise("mint failed: #{inspect(reason)}")
         end
 
       opts[:list] ->
