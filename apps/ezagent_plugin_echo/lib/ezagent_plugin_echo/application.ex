@@ -67,12 +67,25 @@ defmodule EzagentPluginEcho.Application do
   @impl true
   def start(_type, _args) do
     register_behaviors()
+    register_template_classes()
 
     children = [
       {DynamicSupervisor, name: __MODULE__.Supervisor, strategy: :one_for_one}
     ]
 
     Supervisor.start_link(children, strategy: :one_for_one, name: __MODULE__)
+  end
+
+  # Domain.Pty SPEC v1 §10 row 3 + §11 item 6 (deferred PR-D sub-task,
+  # now in scope per Allen Feishu 2026-05-22) — register the
+  # `echo.agent` Template Class so operators can create echo agents
+  # with an optional `/bin/bash -i` PTY sidecar via the standard
+  # `Workspace.add_template → invoke_template → instantiate` chain.
+  # Direct `SpawnRegistry.spawn/1` (the original creation path) still
+  # works unchanged for the default echo agent + legacy callers.
+  defp register_template_classes do
+    :ok = Ezagent.TemplateRegistry.register(Ezagent.PluginEcho.Template.EchoAgent)
+    :ok
   end
 
   defp register_behaviors do
