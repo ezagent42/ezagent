@@ -912,7 +912,7 @@ end
 | Plugin 作者改 init 的能力 | 不能(宏展开覆盖) | 不能(根本没 init 可写) |
 | Property 等价 | ✓ | ✓ |
 
-**Phase 1 选路径 B**(详见 `phase-specs/phase1/DECISIONS.md` P1-D2 + Decision Log #84):理由是 Phase 1 只有 Echo 一个业务 Kind,runtime 隔离风险接近零;property 收益(用户写不出 wrong init)对 Phase 1 dogfood loop 价值更大。Phase 2+ 加 Chat Behavior 时如果发现共享 Server 跟某些 Kind 的 state 假设冲突,届时评估是否需要切回路径 A 或两条并存。
+**Phase 1 选路径 B**(详见 `docs/phase-specs/phase1/DECISIONS.md` P1-D2 + Decision Log #84):理由是 Phase 1 只有 Echo 一个业务 Kind,runtime 隔离风险接近零;property 收益(用户写不出 wrong init)对 Phase 1 dogfood loop 价值更大。Phase 2+ 加 Chat Behavior 时如果发现共享 Server 跟某些 Kind 的 state 假设冲突,届时评估是否需要切回路径 A 或两条并存。
 
 **关键不变式**(两条路径都依赖):这个窗口的正确性依赖 §5.7.6 的硬不变式(inbound 永远走 dispatch,**不**裸 `PubSub.broadcast` 到 inbound topic)。Phoenix.PubSub 对没有订阅者的 topic **不** buffer——裸 broadcast 进 inbound topic 在 register→subscribe 窗口里**会被丢**(这正是事故 2.1 的本来面貌)。
 

@@ -512,7 +512,7 @@ SessionTemplate, orchestrator, etc.).
 | **How-to recipes** | Add a plugin (mix.exs + application.ex + registry register calls); add a Kind (Kind behaviour callbacks + snapshot + persistence); add a Behavior (interface schema + invoke/4 + slice); add a Template Class (implements `Ezagent.Kind.Template` behaviour); add a routing rule; write an invariant test; install a new plugin into running Ezagent (`mix ezagent.plugin.install`) |
 | **Debug recipes** | Silent drop → check CapBAC + meta schema + cap shape; orphan sidecar → check Port lifecycle + sidecar stdin EOF handler; `:unauthorized` despite cap granted → check cap struct shape (atom vs module reference) and User Kind aliveness; fork didn't preserve lineage → check `parent_template_uri` field |
 | **Project conventions** | uv not python3; pnpm not npm; agent-browser for UI debugging; bilingual docs/<name>.md + docs/<name>.zh_cn.md; Decision Log new entry rules; forensic notes in `docs/notes/` |
-| **Pointer index** | Each major Decision Log entry; each forensic note in `docs/notes/`; ARCHITECTURE.md key sections (§5 dispatch, §7 CapBAC, §12.8 channel); phase-specs/phase7/ for v1 design |
+| **Pointer index** | Each major Decision Log entry; each forensic note in `docs/notes/`; ARCHITECTURE.md key sections (§5 dispatch, §7 CapBAC, §12.8 channel); docs/phase-specs/phase7/ for v1 design |
 
 ### 4 onboarding docs
 
@@ -668,9 +668,9 @@ Allen review:
 ## Sign-off
 
 - [x] Allen reviews SPEC v3 — "spec 设计 OK" + AFK execution authorized 2026-05-18
-- [ ] `phase-specs/phase7/VERIFICATION.md` written (acceptance
+- [ ] `docs/phase-specs/phase7/VERIFICATION.md` written (acceptance
       criteria + e2e gate definitions per sub-step)
-- [ ] `phase-specs/phase7/PLAN.md` written (PR ordering + estimate)
-- [ ] `phase-specs/phase7/DECISIONS.md` initialized (capture
+- [ ] `docs/phase-specs/phase7/PLAN.md` written (PR ordering + estimate)
+- [ ] `docs/phase-specs/phase7/DECISIONS.md` initialized (capture
       implementation-time judgment calls as they happen)
 - [ ] Phase 7-1 sub-step PRs begin

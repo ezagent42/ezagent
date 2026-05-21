@@ -3,7 +3,7 @@ defmodule Ezagent.Home do
   EZAGENT_HOME runtime persistence helpers — Phase 5 PR 1.
 
   Resolves the active home + profile + credential paths from environment
-  with sensible fallbacks documented in `phase-specs/phase5/EZAGENT_HOME.md`.
+  with sensible fallbacks documented in `docs/phase-specs/phase5/EZAGENT_HOME.md`.
 
   Read-only here; mutation lives in `Mix.Tasks.Ezagent.Home.Init` and
   `Mix.Tasks.Ezagent.Home.ImportFromEsrdDev` so library code never creates

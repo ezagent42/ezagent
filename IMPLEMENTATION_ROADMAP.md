@@ -15,7 +15,7 @@ roadmap 里这个 phase 的 entry
    │
    ▼
 per-phase /brainstorm
-   │  产出 phase-specs/phaseN/{SPEC, VERIFICATION, PLAN, DECISIONS}.md
+   │  产出 docs/phase-specs/phaseN/{SPEC, VERIFICATION, PLAN, DECISIONS}.md
    │  (VERIFICATION 先于 PLAN 写 —— 它是 sub-step 之间的契约)
    ▼
 /goal 实施 (Allen AFK)
@@ -61,7 +61,7 @@ phaseN git tag → 下一个 phase
 | **4** | LiveView IM 完整化 + CLI 自动派生 + View 同构 | 4a → 4b | ✅ done |
 | **4.5** | Operator/Admin Tools Maturity + Snapshot Observability + Per-rule CapBAC(in-flight 中临时插入) | 4.5-1 ... 4.5-5 | ✅ done |
 | **5** | Feishu + CC channel + Pty-Web | 5a → 5b → 5c | ✅ done w/ known gap(v1→v2 CC channel wire swap → moved to Phase 6) |
-| **6** | Three-Layer Restructure(core / domain / plugin)+ shadcn-like UI + Python contract(详见 `phase-specs/phase6/SPEC.md`) | 6-1, 6-2, 6-3, 6-5, 6-11, 6-12 done; 6-4/6-7/6-8/6-9/6-10 moved to Phase 7 | ⚠️ partial — six PRs shipped (extraction + UI domain + applies_to_users + Python contract + closeout), CC channel v2 + multi-user surface deferred to Phase 7 |
+| **6** | Three-Layer Restructure(core / domain / plugin)+ shadcn-like UI + Python contract(详见 `docs/phase-specs/phase6/SPEC.md`) | 6-1, 6-2, 6-3, 6-5, 6-11, 6-12 done; 6-4/6-7/6-8/6-9/6-10 moved to Phase 7 | ⚠️ partial — six PRs shipped (extraction + UI domain + applies_to_users + Python contract + closeout), CC channel v2 + multi-user surface deferred to Phase 7 |
 
 **sub-step 是 /goal 的内部 e2e gate,不是 Allen 介入点**(Decision #80):
 
@@ -127,7 +127,7 @@ Phase 4 的 "LiveView IM 完整化" **不是从零做 LiveView**,是给 Phase 1-
 
 ### 2.1 transport-agnostic flow 格式
 
-产出 `phase-specs/e2e-parity/FLOWS.md`,把 `docs/notes/manual-e2e-verification.md`(老 esr 的 feishu-cc 人工验证流程)抽成 **transport-agnostic 操作流程**——每条 flow = 一串「人的动作 → 期望的系统行为」,不绑 transport。**操作流程不变,变的只是走哪个 transport**(LiveView 早期 / Feishu 最终)。
+产出 `docs/phase-specs/e2e-parity/FLOWS.md`,把 `docs/notes/manual-e2e-verification.md`(老 esr 的 feishu-cc 人工验证流程)抽成 **transport-agnostic 操作流程**——每条 flow = 一串「人的动作 → 期望的系统行为」,不绑 transport。**操作流程不变,变的只是走哪个 transport**(LiveView 早期 / Feishu 最终)。
 
 ### 2.2 核心 8 条 flow
 
@@ -327,7 +327,7 @@ Deliverable 项:
 
 ## 8. Phase 5 — Feishu adapter + CC channel(production)+ Pty-Web
 
-> **📌 Naming note (2026-05-17)**: PRs #27-#32 were shipped under the label "Phase 5" but their scope (operator/admin LV tools maturity + snapshot observability + per-rule routing cap-check) **is not** what this section describes. That work was reassigned to **Phase 4.5** and lives at `phase-specs/phase4.5/`. The real Phase 5 below (Feishu adapter + CC channel production + Pty-Web) was then completed end-to-end the same day via PRs #36-#51. See "Status (2026-05-17)" below.
+> **📌 Naming note (2026-05-17)**: PRs #27-#32 were shipped under the label "Phase 5" but their scope (operator/admin LV tools maturity + snapshot observability + per-rule routing cap-check) **is not** what this section describes. That work was reassigned to **Phase 4.5** and lives at `docs/phase-specs/phase4.5/`. The real Phase 5 below (Feishu adapter + CC channel production + Pty-Web) was then completed end-to-end the same day via PRs #36-#51. See "Status (2026-05-17)" below.
 
 > **📊 Status (2026-05-17): complete-with-known-gap**
 >
@@ -416,7 +416,7 @@ Phase 7 是 Allen 亲手驱动的最后一个 phase + **Ezagent v1 official rele
 1. Production-grade **session-template generator**——人类创建 session → 自带 orchestrator(LLM-driven session-internal manager)→ 与 orchestrator 对话 = template 完善过程 → session 可被 fork(config only)、可 update_template(新 hash 不动老)、可 save_template_as 起新 template
 2. Make Ezagent **self-sustaining** for dev team without Allen——所有 deferred Phase 6 infra debt 关掉,handoff readiness(invariant tests + skill + 4 onboarding docs)落地,Decision Log + GLOSSARY + ROADMAP 都 current 到 v1 状态
 
-**2. SPEC/VERIFICATION/PLAN/DECISIONS** — 4 个文档已 ship:`phase-specs/phase7/{SPEC,VERIFICATION,PLAN,DECISIONS}.md`(SPEC v3 LOCKED + V1-V5 measurable criteria + 24-PR 顺序 + impl 时累积的 Decision)
+**2. SPEC/VERIFICATION/PLAN/DECISIONS** — 4 个文档已 ship:`docs/phase-specs/phase7/{SPEC,VERIFICATION,PLAN,DECISIONS}.md`(SPEC v3 LOCKED + V1-V5 measurable criteria + 24-PR 顺序 + impl 时累积的 Decision)
 
 **3. Decisions D7-1 → D7-10 已 LOCKED**(全部在 ARCHITECTURE Decision Log Phase 7 closeout 升 #135-#144):
 - D7-1: Orchestrator LLM-driven not deterministic
@@ -554,7 +554,7 @@ ezagent/
 ├── GLOSSARY.md                  ← Decision Log 抽出 + 术语表 + 易混淆词表,实施期持续 append
 ├── IMPLEMENTATION_ROADMAP.md    ← 本文档
 ├── AGENTS.md                    ← Claude Code / 实施期 agent 的 prompt + 「贯穿条款」
-├── phase-specs/
+├── docs/phase-specs/
 │   ├── e2e-parity/
 │   │   └── FLOWS.md             ← e2e flow track 的 8 条 transport-agnostic flow
 │   ├── phase0/
@@ -586,8 +586,8 @@ ezagent/
 ## 12. 下一步
 
 1. **本文档 + ARCHITECTURE.md(Patch A/B/C)双双 sign-off**
-2. **写 `phase-specs/e2e-parity/FLOWS.md`** —— e2e flow track 的 8 条 flow 详细化(可跟 Phase 0 并行)
-3. **Phase 0 的 `/brainstorm`** —— 产出 `phase-specs/phase0/{SPEC,VERIFICATION,PLAN,DECISIONS}.md` + `/goal` 提示词模板
+2. **写 `docs/phase-specs/e2e-parity/FLOWS.md`** —— e2e flow track 的 8 条 flow 详细化(可跟 Phase 0 并行)
+3. **Phase 0 的 `/brainstorm`** —— 产出 `docs/phase-specs/phase0/{SPEC,VERIFICATION,PLAN,DECISIONS}.md` + `/goal` 提示词模板
 4. **`/goal` for Phase 0** → Allen 验收 → `phase0` tag → Phase 1 brainstorm → ...
 
 预计每个 phase 1-2 周,6 phase 共 8-12 周。

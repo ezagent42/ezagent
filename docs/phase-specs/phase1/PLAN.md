@@ -182,7 +182,7 @@ end
 
 1. `mix phx.server` 启动(background),等 `/_health` 返回 200
 2. 执行 `VERIFICATION.md` 1a-G4 的 step 1-6(agent-browser open / snapshot / click / paste 文本 / screenshot / SQLite SELECT)
-3. 把 `/tmp/phase1a-final.png` screenshot 也提交进 git(or 至少在 phase-specs/phase1/artifacts/ 留一份)
+3. 把 `/tmp/phase1a-final.png` screenshot 也提交进 git(or 至少在 docs/phase-specs/phase1/artifacts/ 留一份)
 4. 跑 `VERIFICATION.md` 1a-G1(结构 + compile + test) + 1a-G2(grep checklist) + 1a-G3(`mix ezagent.check_invariants`)
 5. 全绿 → `git commit -m "phase1a step 6: 1a sub-step gate verified" && git tag phase1a`
 
@@ -221,10 +221,10 @@ spec 4 文件全部 sign-off 后,**主 agent**(就是我)走 self-motivated skil
 **`/goal` 文本(待最终 brainstorm/subagent 起草后定稿)**:
 ```
 /goal Implement ezagent Phase 1 sub-step 1a then 1b. Approach: TDD per
-phase-specs/phase1/PLAN.md (1a internal 6 steps with commits between
+docs/phase-specs/phase1/PLAN.md (1a internal 6 steps with commits between
 them, then 1b). Each sub-step ends with agent-browser F1 verification +
 sub-step-gate.sh green. Refs:
-phase-specs/phase1/{SPEC,VERIFICATION,PLAN,DECISIONS}.md, ARCHITECTURE.md
+docs/phase-specs/phase1/{SPEC,VERIFICATION,PLAN,DECISIONS}.md, ARCHITECTURE.md
 §4-§6 + §5.7 + §10.2 + Appendix A, GLOSSARY.md (8 invariants).
 Done when: phase1a + phase1b tags both pushed + all VERIFICATION
 checkboxes ticked + sub-step-gate green for both + mix test + mix

@@ -113,7 +113,7 @@ The empirical test for "really connected via channel":
 | `apps/ezagent_plugin_cc_bridge_v1_prototype/lib/esr/bridge/v1_prototype/server.ex` | add push_to_claude, record_reply, per-bridge topics | +30 |
 | `apps/ezagent_web_liveview/lib/ezagent_web_liveview/admin_live.ex` | add Send-to-Claude form + replies panel | +60 |
 | `scripts/cc-bridge-attach.sh` | add `--dangerously-load-development-channels` flag | +1 |
-| `phase-specs/phase1/SPEC.md` + `VERIFICATION.md` + `PLAN.md` | revise to channel mode | edit |
+| `docs/phase-specs/phase1/SPEC.md` + `VERIFICATION.md` + `PLAN.md` | revise to channel mode | edit |
 | `apps/ezagent_plugin_cc_bridge_v1_prototype/test/` | add channel-mode tests | +60 |
 
 Total: ~263 LOC code + spec rev.

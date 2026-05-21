@@ -1,7 +1,7 @@
 defmodule Mix.Tasks.Ezagent.Home.Init do
   @shortdoc "Create the EZAGENT_HOME profile skeleton (credentials/db/snapshots/logs/plugins)"
   @moduledoc """
-  Phase 5 PR 1: bootstrap `$EZAGENT_HOME/$EZAGENT_PROFILE/` per `phase-specs/phase5/EZAGENT_HOME.md`.
+  Phase 5 PR 1: bootstrap `$EZAGENT_HOME/$EZAGENT_PROFILE/` per `docs/phase-specs/phase5/EZAGENT_HOME.md`.
 
   Idempotent — safe to re-run; only creates missing pieces.
 

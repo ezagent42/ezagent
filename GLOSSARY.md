@@ -308,7 +308,7 @@ Runtime persistence root —— `~/.ezagent/<profile>/` by default,overridable v
 
 Profile model: 多 profile 同 host(`default` / `staging` / `personal`)。Init: `mix ezagent.home.init`;Migration from old esrd: `mix ezagent.home.import_from_esrd_dev`.
 
-参考: phase-specs/phase5/EZAGENT_HOME.md,Decision #130
+参考: docs/phase-specs/phase5/EZAGENT_HOME.md,Decision #130
 
 ### Ezagent.Runtime
 
@@ -595,7 +595,7 @@ Template Instance 的代表性例子。**薄 Resource Kind**——state 是 fold
 
 第 5 个 ETS Registry,在 Kind/Behavior/Routing/Spawn/Template Registry 之外补的 session→workspace 反向 lookup。**Phase 7-8c 时**:authoritative source of truth ——Workspace.Loader.invoke_template 在 spawn session 后 `bind(session_uri, workspace_uri)`;dispatch 通过 `lookup(session_uri)` 拿到 workspace_uri 传给 `Resolver.resolve/4`。**Phase 9 PR-7 之后(SPEC v3 §3.6 URI scheme 统一)**:**降级为 consistency cache**。所有 per-tenant URI(session/template/resource 都加了 workspace 段)now carry workspace structurally;`Capability.workspace_of/1` 直接从 URI 字符串 O(1) 提取,no ETS lookup。WorkspaceRegistry binding **必须等于** session URI 的 workspace 段(invariant test `all_per_tenant_uris_have_workspace_test.exs` "registry binding matches URI workspace segment" 守住)。
 
-参考: ARCHITECTURE.md Decision #135 + #145,IMPL-7-1 in phase-specs/phase7/DECISIONS.md,SPEC v3 §3.6
+参考: ARCHITECTURE.md Decision #135 + #145,IMPL-7-1 in docs/phase-specs/phase7/DECISIONS.md,SPEC v3 §3.6
 
 ### Deployment unit(部署单元)— Phase 9 framing
 
@@ -761,7 +761,7 @@ Ezagent domain 词跟外部世界(Phoenix / Elixir / 通用计算机科学)同�
 1. 实施期产生新架构决策(brainstorm 阶段 / dev review / Allen 指示)
 2. Append 到 §1 Decision Log,编号递增(下一条 #88)
 3. Period 字段标 `impl`(区别 v0.1-v0.4 的"设计期"决策)
-4. 决策正文要简洁:**一句话核心 + 关键 link**(到 ARCHITECTURE.md 章节或 phase-specs/)
+4. 决策正文要简洁:**一句话核心 + 关键 link**(到 ARCHITECTURE.md 章节或 docs/phase-specs/)
 5. 同步:如果决策影响 ARCHITECTURE.md,Allen 决定要不要 patch 主文档(小决策可能只在 GLOSSARY 记录)
 
 ### 新增术语

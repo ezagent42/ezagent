@@ -233,7 +233,7 @@ Tempted to `Phoenix.PubSub.broadcast(EzagentCore.PubSub, "slack:incoming", msg)`
 
 - Run your invariant test (write one — see `docs/onboarding/adding-kind-behavior-template.md` §"How to write an invariant test").
 - Run the cross-PR invariants (see `docs/onboarding/first-30-days.md` §week-4).
-- SPEC_REVIEW 8-item checklist (per `phase-specs/phase7/SPEC.md` §SPEC_REVIEW walkthrough).
+- SPEC_REVIEW 8-item checklist (per `docs/phase-specs/phase7/SPEC.md` §SPEC_REVIEW walkthrough).
 - Open PR with the checklist in the body.
 
 Welcome to the team.

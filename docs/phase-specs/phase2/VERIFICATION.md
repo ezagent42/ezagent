@@ -127,9 +127,9 @@ Phase 2 切 3 个 sub-step,每个有自己的 gate:
 - [ ] 2a + 2b + 2c 全部 sub-step gate 绿
 - [ ] `git tag phase2` 存在并 push origin
 - [ ] `sub-step-gate.sh` 在 commit `phase2` 时实际跑过且通过
-- [ ] `phase-specs/phase2/VERIFICATION.md` 全部 checkbox 打勾(执行记录)
+- [ ] `docs/phase-specs/phase2/VERIFICATION.md` 全部 checkbox 打勾(执行记录)
 - [ ] `mix ezagent.check_invariants` 输出干净
-- [ ] `/tmp/phase2-final.png` screenshot 生成并拷贝进 `phase-specs/phase2/artifacts/`
+- [ ] `/tmp/phase2-final.png` screenshot 生成并拷贝进 `docs/phase-specs/phase2/artifacts/`
 - [ ] Phase 1 所有 functionality 不退化(回归):Echo button / Manual Dispatch / audit log 仍工作
 
 ---

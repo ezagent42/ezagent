@@ -137,7 +137,7 @@ Caller 构造 `%Ezagent.Message{}` struct 然后 dispatch 时,InterfaceValidator
 
 **原则**:Phoenix.LiveView.stream `limit: 50` 自然 LRU 滚出旧条目。autoscroll 默认开(JS `scrollIntoView` hook on `stream_insert` event)。无 manual pagination(Phase 3+ 加 history 滚动加载)。
 
-### `phase-specs/phase2/artifacts/` 存 screenshot
+### `docs/phase-specs/phase2/artifacts/` 存 screenshot
 
 **原则**(沿用 Phase 1):screenshot 跟 spec 同 commit 进 git;Phase 2 只一张 `phase2-final.png`(2c 整体 e2e 完成时的截图);size 限 < 1MB(SCREENSHOT 是验收凭证)。
 

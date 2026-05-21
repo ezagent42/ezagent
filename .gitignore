@@ -38,7 +38,7 @@ scripts/cc-bridge-attach.local.sh
 # Each operator has their own EZAGENT_BRIDGE_URL / proxy; gitignored.
 .mcp.json
 scripts/cc-bridge-attach.local.sh.bak-*
-phase-specs/phase3/artifacts/phase3-multi-agent*
+docs/phase-specs/phase3/artifacts/phase3-multi-agent*
 /.ezagent/
 
 # Cloudflare Access service-token credentials (operator-local).

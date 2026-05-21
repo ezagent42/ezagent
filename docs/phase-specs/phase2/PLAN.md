@@ -206,7 +206,7 @@ handle_event "chat_compose":parse form fields → 构造 Message → dispatch se
 ### 2c-step 4 · 提交 + tag phase2
 
 - 全 gate 绿
-- screenshot `/tmp/phase2-final.png` 拷贝进 `phase-specs/phase2/artifacts/`
+- screenshot `/tmp/phase2-final.png` 拷贝进 `docs/phase-specs/phase2/artifacts/`
 - commit + tag `phase2`(注意:phase2 = phase2c 完成 = Phase 2 整体完成)
 - push origin phase-2 branch + tag
 
@@ -271,13 +271,13 @@ Implement ezagent Phase 2 sub-steps 2a → 2b → 2c. Tags phase2a, phase2b, pha
 
 DONE when:
 1. git tag shows phase2a / phase2b / phase2 all pushed to origin
-2. Every checkbox in phase-specs/phase2/VERIFICATION.md ticked with evidence
+2. Every checkbox in docs/phase-specs/phase2/VERIFICATION.md ticked with evidence
 3. sub-step-gate.sh green at all 3 tag commits (mix format / mix test / mix ezagent.check_invariants)
-4. /tmp/phase2-final.png screenshot exists, archived to phase-specs/phase2/artifacts/
+4. /tmp/phase2-final.png screenshot exists, archived to docs/phase-specs/phase2/artifacts/
 5. Allen-side interactive verification (USER ACTION REQUIRED): Allen runs `bash scripts/cc-bridge-attach.sh` + tests offline/rejoin flow
 
 PRIMARY REFS:
-- phase-specs/phase2/{SPEC, VERIFICATION, PLAN, DECISIONS}.md
+- docs/phase-specs/phase2/{SPEC, VERIFICATION, PLAN, DECISIONS}.md
 - ARCHITECTURE.md §3.5 (Message) §6.3 (Chat Behavior) §10.4 (messages table) §12.8 (Channel rewrite post-Phase 1b)
 - GLOSSARY.md Decision Log
 

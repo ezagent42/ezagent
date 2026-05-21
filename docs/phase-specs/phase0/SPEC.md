@@ -26,7 +26,7 @@ ezagent/  (umbrella root)
 ├── ARCHITECTURE.md / GLOSSARY.md / IMPLEMENTATION_ROADMAP.md / CLAUDE.md / ARCHITECTURE_GRILL_v0.3.md
 │                        ← 奠基提交已在(commit c73d3d9)
 ├── AGENTS.md            ← phx.new 1.8 生成
-├── phase-specs/
+├── docs/phase-specs/
 └── .claude/             ← 迁移自老 esr(审视后)
 ```
 

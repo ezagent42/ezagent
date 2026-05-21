@@ -319,17 +319,17 @@ phase3a, phase3b, phase3c, phase3d (=phase3) pushed to origin.
 
 DONE when:
 1. git tag shows 4 sub-step tags pushed
-2. Every checkbox in phase-specs/phase3/VERIFICATION.md ticked
+2. Every checkbox in docs/phase-specs/phase3/VERIFICATION.md ticked
 3. sub-step-gate.sh green at all 4 tag commits
 4. /tmp/phase3-final.png agent-browser screenshot exists,
-   archived to phase-specs/phase3/artifacts/
+   archived to docs/phase-specs/phase3/artifacts/
 5. SQLite routing_rules table populated with default + 1 admin rule
 6. Phase 1+2 functionality NOT regressed (Echo / Chat /
    bridge attach all still work)
 7. Phase 3d alarm check: no `:stub_grant` telemetry emitted
 
 PRIMARY REFS:
-- phase-specs/phase3/{SPEC, VERIFICATION, PLAN, DECISIONS}.md
+- docs/phase-specs/phase3/{SPEC, VERIFICATION, PLAN, DECISIONS}.md
 - ARCHITECTURE.md §5.4 (RoutingRegistry) §6.6 (Matcher) §7 (CapBAC)
 - GLOSSARY.md Decision Log #88-#94 (Phase 2 emergent context)
 

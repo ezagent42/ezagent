@@ -115,7 +115,7 @@
 ## Phase 3 整体 Gate(`phase3` tag = 3d 完成)
 
 - [ ] 3a + 3b + 3c + 3d 全部 sub-step gate 绿
-- [ ] LV /admin agent-browser 截图存到 `phase-specs/phase3/artifacts/phase3-final.png`,显示 2 个 session + 1 个 agent 在两个 session 都 online
+- [ ] LV /admin agent-browser 截图存到 `docs/phase-specs/phase3/artifacts/phase3-final.png`,显示 2 个 session + 1 个 agent 在两个 session 都 online
 - [ ] SQLite `routing_rules` table 至少 3 行(per-session 默认 fan-out + 一条 admin 加的 demo 规则)
 - [ ] SQLite `messages` table 至少 4 条(单 message URI per envelope,跨 session 共享);`message_routings` 表至少 6 行(2-session demo 各 2 admin + 2 agent reply,跨 session 复用 message 走 routings 多行)
 - [ ] `mix ezagent.check_invariants` 6 个老 + 2 个新(#9 #10)全绿

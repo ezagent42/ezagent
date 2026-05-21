@@ -13,7 +13,7 @@ Elixir/OTP-native **message router runtime**: multi-channel → multi-agent 编�
 2. **`GLOSSARY.md`** — 术语表 + 易混淆词消歧 + Decision Log 速查。
 3. **`IMPLEMENTATION_ROADMAP.md`** — 6 phase 划分 + 4 条贯穿 track。
 4. **`CLAUDE.md`** — Ezagent 特有约定(补充 phx.new 生成的 `AGENTS.md`)。
-5. **`phase-specs/<current-phase>/`** — 当前 phase 的 SPEC / VERIFICATION / PLAN / DECISIONS。
+5. **`docs/phase-specs/<current-phase>/`** — 当前 phase 的 SPEC / VERIFICATION / PLAN / DECISIONS。
 6. `ARCHITECTURE_GRILL_v0.3.md` — dev review 历史记录(可追溯)。
 
 ## 结构
@@ -42,5 +42,5 @@ mix ecto.create / ecto.migrate # SQLite
 
 ## 实施工作流
 
-每个 phase:`/brainstorm` 出 `phase-specs/phaseN/` 4 文件 → 实施(sub-step e2e gate)
+每个 phase:`/brainstorm` 出 `docs/phase-specs/phaseN/` 4 文件 → 实施(sub-step e2e gate)
 → Allen review → `git tag phaseN`。详见 `IMPLEMENTATION_ROADMAP.md` §0。

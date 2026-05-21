@@ -86,4 +86,4 @@ Demo script for video: open agent-browser, screenshot `/admin/workspaces` to sho
 
 ## Decision provenance
 
-All Phase 6 decisions land in `phase-specs/phase6/SPEC.md` (locked v2). Brainstorm history: 7+ rounds documented in that file. Memory entries added for `feedback_phase_planning_reads_main_docs` and `feedback_plugin_external_integration_is_receiver_kind` during Phase 5; both stay valid.
+All Phase 6 decisions land in `docs/phase-specs/phase6/SPEC.md` (locked v2). Brainstorm history: 7+ rounds documented in that file. Memory entries added for `feedback_phase_planning_reads_main_docs` and `feedback_plugin_external_integration_is_receiver_kind` during Phase 5; both stay valid.

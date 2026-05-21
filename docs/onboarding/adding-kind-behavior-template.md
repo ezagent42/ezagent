@@ -293,7 +293,7 @@ Cite the Decision Log entry in the failure message. The next person to fail this
 - Run the cross-PR invariant suite (per `docs/onboarding/first-30-days.md` §week-4)
 - Update `GLOSSARY.md` if your Kind/Behavior introduces a new term
 - Update `.claude/skills/esr-developer/SKILL.md` if your change introduces a new pattern or anti-pattern
-- SPEC_REVIEW 8-item checklist (per `phase-specs/phase7/SPEC.md` §SPEC_REVIEW walkthrough)
+- SPEC_REVIEW 8-item checklist (per `docs/phase-specs/phase7/SPEC.md` §SPEC_REVIEW walkthrough)
 - Open PR with the checklist in the body
 
 The skill update is especially important — it's how future contributors discover your work. The skill is the dev team's "Allen replacement" for architectural judgment (Decision #140).

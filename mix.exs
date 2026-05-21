@@ -5,9 +5,11 @@ defmodule EzagentCore.Umbrella.MixProject do
     [
       apps_path: "apps",
       version: "0.1.0",
+      name: "Ezagent",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       aliases: aliases(),
+      docs: docs(),
       listeners: [Phoenix.CodeReloader]
     ]
   end
@@ -33,7 +35,29 @@ defmodule EzagentCore.Umbrella.MixProject do
   defp deps do
     [
       # Required to run "mix format" on ~H/.heex files from the umbrella root
-      {:phoenix_live_view, ">= 0.0.0"}
+      {:phoenix_live_view, ">= 0.0.0"},
+      # Generates browsable HTML API docs from the apps' @moduledocs.
+      {:ex_doc, "~> 0.34", only: :dev, runtime: false}
+    ]
+  end
+
+  # Configures `mix docs` (ExDoc). Run from the umbrella root to aggregate
+  # every child app's modules into a single browsable doc/ tree.
+  defp docs do
+    [
+      main: "readme",
+      extras: [
+        "README.md",
+        "ARCHITECTURE.md",
+        "GLOSSARY.md",
+        "IMPLEMENTATION_ROADMAP.md",
+        "docs/notes/README.md": [title: "Forensic Notes Index"]
+      ],
+      groups_for_extras: [
+        Project: ["README.md", "ARCHITECTURE.md", "GLOSSARY.md", "IMPLEMENTATION_ROADMAP.md"],
+        Notes: ["docs/notes/README.md"]
+      ],
+      source_url: "https://github.com/ezagent42/esr-ng"
     ]
   end
 

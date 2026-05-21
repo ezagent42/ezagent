@@ -66,7 +66,7 @@ New term entries:
 
 - **Receiver Kind** — plugin pattern for any Kind that consumes session messages and writes externally (Feishu, future Slack/Discord/email). Implements `Ezagent.Behavior.Chat` `:receive` action; bound to sessions via routing rules. Contrast with the **forbidden** side-channel pattern (subscriber). Ref: `docs/notes/plugin-receiver-kind-contract.md`, memory `feedback_plugin_external_integration_is_receiver_kind`, CI gate `receiver_kind_pattern_test.exs`.
 - **in_session(session_uri)** — Matcher constructor that gates a routing rule to messages originating in a specific session. Required for per-session bindings (Plan B).
-- **EZAGENT_HOME** — runtime persistence root (`~/.ezagent/<profile>/`) containing credentials, db, snapshots, logs, plugins. See `phase-specs/phase5/EZAGENT_HOME.md`.
+- **EZAGENT_HOME** — runtime persistence root (`~/.ezagent/<profile>/`) containing credentials, db, snapshots, logs, plugins. See `docs/phase-specs/phase5/EZAGENT_HOME.md`.
 - **Ezagent.Runtime** — distributed Erlang node + cookie management. CLI connects to `ezagent_runtime@127.0.0.1` via RPC.
 
 Update existing entries where they reference deleted paths:

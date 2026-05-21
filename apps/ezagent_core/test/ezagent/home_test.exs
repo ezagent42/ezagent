@@ -1,7 +1,7 @@
 defmodule Ezagent.HomeTest do
   @moduledoc """
   Phase 5 PR 1 invariant: EZAGENT_HOME resolution + mix ezagent.home.init produce
-  the documented `phase-specs/phase5/EZAGENT_HOME.md` layout.
+  the documented `docs/phase-specs/phase5/EZAGENT_HOME.md` layout.
 
   If this test breaks, the credentials path 5a/5b depend on is broken.
   """

@@ -19,7 +19,7 @@
 > resurrection by `apps/ezagent_core/test/invariants/no_v1_bridge_after_cutover_test.exs`.
 
 **Released:** 2026-05-18 evening.
-**Companion docs:** Phase 6 closeout `docs/notes/phase-6-architecture-closeout.md`, SPEC `phase-specs/phase7/SPEC.md` (LOCKED v3), VERIFICATION `phase-specs/phase7/VERIFICATION.md`, PLAN `phase-specs/phase7/PLAN.md`.
+**Companion docs:** Phase 6 closeout `docs/notes/phase-6-architecture-closeout.md`, SPEC `docs/phase-specs/phase7/SPEC.md` (LOCKED v3), VERIFICATION `docs/phase-specs/phase7/VERIFICATION.md`, PLAN `docs/phase-specs/phase7/PLAN.md`.
 
 ---
 
@@ -139,7 +139,7 @@ These are out of v1 scope. The dev team picks them up or leaves them based on th
 If this is being read by a Claude Code session picking up Phase 7 work AFTER Allen's involvement (or finishing the deferred items):
 
 1. Start with `docs/notes/phase-7-resume-state.md` for the per-PR status table.
-2. Then `phase-specs/phase7/{SPEC,VERIFICATION,PLAN,DECISIONS}.md` for the design.
+2. Then `docs/phase-specs/phase7/{SPEC,VERIFICATION,PLAN,DECISIONS}.md` for the design.
 3. Then this file for the v1 release context.
 4. Activate `esr-developer` skill (via Claude Code skill loader) for per-task guidance.
 5. Each PR follows the workflow in PLAN.md §per-PR-workflow.
