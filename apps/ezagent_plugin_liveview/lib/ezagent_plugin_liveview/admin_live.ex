@@ -52,8 +52,16 @@ defmodule EzagentPluginLiveview.AdminLive do
     # one in the umbrella triggered a DB-sandbox boot regression for the
     # rest of the LV test suite). Registration is idempotent so every
     # mount safely no-ops if another LV already registered.
+    #
+    # Domain.Pty PR-C (2026-05-21) — also re-assert TerminalView (it's
+    # primarily registered by `EzagentDomainUi.Application.start/2` at
+    # boot, but the SessionView registry's ETS table is shared across
+    # tests; `session_view_registry_test.exs` wipes it in `setup`, so
+    # this lazy re-registration keeps admin_live tests robust to that
+    # pollution).
     :ok = SessionViewRegistry.init()
     :ok = SessionViewRegistry.register(ConversationView)
+    :ok = SessionViewRegistry.register(EzagentDomainUi.Pty.TerminalView)
 
     # Phase 8c follow-up (Allen 2026-05-20) — auto-spawn session://default/default/main
     # if missing. Without this the LV mounts with a hardcoded
