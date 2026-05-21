@@ -118,7 +118,15 @@ defmodule Ezagent.Behavior.Routing do
     end
   end
 
-  defp bump(slice), do: %{slice | calls: slice.calls + 1}
+  # Defensive — when Routing is registered on a Kind that does NOT
+  # declare it in `behaviors/0` (Session + Workspace per SPEC v2 §5.7
+  # register Routing after-the-fact via `BehaviorRegistry.register/3`),
+  # `Snapshot.init_fresh/2` skips `init_slice/1` and the runtime hands
+  # us an empty slice (`%{}` via `Map.get(state, slice_key, %{})` in
+  # `Kind.Runtime.handle_dispatch/4`). The original `%{slice | calls:
+  # ...}` form crashes on missing key. Lazy-seed the counter so the
+  # Behavior is correct for any Kind it's registered against.
+  defp bump(slice), do: Map.update(slice, :calls, 1, &(&1 + 1))
 
   # Build RuleStore.add/5 opts, populating `workspace_uri` when the
   # dispatch target scheme is `workspace://`. Caller can override via

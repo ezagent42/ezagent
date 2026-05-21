@@ -62,6 +62,11 @@ defmodule EzagentPluginLiveview.AdminLive do
     :ok = SessionViewRegistry.init()
     :ok = SessionViewRegistry.register(ConversationView)
     :ok = SessionViewRegistry.register(EzagentDomainUi.Pty.TerminalView)
+    # V1 Allen #2 (Feishu 2026-05-21) — Routing view as a peer of Chat.
+    # Primary registration is in `EzagentDomainUi.Application.start/2`;
+    # re-asserting here keeps admin_live tests robust to ETS pollution
+    # (same belt-and-suspenders shape as the TerminalView line above).
+    :ok = SessionViewRegistry.register(EzagentDomainUi.Routing.RoutingView)
 
     # Phase 8c follow-up (Allen 2026-05-20) — auto-spawn session://default/default/main
     # if missing. Without this the LV mounts with a hardcoded
@@ -430,6 +435,167 @@ defmodule EzagentPluginLiveview.AdminLive do
 
   def handle_event("pty_resize", _params, socket), do: {:noreply, socket}
 
+  # V1 Allen #2 — RoutingView event handlers.
+  #
+  # Toggle a session-scoped rule's enabled flag. Dispatches via SPEC v2
+  # §5.7 to the Session Kind's Routing Behavior at
+  # `<session_uri>?action=routing.{disable_rule,enable_rule}`. The
+  # Session Kind is the scope-owning Kind for session-scoped rules.
+  def handle_event(
+        "routing_rule_toggle",
+        %{"id" => id_str, "enabled" => enabled_str, "table" => table_str},
+        socket
+      ) do
+    with {id, ""} <- Integer.parse(id_str),
+         {:ok, table} <- safe_table_atom(table_str) do
+      action = if enabled_str == "true", do: :disable_rule, else: :enable_rule
+
+      case dispatch_session_routing(socket, action, %{id: id, table: table}) do
+        {:ok, _} ->
+          {:noreply,
+           socket
+           |> assign(
+             :session_routing_rules,
+             list_session_scoped_rules(socket.assigns.current_session_uri)
+           )
+           |> assign(:flash_error, nil)}
+
+        {:error, :unauthorized} ->
+          {:noreply,
+           assign(
+             socket,
+             :flash_error,
+             "Unauthorized — need routing cap on this session."
+           )}
+
+        {:error, :cross_workspace_denied} ->
+          {:noreply,
+           assign(
+             socket,
+             :flash_error,
+             "Cross-workspace denied — this session lives in a different workspace."
+           )}
+
+        {:error, reason} ->
+          {:noreply, assign(socket, :flash_error, "Toggle failed: #{inspect(reason)}")}
+      end
+    else
+      _ ->
+        {:noreply, assign(socket, :flash_error, "Bad routing rule id or table: #{id_str}")}
+    end
+  end
+
+  # Add a session-scoped rule. The matcher is wrapped with an
+  # `:in_session` constraint targeting the current session so the rule
+  # only fires for this session (SPEC v2 §5.4).
+  def handle_event("routing_rule_add_session", %{"rule" => params}, socket) do
+    session_uri = socket.assigns.current_session_uri
+
+    with {:ok, leaf_matcher} <- build_session_form_matcher(params),
+         receivers when is_list(receivers) and receivers != [] <-
+           parse_session_receivers(Map.get(params, "receivers", "")),
+         matcher = wrap_in_session(leaf_matcher, session_uri),
+         {:ok, _} <-
+           dispatch_session_routing(socket, :add_rule, %{
+             table: EzagentDomainChat.Routing.MentionRouting,
+             matcher_json: Ezagent.Routing.Matcher.to_json(matcher),
+             receivers: receivers
+           }) do
+      {:noreply,
+       socket
+       |> assign(:session_routing_rules, list_session_scoped_rules(session_uri))
+       |> assign(:flash_error, nil)}
+    else
+      {:error, :unauthorized} ->
+        {:noreply,
+         assign(
+           socket,
+           :flash_error,
+           "Unauthorized — need routing cap on this session."
+         )}
+
+      {:error, :cross_workspace_denied} ->
+        {:noreply,
+         assign(
+           socket,
+           :flash_error,
+           "Cross-workspace denied — this session lives in a different workspace."
+         )}
+
+      [] ->
+        {:noreply,
+         assign(socket, :flash_error, "At least one receiver URI is required.")}
+
+      {:error, reason} ->
+        {:noreply, assign(socket, :flash_error, "Add rule failed: #{inspect(reason)}")}
+    end
+  end
+
+  defp dispatch_session_routing(socket, action, args) do
+    session_uri = socket.assigns.current_session_uri
+
+    target =
+      URI.parse(
+        URI.to_string(session_uri) <> "?action=routing." <> Atom.to_string(action)
+      )
+
+    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      target: target,
+      mode: :call,
+      args: args,
+      ctx: %{
+        caller: socket.assigns.caller_uri,
+        caps: socket.assigns.caller_caps,
+        reply: {:caller_inbox, self()}
+      }
+    })
+  end
+
+  defp build_session_form_matcher(%{"matcher_type" => "mention", "matcher_arg" => arg})
+       when is_binary(arg) and arg != "",
+       do: {:ok, Ezagent.Routing.Matcher.mention(arg)}
+
+  defp build_session_form_matcher(%{"matcher_type" => "from", "matcher_arg" => arg})
+       when is_binary(arg) and arg != "",
+       do: {:ok, Ezagent.Routing.Matcher.from(arg)}
+
+  defp build_session_form_matcher(%{"matcher_type" => "text_contains", "matcher_arg" => arg})
+       when is_binary(arg) and arg != "",
+       do: {:ok, Ezagent.Routing.Matcher.text_contains(arg)}
+
+  defp build_session_form_matcher(%{"matcher_type" => "always"}),
+    do: {:ok, Ezagent.Routing.Matcher.always()}
+
+  defp build_session_form_matcher(_),
+    do: {:error, :invalid_matcher_form}
+
+  defp parse_session_receivers(csv) when is_binary(csv) do
+    csv
+    |> String.split(",", trim: true)
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+  end
+
+  defp parse_session_receivers(_), do: []
+
+  # Wrap a leaf matcher with an `:in_session` constraint so the rule
+  # only fires for the current session. If the leaf is already an
+  # `:in_session` (defensive — form doesn't expose it), pass through.
+  defp wrap_in_session({:in_session, _} = m, _session_uri), do: m
+
+  defp wrap_in_session(leaf, %URI{} = session_uri) do
+    Ezagent.Routing.Matcher.all_of([
+      Ezagent.Routing.Matcher.in_session(session_uri),
+      leaf
+    ])
+  end
+
+  defp safe_table_atom(s) when is_binary(s) do
+    {:ok, String.to_existing_atom(s)}
+  rescue
+    ArgumentError -> {:error, {:unknown_table, s}}
+  end
+
   # Phase 5 PR 5 — paginate history backwards.
   def handle_event("load_older_messages", _params, socket) do
     case socket.assigns.oldest_cursor do
@@ -532,6 +698,8 @@ defmodule EzagentPluginLiveview.AdminLive do
               oldest_cursor={@oldest_cursor}
               active_pty_agent_uri={@active_pty_agent_uri}
               empty_state?={@messages_empty?}
+              session_uri={@current_session_uri}
+              session_routing_rules={@session_routing_rules}
             />
           </:main_view>
         </SessionEditor.session_editor>
@@ -581,6 +749,9 @@ defmodule EzagentPluginLiveview.AdminLive do
   attr(:oldest_cursor, :any, default: nil)
   attr(:active_pty_agent_uri, :any, default: nil)
   attr(:empty_state?, :boolean, default: false)
+  # V1 Allen #2 — RoutingView reads these.
+  attr(:session_uri, :any, default: nil)
+  attr(:session_routing_rules, :list, default: [])
 
   defp render_active_view(assigns) do
     case assigns.view_module do
@@ -620,7 +791,18 @@ defmodule EzagentPluginLiveview.AdminLive do
     members = read_session_members(session_uri)
     member_uris = Enum.map(members, & &1.uri)
     floating = list_floating_agents()
-    applicable = SessionViewRegistry.applicable_views(session_uri)
+
+    # V1 Allen #2 (Feishu 2026-05-21) — sort SessionView tabs in a
+    # fixed Chat | Routing | Terminal order. `applicable_views/1`
+    # returns alphabetical by id; without this re-sort the tab order
+    # would be Chat (`:conversation`) | Terminal (`:pty`) | Routing
+    # (`:routing`) which violates Allen's "routing 与 chat 并列" intent.
+    applicable =
+      session_uri
+      |> SessionViewRegistry.applicable_views()
+      |> sort_views()
+
+    session_routing_rules = list_session_scoped_rules(session_uri)
 
     display_map = Ezagent.EntityPresenter.display_many(member_uris ++ floating)
 
@@ -640,6 +822,21 @@ defmodule EzagentPluginLiveview.AdminLive do
     |> assign(:view_module, view_module_for(applicable, current_view_or_default(socket)))
     |> assign(:session_info, build_session_info(session_uri, members))
     |> assign(:feishu_chat_ids, feishu_chat_ids_for(session_uri))
+    |> assign(:session_routing_rules, session_routing_rules)
+  end
+
+  # V1 Allen #2 — explicit display order for the Session view-switcher.
+  # Chat (`:conversation`) first, Routing (`:routing`) middle, Terminal
+  # (`:pty`) last. Unknown ids (future plugin views) fall to the end in
+  # registration order so adding a new view doesn't silently disappear.
+  @view_display_order [:conversation, :routing, :pty]
+  defp sort_views(views) do
+    Enum.sort_by(views, fn %{id: id} ->
+      case Enum.find_index(@view_display_order, &(&1 == id)) do
+        nil -> {1, id}
+        idx -> {0, idx}
+      end
+    end)
   end
 
   defp current_view_or_default(socket) do
@@ -685,6 +882,66 @@ defmodule EzagentPluginLiveview.AdminLive do
       created_at: created_at
     }
   end
+
+  # V1 Allen #2 — read rules in chat plugin's routing tables and
+  # filter to those scoped to this session via an `:in_session` matcher
+  # (directly or inside an and/or/not combinator). SPEC v2 §5.4: a
+  # rule is "session-scoped to S" when its matcher narrows by S.
+  #
+  # The RoutingView shows ONLY this slice; global + workspace rules
+  # live on /routing's full editor.
+  @routing_tables_for_session [
+    EzagentDomainChat.Routing.MentionRouting,
+    EzagentDomainChat.Routing.SessionRouting
+  ]
+
+  defp list_session_scoped_rules(%URI{} = session_uri) do
+    session_str = URI.to_string(session_uri)
+
+    @routing_tables_for_session
+    |> Enum.flat_map(fn table ->
+      rules = Ezagent.Routing.RuleStore.list(table)
+
+      for row <- rules,
+          matcher = parse_matcher(row.matcher_data),
+          matcher != :invalid,
+          matcher_targets_session?(matcher, session_str) do
+        %{
+          id: row.id,
+          table_name: Atom.to_string(table),
+          matcher: matcher,
+          matcher_repr: inspect(matcher),
+          receivers: row.receivers,
+          receivers_repr: Enum.join(row.receivers, ", "),
+          source: row.source,
+          enabled: row.enabled
+        }
+      end
+    end)
+    |> Enum.sort_by(& &1.id)
+  end
+
+  defp list_session_scoped_rules(_), do: []
+
+  defp parse_matcher(matcher_data) do
+    case Ezagent.Routing.Matcher.from_json(matcher_data) do
+      {:ok, m} -> m
+      _ -> :invalid
+    end
+  end
+
+  # `:in_session, "..."` matcher at any depth (and/or/not wrappers).
+  defp matcher_targets_session?({:in_session, s}, session_str), do: s == session_str
+  defp matcher_targets_session?({:and, items}, s) when is_list(items),
+    do: Enum.any?(items, &matcher_targets_session?(&1, s))
+
+  defp matcher_targets_session?({:or, items}, s) when is_list(items),
+    do: Enum.any?(items, &matcher_targets_session?(&1, s))
+
+  defp matcher_targets_session?({:not, inner}, s),
+    do: matcher_targets_session?(inner, s)
+
+  defp matcher_targets_session?(_, _), do: false
 
   defp feishu_chat_ids_for(%URI{} = session_uri) do
     if Code.ensure_loaded?(EzagentPluginFeishu.SessionBinding) do

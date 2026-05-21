@@ -43,9 +43,16 @@ defmodule EzagentDomainUi.Application do
   # Per Domain.Pty SPEC v1 §3.2 + §5.1: the terminal view applies to
   # any session whose members include a live `Ezagent.Domain.Pty`
   # server — cross-flavor (cc / echo-with-pty / curl-with-pty / ...).
+  #
+  # V1 Allen acceptance #2 (Feishu 2026-05-21) — also register
+  # `EzagentDomainUi.Routing.RoutingView` so /sessions view-switcher
+  # shows Routing as a peer of Chat (Terminal becomes 3rd tab). Tab
+  # ordering is enforced by the host LV (admin_live sorts by a known
+  # list); registration order is incidental.
   defp register_session_views do
     :ok = Ezagent.UI.SessionViewRegistry.init()
     :ok = Ezagent.UI.SessionViewRegistry.register(EzagentDomainUi.Pty.TerminalView)
+    :ok = Ezagent.UI.SessionViewRegistry.register(EzagentDomainUi.Routing.RoutingView)
     :ok
   end
 end

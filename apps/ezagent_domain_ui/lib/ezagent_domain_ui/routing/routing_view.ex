@@ -1,0 +1,196 @@
+defmodule EzagentDomainUi.Routing.RoutingView do
+  @moduledoc """
+  Session view: routing rules scoped to the current session.
+
+  Per Allen V1 acceptance #2 (Feishu 2026-05-21) — `与 chat 并列的不应该是
+  Terminal，而是 routing 规则`: this SessionView is a peer of
+  `EzagentPluginLiveview.Views.ConversationView` (Chat) and
+  `EzagentDomainUi.Pty.TerminalView` (Terminal). Tab order in the
+  view-switcher: Chat | Routing | Terminal.
+
+  ## Session-scoped semantics
+
+  Per SPEC v2 §5.4 — scope hierarchy is `global ⊂ workspace ⊂ session`.
+  A routing rule is "session-scoped to S" when its matcher contains an
+  `{:in_session, S}` leaf (directly or inside an `and/or/not`
+  combinator). Global + workspace rules also fire for this session;
+  they live on `/routing` (full editor).
+
+  This view shows ONLY the session-scoped slice for the current session
+  + a compact add-rule form. It does not duplicate `/routing` — that
+  page remains the canonical surface for cross-scope rule management.
+
+  ## Mutation path (SPEC v2 §5.7)
+
+  - Add → dispatch to `<session_uri>?action=routing.add_rule` against
+    the Session Kind's `Ezagent.Behavior.Routing` (registered in
+    `EzagentDomainChat.Application`).
+  - Toggle enable/disable → dispatch to the same target with
+    `routing.disable_rule` / `routing.enable_rule`.
+
+  Tier-2: the view itself is a stateless `Phoenix.Component` reading
+  `@session_routing_rules` (computed by the host LV, typically
+  `EzagentPluginLiveview.AdminLive`). Dispatch happens in the host LV
+  per the 3-tier UI architecture.
+
+  Registered by `EzagentDomainUi.Application.start/2`.
+  """
+
+  @behaviour Ezagent.UI.SessionView
+  use Phoenix.Component
+
+  @impl true
+  def id, do: :routing
+
+  @impl true
+  def label, do: "Routing"
+
+  @impl true
+  def icon, do: "route"
+
+  @impl true
+  # Every session can have session-scoped routing rules — the tab is
+  # always offered. (Empty state in render/1 covers the no-rules case.)
+  def applies_to?(%URI{}), do: true
+  def applies_to?(_), do: false
+
+  @impl true
+  def render(assigns) do
+    assigns =
+      assigns
+      |> assign_new(:session_routing_rules, fn -> [] end)
+      |> assign_new(:session_uri, fn -> nil end)
+
+    ~H"""
+    <div class="flex-1 overflow-auto p-4 bg-zinc-50 dark:bg-zinc-950 min-h-0">
+      <div class="max-w-4xl mx-auto">
+        <h2 class="text-lg font-semibold text-zinc-900 dark:text-zinc-100 mb-2">
+          Session Routing Rules
+        </h2>
+        <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-6">
+          Rules scoped to
+          <code class="font-mono text-xs text-zinc-700 dark:text-zinc-300">
+            {session_uri_string(@session_uri)}
+          </code>
+          via an <code class="font-mono text-xs">in_session</code> matcher.
+          Global + workspace rules also fire for this session — see
+          <a href="/routing" class="text-blue-600 dark:text-blue-400 hover:underline">/routing</a>
+          for all scopes.
+        </p>
+
+        <%!-- Session-scoped rule list --%>
+        <div id="session-routing-rules" class="space-y-2 mb-6">
+          <%= for rule <- @session_routing_rules do %>
+            <div
+              id={"session-routing-rule-#{rule.id}"}
+              class={[
+                "border border-zinc-200 dark:border-zinc-800 rounded p-3 bg-white dark:bg-zinc-900",
+                not rule.enabled && "opacity-50"
+              ]}
+            >
+              <div class="flex items-start justify-between gap-3">
+                <div class="flex-1 min-w-0">
+                  <div class="text-xs font-mono text-zinc-500 dark:text-zinc-400 truncate">
+                    {rule.matcher_repr}
+                  </div>
+                  <div class="text-sm text-zinc-900 dark:text-zinc-100 mt-1">
+                    → <span class="font-mono text-xs">{rule.receivers_repr}</span>
+                  </div>
+                  <div :if={rule.source == "system_default"} class="mt-1">
+                    <span class="inline-block px-1.5 py-0.5 text-[10px] rounded bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300">
+                      system_default
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  phx-click="routing_rule_toggle"
+                  phx-value-id={rule.id}
+                  phx-value-enabled={to_string(rule.enabled)}
+                  phx-value-table={rule.table_name}
+                  class="px-2 py-1 text-xs border border-zinc-300 dark:border-zinc-700 rounded text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                >
+                  {if rule.enabled, do: "Disable", else: "Enable"}
+                </button>
+              </div>
+            </div>
+          <% end %>
+
+          <div
+            :if={@session_routing_rules == []}
+            id="session-routing-rules-empty"
+            class="text-center py-8 text-sm text-zinc-500 dark:text-zinc-400 border border-dashed border-zinc-300 dark:border-zinc-700 rounded"
+          >
+            No session-scoped rules. Add one below, or see
+            <a href="/routing" class="text-blue-600 dark:text-blue-400 hover:underline">/routing</a>
+            for workspace/global rules.
+          </div>
+        </div>
+
+        <%!-- Add rule form (compact; full form lives on /routing) --%>
+        <details class="border border-zinc-200 dark:border-zinc-800 rounded p-3 bg-white dark:bg-zinc-900">
+          <summary class="cursor-pointer text-sm font-medium text-zinc-700 dark:text-zinc-300">
+            + Add session-scoped rule
+          </summary>
+          <form
+            id="session-routing-add-form"
+            phx-submit="routing_rule_add_session"
+            class="mt-3 space-y-3"
+          >
+            <div>
+              <label class="block text-xs text-zinc-600 dark:text-zinc-400 mb-1">
+                Matcher type
+              </label>
+              <select
+                name="rule[matcher_type]"
+                class="w-full px-3 py-2 rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-sm text-zinc-900 dark:text-zinc-100"
+              >
+                <option value="mention">mention</option>
+                <option value="from">from</option>
+                <option value="text_contains">text_contains</option>
+                <option value="always">always (any message in this session)</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs text-zinc-600 dark:text-zinc-400 mb-1">
+                Matcher arg
+                <span class="text-zinc-400 dark:text-zinc-600">
+                  (e.g. <code class="font-mono">entity://user/system/admin</code>; ignored for "always")
+                </span>
+              </label>
+              <input
+                type="text"
+                name="rule[matcher_arg]"
+                placeholder="entity://user/system/admin"
+                class="w-full px-3 py-2 rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-sm font-mono text-zinc-900 dark:text-zinc-100"
+              />
+            </div>
+            <div>
+              <label class="block text-xs text-zinc-600 dark:text-zinc-400 mb-1">
+                Receivers (comma-separated URIs)
+              </label>
+              <input
+                type="text"
+                name="rule[receivers]"
+                placeholder="entity://agent/default/cc_demo,entity://agent/default/echo_default"
+                class="w-full px-3 py-2 rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-sm font-mono text-zinc-900 dark:text-zinc-100"
+              />
+            </div>
+            <button
+              type="submit"
+              class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded"
+            >
+              Add rule
+            </button>
+          </form>
+        </details>
+      </div>
+    </div>
+    """
+  end
+
+  defp session_uri_string(nil), do: "(no session)"
+  defp session_uri_string(%URI{} = uri), do: URI.to_string(uri)
+  defp session_uri_string(s) when is_binary(s), do: s
+  defp session_uri_string(_), do: "(unknown)"
+end
