@@ -93,6 +93,30 @@ defmodule Ezagent.Behavior.CurlAgent do
     end
   end
 
+  def invoke(:reset_conversation, slice, _args, _ctx) do
+    new_slice = %{slice | conversation: [], last_error: nil}
+    {:ok, new_slice, %{ok: true}}
+  end
+
+  def invoke(:configure, slice, args, _ctx) when is_map(args) do
+    # Mutable per-slice settings (provider/model/system_prompt/max_history).
+    # owner_uri is intentionally NOT mutable post-instantiate — changing it
+    # would let the new owner's key be used by a conversation the old owner
+    # built up. Re-create the instance via Template if owner needs to change.
+    new_slice = %{
+      slice
+      | provider: Map.get(args, :provider, slice.provider),
+        api_url: Map.get(args, :api_url, slice.api_url),
+        model: Map.get(args, :model, slice.model),
+        system_prompt: Map.get(args, :system_prompt, slice.system_prompt),
+        max_history: Map.get(args, :max_history, slice.max_history)
+    }
+
+    {:ok, new_slice, %{ok: true}}
+  end
+
+  # Helper for invoke(:receive) — kept below the invoke/4 clauses so
+  # they group contiguously (Elixir clause-grouping warning).
   defp do_receive(slice, %Ezagent.Message{} = msg, ctx) do
     user_text = msg.body[:text] || msg.body["text"] || ""
     source_session_uri = ctx[:caller]
@@ -137,28 +161,6 @@ defmodule Ezagent.Behavior.CurlAgent do
 
         {:ok, new_slice, %{ok: false, error: error_kind(reason)}}
     end
-  end
-
-  def invoke(:reset_conversation, slice, _args, _ctx) do
-    new_slice = %{slice | conversation: [], last_error: nil}
-    {:ok, new_slice, %{ok: true}}
-  end
-
-  def invoke(:configure, slice, args, _ctx) when is_map(args) do
-    # Mutable per-slice settings (provider/model/system_prompt/max_history).
-    # owner_uri is intentionally NOT mutable post-instantiate — changing it
-    # would let the new owner's key be used by a conversation the old owner
-    # built up. Re-create the instance via Template if owner needs to change.
-    new_slice = %{
-      slice
-      | provider: Map.get(args, :provider, slice.provider),
-        api_url: Map.get(args, :api_url, slice.api_url),
-        model: Map.get(args, :model, slice.model),
-        system_prompt: Map.get(args, :system_prompt, slice.system_prompt),
-        max_history: Map.get(args, :max_history, slice.max_history)
-    }
-
-    {:ok, new_slice, %{ok: true}}
   end
 
   @impl Ezagent.Behavior

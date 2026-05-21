@@ -129,15 +129,14 @@ defmodule EzagentPluginLiveview.AdminDashboardLive do
 
   # --- kpi -----------------------------------------------------------------
 
-  @doc """
-  Phase 8c PR-D — animated KPI tile.
-
-  Renders the same visual shape as `Components.stat/1` but wraps the
-  numeric value in a `phx-hook="CountUp"` span so the JS hook animates
-  0 → target on mount.
-
-  `id` MUST be stable + unique on the page (LiveView hooks require it).
-  """
+  # Phase 8c PR-D — animated KPI tile.
+  #
+  # Renders the same visual shape as `Components.stat/1` but wraps the
+  # numeric value in a `phx-hook="CountUp"` span so the JS hook animates
+  # 0 → target on mount.
+  #
+  # `id` MUST be stable + unique on the page (LiveView hooks require it).
+  # (`@doc` dropped — Elixir discards it on private functions.)
   attr(:label, :string, required: true)
   attr(:value, :integer, required: true)
   attr(:id, :string, required: true)

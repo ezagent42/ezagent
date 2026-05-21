@@ -38,15 +38,6 @@ defmodule Ezagent.Workspace.Loader do
   alias Ezagent.{Invocation, SpawnRegistry, TemplateRegistry, Workspace}
 
   @doc """
-  Load every persisted Workspace and (re-)spawn each of its members.
-
-  Returns the list of `{workspace_name, child_results}` for
-  observability — each `child_results` is `[{uri, {:ok, pid}} |
-  {uri, {:error, reason}}]`. Errors are logged but do not abort
-  loading — a Workspace declaring an unknown scheme should produce
-  a clear log but not block the rest of the boot.
-  """
-  @doc """
   Invoke a single Template Class's `instantiate/3` by name, against
   the workspace's persisted `session_templates` JSON.
 
@@ -163,6 +154,15 @@ defmodule Ezagent.Workspace.Loader do
 
   defp instantiate_idempotent_uris(_), do: []
 
+  @doc """
+  Load every persisted Workspace and (re-)spawn each of its members.
+
+  Returns the list of `{workspace_name, child_results}` for
+  observability — each `child_results` is `[{uri, {:ok, pid}} |
+  {uri, {:error, reason}}]`. Errors are logged but do not abort
+  loading — a Workspace declaring an unknown scheme should produce
+  a clear log but not block the rest of the boot.
+  """
   @spec load_all() :: [{String.t(), [{URI.t(), term()}]}]
   def load_all do
     # Phase 5 PR 6: defensive — when multiple plugin Applications all
