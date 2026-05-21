@@ -17,7 +17,7 @@
 - [x] phx.new 默认的 `ezagent_core_web` 已重命名为 `ezagent_web`(目录 + mix.exs app name + `EzagentWeb` 模块前缀 + config 引用全部同步)
 - [x] 奠基提交的 5 个文档在根:`ARCHITECTURE.md` / `GLOSSARY.md` / `IMPLEMENTATION_ROADMAP.md` / `CLAUDE.md` / `ARCHITECTURE_GRILL_v0.3.md`
 - [x] `AGENTS.md` 存在(phx.new 生成,未被重写)
-- [x] `phase-specs/phase0/` 4 文件在版本控制里
+- [x] `docs/phase-specs/phase0/` 4 文件在版本控制里
 
 ### 编译 + 测试
 - [x] `mix deps.get` 成功

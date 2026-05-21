@@ -181,7 +181,7 @@ agent-browser screenshot /tmp/phase1b-final.png
 - [ ] 1a + 1b 全部 sub-step gate 绿
 - [ ] `git tag phase1a` 和 `git tag phase1b` 都在
 - [ ] `sub-step-gate.sh` 在 commit `phase1b` 时实际跑过且通过(`mix test` + `mix format --check` + 8 不变式 grep)
-- [ ] `phase-specs/phase1/VERIFICATION.md` 全部 checkbox 打勾(执行记录)
+- [ ] `docs/phase-specs/phase1/VERIFICATION.md` 全部 checkbox 打勾(执行记录)
 - [ ] `mix ezagent.check_invariants` 输出干净(exit 0)
 - [ ] `/tmp/phase1a-final.png` 和 `/tmp/phase1b-final.png` 两个 screenshot 都生成且 Allen 看过
 

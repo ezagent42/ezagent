@@ -45,7 +45,7 @@ Write down, briefly:
   complete. Phrase it so a future turn can check it: "all sub-step e2e flows in
   VERIFICATION.md green + `mix test` passes", not "the feature works".
 - **Verification flow** — the concrete checks that confirm each milestone. If the
-  project ships a verification document (ezagent's `phase-specs/<phase>/VERIFICATION.md`,
+  project ships a verification document (ezagent's `docs/phase-specs/<phase>/VERIFICATION.md`,
   a test plan, a CI config), that *is* the flow — read it and reference it, do not
   invent a parallel one. If there is no such doc, derive the flow from the spec/plan
   and state it.
@@ -69,8 +69,8 @@ so pack it with the context that keeps you on track:
 **Example:**
 
 ```
-/goal Implement Phase 1 sub-step M1 of ezagent. Approach: TDD per phase-specs/phase-1/PLAN.md,
-one sub-step at a time, grep the 8 invariants before each gate. Refs: phase-specs/phase-1/{SPEC,VERIFICATION,PLAN,DECISIONS}.md,
+/goal Implement Phase 1 sub-step M1 of ezagent. Approach: TDD per docs/phase-specs/phase-1/PLAN.md,
+one sub-step at a time, grep the 8 invariants before each gate. Refs: docs/phase-specs/phase-1/{SPEC,VERIFICATION,PLAN,DECISIONS}.md,
 ARCHITECTURE.md §3-§5. Done when: M1 e2e flow in VERIFICATION.md green AND mix test passes AND invariant greps clean.
 ```
 

@@ -133,7 +133,7 @@ For each PR N in [31..54]:
      Any drift introduced? Any obvious gaps Allen would catch?"
   9. git commit + push + gh pr create
   10. gh pr merge --admin --squash --delete-branch
-  11. Update phase-specs/phase7/PLAN.md to mark PR done
+  11. Update docs/phase-specs/phase7/PLAN.md to mark PR done
   12. If decision point hit (architecture surprise / SPEC ambiguity):
       - Feishu progress report with question
       - Block on Allen response unless trivially resolvable

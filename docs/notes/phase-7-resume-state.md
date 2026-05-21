@@ -19,10 +19,10 @@ Live verification: agent-browser screenshot of `http://100.64.0.27:10042/login` 
 
 If a fresh Claude Code session is picking up Phase 7 implementation, read this first. Then read in order:
 
-1. `phase-specs/phase7/SPEC.md` — full design (LOCKED v3)
-2. `phase-specs/phase7/VERIFICATION.md` — V1-V5 acceptance criteria
-3. `phase-specs/phase7/PLAN.md` — 24-PR sequence + per-PR workflow + risk register
-4. `phase-specs/phase7/DECISIONS.md` — implementation-time judgment calls
+1. `docs/phase-specs/phase7/SPEC.md` — full design (LOCKED v3)
+2. `docs/phase-specs/phase7/VERIFICATION.md` — V1-V5 acceptance criteria
+3. `docs/phase-specs/phase7/PLAN.md` — 24-PR sequence + per-PR workflow + risk register
+4. `docs/phase-specs/phase7/DECISIONS.md` — implementation-time judgment calls
 5. `ARCHITECTURE.md` Decision Log entries #132-#134 (Phase 6 closeout) — these are the most recent architecture decisions before Phase 7
 
 ## Where Phase 7 stands right now

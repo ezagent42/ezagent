@@ -1,6 +1,6 @@
 defmodule EzagentPluginEcho.Integration.F1DirectInvokeTest do
   @moduledoc """
-  PLAN-internal checkpoint per phase-specs/phase1/PLAN.md §1a-step 4.
+  PLAN-internal checkpoint per docs/phase-specs/phase1/PLAN.md §1a-step 4.
 
   Verifies F1 (text round-trip via Echo) works through the full
   dispatch path WITHOUT LiveView:

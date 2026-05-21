@@ -32,7 +32,7 @@ For every task:
 5. When debugging, jump to **Debug recipes** — symptom-first.
 6. Cross-reference **Pointer index** for the durable record (Decision Log, forensic notes, SPEC).
 
-For larger changes, also load `phase-specs/phase7/SPEC.md` and `phase-specs/phase7/VERIFICATION.md` directly — they have the V1-V5 acceptance criteria the system was built against, and `docs/notes/uri-design.md` §5 — the URI SPEC v2 normative spec.
+For larger changes, also load `docs/phase-specs/phase7/SPEC.md` and `docs/phase-specs/phase7/VERIFICATION.md` directly — they have the V1-V5 acceptance criteria the system was built against, and `docs/notes/uri-design.md` §5 — the URI SPEC v2 normative spec.
 
 ---
 
@@ -488,10 +488,10 @@ The durable record. When you (or a future contributor) need authoritative answer
 | `docs/notes/uri-design.md` | **URI SPEC v2 normative spec — §5 (11 subsections), §6 migration sequence (PRs #140-#147)** |
 | `docs/notes/entity-agnostic-architecture-reflection.md` | 8 entity-agnostic load-bearers in §2; 10 proposals S-1..S-10 in §4; foundation for PRs #141-#149 |
 | `docs/superpowers/specs/2026-05-19-phase-8-ide-shell-liveview.zh_cn.md` | Phase 8 IDE Shell spec (Activity Bar / Resource Panel / Main Window / Right Sidebar / Status Bar / CommandPalette IA) |
-| `phase-specs/phase7/SPEC.md` | Phase 7 design (LOCKED v3) |
-| `phase-specs/phase7/VERIFICATION.md` | V1-V5 acceptance criteria + e2e flows |
-| `phase-specs/phase7/PLAN.md` | 24-PR sequence + per-PR workflow + risk register |
-| `phase-specs/phase7/DECISIONS.md` | Implementation-time IMPL-7-N decisions |
+| `docs/phase-specs/phase7/SPEC.md` | Phase 7 design (LOCKED v3) |
+| `docs/phase-specs/phase7/VERIFICATION.md` | V1-V5 acceptance criteria + e2e flows |
+| `docs/phase-specs/phase7/PLAN.md` | 24-PR sequence + per-PR workflow + risk register |
+| `docs/phase-specs/phase7/DECISIONS.md` | Implementation-time IMPL-7-N decisions |
 | `docs/notes/phase-7-handoff.md` | Ezagent v1 release note + 3 trade-offs not to cargo-cult |
 | `docs/notes/phase-6-architecture-closeout.md` | Phase 6 forensic record (meta schema fix + User default caps + InboundDispatcher mode) |
 | `docs/notes/plugin-receiver-kind-contract.md` | Why Plugin X cannot PubSub.broadcast to Plugin Y (Decision #127) — note: SPEC v2 §5.8 supersedes the "Receiver Kind = own a scheme" framing; current pattern is "register a Behavior on the existing core Kind" |

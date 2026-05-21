@@ -32,7 +32,7 @@ Open `http://localhost:10042/admin` (or `http://100.64.0.27:10042/admin` if remo
 3. `ARCHITECTURE.md` Appendix B Decision Log — read the SUBJECT lines of #1-#144 to absorb the project's vocabulary
 4. `GLOSSARY.md` — bookmark this; you'll come back for unfamiliar terms
 5. `docs/notes/phase-7-handoff.md` — the v1 release note explains where the system is now
-6. `phase-specs/phase7/SPEC.md` — Phase 7's locked design (multi-agent orchestration + handoff)
+6. `docs/phase-specs/phase7/SPEC.md` — Phase 7's locked design (multi-agent orchestration + handoff)
 
 **Day 4-5: explore the repo**
 
@@ -66,7 +66,7 @@ Highest-leverage deferred items (pick one):
 
 ## Week 4 — your first real contribution
 
-Pick a deferred PR. Follow the per-PR workflow in `phase-specs/phase7/PLAN.md` (subagent-review pre + post implementation; rebase + admin-merge; append IMPL-7-N to DECISIONS.md if a judgment call surfaces; update PLAN.md row status).
+Pick a deferred PR. Follow the per-PR workflow in `docs/phase-specs/phase7/PLAN.md` (subagent-review pre + post implementation; rebase + admin-merge; append IMPL-7-N to DECISIONS.md if a judgment call surfaces; update PLAN.md row status).
 
 Run the SPEC_REVIEW 8-item checklist (see SPEC §SPEC_REVIEW walkthrough) BEFORE requesting review. Run all 8 invariant tests locally before push (CI runs them too, but local first saves a CI cycle):
 

@@ -3,7 +3,7 @@
 **Status:** DRAFT for Allen review. NO CODE YET.
 **Closes (Multi-user):** Decision #19 (CapBAC cap scopes) production wiring, Decision #24 (Identity Behavior) multi-user instantiation, Decision #81 (admin bootstrap) extended to non-admin Users, Decision #101 (hard-flip cap check) UI surfacing.
 **Closes (Routing):** Decision #41 (additive rules) combinator gap, Decision #96 (5-leaf Matcher) and/or/not extension explicitly deferred to "Phase 4+", Decision #97 (Resolver fan-out) admin-editable rule path.
-**Companion to:** specs 01–04 in `phase-specs/phase4-completion/`.
+**Companion to:** specs 01–04 in `docs/phase-specs/phase4-completion/`.
 **Reading time:** ~12 minutes (largest spec).
 
 ---

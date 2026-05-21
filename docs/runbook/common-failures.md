@@ -60,7 +60,7 @@ Ezagent.WorkspaceRegistry.lookup(URI.parse("session://your-session"))
 
 **Fix:** in your plugin's spawn-session code path, call `Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)` after `Ezagent.SpawnRegistry.spawn`. `Ezagent.Workspace.Loader.invoke_template` does this for the canonical session classes; custom Template Classes follow the same pattern.
 
-**Forensic:** `phase-specs/phase7/DECISIONS.md` IMPL-7-1, Decision #135.
+**Forensic:** `docs/phase-specs/phase7/DECISIONS.md` IMPL-7-1, Decision #135.
 **CI gate:** `apps/ezagent_domain_chat/test/integration/workspace_isolation_test.exs`.
 
 ### Cause 4: Inbound transport using `:cast` instead of `:call`
@@ -260,7 +260,7 @@ In order:
 
 1. Search `docs/notes/` for the topic (e.g. "session", "cap", "bridge", "fork")
 2. Search Decision Log (`ARCHITECTURE.md` Appendix B) for the area
-3. Check `phase-specs/<phase>/SPEC.md` for the relevant phase's design
+3. Check `docs/phase-specs/<phase>/SPEC.md` for the relevant phase's design
 4. Read the invariant test that covers the area — the test name often hints at the failure mode
 5. Ask in the dev team channel
 

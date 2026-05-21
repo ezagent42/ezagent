@@ -125,10 +125,10 @@ Phase 1 不动(收益和风险都在 Phase 1 外)。
 P1-D1 写明 1b 临时用 `:erlexec.run/2` 直接调起 Python bridge,标 `TODO Phase 5 替换为 OSProcess Behavior`。
 **原则**:实施时这条 TODO 必须**实际写进代码注释**,且 phase1 spec 的 `DECISIONS.md` (本文件)有 reference — Phase 5 brainstorm 时找得到。
 
-### `phase-specs/phase1/artifacts/` 存 screenshot?
+### `docs/phase-specs/phase1/artifacts/` 存 screenshot?
 
 VERIFICATION 要求 `/tmp/phase1a-final.png` 和 `/tmp/phase1b-final.png` 两个 screenshot。
-**原则**:这俩 PNG **拷贝一份到 `phase-specs/phase1/artifacts/`** 进 git(SCREENSHOT 是验收凭证,跟 spec 一起留);commit 时一起。**注意:确认 PNG 不超过 1MB,否则用 git LFS 或考虑只留摘要(text 描述)**。Phase 0 没存 screenshot 是疏漏,Phase 1 起补上。
+**原则**:这俩 PNG **拷贝一份到 `docs/phase-specs/phase1/artifacts/`** 进 git(SCREENSHOT 是验收凭证,跟 spec 一起留);commit 时一起。**注意:确认 PNG 不超过 1MB,否则用 git LFS 或考虑只留摘要(text 描述)**。Phase 0 没存 screenshot 是疏漏,Phase 1 起补上。
 
 ### ETS table lifecycle 跟 Application children 顺序(架构师 review P4-5)
 

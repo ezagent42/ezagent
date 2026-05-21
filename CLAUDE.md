@@ -13,7 +13,7 @@ ESR(Ezagent Session Router)— Elixir/OTP message router runtime,multi-channel �
 1. `@ARCHITECTURE.md` — v0.4_final,2700+ 行,设计权威。**不要尝试修改这份文档**(Allen 维护,实施期发现架构问题暂停 → 讨论 → Allen 改 → 继续)
 2. `@GLOSSARY.md` — 术语表 + 易混淆词消歧 + Decision Log(80+ 条决策)
 3. `@IMPLEMENTATION_ROADMAP.md` — 6 phase 划分 + 4 条贯穿 track
-4. `phase-specs/<current-phase>/` 全部 4 文件 — SPEC / VERIFICATION / PLAN / DECISIONS
+4. `docs/phase-specs/<current-phase>/` 全部 4 文件 — SPEC / VERIFICATION / PLAN / DECISIONS
 
 读完后,你应该能在 30 秒内回答以下问题(否则回去再读):
 - Ezagent 跟 typical Phoenix app 的两条核心差异是什么?
@@ -44,7 +44,7 @@ ESR(Ezagent Session Router)— Elixir/OTP message router runtime,multi-channel �
 ### sub-step gate(M1 规则)
 
 - sub-step 是 /goal 内部 e2e gate,**不是 Allen 介入点**
-- 每个 sub-step 完成时,跑该 sub-step 对应的 e2e flow(从 `phase-specs/<phase>/VERIFICATION.md` 找)+ 单元/集成测试
+- 每个 sub-step 完成时,跑该 sub-step 对应的 e2e flow(从 `docs/phase-specs/<phase>/VERIFICATION.md` 找)+ 单元/集成测试
 - **全部 gate 绿才能 tag 进下一 sub-step**
 - 任何 gate 红或不变式违反 → **不要 tag,暂停,等 Allen**
 - **不要为赶进度绕过 gate**
@@ -61,7 +61,7 @@ grep -rn "PubSub.broadcast" lib/ | grep -v ":events"  # inbound 路径 = bug
 grep -rn "def init/1" lib/ | grep -v "use Ezagent.Kind"   # 手写 init 跳过宏 = bug
 ```
 
-(完整 grep 清单在 `phase-specs/<phase>/VERIFICATION.md`)
+(完整 grep 清单在 `docs/phase-specs/<phase>/VERIFICATION.md`)
 
 ### 不要做的事
 
@@ -199,7 +199,7 @@ Ezagent 的 ARCHITECTURE.md 是 Allen 跟工程师做了 4 轮 grill 闭环写�
 
 - [ ] 读完了 ARCHITECTURE.md 至少 §1-§7?
 - [ ] 读完了 GLOSSARY.md 的术语表?
-- [ ] 知道当前在 phase 几 / sub-step 几?(看 `phase-specs/` 哪个目录最新 + 最近 git tag)
+- [ ] 知道当前在 phase 几 / sub-step 几?(看 `docs/phase-specs/` 哪个目录最新 + 最近 git tag)
 - [ ] 当前 phase 的 SPEC / VERIFICATION / PLAN / DECISIONS 都读了?
 - [ ] 8 条硬不变式记得?(回想一下,记不清就回去 grep)
 - [ ] 知道 phase 完成的验收 checklist?
