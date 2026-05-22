@@ -205,9 +205,17 @@ URI 用 SPEC v3 §5.15 的规范 3 段按租户形式：
 
 driver 以受控速率（令牌桶节流器）向目标 session 派发 `chat.send`，每场景每次
 运行有**固定的消息总预算**（§7）。每条消息是一个带短文本体的
-`%Ezagent.Message{}`。对 agents-per-session 场景，消息可以 `@mention` 全体成员
-（强制全扇出）或不 mention（Resolver 展开 `$session_members`）；两者都测 ——
-不 mention 是现实默认值，且会走完整的成员扇出。
+`%Ezagent.Message{}`。
+
+> **2026-05-22 更新** —— mention-gated routing
+> （`docs/superpowers/specs/2026-05-22-mention-gated-routing.md`）。
+> `system_default` 规则现在是 `{:always} → [$session_users,
+> $mentions]`，不再是 `[$session_members]`。一条**不带 mention**
+> 的消息不再扇出给 agent 成员 —— 它只到达 User 成员（per-user
+> 通知）。要在 agents-per-session 场景中触发完整的 agent 扇出，
+> 消息必须 `@mention` 全体 agent 成员，或该场景需额外添加一条解析为
+> `$session_members` 的显式广播规则。不带 mention 仅对*人到人*流量
+> 是现实默认值；agent 扇出现在由 mention 驱动。
 
 ### 3.4 测试环境
 

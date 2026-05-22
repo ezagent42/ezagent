@@ -96,7 +96,7 @@ defmodule EzagentPluginLiveview.RoutingLive do
      |> assign(:entity_options, UriOptions.entities(caller_uri, workspace_uri))
      |> assign(
        :receiver_options,
-       UriOptions.entities_and_sessions(caller_uri, workspace_uri)
+       receiver_options(caller_uri, workspace_uri)
      )
      |> assign(
        :add_form,
@@ -166,7 +166,7 @@ defmodule EzagentPluginLiveview.RoutingLive do
          # session URIs. JSON-mode matchers are validated by
          # Matcher.from_json (the JSON combinator stays a textarea).
          :ok <- revalidate_matcher_arg(socket, params),
-         :ok <- revalidate_uris(socket, receivers, [:entity, :session]),
+         :ok <- revalidate_receivers(socket, receivers),
          {:ok, _r} <-
            dispatch_routing_admin(socket, :add_rule, %{
              table: table,
@@ -412,6 +412,53 @@ defmodule EzagentPluginLiveview.RoutingLive do
         {:halt, {:error, {:invalid_uri, uri}}}
       end
     end)
+  end
+
+  # Mention-gated-routing (SPEC §3) — a receiver is valid when it is a
+  # concrete in-workspace entity/session URI (`UriOptions.valid_for?/4`)
+  # OR one of the recognized magic tokens (`$session_members`,
+  # `$session_users`, `$mentions`). The "All session members
+  # (broadcast)" picker option submits the `$session_members` token;
+  # the magic tokens are not URIs so the URI validator would reject
+  # them — special-case them here.
+  defp revalidate_receivers(socket, receivers) do
+    Enum.reduce_while(receivers, :ok, fn receiver, :ok ->
+      cond do
+        Ezagent.Routing.Resolver.magic_token?(receiver) ->
+          {:cont, :ok}
+
+        UriOptions.valid_for?(
+          socket.assigns.caller_uri,
+          socket.assigns.current_workspace_uri,
+          receiver,
+          [:entity, :session]
+        ) ->
+          {:cont, :ok}
+
+        true ->
+          {:halt, {:error, {:invalid_uri, receiver}}}
+      end
+    end)
+  end
+
+  # Receiver picker options: in-workspace entities + sessions, with the
+  # first-class "All session members (broadcast)" option prepended
+  # (SPEC §3). That option's `uri` is the `$session_members` magic
+  # token — selecting it submits the token, which `revalidate_receivers/2`
+  # accepts and `Ezagent.Routing.Resolver` expands at resolve time.
+  defp receiver_options(caller_uri, workspace_uri) do
+    [broadcast_option() | UriOptions.entities_and_sessions(caller_uri, workspace_uri)]
+  end
+
+  # The synthetic "broadcast" picker option. `kind: :broadcast` so the
+  # picker renders it distinctly from concrete entity/session URIs.
+  defp broadcast_option do
+    %{
+      uri: Ezagent.Routing.Resolver.session_members_token(),
+      label: gettext("All session members (broadcast)"),
+      kind: :broadcast,
+      flavor: nil
+    }
   end
 
   @impl true
@@ -689,7 +736,13 @@ defmodule EzagentPluginLiveview.RoutingLive do
 
   # Render magic tokens as human-friendly hints, regular URIs as-is.
   defp render_receiver("$session_members"),
-    do: gettext("(dynamic: members of current session)")
+    do: gettext("(dynamic: all members of current session — broadcast)")
+
+  defp render_receiver("$session_users"),
+    do: gettext("(dynamic: User members of current session)")
+
+  defp render_receiver("$mentions"),
+    do: gettext("(dynamic: @-mentioned, validated members)")
 
   defp render_receiver(r), do: r
 end

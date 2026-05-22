@@ -135,7 +135,8 @@ defmodule EzagentDomainChat.Integration.RoutingConsolidationInvariantTest do
   describe "DefaultRules bootstrap consolidation" do
     test "MentionRouting has exactly one system_default rule after bootstrap" do
       # DefaultRules.bootstrap ran at chat plugin Application start.
-      # Per PR 9 §A: should be exactly one system_default rule = always → $session_members.
+      # Mention-gated-routing (2026-05-22): the single system_default
+      # rule is now `always → [$session_users, $mentions]`.
       defaults =
         RuleStore.list(MentionRouting)
         |> Enum.filter(&(&1.source == RuleStore.system_default_source()))
@@ -144,7 +145,12 @@ defmodule EzagentDomainChat.Integration.RoutingConsolidationInvariantTest do
              "expected exactly 1 system_default rule in MentionRouting, got #{length(defaults)}"
 
       [rule] = defaults
-      assert rule.receivers == [Resolver.session_members_token()]
+
+      assert rule.receivers == [
+               Resolver.session_users_token(),
+               Resolver.mentions_token()
+             ]
+
       assert rule.matcher_data == %{"type" => "always"}
     end
 
