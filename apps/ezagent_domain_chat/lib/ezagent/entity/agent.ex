@@ -306,12 +306,32 @@ defmodule Ezagent.Entity.Agent do
     for `add_agent_slot` workers, so cap #2 resolves).
   - `workspace_uri` — `%URI{}` scope the worker belongs to.
 
-  ## Return
+  ## Return — the fresh-vs-adopted signal (codex round-5 MEDIUM-3)
 
-  `{:ok, [worker_uri]}` on success, `{:error, reason}` otherwise.
+  `{:ok, %{workers: [worker_uri], fresh?: boolean()}}` on success,
+  `{:error, reason}` otherwise.
+
+  Every plugin `Ezagent.Kind.Template` `instantiate/3` is documented as
+  IDEMPOTENT — re-calling after the Kinds are alive is a no-op that
+  returns the SAME URIs (`SpawnRegistry.spawn/1` collapses the
+  `{:already_started, _}`). That idempotency is correct for the
+  Workspace.Loader boot path, but it ERASES a signal `update_agent_template`
+  needs: did THIS call freshly create the worker, or did it adopt a
+  pre-existing one? (A concurrent spawn registering the candidate URI
+  between the swap's preflight and this call → `instantiate` silently
+  adopts a worker the swap did NOT create.)
+
+  `spawn_from_template_content/4` reconstructs that signal **without
+  changing the plugin behaviour contract**: it probes `KindRegistry`
+  for `instance_uri` BEFORE delegating to `template_class.instantiate/3`.
+  If the worker URI was already registered at that moment, the
+  instantiate adopted a pre-existing process — `fresh?: false`. If it
+  was absent, this call created it — `fresh?: true`. `KindRegistry` is
+  the same registry the swap's candidate-URI preflight reads, so the
+  signal is authoritative for exactly the TOCTOU concern.
   """
   @spec spawn_from_template_content(map(), URI.t(), URI.t(), URI.t()) ::
-          {:ok, [URI.t()]} | {:error, term()}
+          {:ok, %{workers: [URI.t()], fresh?: boolean()}} | {:error, term()}
   def spawn_from_template_content(
         template_content_map,
         %URI{} = instance_uri,
@@ -319,6 +339,12 @@ defmodule Ezagent.Entity.Agent do
         %URI{} = workspace_uri
       )
       when is_map(template_content_map) do
+    # codex round-5 MEDIUM-3 — probe BEFORE the plugin `instantiate/3`
+    # collapses the `{:already_started, _}` signal. A worker already
+    # registered at `instance_uri` means the instantiate will ADOPT it,
+    # not create it.
+    pre_existing? = match?({:ok, _pid}, Ezagent.KindRegistry.lookup(instance_uri))
+
     with {:ok, template_class} <- resolve_template_class(template_content_map),
          {:ok, data} <-
            Ezagent.Entity.AgentTemplate.to_template_data(template_content_map, instance_uri),
@@ -329,7 +355,7 @@ defmodule Ezagent.Entity.Agent do
         :ok = bind_workspace(worker_uri, workspace_uri)
       end)
 
-      {:ok, workers}
+      {:ok, %{workers: workers, fresh?: not pre_existing?}}
     end
   end
 

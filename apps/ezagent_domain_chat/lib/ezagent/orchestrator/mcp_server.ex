@@ -575,6 +575,22 @@ defmodule Ezagent.Orchestrator.McpServer do
   defp error_to_mcp({:update_aborted, reason}),
     do: {:update_aborted, "Update aborted, slot unchanged: #{inspect(reason)}"}
 
+  # codex round-5 — `update_agent_template` is a saga that cannot be
+  # atomic; when a recovery step itself fails the swap HALTS in a
+  # safe-degraded state (all workers alive) rather than risk a corrupt
+  # state. Surface that as a distinct, explicitly "needs manual
+  # attention" message — NOT a generic failure — so the LLM escalates
+  # instead of blindly retrying.
+  defp error_to_mcp({:update_needs_manual_repair, info}) when is_map(info) do
+    {:update_needs_manual_repair,
+     "Update could NOT complete cleanly and HALTED in a safe state — manual repair " <>
+       "is required. All workers were kept alive (none terminated). " <>
+       "slot=#{inspect(info[:slot])} reason=#{inspect(info[:reason])} " <>
+       "old_worker=#{uri_str(info[:old_worker])} new_worker=#{uri_str(info[:new_worker])} " <>
+       "live_workers=#{inspect(Enum.map(info[:live_workers] || [], &uri_str/1))}. " <>
+       "Do not retry blindly — an operator must reconcile the slot, routing, and workers."}
+  end
+
   defp error_to_mcp({:missing_opt, key}),
     do: {:missing_context, "Missing orchestrator context: #{key}"}
 
@@ -613,6 +629,10 @@ defmodule Ezagent.Orchestrator.McpServer do
   end
 
   defp stringify(other), do: other
+
+  # Render a URI (or anything else) as a string for an error message.
+  defp uri_str(%URI{} = uri), do: URI.to_string(uri)
+  defp uri_str(other), do: inspect(other)
 
   # --- GenServer (process form) ------------------------------------------
 
