@@ -4,20 +4,20 @@
 > Feishu 2026-05-22.
 >
 > - **rev 1**: initial design.
-> - **rev 2**: `codex adversarial-review` fixes — 1 CRITICAL + 3 HIGH.
->   (a) CRITICAL — `$mentions` expanding to raw `message.mentions`
->   makes user-controlled data a system-cap dispatch target (mentions
->   are populated from raw compose text / a global agent scan, never
->   validated against session membership) → `$mentions` now means
->   `message.mentions ∩ session members`, workspace-validated. (b) the
->   stream/dispatch split missed the per-USER `chat.receive`
->   notification path → the default rule keeps delivering to ALL User
->   members (`$session_users`); only AGENT actuation is mention-gated.
->   (c) the opt-in broadcast rule can't be entered through the routing
->   UI (the receiver field rejects magic tokens) → the UI gets a
->   first-class "all session members" receiver option. (d) the
->   migration could trample an admin-disabled `system_default` →
->   explicit, `enabled`-preserving migration.
+> - **rev 2**: `codex adversarial-review` — 1 CRITICAL + 3 HIGH.
+>   `$mentions` validated; the per-USER notification path preserved
+>   via `$session_users`; routing-UI broadcast option; migration.
+> - **rev 3**: second `codex adversarial-review` — 2 HIGH + 1 MEDIUM.
+>   (a) `$session_users` was NOT workspace-validated — a cross-workspace
+>   user can land in `slice.members` via programmatic `chat.join` /
+>   template instantiation → it would leak every message cross-tenant.
+>   rev 3: BOTH `$mentions` AND `$session_users` apply the same
+>   workspace+valid-member predicate. (b) the duplicate-`system_default`
+>   migration could resurrect an admin-disabled default → rev 3:
+>   disabled-wins (if ANY system_default row is disabled, the survivor
+>   stays disabled). (c) silent no-op risk — plain-text "hi cc-builder"
+>   sends no longer actuate; rev 3 adds a real-composer V1 test +
+>   mandates the runbook/demo-doc update.
 
 ## 0. The problem
 
@@ -76,22 +76,32 @@ are recipients only when validly mentioned.**
 ## 2. The change — two receiver tokens, a mention-gated default
 
 `Ezagent.Routing.Resolver` already has the `$session_members` magic
-receiver token. Add two more:
+receiver token. Add two more — **both built on ONE validation
+predicate** (codex rev 3 — HIGH-a: the session member set is NOT a
+trust boundary; `chat.join` accepts any live `member_uri` and template
+instantiation joins configured URIs with `admin_caps`, so a
+cross-workspace entity can sit in `slice.members`).
 
-- **`$session_users`** — expands to the User-Kind members of the
-  current session. (Drives per-user notification — §1(b).)
-- **`$mentions`** — expands to **`message.mentions ∩ current session
-  members`**, each entry additionally validated: it parses as an
-  `entity://`/`session://` URI in the SAME workspace as the session,
-  and is an actual current member. Anything in `message.mentions`
-  that fails — a cross-session URI, a cross-workspace URI, a
-  non-member, a malformed string — is **dropped**. (codex rev 2 —
-  CRITICAL: `message.mentions` is user-controlled — populated from raw
-  compose text in LiveView and from a global `KindRegistry.list_all/0`
-  scan in Feishu — and `chat.receive` dispatches with
-  `User.admin_caps()`. Raw mentions as the receiver list would let a
-  sender drive system-cap delivery to entities outside the session or
-  workspace. The `∩ members` + workspace check is the trust boundary.)
+**`valid_member?/2`** — the shared trust boundary. A candidate
+receiver URI is a valid recipient iff: it parses as a well-formed
+`entity://`/`session://` URI; its workspace segment equals the
+current session's workspace; AND it is a currently-registered member
+of the session. Anything failing — cross-workspace, cross-session,
+non-member, malformed — is **dropped**.
+
+- **`$session_users`** — `User`-Kind members of the current session,
+  **filtered through `valid_member?/2`**. (Drives per-user
+  notification — §1(b).) NOT the raw `slice.members` user list.
+- **`$mentions`** — `message.mentions`, **filtered through
+  `valid_member?/2`**. (`message.mentions` is user-controlled —
+  populated from raw compose text in LiveView, from a global
+  `KindRegistry.list_all/0` scan in Feishu — and `chat.receive`
+  dispatches with `User.admin_caps()`; raw mentions as receivers
+  would let a sender drive system-cap delivery outside the session /
+  workspace.)
+
+Both tokens go through the same predicate — the member set alone is
+not trusted; workspace containment is the boundary.
 
 The `system_default` rule changes from
 `{:always} → ["$session_members"]` to:
@@ -152,12 +162,17 @@ re-seed:
    with `["$session_users", "$mentions"]` in place — **preserving its
    `enabled` flag** (an admin-disabled default stays disabled; do not
    resurrect it).
-2. If multiple system_default rows exist, keep one deterministically
-   (oldest by insert order), migrate it, delete the rest — log it.
+2. If multiple system_default rows exist: **disabled-wins** (codex
+   rev 3 — HIGH-b). If ANY of the duplicate system_default rows is
+   `enabled: false`, the single surviving migrated row is
+   `enabled: false` — an admin's disable is never lost to a dedupe.
+   Keep one row deterministically (oldest by insert order), set its
+   `enabled` to the AND of all duplicates' `enabled`, migrate its
+   receivers, delete the rest — log the dedupe.
 3. If NO system_default row exists, seed the new
    `{:always} → ["$session_users", "$mentions"]` (enabled).
 4. Reload the registry from the store.
-This is a one-time data migration; it has its own test (§6.6).
+This is a one-time data migration; it has its own tests (§6.6).
 
 ## 5. Out of scope (V2 — Allen 2026-05-22: "UI 和用户体验上的改进 v2再说")
 
@@ -178,19 +193,22 @@ This is a one-time data migration; it has its own test (§6.6).
    `esr:session:<uri>:events` stream broadcast still fires.
 3. A message `@`-mentioning one agent → exactly that agent gets
    `chat.receive`; other member agents do not; users still all do.
-4. **CRITICAL trust boundary** — a message whose `mentions` contains
-   (a) a non-member URI, (b) a cross-workspace URI, (c) a different
-   session's URI, (d) a malformed string → `$mentions` drops each;
-   no `chat.receive` is dispatched outside the session's validated
-   members. A dedicated test per case.
+4. **Trust boundary (`valid_member?/2`)** — a `$mentions` OR
+   `$session_users` candidate that is (a) a non-member, (b) a
+   cross-workspace URI, (c) a different session's URI, (d) malformed
+   → dropped; no `chat.receive` outside the session's validated
+   members. **Incl. the cross-workspace case for `$session_users`**:
+   a cross-workspace User placed in `slice.members` programmatically
+   (via `chat.join` / template instantiation) receives NOTHING. A
+   dedicated test per case, for BOTH tokens.
 5. Cascade test: N echo agents, a seed with no mention → zero agent
    dispatches; a seed mentioning one echo agent → that agent acts;
    its reply mentioning no one → cascade depth 1, stops.
-6. Migration: a store holding the OLD `{:always} → $session_members`
-   system_default (enabled) → migrated to
-   `{:always} → [$session_users, $mentions]`, still enabled. A store
-   whose old row is DISABLED → migrated receivers, still disabled.
-   Duplicate system_default rows → deduped deterministically.
+6. Migration: OLD `{:always} → $session_members` enabled → migrated
+   to `{:always} → [$session_users, $mentions]`, enabled. OLD row
+   DISABLED → migrated receivers, still disabled. **Mixed
+   enabled/disabled duplicates → the survivor is disabled
+   (disabled-wins)** — a dedicated test.
 7. The routing UI: the receiver picker offers "All session members
    (broadcast)"; submitting it persists a rule with the
    `$session_members` token; the validator accepts the three magic
@@ -198,3 +216,13 @@ This is a one-time data migration; it has its own test (§6.6).
    be created this way.
 8. The session stream / LiveView chat view shows every message
    regardless of mentions — no regression in human visibility.
+9. **Real-composer path (codex rev 3 — MEDIUM-c)** — a test that
+   sends through the ACTUAL LiveView composer using the mention
+   autocomplete (not a synthetic `message.mentions`) and verifies the
+   mentioned agent gets `chat.receive`. This proves the
+   compose→`Message.mentions` path actually populates mentions so the
+   new default is not a silent no-op on the real surface.
+10. The runbook / demo docs are updated: plain agent-name text
+    ("hi cc-builder") no longer actuates an agent — only an
+    `@`-mention does. Any V1 demo script that relied on plain-name
+    actuation is corrected.
