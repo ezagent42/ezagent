@@ -1168,10 +1168,15 @@ design of record** (§1.1, §1.5 — it owns `claude_config_dir`,
 specifies exactly how the cc Template Class consumes them). After
 PR-1, cc-agent-config shrinks to ~nothing.
 
-**Decision flagged for Allen**: recommend **retiring the standalone
-cc-agent-config SPEC** and folding cc agent configurability into
-AgentTemplate (Phase 7). Allen confirms when back. Until then, the
-cc-config branch stays unmerged and is NOT implemented.
+**Decision (Allen 2026-05-23 — confirmed)**: cc-agent-config SPEC
+RETIRED. The branch `docs/cc-agent-config-spec` was deleted on
+2026-05-23. Operational guidance (macOS Keychain caveat,
+credential-seeding question) lives in
+[`docs/runbook/cc-agent-config.md`](../../runbook/cc-agent-config.md);
+the tombstone is in [`docs/notes/README.md`](../../notes/README.md)
+§"Retired specs". `Ezagent.Entity.AgentTemplate` is the single
+source of truth for cc agent sandbox/config — future plugin authors
+should read its moduledoc, not the retired SPEC.
 
 ## 4. macOS Keychain caveat (carry-forward)
 

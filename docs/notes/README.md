@@ -61,6 +61,10 @@ Six notes have bilingual `.zh_cn.md` companions (marked **[zh]** below).
 
 - [ARCHITECTURE_GRILL_v0.3.md](archive/ARCHITECTURE_GRILL_v0.3.md) — 2026-05-14 v0.3-era architecture review; historical artifact, superseded by the current `../../ARCHITECTURE.md`.
 
+## Retired specs
+
+- **`2026-05-22-cc-agent-config.md`** — retired 2026-05-23. Drafted on branch `docs/cc-agent-config-spec` (deleted, never merged). Its `CLAUDE_CONFIG_DIR` sandbox / `settings_path` / `mcp_config_path` / `api_key_helper` design was absorbed by `Ezagent.Entity.AgentTemplate` (Phase 7) and is now the authoritative source. The operational guidance (macOS Keychain caveat + credential-seeding question) survives in [`../runbook/cc-agent-config.md`](../runbook/cc-agent-config.md). See Phase-7 completion SPEC §3 "cc-agent-config reconciliation" for the decision rationale.
+
 ---
 
 `evidence/` and `phase-9-demo/` subdirectories hold supporting artifacts
