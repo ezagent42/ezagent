@@ -203,4 +203,73 @@ defmodule EzagentDomainChat.Integration.SessionSurvivesRestartTest do
       assert loaded == slice
     end
   end
+
+  # Phase 7 completion PR-2 (SPEC §2 "PR-2") — the durable
+  # `template_working_copy` field on the Chat slice.
+  describe "template_working_copy slice (PR-2)" do
+    alias Ezagent.Behavior.Chat
+
+    test "the template_working_copy field round-trips through a Session snapshot/restore" do
+      session_uri =
+        URI.parse("session://default/default/twc-roundtrip-#{System.unique_integer([:positive])}")
+
+      :ok = KindSnapshot.delete(URI.to_string(session_uri))
+
+      # A populated, template-SHAPED working copy: agent_slots carry
+      # `template://agent` URIs (NOT live `entity://agent`), routing
+      # receivers are slot NAMES.
+      working_copy = %{
+        agent_slots: [
+          {"backend", URI.parse("template://agent/default/cc-backend")},
+          {"frontend", URI.parse("template://agent/default/cc-frontend")}
+        ],
+        routing_rules: [{{:mention, "backend"}, ["backend"]}],
+        orchestrator_template_uri: URI.parse("template://agent/default/cc-orchestrator"),
+        default_workspace_uri: URI.parse("workspace://default"),
+        description: "a two-agent team"
+      }
+
+      chat_slice = %{
+        members: %{},
+        monitors: %{},
+        last_seen: %{},
+        template_working_copy: working_copy
+      }
+
+      :ok = Snapshot.save_now(session_uri, Session, %{chat: chat_slice})
+
+      loaded = Snapshot.load_or_init(session_uri, Session, %{uri: session_uri})
+
+      assert Chat.template_working_copy(loaded.chat) == working_copy,
+             "the durable template_working_copy field must survive a Session " <>
+               "snapshot/restore — Session is {:snapshot, :on_change}"
+    end
+
+    test "a pre-PR-2 Session snapshot (no template_working_copy key) still loads — field defaults" do
+      session_uri =
+        URI.parse("session://default/default/twc-pre-pr2-#{System.unique_integer([:positive])}")
+
+      :ok = KindSnapshot.delete(URI.to_string(session_uri))
+
+      member = URI.parse("entity://user/default/pre-#{System.unique_integer([:positive])}")
+
+      # The exact pre-PR-2 `:chat` slice shape — members/monitors/last_seen
+      # only, NO `template_working_copy` key.
+      pre_pr2_chat = %{members: %{member => %{online: true}}, monitors: %{}, last_seen: %{}}
+      refute Map.has_key?(pre_pr2_chat, :template_working_copy)
+
+      :ok = Snapshot.save_now(session_uri, Session, %{chat: pre_pr2_chat})
+
+      # The snapshot loads without crashing; the loaded `:chat` slice
+      # has no `template_working_copy` key (the snapshot layer merges
+      # at slice-key level, so the loaded slice replaces the fresh one).
+      loaded = Snapshot.load_or_init(session_uri, Session, %{uri: session_uri})
+      assert Map.has_key?(loaded.chat, :members)
+      assert loaded.chat.members == pre_pr2_chat.members
+
+      # Reading the field via the accessor yields the empty default —
+      # no crash, the field gracefully defaults.
+      assert Chat.template_working_copy(loaded.chat) == Chat.default_template_working_copy()
+    end
+  end
 end

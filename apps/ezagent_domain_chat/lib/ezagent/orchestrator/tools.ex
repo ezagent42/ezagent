@@ -41,29 +41,42 @@ defmodule Ezagent.Orchestrator.Tools do
   - No `:grant_cap` tool (Decision #137 — cap delegation only
     happens at Generator boot, never mid-session).
 
-  ## Working-copy derivation (Phase 7 PR 46-impl)
+  ## Working-copy derivation (Phase 7 completion PR-2 — SPEC §1.3 / §1.6)
 
-  The SPEC describes a `template_working_copy` slice field on Session
-  that orchestrator tools mutate. That slice field is **not yet
-  added** to Session (PR 44 was deferred — see Session moduledoc).
-  This implementation derives the equivalent state **from live
-  runtime** instead:
+  The `template_working_copy` field on the Session's `:chat` slice
+  (`Ezagent.Behavior.Chat`) IS the durable source-template record.
+  `build_working_copy/4` reads it **straight from the live Session
+  Kind's `:chat` slice** — it does NOT derive `agent_slots` from live
+  `Ezagent.WorkspaceRegistry` membership and does NOT derive
+  `routing_rules` from live `Ezagent.Routing.RuleStore` rows.
 
-  - `agent_slots` — live `Ezagent.WorkspaceRegistry` membership for
-    the session's workspace, filtered to `entity://agent/*` URIs
-  - `routing_rules` — `Ezagent.Routing.RuleStore.list(MentionRouting)`
-    filtered to rules tagged with this session's workspace
+  The slice it emits is **template-shaped** (codex rev-3 HIGH-3), not
+  live-runtime shaped:
 
-  Trade-off: working_copy is reconstructed on every `update_template`
-  / `save_template_as` call rather than mutated incrementally. Costs
-  one DB read per save; avoids the Session slice flip that destabilized
-  PR 44.
+  - `agent_slots :: [{slot_name, template://agent/<ws>/<name>}]` — each
+    slot's durable `source_agent_template_uri`, NOT a live
+    `entity://agent` instance URI.
+  - `routing_rules :: [{matcher_ast, [slot_name]}]` — receivers are
+    slot NAMES, not live agent URIs.
+
+  The hash-input map passed to
+  `Ezagent.Entity.SessionTemplate.compute_version_hash/1` EXCLUDES
+  `session_uri` and `name` (and the function itself already drops
+  `created_at` / `created_by`) — so two different sessions with an
+  identical team config hash identically.
+
+  A Session whose `:chat` slice predates PR-2 (no
+  `template_working_copy` key) reads through
+  `Ezagent.Behavior.Chat.template_working_copy/1`, which returns the
+  empty default — `build_working_copy/4` then emits an empty
+  template-shaped slice rather than crashing.
   """
 
   require Logger
 
+  alias Ezagent.Behavior.Chat
   alias Ezagent.Entity.{Agent, SessionTemplate}
-  alias Ezagent.Routing.{RuleStore, Matcher}
+  alias Ezagent.Routing.RuleStore
 
   @doc "The 7 orchestration tool names. CI gate test pins this list at 7."
   @spec tool_names() :: [atom()]
@@ -375,70 +388,69 @@ defmodule Ezagent.Orchestrator.Tools do
 
   defp extract_template_name(other), do: {:error, {:not_a_session_template_uri, other}}
 
+  # Phase 7 completion PR-2 (SPEC §1.3 / §1.6) — build the
+  # template-shaped working-copy slice from the durable
+  # `template_working_copy` field on the live Session's `:chat` slice.
+  #
+  # This is NOT a live-runtime derivation: `agent_slots` and
+  # `routing_rules` come straight from the durable field (populated by
+  # the Generator + the orchestrator slot tools in PR-4 / PR-5), so a
+  # worker that died and respawned still carries its slot's
+  # `source_agent_template_uri`, and routing receivers stay slot
+  # NAMES. The emitted slice is the input to
+  # `SessionTemplate.compute_version_hash/1`; `session_uri` and `name`
+  # are deliberately ABSENT from it so two different sessions with an
+  # identical team config hash identically.
   defp build_working_copy(%URI{} = session_uri, %URI{} = workspace_uri, %URI{} = caller_uri, parent_uri) do
-    # Derive agent_slots from live WorkspaceRegistry membership:
-    # every entity://agent/* member in this workspace counts as a slot.
-    # PR #141 SPEC v2: slot_name = the name segment (path) of the
-    # agent URI, e.g. `cc_architect` for `entity://agent/default/cc_architect`.
-    agent_slots =
-      workspace_uri
-      |> live_agents_in_workspace()
-      |> Enum.map(fn agent_uri ->
-        slot_name =
-          case agent_uri.path do
-            "/" <> name when name != "" -> name
-            _ -> URI.to_string(agent_uri)
-          end
+    wc = read_template_working_copy(session_uri)
 
-        {slot_name, agent_uri}
-      end)
-      |> Enum.sort()
+    orchestrator_template_uri =
+      Map.get(wc, :orchestrator_template_uri) ||
+        URI.parse("template://agent/default/cc-orchestrator")
 
-    # Derive routing_rules from live RuleStore rows scoped to this
-    # workspace; matcher_data + receivers preserve the rule shape so
-    # re-instantiate from this template hash recreates the same wiring.
-    routing_rules =
-      Ezagent.Routing.MentionRouting
-      |> RuleStore.list()
-      |> Enum.filter(fn rule -> rule.workspace_uri == URI.to_string(workspace_uri) end)
-      |> Enum.map(fn rule ->
-        matcher =
-          case Matcher.from_json(rule.matcher_data) do
-            {:ok, m} -> m
-            _ -> nil
-          end
+    default_workspace_uri = Map.get(wc, :default_workspace_uri) || workspace_uri
 
-        {matcher, rule.receivers}
-      end)
-      |> Enum.reject(fn {m, _} -> is_nil(m) end)
-      |> Enum.sort()
-
+    # The hash-input map. `compute_version_hash/1` already drops
+    # `created_at`/`created_by`/`version_hash`/`version_tag`; PR-2 also
+    # structures the map so `session_uri` and `name` are ABSENT — they
+    # never enter the hash, so identical team configs across distinct
+    # sessions produce the SAME hash (SPEC §1.3).
     slice = %{
-      name: nil,
-      description: "",
-      agent_slots: agent_slots,
-      orchestrator_template_uri: URI.parse("template://agent/default/cc-orchestrator"),
-      routing_rules: routing_rules,
-      default_workspace_uri: workspace_uri,
+      description: Map.get(wc, :description, ""),
+      # [{slot_name, template://agent/<ws>/<name>}] — the durable
+      # source_agent_template_uri per slot (NOT live entity://agent).
+      agent_slots: Enum.sort(Map.get(wc, :agent_slots, [])),
+      orchestrator_template_uri: orchestrator_template_uri,
+      # [{matcher_ast, [slot_name]}] — receivers are slot NAMES.
+      routing_rules: Enum.sort(Map.get(wc, :routing_rules, [])),
+      default_workspace_uri: default_workspace_uri,
       parent_template_uri: parent_uri,
-      created_by: caller_uri,
-      session_uri: session_uri
+      # created_by is dropped by compute_version_hash/1 — carried here
+      # for the eventual persisted SessionTemplate content (PR-3).
+      created_by: caller_uri
     }
 
     {:ok, slice}
   end
 
-  defp live_agents_in_workspace(%URI{} = workspace_uri) do
-    target = URI.to_string(workspace_uri)
+  # Read the durable `template_working_copy` field off the live Session
+  # Kind's `:chat` slice. A Session that is not alive, or whose `:chat`
+  # slice predates PR-2 (no `template_working_copy` key), yields the
+  # empty default via `Chat.template_working_copy/1` — `build_working_copy/4`
+  # then emits an empty template-shaped slice rather than crashing.
+  defp read_template_working_copy(%URI{} = session_uri) do
+    case Ezagent.KindRegistry.lookup(session_uri) do
+      {:ok, pid} ->
+        chat_slice =
+          pid
+          |> :sys.get_state()
+          |> Map.get(:state, %{})
+          |> Map.get(Chat.state_slice(), %{})
 
-    # PR #141 SPEC v2: agent URIs are `entity://agent/<flavor>_<name>`
-    # (scheme=entity, host=agent).
-    Ezagent.WorkspaceRegistry.list_all()
-    |> Enum.filter(fn {_session_or_agent, ws_str} -> ws_str == target end)
-    |> Enum.map(fn {member_str, _ws} -> URI.parse(member_str) end)
-    |> Enum.filter(fn
-      %URI{scheme: "entity", host: "agent"} -> true
-      _ -> false
-    end)
+        Chat.template_working_copy(chat_slice)
+
+      :error ->
+        Chat.default_template_working_copy()
+    end
   end
 end
