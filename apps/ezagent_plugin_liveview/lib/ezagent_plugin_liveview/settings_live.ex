@@ -3,11 +3,16 @@ defmodule EzagentPluginLiveview.SettingsLive do
   Phase 8 阶段 D — Settings LV.
 
   V1 fix (Allen Feishu 2026-05-21 17:44): moved from `/settings` →
-  `/admin/settings` and re-shelled inside
-  `EzagentDomainUi.AdminSettingsShell` (the admin drawer) instead of
-  `EzagentDomainUi.IdeShell` (the workspace surface). The page hosts
-  admin-only config (SMTP + registration domains) and never belonged
-  in the avatar dropdown's personal-config "Preference" slot.
+  `/admin/settings` and re-shelled into the admin drawer perspective
+  instead of `EzagentDomainUi.IdeShell` (the workspace surface). The
+  page hosts admin-only config (SMTP + registration domains) and
+  never belonged in the avatar dropdown's personal-config
+  "Preference" slot.
+
+  Nested-shell PR-3 (SPEC §1, §6 row 3): now renders
+  `AppShell.app_shell` (`perspective: :admin`) wrapping
+  `AdminShell.admin_shell` — the page gains the universal chrome
+  (avatar / notifications / search / ⌘K).
 
   Account / Preferences / Keyboard / Access & Identity / System.
   Most sections are placeholders in Phase 8; Access & Identity
@@ -27,7 +32,8 @@ defmodule EzagentPluginLiveview.SettingsLive do
   depth on top of the per-section `@is_admin?` UI gates.
   """
   use Phoenix.LiveView
-  alias EzagentDomainUi.AdminSettingsShell
+  alias EzagentDomainUi.AdminShell
+  alias EzagentPluginLiveview.AppShell
   use EzagentDomainUi.Components
   use EzagentDomainUi.Primitives
 
@@ -212,15 +218,21 @@ defmodule EzagentPluginLiveview.SettingsLive do
       end)
 
     ~H"""
-    <AdminSettingsShell.admin_settings_shell
+    <AppShell.app_shell
+      perspective={:admin}
       current_entity_uri={@current_entity_uri_str}
-      current_path="/admin/settings"
-      active_section={:settings}
+      current_workspace_uri={@current_workspace_uri}
+      workspaces={@workspaces}
+      is_admin?={@is_admin?}
+      is_system_member?={@is_system_member?}
+      cmdk_nav_routes={@cmdk_nav_routes}
     >
-      <:main>
-        <div class="flex flex-1 min-h-0">
+      <:body>
+        <AdminShell.admin_shell current_path="/admin/settings" active_section={:settings}>
+          <:main>
+            <div class="flex flex-1 min-h-0">
           <%!-- V1 fix (Allen 2026-05-21 17:44): inner sub-section rail.
-                AdminSettingsShell's outer sidebar selects which admin
+                AdminShell's outer sidebar selects which admin
                 page is active (Overview / Workspaces / Logs / Registry
                 / Snapshots / Settings); this inner rail switches
                 between sub-sections of the Settings page itself. All
@@ -241,9 +253,11 @@ defmodule EzagentPluginLiveview.SettingsLive do
           <div class="flex-1 overflow-auto px-6 py-6">
             {render_section(assigns, @section)}
           </div>
-        </div>
-      </:main>
-    </AdminSettingsShell.admin_settings_shell>
+            </div>
+          </:main>
+        </AdminShell.admin_shell>
+      </:body>
+    </AppShell.app_shell>
     """
   end
 

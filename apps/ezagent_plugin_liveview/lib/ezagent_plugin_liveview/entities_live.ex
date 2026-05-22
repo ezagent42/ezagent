@@ -15,7 +15,8 @@ defmodule EzagentPluginLiveview.EntitiesLive do
   """
 
   use Phoenix.LiveView
-  alias EzagentDomainUi.AdminSettingsShell
+  alias EzagentDomainUi.AdminShell
+  alias EzagentPluginLiveview.AppShell
   use EzagentDomainUi.Components
   import Phoenix.Component
 
@@ -74,20 +75,27 @@ defmodule EzagentPluginLiveview.EntitiesLive do
 
   @impl true
   def render(assigns) do
-    # Phase 8 阶段 C: wrap in IdeShell.
+    # Nested-shell PR-3: wrap in AppShell.app_shell (perspective :admin)
+    # over AdminShell.admin_shell.
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
         URI.to_string(assigns.current_entity_uri || URI.parse("entity://user/system/admin"))
       end)
 
     ~H"""
-    <AdminSettingsShell.admin_settings_shell
+    <AppShell.app_shell
+      perspective={:admin}
       current_entity_uri={@current_entity_uri_str}
-      current_path="/admin/registry"
-      active_section={:registry}
+      current_workspace_uri={@current_workspace_uri}
+      workspaces={@workspaces}
+      is_admin?={@is_admin?}
+      is_system_member?={@is_system_member?}
+      cmdk_nav_routes={@cmdk_nav_routes}
     >
-      <:main>
-        <div class="px-6 py-6 text-zinc-900 dark:text-zinc-100">
+      <:body>
+        <AdminShell.admin_shell current_path="/admin/registry" active_section={:registry}>
+          <:main>
+            <div class="px-6 py-6 text-zinc-900 dark:text-zinc-100">
           <header>
             <h1 style="font-size: 22px; font-weight: 600;">Entities (live registry)</h1>
             <p style="font-size: 13px; color: #666;">
@@ -155,9 +163,11 @@ defmodule EzagentPluginLiveview.EntitiesLive do
               </tbody>
             </table>
           </section>
-        </div>
-      </:main>
-    </AdminSettingsShell.admin_settings_shell>
+            </div>
+          </:main>
+        </AdminShell.admin_shell>
+      </:body>
+    </AppShell.app_shell>
     """
   end
 

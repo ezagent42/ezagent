@@ -112,38 +112,29 @@ defmodule EzagentDomainUi.IdeShellOuterTest do
     end
   end
 
-  describe "additive-only invariant (SPEC §6 row 1)" do
-    test "the old ide_shell/1 monolith still renders unchanged" do
-      assigns = %{
-        current_entity_uri: "entity://user/system/admin",
-        current_path: "/sessions",
-        status: %{}
-      }
-
-      html =
-        rendered_to_string(~H"""
-        <IdeShell.ide_shell
-          current_entity_uri={@current_entity_uri}
-          current_path={@current_path}
-          status={@status}
-        >
-          <:main_window>OLD_MONOLITH</:main_window>
-        </IdeShell.ide_shell>
-        """)
-
-      # The old monolith keeps its own root id + chrome — proof PR-1
-      # added next to it rather than replacing it.
-      assert html =~ ~s(id="ide-shell")
-      assert html =~ "OLD_MONOLITH"
-      assert html =~ "⌘K"
+  describe "old monolith deleted (SPEC §6 row 3 — nested-shell PR-3)" do
+    test "the old monolithic ide_shell/1 is gone — only ide_shell_outer/1 remains" do
+      # PR-1 added `ide_shell_outer/1` next to the old `ide_shell/1`
+      # (additive). PR-3 migrated the last consumer off `ide_shell/1`
+      # and deleted it in the SAME PR (SPEC §6 row 3). The OUTER shell
+      # is now the sole shell entry point in this module.
+      {:module, IdeShell} = Code.ensure_loaded(IdeShell)
+      refute function_exported?(IdeShell, :ide_shell, 1)
+      assert function_exported?(IdeShell, :ide_shell_outer, 1)
     end
 
-    test "old + new shells coexist as distinct functions" do
-      # Both exported; neither renamed. ensure_loaded! so the check
-      # doesn't depend on lazy module loading.
+    test "the old monolith's body helpers are gone (copied into WorkspaceShell in PR-1)" do
+      # `activity_bar/1`, `activity_items/0`, `activity_for_path/1`,
+      # `top_command_bar/1`, `status_bar/1` were body helpers of the
+      # deleted `ide_shell/1`. They were copied into
+      # `EzagentDomainUi.WorkspaceShell` in PR-1; PR-3 deletes the
+      # now-dead originals here.
       {:module, IdeShell} = Code.ensure_loaded(IdeShell)
-      assert function_exported?(IdeShell, :ide_shell, 1)
-      assert function_exported?(IdeShell, :ide_shell_outer, 1)
+      refute function_exported?(IdeShell, :activity_bar, 1)
+      refute function_exported?(IdeShell, :activity_items, 0)
+      refute function_exported?(IdeShell, :activity_for_path, 1)
+      refute function_exported?(IdeShell, :top_command_bar, 1)
+      refute function_exported?(IdeShell, :status_bar, 1)
     end
   end
 end

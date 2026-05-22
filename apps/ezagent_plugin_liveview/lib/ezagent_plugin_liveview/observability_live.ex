@@ -10,7 +10,8 @@ defmodule EzagentPluginLiveview.ObservabilityLive do
   display existing data (KindRegistry, CC bridges, audit invocations).
   """
   use Phoenix.LiveView
-  alias EzagentDomainUi.AdminSettingsShell
+  alias EzagentDomainUi.AdminShell
+  alias EzagentPluginLiveview.AppShell
   use EzagentDomainUi.Components
   use EzagentDomainUi.Primitives
 
@@ -68,13 +69,19 @@ defmodule EzagentPluginLiveview.ObservabilityLive do
       end)
 
     ~H"""
-    <AdminSettingsShell.admin_settings_shell
+    <AppShell.app_shell
+      perspective={:admin}
       current_entity_uri={@current_entity_uri_str}
-      current_path="/admin/logs"
-      active_section={:logs}
+      current_workspace_uri={@current_workspace_uri}
+      workspaces={@workspaces}
+      is_admin?={@is_admin?}
+      is_system_member?={@is_system_member?}
+      cmdk_nav_routes={@cmdk_nav_routes}
     >
-      <:main>
-        <div class="px-6 py-6">
+      <:body>
+        <AdminShell.admin_shell current_path="/admin/logs" active_section={:logs}>
+          <:main>
+            <div class="px-6 py-6">
           <%!-- Phase 8c PR-F: sub-section tabs (overview / events / audit
                 / bridges / snapshots) live inline as a horizontal tab
                 strip. The left sidebar holds the top-level sub-section
@@ -88,9 +95,11 @@ defmodule EzagentPluginLiveview.ObservabilityLive do
             <.tab_link tab={@tab} value={:snapshots} label="Snapshots" />
           </nav>
           {render_tab(assigns, @tab)}
-        </div>
-      </:main>
-    </AdminSettingsShell.admin_settings_shell>
+            </div>
+          </:main>
+        </AdminShell.admin_shell>
+      </:body>
+    </AppShell.app_shell>
     """
   end
 

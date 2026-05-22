@@ -12,18 +12,24 @@ defmodule EzagentPluginLiveview.WorkspacesLive do
   ## PR-M (Allen 2026-05-20) — admin drawer surface
 
   Workspace management (templates / members / routing config) is a
-  configuration surface, not a workflow surface. Renders inside
-  `EzagentDomainUi.AdminSettingsShell` (drawer perspective: top bar +
-  left sidebar, no Activity Bar, no Status Bar) per the "no two header
-  types" UX rule. Reachable from:
+  configuration surface, not a workflow surface. Renders inside the
+  admin perspective (left sidebar, no Activity Bar, no Status Bar) per
+  the "no two header types" UX rule. Reachable from:
 
   - avatar dropdown → "Admin" → sidebar → "Workspaces"
-  - workspace top-left dropdown (on any IdeShell surface) → "Manage
+  - workspace top-left dropdown (on any workspace surface) → "Manage
     workspaces..." link → /workspaces (opens the same drawer)
+
+  ## Nested-shell PR-3 (SPEC §1, §6 row 3)
+
+  Now renders `AppShell.app_shell` (`perspective: :admin`) wrapping
+  `AdminShell.admin_shell` — the page gains the universal chrome
+  (avatar / notifications / search / ⌘K).
   """
 
   use Phoenix.LiveView
-  alias EzagentDomainUi.AdminSettingsShell
+  alias EzagentDomainUi.AdminShell
+  alias EzagentPluginLiveview.AppShell
   use EzagentDomainUi.Components
   import Phoenix.Component
 
@@ -71,22 +77,29 @@ defmodule EzagentPluginLiveview.WorkspacesLive do
 
   @impl true
   def render(assigns) do
-    # PR-M (Allen 2026-05-20) — render inside AdminSettingsShell (drawer
-    # perspective), NOT IdeShell. No Activity Bar, no Status Bar — the
-    # "no two header types" rule.
+    # Nested-shell PR-3 — render inside AppShell.app_shell (perspective
+    # :admin) over AdminShell.admin_shell. No Activity Bar, no Status
+    # Bar — the "no two header types" rule. The page now gains the
+    # universal chrome (avatar / notifications / search / ⌘K).
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
         URI.to_string(assigns.current_entity_uri || URI.parse("entity://user/system/admin"))
       end)
 
     ~H"""
-    <AdminSettingsShell.admin_settings_shell
+    <AppShell.app_shell
+      perspective={:admin}
       current_entity_uri={@current_entity_uri_str}
-      current_path="/workspaces"
-      active_section={:workspaces}
+      current_workspace_uri={@current_workspace_uri}
+      workspaces={@workspaces}
+      is_admin?={@is_admin?}
+      is_system_member?={@is_system_member?}
+      cmdk_nav_routes={@cmdk_nav_routes}
     >
-      <:main>
-        <div class="flex-1 overflow-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
+      <:body>
+        <AdminShell.admin_shell current_path="/workspaces" active_section={:workspaces}>
+          <:main>
+            <div class="flex-1 overflow-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
           <.page_header title="Workspaces">
             <:subtitle>
               Persisted cluster configurations — members + session templates + routing rules.
@@ -148,9 +161,11 @@ defmodule EzagentPluginLiveview.WorkspacesLive do
               </table>
             </.card>
           </section>
-        </div>
-      </:main>
-    </AdminSettingsShell.admin_settings_shell>
+            </div>
+          </:main>
+        </AdminShell.admin_shell>
+      </:body>
+    </AppShell.app_shell>
     """
   end
 end

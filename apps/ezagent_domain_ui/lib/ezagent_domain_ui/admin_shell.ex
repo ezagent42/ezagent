@@ -16,11 +16,12 @@ defmodule EzagentDomainUi.AdminShell do
   (SPEC §2). `admin_shell/1` is ONE of the two inner perspectives the
   outer shell's `:body` slot hosts; `workspace_shell/1` is the other.
 
-  PR-1 is purely additive — the old `AdminSettingsShell` is left
-  intact and keeps working until its consumers migrate (PR-3). This
-  component is a faithful COPY of that body region (restructure, not
-  redesign). The left settings nav (`sidebar_nav/1`) is internal to
-  this component, not a slot.
+  Introduced additively in PR-1 as a faithful COPY of the old
+  `AdminSettingsShell` body region (restructure, not redesign). PR-3
+  migrated the last consumer onto this component and DELETED the old
+  `AdminSettingsShell` — `admin_shell/1` is now the sole admin
+  perspective body. The left settings nav (`sidebar_nav/1`) is
+  internal to this component, not a slot.
 
   ## Usage
 
