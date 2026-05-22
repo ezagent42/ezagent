@@ -195,9 +195,36 @@ defmodule Ezagent.Entity.Session do
              template_content
            ),
          :ok <- preflight_agent_slots(template_content),
+         :ok <- preflight_slot_name_uniqueness(template_content),
          :ok <- preflight_routing_rules(template_content) do
       do_spawn(template_content, workspace_uri, owner_uri, session_template_uri)
     end
+  end
+
+  # --- MEDIUM-3 (round 3): slot-name uniqueness preflight --------------
+  #
+  # Every agent slot spawns a worker whose live instance URI is derived
+  # deterministically from its generated instance name
+  # (`Agent.session_instance_name/3`). Two slots that generate the SAME
+  # instance name would produce the SAME worker URI — the second spawn
+  # would silently re-use the first slot's worker (`{:already_started}`).
+  #
+  # `Ezagent.Orchestrator.SlotNames.preflight/2` computes EVERY candidate
+  # instance name up front and rejects the Generator run if any two
+  # collide — BEFORE a single `template.instantiate` dispatch. Every
+  # Generator slot is generation 0; the session discriminator is shared
+  # by all slots, so a placeholder discriminator suffices here (a
+  # collision is independent of the discriminator — the suffix is
+  # appended identically to every slot's name). The real per-session
+  # discriminator is folded in at spawn time in `instantiate_agent_slots`.
+  defp preflight_slot_name_uniqueness(template_content) do
+    slot_specs =
+      template_content
+      |> Map.get(:agent_slots, [])
+      |> normalize_agent_slots()
+      |> Enum.map(fn {slot_name, _agent_template_uri} -> {slot_name, 0} end)
+
+    Ezagent.Orchestrator.SlotNames.preflight(slot_specs, "preflight")
   end
 
   # --- CRITICAL (round 2): SessionTemplate-composition workspace isolation
@@ -287,7 +314,12 @@ defmodule Ezagent.Entity.Session do
   # Each step is irreversible; on failure of a LATER step,
   # `cleanup_partial/1` tears down everything spawned so far so no
   # half-built session/workers/rules/caps survive.
-  defp do_spawn(template_content, %URI{} = workspace_uri, %URI{} = owner_uri, %URI{} = session_template_uri) do
+  defp do_spawn(
+         template_content,
+         %URI{} = workspace_uri,
+         %URI{} = owner_uri,
+         %URI{} = session_template_uri
+       ) do
     with {:ok, session_uri} <- spawn_fresh_session(workspace_uri),
          :ok <- Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri),
          {:ok, orchestrator_uri} <-
@@ -832,8 +864,7 @@ defmodule Ezagent.Entity.Session do
       orchestrator_template_uri:
         Map.get(template_content, :orchestrator_template_uri) ||
           URI.parse("template://agent/default/cc-orchestrator"),
-      default_workspace_uri:
-        Map.get(template_content, :default_workspace_uri) || workspace_uri,
+      default_workspace_uri: Map.get(template_content, :default_workspace_uri) || workspace_uri,
       description: Map.get(template_content, :description, "")
     }
 
@@ -886,6 +917,21 @@ defmodule Ezagent.Entity.Session do
   # error mid-batch) this step also tears down the rows it inserted so
   # far before returning the error — so even an internal abort leaves no
   # partial routing rows.
+  #
+  # ## HIGH-2 hardening (round 3) — total: it NEVER raises after mutating
+  #
+  # `RuleStore.load_into_registry/1` can RAISE (e.g. via
+  # `RoutingRegistry.get_meta/1` raising for an undeclared routing table)
+  # — and `RuleStore.add/5` can in principle raise on a DB error. A
+  # raise after rows were inserted would bypass `guard/2` →
+  # `cleanup_partial/1` would NEVER run → a partially-built session +
+  # workers + persisted routing rows leak. The ENTIRE routing-install
+  # step is now wrapped in exception-safe code: any exception (from the
+  # `RuleStore.add/5` loop OR the registry reload) is captured, the
+  # accumulated rule IDs are deleted, and a tagged `{:error, _}` is
+  # returned — so `install_routing_rules/5` is TOTAL (always
+  # `:ok | {:error, _}`, never raises after mutating `RuleStore`) and
+  # `guard/2` always runs `cleanup_partial/1`.
   defp install_routing_rules(
          template_content,
          slot_instances,
@@ -900,10 +946,22 @@ defmodule Ezagent.Entity.Session do
 
     table = EzagentDomainChat.Routing.MentionRouting
 
+    # HIGH-2 — the whole insert-loop + registry-reload runs inside one
+    # exception-safe wrapper. The accumulator holds the inserted IDs at
+    # every point, so on a RAISE the `rescue`/`catch` clauses can scrub
+    # exactly the rows already inserted before returning a tagged error.
+    do_install_routing_rules(rules, slot_uri_by_name, table, workspace_uri, owner_uri)
+  end
+
+  # The exception-safe core of `install_routing_rules/5` (HIGH-2). On any
+  # raise/exit it tears down the rows it inserted so far and returns a
+  # tagged `{:error, _}` — it NEVER lets an exception escape after
+  # mutating `RuleStore`.
+  defp do_install_routing_rules(rules, slot_uri_by_name, table, workspace_uri, owner_uri) do
     # The accumulator carries the inserted IDs even into the `:halt`
     # path — `{:halt, {ids, {:error, _}}}` — so an internal mid-batch
     # abort can scrub the rows it already inserted.
-    result =
+    {inserted_ids, install_result} =
       Enum.reduce_while(rules, {[], :ok}, fn {matcher_ast, receiver_slot_names}, {ids, :ok} ->
         receiver_uris =
           receiver_slot_names
@@ -933,24 +991,65 @@ defmodule Ezagent.Entity.Session do
         end
       end)
 
-    case result do
-      {[], :ok} ->
+    case install_result do
+      :ok when inserted_ids == [] ->
         # No rules installed — nothing to reload.
         {:ok, []}
 
-      {ids, :ok} ->
+      :ok ->
         # HIGH-3 — hydrate the live RoutingRegistry ETS so the rules
-        # fire at runtime immediately, not after some later reload.
-        :ok = RuleStore.load_into_registry(table)
-        {:ok, Enum.reverse(ids)}
+        # fire at runtime immediately. HIGH-2 — a raise here (an
+        # undeclared routing table) is caught below; without the wrapper
+        # it would bypass `guard/2` and leak the just-inserted rows.
+        RuleStore.load_into_registry(table)
+        {:ok, Enum.reverse(inserted_ids)}
 
-      {ids, {:error, _} = err} ->
+      {:error, _} = err ->
         # Internal failure mid-batch — delete the rows inserted so far so
         # this step itself leaves no partial routing rows, then reload.
-        Enum.each(ids, fn id -> safe(fn -> RuleStore.delete(id, force: true) end) end)
+        Enum.each(inserted_ids, fn id -> safe(fn -> RuleStore.delete(id, force: true) end) end)
         safe(fn -> RuleStore.load_into_registry(table) end)
         err
     end
+  rescue
+    e ->
+      # HIGH-2 — `RuleStore.add/5` or `load_into_registry/1` raised. The
+      # rows inserted so far are unknown to this clause, so scrub by the
+      # matcher set we attempted — `cleanup_partial/1` handles any IDs
+      # `do_spawn` already tracked; here we additionally hard-delete any
+      # row whose matcher matches a rule from THIS batch to leave no
+      # partial routing rows. Then return a tagged error so `guard/2`
+      # runs `cleanup_partial/1`.
+      scrub_routing_rows_for(rules, table)
+      {:error, {:routing_install_raised, e}}
+  catch
+    kind, reason ->
+      scrub_routing_rows_for(rules, table)
+      {:error, {:routing_install_raised, {kind, reason}}}
+  end
+
+  # HIGH-2 — after a raise inside the routing install, hard-delete every
+  # `routing_rules` row whose matcher matches one of THIS batch's rules,
+  # then reload the registry. Best-effort: a failure here is swallowed
+  # (the caller's `cleanup_partial/1` is the durable safety net; this is
+  # an extra scrub for the rows the raise left unaccounted-for).
+  defp scrub_routing_rows_for(rules, table) do
+    batch_matchers =
+      rules
+      |> Enum.map(fn {matcher_ast, _receivers} ->
+        safe(fn -> Ezagent.Routing.Matcher.to_json(matcher_ast) end)
+      end)
+      |> Enum.reject(&(&1 == :error))
+      |> MapSet.new()
+
+    safe(fn ->
+      RuleStore.list(table)
+      |> Enum.filter(fn row -> MapSet.member?(batch_matchers, row.matcher_data) end)
+      |> Enum.each(fn row -> safe(fn -> RuleStore.delete(row.id, force: true) end) end)
+    end)
+
+    safe(fn -> RuleStore.load_into_registry(table) end)
+    :ok
   end
 
   # Phase 7 PR 47 + completion PR-4 (step 8) — scope-bounded delegation
@@ -1113,8 +1212,7 @@ defmodule Ezagent.Entity.Session do
 
     # (kind, representative-template-URI-in-workspace) for #3 and #4.
     candidates = [
-      {:session_template,
-       URI.new!("template://session/#{workspace_name}/_preflight@_")},
+      {:session_template, URI.new!("template://session/#{workspace_name}/_preflight@_")},
       {:agent_template, URI.new!("template://agent/#{workspace_name}/_preflight")}
     ]
 

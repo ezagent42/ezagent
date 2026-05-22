@@ -41,6 +41,20 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
   - **MEDIUM-5 r2** — `session_instance_name/3` is injective
     (`agent_test.exs`): `api.v1` / `api-v1` do not collide.
 
+  ## Round 3 — codex adversarial-review of hardening round 2 (#241)
+
+  - **HIGH-1 r3** — `update_agent_template`'s routing re-point is a
+    CHECKED step: a forced re-point failure aborts the swap, keeps the
+    OLD worker alive, and returns a controlled error — no stale route
+    to a dead worker.
+  - **HIGH-2 r3** — `install_routing_rules/5` is exception-safe: a raise
+    from `load_into_registry` after rows were inserted returns a tagged
+    `{:error, _}` (not a raise), so `guard/2` runs `cleanup_partial` and
+    no session / worker / routing-row leaks.
+  - **MEDIUM-3 r3** — the Generator + `update_agent_template` slot-name
+    uniqueness preflight computes all candidate instance names up front
+    and rejects duplicates before any spawn.
+
   Every test drives the production dispatch path — no mocks. A no-PTY
   synthetic flavor spawns the plain `Ezagent.Entity.Agent` Kind.
   """
@@ -607,6 +621,7 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
       # The new worker is alive; the old one was terminated.
       assert {:ok, _pid} = KindRegistry.lookup(new_worker_uri)
       wait_until(fn -> KindRegistry.lookup(original_worker) == :error end)
+
       assert KindRegistry.lookup(original_worker) == :error,
              "the OLD worker must be terminated after the swap"
     end
@@ -788,6 +803,7 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
         # cap; the caller is the orchestrator agent — never the bootstrap
         # admin URI.
         caller = meta.caller
+
         assert match?(%URI{scheme: "entity", host: "agent"}, caller),
                "template.write must be dispatched by the orchestrator agent, not admin. " <>
                  "Got caller: #{inspect(caller)}"
@@ -1112,6 +1128,250 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
     end
   end
 
+  # ── HIGH-1 (round 3) — update_agent_template's routing re-point is a
+  # CHECKED step; a re-point failure aborts the swap with the OLD worker
+  # kept alive. ────────────────────────────────────────────────────────
+
+  describe "HIGH-1 r3 — a routing re-point failure aborts the swap, OLD worker survives" do
+    test "a forced load_into_registry raise during the re-point keeps the old worker alive" do
+      flavor = register_test_flavor()
+      tmpl_a = URI.new!("template://agent/default/ph7r3-h1-a-#{uniq()}")
+      tmpl_b = URI.new!("template://agent/default/ph7r3-h1-b-#{uniq()}")
+      :ok = create_agent_template(tmpl_a, agent_template_content(flavor, "config-a"))
+      :ok = create_agent_template(tmpl_b, agent_template_content(flavor, "config-b"))
+
+      # A SessionTemplate whose routing rule names the "dev" slot — so
+      # the swap's `repoint_routing_rules` has a rule to rewrite (and
+      # hence calls `load_into_registry`).
+      st_uri =
+        create_session_template(
+          "ph7r3-h1-team-#{uniq()}",
+          [{"dev", tmpl_a}],
+          [{{:text_contains, "ph7r3h1route"}, ["dev"]}]
+        )
+
+      owner_uri = full_template_owner(@default_ws)
+
+      {:ok, %{session_uri: session_uri, orchestrator_uri: orch_uri}} =
+        Session.spawn_from_template(st_uri, owner_uri)
+
+      [old_worker] = live_workers_of(orch_uri)
+      caps = orchestrator_caps(orch_uri)
+
+      # Force `RuleStore.load_into_registry` to RAISE during the swap's
+      # routing re-point by removing the MentionRouting meta row — then
+      # `RoutingRegistry.replace_table_contents → get_meta` raises an
+      # `ArgumentError`. The exact tuple is restored immediately after
+      # the call (and via on_exit) so the shared registry is unharmed.
+      table = EzagentDomainChat.Routing.MentionRouting
+      meta_table = Ezagent.RoutingRegistry.table()
+      [{_, _} = saved_meta] = :ets.lookup(meta_table, table)
+      on_exit(fn -> :ets.insert(meta_table, saved_meta) end)
+
+      :ets.delete(meta_table, table)
+
+      result =
+        Tools.update_agent_template("dev", tmpl_b,
+          caller: orch_uri,
+          caps: caps,
+          workspace_uri: @default_ws,
+          session_uri: session_uri
+        )
+
+      # Restore the registry meta IMMEDIATELY — keep the corruption
+      # window to exactly the one call under test.
+      :ets.insert(meta_table, saved_meta)
+
+      # HIGH-1 — the swap returns a CONTROLLED error, not a raise.
+      assert match?({:error, {:update_aborted, _}}, result),
+             "a routing re-point failure must abort with a controlled error. " <>
+               "Got: #{inspect(result)}"
+
+      # HIGH-1 — the OLD worker is NOT terminated; routing never points
+      # at a dead worker.
+      assert {:ok, _pid} = KindRegistry.lookup(old_worker),
+             "the OLD worker must be kept alive when the routing re-point fails"
+
+      # The working copy was rolled back — the slot still names the OLD
+      # worker + the OLD source template.
+      wc = session_working_copy(session_uri)
+      {_n, src, live, _gen} = find_slot(wc, "dev")
+
+      assert URI.to_string(live) == URI.to_string(old_worker),
+             "the slot tuple must be rolled back to the OLD live worker"
+
+      assert URI.to_string(src) == URI.to_string(tmpl_a),
+             "the slot tuple must be rolled back to the OLD source template"
+
+      # No stale route to a dead worker: every routing recipient the
+      # rule resolves is a LIVE actor.
+      msg =
+        Ezagent.Message.new(User.admin_uri(), %{text: "please ph7r3h1route"},
+          inserted_at: DateTime.utc_now()
+        )
+
+      recipients =
+        Ezagent.Routing.Resolver.resolve(msg, session_uri, [], workspace_uri: @default_ws)
+
+      for recipient <- recipients do
+        assert match?({:ok, _}, KindRegistry.lookup(recipient)),
+               "no routing rule may name a dead worker after a failed swap: " <>
+                 "#{URI.to_string(recipient)}"
+      end
+    end
+  end
+
+  # ── HIGH-2 (round 3) — install_routing_rules is exception-safe; a
+  # raise after rows were inserted does not bypass cleanup_partial. ─────
+
+  describe "HIGH-2 r3 — install_routing_rules survives a load_into_registry raise" do
+    test "a raise after row inserts returns a tagged error and leaks nothing" do
+      flavor = register_test_flavor()
+      worker_tmpl = URI.new!("template://agent/default/ph7r3-h2-worker-#{uniq()}")
+      :ok = create_agent_template(worker_tmpl, agent_template_content(flavor, "worker"))
+
+      # A unique marker so the routing row this Generator run inserts is
+      # identifiable amid rows other (async: false) tests have left.
+      marker = "ph7r3h2marker-#{uniq()}"
+
+      st_uri =
+        create_session_template(
+          "ph7r3-h2-team-#{uniq()}",
+          [{"dev", worker_tmpl}],
+          [{{:text_contains, marker}, ["dev"]}]
+        )
+
+      owner_uri = full_template_owner(@default_ws)
+
+      table = EzagentDomainChat.Routing.MentionRouting
+      lineage_before = MapSet.new(AgentLineage.list_all(), fn {a, _} -> a end)
+      ids_before = table |> Ezagent.Routing.RuleStore.list() |> MapSet.new(& &1.id)
+
+      # Force `RuleStore.load_into_registry` to RAISE. `install_routing_rules`
+      # inserts its rows via `RuleStore.add` FIRST, then reloads the
+      # registry — so the raise lands AFTER the rows are persisted. The
+      # exact meta tuple is restored after the Generator call.
+      meta_table = Ezagent.RoutingRegistry.table()
+      [{_, _} = saved_meta] = :ets.lookup(meta_table, table)
+      on_exit(fn -> :ets.insert(meta_table, saved_meta) end)
+
+      :ets.delete(meta_table, table)
+
+      result = Session.spawn_from_template(st_uri, owner_uri)
+
+      :ets.insert(meta_table, saved_meta)
+
+      # HIGH-2 — the Generator returns a TAGGED error, never a raise.
+      assert match?({:error, _}, result),
+             "install_routing_rules must return a tagged error on a registry-reload " <>
+               "raise, not propagate the exception. Got: #{inspect(result)}"
+
+      # cleanup_partial ran — no routing row carrying the marker leaked.
+      rows_after = Ezagent.Routing.RuleStore.list(table)
+
+      refute Enum.any?(rows_after, fn row ->
+               row.matcher_data |> inspect() |> String.contains?(marker)
+             end),
+             "no routing_rules row may survive — cleanup_partial must have run after " <>
+               "the exception-safe install returned its tagged error"
+
+      ids_after = MapSet.new(rows_after, & &1.id)
+      leaked_rows = MapSet.difference(ids_after, ids_before)
+
+      assert MapSet.size(leaked_rows) == 0,
+             "no routing_rules row the failed Generator inserted may leak: " <>
+               "#{inspect(MapSet.to_list(leaked_rows))}"
+
+      # cleanup_partial ran — no session / worker leaked either.
+      lineage_after = MapSet.new(AgentLineage.list_all(), fn {a, _} -> a end)
+      leaked_agents = MapSet.difference(lineage_after, lineage_before)
+
+      for agent_str <- leaked_agents do
+        assert KindRegistry.lookup(URI.parse(agent_str)) == :error,
+               "the partially-built session's worker #{agent_str} must be torn down"
+      end
+    end
+  end
+
+  # ── MEDIUM-3 (round 3) — the slot-name uniqueness preflight computes
+  # all candidate instance names up front and rejects duplicates. ──────
+
+  describe "MEDIUM-3 r3 — slot-name uniqueness preflight" do
+    test "two normal slots produce DISTINCT worker URIs" do
+      flavor = register_test_flavor()
+      tmpl = URI.new!("template://agent/default/ph7r3-m3-worker-#{uniq()}")
+      :ok = create_agent_template(tmpl, agent_template_content(flavor, "worker"))
+
+      st_uri =
+        create_session_template(
+          "ph7r3-m3-team-#{uniq()}",
+          [{"backend", tmpl}, {"frontend", tmpl}],
+          []
+        )
+
+      owner_uri = full_template_owner(@default_ws)
+
+      assert {:ok, %{orchestrator_uri: orch_uri}} =
+               Session.spawn_from_template(st_uri, owner_uri)
+
+      workers = live_workers_of(orch_uri) |> Enum.map(&URI.to_string/1)
+
+      assert length(workers) == 2,
+             "both slots must spawn — got #{inspect(workers)}"
+
+      assert workers == Enum.uniq(workers),
+             "the Generator's slot-name preflight must yield DISTINCT worker URIs"
+    end
+
+    test "a constructed duplicate slot is REJECTED before any spawn" do
+      # Two literally-equal slot names produce the same instance name —
+      # the deterministic worst case. The preflight must reject the
+      # Generator run BEFORE a single template.instantiate dispatch.
+      flavor = register_test_flavor()
+      tmpl = URI.new!("template://agent/default/ph7r3-m3-dup-#{uniq()}")
+      :ok = create_agent_template(tmpl, agent_template_content(flavor, "worker"))
+
+      st_uri =
+        create_session_template(
+          "ph7r3-m3-dup-team-#{uniq()}",
+          [{"dev", tmpl}, {"dev", tmpl}],
+          []
+        )
+
+      owner_uri = full_template_owner(@default_ws)
+
+      lineage_before = MapSet.new(AgentLineage.list_all(), fn {a, _} -> a end)
+
+      result = Session.spawn_from_template(st_uri, owner_uri)
+
+      assert match?({:error, {:duplicate_instance_names, _}}, result),
+             "a duplicate slot name must be rejected by the uniqueness preflight. " <>
+               "Got: #{inspect(result)}"
+
+      # Rejected BEFORE any spawn — no new agent in the lineage registry.
+      lineage_after = MapSet.new(AgentLineage.list_all(), fn {a, _} -> a end)
+
+      assert MapSet.equal?(lineage_before, lineage_after),
+             "the preflight must reject duplicates BEFORE any template.instantiate dispatch"
+    end
+
+    test "the SlotNames preflight is a pure collision check" do
+      # Direct unit check of the preflight function: distinct slot
+      # specs pass; two specs that generate the same instance name fail.
+      distinct = [{"backend", 0}, {"frontend", 0}, {"backend", 1}]
+      assert Ezagent.Orchestrator.SlotNames.preflight(distinct, "disc") == :ok
+
+      # The same slot name at the same generation → identical instance
+      # name → a reported collision.
+      colliding = [{"dev", 0}, {"dev", 0}]
+
+      assert {:error, {:duplicate_instance_names, [{_name, slot_names}]}} =
+               Ezagent.Orchestrator.SlotNames.preflight(colliding, "disc")
+
+      assert Enum.sort(slot_names) == ["dev", "dev"]
+    end
+  end
+
   # --- shared helpers ----------------------------------------------------
 
   # A test flavor whose Template Class spawns the worker Agent Kind and
@@ -1156,7 +1416,8 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
   # dispatches against a `template://session/...` URI.
   defp collect_template_write_authz(acc \\ []) do
     receive do
-      {:authz_granted, %{action: :write, target: %URI{scheme: "template", host: "session"}} = meta} ->
+      {:authz_granted,
+       %{action: :write, target: %URI{scheme: "template", host: "session"}} = meta} ->
         collect_template_write_authz([meta | acc])
 
       {:authz_granted, _other} ->
