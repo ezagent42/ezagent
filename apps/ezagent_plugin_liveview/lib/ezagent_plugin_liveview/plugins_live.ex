@@ -83,18 +83,6 @@ defmodule EzagentPluginLiveview.PluginsLive do
           current_path="/plugins"
           status={%{agents_alive: 0, bridges: 0, debug_events: 0, version: "dev"}}
         >
-      <:resource_panel>
-        <div class="p-3">
-          <div class="text-[10px] uppercase tracking-wide text-zinc-500 mb-2">Plugins</div>
-          <a
-            :for={p <- @plugins}
-            href={"#plugin-#{p.slug}"}
-            class="block px-2 py-1 text-xs hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded font-mono text-zinc-700 dark:text-zinc-300"
-          >
-            {p.name}
-          </a>
-        </div>
-      </:resource_panel>
       <:main_window>
         <div class="flex-1 overflow-auto px-6 py-6">
           <.page_header title="Plugins">
@@ -103,7 +91,6 @@ defmodule EzagentPluginLiveview.PluginsLive do
           <div class="grid grid-cols-2 gap-4 mt-4">
             <a
               :for={p <- @plugins}
-              id={"plugin-#{p.slug}"}
               href={(p.link && elem(p.link, 1)) || "#"}
               class="block"
             >
