@@ -124,10 +124,17 @@ defmodule Ezagent.Entity.SessionTemplate do
   @doc """
   Compute the deterministic version hash for a slice content map.
 
-  Excludes `created_at` + `created_by` from the hash input so two
-  rows with the same logical config produce the same hash regardless
-  of who/when they were saved. Uses
-  `:erlang.term_to_binary(slice, [:deterministic])` for
+  Excludes `created_at` + `created_by` + `version_hash` + `version_tag`
+  + **`name`** from the hash input (Phase 7 completion SPEC §1.3 — the
+  hash is over `{agent_slots, routing_rules, orchestrator_template_uri,
+  default_workspace_uri, description}` ONLY). Dropping `name` means two
+  sessions with an identical team config produce the SAME content hash
+  regardless of the template name they are saved under — the
+  build-working-copy GATE (PR-2). The `name` is carried by the URI's
+  path segment, not the hash: a hash is the identity of the CONFIG, and
+  a rename is not a new config version.
+
+  Uses `:erlang.term_to_binary(slice, [:deterministic])` for
   cross-BEAM-run consistency (D7-10).
 
   Returns a 64-char lowercase hex string (SHA-256 hex digest).
@@ -136,7 +143,7 @@ defmodule Ezagent.Entity.SessionTemplate do
   def compute_version_hash(slice_content) when is_map(slice_content) do
     canonical =
       slice_content
-      |> Map.drop([:created_at, :created_by, :version_hash, :version_tag])
+      |> Map.drop([:created_at, :created_by, :version_hash, :version_tag, :name])
       |> :erlang.term_to_binary([:deterministic])
 
     :crypto.hash(:sha256, canonical) |> Base.encode16(case: :lower)

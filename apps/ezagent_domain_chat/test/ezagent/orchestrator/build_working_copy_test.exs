@@ -26,6 +26,25 @@ defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
   alias Ezagent.Ecto.KindSnapshot
   alias Ezagent.Orchestrator.Tools
 
+  # Phase 7 completion PR-5 — `save_template_as`/`update_template` now
+  # require the orchestrator's cap #3 (`:session_template`
+  # `Behavior.Template`, `{:within_workspace, ws}`) at the tool
+  # boundary. These build-working-copy tests only exercise the
+  # hash-shape of `build_working_copy/4`, so they supply a workspace-
+  # scoped cap-#3 set.
+  defp caps_3(workspace_uri) do
+    MapSet.new([
+      %Ezagent.Capability{
+        kind: :session_template,
+        behavior: Ezagent.Behavior.Template,
+        instance: {:within_workspace, workspace_uri},
+        workspace_uri: workspace_uri,
+        granted_by: URI.parse("entity://user/system/admin"),
+        granted_at: DateTime.utc_now()
+      }
+    ])
+  end
+
   # A live, template-SHAPED working copy: agent_slots carry
   # `template://agent` URIs (the durable source_agent_template_uri),
   # routing receivers are slot NAMES.
@@ -77,7 +96,8 @@ defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
                Tools.save_template_as("shape-team",
                  session_uri: session_uri,
                  workspace_uri: URI.parse("workspace://default"),
-                 caller: URI.parse("entity://agent/default/cc_orch")
+                 caller: URI.parse("entity://agent/default/cc_orch"),
+                 caps: caps_3(URI.parse("workspace://default"))
                )
 
       assert template_uri.scheme == "template"
@@ -136,7 +156,8 @@ defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
                Tools.save_template_as("empty-team",
                  session_uri: session_uri,
                  workspace_uri: URI.parse("workspace://default"),
-                 caller: URI.parse("entity://agent/default/cc_orch")
+                 caller: URI.parse("entity://agent/default/cc_orch"),
+                 caps: caps_3(URI.parse("workspace://default"))
                )
 
       [_name, uri_hash] =
@@ -174,19 +195,22 @@ defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
 
       caller = URI.parse("entity://agent/default/cc_orch")
       ws = URI.parse("workspace://default")
+      caps = caps_3(ws)
 
       assert {:ok, uri_a} =
                Tools.save_template_as("gate-team",
                  session_uri: session_a,
                  workspace_uri: ws,
-                 caller: caller
+                 caller: caller,
+                 caps: caps
                )
 
       assert {:ok, uri_b} =
                Tools.save_template_as("gate-team",
                  session_uri: session_b,
                  workspace_uri: ws,
-                 caller: caller
+                 caller: caller,
+                 caps: caps
                )
 
       hash_a = uri_a.path |> String.split("@", parts: 2) |> List.last()

@@ -59,11 +59,26 @@ defmodule Ezagent.Entity.SessionTemplateTest do
     end
 
     test "different slice content → different hash (collision resistance)" do
-      slice_a = %{name: "a", agent_slots: []}
-      slice_b = %{name: "b", agent_slots: []}
+      # Phase 7 completion PR-5 (SPEC §1.3) — `name` is EXCLUDED from
+      # the hash input (a rename is not a new config version), so the
+      # collision-resistance witness must differ on a hashed field:
+      # here `description`.
+      slice_a = %{name: "x", description: "config a", agent_slots: []}
+      slice_b = %{name: "x", description: "config b", agent_slots: []}
 
       refute SessionTemplate.compute_version_hash(slice_a) ==
                SessionTemplate.compute_version_hash(slice_b)
+    end
+
+    test "name does NOT affect hash (SPEC §1.3 — a rename is not a new version)" do
+      slice_a = %{name: "alpha", description: "same", agent_slots: []}
+      slice_b = %{name: "beta", description: "same", agent_slots: []}
+
+      assert SessionTemplate.compute_version_hash(slice_a) ==
+               SessionTemplate.compute_version_hash(slice_b),
+             "hash input must exclude `name` — two sessions with an identical " <>
+               "team config saved under different names must hash identically " <>
+               "(SPEC §1.3 build-working-copy GATE)"
     end
 
     test "created_at / created_by do NOT affect hash (content-addressable means stable across saves)" do
