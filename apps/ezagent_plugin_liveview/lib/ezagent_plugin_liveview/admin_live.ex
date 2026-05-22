@@ -706,13 +706,19 @@ defmodule EzagentPluginLiveview.AdminLive do
         </SessionEditor.session_editor>
 
         <section
-          :if={@debug_open and @cc_events != []}
+          :if={@debug_open}
           class="border-t border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 max-h-48 overflow-y-auto p-3"
         >
           <h3 class="text-[10px] uppercase tracking-wide text-zinc-500 mb-1">
             Debug events (last 20)
           </h3>
-          <ul class="space-y-1 text-[11px]">
+          <p
+            :if={@cc_events == []}
+            class="text-[11px] text-zinc-500 dark:text-zinc-400 italic py-2"
+          >
+            No debug events yet. CC hook errors + dispatch events will appear here.
+          </p>
+          <ul :if={@cc_events != []} class="space-y-1 text-[11px]">
             <li :for={ev <- @cc_events} class="flex gap-2">
               <span class={[
                 "px-1 rounded font-semibold",
