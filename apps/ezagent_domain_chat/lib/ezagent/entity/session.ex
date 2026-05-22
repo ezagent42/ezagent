@@ -190,7 +190,7 @@ defmodule Ezagent.Entity.Session do
          {:ok, workspace_uri} <- resolve_target_workspace(template_content),
          :ok <- preflight_agent_slots(template_content),
          :ok <- preflight_routing_rules(template_content) do
-      do_spawn(template_content, workspace_uri, owner_uri)
+      do_spawn(template_content, workspace_uri, owner_uri, session_template_uri)
     end
   end
 
@@ -199,7 +199,7 @@ defmodule Ezagent.Entity.Session do
   # Each step is irreversible; on failure of a LATER step,
   # `cleanup_partial/1` tears down everything spawned so far so no
   # half-built session/workers/rules/caps survive.
-  defp do_spawn(template_content, %URI{} = workspace_uri, %URI{} = owner_uri) do
+  defp do_spawn(template_content, %URI{} = workspace_uri, %URI{} = owner_uri, %URI{} = session_template_uri) do
     with {:ok, session_uri} <- spawn_fresh_session(workspace_uri),
          :ok <- Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri),
          {:ok, orchestrator_uri} <-
@@ -248,6 +248,21 @@ defmodule Ezagent.Entity.Session do
          :ok <-
            guard(
              grant_scoped_caps(orchestrator_uri, session_uri, owner_uri),
+             %{
+               session_uri: session_uri,
+               orchestrator_uri: orchestrator_uri,
+               slots: slot_instances
+             }
+           ),
+         :ok <-
+           guard(
+             register_orchestrator_mcp_context(
+               orchestrator_uri,
+               session_uri,
+               workspace_uri,
+               owner_uri,
+               session_template_uri
+             ),
              %{
                session_uri: session_uri,
                orchestrator_uri: orchestrator_uri,
@@ -890,6 +905,41 @@ defmodule Ezagent.Entity.Session do
       [] -> :ok
       [err | _] -> {:error, {:scoped_cap_grant_failed, err}}
     end
+  end
+
+  # --- Step 9: register the orchestrator's MCP-server context ----------
+  #
+  # Phase 7 completion PR-5 — bind the orchestrator's
+  # `(session, workspace, owner, parent-template)` context in
+  # `Ezagent.Orchestrator.McpRegistry`.
+  #
+  # The orchestrator's `claude` reaches the 7 tools through the MCP
+  # transport bridge (`priv/orchestrator_bridge.py` →
+  # `Ezagent.Orchestrator.McpChannel`). That bridge can only present
+  # the orchestrator's agent URI (token-authenticated). It cannot —
+  # and must not — supply session / workspace / caps, because those
+  # are exactly the context an untrusted `claude` process could spoof.
+  #
+  # Only the Generator knows the binding (it just spawned this
+  # orchestrator INTO this session). Registering it here is what lets
+  # the Channel reconstruct the correct, server-derived `%McpServer{}`
+  # for THIS orchestrator from the URI alone
+  # (`McpServer.from_orchestrator_uri/1`). `parent_template_uri` is the
+  # SessionTemplate the session was instantiated from — `update_template`
+  # needs it.
+  defp register_orchestrator_mcp_context(
+         %URI{} = orchestrator_uri,
+         %URI{} = session_uri,
+         %URI{} = workspace_uri,
+         %URI{} = owner_uri,
+         %URI{} = parent_template_uri
+       ) do
+    Ezagent.Orchestrator.McpRegistry.register(orchestrator_uri,
+      session_uri: session_uri,
+      workspace_uri: workspace_uri,
+      owner_uri: owner_uri,
+      parent_template_uri: parent_template_uri
+    )
   end
 
   # The owner-cap preflight (SPEC §1.4 steps 1-4) — returns the subset

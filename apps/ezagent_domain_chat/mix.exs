@@ -44,7 +44,14 @@ defmodule EzagentDomainChat.MixProject do
       # BridgeRegistry. v1 prototype dep + fallback branch removed in
       # PR 32c (rebrand-4) after PtyServer cutover landed in PR 32b.
       # layer-violation-exempt: cc-bridge production wire
-      {:ezagent_plugin_cc, in_umbrella: true}
+      {:ezagent_plugin_cc, in_umbrella: true},
+      # Phase 7 completion PR-5: the orchestrator MCP transport bridge's
+      # BEAM endpoint is a Phoenix.Socket + Phoenix.Channel
+      # (Ezagent.Orchestrator.McpSocket / McpChannel) — the same house
+      # transport the cc channel bridge uses. Declared explicitly even
+      # though Phoenix is transitively present (via ezagent_plugin_cc),
+      # because this app now `use`s Phoenix.Socket / Phoenix.Channel.
+      {:phoenix, "~> 1.8.0"}
     ]
   end
 end

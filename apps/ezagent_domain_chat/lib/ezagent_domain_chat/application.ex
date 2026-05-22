@@ -59,6 +59,13 @@ defmodule EzagentDomainChat.Application do
     :ok = register_chat_behaviors()
     :ok = declare_routing_tables()
 
+    # Phase 7 completion PR-5 — the `orchestrator_uri → bound
+    # McpServer context` ETS table. The Generator registers a row when
+    # it spawns an orchestrator; `Ezagent.Orchestrator.McpChannel`
+    # (the MCP transport bridge's BEAM endpoint) looks it up. Same
+    # lazy-`init/0` pattern as `EzagentPluginCc.BridgeRegistry`.
+    :ok = Ezagent.Orchestrator.McpRegistry.init()
+
     # Phase 8c PR-J (Allen 2026-05-20) — `session://default/default/main` is no longer
     # a static supervisor child. The first-login wizard at `/` creates
     # the default session via the canonical `EzagentDomainChat.create_session/2`

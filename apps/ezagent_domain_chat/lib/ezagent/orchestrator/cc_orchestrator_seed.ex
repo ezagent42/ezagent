@@ -38,11 +38,41 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
   a live `claude` to use them. The seed writes dev-profile defaults
   under `~/.ezagent/cc-orchestrator/`; production multi-tenant
   deployments override per-template.
+
+  ## The orchestrator MCP transport bridge (PR-5 completion)
+
+  The `mcp_config_path` config's stdio command runs
+  `uv run --script <orchestrator_bridge.py>`. That bridge is a real
+  MCP server (`apps/ezagent_domain_chat/priv/orchestrator_bridge.py`,
+  the orchestrator analogue of `ezagent_mcp_bridge.py`). For the
+  configured command to resolve, the seed:
+
+  1. **copies `orchestrator_bridge.py`** from this app's `priv/` into
+     the sandbox dir the MCP config references
+     (`~/.ezagent/cc-orchestrator/orchestrator_bridge.py`);
+  2. **exports the 7 tool JSON schemas** —
+     `Ezagent.Orchestrator.McpServer.tool_schemas/0` — to
+     `orchestrator_tools.json` beside the script, so the bridge serves
+     `tools/list` from a file (the schemas stay single-sourced in
+     Elixir, and the configured command lists all 7 tools without the
+     BEAM running);
+  3. **writes the MCP config** pointing at the copied script + the
+     exported schema file via `EZAGENT_ORCHESTRATOR_TOOLS_PATH`.
+
+  Without step 1 the pre-PR-5 config referenced a script that was
+  never written — a codex CRITICAL finding: a real orchestrator's
+  `claude` started with a broken MCP command and could reach none of
+  the 7 tools.
   """
 
   require Logger
 
   @template_uri "template://agent/default/cc-orchestrator"
+
+  # The orchestrator MCP bridge script + its exported schema file, as
+  # they ship in this app's priv/ dir.
+  @bridge_script "orchestrator_bridge.py"
+  @tools_schema_file "orchestrator_tools.json"
 
   @doc """
   Seed the cc-orchestrator AgentTemplate. Idempotent; best-effort —
@@ -89,12 +119,13 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
   end
 
   # Build the on-disk sandbox: a CLAUDE_CONFIG_DIR with a settings.json,
-  # an mcp.json for the orchestrator tool surface, and a CLAUDE.md
-  # carrying the orchestrator system prompt. Best-effort in :test (the
-  # paths are recorded in the slice but the files are not required for
-  # the deterministic test). Returns `{:ok, %{...paths}}`.
+  # an mcp.json for the orchestrator tool surface, a CLAUDE.md carrying
+  # the orchestrator system prompt, AND — PR-5 completion — the real
+  # orchestrator MCP transport bridge script + its exported schema
+  # file. Best-effort in :test (the paths are recorded in the slice but
+  # disk writes are skipped). Returns `{:ok, %{...paths}}`.
   defp ensure_sandbox_files do
-    base = Path.join([System.user_home() || "/tmp", ".ezagent", "cc-orchestrator"])
+    base = sandbox_base()
     config_dir = Path.join(base, ".claude")
     settings_path = Path.join(config_dir, "settings.json")
     mcp_config_path = Path.join(base, "orchestrator.mcp.json")
@@ -115,13 +146,66 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
       try do
         File.mkdir_p!(config_dir)
         unless File.exists?(settings_path), do: File.write!(settings_path, settings_json())
-        unless File.exists?(mcp_config_path), do: File.write!(mcp_config_path, orchestrator_mcp_json())
         unless File.exists?(claude_md_path), do: File.write!(claude_md_path, system_prompt())
+
+        # PR-5 completion — ship the real MCP bridge into the sandbox so
+        # the `uv run --script` command the mcp.json references resolves.
+        # ALWAYS overwrites (not `unless File.exists?`) so an updated
+        # bridge / refreshed schemas land on the next boot.
+        :ok = install_orchestrator_bridge(base)
+
+        # Write the mcp.json LAST — after the script + schema file it
+        # references exist on disk. Always rewritten so the embedded
+        # paths track the current install.
+        File.write!(mcp_config_path, orchestrator_mcp_json(base))
+
         {:ok, sandbox}
       rescue
         e -> {:error, {:sandbox_write_failed, e}}
       end
     end
+  end
+
+  defp sandbox_base do
+    Path.join([System.user_home() || "/tmp", ".ezagent", "cc-orchestrator"])
+  end
+
+  @doc """
+  Copy `orchestrator_bridge.py` out of this app's `priv/` into the
+  sandbox dir the mcp.json references, and export the 7 tool JSON
+  schemas (`McpServer.tool_schemas/0`) to `orchestrator_tools.json`
+  beside it. This is what makes the configured `uv run --script …`
+  command actually start a working MCP server (codex CRITICAL — the
+  pre-PR-5 config referenced a script that was never written).
+
+  Exposed so the PR-5 integration test can ship the bridge into a temp
+  dir and execute the configured command.
+  """
+  @spec install_orchestrator_bridge(String.t()) :: :ok
+  def install_orchestrator_bridge(base) do
+    File.mkdir_p!(base)
+
+    source = priv_bridge_path()
+    dest = Path.join(base, @bridge_script)
+    File.cp!(source, dest)
+    _ = File.chmod(dest, 0o755)
+
+    schema_dest = Path.join(base, @tools_schema_file)
+
+    File.write!(
+      schema_dest,
+      Jason.encode!(%{"tools" => Ezagent.Orchestrator.McpServer.tool_schemas()}, pretty: true)
+    )
+
+    :ok
+  end
+
+  # The orchestrator MCP bridge script as it ships in this app's priv/.
+  @doc false
+  @spec priv_bridge_path() :: String.t()
+  def priv_bridge_path do
+    :code.priv_dir(:ezagent_domain_chat)
+    |> Path.join(@bridge_script)
   end
 
   # Dispatch `Ezagent.Behavior.Template` `:write` to populate the
@@ -183,31 +267,41 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
   # orchestrator.mcp.json — the additional `--mcp-config` the cc
   # Template Class threads (additive to the trusted esr-bridge config).
   # It points `claude` at the orchestrator MCP server (the 7-tool
-  # surface). The command runs a thin stdio bridge that forwards
-  # `tools/call` to `Ezagent.Orchestrator.McpServer` over the existing
-  # WS channel — the caller/cap/session context is bound ESR-side.
-  defp orchestrator_mcp_json do
+  # surface). The command runs the real stdio bridge
+  # (`orchestrator_bridge.py`) that serves `tools/list` from the
+  # exported schema file and forwards `tools/call` to
+  # `Ezagent.Orchestrator.McpServer` over the WS Phoenix Channel — the
+  # caller/cap/session context is bound ESR-side.
+  #
+  # `base` is the sandbox dir; `install_orchestrator_bridge/1` has
+  # already copied the script + schema file there, so both
+  # `--script <path>` and `EZAGENT_ORCHESTRATOR_TOOLS_PATH` resolve.
+  #
+  # `--script` is used (per cc bridge PR #129) so `uv` honors the
+  # PEP 723 inline metadata header and provisions `websockets` on
+  # first run.
+  @doc false
+  # Exposed for the PR-5 integration test — it reads the CONFIGURED
+  # command (the `uv run --script …` the seed writes) and executes it.
+  @spec orchestrator_mcp_json_for_test(String.t()) :: String.t()
+  def orchestrator_mcp_json_for_test(base), do: orchestrator_mcp_json(base)
+
+  defp orchestrator_mcp_json(base) do
     Jason.encode!(
       %{
         "mcpServers" => %{
           "esr-orchestrator" => %{
             "command" => "uv",
-            "args" => ["run", "--script", orchestrator_bridge_script_path()],
+            "args" => ["run", "--script", Path.join(base, @bridge_script)],
             "env" => %{
-              "EZAGENT_ROLE" => "orchestrator"
+              "EZAGENT_ROLE" => "orchestrator",
+              "EZAGENT_ORCHESTRATOR_TOOLS_PATH" => Path.join(base, @tools_schema_file)
             }
           }
         }
       },
       pretty: true
     )
-  end
-
-  # The orchestrator stdio bridge script path. Reuses the cc plugin's
-  # python dir convention; the script is the orchestrator-tool analogue
-  # of `ezagent_mcp_bridge.py`.
-  defp orchestrator_bridge_script_path do
-    Path.join([System.user_home() || "/tmp", ".ezagent", "cc-orchestrator", "orchestrator_bridge.py"])
   end
 
   # The orchestrator system prompt — written into the sandbox CLAUDE.md
