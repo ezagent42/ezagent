@@ -140,7 +140,6 @@ defmodule EzagentDomainUi.IdeShell do
         is_admin?={@is_admin?}
         is_system_member?={@is_system_member?}
         has_resource_panel={@resource_panel != []}
-        has_right_sidebar={@right_sidebar != []}
       />
 
       <div class="flex-1 flex min-h-0 relative">
@@ -197,6 +196,7 @@ defmodule EzagentDomainUi.IdeShell do
       <.status_bar
         current_entity_uri={@current_entity_uri}
         status={@status}
+        has_right_sidebar={@right_sidebar != []}
       />
 
       {render_slot(@command_palette)}
@@ -330,10 +330,9 @@ defmodule EzagentDomainUi.IdeShell do
     doc: "Phase 8c follow-up — mobile toggle button for the left resource panel renders when this is true."
   )
 
-  attr(:has_right_sidebar, :boolean,
-    default: false,
-    doc: "Phase 8c follow-up — mobile toggle button for the right sidebar renders when this is true."
-  )
+  # NOTE: the right-sidebar (Members) toggle moved OUT of the header
+  # into status_bar/1 — V1 UI fix (Allen 2026-05-22) — per the
+  # header/statusbar separation principle (see SKILL.md UI Contract).
 
   def top_command_bar(assigns) do
     ~H"""
@@ -413,22 +412,13 @@ defmodule EzagentDomainUi.IdeShell do
       </div>
 
       <div class="flex items-center gap-2 shrink-0">
-        <%!-- V1 UI fix (Allen 2026-05-21) — toggle button for the right
-              sidebar (Members panel). Visible on BOTH mobile AND desktop
-              so the sidebar is always recoverable (the prior `lg:hidden`
-              + `phx-click-away` combo could strand the sidebar in a
-              hidden state on desktop). Same pattern as the left panel
-              toggle above. `display: "block"` matches `lg:block`. --%>
-        <button
-          :if={@has_right_sidebar}
-          type="button"
-          phx-click={JS.toggle(to: "#right-sidebar", display: "block")}
-          class="p-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500"
-          title="Toggle members panel"
-          aria-label="Toggle members panel"
-        >
-          <.icon name="users" size="sm" />
-        </button>
+        <%!-- V1 UI fix (Allen 2026-05-22) — header/statusbar separation
+              principle: the header shows WORKSPACE-level info that does
+              NOT change with the user's current view. View-/position-
+              related controls (like the Members-panel toggle) belong in
+              the status bar. The Members toggle moved to status_bar/1.
+              bell + help + avatar stay — those are workspace/account
+              scoped, not position-scoped. --%>
         <.icon
           name="bell"
           size="sm"
@@ -650,13 +640,7 @@ defmodule EzagentDomainUi.IdeShell do
     <div class="relative">
       <button
         type="button"
-        phx-click={
-          JS.toggle(
-            to: "##{@menu_id}",
-            in: {"ease-out duration-150", "opacity-0 -translate-y-1", "opacity-100 translate-y-0"},
-            out: {"ease-in duration-100", "opacity-100 translate-y-0", "opacity-0 -translate-y-1"}
-          )
-        }
+        phx-click={JS.toggle(to: "##{@menu_id}", display: "block")}
         title="Your profile"
         aria-label="Your profile"
         class="flex items-center"
@@ -664,15 +648,17 @@ defmodule EzagentDomainUi.IdeShell do
         <.avatar uri={@current_entity_uri} size="sm" />
       </button>
 
-      <%!-- Phase 8c follow-up (Allen 2026-05-20) — outside-click dismiss --%>
+      <%!-- V1 UI fix (Allen 2026-05-22) — dropdown did not open. The
+            prior `JS.toggle` used `in:`/`out:` transition tuples; on an
+            element that starts with the `hidden` class the show-side
+            stuck at `opacity-0` (same fragility PR #178 hit on the side
+            panels). Switched to plain `JS.toggle(display: "block")` —
+            no transition, reliably toggles. phx-click-away dismiss kept
+            as a plain JS.hide (no transition). --%>
       <div
         id={@menu_id}
-        phx-click-away={
-          JS.hide(
-            transition: {"ease-in duration-100", "opacity-100 translate-y-0", "opacity-0 -translate-y-1"}
-          )
-        }
-        class="hidden absolute right-0 top-full mt-1 w-64 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-md shadow-lg z-40 transition transform"
+        phx-click-away={JS.hide(to: "##{@menu_id}")}
+        class="hidden absolute right-0 top-full mt-1 w-64 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-md shadow-lg z-40"
       >
         <div class="px-3 py-3 border-b border-zinc-200 dark:border-zinc-800 flex items-center gap-2">
           <.avatar uri={@current_entity_uri} size="md" />
@@ -769,6 +755,14 @@ defmodule EzagentDomainUi.IdeShell do
   attr(:current_entity_uri, :any, required: true)
   attr(:status, :map, default: %{})
 
+  attr(:has_right_sidebar, :boolean,
+    default: false,
+    doc:
+      "When true, render the Members-panel toggle in the status bar. " <>
+        "Per the header/statusbar separation principle (Allen 2026-05-22): " <>
+        "view-/position-related controls live in the status bar, not the header."
+  )
+
   def status_bar(assigns) do
     # Phase 8c PR-B (Allen 2026-05-20) — state-aware signal lights.
     # The bar should communicate health at a glance: green when something
@@ -814,6 +808,21 @@ defmodule EzagentDomainUi.IdeShell do
           {@events_count} events
         </span>
       </a>
+      <%!-- V1 UI fix (Allen 2026-05-22) — Members-panel toggle. Lives in
+            the status bar (not the header) because it's a view-/position-
+            related control — see the header/statusbar separation
+            principle in SKILL.md UI Contract. --%>
+      <button
+        :if={@has_right_sidebar}
+        type="button"
+        phx-click={JS.toggle(to: "#right-sidebar", display: "block")}
+        class="flex items-center gap-1 hover:text-zinc-900 dark:hover:text-zinc-100"
+        title="Toggle members panel"
+        aria-label="Toggle members panel"
+      >
+        <.icon name="users" size="xs" />
+        <span>members</span>
+      </button>
       <span class="font-mono text-zinc-400 dark:text-zinc-600">
         v{Map.get(@status, :version, "dev")}
       </span>
