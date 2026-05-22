@@ -379,7 +379,7 @@ defmodule Ezagent.Orchestrator.Tools do
     end
   end
 
-  # HIGH-6 + HIGH-7 — the two-phase rollback-safe swap.
+  # HIGH-6 + HIGH-7 + HIGH-1 — the transactional, rollback-safe swap.
   #
   # HIGH-6: the replacement worker spawns under a fresh
   # **generation-specific** instance URI (`old_generation + 1`). The
@@ -389,31 +389,38 @@ defmodule Ezagent.Orchestrator.Tools do
   # process kept running with the OLD config. A generation-bumped URI
   # is genuinely new, so the worker actually restarts.
   #
-  # HIGH-7: a saga — if `upsert_agent_slot` (the swap commit) fails
-  # AFTER the replacement spawned, the new worker is an orphan (lineage,
-  # no slot); `compensate_orphan_worker/4` terminates it before the
-  # error is surfaced. The OLD worker + slot stay untouched on any
-  # phase-1..3 failure — no outage.
+  # HIGH-7: if `upsert_agent_slot` (the slot-tuple commit) fails AFTER
+  # the replacement spawned, the new worker is an orphan (lineage, no
+  # slot); `compensate_orphan_worker/4` terminates it before the error
+  # is surfaced. The OLD worker + routing stay untouched — no outage.
   #
-  # HIGH-2 (round 2): routing-rule re-point. `RuleStore` rows store
-  # CONCRETE receiver URIs, not slot names — so after the slot tuple is
-  # swapped the existing routing rules still name `old_worker_uri` and
-  # the next matching message routes to the now-DEAD old worker. As part
-  # of the swap, BEFORE terminating the old worker, every live +
-  # persisted routing rule whose receivers reference `old_worker_uri` is
-  # rewritten to `new_worker_uri` and the registry reloaded.
+  # HIGH-1 (round 4): the routing re-point is now a SQL TRANSACTION, not
+  # a multi-step manual abort path. `RuleStore` rows store CONCRETE
+  # receiver URIs, not slot names — so after the slot tuple is swapped
+  # the existing routing rules still name `old_worker_uri`. The swap
+  # rewrites every such row to `new_worker_uri`; the whole rewrite runs
+  # inside ONE `Repo.transaction` (`repoint_routing_rules/2`). On ANY
+  # failure `Repo.rollback` atomically restores every row to the OLD
+  # worker URI — there is no partial routing state to compensate for.
   #
-  # HIGH-1 (round 3): the routing re-point is part of the swap
-  # TRANSACTION, not a best-effort afterthought. `repoint_routing_rules/2`
-  # returns a checked `:ok | {:error, reason}`. The OLD worker is
-  # terminated ONLY after the re-point (persisted rows AND the registry
-  # reload) is verified. On a re-point failure the swap ABORTS: the slot
-  # tuple is rolled back to the OLD worker, the partially-rewritten
-  # routing rows are reverted to the OLD worker, the NEW orphan worker is
-  # terminated, and the OLD worker is KEPT ALIVE — a controlled
-  # `{:error, {:update_aborted, reason}}`. The OLD worker is never
-  # terminated while routing still points at it (the round-2 stale-route
-  # outage).
+  # The swap is sequenced so no step terminates the old worker until
+  # BOTH routing AND the slot consistently name the new worker:
+  #
+  #   1. spawn the replacement worker;
+  #   2. `upsert_agent_slot` — commit the slot tuple to the new worker.
+  #      A failure here orphans the new worker → `compensate_orphan_worker`
+  #      terminates it; OLD worker + routing untouched (HIGH-7);
+  #   3. `repoint_routing_rules` — rewrite the routing rows inside a
+  #      `Repo.transaction`. On rollback the persisted rows are
+  #      atomically back on the OLD worker; the swap ABORTS — the slot
+  #      tuple is reverted to the OLD worker (one call — the slot is a
+  #      Session-Kind slice, not in the SQL transaction), the NEW orphan
+  #      is terminated, the OLD worker is KEPT ALIVE + still routed-to;
+  #   4. only after BOTH committed: `load_into_registry` reflects the
+  #      committed rows in ETS, then the OLD worker is terminated.
+  #
+  # The transaction IS the routing rollback — the round-3 manual
+  # `abort_swap_on_repoint_failure` / `revert_routing_rules` are gone.
   defp do_update_agent_template(
          slot_name,
          %URI{} = new_agent_template_uri,
@@ -437,14 +444,33 @@ defmodule Ezagent.Orchestrator.Tools do
 
     with :ok <-
            preflight_swap_uniqueness(session_uri, slot_name, new_generation, discriminator),
-         :ok <- preflight_template_read(new_agent_template_uri, caller, caps),
-         # Phase 2 — spawn the replacement worker under the fresh
+         {:ok, new_template_content} <-
+           preflight_template_read(new_agent_template_uri, caller, caps),
+         # MEDIUM-3 (round 4) — the candidate replacement worker URI must
+         # not ALREADY be live as an orphan. A prior failed swap may have
+         # left a worker spawned at this exact generation-specific URI; a
+         # retry recomputes the same name, so without this check
+         # `instantiate_worker` would hit plugin idempotency and silently
+         # adopt the stale worker. The expected-URI is the OLD worker
+         # (the only legitimately-live worker for this slot before the
+         # swap) — a degenerate same-URI case is therefore not a false
+         # positive. Done AFTER reading the new template content, before
+         # `instantiate_worker`.
+         :ok <-
+           preflight_candidate_uri_free(
+             new_template_content,
+             instance_name,
+             workspace_uri,
+             old_worker_uri
+           ),
+         # Step 1 — spawn the replacement worker under the fresh
          # generation-specific URI (cap #4).
          {:ok, new_worker_uri} <-
            instantiate_worker(new_agent_template_uri, instance_name, workspace_uri, caller, caps) do
-      # Phase 3 — atomic swap: the slot tuple now records the new
-      # AgentTemplate URI, the new LIVE worker URI, and the bumped
-      # generation. HIGH-7 — a failure here orphans the new worker.
+      # Step 2 — commit the slot tuple to the new AgentTemplate URI, the
+      # new LIVE worker URI, and the bumped generation. HIGH-7 — a
+      # failure here orphans the new worker; OLD worker + routing
+      # untouched.
       case upsert_agent_slot(
              session_uri,
              slot_name,
@@ -455,29 +481,26 @@ defmodule Ezagent.Orchestrator.Tools do
              caps
            ) do
         :ok ->
-          # HIGH-1 — re-point every routing rule from the OLD worker URI
-          # to the NEW one BEFORE terminating the old worker. This is a
-          # CHECKED step of the swap transaction: the old worker is
-          # terminated ONLY if the re-point (rows + registry reload)
-          # verifiably succeeded.
+          # Step 3 — re-point every routing rule from the OLD worker URI
+          # to the NEW one inside a Repo.transaction. On rollback the
+          # rows are atomically restored to the OLD worker.
           case repoint_routing_rules(old_worker_uri, new_worker_uri) do
             :ok ->
-              # Phase 4 — routing now points at the NEW worker; terminate
-              # the OLD worker. The new worker is the slot's truth + has a
-              # DIFFERENT URI (generation-bumped), so this always
-              # terminates a genuinely-distinct old process.
+              # Step 4 — routing + slot both name the NEW worker;
+              # terminate the OLD worker. The new worker has a DIFFERENT
+              # URI (generation-bumped), so this always terminates a
+              # genuinely-distinct old process.
               maybe_terminate_old(old_worker_uri, new_worker_uri, caller, caps)
               {:ok, new_worker_uri}
 
             {:error, reason} ->
-              # HIGH-1 — the routing re-point failed: a transient DB/ETS
-              # failure would otherwise leave stale routes to a worker we
-              # were about to kill. ABORT — keep the OLD worker alive
-              # (least-disruptive: it is still a valid live agent), roll
-              # the slot tuple + any partially-rewritten routing rows back
-              # to the OLD worker, terminate the NEW orphan. Never
-              # terminate the old worker while routing may still name it.
-              abort_swap_on_repoint_failure(
+              # HIGH-1 — the routing transaction rolled back: the
+              # persisted rows are already atomically back on the OLD
+              # worker. The swap ABORTS — revert the slot tuple to the
+              # OLD worker (one call — the slot is a Session-Kind slice,
+              # not in the SQL transaction), terminate the NEW orphan,
+              # keep the OLD worker alive + still routed-to.
+              abort_swap_after_repoint_rollback(
                 slot_name,
                 session_uri,
                 old_template_uri,
@@ -528,7 +551,8 @@ defmodule Ezagent.Orchestrator.Tools do
 
   # Preflight: dispatch `template.read` on the new AgentTemplate URI,
   # cap-checked (cap #4). Confirms the template exists + is populated
-  # BEFORE any destructive step.
+  # BEFORE any destructive step. Returns `{:ok, content}` so the caller
+  # can extract the flavor for the MEDIUM-3 candidate-URI check.
   defp preflight_template_read(%URI{} = agent_template_uri, %URI{} = caller, caps) do
     with {:ok, _pid} <- ensure_template_alive(agent_template_uri),
          target <- URI.parse("#{URI.to_string(agent_template_uri)}?action=template.read"),
@@ -540,36 +564,97 @@ defmodule Ezagent.Orchestrator.Tools do
              ctx: ctx(caller, caps)
            }) do
       case result do
-        %{content: content} when is_map(content) -> :ok
+        %{content: content} when is_map(content) -> {:ok, content}
         %{content: nil} -> {:error, :agent_template_not_populated}
         other -> {:error, {:unexpected_template_read_result, other}}
       end
     end
   end
 
-  # HIGH-1 (round 3) + HIGH-2 (round 2) — rewrite every routing rule
-  # whose receivers name `old_worker_uri` so they point at
-  # `new_worker_uri` instead. CHECKED — part of the swap transaction.
+  # MEDIUM-3 (round 4) — reject the swap if the candidate replacement
+  # worker URI is ALREADY live in `KindRegistry` as an orphan.
+  #
+  # The candidate worker URI is `entity://agent/<workspace>/<flavor>_<name>`
+  # — exactly what `template.instantiate` would build. The `flavor` comes
+  # from the new AgentTemplate's content. `expected_uri` is the OLD
+  # worker (the slot's only legitimately-live worker before the swap), so
+  # a degenerate generation-collision is not a false positive.
+  #
+  # A content missing a flavor is left to `instantiate_worker` to error
+  # on (the flavor lookup) — the candidate URI can't be derived without
+  # one, so the orphan check is vacuously `:ok`.
+  defp preflight_candidate_uri_free(
+         new_template_content,
+         instance_name,
+         %URI{} = workspace_uri,
+         %URI{} = old_worker_uri
+       ) do
+    case candidate_worker_uri(new_template_content, instance_name, workspace_uri) do
+      {:ok, %URI{} = candidate_uri} ->
+        Ezagent.Orchestrator.SlotNames.preflight_live_worker_uris([
+          {candidate_uri, old_worker_uri}
+        ])
+
+      :no_flavor ->
+        :ok
+    end
+  end
+
+  # Build the full worker URI `template.instantiate` would construct:
+  # `entity://agent/<workspace>/<flavor>_<instance_name>`. Returns
+  # `:no_flavor` if the content has no flavor (the URI is then
+  # underivable — `instantiate_worker` will surface the flavor error).
+  defp candidate_worker_uri(content, instance_name, %URI{} = workspace_uri)
+       when is_binary(instance_name) do
+    flavor = Map.get(content, :flavor) || Map.get(content, "flavor")
+    workspace_name = workspace_uri.host || "default"
+
+    if is_binary(flavor) and flavor != "" do
+      {:ok, URI.new!("entity://agent/#{workspace_name}/#{flavor}_#{instance_name}")}
+    else
+      :no_flavor
+    end
+  end
+
+  # HIGH-1 (round 4) — rewrite every routing rule whose receivers name
+  # `old_worker_uri` so they point at `new_worker_uri` instead, inside
+  # ONE `Repo.transaction`.
   #
   # `RuleStore` rows store concrete receiver URI strings (not slot
   # names). When `update_agent_template` swaps a worker, the old worker
   # URI is terminated but any routing rule that named it still does —
   # the next matching message would route to a dead actor. This rewrites
-  # every persisted rule, then `load_into_registry/1` makes the live
-  # `RoutingRegistry` ETS reflect the change, so the very next message
-  # routes to the new worker.
+  # every persisted rule; on success `load_into_registry/1` makes the
+  # live `RoutingRegistry` ETS reflect the change, so the very next
+  # message routes to the new worker.
   #
-  # ## HIGH-1 — a real checked result, never swallowed
+  # ## The transaction IS the rollback (no manual revert)
   #
-  # The pre-round-3 code only LOGGED a `RuleStore.update_receivers/3`
-  # failure and SWALLOWED a `load_into_registry/1` raise, then returned
-  # `:ok` unconditionally — so a transient DB/ETS failure left persisted
-  # rows + live `RoutingRegistry` entries pointing at a worker
-  # `update_agent_template` was about to terminate (the round-2
-  # stale-route outage). This now returns `:ok` ONLY when EVERY
-  # `old`-naming row was rewritten AND the registry reload succeeded; the
-  # first failure short-circuits to `{:error, {:repoint_failed, reason}}`
-  # so the caller can abort the swap and keep the old worker alive.
+  # The pre-round-4 code rewrote rows one-by-one and, on a failure,
+  # walked a manual "revert" path that rewrote them back — itself not
+  # failure-safe. The whole `RuleStore.update_receivers/3` batch now runs
+  # inside `EzagentCore.Repo.transaction/1` (`RuleStore` is
+  # `EzagentCore.Repo`-backed). On ANY failure — a tagged error OR an
+  # exception — `Repo.rollback/1` atomically restores EVERY row to the
+  # OLD worker URI. There is no partially-rewritten state to compensate
+  # for. `load_into_registry/1` runs ONLY after the transaction commits,
+  # so ETS only ever reflects committed rows.
+  #
+  # Returns `:ok` only when EVERY `old`-naming row was rewritten AND the
+  # post-commit registry reload succeeded; a transaction rollback OR a
+  # reload failure short-circuits to `{:error, reason}` so the caller
+  # aborts the swap and keeps the old worker alive.
+  #
+  # ## The post-commit reload-failure window
+  #
+  # `load_into_registry/1` is an ETS op — it cannot join the SQL
+  # transaction. If it fails AFTER the rewrite transaction committed,
+  # the DB rows name the NEW worker but ETS still names the OLD one (the
+  # reload never ran). The swap is aborting (the OLD worker stays the
+  # truth), so the committed DB rows are restored to the OLD worker via
+  # the INVERSE `Repo.transaction` — one symmetric atomic revert, not a
+  # multi-step manual compensation. The DB then matches ETS (both name
+  # the OLD worker) and the abort is fully consistent.
   #
   # Idempotent: a rule with no `old` receiver is left alone; a rule that
   # has BOTH `old` and `new` is collapsed (the new URI appears once).
@@ -579,82 +664,83 @@ defmodule Ezagent.Orchestrator.Tools do
     old_str = URI.to_string(old_worker_uri)
     new_str = URI.to_string(new_worker_uri)
 
-    with {:ok, rewritten} <- rewrite_receivers(table, old_str, new_str) do
-      if rewritten > 0 do
-        # HIGH-1 — the registry reload is part of the checked step; a
-        # raise here (e.g. an undeclared routing table) is no longer
-        # swallowed — it becomes a real `{:error, _}` so the swap aborts.
-        reload_registry(table)
-      else
+    case rewrite_receivers_txn(table, old_str, new_str) do
+      {:ok, 0} ->
+        # No row named the old worker — nothing rewritten, nothing to
+        # reload.
         :ok
-      end
-    end
-  end
 
-  # Rewrite every `old_str`-naming rule to `new_str`. Returns
-  # `{:ok, rewritten_count}` only if ALL such rows were rewritten;
-  # `{:error, reason}` on the first row failure (short-circuit).
-  defp rewrite_receivers(table, old_str, new_str) do
-    with {:ok, rules} <- safe_list_rules(table) do
-      rules
-      |> Enum.filter(fn rule -> old_str in (rule.receivers || []) end)
-      |> Enum.reduce_while({:ok, 0}, fn rule, {:ok, count} ->
-        new_receivers =
-          rule.receivers
-          |> Enum.map(fn r -> if r == old_str, do: new_str, else: r end)
-          |> Enum.uniq()
-
-        case safe_update_receivers(rule.id, new_receivers, rule.enabled) do
+      {:ok, _rewritten} ->
+        # The transaction committed; reflect the committed rows in the
+        # live ETS.
+        case reload_registry(table) do
           :ok ->
-            {:cont, {:ok, count + 1}}
+            :ok
 
-          {:error, reason} ->
-            Logger.warning(
-              "update_agent_template: re-pointing routing rule id=#{rule.id} from " <>
-                "#{old_str} to #{new_str} failed: #{inspect(reason)} — aborting the swap"
-            )
-
-            {:halt, {:error, {:repoint_failed, reason}}}
+          {:error, reload_reason} ->
+            # The post-commit reload failed — the DB names the new
+            # worker but ETS still names the old. The swap is aborting,
+            # so restore the DB rows to the OLD worker via the inverse
+            # transaction. DB + ETS then both name the OLD worker.
+            _ = rewrite_receivers_txn(table, new_str, old_str)
+            {:error, reload_reason}
         end
-      end)
+
+      {:error, _} = err ->
+        # The transaction rolled back — every row is atomically back on
+        # the OLD worker. The live registry was never touched.
+        err
     end
   end
 
-  # Best-effort revert of a partial re-point: rewrite any rule that now
-  # names `new_str` back to `old_str` (the abort path keeps the OLD
-  # worker alive, so routing must name it again). Failures here are
-  # logged — the abort already returns an error to the orchestrator.
-  defp revert_routing_rules(%URI{} = old_worker_uri, %URI{} = new_worker_uri) do
-    table = EzagentDomainChat.Routing.MentionRouting
-    old_str = URI.to_string(old_worker_uri)
-    new_str = URI.to_string(new_worker_uri)
+  # HIGH-1 (round 4) — rewrite every `old_str`-naming rule to `new_str`
+  # inside ONE `Repo.transaction`. Any mid-batch failure (a tagged error
+  # from `RuleStore.update_receivers/3` OR an exception) calls
+  # `Repo.rollback/1`, atomically restoring every row to the OLD worker
+  # URI. Returns `{:ok, rewritten_count}` (committed) or
+  # `{:error, reason}` (rolled back — DB untouched).
+  defp rewrite_receivers_txn(table, old_str, new_str) do
+    txn =
+      EzagentCore.Repo.transaction(fn ->
+        rules = Ezagent.Routing.RuleStore.list(table)
 
-    case rewrite_receivers(table, new_str, old_str) do
-      {:ok, reverted} when reverted > 0 -> reload_registry(table)
-      {:ok, _} -> :ok
+        rules
+        |> Enum.filter(fn rule -> old_str in (rule.receivers || []) end)
+        |> Enum.reduce_while(0, fn rule, count ->
+          new_receivers =
+            rule.receivers
+            |> Enum.map(fn r -> if r == old_str, do: new_str, else: r end)
+            |> Enum.uniq()
+
+          case Ezagent.Routing.RuleStore.update_receivers(rule.id, new_receivers, rule.enabled) do
+            :ok ->
+              {:cont, count + 1}
+
+            {:error, reason} ->
+              # Roll the WHOLE batch back — every row rewritten so far in
+              # this transaction is atomically restored to the OLD URI.
+              EzagentCore.Repo.rollback({:repoint_failed, reason})
+          end
+        end)
+      end)
+
+    case txn do
+      {:ok, rewritten} -> {:ok, rewritten}
       {:error, reason} -> {:error, reason}
     end
-  end
-
-  defp safe_list_rules(table) do
-    {:ok, Ezagent.Routing.RuleStore.list(table)}
   rescue
-    e -> {:error, {:list_rules_failed, e}}
+    # A `RuleStore` exception escaped the transaction fun; Ecto has
+    # already rolled the transaction back. Surface a tagged error — no
+    # partially-rewritten rows survive.
+    e -> {:error, {:repoint_failed, e}}
   catch
-    _, reason -> {:error, {:list_rules_failed, reason}}
+    kind, reason -> {:error, {:repoint_failed, {kind, reason}}}
   end
 
-  defp safe_update_receivers(id, receivers, enabled) do
-    Ezagent.Routing.RuleStore.update_receivers(id, receivers, enabled)
-  rescue
-    e -> {:error, e}
-  catch
-    _, reason -> {:error, reason}
-  end
-
-  # HIGH-1 — the registry reload is now checked: a raise (e.g.
-  # `RoutingRegistry.get_meta/1` raising for an undeclared table) is
-  # captured as `{:error, _}` instead of being silently swallowed.
+  # The registry reload — captured: a raise (e.g.
+  # `RoutingRegistry.get_meta/1` raising for an undeclared table) becomes
+  # a tagged `{:error, _}` so a swap step that needs the reload can
+  # abort cleanly instead of crashing.
   defp reload_registry(table) do
     Ezagent.Routing.RuleStore.load_into_registry(table)
     :ok
@@ -664,22 +750,19 @@ defmodule Ezagent.Orchestrator.Tools do
     _, reason -> {:error, {:registry_reload_failed, reason}}
   end
 
-  # HIGH-1 — the routing re-point of a swap failed. Abort cleanly,
-  # leaving the OLD worker the live truth:
-  #
-  #   1. roll the slot tuple back to the OLD worker / OLD template /
-  #      OLD generation (the working copy must name a LIVE worker);
-  #   2. revert any partially-rewritten routing rows back to the OLD
-  #      worker (routing must name a live actor);
-  #   3. terminate the NEW orphan worker (it was never adopted);
-  #   4. KEEP the OLD worker alive and return a controlled error.
+  # HIGH-1 (round 4) — the routing re-point transaction rolled back. The
+  # persisted routing rows are ALREADY atomically restored to the OLD
+  # worker by the transaction — there is no routing state to revert. The
+  # only thing not in the SQL transaction is the working-copy slot tuple
+  # (a Session-Kind slice), which step 2 committed to the NEW worker;
+  # revert it to the OLD worker in one call. Then terminate the NEW
+  # orphan worker and keep the OLD worker alive + still routed-to.
   #
   # Keeping the old worker alive is the least-disruptive choice: it is
-  # still a valid, running agent; the slot + routing simply continue to
-  # name it as before the (failed) swap — no outage, no stale route to a
-  # dead process. The alternative (terminate-old, retry-repoint) risks
-  # an outage window if the retry also fails.
-  defp abort_swap_on_repoint_failure(
+  # still a valid, running agent; the slot + routing both name it as
+  # before the (failed) swap — no outage, no stale route to a dead
+  # process.
+  defp abort_swap_after_repoint_rollback(
          slot_name,
          %URI{} = session_uri,
          old_template_uri,
@@ -691,9 +774,10 @@ defmodule Ezagent.Orchestrator.Tools do
          reason
        ) do
     Logger.warning(
-      "update_agent_template: routing re-point failed (#{inspect(reason)}) for slot " <>
-        "#{slot_name} — aborting the swap, keeping the OLD worker " <>
-        "#{URI.to_string(old_worker_uri)} alive"
+      "update_agent_template: routing re-point transaction rolled back " <>
+        "(#{inspect(reason)}) for slot #{slot_name} — aborting the swap, the persisted " <>
+        "routing rows are atomically back on the OLD worker " <>
+        "#{URI.to_string(old_worker_uri)}, which is kept alive"
     )
 
     rollback_slot_to_old(
@@ -705,18 +789,6 @@ defmodule Ezagent.Orchestrator.Tools do
       caller,
       caps
     )
-
-    case revert_routing_rules(old_worker_uri, new_worker_uri) do
-      :ok ->
-        :ok
-
-      {:error, revert_reason} ->
-        Logger.error(
-          "update_agent_template: reverting routing rows back to the OLD worker " <>
-            "#{URI.to_string(old_worker_uri)} ALSO failed: #{inspect(revert_reason)} — " <>
-            "routing may be inconsistent; manual review required"
-        )
-    end
 
     compensate_orphan_worker(new_worker_uri, caller, caps, {:repoint_aborted, reason})
     {:error, {:update_aborted, reason}}
