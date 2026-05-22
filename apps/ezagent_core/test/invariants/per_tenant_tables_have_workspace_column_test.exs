@@ -41,7 +41,11 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
     {Ezagent.Ecto.KindSnapshot, "kind_snapshots"},
     {Ezagent.Users, "users"},
     {Ezagent.Entity.Token, "entity_tokens"},
-    {Ezagent.Entity.Profile, "entity_profiles"}
+    {Ezagent.Entity.Profile, "entity_profiles"},
+    # Phase 7 completion PR-3 (SPEC §1.7 (c)) — the SessionTemplate
+    # tag registry. Per-tenant: a `(workspace, name, tag)` row is
+    # scoped to its workspace (`stable` in ws A ≠ `stable` in ws B).
+    {Ezagent.TemplateTags, "template_tags"}
   ]
 
   # Per-tenant tables that have NO schema module (raw `Repo.insert_all`

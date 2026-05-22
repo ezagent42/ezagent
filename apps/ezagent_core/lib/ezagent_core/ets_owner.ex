@@ -65,7 +65,13 @@ defmodule EzagentCore.EtsOwner do
     # - AgentFlavorRegistry §6.3 — declarative flavor→{kind,
     #   template_class} map; populated by `boot/1` per `agent_flavors/0`.
     {Ezagent.PluginRegistry, :set},
-    {Ezagent.AgentFlavorRegistry, :set}
+    {Ezagent.AgentFlavorRegistry, :set},
+    # Phase 7 completion PR-3 (SPEC §1.7 (c)): TemplateTags read cache.
+    # `Ezagent.TemplateTags` persists `(workspace, name, tag) → hash`
+    # rows in SQLite (the CAS source of truth) and mirrors them into
+    # this ETS table for O(1) `resolve/3`/`list/1` reads — the
+    # `Ezagent.Routing.RuleStore` pattern.
+    {Ezagent.TemplateTags, :set}
   ]
 
   def start_link(_opts) do
