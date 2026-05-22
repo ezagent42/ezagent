@@ -1,109 +1,121 @@
 defmodule EzagentPluginCc.Application do
   @moduledoc """
-  CC plugin Application — the unified Claude Code agent plugin
-  (Allen 2026-05-19: merged from the previous `ezagent_plugin_cc_pty`
-  + `ezagent_plugin_cc_channel` apps; both predecessors deleted).
+  CC plugin OTP application — the `Ezagent.Plugin` contract module.
 
-  Responsibilities:
+  The unified Claude Code agent plugin (Allen 2026-05-19: merged from
+  the previous `ezagent_plugin_cc_pty` + `ezagent_plugin_cc_channel`
+  apps; both predecessors deleted).
 
-  - Host the v2 Phoenix.Channel WS bridge at `/cc_socket`
-    (`Socket` + `Channel` + `BridgeRegistry`)
-  - Mint + persist per-instance connect tokens (`TokenStore`)
-  - Write the `mcp.json` Claude reads for the WS bridge sidecar
-    (`McpConfigWriter`)
-  - Register the unified `cc.agent` Template Class (PR-D2,
-    Allen 2026-05-19 — replaces the pre-existing cc.pty +
-    cc.channel_instance split)
+  ## Plugin authoring contract (PR-3)
 
-  PTY runtime (PtyServer + Supervisor + Registry) moved to the new
+  Per the plugin authoring contract SPEC
+  (`docs/superpowers/specs/2026-05-22-plugin-authoring-contract.md`,
+  §3 / §8 Q3 — Allen confirmed: the OTP `Application` module IS the
+  plugin contract module) this module `use`s **both** `Application`
+  (OTP plumbing) and `Ezagent.Plugin` (the declarative contract).
+
+  Registration is no longer imperative. `start/2` collapses to
+  `Ezagent.Plugin.boot(__MODULE__)`; the framework's two-phase
+  `boot/1` reads the declaration callbacks below and performs every
+  `*Registry` call — the plugin author never touches a registry API
+  (the plugin-isolation north star, made structural). The
+  `:ezagent_plugin_check` Mix compiler (wired into `mix.exs`) is the
+  non-bypassable gate that enforces this.
+
+  ## What this plugin declares
+
+  - `template_classes/0` — the unified `cc.agent` Template Class
+    (PR-D2, Allen 2026-05-19 — replaces the pre-existing cc.pty +
+    cc.channel_instance split). Operators add ONE template per CC
+    agent via the standard add-template chain.
+  - `agent_flavors/0` — flavor `"cc"` → `{Ezagent.Entity.Agent,
+    Ezagent.PluginCc.Template.CcAgent}`. Consumed by
+    `Ezagent.AgentFlavorRegistry`; PR-3 migrates the domain_chat agent
+    resolver onto it, replacing the hardcoded `kind_module_from_flavor`
+    map. The cc Agent Kind is the shared `Ezagent.Entity.Agent` (cc
+    flavor lives in the `entity://agent/<ws>/cc_<name>` name prefix per
+    SPEC v2 §5.14 — there is no cc-specific Kind module).
+  - `config_surface/0` — `:flavor` surface. The `/plugins` config icon
+    routes to this flavor's agent surface (SPEC §6.1).
+  - `children/0` — an empty supervisor. cc's stateful surfaces are all
+    either ETS-backed (`BridgeRegistry` — initialized in `after_boot/0`)
+    or pulled in via the umbrella's lifecycle (`Socket` via
+    `EzagentWeb.Endpoint`). The empty supervisor makes
+    `Application.stop` work as the umbrella expects.
+  - `after_boot/0` — Phase 3 hook: (a) initialize `BridgeRegistry`'s
+    ETS table; (b) re-run `Ezagent.Workspace.Loader.load_all/0`. The
+    `load_all/0` re-run is the Decision #112 boot-ordering fix —
+    chat plugin's `Application.start` calls `load_all/0` BEFORE this
+    plugin's Template Class is published, so workspaces declaring
+    `cc.agent` templates were skipped; the post-publish re-run
+    instantiates them. `boot/1`'s Phase 3 hook is exactly where this
+    belongs — `template_classes/0` is published in Phase 2 first.
+
+  PTY runtime (PtyServer + Supervisor + Registry) moved to the
   `ezagent_domain_pty` Tier-2 app in PR-A of the Domain.Pty SPEC
   (2026-05-21). cc plugin now spawns its claude PTY by building the
-  full cmd string and calling `Ezagent.Domain.Pty.start/2`; the
-  Server/Supervisor/Registry boot here is gone.
+  full cmd string and calling `Ezagent.Domain.Pty.start/2`.
 
-  PR-B (2026-05-21) further moved `Ezagent.Behavior.Pty` itself into
-  `ezagent_domain_pty`, and the Agent-Kind ↔ :write registration moved
-  to `EzagentDomainChat.Application.start/2` (where the Agent Kind is
-  defined). cc plugin's `start/2` no longer references the PTY
-  Behavior at all.
-
-  PR-C (2026-05-21) moved `EzagentPluginCc.Views.PtyView` (historical)
-  to `EzagentDomainUi.Pty.TerminalView` (Tier-2) with cross-flavor
-  detection. The SessionView registration moved to
-  `EzagentDomainUi.Application.start/2`. cc plugin no longer hosts a
-  terminal view module nor a `register_session_views/0` step.
-
-  ## Why the unified template
-
-  Pre-PR-D2 the operator had to add TWO templates per CC agent —
-  one `cc.pty` (spawns the PTY) and one `cc.channel_instance` (mints
-  the token + makes BridgeRegistry happy). They were always added
-  together, deleted together.
-
-  Now: ONE template (`cc.agent`), ONE plugin. PR-D2 originally
-  reserved a `mode` field (`"local-pty"` / `"remote-channel"`) for a
-  future external-host bridge mode. Allen 2026-05-21 removed that
-  field — the placeholder was never wired and the dichotomy was
-  dead weight. If/when remote support returns it will land as a
-  separate plugin + Template Class, not a mode dimension on this
-  template.
-
-  ## Boot order
-
-  1. Init BridgeRegistry (ETS table for agent_uri → Channel pid)
-  2. Register the `cc.agent` Template Class
-  3. Re-run `Workspace.Loader.load_all/0` to instantiate any
-     cc.agent templates that were skipped during boot before this
-     plugin was up. Idempotent via the Domain.Pty :via Registry.
-
-  (`Ezagent.Behavior.Pty` Agent-Kind registration moved to
-  `EzagentDomainChat.Application.start/2` in PR-B — see that module
-  for the binding. `EzagentPluginCc.Views.PtyView` (historical)
-  SessionView registration moved to `EzagentDomainUi.Application.start/2`
-  in PR-C alongside the module relocation.)
+  `Ezagent.Behavior.Pty` Agent-Kind registration moved to
+  `EzagentDomainChat.Application.start/2` in PR-B; `EzagentPluginCc`
+  has no PTY-Behavior registration of its own — hence `behaviors/0`
+  keeps the `use Ezagent.Plugin` default `[]`.
   """
 
   use Application
+  use Ezagent.Plugin
 
   alias EzagentPluginCc.BridgeRegistry
 
-  @impl true
-  def start(_type, _args) do
-    :ok = BridgeRegistry.init()
+  # --- OTP Application -------------------------------------------------
 
-    # Domain.Pty PR-A (2026-05-21): the PtyServerRegistry +
-    # PtyServerSupervisor children moved to EzagentDomainPty.Application.
-    # cc plugin's Application now boots ONLY a placeholder supervisor —
-    # all stateful children (Bridge/Token/Socket) are either ETS-backed
-    # (BridgeRegistry above) or pulled in via the umbrella's lifecycle
-    # (Socket via EzagentWeb.Endpoint). Keeping an empty Supervisor
-    # makes Application.stop work as the umbrella expects.
-    children = []
+  @impl Application
+  def start(_type, _args), do: Ezagent.Plugin.boot(__MODULE__)
 
-    case Supervisor.start_link(children, strategy: :one_for_one, name: __MODULE__) do
-      {:ok, sup_pid} ->
-        :ok = register_template_classes()
+  # --- Ezagent.Plugin contract ---------------------------------------
 
-        # Boot-ordering fix: chat plugin's Application.start calls
-        # Ezagent.Workspace.Loader.load_all/0 BEFORE this plugin
-        # starts. Re-run here so Workspaces declaring our Template
-        # Classes get instantiated.
-        _ = Ezagent.Workspace.Loader.load_all()
-
-        {:ok, sup_pid}
-
-      other ->
-        other
-    end
+  @impl Ezagent.Plugin
+  def plugin_info do
+    %{
+      slug: "cc",
+      name: "Claude Code",
+      description: "Spawn Claude Code agents via PTY.",
+      version: "0.1.0"
+    }
   end
 
-  defp register_template_classes do
-    # PR-D2 (Allen 2026-05-19): cc.pty + cc.channel_instance collapsed
-    # into a single cc.agent Template (originally with a "mode" form
-    # field — that field was removed Allen 2026-05-21; only local-pty
-    # remains).
-    :ok = Ezagent.TemplateRegistry.register(Ezagent.PluginCc.Template.CcAgent)
+  @impl Ezagent.Plugin
+  def template_classes, do: [Ezagent.PluginCc.Template.CcAgent]
+
+  @impl Ezagent.Plugin
+  def agent_flavors do
+    [
+      %{
+        flavor: "cc",
+        # cc agents are the shared Ezagent.Entity.Agent Kind — the cc
+        # flavor lives only in the `entity://agent/<ws>/cc_<name>` name
+        # prefix (SPEC v2 §5.14). There is no cc-specific Kind module.
+        kind: Ezagent.Entity.Agent,
+        template_class: Ezagent.PluginCc.Template.CcAgent
+      }
+    ]
+  end
+
+  @impl Ezagent.Plugin
+  def config_surface do
+    %{kind: :flavor, flavor: "cc", label: "Claude Code Agents"}
+  end
+
+  @impl Ezagent.Plugin
+  def children, do: []
+
+  # Phase 3 post-register hook. `BridgeRegistry.init/0` is idempotent
+  # (creates the ETS table if absent). The `load_all/0` re-run is the
+  # Decision #112 boot-ordering fix — see moduledoc.
+  @impl Ezagent.Plugin
+  def after_boot do
+    :ok = BridgeRegistry.init()
+    _ = Ezagent.Workspace.Loader.load_all()
     :ok
   end
-
 end
