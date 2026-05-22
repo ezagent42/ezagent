@@ -250,6 +250,39 @@ defmodule Ezagent.Routing.RuleStore do
     end
   end
 
+  @doc """
+  Replace a rule's receivers + set its `enabled` flag in place.
+
+  Used by the mention-gated-routing migration
+  (`EzagentDomainChat.DefaultRules`) to migrate an existing persisted
+  `system_default` row's receivers without deleting + re-seeding it
+  (which would lose the row id and its `created_at`).
+
+  `receivers` is a list of URI strings / magic tokens. `enabled` is
+  written as given — the caller decides (the migration preserves the
+  pre-existing flag, applying disabled-wins on duplicates).
+  """
+  @spec update_receivers(integer(), [String.t()], boolean()) ::
+          :ok | {:error, term()}
+  def update_receivers(id, receivers, enabled)
+      when is_integer(id) and is_list(receivers) and is_boolean(enabled) do
+    receivers_str = Enum.map(receivers, &uri_to_string/1)
+
+    case Repo.get(__MODULE__, id) do
+      nil ->
+        {:error, :not_found}
+
+      rule ->
+        rule
+        |> Ecto.Changeset.change(%{receivers: receivers_str, enabled: enabled})
+        |> Repo.update()
+        |> case do
+          {:ok, _} -> :ok
+          err -> err
+        end
+    end
+  end
+
   @spec enable(integer()) :: :ok | {:error, term()}
   def enable(id) when is_integer(id) do
     case Repo.get(__MODULE__, id) do

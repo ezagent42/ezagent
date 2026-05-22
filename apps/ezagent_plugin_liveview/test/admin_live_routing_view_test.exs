@@ -185,4 +185,51 @@ defmodule EzagentPluginLiveview.AdminLiveRoutingViewTest do
       assert html =~ "Rejected URI"
     end
   end
+
+  # Mention-gated routing (SPEC §3 / §6.7) — the session-scoped
+  # RoutingView's receiver picker accepts the broadcast magic token.
+  describe "broadcast option (mention-gated routing)" do
+    test "session-scoped add-rule accepts the $session_members token", %{conn: conn} do
+      {:ok, lv, _html} = live(conn, "/sessions")
+      render_hook(lv, "switch_view", %{"view" => "routing"})
+
+      lv
+      |> form("#session-routing-add-form", %{
+        "rule" => %{"matcher_type" => "mention"}
+      })
+      |> render_submit(%{
+        "rule" => %{
+          "matcher_arg" => "entity://user/default/admin",
+          "receivers" => ["$session_members"]
+        }
+      })
+
+      html = render(lv)
+
+      refute html =~ "Rejected URI",
+             "the $session_members broadcast token must not be rejected as an invalid URI"
+
+      assert html =~ "$session_members",
+             "the persisted session-scoped rule's broadcast token should render"
+    end
+
+    test "session-scoped add-rule accepts $session_users + $mentions tokens", %{conn: conn} do
+      {:ok, lv, _html} = live(conn, "/sessions")
+      render_hook(lv, "switch_view", %{"view" => "routing"})
+
+      lv
+      |> form("#session-routing-add-form", %{
+        "rule" => %{"matcher_type" => "mention"}
+      })
+      |> render_submit(%{
+        "rule" => %{
+          "matcher_arg" => "entity://user/default/admin",
+          "receivers" => ["$session_users", "$mentions"]
+        }
+      })
+
+      html = render(lv)
+      refute html =~ "Rejected URI"
+    end
+  end
 end

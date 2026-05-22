@@ -222,10 +222,19 @@ URIs are canonical 3-segment per-tenant form (SPEC v3 §5.15):
 The driver dispatches `chat.send` invocations into target sessions at a
 controlled rate (a token-bucket pacer), with a **fixed total message budget**
 per scenario run (§7). Each message is a plain `%Ezagent.Message{}` with a
-small text body. For the agents-per-session scenario, the message may
-`@mention` all members (forces full fan-out) or none (Resolver expands
-`$session_members`); test both — mention-less is the realistic default and
-exercises the full member fan-out.
+small text body.
+
+> **Updated 2026-05-22** — mention-gated routing
+> (`docs/superpowers/specs/2026-05-22-mention-gated-routing.md`). The
+> `system_default` rule is now `{:always} → [$session_users,
+> $mentions]`, NOT `[$session_members]`. A **mention-less** message
+> no longer fans out to agent members — it only reaches User members
+> (per-user notification). To exercise the full agent fan-out for the
+> agents-per-session scenario, the message MUST either `@mention` all
+> agent members, or the scenario must add an explicit broadcast rule
+> resolving to `$session_members`. Mention-less is the realistic
+> default only for *human-to-human* traffic; agent fan-out is now
+> mention-driven.
 
 ### 3.4 Test environment
 

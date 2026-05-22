@@ -193,6 +193,58 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
     assert html =~ "Rejected URI"
   end
 
+  # --- Mention-gated routing (SPEC §3 / §6.7) — broadcast option -------------
+
+  test "receiver picker offers the 'All session members (broadcast)' option", %{conn: conn} do
+    {:ok, _lv, html} = live(conn, "/routing")
+
+    # The broadcast option is prepended to the receiver picker's
+    # data-options; selecting it submits the $session_members token.
+    assert html =~ "All session members (broadcast)"
+    assert html =~ "$session_members"
+  end
+
+  test "add_rule accepts the $session_members broadcast token as a receiver", %{conn: conn} do
+    {:ok, lv, _html} = live(conn, "/routing")
+
+    matcher_arg = "entity://agent/default/test_bcast-#{System.unique_integer([:positive])}"
+
+    lv
+    |> form("#add-rule form",
+      rule: %{
+        table: "Elixir.EzagentDomainChat.Routing.MentionRouting",
+        matcher_type: "mention"
+      }
+    )
+    |> render_submit(%{rule: %{matcher_arg: matcher_arg, receivers: ["$session_members"]}})
+
+    html = render(lv)
+    # The magic token must NOT be rejected as an invalid URI; the rule
+    # persists and the token renders as a human-friendly hint.
+    refute html =~ "Rejected URI"
+    assert html =~ "broadcast"
+  end
+
+  test "add_rule accepts $session_users + $mentions magic tokens as receivers", %{conn: conn} do
+    {:ok, lv, _html} = live(conn, "/routing")
+
+    matcher_arg = "entity://agent/default/test_mg-#{System.unique_integer([:positive])}"
+
+    lv
+    |> form("#add-rule form",
+      rule: %{
+        table: "Elixir.EzagentDomainChat.Routing.MentionRouting",
+        matcher_type: "mention"
+      }
+    )
+    |> render_submit(%{
+      rule: %{matcher_arg: matcher_arg, receivers: ["$session_users", "$mentions"]}
+    })
+
+    html = render(lv)
+    refute html =~ "Rejected URI"
+  end
+
   # --- V1 UI PR-2b (SPEC §2.5) — CmdK palette on every ide_shell LV ----------
 
   # Regression guard: PR-2 wired the CommandPaletteComponent into the

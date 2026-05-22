@@ -21,8 +21,36 @@ defmodule Ezagent.Routing.Resolver do
   ## Magic receiver tokens
 
   - `"$session_members"` — expands to the current session's members
-    list (excluding the message sender) — replaces the old hardcoded
-    fan-out in `Chat.invoke(:send)`.
+    list (excluding the message sender). The unconditional broadcast
+    token — an explicit opt-in for broadcast-to-all rules.
+  - `"$session_users"` — the `User`-Kind members of the current
+    session (`entity://user/...`), each filtered through
+    `valid_member?/2`. Drives the per-user notification path: a User
+    member always gets `chat.receive` regardless of `@mention`.
+  - `"$mentions"` — `message.mentions`, each filtered through
+    `valid_member?/2`. The mention-gated routing primitive — only a
+    validly-mentioned member (agents in practice) is dispatched to.
+
+  `$session_users` + `$mentions` are the receivers of the
+  `system_default` rule (mention-gated agent dispatch — see
+  `docs/superpowers/specs/2026-05-22-mention-gated-routing.md`).
+  `$session_members` stays a valid token for an explicit broadcast
+  rule.
+
+  ## `valid_member?/2` — the trust boundary
+
+  `slice.members` is NOT a trust boundary: `chat.join` accepts any
+  live `member_uri` and template instantiation joins configured URIs
+  with `admin_caps`, so a cross-workspace entity can sit in
+  `slice.members`. Since `chat.receive` dispatches with
+  `User.admin_caps()`, an unvalidated receiver is a privilege hole.
+
+  `valid_member?/2` is the shared predicate guarding BOTH
+  `$session_users` and `$mentions`: a candidate URI is a valid
+  recipient iff it is a well-formed `entity://`/`session://` URI, its
+  workspace segment equals the current session's workspace, AND it is
+  a currently-registered member of the session. Anything failing —
+  cross-workspace, cross-session, non-member, malformed — is dropped.
 
   Magic tokens are surface to LV `/admin/routing` editor as
   human-readable "(dynamic: ...)" entries so operators see the full
@@ -44,12 +72,44 @@ defmodule Ezagent.Routing.Resolver do
   ]
 
   @session_members_token "$session_members"
+  @session_users_token "$session_users"
+  @mentions_token "$mentions"
+
+  @magic_tokens [@session_members_token, @session_users_token, @mentions_token]
 
   @doc """
   Magic token signaling "expand to current session's members" in a
-  rule's receivers list. Surface in LV / mix CLI for discoverability.
+  rule's receivers list — the unconditional broadcast token. Surface
+  in LV / mix CLI for discoverability.
   """
   def session_members_token, do: @session_members_token
+
+  @doc """
+  Magic token expanding to the `User`-Kind members of the current
+  session, each validated via `valid_member?/2`. Drives the per-user
+  notification path in the mention-gated `system_default` rule.
+  """
+  def session_users_token, do: @session_users_token
+
+  @doc """
+  Magic token expanding to `message.mentions`, each validated via
+  `valid_member?/2`. The mention-gated routing primitive for agents.
+  """
+  def mentions_token, do: @mentions_token
+
+  @doc """
+  The complete set of recognized magic receiver tokens. Used by the
+  routing UI's receiver validator to accept these alongside concrete
+  URIs.
+  """
+  @spec magic_tokens() :: [String.t()]
+  def magic_tokens, do: @magic_tokens
+
+  @doc """
+  Is `token` one of the recognized magic receiver tokens?
+  """
+  @spec magic_token?(term()) :: boolean()
+  def magic_token?(token), do: token in @magic_tokens
 
   @doc """
   Resolve recipients for `message` in context of `current_session_uri`
@@ -99,7 +159,9 @@ defmodule Ezagent.Routing.Resolver do
 
     Application.get_env(:ezagent_core, :routing_tables, @default_routing_tables)
     |> Enum.flat_map(&query_table(&1, message, workspace_uri))
-    |> Enum.flat_map(&expand_receiver(&1, message, current_session_uri, members))
+    |> Enum.flat_map(
+      &expand_receiver(&1, message, current_session_uri, members, workspace_uri)
+    )
     |> Enum.uniq_by(&URI.to_string/1)
     |> Enum.reject(&(URI.to_string(&1) == URI.to_string(current_session_uri)))
   end
@@ -168,22 +230,145 @@ defmodule Ezagent.Routing.Resolver do
   end
 
   # Expand magic tokens. Receivers are stored as binaries in RuleStore;
-  # the magic token "$session_members" expands via the `members` arg.
-  defp expand_receiver(@session_members_token, message, _current_session_uri, members) do
-    sender_str =
-      case message.sender do
-        %URI{} = u -> URI.to_string(u)
-        s when is_binary(s) -> s
-      end
+  # the magic tokens expand via the `members` arg + the session URI.
+
+  # "$session_members" — the unconditional broadcast token. Every
+  # member except the sender. No trust-boundary filter — this is the
+  # explicit opt-in broadcast token; an operator who adds a rule
+  # resolving to it is consciously asking for full fan-out.
+  defp expand_receiver(@session_members_token, message, _current_session_uri, members, _ws) do
+    sender_str = sender_string(message)
 
     members
     |> Enum.reject(fn m -> URI.to_string(m) == sender_str end)
   end
 
-  defp expand_receiver(receiver, _message, _current, _members)
+  # "$session_users" — the User-Kind members (entity://user/...) of
+  # the current session, each through the valid_member?/2 trust
+  # boundary, excluding the sender. Drives the per-user notification.
+  defp expand_receiver(@session_users_token, message, current_session_uri, members, _ws) do
+    sender_str = sender_string(message)
+
+    members
+    |> Enum.filter(&user_uri?/1)
+    |> Enum.filter(&valid_member?(&1, current_session_uri, members))
+    |> Enum.reject(fn m -> URI.to_string(m) == sender_str end)
+  end
+
+  # "$mentions" — message.mentions, each through the valid_member?/2
+  # trust boundary, excluding the sender. The mention-gated routing
+  # primitive. message.mentions is user-controlled (raw compose text /
+  # global registry scan) and chat.receive dispatches with admin_caps,
+  # so unvalidated mentions would be a privilege hole.
+  defp expand_receiver(@mentions_token, message, current_session_uri, members, _ws) do
+    sender_str = sender_string(message)
+
+    (message.mentions || [])
+    |> Enum.map(&to_uri/1)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.filter(&valid_member?(&1, current_session_uri, members))
+    |> Enum.reject(fn m -> URI.to_string(m) == sender_str end)
+  end
+
+  defp expand_receiver(receiver, _message, _current, _members, _ws)
        when is_binary(receiver),
        do: [URI.new!(receiver)]
 
-  defp expand_receiver(%URI{} = receiver, _message, _current, _members),
+  defp expand_receiver(%URI{} = receiver, _message, _current, _members, _ws),
     do: [receiver]
+
+  @doc """
+  The shared trust boundary for `$session_users` + `$mentions`.
+
+  A candidate receiver URI is a valid recipient iff ALL of:
+
+    1. It is a well-formed `entity://` or `session://` URI.
+    2. It is NOT a cross-session URI — a `session://` candidate
+       naming a session OTHER than the current one is dropped (these
+       tokens deliver into THIS session; routing to a peer session
+       is an explicit-rule concern, not a default-token concern).
+    3. Its workspace segment equals the current session's workspace
+       (derived structurally from `current_session_uri` — session
+       URIs are 3-segment, the workspace is in the path).
+    4. It is a currently-registered member of the session — i.e. it
+       appears in `members` (the Session's `slice.members` keys).
+
+  Anything failing — cross-workspace, cross-session, non-member,
+  malformed — returns `false` and is dropped. This is the security
+  boundary: `chat.receive` dispatches with `User.admin_caps()`, so an
+  unvalidated receiver would be a privilege hole (a cross-workspace
+  entity placed in `slice.members` via programmatic `chat.join` /
+  template instantiation must receive NOTHING).
+
+  Never raises — a malformed candidate is a `false`, not a crash.
+  """
+  @spec valid_member?(URI.t() | String.t(), URI.t(), [URI.t()]) :: boolean()
+  def valid_member?(candidate, %URI{} = current_session_uri, members)
+      when is_list(members) do
+    with %URI{} = uri <- to_uri(candidate),
+         true <- uri.scheme in ["entity", "session"],
+         true <- not cross_session?(uri, current_session_uri),
+         %URI{} = candidate_ws <- safe_workspace_of(uri),
+         %URI{} = session_ws <- safe_workspace_of(current_session_uri),
+         true <- URI.to_string(candidate_ws) == URI.to_string(session_ws),
+         true <- member?(uri, members) do
+      true
+    else
+      _ -> false
+    end
+  end
+
+  def valid_member?(_candidate, _current_session_uri, _members), do: false
+
+  # Membership check — the candidate must appear in the session's
+  # member URI list. Compared on canonical string form.
+  defp member?(%URI{} = uri, members) do
+    uri_str = URI.to_string(uri)
+    Enum.any?(members, fn m -> URI.to_string(m) == uri_str end)
+  end
+
+  # A `session://` candidate naming a session OTHER than the current
+  # one is cross-session — dropped (SPEC §6.4(c)). The current
+  # session's own URI is not cross-session (and is excluded as a
+  # recipient downstream by resolve/4's self-reject anyway). An
+  # `entity://` candidate is never cross-session.
+  defp cross_session?(%URI{scheme: "session"} = uri, %URI{} = current_session_uri) do
+    URI.to_string(uri) != URI.to_string(current_session_uri)
+  end
+
+  defp cross_session?(%URI{}, %URI{}), do: false
+
+  # A User-Kind member is structurally `entity://user/<ws>/<name>`.
+  # parse!/1 guarantees the canonical shape, so the host segment is
+  # the authoritative type axis (no registry lookup needed).
+  defp user_uri?(%URI{} = uri), do: uri.scheme == "entity" and uri.host == "user"
+  defp user_uri?(uri) when is_binary(uri), do: user_uri?(to_uri(uri))
+  defp user_uri?(_), do: false
+
+  defp to_uri(%URI{} = uri), do: uri
+
+  defp to_uri(s) when is_binary(s) do
+    Ezagent.URI.parse!(s)
+  rescue
+    _ -> nil
+  end
+
+  defp to_uri(_), do: nil
+
+  defp safe_workspace_of(%URI{} = uri) do
+    case Ezagent.Capability.workspace_of(uri) do
+      %URI{} = ws -> ws
+      _ -> nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  defp sender_string(message) do
+    case message.sender do
+      %URI{} = u -> URI.to_string(u)
+      s when is_binary(s) -> s
+      _ -> ""
+    end
+  end
 end

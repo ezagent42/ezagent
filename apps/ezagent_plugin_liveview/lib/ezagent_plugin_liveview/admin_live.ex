@@ -578,7 +578,7 @@ defmodule EzagentPluginLiveview.AdminLive do
          # SPEC §1.6 — revalidate every uri_picker submission
          # server-side before dispatch. Hidden inputs are untrusted.
          :ok <- revalidate_session_matcher_arg(socket, params),
-         :ok <- revalidate_session_uris(socket, receivers, [:entity, :session]),
+         :ok <- revalidate_session_receivers(socket, receivers),
          matcher = wrap_in_session(leaf_matcher, session_uri),
          {:ok, _} <-
            dispatch_session_routing(socket, :add_rule, %{
@@ -772,6 +772,27 @@ defmodule EzagentPluginLiveview.AdminLive do
         {:cont, :ok}
       else
         {:halt, {:error, {:invalid_uri, uri}}}
+      end
+    end)
+  end
+
+  # Mention-gated-routing (SPEC §3) — a session-scoped rule's receivers
+  # accept the magic tokens (`$session_members`, `$session_users`,
+  # `$mentions`) alongside concrete in-workspace entity/session URIs.
+  # The "All session members (broadcast)" picker option submits
+  # `$session_members`; the magic tokens are not URIs so the URI
+  # validator would reject them — special-case them here.
+  defp revalidate_session_receivers(socket, receivers) do
+    Enum.reduce_while(receivers, :ok, fn receiver, :ok ->
+      cond do
+        Ezagent.Routing.Resolver.magic_token?(receiver) ->
+          {:cont, :ok}
+
+        true ->
+          case revalidate_session_uris(socket, [receiver], [:entity, :session]) do
+            :ok -> {:cont, :ok}
+            {:error, _} = err -> {:halt, err}
+          end
       end
     end)
   end
@@ -1100,8 +1121,25 @@ defmodule EzagentPluginLiveview.AdminLive do
     )
     |> assign(
       :routing_receiver_options,
-      Ezagent.UI.UriOptions.entities_and_sessions(caller_uri, workspace_uri)
+      routing_receiver_options(caller_uri, workspace_uri)
     )
+  end
+
+  # Receiver picker options for the session-scoped RoutingView:
+  # in-workspace entities + sessions, with the first-class "All session
+  # members (broadcast)" option prepended (mention-gated-routing
+  # SPEC §3). That option's `uri` is the `$session_members` magic
+  # token; `revalidate_session_receivers/2` accepts it and
+  # `Ezagent.Routing.Resolver` expands it at resolve time.
+  defp routing_receiver_options(caller_uri, workspace_uri) do
+    broadcast = %{
+      uri: Ezagent.Routing.Resolver.session_members_token(),
+      label: gettext("All session members (broadcast)"),
+      kind: :broadcast,
+      flavor: nil
+    }
+
+    [broadcast | Ezagent.UI.UriOptions.entities_and_sessions(caller_uri, workspace_uri)]
   end
 
   # The workspace a session-scoped routing rule + its uri_picker

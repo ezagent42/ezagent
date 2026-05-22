@@ -90,9 +90,13 @@ defmodule EzagentCore.Invariants.Phase5NoRegressionTest do
                :undefined
     end
 
-    test "default $session_members rule is loaded" do
-      # The boot path loads the system_default rule that fan-outs to
-      # session members. Without this, chat/send routes nowhere.
+    test "the system_default mention-gated rule is loaded" do
+      # The boot path loads the system_default rule. Mention-gated
+      # routing (2026-05-22 —
+      # docs/superpowers/specs/2026-05-22-mention-gated-routing.md)
+      # changed its receivers from [$session_members] to
+      # [$session_users, $mentions]. Without this rule, chat/send
+      # routes nowhere.
       entries = RoutingRegistry.list_all(EzagentDomainChat.Routing.MentionRouting)
 
       assert Enum.any?(entries, fn {_matcher, value} ->
@@ -102,9 +106,10 @@ defmodule EzagentCore.Invariants.Phase5NoRegressionTest do
                    %{receivers: r} -> r
                  end
 
-               "$session_members" in receivers
+               "$session_users" in receivers and "$mentions" in receivers
              end),
-             "system_default $session_members rule missing from MentionRouting"
+             "system_default mention-gated rule ([$session_users, $mentions]) " <>
+               "missing from MentionRouting"
     end
   end
 
