@@ -339,6 +339,21 @@ defmodule Ezagent.Orchestrator.Tools do
             caller,
             caps
           )
+
+        # HIGH-4 (round 2) — a pre-hardening 2-tuple `{name, src}` slot
+        # widens (via `normalize_slot/1`) to `{name, src, nil, 0}`: a
+        # slot with NO recorded live worker URI. The pre-round-2 `case`
+        # had no clause for `{_, _, nil, _}`, so a legacy snapshot's
+        # slot crashed `update_agent_template` with a `CaseClauseError`
+        # instead of a controlled error. An explicit clause returns a
+        # structured `:no_live_worker` error — the orchestrator can then
+        # `remove_agent_slot` + `add_agent_slot` to re-establish a live
+        # worker. (A respawn-from-source path was considered; a clear
+        # error is safer — the legacy slot's `src` may itself be stale,
+        # and the orchestrator should make the re-add decision
+        # explicitly rather than the swap silently resurrecting it.)
+        {_s, _old_template_uri, nil, _old_generation} ->
+          {:error, {:update_aborted, :no_live_worker}}
       end
     end
   end
@@ -358,6 +373,14 @@ defmodule Ezagent.Orchestrator.Tools do
   # no slot); `compensate_orphan_worker/4` terminates it before the
   # error is surfaced. The OLD worker + slot stay untouched on any
   # phase-1..3 failure — no outage.
+  #
+  # HIGH-2 (round 2): routing-rule re-point. `RuleStore` rows store
+  # CONCRETE receiver URIs, not slot names — so after the slot tuple is
+  # swapped the existing routing rules still name `old_worker_uri` and
+  # the next matching message routes to the now-DEAD old worker. As part
+  # of the swap, BEFORE terminating the old worker, every live +
+  # persisted routing rule whose receivers reference `old_worker_uri` is
+  # rewritten to `new_worker_uri` and the registry reloaded.
   defp do_update_agent_template(
          slot_name,
          %URI{} = new_agent_template_uri,
@@ -395,6 +418,11 @@ defmodule Ezagent.Orchestrator.Tools do
              caps
            ) do
         :ok ->
+          # HIGH-2 — re-point every routing rule from the OLD worker URI
+          # to the NEW one BEFORE terminating the old worker, so no
+          # matching message is ever delivered to the dead process.
+          repoint_routing_rules(old_worker_uri, new_worker_uri)
+
           # Phase 4 — terminate the OLD worker. The new worker is the
           # slot's truth + has a DIFFERENT URI (generation-bumped), so
           # this always terminates a genuinely-distinct old process.
@@ -431,6 +459,87 @@ defmodule Ezagent.Orchestrator.Tools do
         other -> {:error, {:unexpected_template_read_result, other}}
       end
     end
+  end
+
+  # HIGH-2 (round 2) — rewrite every routing rule whose receivers name
+  # `old_worker_uri` so they point at `new_worker_uri` instead.
+  #
+  # `RuleStore` rows store concrete receiver URI strings (not slot
+  # names). When `update_agent_template` swaps a worker, the old worker
+  # URI is terminated but any routing rule that named it still does —
+  # the next matching message would route to a dead actor. This rewrites
+  # every persisted rule, then `load_into_registry/1` makes the live
+  # `RoutingRegistry` ETS reflect the change, so the very next message
+  # routes to the new worker.
+  #
+  # Best-effort + idempotent: a rule with no `old` receiver is left
+  # alone; a rule that has BOTH is collapsed (the new URI appears once).
+  # A `RuleStore.update_receivers/3` failure is logged, not fatal — the
+  # swap itself already succeeded.
+  defp repoint_routing_rules(%URI{} = old_worker_uri, %URI{} = new_worker_uri) do
+    table = EzagentDomainChat.Routing.MentionRouting
+    old_str = URI.to_string(old_worker_uri)
+    new_str = URI.to_string(new_worker_uri)
+
+    rewritten =
+      table
+      |> safe_list_rules()
+      |> Enum.reduce(0, fn rule, count ->
+        if old_str in (rule.receivers || []) do
+          new_receivers =
+            rule.receivers
+            |> Enum.map(fn r -> if r == old_str, do: new_str, else: r end)
+            |> Enum.uniq()
+
+          case safe_update_receivers(rule.id, new_receivers, rule.enabled) do
+            :ok ->
+              count + 1
+
+            {:error, reason} ->
+              Logger.warning(
+                "update_agent_template: re-pointing routing rule id=#{rule.id} from " <>
+                  "#{old_str} to #{new_str} failed: #{inspect(reason)} — rule may still " <>
+                  "name the terminated worker"
+              )
+
+              count
+          end
+        else
+          count
+        end
+      end)
+
+    if rewritten > 0 do
+      # Make the live registry reflect the rewritten rows immediately.
+      safe_load_into_registry(table)
+    end
+
+    :ok
+  end
+
+  defp safe_list_rules(table) do
+    Ezagent.Routing.RuleStore.list(table)
+  rescue
+    _ -> []
+  catch
+    _, _ -> []
+  end
+
+  defp safe_update_receivers(id, receivers, enabled) do
+    Ezagent.Routing.RuleStore.update_receivers(id, receivers, enabled)
+  rescue
+    e -> {:error, e}
+  catch
+    _, reason -> {:error, reason}
+  end
+
+  defp safe_load_into_registry(table) do
+    Ezagent.Routing.RuleStore.load_into_registry(table)
+    :ok
+  rescue
+    _ -> :ok
+  catch
+    _, _ -> :ok
   end
 
   # Terminate the OLD worker after a successful swap. HIGH-6 — the new

@@ -188,11 +188,99 @@ defmodule Ezagent.Entity.Session do
          :ok <- owner_instantiate_preflight(session_template_uri, owner_uri),
          {:ok, template_content} <- read_template_content(session_template_uri),
          {:ok, workspace_uri} <- resolve_target_workspace(template_content),
+         :ok <-
+           preflight_workspace_isolation(
+             session_template_uri,
+             workspace_uri,
+             template_content
+           ),
          :ok <- preflight_agent_slots(template_content),
          :ok <- preflight_routing_rules(template_content) do
       do_spawn(template_content, workspace_uri, owner_uri, session_template_uri)
     end
   end
+
+  # --- CRITICAL (round 2): SessionTemplate-composition workspace isolation
+  #
+  # ## The bug
+  #
+  # `instantiate_one_slot/5` dispatches each agent slot's
+  # `template.instantiate` with `Ezagent.Entity.User.admin_caps()` in
+  # `ctx.caps`. `owner_instantiate_preflight/2` only checks the OWNER
+  # against the SessionTemplate's OWN workspace — it never checks the
+  # `default_workspace_uri` the Generator resolves from template content,
+  # nor the workspace of each slot's AgentTemplate URI. A caller able to
+  # create/instantiate a SessionTemplate in workspace A could therefore
+  # encode a DIFFERENT `default_workspace_uri` and/or slot AgentTemplate
+  # URIs pointing at workspace B; every slot `template.instantiate` then
+  # runs as ADMIN against a B-workspace AgentTemplate → cross-workspace
+  # CapBAC + isolation bypass.
+  #
+  # ## The fix — the same-workspace rule
+  #
+  # A SessionTemplate may only compose AgentTemplates in its OWN
+  # workspace, and may only instantiate into its own workspace. We
+  # require, structurally:
+  #
+  #   SessionTemplate URI workspace
+  #     == resolved default_workspace_uri
+  #     == every agent-slot AgentTemplate URI workspace
+  #
+  # Any divergence → `{:error, :cross_workspace_denied}`, nothing
+  # spawned. This is chosen over a per-slot owner-cap preflight because
+  # (a) V1 has no cross-workspace templating — a SessionTemplate and the
+  # AgentTemplates it cites are authored together in one workspace —
+  # (b) it is a single structural invariant a reviewer can verify, and
+  # (c) it closes the escalation regardless of what the owner happens to
+  # hold (the per-slot owner-cap check would still PASS the dispatch
+  # under `admin_caps` — it only gates which caps were delegated to the
+  # orchestrator, not the slot-instantiation dispatch itself). The
+  # admin-cap slot dispatch is now safe because it can ONLY reach an
+  # AgentTemplate proven to be in the SessionTemplate's own workspace,
+  # for which the owner's authority was already established by
+  # `owner_instantiate_preflight/2`.
+  defp preflight_workspace_isolation(
+         %URI{} = session_template_uri,
+         %URI{} = workspace_uri,
+         template_content
+       ) do
+    template_ws = Ezagent.Capability.workspace_of(session_template_uri)
+
+    with :ok <- same_workspace(template_ws, workspace_uri, :default_workspace_uri),
+         :ok <- slots_in_workspace(template_content, template_ws) do
+      :ok
+    end
+  end
+
+  # Compare two workspace URIs by their bare name (the `workspace://`
+  # host). `workspace_of/1` may return `:any` for a malformed URI — a
+  # non-`%URI{}` workspace is itself a cross-workspace denial.
+  defp same_workspace(%URI{host: a}, %URI{host: b}, _which) when is_binary(a) and a == b,
+    do: :ok
+
+  defp same_workspace(_template_ws, _other_ws, which),
+    do: {:error, {:cross_workspace_denied, which}}
+
+  # Every agent-slot AgentTemplate URI must live in the SessionTemplate's
+  # own workspace. A slot URI in another workspace → denial.
+  defp slots_in_workspace(template_content, %URI{} = template_ws) do
+    slots = normalize_agent_slots(Map.get(template_content, :agent_slots, []))
+
+    Enum.reduce_while(slots, :ok, fn {slot_name, %URI{} = agent_template_uri}, :ok ->
+      case Ezagent.Capability.workspace_of(agent_template_uri) do
+        %URI{host: ws} when is_binary(ws) and ws == template_ws.host ->
+          {:cont, :ok}
+
+        other ->
+          {:halt,
+           {:error,
+            {:cross_workspace_denied, {:agent_slot, slot_name, slot_workspace_label(other)}}}}
+      end
+    end)
+  end
+
+  defp slot_workspace_label(%URI{} = uri), do: URI.to_string(uri)
+  defp slot_workspace_label(other), do: other
 
   # ── The spawn phase (MEDIUM-5) — irreversible side effects + cleanup ──
   #
@@ -230,7 +318,12 @@ defmodule Ezagent.Entity.Session do
                slots: slot_instances
              }
            ),
-         :ok <-
+         # HIGH-3 (round 2) — `install_routing_rules/5` now returns the
+         # IDs of the `routing_rules` rows it inserted; those IDs ride in
+         # the `spawned` accumulator so a LATER failure's
+         # `cleanup_partial/1` can DELETE exactly those rows (not just
+         # reload the registry, which would re-load the dead rows).
+         {:ok, routing_rule_ids} <-
            guard(
              install_routing_rules(
                template_content,
@@ -242,7 +335,8 @@ defmodule Ezagent.Entity.Session do
              %{
                session_uri: session_uri,
                orchestrator_uri: orchestrator_uri,
-               slots: slot_instances
+               slots: slot_instances,
+               routing_rule_ids: []
              }
            ),
          :ok <-
@@ -251,7 +345,8 @@ defmodule Ezagent.Entity.Session do
              %{
                session_uri: session_uri,
                orchestrator_uri: orchestrator_uri,
-               slots: slot_instances
+               slots: slot_instances,
+               routing_rule_ids: routing_rule_ids
              }
            ),
          :ok <-
@@ -266,7 +361,8 @@ defmodule Ezagent.Entity.Session do
              %{
                session_uri: session_uri,
                orchestrator_uri: orchestrator_uri,
-               slots: slot_instances
+               slots: slot_instances,
+               routing_rule_ids: routing_rule_ids
              }
            ) do
       {:ok, %{session_uri: session_uri, orchestrator_uri: orchestrator_uri}}
@@ -286,14 +382,23 @@ defmodule Ezagent.Entity.Session do
   # MEDIUM-5 compensating cleanup — tear down everything `do_spawn`
   # built so far. Best-effort: every step is wrapped so one failure
   # does not prevent the rest. Order: workers, then orchestrator, then
-  # the session Kind, then its workspace binding. Routing rows are NOT
-  # rolled back individually (a rule whose receivers are all dead is
-  # inert) — but the live registry is reloaded so dead receivers do not
-  # linger in ETS.
+  # the session Kind, then its workspace binding.
+  #
+  # ## HIGH-3 (round 2) — DELETE the partially-installed routing rows
+  #
+  # The pre-round-2 cleanup left every Generator-installed
+  # `routing_rules` ROW in SQLite and only called `load_into_registry`,
+  # which RE-loads exactly those just-inserted enabled rows → dead
+  # receivers stayed in `RoutingRegistry` ETS after a failed Generator
+  # run. The fix: `install_routing_rules/5` tracks the row IDs it
+  # inserted, they ride in the `spawned` accumulator, and cleanup
+  # DELETES those exact rows BEFORE `load_into_registry/1` — so the
+  # reload sees them gone and they leave ETS too.
   defp cleanup_partial(spawned) do
     session_uri = Map.get(spawned, :session_uri)
     orchestrator_uri = Map.get(spawned, :orchestrator_uri)
     slots = Map.get(spawned, :slots, [])
+    routing_rule_ids = Map.get(spawned, :routing_rule_ids, [])
 
     Enum.each(slots, fn
       {_slot, _tmpl, %URI{} = worker_uri} -> terminate_kind(worker_uri)
@@ -304,8 +409,13 @@ defmodule Ezagent.Entity.Session do
     if session_uri, do: terminate_kind(session_uri)
     if session_uri, do: Ezagent.WorkspaceRegistry.unbind(session_uri)
 
-    # Re-hydrate the routing registry so any rule rows installed before
-    # the failure (whose receivers are now terminated) drop out of ETS.
+    # HIGH-3 — delete the exact routing rows this Generator run inserted.
+    Enum.each(routing_rule_ids, fn id ->
+      safe(fn -> RuleStore.delete(id, force: true) end)
+    end)
+
+    # Re-hydrate the routing registry — now that the partially-installed
+    # rows are gone from SQLite, the reload drops them from ETS too.
     safe(fn -> RuleStore.load_into_registry(EzagentDomainChat.Routing.MentionRouting) end)
     :ok
   end
@@ -609,9 +719,25 @@ defmodule Ezagent.Entity.Session do
 
   # Instantiate ONE slot: dispatch `template.instantiate` on its
   # AgentTemplate URI. `instance_name` is the SESSION-UNIQUE live
-  # instance name (CRITICAL fix) — `session_instance_name/3` folds the
-  # session discriminator into the slot name so the `:instantiate`
-  # action builds a per-session flavor-prefixed worker URI.
+  # instance name (CRITICAL fix round 1) — `session_instance_name/3`
+  # folds the session discriminator into the slot name so the
+  # `:instantiate` action builds a per-session flavor-prefixed worker
+  # URI.
+  #
+  # ## The `admin_caps` ctx is bounded (CRITICAL round 2)
+  #
+  # The dispatch ctx carries `admin_caps` so the Generator (a privileged
+  # bootstrap program) can instantiate the slot. This is SAFE here ONLY
+  # because `preflight_workspace_isolation/3` has already proven that
+  # `agent_template_uri` lives in the SAME workspace as the
+  # SessionTemplate — and `owner_instantiate_preflight/2` already
+  # established the owner holds `Behavior.Template` authority for THAT
+  # workspace. The admin-cap dispatch therefore cannot reach an
+  # AgentTemplate in a workspace the owner lacks authority over: the
+  # owner-authority preflight for this exact AgentTemplate's workspace
+  # has passed (transitively, via the same-workspace invariant). Without
+  # `preflight_workspace_isolation/3` this would be a cross-workspace
+  # escalation — see its moduledoc.
   defp instantiate_one_slot(
          slot_name,
          %URI{} = agent_template_uri,
@@ -738,7 +864,7 @@ defmodule Ezagent.Entity.Session do
   # rules fire (invariant 4). Receivers a slot name doesn't resolve to
   # are skipped — a rule whose every receiver is unknown is dropped.
   #
-  # ## HIGH-3 hardening — load the rules into the live registry
+  # ## HIGH-3 hardening (round 1) — load the rules into the live registry
   #
   # `RuleStore.add/5` only inserts the SQLite row. The live resolver
   # (`Ezagent.Routing.Resolver`) reads `RoutingRegistry` ETS, which is
@@ -748,6 +874,18 @@ defmodule Ezagent.Entity.Session do
   # After installing the rows this step calls `load_into_registry/1`
   # ONCE so every Generator-installed rule is live the instant the
   # Generator returns.
+  #
+  # ## HIGH-3 hardening (round 2) — return the inserted row IDs
+  #
+  # This step now returns `{:ok, [rule_id]}` — the IDs of the
+  # `routing_rules` rows it inserted. `do_spawn/4` threads them into the
+  # `spawned` accumulator so a LATER step's failure has
+  # `cleanup_partial/1` DELETE exactly those rows. Previously the rows
+  # were left in SQLite and `load_into_registry` re-loaded the dead
+  # receivers back into ETS. On its own internal failure (a row insert
+  # error mid-batch) this step also tears down the rows it inserted so
+  # far before returning the error — so even an internal abort leaves no
+  # partial routing rows.
   defp install_routing_rules(
          template_content,
          slot_instances,
@@ -762,8 +900,11 @@ defmodule Ezagent.Entity.Session do
 
     table = EzagentDomainChat.Routing.MentionRouting
 
+    # The accumulator carries the inserted IDs even into the `:halt`
+    # path — `{:halt, {ids, {:error, _}}}` — so an internal mid-batch
+    # abort can scrub the rows it already inserted.
     result =
-      Enum.reduce_while(rules, {:ok, 0}, fn {matcher_ast, receiver_slot_names}, {:ok, added} ->
+      Enum.reduce_while(rules, {[], :ok}, fn {matcher_ast, receiver_slot_names}, {ids, :ok} ->
         receiver_uris =
           receiver_slot_names
           |> Enum.map(&Map.get(slot_uri_by_name, to_string(&1)))
@@ -773,7 +914,7 @@ defmodule Ezagent.Entity.Session do
           receiver_uris == [] ->
             # No resolvable receiver — drop the rule (slot names that
             # don't map to a spawned worker can't route anywhere).
-            {:cont, {:ok, added}}
+            {:cont, {ids, :ok}}
 
           true ->
             case RuleStore.add(
@@ -783,24 +924,31 @@ defmodule Ezagent.Entity.Session do
                    owner_uri,
                    workspace_uri: workspace_uri
                  ) do
-              {:ok, _rule} -> {:cont, {:ok, added + 1}}
-              {:error, reason} -> {:halt, {:error, {:routing_rule_failed, reason}}}
+              {:ok, %{id: id}} ->
+                {:cont, {[id | ids], :ok}}
+
+              {:error, reason} ->
+                {:halt, {ids, {:error, {:routing_rule_failed, reason}}}}
             end
         end
       end)
 
     case result do
-      {:ok, 0} ->
+      {[], :ok} ->
         # No rules installed — nothing to reload.
-        :ok
+        {:ok, []}
 
-      {:ok, _added} ->
+      {ids, :ok} ->
         # HIGH-3 — hydrate the live RoutingRegistry ETS so the rules
         # fire at runtime immediately, not after some later reload.
         :ok = RuleStore.load_into_registry(table)
-        :ok
+        {:ok, Enum.reverse(ids)}
 
-      {:error, _} = err ->
+      {ids, {:error, _} = err} ->
+        # Internal failure mid-batch — delete the rows inserted so far so
+        # this step itself leaves no partial routing rows, then reload.
+        Enum.each(ids, fn id -> safe(fn -> RuleStore.delete(id, force: true) end) end)
+        safe(fn -> RuleStore.load_into_registry(table) end)
         err
     end
   end
