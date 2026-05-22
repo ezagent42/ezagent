@@ -102,18 +102,20 @@ defmodule EzagentPluginLiveview.AdminLiveRoutingViewTest do
       {:ok, lv, _html} = live(conn, "/sessions")
       render_hook(lv, "switch_view", %{"view" => "routing"})
 
+      # V1 UI PR-1 — the RoutingView pickers are scoped to the
+      # session's workspace (session://default/default/main → default).
+      # URIs must be in `default`; pass them via render_submit/2 since
+      # the uri_picker hidden inputs are JS-managed (empty dead-render).
       receiver = "entity://agent/default/echo-receiver-#{System.unique_integer([:positive])}"
-      mention_arg = "entity://user/system/admin"
+      mention_arg = "entity://user/default/admin"
 
       lv
       |> form("#session-routing-add-form", %{
-        "rule" => %{
-          "matcher_type" => "mention",
-          "matcher_arg" => mention_arg,
-          "receivers" => receiver
-        }
+        "rule" => %{"matcher_type" => "mention"}
       })
-      |> render_submit()
+      |> render_submit(%{
+        "rule" => %{"matcher_arg" => mention_arg, "receivers" => [receiver]}
+      })
 
       html = render(lv)
 
@@ -135,16 +137,52 @@ defmodule EzagentPluginLiveview.AdminLiveRoutingViewTest do
 
       lv
       |> form("#session-routing-add-form", %{
-        "rule" => %{
-          "matcher_type" => "mention",
-          "matcher_arg" => "entity://user/system/admin",
-          "receivers" => ""
-        }
+        "rule" => %{"matcher_type" => "mention"}
       })
-      |> render_submit()
+      |> render_submit(%{"rule" => %{"matcher_arg" => "entity://user/default/admin"}})
 
       html = render(lv)
       assert html =~ "receiver"
+    end
+
+    # V1 UI PR-1 (SPEC §1.6) — server-side revalidation of the
+    # session-scoped RoutingView's uri_picker submissions.
+    test "rejects a tampered out-of-workspace receiver", %{conn: conn} do
+      {:ok, lv, _html} = live(conn, "/sessions")
+      render_hook(lv, "switch_view", %{"view" => "routing"})
+
+      lv
+      |> form("#session-routing-add-form", %{
+        "rule" => %{"matcher_type" => "mention"}
+      })
+      |> render_submit(%{
+        "rule" => %{
+          "matcher_arg" => "entity://user/default/admin",
+          "receivers" => ["entity://agent/other-tenant/cc_leak"]
+        }
+      })
+
+      html = render(lv)
+      assert html =~ "Rejected URI"
+    end
+
+    test "rejects a tampered out-of-workspace matcher arg", %{conn: conn} do
+      {:ok, lv, _html} = live(conn, "/sessions")
+      render_hook(lv, "switch_view", %{"view" => "routing"})
+
+      lv
+      |> form("#session-routing-add-form", %{
+        "rule" => %{"matcher_type" => "mention"}
+      })
+      |> render_submit(%{
+        "rule" => %{
+          "matcher_arg" => "entity://user/other-tenant/admin",
+          "receivers" => ["entity://agent/default/echo_default"]
+        }
+      })
+
+      html = render(lv)
+      assert html =~ "Rejected URI"
     end
   end
 end

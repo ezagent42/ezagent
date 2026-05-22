@@ -9,10 +9,16 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
     :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
     Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
 
+    # V1 UI PR-1 — the uri_picker fields are scoped to
+    # `current_workspace_uri`. The admin is a `workspace://system`
+    # member (cross-workspace authority), so it can operate in the
+    # `default` workspace; set the session slot explicitly so the
+    # picker + server revalidation both scope to `workspace://default`.
     conn =
       Phoenix.ConnTest.build_conn()
       |> Plug.Test.init_test_session(%{
-        "current_entity_uri" => URI.to_string(Ezagent.Entity.User.admin_uri())
+        "current_entity_uri" => URI.to_string(Ezagent.Entity.User.admin_uri()),
+        "current_workspace_uri" => "workspace://default"
       })
 
     {:ok, conn: conn}
@@ -28,19 +34,35 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
     assert html =~ "JSON mode"
   end
 
+  test "matcher arg + receivers render uri_picker components", %{conn: conn} do
+    {:ok, lv, html} = live(conn, "/routing")
+    # V1 UI PR-1 — raw text inputs replaced with uri_picker.
+    assert html =~ ~s(phx-hook="UriPicker")
+    assert html =~ ~s(data-mode="single")
+    assert html =~ ~s(data-mode="multi")
+
+    # JSON-combinator advanced mode stays a textarea (not a picker).
+    json_html = lv |> element("button[phx-value-mode='json']") |> render_click()
+    assert json_html =~ "<textarea"
+  end
+
   test "add_rule via form-mode mention persists + appears in list", %{conn: conn} do
     {:ok, lv, _html} = live(conn, "/routing")
+
+    # The uri_picker hidden inputs are JS-managed (empty in a
+    # dead-render). Set form-real fields (table/matcher_type) via
+    # form/3; pass the picker-managed URIs via render_submit/2 extras.
+    matcher_arg = "entity://agent/default/test_lv-test-#{System.unique_integer([:positive])}"
+    receiver = "session://default/default/lv-rcv-#{System.unique_integer([:positive])}"
 
     lv
     |> form("#add-rule form",
       rule: %{
         table: "Elixir.EzagentDomainChat.Routing.MentionRouting",
-        matcher_type: "mention",
-        matcher_arg: "entity://agent/default/test_lv-test-#{System.unique_integer([:positive])}",
-        receivers: "session://default/default/lv-rcv-#{System.unique_integer([:positive])}"
+        matcher_type: "mention"
       }
     )
-    |> render_submit()
+    |> render_submit(%{rule: %{matcher_arg: matcher_arg, receivers: [receiver]}})
 
     html = render(lv)
     assert html =~ "mention"
@@ -50,9 +72,6 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
   test "switch_table changes view", %{conn: conn} do
     {:ok, lv, _html} = live(conn, "/routing")
 
-    # Phase 8 polish added a sidebar tablist; scope to the main body's
-    # tab strip so the click hits a single button (the body table-tabs
-    # section).
     lv
     |> element(
       "#table-tabs button[phx-value-table='Elixir.EzagentDomainChat.Routing.SessionRouting']"
@@ -60,7 +79,6 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
     |> render_click()
 
     html = render(lv)
-    # SessionRouting empty by default in test sandbox
     assert html =~ "Routing Rules"
   end
 
@@ -82,11 +100,10 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
     |> form("#add-rule form",
       rule: %{
         table: "Elixir.EzagentDomainChat.Routing.MentionRouting",
-        matcher_json: combinator_json,
-        receivers: "session://default/default/oncall"
+        matcher_json: combinator_json
       }
     )
-    |> render_submit()
+    |> render_submit(%{rule: %{receivers: ["session://default/default/oncall"]}})
 
     html = render(lv)
     assert html =~ ":and"
@@ -99,14 +116,80 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
     |> form("#add-rule form",
       rule: %{
         table: "Elixir.EzagentDomainChat.Routing.MentionRouting",
-        matcher_type: "mention",
-        matcher_arg: "entity://agent/default/test_x",
-        receivers: ""
+        matcher_type: "mention"
       }
     )
-    |> render_submit()
+    |> render_submit(%{rule: %{matcher_arg: "entity://agent/default/test_x"}})
 
     html = render(lv)
     assert html =~ "receiver"
+  end
+
+  # --- V1 UI PR-1 (SPEC §1.6) — server-side revalidation ---------------------
+
+  test "add_rule rejects a tampered out-of-workspace matcher arg", %{conn: conn} do
+    {:ok, lv, _html} = live(conn, "/routing")
+
+    # The picker is scoped to workspace://default; a hand-tampered
+    # hidden input naming an entity in another workspace must be
+    # rejected server-side, NOT dispatched.
+    lv
+    |> form("#add-rule form",
+      rule: %{
+        table: "Elixir.EzagentDomainChat.Routing.MentionRouting",
+        matcher_type: "mention"
+      }
+    )
+    |> render_submit(%{
+      rule: %{
+        matcher_arg: "entity://agent/other-tenant/cc_evil",
+        receivers: ["session://default/default/oncall"]
+      }
+    })
+
+    html = render(lv)
+    assert html =~ "Rejected URI"
+  end
+
+  test "add_rule rejects a tampered out-of-workspace receiver", %{conn: conn} do
+    {:ok, lv, _html} = live(conn, "/routing")
+
+    lv
+    |> form("#add-rule form",
+      rule: %{
+        table: "Elixir.EzagentDomainChat.Routing.MentionRouting",
+        matcher_type: "mention"
+      }
+    )
+    |> render_submit(%{
+      rule: %{
+        matcher_arg: "entity://agent/default/test_ok",
+        receivers: ["entity://agent/other-tenant/cc_leak"]
+      }
+    })
+
+    html = render(lv)
+    assert html =~ "Rejected URI"
+  end
+
+  test "add_rule rejects a malformed receiver URI", %{conn: conn} do
+    {:ok, lv, _html} = live(conn, "/routing")
+
+    lv
+    |> form("#add-rule form",
+      rule: %{
+        table: "Elixir.EzagentDomainChat.Routing.MentionRouting",
+        matcher_type: "mention"
+      }
+    )
+    |> render_submit(%{
+      rule: %{
+        matcher_arg: "entity://agent/default/test_ok",
+        receivers: ["not-a-valid-uri"]
+      }
+    })
+
+    html = render(lv)
+    assert html =~ "Rejected URI"
   end
 end

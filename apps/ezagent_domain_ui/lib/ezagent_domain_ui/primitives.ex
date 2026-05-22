@@ -31,23 +31,21 @@ defmodule EzagentDomainUi.Primitives do
       <.status_dot color="green" />
       <.status_dot color="amber" pulse />
   """
-  attr :color, :string, default: "gray", values: ~w(green gray amber red)
-  attr :pulse, :boolean, default: false
-  attr :class, :string, default: ""
+  attr(:color, :string, default: "gray", values: ~w(green gray amber red))
+  attr(:pulse, :boolean, default: false)
+  attr(:class, :string, default: "")
 
   def status_dot(assigns) do
     ~H"""
-    <span
-      class={[
-        "inline-block w-2 h-2 rounded-full",
-        @color == "green" && "bg-emerald-500",
-        @color == "gray" && "bg-zinc-400",
-        @color == "amber" && "bg-amber-500",
-        @color == "red" && "bg-rose-500",
-        @pulse && "animate-pulse",
-        @class
-      ]}
-    />
+    <span class={[
+      "inline-block w-2 h-2 rounded-full",
+      @color == "green" && "bg-emerald-500",
+      @color == "gray" && "bg-zinc-400",
+      @color == "amber" && "bg-amber-500",
+      @color == "red" && "bg-rose-500",
+      @pulse && "animate-pulse",
+      @class
+    ]} />
     """
   end
 
@@ -59,9 +57,9 @@ defmodule EzagentDomainUi.Primitives do
       <.avatar uri="entity://user/system/admin" />
       <.avatar uri="entity://agent/default/cc_demo" size="md" />
   """
-  attr :uri, :any, required: true
-  attr :size, :string, default: "sm", values: ~w(xs sm md)
-  attr :class, :string, default: ""
+  attr(:uri, :any, required: true)
+  attr(:size, :string, default: "sm", values: ~w(xs sm md))
+  attr(:class, :string, default: "")
 
   def avatar(assigns) do
     # Phase 8c PR-C — procedural avatar (Allen 2026-05-20). Each entity
@@ -74,7 +72,8 @@ defmodule EzagentDomainUi.Primitives do
     assigns =
       assigns
       |> assign(:label, label)
-      |> assign(:bg_style,
+      |> assign(
+        :bg_style,
         "background: conic-gradient(from 220deg at 30% 30%, hsl(#{hue1} 70% 52%) 0%, hsl(#{hue2} 65% 45%) 100%);"
       )
 
@@ -147,14 +146,17 @@ defmodule EzagentDomainUi.Primitives do
         on_select="select_tab"
       />
   """
-  attr :items, :list, required: true
-  attr :selected, :any, required: true
-  attr :on_select, :string, default: nil
-  attr :class, :string, default: ""
+  attr(:items, :list, required: true)
+  attr(:selected, :any, required: true)
+  attr(:on_select, :string, default: nil)
+  attr(:class, :string, default: "")
 
   def tabs(assigns) do
     ~H"""
-    <div class={["flex items-center gap-px border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950", @class]}>
+    <div class={[
+      "flex items-center gap-px border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950",
+      @class
+    ]}>
       <button
         :for={{key, label} <- @items}
         type="button"
@@ -162,9 +164,9 @@ defmodule EzagentDomainUi.Primitives do
         phx-value-key={inspect(key)}
         class={[
           "px-3 py-1.5 text-xs font-medium transition-colors border-b-2",
-          to_string(key) == to_string(@selected)
-            && "border-zinc-900 dark:border-zinc-100 text-zinc-900 dark:text-zinc-100 bg-white dark:bg-zinc-900"
-            || "border-transparent text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+          (to_string(key) == to_string(@selected) &&
+             "border-zinc-900 dark:border-zinc-100 text-zinc-900 dark:text-zinc-100 bg-white dark:bg-zinc-900") ||
+            "border-transparent text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800"
         ]}
       >
         {label}
@@ -186,12 +188,12 @@ defmodule EzagentDomainUi.Primitives do
         </:footer>
       </.modal>
   """
-  attr :id, :string, required: true
-  attr :open, :boolean, default: false
-  attr :on_close, :string, default: nil
-  slot :header
-  slot :body
-  slot :footer
+  attr(:id, :string, required: true)
+  attr(:open, :boolean, default: false)
+  attr(:on_close, :string, default: nil)
+  slot(:header)
+  slot(:body)
+  slot(:footer)
 
   def modal(assigns) do
     ~H"""
@@ -209,13 +211,19 @@ defmodule EzagentDomainUi.Primitives do
         phx-click={if @on_close, do: @on_close}
       />
       <div class="relative z-10 w-full max-w-md mx-4 bg-white dark:bg-zinc-900 rounded-lg shadow-2xl overflow-hidden">
-        <div :if={@header != []} class="px-4 py-3 border-b border-zinc-200 dark:border-zinc-800 font-medium text-sm">
+        <div
+          :if={@header != []}
+          class="px-4 py-3 border-b border-zinc-200 dark:border-zinc-800 font-medium text-sm"
+        >
           {render_slot(@header)}
         </div>
         <div :if={@body != []} class="px-4 py-3 text-sm text-zinc-700 dark:text-zinc-300">
           {render_slot(@body)}
         </div>
-        <div :if={@footer != []} class="px-4 py-3 border-t border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 flex justify-end gap-2">
+        <div
+          :if={@footer != []}
+          class="px-4 py-3 border-t border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 flex justify-end gap-2"
+        >
           {render_slot(@footer)}
         </div>
       </div>
@@ -230,21 +238,19 @@ defmodule EzagentDomainUi.Primitives do
 
       <.toast kind="success">Saved</.toast>
   """
-  attr :kind, :string, default: "info", values: ~w(info success error)
-  attr :class, :string, default: ""
-  slot :inner_block, required: true
+  attr(:kind, :string, default: "info", values: ~w(info success error))
+  attr(:class, :string, default: "")
+  slot(:inner_block, required: true)
 
   def toast(assigns) do
     ~H"""
-    <div
-      class={[
-        "fixed bottom-4 right-4 z-40 px-3 py-2 rounded-md shadow-lg text-sm font-medium",
-        @kind == "info" && "bg-zinc-800 text-white",
-        @kind == "success" && "bg-emerald-600 text-white",
-        @kind == "error" && "bg-rose-600 text-white",
-        @class
-      ]}
-    >
+    <div class={[
+      "fixed bottom-4 right-4 z-40 px-3 py-2 rounded-md shadow-lg text-sm font-medium",
+      @kind == "info" && "bg-zinc-800 text-white",
+      @kind == "success" && "bg-emerald-600 text-white",
+      @kind == "error" && "bg-rose-600 text-white",
+      @class
+    ]}>
       {render_slot(@inner_block)}
     </div>
     """
@@ -263,14 +269,14 @@ defmodule EzagentDomainUi.Primitives do
 
   Use the `section` slot for groups; pass plain children for ungrouped items.
   """
-  attr :class, :string, default: ""
+  attr(:class, :string, default: "")
 
   slot :section do
-    attr :title, :string, required: true
-    attr :count, :integer
+    attr(:title, :string, required: true)
+    attr(:count, :integer)
   end
 
-  slot :inner_block
+  slot(:inner_block)
 
   def tree_list(assigns) do
     ~H"""
@@ -278,7 +284,10 @@ defmodule EzagentDomainUi.Primitives do
       <div :for={section <- @section} class="mb-2">
         <div class="px-2 py-1 text-[10px] uppercase tracking-wide text-zinc-500 font-medium flex items-center justify-between">
           <span>{section.title}</span>
-          <span :if={Map.get(section, :count)} class="text-zinc-400 dark:text-zinc-600 normal-case tracking-normal">
+          <span
+            :if={Map.get(section, :count)}
+            class="text-zinc-400 dark:text-zinc-600 normal-case tracking-normal"
+          >
             {section.count}
           </span>
         </div>
@@ -304,10 +313,10 @@ defmodule EzagentDomainUi.Primitives do
         </:action>
       </.empty_state>
   """
-  attr :title, :string, required: true
-  attr :description, :string, default: nil
-  attr :icon, :string, default: "📭"
-  slot :action
+  attr(:title, :string, required: true)
+  attr(:description, :string, default: nil)
+  attr(:icon, :string, default: "📭")
+  slot(:action)
 
   def empty_state(assigns) do
     ~H"""
@@ -331,16 +340,16 @@ defmodule EzagentDomainUi.Primitives do
         <:help>We never share your email.</:help>
       </.form_field>
   """
-  attr :name, :string, required: true
-  attr :type, :string, default: "text"
-  attr :label, :string, required: true
-  attr :value, :any, default: nil
-  attr :placeholder, :string, default: nil
-  attr :required, :boolean, default: false
-  attr :error, :string, default: nil
-  attr :class, :string, default: ""
-  attr :rest, :global, include: ~w(autocomplete pattern)
-  slot :help
+  attr(:name, :string, required: true)
+  attr(:type, :string, default: "text")
+  attr(:label, :string, required: true)
+  attr(:value, :any, default: nil)
+  attr(:placeholder, :string, default: nil)
+  attr(:required, :boolean, default: false)
+  attr(:error, :string, default: nil)
+  attr(:class, :string, default: "")
+  attr(:rest, :global, include: ~w(autocomplete pattern))
+  slot(:help)
 
   def form_field(assigns) do
     ~H"""
@@ -357,7 +366,7 @@ defmodule EzagentDomainUi.Primitives do
         required={@required}
         class={[
           "px-2 py-1.5 text-xs border rounded-md font-mono",
-          @error && "border-rose-400 dark:border-rose-600" || "border-zinc-300 dark:border-zinc-700"
+          (@error && "border-rose-400 dark:border-rose-600") || "border-zinc-300 dark:border-zinc-700"
         ]}
         {@rest}
       />
@@ -375,9 +384,9 @@ defmodule EzagentDomainUi.Primitives do
       <.uri_chip uri={@current_entity_uri} />
       <.uri_chip uri="entity://user/system/admin" copyable />
   """
-  attr :uri, :any, required: true
-  attr :copyable, :boolean, default: false
-  attr :class, :string, default: ""
+  attr(:uri, :any, required: true)
+  attr(:copyable, :boolean, default: false)
+  attr(:class, :string, default: "")
 
   def uri_chip(assigns) do
     str = uri_to_string(assigns.uri)
@@ -407,8 +416,8 @@ defmodule EzagentDomainUi.Primitives do
         <.button size="sm" variant="ghost">⚙</.button>
       </.toolbar>
   """
-  attr :class, :string, default: ""
-  slot :inner_block, required: true
+  attr(:class, :string, default: "")
+  slot(:inner_block, required: true)
 
   def toolbar(assigns) do
     ~H"""
@@ -427,9 +436,9 @@ defmodule EzagentDomainUi.Primitives do
         <.icon name="message-square" />
       </.tooltip>
   """
-  attr :text, :string, required: true
-  attr :class, :string, default: ""
-  slot :inner_block, required: true
+  attr(:text, :string, required: true)
+  attr(:class, :string, default: "")
+  slot(:inner_block, required: true)
 
   def tooltip(assigns) do
     ~H"""
@@ -457,9 +466,9 @@ defmodule EzagentDomainUi.Primitives do
   at compile time (via `__heroicon__/1` macro-ish function lookup).
   Unknown names fall back to the small text glyph.
   """
-  attr :name, :string, required: true
-  attr :size, :string, default: "sm", values: ~w(xs sm md lg)
-  attr :class, :string, default: ""
+  attr(:name, :string, required: true)
+  attr(:size, :string, default: "sm", values: ~w(xs sm md lg))
+  attr(:class, :string, default: "")
 
   def icon(assigns) do
     {svg_path, fallback} = resolve_icon(assigns.name)
@@ -538,7 +547,16 @@ defmodule EzagentDomainUi.Primitives do
     umbrella_root = File.cwd!()
 
     # Try umbrella root first (works from `mix phx.server` at root)
-    candidate1 = Path.join([umbrella_root, "deps", "heroicons", "optimized", "24", "outline", "#{basename}.svg"])
+    candidate1 =
+      Path.join([
+        umbrella_root,
+        "deps",
+        "heroicons",
+        "optimized",
+        "24",
+        "outline",
+        "#{basename}.svg"
+      ])
 
     if File.exists?(candidate1) do
       candidate1
@@ -547,7 +565,17 @@ defmodule EzagentDomainUi.Primitives do
       candidate2 =
         :code.lib_dir(:ezagent_domain_ui)
         |> to_string()
-        |> Path.join(["..", "..", "..", "deps", "heroicons", "optimized", "24", "outline", "#{basename}.svg"])
+        |> Path.join([
+          "..",
+          "..",
+          "..",
+          "deps",
+          "heroicons",
+          "optimized",
+          "24",
+          "outline",
+          "#{basename}.svg"
+        ])
         |> Path.expand()
 
       candidate2
@@ -570,5 +598,208 @@ defmodule EzagentDomainUi.Primitives do
       {:error, _} ->
         nil
     end
+  end
+
+  # --- uri_picker ------------------------------------------------------------
+
+  @doc """
+  URI selector component — combobox (`:single`) or tag-input
+  (`:multi`). V1 UI PR-1 (SPEC §1.2).
+
+  Replaces the raw URI text inputs across the routing + workspace
+  forms. A **stateless** `Phoenix.Component` — it does NOT query
+  registries. The host LiveView (Tier-3) computes `options` via
+  `Ezagent.UI.UriOptions.*` and passes them in; this keeps the atom
+  registry-dependency-free (3-layer architecture invariant).
+
+      <.uri_picker name="rule[matcher_arg]" mode={:single} options={@entity_options} />
+      <.uri_picker name="rule[receivers]" mode={:multi} options={@receiver_options} />
+
+  ## Behaviour
+
+  - `:single` → a combobox: a text input with a filtered dropdown of
+    matching options. A hidden `<input type="hidden" name={@name}>`
+    carries the chosen URI.
+  - `:multi` → a tag-input with autocomplete: chosen URIs render as
+    removable chips; picking from the filtered list adds a chip. Each
+    chip emits `<input type="hidden" name={@name <> "[]"}>` so the form
+    submit yields the list.
+
+  ## JS hook + diff protection
+
+  The component root `<div>` carries `phx-hook="UriPicker"`. The
+  mutable subtree (dropdown, chip list, hidden inputs) is wrapped in
+  `phx-update="ignore"` so a LiveView re-render does not wipe the
+  hook-mutated DOM. The immutable `options` list rides in a
+  `data-options` JSON attribute on the root, which the hook reads on
+  `mounted()` and re-reads on `updated()` (workspace switch /
+  reconnect — the hook prunes selections no longer present, SPEC §1.6).
+
+  Client-side filtering is UX only — the server revalidates every
+  submitted URI (`Ezagent.UI.UriOptions.valid_for?/4`).
+  """
+  attr(:name, :string, required: true)
+  attr(:mode, :atom, default: :single, values: [:single, :multi])
+  attr(:options, :list, required: true)
+  attr(:kinds, :list, default: [:entity, :session])
+  attr(:value, :any, default: nil)
+  attr(:placeholder, :string, default: nil)
+  attr(:allow_freetext, :boolean, default: false)
+  attr(:label, :string, default: nil)
+  attr(:required, :boolean, default: false)
+  attr(:id, :string, default: nil)
+  attr(:class, :string, default: nil)
+
+  def uri_picker(assigns) do
+    assigns =
+      assigns
+      |> assign(:id, assigns.id || "uri-picker-" <> uri_picker_slug(assigns.name))
+      |> assign(:options_json, Jason.encode!(uri_picker_options(assigns.options)))
+      |> assign(:selected, uri_picker_selected(assigns.value, assigns.mode))
+      |> assign(:freetext_value, uri_picker_freetext_value(assigns.value, assigns.mode))
+
+    ~H"""
+    <div
+      id={@id}
+      phx-hook="UriPicker"
+      data-options={@options_json}
+      data-mode={Atom.to_string(@mode)}
+      data-name={@name}
+      data-allow-freetext={to_string(@allow_freetext)}
+      class={["flex flex-col gap-1", @class]}
+    >
+      <label :if={@label} class="text-xs font-medium text-zinc-700 dark:text-zinc-300">
+        {@label}
+        <span :if={@required} class="text-rose-600 dark:text-rose-400">*</span>
+      </label>
+
+      <%!--
+        Mutable subtree — JS-owned. phx-update="ignore" so a LiveView
+        re-render never wipes hook-mutated chips / dropdown / hidden
+        inputs. Pre-seeded server-side so a no-JS dead-render still
+        submits sensibly; the hook re-hydrates from data-options.
+      --%>
+      <div data-uri-picker-body phx-update="ignore" id={@id <> "-body"}>
+        <div :if={@mode == :multi} data-uri-picker-chips class="flex flex-wrap gap-1 mb-1">
+          <span
+            :for={uri <- @selected}
+            data-uri-picker-chip
+            class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-mono bg-zinc-100 dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-800"
+          >
+            <span data-uri-picker-chip-label>{uri}</span>
+            <button
+              type="button"
+              data-uri-picker-chip-remove
+              data-uri={uri}
+              class="text-zinc-400 hover:text-rose-600 dark:hover:text-rose-400"
+              aria-label="Remove"
+            >
+              ✕
+            </button>
+            <input type="hidden" name={@name <> "[]"} value={uri} data-uri-picker-hidden />
+          </span>
+        </div>
+
+        <input
+          :if={@mode == :single}
+          type="hidden"
+          name={@name}
+          value={List.first(@selected)}
+          data-uri-picker-hidden
+        />
+
+        <div class="relative">
+          <input
+            type="text"
+            data-uri-picker-filter
+            value={uri_picker_filter_seed(@selected, @mode)}
+            placeholder={@placeholder || uri_picker_default_placeholder(@kinds)}
+            autocomplete="off"
+            class="w-full px-2 py-1.5 text-xs border rounded-md font-mono border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
+          />
+          <ul
+            data-uri-picker-dropdown
+            class="hidden absolute z-20 mt-1 w-full max-h-56 overflow-auto rounded-md border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-lg text-xs"
+          >
+          </ul>
+          <p
+            data-uri-picker-empty
+            class="hidden absolute z-20 mt-1 w-full rounded-md border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-lg text-[11px] text-zinc-500 dark:text-zinc-400 px-2 py-1.5"
+          >
+            No {uri_picker_kinds_phrase(@kinds)} match.
+          </p>
+        </div>
+      </div>
+
+      <details :if={@allow_freetext} data-uri-picker-freetext class="mt-1">
+        <summary class="cursor-pointer text-[11px] text-zinc-500 dark:text-zinc-400">
+          or enter a URI manually
+        </summary>
+        <input
+          type="text"
+          data-uri-picker-freetext-input
+          name={uri_picker_freetext_name(@name, @mode)}
+          value={@freetext_value}
+          disabled
+          placeholder="entity://agent/default/cc_demo"
+          class="mt-1 w-full px-2 py-1.5 text-xs border rounded-md font-mono border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
+        />
+      </details>
+    </div>
+    """
+  end
+
+  # The hook reads this — keep only the keys it needs (uri/label/
+  # kind/flavor). Drop anything else a caller's option map carries.
+  defp uri_picker_options(options) when is_list(options) do
+    Enum.map(options, fn opt ->
+      %{
+        "uri" => Map.get(opt, :uri) || Map.get(opt, "uri"),
+        "label" => Map.get(opt, :label) || Map.get(opt, "label"),
+        "kind" => uri_picker_kind_str(Map.get(opt, :kind) || Map.get(opt, "kind")),
+        "flavor" => Map.get(opt, :flavor) || Map.get(opt, "flavor")
+      }
+    end)
+  end
+
+  defp uri_picker_kind_str(k) when is_atom(k) and not is_nil(k), do: Atom.to_string(k)
+  defp uri_picker_kind_str(k) when is_binary(k), do: k
+  defp uri_picker_kind_str(_), do: nil
+
+  defp uri_picker_selected(nil, :single), do: []
+  defp uri_picker_selected("", :single), do: []
+  defp uri_picker_selected(v, :single) when is_binary(v), do: [v]
+  defp uri_picker_selected(v, :multi) when is_list(v), do: Enum.filter(v, &(&1 != ""))
+  defp uri_picker_selected(_, _), do: []
+
+  # When `allow_freetext` and the current value is NOT one of the
+  # options, the value is treated as the free-text seed. The hook
+  # decides at runtime which input is enabled; this seeds the markup.
+  defp uri_picker_freetext_value(v, :single) when is_binary(v), do: v
+  defp uri_picker_freetext_value(_, _), do: ""
+
+  # For :single the filter input shows the current selection; for
+  # :multi it stays empty (selections are chips above it).
+  defp uri_picker_filter_seed([uri | _], :single), do: uri
+  defp uri_picker_filter_seed(_, _), do: ""
+
+  # Free-text shares the SAME submit param as the picker hidden field
+  # (SPEC §1.4). The hook disables exactly one source so there is no
+  # merge / precedence rule.
+  defp uri_picker_freetext_name(name, :multi), do: name <> "[]"
+  defp uri_picker_freetext_name(name, :single), do: name
+
+  defp uri_picker_default_placeholder([:entity]), do: "Search entities…"
+  defp uri_picker_default_placeholder([:session]), do: "Search sessions…"
+  defp uri_picker_default_placeholder(_), do: "Search entities + sessions…"
+
+  defp uri_picker_kinds_phrase([:entity]), do: "entities"
+  defp uri_picker_kinds_phrase([:session]), do: "sessions"
+  defp uri_picker_kinds_phrase(_), do: "entities or sessions"
+
+  defp uri_picker_slug(name) do
+    name
+    |> String.replace(~r/[^a-zA-Z0-9]+/, "-")
+    |> String.trim("-")
   end
 end

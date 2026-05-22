@@ -27,6 +27,7 @@ import topbar from "../vendor/topbar"
 import {MentionAutocomplete} from "./hooks/mention_autocomplete"
 import {CountUp} from "./hooks/count_up"
 import {PtyTerminal} from "./hooks/pty_terminal"
+import {UriPicker} from "./hooks/uri_picker"
 
 // Auto-scroll messages stream on new inserts AND preserve visual
 // position on history prepend.
@@ -84,7 +85,7 @@ const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, ScrollOnUpdate, PtyTerminal, MentionAutocomplete, CountUp},
+  hooks: {...colocatedHooks, ScrollOnUpdate, PtyTerminal, MentionAutocomplete, CountUp, UriPicker},
 })
 
 // Show progress bar on live navigation and form submits

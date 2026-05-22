@@ -40,8 +40,15 @@ defmodule EzagentDomainUi.MixProject do
       # consumed by EzagentDomainUi.Pty.TerminalView.applies_to?/1
       # which queries Ezagent.Domain.Pty.alive?/1 for cross-flavor
       # detection (Domain.Pty PR-C, 2026-05-21).
+      #
+      # V1 UI PR-1 (SPEC §1.3) — ezagent_domain_identity is consumed by
+      # `Ezagent.UI.UriOptions`, which enriches option labels via
+      # `Ezagent.EntityPresenter.display/1`. Identity is a sibling
+      # Domain app that depends only on ezagent_core, so this introduces
+      # no dependency cycle.
       {:ezagent_core, in_umbrella: true},
       {:ezagent_domain_pty, in_umbrella: true},
+      {:ezagent_domain_identity, in_umbrella: true},
       {:phoenix_live_view, ">= 0.0.0"},
       {:phoenix_html, "~> 4.1"}
     ]

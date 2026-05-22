@@ -494,6 +494,10 @@ defmodule EzagentPluginLiveview.AdminLive do
     with {:ok, leaf_matcher} <- build_session_form_matcher(params),
          receivers when is_list(receivers) and receivers != [] <-
            parse_session_receivers(Map.get(params, "receivers", "")),
+         # SPEC §1.6 — revalidate every uri_picker submission
+         # server-side before dispatch. Hidden inputs are untrusted.
+         :ok <- revalidate_session_matcher_arg(socket, params),
+         :ok <- revalidate_session_uris(socket, receivers, [:entity, :session]),
          matcher = wrap_in_session(leaf_matcher, session_uri),
          {:ok, _} <-
            dispatch_session_routing(socket, :add_rule, %{
@@ -506,6 +510,16 @@ defmodule EzagentPluginLiveview.AdminLive do
        |> assign(:session_routing_rules, list_session_scoped_rules(session_uri))
        |> assign(:flash_error, nil)}
     else
+      {:error, {:invalid_uri, bad}} ->
+        # SPEC §1.6 — a submitted URI failed revalidation. Flash, no
+        # dispatch.
+        {:noreply,
+         assign(
+           socket,
+           :flash_error,
+           "Rejected URI #{inspect(bad)} — not a valid in-workspace entity/session."
+         )}
+
       {:error, :unauthorized} ->
         {:noreply,
          assign(
@@ -523,8 +537,7 @@ defmodule EzagentPluginLiveview.AdminLive do
          )}
 
       [] ->
-        {:noreply,
-         assign(socket, :flash_error, "At least one receiver URI is required.")}
+        {:noreply, assign(socket, :flash_error, "At least one receiver URI is required.")}
 
       {:error, reason} ->
         {:noreply, assign(socket, :flash_error, "Add rule failed: #{inspect(reason)}")}
@@ -558,9 +571,7 @@ defmodule EzagentPluginLiveview.AdminLive do
     session_uri = socket.assigns.current_session_uri
 
     target =
-      URI.parse(
-        URI.to_string(session_uri) <> "?action=routing." <> Atom.to_string(action)
-      )
+      URI.parse(URI.to_string(session_uri) <> "?action=routing." <> Atom.to_string(action))
 
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
       target: target,
@@ -592,6 +603,15 @@ defmodule EzagentPluginLiveview.AdminLive do
   defp build_session_form_matcher(_),
     do: {:error, :invalid_matcher_form}
 
+  # V1 UI PR-1 — the receivers field is now a :multi uri_picker, which
+  # submits `rule[receivers][]` as a list. The comma-separated string
+  # clause is kept for the no-JS dead-render fallback.
+  defp parse_session_receivers(list) when is_list(list) do
+    list
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+  end
+
   defp parse_session_receivers(csv) when is_binary(csv) do
     csv
     |> String.split(",", trim: true)
@@ -600,6 +620,39 @@ defmodule EzagentPluginLiveview.AdminLive do
   end
 
   defp parse_session_receivers(_), do: []
+
+  # SPEC §1.6 — server-side revalidation of uri_picker submissions in
+  # the session-scoped RoutingView. The picker's hidden inputs are
+  # untrusted user-controlled DOM; every submitted URI must pass the
+  # SHARED validator `UriOptions.valid_for?/4` before dispatch.
+  #
+  # Form-mode mention/from matchers carry one entity URI; text_contains
+  # / always carry no URI. Receivers carry entity + session URIs.
+  defp revalidate_session_matcher_arg(socket, %{
+         "matcher_type" => type,
+         "matcher_arg" => arg
+       })
+       when type in ["mention", "from"] and is_binary(arg) and arg != "" do
+    revalidate_session_uris(socket, [arg], [:entity])
+  end
+
+  defp revalidate_session_matcher_arg(_socket, _params), do: :ok
+
+  defp revalidate_session_uris(socket, uris, kinds) do
+    caller_uri = socket.assigns.current_entity_uri
+    # Session-scoped rules live in the session's workspace — revalidate
+    # against THAT workspace (same scope the picker options were built
+    # from), not the caller's current workspace.
+    workspace_uri = routing_workspace_uri(socket)
+
+    Enum.reduce_while(uris, :ok, fn uri, :ok ->
+      if Ezagent.UI.UriOptions.valid_for?(caller_uri, workspace_uri, uri, kinds) do
+        {:cont, :ok}
+      else
+        {:halt, {:error, {:invalid_uri, uri}}}
+      end
+    end)
+  end
 
   # Wrap a leaf matcher with an `:in_session` constraint so the rule
   # only fires for the current session. If the leaf is already an
@@ -701,6 +754,8 @@ defmodule EzagentPluginLiveview.AdminLive do
               empty_state?={@messages_empty?}
               session_uri={@current_session_uri}
               session_routing_rules={@session_routing_rules}
+              entity_options={@routing_entity_options}
+              receiver_options={@routing_receiver_options}
             />
           </:main_view>
         </SessionEditor.session_editor>
@@ -759,6 +814,9 @@ defmodule EzagentPluginLiveview.AdminLive do
   # V1 Allen #2 — RoutingView reads these.
   attr(:session_uri, :any, default: nil)
   attr(:session_routing_rules, :list, default: [])
+  # V1 UI PR-1 — RoutingView's uri_picker option lists.
+  attr(:entity_options, :list, default: [])
+  attr(:receiver_options, :list, default: [])
 
   defp render_active_view(assigns) do
     case assigns.view_module do
@@ -830,6 +888,44 @@ defmodule EzagentPluginLiveview.AdminLive do
     |> assign(:session_info, build_session_info(session_uri, members))
     |> assign(:feishu_chat_ids, feishu_chat_ids_for(session_uri))
     |> assign(:session_routing_rules, session_routing_rules)
+    |> assign_routing_uri_options()
+  end
+
+  # V1 UI PR-1 (SPEC §1.2 / §1.5) — option lists for the RoutingView's
+  # uri_picker components. The RoutingView edits SESSION-scoped rules,
+  # so its pickers are scoped to the *session's* workspace (not the
+  # caller's current workspace). UriOptions still resolves the caller's
+  # authority itself: a non-system caller viewing a session in another
+  # workspace gets `[]`.
+  defp assign_routing_uri_options(socket) do
+    caller_uri = socket.assigns.current_entity_uri
+    workspace_uri = routing_workspace_uri(socket)
+
+    socket
+    |> assign(
+      :routing_entity_options,
+      Ezagent.UI.UriOptions.entities(caller_uri, workspace_uri)
+    )
+    |> assign(
+      :routing_receiver_options,
+      Ezagent.UI.UriOptions.entities_and_sessions(caller_uri, workspace_uri)
+    )
+  end
+
+  # The workspace a session-scoped routing rule + its uri_picker
+  # options belong to — derived from the current session URI. Falls
+  # back to the caller's current workspace when no session is in view.
+  defp routing_workspace_uri(socket) do
+    case Map.get(socket.assigns, :current_session_uri) do
+      %URI{} = session_uri ->
+        case Ezagent.Capability.workspace_of(session_uri) do
+          %URI{} = ws -> ws
+          _ -> socket.assigns.current_workspace_uri
+        end
+
+      _ ->
+        socket.assigns.current_workspace_uri
+    end
   end
 
   # V1 Allen #2 — explicit display order for the Session view-switcher.
@@ -939,6 +1035,7 @@ defmodule EzagentPluginLiveview.AdminLive do
 
   # `:in_session, "..."` matcher at any depth (and/or/not wrappers).
   defp matcher_targets_session?({:in_session, s}, session_str), do: s == session_str
+
   defp matcher_targets_session?({:and, items}, s) when is_list(items),
     do: Enum.any?(items, &matcher_targets_session?(&1, s))
 

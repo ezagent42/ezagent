@@ -8,6 +8,7 @@ defmodule EzagentPluginLiveview.WorkspacesLiveTest do
   setup do
     :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
     Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
+
     conn =
       Phoenix.ConnTest.build_conn()
       |> Plug.Test.init_test_session(%{
@@ -43,7 +44,9 @@ defmodule EzagentPluginLiveview.WorkspacesLiveTest do
   end
 
   test "detail page for non-existent workspace shows 'not found'", %{conn: conn} do
-    {:ok, _lv, html} = live(conn, "/workspaces/never-existed-#{System.unique_integer([:positive])}")
+    {:ok, _lv, html} =
+      live(conn, "/workspaces/never-existed-#{System.unique_integer([:positive])}")
+
     assert html =~ "Workspace not found"
   end
 
@@ -63,12 +66,35 @@ defmodule EzagentPluginLiveview.WorkspacesLiveTest do
 
     {:ok, lv, _html} = live(conn, "/workspaces/#{name}")
 
+    # V1 UI PR-1 — the add-member uri_picker is scoped to THIS
+    # workspace; the member URI's workspace segment must match `name`.
+    # The hidden input is JS-managed, so pass the value via
+    # render_submit/2 extras.
+    member = "entity://agent/#{name}/test_test-add"
+
     lv
-    |> form("#members form", add_member: %{member_uri: "entity://agent/default/test_test-add"})
-    |> render_submit()
+    |> form("#members form")
+    |> render_submit(%{add_member: %{member_uri: member}})
 
     html = render(lv)
-    assert html =~ "entity://agent/default/test_test-add"
+    assert html =~ member
     assert html =~ "Members (1)"
+  end
+
+  # V1 UI PR-1 (SPEC §1.6) — server-side revalidation of the
+  # add-member uri_picker submission.
+  test "add_member rejects a tampered out-of-workspace URI", %{conn: conn} do
+    name = "lv-reject-#{System.unique_integer([:positive])}"
+    {:ok, _} = Ezagent.Workspace.create(name)
+
+    {:ok, lv, _html} = live(conn, "/workspaces/#{name}")
+
+    lv
+    |> form("#members form")
+    |> render_submit(%{add_member: %{member_uri: "entity://agent/other-tenant/cc_leak"}})
+
+    html = render(lv)
+    assert html =~ "Rejected"
+    assert html =~ "Members (0)"
   end
 end
