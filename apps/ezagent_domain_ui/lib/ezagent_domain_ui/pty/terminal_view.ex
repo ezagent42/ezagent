@@ -69,19 +69,19 @@ defmodule EzagentDomainUi.Pty.TerminalView do
   def render(assigns) do
     assigns = assign_new(assigns, :active_pty_agent_uri, fn -> nil end)
 
+    # Renders through the ONE unified terminal panel
+    # (`EzagentDomainUi.Pty.Terminal.panel/1`) — same component the
+    # standalone TerminalLive page and the inline AgentDetailLive panel
+    # use. The SessionView only picks the header mode + empty-state copy
+    # appropriate for the view-switcher; no terminal markup is
+    # reimplemented here.
     ~H"""
-    <div class="flex-1 flex flex-col bg-black text-zinc-200 min-h-0">
-      <div class="px-3 py-1 text-[11px] text-zinc-400 bg-zinc-900 border-b border-zinc-800 shrink-0">
-        Terminal —
-        <span class="font-mono">{@active_pty_agent_uri || "select a PTY-backed agent from Members panel"}</span>
-      </div>
-
-      <div :if={is_nil(@active_pty_agent_uri)} class="flex-1 flex items-center justify-center text-zinc-500 text-xs">
-        Click the terminal icon next to a PTY-backed agent in the Members panel to attach.
-      </div>
-
-      <Terminal.mount :if={@active_pty_agent_uri} agent_uri={@active_pty_agent_uri} />
-    </div>
+    <Terminal.panel
+      agent_uri={@active_pty_agent_uri}
+      header={:bar}
+      empty_text="Click the terminal icon next to a PTY-backed agent in the Members panel to attach."
+      class="flex-1"
+    />
     """
   end
 end
