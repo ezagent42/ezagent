@@ -31,9 +31,24 @@ defmodule Ezagent.Test.TestBehavior do
   @impl Ezagent.Behavior
   def interface do
     %{
-      noop: %{args: %{msg: :string}, returns: %{echoed: :string}, modes: [:call, :cast]},
-      fail: %{args: %{}, returns: %{}, modes: [:call]},
-      raise: %{args: %{}, returns: %{}, modes: [:call]}
+      noop: %{
+        description: "Bump the slice counter and echo the message",
+        args: %{msg: :string},
+        returns: %{echoed: :string},
+        modes: [:call, :cast]
+      },
+      fail: %{
+        description: "Always return {:error, :test_failure}",
+        args: %{},
+        returns: %{},
+        modes: [:call]
+      },
+      raise: %{
+        description: "Always raise — exercises the crash path",
+        args: %{},
+        returns: %{},
+        modes: [:call]
+      }
     }
   end
 end

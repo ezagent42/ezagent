@@ -102,6 +102,7 @@ defmodule Ezagent.Behavior.Pty do
   def interface do
     %{
       write: %{
+        description: "Write raw bytes to the agent's PTY input stream",
         args: %{bytes: :string},
         returns: %{bytes_written: :integer},
         modes: [:call, :cast]

@@ -167,16 +167,19 @@ defmodule Ezagent.Behavior.CurlAgent do
   def interface do
     %{
       receive: %{
+        description: "Call the remote LLM with the conversation and reply into the session",
         args: %{message: :map},
         returns: %{ok: :boolean, tokens: :integer, error: :atom},
         modes: [:cast]
       },
       reset_conversation: %{
+        description: "Clear the agent's accumulated conversation history",
         args: %{},
         returns: %{ok: :boolean},
         modes: [:call]
       },
       configure: %{
+        description: "Update the agent's provider, model, prompt, and history settings",
         args: %{
           provider: :string,
           api_url: :string,

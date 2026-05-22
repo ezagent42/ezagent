@@ -95,6 +95,22 @@ defmodule EzagentCli.Integration.CLIDispatchTest do
       assert MapSet.member?(action_names, "instantiate")
     end
 
+    test "action `about` text comes from the @interface :description key (V1 UI SPEC §0)" do
+      spec = TreeBuilder.build()
+      ws_sub = Enum.find(spec.subcommands, fn s -> s.name == "workspace" end)
+      assert ws_sub
+
+      add_member = Enum.find(ws_sub.subcommands, fn s -> s.name == "add_member" end)
+      assert add_member
+
+      # tree_builder.action_about/2 reads interface[action][:description]
+      # directly — no Code.fetch_docs scrape, no generic fallback.
+      expected = Ezagent.Behavior.Workspace.interface()[:add_member][:description]
+      assert is_binary(expected)
+      assert add_member.about == expected
+      refute add_member.about == "add_member action on #{Ezagent.Behavior.Workspace}"
+    end
+
     test "workspace subcommand includes :create facade op (registered by EzagentCore.Application)" do
       # Ensure registration ran by booting ezagent_core
       Application.ensure_all_started(:ezagent_core)
