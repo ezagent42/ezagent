@@ -12,12 +12,15 @@ defmodule EzagentPluginLiveview.Views.ConversationView do
 
   @behaviour Ezagent.UI.SessionView
   use Phoenix.Component
+  # i18n (Allen 2026-05-22) — Tier-3 plugin component; runtime backend
+  # reference to the host app's EzagentWeb.Gettext (no compile-time dep).
+  use Gettext, backend: EzagentPluginLiveview.Gettext
 
   @impl true
   def id, do: :conversation
 
   @impl true
-  def label, do: "Chat"
+  def label, do: gettext("Chat")
 
   @impl true
   def icon, do: "message-square"
@@ -51,7 +54,7 @@ defmodule EzagentPluginLiveview.Views.ConversationView do
           phx-click="load_older_messages"
           class="px-3 py-1 bg-white dark:bg-zinc-900 text-blue-600 dark:text-blue-400 border border-zinc-300 dark:border-zinc-700 rounded text-xs hover:bg-zinc-50 dark:hover:bg-zinc-900"
         >
-          ↑ Load older
+          ↑ {gettext("Load older")}
         </button>
       </div>
 
@@ -64,10 +67,10 @@ defmodule EzagentPluginLiveview.Views.ConversationView do
       >
         <div class="text-center">
           <div class="font-mono text-xs uppercase tracking-widest text-zinc-400 dark:text-zinc-600">
-            empty session
+            {gettext("empty session")}
           </div>
           <div class="mt-2 text-sm text-zinc-500">
-            Type a message below to begin.
+            {gettext("Type a message below to begin.")}
           </div>
         </div>
       </div>

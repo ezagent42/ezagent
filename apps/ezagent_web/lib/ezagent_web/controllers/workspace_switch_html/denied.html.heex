@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
   <head>
-    <title>Sign in required · ezagent</title>
+    <title>{gettext("Sign in required")} · ezagent</title>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -133,16 +133,17 @@
   <body>
     <div class="brand">ezagent</div>
     <div class="card">
-      <div class="badge">Permission required</div>
-      <h1>Sign in to workspace <code>{@target_workspace}</code></h1>
+      <div class="badge">{gettext("Permission required")}</div>
+      <h1>{gettext("Sign in to workspace")} <code>{@target_workspace}</code></h1>
       <p>
-        You don't have permission to view workspace
-        <code>{@target_workspace}</code> as your current identity
+        {gettext("You don't have permission to view workspace")}
+        <code>{@target_workspace}</code> {gettext("as your current identity")}
         (<code>{@caller_uri}</code>).
       </p>
       <p>
-        To work in <code>{@target_workspace}</code>, sign in as a
-        member of that workspace. This will end your current session.
+        {gettext(
+          "To work in this workspace, sign in as a member of it. This will end your current session."
+        )}
       </p>
       <div class="actions">
         <form action={logout_to_login_path(@target_workspace)} method="post">
@@ -152,10 +153,10 @@
             value={Plug.CSRFProtection.get_csrf_token()}
           />
           <button type="submit" class="btn btn-primary">
-            Sign in to {@target_workspace}
+            {gettext("Sign in to %{name}", name: @target_workspace)}
           </button>
         </form>
-        <a class="btn" href={~p"/sessions"}>Cancel</a>
+        <a class="btn" href={~p"/sessions"}>{gettext("Cancel")}</a>
       </div>
     </div>
   </body>

@@ -43,6 +43,9 @@ defmodule EzagentPluginLiveview.TerminalLive do
   """
 
   use Phoenix.LiveView
+  # i18n (Allen 2026-05-22) — runtime backend reference; no compile-time
+  # dep on :ezagent_web.
+  use Gettext, backend: EzagentPluginLiveview.Gettext
   alias EzagentDomainUi.WorkspaceShell
   alias EzagentPluginLiveview.AppShell
   use EzagentDomainUi.Components
@@ -91,7 +94,7 @@ defmodule EzagentPluginLiveview.TerminalLive do
       :error ->
         {:ok,
          socket
-         |> put_flash(:error, "Invalid agent URI")
+         |> put_flash(:error, gettext("Invalid agent URI"))
          |> push_navigate(to: "/identities")}
     end
   end
@@ -191,14 +194,14 @@ defmodule EzagentPluginLiveview.TerminalLive do
                 href={"/identities/agents/" <> URI.encode_www_form(URI.to_string(@agent_uri))}
                 class="text-xs text-blue-600 dark:text-blue-400 hover:text-blue-700 no-underline shrink-0"
               >
-                ← Agent
+                ← {gettext("Agent")}
               </a>
               <span class="text-sm font-mono text-zinc-700 dark:text-zinc-300 truncate">
                 {URI.to_string(@agent_uri)}
               </span>
             </div>
             <div class="text-xs text-zinc-500 dark:text-zinc-400 shrink-0">
-              Phase:
+              {gettext("Phase:")}
               <span class={phase_class(@status.phase)}>
                 <span class="font-mono">{@status.phase}</span>
               </span>
@@ -222,11 +225,11 @@ defmodule EzagentPluginLiveview.TerminalLive do
               <div class="flex-1 flex items-center justify-center p-8">
                 <div class="text-center max-w-md">
                   <h2 class="text-base font-medium text-zinc-700 dark:text-zinc-200 mb-2">
-                    Terminal not available
+                    {gettext("Terminal not available")}
                   </h2>
                   <p class="text-sm text-zinc-500 dark:text-zinc-400">
                     {pty_unavailable_help(@status.flavor)}
-                    Auto-refreshing every {@refresh_seconds}s.
+                    {gettext("Auto-refreshing every %{seconds}s.", seconds: @refresh_seconds)}
                   </p>
                 </div>
               </div>
@@ -234,11 +237,10 @@ defmodule EzagentPluginLiveview.TerminalLive do
               <div class="flex-1 flex items-center justify-center p-8">
                 <div class="text-center max-w-md">
                   <h2 class="text-base font-medium text-zinc-700 dark:text-zinc-200 mb-2">
-                    Agent not found
+                    {gettext("Agent not found")}
                   </h2>
                   <p class="text-sm text-zinc-500 dark:text-zinc-400">
-                    No Kind registered at this URI. Check that the agent URI is correct or
-                    instantiate the agent's template first.
+                    {gettext("No Kind registered at this URI. Check that the agent URI is correct or instantiate the agent's template first.")}
                   </p>
                 </div>
               </div>
@@ -263,17 +265,20 @@ defmodule EzagentPluginLiveview.TerminalLive do
   # so we explain "why no terminal" specifically rather than generic.
   defp pty_unavailable_help("cc"),
     do:
-      "The PTY process for this cc agent isn't running yet. It will " <>
-        "start when the agent's template is instantiated."
+      gettext(
+        "The PTY process for this cc agent isn't running yet. It will start when the agent's template is instantiated."
+      )
 
   defp pty_unavailable_help(flavor) when flavor in ["echo", "curl"],
     do:
-      "This flavor (#{flavor}) doesn't run under a PTY. Terminal " <>
-        "view is only available for agents whose template starts a " <>
-        "Ezagent.Domain.Pty.Server."
+      gettext(
+        "This flavor (%{flavor}) doesn't run under a PTY. Terminal view is only available for agents whose template starts a Ezagent.Domain.Pty.Server.",
+        flavor: flavor
+      )
 
   defp pty_unavailable_help(_),
     do:
-      "This agent isn't backed by a Ezagent.Domain.Pty.Server. " <>
-        "Terminal view requires a PTY-backed agent flavor."
+      gettext(
+        "This agent isn't backed by a Ezagent.Domain.Pty.Server. Terminal view requires a PTY-backed agent flavor."
+      )
 end

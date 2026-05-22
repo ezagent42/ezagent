@@ -33,7 +33,10 @@ defmodule EzagentWeb.WorkspaceSwitchController do
     case Ezagent.Workspace.Store.get_by_name(target_workspace) do
       nil ->
         conn
-        |> put_flash(:error, "Unknown workspace: " <> target_workspace)
+        |> put_flash(
+          :error,
+          gettext("Unknown workspace: %{name}", name: target_workspace)
+        )
         |> redirect(to: ~p"/sessions")
 
       %{visible: false} ->
@@ -41,7 +44,7 @@ defmodule EzagentWeb.WorkspaceSwitchController do
         # directly switchable; the system-member context-swap still
         # operates on visible targets only.
         conn
-        |> put_flash(:error, "Workspace not available")
+        |> put_flash(:error, gettext("Workspace not available"))
         |> redirect(to: ~p"/sessions")
 
       workspace ->
@@ -51,7 +54,7 @@ defmodule EzagentWeb.WorkspaceSwitchController do
 
   def switch(conn, _params) do
     conn
-    |> put_flash(:error, "Missing workspace parameter.")
+    |> put_flash(:error, gettext("Missing workspace parameter."))
     |> redirect(to: ~p"/sessions")
   end
 
@@ -69,7 +72,10 @@ defmodule EzagentWeb.WorkspaceSwitchController do
         # workspace slot — see session_principal_test.exs allow list.
         conn
         |> put_session(:current_workspace_uri, URI.to_string(target_uri))
-        |> put_flash(:info, "Operating on workspace " <> workspace.name)
+        |> put_flash(
+          :info,
+          gettext("Operating on workspace %{name}", name: workspace.name)
+        )
         |> redirect(to: ~p"/sessions")
 
       URI.to_string(caller_workspace) == URI.to_string(target_uri) ->

@@ -31,6 +31,9 @@ defmodule EzagentDomainUi.IdeShell do
   """
 
   use Phoenix.Component
+  # i18n (Allen 2026-05-22) — Tier-2 shared-component backend. NOT a
+  # dependency on `ezagent_web` (see `EzagentDomainUi.Gettext` moduledoc).
+  use Gettext, backend: EzagentDomainUi.Gettext
   use EzagentDomainUi.Primitives
   alias Phoenix.LiveView.JS
 
@@ -159,7 +162,7 @@ defmodule EzagentDomainUi.IdeShell do
         <div class="flex items-center gap-2 shrink-0">
           <span class="font-semibold text-xs tracking-tight">ezagent</span>
           <span class="text-zinc-400 dark:text-zinc-600 select-none">·</span>
-          <span class="text-xs text-zinc-600 dark:text-zinc-400">System</span>
+          <span class="text-xs text-zinc-600 dark:text-zinc-400">{gettext("System")}</span>
         </div>
       <% else %>
         <%= if @workspaces != [] do %>
@@ -196,10 +199,10 @@ defmodule EzagentDomainUi.IdeShell do
             class="ez-typing-placeholder relative flex-1 text-left h-4 overflow-hidden"
             aria-live="polite"
           >
-            <span class="ez-typing-line">搜索 sessions</span>
-            <span class="ez-typing-line">召唤 entity</span>
-            <span class="ez-typing-line">执行 action</span>
-            <span class="ez-typing-line">跳转 routing</span>
+            <span class="ez-typing-line">{gettext("Search sessions")}</span>
+            <span class="ez-typing-line">{gettext("Summon entity")}</span>
+            <span class="ez-typing-line">{gettext("Run action")}</span>
+            <span class="ez-typing-line">{gettext("Jump to routing")}</span>
           </span>
           <span class="ml-auto text-[10px] text-zinc-400 dark:text-zinc-600 font-mono">⌘K</span>
         </button>
@@ -279,8 +282,8 @@ defmodule EzagentDomainUi.IdeShell do
             out: {"ease-in duration-100", "opacity-100 translate-y-0", "opacity-0 -translate-y-1"}
           )
         }
-        title="Switch workspace"
-        aria-label="Switch workspace"
+        title={gettext("Switch workspace")}
+        aria-label={gettext("Switch workspace")}
         class="flex items-center gap-2 px-1.5 py-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
       >
         <span class="font-semibold text-xs tracking-tight">ezagent</span>
@@ -308,7 +311,7 @@ defmodule EzagentDomainUi.IdeShell do
         class="hidden absolute left-0 top-full mt-1 w-64 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-md shadow-lg z-40 transition transform"
       >
         <div class="px-3 py-2 border-b border-zinc-200 dark:border-zinc-800">
-          <div class="text-[10px] uppercase tracking-wide text-zinc-500">Workspaces</div>
+          <div class="text-[10px] uppercase tracking-wide text-zinc-500">{gettext("Workspaces")}</div>
         </div>
         <div class="py-1 max-h-64 overflow-y-auto">
           <%= for ws <- @workspaces do %>
@@ -318,7 +321,7 @@ defmodule EzagentDomainUi.IdeShell do
               <div class="px-3 py-1.5 text-xs text-zinc-700 dark:text-zinc-300 flex items-center justify-between gap-2 bg-zinc-50 dark:bg-zinc-950">
                 <span class="font-mono truncate">{ws_name}</span>
                 <span class="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border bg-zinc-900 dark:bg-zinc-100 text-zinc-50 dark:text-zinc-900 border-zinc-900 dark:border-zinc-100 shrink-0">
-                  current
+                  {gettext("current")}
                 </span>
               </div>
             <% else %>
@@ -348,16 +351,20 @@ defmodule EzagentDomainUi.IdeShell do
                   ]}
                   title={
                     if @is_system_member?,
-                      do: "Operate on workspace " <> ws_name,
-                      else: "Sign in to workspace " <> ws_name <> " (you'll be asked to re-auth)"
+                      do: gettext("Operate on workspace %{name}", name: ws_name),
+                      else:
+                        gettext(
+                          "Sign in to workspace %{name} (you'll be asked to re-auth)",
+                          name: ws_name
+                        )
                   }
                 >
                   <span class="font-mono truncate">{ws_name}</span>
                   <span
                     :if={not @is_system_member?}
                     class="text-[10px] text-zinc-400 dark:text-zinc-600 shrink-0"
-                    aria-label="locked"
-                    title="You'll be asked to sign in to this workspace"
+                    aria-label={gettext("locked")}
+                    title={gettext("You'll be asked to sign in to this workspace")}
                   >
                     🔒
                   </span>
@@ -371,7 +378,7 @@ defmodule EzagentDomainUi.IdeShell do
             href="/workspaces"
             class="block px-3 py-1.5 text-xs text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center gap-2"
           >
-            <.icon name="folder" size="xs" /> Manage workspaces...
+            <.icon name="folder" size="xs" /> {gettext("Manage workspaces...")}
           </a>
         </div>
       </div>
@@ -442,8 +449,8 @@ defmodule EzagentDomainUi.IdeShell do
       <button
         type="button"
         phx-click={JS.toggle(to: "##{@menu_id}", display: "block")}
-        title="Your profile"
-        aria-label="Your profile"
+        title={gettext("Your profile")}
+        aria-label={gettext("Your profile")}
         class="flex items-center"
       >
         <.avatar uri={@current_entity_uri} size="sm" />
@@ -467,7 +474,7 @@ defmodule EzagentDomainUi.IdeShell do
             </div>
             <div class="flex items-center gap-1 text-[10px] text-zinc-500 mt-0.5">
               <.status_dot color="green" />
-              <span>online</span>
+              <span>{gettext("online")}</span>
             </div>
           </div>
         </div>
@@ -476,7 +483,7 @@ defmodule EzagentDomainUi.IdeShell do
             href="/profile"
             class="block px-3 py-1.5 text-xs text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800"
           >
-            Profile
+            {gettext("Profile")}
           </a>
           <%!-- V1 fix (Allen Feishu 2026-05-21 17:44) — the former
                 "Preferences" link (→ /settings) was REMOVED. Its
@@ -496,7 +503,7 @@ defmodule EzagentDomainUi.IdeShell do
             href="/admin"
             class="block px-3 py-1.5 text-xs text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center gap-2"
           >
-            <.icon name="settings" size="xs" /> Admin
+            <.icon name="settings" size="xs" /> {gettext("Admin")}
           </a>
         </div>
         <%!-- Phase 8c PR-C: dark mode toggle. daisyUI infrastructure
@@ -510,7 +517,7 @@ defmodule EzagentDomainUi.IdeShell do
             phx-click={JS.dispatch("phx:set-theme")}
             class="w-full text-left px-3 py-1.5 text-xs text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center gap-2"
           >
-            <.icon name="sun" size="xs" /> Light theme
+            <.icon name="sun" size="xs" /> {gettext("Light theme")}
           </button>
           <button
             type="button"
@@ -518,7 +525,7 @@ defmodule EzagentDomainUi.IdeShell do
             phx-click={JS.dispatch("phx:set-theme")}
             class="w-full text-left px-3 py-1.5 text-xs text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center gap-2"
           >
-            <.icon name="moon" size="xs" /> Dark theme
+            <.icon name="moon" size="xs" /> {gettext("Dark theme")}
           </button>
           <button
             type="button"
@@ -526,7 +533,7 @@ defmodule EzagentDomainUi.IdeShell do
             phx-click={JS.dispatch("phx:set-theme")}
             class="w-full text-left px-3 py-1.5 text-xs text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center gap-2"
           >
-            <.icon name="settings" size="xs" /> System
+            <.icon name="settings" size="xs" /> {gettext("System")}
           </button>
         </div>
         <div class="border-t border-zinc-200 dark:border-zinc-800 py-1">
@@ -540,7 +547,7 @@ defmodule EzagentDomainUi.IdeShell do
               type="submit"
               class="w-full text-left px-3 py-1.5 text-xs text-rose-600 dark:text-rose-400 hover:bg-zinc-100 dark:hover:bg-zinc-800"
             >
-              Sign out
+              {gettext("Sign out")}
             </button>
           </form>
         </div>
@@ -664,7 +671,7 @@ defmodule EzagentDomainUi.IdeShell do
             type="text"
             name="q"
             value={@query}
-            placeholder="搜索 sessions / entities / actions ..."
+            placeholder={gettext("Search sessions / entities / actions ...")}
             autocomplete="off"
             autofocus
             class="w-full px-4 py-3 text-sm border-b border-zinc-200 dark:border-zinc-800 focus:outline-none"
@@ -672,7 +679,7 @@ defmodule EzagentDomainUi.IdeShell do
         </form>
         <div class="max-h-96 overflow-y-auto">
           <div :if={@results == []} class="px-4 py-8 text-center text-xs text-zinc-500">
-            {(@query == "" && "输入开始搜索") || "没有结果"}
+            {(@query == "" && gettext("Type to start searching")) || gettext("No results")}
           </div>
           <button
             :for={r <- @results}

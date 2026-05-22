@@ -15,7 +15,7 @@ defmodule EzagentPluginLiveview.UsersLive do
 
   use Phoenix.LiveView
   # i18n V1 (Allen 2026-05-21) — see admin_dashboard_live for rationale.
-  use Gettext, backend: EzagentWeb.Gettext
+  use Gettext, backend: EzagentPluginLiveview.Gettext
   import Phoenix.Component
 
   @impl true
@@ -68,12 +68,14 @@ defmodule EzagentPluginLiveview.UsersLive do
 
     cond do
       uri == "" ->
-        {:noreply, assign(socket, :flash_error, "Username required (e.g. allen)")}
+        {:noreply, assign(socket, :flash_error, gettext("Username required (e.g. allen)"))}
 
       String.contains?(caps_str, "*") ->
         {:noreply,
-         assign(socket, :flash_error,
-           "'*' caps require --allow-allcaps via mix; UI refuses for safety"
+         assign(
+           socket,
+           :flash_error,
+           gettext("'*' caps require --allow-allcaps via mix; UI refuses for safety")
          )}
 
       true ->
@@ -88,12 +90,20 @@ defmodule EzagentPluginLiveview.UsersLive do
           {:noreply,
            socket
            |> assign(:users, list_users())
-           |> assign(:flash_info, "✓ created #{uri} (#{length(caps)} caps)")
+           |> assign(
+             :flash_info,
+             gettext("✓ created %{uri} (%{count} caps)", uri: uri, count: length(caps))
+           )
            |> assign(:flash_error, nil)
            |> assign(:create_form, to_form(create_form_defaults(), as: "user"))}
         else
           {:error, reason} ->
-            {:noreply, assign(socket, :flash_error, "create failed: #{inspect(reason)}")}
+            {:noreply,
+             assign(
+               socket,
+               :flash_error,
+               gettext("create failed: %{reason}", reason: inspect(reason))
+             )}
         end
     end
   end
@@ -111,7 +121,7 @@ defmodule EzagentPluginLiveview.UsersLive do
     name = String.trim(name)
 
     if name == "" do
-      {:noreply, assign(socket, :flash_error, "Display name cannot be empty")}
+      {:noreply, assign(socket, :flash_error, gettext("Display name cannot be empty"))}
     else
       case Ezagent.Entity.Profile.upsert(%{entity_uri: uri_str, display_name: name}) do
         {:ok, _profile} ->
@@ -119,11 +129,19 @@ defmodule EzagentPluginLiveview.UsersLive do
            socket
            |> assign(:users, list_users())
            |> assign(:editing_uri, nil)
-           |> assign(:flash_info, "✓ display name updated for #{uri_str}")
+           |> assign(
+             :flash_info,
+             gettext("✓ display name updated for %{uri}", uri: uri_str)
+           )
            |> assign(:flash_error, nil)}
 
         {:error, changeset} ->
-          {:noreply, assign(socket, :flash_error, "update failed: #{inspect(changeset.errors)}")}
+          {:noreply,
+           assign(
+             socket,
+             :flash_error,
+             gettext("update failed: %{reason}", reason: inspect(changeset.errors))
+           )}
       end
     end
   end
@@ -135,16 +153,21 @@ defmodule EzagentPluginLiveview.UsersLive do
         {:noreply,
          socket
          |> assign(:users, list_users())
-         |> assign(:flash_info, "✓ password set for #{uri}")
+         |> assign(:flash_info, gettext("✓ password set for %{uri}", uri: uri))
          |> assign(:flash_error, nil)}
 
       {:error, reason} ->
-        {:noreply, assign(socket, :flash_error, "set_password failed: #{inspect(reason)}")}
+        {:noreply,
+         assign(
+           socket,
+           :flash_error,
+           gettext("set_password failed: %{reason}", reason: inspect(reason))
+         )}
     end
   end
 
   def handle_event("set_password", _params, socket) do
-    {:noreply, assign(socket, :flash_error, "password cannot be empty")}
+    {:noreply, assign(socket, :flash_error, gettext("password cannot be empty"))}
   end
 
   # PR #141 + #145: entity:// scheme; user URIs are entity://user/<name>.
@@ -240,22 +263,22 @@ defmodule EzagentPluginLiveview.UsersLive do
       <:main_window>
         <div class="flex-1 overflow-auto px-6 py-6">
           <.page_header title={gettext("Users")}>
-            <:subtitle>Provisioned principals (independent of User Kind snapshot per Q-MU-2).</:subtitle>
+            <:subtitle>{gettext("Provisioned principals (independent of User Kind snapshot per Q-MU-2).")}</:subtitle>
           </.page_header>
 
           <%!-- Username & Auth UI Tasks 1+2 — display name primary, URI
                 mono subtitle, inline pencil to edit display name. --%>
           <section id="users-list" class="mt-4">
-            <p :if={@users == []} class="text-sm italic text-zinc-500">No users.</p>
+            <p :if={@users == []} class="text-sm italic text-zinc-500">{gettext("No users.")}</p>
 
             <.card :if={@users != []}>
               <table id="users-table" class="w-full text-sm">
                 <thead>
                   <tr class="border-b-2 border-zinc-200 dark:border-zinc-800 text-left text-xs uppercase tracking-wide text-zinc-500">
-                    <th class="py-2">Name / URI</th>
-                    <th>Password</th>
-                    <th>Caps</th>
-                    <th>Set password</th>
+                    <th class="py-2">{gettext("Name / URI")}</th>
+                    <th>{gettext("Password")}</th>
+                    <th>{gettext("Caps")}</th>
+                    <th>{gettext("Set password")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -273,10 +296,10 @@ defmodule EzagentPluginLiveview.UsersLive do
                             phx-keydown="cancel_edit_display_name"
                             class="flex-1 px-2 py-1 text-xs border border-blue-400 dark:border-blue-600 rounded bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
                           />
-                          <button type="submit" class="p-1 text-emerald-600 hover:text-emerald-700 dark:text-emerald-400" aria-label="Save">
+                          <button type="submit" class="p-1 text-emerald-600 hover:text-emerald-700 dark:text-emerald-400" aria-label={gettext("Save")}>
                             <.icon name="check" size="xs" />
                           </button>
-                          <button type="button" phx-click="cancel_edit_display_name" class="p-1 text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300" aria-label="Cancel">
+                          <button type="button" phx-click="cancel_edit_display_name" class="p-1 text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300" aria-label={gettext("Cancel")}>
                             <.icon name="x" size="xs" />
                           </button>
                         </form>
@@ -287,7 +310,7 @@ defmodule EzagentPluginLiveview.UsersLive do
                             type="button"
                             phx-click="edit_display_name"
                             phx-value-uri={URI.to_string(u.uri)}
-                            aria-label={"Edit display name for #{u.display_name}"}
+                            aria-label={gettext("Edit display name for %{name}", name: u.display_name)}
                             class="p-1 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded"
                           >
                             <.icon name="pencil" size="xs" />
@@ -297,8 +320,8 @@ defmodule EzagentPluginLiveview.UsersLive do
                       <div class="font-mono text-[10px] text-zinc-500 break-all">{URI.to_string(u.uri)}</div>
                     </td>
                     <td class="text-xs">
-                      <.badge :if={u.has_password} variant="success">set</.badge>
-                      <.badge :if={!u.has_password} variant="danger">unset</.badge>
+                      <.badge :if={u.has_password} variant="success">{gettext("set")}</.badge>
+                      <.badge :if={!u.has_password} variant="danger">{gettext("unset")}</.badge>
                     </td>
                     <td class="text-xs">{u.cap_count}</td>
                     <td>
@@ -307,10 +330,10 @@ defmodule EzagentPluginLiveview.UsersLive do
                         <input
                           type="password"
                           name="password"
-                          placeholder="new password"
+                          placeholder={gettext("new password")}
                           class="px-2 py-1 text-xs border border-zinc-300 dark:border-zinc-700 rounded bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 w-32"
                         />
-                        <.button type="submit" variant="outline" size="sm">Set</.button>
+                        <.button type="submit" variant="outline" size="sm">{gettext("Set")}</.button>
                       </form>
                     </td>
                   </tr>
@@ -324,12 +347,12 @@ defmodule EzagentPluginLiveview.UsersLive do
                 still accepted. --%>
           <section id="create-user" class="mt-6">
             <.card>
-              <h2 class="text-sm font-medium mb-3 text-zinc-900 dark:text-zinc-100">+ Create user</h2>
+              <h2 class="text-sm font-medium mb-3 text-zinc-900 dark:text-zinc-100">{gettext("+ Create user")}</h2>
 
               <.form for={@create_form} phx-submit="create_user" class="space-y-3">
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div>
-                    <label for="user_handle" class="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1">Username</label>
+                    <label for="user_handle" class="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1">{gettext("Username")}</label>
                     <input
                       type="text"
                       id="user_handle"
@@ -338,10 +361,10 @@ defmodule EzagentPluginLiveview.UsersLive do
                       value={@create_form.params["handle"]}
                       class="w-full px-2 py-1.5 text-xs border border-zinc-300 dark:border-zinc-700 rounded font-mono bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
                     />
-                    <p class="mt-1 text-[11px] text-zinc-500">Accepts bare handle (<code>allen</code>) or full URI (<code>entity://user/default/allen</code>).</p>
+                    <p class="mt-1 text-[11px] text-zinc-500">{gettext("Accepts bare handle (%{handle}) or full URI (%{uri}).", handle: "allen", uri: "entity://user/default/allen")}</p>
                   </div>
                   <div>
-                    <label for="user_display_name" class="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1">Display name</label>
+                    <label for="user_display_name" class="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1">{gettext("Display name")}</label>
                     <input
                       type="text"
                       id="user_display_name"
@@ -350,21 +373,21 @@ defmodule EzagentPluginLiveview.UsersLive do
                       value={@create_form.params["display_name"]}
                       class="w-full px-2 py-1.5 text-xs border border-zinc-300 dark:border-zinc-700 rounded bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
                     />
-                    <p class="mt-1 text-[11px] text-zinc-500">Optional; editable later via pencil icon.</p>
+                    <p class="mt-1 text-[11px] text-zinc-500">{gettext("Optional; editable later via pencil icon.")}</p>
                   </div>
                   <div>
-                    <label for="user_password" class="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1">Password</label>
+                    <label for="user_password" class="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1">{gettext("Password")}</label>
                     <input
                       type="password"
                       id="user_password"
                       name="user[password]"
-                      placeholder="(optional)"
+                      placeholder={gettext("(optional)")}
                       class="w-full px-2 py-1.5 text-xs border border-zinc-300 dark:border-zinc-700 rounded bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
                     />
-                    <p class="mt-1 text-[11px] text-zinc-500">If unset, user can only sign in via magic link.</p>
+                    <p class="mt-1 text-[11px] text-zinc-500">{gettext("If unset, user can only sign in via magic link.")}</p>
                   </div>
                   <div>
-                    <label for="user_caps" class="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1">Caps</label>
+                    <label for="user_caps" class="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1">{gettext("Caps")}</label>
                     <input
                       type="text"
                       id="user_caps"
@@ -372,11 +395,11 @@ defmodule EzagentPluginLiveview.UsersLive do
                       placeholder="chat.send,workspace.read"
                       class="w-full px-2 py-1.5 text-xs border border-zinc-300 dark:border-zinc-700 rounded font-mono bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
                     />
-                    <p class="mt-1 text-[11px] text-zinc-500"><code>kind.behavior[@instance_uri]</code> comma-separated. <code>*</code> requires <code>--allow-allcaps</code>.</p>
+                    <p class="mt-1 text-[11px] text-zinc-500">{gettext("%{format} comma-separated. %{wildcard} requires %{flag}.", format: "kind.behavior[@instance_uri]", wildcard: "*", flag: "--allow-allcaps")}</p>
                   </div>
                 </div>
                 <div class="flex justify-end">
-                  <.button type="submit" variant="primary" size="sm">Create user</.button>
+                  <.button type="submit" variant="primary" size="sm">{gettext("Create user")}</.button>
                 </div>
               </.form>
 

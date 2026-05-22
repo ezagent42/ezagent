@@ -19,6 +19,9 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
   """
 
   use Phoenix.LiveView
+  # i18n (Allen 2026-05-22) — runtime backend reference; no compile-time
+  # dep on :ezagent_web.
+  use Gettext, backend: EzagentPluginLiveview.Gettext
   alias EzagentDomainUi.AdminShell
   alias EzagentPluginLiveview.AppShell
   use EzagentDomainUi.Components
@@ -97,9 +100,9 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
 
   defp template_status(_), do: :no_class_field
 
-  defp template_status_label(:class_registered), do: "Class registered"
-  defp template_status_label(:no_class), do: "No Class registered"
-  defp template_status_label(:no_class_field), do: "Missing \"class\" field"
+  defp template_status_label(:class_registered), do: gettext("Class registered")
+  defp template_status_label(:no_class), do: gettext("No Class registered")
+  defp template_status_label(:no_class_field), do: gettext("Missing \"class\" field")
 
   # Phase 8c PR-H — helper now returns Tailwind classes, not inline
   # `style=""` strings. Same green/red semantic mapping as before.
@@ -144,15 +147,18 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
 
     cond do
       not match?(%URI{}, caller_uri) ->
-        {:noreply, assign(socket, :flash_error, "Not signed in.")}
+        {:noreply, assign(socket, :flash_error, gettext("Not signed in."))}
 
       not Ezagent.UI.UriOptions.valid_for?(caller_uri, workspace_uri, trimmed, [:entity]) ->
         {:noreply,
          assign(
            socket,
            :flash_error,
-           "Rejected #{inspect(trimmed)} — must be an entity URI in this workspace " <>
-             "(#{URI.to_string(workspace_uri)}). Pick from the list."
+           gettext(
+             "Rejected %{uri} — must be an entity URI in this workspace (%{workspace}). Pick from the list.",
+             uri: inspect(trimmed),
+             workspace: URI.to_string(workspace_uri)
+           )
          )}
 
       true ->
@@ -168,13 +174,14 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
              |> assign(:flash_error, nil)}
 
           {:error, reason} ->
-            {:noreply, assign(socket, :flash_error, "add failed: #{inspect(reason)}")}
+            {:noreply,
+             assign(socket, :flash_error, gettext("add failed: %{reason}", reason: inspect(reason)))}
         end
     end
   end
 
   def handle_event("add_member", _params, socket) do
-    {:noreply, assign(socket, :flash_error, "Member URI is required.")}
+    {:noreply, assign(socket, :flash_error, gettext("Member URI is required."))}
   end
 
   # Phase 5 PR 2: Class picker drives form_fields/0 rendering.
@@ -193,16 +200,16 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
 
     case {tmpl_name, Jason.decode(json)} do
       {"", _} ->
-        {:noreply, assign(socket, :flash_error, "template name required")}
+        {:noreply, assign(socket, :flash_error, gettext("template name required"))}
 
       {_, {:ok, tmpl}} when is_map(tmpl) ->
         do_add_template(socket, tmpl_name, tmpl)
 
       {_, {:ok, _}} ->
-        {:noreply, assign(socket, :flash_error, "JSON must be an object")}
+        {:noreply, assign(socket, :flash_error, gettext("JSON must be an object"))}
 
       {_, {:error, _}} ->
-        {:noreply, assign(socket, :flash_error, "invalid JSON")}
+        {:noreply, assign(socket, :flash_error, gettext("invalid JSON"))}
     end
   end
 
@@ -217,7 +224,7 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
 
     cond do
       tmpl_name == "" ->
-        {:noreply, assign(socket, :flash_error, "template name required")}
+        {:noreply, assign(socket, :flash_error, gettext("template name required"))}
 
       true ->
         case Ezagent.TemplateRegistry.lookup(class_name) do
@@ -235,7 +242,12 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
             do_add_template(socket, tmpl_name, tmpl)
 
           :error ->
-            {:noreply, assign(socket, :flash_error, "no registered Class: #{class_name}")}
+            {:noreply,
+             assign(
+               socket,
+               :flash_error,
+               gettext("no registered Class: %{class}", class: class_name)
+             )}
         end
     end
   end
@@ -249,7 +261,12 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
          |> assign(:flash_error, nil)}
 
       {:error, reason} ->
-        {:noreply, assign(socket, :flash_error, "remove_template failed: #{inspect(reason)}")}
+        {:noreply,
+         assign(
+           socket,
+           :flash_error,
+           gettext("remove_template failed: %{reason}", reason: inspect(reason))
+         )}
     end
   end
 
@@ -264,11 +281,16 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
              |> assign(:flash_error, nil)}
 
           {:error, reason} ->
-            {:noreply, assign(socket, :flash_error, "remove failed: #{inspect(reason)}")}
+            {:noreply,
+             assign(
+               socket,
+               :flash_error,
+               gettext("remove failed: %{reason}", reason: inspect(reason))
+             )}
         end
 
       _ ->
-        {:noreply, assign(socket, :flash_error, "Bad URI")}
+        {:noreply, assign(socket, :flash_error, gettext("Bad URI"))}
     end
   end
 
@@ -289,7 +311,12 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
          |> assign(:flash_error, nil)}
 
       {:error, reason} ->
-        {:noreply, assign(socket, :flash_error, "add_template failed: #{inspect(reason)}")}
+        {:noreply,
+         assign(
+           socket,
+           :flash_error,
+           gettext("add_template failed: %{reason}", reason: inspect(reason))
+         )}
     end
   end
 
@@ -335,14 +362,14 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
         <AdminShell.admin_shell current_path="/workspaces" active_section={:workspaces}>
           <:main>
             <div class="max-w-3xl mx-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
-              <.page_header title="Workspace not found" />
-              <p>No persisted workspace named <code>{@name}</code>.</p>
+              <.page_header title={gettext("Workspace not found")} />
+              <p>{gettext("No persisted workspace named")} <code>{@name}</code>.</p>
               <p>
                 <a
                   href="/workspaces"
                   class="text-blue-600 dark:text-blue-400 hover:text-blue-700"
                 >
-                  ← Workspaces
+                  ← {gettext("Workspaces")}
                 </a>
               </p>
             </div>
@@ -385,7 +412,7 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
             class="inline-flex items-center gap-1 text-xs text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 mb-4"
           >
             <.icon name="chevron-left" size="xs" />
-            <span>All workspaces</span>
+            <span>{gettext("All workspaces")}</span>
           </a>
           <%!--
             Phase 8c PR-H: NOT using `<.page_header>` here because the page
@@ -399,7 +426,7 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
           <div class="flex items-end justify-between mb-6 pb-4 border-b border-zinc-200 dark:border-zinc-800">
             <div>
               <h1 class="text-xl font-semibold text-zinc-900 dark:text-zinc-100">
-                Workspace: <code>{@workspace.name}</code>
+                {gettext("Workspace:")} <code>{@workspace.name}</code>
               </h1>
               <p class="mt-1 text-sm text-zinc-500">
                 <code>{URI.to_string(@workspace.uri)}</code>
@@ -409,12 +436,11 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
 
           <.card id="members" class="mt-6">
             <h2 class="text-sm font-medium mb-3 text-zinc-900 dark:text-zinc-100">
-              Members ({length(@workspace.members)})
+              {gettext("Members (%{count})", count: length(@workspace.members))}
             </h2>
 
             <p :if={@workspace.members == []} id="members-empty" class="text-zinc-500 italic">
-              No members. Add one below to declare a Kind that should be alive
-              whenever this Workspace is loaded.
+              {gettext("No members. Add one below to declare a Kind that should be alive whenever this Workspace is loaded.")}
             </p>
 
             <ul :if={@workspace.members != []} id="members-list" class="list-none p-0 m-0">
@@ -430,9 +456,9 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
                   phx-click="remove_member"
                   phx-value-member_uri={URI.to_string(member)}
                   class="text-rose-600 dark:text-rose-400 border-rose-600 dark:border-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950 text-[11px]"
-                  data-confirm="Remove this member?"
+                  data-confirm={gettext("Remove this member?")}
                 >
-                  Remove
+                  {gettext("Remove")}
                 </.button>
               </li>
             </ul>
@@ -452,10 +478,10 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
                   kinds={[:entity]}
                   options={@member_options}
                   allow_freetext={true}
-                  placeholder="pick an entity to add as a member"
+                  placeholder={gettext("pick an entity to add as a member")}
                 />
               </div>
-              <.button type="submit" variant="primary" size="sm">Add member</.button>
+              <.button type="submit" variant="primary" size="sm">{gettext("Add member")}</.button>
             </.form>
             <p :if={@flash_error} class="text-rose-600 dark:text-rose-400 text-xs mt-2">
               {@flash_error}
@@ -464,14 +490,14 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
 
           <.card id="templates" class="mt-6">
             <h2 class="text-sm font-medium mb-3 text-zinc-900 dark:text-zinc-100">
-              Session templates ({map_size(@workspace.session_templates)})
+              {gettext("Session templates (%{count})", count: map_size(@workspace.session_templates))}
             </h2>
             <p
               :if={@workspace.session_templates == %{}}
               id="templates-empty"
               class="text-zinc-500 italic"
             >
-              No session templates declared.
+              {gettext("No session templates declared.")}
             </p>
             <table
               :if={@workspace.session_templates != %{}}
@@ -480,10 +506,10 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
             >
               <thead>
                 <tr class="border-b border-zinc-200 dark:border-zinc-800">
-                  <th class="text-left px-1 py-1.5">Name</th>
-                  <th class="text-left">Class</th>
-                  <th class="text-left">Members</th>
-                  <th class="text-left">Status</th>
+                  <th class="text-left px-1 py-1.5">{gettext("Name")}</th>
+                  <th class="text-left">{gettext("Class")}</th>
+                  <th class="text-left">{gettext("Members")}</th>
+                  <th class="text-left">{gettext("Status")}</th>
                   <th></th>
                 </tr>
               </thead>
@@ -506,9 +532,9 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
                       phx-click="remove_template"
                       phx-value-name={tmpl_name}
                       class="text-rose-600 dark:text-rose-400 border-rose-600 dark:border-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950 text-[10px] px-2 py-0.5 h-auto"
-                      data-confirm="Remove this template? (already-spawned Kinds stay alive)"
+                      data-confirm={gettext("Remove this template? (already-spawned Kinds stay alive)")}
                     >
-                      Remove
+                      {gettext("Remove")}
                     </.button>
                   </td>
                 </tr>
@@ -519,19 +545,19 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
               id="registered-classes"
               class="mt-3 text-[11px] text-zinc-500"
             >
-              Registered Template Classes:
+              {gettext("Registered Template Classes:")}
               <code>{Enum.join(@registered_template_classes, ", ")}</code>
             </p>
 
             <div id="add-template" class="mt-4 pt-4 border-t border-zinc-200 dark:border-zinc-800">
               <h3 class="text-[13px] font-medium mb-2 text-zinc-900 dark:text-zinc-100">
-                Add template
+                {gettext("Add template")}
               </h3>
 
               <p class="text-[11px] text-zinc-500 mb-2">
-                Class picker drives the form below — each registered Template Class self-describes its
-                fields via <code>Ezagent.UI.Form.form_fields/0</code>. JSON mode is the escape hatch for
-                custom Classes that don't implement the form behaviour.
+                {gettext(
+                  "Class picker drives the form below — each registered Template Class self-describes its fields via Ezagent.UI.Form.form_fields/0. JSON mode is the escape hatch for custom Classes that don't implement the form behaviour."
+                )}
               </p>
 
               <div class="mb-3 flex gap-1.5 flex-wrap">
@@ -550,7 +576,7 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
                   phx-value-class="__json__"
                   class={tmpl_mode_btn_class(@selected_class == "__json__")}
                 >
-                  JSON (custom class)
+                  {gettext("JSON (custom class)")}
                 </button>
               </div>
 
@@ -559,11 +585,11 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
                   <input
                     type="text"
                     name="add_template[tmpl_name]"
-                    placeholder="template name (e.g. main)"
+                    placeholder={gettext("template name (e.g. main)")}
                     class="px-2 py-1 border border-zinc-300 dark:border-zinc-700 rounded text-xs bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
                   />
                   <span class="text-[11px] text-zinc-500 self-center">
-                    Class = <code>{@selected_class}</code>
+                    {gettext("Class =")} <code>{@selected_class}</code>
                   </span>
                 </div>
 
@@ -576,7 +602,7 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
                       class="w-full px-2.5 py-1.5 border border-zinc-300 dark:border-zinc-700 rounded font-mono text-[11px] bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
                     ></textarea>
                     <p class="text-[10px] text-zinc-500 mt-1">
-                      Full template JSON — "class" field must reference a registered Class.
+                      {gettext("Full template JSON — \"class\" field must reference a registered Class.")}
                     </p>
                   </div>
                 <% else %>
@@ -611,7 +637,7 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
                             class={input_class_for(field.type)}
                           />
                           <span class="text-[10px] text-zinc-500">
-                            📁 Filesystem path (server-side)
+                            📁 {gettext("Filesystem path (server-side)")}
                           </span>
                         </div>
                       <% _ -> %>
@@ -625,18 +651,18 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
                   </div>
                 <% end %>
 
-                <.button type="submit" variant="success" size="sm">Add template</.button>
+                <.button type="submit" variant="success" size="sm">{gettext("Add template")}</.button>
               </.form>
             </div>
           </.card>
 
           <.card id="routing-rules" class="mt-6">
             <h2 class="text-sm font-medium mb-3 text-zinc-900 dark:text-zinc-100">
-              Routing rules ({length(@workspace.routing_rules)})
-              <span class="text-[11px] text-zinc-500 font-normal">(read-only — Phase 5 editor)</span>
+              {gettext("Routing rules (%{count})", count: length(@workspace.routing_rules))}
+              <span class="text-[11px] text-zinc-500 font-normal">{gettext("(read-only — Phase 5 editor)")}</span>
             </h2>
             <p :if={@workspace.routing_rules == []} id="rules-empty" class="text-zinc-500 italic">
-              No routing rules declared.
+              {gettext("No routing rules declared.")}
             </p>
             <pre
               :if={@workspace.routing_rules != []}

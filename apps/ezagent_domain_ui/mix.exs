@@ -50,7 +50,15 @@ defmodule EzagentDomainUi.MixProject do
       {:ezagent_domain_pty, in_umbrella: true},
       {:ezagent_domain_identity, in_umbrella: true},
       {:phoenix_live_view, ">= 0.0.0"},
-      {:phoenix_html, "~> 4.1"}
+      {:phoenix_html, "~> 4.1"},
+      # i18n (Allen 2026-05-22) — domain_ui owns its own Gettext backend
+      # (`EzagentDomainUi.Gettext`) + `priv/gettext` tree. `:gettext` is
+      # a standalone Hex lib, NOT `:ezagent_web` — a Tier-2 domain app
+      # depending on it introduces no tier violation. This keeps the
+      # shared UI component library self-sufficient for translation
+      # without threading translated-string assigns through every
+      # Tier-3 call site (standard Phoenix shared-component pattern).
+      {:gettext, "~> 0.26"}
     ]
   end
 end

@@ -83,7 +83,10 @@ defmodule EzagentPluginLiveview.CommandPaletteComponentTest do
       {:ok, lv, _html} = live(conn, "/sessions")
 
       html = lv |> form("#cmdk form", %{"q" => "zzzznomatch"}) |> render_change()
-      assert html =~ "没有结果"
+      # i18n full-coverage (Allen 2026-05-22) — the empty-state copy was a
+      # hardcoded "没有结果"; it is now `gettext("No results")`, which
+      # renders English under the test default locale.
+      assert html =~ "No results"
     end
   end
 

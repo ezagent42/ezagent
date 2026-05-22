@@ -25,6 +25,9 @@ defmodule EzagentPluginLiveview.PluginsLive do
   `workspace_shell`); that wrapping is kept.
   """
   use Phoenix.LiveView
+  # i18n (Allen 2026-05-22) — runtime backend reference; no compile-time
+  # dep on :ezagent_web.
+  use Gettext, backend: EzagentPluginLiveview.Gettext
   alias EzagentDomainUi.WorkspaceShell
   alias EzagentPluginLiveview.AppShell
   use EzagentDomainUi.Components
@@ -66,7 +69,7 @@ defmodule EzagentPluginLiveview.PluginsLive do
        when is_binary(flavor) and is_binary(label),
        do: {"/identities?filter=agent:#{flavor}", label}
 
-  defp config_target(nil), do: {nil, "Configure"}
+  defp config_target(nil), do: {nil, gettext("Configure")}
 
   # PR-5 codex MEDIUM-5 — defensive catch-all. The `:ezagent_plugin_check`
   # gate + `Ezagent.Plugin.boot/1` both reject a `:form` or malformed
@@ -74,7 +77,7 @@ defmodule EzagentPluginLiveview.PluginsLive do
   # here. But `/plugins` must NOT crash with a FunctionClauseError if
   # one slips through (e.g. a hot-installed plugin that bypassed the
   # gate) — an unknown surface renders a disabled config icon instead.
-  defp config_target(_unknown), do: {nil, "Configure"}
+  defp config_target(_unknown), do: {nil, gettext("Configure")}
 
   @impl true
   def render(assigns) do
@@ -101,8 +104,8 @@ defmodule EzagentPluginLiveview.PluginsLive do
         >
           <:main_window>
             <div class="flex-1 overflow-auto px-6 py-6">
-              <.page_header title="Plugins">
-                <:subtitle>Installed ezagent plugins. Each one extends a core capability.</:subtitle>
+              <.page_header title={gettext("Plugins")}>
+                <:subtitle>{gettext("Installed ezagent plugins. Each one extends a core capability.")}</:subtitle>
               </.page_header>
               <div class="grid grid-cols-2 gap-4 mt-4">
                 <.plugin_card

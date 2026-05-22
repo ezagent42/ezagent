@@ -24,7 +24,7 @@ defmodule EzagentPluginLiveview.AdminDashboardLive do
   # EzagentWeb.Gettext lives in the host app but doesn't need a
   # compile-time dep here. Gettext macros expand to runtime calls
   # against the named backend.
-  use Gettext, backend: EzagentWeb.Gettext
+  use Gettext, backend: EzagentPluginLiveview.Gettext
   alias EzagentDomainUi.AdminShell
   alias EzagentPluginLiveview.AppShell
   use EzagentDomainUi.Components
@@ -89,9 +89,9 @@ defmodule EzagentPluginLiveview.AdminDashboardLive do
             <div class="px-6 py-6 text-zinc-900 dark:text-zinc-100">
           <.page_header title={gettext("Overview")}>
             <:subtitle>
-              System layer (admin settings drawer). Workspace-layer surfaces
-              — Sessions, Workspaces, Identities, Routing, Plugins — live on
-              the main Activity Bar. Close this drawer to return.
+              {gettext(
+                "System layer (admin settings drawer). Workspace-layer surfaces — Sessions, Workspaces, Identities, Routing, Plugins — live on the main Activity Bar. Close this drawer to return."
+              )}
             </:subtitle>
           </.page_header>
 
@@ -101,34 +101,36 @@ defmodule EzagentPluginLiveview.AdminDashboardLive do
                 ease-out curve. Falls back gracefully to the static
                 number if JS doesn't run. --%>
           <div class="grid grid-cols-4 gap-3 mb-6">
-            <.card><.kpi label="Sessions" value={@sessions} id="kpi-sessions" /></.card>
-            <.card><.kpi label="Workspaces" value={@workspaces} id="kpi-workspaces" /></.card>
-            <.card><.kpi label="Identities" value={@identities} id="kpi-identities" /></.card>
-            <.card><.kpi label="Kinds alive" value={@kinds_total} id="kpi-kinds" /></.card>
+            <.card><.kpi label={gettext("Sessions")} value={@sessions} id="kpi-sessions" /></.card>
+            <.card><.kpi label={gettext("Workspaces")} value={@workspaces} id="kpi-workspaces" /></.card>
+            <.card><.kpi label={gettext("Identities")} value={@identities} id="kpi-identities" /></.card>
+            <.card><.kpi label={gettext("Kinds alive")} value={@kinds_total} id="kpi-kinds" /></.card>
           </div>
 
           <div class="grid grid-cols-3 gap-3">
             <a href="/admin/logs" class="block">
               <.card>
-                <div class="font-medium text-sm">Logs &amp; Audit →</div>
+                <div class="font-medium text-sm">{gettext("Logs & Audit")} →</div>
                 <div class="text-xs text-zinc-500 mt-1">
-                  Dispatch audit log, events, bridges. Renamed from Observability.
+                  {gettext("Dispatch audit log, events, bridges. Renamed from Observability.")}
                 </div>
               </.card>
             </a>
             <a href="/admin/registry" class="block">
               <.card>
-                <div class="font-medium text-sm">Registry →</div>
+                <div class="font-medium text-sm">{gettext("Registry")} →</div>
                 <div class="text-xs text-zinc-500 mt-1">
-                  Live <code>Ezagent.KindRegistry</code> snapshot — every Kind, every URI.
+                  {gettext("Live %{registry} snapshot — every Kind, every URI.",
+                    registry: "Ezagent.KindRegistry"
+                  )}
                 </div>
               </.card>
             </a>
             <a href="/admin/snapshots" class="block">
               <.card>
-                <div class="font-medium text-sm">Snapshots →</div>
+                <div class="font-medium text-sm">{gettext("Snapshots")} →</div>
                 <div class="text-xs text-zinc-500 mt-1">
-                  Persisted Kind state per <code>kind_snapshots</code> table.
+                  {gettext("Persisted Kind state per %{table} table.", table: "kind_snapshots")}
                 </div>
               </.card>
             </a>

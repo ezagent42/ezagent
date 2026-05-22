@@ -39,6 +39,9 @@ defmodule EzagentPluginLiveview.FeishuBindingsLive do
   """
 
   use Phoenix.LiveView
+  # i18n (Allen 2026-05-22) — runtime backend reference; no compile-time
+  # dep on :ezagent_web.
+  use Gettext, backend: EzagentPluginLiveview.Gettext
   alias EzagentDomainUi.WorkspaceShell
   alias EzagentPluginLiveview.AppShell
   alias Ezagent.UI.UriOptions
@@ -98,15 +101,17 @@ defmodule EzagentPluginLiveview.FeishuBindingsLive do
 
     cond do
       open_id == "" or user_uri == "" ->
-        {:noreply, assign(socket, :flash_error, "open_id and user_uri are required")}
+        {:noreply, assign(socket, :flash_error, gettext("open_id and user_uri are required"))}
 
       not UriOptions.valid_for?(caller_uri, workspace_uri, user_uri, [:entity]) ->
         {:noreply,
          assign(
            socket,
            :flash_error,
-           "Rejected #{inspect(user_uri)} — must be an entity URI in this workspace. " <>
-             "Pick from the list."
+           gettext(
+             "Rejected %{uri} — must be an entity URI in this workspace. Pick from the list.",
+             uri: inspect(user_uri)
+           )
          )}
 
       true ->
@@ -117,12 +122,20 @@ defmodule EzagentPluginLiveview.FeishuBindingsLive do
             {:noreply,
              socket
              |> assign(:bindings, UserBinding.list_all())
-             |> assign(:flash_info, "Bound #{open_id} → #{user_uri}")
+             |> assign(
+               :flash_info,
+               gettext("Bound %{from} → %{to}", from: open_id, to: user_uri)
+             )
              |> assign(:flash_error, nil)
              |> assign(:bind_form, to_form(%{"open_id" => "", "user_uri" => ""}, as: "bind"))}
 
           {:error, reason} ->
-            {:noreply, assign(socket, :flash_error, "bind failed: #{inspect(reason)}")}
+            {:noreply,
+             assign(
+               socket,
+               :flash_error,
+               gettext("bind failed: %{reason}", reason: inspect(reason))
+             )}
         end
     end
   end
@@ -133,11 +146,12 @@ defmodule EzagentPluginLiveview.FeishuBindingsLive do
         {:noreply,
          socket
          |> assign(:bindings, UserBinding.list_all())
-         |> assign(:flash_info, "Unbound #{open_id}")
+         |> assign(:flash_info, gettext("Unbound %{id}", id: open_id))
          |> assign(:flash_error, nil)}
 
       {:error, :not_found} ->
-        {:noreply, assign(socket, :flash_error, "no binding for #{open_id}")}
+        {:noreply,
+         assign(socket, :flash_error, gettext("no binding for %{id}", id: open_id))}
     end
   end
 
@@ -164,19 +178,25 @@ defmodule EzagentPluginLiveview.FeishuBindingsLive do
 
     cond do
       chat_id == "" or session_uri == "" ->
-        {:noreply, assign(socket, :flash_error, "chat_id and session_uri are required")}
+        {:noreply, assign(socket, :flash_error, gettext("chat_id and session_uri are required"))}
 
       not String.starts_with?(chat_id, "oc_") ->
         {:noreply,
-         assign(socket, :flash_error, "chat_id must start with `oc_` (Feishu open-chat-id)")}
+         assign(
+           socket,
+           :flash_error,
+           gettext("chat_id must start with `oc_` (Feishu open-chat-id)")
+         )}
 
       not UriOptions.valid_for?(caller_uri, workspace_uri, session_uri, [:session]) ->
         {:noreply,
          assign(
            socket,
            :flash_error,
-           "Rejected #{inspect(session_uri)} — must be a session URI in this workspace. " <>
-             "Pick from the list."
+           gettext(
+             "Rejected %{uri} — must be a session URI in this workspace. Pick from the list.",
+             uri: inspect(session_uri)
+           )
          )}
 
       true ->
@@ -185,7 +205,10 @@ defmodule EzagentPluginLiveview.FeishuBindingsLive do
             {:noreply,
              socket
              |> assign(:session_bindings, SessionBinding.list_all())
-             |> assign(:flash_info, "Bound #{chat_id} → #{session_uri}")
+             |> assign(
+               :flash_info,
+               gettext("Bound %{from} → %{to}", from: chat_id, to: session_uri)
+             )
              |> assign(:flash_error, nil)
              |> assign(
                :session_bind_form,
@@ -193,7 +216,12 @@ defmodule EzagentPluginLiveview.FeishuBindingsLive do
              )}
 
           {:error, reason} ->
-            {:noreply, assign(socket, :flash_error, "session bind failed: #{inspect(reason)}")}
+            {:noreply,
+             assign(
+               socket,
+               :flash_error,
+               gettext("session bind failed: %{reason}", reason: inspect(reason))
+             )}
         end
     end
   end
@@ -204,11 +232,12 @@ defmodule EzagentPluginLiveview.FeishuBindingsLive do
         {:noreply,
          socket
          |> assign(:session_bindings, SessionBinding.list_all())
-         |> assign(:flash_info, "Unbound #{chat_id}")
+         |> assign(:flash_info, gettext("Unbound %{id}", id: chat_id))
          |> assign(:flash_error, nil)}
 
       {:error, :not_found} ->
-        {:noreply, assign(socket, :flash_error, "no session binding for #{chat_id}")}
+        {:noreply,
+         assign(socket, :flash_error, gettext("no session binding for %{id}", id: chat_id))}
     end
   end
 
@@ -239,18 +268,16 @@ defmodule EzagentPluginLiveview.FeishuBindingsLive do
         >
           <:main_window>
             <div class="flex-1 overflow-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
-              <.page_header title="Feishu bindings">
+              <.page_header title={gettext("Feishu bindings")}>
                 <:subtitle>
-                  Two binding kinds: <strong>user bindings</strong>
-                  (open_id ↔ user URI,
-                  grants chat caps) and <strong>session bindings</strong>
-                  (chat_id ↔
-                  session URI, mirrors a session to a Feishu chat).
+                  {gettext(
+                    "Two binding kinds: user bindings (open_id ↔ user URI, grants chat caps) and session bindings (chat_id ↔ session URI, mirrors a session to a Feishu chat)."
+                  )}
                   <a
                     href="/plugins"
                     class="text-zinc-600 dark:text-zinc-400 underline hover:text-zinc-900 dark:hover:text-zinc-100 ml-1"
                   >
-                    ← Plugins
+                    ← {gettext("Plugins")}
                   </a>
                 </:subtitle>
               </.page_header>
@@ -263,14 +290,14 @@ defmodule EzagentPluginLiveview.FeishuBindingsLive do
               </p>
 
               <h2 class="text-sm font-semibold text-zinc-900 dark:text-zinc-100 mb-2">
-                User bindings
+                {gettext("User bindings")}
               </h2>
 
               <.card class="mb-6">
-                <:header>Bind open_id ↔ user URI</:header>
+                <:header>{gettext("Bind open_id ↔ user URI")}</:header>
                 <.form for={@bind_form} phx-submit="bind" class="grid grid-cols-2 gap-2 items-start">
                   <label class="text-xs text-zinc-700 dark:text-zinc-300">
-                    Feishu open_id
+                    {gettext("Feishu open_id")}
                     <input
                       type="text"
                       name="bind[open_id]"
@@ -290,19 +317,19 @@ defmodule EzagentPluginLiveview.FeishuBindingsLive do
                     kinds={[:entity]}
                     options={@entity_options}
                     allow_freetext={true}
-                    label="local user URI"
-                    placeholder="pick the local entity to bind"
+                    label={gettext("local user URI")}
+                    placeholder={gettext("pick the local entity to bind")}
                   />
                   <div class="col-span-2 flex justify-end">
-                    <.button type="submit" variant="primary" size="sm">Bind + grant cap</.button>
+                    <.button type="submit" variant="primary" size="sm">{gettext("Bind + grant cap")}</.button>
                   </div>
                 </.form>
               </.card>
 
               <.card class="mb-8">
-                <:header>Current user bindings ({length(@bindings)})</:header>
+                <:header>{gettext("Current user bindings (%{count})", count: length(@bindings))}</:header>
                 <p :if={@bindings == []} class="text-zinc-500 italic text-sm">
-                  No bindings yet. Unbound Feishu users see the bot react with EYES — bind them above to enable chat.
+                  {gettext("No bindings yet. Unbound Feishu users see the bot react with EYES — bind them above to enable chat.")}
                 </p>
                 <table :if={@bindings != []} class="w-full text-sm">
                   <thead class="bg-zinc-50 dark:bg-zinc-950 border-b border-zinc-200 dark:border-zinc-800">
@@ -310,7 +337,7 @@ defmodule EzagentPluginLiveview.FeishuBindingsLive do
                       <th class="px-2 py-2">open_id</th>
                       <th class="py-2">user_uri</th>
                       <th class="py-2">bound_by</th>
-                      <th class="py-2">when</th>
+                      <th class="py-2">{gettext("when")}</th>
                       <th></th>
                     </tr>
                   </thead>
@@ -330,7 +357,7 @@ defmodule EzagentPluginLiveview.FeishuBindingsLive do
                           phx-click="unbind"
                           phx-value-open-id={b.open_id}
                         >
-                          unbind
+                          {gettext("unbind")}
                         </.button>
                       </td>
                     </tr>
@@ -339,18 +366,18 @@ defmodule EzagentPluginLiveview.FeishuBindingsLive do
               </.card>
 
               <h2 class="text-sm font-semibold text-zinc-900 dark:text-zinc-100 mb-2">
-                Session bindings
+                {gettext("Session bindings")}
               </h2>
 
               <.card class="mb-6">
-                <:header>Bind chat_id ↔ session URI</:header>
+                <:header>{gettext("Bind chat_id ↔ session URI")}</:header>
                 <.form
                   for={@session_bind_form}
                   phx-submit="bind_session"
                   class="grid grid-cols-2 gap-2 items-start"
                 >
                   <label class="text-xs text-zinc-700 dark:text-zinc-300">
-                    Feishu chat_id
+                    {gettext("Feishu chat_id")}
                     <input
                       type="text"
                       name="session_bind[chat_id]"
@@ -370,28 +397,27 @@ defmodule EzagentPluginLiveview.FeishuBindingsLive do
                     kinds={[:session]}
                     options={@session_options}
                     allow_freetext={true}
-                    label="session URI"
+                    label={gettext("session URI")}
                     placeholder="session://default/default/main"
                   />
                   <div class="col-span-2 flex justify-end">
-                    <.button type="submit" variant="primary" size="sm">Bind chat</.button>
+                    <.button type="submit" variant="primary" size="sm">{gettext("Bind chat")}</.button>
                   </div>
                 </.form>
               </.card>
 
               <.card>
-                <:header>Current session bindings ({length(@session_bindings)})</:header>
+                <:header>{gettext("Current session bindings (%{count})", count: length(@session_bindings))}</:header>
                 <p :if={@session_bindings == []} class="text-zinc-500 italic text-sm">
-                  No session bindings yet. Bind a Feishu chat_id above to mirror a
-                  session's messages into a Feishu chat (and route replies back in).
+                  {gettext("No session bindings yet. Bind a Feishu chat_id above to mirror a session's messages into a Feishu chat (and route replies back in).")}
                 </p>
                 <table :if={@session_bindings != []} class="w-full text-sm">
                   <thead class="bg-zinc-50 dark:bg-zinc-950 border-b border-zinc-200 dark:border-zinc-800">
                     <tr class="text-left text-xs uppercase tracking-wide text-zinc-500">
                       <th class="px-2 py-2">chat_id</th>
                       <th class="py-2">session_uri</th>
-                      <th class="py-2">enabled</th>
-                      <th class="py-2">when</th>
+                      <th class="py-2">{gettext("enabled")}</th>
+                      <th class="py-2">{gettext("when")}</th>
                       <th></th>
                     </tr>
                   </thead>
@@ -404,7 +430,7 @@ defmodule EzagentPluginLiveview.FeishuBindingsLive do
                       <td class="py-2 font-mono text-xs">{b.session_uri}</td>
                       <td class="py-2">
                         <.badge variant={if b.enabled, do: "success", else: "warning"}>
-                          {if b.enabled, do: "enabled", else: "disabled"}
+                          {if b.enabled, do: gettext("enabled"), else: gettext("disabled")}
                         </.badge>
                       </td>
                       <td class="py-2 text-xs text-zinc-500">{DateTime.to_iso8601(b.created_at)}</td>
@@ -415,7 +441,7 @@ defmodule EzagentPluginLiveview.FeishuBindingsLive do
                           phx-click="unbind_session"
                           phx-value-chat-id={b.chat_id}
                         >
-                          unbind
+                          {gettext("unbind")}
                         </.button>
                       </td>
                     </tr>

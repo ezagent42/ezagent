@@ -42,6 +42,9 @@ defmodule EzagentDomainUi.AdminShell do
   """
 
   use Phoenix.Component
+  # i18n (Allen 2026-05-22) — Tier-2 shared-component backend. NOT a
+  # dependency on `ezagent_web` (see `EzagentDomainUi.Gettext` moduledoc).
+  use Gettext, backend: EzagentDomainUi.Gettext
   use EzagentDomainUi.Primitives
 
   # --- admin_shell ----------------------------------------------------------
@@ -110,7 +113,7 @@ defmodule EzagentDomainUi.AdminShell do
       class="hidden lg:flex lg:static fixed top-10 bottom-0 left-0 z-40 w-56 max-w-[80vw] border-r border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 flex-col py-2 px-2 gap-px shrink-0 shadow-xl lg:shadow-none"
     >
       <div class="text-[10px] uppercase tracking-wide text-zinc-500 px-2 mb-1">
-        Admin Settings
+        {gettext("Admin Settings")}
       </div>
       <a
         :for={item <- @items}
@@ -143,12 +146,12 @@ defmodule EzagentDomainUi.AdminShell do
   @spec sections() :: [%{key: atom(), label: String.t(), icon: String.t(), path: String.t()}]
   def sections do
     [
-      %{key: :overview, label: "Overview", icon: "dashboard", path: "/admin"},
-      %{key: :workspaces, label: "Workspaces", icon: "folder", path: "/workspaces"},
-      %{key: :logs, label: "Logs & Audit", icon: "bug", path: "/admin/logs"},
-      %{key: :registry, label: "Registry", icon: "users", path: "/admin/registry"},
-      %{key: :snapshots, label: "Snapshots", icon: "folder", path: "/admin/snapshots"},
-      %{key: :settings, label: "Settings", icon: "settings", path: "/admin/settings"}
+      %{key: :overview, label: gettext("Overview"), icon: "dashboard", path: "/admin"},
+      %{key: :workspaces, label: gettext("Workspaces"), icon: "folder", path: "/workspaces"},
+      %{key: :logs, label: gettext("Logs & Audit"), icon: "bug", path: "/admin/logs"},
+      %{key: :registry, label: gettext("Registry"), icon: "users", path: "/admin/registry"},
+      %{key: :snapshots, label: gettext("Snapshots"), icon: "folder", path: "/admin/snapshots"},
+      %{key: :settings, label: gettext("Settings"), icon: "settings", path: "/admin/settings"}
     ]
   end
 

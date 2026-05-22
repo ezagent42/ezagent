@@ -72,7 +72,7 @@ defmodule EzagentWeb.HomeLive do
     with_echo? = params |> Map.get("with_echo") |> truthy?()
 
     if short_name == "" do
-      {:noreply, assign(socket, :flash_error, "Session name is required.")}
+      {:noreply, assign(socket, :flash_error, gettext("Session name is required."))}
     else
       creator_uri = parse_entity_uri(socket.assigns.current_entity_uri_str)
 
@@ -86,7 +86,7 @@ defmodule EzagentWeb.HomeLive do
            assign(
              socket,
              :flash_error,
-             "Create failed: #{inspect(reason)}"
+             gettext("Create failed: %{reason}", reason: inspect(reason))
            )}
       end
     end
@@ -148,10 +148,10 @@ defmodule EzagentWeb.HomeLive do
       <div class="w-full max-w-md">
         <div class="text-center mb-8">
           <h1 class="text-2xl font-semibold text-zinc-900 dark:text-zinc-100">
-            Welcome to ezagent
+            {gettext("Welcome to ezagent")}
           </h1>
           <p class="mt-2 text-sm text-zinc-500">
-            Let's set up your first session.
+            {gettext("Let's set up your first session.")}
           </p>
         </div>
 
@@ -167,7 +167,7 @@ defmodule EzagentWeb.HomeLive do
                 for="wizard_short_name"
                 class="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1"
               >
-                Session short name
+                {gettext("Session short name")}
               </label>
               <input
                 type="text"
@@ -179,7 +179,7 @@ defmodule EzagentWeb.HomeLive do
                 class="w-full px-3 py-2 text-sm bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 rounded-md text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-zinc-500 dark:focus:border-zinc-500"
               />
               <p class="mt-1 text-xs text-zinc-500">
-                Creates <span class="font-mono">session://default/default/<span id="short-name-preview">{@form[:short_name].value}</span></span> bound to <span class="font-mono">workspace://default</span>.
+                {gettext("Creates")} <span class="font-mono">session://default/default/<span id="short-name-preview">{@form[:short_name].value}</span></span> {gettext("bound to")} <span class="font-mono">workspace://default</span>.
               </p>
             </div>
 
@@ -195,9 +195,9 @@ defmodule EzagentWeb.HomeLive do
                 class="mt-0.5 rounded border-zinc-300 dark:border-zinc-700"
               />
               <span class="text-xs text-zinc-700 dark:text-zinc-300">
-                Include echo demo agent
+                {gettext("Include echo demo agent")}
                 <span class="block text-zinc-500">
-                  Adds <span class="font-mono">entity://agent/default/echo_default</span> as a session member so you can verify the chat round-trip works.
+                  {gettext("Adds")} <span class="font-mono">entity://agent/default/echo_default</span> {gettext("as a session member so you can verify the chat round-trip works.")}
                 </span>
               </span>
             </label>
@@ -210,13 +210,13 @@ defmodule EzagentWeb.HomeLive do
               type="submit"
               class="w-full px-4 py-2 text-sm font-medium bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 rounded-md hover:bg-zinc-800 dark:hover:bg-zinc-200 transition-colors"
             >
-              Create session
+              {gettext("Create session")}
             </button>
           </.form>
         </div>
 
         <p class="mt-6 text-center text-xs text-zinc-500">
-          Signed in as <span class="font-mono">{@current_entity_uri_str}</span>
+          {gettext("Signed in as")} <span class="font-mono">{@current_entity_uri_str}</span>
         </p>
       </div>
     </div>

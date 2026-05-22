@@ -59,6 +59,9 @@ defmodule EzagentPluginLiveview.CommandPaletteComponent do
   """
 
   use Phoenix.LiveComponent
+  # i18n (Allen 2026-05-22) — runtime backend reference; no compile-time
+  # dep on :ezagent_web.
+  use Gettext, backend: EzagentPluginLiveview.Gettext
 
   alias Ezagent.UI.{CommandSource, UriOptions}
   alias EzagentDomainUi.Primitives
@@ -202,9 +205,9 @@ defmodule EzagentPluginLiveview.CommandPaletteComponent do
   defp entity_icon(%{kind: :entity}), do: "users"
   defp entity_icon(_), do: "dot"
 
-  defp entity_group(%{kind: :session}), do: "Sessions"
-  defp entity_group(%{kind: :entity}), do: "Entities"
-  defp entity_group(_), do: "Entities"
+  defp entity_group(%{kind: :session}), do: gettext("Sessions")
+  defp entity_group(%{kind: :entity}), do: gettext("Entities")
+  defp entity_group(_), do: gettext("Entities")
 
   @impl true
   def render(assigns) do
@@ -231,7 +234,7 @@ defmodule EzagentPluginLiveview.CommandPaletteComponent do
             type="text"
             name="q"
             value={@query}
-            placeholder="搜索 sessions / entities ..."
+            placeholder={gettext("Search sessions / entities ...")}
             autocomplete="off"
             autofocus
             class="w-full px-4 py-3 text-sm bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 border-b border-zinc-200 dark:border-zinc-800 focus:outline-none"
@@ -242,7 +245,7 @@ defmodule EzagentPluginLiveview.CommandPaletteComponent do
             :if={@results == []}
             class="px-4 py-8 text-center text-xs text-zinc-500 dark:text-zinc-400"
           >
-            {(@query == "" && "输入开始搜索") || "没有结果"}
+            {(@query == "" && gettext("Type to start searching")) || gettext("No results")}
           </div>
           <button
             :for={r <- @results}

@@ -120,18 +120,18 @@
   <body>
     <div class="brand">ezagent</div>
     <div class="wrap">
-      <p class="code">404 · not found</p>
+      <p class="code">404 · {gettext("not found")}</p>
       <div class="pattern">∅</div>
-      <h1>This path doesn't lead anywhere.</h1>
+      <h1>{gettext("This path doesn't lead anywhere.")}</h1>
       <p class="subtitle">
-        The URL you opened isn't a route ezagent serves right now. If you
-        followed a link from inside the app and landed here, that's a bug
-        worth reporting.
+        {gettext(
+          "The URL you opened isn't a route ezagent serves right now. If you followed a link from inside the app and landed here, that's a bug worth reporting."
+        )}
       </p>
       <div class="actions">
-        <a class="btn btn-primary" href="/sessions">Open Sessions</a>
-        <a class="btn" href="/identities">Browse Identities</a>
-        <a class="btn" href="/admin">Admin Dashboard</a>
+        <a class="btn btn-primary" href="/sessions">{gettext("Open Sessions")}</a>
+        <a class="btn" href="/identities">{gettext("Browse Identities")}</a>
+        <a class="btn" href="/admin">{gettext("Admin Dashboard")}</a>
       </div>
     </div>
   </body>

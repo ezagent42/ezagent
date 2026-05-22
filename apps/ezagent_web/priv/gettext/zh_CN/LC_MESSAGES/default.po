@@ -22,27 +22,27 @@ msgstr "操作"
 msgid "Attempting to reconnect"
 msgstr "正在尝试重新连接"
 
-#: lib/ezagent_web/controllers/session_controller.ex:397
+#: lib/ezagent_web/controllers/session_controller.ex:404
 #, elixir-autogen, elixir-format
 msgid "Email address"
 msgstr "电子邮箱"
 
-#: lib/ezagent_web/controllers/session_controller.ex:400
+#: lib/ezagent_web/controllers/session_controller.ex:407
 #, elixir-autogen, elixir-format
 msgid "Email me a sign-in link"
 msgstr "给我发送登录链接"
 
-#: lib/ezagent_web/controllers/session_controller.ex:406
+#: lib/ezagent_web/controllers/session_controller.ex:413
 #, elixir-autogen, elixir-format
 msgid "Email sign-in is not enabled. An admin can turn it on in Settings → SMTP."
 msgstr "邮箱登录尚未启用。管理员可在 设置 → SMTP 中开启。"
 
-#: lib/ezagent_web/controllers/session_controller.ex:421
+#: lib/ezagent_web/controllers/session_controller.ex:428
 #, elixir-autogen, elixir-format
 msgid "Password or token"
 msgstr "密码或令牌"
 
-#: lib/ezagent_web/controllers/session_controller.ex:418
+#: lib/ezagent_web/controllers/session_controller.ex:425
 #, elixir-autogen, elixir-format
 msgid "Sign in"
 msgstr "登录"
@@ -52,7 +52,7 @@ msgstr "登录"
 msgid "Something went wrong!"
 msgstr "出错了！"
 
-#: lib/ezagent_web/controllers/session_controller.ex:420
+#: lib/ezagent_web/controllers/session_controller.ex:427
 #, elixir-autogen, elixir-format
 msgid "Username or entity URI"
 msgstr "用户名或实体 URI"
@@ -62,12 +62,12 @@ msgstr "用户名或实体 URI"
 msgid "We can't find the internet"
 msgstr "网络连接已断开"
 
-#: lib/ezagent_web/controllers/session_controller.ex:423
+#: lib/ezagent_web/controllers/session_controller.ex:430
 #, elixir-autogen, elixir-format
 msgid "With email magic link"
 msgstr "使用邮箱魔法链接"
 
-#: lib/ezagent_web/controllers/session_controller.ex:419
+#: lib/ezagent_web/controllers/session_controller.ex:426
 #, elixir-autogen, elixir-format
 msgid "With password"
 msgstr "使用密码"
@@ -77,39 +77,259 @@ msgstr "使用密码"
 msgid "close"
 msgstr "关闭"
 
-#: lib/ezagent_web/controllers/session_controller.ex:417
+#: lib/ezagent_web/controllers/session_controller.ex:424
 #, elixir-autogen, elixir-format
 msgid "ezagent · sign in"
 msgstr "ezagent · 登录"
 
-#: lib/ezagent_web/controllers/session_controller.ex:422
+#: lib/ezagent_web/controllers/session_controller.ex:429
 #, elixir-autogen, elixir-format
 msgid "or"
 msgstr "或"
 
-# --- i18n V1 manual additions ---------------------------------------
-# Strings wrapped in apps/ezagent_plugin_liveview which uses
-# EzagentWeb.Gettext as its backend. `mix gettext.extract` runs from
-# the ezagent_web Mix project and does NOT walk sibling umbrella apps,
-# so these msgids are added by hand on the same wrap-PR. Future PRs
-# that touch many strings should either run extract from each app or
-# centralize via an extraction shim.
-#: ../ezagent_plugin_liveview/lib/ezagent_plugin_liveview/admin_dashboard_live.ex
-#, elixir-format
-msgid "Overview"
-msgstr "概览"
+#: lib/ezagent_web/live/home_live.ex:200
+#, elixir-autogen, elixir-format
+msgid "Adds"
+msgstr "添加"
 
-#: ../ezagent_plugin_liveview/lib/ezagent_plugin_liveview/identities_live.ex
-#, elixir-format
-msgid "Identities"
-msgstr "身份"
+#: lib/ezagent_web/controllers/error_html/404.html.heex:134
+#, elixir-autogen, elixir-format
+msgid "Admin Dashboard"
+msgstr "管理控制台"
 
-#: ../ezagent_plugin_liveview/lib/ezagent_plugin_liveview/profile_live.ex
-#, elixir-format
-msgid "Profile"
-msgstr "个人资料"
+#: lib/ezagent_web/controllers/error_html/500.html.heex:164
+#, elixir-autogen, elixir-format
+msgid "An unexpected error occurred while loading this page."
+msgstr "加载此页面时发生意外错误。"
 
-#: ../ezagent_plugin_liveview/lib/ezagent_plugin_liveview/users_live.ex
-#, elixir-format
-msgid "Users"
-msgstr "用户"
+#: lib/ezagent_web/controllers/error_html/404.html.heex:133
+#, elixir-autogen, elixir-format
+msgid "Browse Identities"
+msgstr "浏览身份"
+
+#: lib/ezagent_web/controllers/workspace_switch_html/denied.html.heex:159
+#, elixir-autogen, elixir-format
+msgid "Cancel"
+msgstr "取消"
+
+#: lib/ezagent_web/controllers/registration_controller.ex:28
+#, elixir-autogen, elixir-format
+msgid "Complete registration"
+msgstr "完成注册"
+
+#: lib/ezagent_web/controllers/registration_controller.ex:38
+#, elixir-autogen, elixir-format
+msgid "Complete your registration"
+msgstr "完成你的注册"
+
+#: lib/ezagent_web/controllers/registration_controller.ex:102
+#, elixir-autogen, elixir-format
+msgid "Could not register: %{reason}"
+msgstr "无法注册：%{reason}"
+
+#: lib/ezagent_web/live/home_live.ex:89
+#, elixir-autogen, elixir-format
+msgid "Create failed: %{reason}"
+msgstr "创建失败：%{reason}"
+
+#: lib/ezagent_web/controllers/registration_controller.ex:46
+#, elixir-autogen, elixir-format
+msgid "Create my account"
+msgstr "创建我的账户"
+
+#: lib/ezagent_web/live/home_live.ex:213
+#, elixir-autogen, elixir-format
+msgid "Create session"
+msgstr "创建会话"
+
+#: lib/ezagent_web/live/home_live.ex:182
+#, elixir-autogen, elixir-format
+msgid "Creates"
+msgstr "创建"
+
+#: lib/ezagent_web/controllers/registration_controller.ex:44
+#, elixir-autogen, elixir-format
+msgid "Display name (you can change this later)"
+msgstr "显示名称（稍后可更改）"
+
+#: lib/ezagent_web/controllers/error_html/500.html.heex:172
+#, elixir-autogen, elixir-format
+msgid "Go to sessions"
+msgstr "前往会话"
+
+#: lib/ezagent_web/controllers/session_controller.ex:292
+#, elixir-autogen, elixir-format
+msgid "If that email can sign in, we've sent a link. Please check your inbox."
+msgstr "如果该邮箱可以登录，我们已发送链接。请查收邮件。"
+
+#: lib/ezagent_web/live/home_live.ex:198
+#, elixir-autogen, elixir-format
+msgid "Include echo demo agent"
+msgstr "包含 echo 演示代理"
+
+#: lib/ezagent_web/controllers/session_controller.ex:330
+#: lib/ezagent_web/controllers/session_controller.ex:341
+#, elixir-autogen, elixir-format
+msgid "Invalid URI or credentials."
+msgstr "URI 或凭据无效。"
+
+#: lib/ezagent_web/controllers/magic_link_controller.ex:61
+#, elixir-autogen, elixir-format
+msgid "Invalid sign-in link. Please request a new one."
+msgstr "登录链接无效。请重新申请。"
+
+#: lib/ezagent_web/live/home_live.ex:154
+#, elixir-autogen, elixir-format
+msgid "Let's set up your first session."
+msgstr "我们来设置你的第一个会话。"
+
+#: lib/ezagent_web/controllers/workspace_switch_controller.ex:57
+#, elixir-autogen, elixir-format
+msgid "Missing workspace parameter."
+msgstr "缺少工作区参数。"
+
+#: lib/ezagent_web/controllers/error_html/404.html.heex:132
+#, elixir-autogen, elixir-format
+msgid "Open Sessions"
+msgstr "打开会话"
+
+#: lib/ezagent_web/controllers/workspace_switch_controller.ex:77
+#, elixir-autogen, elixir-format
+msgid "Operating on workspace %{name}"
+msgstr "正在工作区 %{name} 中操作"
+
+#: lib/ezagent_web/controllers/workspace_switch_html/denied.html.heex:136
+#, elixir-autogen, elixir-format
+msgid "Permission required"
+msgstr "需要权限"
+
+#: lib/ezagent_web/live/home_live.ex:75
+#, elixir-autogen, elixir-format
+msgid "Session name is required."
+msgstr "会话名称为必填项。"
+
+#: lib/ezagent_web/live/home_live.ex:170
+#, elixir-autogen, elixir-format
+msgid "Session short name"
+msgstr "会话短名称"
+
+#: lib/ezagent_web/controllers/error_html/500.html.heex:173
+#, elixir-autogen, elixir-format
+msgid "Sign in again"
+msgstr "重新登录"
+
+#: lib/ezagent_web/controllers/workspace_switch_html/denied.html.heex:4
+#, elixir-autogen, elixir-format
+msgid "Sign in required"
+msgstr "需要登录"
+
+#: lib/ezagent_web/controllers/workspace_switch_html/denied.html.heex:156
+#, elixir-autogen, elixir-format
+msgid "Sign in to %{name}"
+msgstr "登录到 %{name}"
+
+#: lib/ezagent_web/controllers/workspace_switch_html/denied.html.heex:137
+#, elixir-autogen, elixir-format
+msgid "Sign in to workspace"
+msgstr "登录到工作区"
+
+#: lib/ezagent_web/live/home_live.ex:219
+#, elixir-autogen, elixir-format
+msgid "Signed in as"
+msgstr "登录身份为"
+
+#: lib/ezagent_web/controllers/registration_controller.ex:48
+#, elixir-autogen, elixir-format
+msgid "Signing up as"
+msgstr "注册身份为"
+
+#: lib/ezagent_web/controllers/error_html/500.html.heex:4
+#: lib/ezagent_web/controllers/error_html/500.html.heex:163
+#, elixir-autogen, elixir-format
+msgid "Something went wrong"
+msgstr "出错了"
+
+#: lib/ezagent_web/controllers/magic_link_controller.ex:56
+#, elixir-autogen, elixir-format
+msgid "That sign-in link has expired. Please request a new one."
+msgstr "该登录链接已过期。请重新申请。"
+
+#: lib/ezagent_web/controllers/magic_link_controller.ex:59
+#, elixir-autogen, elixir-format
+msgid "That sign-in link was already used. Please request a new one."
+msgstr "该登录链接已被使用。请重新申请。"
+
+#: lib/ezagent_web/controllers/error_html/404.html.heex:127
+#, elixir-autogen, elixir-format
+msgid "The URL you opened isn't a route ezagent serves right now. If you followed a link from inside the app and landed here, that's a bug worth reporting."
+msgstr "你打开的 URL 不是 ezagent 当前提供的路由。如果你是从应用内部的链接来到此处，那是一个值得上报的缺陷。"
+
+#: lib/ezagent_web/controllers/error_html/404.html.heex:125
+#, elixir-autogen, elixir-format
+msgid "This path doesn't lead anywhere."
+msgstr "此路径无处可去。"
+
+#: lib/ezagent_web/controllers/workspace_switch_html/denied.html.heex:144
+#, elixir-autogen, elixir-format
+msgid "To work in this workspace, sign in as a member of it. This will end your current session."
+msgstr "要在此工作区中工作，请以其成员身份登录。这将结束你当前的会话。"
+
+#: lib/ezagent_web/controllers/workspace_switch_controller.ex:38
+#, elixir-autogen, elixir-format
+msgid "Unknown workspace: %{name}"
+msgstr "未知工作区：%{name}"
+
+#: lib/ezagent_web/controllers/registration_controller.ex:42
+#, elixir-autogen, elixir-format
+msgid "Username (your permanent handle — entity://user/<handle>)"
+msgstr "用户名（你的永久句柄 — entity://user/<handle>）"
+
+#: lib/ezagent_web/controllers/session_controller.ex:348
+#, elixir-autogen, elixir-format
+msgid "Username/URI and password/token are required."
+msgstr "用户名/URI 和密码/令牌为必填项。"
+
+#: lib/ezagent_web/live/home_live.ex:151
+#, elixir-autogen, elixir-format
+msgid "Welcome to ezagent"
+msgstr "欢迎使用 ezagent"
+
+#: lib/ezagent_web/controllers/workspace_switch_controller.ex:47
+#, elixir-autogen, elixir-format
+msgid "Workspace not available"
+msgstr "工作区不可用"
+
+#: lib/ezagent_web/controllers/error_html/500.html.heex:166
+#, elixir-autogen, elixir-format
+msgid "You can try again, return to your sessions, or sign in again if your session expired."
+msgstr "你可以重试、返回你的会话，或在会话过期时重新登录。"
+
+#: lib/ezagent_web/controllers/workspace_switch_html/denied.html.heex:139
+#, elixir-autogen, elixir-format
+msgid "You don't have permission to view workspace"
+msgstr "你没有查看工作区的权限"
+
+#: lib/ezagent_web/live/home_live.ex:200
+#, elixir-autogen, elixir-format
+msgid "as a session member so you can verify the chat round-trip works."
+msgstr "作为会话成员，以便你验证聊天往返是否正常。"
+
+#: lib/ezagent_web/controllers/workspace_switch_html/denied.html.heex:140
+#, elixir-autogen, elixir-format
+msgid "as your current identity"
+msgstr "以你当前的身份"
+
+#: lib/ezagent_web/live/home_live.ex:182
+#, elixir-autogen, elixir-format
+msgid "bound to"
+msgstr "绑定到"
+
+#: lib/ezagent_web/controllers/error_html/404.html.heex:123
+#, elixir-autogen, elixir-format
+msgid "not found"
+msgstr "未找到"
+
+#: lib/ezagent_web/controllers/registration_controller.ex:90
+#, elixir-autogen, elixir-format
+msgid "“%{slug}” is taken. Try “%{suggestion}”."
+msgstr "“%{slug}” 已被占用。试试 “%{suggestion}”。"

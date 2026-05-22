@@ -11,7 +11,7 @@ defmodule EzagentPluginLiveview.ProfileLive do
   """
   use Phoenix.LiveView
   # i18n V1 (Allen 2026-05-21) — see admin_dashboard_live for rationale.
-  use Gettext, backend: EzagentWeb.Gettext
+  use Gettext, backend: EzagentPluginLiveview.Gettext
   alias EzagentDomainUi.WorkspaceShell
   alias EzagentPluginLiveview.AppShell
   use EzagentDomainUi.Components
@@ -48,7 +48,7 @@ defmodule EzagentPluginLiveview.ProfileLive do
 
     cond do
       name == "" ->
-        {:noreply, assign(socket, :flash_error, "Display name cannot be empty")}
+        {:noreply, assign(socket, :flash_error, gettext("Display name cannot be empty"))}
 
       true ->
         case Ezagent.Entity.Profile.upsert(%{
@@ -60,11 +60,16 @@ defmodule EzagentPluginLiveview.ProfileLive do
              socket
              |> assign(:display_name, name)
              |> assign(:editing_display_name?, false)
-             |> assign(:flash_info, "Display name updated.")
+             |> assign(:flash_info, gettext("Display name updated."))
              |> assign(:flash_error, nil)}
 
           {:error, changeset} ->
-            {:noreply, assign(socket, :flash_error, "update failed: #{inspect(changeset.errors)}")}
+            {:noreply,
+             assign(
+               socket,
+               :flash_error,
+               gettext("update failed: %{reason}", reason: inspect(changeset.errors))
+             )}
         end
     end
   end
@@ -106,14 +111,14 @@ defmodule EzagentPluginLiveview.ProfileLive do
       <:main_window>
         <div class="flex-1 overflow-auto px-6 py-6 max-w-3xl">
           <.page_header title={gettext("Profile")}>
-            <:subtitle>Your entity URI and access summary.</:subtitle>
+            <:subtitle>{gettext("Your entity URI and access summary.")}</:subtitle>
           </.page_header>
 
           <.card class="mt-4">
             <div class="flex items-center gap-4">
               <.avatar uri={@entity_uri_str} size="md" />
               <div class="flex-1">
-                <div class="text-xs text-zinc-500">Display name</div>
+                <div class="text-xs text-zinc-500">{gettext("Display name")}</div>
                 <%= if @editing_display_name? do %>
                   <form phx-submit="save_display_name" phx-click-away="cancel_edit_display_name" class="flex gap-1 items-center mt-0.5">
                     <input
@@ -125,10 +130,10 @@ defmodule EzagentPluginLiveview.ProfileLive do
                       phx-keydown="cancel_edit_display_name"
                       class="flex-1 px-2 py-1 text-sm border border-blue-400 dark:border-blue-600 rounded bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
                     />
-                    <button type="submit" class="p-1 text-emerald-600 hover:text-emerald-700 dark:text-emerald-400" aria-label="Save">
+                    <button type="submit" class="p-1 text-emerald-600 hover:text-emerald-700 dark:text-emerald-400" aria-label={gettext("Save")}>
                       <.icon name="check" size="sm" />
                     </button>
-                    <button type="button" phx-click="cancel_edit_display_name" class="p-1 text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300" aria-label="Cancel">
+                    <button type="button" phx-click="cancel_edit_display_name" class="p-1 text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300" aria-label={gettext("Cancel")}>
                       <.icon name="x" size="sm" />
                     </button>
                   </form>
@@ -138,14 +143,14 @@ defmodule EzagentPluginLiveview.ProfileLive do
                     <button
                       type="button"
                       phx-click="edit_display_name"
-                      aria-label="Edit display name"
+                      aria-label={gettext("Edit display name")}
                       class="p-1 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded"
                     >
                       <.icon name="pencil" size="xs" />
                     </button>
                   </div>
                 <% end %>
-                <div class="mt-2 text-xs text-zinc-500">Entity URI</div>
+                <div class="mt-2 text-xs text-zinc-500">{gettext("Entity URI")}</div>
                 <.uri_chip uri={@entity_uri_str} />
                 <p :if={@flash_error} class="text-rose-600 dark:text-rose-400 text-xs mt-2">{@flash_error}</p>
                 <p :if={@flash_info} class="text-emerald-600 dark:text-emerald-400 text-xs mt-2">{@flash_info}</p>
@@ -156,23 +161,23 @@ defmodule EzagentPluginLiveview.ProfileLive do
           <div class="grid grid-cols-2 gap-3 mt-4">
             <a href={"/identities/users/" <> URI.encode_www_form(@entity_uri_str) <> "/caps"} class="block">
               <.card>
-                <div class="font-medium text-sm">Capabilities</div>
+                <div class="font-medium text-sm">{gettext("Capabilities")}</div>
                 <div class="text-2xl font-mono mt-1">{@caps_count}</div>
-                <div class="text-xs text-zinc-500 mt-1">→ Manage</div>
+                <div class="text-xs text-zinc-500 mt-1">→ {gettext("Manage")}</div>
               </.card>
             </a>
             <a href={"/identities/users/" <> URI.encode_www_form(@entity_uri_str) <> "/api-keys"} class="block">
               <.card>
-                <div class="font-medium text-sm">API Keys</div>
+                <div class="font-medium text-sm">{gettext("API Keys")}</div>
                 <div class="text-2xl font-mono mt-1">{@api_keys_count}</div>
-                <div class="text-xs text-zinc-500 mt-1">→ Manage</div>
+                <div class="text-xs text-zinc-500 mt-1">→ {gettext("Manage")}</div>
               </.card>
             </a>
           </div>
 
           <div class="mt-6 text-right">
             <form action="/logout" method="post">
-              <.button variant="ghost" type="submit">Sign out</.button>
+              <.button variant="ghost" type="submit">{gettext("Sign out")}</.button>
             </form>
           </div>
         </div>

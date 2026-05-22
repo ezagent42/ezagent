@@ -35,6 +35,9 @@ defmodule EzagentPluginLiveview.RoutingLive do
   """
 
   use Phoenix.LiveView
+  # i18n (Allen 2026-05-22) — runtime backend reference; no compile-time
+  # dep on :ezagent_web.
+  use Gettext, backend: EzagentPluginLiveview.Gettext
   alias EzagentDomainUi.WorkspaceShell
   alias EzagentPluginLiveview.AppShell
   use EzagentDomainUi.Primitives
@@ -141,7 +144,8 @@ defmodule EzagentPluginLiveview.RoutingLive do
          |> assign(:flash_error, nil)}
 
       _ ->
-        {:noreply, assign(socket, :flash_error, "unknown table: #{table_str}")}
+        {:noreply,
+         assign(socket, :flash_error, gettext("unknown table: %{table}", table: table_str))}
     end
   end
 
@@ -193,8 +197,9 @@ defmodule EzagentPluginLiveview.RoutingLive do
          assign(
            socket,
            :flash_error,
-           "You don't have routing cap on the global system://routing/default scope. " <>
-             "Ask admin to grant via mix ezagent.user.create."
+           gettext(
+             "You don't have routing cap on the global system://routing/default scope. Ask admin to grant via mix ezagent.user.create."
+           )
          )}
 
       {:error, :cross_workspace_denied} ->
@@ -207,8 +212,9 @@ defmodule EzagentPluginLiveview.RoutingLive do
          assign(
            socket,
            :flash_error,
-           "Cross-workspace denied — you're trying to add a routing rule in a " <>
-             "different workspace. Ask admin for a cross-workspace cap."
+           gettext(
+             "Cross-workspace denied — you're trying to add a routing rule in a different workspace. Ask admin for a cross-workspace cap."
+           )
          )}
 
       {:error, {:invalid_uri, bad}} ->
@@ -219,15 +225,18 @@ defmodule EzagentPluginLiveview.RoutingLive do
          assign(
            socket,
            :flash_error,
-           "Rejected URI #{inspect(bad)} — not a valid in-workspace " <>
-             "entity/session. Pick from the list or check the URI."
+           gettext(
+             "Rejected URI %{uri} — not a valid in-workspace entity/session. Pick from the list or check the URI.",
+             uri: inspect(bad)
+           )
          )}
 
       {:error, reason} ->
-        {:noreply, assign(socket, :flash_error, "add failed: #{inspect(reason)}")}
+        {:noreply,
+         assign(socket, :flash_error, gettext("add failed: %{reason}", reason: inspect(reason)))}
 
       false ->
-        {:noreply, assign(socket, :flash_error, "at least one receiver required")}
+        {:noreply, assign(socket, :flash_error, gettext("at least one receiver required"))}
     end
   end
 
@@ -258,8 +267,9 @@ defmodule EzagentPluginLiveview.RoutingLive do
              assign(
                socket,
                :flash_error,
-               "You don't have routing cap on the global system://routing/default " <>
-                 "scope to perform this action."
+               gettext(
+                 "You don't have routing cap on the global system://routing/default scope to perform this action."
+               )
              )}
 
           {:error, :cross_workspace_denied} ->
@@ -267,16 +277,18 @@ defmodule EzagentPluginLiveview.RoutingLive do
              assign(
                socket,
                :flash_error,
-               "Cross-workspace denied — this rule lives in a different workspace. " <>
-                 "Ask admin for a cross-workspace cap."
+               gettext(
+                 "Cross-workspace denied — this rule lives in a different workspace. Ask admin for a cross-workspace cap."
+               )
              )}
 
           {:error, reason} ->
-            {:noreply, assign(socket, :flash_error, "failed: #{inspect(reason)}")}
+            {:noreply,
+             assign(socket, :flash_error, gettext("failed: %{reason}", reason: inspect(reason)))}
         end
 
       _ ->
-        {:noreply, assign(socket, :flash_error, "bad id: #{id_str}")}
+        {:noreply, assign(socket, :flash_error, gettext("bad id: %{id}", id: id_str))}
     end
   end
 
@@ -428,7 +440,7 @@ defmodule EzagentPluginLiveview.RoutingLive do
         >
       <:resource_panel>
         <div class="p-3 flex flex-col gap-1">
-          <div class="text-[10px] uppercase tracking-wide text-zinc-500 mb-1">Tables</div>
+          <div class="text-[10px] uppercase tracking-wide text-zinc-500 mb-1">{gettext("Tables")}</div>
           <button
             :for={{label, mod} <- @tables}
             type="button"
@@ -448,9 +460,11 @@ defmodule EzagentPluginLiveview.RoutingLive do
       <:main_window>
         <div class="flex-1 overflow-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
           <header>
-            <h1 style="font-size: 22px; font-weight: 600;">Routing Rules</h1>
+            <h1 style="font-size: 22px; font-weight: 600;">{gettext("Routing Rules")}</h1>
             <p style="font-size: 13px; color: #666;">
-              Global RoutingRegistry tables. Per-workspace routing_rules stay config-only metadata (visible on Workspace detail page).
+              {gettext(
+                "Global RoutingRegistry tables. Per-workspace routing_rules stay config-only metadata (visible on Workspace detail page)."
+              )}
             </p>
           </header>
 
@@ -468,7 +482,7 @@ defmodule EzagentPluginLiveview.RoutingLive do
 
           <section id="rules-list" style="margin-top: 16px;">
             <p :if={@rules == []} id="rules-empty" style="color: #57606a; font-style: italic;">
-              No rules in this table. Add one below.
+              {gettext("No rules in this table. Add one below.")}
             </p>
 
             <table
@@ -478,10 +492,10 @@ defmodule EzagentPluginLiveview.RoutingLive do
             >
               <thead>
                 <tr style="border-bottom: 1px solid #d1d5da;">
-                  <th style="text-align: left; padding: 6px 4px;">ID</th>
-                  <th style="text-align: left;">Source</th>
-                  <th style="text-align: left;">Matcher</th>
-                  <th style="text-align: left;">Receivers</th>
+                  <th style="text-align: left; padding: 6px 4px;">{gettext("ID")}</th>
+                  <th style="text-align: left;">{gettext("Source")}</th>
+                  <th style="text-align: left;">{gettext("Matcher")}</th>
+                  <th style="text-align: left;">{gettext("Receivers")}</th>
                   <th></th>
                 </tr>
               </thead>
@@ -494,7 +508,7 @@ defmodule EzagentPluginLiveview.RoutingLive do
                   <td style="font-size: 11px;">
                     <span style={source_badge_style(rule.source)}>{rule.source}</span>
                     <span :if={!rule.enabled} style="color: #57606a; margin-left: 4px;">
-                      (disabled)
+                      {gettext("(disabled)")}
                     </span>
                   </td>
                   <td style="font-family: monospace; font-size: 11px;">{inspect(rule.matcher)}</td>
@@ -508,9 +522,9 @@ defmodule EzagentPluginLiveview.RoutingLive do
                       phx-click="delete_rule"
                       phx-value-id={rule.id}
                       style="padding: 4px 10px; background: white; color: #cf222e; border: 1px solid #cf222e; border-radius: 4px; cursor: pointer; font-size: 11px;"
-                      data-confirm="Delete this rule?"
+                      data-confirm={gettext("Delete this rule?")}
                     >
-                      Delete
+                      {gettext("Delete")}
                     </button>
                     <button
                       :if={rule.source == "system_default" and rule.enabled}
@@ -518,9 +532,9 @@ defmodule EzagentPluginLiveview.RoutingLive do
                       phx-click="disable_rule"
                       phx-value-id={rule.id}
                       style="padding: 4px 10px; background: white; color: #9a6700; border: 1px solid #9a6700; border-radius: 4px; cursor: pointer; font-size: 11px;"
-                      data-confirm="Disable this system_default rule? (admin opt-out — re-enable via Enable button)"
+                      data-confirm={gettext("Disable this system_default rule? (admin opt-out — re-enable via Enable button)")}
                     >
-                      Disable
+                      {gettext("Disable")}
                     </button>
                     <button
                       :if={rule.source == "system_default" and !rule.enabled}
@@ -529,7 +543,7 @@ defmodule EzagentPluginLiveview.RoutingLive do
                       phx-value-id={rule.id}
                       style="padding: 4px 10px; background: white; color: #1f883d; border: 1px solid #1f883d; border-radius: 4px; cursor: pointer; font-size: 11px;"
                     >
-                      Enable
+                      {gettext("Enable")}
                     </button>
                   </td>
                 </tr>
@@ -541,7 +555,7 @@ defmodule EzagentPluginLiveview.RoutingLive do
             id="add-rule"
             style="margin-top: 24px; padding: 16px; border: 1px solid #d1d5da; border-radius: 6px;"
           >
-            <h2 style="font-size: 14px; font-weight: 500; margin: 0 0 12px 0;">Add rule</h2>
+            <h2 style="font-size: 14px; font-weight: 500; margin: 0 0 12px 0;">{gettext("Add rule")}</h2>
 
             <div style="margin-bottom: 12px; display: flex; gap: 8px;">
               <button
@@ -550,7 +564,7 @@ defmodule EzagentPluginLiveview.RoutingLive do
                 phx-value-mode="form"
                 style={mode_btn_style(@matcher_mode == "form")}
               >
-                Form mode
+                {gettext("Form mode")}
               </button>
               <button
                 type="button"
@@ -558,7 +572,7 @@ defmodule EzagentPluginLiveview.RoutingLive do
                 phx-value-mode="json"
                 style={mode_btn_style(@matcher_mode == "json")}
               >
-                JSON mode (combinators)
+                {gettext("JSON mode (combinators)")}
               </button>
             </div>
 
@@ -588,7 +602,7 @@ defmodule EzagentPluginLiveview.RoutingLive do
                   kinds={[:entity]}
                   options={@entity_options}
                   allow_freetext={true}
-                  placeholder="pick an entity, or enter a substring/regex below"
+                  placeholder={gettext("pick an entity, or enter a substring/regex below")}
                 />
               </div>
 
@@ -602,9 +616,11 @@ defmodule EzagentPluginLiveview.RoutingLive do
                   style="width: 100%; padding: 6px 10px; border: 1px solid #d1d5da; border-radius: 4px; font-family: monospace; font-size: 12px;"
                 ></textarea>
                 <p style="font-size: 11px; color: #57606a; margin: 4px 0 0;">
-                  Use full matcher JSON for combinators. Shapes: <code>and / or / not</code>
-                  wrap leaf matchers
-                  (<code>mention</code>, <code>from</code>, <code>text_contains</code>, <code>text_matches</code>, <code>always</code>).
+                  {gettext(
+                    "Use full matcher JSON for combinators. Shapes: %{combinators} wrap leaf matchers (%{leaves}).",
+                    combinators: "and / or / not",
+                    leaves: "mention, from, text_contains, text_matches, always"
+                  )}
                 </p>
               </div>
 
@@ -620,8 +636,8 @@ defmodule EzagentPluginLiveview.RoutingLive do
                   mode={:multi}
                   kinds={[:entity, :session]}
                   options={@receiver_options}
-                  label="Receivers"
-                  placeholder="add entities + sessions"
+                  label={gettext("Receivers")}
+                  placeholder={gettext("add entities + sessions")}
                 />
               </div>
 
@@ -629,7 +645,7 @@ defmodule EzagentPluginLiveview.RoutingLive do
                 type="submit"
                 style="padding: 8px 16px; background: #1f883d; color: white; border: none; border-radius: 4px; cursor: pointer;"
               >
-                Add rule
+                {gettext("Add rule")}
               </button>
             </.form>
 
@@ -672,6 +688,8 @@ defmodule EzagentPluginLiveview.RoutingLive do
       "background: #f6f8fa; color: #57606a; padding: 2px 6px; border-radius: 3px; font-size: 10px;"
 
   # Render magic tokens as human-friendly hints, regular URIs as-is.
-  defp render_receiver("$session_members"), do: "(dynamic: members of current session)"
+  defp render_receiver("$session_members"),
+    do: gettext("(dynamic: members of current session)")
+
   defp render_receiver(r), do: r
 end

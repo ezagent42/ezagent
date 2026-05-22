@@ -10,6 +10,9 @@ defmodule EzagentPluginLiveview.ObservabilityLive do
   display existing data (KindRegistry, CC bridges, audit invocations).
   """
   use Phoenix.LiveView
+  # i18n (Allen 2026-05-22) — runtime backend reference; no compile-time
+  # dep on :ezagent_web.
+  use Gettext, backend: EzagentPluginLiveview.Gettext
   alias EzagentDomainUi.AdminShell
   alias EzagentPluginLiveview.AppShell
   use EzagentDomainUi.Components
@@ -88,11 +91,11 @@ defmodule EzagentPluginLiveview.ObservabilityLive do
                 nav (Overview / Logs & Audit / Registry / Snapshots);
                 a second vertical nav would be redundant. --%>
           <nav class="flex items-center gap-1 mb-4 border-b border-zinc-200 dark:border-zinc-800 -mx-6 px-6 pb-0">
-            <.tab_link tab={@tab} value={:overview} label="Overview" />
-            <.tab_link tab={@tab} value={:events} label="Events" />
-            <.tab_link tab={@tab} value={:audit} label="Audit Log" />
-            <.tab_link tab={@tab} value={:bridges} label="Bridges" />
-            <.tab_link tab={@tab} value={:snapshots} label="Snapshots" />
+            <.tab_link tab={@tab} value={:overview} label={gettext("Overview")} />
+            <.tab_link tab={@tab} value={:events} label={gettext("Events")} />
+            <.tab_link tab={@tab} value={:audit} label={gettext("Audit Log")} />
+            <.tab_link tab={@tab} value={:bridges} label={gettext("Bridges")} />
+            <.tab_link tab={@tab} value={:snapshots} label={gettext("Snapshots")} />
           </nav>
           {render_tab(assigns, @tab)}
             </div>
@@ -127,38 +130,38 @@ defmodule EzagentPluginLiveview.ObservabilityLive do
 
   defp render_tab(assigns, :overview) do
     ~H"""
-    <.page_header title="Health Overview">
-      <:subtitle>System pulse — KindRegistry, CC bridges, recent audit activity.</:subtitle>
+    <.page_header title={gettext("Health Overview")}>
+      <:subtitle>{gettext("System pulse — KindRegistry, CC bridges, recent audit activity.")}</:subtitle>
     </.page_header>
     <div class="grid grid-cols-3 gap-3">
-      <.stat label="Kinds alive" value={@kinds_total} />
-      <.stat label="CC bridges" value={length(@bridges)} />
-      <.stat label="Recent audit rows" value={length(@audit_rows)} />
+      <.stat label={gettext("Kinds alive")} value={@kinds_total} />
+      <.stat label={gettext("CC bridges")} value={length(@bridges)} />
+      <.stat label={gettext("Recent audit rows")} value={length(@audit_rows)} />
     </div>
     """
   end
 
   defp render_tab(assigns, :events) do
     ~H"""
-    <.page_header title="Events">
-      <:subtitle>CC hook errors + runtime events. Per-event detail in audit log.</:subtitle>
+    <.page_header title={gettext("Events")}>
+      <:subtitle>{gettext("CC hook errors + runtime events. Per-event detail in audit log.")}</:subtitle>
     </.page_header>
-    <.empty_state title="No live events" description="Live event stream wires in Phase 9." />
+    <.empty_state title={gettext("No live events")} description={gettext("Live event stream wires in Phase 9.")} />
     """
   end
 
   defp render_tab(assigns, :audit) do
     ~H"""
-    <.page_header title="Audit Log (last 50)">
-      <:subtitle>Every Ezagent.Invocation.dispatch — target, action, authz, duration.</:subtitle>
+    <.page_header title={gettext("Audit Log (last 50)")}>
+      <:subtitle>{gettext("Every Ezagent.Invocation.dispatch — target, action, authz, duration.")}</:subtitle>
     </.page_header>
     <.card class="p-0">
       <table class="w-full text-xs font-mono">
         <thead class="bg-zinc-50 dark:bg-zinc-950 border-b border-zinc-200 dark:border-zinc-800 text-zinc-500">
           <tr>
-            <th class="text-left px-3 py-2">Target</th>
-            <th class="text-left">Action</th>
-            <th class="text-left">Authz</th>
+            <th class="text-left px-3 py-2">{gettext("Target")}</th>
+            <th class="text-left">{gettext("Action")}</th>
+            <th class="text-left">{gettext("Authz")}</th>
             <th class="text-right pr-3">μs</th>
           </tr>
         </thead>
@@ -182,13 +185,13 @@ defmodule EzagentPluginLiveview.ObservabilityLive do
 
   defp render_tab(assigns, :bridges) do
     ~H"""
-    <.page_header title="CC Bridges (v2)">
-      <:subtitle>Active Phoenix.Channel connections to /cc_socket.</:subtitle>
+    <.page_header title={gettext("CC Bridges (v2)")}>
+      <:subtitle>{gettext("Active Phoenix.Channel connections to /cc_socket.")}</:subtitle>
     </.page_header>
     <.empty_state
       :if={@bridges == []}
-      title="No connected bridges"
-      description="A bridge connects when a cc.agent's claude PtyServer launches its Python MCP sidecar."
+      title={gettext("No connected bridges")}
+      description={gettext("A bridge connects when a cc.agent's claude PtyServer launches its Python MCP sidecar.")}
     />
     <.card :if={@bridges != []} class="p-0">
       <table class="w-full text-xs font-mono">
@@ -202,7 +205,7 @@ defmodule EzagentPluginLiveview.ObservabilityLive do
           <tr :for={{uri, _pid} <- @bridges} class="border-b border-zinc-100 dark:border-zinc-900">
             <td class="px-3 py-1">{URI.to_string(uri)}</td>
             <td>
-              <.badge variant="success">connected</.badge>
+              <.badge variant="success">{gettext("connected")}</.badge>
             </td>
           </tr>
         </tbody>
@@ -213,23 +216,23 @@ defmodule EzagentPluginLiveview.ObservabilityLive do
 
   defp render_tab(assigns, :snapshots) do
     ~H"""
-    <.page_header title="Snapshots">
-      <:subtitle>Persisted Kind state snapshots.</:subtitle>
+    <.page_header title={gettext("Snapshots")}>
+      <:subtitle>{gettext("Persisted Kind state snapshots.")}</:subtitle>
     </.page_header>
     <.empty_state
       :if={@snapshots == []}
-      title="No snapshots"
-      description="Kinds with persistence: {:snapshot, :on_change} write here."
+      title={gettext("No snapshots")}
+      description={gettext("Kinds with persistence: {:snapshot, :on_change} write here.")}
     />
     <.card :if={@snapshots != []} class="p-0">
       <table class="w-full text-xs font-mono">
         <thead class="bg-zinc-50 dark:bg-zinc-950 border-b border-zinc-200 dark:border-zinc-800 text-zinc-500">
           <tr>
-            <th class="text-left px-3 py-2">URI</th>
-            <th class="text-left">kind</th>
+            <th class="text-left px-3 py-2">{gettext("URI")}</th>
+            <th class="text-left">{gettext("kind")}</th>
             <th class="text-right">v</th>
-            <th class="text-right">bytes</th>
-            <th class="text-left pr-3">updated</th>
+            <th class="text-right">{gettext("bytes")}</th>
+            <th class="text-left pr-3">{gettext("updated")}</th>
           </tr>
         </thead>
         <tbody>

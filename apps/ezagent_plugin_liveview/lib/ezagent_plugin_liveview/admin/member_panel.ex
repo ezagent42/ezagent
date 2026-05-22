@@ -38,6 +38,9 @@ defmodule EzagentPluginLiveview.Admin.MemberPanel do
   """
 
   use Phoenix.Component
+  # i18n (Allen 2026-05-22) — Tier-3 plugin component; runtime backend
+  # reference to the host app's EzagentWeb.Gettext (no compile-time dep).
+  use Gettext, backend: EzagentPluginLiveview.Gettext
   use EzagentDomainUi.Primitives
   use EzagentDomainUi.Components
 
@@ -59,7 +62,7 @@ defmodule EzagentPluginLiveview.Admin.MemberPanel do
     ~H"""
     <aside id="session-members" class="p-3 text-zinc-800 dark:text-zinc-200">
       <div class="flex items-center justify-between mb-2">
-        <h3 class="text-[10px] uppercase tracking-wide text-zinc-500">Members</h3>
+        <h3 class="text-[10px] uppercase tracking-wide text-zinc-500">{gettext("Members")}</h3>
         <.button
           type="button"
           variant="outline"
@@ -67,7 +70,7 @@ defmodule EzagentPluginLiveview.Admin.MemberPanel do
           phx-click="open_invite_modal"
           id="invite-member-button"
         >
-          <.icon name="plus" size="xs" class="mr-1" /> Invite
+          <.icon name="plus" size="xs" class="mr-1" /> {gettext("Invite")}
         </.button>
       </div>
 
@@ -77,7 +80,7 @@ defmodule EzagentPluginLiveview.Admin.MemberPanel do
             guarantees the session exists before this renders, so an
             empty list just means no member has joined yet. --%>
       <p :if={@members == []} id="session-members-empty" class="text-xs text-zinc-500">
-        No members yet. Use Invite to add an agent.
+        {gettext("No members yet. Use Invite to add an agent.")}
       </p>
       <ul :if={@members != []} id="session-members-table" class="space-y-1.5">
         <li
@@ -95,7 +98,7 @@ defmodule EzagentPluginLiveview.Admin.MemberPanel do
             </div>
             <div class={member_status_class(member.online)}>
               <.status_dot color={if member.online, do: "green", else: "gray"} />
-              {if member.online, do: "online", else: "offline"}
+              {if member.online, do: gettext("online"), else: gettext("offline")}
               <span :if={member.last_seen} class="text-zinc-400 dark:text-zinc-600 font-normal">
                 · {DateTime.to_iso8601(member.last_seen)}
               </span>
@@ -106,8 +109,8 @@ defmodule EzagentPluginLiveview.Admin.MemberPanel do
             type="button"
             phx-click="switch_to_pty_for_agent"
             phx-value-agent={member.uri}
-            title={"Open PTY for #{display_for(member.uri, @display_map)}"}
-            aria-label={"Open PTY for #{display_for(member.uri, @display_map)}"}
+            title={gettext("Open PTY for %{name}", name: display_for(member.uri, @display_map))}
+            aria-label={gettext("Open PTY for %{name}", name: display_for(member.uri, @display_map))}
             class="p-1 text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded shrink-0"
           >
             <.icon name="terminal" size="xs" />
@@ -120,15 +123,15 @@ defmodule EzagentPluginLiveview.Admin.MemberPanel do
             `invite_member`; "Create new agent" routes to the existing
             AgentNewLive instead of rebuilding the form here. --%>
       <.modal id="invite-member-modal" open={@invite_open} on_close="close_invite_modal">
-        <:header>Invite a member</:header>
+        <:header>{gettext("Invite a member")}</:header>
         <:body>
           <div class="space-y-4">
             <div>
               <h4 class="text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
-                Add existing
+                {gettext("Add existing")}
               </h4>
               <p class="text-[11px] text-zinc-500 dark:text-zinc-400 mb-2">
-                Pick an entity to add to this session as a member.
+                {gettext("Pick an entity to add to this session as a member.")}
               </p>
               <.form
                 for={%{}}
@@ -143,33 +146,33 @@ defmodule EzagentPluginLiveview.Admin.MemberPanel do
                     mode={:single}
                     kinds={[:entity]}
                     options={@invite_options}
-                    placeholder="Search entities…"
+                    placeholder={gettext("Search entities…")}
                   />
                 </div>
-                <.button type="submit" variant="primary" size="sm">Invite</.button>
+                <.button type="submit" variant="primary" size="sm">{gettext("Invite")}</.button>
               </.form>
             </div>
 
             <div class="border-t border-zinc-200 dark:border-zinc-800 pt-3">
               <h4 class="text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
-                Create new agent
+                {gettext("Create new agent")}
               </h4>
               <p class="text-[11px] text-zinc-500 dark:text-zinc-400 mb-2">
-                Need a new agent first? Create one, then invite it.
+                {gettext("Need a new agent first? Create one, then invite it.")}
               </p>
               <.link
                 navigate="/identities/agents/new"
                 id="invite-create-agent-link"
                 class="inline-flex items-center text-xs font-medium text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300"
               >
-                <.icon name="plus" size="xs" class="mr-1" /> New agent
+                <.icon name="plus" size="xs" class="mr-1" /> {gettext("New agent")}
               </.link>
             </div>
           </div>
         </:body>
         <:footer>
           <.button type="button" variant="ghost" size="sm" phx-click="close_invite_modal">
-            Close
+            {gettext("Close")}
           </.button>
         </:footer>
       </.modal>

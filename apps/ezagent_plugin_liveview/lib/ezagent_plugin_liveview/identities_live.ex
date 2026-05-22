@@ -14,7 +14,7 @@ defmodule EzagentPluginLiveview.IdentitiesLive do
   """
   use Phoenix.LiveView
   # i18n V1 (Allen 2026-05-21) — see admin_dashboard_live for rationale.
-  use Gettext, backend: EzagentWeb.Gettext
+  use Gettext, backend: EzagentPluginLiveview.Gettext
   alias EzagentDomainUi.WorkspaceShell
   alias EzagentPluginLiveview.AppShell
   alias Phoenix.LiveView.JS
@@ -148,38 +148,40 @@ defmodule EzagentPluginLiveview.IdentitiesLive do
         >
       <:resource_panel>
         <div class="p-3 flex flex-col gap-1">
-          <div class="text-[10px] uppercase tracking-wide text-zinc-500 mb-1">Filters</div>
-          <.filter_chip filter={@filter} value="all" label="All" />
-          <.filter_chip filter={@filter} value="users" label="Users" />
-          <.filter_chip filter={@filter} value="agents" label="Agents" />
-          <div :if={@agent_flavors != []} class="text-[10px] uppercase tracking-wide text-zinc-500 mt-3 mb-1">By flavor</div>
+          <div class="text-[10px] uppercase tracking-wide text-zinc-500 mb-1">{gettext("Filters")}</div>
+          <.filter_chip filter={@filter} value="all" label={gettext("All")} />
+          <.filter_chip filter={@filter} value="users" label={gettext("Users")} />
+          <.filter_chip filter={@filter} value="agents" label={gettext("Agents")} />
+          <div :if={@agent_flavors != []} class="text-[10px] uppercase tracking-wide text-zinc-500 mt-3 mb-1">{gettext("By flavor")}</div>
           <.filter_chip
             :for={f <- @agent_flavors}
             filter={@filter}
             value={"agent:" <> f}
             label={"agent: " <> f}
           />
-          <div class="text-[10px] uppercase tracking-wide text-zinc-500 mt-3 mb-1">Manage</div>
-          <a href="/identities/users" class="px-2 py-1 text-xs rounded text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800">+ Users admin</a>
+          <div class="text-[10px] uppercase tracking-wide text-zinc-500 mt-3 mb-1">{gettext("Manage")}</div>
+          <a href="/identities/users" class="px-2 py-1 text-xs rounded text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800">{gettext("+ Users admin")}</a>
         </div>
       </:resource_panel>
       <:main_window>
         <div class="flex-1 overflow-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
           <.page_header title={gettext("Identities")}>
             <:subtitle>
-              The directory of every live entity — users and agents.
-              Driven by <code>Ezagent.KindRegistry</code> filtered to
-              <code>entity://*</code>.
+              {gettext(
+                "The directory of every live entity — users and agents. Driven by %{registry} filtered to %{scheme}.",
+                registry: "Ezagent.KindRegistry",
+                scheme: "entity://*"
+              )}
             </:subtitle>
             <:actions>
               <.button variant="primary" size="sm" type="button" phx-click={JS.navigate("/identities/agents/new")}>
-                + New agent
+                {gettext("+ New agent")}
               </.button>
             </:actions>
           </.page_header>
 
           <p :if={@entities == []} id="identities-empty" class="text-sm text-zinc-500 italic">
-            No entities match the current filter.
+            {gettext("No entities match the current filter.")}
           </p>
 
           <div :if={@entities != []} class="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -226,27 +228,28 @@ defmodule EzagentPluginLiveview.IdentitiesLive do
           </div>
           <div class="font-mono text-[10px] text-zinc-500 truncate">{@entity.uri_str}</div>
           <div class="text-[11px] text-zinc-500 mt-1">
-            {@entity.host == "user" && "User" || ("Agent (" <> @entity.flavor <> ")")}
+            {(@entity.host == "user" && gettext("User")) ||
+              gettext("Agent (%{flavor})", flavor: @entity.flavor)}
           </div>
           <div class="flex gap-3 mt-2 text-xs">
             <%= if @entity.host == "user" do %>
               <a
                 href={"/identities/users/" <> URI.encode_www_form(@entity.uri_str) <> "/caps"}
                 class="text-zinc-700 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-zinc-100 underline"
-              >Caps</a>
+              >{gettext("Caps")}</a>
               <a
                 href={"/identities/users/" <> URI.encode_www_form(@entity.uri_str) <> "/api-keys"}
                 class="text-zinc-700 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-zinc-100 underline"
-              >API Keys</a>
+              >{gettext("API Keys")}</a>
             <% else %>
               <a
                 href={"/identities/agents/" <> URI.encode_www_form(@entity.uri_str)}
                 class="text-zinc-700 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-zinc-100 underline"
-              >Status</a>
+              >{gettext("Status")}</a>
               <a
                 href={"/identities/agents/" <> URI.encode_www_form(@entity.uri_str) <> "/caps"}
                 class="text-zinc-700 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-zinc-100 underline"
-              >Caps</a>
+              >{gettext("Caps")}</a>
             <% end %>
           </div>
         </div>
