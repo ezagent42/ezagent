@@ -79,6 +79,21 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   a structured `CLAUDE_CONFIG_DIR` env var via the Server's `:cmd_env`
   param, never as a `VAR=val` command prefix.
 
+  ## codex review of #233 — argv element 0 is an ABSOLUTE PATH
+
+  The no-shell argv form has a corollary the PR-1 hardening missed:
+  erlexec's list-form `:exec.run/2` runs `execve(3)` directly — no
+  shell, hence no `$PATH` search. A bare `"claude"` as argv element 0
+  resolves only if `claude` lives in `cwd`, so the hardening regressed
+  production cc startup (the pre-#233 shell-string path did resolve
+  `claude` via `$PATH`). `build_claude_cmd/3` now resolves the
+  `claude` executable to an absolute path via
+  `System.find_executable/1` before building the argv. When `claude`
+  is not on `PATH`, `build_claude_cmd/3` returns
+  `{:error, :claude_not_found}` — a clear, propagated error, NOT a
+  silent fall back to the shell. `instantiate/3` therefore fails
+  loudly instead of spawning a PtyServer whose child can never start.
+
   ## Idempotency (PR-D2 + V1 fix)
 
   `instantiate/3` first looks up `agent_uri` in `KindRegistry`.
@@ -255,24 +270,40 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
     # true` (Mix.env() default), so the invocation is never spawned;
     # building it would write `~/.ezagent/bridge.mcp.json` to disk on
     # every test, which the pre-Domain.Pty-PR-A path also avoided.
-    params =
-      case Mix.env() do
-        :test ->
-          %{cwd: cwd, test_mode: true}
+    #
+    # `build_claude_cmd/3` may fail with `{:error, :claude_not_found}`
+    # when `claude` is not on `PATH` — argv element 0 must be an
+    # absolute path because erlexec's list-form `:exec.run/2` runs
+    # `execve(3)` with NO shell and NO PATH search (see its docstring).
+    # The `with` propagates that error so instantiate/3 fails clearly
+    # rather than spawning a PtyServer whose `claude` will never start.
+    with {:ok, params} <- build_pty_params(agent_uri, cwd, tmpl),
+         {:ok, _pid} <- start_pty(agent_uri, params) do
+      :ok
+    end
+  end
 
-        _ ->
-          {argv, cmd_env} = build_claude_cmd(agent_uri, cwd, tmpl)
-          %{cwd: cwd, cmd_override: argv, cmd_env: cmd_env}
-      end
+  defp build_pty_params(agent_uri, cwd, tmpl) do
+    case Mix.env() do
+      :test ->
+        {:ok, %{cwd: cwd, test_mode: true}}
 
+      _ ->
+        with {:ok, {argv, cmd_env}} <- build_claude_cmd(agent_uri, cwd, tmpl) do
+          {:ok, %{cwd: cwd, cmd_override: argv, cmd_env: cmd_env}}
+        end
+    end
+  end
+
+  defp start_pty(agent_uri, params) do
     case Ezagent.Domain.Pty.start(agent_uri, params) do
-      {:ok, _pid} ->
-        :ok
+      {:ok, pid} ->
+        {:ok, pid}
 
-      {:error, {:already_started, _pid}} ->
+      {:error, {:already_started, pid}} ->
         # Atomic dedup at supervisor layer (PtyServer's :via Registry
         # name made this happen). Treat as success.
-        :ok
+        {:ok, pid}
 
       {:error, reason} ->
         Logger.warning(
@@ -305,32 +336,86 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   # shell command. `claude_config_dir` is returned as a structured env
   # var (`CLAUDE_CONFIG_DIR`), NOT a `VAR=val` shell prefix (a prefix
   # is meaningless in argv form and was shell-injectable in string
-  # form). Returns `{argv_list, env_map}`.
+  # form).
+  #
+  # codex review of the PR-1 hardening (#233) — argv element 0 MUST be
+  # an ABSOLUTE PATH. erlexec's list-form `:exec.run/2` goes straight
+  # to `execve(3)` (no shell, no `$PATH` search), so a bare `"claude"`
+  # would only resolve if it happened to live in `cwd`. The pre-#233
+  # shell-string path resolved `claude` via `$PATH`; the no-shell argv
+  # refactor regressed that. We restore PATH resolution here by calling
+  # `System.find_executable("claude")` — and if `claude` is not on
+  # `PATH` we return `{:error, :claude_not_found}` (NO silent shell
+  # fallback) so the caller fails loudly rather than spawning a PTY
+  # whose child can never start.
+  #
+  # Returns `{:ok, {argv_list, env_map}}` or `{:error, :claude_not_found}`.
   defp build_claude_cmd(agent_uri, agent_cwd, tmpl) do
-    {:ok, mcp_path} =
-      EzagentPluginCc.McpConfigWriter.write!(
-        agent_uri: URI.to_string(agent_uri),
-        agent_cwd: agent_cwd
-      )
+    with {:ok, claude_path} <- resolve_claude_executable(agent_uri) do
+      {:ok, mcp_path} =
+        EzagentPluginCc.McpConfigWriter.write!(
+          agent_uri: URI.to_string(agent_uri),
+          agent_cwd: agent_cwd
+        )
 
-    settings_mcp_args = assemble_settings_mcp_args(mandatory_settings_path(), mcp_path, tmpl)
+      settings_mcp_args = assemble_settings_mcp_args(mandatory_settings_path(), mcp_path, tmpl)
 
-    argv =
-      [
-        "claude",
-        "--permission-mode",
-        "bypassPermissions",
-        "--dangerously-load-development-channels",
-        "server:esr-bridge"
-      ] ++ settings_mcp_args
+      # argv element 0 is the resolved ABSOLUTE path (not bare
+      # "claude"); the rest is the hardening's safe arg assembly,
+      # unchanged.
+      argv =
+        [
+          claude_path,
+          "--permission-mode",
+          "bypassPermissions",
+          "--dangerously-load-development-channels",
+          "server:esr-bridge"
+        ] ++ settings_mcp_args
 
-    cmd_env =
-      case Map.get(tmpl, "claude_config_dir") do
-        dir when is_binary(dir) and dir != "" -> %{"CLAUDE_CONFIG_DIR" => dir}
-        _ -> %{}
-      end
+      cmd_env =
+        case Map.get(tmpl, "claude_config_dir") do
+          dir when is_binary(dir) and dir != "" -> %{"CLAUDE_CONFIG_DIR" => dir}
+          _ -> %{}
+        end
 
-    {argv, cmd_env}
+      {:ok, {argv, cmd_env}}
+    end
+  end
+
+  @doc false
+  # codex review of the PR-1 hardening (#233) — resolve the `claude`
+  # executable to an ABSOLUTE PATH via `System.find_executable/1`.
+  #
+  # erlexec's list-form `:exec.run/2` (the no-shell argv path the
+  # hardening adopted) runs `execve(3)` directly: there is no shell, so
+  # no `$PATH` lookup. A bare `"claude"` as argv element 0 only
+  # resolves if `claude` happens to live in `cwd`. `System.find_executable/1`
+  # reproduces the `$PATH` search the pre-#233 shell-string path got
+  # for free, so the resolved absolute path can be handed to `execve`.
+  #
+  # Returns `{:ok, absolute_path}` or `{:error, :claude_not_found}`.
+  # The not-found case is a clear, propagated error — there is NO
+  # silent fall back to a shell-resolved invocation.
+  #
+  # Exposed (`@doc false`) so the regression test can drive PATH
+  # resolution + the no-claude error path directly.
+  @spec resolve_claude_executable(URI.t()) :: {:ok, String.t()} | {:error, :claude_not_found}
+  def resolve_claude_executable(agent_uri) do
+    case System.find_executable("claude") do
+      nil ->
+        Logger.error(
+          "cc.agent: `claude` executable not found on PATH for " <>
+            "#{URI.to_string(agent_uri)} — cannot build the argv invocation. " <>
+            "erlexec list-form exec runs execve(3) with no PATH search, so " <>
+            "argv element 0 must be an absolute path. Install `claude` on the " <>
+            "PATH of the process running `mix phx.server`."
+        )
+
+        {:error, :claude_not_found}
+
+      claude_path ->
+        {:ok, claude_path}
+    end
   end
 
   # The plugin-shipped mandatory safety settings file. Phase 6 PR 23:
