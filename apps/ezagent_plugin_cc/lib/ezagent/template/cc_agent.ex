@@ -352,8 +352,18 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   # Returns `{:ok, {argv_list, env_map}}` or `{:error, :claude_not_found}`.
   defp build_claude_cmd(agent_uri, agent_cwd, tmpl) do
     with {:ok, claude_path} <- resolve_claude_executable(agent_uri) do
-      {:ok, mcp_path} =
-        EzagentPluginCc.McpConfigWriter.write!(
+      # `write_with_token!/1` returns the per-instance connect token in
+      # addition to the esr-bridge mcp.json path. Exporting the agent
+      # URI + that token into the `claude` PROCESS env (`cmd_env`)
+      # means every MCP server `claude` launches — including the
+      # orchestrator MCP transport bridge (`orchestrator_bridge.py`),
+      # which an operator `--mcp-config` adds — inherits the same
+      # per-instance identity and can authenticate its own WS Channel
+      # join. Minting is idempotent per agent URI, so this is the SAME
+      # token baked into the esr-bridge config: one credential, no
+      # spoofing surface (Phase 7 completion PR-5).
+      {:ok, mcp_path, agent_token} =
+        EzagentPluginCc.McpConfigWriter.write_with_token!(
           agent_uri: URI.to_string(agent_uri),
           agent_cwd: agent_cwd
         )
@@ -372,10 +382,19 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
           "server:esr-bridge"
         ] ++ settings_mcp_args
 
+      base_env = %{
+        # Inherited by every MCP-server subprocess `claude` spawns.
+        "EZAGENT_AGENT_URI" => URI.to_string(agent_uri),
+        "EZAGENT_AGENT_TOKEN" => agent_token
+      }
+
       cmd_env =
         case Map.get(tmpl, "claude_config_dir") do
-          dir when is_binary(dir) and dir != "" -> %{"CLAUDE_CONFIG_DIR" => dir}
-          _ -> %{}
+          dir when is_binary(dir) and dir != "" ->
+            Map.put(base_env, "CLAUDE_CONFIG_DIR", dir)
+
+          _ ->
+            base_env
         end
 
       {:ok, {argv, cmd_env}}

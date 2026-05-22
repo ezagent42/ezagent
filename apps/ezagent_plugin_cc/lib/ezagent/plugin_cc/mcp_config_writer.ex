@@ -44,6 +44,12 @@ defmodule EzagentPluginCc.McpConfigWriter do
   @doc """
   Write the v2 bridge mcp.json. Returns `{:ok, abs_path}`.
 
+  See `write_with_token!/1` for the variant that also returns the
+  minted connect token — needed when the caller wants to export the
+  agent URI + token into the `claude` process env so OTHER MCP
+  servers `claude` launches (e.g. the orchestrator MCP transport
+  bridge) can authenticate to the same per-instance identity.
+
   Required opt:
   - `:agent_uri` — string. Used both as the WS join target and the
     TokenStore key.
@@ -62,10 +68,32 @@ defmodule EzagentPluginCc.McpConfigWriter do
   """
   @spec write!(keyword()) :: {:ok, String.t()}
   def write!(opts) do
+    {:ok, path, _token} = write_with_token!(opts)
+    {:ok, path}
+  end
+
+  @doc """
+  Like `write!/1`, but ALSO returns the per-instance connect token:
+  `{:ok, abs_path, token}`.
+
+  The token is what gates the WS bridge join (`EzagentPluginCc.Socket`
+  / `Ezagent.Orchestrator.McpSocket`). A caller that wants `claude`'s
+  OTHER MCP servers to authenticate as the same agent (the
+  orchestrator MCP transport bridge does — it joins
+  `orch:bridge:<orchestrator_uri>` with this exact token) exports the
+  agent URI + token into the `claude` process env so every MCP-server
+  subprocess `claude` launches inherits them.
+
+  Minting is idempotent per `agent_uri` (`TokenStore.mint/1`), so this
+  returns the SAME token `write!/1` baked into the esr-bridge config —
+  no second credential, no spoofing surface.
+  """
+  @spec write_with_token!(keyword()) :: {:ok, String.t(), String.t()}
+  def write_with_token!(opts) do
     agent_uri_str =
       Keyword.get(opts, :agent_uri) ||
         raise ArgumentError,
-              "EzagentPluginCc.McpConfigWriter.write!/1 requires :agent_uri"
+              "EzagentPluginCc.McpConfigWriter.write_with_token!/1 requires :agent_uri"
 
     {:ok, token} = mint_token!(agent_uri_str)
 
@@ -144,7 +172,7 @@ defmodule EzagentPluginCc.McpConfigWriter do
         :ok
     end
 
-    {:ok, path}
+    {:ok, path, token}
   end
 
   @doc "Absolute path of the v2 Python bridge script."

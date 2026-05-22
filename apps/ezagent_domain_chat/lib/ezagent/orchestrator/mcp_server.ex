@@ -135,6 +135,81 @@ defmodule Ezagent.Orchestrator.McpServer do
   end
 
   @doc """
+  Build the bound context for `orchestrator_uri` ALONE — the entry
+  point the orchestrator MCP transport bridge's Channel
+  (`Ezagent.Orchestrator.McpChannel`) uses.
+
+  A `claude`-launched bridge can only present the orchestrator's agent
+  URI (token-authenticated by `Ezagent.Orchestrator.McpSocket`). It
+  cannot — and must not — supply the session / workspace / caps: that
+  is exactly the context an untrusted process could spoof. So this
+  function resolves the rest SERVER-SIDE:
+
+  - session / workspace / owner / parent-template come from
+    `Ezagent.Orchestrator.McpRegistry.lookup/1` — the binding the
+    Generator registered when it spawned the orchestrator into a
+    session.
+  - the four delegated caps are loaded from the orchestrator agent's
+    own `:identity` slice via `Ezagent.Identity.list_caps_for/1`
+    (inside `new/1`), NEVER from the wire.
+
+  Returns `{:error, :orchestrator_not_registered}` when the
+  orchestrator has no `McpRegistry` row — a `claude` process whose
+  agent URI is valid but which is not a registered orchestrator
+  cannot reach the 7 tools (fail-closed).
+  """
+  @spec from_orchestrator_uri(URI.t()) :: {:ok, t()} | {:error, term()}
+  def from_orchestrator_uri(%URI{} = orchestrator_uri) do
+    case Ezagent.Orchestrator.McpRegistry.lookup(orchestrator_uri) do
+      {:ok, ctx} ->
+        new(
+          orchestrator_uri: orchestrator_uri,
+          session_uri: ctx.session_uri,
+          workspace_uri: ctx.workspace_uri,
+          owner_uri: ctx.owner_uri || orchestrator_uri,
+          parent_template_uri: ctx.parent_template_uri,
+          # Caps are the orchestrator agent's OWN four delegated caps —
+          # loaded server-side from its `:identity` slice. Passing them
+          # explicitly (rather than letting `new/1` fall back to
+          # `Ezagent.Identity.list_caps_for/1`, which is user-kind
+          # scoped) keeps the load reliable for an `:agent` Kind.
+          caps: load_orchestrator_caps(orchestrator_uri)
+        )
+
+      :error ->
+        {:error, :orchestrator_not_registered}
+    end
+  end
+
+  # Read the orchestrator agent's `:identity` slice caps via the
+  # `identity.list_caps` dispatch. The `ctx` uses `admin_caps()` —
+  # this is TRUSTED INFRASTRUCTURE reading the orchestrator's OWN
+  # delegated caps to bind its MCP server, the same privileged-read
+  # pattern the Generator's `read_template_content/2` uses. It does
+  # NOT grant the orchestrator anything: the loaded caps are exactly
+  # what the Generator delegated (§1.4) — the four scope-bounded caps,
+  # or fewer if a preflight dropped one. An orchestrator with no
+  # delegated caps yields an empty set, and every tool then DENIES
+  # (no `admin_caps` fallback — SPEC §2 PR-5 HIGH-1).
+  defp load_orchestrator_caps(%URI{} = orchestrator_uri) do
+    target = URI.parse("#{URI.to_string(orchestrator_uri)}?action=identity.list_caps")
+
+    case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+           target: target,
+           mode: :call,
+           args: %{},
+           ctx: %{
+             caller: Ezagent.Entity.User.admin_uri(),
+             caps: Ezagent.Entity.User.admin_caps(),
+             reply: {:caller_inbox, self()}
+           }
+         }) do
+      {:ok, %{caps: caps}} when is_list(caps) -> MapSet.new(caps)
+      _ -> MapSet.new()
+    end
+  end
+
+  @doc """
   Reload the orchestrator's caps from its `:identity` slice into the
   bound context. Caps are static after Generator boot (§1.4) so this is
   rarely needed — provided for completeness.

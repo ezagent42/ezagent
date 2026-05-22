@@ -22,6 +22,17 @@ defmodule EzagentWeb.Endpoint do
     websocket: [check_origin: false],
     longpoll: false
 
+  # Phase 7 completion PR-5: orchestrator MCP transport bridge WS.
+  # The orchestrator MCP stdio bridge (ezagent_domain_chat's
+  # priv/orchestrator_bridge.py) forwards `tools/call` for the 7
+  # orchestration tools onto `Ezagent.Orchestrator.McpChannel`. Token
+  # auth (reusing the cc TokenStore) at connect; the orchestrator's
+  # caller/cap/session context is server-derived from the
+  # token-authenticated agent URI.
+  socket "/orchestrator_socket", Ezagent.Orchestrator.McpSocket,
+    websocket: [check_origin: false],
+    longpoll: false
+
   # Serve at "/" the static files from "priv/static" directory.
   #
   # When code reloading is disabled (e.g., in production),
