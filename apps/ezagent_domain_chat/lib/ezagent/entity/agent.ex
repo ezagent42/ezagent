@@ -195,20 +195,35 @@ defmodule Ezagent.Entity.Agent do
   `-`, so two DISTINCT slot names — `api.v1` and `api-v1` — sanitized
   to the SAME `api-v1` and produced the SAME instance name. The second
   spawn in that session then re-used the first slot's worker URI. The
-  encoded slot component is now made injective by appending an
-  8-hex-char slice of `:crypto.hash(:sha256, original_slot_name)` —
-  computed over the ORIGINAL (un-sanitized) slot string, so distinct
-  inputs hash distinctly even when their sanitized forms collide. The
-  session discriminator does NOT need the hash (it is already globally
-  unique — `gen-<millis>-<unique_int>`).
+  encoded slot component is made injective by appending a hex slice of
+  `:crypto.hash(:sha256, original_slot_name)` — computed over the
+  ORIGINAL (un-sanitized) slot string, so distinct inputs hash
+  distinctly even when their sanitized forms collide. The session
+  discriminator does NOT need the hash (it is already globally unique —
+  `gen-<millis>-<unique_int>`).
+
+  ## MEDIUM-3 (hardening round 3) — the digest is widened to 32 hex
+
+  Round 2 appended only the FIRST 8 hex chars of the SHA-256 digest —
+  a 32-bit collision domain. Two distinct slot names whose sanitized
+  forms ALSO collide need only a 32-bit hash collision to produce the
+  same instance name (and hence the same worker URI). The digest is now
+  the first **32 hex chars** (128 bits) — accidental collision is
+  negligible. This is the probabilistic defense; the deterministic
+  guarantee is the Generator / `update_agent_template` uniqueness
+  preflight (`Ezagent.Orchestrator.SlotNames.preflight/2`), which
+  computes every candidate instance name up front and REJECTS the
+  operation if any two collide — uniqueness is then guaranteed, not
+  merely improbable.
   """
   @spec session_instance_name(String.t(), String.t(), non_neg_integer()) :: String.t()
   def session_instance_name(slot_name, session_discriminator, generation \\ 0)
       when is_binary(slot_name) and is_binary(session_discriminator) and
              is_integer(generation) and generation >= 0 do
     disc = sanitize_segment(session_discriminator)
-    # MEDIUM-5 — the sanitized slot label may collide for distinct slot
-    # names; the appended hash of the ORIGINAL name restores injectivity.
+    # MEDIUM-3/MEDIUM-5 — the sanitized slot label may collide for
+    # distinct slot names; the appended wide hash of the ORIGINAL name
+    # restores injectivity with a negligible collision domain.
     slot_component = "#{sanitize_segment(slot_name)}-#{slot_hash(slot_name)}"
     base = "#{slot_component}--#{disc}"
 
@@ -219,16 +234,21 @@ defmodule Ezagent.Entity.Agent do
     end
   end
 
-  # MEDIUM-5 — a stable, collision-resistant 8-hex-char fingerprint of
-  # the ORIGINAL (un-sanitized) slot name. Folded into the instance-name
-  # slot component so two slot names whose sanitized forms collide
-  # (`api.v1` / `api-v1`) still get DISTINCT instance names. Stable
-  # across runs (pure `:crypto.hash`), URI-safe (hex only).
+  # MEDIUM-3 — the slot-hash width. 32 hex chars = 128 bits of the
+  # SHA-256 digest. Folded into the instance-name slot component so two
+  # slot names whose sanitized forms collide (`api.v1` / `api-v1`) get
+  # DISTINCT instance names. Round 2 used 8 (a 32-bit domain); widened
+  # here so accidental collision is negligible.
+  @slot_hash_hex_width 32
+
+  # MEDIUM-3/MEDIUM-5 — a stable, collision-resistant hex fingerprint of
+  # the ORIGINAL (un-sanitized) slot name. Stable across runs (pure
+  # `:crypto.hash`), URI-safe (hex only).
   defp slot_hash(slot_name) when is_binary(slot_name) do
     :sha256
     |> :crypto.hash(slot_name)
     |> Base.encode16(case: :lower)
-    |> binary_part(0, 8)
+    |> binary_part(0, @slot_hash_hex_width)
   end
 
   # URI name segments must be filesystem/URI-safe — collapse anything
@@ -340,7 +360,8 @@ defmodule Ezagent.Entity.Agent do
   end
 
   defp record_lineage(agent_uri, granted_by) do
-    if Code.ensure_loaded?(Ezagent.AgentLineage) and function_exported?(Ezagent.AgentLineage, :record, 2) do
+    if Code.ensure_loaded?(Ezagent.AgentLineage) and
+         function_exported?(Ezagent.AgentLineage, :record, 2) do
       Ezagent.AgentLineage.record(agent_uri, granted_by)
     else
       # AgentLineage registry not loaded — log + continue. PR 42's
