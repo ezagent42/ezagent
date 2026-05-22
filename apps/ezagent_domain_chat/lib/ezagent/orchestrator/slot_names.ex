@@ -40,8 +40,26 @@ defmodule Ezagent.Orchestrator.SlotNames do
     its current generation. A collision → the swap is rejected before
     the replacement worker spawns.
 
-  The preflight is a PURE function — it computes names, it does not
+  `preflight/2` is a PURE function — it computes names, it does not
   spawn, dispatch, or touch any registry.
+
+  ## MEDIUM-3 (round 4) — also reject a candidate already LIVE as an
+  ## orphan
+
+  `preflight/2` only groups the candidate instance names against EACH
+  OTHER — it never sees a candidate URI that is ALREADY LIVE in
+  `Ezagent.KindRegistry` but not in the candidate set. An orphaned
+  generation worker left by a prior failed cleanup → a retry generates
+  the same name → `preflight/2` passes → `template.instantiate` hits the
+  plugin's idempotency (`{:already_started, _}`) and the swap silently
+  ADOPTS the stale worker.
+
+  `preflight_live_worker_uris/1` closes that gap: given the FULL
+  candidate worker URIs (workspace + flavor + name), it rejects the
+  operation if any candidate URI is already registered in `KindRegistry`
+  UNLESS that URI is the expected current worker for the slot (so a
+  same-URI degenerate is not a false positive). Unlike `preflight/2`
+  this DOES read `KindRegistry` — it is the live-orphan check.
   """
 
   alias Ezagent.Entity.Agent
@@ -82,4 +100,55 @@ defmodule Ezagent.Orchestrator.SlotNames do
       details -> {:error, {:duplicate_instance_names, details}}
     end
   end
+
+  @typedoc """
+  One candidate's `{candidate_worker_uri, expected_current_uri}`.
+
+  `candidate_worker_uri` is the FULL worker URI the operation is about
+  to spawn (`entity://agent/<workspace>/<flavor>_<instance_name>`).
+  `expected_current_uri` is the slot's current live worker URI when the
+  candidate may legitimately already exist (e.g. a degenerate
+  same-generation swap), or `nil` when the candidate must be brand new.
+  """
+  @type live_candidate :: {URI.t(), URI.t() | nil}
+
+  @doc """
+  MEDIUM-3 (round 4) — reject any candidate worker URI that is ALREADY
+  LIVE in `Ezagent.KindRegistry` as an orphan.
+
+  For each `{candidate_uri, expected_uri}`: if `candidate_uri` is
+  registered in `KindRegistry` AND it is not `expected_uri`, the
+  candidate names a worker that already exists but is NOT the one this
+  operation expects — an orphan from a prior failed cleanup. A retry
+  that reuses that name would `template.instantiate` into the live
+  orphan (plugin idempotency) and silently adopt a stale worker.
+
+  Returns `:ok` when every candidate is either absent from
+  `KindRegistry` or equals its `expected_uri`, otherwise
+  `{:error, {:candidate_uri_already_live, [URI.t(), ...]}}` listing the
+  offending candidate URIs.
+
+  An empty candidate list is vacuously `:ok`.
+  """
+  @spec preflight_live_worker_uris([live_candidate()]) ::
+          :ok | {:error, {:candidate_uri_already_live, [URI.t()]}}
+  def preflight_live_worker_uris(candidates) when is_list(candidates) do
+    orphans =
+      candidates
+      |> Enum.filter(fn {%URI{} = candidate_uri, expected_uri} ->
+        case Ezagent.KindRegistry.lookup(candidate_uri) do
+          {:ok, _pid} -> not same_uri?(candidate_uri, expected_uri)
+          :error -> false
+        end
+      end)
+      |> Enum.map(fn {candidate_uri, _expected} -> candidate_uri end)
+
+    case orphans do
+      [] -> :ok
+      _ -> {:error, {:candidate_uri_already_live, orphans}}
+    end
+  end
+
+  defp same_uri?(%URI{} = a, %URI{} = b), do: URI.to_string(a) == URI.to_string(b)
+  defp same_uri?(_a, nil), do: false
 end
