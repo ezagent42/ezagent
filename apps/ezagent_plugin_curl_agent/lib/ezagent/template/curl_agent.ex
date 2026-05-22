@@ -22,6 +22,12 @@ defmodule Ezagent.PluginCurlAgent.Template do
   config as `init_slice` args. Idempotent against KindRegistry —
   re-instantiate skips if already alive.
 
+  `instantiate/3` returns the 3-element `{:ok, [agent_uri],
+  %{fresh?: boolean()}}` form (codex round-6 HIGH-1) — `fresh?` is
+  `true` iff THIS call's `DynamicSupervisor.start_child` started the
+  worker. The signal lets `update_agent_template`'s rollback-safe swap
+  refuse adopting a worker another process created.
+
   ## What this template does NOT validate
 
   - Whether the owner User has a `provider` key set today —
@@ -125,12 +131,19 @@ defmodule Ezagent.PluginCurlAgent.Template do
     # V1 prevention (Allen 2026-05-21): route via Ezagent.Kind.spawn/2.
     # CurlAgent declares EzagentPluginCurlAgent.InstanceSupervisor via
     # supervisor/0 — destination preserved.
+    #
+    # codex round-6 HIGH-1 — `Ezagent.Kind.spawn/2` returns the raw
+    # `DynamicSupervisor.start_child` outcome, which atomically
+    # distinguishes `{:ok, pid}` (THIS call started the worker) from
+    # `{:error, {:already_started, pid}}` (it pre-existed). Thread that
+    # ground truth out as `%{fresh?: _}` so `update_agent_template`'s
+    # swap can refuse adopting a worker it did not create.
     case Ezagent.Kind.spawn(Ezagent.Entity.CurlAgent, init_args) do
       {:ok, _pid} ->
-        {:ok, [agent_uri]}
+        {:ok, [agent_uri], %{fresh?: true}}
 
       {:error, {:already_started, _pid}} ->
-        {:ok, [agent_uri]}
+        {:ok, [agent_uri], %{fresh?: false}}
 
       {:error, reason} ->
         Logger.warning(

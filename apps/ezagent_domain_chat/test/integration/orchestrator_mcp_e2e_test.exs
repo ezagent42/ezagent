@@ -66,12 +66,17 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpE2eTest do
     def validate(_), do: {:error, :not_a_map}
 
     @impl true
+    # codex round-6 HIGH-1 — return the 3-element `{:ok, uris, %{fresh?:
+    # _}}` form, deriving `fresh?` from the ATOMIC spawn result
+    # (`SpawnRegistry.spawn_detailed/1`). A Template Class that spawns
+    # MUST report the real freshness signal — `update_agent_template`'s
+    # swap rejects a non-fresh (adopted) candidate.
     def instantiate(_tmpl_name, %{"agent_uri" => uri_str}, _workspace_uri) do
       agent_uri = URI.parse(uri_str)
 
-      case Ezagent.SpawnRegistry.spawn(agent_uri) do
-        {:ok, _pid} -> {:ok, [agent_uri]}
-        {:error, {:already_started, _pid}} -> {:ok, [agent_uri]}
+      case Ezagent.SpawnRegistry.spawn_detailed(agent_uri) do
+        {:ok, :started, _pid} -> {:ok, [agent_uri], %{fresh?: true}}
+        {:ok, :already_started, _pid} -> {:ok, [agent_uri], %{fresh?: false}}
         {:error, _} = err -> err
       end
     end

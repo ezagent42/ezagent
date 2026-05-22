@@ -98,12 +98,28 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
 
   `instantiate/3` first looks up `agent_uri` in `KindRegistry`.
   If alive, returns the existing URI — no respawn, no PTY waste.
-  Otherwise spawns the Agent Kind via `SpawnRegistry.spawn/1` then
-  starts the PtyServer via `Ezagent.Domain.Pty.start/2` (facade over
-  the `ezagent_domain_pty` Tier-2 app). Both layers are atomically
+  Otherwise spawns the Agent Kind via `SpawnRegistry.spawn_detailed/1`
+  then starts the PtyServer via `Ezagent.Domain.Pty.start/2` (facade
+  over the `ezagent_domain_pty` Tier-2 app). Both layers are atomically
   dedup'd: Agent Kind via `KindRegistry` (entity:// spawn fn returns
   `{:error, {:already_started, _}}` for duplicates), PtyServer via the
   Domain.Pty :via Registry (`EzagentDomainPty.Registry`).
+
+  ## codex round-6 HIGH-1 — the `fresh?` signal
+
+  `instantiate/3` returns the 3-element `{:ok, [agent_uri],
+  %{fresh?: boolean()}}` form. `fresh?` is `true` iff THIS call's
+  `DynamicSupervisor.start_child` STARTED the Agent Kind worker — the
+  atomic outcome `SpawnRegistry.spawn_detailed/1` preserves. The
+  idempotency short-circuit (Kind + PtyServer already alive) returns
+  `fresh?: false` — the worker pre-existed.
+
+  `update_agent_template`'s rollback-safe swap reads `fresh?` to refuse
+  silently adopting a worker another process created. Deriving it from
+  the atomic spawn result — rather than a pre-probe of `KindRegistry`
+  before the spawn — removes a TOCTOU window: a concurrent registration
+  between a pre-probe and the spawn would make an adopted worker read
+  as fresh.
 
   ## Domain.Pty PR-A (2026-05-21 SPEC v1)
 
@@ -205,9 +221,13 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
     # PtyServer are already alive we have nothing to do. Each plugin
     # re-running Workspace.Loader.load_all/0 hits this on subsequent
     # passes; the first pass spawns, the rest no-op.
+    #
+    # codex round-6 HIGH-1 — the 3-element `{:ok, uris, %{fresh?: _}}`
+    # return carries whether THIS call STARTED the Agent Kind worker.
+    # The short-circuit means the worker pre-existed → `fresh?: false`.
     cond do
       agent_kind_alive?(agent_uri) and pty_server_alive?(agent_uri) ->
-        {:ok, [agent_uri]}
+        {:ok, [agent_uri], %{fresh?: false}}
 
       true ->
         spawn_for_local_pty(agent_uri, tmpl)
@@ -231,26 +251,37 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   defp spawn_for_local_pty(agent_uri, tmpl) do
     cwd = Map.fetch!(tmpl, "cwd")
 
-    with :ok <- ensure_agent_kind(agent_uri),
+    # codex round-6 HIGH-1 — `ensure_agent_kind/1` reports whether THIS
+    # call STARTED the Agent Kind worker (`:started`) or adopted a
+    # pre-existing one (`:already_started`). The worker IS the Agent
+    # Kind; the PtyServer is a sidecar — so the worker's freshness is
+    # the Agent Kind's freshness. Threaded out as `%{fresh?: _}`.
+    with {:ok, started_or_adopted} <- ensure_agent_kind(agent_uri),
          :ok <- ensure_pty_server(agent_uri, cwd, tmpl) do
-      {:ok, [agent_uri]}
+      {:ok, [agent_uri], %{fresh?: started_or_adopted == :started}}
     end
   end
 
+  # codex round-6 HIGH-1 — `SpawnRegistry.spawn_detailed/1` preserves
+  # the atomic `DynamicSupervisor` outcome: exactly one concurrent
+  # caller gets `:started`, every other gets `:already_started`. This
+  # is the ground-truth freshness signal — NOT a pre-probe (a pre-probe
+  # is a TOCTOU window). Returns `{:ok, :started | :already_started}`.
   defp ensure_agent_kind(agent_uri) do
-    case Ezagent.SpawnRegistry.spawn(agent_uri) do
-      {:ok, _pid} ->
-        :ok
+    case Ezagent.SpawnRegistry.spawn_detailed(agent_uri) do
+      {:ok, :started, _pid} ->
+        {:ok, :started}
 
-      {:error, {:already_started, _pid}} ->
-        # Atomic dedup at KindRegistry level — Kind was spawned by a
-        # concurrent caller (or by an earlier instantiate that crashed
-        # between Kind spawn and PtyServer start). Treat as success.
-        :ok
+      {:ok, :already_started, _pid} ->
+        # Atomic dedup at KindRegistry / supervisor level — the Kind was
+        # spawned by a concurrent caller (or by an earlier instantiate
+        # that crashed between Kind spawn and PtyServer start). Still a
+        # success, but THIS call did not create the worker.
+        {:ok, :already_started}
 
       {:error, reason} ->
         Logger.warning(
-          "cc.agent: SpawnRegistry.spawn failed for #{URI.to_string(agent_uri)}: " <>
+          "cc.agent: SpawnRegistry.spawn_detailed failed for #{URI.to_string(agent_uri)}: " <>
             inspect(reason)
         )
 

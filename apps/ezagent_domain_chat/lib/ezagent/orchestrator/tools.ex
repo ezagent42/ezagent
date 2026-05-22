@@ -391,19 +391,24 @@ defmodule Ezagent.Orchestrator.Tools do
   failure in (5) is non-fatal (the new worker is live, the slot +
   routing already point at it); the stale old worker is logged.
 
-  ## codex round-5 — saga recovery is FAIL-SAFE
+  ## codex round-5/6 — saga recovery is FAIL-SAFE
 
   `update_agent_template` is a saga across resources that CANNOT all
   join one SQL transaction (live workers, SQL routing, the Session-Kind
-  working-copy slice, ETS). When a RECOVERY step itself fails, the
-  terminal answer is FAIL SAFE + FAIL LOUD — halt, terminate NOTHING
-  unsure, keep ALL workers alive:
+  working-copy slice, ETS). When a RECOVERY step itself fails — or a
+  step's outcome is UNCERTAIN — the terminal answer is FAIL SAFE + FAIL
+  LOUD — halt, terminate NOTHING unsure, keep ALL workers alive:
 
   - the step-4 slot revert is a CHECKED step — the NEW worker is
     terminated ONLY if the slot was CONFIRMED restored to the OLD
     worker; if the slot revert fails, both workers stay alive;
   - a post-commit ETS-reload + inverse-revert double-failure HALTS —
-    both workers stay alive, routing not silently assumed restored.
+    both workers stay alive, routing not silently assumed restored;
+  - the post-spawn step-2 slot commit is a `GenServer.call` into the
+    Session; a dead / timing-out Session EXITS the caller. The commit
+    is wrapped (`commit_slot_step2/7`) — an exit AFTER the replacement
+    worker exists leaves the slot state UNCERTAIN, so the swap HALTS:
+    terminates nothing, keeps both workers alive (MEDIUM-2 round 6).
 
   Either way the tool returns the distinct
   `{:error, {:update_needs_manual_repair, %{slot, old_worker,
@@ -490,10 +495,15 @@ defmodule Ezagent.Orchestrator.Tools do
   # BOTH routing AND the slot consistently name the new worker:
   #
   #   1. spawn the replacement worker — `require_fresh_candidate`
-  #      rejects an `already_started` adoption (MEDIUM-3, round 5);
-  #   2. `upsert_agent_slot` — commit the slot tuple to the new worker.
-  #      A failure here orphans the new worker → `compensate_orphan_worker`
-  #      terminates it; OLD worker + routing untouched (HIGH-7);
+  #      rejects an `already_started` adoption (MEDIUM-3 round 5;
+  #      `fresh?` now from the ATOMIC spawn result — HIGH-1 round 6);
+  #   2. `commit_slot_step2` — commit the slot tuple to the new worker.
+  #      A tagged failure orphans the new worker → `compensate_orphan_worker`
+  #      terminates it; OLD worker + routing untouched (HIGH-7). The
+  #      commit is a `GenServer.call` into the Session — if that call
+  #      EXITS (a dead/timing-out Session), the slot-commit state is
+  #      UNCERTAIN: FAIL SAFE — terminate nothing, keep both workers
+  #      alive, manual-repair error (MEDIUM-2 round 6);
   #   3. `repoint_routing_rules` — rewrite the routing rows inside a
   #      `Repo.transaction`. On forward rollback the persisted rows are
   #      atomically back on the OLD worker; the swap ABORTS — the slot
@@ -570,10 +580,25 @@ defmodule Ezagent.Orchestrator.Tools do
              )
            ) do
       # Step 2 — commit the slot tuple to the new AgentTemplate URI, the
-      # new LIVE worker URI, and the bumped generation. HIGH-7 — a
-      # failure here orphans the new worker; OLD worker + routing
-      # untouched.
-      case upsert_agent_slot(
+      # new LIVE worker URI, and the bumped generation.
+      #
+      # MEDIUM-2 (codex round 6) — the slot commit is `upsert_agent_slot`
+      # → `write_working_copy` → `Invocation.dispatch` → a
+      # `GenServer.call` into the Session Kind. A dead / timing-out /
+      # crashing Session EXITS the caller rather than returning a tagged
+      # `{:error, _}` — which would bypass both the HIGH-7 orphan
+      # compensation AND the manual-repair path. `commit_slot_step2/7`
+      # wraps the call (the SAME way round 5 wrapped `rollback_slot_to_old`):
+      #
+      #   - `:ok`                       — slot CONFIRMED committed → step 3;
+      #   - `{:error, reason}`          — slot CONFIRMED not committed →
+      #     orphan the new worker, compensate, abort;
+      #   - `{:uncertain, detail}`      — the `GenServer.call` exited /
+      #     crashed AFTER the replacement worker exists; the slot-commit
+      #     state is UNKNOWN. FAIL SAFE — terminate NOTHING (the slot may
+      #     name the new worker), keep BOTH workers alive, surface a
+      #     manual-repair error.
+      case commit_slot_step2(
              session_uri,
              slot_name,
              new_agent_template_uri,
@@ -633,13 +658,90 @@ defmodule Ezagent.Orchestrator.Tools do
           end
 
         {:error, reason} ->
+          # MEDIUM-2 (round 6) — the slot write CONFIRMED did not commit
+          # (a tagged `{:error, _}`). The new worker is an orphan
+          # (lineage, no slot); routing untouched. Terminate the orphan,
+          # abort — no outage.
           compensate_orphan_worker(new_worker_uri, caller, caps, reason)
           {:error, {:update_aborted, reason}}
+
+        {:uncertain, detail} ->
+          # MEDIUM-2 (round 6) — the step-2 `GenServer.call` into the
+          # Session EXITED / crashed (a dead or timing-out Session). The
+          # slot may or may not have committed to the NEW worker — the
+          # state is UNKNOWN. Terminating the new worker would risk the
+          # slot naming a DEAD worker; NOT terminating it risks a stale
+          # OLD worker. The fail-safe answer (round 5 principle): halt,
+          # terminate NOTHING, keep BOTH workers alive, surface a
+          # manual-repair error an operator can resolve.
+          Logger.error(
+            "update_agent_template: the step-2 slot commit for slot #{slot_name} " <>
+              "exited/crashed (#{inspect(detail)}) AFTER the replacement worker " <>
+              "#{URI.to_string(new_worker_uri)} was spawned — slot-commit state " <>
+              "UNCERTAIN; HALTING in a safe-degraded state, both workers kept alive, " <>
+              "manual repair required"
+          )
+
+          manual_repair_error(
+            :slot_commit_uncertain,
+            slot_name,
+            old_worker_uri,
+            new_worker_uri,
+            detail
+          )
       end
     else
       {:error, reason} ->
         # Phases 1-2 failed — the OLD slot is untouched, no outage.
         {:error, {:update_aborted, reason}}
+    end
+  end
+
+  # MEDIUM-2 (codex round 6) — the step-2 slot commit, wrapped against
+  # an exiting `GenServer.call`.
+  #
+  # `upsert_agent_slot` → `write_working_copy` → `Invocation.dispatch`
+  # → a `GenServer.call` into the Session Kind. A dead / timing-out /
+  # crashing Session EXITS the caller instead of returning a tagged
+  # tuple — which (un-wrapped) would crash `update_agent_template` past
+  # BOTH the HIGH-7 orphan compensation and the manual-repair path,
+  # leaving the replacement worker spawned with no controlled cleanup.
+  #
+  # Round 5 wrapped `rollback_slot_to_old/7` for exactly this exit; this
+  # is the same wrap for the INITIAL post-spawn slot commit. Returns:
+  #
+  #   - `:ok`                  — the slot write VERIFIABLY committed;
+  #   - `{:error, reason}`     — a tagged failure; the slot CONFIRMED
+  #     did NOT commit (the caller may safely terminate the orphan);
+  #   - `{:uncertain, detail}` — the call EXITED / raised; the slot
+  #     write state is UNKNOWN. The caller MUST NOT terminate either
+  #     worker — it halts in a safe-degraded state.
+  defp commit_slot_step2(
+         %URI{} = session_uri,
+         slot_name,
+         %URI{} = new_agent_template_uri,
+         %URI{} = new_worker_uri,
+         new_generation,
+         %URI{} = caller,
+         caps
+       ) do
+    try do
+      case upsert_agent_slot(
+             session_uri,
+             slot_name,
+             new_agent_template_uri,
+             new_worker_uri,
+             new_generation,
+             caller,
+             caps
+           ) do
+        :ok -> :ok
+        {:error, reason} -> {:error, reason}
+      end
+    rescue
+      e -> {:uncertain, {:slot_write_crashed, e}}
+    catch
+      kind, reason -> {:uncertain, {:slot_write_crashed, {kind, reason}}}
     end
   end
 

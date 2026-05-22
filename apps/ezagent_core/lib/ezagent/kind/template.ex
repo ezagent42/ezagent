@@ -40,15 +40,29 @@ defmodule Ezagent.Kind.Template do
   these for telemetry / observability. Returning a list (not a single
   URI) lets a Class spawn multiple Kinds in one call (e.g. Session +
   N Agents + connections).
+
+  `{:ok, [URI.t()], meta}` — the SAME, plus a `meta` map carrying
+  per-instantiate signals (codex round-6 HIGH-1). The one signal in
+  use today is `%{fresh?: boolean()}` — `true` iff THIS call's
+  `DynamicSupervisor.start_child` started the worker (vs adopting a
+  pre-existing one). `update_agent_template`'s rollback-safe swap
+  reads `fresh?` to refuse silently adopting a worker another process
+  created. A Class that does not produce the signal returns the
+  2-element form; consumers treat an absent `fresh?` conservatively as
+  `false`. The 2- and 3-element forms are BOTH valid — `Loader`
+  accepts either.
   """
 
   @type template_data :: map()
   @type template_name :: String.t()
+  @type instantiate_meta :: %{optional(:fresh?) => boolean()}
 
   @callback template_name() :: template_name()
   @callback validate(template_data()) :: :ok | {:error, term()}
   @callback instantiate(template_name(), template_data(), workspace_uri :: URI.t()) ::
-              {:ok, [URI.t()]} | {:error, term()}
+              {:ok, [URI.t()]}
+              | {:ok, [URI.t()], instantiate_meta()}
+              | {:error, term()}
 
   @optional_callbacks [validate: 1]
 end

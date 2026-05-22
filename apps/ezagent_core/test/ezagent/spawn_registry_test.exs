@@ -53,4 +53,54 @@ defmodule Ezagent.SpawnRegistryTest do
       assert {:ok, ^fake_pid} = SpawnRegistry.spawn(uri)
     end
   end
+
+  # codex round-6 HIGH-1 — `spawn_detailed/1` preserves the atomic
+  # "this call won the start" signal that `spawn/1` collapses. It is
+  # the ground truth `update_agent_template`'s swap derives `fresh?`
+  # from — never a pre-probe (a pre-probe is a TOCTOU window).
+  describe "spawn_detailed/1 — atomic started vs already_started" do
+    test "a spawn fn returning {:ok, pid} is reported as :started" do
+      scheme = "detailed-started-#{System.unique_integer([:positive])}"
+      fake_pid = spawn(fn -> :timer.sleep(:infinity) end)
+      SpawnRegistry.register(scheme, fn _uri -> {:ok, fake_pid} end)
+
+      uri = URI.parse("#{scheme}://x")
+
+      assert {:ok, :started, ^fake_pid} = SpawnRegistry.spawn_detailed(uri),
+             "a fresh DynamicSupervisor start must be reported as :started"
+    end
+
+    test "a spawn fn returning {:error, {:already_started, pid}} is reported as :already_started" do
+      scheme = "detailed-already-#{System.unique_integer([:positive])}"
+      fake_pid = spawn(fn -> :timer.sleep(:infinity) end)
+      SpawnRegistry.register(scheme, fn _uri -> {:error, {:already_started, fake_pid}} end)
+
+      uri = URI.parse("#{scheme}://x")
+
+      assert {:ok, :already_started, ^fake_pid} = SpawnRegistry.spawn_detailed(uri),
+             "an already_started supervisor result must be reported as :already_started — " <>
+               "the caller did NOT win the start"
+    end
+
+    test "a URI already live in KindRegistry is reported as :already_started" do
+      uri = Ezagent.Entity.User.admin_uri()
+      {:ok, existing_pid} = Ezagent.KindRegistry.lookup(uri)
+
+      assert {:ok, :already_started, ^existing_pid} = SpawnRegistry.spawn_detailed(uri),
+             "a KindRegistry lookup hit means the worker pre-existed — :already_started"
+    end
+
+    test "an unknown scheme returns {:error, {:no_spawn_fn, scheme}}" do
+      uri = URI.parse("nonesuch-detailed-#{System.unique_integer([:positive])}://x")
+      assert {:error, {:no_spawn_fn, _}} = SpawnRegistry.spawn_detailed(uri)
+    end
+
+    test "a spawn fn error propagates" do
+      scheme = "detailed-err-#{System.unique_integer([:positive])}"
+      SpawnRegistry.register(scheme, fn _uri -> {:error, :boom} end)
+
+      uri = URI.parse("#{scheme}://x")
+      assert {:error, :boom} = SpawnRegistry.spawn_detailed(uri)
+    end
+  end
 end

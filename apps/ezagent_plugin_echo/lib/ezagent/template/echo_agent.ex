@@ -144,14 +144,18 @@ defmodule Ezagent.PluginEcho.Template.EchoAgent do
   def instantiate(_tmpl_name, %{"agent_uri" => uri_str} = tmpl, _workspace_uri) do
     agent_uri = URI.parse(uri_str)
 
+    # codex round-6 HIGH-1 — the 3-element `{:ok, uris, %{fresh?: _}}`
+    # return carries whether THIS call STARTED the Agent Kind worker.
+    # The idempotency short-circuit means the worker pre-existed →
+    # `fresh?: false`.
     cond do
       agent_kind_alive?(agent_uri) and pty_ok?(tmpl, agent_uri) ->
-        {:ok, [agent_uri]}
+        {:ok, [agent_uri], %{fresh?: false}}
 
       true ->
-        with :ok <- ensure_agent_kind(agent_uri),
+        with {:ok, started_or_adopted} <- ensure_agent_kind(agent_uri),
              :ok <- maybe_start_pty(tmpl, agent_uri) do
-          {:ok, [agent_uri]}
+          {:ok, [agent_uri], %{fresh?: started_or_adopted == :started}}
         end
     end
   end
@@ -159,19 +163,24 @@ defmodule Ezagent.PluginEcho.Template.EchoAgent do
   def instantiate(_tmpl_name, tmpl, _workspace_uri),
     do: {:error, {:invalid_template, tmpl}}
 
+  # codex round-6 HIGH-1 — `SpawnRegistry.spawn_detailed/1` preserves
+  # the atomic `DynamicSupervisor` outcome (`:started` vs
+  # `:already_started`) — the ground-truth freshness signal, not a
+  # TOCTOU-prone pre-probe. Returns `{:ok, :started | :already_started}`.
   defp ensure_agent_kind(agent_uri) do
-    case Ezagent.SpawnRegistry.spawn(agent_uri) do
-      {:ok, _pid} ->
-        :ok
+    case Ezagent.SpawnRegistry.spawn_detailed(agent_uri) do
+      {:ok, :started, _pid} ->
+        {:ok, :started}
 
-      {:error, {:already_started, _pid}} ->
+      {:ok, :already_started, _pid} ->
         # Atomic dedup at KindRegistry level — same pattern as
-        # `cc.agent.instantiate/3`. Treat as success.
-        :ok
+        # `cc.agent.instantiate/3`. Still a success, but THIS call did
+        # not create the worker.
+        {:ok, :already_started}
 
       {:error, reason} ->
         Logger.warning(
-          "echo.agent: SpawnRegistry.spawn failed for #{URI.to_string(agent_uri)}: " <>
+          "echo.agent: SpawnRegistry.spawn_detailed failed for #{URI.to_string(agent_uri)}: " <>
             inspect(reason)
         )
 
