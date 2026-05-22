@@ -1,6 +1,6 @@
 # Phase 7 completion — the Generator + the live Orchestrator
 
-> **Status**: DRAFT rev 3 — 2026-05-22. Author: Claude, per Allen
+> **Status**: DRAFT rev 4 — 2026-05-22. Author: Claude, per Allen
 > Feishu 2026-05-22 ("和 codex 配合完成 Phase 7 的工作 … v1 要求是
 > 完整的生产可用性,不要留尾巴").
 >
@@ -18,32 +18,51 @@
 >   (g) tests per-PR.
 > - **rev 3**: second `codex adversarial-review` — 4 HIGH + 1 MEDIUM,
 >   all addressed against the REAL code (modules cited inline):
->   - **HIGH-1** — rev 2 dispatch-routed the 7 tools with the
->     orchestrator's two scope-bounded caps but never gave the
->     orchestrator any `template:*` cap; dispatch-routed
->     `update_template` / `save_template_as` / `list_templates` would
->     DENY on the happy path. rev 3 adds the **Generator-time
->     template-cap delegation contract** (§1.4) — explicit owner→
->     orchestrator template-cap grant, exact shapes, denial tests.
->   - **HIGH-2** — `Ezagent.PluginCc.Template.CcAgent` is not a
->     flavor-delegation target: `validate/1` requires
->     `{"class","agent_uri","cwd"}`, `instantiate/3` matches only
->     `%{"agent_uri"=>…}`, `build_claude_cmd/2` hardcodes one
->     `--settings` + one `--mcp-config`. rev 3 specifies the concrete
+>   - **HIGH-1** — rev 2 never gave the orchestrator any `template:*`
+>     cap; dispatch-routed template tools would DENY. rev 3 added the
+>     Generator-time template-cap delegation contract (§1.4).
+>   - **HIGH-2** — `Ezagent.PluginCc.Template.CcAgent` was not a
+>     flavor-delegation target; rev 3 specified the concrete
 >     AgentTemplate→cc delegation contract (§1.1, §1.5).
 >   - **HIGH-3** — working-copy normalization needs a durable
->     source-template field that does not exist (`Agent.spawn/4`
->     ignores `template_uri`, records only workspace + lineage).
->     rev 3 makes `source_agent_template_uri` a durable field and
->     defines it BEFORE the PR that relies on it (§1.6).
->   - **HIGH-4** — rev 2's "DB-backed SessionTemplate tables" conflict
->     with the actual Kind/`kind_snapshots` persistence model. rev 3
->     picks ONE source of truth: a SessionTemplate version IS a Kind
->     instance; persistence = snapshot; `list_templates` = catalog
->     query over `kind_snapshots` (§1.7).
->   - **MEDIUM-5** — the PR sequence asked earlier PRs to prove
->     later-PR behavior. rev 3 resequences into independently-testable
+>     source-template field; rev 3 put it in the working-copy slice
+>     (§1.6).
+>   - **HIGH-4** — rev 2's "DB-backed SessionTemplate tables"
+>     conflicted with the Kind/`kind_snapshots` model; rev 3 picked
+>     the Kind/snapshot model as the one source of truth (§1.7).
+>   - **MEDIUM-5** — resequenced PRs into independently-testable
 >     vertical slices (§2).
+> - **rev 4**: third `codex adversarial-review` — 4 HIGH + 1 MEDIUM,
+>   all addressed against the REAL code (modules cited inline):
+>   - **HIGH-1+2 (unified)** — rev 3's persistence + dispatch plan
+>     targeted **actions that do not exist**. It said persisting a
+>     template version dispatches `identity.update_slice`, and PR-5's
+>     table routed `add_agent_slot` to a bare `template.instantiate`
+>     callback. But `Ezagent.Behavior.Identity` exposes ONLY
+>     `list_caps`/`has_cap?`/`grant_cap`/`revoke_cap` (there is no
+>     `update_slice`, and the `:identity` slice holds CAPS, not
+>     template content); and `Ezagent.Kind.Template.instantiate/3` is
+>     a callback-module contract, NOT a `BehaviorRegistry`-registered
+>     action, so it is not dispatch-invocable. rev 4 defines a **real
+>     `Ezagent.Behavior.Template`** carrying the template CONTENT
+>     slice with dispatchable `:read`/`:write`/`:instantiate` actions,
+>     registered on both Template Kinds (§1.0). Persistence and the
+>     PR-5 dispatch table are rewritten to that real Behavior.
+>   - **HIGH-3** — delegating worker spawn to `CcAgent.instantiate/3`
+>     drops the `AgentLineage.record` + workspace bind that cap #2
+>     (`{:spawned_by, orchestrator}`) needs — `CcAgent` only ensures
+>     the Agent Kind + PtyServer. rev 4 makes the **Generator /
+>     `add_agent_slot` wrapper own post-spawn obligations** (§1.6a).
+>   - **HIGH-4** — owner→orchestrator template-cap delegation had no
+>     real authority preflight: `Identity.grant_cap/3` dispatches with
+>     `admin_caps()` and merely stamps `granted_by` — nothing checks
+>     the owner actually holds the authority. rev 4 specifies the
+>     exact **owner-cap preflight** the Generator performs before
+>     delegating caps #3/#4 (§1.4).
+>   - **MEDIUM-5** — `list_templates` returned a COMBINED catalog of
+>     both AgentTemplate + SessionTemplate URIs gated on cap #3 OR #4
+>     — cross-kind leak. rev 4 gates each result set by its OWN kind
+>     cap (§2.1, §1.7 (b)).
 
 This SPEC **completes** the LOCKED `docs/phase-specs/phase7/SPEC.md`
 (v3). The phase7 SPEC's *design intent* (the Generator, the live
@@ -72,28 +91,164 @@ Audit verdict: Phase 7 is ~55-60% real. **Solid — do not re-do**:
 4. `SessionTemplate.fork/2`, `.create/2`, the `template_tags` registry
    — absent.
 5. `Ezagent.Entity.AgentTemplate` / `Ezagent.Entity.SessionTemplate`
-   are bare Kinds — no `Ezagent.Kind.Template` impl, slice schemas
-   moduledoc-only, no slice-population code.
-6. No `template:` cap is ever enforced.
+   are bare Kinds — they carry only `Ezagent.Behavior.Identity`
+   (caps), the template-CONTENT slice schemas are moduledoc-only,
+   there is no dispatchable `read`/`write`/`instantiate` action, and
+   no slice-population code. rev 4 adds a real
+   `Ezagent.Behavior.Template` (§1.0) to fix this.
+6. No `template:` cap is ever enforced; the would-be grant path has
+   no owner-authority preflight (§1.4).
 7. ~7 V1-V5 gating tests missing.
 
-## 1. Architectural decisions rev 3 locks
+## 1. Architectural decisions rev 4 locks
+
+### 1.0 `Ezagent.Behavior.Template` — the dispatchable template Behavior (codex rev-4 HIGH-1+2)
+
+**The bug rev 3 left.** rev 3's persistence plan said "persisting a
+template version dispatches `identity.update_slice`", and PR-5's
+dispatch table routed `add_agent_slot` to
+`template://agent/...?action=template.instantiate`. Both target
+**non-existent dispatch actions**:
+
+- `Ezagent.Behavior.Identity` (verified —
+  `apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex`)
+  declares `actions/0 == [:list_caps, :has_cap?, :grant_cap,
+  :revoke_cap]`. There is **no `update_slice` action**, and its
+  `state_slice/0 == :identity` holds `%{caps: MapSet.t()}` — CAPS,
+  not template content. Routing template content through it is
+  category-wrong.
+- `Ezagent.Kind.Template` (verified —
+  `apps/ezagent_core/lib/ezagent/kind/template.ex`) is a
+  **callback-module contract** (`template_name/0`, `validate/1`,
+  `instantiate/3`). It is NOT registered in `BehaviorRegistry`.
+  Dispatch resolves an action via
+  `Ezagent.BehaviorRegistry.lookup(kind_module, action)` → a
+  `Ezagent.Behavior` module (verified — `Ezagent.Capability.cap_for_action/3`
+  + `BehaviorRegistry.lookup/2`). A bare callback is never
+  dispatch-invocable; `?action=template.instantiate` resolves to
+  `:error` → DLQ-unroutable.
+
+**The fix — a real `Ezagent.Behavior.Template`.** rev 4 defines a
+new Behavior in `ezagent_domain_chat`
+(`apps/ezagent_domain_chat/lib/ezagent/behavior/template.ex`) that
+follows the house pattern of `Ezagent.Behavior.Identity` /
+`Ezagent.Behavior.Chat` (verified — both implement
+`@behaviour Ezagent.Behavior` with `actions/0`, `state_slice/0`,
+`init_slice/1`, `invoke/4`, `interface/0`):
+
+- **`state_slice/0 → :template`.** A NEW slice, separate from
+  `:identity`. The Template Kinds (AgentTemplate / SessionTemplate)
+  already carry `Ezagent.Behavior.Identity` in their `behaviors/0`
+  for the cap policy; rev 4 ADDS `Ezagent.Behavior.Template` to both
+  Kinds' `behaviors/0`, so each Kind now has two slices: `:identity`
+  (the cap policy — `default_caps`, owner-grant caps) and
+  `:template` (the template CONTENT).
+- **`init_slice/1`.** Reads `args[:content]` (default `nil` — an
+  unpopulated template Kind). The content map is the per-Kind
+  schema:
+  - **AgentTemplate `:template` slice content** — the
+    moduledoc-only schema from `agent_template.ex` made real:
+    `name`, `description`, `flavor`, `working_directory`,
+    `claude_config_dir`, `settings_path`, `mcp_config_path`,
+    `api_key_helper`, `default_caps`, `created_by`, `created_at`.
+  - **SessionTemplate `:template` slice content** — the
+    moduledoc-only schema from `session_template.ex` made real:
+    `name`, `description`, `agent_slots`,
+    `orchestrator_template_uri`, `routing_rules`,
+    `default_workspace_uri`, `parent_template_uri`, `version_hash`,
+    `version_tag`, `created_by`, `created_at`.
+- **`actions/0 → [:read, :write, :instantiate]`** — the
+  dispatchable action set:
+  - **`:read`** (`:call` mode) — `{:ok, slice, %{content: map}}`.
+    Returns the `:template` slice content. The cap-gated catalog
+    read for `list_templates` and the per-template fetch
+    `add_agent_slot` / the Generator do when resolving a template
+    URI.
+  - **`:write`** (`:call` mode) — args `%{content: map}` → replaces
+    the `:template` slice content, returns `{:ok, new_slice,
+    %{content: map}}`. Because both Template Kinds are
+    `{:snapshot, :on_change}` (verified — `persistence/0` in both
+    Kind modules), a `:write` slice mutation triggers a
+    `kind_snapshots` row write. **This is the persistence
+    primitive** — "persist a template version" = spawn the
+    Template Kind + dispatch `Behavior.Template` `:write`.
+  - **`:instantiate`** (`:call` mode) — args `%{instance_name,
+    workspace_uri, ...}`. For an **AgentTemplate** Kind: reads its
+    own `:template` slice `flavor`, resolves the plugin Template
+    Class via `Ezagent.AgentFlavorRegistry.lookup(flavor)`
+    (verified — returns `{:ok, %{kind: _, template_class: tc}}`),
+    builds the Class data map via `AgentTemplate.to_template_data/2`
+    (§1.5), and delegates the actual spawn to the wrapper described
+    in §1.6a. For a **SessionTemplate** Kind: returns
+    `{:error, :use_generator}` (SessionTemplate instantiation IS
+    the Generator — §1.7 (d) / PR-4; the Behavior does not
+    duplicate it).
+- **`interface/0`** — the `description`/`args`/`returns`/`modes`
+  map per `Ezagent.Behavior` contract, all three actions `:call`.
+- **Registration.** `EzagentDomainChat.Application.start/2` extends
+  `register_chat_behaviors/0` (verified — that fn already does
+  `BehaviorRegistry.register(Session, :send, Chat)` etc.):
+
+      Enum.each(Ezagent.Behavior.Template.actions(), fn action ->
+        :ok = BehaviorRegistry.register(AgentTemplate, action, Ezagent.Behavior.Template)
+        :ok = BehaviorRegistry.register(SessionTemplate, action, Ezagent.Behavior.Template)
+      end)
+
+  After this, `?action=template.read` / `template.write` /
+  `template.instantiate` resolve through `BehaviorRegistry` on
+  either Template Kind and are dispatch-invocable — and CapBAC
+  step 5.5 derives the `needed` cap via `cap_for_action/3` with
+  `behavior == Ezagent.Behavior.Template`, `kind == :agent_template`
+  or `:session_template`.
+
+**Relationship to `Ezagent.Kind.Template`.** The callback contract
+`Ezagent.Kind.Template` (`template_name/0` + `validate/1` +
+`instantiate/3`) **keeps its existing role** — it is the
+**Template-CLASS** contract that plugin Template Classes implement
+(`Ezagent.PluginCc.Template.CcAgent` implements it; `Ezagent.Workspace.Loader`
+invokes it). It is the *flavor plugin's* spawn contract, registered
+in `Ezagent.TemplateRegistry`. The new `Ezagent.Behavior.Template`
+is a different thing: a **Behavior on the Template KIND** that holds
++ serves the persistent template-content slice and routes
+dispatchable actions. They do not collide — different namespaces
+(`Ezagent.Kind.Template` = the plugin Class behaviour;
+`Ezagent.Behavior.Template` = the core Behavior contract), different
+roles (Class = "how to spawn a flavor of agent"; Behavior = "how to
+read/write/instantiate the template config record"). The
+AgentTemplate Kind's `Behavior.Template` `:instantiate` action
+*delegates to* a `Ezagent.Kind.Template` Class — it does not replace
+it. rev 4 keeps both; the SPEC text is precise about which is which
+at every call site.
+
+**Tests (PR-1):** `Behavior.Template.actions/0` returns the 3
+actions; `:write` then `:read` round-trips the content slice;
+`:write` on a `{:snapshot, :on_change}` Template Kind produces a
+`kind_snapshots` row; both Template Kinds resolve `template.read` /
+`template.write` / `template.instantiate` through `BehaviorRegistry`;
+`cap_for_action(AgentTemplate, :write, uri)` yields `behavior ==
+Ezagent.Behavior.Template` and `kind == :agent_template`;
+SessionTemplate `:instantiate` returns `{:error, :use_generator}`.
 
 ### 1.1 AgentTemplate is persistent CONFIG — it does NOT spawn
 
 `Ezagent.Entity.AgentTemplate` is a Kind-snapshot-backed **config
 record**: a pointer to a sandbox + a cap policy. It does NOT itself
-launch a `claude` PTY. **Instantiation is delegated** — the Generator
-(and the orchestrator's `add_agent_slot`) resolves an AgentTemplate,
-reads its `flavor`, looks up the plugin Template Class via
-`Ezagent.TemplateRegistry`, builds a Template-Class data map from the
-AgentTemplate slice, and calls `Class.instantiate/3`. The plugin owns
-the launch. The concrete `flavor → Template Class` resolution and the
-AgentTemplate-slice→cc-agent-data adapter are specified in §1.5.
+launch a `claude` PTY. **Instantiation is delegated** — the
+AgentTemplate Kind's `Ezagent.Behavior.Template` `:instantiate`
+action (§1.0) reads its own `:template` slice `flavor`, resolves the
+plugin Template Class via `Ezagent.AgentFlavorRegistry.lookup(flavor)`,
+builds a Template-Class data map from the AgentTemplate slice
+(§1.5 adapter), and hands off to the **§1.6a wrapper** which calls
+`Class.instantiate/3` and then records lineage + binds the workspace.
+The plugin owns the *launch*; the wrapper owns the *post-spawn
+obligations* (§1.6a). The concrete `flavor → Template Class`
+resolution and the AgentTemplate-slice→cc-agent-data adapter are
+specified in §1.5.
 
-AgentTemplate gains a `flavor` slice field (`"cc"` etc.) so the
-delegation target is explicit. Non-cc flavors are supported the day
-their plugin Template Class accepts the adapter's data map.
+AgentTemplate's `flavor` field lives in its `:template` slice
+content (§1.0 — `"cc"` etc.) so the delegation target is explicit.
+Non-cc flavors are supported the day their plugin Template Class
+accepts the adapter's data map.
 
 ### 1.2 URIs — the CURRENT 3-segment per-workspace model
 
@@ -137,7 +292,7 @@ populated), and a **normalization** function `live → template`:
   `session_uri` and `name` from the *hash input* by structuring
   `build_working_copy/4` to emit a hash-input map without them).
 
-### 1.4 Generator-time template-cap delegation contract (codex HIGH-1)
+### 1.4 Generator-time template-cap delegation contract + owner-cap preflight (codex HIGH-1 / rev-4 HIGH-4)
 
 **The bug rev 2 left:** PR-5 dispatch-routes the 7 MCP tools with the
 orchestrator's caps; PR-2 gates `update_template`/`save_template_as`/
@@ -152,13 +307,20 @@ is permitted (skill anti-pattern + Decision #137).
 
 **The fix — explicit template-cap delegation at Generator boot.**
 `grant_scoped_caps/3` is extended to grant the orchestrator a THIRD
-and FOURTH cap, in the SAME `Repo`-free dispatch-of-`identity.grant_cap`
-loop that already grants the two scope-bounded caps. The grants:
+and FOURTH cap. The grants:
 
 | # | kind | behavior | instance | workspace_uri | meaning |
 |---|------|----------|----------|---------------|---------|
-| 3 | `:session_template` | `:any` | `{:within_workspace, ws}` (see below) | session's workspace | read + create + instantiate SessionTemplates in the orchestrator's workspace |
-| 4 | `:agent_template`   | `:any` | `{:within_workspace, ws}` | session's workspace | read AgentTemplates in the orchestrator's workspace (needed by `add_agent_slot`/`list_templates`) |
+| 3 | `:session_template` | `Ezagent.Behavior.Template` | `{:within_workspace, ws}` (see below) | session's workspace | read + write + instantiate SessionTemplates in the orchestrator's workspace |
+| 4 | `:agent_template`   | `Ezagent.Behavior.Template` | `{:within_workspace, ws}` | session's workspace | read + instantiate AgentTemplates in the orchestrator's workspace (needed by `add_agent_slot`/`list_templates`) |
+
+`behavior` is the **module reference** `Ezagent.Behavior.Template`
+(invariant 2 — caps carry module refs, never atom shorthand). Now
+that §1.0 makes `Ezagent.Behavior.Template` a real registered
+Behavior, `cap_for_action/3` derives `behavior ==
+Ezagent.Behavior.Template` for every `template.read`/`write`/
+`instantiate` dispatch — so the delegated caps and the `needed` caps
+match on `behavior` exactly.
 
 `{:within_workspace, workspace_uri}` is a new scope-tuple `instance`
 shape, narrower than `:any`, MORE specific than a URI cap — symmetric
@@ -180,20 +342,77 @@ per-name `template:write` cap is NOT delegated to the orchestrator —
 the orchestrator's authority is workspace-bounded, not name-bounded;
 finer-grained name caps remain an operator/LV concern.
 
-**Delegation source.** Caps #3/#4 are `granted_by: owner_uri` — the
-human owner who triggered the Generator. The owner must itself hold a
-template cap covering that workspace; the Generator does **not**
-fabricate authority. If the owner lacks it, `grant_scoped_caps/3`
-surfaces `{:error, {:scoped_cap_grant_failed, _}}` (the existing
-return path) and the Generator fails closed — no orchestrator with
-half its caps.
+**Delegation source + the owner-cap preflight (rev-4 HIGH-4).** Caps
+#3/#4 are `granted_by: owner_uri` — the human owner who triggered the
+Generator. **The bug rev 3 left:** rev 3 said the owner "must itself
+hold a template cap covering that workspace; the Generator does not
+fabricate authority", and "fails closed if the owner lacks it" — but
+specified NO code that actually checks. The real grant path
+(`Ezagent.Identity.grant_cap/3` — verified,
+`apps/ezagent_domain_identity/lib/ezagent/identity.ex`) dispatches
+`identity.grant_cap` with `ctx.caps = Ezagent.Entity.User.admin_caps()`
+and merely stamps `granted_by` on the new cap. It runs the CapBAC
+check against `admin_caps`, not the owner's. An implementer extending
+`grant_scoped_caps/3` the obvious way would **silently mint
+workspace-wide template authority for an owner who has none** —
+fail-open, the exact opposite of the SPEC's intent.
 
-**Tests (PR-1 for the shape, PR-5 for the e2e):**
+rev 4 specifies the exact **preflight** the Generator performs,
+*before* delegating caps #3/#4, for EACH of #3 and #4 independently:
+
+1. **Load the owner's ACTUAL caps.** Call
+   `Ezagent.Identity.list_caps_for(owner_uri)` (verified — returns a
+   `MapSet.t(Capability.t())`, dispatches `identity.list_caps` on the
+   owner's User Kind; `MapSet.new()` if the Kind is not spawned). This
+   is the owner's real authority — NOT `admin_caps()`.
+2. **Verify it covers the delegated scope.** Build the `needed` map
+   for the cap being delegated:
+   `%{kind: :session_template (or :agent_template), behavior:
+   Ezagent.Behavior.Template, instance: <a representative
+   template://<type>/<ws>/<name> URI in the session's workspace>,
+   workspace_uri: <session workspace>}`, and check
+   `Enum.any?(owner_caps, &Ezagent.Capability.matches?(&1,
+   needed))`. The owner passes iff at least one of their real caps
+   authorizes a `Behavior.Template` action on that kind in that
+   workspace (e.g. the owner holds `:any` admin, or a
+   `{:within_workspace, ws}` template cap, or a broader template
+   cap). Because `instance_match?/2` honors `{:within_workspace, _}`,
+   an owner whose own template cap is workspace-bounded still passes
+   for their own workspace and fails for any other.
+3. **Only then perform the grant.** If the owner passes, dispatch the
+   `identity.grant_cap` for that cap. The grant dispatch itself still
+   uses a **system context** (the Generator is a privileged
+   bootstrap program — it runs `grant_cap` as `system://bootstrap`,
+   consistent with `grant_scoped_caps/3`'s existing privileged grant
+   of caps #1/#2). The preflight — NOT the grant's `ctx.caps` — is
+   what enforces "no authority is fabricated". The privileged grant
+   context is legitimate *because* the preflight gated it.
+4. **If the owner fails — grant nothing for THAT cap.** The Generator
+   skips delegating that one cap (#3 or #4). It does NOT raise, does
+   NOT abort the whole session — the orchestrator simply comes up
+   without that cap and the corresponding tools (template-write tools
+   if #3 missing; `add_agent_slot`/`list_templates`-agent-rows if #4
+   missing) DENY at dispatch when the orchestrator later tries them.
+   **Fail closed, not fail open**: a missing delegated cap silently
+   removes a tool's authority; it never silently grants it. Caps
+   #1/#2 (the scope-bounded session/agent caps) are unconditional —
+   they are structural to any orchestrator and not template
+   authority, so the preflight does not gate them.
+
+**Tests (PR-1 for the shape, PR-4/PR-5 for the e2e):**
 - PR-1: `{:within_workspace, W}` matches same-workspace template URI,
   denies other-workspace template URI, denies non-template kind.
+- PR-4: **owner-cap preflight denial test** — run the Generator with
+  an `owner_uri` whose User Kind holds NO template cap (and is not
+  admin); assert the spawned orchestrator's cap set contains caps
+  #1/#2 but NOT cap #3 and NOT cap #4. A second variant: owner holds
+  ONLY cap #3-equivalent → orchestrator receives #3 but not #4.
 - PR-5: dispatch-routed `list_templates` with ONLY the four delegated
   caps SUCCEEDS; the same call with caps #3/#4 *omitted* returns
-  `{:error, :unauthorized}` — proving no `admin_caps` fallback.
+  `{:error, :unauthorized}` — proving no `admin_caps` fallback. And:
+  an orchestrator whose owner failed the cap-#3 preflight, calling
+  `update_template`, returns `{:error, :unauthorized}` (the missing
+  cap fails closed end-to-end).
 - PR-5: an out-of-workspace `add_agent_slot` (AgentTemplate URI in a
   different workspace) returns `{:error, :unauthorized}`.
 
@@ -319,10 +538,11 @@ working-copy slice — no guessing from live instance URIs, no
 slot's source template because the slot tuple is the truth, not the
 process.
 
-This makes `Agent.spawn/4`'s ignored `template_uri` arg honest: the
-Generator and `add_agent_slot` pass the AgentTemplate URI; `spawn/4`
-does not need to store it (the working copy does), but the Generator
-records `{slot, agent_template_uri}` into the slice in the same step.
+The Generator and `add_agent_slot` know the AgentTemplate URI; they
+record `{slot, agent_template_uri}` into the slice in the same step
+as the worker spawn. The worker spawn itself goes through the §1.6a
+wrapper (NOT `Agent.spawn/4` directly), and the wrapper is also where
+lineage + workspace binding happen.
 
 **Tests (PR-4 for init, PR-5 for maintenance):**
 - Generator initializes `agent_slots` with the right
@@ -331,6 +551,108 @@ records `{slot, agent_template_uri}` into the slice in the same step.
 - `add_agent_slot` / `update_agent_template` / `remove_agent_slot`
   each leave `agent_slots` consistent; after a restart the working
   copy round-trips.
+
+### 1.6a The delegated-spawn wrapper owns lineage + workspace binding (codex rev-4 HIGH-3)
+
+**The bug rev 3 left.** rev 3 (§1.1, §1.5, PR-4, PR-5) moves worker
+creation from `Ezagent.Entity.Agent.spawn/4` to the flavor Template
+Class's `instantiate/3` (delegation — the plugin owns the launch).
+But the lineage + workspace recording that cap #2
+(`{:spawned_by, orchestrator}`) depends on lives in `Agent.spawn/4`,
+NOT in the plugin Template Class. Verified:
+
+- `Ezagent.Entity.Agent.spawn/4`
+  (`apps/ezagent_domain_chat/lib/ezagent/entity/agent.ex:132`) does
+  `spawn_or_resume` → `Ezagent.WorkspaceRegistry.bind(agent_uri,
+  workspace_uri)` → `Ezagent.AgentLineage.record(agent_uri,
+  granted_by)`. The lineage record is what makes
+  `Ezagent.AgentLineage.spawned_in_lineage?/3` (called by
+  `Capability.instance_match?({:spawned_by, P}, _)` — verified,
+  `capability.ex:122-130`) return true.
+- `Ezagent.PluginCc.Template.CcAgent.instantiate/3`
+  (`apps/ezagent_plugin_cc/lib/ezagent/template/cc_agent.ex:131`)
+  does ONLY `ensure_agent_kind` (`SpawnRegistry.spawn`) +
+  `ensure_pty_server`. It does **NOT** call
+  `WorkspaceRegistry.bind` and does **NOT** call
+  `AgentLineage.record`. (`Ezagent.Workspace.Loader.invoke_template`
+  binds the workspace *after* `Class.instantiate/3` returns — but it
+  too never records lineage, and the orchestrator path does not go
+  through `Workspace.Loader`.)
+
+**Consequence:** a worker spawned by delegating straight to
+`Class.instantiate/3` is **never recorded in `AgentLineage` under the
+orchestrator**. The orchestrator's cap #2 (`{:spawned_by,
+orchestrator}`) then matches nothing for that worker. So
+`remove_agent_slot` (dispatch target `lifecycle.terminate`, cap #2)
+and `update_agent_template` (caps #2 + #4) — which the orchestrator
+must call on its own workers on the *happy path* — return
+`{:error, :unauthorized}`. The orchestrator could create workers it
+can never manage. Fail-broken.
+
+**The fix — a wrapper owns the post-spawn obligations.** The plugin
+Template Class is correctly plugin-isolated (`feedback_north_star_plugin_isolation`)
+— it must NOT know about ESR's lineage/workspace registries. So the
+*caller* of `Class.instantiate/3` owns the obligations. rev 4
+specifies a **delegated-spawn wrapper** —
+`Ezagent.Entity.Agent.spawn_from_agent_template/4` (a NEW function
+in `agent.ex`, replacing the role of the old `spawn/4` for the
+delegated path; the old `spawn/4` may be kept or folded — see
+below). The wrapper contract:
+
+1. **Resolve.** Given an `agent_template_uri`, dispatch
+   `Behavior.Template` `:read` on it (§1.0) to get the AgentTemplate
+   `:template` slice content; read its `flavor`.
+2. **Look up the Class.** `Ezagent.AgentFlavorRegistry.lookup(flavor)`
+   → `%{template_class: tc}`.
+3. **Build the Class data map.** `AgentTemplate.to_template_data/2`
+   (§1.5 adapter) from the slice + the per-instance agent URI the
+   wrapper builds.
+4. **Delegate the launch.** `tc.instantiate(tc.template_name(),
+   data, workspace_uri)` → `{:ok, [worker_uri]}` (the plugin owns
+   exactly this — the Agent Kind + PTY).
+5. **Record lineage (wrapper-owned).** For each returned
+   `worker_uri`: `Ezagent.AgentLineage.record(worker_uri,
+   orchestrator_uri)` — `orchestrator_uri` is the principal passed
+   in by the caller (the Generator passes the owner for the
+   orchestrator agent; `add_agent_slot` passes the orchestrator's
+   own URI for workers, so cap #2's `{:spawned_by, orchestrator}`
+   resolves).
+6. **Bind workspace (wrapper-owned).** For each `worker_uri`:
+   `Ezagent.WorkspaceRegistry.bind(worker_uri, workspace_uri)`
+   (invariant 4 — workspace-scoped routing rules must fire).
+
+Steps 5 + 6 are the obligations that USED to live inside
+`Agent.spawn/4` and that `Class.instantiate/3` does NOT do. The
+wrapper re-establishes them after delegation. This is stated as the
+**wrapper contract**: any code path that creates a worker through
+the delegated Template-Class path MUST run steps 5 + 6, in that
+order, against the returned worker URI(s), before returning. The
+Generator (PR-4) and `add_agent_slot` (PR-5) both call this single
+wrapper — they do not call `Class.instantiate/3` directly and do not
+re-implement lineage/binding.
+
+**Relationship to `Agent.spawn/4`.** The old `Agent.spawn/4` already
+does steps 5 + 6 but does NOT delegate to a flavor Class (its
+moduledoc admits it "does NOT instantiate the underlying claude
+process"). rev 4 supersedes it for the orchestrator/Generator path
+with `spawn_from_agent_template/4`, which delegates AND keeps the
+obligations. The old `spawn/4` is retired from the orchestrator path
+(its remaining call sites, if any non-template, are audited in PR-4;
+if none, it is deleted — no dead code, per `feedback_let_it_crash_no_workarounds`).
+
+**Tests (PR-4 + PR-5):**
+- PR-4: a worker spawned through `spawn_from_agent_template/4` IS
+  recorded in `AgentLineage` under the orchestrator —
+  `AgentLineage.spawned_in_lineage?(worker_uri, orchestrator_uri)`
+  returns true; and `WorkspaceRegistry.lookup(worker_uri)` returns
+  the session's workspace.
+- PR-5: **cap-#2 happy-path test** — after `add_agent_slot` spawns a
+  worker via the delegated path, the orchestrator (holding cap #2)
+  successfully dispatches `remove_agent_slot`
+  (`lifecycle.terminate`) and `update_agent_template` on that
+  worker; both SUCCEED (proving lineage was recorded). A control:
+  the same dispatch against a worker spawned by a *different*
+  orchestrator returns `{:error, :unauthorized}`.
 
 ### 1.7 Persistence model — a SessionTemplate version IS a Kind instance (codex HIGH-4)
 
@@ -353,29 +675,75 @@ real persistence model has no such tables:
 **rev 3 picks ONE source of truth: the existing Kind/snapshot model.**
 No new tables. Concretely:
 
-**(a) "Persist a new SessionTemplate version" =** spawn a
-SessionTemplate Kind at `template://session/<ws>/<name>@<hash>` and
-dispatch `identity.update_slice` (or grant the slice via the spawn
-`init_slice` args) to populate its `:identity` slice with the
-template content map. Because SessionTemplate is `{:snapshot,
-:on_change}`, the spawn + slice population writes a `kind_snapshots`
-row keyed by the hash URI. Content-addressing gives idempotency for
-free: the same content ⇒ the same hash ⇒ the same URI ⇒
-`SpawnRegistry.spawn` returns `{:error, {:already_started, _}}` (or
-the snapshot row already exists) ⇒ no duplicate, no error — treat as
-success (the boot-seed idempotency convention).
+**(a) "Persist a new SessionTemplate version" = spawn the Template
+Kind + dispatch `Behavior.Template` `:write` (rev-4 HIGH-1+2 fix).**
+rev 3 said this dispatches `identity.update_slice` to populate the
+`:identity` slice — but `Ezagent.Behavior.Identity` has no
+`update_slice` action and the `:identity` slice holds CAPS, not
+template content (§1.0). rev 4 corrects it: persisting a version is
 
-**(b) "List templates" = a catalog query, not a live-registry scan.**
-`list_templates` is rewritten to query persisted templates:
-`Ezagent.Ecto.KindSnapshot.list_in_workspace(workspace_uri)` filtered
-to `kind_type in ["session_template", "agent_template"]`, mapped to
-their `uri`. This returns the durable catalog regardless of which
-templates are currently spawned. (`list_in_workspace/1` already
-exists and is the standard workspace-scoped read path per SPEC v3
-§7.2.) Live-only templates that happen to be spawned but not yet
-snapshotted are a non-issue — a `{:snapshot, :on_change}` Kind
-snapshots on its first slice mutation, and template population IS a
-slice mutation.
+1. `Ezagent.Kind.spawn(SessionTemplate, %{uri:
+   template://session/<ws>/<name>@<hash>})` — bring the Template
+   Kind up (or find it already alive). The `:template` slice starts
+   empty (`Behavior.Template.init_slice/1` with no `content`).
+2. Dispatch `?action=template.write` on that URI with
+   `args: %{content: <the template content map>}` — the
+   `Ezagent.Behavior.Template` `:write` action (§1.0) replaces the
+   `:template` slice content. Because SessionTemplate is
+   `{:snapshot, :on_change}`, this slice mutation writes a
+   `kind_snapshots` row keyed by the hash URI.
+
+   (Equivalently the content MAY be passed via the spawn `params` so
+   `Behavior.Template.init_slice/1` reads `args[:content]` — but
+   the dispatch-`:write` path is canonical because it goes through
+   CapBAC and audit. The persistence helper `persist_version/2`
+   (PR-3) uses the dispatch path.)
+
+Content-addressing gives idempotency for free: the same content ⇒
+the same hash ⇒ the same URI ⇒ `Ezagent.Kind.spawn` /
+`SpawnRegistry.spawn` returns `{:error, {:already_started, _}}` (the
+snapshot row already exists with the same content) ⇒ no duplicate,
+no error — treat as success (the boot-seed idempotency convention).
+The `template.write` is harmlessly re-applied (writes the identical
+content) or skipped when the Kind is already alive with that hash.
+
+**(b) "List templates" = a catalog query, not a live-registry scan —
+gated PER KIND (rev-4 MEDIUM-5 fix).** `list_templates` is rewritten
+to query persisted templates:
+`Ezagent.Ecto.KindSnapshot.list_in_workspace(workspace_uri)` (verified
+— exists, the standard workspace-scoped read path per SPEC v3 §7.2),
+then partitioned by `kind_type`:
+
+- the `kind_type == "agent_template"` rows form the **AgentTemplate
+  result set**;
+- the `kind_type == "session_template"` rows form the
+  **SessionTemplate result set**.
+
+**Each result set is gated by its OWN kind cap.** rev 3 returned a
+COMBINED `%{agent_templates, session_templates}` catalog gated on cap
+#3 OR cap #4 — so a caller with only `:agent_template` authority
+would still learn every SessionTemplate name (and vice versa). That
+is a cross-kind information leak. rev 4 gates independently:
+
+- the AgentTemplate rows are included ONLY if the caller holds a
+  `Behavior.Template` cap matching `kind == :agent_template` for the
+  workspace (cap #4);
+- the SessionTemplate rows are included ONLY if the caller holds a
+  `Behavior.Template` cap matching `kind == :session_template` for
+  the workspace (cap #3).
+
+A caller with only cap #4 sees `agent_templates: [...]` and
+`session_templates: []`; a caller with only cap #3 sees the inverse;
+a caller with neither gets `{:error, :unauthorized}`. The catalog is
+never cross-contaminated. The per-kind check uses
+`Ezagent.Capability.matches?/2` against a `needed` map per kind
+(`%{kind: :agent_template (or :session_template), behavior:
+Ezagent.Behavior.Template, instance: <representative workspace
+template URI>, workspace_uri: <ws>}`) — the same matcher dispatch
+CapBAC uses, so the two stay structurally aligned. Live-only
+templates spawned but not yet snapshotted are a non-issue — a
+`{:snapshot, :on_change}` Kind snapshots on its first slice
+mutation, and `template.write` population IS a slice mutation.
 
 **(c) `template_tags` is a small persisted registry — same pattern as
 `routing_rules`.** `Ezagent.Routing.RuleStore` is the reference: an
@@ -411,24 +779,30 @@ snapshot row exists.
 the owner must hold the cap that lets `spawn_from_template` later
 instantiate it. The grant goes through `Ezagent.Identity.grant_cap/3`
 (verified path: `apps/ezagent_domain_identity/lib/ezagent/identity.ex`
-— dispatches `identity.grant_cap` on the target Kind; the
+— dispatches `identity.grant_cap` on the OWNER's User Kind; the
 `Ezagent.Behavior.Identity` `invoke(:grant_cap, …)` adds the cap to
-the `:identity` slice; for a `{:snapshot, :on_change}` target that
-mutation snapshots). The new-template creation and the owner-cap grant
-are sequenced: **create the SessionTemplate Kind first** (its snapshot
-row appears), **then** `grant_cap` the owner a `template:instantiate`
-cap whose `instance` is `{:within_workspace, ws}` (the workspace the
-template was created in). There is no `Repo.transaction` because there
-is no shared SQL transaction across two Kind snapshots — instead the
-ordering is: template-Kind-first, cap-second; if the cap grant fails
-the template still exists (harmless — a template nobody can yet
-instantiate, fixable by re-granting) but the function returns
-`{:error, _}` so the caller knows. (This is the let-it-crash-honest
-trade-off: no fake atomicity over two independent snapshot writes.)
+the owner's `:identity` slice; the owner's User Kind snapshots that
+mutation). The new-template creation and the owner-cap grant are
+sequenced: **create the SessionTemplate Kind first** (its
+`kind_snapshots` row appears via the `template.write`), **then**
+`grant_cap` the owner a cap with `kind: :session_template, behavior:
+Ezagent.Behavior.Template, instance: {:within_workspace, ws}` (the
+workspace the template was created in) — i.e. a `Behavior.Template`
+authority covering `:read`/`:write`/`:instantiate` on
+SessionTemplates in `ws`, which is what `spawn_from_template/2`'s
+preflight (§1.4 / PR-4) will check. There is no `Repo.transaction`
+because there is no shared SQL transaction across two Kind snapshots
+— instead the ordering is: template-Kind-first, cap-second; if the
+cap grant fails the template still exists (harmless — a template
+nobody can yet instantiate, fixable by re-granting) but the function
+returns `{:error, _}` so the caller knows. (This is the
+let-it-crash-honest trade-off: no fake atomicity over two
+independent snapshot writes.)
 
 **(f) No silent divergence.** The invariant rev 3 protects: persisted
-templates (`kind_snapshots`), tags (`template_tags`), caps (`:identity`
-slices), and the live `KindRegistry` never disagree. Tests:
+templates (`kind_snapshots` — the `:template` slice per §1.0), tags
+(`template_tags`), caps (`:identity` slices), and the live
+`KindRegistry` never disagree. Tests:
 - **Restart test**: persist a SessionTemplate, simulate a restart
   (stop the Kind, re-reference the hash URI), assert the rehydrated
   slice equals the persisted content and `list_templates` still shows
@@ -452,23 +826,35 @@ resequences so **each PR's tests pass honestly on that PR's own code**
 Every PR carries its own tests. The rule: a PR claims only what its
 code does.
 
-### PR-1 — contracts only: Template Classes, the 4 cap shapes, the adapter
+### PR-1 — contracts only: the `Behavior.Template`, the cap shape, the adapter
 
 Pure contract + schema. No persistence claim, no re-instantiation
 claim.
 
+- **`Ezagent.Behavior.Template`** — the NEW Behavior (§1.0):
+  `state_slice/0 → :template`, `actions/0 → [:read, :write,
+  :instantiate]`, `init_slice/1`, `invoke/4`, `interface/0`. Follows
+  the `Ezagent.Behavior.Identity` / `Ezagent.Behavior.Chat` house
+  pattern.
 - `Ezagent.Entity.AgentTemplate` and `Ezagent.Entity.SessionTemplate`
-  implement `Ezagent.Kind.Template` (`template_name/0`, `validate/1`,
-  `instantiate/3`) with real slice fields (phase7 SPEC schemas;
-  AgentTemplate gains `flavor`; both 3-segment URIs per §1.2).
-- `AgentTemplate.instantiate/3` resolves `flavor` →
-  `AgentFlavorRegistry` Template Class and delegates via the
-  `to_template_data/2` adapter (§1.5). It does NOT spawn workers
-  itself.
-- `SessionTemplate.instantiate/3` returns `{:error,
-  :use_generator}` — honest: SessionTemplate instantiation IS the
-  Generator (PR-4); PR-1 does not pretend otherwise. (No stub
-  delegating to a non-existent function.)
+  gain `Ezagent.Behavior.Template` in their `behaviors/0` (alongside
+  the existing `Ezagent.Behavior.Identity`), so each Kind boots a
+  `:template` slice. The real slice schemas (phase7 SPEC, currently
+  moduledoc-only) become the `Behavior.Template` content shape
+  (§1.0); AgentTemplate's content carries `flavor`. URIs 3-segment
+  per §1.2.
+- `EzagentDomainChat.Application.register_chat_behaviors/0` registers
+  `Behavior.Template`'s 3 actions on both Template Kinds via
+  `BehaviorRegistry.register/3` (§1.0) — so `template.read` /
+  `template.write` / `template.instantiate` are dispatch-invocable.
+- AgentTemplate Kind's `Behavior.Template` `:instantiate` action
+  resolves `flavor` → `AgentFlavorRegistry` Template Class; the
+  actual worker spawn is delegated to the §1.6a wrapper. SessionTemplate
+  Kind's `:instantiate` returns `{:error, :use_generator}` — honest:
+  SessionTemplate instantiation IS the Generator (PR-4).
+- `Ezagent.Kind.Template` (the plugin Template-CLASS callback
+  contract) is UNCHANGED — PR-1 keeps it; §1.0 spells out the
+  relationship.
 - `Ezagent.Capability.instance_match?/2` gains the
   `{:within_workspace, workspace_uri}` shape (§1.4).
 - `Ezagent.Entity.AgentTemplate.to_template_data/2` adapter (§1.5).
@@ -477,8 +863,14 @@ claim.
   emits operator `--settings`/`--mcp-config` with the **mandatory
   safety file LAST** and the trusted bridge config non-removable
   (§1.5 (c)).
-- **Tests**: `validate/1` accept/reject for both Template Kinds; the
-  3-segment URI round-trip; cross-workspace name non-collision;
+- **Tests**: `Behavior.Template` — `actions/0` returns the 3
+  actions; `:write` then `:read` round-trip; `:write` on a
+  `{:snapshot, :on_change}` Template Kind writes a `kind_snapshots`
+  row; both Template Kinds resolve all 3 actions via
+  `BehaviorRegistry`; `cap_for_action(AgentTemplate, :write, uri)`
+  yields `behavior == Ezagent.Behavior.Template`; SessionTemplate
+  `:instantiate` → `{:error, :use_generator}`. Plus: the 3-segment
+  URI round-trip; cross-workspace name non-collision;
   `{:within_workspace, W}` matches/denies (§1.4); `to_template_data/2`
   round-trip; `CcAgent` legacy-3-key + extended-7-key both validate;
   **hostile-path** — operator `settings_path` cannot flip
@@ -525,29 +917,49 @@ The persistence layer, standing on its own.
   duplicate-hash `persist_version` (same content → one row, no
   error); `template_tags` rows carry non-nil `workspace_uri`.
 
-### PR-4 — the Generator, fully (+ `template:instantiate` cap)
+### PR-4 — the Generator, fully (+ the delegated-spawn wrapper + the owner-cap preflight)
 
 `Session.spawn_from_template/2` performs all 8 phase7-SPEC steps
 (currently 4).
 
-- Resolve `agent_slots` → for each slot, resolve its AgentTemplate →
-  delegate spawn via the flavor Template Class (§1.1, §1.5).
+- **`Ezagent.Entity.Agent.spawn_from_agent_template/4`** — the NEW
+  delegated-spawn wrapper (§1.6a). Resolves the AgentTemplate's
+  `:template` slice (`Behavior.Template` `:read`), looks up the
+  flavor Class, builds the Class data via `to_template_data/2`,
+  calls `Class.instantiate/3`, then — **wrapper-owned** —
+  `AgentLineage.record(worker_uri, principal_uri)` and
+  `WorkspaceRegistry.bind(worker_uri, workspace_uri)` for every
+  returned worker URI. The old `Agent.spawn/4` is retired from this
+  path (deleted if it has no other call sites).
+- Resolve `agent_slots` → for each slot, spawn via
+  `spawn_from_agent_template/4` (NOT `Class.instantiate/3` directly —
+  so lineage is recorded; §1.6a).
 - Record each slot's `{slot_name, source_agent_template_uri}` into the
   Session's `template_working_copy.agent_slots` slice (§1.6).
 - Resolve `routing_rules` slot-names → per-instance agent URIs →
   install via `RuleStore.add`.
-- `grant_scoped_caps/3` extended to grant the orchestrator the TWO
-  template caps #3/#4 (§1.4) alongside the existing two
-  scope-bounded caps.
-- `template:instantiate` cap is enforced at the Generator's caller
-  surface — `spawn_from_template/2` checks `owner_uri` holds a
-  `template:instantiate` cap (`{:within_workspace, ws}` shape)
-  covering the SessionTemplate's workspace, before instantiating.
+- `grant_scoped_caps/3` extended (§1.4): grants the orchestrator the
+  two template caps #3/#4 (`behavior == Ezagent.Behavior.Template`)
+  alongside the existing two scope-bounded caps — but **only after
+  the owner-cap preflight passes** for each (§1.4 steps 1-4). The
+  preflight loads the owner's ACTUAL caps via
+  `Ezagent.Identity.list_caps_for/1` (NOT `admin_caps()`) and
+  `Capability.matches?/2`-checks them against the delegated scope; a
+  failing preflight skips ONLY that cap (fail closed). Caps #1/#2 are
+  unconditional.
+- `spawn_from_template/2` itself preflights the OWNER too — checks
+  `owner_uri` holds a `Behavior.Template` cap for `:session_template`
+  covering the SessionTemplate's workspace before instantiating
+  (otherwise the owner cannot create the session at all).
 - **Tests**: a multi-slot template instantiates all workers + routing;
+  each worker IS in `AgentLineage` under the orchestrator and bound
+  to the session workspace (§1.6a wrapper test);
   `agent_slots` slice populated with the right source-template URIs;
   the slice survives a restart; re-instantiation of the same template
-  produces an identical team; a caller without `template:instantiate`
-  is denied.
+  produces an identical team; **owner-cap preflight denial test** —
+  owner without a SessionTemplate `Behavior.Template` cap → Generator
+  denied; owner without cap-#3/#4 authority → orchestrator spawns but
+  its cap set omits #3 and/or #4 (§1.4 PR-4 test).
 
 ### PR-5 — the Orchestrator runs: the privileged MCP surface
 
@@ -559,14 +971,19 @@ PR-5's behavior.
 - **Dispatch-routing the 7 tools.** `Orchestrator.Tools` today calls
   `Agent.spawn/4` / `RuleStore.add/5` / `terminate_child` DIRECTLY,
   bypassing dispatch + CapBAC. Each tool is refactored to go through
-  `Ezagent.Invocation.dispatch/1` so the orchestrator's four
-  delegated caps (§1.4) are enforced on every tool action. The
-  per-tool dispatch table is §2.1 below.
+  `Ezagent.Invocation.dispatch/1` (or, for the agent-slot tools,
+  through the §1.6a wrapper which itself dispatches `template.read`)
+  so the orchestrator's four delegated caps (§1.4) are enforced on
+  every tool action. The per-tool dispatch table is §2.1 below — it
+  targets the real `Ezagent.Behavior.Template` actions, NOT
+  `identity.*` and NOT bare callbacks.
 - **`update_template` / `save_template_as` now persist** — via
-  `SessionTemplate.persist_version/2` (PR-3). They write a real
-  `kind_snapshots` row; `update_template` produces a new hash version
-  of the parent; `save_template_as` produces the first version of a
-  new name and (§1.7 (e)) grants the owner a `template:instantiate`
+  `SessionTemplate.persist_version/2` (PR-3), which spawns the
+  SessionTemplate Kind + dispatches `Behavior.Template` `:write`
+  (§1.7 (a)). They write a real `kind_snapshots` row;
+  `update_template` produces a new hash version of the parent;
+  `save_template_as` produces the first version of a new name and
+  (§1.7 (e)) grants the owner a `Behavior.Template` SessionTemplate
   cap on it.
 - **The orchestrator MCP server** — a new component in
   `ezagent_domain_chat`:
@@ -592,21 +1009,31 @@ PR-5's behavior.
   processes it and may call the 7 MCP tools.
 - **Tests IN THIS PR**: a deterministic fake-LLM / fake-MCP e2e that
   drives the 7 tools through the MCP server + asserts CapBAC holds —
-  including the **HIGH-1 denial test** (`list_templates` with caps
-  #3/#4 omitted → `:unauthorized`, proving no `admin_caps` fallback);
-  per-tool effect tests; the agent-slot tools maintain
-  `template_working_copy.agent_slots` (§1.6). The human agent-browser
-  demo is supplemental release evidence, not the CI gate.
+  including:
+  - the **no-`admin_caps`-fallback denial test** — `list_templates`
+    with caps #3/#4 omitted → `:unauthorized`;
+  - the **cap-#2 happy-path test** (§1.6a) — `remove_agent_slot` /
+    `update_agent_template` on a worker the orchestrator spawned via
+    the delegated path SUCCEED (proving the wrapper recorded
+    lineage); the control against another orchestrator's worker
+    DENIES;
+  - the **MEDIUM-5 per-kind list test** — a cap-#3-only caller sees
+    `session_templates: [...], agent_templates: []`; a cap-#4-only
+    caller sees the inverse; neither leaks the other kind's URIs;
+  - per-tool effect tests; the agent-slot tools maintain
+    `template_working_copy.agent_slots` (§1.6).
+  The human agent-browser demo is supplemental release evidence, not
+  the CI gate.
 
 ### PR-6 — the 3 session-creation entry points + closeout
 
 - `SessionTemplate.fork/2` — `persist_version/2` a new SessionTemplate
-  with `parent_template_uri` set; grant the owner a
-  `template:instantiate` cap (§1.7 (e)).
+  with `parent_template_uri` set; grant the owner a `Behavior.Template`
+  SessionTemplate cap (§1.7 (e)).
 - `SessionTemplate.create/2` — `persist_version/2` a new root
   template (no parent); grant the owner cap.
-- Both, plus `spawn_from_template`, require the template-create /
-  `template:instantiate` cap before they act.
+- Both, plus `spawn_from_template`, require the SessionTemplate
+  `Behavior.Template` cap (preflight per §1.4) before they act.
 - Any V1-V5 gating test not already landed (`bootstrap_to_serving`,
   `plugin_hot_install` if still missing).
 - Correct `docs/notes/phase-7-handoff.md` (it falsely declares "v1
@@ -615,30 +1042,38 @@ PR-5's behavior.
 - **Tests**: fork lineage (`parent_template_uri` correct, parent row
   unchanged); create produces a root; cap denial on each path.
 
-### 2.1 PR-5 per-tool dispatch table (codex explicit ask)
+### 2.1 PR-5 per-tool dispatch table (codex explicit ask — rev 4: real `Behavior.Template` actions)
 
 All 7 `Orchestrator.Tools` functions, refactored to dispatch. `ctx`
 for every row = `%{caller: orchestrator_uri, caps: <the 4 delegated
-caps>, reply: …}`. "Workspace derived from" describes how the target
-workspace segment is obtained.
+caps>, reply: …}`. Every cap's `behavior` field is the **module
+reference** shown (invariant 2 — never an atom shorthand). Every
+template action resolves through `BehaviorRegistry` to the real
+`Ezagent.Behavior.Template` Behavior registered in PR-1 (§1.0) — so
+`cap_for_action/3` derives the same `behavior` and CapBAC matches.
+"Workspace derived from" describes how the target workspace segment
+is obtained.
 
 | Tool | Dispatch target URI | Behavior.action | Args (JSON schema, brief) | Required cap shape | Workspace derived from | Error mapping |
 |------|---------------------|-----------------|---------------------------|--------------------|------------------------|---------------|
-| `add_agent_slot` | `entity://agent/<ws>/<flavor>_<slot>?action=identity.grant_cap` is NOT it — spawn is via the flavor Template Class. Dispatch target = `template://agent/<ws>/<name>?action=template.instantiate` | `template.instantiate` (Template Class delegated) | `{slot_name: string, agent_template_uri: string(uri), prompt_override?: string}` | `{kind: :agent_template, behavior: :any, instance: {:within_workspace, ws}}` (cap #4) | `agent_template_uri`'s workspace segment; must equal the orchestrator's session workspace | `:unauthorized` → MCP error "slot template outside your workspace"; `:cross_workspace_denied` likewise; `{:error, _}` → "spawn failed: …" |
-| `remove_agent_slot` | `entity://agent/<ws>/<flavor>_<slot>?action=lifecycle.terminate` (terminate Behavior on Agent Kind; replaces the direct `DynamicSupervisor.terminate_child`) | `lifecycle.terminate` | `{slot_name: string}` | `{kind: :agent, behavior: :any, instance: {:spawned_by, orch}}` (cap #2) | the orchestrator's session workspace (the slot's instance URI is built in it) | `:unauthorized` → "not your agent"; absent slot → `{:ok, :removed}` (idempotent) |
+| `add_agent_slot` | `template://agent/<ws>/<name>?action=template.instantiate` — the `Behavior.Template` `:instantiate` action on the AgentTemplate Kind (§1.0). The action resolves the flavor Class and hands off to the §1.6a wrapper, which runs `Class.instantiate/3` + records lineage + binds workspace. | `template.instantiate` (`Ezagent.Behavior.Template`) | `{slot_name: string, agent_template_uri: string(uri), prompt_override?: string}` | `{kind: :agent_template, behavior: Ezagent.Behavior.Template, instance: {:within_workspace, ws}}` (cap #4) | `agent_template_uri`'s workspace segment; must equal the orchestrator's session workspace | `:unauthorized` → MCP error "slot template outside your workspace"; `:cross_workspace_denied` likewise; `{:error, _}` → "spawn failed: …" |
+| `remove_agent_slot` | `entity://agent/<ws>/<flavor>_<slot>?action=lifecycle.terminate` (terminate Behavior on the Agent Kind; replaces the direct `DynamicSupervisor.terminate_child`) | `lifecycle.terminate` | `{slot_name: string}` | `{kind: :agent, behavior: :any, instance: {:spawned_by, orch}}` (cap #2 — resolves because the §1.6a wrapper recorded the worker under the orchestrator) | the orchestrator's session workspace (the slot's instance URI is built in it) | `:unauthorized` → "not your agent"; absent slot → `{:ok, :removed}` (idempotent) |
 | `update_agent_template` | sequential `remove_agent_slot` then `add_agent_slot` dispatches | (as the two above) | `{slot_name: string, new_agent_template_uri: string(uri)}` | caps #2 + #4 | as the two above | first failing dispatch's mapping |
 | `write_matcher` | `session://<template>/<ws>/<name>?action=routing.add_rule` (the rule's scope-owning Kind is the orchestrator's Session — invariant 12, no `routing-admin://` singleton) | `routing.add_rule` | `{matcher_ast: object, receiver_slot_names: [string]}` | `{kind: :session, behavior: :any, instance: {:within_session, S}}` (cap #1) | the orchestrator's session URI workspace segment | `:unauthorized` → "cannot write rules outside your session"; matcher parse error → "invalid matcher" |
-| `update_template` | `template://session/<ws>/<parent_name>@<new_hash>?action=identity.update_slice` (spawn-then-populate via `persist_version/2`; the dispatched action populates the new Kind's slice) | `identity.update_slice` (slice population on the new SessionTemplate Kind) | `{}` (no args — session context supplies everything) | `{kind: :session_template, behavior: :any, instance: {:within_workspace, ws}}` (cap #3) | the orchestrator's session workspace (parent template lives there) | `:parent_template_deleted` → "parent gone, use save_template_as"; `:unauthorized` → "no template-write authority here" |
-| `save_template_as` | `template://session/<ws>/<new_name>@<hash>?action=identity.update_slice` (new family; same persist path) | `identity.update_slice` | `{new_name: string}` | `{kind: :session_template, behavior: :any, instance: {:within_workspace, ws}}` (cap #3) | the orchestrator's session workspace | `:unauthorized` → "no template-create authority here"; duplicate hash → success (idempotent) |
-| `list_templates` | `Ezagent.Ecto.KindSnapshot.list_in_workspace(ws)` is a read — but to keep CapBAC honest it is wrapped as a dispatch to `system://routing/default` is wrong; instead it is a **cap-gated read**: the MCP server checks the orchestrator holds cap #3 OR #4 for `ws` before calling `list_in_workspace/1`, then filters results to that workspace | (cap-gated read, no Behavior — the catalog is a query, §1.7 (b)) | `{name_filter?: string}` | cap #3 OR cap #4 (read intent) for the orchestrator's workspace | the orchestrator's session workspace | missing both caps → `:unauthorized` "no template-read authority" |
+| `update_template` | `template://session/<ws>/<parent_name>@<new_hash>?action=template.write` — spawn the new-hash SessionTemplate Kind, then dispatch `Behavior.Template` `:write` to populate its `:template` content slice (§1.7 (a)). NOT `identity.update_slice` (no such action). | `template.write` (`Ezagent.Behavior.Template`) | `{content: object}` — the normalized template content map (built from session context; the MCP tool itself takes no args) | `{kind: :session_template, behavior: Ezagent.Behavior.Template, instance: {:within_workspace, ws}}` (cap #3) | the orchestrator's session workspace (parent template lives there) | `:parent_template_deleted` → "parent gone, use save_template_as"; `:unauthorized` → "no template-write authority here" |
+| `save_template_as` | `template://session/<ws>/<new_name>@<hash>?action=template.write` (new family; same spawn-then-`:write` persist path) | `template.write` (`Ezagent.Behavior.Template`) | `{new_name: string}` (content from session context) | `{kind: :session_template, behavior: Ezagent.Behavior.Template, instance: {:within_workspace, ws}}` (cap #3) | the orchestrator's session workspace | `:unauthorized` → "no template-create authority here"; duplicate hash → success (idempotent) |
+| `list_templates` | a per-kind cap-gated read of `Ezagent.Ecto.KindSnapshot.list_in_workspace(ws)` (§1.7 (b)), partitioned by `kind_type`. NOT a single dispatch — but each kind's result set is gated by its OWN `Behavior.Template` cap before inclusion (§1.7 (b) / rev-4 MEDIUM-5) | (cap-gated read, no dispatch — see note) | `{name_filter?: string}` | AgentTemplate rows gated by cap #4 (`kind: :agent_template`); SessionTemplate rows gated by cap #3 (`kind: :session_template`); each via `Capability.matches?/2` | the orchestrator's session workspace | neither cap → `:unauthorized` "no template-read authority"; only one cap → that kind's rows returned, the other kind's list empty (no cross-kind leak) |
 
 Note on `list_templates`: it is the one tool that is a pure read of
 `kind_snapshots` (§1.7 (b)), not an actor-to-actor message — so it is
-not a dispatch. The MCP server still enforces CapBAC explicitly
-(checks cap #3/#4 before the query) so the "no `admin_caps`,
-caps-enforced-everywhere" property holds. This is documented as a
-deliberate trade-off, not an idiom: reads of the snapshot catalog are
-not dispatches, but they are still cap-gated at the MCP-server
+not a dispatch. The MCP server enforces CapBAC explicitly and **per
+kind**: it checks cap #4 (`:agent_template`, `behavior ==
+Ezagent.Behavior.Template`) before including the AgentTemplate rows
+and cap #3 (`:session_template`) before including the SessionTemplate
+rows. A caller authorized for only one kind never learns the other
+kind's template names. This is documented as a deliberate trade-off,
+not an idiom: reads of the snapshot catalog are not dispatches, but
+they are still cap-gated — per result set — at the MCP-server
 boundary.
 
 ## 3. cc-agent-config reconciliation (audit §"Overlap")
@@ -683,10 +1118,15 @@ PR-1's cc Template Class delegation + the runbook document it.
 Each phase7 `VERIFICATION.md` row the audit marked NOT MET / PARTIAL
 ends MET, with the gating test in the PR that delivers the behavior
 (not batched): V2.1 (PR-5), V2.3/V2.5 (PR-5 — persistence now lands
-with the running orchestrator), V2.4 (PR-4), V2.6 (PR-2 working-copy
-restart + PR-4 Generator restart), V5.1's 7 tests distributed
-PR-1..6. The Generator instantiates workers+routing (PR-4); a
-`template:instantiate`-less caller is denied (PR-4); the
-orchestrator's dispatch-routed tools enforce the four delegated caps
-with no `admin_caps` fallback (PR-5); `phase-7-handoff.md` no longer
-claims a false "code-complete" (PR-6).
+via `Behavior.Template` `:write` with the running orchestrator), V2.4
+(PR-4), V2.6 (PR-2 working-copy restart + PR-4 Generator restart),
+V5.1's 7 tests distributed PR-1..6. The Generator instantiates
+workers+routing (PR-4); the owner-cap preflight denies a Generator
+call whose owner lacks SessionTemplate `Behavior.Template` authority
+(PR-4); a worker spawned through the delegated path IS in the
+orchestrator's lineage so cap #2 permits managing it (PR-4 wrapper
+test); the orchestrator's dispatch-routed tools enforce the four
+delegated caps — targeting the real `Ezagent.Behavior.Template`
+actions — with no `admin_caps` fallback (PR-5); `list_templates`
+leaks no cross-kind URIs (PR-5 MEDIUM-5 test); `phase-7-handoff.md`
+no longer claims a false "code-complete" (PR-6).
