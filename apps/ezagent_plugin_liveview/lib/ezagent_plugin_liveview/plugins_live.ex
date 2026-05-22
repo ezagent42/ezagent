@@ -1,13 +1,28 @@
 defmodule EzagentPluginLiveview.PluginsLive do
   @moduledoc """
-  Phase 8 polish (Allen 2026-05-20) — `/plugins` cards view.
+  `/plugins` — the installed-plugin listing (plugin authoring contract
+  SPEC §6.2 / PR-4).
 
-  Replaces the previous Activity Bar shortcut to `/admin/feishu/bindings`.
-  Lists every loaded `ezagent_plugin_*` OTP app as a card with name,
-  description, status badge, and primary action links.
+  100% registry-driven. `mount` enumerates `Ezagent.PluginRegistry`;
+  each plugin's own `plugin_info/0` supplies the card's name /
+  description / version, and `config_surface/0` supplies the config
+  icon's target. The page holds NO per-slug knowledge — the hardcoded
+  `pretty_name/1` / `pretty_desc/1` / `primary_link/1` of the previous
+  version are deleted, which is the whole point of the contract: a
+  plugin declares its own metadata, core UI never changes when a plugin
+  is added.
 
-  Data source: `Application.loaded_applications()` filtered by name
-  prefix — no separate PluginRegistry is needed for v1.
+  Each plugin renders as one `<.plugin_card>` (Tier-1 atom). The config
+  icon is wired from `config_surface/0`:
+
+    - `:route`  → the icon links to the surface's own `path`.
+    - `:flavor` → the icon links to `/identities?filter=agent:<flavor>`
+      (manage that flavor's agents — SPEC §6.1, Allen Q1).
+    - `nil`     → no config target; the card renders a disabled icon.
+
+  PR-2/2b removed the redundant left sidebar from this page — the cards
+  ARE the listing. The page is on the nested shell (`app_shell` +
+  `workspace_shell`); that wrapping is kept.
   """
   use Phoenix.LiveView
   alias EzagentDomainUi.WorkspaceShell
@@ -20,45 +35,35 @@ defmodule EzagentPluginLiveview.PluginsLive do
     {:ok, assign(socket, :plugins, list_plugins())}
   end
 
+  # Enumerate PluginRegistry — every card is built from the plugin's
+  # OWN declarations (plugin_info/0 + config_surface/0). No per-slug
+  # branch lives here.
   defp list_plugins do
-    Application.loaded_applications()
-    |> Enum.filter(fn {name, _desc, _vsn} ->
-      String.starts_with?(Atom.to_string(name), "ezagent_plugin_")
-    end)
-    |> Enum.map(fn {name, desc, vsn} ->
-      slug = Atom.to_string(name) |> String.replace_prefix("ezagent_plugin_", "")
+    Ezagent.PluginRegistry.list_all()
+    |> Enum.map(fn plugin_module ->
+      info = plugin_module.plugin_info()
+      {config_path, config_label} = config_target(plugin_module.config_surface())
+
       %{
-        slug: slug,
-        name: pretty_name(slug),
-        description: pretty_desc(slug, desc),
-        version: to_string(vsn),
-        link: primary_link(slug)
+        slug: info.slug,
+        name: info.name,
+        description: info.description,
+        version: info.version,
+        config_path: config_path,
+        config_label: config_label
       }
     end)
     |> Enum.sort_by(& &1.slug)
   end
 
-  defp pretty_name("cc"), do: "Claude Code"
-  defp pretty_name("curl_agent"), do: "Curl Agent"
-  defp pretty_name("echo"), do: "Echo"
-  defp pretty_name("feishu"), do: "Feishu (Lark)"
-  defp pretty_name("liveview"), do: "Admin Web UI"
-  defp pretty_name(other), do: other
+  # Translate a plugin's config_surface/0 into the card's config icon
+  # target (SPEC §6.1).
+  defp config_target(%{kind: :route, path: path, label: label}), do: {path, label}
 
-  defp pretty_desc("cc", _), do: "Spawn Claude Code agents via PTY or remote channel"
-  defp pretty_desc("curl_agent", _), do: "HTTP-API agents (DeepSeek / OpenAI / etc.)"
-  defp pretty_desc("echo", _), do: "Test stub — echoes back messages"
-  defp pretty_desc("feishu", _), do: "Lark integration (inbound webhook + outbound bot)"
-  defp pretty_desc("liveview", _), do: "The web admin UI you're currently using"
-  defp pretty_desc(_, desc) when is_list(desc), do: List.to_string(desc)
-  defp pretty_desc(_, _), do: ""
+  defp config_target(%{kind: :flavor, flavor: flavor, label: label}),
+    do: {"/identities?filter=agent:#{flavor}", label}
 
-  defp primary_link("feishu"), do: {"Bindings", "/plugins/feishu/bindings"}
-  defp primary_link("cc"), do: {"Agents", "/identities?filter=agent"}
-  defp primary_link("curl_agent"), do: {"Agents", "/identities?filter=agent"}
-  defp primary_link("echo"), do: {"Agents", "/identities?filter=agent"}
-  defp primary_link("liveview"), do: nil
-  defp primary_link(_), do: nil
+  defp config_target(nil), do: {nil, "Configure"}
 
   @impl true
   def render(assigns) do
@@ -83,35 +88,23 @@ defmodule EzagentPluginLiveview.PluginsLive do
           current_path="/plugins"
           status={%{agents_alive: 0, bridges: 0, debug_events: 0, version: "dev"}}
         >
-      <:main_window>
-        <div class="flex-1 overflow-auto px-6 py-6">
-          <.page_header title="Plugins">
-            <:subtitle>Installed ezagent plugins. Each one extends a core capability.</:subtitle>
-          </.page_header>
-          <div class="grid grid-cols-2 gap-4 mt-4">
-            <a
-              :for={p <- @plugins}
-              href={(p.link && elem(p.link, 1)) || "#"}
-              class="block"
-            >
-              <.card>
-                <div class="flex items-start justify-between">
-                  <div>
-                    <div class="font-medium text-sm">{p.name}</div>
-                    <div class="text-[11px] text-zinc-400 dark:text-zinc-600 font-mono mt-0.5">v{p.version}</div>
-                  </div>
-                  <.badge variant="success">active</.badge>
-                </div>
-                <div class="text-xs text-zinc-500 mt-2">{p.description}</div>
-                <div :if={p.link} class="mt-3 text-xs text-blue-600 dark:text-blue-400">
-                  → {elem(p.link, 0)}
-                </div>
-              </.card>
-            </a>
-          </div>
-        </div>
-      </:main_window>
-
+          <:main_window>
+            <div class="flex-1 overflow-auto px-6 py-6">
+              <.page_header title="Plugins">
+                <:subtitle>Installed ezagent plugins. Each one extends a core capability.</:subtitle>
+              </.page_header>
+              <div class="grid grid-cols-2 gap-4 mt-4">
+                <.plugin_card
+                  :for={p <- @plugins}
+                  name={p.name}
+                  description={p.description}
+                  version={p.version}
+                  config_path={p.config_path}
+                  config_label={p.config_label}
+                />
+              </div>
+            </div>
+          </:main_window>
         </WorkspaceShell.workspace_shell>
       </:body>
     </AppShell.app_shell>
