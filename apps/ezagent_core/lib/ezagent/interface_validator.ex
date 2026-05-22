@@ -118,4 +118,35 @@ defmodule Ezagent.InterfaceValidator do
 
   defp check(value, ty, path),
     do: {:error, [{path, {:type_mismatch, expected: ty, got: value}}]}
+
+  # --- @interface action-map shape check ---------------------------------
+
+  @doc """
+  Validate a single `@interface` action map's shape.
+
+  An action map is `%{args: map(), returns: map(), modes: [atom()]}` with
+  an OPTIONAL `description:` key. The V1 UI SPEC §0 adds `description:` as
+  a single source of truth for "what does this action do" (consumed by the
+  CLI `tree_builder`, CmdK later). It is optional — absent is valid — but
+  when present it MUST be a binary.
+
+  Returns `:ok` if the action map is well-shaped, otherwise
+  `{:error, {:invalid_interface, violations}}` where `violations` is a
+  list of `{path :: [atom()], reason :: term()}` (same shape as
+  `validate/2`'s violations).
+  """
+  @spec validate_action(map()) :: :ok | {:error, {:invalid_interface, [violation()]}}
+  def validate_action(action_map) when is_map(action_map) do
+    violations =
+      case Map.fetch(action_map, :description) do
+        {:ok, desc} when is_binary(desc) -> []
+        {:ok, desc} -> [{[:description], {:type_mismatch, expected: :string, got: desc}}]
+        :error -> []
+      end
+
+    case violations do
+      [] -> :ok
+      _ -> {:error, {:invalid_interface, violations}}
+    end
+  end
 end

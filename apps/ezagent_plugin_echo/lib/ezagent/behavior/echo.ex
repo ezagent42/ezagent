@@ -113,11 +113,13 @@ defmodule Ezagent.Behavior.Echo do
   def interface do
     %{
       say: %{
+        description: "Echo a string back to the caller",
         args: %{msg: :string},
         returns: %{echo: :string},
         modes: [:call, :cast]
       },
       receive: %{
+        description: "Reply to an inbound chat message with an \"echo: <text>\" line",
         args: %{message: :map},
         returns: %{},
         modes: [:cast]

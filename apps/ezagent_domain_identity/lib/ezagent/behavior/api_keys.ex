@@ -88,21 +88,25 @@ defmodule Ezagent.Behavior.ApiKeys do
   def interface do
     %{
       list_api_keys: %{
+        description: "List the user's stored API keys with masked values",
         args: %{},
         returns: %{api_keys: {:list, :map}},
         modes: [:call]
       },
       put_api_key: %{
+        description: "Store or replace the user's API key for a provider",
         args: %{provider: :string, key: :string},
         returns: %{ok: :boolean, provider: :string},
         modes: [:call]
       },
       delete_api_key: %{
+        description: "Delete the user's API key for a provider",
         args: %{provider: :string},
         returns: %{ok: :boolean, provider: :string},
         modes: [:call]
       },
       get_api_key: %{
+        description: "Fetch the user's plaintext API key for a provider",
         args: %{provider: :string},
         returns: %{key: :string, provider: :string},
         modes: [:call]

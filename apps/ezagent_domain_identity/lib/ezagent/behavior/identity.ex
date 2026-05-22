@@ -86,21 +86,25 @@ defmodule Ezagent.Behavior.Identity do
   def interface do
     %{
       list_caps: %{
+        description: "List the principal's capability set",
         args: %{},
         returns: %{caps: {:list, :map}},
         modes: [:call]
       },
       has_cap?: %{
+        description: "Check whether the principal holds a capability matching the needed shape",
         args: %{cap: :map},
         returns: %{has: :boolean},
         modes: [:call]
       },
       grant_cap: %{
+        description: "Add a capability to the principal's set",
         args: %{cap: :map},
         returns: %{caps: {:list, :map}},
         modes: [:call]
       },
       revoke_cap: %{
+        description: "Remove a capability from the principal's set",
         args: %{cap: :map},
         returns: %{caps: {:list, :map}},
         modes: [:call]

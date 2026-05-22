@@ -71,9 +71,22 @@ defmodule Ezagent.Behavior do
   @doc """
   Adapter-generation + arg-validation source.
 
-  Shape: `%{<action_atom> => %{args: <type_spec>, returns: <type_spec>,
-  modes: [<mode>]}}`. Used by `Ezagent.InterfaceValidator.validate/2` at
-  dispatch time.
+  Shape: `%{<action_atom> => %{description: <String.t()>, args: <type_spec>,
+  returns: <type_spec>, modes: [<mode>]}}`. Used by
+  `Ezagent.InterfaceValidator.validate/2` at dispatch time.
+
+  `description:` is OPTIONAL (V1 UI SPEC §0) — a one-line human-readable
+  summary of what the action does, surfaced by the CLI `tree_builder` and
+  CmdK. When present it MUST be a binary; `Ezagent.InterfaceValidator.validate_action/1`
+  enforces this. Behaviors SHOULD supply it so consumers rarely fall back
+  to generic text.
   """
-  @callback interface() :: %{atom() => %{args: map(), returns: map(), modes: [atom()]}}
+  @callback interface() :: %{
+              atom() => %{
+                optional(:description) => String.t(),
+                args: map(),
+                returns: map(),
+                modes: [atom()]
+              }
+            }
 end

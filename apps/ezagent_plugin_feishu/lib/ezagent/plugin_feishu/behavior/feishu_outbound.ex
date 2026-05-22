@@ -233,6 +233,7 @@ defmodule EzagentPluginFeishu.Behavior.FeishuOutbound do
 
     %{
       @action => %{
+        description: "Mirror a session message out to its bound Feishu chats",
         args: %{message: msg_schema},
         returns: %{},
         # Cast: outbound mirror is fire-and-forget from Chat.send's

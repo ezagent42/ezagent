@@ -143,19 +143,60 @@ defmodule Ezagent.Behavior.Workspace do
   @impl Ezagent.Behavior
   def interface do
     %{
-      list_members: %{args: %{}, returns: %{members: {:list, :uri}}, modes: [:call]},
-      add_member: %{args: %{member: :uri}, returns: %{}, modes: [:cast, :call]},
-      remove_member: %{args: %{member: :uri}, returns: %{}, modes: [:cast, :call]},
-      list_templates: %{args: %{}, returns: %{templates: :map}, modes: [:call]},
+      list_members: %{
+        description: "List the workspace's member URIs",
+        args: %{},
+        returns: %{members: {:list, :uri}},
+        modes: [:call]
+      },
+      add_member: %{
+        description: "Add an entity URI to the workspace's member set",
+        args: %{member: :uri},
+        returns: %{},
+        modes: [:cast, :call]
+      },
+      remove_member: %{
+        description: "Remove an entity URI from the workspace's member set",
+        args: %{member: :uri},
+        returns: %{},
+        modes: [:cast, :call]
+      },
+      list_templates: %{
+        description: "List the workspace's session templates",
+        args: %{},
+        returns: %{templates: :map},
+        modes: [:call]
+      },
       add_template: %{
+        description: "Add or replace a named session template",
         args: %{name: :string, template: :map},
         returns: %{},
         modes: [:cast, :call]
       },
-      remove_template: %{args: %{name: :string}, returns: %{}, modes: [:cast, :call]},
-      list_routing_rules: %{args: %{}, returns: %{rules: {:list, :map}}, modes: [:call]},
-      set_routing_rules: %{args: %{rules: {:list, :map}}, returns: %{}, modes: [:cast, :call]},
-      instantiate: %{args: %{}, returns: %{children: {:list, :tuple}}, modes: [:call]}
+      remove_template: %{
+        description: "Remove a named session template",
+        args: %{name: :string},
+        returns: %{},
+        modes: [:cast, :call]
+      },
+      list_routing_rules: %{
+        description: "List the workspace's routing rules",
+        args: %{},
+        returns: %{rules: {:list, :map}},
+        modes: [:call]
+      },
+      set_routing_rules: %{
+        description: "Replace the workspace's routing rule list",
+        args: %{rules: {:list, :map}},
+        returns: %{},
+        modes: [:cast, :call]
+      },
+      instantiate: %{
+        description: "Return the child entities + templates this workspace declares",
+        args: %{},
+        returns: %{children: {:list, :tuple}},
+        modes: [:call]
+      }
     }
   end
 end

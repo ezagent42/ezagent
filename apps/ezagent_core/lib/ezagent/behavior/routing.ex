@@ -157,21 +157,25 @@ defmodule Ezagent.Behavior.Routing do
   def interface do
     %{
       add_rule: %{
+        description: "Add a routing rule to a table and reload the live registry",
         args: %{table: :atom, matcher_json: :map, receivers: {:list, :string}},
         returns: %{id: :integer},
         modes: [:call]
       },
       delete_rule: %{
+        description: "Delete a routing rule by id and reload the live registry",
         args: %{table: :atom, id: :integer},
         returns: %{deleted: :integer},
         modes: [:call]
       },
       disable_rule: %{
+        description: "Disable a routing rule by id and reload the live registry",
         args: %{table: :atom, id: :integer},
         returns: %{disabled: :integer},
         modes: [:call]
       },
       enable_rule: %{
+        description: "Enable a routing rule by id and reload the live registry",
         args: %{table: :atom, id: :integer},
         returns: %{enabled: :integer},
         modes: [:call]

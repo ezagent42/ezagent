@@ -367,16 +367,19 @@ defmodule Ezagent.Behavior.Chat do
   def interface do
     %{
       send: %{
+        description: "Post a message into the session and fan it out to members",
         args: %{message: message_schema()},
         returns: %{stored: :boolean},
         modes: [:cast]
       },
       receive: %{
+        description: "Deliver a session message to this member (User inbox / Agent bridge)",
         args: %{message: message_schema()},
         returns: %{},
         modes: [:cast]
       },
       join: %{
+        description: "Add a member to the session and replay any missed messages",
         args: %{member: :uri},
         returns: %{members: {:list, :uri}},
         # Allow both — admin User joins via :cast at boot (non-blocking);
@@ -384,6 +387,7 @@ defmodule Ezagent.Behavior.Chat do
         modes: [:call, :cast]
       },
       leave: %{
+        description: "Remove a member from the session",
         args: %{member: :uri},
         returns: %{},
         modes: [:cast]

@@ -138,17 +138,17 @@ defmodule EzagentCli.TreeBuilder do
     ]
   end
 
+  # V1 UI SPEC §0: the `@interface` action schema carries an optional
+  # `description:` string — the single source of truth for "what does
+  # this action do," shared by the CLI (here) and CmdK. Read it directly;
+  # fall back to generic text only when a Behavior hasn't backfilled one.
+  # The previous `Code.fetch_docs/1` scrape looked for a function named
+  # after the action — but Behaviors implement `invoke(:action, ...)`,
+  # never `def <action>`, so it almost always fell through to generic.
   defp action_about(behavior_module, action) do
-    # Per Spec 02 Q-H: per-action @doc extraction, fallback generic.
-    case Code.fetch_docs(behavior_module) do
-      {:docs_v1, _, _, _, _, _, fn_docs} ->
-        Enum.find_value(fn_docs, fn
-          {{:function, ^action, _arity}, _, _, %{"en" => text}, _} -> text
-          _ -> nil
-        end) || "#{action} action on #{behavior_module}"
-
-      _ ->
-        "#{action} action on #{behavior_module}"
+    case behavior_module.interface()[action][:description] do
+      desc when is_binary(desc) -> desc
+      _ -> "#{action} action on #{behavior_module}"
     end
   end
 

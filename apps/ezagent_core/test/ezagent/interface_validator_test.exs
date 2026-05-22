@@ -93,4 +93,35 @@ defmodule Ezagent.InterfaceValidatorTest do
     # Two violations: a is not string, b is not integer.
     assert length(vs) == 2
   end
+
+  describe "validate_action/1 — @interface action-map shape (V1 UI SPEC §0)" do
+    test "action map with no :description key is valid (optional)" do
+      assert :ok =
+               InterfaceValidator.validate_action(%{
+                 args: %{msg: :string},
+                 returns: %{echo: :string},
+                 modes: [:call]
+               })
+    end
+
+    test "action map with a binary :description is valid" do
+      assert :ok =
+               InterfaceValidator.validate_action(%{
+                 description: "Echo a string back to the caller",
+                 args: %{msg: :string},
+                 returns: %{echo: :string},
+                 modes: [:call]
+               })
+    end
+
+    test "non-binary :description produces an :invalid_interface violation" do
+      assert {:error, {:invalid_interface, [{[:description], {:type_mismatch, _}}]}} =
+               InterfaceValidator.validate_action(%{
+                 description: :not_a_string,
+                 args: %{},
+                 returns: %{},
+                 modes: [:call]
+               })
+    end
+  end
 end
