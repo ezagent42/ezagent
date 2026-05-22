@@ -8,10 +8,13 @@ defmodule EzagentPluginLiveview.SettingsLiveAdminTest do
 
     1. /admin/settings is admin-only at the mount level (non-admin
        callers are redirected, not just shown a no-op page).
-    2. The page renders inside `EzagentDomainUi.AdminSettingsShell`
-       (the admin drawer) — same shell as /admin, /admin/logs,
-       /admin/registry, /admin/snapshots — NOT inside
-       `EzagentDomainUi.IdeShell` (the workspace surface).
+    2. The page renders inside the admin perspective — nested-shell
+       PR-3 wraps it in `AppShell.app_shell` (`perspective: :admin`)
+       over `AdminShell.admin_shell` — same shell stack as /admin,
+       /admin/logs, /admin/registry, /admin/snapshots, /workspaces.
+       It carries the universal outer chrome (`ide-shell-outer`) +
+       the admin inner perspective (`admin-shell`), and does NOT use
+       the workspace inner perspective.
     3. The SMTP form is still wired correctly at the new URL
        (regression coverage on top of `settings_live_smtp_test.exs`).
   """
@@ -64,22 +67,35 @@ defmodule EzagentPluginLiveview.SettingsLiveAdminTest do
     end
   end
 
-  describe "/admin/settings renders inside AdminSettingsShell" do
-    test "page is in the admin drawer (not the workspace IDE shell)" do
+  describe "/admin/settings renders in the admin perspective" do
+    test "page is in the admin perspective (not the workspace perspective)" do
       {:ok, _lv, html} = live(admin_conn(), "/admin/settings")
 
-      # AdminSettingsShell's structural ids.
-      assert html =~ ~s(id="admin-settings-shell")
-      assert html =~ ~s(id="admin-settings-topbar")
-      assert html =~ ~s(id="admin-settings-sidebar")
+      # Nested-shell PR-3 — the universal outer chrome wraps the page.
+      assert html =~ ~s(id="ide-shell-outer")
+      # The admin inner perspective body + its left settings nav.
+      assert html =~ ~s(id="admin-shell")
+      assert html =~ ~s(id="admin-shell-sidebar")
 
-      # IdeShell has its own root id — must NOT appear.
-      refute html =~ ~s(id="ide-shell")
+      # The workspace inner perspective MUST NOT appear — /admin/settings
+      # is a system-config surface, not a workspace surface.
+      refute html =~ ~s(id="workspace-shell")
     end
 
     test "drawer sidebar includes a Settings entry pointing at /admin/settings" do
       {:ok, _lv, html} = live(admin_conn(), "/admin/settings")
       assert html =~ ~s(href="/admin/settings")
+    end
+
+    test "page gains the universal chrome it previously lacked (avatar / search / ⌘K)" do
+      # Nested-shell SPEC §8 — the 7 admin pages now carry the universal
+      # chrome. The old chrome-less AdminSettingsShell had none of it.
+      {:ok, _lv, html} = live(admin_conn(), "/admin/settings")
+
+      # Search / ⌘K trigger.
+      assert html =~ "⌘K"
+      # CommandPaletteComponent is wired (its root carries id="cmdk").
+      assert html =~ ~s(id="cmdk")
     end
   end
 
@@ -111,10 +127,10 @@ defmodule EzagentPluginLiveview.SettingsLiveAdminTest do
       conn = get(admin_conn(), "/settings")
       assert conn.status == 404
 
-      # And — crucially — the SettingsLive admin-shell ids must NOT
-      # appear (proves the LV did NOT mount at the old URL).
+      # And — crucially — the SettingsLive shell ids must NOT appear
+      # (proves the LV did NOT mount at the old URL).
       body = response(conn, 404)
-      refute body =~ ~s(id="admin-settings-shell")
+      refute body =~ ~s(id="admin-shell")
     end
   end
 end

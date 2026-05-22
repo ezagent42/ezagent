@@ -77,8 +77,8 @@ defmodule Ezagent.Identity do
   admin principal?
 
   Used by the avatar dropdown to gate visibility of the "Admin" link
-  (which opens the AdminSettingsShell drawer at `/admin`). Returns
-  `false` for `nil`, malformed URIs, or any non-admin entity.
+  (which opens the admin drawer at `/admin`). Returns `false` for
+  `nil`, malformed URIs, or any non-admin entity.
 
   ## Current implementation
 

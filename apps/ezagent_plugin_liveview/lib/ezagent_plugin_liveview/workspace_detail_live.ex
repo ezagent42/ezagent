@@ -19,7 +19,8 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
   """
 
   use Phoenix.LiveView
-  alias EzagentDomainUi.AdminSettingsShell
+  alias EzagentDomainUi.AdminShell
+  alias EzagentPluginLiveview.AppShell
   use EzagentDomainUi.Components
   use EzagentDomainUi.Primitives
   import Phoenix.Component
@@ -312,36 +313,73 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
 
   @impl true
   def render(%{not_found: true} = assigns) do
-    ~H"""
-    <div class="max-w-3xl mx-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
-      <.page_header title="Workspace not found" />
-      <p>No persisted workspace named <code>{@name}</code>.</p>
-      <p>
-        <a href="/workspaces" class="text-blue-600 dark:text-blue-400 hover:text-blue-700">
-          ← Workspaces
-        </a>
-      </p>
-    </div>
-    """
-  end
-
-  def render(assigns) do
-    # PR-M (Allen 2026-05-20) — wrap in AdminSettingsShell (drawer
-    # perspective). Workspace MANAGEMENT (templates / members / routing
-    # config) is a configuration surface, not a workflow surface.
+    # Nested-shell PR-3 — the not-found page is still an admin surface;
+    # wrap it in AppShell.app_shell (perspective :admin) over
+    # AdminShell.admin_shell so it carries the universal chrome.
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
         URI.to_string(assigns.current_entity_uri || URI.parse("entity://user/system/admin"))
       end)
 
     ~H"""
-    <AdminSettingsShell.admin_settings_shell
+    <AppShell.app_shell
+      perspective={:admin}
       current_entity_uri={@current_entity_uri_str}
-      current_path={"/workspaces/" <> @workspace.name}
-      active_section={:workspaces}
+      current_workspace_uri={@current_workspace_uri}
+      workspaces={@workspaces}
+      is_admin?={@is_admin?}
+      is_system_member?={@is_system_member?}
+      cmdk_nav_routes={@cmdk_nav_routes}
     >
-      <:main>
-        <div class="flex-1 overflow-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
+      <:body>
+        <AdminShell.admin_shell current_path="/workspaces" active_section={:workspaces}>
+          <:main>
+            <div class="max-w-3xl mx-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
+              <.page_header title="Workspace not found" />
+              <p>No persisted workspace named <code>{@name}</code>.</p>
+              <p>
+                <a
+                  href="/workspaces"
+                  class="text-blue-600 dark:text-blue-400 hover:text-blue-700"
+                >
+                  ← Workspaces
+                </a>
+              </p>
+            </div>
+          </:main>
+        </AdminShell.admin_shell>
+      </:body>
+    </AppShell.app_shell>
+    """
+  end
+
+  def render(assigns) do
+    # Nested-shell PR-3 — wrap in AppShell.app_shell (perspective :admin)
+    # over AdminShell.admin_shell. Workspace MANAGEMENT (templates /
+    # members / routing config) is a configuration surface, not a
+    # workflow surface; it now gains the universal chrome.
+    assigns =
+      assign_new(assigns, :current_entity_uri_str, fn ->
+        URI.to_string(assigns.current_entity_uri || URI.parse("entity://user/system/admin"))
+      end)
+
+    ~H"""
+    <AppShell.app_shell
+      perspective={:admin}
+      current_entity_uri={@current_entity_uri_str}
+      current_workspace_uri={@current_workspace_uri}
+      workspaces={@workspaces}
+      is_admin?={@is_admin?}
+      is_system_member?={@is_system_member?}
+      cmdk_nav_routes={@cmdk_nav_routes}
+    >
+      <:body>
+        <AdminShell.admin_shell
+          current_path={"/workspaces/" <> @workspace.name}
+          active_section={:workspaces}
+        >
+          <:main>
+            <div class="flex-1 overflow-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
           <a
             href="/workspaces"
             class="inline-flex items-center gap-1 text-xs text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 mb-4"
@@ -606,9 +644,11 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
               class="bg-zinc-100 dark:bg-zinc-900 p-3 rounded overflow-x-auto text-[11px] font-mono text-zinc-900 dark:text-zinc-100"
             >{Jason.encode!(@workspace.routing_rules, pretty: true)}</pre>
           </.card>
-        </div>
-      </:main>
-    </AdminSettingsShell.admin_settings_shell>
+            </div>
+          </:main>
+        </AdminShell.admin_shell>
+      </:body>
+    </AppShell.app_shell>
     """
   end
 end

@@ -59,8 +59,9 @@ defmodule EzagentPluginLiveview.AgentNewLive do
   per-instance state lives entirely in the owner User's `api_keys`
   slice. A minimal template class would be empty boilerplate.
 
-  Wraps in `IdeShell.ide_shell` (workspace surface — agent creation
-  is workflow, not config).
+  Wraps in `AppShell.app_shell` (`perspective: :workspace`) over
+  `WorkspaceShell.workspace_shell` — agent creation is workflow, not
+  config.
   """
   use Phoenix.LiveView
   alias EzagentDomainUi.WorkspaceShell

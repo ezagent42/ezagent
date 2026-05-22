@@ -8,11 +8,16 @@ defmodule EzagentPluginLiveview.AdminDashboardLive do
   `/admin/registry` (the KindRegistry live view, moved from
   `/admin/entities`), and `/admin/snapshots`.
 
-  Phase 8c PR-F (2026-05-20): rendered inside
-  `EzagentDomainUi.AdminSettingsShell` (the "settings drawer"
-  perspective) instead of the IDE Shell. The drawer has no Activity
+  Phase 8c PR-F (2026-05-20): rendered inside the admin settings-drawer
+  perspective instead of the IDE Shell. The drawer has no Activity
   Bar — admin is not a peer workflow, it's a permission/role
   perspective opened from the avatar dropdown.
+
+  Nested-shell PR-3 (SPEC §1, §6 row 3): now renders
+  `AppShell.app_shell` (`perspective: :admin`) wrapping
+  `AdminShell.admin_shell` — the page gains the universal chrome
+  (avatar / notifications / search / ⌘K) the old chrome-less
+  `AdminSettingsShell` lacked.
   """
   use Phoenix.LiveView
   # i18n V1 (Allen 2026-05-21): backend module reference is runtime —
@@ -20,7 +25,8 @@ defmodule EzagentPluginLiveview.AdminDashboardLive do
   # compile-time dep here. Gettext macros expand to runtime calls
   # against the named backend.
   use Gettext, backend: EzagentWeb.Gettext
-  alias EzagentDomainUi.AdminSettingsShell
+  alias EzagentDomainUi.AdminShell
+  alias EzagentPluginLiveview.AppShell
   use EzagentDomainUi.Components
   use EzagentDomainUi.Primitives
 
@@ -68,13 +74,19 @@ defmodule EzagentPluginLiveview.AdminDashboardLive do
       end)
 
     ~H"""
-    <AdminSettingsShell.admin_settings_shell
+    <AppShell.app_shell
+      perspective={:admin}
       current_entity_uri={@current_entity_uri_str}
-      current_path="/admin"
-      active_section={:overview}
+      current_workspace_uri={@current_workspace_uri}
+      workspaces={@workspaces}
+      is_admin?={@is_admin?}
+      is_system_member?={@is_system_member?}
+      cmdk_nav_routes={@cmdk_nav_routes}
     >
-      <:main>
-        <div class="px-6 py-6 text-zinc-900 dark:text-zinc-100">
+      <:body>
+        <AdminShell.admin_shell current_path="/admin" active_section={:overview}>
+          <:main>
+            <div class="px-6 py-6 text-zinc-900 dark:text-zinc-100">
           <.page_header title={gettext("Overview")}>
             <:subtitle>
               System layer (admin settings drawer). Workspace-layer surfaces
@@ -121,9 +133,11 @@ defmodule EzagentPluginLiveview.AdminDashboardLive do
               </.card>
             </a>
           </div>
-        </div>
-      </:main>
-    </AdminSettingsShell.admin_settings_shell>
+            </div>
+          </:main>
+        </AdminShell.admin_shell>
+      </:body>
+    </AppShell.app_shell>
     """
   end
 
