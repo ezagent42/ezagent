@@ -28,7 +28,8 @@ defmodule EzagentPluginLiveview.AdminLive do
   - `:current_view` — `:conversation` | `:pty` (default `:conversation`)
   - `:active_pty_agent_uri` — string, set when `current_view = :pty`
   - `:applicable_views` — derived from SessionViewRegistry on session change
-  - `:session_members`, `:member_options`, `:floating_agents` — Members panel + composer
+  - `:session_members`, `:member_options`, `:invite_options`,
+    `:invite_open` — Members panel + Invite modal + composer
   - `:feishu_chat_ids` — for setting dropdown
   - `:debug_open` — Debug events panel toggle (setting dropdown)
   - `:compose_form`, `:new_session_form` — input + create
@@ -126,6 +127,8 @@ defmodule EzagentPluginLiveview.AdminLive do
       |> assign(:active_pty_agent_uri, nil)
       |> assign(:cc_events, [])
       |> assign(:debug_open, false)
+      # V1 UI SPEC §2C.3 — MemberPanel's Invite modal visibility.
+      |> assign(:invite_open, false)
       |> assign(:compose_form, to_form(%{"text" => ""}, as: "chat"))
       |> assign(:new_session_form, to_form(%{"short_name" => ""}, as: "new_session"))
       |> allow_upload(:attachments,
@@ -332,35 +335,110 @@ defmodule EzagentPluginLiveview.AdminLive do
      |> assign(:active_pty_agent_uri, agent_uri_str)}
   end
 
-  # Phase 8c PR-E (Allen 2026-05-20) — restored Floating agents picker.
-  # Dispatches `chat.join` with the picked agent as the member to add
-  # to the current session. Re-asserts session context to refresh
-  # member list + floating list.
-  def handle_event("add_floating_agent", %{"agent_uri" => ""}, socket), do: {:noreply, socket}
+  # V1 UI SPEC §2C.3 — MemberPanel's Invite modal open/close.
+  def handle_event("open_invite_modal", _params, socket) do
+    {:noreply, assign(socket, :invite_open, true)}
+  end
 
-  def handle_event("add_floating_agent", %{"agent_uri" => agent_uri_str}, socket) do
-    with {:ok, agent_uri} <- URI.new(agent_uri_str),
-         session_uri = socket.assigns.current_session_uri,
-         target = URI.new!("#{URI.to_string(session_uri)}?action=chat.join") do
-      _ =
-        Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-          target: target,
-          mode: :cast,
-          args: %{member: agent_uri},
-          ctx: %{
-            caller: socket.assigns.caller_uri,
-            caps: socket.assigns.caller_caps,
-            reply: :ignore
-          }
-        })
+  def handle_event("close_invite_modal", _params, socket) do
+    {:noreply, assign(socket, :invite_open, false)}
+  end
 
-      {:noreply,
-       socket
-       |> assign_session_context(session_uri)
-       |> assign(:floating_agents, list_floating_agents())}
-    else
-      _ -> {:noreply, assign(socket, :flash_error, "Bad agent URI: #{agent_uri_str}")}
+  # V1 UI SPEC §2C.4 (Codex adversarial review rev-4 fix) — the
+  # dedicated Invite handler. It REPLACES the deleted `add_floating_agent`
+  # `:cast` path, which discarded the dispatch result and silently
+  # dropped `:unauthorized` / `:cross_workspace_denied` / missing-target
+  # failures (violates Decision #134, the no-silent-drop invariant for
+  # user-facing surfaces).
+  #
+  # Flow:
+  #   1. Revalidate the submitted `member_uri` via the SHARED validator
+  #      `Ezagent.UI.UriOptions.valid_for?/4` — the picker's hidden
+  #      input is untrusted user-controlled DOM, and the ignored
+  #      subtree can hold a stale selection after a workspace switch
+  #      (SPEC §1.6). A failed check → flash, NO dispatch.
+  #   2. Dispatch `chat.join` as `:call` (NOT `:cast`) so the result
+  #      comes back — `join`'s `@interface` declares `modes: [:call,
+  #      :cast]`, so `:call` is a valid transport choice (invariant 7).
+  #   3. Decompose the `:call` result and surface every failure mode
+  #      as a distinct flash.
+  #   4. Refresh the members list ONLY on confirmed `:ok`.
+  def handle_event("invite_member", %{"member_uri" => uri_str}, socket)
+      when is_binary(uri_str) and uri_str != "" do
+    trimmed = String.trim(uri_str)
+    caller_uri = socket.assigns.current_entity_uri
+    session_uri = socket.assigns.current_session_uri
+    workspace_uri = invite_workspace_uri(socket)
+
+    cond do
+      not match?(%URI{}, caller_uri) ->
+        {:noreply, assign(socket, :flash_error, "Not signed in.")}
+
+      # SPEC §1.6 / §2C.4 step 1 — server-side revalidation. The
+      # submitted URI must be a well-formed entity URI inside the
+      # session's workspace (or the caller holds cross-workspace
+      # authority). Reject without dispatching.
+      not Ezagent.UI.UriOptions.valid_for?(caller_uri, workspace_uri, trimmed, [:entity]) ->
+        {:noreply,
+         assign(
+           socket,
+           :flash_error,
+           "Rejected #{inspect(trimmed)} — must be an entity URI in this session's " <>
+             "workspace (#{URI.to_string(workspace_uri)}). Pick from the list."
+         )}
+
+      true ->
+        target = URI.new!("#{URI.to_string(session_uri)}?action=chat.join")
+
+        # SPEC §2C.4 step 2 — dispatch as `:call` so the result is
+        # observable; `:caller_inbox` is irrelevant for `:call` (the
+        # GenServer.call return is the result) — keep `reply: :ignore`.
+        result =
+          Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+            target: target,
+            mode: :call,
+            args: %{member: Ezagent.URI.parse!(trimmed)},
+            ctx: %{
+              caller: socket.assigns.caller_uri,
+              caps: socket.assigns.caller_caps,
+              reply: :ignore
+            }
+          })
+
+        # SPEC §2C.4 step 3 + 4 — decompose; refresh members only on :ok.
+        case result do
+          :ok ->
+            invite_ok(socket, session_uri)
+
+          {:ok, _members} ->
+            invite_ok(socket, session_uri)
+
+          {:error, :unauthorized} ->
+            {:noreply,
+             assign(
+               socket,
+               :flash_error,
+               "Unauthorized — you may not add members to this session."
+             )}
+
+          {:error, :cross_workspace_denied} ->
+            {:noreply,
+             assign(
+               socket,
+               :flash_error,
+               "Cross-workspace denied — this session lives in workspace " <>
+                 "#{URI.to_string(workspace_uri)}, different from yours. " <>
+                 "Ask admin for a cross-workspace cap."
+             )}
+
+          {:error, reason} ->
+            {:noreply, assign(socket, :flash_error, "Invite failed: #{inspect(reason)}")}
+        end
     end
+  end
+
+  def handle_event("invite_member", _params, socket) do
+    {:noreply, assign(socket, :flash_error, "Pick an entity to invite.")}
   end
 
   # Phase 8b §1.6 — Debug events toggle in setting dropdown.
@@ -833,8 +911,9 @@ defmodule EzagentPluginLiveview.AdminLive do
       <:right_sidebar>
         <MemberPanel.member_panel
           members={@session_members}
-          floating_agents={@floating_agents}
           display_map={@display_map}
+          invite_open={@invite_open}
+          invite_options={@invite_options}
         />
       </:right_sidebar>
 
@@ -909,7 +988,15 @@ defmodule EzagentPluginLiveview.AdminLive do
   defp assign_session_context(socket, session_uri) do
     members = read_session_members(session_uri)
     member_uris = Enum.map(members, & &1.uri)
-    floating = list_floating_agents()
+
+    # V1 UI SPEC §2C.3 — the MemberPanel Invite modal's `uri_picker`
+    # options: entities in the session's workspace that are NOT already
+    # members. `UriOptions.entities/2` enforces the caller's authority
+    # (a non-system caller viewing a session in another workspace gets
+    # `[]`). Filtering out current members keeps the picker showing
+    # only addable entities (SPEC §2C.3 "entities NOT already in the
+    # session").
+    invite_options = invite_options_for(socket, session_uri, member_uris)
 
     # V1 Allen #2 (Feishu 2026-05-21) — sort SessionView tabs in a
     # fixed Chat | Routing | Terminal order. `applicable_views/1`
@@ -923,7 +1010,7 @@ defmodule EzagentPluginLiveview.AdminLive do
 
     session_routing_rules = list_session_scoped_rules(session_uri)
 
-    display_map = Ezagent.EntityPresenter.display_many(member_uris ++ floating)
+    display_map = Ezagent.EntityPresenter.display_many(member_uris)
 
     member_options =
       member_uris
@@ -935,7 +1022,7 @@ defmodule EzagentPluginLiveview.AdminLive do
     socket
     |> assign(:session_members, members)
     |> assign(:member_options, member_options)
-    |> assign(:floating_agents, floating)
+    |> assign(:invite_options, invite_options)
     |> assign(:display_map, display_map)
     |> assign(:applicable_views, applicable)
     |> assign(:view_module, view_module_for(applicable, current_view_or_default(socket)))
@@ -943,6 +1030,52 @@ defmodule EzagentPluginLiveview.AdminLive do
     |> assign(:feishu_chat_ids, feishu_chat_ids_for(session_uri))
     |> assign(:session_routing_rules, session_routing_rules)
     |> assign_routing_uri_options()
+  end
+
+  # V1 UI SPEC §2C.3 — entity option list for the Invite modal's
+  # `:single` uri_picker, scoped to the SESSION's workspace and pruned
+  # of entities already joined. `UriOptions.entities/2` resolves the
+  # caller's authority itself.
+  defp invite_options_for(socket, session_uri, member_uris) do
+    case Map.get(socket.assigns, :current_entity_uri) do
+      %URI{} = caller_uri ->
+        joined = MapSet.new(member_uris)
+
+        caller_uri
+        |> Ezagent.UI.UriOptions.entities(invite_workspace_uri(socket, session_uri))
+        |> Enum.reject(&MapSet.member?(joined, &1.uri))
+
+      _ ->
+        []
+    end
+  end
+
+  # The workspace the Invite picker options + the `chat.join`
+  # revalidation belong to — derived from the session URI (a
+  # session-scoped action lives in the session's workspace, not
+  # necessarily the caller's current workspace). Falls back to the
+  # caller's current workspace if the session URI carries no workspace.
+  defp invite_workspace_uri(socket) do
+    invite_workspace_uri(socket, Map.get(socket.assigns, :current_session_uri))
+  end
+
+  defp invite_workspace_uri(socket, %URI{} = session_uri) do
+    case Ezagent.Capability.workspace_of(session_uri) do
+      %URI{} = ws -> ws
+      _ -> socket.assigns.current_workspace_uri
+    end
+  end
+
+  defp invite_workspace_uri(socket, _), do: socket.assigns.current_workspace_uri
+
+  # V1 UI SPEC §2C.4 step 4 — a confirmed `chat.join` :ok. Refresh the
+  # member list (and the derived invite options) + close the modal.
+  defp invite_ok(socket, session_uri) do
+    {:noreply,
+     socket
+     |> assign_session_context(session_uri)
+     |> assign(:invite_open, false)
+     |> assign(:flash_error, nil)}
   end
 
   # V1 UI PR-1 (SPEC §1.2 / §1.5) — option lists for the RoutingView's
@@ -1237,26 +1370,6 @@ defmodule EzagentPluginLiveview.AdminLive do
       :error ->
         []
     end
-  end
-
-  defp list_agent_uris do
-    Ezagent.KindRegistry.list_all()
-    |> Enum.filter(fn {uri_str, _pid} -> String.starts_with?(uri_str, "entity://agent/") end)
-    |> Enum.map(fn {uri_str, _pid} -> uri_str end)
-    |> Enum.sort()
-  end
-
-  defp list_floating_agents do
-    all_agents = list_agent_uris() |> MapSet.new()
-
-    joined =
-      EzagentDomainChat.list_sessions()
-      |> Enum.flat_map(fn session_uri ->
-        read_session_members(session_uri) |> Enum.map(& &1.uri)
-      end)
-      |> MapSet.new()
-
-    MapSet.difference(all_agents, joined) |> Enum.sort()
   end
 
   defp bridge_topic_safely, do: EzagentPluginCc.BridgeRegistry.topic()
