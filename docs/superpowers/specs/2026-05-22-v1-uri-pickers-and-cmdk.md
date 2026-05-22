@@ -1,24 +1,36 @@
 # V1 UI — URI pickers + CmdK wiring
 
-> **Status**: DRAFT rev 3 — 2026-05-22. Author: Claude, V1 acceptance
+> **Status**: DRAFT rev 4 — 2026-05-22. Author: Claude, V1 acceptance
 > phase per Allen Feishu 2026-05-22 (items #1 + #3 + #6).
+> Implementation-ready: passed a `codex:rescue` review (rev 3) AND a
+> `codex adversarial-review` (rev 4).
 >
 > - **rev 2**: Allen's decisions on the §5 open questions + Part C
 >   (member panel).
-> - **rev 3**: Codex review fixes — 3 BLOCKERs + 7 MAJORs. Key
->   structural changes: (a) dependency-cycle fix —
+> - **rev 3**: Codex `rescue` review fixes — 3 BLOCKERs + 7 MAJORs.
+>   Key structural changes: (a) dependency-cycle fix —
 >   `CommandSource`/`CommandPalette` never call `EzagentWeb.Router`;
 >   nav routes are assembled in `ezagent_web` via a new
 >   `command_routes/0` + flow DOWN through an `on_mount` assign; (b)
->   `UriOptions` is workspace-scoped (no cross-workspace URI leak);
->   (c) `CommandSource` is a pure ranking function over injected
->   candidates, not a live-registry query; (d) JS open-trigger is
+>   `UriOptions` is workspace-scoped; (c) `CommandSource` is a pure
+>   ranking function over injected candidates; (d) JS open-trigger is
 >   global `app.js`, not a mount-point-less hook; (e) LiveComponent
 >   events all carry `phx-target={@myself}` + a canonical event
 >   table; (f) `uri_picker` tag-input subtree is `phx-update="ignore"`;
->   `uri_picker` is correctly labelled Tier-2; `:kinds` attr added;
->   `result()` gains a `:key`; `allow_freetext` param contract
->   specified; session target-URL contract defined.
+>   Tier-2 label; `:kinds` attr; `result()` `:key`; `allow_freetext`
+>   contract; session target-URL contract.
+> - **rev 4**: Codex **adversarial** review fixes — 2 HIGH + 2 MEDIUM,
+>   all about tenant boundary + failure visibility: (a) §1.3 —
+>   `UriOptions` enforces workspace authority ITSELF from a
+>   `caller_uri` arg; the rev-3 `cross_workspace: true` caller-discipline
+>   escape hatch is removed; (b) §1.6 — submitted picker URIs are
+>   UNTRUSTED; every converted form revalidates server-side
+>   (`UriOptions.valid_for?/4`); hook `updated()`/reconnect prunes
+>   stale selections; (c) §2C.4 — the member-panel Invite uses a NEW
+>   `:call` handler that surfaces `:unauthorized`/`:cross_workspace_denied`,
+>   NOT the silent `:cast` `add_floating_agent` path; (d) §4 —
+>   verification checklist rewritten (rev-3 left stale items asserting
+>   the old Tier-1 / Router-querying architecture).
 
 ## 0. Why
 
@@ -170,13 +182,17 @@ depends only on `ezagent_core` (`KindRegistry`) +
 Tier-2, so `ezagent_domain_ui` may host it without a dependency-cycle
 violation.
 
-**Workspace scoping is mandatory (Codex review 2026-05-22 — MAJOR).**
+**Workspace scoping is enforced INSIDE UriOptions — no caller-discipline
+escape hatch (Codex adversarial review rev 3 → rev 4, HIGH).**
 `KindRegistry.list_all/0` is global; returning every URI to every user
-leaks cross-workspace entities. Every public function takes a
-`workspace_uri` and filters to it — unless the caller passes
-`cross_workspace: true` AND holds cross-workspace authority (system
-members; the caller is responsible for that authorization check, the
-same way dispatch step 5.6 is).
+leaks cross-workspace entities. Rev 3 made cross-workspace safety a
+`cross_workspace: true` opt the caller had to "remember to authorize"
+— a landmine: a single picker/CmdK call site forgetting it leaks
+labels across tenants, and this read path sits OUTSIDE dispatch step
+5.6 where isolation is normally enforced.
+
+**Rev 4 fix**: every public function takes the **caller's entity URI**
+and resolves authority ITSELF. There is no boolean escape hatch.
 
 ```elixir
 @type option :: %{
@@ -186,26 +202,39 @@ same way dispatch step 5.6 is).
         flavor: String.t() | nil
       }
 
-@doc "Entity URIs (users + agents) in the workspace, as picker options."
-@spec entities(workspace_uri :: String.t(), opts :: keyword()) :: [option()]
+# `caller_uri` — the acting user/entity (LV's current_entity_uri).
+# `workspace_uri` — the workspace to list. UriOptions enforces:
+#   - caller is a system member (cross-workspace authority, the same
+#     check dispatch step 5.6 uses) → any workspace_uri allowed;
+#   - else → workspace_uri MUST equal the caller's own workspace,
+#     otherwise UriOptions returns [] (never leaks; never raises a
+#     stack-trace at the user).
+@doc "Entity URIs (users + agents) the caller may see in workspace_uri."
+@spec entities(caller_uri :: String.t(), workspace_uri :: String.t()) :: [option()]
 
-@doc "Session URIs in the workspace, as picker options."
-@spec sessions(workspace_uri :: String.t(), opts :: keyword()) :: [option()]
+@doc "Session URIs the caller may see in workspace_uri."
+@spec sessions(caller_uri :: String.t(), workspace_uri :: String.t()) :: [option()]
 
 @doc "Entities + sessions both — for receiver fields."
-@spec entities_and_sessions(workspace_uri :: String.t(), opts :: keyword()) :: [option()]
+@spec entities_and_sessions(caller_uri :: String.t(), workspace_uri :: String.t()) :: [option()]
 ```
 
-Each function: `KindRegistry.list_all/0` → filter by scheme → filter
-by workspace (the workspace segment of the 3-segment URI, per SPEC v3
-§3) → enrich each `{uri, _pid}` into an `option()` (`label` via
-`Ezagent.EntityPresenter.display/1`, `kind`/`flavor` parsed from the
-URI). `opts`: `cross_workspace: boolean` (default false).
+Each function: resolve caller authority → if not authorized for
+`workspace_uri`, return `[]` → else `KindRegistry.list_all/0` → filter
+by scheme → filter by workspace (the workspace segment of the
+3-segment URI, per SPEC v3 §3) → enrich each `{uri, _pid}` into an
+`option()` (`label` via `Ezagent.EntityPresenter.display/1`,
+`kind`/`flavor` parsed from the URI).
+
+**PR-1 MUST add invariant tests**: a non-system user calling
+`UriOptions.entities(their_uri, other_workspace_uri)` gets `[]`; a
+system member gets the full list. This is the tenant-isolation gate
+for the read path.
 
 > Note (Codex review): `KindRegistry.list_all/0` returns only
 > `{uri_string, pid}` — no label/kind/flavor/workspace. `UriOptions`
-> is the enrichment layer that turns raw registry rows into `option()`.
-> It is NOT a "pure pass-through query" — it parses + presents.
+> is the enrichment + **authorization** layer. It is NOT a "pure
+> pass-through query".
 
 ### 1.4 Free-text fallback
 
@@ -227,10 +256,40 @@ disclosure ("or enter a URI manually") with a plain text input.
 ### 1.5 Per-site wiring
 
 Each of the 5 picker sites: the LV's `mount`/`handle_params` computes
-`options` via `Ezagent.UI.UriOptions.*`, assigns it, and the template
-swaps the raw `<input>` for `<.uri_picker .../>`. Form-submit params
-are unchanged in shape (single → string, multi → list) so the
-existing `handle_event` handlers need minimal-to-no change.
+`options` via `Ezagent.UI.UriOptions.*` (passing `current_entity_uri`
++ `current_workspace_uri`), assigns it, and the template swaps the raw
+`<input>` for `<.uri_picker .../>`. Form-submit params are unchanged
+in shape (single → string, multi → list).
+
+### 1.6 Submitted URIs are UNTRUSTED — server-side revalidation is in PR-1 scope
+
+**(Codex adversarial review rev 3 → rev 4, HIGH.)** The picker's chip
+state + hidden inputs live under a JS-owned `phx-update="ignore"`
+subtree. Hidden inputs are **user-controlled DOM**: a user can edit
+them; and the ignored subtree can hold a **stale** option after a
+workspace switch or a LiveView reconnect. Rev 3's "handlers need
+minimal-to-no change" was wrong — it treated client state as trusted.
+
+**Rev 4 — mandatory for every converted site, in PR-1 scope:**
+- Client-side filtering is **UX only**. The authoritative check is on
+  the server.
+- Each converted form's `handle_event` MUST, on submit, revalidate
+  EVERY submitted URI: (a) well-formed + correct scheme for the field,
+  (b) belongs to the current workspace (or the caller has
+  cross-workspace authority), (c) the target actually exists /
+  membership is valid where the action needs it. A failed check →
+  a flash error, not a dispatch.
+- This is the SAME validation the picker's `options` were built from
+  (`UriOptions` §1.3) — factor it into a shared
+  `UriOptions.valid_for?(caller_uri, workspace_uri, uri, kinds)` so
+  the option-build path and the submit-revalidate path cannot drift.
+- **Hook `updated()` / reconnect**: the `uri_picker.js` hook MUST
+  implement `updated()` — when LiveView pushes a new `data-options`
+  (workspace switch, re-render), the hook drops selections no longer
+  in the option set. On reconnect, LiveView re-renders the component
+  from server assigns; the hook re-reads `data-options` and prunes
+  stale chips. A stale selection can never silently survive into a
+  submit.
 
 ## 2. Part B — CmdK wiring (#3)
 
@@ -448,36 +507,70 @@ member panel needs nothing new: `<.avatar>` + `display_name` cover it.
   - Tab/section 2 — **Create new agent**: a link/button that navigates
     to the existing `/identities/agents/new` page (AgentNewLive). Don't
     rebuild the create form in the modal — just route to it.
-- The modal is a Tier-1 `<.modal>` atom (already exists in
-  `primitives.ex`); the picker reuses Part A's `uri_picker`.
+- The modal is a Tier-2 `<.modal>` atom (already in `primitives.ex`);
+  the picker reuses Part A's `uri_picker`.
 
-### 2C.4 Wiring
+### 2C.4 Wiring — a NEW invite handler, NOT the silent cast path
 
-`AdminLive` already has the member data + the `add_floating_agent`
-handler. The redesign:
-- Drop the separate floating-agents `<select>`; the `add_floating_agent`
-  handler is reused by the modal's "Add existing" picker.
-- New handler `open_invite_modal` / `close_invite_modal`.
+**(Codex adversarial review rev 3 → rev 4, MEDIUM.)** Rev 3 said the
+modal reuses the existing `add_floating_agent` handler. That handler
+dispatches `chat.join` as **`:cast`** and discards the result — an
+`:unauthorized`, `:cross_workspace_denied`, missing-session, or
+invalid-target failure is **silently dropped**. That violates the
+architecture's no-silent-drop posture for user-facing surfaces
+(Decision #134 — inbound user surfaces dispatch `:call` + surface
+errors), and after the separate floating-agent `<select>` is removed
+there is no other affordance, so a silent failure is invisible.
+
+**Rev 4 — PR-3 adds a dedicated invite handler, does NOT reuse
+`add_floating_agent` unchanged:**
+- New `handle_event("invite_member", %{"member_uri" => uri}, socket)`:
+  1. Revalidate `uri` per §1.6 (well-formed entity URI, in the current
+     workspace OR caller has cross-workspace authority).
+  2. Dispatch `chat.join` as **`:call`** (not `:cast`) so the result
+     comes back.
+  3. Decompose the result: `:ok` → refresh members + close modal;
+     `{:error, :unauthorized}` → flash "you may not add members here";
+     `{:error, :cross_workspace_denied}` → flash naming the workspace
+     boundary; other `{:error, reason}` → flash `inspect(reason)`.
+  4. Members list refreshes ONLY on confirmed `:ok`.
+- `open_invite_modal` / `close_invite_modal` for modal visibility.
+- The old `add_floating_agent` handler + its `<select>` are deleted
+  (nothing else uses them once the modal lands).
 - The merged list is just `members` (floating agents are members).
 
-This is **PR-3**, depends on PR-1 (`uri_picker`).
+This is **PR-3**, depends on PR-1 (`uri_picker` + the §1.6
+`UriOptions.valid_for?/4` shared validator).
 
 ## 3. PR sequence
 
 | # | Title | Scope |
 |---|-------|-------|
 | 0 | `@interface` gains `description:` key + backfill all behaviors + CLI reads it | Part 0 |
-| 1 | `uri_picker` component (combobox + tag-input) + `UriOptions` + wire 5 sites | Part A |
+| 1 | `uri_picker` (combobox + tag-input) + `UriOptions` (caller-authorized) + `valid_for?/4` + server-side revalidation at all 5 sites + tenant-isolation invariant tests | Part A |
 | 2 | `CommandSource` (nav + entity) + `CommandPalette` LiveComponent + JS hook + ⌘K | Part B |
-| 3 | Member panel redesign — unified list + Invite modal | Part C |
+| 3 | Member panel redesign — unified list + Invite modal (dedicated `:call` invite handler) | Part C |
 
 PR-0 ships independently (fixes CLI doc-scrape; prepares V2 CmdK
 actions + future slash). PR-1 independent. PR-2 independent of PR-0
-now (V1 CmdK = nav+entity, no action results) + reuses PR-1's
-`UriOptions`.
+(V1 CmdK = nav+entity, no action results) + reuses PR-1's
+`UriOptions`. PR-3 depends on PR-1 (`uri_picker` + `valid_for?/4`).
+
+**PR-1 is bigger than rev 3 implied** — Codex rev 4 folded the
+server-side URI revalidation (§1.6) + the `UriOptions` caller-auth
+model (§1.3) + the tenant-isolation invariant tests into PR-1's
+definition of done. Client-side picker UX without the server gate is
+NOT a shippable PR-1.
 
 ## 4. Verification
 
+> Rewritten rev 4 — Codex adversarial review caught that the rev 3
+> checklist still asserted the OLD blocked architecture (a "Tier-1
+> atom", "CommandSource queries Router + KindRegistry"). Those are the
+> exact mistakes rev 3's prose fixed; a stale checklist could bless
+> them back in. The list below matches rev 4's design.
+
+**Functional**
 1. `routing_live` matcher arg renders a `uri_picker` `:single`
    combobox of live entities, not a raw text box
 2. `routing_live` receivers renders a `uri_picker` `:multi` tag-input
@@ -487,12 +580,34 @@ now (V1 CmdK = nav+entity, no action results) + reuses PR-1's
 5. Typing "sessions" → a `:nav` result → Enter → navigates to /sessions
 6. Typing an agent name → an `:entity` result → navigates to its page
 7. JSON-combinator advanced mode unchanged (still a textarea)
-8. `uri_picker` is a pure Tier-1 atom (no LV/registry imports)
-9. CmdK adds no new "registry" module — `CommandSource` is a query
-   over Router + KindRegistry (V1); BehaviorRegistry actions are V2
-10. `/sessions` right sidebar shows ONE unified member list (avatars);
-    no separate "Floating Agents" section; an Invite button opens a
-    modal (add-existing picker + create-new-agent link)
+8. `/sessions` right sidebar shows ONE unified member list (avatars);
+   no separate "Floating Agents" section; an Invite button opens a
+   modal (add-existing picker + create-new-agent link)
+
+**Architecture / tiering (dependency-boundary tests)**
+9. `uri_picker/1` is a **Tier-2** `ezagent_domain_ui` component — no
+   `KindRegistry`/`Router`/LiveView imports. (`primitives.ex` is
+   Tier-2; Tier-1 is `ezagent_core`, which holds no UI code.)
+10. `UriOptions` is the ONLY registry-facing helper in this feature;
+    it depends on `ezagent_core` + `ezagent_domain_identity` only.
+11. `CommandSource.search/2` is a **pure function over injected
+    candidates** — it has NO `EzagentWeb.Router` and NO `KindRegistry`
+    dependency. Nav routes reach it only via the `ezagent_web`
+    `on_mount` assign. (Add a test asserting `CommandSource`'s module
+    deps exclude `EzagentWeb.*` and `Ezagent.KindRegistry`.)
+12. No new "registry" module is added — `CommandSource` registers
+    nothing; `command_routes/0` lives in `ezagent_web`.
+
+**Tenant isolation (Codex rev 4 — the read path)**
+13. `UriOptions.entities(non_system_user, other_workspace_uri)`
+    returns `[]`; a system member gets the full list. (Invariant
+    test — §1.3.)
+14. Every converted picker form revalidates submitted URIs
+    server-side (§1.6) — a hand-tampered hidden input with an
+    out-of-workspace URI is rejected with a flash, never dispatched.
+15. The member-panel Invite handler dispatches `chat.join` as `:call`
+    and surfaces `:unauthorized` / `:cross_workspace_denied` as
+    distinct flashes — no silent `:cast` drop (§2C.4).
 
 ## 5. Decisions (Allen 2026-05-22 — all open questions resolved)
 

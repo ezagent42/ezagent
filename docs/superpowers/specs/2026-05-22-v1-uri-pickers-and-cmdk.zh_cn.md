@@ -3,11 +3,14 @@
 > **状态**: DRAFT rev 2 — 2026-05-22。作者: Claude，V1 验收期，按
 > Allen Feishu 2026-05-22（item #1 + #3 + #6）。
 >
-> ⚠️ **此中文版停在 rev 2。英文版已到 rev 3**（Codex review 修复:
-> 3 BLOCKER + 7 MAJOR —— 依赖环、workspace 过滤、CommandSource 改纯
-> 函数、JS hook 挂载点、`phx-target` 等）。中文版将在 Allen 批准
-> rev 3 后一次性同步，避免 codex-review 反复期间反复翻译。rev 3 的
-> 细节见英文版 + Feishu 摘要。
+> ⚠️ **此中文版停在 rev 2。英文版 `.md` 是 rev 4 且为权威版本。**
+> rev 3 = Codex `rescue` review 修复（3 BLOCKER + 7 MAJOR）；
+> rev 4 = Codex **adversarial** review 修复（2 HIGH + 2 MEDIUM ——
+> UriOptions 自身强制 workspace 授权、提交的 URI 服务端重校验、
+> member 邀请用 `:call` 不静默 `:cast`、验证清单重写）。
+> 中文版将在 4 个 PR（PR-0~3）全部落地、SPEC 经实现验证后一次性
+> 全量同步到 rev 4 —— 避免对一份尚在实现中的 SPEC 反复翻译。
+> 实现期间以英文版为准。
 
 ## 0. 为什么
 
