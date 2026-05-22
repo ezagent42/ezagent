@@ -448,6 +448,188 @@ defmodule EzagentDomainChat.Integration.GeneratorTest do
     end
   end
 
+  # --- codex round-8 HIGH-2: fresh?: false ownership verification --------
+  #
+  # A `fresh?: false` worker means `spawn_from_template_content/4` did NO
+  # lineage/workspace binding (round-7 gating). If a candidate worker
+  # appeared in the TOCTOU window between `preflight_candidate_uris_free/3`
+  # and the atomic spawn, the Generator must NOT record it in the session
+  # working-copy + routing rules unless its ownership verifies:
+  # `AgentLineage.lookup` == this orchestrator AND `WorkspaceRegistry.lookup`
+  # == the target workspace. Otherwise the slot fails
+  # `:slot_candidate_not_owned`.
+
+  # A Template Class whose `instantiate/3` ALWAYS reports `fresh?: false`
+  # and records NO lineage/workspace binding — modelling a foreign /
+  # unknown-lineage worker that appeared in the TOCTOU window. The
+  # Generator must REFUSE to adopt it.
+  defmodule ForeignWorkerClass do
+    @moduledoc false
+    @behaviour Ezagent.Kind.Template
+
+    @impl true
+    def template_name, do: "generator.test.foreign-worker"
+
+    @impl true
+    def validate(tmpl) when is_map(tmpl),
+      do: if(Map.has_key?(tmpl, "agent_uri"), do: :ok, else: {:error, :missing_agent_uri})
+
+    def validate(_), do: {:error, :not_a_map}
+
+    @impl true
+    def instantiate(_n, %{"agent_uri" => uri_str}, _ws) do
+      agent_uri = URI.parse(uri_str)
+      # Spawn the Kind so the URI is live, but report `fresh?: false`
+      # and record NOTHING — the worker has unknown lineage + is not
+      # workspace-bound. (`spawn_from_template_content/4` skips its own
+      # recording for `fresh?: false`, round-7.)
+      _ = Ezagent.SpawnRegistry.spawn_detailed(agent_uri)
+      {:ok, [agent_uri], %{fresh?: false}}
+    end
+
+    def instantiate(_n, tmpl, _ws), do: {:error, {:invalid_template, tmpl}}
+  end
+
+  # A Template Class whose `instantiate/3` reports `fresh?: false` but
+  # FIRST records lineage + workspace binding for the worker under THIS
+  # run's orchestrator + workspace — modelling the legitimate idempotent
+  # `Workspace.Loader` re-run, where the FIRST (fresh) instantiation
+  # already recorded ownership. The Generator MUST accept it.
+  #
+  # The orchestrator URI is reconstructed from the worker URI: the
+  # Generator folds the session discriminator (`gen-<millis>-<int>`) into
+  # the worker instance name as the `--<disc>` suffix
+  # (`session_instance_name/3`), and the orchestrator instance is
+  # `entity://agent/<ws>/cc_orchestrator-<disc>` (`spawn_orchestrator/3`).
+  defmodule OwnedRerunClass do
+    @moduledoc false
+    @behaviour Ezagent.Kind.Template
+
+    @impl true
+    def template_name, do: "generator.test.owned-rerun"
+
+    @impl true
+    def validate(tmpl) when is_map(tmpl),
+      do: if(Map.has_key?(tmpl, "agent_uri"), do: :ok, else: {:error, :missing_agent_uri})
+
+    def validate(_), do: {:error, :not_a_map}
+
+    @impl true
+    def instantiate(_n, %{"agent_uri" => uri_str}, %URI{} = workspace_uri) do
+      agent_uri = URI.parse(uri_str)
+      _ = Ezagent.SpawnRegistry.spawn_detailed(agent_uri)
+
+      orchestrator_uri = reconstruct_orchestrator_uri(agent_uri)
+
+      # The FIRST fresh instantiation would have recorded these; this
+      # call is the idempotent re-run, so the worker is already owned.
+      :ok = Ezagent.AgentLineage.record(agent_uri, orchestrator_uri)
+      :ok = Ezagent.WorkspaceRegistry.bind(agent_uri, workspace_uri)
+
+      {:ok, [agent_uri], %{fresh?: false}}
+    end
+
+    def instantiate(_n, tmpl, _ws), do: {:error, {:invalid_template, tmpl}}
+
+    # worker URI: entity://agent/<ws>/<flavor>_<slot>-<hash>--<disc>
+    # orchestrator: entity://agent/<ws>/cc_orchestrator-<disc>
+    defp reconstruct_orchestrator_uri(%URI{path: "/" <> rest} = worker_uri) do
+      [ws, entity_name] = String.split(rest, "/", parts: 2)
+      [_flavor, suffix] = String.split(entity_name, "_", parts: 2)
+      [_slot_component, disc] = String.split(suffix, "--", parts: 2)
+
+      URI.new!("#{worker_uri.scheme}://#{worker_uri.host}/#{ws}/cc_orchestrator-#{disc}")
+    end
+  end
+
+  describe "fresh?: false slot candidate ownership verification (codex round-8 HIGH-2)" do
+    test "a fresh?: false worker NOT owned by this orchestrator fails the slot" do
+      flavor = "genforeign#{uniq()}"
+
+      :ok =
+        AgentFlavorRegistry.register(%{
+          flavor: flavor,
+          kind: Ezagent.Entity.Agent,
+          template_class: ForeignWorkerClass
+        })
+
+      worker_uri = URI.new!("template://agent/default/gen-foreign-worker-#{uniq()}")
+      :ok = create_agent_template(worker_uri, agent_template_content(flavor, "foreign"))
+
+      st_uri =
+        create_session_template(
+          "gen-foreign-team-#{uniq()}",
+          [{"foreign-slot", worker_uri}],
+          []
+        )
+
+      owner_uri = URI.parse("entity://user/default/gen-foreign-owner-#{uniq()}")
+
+      :ok =
+        spawn_owner(owner_uri, [
+          template_cap(:session_template, @workspace_uri),
+          template_cap(:agent_template, @workspace_uri)
+        ])
+
+      # The Generator must REFUSE the foreign worker — the slot fails
+      # `:slot_candidate_not_owned`, wrapped by `instantiate_agent_slots`
+      # as `{:agent_slot_failed, slot_name, reason}`.
+      assert {:error, {:agent_slot_failed, "foreign-slot", reason}} =
+               Session.spawn_from_template(st_uri, owner_uri)
+
+      assert {:slot_candidate_not_owned, "foreign-slot", _worker_uri_str} = reason,
+             "a fresh?: false worker with unknown lineage must NOT be silently adopted"
+    end
+
+    test "a fresh?: false worker already owned by this orchestrator+workspace succeeds (idempotent re-run)" do
+      flavor = "genrerun#{uniq()}"
+
+      :ok =
+        AgentFlavorRegistry.register(%{
+          flavor: flavor,
+          kind: Ezagent.Entity.Agent,
+          template_class: OwnedRerunClass
+        })
+
+      worker_uri = URI.new!("template://agent/default/gen-rerun-worker-#{uniq()}")
+      :ok = create_agent_template(worker_uri, agent_template_content(flavor, "rerun"))
+
+      st_uri =
+        create_session_template(
+          "gen-rerun-team-#{uniq()}",
+          [{"rerun-slot", worker_uri}],
+          []
+        )
+
+      owner_uri = URI.parse("entity://user/default/gen-rerun-owner-#{uniq()}")
+
+      :ok =
+        spawn_owner(owner_uri, [
+          template_cap(:session_template, @workspace_uri),
+          template_cap(:agent_template, @workspace_uri)
+        ])
+
+      # A fresh?: false worker that IS already owned by this run's
+      # orchestrator + workspace (the legitimate idempotent re-run)
+      # passes ownership verification — the Generator commits it.
+      assert {:ok, %{session_uri: session_uri, orchestrator_uri: orch_uri}} =
+               Session.spawn_from_template(st_uri, owner_uri)
+
+      wc = session_working_copy(session_uri)
+      assert length(wc.agent_slots) == 1
+
+      [{slot_name, _src, live_worker_uri, _gen}] = wc.agent_slots
+      assert slot_name == "rerun-slot"
+
+      # The committed worker is the one the OwnedRerunClass owned.
+      assert {:ok, lineage} = AgentLineage.lookup(live_worker_uri)
+      assert URI.to_string(lineage) == URI.to_string(orch_uri)
+
+      assert {:ok, ws} = Ezagent.WorkspaceRegistry.lookup(live_worker_uri)
+      assert URI.to_string(ws) == "workspace://default"
+    end
+  end
+
   defp has_template_cap?(caps, kind) do
     Enum.any?(caps, fn cap ->
       cap.kind == kind and cap.behavior == Behavior.Template and

@@ -148,14 +148,31 @@ defmodule Ezagent.PluginEcho.Template.EchoAgent do
     # return carries whether THIS call STARTED the Agent Kind worker.
     # The idempotency short-circuit means the worker pre-existed →
     # `fresh?: false`.
+    #
+    # codex round-8 HIGH-1 — the fresh-check gates the PTY sidecar.
+    # When `ensure_agent_kind/1` reports `:already_started` (a worker
+    # this call did NOT create), return `fresh?: false` IMMEDIATELY
+    # WITHOUT calling `maybe_start_pty/2`. Starting a `/bin/bash` PTY
+    # sidecar for a pre-existing (possibly foreign or orphaned) worker
+    # would make a rejected adoption non-zero-side-effect. The Template
+    # Class only brings up a sidecar for a worker IT freshly started;
+    # whether to adopt a pre-existing worker is the caller's decision.
+    # Mirrors `Ezagent.PluginCc.Template.CcAgent.spawn_for_local_pty/2`.
     cond do
       agent_kind_alive?(agent_uri) and pty_ok?(tmpl, agent_uri) ->
         {:ok, [agent_uri], %{fresh?: false}}
 
       true ->
-        with {:ok, started_or_adopted} <- ensure_agent_kind(agent_uri),
-             :ok <- maybe_start_pty(tmpl, agent_uri) do
-          {:ok, [agent_uri], %{fresh?: started_or_adopted == :started}}
+        with {:ok, started_or_adopted} <- ensure_agent_kind(agent_uri) do
+          case started_or_adopted do
+            :already_started ->
+              {:ok, [agent_uri], %{fresh?: false}}
+
+            :started ->
+              with :ok <- maybe_start_pty(tmpl, agent_uri) do
+                {:ok, [agent_uri], %{fresh?: true}}
+              end
+          end
         end
     end
   end
