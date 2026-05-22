@@ -175,6 +175,30 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
     end
   end
 
+  # codex round-9 HIGH-2 — a Template Class whose `instantiate/3` ALWAYS
+  # fails. Used as the SECOND agent slot in a multi-slot SessionTemplate
+  # so the Generator's `instantiate_agent_slots/4` succeeds on slot 1
+  # (fresh) then fails on slot 2 — exercising the partial-slot cleanup.
+  defmodule FailingFlavorClass do
+    @moduledoc false
+    @behaviour Ezagent.Kind.Template
+
+    @impl true
+    def template_name, do: "phase7.r9.failing.agent"
+
+    @impl true
+    def validate(tmpl) when is_map(tmpl),
+      do: if(Map.has_key?(tmpl, "agent_uri"), do: :ok, else: {:error, :missing_agent_uri})
+
+    def validate(_), do: {:error, :not_a_map}
+
+    @impl true
+    def instantiate(_tmpl_name, tmpl, _workspace_uri) when is_map(tmpl),
+      do: {:error, :deliberate_slot2_failure}
+
+    def instantiate(_n, tmpl, _ws), do: {:error, {:invalid_template, tmpl}}
+  end
+
   # --- helpers -----------------------------------------------------------
 
   defp uniq, do: System.unique_integer([:positive])
@@ -2394,6 +2418,116 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
     end
   end
 
+  # ════════════════════════════════════════════════════════════════════
+  # ROUND 9 — codex adversarial-review of hardening round 8 (#248).
+  # ════════════════════════════════════════════════════════════════════
+
+  # ── HIGH-2 (round 9) — the Generator's cleanup accumulator passed
+  # `slots: []` ALWAYS, so a multi-slot SessionTemplate whose later slot
+  # failed left the earlier slot's fresh worker live, workspace-bound,
+  # and lineaged after `cleanup_partial` tore down the session. The
+  # accumulator must now reflect REALITY — `instantiate_agent_slots/4`
+  # returns the slots created so far on failure, and `cleanup_partial`
+  # terminates each one + forgets its lineage + removes its workspace
+  # binding. A failed multi-slot Generator run leaves ZERO orphans. ─────
+
+  describe "HIGH-2 r9 — a multi-slot Generator failure cleans up the earlier fresh worker" do
+    test "slot 1 succeeds fresh, slot 2 fails → slot-1 worker terminated, lineage + binding gone" do
+      # Slot 1 — a normal `register_test_flavor` flavor: its
+      # `instantiate/3` actually spawns the worker Agent Kind
+      # (`fresh?: true` — records lineage, binds the workspace).
+      ok_flavor = register_test_flavor()
+      slot1_tmpl = URI.new!("template://agent/default/ph7r9-h2-slot1-#{uniq()}")
+      :ok = create_agent_template(slot1_tmpl, agent_template_content(ok_flavor, "slot1"))
+
+      # Slot 2 — a flavor whose `instantiate/3` ALWAYS fails. Slots are
+      # instantiated SEQUENTIALLY, so slot 1 has already spawned (fresh)
+      # by the time slot 2 fails.
+      fail_flavor = register_failing_flavor()
+      slot2_tmpl = URI.new!("template://agent/default/ph7r9-h2-slot2-#{uniq()}")
+      :ok = create_agent_template(slot2_tmpl, agent_template_content(fail_flavor, "slot2"))
+
+      st_uri =
+        create_session_template(
+          "ph7r9-h2-team-#{uniq()}",
+          [{"slot1", slot1_tmpl}, {"slot2", slot2_tmpl}],
+          []
+        )
+
+      owner_uri = full_template_owner(@default_ws)
+
+      # Snapshot the registries BEFORE the run — a set-difference
+      # isolates exactly what THIS Generator run left behind.
+      lineage_before = MapSet.new(AgentLineage.list_all(), fn {a, _} -> a end)
+      bindings_before = MapSet.new(Ezagent.WorkspaceRegistry.list_all(), fn {s, _} -> s end)
+
+      # The Generator MUST fail — slot 2's `instantiate/3` errors.
+      result = Session.spawn_from_template(st_uri, owner_uri)
+
+      assert match?({:error, {:agent_slot_failed, "slot2", _}}, result),
+             "the Generator must fail on slot 2. Got: #{inspect(result)}"
+
+      # ── (1) NO new live worker survives ──
+      # Every agent URI added to AgentLineage by this run must be gone —
+      # `cleanup_partial` forgot slot-1's lineage record.
+      lineage_after = MapSet.new(AgentLineage.list_all(), fn {a, _} -> a end)
+      leaked_lineage = MapSet.difference(lineage_after, lineage_before)
+
+      assert MapSet.size(leaked_lineage) == 0,
+             "a failed multi-slot Generator run must leave NO stale AgentLineage record — " <>
+               "the earlier fresh slot's worker lineage must be forgotten. " <>
+               "Leaked: #{inspect(MapSet.to_list(leaked_lineage))}"
+
+      # ── (2) NO new WorkspaceRegistry binding survives ──
+      bindings_after = MapSet.new(Ezagent.WorkspaceRegistry.list_all(), fn {s, _} -> s end)
+      leaked_bindings = MapSet.difference(bindings_after, bindings_before)
+
+      assert MapSet.size(leaked_bindings) == 0,
+             "a failed multi-slot Generator run must leave NO stale WorkspaceRegistry " <>
+               "binding — the earlier fresh slot's worker binding must be removed. " <>
+               "Leaked: #{inspect(MapSet.to_list(leaked_bindings))}"
+
+      # ── (3) slot-1's worker process is dead ──
+      # The slot-1 worker URI is `entity://agent/default/<ok_flavor>_<name>`
+      # where the instance name folds the session discriminator. We
+      # cannot compute the discriminator (the session URI is gone), so
+      # assert no LIVE Agent Kind exists for the `ok_flavor` this test
+      # registered — its flavor token is unique per `uniq()`.
+      refute Enum.any?(KindRegistry.list_all(), fn {uri_str, _pid} ->
+               String.contains?(uri_str, "#{ok_flavor}_")
+             end),
+             "the earlier fresh slot's worker must be terminated — no live Kind may " <>
+               "carry this run's slot-1 flavor token after a failed Generator run"
+    end
+
+    test "instantiate_agent_slots returns the partial slots created before a slot failure" do
+      # A direct unit-level assertion on the round-9 contract change:
+      # when a later slot fails, `instantiate_agent_slots/4`'s error
+      # carries the slots created so far. Exercised end-to-end above;
+      # this asserts the OBSERVABLE consequence — a single-slot template
+      # whose ONLY slot fails leaves zero orphans too (the partial list
+      # is empty, cleanup is a no-op, the session/orchestrator are still
+      # torn down).
+      fail_flavor = register_failing_flavor()
+      slot_tmpl = URI.new!("template://agent/default/ph7r9-h2b-#{uniq()}")
+      :ok = create_agent_template(slot_tmpl, agent_template_content(fail_flavor, "only"))
+
+      st_uri = create_session_template("ph7r9-h2b-team-#{uniq()}", [{"dev", slot_tmpl}], [])
+      owner_uri = full_template_owner(@default_ws)
+
+      lineage_before = MapSet.new(AgentLineage.list_all(), fn {a, _} -> a end)
+
+      result = Session.spawn_from_template(st_uri, owner_uri)
+
+      assert match?({:error, {:agent_slot_failed, "dev", _}}, result)
+
+      lineage_after = MapSet.new(AgentLineage.list_all(), fn {a, _} -> a end)
+
+      assert MapSet.equal?(lineage_before, lineage_after),
+             "a single-slot Generator failure must leave no orphan in AgentLineage"
+    end
+  end
+
   # --- shared helpers ----------------------------------------------------
 
   # A test flavor whose Template Class spawns the worker Agent Kind and
@@ -2407,6 +2541,22 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
         flavor: flavor,
         kind: Agent,
         template_class: OrchestratorKillerFlavorClass
+      })
+
+    flavor
+  end
+
+  # codex round-9 HIGH-2 — a flavor whose Template Class `instantiate/3`
+  # always fails. The Generator's slot 2 uses this so slot 1 (a
+  # `register_test_flavor` slot) succeeds fresh, then slot 2 fails.
+  defp register_failing_flavor do
+    flavor = "ph7r9fail#{uniq()}"
+
+    :ok =
+      AgentFlavorRegistry.register(%{
+        flavor: flavor,
+        kind: Agent,
+        template_class: FailingFlavorClass
       })
 
     flavor

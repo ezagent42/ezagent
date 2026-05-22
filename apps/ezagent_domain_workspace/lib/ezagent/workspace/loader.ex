@@ -118,15 +118,21 @@ defmodule Ezagent.Workspace.Loader do
   defp do_invoke(class_module, tmpl_name, tmpl_data, workspace_uri) do
     # codex round-6 HIGH-1 — a Template Class may return either the
     # 2-element `{:ok, uris}` form or the 3-element `{:ok, uris, meta}`
-    # form (meta carries `fresh?`). The Loader does not consume `meta`;
-    # it normalizes both to a URI list so the freshness-signal change
-    # does not regress the boot path.
+    # form (meta carries `fresh?`).
+    #
+    # codex round-9 HIGH-1 — the runtime `invoke_template/2` path (called
+    # by `Workspace.add_template/3`) is also a Loader call site that must
+    # adopt a `fresh?: false` worker only if it already owns it.
+    # `gated_load_bind/3` enforces the same ownership gate as the boot
+    # `load_all/0` path: bind unconditionally for `fresh?: true` / the
+    # legacy 2-tuple, but for `fresh?: false` bind ONLY if the worker is
+    # already bound to this workspace.
     case class_module.instantiate(tmpl_name, tmpl_data, workspace_uri) do
       {:ok, uris} when is_list(uris) ->
-        do_invoke_bind(uris, workspace_uri)
+        gated_load_bind(uris, workspace_uri, true)
 
       {:ok, uris, meta} when is_list(uris) and is_map(meta) ->
-        do_invoke_bind(uris, workspace_uri)
+        gated_load_bind(uris, workspace_uri, Map.get(meta, :fresh?, false) == true)
 
       {:error, {:already_started, _pid}} ->
         # Idempotent: the Kind is already alive (template instantiate
@@ -146,15 +152,103 @@ defmodule Ezagent.Workspace.Loader do
     end
   end
 
-  # Bind every URI a Template Class spawned to the workspace
-  # (invariant 4 — workspace-scoped routing rules must fire). Shared by
-  # both the 2- and 3-element `instantiate/3` return shapes.
-  defp do_invoke_bind(uris, workspace_uri) do
-    Enum.each(uris, fn uri ->
-      Ezagent.WorkspaceRegistry.bind(uri, workspace_uri)
+  # codex round-9 HIGH-1 — gated workspace bind for the Loader.
+  #
+  # ## The bug
+  #
+  # The Loader accepts the 3-tuple Template-Class return `{:ok, [uri],
+  # %{fresh?: _}}` but the pre-round-9 code IGNORED `fresh?` — it
+  # unconditionally rebound every returned URI in `WorkspaceRegistry`.
+  # Round 8 made an already-started Agent Kind report `fresh?: false`
+  # (no fresh sidecar, no fresh lineage/binding from the plugin) — but
+  # the Loader rebound it anyway. A persisted workspace template whose
+  # `agent_uri` points at an already-live worker could therefore REBIND
+  # that worker to THIS workspace with no ownership check — a
+  # corrupt-state / workspace-isolation path round 8 fixed in the
+  # Generator (`verify_slot_candidate_ownership/5`) but NOT here.
+  #
+  # ## The fix — adopt-only-if-owned for `fresh?: false`
+  #
+  # - `fresh?: true` (or a legacy 2-tuple return, which carries no
+  #   signal): the worker was freshly created by THIS instantiate call —
+  #   bind it, after a structural URI/workspace-segment consistency
+  #   check (the returned URI's workspace segment must equal
+  #   `workspace_uri`).
+  # - `fresh?: false`: the worker was NOT freshly created — adopt it
+  #   ONLY IF it is already owned by this workspace: its existing
+  #   `WorkspaceRegistry` binding must already equal `workspace_uri`
+  #   AND its URI's workspace segment must match. A divergent or absent
+  #   binding → `{:error, {:loader_adopt_not_owned, uri}}`, NO bind.
+  #
+  # This mirrors the Generator's `verify_slot_candidate_ownership/5`
+  # intent (round 8): the Loader is a parallel call site that needs the
+  # equivalent gate. Any rejected URI returns an error for the whole
+  # template and binds NOTHING — a half-bound template is worse than an
+  # un-loaded one.
+  defp gated_load_bind(uris, workspace_uri, fresh?) do
+    Enum.reduce_while(uris, {:ok, uris}, fn uri, acc ->
+      case bind_one_gated(uri, workspace_uri, fresh?) do
+        :ok -> {:cont, acc}
+        {:error, _} = err -> {:halt, err}
+      end
     end)
+  end
 
-    {:ok, uris}
+  # Bind a single URI under the round-9 ownership gate.
+  defp bind_one_gated(%URI{} = uri, %URI{} = workspace_uri, fresh?) do
+    cond do
+      not uri_workspace_segment_matches?(uri, workspace_uri) ->
+        {:error, {:loader_uri_workspace_mismatch, URI.to_string(uri)}}
+
+      fresh? ->
+        # Freshly created by this call (or a legacy no-signal return):
+        # binding it is the documented invariant-4 obligation.
+        Ezagent.WorkspaceRegistry.bind(uri, workspace_uri)
+        :ok
+
+      worker_already_bound_to?(uri, workspace_uri) ->
+        # `fresh?: false` AND already owned by this workspace — the
+        # legitimate idempotent re-load. The bind is a no-op (the
+        # registry is idempotent for an identical pair); call it so the
+        # binding is asserted regardless.
+        Ezagent.WorkspaceRegistry.bind(uri, workspace_uri)
+        :ok
+
+      true ->
+        # `fresh?: false` and NOT owned by this workspace — a foreign /
+        # unbound / divergently-bound live worker. Refuse to adopt it;
+        # bind nothing.
+        {:error, {:loader_adopt_not_owned, URI.to_string(uri)}}
+    end
+  end
+
+  # The returned URI's workspace segment must equal `workspace_uri`.
+  # `Ezagent.Capability.workspace_of/1` extracts the workspace from an
+  # `entity://` / `session://` / `template://` / `resource://` URI; for
+  # any other scheme (a test fixture) it returns `:any` — which we treat
+  # as a match (the consistency check only constrains real, workspaced
+  # schemes).
+  defp uri_workspace_segment_matches?(%URI{} = uri, %URI{} = workspace_uri) do
+    case Ezagent.Capability.workspace_of(uri) do
+      %URI{host: ws} when is_binary(ws) -> ws == workspace_uri.host
+      :any -> true
+      _ -> false
+    end
+  rescue
+    # `workspace_of/1` raises for a structurally-malformed entity URI
+    # (e.g. a non-3-segment path). A URI we cannot derive a workspace
+    # for is treated as a mismatch — fail closed.
+    _ -> false
+  end
+
+  # True iff `uri`'s existing `WorkspaceRegistry` binding already equals
+  # `workspace_uri` (compared by canonical string form — the registry
+  # stores + returns string-derived `%URI{}`).
+  defp worker_already_bound_to?(%URI{} = uri, %URI{} = workspace_uri) do
+    case Ezagent.WorkspaceRegistry.lookup(uri) do
+      {:ok, %URI{} = bound} -> URI.to_string(bound) == URI.to_string(workspace_uri)
+      :error -> false
+    end
   end
 
   defp tmpl_data_from_template_name(workspace_uri, tmpl_name) do
@@ -291,12 +385,20 @@ defmodule Ezagent.Workspace.Loader do
     case class_module.instantiate(tmpl_name, tmpl_data, workspace_uri) do
       # codex round-6 HIGH-1 — accept both the 2-element `{:ok, uris}`
       # and the 3-element `{:ok, uris, meta}` form (meta carries
-      # `fresh?`, which the boot path does not consume).
+      # `fresh?`).
+      #
+      # codex round-9 HIGH-1 — the Loader is a SECOND call site (the
+      # boot path) that, like the Generator, must NOT rebind a
+      # `fresh?: false` worker it does not own. `gated_load_bind/3`
+      # binds unconditionally for `fresh?: true` / the legacy 2-tuple,
+      # but for `fresh?: false` binds ONLY if the worker is already
+      # bound to this workspace (adopt-only-if-owned). A divergent
+      # binding → error, NO bind.
       {:ok, uris} when is_list(uris) ->
-        {tmpl_name, load_all_bind(uris, workspace_uri)}
+        {tmpl_name, gated_load_bind(uris, workspace_uri, true)}
 
       {:ok, uris, meta} when is_list(uris) and is_map(meta) ->
-        {tmpl_name, load_all_bind(uris, workspace_uri)}
+        {tmpl_name, gated_load_bind(uris, workspace_uri, Map.get(meta, :fresh?, false) == true)}
 
       {:error, reason} = err ->
         Logger.warning(
@@ -314,19 +416,6 @@ defmodule Ezagent.Workspace.Loader do
 
         {tmpl_name, {:error, {:bad_template_return, other}}}
     end
-  end
-
-  # Phase 7 PR 31 (IMPL-7-1): bind every session URI the Template Class
-  # spawned to this workspace, so production dispatch via
-  # Ezagent.Behavior.Chat.invoke(:send) can resolve workspace_uri for
-  # the Resolver call. Non-session URIs are bound too — harmless, and
-  # avoids special-casing scheme detection in this fan-out path.
-  defp load_all_bind(uris, workspace_uri) do
-    Enum.each(uris, fn uri ->
-      Ezagent.WorkspaceRegistry.bind(uri, workspace_uri)
-    end)
-
-    {:ok, uris}
   end
 
   defp extract_class_name(%{"class" => name}) when is_binary(name) and name != "", do: name
