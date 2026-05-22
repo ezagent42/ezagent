@@ -38,6 +38,7 @@ defmodule EzagentDomainUi.Routing.RoutingView do
 
   @behaviour Ezagent.UI.SessionView
   use Phoenix.Component
+  use EzagentDomainUi.Primitives
 
   @impl true
   def id, do: :routing
@@ -60,6 +61,11 @@ defmodule EzagentDomainUi.Routing.RoutingView do
       assigns
       |> assign_new(:session_routing_rules, fn -> [] end)
       |> assign_new(:session_uri, fn -> nil end)
+      # V1 UI PR-1 (SPEC §1.2 / §1.5) — uri_picker option lists,
+      # computed by the host LV via `Ezagent.UI.UriOptions.*`. Default
+      # to [] so a no-options dead-render still works.
+      |> assign_new(:entity_options, fn -> [] end)
+      |> assign_new(:receiver_options, fn -> [] end)
 
     ~H"""
     <div class="flex-1 overflow-auto p-4 bg-zinc-50 dark:bg-zinc-950 min-h-0">
@@ -72,7 +78,8 @@ defmodule EzagentDomainUi.Routing.RoutingView do
           <code class="font-mono text-xs text-zinc-700 dark:text-zinc-300">
             {session_uri_string(@session_uri)}
           </code>
-          via an <code class="font-mono text-xs">in_session</code> matcher.
+          via an <code class="font-mono text-xs">in_session</code>
+          matcher.
           Global + workspace rules also fire for this session — see
           <a href="/routing" class="text-blue-600 dark:text-blue-400 hover:underline">/routing</a>
           for all scopes.
@@ -155,25 +162,37 @@ defmodule EzagentDomainUi.Routing.RoutingView do
               <label class="block text-xs text-zinc-600 dark:text-zinc-400 mb-1">
                 Matcher arg
                 <span class="text-zinc-400 dark:text-zinc-600">
-                  (e.g. <code class="font-mono">entity://user/system/admin</code>; ignored for "always")
+                  (ignored for "always"; substring/regex via manual entry)
                 </span>
               </label>
-              <input
-                type="text"
+              <%!--
+                V1 UI PR-1 (SPEC §1.2) — :single uri_picker over
+                in-workspace entities. allow_freetext ON so
+                text_contains matchers (substring args) can be entered
+                via the manual-entry disclosure.
+              --%>
+              <.uri_picker
                 name="rule[matcher_arg]"
-                placeholder="entity://user/system/admin"
-                class="w-full px-3 py-2 rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-sm font-mono text-zinc-900 dark:text-zinc-100"
+                mode={:single}
+                kinds={[:entity]}
+                options={@entity_options}
+                allow_freetext={true}
+                placeholder="pick an entity, or enter a substring below"
               />
             </div>
             <div>
-              <label class="block text-xs text-zinc-600 dark:text-zinc-400 mb-1">
-                Receivers (comma-separated URIs)
-              </label>
-              <input
-                type="text"
+              <%!--
+                V1 UI PR-1 (SPEC §1.2) — :multi uri_picker over
+                in-workspace entities + sessions. Submits
+                rule[receivers][] as a list.
+              --%>
+              <.uri_picker
                 name="rule[receivers]"
-                placeholder="entity://agent/default/cc_demo,entity://agent/default/echo_default"
-                class="w-full px-3 py-2 rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-sm font-mono text-zinc-900 dark:text-zinc-100"
+                mode={:multi}
+                kinds={[:entity, :session]}
+                options={@receiver_options}
+                label="Receivers"
+                placeholder="add entities + sessions"
               />
             </div>
             <button

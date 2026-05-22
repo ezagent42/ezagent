@@ -45,9 +45,17 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
          # for the JSON escape hatch. Default is first registered Class.
          |> assign(:selected_class, default_selected_class())
          |> assign(:form_classes, Ezagent.UI.Form.list_form_classes())
+         # V1 UI PR-1 (SPEC §1.2 / §1.5) — add-member uri_picker
+         # options. Caller-authorized: UriOptions resolves workspace
+         # authority itself. The workspace listed is THIS workspace
+         # (ws.uri), not the caller's session workspace.
+         |> assign(:member_options, member_uri_options(socket, ws))
          |> assign(:add_form, to_form(%{"member_uri" => ""}, as: "add_member"))
          |> assign(:add_template_form, to_form(%{"tmpl_name" => ""}, as: "add_template"))
-         |> assign(:registered_template_classes, Ezagent.TemplateRegistry.registered_template_names())}
+         |> assign(
+           :registered_template_classes,
+           Ezagent.TemplateRegistry.registered_template_names()
+         )}
     end
   end
 
@@ -55,6 +63,21 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
     case Ezagent.UI.Form.list_form_classes() do
       [{name, _, _} | _] -> name
       [] -> "__json__"
+    end
+  end
+
+  # V1 UI PR-1 (SPEC §1.3) — entity options for the add-member
+  # `:single` uri_picker, scoped to THIS workspace (`ws.uri`).
+  # `UriOptions.entities/2` enforces the caller's authority: a
+  # non-system caller viewing a workspace that is not their own gets
+  # `[]`. `current_entity_uri` is set by `EzagentWeb.LiveAuth`.
+  defp member_uri_options(socket, ws) do
+    case Map.get(socket.assigns, :current_entity_uri) do
+      %URI{} = caller_uri ->
+        Ezagent.UI.UriOptions.entities(caller_uri, ws.uri)
+
+      _ ->
+        []
     end
   end
 
@@ -86,13 +109,16 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
     do: "text-[11px] text-rose-600 dark:text-rose-400"
 
   defp input_class_for(:path),
-    do: "px-2 py-1 border border-zinc-300 dark:border-zinc-700 rounded text-xs font-mono bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
+    do:
+      "px-2 py-1 border border-zinc-300 dark:border-zinc-700 rounded text-xs font-mono bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
 
   defp input_class_for(:uri),
-    do: "px-2 py-1 border border-zinc-300 dark:border-zinc-700 rounded text-xs font-mono bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
+    do:
+      "px-2 py-1 border border-zinc-300 dark:border-zinc-700 rounded text-xs font-mono bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
 
   defp input_class_for(_),
-    do: "px-2 py-1 border border-zinc-300 dark:border-zinc-700 rounded text-xs bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
+    do:
+      "px-2 py-1 border border-zinc-300 dark:border-zinc-700 rounded text-xs bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
 
   defp tmpl_mode_btn_class(true),
     do:
@@ -105,22 +131,44 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
   @impl true
   def handle_event("add_member", %{"add_member" => %{"member_uri" => uri_str}}, socket)
       when is_binary(uri_str) and uri_str != "" do
-    case URI.new(String.trim(uri_str)) do
-      {:ok, %URI{scheme: scheme} = uri} when is_binary(scheme) ->
-        case Ezagent.Workspace.add_member(socket.assigns.name, uri) do
+    trimmed = String.trim(uri_str)
+
+    # V1 UI PR-1 (SPEC §1.6) — the uri_picker hidden input is untrusted
+    # user-controlled DOM. Revalidate server-side via the SHARED
+    # validator: well-formed entity URI, in THIS workspace (or caller
+    # has cross-workspace authority). `valid_for?/4` does not require
+    # liveness — a member declaration may name a Kind not yet live.
+    caller_uri = Map.get(socket.assigns, :current_entity_uri)
+    workspace_uri = socket.assigns.workspace.uri
+
+    cond do
+      not match?(%URI{}, caller_uri) ->
+        {:noreply, assign(socket, :flash_error, "Not signed in.")}
+
+      not Ezagent.UI.UriOptions.valid_for?(caller_uri, workspace_uri, trimmed, [:entity]) ->
+        {:noreply,
+         assign(
+           socket,
+           :flash_error,
+           "Rejected #{inspect(trimmed)} — must be an entity URI in this workspace " <>
+             "(#{URI.to_string(workspace_uri)}). Pick from the list."
+         )}
+
+      true ->
+        case Ezagent.Workspace.add_member(socket.assigns.name, Ezagent.URI.parse!(trimmed)) do
           :ok ->
+            ws = Ezagent.Workspace.Store.get_by_name(socket.assigns.name)
+
             {:noreply,
              socket
-             |> assign(:workspace, Ezagent.Workspace.Store.get_by_name(socket.assigns.name))
+             |> assign(:workspace, ws)
+             |> assign(:member_options, member_uri_options(socket, ws))
              |> assign(:add_form, to_form(%{"member_uri" => ""}, as: "add_member"))
              |> assign(:flash_error, nil)}
 
           {:error, reason} ->
             {:noreply, assign(socket, :flash_error, "add failed: #{inspect(reason)}")}
         end
-
-      _ ->
-        {:noreply, assign(socket, :flash_error, "URI must include a scheme (e.g. entity://agent/default/cc_x)")}
     end
   end
 
@@ -177,7 +225,10 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
               if function_exported?(class_module, :form_to_args, 1) do
                 class_module.form_to_args(params)
               else
-                Ezagent.UI.Form.default_form_to_args(class_module, Map.drop(params, ["tmpl_name"]))
+                Ezagent.UI.Form.default_form_to_args(
+                  class_module,
+                  Map.drop(params, ["tmpl_name"])
+                )
               end
 
             do_add_template(socket, tmpl_name, tmpl)
@@ -291,7 +342,10 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
     >
       <:main>
         <div class="flex-1 overflow-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
-          <a href="/workspaces" class="inline-flex items-center gap-1 text-xs text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 mb-4">
+          <a
+            href="/workspaces"
+            class="inline-flex items-center gap-1 text-xs text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 mb-4"
+          >
             <.icon name="chevron-left" size="xs" />
             <span>All workspaces</span>
           </a>
@@ -345,17 +399,29 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
               </li>
             </ul>
 
-            <.form for={@add_form} phx-submit="add_member" class="flex gap-2 mt-4">
-              <input
-                type="text"
-                name="add_member[member_uri]"
-                id="add_member_uri"
-                placeholder="entity://agent/default/cc_architect"
-                class="flex-1 px-2.5 py-1.5 border border-zinc-300 dark:border-zinc-700 rounded font-mono text-xs bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
-              />
+            <%!--
+              V1 UI PR-1 (SPEC §1.2 / §1.4) — :single uri_picker over
+              in-workspace entities. allow_freetext ON so an operator
+              can declare a member Kind not yet live (a member is a
+              declaration of what should be alive when the workspace
+              loads). Submits add_member[member_uri] as a string.
+            --%>
+            <.form for={@add_form} phx-submit="add_member" class="flex gap-2 mt-4 items-start">
+              <div class="flex-1">
+                <.uri_picker
+                  name="add_member[member_uri]"
+                  mode={:single}
+                  kinds={[:entity]}
+                  options={@member_options}
+                  allow_freetext={true}
+                  placeholder="pick an entity to add as a member"
+                />
+              </div>
               <.button type="submit" variant="primary" size="sm">Add member</.button>
             </.form>
-            <p :if={@flash_error} class="text-rose-600 dark:text-rose-400 text-xs mt-2">{@flash_error}</p>
+            <p :if={@flash_error} class="text-rose-600 dark:text-rose-400 text-xs mt-2">
+              {@flash_error}
+            </p>
           </.card>
 
           <.card id="templates" class="mt-6">
@@ -391,7 +457,9 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
                   <td class="px-1 py-1 font-medium">{tmpl_name}</td>
                   <td class="font-mono text-[11px]">{template_class_name(tmpl_data)}</td>
                   <td>{template_member_count(tmpl_data)}</td>
-                  <td class={template_status_class(template_status(tmpl_data))}>{template_status_label(template_status(tmpl_data))}</td>
+                  <td class={template_status_class(template_status(tmpl_data))}>
+                    {template_status_label(template_status(tmpl_data))}
+                  </td>
                   <td>
                     <.button
                       variant="outline"
@@ -401,7 +469,9 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
                       phx-value-name={tmpl_name}
                       class="text-rose-600 dark:text-rose-400 border-rose-600 dark:border-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950 text-[10px] px-2 py-0.5 h-auto"
                       data-confirm="Remove this template? (already-spawned Kinds stay alive)"
-                    >Remove</.button>
+                    >
+                      Remove
+                    </.button>
                   </td>
                 </tr>
               </tbody>
@@ -411,11 +481,14 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
               id="registered-classes"
               class="mt-3 text-[11px] text-zinc-500"
             >
-              Registered Template Classes: <code>{Enum.join(@registered_template_classes, ", ")}</code>
+              Registered Template Classes:
+              <code>{Enum.join(@registered_template_classes, ", ")}</code>
             </p>
 
             <div id="add-template" class="mt-4 pt-4 border-t border-zinc-200 dark:border-zinc-800">
-              <h3 class="text-[13px] font-medium mb-2 text-zinc-900 dark:text-zinc-100">Add template</h3>
+              <h3 class="text-[13px] font-medium mb-2 text-zinc-900 dark:text-zinc-100">
+                Add template
+              </h3>
 
               <p class="text-[11px] text-zinc-500 mb-2">
                 Class picker drives the form below — each registered Template Class self-describes its
@@ -430,13 +503,17 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
                   phx-click="select_template_class"
                   phx-value-class={class_name}
                   class={tmpl_mode_btn_class(@selected_class == class_name)}
-                >{class_name}</button>
+                >
+                  {class_name}
+                </button>
                 <button
                   type="button"
                   phx-click="select_template_class"
                   phx-value-class="__json__"
                   class={tmpl_mode_btn_class(@selected_class == "__json__")}
-                >JSON (custom class)</button>
+                >
+                  JSON (custom class)
+                </button>
               </div>
 
               <.form for={@add_template_form} phx-submit="add_template">
@@ -483,7 +560,9 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
                           name={"add_template[" <> field.name <> "]"}
                           class="px-2 py-1 border border-zinc-300 dark:border-zinc-700 rounded text-xs font-mono bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
                         >
-                          <option :for={opt <- Map.get(field, :options, [])} value={opt}>{opt}</option>
+                          <option :for={opt <- Map.get(field, :options, [])} value={opt}>
+                            {opt}
+                          </option>
                         </select>
                       <% :path -> %>
                         <div class="flex flex-col gap-0.5">
@@ -493,7 +572,9 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
                             placeholder={Map.get(field, :placeholder, "/path/to/dir")}
                             class={input_class_for(field.type)}
                           />
-                          <span class="text-[10px] text-zinc-500">📁 Filesystem path (server-side)</span>
+                          <span class="text-[10px] text-zinc-500">
+                            📁 Filesystem path (server-side)
+                          </span>
                         </div>
                       <% _ -> %>
                         <input
