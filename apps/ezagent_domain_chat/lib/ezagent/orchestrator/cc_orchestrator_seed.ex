@@ -74,14 +74,37 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
   @bridge_script "orchestrator_bridge.py"
   @tools_schema_file "orchestrator_tools.json"
 
+  defmodule InstallError do
+    @moduledoc """
+    Raised when the orchestrator MCP bridge / schema / mcp.json could
+    not be installed.
+
+    This is a HARD seed failure (codex MEDIUM): if the bridge script or
+    its exported schema cannot be written, the configured `uv run
+    --script …` MCP command would point at outdated or missing code.
+    A stale orchestrator template is worse than an aborted boot, so the
+    seed does NOT downgrade this to a warning — it propagates.
+    """
+    defexception [:message]
+  end
+
   @doc """
-  Seed the cc-orchestrator AgentTemplate. Idempotent; best-effort —
-  logs and returns `:ok` on any failure so a boot does not abort.
+  Seed the cc-orchestrator AgentTemplate. Idempotent.
+
+  Best-effort for the AgentTemplate Kind spawn + `:template` slice
+  write — those downgrade to a warning so a boot does not abort.
+
+  But a failure to install the MCP bridge / schema / mcp.json is a
+  HARD failure (`InstallError`): a stale bridge leaves the configured
+  MCP command pointing at outdated code, which is worse than a loud
+  boot failure. That error propagates out of `seed/0`.
   """
   @spec seed() :: :ok
   def seed do
     uri = URI.parse(@template_uri)
 
+    # `ensure_sandbox_files/0` raises `InstallError` on a bridge/schema
+    # install failure — deliberately NOT caught here.
     with {:ok, _pid} <- ensure_kind(uri),
          {:ok, sandbox} <- ensure_sandbox_files(),
          :ok <- write_template_slice(uri, sandbox) do
@@ -124,6 +147,11 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
   # orchestrator MCP transport bridge script + its exported schema
   # file. Best-effort in :test (the paths are recorded in the slice but
   # disk writes are skipped). Returns `{:ok, %{...paths}}`.
+  #
+  # The settings.json / CLAUDE.md writes are soft (a failure downgrades
+  # to a `{:error, _}` warning). The bridge / schema / mcp.json install
+  # is HARD — a failure raises `InstallError` so the seed does NOT leave
+  # a stale template whose MCP command points at outdated code.
   defp ensure_sandbox_files do
     base = sandbox_base()
     config_dir = Path.join(base, ".claude")
@@ -143,27 +171,55 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
       # — the deterministic e2e drives the tools directly, no live claude.
       {:ok, sandbox}
     else
-      try do
-        File.mkdir_p!(config_dir)
-        unless File.exists?(settings_path), do: File.write!(settings_path, settings_json())
-        unless File.exists?(claude_md_path), do: File.write!(claude_md_path, system_prompt())
-
-        # PR-5 completion — ship the real MCP bridge into the sandbox so
-        # the `uv run --script` command the mcp.json references resolves.
-        # ALWAYS overwrites (not `unless File.exists?`) so an updated
-        # bridge / refreshed schemas land on the next boot.
-        :ok = install_orchestrator_bridge(base)
-
-        # Write the mcp.json LAST — after the script + schema file it
-        # references exist on disk. Always rewritten so the embedded
-        # paths track the current install.
-        File.write!(mcp_config_path, orchestrator_mcp_json(base))
-
+      with :ok <- write_soft_sandbox_files(config_dir, settings_path, claude_md_path) do
+        # HARD: the bridge + schema + mcp.json. `install_sandbox_bridge!/2`
+        # raises `InstallError` on failure — deliberately NOT rescued, so
+        # the seed surfaces it instead of leaving a stale template.
+        install_sandbox_bridge!(base, mcp_config_path)
         {:ok, sandbox}
-      rescue
-        e -> {:error, {:sandbox_write_failed, e}}
       end
     end
+  end
+
+  # The non-load-bearing sandbox files. A failure here is soft — it
+  # downgrades to a warning in `seed/0` (the orchestrator can still run
+  # without a custom settings.json / CLAUDE.md).
+  defp write_soft_sandbox_files(config_dir, settings_path, claude_md_path) do
+    File.mkdir_p!(config_dir)
+    unless File.exists?(settings_path), do: File.write!(settings_path, settings_json())
+    unless File.exists?(claude_md_path), do: File.write!(claude_md_path, system_prompt())
+    :ok
+  rescue
+    e -> {:error, {:sandbox_write_failed, e}}
+  end
+
+  # The load-bearing install: ship the real MCP bridge + exported schema
+  # into the sandbox, then write the mcp.json that references them.
+  # ALWAYS overwrites (atomically) so an updated bridge / refreshed
+  # schema lands on the next boot. Raises `InstallError` on ANY failure
+  # — a stale bridge would leave the configured `uv run --script …`
+  # command pointing at outdated or missing code.
+  defp install_sandbox_bridge!(base, mcp_config_path) do
+    install_orchestrator_bridge(base)
+
+    # Write the mcp.json LAST — after the script + schema file it
+    # references exist on disk. Always rewritten so the embedded paths
+    # track the current install.
+    File.write!(mcp_config_path, orchestrator_mcp_json(base))
+    :ok
+  rescue
+    e in InstallError ->
+      reraise e, __STACKTRACE__
+
+    e ->
+      reraise InstallError,
+              [
+                message:
+                  "cc-orchestrator MCP bridge install failed: #{Exception.message(e)} — " <>
+                    "the configured `uv run --script` command would point at outdated " <>
+                    "or missing code; refusing to leave a stale orchestrator template"
+              ],
+              __STACKTRACE__
   end
 
   defp sandbox_base do
@@ -178,6 +234,21 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
   command actually start a working MCP server (codex CRITICAL — the
   pre-PR-5 config referenced a script that was never written).
 
+  ## Atomic install (codex MEDIUM)
+
+  Both files are installed atomically: each is written to a temp file
+  in the destination dir with known permissions, then `File.rename/2`
+  is used to move it over the destination. `rename` replaces the
+  destination regardless of the OLD file's mode — so a pre-existing
+  `orchestrator_bridge.py` WITHOUT owner-write no longer aborts the
+  install (the previous `File.cp!`-then-`chmod` ordering failed on the
+  copy before it could ever chmod). The temp + rename also means a
+  reader never sees a half-written file.
+
+  Raises on any failure — the caller (`ensure_sandbox_files/0`) treats
+  an install failure as a HARD seed failure, because a stale bridge /
+  schema leaves the configured MCP command pointing at outdated code.
+
   Exposed so the PR-5 integration test can ship the bridge into a temp
   dir and execute the configured command.
   """
@@ -185,19 +256,41 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
   def install_orchestrator_bridge(base) do
     File.mkdir_p!(base)
 
-    source = priv_bridge_path()
-    dest = Path.join(base, @bridge_script)
-    File.cp!(source, dest)
-    _ = File.chmod(dest, 0o755)
+    atomic_install!(
+      priv_bridge_path() |> File.read!(),
+      Path.join(base, @bridge_script),
+      0o755
+    )
 
-    schema_dest = Path.join(base, @tools_schema_file)
-
-    File.write!(
-      schema_dest,
-      Jason.encode!(%{"tools" => Ezagent.Orchestrator.McpServer.tool_schemas()}, pretty: true)
+    atomic_install!(
+      Jason.encode!(
+        %{"tools" => Ezagent.Orchestrator.McpServer.tool_schemas()},
+        pretty: true
+      ),
+      Path.join(base, @tools_schema_file),
+      0o644
     )
 
     :ok
+  end
+
+  # Write `content` to a temp file in the destination's directory with
+  # `mode`, then atomically `rename` it over `dest`. `rename` replaces
+  # the destination regardless of the old file's permissions, so an
+  # existing non-writable file never aborts the install. Raises on
+  # failure (the seed treats install failure as a hard failure).
+  defp atomic_install!(content, dest, mode) do
+    tmp = dest <> ".tmp-#{System.unique_integer([:positive])}"
+
+    try do
+      File.write!(tmp, content)
+      File.chmod!(tmp, mode)
+      File.rename!(tmp, dest)
+    rescue
+      e ->
+        _ = File.rm(tmp)
+        reraise e, __STACKTRACE__
+    end
   end
 
   # The orchestrator MCP bridge script as it ships in this app's priv/.

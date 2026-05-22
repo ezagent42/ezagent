@@ -45,3 +45,7 @@ docs/phase-specs/phase3/artifacts/phase3-multi-agent*
 # Allen 2026-05-18: moved to workspace for tunnel setup. Never commit.
 .cf-access.env
 .cf-access*.env
+
+# Python bytecode cache
+__pycache__/
+*.pyc
