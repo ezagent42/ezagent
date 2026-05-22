@@ -54,7 +54,7 @@ defmodule Ezagent.Behavior.Chat do
   alias Ezagent.{Invocation, KindRegistry, Message, MessageStore}
 
   @impl Ezagent.Behavior
-  def actions, do: [:send, :receive, :join, :leave]
+  def actions, do: [:send, :receive, :join, :leave, :set_working_copy]
 
   @impl Ezagent.Behavior
   def state_slice, do: :chat
@@ -365,6 +365,26 @@ defmodule Ezagent.Behavior.Chat do
     {:ok, new_slice}
   end
 
+  # --- :set_working_copy -------------------------------------------------
+
+  # Phase 7 completion PR-4 (SPEC §1.6) — write the durable
+  # `template_working_copy` field on the Session's `:chat` slice. The
+  # Generator (`Session.spawn_from_template/2`) populates `agent_slots`
+  # + `routing_rules` + `orchestrator_template_uri` + `default_workspace_uri`
+  # + `description` from the SessionTemplate; PR-5's orchestrator slot
+  # tools maintain `agent_slots` mid-session through this same action.
+  #
+  # Routed through dispatch so the write is CapBAC-gated + audited, and
+  # because Session is `{:snapshot, :on_change}` the mutation snapshots —
+  # the working copy survives a Session restart. The Generator dispatches
+  # this with a system context (it is the privileged bootstrap program);
+  # the orchestrator dispatches it with its `{:within_session, S}` cap #1.
+  def invoke(:set_working_copy, slice, %{template_working_copy: wc}, _ctx)
+      when is_map(wc) do
+    new_slice = Map.put(slice, :template_working_copy, wc)
+    {:ok, new_slice, %{template_working_copy: wc}}
+  end
+
   # --- Kind-message hook -------------------------------------------------
 
   @doc """
@@ -437,6 +457,14 @@ defmodule Ezagent.Behavior.Chat do
         args: %{member: :uri},
         returns: %{},
         modes: [:cast]
+      },
+      set_working_copy: %{
+        description:
+          "Write the durable template_working_copy field on the Session's :chat " <>
+            "slice (the orchestrator's source-template record — Phase 7 SPEC §1.6)",
+        args: %{template_working_copy: :map},
+        returns: %{template_working_copy: :map},
+        modes: [:call]
       }
     }
   end

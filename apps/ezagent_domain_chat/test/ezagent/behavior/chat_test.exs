@@ -32,8 +32,11 @@ defmodule Ezagent.Behavior.ChatTest do
   end
 
   describe "Behavior contract surface" do
-    test "actions/0 returns the 4 K-path actions" do
-      assert Chat.actions() == [:send, :receive, :join, :leave]
+    test "actions/0 returns the K-path actions + the working-copy writer" do
+      # Phase 7 completion PR-4 (SPEC §1.6) — `:set_working_copy` joins
+      # the four K-path actions: the Generator + the orchestrator slot
+      # tools write the durable `template_working_copy` field through it.
+      assert Chat.actions() == [:send, :receive, :join, :leave, :set_working_copy]
     end
 
     test "state_slice/0 returns :chat" do
@@ -73,9 +76,9 @@ defmodule Ezagent.Behavior.ChatTest do
       assert Chat.template_working_copy(pre_pr2_slice) == Chat.default_template_working_copy()
     end
 
-    test "interface/0 declares all 4 actions" do
+    test "interface/0 declares all 5 actions" do
       keys = Chat.interface() |> Map.keys() |> Enum.sort()
-      assert keys == [:join, :leave, :receive, :send]
+      assert keys == [:join, :leave, :receive, :send, :set_working_copy]
     end
   end
 

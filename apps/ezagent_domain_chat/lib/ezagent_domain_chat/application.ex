@@ -452,6 +452,10 @@ defmodule EzagentDomainChat.Application do
     :ok = BehaviorRegistry.register(Session, :send, Chat)
     :ok = BehaviorRegistry.register(Session, :join, Chat)
     :ok = BehaviorRegistry.register(Session, :leave, Chat)
+    # Phase 7 completion PR-4 (SPEC §1.6) — the Generator + the
+    # orchestrator slot tools write the durable `template_working_copy`
+    # field via `?action=chat.set_working_copy` on the Session Kind.
+    :ok = BehaviorRegistry.register(Session, :set_working_copy, Chat)
     :ok = BehaviorRegistry.register(User, :receive, Chat)
     :ok = BehaviorRegistry.register(Agent, :receive, Chat)
     # Phase 6 PR 2: Identity behavior registration (list_caps / has_cap?)
