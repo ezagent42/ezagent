@@ -16,8 +16,9 @@ Six notes have bilingual `.zh_cn.md` companions (marked **[zh]** below).
 - [Phase 6 — Architecture closeout](phase-6-architecture-closeout.md) — closeout review of Phase 6 architecture work.
 - [Phase 6 — Summary](phase6-summary.md) — concise Phase 6 delivery summary.
 - [Post-Phase-5 meta-report](post-phase-5-meta-report.md) — 2026-05-17 retrospective on Phase 5 process and outcomes.
-- [Phase 7 handoff](phase-7-handoff.md) — Ezagent v1 release handoff (code-complete; demo recording open).
-- [Phase 7 resume state](phase-7-resume-state.md) — resume context for the next Claude Code session.
+- [Phase 7 implementation audit (2026-05-22)](phase-7-implementation-audit-2026-05-22.md) — honest as-built audit: Phase 7 was ~55-60% real; the basis for the completion effort. **(also [zh](phase-7-implementation-audit-2026-05-22.zh_cn.md))**
+- [Phase 7 handoff](phase-7-handoff.md) — corrected handoff; the original 2026-05-18 "v1 release, code-complete" claim was premature and is corrected (Phase 7 completed 2026-05-23 by the 6-PR completion effort).
+- [Phase 7 resume state](phase-7-resume-state.md) — **superseded** by the audit + completion SPEC; kept for historical record only.
 - [Phase 7 / v1-rc1 evidence pack](phase-7-v1-evidence.md) — visual evidence pack for v1-rc1.
 - [Phase 8 — branch verification guide](phase-8-deploy-notes.zh_cn.md) — **[zh]** deployment / branch verification notes (Chinese only).
 - [Phase 9 Demo — Tenant Isolation (2026-05-21)](phase-9-demo-2026-05-21.md) — **[zh]** tenant-isolation demo writeup.

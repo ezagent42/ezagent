@@ -1,7 +1,34 @@
 # Phase 7 resume state (for next Claude Code session)
 
+> **⚠️ SUPERSEDED (2026-05-23, Phase-7-completion PR-6).** This file is
+> **no longer the source of truth** for Phase 7 status and must not be
+> used to resume work. It carries two contradictions that the
+> 2026-05-22 audit exposed:
+>
+> 1. Its header below declares Phase 7 "at v1 release, code-complete"
+>    — but its own per-PR status table (further down) still has
+>    multiple `⏳ pending` rows (PRs 41, 46, 47, 48, 49, 52, the 7-2 +
+>    7-3 + 7-4 group rows). Header and table directly contradict.
+> 2. The "code-complete" header was premature — the 2026-05-22 audit
+>    (`docs/notes/phase-7-implementation-audit-2026-05-22.md`) found
+>    Phase 7 only ~55-60% real (Orchestrator did not run; Generator
+>    was a stub; templates persisted no rows).
+>
+> **For Phase 7 status, use instead:**
+> - `docs/notes/phase-7-implementation-audit-2026-05-22.md` — the
+>   honest as-built audit.
+> - `docs/superpowers/specs/2026-05-22-phase-7-completion.md` — the
+>   6-PR completion SPEC (rev 5).
+> - `docs/notes/phase-7-handoff.md` — corrected handoff (the false
+>   "v1 release" claim there is corrected as of 2026-05-23).
+>
+> Phase 7 was **completed 2026-05-23** by the Phase-7-completion 6-PR
+> effort (PRs #231–#237 + PR-6). The status table below is preserved
+> for historical record ONLY — it reflects the pre-completion state.
+
 **Updated:** 2026-05-18 evening (after all 5 rc1 code blockers landed).
-**Status:** Phase 7 at **v1 release**. Code-complete; PR 49 e2e demo recording is the only open non-code deliverable.
+**Status (HISTORICAL — superseded, see banner above):** the
+2026-05-18 declaration of "v1 release, code-complete" was premature.
 
 PRs merged this evening (continuation of the rc1 → v1 work):
 

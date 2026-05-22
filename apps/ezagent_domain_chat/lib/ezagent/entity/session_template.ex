@@ -78,15 +78,30 @@ defmodule Ezagent.Entity.SessionTemplate do
     creates the FIRST VERSION of a NEW template with
     `parent_template_uri = current_parent_hash_uri`. Requires
     template-creation cap (default-granted to most users).
-  - **`fork(parent_uri@hash, new_name)`** (registry operation, NOT
-    an orchestrator tool — see Decision #141): cold-fork from any
-    template hash; the orchestrator inside a running session uses
-    `save_template_as` for its in-session equivalent. Fork is a
-    SessionTemplate registry verb invoked by Generator / Session
-    creation paths.
+  - **`fork/3`** (`fork(parent_uri, new_name, opts)` — registry
+    operation, NOT an orchestrator tool, see Decision #141): cold-fork
+    from any template hash URI; the orchestrator inside a running
+    session uses `save_template_as` for its in-session equivalent.
+    `fork` is a SessionTemplate registry verb — a **session-creation
+    entry point** (Phase 7 completion SPEC §2 PR-6). It copies the
+    parent's CONFIG into a new SessionTemplate Kind with
+    `parent_template_uri` set to the parent, persists via
+    `persist_version/2`, and grants the owner a `Behavior.Template`
+    cap (§1.7 (e)). The parent template row is **immutable** — `fork`
+    never `:write`s the parent.
+  - **`create/3`** (`create(new_name, config, opts)` — Phase 7
+    completion SPEC §2 PR-6): a **session-creation entry point** that
+    makes a NEW ROOT template (`parent_template_uri: nil`) from a
+    caller-supplied team `config`; persists via `persist_version/2`,
+    grants the owner cap.
+
+  Both `fork/3` and `create/3` require a `Behavior.Template`
+  `:session_template` cap as a preflight (§1.4) — a caller without it
+  → `{:error, :unauthorized}`. Neither instantiates a session;
+  instantiation is `Ezagent.Entity.Session.spawn_from_template/2`.
 
   Fork unit = configuration only. Message history does NOT fork
-  (D7-7).
+  (D7-7) — a forked/instantiated session starts with EMPTY chat.
 
   ## Generator (Ezagent.Entity.Session.spawn_from_template/2 — PR 41)
 
@@ -245,6 +260,309 @@ defmodule Ezagent.Entity.SessionTemplate do
              {:ok, _result} <- dispatch_write(uri, content) do
           {:ok, uri}
         end
+    end
+  end
+
+  @doc """
+  Fork a SessionTemplate — `fork(parent_uri, new_name, opts)` (Phase 7
+  completion SPEC §2 PR-6).
+
+  A **session-creation entry point**. `fork` is configuration-only
+  (Decision #141 / D7-7): it copies the parent template's CONFIG into a
+  new SessionTemplate, with `parent_template_uri` set to the exact
+  `parent_uri@<hash>` it forked from — never message history, never a
+  live session's chat. The parent template row is **immutable**: `fork`
+  reads the parent's `:template` slice and persists a brand-new Kind at a
+  brand-new content-hash URI; it never dispatches `:write` against the
+  parent.
+
+  ## What it does
+
+  1. **Cap preflight** (§1.4) — the caller MUST hold a `Behavior.Template`
+     cap for `:session_template` covering the parent's workspace. A
+     caller without it → `{:error, :unauthorized}`. This is the
+     template-create authority gate, symmetric with
+     `Session.spawn_from_template/2`'s owner preflight.
+  2. **Read the parent** — dispatch `Behavior.Template` `:read` on
+     `parent_uri` to fetch its `:template` content. A parent with no
+     populated slice / not resolvable → `{:error, _}`.
+  3. **Build the fork content** — the parent's content, with `name`
+     replaced by `new_name`, `parent_template_uri` set to `parent_uri`,
+     `version_tag` cleared, and `created_by`/`created_at` refreshed.
+  4. **Persist** — `persist_version/2` spawns a NEW SessionTemplate Kind
+     at the fork's own content-hash URI and writes its `:template` slice.
+  5. **Owner-cap grant** (§1.7 (e)) — grant the owner a `Behavior.Template`
+     SessionTemplate cap (`{:within_workspace, ws}`) so they can later
+     instantiate the fork via the Generator.
+
+  ## Options
+
+  - `:caps` — the caller's cap set (`MapSet`/list of `Capability.t()`).
+    Required — the preflight has nothing to check without it.
+  - `:caller` — `%URI{}` of the principal performing the fork. Required.
+  - `:owner` — `%URI{}` to receive the owner cap (§1.7 (e)). Defaults to
+    `:caller`.
+  - `:workspace` — the workspace the fork is created in. Defaults to the
+    parent's workspace (the canonical choice — a fork lives alongside its
+    parent).
+
+  ## Returns
+
+  - `{:ok, new_template_uri}` — the fork's `template://session/<ws>/<new_name>@<hash>` URI.
+  - `{:error, :unauthorized}` — the caller lacks the SessionTemplate
+    template cap.
+  - `{:error, reason}` — read / persist failure.
+
+  Does NOT instantiate a session — instantiation is
+  `Ezagent.Entity.Session.spawn_from_template/2` (PR-4). `fork` returns
+  the new template URI; the caller decides whether to instantiate it.
+  """
+  @spec fork(URI.t(), String.t(), keyword()) ::
+          {:ok, URI.t()} | {:error, term()}
+  def fork(%URI{} = parent_uri, new_name, opts \\ [])
+      when is_binary(new_name) and new_name != "" do
+    parent_workspace = Ezagent.Capability.workspace_of(parent_uri)
+    workspace = Keyword.get(opts, :workspace, parent_workspace)
+
+    with {:ok, caps} <- fetch_opt(opts, :caps),
+         {:ok, caller_uri} <- fetch_opt(opts, :caller),
+         :ok <- require_session_template_cap(caps, workspace),
+         {:ok, parent_content} <- read_template_content(parent_uri) do
+      content =
+        parent_content
+        |> Map.put(:name, new_name)
+        |> Map.put(:parent_template_uri, parent_uri)
+        |> Map.put(:version_tag, nil)
+        |> Map.put(:created_by, caller_uri)
+        |> Map.put(:created_at, DateTime.utc_now())
+
+      persist_and_grant(content, workspace, Keyword.get(opts, :owner, caller_uri))
+    end
+  end
+
+  @doc """
+  Create a new ROOT SessionTemplate — `create(new_name, config, opts)`
+  (Phase 7 completion SPEC §2 PR-6).
+
+  A **session-creation entry point**. Unlike `fork/3`, `create` makes a
+  template with NO parent (`parent_template_uri: nil`) — a blank root,
+  the head of a fresh template family. The team `config` is supplied
+  directly by the caller.
+
+  ## What it does
+
+  1. **Cap preflight** (§1.4) — the caller MUST hold a `Behavior.Template`
+     cap for `:session_template` covering the target workspace. A caller
+     without it → `{:error, :unauthorized}`.
+  2. **Build the root content** — the supplied `config`, with `name`
+     set to `new_name`, `parent_template_uri` forced to `nil` (a root
+     never has a parent), `version_tag` cleared, and
+     `created_by`/`created_at` stamped.
+  3. **Persist** — `persist_version/2` spawns a new SessionTemplate Kind
+     at its content-hash URI.
+  4. **Owner-cap grant** (§1.7 (e)) — grant the owner a `Behavior.Template`
+     SessionTemplate cap so they can later instantiate it.
+
+  ## `config`
+
+  A map of the SessionTemplate `:template` slice fields (any of
+  `description`, `agent_slots`, `orchestrator_template_uri`,
+  `routing_rules`, `default_workspace_uri`). `name` and
+  `parent_template_uri` in `config` are overridden — `name` by
+  `new_name`, `parent_template_uri` by `nil` (a root is parentless).
+
+  ## Options
+
+  - `:caps` — the caller's cap set. Required.
+  - `:caller` — `%URI{}` of the principal. Required.
+  - `:owner` — `%URI{}` to receive the owner cap. Defaults to `:caller`.
+  - `:workspace` — the workspace the root is created in. Defaults to
+    `"default"`.
+
+  ## Returns
+
+  - `{:ok, new_template_uri}` — the root's
+    `template://session/<ws>/<new_name>@<hash>` URI.
+  - `{:error, :unauthorized}` / `{:error, reason}`.
+
+  Does NOT instantiate a session — see `fork/3`'s note.
+  """
+  @spec create(String.t(), map(), keyword()) ::
+          {:ok, URI.t()} | {:error, term()}
+  def create(new_name, config \\ %{}, opts \\ [])
+      when is_binary(new_name) and new_name != "" and is_map(config) do
+    workspace = Keyword.get(opts, :workspace, "default")
+
+    with {:ok, caps} <- fetch_opt(opts, :caps),
+         {:ok, caller_uri} <- fetch_opt(opts, :caller),
+         :ok <- require_session_template_cap(caps, workspace) do
+      content =
+        config
+        |> normalize_config_keys()
+        |> Map.put(:name, new_name)
+        # A root template has NO parent — §2 PR-6 / D7-7.
+        |> Map.put(:parent_template_uri, nil)
+        |> Map.put(:version_tag, nil)
+        |> Map.put(:created_by, caller_uri)
+        |> Map.put(:created_at, DateTime.utc_now())
+
+      persist_and_grant(content, workspace, Keyword.get(opts, :owner, caller_uri))
+    end
+  end
+
+  # --- fork / create internals -------------------------------------------
+
+  # Persist the new SessionTemplate version, then grant the owner a
+  # `Behavior.Template` cap (§1.7 (e)). The ordering is
+  # template-Kind-first, cap-second — there is no shared SQL transaction
+  # across two independent Kind snapshots, so the helper is honest about
+  # it: a failed grant leaves the template existing (harmless) but the
+  # function returns `{:error, _}` so the caller knows the owner cannot
+  # yet instantiate it.
+  defp persist_and_grant(content, workspace, owner_uri) do
+    with {:ok, new_uri} <- persist_version(content, workspace),
+         :ok <- grant_owner_template_cap(owner_uri, workspace) do
+      {:ok, new_uri}
+    end
+  end
+
+  # The cap preflight (SPEC §1.4) — the caller must hold a
+  # `Behavior.Template` cap for `:session_template` covering `workspace`.
+  # Builds the same `needed` shape CapBAC's `cap_for_action/3` derives
+  # (a representative SessionTemplate URI in the workspace) and checks
+  # `Capability.matches?/2` — so this boundary check stays structurally
+  # aligned with dispatch CapBAC. `:any` admin caps,
+  # `{:within_workspace, ws}` template caps, and broader template caps
+  # all pass; a caller with no template authority is denied.
+  defp require_session_template_cap(caps, workspace) do
+    case workspace_uri(workspace) do
+      {:ok, %URI{} = workspace_uri} ->
+        workspace_name = workspace_uri.host || "default"
+
+        needed = %{
+          kind: :session_template,
+          behavior: Ezagent.Behavior.Template,
+          instance: URI.new!("template://session/#{workspace_name}/_preflight@_"),
+          workspace_uri: workspace_uri
+        }
+
+        caps
+        |> normalize_caps()
+        |> Enum.any?(&Ezagent.Capability.matches?(&1, needed))
+        |> case do
+          true -> :ok
+          false -> {:error, :unauthorized}
+        end
+
+      :error ->
+        {:error, :invalid_workspace}
+    end
+  end
+
+  # SPEC §1.7 (e) — after creating a new SessionTemplate, grant the
+  # owner a `Behavior.Template` cap on `:session_template` for the
+  # workspace so they may later instantiate it via the Generator (whose
+  # owner-cap preflight, §1.4 / PR-4, checks exactly this cap).
+  #
+  # The grant dispatches `identity.grant_cap` on the owner's User Kind
+  # under a system context — the WHO-may-create authority was already
+  # enforced by `require_session_template_cap/2`. The ordering is
+  # template-first, cap-second (§1.7 (e)).
+  defp grant_owner_template_cap(%URI{} = owner_uri, workspace) do
+    with {:ok, %URI{} = workspace_uri} <- workspace_uri(workspace) do
+      cap = %Ezagent.Capability{
+        kind: :session_template,
+        behavior: Ezagent.Behavior.Template,
+        instance: {:within_workspace, workspace_uri},
+        workspace_uri: workspace_uri,
+        granted_by: owner_uri,
+        granted_at: DateTime.utc_now()
+      }
+
+      target = URI.parse("#{URI.to_string(owner_uri)}?action=identity.grant_cap")
+
+      case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+             target: target,
+             mode: :call,
+             args: %{cap: cap},
+             ctx: %{
+               caller: Ezagent.Entity.User.admin_uri(),
+               caps: Ezagent.Entity.User.admin_caps(),
+               reply: {:caller_inbox, self()}
+             }
+           }) do
+        {:ok, _} -> :ok
+        {:error, _} = err -> err
+        other -> {:error, {:owner_cap_grant_failed, other}}
+      end
+    end
+  end
+
+  # Read the `:template` content slice of a SessionTemplate via the
+  # `Behavior.Template` `:read` action. Brings the Kind up first (lazy
+  # demand-spawn — §1.7 (d)) so a fork of a snapshotted-but-not-spawned
+  # parent rehydrates from `kind_snapshots`.
+  defp read_template_content(%URI{} = template_uri) do
+    with {:ok, _pid} <- ensure_kind_alive(template_uri) do
+      target = URI.parse("#{URI.to_string(template_uri)}?action=template.read")
+
+      case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+             target: target,
+             mode: :call,
+             args: %{},
+             ctx: %{
+               caller: Ezagent.Entity.User.admin_uri(),
+               caps: Ezagent.Entity.User.admin_caps(),
+               reply: {:caller_inbox, self()}
+             }
+           }) do
+        {:ok, %{content: content}} when is_map(content) -> {:ok, content}
+        {:ok, %{content: nil}} -> {:error, :parent_template_not_populated}
+        {:error, _} = err -> err
+        other -> {:error, {:unexpected_template_read_result, other}}
+      end
+    end
+  end
+
+  # Normalize a caller-supplied `config` map to atom keys for the known
+  # SessionTemplate slice fields. String-keyed input (e.g. from a JSON
+  # tool boundary) is coerced; unknown keys pass through untouched.
+  @config_atom_keys ~w(name description agent_slots orchestrator_template_uri
+                       routing_rules default_workspace_uri parent_template_uri
+                       version_tag created_by created_at)a
+  defp normalize_config_keys(config) do
+    Map.new(config, fn
+      {k, v} when is_atom(k) ->
+        {k, v}
+
+      {k, v} when is_binary(k) ->
+        case Enum.find(@config_atom_keys, &(Atom.to_string(&1) == k)) do
+          nil -> {k, v}
+          atom_key -> {atom_key, v}
+        end
+    end)
+  end
+
+  # Coerce a caps opt (MapSet | list | nil) to a list for `Enum.any?`.
+  defp normalize_caps(%MapSet{} = caps), do: MapSet.to_list(caps)
+  defp normalize_caps(caps) when is_list(caps), do: caps
+  defp normalize_caps(_), do: []
+
+  # Resolve a workspace opt (URI | bare-name string) to a
+  # `workspace://<name>` URI.
+  defp workspace_uri(%URI{scheme: "workspace"} = uri), do: {:ok, uri}
+
+  defp workspace_uri(other) do
+    case workspace_segment(other) do
+      name when is_binary(name) -> {:ok, URI.new!("workspace://#{name}")}
+      nil -> :error
+    end
+  end
+
+  defp fetch_opt(opts, key) do
+    case Keyword.get(opts, key) do
+      nil -> {:error, {:missing_opt, key}}
+      v -> {:ok, v}
     end
   end
 
