@@ -106,9 +106,20 @@ defmodule Ezagent.Behavior.Chat do
   @spec default_template_working_copy() :: map()
   def default_template_working_copy do
     %{
-      # [{slot_name :: String.t(), template_uri :: URI.t()}]
-      # template_uri is a `template://agent/<ws>/<name>` AgentTemplate
-      # URI — the durable source_agent_template_uri.
+      # [{slot_name :: String.t(),
+      #   source_agent_template_uri :: URI.t(),
+      #   live_worker_uri :: URI.t(),
+      #   generation :: non_neg_integer()}]
+      #
+      # The 4-tuple (CRITICAL + HIGH-6 hardening fix): `slot_name` is
+      # the stable template-shaped key; `source_agent_template_uri` is
+      # the `template://agent/<ws>/<name>` the slot was spawned from
+      # (the durable source); `live_worker_uri` is the CURRENT
+      # session-unique live `entity://agent/...` instance URI;
+      # `generation` is the swap counter (0 at Generator init,
+      # incremented by each `update_agent_template`). Storing the live
+      # URI + generation means readers never re-derive a collision-prone
+      # URI from `{workspace, flavor, slot_name}`.
       agent_slots: [],
       # [{matcher_ast :: term(), [slot_name :: String.t()]}]
       # receivers are slot NAMES, resolved to URIs only on instantiate.
@@ -374,15 +385,103 @@ defmodule Ezagent.Behavior.Chat do
   # + `description` from the SessionTemplate; PR-5's orchestrator slot
   # tools maintain `agent_slots` mid-session through this same action.
   #
-  # Routed through dispatch so the write is CapBAC-gated + audited, and
-  # because Session is `{:snapshot, :on_change}` the mutation snapshots —
-  # the working copy survives a Session restart. The Generator dispatches
-  # this with a system context (it is the privileged bootstrap program);
-  # the orchestrator dispatches it with its `{:within_session, S}` cap #1.
-  def invoke(:set_working_copy, slice, %{template_working_copy: wc}, _ctx)
+  # ## HIGH-2 hardening — orchestrator-only authorization
+  #
+  # `set_working_copy` is a normal Chat action, so dispatch CapBAC step
+  # 5.5 derives the needed cap as `{kind: :session, behavior: Chat,
+  # instance: <session_uri>}` — which a non-admin user holds
+  # STRUCTURALLY (`{:session, :any, :any}` in their workspace). Without
+  # an extra gate ANY session-cap holder could blindly overwrite the
+  # working copy that `update_template` later hashes.
+  #
+  # So `invoke` requires an EXPLICIT authority beyond generic
+  # session-chat: the caller must EITHER
+  #
+  # - be the session's orchestrator — hold the exact
+  #   `{:within_session, self_uri}` delegated cap (cap #1, which the
+  #   Generator grants ONLY to the orchestrator), OR
+  # - be the system-internal Generator init path —
+  #   `ctx[:system_internal] == true`, set ONLY by
+  #   `system_set_working_copy/2`, never reachable from a user dispatch.
+  #
+  # A normal user holding only default session caps is denied here even
+  # though step 5.5 passed.
+  def invoke(:set_working_copy, slice, %{template_working_copy: wc}, ctx)
       when is_map(wc) do
-    new_slice = Map.put(slice, :template_working_copy, wc)
-    {:ok, new_slice, %{template_working_copy: wc}}
+    if working_copy_write_authorized?(ctx) do
+      new_slice = Map.put(slice, :template_working_copy, wc)
+      {:ok, new_slice, %{template_working_copy: wc}}
+    else
+      {:error, :unauthorized}
+    end
+  end
+
+  # The HIGH-2 orchestrator-only gate. `ctx.self_uri` is the Session
+  # Kind's own URI (injected by `Kind.Runtime` step 5).
+  defp working_copy_write_authorized?(ctx) do
+    Map.get(ctx, :system_internal) == true or
+      orchestrator_cap_present?(ctx)
+  end
+
+  # True iff `ctx.caps` carries a `{:within_session, self_uri}` cap on
+  # the `:session` kind — i.e. the caller IS this session's orchestrator
+  # (cap #1, granted only by the Generator to the orchestrator agent).
+  defp orchestrator_cap_present?(ctx) do
+    self_uri = Map.get(ctx, :self_uri)
+    caps = Map.get(ctx, :caps, MapSet.new())
+
+    case self_uri do
+      %URI{} = sess_uri ->
+        self_str = URI.to_string(sess_uri)
+
+        Enum.any?(caps, fn
+          %Ezagent.Capability{kind: :session, instance: {:within_session, %URI{} = s}} ->
+            URI.to_string(s) == self_str
+
+          _ ->
+            false
+        end)
+
+      _ ->
+        false
+    end
+  end
+
+  @doc """
+  Generator-only internal path to write the durable
+  `template_working_copy` field (HIGH-2 hardening).
+
+  `Ezagent.Entity.Session.spawn_from_template/2` is the privileged
+  bootstrap program that does the FIRST `template_working_copy` write,
+  before any orchestrator cap exists. It cannot hold the orchestrator's
+  `{:within_session, _}` cap (the session is brand-new), so it uses
+  this path: a `chat.set_working_copy` dispatch carrying
+  `ctx[:system_internal] = true`. That marker is honored ONLY here and
+  by `invoke/4`'s `working_copy_write_authorized?/1` — it is NOT
+  settable from any user-facing dispatch (the MCP tool path supplies
+  `caps`, never `system_internal`).
+
+  Returns the dispatch result.
+  """
+  @spec system_set_working_copy(URI.t(), map()) :: {:ok, map()} | {:error, term()}
+  def system_set_working_copy(%URI{} = session_uri, working_copy) when is_map(working_copy) do
+    target = URI.parse("#{URI.to_string(session_uri)}?action=chat.set_working_copy")
+
+    case Invocation.dispatch(%Invocation{
+           target: target,
+           mode: :call,
+           args: %{template_working_copy: working_copy},
+           ctx: %{
+             caller: Ezagent.Entity.User.admin_uri(),
+             caps: Ezagent.Entity.User.admin_caps(),
+             system_internal: true,
+             reply: {:caller_inbox, self()}
+           }
+         }) do
+      {:ok, %{template_working_copy: _} = ok} -> {:ok, ok}
+      {:error, _} = err -> err
+      other -> {:error, {:unexpected_set_working_copy_result, other}}
+    end
   end
 
   # --- Kind-message hook -------------------------------------------------

@@ -218,17 +218,28 @@ defmodule Ezagent.Entity.SessionTemplate do
   `kind_snapshots` row exists; no error is raised. This is the
   content-addressing idempotency convention of SPEC §1.7 (a).
 
-  ## Caller context
+  ## Caller context — HIGH-9 hardening
 
-  `persist_version/2` dispatches `:write` with the bootstrap principal's
-  authority (`Ezagent.Entity.User.admin_uri/0` + `admin_caps/0`) — the
-  same system-internal convention `Ezagent.Template.GenericSession` and
-  `Ezagent.Entity.Session.spawn_from_template/2` use for in-process
-  orchestration dispatch. The WHO-may-save authorization is a separate
-  concern: PR-5's `update_template` / `save_template_as` tools run the
-  owner-cap preflight (§1.4) at the tool boundary BEFORE calling this
-  helper. The content-hash write-once guard inside `:write` is the
-  version-integrity check.
+  The `:write` dispatch's `ctx` is **threaded from the caller**, never a
+  blanket `admin_caps()` fallback (codex HIGH-9). The pre-hardening
+  `persist_version/2` always dispatched `template.write` with
+  `User.admin_uri/0` + `User.admin_caps/0` — so the decisive
+  template-persistence write of the orchestrator's `update_template` /
+  `save_template_as` tools ran under ambient admin authority,
+  contradicting "no `admin_caps` in the tool path".
+
+  `persist_version/3` takes an `opts` keyword carrying `:caller` +
+  `:caps`. The orchestrator tools pass the orchestrator's own context;
+  `fork/3` / `create/3` pass the caller's context. The `:write` action
+  is then CapBAC-checked against that REAL authority. Only the
+  explicitly-named **system-internal** entry point
+  `persist_version_as_system/2` uses the bootstrap principal — and that
+  is NEVER on the MCP tool path.
+
+  `persist_version/2` is retained as a thin shim over
+  `persist_version_as_system/2` for back-compat with test fixtures and
+  callers that already hold no caller context. New tool-path code MUST
+  use `persist_version/3` with a threaded `ctx`.
 
   ## Returns
 
@@ -237,11 +248,50 @@ defmodule Ezagent.Entity.SessionTemplate do
     URI of the version.
   - `{:error, reason}` — the spawn failed, or the `:write` dispatch
     failed (e.g. `:hash_mismatch` for caller-supplied content that
-    doesn't agree with its hash).
+    doesn't agree with its hash, or `:unauthorized` if the threaded
+    caps do not authorize the `template.write`).
   """
   @spec persist_version(map(), URI.t() | String.t()) ::
           {:ok, URI.t()} | {:error, term()}
   def persist_version(content, workspace) when is_map(content) do
+    persist_version_as_system(content, workspace)
+  end
+
+  @doc """
+  Persist a SessionTemplate version with a CALLER-THREADED dispatch
+  context (HIGH-9 hardening) — the variant the MCP tool path uses.
+
+  Identical to `persist_version/2` except the `template.write` dispatch
+  `ctx` is built from `opts[:caller]` + `opts[:caps]` instead of the
+  bootstrap admin principal. `opts` MUST carry both `:caller` (`%URI{}`)
+  and `:caps` (a `MapSet`/list of `Capability.t()`). The `:write`
+  action's CapBAC then enforces the caller's REAL authority — a caller
+  whose threaded caps do not authorize `template.write` on the version
+  URI gets `{:error, :unauthorized}`, with NO admin fallback.
+  """
+  @spec persist_version(map(), URI.t() | String.t(), keyword()) ::
+          {:ok, URI.t()} | {:error, term()}
+  def persist_version(content, workspace, opts) when is_map(content) and is_list(opts) do
+    with {:ok, ctx} <- build_caller_ctx(opts) do
+      do_persist_version(content, workspace, ctx)
+    end
+  end
+
+  @doc """
+  Persist a SessionTemplate version under the SYSTEM-INTERNAL bootstrap
+  principal (HIGH-9 — explicitly named, NOT on the MCP tool path).
+
+  Used by boot-seed / fixture paths that have no caller context. The
+  orchestrator's `update_template` / `save_template_as` tools MUST NOT
+  call this — they use `persist_version/3` with a threaded `ctx`.
+  """
+  @spec persist_version_as_system(map(), URI.t() | String.t()) ::
+          {:ok, URI.t()} | {:error, term()}
+  def persist_version_as_system(content, workspace) when is_map(content) do
+    do_persist_version(content, workspace, system_ctx())
+  end
+
+  defp do_persist_version(content, workspace, ctx) when is_map(content) do
     name = Map.get(content, :name) || Map.get(content, "name")
     workspace_segment = workspace_segment(workspace)
 
@@ -257,10 +307,37 @@ defmodule Ezagent.Entity.SessionTemplate do
         uri = build_uri(name, hash, workspace: workspace_segment)
 
         with {:ok, _pid} <- ensure_kind_alive(uri),
-             {:ok, _result} <- dispatch_write(uri, content) do
+             {:ok, _result} <- dispatch_write(uri, content, ctx) do
           {:ok, uri}
         end
     end
+  end
+
+  # Build the `template.write` dispatch ctx from a caller-threaded opts
+  # keyword. Both `:caller` and `:caps` are required (HIGH-9 — no
+  # admin fallback on the caps-threaded path).
+  defp build_caller_ctx(opts) do
+    with {:ok, %URI{} = caller} <- fetch_opt(opts, :caller),
+         {:ok, caps} <- fetch_opt(opts, :caps) do
+      {:ok,
+       %{
+         caller: caller,
+         caps: normalize_caps_set(caps),
+         reply: {:caller_inbox, self()}
+       }}
+    end
+  end
+
+  defp normalize_caps_set(%MapSet{} = caps), do: caps
+  defp normalize_caps_set(caps) when is_list(caps), do: MapSet.new(caps)
+  defp normalize_caps_set(_), do: MapSet.new()
+
+  defp system_ctx do
+    %{
+      caller: Ezagent.Entity.User.admin_uri(),
+      caps: Ezagent.Entity.User.admin_caps(),
+      reply: {:caller_inbox, self()}
+    }
   end
 
   @doc """
@@ -336,7 +413,13 @@ defmodule Ezagent.Entity.SessionTemplate do
         |> Map.put(:created_by, caller_uri)
         |> Map.put(:created_at, DateTime.utc_now())
 
-      persist_and_grant(content, workspace, Keyword.get(opts, :owner, caller_uri))
+      persist_and_grant(
+        content,
+        workspace,
+        Keyword.get(opts, :owner, caller_uri),
+        caller: caller_uri,
+        caps: caps
+      )
     end
   end
 
@@ -406,7 +489,13 @@ defmodule Ezagent.Entity.SessionTemplate do
         |> Map.put(:created_by, caller_uri)
         |> Map.put(:created_at, DateTime.utc_now())
 
-      persist_and_grant(content, workspace, Keyword.get(opts, :owner, caller_uri))
+      persist_and_grant(
+        content,
+        workspace,
+        Keyword.get(opts, :owner, caller_uri),
+        caller: caller_uri,
+        caps: caps
+      )
     end
   end
 
@@ -419,8 +508,13 @@ defmodule Ezagent.Entity.SessionTemplate do
   # it: a failed grant leaves the template existing (harmless) but the
   # function returns `{:error, _}` so the caller knows the owner cannot
   # yet instantiate it.
-  defp persist_and_grant(content, workspace, owner_uri) do
-    with {:ok, new_uri} <- persist_version(content, workspace),
+  #
+  # HIGH-9 — the `template.write` runs under the CALLER's threaded
+  # context (`persist_version/3`), not `admin_caps`. The caller already
+  # passed `require_session_template_cap/2`, so its caps authorize the
+  # write.
+  defp persist_and_grant(content, workspace, owner_uri, caller_opts) do
+    with {:ok, new_uri} <- persist_version(content, workspace, caller_opts),
          :ok <- grant_owner_template_cap(owner_uri, workspace) do
       {:ok, new_uri}
     end
@@ -581,18 +675,18 @@ defmodule Ezagent.Entity.SessionTemplate do
   # `:template` slice — the `{:snapshot, :on_change}` mutation writes
   # the `kind_snapshots` row. An identical-content retry no-ops as
   # `{:ok, …}` (the write-once Kind is not corrupted).
-  defp dispatch_write(uri, content) do
+  #
+  # HIGH-9 — `ctx` is THREADED from the caller; the `:write` action is
+  # CapBAC-checked against the caller's real authority. Only
+  # `persist_version_as_system/2` passes a system (`admin`) ctx.
+  defp dispatch_write(uri, content, ctx) do
     target = URI.parse("#{URI.to_string(uri)}?action=template.write")
 
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
       target: target,
       mode: :call,
       args: %{content: content},
-      ctx: %{
-        caller: Ezagent.Entity.User.admin_uri(),
-        caps: Ezagent.Entity.User.admin_caps(),
-        reply: {:caller_inbox, self()}
-      }
+      ctx: ctx
     })
   end
 
