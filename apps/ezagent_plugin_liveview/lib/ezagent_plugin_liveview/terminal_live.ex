@@ -48,6 +48,7 @@ defmodule EzagentPluginLiveview.TerminalLive do
   use EzagentDomainUi.Components
   import Phoenix.Component
   alias EzagentDomainUi.Pty.Terminal
+  alias EzagentDomainUi.Pty.TerminalSeam
 
   @refresh_ms 2_000
 
@@ -56,13 +57,11 @@ defmodule EzagentPluginLiveview.TerminalLive do
     case parse_agent_uri(encoded_uri) do
       {:ok, agent_uri} ->
         if connected?(socket) do
-          # Subscribe to the agent's PTY output stream so we can forward
-          # chunks to xterm via push_event. Same topic the Server
-          # broadcasts on (see `EzagentDomainPty.Server.output_topic/1`).
-          Phoenix.PubSub.subscribe(
-            EzagentCore.PubSub,
-            Ezagent.Domain.Pty.Server.output_topic(agent_uri)
-          )
+          # Subscribe to the agent's PTY output stream via the shared
+          # `TerminalSeam` — the ONE seam reused by AgentDetailLive +
+          # AdminLive so the subscribe/replay/fan-out plumbing isn't
+          # copy-pasted.
+          TerminalSeam.subscribe(agent_uri)
 
           # 2s polling matches AgentDetailLive — gives the operator
           # immediate feedback when the PTY phase changes (e.g. they
@@ -78,11 +77,11 @@ defmodule EzagentPluginLiveview.TerminalLive do
           |> assign(:refresh_seconds, div(@refresh_ms, 1000))
 
         # ttyd-style initial buffer replay — only meaningful when the
-        # PtyServer is alive. The Server's snapshot_buffer/1 returns
-        # `:error` if no server exists for this URI.
+        # PtyServer is alive. `TerminalSeam.push_initial_buffer/2`
+        # returns the socket unchanged if no server exists for this URI.
         socket =
           if connected?(socket) do
-            push_initial_buffer(socket, agent_uri)
+            TerminalSeam.push_initial_buffer(socket, agent_uri)
           else
             socket
           end
@@ -114,16 +113,6 @@ defmodule EzagentPluginLiveview.TerminalLive do
     Ezagent.Domain.Agent.lifecycle_status(agent_uri)
   end
 
-  defp push_initial_buffer(socket, agent_uri) do
-    case Ezagent.Domain.Pty.Server.snapshot_buffer(agent_uri) do
-      {:ok, buf} when byte_size(buf) > 0 ->
-        Phoenix.LiveView.push_event(socket, "pty_chunk", %{bytes: buf})
-
-      _ ->
-        socket
-    end
-  end
-
   @impl true
   def handle_info(:refresh, socket) do
     agent_uri = socket.assigns.agent_uri
@@ -134,44 +123,20 @@ defmodule EzagentPluginLiveview.TerminalLive do
      |> assign(:pty_alive?, Ezagent.Domain.Pty.alive?(agent_uri))}
   end
 
-  # PTY chunk fan-out from the Server's PubSub broadcast.
+  # PTY chunk fan-out from the Server's PubSub broadcast — via the
+  # shared TerminalSeam.
   def handle_info({:pty_output, _agent_uri, chunk}, socket) when is_binary(chunk) do
-    {:noreply, Phoenix.LiveView.push_event(socket, "pty_chunk", %{bytes: chunk})}
+    {:noreply, TerminalSeam.push_chunk(socket, chunk)}
   end
 
   @impl true
   def handle_event("pty_input", %{"bytes" => bytes}, socket) when is_binary(bytes) do
-    target =
-      URI.parse(URI.to_string(socket.assigns.agent_uri) <> "?action=pty.write")
-
-    inv = %Ezagent.Invocation{
-      target: target,
-      mode: :cast,
-      args: %{bytes: bytes},
-      ctx: ctx(socket)
-    }
-
-    case Ezagent.Invocation.dispatch(inv) do
+    case TerminalSeam.dispatch_input(socket.assigns.agent_uri, bytes, ctx(socket)) do
       :ok ->
         {:noreply, socket}
 
-      {:ok, _} ->
-        {:noreply, socket}
-
-      {:error, :unauthorized} ->
-        {:noreply,
-         put_flash(socket, :error, "Unauthorized — need agent.pty.write cap on this agent.")}
-
-      {:error, :cross_workspace_denied} ->
-        {:noreply,
-         put_flash(
-           socket,
-           :error,
-           "Cross-workspace denied — your workspace differs from this agent's workspace."
-         )}
-
       {:error, reason} ->
-        {:noreply, put_flash(socket, :error, "PTY input failed: #{inspect(reason)}")}
+        {:noreply, put_flash(socket, :error, TerminalSeam.input_error_message(reason))}
     end
   end
 
@@ -242,9 +207,12 @@ defmodule EzagentPluginLiveview.TerminalLive do
 
           <%= cond do %>
             <% @status.phase == :alive and @pty_alive? -> %>
-              <div class="flex-1 min-h-0 bg-black">
-                <Terminal.mount agent_uri={@agent_uri} />
-              </div>
+              <%!-- The ONE unified terminal panel — same component
+                   the inline AgentDetailLive panel and the :pty
+                   SessionView render. Full-page surface → header
+                   omitted (this LV already shows the agent URI in its
+                   own toolbar above) + `flex-1` to fill the window. --%>
+              <Terminal.panel agent_uri={@agent_uri} header={:none} class="flex-1 min-h-0" />
             <% @status.phase in [:registered, :alive] -> %>
               <%!-- :registered = cc kind alive but PtyServer not yet
                    up; :alive without pty = echo/curl/etc. — Kind is up

@@ -48,8 +48,10 @@ defmodule EzagentDomainUi.Pty.TerminalViewTest do
     test "renders empty-state copy when no active agent" do
       html = render_component(&TerminalView.render/1, active_pty_agent_uri: nil)
 
+      # Renders through the unified Terminal.panel/1 — the :bar header
+      # is always present; the empty state explains how to attach.
       assert html =~ "Terminal —"
-      assert html =~ "select a PTY-backed agent"
+      assert html =~ "PTY-backed agent"
       # No xterm mount when no active agent.
       refute html =~ ~s(phx-hook="PtyTerminal")
     end

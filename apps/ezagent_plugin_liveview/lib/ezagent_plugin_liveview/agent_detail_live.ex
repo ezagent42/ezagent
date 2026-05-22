@@ -30,6 +30,7 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
   alias EzagentDomainUi.WorkspaceShell
   alias EzagentPluginLiveview.AppShell
   alias EzagentDomainUi.Pty.Terminal
+  alias EzagentDomainUi.Pty.TerminalSeam
   use EzagentDomainUi.Components
   import Phoenix.Component
 
@@ -42,15 +43,13 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
           # hammering :sys.get_state on a busy PTY.
           :timer.send_interval(2000, :refresh)
 
-          # Domain.Pty PR-D — subscribe to this agent's PTY output
-          # stream so the inline terminal (when expanded by the
-          # operator) can render fresh chunks. Subscription is cheap
-          # even when the terminal `<details>` is collapsed; if PTY
-          # isn't alive the topic just has no broadcaster.
-          Phoenix.PubSub.subscribe(
-            EzagentCore.PubSub,
-            Ezagent.Domain.Pty.Server.output_topic(agent_uri)
-          )
+          # Domain.Pty — subscribe to this agent's PTY output stream
+          # via the shared `TerminalSeam` (the ONE seam reused by
+          # TerminalLive + AdminLive) so the inline terminal (when
+          # expanded by the operator) can render fresh chunks.
+          # Subscription is cheap even when the `<details>` is
+          # collapsed; if PTY isn't alive the topic has no broadcaster.
+          TerminalSeam.subscribe(agent_uri)
         end
 
         {:ok,
@@ -119,12 +118,12 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
      |> assign(:bridge_entry, load_bridge_entry(socket.assigns.agent_uri))}
   end
 
-  # Domain.Pty PR-D — fan-out PTY stdout/stderr chunks from the
+  # Domain.Pty — fan-out PTY stdout/stderr chunks from the
   # `Ezagent.Domain.Pty.Server` PubSub broadcast through to xterm via
-  # `push_event "pty_chunk"`. The xterm hook in
-  # `EzagentDomainUi.Pty.Terminal.mount/1` listens for this event.
+  # the shared `TerminalSeam`. The xterm hook in
+  # `EzagentDomainUi.Pty.Terminal.mount/1` listens for `pty_chunk`.
   def handle_info({:pty_output, _agent_uri, chunk}, socket) when is_binary(chunk) do
-    {:noreply, Phoenix.LiveView.push_event(socket, "pty_chunk", %{bytes: chunk})}
+    {:noreply, TerminalSeam.push_chunk(socket, chunk)}
   end
 
   @impl true
@@ -155,39 +154,16 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
     end
   end
 
-  # Domain.Pty PR-D — inline terminal event seam. The xterm hook
-  # pushes `pty_input` for every keystroke and `pty_resize` on size
-  # changes. Same shape as `EzagentPluginLiveview.AdminLive` (the
-  # Sessions view-switcher) and `TerminalLive` (the standalone page).
+  # Domain.Pty — inline terminal keystroke seam, via the shared
+  # `TerminalSeam` (the ONE seam reused by `EzagentPluginLiveview.AdminLive`
+  # and `TerminalLive`). The xterm hook pushes `pty_input` per keystroke.
   def handle_event("pty_input", %{"bytes" => bytes}, socket) when is_binary(bytes) do
-    target =
-      URI.parse(URI.to_string(socket.assigns.agent_uri) <> "?action=pty.write")
-
-    inv = %Ezagent.Invocation{
-      target: target,
-      mode: :cast,
-      args: %{bytes: bytes},
-      ctx: pty_ctx(socket)
-    }
-
-    case Ezagent.Invocation.dispatch(inv) do
-      :ok -> {:noreply, socket}
-      {:ok, _} -> {:noreply, socket}
-
-      {:error, :unauthorized} ->
-        {:noreply,
-         assign(socket, :flash_error, "Unauthorized — need agent.pty.write cap on this agent.")}
-
-      {:error, :cross_workspace_denied} ->
-        {:noreply,
-         assign(
-           socket,
-           :flash_error,
-           "Cross-workspace denied — your workspace differs from this agent's workspace."
-         )}
+    case TerminalSeam.dispatch_input(socket.assigns.agent_uri, bytes, pty_ctx(socket)) do
+      :ok ->
+        {:noreply, socket}
 
       {:error, reason} ->
-        {:noreply, assign(socket, :flash_error, "PTY input failed: #{inspect(reason)}")}
+        {:noreply, assign(socket, :flash_error, TerminalSeam.input_error_message(reason))}
     end
   end
 
@@ -392,8 +368,13 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
                         Open in full page →
                       </a>
                     </div>
-                    <div class="h-[420px] bg-black rounded-md overflow-hidden">
-                      <Terminal.mount agent_uri={@agent_uri} class="h-full" />
+                    <%!-- The ONE unified terminal panel — same component
+                         the standalone TerminalLive page and the :pty
+                         SessionView render. Inline surface → header
+                         omitted (the `<details>` summary already labels
+                         it) + a fixed height so it sits in the card. --%>
+                    <div class="rounded-md overflow-hidden">
+                      <Terminal.panel agent_uri={@agent_uri} header={:none} class="h-[420px]" />
                     </div>
                   </div>
                 </details>

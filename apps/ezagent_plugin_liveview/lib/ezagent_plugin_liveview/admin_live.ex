@@ -41,6 +41,7 @@ defmodule EzagentPluginLiveview.AdminLive do
   alias EzagentPluginLiveview.Admin.{SessionEditor, MemberPanel}
   alias EzagentPluginLiveview.Views.ConversationView
   alias EzagentDomainUi.WorkspaceShell
+  alias EzagentDomainUi.Pty.TerminalSeam
   alias EzagentPluginLiveview.AppShell
   alias Ezagent.UI.SessionViewRegistry
 
@@ -458,6 +459,9 @@ defmodule EzagentPluginLiveview.AdminLive do
   end
 
   # PTY input dispatch — when PtyView is active, xterm pushes pty_input.
+  # Routed through the shared `EzagentDomainUi.Pty.TerminalSeam` (the
+  # ONE seam reused by TerminalLive + AgentDetailLive) so the dispatch
+  # + error-message plumbing isn't reimplemented per surface.
   def handle_event("pty_input", %{"bytes" => bytes}, socket) when is_binary(bytes) do
     case socket.assigns.active_pty_agent_uri do
       nil ->
@@ -466,45 +470,13 @@ defmodule EzagentPluginLiveview.AdminLive do
       agent_uri_str ->
         case URI.new(agent_uri_str) do
           {:ok, agent_uri} ->
-            target = URI.parse(URI.to_string(agent_uri) <> "?action=pty.write")
-
-            inv = %Ezagent.Invocation{
-              target: target,
-              mode: :cast,
-              args: %{bytes: bytes},
-              ctx: ctx(socket)
-            }
-
-            case Ezagent.Invocation.dispatch(inv) do
+            case TerminalSeam.dispatch_input(agent_uri, bytes, ctx(socket)) do
               :ok ->
                 {:noreply, socket}
 
-              {:ok, _} ->
-                {:noreply, socket}
-
-              {:error, :unauthorized} ->
-                {:noreply,
-                 assign(
-                   socket,
-                   :flash_error,
-                   "Unauthorized — need agent.pty.write cap on this agent."
-                 )}
-
-              {:error, :cross_workspace_denied} ->
-                # Phase 9 PR-4 — workspace isolation violation. The
-                # current user holds a matching cap structurally but
-                # their workspace differs from the target agent's
-                # workspace and they don't hold a cross-workspace cap.
-                {:noreply,
-                 assign(
-                   socket,
-                   :flash_error,
-                   "Cross-workspace denied — your workspace differs from this agent's " <>
-                     "workspace. Ask admin for a cross-workspace cap."
-                 )}
-
               {:error, reason} ->
-                {:noreply, assign(socket, :flash_error, "PTY input failed: #{inspect(reason)}")}
+                {:noreply,
+                 assign(socket, :flash_error, TerminalSeam.input_error_message(reason))}
             end
 
           _ ->
