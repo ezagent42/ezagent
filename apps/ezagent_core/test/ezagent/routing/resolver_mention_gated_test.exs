@@ -146,6 +146,32 @@ defmodule Ezagent.Routing.ResolverMentionGatedTest do
       members = [URI.new!(@sender)]
       assert Resolver.resolve(m, @session, members) == []
     end
+
+    # codex HIGH-1: the real mention sources build `%URI{}` via
+    # `URI.new/URI.new!` — NOT `Ezagent.URI.parse!`. A hand-built
+    # struct carrying an extra path segment violates the SPEC-v3
+    # 3-segment / reserved-sub-resource rule but, before the fix,
+    # passed through `valid_member?/2` unchecked because only the
+    # binary path ran the strict parser. It must be dropped even
+    # when it is present in `members`.
+    test "(e) a %URI{} agent member with an extra path segment is dropped" do
+      # entity://agent/default/cc_x/extra — 4-segment, reserved
+      # sub-resource position. `URI.new!/1` builds it happily; the
+      # strict `Ezagent.URI.parse!/1` rejects it.
+      bad = %URI{scheme: "entity", host: "agent", path: "/default/cc_x/extra"}
+      m = Message.new(URI.new!(@sender), %{text: "hi", attachments: []}, mentions: [bad])
+      # Present in members — the membership check alone would have
+      # accepted it; the strict shape check is what drops it.
+      members = [URI.new!(@sender), bad]
+      assert Resolver.resolve(m, @session, members) == []
+    end
+
+    test "(f) a %URI{} user member with an extra path segment is dropped" do
+      bad = %URI{scheme: "entity", host: "user", path: "/default/bob/extra"}
+      m = Message.new(URI.new!(@sender), %{text: "hi", attachments: []}, mentions: [bad])
+      members = [URI.new!(@sender), bad]
+      assert Resolver.resolve(m, @session, members) == []
+    end
   end
 
   describe "trust boundary — $session_users drops invalid candidates" do
@@ -170,6 +196,17 @@ defmodule Ezagent.Routing.ResolverMentionGatedTest do
       members = [URI.new!(@sender), URI.new!("entity://user/default/bob")]
       result = Resolver.resolve(msg("hi"), @session, members)
       assert strs(result) == ["entity://user/default/bob"]
+    end
+
+    # codex HIGH-1: an extra-segment %URI{} User struct sitting in
+    # `slice.members` (where `$session_users` reads from directly,
+    # not from `message.mentions`) must also be dropped — the strict
+    # shape validation applies to BOTH tokens.
+    test "(g) a %URI{} user member with an extra path segment receives NOTHING" do
+      bad = %URI{scheme: "entity", host: "user", path: "/default/bob/extra"}
+      members = [URI.new!(@sender), bad]
+      result = Resolver.resolve(msg("hi"), @session, members)
+      assert result == []
     end
   end
 
@@ -200,6 +237,25 @@ defmodule Ezagent.Routing.ResolverMentionGatedTest do
     test "false (never raises) for a malformed candidate" do
       refute Resolver.valid_member?("not a uri at all", @session, [])
       refute Resolver.valid_member?(%URI{scheme: "ftp"}, @session, [])
+    end
+
+    # codex HIGH-1: a hand-built %URI{} struct with an extra path
+    # segment must fail identically to its binary equivalent — the
+    # strict `Ezagent.URI.parse!/1` validation applies to BOTH input
+    # forms, not just binaries.
+    test "false for a %URI{} struct with an extra path segment (binary + struct parity)" do
+      bad_str = "entity://agent/default/cc_x/extra"
+      bad_struct = %URI{scheme: "entity", host: "agent", path: "/default/cc_x/extra"}
+
+      # Both forms present in members — only the strict shape check
+      # rejects them.
+      refute Resolver.valid_member?(bad_str, @session, [bad_struct])
+      refute Resolver.valid_member?(bad_struct, @session, [bad_struct])
+
+      # Parity: the binary path already dropped it; the struct path
+      # now drops it the same way.
+      assert Resolver.valid_member?(bad_str, @session, [bad_struct]) ==
+               Resolver.valid_member?(bad_struct, @session, [bad_struct])
     end
 
     test "a peer session:// URI is cross-session → invalid (SPEC §6.4 c)" do

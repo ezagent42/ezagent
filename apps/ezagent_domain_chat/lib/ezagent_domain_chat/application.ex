@@ -85,7 +85,19 @@ defmodule EzagentDomainChat.Application do
 
     case Supervisor.start_link(children, strategy: :one_for_one, name: __MODULE__) do
       {:ok, sup_pid} ->
-        :ok = EzagentDomainChat.DefaultRules.bootstrap()
+        # Fail-closed (codex review — HIGH-2): bootstrap/0 returns
+        # {:error, reason} when the system_default migration cannot
+        # complete cleanly (transaction rolled back, registry NOT
+        # reloaded). Crash the boot loudly rather than run on a
+        # partially-migrated routing store.
+        case EzagentDomainChat.DefaultRules.bootstrap() do
+          :ok ->
+            :ok
+
+          {:error, reason} ->
+            raise "EzagentDomainChat boot aborted — routing default-rule " <>
+                    "migration failed (fail-closed): #{inspect(reason)}"
+        end
 
         # PR #141 (SPEC v2): chat plugin now owns the unified `entity://`
         # scheme + `session://`. The identity domain's user:// spawn fn

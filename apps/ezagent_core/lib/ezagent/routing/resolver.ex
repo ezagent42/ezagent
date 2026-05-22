@@ -282,7 +282,17 @@ defmodule Ezagent.Routing.Resolver do
 
   A candidate receiver URI is a valid recipient iff ALL of:
 
-    1. It is a well-formed `entity://` or `session://` URI.
+    1. It is a well-formed, canonical `entity://` or `session://` URI
+       — it parses cleanly through the STRICT `Ezagent.URI.parse!/1`
+       validator (SPEC-v3 3-segment authority, reserved sub-resource
+       positions rejected) AND its canonical string round-trip equals
+       the input. This is applied IDENTICALLY whether the candidate
+       arrived as a binary or as a pre-built `%URI{}` struct — the
+       real mention sources build `%URI{}` via `URI.new/URI.new!`
+       (NOT `Ezagent.URI.parse!`), so a hand-built struct carrying an
+       extra path segment (`entity://user/default/bob/extra`) would
+       otherwise bypass the shape rule. `current_session_uri` is
+       held to the same strict standard.
     2. It is NOT a cross-session URI — a `session://` candidate
        naming a session OTHER than the current one is dropped (these
        tokens deliver into THIS session; routing to a peer session
@@ -294,22 +304,26 @@ defmodule Ezagent.Routing.Resolver do
        appears in `members` (the Session's `slice.members` keys).
 
   Anything failing — cross-workspace, cross-session, non-member,
-  malformed — returns `false` and is dropped. This is the security
-  boundary: `chat.receive` dispatches with `User.admin_caps()`, so an
-  unvalidated receiver would be a privilege hole (a cross-workspace
-  entity placed in `slice.members` via programmatic `chat.join` /
-  template instantiation must receive NOTHING).
+  malformed, non-canonical, wrong shape — returns `false` and is
+  dropped. This is the security boundary: `chat.receive` dispatches
+  with `User.admin_caps()`, so an unvalidated receiver would be a
+  privilege hole (a cross-workspace entity placed in `slice.members`
+  via programmatic `chat.join` / template instantiation must receive
+  NOTHING).
 
-  Never raises — a malformed candidate is a `false`, not a crash.
+  Never raises — `Ezagent.URI.parse!/1` raises on bad input, so the
+  canonicalization is wrapped; a malformed candidate is a `false`,
+  not a crash.
   """
   @spec valid_member?(URI.t() | String.t(), URI.t(), [URI.t()]) :: boolean()
   def valid_member?(candidate, %URI{} = current_session_uri, members)
       when is_list(members) do
-    with %URI{} = uri <- to_uri(candidate),
+    with %URI{} = uri <- canonicalize(candidate),
+         %URI{} = session_uri <- canonicalize(current_session_uri),
          true <- uri.scheme in ["entity", "session"],
-         true <- not cross_session?(uri, current_session_uri),
+         true <- not cross_session?(uri, session_uri),
          %URI{} = candidate_ws <- safe_workspace_of(uri),
-         %URI{} = session_ws <- safe_workspace_of(current_session_uri),
+         %URI{} = session_ws <- safe_workspace_of(session_uri),
          true <- URI.to_string(candidate_ws) == URI.to_string(session_ws),
          true <- member?(uri, members) do
       true
@@ -319,6 +333,27 @@ defmodule Ezagent.Routing.Resolver do
   end
 
   def valid_member?(_candidate, _current_session_uri, _members), do: false
+
+  # Canonicalize ANY candidate (binary OR %URI{}) through the strict
+  # `Ezagent.URI.parse!/1` validator. The real mention sources build
+  # `%URI{}` via `URI.new/URI.new!` — NOT `Ezagent.URI.parse!` — so a
+  # struct path that skipped strict validation let a crafted member
+  # with an extra path segment (`entity://user/default/bob/extra`)
+  # bypass the SPEC-v3 3-segment / reserved-sub-resource rule and
+  # become a `chat.receive` target under `admin_caps`. Routing the
+  # struct through `URI.to_string/1` then `parse!/1` applies IDENTICAL
+  # strict validation to both inputs. `parse!/1` raises on malformed /
+  # non-canonical / wrong-shape input — wrapped so this stays total
+  # (a parse failure is a `nil`, i.e. "drop").
+  defp canonicalize(%URI{} = uri), do: canonicalize(URI.to_string(uri))
+
+  defp canonicalize(s) when is_binary(s) do
+    Ezagent.URI.parse!(s)
+  rescue
+    _ -> nil
+  end
+
+  defp canonicalize(_), do: nil
 
   # Membership check — the candidate must appear in the session's
   # member URI list. Compared on canonical string form.

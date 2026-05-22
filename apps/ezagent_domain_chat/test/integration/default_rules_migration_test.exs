@@ -159,4 +159,111 @@ defmodule EzagentDomainChat.Integration.DefaultRulesMigrationTest do
       assert row.receivers == @new_receivers
     end
   end
+
+  # codex review — HIGH-2: the migration is atomic + fail-closed. The
+  # non-atomic version deleted duplicates before updating the survivor,
+  # logged errors, and still returned :ok — a partial failure could
+  # reload BOTH the migrated default and a stale $session_members
+  # default. These tests inject a fault at each step and assert the
+  # store is left FULLY untouched (every row keeps the OLD
+  # $session_members shape) and bootstrap/0 returns {:error, _} so the
+  # registry is NOT reloaded from a half-migrated store.
+  describe "migration is atomic + fail-closed (codex HIGH-2)" do
+    @old_receivers [Resolver.session_members_token()]
+
+    # Restore the config seam after each test so a leaked fault can't
+    # poison a later test.
+    setup do
+      on_exit(fn ->
+        Application.delete_env(:ezagent_domain_chat, :default_rules_migration_fault)
+      end)
+
+      :ok
+    end
+
+    test "receiver update fails → bootstrap returns {:error}, NO row migrated" do
+      wipe_system_defaults()
+      old = insert_old_shape_rule()
+      assert old.enabled
+      assert old.receivers == @old_receivers
+
+      # Inject a failure into the survivor's update_receivers step.
+      Application.put_env(
+        :ezagent_domain_chat,
+        :default_rules_migration_fault,
+        [{:update_receivers, {:error, :injected_update_failure}}]
+      )
+
+      result = EzagentDomainChat.DefaultRules.bootstrap()
+
+      # Fail-closed: bootstrap surfaces the error, does not return :ok.
+      assert {:error, {:update_receivers_failed, _id, :injected_update_failure}} = result
+
+      # The store is FULLY untouched — the survivor still carries the
+      # OLD $session_members shape, NOT a half-migrated state. A
+      # subsequent load_into_registry would NOT reintroduce a stale
+      # $session_members default because bootstrap skipped the reload.
+      assert [untouched] = system_default_rows()
+      assert untouched.id == old.id
+      assert untouched.receivers == @old_receivers, "rolled back — old shape preserved"
+      assert untouched.enabled
+    end
+
+    test "duplicate delete fails → transaction rolls back, survivor NOT migrated, duplicates kept" do
+      wipe_system_defaults()
+      survivor = insert_old_shape_rule()
+      dup = insert_old_shape_rule()
+      assert length(system_default_rows()) == 2
+
+      # The survivor update succeeds, then the duplicate delete fails.
+      # The whole transaction must roll back — including the survivor
+      # update — so we never get the survivor migrated AND a stale
+      # $session_members duplicate still present.
+      Application.put_env(
+        :ezagent_domain_chat,
+        :default_rules_migration_fault,
+        [{:delete_duplicate, {:error, :injected_delete_failure}}]
+      )
+
+      result = EzagentDomainChat.DefaultRules.bootstrap()
+
+      assert {:error, {:delete_duplicate_failed, _id, :injected_delete_failure}} = result
+
+      # Atomic rollback: BOTH rows survive, BOTH on the OLD shape. The
+      # storm is not half-fixed — the survivor was NOT migrated.
+      rows = system_default_rows()
+      assert length(rows) == 2, "delete rolled back — duplicate still present"
+
+      for row <- rows do
+        assert row.receivers == @old_receivers,
+               "survivor update rolled back too — no half-migrated $session_users default"
+      end
+
+      assert Enum.any?(rows, &(&1.id == survivor.id))
+      assert Enum.any?(rows, &(&1.id == dup.id))
+    end
+
+    test "after a failed migration a clean re-run fully migrates (recoverable)" do
+      wipe_system_defaults()
+      insert_old_shape_rule()
+      insert_old_shape_rule()
+
+      # First run fails at the delete step (fault fires once).
+      Application.put_env(
+        :ezagent_domain_chat,
+        :default_rules_migration_fault,
+        [{:delete_duplicate, {:error, :injected_delete_failure}}]
+      )
+
+      assert {:error, _} = EzagentDomainChat.DefaultRules.bootstrap()
+      # Fault is one-shot — already cleared. Store untouched.
+      assert length(system_default_rows()) == 2
+
+      # A clean re-run (no injected fault) migrates fully.
+      assert :ok = EzagentDomainChat.DefaultRules.bootstrap()
+
+      assert [migrated] = system_default_rows()
+      assert migrated.receivers == @new_receivers
+    end
+  end
 end
