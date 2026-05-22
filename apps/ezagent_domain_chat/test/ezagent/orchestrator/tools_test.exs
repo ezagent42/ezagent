@@ -73,34 +73,35 @@ defmodule Ezagent.Orchestrator.ToolsTest do
              Tools.invoke(:totally_made_up, [])
   end
 
-  describe "PR 46-impl — all 7 tools have wired bodies (no :not_implemented_yet)" do
-    test "list_templates/2 returns the catalog map" do
-      assert {:ok, %{agent_templates: agents, session_templates: sessions}} =
-               Tools.list_templates()
-
-      assert is_list(agents)
-      assert is_list(sessions)
+  describe "PR 46-impl / PR-5 — all 7 tools have wired, dispatch-routed bodies" do
+    # Phase 7 completion PR-5 — every tool now requires the
+    # orchestrator's caller context (`:caller` + `:caps`) plus
+    # session/workspace. Tools without it surface
+    # `{:error, {:missing_opt, _}}` — explicitly NOT
+    # :not_implemented_yet — proving the body is wired through dispatch.
+    test "list_templates/2 surfaces :missing_opt without caps (cap-gated read)" do
+      assert {:error, {:missing_opt, :caps}} = Tools.list_templates()
     end
 
     test "add_agent_slot/4 surfaces :missing_opt for required ctx — proves body is wired" do
       template_uri = URI.parse("template://agent/default/cc-orchestrator")
 
-      assert {:error, {:missing_opt, :workspace_uri}} =
+      assert {:error, {:missing_opt, :caller}} =
                Tools.add_agent_slot("test-slot", template_uri, nil, [])
     end
 
-    test "remove_agent_slot/2 is idempotent {:ok, :removed} for non-existent slot" do
-      assert {:ok, :removed} =
+    test "remove_agent_slot/2 surfaces :missing_opt for required ctx" do
+      assert {:error, {:missing_opt, :caller}} =
                Tools.remove_agent_slot("never-existed-#{System.unique_integer([:positive])}")
     end
 
     test "update_agent_template/3 surfaces :missing_opt without full ctx" do
-      assert {:error, {:missing_opt, :workspace_uri}} =
+      assert {:error, {:missing_opt, :caller}} =
                Tools.update_agent_template("x", URI.parse("template://agent/default/x"), [])
     end
 
-    test "write_matcher/3 surfaces :missing_opt without workspace_uri" do
-      assert {:error, {:missing_opt, :workspace_uri}} =
+    test "write_matcher/3 surfaces :missing_opt without ctx" do
+      assert {:error, {:missing_opt, :caller}} =
                Tools.write_matcher({:mention, "x"}, ["x"], [])
     end
 
@@ -113,10 +114,6 @@ defmodule Ezagent.Orchestrator.ToolsTest do
     end
 
     test "all 7 tools NEVER return :not_implemented_yet (PR 46-impl gate)" do
-      # Goal acceptance criterion: "all 7 orchestrator tools return
-      # {:ok, _} not :not_implemented_yet for valid args". Tools without
-      # full ctx surface {:error, {:missing_opt, _}} — explicitly NOT
-      # :not_implemented_yet, proving every body is wired.
       results = [
         {:list_templates, Tools.list_templates()},
         {:add_agent_slot,
@@ -136,15 +133,30 @@ defmodule Ezagent.Orchestrator.ToolsTest do
       end
     end
   end
+
   describe "PR 48 — in-flight template deletion semantics" do
     test "update_template returns :parent_template_deleted when parent hash is gone" do
-      parent_uri = URI.parse("template://session/default/never-registered@deadbeefdeadbeef")
+      parent_uri = URI.parse("template://session/pr48-test/never-registered@deadbeefdeadbeef")
+      ws = URI.parse("workspace://pr48-test")
+
+      caps =
+        MapSet.new([
+          %Ezagent.Capability{
+            kind: :session_template,
+            behavior: Ezagent.Behavior.Template,
+            instance: {:within_workspace, ws},
+            workspace_uri: ws,
+            granted_by: URI.parse("entity://user/system/admin"),
+            granted_at: DateTime.utc_now()
+          }
+        ])
 
       assert {:error, :parent_template_deleted} =
                Tools.update_template(
-                 session_uri: URI.parse("session://default/default/pr48-test"),
-                 workspace_uri: URI.parse("workspace://pr48-test"),
-                 caller: URI.parse("entity://agent/default/test_pr48-orchestrator"),
+                 session_uri: URI.parse("session://default/pr48-test/pr48-test"),
+                 workspace_uri: ws,
+                 caller: URI.parse("entity://agent/pr48-test/test_pr48-orchestrator"),
+                 caps: caps,
                  parent_template_uri: parent_uri
                )
     end

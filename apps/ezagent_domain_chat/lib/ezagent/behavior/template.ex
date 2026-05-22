@@ -224,11 +224,30 @@ defmodule Ezagent.Behavior.Template do
   end
 
   # The immutable-version check: a `:write` to an already-non-empty
-  # `:template` slice is rejected UNLESS the new content is logically
-  # identical (an idempotent retry, which no-ops as success).
+  # `:template` slice is rejected UNLESS the new content is **logically
+  # identical** — an idempotent retry, which no-ops as success.
+  #
+  # "Logically identical" is **content-hash equivalence**, NOT exact map
+  # equality (Phase 7 completion PR-5). A SessionTemplate version is
+  # content-addressed: its identity is `compute_version_hash/1`, which
+  # excludes `name` / `created_at` / `created_by` / `version_*` (SPEC
+  # §1.3). Two `save_template_as` retries of the same team config carry
+  # different `created_at` timestamps but compute the SAME hash — so
+  # they ARE the same version and the second write must no-op as `:ok`.
+  # Exact map equality would spuriously reject the retry as
+  # `:immutable_version`. A genuine hash divergence is already caught by
+  # `check_hash_matches/2` against the URI, so this check only ever sees
+  # hash-equal content here; the comparison is belt-and-braces.
   defp check_immutable(nil, _new), do: :ok
-  defp check_immutable(same, same), do: :ok
-  defp check_immutable(_existing, _new), do: {:error, :immutable_version}
+
+  defp check_immutable(existing, new) do
+    if SessionTemplate.compute_version_hash(existing) ==
+         SessionTemplate.compute_version_hash(new) do
+      :ok
+    else
+      {:error, :immutable_version}
+    end
+  end
 
   # Extract the `@<hash>` segment from a SessionTemplate URI's name
   # path segment: `template://session/<ws>/<name>@<hash>`.

@@ -286,41 +286,26 @@ defmodule EzagentDomainChat.Application do
   # ezagent_plugin_echo). The seed moved to
   # `EzagentPluginEcho.Application.after_boot/0`.
 
-  # Phase 7 PR 45 — seed cc-orchestrator AgentTemplate at boot.
+  # Phase 7 PR 45 + completion PR-5 — seed the cc-orchestrator
+  # AgentTemplate at boot with a REAL `:template` slice.
   #
   # The cc-orchestrator is the LLM-driven session-internal manager
   # (Decision D7-1, #136). Every SessionTemplate's
   # `orchestrator_template_uri` field defaults to
-  # `template://agent/default/cc-orchestrator` — so the template must exist
-  # by the time the Generator (PR 41) tries to spawn an orchestrator
-  # instance. This boot-time seed makes that resolution work
-  # out-of-the-box in dev / single-host deployments.
+  # `template://agent/default/cc-orchestrator` — so the template must
+  # exist by the time the Generator tries to spawn an orchestrator
+  # instance.
   #
-  # Slice values use placeholder defaults pointing at the operator's
-  # current `~/.claude/` — production multi-tenant deployments will
-  # configure per-template `claude_config_dir` to isolate sandboxes
-  # (D7-2 AgentTemplate slice fields). macOS Keychain caveat applies
-  # — multi-orchestrator on one mac shares Keychain credentials; use
-  # `api_key_helper` or separate OS users (skill anti-pattern + runbook).
-  #
-  # Spawn semantics: SpawnRegistry returns `{:error, {:already_started, _}}`
-  # if the Kind is already alive (snapshot restore on subsequent
-  # boots); this fn treats that as success per the boot-seed
-  # idempotency convention.
+  # Pre-PR-5 this seed only spawned an EMPTY AgentTemplate Kind. PR-5
+  # delegates to `Ezagent.Orchestrator.CcOrchestratorSeed.seed/0`, which
+  # populates a real slice (`flavor: "cc"`, an isolated
+  # `claude_config_dir`, a `settings.json`, an `mcp_config_path` pointing
+  # at the orchestrator MCP server, a system prompt) so a Generator-
+  # spawned orchestrator comes up fully configured. The seed is
+  # idempotent (AgentTemplate `:write` is a mutable replace) and
+  # best-effort (logs + `:ok` on failure so boot never aborts).
   defp seed_cc_orchestrator_template do
-    uri = URI.parse("template://agent/default/cc-orchestrator")
-
-    case Ezagent.SpawnRegistry.spawn(uri) do
-      {:ok, _pid} -> :ok
-      {:error, {:already_started, _pid}} -> :ok
-      {:error, reason} ->
-        require Logger
-        Logger.warning(
-          "Failed to seed cc-orchestrator template at boot: #{inspect(reason)}; " <>
-            "orchestrator-style SessionTemplate instantiation will fail until manually created"
-        )
-        :ok
-    end
+    Ezagent.Orchestrator.CcOrchestratorSeed.seed()
   end
 
   defp register_spawn_fns do
@@ -498,6 +483,22 @@ defmodule EzagentDomainChat.Application do
     Enum.each(TemplateB.actions(), fn action ->
       :ok = BehaviorRegistry.register(AgentTemplate, action, TemplateB)
       :ok = BehaviorRegistry.register(SessionTemplate, action, TemplateB)
+    end)
+
+    # Phase 7 completion PR-5 (SPEC §1.6b) — register the new core
+    # `Ezagent.Behavior.Lifecycle` Behavior's `:terminate` action on the
+    # Agent Kind. After this, `entity://agent/...?action=lifecycle.terminate`
+    # resolves through `BehaviorRegistry` and is dispatch-invocable +
+    # CapBAC-gated — so the orchestrator's `remove_agent_slot` /
+    # `update_agent_template` tools terminate workers through dispatch,
+    # NOT a bare `DynamicSupervisor.terminate_child` (which would bypass
+    # CapBAC and let an orchestrator kill any agent). The orchestrator's
+    # cap #2 (`{:spawned_by, orchestrator}`) is what permits it to
+    # terminate only ITS OWN workers.
+    alias Ezagent.Behavior.Lifecycle, as: LifecycleB
+
+    Enum.each(LifecycleB.actions(), fn action ->
+      :ok = BehaviorRegistry.register(Agent, action, LifecycleB)
     end)
 
     :ok
