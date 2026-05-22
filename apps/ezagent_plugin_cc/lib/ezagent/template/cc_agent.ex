@@ -35,11 +35,35 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
 
   ## Template data
 
+  Legacy 3-key form (still valid — backward compat):
+
       %{
         "class" => "cc.agent",
         "agent_uri" => "entity://agent/<workspace>/cc_<name>",
         "cwd" => "/path"
       }
+
+  Extended 7-key form (Phase 7 completion PR-1, SPEC §1.5 (c)) — the
+  AgentTemplate→cc adapter (`Ezagent.Entity.AgentTemplate.to_template_data/2`)
+  threads these four OPTIONAL sandbox keys:
+
+      %{
+        "class" => "cc.agent",
+        "agent_uri" => "entity://agent/<workspace>/cc_<name>",
+        "cwd" => "/path",
+        "operator_settings_path" => "/path/to/operator/settings.json",
+        "operator_mcp_config_path" => "/path/to/operator/mcp.json",
+        "claude_config_dir" => "/path/to/sandbox/.claude",
+        "api_key_helper" => "/path/to/api-key-helper.sh"
+      }
+
+  All four extended keys are optional — absent ⇒ the legacy behavior,
+  no regression. `build_claude_cmd/2` emits the operator `--settings` /
+  `--mcp-config` such that the **mandatory plugin safety `--settings`
+  is LAST** (claude `--settings` is last-wins, so `remoteControlAtStartup:
+  false` is non-bypassable) and the trusted esr-bridge `--mcp-config` is
+  never replaced (claude merges MCP configs additively — an operator
+  config adds servers but cannot delete the bridge).
 
   ## Idempotency (PR-D2 + V1 fix)
 
@@ -78,12 +102,29 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   def validate(tmpl) when is_map(tmpl) do
     with :ok <- check_class(tmpl),
          :ok <- check_agent_uri(tmpl),
-         :ok <- check_cwd(tmpl) do
+         :ok <- check_cwd(tmpl),
+         :ok <- check_optional_sandbox_keys(tmpl) do
       :ok
     end
   end
 
   def validate(_), do: {:error, :not_a_map}
+
+  # Phase 7 completion PR-1 (SPEC §1.5 (c)) — the four sandbox keys are
+  # OPTIONAL. Absent ⇒ legacy behavior (the 3-key form still validates).
+  # When present, each must be a non-empty string.
+  @optional_sandbox_keys ~w(operator_settings_path operator_mcp_config_path
+                            claude_config_dir api_key_helper)
+
+  defp check_optional_sandbox_keys(tmpl) do
+    Enum.reduce_while(@optional_sandbox_keys, :ok, fn key, :ok ->
+      case Map.fetch(tmpl, key) do
+        :error -> {:cont, :ok}
+        {:ok, v} when is_binary(v) and v != "" -> {:cont, :ok}
+        {:ok, bad} -> {:halt, {:error, {:invalid_sandbox_key, key, bad}}}
+      end
+    end)
+  end
 
   defp check_class(%{"class" => "cc.agent"}), do: :ok
   defp check_class(%{"class" => other}), do: {:error, {:wrong_class, other}}
@@ -162,7 +203,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
     cwd = Map.fetch!(tmpl, "cwd")
 
     with :ok <- ensure_agent_kind(agent_uri),
-         :ok <- ensure_pty_server(agent_uri, cwd) do
+         :ok <- ensure_pty_server(agent_uri, cwd, tmpl) do
       {:ok, [agent_uri]}
     end
   end
@@ -188,7 +229,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
     end
   end
 
-  defp ensure_pty_server(agent_uri, cwd) do
+  defp ensure_pty_server(agent_uri, cwd, tmpl) do
     # Domain.Pty PR-A: route through the facade instead of
     # DynamicSupervisor.start_child on EzagentPluginCc.PtyServerSupervisor.
     # The cmd string (claude + flags + mcp config path) is built here
@@ -203,7 +244,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
     params =
       case Mix.env() do
         :test -> %{cwd: cwd, test_mode: true}
-        _ -> %{cwd: cwd, cmd_override: build_claude_cmd(agent_uri, cwd)}
+        _ -> %{cwd: cwd, cmd_override: build_claude_cmd(agent_uri, cwd, tmpl)}
       end
 
     case Ezagent.Domain.Pty.start(agent_uri, params) do
@@ -231,27 +272,88 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   # module (now `Ezagent.Domain.Pty.Server`) stays Tier-2 — no
   # dependency on cc-plugin modules like `McpConfigWriter`.
   # `agent_cwd` is always supplied by the sole caller
-  # (ensure_pty_server/2) — no default, per dead-code audit 2026-05-21.
-  defp build_claude_cmd(agent_uri, agent_cwd) do
+  # (ensure_pty_server/3) — no default, per dead-code audit 2026-05-21.
+  #
+  # Phase 7 completion PR-1 (SPEC §1.5 (c)): `tmpl` may carry the four
+  # optional sandbox keys. `claude_config_dir` is emitted as a
+  # `CLAUDE_CONFIG_DIR=<dir>` env prefix on the shell command (erlexec
+  # runs the cmd string through a shell). The `--settings` / `--mcp-config`
+  # assembly is delegated to the pure `assemble_settings_mcp_args/3` so
+  # the safety-ordering invariant is unit-testable without the
+  # `McpConfigWriter` side effect.
+  defp build_claude_cmd(agent_uri, agent_cwd, tmpl) do
     {:ok, mcp_path} =
       EzagentPluginCc.McpConfigWriter.write!(
         agent_uri: URI.to_string(agent_uri),
         agent_cwd: agent_cwd
       )
 
-    # Phase 6 PR 23: operator's ~/.claude/settings.json may have
-    # `remoteControlAtStartup: true` (cc-openclaw + others enable
-    # it). That redirects interactive I/O to claude.ai cloud session
-    # — local PTY becomes a passive observer. Override to false via
-    # --settings on a plugin-shipped JSON.
-    settings_path =
-      :code.priv_dir(:ezagent_plugin_cc)
-      |> Path.join("claude-pty-settings.json")
+    args = assemble_settings_mcp_args(mandatory_settings_path(), mcp_path, tmpl)
 
-    "claude --permission-mode bypassPermissions " <>
+    env_prefix =
+      case Map.get(tmpl, "claude_config_dir") do
+        dir when is_binary(dir) and dir != "" -> "CLAUDE_CONFIG_DIR=#{dir} "
+        _ -> ""
+      end
+
+    env_prefix <>
+      "claude --permission-mode bypassPermissions " <>
       "--dangerously-load-development-channels server:esr-bridge " <>
-      "--settings #{settings_path} " <>
-      "--mcp-config #{mcp_path}"
+      args
+  end
+
+  # The plugin-shipped mandatory safety settings file. Phase 6 PR 23:
+  # operator's `~/.claude/settings.json` may set `remoteControlAtStartup:
+  # true` (cc-openclaw + others enable it) — that redirects interactive
+  # I/O to claude.ai cloud + makes the local PTY a passive observer.
+  # This file forces `remoteControlAtStartup: false`.
+  defp mandatory_settings_path do
+    :code.priv_dir(:ezagent_plugin_cc)
+    |> Path.join("claude-pty-settings.json")
+  end
+
+  @doc false
+  # Phase 7 completion PR-1 (SPEC §1.5 (c)) — pure assembly of the
+  # `--settings` / `--mcp-config` arg sequence. Exposed (`@doc false`)
+  # so the hostile-path test can assert the ordering invariant without
+  # the McpConfigWriter side effect.
+  #
+  # SAFETY INVARIANT — the mandatory plugin `--settings` is emitted
+  # LAST. claude's `--settings` is last-wins, so a hostile operator
+  # `operator_settings_path` setting `remoteControlAtStartup: true`
+  # cannot win: the mandatory file (forcing `false`) is layered after
+  # it. An operator `--settings` is emitted FIRST (it may layer
+  # non-conflicting keys; conflicting safety keys lose).
+  #
+  # The trusted esr-bridge `--mcp-config` is ALWAYS emitted; an
+  # operator `--mcp-config` is an ADDITIONAL flag, never a replacement
+  # (claude merges MCP configs additively — an operator config adds
+  # servers but cannot delete the bridge server).
+  def assemble_settings_mcp_args(mandatory_settings_path, bridge_mcp_path, tmpl)
+      when is_binary(mandatory_settings_path) and is_binary(bridge_mcp_path) and is_map(tmpl) do
+    operator_settings =
+      case Map.get(tmpl, "operator_settings_path") do
+        p when is_binary(p) and p != "" -> ["--settings #{p}"]
+        _ -> []
+      end
+
+    operator_mcp =
+      case Map.get(tmpl, "operator_mcp_config_path") do
+        p when is_binary(p) and p != "" -> ["--mcp-config #{p}"]
+        _ -> []
+      end
+
+    # Order: operator --settings FIRST, mandatory --settings LAST
+    # (last-wins ⇒ safety non-bypassable). The trusted bridge
+    # --mcp-config is always present; an operator --mcp-config is
+    # additive (listed after the bridge).
+    args =
+      operator_settings ++
+        ["--settings #{mandatory_settings_path}"] ++
+        ["--mcp-config #{bridge_mcp_path}"] ++
+        operator_mcp
+
+    Enum.join(args, " ")
   end
 
   defp agent_kind_alive?(agent_uri) do

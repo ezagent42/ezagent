@@ -19,6 +19,12 @@ defmodule Ezagent.Entity.SessionTemplateTest do
     assert Ezagent.Behavior.Identity in SessionTemplate.behaviors()
   end
 
+  test "behaviors/0 includes Behavior.Template (Phase 7 completion PR-1 — content slice)" do
+    assert Ezagent.Behavior.Template in SessionTemplate.behaviors(),
+           "SessionTemplate must carry Behavior.Template so the versioned " <>
+             ":template content slice has dispatchable actions (SPEC §1.0)"
+  end
+
   test "persistence/0 is {:snapshot, :on_change} — versioned templates survive restart" do
     assert SessionTemplate.persistence() == {:snapshot, :on_change}
   end

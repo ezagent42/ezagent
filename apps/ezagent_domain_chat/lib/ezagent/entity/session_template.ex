@@ -104,8 +104,13 @@ defmodule Ezagent.Entity.SessionTemplate do
   @impl Ezagent.Kind
   def type_name, do: :session_template
 
+  # Phase 7 completion PR-1 (SPEC §1.0): SessionTemplate carries TWO
+  # slices — `:identity` (the cap policy) and `:template` (the
+  # versioned, content-addressed template CONTENT, served via
+  # `Ezagent.Behavior.Template`). SessionTemplate `:write` is
+  # write-once + hash-checked (codex rev-5 CRITICAL).
   @impl Ezagent.Kind
-  def behaviors, do: [Ezagent.Behavior.Identity]
+  def behaviors, do: [Ezagent.Behavior.Identity, Ezagent.Behavior.Template]
 
   @impl Ezagent.Kind
   def persistence, do: {:snapshot, :on_change}

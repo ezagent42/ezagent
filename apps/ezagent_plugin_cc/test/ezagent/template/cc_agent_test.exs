@@ -187,6 +187,92 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
     end
   end
 
+  describe "validate/1 — Phase 7 completion PR-1 extended sandbox keys (SPEC §1.5 (c))" do
+    test "legacy 3-key form still validates (backward compat)" do
+      assert :ok =
+               CcAgent.validate(%{
+                 "class" => "cc.agent",
+                 "agent_uri" => "entity://agent/default/cc_legacy",
+                 "cwd" => "/tmp"
+               })
+    end
+
+    test "extended 7-key form validates" do
+      assert :ok =
+               CcAgent.validate(%{
+                 "class" => "cc.agent",
+                 "agent_uri" => "entity://agent/default/cc_extended",
+                 "cwd" => "/tmp",
+                 "operator_settings_path" => "/sandbox/settings.json",
+                 "operator_mcp_config_path" => "/sandbox/mcp.json",
+                 "claude_config_dir" => "/sandbox/.claude",
+                 "api_key_helper" => "/sandbox/key-helper.sh"
+               })
+    end
+
+    test "a non-string sandbox key is rejected" do
+      assert {:error, {:invalid_sandbox_key, "claude_config_dir", _}} =
+               CcAgent.validate(%{
+                 "class" => "cc.agent",
+                 "agent_uri" => "entity://agent/default/cc_bad",
+                 "cwd" => "/tmp",
+                 "claude_config_dir" => 123
+               })
+    end
+  end
+
+  describe "assemble_settings_mcp_args/3 — hostile-path (SPEC §1.5 (c))" do
+    @mandatory "/priv/claude-pty-settings.json"
+    @bridge "/run/esr-bridge.mcp.json"
+
+    test "with no operator keys: mandatory --settings + bridge --mcp-config only" do
+      args = CcAgent.assemble_settings_mcp_args(@mandatory, @bridge, %{})
+
+      assert args == "--settings #{@mandatory} --mcp-config #{@bridge}"
+    end
+
+    test "an operator --settings is emitted BEFORE the mandatory one (safety last-wins)" do
+      hostile = %{"operator_settings_path" => "/hostile/settings.json"}
+      args = CcAgent.assemble_settings_mcp_args(@mandatory, @bridge, hostile)
+
+      # The mandatory file (forcing remoteControlAtStartup:false) MUST be
+      # the LAST --settings. claude is last-wins per --settings file —
+      # so a hostile operator file setting remoteControlAtStartup:true
+      # cannot win.
+      settings_args =
+        args
+        |> String.split(" ")
+        |> Enum.chunk_every(2, 1, :discard)
+        |> Enum.filter(fn [flag, _] -> flag == "--settings" end)
+        |> Enum.map(fn [_, path] -> path end)
+
+      assert settings_args == ["/hostile/settings.json", @mandatory],
+             "operator --settings must precede the mandatory safety --settings"
+
+      assert List.last(settings_args) == @mandatory,
+             "the mandatory remoteControlAtStartup:false file must be LAST so it wins"
+    end
+
+    test "an operator --mcp-config NEVER replaces the trusted esr-bridge --mcp-config" do
+      hostile = %{"operator_mcp_config_path" => "/hostile/mcp.json"}
+      args = CcAgent.assemble_settings_mcp_args(@mandatory, @bridge, hostile)
+
+      mcp_args =
+        args
+        |> String.split(" ")
+        |> Enum.chunk_every(2, 1, :discard)
+        |> Enum.filter(fn [flag, _] -> flag == "--mcp-config" end)
+        |> Enum.map(fn [_, path] -> path end)
+
+      assert @bridge in mcp_args,
+             "the trusted esr-bridge --mcp-config must always be present — " <>
+               "an operator mcp config cannot drop it"
+
+      assert "/hostile/mcp.json" in mcp_args,
+             "operator --mcp-config is additive, not a replacement"
+    end
+  end
+
   defp list_pty_pids_for(agent_uri_str) do
     Ezagent.Domain.Pty.Server.list_agents()
     |> Enum.filter(fn a -> URI.to_string(a.agent_uri) == agent_uri_str end)
