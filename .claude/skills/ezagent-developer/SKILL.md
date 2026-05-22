@@ -506,15 +506,37 @@ The UI obeys a **3-layer architecture** so changing one atom propagates to every
 
 ### 3-layer UI architecture
 
-- **Layer 1 — atoms** (`apps/ezagent_domain_ui/lib/ezagent_domain_ui/`): stateless `Phoenix.Component`s. Zero LV deps. Files: `primitives.ex` (low-level: button, badge, status_dot, avatar, modal, tabs, toast, tree_list, empty_state, form_field, uri_chip, toolbar, tooltip, icon), `components.ex` (page_header, breadcrumb, card, stat), `ide_shell.ex` (workspace shell wrapping Activity Bar + Resource Panel + Main + Right Sidebar + Status Bar). **The style-replacement boundary lives here.**
-- **Layer 2 — plugin component compositions** (`apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/admin/`): `Phoenix.Component` modules that compose Layer 1 atoms into plugin-level pieces (e.g. `member_panel.ex`, `session_editor.ex`). Still no LV state — just structure + slots.
-- **Layer 3 — LV containers** (`apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/*_live.ex`): the LiveView modules with `mount`, `handle_event`, socket assigns. Each `render/1` wraps content in a shell atom — `<IdeShell.ide_shell>` for workspace surfaces; admin pages follow the same pattern via the page_header + breadcrumb + card composition.
+- **Layer 1 — atoms** (`apps/ezagent_domain_ui/lib/ezagent_domain_ui/`): stateless `Phoenix.Component`s. Zero LV deps. Files: `primitives.ex` (low-level: button, badge, status_dot, avatar, modal, tabs, toast, tree_list, empty_state, form_field, uri_chip, uri_picker, toolbar, tooltip, icon), `components.ex` (page_header, breadcrumb, card, stat), the shell components (see **Nested shell architecture** below). **The style-replacement boundary lives here.**
+- **Layer 2 — plugin component compositions** (`apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/` incl. `admin/`): `Phoenix.Component` modules that compose Layer 1 atoms into plugin-level pieces (e.g. `member_panel.ex`, `session_editor.ex`, `app_shell.ex`). Still no LV state — just structure + slots.
+- **Layer 3 — LV containers** (`apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/*_live.ex`): the LiveView modules with `mount`, `handle_event`, socket assigns. Each `render/1` wraps content in `<AppShell.app_shell>` (see below).
+
+### Nested shell architecture (refactor 2026-05-22, SPEC `docs/superpowers/specs/2026-05-22-nested-shell-refactor.md`)
+
+ONE outer shell owns the universal chrome; TWO inner perspectives fill its body. (Replaced the prior two-sibling-shell design — `ide_shell` + `AdminSettingsShell` — which left admin pages with no avatar/notifications/search.)
+
+```
+AppShell.app_shell        (Tier-3, ezagent_plugin_liveview) — the single thing an LV renders.
+│  Wraps the Tier-2 outer chrome AND fills its :command_palette slot with the
+│  stateful CommandPaletteComponent ONCE. Has a `perspective` attr + a :body slot.
+│
+└─ IdeShell.ide_shell_outer (Tier-2, ezagent_domain_ui/ide_shell.ex) — OUTER chrome:
+   │  universal header (context affordance · search/⌘K · notifications · help · avatar)
+   │  + :command_palette slot + :body slot. `perspective :: :workspace | :admin`.
+   └─ :body — exactly one inner perspective:
+      ├─ WorkspaceShell.workspace_shell (Tier-2, workspace_shell.ex) — Activity Bar +
+      │    Resource Panel + Main Window + Right Sidebar + Status Bar.
+      └─ AdminShell.admin_shell        (Tier-2, admin_shell.ex) — left settings nav + main.
+```
+
+- An LV renders `<AppShell.app_shell perspective={:workspace}>` with `<WorkspaceShell.workspace_shell>` in `:body` (workflow surfaces — /sessions, /routing, /identities, /plugins, …) OR `perspective={:admin}` with `<AdminShell.admin_shell>` (system-config surfaces — /admin/*, /workspaces).
+- CmdK / `CommandPaletteComponent` is wired exactly ONCE, inside `app_shell` — never per-LV. `CommandSource` (Tier-2) is the pure ranking fn; nav routes flow DOWN from the `EzagentWeb.LiveAuth` `:cmdk_nav` on_mount assign.
+- `perspective` is a typed context contract: `:workspace` → header shows the workspace dropdown; `:admin` → a system-context label (admin pages are `workspace://system` global config — you don't "switch workspace" there).
 
 ### Header / status-bar separation principle (Allen 2026-05-22)
 
-The `ide_shell` chrome has a **top header** (`top_command_bar/1`) and a
-**bottom status bar** (`status_bar/1`). They have DIFFERENT semantic roles
-— don't put a control in the wrong one:
+The shell chrome splits into a **top header** (in `ide_shell_outer/1`, the outer
+shell) and a **bottom status bar** (`status_bar/1`, internal to `workspace_shell`).
+They have DIFFERENT semantic roles — don't put a control in the wrong one:
 
 - **Header = workspace-scoped, view-INVARIANT.** Shows info that does NOT
   change as the user navigates between surfaces: the `ezagent / <workspace>`
@@ -537,7 +559,8 @@ Allen surfaced this principle.
 
 ### DO list
 
-- Wrap workspace-surface LV `render/1` in `<IdeShell.ide_shell>`.
+- Wrap every shell LV `render/1` in `<AppShell.app_shell perspective={:workspace|:admin}>` with one inner perspective (`<WorkspaceShell.workspace_shell>` or `<AdminShell.admin_shell>`) in its `:body` slot. Never render a shell component directly — `app_shell` is the entry point (it wires CmdK).
+- For a manual URI field, use `<.uri_picker mode={:single|:multi} options={...} />` — not a raw text input. Options come from `Ezagent.UI.UriOptions` (caller-authorized, workspace-scoped).
 - Use `<.page_header title="...">...<:subtitle>...</:subtitle></.page_header>` for every page title.
 - Use `<.breadcrumb items={[{"Admin", "/admin"}, {"This page", nil}]} />` for nested pages.
 - Use `<.card class="...">` to wrap content blocks.
@@ -582,7 +605,7 @@ When changing the visual design:
 
 ### Adding a new component to Layer 1
 
-- File: pick the matching tier — `primitives.ex` (low-level atoms), `components.ex` (composite page-level atoms like header / breadcrumb / card / stat), or `ide_shell.ex` (layout shells).
+- File: pick the matching tier — `primitives.ex` (low-level atoms), `components.ex` (composite page-level atoms like header / breadcrumb / card / stat), or the shell files (`ide_shell.ex` outer chrome, `workspace_shell.ex` / `admin_shell.ex` inner perspectives — see Nested shell architecture).
 - Pattern:
 
   ```elixir
@@ -604,7 +627,7 @@ When changing the visual design:
 
 ### Architecture invariants enforced by tests
 
-- `apps/ezagent_domain_ui/test/ezagent_domain_ui/ide_shell_test.exs` — Activity Bar item count + path mappings.
+- `apps/ezagent_domain_ui/test/ezagent_domain_ui/` — shell component tests (`ide_shell_outer`, `workspace_shell`, `admin_shell`) incl. Activity Bar item count + path mappings + the `perspective` header contract.
 - `apps/ezagent_core/test/invariants/sessions_have_workspace_test.exs` — every session has a WorkspaceRegistry binding (Allen 2026-05-20).
 - `apps/ezagent_web/test/ezagent_web/controllers/error_html_test.exs` — branded 404 renders with Activity Bar fallbacks.
 
@@ -622,8 +645,9 @@ When changing the visual design:
   - #145 — `Ezagent.URI.SchemeRegistry` runtime ETS + `parse!/1` lockdown
   - #146 — query-string action syntax (`/behavior/X/Y` → `?action=X.Y`) everywhere
   - #147–#149 — polish, `Ezagent.AgentTypeRegistry` removal, `Message.uri` → `Message.id`, FeishuOutbound interface + lazy slice init
-- **Phase 8 IDE Shell LiveView redesign in branch `feat/phase-8-ide-shell-liveview`** (not yet merged). Spec: `docs/superpowers/specs/2026-05-19-phase-8-ide-shell-liveview.zh_cn.md`. Adds VS-Code-like Activity Bar / Resource Panel / Main Window / Right Sidebar / Status Bar shell as `Phoenix.Component` primitives in `apps/ezagent_domain_ui/lib/ezagent_domain_ui/ide_shell.ex`. No runtime logic changes — UI/UX only.
-- **Phase 9 candidates** (open, not yet specced): Auth UX (magic link + self-serve registration), CmdK fuzzy backend with cross-LV tab persistence, asset fingerprinting + real lucide-icons (replacing heroicons emoji fallback), dark theme, mobile responsive.
+- **Phase 8 IDE Shell + Phase 9 tenant isolation — both shipped** (merged to main). The VS-Code-like shell + per-workspace entity URIs + tenant-aware auth are live.
+- **V1 acceptance phase (2026-05-22) — shipped**: `uri_picker` component + `UriOptions` (PR-1), CmdK command palette (`CommandSource` + `CommandPaletteComponent`, PR-2/2b), member-panel redesign (PR-3), `@interface` `description:` key (PR-0). Spec: `docs/superpowers/specs/2026-05-22-v1-uri-pickers-and-cmdk.md`.
+- **Nested shell refactor (2026-05-22) — shipped**: two sibling shells → one outer `ide_shell` + `workspace_shell`/`admin_shell` inner perspectives (see **Nested shell architecture** above). Spec: `docs/superpowers/specs/2026-05-22-nested-shell-refactor.md`.
 
 ---
 
