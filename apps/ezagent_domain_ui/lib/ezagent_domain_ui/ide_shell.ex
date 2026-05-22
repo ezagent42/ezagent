@@ -204,6 +204,197 @@ defmodule EzagentDomainUi.IdeShell do
     """
   end
 
+  # --- ide_shell_outer -------------------------------------------------------
+
+  @doc """
+  Nested-shell refactor PR-1 (SPEC §1, §2, §6 row 1) — the Tier-2
+  OUTER chrome.
+
+  Renders ONLY the universal top header + a `:command_palette` slot +
+  a `:body` slot. The `:body` slot hosts exactly one inner perspective
+  — `EzagentDomainUi.WorkspaceShell.workspace_shell/1` (sessions/agents)
+  or `EzagentDomainUi.AdminShell.admin_shell/1` (`workspace://system`
+  config).
+
+  Stateless `Phoenix.Component` (Tier-2 — zero LiveView/registry deps,
+  per the UI Contract). The `:command_palette` slot is filled by the
+  Tier-3 `EzagentPluginLiveview.AppShell.app_shell/1`, which renders
+  the stateful `CommandPaletteComponent` LiveComponent — keeping the
+  stateful piece out of the stateless-atom layer (SPEC §3).
+
+  PR-1 is purely additive: `ide_shell/1` (the old monolith) is left
+  fully intact and keeps working until its consumers migrate (PR-2/3).
+  Nothing here is renamed or deleted.
+
+  ## The `perspective` context contract (SPEC §2)
+
+  `perspective :: :workspace | :admin` governs the header's left
+  affordance — it is NOT cosmetic:
+
+  - `:workspace` — left affordance is the `workspace_dropdown`
+    (`ezagent / <workspace>`); switching workspace is meaningful.
+  - `:admin` — admin pages are `workspace://system` global config.
+    Left affordance is a plain system-context label (`ezagent ·
+    System`), NOT the tenant workspace dropdown — you do not "switch
+    workspace" while editing global runtime config.
+
+  ## Usage
+
+      <IdeShell.ide_shell_outer
+        perspective={:workspace}
+        current_entity_uri={@current_entity_uri}
+        workspace_name={@workspace_name}
+        workspaces={@workspaces}
+        is_admin?={@is_admin?}
+        is_system_member?={@is_system_member?}
+      >
+        <:command_palette>...</:command_palette>
+        <:body>
+          <WorkspaceShell.workspace_shell ...>...</WorkspaceShell.workspace_shell>
+        </:body>
+      </IdeShell.ide_shell_outer>
+  """
+  attr(:perspective, :atom,
+    required: true,
+    values: [:workspace, :admin],
+    doc: """
+    SPEC §2 context contract. `:workspace` → header shows the
+    `workspace_dropdown`. `:admin` → header shows the plain
+    `ezagent · System` label (no tenant workspace switcher).
+    """
+  )
+
+  attr(:current_entity_uri, :any, required: true)
+  attr(:workspace_name, :string, default: nil)
+  attr(:workspaces, :list, default: [])
+  attr(:is_admin?, :boolean, default: false)
+  attr(:is_system_member?, :boolean, default: false)
+
+  slot(:command_palette)
+  slot(:body, required: true)
+
+  def ide_shell_outer(assigns) do
+    ~H"""
+    <div
+      id="ide-shell-outer"
+      class="fixed inset-0 flex flex-col bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 text-sm font-sans"
+    >
+      <.outer_command_bar
+        perspective={@perspective}
+        current_entity_uri={@current_entity_uri}
+        workspace_name={@workspace_name}
+        workspaces={@workspaces}
+        is_admin?={@is_admin?}
+        is_system_member?={@is_system_member?}
+      />
+
+      {render_slot(@body)}
+
+      {render_slot(@command_palette)}
+    </div>
+    """
+  end
+
+  # --- outer_command_bar -----------------------------------------------------
+
+  @doc """
+  Nested-shell PR-1 — the universal header for `ide_shell_outer/1`.
+
+  Context affordance + search/⌘K trigger + bell + help + avatar menu.
+  Differs from `top_command_bar/1` in that the left context affordance
+  is driven by the `perspective` attr (SPEC §2):
+
+  - `:workspace` → `workspace_dropdown` (or plain `ezagent / <ws>`
+    text when no `workspaces` list is passed).
+  - `:admin` → plain `ezagent · System` system-context label.
+
+  It carries no resource-panel toggle — panel toggles belong to the
+  inner `workspace_shell` body / status bar.
+  """
+  attr(:perspective, :atom, required: true, values: [:workspace, :admin])
+  attr(:current_entity_uri, :any, required: true)
+  attr(:workspace_name, :string, default: nil)
+  attr(:workspaces, :list, default: [])
+  attr(:is_admin?, :boolean, default: false)
+  attr(:is_system_member?, :boolean, default: false)
+
+  def outer_command_bar(assigns) do
+    ~H"""
+    <header class="h-10 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-3 flex items-center gap-3 shrink-0">
+      <%!-- SPEC §2 — context affordance. `:admin` shows a plain
+            system-context label (you do not switch tenant workspace
+            while editing global config); `:workspace` shows the
+            workspace dropdown (or plain text when no list given). --%>
+      <%= if @perspective == :admin do %>
+        <div class="flex items-center gap-2 shrink-0">
+          <span class="font-semibold text-xs tracking-tight">ezagent</span>
+          <span class="text-zinc-400 dark:text-zinc-600 select-none">·</span>
+          <span class="text-xs text-zinc-600 dark:text-zinc-400">System</span>
+        </div>
+      <% else %>
+        <%= if @workspaces != [] do %>
+          <.workspace_dropdown
+            workspace_name={@workspace_name}
+            workspaces={@workspaces}
+            is_system_member?={@is_system_member?}
+          />
+        <% else %>
+          <div class="flex items-center gap-2 shrink-0">
+            <span class="font-semibold text-xs tracking-tight">ezagent</span>
+            <span :if={@workspace_name} class="text-zinc-400 dark:text-zinc-600 select-none">
+              /
+            </span>
+            <span
+              :if={@workspace_name}
+              class="font-mono text-xs text-zinc-600 dark:text-zinc-400"
+            >
+              {@workspace_name}
+            </span>
+          </div>
+        <% end %>
+      <% end %>
+
+      <%!-- search / ⌘K trigger — universal, present on every page. --%>
+      <div class="flex-1 max-w-md mx-auto">
+        <button
+          type="button"
+          phx-click={JS.dispatch("ezagent:open-command-palette")}
+          class="w-full flex items-center gap-2 px-3 py-1.5 bg-zinc-100 dark:bg-zinc-900 hover:bg-zinc-200 dark:hover:bg-zinc-700 rounded-md text-xs text-zinc-500 transition-colors"
+        >
+          <.icon name="search" size="xs" />
+          <span
+            class="ez-typing-placeholder relative flex-1 text-left h-4 overflow-hidden"
+            aria-live="polite"
+          >
+            <span class="ez-typing-line">搜索 sessions</span>
+            <span class="ez-typing-line">召唤 entity</span>
+            <span class="ez-typing-line">执行 action</span>
+            <span class="ez-typing-line">跳转 routing</span>
+          </span>
+          <span class="ml-auto text-[10px] text-zinc-400 dark:text-zinc-600 font-mono">⌘K</span>
+        </button>
+      </div>
+
+      <div class="flex items-center gap-2 shrink-0">
+        <.icon
+          name="bell"
+          size="sm"
+          class="text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 cursor-pointer"
+        />
+        <.icon
+          name="help"
+          size="sm"
+          class="text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 cursor-pointer"
+        />
+        <.avatar_menu
+          current_entity_uri={@current_entity_uri}
+          is_admin?={@is_admin?}
+        />
+      </div>
+    </header>
+    """
+  end
+
   # --- activity_bar ----------------------------------------------------------
 
   @doc """
