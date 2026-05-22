@@ -1635,6 +1635,375 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
     end
   end
 
+  # ══════════════════════════════════════════════════════════════════════
+  # ROUND 5 — codex adversarial-review of hardening round 4 (#244).
+  #
+  # `update_agent_template` is a saga across resources that CANNOT all
+  # join one SQL transaction (live workers, SQL routing, the
+  # Session-Kind working-copy slice, ETS). Round 4 made the SQL part
+  # transactional; round 5 makes the saga RECOVERY fail-safe — when a
+  # recovery step itself fails the swap HALTS in a safe-degraded state
+  # (all workers alive, a distinct manual-repair error), never a corrupt
+  # state naming a terminated worker.
+  #
+  # - HIGH-1 r5 — the slot rollback is a CHECKED step; the replacement
+  #   worker is terminated ONLY if the slot was confirmed restored. A
+  #   slot-rollback failure terminates nothing, keeps both workers
+  #   alive, returns {:error, {:update_needs_manual_repair, _}}.
+  # - HIGH-2 r5 — the forward routing transaction returns the exact
+  #   changed rule IDs; the inverse revert operates ONLY on those IDs.
+  #   An inverse-revert failure is a blocking degraded state — halt,
+  #   both workers alive, manual-repair error. A pre-existing rule
+  #   naming the new worker URI is never touched.
+  # - MEDIUM-3 r5 — the swap candidate path no longer silently adopts an
+  #   an already-live worker: an `already_started` adoption is
+  #   {:error, {:update_aborted, :candidate_uri_already_live}}.
+  # ══════════════════════════════════════════════════════════════════════
+
+  # Kill the Session Kind on the Nth `chat.set_working_copy` authz-grant.
+  # The handler runs synchronously INSIDE the Session process (the authz
+  # check is part of the Session's handle_call) before `invoke/4` runs —
+  # so killing `self()` there makes the in-flight `set_working_copy`
+  # GenServer.call EXIT, which `rollback_slot_to_old` catches as a clean
+  # `:error`. Deterministic — no polling, no race.
+  defp install_session_killer_on_nth_set_working_copy(session_uri, n) do
+    handler_id = {:r5_session_killer, session_uri, make_ref()}
+    counter = :counters.new(1, [])
+    session_str = URI.to_string(session_uri)
+
+    :telemetry.attach(
+      handler_id,
+      [:ezagent, :authz, :granted],
+      fn _event, _measure, meta, _cfg ->
+        target = meta[:target]
+
+        if meta[:action] == :set_working_copy and is_struct(target, URI) and
+             String.starts_with?(URI.to_string(target), session_str) do
+          :counters.add(counter, 1, 1)
+
+          if :counters.get(counter, 1) >= n do
+            Process.exit(self(), :kill)
+          end
+        end
+      end,
+      nil
+    )
+
+    on_exit(fn -> :telemetry.detach(handler_id) end)
+    :ok
+  end
+
+  # HIGH-1 r5 — force the routing re-point's post-commit reload to fail
+  # AND the slot rollback to fail; assert the swap HALTS fail-safe.
+  describe "HIGH-1 r5 — a slot-rollback failure terminates nothing and halts fail-safe" do
+    test "a failed slot rollback keeps BOTH workers alive + returns :update_needs_manual_repair" do
+      flavor = register_test_flavor()
+      tmpl_a = URI.new!("template://agent/default/ph7r5-h1-a-#{uniq()}")
+      tmpl_b = URI.new!("template://agent/default/ph7r5-h1-b-#{uniq()}")
+      :ok = create_agent_template(tmpl_a, agent_template_content(flavor, "config-a"))
+      :ok = create_agent_template(tmpl_b, agent_template_content(flavor, "config-b"))
+
+      st_uri =
+        create_session_template(
+          "ph7r5-h1-team-#{uniq()}",
+          [{"dev", tmpl_a}],
+          [{{:text_contains, "ph7r5h1route-#{uniq()}"}, ["dev"]}]
+        )
+
+      owner_uri = full_template_owner(@default_ws)
+
+      {:ok, %{session_uri: session_uri, orchestrator_uri: orch_uri}} =
+        Session.spawn_from_template(st_uri, owner_uri)
+
+      [old_worker] = live_workers_of(orch_uri)
+      caps = orchestrator_caps(orch_uri)
+
+      # The replacement worker URI the swap will spawn — the OLD worker
+      # URI with a generation-1 suffix (`session_instance_name/3`
+      # appends `--g1` for generation > 0).
+      new_worker = URI.parse(URI.to_string(old_worker) <> "--g1")
+
+      # Force the routing re-point's post-commit reload to fail — drop
+      # the MentionRouting meta row so `replace_table_contents` raises.
+      table = EzagentDomainChat.Routing.MentionRouting
+      meta_table = Ezagent.RoutingRegistry.table()
+      [{_, _} = saved_meta] = :ets.lookup(meta_table, table)
+      on_exit(fn -> :ets.insert(meta_table, saved_meta) end)
+      :ets.delete(meta_table, table)
+
+      # Force the SLOT ROLLBACK to fail — kill the Session on the 2nd
+      # `set_working_copy` (1st = step-2 commit, 2nd = the abort path's
+      # rollback). The rollback's dispatch then EXITS → caught → :error.
+      :ok = install_session_killer_on_nth_set_working_copy(session_uri, 2)
+
+      result =
+        Tools.update_agent_template("dev", tmpl_b,
+          caller: orch_uri,
+          caps: caps,
+          workspace_uri: @default_ws,
+          session_uri: session_uri
+        )
+
+      :ets.insert(meta_table, saved_meta)
+
+      # HIGH-1 r5 — a distinct manual-repair error, NOT a generic abort.
+      assert match?({:error, {:update_needs_manual_repair, _}}, result),
+             "a slot-rollback failure must HALT with {:error, {:update_needs_manual_repair, _}}. " <>
+               "Got: #{inspect(result)}"
+
+      {:error, {:update_needs_manual_repair, info}} = result
+
+      # The repair payload carries enough state for an operator.
+      assert info[:reason] == :slot_rollback_failed
+      assert URI.to_string(info[:old_worker]) == URI.to_string(old_worker)
+      assert URI.to_string(info[:new_worker]) == URI.to_string(new_worker)
+      assert info[:slot] == "dev"
+
+      live = Enum.map(info[:live_workers] || [], &URI.to_string/1)
+      assert URI.to_string(old_worker) in live
+      assert URI.to_string(new_worker) in live
+
+      # HIGH-1 r5 — NOTHING was terminated: BOTH workers are still alive.
+      assert {:ok, _} = KindRegistry.lookup(old_worker),
+             "the OLD worker must NOT be terminated when the slot rollback fails"
+
+      assert {:ok, _} = KindRegistry.lookup(new_worker),
+             "the NEW (replacement) worker must NOT be terminated when the slot " <>
+               "rollback fails — the slot may still name it"
+    end
+  end
+
+  # HIGH-2 r5 — force the inverse routing revert to fail after a
+  # committed forward txn; assert the swap HALTS fail-safe and that the
+  # inverse revert is scoped to the forward txn's rule IDs only.
+  describe "HIGH-2 r5 — an inverse-revert failure halts fail-safe; the revert is ID-scoped" do
+    test "a forward-txn-committed + inverse-revert-failed swap halts, both workers alive" do
+      flavor = register_test_flavor()
+      tmpl_a = URI.new!("template://agent/default/ph7r5-h2-a-#{uniq()}")
+      tmpl_b = URI.new!("template://agent/default/ph7r5-h2-b-#{uniq()}")
+      :ok = create_agent_template(tmpl_a, agent_template_content(flavor, "config-a"))
+      :ok = create_agent_template(tmpl_b, agent_template_content(flavor, "config-b"))
+
+      route_token = "ph7r5h2route-#{uniq()}"
+
+      st_uri =
+        create_session_template(
+          "ph7r5-h2-team-#{uniq()}",
+          [{"dev", tmpl_a}],
+          [{{:text_contains, route_token}, ["dev"]}]
+        )
+
+      owner_uri = full_template_owner(@default_ws)
+
+      {:ok, %{session_uri: session_uri, orchestrator_uri: orch_uri}} =
+        Session.spawn_from_template(st_uri, owner_uri)
+
+      [old_worker] = live_workers_of(orch_uri)
+      caps = orchestrator_caps(orch_uri)
+      old_str = URI.to_string(old_worker)
+      new_worker = URI.parse(old_str <> "--g1")
+      new_str = URI.to_string(new_worker)
+
+      table = EzagentDomainChat.Routing.MentionRouting
+
+      # The routing rule the forward txn will rewrite (old → new).
+      [forward_rule] =
+        Enum.filter(Ezagent.Routing.RuleStore.list(table), fn row ->
+          old_str in (row.receivers || [])
+        end)
+
+      # An UNRELATED pre-existing rule that ALREADY names the NEW worker
+      # URI. The round-4 inverse revert was a blanket receiver-URI match
+      # → it would rewrite THIS rule too. The round-5 inverse revert is
+      # scoped to the forward txn's rule IDs → this rule must be UNTOUCHED.
+      {:ok, unrelated_rule} =
+        Ezagent.Routing.RuleStore.add(
+          table,
+          {:text_contains, "ph7r5h2-unrelated-#{uniq()}"},
+          [new_str],
+          User.admin_uri(),
+          source: "admin"
+        )
+
+      # Force the inverse revert to fail: DELETE the forward-txn rule row
+      # the instant the forward txn's UPDATE on `routing_rules` runs
+      # (synchronously, same connection → the delete joins the forward
+      # txn and commits with it). The inverse revert then finds its
+      # changed rule id GONE → {:revert_failed, {:rows_vanished, _}}.
+      delete_handler = {:r5_h2_forward_update_deleter, make_ref()}
+      done = :counters.new(1, [])
+      forward_rule_id = forward_rule.id
+
+      :telemetry.attach(
+        delete_handler,
+        [:ezagent_core, :repo, :query],
+        fn _e, _m, meta, _cfg ->
+          sql = to_string(meta[:query] || "")
+
+          if :counters.get(done, 1) == 0 and
+               String.contains?(sql, "UPDATE") and String.contains?(sql, "routing_rules") do
+            :counters.add(done, 1, 1)
+            # Same process + connection → part of the open forward txn.
+            EzagentCore.Repo.delete_all(
+              from(r in Ezagent.Routing.RuleStore, where: r.id == ^forward_rule_id)
+            )
+          end
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(delete_handler) end)
+
+      # Also force the post-commit reload to fail (drop the meta row) so
+      # the inverse revert is reached at all.
+      meta_table = Ezagent.RoutingRegistry.table()
+      [{_, _} = saved_meta] = :ets.lookup(meta_table, table)
+      on_exit(fn -> :ets.insert(meta_table, saved_meta) end)
+      :ets.delete(meta_table, table)
+
+      result =
+        Tools.update_agent_template("dev", tmpl_b,
+          caller: orch_uri,
+          caps: caps,
+          workspace_uri: @default_ws,
+          session_uri: session_uri
+        )
+
+      :ets.insert(meta_table, saved_meta)
+      :telemetry.detach(delete_handler)
+
+      # HIGH-2 r5 — the inverse revert failed → the swap HALTS with the
+      # distinct manual-repair error.
+      assert match?({:error, {:update_needs_manual_repair, _}}, result),
+             "an inverse-revert failure after a committed forward txn must HALT with " <>
+               "{:error, {:update_needs_manual_repair, _}}. Got: #{inspect(result)}"
+
+      {:error, {:update_needs_manual_repair, info}} = result
+      assert info[:reason] == :routing_revert_failed
+
+      # HIGH-2 r5 — BOTH workers stay alive; nothing terminated.
+      assert {:ok, _} = KindRegistry.lookup(old_worker),
+             "the OLD worker must NOT be terminated when the inverse revert fails"
+
+      assert {:ok, _} = KindRegistry.lookup(new_worker),
+             "the NEW worker must NOT be terminated when the inverse revert fails"
+
+      # HIGH-2 r5 — the UNRELATED pre-existing rule that names the new
+      # worker URI is UNTOUCHED — the inverse revert is scoped to the
+      # forward txn's rule IDs, NOT a blanket receiver-URI match.
+      unrelated_after = EzagentCore.Repo.get(Ezagent.Routing.RuleStore, unrelated_rule.id)
+
+      assert unrelated_after != nil,
+             "the unrelated pre-existing rule must still exist"
+
+      assert new_str in (unrelated_after.receivers || []),
+             "the unrelated rule naming the NEW worker URI must be UNTOUCHED by the " <>
+               "ID-scoped inverse revert — a blanket receiver-URI revert would have " <>
+               "rewritten it. receivers=#{inspect(unrelated_after.receivers)}"
+    end
+  end
+
+  # MEDIUM-3 r5 — the swap must never silently adopt an already-live
+  # worker. The round-4 candidate-URI preflight is a TOCTOU check; the
+  # round-5 fix is the `fresh?` signal checked AFTER instantiate.
+  describe "MEDIUM-3 r5 — the swap rejects an already-live candidate worker" do
+    test "a candidate URI registered in the TOCTOU window is rejected, not adopted" do
+      flavor = register_test_flavor()
+      tmpl_a = URI.new!("template://agent/default/ph7r5-m3-a-#{uniq()}")
+      tmpl_b = URI.new!("template://agent/default/ph7r5-m3-b-#{uniq()}")
+      :ok = create_agent_template(tmpl_a, agent_template_content(flavor, "config-a"))
+      :ok = create_agent_template(tmpl_b, agent_template_content(flavor, "config-b"))
+
+      st_uri = create_session_template("ph7r5-m3-team-#{uniq()}", [{"dev", tmpl_a}], [])
+      owner_uri = full_template_owner(@default_ws)
+
+      {:ok, %{session_uri: session_uri, orchestrator_uri: orch_uri}} =
+        Session.spawn_from_template(st_uri, owner_uri)
+
+      [old_worker] = live_workers_of(orch_uri)
+      caps = orchestrator_caps(orch_uri)
+
+      # The candidate replacement worker URI — old worker URI + `--g1`.
+      candidate = URI.parse(URI.to_string(old_worker) <> "--g1")
+
+      # Simulate the TOCTOU race: register a worker at the candidate URI
+      # AFTER the swap's round-4 preflight (which lives in Tools, earlier
+      # in the flow) but BEFORE `spawn_from_template_content` probes for
+      # the `fresh?` signal. The `template.instantiate` authz-grant fires
+      # in that exact window — attach a one-shot handler that spawns the
+      # worker there.
+      handler_id = {:r5_m3_toctou_spawn, make_ref()}
+      armed = :counters.new(1, [])
+      tmpl_b_str = URI.to_string(tmpl_b)
+
+      :telemetry.attach(
+        handler_id,
+        [:ezagent, :authz, :granted],
+        fn _e, _m, meta, _cfg ->
+          target = meta[:target]
+
+          if :counters.get(armed, 1) == 0 and meta[:action] == :instantiate and
+               is_struct(target, URI) and
+               String.starts_with?(URI.to_string(target), tmpl_b_str) do
+            :counters.add(armed, 1, 1)
+            {:ok, _pid} = Ezagent.SpawnRegistry.spawn(candidate)
+          end
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      result =
+        Tools.update_agent_template("dev", tmpl_b,
+          caller: orch_uri,
+          caps: caps,
+          workspace_uri: @default_ws,
+          session_uri: session_uri
+        )
+
+      :telemetry.detach(handler_id)
+
+      # MEDIUM-3 r5 — the swap REFUSES the already-live candidate; it
+      # does NOT silently adopt it.
+      assert result == {:error, {:update_aborted, :candidate_uri_already_live}},
+             "a candidate worker that became live in the TOCTOU window must abort the " <>
+               "swap with :candidate_uri_already_live — never a silent adoption. " <>
+               "Got: #{inspect(result)}"
+
+      # The OLD worker is untouched + alive — no outage.
+      assert {:ok, _} = KindRegistry.lookup(old_worker),
+             "the OLD worker must stay alive when the candidate is rejected"
+
+      # The slot still names the OLD worker — the swap did not commit.
+      wc = session_working_copy(session_uri)
+      {_n, _src, live, _gen} = find_slot(wc, "dev")
+
+      assert URI.to_string(live) == URI.to_string(old_worker),
+             "the slot must still name the OLD worker after a rejected swap"
+    end
+
+    test "spawn_from_template_content signals fresh? on first spawn, not on adoption" do
+      # The `fresh?` signal at its source — first spawn is fresh, a
+      # re-spawn at the same URI adopts (not fresh).
+      flavor = register_test_flavor()
+      tmpl = URI.new!("template://agent/default/ph7r5-m3sig-#{uniq()}")
+      content = agent_template_content(flavor, "sig")
+      :ok = create_agent_template(tmpl, content)
+
+      instance_uri = URI.parse("entity://agent/default/#{flavor}_ph7r5sig-#{uniq()}")
+      spawned_by = User.admin_uri()
+
+      assert {:ok, %{workers: [^instance_uri], fresh?: true}} =
+               Agent.spawn_from_template_content(content, instance_uri, spawned_by, @default_ws),
+             "the first spawn at a URI must report fresh?: true"
+
+      assert {:ok, %{workers: [^instance_uri], fresh?: false}} =
+               Agent.spawn_from_template_content(content, instance_uri, spawned_by, @default_ws),
+             "a re-spawn at an already-live URI must report fresh?: false (adoption)"
+    end
+  end
+
   # --- shared helpers ----------------------------------------------------
 
   # A test flavor whose Template Class spawns the worker Agent Kind and

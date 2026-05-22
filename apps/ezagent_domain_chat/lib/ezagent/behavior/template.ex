@@ -190,7 +190,7 @@ defmodule Ezagent.Behavior.Template do
           workspace_uri: {:option, :uri},
           spawned_by: {:option, :uri}
         },
-        returns: %{workers: {:list, :uri}},
+        returns: %{workers: {:list, :uri}, fresh?: :boolean},
         modes: [:call]
       }
     }
@@ -263,6 +263,11 @@ defmodule Ezagent.Behavior.Template do
   # AgentTemplate `:instantiate` — resolve flavor → Class, build the
   # Class data map, hand off to the in-process spawn helper (§1.6a). NO
   # `:read` self-dispatch.
+  #
+  # codex round-5 MEDIUM-3 — `spawn_from_template_content/4` now returns
+  # `%{workers: ..., fresh?: ...}`; the `fresh?` flag is threaded into
+  # the action result so `update_agent_template` can reject silently
+  # adopting an already-live worker.
   defp instantiate_agent_template(slice, args, ctx) do
     self_uri = Map.get(ctx, :self_uri)
 
@@ -271,14 +276,14 @@ defmodule Ezagent.Behavior.Template do
         with {:ok, instance_uri} <- resolve_instance_uri(content, args, self_uri, ctx),
              {:ok, workspace_uri} <- resolve_workspace_uri(content, args, self_uri),
              spawned_by <- resolve_spawned_by(args, ctx),
-             {:ok, workers} <-
+             {:ok, %{workers: workers, fresh?: fresh?}} <-
                Ezagent.Entity.Agent.spawn_from_template_content(
                  content,
                  instance_uri,
                  spawned_by,
                  workspace_uri
                ) do
-          {:ok, slice, %{workers: workers}}
+          {:ok, slice, %{workers: workers, fresh?: fresh?}}
         end
 
       _ ->
