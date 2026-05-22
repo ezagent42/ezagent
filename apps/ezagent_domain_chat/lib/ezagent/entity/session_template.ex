@@ -155,4 +155,133 @@ defmodule Ezagent.Entity.SessionTemplate do
     workspace = Keyword.get(opts, :workspace, "default")
     URI.new!("template://session/#{workspace}/#{name}@#{version_hash}")
   end
+
+  @doc """
+  Persist a SessionTemplate version (Phase 7 completion SPEC §1.7 (a)).
+
+  This is the persistence helper that stands on the Kind/`kind_snapshots`
+  model — a SessionTemplate version IS a Kind instance, there is no
+  separate "SessionTemplate row" table. Given the template content map
+  + the workspace, `persist_version/2`:
+
+  1. computes the content hash via `compute_version_hash/1` — this
+     content-addresses the version (identical content ⇒ identical
+     hash ⇒ identical URI);
+  2. builds the version URI `template://session/<ws>/<name>@<hash>`
+     via `build_uri/3`;
+  3. **spawns the SessionTemplate Kind** at that URI through
+     `Ezagent.SpawnRegistry.spawn/1` (the `template` scheme spawn fn
+     routes to `Ezagent.Kind.spawn(SessionTemplate, …)`);
+  4. dispatches `Ezagent.Behavior.Template` `:write` (`?action=template.write`)
+     to populate the Kind's `:template` content slice. Because
+     SessionTemplate is `{:snapshot, :on_change}`, that slice mutation
+     writes a `kind_snapshots` row keyed by the hash URI — the
+     persistence is the snapshot.
+
+  The `:write` action (PR-1) is the integrity guard: it is write-once
+  + hash-checked. It recomputes the hash over `content` and requires it
+  to equal the URI's `@<hash>` segment — `persist_version/2` builds the
+  URI from the same hash, so a correctly-formed call always passes; a
+  caller that hands content whose hash disagrees with a pre-built URI
+  is rejected with `{:error, :hash_mismatch}`.
+
+  ## Idempotent on a duplicate hash
+
+  Persisting the SAME content twice resolves to the SAME hash ⇒ the
+  SAME URI. The second call finds the Kind already alive
+  (`SpawnRegistry.spawn/1` → `{:error, {:already_started, pid}}`) and
+  re-dispatches `:write` with identical content — the `:write` action's
+  identical-retry no-op (`check_immutable/2` `same, same`) returns
+  `{:ok, …}`. Both calls return `{:ok, uri}`; exactly one
+  `kind_snapshots` row exists; no error is raised. This is the
+  content-addressing idempotency convention of SPEC §1.7 (a).
+
+  ## Caller context
+
+  `persist_version/2` dispatches `:write` with the bootstrap principal's
+  authority (`Ezagent.Entity.User.admin_uri/0` + `admin_caps/0`) — the
+  same system-internal convention `Ezagent.Template.GenericSession` and
+  `Ezagent.Entity.Session.spawn_from_template/2` use for in-process
+  orchestration dispatch. The WHO-may-save authorization is a separate
+  concern: PR-5's `update_template` / `save_template_as` tools run the
+  owner-cap preflight (§1.4) at the tool boundary BEFORE calling this
+  helper. The content-hash write-once guard inside `:write` is the
+  version-integrity check.
+
+  ## Returns
+
+  - `{:ok, uri}` — the version was persisted (or already existed with
+    identical content); `uri` is the `template://session/...@<hash>`
+    URI of the version.
+  - `{:error, reason}` — the spawn failed, or the `:write` dispatch
+    failed (e.g. `:hash_mismatch` for caller-supplied content that
+    doesn't agree with its hash).
+  """
+  @spec persist_version(map(), URI.t() | String.t()) ::
+          {:ok, URI.t()} | {:error, term()}
+  def persist_version(content, workspace) when is_map(content) do
+    name = Map.get(content, :name) || Map.get(content, "name")
+    workspace_segment = workspace_segment(workspace)
+
+    cond do
+      not (is_binary(name) and name != "") ->
+        {:error, :missing_template_name}
+
+      is_nil(workspace_segment) ->
+        {:error, :invalid_workspace}
+
+      true ->
+        hash = compute_version_hash(content)
+        uri = build_uri(name, hash, workspace: workspace_segment)
+
+        with {:ok, _pid} <- ensure_kind_alive(uri),
+             {:ok, _result} <- dispatch_write(uri, content) do
+          {:ok, uri}
+        end
+    end
+  end
+
+  # Spawn the SessionTemplate Kind at the hash URI. A duplicate-hash
+  # persist finds the Kind already alive — `{:already_started, pid}` is
+  # idempotency, treated as success (SPEC §1.7 (a)).
+  defp ensure_kind_alive(uri) do
+    case Ezagent.SpawnRegistry.spawn(uri) do
+      {:ok, pid} -> {:ok, pid}
+      {:error, {:already_started, pid}} -> {:ok, pid}
+      {:error, _} = err -> err
+    end
+  end
+
+  # Dispatch `Ezagent.Behavior.Template` `:write` to populate the
+  # `:template` slice — the `{:snapshot, :on_change}` mutation writes
+  # the `kind_snapshots` row. An identical-content retry no-ops as
+  # `{:ok, …}` (the write-once Kind is not corrupted).
+  defp dispatch_write(uri, content) do
+    target = URI.parse("#{URI.to_string(uri)}?action=template.write")
+
+    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      target: target,
+      mode: :call,
+      args: %{content: content},
+      ctx: %{
+        caller: Ezagent.Entity.User.admin_uri(),
+        caps: Ezagent.Entity.User.admin_caps(),
+        reply: {:caller_inbox, self()}
+      }
+    })
+  end
+
+  # The workspace path segment (no scheme prefix) for `build_uri/3`.
+  defp workspace_segment(%URI{scheme: "workspace", host: host})
+       when is_binary(host) and host != "",
+       do: host
+
+  defp workspace_segment("workspace://" <> rest) when rest != "", do: rest
+
+  defp workspace_segment(name) when is_binary(name) and name != "" do
+    # Bare workspace name (no scheme) — accept it directly.
+    if String.contains?(name, "/"), do: nil, else: name
+  end
+
+  defp workspace_segment(_), do: nil
 end

@@ -69,6 +69,13 @@ defmodule EzagentCore.Application do
     # `system://routing/default`, spawned below.
     :ok = register_system_kind()
 
+    # Phase 7 completion PR-3 (SPEC §1.7 (c)) — hydrate the TemplateTags
+    # ETS read cache from the `template_tags` SQLite table, the
+    # `Ezagent.Routing.RuleStore.load_into_registry/1` analogue. Runs
+    # after the Repo + Migrator children are up (children ④); EtsOwner
+    # (child ①) already created the cache table.
+    :ok = Ezagent.TemplateTags.load_into_registry()
+
     # Post-Phase-5 (Allen 2026-05-17): start distributed Erlang as the
     # named runtime node so `mix esr` (CLI) can reach us via :rpc.call.
     # Cookie + node name from Ezagent.Runtime. Skip in test env to avoid
