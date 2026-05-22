@@ -17,23 +17,55 @@ defmodule EzagentPluginLiveview.FeishuBindingsLive do
      `EzagentPluginFeishu.SessionBinding`'s public API (only `bind/2`
      which upserts `enabled: true`, and `unbind/1`), so an enable/disable
      toggle is deferred until that API is added.
+
+  ## URI fields use `uri_picker` (fix 2026-05-22)
+
+  The V1 UI `uri_picker` SPEC scoped 6 picker sites; this page's
+  session-binding form postdated the SPEC, so its two ESR-URI fields
+  (`user_uri`, `session_uri`) stayed raw text inputs. They are now
+  `EzagentDomainUi.Primitives.uri_picker/1` `:single` comboboxes:
+
+  - `user_uri` → picker over entities (`Ezagent.UI.UriOptions.entities/2`)
+  - `session_uri` → picker over sessions (`Ezagent.UI.UriOptions.sessions/2`)
+
+  `open_id` / `chat_id` are Feishu identifiers, NOT URIs — they stay
+  text inputs. Both pickers set `allow_freetext: true`: a binding is a
+  *declaration* (a Feishu chat may be bound to a session spawned from a
+  template later; a user may be bound before its entity is live), so an
+  operator must be able to name a not-yet-live URI. The shared
+  `Ezagent.UI.UriOptions.valid_for?/4` revalidates every submit (SPEC
+  §1.6) — well-formed + in-workspace, no liveness requirement — so the
+  free-text path is still tenant-safe.
   """
 
   use Phoenix.LiveView
   alias EzagentDomainUi.WorkspaceShell
   alias EzagentPluginLiveview.AppShell
+  alias Ezagent.UI.UriOptions
   use EzagentDomainUi.Components
+  use EzagentDomainUi.Primitives
   import Phoenix.Component
 
   alias EzagentPluginFeishu.{BindingPolicy, SessionBinding, UserBinding}
 
   @impl true
   def mount(_params, session, socket) do
+    # `:require_entity` on_mount has already set `current_entity_uri`
+    # (a `%URI{}`) + `current_workspace_uri` in socket.assigns. Keep
+    # `admin_uri` (a string, what `UserBinding.bind/3` / `BindingPolicy`
+    # expect as `bound_by`) derived from the session slot.
     admin_uri =
       case Map.get(session || %{}, "current_entity_uri") do
         nil -> "entity://user/system/admin"
         s -> s
       end
+
+    # V1 UI `uri_picker` options. Caller-authorized: `UriOptions`
+    # resolves workspace authority itself from `current_entity_uri` +
+    # `current_workspace_uri`. A non-system caller viewing a foreign
+    # workspace gets `[]` (never leaks).
+    caller_uri = socket.assigns[:current_entity_uri]
+    workspace_uri = socket.assigns[:current_workspace_uri]
 
     {:ok,
      socket
@@ -42,7 +74,9 @@ defmodule EzagentPluginLiveview.FeishuBindingsLive do
      |> assign(:session_bindings, SessionBinding.list_all())
      |> assign(:flash_info, nil)
      |> assign(:flash_error, nil)
-     |> assign(:bind_form, to_form(%{"open_id" => "", "user_uri" => "entity://user/"}, as: "bind"))
+     |> assign(:entity_options, UriOptions.entities(caller_uri, workspace_uri))
+     |> assign(:session_options, UriOptions.sessions(caller_uri, workspace_uri))
+     |> assign(:bind_form, to_form(%{"open_id" => "", "user_uri" => ""}, as: "bind"))
      |> assign(
        :session_bind_form,
        to_form(%{"chat_id" => "", "session_uri" => ""}, as: "session_bind")
@@ -54,9 +88,26 @@ defmodule EzagentPluginLiveview.FeishuBindingsLive do
     open_id = String.trim(open_id)
     user_uri = String.trim(user_uri)
 
+    # V1 UI PR-1 (SPEC §1.6) — the uri_picker hidden input is untrusted
+    # user-controlled DOM. Revalidate server-side via the SHARED
+    # validator: well-formed entity URI, in the caller's workspace (or
+    # caller holds cross-workspace authority). `valid_for?/4` does NOT
+    # require liveness — a binding may name an entity not yet spawned.
+    caller_uri = socket.assigns[:current_entity_uri]
+    workspace_uri = socket.assigns[:current_workspace_uri]
+
     cond do
-      open_id == "" or user_uri == "" or user_uri == "entity://user/" ->
+      open_id == "" or user_uri == "" ->
         {:noreply, assign(socket, :flash_error, "open_id and user_uri are required")}
+
+      not UriOptions.valid_for?(caller_uri, workspace_uri, user_uri, [:entity]) ->
+        {:noreply,
+         assign(
+           socket,
+           :flash_error,
+           "Rejected #{inspect(user_uri)} — must be an entity URI in this workspace. " <>
+             "Pick from the list."
+         )}
 
       true ->
         case UserBinding.bind(open_id, user_uri, socket.assigns.admin_uri) do
@@ -68,7 +119,7 @@ defmodule EzagentPluginLiveview.FeishuBindingsLive do
              |> assign(:bindings, UserBinding.list_all())
              |> assign(:flash_info, "Bound #{open_id} → #{user_uri}")
              |> assign(:flash_error, nil)
-             |> assign(:bind_form, to_form(%{"open_id" => "", "user_uri" => "entity://user/"}, as: "bind"))}
+             |> assign(:bind_form, to_form(%{"open_id" => "", "user_uri" => ""}, as: "bind"))}
 
           {:error, reason} ->
             {:noreply, assign(socket, :flash_error, "bind failed: #{inspect(reason)}")}
@@ -103,6 +154,14 @@ defmodule EzagentPluginLiveview.FeishuBindingsLive do
     chat_id = String.trim(chat_id)
     session_uri = String.trim(session_uri)
 
+    # V1 UI PR-1 (SPEC §1.6) — the uri_picker hidden input is untrusted
+    # user-controlled DOM. Revalidate server-side via the SHARED
+    # validator: well-formed session URI, in the caller's workspace (or
+    # caller holds cross-workspace authority). This subsumes the prior
+    # `starts_with?("session://")` string check.
+    caller_uri = socket.assigns[:current_entity_uri]
+    workspace_uri = socket.assigns[:current_workspace_uri]
+
     cond do
       chat_id == "" or session_uri == "" ->
         {:noreply, assign(socket, :flash_error, "chat_id and session_uri are required")}
@@ -111,8 +170,14 @@ defmodule EzagentPluginLiveview.FeishuBindingsLive do
         {:noreply,
          assign(socket, :flash_error, "chat_id must start with `oc_` (Feishu open-chat-id)")}
 
-      not String.starts_with?(session_uri, "session://") ->
-        {:noreply, assign(socket, :flash_error, "session_uri must be a session:// URI")}
+      not UriOptions.valid_for?(caller_uri, workspace_uri, session_uri, [:session]) ->
+        {:noreply,
+         assign(
+           socket,
+           :flash_error,
+           "Rejected #{inspect(session_uri)} — must be a session URI in this workspace. " <>
+             "Pick from the list."
+         )}
 
       true ->
         case SessionBinding.bind(chat_id, session_uri) do
@@ -151,7 +216,9 @@ defmodule EzagentPluginLiveview.FeishuBindingsLive do
   def render(assigns) do
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
-        URI.to_string(Map.get(assigns, :current_entity_uri) || URI.parse("entity://user/system/admin"))
+        URI.to_string(
+          Map.get(assigns, :current_entity_uri) || URI.parse("entity://user/system/admin")
+        )
       end)
 
     ~H"""
@@ -170,159 +237,193 @@ defmodule EzagentPluginLiveview.FeishuBindingsLive do
           current_path="/plugins/feishu/bindings"
           status={%{agents_alive: 0, bridges: 0, debug_events: 0, version: "dev"}}
         >
-      <:main_window>
-        <div class="flex-1 overflow-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
-      <.page_header title="Feishu bindings">
-        <:subtitle>
-          Two binding kinds: <strong>user bindings</strong> (open_id ↔ user URI,
-          grants chat caps) and <strong>session bindings</strong> (chat_id ↔
-          session URI, mirrors a session to a Feishu chat).
-          <a href="/plugins" class="text-zinc-600 dark:text-zinc-400 underline hover:text-zinc-900 dark:hover:text-zinc-100 ml-1">← Plugins</a>
-        </:subtitle>
-      </.page_header>
+          <:main_window>
+            <div class="flex-1 overflow-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
+              <.page_header title="Feishu bindings">
+                <:subtitle>
+                  Two binding kinds: <strong>user bindings</strong>
+                  (open_id ↔ user URI,
+                  grants chat caps) and <strong>session bindings</strong>
+                  (chat_id ↔
+                  session URI, mirrors a session to a Feishu chat).
+                  <a
+                    href="/plugins"
+                    class="text-zinc-600 dark:text-zinc-400 underline hover:text-zinc-900 dark:hover:text-zinc-100 ml-1"
+                  >
+                    ← Plugins
+                  </a>
+                </:subtitle>
+              </.page_header>
 
-      <p :if={@flash_info} class="text-emerald-700 dark:text-emerald-300 text-sm mb-3">{@flash_info}</p>
-      <p :if={@flash_error} class="text-red-700 dark:text-red-300 text-sm mb-3">{@flash_error}</p>
+              <p :if={@flash_info} class="text-emerald-700 dark:text-emerald-300 text-sm mb-3">
+                {@flash_info}
+              </p>
+              <p :if={@flash_error} class="text-red-700 dark:text-red-300 text-sm mb-3">
+                {@flash_error}
+              </p>
 
-      <h2 class="text-sm font-semibold text-zinc-900 dark:text-zinc-100 mb-2">User bindings</h2>
+              <h2 class="text-sm font-semibold text-zinc-900 dark:text-zinc-100 mb-2">
+                User bindings
+              </h2>
 
-      <.card class="mb-6">
-        <:header>Bind open_id ↔ user URI</:header>
-        <.form for={@bind_form} phx-submit="bind" class="grid grid-cols-2 gap-2 items-end">
-          <label class="text-xs">
-            Feishu open_id
-            <input
-              type="text"
-              name="bind[open_id]"
-              placeholder="ou_6b11faf8e9..."
-              class="block w-full px-2 py-1 text-sm border border-zinc-300 dark:border-zinc-700 rounded-md font-mono"
-            />
-          </label>
-          <label class="text-xs">
-            local user URI
-            <input
-              type="text"
-              name="bind[user_uri]"
-              value="entity://user/"
-              class="block w-full px-2 py-1 text-sm border border-zinc-300 dark:border-zinc-700 rounded-md font-mono"
-            />
-          </label>
-          <div class="col-span-2 flex justify-end">
-            <.button type="submit" variant="primary" size="sm">Bind + grant cap</.button>
-          </div>
-        </.form>
-      </.card>
+              <.card class="mb-6">
+                <:header>Bind open_id ↔ user URI</:header>
+                <.form for={@bind_form} phx-submit="bind" class="grid grid-cols-2 gap-2 items-start">
+                  <label class="text-xs text-zinc-700 dark:text-zinc-300">
+                    Feishu open_id
+                    <input
+                      type="text"
+                      name="bind[open_id]"
+                      placeholder="ou_6b11faf8e9..."
+                      class="block w-full px-2 py-1 mt-1 text-sm border border-zinc-300 dark:border-zinc-700 rounded-md font-mono bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
+                    />
+                  </label>
+                  <%!--
+            uri_picker :single over in-workspace entities. allow_freetext
+            ON so an operator can bind a user before its entity Kind is
+            live. Submits bind[user_uri] as a string; revalidated
+            server-side via UriOptions.valid_for?/4.
+          --%>
+                  <.uri_picker
+                    name="bind[user_uri]"
+                    mode={:single}
+                    kinds={[:entity]}
+                    options={@entity_options}
+                    allow_freetext={true}
+                    label="local user URI"
+                    placeholder="pick the local entity to bind"
+                  />
+                  <div class="col-span-2 flex justify-end">
+                    <.button type="submit" variant="primary" size="sm">Bind + grant cap</.button>
+                  </div>
+                </.form>
+              </.card>
 
-      <.card class="mb-8">
-        <:header>Current user bindings ({length(@bindings)})</:header>
-        <p :if={@bindings == []} class="text-zinc-500 italic text-sm">
-          No bindings yet. Unbound Feishu users see the bot react with EYES — bind them above to enable chat.
-        </p>
-        <table :if={@bindings != []} class="w-full text-sm">
-          <thead class="bg-zinc-50 dark:bg-zinc-950 border-b border-zinc-200 dark:border-zinc-800">
-            <tr class="text-left text-xs uppercase tracking-wide text-zinc-500">
-              <th class="px-2 py-2">open_id</th>
-              <th class="py-2">user_uri</th>
-              <th class="py-2">bound_by</th>
-              <th class="py-2">when</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr :for={b <- @bindings} class="border-b border-zinc-100 dark:border-zinc-900 last:border-0">
-              <td class="px-2 py-2 font-mono text-xs">{b.open_id}</td>
-              <td class="py-2 font-mono text-xs">{b.user_uri}</td>
-              <td class="py-2 font-mono text-xs text-zinc-500">{b.bound_by}</td>
-              <td class="py-2 text-xs text-zinc-500">{DateTime.to_iso8601(b.bound_at)}</td>
-              <td class="py-2 text-right pr-2">
-                <.button variant="danger" size="sm" phx-click="unbind" phx-value-open-id={b.open_id}>
-                  unbind
-                </.button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </.card>
+              <.card class="mb-8">
+                <:header>Current user bindings ({length(@bindings)})</:header>
+                <p :if={@bindings == []} class="text-zinc-500 italic text-sm">
+                  No bindings yet. Unbound Feishu users see the bot react with EYES — bind them above to enable chat.
+                </p>
+                <table :if={@bindings != []} class="w-full text-sm">
+                  <thead class="bg-zinc-50 dark:bg-zinc-950 border-b border-zinc-200 dark:border-zinc-800">
+                    <tr class="text-left text-xs uppercase tracking-wide text-zinc-500">
+                      <th class="px-2 py-2">open_id</th>
+                      <th class="py-2">user_uri</th>
+                      <th class="py-2">bound_by</th>
+                      <th class="py-2">when</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr
+                      :for={b <- @bindings}
+                      class="border-b border-zinc-100 dark:border-zinc-900 last:border-0"
+                    >
+                      <td class="px-2 py-2 font-mono text-xs">{b.open_id}</td>
+                      <td class="py-2 font-mono text-xs">{b.user_uri}</td>
+                      <td class="py-2 font-mono text-xs text-zinc-500">{b.bound_by}</td>
+                      <td class="py-2 text-xs text-zinc-500">{DateTime.to_iso8601(b.bound_at)}</td>
+                      <td class="py-2 text-right pr-2">
+                        <.button
+                          variant="danger"
+                          size="sm"
+                          phx-click="unbind"
+                          phx-value-open-id={b.open_id}
+                        >
+                          unbind
+                        </.button>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </.card>
 
-      <h2 class="text-sm font-semibold text-zinc-900 dark:text-zinc-100 mb-2">Session bindings</h2>
+              <h2 class="text-sm font-semibold text-zinc-900 dark:text-zinc-100 mb-2">
+                Session bindings
+              </h2>
 
-      <.card class="mb-6">
-        <:header>Bind chat_id ↔ session URI</:header>
-        <.form
-          for={@session_bind_form}
-          phx-submit="bind_session"
-          class="grid grid-cols-2 gap-2 items-end"
-        >
-          <label class="text-xs">
-            Feishu chat_id
-            <input
-              type="text"
-              name="session_bind[chat_id]"
-              placeholder="oc_abc123..."
-              class="block w-full px-2 py-1 text-sm border border-zinc-300 dark:border-zinc-700 rounded-md font-mono"
-            />
-          </label>
-          <label class="text-xs">
-            session URI
-            <input
-              type="text"
-              name="session_bind[session_uri]"
-              placeholder="session://default/default/main"
-              class="block w-full px-2 py-1 text-sm border border-zinc-300 dark:border-zinc-700 rounded-md font-mono"
-            />
-          </label>
-          <div class="col-span-2 flex justify-end">
-            <.button type="submit" variant="primary" size="sm">Bind chat</.button>
-          </div>
-        </.form>
-      </.card>
-
-      <.card>
-        <:header>Current session bindings ({length(@session_bindings)})</:header>
-        <p :if={@session_bindings == []} class="text-zinc-500 italic text-sm">
-          No session bindings yet. Bind a Feishu chat_id above to mirror a
-          session's messages into a Feishu chat (and route replies back in).
-        </p>
-        <table :if={@session_bindings != []} class="w-full text-sm">
-          <thead class="bg-zinc-50 dark:bg-zinc-950 border-b border-zinc-200 dark:border-zinc-800">
-            <tr class="text-left text-xs uppercase tracking-wide text-zinc-500">
-              <th class="px-2 py-2">chat_id</th>
-              <th class="py-2">session_uri</th>
-              <th class="py-2">enabled</th>
-              <th class="py-2">when</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr
-              :for={b <- @session_bindings}
-              class="border-b border-zinc-100 dark:border-zinc-900 last:border-0"
-            >
-              <td class="px-2 py-2 font-mono text-xs">{b.chat_id}</td>
-              <td class="py-2 font-mono text-xs">{b.session_uri}</td>
-              <td class="py-2">
-                <.badge variant={if b.enabled, do: "success", else: "warning"}>
-                  {if b.enabled, do: "enabled", else: "disabled"}
-                </.badge>
-              </td>
-              <td class="py-2 text-xs text-zinc-500">{DateTime.to_iso8601(b.created_at)}</td>
-              <td class="py-2 text-right pr-2">
-                <.button
-                  variant="danger"
-                  size="sm"
-                  phx-click="unbind_session"
-                  phx-value-chat-id={b.chat_id}
+              <.card class="mb-6">
+                <:header>Bind chat_id ↔ session URI</:header>
+                <.form
+                  for={@session_bind_form}
+                  phx-submit="bind_session"
+                  class="grid grid-cols-2 gap-2 items-start"
                 >
-                  unbind
-                </.button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </.card>
-        </div>
-      </:main_window>
+                  <label class="text-xs text-zinc-700 dark:text-zinc-300">
+                    Feishu chat_id
+                    <input
+                      type="text"
+                      name="session_bind[chat_id]"
+                      placeholder="oc_abc123..."
+                      class="block w-full px-2 py-1 mt-1 text-sm border border-zinc-300 dark:border-zinc-700 rounded-md font-mono bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
+                    />
+                  </label>
+                  <%!--
+            uri_picker :single over in-workspace sessions. allow_freetext
+            ON so an operator can bind a chat to a session spawned from a
+            template later. Submits session_bind[session_uri] as a
+            string; revalidated server-side via UriOptions.valid_for?/4.
+          --%>
+                  <.uri_picker
+                    name="session_bind[session_uri]"
+                    mode={:single}
+                    kinds={[:session]}
+                    options={@session_options}
+                    allow_freetext={true}
+                    label="session URI"
+                    placeholder="session://default/default/main"
+                  />
+                  <div class="col-span-2 flex justify-end">
+                    <.button type="submit" variant="primary" size="sm">Bind chat</.button>
+                  </div>
+                </.form>
+              </.card>
 
+              <.card>
+                <:header>Current session bindings ({length(@session_bindings)})</:header>
+                <p :if={@session_bindings == []} class="text-zinc-500 italic text-sm">
+                  No session bindings yet. Bind a Feishu chat_id above to mirror a
+                  session's messages into a Feishu chat (and route replies back in).
+                </p>
+                <table :if={@session_bindings != []} class="w-full text-sm">
+                  <thead class="bg-zinc-50 dark:bg-zinc-950 border-b border-zinc-200 dark:border-zinc-800">
+                    <tr class="text-left text-xs uppercase tracking-wide text-zinc-500">
+                      <th class="px-2 py-2">chat_id</th>
+                      <th class="py-2">session_uri</th>
+                      <th class="py-2">enabled</th>
+                      <th class="py-2">when</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr
+                      :for={b <- @session_bindings}
+                      class="border-b border-zinc-100 dark:border-zinc-900 last:border-0"
+                    >
+                      <td class="px-2 py-2 font-mono text-xs">{b.chat_id}</td>
+                      <td class="py-2 font-mono text-xs">{b.session_uri}</td>
+                      <td class="py-2">
+                        <.badge variant={if b.enabled, do: "success", else: "warning"}>
+                          {if b.enabled, do: "enabled", else: "disabled"}
+                        </.badge>
+                      </td>
+                      <td class="py-2 text-xs text-zinc-500">{DateTime.to_iso8601(b.created_at)}</td>
+                      <td class="py-2 text-right pr-2">
+                        <.button
+                          variant="danger"
+                          size="sm"
+                          phx-click="unbind_session"
+                          phx-value-chat-id={b.chat_id}
+                        >
+                          unbind
+                        </.button>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </.card>
+            </div>
+          </:main_window>
         </WorkspaceShell.workspace_shell>
       </:body>
     </AppShell.app_shell>
