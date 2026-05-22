@@ -71,6 +71,23 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
   - **MEDIUM-3 r4** — `SlotNames.preflight_live_worker_uris/1` rejects a
     candidate worker URI already live in `KindRegistry` as an orphan.
 
+  ## Round 10 — codex adversarial-review of hardening round 9 (#249)
+
+  Two Generator failure-exit orphan-leak paths.
+
+  - **HIGH-1 r10** — `spawn_orchestrator/3` was not wrapped in
+    `guard/2`; an orchestrator-spawn failure after the session was
+    created + bound returned directly from `do_spawn/4` — leaking a live
+    Session Kind + its `WorkspaceRegistry` binding. It (and the bind
+    before it) are now guarded.
+  - **HIGH-2 r10** — a slot could start its Agent Kind then fail in a
+    later step (cc PTY startup) and return a bare `{:error, _}` with no
+    worker URI — so the Generator's `acc`-only accumulator never learned
+    it and `cleanup_partial/1` could not terminate it. The Template
+    Class now owns its own partial-spawn teardown: a fresh-start then a
+    later-step failure terminates the Kind it started before returning
+    the error. A per-slot instantiate is then all-or-nothing.
+
   Every test drives the production dispatch path — no mocks. A no-PTY
   synthetic flavor spawns the plain `Ezagent.Entity.Agent` Kind.
   """
@@ -195,6 +212,57 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
     @impl true
     def instantiate(_tmpl_name, tmpl, _workspace_uri) when is_map(tmpl),
       do: {:error, :deliberate_slot2_failure}
+
+    def instantiate(_n, tmpl, _ws), do: {:error, {:invalid_template, tmpl}}
+  end
+
+  # codex round-10 HIGH-2 — a Template Class that faithfully reproduces
+  # the cc/echo round-10 self-cleanup contract: it FRESHLY starts the
+  # Agent Kind (`SpawnRegistry.spawn_detailed/1` → `:started`), then a
+  # LATER step of the SAME instantiate fails (the cc PTY / `claude`
+  # startup is the production analogue), so it TERMINATES the Agent Kind
+  # it itself started — via the tier-clean `Ezagent.Kind.terminate/1` —
+  # BEFORE returning a bare `{:error, _}`. Net: the instantiate either
+  # fully succeeds or leaves ZERO residue. Used as a Generator slot to
+  # prove that a self-cleaning slot leaves no orphan even though the
+  # Generator's `instantiate_agent_slots/4` `acc`-only accumulator never
+  # learns the failed slot's worker URI.
+  #
+  # An `:already_started` Kind is NOT terminated — this call did not
+  # create it (mirrors the cc/echo `:already_started` early return).
+  defmodule PartialSpawnFlavorClass do
+    @moduledoc false
+    @behaviour Ezagent.Kind.Template
+
+    @impl true
+    def template_name, do: "phase7.r10.partial-spawn.agent"
+
+    @impl true
+    def validate(tmpl) when is_map(tmpl),
+      do: if(Map.has_key?(tmpl, "agent_uri"), do: :ok, else: {:error, :missing_agent_uri})
+
+    def validate(_), do: {:error, :not_a_map}
+
+    @impl true
+    def instantiate(_tmpl_name, %{"agent_uri" => uri_str}, _workspace_uri) do
+      agent_uri = URI.parse(uri_str)
+
+      case Ezagent.SpawnRegistry.spawn_detailed(agent_uri) do
+        {:ok, :started, _pid} ->
+          # The Agent Kind is now LIVE. A later step (the PTY sidecar
+          # in the real cc/echo class) fails — so the spawner undoes
+          # its OWN partial spawn before returning the error.
+          _ = Ezagent.Kind.terminate(agent_uri)
+          {:error, :deliberate_post_kind_start_failure}
+
+        {:ok, :already_started, _pid} ->
+          # This call did not create the Kind — do NOT terminate it.
+          {:ok, [agent_uri], %{fresh?: false}}
+
+        {:error, _} = err ->
+          err
+      end
+    end
 
     def instantiate(_n, tmpl, _ws), do: {:error, {:invalid_template, tmpl}}
   end
@@ -2528,7 +2596,215 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
     end
   end
 
+  # ════════════════════════════════════════════════════════════════════
+  # ROUND 10 — codex adversarial-review of hardening round 9 (#249).
+  # Two Generator failure-exit orphan-leak paths.
+  # ════════════════════════════════════════════════════════════════════
+
+  # ── HIGH-1 (round 10) — `spawn_orchestrator/3` was NOT wrapped in
+  # `guard/2`, so an orchestrator-spawn failure AFTER the session was
+  # created + WorkspaceRegistry-bound returned directly from the `with`
+  # in `do_spawn/4` — `cleanup_partial/1` never ran — leaking a live
+  # Session Kind and its workspace binding. `spawn_orchestrator/3` (and
+  # the bind before it) are now guarded; a failure tears the session
+  # down. `cleanup_partial/1` handles a `nil` `orchestrator_uri` (the
+  # orchestrator was never created in this failure path). ──────────────
+
+  describe "HIGH-1 r10 — an orchestrator-spawn failure tears down the bound session" do
+    test "the cc flavor missing → spawn_orchestrator fails → no live session, no binding" do
+      # Force `spawn_orchestrator/3` to FAIL via a real production
+      # failure mode. `spawn_orchestrator/3` builds an orchestrator URI
+      # `entity://agent/<ws>/cc_orchestrator-<disc>` (flavor `cc`) and
+      # spawns it via `Agent.spawn/4` → the `entity://` SpawnRegistry fn
+      # → `lookup_kind_module_for_agent/1` → flavor-prefix resolution.
+      # A `cc` flavor missing from `AgentFlavorRegistry` (the documented
+      # boot-ordering case) yields `{:error, {:no_kind_module_for_agent,
+      # _}}` — exactly the failure exit HIGH-1 guards. We remove the
+      # `cc` flavor entry for the duration of this single (async: false)
+      # run and restore it immediately after.
+      cc_decl =
+        case AgentFlavorRegistry.lookup("cc") do
+          {:ok, decl} -> decl
+          :error -> nil
+        end
+
+      # Slot uses a normal test flavor so slot preflight passes — the
+      # ONLY failure point is the orchestrator spawn, which runs BEFORE
+      # any slot. The session has been created + bound by then.
+      slot_flavor = register_test_flavor()
+      slot_tmpl = URI.new!("template://agent/default/ph7r10-h1-slot-#{uniq()}")
+      :ok = create_agent_template(slot_tmpl, agent_template_content(slot_flavor, "slot"))
+
+      st_uri = create_session_template("ph7r10-h1-team-#{uniq()}", [{"dev", slot_tmpl}], [])
+      owner_uri = full_template_owner(@default_ws)
+
+      sessions_before =
+        MapSet.new(Ezagent.WorkspaceRegistry.list_all(), fn {s, _} -> s end)
+
+      lineage_before = MapSet.new(AgentLineage.list_all(), fn {a, _} -> a end)
+      gen_kinds_before = live_generated_session_kinds()
+
+      result =
+        try do
+          # Remove the `cc` flavor — the orchestrator can no longer be
+          # spawned. The `cc` template-class is keyed on the table by
+          # the bare flavor string "cc".
+          if cc_decl, do: :ets.delete(AgentFlavorRegistry.table(), "cc")
+          Session.spawn_from_template(st_uri, owner_uri)
+        after
+          # Restore immediately so no other test sees a missing flavor.
+          if cc_decl, do: :ets.insert(AgentFlavorRegistry.table(), {"cc", cc_decl})
+        end
+
+      # The Generator MUST fail — the orchestrator spawn could not
+      # resolve a Kind module for the `cc`-flavored orchestrator URI.
+      assert match?({:error, _}, result),
+             "the Generator must fail when spawn_orchestrator cannot resolve the cc flavor. " <>
+               "Got: #{inspect(result)}"
+
+      # ── (1) NO leaked WorkspaceRegistry binding ──
+      # `spawn_fresh_session` created the Session Kind and the guarded
+      # `WorkspaceRegistry.bind` bound it. `cleanup_partial/1` must
+      # `unbind` the session — pre-round-10 the binding leaked.
+      sessions_after =
+        MapSet.new(Ezagent.WorkspaceRegistry.list_all(), fn {s, _} -> s end)
+
+      leaked_bindings = MapSet.difference(sessions_after, sessions_before)
+
+      assert MapSet.size(leaked_bindings) == 0,
+             "an orchestrator-spawn failure must leave NO WorkspaceRegistry binding — " <>
+               "the bound session must be unbound by cleanup_partial. " <>
+               "Leaked: #{inspect(MapSet.to_list(leaked_bindings))}"
+
+      # ── (2) NO live generated Session Kind from THIS run ──
+      # Set-difference against the pre-run snapshot — other tests in
+      # this (async: false) file leave their own `session://generic/`
+      # Kinds; only a NEW one is this run's leak.
+      leaked_gen_kinds =
+        MapSet.difference(live_generated_session_kinds(), gen_kinds_before)
+
+      assert MapSet.size(leaked_gen_kinds) == 0,
+             "an orchestrator-spawn failure must leave NO live generated Session Kind — " <>
+               "cleanup_partial must terminate it. " <>
+               "Leaked: #{inspect(MapSet.to_list(leaked_gen_kinds))}"
+
+      # ── (3) NO orphan lineage (the orchestrator never reached
+      # AgentLineage; the slots never ran — the failure is BEFORE
+      # slot instantiation) ──
+      lineage_after = MapSet.new(AgentLineage.list_all(), fn {a, _} -> a end)
+
+      assert MapSet.equal?(lineage_before, lineage_after),
+             "an orchestrator-spawn failure must leave AgentLineage untouched"
+    end
+  end
+
+  # ── HIGH-2 (round 10) — a slot could start its Agent Kind then fail
+  # in a LATER step (cc PTY startup) and return a bare `{:error, _}`
+  # with NO worker URI — so the Generator's `instantiate_agent_slots/4`
+  # `acc`-only accumulator never learned the just-started worker and
+  # `cleanup_partial/1` could not terminate it. The fix: the Template
+  # Class owns its OWN partial-spawn teardown — if it freshly started
+  # the Agent Kind and a later step fails, it terminates that Kind
+  # before returning the error (`Ezagent.Kind.terminate/1`). A per-slot
+  # instantiate then either fully succeeds or leaves ZERO residue. ─────
+
+  describe "HIGH-2 r10 — a slot whose Kind started then failed self-cleans, no orphan" do
+    test "a Template Class that starts the Kind then fails leaves zero residue" do
+      # `PartialSpawnFlavorClass` reproduces the production cc/echo
+      # round-10 contract: `SpawnRegistry.spawn_detailed/1` STARTS the
+      # Agent Kind, then a later step fails, so it `Ezagent.Kind.terminate/1`s
+      # the Kind it started before returning `{:error, _}`. As a
+      # Generator slot, the Generator never learns this worker's URI
+      # (the slot returns a bare `{:error, _}`), so the self-cleanup is
+      # the ONLY thing that prevents an orphan.
+      partial_flavor = register_partial_spawn_flavor()
+      slot_tmpl = URI.new!("template://agent/default/ph7r10-h2-slot-#{uniq()}")
+      :ok = create_agent_template(slot_tmpl, agent_template_content(partial_flavor, "slot"))
+
+      st_uri = create_session_template("ph7r10-h2-team-#{uniq()}", [{"dev", slot_tmpl}], [])
+      owner_uri = full_template_owner(@default_ws)
+
+      lineage_before = MapSet.new(AgentLineage.list_all(), fn {a, _} -> a end)
+      bindings_before = MapSet.new(Ezagent.WorkspaceRegistry.list_all(), fn {s, _} -> s end)
+      gen_kinds_before = live_generated_session_kinds()
+
+      # The Generator MUST fail on the slot.
+      result = Session.spawn_from_template(st_uri, owner_uri)
+
+      assert match?({:error, {:agent_slot_failed, "dev", _}}, result),
+             "the Generator must fail on the self-cleaning slot. Got: #{inspect(result)}"
+
+      # ── (1) NO live Agent Kind for the slot ──
+      # The slot's Template Class freshly STARTED the Agent Kind, then
+      # terminated it. `partial_flavor` carries a unique token, so any
+      # live Kind bearing it is the orphan HIGH-2 must prevent.
+      refute Enum.any?(KindRegistry.list_all(), fn {uri_str, _pid} ->
+               String.contains?(uri_str, "#{partial_flavor}_")
+             end),
+             "the slot's Agent Kind must be terminated by the Template Class self-cleanup — " <>
+               "no live Kind may carry this run's slot flavor token"
+
+      # ── (2) NO leaked lineage — the slot returned a bare `{:error, _}`
+      # with no worker URI, so `spawn_from_template_content/4`'s
+      # `fresh?: true` post-spawn obligations never ran. Plus the whole
+      # generated session/orchestrator are torn down. ──
+      lineage_after = MapSet.new(AgentLineage.list_all(), fn {a, _} -> a end)
+      leaked_lineage = MapSet.difference(lineage_after, lineage_before)
+
+      assert MapSet.size(leaked_lineage) == 0,
+             "a self-cleaning slot failure must leave NO stale AgentLineage record. " <>
+               "Leaked: #{inspect(MapSet.to_list(leaked_lineage))}"
+
+      # ── (3) NO leaked WorkspaceRegistry binding ──
+      bindings_after = MapSet.new(Ezagent.WorkspaceRegistry.list_all(), fn {s, _} -> s end)
+      leaked_bindings = MapSet.difference(bindings_after, bindings_before)
+
+      assert MapSet.size(leaked_bindings) == 0,
+             "a self-cleaning slot failure must leave NO stale WorkspaceRegistry binding. " <>
+               "Leaked: #{inspect(MapSet.to_list(leaked_bindings))}"
+
+      # ── (4) NO live generated Session Kind from THIS run ──
+      leaked_gen_kinds =
+        MapSet.difference(live_generated_session_kinds(), gen_kinds_before)
+
+      assert MapSet.size(leaked_gen_kinds) == 0,
+             "the generated session must be torn down — no NEW live session://generic/ Kind. " <>
+               "Leaked: #{inspect(MapSet.to_list(leaked_gen_kinds))}"
+    end
+  end
+
   # --- shared helpers ----------------------------------------------------
+
+  # codex round-10 — the set of live `session://generic/` Kind URIs
+  # (the Generator's `spawn_fresh_session/1` shape). A round-10 leak
+  # test snapshots this before the run and asserts no NEW entry after —
+  # other tests in this (async: false) file leave their own generated
+  # sessions, so an absolute "zero generated sessions" check would be a
+  # cross-test false positive.
+  defp live_generated_session_kinds do
+    KindRegistry.list_all()
+    |> Enum.filter(fn {uri_str, _pid} ->
+      String.starts_with?(uri_str, "session://generic/")
+    end)
+    |> MapSet.new(fn {uri_str, _pid} -> uri_str end)
+  end
+
+  # codex round-10 HIGH-2 — a flavor whose Template Class freshly starts
+  # the Agent Kind, then fails a later step, then self-cleans the Kind
+  # it started (`PartialSpawnFlavorClass`). Reproduces the cc/echo
+  # round-10 partial-spawn contract at the Generator-slot level.
+  defp register_partial_spawn_flavor do
+    flavor = "ph7r10partial#{uniq()}"
+
+    :ok =
+      AgentFlavorRegistry.register(%{
+        flavor: flavor,
+        kind: Agent,
+        template_class: PartialSpawnFlavorClass
+      })
+
+    flavor
+  end
 
   # A test flavor whose Template Class spawns the worker Agent Kind and
   # then TERMINATES the freshly-spawned orchestrator agent — used by the

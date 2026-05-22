@@ -51,6 +51,20 @@ defmodule Ezagent.PluginEcho.Template.EchoAgent do
   Re-running `instantiate/3` after the agent is fully spawned is a
   no-op (matches `cc.agent.instantiate/3` semantics).
 
+  ## codex round-10 HIGH-2 — the Template Class undoes its OWN partial spawn
+
+  When `instantiate/3` FRESHLY starts the Agent Kind and then
+  `maybe_start_pty/2` fails (`with_pty: true`, the `/bin/bash -i`
+  sidecar), the just-started Agent Kind would otherwise leak — as a
+  Generator agent slot that is an orphan the Generator's
+  `cleanup_partial/1` cannot see (the slot returned a bare
+  `{:error, _}` with no worker URI). The spawner now owns its own
+  partial-spawn teardown: a failure of any step AFTER the fresh Kind
+  start terminates the Kind this call itself created
+  (`Ezagent.Kind.terminate/1`) before returning the error — so the
+  instantiate either fully succeeds or leaves ZERO residue. Mirrors
+  `Ezagent.PluginCc.Template.CcAgent`.
+
   ## Cap shape
 
   Unchanged from non-templated echo agents created via direct
@@ -169,8 +183,30 @@ defmodule Ezagent.PluginEcho.Template.EchoAgent do
               {:ok, [agent_uri], %{fresh?: false}}
 
             :started ->
-              with :ok <- maybe_start_pty(tmpl, agent_uri) do
-                {:ok, [agent_uri], %{fresh?: true}}
+              # codex round-10 HIGH-2 — the Template Class owns its OWN
+              # partial-spawn teardown. `ensure_agent_kind/1` FRESHLY
+              # started the Agent Kind on this call; if `maybe_start_pty/2`
+              # (the `/bin/bash -i` PTY sidecar) now fails, the
+              # just-started Agent Kind would leak — a live orphan a
+              # Generator slot's `cleanup_partial/1` cannot see (the slot
+              # returned a bare `{:error, _}` with no worker URI). So if a
+              # step AFTER the fresh Kind start fails, terminate the Kind
+              # this call itself started BEFORE returning the error. An
+              # `:already_started` Kind is never terminated — this call
+              # did not create it (that branch returned early above).
+              # Mirrors `Ezagent.PluginCc.Template.CcAgent.spawn_for_local_pty/2`.
+              # Only the Kind PROCESS is terminated; lineage / workspace
+              # binding are ESR-domain registries the plugin must not
+              # touch (3-tier) — `spawn_from_template_content/4` had not
+              # recorded either (it gates them on a `fresh?: true`
+              # success this path never returns).
+              case maybe_start_pty(tmpl, agent_uri) do
+                :ok ->
+                  {:ok, [agent_uri], %{fresh?: true}}
+
+                {:error, reason} ->
+                  _ = Ezagent.Kind.terminate(agent_uri)
+                  {:error, reason}
               end
           end
         end

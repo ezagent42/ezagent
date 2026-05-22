@@ -360,6 +360,28 @@ defmodule Ezagent.Entity.Agent do
   worker URI and ZERO side effects: the pre-existing worker's lineage +
   workspace binding are left exactly as they were. The swap's
   `:candidate_uri_already_live` abort is now genuinely side-effect-free.
+
+  ## codex round-10 HIGH-2 — a post-spawn failure undoes the fresh spawn
+
+  Round 7 ran the post-spawn obligations as `:ok = record_lineage(...)`
+  / `:ok = bind_workspace(...)`. A `bind_workspace/2` failure AFTER a
+  successful `record_lineage/2` would (a) RAISE on the `:ok =` match —
+  an exception, not a clean `{:error, _}` — and (b) leave the freshly
+  created worker with a lineage row but no workspace binding: residue
+  the caller could not see or clean.
+
+  Round 10 makes this helper own its own partial-spawn teardown. The
+  obligations run as a CHECKED step (`establish_post_spawn_obligations/3`);
+  on ANY failure after the plugin Template Class freshly created the
+  worker, this helper undoes everything IT established for that worker —
+  terminate the Kind, forget the lineage row, unbind the workspace
+  (`undo_fresh_workers/1`) — and returns a clean `{:error, reason}`. A
+  fresh `spawn_from_template_content/4` therefore either fully succeeds
+  or leaves ZERO residue: combined with the plugin Template Class
+  cleaning up its own freshly-started-then-failed Kind (cc/echo round
+  10), a per-slot instantiate is all-or-nothing, so the Generator's
+  `instantiate_agent_slots/4` `acc`-only accumulator (round 9) is
+  correct — a failed slot has already self-cleaned.
   """
   @spec spawn_from_template_content(map(), URI.t(), URI.t(), URI.t()) ::
           {:ok, %{workers: [URI.t()], fresh?: boolean()}} | {:error, term()}
@@ -392,14 +414,33 @@ defmodule Ezagent.Entity.Agent do
       # ZERO side effects — the pre-existing worker's lineage + workspace
       # binding are left exactly as they were, making the swap's abort
       # genuinely side-effect-free.
+      # codex round-10 HIGH-2 — the post-spawn obligations are now a
+      # CHECKED step that self-cleans on failure. Pre-round-10 this was
+      # `:ok = record_lineage(...)` / `:ok = bind_workspace(...)` — if
+      # `bind_workspace/2` failed AFTER `record_lineage/2` succeeded, the
+      # `:ok =` match RAISED (an exception, not a clean `{:error, _}`)
+      # and left a worker that the plugin Template Class freshly created
+      # WITH a lineage row but WITHOUT a workspace binding — a residue
+      # the caller could not see. Now: if a step AFTER the fresh spawn
+      # fails, `spawn_from_template_content/4` undoes everything IT
+      # established for the worker it created — terminate the Kind
+      # (`Ezagent.Kind.terminate/1`), forget the lineage row, unbind the
+      # workspace — and returns a clean `{:error, reason}`. A fresh
+      # instantiate therefore either fully succeeds or leaves ZERO
+      # residue. (`fresh?: false` adopts a pre-existing worker — no
+      # obligations run, nothing to undo — round 7.)
       if fresh? do
-        Enum.each(workers, fn worker_uri ->
-          :ok = record_lineage(worker_uri, spawned_by_uri)
-          :ok = bind_workspace(worker_uri, workspace_uri)
-        end)
-      end
+        case establish_post_spawn_obligations(workers, spawned_by_uri, workspace_uri) do
+          :ok ->
+            {:ok, %{workers: workers, fresh?: fresh?}}
 
-      {:ok, %{workers: workers, fresh?: fresh?}}
+          {:error, reason} ->
+            undo_fresh_workers(workers)
+            {:error, reason}
+        end
+      else
+        {:ok, %{workers: workers, fresh?: fresh?}}
+      end
     end
   end
 
@@ -442,6 +483,58 @@ defmodule Ezagent.Entity.Agent do
       _ ->
         {:error, :missing_flavor}
     end
+  end
+
+  # codex round-10 HIGH-2 — establish lineage + workspace binding for
+  # each freshly-created worker as a CHECKED step. `record_lineage/2`
+  # always returns `:ok`; `bind_workspace/2` may not — a failure here is
+  # returned as `{:error, {:post_spawn_obligation_failed, _}}` (NOT
+  # raised) so the caller can self-clean. `Enum.reduce_while/3` stops at
+  # the first failure.
+  defp establish_post_spawn_obligations(workers, spawned_by_uri, workspace_uri) do
+    Enum.reduce_while(workers, :ok, fn worker_uri, :ok ->
+      with :ok <- record_lineage(worker_uri, spawned_by_uri),
+           :ok <- bind_workspace(worker_uri, workspace_uri) do
+        {:cont, :ok}
+      else
+        other ->
+          {:halt, {:error, {:post_spawn_obligation_failed, worker_uri, other}}}
+      end
+    end)
+  rescue
+    error ->
+      {:error, {:post_spawn_obligation_failed, :exception, error}}
+  end
+
+  # codex round-10 HIGH-2 — undo everything `spawn_from_template_content/4`
+  # established for the workers IT freshly created, when a post-spawn
+  # step fails: terminate the Kind process, forget the lineage row,
+  # unbind the workspace. Best-effort + idempotent — a worker for which
+  # the obligation never ran (binding/lineage absent) just no-ops.
+  # `Ezagent.Kind.terminate/1` is the tier-clean Kind-process teardown;
+  # `AgentLineage`/`WorkspaceRegistry` are ESR-domain registries this
+  # ESR-layer helper legitimately owns (it is the layer that recorded
+  # them — unlike the plugin Template Class, which must not touch them).
+  defp undo_fresh_workers(workers) do
+    Enum.each(workers, fn worker_uri ->
+      _ = Ezagent.Kind.terminate(worker_uri)
+      safe(fn -> Ezagent.WorkspaceRegistry.unbind(worker_uri) end)
+
+      if Code.ensure_loaded?(Ezagent.AgentLineage) and
+           function_exported?(Ezagent.AgentLineage, :forget, 1) do
+        safe(fn -> Ezagent.AgentLineage.forget(worker_uri) end)
+      end
+    end)
+
+    :ok
+  end
+
+  defp safe(fun) do
+    fun.()
+  rescue
+    _ -> :error
+  catch
+    _, _ -> :error
   end
 
   defp bind_workspace(worker_uri, workspace_uri) do
