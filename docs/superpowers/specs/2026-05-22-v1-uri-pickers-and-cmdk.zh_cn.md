@@ -1,7 +1,13 @@
 # V1 UI — URI 选择器 + CmdK 接通
 
-> **状态**: DRAFT — 2026-05-22。作者: Claude，V1 验收期，按 Allen
-> Feishu 2026-05-22（item #1 + #3）。等 Allen review 后实施。
+> **状态**: DRAFT rev 2 — 2026-05-22。作者: Claude，V1 验收期，按
+> Allen Feishu 2026-05-22（item #1 + #3 + #6）。
+>
+> ⚠️ **此中文版停在 rev 2。英文版已到 rev 3**（Codex review 修复:
+> 3 BLOCKER + 7 MAJOR —— 依赖环、workspace 过滤、CommandSource 改纯
+> 函数、JS hook 挂载点、`phx-target` 等）。中文版将在 Allen 批准
+> rev 3 后一次性同步，避免 codex-review 反复期间反复翻译。rev 3 的
+> 细节见英文版 + Feishu 摘要。
 
 ## 0. 为什么
 
