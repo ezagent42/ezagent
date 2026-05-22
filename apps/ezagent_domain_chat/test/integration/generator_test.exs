@@ -50,13 +50,20 @@ defmodule EzagentDomainChat.Integration.GeneratorTest do
     # Just bring the Agent Kind up — no PTY, no claude. The flavor's
     # `kind: Ezagent.Entity.Agent` wiring means SpawnRegistry resolves
     # the URI to the plain Agent Kind.
+    #
+    # codex round-6 HIGH-1 / round-7 HIGH-1 — return the 3-element
+    # `{:ok, uris, %{fresh?: _}}` form, deriving `fresh?` from the
+    # ATOMIC `SpawnRegistry.spawn_detailed/1` outcome (`:started` vs
+    # `:already_started`). All production Template Classes (cc / echo /
+    # curl) use this form; `spawn_from_template_content/4` records
+    # lineage + binds the workspace only for `fresh?: true` workers.
     @impl true
     def instantiate(_tmpl_name, %{"agent_uri" => uri_str}, _workspace_uri) do
       agent_uri = URI.parse(uri_str)
 
-      case Ezagent.SpawnRegistry.spawn(agent_uri) do
-        {:ok, _pid} -> {:ok, [agent_uri]}
-        {:error, {:already_started, _pid}} -> {:ok, [agent_uri]}
+      case Ezagent.SpawnRegistry.spawn_detailed(agent_uri) do
+        {:ok, :started, _pid} -> {:ok, [agent_uri], %{fresh?: true}}
+        {:ok, :already_started, _pid} -> {:ok, [agent_uri], %{fresh?: false}}
         {:error, _} = err -> err
       end
     end

@@ -138,14 +138,18 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
 
     def validate(_), do: {:error, :not_a_map}
 
+    # codex round-6 HIGH-1 / round-7 HIGH-1 — return the 3-element
+    # `{:ok, uris, %{fresh?: _}}` form (the atomic `spawn_detailed`
+    # outcome). `spawn_from_template_content/4` records lineage + binds
+    # the workspace only for `fresh?: true` workers.
     @impl true
     def instantiate(_tmpl_name, %{"agent_uri" => uri_str}, _workspace_uri) do
       agent_uri = URI.parse(uri_str)
 
       worker_result =
-        case Ezagent.SpawnRegistry.spawn(agent_uri) do
-          {:ok, _pid} -> {:ok, [agent_uri]}
-          {:error, {:already_started, _pid}} -> {:ok, [agent_uri]}
+        case Ezagent.SpawnRegistry.spawn_detailed(agent_uri) do
+          {:ok, :started, _pid} -> {:ok, [agent_uri], %{fresh?: true}}
+          {:ok, :already_started, _pid} -> {:ok, [agent_uri], %{fresh?: false}}
           {:error, _} = err -> err
         end
 
@@ -2193,6 +2197,200 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
       assert {:ok, _} = KindRegistry.lookup(new_worker),
              "the NEW (replacement) worker must NOT be terminated when the step-2 " <>
                "slot commit exits — the slot may have committed to it"
+    end
+  end
+
+  # ══════════════════════════════════════════════════════════════════════
+  # codex round 7 — HIGH-1: a rejected `fresh?: false` adoption must have
+  # ZERO side effects.
+  #
+  # Round 6 made `fresh?` an ATOMIC signal, but `spawn_from_template_content`
+  # still recorded `AgentLineage` + bound the workspace for EVERY returned
+  # worker BEFORE the caller saw `fresh?`. So a `fresh?: false` candidate
+  # (a worker created by another operation) was re-parented under THIS
+  # orchestrator (its `{:spawned_by, orchestrator}` cap then matched!) and
+  # workspace-rebound — even though `update_agent_template` then correctly
+  # refused the adoption. The "safe-degraded" abort was not side-effect-free.
+  #
+  # Round 7 gates the post-spawn obligations on `fresh?: true`. This test
+  # pre-registers the candidate worker URI with a DIFFERENT lineage +
+  # workspace binding, runs the swap so that URI is the candidate, and
+  # asserts the swap aborts AND the pre-existing worker's lineage +
+  # workspace binding are UNCHANGED (not re-parented under this orchestrator).
+  # ══════════════════════════════════════════════════════════════════════
+
+  describe "HIGH-1 r7 — a rejected fresh?: false adoption has ZERO side effects" do
+    test "a pre-existing candidate worker keeps its own lineage + workspace binding after a rejected swap" do
+      flavor = register_test_flavor()
+      tmpl_a = URI.new!("template://agent/default/ph7r7-h1-a-#{uniq()}")
+      tmpl_b = URI.new!("template://agent/default/ph7r7-h1-b-#{uniq()}")
+      :ok = create_agent_template(tmpl_a, agent_template_content(flavor, "config-a"))
+      :ok = create_agent_template(tmpl_b, agent_template_content(flavor, "config-b"))
+
+      st_uri = create_session_template("ph7r7-h1-team-#{uniq()}", [{"dev", tmpl_a}], [])
+      owner_uri = full_template_owner(@default_ws)
+
+      {:ok, %{session_uri: session_uri, orchestrator_uri: orch_uri}} =
+        Session.spawn_from_template(st_uri, owner_uri)
+
+      [old_worker] = live_workers_of(orch_uri)
+      caps = orchestrator_caps(orch_uri)
+
+      # The candidate replacement worker URI — old worker URI + `--g1`.
+      # This is the URI the swap will compute for the gen-1 worker.
+      candidate = URI.parse(URI.to_string(old_worker) <> "--g1")
+      foreign_spawner = URI.parse("entity://agent/default/#{flavor}_foreign-orch-#{uniq()}")
+      foreign_workspace = URI.new!("workspace://foreign-ws-#{uniq()}")
+
+      # Model a worker created by some OTHER operation, registered in the
+      # TOCTOU window — AFTER round-4's `preflight_candidate_uri_free`
+      # probe (so the swap reaches the `fresh?` path under test, not the
+      # preflight) but BEFORE the plugin's atomic spawn. The
+      # `template.instantiate` authz-grant fires in exactly that window; a
+      # one-shot handler spawns the competing worker there AND records its
+      # OWN (foreign) lineage + workspace binding — the pre-existing state
+      # that a rejected `fresh?: false` adoption must NOT touch.
+      handler_id = {:r7_h1_window_spawn, make_ref()}
+      armed = :counters.new(1, [])
+      tmpl_b_str = URI.to_string(tmpl_b)
+
+      :telemetry.attach(
+        handler_id,
+        [:ezagent, :authz, :granted],
+        fn _e, _m, meta, _cfg ->
+          target = meta[:target]
+
+          if :counters.get(armed, 1) == 0 and meta[:action] == :instantiate and
+               is_struct(target, URI) and
+               String.starts_with?(URI.to_string(target), tmpl_b_str) do
+            :counters.add(armed, 1, 1)
+            {:ok, _pid} = Ezagent.SpawnRegistry.spawn(candidate)
+            :ok = AgentLineage.record(candidate, foreign_spawner)
+            :ok = Ezagent.WorkspaceRegistry.bind(candidate, foreign_workspace)
+          end
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      # Run the swap. Its instantiate hits the already-live candidate URI;
+      # the plugin's atomic `spawn_detailed` returns `:already_started`, so
+      # `spawn_from_template_content` reports `fresh?: false` and
+      # `require_fresh_candidate/1` aborts the swap.
+      result =
+        Tools.update_agent_template("dev", tmpl_b,
+          caller: orch_uri,
+          caps: caps,
+          workspace_uri: @default_ws,
+          session_uri: session_uri
+        )
+
+      :telemetry.detach(handler_id)
+
+      # Sanity — the one-shot handler did fire, so the competing worker is
+      # registered. (If it had not, the swap could spawn fresh and the
+      # test would not exercise the `fresh?: false` path at all.)
+      assert :counters.get(armed, 1) == 1,
+             "the TOCTOU-window handler must have fired — otherwise the swap " <>
+               "did not exercise the fresh?: false adoption path"
+
+      # The swap aborts — a `fresh?: false` candidate is never adopted.
+      assert result == {:error, {:update_aborted, :candidate_uri_already_live}},
+             "a pre-existing candidate worker must abort the swap with " <>
+               ":candidate_uri_already_live. Got: #{inspect(result)}"
+
+      # HIGH-1 r7 — the rejected adoption is genuinely side-effect-free.
+      # The pre-existing worker's lineage + workspace binding are EXACTLY
+      # what they were before the swap — NOT re-parented under this
+      # orchestrator, NOT rebound to @default_ws.
+      assert {:ok, spawner_after} = AgentLineage.lookup(candidate)
+      assert {:ok, ws_after} = Ezagent.WorkspaceRegistry.lookup(candidate)
+
+      assert URI.to_string(spawner_after) == URI.to_string(foreign_spawner),
+             "the rejected candidate worker's lineage must be UNCHANGED — it must " <>
+               "NOT be re-parented under the orchestrator. " <>
+               "Expected #{URI.to_string(foreign_spawner)}, got #{URI.to_string(spawner_after)}"
+
+      refute URI.to_string(spawner_after) == URI.to_string(orch_uri),
+             "the rejected candidate worker must NOT be re-parented under this orchestrator"
+
+      assert URI.to_string(ws_after) == URI.to_string(foreign_workspace),
+             "the rejected candidate worker's workspace binding must be UNCHANGED. " <>
+               "Expected #{URI.to_string(foreign_workspace)}, got #{URI.to_string(ws_after)}"
+
+      # The cap-resolution consequence: the orchestrator's
+      # {:spawned_by, orchestrator} lineage must NOT reach the rejected
+      # worker — the side effect that would have falsely granted authority.
+      refute AgentLineage.spawned_in_lineage?(candidate, orch_uri),
+             "the orchestrator must NOT have a lineage path to the rejected worker — " <>
+               "a rejected adoption must not silently grant {:spawned_by, _} authority"
+
+      # The OLD worker is untouched + alive — no outage.
+      assert {:ok, _} = KindRegistry.lookup(old_worker),
+             "the OLD worker must stay alive when the candidate is rejected"
+
+      # The slot still names the OLD worker — the swap did not commit.
+      wc = session_working_copy(session_uri)
+      {_n, _src, live, _gen} = find_slot(wc, "dev")
+
+      assert URI.to_string(live) == URI.to_string(old_worker),
+             "the slot must still name the OLD worker after a rejected swap"
+    end
+
+    test "spawn_from_template_content records lineage/binding ONLY for a fresh worker" do
+      # The fix at its source. A fresh spawn records lineage + binds the
+      # workspace; an adoption (fresh?: false) of the SAME URI does NOT
+      # overwrite either — it returns the worker with zero side effects.
+      flavor = register_test_flavor()
+      tmpl = URI.new!("template://agent/default/ph7r7-sig-#{uniq()}")
+      content = agent_template_content(flavor, "sig")
+      :ok = create_agent_template(tmpl, content)
+
+      instance_uri = URI.parse("entity://agent/default/#{flavor}_ph7r7sig-#{uniq()}")
+      first_spawner = URI.parse("entity://agent/default/#{flavor}_first-orch-#{uniq()}")
+
+      # First call — freshly creates the worker → lineage + binding recorded.
+      assert {:ok, %{workers: [^instance_uri], fresh?: true}} =
+               Agent.spawn_from_template_content(content, instance_uri, first_spawner, @default_ws),
+             "the first spawn at a URI must report fresh?: true"
+
+      assert {:ok, spawner1} = AgentLineage.lookup(instance_uri)
+
+      assert URI.to_string(spawner1) == URI.to_string(first_spawner),
+             "a fresh spawn must record lineage under its spawner"
+
+      assert {:ok, ws1} = Ezagent.WorkspaceRegistry.lookup(instance_uri)
+      assert URI.to_string(ws1) == URI.to_string(@default_ws)
+
+      # Second call — the worker is already live; the atomic spawn result
+      # is `:already_started` → fresh?: false. A DIFFERENT spawner +
+      # workspace are passed, but because fresh? is false the side effects
+      # are SKIPPED — the original lineage + binding survive untouched.
+      other_spawner = URI.parse("entity://agent/default/#{flavor}_other-orch-#{uniq()}")
+      other_workspace = URI.new!("workspace://other-ws-#{uniq()}")
+
+      assert {:ok, %{workers: [^instance_uri], fresh?: false}} =
+               Agent.spawn_from_template_content(
+                 content,
+                 instance_uri,
+                 other_spawner,
+                 other_workspace
+               ),
+             "a re-spawn at an already-live URI must report fresh?: false (adoption)"
+
+      assert {:ok, spawner2} = AgentLineage.lookup(instance_uri)
+
+      assert URI.to_string(spawner2) == URI.to_string(first_spawner),
+             "a fresh?: false adoption must NOT overwrite the worker's lineage — " <>
+               "expected the ORIGINAL spawner #{URI.to_string(first_spawner)}, " <>
+               "got #{URI.to_string(spawner2)}"
+
+      assert {:ok, ws2} = Ezagent.WorkspaceRegistry.lookup(instance_uri)
+
+      assert URI.to_string(ws2) == URI.to_string(@default_ws),
+             "a fresh?: false adoption must NOT rebind the worker's workspace — " <>
+               "expected the ORIGINAL workspace, got #{URI.to_string(ws2)}"
     end
   end
 

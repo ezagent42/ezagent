@@ -877,6 +877,20 @@ defmodule Ezagent.Entity.Session do
                reply: {:caller_inbox, self()}
              }
            }) do
+      # codex round-7 HIGH-1 — the Generator does NOT gate on `fresh?`.
+      # `Ezagent.Kind.Template` `instantiate/3` is documented as
+      # IDEMPOTENT: re-calling after the Kinds are alive is a no-op that
+      # returns the SAME URIs (the `Workspace.Loader` boot path re-runs
+      # the Generator on every pass). An idempotent re-instantiation
+      # therefore legitimately reports `fresh?: false` — that is NOT an
+      # error here. Lineage + workspace binding for the worker were
+      # already recorded by the FIRST (fresh) instantiation under the
+      # SAME orchestrator + workspace; `spawn_from_template_content/4`
+      # correctly skips re-recording them on the `fresh?: false` re-run
+      # (the rows are unchanged either way). The Generator's
+      # session-unique worker URIs already prevent cross-session
+      # adoption, so the `fresh?` distinction the swap path needs does
+      # not apply to the Generator.
       case workers do
         [worker_uri | _] -> {:ok, worker_uri}
         [] -> {:error, :instantiate_returned_no_worker}
