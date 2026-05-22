@@ -67,21 +67,59 @@ defmodule Ezagent.Behavior.Echo do
     # is the echo agent's URI (Kind.Runtime injects it).
     reply_text = "echo: #{original_text}"
 
-    reply_msg =
-      Message.new(ctx.self_uri, %{text: reply_text, attachments: []},
-        ref_id: msg.id
-      )
+    # --- Loop-amplification safety (V1 stress-test plan §7) -------------
+    #
+    # The stress driver (`mix ezagent.stress`) tags each message body with
+    # a `meta` map carrying `"hop"` (cascade depth) + `"turn_cap"`. The
+    # echo reply path is gated on it:
+    #
+    #   * `turn_cap == 0`  → echo NEVER replies — "sink" mode, the pure
+    #     fan-out capacity measurement (one logical message = exactly
+    #     N-1 dispatches, no cascade).
+    #   * `hop >= turn_cap` → cascade depth reached; stop replying.
+    #   * otherwise → reply, propagating `hop + 1` so the cascade is
+    #     bounded deterministically.
+    #
+    # Production echo behaviour is UNCHANGED: a message with no `meta`
+    # (the only shape produced outside the stress task) has hop=nil and
+    # falls through to the unconditional reply, exactly as before.
+    {hop, turn_cap} = stress_hop(msg.body)
+
+    reply_allowed? =
+      case {hop, turn_cap} do
+        {nil, _} -> true
+        {_, nil} -> true
+        {h, cap} when is_integer(h) and is_integer(cap) -> h < cap
+        _ -> true
+      end
+
+    next_meta =
+      case hop do
+        nil -> nil
+        h -> %{"hop" => h + 1, "turn_cap" => turn_cap}
+      end
+
+    reply_body =
+      case next_meta do
+        nil -> %{text: reply_text, attachments: []}
+        meta -> %{text: reply_text, attachments: [], meta: meta}
+      end
+
+    reply_msg = Message.new(ctx.self_uri, reply_body, ref_id: msg.id)
 
     # The dispatching session URI lives in ctx.caller — set by
     # Chat.invoke(:send) when it dispatched the per-member chat.receive
     # (see `dispatch_receive/3` in chat.ex). Skip silently if absent —
     # that would only happen for a direct test invoke that didn't set
     # caller, and silent no-op preserves test isolation.
-    case session_uri_from_caller(ctx) do
-      nil ->
+    case {reply_allowed?, session_uri_from_caller(ctx)} do
+      {false, _} ->
         :ok
 
-      %URI{} = session_uri ->
+      {true, nil} ->
+        :ok
+
+      {true, %URI{} = session_uri} ->
         target = URI.new!("#{URI.to_string(session_uri)}?action=chat.send")
 
         Invocation.dispatch(%Invocation{
@@ -133,6 +171,21 @@ defmodule Ezagent.Behavior.Echo do
   defp extract_text(%{text: t}) when is_binary(t), do: t
   defp extract_text(%{"text" => t}) when is_binary(t), do: t
   defp extract_text(_), do: ""
+
+  # Extract the stress-test `{hop, turn_cap}` from a message body's
+  # `meta` map. Returns `{nil, nil}` for any non-stress message (the
+  # production case — body has no `meta` key). Key shape is tolerant of
+  # both atom (in-flight) and string (post-MessageStore JSON round-trip)
+  # keys.
+  defp stress_hop(%{meta: %{} = m}), do: meta_pair(m)
+  defp stress_hop(%{"meta" => %{} = m}), do: meta_pair(m)
+  defp stress_hop(_), do: {nil, nil}
+
+  defp meta_pair(m) do
+    hop = m["hop"] || m[:hop]
+    cap = m["turn_cap"] || m[:turn_cap]
+    {hop, cap}
+  end
 
   # ctx.caller is the dispatching principal — for Session→member fan-out
   # it's the session URI. Be lenient on shape (URI vs string).
