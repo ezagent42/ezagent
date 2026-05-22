@@ -190,7 +190,7 @@ defmodule Ezagent.Entity.Session do
          {:ok, workspace_uri} <- resolve_target_workspace(template_content),
          :ok <- preflight_agent_slots(template_content),
          :ok <- preflight_routing_rules(template_content) do
-      do_spawn(template_content, workspace_uri, owner_uri)
+      do_spawn(template_content, workspace_uri, owner_uri, session_template_uri)
     end
   end
 
@@ -199,7 +199,7 @@ defmodule Ezagent.Entity.Session do
   # Each step is irreversible; on failure of a LATER step,
   # `cleanup_partial/1` tears down everything spawned so far so no
   # half-built session/workers/rules/caps survive.
-  defp do_spawn(template_content, %URI{} = workspace_uri, %URI{} = owner_uri) do
+  defp do_spawn(template_content, %URI{} = workspace_uri, %URI{} = owner_uri, %URI{} = session_template_uri) do
     with {:ok, session_uri} <- spawn_fresh_session(workspace_uri),
          :ok <- Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri),
          {:ok, orchestrator_uri} <-
