@@ -30,6 +30,7 @@ defmodule Ezagent.Capability do
 
   @type scope_tuple ::
           {:within_session, URI.t()}
+          | {:within_workspace, URI.t()}
           | {:spawned_by, URI.t()}
 
   @type t :: %__MODULE__{
@@ -52,7 +53,7 @@ defmodule Ezagent.Capability do
 
   ## Scope-bounded instance shapes (Phase 7 PR 42 / D7-3)
 
-  The `instance` field may also be one of two tuple shapes that
+  The `instance` field may also be one of three tuple shapes that
   express bounded delegation:
 
   - `{:within_session, %URI{} = session_uri}` — matches when the
@@ -60,6 +61,17 @@ defmodule Ezagent.Capability do
     of it (prefix match on `URI.to_string/1`). Used by the
     orchestrator's scope-bounded delegation cap so it can act
     within its own session without becoming a full admin.
+
+  - `{:within_workspace, %URI{} = workspace_uri}` — Phase 7
+    completion PR-1 (SPEC §1.4). Matches when the needed cap's
+    instance URI's workspace segment equals `workspace_uri`. Used
+    by the orchestrator's delegated `Behavior.Template` caps (#3/#4)
+    so it can read/write/instantiate templates in its OWN workspace
+    without a per-name cap. NARROWER than `:any`, MORE specific than
+    a URI cap — cross-workspace template access is denied (two-tenant
+    isolation holds). The needed URI's workspace is derived via the
+    same `workspace_of/1` `cap_for_action/3` uses, so the two sides
+    stay structurally aligned.
 
   - `{:spawned_by, %URI{} = principal_uri}` — matches when the
     needed cap's instance URI is in the lineage spawned by
@@ -117,6 +129,19 @@ defmodule Ezagent.Capability do
     # session://default/default/main}`.
     needed_str == session_str or
       String.starts_with?(needed_str, session_str <> "/")
+  end
+
+  defp instance_match?({:within_workspace, %URI{} = workspace_uri}, %URI{} = needed_instance) do
+    # Phase 7 completion PR-1 (SPEC §1.4) — a `{:within_workspace, W}`
+    # cap matches a needed action on a per-tenant URI iff the URI's
+    # workspace segment equals `W`. `workspace_of/1` does the structural
+    # extraction (and returns `:any` for cross-cutting schemes like
+    # `system://`, which a workspace-bounded cap must NOT match — only
+    # `:any` is the true wildcard, never `{:within_workspace, _}`).
+    case workspace_of(needed_instance) do
+      %URI{} = needed_ws -> URI.to_string(needed_ws) == URI.to_string(workspace_uri)
+      :any -> false
+    end
   end
 
   defp instance_match?({:spawned_by, %URI{} = principal_uri}, %URI{} = needed_instance) do

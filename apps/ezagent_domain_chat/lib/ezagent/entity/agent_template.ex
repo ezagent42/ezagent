@@ -20,17 +20,25 @@ defmodule Ezagent.Entity.AgentTemplate do
   human-edited and versionless for now; bump to versioned shape if
   Phase 8+ adds blueprint synthesis or auto-evolution).
 
-  ## Slice schema (per SPEC §AgentTemplate, final v3)
+  ## `:template` slice content schema (Phase 7 completion PR-1, SPEC §1.0)
+
+  The schema below is the real `Ezagent.Behavior.Template` `:template`
+  slice content map — no longer moduledoc-only. `flavor` (SPEC §1.1)
+  names the plugin Template Class the `:instantiate` action delegates
+  to (`"cc"` → `Ezagent.PluginCc.Template.CcAgent`).
 
       %{
         # metadata
         name:               String.t(),
         description:        String.t(),
 
-        # PTY launch params (Agent.spawn/4 translates these to erlexec
-        # env + CLI args when starting the underlying claude process)
+        # delegation target — flavor → Template Class
+        flavor:             String.t(),       # "cc" etc.
+
+        # PTY launch params (the flavor Template Class translates these
+        # to erlexec env + CLI args when starting the claude process)
         working_directory:  String.t(),
-        claude_config_dir:  String.t(),
+        claude_config_dir:  String.t() | nil,
         settings_path:      String.t() | nil,  # --settings override
         mcp_config_path:    String.t() | nil,  # --mcp-config override
         api_key_helper:     String.t() | nil,  # macOS multi-agent only
@@ -83,8 +91,12 @@ defmodule Ezagent.Entity.AgentTemplate do
   @impl Ezagent.Kind
   def type_name, do: :agent_template
 
+  # Phase 7 completion PR-1 (SPEC §1.0): AgentTemplate carries TWO
+  # slices — `:identity` (the cap policy) and `:template` (the
+  # template CONTENT, served via `Ezagent.Behavior.Template`'s
+  # dispatchable `:read` / `:write` / `:instantiate` actions).
   @impl Ezagent.Kind
-  def behaviors, do: [Ezagent.Behavior.Identity]
+  def behaviors, do: [Ezagent.Behavior.Identity, Ezagent.Behavior.Template]
 
   @impl Ezagent.Kind
   def persistence, do: {:snapshot, :on_change}
@@ -94,4 +106,92 @@ defmodule Ezagent.Entity.AgentTemplate do
   # reads this.
   @impl Ezagent.Kind
   def supervisor, do: EzagentDomainChat.AgentTemplateSupervisor
+
+  @doc """
+  Adapter — AgentTemplate `:template` slice content + a per-instance
+  agent URI → the cc-flavored Template-Class data map (SPEC §1.5 (b)).
+
+  The plugin Template Class (`Ezagent.PluginCc.Template.CcAgent`)
+  consumes a string-keyed map; this is the pure function that produces
+  it from the AgentTemplate content. It is flavor-agnostic in shape —
+  the `"class"` key resolves from the content's `flavor` via the
+  `AgentFlavorRegistry`'s Template Class `template_name/0`.
+
+  Mapping:
+
+  | AgentTemplate content field | cc.agent data key            |
+  |-----------------------------|------------------------------|
+  | (flavor's Class name)       | `"class"`                    |
+  | `instance_agent_uri`        | `"agent_uri"`                |
+  | `working_directory`         | `"cwd"` (required — errors if nil) |
+  | `settings_path`             | `"operator_settings_path"`   |
+  | `mcp_config_path`           | `"operator_mcp_config_path"` |
+  | `claude_config_dir`         | `"claude_config_dir"`        |
+  | `api_key_helper`            | `"api_key_helper"`           |
+
+  The four optional keys are only added when present (a nil value is
+  dropped) so the legacy 3-key cc.agent form still validates when the
+  AgentTemplate sets none of them.
+
+  Returns `{:ok, data_map}` or `{:error, reason}`.
+  """
+  @spec to_template_data(map(), URI.t()) :: {:ok, map()} | {:error, term()}
+  def to_template_data(content, %URI{} = instance_agent_uri) when is_map(content) do
+    with {:ok, class} <- resolve_class_name(content),
+         {:ok, cwd} <- fetch_working_directory(content) do
+      base = %{
+        "class" => class,
+        "agent_uri" => URI.to_string(instance_agent_uri),
+        "cwd" => cwd
+      }
+
+      optional = %{
+        "operator_settings_path" => content_get(content, :settings_path),
+        "operator_mcp_config_path" => content_get(content, :mcp_config_path),
+        "claude_config_dir" => content_get(content, :claude_config_dir),
+        "api_key_helper" => content_get(content, :api_key_helper)
+      }
+
+      data =
+        Enum.reduce(optional, base, fn
+          {_k, nil}, acc -> acc
+          {k, v}, acc -> Map.put(acc, k, v)
+        end)
+
+      {:ok, data}
+    end
+  end
+
+  def to_template_data(content, _uri), do: {:error, {:invalid_template_content, content}}
+
+  # The `"class"` key — the flavor's Template Class `template_name/0`,
+  # resolved through `Ezagent.AgentFlavorRegistry`.
+  defp resolve_class_name(content) do
+    case content_get(content, :flavor) do
+      flavor when is_binary(flavor) and flavor != "" ->
+        case Ezagent.AgentFlavorRegistry.lookup(flavor) do
+          {:ok, %{template_class: tc}} -> {:ok, tc.template_name()}
+          :error -> {:error, {:unknown_flavor, flavor}}
+        end
+
+      _ ->
+        {:error, :missing_flavor}
+    end
+  end
+
+  defp fetch_working_directory(content) do
+    case content_get(content, :working_directory) do
+      cwd when is_binary(cwd) and cwd != "" -> {:ok, cwd}
+      _ -> {:error, :missing_working_directory}
+    end
+  end
+
+  # The content map may carry atom OR string keys (atom keys from
+  # freshly-built content, string keys after a JSON snapshot round-trip).
+  defp content_get(content, key) when is_atom(key) do
+    case Map.get(content, key) do
+      nil -> Map.get(content, Atom.to_string(key))
+      value -> value
+    end
+  end
 end

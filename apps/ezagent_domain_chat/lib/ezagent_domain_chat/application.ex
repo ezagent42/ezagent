@@ -482,6 +482,20 @@ defmodule EzagentDomainChat.Application do
       :ok = BehaviorRegistry.register(Agent, action, PtyB)
     end)
 
+    # Phase 7 completion PR-1 (SPEC §1.0) — register the new
+    # `Ezagent.Behavior.Template` Behavior's three actions
+    # (`:read` / `:write` / `:instantiate`) on BOTH Template Kinds.
+    # After this, `?action=template.read` / `template.write` /
+    # `template.instantiate` resolve through `BehaviorRegistry` on
+    # either Template Kind and are dispatch-invocable; CapBAC step
+    # 5.5 derives `behavior == Ezagent.Behavior.Template`.
+    alias Ezagent.Behavior.Template, as: TemplateB
+
+    Enum.each(TemplateB.actions(), fn action ->
+      :ok = BehaviorRegistry.register(AgentTemplate, action, TemplateB)
+      :ok = BehaviorRegistry.register(SessionTemplate, action, TemplateB)
+    end)
+
     :ok
   end
 

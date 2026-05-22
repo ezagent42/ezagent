@@ -497,4 +497,86 @@ defmodule Ezagent.CapabilityTest do
              "scope-tuple cap with wrong kind must NOT match"
     end
   end
+
+  describe "{:within_workspace, W} instance shape (Phase 7 completion PR-1 / SPEC §1.4)" do
+    defp ws_cap(workspace_uri, kind \\ :agent_template) do
+      cap(
+        kind: kind,
+        behavior: Ezagent.Behavior.Template,
+        instance: {:within_workspace, workspace_uri},
+        workspace_uri: :any,
+        granted_by: URI.parse("entity://user/system/admin"),
+        granted_at: ~U[2026-05-22 00:00:00Z]
+      )
+    end
+
+    test "matches a template URI whose workspace segment equals W" do
+      c = ws_cap(URI.new!("workspace://default"))
+
+      assert Capability.matches?(
+               c,
+               needed(
+                 kind: :agent_template,
+                 behavior: Ezagent.Behavior.Template,
+                 instance: URI.new!("template://agent/default/cc-orch"),
+                 workspace_uri: :any
+               )
+             )
+    end
+
+    test "denies a template URI in a DIFFERENT workspace (two-tenant isolation)" do
+      c = ws_cap(URI.new!("workspace://default"))
+
+      refute Capability.matches?(
+               c,
+               needed(
+                 kind: :agent_template,
+                 behavior: Ezagent.Behavior.Template,
+                 instance: URI.new!("template://agent/team-alpha/cc-orch"),
+                 workspace_uri: :any
+               )
+             ),
+             "{:within_workspace, default} must NOT match a template in team-alpha"
+    end
+
+    test "matches a 3-segment session-template URI in the same workspace" do
+      c = ws_cap(URI.new!("workspace://team-alpha"), :session_template)
+
+      assert Capability.matches?(
+               c,
+               needed(
+                 kind: :session_template,
+                 behavior: Ezagent.Behavior.Template,
+                 instance: URI.new!("template://session/team-alpha/code-review@" <> String.duplicate("a", 64)),
+                 workspace_uri: :any
+               )
+             )
+    end
+
+    test "does NOT match a cross-cutting system:// URI — only :any is a true wildcard" do
+      # `kind: :any` on the cap isolates the test to the INSTANCE
+      # dimension — proving `{:within_workspace, _}` itself rejects a
+      # workspace-less system:// URI (whose `workspace_of/1` is `:any`).
+      c =
+        cap(
+          kind: :any,
+          behavior: :any,
+          instance: {:within_workspace, URI.new!("workspace://default")},
+          workspace_uri: :any,
+          granted_by: URI.parse("entity://user/system/admin"),
+          granted_at: ~U[2026-05-22 00:00:00Z]
+        )
+
+      refute Capability.matches?(
+               c,
+               needed(
+                 kind: :system,
+                 behavior: :any,
+                 instance: URI.new!("system://routing/default"),
+                 workspace_uri: :any
+               )
+             ),
+             "{:within_workspace, _} narrows; it must not match a workspace-less system:// URI"
+    end
+  end
 end

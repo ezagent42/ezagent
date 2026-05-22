@@ -154,6 +154,102 @@ defmodule Ezagent.Entity.Agent do
     end
   end
 
+  @doc """
+  Phase 7 completion PR-1 (SPEC §1.6a) — spawn a worker agent from an
+  AgentTemplate's `:template` slice CONTENT, delegating the launch to
+  the flavor's plugin Template Class and re-establishing the post-spawn
+  obligations (lineage + workspace binding) the Class does not perform.
+
+  This is the **content-taking** spawn helper. It takes the template
+  content as an ARGUMENT — it does NOT dispatch `:read` (the
+  `Ezagent.Behavior.Template` `:instantiate` action that calls it is
+  ALREADY running inside the AgentTemplate Kind process with the slice
+  in hand; a `:read` self-dispatch would be a `GenServer.call(self)`
+  deadlock — codex rev-5 HIGH-2).
+
+  ## Contract (SPEC §1.6a)
+
+  1. **Look up the Class** — from `content.flavor`,
+     `Ezagent.AgentFlavorRegistry.lookup/1` → `%{template_class: tc}`.
+  2. **Build the Class data map** — `AgentTemplate.to_template_data/2`
+     (§1.5 adapter) from the content + `instance_uri`.
+  3. **Delegate the launch** — `tc.instantiate(tc.template_name(),
+     data, workspace_uri)` → `{:ok, [worker_uri]}` (the plugin owns
+     exactly this — the Agent Kind + PTY).
+  4. **Record lineage (helper-owned)** — for each returned
+     `worker_uri`, `Ezagent.AgentLineage.record(worker_uri,
+     spawned_by_uri)`. The plugin Template Class does NOT do this, so
+     cap #2 (`{:spawned_by, orchestrator}`) would never resolve without
+     this step.
+  5. **Bind workspace (helper-owned)** — for each `worker_uri`,
+     `Ezagent.WorkspaceRegistry.bind(worker_uri, workspace_uri)`
+     (invariant 4 — workspace-scoped routing rules must fire).
+
+  NO `:read` dispatch anywhere.
+
+  ## Args
+
+  - `template_content_map` — the AgentTemplate `:template` slice content
+    (carries `flavor`, `working_directory`, the sandbox keys).
+  - `instance_uri` — the per-instance agent URI the caller built.
+  - `spawned_by_uri` — `%URI{}` of the principal authorizing the spawn
+    (the owner for the orchestrator agent; the orchestrator's own URI
+    for `add_agent_slot` workers, so cap #2 resolves).
+  - `workspace_uri` — `%URI{}` scope the worker belongs to.
+
+  ## Return
+
+  `{:ok, [worker_uri]}` on success, `{:error, reason}` otherwise.
+  """
+  @spec spawn_from_template_content(map(), URI.t(), URI.t(), URI.t()) ::
+          {:ok, [URI.t()]} | {:error, term()}
+  def spawn_from_template_content(
+        template_content_map,
+        %URI{} = instance_uri,
+        %URI{} = spawned_by_uri,
+        %URI{} = workspace_uri
+      )
+      when is_map(template_content_map) do
+    with {:ok, template_class} <- resolve_template_class(template_content_map),
+         {:ok, data} <-
+           Ezagent.Entity.AgentTemplate.to_template_data(template_content_map, instance_uri),
+         {:ok, workers} <-
+           template_class.instantiate(template_class.template_name(), data, workspace_uri) do
+      Enum.each(workers, fn worker_uri ->
+        :ok = record_lineage(worker_uri, spawned_by_uri)
+        :ok = bind_workspace(worker_uri, workspace_uri)
+      end)
+
+      {:ok, workers}
+    end
+  end
+
+  def spawn_from_template_content(_content, _instance, _spawned_by, _workspace) do
+    {:error, :invalid_spawn_from_template_content_args}
+  end
+
+  defp resolve_template_class(content) do
+    flavor = Map.get(content, :flavor) || Map.get(content, "flavor")
+
+    case flavor do
+      f when is_binary(f) and f != "" ->
+        case Ezagent.AgentFlavorRegistry.lookup(f) do
+          {:ok, %{template_class: tc}} -> {:ok, tc}
+          :error -> {:error, {:unknown_flavor, f}}
+        end
+
+      _ ->
+        {:error, :missing_flavor}
+    end
+  end
+
+  defp bind_workspace(worker_uri, workspace_uri) do
+    case Ezagent.WorkspaceRegistry.bind(worker_uri, workspace_uri) do
+      :ok -> :ok
+      other -> other
+    end
+  end
+
   defp record_lineage(agent_uri, granted_by) do
     if Code.ensure_loaded?(Ezagent.AgentLineage) and function_exported?(Ezagent.AgentLineage, :record, 2) do
       Ezagent.AgentLineage.record(agent_uri, granted_by)
