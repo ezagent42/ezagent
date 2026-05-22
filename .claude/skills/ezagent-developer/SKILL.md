@@ -510,6 +510,31 @@ The UI obeys a **3-layer architecture** so changing one atom propagates to every
 - **Layer 2 — plugin component compositions** (`apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/admin/`): `Phoenix.Component` modules that compose Layer 1 atoms into plugin-level pieces (e.g. `member_panel.ex`, `session_editor.ex`). Still no LV state — just structure + slots.
 - **Layer 3 — LV containers** (`apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/*_live.ex`): the LiveView modules with `mount`, `handle_event`, socket assigns. Each `render/1` wraps content in a shell atom — `<IdeShell.ide_shell>` for workspace surfaces; admin pages follow the same pattern via the page_header + breadcrumb + card composition.
 
+### Header / status-bar separation principle (Allen 2026-05-22)
+
+The `ide_shell` chrome has a **top header** (`top_command_bar/1`) and a
+**bottom status bar** (`status_bar/1`). They have DIFFERENT semantic roles
+— don't put a control in the wrong one:
+
+- **Header = workspace-scoped, view-INVARIANT.** Shows info that does NOT
+  change as the user navigates between surfaces: the `ezagent / <workspace>`
+  dropdown, global search (⌘K), notifications bell, help, the avatar menu.
+  A control belongs in the header only if it would make sense on *every*
+  page.
+- **Status bar = position-scoped, view-VARIANT.** Shows info + controls
+  tied to *where the user currently is*: the current entity URI, the
+  current `session://` URI, agents/bridges signal lights, the Members-panel
+  toggle, debug-events count. When the user switches view, the status bar
+  is allowed (expected) to change.
+
+Litmus test before placing a button: *"does this control still make sense
+when the user navigates to a different page?"* — yes → header; no (it acts
+on the current view/session/position) → status bar.
+
+History: the Members-panel toggle was first (wrongly) placed in the header
+next to the bell (V1 fix PR #178); moved to the status bar 2026-05-22 when
+Allen surfaced this principle.
+
 ### DO list
 
 - Wrap workspace-surface LV `render/1` in `<IdeShell.ide_shell>`.
