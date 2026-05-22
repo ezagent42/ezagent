@@ -354,6 +354,122 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
     end
   end
 
+  describe "V1 UI SPEC §2C — member panel Invite modal" do
+    test "open_invite_modal / close_invite_modal toggle the modal", %{conn: conn} do
+      {:ok, lv, html} = live(conn, "/sessions")
+
+      # Closed at mount — the `<.modal>` wrapper carries `hidden`.
+      [_, closed_block | _] = String.split(html, ~s(id="invite-member-modal"))
+      assert closed_block =~ "hidden"
+
+      # Open it.
+      html = render_hook(lv, "open_invite_modal", %{})
+      [_, open_block | _] = String.split(html, ~s(id="invite-member-modal"))
+
+      refute open_block
+             |> String.split(">")
+             |> hd()
+             |> String.contains?(" hidden")
+
+      # Close it again.
+      html = render_hook(lv, "close_invite_modal", %{})
+      [_, reclosed_block | _] = String.split(html, ~s(id="invite-member-modal"))
+      assert reclosed_block =~ "hidden"
+    end
+
+    # SPEC §2C.4 — `invite_member` with a valid in-workspace entity URI
+    # dispatches `chat.join` as `:call`; on `:ok` the member appears in
+    # the unified list and the modal closes.
+    test "invite_member with a valid entity → member added + modal closes", %{conn: conn} do
+      name = "cc_demo-invite-#{System.unique_integer([:positive])}"
+      agent_uri = URI.parse("entity://agent/default/#{name}")
+      {:ok, _kind_pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
+
+      {:ok, lv, _html} = live(conn, "/sessions")
+
+      # Before the invite the agent is NOT a member — the unified list
+      # carries no PTY button targeting it (the cc-agent PTY button is
+      # only emitted for members).
+      refute member_row?(render(lv), URI.to_string(agent_uri))
+
+      render_hook(lv, "open_invite_modal", %{})
+
+      html =
+        render_hook(lv, "invite_member", %{"member_uri" => URI.to_string(agent_uri)})
+
+      # The agent is now a member of the unified list.
+      assert html =~ ~s(id="session-members-table")
+      assert member_row?(html, URI.to_string(agent_uri))
+
+      # The modal closed on confirmed :ok.
+      [_, modal_block | _] = String.split(html, ~s(id="invite-member-modal"))
+      assert modal_block =~ "hidden"
+    end
+
+    # SPEC §1.6 / §2C.4 step 1 — the picker's hidden input is untrusted.
+    # A hand-tampered out-of-workspace URI is rejected with a flash and
+    # is NEVER dispatched (the entity does not become a member).
+    test "invite_member with an out-of-workspace URI → flash, NOT dispatched", %{conn: conn} do
+      # session://default/default/main lives in workspace `default`; a
+      # URI whose workspace segment is `otherws` fails the shared
+      # `UriOptions.valid_for?/4` workspace check even for a system
+      # caller (a picker field is scoped to ONE workspace).
+      bad_uri = "entity://agent/otherws/cc_intruder-#{System.unique_integer([:positive])}"
+
+      {:ok, lv, _html} = live(conn, "/sessions")
+      render_hook(lv, "open_invite_modal", %{})
+
+      html = render_hook(lv, "invite_member", %{"member_uri" => bad_uri})
+
+      # Flash names the rejection — no silent drop.
+      assert html =~ "Rejected"
+      assert html =~ "workspace"
+      # The bad URI never reached dispatch → it is NOT in the member list.
+      refute member_row?(html, bad_uri)
+    end
+
+    # SPEC §2C.4 step 3 + §4 verification item 15 — a genuine
+    # `:unauthorized` dispatch result surfaces as a DISTINCT flash, not
+    # a silent drop. The pre-V1 `add_floating_agent` `:cast` path
+    # discarded this. A non-admin caller with no caps (its User Kind is
+    # never spawned → `Identity.list_caps_for/1` returns an empty
+    # MapSet) is denied by CapBAC.
+    test "invite_member surfacing :unauthorized → distinct flash, no silent drop", %{conn: _conn} do
+      name = "cc_demo-unauth-#{System.unique_integer([:positive])}"
+      agent_uri = URI.parse("entity://agent/default/#{name}")
+      {:ok, _kind_pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
+
+      # A non-admin caller in workspace `default` (same workspace as
+      # session://default/default/main, so the denial is :unauthorized,
+      # not :cross_workspace_denied) with NO caps.
+      non_admin = "entity://user/default/tester-#{System.unique_integer([:positive])}"
+
+      conn =
+        Phoenix.ConnTest.build_conn()
+        |> Plug.Test.init_test_session(%{"current_entity_uri" => non_admin})
+
+      {:ok, lv, _html} = live(conn, "/sessions")
+      render_hook(lv, "open_invite_modal", %{})
+
+      html =
+        render_hook(lv, "invite_member", %{"member_uri" => URI.to_string(agent_uri)})
+
+      # Distinct :unauthorized flash — NOT a generic "failed" and NOT
+      # silently swallowed.
+      assert html =~ "Unauthorized"
+      # The invite did not go through → the agent is not a member.
+      refute member_row?(html, URI.to_string(agent_uri))
+    end
+  end
+
+  # An agent URI may legitimately appear in the page outside the member
+  # list (e.g. inside the Invite picker's `data-options` JSON). A true
+  # "is a member" check looks for the row's cc-agent PTY button, which
+  # `MemberPanel` emits ONLY for joined cc-agent members.
+  defp member_row?(html, agent_uri) do
+    html =~ ~s(phx-value-agent="#{agent_uri}")
+  end
+
   describe "Phase 8b — composer @ autocomplete wiring" do
     test "composer input has MentionAutocomplete hook + data-members JSON", %{conn: conn} do
       {:ok, _lv, html} = live(conn, "/sessions")

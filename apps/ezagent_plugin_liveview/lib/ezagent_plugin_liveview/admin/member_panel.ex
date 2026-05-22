@@ -1,91 +1,178 @@
 defmodule EzagentPluginLiveview.Admin.MemberPanel do
   @moduledoc """
-  Right pane: session members table (uri / online / last_seen).
-  Stateless — parent (AdminLive) reads members from the Session Kind
-  via :sys.get_state and refreshes on member_joined/member_left/member_offline.
+  Right pane: the session's unified member list + an Invite modal.
 
-  Phase 8b — for every `entity://agent/default/cc_*` member, renders a small
-  PTY (🖥️) button next to the URI. Click dispatches
-  `switch_to_pty_for_agent` which sets the SessionEditor view-mode
-  to `:pty` and binds xterm.js to the chosen agent.
+  Stateless — parent (`AdminLive`) reads members from the Session Kind
+  via `:sys.get_state` and refreshes on
+  `member_joined`/`member_left`/`member_offline`.
+
+  ## V1 UI SPEC §2C — member panel redesign
+
+  The pre-V1 sidebar had a confusing split: a MEMBERS list AND a
+  separate FLOATING AGENTS `<select>`. Per SPEC §2C.3 those merge into
+  **one unified list** — floating agents are simply members added
+  ad-hoc, so they render identically. Each row carries the procedural
+  `<.avatar>`, the display name, the URI (`font-mono` small), an online
+  `<.status_dot>`, and the per-row cc-agent PTY button.
+
+  The FLOATING AGENTS `<select>` is gone; in its place an **Invite**
+  button opens a `<.modal>` with two affordances (SPEC §2C.3):
+
+    1. *Add existing* — a `<.uri_picker mode={:single} kinds={[:entity]}>`
+       (PR-1's component) over entities not already in the session.
+       Submitting `invite_member` dispatches `chat.join`.
+    2. *Create new agent* — a link to the existing
+       `/identities/agents/new` page (AgentNewLive). The create form is
+       NOT rebuilt in the modal.
+
+  The `invite_member` handler in `AdminLive` is a NEW dedicated
+  `:call`-mode handler (SPEC §2C.4) — it does NOT reuse the deleted
+  `add_floating_agent` `:cast` path, which silently dropped
+  `:unauthorized` / `:cross_workspace_denied` failures (Decision #134,
+  the no-silent-drop invariant).
+
+  Phase 8b — for every cc-managed agent member
+  (`entity://agent/default/cc_*`) the row renders a small PTY (🖥️)
+  button. Click dispatches `switch_to_pty_for_agent` which sets the
+  SessionEditor view-mode to `:pty` and binds xterm.js to that agent.
   """
 
   use Phoenix.Component
   use EzagentDomainUi.Primitives
+  use EzagentDomainUi.Components
 
   attr :members, :list, required: true
-  attr :floating_agents, :list, default: []
 
   # Username & Auth UI Task 1 (PR-O) — `%{uri_str => display_name}`
   # batch-resolved by admin_live via `Ezagent.EntityPresenter.display_many/1`.
   # Empty map = fall back to URI path segment for each member.
   attr :display_map, :map, default: %{}
 
+  # V1 UI SPEC §2C.3 — Invite modal state. `invite_open` toggles the
+  # `<.modal>`; `invite_options` is the `uri_picker`'s entity option
+  # list (entities NOT already in the session, scoped to the session's
+  # workspace — computed by `AdminLive.assign_session_context/2`).
+  attr :invite_open, :boolean, default: false
+  attr :invite_options, :list, default: []
+
   def member_panel(assigns) do
     ~H"""
     <aside id="session-members" class="p-3 text-zinc-800 dark:text-zinc-200">
-      <h3 class="text-[10px] uppercase tracking-wide text-zinc-500 mb-2">Members</h3>
-      <%!-- Phase 8c follow-up (Allen 2026-05-20) — the prior copy
-            "(No members — Chat plugin failed to start?)" blamed the
-            chat plugin for a normal cold-start state. Empty here just
-            means the session has no joined members yet — invite an
-            agent via the picker below. AdminLive.ensure_main_session/2
-            guarantees the session itself exists before we render. --%>
-      <p :if={@members == []} id="session-members-empty" class="text-xs text-zinc-500">
-        No members yet. Invite an agent from the picker below.
-      </p>
-      <table :if={@members != []} id="session-members-table" class="w-full text-xs">
-        <tbody>
-          <tr :for={member <- @members} class="border-b border-zinc-100 dark:border-zinc-900">
-            <td class="py-1.5 align-top">
-              <div class="flex items-start gap-1 justify-between">
-                <div class="flex-1 min-w-0">
-                  <%!-- Display name primary, URI mono subtitle. --%>
-                  <div class="text-xs font-medium text-zinc-800 dark:text-zinc-200 truncate">
-                    {display_for(member.uri, @display_map)}
-                  </div>
-                  <div class="font-mono text-[10px] text-zinc-400 dark:text-zinc-600 break-all">{member.uri}</div>
-                </div>
-                <button
-                  :if={cc_agent_uri?(member.uri)}
-                  type="button"
-                  phx-click="switch_to_pty_for_agent"
-                  phx-value-agent={member.uri}
-                  title={"Open PTY for #{display_for(member.uri, @display_map)}"}
-                  aria-label={"Open PTY for #{display_for(member.uri, @display_map)}"}
-                  class="p-1 text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded shrink-0"
-                >
-                  <.icon name="terminal" size="xs" />
-                </button>
-              </div>
-              <div class={member_status_class(member.online)}>
-                {if member.online, do: "online", else: "offline"}
-                <span :if={member.last_seen} class="text-zinc-400 dark:text-zinc-600 font-normal">
-                  · {DateTime.to_iso8601(member.last_seen)}
-                </span>
-              </div>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-
-      <%!-- Phase 8c PR-E (Allen 2026-05-20) — restore "Floating agents"
-            picker that pre-Phase-8b sessions_sidebar provided. Lets
-            an operator add any agent in KindRegistry that isn't yet
-            a member of any session to the current session. --%>
-      <div :if={@floating_agents != []} class="mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-800">
-        <h3 class="text-[10px] uppercase tracking-wide text-zinc-500 mb-2">Floating agents</h3>
-        <form phx-change="add_floating_agent" class="contents">
-          <select
-            name="agent_uri"
-            id="floating-agents-picker"
-            class="w-full text-[11px] px-2 py-1 border border-zinc-300 dark:border-zinc-700 rounded bg-white dark:bg-zinc-900 text-zinc-800 dark:text-zinc-200"
-          >
-            <option value="">— add to session…</option>
-            <option :for={uri <- @floating_agents} value={uri}>{display_for(uri, @display_map)}</option>
-          </select>
-        </form>
+      <div class="flex items-center justify-between mb-2">
+        <h3 class="text-[10px] uppercase tracking-wide text-zinc-500">Members</h3>
+        <.button
+          type="button"
+          variant="outline"
+          size="sm"
+          phx-click="open_invite_modal"
+          id="invite-member-button"
+        >
+          <.icon name="plus" size="xs" class="mr-1" /> Invite
+        </.button>
       </div>
+
+      <%!-- V1 UI SPEC §2C.3 — one unified member list. `members`
+            already includes ex-"floating" agents (they ARE members);
+            nothing distinguishes them in the markup. AdminLive
+            guarantees the session exists before this renders, so an
+            empty list just means no member has joined yet. --%>
+      <p :if={@members == []} id="session-members-empty" class="text-xs text-zinc-500">
+        No members yet. Use Invite to add an agent.
+      </p>
+      <ul :if={@members != []} id="session-members-table" class="space-y-1.5">
+        <li
+          :for={member <- @members}
+          class="flex items-start gap-2 border-b border-zinc-100 dark:border-zinc-900 pb-1.5"
+        >
+          <.avatar uri={member.uri} size="sm" class="mt-0.5" />
+          <div class="flex-1 min-w-0">
+            <%!-- Display name primary, URI mono subtitle. --%>
+            <div class="text-xs font-medium text-zinc-800 dark:text-zinc-200 truncate">
+              {display_for(member.uri, @display_map)}
+            </div>
+            <div class="font-mono text-[10px] text-zinc-400 dark:text-zinc-600 break-all">
+              {member.uri}
+            </div>
+            <div class={member_status_class(member.online)}>
+              <.status_dot color={if member.online, do: "green", else: "gray"} />
+              {if member.online, do: "online", else: "offline"}
+              <span :if={member.last_seen} class="text-zinc-400 dark:text-zinc-600 font-normal">
+                · {DateTime.to_iso8601(member.last_seen)}
+              </span>
+            </div>
+          </div>
+          <button
+            :if={cc_agent_uri?(member.uri)}
+            type="button"
+            phx-click="switch_to_pty_for_agent"
+            phx-value-agent={member.uri}
+            title={"Open PTY for #{display_for(member.uri, @display_map)}"}
+            aria-label={"Open PTY for #{display_for(member.uri, @display_map)}"}
+            class="p-1 text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded shrink-0"
+          >
+            <.icon name="terminal" size="xs" />
+          </button>
+        </li>
+      </ul>
+
+      <%!-- V1 UI SPEC §2C.3 — Invite modal. Reuses the Tier-2 `<.modal>`
+            atom + PR-1's `<.uri_picker>`. "Add existing" submits
+            `invite_member`; "Create new agent" routes to the existing
+            AgentNewLive instead of rebuilding the form here. --%>
+      <.modal id="invite-member-modal" open={@invite_open} on_close="close_invite_modal">
+        <:header>Invite a member</:header>
+        <:body>
+          <div class="space-y-4">
+            <div>
+              <h4 class="text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
+                Add existing
+              </h4>
+              <p class="text-[11px] text-zinc-500 dark:text-zinc-400 mb-2">
+                Pick an entity to add to this session as a member.
+              </p>
+              <.form
+                for={%{}}
+                as={:invite}
+                phx-submit="invite_member"
+                id="invite-member-form"
+                class="flex items-start gap-2"
+              >
+                <div class="flex-1">
+                  <.uri_picker
+                    name="member_uri"
+                    mode={:single}
+                    kinds={[:entity]}
+                    options={@invite_options}
+                    placeholder="Search entities…"
+                  />
+                </div>
+                <.button type="submit" variant="primary" size="sm">Invite</.button>
+              </.form>
+            </div>
+
+            <div class="border-t border-zinc-200 dark:border-zinc-800 pt-3">
+              <h4 class="text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
+                Create new agent
+              </h4>
+              <p class="text-[11px] text-zinc-500 dark:text-zinc-400 mb-2">
+                Need a new agent first? Create one, then invite it.
+              </p>
+              <.link
+                navigate="/identities/agents/new"
+                id="invite-create-agent-link"
+                class="inline-flex items-center text-xs font-medium text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300"
+              >
+                <.icon name="plus" size="xs" class="mr-1" /> New agent
+              </.link>
+            </div>
+          </div>
+        </:body>
+        <:footer>
+          <.button type="button" variant="ghost" size="sm" phx-click="close_invite_modal">
+            Close
+          </.button>
+        </:footer>
+      </.modal>
     </aside>
     """
   end
@@ -104,6 +191,9 @@ defmodule EzagentPluginLiveview.Admin.MemberPanel do
   defp cc_agent_uri?("entity://agent/default/cc_" <> _), do: true
   defp cc_agent_uri?(_), do: false
 
-  defp member_status_class(true), do: "text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold"
-  defp member_status_class(false), do: "text-[10px] text-zinc-400 dark:text-zinc-600"
+  defp member_status_class(true),
+    do: "text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1"
+
+  defp member_status_class(false),
+    do: "text-[10px] text-zinc-400 dark:text-zinc-600 flex items-center gap-1"
 end
