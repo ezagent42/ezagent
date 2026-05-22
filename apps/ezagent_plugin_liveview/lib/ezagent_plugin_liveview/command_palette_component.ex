@@ -67,6 +67,13 @@ defmodule EzagentPluginLiveview.CommandPaletteComponent do
   def mount(socket) do
     {:ok,
      socket
+     # Nested-shell PR-1 (SPEC §2/§3) — `perspective` is an OPTIONAL
+     # attr threaded by the Tier-3 `AppShell.app_shell/1`. It defaults
+     # to `:workspace` so existing callers (the per-LV `:command_palette`
+     # slot, PR-2b) keep working unchanged. PR-1 does NOT change the V1
+     # candidate/result behavior — `:admin`-scoped CmdK filtering is a
+     # later PR; this PR only accepts the attr.
+     |> assign(:perspective, :workspace)
      |> assign(:open, false)
      |> assign(:query, "")
      |> assign(:results, [])
