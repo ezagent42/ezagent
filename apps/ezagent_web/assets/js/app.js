@@ -96,6 +96,35 @@ window.addEventListener("phx:page-loading-stop", _info => topbar.hide())
 // connect if there are any LiveViews on the page
 liveSocket.connect()
 
+// V1 UI PR-2 (SPEC §2.4) — CmdK command palette open-trigger.
+//
+// The open behavior is app-GLOBAL, not bound to one component
+// instance, so it is plain global JS here — NOT a phx-hook (a hook
+// needs a mount-point element). Two paths both end at one place:
+//
+//   1. The header search button dispatches `ezagent:open-command-palette`
+//      (see ide_shell.ex top_command_bar).
+//   2. ⌘K / Ctrl+K dispatches the same custom event.
+//
+// The CommandPaletteComponent (#cmdk) renders a `data-cmdk-open`
+// attribute holding a serialized `JS.push("cmdk_open", target: @myself)`.
+// The listener reads that attribute and execJS-es it, routing the
+// canonical `cmdk_open` event (SPEC §2.5) to that LiveComponent. If
+// the palette isn't on the page (no `#cmdk`), this is a harmless no-op.
+window.addEventListener("ezagent:open-command-palette", () => {
+  const palette = document.getElementById("cmdk")
+  if (palette) {
+    const cmd = palette.getAttribute("data-cmdk-open")
+    if (cmd) liveSocket.execJS(palette, cmd)
+  }
+})
+window.addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+    e.preventDefault()
+    window.dispatchEvent(new CustomEvent("ezagent:open-command-palette"))
+  }
+})
+
 // expose liveSocket on window for web console debug logs and latency simulation:
 // >> liveSocket.enableDebug()
 // >> liveSocket.enableLatencySim(1000)  // enabled for duration of browser session

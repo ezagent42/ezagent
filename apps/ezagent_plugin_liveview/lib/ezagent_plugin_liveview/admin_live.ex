@@ -137,6 +137,32 @@ defmodule EzagentPluginLiveview.AdminLive do
     {:ok, socket}
   end
 
+  # V1 UI PR-2 (SPEC §2.2 target-URL contract) — `?session=<encoded>`.
+  #
+  # A CmdK session result navigates to `/sessions?session=<url-encoded
+  # session URI>` (SPEC §2.2). Before PR-2, session-switching was ONLY
+  # a `phx-click` event ("switch_session") with no URL form — so a
+  # CmdK session result had nowhere to land. This `handle_params/3`
+  # clause reads the query param, decodes it, and selects that session
+  # via the SAME `select_session/2` helper the `phx-click` handler
+  # uses, so the two paths cannot drift.
+  #
+  # No `session` param (the normal /sessions visit, and live-nav back
+  # to /sessions without it) is a no-op — the LV keeps its current
+  # session.
+  @impl true
+  def handle_params(%{"session" => encoded}, _uri, socket) when is_binary(encoded) do
+    case URI.new(URI.decode_www_form(encoded)) do
+      {:ok, %URI{scheme: "session"} = session_uri} ->
+        {:noreply, select_session(socket, session_uri)}
+
+      _ ->
+        {:noreply, assign(socket, :flash_error, "Bad session URI: #{encoded}")}
+    end
+  end
+
+  def handle_params(_params, _uri, socket), do: {:noreply, socket}
+
   # --- Stream / membership / audit handlers -----------------------------
 
   @impl true
@@ -236,32 +262,7 @@ defmodule EzagentPluginLiveview.AdminLive do
   def handle_event("switch_session", %{"session_uri" => session_uri_str}, socket) do
     case URI.new(session_uri_str) do
       {:ok, new_uri} ->
-        new_messages = load_session_messages(new_uri)
-        applicable = SessionViewRegistry.applicable_views(new_uri)
-
-        new_view =
-          cond do
-            Enum.any?(applicable, &(&1.id == socket.assigns.current_view)) ->
-              socket.assigns.current_view
-
-            applicable != [] ->
-              hd(applicable).id
-
-            true ->
-              :conversation
-          end
-
-        {:noreply,
-         socket
-         |> assign(:current_session_uri, new_uri)
-         |> assign_session_context(new_uri)
-         |> assign(:current_view, new_view)
-         # Reset PTY agent binding — the new session may not have that
-         # agent as a member.
-         |> assign(:active_pty_agent_uri, nil)
-         |> assign(:oldest_cursor, oldest_cursor(new_messages))
-         |> assign(:messages_empty?, new_messages == [])
-         |> stream(:messages, new_messages, reset: true)}
+        {:noreply, select_session(socket, new_uri)}
 
       _ ->
         {:noreply, assign(socket, :flash_error, "Bad session URI: #{session_uri_str}")}
@@ -585,6 +586,38 @@ defmodule EzagentPluginLiveview.AdminLive do
     })
   end
 
+  # Switch the LV's in-view session to `session_uri`. Shared by the
+  # `switch_session` phx-click handler AND the `?session=` query-param
+  # `handle_params/3` clause (V1 UI PR-2, SPEC §2.2) so the two entry
+  # points stay in lockstep.
+  defp select_session(socket, %URI{} = session_uri) do
+    new_messages = load_session_messages(session_uri)
+    applicable = SessionViewRegistry.applicable_views(session_uri)
+
+    new_view =
+      cond do
+        Enum.any?(applicable, &(&1.id == socket.assigns.current_view)) ->
+          socket.assigns.current_view
+
+        applicable != [] ->
+          hd(applicable).id
+
+        true ->
+          :conversation
+      end
+
+    socket
+    |> assign(:current_session_uri, session_uri)
+    |> assign_session_context(session_uri)
+    |> assign(:current_view, new_view)
+    # Reset PTY agent binding — the new session may not have that
+    # agent as a member.
+    |> assign(:active_pty_agent_uri, nil)
+    |> assign(:oldest_cursor, oldest_cursor(new_messages))
+    |> assign(:messages_empty?, new_messages == [])
+    |> stream(:messages, new_messages, reset: true)
+  end
+
   defp build_session_form_matcher(%{"matcher_type" => "mention", "matcher_arg" => arg})
        when is_binary(arg) and arg != "",
        do: {:ok, Ezagent.Routing.Matcher.mention(arg)}
@@ -719,6 +752,11 @@ defmodule EzagentPluginLiveview.AdminLive do
           _ -> false
         end
       end)
+      # V1 UI PR-2 (SPEC §2.2) — `cmdk_nav_routes` is normally set by
+      # `EzagentWeb.LiveAuth.on_mount(:cmdk_nav)`. Belt-and-suspenders
+      # empty default for test paths that mount this LV outside the
+      # `:require_entity` live_session.
+      |> assign_new(:cmdk_nav_routes, fn -> [] end)
 
     ~H"""
     <IdeShell.ide_shell
@@ -799,6 +837,22 @@ defmodule EzagentPluginLiveview.AdminLive do
           display_map={@display_map}
         />
       </:right_sidebar>
+
+      <%!-- V1 UI PR-2 (SPEC §2.5 + §2.7) — CmdK command palette.
+            Shared LiveComponent: open-state + query + results + the
+            four canonical handlers live in one place. `nav_routes`
+            flows DOWN from the `EzagentWeb.LiveAuth` `:cmdk_nav`
+            on_mount assign; entity/session results are built inside
+            the component from `UriOptions`. --%>
+      <:command_palette>
+        <.live_component
+          module={EzagentPluginLiveview.CommandPaletteComponent}
+          id="cmdk"
+          nav_routes={@cmdk_nav_routes}
+          current_entity_uri={@current_entity_uri}
+          current_workspace_uri={@current_workspace_uri}
+        />
+      </:command_palette>
     </IdeShell.ide_shell>
     """
   end
