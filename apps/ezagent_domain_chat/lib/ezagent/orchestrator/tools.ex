@@ -142,17 +142,38 @@ defmodule Ezagent.Orchestrator.Tools do
          {:ok, caps} <- require_opt(opts, :caps),
          {:ok, workspace_uri} <- require_opt(opts, :workspace_uri),
          {:ok, session_uri} <- require_opt(opts, :session_uri),
+         # CRITICAL/HIGH-6 hardening — the LIVE worker instance name is
+         # session-unique (gen 0 for a fresh slot). Two sessions adding
+         # the same slot name get DISJOINT live worker URIs.
+         instance_name <-
+           Ezagent.Entity.Agent.session_instance_name(
+             slot_name,
+             session_discriminator(session_uri),
+             0
+           ),
          {:ok, worker_uri} <-
-           instantiate_worker(agent_template_uri, slot_name, workspace_uri, caller, caps) do
-      :ok = upsert_agent_slot(session_uri, slot_name, agent_template_uri, caller, caps)
-      {:ok, worker_uri}
+           instantiate_worker(agent_template_uri, instance_name, workspace_uri, caller, caps) do
+      # HIGH-7 saga — if recording the slot fails AFTER the worker
+      # spawned, terminate the orphaned worker before surfacing the
+      # error (a worker with lineage but no slot).
+      case upsert_agent_slot(session_uri, slot_name, agent_template_uri, worker_uri, 0, caller, caps) do
+        :ok ->
+          {:ok, worker_uri}
+
+        {:error, reason} ->
+          compensate_orphan_worker(worker_uri, caller, caps, reason)
+          {:error, {:add_agent_slot_aborted, reason}}
+      end
     end
   end
 
   # Dispatch `template.instantiate` on the AgentTemplate Kind. The
   # action runs in-process with the slice in hand, resolves the flavor
   # Class, and spawns the worker — recording lineage under `caller`.
-  defp instantiate_worker(%URI{} = agent_template_uri, slot_name, %URI{} = workspace_uri, %URI{} = caller, caps) do
+  # `instance_name` is the SESSION-UNIQUE live instance name (CRITICAL
+  # fix) — the caller built it via `Agent.session_instance_name/3`.
+  defp instantiate_worker(%URI{} = agent_template_uri, instance_name, %URI{} = workspace_uri, %URI{} = caller, caps)
+       when is_binary(instance_name) do
     with {:ok, _pid} <- ensure_template_alive(agent_template_uri) do
       target = URI.parse("#{URI.to_string(agent_template_uri)}?action=template.instantiate")
 
@@ -160,7 +181,7 @@ defmodule Ezagent.Orchestrator.Tools do
              target: target,
              mode: :call,
              args: %{
-               instance_name: slot_name,
+               instance_name: instance_name,
                workspace_uri: workspace_uri,
                spawned_by: caller
              },
@@ -171,6 +192,41 @@ defmodule Ezagent.Orchestrator.Tools do
         {:error, _} = err -> err
         other -> {:error, {:unexpected_instantiate_result, other}}
       end
+    end
+  end
+
+  # The session-scoped discriminator folded into every LIVE worker
+  # instance name — the session URI's name segment (kept in sync with
+  # `Ezagent.Entity.Session.session_discriminator/1`).
+  defp session_discriminator(%URI{} = session_uri) do
+    case session_uri.path do
+      "/" <> rest ->
+        case String.split(rest, "/", parts: 2) do
+          [_ws, name] when name != "" -> name
+          _ -> session_uri.host || "session"
+        end
+
+      _ ->
+        session_uri.host || "session"
+    end
+  end
+
+  # HIGH-7 — terminate a replacement/new worker orphaned because a
+  # post-spawn saga step failed. Best-effort; a failed cleanup is
+  # logged so the orphan is visible (it never silently lingers).
+  defp compensate_orphan_worker(%URI{} = worker_uri, %URI{} = caller, caps, cause) do
+    case terminate_worker(worker_uri, caller, caps) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.error(
+          "orchestrator saga cleanup FAILED — orphaned worker " <>
+            "#{URI.to_string(worker_uri)} could not be terminated after " <>
+            "#{inspect(cause)}: #{inspect(reason)} — manual cleanup required"
+        )
+
+        :ok
     end
   end
 
@@ -264,35 +320,95 @@ defmodule Ezagent.Orchestrator.Tools do
       when is_binary(slot_name) do
     with {:ok, caller} <- require_opt(opts, :caller),
          {:ok, caps} <- require_opt(opts, :caps),
-         {:ok, workspace_uri} <- require_opt(opts, :workspace_uri),
+         {:ok, _workspace_uri} <- require_opt(opts, :workspace_uri),
          {:ok, session_uri} <- require_opt(opts, :session_uri) do
-      # Capture the OLD worker URI BEFORE any mutation so phase 4 can
-      # terminate exactly it (not the new worker).
-      old_worker_uri =
-        case resolve_slot_worker_uri(session_uri, slot_name, workspace_uri) do
-          {:ok, uri} -> uri
-          :no_slot -> nil
-        end
+      # Capture the OLD slot tuple BEFORE any mutation so phase 4
+      # terminates exactly the OLD worker, and the generation counter
+      # advances from the slot's current generation.
+      case find_slot_tuple(session_uri, slot_name) do
+        nil ->
+          {:error, {:update_aborted, :no_such_slot}}
 
-      with :ok <- preflight_template_read(new_agent_template_uri, caller, caps),
-           # Phase 2 — spawn the replacement worker (cap #4).
-           {:ok, new_worker_uri} <-
-             instantiate_worker(new_agent_template_uri, slot_name, workspace_uri, caller, caps),
-           # Phase 3 — atomic swap: the slot tuple now points at the new
-           # AgentTemplate URI. From here the slot is "switched";
-           # failures past this point do not lose the live new worker.
-           :ok <-
-             upsert_agent_slot(session_uri, slot_name, new_agent_template_uri, caller, caps) do
-        # Phase 4 — terminate the OLD worker (best-effort; the new worker
-        # is already the slot's truth). A failed terminate leaves a stale
-        # process but never an outage.
-        maybe_terminate_old(old_worker_uri, new_worker_uri, caller, caps)
-        {:ok, new_worker_uri}
-      else
+        {_s, _old_template_uri, %URI{} = old_worker_uri, old_generation} ->
+          do_update_agent_template(
+            slot_name,
+            new_agent_template_uri,
+            session_uri,
+            old_worker_uri,
+            old_generation,
+            caller,
+            caps
+          )
+      end
+    end
+  end
+
+  # HIGH-6 + HIGH-7 — the two-phase rollback-safe swap.
+  #
+  # HIGH-6: the replacement worker spawns under a fresh
+  # **generation-specific** instance URI (`old_generation + 1`). The
+  # pre-hardening code reused the same `{workspace, flavor, slot_name}`
+  # URI, so a cc→cc swap produced an identical URI — the cc Class
+  # treated the already-alive worker as idempotent success and the OLD
+  # process kept running with the OLD config. A generation-bumped URI
+  # is genuinely new, so the worker actually restarts.
+  #
+  # HIGH-7: a saga — if `upsert_agent_slot` (the swap commit) fails
+  # AFTER the replacement spawned, the new worker is an orphan (lineage,
+  # no slot); `compensate_orphan_worker/4` terminates it before the
+  # error is surfaced. The OLD worker + slot stay untouched on any
+  # phase-1..3 failure — no outage.
+  defp do_update_agent_template(
+         slot_name,
+         %URI{} = new_agent_template_uri,
+         %URI{} = session_uri,
+         %URI{} = old_worker_uri,
+         old_generation,
+         %URI{} = caller,
+         caps
+       ) do
+    new_generation = old_generation + 1
+    workspace_uri = derive_workspace(session_uri)
+
+    instance_name =
+      Ezagent.Entity.Agent.session_instance_name(
+        slot_name,
+        session_discriminator(session_uri),
+        new_generation
+      )
+
+    with :ok <- preflight_template_read(new_agent_template_uri, caller, caps),
+         # Phase 2 — spawn the replacement worker under the fresh
+         # generation-specific URI (cap #4).
+         {:ok, new_worker_uri} <-
+           instantiate_worker(new_agent_template_uri, instance_name, workspace_uri, caller, caps) do
+      # Phase 3 — atomic swap: the slot tuple now records the new
+      # AgentTemplate URI, the new LIVE worker URI, and the bumped
+      # generation. HIGH-7 — a failure here orphans the new worker.
+      case upsert_agent_slot(
+             session_uri,
+             slot_name,
+             new_agent_template_uri,
+             new_worker_uri,
+             new_generation,
+             caller,
+             caps
+           ) do
+        :ok ->
+          # Phase 4 — terminate the OLD worker. The new worker is the
+          # slot's truth + has a DIFFERENT URI (generation-bumped), so
+          # this always terminates a genuinely-distinct old process.
+          maybe_terminate_old(old_worker_uri, new_worker_uri, caller, caps)
+          {:ok, new_worker_uri}
+
         {:error, reason} ->
-          # Phases 1-3 failed — the OLD slot is untouched, no outage.
+          compensate_orphan_worker(new_worker_uri, caller, caps, reason)
           {:error, {:update_aborted, reason}}
       end
+    else
+      {:error, reason} ->
+        # Phases 1-2 failed — the OLD slot is untouched, no outage.
+        {:error, {:update_aborted, reason}}
     end
   end
 
@@ -317,11 +433,10 @@ defmodule Ezagent.Orchestrator.Tools do
     end
   end
 
-  # Terminate the OLD worker after a successful swap, unless it IS the
-  # new worker (flavors identical + same slot ⇒ identical instance URI ⇒
-  # the new worker reused the slot; nothing to terminate).
-  defp maybe_terminate_old(nil, _new_worker_uri, _caller, _caps), do: :ok
-
+  # Terminate the OLD worker after a successful swap. HIGH-6 — the new
+  # worker always has a fresh generation-specific URI, so it is never
+  # the same process as the old; the URI-equality guard below is
+  # belt-and-braces against a degenerate generation collision.
   defp maybe_terminate_old(%URI{} = old_worker_uri, %URI{} = new_worker_uri, caller, caps) do
     if URI.to_string(old_worker_uri) == URI.to_string(new_worker_uri) do
       :ok
@@ -415,18 +530,22 @@ defmodule Ezagent.Orchestrator.Tools do
   @doc """
   Snapshot the live session as a NEW VERSION of the current parent
   SessionTemplate, persisting it via
-  `Ezagent.Entity.SessionTemplate.persist_version/2` (SPEC §2.1 row 5).
+  `Ezagent.Entity.SessionTemplate.persist_version/3` (SPEC §2.1 row 5).
 
-  `persist_version/2` spawns the SessionTemplate Kind at the
+  `persist_version/3` spawns the SessionTemplate Kind at the
   content-hash URI and dispatches `Behavior.Template` `:write` — which
   writes a real `kind_snapshots` row. The version is content-addressed:
   identical content ⇒ identical hash ⇒ idempotent.
 
-  CapBAC: the tool runs `check_template_write_cap/2` (cap #3,
-  `:session_template`, `{:within_workspace, ws}`) at the boundary BEFORE
-  calling `persist_version/2` — `persist_version/2`'s internal `:write`
-  uses admin caps, so the boundary check is what enforces the
-  orchestrator's actual authority (SPEC §1.7 caller-context note).
+  ## CapBAC — HIGH-9 hardening
+
+  The tool runs `check_template_write_cap/2` (cap #3, `:session_template`,
+  `{:within_workspace, ws}`) at the boundary, AND threads the
+  orchestrator's `{caller, caps}` into `persist_version/3` so the
+  decisive `template.write` dispatch is CapBAC-checked against the
+  ORCHESTRATOR's real authority — NOT `admin_caps`. The pre-hardening
+  code called `persist_version/2`, whose `:write` ran under ambient
+  admin authority; that admin fallback is removed from the tool path.
 
   Required `opts`: `:caller`, `:caps`, `:session_uri`, `:workspace_uri`,
   `:parent_template_uri`.
@@ -453,22 +572,59 @@ defmodule Ezagent.Orchestrator.Tools do
         |> Map.put(:created_by, caller_uri)
         |> Map.put(:created_at, DateTime.utc_now())
 
-      SessionTemplate.persist_version(content, workspace_uri)
+      # HIGH-9 — thread the orchestrator's context; NO admin fallback.
+      SessionTemplate.persist_version(content, workspace_uri,
+        caller: caller_uri,
+        caps: caps
+      )
     end
   end
 
-  # Phase 7 PR 48 — parent-template-deletion check. A genuinely-deleted
-  # (or never-registered) parent hash returns `:parent_template_deleted`.
-  # The lookup is registry-only by design: `SpawnRegistry.spawn` would
-  # bring up a FRESH empty SessionTemplate Kind for any URI, masking a
-  # real deletion — so the deleted-parent semantics require the
-  # live-registry check. For `update_template` the parent IS expected
-  # alive: the session was instantiated from it this very session.
+  # Phase 7 PR 48 + HIGH-8 hardening — parent-template-deletion check.
+  #
+  # ## The HIGH-8 bug
+  #
+  # The pre-hardening check used ONLY `KindRegistry.lookup/1` — a
+  # live-pid registry. After a phx restart (or process culling) a
+  # SessionTemplate version that IS durably persisted in `kind_snapshots`
+  # but not currently spawned was wrongly reported
+  # `:parent_template_deleted`, so `update_template` falsely failed even
+  # though the parent template still exists.
+  #
+  # ## The fix
+  #
+  # Existence is checked against the DURABLE store —
+  # `Ezagent.Ecto.KindSnapshot.get/1`. A parent is "alive" iff it is
+  # either live in `KindRegistry` OR has a `kind_snapshots` row (a Kind
+  # that is `{:snapshot, :on_change}` snapshots on its first slice
+  # write, so a persisted SessionTemplate version always has a row). A
+  # genuinely-never-registered / deleted parent has NEITHER → still
+  # `:parent_template_deleted`. `SpawnRegistry.spawn` is deliberately
+  # NOT used to probe — it would bring up a FRESH empty Kind for any
+  # URI and mask a real deletion.
   defp check_parent_alive(%URI{} = parent_uri) do
-    case Ezagent.KindRegistry.lookup(parent_uri) do
-      {:ok, _pid} -> :ok
-      :error -> {:error, :parent_template_deleted}
+    cond do
+      match?({:ok, _pid}, Ezagent.KindRegistry.lookup(parent_uri)) ->
+        :ok
+
+      durable_snapshot_exists?(parent_uri) ->
+        :ok
+
+      true ->
+        {:error, :parent_template_deleted}
     end
+  end
+
+  # True iff a `kind_snapshots` row exists for `uri` — the durable
+  # existence check (HIGH-8). DB errors degrade to `false` (treated as
+  # "not durably present") rather than crashing the tool.
+  defp durable_snapshot_exists?(%URI{} = uri) do
+    case Ezagent.Ecto.KindSnapshot.get(URI.to_string(uri)) do
+      %Ezagent.Ecto.KindSnapshot{} -> true
+      nil -> false
+    end
+  rescue
+    _ -> false
   end
 
   # === save_template_as ==================================================
@@ -476,11 +632,14 @@ defmodule Ezagent.Orchestrator.Tools do
   @doc """
   Snapshot the live session as the FIRST VERSION of a NEW SessionTemplate
   named `new_name`, persisting it via
-  `Ezagent.Entity.SessionTemplate.persist_version/2` (SPEC §2.1 row 6).
+  `Ezagent.Entity.SessionTemplate.persist_version/3` (SPEC §2.1 row 6).
 
   After persistence, grants the owner a `Behavior.Template`
   SessionTemplate cap on the workspace (SPEC §1.7 (e)) so the owner can
   later instantiate it via the Generator.
+
+  HIGH-9 — the `template.write` persistence dispatch runs under the
+  orchestrator's threaded `{caller, caps}`, NOT `admin_caps`.
 
   Required `opts`: same as `update_template/1` except
   `:parent_template_uri` is optional (the new template records it as
@@ -509,7 +668,11 @@ defmodule Ezagent.Orchestrator.Tools do
         |> Map.put(:created_by, caller_uri)
         |> Map.put(:created_at, DateTime.utc_now())
 
-      case SessionTemplate.persist_version(content, workspace_uri) do
+      # HIGH-9 — thread the orchestrator's context; NO admin fallback.
+      case SessionTemplate.persist_version(content, workspace_uri,
+             caller: caller_uri,
+             caps: caps
+           ) do
         {:ok, new_uri} ->
           owner_uri = Keyword.get(opts, :owner, caller_uri)
           :ok = grant_owner_template_cap(owner_uri, new_uri, workspace_uri)
@@ -760,29 +923,62 @@ defmodule Ezagent.Orchestrator.Tools do
 
   # --- working-copy slice maintenance (SPEC §1.6) ------------------------
 
-  # Append/replace `{slot_name, agent_template_uri}` in the durable
+  # The durable slot tuple is the 4-tuple
+  # `{slot_name, source_agent_template_uri, live_worker_uri, generation}`
+  # (CRITICAL + HIGH-6 hardening). Live worker URIs are READ from the
+  # slot, never re-derived from `{workspace, flavor, slot_name}` — that
+  # re-derivation was collision-prone across sessions.
+
+  # Append/replace a slot's 4-tuple in the durable
   # `template_working_copy.agent_slots` slice via `chat.set_working_copy`.
-  defp upsert_agent_slot(%URI{} = session_uri, slot_name, %URI{} = agent_template_uri, %URI{} = caller, caps) do
+  # Stores the CURRENT live worker URI + generation so subsequent reads
+  # resolve the actual running process, not a guessed URI.
+  defp upsert_agent_slot(
+         %URI{} = session_uri,
+         slot_name,
+         %URI{} = agent_template_uri,
+         %URI{} = worker_uri,
+         generation,
+         %URI{} = caller,
+         caps
+       )
+       when is_integer(generation) and generation >= 0 do
     wc = read_template_working_copy(session_uri)
     slots = Map.get(wc, :agent_slots, [])
 
     new_slots =
       slots
-      |> Enum.reject(fn {s, _uri} -> to_string(s) == slot_name end)
-      |> Kernel.++([{slot_name, agent_template_uri}])
+      |> reject_slot(slot_name)
+      |> Kernel.++([{slot_name, agent_template_uri, worker_uri, generation}])
 
     write_working_copy(session_uri, Map.put(wc, :agent_slots, new_slots), caller, caps)
   end
 
-  # Drop the `{slot_name, _}` tuple from `agent_slots`.
+  # Drop a slot's tuple from `agent_slots`.
   defp drop_agent_slot(%URI{} = session_uri, slot_name, %URI{} = caller, caps) do
     wc = read_template_working_copy(session_uri)
     slots = Map.get(wc, :agent_slots, [])
 
-    new_slots = Enum.reject(slots, fn {s, _uri} -> to_string(s) == slot_name end)
-
-    write_working_copy(session_uri, Map.put(wc, :agent_slots, new_slots), caller, caps)
+    write_working_copy(
+      session_uri,
+      Map.put(wc, :agent_slots, reject_slot(slots, slot_name)),
+      caller,
+      caps
+    )
   end
+
+  # Reject the tuple(s) for `slot_name`. Tolerates legacy 2-tuples /
+  # 3-tuples in a pre-hardening snapshot (`normalize_slot/1` widens
+  # them) — `slot_tuple_name/1` reads the name from any arity.
+  defp reject_slot(slots, slot_name) do
+    Enum.reject(slots, fn tuple -> slot_tuple_name(tuple) == to_string(slot_name) end)
+  end
+
+  defp slot_tuple_name(tuple) when is_tuple(tuple) and tuple_size(tuple) >= 1 do
+    to_string(elem(tuple, 0))
+  end
+
+  defp slot_tuple_name(_), do: nil
 
   defp write_working_copy(%URI{} = session_uri, working_copy, %URI{} = caller, caps) do
     target = URI.parse("#{URI.to_string(session_uri)}?action=chat.set_working_copy")
@@ -799,64 +995,51 @@ defmodule Ezagent.Orchestrator.Tools do
     end
   end
 
-  # Resolve a slot's per-instance worker URI from its source
-  # AgentTemplate URI (which carries the `flavor`) + the slot name.
-  defp resolve_slot_worker_uri(%URI{} = session_uri, slot_name, %URI{} = workspace_uri) do
-    wc = read_template_working_copy(session_uri)
-    slots = Map.get(wc, :agent_slots, [])
+  # Find a slot's full normalized 4-tuple
+  # `{slot_name, source_agent_template_uri, live_worker_uri, generation}`,
+  # or `nil`. Used by `update_agent_template` to capture the OLD worker
+  # URI + current generation before the swap.
+  defp find_slot_tuple(%URI{} = session_uri, slot_name) do
+    want = to_string(slot_name)
 
-    case Enum.find(slots, fn {s, _uri} -> to_string(s) == slot_name end) do
-      {_s, %URI{} = agent_template_uri} ->
-        {:ok, worker_uri_for(agent_template_uri, slot_name, workspace_uri)}
-
-      {_s, uri} when is_binary(uri) ->
-        {:ok, worker_uri_for(URI.parse(uri), slot_name, workspace_uri)}
-
-      nil ->
-        :no_slot
-    end
+    read_template_working_copy(session_uri)
+    |> Map.get(:agent_slots, [])
+    |> Enum.find_value(fn tuple ->
+      case normalize_slot(tuple) do
+        {^want, _src, _worker, _gen} = t -> t
+        _ -> nil
+      end
+    end)
   end
 
-  # The worker instance URI for a slot: `entity://agent/<ws>/<flavor>_<slot>`
-  # (SPEC §1.2). The flavor must match what `template.instantiate`'s
-  # `resolve_instance_uri/4` built.
-  defp worker_uri_for(%URI{} = agent_template_uri, slot_name, %URI{} = workspace_uri) do
-    workspace_name = workspace_uri.host || "default"
-    flavor = flavor_of_agent_template(agent_template_uri)
+  # Widen any stored slot tuple to the canonical 4-tuple. A pre-hardening
+  # snapshot may carry a 2-tuple `{name, src}` or 3-tuple
+  # `{name, src, worker}`; those have no recorded live URI, so the
+  # worker URI is `nil` (callers treat that as "no live worker").
+  defp normalize_slot({name, src, %URI{} = worker, gen})
+       when is_integer(gen),
+       do: {to_string(name), as_uri(src), worker, gen}
 
-    if is_binary(flavor) and flavor != "" do
-      URI.new!("entity://agent/#{workspace_name}/#{flavor}_#{slot_name}")
-    else
-      URI.new!("entity://agent/#{workspace_name}/#{slot_name}")
+  defp normalize_slot({name, src, %URI{} = worker}),
+    do: {to_string(name), as_uri(src), worker, 0}
+
+  defp normalize_slot({name, src}),
+    do: {to_string(name), as_uri(src), nil, 0}
+
+  defp normalize_slot(other), do: other
+
+  defp as_uri(%URI{} = u), do: u
+  defp as_uri(s) when is_binary(s), do: URI.parse(s)
+  defp as_uri(other), do: other
+
+  # Resolve a slot's CURRENT live worker URI — READ from the durable
+  # slot tuple (CRITICAL fix), never re-derived. `:no_slot` if the slot
+  # is absent OR has no recorded live URI (legacy snapshot).
+  defp resolve_slot_worker_uri(%URI{} = session_uri, slot_name, %URI{} = _workspace_uri) do
+    case find_slot_tuple(session_uri, slot_name) do
+      {_s, _src, %URI{} = worker_uri, _gen} -> {:ok, worker_uri}
+      _ -> :no_slot
     end
-  end
-
-  # Derive the flavor from the AgentTemplate's `:template` slice if the
-  # Kind is alive, else default to "cc" (the V1 flavor). The
-  # `:instantiate` action built the worker URI with this same flavor
-  # prefix, so the two must agree.
-  defp flavor_of_agent_template(%URI{} = agent_template_uri) do
-    case Ezagent.KindRegistry.lookup(agent_template_uri) do
-      {:ok, pid} ->
-        slice =
-          pid
-          |> :sys.get_state()
-          |> Map.get(:state, %{})
-          |> Map.get(:template, %{})
-
-        case Map.get(slice, :content) do
-          content when is_map(content) ->
-            Map.get(content, :flavor) || Map.get(content, "flavor") || "cc"
-
-          _ ->
-            "cc"
-        end
-
-      :error ->
-        "cc"
-    end
-  rescue
-    _ -> "cc"
   end
 
   defp resolve_receiver_uris(%URI{} = session_uri, slot_names, %URI{} = workspace_uri) do
@@ -883,6 +1066,14 @@ defmodule Ezagent.Orchestrator.Tools do
   # `session_uri` and `name` are deliberately ABSENT from the emitted
   # slice so two different sessions with an identical team config hash
   # identically.
+  #
+  # The durable `agent_slots` is the 4-tuple
+  # `{slot_name, source_agent_template_uri, live_worker_uri, generation}`,
+  # but the EMITTED template content projects to the 2-tuple
+  # `{slot_name, source_agent_template_uri}` — the live worker URI +
+  # generation are SESSION-SPECIFIC (CRITICAL fix) and MUST NOT enter
+  # the content hash, or two sessions with the same team would hash
+  # differently.
   defp build_working_copy(%URI{} = session_uri, %URI{} = workspace_uri, %URI{} = _caller_uri, parent_uri) do
     wc = read_template_working_copy(session_uri)
 
@@ -892,9 +1083,18 @@ defmodule Ezagent.Orchestrator.Tools do
 
     default_workspace_uri = Map.get(wc, :default_workspace_uri) || workspace_uri
 
+    template_slots =
+      wc
+      |> Map.get(:agent_slots, [])
+      |> Enum.map(fn tuple ->
+        {name, src, _worker, _gen} = normalize_slot(tuple)
+        {name, src}
+      end)
+      |> Enum.sort()
+
     slice = %{
       description: Map.get(wc, :description, ""),
-      agent_slots: Enum.sort(Map.get(wc, :agent_slots, [])),
+      agent_slots: template_slots,
       orchestrator_template_uri: orchestrator_template_uri,
       routing_rules: Enum.sort(Map.get(wc, :routing_rules, [])),
       default_workspace_uri: default_workspace_uri,
@@ -902,6 +1102,17 @@ defmodule Ezagent.Orchestrator.Tools do
     }
 
     {:ok, slice}
+  end
+
+  # Derive a workspace URI from the orchestrator's session URI — used by
+  # `update_agent_template` when building the replacement worker's
+  # instance URI. The 3-segment session URI carries the workspace name
+  # as its first path segment.
+  defp derive_workspace(%URI{} = session_uri) do
+    case Ezagent.Capability.workspace_of(session_uri) do
+      %URI{} = ws -> ws
+      :any -> URI.new!("workspace://default")
+    end
   end
 
   # Read the durable `template_working_copy` field off the live Session

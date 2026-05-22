@@ -172,38 +172,171 @@ defmodule Ezagent.Entity.Session do
     session_template_uri = URI.parse(URI.to_string(session_template_uri_in))
     owner_uri = URI.parse(URI.to_string(owner_uri_in))
 
-    with {:ok, template_pid} <- ensure_template_alive(session_template_uri),
+    # ── MEDIUM-5 hardening: preflight EVERYTHING before any spawn ──────
+    #
+    # The pre-hardening Generator did irreversible side effects in a
+    # `with` chain with no cleanup — a late failure (a bad routing
+    # matcher, a missing AgentTemplate) left an orphaned session +
+    # workers + caps. The preflight below verifies, with NO side
+    # effects, every precondition that can be checked up front:
+    # template aliveness, owner authority, the destination workspace
+    # (HIGH-4), each agent-slot template's resolvability, and each
+    # routing matcher's validity. Only then does `do_spawn/4` start
+    # spawning — and `do_spawn/4` itself runs compensating cleanup if a
+    # post-spawn step fails.
+    with {:ok, _template_pid} <- ensure_template_alive(session_template_uri),
          :ok <- owner_instantiate_preflight(session_template_uri, owner_uri),
-         {:ok, template_content} <- read_template_content(session_template_uri, template_pid),
-         {:ok, session_uri} <- spawn_fresh_session(),
-         {:ok, workspace_uri} <- default_workspace_for_session(session_uri),
+         {:ok, template_content} <- read_template_content(session_template_uri),
+         {:ok, workspace_uri} <- resolve_target_workspace(template_content),
+         :ok <- preflight_agent_slots(template_content),
+         :ok <- preflight_routing_rules(template_content) do
+      do_spawn(template_content, workspace_uri, owner_uri)
+    end
+  end
+
+  # ── The spawn phase (MEDIUM-5) — irreversible side effects + cleanup ──
+  #
+  # Each step is irreversible; on failure of a LATER step,
+  # `cleanup_partial/1` tears down everything spawned so far so no
+  # half-built session/workers/rules/caps survive.
+  defp do_spawn(template_content, %URI{} = workspace_uri, %URI{} = owner_uri) do
+    with {:ok, session_uri} <- spawn_fresh_session(workspace_uri),
          :ok <- Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri),
          {:ok, orchestrator_uri} <-
-           spawn_orchestrator(session_uri, workspace_uri, owner_uri),
+           spawn_orchestrator(session_uri, workspace_uri, owner_uri) ||
+             {:error, :orchestrator_spawn_failed},
          {:ok, slot_instances} <-
-           instantiate_agent_slots(template_content, workspace_uri, orchestrator_uri),
-         :ok <-
-           populate_working_copy(
-             session_uri,
-             template_content,
-             slot_instances,
-             workspace_uri,
-             owner_uri
+           guard(
+             instantiate_agent_slots(
+               template_content,
+               session_uri,
+               workspace_uri,
+               orchestrator_uri
+             ),
+             %{session_uri: session_uri, orchestrator_uri: orchestrator_uri, slots: []}
            ),
-         :ok <- install_routing_rules(template_content, slot_instances, session_uri, owner_uri),
-         :ok <- grant_scoped_caps(orchestrator_uri, session_uri, owner_uri),
          :ok <-
-           register_orchestrator_mcp_context(
-             orchestrator_uri,
-             session_uri,
-             workspace_uri,
-             owner_uri,
-             session_template_uri
+           guard(
+             populate_working_copy(
+               session_uri,
+               template_content,
+               slot_instances,
+               workspace_uri,
+               owner_uri
+             ),
+             %{
+               session_uri: session_uri,
+               orchestrator_uri: orchestrator_uri,
+               slots: slot_instances
+             }
+           ),
+         :ok <-
+           guard(
+             install_routing_rules(
+               template_content,
+               slot_instances,
+               session_uri,
+               workspace_uri,
+               owner_uri
+             ),
+             %{
+               session_uri: session_uri,
+               orchestrator_uri: orchestrator_uri,
+               slots: slot_instances
+             }
+           ),
+         :ok <-
+           guard(
+             grant_scoped_caps(orchestrator_uri, session_uri, owner_uri),
+             %{
+               session_uri: session_uri,
+               orchestrator_uri: orchestrator_uri,
+               slots: slot_instances
+             }
+           ),
+         :ok <-
+           guard(
+             register_orchestrator_mcp_context(
+               orchestrator_uri,
+               session_uri,
+               workspace_uri,
+               owner_uri,
+               session_template_uri
+             ),
+             %{
+               session_uri: session_uri,
+               orchestrator_uri: orchestrator_uri,
+               slots: slot_instances
+             }
            ) do
       {:ok, %{session_uri: session_uri, orchestrator_uri: orchestrator_uri}}
-    else
-      err -> err
     end
+  end
+
+  # `spawn_orchestrator/3` returns `{:ok, _}` | `{:error, _}` already,
+  # so the `|| {:error, ...}` above is belt-and-braces against a nil.
+  # `guard/2` runs `cleanup_partial/1` when its first arg is an error.
+  defp guard({:error, reason}, spawned) do
+    cleanup_partial(spawned)
+    {:error, reason}
+  end
+
+  defp guard(ok, _spawned), do: ok
+
+  # MEDIUM-5 compensating cleanup — tear down everything `do_spawn`
+  # built so far. Best-effort: every step is wrapped so one failure
+  # does not prevent the rest. Order: workers, then orchestrator, then
+  # the session Kind, then its workspace binding. Routing rows are NOT
+  # rolled back individually (a rule whose receivers are all dead is
+  # inert) — but the live registry is reloaded so dead receivers do not
+  # linger in ETS.
+  defp cleanup_partial(spawned) do
+    session_uri = Map.get(spawned, :session_uri)
+    orchestrator_uri = Map.get(spawned, :orchestrator_uri)
+    slots = Map.get(spawned, :slots, [])
+
+    Enum.each(slots, fn
+      {_slot, _tmpl, %URI{} = worker_uri} -> terminate_kind(worker_uri)
+      _ -> :ok
+    end)
+
+    if orchestrator_uri, do: terminate_kind(orchestrator_uri)
+    if session_uri, do: terminate_kind(session_uri)
+    if session_uri, do: Ezagent.WorkspaceRegistry.unbind(session_uri)
+
+    # Re-hydrate the routing registry so any rule rows installed before
+    # the failure (whose receivers are now terminated) drop out of ETS.
+    safe(fn -> RuleStore.load_into_registry(EzagentDomainChat.Routing.MentionRouting) end)
+    :ok
+  end
+
+  # Terminate a Kind process (best-effort) and forget its lineage. The
+  # process is an Agent (worker / orchestrator) under `AgentSupervisor`
+  # or a Session under `SessionSupervisor`; we try both — a
+  # `terminate_child` against the wrong supervisor returns
+  # `{:error, :not_found}` harmlessly.
+  defp terminate_kind(%URI{} = uri) do
+    case Ezagent.KindRegistry.lookup(uri) do
+      {:ok, pid} ->
+        Enum.each(
+          [EzagentDomainChat.AgentSupervisor, EzagentDomainChat.SessionSupervisor],
+          fn sup -> safe(fn -> DynamicSupervisor.terminate_child(sup, pid) end) end
+        )
+
+      :error ->
+        :ok
+    end
+
+    safe(fn -> Ezagent.AgentLineage.forget(uri) end)
+    :ok
+  end
+
+  defp safe(fun) do
+    fun.()
+  rescue
+    _ -> :error
+  catch
+    _, _ -> :error
   end
 
   defp ensure_template_alive(%URI{} = template_uri) do
@@ -253,7 +386,7 @@ defmodule Ezagent.Entity.Session do
   # the read is audited. The Generator runs as a privileged bootstrap
   # program (consistent with `grant_scoped_caps/3`'s privileged grant
   # context); the WHO-may-instantiate gate is the owner preflight above.
-  defp read_template_content(%URI{} = session_template_uri, _template_pid) do
+  defp read_template_content(%URI{} = session_template_uri) do
     target = URI.parse("#{URI.to_string(session_template_uri)}?action=template.read")
 
     case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
@@ -273,14 +406,97 @@ defmodule Ezagent.Entity.Session do
     end
   end
 
-  defp spawn_fresh_session do
-    # SPEC v3 §3.6 (Phase 9 PR-7) — sessions are 3-segment:
-    # session://<template>/<workspace>/<name>. The Generator path
-    # builds `session://generic/default/gen-<unique>` so dispatch can
-    # extract workspace structurally without a registry lookup.
+  # --- HIGH-4: honor the SessionTemplate's default_workspace_uri --------
+
+  # The pre-hardening Generator IGNORED `template_content.default_workspace_uri`
+  # and always created the session in `WorkspaceRegistry.default_workspace_uri/0`.
+  # A non-default-workspace SessionTemplate spawned into the WRONG
+  # workspace. `resolve_target_workspace/1` reads the field, validates
+  # it, and that workspace is then threaded through the session URI,
+  # orchestrator spawn, worker instantiation, routing install, and the
+  # delegated caps.
+  #
+  # A `nil` / absent field falls back to `WorkspaceRegistry`'s default
+  # — the common case is unchanged. A present-but-malformed value is a
+  # hard error (let-it-crash — no silent fallback past a real value).
+  defp resolve_target_workspace(template_content) do
+    case Map.get(template_content, :default_workspace_uri) ||
+           Map.get(template_content, "default_workspace_uri") do
+      nil ->
+        Ezagent.WorkspaceRegistry.default_workspace_uri()
+
+      %URI{scheme: "workspace", host: host} = uri when is_binary(host) ->
+        validate_workspace_name(host, uri)
+
+      uri_str when is_binary(uri_str) ->
+        case URI.parse(uri_str) do
+          %URI{scheme: "workspace", host: host} = uri when is_binary(host) ->
+            validate_workspace_name(host, uri)
+
+          _ ->
+            {:error, {:invalid_default_workspace_uri, uri_str}}
+        end
+
+      other ->
+        {:error, {:invalid_default_workspace_uri, other}}
+    end
+  end
+
+  # Invariant 11 — a workspace name must match `^[a-z][a-z0-9_-]*$`.
+  defp validate_workspace_name(host, %URI{} = uri) do
+    if Regex.match?(~r/^[a-z][a-z0-9_-]*$/, host) do
+      {:ok, uri}
+    else
+      {:error, {:invalid_workspace_name, host}}
+    end
+  end
+
+  # --- MEDIUM-5: agent-slot + routing preflight (no side effects) ------
+
+  # Every agent slot's AgentTemplate must be resolvable (the Kind can be
+  # brought up + has a populated `:template` slice). Bringing the
+  # Template Kind up is the lazy demand-spawn — it is idempotent and not
+  # a session side effect. A bad slot fails the WHOLE Generator BEFORE
+  # any session/worker is spawned.
+  defp preflight_agent_slots(template_content) do
+    slots = normalize_agent_slots(Map.get(template_content, :agent_slots, []))
+
+    Enum.reduce_while(slots, :ok, fn {slot_name, agent_template_uri}, :ok ->
+      case ensure_template_alive(agent_template_uri) do
+        {:ok, _pid} ->
+          {:cont, :ok}
+
+        {:error, {:already_started, _pid}} ->
+          {:cont, :ok}
+
+        {:error, reason} ->
+          {:halt, {:error, {:agent_slot_template_unresolvable, slot_name, reason}}}
+      end
+    end)
+  end
+
+  # Every routing-rule matcher must be a valid matcher AST. A matcher
+  # that does not round-trip through `Matcher.to_json/1` would fail at
+  # `RuleStore.add/5` AFTER the session is half-built — catch it here.
+  defp preflight_routing_rules(template_content) do
+    rules = normalize_routing_rules(Map.get(template_content, :routing_rules, []))
+
+    Enum.reduce_while(rules, :ok, fn {matcher_ast, _receivers}, :ok ->
+      try do
+        _ = Ezagent.Routing.Matcher.to_json(matcher_ast)
+        {:cont, :ok}
+      rescue
+        _ -> {:halt, {:error, {:invalid_routing_matcher, matcher_ast}}}
+      end
+    end)
+  end
+
+  # SPEC v3 §3.6 (Phase 9 PR-7) — sessions are 3-segment:
+  # `session://<template>/<workspace>/<name>`. HIGH-4 — the session URI
+  # is built in the TARGET workspace (from the SessionTemplate's
+  # `default_workspace_uri`), not always `default`.
+  defp spawn_fresh_session(%URI{host: workspace_name}) when is_binary(workspace_name) do
     unique_suffix = "#{System.system_time(:millisecond)}-#{System.unique_integer([:positive])}"
-    {:ok, workspace_uri} = Ezagent.WorkspaceRegistry.default_workspace_uri()
-    workspace_name = workspace_uri.host
     session_uri = URI.new!("session://generic/#{workspace_name}/gen-#{unique_suffix}")
 
     case Ezagent.SpawnRegistry.spawn(session_uri) do
@@ -289,19 +505,12 @@ defmodule Ezagent.Entity.Session do
     end
   end
 
-  defp default_workspace_for_session(_session_uri) do
-    # Phase 8c PR-E (Allen 2026-05-20): canonical name is
-    # `workspace://default` per `Ezagent.URI` docs. The earlier
-    # `workspace://generated-sessions` name was a Phase 7 stop-gap.
-    # Sessions that don't override via SessionTemplate's
-    # `default_workspace_uri` field land here.
-    Ezagent.WorkspaceRegistry.default_workspace_uri()
-  end
-
   defp spawn_orchestrator(session_uri, workspace_uri, owner_uri) do
     # Spawn the cc-orchestrator (PR 45 seed) under a fresh instance
     # name keyed to this session for traceability. SPEC v3 §3.6 PR-7
-    # — orchestrator template is workspace-scoped to `default`.
+    # — the orchestrator AgentTemplate is workspace-scoped to `default`
+    # (a shared seed); the orchestrator INSTANCE is spawned into the
+    # session's own (HIGH-4-resolved) workspace via `workspace_uri`.
     template_uri = URI.parse("template://agent/default/cc-orchestrator")
     # session_uri.path = "/<workspace>/<name>" → use name as suffix
     session_name =
@@ -342,13 +551,32 @@ defmodule Ezagent.Entity.Session do
   # orchestrator's `AgentLineage` — cap #2 (`{:spawned_by, orchestrator}`)
   # then resolves for the orchestrator's own workers.
   #
+  # CRITICAL hardening fix — the LIVE worker `instance_name` is made
+  # **session-unique** via `Ezagent.Entity.Agent.session_instance_name/3`
+  # (the session URI's name segment is the discriminator). Two sessions
+  # from the SAME SessionTemplate therefore get DISJOINT live worker
+  # URIs, so neither overwrites the other's `AgentLineage` row.
+  #
   # Returns `{:ok, [{slot_name, agent_template_uri, worker_uri}]}` — the
-  # working copy + the routing rules both consume this list.
-  defp instantiate_agent_slots(template_content, %URI{} = workspace_uri, %URI{} = orchestrator_uri) do
+  # working copy + the routing rules both consume this list. The
+  # `worker_uri` here is the durable record of the LIVE instance URI.
+  defp instantiate_agent_slots(
+         template_content,
+         %URI{} = session_uri,
+         %URI{} = workspace_uri,
+         %URI{} = orchestrator_uri
+       ) do
     slots = normalize_agent_slots(Map.get(template_content, :agent_slots, []))
+    discriminator = session_discriminator(session_uri)
 
     Enum.reduce_while(slots, {:ok, []}, fn {slot_name, agent_template_uri}, {:ok, acc} ->
-      case instantiate_one_slot(slot_name, agent_template_uri, workspace_uri, orchestrator_uri) do
+      case instantiate_one_slot(
+             slot_name,
+             agent_template_uri,
+             discriminator,
+             workspace_uri,
+             orchestrator_uri
+           ) do
         {:ok, worker_uri} ->
           {:cont, {:ok, [{slot_name, agent_template_uri, worker_uri} | acc]}}
 
@@ -362,10 +590,37 @@ defmodule Ezagent.Entity.Session do
     end
   end
 
+  # The session-scoped discriminator folded into every LIVE worker
+  # instance name (CRITICAL fix) — the session URI's name segment,
+  # which `spawn_fresh_session/0` already makes globally unique
+  # (`gen-<millis>-<unique_int>`).
+  defp session_discriminator(%URI{} = session_uri) do
+    case session_uri.path do
+      "/" <> rest ->
+        case String.split(rest, "/", parts: 2) do
+          [_ws, name] when name != "" -> name
+          _ -> session_uri.host || "session"
+        end
+
+      _ ->
+        session_uri.host || "session"
+    end
+  end
+
   # Instantiate ONE slot: dispatch `template.instantiate` on its
-  # AgentTemplate URI. `instance_name` is the slot name; the
-  # `:instantiate` action builds the flavor-prefixed per-instance URI.
-  defp instantiate_one_slot(slot_name, %URI{} = agent_template_uri, workspace_uri, orchestrator_uri) do
+  # AgentTemplate URI. `instance_name` is the SESSION-UNIQUE live
+  # instance name (CRITICAL fix) — `session_instance_name/3` folds the
+  # session discriminator into the slot name so the `:instantiate`
+  # action builds a per-session flavor-prefixed worker URI.
+  defp instantiate_one_slot(
+         slot_name,
+         %URI{} = agent_template_uri,
+         discriminator,
+         workspace_uri,
+         orchestrator_uri
+       ) do
+    instance_name = Ezagent.Entity.Agent.session_instance_name(slot_name, discriminator)
+
     with {:ok, _pid} <- ensure_template_alive(agent_template_uri),
          target <-
            URI.parse("#{URI.to_string(agent_template_uri)}?action=template.instantiate"),
@@ -374,7 +629,7 @@ defmodule Ezagent.Entity.Session do
              target: target,
              mode: :call,
              args: %{
-               instance_name: slot_name,
+               instance_name: instance_name,
                workspace_uri: workspace_uri,
                spawned_by: orchestrator_uri
              },
@@ -412,25 +667,37 @@ defmodule Ezagent.Entity.Session do
   # --- Step 6: populate template_working_copy ----------------------------
 
   # Record the durable `template_working_copy` field on the new Session's
-  # `:chat` slice (PR-2's field). `agent_slots` carries
-  # `{slot_name, source_agent_template_uri}` — the AgentTemplate URI, NOT
-  # the live instance URI (the slot tuple is the durable truth; a worker
-  # that dies + respawns keeps its slot's source template).
+  # `:chat` slice (PR-2's field). `agent_slots` carries the 4-tuple
+  # `{slot_name, source_agent_template_uri, live_worker_uri, generation}`:
+  #
+  # - `slot_name` — the stable template-shaped SLOT key.
+  # - `source_agent_template_uri` — the AgentTemplate URI the slot was
+  #   spawned from (the durable source — survives a worker respawn).
+  # - `live_worker_uri` — the CURRENT live `entity://agent/...` instance
+  #   URI (CRITICAL fix). It is session-unique; storing it means
+  #   `resolve_slot_worker_uri` reads the truth instead of re-deriving a
+  #   collision-prone URI from `{workspace, flavor, slot_name}`.
+  # - `generation` — the swap counter (HIGH-6); 0 at Generator init,
+  #   incremented by each `update_agent_template`.
+  #
   # `routing_rules` carries `{matcher_ast, [slot_name]}` — receivers as
   # slot NAMES. Both come straight from the SessionTemplate content.
   #
-  # Written via the `chat.set_working_copy` dispatch — Session is
-  # `{:snapshot, :on_change}`, so the field survives a Session restart.
+  # Written via the `chat.set_working_copy` dispatch with the
+  # Generator's system-internal write path (the orchestrator-only cap
+  # gate, HIGH-2, does not apply to the Generator's bootstrap init
+  # write) — Session is `{:snapshot, :on_change}`, so the field survives
+  # a Session restart.
   defp populate_working_copy(
          %URI{} = session_uri,
          template_content,
          slot_instances,
          %URI{} = workspace_uri,
-         %URI{} = owner_uri
+         %URI{} = _owner_uri
        ) do
     agent_slots =
-      Enum.map(slot_instances, fn {slot_name, agent_template_uri, _worker_uri} ->
-        {slot_name, agent_template_uri}
+      Enum.map(slot_instances, fn {slot_name, agent_template_uri, worker_uri} ->
+        {slot_name, agent_template_uri, worker_uri, 0}
       end)
 
     working_copy = %{
@@ -444,19 +711,8 @@ defmodule Ezagent.Entity.Session do
       description: Map.get(template_content, :description, "")
     }
 
-    target = URI.parse("#{URI.to_string(session_uri)}?action=chat.set_working_copy")
-
-    case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-           target: target,
-           mode: :call,
-           args: %{template_working_copy: working_copy},
-           ctx: %{
-             caller: owner_uri,
-             caps: Ezagent.Entity.User.admin_caps(),
-             reply: {:caller_inbox, self()}
-           }
-         }) do
-      {:ok, %{template_working_copy: _}} -> :ok
+    case Ezagent.Behavior.Chat.system_set_working_copy(session_uri, working_copy) do
+      {:ok, _} -> :ok
       {:error, _} = err -> err
       other -> {:error, {:unexpected_set_working_copy_result, other}}
     end
@@ -478,42 +734,75 @@ defmodule Ezagent.Entity.Session do
   # The SessionTemplate's `routing_rules` express receivers as slot
   # NAMES. Resolve each name to the per-instance worker URI just spawned
   # (step 5) and install the rule via `Ezagent.Routing.RuleStore.add/5`,
-  # scoped to the session's workspace so workspace-scoped rules fire
-  # (invariant 4). Receivers a slot name doesn't resolve to are skipped
-  # — a rule whose every receiver is unknown is dropped.
-  defp install_routing_rules(template_content, slot_instances, %URI{} = session_uri, %URI{} = owner_uri) do
+  # scoped to the workspace passed by the Generator so workspace-scoped
+  # rules fire (invariant 4). Receivers a slot name doesn't resolve to
+  # are skipped — a rule whose every receiver is unknown is dropped.
+  #
+  # ## HIGH-3 hardening — load the rules into the live registry
+  #
+  # `RuleStore.add/5` only inserts the SQLite row. The live resolver
+  # (`Ezagent.Routing.Resolver`) reads `RoutingRegistry` ETS, which is
+  # hydrated by `RuleStore.load_into_registry/1`. The pre-hardening
+  # Generator never called it, so its installed rules NEVER fired at
+  # runtime until some later unrelated mutation reloaded the table.
+  # After installing the rows this step calls `load_into_registry/1`
+  # ONCE so every Generator-installed rule is live the instant the
+  # Generator returns.
+  defp install_routing_rules(
+         template_content,
+         slot_instances,
+         %URI{} = _session_uri,
+         %URI{} = workspace_uri,
+         %URI{} = owner_uri
+       ) do
     rules = normalize_routing_rules(Map.get(template_content, :routing_rules, []))
 
     slot_uri_by_name =
       Map.new(slot_instances, fn {slot_name, _tmpl, worker_uri} -> {slot_name, worker_uri} end)
 
-    {:ok, workspace_uri} = default_workspace_for_session(session_uri)
+    table = EzagentDomainChat.Routing.MentionRouting
 
-    Enum.reduce_while(rules, :ok, fn {matcher_ast, receiver_slot_names}, :ok ->
-      receiver_uris =
-        receiver_slot_names
-        |> Enum.map(&Map.get(slot_uri_by_name, to_string(&1)))
-        |> Enum.reject(&is_nil/1)
+    result =
+      Enum.reduce_while(rules, {:ok, 0}, fn {matcher_ast, receiver_slot_names}, {:ok, added} ->
+        receiver_uris =
+          receiver_slot_names
+          |> Enum.map(&Map.get(slot_uri_by_name, to_string(&1)))
+          |> Enum.reject(&is_nil/1)
 
-      cond do
-        receiver_uris == [] ->
-          # No resolvable receiver — drop the rule (slot names that
-          # don't map to a spawned worker can't route anywhere).
-          {:cont, :ok}
+        cond do
+          receiver_uris == [] ->
+            # No resolvable receiver — drop the rule (slot names that
+            # don't map to a spawned worker can't route anywhere).
+            {:cont, {:ok, added}}
 
-        true ->
-          case RuleStore.add(
-                 EzagentDomainChat.Routing.MentionRouting,
-                 matcher_ast,
-                 receiver_uris,
-                 owner_uri,
-                 workspace_uri: workspace_uri
-               ) do
-            {:ok, _rule} -> {:cont, :ok}
-            {:error, reason} -> {:halt, {:error, {:routing_rule_failed, reason}}}
-          end
-      end
-    end)
+          true ->
+            case RuleStore.add(
+                   table,
+                   matcher_ast,
+                   receiver_uris,
+                   owner_uri,
+                   workspace_uri: workspace_uri
+                 ) do
+              {:ok, _rule} -> {:cont, {:ok, added + 1}}
+              {:error, reason} -> {:halt, {:error, {:routing_rule_failed, reason}}}
+            end
+        end
+      end)
+
+    case result do
+      {:ok, 0} ->
+        # No rules installed — nothing to reload.
+        :ok
+
+      {:ok, _added} ->
+        # HIGH-3 — hydrate the live RoutingRegistry ETS so the rules
+        # fire at runtime immediately, not after some later reload.
+        :ok = RuleStore.load_into_registry(table)
+        :ok
+
+      {:error, _} = err ->
+        err
+    end
   end
 
   # Phase 7 PR 47 + completion PR-4 (step 8) — scope-bounded delegation

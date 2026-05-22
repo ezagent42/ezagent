@@ -433,8 +433,12 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpE2eTest do
                "(§1.6a) — cap #2 depends on it"
 
       # The durable template_working_copy.agent_slots carries the slot.
+      # Phase 7 hardening — agent_slots is the 4-tuple
+      # {slot_name, source_agent_template_uri, live_worker_uri, generation}.
       wc = session_working_copy(ctx.session_uri)
-      assert {"backend-dev", _uri} = Enum.find(wc.agent_slots, &(elem(&1, 0) == "backend-dev"))
+
+      assert {"backend-dev", _src, _live, _gen} =
+               Enum.find(wc.agent_slots, &(elem(&1, 0) == "backend-dev"))
     end
 
     test "remove_agent_slot terminates the orchestrator's own worker (cap-#2 happy path)", ctx do
@@ -485,10 +489,16 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpE2eTest do
              "update_agent_template on the orchestrator's own slot must SUCCEED. " <>
                "Got: #{inspect(result)}"
 
-      # The slot tuple now points at the REPLACEMENT AgentTemplate URI.
+      # The slot tuple now points at the REPLACEMENT AgentTemplate URI,
+      # carries a NEW live worker URI, and a bumped generation (HIGH-6).
       wc = session_working_copy(ctx.session_uri)
-      {"upd-slot", new_src} = Enum.find(wc.agent_slots, &(elem(&1, 0) == "upd-slot"))
+
+      {"upd-slot", new_src, new_live, new_gen} =
+        Enum.find(wc.agent_slots, &(elem(&1, 0) == "upd-slot"))
+
       assert URI.to_string(new_src) == URI.to_string(ctx.replacement_uri)
+      assert new_gen == 1, "a same-flavor swap bumps the slot's generation"
+      assert %URI{scheme: "entity"} = new_live
     end
 
     test "cap-#2 CONTROL — another orchestrator cannot remove this orchestrator's worker", ctx do

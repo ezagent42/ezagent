@@ -268,7 +268,12 @@ defmodule EzagentDomainChat.Integration.GeneratorTest do
       assert {:ok, %{session_uri: session_uri}} = Session.spawn_from_template(st_uri, owner_uri)
 
       wc = session_working_copy(session_uri)
-      slots = Map.new(wc.agent_slots, fn {name, uri} -> {name, URI.to_string(uri)} end)
+      # Phase 7 hardening — agent_slots is the 4-tuple
+      # {slot_name, source_agent_template_uri, live_worker_uri, generation}.
+      slots =
+        Map.new(wc.agent_slots, fn {name, src, _live, _gen} ->
+          {name, URI.to_string(src)}
+        end)
 
       assert slots["backend-dev"] == URI.to_string(backend_uri)
       assert slots["frontend-dev"] == URI.to_string(frontend_uri)
@@ -315,6 +320,7 @@ defmodule EzagentDomainChat.Integration.GeneratorTest do
       restored = session_working_copy(session_uri)
 
       assert length(restored.agent_slots) == 2
+      # The whole 4-tuple (incl. live worker URI + generation) survives.
       assert Enum.sort(restored.agent_slots) == Enum.sort(before.agent_slots)
     end
 
@@ -328,18 +334,28 @@ defmodule EzagentDomainChat.Integration.GeneratorTest do
       assert s1 != s2, "each Generator call produces a fresh session"
 
       # Same slot → source-template mapping (the team config is
-      # identical) — only the live instance URIs differ.
+      # identical). The CRITICAL hardening fix means the LIVE worker
+      # URIs DIFFER between the two sessions — so we compare only the
+      # {slot_name, source_agent_template_uri} projection.
       wc1 = session_working_copy(s1)
       wc2 = session_working_copy(s2)
 
       norm = fn wc ->
         wc.agent_slots
-        |> Enum.map(fn {name, uri} -> {name, URI.to_string(uri)} end)
+        |> Enum.map(fn {name, src, _live, _gen} -> {name, URI.to_string(src)} end)
         |> Enum.sort()
       end
 
       assert norm.(wc1) == norm.(wc2),
              "re-instantiating the same template yields the same slot → source-template team"
+
+      # ...and the LIVE worker URIs are DISJOINT (CRITICAL fix).
+      live = fn wc ->
+        wc.agent_slots |> Enum.map(fn {_n, _s, live, _g} -> URI.to_string(live) end)
+      end
+
+      assert MapSet.disjoint?(MapSet.new(live.(wc1)), MapSet.new(live.(wc2))),
+             "two sessions from one SessionTemplate must get DISJOINT live worker URIs"
     end
   end
 
