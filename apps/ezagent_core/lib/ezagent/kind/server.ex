@@ -109,6 +109,17 @@ defmodule Ezagent.Kind.Server do
     {:noreply, state}
   end
 
+  # codex round-10 HIGH — `Ezagent.Kind.terminate/1` needs the Kind
+  # module of a LIVE process to resolve its owning `DynamicSupervisor`
+  # (`kind_module.supervisor/0`). The caller (a Tier-3 plugin Template
+  # Class undoing its own partial spawn) only has the URI / pid — it
+  # must NOT name a Tier-2 supervisor constant. This synchronous query
+  # lets a Tier-1 helper resolve the supervisor without that coupling.
+  @impl true
+  def handle_call(:ezagent_kind_module, _from, %{kind: kind_module} = state) do
+    {:reply, {:ok, kind_module}, state}
+  end
+
   @impl true
   def handle_call({:ezagent_dispatch, %Ezagent.Invocation{} = inv}, _from, state) do
     case Ezagent.Kind.Runtime.handle_dispatch(inv, state.state, state.kind, state.uri) do

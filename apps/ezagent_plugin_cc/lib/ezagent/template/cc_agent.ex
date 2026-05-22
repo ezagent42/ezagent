@@ -142,6 +142,30 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   the Template Class's. The Template Class only ever brings up a PTY
   for a worker IT freshly started.
 
+  ## codex round-10 HIGH-2 — the Template Class undoes its OWN partial spawn
+
+  Round 8 stopped a `:already_started` Kind from getting a sidecar, but
+  the FRESH path was still not all-or-nothing: `spawn_for_local_pty/2`
+  freshly STARTED the Agent Kind, then called `ensure_pty_server/3` —
+  and a PTY / `claude` startup failure there returned a bare
+  `{:error, reason}` while the just-started Agent Kind stayed LIVE. As a
+  Generator agent slot that is an orphan: the slot returns
+  `{:error, _}` with NO worker URI, so the Generator's `cleanup_partial/1`
+  cannot terminate it (it never learns the URI). The orphan then blocks
+  future retries via the candidate-URI preflight.
+
+  Round 10 makes the spawner own its own partial-spawn teardown: when
+  this call FRESHLY started the Agent Kind and a LATER step
+  (`ensure_pty_server/3`) fails, `spawn_for_local_pty/2` terminates the
+  Agent Kind it itself started (`Ezagent.Kind.terminate/1`) BEFORE
+  returning the error. The function now either fully succeeds or leaves
+  ZERO residue. An `:already_started` Kind is never terminated — this
+  call did not create it. Only the Kind PROCESS is terminated; lineage
+  and workspace binding are ESR-domain registries the plugin must not
+  touch (3-tier) — and `spawn_from_template_content/4` had not recorded
+  either (it gates them on a `fresh?: true` success this path never
+  returns).
+
   ## Domain.Pty PR-A (2026-05-21 SPEC v1)
 
   The cc-specific claude invocation (mcp.json generation, settings
@@ -292,8 +316,31 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
           {:ok, [agent_uri], %{fresh?: false}}
 
         :started ->
-          with :ok <- ensure_pty_server(agent_uri, cwd, tmpl) do
-            {:ok, [agent_uri], %{fresh?: true}}
+          # codex round-10 HIGH-2 — the Template Class owns its OWN
+          # partial-spawn teardown. `ensure_agent_kind/1` FRESHLY
+          # started the Agent Kind on this call; if `ensure_pty_server/3`
+          # (PTY / `claude` startup) now fails, the just-started Agent
+          # Kind would leak — a live orphan the Generator's
+          # `cleanup_partial/1` cannot see (the slot returned a bare
+          # `{:error, _}` with no worker URI). So if a step AFTER the
+          # fresh Kind start fails, the Template Class terminates the
+          # Kind it itself started BEFORE returning the error. The
+          # function then either fully succeeds or leaves ZERO residue.
+          # (An `:already_started` Kind is NEVER terminated here — this
+          # call did not create it; that branch already returned early
+          # above with `fresh?: false`.) The Template Class terminates
+          # only the Kind PROCESS — lineage / workspace binding are
+          # ESR-domain registries the plugin must not touch (3-tier);
+          # `spawn_from_template_content/4` had not recorded either yet
+          # (it gates them on the `{:ok, ..., fresh?: true}` it never
+          # received).
+          case ensure_pty_server(agent_uri, cwd, tmpl) do
+            :ok ->
+              {:ok, [agent_uri], %{fresh?: true}}
+
+            {:error, reason} ->
+              _ = Ezagent.Kind.terminate(agent_uri)
+              {:error, reason}
           end
       end
     end

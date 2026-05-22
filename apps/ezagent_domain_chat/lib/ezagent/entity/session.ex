@@ -321,10 +321,29 @@ defmodule Ezagent.Entity.Session do
          %URI{} = session_template_uri
        ) do
     with {:ok, session_uri} <- spawn_fresh_session(workspace_uri),
-         :ok <- Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri),
+         # codex round-10 HIGH-1 — the session is LIVE the instant
+         # `spawn_fresh_session` returns. Both the workspace bind AND
+         # the orchestrator spawn are now wrapped in `guard/2` so a
+         # failure of either triggers `cleanup_partial/1` (terminate +
+         # unbind the session). Pre-round-10 a `bind` or
+         # `spawn_orchestrator` failure returned DIRECTLY from the
+         # `with` — `cleanup_partial/1` never ran — leaking a live
+         # Session Kind and (for an orchestrator failure that happens
+         # after the bind) its `WorkspaceRegistry` binding.
+         # `cleanup_partial/1` handles a `nil` `orchestrator_uri` (the
+         # orchestrator was never created in this failure path) via its
+         # `if orchestrator_uri` guard.
+         :ok <-
+           guard(
+             Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri),
+             %{session_uri: session_uri, orchestrator_uri: nil, slots: []}
+           ),
          {:ok, orchestrator_uri} <-
-           spawn_orchestrator(session_uri, workspace_uri, owner_uri) ||
-             {:error, :orchestrator_spawn_failed},
+           guard(
+             spawn_orchestrator(session_uri, workspace_uri, owner_uri) ||
+               {:error, :orchestrator_spawn_failed},
+             %{session_uri: session_uri, orchestrator_uri: nil, slots: []}
+           ),
          # MEDIUM-3 (round 4) — none of this run's candidate worker URIs
          # may ALREADY be live in `KindRegistry` as orphans. The slot
          # worker URIs fold the (just-created, globally-unique) session

@@ -95,6 +95,70 @@ defmodule Ezagent.Kind do
     DynamicSupervisor.start_child(supervisor, {Ezagent.Kind.Server, {kind_module, params}})
   end
 
+  @doc """
+  Terminate a live Kind process by its instance URI (codex round-10 HIGH).
+
+  This is the tier-clean teardown primitive a plugin Template Class uses
+  to undo its OWN partial spawn: when a Template Class freshly STARTED a
+  Kind via `spawn/2` (or `SpawnRegistry.spawn_detailed/1`) and a LATER
+  step of the same instantiate fails, it must terminate the Kind it just
+  started before returning `{:error, _}` — so a per-slot instantiate
+  either fully succeeds or leaves zero residue.
+
+  A Tier-3 plugin cannot name a Tier-2 supervisor constant, so this
+  helper resolves the owning `DynamicSupervisor` itself: it looks up the
+  live pid in `Ezagent.KindRegistry`, asks the running `Ezagent.Kind.Server`
+  for its Kind module (`:ezagent_kind_module` call), resolves the
+  supervisor via `kind_module.supervisor/0`, and calls
+  `DynamicSupervisor.terminate_child/2`. The `:permanent` `Kind.Server`
+  child is only PERMANENTLY removed by `terminate_child` — a bare
+  `Process.exit/2` would be restarted; that is the fallback only when
+  the child is not under the resolved supervisor.
+
+  **Idempotent** — an already-absent / already-terminated URI returns
+  `:ok`. Best-effort: any error in the lookup / query / terminate path
+  is swallowed and `:ok` is returned (the caller is on a failure exit
+  and a teardown step must not mask the original error).
+
+  This terminates ONLY the Kind process. Lineage (`AgentLineage`) and
+  workspace binding (`WorkspaceRegistry`) are ESR-domain registries —
+  a plugin Template Class must NOT touch them (3-tier rule); the
+  ESR-layer caller (`Ezagent.Entity.Agent.spawn_from_template_content/4`)
+  owns undoing those.
+  """
+  @spec terminate(URI.t()) :: :ok
+  def terminate(%URI{} = uri) do
+    with {:ok, pid} <- Ezagent.KindRegistry.lookup(uri),
+         {:ok, kind_module} <- safe_kind_module(pid) do
+      supervisor = resolve_supervisor(kind_module)
+
+      case DynamicSupervisor.terminate_child(supervisor, pid) do
+        :ok ->
+          :ok
+
+        {:error, :not_found} ->
+          # Not under the resolved supervisor (or already gone) — bring
+          # the process down directly so the worker still terminates.
+          _ = Process.exit(pid, :shutdown)
+          :ok
+      end
+    else
+      _ -> :ok
+    end
+  rescue
+    _ -> :ok
+  catch
+    _, _ -> :ok
+  end
+
+  defp safe_kind_module(pid) when is_pid(pid) do
+    {:ok, _} = GenServer.call(pid, :ezagent_kind_module, 5_000)
+  rescue
+    _ -> :error
+  catch
+    _, _ -> :error
+  end
+
   defp resolve_supervisor(kind_module) do
     if function_exported?(kind_module, :supervisor, 0) do
       kind_module.supervisor()
