@@ -72,11 +72,33 @@ defmodule EzagentWeb.LiveAuth do
     {:cont, assign(socket, :current_locale, Gettext.get_locale(EzagentWeb.Gettext))}
   end
 
+  # V1 UI PR-2 (SPEC §2.2) — `:cmdk_nav` on_mount: assigns
+  # `:cmdk_nav_routes` for the CmdK command palette.
+  #
+  # `EzagentWeb.CommandRoutes.command_routes/0` projects the Phoenix
+  # Router into enriched nav routes. The CmdK `CommandSource` (Tier-2)
+  # and `CommandPaletteComponent` (Tier-3) live BELOW `ezagent_web` and
+  # MUST NOT call `EzagentWeb.Router` directly — so the nav data is
+  # computed HERE (the top tier) and flows DOWN through this assign:
+  # `ezagent_web` → LV → `CommandPaletteComponent`.
+  #
+  # Chained from `:require_entity` (below) so every workspace LV
+  # inherits `:cmdk_nav_routes` without each LV recomputing it.
+  def on_mount(:cmdk_nav, _params, _session, socket) do
+    {:cont, assign(socket, :cmdk_nav_routes, EzagentWeb.CommandRoutes.command_routes())}
+  end
+
   def on_mount(:require_entity, params, session, socket) do
     # Locale must be set on the LV process too — chain to :put_locale
     # first so any redirect message (e.g. "Please sign in") + every
     # subsequent render uses the user's chosen locale.
     {:cont, socket} = on_mount(:put_locale, params, session, socket)
+
+    # CmdK nav routes (SPEC §2.2) — assemble in this top tier and flow
+    # the data DOWN via an assign. Chaining here keeps it inside the
+    # one `:require_entity` hook the router already wires for every
+    # workspace LV.
+    {:cont, socket} = on_mount(:cmdk_nav, params, session, socket)
 
     require_entity_mount(session, socket)
   end
