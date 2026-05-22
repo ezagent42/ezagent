@@ -39,10 +39,12 @@ defmodule EzagentPluginLiveview.MixProject do
       # compile cycle. The plugin uses Phoenix.LiveView directly.
       {:phoenix_live_view, ">= 0.0.0"},
       {:phoenix_html, "~> 4.1"},
-      # i18n V1 (Allen 2026-05-21): LV pages call `gettext(...)` against
-      # the host `EzagentWeb.Gettext` backend (runtime module reference;
-      # no compile-time dep on :ezagent_web). The :gettext lib provides
-      # the macro surface used by `use Gettext, backend: ...`.
+      # i18n (Allen 2026-05-22): the plugin owns its own Gettext backend
+      # `EzagentPluginLiveview.Gettext` + `priv/gettext` tree. A
+      # plugin-owned backend keeps `mix gettext.extract` self-contained
+      # (a foreign backend would fail the clean-build compile-order
+      # check). `:gettext` is a standalone Hex lib — no dep on
+      # :ezagent_web.
       {:gettext, "~> 0.26"},
       {:jason, "~> 1.2"},
       # Phase 2: the /admin LV displays Session membership (online/

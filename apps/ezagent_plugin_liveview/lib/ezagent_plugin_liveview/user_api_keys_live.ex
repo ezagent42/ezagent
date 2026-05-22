@@ -27,6 +27,9 @@ defmodule EzagentPluginLiveview.UserApiKeysLive do
   """
 
   use Phoenix.LiveView
+  # i18n (Allen 2026-05-22) — runtime backend reference; no compile-time
+  # dep on :ezagent_web.
+  use Gettext, backend: EzagentPluginLiveview.Gettext
   alias EzagentDomainUi.WorkspaceShell
   alias EzagentPluginLiveview.AppShell
   import Phoenix.Component
@@ -95,24 +98,39 @@ defmodule EzagentPluginLiveview.UserApiKeysLive do
 
     cond do
       not authorized?(socket) ->
-        {:noreply, assign(socket, :flash_error, "you can only edit your own API keys (admin can edit any)")}
+        {:noreply,
+         assign(
+           socket,
+           :flash_error,
+           gettext("you can only edit your own API keys (admin can edit any)")
+         )}
 
       provider == "" ->
-        {:noreply, assign(socket, :flash_error, "provider required (e.g. `deepseek`)")}
+        {:noreply, assign(socket, :flash_error, gettext("provider required (e.g. `deepseek`)"))}
 
       key == "" ->
-        {:noreply, assign(socket, :flash_error, "key required")}
+        {:noreply, assign(socket, :flash_error, gettext("key required"))}
 
       true ->
-        dispatch(:put_api_key, socket, %{provider: provider, key: key}, "Saved key for `#{provider}`")
+        dispatch(
+          :put_api_key,
+          socket,
+          %{provider: provider, key: key},
+          gettext("Saved key for `%{provider}`", provider: provider)
+        )
     end
   end
 
   def handle_event("delete", %{"provider" => provider}, socket) do
     if authorized?(socket) do
-      dispatch(:delete_api_key, socket, %{provider: provider}, "Deleted key for `#{provider}`")
+      dispatch(
+        :delete_api_key,
+        socket,
+        %{provider: provider},
+        gettext("Deleted key for `%{provider}`", provider: provider)
+      )
     else
-      {:noreply, assign(socket, :flash_error, "unauthorized")}
+      {:noreply, assign(socket, :flash_error, gettext("unauthorized"))}
     end
   end
 
@@ -142,7 +160,7 @@ defmodule EzagentPluginLiveview.UserApiKeysLive do
       {:error, reason} ->
         {:noreply,
          socket
-         |> assign(:flash_error, "dispatch failed: #{inspect(reason)}")
+         |> assign(:flash_error, gettext("dispatch failed: %{reason}", reason: inspect(reason)))
          |> assign(:flash_info, nil)}
     end
   end
@@ -173,11 +191,12 @@ defmodule EzagentPluginLiveview.UserApiKeysLive do
       <:main_window>
         <div class="flex-1 overflow-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
       <header>
-        <h1 style="font-size: 22px; font-weight: 600;">API Keys for <code>{URI.to_string(@user_uri)}</code></h1>
+        <h1 style="font-size: 22px; font-weight: 600;">{gettext("API Keys for")} <code>{URI.to_string(@user_uri)}</code></h1>
         <p style="font-size: 13px; color: #666;">
-          Per-user secret storage for outbound LLM completion APIs (DeepSeek, OpenAI, etc.).
-          The system itself holds no keys — every user supplies their own.
-          <a href="/identities/users" style="margin-left: 16px; color: #0969da;">← Users</a>
+          {gettext(
+            "Per-user secret storage for outbound LLM completion APIs (DeepSeek, OpenAI, etc.). The system itself holds no keys — every user supplies their own."
+          )}
+          <a href="/identities/users" style="margin-left: 16px; color: #0969da;">← {gettext("Users")}</a>
         </p>
       </header>
 
@@ -189,25 +208,25 @@ defmodule EzagentPluginLiveview.UserApiKeysLive do
       </p>
 
       <section :if={@api_keys == :user_not_live} style="margin-top: 24px; padding: 12px; background: #fef3c7; border-radius: 4px; font-size: 13px;">
-        User Kind not currently live in KindRegistry. Trigger any dispatch on this URI to spawn it (e.g. log in as that user once), then return here.
+        {gettext("User Kind not currently live in KindRegistry. Trigger any dispatch on this URI to spawn it (e.g. log in as that user once), then return here.")}
       </section>
 
       <section :if={match?({:error, _}, @api_keys)} style="margin-top: 24px; padding: 12px; background: #fde8e8; border-radius: 4px; font-size: 13px;">
-        Error loading keys: <code>{inspect(elem(@api_keys, 1))}</code>
+        {gettext("Error loading keys:")} <code>{inspect(elem(@api_keys, 1))}</code>
       </section>
 
       <section :if={is_list(@api_keys)} style="margin-top: 24px;">
-        <h2 style="font-size: 16px; font-weight: 500;">Stored keys ({length(@api_keys)})</h2>
+        <h2 style="font-size: 16px; font-weight: 500;">{gettext("Stored keys (%{count})", count: length(@api_keys))}</h2>
 
         <p :if={@api_keys == []} style="font-size: 13px; color: #57606a; font-style: italic;">
-          No API keys yet. Add one below to enable curl-agent instances that use this user as their owner.
+          {gettext("No API keys yet. Add one below to enable curl-agent instances that use this user as their owner.")}
         </p>
 
         <table :if={@api_keys != []} style="width: 100%; font-size: 13px; border-collapse: collapse; margin-top: 12px;">
           <thead>
             <tr style="border-bottom: 1px solid #d1d5da;">
               <th style="text-align: left; padding: 6px 0;">provider</th>
-              <th style="text-align: left;">masked</th>
+              <th style="text-align: left;">{gettext("masked")}</th>
               <th></th>
             </tr>
           </thead>
@@ -216,7 +235,7 @@ defmodule EzagentPluginLiveview.UserApiKeysLive do
               <td style="padding: 4px 0; font-family: monospace;">{entry.provider}</td>
               <td style="font-family: monospace; color: #57606a;">{entry.masked}</td>
               <td style="text-align: right;">
-                <button :if={@is_admin? or @self?} phx-click="delete" phx-value-provider={entry.provider} style="padding: 4px 10px; background: white; color: #b91c1c; border: 1px solid #b91c1c; border-radius: 4px; cursor: pointer; font-size: 12px;">Delete</button>
+                <button :if={@is_admin? or @self?} phx-click="delete" phx-value-provider={entry.provider} style="padding: 4px 10px; background: white; color: #b91c1c; border: 1px solid #b91c1c; border-radius: 4px; cursor: pointer; font-size: 12px;">{gettext("Delete")}</button>
               </td>
             </tr>
           </tbody>
@@ -224,9 +243,9 @@ defmodule EzagentPluginLiveview.UserApiKeysLive do
       </section>
 
       <section :if={is_list(@api_keys)} style="margin-top: 32px; padding: 16px; border: 1px solid #d1d5da; border-radius: 6px;">
-        <h2 style="font-size: 16px; font-weight: 500; margin: 0 0 12px 0;">Add / rotate key</h2>
+        <h2 style="font-size: 16px; font-weight: 500; margin: 0 0 12px 0;">{gettext("Add / rotate key")}</h2>
         <p style="font-size: 12px; color: #57606a; margin: 0 0 12px 0;">
-          Adding a key for an existing provider overwrites it (rotation). Same form serves both.
+          {gettext("Adding a key for an existing provider overwrites it (rotation). Same form serves both.")}
         </p>
 
         <.form for={@form} phx-submit="put">
@@ -242,7 +261,7 @@ defmodule EzagentPluginLiveview.UserApiKeysLive do
           </div>
 
           <div style="margin-bottom: 8px;">
-            <label style="display: block; font-size: 13px; font-weight: 500;">key (plaintext — never re-displayed after save)</label>
+            <label style="display: block; font-size: 13px; font-weight: 500;">{gettext("key (plaintext — never re-displayed after save)")}</label>
             <input
               type="password"
               name="api_key[key]"
@@ -257,9 +276,9 @@ defmodule EzagentPluginLiveview.UserApiKeysLive do
             :if={@is_admin? or @self?}
             type="submit"
             style="padding: 8px 16px; background: #0969da; color: white; border: none; border-radius: 4px; cursor: pointer;"
-          >Save</button>
+          >{gettext("Save")}</button>
           <p :if={not (@is_admin? or @self?)} style="font-size: 12px; color: #b91c1c;">
-            You can only edit your own keys. Admin (<code>entity://user/system/admin</code>) can edit any.
+            {gettext("You can only edit your own keys. Admin (entity://user/system/admin) can edit any.")}
           </p>
         </.form>
       </section>

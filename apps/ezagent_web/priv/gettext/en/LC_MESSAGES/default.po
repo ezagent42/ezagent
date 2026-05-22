@@ -22,27 +22,27 @@ msgstr ""
 msgid "Attempting to reconnect"
 msgstr ""
 
-#: lib/ezagent_web/controllers/session_controller.ex:397
+#: lib/ezagent_web/controllers/session_controller.ex:404
 #, elixir-autogen, elixir-format
 msgid "Email address"
 msgstr ""
 
-#: lib/ezagent_web/controllers/session_controller.ex:400
+#: lib/ezagent_web/controllers/session_controller.ex:407
 #, elixir-autogen, elixir-format
 msgid "Email me a sign-in link"
 msgstr ""
 
-#: lib/ezagent_web/controllers/session_controller.ex:406
+#: lib/ezagent_web/controllers/session_controller.ex:413
 #, elixir-autogen, elixir-format
 msgid "Email sign-in is not enabled. An admin can turn it on in Settings → SMTP."
 msgstr ""
 
-#: lib/ezagent_web/controllers/session_controller.ex:421
+#: lib/ezagent_web/controllers/session_controller.ex:428
 #, elixir-autogen, elixir-format
 msgid "Password or token"
 msgstr ""
 
-#: lib/ezagent_web/controllers/session_controller.ex:418
+#: lib/ezagent_web/controllers/session_controller.ex:425
 #, elixir-autogen, elixir-format
 msgid "Sign in"
 msgstr ""
@@ -52,7 +52,7 @@ msgstr ""
 msgid "Something went wrong!"
 msgstr ""
 
-#: lib/ezagent_web/controllers/session_controller.ex:420
+#: lib/ezagent_web/controllers/session_controller.ex:427
 #, elixir-autogen, elixir-format
 msgid "Username or entity URI"
 msgstr ""
@@ -62,12 +62,12 @@ msgstr ""
 msgid "We can't find the internet"
 msgstr ""
 
-#: lib/ezagent_web/controllers/session_controller.ex:423
+#: lib/ezagent_web/controllers/session_controller.ex:430
 #, elixir-autogen, elixir-format
 msgid "With email magic link"
 msgstr ""
 
-#: lib/ezagent_web/controllers/session_controller.ex:419
+#: lib/ezagent_web/controllers/session_controller.ex:426
 #, elixir-autogen, elixir-format
 msgid "With password"
 msgstr ""
@@ -77,39 +77,259 @@ msgstr ""
 msgid "close"
 msgstr ""
 
-#: lib/ezagent_web/controllers/session_controller.ex:417
+#: lib/ezagent_web/controllers/session_controller.ex:424
 #, elixir-autogen, elixir-format
 msgid "ezagent · sign in"
 msgstr ""
 
-#: lib/ezagent_web/controllers/session_controller.ex:422
+#: lib/ezagent_web/controllers/session_controller.ex:429
 #, elixir-autogen, elixir-format
 msgid "or"
 msgstr ""
 
-# --- i18n V1 manual additions ---------------------------------------
-# Strings wrapped in apps/ezagent_plugin_liveview which uses
-# EzagentWeb.Gettext as its backend. `mix gettext.extract` runs from
-# the ezagent_web Mix project and does NOT walk sibling umbrella apps,
-# so these msgids are added by hand on the same wrap-PR. Future PRs
-# that touch many strings should either run extract from each app or
-# centralize via an extraction shim.
-#: ../ezagent_plugin_liveview/lib/ezagent_plugin_liveview/admin_dashboard_live.ex
-#, elixir-format
-msgid "Overview"
+#: lib/ezagent_web/live/home_live.ex:200
+#, elixir-autogen, elixir-format
+msgid "Adds"
 msgstr ""
 
-#: ../ezagent_plugin_liveview/lib/ezagent_plugin_liveview/identities_live.ex
-#, elixir-format
-msgid "Identities"
+#: lib/ezagent_web/controllers/error_html/404.html.heex:134
+#, elixir-autogen, elixir-format
+msgid "Admin Dashboard"
 msgstr ""
 
-#: ../ezagent_plugin_liveview/lib/ezagent_plugin_liveview/profile_live.ex
-#, elixir-format
-msgid "Profile"
+#: lib/ezagent_web/controllers/error_html/500.html.heex:164
+#, elixir-autogen, elixir-format
+msgid "An unexpected error occurred while loading this page."
 msgstr ""
 
-#: ../ezagent_plugin_liveview/lib/ezagent_plugin_liveview/users_live.ex
-#, elixir-format
-msgid "Users"
+#: lib/ezagent_web/controllers/error_html/404.html.heex:133
+#, elixir-autogen, elixir-format
+msgid "Browse Identities"
+msgstr ""
+
+#: lib/ezagent_web/controllers/workspace_switch_html/denied.html.heex:159
+#, elixir-autogen, elixir-format
+msgid "Cancel"
+msgstr ""
+
+#: lib/ezagent_web/controllers/registration_controller.ex:28
+#, elixir-autogen, elixir-format
+msgid "Complete registration"
+msgstr ""
+
+#: lib/ezagent_web/controllers/registration_controller.ex:38
+#, elixir-autogen, elixir-format
+msgid "Complete your registration"
+msgstr ""
+
+#: lib/ezagent_web/controllers/registration_controller.ex:102
+#, elixir-autogen, elixir-format
+msgid "Could not register: %{reason}"
+msgstr ""
+
+#: lib/ezagent_web/live/home_live.ex:89
+#, elixir-autogen, elixir-format
+msgid "Create failed: %{reason}"
+msgstr ""
+
+#: lib/ezagent_web/controllers/registration_controller.ex:46
+#, elixir-autogen, elixir-format
+msgid "Create my account"
+msgstr ""
+
+#: lib/ezagent_web/live/home_live.ex:213
+#, elixir-autogen, elixir-format
+msgid "Create session"
+msgstr ""
+
+#: lib/ezagent_web/live/home_live.ex:182
+#, elixir-autogen, elixir-format
+msgid "Creates"
+msgstr ""
+
+#: lib/ezagent_web/controllers/registration_controller.ex:44
+#, elixir-autogen, elixir-format
+msgid "Display name (you can change this later)"
+msgstr ""
+
+#: lib/ezagent_web/controllers/error_html/500.html.heex:172
+#, elixir-autogen, elixir-format
+msgid "Go to sessions"
+msgstr ""
+
+#: lib/ezagent_web/controllers/session_controller.ex:292
+#, elixir-autogen, elixir-format
+msgid "If that email can sign in, we've sent a link. Please check your inbox."
+msgstr ""
+
+#: lib/ezagent_web/live/home_live.ex:198
+#, elixir-autogen, elixir-format
+msgid "Include echo demo agent"
+msgstr ""
+
+#: lib/ezagent_web/controllers/session_controller.ex:330
+#: lib/ezagent_web/controllers/session_controller.ex:341
+#, elixir-autogen, elixir-format
+msgid "Invalid URI or credentials."
+msgstr ""
+
+#: lib/ezagent_web/controllers/magic_link_controller.ex:61
+#, elixir-autogen, elixir-format
+msgid "Invalid sign-in link. Please request a new one."
+msgstr ""
+
+#: lib/ezagent_web/live/home_live.ex:154
+#, elixir-autogen, elixir-format
+msgid "Let's set up your first session."
+msgstr ""
+
+#: lib/ezagent_web/controllers/workspace_switch_controller.ex:57
+#, elixir-autogen, elixir-format
+msgid "Missing workspace parameter."
+msgstr ""
+
+#: lib/ezagent_web/controllers/error_html/404.html.heex:132
+#, elixir-autogen, elixir-format
+msgid "Open Sessions"
+msgstr ""
+
+#: lib/ezagent_web/controllers/workspace_switch_controller.ex:77
+#, elixir-autogen, elixir-format
+msgid "Operating on workspace %{name}"
+msgstr ""
+
+#: lib/ezagent_web/controllers/workspace_switch_html/denied.html.heex:136
+#, elixir-autogen, elixir-format
+msgid "Permission required"
+msgstr ""
+
+#: lib/ezagent_web/live/home_live.ex:75
+#, elixir-autogen, elixir-format
+msgid "Session name is required."
+msgstr ""
+
+#: lib/ezagent_web/live/home_live.ex:170
+#, elixir-autogen, elixir-format
+msgid "Session short name"
+msgstr ""
+
+#: lib/ezagent_web/controllers/error_html/500.html.heex:173
+#, elixir-autogen, elixir-format, fuzzy
+msgid "Sign in again"
+msgstr ""
+
+#: lib/ezagent_web/controllers/workspace_switch_html/denied.html.heex:4
+#, elixir-autogen, elixir-format, fuzzy
+msgid "Sign in required"
+msgstr ""
+
+#: lib/ezagent_web/controllers/workspace_switch_html/denied.html.heex:156
+#, elixir-autogen, elixir-format
+msgid "Sign in to %{name}"
+msgstr ""
+
+#: lib/ezagent_web/controllers/workspace_switch_html/denied.html.heex:137
+#, elixir-autogen, elixir-format
+msgid "Sign in to workspace"
+msgstr ""
+
+#: lib/ezagent_web/live/home_live.ex:219
+#, elixir-autogen, elixir-format, fuzzy
+msgid "Signed in as"
+msgstr ""
+
+#: lib/ezagent_web/controllers/registration_controller.ex:48
+#, elixir-autogen, elixir-format
+msgid "Signing up as"
+msgstr ""
+
+#: lib/ezagent_web/controllers/error_html/500.html.heex:4
+#: lib/ezagent_web/controllers/error_html/500.html.heex:163
+#, elixir-autogen, elixir-format, fuzzy
+msgid "Something went wrong"
+msgstr ""
+
+#: lib/ezagent_web/controllers/magic_link_controller.ex:56
+#, elixir-autogen, elixir-format
+msgid "That sign-in link has expired. Please request a new one."
+msgstr ""
+
+#: lib/ezagent_web/controllers/magic_link_controller.ex:59
+#, elixir-autogen, elixir-format
+msgid "That sign-in link was already used. Please request a new one."
+msgstr ""
+
+#: lib/ezagent_web/controllers/error_html/404.html.heex:127
+#, elixir-autogen, elixir-format
+msgid "The URL you opened isn't a route ezagent serves right now. If you followed a link from inside the app and landed here, that's a bug worth reporting."
+msgstr ""
+
+#: lib/ezagent_web/controllers/error_html/404.html.heex:125
+#, elixir-autogen, elixir-format
+msgid "This path doesn't lead anywhere."
+msgstr ""
+
+#: lib/ezagent_web/controllers/workspace_switch_html/denied.html.heex:144
+#, elixir-autogen, elixir-format
+msgid "To work in this workspace, sign in as a member of it. This will end your current session."
+msgstr ""
+
+#: lib/ezagent_web/controllers/workspace_switch_controller.ex:38
+#, elixir-autogen, elixir-format
+msgid "Unknown workspace: %{name}"
+msgstr ""
+
+#: lib/ezagent_web/controllers/registration_controller.ex:42
+#, elixir-autogen, elixir-format
+msgid "Username (your permanent handle — entity://user/<handle>)"
+msgstr ""
+
+#: lib/ezagent_web/controllers/session_controller.ex:348
+#, elixir-autogen, elixir-format
+msgid "Username/URI and password/token are required."
+msgstr ""
+
+#: lib/ezagent_web/live/home_live.ex:151
+#, elixir-autogen, elixir-format
+msgid "Welcome to ezagent"
+msgstr ""
+
+#: lib/ezagent_web/controllers/workspace_switch_controller.ex:47
+#, elixir-autogen, elixir-format
+msgid "Workspace not available"
+msgstr ""
+
+#: lib/ezagent_web/controllers/error_html/500.html.heex:166
+#, elixir-autogen, elixir-format
+msgid "You can try again, return to your sessions, or sign in again if your session expired."
+msgstr ""
+
+#: lib/ezagent_web/controllers/workspace_switch_html/denied.html.heex:139
+#, elixir-autogen, elixir-format
+msgid "You don't have permission to view workspace"
+msgstr ""
+
+#: lib/ezagent_web/live/home_live.ex:200
+#, elixir-autogen, elixir-format
+msgid "as a session member so you can verify the chat round-trip works."
+msgstr ""
+
+#: lib/ezagent_web/controllers/workspace_switch_html/denied.html.heex:140
+#, elixir-autogen, elixir-format
+msgid "as your current identity"
+msgstr ""
+
+#: lib/ezagent_web/live/home_live.ex:182
+#, elixir-autogen, elixir-format
+msgid "bound to"
+msgstr ""
+
+#: lib/ezagent_web/controllers/error_html/404.html.heex:123
+#, elixir-autogen, elixir-format
+msgid "not found"
+msgstr ""
+
+#: lib/ezagent_web/controllers/registration_controller.ex:90
+#, elixir-autogen, elixir-format
+msgid "“%{slug}” is taken. Try “%{suggestion}”."
 msgstr ""

@@ -41,6 +41,9 @@ defmodule EzagentPluginLiveview.EntityCapsLive do
   """
 
   use Phoenix.LiveView
+  # i18n (Allen 2026-05-22) — runtime backend reference; no compile-time
+  # dep on :ezagent_web.
+  use Gettext, backend: EzagentPluginLiveview.Gettext
   alias EzagentDomainUi.WorkspaceShell
   alias EzagentPluginLiveview.AppShell
   use EzagentDomainUi.Components
@@ -110,10 +113,16 @@ defmodule EzagentPluginLiveview.EntityCapsLive do
     kind_str = Map.get(params, "kind", "") |> String.trim()
 
     if kind_str == "" do
-      {:noreply, assign(socket, :flash_error, "Kind required (e.g. echo, agent, :any)")}
+      {:noreply, assign(socket, :flash_error, gettext("Kind required (e.g. echo, agent, :any)"))}
     else
       cap = build_cap(params, socket.assigns.caller_uri)
-      do_grant_or_revoke(socket, :grant_cap, cap, "Granted cap to #{URI.to_string(socket.assigns.entity_uri)}")
+
+      do_grant_or_revoke(
+        socket,
+        :grant_cap,
+        cap,
+        gettext("Granted cap to %{uri}", uri: URI.to_string(socket.assigns.entity_uri))
+      )
     end
   end
 
@@ -122,10 +131,11 @@ defmodule EzagentPluginLiveview.EntityCapsLive do
 
     case Enum.at(socket.assigns.caps, idx) do
       nil ->
-        {:noreply, assign(socket, :flash_error, "cap not found at index #{idx}")}
+        {:noreply,
+         assign(socket, :flash_error, gettext("cap not found at index %{index}", index: idx))}
 
       cap ->
-        do_grant_or_revoke(socket, :revoke_cap, cap, "Revoked cap")
+        do_grant_or_revoke(socket, :revoke_cap, cap, gettext("Revoked cap"))
     end
   end
 
@@ -151,7 +161,12 @@ defmodule EzagentPluginLiveview.EntityCapsLive do
          |> load_caps()}
 
       {:error, reason} ->
-        {:noreply, assign(socket, :flash_error, "#{action} failed: #{inspect(reason)}")}
+        {:noreply,
+         assign(
+           socket,
+           :flash_error,
+           gettext("%{action} failed: %{reason}", action: action, reason: inspect(reason))
+         )}
     end
   end
 
@@ -231,9 +246,9 @@ defmodule EzagentPluginLiveview.EntityCapsLive do
         >
       <:main_window>
         <div class="flex-1 overflow-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
-          <.page_header title={"Caps for " <> URI.to_string(@entity_uri)}>
+          <.page_header title={gettext("Caps for %{uri}", uri: URI.to_string(@entity_uri))}>
             <:subtitle>
-              Live cap mutation via Identity Behavior. Admin caps required (CapBAC at dispatch step 5.5).
+              {gettext("Live cap mutation via Identity Behavior. Admin caps required (CapBAC at dispatch step 5.5).")}
               <a href={parent_path(@entity_kind)} class="text-zinc-600 dark:text-zinc-400 underline hover:text-zinc-900 dark:hover:text-zinc-100 ml-1">{parent_label(@entity_kind)}</a>
             </:subtitle>
           </.page_header>
@@ -242,7 +257,7 @@ defmodule EzagentPluginLiveview.EntityCapsLive do
           <p :if={@flash_error} class="text-red-700 dark:text-red-300 text-sm mb-3">{@flash_error}</p>
 
           <.card class="mb-6">
-            <:header>Grant new cap</:header>
+            <:header>{gettext("Grant new cap")}</:header>
             <.form for={@grant_form} phx-submit="grant" id="grant-cap-form" class="grid grid-cols-3 gap-2 items-end">
               <label class="text-xs">
                 kind
@@ -260,20 +275,20 @@ defmodule EzagentPluginLiveview.EntityCapsLive do
                   class="block w-full px-2 py-1 text-sm border border-zinc-300 dark:border-zinc-700 rounded-md" />
               </label>
               <div class="col-span-3 flex justify-end">
-                <.button type="submit" variant="primary" size="sm">Grant</.button>
+                <.button type="submit" variant="primary" size="sm">{gettext("Grant")}</.button>
               </div>
             </.form>
           </.card>
 
           <.card>
-            <:header>Current caps</:header>
+            <:header>{gettext("Current caps")}</:header>
             <%= case @caps do %>
               <% :entity_not_live -> %>
-                <p class="text-red-700 dark:text-red-300 text-sm">{String.capitalize(@entity_kind)} Kind not registered (not live in BEAM).</p>
+                <p class="text-red-700 dark:text-red-300 text-sm">{gettext("%{kind} Kind not registered (not live in BEAM).", kind: String.capitalize(@entity_kind))}</p>
               <% {:error, reason} -> %>
-                <p class="text-red-700 dark:text-red-300 text-sm">Error reading caps: {inspect(reason)}</p>
+                <p class="text-red-700 dark:text-red-300 text-sm">{gettext("Error reading caps: %{reason}", reason: inspect(reason))}</p>
               <% caps when is_list(caps) and caps == [] -> %>
-                <p class="text-zinc-500 italic text-sm">No caps. Grant one above.</p>
+                <p class="text-zinc-500 italic text-sm">{gettext("No caps. Grant one above.")}</p>
               <% caps when is_list(caps) -> %>
                 <table class="w-full text-sm">
                   <thead class="bg-zinc-50 dark:bg-zinc-950 border-b border-zinc-200 dark:border-zinc-800">
@@ -293,7 +308,7 @@ defmodule EzagentPluginLiveview.EntityCapsLive do
                       <td class="py-2 font-mono text-xs">{cap.granted_by && URI.to_string(cap.granted_by)}</td>
                       <td class="py-2 text-right pr-2">
                         <.button variant="danger" size="sm" phx-click="revoke" phx-value-index={i}>
-                          revoke
+                          {gettext("revoke")}
                         </.button>
                       </td>
                     </tr>

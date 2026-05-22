@@ -26,6 +26,9 @@ defmodule EzagentDomainUi.Pty.TerminalView do
 
   @behaviour Ezagent.UI.SessionView
   use Phoenix.Component
+  # i18n (Allen 2026-05-22) — Tier-2 shared-component backend. NOT a
+  # dependency on `ezagent_web` (see `EzagentDomainUi.Gettext` moduledoc).
+  use Gettext, backend: EzagentDomainUi.Gettext
 
   alias EzagentDomainUi.Pty.Terminal
 
@@ -33,7 +36,7 @@ defmodule EzagentDomainUi.Pty.TerminalView do
   def id, do: :pty
 
   @impl true
-  def label, do: "Terminal"
+  def label, do: gettext("Terminal")
 
   @impl true
   def icon, do: "terminal"

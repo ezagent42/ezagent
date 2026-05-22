@@ -37,6 +37,9 @@ defmodule EzagentPluginLiveview.AdminLive do
 
   use Phoenix.LiveView
   import Phoenix.Component
+  # i18n (Allen 2026-05-22): runtime backend reference — EzagentWeb.Gettext
+  # lives in the host app; no compile-time dep on :ezagent_web.
+  use Gettext, backend: EzagentPluginLiveview.Gettext
 
   alias EzagentPluginLiveview.Admin.{SessionEditor, MemberPanel}
   alias EzagentPluginLiveview.Views.ConversationView
@@ -161,7 +164,8 @@ defmodule EzagentPluginLiveview.AdminLive do
         {:noreply, select_session(socket, session_uri)}
 
       _ ->
-        {:noreply, assign(socket, :flash_error, "Bad session URI: #{encoded}")}
+        {:noreply,
+         assign(socket, :flash_error, gettext("Bad session URI: %{uri}", uri: encoded))}
     end
   end
 
@@ -252,7 +256,11 @@ defmodule EzagentPluginLiveview.AdminLive do
 
     if String.trim(text) == "" and attachments == [] do
       {:noreply,
-       assign(socket, :flash_error, "Message text or at least one attachment is required.")}
+       assign(
+         socket,
+         :flash_error,
+         gettext("Message text or at least one attachment is required.")
+       )}
     else
       send_chat_message(socket, text, attachments, mentions)
     end
@@ -260,7 +268,11 @@ defmodule EzagentPluginLiveview.AdminLive do
 
   def handle_event("chat_compose", _params, socket) do
     {:noreply,
-     assign(socket, :flash_error, "Message text or at least one attachment is required.")}
+     assign(
+       socket,
+       :flash_error,
+       gettext("Message text or at least one attachment is required.")
+     )}
   end
 
   def handle_event("switch_session", %{"session_uri" => session_uri_str}, socket) do
@@ -269,7 +281,8 @@ defmodule EzagentPluginLiveview.AdminLive do
         {:noreply, select_session(socket, new_uri)}
 
       _ ->
-        {:noreply, assign(socket, :flash_error, "Bad session URI: #{session_uri_str}")}
+        {:noreply,
+         assign(socket, :flash_error, gettext("Bad session URI: %{uri}", uri: session_uri_str))}
     end
   end
 
@@ -288,12 +301,13 @@ defmodule EzagentPluginLiveview.AdminLive do
          |> assign(:flash_error, nil)}
 
       {:error, reason} ->
-        {:noreply, assign(socket, :flash_error, "Create failed: #{inspect(reason)}")}
+        {:noreply,
+         assign(socket, :flash_error, gettext("Create failed: %{reason}", reason: inspect(reason)))}
     end
   end
 
   def handle_event("create_session", _params, socket) do
-    {:noreply, assign(socket, :flash_error, "Session name is required.")}
+    {:noreply, assign(socket, :flash_error, gettext("Session name is required."))}
   end
 
   # Phase 8b §3 stage c — view switcher (Chat / Terminal buttons in
@@ -373,7 +387,7 @@ defmodule EzagentPluginLiveview.AdminLive do
 
     cond do
       not match?(%URI{}, caller_uri) ->
-        {:noreply, assign(socket, :flash_error, "Not signed in.")}
+        {:noreply, assign(socket, :flash_error, gettext("Not signed in."))}
 
       # SPEC §1.6 / §2C.4 step 1 — server-side revalidation. The
       # submitted URI must be a well-formed entity URI inside the
@@ -384,8 +398,11 @@ defmodule EzagentPluginLiveview.AdminLive do
          assign(
            socket,
            :flash_error,
-           "Rejected #{inspect(trimmed)} — must be an entity URI in this session's " <>
-             "workspace (#{URI.to_string(workspace_uri)}). Pick from the list."
+           gettext(
+             "Rejected %{uri} — must be an entity URI in this session's workspace (%{workspace}). Pick from the list.",
+             uri: inspect(trimmed),
+             workspace: URI.to_string(workspace_uri)
+           )
          )}
 
       true ->
@@ -419,7 +436,7 @@ defmodule EzagentPluginLiveview.AdminLive do
              assign(
                socket,
                :flash_error,
-               "Unauthorized — you may not add members to this session."
+               gettext("Unauthorized — you may not add members to this session.")
              )}
 
           {:error, :cross_workspace_denied} ->
@@ -427,19 +444,25 @@ defmodule EzagentPluginLiveview.AdminLive do
              assign(
                socket,
                :flash_error,
-               "Cross-workspace denied — this session lives in workspace " <>
-                 "#{URI.to_string(workspace_uri)}, different from yours. " <>
-                 "Ask admin for a cross-workspace cap."
+               gettext(
+                 "Cross-workspace denied — this session lives in workspace %{workspace}, different from yours. Ask admin for a cross-workspace cap.",
+                 workspace: URI.to_string(workspace_uri)
+               )
              )}
 
           {:error, reason} ->
-            {:noreply, assign(socket, :flash_error, "Invite failed: #{inspect(reason)}")}
+            {:noreply,
+             assign(
+               socket,
+               :flash_error,
+               gettext("Invite failed: %{reason}", reason: inspect(reason))
+             )}
         end
     end
   end
 
   def handle_event("invite_member", _params, socket) do
-    {:noreply, assign(socket, :flash_error, "Pick an entity to invite.")}
+    {:noreply, assign(socket, :flash_error, gettext("Pick an entity to invite."))}
   end
 
   # Phase 8b §1.6 — Debug events toggle in setting dropdown.
@@ -487,7 +510,7 @@ defmodule EzagentPluginLiveview.AdminLive do
                  assign(
                    socket,
                    :flash_error,
-                   "Unauthorized — need agent.pty.write cap on this agent."
+                   gettext("Unauthorized — need agent.pty.write cap on this agent.")
                  )}
 
               {:error, :cross_workspace_denied} ->
@@ -499,12 +522,18 @@ defmodule EzagentPluginLiveview.AdminLive do
                  assign(
                    socket,
                    :flash_error,
-                   "Cross-workspace denied — your workspace differs from this agent's " <>
-                     "workspace. Ask admin for a cross-workspace cap."
+                   gettext(
+                     "Cross-workspace denied — your workspace differs from this agent's workspace. Ask admin for a cross-workspace cap."
+                   )
                  )}
 
               {:error, reason} ->
-                {:noreply, assign(socket, :flash_error, "PTY input failed: #{inspect(reason)}")}
+                {:noreply,
+                 assign(
+                   socket,
+                   :flash_error,
+                   gettext("PTY input failed: %{reason}", reason: inspect(reason))
+                 )}
             end
 
           _ ->
@@ -545,7 +574,7 @@ defmodule EzagentPluginLiveview.AdminLive do
            assign(
              socket,
              :flash_error,
-             "Unauthorized — need routing cap on this session."
+             gettext("Unauthorized — need routing cap on this session.")
            )}
 
         {:error, :cross_workspace_denied} ->
@@ -553,15 +582,21 @@ defmodule EzagentPluginLiveview.AdminLive do
            assign(
              socket,
              :flash_error,
-             "Cross-workspace denied — this session lives in a different workspace."
+             gettext("Cross-workspace denied — this session lives in a different workspace.")
            )}
 
         {:error, reason} ->
-          {:noreply, assign(socket, :flash_error, "Toggle failed: #{inspect(reason)}")}
+          {:noreply,
+           assign(socket, :flash_error, gettext("Toggle failed: %{reason}", reason: inspect(reason)))}
       end
     else
       _ ->
-        {:noreply, assign(socket, :flash_error, "Bad routing rule id or table: #{id_str}")}
+        {:noreply,
+         assign(
+           socket,
+           :flash_error,
+           gettext("Bad routing rule id or table: %{id}", id: id_str)
+         )}
     end
   end
 
@@ -597,7 +632,10 @@ defmodule EzagentPluginLiveview.AdminLive do
          assign(
            socket,
            :flash_error,
-           "Rejected URI #{inspect(bad)} — not a valid in-workspace entity/session."
+           gettext(
+             "Rejected URI %{uri} — not a valid in-workspace entity/session.",
+             uri: inspect(bad)
+           )
          )}
 
       {:error, :unauthorized} ->
@@ -605,7 +643,7 @@ defmodule EzagentPluginLiveview.AdminLive do
          assign(
            socket,
            :flash_error,
-           "Unauthorized — need routing cap on this session."
+           gettext("Unauthorized — need routing cap on this session.")
          )}
 
       {:error, :cross_workspace_denied} ->
@@ -613,14 +651,20 @@ defmodule EzagentPluginLiveview.AdminLive do
          assign(
            socket,
            :flash_error,
-           "Cross-workspace denied — this session lives in a different workspace."
+           gettext("Cross-workspace denied — this session lives in a different workspace.")
          )}
 
       [] ->
-        {:noreply, assign(socket, :flash_error, "At least one receiver URI is required.")}
+        {:noreply,
+         assign(socket, :flash_error, gettext("At least one receiver URI is required."))}
 
       {:error, reason} ->
-        {:noreply, assign(socket, :flash_error, "Add rule failed: #{inspect(reason)}")}
+        {:noreply,
+         assign(
+           socket,
+           :flash_error,
+           gettext("Add rule failed: %{reason}", reason: inspect(reason))
+         )}
     end
   end
 
@@ -889,13 +933,13 @@ defmodule EzagentPluginLiveview.AdminLive do
           class="border-t border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 max-h-48 overflow-y-auto p-3"
         >
           <h3 class="text-[10px] uppercase tracking-wide text-zinc-500 mb-1">
-            Debug events (last 20)
+            {gettext("Debug events (last 20)")}
           </h3>
           <p
             :if={@cc_events == []}
             class="text-[11px] text-zinc-500 dark:text-zinc-400 italic py-2"
           >
-            No debug events yet. CC hook errors + dispatch events will appear here.
+            {gettext("No debug events yet. CC hook errors + dispatch events will appear here.")}
           </p>
           <ul :if={@cc_events != []} class="space-y-1 text-[11px]">
             <li :for={ev <- @cc_events} class="flex gap-2">
@@ -1490,7 +1534,7 @@ defmodule EzagentPluginLiveview.AdminLive do
         clear_compose(socket)
 
       {:error, reason} ->
-        {:noreply, assign(socket, :flash_error, friendly_error("Send", reason))}
+        {:noreply, assign(socket, :flash_error, friendly_error(gettext("Send"), reason))}
     end
   end
 
@@ -1507,18 +1551,20 @@ defmodule EzagentPluginLiveview.AdminLive do
   end
 
   defp friendly_error(_action, :unauthorized) do
-    "You don't have permission for this action. Contact admin for cap grant."
+    gettext("You don't have permission for this action. Contact admin for cap grant.")
   end
 
   # Phase 9 PR-4 (SPEC v3 §5) — distinct from :unauthorized so users
   # see "wrong workspace" vs "missing cap" as separate failure modes
   # (invariant 9).
   defp friendly_error(_action, :cross_workspace_denied) do
-    "Cross-workspace denied — your workspace differs from the target's workspace. " <>
-      "Contact admin for a cross-workspace cap."
+    gettext(
+      "Cross-workspace denied — your workspace differs from the target's workspace. Contact admin for a cross-workspace cap."
+    )
   end
 
-  defp friendly_error(action, reason), do: "#{action} failed: #{inspect(reason)}"
+  defp friendly_error(action, reason),
+    do: gettext("%{action} failed: %{reason}", action: action, reason: inspect(reason))
 
   # Phase 8c PR-F: look up the workspace name bound to the current
   # session. Returns the URI host (e.g. "default" for workspace://default)

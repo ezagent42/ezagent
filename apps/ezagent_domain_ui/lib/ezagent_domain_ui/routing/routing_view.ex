@@ -38,13 +38,16 @@ defmodule EzagentDomainUi.Routing.RoutingView do
 
   @behaviour Ezagent.UI.SessionView
   use Phoenix.Component
+  # i18n (Allen 2026-05-22) — Tier-2 shared-component backend. NOT a
+  # dependency on `ezagent_web` (see `EzagentDomainUi.Gettext` moduledoc).
+  use Gettext, backend: EzagentDomainUi.Gettext
   use EzagentDomainUi.Primitives
 
   @impl true
   def id, do: :routing
 
   @impl true
-  def label, do: "Routing"
+  def label, do: gettext("Routing")
 
   @impl true
   def icon, do: "route"
@@ -71,18 +74,16 @@ defmodule EzagentDomainUi.Routing.RoutingView do
     <div class="flex-1 overflow-auto p-4 bg-zinc-50 dark:bg-zinc-950 min-h-0">
       <div class="max-w-4xl mx-auto">
         <h2 class="text-lg font-semibold text-zinc-900 dark:text-zinc-100 mb-2">
-          Session Routing Rules
+          {gettext("Session Routing Rules")}
         </h2>
         <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-6">
-          Rules scoped to
+          {gettext("Rules scoped to")}
           <code class="font-mono text-xs text-zinc-700 dark:text-zinc-300">
             {session_uri_string(@session_uri)}
           </code>
-          via an <code class="font-mono text-xs">in_session</code>
-          matcher.
-          Global + workspace rules also fire for this session — see
+          {gettext("via an in_session matcher. Global + workspace rules also fire for this session — see")}
           <a href="/routing" class="text-blue-600 dark:text-blue-400 hover:underline">/routing</a>
-          for all scopes.
+          {gettext("for all scopes.")}
         </p>
 
         <%!-- Session-scoped rule list --%>
@@ -117,7 +118,7 @@ defmodule EzagentDomainUi.Routing.RoutingView do
                   phx-value-table={rule.table_name}
                   class="px-2 py-1 text-xs border border-zinc-300 dark:border-zinc-700 rounded text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800"
                 >
-                  {if rule.enabled, do: "Disable", else: "Enable"}
+                  {if rule.enabled, do: gettext("Disable"), else: gettext("Enable")}
                 </button>
               </div>
             </div>
@@ -128,16 +129,16 @@ defmodule EzagentDomainUi.Routing.RoutingView do
             id="session-routing-rules-empty"
             class="text-center py-8 text-sm text-zinc-500 dark:text-zinc-400 border border-dashed border-zinc-300 dark:border-zinc-700 rounded"
           >
-            No session-scoped rules. Add one below, or see
+            {gettext("No session-scoped rules. Add one below, or see")}
             <a href="/routing" class="text-blue-600 dark:text-blue-400 hover:underline">/routing</a>
-            for workspace/global rules.
+            {gettext("for workspace/global rules.")}
           </div>
         </div>
 
         <%!-- Add rule form (compact; full form lives on /routing) --%>
         <details class="border border-zinc-200 dark:border-zinc-800 rounded p-3 bg-white dark:bg-zinc-900">
           <summary class="cursor-pointer text-sm font-medium text-zinc-700 dark:text-zinc-300">
-            + Add session-scoped rule
+            {gettext("+ Add session-scoped rule")}
           </summary>
           <form
             id="session-routing-add-form"
@@ -146,7 +147,7 @@ defmodule EzagentDomainUi.Routing.RoutingView do
           >
             <div>
               <label class="block text-xs text-zinc-600 dark:text-zinc-400 mb-1">
-                Matcher type
+                {gettext("Matcher type")}
               </label>
               <select
                 name="rule[matcher_type]"
@@ -155,14 +156,14 @@ defmodule EzagentDomainUi.Routing.RoutingView do
                 <option value="mention">mention</option>
                 <option value="from">from</option>
                 <option value="text_contains">text_contains</option>
-                <option value="always">always (any message in this session)</option>
+                <option value="always">{gettext("always (any message in this session)")}</option>
               </select>
             </div>
             <div>
               <label class="block text-xs text-zinc-600 dark:text-zinc-400 mb-1">
-                Matcher arg
+                {gettext("Matcher arg")}
                 <span class="text-zinc-400 dark:text-zinc-600">
-                  (ignored for "always"; substring/regex via manual entry)
+                  {gettext("(ignored for \"always\"; substring/regex via manual entry)")}
                 </span>
               </label>
               <%!--
@@ -177,7 +178,7 @@ defmodule EzagentDomainUi.Routing.RoutingView do
                 kinds={[:entity]}
                 options={@entity_options}
                 allow_freetext={true}
-                placeholder="pick an entity, or enter a substring below"
+                placeholder={gettext("pick an entity, or enter a substring below")}
               />
             </div>
             <div>
@@ -191,15 +192,15 @@ defmodule EzagentDomainUi.Routing.RoutingView do
                 mode={:multi}
                 kinds={[:entity, :session]}
                 options={@receiver_options}
-                label="Receivers"
-                placeholder="add entities + sessions"
+                label={gettext("Receivers")}
+                placeholder={gettext("add entities + sessions")}
               />
             </div>
             <button
               type="submit"
               class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded"
             >
-              Add rule
+              {gettext("Add rule")}
             </button>
           </form>
         </details>

@@ -10,36 +10,45 @@ defmodule EzagentWeb.RegistrationController do
   Uses the light `Phoenix.Controller` header (matching `SessionController`).
   """
   use Phoenix.Controller, formats: [:html], layouts: []
+  use Gettext, backend: EzagentWeb.Gettext
 
   import Plug.Conn
 
   alias Ezagent.Registration
 
-  @form_html """
-  <!DOCTYPE html>
-  <html><head><title>Complete registration</title><meta charset="utf-8">
-  <style>
-    body { font-family: -apple-system, sans-serif; max-width: 420px; margin: 80px auto; padding: 24px; }
-    h1 { font-size: 22px; } form { display: flex; flex-direction: column; gap: 12px; }
-    label { font-size: 13px; color: #666; }
-    input { padding: 8px 10px; border: 1px solid #d1d5da; border-radius: 4px; font-size: 14px; }
-    button { padding: 10px; background: #1f883d; color: white; border: none; border-radius: 4px; cursor: pointer; }
-    .err { color: #cf222e; font-size: 13px; padding: 8px; background: #ffebe9; border-radius: 4px; }
-    .hint { color: #57606a; font-size: 12px; }
-  </style></head><body>
-  <h1>Complete your registration</h1>
-  {{ERROR}}
-  <form method="post" action="/register/complete">
-    <input type="hidden" name="_csrf_token" value="{{CSRF}}">
-    <label for="handle">Username (your permanent handle — entity://user/&lt;handle&gt;)</label>
-    <input type="text" id="handle" name="handle" value="{{HANDLE}}" required autofocus>
-    <label for="display_name">Display name (you can change this later)</label>
-    <input type="text" id="display_name" name="display_name" value="{{DISPLAY}}" required>
-    <button type="submit">Create my account</button>
-  </form>
-  <p class="hint">Signing up as {{EMAIL}}</p>
-  </body></html>
-  """
+  # i18n (Allen 2026-05-22) — the registration boundary page is a raw
+  # self-contained heredoc (auth boundary — keeps its own <style>, no
+  # app.css). Built at RUNTIME via `form_html/0` so its user-facing
+  # strings can pass through `gettext/1` (a compile-time `@form_html`
+  # module attribute cannot). `{{...}}` placeholders are still
+  # substituted in `render_form/5`.
+  defp form_html do
+    """
+    <!DOCTYPE html>
+    <html><head><title>#{gettext("Complete registration")}</title><meta charset="utf-8">
+    <style>
+      body { font-family: -apple-system, sans-serif; max-width: 420px; margin: 80px auto; padding: 24px; }
+      h1 { font-size: 22px; } form { display: flex; flex-direction: column; gap: 12px; }
+      label { font-size: 13px; color: #666; }
+      input { padding: 8px 10px; border: 1px solid #d1d5da; border-radius: 4px; font-size: 14px; }
+      button { padding: 10px; background: #1f883d; color: white; border: none; border-radius: 4px; cursor: pointer; }
+      .err { color: #cf222e; font-size: 13px; padding: 8px; background: #ffebe9; border-radius: 4px; }
+      .hint { color: #57606a; font-size: 12px; }
+    </style></head><body>
+    <h1>#{gettext("Complete your registration")}</h1>
+    {{ERROR}}
+    <form method="post" action="/register/complete">
+      <input type="hidden" name="_csrf_token" value="{{CSRF}}">
+      <label for="handle">#{gettext("Username (your permanent handle — entity://user/<handle>)")}</label>
+      <input type="text" id="handle" name="handle" value="{{HANDLE}}" required autofocus>
+      <label for="display_name">#{gettext("Display name (you can change this later)")}</label>
+      <input type="text" id="display_name" name="display_name" value="{{DISPLAY}}" required>
+      <button type="submit">#{gettext("Create my account")}</button>
+    </form>
+    <p class="hint">#{gettext("Signing up as")} {{EMAIL}}</p>
+    </body></html>
+    """
+  end
 
   def complete_new(conn, _params) do
     case get_session(conn, :pending_registration_email) do
@@ -78,7 +87,10 @@ defmodule EzagentWeb.RegistrationController do
                   email,
                   suggestion,
                   display_name,
-                  "“#{slug}” is taken. Try “#{suggestion}”."
+                  gettext("“%{slug}” is taken. Try “%{suggestion}”.",
+                    slug: slug,
+                    suggestion: suggestion
+                  )
                 )
 
               {:error, reason} ->
@@ -87,7 +99,7 @@ defmodule EzagentWeb.RegistrationController do
                   email,
                   slug,
                   display_name,
-                  "Could not register: #{inspect(reason)}"
+                  gettext("Could not register: %{reason}", reason: inspect(reason))
                 )
             end
         end
@@ -115,7 +127,7 @@ defmodule EzagentWeb.RegistrationController do
       if error, do: ~s(<div class="err">#{Plug.HTML.html_escape(error)}</div>), else: ""
 
     html =
-      @form_html
+      form_html()
       |> String.replace("{{ERROR}}", error_block)
       |> String.replace("{{CSRF}}", Plug.CSRFProtection.get_csrf_token())
       |> String.replace("{{HANDLE}}", Plug.HTML.html_escape(handle) |> safe_to_string())

@@ -64,6 +64,9 @@ defmodule EzagentPluginLiveview.AgentNewLive do
   config.
   """
   use Phoenix.LiveView
+  # i18n (Allen 2026-05-22) — runtime backend reference; no compile-time
+  # dep on :ezagent_web.
+  use Gettext, backend: EzagentPluginLiveview.Gettext
   alias EzagentDomainUi.WorkspaceShell
   alias EzagentPluginLiveview.AppShell
   use EzagentDomainUi.Components
@@ -340,41 +343,53 @@ defmodule EzagentPluginLiveview.AgentNewLive do
     end
   end
 
-  defp friendly_error(:flavor_required), do: "Flavor is required."
-  defp friendly_error(:name_required), do: "Name is required."
+  defp friendly_error(:flavor_required), do: gettext("Flavor is required.")
+  defp friendly_error(:name_required), do: gettext("Name is required.")
 
   defp friendly_error({:bad_flavor, f}),
-    do: "Unknown flavor: #{inspect(f)}. Choose cc / echo / curl."
+    do: gettext("Unknown flavor: %{flavor}. Choose cc / echo / curl.", flavor: inspect(f))
 
   defp friendly_error({:bad_name, n}),
     do:
-      "Name #{inspect(n)} must start with a letter or digit and contain only letters, digits, '-', or '_'."
+      gettext(
+        "Name %{name} must start with a letter or digit and contain only letters, digits, '-', or '_'.",
+        name: inspect(n)
+      )
 
-  defp friendly_error({:bad_uri, s}), do: "Cannot build URI from inputs (got #{s})."
+  defp friendly_error({:bad_uri, s}),
+    do: gettext("Cannot build URI from inputs (got %{uri}).", uri: s)
 
   defp friendly_error({:already_exists, uri}),
-    do: "An agent already exists at #{uri}. Pick a different name."
+    do: gettext("An agent already exists at %{uri}. Pick a different name.", uri: uri)
 
   defp friendly_error({:grant_failed, cap, reason}),
-    do: "Agent created but cap grant failed for #{inspect(cap)}: #{inspect(reason)}"
+    do:
+      gettext("Agent created but cap grant failed for %{cap}: %{reason}",
+        cap: inspect(cap),
+        reason: inspect(reason)
+      )
 
   defp friendly_error(:cwd_required_for_cc),
-    do: "Working directory is required for cc agents (claude-code runs there)."
+    do: gettext("Working directory is required for cc agents (claude-code runs there).")
 
   defp friendly_error(:cwd_required_for_echo_with_pty),
     do:
-      "Working directory is required when an echo agent is created with PTY (/bin/bash -i runs there)."
+      gettext(
+        "Working directory is required when an echo agent is created with PTY (/bin/bash -i runs there)."
+      )
 
   defp friendly_error({:cwd_not_a_dir, cwd}),
-    do: "Working directory #{inspect(cwd)} doesn't exist or isn't a directory."
+    do:
+      gettext("Working directory %{cwd} doesn't exist or isn't a directory.", cwd: inspect(cwd))
 
   defp friendly_error({:template_register_failed, reason}),
-    do: "cc.agent template registration failed: #{inspect(reason)}"
+    do: gettext("cc.agent template registration failed: %{reason}", reason: inspect(reason))
 
   defp friendly_error({:spawn_failed, reason}),
-    do: "Agent spawn failed: #{inspect(reason)}"
+    do: gettext("Agent spawn failed: %{reason}", reason: inspect(reason))
 
-  defp friendly_error(other), do: "Create failed: #{inspect(other)}"
+  defp friendly_error(other),
+    do: gettext("Create failed: %{reason}", reason: inspect(other))
 
   # ── render ─────────────────────────────────────────────────────────
 
@@ -405,11 +420,14 @@ defmodule EzagentPluginLiveview.AgentNewLive do
         >
       <:main_window>
         <div class="flex-1 overflow-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
-          <.breadcrumb items={[{"Identities", "/identities"}, {"New agent", nil}]} />
+          <.breadcrumb items={[{gettext("Identities"), "/identities"}, {gettext("New agent"), nil}]} />
 
-          <.page_header title="New agent">
+          <.page_header title={gettext("New agent")}>
             <:subtitle>
-              Spawns a new Agent Kind into the registry. Same backend as <code>mix ezagent.agent.create</code>.
+              {gettext(
+                "Spawns a new Agent Kind into the registry. Same backend as %{cmd}.",
+                cmd: "mix ezagent.agent.create"
+              )}
             </:subtitle>
           </.page_header>
 
@@ -428,7 +446,7 @@ defmodule EzagentPluginLiveview.AgentNewLive do
               class="flex flex-col gap-4"
             >
               <label class="flex flex-col gap-1">
-                <span class="text-xs uppercase tracking-wide text-zinc-500">Flavor</span>
+                <span class="text-xs uppercase tracking-wide text-zinc-500">{gettext("Flavor")}</span>
                 <select
                   name="agent[flavor]"
                   class="block w-full px-3 py-2 text-sm rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
@@ -436,15 +454,14 @@ defmodule EzagentPluginLiveview.AgentNewLive do
                   <option :for={f <- @flavors} value={f} selected={f == @flavor}>{f}</option>
                 </select>
                 <span class="text-[11px] text-zinc-500">
-                  Which plugin runs this agent. <code>cc</code>
-                  = Claude-Code orchestrated; <code>echo</code>
-                  = test fixture; <code>curl</code>
-                  = external HTTP agent.
+                  {gettext(
+                    "Which plugin runs this agent. cc = Claude-Code orchestrated; echo = test fixture; curl = external HTTP agent."
+                  )}
                 </span>
               </label>
 
               <label class="flex flex-col gap-1">
-                <span class="text-xs uppercase tracking-wide text-zinc-500">Name</span>
+                <span class="text-xs uppercase tracking-wide text-zinc-500">{gettext("Name")}</span>
                 <input
                   type="text"
                   name="agent[name]"
@@ -454,7 +471,7 @@ defmodule EzagentPluginLiveview.AgentNewLive do
                   class="block w-full px-3 py-2 text-sm rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 font-mono"
                 />
                 <span class="text-[11px] text-zinc-500">
-                  Creates
+                  {gettext("Creates")}
                   <code class="font-mono text-zinc-700 dark:text-zinc-300">{@preview_uri}</code>
                 </span>
               </label>
@@ -481,8 +498,9 @@ defmodule EzagentPluginLiveview.AgentNewLive do
                   class="h-4 w-4 rounded border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-emerald-600 dark:text-emerald-400 focus:ring-emerald-500 dark:focus:ring-emerald-400"
                 />
                 <span class="text-sm text-zinc-700 dark:text-zinc-300">
-                  With local PTY — echo agent gets a <code>/bin/bash -i</code> sidecar so it
-                  shows up in the Sessions Terminal tab + at <code>/identities/agents/&lt;uri&gt;/terminal</code>.
+                  {gettext(
+                    "With local PTY — echo agent gets a /bin/bash -i sidecar so it shows up in the Sessions Terminal tab + at /identities/agents/<uri>/terminal."
+                  )}
                 </span>
               </label>
 
@@ -491,7 +509,7 @@ defmodule EzagentPluginLiveview.AgentNewLive do
                 class="flex flex-col gap-1"
               >
                 <span class="text-xs uppercase tracking-wide text-zinc-500">
-                  Working directory <span class="text-red-600 dark:text-red-400">*</span>
+                  {gettext("Working directory")} <span class="text-red-600 dark:text-red-400">*</span>
                 </span>
                 <input
                   type="text"
@@ -506,22 +524,19 @@ defmodule EzagentPluginLiveview.AgentNewLive do
                   class="block w-full px-3 py-2 text-sm rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 font-mono"
                 />
                 <span :if={@flavor == "cc"} class="text-[11px] text-zinc-500">
-                  Where <code>claude-code</code>
-                  runs. Required for <code>cc</code>
-                  flavor
-                  — the PtyServer starts in this directory. Must exist on the host.
-                  Registers a <code>cc.agent</code>
-                  template in workspace <code>default</code>
-                  so the agent boots ready-to-use.
+                  {gettext(
+                    "Where claude-code runs. Required for cc flavor — the PtyServer starts in this directory. Must exist on the host. Registers a cc.agent template in workspace default so the agent boots ready-to-use."
+                  )}
                 </span>
                 <span :if={@flavor == "echo" and @with_pty?} class="text-[11px] text-zinc-500">
-                  Where the echo agent's <code>/bin/bash -i</code> sidecar runs. Required
-                  because the operator selected <em>With local PTY</em>. Must exist on the host.
+                  {gettext(
+                    "Where the echo agent's /bin/bash -i sidecar runs. Required because the operator selected With local PTY. Must exist on the host."
+                  )}
                 </span>
               </label>
 
               <label class="flex flex-col gap-1">
-                <span class="text-xs uppercase tracking-wide text-zinc-500">Initial caps</span>
+                <span class="text-xs uppercase tracking-wide text-zinc-500">{gettext("Initial caps")}</span>
                 <input
                   type="text"
                   name="agent[caps]"
@@ -531,17 +546,17 @@ defmodule EzagentPluginLiveview.AgentNewLive do
                   class="block w-full px-3 py-2 text-sm rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 font-mono"
                 />
                 <span class="text-[11px] text-zinc-500">
-                  Comma-separated <code>kind.behavior</code>
-                  specs (<code>Ezagent.Capability.Parser</code>).
-                  Leave empty to create with no caps and grant them later.
+                  {gettext(
+                    "Comma-separated kind.behavior specs (Ezagent.Capability.Parser). Leave empty to create with no caps and grant them later."
+                  )}
                 </span>
               </label>
 
               <div class="flex justify-end gap-2 pt-2 border-t border-zinc-200 dark:border-zinc-800">
                 <.button variant="ghost" type="button" phx-click={JS.navigate("/identities")}>
-                  Cancel
+                  {gettext("Cancel")}
                 </.button>
-                <.button variant="primary" type="submit">Create agent</.button>
+                <.button variant="primary" type="submit">{gettext("Create agent")}</.button>
               </div>
             </form>
           </.card>

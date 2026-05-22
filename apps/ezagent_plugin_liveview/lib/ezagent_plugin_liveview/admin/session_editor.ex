@@ -17,6 +17,9 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
   """
 
   use Phoenix.Component
+  # i18n (Allen 2026-05-22) — Tier-3 plugin component; runtime backend
+  # reference to the host app's EzagentWeb.Gettext (no compile-time dep).
+  use Gettext, backend: EzagentPluginLiveview.Gettext
   use EzagentDomainUi.Primitives
   alias Phoenix.LiveView.JS
 
@@ -100,7 +103,7 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
   defp session_selector(assigns) do
     ~H"""
     <div class="flex items-center gap-2">
-      <span class="text-[10px] uppercase tracking-wide text-zinc-500">Session</span>
+      <span class="text-[10px] uppercase tracking-wide text-zinc-500">{gettext("Session")}</span>
       <form phx-change="switch_session" class="contents">
         <select
           name="session_uri"
@@ -128,12 +131,12 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
     ~H"""
     <details class="relative">
       <summary class="cursor-pointer text-xs text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 select-none">
-        + New
+        {gettext("+ New")}
       </summary>
       <div class="absolute left-0 top-full mt-1 w-64 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-md shadow-lg z-30 p-2">
         <.form for={@new_session_form} phx-submit="create_session">
           <label for="new_session_short_name" class="block text-[10px] text-zinc-500 mb-1">
-            New session name
+            {gettext("New session name")}
           </label>
           <input
             type="text"
@@ -146,7 +149,7 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
             type="submit"
             class="mt-2 w-full px-2 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 dark:hover:bg-blue-500"
           >
-            Create
+            {gettext("Create")}
           </button>
         </.form>
       </div>
@@ -204,8 +207,8 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
             out: {"ease-in duration-100", "opacity-100 translate-y-0", "opacity-0 -translate-y-1"}
           )
         }
-        title="Session settings"
-        aria-label="Session settings"
+        title={gettext("Session settings")}
+        aria-label={gettext("Session settings")}
         class="p-1 text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded transition-colors"
       >
         <.icon name="settings" size="sm" />
@@ -222,7 +225,7 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
         class="hidden absolute right-0 top-full mt-1 w-80 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-md shadow-lg z-40 text-xs transition transform"
       >
         <div class="px-3 py-2 border-b border-zinc-200 dark:border-zinc-800">
-          <div class="text-[10px] uppercase tracking-wide text-zinc-500">Session</div>
+          <div class="text-[10px] uppercase tracking-wide text-zinc-500">{gettext("Session")}</div>
           <div class="font-mono text-zinc-800 dark:text-zinc-200 break-all mt-0.5">{URI.to_string(@current_session_uri)}</div>
         </div>
 
@@ -230,7 +233,7 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
           <label class="flex items-center justify-between cursor-pointer">
             <div class="flex items-center gap-2">
               <.icon name="bug" size="xs" />
-              <span class="text-zinc-700 dark:text-zinc-300">Debug events panel</span>
+              <span class="text-zinc-700 dark:text-zinc-300">{gettext("Debug events panel")}</span>
             </div>
             <button
               type="button"
@@ -251,10 +254,10 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
         <div class="px-3 py-2 border-b border-zinc-200 dark:border-zinc-800">
           <div class="flex items-center gap-2 mb-1">
             <.icon name="message-square" size="xs" />
-            <span class="text-[10px] uppercase tracking-wide text-zinc-500">Feishu binding</span>
+            <span class="text-[10px] uppercase tracking-wide text-zinc-500">{gettext("Feishu binding")}</span>
           </div>
           <div :if={@feishu_chat_ids == []} class="text-zinc-500 italic">
-            no chat bound — bind via mix ezagent.feishu.chat.bind
+            {gettext("no chat bound — bind via mix ezagent.feishu.chat.bind")}
           </div>
           <ul :if={@feishu_chat_ids != []} class="space-y-1">
             <li :for={chat_id <- @feishu_chat_ids} class="flex items-center justify-between gap-2">
@@ -263,10 +266,10 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
                 type="button"
                 phx-click="unbind_feishu_chat"
                 phx-value-chat_id={chat_id}
-                data-confirm={"Unbind Feishu chat #{chat_id} from this session?"}
+                data-confirm={gettext("Unbind Feishu chat %{chat_id} from this session?", chat_id: chat_id)}
                 class="text-[10px] text-rose-600 dark:text-rose-400 hover:text-rose-700"
               >
-                Unbind
+                {gettext("Unbind")}
               </button>
             </li>
           </ul>
@@ -278,16 +281,16 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
             class="flex items-center gap-2 text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300"
           >
             <.icon name="route" size="xs" />
-            <span>Routing rules for this session</span>
+            <span>{gettext("Routing rules for this session")}</span>
           </a>
         </div>
 
         <div class="px-3 py-2">
-          <div class="text-[10px] uppercase tracking-wide text-zinc-500 mb-1">Info</div>
+          <div class="text-[10px] uppercase tracking-wide text-zinc-500 mb-1">{gettext("Info")}</div>
           <dl class="space-y-0.5 text-zinc-700 dark:text-zinc-300">
-            <div class="flex justify-between"><dt>members</dt><dd>{@session_info[:member_count] || 0}</dd></div>
-            <div class="flex justify-between"><dt>workspace</dt><dd class="font-mono text-[10px] truncate max-w-[60%]">{@session_info[:workspace_uri] || "—"}</dd></div>
-            <div class="flex justify-between"><dt>created</dt><dd class="text-[10px]">{format_dt(@session_info[:created_at])}</dd></div>
+            <div class="flex justify-between"><dt>{gettext("members")}</dt><dd>{@session_info[:member_count] || 0}</dd></div>
+            <div class="flex justify-between"><dt>{gettext("workspace")}</dt><dd class="font-mono text-[10px] truncate max-w-[60%]">{@session_info[:workspace_uri] || "—"}</dd></div>
+            <div class="flex justify-between"><dt>{gettext("created")}</dt><dd class="text-[10px]">{format_dt(@session_info[:created_at])}</dd></div>
           </dl>
         </div>
       </div>
@@ -340,7 +343,7 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
           data-members={@members_json}
           data-popover="#mention-popover"
           autocomplete="off"
-          placeholder="Type a message... use @ to mention a member"
+          placeholder={gettext("Type a message... use @ to mention a member")}
           class="flex-1 px-3 py-2 border border-zinc-300 dark:border-zinc-700 rounded-md text-sm focus:outline-none focus:border-blue-400 dark:focus:border-blue-600"
         />
 
@@ -348,7 +351,7 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
           <label
             for={@uploads.attachments.ref}
             class="inline-flex items-center px-3 py-2 border border-zinc-300 dark:border-zinc-700 rounded-md text-sm cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-900"
-            title="Attach files (≤10MB each, up to 5)"
+            title={gettext("Attach files (≤10MB each, up to 5)")}
           >
             📎
           </label>
@@ -360,7 +363,7 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
           id="chat-send-btn"
           class="px-4 py-2 bg-emerald-600 text-white rounded-md text-sm font-medium hover:bg-emerald-700 dark:hover:bg-emerald-500"
         >
-          Send
+          {gettext("Send")}
         </button>
       </div>
 
@@ -375,7 +378,7 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
             type="button"
             phx-click="cancel_upload"
             phx-value-ref={entry.ref}
-            aria-label={"cancel " <> entry.client_name}
+            aria-label={gettext("cancel %{file}", file: entry.client_name)}
             class="text-rose-600 dark:text-rose-400 hover:text-rose-700"
           >
             ×
@@ -398,7 +401,9 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
   defp my_upload_errors(%{errors: errors}) when is_list(errors), do: errors
   defp my_upload_errors(_), do: []
 
-  defp format_upload_error({_ref, :too_large}), do: "file too large (max 10MB)"
-  defp format_upload_error({_ref, :too_many_files}), do: "too many files (max 5)"
-  defp format_upload_error({_ref, reason}), do: "upload error: #{inspect(reason)}"
+  defp format_upload_error({_ref, :too_large}), do: gettext("file too large (max 10MB)")
+  defp format_upload_error({_ref, :too_many_files}), do: gettext("too many files (max 5)")
+
+  defp format_upload_error({_ref, reason}),
+    do: gettext("upload error: %{reason}", reason: inspect(reason))
 end

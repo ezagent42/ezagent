@@ -63,11 +63,17 @@ defmodule EzagentWeb.LiveAuth do
   def on_mount(:put_locale, _params, session, socket) do
     locale = session["locale"] || "en"
 
-    if locale in EzagentWeb.Plugs.Locale.supported_locales() do
-      Gettext.put_locale(EzagentWeb.Gettext, locale)
-    else
-      Gettext.put_locale(EzagentWeb.Gettext, EzagentWeb.Plugs.Locale.default_locale())
-    end
+    resolved =
+      if locale in EzagentWeb.Plugs.Locale.supported_locales() do
+        locale
+      else
+        EzagentWeb.Plugs.Locale.default_locale()
+      end
+
+    Gettext.put_locale(EzagentWeb.Gettext, resolved)
+    # Tier-2 shared-component backend (`ezagent_domain_ui` shells) — set
+    # on the LV process too; `put_locale/2` is per-backend process state.
+    Gettext.put_locale(EzagentDomainUi.Gettext, resolved)
 
     {:cont, assign(socket, :current_locale, Gettext.get_locale(EzagentWeb.Gettext))}
   end

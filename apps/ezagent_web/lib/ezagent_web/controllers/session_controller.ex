@@ -287,7 +287,11 @@ defmodule EzagentWeb.SessionController do
     email = email |> String.trim() |> String.downcase()
     _ = maybe_send_magic_link(conn, email)
 
-    notice = ~s(<div class="info">If that email can sign in, we've sent a link. Please check your inbox.</div>)
+    notice =
+      ~s(<div class="info">) <>
+        esc(gettext("If that email can sign in, we've sent a link. Please check your inbox.")) <>
+        "</div>"
+
     render_login_page(conn, notice: notice)
   end
 
@@ -322,7 +326,10 @@ defmodule EzagentWeb.SessionController do
             |> redirect(to: "/sessions")
 
           :error ->
-            render_login_page(conn, cred_error: "Invalid URI or credentials.", workspace: workspace)
+            render_login_page(conn,
+              cred_error: gettext("Invalid URI or credentials."),
+              workspace: workspace
+            )
         end
     end
   rescue
@@ -331,14 +338,14 @@ defmodule EzagentWeb.SessionController do
     # no enumeration leak.
     ArgumentError ->
       render_login_page(conn,
-        cred_error: "Invalid URI or credentials.",
+        cred_error: gettext("Invalid URI or credentials."),
         workspace: workspace_param(conn, params)
       )
   end
 
   def credentials_create(conn, params) do
     render_login_page(conn,
-      cred_error: "Username/URI and password/token are required.",
+      cred_error: gettext("Username/URI and password/token are required."),
       workspace: workspace_param(conn, params)
     )
   end

@@ -15,6 +15,9 @@ defmodule EzagentPluginLiveview.EntitiesLive do
   """
 
   use Phoenix.LiveView
+  # i18n (Allen 2026-05-22) — runtime backend reference; no compile-time
+  # dep on :ezagent_web.
+  use Gettext, backend: EzagentPluginLiveview.Gettext
   alias EzagentDomainUi.AdminShell
   alias EzagentPluginLiveview.AppShell
   use EzagentDomainUi.Components
@@ -97,17 +100,19 @@ defmodule EzagentPluginLiveview.EntitiesLive do
           <:main>
             <div class="px-6 py-6 text-zinc-900 dark:text-zinc-100">
           <header>
-            <h1 style="font-size: 22px; font-weight: 600;">Entities (live registry)</h1>
+            <h1 style="font-size: 22px; font-weight: 600;">{gettext("Entities (live registry)")}</h1>
             <p style="font-size: 13px; color: #666;">
-              Every Kind currently registered in <code>Ezagent.KindRegistry</code> — users,
-              agents, sessions, workspaces, templates, system sentinels.
+              {gettext(
+                "Every Kind currently registered in %{registry} — users, agents, sessions, workspaces, templates, system sentinels.",
+                registry: "Ezagent.KindRegistry"
+              )}
             </p>
           </header>
 
           <%!-- Phase 8c PR-F: filter chips inlined above the table since
             the left rail is now the admin sub-section nav. --%>
           <div class="flex items-center gap-1 flex-wrap mt-3">
-            <span class="text-[10px] uppercase tracking-wide text-zinc-500 mr-2">Filters</span>
+            <span class="text-[10px] uppercase tracking-wide text-zinc-500 mr-2">{gettext("Filters")}</span>
             <.filter_chip filter={@filter} value="all" label="all" />
             <.filter_chip filter={@filter} value="user" label="entity://user" />
             <.filter_chip filter={@filter} value="agent" label="entity://agent" />
@@ -123,7 +128,7 @@ defmodule EzagentPluginLiveview.EntitiesLive do
               id="entities-empty"
               style="font-size: 13px; color: #57606a; font-style: italic;"
             >
-              No entities match the current filter.
+              {gettext("No entities match the current filter.")}
             </p>
 
             <table
@@ -156,7 +161,7 @@ defmodule EzagentPluginLiveview.EntitiesLive do
                       href={"/plugins/auto/#{e.scheme}/#{URI.encode_www_form(e.uri_str)}"}
                       style="color: #0969da; font-size: 12px;"
                     >
-                      detail →
+                      {gettext("detail")} →
                     </a>
                   </td>
                 </tr>

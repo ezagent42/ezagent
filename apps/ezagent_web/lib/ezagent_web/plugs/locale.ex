@@ -14,9 +14,12 @@ defmodule EzagentWeb.Plugs.Locale do
   Mount in the `:browser` pipeline AFTER `:fetch_session` so the session
   is readable + writable.
 
-  Also calls `Gettext.put_locale(EzagentWeb.Gettext, locale)` so any
+  Also calls `Gettext.put_locale/2` for BOTH `EzagentWeb.Gettext` and
+  `EzagentDomainUi.Gettext` (the Tier-2 shared-component backend) so any
   Gettext call during this request (controller, layout, dead-render
-  LiveView mount) sees the resolved locale.
+  LiveView mount, domain_ui shell component) sees the resolved locale.
+  `Gettext.put_locale/2` is per-backend process-dictionary state, so
+  both backends must be set explicitly.
 
   Assigns:
 
@@ -42,6 +45,9 @@ defmodule EzagentWeb.Plugs.Locale do
   def call(conn, _opts) do
     {locale, conn} = resolve(conn)
     Gettext.put_locale(EzagentWeb.Gettext, locale)
+    # Tier-2 shared-component backend — set explicitly; `put_locale/2`
+    # is per-backend process-dictionary state.
+    Gettext.put_locale(EzagentDomainUi.Gettext, locale)
 
     conn
     |> put_session(:locale, locale)

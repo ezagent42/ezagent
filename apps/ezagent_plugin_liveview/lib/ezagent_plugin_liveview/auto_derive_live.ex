@@ -15,6 +15,9 @@ defmodule EzagentPluginLiveview.AutoDeriveLive do
   """
 
   use Phoenix.LiveView
+  # i18n (Allen 2026-05-22) — runtime backend reference; no compile-time
+  # dep on :ezagent_web.
+  use Gettext, backend: EzagentPluginLiveview.Gettext
   alias EzagentDomainUi.WorkspaceShell
   alias EzagentPluginLiveview.AppShell
   use EzagentDomainUi.Components
@@ -91,25 +94,25 @@ defmodule EzagentPluginLiveview.AutoDeriveLive do
         >
       <:main_window>
         <div class="flex-1 overflow-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
-      <.page_header title={"Auto-derived: " <> Atom.to_string(@kind)}>
+      <.page_header title={gettext("Auto-derived: %{kind}", kind: Atom.to_string(@kind))}>
         <:subtitle>
-          Generic admin surface, no hand-written code per Kind.
-          <a href="/plugins" class="text-zinc-600 dark:text-zinc-400 underline hover:text-zinc-900 dark:hover:text-zinc-100 ml-1">← Plugins</a>
+          {gettext("Generic admin surface, no hand-written code per Kind.")}
+          <a href="/plugins" class="text-zinc-600 dark:text-zinc-400 underline hover:text-zinc-900 dark:hover:text-zinc-100 ml-1">← {gettext("Plugins")}</a>
         </:subtitle>
       </.page_header>
 
       <div :if={!@detail_uri}>
         <.card>
-          <:header>{length(@instances)} live instance(s)</:header>
+          <:header>{gettext("%{count} live instance(s)", count: length(@instances))}</:header>
           <p :if={@instances == []} class="text-zinc-500 italic text-sm">
-            No live instances of <code>{@kind}</code>.
+            {gettext("No live instances of %{kind}.", kind: to_string(@kind))}
           </p>
 
           <table :if={@instances != []} class="w-full text-sm">
             <thead class="bg-zinc-50 dark:bg-zinc-950 border-b border-zinc-200 dark:border-zinc-800">
               <tr class="text-left text-xs uppercase tracking-wide text-zinc-500">
-                <th class="px-2 py-2">URI</th>
-                <th class="py-2">Slice keys</th>
+                <th class="px-2 py-2">{gettext("URI")}</th>
+                <th class="py-2">{gettext("Slice keys")}</th>
                 <th></th>
               </tr>
             </thead>
@@ -125,7 +128,7 @@ defmodule EzagentPluginLiveview.AutoDeriveLive do
                   <a
                     href={"/plugins/auto/" <> Atom.to_string(@kind) <> "/" <> URI.encode_www_form(URI.to_string(inst.uri))}
                     class="text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 text-xs"
-                  >detail →</a>
+                  >{gettext("detail")} →</a>
                 </td>
               </tr>
             </tbody>
@@ -138,17 +141,17 @@ defmodule EzagentPluginLiveview.AutoDeriveLive do
           <:header>{URI.to_string(@detail_uri)}</:header>
           <%= case @detail do %>
             <% nil -> %>
-              <p class="text-zinc-500 italic text-sm">Loading…</p>
+              <p class="text-zinc-500 italic text-sm">{gettext("Loading…")}</p>
             <% {:error, reason} -> %>
-              <p class="text-red-700 dark:text-red-300 text-sm">Error: {inspect(reason)}</p>
+              <p class="text-red-700 dark:text-red-300 text-sm">{gettext("Error: %{reason}", reason: inspect(reason))}</p>
             <% detail when is_map(detail) -> %>
               <div class="space-y-2">
                 <div>
-                  <span class="text-xs uppercase text-zinc-500">Kind module</span>
+                  <span class="text-xs uppercase text-zinc-500">{gettext("Kind module")}</span>
                   <code class="block text-xs">{detail.kind_module}</code>
                 </div>
                 <div>
-                  <span class="text-xs uppercase text-zinc-500">Behaviors</span>
+                  <span class="text-xs uppercase text-zinc-500">{gettext("Behaviors")}</span>
                   <ul class="text-xs">
                     <li :for={b <- detail.behaviors}>
                       <code>{b.module}</code> — {Enum.join(b.actions, ", ")}
@@ -160,7 +163,7 @@ defmodule EzagentPluginLiveview.AutoDeriveLive do
         </.card>
 
         <.card :if={is_map(@detail)}>
-          <:header>Slices</:header>
+          <:header>{gettext("Slices")}</:header>
           <%= for {slice_key, slice_val} <- (@detail && @detail[:slices]) || %{} do %>
             <div class="mb-3">
               <div class="text-xs uppercase text-zinc-500 mb-1">{slice_key}</div>
@@ -173,7 +176,7 @@ defmodule EzagentPluginLiveview.AutoDeriveLive do
           <a
             href={"/plugins/auto/" <> Atom.to_string(@kind)}
             class="text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 text-xs"
-          >← back to list</a>
+          >← {gettext("back to list")}</a>
         </p>
       </div>
         </div>

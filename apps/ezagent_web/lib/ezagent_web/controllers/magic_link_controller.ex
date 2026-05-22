@@ -10,6 +10,7 @@ defmodule EzagentWeb.MagicLinkController do
   — no layouts, no verified routes; just redirects + flash + session.
   """
   use Phoenix.Controller, formats: [:html], layouts: []
+  use Gettext, backend: EzagentWeb.Gettext
 
   import Plug.Conn
 
@@ -51,10 +52,11 @@ defmodule EzagentWeb.MagicLinkController do
     end
   end
 
-  defp error_message(:expired), do: "That sign-in link has expired. Please request a new one."
+  defp error_message(:expired),
+    do: gettext("That sign-in link has expired. Please request a new one.")
 
   defp error_message(:consumed),
-    do: "That sign-in link was already used. Please request a new one."
+    do: gettext("That sign-in link was already used. Please request a new one.")
 
-  defp error_message(_), do: "Invalid sign-in link. Please request a new one."
+  defp error_message(_), do: gettext("Invalid sign-in link. Please request a new one.")
 end

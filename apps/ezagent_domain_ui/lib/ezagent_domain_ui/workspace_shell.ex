@@ -43,6 +43,9 @@ defmodule EzagentDomainUi.WorkspaceShell do
   """
 
   use Phoenix.Component
+  # i18n (Allen 2026-05-22) — Tier-2 shared-component backend. NOT a
+  # dependency on `ezagent_web` (see `EzagentDomainUi.Gettext` moduledoc).
+  use Gettext, backend: EzagentDomainUi.Gettext
   use EzagentDomainUi.Primitives
   alias Phoenix.LiveView.JS
 
@@ -152,10 +155,10 @@ defmodule EzagentDomainUi.WorkspaceShell do
   """
   def activity_items do
     [
-      %{key: :sessions, label: "Sessions", icon: "message-square", path: "/sessions"},
-      %{key: :identities, label: "Identities", icon: "users", path: "/identities"},
-      %{key: :routing, label: "Routing", icon: "route", path: "/routing"},
-      %{key: :plugins, label: "Plugins", icon: "puzzle", path: "/plugins"}
+      %{key: :sessions, label: gettext("Sessions"), icon: "message-square", path: "/sessions"},
+      %{key: :identities, label: gettext("Identities"), icon: "users", path: "/identities"},
+      %{key: :routing, label: gettext("Routing"), icon: "route", path: "/routing"},
+      %{key: :plugins, label: gettext("Plugins"), icon: "puzzle", path: "/plugins"}
     ]
   end
 
@@ -238,11 +241,11 @@ defmodule EzagentDomainUi.WorkspaceShell do
       </span>
       <span class="flex items-center gap-1">
         <.status_dot color={@agents_color} />
-        <span>{@agents_count} agents</span>
+        <span>{gettext("%{count} agents", count: @agents_count)}</span>
       </span>
       <span class="flex items-center gap-1">
         <.status_dot color={@bridges_color} />
-        <span>{@bridges_count} bridges</span>
+        <span>{gettext("%{count} bridges", count: @bridges_count)}</span>
       </span>
       <a
         href="/admin/logs"
@@ -250,7 +253,7 @@ defmodule EzagentDomainUi.WorkspaceShell do
       >
         <.icon name="bug" size="xs" />
         <span class={(@events_color == "amber" && "text-amber-700 dark:text-amber-300") || ""}>
-          {@events_count} events
+          {gettext("%{count} events", count: @events_count)}
         </span>
       </a>
       <%!-- Members-panel toggle — a view-/position-related control, so
@@ -261,11 +264,11 @@ defmodule EzagentDomainUi.WorkspaceShell do
         type="button"
         phx-click={JS.toggle(to: "#right-sidebar", display: "block")}
         class="flex items-center gap-1 hover:text-zinc-900 dark:hover:text-zinc-100"
-        title="Toggle members panel"
-        aria-label="Toggle members panel"
+        title={gettext("Toggle members panel")}
+        aria-label={gettext("Toggle members panel")}
       >
         <.icon name="users" size="xs" />
-        <span>members</span>
+        <span>{gettext("members")}</span>
       </button>
       <span class="font-mono text-zinc-400 dark:text-zinc-600">
         v{Map.get(@status, :version, "dev")}

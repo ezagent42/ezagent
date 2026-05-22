@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
   <head>
-    <title>Something went wrong · ezagent</title>
+    <title>{gettext("Something went wrong")} · ezagent</title>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -160,15 +160,17 @@
   <body>
     <div class="container">
       <div class="brand">EZAGENT</div>
-      <h1>Something went wrong</h1>
-      <p class="lead">An unexpected error occurred while loading this page.</p>
+      <h1>{gettext("Something went wrong")}</h1>
+      <p class="lead">{gettext("An unexpected error occurred while loading this page.")}</p>
       <p class="lead">
-        You can try again, return to your sessions, or sign in again if your session expired.
+        {gettext(
+          "You can try again, return to your sessions, or sign in again if your session expired."
+        )}
       </p>
 
       <div class="actions">
-        <a href="/sessions" class="btn btn-primary">Go to sessions</a>
-        <a href="/login" class="btn btn-secondary">Sign in again</a>
+        <a href="/sessions" class="btn btn-primary">{gettext("Go to sessions")}</a>
+        <a href="/login" class="btn btn-secondary">{gettext("Sign in again")}</a>
       </div>
 
       <%= if EzagentWeb.ErrorHTML.show_debug?(@conn) do %>

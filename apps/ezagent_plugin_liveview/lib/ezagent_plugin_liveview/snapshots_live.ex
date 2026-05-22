@@ -9,6 +9,9 @@ defmodule EzagentPluginLiveview.SnapshotsLive do
   """
 
   use Phoenix.LiveView
+  # i18n (Allen 2026-05-22) — runtime backend reference; no compile-time
+  # dep on :ezagent_web.
+  use Gettext, backend: EzagentPluginLiveview.Gettext
   alias EzagentDomainUi.AdminShell
   alias EzagentPluginLiveview.AppShell
   use EzagentDomainUi.Components
@@ -46,7 +49,8 @@ defmodule EzagentPluginLiveview.SnapshotsLive do
   def handle_event("dump", %{"uri" => uri}, socket) do
     case KindSnapshot.get(uri) do
       nil ->
-        {:noreply, assign(socket, :flash_error, "snapshot not found: #{uri}")}
+        {:noreply,
+         assign(socket, :flash_error, gettext("snapshot not found: %{uri}", uri: uri))}
 
       row ->
         decoded =
@@ -108,16 +112,17 @@ defmodule EzagentPluginLiveview.SnapshotsLive do
           <:main>
             <div class="px-6 py-6 text-zinc-900 dark:text-zinc-100">
           <header>
-            <h1 style="font-size: 22px; font-weight: 600;">Snapshots</h1>
+            <h1 style="font-size: 22px; font-weight: 600;">{gettext("Snapshots")}</h1>
             <p style="font-size: 13px; color: #666;">
-              Per-Kind runtime state snapshots (Phase 4-completion PR 2,
-              Decision #115). One row per `kind_snapshots.uri`.
+              {gettext(
+                "Per-Kind runtime state snapshots (Phase 4-completion PR 2, Decision #115). One row per kind_snapshots.uri."
+              )}
             </p>
           </header>
 
           <section id="snapshots-list" style="margin-top: 16px;">
             <p :if={@snapshots == []} style="color: #57606a; font-style: italic;">
-              No snapshots yet.
+              {gettext("No snapshots yet.")}
             </p>
 
             <table
@@ -127,11 +132,11 @@ defmodule EzagentPluginLiveview.SnapshotsLive do
             >
               <thead>
                 <tr style="border-bottom: 2px solid #d1d5da;">
-                  <th style="text-align: left; padding: 6px 4px;">URI</th>
-                  <th style="text-align: left;">Kind</th>
-                  <th style="text-align: right;">Bytes</th>
-                  <th style="text-align: left;">Version</th>
-                  <th style="text-align: left;">Updated</th>
+                  <th style="text-align: left; padding: 6px 4px;">{gettext("URI")}</th>
+                  <th style="text-align: left;">{gettext("Kind")}</th>
+                  <th style="text-align: right;">{gettext("Bytes")}</th>
+                  <th style="text-align: left;">{gettext("Version")}</th>
+                  <th style="text-align: left;">{gettext("Updated")}</th>
                   <th></th>
                 </tr>
               </thead>
@@ -151,16 +156,16 @@ defmodule EzagentPluginLiveview.SnapshotsLive do
                       phx-value-uri={s.uri}
                       style="padding: 4px 10px; background: white; color: #0969da; border: 1px solid #0969da; border-radius: 4px; cursor: pointer; font-size: 11px; margin-right: 4px;"
                     >
-                      Dump
+                      {gettext("Dump")}
                     </button>
                     <button
                       type="button"
                       phx-click="clear"
                       phx-value-uri={s.uri}
                       style="padding: 4px 10px; background: white; color: #cf222e; border: 1px solid #cf222e; border-radius: 4px; cursor: pointer; font-size: 11px;"
-                      data-confirm="Clear this snapshot? Next Kind spawn will init_fresh — granted caps / runtime state are LOST."
+                      data-confirm={gettext("Clear this snapshot? Next Kind spawn will init_fresh — granted caps / runtime state are LOST.")}
                     >
-                      Clear
+                      {gettext("Clear")}
                     </button>
                   </td>
                 </tr>
@@ -174,13 +179,13 @@ defmodule EzagentPluginLiveview.SnapshotsLive do
             style="margin-top: 24px; padding: 16px; border: 1px solid #d1d5da; border-radius: 6px;"
           >
             <h2 style="font-size: 14px; font-weight: 500; margin: 0 0 8px 0;">
-              Dump: <code>{@selected_uri}</code>
+              {gettext("Dump:")} <code>{@selected_uri}</code>
               <button
                 type="button"
                 phx-click="close_dump"
                 style="float: right; padding: 4px 10px; background: white; color: #57606a; border: 1px solid #d1d5da; border-radius: 4px; cursor: pointer; font-size: 11px;"
               >
-                Close
+                {gettext("Close")}
               </button>
             </h2>
             <pre style="background: #f6f8fa; padding: 12px; border-radius: 4px; overflow-x: auto; font-size: 11px; max-height: 480px;">{@selected_dump}</pre>

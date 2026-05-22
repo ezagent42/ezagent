@@ -15,6 +15,9 @@ defmodule EzagentDomainUi.Primitives do
   """
 
   use Phoenix.Component
+  # i18n (Allen 2026-05-22) — Tier-2 shared-component backend. NOT a
+  # dependency on `ezagent_web` (see `EzagentDomainUi.Gettext` moduledoc).
+  use Gettext, backend: EzagentDomainUi.Gettext
   alias Phoenix.LiveView.JS
 
   defmacro __using__(_opts) do
@@ -692,7 +695,7 @@ defmodule EzagentDomainUi.Primitives do
               data-uri-picker-chip-remove
               data-uri={uri}
               class="text-zinc-400 hover:text-rose-600 dark:hover:text-rose-400"
-              aria-label="Remove"
+              aria-label={gettext("Remove")}
             >
               ✕
             </button>
@@ -726,14 +729,14 @@ defmodule EzagentDomainUi.Primitives do
             data-uri-picker-empty
             class="hidden absolute z-20 mt-1 w-full rounded-md border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-lg text-[11px] text-zinc-500 dark:text-zinc-400 px-2 py-1.5"
           >
-            No {uri_picker_kinds_phrase(@kinds)} match.
+            {uri_picker_no_match(@kinds)}
           </p>
         </div>
       </div>
 
       <details :if={@allow_freetext} data-uri-picker-freetext class="mt-1">
         <summary class="cursor-pointer text-[11px] text-zinc-500 dark:text-zinc-400">
-          or enter a URI manually
+          {gettext("or enter a URI manually")}
         </summary>
         <input
           type="text"
@@ -789,13 +792,16 @@ defmodule EzagentDomainUi.Primitives do
   defp uri_picker_freetext_name(name, :multi), do: name <> "[]"
   defp uri_picker_freetext_name(name, :single), do: name
 
-  defp uri_picker_default_placeholder([:entity]), do: "Search entities…"
-  defp uri_picker_default_placeholder([:session]), do: "Search sessions…"
-  defp uri_picker_default_placeholder(_), do: "Search entities + sessions…"
+  defp uri_picker_default_placeholder([:entity]), do: gettext("Search entities…")
+  defp uri_picker_default_placeholder([:session]), do: gettext("Search sessions…")
+  defp uri_picker_default_placeholder(_), do: gettext("Search entities + sessions…")
 
-  defp uri_picker_kinds_phrase([:entity]), do: "entities"
-  defp uri_picker_kinds_phrase([:session]), do: "sessions"
-  defp uri_picker_kinds_phrase(_), do: "entities or sessions"
+  # Full "no <kind> match." sentences — each a standalone translatable
+  # string (Gettext forbids interpolating a translated phrase into a
+  # translated sentence; the noun must stay inside the msgid).
+  defp uri_picker_no_match([:entity]), do: gettext("No entities match.")
+  defp uri_picker_no_match([:session]), do: gettext("No sessions match.")
+  defp uri_picker_no_match(_), do: gettext("No entities or sessions match.")
 
   defp uri_picker_slug(name) do
     name

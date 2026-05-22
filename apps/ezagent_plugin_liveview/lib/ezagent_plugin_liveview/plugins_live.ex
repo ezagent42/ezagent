@@ -10,6 +10,9 @@ defmodule EzagentPluginLiveview.PluginsLive do
   prefix — no separate PluginRegistry is needed for v1.
   """
   use Phoenix.LiveView
+  # i18n (Allen 2026-05-22) — runtime backend reference; no compile-time
+  # dep on :ezagent_web.
+  use Gettext, backend: EzagentPluginLiveview.Gettext
   alias EzagentDomainUi.WorkspaceShell
   alias EzagentPluginLiveview.AppShell
   use EzagentDomainUi.Components
@@ -38,25 +41,27 @@ defmodule EzagentPluginLiveview.PluginsLive do
     |> Enum.sort_by(& &1.slug)
   end
 
+  # Plugin display names — product nouns (Claude Code / Echo / Feishu)
+  # stay verbatim; the descriptive ones get translated.
   defp pretty_name("cc"), do: "Claude Code"
-  defp pretty_name("curl_agent"), do: "Curl Agent"
+  defp pretty_name("curl_agent"), do: gettext("Curl Agent")
   defp pretty_name("echo"), do: "Echo"
   defp pretty_name("feishu"), do: "Feishu (Lark)"
-  defp pretty_name("liveview"), do: "Admin Web UI"
+  defp pretty_name("liveview"), do: gettext("Admin Web UI")
   defp pretty_name(other), do: other
 
-  defp pretty_desc("cc", _), do: "Spawn Claude Code agents via PTY or remote channel"
-  defp pretty_desc("curl_agent", _), do: "HTTP-API agents (DeepSeek / OpenAI / etc.)"
-  defp pretty_desc("echo", _), do: "Test stub — echoes back messages"
-  defp pretty_desc("feishu", _), do: "Lark integration (inbound webhook + outbound bot)"
-  defp pretty_desc("liveview", _), do: "The web admin UI you're currently using"
+  defp pretty_desc("cc", _), do: gettext("Spawn Claude Code agents via PTY or remote channel")
+  defp pretty_desc("curl_agent", _), do: gettext("HTTP-API agents (DeepSeek / OpenAI / etc.)")
+  defp pretty_desc("echo", _), do: gettext("Test stub — echoes back messages")
+  defp pretty_desc("feishu", _), do: gettext("Lark integration (inbound webhook + outbound bot)")
+  defp pretty_desc("liveview", _), do: gettext("The web admin UI you're currently using")
   defp pretty_desc(_, desc) when is_list(desc), do: List.to_string(desc)
   defp pretty_desc(_, _), do: ""
 
-  defp primary_link("feishu"), do: {"Bindings", "/plugins/feishu/bindings"}
-  defp primary_link("cc"), do: {"Agents", "/identities?filter=agent"}
-  defp primary_link("curl_agent"), do: {"Agents", "/identities?filter=agent"}
-  defp primary_link("echo"), do: {"Agents", "/identities?filter=agent"}
+  defp primary_link("feishu"), do: {gettext("Bindings"), "/plugins/feishu/bindings"}
+  defp primary_link("cc"), do: {gettext("Agents"), "/identities?filter=agent"}
+  defp primary_link("curl_agent"), do: {gettext("Agents"), "/identities?filter=agent"}
+  defp primary_link("echo"), do: {gettext("Agents"), "/identities?filter=agent"}
   defp primary_link("liveview"), do: nil
   defp primary_link(_), do: nil
 
@@ -85,8 +90,8 @@ defmodule EzagentPluginLiveview.PluginsLive do
         >
       <:main_window>
         <div class="flex-1 overflow-auto px-6 py-6">
-          <.page_header title="Plugins">
-            <:subtitle>Installed ezagent plugins. Each one extends a core capability.</:subtitle>
+          <.page_header title={gettext("Plugins")}>
+            <:subtitle>{gettext("Installed ezagent plugins. Each one extends a core capability.")}</:subtitle>
           </.page_header>
           <div class="grid grid-cols-2 gap-4 mt-4">
             <a
@@ -100,7 +105,7 @@ defmodule EzagentPluginLiveview.PluginsLive do
                     <div class="font-medium text-sm">{p.name}</div>
                     <div class="text-[11px] text-zinc-400 dark:text-zinc-600 font-mono mt-0.5">v{p.version}</div>
                   </div>
-                  <.badge variant="success">active</.badge>
+                  <.badge variant="success">{gettext("active")}</.badge>
                 </div>
                 <div class="text-xs text-zinc-500 mt-2">{p.description}</div>
                 <div :if={p.link} class="mt-3 text-xs text-blue-600 dark:text-blue-400">

@@ -27,6 +27,9 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
   forwarded to xterm via `push_event "pty_chunk"`.
   """
   use Phoenix.LiveView
+  # i18n (Allen 2026-05-22) — runtime backend reference; no compile-time
+  # dep on :ezagent_web.
+  use Gettext, backend: EzagentPluginLiveview.Gettext
   alias EzagentDomainUi.WorkspaceShell
   alias EzagentPluginLiveview.AppShell
   alias EzagentDomainUi.Pty.Terminal
@@ -151,7 +154,7 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
          |> assign(:flash_error, nil)}
 
       :error ->
-        {:noreply, assign(socket, :flash_error, "no live PtyServer for this agent")}
+        {:noreply, assign(socket, :flash_error, gettext("no live PtyServer for this agent"))}
     end
   end
 
@@ -176,18 +179,27 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
 
       {:error, :unauthorized} ->
         {:noreply,
-         assign(socket, :flash_error, "Unauthorized — need agent.pty.write cap on this agent.")}
+         assign(
+           socket,
+           :flash_error,
+           gettext("Unauthorized — need agent.pty.write cap on this agent.")
+         )}
 
       {:error, :cross_workspace_denied} ->
         {:noreply,
          assign(
            socket,
            :flash_error,
-           "Cross-workspace denied — your workspace differs from this agent's workspace."
+           gettext("Cross-workspace denied — your workspace differs from this agent's workspace.")
          )}
 
       {:error, reason} ->
-        {:noreply, assign(socket, :flash_error, "PTY input failed: #{inspect(reason)}")}
+        {:noreply,
+         assign(
+           socket,
+           :flash_error,
+           gettext("PTY input failed: %{reason}", reason: inspect(reason))
+         )}
     end
   end
 
@@ -234,13 +246,13 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
         >
       <:main_window>
         <div class="flex-1 overflow-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
-          <.page_header title="Agent URI invalid" />
+          <.page_header title={gettext("Agent URI invalid")} />
           <p>
             <code>{@bad_uri}</code>
           </p>
           <p>
             <a href="/identities/agents" class="text-blue-600 dark:text-blue-400 hover:text-blue-700">
-              ← Agents
+              ← {gettext("Agents")}
             </a>
           </p>
         </div>
@@ -276,12 +288,12 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
         >
       <:main_window>
         <div class="flex-1 overflow-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
-          <.page_header title={"Agent: " <> URI.to_string(@agent_uri)}>
+          <.page_header title={gettext("Agent: %{uri}", uri: URI.to_string(@agent_uri))}>
             <:subtitle>
               <a href="/identities/agents" class="text-blue-600 dark:text-blue-400 hover:text-blue-700">
-                ← Agents
+                ← {gettext("Agents")}
               </a>
-              <span class="ml-4 text-zinc-500">auto-refresh every 2s</span>
+              <span class="ml-4 text-zinc-500">{gettext("auto-refresh every 2s")}</span>
             </:subtitle>
           </.page_header>
 
@@ -307,7 +319,7 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
               <% s = @status.detail %>
               <.card class="mt-6">
                 <h2 class="text-sm font-medium mb-3 text-zinc-900 dark:text-zinc-100">
-                  Running (cc)
+                  {gettext("Running (cc)")}
                 </h2>
                 <table class="w-full text-xs">
                   <tbody>
@@ -326,7 +338,7 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
                           do: "text-emerald-600 dark:text-emerald-400 font-semibold",
                           else: "text-rose-600 dark:text-rose-400"
                       }>
-                        {if s.running, do: "yes", else: "no"}
+                        {if s.running, do: gettext("yes"), else: gettext("no")}
                       </td>
                     </tr>
                     <tr>
@@ -342,7 +354,7 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
                               do: "text-emerald-600 dark:text-emerald-400 mr-2",
                               else: "text-zinc-500 mr-2"
                           }>
-                            {p.name}: {if p.fired?, do: "fired", else: "waiting"}
+                            {p.name}: {if p.fired?, do: gettext("fired"), else: gettext("waiting")}
                           </span>
                         <% end %>
                       </td>
@@ -362,8 +374,8 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
                     phx-click="restart"
                     id="restart-btn"
                     class="text-rose-600 dark:text-rose-400 border-rose-600 dark:border-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950"
-                    data-confirm="Restart PtyServer for this agent? (supervisor will respawn)"
-                  >Restart</.button>
+                    data-confirm={gettext("Restart PtyServer for this agent? (supervisor will respawn)")}
+                  >{gettext("Restart")}</.button>
                 </div>
               </.card>
 
@@ -378,9 +390,9 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
               <.card :if={Ezagent.Domain.Pty.alive?(@agent_uri)} id="agent-inline-terminal" class="mt-6">
                 <details class="text-zinc-900 dark:text-zinc-100">
                   <summary class="cursor-pointer text-sm font-medium select-none">
-                    Terminal
+                    {gettext("Terminal")}
                     <span class="ml-2 text-xs text-zinc-500 dark:text-zinc-400">
-                      (click to expand · live PTY)
+                      {gettext("(click to expand · live PTY)")}
                     </span>
                   </summary>
                   <div class="mt-3 space-y-2">
@@ -389,7 +401,7 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
                         href={"/identities/agents/" <> URI.encode_www_form(URI.to_string(@agent_uri)) <> "/terminal"}
                         class="text-blue-600 dark:text-blue-400 hover:text-blue-700 no-underline"
                       >
-                        Open in full page →
+                        {gettext("Open in full page")} →
                       </a>
                     </div>
                     <div class="h-[420px] bg-black rounded-md overflow-hidden">
@@ -401,16 +413,17 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
 
               <%!-- Phase 8b §1.10 — CC Bridges (v2) panel relocated from admin_live --%>
               <.card id="cc-bridge-panel" class="mt-6">
-                <h2 class="text-sm font-medium mb-3 text-zinc-900 dark:text-zinc-100">CC Bridge (v2)</h2>
+                <h2 class="text-sm font-medium mb-3 text-zinc-900 dark:text-zinc-100">{gettext("CC Bridge (v2)")}</h2>
                 <p :if={is_nil(@bridge_entry)} class="text-xs text-zinc-500">
-                  No WS bridge connected for this agent. Local-pty agents only need a bridge if
-                  the Python sidecar is configured to mount <code>/cc_socket</code>.
+                  {gettext(
+                    "No WS bridge connected for this agent. Local-pty agents only need a bridge if the Python sidecar is configured to mount /cc_socket."
+                  )}
                 </p>
                 <table :if={@bridge_entry} class="w-full text-xs">
                   <tbody>
                     <tr>
                       <td class="py-0.5 w-52 text-zinc-500">status</td>
-                      <td class="text-emerald-600 dark:text-emerald-400 font-semibold">connected</td>
+                      <td class="text-emerald-600 dark:text-emerald-400 font-semibold">{gettext("connected")}</td>
                     </tr>
                     <tr>
                       <td class="py-0.5 text-zinc-500">connected_at</td>
@@ -425,7 +438,7 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
               </.card>
 
               <.card :if={is_map(s) and Map.get(s, :recent_output, []) != []} class="mt-6 bg-zinc-900 dark:bg-zinc-950 border-zinc-700 dark:border-zinc-800">
-                <h2 class="text-sm font-medium mb-2 text-zinc-200">Recent PTY output (last 50 lines)</h2>
+                <h2 class="text-sm font-medium mb-2 text-zinc-200">{gettext("Recent PTY output (last 50 lines)")}</h2>
                 <pre class="font-mono text-[11px] whitespace-pre-wrap m-0 max-h-[360px] overflow-y-auto text-zinc-200">{Enum.join(s.recent_output, "\n")}</pre>
               </.card>
             <% @status.phase == :alive -> %>
@@ -433,17 +446,17 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
                    PTY/bridge layer to introspect. --%>
               <.card class="mt-6">
                 <h2 class="text-sm font-medium mb-2 text-emerald-600 dark:text-emerald-400">
-                  Running ({@status.flavor || "unknown flavor"})
+                  {gettext("Running (%{flavor})", flavor: @status.flavor || gettext("unknown flavor"))}
                 </h2>
                 <p class="text-xs text-zinc-500">
-                  Agent Kind is alive. This flavor has no PTY/bridge layer to introspect.
+                  {gettext("Agent Kind is alive. This flavor has no PTY/bridge layer to introspect.")}
                 </p>
               </.card>
             <% true -> %>
               <%!-- :error or any other phase --%>
               <.card class="mt-6">
                 <h2 class="text-sm font-medium mb-2 text-rose-600 dark:text-rose-400">
-                  Status error
+                  {gettext("Status error")}
                 </h2>
                 <p class="text-xs">{inspect(@status.detail)}</p>
               </.card>
@@ -468,23 +481,26 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
   # V1 acceptance fix (2026-05-21) — header text for non-running
   # lifecycle phases. "Not running" matches the pre-fix wording the
   # operator already knows.
-  defp phase_header(:not_found), do: "Not running"
-  defp phase_header(:registered), do: "Registered (not yet instantiated)"
+  defp phase_header(:not_found), do: gettext("Not running")
+  defp phase_header(:registered), do: gettext("Registered (not yet instantiated)")
   defp phase_header(other), do: to_string(other)
 
   defp phase_help_text(%{phase: :not_found}, _agent_uri) do
-    "No Kind registered at this URI. If you just clicked Restart, wait a moment. " <>
-      "Otherwise, add a cc.agent template for this agent_uri in a Workspace."
+    gettext(
+      "No Kind registered at this URI. If you just clicked Restart, wait a moment. Otherwise, add a cc.agent template for this agent_uri in a Workspace."
+    )
   end
 
   defp phase_help_text(%{phase: :registered, detail: %{note: note}}, _agent_uri)
        when is_binary(note) do
-    "Agent Kind alive but lifecycle helper says: #{note}. For cc agents this usually " <>
-      "means the PtyServer hasn't started yet (boot race or instantiate failed)."
+    gettext(
+      "Agent Kind alive but lifecycle helper says: %{note}. For cc agents this usually means the PtyServer hasn't started yet (boot race or instantiate failed).",
+      note: note
+    )
   end
 
   defp phase_help_text(%{phase: :registered}, _agent_uri) do
-    "Agent Kind alive but the deeper lifecycle layer is not running yet."
+    gettext("Agent Kind alive but the deeper lifecycle layer is not running yet.")
   end
 
   defp phase_help_text(_status, _agent_uri), do: ""
