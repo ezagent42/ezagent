@@ -192,4 +192,24 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
     html = render(lv)
     assert html =~ "Rejected URI"
   end
+
+  # --- V1 UI PR-2b (SPEC §2.5) — CmdK palette on every ide_shell LV ----------
+
+  # Regression guard: PR-2 wired the CommandPaletteComponent into the
+  # `:command_palette` slot of `admin_live.ex` ONLY, so on /routing (and
+  # the other non-Admin ide_shell LVs) pressing ⌘K did nothing — the
+  # `#cmdk` element wasn't in the DOM. The header search bar + ⌘K are
+  # global ide_shell chrome, so SPEC §2.5 requires every ide_shell LV to
+  # render the palette. /routing is a non-Admin ide_shell LV — if a
+  # future LV is added without the `:command_palette` slot, the same
+  # class of gap regresses; this test catches it on at least one of them.
+  test "CmdK command palette renders on /routing (non-Admin ide_shell LV)", %{conn: conn} do
+    {:ok, _lv, html} = live(conn, "/routing")
+
+    # The CommandPaletteComponent root carries `id="cmdk"` and the
+    # `data-cmdk-open` JS push that app.js execJS-es on the ⌘K keybind.
+    assert html =~ ~s(id="cmdk")
+    assert html =~ "data-cmdk-open"
+    assert html =~ "cmdk_open"
+  end
 end

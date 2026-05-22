@@ -538,6 +538,21 @@ defmodule EzagentPluginLiveview.AgentNewLive do
           </.card>
         </div>
       </:main_window>
+
+      <%!-- V1 UI PR-2b (SPEC §2.5) — CmdK command palette. The
+            header search bar + ⌘K are global ide_shell chrome, so
+            every ide_shell LV must render the palette (PR-2 wired it
+            into admin_live only). Shared LiveComponent; `nav_routes`
+            flows DOWN from `EzagentWeb.LiveAuth` `:cmdk_nav`. --%>
+      <:command_palette>
+        <.live_component
+          module={EzagentPluginLiveview.CommandPaletteComponent}
+          id="cmdk"
+          nav_routes={@cmdk_nav_routes}
+          current_entity_uri={@current_entity_uri}
+          current_workspace_uri={@current_workspace_uri}
+        />
+      </:command_palette>
     </IdeShell.ide_shell>
     """
   end
