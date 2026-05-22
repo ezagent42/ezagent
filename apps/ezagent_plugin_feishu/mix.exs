@@ -11,6 +11,11 @@ defmodule EzagentPluginFeishu.MixProject do
       lockfile: "../../mix.lock",
       elixir: "~> 1.18",
       elixirc_paths: elixirc_paths(Mix.env()),
+      # Plugin authoring contract SPEC §3.2 — the non-bypassable
+      # app-level gate. Runs after the app has compiled so its
+      # cross-module checks (declared kinds/behaviors/templates exist
+      # + implement their behaviour) can see every sibling module.
+      compilers: Mix.compilers() ++ [:ezagent_plugin_check],
       start_permanent: Mix.env() == :prod,
       deps: deps()
     ]
@@ -19,7 +24,10 @@ defmodule EzagentPluginFeishu.MixProject do
   def application do
     [
       extra_applications: [:logger, :inets, :ssl, :crypto],
-      mod: {EzagentPluginFeishu.Application, []}
+      mod: {EzagentPluginFeishu.Application, []},
+      # Plugin authoring contract SPEC §3.2 — names the plugin
+      # contract module for the :ezagent_plugin_check gate.
+      env: [ezagent_plugin: EzagentPluginFeishu.Application]
     ]
   end
 

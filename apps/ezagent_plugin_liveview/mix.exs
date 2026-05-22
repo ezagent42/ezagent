@@ -13,13 +13,23 @@ defmodule EzagentPluginLiveview.MixProject do
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       deps: deps(),
-      compilers: [:phoenix_live_view] ++ Mix.compilers()
+      # Plugin authoring contract SPEC §3.2 — `:ezagent_plugin_check`
+      # is the non-bypassable app-level gate; it runs after the app
+      # has compiled. `:phoenix_live_view` stays first (it preprocesses
+      # `.heex` colocated hooks before the standard Elixir compiler).
+      compilers: [:phoenix_live_view] ++ Mix.compilers() ++ [:ezagent_plugin_check]
     ]
   end
 
   def application do
     [
-      extra_applications: [:logger]
+      extra_applications: [:logger],
+      # Plugin authoring contract SPEC §3 — the OTP app boots the
+      # plugin contract module via two-phase `Ezagent.Plugin.boot/1`.
+      mod: {EzagentPluginLiveview.Application, []},
+      # Plugin authoring contract SPEC §3.2 — names the plugin
+      # contract module for the :ezagent_plugin_check gate.
+      env: [ezagent_plugin: EzagentPluginLiveview.Application]
     ]
   end
 

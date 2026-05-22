@@ -111,14 +111,19 @@ defmodule EzagentDomainChat.Application do
         # workspace uses. Test-env skip — see helper docstring.
         :ok = ensure_default_workspace()
 
-        # PR-M (Allen 2026-05-20) — idempotently spawn the default Echo
-        # agent via SpawnRegistry. Previously the echo plugin used
-        # `DynamicSupervisor.start_child` directly at its own boot,
-        # bypassing `SpawnRegistry.spawn/1`. The echo plugin boots
-        # before chat (no chat dep), so the `entity://` spawn fn isn't
-        # registered yet at echo's boot time — chat (the last app)
-        # invokes the standardized spawn here.
-        :ok = ensure_echo_default()
+        # Plugin authoring contract PR-5 codex HIGH-2 — the default
+        # Echo agent is NO LONGER seeded here. Seeding the echo agent
+        # from chat's `start/2` was a boot-order race: the resolver
+        # needs `Ezagent.AgentFlavorRegistry.lookup("echo")` to have
+        # been published by the echo plugin's `boot/1`, but
+        # `ezagent_domain_chat` does not depend on `ezagent_plugin_echo`
+        # — so the seed could fire before echo's `agent_flavors/0` was
+        # registered, fail with `{:no_kind_module_for_agent, ...}`, log,
+        # and never retry → the default echo agent absent. The seed now
+        # lives in `EzagentPluginEcho.Application.after_boot/0`, which
+        # by construction runs after echo's `agent_flavors/0` is
+        # published; echo declares a dep on `ezagent_domain_chat` so the
+        # `entity://` spawn dispatcher is registered first.
 
         # Phase 7 PR 45: install the cc-orchestrator AgentTemplate seed
         # so SessionTemplate-instantiation paths (PR 41 Generator) can
@@ -262,46 +267,12 @@ defmodule EzagentDomainChat.Application do
     end
   end
 
-  # PR-M (Allen 2026-05-20) — idempotently spawn the default Echo agent
-  # via the standardized `Ezagent.SpawnRegistry.spawn/1` API. Previously
-  # the echo plugin's own Application.start/2 called
-  # `DynamicSupervisor.start_child/2` directly, bypassing the registry.
-  # The echo plugin boots before chat (no chat dep), so the `entity://`
-  # spawn fn isn't registered yet at echo's boot — this post-boot hook
-  # in the last app to start (chat) does the spawn properly.
-  #
-  # `Code.ensure_loaded?` guards against test contexts where the echo
-  # plugin isn't loaded. `{:already_started, _}` from SpawnRegistry is
-  # treated as :ok (the echo plugin may have spawned via snapshot
-  # rehydration before this hook runs).
-  defp ensure_echo_default do
-    if Code.ensure_loaded?(EzagentPluginEcho.Application) and
-         function_exported?(EzagentPluginEcho.Application, :default_uri, 0) do
-      do_ensure_echo_default(EzagentPluginEcho.Application.default_uri())
-    else
-      :ok
-    end
-  end
-
-  defp do_ensure_echo_default(uri) do
-    case Ezagent.SpawnRegistry.spawn(uri) do
-      {:ok, _pid} ->
-        :ok
-
-      {:error, {:already_started, _pid}} ->
-        :ok
-
-      {:error, reason} ->
-        require Logger
-
-        Logger.warning(
-          "ensure_echo_default: spawn failed (#{inspect(reason)}); " <>
-            "F1 echo round-trip tests will fail until echo agent is available"
-        )
-
-        :ok
-    end
-  end
+  # Plugin authoring contract PR-5 codex HIGH-2 — `ensure_echo_default/0`
+  # + `do_ensure_echo_default/1` were removed from here. Seeding the
+  # default echo agent from chat's boot raced the echo plugin's
+  # `agent_flavors/0` registration (chat does not depend on
+  # ezagent_plugin_echo). The seed moved to
+  # `EzagentPluginEcho.Application.after_boot/0`.
 
   # Phase 7 PR 45 — seed cc-orchestrator AgentTemplate at boot.
   #
@@ -532,10 +503,11 @@ defmodule EzagentDomainChat.Application do
   #    `class` string ("cc.agent" / "curl.agent" / ...) maps to a Kind
   #    module.
   # 3. Flavor prefix — boot-time auto-spawn / CLI-driven spawn case.
-  #    The URI's name segment is `<flavor>_<name>`; the chat plugin
-  #    knows the three built-in flavors (cc/curl/echo). Future agent
-  #    flavors register their Template Class in step 2; the prefix
-  #    fallback handles legacy / direct-spawn paths.
+  #    The URI's name segment is `<flavor>_<name>`; the flavor is
+  #    resolved via `Ezagent.AgentFlavorRegistry` (plugin authoring
+  #    contract SPEC §6.3 / codex MEDIUM-5 — each agent-flavor plugin
+  #    declares `agent_flavors/0`, `Ezagent.Plugin.boot/1` registers
+  #    it). The `test` fixture flavor is the one non-plugin exception.
   defp spawn_agent(%URI{} = uri) do
     case lookup_kind_module_for_agent(uri) do
       {:ok, kind_module} ->
@@ -637,20 +609,61 @@ defmodule EzagentDomainChat.Application do
   defp kind_module_from_kind_type(_), do: nil
 
   # Template Class names (e.g. "cc.agent" registered by ezagent_plugin_cc;
-  # "curl.agent" registered by ezagent_plugin_curl_agent) map to Kind
-  # modules. Echo has no Template Class — Echo agents live via boot-time
-  # auto-spawn + snapshot.
-  defp kind_module_from_class("cc.agent"), do: Ezagent.Entity.Agent
-  defp kind_module_from_class("curl.agent"), do: Ezagent.Entity.CurlAgent
-  defp kind_module_from_class("echo.agent"), do: Ezagent.Entity.Echo
+  # "curl.agent" by ezagent_plugin_curl_agent; "echo.agent" by
+  # ezagent_plugin_echo) map to Kind modules.
+  #
+  # Plugin authoring contract SPEC §6.3 + codex MEDIUM-5: the
+  # flavor→{kind, template_class} mapping is no longer hardcoded here —
+  # each agent-flavor plugin declares `agent_flavors/0` and
+  # `Ezagent.Plugin.boot/1` registers it in
+  # `Ezagent.AgentFlavorRegistry`. This resolver consults that registry
+  # instead. Adding a 6th agent-flavor plugin now touches only that
+  # plugin's own dir. The decl carries the `template_class` module, so
+  # a Template Class NAME (e.g. "cc.agent") is matched against
+  # `template_class.template_name/0`.
+  defp kind_module_from_class(class) when is_binary(class) do
+    Enum.find_value(Ezagent.AgentFlavorRegistry.list_all(), fn
+      {_flavor, %{kind: kind, template_class: tc}} ->
+        if class_name(tc) == class, do: kind, else: nil
+    end)
+  end
+
   defp kind_module_from_class(_), do: nil
 
+  defp class_name(template_class) do
+    template_class.template_name()
+  rescue
+    # A declared template_class module that does not (yet) export
+    # `template_name/0` — tolerate it (the snapshot / flavor-prefix
+    # resolver steps still cover the spawn).
+    _ -> nil
+  end
+
   # Flavor prefix (`cc_` / `curl_` / `echo_` / `test_`) → Kind module.
-  # `test` agents (used as mention/routing fixtures) map to Entity.Agent
-  # so the SpawnRegistry round-trip works in tests.
-  defp kind_module_from_flavor("cc"), do: Ezagent.Entity.Agent
-  defp kind_module_from_flavor("curl"), do: Ezagent.Entity.CurlAgent
-  defp kind_module_from_flavor("echo"), do: Ezagent.Entity.Echo
+  #
+  # Plugin authoring contract SPEC §6.3 + codex MEDIUM-5: real agent
+  # flavors (cc / curl / echo) resolve via `Ezagent.AgentFlavorRegistry`
+  # — populated by each plugin's `agent_flavors/0` declaration through
+  # `Ezagent.Plugin.boot/1`. The registry is published before this
+  # resolver runs at dispatch time (the plugin apps boot, and
+  # `boot/1`'s Phase 2 registers the flavor, well before any
+  # `entity://agent/...` dispatch); a not-yet-registered flavor returns
+  # `:error` from `lookup/1` and this fn returns `nil` — the caller
+  # then yields `{:error, {:no_kind_module_for_agent, _}}` rather than
+  # crashing (graceful boot-ordering tolerance).
+  #
+  # `test` is NOT a plugin flavor — `test_*` agents are mention/routing
+  # test fixtures with no owning plugin; they map to the shared
+  # `Ezagent.Entity.Agent` Kind so the SpawnRegistry round-trip works
+  # in tests. It is kept as an explicit non-registry fallback.
   defp kind_module_from_flavor("test"), do: Ezagent.Entity.Agent
+
+  defp kind_module_from_flavor(flavor) when is_binary(flavor) do
+    case Ezagent.AgentFlavorRegistry.lookup(flavor) do
+      {:ok, %{kind: kind}} -> kind
+      :error -> nil
+    end
+  end
+
   defp kind_module_from_flavor(_), do: nil
 end

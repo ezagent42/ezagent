@@ -1,55 +1,108 @@
 defmodule EzagentPluginFeishu.Application do
   @moduledoc """
-  Feishu adapter plugin — SPEC v2 §5.8 shape (PR #144).
+  Feishu adapter plugin OTP application — the `Ezagent.Plugin` contract
+  module. SPEC v2 §5.8 shape (PR #144).
+
+  ## Plugin authoring contract (PR-3)
+
+  Per the plugin authoring contract SPEC
+  (`docs/superpowers/specs/2026-05-22-plugin-authoring-contract.md`,
+  §3 / §8 Q3 — Allen confirmed: the OTP `Application` module IS the
+  plugin contract module) this module `use`s **both** `Application`
+  (OTP plumbing) and `Ezagent.Plugin` (the declarative contract).
+
+  Registration is no longer imperative. `start/2` collapses to
+  `Ezagent.Plugin.boot(__MODULE__)`; the framework's two-phase
+  `boot/1` reads the declaration callbacks below and performs every
+  `*Registry` call — the plugin author never touches a registry API.
+  The `:ezagent_plugin_check` Mix compiler (wired into `mix.exs`) is
+  the non-bypassable gate that enforces this.
 
   ## §5.8 — no plugin-owned schemes
 
   The PR #144 re-shape deleted the `feishu://oc_xxx` Receiver Kind.
-  In its place:
+  Feishu is the canonical "external integration" plugin: it does NOT
+  own a top-level URI scheme — `behaviors/0` registers
+  `EzagentPluginFeishu.Behavior.FeishuOutbound` on the **existing**
+  `Ezagent.Entity.Session` core Kind, and `spawns/0` keeps the
+  `use Ezagent.Plugin` default `[]` (no `feishu` scheme).
 
   - **Inbound** (Feishu → Ezagent): `InboundDispatcher` resolves
     `sender_open_id → entity://user/<X>` via `FeishuUserBinding` and
-    `chat_id → session://<template>/<name>` via the new
+    `chat_id → session://<template>/<name>` via the
     `FeishuSessionBinding` join table, then dispatches
     `<session_uri>?action=chat.send` with the message.
   - **Outbound** (Ezagent → Feishu): `Behavior.FeishuOutbound`
     registers against `Ezagent.Entity.Session` for action
     `:notify_external`. `Behavior.Chat.invoke(:send)` opportunistically
-    dispatches `notify_external` after fan-out; the behavior reads
-    the session's binding(s) and mirrors via the Feishu Open API.
+    dispatches `notify_external` after fan-out.
 
   Per `feedback_plugin_external_integration_is_receiver_kind`: any
   future plugin that sends messages out of Ezagent (Slack, Discord,
   email, webhook, …) MUST follow this Behavior-on-existing-Kind
   pattern, NOT introduce a new top-level scheme.
 
-  ## Boot
+  ## What this plugin declares
 
-  1. Start FeishuChatSupervisor (DynamicSupervisor — retained as
-     a stable name even though no `feishu://` Kinds are spawned
-     under it post-PR-144; future intra-plugin processes can supervise
-     here)
-  2. Start Client GenServer (Lark token cache + send endpoints)
-  3. Register `EzagentPluginFeishu.Behavior.FeishuOutbound` on
-     `Ezagent.Entity.Session` for `:notify_external` action
-  4. Re-run `Ezagent.Workspace.Loader.load_all/0` (Decision #112
-     boot-ordering)
-  5. Seed any bindings from
-     `$EZAGENT_HOME/<profile>/plugins/feishu/initial_bindings.yaml`
-     (each binding becomes a `FeishuSessionBinding` row directly —
-     no Kind spawn, no routing-rule write)
+  - `behaviors/0` — `{Ezagent.Entity.Session, <action>,
+    EzagentPluginFeishu.Behavior.FeishuOutbound}` for every action in
+    `FeishuOutbound.actions/0` (the `:notify_external` outbound mirror).
+  - `config_surface/0` — `:route` surface. The `/plugins` config icon
+    opens the Bindings LiveView at `/plugins/feishu/bindings`.
+  - `children/0` — `FeishuChatSupervisor` (a `DynamicSupervisor`,
+    retained as a stable name for future intra-plugin processes), the
+    `Client` GenServer (Lark token cache + send endpoints), and the
+    `WsClient` long-connect (skipped at test boot / `EZAGENT_FEISHU_WS=0`).
+  - `after_boot/0` — Phase 3 hook: re-run
+    `Ezagent.Workspace.Loader.load_all/0` (Decision #112 boot-ordering)
+    and seed any bindings from
+    `$EZAGENT_HOME/<profile>/plugins/feishu/initial_bindings.yaml`.
   """
 
   use Application
+  use Ezagent.Plugin
   require Logger
 
-  alias Ezagent.BehaviorRegistry
   alias Ezagent.Entity.Session, as: SessionKind
   alias EzagentPluginFeishu.Behavior.FeishuOutbound
 
-  @impl true
-  def start(_type, _args) do
-    children = [
+  # --- OTP Application -------------------------------------------------
+
+  @impl Application
+  def start(_type, _args), do: Ezagent.Plugin.boot(__MODULE__)
+
+  # --- Ezagent.Plugin contract ---------------------------------------
+
+  @impl Ezagent.Plugin
+  def plugin_info do
+    %{
+      slug: "feishu",
+      name: "Feishu (Lark)",
+      description: "Lark integration (inbound webhook + outbound bot).",
+      version: "0.1.0"
+    }
+  end
+
+  # PR #144 SPEC v2 §5.8 — FeishuOutbound registers against the
+  # existing `Ezagent.Entity.Session` core Kind for the generic
+  # `:notify_external` action. `Ezagent.Behavior.Chat.invoke(:send)`
+  # dispatches that action after fan-out (opportunistic — no-op if
+  # nothing is registered). NOT a `feishu://` scheme.
+  @impl Ezagent.Plugin
+  def behaviors do
+    for action <- FeishuOutbound.actions() do
+      {SessionKind, action, FeishuOutbound}
+    end
+  end
+
+  @impl Ezagent.Plugin
+  def config_surface do
+    %{kind: :route, path: "/plugins/feishu/bindings", label: "Bindings"}
+  end
+
+  @impl Ezagent.Plugin
+  def children do
+    [
       {DynamicSupervisor, name: EzagentPluginFeishu.FeishuChatSupervisor, strategy: :one_for_one},
       EzagentPluginFeishu.Client,
       # Phase 6 PR 15: WS long-connect to Feishu. Skipped at test boot
@@ -57,18 +110,19 @@ defmodule EzagentPluginFeishu.Application do
       maybe_ws_client_spec()
     ]
     |> Enum.reject(&is_nil/1)
-
-    case Supervisor.start_link(children, strategy: :one_for_one, name: __MODULE__) do
-      {:ok, sup_pid} ->
-        :ok = register_behaviors()
-        _ = Ezagent.Workspace.Loader.load_all()
-        :ok = seed_initial_bindings()
-        {:ok, sup_pid}
-
-      other ->
-        other
-    end
   end
+
+  # Phase 3 post-register hook. Decision #112 boot-ordering: re-run the
+  # workspace loader once FeishuOutbound is published (Phase 2). Then
+  # seed initial bindings (skipped in test env — see seed_initial_bindings/0).
+  @impl Ezagent.Plugin
+  def after_boot do
+    _ = Ezagent.Workspace.Loader.load_all()
+    :ok = seed_initial_bindings()
+    :ok
+  end
+
+  # --- internals ------------------------------------------------------
 
   defp maybe_ws_client_spec do
     if Mix.env() == :test do
@@ -76,19 +130,6 @@ defmodule EzagentPluginFeishu.Application do
     else
       EzagentPluginFeishu.WsClient
     end
-  end
-
-  # PR #144 SPEC v2 §5.8 — FeishuOutbound registers against the
-  # existing `Ezagent.Entity.Session` Kind for the generic
-  # `:notify_external` action. `Ezagent.Behavior.Chat.invoke(:send)`
-  # dispatches that action after fan-out (opportunistic — no-op if
-  # nothing is registered).
-  defp register_behaviors do
-    Enum.each(FeishuOutbound.actions(), fn action ->
-      :ok = BehaviorRegistry.register(SessionKind, action, FeishuOutbound)
-    end)
-
-    :ok
   end
 
   defp seed_initial_bindings do
