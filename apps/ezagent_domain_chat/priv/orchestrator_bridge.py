@@ -71,7 +71,7 @@ import os
 import sys
 import threading
 from typing import Any
-from urllib.parse import urlencode, urlparse, urlunparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import websockets
 
@@ -184,7 +184,12 @@ def load_tool_schemas() -> list[dict]:
 
 
 def ws_url_with_params() -> str:
-    """Append token + agent_uri query params, mirroring McpSocket.connect/3."""
+    """Append token + agent_uri query params, mirroring McpSocket.connect/3.
+
+    The returned URL carries the per-agent connect token in its query
+    string — it MUST NOT be logged. Use ``redact_ws_url`` before
+    putting any WebSocket URL into a log line, stdout, or stderr.
+    """
     if not AGENT_URI or not AGENT_TOKEN:
         raise SystemExit(
             "orchestrator_bridge: EZAGENT_AGENT_URI + EZAGENT_AGENT_TOKEN "
@@ -194,6 +199,36 @@ def ws_url_with_params() -> str:
     parsed = urlparse(WS_URL)
     query = urlencode({"token": AGENT_TOKEN, "agent_uri": AGENT_URI, "vsn": "2.0.0"})
     return urlunparse(parsed._replace(query=query))
+
+
+def redact_ws_url(url: str) -> str:
+    """Return ``url`` with the ``token`` query parameter masked.
+
+    The connect token authenticates as the orchestrator until rotated,
+    so a WebSocket URL that carries it must never reach a log file,
+    stdout, or stderr. This redacts only ``token`` and leaves
+    ``agent_uri`` / ``vsn`` intact so the log line is still useful.
+    """
+    parsed = urlparse(url)
+    if not parsed.query:
+        return url
+    pairs = parse_qsl(parsed.query, keep_blank_values=True)
+    redacted = [(k, "***REDACTED***" if k == "token" else v) for k, v in pairs]
+    return urlunparse(parsed._replace(query=urlencode(redacted)))
+
+
+def redact_text(text: str) -> str:
+    """Mask any occurrence of the connect token in an arbitrary string.
+
+    Belt-and-braces for log paths that don't take a URL — e.g.
+    ``websockets`` handshake exceptions can embed the full request URI
+    (token and all) in ``str(exc)``. Replacing the literal token
+    substring guarantees it never lands in a log line regardless of
+    how the exception formats itself.
+    """
+    if not AGENT_TOKEN:
+        return text
+    return text.replace(AGENT_TOKEN, "***REDACTED***")
 
 
 async def call_beam(event: str, payload: dict, timeout: float = 30.0) -> dict:
@@ -258,11 +293,14 @@ async def connect_loop() -> None:
     global _ws_send
 
     url = ws_url_with_params()
+    # Pre-redacted form for logging — `url` itself carries the connect
+    # token and must never reach a log line / stdout / stderr.
+    safe_url = redact_ws_url(url)
     backoff = 2
 
     while True:
         try:
-            LOG.info("connecting %s", url)
+            LOG.info("connecting %s", safe_url)
             async with websockets.connect(url, max_size=None) as ws:
                 _ws_send = ws.send
                 LOG.info("ws connected; joining %s", TOPIC)
@@ -295,7 +333,9 @@ async def connect_loop() -> None:
         except (OSError, websockets.exceptions.WebSocketException) as e:
             _joined.clear()
             _ws_send = None
-            LOG.warning("ws error: %s; retry in %ds", e, backoff)
+            # `websockets` handshake errors can embed the full request
+            # URI (token included) in str(e) — redact before logging.
+            LOG.warning("ws error: %s; retry in %ds", redact_text(str(e)), backoff)
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 30)
         except asyncio.TimeoutError:

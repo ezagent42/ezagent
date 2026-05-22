@@ -51,7 +51,15 @@ defmodule EzagentDomainChat.MixProject do
       # transport the cc channel bridge uses. Declared explicitly even
       # though Phoenix is transitively present (via ezagent_plugin_cc),
       # because this app now `use`s Phoenix.Socket / Phoenix.Channel.
-      {:phoenix, "~> 1.8.0"}
+      {:phoenix, "~> 1.8.0"},
+      # Phase 7 MCP-bridge hardening (codex MEDIUM-3): the authenticated
+      # subprocess test (`orchestrator_mcp_bridge_test.exs`) starts a
+      # real HTTP listener hosting `McpSocket` so the Python bridge can
+      # round-trip a `tools/call` through the production transport.
+      # Bandit is the project's adapter (`config/config.exs`); declared
+      # test-only here so the test runs even when this app's suite is
+      # invoked standalone (`mix cmd --app ezagent_domain_chat`).
+      {:bandit, "~> 1.5", only: :test}
     ]
   end
 end

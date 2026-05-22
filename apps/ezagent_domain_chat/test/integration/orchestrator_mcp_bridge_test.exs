@@ -1,3 +1,23 @@
+defmodule EzagentDomainChat.Integration.OrchestratorMcpBridgeTest.BridgeEndpoint do
+  @moduledoc """
+  A Phoenix endpoint with a REAL HTTP listener for the authenticated
+  subprocess test — the Python bridge must actually open a WebSocket
+  against `/orchestrator_socket`, which the `server: false` ChannelTest
+  endpoint cannot serve. It mounts `McpSocket` (the production Socket,
+  incl. its `connect/3` token-auth path) so the round-trip exercises
+  the real transport, not a `ChannelTest` shortcut.
+
+  Defined at top level (not nested in the test module) so the
+  `socket/3` endpoint macro is unambiguous — `Phoenix.ChannelTest`,
+  imported inside the test module, also exports a `socket/3`.
+  """
+  use Phoenix.Endpoint, otp_app: :ezagent_domain_chat
+
+  socket "/orchestrator_socket", Ezagent.Orchestrator.McpSocket,
+    websocket: [check_origin: false],
+    longpoll: false
+end
+
 defmodule EzagentDomainChat.Integration.OrchestratorMcpBridgeTest do
   @moduledoc """
   Phase 7 completion PR-5 — the orchestrator MCP TRANSPORT bridge.
@@ -8,12 +28,12 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpBridgeTest do
   transport. PR-5's e2e called `McpServer.handle_tool_call/3` directly,
   bypassing the actual transport a live `claude` uses.
 
-  This test proves the gap is closed — TWO ways:
+  This test proves the gap is closed — THREE ways:
 
   ## 1. The configured command starts a working MCP server
 
-  `test "the seed-configured bridge command serves the 7 tool schemas
-  over MCP tools/list"` does EXACTLY codex's explicit ask:
+  `test "executing the seed-configured `uv run --script` command
+  returns 7 tools on tools/list"` does EXACTLY codex's explicit ask:
 
   - it runs `Ezagent.Orchestrator.CcOrchestratorSeed.install_orchestrator_bridge/1`
     to ship the real script + exported schema file into a temp dir,
@@ -28,17 +48,33 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpBridgeTest do
   finding), this test cannot pass — the configured command would not
   resolve.
 
-  ## 2. tools/call reaches the per-orchestrator McpServer
+  ## 2. tools/call reaches the per-orchestrator McpServer (Channel)
 
-  `test "mcp_tools_call over the Channel reaches the per-orchestrator
-  McpServer"` drives the BEAM-side transport: it joins
+  `test "a registered orchestrator's bridge join + mcp_tools_call
+  routes to ITS McpServer"` drives the BEAM-side transport: it joins
   `Ezagent.Orchestrator.McpChannel` (the bridge's BEAM endpoint) and
   pushes `mcp_tools_call`, asserting it routes to the RIGHT
-  per-orchestrator `McpServer` with server-derived caller/cap/session
-  context — and that a `claude`/bridge cannot spoof another
-  orchestrator's identity (the Channel resolves context from the
-  token-authenticated agent URI via `McpRegistry`, never from the
-  payload).
+  per-orchestrator `McpServer`.
+
+  ## 3. tools/call through the REAL stdio + McpSocket auth path
+
+  codex MEDIUM-3 — test 2 above joins the Channel directly with
+  pre-populated `socket` assigns, so it never exercises the real stdio
+  transport or `McpSocket.connect/3` token auth. `test "an
+  authenticated bridge subprocess round-trips a tools/call through
+  /orchestrator_socket"` closes that gap: it starts a real HTTP
+  listener hosting `McpSocket`, mints a connect token, spawns the
+  configured bridge as a subprocess with that token + agent URI, and
+  drives a `tools/call` end-to-end — stdio → WebSocket → `McpSocket`
+  token auth → `McpChannel` → `McpServer`.
+
+  ## `uv` gating (codex MEDIUM-3)
+
+  All three subprocess tests need `uv` on PATH (the configured command
+  is `uv run --script …`). When `uv` is absent the tests are a REAL
+  `ExUnit` skip (`@tag skip:` resolved at module-eval) — NOT a printed
+  `SKIP` that lets the gate pass green without the command ever
+  running.
   """
 
   use EzagentCore.DataCase, async: false
@@ -48,6 +84,17 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpBridgeTest do
   alias Ezagent.{Behavior, Capability}
   alias Ezagent.Entity.{Agent, Session, User}
   alias Ezagent.Orchestrator.{CcOrchestratorSeed, McpChannel, McpRegistry, McpServer}
+  alias EzagentPluginCc.TokenStore
+
+  # `uv` presence is resolved ONCE at module eval. The three subprocess
+  # tests below tag themselves `skip:` when it is absent — a real
+  # ExUnit skip (the suite reports the test as skipped), never a
+  # printed "SKIP" that would let CI pass the gate without ever
+  # executing the configured `uv run --script` command.
+  @uv_path System.find_executable("uv")
+  @uv_skip (if is_nil(@uv_path),
+              do: "`uv` not on PATH — cannot execute the configured bridge command",
+              else: false)
 
   # --- a minimal endpoint so Phoenix.ChannelTest can drive the Channel --
 
@@ -55,6 +102,10 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpBridgeTest do
     @moduledoc false
     use Phoenix.Endpoint, otp_app: :ezagent_domain_chat
   end
+
+  # The top-level endpoint with a REAL HTTP listener — see its own
+  # moduledoc. Aliased here so the test body reads cleanly.
+  alias EzagentDomainChat.Integration.OrchestratorMcpBridgeTest.BridgeEndpoint
 
   @endpoint TestEndpoint
 
@@ -113,85 +164,78 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpBridgeTest do
 
   describe "the configured bridge command serves the 7 tool schemas over MCP" do
     @tag :slow
+    @tag skip: @uv_skip
     test "executing the seed-configured `uv run --script` command returns 7 tools on tools/list" do
-      uv = System.find_executable("uv")
+      base = Path.join(System.tmp_dir!(), "orch-bridge-test-#{uniq()}")
+      File.mkdir_p!(base)
+      on_exit(fn -> File.rm_rf(base) end)
 
-      if is_nil(uv) do
-        # `uv` is the runtime the seed-configured command uses; without
-        # it on PATH there is nothing to execute. Skip rather than
-        # silently pass.
-        IO.puts("SKIP — `uv` not on PATH; cannot execute the configured bridge command")
-      else
-        base = Path.join(System.tmp_dir!(), "orch-bridge-test-#{uniq()}")
-        File.mkdir_p!(base)
-        on_exit(fn -> File.rm_rf(base) end)
+      # Ship the real bridge script + exported schema file exactly as
+      # the seed does on a dev/prod boot.
+      :ok = CcOrchestratorSeed.install_orchestrator_bridge(base)
 
-        # Ship the real bridge script + exported schema file exactly as
-        # the seed does on a dev/prod boot.
-        :ok = CcOrchestratorSeed.install_orchestrator_bridge(base)
+      script = Path.join(base, "orchestrator_bridge.py")
+      tools_json = Path.join(base, "orchestrator_tools.json")
 
-        script = Path.join(base, "orchestrator_bridge.py")
-        tools_json = Path.join(base, "orchestrator_tools.json")
+      assert File.exists?(script),
+             "the seed must SHIP orchestrator_bridge.py — codex CRITICAL: " <>
+               "the pre-PR-5 config referenced a script that was never written"
 
-        assert File.exists?(script),
-               "the seed must SHIP orchestrator_bridge.py — codex CRITICAL: " <>
-                 "the pre-PR-5 config referenced a script that was never written"
+      assert File.exists?(tools_json),
+             "the seed must export the 7 tool schemas beside the script"
 
-        assert File.exists?(tools_json),
-               "the seed must export the 7 tool schemas beside the script"
+      # The seed's MCP config — the CONFIGURED command a live
+      # orchestrator's `claude` runs.
+      mcp_config = Jason.decode!(CcOrchestratorSeed.orchestrator_mcp_json_for_test(base))
+      server = mcp_config["mcpServers"]["esr-orchestrator"]
 
-        # The seed's MCP config — the CONFIGURED command a live
-        # orchestrator's `claude` runs.
-        mcp_config = Jason.decode!(CcOrchestratorSeed.orchestrator_mcp_json_for_test(base))
-        server = mcp_config["mcpServers"]["esr-orchestrator"]
+      assert server["command"] == "uv"
+      assert "run" in server["args"] and "--script" in server["args"]
+      configured_script = List.last(server["args"])
+      assert configured_script == script,
+             "the MCP config must point at the shipped script path"
 
-        assert server["command"] == "uv"
-        assert "run" in server["args"] and "--script" in server["args"]
-        configured_script = List.last(server["args"])
-        assert configured_script == script,
-               "the MCP config must point at the shipped script path"
+      env = server["env"]
+      # The schema-file path the bridge reads tools/list from.
+      tools_env = env["EZAGENT_ORCHESTRATOR_TOOLS_PATH"]
+      assert tools_env == tools_json
 
-        env = server["env"]
-        # The schema-file path the bridge reads tools/list from.
-        tools_env = env["EZAGENT_ORCHESTRATOR_TOOLS_PATH"]
-        assert tools_env == tools_json
+      # EXECUTE the configured command — exactly `uv run --script
+      # <script>` with the configured env — and speak MCP over stdio.
+      out =
+        run_bridge_stdio(
+          server["command"],
+          server["args"],
+          %{"EZAGENT_ORCHESTRATOR_TOOLS_PATH" => tools_env},
+          [
+            ~s({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}),
+            ~s({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}})
+          ],
+          2
+        )
 
-        # EXECUTE the configured command — exactly `uv run --script
-        # <script>` with the configured env — and speak MCP over stdio.
-        out =
-          run_bridge_stdio(
-            server["command"],
-            server["args"],
-            %{"EZAGENT_ORCHESTRATOR_TOOLS_PATH" => tools_env},
-            [
-              ~s({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}),
-              ~s({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}})
-            ]
-          )
+      responses = parse_jsonrpc_lines(out)
 
-        responses = parse_jsonrpc_lines(out)
+      init = Enum.find(responses, &(&1["id"] == 1))
+      assert init["result"]["serverInfo"]["name"] == "esr-orchestrator",
+             "the configured command must start a working MCP server. Got: #{inspect(out)}"
 
-        init = Enum.find(responses, &(&1["id"] == 1))
-        assert init["result"]["serverInfo"]["name"] == "esr-orchestrator",
-               "the configured command must start a working MCP server. Got: #{inspect(out)}"
+      list = Enum.find(responses, &(&1["id"] == 2))
+      tools = list["result"]["tools"]
 
-        list = Enum.find(responses, &(&1["id"] == 2))
-        tools = list["result"]["tools"]
+      assert length(tools) == 7,
+             "the configured command's tools/list must return the 7 orchestrator " <>
+               "tool schemas. Got #{inspect(tools)}"
 
-        assert length(tools) == 7,
-               "the configured command's tools/list must return the 7 orchestrator " <>
-                 "tool schemas. Got #{inspect(tools)}"
+      names = tools |> Enum.map(& &1["name"]) |> MapSet.new()
 
-        names = tools |> Enum.map(& &1["name"]) |> MapSet.new()
+      assert names ==
+               MapSet.new(~w(add_agent_slot remove_agent_slot update_agent_template
+                             write_matcher update_template save_template_as list_templates)),
+             "tools/list must serve exactly McpServer.tool_schemas/0's 7 tools"
 
-        assert names ==
-                 MapSet.new(~w(add_agent_slot remove_agent_slot update_agent_template
-                               write_matcher update_template save_template_as list_templates)),
-               "tools/list must serve exactly McpServer.tool_schemas/0's 7 tools"
-
-        # The schemas must be the SAME ones McpServer owns — single source.
-        assert names == MapSet.new(Enum.map(McpServer.tool_schemas(), & &1["name"]))
-      end
+      # The schemas must be the SAME ones McpServer owns — single source.
+      assert names == MapSet.new(Enum.map(McpServer.tool_schemas(), & &1["name"]))
     end
   end
 
@@ -295,6 +339,121 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpBridgeTest do
     end
   end
 
+  # ======================================================================
+  # 3. tools/call through the REAL stdio + McpSocket auth path (codex MED-3)
+  # ======================================================================
+
+  describe "an authenticated bridge subprocess round-trips a tools/call" do
+    @tag :slow
+    @tag skip: @uv_skip
+    @tag timeout: 90_000
+    test "stdio -> /orchestrator_socket -> McpSocket auth -> McpChannel -> McpServer" do
+      # --- 1. an isolated EZAGENT_HOME so TokenStore.mint is sandboxed ---
+      home = Path.join(System.tmp_dir!(), "orch-bridge-home-#{uniq()}")
+      File.mkdir_p!(home)
+      prev_home = System.get_env("EZAGENT_HOME")
+      System.put_env("EZAGENT_HOME", home)
+
+      on_exit(fn ->
+        if prev_home, do: System.put_env("EZAGENT_HOME", prev_home), else: System.delete_env("EZAGENT_HOME")
+        File.rm_rf(home)
+      end)
+
+      # --- 2. a REAL HTTP listener hosting McpSocket on a free port ----
+      port = free_tcp_port()
+
+      Application.put_env(:ezagent_domain_chat, BridgeEndpoint,
+        # Bandit — the project's adapter (config/config.exs sets it for
+        # EzagentWeb.Endpoint; this ad-hoc test endpoint must opt in
+        # explicitly or Phoenix defaults to the unavailable Cowboy).
+        adapter: Bandit.PhoenixAdapter,
+        http: [ip: {127, 0, 0, 1}, port: port],
+        secret_key_base: String.duplicate("b", 64),
+        pubsub_server: EzagentCore.PubSub,
+        server: true
+      )
+
+      start_supervised!(BridgeEndpoint)
+
+      # --- 3. a registered orchestrator with a minted connect token ----
+      session_uri = spawn_session()
+      caps = MapSet.new([template_cap(:agent_template, @workspace_uri)])
+      orchestrator_uri = spawn_orchestrator_with_caps(caps)
+
+      :ok =
+        McpRegistry.register(orchestrator_uri,
+          session_uri: session_uri,
+          workspace_uri: @workspace_uri,
+          owner_uri: User.admin_uri()
+        )
+
+      # The token `McpSocket.connect/3` will verify — minted by the same
+      # TokenStore the cc Template Class uses for a cc-flavored agent.
+      {:ok, token} = TokenStore.mint(orchestrator_uri)
+
+      # --- 4. ship the configured bridge into a temp dir --------------
+      base = Path.join(System.tmp_dir!(), "orch-bridge-auth-#{uniq()}")
+      File.mkdir_p!(base)
+      on_exit(fn -> File.rm_rf(base) end)
+      :ok = CcOrchestratorSeed.install_orchestrator_bridge(base)
+
+      mcp_config = Jason.decode!(CcOrchestratorSeed.orchestrator_mcp_json_for_test(base))
+      server = mcp_config["mcpServers"]["esr-orchestrator"]
+      tools_env = server["env"]["EZAGENT_ORCHESTRATOR_TOOLS_PATH"]
+
+      ws_url = "ws://127.0.0.1:#{port}/orchestrator_socket/websocket"
+
+      # --- 5. EXECUTE the configured command with the auth env -------
+      # The bridge connects to the real /orchestrator_socket, presents
+      # the token, joins orch:bridge:<uri>, then forwards tools/call.
+      out =
+        run_bridge_stdio(
+          server["command"],
+          server["args"],
+          %{
+            "EZAGENT_ORCHESTRATOR_TOOLS_PATH" => tools_env,
+            "EZAGENT_BRIDGE_WS_URL" => ws_url,
+            "EZAGENT_AGENT_URI" => URI.to_string(orchestrator_uri),
+            "EZAGENT_AGENT_TOKEN" => token,
+            "EZAGENT_HOME" => home
+          },
+          [
+            ~s({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}),
+            ~s({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_templates","arguments":{}}})
+          ],
+          2
+        )
+
+      responses = parse_jsonrpc_lines(out)
+
+      init = Enum.find(responses, &(&1["id"] == 1))
+      assert init["result"]["serverInfo"]["name"] == "esr-orchestrator",
+             "the configured command must start a working MCP server. Got: #{inspect(out)}"
+
+      call = Enum.find(responses, &(&1["id"] == 2))
+
+      assert call,
+             "no tools/call reply — the bridge did not round-trip through " <>
+               "/orchestrator_socket. Got: #{inspect(out)}"
+
+      result = call["result"]
+
+      refute result["isError"],
+             "list_templates over the REAL stdio + McpSocket auth transport must " <>
+               "succeed with the orchestrator's agent_template cap. Got: #{inspect(result)}"
+
+      structured = result["structuredContent"]
+
+      assert is_list(structured["agent_templates"]),
+             "the tools/call must reach the per-orchestrator McpServer and return " <>
+               "structured content. Got: #{inspect(result)}"
+
+      assert structured["session_templates"] == [],
+             "session_templates must be gated out — the call ran through the real " <>
+               "McpSocket-authenticated transport with the orchestrator's OWN caps"
+    end
+  end
+
   # --- McpRegistry round-trip -------------------------------------------
 
   describe "McpRegistry binds the server-derived orchestrator context" do
@@ -329,12 +488,21 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpBridgeTest do
 
   # --- subprocess + JSON-RPC helpers ------------------------------------
 
+  # Pick a free TCP port by binding one momentarily and reading the
+  # OS-assigned port. A tiny race window remains between close and the
+  # endpoint re-binding it; acceptable for a test helper.
+  defp free_tcp_port do
+    {:ok, listen} = :gen_tcp.listen(0, [:binary, ip: {127, 0, 0, 1}])
+    {:ok, port} = :inet.port(listen)
+    :ok = :gen_tcp.close(listen)
+    port
+  end
+
   # Run the bridge command as a subprocess, feed `lines` on stdin,
-  # collect stdout until both JSON-RPC replies arrive, then close the
-  # port (which terminates the bridge — a Port has no stdin-only-close
-  # primitive, and the synchronous tools/list reply lands well before
-  # we close).
-  defp run_bridge_stdio(command, args, extra_env, lines) do
+  # collect stdout until `expected` JSON-RPC replies arrive, then close
+  # the port (which terminates the bridge — a Port has no
+  # stdin-only-close primitive).
+  defp run_bridge_stdio(command, args, extra_env, lines, expected) do
     port_env =
       Enum.map(extra_env, fn {k, v} -> {String.to_charlist(k), String.to_charlist(v)} end)
 
@@ -348,13 +516,13 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpBridgeTest do
       ])
 
     Enum.each(lines, fn line -> Port.command(port, line <> "\n") end)
-    collect_until(port, 2, "")
+    collect_until(port, expected, "")
   end
 
   # Collect stdout until `expected` JSON-RPC reply lines are seen, or a
-  # generous timeout. The bridge answers tools/list synchronously, so a
-  # few seconds is ample (uv's first-run dep provisioning aside — hence
-  # the 60s ceiling).
+  # generous timeout. The bridge answers tools/list synchronously and a
+  # tools/call within a couple of seconds once joined; the 75s ceiling
+  # absorbs uv's first-run dep provisioning.
   defp collect_until(port, expected, acc) do
     receive do
       {^port, {:data, chunk}} ->
@@ -370,9 +538,9 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpBridgeTest do
       {^port, {:exit_status, _}} ->
         acc
     after
-      60_000 ->
+      75_000 ->
         Port.close(port)
-        flunk("bridge did not produce #{expected} JSON-RPC replies in 60s. Got: #{acc}")
+        flunk("bridge did not produce #{expected} JSON-RPC replies in 75s. Got: #{acc}")
     end
   end
 
@@ -382,6 +550,7 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpBridgeTest do
     |> Enum.count(fn line ->
       case Jason.decode(line) do
         {:ok, %{"id" => _, "result" => _}} -> true
+        {:ok, %{"id" => _, "error" => _}} -> true
         _ -> false
       end
     end)
