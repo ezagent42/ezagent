@@ -339,6 +339,13 @@ defmodule Ezagent.Entity.Session do
              preflight_candidate_uris_free(template_content, session_uri, workspace_uri),
              %{session_uri: session_uri, orchestrator_uri: orchestrator_uri, slots: []}
            ),
+         # codex round-9 HIGH-2 — `instantiate_agent_slots/4` returns a
+         # 3-element `{:error, reason, partial_slots}` when a later slot
+         # fails after earlier slots already spawned. `guard/2`'s
+         # 3-element clause merges `partial_slots` INTO the accumulator so
+         # `cleanup_partial/1` tears down the earlier fresh workers; it
+         # then returns the bare `{:error, reason}` the `with` chain
+         # expects. The 2-element ok/error path is unchanged.
          {:ok, slot_instances} <-
            guard(
              instantiate_agent_slots(
@@ -418,6 +425,21 @@ defmodule Ezagent.Entity.Session do
   # `spawn_orchestrator/3` returns `{:ok, _}` | `{:error, _}` already,
   # so the `|| {:error, ...}` above is belt-and-braces against a nil.
   # `guard/2` runs `cleanup_partial/1` when its first arg is an error.
+  #
+  # codex round-9 HIGH-2 — the 3-element `{:error, reason, partial_slots}`
+  # clause is for `instantiate_agent_slots/4`: a later slot failed after
+  # earlier slots already spawned (`fresh?: true` — lineage recorded,
+  # workspace bound, possibly a PTY sidecar started). `partial_slots` is
+  # MERGED into the `spawned` accumulator's `:slots` so `cleanup_partial/1`
+  # tears each earlier worker down — terminate + forget lineage + unbind
+  # workspace. The bare `{:error, reason}` is then returned so the `with`
+  # chain in `do_spawn/4` sees the same 2-element shape it always did.
+  defp guard({:error, reason, partial_slots}, spawned) when is_list(partial_slots) do
+    spawned_with_partials = Map.put(spawned, :slots, partial_slots)
+    cleanup_partial(spawned_with_partials)
+    {:error, reason}
+  end
+
   defp guard({:error, reason}, spawned) do
     cleanup_partial(spawned)
     {:error, reason}
@@ -429,6 +451,17 @@ defmodule Ezagent.Entity.Session do
   # built so far. Best-effort: every step is wrapped so one failure
   # does not prevent the rest. Order: workers, then orchestrator, then
   # the session Kind, then its workspace binding.
+  #
+  # ## codex round-9 HIGH-2 — every spawned worker is torn down COMPLETELY
+  #
+  # The `slots` list now reflects REALITY: when a multi-slot template's
+  # later slot fails, `instantiate_agent_slots/4` returns the earlier
+  # slots created so far and `guard/2` merges them into `spawned`. Each
+  # accumulated slot worker — AND the orchestrator, itself a worker the
+  # Generator spawned — is terminated, has its `AgentLineage` record
+  # forgotten (`terminate_kind/1`), AND has its `WorkspaceRegistry`
+  # binding removed — so a failed multi-slot Generator run leaves NO
+  # live worker, NO stale lineage, NO stale binding.
   #
   # ## HIGH-3 (round 2) — DELETE the COMMITTED routing rows on a
   # ## later-step failure
@@ -448,12 +481,33 @@ defmodule Ezagent.Entity.Session do
     slots = Map.get(spawned, :slots, [])
     routing_rule_ids = Map.get(spawned, :routing_rule_ids, [])
 
+    # codex round-9 HIGH-2 — each accumulated slot worker is torn down
+    # COMPLETELY: `terminate_kind/1` stops the process AND forgets its
+    # `AgentLineage` record; `WorkspaceRegistry.unbind/1` removes its
+    # workspace binding. A `fresh?: true` slot recorded all three at
+    # spawn (lineage + binding + the live process), so a failed
+    # multi-slot Generator run must undo all three — leaving NO live
+    # worker, NO stale lineage, NO stale binding.
     Enum.each(slots, fn
-      {_slot, _tmpl, %URI{} = worker_uri} -> terminate_kind(worker_uri)
-      _ -> :ok
+      {_slot, _tmpl, %URI{} = worker_uri} ->
+        terminate_kind(worker_uri)
+        safe(fn -> Ezagent.WorkspaceRegistry.unbind(worker_uri) end)
+
+      _ ->
+        :ok
     end)
 
-    if orchestrator_uri, do: terminate_kind(orchestrator_uri)
+    # codex round-9 HIGH-2 — the orchestrator is itself a worker the
+    # Generator spawned (`spawn_orchestrator/3` → `Agent.spawn/4`, which
+    # binds its workspace). A failed run must leave it with NO live
+    # process, NO stale lineage (`terminate_kind/1`), AND NO stale
+    # `WorkspaceRegistry` binding — same three-part teardown as the slot
+    # workers above.
+    if orchestrator_uri do
+      terminate_kind(orchestrator_uri)
+      safe(fn -> Ezagent.WorkspaceRegistry.unbind(orchestrator_uri) end)
+    end
+
     if session_uri, do: terminate_kind(session_uri)
     if session_uri, do: Ezagent.WorkspaceRegistry.unbind(session_uri)
 
@@ -782,6 +836,23 @@ defmodule Ezagent.Entity.Session do
   # Returns `{:ok, [{slot_name, agent_template_uri, worker_uri}]}` — the
   # working copy + the routing rules both consume this list. The
   # `worker_uri` here is the durable record of the LIVE instance URI.
+  #
+  # ## codex round-9 HIGH-2 — return the PARTIAL slots on a slot failure
+  #
+  # Slots are instantiated SEQUENTIALLY: slot 1 may be `fresh?: true`
+  # (records lineage, binds the workspace, may start a PTY sidecar)
+  # before slot 2 fails. The pre-round-9 error path returned a bare
+  # `{:error, reason}` — the slots created so far were LOST, so
+  # `do_spawn/4`'s `guard/2` accumulator carried `slots: []` and
+  # `cleanup_partial/1` left slot 1's worker live, workspace-bound, and
+  # lineaged to a now-terminated orchestrator. A rejected slot was NOT
+  # zero-side-effect at the Generator level.
+  #
+  # On a slot failure this now returns the 3-element
+  # `{:error, reason, partial_slots}` — the slots created BEFORE the
+  # failure, in `{slot_name, agent_template_uri, worker_uri}` shape.
+  # `do_spawn/4` threads `partial_slots` into the `guard/2` accumulator
+  # so `cleanup_partial/1` tears each one down.
   defp instantiate_agent_slots(
          template_content,
          %URI{} = session_uri,
@@ -803,12 +874,14 @@ defmodule Ezagent.Entity.Session do
           {:cont, {:ok, [{slot_name, agent_template_uri, worker_uri} | acc]}}
 
         {:error, reason} ->
-          {:halt, {:error, {:agent_slot_failed, slot_name, reason}}}
+          # Carry the slots created BEFORE this failure (the reduce
+          # accumulator) into the error so `do_spawn/4` can clean them up.
+          {:halt, {:error, {:agent_slot_failed, slot_name, reason}, Enum.reverse(acc)}}
       end
     end)
     |> case do
       {:ok, instances} -> {:ok, Enum.reverse(instances)}
-      err -> err
+      {:error, _reason, _partial} = err -> err
     end
   end
 
