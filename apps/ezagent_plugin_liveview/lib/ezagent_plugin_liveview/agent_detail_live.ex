@@ -27,7 +27,8 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
   forwarded to xterm via `push_event "pty_chunk"`.
   """
   use Phoenix.LiveView
-  alias EzagentDomainUi.IdeShell
+  alias EzagentDomainUi.WorkspaceShell
+  alias EzagentPluginLiveview.AppShell
   alias EzagentDomainUi.Pty.Terminal
   use EzagentDomainUi.Components
   import Phoenix.Component
@@ -216,14 +217,21 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
       end)
 
     ~H"""
-    <IdeShell.ide_shell
+    <AppShell.app_shell
+      perspective={:workspace}
       current_entity_uri={@current_entity_uri_str}
-      current_path="/identities/agents"
-      status={%{agents_alive: 0, bridges: 0, debug_events: 0, version: "dev"}}
+      current_workspace_uri={@current_workspace_uri}
       is_admin?={@is_admin?}
       is_system_member?={@is_system_member?}
       workspaces={@workspaces}
+      cmdk_nav_routes={@cmdk_nav_routes}
     >
+      <:body>
+        <WorkspaceShell.workspace_shell
+          current_entity_uri={@current_entity_uri_str}
+          current_path="/identities/agents"
+          status={%{agents_alive: 0, bridges: 0, debug_events: 0, version: "dev"}}
+        >
       <:main_window>
         <div class="flex-1 overflow-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
           <.page_header title="Agent URI invalid" />
@@ -238,22 +246,9 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
         </div>
       </:main_window>
 
-      <%!-- V1 UI PR-2b (SPEC §2.5) — CmdK command palette. Rendered
-            on the not-found clause too: the `:require_entity`
-            on_mount runs before mount/3 and assigns `:cmdk_nav_routes`
-            + `:current_entity_uri` + `:current_workspace_uri` (same
-            assigns this clause already uses for `is_admin?` etc.), so
-            ⌘K stays consistent even on the error page. --%>
-      <:command_palette>
-        <.live_component
-          module={EzagentPluginLiveview.CommandPaletteComponent}
-          id="cmdk"
-          nav_routes={@cmdk_nav_routes}
-          current_entity_uri={@current_entity_uri}
-          current_workspace_uri={@current_workspace_uri}
-        />
-      </:command_palette>
-    </IdeShell.ide_shell>
+        </WorkspaceShell.workspace_shell>
+      </:body>
+    </AppShell.app_shell>
     """
   end
 
@@ -264,14 +259,21 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
       end)
 
     ~H"""
-    <IdeShell.ide_shell
+    <AppShell.app_shell
+      perspective={:workspace}
       current_entity_uri={@current_entity_uri_str}
-      current_path="/identities/agents"
-      status={%{agents_alive: 0, bridges: 0, debug_events: 0, version: "dev"}}
+      current_workspace_uri={@current_workspace_uri}
       is_admin?={@is_admin?}
       is_system_member?={@is_system_member?}
       workspaces={@workspaces}
+      cmdk_nav_routes={@cmdk_nav_routes}
     >
+      <:body>
+        <WorkspaceShell.workspace_shell
+          current_entity_uri={@current_entity_uri_str}
+          current_path="/identities/agents"
+          status={%{agents_alive: 0, bridges: 0, debug_events: 0, version: "dev"}}
+        >
       <:main_window>
         <div class="flex-1 overflow-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
           <.page_header title={"Agent: " <> URI.to_string(@agent_uri)}>
@@ -449,21 +451,9 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
         </div>
       </:main_window>
 
-      <%!-- V1 UI PR-2b (SPEC §2.5) — CmdK command palette. The
-            header search bar + ⌘K are global ide_shell chrome, so
-            every ide_shell LV must render the palette (PR-2 wired it
-            into admin_live only). Shared LiveComponent; `nav_routes`
-            flows DOWN from `EzagentWeb.LiveAuth` `:cmdk_nav`. --%>
-      <:command_palette>
-        <.live_component
-          module={EzagentPluginLiveview.CommandPaletteComponent}
-          id="cmdk"
-          nav_routes={@cmdk_nav_routes}
-          current_entity_uri={@current_entity_uri}
-          current_workspace_uri={@current_workspace_uri}
-        />
-      </:command_palette>
-    </IdeShell.ide_shell>
+        </WorkspaceShell.workspace_shell>
+      </:body>
+    </AppShell.app_shell>
     """
   end
 

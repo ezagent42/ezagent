@@ -40,7 +40,8 @@ defmodule EzagentPluginLiveview.AdminLive do
 
   alias EzagentPluginLiveview.Admin.{SessionEditor, MemberPanel}
   alias EzagentPluginLiveview.Views.ConversationView
-  alias EzagentDomainUi.IdeShell
+  alias EzagentDomainUi.WorkspaceShell
+  alias EzagentPluginLiveview.AppShell
   alias Ezagent.UI.SessionViewRegistry
 
   @main_session_uri URI.new!("session://default/default/main")
@@ -837,15 +838,22 @@ defmodule EzagentPluginLiveview.AdminLive do
       |> assign_new(:cmdk_nav_routes, fn -> [] end)
 
     ~H"""
-    <IdeShell.ide_shell
+    <AppShell.app_shell
+      perspective={:workspace}
       current_entity_uri={@caller_uri_str}
-      current_path="/sessions"
-      status={@status}
+      current_workspace_uri={@current_workspace_uri}
       workspace_name={@workspace_name}
-      workspaces={@workspaces}
       is_admin?={@is_admin?}
       is_system_member?={@is_system_member?}
+      workspaces={@workspaces}
+      cmdk_nav_routes={@cmdk_nav_routes}
     >
+      <:body>
+        <WorkspaceShell.workspace_shell
+          current_entity_uri={@caller_uri_str}
+          current_path="/sessions"
+          status={@status}
+        >
       <:main_window>
         <SessionEditor.session_editor
           current_session_uri={@current_session_uri}
@@ -917,22 +925,9 @@ defmodule EzagentPluginLiveview.AdminLive do
         />
       </:right_sidebar>
 
-      <%!-- V1 UI PR-2 (SPEC §2.5 + §2.7) — CmdK command palette.
-            Shared LiveComponent: open-state + query + results + the
-            four canonical handlers live in one place. `nav_routes`
-            flows DOWN from the `EzagentWeb.LiveAuth` `:cmdk_nav`
-            on_mount assign; entity/session results are built inside
-            the component from `UriOptions`. --%>
-      <:command_palette>
-        <.live_component
-          module={EzagentPluginLiveview.CommandPaletteComponent}
-          id="cmdk"
-          nav_routes={@cmdk_nav_routes}
-          current_entity_uri={@current_entity_uri}
-          current_workspace_uri={@current_workspace_uri}
-        />
-      </:command_palette>
-    </IdeShell.ide_shell>
+        </WorkspaceShell.workspace_shell>
+      </:body>
+    </AppShell.app_shell>
     """
   end
 
