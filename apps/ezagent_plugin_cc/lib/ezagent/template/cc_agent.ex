@@ -121,6 +121,27 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   between a pre-probe and the spawn would make an adopted worker read
   as fresh.
 
+  ## codex round-8 HIGH-1 — a `fresh?: false` result starts NO sidecar
+
+  Round 6/7 made `fresh?` an atomic, side-effect-aware signal at the
+  ESR domain layer. But the Template Class itself was still not
+  side-effect-free for a rejected adoption: `spawn_for_local_pty/2`
+  called `ensure_agent_kind/1` and then UNCONDITIONALLY continued to
+  `ensure_pty_server/3`. When `ensure_agent_kind/1` finds the Agent
+  Kind `:already_started` — a worker THIS call did NOT create —
+  `ensure_pty_server/3` would still start a PTY / `claude` sidecar for
+  that pre-existing (possibly foreign or orphaned) worker, attaching a
+  new process + config + cwd to it.
+
+  Round 8 makes the fresh-check happen BEFORE any stateful side effect.
+  When `ensure_agent_kind/1` reports `:already_started`,
+  `spawn_for_local_pty/2` returns `{:ok, [agent_uri], %{fresh?: false}}`
+  IMMEDIATELY — it does NOT call `ensure_pty_server/3`, does NOT start
+  a sidecar. Whether to adopt a worker this call did not create is the
+  caller's (the Generator's / `update_agent_template`'s) decision, not
+  the Template Class's. The Template Class only ever brings up a PTY
+  for a worker IT freshly started.
+
   ## Domain.Pty PR-A (2026-05-21 SPEC v1)
 
   The cc-specific claude invocation (mcp.json generation, settings
@@ -256,9 +277,25 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
     # pre-existing one (`:already_started`). The worker IS the Agent
     # Kind; the PtyServer is a sidecar — so the worker's freshness is
     # the Agent Kind's freshness. Threaded out as `%{fresh?: _}`.
-    with {:ok, started_or_adopted} <- ensure_agent_kind(agent_uri),
-         :ok <- ensure_pty_server(agent_uri, cwd, tmpl) do
-      {:ok, [agent_uri], %{fresh?: started_or_adopted == :started}}
+    #
+    # codex round-8 HIGH-1 — the fresh-check gates the PTY sidecar.
+    # When the Agent Kind was `:already_started` (a worker this call
+    # did NOT create), return `fresh?: false` IMMEDIATELY without
+    # calling `ensure_pty_server/3`. Starting a PTY / `claude` sidecar
+    # for a pre-existing (possibly foreign or orphaned) worker would
+    # make a rejected adoption non-zero-side-effect. The Template Class
+    # only brings up a sidecar for a worker IT freshly started; whether
+    # to adopt a pre-existing worker is the caller's decision.
+    with {:ok, started_or_adopted} <- ensure_agent_kind(agent_uri) do
+      case started_or_adopted do
+        :already_started ->
+          {:ok, [agent_uri], %{fresh?: false}}
+
+        :started ->
+          with :ok <- ensure_pty_server(agent_uri, cwd, tmpl) do
+            {:ok, [agent_uri], %{fresh?: true}}
+          end
+      end
     end
   end
 

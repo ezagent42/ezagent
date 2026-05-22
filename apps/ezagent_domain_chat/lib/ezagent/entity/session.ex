@@ -862,7 +862,7 @@ defmodule Ezagent.Entity.Session do
     with {:ok, _pid} <- ensure_template_alive(agent_template_uri),
          target <-
            URI.parse("#{URI.to_string(agent_template_uri)}?action=template.instantiate"),
-         {:ok, %{workers: workers}} <-
+         {:ok, %{workers: workers, fresh?: fresh?}} <-
            Ezagent.Invocation.dispatch(%Ezagent.Invocation{
              target: target,
              mode: :call,
@@ -877,27 +877,103 @@ defmodule Ezagent.Entity.Session do
                reply: {:caller_inbox, self()}
              }
            }) do
-      # codex round-7 HIGH-1 — the Generator does NOT gate on `fresh?`.
-      # `Ezagent.Kind.Template` `instantiate/3` is documented as
-      # IDEMPOTENT: re-calling after the Kinds are alive is a no-op that
-      # returns the SAME URIs (the `Workspace.Loader` boot path re-runs
-      # the Generator on every pass). An idempotent re-instantiation
-      # therefore legitimately reports `fresh?: false` — that is NOT an
-      # error here. Lineage + workspace binding for the worker were
-      # already recorded by the FIRST (fresh) instantiation under the
-      # SAME orchestrator + workspace; `spawn_from_template_content/4`
-      # correctly skips re-recording them on the `fresh?: false` re-run
-      # (the rows are unchanged either way). The Generator's
-      # session-unique worker URIs already prevent cross-session
-      # adoption, so the `fresh?` distinction the swap path needs does
-      # not apply to the Generator.
-      case workers do
-        [worker_uri | _] -> {:ok, worker_uri}
-        [] -> {:error, :instantiate_returned_no_worker}
+      # codex round-8 HIGH-2 — the Generator MUST gate a `fresh?: false`
+      # worker on ownership verification before committing it.
+      #
+      # Round 7 made `spawn_from_template_content/4` record lineage +
+      # bind workspace ONLY for `fresh?: true` workers. A `fresh?: false`
+      # result therefore means NO lineage/workspace binding happened on
+      # THIS call. The Generator used to record the worker into the
+      # session working-copy + routing rules regardless of `fresh?` —
+      # so a candidate worker that appeared AFTER
+      # `preflight_candidate_uris_free/3` but BEFORE the atomic spawn
+      # (a TOCTOU window) was silently adopted into the session with
+      # UNKNOWN lineage + workspace — a worker the Generator neither
+      # created nor bound.
+      #
+      # The legitimate idempotent re-run still exists: `Workspace.Loader`
+      # re-runs the Generator on every boot pass; a re-instantiation of
+      # a worker THIS orchestrator + workspace already created + bound
+      # also reports `fresh?: false`. That re-run is fine — the worker
+      # IS owned. So a `fresh?: false` worker is committed ONLY IF
+      # ownership verifies: `AgentLineage.lookup` equals THIS
+      # orchestrator AND `WorkspaceRegistry.lookup` equals the target
+      # workspace. If it does not verify, the slot fails
+      # `:slot_candidate_not_owned` — the Generator does NOT silently
+      # adopt a foreign / unknown-lineage worker into the session.
+      with {:ok, worker_uri} <- first_worker(workers),
+           :ok <-
+             verify_slot_candidate_ownership(
+               fresh?,
+               slot_name,
+               worker_uri,
+               workspace_uri,
+               orchestrator_uri
+             ) do
+        {:ok, worker_uri}
       end
     else
       {:error, _} = err -> err
       other -> {:error, {:unexpected_instantiate_result, other}}
+    end
+  end
+
+  defp first_worker([worker_uri | _]), do: {:ok, worker_uri}
+  defp first_worker([]), do: {:error, :instantiate_returned_no_worker}
+
+  # codex round-8 HIGH-2 — ownership verification for a `fresh?: false`
+  # slot candidate.
+  #
+  # A `fresh?: true` worker was just created AND bound by THIS call's
+  # `spawn_from_template_content/4` (round 7 gating) — it is owned by
+  # construction, no check needed.
+  #
+  # A `fresh?: false` worker was NOT bound by this call. It is committed
+  # to the session only if it is already owned by THIS orchestrator +
+  # workspace — the legitimate idempotent `Workspace.Loader` re-run. The
+  # ownership predicate is structural: `AgentLineage.lookup(worker_uri)`
+  # must equal `orchestrator_uri` AND `WorkspaceRegistry.lookup(worker_uri)`
+  # must equal `workspace_uri`. A worker that appeared in the TOCTOU
+  # window (foreign / unknown lineage, or bound to a different
+  # workspace, or unbound entirely) fails the check — the Generator
+  # fails the slot rather than adopting it.
+  #
+  # URIs are compared by canonical string form: the registries store +
+  # return string-derived `%URI{}` values, while `orchestrator_uri` /
+  # `workspace_uri` are caller-supplied structs — `URI.to_string/1`
+  # normalizes both sides.
+  defp verify_slot_candidate_ownership(true, _slot_name, _worker_uri, _workspace_uri, _orch_uri),
+    do: :ok
+
+  defp verify_slot_candidate_ownership(
+         false,
+         slot_name,
+         %URI{} = worker_uri,
+         %URI{} = workspace_uri,
+         %URI{} = orchestrator_uri
+       ) do
+    lineage_ok? =
+      case Ezagent.AgentLineage.lookup(worker_uri) do
+        {:ok, %URI{} = spawned_by} ->
+          URI.to_string(spawned_by) == URI.to_string(orchestrator_uri)
+
+        :error ->
+          false
+      end
+
+    workspace_ok? =
+      case Ezagent.WorkspaceRegistry.lookup(worker_uri) do
+        {:ok, %URI{} = bound_ws} ->
+          URI.to_string(bound_ws) == URI.to_string(workspace_uri)
+
+        :error ->
+          false
+      end
+
+    if lineage_ok? and workspace_ok? do
+      :ok
+    else
+      {:error, {:slot_candidate_not_owned, slot_name, URI.to_string(worker_uri)}}
     end
   end
 

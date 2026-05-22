@@ -186,6 +186,49 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
       pids_after = list_pty_pids_for(agent_uri_str)
       assert pids_after == pids_before
     end
+
+    # codex round-8 HIGH-1 — when the Agent Kind already exists (a
+    # worker THIS instantiate did NOT create — e.g. spawned directly by
+    # a concurrent path), `instantiate/3` must return `fresh?: false`
+    # WITHOUT starting a PTY sidecar. Adopting a foreign / orphaned
+    # worker is the caller's decision; the Template Class must not
+    # attach a sidecar to it.
+    test "an already-started Agent Kind returns fresh?: false and starts NO PtyServer" do
+      agent_uri_str =
+        "entity://agent/default/cc_already-#{System.unique_integer([:positive])}"
+
+      agent_uri = URI.parse(agent_uri_str)
+
+      # Bring up ONLY the Agent Kind — directly, NOT via the template.
+      # This is the "worker this call did not create" state: Kind alive,
+      # no PtyServer.
+      assert {:ok, _pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
+      assert {:ok, _} = Ezagent.KindRegistry.lookup(agent_uri)
+
+      refute Ezagent.Domain.Pty.alive?(agent_uri),
+             "precondition: no PtyServer before instantiate"
+
+      tmpl = %{
+        "class" => "cc.agent",
+        "agent_uri" => agent_uri_str,
+        "cwd" => "/tmp"
+      }
+
+      workspace_uri = URI.parse("workspace://test")
+
+      # The instantiate hits `spawn_for_local_pty` (Kind alive but PTY
+      # absent, so the idempotency short-circuit does not fire), and
+      # `ensure_agent_kind` reports `:already_started` → the fresh-check
+      # gates the sidecar: `fresh?: false`, NO PTY.
+      assert {:ok, [^agent_uri], %{fresh?: false}} =
+               CcAgent.instantiate("t", tmpl, workspace_uri)
+
+      refute Ezagent.Domain.Pty.alive?(agent_uri),
+             "a rejected adoption must NOT start a PTY sidecar (codex round-8 HIGH-1)"
+
+      assert list_pty_pids_for(agent_uri_str) == [],
+             "no PtyServer process may exist for an already-started Agent Kind"
+    end
   end
 
   describe "registry integration" do
