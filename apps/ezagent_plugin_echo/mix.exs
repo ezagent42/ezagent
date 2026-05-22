@@ -43,7 +43,16 @@ defmodule EzagentPluginEcho.MixProject do
       # `Ezagent.Domain.Pty.start/2` to attach a `/bin/bash -i` PTY
       # sidecar — surfacing the agent in the SessionView Terminal tab
       # + `/identities/agents/:uri/terminal` standalone page.
-      {:ezagent_domain_pty, in_umbrella: true}
+      {:ezagent_domain_pty, in_umbrella: true},
+      # Plugin authoring contract PR-5 codex HIGH-2 — the default echo
+      # agent is seeded in this plugin's `after_boot/0` (it owns the
+      # echo flavor). The seed spawns via the `entity://` SpawnRegistry
+      # dispatcher, which `ezagent_domain_chat` registers in its
+      # `start/2`. Declaring the dep makes OTP boot domain_chat BEFORE
+      # this plugin, so the `entity://` spawn fn is published by the
+      # time `after_boot/0` runs. (No code from domain_chat is
+      # referenced here — the dep is purely a boot-order constraint.)
+      {:ezagent_domain_chat, in_umbrella: true}
     ]
   end
 end

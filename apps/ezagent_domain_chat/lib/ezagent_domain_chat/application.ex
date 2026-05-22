@@ -111,14 +111,19 @@ defmodule EzagentDomainChat.Application do
         # workspace uses. Test-env skip — see helper docstring.
         :ok = ensure_default_workspace()
 
-        # PR-M (Allen 2026-05-20) — idempotently spawn the default Echo
-        # agent via SpawnRegistry. Previously the echo plugin used
-        # `DynamicSupervisor.start_child` directly at its own boot,
-        # bypassing `SpawnRegistry.spawn/1`. The echo plugin boots
-        # before chat (no chat dep), so the `entity://` spawn fn isn't
-        # registered yet at echo's boot time — chat (the last app)
-        # invokes the standardized spawn here.
-        :ok = ensure_echo_default()
+        # Plugin authoring contract PR-5 codex HIGH-2 — the default
+        # Echo agent is NO LONGER seeded here. Seeding the echo agent
+        # from chat's `start/2` was a boot-order race: the resolver
+        # needs `Ezagent.AgentFlavorRegistry.lookup("echo")` to have
+        # been published by the echo plugin's `boot/1`, but
+        # `ezagent_domain_chat` does not depend on `ezagent_plugin_echo`
+        # — so the seed could fire before echo's `agent_flavors/0` was
+        # registered, fail with `{:no_kind_module_for_agent, ...}`, log,
+        # and never retry → the default echo agent absent. The seed now
+        # lives in `EzagentPluginEcho.Application.after_boot/0`, which
+        # by construction runs after echo's `agent_flavors/0` is
+        # published; echo declares a dep on `ezagent_domain_chat` so the
+        # `entity://` spawn dispatcher is registered first.
 
         # Phase 7 PR 45: install the cc-orchestrator AgentTemplate seed
         # so SessionTemplate-instantiation paths (PR 41 Generator) can
@@ -262,46 +267,12 @@ defmodule EzagentDomainChat.Application do
     end
   end
 
-  # PR-M (Allen 2026-05-20) — idempotently spawn the default Echo agent
-  # via the standardized `Ezagent.SpawnRegistry.spawn/1` API. Previously
-  # the echo plugin's own Application.start/2 called
-  # `DynamicSupervisor.start_child/2` directly, bypassing the registry.
-  # The echo plugin boots before chat (no chat dep), so the `entity://`
-  # spawn fn isn't registered yet at echo's boot — this post-boot hook
-  # in the last app to start (chat) does the spawn properly.
-  #
-  # `Code.ensure_loaded?` guards against test contexts where the echo
-  # plugin isn't loaded. `{:already_started, _}` from SpawnRegistry is
-  # treated as :ok (the echo plugin may have spawned via snapshot
-  # rehydration before this hook runs).
-  defp ensure_echo_default do
-    if Code.ensure_loaded?(EzagentPluginEcho.Application) and
-         function_exported?(EzagentPluginEcho.Application, :default_uri, 0) do
-      do_ensure_echo_default(EzagentPluginEcho.Application.default_uri())
-    else
-      :ok
-    end
-  end
-
-  defp do_ensure_echo_default(uri) do
-    case Ezagent.SpawnRegistry.spawn(uri) do
-      {:ok, _pid} ->
-        :ok
-
-      {:error, {:already_started, _pid}} ->
-        :ok
-
-      {:error, reason} ->
-        require Logger
-
-        Logger.warning(
-          "ensure_echo_default: spawn failed (#{inspect(reason)}); " <>
-            "F1 echo round-trip tests will fail until echo agent is available"
-        )
-
-        :ok
-    end
-  end
+  # Plugin authoring contract PR-5 codex HIGH-2 — `ensure_echo_default/0`
+  # + `do_ensure_echo_default/1` were removed from here. Seeding the
+  # default echo agent from chat's boot raced the echo plugin's
+  # `agent_flavors/0` registration (chat does not depend on
+  # ezagent_plugin_echo). The seed moved to
+  # `EzagentPluginEcho.Application.after_boot/0`.
 
   # Phase 7 PR 45 — seed cc-orchestrator AgentTemplate at boot.
   #

@@ -75,6 +75,48 @@ defmodule Ezagent.Plugin.BootTest do
       template_class = Ezagent.Plugin.BootTest.TemplateClass1
       tname = "boot-tc-#{System.unique_integer([:positive])}"
 
+      # PR-5 MEDIUM-4: `boot/1` now behaviour-checks every
+      # `agent_flavors/0` entry — `kind` must @behaviour Ezagent.Kind
+      # and `behavior` must @behaviour Ezagent.Behavior. Create real
+      # minimal modules (these registrations land in the global
+      # *Registry ETS tables — see the on_exit cleanup below).
+      Module.create(
+        kind,
+        quote do
+          @behaviour Ezagent.Kind
+          @impl true
+          def type_name, do: :boot_test_kind1
+          @impl true
+          def behaviors, do: []
+          @impl true
+          def persistence, do: :ephemeral
+        end,
+        Macro.Env.location(__ENV__)
+      )
+
+      # `Behavior1` is a real Ezagent.Behavior — including `interface/0`
+      # — so anything that enumerates BehaviorRegistry (e.g. the CLI
+      # TreeBuilder) never crashes on it even before the on_exit
+      # cleanup runs.
+      Module.create(
+        behavior,
+        quote do
+          @behaviour Ezagent.Behavior
+          @impl true
+          def actions, do: [:do_thing]
+          @impl true
+          def state_slice, do: :boot_test
+          @impl true
+          def init_slice(_args), do: %{}
+          @impl true
+          def invoke(:do_thing, slice, _args, _ctx), do: {:ok, slice, %{}}
+          @impl true
+          def interface,
+            do: %{do_thing: %{args: %{}, returns: %{}, modes: [:cast]}}
+        end,
+        Macro.Env.location(__ENV__)
+      )
+
       Module.create(
         template_class,
         quote do
@@ -88,6 +130,17 @@ defmodule Ezagent.Plugin.BootTest do
         end,
         Macro.Env.location(__ENV__)
       )
+
+      # `boot/1`'s Phase-2 publish writes to the global BehaviorRegistry
+      # / TemplateRegistry / AgentFlavorRegistry ETS tables — shared
+      # process-wide state. Clean them up so this test's throwaway
+      # modules do not leak into other suites (the CLI TreeBuilder
+      # enumerates BehaviorRegistry; a stale fake entry would crash it).
+      on_exit(fn ->
+        :ets.delete(Ezagent.BehaviorRegistry.table(), {kind, :do_thing})
+        :ets.delete(Ezagent.TemplateRegistry.table(), tname)
+        :ets.delete(Ezagent.AgentFlavorRegistry.table(), "boot-flavor-x")
+      end)
 
       defmodule PublishingPlugin do
         use Ezagent.Plugin
@@ -208,8 +261,14 @@ defmodule Ezagent.Plugin.BootTest do
     end
   end
 
-  describe "boot/1 — non-core spawn scheme rejected (codex HIGH-4 / verification §9 item 3)" do
-    test "a spawns/0 scheme outside the six core schemes raises" do
+  describe "boot/1 — any spawns/0 declaration rejected (codex PR-5 HIGH-1)" do
+    # PR-5 HIGH-1 supersedes the old "non-core scheme rejected / core
+    # scheme accepted" pair. `SpawnRegistry.register/2` is scheme-keyed
+    # and OVERWRITES — so even a CORE scheme spawn declared by a plugin
+    # hijacks that scheme's dispatcher (invariant 8). A plugin owns NO
+    # scheme; therefore ANY non-empty `spawns/0` is a hard error.
+
+    test "a spawns/0 declaring a non-core scheme raises" do
       defmodule BadSchemePlugin do
         use Ezagent.Plugin
         @impl true
@@ -227,43 +286,149 @@ defmodule Ezagent.Plugin.BootTest do
           Ezagent.Plugin.boot(BadSchemePlugin)
         end
 
-      assert err.message =~ "slack"
-      assert err.message =~ "core schemes"
+      assert err.message =~ "spawns/0"
+      assert err.message =~ "may NOT register a scheme-level spawn"
     end
 
-    test "a core spawns/0 scheme is accepted" do
-      # `resource` is a core scheme; capture + restore its spawn fn so
-      # this test does not clobber shared SpawnRegistry state for the
-      # rest of the (async: false) suite.
-      original =
-        case :ets.lookup(Ezagent.SpawnRegistry.table(), "resource") do
-          [{"resource", fun}] -> {:fun, fun}
-          [] -> :none
-        end
-
-      on_exit(fn ->
-        case original do
-          {:fun, fun} -> :ets.insert(Ezagent.SpawnRegistry.table(), {"resource", fun})
-          :none -> :ets.delete(Ezagent.SpawnRegistry.table(), "resource")
-        end
-      end)
-
-      defmodule GoodSchemePlugin do
+    test "a spawns/0 declaring a CORE scheme is ALSO rejected (the HIGH-1 hole)" do
+      # This is the exact hole codex found: `{"entity", fun}` passed the
+      # old @core_schemes allowlist, then OVERWROTE the entity://
+      # dispatcher. It must now hard-fail.
+      defmodule CoreSchemeHijackPlugin do
         use Ezagent.Plugin
         @impl true
         def plugin_info,
-          do: %{slug: "boot-goodscheme", name: "GoodScheme", description: "d", version: "1.0.0"}
+          do: %{slug: "boot-hijack", name: "Hijack", description: "d", version: "1.0.0"}
 
         @impl true
         def spawns do
-          [{"resource", fn _uri -> {:ok, self()} end}]
+          [{"entity", fn _uri -> {:ok, self()} end}]
         end
       end
 
-      assert {:ok, sup_pid} = Ezagent.Plugin.boot(GoodSchemePlugin)
-      assert "resource" in Ezagent.SpawnRegistry.registered_schemes()
+      # Capture whatever spawn fn (if any) the "entity" scheme had
+      # before — the standalone ezagent_core test may have none.
+      entity_before = :ets.lookup(Ezagent.SpawnRegistry.table(), "entity")
 
+      err =
+        assert_raise ArgumentError, fn ->
+          Ezagent.Plugin.boot(CoreSchemeHijackPlugin)
+        end
+
+      assert err.message =~ "spawns/0"
+      assert err.message =~ "hijack"
+
+      # The plugin's spawn fn never reached SpawnRegistry — the "entity"
+      # scheme entry is byte-for-byte unchanged (not clobbered). `boot/1`
+      # rejects spawns/0 in `reject_spawns!` BEFORE any `publish/1` work.
+      assert :ets.lookup(Ezagent.SpawnRegistry.table(), "entity") == entity_before
+    end
+
+    test "a plugin with the default empty spawns/0 boots fine" do
+      defmodule NoSpawnPlugin do
+        use Ezagent.Plugin
+        @impl true
+        def plugin_info,
+          do: %{slug: "boot-nospawn", name: "NoSpawn", description: "d", version: "1.0.0"}
+      end
+
+      assert NoSpawnPlugin.spawns() == []
+      assert {:ok, sup_pid} = Ezagent.Plugin.boot(NoSpawnPlugin)
       Supervisor.stop(sup_pid)
+    end
+  end
+
+  describe "boot/1 — config_surface/0 validation (codex PR-5 MEDIUM-5)" do
+    test "a :form config_surface/0 is rejected" do
+      defmodule FormSurfacePlugin do
+        use Ezagent.Plugin
+        @impl true
+        def plugin_info,
+          do: %{slug: "boot-form", name: "Form", description: "d", version: "1.0.0"}
+
+        @impl true
+        def config_surface, do: %{kind: :form, fields: []}
+      end
+
+      err = assert_raise ArgumentError, fn -> Ezagent.Plugin.boot(FormSurfacePlugin) end
+      assert err.message =~ ":form"
+      assert err.message =~ "V2" or err.message =~ "V1"
+    end
+
+    test "a malformed config_surface/0 is rejected" do
+      defmodule BadSurfacePlugin do
+        use Ezagent.Plugin
+        @impl true
+        def plugin_info,
+          do: %{slug: "boot-badsurface", name: "BadSurface", description: "d", version: "1.0.0"}
+
+        @impl true
+        def config_surface, do: %{kind: :route}
+      end
+
+      err = assert_raise ArgumentError, fn -> Ezagent.Plugin.boot(BadSurfacePlugin) end
+      assert err.message =~ "config_surface/0"
+    end
+
+    test "a valid :route config_surface/0 boots fine" do
+      defmodule RouteSurfacePlugin do
+        use Ezagent.Plugin
+        @impl true
+        def plugin_info,
+          do: %{slug: "boot-route", name: "Route", description: "d", version: "1.0.0"}
+
+        @impl true
+        def config_surface, do: %{kind: :route, path: "/x", label: "X"}
+      end
+
+      assert {:ok, sup_pid} = Ezagent.Plugin.boot(RouteSurfacePlugin)
+      Supervisor.stop(sup_pid)
+    end
+  end
+
+  describe "boot/1 — agent_flavors/0 behaviour validation (codex PR-5 MEDIUM-4)" do
+    test "an agent flavor whose kind is not an Ezagent.Kind raises" do
+      # NotAKind is a plain module — does not @behaviour Ezagent.Kind.
+      defmodule NotAKind do
+        def hello, do: :world
+      end
+
+      template_class = Ezagent.Plugin.BootTest.MedTC
+
+      Module.create(
+        template_class,
+        quote do
+          @behaviour Ezagent.Kind.Template
+          @impl true
+          def template_name, do: "med-tc-#{System.unique_integer([:positive])}"
+          @impl true
+          def validate(_), do: :ok
+          @impl true
+          def instantiate(_, _, _), do: {:ok, []}
+        end,
+        Macro.Env.location(__ENV__)
+      )
+
+      defmodule BadFlavorKindPlugin do
+        use Ezagent.Plugin
+        @impl true
+        def plugin_info,
+          do: %{slug: "boot-badflavor", name: "BadFlavor", description: "d", version: "1.0.0"}
+
+        @impl true
+        def agent_flavors do
+          [
+            %{
+              flavor: "badkind",
+              kind: Ezagent.Plugin.BootTest.NotAKind,
+              template_class: Ezagent.Plugin.BootTest.MedTC
+            }
+          ]
+        end
+      end
+
+      err = assert_raise ArgumentError, fn -> Ezagent.Plugin.boot(BadFlavorKindPlugin) end
+      assert err.message =~ "Ezagent.Kind"
     end
   end
 end

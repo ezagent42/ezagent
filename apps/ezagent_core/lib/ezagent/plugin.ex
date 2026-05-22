@@ -35,6 +35,21 @@ defmodule Ezagent.Plugin do
   `defoverridable` default supplied by `use Ezagent.Plugin` (§3.1) —
   `kinds/0 → []`, `config_surface/0 → nil`, `after_boot/0 → :ok`, etc.
 
+  ## `spawns/0` is RESERVED (codex PR-5 HIGH-1)
+
+  `spawns/0` once let a plugin register a `SpawnRegistry` spawn fn for
+  a URI scheme. That is a hole: `SpawnRegistry` is scheme-keyed and a
+  `register/2` OVERWRITES — so a plugin declaring `{"entity", fun}`
+  takes ownership of ALL `entity://` spawning. A plugin must NEVER own
+  a scheme-level dispatcher (invariant 8). All six core schemes
+  (`entity, session, template, resource, workspace, system`) are
+  owned by core/domain — there is no valid plugin spawn declaration.
+  `spawns/0` must return `[]`; `boot/1` and the `:ezagent_plugin_check`
+  gate REJECT any non-empty value. To contribute spawnable Kinds, a
+  plugin extends an existing scheme via its Kind's type/name prefix
+  (e.g. `entity://agent/<ws>/cc_<name>` — the cc plugin's flavor lives
+  in the name prefix) or registers a Behavior on a core Kind.
+
   ## Two-layer enforcement (SPEC §3)
 
   1. **`use Ezagent.Plugin`** injects an `@after_compile` that does
@@ -52,11 +67,24 @@ defmodule Ezagent.Plugin do
   `Application.start/2` delegates to.
   """
 
-  # SPEC §2 (codex HIGH-4): a `spawns/0` scheme is NOT a free string —
-  # a plugin may only register a spawn fn under one of the SIX core
-  # SPEC v3 schemes. It may NEVER introduce a new top-level scheme
-  # (the `feishu://` deletion). `boot/1` + the app-level gate reject
-  # anything else.
+  # SPEC §2 + PR-5 codex HIGH-1: the six core SPEC v3 URI schemes.
+  # ALL six are owned by core/domain — a plugin owns NONE of them.
+  #
+  # `spawns/0` originally let a plugin register a spawn fn for a core
+  # scheme; codex PR-5 HIGH-1 showed that is itself the bug: a
+  # scheme-keyed `SpawnRegistry.register/2` OVERWRITES, so a plugin
+  # declaring `{"entity", fun}` passes the allowlist yet takes
+  # ownership of ALL `entity://` spawning. A plugin must NEVER own a
+  # scheme-level dispatcher (invariant 8). Since every scheme is
+  # core-owned, there is no valid plugin spawn declaration at all —
+  # `boot/1` and the `:ezagent_plugin_check` gate now REJECT any
+  # non-empty `spawns/0`. The callback is retained (so a plugin
+  # declaring one fails loudly with a precise message rather than a
+  # silent no-op), but it is effectively reserved/unusable.
+  #
+  # A plugin extends an existing scheme via its Kind's type/name
+  # prefix (e.g. `entity://agent/<ws>/cc_<name>`) or registers a
+  # Behavior on a core Kind — it never registers a scheme spawn fn.
   @core_schemes ~w(entity session template resource workspace system)
 
   @typedoc """
@@ -77,9 +105,14 @@ defmodule Ezagent.Plugin do
   @type behavior_decl :: {kind :: module(), action :: atom(), behavior :: module()}
 
   @typedoc """
-  `{scheme, spawn_fun}` — `scheme` MUST be one of the six core schemes
-  (`#{Enum.join(@core_schemes, " ")}`). `boot/1` rejects anything else
-  (codex HIGH-4).
+  `{scheme, spawn_fun}` — **RESERVED / REJECTED** (codex PR-5 HIGH-1).
+
+  Every URI scheme is owned by core/domain; a plugin may not register
+  a scheme-level spawn fn (doing so would let it hijack a core
+  scheme's dispatcher — invariant 8). `boot/1` and the
+  `:ezagent_plugin_check` gate reject any non-empty `spawns/0`. The
+  type is kept only so a misuse fails with a precise diagnostic.
+  Extend a scheme via a Kind type/name prefix instead.
   """
   @type spawn_decl :: {scheme :: String.t(), spawn_fun :: (URI.t() -> {:ok, pid} | {:error, term})}
 
@@ -117,7 +150,13 @@ defmodule Ezagent.Plugin do
   # --- OPTIONAL (default [] / nil / :ok via `use Ezagent.Plugin`) ---
   @callback kinds() :: [module()]
   @callback behaviors() :: [behavior_decl()]
-  @callback spawns() :: [spawn_decl()]
+
+  @doc """
+  RESERVED — must return `[]`. A plugin may not register a
+  scheme-level spawn fn; `boot/1` and the `:ezagent_plugin_check`
+  gate reject any non-empty list (codex PR-5 HIGH-1).
+  """
+  @callback spawns() :: []
   @callback template_classes() :: [module()]
   @callback agent_flavors() :: [agent_flavor_decl()]
   @callback routing_tables() :: [routing_decl()]
@@ -212,11 +251,13 @@ defmodule Ezagent.Plugin do
   ## Phase 2 — publish
 
   Only now register: `BehaviorRegistry` per `behaviors/0`;
-  `SpawnRegistry` per `spawns/0` (scheme allowlist checked — a scheme
-  outside the six core schemes raises, codex HIGH-4);
   `TemplateRegistry` per `template_classes/0`; `AgentFlavorRegistry`
   per `agent_flavors/0`; `RoutingRegistry.declare_table/2` per
   `routing_tables/0`; `PluginRegistry` self-registration.
+
+  A non-empty `spawns/0` is REJECTED with an `ArgumentError` — every
+  URI scheme is core/domain-owned, so a plugin scheme spawn would
+  hijack a core dispatcher (codex PR-5 HIGH-1).
 
   ## Phase 3 — post-register hook
 
@@ -252,13 +293,21 @@ defmodule Ezagent.Plugin do
   # plugin author never sees a `*Registry` module; `boot/1` owns the
   # mapping.
   defp publish(plugin_module) do
+    # codex PR-5 HIGH-1 — a plugin must not own a scheme-level spawn.
+    # Reject BEFORE any other publish so a misconfigured plugin fails
+    # loudly at boot rather than silently hijacking a core scheme.
+    reject_spawns!(plugin_module)
+
     Enum.each(plugin_module.behaviors(), fn {kind, action, behavior} ->
       :ok = Ezagent.BehaviorRegistry.register(kind, action, behavior)
     end)
 
-    Enum.each(plugin_module.spawns(), fn {scheme, spawn_fun} ->
-      assert_core_scheme!(plugin_module, scheme)
-      :ok = Ezagent.SpawnRegistry.register(scheme, spawn_fun)
+    Enum.each(plugin_module.agent_flavors(), fn decl ->
+      assert_agent_flavor!(plugin_module, decl)
+    end)
+
+    Enum.each(plugin_module.config_surface() |> List.wrap(), fn surface ->
+      assert_config_surface!(plugin_module, surface)
     end)
 
     Enum.each(plugin_module.template_classes(), fn class_module ->
@@ -286,20 +335,133 @@ defmodule Ezagent.Plugin do
     :ok
   end
 
-  # codex HIGH-4 — a plugin may NOT introduce a top-level scheme. Only
-  # the six core schemes are spawnable; reject anything else with a
-  # clear error.
-  defp assert_core_scheme!(plugin_module, scheme) do
-    if scheme in @core_schemes do
-      :ok
-    else
-      raise ArgumentError,
-            "#{inspect(plugin_module)} declared a spawns/0 scheme #{inspect(scheme)} " <>
-              "which is not one of the six core schemes " <>
-              "(#{Enum.join(@core_schemes, ", ")}). Plugins do NOT own top-level " <>
-              "URI schemes (SPEC §5.8 — the feishu:// deletion). Extend an " <>
-              "existing scheme via its type segment, or register a Behavior on a " <>
-              "core Kind instead."
+  # codex PR-5 HIGH-1 — a plugin may NOT register a scheme-level spawn
+  # fn. `SpawnRegistry.register/2` is scheme-keyed and OVERWRITES, so
+  # any plugin scheme spawn (even one naming a core scheme) hijacks
+  # that scheme's dispatcher. Every scheme is core/domain-owned ⇒
+  # there is no valid plugin spawn ⇒ any non-empty `spawns/0` is a
+  # hard error.
+  defp reject_spawns!(plugin_module) do
+    case plugin_module.spawns() do
+      [] ->
+        :ok
+
+      declared ->
+        raise ArgumentError,
+              "#{inspect(plugin_module)} declared spawns/0 = #{inspect(declared)}. " <>
+                "A plugin may NOT register a scheme-level spawn fn — " <>
+                "Ezagent.SpawnRegistry is scheme-keyed and OVERWRITES, so this " <>
+                "would hijack a core scheme's dispatcher (invariant 8). All six " <>
+                "URI schemes (#{Enum.join(@core_schemes, ", ")}) are owned by " <>
+                "core/domain; spawns/0 is reserved and must return []. Extend an " <>
+                "existing scheme via your Kind's type/name prefix " <>
+                "(e.g. entity://agent/<ws>/<flavor>_<name>), or register a " <>
+                "Behavior on a core Kind instead."
     end
+  end
+
+  # codex PR-5 MEDIUM-4 — every `agent_flavors/0` entry's `kind` must
+  # implement `Ezagent.Kind` and `template_class` must implement
+  # `Ezagent.Kind.Template`. The `:ezagent_plugin_check` gate checks
+  # this at compile time; this is the defensive boot-time guard
+  # (catches e.g. a hot-installed plugin that bypassed the gate).
+  #
+  # Reachability caveat: a flavor's `kind` may be a CORE/domain Kind
+  # the plugin REUSES rather than owns (cc's flavor `kind` is
+  # `Ezagent.Entity.Agent` from `ezagent_domain_chat`). The plugin
+  # cannot depend on a domain app that already depends on it (cycle),
+  # so that module's beam is not on the plugin's standalone code path.
+  # `assert_implements!` therefore behaviour-checks only modules it can
+  # resolve; a non-module value and a resolvable-but-wrong-behaviour
+  # module still hard-fail. A core/domain Kind always implements
+  # `Ezagent.Kind` by construction — the value of this guard is
+  # rejecting a plugin's OWN malformed flavor module.
+  defp assert_agent_flavor!(plugin_module, %{
+         flavor: flavor,
+         kind: kind,
+         template_class: template_class
+       }) do
+    assert_implements!(plugin_module, kind, Ezagent.Kind, "agent_flavors/0 (flavor #{inspect(flavor)})")
+
+    assert_implements!(
+      plugin_module,
+      template_class,
+      Ezagent.Kind.Template,
+      "agent_flavors/0 (flavor #{inspect(flavor)})"
+    )
+
+    :ok
+  end
+
+  defp assert_agent_flavor!(plugin_module, decl) do
+    raise ArgumentError,
+          "#{inspect(plugin_module)} declared a malformed agent_flavors/0 entry: " <>
+            "#{inspect(decl)}. Each entry must be a map " <>
+            "%{flavor: String.t(), kind: module(), template_class: module()}."
+  end
+
+  defp assert_implements!(plugin_module, module, behaviour, source) do
+    cond do
+      not is_atom(module) ->
+        raise ArgumentError,
+              "#{inspect(plugin_module)} #{source} declares #{inspect(module)}, " <>
+                "which is not a module."
+
+      not match?({:module, ^module}, Code.ensure_compiled(module)) ->
+        # Unreachable from this plugin's code path — a reused
+        # core/domain Kind. Cannot behaviour-check; tolerate (see the
+        # reachability caveat above).
+        :ok
+
+      not behaviour_present?(module, behaviour) ->
+        raise ArgumentError,
+              "#{inspect(plugin_module)} #{source} declares #{inspect(module)}, " <>
+                "which does not implement the #{inspect(behaviour)} behaviour."
+
+      true ->
+        :ok
+    end
+  end
+
+  defp behaviour_present?(module, behaviour) do
+    module.module_info(:attributes)
+    |> Keyword.get_values(:behaviour)
+    |> List.flatten()
+    |> Enum.member?(behaviour)
+  rescue
+    _ -> false
+  end
+
+  # codex PR-5 MEDIUM-5 — `config_surface/0` is `:route | :flavor |
+  # nil` in V1. `:form` (auto-rendered settings persisted to a store
+  # that does not exist yet) is V2 — reject it. A malformed map (or
+  # any non-conforming value) is also rejected so it cannot reach
+  # `plugins_live` and crash `/plugins`. Mirrors the
+  # `:ezagent_plugin_check` gate's compile-time check.
+  defp assert_config_surface!(_plugin_module, nil), do: :ok
+
+  defp assert_config_surface!(_plugin_module, %{kind: :route, path: path, label: label})
+       when is_binary(path) and is_binary(label),
+       do: :ok
+
+  defp assert_config_surface!(_plugin_module, %{kind: :flavor, flavor: flavor, label: label})
+       when is_binary(flavor) and is_binary(label),
+       do: :ok
+
+  defp assert_config_surface!(plugin_module, %{kind: :form} = surface) do
+    raise ArgumentError,
+          "#{inspect(plugin_module)} declared a `:form` config_surface/0 " <>
+            "(#{inspect(surface)}). The plugin settings store is V2 — `:form` " <>
+            "is rejected in V1. V1 config_surface/0 is :route | :flavor | nil " <>
+            "(SPEC §6.1)."
+  end
+
+  defp assert_config_surface!(plugin_module, surface) do
+    raise ArgumentError,
+          "#{inspect(plugin_module)} declared a malformed config_surface/0: " <>
+            "#{inspect(surface)}. V1 config_surface/0 is one of " <>
+            "%{kind: :route, path: String.t(), label: String.t()}, " <>
+            "%{kind: :flavor, flavor: String.t(), label: String.t()}, or nil " <>
+            "(SPEC §6.1)."
   end
 end

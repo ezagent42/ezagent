@@ -58,12 +58,23 @@ defmodule EzagentPluginLiveview.PluginsLive do
 
   # Translate a plugin's config_surface/0 into the card's config icon
   # target (SPEC §6.1).
-  defp config_target(%{kind: :route, path: path, label: label}), do: {path, label}
+  defp config_target(%{kind: :route, path: path, label: label})
+       when is_binary(path) and is_binary(label),
+       do: {path, label}
 
-  defp config_target(%{kind: :flavor, flavor: flavor, label: label}),
-    do: {"/identities?filter=agent:#{flavor}", label}
+  defp config_target(%{kind: :flavor, flavor: flavor, label: label})
+       when is_binary(flavor) and is_binary(label),
+       do: {"/identities?filter=agent:#{flavor}", label}
 
   defp config_target(nil), do: {nil, "Configure"}
+
+  # PR-5 codex MEDIUM-5 — defensive catch-all. The `:ezagent_plugin_check`
+  # gate + `Ezagent.Plugin.boot/1` both reject a `:form` or malformed
+  # config_surface/0, so a non-conforming surface should never reach
+  # here. But `/plugins` must NOT crash with a FunctionClauseError if
+  # one slips through (e.g. a hot-installed plugin that bypassed the
+  # gate) — an unknown surface renders a disabled config icon instead.
+  defp config_target(_unknown), do: {nil, "Configure"}
 
   @impl true
   def render(assigns) do
