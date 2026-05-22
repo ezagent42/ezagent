@@ -20,8 +20,17 @@ defmodule Ezagent.Domain.Pty do
   `EzagentDomainPty.Supervisor`. `params` is forwarded to the
   Server's `init/1`; common keys:
 
-    * `:cmd_override` (string) — the command to spawn. Required for
-      production callers (Server raises if absent).
+    * `:cmd_override` (string OR list of strings) — the command to
+      spawn. Required for production callers (Server raises if
+      absent). A STRING runs via `/bin/sh -c` (shell). A LIST runs in
+      argv form (`[Cmd | Args]`) directly via `execve` with NO shell —
+      each element is exactly one argument, so operator-controlled
+      values cannot inject flags or shell commands (codex HIGH-2). The
+      cc plugin supplies the argv list form.
+    * `:cmd_env` (map `%{"NAME" => "value"}`) — extra environment
+      variables for the child, merged into the inherited OS env and
+      passed structurally to `:exec.run/2` (never interpolated into a
+      command line). Used by the cc plugin for `CLAUDE_CONFIG_DIR`.
     * `:cwd` (string) — working directory for the child process.
     * `:test_mode` (boolean) — short-circuit `:exec.run/2` (default:
       `Mix.env() == :test`).

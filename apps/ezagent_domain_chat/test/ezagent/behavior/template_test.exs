@@ -147,4 +147,93 @@ defmodule Ezagent.Behavior.TemplateTest do
                Template.invoke(:instantiate, %{content: nil}, %{}, ctx)
     end
   end
+
+  # codex HIGH-1 — `template.instantiate` is CapBAC-checked against the
+  # AgentTemplate's OWN URI, so only that workspace is authorized. An
+  # explicit `args.workspace_uri` must NOT be trusted as the spawn
+  # destination: a caller authorized for workspace A must not be able
+  # to spawn + bind a worker into workspace B by passing
+  # `workspace_uri: workspace://B`.
+  describe "invoke(:instantiate, ...) — AgentTemplate workspace-escape (codex HIGH-1)" do
+    # An AgentTemplate URI in `default`; the slice carries a flavor so
+    # the only thing standing between the call and a spawn is the
+    # cross-workspace guard.
+    defp agent_template_content do
+      %{name: "cc-orch", flavor: "cc", working_directory: "/tmp/proj"}
+    end
+
+    test "a workspace_uri arg pointing at ANOTHER workspace → {:error, :cross_workspace_denied}" do
+      # AgentTemplate cap-checked for `default`; caller tries to escape
+      # into `team-alpha` via the workspace_uri arg.
+      self_uri = URI.new!("template://agent/default/cc-orch")
+      ctx = %{kind_module: AgentTemplate, self_uri: self_uri}
+      slice = %{content: agent_template_content()}
+
+      assert {:error, :cross_workspace_denied} =
+               Template.invoke(
+                 :instantiate,
+                 slice,
+                 %{instance_name: "demo", workspace_uri: URI.new!("workspace://team-alpha")},
+                 ctx
+               )
+
+      # The reject happens BEFORE any spawn — `resolve_instance_uri`
+      # short-circuits the `with` chain so `spawn_from_template_content`
+      # is never reached and NO worker is spawned/bound in `team-alpha`.
+      # (Proven structurally: the guard is the first step of the chain;
+      #  an integration spawn-count assertion lives in PR-4/PR-5.)
+    end
+
+    test "a workspace_uri arg pointing at a per-tenant URI in another workspace is also denied" do
+      # The guard normalizes through `workspace_of/1`, so passing an
+      # entity:// URI carrying `team-alpha` is rejected just the same.
+      self_uri = URI.new!("template://agent/default/cc-orch")
+      ctx = %{kind_module: AgentTemplate, self_uri: self_uri}
+      slice = %{content: agent_template_content()}
+
+      assert {:error, :cross_workspace_denied} =
+               Template.invoke(
+                 :instantiate,
+                 slice,
+                 %{
+                   instance_name: "demo",
+                   workspace_uri: URI.new!("entity://agent/team-alpha/cc_other")
+                 },
+                 ctx
+               )
+    end
+
+    test "a workspace_uri arg MATCHING the AgentTemplate's own workspace is allowed" do
+      # Same workspace — the guard passes. The instance URI is built in
+      # the cap-checked workspace; the spawn helper would then run (it
+      # crashes here only because no real registry/flavor is wired in a
+      # pure unit test — the point is the guard did NOT reject).
+      self_uri = URI.new!("template://agent/default/cc-orch")
+      ctx = %{kind_module: AgentTemplate, self_uri: self_uri}
+      slice = %{content: agent_template_content()}
+
+      result =
+        Template.invoke(
+          :instantiate,
+          slice,
+          %{instance_name: "demo", workspace_uri: URI.new!("workspace://default")},
+          ctx
+        )
+
+      refute match?({:error, :cross_workspace_denied}, result),
+             "a workspace_uri matching the AgentTemplate's own workspace must NOT be rejected"
+    end
+
+    test "no workspace_uri arg → destination derived from the AgentTemplate URI, not rejected" do
+      self_uri = URI.new!("template://agent/default/cc-orch")
+      ctx = %{kind_module: AgentTemplate, self_uri: self_uri}
+      slice = %{content: agent_template_content()}
+
+      result = Template.invoke(:instantiate, slice, %{instance_name: "demo"}, ctx)
+
+      refute match?({:error, :cross_workspace_denied}, result),
+             "the happy path (no workspace_uri arg) must derive the workspace " <>
+               "from the cap-checked AgentTemplate URI and proceed"
+    end
+  end
 end
