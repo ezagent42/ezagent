@@ -221,55 +221,154 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
     end
   end
 
-  describe "assemble_settings_mcp_args/3 — hostile-path (SPEC §1.5 (c))" do
+  # codex HIGH-2 — `assemble_settings_mcp_args/3` returns an argv LIST
+  # (each flag + each path a SEPARATE element) handed verbatim to
+  # `:exec.run/2`'s no-shell argv form. These tests are adversarial:
+  # an operator-controlled `operator_settings_path` /
+  # `operator_mcp_config_path` containing a space, a literal
+  # ` --settings /tmp/x.json`, or shell metacharacters MUST NOT become
+  # a separate flag or execute a shell command, and the mandatory
+  # safety `--settings` MUST stay last-wins + non-overridable.
+  describe "assemble_settings_mcp_args/3 — argv-safe adversarial (codex HIGH-2)" do
     @mandatory "/priv/claude-pty-settings.json"
     @bridge "/run/esr-bridge.mcp.json"
 
-    test "with no operator keys: mandatory --settings + bridge --mcp-config only" do
-      args = CcAgent.assemble_settings_mcp_args(@mandatory, @bridge, %{})
-
-      assert args == "--settings #{@mandatory} --mcp-config #{@bridge}"
+    # Extract the value(s) following each occurrence of `flag` in the
+    # argv list. Because the list is `[flag, value, flag, value, ...]`,
+    # a value is whatever element directly follows a flag element.
+    defp values_for(argv, flag) do
+      argv
+      |> Enum.with_index()
+      |> Enum.filter(fn {el, _i} -> el == flag end)
+      |> Enum.map(fn {_el, i} -> Enum.at(argv, i + 1) end)
     end
 
-    test "an operator --settings is emitted BEFORE the mandatory one (safety last-wins)" do
+    test "no operator keys: argv has only the mandatory --settings + bridge --mcp-config" do
+      argv = CcAgent.assemble_settings_mcp_args(@mandatory, @bridge, %{})
+
+      assert argv == ["--settings", @mandatory, "--mcp-config", @bridge]
+    end
+
+    test "the mandatory safety --settings is ALWAYS the LAST --settings (last-wins)" do
       hostile = %{"operator_settings_path" => "/hostile/settings.json"}
-      args = CcAgent.assemble_settings_mcp_args(@mandatory, @bridge, hostile)
+      argv = CcAgent.assemble_settings_mcp_args(@mandatory, @bridge, hostile)
 
-      # The mandatory file (forcing remoteControlAtStartup:false) MUST be
-      # the LAST --settings. claude is last-wins per --settings file —
-      # so a hostile operator file setting remoteControlAtStartup:true
-      # cannot win.
-      settings_args =
-        args
-        |> String.split(" ")
-        |> Enum.chunk_every(2, 1, :discard)
-        |> Enum.filter(fn [flag, _] -> flag == "--settings" end)
-        |> Enum.map(fn [_, path] -> path end)
+      settings_values = values_for(argv, "--settings")
 
-      assert settings_args == ["/hostile/settings.json", @mandatory],
+      assert settings_values == ["/hostile/settings.json", @mandatory],
              "operator --settings must precede the mandatory safety --settings"
 
-      assert List.last(settings_args) == @mandatory,
+      assert List.last(settings_values) == @mandatory,
              "the mandatory remoteControlAtStartup:false file must be LAST so it wins"
     end
 
-    test "an operator --mcp-config NEVER replaces the trusted esr-bridge --mcp-config" do
+    test "the trusted esr-bridge --mcp-config is never replaced by an operator one" do
       hostile = %{"operator_mcp_config_path" => "/hostile/mcp.json"}
-      args = CcAgent.assemble_settings_mcp_args(@mandatory, @bridge, hostile)
+      argv = CcAgent.assemble_settings_mcp_args(@mandatory, @bridge, hostile)
 
-      mcp_args =
-        args
-        |> String.split(" ")
-        |> Enum.chunk_every(2, 1, :discard)
-        |> Enum.filter(fn [flag, _] -> flag == "--mcp-config" end)
-        |> Enum.map(fn [_, path] -> path end)
+      mcp_values = values_for(argv, "--mcp-config")
 
-      assert @bridge in mcp_args,
-             "the trusted esr-bridge --mcp-config must always be present — " <>
-               "an operator mcp config cannot drop it"
+      assert @bridge in mcp_values,
+             "the trusted esr-bridge --mcp-config must always be present"
 
-      assert "/hostile/mcp.json" in mcp_args,
+      assert "/hostile/mcp.json" in mcp_values,
              "operator --mcp-config is additive, not a replacement"
+    end
+
+    test "(a) an operator path containing a SPACE stays ONE argv element" do
+      # A space in a shell string would split into two arguments. In
+      # the argv list it must remain a single, intact element.
+      spacey = "/tmp/my settings.json"
+      argv = CcAgent.assemble_settings_mcp_args(@mandatory, @bridge, %{"operator_settings_path" => spacey})
+
+      assert spacey in argv,
+             "the spaced operator path must survive intact as one argv element"
+
+      # It is NOT split — neither half appears as a standalone element.
+      refute "/tmp/my" in argv
+      refute "settings.json" in argv
+    end
+
+    test "(b) an operator path with a literal ` --settings /tmp/x.json` cannot inject a flag" do
+      # The classic flag-injection: a value that, space-joined, would
+      # introduce a LATER --settings and defeat the last-wins safety
+      # guarantee. In argv form the whole string is ONE element.
+      injected = "/tmp/mcp.json --settings /tmp/hostile-settings.json"
+      argv =
+        CcAgent.assemble_settings_mcp_args(@mandatory, @bridge, %{
+          "operator_mcp_config_path" => injected
+        })
+
+      # The injected string is delivered verbatim as a single
+      # --mcp-config value — it is NOT parsed as a flag.
+      assert injected in values_for(argv, "--mcp-config"),
+             "the injection string must be one --mcp-config value, intact"
+
+      # The hostile path NEVER became a --settings value. The only
+      # --settings value is the mandatory safety file (no operator
+      # --settings key was set).
+      assert values_for(argv, "--settings") == [@mandatory],
+             "no operator value may introduce an extra --settings flag"
+
+      assert List.last(values_for(argv, "--settings")) == @mandatory,
+             "the mandatory safety --settings remains last-wins"
+
+      # `/tmp/hostile-settings.json` is NOT a standalone argv element —
+      # it is buried inside the single injected string, inert.
+      refute "/tmp/hostile-settings.json" in argv
+    end
+
+    test "(b') a --settings injection via operator_settings_path still cannot win over safety" do
+      injected = "/tmp/op.json --settings /tmp/evil.json"
+      argv =
+        CcAgent.assemble_settings_mcp_args(@mandatory, @bridge, %{
+          "operator_settings_path" => injected
+        })
+
+      settings_values = values_for(argv, "--settings")
+
+      # Exactly two --settings values: the (intact, nonsense) operator
+      # string FIRST and the mandatory safety file LAST. The buried
+      # `/tmp/evil.json` never became its own --settings value.
+      assert settings_values == [injected, @mandatory],
+             "the injection cannot add a third, later --settings"
+
+      assert List.last(settings_values) == @mandatory,
+             "the mandatory remoteControlAtStartup:false file still wins"
+
+      refute "/tmp/evil.json" in argv
+    end
+
+    test "(c) shell metacharacters in an operator path stay inert (no command execution)" do
+      # `;`, `$(...)`, backticks and `&&` would be interpreted by a
+      # shell. In argv form there is NO shell — each is delivered as a
+      # literal character inside a single argv element.
+      for metachar_path <- [
+            "/tmp/x.json; rm -rf /tmp/pwned",
+            "/tmp/x.json$(touch /tmp/pwned)",
+            "/tmp/x.json`touch /tmp/pwned`",
+            "/tmp/x.json && touch /tmp/pwned"
+          ] do
+        argv =
+          CcAgent.assemble_settings_mcp_args(@mandatory, @bridge, %{
+            "operator_settings_path" => metachar_path
+          })
+
+        assert metachar_path in argv,
+               "the metachar path must survive intact as one argv element: #{metachar_path}"
+
+        # The settings sequence is still exactly [operator, mandatory].
+        assert values_for(argv, "--settings") == [metachar_path, @mandatory],
+               "metachars must not create extra --settings flags"
+
+        assert List.last(values_for(argv, "--settings")) == @mandatory,
+               "the mandatory safety --settings still wins"
+
+        # No fragment of the metachar payload leaked out as its own
+        # argv element — the whole thing is one inert string.
+        refute "rm" in argv
+        refute "touch" in argv
+      end
     end
   end
 

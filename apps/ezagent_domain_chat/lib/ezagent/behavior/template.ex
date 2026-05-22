@@ -75,6 +75,17 @@ defmodule Ezagent.Behavior.Template do
     IS the Generator (`Session.spawn_from_template/2`, PR-4); the
     Behavior does not duplicate it.
 
+    **Workspace authority (codex HIGH-1).** `template.instantiate` is
+    CapBAC-checked against the AgentTemplate's own URI
+    (`template://agent/<workspace>/<name>`) — only that workspace
+    segment is authorized. The destination workspace the worker is
+    spawned + bound into is therefore derived SOLELY from the
+    AgentTemplate's own URI. An explicit `workspace_uri` arg is NOT a
+    destination selector; if supplied it must equal the AgentTemplate's
+    own workspace, otherwise the call is rejected
+    `{:error, :cross_workspace_denied}`. Cross-workspace instantiation
+    is not a V1 feature — there is no second-cap path.
+
   ## Relationship to `Ezagent.Kind.Template`
 
   `Ezagent.Kind.Template` (`template_name/0` + `validate/1` +
@@ -167,9 +178,15 @@ defmodule Ezagent.Behavior.Template do
       instantiate: %{
         description:
           "Instantiate the template — AgentTemplate spawns a worker via its " <>
-            "flavor Class; SessionTemplate returns {:error, :use_generator}",
+            "flavor Class into the AgentTemplate's OWN (cap-checked) workspace; " <>
+            "an explicit workspace_uri arg differing from it is rejected " <>
+            ":cross_workspace_denied. SessionTemplate returns {:error, :use_generator}",
         args: %{
           instance_name: {:option, :string},
+          # `workspace_uri` is NOT the destination selector — the
+          # destination is always the AgentTemplate's own workspace
+          # (codex HIGH-1). When supplied it must MATCH that workspace
+          # or the call is rejected :cross_workspace_denied.
           workspace_uri: {:option, :uri},
           spawned_by: {:option, :uri}
         },
@@ -273,18 +290,58 @@ defmodule Ezagent.Behavior.Template do
     end
   end
 
-  # The workspace URI. Prefer the explicit arg; otherwise derive from
-  # the AgentTemplate's own URI workspace segment.
-  defp resolve_workspace_uri(_content, %{workspace_uri: %URI{} = ws}, _self_uri), do: {:ok, ws}
-
-  defp resolve_workspace_uri(_content, _args, %URI{} = self_uri) do
+  # The instantiation-destination workspace URI.
+  #
+  # codex HIGH-1 — a `template.instantiate` is CapBAC-checked against
+  # the AgentTemplate's OWN URI (`template://agent/<workspace>/<name>`),
+  # so only that workspace segment is authorized. The destination
+  # workspace is therefore derived SOLELY from `self_uri` — an explicit
+  # `args.workspace_uri` is NEVER trusted as the spawn destination.
+  #
+  # Cross-workspace instantiation is not a V1 feature: if `args` still
+  # carries a `workspace_uri` that differs from the AgentTemplate's own
+  # workspace, the call is REJECTED `{:error, :cross_workspace_denied}`
+  # — no second-cap path. A matching (or absent) `workspace_uri` arg is
+  # allowed; the worker is spawned + bound ONLY in the cap-checked
+  # workspace.
+  defp resolve_workspace_uri(_content, args, %URI{} = self_uri) do
     case Ezagent.Capability.workspace_of(self_uri) do
-      %URI{} = ws -> {:ok, ws}
-      :any -> {:error, :cannot_derive_workspace}
+      %URI{} = authorized_ws ->
+        check_workspace_arg(Map.get(args, :workspace_uri), authorized_ws)
+
+      :any ->
+        {:error, :cannot_derive_workspace}
     end
   end
 
   defp resolve_workspace_uri(_content, _args, _self_uri), do: {:error, :cannot_derive_workspace}
+
+  # No explicit `workspace_uri` arg → use the cap-checked workspace.
+  defp check_workspace_arg(nil, authorized_ws), do: {:ok, authorized_ws}
+
+  # An explicit `workspace_uri` arg is allowed ONLY when it equals the
+  # AgentTemplate's own (cap-checked) workspace. Any other value is a
+  # workspace-escape attempt → reject.
+  defp check_workspace_arg(%URI{} = requested, %URI{} = authorized_ws) do
+    if same_workspace?(requested, authorized_ws) do
+      {:ok, authorized_ws}
+    else
+      {:error, :cross_workspace_denied}
+    end
+  end
+
+  defp check_workspace_arg(_other, _authorized_ws), do: {:error, :cross_workspace_denied}
+
+  # Normalize both sides through `workspace_of/1` so a caller may pass
+  # either a `workspace://<name>` URI or any per-tenant URI that
+  # carries the workspace — comparison is on the canonical workspace
+  # URI, never on raw string equality.
+  defp same_workspace?(%URI{} = a, %URI{} = b) do
+    case {Ezagent.Capability.workspace_of(a), Ezagent.Capability.workspace_of(b)} do
+      {%URI{} = wa, %URI{} = wb} -> URI.to_string(wa) == URI.to_string(wb)
+      _ -> false
+    end
+  end
 
   # The principal authorizing the spawn (recorded in AgentLineage).
   # Prefer the explicit arg; fall back to the dispatch caller.

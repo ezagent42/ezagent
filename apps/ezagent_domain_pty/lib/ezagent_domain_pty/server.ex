@@ -70,10 +70,23 @@ defmodule Ezagent.Domain.Pty.Server do
     :exec_pid,
     :os_pid,
     :test_mode,
-    # Optional cmd override — tests pass a mock script here instead of
-    # needing a real claude binary. Production defaults to the inline
-    # `claude --permission-mode bypassPermissions ...` invocation.
+    # Optional cmd override. Two accepted shapes:
+    #   * a STRING — run via `/bin/sh -c` (legacy; tests pass a mock
+    #     script path here, e.g. `"bash /tmp/mock.sh"`).
+    #   * a LIST of strings — argv form `[Cmd | Args]`, executed
+    #     directly via `execve` with NO shell. Each element is exactly
+    #     one argv element — no element can split into multiple args or
+    #     introduce shell metacharacter behavior. The cc plugin builds
+    #     its `claude ...` invocation as a list so operator-controlled
+    #     sandbox paths cannot inject flags or shell commands (codex
+    #     HIGH-2).
     :cmd_override,
+    # Optional extra environment variables for the spawned child,
+    # `%{"NAME" => "value"}`. Merged into the inherited OS env. The cc
+    # plugin uses this to pass `CLAUDE_CONFIG_DIR` instead of a shell
+    # `VAR=val cmd` prefix (which is unavailable in argv form and was
+    # shell-injectable in string form — codex HIGH-2).
+    :cmd_env,
     pty_buffer: "",
     # Phase 6 PR 19 (Allen 2026-05-18): generalize auto-confirm into a
     # data-driven list of prompt patterns. Each entry:
@@ -285,6 +298,7 @@ defmodule Ezagent.Domain.Pty.Server do
     cwd = Map.get(args, :cwd, File.cwd!())
     test_mode = Map.get(args, :test_mode, Mix.env() == :test)
     cmd_override = Map.get(args, :cmd_override)
+    cmd_env = Map.get(args, :cmd_env, %{})
 
     Process.flag(:trap_exit, true)
 
@@ -293,6 +307,7 @@ defmodule Ezagent.Domain.Pty.Server do
       cwd: cwd,
       test_mode: test_mode,
       cmd_override: cmd_override,
+      cmd_env: cmd_env,
       auto_prompts: default_auto_prompts() ++ Map.get(args, :auto_prompts, [])
     }
 
@@ -364,27 +379,10 @@ defmodule Ezagent.Domain.Pty.Server do
   # the cc plugin and passed in as `cmd_override`; this Server module
   # no longer references any cc-plugin module.
   defp spawn_claude_directly(state) do
-    cmd_str =
-      case state.cmd_override do
-        cmd when is_binary(cmd) ->
-          cmd
-
-        nil ->
-          # No cmd supplied. The pre-move behavior built a `claude ...`
-          # invocation here; that lived in plugin_cc and could not move
-          # to Tier-2 Domain.Pty. Callers MUST now supply `cmd_override`
-          # (or the eventual `:cmd` field PR-D adds). Crash explicitly
-          # rather than masking the misuse — `feedback_let_it_crash_no_workarounds`.
-          raise ArgumentError,
-                "Ezagent.Domain.Pty.Server: no `cmd_override` provided for " <>
-                  "agent_uri=#{URI.to_string(state.agent_uri)}. Callers must build " <>
-                  "the command string and pass it as :cmd_override; cc plugin's " <>
-                  "Template.CcAgent does this via Ezagent.Domain.Pty.start/2."
-      end
-
+    exec_cmd = build_exec_cmd(state.cmd_override, state.agent_uri)
     env = build_env(state)
 
-    case :exec.run(String.to_charlist(cmd_str), [
+    case :exec.run(exec_cmd, [
            :pty,
            :monitor,
            # `:stdin` keeps the child's stdin pipe open so :exec.send/2
@@ -402,6 +400,46 @@ defmodule Ezagent.Domain.Pty.Server do
     end
   end
 
+  # Translate a `cmd_override` into the form `:exec.run/2` expects.
+  #
+  # codex HIGH-2 — `:exec.run/2` runs a single binary/charlist via
+  # `/bin/sh -c` (shell — metacharacters are interpreted) but runs a
+  # LIST of binaries/charlists directly via `execve` with NO shell.
+  # The argv (list) form is the safe path: each element is exactly one
+  # `argv[]` entry, so an operator-controlled element containing
+  # spaces, `;`, `$(...)`, backticks or a stray ` --flag` is delivered
+  # to the program verbatim as a SINGLE argument — it can neither
+  # split into extra arguments nor be interpreted by a shell.
+  #
+  # Two accepted shapes:
+  #   * list  → argv form, no shell. The cc plugin builds the `claude`
+  #             invocation this way so operator sandbox paths can never
+  #             inject a flag or a command.
+  #   * string → legacy `/bin/sh -c` form, kept for back-compat with
+  #             callers/tests that pass a fixed, trusted command line
+  #             (e.g. `"/bin/bash -i"`, `"bash /tmp/mock.sh"`).
+  defp build_exec_cmd(cmd, _agent_uri) when is_list(cmd) do
+    Enum.map(cmd, fn
+      arg when is_binary(arg) -> String.to_charlist(arg)
+      arg when is_list(arg) -> arg
+    end)
+  end
+
+  defp build_exec_cmd(cmd, _agent_uri) when is_binary(cmd), do: String.to_charlist(cmd)
+
+  defp build_exec_cmd(nil, agent_uri) do
+    # No cmd supplied. The pre-move behavior built a `claude ...`
+    # invocation here; that lived in plugin_cc and could not move to
+    # Tier-2 Domain.Pty. Callers MUST now supply `cmd_override`. Crash
+    # explicitly rather than masking the misuse —
+    # `feedback_let_it_crash_no_workarounds`.
+    raise ArgumentError,
+          "Ezagent.Domain.Pty.Server: no `cmd_override` provided for " <>
+            "agent_uri=#{URI.to_string(agent_uri)}. Callers must build " <>
+            "the command (string or argv list) and pass it as :cmd_override; " <>
+            "cc plugin's Template.CcAgent does this via Ezagent.Domain.Pty.start/2."
+  end
+
   defp build_env(state) do
     # Pass operator's existing env through (proxy / API key / etc) so
     # operator-set vars from their shell where `mix phx.server` runs
@@ -414,9 +452,20 @@ defmodule Ezagent.Domain.Pty.Server do
       end
     end)
 
-    overrides = [
-      {~c"EZAGENT_AGENT_URI", String.to_charlist(URI.to_string(state.agent_uri))}
-    ]
+    # Caller-supplied extra env (e.g. cc plugin's CLAUDE_CONFIG_DIR).
+    # Passed as a structured `{name, value}` pair to `:exec.run/2` —
+    # NOT interpolated into any command line — so the value cannot be
+    # shell-interpreted (codex HIGH-2).
+    cmd_env =
+      (state.cmd_env || %{})
+      |> Enum.map(fn {k, v} ->
+        {String.to_charlist(to_string(k)), String.to_charlist(to_string(v))}
+      end)
+
+    overrides =
+      [
+        {~c"EZAGENT_AGENT_URI", String.to_charlist(URI.to_string(state.agent_uri))}
+      ] ++ cmd_env
 
     overrides ++ base
   end

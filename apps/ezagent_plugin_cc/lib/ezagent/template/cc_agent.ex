@@ -58,12 +58,26 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
       }
 
   All four extended keys are optional — absent ⇒ the legacy behavior,
-  no regression. `build_claude_cmd/2` emits the operator `--settings` /
+  no regression. `build_claude_cmd/3` emits the operator `--settings` /
   `--mcp-config` such that the **mandatory plugin safety `--settings`
   is LAST** (claude `--settings` is last-wins, so `remoteControlAtStartup:
   false` is non-bypassable) and the trusted esr-bridge `--mcp-config` is
   never replaced (claude merges MCP configs additively — an operator
   config adds servers but cannot delete the bridge).
+
+  ## codex HIGH-2 — argv-safe invocation
+
+  `build_claude_cmd/3` returns an **argv list** (`[cmd | args]`), not a
+  shell string. `Ezagent.Domain.Pty` runs a list-form `cmd_override`
+  via `execve` with NO shell, so every operator-controlled sandbox
+  path is exactly ONE `argv[]` element. An operator value containing
+  a space, a literal ` --settings /tmp/x.json`, or shell
+  metacharacters (`;`, `$()`, backtick, `&&`) is delivered to `claude`
+  verbatim as a single argument — it cannot create an extra flag
+  (which would defeat the `--settings` last-wins safety guarantee) and
+  it cannot execute a shell command. `claude_config_dir` is passed as
+  a structured `CLAUDE_CONFIG_DIR` env var via the Server's `:cmd_env`
+  param, never as a `VAR=val` command prefix.
 
   ## Idempotency (PR-D2 + V1 fix)
 
@@ -82,12 +96,12 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   override path, `--dangerously-load-development-channels`,
   `--permission-mode bypassPermissions`) used to live inside
   `Ezagent.PluginCc.PtyServer.spawn_claude_directly/1` (historical).
-  It now lives here (`build_claude_cmd/1`) because Domain.Pty.Server
+  It now lives here (`build_claude_cmd/3`) because Domain.Pty.Server
   is Tier-2 and cannot reference cc-plugin modules like
   `EzagentPluginCc.McpConfigWriter`.
-  The cmd string is supplied as `cmd_override` on the Server init
-  args; Server just runs whatever string the caller hands it under
-  erlexec's PTY.
+  The invocation is supplied as `cmd_override` on the Server init args
+  — an argv LIST (codex HIGH-2), which Server runs under erlexec's PTY
+  via `execve` with no shell.
   """
 
   @behaviour Ezagent.Kind.Template
@@ -232,19 +246,23 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   defp ensure_pty_server(agent_uri, cwd, tmpl) do
     # Domain.Pty PR-A: route through the facade instead of
     # DynamicSupervisor.start_child on EzagentPluginCc.PtyServerSupervisor.
-    # The cmd string (claude + flags + mcp config path) is built here
-    # in the cc plugin and handed to Server as :cmd_override, keeping
-    # ezagent_domain_pty Tier-2.
+    # The claude invocation (argv list + cmd_env) is built here in the
+    # cc plugin and handed to Server as :cmd_override / :cmd_env,
+    # keeping ezagent_domain_pty Tier-2.
     #
     # In `:test` env we deliberately SKIP the McpConfigWriter side
     # effect — the Server short-circuits `:exec.run/2` via `test_mode:
-    # true` (Mix.env() default), so the cmd string is never spawned;
+    # true` (Mix.env() default), so the invocation is never spawned;
     # building it would write `~/.ezagent/bridge.mcp.json` to disk on
     # every test, which the pre-Domain.Pty-PR-A path also avoided.
     params =
       case Mix.env() do
-        :test -> %{cwd: cwd, test_mode: true}
-        _ -> %{cwd: cwd, cmd_override: build_claude_cmd(agent_uri, cwd, tmpl)}
+        :test ->
+          %{cwd: cwd, test_mode: true}
+
+        _ ->
+          {argv, cmd_env} = build_claude_cmd(agent_uri, cwd, tmpl)
+          %{cwd: cwd, cmd_override: argv, cmd_env: cmd_env}
       end
 
     case Ezagent.Domain.Pty.start(agent_uri, params) do
@@ -275,12 +293,19 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   # (ensure_pty_server/3) — no default, per dead-code audit 2026-05-21.
   #
   # Phase 7 completion PR-1 (SPEC §1.5 (c)): `tmpl` may carry the four
-  # optional sandbox keys. `claude_config_dir` is emitted as a
-  # `CLAUDE_CONFIG_DIR=<dir>` env prefix on the shell command (erlexec
-  # runs the cmd string through a shell). The `--settings` / `--mcp-config`
-  # assembly is delegated to the pure `assemble_settings_mcp_args/3` so
-  # the safety-ordering invariant is unit-testable without the
-  # `McpConfigWriter` side effect.
+  # optional sandbox keys.
+  #
+  # codex HIGH-2 — the invocation is built as an **argv list**, NOT a
+  # shell string. `Ezagent.Domain.Pty` runs a list-form `cmd_override`
+  # via `execve` with NO shell, so each element is exactly one
+  # `argv[]` entry. An operator-controlled sandbox path
+  # (`operator_settings_path` / `operator_mcp_config_path`) is one list
+  # element — it can neither split into extra arguments (defeating the
+  # rev-5 "mandatory `--settings` last-wins" guarantee) nor smuggle a
+  # shell command. `claude_config_dir` is returned as a structured env
+  # var (`CLAUDE_CONFIG_DIR`), NOT a `VAR=val` shell prefix (a prefix
+  # is meaningless in argv form and was shell-injectable in string
+  # form). Returns `{argv_list, env_map}`.
   defp build_claude_cmd(agent_uri, agent_cwd, tmpl) do
     {:ok, mcp_path} =
       EzagentPluginCc.McpConfigWriter.write!(
@@ -288,18 +313,24 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
         agent_cwd: agent_cwd
       )
 
-    args = assemble_settings_mcp_args(mandatory_settings_path(), mcp_path, tmpl)
+    settings_mcp_args = assemble_settings_mcp_args(mandatory_settings_path(), mcp_path, tmpl)
 
-    env_prefix =
+    argv =
+      [
+        "claude",
+        "--permission-mode",
+        "bypassPermissions",
+        "--dangerously-load-development-channels",
+        "server:esr-bridge"
+      ] ++ settings_mcp_args
+
+    cmd_env =
       case Map.get(tmpl, "claude_config_dir") do
-        dir when is_binary(dir) and dir != "" -> "CLAUDE_CONFIG_DIR=#{dir} "
-        _ -> ""
+        dir when is_binary(dir) and dir != "" -> %{"CLAUDE_CONFIG_DIR" => dir}
+        _ -> %{}
       end
 
-    env_prefix <>
-      "claude --permission-mode bypassPermissions " <>
-      "--dangerously-load-development-channels server:esr-bridge " <>
-      args
+    {argv, cmd_env}
   end
 
   # The plugin-shipped mandatory safety settings file. Phase 6 PR 23:
@@ -314,9 +345,23 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
 
   @doc false
   # Phase 7 completion PR-1 (SPEC §1.5 (c)) — pure assembly of the
-  # `--settings` / `--mcp-config` arg sequence. Exposed (`@doc false`)
-  # so the hostile-path test can assert the ordering invariant without
-  # the McpConfigWriter side effect.
+  # `--settings` / `--mcp-config` argv sequence. Exposed (`@doc false`)
+  # so the adversarial-path test can assert the ordering + injection
+  # invariants without the McpConfigWriter side effect.
+  #
+  # codex HIGH-2 — returns an **argv LIST** where every flag and every
+  # path is a SEPARATE element (`["--settings", "/a/b", ...]`), NOT a
+  # space-joined string. The list is handed verbatim to
+  # `:exec.run/2`'s argv form (no shell). Consequences:
+  #
+  #   * An operator `operator_settings_path` / `operator_mcp_config_path`
+  #     is ONE element. A value like `/tmp/x.json --settings /tmp/evil`
+  #     stays a single `argv[]` entry — claude receives it as one
+  #     (nonsense) file path; it CANNOT introduce a later `--settings`
+  #     flag, so the rev-5 "mandatory `--settings` last-wins" guarantee
+  #     holds for every possible operator value.
+  #   * Spaces, `;`, `$(...)`, backticks, `&&` in an operator value are
+  #     inert — there is no shell to interpret them.
   #
   # SAFETY INVARIANT — the mandatory plugin `--settings` is emitted
   # LAST. claude's `--settings` is last-wins, so a hostile operator
@@ -329,31 +374,31 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   # operator `--mcp-config` is an ADDITIONAL flag, never a replacement
   # (claude merges MCP configs additively — an operator config adds
   # servers but cannot delete the bridge server).
+  @spec assemble_settings_mcp_args(String.t(), String.t(), map()) :: [String.t()]
   def assemble_settings_mcp_args(mandatory_settings_path, bridge_mcp_path, tmpl)
       when is_binary(mandatory_settings_path) and is_binary(bridge_mcp_path) and is_map(tmpl) do
     operator_settings =
       case Map.get(tmpl, "operator_settings_path") do
-        p when is_binary(p) and p != "" -> ["--settings #{p}"]
+        p when is_binary(p) and p != "" -> ["--settings", p]
         _ -> []
       end
 
     operator_mcp =
       case Map.get(tmpl, "operator_mcp_config_path") do
-        p when is_binary(p) and p != "" -> ["--mcp-config #{p}"]
+        p when is_binary(p) and p != "" -> ["--mcp-config", p]
         _ -> []
       end
 
     # Order: operator --settings FIRST, mandatory --settings LAST
     # (last-wins ⇒ safety non-bypassable). The trusted bridge
     # --mcp-config is always present; an operator --mcp-config is
-    # additive (listed after the bridge).
-    args =
-      operator_settings ++
-        ["--settings #{mandatory_settings_path}"] ++
-        ["--mcp-config #{bridge_mcp_path}"] ++
-        operator_mcp
-
-    Enum.join(args, " ")
+    # additive (listed after the bridge). Each flag + each path is its
+    # OWN list element — an operator value is never split or able to
+    # become a new flag (codex HIGH-2).
+    operator_settings ++
+      ["--settings", mandatory_settings_path] ++
+      ["--mcp-config", bridge_mcp_path] ++
+      operator_mcp
   end
 
   defp agent_kind_alive?(agent_uri) do
