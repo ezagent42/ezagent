@@ -351,6 +351,8 @@ But: this is my read, not a decision. Allen's question is structural and deserve
 
 ## §5 Final spec (v2)
 
+> **Reference relationship**: §5 is the **deep normative spec** for URI shape (15 subsections, parser-enforced). The principle-level index entry — "URI shape — 6-scheme allowlist + 3-segment authority for per-tenant schemes + query-string action" — is **SKILL §Design Principles P20** in `.claude/skills/ezagent-developer/SKILL.md`. P20 points back at §5 as the deep normative spec. Skim P20 for the rule; come here for the parser-level detail (§5.1 authority shape, §5.6 scheme allowlist, §5.15 SPEC v3 3-segment per-tenant, etc.).
+
 Consensus shape after Rounds 1-4 (Allen 2026-05-19). This section is **normative**. Every claim here is a constraint that downstream PRs (#141-#147) and future code must satisfy.
 
 **SPEC v2 supersedes SPEC v1** (PR #139). The v1 → v2 deltas:

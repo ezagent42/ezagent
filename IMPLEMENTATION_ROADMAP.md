@@ -83,20 +83,11 @@ phaseN git tag → 下一个 phase
 | **e2e flow track** | manual-check feishu-cc 流程抽成 transport-agnostic 操作流程(§2),Phase 1+ 走 LiveView 验、Phase 5 走 Feishu 验;**作为 /goal 的 sub-step 内 gate**(§1.1) | Phase 1 |
 | **词汇 track** | `GLOSSARY.md` 术语表 + 易混淆词表 + 消歧 convention;新文档/代码复用易混淆词必须用消歧写法 | Phase 0 |
 
-### 1.3 10 条硬不变式
+### 1.3 设计原则 → 见 SKILL 权威集
 
-来自 `ARCHITECTURE.md` v0.4 Decision Log,任何 phase 不能违反(违反 = bug,即使代码"工作"):
+历史上本节列过 "10 条硬不变式"(来自 ARCHITECTURE v0.4 Decision Log)。现已合并进 SKILL 权威集:
 
-1. **inbound 永远走 `Ezagent.Invocation.dispatch/1`** — 不允许裸 `Phoenix.PubSub.broadcast` 到 inbound topic(Decision #75)
-2. **`use Ezagent.Kind` 生命周期严格 register→subscribe→announce_ready** — plugin 作者无法绕过(Decision #66)
-3. **`:call` to not-ready actor 必须 fail-fast,不能 buffer**(Decision #67)
-4. **Unique-key RoutingRegistry 表用 `put_new`,duplicate-key 用 `put`**(Decision #65)
-5. **Snapshot 只在 slice 真变了写**(Decision #59)
-6. **Audit 异步 cast,不阻塞 invoke**(Decision #60)
-7. **零匹配路由必须 telemetry + DLQ unroutable,不能静默**(Decision #68)
-8. **CC channel 用 stdio**(Channels 协议要求)
-9. **CLI ↔ LV 同 BEAM** — CLI 永远不起独立 VM dispatch;通过 distributed Erlang RPC 连 runtime(Decision #130)。CI gate: `apps/ezagent_cli/test/integration/cli_lv_same_server_invariant_test.exs`
-10. **External-integration plugins go through Receiver Kind + routing rule** — 禁止 PubSub-subscribe + 直接外部写(Decision #127)。CI gate: `apps/ezagent_core/test/invariants/receiver_kind_pattern_test.exs`
+**权威源**:`.claude/skills/ezagent-developer/SKILL.md` §Design Principles — 26 条编号原则(P1-P26)+ `Where each old principle now lives` 对照表(含本节 10 条的逐项映射)。Phase 实施期任何 sub-step 完成前的 grep 自查也以 SKILL 为准。
 
 ### 1.4 CLI ↔ LiveView 同构等价 — 精确定义
 

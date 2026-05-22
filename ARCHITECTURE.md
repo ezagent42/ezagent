@@ -56,29 +56,25 @@ ESR:消息进来 → 路由给 N 个 receiver → 各自反应 → 可能晚点�
 
 ## 2. 实现原则
 
-### 2.1 少发明,多装配
+> **本节四条原则的"规则陈述"已迁移到 SKILL 权威集**:`.claude/skills/ezagent-developer/SKILL.md` §Design Principles。本节保留每条的 **rationale / 反例 / Phoenix 子系统取舍表** 作为"为什么 + 实施细节",不再独立列规则。
+>
+> 旧位置 → 新原则对照:
+> - §2.1 少发明,多装配 → **P8**
+> - §2.2 Plugin 判定原则 → **P9**
+> - §2.3 Phoenix as transport → **P13**
+> - §2.4 Adapter pattern → **P12**
 
-整个系统真正属于"我们写的"代码约 920 行,集中在 `ezagent_core`。剩下全部装配 Phoenix / OTP / 生态库。判断标准:**新人加入项目时多懂几个东西还是少懂几个东西**——多记的拒绝,少记的接受。
+### 2.1 少发明,多装配 — rationale(权威规则见 SKILL P8)
 
-### 2.2 Plugin 判定原则 — 读什么数据,归哪里
+整个系统真正属于"我们写的"代码约 920 行,集中在 `ezagent_core`。剩下全部装配 Phoenix / OTP / 生态库。判断标准:**新人加入项目时多懂几个东西还是少懂几个东西**——多记的拒绝,少记的接受。LOC budget 详见 §14。
 
-什么属于 `ezagent_core`,什么属于 plugin,**判定的核心是"这段代码读什么数据"**,而不是"它是基础设施还是业务":
+### 2.2 Plugin 判定 — "读什么数据" rationale(权威规则见 SKILL P9)
 
-| 类别 | 归属 | 例子 |
-|---|---|---|
-| 读 core 数据(`%Invocation{}` / `%Message{}` / KindRegistry / RoutingRegistry) | **core** | Matcher 中 `mention`/`from`/`text_contains` 读 `%Message{}` 字段 |
-| 通用 invariants(注册一致性、投递保证、幂等) | **core** | `Ezagent.PendingDelivery` / `Ezagent.Idempotency` / `Ezagent.ReadyGate` |
-| 通用机制 infrastructure(DSL framework、registry 底座) | **core** | `Ezagent.Routing.Matcher` 的 DSL 宏 + 求值器 + `register/2` API |
-| 读 plugin 专属 payload | **plugin** | 假设 `feishu_card_type(:approval)` 读 Feishu 卡片结构 → 进 feishu plugin |
-| 业务概念(Identity、Chat 行为、Workspace 操作) | **plugin** | `esr_behavior_chat` / `esr_behavior_workspace` 等 |
-| 跟外部协议绑定 | **plugin** | `ezagent_plugin_feishu` / `ezagent_plugin_cc` |
-| 可选 transport / UI | **plugin** | `esr_adapter_cli` / `ezagent_web_liveview` |
+**反例为什么这条原则重要**:Matcher 的 `from`/`mention` 类型,如果按"chat 业务边界"放进 `esr_behavior_chat`,那未来一个 `esr_behavior_audit` 或 `esr_behavior_workflow` 也路由 `%Message{}`,就要**依赖 chat plugin** 才能用 `from/1`——破坏 plugin 隔离(SKILL §Design Principles P1 北极星)。按"读 core 数据"原则,这些 matcher 直接在 core,任何 Message-router plugin 直接调用,**不依赖 chat**。
 
-**硬测试**:_plugin 作者应该专注业务,不应该被强迫做"我是不是要装 PendingDelivery plugin"这种基础设施决策_。
+具体 core / domain / plugin 三层边界表见 SKILL §Three-tier project structure。
 
-**反例为什么这条原则重要**:Matcher 的 `from`/`mention` 类型,如果按"chat 业务边界"放进 `esr_behavior_chat`,那未来一个 `esr_behavior_audit` 或 `esr_behavior_workflow` 也路由 `%Message{}`,就要**依赖 chat plugin** 才能用 `from/1`——破坏 plugin 隔离。按"读 core 数据"原则,这些 matcher 直接在 core,任何 Message-router plugin 直接调用,**不依赖 chat**。
-
-### 2.3 Phoenix as transport, not fullstack
+### 2.3 Phoenix as transport, not fullstack — 子系统取舍(权威规则见 SKILL P13)
 
 Phoenix 在 Ezagent 里扮演 **transport framework** 角色,不是 fullstack framework。具体用与不用:
 
@@ -101,7 +97,7 @@ Phoenix 在 Ezagent 里扮演 **transport framework** 角色,不是 fullstack fr
 
 **Phoenix.Controller / View 仍然不用** — 我们的 HTTP 入口都是 Plug-level(Webhook / AdminAPI),不需要 MVC convention。
 
-### 2.4 Adapter pattern: protocol-specific code in adapters only
+### 2.4 Adapter pattern — 硬测试(权威规则见 SKILL P12)
 
 所有外部入口(Feishu/Slack/CLI/MCP/HTTP/internal)都是 **Adapter**。Adapter 做两件事:
 
@@ -781,11 +777,9 @@ end
 
 > **Implementation**:`Ezagent.Routing.Matcher` 模块 **~85 LOC / cap 110**(组合子 + Message-field matcher + DSL 宏 + `match?/2` 递归 + `register/2` API + `to_string/1` 反向渲染)。整个 session routing 表逻辑 ~10 LOC,因为 RoutingRegistry 把存储和 lookup 接走了。
 
-### 5.6 三条 dispatch 不变式
+### 5.6 三条 dispatch 不变式 → 见 SKILL P19
 
-1. **Caller 永远不直接 import Behavior 模块** — 全部走 Registry,ACL/telemetry 钩点不可绕过
-2. **Behavior 只看自己 slice** — 跨 Behavior 协调走新 action,不偷看别的 slice
-3. **每次调用 `:start, :stop, :exception` 三事件** — 分布式追踪通过 OpenTelemetry handler 自动产出
+权威源现在在 `.claude/skills/ezagent-developer/SKILL.md` §Design Principles **P19**(三条 dispatch hygiene rules 完整逐字保留 + 解释为什么这是 P14/P15/P16 的本地 hygiene)。P19 同时上下文链接到 P14(dispatch is the only path)、P15(capability shape)、P16(Kind lifecycle single entry)。本节不再独立列规则,避免双源 drift。
 
 ### 5.7 Reliability Primitives — 让正确性落在 core,不靠 plugin 作者纪律
 

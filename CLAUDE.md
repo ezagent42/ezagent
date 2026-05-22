@@ -17,23 +17,22 @@ ESR(Ezagent Session Router)— Elixir/OTP message router runtime,multi-channel �
 
 读完后,你应该能在 30 秒内回答以下问题(否则回去再读):
 - Ezagent 跟 typical Phoenix app 的两条核心差异是什么?
-- 8 条硬不变式是哪些?
+- 设计原则的五个 group 是哪些?(见下方 link)
 - 当前 phase 在哪个 sub-step?
 
 ---
 
-## 8 条硬不变式(违反 = bug,即使代码"工作")
+## 设计原则(权威集在 SKILL)
 
-每个 sub-step 完成前 grep 自查:
+**权威源**:`.claude/skills/ezagent-developer/SKILL.md` §Design Principles — 26 条编号原则(P1-P26),分 5 组(Engineering / Architecture & boundaries / Dispatch & runtime / Persistence & URIs / Plugin contract)。
 
-1. **inbound 永远走 `Ezagent.Invocation.dispatch/1`** — 不允许裸 `Phoenix.PubSub.broadcast` 到 inbound topic。Phoenix.PubSub 不 buffer 没订阅者的 topic,裸 broadcast 在 register→subscribe 窗口会丢消息(事故 2.1 根因)。Grep:`PubSub.broadcast` 出现在 inbound 路径 = bug
-2. **`use Ezagent.Kind` 生命周期严格 register→subscribe→announce_ready** — plugin 作者无法绕过。手写 `init/1` 不调宏 = bug
-3. **`:call` to not-ready actor 必须 fail-fast,不能 buffer** — caller 同步阻塞等结果,buffer 会撞 deadline_ms
-4. **Unique-key RoutingRegistry 表用 `put_new`,duplicate-key 用 `put`** — `declare_table` 时 `duplicate_keys: false/true` 决定;混用 = bug
-5. **Snapshot 只在 slice 真变了写** — `new_slice != old_slice` 才落 SQLite,不是 invoke 后都写
-6. **Audit 异步 cast,不阻塞 invoke** — `:telemetry` handler 只 `GenServer.cast` 到 `Ezagent.Audit.Writer`,不直接写 SQLite
-7. **零匹配路由必须 telemetry + DLQ unroutable,不能静默** — 默认静默 = Ezagent 是 router 不是 req/resp app 的根问题
-8. **CC channel 用 stdio**(Channels 协议要求,不是我们的选择)
+历史上本节列过 "8 条硬不变式",现已合并进 SKILL 权威集(对照表见 SKILL §"Where each old principle now lives")。**本文件在每个 prompt 都加载,刻意不复述原则**(memory `feedback_claude_md_links_only`)— 写代码 / review 前 load SKILL,改架构原则改 SKILL,不在这里。
+
+最常出 bug 的两条速查:
+- **P14 — Dispatch is the only path between Kinds**(inbound 永远走 `Ezagent.Invocation.dispatch/1`,不许 `PubSub.broadcast` 到 inbound topic — 事故 2.1 根因)
+- **P22 — Reliability primitives live in core**(ReadyGate / PendingDelivery / Idempotency / Snapshot-on-change / async audit / DLQ-on-zero-match;plugin 作者绕不过)
+
+完整集 + CI gate + 触发的 Decision Log 编号都在 SKILL。
 
 ---
 
@@ -75,21 +74,13 @@ grep -rn "def init/1" lib/ | grep -v "use Ezagent.Kind"   # 手写 init 跳过�
 
 ## 写代码核心约定
 
-### Plugin 判定原则(ARCHITECTURE.md §2.2)
+### Plugin 判定 / 三层架构 / Adapter pattern
 
-**读什么数据决定归属**:
-
-| 类别 | 归属 | 例子 |
-|---|---|---|
-| 读 core 数据(`%Invocation{}` / `%Message{}` / KindRegistry / RoutingRegistry) | **core** | Matcher 读 `%Message{}.mentions` |
-| 通用 invariants(注册一致性、投递保证、幂等) | **core** | `Ezagent.PendingDelivery` / `Ezagent.Idempotency` / `Ezagent.ReadyGate` |
-| 通用机制 infrastructure | **core** | `Ezagent.Routing.Matcher` 的 DSL 宏 + 求值器 |
-| 读 plugin 专属 payload | **plugin** | 假设的 `feishu_card_type(:approval)` |
-| 业务概念(Chat / Workspace / Identity) | **plugin** | `esr_behavior_chat` 等 |
-| 外部协议(Feishu / CC Channel) | **plugin** | `ezagent_plugin_feishu` 等 |
-| 可选 transport / UI | **plugin** | `esr_adapter_cli` / `ezagent_web_liveview` |
-
-**硬测试**:plugin 作者应该专注业务,不应该被强迫做"我是不是要装 PendingDelivery plugin"这种基础设施决策。
+合并进设计原则权威集(SKILL §Design Principles):
+- **P9 — "Reads what data" decides tier ownership**(原 ARCHITECTURE §2.2 + 本文件旧表)
+- **P12 — Adapter pattern: protocol-specific code in adapters only**(原 ARCHITECTURE §2.4)
+- **P13 — Phoenix is transport, not fullstack**(原 ARCHITECTURE §2.3)
+- **SKILL §Three-tier project structure** — core / domain / plugin 边界表
 
 ### LOC budget(ARCHITECTURE.md §14)
 
