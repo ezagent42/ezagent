@@ -97,12 +97,16 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
     def validate(_), do: {:error, :not_a_map}
 
     @impl true
+    # codex round-6 HIGH-1 — return the 3-element `{:ok, uris, %{fresh?:
+    # _}}` form, deriving `fresh?` from the ATOMIC spawn result
+    # (`SpawnRegistry.spawn_detailed/1` preserves `:started` vs
+    # `:already_started`). Models a real plugin Template Class.
     def instantiate(_tmpl_name, %{"agent_uri" => uri_str}, _workspace_uri) do
       agent_uri = URI.parse(uri_str)
 
-      case Ezagent.SpawnRegistry.spawn(agent_uri) do
-        {:ok, _pid} -> {:ok, [agent_uri]}
-        {:error, {:already_started, _pid}} -> {:ok, [agent_uri]}
+      case Ezagent.SpawnRegistry.spawn_detailed(agent_uri) do
+        {:ok, :started, _pid} -> {:ok, [agent_uri], %{fresh?: true}}
+        {:ok, :already_started, _pid} -> {:ok, [agent_uri], %{fresh?: false}}
         {:error, _} = err -> err
       end
     end
@@ -2001,6 +2005,194 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
       assert {:ok, %{workers: [^instance_uri], fresh?: false}} =
                Agent.spawn_from_template_content(content, instance_uri, spawned_by, @default_ws),
              "a re-spawn at an already-live URI must report fresh?: false (adoption)"
+    end
+  end
+
+  # ══════════════════════════════════════════════════════════════════════
+  # codex round 6 — the LAST two update_agent_template failure-path gaps
+  #
+  # - HIGH-1 r6 — round 5's `fresh?` was a PRE-PROBE (a `KindRegistry`
+  #   lookup before the plugin instantiate). That is a TOCTOU window: a
+  #   concurrent registration BETWEEN the probe and the spawn makes an
+  #   adopted worker read as fresh. r6 derives `fresh?` from the ATOMIC
+  #   `DynamicSupervisor` spawn result (`SpawnRegistry.spawn_detailed/1`
+  #   preserves `:started` vs `:already_started`). A candidate that
+  #   becomes live AFTER any probe but BEFORE the plugin's own spawn is
+  #   detected atomically — the swap REJECTS it, never adopts it.
+  # - MEDIUM-2 r6 — the post-spawn step-2 slot commit is a
+  #   `GenServer.call` into the Session; a dead/timing-out Session EXITS
+  #   the caller, bypassing both `compensate_orphan_worker` and the
+  #   manual-repair path. r6 wraps the commit (`commit_slot_step2/7`) —
+  #   an exit AFTER the replacement worker exists → HALT, both workers
+  #   alive, {:error, {:update_needs_manual_repair, _}}.
+  # ══════════════════════════════════════════════════════════════════════
+
+  describe "HIGH-1 r6 — the TOCTOU window is CLOSED: a worker registered before the plugin spawn is rejected" do
+    test "a candidate registered after the probe but before the plugin spawn aborts the swap" do
+      flavor = register_test_flavor()
+      tmpl_a = URI.new!("template://agent/default/ph7r6-h1-a-#{uniq()}")
+      tmpl_b = URI.new!("template://agent/default/ph7r6-h1-b-#{uniq()}")
+      :ok = create_agent_template(tmpl_a, agent_template_content(flavor, "config-a"))
+      :ok = create_agent_template(tmpl_b, agent_template_content(flavor, "config-b"))
+
+      st_uri = create_session_template("ph7r6-h1-team-#{uniq()}", [{"dev", tmpl_a}], [])
+      owner_uri = full_template_owner(@default_ws)
+
+      {:ok, %{session_uri: session_uri, orchestrator_uri: orch_uri}} =
+        Session.spawn_from_template(st_uri, owner_uri)
+
+      [old_worker] = live_workers_of(orch_uri)
+      caps = orchestrator_caps(orch_uri)
+
+      # The candidate replacement worker URI — old worker URI + `--g1`.
+      candidate = URI.parse(URI.to_string(old_worker) <> "--g1")
+
+      # Simulate the TOCTOU race precisely: register a worker at the
+      # candidate URI in the window AFTER round-4's
+      # `preflight_candidate_uri_free` probe but BEFORE the plugin
+      # Template Class's own spawn. The `template.instantiate` authz
+      # grant fires in exactly that window — a one-shot handler spawns
+      # the competing worker there.
+      handler_id = {:r6_h1_window_spawn, make_ref()}
+      armed = :counters.new(1, [])
+      tmpl_b_str = URI.to_string(tmpl_b)
+
+      :telemetry.attach(
+        handler_id,
+        [:ezagent, :authz, :granted],
+        fn _e, _m, meta, _cfg ->
+          target = meta[:target]
+
+          if :counters.get(armed, 1) == 0 and meta[:action] == :instantiate and
+               is_struct(target, URI) and
+               String.starts_with?(URI.to_string(target), tmpl_b_str) do
+            :counters.add(armed, 1, 1)
+            {:ok, _pid} = Ezagent.SpawnRegistry.spawn(candidate)
+          end
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      result =
+        Tools.update_agent_template("dev", tmpl_b,
+          caller: orch_uri,
+          caps: caps,
+          workspace_uri: @default_ws,
+          session_uri: session_uri
+        )
+
+      :telemetry.detach(handler_id)
+
+      # HIGH-1 r6 — the atomic `spawn_detailed` inside the plugin
+      # instantiate sees `:already_started` for the candidate URI, so
+      # `spawn_from_template_content` reports `fresh?: false` and the
+      # swap REJECTS it. The window is CLOSED — never a silent adoption.
+      assert result == {:error, {:update_aborted, :candidate_uri_already_live}},
+             "a worker registered before the plugin's atomic spawn must abort the swap " <>
+               "with :candidate_uri_already_live — the TOCTOU window is closed. " <>
+               "Got: #{inspect(result)}"
+
+      # The OLD worker is untouched + alive — no outage.
+      assert {:ok, _} = KindRegistry.lookup(old_worker),
+             "the OLD worker must stay alive when the candidate is rejected"
+
+      # The slot still names the OLD worker — the swap did not commit.
+      wc = session_working_copy(session_uri)
+      {_n, _src, live, _gen} = find_slot(wc, "dev")
+
+      assert URI.to_string(live) == URI.to_string(old_worker),
+             "the slot must still name the OLD worker after a rejected swap"
+    end
+
+    test "spawn_from_template_content derives fresh? from the atomic spawn result, not a pre-probe" do
+      # The fresh? signal at its source. A worker registered between a
+      # (hypothetical) probe and the plugin spawn would make a pre-probe
+      # lie; the atomic `spawn_detailed` inside the plugin instantiate
+      # cannot be fooled — it reports the true outcome.
+      flavor = register_test_flavor()
+      tmpl = URI.new!("template://agent/default/ph7r6-sig-#{uniq()}")
+      content = agent_template_content(flavor, "sig")
+      :ok = create_agent_template(tmpl, content)
+
+      instance_uri = URI.parse("entity://agent/default/#{flavor}_ph7r6sig-#{uniq()}")
+      spawned_by = User.admin_uri()
+
+      # Pre-register the worker — model a concurrent spawn that already
+      # won the race. A pre-probe done before this point would have said
+      # "absent" and lied; the atomic result is the ground truth.
+      {:ok, _pid} = Ezagent.SpawnRegistry.spawn(instance_uri)
+
+      assert {:ok, %{workers: [^instance_uri], fresh?: false}} =
+               Agent.spawn_from_template_content(content, instance_uri, spawned_by, @default_ws),
+             "a worker already live before the plugin spawn must report fresh?: false — " <>
+               "the atomic spawn result, not a pre-probe, is the source of truth"
+    end
+  end
+
+  describe "MEDIUM-2 r6 — a step-2 slot-commit exit after the replacement spawns halts fail-safe" do
+    test "a killed Session on the step-2 commit keeps BOTH workers alive + :update_needs_manual_repair" do
+      flavor = register_test_flavor()
+      tmpl_a = URI.new!("template://agent/default/ph7r6-m2-a-#{uniq()}")
+      tmpl_b = URI.new!("template://agent/default/ph7r6-m2-b-#{uniq()}")
+      :ok = create_agent_template(tmpl_a, agent_template_content(flavor, "config-a"))
+      :ok = create_agent_template(tmpl_b, agent_template_content(flavor, "config-b"))
+
+      st_uri = create_session_template("ph7r6-m2-team-#{uniq()}", [{"dev", tmpl_a}], [])
+      owner_uri = full_template_owner(@default_ws)
+
+      {:ok, %{session_uri: session_uri, orchestrator_uri: orch_uri}} =
+        Session.spawn_from_template(st_uri, owner_uri)
+
+      [old_worker] = live_workers_of(orch_uri)
+      caps = orchestrator_caps(orch_uri)
+
+      # The replacement worker URI the swap will spawn.
+      new_worker = URI.parse(URI.to_string(old_worker) <> "--g1")
+
+      # Force the STEP-2 slot commit to EXIT — kill the Session on the
+      # FIRST `set_working_copy` (step-2 is the first such call in the
+      # swap). The step-2 dispatch is a `GenServer.call` into the
+      # Session; killing the Session inside its authz-grant handler
+      # makes the in-flight call EXIT rather than return a tagged tuple.
+      :ok = install_session_killer_on_nth_set_working_copy(session_uri, 1)
+
+      result =
+        Tools.update_agent_template("dev", tmpl_b,
+          caller: orch_uri,
+          caps: caps,
+          workspace_uri: @default_ws,
+          session_uri: session_uri
+        )
+
+      # MEDIUM-2 r6 — the step-2 commit exited AFTER the replacement
+      # worker was spawned. The slot-commit state is UNCERTAIN → HALT
+      # with a distinct manual-repair error, NOT a generic abort and NOT
+      # an uncaught exit.
+      assert match?({:error, {:update_needs_manual_repair, _}}, result),
+             "a step-2 slot-commit exit must HALT with " <>
+               "{:error, {:update_needs_manual_repair, _}}. Got: #{inspect(result)}"
+
+      {:error, {:update_needs_manual_repair, info}} = result
+
+      # The repair payload carries enough state for an operator.
+      assert info[:reason] == :slot_commit_uncertain
+      assert URI.to_string(info[:old_worker]) == URI.to_string(old_worker)
+      assert URI.to_string(info[:new_worker]) == URI.to_string(new_worker)
+      assert info[:slot] == "dev"
+
+      live = Enum.map(info[:live_workers] || [], &URI.to_string/1)
+      assert URI.to_string(old_worker) in live
+      assert URI.to_string(new_worker) in live
+
+      # MEDIUM-2 r6 — NOTHING was terminated: BOTH workers stay alive.
+      # The replacement (new) worker was spawned and must NOT be
+      # compensated away — the slot may name it (the commit's outcome is
+      # unknown).
+      assert {:ok, _} = KindRegistry.lookup(new_worker),
+             "the NEW (replacement) worker must NOT be terminated when the step-2 " <>
+               "slot commit exits — the slot may have committed to it"
     end
   end
 

@@ -306,29 +306,40 @@ defmodule Ezagent.Entity.Agent do
     for `add_agent_slot` workers, so cap #2 resolves).
   - `workspace_uri` — `%URI{}` scope the worker belongs to.
 
-  ## Return — the fresh-vs-adopted signal (codex round-5 MEDIUM-3)
+  ## Return — the fresh-vs-adopted signal (codex round-5 MEDIUM-3, round-6 HIGH-1)
 
   `{:ok, %{workers: [worker_uri], fresh?: boolean()}}` on success,
   `{:error, reason}` otherwise.
 
   Every plugin `Ezagent.Kind.Template` `instantiate/3` is documented as
   IDEMPOTENT — re-calling after the Kinds are alive is a no-op that
-  returns the SAME URIs (`SpawnRegistry.spawn/1` collapses the
-  `{:already_started, _}`). That idempotency is correct for the
-  Workspace.Loader boot path, but it ERASES a signal `update_agent_template`
-  needs: did THIS call freshly create the worker, or did it adopt a
-  pre-existing one? (A concurrent spawn registering the candidate URI
-  between the swap's preflight and this call → `instantiate` silently
-  adopts a worker the swap did NOT create.)
+  returns the SAME URIs. That idempotency is correct for the
+  Workspace.Loader boot path, but it must not ERASE a signal
+  `update_agent_template` needs: did THIS call freshly create the
+  worker, or did it adopt a pre-existing one? (A concurrent spawn
+  registering the candidate URI → `instantiate` silently adopts a
+  worker the swap did NOT create; `record_lineage`/`bind_workspace`
+  then mutate ownership for an adopted worker.)
 
-  `spawn_from_template_content/4` reconstructs that signal **without
-  changing the plugin behaviour contract**: it probes `KindRegistry`
-  for `instance_uri` BEFORE delegating to `template_class.instantiate/3`.
-  If the worker URI was already registered at that moment, the
-  instantiate adopted a pre-existing process — `fresh?: false`. If it
-  was absent, this call created it — `fresh?: true`. `KindRegistry` is
-  the same registry the swap's candidate-URI preflight reads, so the
-  signal is authoritative for exactly the TOCTOU concern.
+  ## codex round-6 HIGH-1 — `fresh?` comes from the ATOMIC spawn result
+
+  Round 5 reconstructed `fresh?` by probing `KindRegistry` for
+  `instance_uri` BEFORE delegating to `template_class.instantiate/3`.
+  That probe is a TOCTOU window: a concurrent registration BETWEEN the
+  probe and the plugin's spawn makes an adopted worker read as fresh.
+
+  Round 6 removes the window structurally. `Ezagent.Kind.Template`
+  `instantiate/3` now returns the 3-element `{:ok, [URI.t()], %{fresh?:
+  boolean()}}` form, where `fresh?` is derived from the ATOMIC
+  `DynamicSupervisor.start_child` outcome (`SpawnRegistry.spawn_detailed/1`
+  preserves `:started` vs `:already_started`) — exactly one concurrent
+  caller wins the start. `spawn_from_template_content/4` reads `fresh?`
+  from THAT result. No pre-probe; the check+spawn is atomic, so the
+  window is removed, not narrowed.
+
+  A Template Class returning the legacy 2-element `{:ok, [URI.t()]}`
+  form supplies no `fresh?` — it is treated conservatively as `false`
+  (the swap then errs on the side of refusing a possible adoption).
   """
   @spec spawn_from_template_content(map(), URI.t(), URI.t(), URI.t()) ::
           {:ok, %{workers: [URI.t()], fresh?: boolean()}} | {:error, term()}
@@ -339,28 +350,44 @@ defmodule Ezagent.Entity.Agent do
         %URI{} = workspace_uri
       )
       when is_map(template_content_map) do
-    # codex round-5 MEDIUM-3 — probe BEFORE the plugin `instantiate/3`
-    # collapses the `{:already_started, _}` signal. A worker already
-    # registered at `instance_uri` means the instantiate will ADOPT it,
-    # not create it.
-    pre_existing? = match?({:ok, _pid}, Ezagent.KindRegistry.lookup(instance_uri))
-
     with {:ok, template_class} <- resolve_template_class(template_content_map),
          {:ok, data} <-
            Ezagent.Entity.AgentTemplate.to_template_data(template_content_map, instance_uri),
-         {:ok, workers} <-
-           template_class.instantiate(template_class.template_name(), data, workspace_uri) do
+         {:ok, workers, fresh?} <-
+           instantiate_workers(template_class, data, workspace_uri) do
       Enum.each(workers, fn worker_uri ->
         :ok = record_lineage(worker_uri, spawned_by_uri)
         :ok = bind_workspace(worker_uri, workspace_uri)
       end)
 
-      {:ok, %{workers: workers, fresh?: not pre_existing?}}
+      {:ok, %{workers: workers, fresh?: fresh?}}
     end
   end
 
   def spawn_from_template_content(_content, _instance, _spawned_by, _workspace) do
     {:error, :invalid_spawn_from_template_content_args}
+  end
+
+  # codex round-6 HIGH-1 — call the plugin Template Class's
+  # `instantiate/3` and normalize its return to `{:ok, workers,
+  # fresh?}`. The 3-element `{:ok, workers, %{fresh?: _}}` form carries
+  # the atomic fresh-vs-adopted signal; the legacy 2-element
+  # `{:ok, workers}` form has no signal — `fresh?` is conservatively
+  # `false` (the swap then refuses a possible adoption).
+  defp instantiate_workers(template_class, data, %URI{} = workspace_uri) do
+    case template_class.instantiate(template_class.template_name(), data, workspace_uri) do
+      {:ok, workers, meta} when is_list(workers) and is_map(meta) ->
+        {:ok, workers, Map.get(meta, :fresh?, false) == true}
+
+      {:ok, workers} when is_list(workers) ->
+        {:ok, workers, false}
+
+      {:error, _} = err ->
+        err
+
+      other ->
+        {:error, {:unexpected_instantiate_result, other}}
+    end
   end
 
   defp resolve_template_class(content) do

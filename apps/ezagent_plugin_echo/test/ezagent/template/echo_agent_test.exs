@@ -153,7 +153,10 @@ defmodule Ezagent.PluginEcho.Template.EchoAgentTest do
 
       workspace_uri = URI.parse("workspace://test")
 
-      assert {:ok, [^agent_uri]} = EchoAgent.instantiate("t", tmpl, workspace_uri)
+      # codex round-6 HIGH-1 — `instantiate/3` returns the 3-element
+      # `{:ok, uris, %{fresh?: _}}` form; a first spawn is `fresh?: true`.
+      assert {:ok, [^agent_uri], %{fresh?: true}} =
+               EchoAgent.instantiate("t", tmpl, workspace_uri)
 
       # Agent Kind alive
       assert {:ok, agent_pid} = Ezagent.KindRegistry.lookup(agent_uri),
@@ -184,7 +187,9 @@ defmodule Ezagent.PluginEcho.Template.EchoAgentTest do
 
       workspace_uri = URI.parse("workspace://test")
 
-      assert {:ok, [^agent_uri]} = EchoAgent.instantiate("t", tmpl, workspace_uri)
+      # codex round-6 HIGH-1 — 3-element return; a first spawn is fresh.
+      assert {:ok, [^agent_uri], %{fresh?: true}} =
+               EchoAgent.instantiate("t", tmpl, workspace_uri)
 
       # Both halves alive — the cross-flavor invariant.
       assert {:ok, agent_pid} = Ezagent.KindRegistry.lookup(agent_uri),
@@ -216,12 +221,16 @@ defmodule Ezagent.PluginEcho.Template.EchoAgentTest do
 
       workspace_uri = URI.parse("workspace://test")
 
-      assert {:ok, [^agent_uri]} = EchoAgent.instantiate("t", tmpl, workspace_uri)
+      # codex round-6 HIGH-1 — first spawn is fresh, the idempotent
+      # re-call adopts the already-live worker (`fresh?: false`).
+      assert {:ok, [^agent_uri], %{fresh?: true}} =
+               EchoAgent.instantiate("t", tmpl, workspace_uri)
 
       pids_before = list_pty_pids_for(agent_uri_str)
       assert length(pids_before) == 1
 
-      assert {:ok, [^agent_uri]} = EchoAgent.instantiate("t", tmpl, workspace_uri)
+      assert {:ok, [^agent_uri], %{fresh?: false}} =
+               EchoAgent.instantiate("t", tmpl, workspace_uri)
 
       pids_after = list_pty_pids_for(agent_uri_str)
       assert pids_after == pids_before

@@ -29,6 +29,13 @@ defmodule Ezagent.SpawnRegistry do
   and plugins may also spawn their own canonical Kinds (admin User,
   default Session).
 
+  `spawn/1` collapses "this call started it" and "it already existed"
+  into one `{:ok, pid}`. A caller that needs the distinction — e.g.
+  `update_agent_template`'s rollback-safe swap, which must NOT adopt a
+  worker another process created — uses `spawn_detailed/1`, which
+  preserves the atomic `DynamicSupervisor` outcome
+  (`{:ok, :started, pid}` vs `{:ok, :already_started, pid}`).
+
   ## ETS layout
 
   `:ezagent_spawn_registry` set table owned by `EzagentCore.EtsOwner`. Keys
@@ -65,20 +72,76 @@ defmodule Ezagent.SpawnRegistry do
 
   Returns `{:ok, pid}` either way. `{:error, :no_spawn_fn}` if no
   plugin registered the URI's scheme.
+
+  ## Idempotency collapse (and why `spawn_detailed/1` exists)
+
+  `spawn/1` deliberately collapses three distinct outcomes into a
+  single `{:ok, pid}`:
+
+    1. the URI was ALREADY live in `KindRegistry` (lookup hit);
+    2. THIS call's `DynamicSupervisor.start_child` started the worker
+       (`{:ok, pid}`);
+    3. the worker was started CONCURRENTLY — the supervisor returned
+       `{:error, {:already_started, pid}}`.
+
+  For the Loader / boot path that collapse is correct (a re-run is a
+  no-op). But it ERASES the "did THIS call win the start" signal —
+  and that signal is the ground truth `update_agent_template`'s swap
+  needs to know it is not silently adopting a worker another process
+  created (codex round-6 HIGH-1). The `DynamicSupervisor` ALREADY
+  distinguishes cases 2 and 3 atomically; `spawn_detailed/1` preserves
+  that distinction instead of collapsing it.
   """
   @spec spawn(URI.t()) :: {:ok, pid()} | {:error, term()}
   def spawn(%URI{scheme: scheme} = uri) when is_binary(scheme) do
+    case spawn_detailed(uri) do
+      {:ok, _started_or_adopted, pid} -> {:ok, pid}
+      {:error, _} = err -> err
+    end
+  end
+
+  @doc """
+  Spawn (or look up an existing) Kind at the given URI, PRESERVING the
+  atomic "this call won the start" signal.
+
+  This is the structural fix for codex round-6 HIGH-1: the freshness
+  of a worker MUST come from the atomic spawn result, never from a
+  pre-probe of `KindRegistry` (a pre-probe is a TOCTOU window — a
+  concurrent registration between the probe and the spawn makes an
+  adopted worker read as fresh).
+
+  Returns:
+
+    * `{:ok, :started, pid}` — THIS call's `DynamicSupervisor.start_child`
+      started the worker. The caller created it.
+    * `{:ok, :already_started, pid}` — the worker already existed (a
+      `KindRegistry` lookup hit OR the supervisor returned
+      `{:error, {:already_started, pid}}` — a concurrent start that
+      THIS call lost). The caller ADOPTED it.
+    * `{:error, term()}` — no spawn fn for the scheme, or the spawn fn
+      failed.
+
+  A `KindRegistry` lookup hit is reported as `:already_started`
+  (conservatively — the caller did not create the worker). The race
+  window narrows to the spawn fn itself, where `DynamicSupervisor`
+  resolves it atomically: exactly one concurrent caller gets
+  `{:ok, :started, _}`, every other gets `{:ok, :already_started, _}`.
+  """
+  @spec spawn_detailed(URI.t()) ::
+          {:ok, :started | :already_started, pid()} | {:error, term()}
+  def spawn_detailed(%URI{scheme: scheme} = uri) when is_binary(scheme) do
     case Ezagent.KindRegistry.lookup(uri) do
       {:ok, pid} ->
-        {:ok, pid}
+        {:ok, :already_started, pid}
 
       :error ->
         case :ets.lookup(@table, scheme) do
           [{^scheme, fun}] ->
             case fun.(uri) do
-              {:ok, pid} -> {:ok, pid}
-              {:error, {:already_started, pid}} -> {:ok, pid}
-              other -> other
+              {:ok, pid} -> {:ok, :started, pid}
+              {:error, {:already_started, pid}} -> {:ok, :already_started, pid}
+              {:error, _} = err -> err
+              other -> {:error, {:unexpected_spawn_fn_result, other}}
             end
 
           [] ->

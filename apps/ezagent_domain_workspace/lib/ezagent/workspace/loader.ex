@@ -116,13 +116,17 @@ defmodule Ezagent.Workspace.Loader do
   end
 
   defp do_invoke(class_module, tmpl_name, tmpl_data, workspace_uri) do
+    # codex round-6 HIGH-1 — a Template Class may return either the
+    # 2-element `{:ok, uris}` form or the 3-element `{:ok, uris, meta}`
+    # form (meta carries `fresh?`). The Loader does not consume `meta`;
+    # it normalizes both to a URI list so the freshness-signal change
+    # does not regress the boot path.
     case class_module.instantiate(tmpl_name, tmpl_data, workspace_uri) do
       {:ok, uris} when is_list(uris) ->
-        Enum.each(uris, fn uri ->
-          Ezagent.WorkspaceRegistry.bind(uri, workspace_uri)
-        end)
+        do_invoke_bind(uris, workspace_uri)
 
-        {:ok, uris}
+      {:ok, uris, meta} when is_list(uris) and is_map(meta) ->
+        do_invoke_bind(uris, workspace_uri)
 
       {:error, {:already_started, _pid}} ->
         # Idempotent: the Kind is already alive (template instantiate
@@ -140,6 +144,17 @@ defmodule Ezagent.Workspace.Loader do
       other ->
         {:error, {:bad_template_return, other}}
     end
+  end
+
+  # Bind every URI a Template Class spawned to the workspace
+  # (invariant 4 — workspace-scoped routing rules must fire). Shared by
+  # both the 2- and 3-element `instantiate/3` return shapes.
+  defp do_invoke_bind(uris, workspace_uri) do
+    Enum.each(uris, fn uri ->
+      Ezagent.WorkspaceRegistry.bind(uri, workspace_uri)
+    end)
+
+    {:ok, uris}
   end
 
   defp tmpl_data_from_template_name(workspace_uri, tmpl_name) do
@@ -274,18 +289,14 @@ defmodule Ezagent.Workspace.Loader do
 
   defp invoke_template(class_module, tmpl_name, tmpl_data, workspace_uri) do
     case class_module.instantiate(tmpl_name, tmpl_data, workspace_uri) do
+      # codex round-6 HIGH-1 — accept both the 2-element `{:ok, uris}`
+      # and the 3-element `{:ok, uris, meta}` form (meta carries
+      # `fresh?`, which the boot path does not consume).
       {:ok, uris} when is_list(uris) ->
-        # Phase 7 PR 31 (IMPL-7-1): bind every session URI the
-        # Template Class spawned to this workspace, so production
-        # dispatch via Ezagent.Behavior.Chat.invoke(:send) can resolve
-        # workspace_uri for the Resolver call (chat.ex:116).
-        # Non-session URIs are bound too — harmless, and avoids
-        # special-casing scheme detection in this fan-out path.
-        Enum.each(uris, fn uri ->
-          Ezagent.WorkspaceRegistry.bind(uri, workspace_uri)
-        end)
+        {tmpl_name, load_all_bind(uris, workspace_uri)}
 
-        {tmpl_name, {:ok, uris}}
+      {:ok, uris, meta} when is_list(uris) and is_map(meta) ->
+        {tmpl_name, load_all_bind(uris, workspace_uri)}
 
       {:error, reason} = err ->
         Logger.warning(
@@ -303,6 +314,19 @@ defmodule Ezagent.Workspace.Loader do
 
         {tmpl_name, {:error, {:bad_template_return, other}}}
     end
+  end
+
+  # Phase 7 PR 31 (IMPL-7-1): bind every session URI the Template Class
+  # spawned to this workspace, so production dispatch via
+  # Ezagent.Behavior.Chat.invoke(:send) can resolve workspace_uri for
+  # the Resolver call. Non-session URIs are bound too — harmless, and
+  # avoids special-casing scheme detection in this fan-out path.
+  defp load_all_bind(uris, workspace_uri) do
+    Enum.each(uris, fn uri ->
+      Ezagent.WorkspaceRegistry.bind(uri, workspace_uri)
+    end)
+
+    {:ok, uris}
   end
 
   defp extract_class_name(%{"class" => name}) when is_binary(name) and name != "", do: name
