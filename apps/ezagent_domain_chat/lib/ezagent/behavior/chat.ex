@@ -74,16 +74,62 @@ defmodule Ezagent.Behavior.Chat do
       # %{ref => URI} — Process.monitor refs
       monitors: %{},
       # %{URI => DateTime} — when last seen offline (only present for offline)
-      last_seen: %{}
-      # Phase 7 PR 44 + PR 46: orchestrator's working-copy template
-      # state will be ADDED to this slice when the orchestrator tools
-      # first mutate it (lazy add via Map.put rather than init field
-      # so existing tests asserting exact slice shape don't regress).
-      # Field name: `template_working_copy`. Format documented in
-      # SPEC §7-3 "Working-copy session slice".
-      # User / Agent Kind contexts never write to it; Session-context
-      # only.
+      last_seen: %{},
+      # Phase 7 completion PR-2 (SPEC §1.3 / §1.6) — the durable
+      # source-template record for the orchestrator's working copy.
+      # `template_working_copy` is template-SHAPED, not live-runtime
+      # shaped (codex rev-3 HIGH-3): `agent_slots` carries the
+      # `template://agent/<ws>/<name>` AgentTemplate URI each slot was
+      # spawned from (the durable `source_agent_template_uri`), NOT a
+      # live `entity://agent` instance URI; routing receivers are slot
+      # NAMES, not live URIs. Because Session is `{:snapshot,
+      # :on_change}` this field persists across restart.
+      #
+      # A pre-PR-2 Session snapshot has a `:chat` slice WITHOUT this
+      # key. `Ezagent.Kind.Snapshot.load_or_init/3` merges at the
+      # slice-key level (`Map.merge(fresh, loaded)`), so the loaded
+      # `:chat` slice would replace the fresh one entirely — readers
+      # MUST therefore treat a missing key as the default via
+      # `template_working_copy/1` below rather than dot-access.
+      template_working_copy: default_template_working_copy()
     }
+  end
+
+  @doc """
+  The empty/default `template_working_copy` shape (Phase 7 completion
+  SPEC §1.3 / §1.6).
+
+  Used by `init_slice/1` for fresh Sessions and as the safe default
+  when reading a pre-PR-2 Session snapshot whose `:chat` slice has no
+  `template_working_copy` key.
+  """
+  @spec default_template_working_copy() :: map()
+  def default_template_working_copy do
+    %{
+      # [{slot_name :: String.t(), template_uri :: URI.t()}]
+      # template_uri is a `template://agent/<ws>/<name>` AgentTemplate
+      # URI — the durable source_agent_template_uri.
+      agent_slots: [],
+      # [{matcher_ast :: term(), [slot_name :: String.t()]}]
+      # receivers are slot NAMES, resolved to URIs only on instantiate.
+      routing_rules: [],
+      # URI.t() | nil — the orchestrator agent's AgentTemplate
+      orchestrator_template_uri: nil,
+      # URI.t() | nil — workspace newly-instantiated sessions land in
+      default_workspace_uri: nil,
+      # String.t() — human description of the team
+      description: ""
+    }
+  end
+
+  @doc """
+  Read the durable `template_working_copy` field from a `:chat` slice,
+  defaulting to `default_template_working_copy/0` when the key is
+  absent (a pre-PR-2 Session snapshot — see `init_slice/1`).
+  """
+  @spec template_working_copy(map()) :: map()
+  def template_working_copy(slice) when is_map(slice) do
+    Map.get(slice, :template_working_copy, default_template_working_copy())
   end
 
   # --- :send -------------------------------------------------------------

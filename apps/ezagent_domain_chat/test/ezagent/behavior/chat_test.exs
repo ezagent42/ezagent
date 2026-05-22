@@ -40,8 +40,37 @@ defmodule Ezagent.Behavior.ChatTest do
       assert Chat.state_slice() == :chat
     end
 
-    test "init_slice/1 returns slice with members / monitors / last_seen empty maps" do
-      assert Chat.init_slice(%{}) == %{members: %{}, monitors: %{}, last_seen: %{}}
+    test "init_slice/1 returns slice with members / monitors / last_seen empty maps + empty template_working_copy" do
+      # Phase 7 completion PR-2 — the `:chat` slice now also carries the
+      # durable `template_working_copy` field (SPEC §1.3 / §1.6).
+      assert Chat.init_slice(%{}) == %{
+               members: %{},
+               monitors: %{},
+               last_seen: %{},
+               template_working_copy: Chat.default_template_working_copy()
+             }
+    end
+
+    test "default_template_working_copy/0 is the empty template-shaped record (PR-2)" do
+      assert Chat.default_template_working_copy() == %{
+               agent_slots: [],
+               routing_rules: [],
+               orchestrator_template_uri: nil,
+               default_workspace_uri: nil,
+               description: ""
+             }
+    end
+
+    test "template_working_copy/1 returns the field, defaulting when key is absent (pre-PR-2 slice)" do
+      # A fresh `init_slice/1` carries the field.
+      slice = Chat.init_slice(%{})
+      assert Chat.template_working_copy(slice) == Chat.default_template_working_copy()
+
+      # A pre-PR-2 `:chat` slice has no `template_working_copy` key —
+      # readers must still get the empty default, never crash.
+      pre_pr2_slice = %{members: %{}, monitors: %{}, last_seen: %{}}
+      refute Map.has_key?(pre_pr2_slice, :template_working_copy)
+      assert Chat.template_working_copy(pre_pr2_slice) == Chat.default_template_working_copy()
     end
 
     test "interface/0 declares all 4 actions" do
