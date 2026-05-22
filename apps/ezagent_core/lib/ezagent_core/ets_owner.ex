@@ -57,7 +57,15 @@ defmodule EzagentCore.EtsOwner do
     # schemes; plugins extend it ONLY via `Ezagent.SpawnRegistry.register/2`
     # (which co-registers). Eliminates the hardcoded `@known_schemes`
     # drift bug.
-    {Ezagent.URI.SchemeRegistry, :set}
+    {Ezagent.URI.SchemeRegistry, :set},
+    # Plugin authoring contract PR-1 (SPEC
+    # docs/superpowers/specs/2026-05-22-plugin-authoring-contract.md):
+    # - PluginRegistry §4 — runtime catalog of installed plugins;
+    #   each plugin self-registers during `Ezagent.Plugin.boot/1`.
+    # - AgentFlavorRegistry §6.3 — declarative flavor→{kind,
+    #   template_class} map; populated by `boot/1` per `agent_flavors/0`.
+    {Ezagent.PluginRegistry, :set},
+    {Ezagent.AgentFlavorRegistry, :set}
   ]
 
   def start_link(_opts) do
