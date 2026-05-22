@@ -497,6 +497,7 @@ The durable record. When you (or a future contributor) need authoritative answer
 | `docs/notes/plugin-receiver-kind-contract.md` | Why Plugin X cannot PubSub.broadcast to Plugin Y (Decision #127) — note: SPEC v2 §5.8 supersedes the "Receiver Kind = own a scheme" framing; current pattern is "register a Behavior on the existing core Kind" |
 | `docs/notes/phase-7-resume-state.md` | Per-PR live status table (resume any session mid-Phase-7) |
 | `docs/notes/phase-8-deploy-notes.zh_cn.md` | Phase 8 branch verification + operator runbook |
+| `apps/ezagent_domain_chat/lib/ezagent/entity/agent_template.ex` moduledoc | **Authoritative source for cc agent sandbox/config** — `claude_config_dir` / `settings_path` / `mcp_config_path` / `api_key_helper`. The standalone `cc-agent-config` SPEC was retired 2026-05-23 and absorbed here. Operator companion: `docs/runbook/cc-agent-config.md` |
 
 ---
 

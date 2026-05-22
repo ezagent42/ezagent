@@ -14,6 +14,16 @@ defmodule Ezagent.Entity.AgentTemplate do
   (PR 38). The orchestrator agent (PR 45+) selects from registered
   AgentTemplates via its `list_templates` and `add_agent_slot` tools.
 
+  > **Single source of truth for cc agent sandbox/config.** A
+  > standalone `cc-agent-config` SPEC was drafted 2026-05-22 and
+  > RETIRED 2026-05-23 (branch `docs/cc-agent-config-spec` deleted,
+  > never merged): this slice schema (`claude_config_dir`,
+  > `settings_path`, `mcp_config_path`, `api_key_helper`) already
+  > covered it. Operator companion runbook:
+  > `docs/runbook/cc-agent-config.md`. Future plugin authors
+  > extending cc-agent config knobs add fields HERE — not in a
+  > parallel store.
+
   ## URI shape
 
   `template://agent/<name>` (no version suffix — AgentTemplates are
