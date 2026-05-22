@@ -155,6 +155,67 @@ defmodule Ezagent.Entity.Agent do
   end
 
   @doc """
+  The shared session-unique LIVE worker instance name (Phase 7
+  completion hardening — CRITICAL + HIGH-6).
+
+  ## The bug this closes
+
+  Worker instance URIs are deterministic from `{workspace, flavor,
+  instance_name}`. The pre-hardening Generator + `add_agent_slot`
+  passed the **bare slot name** as `instance_name` for every
+  `template.instantiate`. Two sessions instantiated from the SAME
+  SessionTemplate therefore got the SAME live worker URI for a slot —
+  the cc Class treats an already-started worker as idempotent success,
+  and `AgentLineage.record/2` (an ETS *set*) lets the later session
+  silently OVERWRITE the worker's parent lineage. Session isolation
+  breaks: the prior session loses cap #2, and routing / PTY state is
+  shared between two unrelated sessions. The same determinism made
+  `update_agent_template` a no-op for a same-flavor swap — old + new
+  worker URIs were equal, so the worker never restarted.
+
+  ## The fix
+
+  The LIVE worker instance name is made **session-unique** by folding
+  in a `session_discriminator` (the generated Session's name segment)
+  and an optional `generation` counter (incremented on every
+  `update_agent_template` swap of the same slot). The durable
+  `template_working_copy` SLOT name stays the bare `slot_name` — it is
+  the template-shaped key, stable across instantiations; only the
+  live instance URI gets uniqueness.
+
+  Result: `<slot>--<session_discriminator>` (generation 0) or
+  `<slot>--<session_discriminator>--g<n>` (generation ≥ 1). Two
+  sessions from one template → disjoint live worker URIs; a same-flavor
+  `update_agent_template` → a fresh generation-specific URI, so the
+  worker actually restarts.
+  """
+  @spec session_instance_name(String.t(), String.t(), non_neg_integer()) :: String.t()
+  def session_instance_name(slot_name, session_discriminator, generation \\ 0)
+      when is_binary(slot_name) and is_binary(session_discriminator) and
+             is_integer(generation) and generation >= 0 do
+    disc = sanitize_segment(session_discriminator)
+    base = "#{sanitize_segment(slot_name)}--#{disc}"
+
+    if generation == 0 do
+      base
+    else
+      "#{base}--g#{generation}"
+    end
+  end
+
+  # URI name segments must be filesystem/URI-safe — collapse anything
+  # outside `[a-zA-Z0-9_-]` to `-` so a slot name or session
+  # discriminator with spaces / dots cannot break the instance URI.
+  defp sanitize_segment(seg) when is_binary(seg) do
+    seg
+    |> String.replace(~r/[^a-zA-Z0-9_-]/, "-")
+    |> case do
+      "" -> "x"
+      s -> s
+    end
+  end
+
+  @doc """
   Phase 7 completion PR-1 (SPEC §1.6a) — spawn a worker agent from an
   AgentTemplate's `:template` slice CONTENT, delegating the launch to
   the flavor's plugin Template Class and re-establishing the post-spawn
