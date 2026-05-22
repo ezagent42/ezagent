@@ -42,30 +42,38 @@ defmodule Mix.Tasks.Compile.EzagentPluginCheck do
   fresh build where the application is not loaded yet) names the
   plugin contract module.
 
-  ## Behavior for an un-migrated app — DESIGN CHOICE: no-op pass
+  ## Behavior when no `:ezagent_plugin` key is set
 
-  PR-1 only DEFINES this compiler. It is added to a plugin app's
-  `mix.exs` only in the PR that migrates that app (PR-2/3). To make
-  that wiring safe to land *before* the rest of a migration, this
-  compiler is a **no-op `{:ok, []}`** for any app that has no
-  `:ezagent_plugin` app-env key. Rationale: the `compilers:` line and
-  the plugin module + `:ezagent_plugin` key may land in separate
-  commits; a no-op-when-unconfigured compiler never blocks a partial
-  migration, while still being a hard gate the instant the
-  `:ezagent_plugin` key appears. (`ezagent_core` itself never sets the
-  key, so adding the compiler nowhere-near a plugin is harmless too.)
+  - **An `ezagent_plugin_*` app with NO `:ezagent_plugin` key → the
+    build FAILS** (codex PR-5 HIGH-3). Detection is by the
+    `Mix.Project.config()[:app]` name prefix. The original "no-op
+    pass" here was the bypass: a plugin app could include the
+    compiler but omit `env: [ezagent_plugin: ...]` and skip ALL
+    checks. Every `ezagent_plugin_*` app MUST name its contract
+    module via the `:ezagent_plugin` env key; a missing key is itself
+    a contract violation.
+  - **A non-`ezagent_plugin_*` app with no key → no-op `{:ok, []}`**
+    (correct — `ezagent_core` runs this compiler harmlessly, and a
+    partial migration that lands the `compilers:` line before the
+    plugin module never blocks a non-plugin app).
 
-  ## Checks (SPEC §3.2) — run only once `:ezagent_plugin` is set
+  ## Checks (SPEC §3.2 + codex PR-5)
 
-  1. The app declares a plugin module (the `:ezagent_plugin` key).
+  1. The app declares a plugin module (the `:ezagent_plugin` key) —
+     **mandatory for an `ezagent_plugin_*` app** (HIGH-3).
   2. That module `use`s `Ezagent.Plugin` (`@behaviour Ezagent.Plugin`
      present).
-  3. Every declared kind / behavior / template / agent-flavor module
-     exists and implements its own behaviour (`Ezagent.Kind` /
+  3. Every declared kind / behavior / template module exists and
+     implements its own behaviour (`Ezagent.Kind` /
      `Ezagent.Behavior` / `Ezagent.Kind.Template`).
-  4. Every `spawns/0` scheme is one of the six core schemes
-     (`Ezagent.Plugin.core_schemes/0`) — codex HIGH-4.
-  5. The app source does not call `*Registry.register` /
+  4. Every `agent_flavors/0` entry's `kind` implements `Ezagent.Kind`
+     and `template_class` implements `Ezagent.Kind.Template`
+     (codex PR-5 MEDIUM-4).
+  5. `spawns/0` is empty — a plugin may not own a scheme-level spawn
+     (codex PR-5 HIGH-1).
+  6. `config_surface/0` is `:route | :flavor | nil`; `:form` and
+     malformed maps are rejected (codex PR-5 MEDIUM-5).
+  7. The app source does not call `*Registry.register` /
      `RoutingRegistry.declare_table` directly — registration goes
      through `Ezagent.Plugin.boot/1` (grep gate).
 
@@ -79,45 +87,94 @@ defmodule Mix.Tasks.Compile.EzagentPluginCheck do
   def run(_argv) do
     plugin_module = configured_plugin_module()
 
-    if is_nil(plugin_module) do
-      # Un-migrated app (no `:ezagent_plugin` key) — no-op pass. See
-      # moduledoc "DESIGN CHOICE".
-      {:ok, []}
-    else
-      diagnostics =
-        []
-        |> check_uses_behaviour(plugin_module)
-        |> check_declared_modules(plugin_module)
-        |> check_spawn_schemes(plugin_module)
-        |> check_no_direct_registry_calls()
+    cond do
+      not is_nil(plugin_module) ->
+        diagnostics =
+          []
+          |> check_uses_behaviour(plugin_module)
+          |> check_declared_modules(plugin_module)
+          |> check_agent_flavors(plugin_module)
+          |> check_spawns_empty(plugin_module)
+          |> check_config_surface(plugin_module)
+          |> check_no_direct_registry_calls()
 
-      if diagnostics == [] do
+        if diagnostics == [] do
+          {:ok, []}
+        else
+          Enum.each(diagnostics, &print_diagnostic/1)
+          {:error, diagnostics}
+        end
+
+      ezagent_plugin_app?() ->
+        # codex PR-5 HIGH-3 — an `ezagent_plugin_*` app that wires this
+        # compiler but omits the `:ezagent_plugin` env key would
+        # otherwise bypass EVERY check. That is the hole. The key is
+        # mandatory for a plugin app; a missing key FAILS the build.
+        diag =
+          diagnostic(
+            "this is an `ezagent_plugin_*` app (#{inspect(current_app())}) but it " <>
+              "declares NO plugin contract module. Add `env: [ezagent_plugin: " <>
+              "<YourPlugin>]` to `application/0` in mix.exs — the :ezagent_plugin " <>
+              "key names the module that `use`s Ezagent.Plugin. Without it the " <>
+              ":ezagent_plugin_check gate cannot run and the plugin authoring " <>
+              "contract is unenforced (SPEC §3.2)."
+          )
+
+        print_diagnostic(diag)
+        {:error, [diag]}
+
+      true ->
+        # Non-`ezagent_plugin_*` app with no key (e.g. ezagent_core) —
+        # genuine no-op pass.
         {:ok, []}
-      else
-        Enum.each(diagnostics, &print_diagnostic/1)
-        {:error, diagnostics}
-      end
+    end
+  end
+
+  # --- is the app under compilation an ezagent_plugin_* app? -------------
+
+  defp current_app, do: Keyword.get(Mix.Project.config(), :app)
+
+  defp ezagent_plugin_app? do
+    case current_app() do
+      app when is_atom(app) -> String.starts_with?(Atom.to_string(app), "ezagent_plugin_")
+      _ -> false
     end
   end
 
   # --- which plugin module does this app declare? -----------------------
 
-  # Read the `:ezagent_plugin` app-env key set by the plugin app's
-  # `mix.exs` `application/0` `env:`. Prefer the loaded application
+  # Read the `:ezagent_plugin` app-env key the plugin app's `mix.exs`
+  # sets in `application/0`'s `env:`. Prefer the loaded application
   # environment (`Application.get_env/3` — the `.app` file's `env`
-  # populates this); fall back to the in-memory `Mix.Project` config
-  # (the application may not be loaded yet on a fresh build).
+  # populates this once the app is built); fall back to invoking the
+  # `application/0` callback on the current project module directly
+  # (covers a fresh build where the `.app` file does not exist yet,
+  # and `Mix.Project.in_project/4` test contexts where the fixture
+  # app is never loaded).
   defp configured_plugin_module do
     app = Keyword.fetch!(Mix.Project.config(), :app)
 
     Application.get_env(app, :ezagent_plugin) || from_mix_project()
   end
 
+  # `:application` is NOT a key of `Mix.Project.config/0` (that returns
+  # `project/0`); it is the separate `application/0` project-module
+  # callback. Invoke it on the project module to read the `env:` list.
   defp from_mix_project do
-    Mix.Project.config()
-    |> Keyword.get(:application, [])
-    |> Keyword.get(:env, [])
-    |> Keyword.get(:ezagent_plugin)
+    project_module = Mix.Project.get()
+
+    cond do
+      is_nil(project_module) ->
+        nil
+
+      function_exported?(project_module, :application, 0) ->
+        project_module.application()
+        |> Keyword.get(:env, [])
+        |> Keyword.get(:ezagent_plugin)
+
+      true ->
+        nil
+    end
   end
 
   # --- check 2 — the module `use`s Ezagent.Plugin -----------------------
@@ -170,11 +227,6 @@ defmodule Mix.Tasks.Compile.EzagentPluginCheck do
         "behaviors/0"
       )
       |> check_modules(plugin_module.template_classes(), Ezagent.Kind.Template, "template_classes/0")
-      |> check_modules(
-        Enum.flat_map(plugin_module.agent_flavors(), fn d -> [d.kind, d.template_class] end),
-        nil,
-        "agent_flavors/0"
-      )
     else
       diagnostics
     end
@@ -189,9 +241,8 @@ defmodule Mix.Tasks.Compile.EzagentPluginCheck do
       ]
   end
 
-  # `expected_behaviour` may be nil (agent-flavor modules are checked
-  # for existence; their kind / template_class behaviours are checked
-  # by the kinds/0 + template_classes/0 passes if also declared there).
+  # `expected_behaviour` is always a module here. Each declared module
+  # must (a) exist / be compiled and (b) implement that behaviour.
   defp check_modules(diagnostics, modules, expected_behaviour, source) do
     Enum.reduce(modules, diagnostics, fn module, acc ->
       cond do
@@ -204,8 +255,7 @@ defmodule Mix.Tasks.Compile.EzagentPluginCheck do
             | acc
           ]
 
-        not is_nil(expected_behaviour) and
-            not implements_behaviour?(module, expected_behaviour) ->
+        not implements_behaviour?(module, expected_behaviour) ->
           [
             diagnostic(
               "#{source} declares #{inspect(module)}, which does not implement " <>
@@ -227,26 +277,50 @@ defmodule Mix.Tasks.Compile.EzagentPluginCheck do
       |> List.flatten()
 
     behaviour in behaviours
+  rescue
+    _ -> false
   end
 
-  # --- check 4 — every spawns/0 scheme is core --------------------------
-
-  defp check_spawn_schemes(diagnostics, plugin_module) do
+  # --- check 4 — agent_flavors/0 kind + template_class implement their
+  #     behaviours (codex PR-5 MEDIUM-4) --------------------------------
+  #
+  # The merged contract validated agent_flavors/0 with
+  # `expected_behaviour: nil` — it only checked the modules EXIST, not
+  # that `decl.kind` implements `Ezagent.Kind` and `decl.template_class`
+  # implements `Ezagent.Kind.Template`. A flavor declaring a non-Kind
+  # module passed the gate, then the resolver mis-spawned it.
+  #
+  # Compile-order caveat (the codex HIGH-3 lesson): an agent flavor's
+  # `kind` may legitimately be a CORE/domain Kind the plugin REUSES
+  # rather than owns — e.g. cc's flavor `kind` is `Ezagent.Entity.Agent`
+  # from `ezagent_domain_chat`, and a plugin cannot depend on a domain
+  # app that already depends on it (cycle). Such a module is simply not
+  # on the plugin's codepath at its own compile time. So the gate
+  # behaviour-checks only the modules it CAN resolve; an unreachable
+  # one is deferred to `Ezagent.Plugin.boot/1`'s `assert_agent_flavor!`
+  # (runtime — every app is loaded, the SPEC-mandated hard guarantee).
+  # A reachable module that does NOT implement the behaviour still
+  # hard-fails the build.
+  defp check_agent_flavors(diagnostics, plugin_module) do
     if uses_plugin_behaviour?(plugin_module) and ensure_compiled?(plugin_module) do
-      core = Ezagent.Plugin.core_schemes()
+      Enum.reduce(plugin_module.agent_flavors(), diagnostics, fn decl, acc ->
+        case decl do
+          %{flavor: flavor, kind: kind, template_class: tc} ->
+            src = "agent_flavors/0 (flavor #{inspect(flavor)})"
 
-      Enum.reduce(plugin_module.spawns(), diagnostics, fn {scheme, _fun}, acc ->
-        if scheme in core do
-          acc
-        else
-          [
-            diagnostic(
-              "spawns/0 declares scheme #{inspect(scheme)}, which is not one of " <>
-                "the six core schemes (#{Enum.join(core, ", ")}). Plugins do NOT " <>
-                "own top-level URI schemes (SPEC §5.8 — the feishu:// deletion)."
-            )
-            | acc
-          ]
+            acc
+            |> check_flavor_module(kind, Ezagent.Kind, src)
+            |> check_flavor_module(tc, Ezagent.Kind.Template, src)
+
+          other ->
+            [
+              diagnostic(
+                "agent_flavors/0 has a malformed entry #{inspect(other)} — each " <>
+                  "entry must be %{flavor: String.t(), kind: module(), " <>
+                  "template_class: module()}."
+              )
+              | acc
+            ]
         end
       end)
     else
@@ -256,7 +330,122 @@ defmodule Mix.Tasks.Compile.EzagentPluginCheck do
     _ -> diagnostics
   end
 
-  # --- check 5 — no direct *Registry.register / declare_table calls -----
+  # An agent-flavor module: if reachable at compile time it MUST
+  # implement the behaviour (hard fail otherwise); if unreachable
+  # (a reused core/domain Kind off the plugin's codepath) the check
+  # is deferred to `boot/1`'s runtime `assert_agent_flavor!`.
+  defp check_flavor_module(diagnostics, module, behaviour, source) do
+    cond do
+      not is_atom(module) ->
+        [
+          diagnostic("#{source} declares #{inspect(module)}, which is not a module.")
+          | diagnostics
+        ]
+
+      not ensure_compiled?(module) ->
+        # Not on this plugin's codepath at compile time — deferred to
+        # the runtime gate. Not a build failure.
+        diagnostics
+
+      not implements_behaviour?(module, behaviour) ->
+        [
+          diagnostic(
+            "#{source} declares #{inspect(module)}, which does not implement " <>
+              "the #{inspect(behaviour)} behaviour."
+          )
+          | diagnostics
+        ]
+
+      true ->
+        diagnostics
+    end
+  end
+
+  # --- check 5 — spawns/0 is empty (codex PR-5 HIGH-1) ------------------
+  #
+  # `Ezagent.SpawnRegistry.register/2` is scheme-keyed and OVERWRITES.
+  # A plugin declaring `{"entity", fun}` passed the old scheme allowlist
+  # yet took ownership of ALL `entity://` spawning — invariant 8
+  # violation. Every scheme is core-owned ⇒ no valid plugin spawn ⇒
+  # spawns/0 MUST be empty.
+  defp check_spawns_empty(diagnostics, plugin_module) do
+    if uses_plugin_behaviour?(plugin_module) and ensure_compiled?(plugin_module) do
+      case plugin_module.spawns() do
+        [] ->
+          diagnostics
+
+        declared ->
+          [
+            diagnostic(
+              "spawns/0 declares #{inspect(declared)} — a plugin may NOT register " <>
+                "a scheme-level spawn fn. SpawnRegistry is scheme-keyed and " <>
+                "OVERWRITES, so this hijacks a core scheme's dispatcher " <>
+                "(invariant 8). All six URI schemes are core/domain-owned; " <>
+                "spawns/0 is reserved and must return []. Extend a scheme via your " <>
+                "Kind's type/name prefix, or register a Behavior on a core Kind " <>
+                "(SPEC §5.8 — the feishu:// deletion / codex PR-5 HIGH-1)."
+            )
+            | diagnostics
+          ]
+      end
+    else
+      diagnostics
+    end
+  rescue
+    _ -> diagnostics
+  end
+
+  # --- check 6 — config_surface/0 is :route | :flavor | nil
+  #     (codex PR-5 MEDIUM-5) --------------------------------------------
+  #
+  # SPEC §6.1: V1 rejects `:form` (the plugin settings store is V2).
+  # The merged contract validated neither here nor in `boot/1` — a
+  # `%{kind: :form, ...}` compiled + booted, then crashed `/plugins`
+  # with a FunctionClauseError. The gate now rejects `:form` and any
+  # malformed config_surface map.
+  defp check_config_surface(diagnostics, plugin_module) do
+    if uses_plugin_behaviour?(plugin_module) and ensure_compiled?(plugin_module) do
+      case plugin_module.config_surface() do
+        nil ->
+          diagnostics
+
+        %{kind: :route, path: p, label: l} when is_binary(p) and is_binary(l) ->
+          diagnostics
+
+        %{kind: :flavor, flavor: f, label: l} when is_binary(f) and is_binary(l) ->
+          diagnostics
+
+        %{kind: :form} = surface ->
+          [
+            diagnostic(
+              "config_surface/0 returns #{inspect(surface)} — a `:form` config " <>
+                "surface is REJECTED in V1. It would auto-render settings " <>
+                "persisted to a plugin-settings store that does not exist yet; " <>
+                "the store is V2 (SPEC §6.1). V1 config_surface/0 is " <>
+                ":route | :flavor | nil."
+            )
+            | diagnostics
+          ]
+
+        other ->
+          [
+            diagnostic(
+              "config_surface/0 returns a malformed value #{inspect(other)}. V1 " <>
+                "config_surface/0 is one of %{kind: :route, path: String.t(), " <>
+                "label: String.t()}, %{kind: :flavor, flavor: String.t(), " <>
+                "label: String.t()}, or nil (SPEC §6.1)."
+            )
+            | diagnostics
+          ]
+      end
+    else
+      diagnostics
+    end
+  rescue
+    _ -> diagnostics
+  end
+
+  # --- check 7 — no direct *Registry.register / declare_table calls -----
 
   defp check_no_direct_registry_calls(diagnostics) do
     source_files =
