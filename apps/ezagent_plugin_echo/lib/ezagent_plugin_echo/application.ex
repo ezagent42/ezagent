@@ -1,103 +1,118 @@
 defmodule EzagentPluginEcho.Application do
   @moduledoc """
-  Echo plugin OTP application.
+  Echo plugin OTP application — the `Ezagent.Plugin` contract module.
 
-  ## Boot sequence
+  ## Plugin authoring contract (PR-2)
 
-  1. Register `{Ezagent.Entity.Echo, :say|:receive} → Ezagent.Behavior.Echo`
-     in `Ezagent.BehaviorRegistry`. Idempotent on hot-reload.
-  2. Register the `echo` agent flavor in `SpawnRegistry`'s entity://
-     scheme via the chat plugin's three-step resolver (snapshot →
-     template → flavor-prefix). Echo's `kind_module_from_flavor("echo")`
-     hardcoded in `EzagentDomainChat.Application` already covers this —
-     this plugin's contribution is just behavior registration + the
-     DynamicSupervisor for spawned instances.
-  3. Start the per-Kind DynamicSupervisor so SpawnRegistry-driven
-     spawns have a place to live (the chat plugin's `spawn_agent/1`
-     routes echo Kinds under `EzagentDomainChat.AgentSupervisor`, not
-     this plugin's supervisor — so this DynamicSupervisor is currently
-     unused but kept for future per-plugin-supervisor migrations).
+  Per the plugin authoring contract SPEC
+  (`docs/superpowers/specs/2026-05-22-plugin-authoring-contract.md`,
+  §3 / §8 Q3 — Allen confirmed: the OTP `Application` module IS the
+  plugin contract module) this module `use`s **both** `Application`
+  (OTP plumbing) and `Ezagent.Plugin` (the declarative contract).
+
+  Registration is no longer imperative. `start/2` collapses to
+  `Ezagent.Plugin.boot(__MODULE__)`; the framework's two-phase
+  `boot/1` reads the declaration callbacks below and performs every
+  `*Registry` call — the plugin author never touches a registry API
+  (the plugin-isolation north star, made structural). The
+  `:ezagent_plugin_check` Mix compiler (wired into `mix.exs`) is the
+  non-bypassable gate that enforces this.
+
+  ## What this plugin declares
+
+  - `behaviors/0` — `{Ezagent.Entity.Echo, :say|:receive}` →
+    `Ezagent.Behavior.Echo`. `:say` is the historical
+    programmatic-invoke action (Phase 1 contract); `:receive` is the
+    chat fan-out hook (Session's `chat.send` dispatches `chat.receive`
+    to every Echo agent in members — without it the echo agent
+    silently drops chat messages, the regression Allen flagged
+    2026-05-20).
+  - `template_classes/0` — the `echo.agent` Template Class, so
+    operators can create echo agents (optionally with a `/bin/bash -i`
+    PTY sidecar) via the standard add-template chain.
+  - `agent_flavors/0` — flavor `"echo"` → `{Ezagent.Entity.Echo,
+    Ezagent.PluginEcho.Template.EchoAgent}`. Consumed by
+    `Ezagent.AgentFlavorRegistry`; PR-3 migrates the domain_chat agent
+    resolver onto it, replacing the hardcoded `kind_module_from_flavor`
+    map.
+  - `config_surface/0` — `:flavor` surface. The `/plugins` config icon
+    routes to this flavor's agent surface (SPEC §6.1).
+  - `children/0` — a per-Kind `DynamicSupervisor`. Kept for future
+    per-plugin-supervisor migrations; echo Kinds currently land under
+    `EzagentDomainChat.AgentSupervisor` (chat's flavor-prefix resolver
+    routes them there — see `Ezagent.Entity.Echo.supervisor/0`).
 
   ## PR-M (Allen 2026-05-20) — standardized creation
 
-  Previously this Application's `start/2` called
-  `DynamicSupervisor.start_child(__MODULE__.Supervisor, ...)` directly
-  to spawn the default echo agent at boot. That bypassed
-  `Ezagent.SpawnRegistry.spawn/1` — the same registry every other Kind
-  uses — and meant:
-
-  - snapshot rehydration wouldn't reproduce echo_default on next boot
-    via the standard path
-  - the agent's URI wasn't routed through chat's `spawn_agent/1`
-    flavor-resolver (so the Kind landed in this plugin's supervisor
-    instead of `EzagentDomainChat.AgentSupervisor`)
-  - chat plugin's `entity://` spawn fn never saw the URI, breaking the
-    "one path to spawn Kinds" invariant
-
-  PR-M removes the direct spawn here. The chat plugin (last app to
-  boot) calls `EzagentPluginEcho.Application.default_uri/0` +
+  Echo's default instance is NOT spawned here. The chat plugin (last
+  app to boot) calls `EzagentPluginEcho.Application.default_uri/0` +
   `Ezagent.SpawnRegistry.spawn/1` post-boot via
-  `EzagentDomainChat.Application.ensure_echo_default/0`. The result
-  goes through the standard path: chat's `entity://` fn → `spawn_agent/1`
-  → flavor-prefix resolver → `EzagentDomainChat.AgentSupervisor`.
-
-  This plugin's only remaining responsibilities:
-  - `register_behaviors/0` (the same as before)
-  - own the URI constant `@default_uri` (exported via `default_uri/0`)
-  - keep `__MODULE__.Supervisor` available as a DynamicSupervisor for
-    future per-plugin-supervisor migrations (currently unused at runtime
-    since chat owns AgentSupervisor)
-
-  ## Why this app depends on `ezagent_core` via in_umbrella
-
-  Plugin pattern: plugins live alongside `ezagent_core` in the umbrella
-  but never reach into core internals — only via the public API
-  (`Ezagent.BehaviorRegistry.register`, `Ezagent.SpawnRegistry.spawn`).
-  This boundary is what lets future devs work on plugins without
-  coordinating with the core team (the north-star feedback rule).
+  `EzagentDomainChat.Application.ensure_echo_default/0`, so the spawn
+  goes through the standard `entity://` resolver path. Echo has no
+  post-registration work of its own, so `after_boot/0` keeps the
+  `use Ezagent.Plugin` default `:ok`.
   """
 
   use Application
+  use Ezagent.Plugin
 
   # PR #141 (SPEC v2): `agent://` scheme deleted; merged into `entity://`.
   # Agent flavor moves to free-form name prefix (SPEC §5.14):
   # Echo's default instance is `entity://agent/default/echo_default`.
   @default_uri URI.parse("entity://agent/default/echo_default")
 
-  @impl true
-  def start(_type, _args) do
-    register_behaviors()
-    register_template_classes()
+  # --- OTP Application -------------------------------------------------
 
-    children = [
-      {DynamicSupervisor, name: __MODULE__.Supervisor, strategy: :one_for_one}
+  @impl Application
+  def start(_type, _args), do: Ezagent.Plugin.boot(__MODULE__)
+
+  # --- Ezagent.Plugin contract ---------------------------------------
+
+  @impl Ezagent.Plugin
+  def plugin_info do
+    %{
+      slug: "echo",
+      name: "Echo",
+      description: "Test stub — echoes back messages.",
+      version: "0.1.0"
+    }
+  end
+
+  @impl Ezagent.Plugin
+  def behaviors do
+    [
+      {Ezagent.Entity.Echo, :say, Ezagent.Behavior.Echo},
+      {Ezagent.Entity.Echo, :receive, Ezagent.Behavior.Echo}
     ]
-
-    Supervisor.start_link(children, strategy: :one_for_one, name: __MODULE__)
   end
 
-  # Domain.Pty SPEC v1 §10 row 3 + §11 item 6 (deferred PR-D sub-task,
-  # now in scope per Allen Feishu 2026-05-22) — register the
-  # `echo.agent` Template Class so operators can create echo agents
-  # with an optional `/bin/bash -i` PTY sidecar via the standard
-  # `Workspace.add_template → invoke_template → instantiate` chain.
-  # Direct `SpawnRegistry.spawn/1` (the original creation path) still
-  # works unchanged for the default echo agent + legacy callers.
-  defp register_template_classes do
-    :ok = Ezagent.TemplateRegistry.register(Ezagent.PluginEcho.Template.EchoAgent)
-    :ok
+  @impl Ezagent.Plugin
+  def template_classes, do: [Ezagent.PluginEcho.Template.EchoAgent]
+
+  @impl Ezagent.Plugin
+  def agent_flavors do
+    [
+      %{
+        flavor: "echo",
+        kind: Ezagent.Entity.Echo,
+        template_class: Ezagent.PluginEcho.Template.EchoAgent
+      }
+    ]
   end
 
-  defp register_behaviors do
-    # `:say` is the historical programmatic-invoke action (Phase 1
-    # contract). `:receive` is the fan-out hook — Session's chat.send
-    # dispatches `chat.receive` to every Echo agent in members; without
-    # this registration, that dispatch returns `:not_registered` and
-    # the echo agent silently drops every chat msg (the regression
-    # Allen flagged 2026-05-20).
-    :ok = Ezagent.BehaviorRegistry.register(Ezagent.Entity.Echo, :say, Ezagent.Behavior.Echo)
-    :ok = Ezagent.BehaviorRegistry.register(Ezagent.Entity.Echo, :receive, Ezagent.Behavior.Echo)
+  @impl Ezagent.Plugin
+  def config_surface do
+    %{kind: :flavor, flavor: "echo", label: "Echo Agents"}
   end
+
+  @impl Ezagent.Plugin
+  def children do
+    [
+      {DynamicSupervisor, name: EzagentPluginEcho.InstanceSupervisor, strategy: :one_for_one}
+    ]
+  end
+
+  # --- public API -----------------------------------------------------
 
   @doc """
   URI of the default Echo instance — spawned post-boot by the chat
