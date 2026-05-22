@@ -285,14 +285,15 @@ defmodule Ezagent.Entity.Agent do
   3. **Delegate the launch** — `tc.instantiate(tc.template_name(),
      data, workspace_uri)` → `{:ok, [worker_uri]}` (the plugin owns
      exactly this — the Agent Kind + PTY).
-  4. **Record lineage (helper-owned)** — for each returned
+  4. **Record lineage (helper-owned, fresh-only)** — for each returned
      `worker_uri`, `Ezagent.AgentLineage.record(worker_uri,
      spawned_by_uri)`. The plugin Template Class does NOT do this, so
      cap #2 (`{:spawned_by, orchestrator}`) would never resolve without
-     this step.
-  5. **Bind workspace (helper-owned)** — for each `worker_uri`,
-     `Ezagent.WorkspaceRegistry.bind(worker_uri, workspace_uri)`
-     (invariant 4 — workspace-scoped routing rules must fire).
+     this step. Runs ONLY when `fresh?: true` (see codex round-7 below).
+  5. **Bind workspace (helper-owned, fresh-only)** — for each
+     `worker_uri`, `Ezagent.WorkspaceRegistry.bind(worker_uri,
+     workspace_uri)` (invariant 4 — workspace-scoped routing rules must
+     fire). Runs ONLY when `fresh?: true` (see codex round-7 below).
 
   NO `:read` dispatch anywhere.
 
@@ -340,6 +341,25 @@ defmodule Ezagent.Entity.Agent do
   A Template Class returning the legacy 2-element `{:ok, [URI.t()]}`
   form supplies no `fresh?` — it is treated conservatively as `false`
   (the swap then errs on the side of refusing a possible adoption).
+
+  ## codex round-7 HIGH-1 — side effects gated on `fresh?: true`
+
+  Round 6 made `fresh?` an ATOMIC signal but still recorded lineage and
+  bound the workspace for EVERY returned worker, BEFORE the caller saw
+  `fresh?`. `AgentLineage.record/2` is an ETS set insert that OVERWRITES
+  the worker's `spawned_by`, and `WorkspaceRegistry.bind/2` OVERWRITES
+  the binding. So a `fresh?: false` worker — one created by some other
+  operation, which `instantiate` merely ADOPTED — got re-parented under
+  THIS orchestrator (its `{:spawned_by, orchestrator}` cap then matched!)
+  and workspace-rebound, even though `update_agent_template` then
+  correctly refused the adoption (`:candidate_uri_already_live`). The
+  "safe-degraded" abort was not actually side-effect-free.
+
+  Round 7 gates the post-spawn obligations on `fresh?: true` — a worker
+  THIS call created. A `fresh?: false` result is returned with the
+  worker URI and ZERO side effects: the pre-existing worker's lineage +
+  workspace binding are left exactly as they were. The swap's
+  `:candidate_uri_already_live` abort is now genuinely side-effect-free.
   """
   @spec spawn_from_template_content(map(), URI.t(), URI.t(), URI.t()) ::
           {:ok, %{workers: [URI.t()], fresh?: boolean()}} | {:error, term()}
@@ -355,10 +375,29 @@ defmodule Ezagent.Entity.Agent do
            Ezagent.Entity.AgentTemplate.to_template_data(template_content_map, instance_uri),
          {:ok, workers, fresh?} <-
            instantiate_workers(template_class, data, workspace_uri) do
-      Enum.each(workers, fn worker_uri ->
-        :ok = record_lineage(worker_uri, spawned_by_uri)
-        :ok = bind_workspace(worker_uri, workspace_uri)
-      end)
+      # codex round-7 HIGH-1 — the post-spawn obligations (lineage +
+      # workspace binding) are side effects that OVERWRITE existing rows:
+      # `AgentLineage.record/2` is an ETS set insert (re-parents the
+      # worker under `spawned_by_uri`) and `WorkspaceRegistry.bind/2`
+      # overwrites the binding. They must run ONLY for a worker THIS call
+      # actually created — `fresh?: true`.
+      #
+      # When `fresh?: false`, the instantiate ADOPTED a pre-existing
+      # worker (one created by some other operation — e.g. a concurrent
+      # spawn). Recording lineage / binding workspace for it would
+      # re-parent a worker this call did NOT create. `update_agent_template`
+      # then correctly refuses the adoption (`require_fresh_candidate/1` →
+      # `:candidate_uri_already_live`), but the damage would already be
+      # done. So a `fresh?: false` result returns the worker URI with
+      # ZERO side effects — the pre-existing worker's lineage + workspace
+      # binding are left exactly as they were, making the swap's abort
+      # genuinely side-effect-free.
+      if fresh? do
+        Enum.each(workers, fn worker_uri ->
+          :ok = record_lineage(worker_uri, spawned_by_uri)
+          :ok = bind_workspace(worker_uri, workspace_uri)
+        end)
+      end
 
       {:ok, %{workers: workers, fresh?: fresh?}}
     end

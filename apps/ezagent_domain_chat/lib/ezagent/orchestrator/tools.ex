@@ -181,8 +181,16 @@ defmodule Ezagent.Orchestrator.Tools do
   # `instance_name` is the SESSION-UNIQUE live instance name (CRITICAL
   # fix) — the caller built it via `Agent.session_instance_name/3`.
   #
-  # Returns `{:ok, worker_uri}` — used by `add_agent_slot`, which does
-  # not need the fresh-vs-adopted distinction.
+  # codex round-7 HIGH-1 — `add_agent_slot` builds a fresh gen-0
+  # session-unique URI; it WANTS a worker it freshly created. Lineage +
+  # workspace binding only happen for `fresh?: true` workers
+  # (`spawn_from_template_content/4`). A `fresh?: false` result means
+  # the instantiate adopted a pre-existing worker — that worker has NOT
+  # been re-parented or bound, and `add_agent_slot` must not silently
+  # adopt it (it would record a slot pointing at a foreign worker with
+  # no lineage). Treat `fresh?: false` as a clear error condition.
+  #
+  # Returns `{:ok, worker_uri}` — used by `add_agent_slot`.
   defp instantiate_worker(
          %URI{} = agent_template_uri,
          instance_name,
@@ -198,7 +206,8 @@ defmodule Ezagent.Orchestrator.Tools do
            caller,
            caps
          ) do
-      {:ok, %{worker_uri: worker_uri}} -> {:ok, worker_uri}
+      {:ok, %{worker_uri: worker_uri, fresh?: true}} -> {:ok, worker_uri}
+      {:ok, %{fresh?: false}} -> {:error, :candidate_uri_already_live}
       {:error, _} = err -> err
     end
   end
