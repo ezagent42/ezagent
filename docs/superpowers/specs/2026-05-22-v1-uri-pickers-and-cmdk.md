@@ -103,15 +103,21 @@ attr :label, :string, default: nil
 attr :required, :boolean, default: false
 ```
 
-Rendering:
-- **`:single`** → a styled `<select>` (or combobox if option count is
-  large; V1 ships plain `<select>` — combobox is a V2 polish). One
-  hidden-or-native select bound to `name`.
-- **`:multi`** → a checklist OR a tag-input. V1 ships a **checklist**
-  (vertical list of checkboxes, each `name="<name>[]"`). Simple,
-  accessible, no JS. Tag-input with autocomplete is V2 polish.
-- Each option renders `label` (human) + the `uri` in `font-mono`
+Rendering (Allen 2026-05-22 decision — do BOTH, not V2-deferred):
+- **`:single`** → a combobox: a text input with a filtered dropdown of
+  matching options. Typing filters; click or Enter selects. A hidden
+  field bound to `name` carries the chosen URI.
+- **`:multi`** → a **tag-input with autocomplete**: selected URIs
+  render as removable chips; a text input below filters the option
+  list; picking adds a chip. Each chip emits a hidden `name="<name>[]"`
+  field so form submit yields the list.
+- Each option (both modes) renders the procedural `<.avatar>` (entity
+  options) + `label` (human display name) + the `uri` in `font-mono`
   small text + a `kind`/`flavor` badge.
+- Autocomplete filtering is a small JS hook (`uri_picker.js`) —
+  client-side filter over the pre-rendered `options` (no per-keystroke
+  server round-trip). Entity/session counts are small in V1; a
+  server-side filter is a future option if sets grow.
 
 The component is **pure** — it does NOT query registries. The LV
 (Tier-3) computes `options` and passes them in. This keeps the atom
@@ -230,69 +236,138 @@ end
   - Binds **⌘K / Ctrl+K** globally → same
   - (Esc-to-close already handled by the component's `phx-window-keydown`)
 
-### 2.5 LV handlers
+### 2.5 LV handlers — shared LiveComponent (Allen 2026-05-22 decision)
 
-Add to the LVs that wrap `ide_shell` (or — cleaner — a shared
-`on_mount` / a `CommandPalette` live_component so it's not copy-pasted
-into 13 LVs):
+CmdK is implemented as a **`Phoenix.LiveComponent`**
+(`EzagentPluginLiveview.CommandPaletteComponent`) — Allen's decision
+over the on_mount alternative. Open-state + query + results + handlers
+live in ONE place; every `ide_shell` LV renders
+`<.live_component module={CommandPaletteComponent} id="cmdk"/>` in the
+`:command_palette` slot. No 13× handler duplication.
 
-- `open_command_palette` → `assign(:cmdk_open, true)`
-- `command_query` → `assign(:cmdk_results, CommandSource.search(q))`
-- `command_select_result` → branch on `result.kind`:
-  - `:nav` / `:entity` → `push_navigate(to: target)`
-  - `:action` → `Ezagent.Invocation.dispatch(...)` then close
+The component's internal events:
+- `open` → `assign(:open, true)`
+- `query` → `assign(:results, CommandSource.search(q))`
+- `select_result` → branch on `result.kind`:
+  - `:nav` / `:entity` → `push_navigate(to: target)` (V1 scope)
+  - `:action` → V2 (see §2.6)
 
-**Recommendation**: implement CmdK as a `Phoenix.LiveComponent`
-(`EzagentPluginLiveview.CommandPaletteComponent`) so the open-state +
-query + results + handlers live in ONE place, and every `ide_shell`
-LV just renders `<.live_component module={CommandPalette} id="cmdk"/>`
-in the `:command_palette` slot. Avoids 13× handler duplication.
+### 2.6 CmdK V1 scope = nav + entity only (Allen 2026-05-22 decision)
 
-### 2.6 Out of scope (V2)
+V1 CmdK ships **Source 1 (nav) + Source 2 (entity/session)** only.
+**Source 3 (actions) is deferred to V2** — Allen's decision. The
+high-value use case Allen described ("search → click ≡ click the
+link") is fully served by nav + entity. Actions need the
+parameter-free filter + dispatch path + (for parameterized actions)
+in-CmdK forms — all V2.
 
-- In-CmdK forms for parameterized actions (V1: navigate to the form
-  page instead)
+PR-2 therefore does NOT depend on PR-0 (`description:` key) — that
+dependency was only for action results. PR-0 still ships (it fixes
+CLI's brittle doc-scrape + prepares for V2 CmdK actions + future
+slash) but is no longer a hard prerequisite for PR-2.
+
+### 2.7 Out of scope (V2)
+
+- CmdK Source 3 — action results (parameter-free dispatch + forms)
+- LiveView slash commands (`/agent:set-default`) — Allen 2026-05-22:
+  slash is V2. (Never implemented; ARCHITECTURE.md §D.3 design only.)
 - Fuzzy-rank tuning / recency boosting
-- Combobox autocomplete for `uri_picker` single mode
-- Tag-input for `uri_picker` multi mode
+- `uri_picker` server-side option filtering for large sets
+
+## 2C. Part C — member panel redesign (#6, Allen 2026-05-22)
+
+### 2C.1 The problem
+
+The `/sessions` right sidebar has TWO sections — "MEMBERS" + a
+separate "FLOATING AGENTS" dropdown. Allen: this split is confusing;
+they should be ONE unified member list. Floating agents stop being a
+section; instead an **Invite** button opens a modal.
+
+### 2C.2 Entity avatars — already solved
+
+Allen asked whether entity Kinds have an avatar attribute / an "infos"
+field. **Answer: avatars are procedural, not stored.** The `<.avatar
+uri={...}>` atom (Phase 8c PR-C) derives a unique 2-color conic
+gradient + monogram from a hash of the entity URI. Any entity URI
+gets a deterministic avatar — nothing to store. `entity_profiles`
+holds `display_name` + `email`; there is no generic "infos"/metadata
+JSON column. If V2 wants richer per-entity metadata, adding a
+`metadata` JSON column to `entity_profiles` is the place — but the
+member panel needs nothing new: `<.avatar>` + `display_name` cover it.
+
+### 2C.3 Redesign
+
+`EzagentPluginLiveview.Admin.MemberPanel` (`member_panel.ex`):
+
+- **One unified member list.** Each row: `<.avatar>` + display name +
+  URI (`font-mono` small) + online `<.status_dot>` + per-row actions
+  (the existing cc-agent PTY button stays). `members` + `floating_agents`
+  are merged into one rendered list — floating agents are simply
+  members that were added ad-hoc; they render identically.
+- **Remove the "FLOATING AGENTS" dropdown section** entirely.
+- **Add an "Invite" button** at the top/bottom of the member list →
+  opens a modal:
+  - Tab/section 1 — **Add existing**: a `uri_picker` (`:single`,
+    `kinds: [:entity]`) listing entities not already in the session →
+    pick → adds as a member.
+  - Tab/section 2 — **Create new agent**: a link/button that navigates
+    to the existing `/identities/agents/new` page (AgentNewLive). Don't
+    rebuild the create form in the modal — just route to it.
+- The modal is a Tier-1 `<.modal>` atom (already exists in
+  `primitives.ex`); the picker reuses Part A's `uri_picker`.
+
+### 2C.4 Wiring
+
+`AdminLive` already has the member data + the `add_floating_agent`
+handler. The redesign:
+- Drop the separate floating-agents `<select>`; the `add_floating_agent`
+  handler is reused by the modal's "Add existing" picker.
+- New handler `open_invite_modal` / `close_invite_modal`.
+- The merged list is just `members` (floating agents are members).
+
+This is **PR-3**, depends on PR-1 (`uri_picker`).
 
 ## 3. PR sequence
 
 | # | Title | Scope |
 |---|-------|-------|
-| 0 | `@interface` gains `description:` key + backfill all behaviors + CLI reads it | Part 0 (prerequisite) |
-| 1 | `uri_picker` component + `UriOptions` source + wire 5 sites | Part A |
-| 2 | `CommandSource` query + `CommandPalette` live_component + JS hook + ⌘K | Part B |
+| 0 | `@interface` gains `description:` key + backfill all behaviors + CLI reads it | Part 0 |
+| 1 | `uri_picker` component (combobox + tag-input) + `UriOptions` + wire 5 sites | Part A |
+| 2 | `CommandSource` (nav + entity) + `CommandPalette` LiveComponent + JS hook + ⌘K | Part B |
+| 3 | Member panel redesign — unified list + Invite modal | Part C |
 
-PR-0 lands first (CmdK action results depend on it; also fixes CLI's
-brittle doc-scrape). PR-1 has no dep on PR-0 or PR-2 — can land in
-parallel. PR-2 depends on PR-0 (reads `description:`) + reuses PR-1's
+PR-0 ships independently (fixes CLI doc-scrape; prepares V2 CmdK
+actions + future slash). PR-1 independent. PR-2 independent of PR-0
+now (V1 CmdK = nav+entity, no action results) + reuses PR-1's
 `UriOptions`.
 
 ## 4. Verification
 
-1. `routing_live` matcher arg renders a `<select>` of live entities,
-   not a raw text box
-2. `routing_live` receivers renders a multi-checklist of entities +
-   sessions
-3. `workspace_detail` add-member uses the single picker
+1. `routing_live` matcher arg renders a `uri_picker` `:single`
+   combobox of live entities, not a raw text box
+2. `routing_live` receivers renders a `uri_picker` `:multi` tag-input
+   (chips + autocomplete) over entities + sessions
+3. `workspace_detail` add-member uses the `:single` picker
 4. Clicking the header search bar OR pressing ⌘K opens the CmdK modal
 5. Typing "sessions" → a `:nav` result → Enter → navigates to /sessions
 6. Typing an agent name → an `:entity` result → navigates to its page
 7. JSON-combinator advanced mode unchanged (still a textarea)
 8. `uri_picker` is a pure Tier-1 atom (no LV/registry imports)
 9. CmdK adds no new "registry" module — `CommandSource` is a query
-   over Router + KindRegistry + BehaviorRegistry
+   over Router + KindRegistry (V1); BehaviorRegistry actions are V2
+10. `/sessions` right sidebar shows ONE unified member list (avatars);
+    no separate "Floating Agents" section; an Invite button opens a
+    modal (add-existing picker + create-new-agent link)
 
-## 5. Open questions for Allen
+## 5. Decisions (Allen 2026-05-22 — all open questions resolved)
 
-- **Q1**: `uri_picker` multi-mode — V1 ships a plain checklist. OK to
-  defer tag-input-with-autocomplete to V2? (Recommended yes — checklist
-  is accessible + zero-JS.)
-- **Q2**: CmdK as a shared `LiveComponent` vs an `on_mount` injected
-  into all 13 ide_shell LVs. Recommended: LiveComponent (one home).
-- **Q3**: Should CmdK action results (Source 3) be in V1 at all, or
-  V1 ships only nav + entity results and actions land in V2? Actions
-  need the parameter-free filter + dispatch path. Recommended: V1
-  ships nav + entity (the high-value "jump" use case Allen described);
-  actions deferred to V2 to keep PR-2 tight.
+- **uri_picker modes**: ship BOTH — `:single` combobox + `:multi`
+  tag-input-with-autocomplete. (Not V2-deferred.)
+- **CmdK structure**: shared `Phoenix.LiveComponent` (one home, no
+  13× duplication).
+- **CmdK V1 scope**: nav + entity results only. Action results
+  (Source 3) → V2.
+- **slash commands**: V2. (Never implemented; CmdK is the V1 search
+  surface.)
+- **Member panel** (new Part C): unified member list + Invite modal;
+  avatars are procedural (`<.avatar>`), nothing to store.

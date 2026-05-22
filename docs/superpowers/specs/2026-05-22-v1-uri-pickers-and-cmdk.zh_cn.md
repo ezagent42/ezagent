@@ -94,13 +94,16 @@ attr :label, :string, default: nil
 attr :required, :boolean, default: false
 ```
 
-渲染:
-- **`:single`** → 样式化 `<select>`（选项很多时用 combobox；V1 发
-  plain `<select>`，combobox 是 V2 polish）
-- **`:multi`** → checklist（竖排 checkbox，每个 `name="<name>[]"`）。
-  简单、可访问、零 JS。tag-input + autocomplete 是 V2 polish
-- 每个选项渲染 `label`（人类可读）+ `uri`（font-mono 小字）+
-  `kind`/`flavor` badge
+渲染（Allen 2026-05-22 决定 —— 两种都做，不推迟 V2）:
+- **`:single`** → combobox: text input + 过滤下拉。打字过滤，点击/Enter
+  选中。隐藏字段绑 `name` 携带选中 URI
+- **`:multi`** → **tag-input + autocomplete**: 选中的 URI 渲染成可删
+  chip；下方 text input 过滤选项；选中加 chip。每个 chip 发隐藏
+  `name="<name>[]"` 字段，表单提交得到 list
+- 每个选项（两种模式）渲染 procedural `<.avatar>`（entity 选项）+
+  `label`（人类显示名）+ `uri`（font-mono 小字）+ `kind`/`flavor` badge
+- autocomplete 过滤是小 JS hook（`uri_picker.js`）—— 客户端过滤预渲染
+  的 `options`（不每键击 server round-trip）
 
 组件是**纯的** —— 不查 registry。LV（Tier-3）算 `options` 传进来。
 保持 atom 无 LV 依赖（3-layer 架构 invariant）。
@@ -218,38 +221,86 @@ handler:
 - `uri_picker` 单选的 combobox autocomplete
 - `uri_picker` 多选的 tag-input
 
+## 2C. Part C — member 栏重做（#6，Allen 2026-05-22）
+
+### 2C.1 问题
+
+`/sessions` 右侧栏有两个 section —— "MEMBERS" + 单独的 "FLOATING
+AGENTS" 下拉。Allen: 这个分裂困惑；应该合并成一个统一 member 列表。
+floating agent 不再是 section；改为一个 **Invite** 按钮开 modal。
+
+### 2C.2 实体头像 —— 已解决
+
+Allen 问 entity Kind 有没有 avatar 属性 / "infos" 字段。**答: 头像
+是 procedural，不存储。** `<.avatar uri={...}>` atom（Phase 8c PR-C）
+从 entity URI 的 hash 派生一个唯一 2 色 conic gradient + monogram。
+任何 entity URI 都得到确定的头像，无需存储。`entity_profiles` 有
+`display_name` + `email`；没有通用 "infos"/metadata JSON 列。V2 想要
+更丰富的 per-entity metadata，给 `entity_profiles` 加 `metadata` JSON
+列是合适位置 —— 但 member 栏不需要新东西：`<.avatar>` + `display_name`
+够了。
+
+### 2C.3 重做
+
+`EzagentPluginLiveview.Admin.MemberPanel`（`member_panel.ex`）:
+
+- **一个统一 member 列表**。每行: `<.avatar>` + 显示名 + URI（font-mono
+  小字）+ online `<.status_dot>` + per-row action（现有 cc-agent PTY
+  按钮保留）。`members` + `floating_agents` 合并成一个渲染列表 ——
+  floating agent 就是临时加进来的 member，渲染完全一样。
+- **删掉 "FLOATING AGENTS" 下拉 section**。
+- **加 "Invite" 按钮** → 开 modal:
+  - section 1 — **Add existing**: `uri_picker`（`:single`，
+    `kinds: [:entity]`）列出不在 session 里的实体 → 选 → 加为 member
+  - section 2 — **Create new agent**: 链接/按钮跳转现有
+    `/identities/agents/new`（AgentNewLive）。不在 modal 里重建创建表单
+- modal 是 Tier-1 `<.modal>` atom（primitives.ex 已有）；picker 复用
+  Part A 的 `uri_picker`
+
+### 2C.4 接线
+
+`AdminLive` 已有 member 数据 + `add_floating_agent` handler。重做:
+- 去掉单独的 floating-agents `<select>`；`add_floating_agent` handler
+  被 modal 的 "Add existing" picker 复用
+- 新 handler `open_invite_modal` / `close_invite_modal`
+- 合并列表就是 `members`（floating agent 即 member）
+
+这是 **PR-3**，依赖 PR-1（`uri_picker`）。
+
 ## 3. PR 序列
 
 | # | 标题 | 范围 |
 |---|------|------|
-| 0 | `@interface` 加 `description:` 键 + 回填所有 behavior + CLI 改读 | Part 0（前置）|
-| 1 | `uri_picker` 组件 + `UriOptions` 源 + 接入 5 站点 | Part A |
-| 2 | `CommandSource` query + `CommandPalette` live_component + JS hook + ⌘K | Part B |
+| 0 | `@interface` 加 `description:` 键 + 回填所有 behavior + CLI 改读 | Part 0 |
+| 1 | `uri_picker` 组件（combobox + tag-input）+ `UriOptions` + 接入 5 站点 | Part A |
+| 2 | `CommandSource`（nav + entity）+ `CommandPalette` LiveComponent + JS hook + ⌘K | Part B |
+| 3 | Member 栏重做 —— 统一列表 + Invite modal | Part C |
 
-PR-0 先落地（CmdK action 结果依赖它；也修 CLI 脆弱的 doc-scrape）。
-PR-1 不依赖 PR-0/PR-2 —— 可并行。PR-2 依赖 PR-0（读 `description:`）
-+ 复用 PR-1 的 `UriOptions`。
+PR-0 独立发（修 CLI doc-scrape；备 V2 CmdK action + 将来 slash）。
+PR-1 独立。PR-2 现在不依赖 PR-0（V1 CmdK = nav+entity，无 action
+结果）+ 复用 PR-1 的 `UriOptions`。PR-3 依赖 PR-1。
 
 ## 4. 验证
 
-1. `routing_live` matcher arg 渲染活实体的 `<select>`，不是裸 text box
-2. `routing_live` receivers 渲染 entity + session 的多选 checklist
-3. `workspace_detail` add-member 用单选 picker
+1. `routing_live` matcher arg 渲染 `uri_picker` `:single` combobox
+2. `routing_live` receivers 渲染 `uri_picker` `:multi` tag-input（chip + autocomplete）
+3. `workspace_detail` add-member 用 `:single` picker
 4. 点 header 搜索栏或按 ⌘K 打开 CmdK modal
 5. 输入 "sessions" → `:nav` 结果 → Enter → 跳 /sessions
 6. 输入 agent 名 → `:entity` 结果 → 跳它的页面
 7. JSON-combinator 高级模式不变（仍是 textarea）
 8. `uri_picker` 是纯 Tier-1 atom（无 LV/registry import）
 9. CmdK 没加新 "registry" 模块 —— `CommandSource` 是对 Router +
-   KindRegistry + BehaviorRegistry 的 query
+   KindRegistry 的 query（V1）；BehaviorRegistry action 是 V2
+10. `/sessions` 右侧栏一个统一 member 列表（带头像）；无单独
+    "Floating Agents" section；Invite 按钮开 modal
 
-## 5. Allen 待决问题
+## 5. 决策（Allen 2026-05-22 —— 待决问题全部解决）
 
-- **Q1**: `uri_picker` 多选 —— V1 发 plain checklist。tag-input +
-  autocomplete 推迟到 V2 行吗？（推荐行 —— checklist 可访问 + 零 JS）
-- **Q2**: CmdK 做共享 `LiveComponent` vs `on_mount` 注入 13 个
-  ide_shell LV。推荐 LiveComponent（一处归宿）。
-- **Q3**: CmdK 的 action 结果（源 3）V1 要不要做，还是 V1 只发
-  nav + entity，action 留 V2？action 需要无参数过滤 + dispatch 路径。
-  推荐: V1 发 nav + entity（你描述的高价值 "跳转" 场景），action
-  推迟 V2 让 PR-2 紧凑。
+- **uri_picker 模式**: 两种都做 —— `:single` combobox + `:multi`
+  tag-input + autocomplete。（不推迟 V2。）
+- **CmdK 结构**: 共享 `Phoenix.LiveComponent`（一处，无 13× 重复）。
+- **CmdK V1 范围**: 只 nav + entity 结果。action 结果（源 3）→ V2。
+- **slash 命令**: V2。（从未实现；CmdK 是 V1 搜索界面。）
+- **Member 栏**（新 Part C）: 统一 member 列表 + Invite modal；头像
+  是 procedural（`<.avatar>`），无需存储。
