@@ -42,15 +42,24 @@ defmodule EzagentPluginEcho.Application do
     `EzagentDomainChat.AgentSupervisor` (chat's flavor-prefix resolver
     routes them there — see `Ezagent.Entity.Echo.supervisor/0`).
 
-  ## PR-M (Allen 2026-05-20) — standardized creation
+  ## Default echo agent seeding — `after_boot/0` (PR-5 codex HIGH-2)
 
-  Echo's default instance is NOT spawned here. The chat plugin (last
-  app to boot) calls `EzagentPluginEcho.Application.default_uri/0` +
-  `Ezagent.SpawnRegistry.spawn/1` post-boot via
-  `EzagentDomainChat.Application.ensure_echo_default/0`, so the spawn
-  goes through the standard `entity://` resolver path. Echo has no
-  post-registration work of its own, so `after_boot/0` keeps the
-  `use Ezagent.Plugin` default `:ok`.
+  Echo's default instance is spawned in this plugin's `after_boot/0`
+  (Phase 3 of `Ezagent.Plugin.boot/1`). It was previously seeded from
+  `EzagentDomainChat.Application.start/2`, but that was a boot-order
+  race: chat's seed needs `Ezagent.AgentFlavorRegistry.lookup("echo")`
+  — published by THIS plugin's `boot/1` — and `ezagent_domain_chat`
+  does not depend on `ezagent_plugin_echo`, so the seed could fire
+  before echo's `agent_flavors/0` was registered and fail with
+  `{:no_kind_module_for_agent, ...}`, never retried.
+
+  `after_boot/0` runs in Phase 3 — AFTER this plugin's Phase-2
+  `publish/1` registered `agent_flavors/0`, so the resolver can map
+  the flavor. This plugin declares a dep on `ezagent_domain_chat` (a
+  pure boot-order constraint — no chat code is referenced), so OTP
+  boots chat first and the `entity://` `SpawnRegistry` dispatcher is
+  published by the time `after_boot/0` runs. The spawn therefore goes
+  through the standard `entity://` resolver path.
   """
 
   use Application
@@ -112,12 +121,48 @@ defmodule EzagentPluginEcho.Application do
     ]
   end
 
+  @doc """
+  Phase 3 post-register hook — seed the default Echo agent (PR-5
+  codex HIGH-2).
+
+  `Ezagent.Plugin.boot/1` calls this AFTER Phase-2 `publish/1` has
+  registered `agent_flavors/0`, so `Ezagent.AgentFlavorRegistry`
+  already maps the `"echo"` flavor → `Ezagent.Entity.Echo`. The seed
+  spawns through `Ezagent.SpawnRegistry.spawn/1` — the standard
+  `entity://` resolver path — and this plugin's dep on
+  `ezagent_domain_chat` guarantees the `entity://` dispatcher is
+  published before this runs.
+
+  Idempotent: `SpawnRegistry.spawn/1` returns the existing pid for an
+  already-alive Kind (snapshot rehydration), and treats
+  `{:already_started, _}` as `{:ok, _}`. A genuine failure is logged,
+  not raised — `after_boot/0` must not abort the plugin's boot — but
+  with the dep + Phase ordering above this path is no longer racy.
+  """
+  @impl Ezagent.Plugin
+  def after_boot do
+    case Ezagent.SpawnRegistry.spawn(@default_uri) do
+      {:ok, _pid} ->
+        :ok
+
+      {:error, reason} ->
+        require Logger
+
+        Logger.warning(
+          "EzagentPluginEcho.after_boot/0: default echo agent spawn failed " <>
+            "(#{inspect(reason)}); F1 echo round-trip tests will fail until the " <>
+            "default echo agent is available"
+        )
+
+        :ok
+    end
+  end
+
   # --- public API -----------------------------------------------------
 
   @doc """
-  URI of the default Echo instance — spawned post-boot by the chat
-  plugin (PR-M, see moduledoc) via
-  `EzagentDomainChat.Application.ensure_echo_default/0`.
+  URI of the default Echo instance — seeded by `after_boot/0`
+  (PR-5 codex HIGH-2, see moduledoc).
   """
   def default_uri, do: @default_uri
 end
