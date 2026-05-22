@@ -637,7 +637,21 @@ defmodule EzagentDomainUi.IdeShell do
       |> assign(:uri_str, format_uri_for_status(assigns.current_entity_uri))
 
     ~H"""
-    <div class="relative">
+    <%!-- V1 UI fix (Allen 2026-05-22, 2nd attempt) — dropdown would not
+          open. ROOT CAUSE: click-away race. `phx-click-away` was on the
+          MENU div; the avatar button is a SIBLING (outside the menu).
+          Clicking the button: (1) `phx-click` JS.toggle shows the menu,
+          (2) the SAME click is "outside the menu" → menu's
+          `phx-click-away` immediately JS.hide's it. Net: open→close in
+          one tick, looks like it never opens.
+          FIX: move `phx-click-away` to the WRAPPER div (clicks on the
+          button + menu are now "inside" → no dismiss); the JS.hide
+          action still targets the menu by id. Genuine outside clicks
+          (outside the wrapper) still dismiss.
+          Regression origin: the `phx-click-away` was added in Phase 8c
+          (2026-05-20 "outside-click dismiss") onto the menu div — that
+          is the commit that introduced the race. --%>
+    <div class="relative" phx-click-away={JS.hide(to: "##{@menu_id}")}>
       <button
         type="button"
         phx-click={JS.toggle(to: "##{@menu_id}", display: "block")}
@@ -648,17 +662,15 @@ defmodule EzagentDomainUi.IdeShell do
         <.avatar uri={@current_entity_uri} size="sm" />
       </button>
 
-      <%!-- V1 UI fix (Allen 2026-05-22) — dropdown did not open. The
-            prior `JS.toggle` used `in:`/`out:` transition tuples; on an
-            element that starts with the `hidden` class the show-side
-            stuck at `opacity-0` (same fragility PR #178 hit on the side
-            panels). Switched to plain `JS.toggle(display: "block")` —
-            no transition, reliably toggles. phx-click-away dismiss kept
-            as a plain JS.hide (no transition). --%>
+      <%!-- z-50 (not z-40): the right sidebar panel is z-40 and later in
+            the DOM, so a z-40 menu paints BEHIND it — the avatar dropdown
+            overlaps the Members panel on the right edge and was fully
+            occluded. z-50 (same tier as the command palette) clears all
+            z-40 chrome. Third + final piece of the 2026-05-22 avatar fix:
+            (1) plain JS.toggle, (2) click-away on wrapper, (3) this. --%>
       <div
         id={@menu_id}
-        phx-click-away={JS.hide(to: "##{@menu_id}")}
-        class="hidden absolute right-0 top-full mt-1 w-64 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-md shadow-lg z-40"
+        class="hidden absolute right-0 top-full mt-1 w-64 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-md shadow-lg z-50"
       >
         <div class="px-3 py-3 border-b border-zinc-200 dark:border-zinc-800 flex items-center gap-2">
           <.avatar uri={@current_entity_uri} size="md" />

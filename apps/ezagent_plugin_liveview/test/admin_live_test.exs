@@ -336,6 +336,22 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
       render_hook(lv, "toggle_debug_panel", %{})
       _ = render(lv)
     end
+
+    test "debug panel shows empty state when toggled with no cc_events",
+         %{conn: conn} do
+      {:ok, lv, html} = live(conn, "/sessions")
+
+      # Collapsed: the panel section (heading + empty state) is absent.
+      refute html =~ "No debug events yet"
+
+      # V1 fix (Allen 2026-05-22): the panel previously rendered only
+      # when cc_events != []. With the common case (no CC-hook events)
+      # toggling debug_open must now still show the panel with an
+      # explicit empty state — not a blank surface.
+      html = render_hook(lv, "toggle_debug_panel", %{})
+      assert html =~ "Debug events (last 20)"
+      assert html =~ "No debug events yet"
+    end
   end
 
   describe "Phase 8b — composer @ autocomplete wiring" do

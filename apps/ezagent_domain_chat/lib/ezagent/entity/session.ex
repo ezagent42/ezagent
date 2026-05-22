@@ -11,7 +11,7 @@ defmodule Ezagent.Entity.Session do
   at `EzagentDomainChat.Application.start/2`. Multi-Session support is
   intentionally out of scope (Phase 3+).
 
-  ## Persistence flipped to {:snapshot, :on_change} in Phase 7 PR 44
+  ## Persistence: {:snapshot, :on_change} — session membership survives restart
 
   Phase 2 originally used `:ephemeral` — members / monitors /
   last_seen were rebuilt at each boot from PubSub re-announcements
@@ -19,21 +19,48 @@ defmodule Ezagent.Entity.Session do
   Historical message stream was persisted (via `Ezagent.MessageStore`);
   only in-flight membership was ephemeral.
 
-  **Phase 7 PR 44 (D7-7 + SPEC §7-3 working-copy session slice)**:
-  the orchestrator's `template_working_copy` field on Chat slice
-  (Session-context) must survive phx restart so the orchestrator's
-  team-refinement work isn't lost on every server bounce. Flipping
-  persistence to `{:snapshot, :on_change}` makes the Chat slice's
-  `template_working_copy` durable. Pre-Phase-7 sessions reload
-  with empty working_copy on next state change → behaves as before.
+  **Allen V1 acceptance 2026-05-22**: adding an agent (cc_demo) to a
+  session at runtime, then a phx restart, wiped it from `members`.
+  Root cause — `persistence/0` was still `:ephemeral`, so the Session
+  Kind's in-memory Chat slice (members map, last_seen, the
+  orchestrator's working-copy) was never snapshotted; any restart lost
+  every runtime mutation. ("Phase 7 PR 44/46" was supposed to flip
+  this for orchestrator working-copy durability — SPEC §7-3 — but the
+  flip never landed; only the moduledoc was updated to claim it had.)
 
-  Members / monitors / last_seen ARE now persisted as a side
-  effect of the slice-level snapshot. This is mostly harmless:
-  members get re-validated when their owning Kind comes up (admin
-  User, Agents via bridge re-announce); monitors are stale across
-  restart anyway (refs only valid for live processes); last_seen
-  reflects history not live state. The added durability is mostly
-  invisible to existing flows.
+  `persistence/0` is now `{:snapshot, :on_change}` — the same mode the
+  `Ezagent.Entity.User` Kind already uses. After every Chat-slice
+  mutation (`:send` / `:join` / `:leave` / `:DOWN`), `Ezagent.Kind.Server`
+  writes the slice to `kind_snapshots`; on (re)spawn,
+  `Ezagent.Kind.Snapshot.load_or_init/3` rehydrates it. Membership,
+  last_seen, and the orchestrator working-copy now survive an unclean
+  crash, not just a graceful shutdown.
+
+  ### Slice serialization
+
+  The Chat slice (`Ezagent.Behavior.Chat`) holds `members`
+  (`%{URI => %{online: bool}}`), `monitors` (`%{reference => URI}`),
+  and `last_seen` (`%{URI => DateTime}`). `URI` structs, `DateTime`,
+  booleans, and `reference()` are all serializable via
+  `:erlang.term_to_binary/1` and decode safely under the `[:safe]`
+  flag — no pids, no funs, no anonymous closures. `monitors` refs are
+  stale across a restart (a `reference()` is only meaningful for a
+  live monitor), but that is harmless: a stale ref simply never
+  matches an incoming `:DOWN`, and a member rejoin via `chat.join`
+  re-monitors the live pid. `last_seen` reflects history, not live
+  state. Members get re-validated when their owning Kind comes up.
+
+  ### WorkspaceRegistry rebind (invariant 4)
+
+  When a Session Kind rehydrates after a restart, its
+  `WorkspaceRegistry` binding must be re-established so workspace-scoped
+  routing rules still fire. Per Phase 9 PR-7 the workspace lives in the
+  3-segment session URI (`session://<template>/<workspace>/<name>`), so
+  `WorkspaceRegistry` is a consistency cache and the binding is derived
+  structurally from the URI. The chat plugin's `session` spawn fn
+  (`EzagentDomainChat.Application.register_spawn_fns/0`) calls
+  `WorkspaceRegistry.bind/2` on every spawn — covering the lazy
+  demand-spawn rehydrate path as well as `EzagentDomainChat.create_session/2`.
   """
 
   @behaviour Ezagent.Kind
@@ -44,17 +71,13 @@ defmodule Ezagent.Entity.Session do
   @impl Ezagent.Kind
   def behaviors, do: [Ezagent.Behavior.Chat]
 
+  # Allen V1 acceptance 2026-05-22 — session membership + chat config
+  # must survive a phx restart (even an unclean crash, hence :on_change
+  # not :on_terminate). The Chat slice is fully serializable; see the
+  # moduledoc "Slice serialization" section. Same persistence mode the
+  # User Kind already uses.
   @impl Ezagent.Kind
-  # Phase 7 PR 44: WILL FLIP TO {:snapshot, :on_change} once orchestrator
-  # working-copy lands (PR 46). Phase 7 PR 44 explored the flip and
-  # discovered it triggers snapshot writes during tests that don't
-  # own the Ecto sandbox connection (Ezagent.Audit.Writer-style cascade
-  # via Ezagent.Kind.Snapshot.save_now). Fix is per-test setup updates,
-  # not a code revert. Deferred to PR 46 which adds the
-  # template_working_copy slice field AND the test-helper updates
-  # together. Until then, persistence stays :ephemeral — working-copy
-  # is lost on restart, accepted in dev / acceptable for v1 demo.
-  def persistence, do: :ephemeral
+  def persistence, do: {:snapshot, :on_change}
 
   # V1 prevention (Allen 2026-05-21): Session Kinds live under the
   # chat domain's SessionSupervisor. `Ezagent.Kind.spawn/2` reads this.
