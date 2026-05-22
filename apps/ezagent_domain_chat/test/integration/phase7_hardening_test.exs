@@ -25,6 +25,22 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
   - **HIGH-9** — `update_template` / `save_template_as` dispatch
     `template.write` WITHOUT `admin_caps`.
 
+  ## Round 2 — codex adversarial-review of the merged hardening (#239)
+
+  - **CRITICAL r2** — the Generator must NOT instantiate slot
+    AgentTemplates across a workspace boundary; a cross-workspace
+    `default_workspace_uri` or a cross-workspace slot AgentTemplate URI
+    → `:cross_workspace_denied`, nothing spawned.
+  - **HIGH-2 r2** — `update_agent_template` re-points routing rules
+    from the old worker URI to the new one before terminating the old
+    worker.
+  - **HIGH-3 r2** — `cleanup_partial` DELETES the routing rows the
+    Generator installed (tracked rule IDs), not just reloads them.
+  - **HIGH-4 r2** — a legacy 2-tuple `agent_slots` entry yields a
+    controlled `:no_live_worker` error, not a `CaseClauseError`.
+  - **MEDIUM-5 r2** — `session_instance_name/3` is injective
+    (`agent_test.exs`): `api.v1` / `api-v1` do not collide.
+
   Every test drives the production dispatch path — no mocks. A no-PTY
   synthetic flavor spawns the plain `Ezagent.Entity.Agent` Kind.
   """
@@ -62,6 +78,63 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
     end
 
     def instantiate(_n, tmpl, _ws), do: {:error, {:invalid_template, tmpl}}
+  end
+
+  # A test Template Class that spawns the worker Agent Kind and then
+  # TERMINATES the freshly-spawned orchestrator agent as a side effect —
+  # used by the HIGH-3 r2 test to force a Generator failure AFTER
+  # `install_routing_rules` has inserted its rows. Slot instantiation
+  # runs BEFORE routing install, so by the time `grant_scoped_caps`
+  # dispatches `identity.grant_cap` to the orchestrator it is dead.
+  #
+  # Defined here (before its first reference) so the bare-alias
+  # `OrchestratorKillerFlavorClass` resolves to this nested module —
+  # an alias used before its `defmodule` resolves to the WRONG
+  # top-level module.
+  defmodule OrchestratorKillerFlavorClass do
+    @moduledoc false
+    @behaviour Ezagent.Kind.Template
+
+    @impl true
+    def template_name, do: "phase7.r2.orchestrator-killer"
+
+    @impl true
+    def validate(tmpl) when is_map(tmpl),
+      do: if(Map.has_key?(tmpl, "agent_uri"), do: :ok, else: {:error, :missing_agent_uri})
+
+    def validate(_), do: {:error, :not_a_map}
+
+    @impl true
+    def instantiate(_tmpl_name, %{"agent_uri" => uri_str}, _workspace_uri) do
+      agent_uri = URI.parse(uri_str)
+
+      worker_result =
+        case Ezagent.SpawnRegistry.spawn(agent_uri) do
+          {:ok, _pid} -> {:ok, [agent_uri]}
+          {:error, {:already_started, _pid}} -> {:ok, [agent_uri]}
+          {:error, _} = err -> err
+        end
+
+      kill_live_orchestrator()
+      worker_result
+    end
+
+    def instantiate(_n, tmpl, _ws), do: {:error, {:invalid_template, tmpl}}
+
+    defp kill_live_orchestrator do
+      Ezagent.AgentLineage.list_all()
+      |> Enum.map(fn {agent, _} -> agent end)
+      |> Enum.filter(&String.contains?(&1, "cc_orchestrator-"))
+      |> Enum.each(fn orch_str ->
+        case Ezagent.KindRegistry.lookup(URI.parse(orch_str)) do
+          {:ok, pid} ->
+            DynamicSupervisor.terminate_child(EzagentDomainChat.AgentSupervisor, pid)
+
+          :error ->
+            :ok
+        end
+      end)
+    end
   end
 
   # --- helpers -----------------------------------------------------------
@@ -764,7 +837,298 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
     end
   end
 
+  # ════════════════════════════════════════════════════════════════════
+  # ROUND 2 — codex adversarial-review of the merged hardening (#239).
+  # ════════════════════════════════════════════════════════════════════
+
+  # ── CRITICAL (round 2) — the Generator must NOT instantiate slot
+  # AgentTemplates across workspace boundaries. A SessionTemplate may
+  # only compose AgentTemplates in its OWN workspace and instantiate
+  # into its own workspace. ───────────────────────────────────────────
+
+  describe "CRITICAL r2 — SessionTemplate-composition workspace isolation" do
+    test "a cross-workspace default_workspace_uri → Generator denied, nothing spawned" do
+      flavor = register_test_flavor()
+      # The SessionTemplate + the worker AgentTemplate both live in
+      # `default`, but the template encodes a default_workspace_uri
+      # pointing at a DIFFERENT workspace — the cross-workspace escalation.
+      worker_tmpl = URI.new!("template://agent/default/ph7r2-crit-a-#{uniq()}")
+      :ok = create_agent_template(worker_tmpl, agent_template_content(flavor, "worker"))
+
+      other_ws = URI.new!("workspace://ph7r2crit#{uniq()}")
+
+      st_uri =
+        create_session_template(
+          "ph7r2-crit-team-#{uniq()}",
+          [{"dev", worker_tmpl}],
+          [],
+          workspace: "default",
+          default_workspace_uri: other_ws
+        )
+
+      owner_uri = full_template_owner(@default_ws)
+
+      lineage_before = length(AgentLineage.list_all())
+
+      assert {:error, {:cross_workspace_denied, :default_workspace_uri}} =
+               Session.spawn_from_template(st_uri, owner_uri)
+
+      assert length(AgentLineage.list_all()) == lineage_before,
+             "a cross-workspace SessionTemplate must spawn NOTHING"
+    end
+
+    test "a cross-workspace slot AgentTemplate → Generator denied, nothing spawned" do
+      flavor = register_test_flavor()
+      # The SessionTemplate lives in `default`, default_workspace_uri is
+      # `default`, but the agent-slot AgentTemplate URI points at ANOTHER
+      # workspace — the slot-composition escalation.
+      other_ws_name = "ph7r2cs#{uniq()}"
+      cross_slot_tmpl = URI.new!("template://agent/#{other_ws_name}/ph7r2-crit-b-#{uniq()}")
+      :ok = create_agent_template(cross_slot_tmpl, agent_template_content(flavor, "worker"))
+
+      st_uri =
+        create_session_template(
+          "ph7r2-crit-team-#{uniq()}",
+          [{"dev", cross_slot_tmpl}],
+          [],
+          workspace: "default",
+          default_workspace_uri: URI.parse("workspace://default")
+        )
+
+      owner_uri = full_template_owner(@default_ws)
+
+      lineage_before = length(AgentLineage.list_all())
+
+      assert {:error, {:cross_workspace_denied, {:agent_slot, "dev", _}}} =
+               Session.spawn_from_template(st_uri, owner_uri)
+
+      assert length(AgentLineage.list_all()) == lineage_before,
+             "a cross-workspace agent-slot must spawn NOTHING"
+    end
+
+    test "an all-same-workspace SessionTemplate still spawns (no false denial)" do
+      flavor = register_test_flavor()
+      worker_tmpl = URI.new!("template://agent/default/ph7r2-crit-ok-#{uniq()}")
+      :ok = create_agent_template(worker_tmpl, agent_template_content(flavor, "worker"))
+
+      st_uri = create_session_template("ph7r2-crit-ok-#{uniq()}", [{"dev", worker_tmpl}], [])
+      owner_uri = full_template_owner(@default_ws)
+
+      assert {:ok, %{session_uri: _, orchestrator_uri: _}} =
+               Session.spawn_from_template(st_uri, owner_uri)
+    end
+  end
+
+  # ── HIGH-2 (round 2) — update_agent_template must re-point routing
+  # rules from the old worker URI to the new one. ──────────────────────
+
+  describe "HIGH-2 r2 — update_agent_template re-points routing rules" do
+    test "a message matching a rule that targeted the old slot is delivered to the NEW worker" do
+      flavor = register_test_flavor()
+      tmpl_a = URI.new!("template://agent/default/ph7r2-h2-a-#{uniq()}")
+      tmpl_b = URI.new!("template://agent/default/ph7r2-h2-b-#{uniq()}")
+      :ok = create_agent_template(tmpl_a, agent_template_content(flavor, "config-a"))
+      :ok = create_agent_template(tmpl_b, agent_template_content(flavor, "config-b"))
+
+      # The SessionTemplate's routing rule fires on `text_contains
+      # "ph7r2route"` and delivers to the "dev" slot.
+      st_uri =
+        create_session_template(
+          "ph7r2-h2-team-#{uniq()}",
+          [{"dev", tmpl_a}],
+          [{{:text_contains, "ph7r2route"}, ["dev"]}]
+        )
+
+      owner_uri = full_template_owner(@default_ws)
+
+      {:ok, %{session_uri: session_uri, orchestrator_uri: orch_uri}} =
+        Session.spawn_from_template(st_uri, owner_uri)
+
+      [old_worker] = live_workers_of(orch_uri)
+      caps = orchestrator_caps(orch_uri)
+
+      # The rule routes to the OLD worker before the swap.
+      msg_before =
+        Ezagent.Message.new(User.admin_uri(), %{text: "please ph7r2route"},
+          inserted_at: DateTime.utc_now()
+        )
+
+      before_recipients =
+        Ezagent.Routing.Resolver.resolve(msg_before, session_uri, [], workspace_uri: @default_ws)
+        |> Enum.map(&URI.to_string/1)
+
+      assert URI.to_string(old_worker) in before_recipients,
+             "sanity — the rule routes to the old worker before the swap"
+
+      # Swap the slot to a new AgentTemplate.
+      assert {:ok, new_worker} =
+               Tools.update_agent_template("dev", tmpl_b,
+                 caller: orch_uri,
+                 caps: caps,
+                 workspace_uri: @default_ws,
+                 session_uri: session_uri
+               )
+
+      refute URI.to_string(new_worker) == URI.to_string(old_worker)
+
+      # HIGH-2 — after the swap, the SAME rule must resolve to the NEW
+      # worker, and NOT to the (now terminated) old worker.
+      msg_after =
+        Ezagent.Message.new(User.admin_uri(), %{text: "please ph7r2route again"},
+          inserted_at: DateTime.utc_now()
+        )
+
+      after_recipients =
+        Ezagent.Routing.Resolver.resolve(msg_after, session_uri, [], workspace_uri: @default_ws)
+        |> Enum.map(&URI.to_string/1)
+
+      assert URI.to_string(new_worker) in after_recipients,
+             "after update_agent_template the routing rule must deliver to the NEW worker. " <>
+               "Got: #{inspect(after_recipients)}"
+
+      refute URI.to_string(old_worker) in after_recipients,
+             "the routing rule must NOT still name the terminated old worker"
+
+      # The persisted DB row was rewritten too.
+      rules = Ezagent.Routing.RuleStore.list(EzagentDomainChat.Routing.MentionRouting)
+      old_str = URI.to_string(old_worker)
+
+      for rule <- rules do
+        refute old_str in (rule.receivers || []),
+               "no persisted routing row may still name the old worker URI"
+      end
+    end
+  end
+
+  # ── HIGH-3 (round 2) — cleanup_partial must DELETE the routing rows
+  # the Generator installed (tracked rule IDs), not just reload. ───────
+
+  describe "HIGH-3 r2 — cleanup deletes partially-installed routing rows" do
+    test "a post-routing-install Generator failure removes both the DB rows and the ETS entries" do
+      # The worker flavor's `instantiate/3` kills the freshly-spawned
+      # orchestrator agent as a side effect. Slot instantiation runs
+      # BEFORE routing install; the orchestrator is then dead by the
+      # time `grant_scoped_caps` dispatches `identity.grant_cap` to it —
+      # so the Generator fails AFTER `install_routing_rules` inserted
+      # the routing rows. `cleanup_partial` must DELETE those exact rows.
+      table = EzagentDomainChat.Routing.MentionRouting
+
+      flavor = register_orchestrator_killer_flavor()
+      worker_tmpl = URI.new!("template://agent/default/ph7r2-h3-worker-#{uniq()}")
+      :ok = create_agent_template(worker_tmpl, agent_template_content(flavor, "worker"))
+
+      # A routing rule the Generator will install BEFORE the failure —
+      # carrying a UNIQUE marker token so it is identifiable amid any
+      # rows other (async: false) tests have left in the shared store.
+      marker = "ph7r2h3marker-#{uniq()}"
+
+      st_uri =
+        create_session_template(
+          "ph7r2-h3-team-#{uniq()}",
+          [{"dev", worker_tmpl}],
+          [{{:text_contains, marker}, ["dev"]}]
+        )
+
+      owner_uri = full_template_owner(@default_ws)
+
+      # Snapshot the IDs of pre-existing rows so a set-difference
+      # isolates exactly what THIS Generator run installs.
+      ids_before =
+        table |> Ezagent.Routing.RuleStore.list() |> MapSet.new(& &1.id)
+
+      # The Generator must FAIL (the orchestrator was killed) — and the
+      # failure must come AFTER routing install (a grant/register error,
+      # not a preflight rejection).
+      result = Session.spawn_from_template(st_uri, owner_uri)
+      assert match?({:error, _}, result), "expected a post-routing-install failure"
+
+      # ── (1) the DB rows the failed Generator installed are GONE ──
+      rows_after = Ezagent.Routing.RuleStore.list(table)
+      ids_after = MapSet.new(rows_after, & &1.id)
+      leaked_rows = MapSet.difference(ids_after, ids_before)
+
+      assert MapSet.size(leaked_rows) == 0,
+             "cleanup_partial must DELETE every routing_rules row the failed Generator " <>
+               "installed — leaked DB row ids: #{inspect(MapSet.to_list(leaked_rows))}"
+
+      # And no row carries the unique marker matcher — pollution-immune.
+      refute Enum.any?(rows_after, fn row ->
+               row.matcher_data |> inspect() |> String.contains?(marker)
+             end),
+             "no routing_rules row may still carry the failed Generator's marker matcher"
+
+      # ── (2) the live RoutingRegistry ETS retains NO entry for the
+      # marker matcher / the failed Generator's worker receivers ──
+      ets_entries = Ezagent.RoutingRegistry.list_all(table)
+
+      refute Enum.any?(ets_entries, fn entry ->
+               inspect(entry) |> String.contains?(marker)
+             end),
+             "the routing ETS table must not retain the failed Generator's rule entry"
+    end
+  end
+
+  # ── HIGH-4 (round 2) — a legacy 2-tuple agent_slots entry must not
+  # crash update_agent_template with a CaseClauseError. ────────────────
+
+  describe "HIGH-4 r2 — legacy 2-tuple agent_slots in update_agent_template" do
+    test "a pre-hardening 2-tuple slot yields a controlled :no_live_worker error" do
+      flavor = register_test_flavor()
+      worker_tmpl = URI.new!("template://agent/default/ph7r2-h4-worker-#{uniq()}")
+      :ok = create_agent_template(worker_tmpl, agent_template_content(flavor, "worker"))
+      new_tmpl = URI.new!("template://agent/default/ph7r2-h4-new-#{uniq()}")
+      :ok = create_agent_template(new_tmpl, agent_template_content(flavor, "new"))
+
+      st_uri = create_session_template("ph7r2-h4-team-#{uniq()}", [{"dev", worker_tmpl}], [])
+      owner_uri = full_template_owner(@default_ws)
+
+      {:ok, %{session_uri: session_uri, orchestrator_uri: orch_uri}} =
+        Session.spawn_from_template(st_uri, owner_uri)
+
+      caps = orchestrator_caps(orch_uri)
+
+      # Simulate a pre-hardening snapshot — overwrite the working copy's
+      # `agent_slots` with a LEGACY 2-tuple `{slot, src}` (no live worker
+      # recorded). `normalize_slot/1` widens it to `{slot, src, nil, 0}`.
+      {:ok, %{template_working_copy: _}} =
+        Behavior.Chat.system_set_working_copy(session_uri, %{
+          agent_slots: [{"dev", worker_tmpl}],
+          routing_rules: []
+        })
+
+      # Pre-round-2 this `{_, _, nil, _}` slot crashed update_agent_template
+      # with a CaseClauseError. It must now return a controlled error.
+      result =
+        Tools.update_agent_template("dev", new_tmpl,
+          caller: orch_uri,
+          caps: caps,
+          workspace_uri: @default_ws,
+          session_uri: session_uri
+        )
+
+      assert result == {:error, {:update_aborted, :no_live_worker}},
+             "a legacy 2-tuple slot must yield :no_live_worker, not a CaseClauseError. " <>
+               "Got: #{inspect(result)}"
+    end
+  end
+
   # --- shared helpers ----------------------------------------------------
+
+  # A test flavor whose Template Class spawns the worker Agent Kind and
+  # then TERMINATES the freshly-spawned orchestrator agent — used by the
+  # HIGH-3 r2 test to force a Generator failure AFTER routing install.
+  defp register_orchestrator_killer_flavor do
+    flavor = "ph7r2kill#{uniq()}"
+
+    :ok =
+      AgentFlavorRegistry.register(%{
+        flavor: flavor,
+        kind: Agent,
+        template_class: OrchestratorKillerFlavorClass
+      })
+
+    flavor
+  end
 
   # The live worker URIs recorded under a given orchestrator in
   # AgentLineage (excludes the orchestrator agent itself).

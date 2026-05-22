@@ -183,24 +183,52 @@ defmodule Ezagent.Entity.Agent do
   the template-shaped key, stable across instantiations; only the
   live instance URI gets uniqueness.
 
-  Result: `<slot>--<session_discriminator>` (generation 0) or
-  `<slot>--<session_discriminator>--g<n>` (generation ≥ 1). Two
+  Result: `<slot>-<8hex>--<session_discriminator>` (generation 0) or
+  `<slot>-<8hex>--<session_discriminator>--g<n>` (generation ≥ 1). Two
   sessions from one template → disjoint live worker URIs; a same-flavor
   `update_agent_template` → a fresh generation-specific URI, so the
   worker actually restarts.
+
+  ## MEDIUM-5 (hardening round 2) — the slot component is INJECTIVE
+
+  `sanitize_segment/1` collapses every char outside `[a-zA-Z0-9_-]` to
+  `-`, so two DISTINCT slot names — `api.v1` and `api-v1` — sanitized
+  to the SAME `api-v1` and produced the SAME instance name. The second
+  spawn in that session then re-used the first slot's worker URI. The
+  encoded slot component is now made injective by appending an
+  8-hex-char slice of `:crypto.hash(:sha256, original_slot_name)` —
+  computed over the ORIGINAL (un-sanitized) slot string, so distinct
+  inputs hash distinctly even when their sanitized forms collide. The
+  session discriminator does NOT need the hash (it is already globally
+  unique — `gen-<millis>-<unique_int>`).
   """
   @spec session_instance_name(String.t(), String.t(), non_neg_integer()) :: String.t()
   def session_instance_name(slot_name, session_discriminator, generation \\ 0)
       when is_binary(slot_name) and is_binary(session_discriminator) and
              is_integer(generation) and generation >= 0 do
     disc = sanitize_segment(session_discriminator)
-    base = "#{sanitize_segment(slot_name)}--#{disc}"
+    # MEDIUM-5 — the sanitized slot label may collide for distinct slot
+    # names; the appended hash of the ORIGINAL name restores injectivity.
+    slot_component = "#{sanitize_segment(slot_name)}-#{slot_hash(slot_name)}"
+    base = "#{slot_component}--#{disc}"
 
     if generation == 0 do
       base
     else
       "#{base}--g#{generation}"
     end
+  end
+
+  # MEDIUM-5 — a stable, collision-resistant 8-hex-char fingerprint of
+  # the ORIGINAL (un-sanitized) slot name. Folded into the instance-name
+  # slot component so two slot names whose sanitized forms collide
+  # (`api.v1` / `api-v1`) still get DISTINCT instance names. Stable
+  # across runs (pure `:crypto.hash`), URI-safe (hex only).
+  defp slot_hash(slot_name) when is_binary(slot_name) do
+    :sha256
+    |> :crypto.hash(slot_name)
+    |> Base.encode16(case: :lower)
+    |> binary_part(0, 8)
   end
 
   # URI name segments must be filesystem/URI-safe — collapse anything
