@@ -181,7 +181,23 @@ defmodule Ezagent.Kind.Snapshot do
     binary = :erlang.term_to_binary(state)
     workspace_uri_str = derive_workspace_uri(uri)
 
-    case KindSnapshot.upsert(uri_str, kind_type_str, binary, version, workspace_uri_str) do
+    # `KindSnapshot.upsert/5` returns `{:error, _}` for changeset
+    # failures, but `Repo.get`/`Repo.insert` can also *raise*
+    # (`DBConnection.ConnectionError` / `DBConnection.OwnershipError`)
+    # when the connection pool is unavailable. The moduledoc contract
+    # is "write failure does NOT crash the Kind" — so we rescue the
+    # raised case too and treat it identically to a returned error.
+    # Without this, an `:on_change` Kind whose snapshot write hits a
+    # pool error (notably the boot-time Session under the ExUnit SQL
+    # Sandbox when a prior test's owner has exited) would crash mid
+    # `handle_cast`. Phase 9 follow-up — Allen V1 acceptance 2026-05-22.
+    try do
+      KindSnapshot.upsert(uri_str, kind_type_str, binary, version, workspace_uri_str)
+    rescue
+      e in [DBConnection.ConnectionError, DBConnection.OwnershipError] ->
+        {:error, e}
+    end
+    |> case do
       {:ok, _row} ->
         :telemetry.execute(
           [:ezagent, :persistence, :written],
@@ -191,7 +207,7 @@ defmodule Ezagent.Kind.Snapshot do
 
         :ok
 
-      {:error, reason} = err ->
+      {:error, reason} ->
         Logger.warning("Ezagent.Kind.Snapshot: save failed for #{uri_str}: #{inspect(reason)}")
 
         :telemetry.execute(
@@ -200,7 +216,6 @@ defmodule Ezagent.Kind.Snapshot do
           %{uri: uri_str, kind_type: kind_type_str, reason: inspect(reason)}
         )
 
-        _ = err
         :ok
     end
   end

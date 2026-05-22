@@ -11,15 +11,13 @@ defmodule Ezagent.Entity.SessionTest do
       assert Session.behaviors() == [Ezagent.Behavior.Chat]
     end
 
-    test "persistence/0 is :ephemeral (Phase 7 PR 44 explored flip, deferred to PR 46)" do
-      # Phase 7 PR 44 attempted to flip to {:snapshot, :on_change}
-      # for orchestrator working-copy durability (SPEC §7-3) but the
-      # snapshot writes cascade through tests that don't own the
-      # Ecto sandbox connection — test-helper update is required
-      # before the flip. Deferred to PR 46 (orchestrator tools)
-      # which adds the slice field AND the helper updates together.
-      # Ezagent.Entity.Session moduledoc documents the planned flip.
-      assert Session.persistence() == :ephemeral
+    test "persistence/0 is {:snapshot, :on_change} (Allen V1 acceptance 2026-05-22)" do
+      # Flipped from :ephemeral — adding an agent to a session at
+      # runtime then a phx restart wiped it from members. The Session
+      # Kind's Chat slice (members / last_seen / working-copy) now
+      # snapshots on every change and rehydrates on (re)spawn. Same
+      # mode the User Kind uses. See Ezagent.Entity.Session moduledoc.
+      assert Session.persistence() == {:snapshot, :on_change}
     end
   end
 

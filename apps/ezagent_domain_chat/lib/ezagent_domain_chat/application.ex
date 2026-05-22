@@ -394,7 +394,29 @@ defmodule EzagentDomainChat.Application do
     :ok =
       Ezagent.SpawnRegistry.register("session", fn uri ->
         # V1 prevention (Allen 2026-05-21): route via Ezagent.Kind.spawn/2.
-        Ezagent.Kind.spawn(Session, %{uri: uri})
+        result = Ezagent.Kind.spawn(Session, %{uri: uri})
+
+        # Allen V1 acceptance 2026-05-22 (invariant 4): rebind the
+        # session → workspace consistency cache on EVERY spawn,
+        # including the lazy demand-spawn rehydrate path after a phx
+        # restart. Session Kind is now {:snapshot, :on_change} —
+        # membership rehydrates from `kind_snapshots`, but the
+        # WorkspaceRegistry ETS binding does NOT survive a restart
+        # (ETS is in-memory). Without rebinding here, a rehydrated
+        # session that's referenced via a bare `SpawnRegistry.spawn`
+        # (not `create_session/2`) would have no workspace binding →
+        # `Ezagent.Behavior.Chat.invoke(:send)` resolves
+        # `workspace_uri: nil` and workspace-scoped routing rules
+        # silently never fire. Per Phase 9 PR-7 the workspace is in
+        # the 3-segment session URI, so the binding is derived
+        # structurally — no DB lookup needed.
+        case result do
+          {:ok, _pid} -> bind_session_workspace(uri)
+          {:error, {:already_started, _pid}} -> bind_session_workspace(uri)
+          _ -> :ok
+        end
+
+        result
       end)
 
     # Phase 7 PR 37: template:// scheme dispatches on host segment.
@@ -421,6 +443,27 @@ defmodule EzagentDomainChat.Application do
 
     :ok
   end
+
+  # Allen V1 acceptance 2026-05-22 (invariant 4) — derive the workspace
+  # URI structurally from the 3-segment session URI
+  # (`session://<template>/<workspace>/<name>`, Phase 9 PR-7) and bind
+  # it in `Ezagent.WorkspaceRegistry`. Called from the `session` spawn
+  # fn so the binding is (re)established on every spawn — crucially the
+  # lazy demand-spawn path that rehydrates a snapshotted Session after
+  # a phx restart, where ETS bindings were lost. `Capability.workspace_of/1`
+  # returns `:any` only for cross-cutting schemes; a `session://` URI
+  # always yields a concrete `workspace://` URI, so the bind always runs.
+  defp bind_session_workspace(%URI{scheme: "session"} = session_uri) do
+    case Ezagent.Capability.workspace_of(session_uri) do
+      %URI{} = workspace_uri ->
+        :ok = Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)
+
+      :any ->
+        :ok
+    end
+  end
+
+  defp bind_session_workspace(_other), do: :ok
 
   defp register_chat_behaviors do
     :ok = BehaviorRegistry.register(Session, :send, Chat)
