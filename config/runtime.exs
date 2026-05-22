@@ -107,3 +107,17 @@ if config_env() == :prod do
 
   config :ezagent_core, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
 end
+
+# --- Public URL (all envs) -------------------------------------------------
+# `EzagentWeb.Endpoint.url/0` must return the PUBLIC host, not localhost —
+# magic-link emails embed an absolute URL the recipient opens in a browser.
+# The app is fronted by the app.ezagent.chat Cloudflare tunnel in BOTH the
+# dev-mode and prod-mode deployments, so this is set unconditionally (the
+# endpoint `:url` only affects URL generation, not the bind address — that
+# stays the `http:` port). Override per-deployment with EZAGENT_PUBLIC_HOST.
+config :ezagent_web, EzagentWeb.Endpoint,
+  url: [
+    host: System.get_env("EZAGENT_PUBLIC_HOST", "app.ezagent.chat"),
+    scheme: "https",
+    port: 443
+  ]
