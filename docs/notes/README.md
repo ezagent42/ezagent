@@ -52,6 +52,10 @@ Six notes have bilingual `.zh_cn.md` companions (marked **[zh]** below).
 - [ezagent Web Admin — IDE-shell Prototype Brief](prototype-design-prompt.ide-shell.zh_cn.md) — **[zh]** IDE-shell variant of the Web Admin prototype brief.
 - [Grill report — IDE-shell prototype brief](prototype-design-prompt.ide-shell.grill.md) — grill review of the IDE-shell prototype brief.
 
+## Stress / capacity tests
+
+- [V1 stress-test results (2026-05-22)](v1-stress-test-results-2026-05-22.md) — **[zh]** measured answers to the agents-per-session / max-sessions / max-users questions at a Raspberry-Pi (`+S 4:4`, ~4 GB) resource profile; which bottleneck bit first.
+
 ## Archive
 
 - [ARCHITECTURE_GRILL_v0.3.md](archive/ARCHITECTURE_GRILL_v0.3.md) — 2026-05-14 v0.3-era architecture review; historical artifact, superseded by the current `../../ARCHITECTURE.md`.
