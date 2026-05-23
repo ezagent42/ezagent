@@ -38,6 +38,11 @@ defmodule EzagentCore.MixProject do
     [
       {:dns_cluster, "~> 0.2.0"},
       {:phoenix_pubsub, "~> 2.1"},
+      # Presence SPEC `docs/superpowers/specs/2026-05-23-presence.md` —
+      # Phoenix.Presence (CRDT-replicated liveness tracking) is in :phoenix,
+      # NOT :phoenix_pubsub. Per `layer_purity_test`: core may carry
+      # external Hex deps; the rule is "no umbrella deps".
+      {:phoenix, "~> 1.8"},
       {:ecto_sql, "~> 3.13"},
       {:ecto_sqlite3, ">= 0.0.0"},
       {:jason, "~> 1.2"},
