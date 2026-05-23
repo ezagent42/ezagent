@@ -114,7 +114,8 @@ defmodule Ezagent.Plugin do
   type is kept only so a misuse fails with a precise diagnostic.
   Extend a scheme via a Kind type/name prefix instead.
   """
-  @type spawn_decl :: {scheme :: String.t(), spawn_fun :: (URI.t() -> {:ok, pid} | {:error, term})}
+  @type spawn_decl ::
+          {scheme :: String.t(), spawn_fun :: (URI.t() -> {:ok, pid} | {:error, term})}
 
   @typedoc """
   `{table_name, opts}` — `boot/1` translates into
@@ -299,7 +300,7 @@ defmodule Ezagent.Plugin do
     reject_spawns!(plugin_module)
 
     Enum.each(plugin_module.behaviors(), fn {kind, action, behavior} ->
-      :ok = Ezagent.BehaviorRegistry.register(kind, action, behavior)
+      :ok = Ezagent.CapabilityRegistry.register(kind, action, behavior)
     end)
 
     Enum.each(plugin_module.agent_flavors(), fn decl ->
@@ -381,7 +382,12 @@ defmodule Ezagent.Plugin do
          kind: kind,
          template_class: template_class
        }) do
-    assert_implements!(plugin_module, kind, Ezagent.Kind, "agent_flavors/0 (flavor #{inspect(flavor)})")
+    assert_implements!(
+      plugin_module,
+      kind,
+      Ezagent.Kind,
+      "agent_flavors/0 (flavor #{inspect(flavor)})"
+    )
 
     assert_implements!(
       plugin_module,

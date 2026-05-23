@@ -59,6 +59,14 @@ defmodule Ezagent.Behavior.Lifecycle do
   def actions, do: [:terminate]
 
   @impl Ezagent.Behavior
+  def cap_subjects do
+    [
+      {:terminate,
+       "terminate the target Kind's supervised process (idempotent — already-gone is :ok)"}
+    ]
+  end
+
+  @impl Ezagent.Behavior
   def state_slice, do: :lifecycle
 
   @impl Ezagent.Behavior

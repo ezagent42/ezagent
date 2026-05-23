@@ -49,6 +49,16 @@ defmodule Ezagent.Behavior.ApiKeys do
   def actions, do: [:list_api_keys, :put_api_key, :delete_api_key, :get_api_key]
 
   @impl Ezagent.Behavior
+  def cap_subjects do
+    [
+      {:list_api_keys, "list the API-key slot names this Kind owns (values redacted)"},
+      {:put_api_key, "set or rotate an API key value for a named slot"},
+      {:delete_api_key, "remove an API key slot entirely"},
+      {:get_api_key, "fetch an API key value for outbound use (sensitive — caller must hold cap)"}
+    ]
+  end
+
+  @impl Ezagent.Behavior
   def state_slice, do: :api_keys
 
   @impl Ezagent.Behavior

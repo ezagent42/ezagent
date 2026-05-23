@@ -49,7 +49,7 @@ defmodule EzagentDomainChat.Application do
 
   use Application
 
-  alias Ezagent.{BehaviorRegistry, RoutingRegistry}
+  alias Ezagent.{CapabilityRegistry, RoutingRegistry}
   alias Ezagent.Entity.{Agent, AgentTemplate, Session, SessionTemplate, User}
   alias Ezagent.Behavior.Chat
   alias EzagentDomainChat.Routing.{MentionRouting, SessionRouting}
@@ -81,10 +81,12 @@ defmodule EzagentDomainChat.Application do
       # Phase 7 PR 37: supervisor for AgentTemplate Kinds. 0 children at
       # boot; templates materialize on admin create (LV or mix task) or
       # on snapshot restore at next reference.
-      {DynamicSupervisor, name: EzagentDomainChat.AgentTemplateSupervisor, strategy: :one_for_one},
+      {DynamicSupervisor,
+       name: EzagentDomainChat.AgentTemplateSupervisor, strategy: :one_for_one},
       # Phase 7 PR 38: supervisor for SessionTemplate Kinds. Same shape
       # as AgentTemplateSupervisor — 0 children at boot, lazy spawn.
-      {DynamicSupervisor, name: EzagentDomainChat.SessionTemplateSupervisor, strategy: :one_for_one}
+      {DynamicSupervisor,
+       name: EzagentDomainChat.SessionTemplateSupervisor, strategy: :one_for_one}
       # Phase 6 PR 2: admin User spawn moved to EzagentDomainIdentity.Application
       # (User Kind belongs to identity domain). Chat's start callback below
       # still dispatches admin → join default Session in test env only.
@@ -185,7 +187,9 @@ defmodule EzagentDomainChat.Application do
       # the demand-spawn covers the gap so admin appears in
       # session://default/default/main's members map post-seed.
       case EzagentDomainChat.create_session("main", User.admin_uri()) do
-        {:ok, _uri} -> :ok
+        {:ok, _uri} ->
+          :ok
+
         # Identity domain may not have spawned admin User yet on first
         # boot — surface as a warning, not a crash. Tests that depend
         # on this seed will set their own setup-time seeding if needed.
@@ -441,15 +445,15 @@ defmodule EzagentDomainChat.Application do
   defp bind_session_workspace(_other), do: :ok
 
   defp register_chat_behaviors do
-    :ok = BehaviorRegistry.register(Session, :send, Chat)
-    :ok = BehaviorRegistry.register(Session, :join, Chat)
-    :ok = BehaviorRegistry.register(Session, :leave, Chat)
+    :ok = CapabilityRegistry.register(Session, :send, Chat)
+    :ok = CapabilityRegistry.register(Session, :join, Chat)
+    :ok = CapabilityRegistry.register(Session, :leave, Chat)
     # Phase 7 completion PR-4 (SPEC §1.6) — the Generator + the
     # orchestrator slot tools write the durable `template_working_copy`
     # field via `?action=chat.set_working_copy` on the Session Kind.
-    :ok = BehaviorRegistry.register(Session, :set_working_copy, Chat)
-    :ok = BehaviorRegistry.register(User, :receive, Chat)
-    :ok = BehaviorRegistry.register(Agent, :receive, Chat)
+    :ok = CapabilityRegistry.register(Session, :set_working_copy, Chat)
+    :ok = CapabilityRegistry.register(User, :receive, Chat)
+    :ok = CapabilityRegistry.register(Agent, :receive, Chat)
     # Phase 6 PR 2: Identity behavior registration (list_caps / has_cap?)
     # moved to ezagent_domain_identity.Application — Identity is the identity
     # domain's concern, not chat's.
@@ -461,7 +465,7 @@ defmodule EzagentDomainChat.Application do
     alias Ezagent.Behavior.Routing, as: RB
 
     Enum.each(RB.actions(), fn action ->
-      :ok = BehaviorRegistry.register(Session, action, RB)
+      :ok = CapabilityRegistry.register(Session, action, RB)
     end)
 
     # Domain.Pty PR-B (2026-05-21 SPEC v1) — register the PTY Behavior
@@ -475,7 +479,7 @@ defmodule EzagentDomainChat.Application do
     alias Ezagent.Behavior.Pty, as: PtyB
 
     Enum.each(PtyB.actions(), fn action ->
-      :ok = BehaviorRegistry.register(Agent, action, PtyB)
+      :ok = CapabilityRegistry.register(Agent, action, PtyB)
     end)
 
     # Phase 7 completion PR-1 (SPEC §1.0) — register the new
@@ -488,8 +492,8 @@ defmodule EzagentDomainChat.Application do
     alias Ezagent.Behavior.Template, as: TemplateB
 
     Enum.each(TemplateB.actions(), fn action ->
-      :ok = BehaviorRegistry.register(AgentTemplate, action, TemplateB)
-      :ok = BehaviorRegistry.register(SessionTemplate, action, TemplateB)
+      :ok = CapabilityRegistry.register(AgentTemplate, action, TemplateB)
+      :ok = CapabilityRegistry.register(SessionTemplate, action, TemplateB)
     end)
 
     # Phase 7 completion PR-5 (SPEC §1.6b) — register the new core
@@ -505,7 +509,7 @@ defmodule EzagentDomainChat.Application do
     alias Ezagent.Behavior.Lifecycle, as: LifecycleB
 
     Enum.each(LifecycleB.actions(), fn action ->
-      :ok = BehaviorRegistry.register(Agent, action, LifecycleB)
+      :ok = CapabilityRegistry.register(Agent, action, LifecycleB)
     end)
 
     :ok

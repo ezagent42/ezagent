@@ -59,6 +59,16 @@ defmodule Ezagent.Behavior.Routing do
   def actions, do: [:add_rule, :delete_rule, :disable_rule, :enable_rule]
 
   @impl Ezagent.Behavior
+  def cap_subjects do
+    [
+      {:add_rule, "add a routing rule to this scope's rule store"},
+      {:delete_rule, "delete a routing rule from this scope's rule store"},
+      {:disable_rule, "disable an existing routing rule without removing it"},
+      {:enable_rule, "re-enable a previously disabled routing rule"}
+    ]
+  end
+
+  @impl Ezagent.Behavior
   def state_slice, do: :routing
 
   @impl Ezagent.Behavior

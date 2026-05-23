@@ -21,10 +21,16 @@ defmodule Ezagent.BehaviorRegistry do
 
   def table, do: @table
 
-  @doc """
-  Register `{kind, action} → behavior`. Overwrites if already present
-  (last-writer-wins is fine for boot-time wiring).
-  """
+  @doc false
+  # WARN: direct calls FORBIDDEN in production code outside
+  # `Ezagent.CapabilityRegistry`. Use `Ezagent.CapabilityRegistry.register/3`
+  # — it ALSO updates the cap-subject discovery layer and detects
+  # `{kind, action}` conflicts (raise vs silent last-writer-wins).
+  #
+  # Enforced by
+  # `apps/ezagent_core/test/invariants/single_capability_registration_entry_test.exs`
+  # — any production call site outside this allowlist will fail CI.
+  # See SPEC `docs/superpowers/specs/2026-05-23-capability-registry.md` §2.
   @spec register(kind :: module(), action :: atom(), behavior :: module()) :: :ok
   def register(kind, action, behavior)
       when is_atom(kind) and is_atom(action) and is_atom(behavior) do

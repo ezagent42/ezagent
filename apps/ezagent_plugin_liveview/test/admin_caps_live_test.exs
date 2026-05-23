@@ -1,0 +1,74 @@
+defmodule EzagentPluginLiveview.AdminCapsLiveTest do
+  @moduledoc """
+  `/admin/caps` placement + admin-gate test.
+
+  Mirrors `settings_live_admin_test.exs` — pins the contract that:
+
+  1. /admin/caps is admin-only at the mount level (non-admin callers
+     are redirected to /sessions, not just shown a no-op page).
+  2. The admin caller sees the cap-subjects table.
+
+  SPEC `docs/superpowers/specs/2026-05-23-capability-registry.md` §8.1.
+  """
+
+  use ExUnit.Case
+  import Phoenix.ConnTest
+  import Phoenix.LiveViewTest
+
+  @endpoint EzagentWeb.Endpoint
+
+  setup do
+    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
+    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
+    :ok
+  end
+
+  defp admin_conn do
+    Phoenix.ConnTest.build_conn()
+    |> Plug.Test.init_test_session(%{
+      "current_entity_uri" => URI.to_string(Ezagent.Entity.User.admin_uri())
+    })
+  end
+
+  defp non_admin_conn do
+    uri = "entity://user/default/admin_caps_test_user"
+    {:ok, _user} = Ezagent.Users.create(URI.parse(uri), nil, [])
+
+    Phoenix.ConnTest.build_conn()
+    |> Plug.Test.init_test_session(%{"current_entity_uri" => uri})
+  end
+
+  describe "/admin/caps admin gate" do
+    test "admin caller mounts successfully + sees cap subjects" do
+      {:ok, _lv, html} = live(admin_conn(), "/admin/caps")
+
+      # Page rendered (not a redirect).
+      assert html =~ "Capability subjects"
+      # At least one production cap subject is visible (Chat / Session is
+      # always registered by EzagentDomainChat.Application.start/2).
+      assert html =~ "Ezagent.Behavior.Chat" or html =~ "Ezagent.Entity.Session"
+    end
+
+    test "non-admin caller is redirected away from /admin/caps" do
+      assert {:error, redirect} = live(non_admin_conn(), "/admin/caps")
+
+      assert match?({:live_redirect, %{to: "/sessions"}}, redirect) or
+               match?({:redirect, %{to: "/sessions"}}, redirect)
+    end
+  end
+
+  describe "/admin/caps surface content" do
+    test "renders the default-grants section" do
+      {:ok, _lv, html} = live(admin_conn(), "/admin/caps")
+      assert html =~ "Default grants"
+      # `Ezagent.Entity.User` is registered with a default-grant fn by
+      # EzagentDomainIdentity.Application.start/2.
+      assert html =~ "Ezagent.Entity.User"
+    end
+
+    test "renders the dispatchable / cap-only badge column" do
+      {:ok, _lv, html} = live(admin_conn(), "/admin/caps")
+      assert html =~ "dispatchable"
+    end
+  end
+end

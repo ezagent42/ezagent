@@ -57,6 +57,18 @@ defmodule Ezagent.Behavior.Chat do
   def actions, do: [:send, :receive, :join, :leave, :set_working_copy]
 
   @impl Ezagent.Behavior
+  def cap_subjects do
+    [
+      {:send, "send a chat message to session members"},
+      {:receive, "receive a chat message routed to this Kind (User/Agent inbox)"},
+      {:join, "join a session as a member (replays missed messages on rejoin)"},
+      {:leave, "leave a session (records last_seen for future rejoin replay)"},
+      {:set_working_copy,
+       "stage SessionTemplate working-copy edits on the Session before instantiate"}
+    ]
+  end
+
+  @impl Ezagent.Behavior
   def state_slice, do: :chat
 
   @impl Ezagent.Behavior
@@ -261,6 +273,7 @@ defmodule Ezagent.Behavior.Chat do
         # representable in the channel meta schema.
         attachments = body_attachments(msg.body)
         attachment_hint = attachment_hint_text(attachments)
+
         text_with_hint =
           case {body_text(msg.body), attachment_hint} do
             {"", ""} -> ""
@@ -301,6 +314,7 @@ defmodule Ezagent.Behavior.Chat do
             # warning so operators see the drop in /admin/logs +
             # `phx.log`.
             require Logger
+
             Logger.warning(
               "Chat receive dropped — no BridgeRegistry binding for #{URI.to_string(ctx.self_uri)} " <>
                 "(claude TUI hasn't opened its WS channel yet, or the agent has no PtyServer). " <>

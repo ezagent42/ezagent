@@ -89,4 +89,49 @@ defmodule Ezagent.Behavior do
                 modes: [atom()]
               }
             }
+
+  @doc """
+  List of `{action, description}` tuples — the cap subjects this
+  Behavior gates. Every action returned from `actions/0` MUST appear
+  here with a human-readable English description; the description
+  surfaces in `/admin/caps`, the future `mix ezagent.caps.list` CLI,
+  and audit/forensic queries.
+
+  Cap-only Behaviors (`dispatchable?/0 == false`, e.g. a future
+  `Ezagent.Behavior.Presence`) still list their actions here — that
+  is HOW Presence-style auth gates get their cap shape into
+  `Ezagent.CapabilityRegistry`.
+
+  Enforcement is via the `@behaviour` compile warning + CI's
+  `--warnings-as-errors`. SPEC `docs/superpowers/specs/2026-05-23-capability-registry.md`
+  §3.1 — non-bypassable single-entry semantics.
+
+  Example:
+      def cap_subjects do
+        [
+          {:send,  "send a message to session members"},
+          {:join,  "join a session as a member"},
+          {:leave, "leave a session"}
+        ]
+      end
+  """
+  @callback cap_subjects() :: [{action(), String.t()}]
+
+  @doc """
+  Is this Behavior dispatchable? Default `true` — most Behaviors
+  expose `invoke/4` for action dispatch. Set to `false` for
+  cap-only Behaviors (the cap shape exists for auth but there is
+  no dispatchable action) — e.g. a future `Ezagent.Behavior.Presence`'s
+  `:online` action is a subscription gate, not a dispatch target.
+
+  When `dispatchable?/0 == false`, `Ezagent.CapabilityRegistry.register/3`
+  records the cap subject but does NOT write to
+  `Ezagent.BehaviorRegistry`, so `Invocation.dispatch/1` can never
+  accidentally invoke the Behavior.
+
+  Optional callback (default-true probed via `function_exported?/3`).
+  """
+  @callback dispatchable?() :: boolean()
+
+  @optional_callbacks [dispatchable?: 0]
 end

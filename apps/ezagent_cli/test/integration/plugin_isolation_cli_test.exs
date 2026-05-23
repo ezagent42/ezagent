@@ -28,6 +28,9 @@ defmodule EzagentCli.Integration.PluginIsolationCLITest do
     def actions, do: [:do_thing]
 
     @impl true
+    def cap_subjects, do: [{:do_thing, "test fixture"}]
+
+    @impl true
     def state_slice, do: :probe_cli
 
     @impl true

@@ -52,6 +52,11 @@ defmodule Ezagent.PluginNp.Test.FakeCcAgent do
   def actions, do: [:receive]
 
   @impl Ezagent.Behavior
+  def cap_subjects do
+    [{:receive, "test fixture — fake CC agent's :receive action"}]
+  end
+
+  @impl Ezagent.Behavior
   def state_slice, do: :fake_cc
 
   @impl Ezagent.Behavior

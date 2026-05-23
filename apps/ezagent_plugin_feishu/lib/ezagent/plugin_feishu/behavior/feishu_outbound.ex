@@ -61,6 +61,14 @@ defmodule EzagentPluginFeishu.Behavior.FeishuOutbound do
   def actions, do: [@action]
 
   @impl Ezagent.Behavior
+  def cap_subjects do
+    [
+      {@action,
+       "mirror a session message out to its bound Feishu chats (skips self-echo via :_feishu_origin flag)"}
+    ]
+  end
+
+  @impl Ezagent.Behavior
   def state_slice, do: :feishu_outbound
 
   @impl Ezagent.Behavior
@@ -127,9 +135,7 @@ defmodule EzagentPluginFeishu.Behavior.FeishuOutbound do
     if failures == [] do
       {:ok, new_slice, %{bytes_sent: total_bytes_sent, chats_notified: length(chat_ids)}}
     else
-      Logger.warning(
-        "FeishuOutbound #{maybe_uri(self_uri)}: failures=#{inspect(failures)}"
-      )
+      Logger.warning("FeishuOutbound #{maybe_uri(self_uri)}: failures=#{inspect(failures)}")
 
       {:error, {:partial_send, failures}}
     end

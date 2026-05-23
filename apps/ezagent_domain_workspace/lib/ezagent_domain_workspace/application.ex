@@ -25,7 +25,7 @@ defmodule EzagentDomainWorkspace.Application do
 
   use Application
 
-  alias Ezagent.BehaviorRegistry
+  alias Ezagent.CapabilityRegistry
   alias Ezagent.Behavior.Workspace, as: WB
   alias Ezagent.Entity.Workspace, as: WK
 
@@ -42,7 +42,7 @@ defmodule EzagentDomainWorkspace.Application do
 
   defp register_workspace_behavior do
     Enum.each(WB.actions(), fn action ->
-      :ok = BehaviorRegistry.register(WK, action, WB)
+      :ok = CapabilityRegistry.register(WK, action, WB)
     end)
 
     # PR #146 (SPEC v2 §5.7) — workspace-scoped routing rule mutations
@@ -52,7 +52,7 @@ defmodule EzagentDomainWorkspace.Application do
     alias Ezagent.Behavior.Routing, as: RB
 
     Enum.each(RB.actions(), fn action ->
-      :ok = BehaviorRegistry.register(WK, action, RB)
+      :ok = CapabilityRegistry.register(WK, action, RB)
     end)
 
     :ok

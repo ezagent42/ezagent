@@ -56,6 +56,16 @@ defmodule Ezagent.Behavior.NpAgent do
   def actions, do: [:receive, :reset, :configure]
 
   @impl Ezagent.Behavior
+  def cap_subjects do
+    [
+      {:receive,
+       "receive a session message and forward to the Python compute subprocess (sympy/numpy)"},
+      {:reset, "tear down + respawn the Python compute subprocess (clears state)"},
+      {:configure, "set or update the np-agent's subprocess config (timeout, allowed funcs)"}
+    ]
+  end
+
+  @impl Ezagent.Behavior
   def state_slice, do: :np_agent
 
   @impl Ezagent.Behavior

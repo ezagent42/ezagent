@@ -52,6 +52,13 @@ defmodule Ezagent.Behavior.Pty do
   def actions, do: [:write]
 
   @impl Ezagent.Behavior
+  def cap_subjects do
+    [
+      {:write, "write input bytes to the Agent's PTY subprocess stdin"}
+    ]
+  end
+
+  @impl Ezagent.Behavior
   def state_slice, do: :pty
 
   @impl Ezagent.Behavior
@@ -76,8 +83,7 @@ defmodule Ezagent.Behavior.Pty do
                 new_slice = %{
                   base
                   | write_calls: Map.get(slice, :write_calls, base.write_calls) + 1,
-                    total_bytes:
-                      Map.get(slice, :total_bytes, base.total_bytes) + byte_size(bytes)
+                    total_bytes: Map.get(slice, :total_bytes, base.total_bytes) + byte_size(bytes)
                 }
 
                 {:ok, new_slice, %{bytes_written: byte_size(bytes)}}
