@@ -63,9 +63,31 @@ but keeps the JSON-RPC stdio wire.
 
 `Domain.Python` is a **Tier-2 domain app** (`apps/ezagent_domain_python/`).
 It already exists as a Phase-6 placeholder; this SPEC turns it into a
-real runtime. Deps: `:ezagent_core` + `:jason` only (consistent with
-the principle that a Tier-2 domain app depends on `core` and nothing
-else — see ezagent-developer SKILL §Three-tier project structure).
+real runtime.
+
+**Dependencies** (codex round-2 HIGH-2 — added):
+
+```elixir
+# apps/ezagent_domain_python/mix.exs
+def application do
+  [extra_applications: [:logger, :erlexec],   # erlexec required for :exec.run/2 + :exec.stop/1
+   mod: {EzagentDomainPython.Application, []}]
+end
+
+defp deps do
+  [
+    {:ezagent_core, in_umbrella: true},
+    {:jason, "~> 1.2"},
+    {:erlexec, "~> 2.1"}   # mirrors apps/ezagent_domain_pty/mix.exs
+  ]
+end
+```
+
+Per Tier-2 rules, no plugin deps and no other domain deps. `:erlexec`
+is OK because Domain.Pty already declares it — it's an ecosystem dep,
+not an in-umbrella dep. The boot/integration test (§9.2) starts
+`:ezagent_domain_python` in isolation and performs a real
+`:exec.run/2` to fail loud at precommit if the dep declaration drifts.
 
 ```
 apps/ezagent_domain_python/
@@ -103,50 +125,78 @@ keyed by the **canonical handle key** derived from the caller's
 handle (see §1.2.1 for the canonicalization rules — codex round-1
 HIGH-4).
 
-#### 1.2.1 Handle identity — canonicalization at the boundary (codex round-1 HIGH-4)
+#### 1.2.1 Handle identity — strict canonicalization at the boundary (codex round-1 HIGH-4 + round-2 HIGH-3)
+
+Naive `URI.parse → URI.to_string` is NOT identity-preserving for many
+valid URIs (uppercase host, percent-encoded segments, trailing slash,
+query-param ordering). The lenient roundtrip from round-1 would have
+let two equivalent-but-non-identical strings produce two Registry
+keys → two OS processes for one logical handle. Round-2 tightens
+this to a STRICT policy: the only accepted handle shapes are forms
+the caller already canonicalized.
 
 The caller-facing `handle` accepts EXACTLY two shapes:
 
-- **`URI.t()`** — the production case. P5 UUID-canonical-identifier
-  applies; every per-tenant URI in ezagent already canonicalizes
-  through `Ezagent.URI.parse!/1`, so callers are already passing
-  parsed structs.
-- **binary** — restricted to a SINGLE production use (a static
-  service handle like `"system://python-sidecar/default"` that the
-  caller has already serialized) PLUS test fixtures. Any other
-  binary form raises at the boundary.
+- **`URI.t()`** — the production case. The struct came from
+  `Ezagent.URI.parse!/1` (or the operator-typed forms it normalizes),
+  so it's already in the canonical form ezagent uses everywhere else.
+  `handle_key/1` simply does `URI.to_string/1` on it.
+- **binary** — RESTRICTED to:
+  (a) the exact `URI.to_string/1` output of a `URI.t()` the caller
+      could equally have passed as a struct (e.g. a stored config
+      value, a cross-process re-injection), AND
+  (b) test fixtures using the `"test://"` scheme prefix.
 
-`Ezagent.Domain.Python.handle_key/1` is the SOLE canonicalization
-point:
+`Ezagent.Domain.Python.handle_key/1` enforces this strictly:
 
 ```elixir
 @spec handle_key(URI.t() | binary()) :: binary()
 def handle_key(%URI{} = uri), do: URI.to_string(uri)
+
+def handle_key("test://" <> _ = bin), do: bin   # test fixtures: identity
+
 def handle_key(bin) when is_binary(bin) do
-  # Defensive: roundtrip through URI.parse + back so an accidentally
-  # different-but-equivalent string (e.g. trailing slash, lowercased
-  # scheme) normalizes to one Registry key. URI.parse is lenient;
-  # for production URIs the caller should have used %URI{} directly.
-  case URI.new(bin) do
-    {:ok, %URI{} = uri} -> URI.to_string(uri)
-    {:error, _} -> bin  # test fixture or static handle — used as-is
+  # Production binary handle MUST roundtrip through Ezagent.URI.parse!/1
+  # AND match its own to_string/1 output. Any normalization difference
+  # (uppercase host, percent-encoding, trailing slash, etc.) is a
+  # caller error — fail loud, don't silently bind to a different key.
+  uri = Ezagent.URI.parse!(bin)
+  canonical = URI.to_string(uri)
+  if canonical != bin do
+    raise ArgumentError,
+          "Ezagent.Domain.Python: non-canonical handle binary. " <>
+          "Got #{inspect(bin)}, canonical form is #{inspect(canonical)}. " <>
+          "Pass the %URI{} struct or the canonical string."
   end
+  bin
 end
-def handle_key(other), do:
+
+def handle_key(other) do
   raise ArgumentError,
         "Ezagent.Domain.Python: handle must be %URI{} or binary, got: #{inspect(other)}"
+end
 ```
 
 Both `start_subprocess/1` (via `Spec.validate/1`) AND `call / notify /
 stop / alive?` invoke `handle_key/1`. So passing a `%URI{}` for spawn
-and the URI's `to_string/1` for `call` resolve to the SAME Registry
-entry. **No tuples, no maps, no atoms.** The Registry key is always a
-binary; the type is enforced at the boundary so a typo
-(`call(:my_atom, ...)`) fails loudly, not silently as `:not_alive`.
+and the SAME URI's `URI.to_string/1` output for `call` resolve to the
+SAME Registry entry. Non-canonical strings (uppercase, trailing
+slash, percent-encoded identity segments, unknown schemes) raise
+loud — they NEVER silently produce a different key. **No tuples, no
+maps, no atoms.**
 
-Invariant test (§9.3): start with `URI.parse("system://python/default")`,
-then call with the literal binary `"system://python/default"` — must
-hit the same Server pid.
+Invariant tests (§9.3):
+- Positive: `start_subprocess(%Spec{handle: URI.parse("system://python/default")...})`
+  → `call(URI.to_string(URI.parse("system://python/default")), ...)`
+  hits the same Server.
+- Negative: `call("SYSTEM://python/default", ...)` (uppercase scheme)
+  raises `ArgumentError`.
+- Negative: `call("system://python/default/", ...)` (trailing slash)
+  raises `ArgumentError`.
+- Negative: `call("system://python/%64efault", ...)` (percent-encoded)
+  raises `ArgumentError` (canonical form differs).
+- Negative: `call(:my_atom, ...)` raises `ArgumentError`.
+- Negative: `call("not-a-uri", ...)` raises (parse!/1 rejects).
 
 The Python subprocess is launched via `:exec.run/2` — the same
 primitive Domain.Pty uses — but **without** the `:pty` option. Pipes:
@@ -359,27 +409,83 @@ Step-by-step:
    `File.dir?(spec.cwd)` check returns `{:error, :bad_cwd}` if cwd
    absent. Preflight failures are returned to the caller WITHOUT
    touching the supervisor — no half-started child, no restart loop.
-2. **Atomic Registry dedup:** the Server's `start_link` uses
-   `name: via(handle_key(spec.handle))`. Concurrent starts for the
-   same handle collapse to `{:error, {:already_started, pid}}` which
-   `start_subprocess/1` returns AS-IS (caller decides whether to
-   adopt — mirrors the cc plugin's `:already_started` handling).
+2. **Readiness-aware atomic dedup** (codex round-2 HIGH-1): the
+   Server's `start_link` uses `name: via(handle_key(spec.handle))`,
+   so concurrent starts collapse atomically at the Registry level.
+   But a `{:error, {:already_started, pid}}` raw return is unsafe —
+   GenServer names are published BEFORE `init/1` finishes, so the
+   second caller could see `{:already_started, pid}` while the first
+   process is still mid-spawn or about to fail with `:ping_timeout`.
+   Returning that as adoptable success reintroduces the D9
+   false-readiness window through a different door.
+
+   The correct contract: `start_subprocess/1` does NOT just propagate
+   `{:already_started, pid}`. Instead:
+
+   a. On `{:error, {:already_started, pid}}`, the caller (which is
+      still inside `start_subprocess/1`) `Process.monitor(pid)` and
+      then `GenServer.call(pid, :await_ready, ping_timeout_ms)`.
+   b. The Server exposes `handle_call(:await_ready, from, state)`:
+      - If `state.ready? == true` → reply `:ok` immediately.
+      - If `state.ready? == false` → enqueue `from` in
+        `state.ready_waiters` (a small list); `init/1`'s ping-success
+        path replies `:ok` to every waiter before transitioning to
+        the main loop.
+   c. If the monitored pid dies before `:await_ready` returns, the
+      caller receives `{:DOWN, _, _, _, reason}` and returns
+      `{:error, {:concurrent_start_died, reason}}`.
+   d. If the monitored pid is still not ready after `ping_timeout_ms`,
+      the caller returns `{:error, :concurrent_start_timeout}` and
+      demonitors. (The first caller still owns the lifecycle; the
+      second caller just gave up waiting.)
+
+   This makes adoption safe: `start_subprocess/1` returns `{:ok, pid}`
+   to BOTH concurrent callers only when the underlying subprocess
+   actually reached `ready? == true`. Identical false-readiness
+   guarantee as the lone-caller path.
+
+   Invariant test (§9.3): two parallel `start_subprocess` for the
+   SAME handle with a `command: ["/usr/bin/false"]` Spec — BOTH
+   callers MUST observe `{:error, _}`, neither can observe
+   `{:ok, pid}`.
 3. **`init/1` performs the spawn synchronously:**
    `Process.flag(:trap_exit, true)`, then `:exec.run/2` (no `:pty`;
    `[:stdin, :stdout, :stderr, :monitor, {:env, env}, {:cd, cwd}]`).
    On `{:error, reason}` → `{:stop, {:spawn_failed, reason}}`, which
    `start_link` propagates as `{:error, {:spawn_failed, reason}}`.
 4. **`init/1` then issues `python.ping` and AWAITS it synchronously:**
-   write the ping frame, then `receive` `{:stdout, _, bytes}` chunks
-   feeding `FrameBuffer` until either the ping response arrives
-   (success, transition to `ready? := true`, return `{:ok, state}`)
-   or `ping_timeout_ms` elapses (`{:stop, :ping_timeout}` →
-   `start_link` returns `{:error, :ping_timeout}`). The Server stops
-   the subprocess (`:exec.stop/1`) before exiting on ping failure so
-   no orphan remains.
-   Edge case: if `{:DOWN, _, :process, _, reason}` arrives before
-   the ping response (subprocess crashed at import time), the Server
-   stops with `{:spawn_died_at_init, reason}`.
+   write the ping frame, then enter a private `receive` loop that
+   handles `{:stdout, _, bytes}` chunks (feeding `FrameBuffer`),
+   `{:stderr, _, bytes}` (writing to the stderr log), and
+   `{:DOWN, _, :process, _, reason}` (subprocess crashed mid-init).
+   Loop terminates when either:
+   - the ping response arrives → transition to `ready? := true`,
+     reply `:ok` to any queued `ready_waiters` (§3.2 step 2), return
+     `{:ok, state}` from `init/1`.
+   - `ping_timeout_ms` elapses (a single `after ping_timeout_ms ->` arm
+     on the receive) → `:exec.stop/1` to reap the subprocess + return
+     `{:stop, :ping_timeout}` from `init/1` → `start_link` propagates
+     `{:error, :ping_timeout}`.
+   - `{:DOWN, _, _, _, reason}` arrives → `{:stop, {:spawn_died_at_init, reason}}`.
+
+   **OTP safety note**: doing message-receive inside `init/1` is
+   technically supported (init is just a normal process callback,
+   not subject to special restrictions), but the receive MUST be
+   selective — it pattern-matches ONLY on the expected erlexec
+   messages so any other mail sent to the new pid (e.g. a
+   `Process.exit/2` from the supervisor's own startup observers)
+   waits in the mailbox until the main loop picks it up later. We
+   accept the trade-off because the alternative — `{:continue,
+   :spawn_and_ping}` async startup — reintroduces the false-readiness
+   window D9 eliminates. The receive set is small + well-known
+   (`:stdout / :stderr / :DOWN`); deadlock risk is bounded by the
+   `after ping_timeout_ms` arm (default 5s).
+
+   Erlexec delivers `{:stdout, os_pid, _}` to the controlling
+   process (the Server's pid) starting at `:exec.run/2` return —
+   so when init/1's selective receive runs, stdout messages are
+   already (or imminently will be) in the Server's mailbox. No
+   handshake required.
 5. **After `init/1` returns**, the GenServer is in normal message
    loop. `handle_info({:stdout, os_pid, bytes}, state)` feeds bytes
    into `FrameBuffer`. Each completed frame is decoded via
@@ -396,7 +502,45 @@ Step-by-step:
 6. **`handle_info({:stderr, _, bytes}, state)`** → append to a per-handle
    stderr log file under `~/.ezagent/<profile>/logs/python-<slug>.log`
    (slug = handle key with `://` → `-` and `/` → `_`, mirroring the
-   `ezagent_mcp_bridge.py` log naming).
+   `ezagent_mcp_bridge.py` log naming). See §3.7 for bounded log policy.
+
+### 3.7 Bounded stderr logging (codex round-2 MEDIUM-5)
+
+A noisy or broken Python subprocess can write stderr in a tight loop;
+unbounded append would fill the operator's disk and take down
+unrelated ezagent state. Domain.Python ships a built-in cap so the
+default is safe.
+
+Policy (all values configurable per-Spec but with safe defaults):
+
+- **Per-file cap**: 4 MiB (`stderr_log_max_bytes`, default).
+  When the current log file would cross the cap on an append, the
+  Server rotates: rename `python-<slug>.log` →
+  `python-<slug>.log.1` (overwriting any previous `.1`), then open a
+  fresh `.log` and continue. This is a 2-file rotating buffer — most
+  recent `4 MiB` always live, prior `4 MiB` in `.1`, ~8 MiB max per
+  handle.
+- **No `.2 .3 …`**: keeping more files is operator preference; V1
+  picks the simplest bounded scheme. (V2 can add `stderr_log_files`
+  count if a deployment needs it.)
+- **Open mode**: append + line-buffered (`File.open!(path, [:append])`
+  with explicit `IO.binwrite/2`; we do NOT use `Logger` for stderr
+  because the volume can be high and we want stderr in a separate
+  file so operator `tail -f` is clean).
+- **Truncation safety**: rotation happens BEFORE the next append
+  that would cross the cap; an oversized single chunk (>4 MiB in one
+  message — unlikely but possible) is split: write the head into the
+  current file (filling to cap), rotate, write the tail into the new
+  file.
+
+This is a Tier-2 primitive responsibility: plugin authors should not
+have to defend against runaway Python stderr. The cap is
+log-level-noisy + still production-safe.
+
+Invariant test (§9.3): spawn a subprocess that writes stderr in a
+loop; assert total bytes across `.log` + `.log.1` stays ≤
+`2 * stderr_log_max_bytes`; assert `.log.1` contains the older
+content and `.log` contains the newer content.
 
 **Why synchronous init/1 (vs `{:continue, :spawn}` async startup):**
 the contract `start_subprocess/1 returns {:ok, pid} only when ready`
@@ -418,13 +562,25 @@ someone refactors init/1 to async startup.
 `call/4` (synchronous; default timeout 5000ms):
 
 1. Allocate next monotonic `id` (incrementing integer per Server).
-2. Insert `{id, from, deadline_mref}` into `pending_requests`.
+2. Insert `{id, from, timer_ref}` into `pending_requests`.
 3. Encode + write frame to subprocess stdin.
-4. Set a `Process.send_after(self(), {:rpc_timeout, id}, timeout)` ref;
+4. Set `timer_ref = Process.send_after(self(), {:rpc_timeout, id}, timeout)`;
    on timeout the Server treats the subprocess as **unhealthy** and
    tears it down — see §3.3.1.
-5. When `{:result | :error}` for `id` arrives in `handle_info`,
-   `GenServer.reply/2` to the original caller.
+5. When `{:result | :error}` for `id` arrives in `handle_info`, the
+   handler MUST (codex round-2 MEDIUM-4 — explicit ordering):
+   a. Pop the entry from `pending_requests`. If absent, drop the
+      frame (it's a late response for a previously-timed-out call —
+      the subprocess is already in teardown or a fresh restart).
+   b. `Process.cancel_timer(timer_ref)` AND flush any already-
+      delivered `{:rpc_timeout, id}` from the mailbox:
+      `receive do {:rpc_timeout, ^id} -> :ok after 0 -> :ok end`.
+   c. `GenServer.reply(from, {:ok | :error, payload})`.
+
+   Symmetrically, the `{:rpc_timeout, id}` handler MUST:
+   a. If `id` not in `pending_requests` → ignore (stale message;
+      response already arrived). This is the cancellation-race no-op.
+   b. Otherwise execute the unhealthy-teardown path from §3.3.1.
 
 `notify/3` (fire-and-forget):
 
@@ -449,15 +605,21 @@ The recovery contract is: **an RPC timeout means the subprocess can
 no longer be trusted; tear it down so the supervisor gives the next
 caller a fresh one.**
 
-On `{:rpc_timeout, id}`:
+On `{:rpc_timeout, id}` AND `id` IS still in `pending_requests`
+(else: stale no-op per §3.3 step 5 cancellation-race rule):
 
-1. Reply `{:error, :rpc_timeout}` to the caller pinned at `id`.
-2. Reply `{:error, :subprocess_unhealthy}` to every OTHER entry in
+1. Set `state.tearing_down? := true` (codex round-2 MEDIUM-4: every
+   subsequent `handle_info` for stdout/stderr/DOWN that runs while
+   tearing_down? is true MUST drop the frame after logging — no
+   double-reply, no crash from late results trying to find
+   already-replied callers).
+2. Reply `{:error, :rpc_timeout}` to the caller pinned at `id`.
+3. Reply `{:error, :subprocess_unhealthy}` to every OTHER entry in
    `pending_requests` (they are stuck behind the hung handler — no
-   point waiting).
-3. Force-stop the subprocess (`:exec.stop/1` → SIGTERM → 1s →
+   point waiting); cancel each entry's timer.
+4. Force-stop the subprocess (`:exec.stop/1` → SIGTERM → 1s →
    SIGKILL, per erlexec default).
-4. `{:stop, :subprocess_unhealthy, state}` → DynamicSupervisor
+5. `{:stop, :subprocess_unhealthy, state}` → DynamicSupervisor
    restarts the Server, which respawns Python via `init/1` (§3.2)
    into a fresh ready state.
 
@@ -528,6 +690,8 @@ defstruct [
   pending_requests: %{},    # %{id => {from, timeout_ref}}
   frame_buffer: %FrameBuffer{},  # incremental LSP parser state
   ready?: false,            # true after python.ping round-trip succeeds
+  ready_waiters: [],        # [GenServer.from()] enqueued by concurrent :await_ready calls (codex round-2 HIGH-1)
+  tearing_down?: false,     # set during stop/unhealthy paths — drops late frames cleanly (codex round-2 MEDIUM-4)
   test_mode: false          # short-circuits :exec.run/2 in :test
 ]
 ```
@@ -1096,6 +1260,29 @@ invariant gets a failing-when-violated test:
   MEDIUM-3): the fixture script `test/support/echo_server.py` imports
   the library via the exact `os.environ["EZAGENT_PYTHON_LIB_DIR"]`
   pattern from §6.3. Integration test passing → docs work.
+- **Concurrent start with bad command — neither caller observes success**
+  (codex round-2 HIGH-1): two parallel `start_subprocess` for the same
+  handle with `command: ["/usr/bin/false"]` MUST both return
+  `{:error, _}`. Fails if the second caller adopts a soon-to-die pid
+  via raw `{:already_started, pid}`.
+- **erlexec boots in isolation** (codex round-2 HIGH-2):
+  `Application.ensure_all_started(:ezagent_domain_python)` MUST return
+  `{:ok, [_ | _]}` including `:erlexec`. Fails if mix.exs deps drift.
+- **Strict handle canonicalization** (codex round-2 HIGH-3): the 6
+  negative cases in §1.2.1 (uppercase scheme, trailing slash,
+  percent-encoded segment, atom, malformed URI, non-string) each get
+  one assertion: `handle_key/1` raises `ArgumentError` with a
+  message that mentions the canonical form when applicable.
+- **Late-result-after-cancellation race is benign** (codex round-2
+  MEDIUM-4): in the fixture, fire a `call/4` with `timeout: 10ms`
+  against a method that sleeps 5ms then returns. The result MAY
+  arrive before or after the timeout fires. Either way: the caller
+  receives exactly ONE reply, the subprocess is NOT torn down if the
+  result won the race, AND `alive?(h)` after the call is `true`.
+- **Bounded stderr does not exceed 2× cap** (codex round-2 MEDIUM-5):
+  spawn a fixture that writes 20 MiB to stderr; assert the sum of
+  `python-<slug>.log` + `python-<slug>.log.1` byte sizes is
+  ≤ `2 * stderr_log_max_bytes` + one chunk's worth of slack.
 
 ### 9.4 Future-readiness sketch (not implemented — design check)
 
@@ -1125,6 +1312,11 @@ the OS-process primitive that backs such a Behavior.)
 | D10 (codex round-1) | RPC timeout = tear down subprocess | Python lib is single-threaded; hung handler poisons all future calls. Restart is the only recovery available in V1. §3.3.1 |
 | D11 (codex round-1) | Plugin docs use `os.environ["EZAGENT_PYTHON_LIB_DIR"]` | Python does not expand `$VAR` in string literals; the original draft would have broken every plugin copied from the SPEC. §6.3 |
 | D12 (codex round-1) | Handle is `URI.t() \| binary()` ONLY; canonicalize at boundary | "Any term" → silent `:not_alive` on typo; URI/string equivalence requires explicit `handle_key/1`. Atoms / tuples raise loud. §1.2.1 |
+| D13 (codex round-2) | Concurrent dedup uses `:await_ready` not raw `{:already_started, _}` | Names are published before `init/1` finishes; bare `{:already_started, pid}` reintroduces D9 false-readiness via the second-caller path. `:await_ready` makes both callers see the same final outcome. §3.2 step 2 |
+| D14 (codex round-2) | erlexec declared explicitly in `mix.exs` deps + `extra_applications` | Domain.Python uses `:exec.*` directly; without explicit dep, release-time failures replace precommit-time failures. §1.1 |
+| D15 (codex round-2) | Strict handle canonicalization — non-canonical binaries raise | `URI.parse + to_string` is NOT identity for many valid URIs; lenient roundtrip would split one logical handle into two Registry keys. Require caller-canonical input; fail loud on drift. §1.2.1 |
+| D16 (codex round-2) | RPC timeout / late-result race has explicit cancel + flush + stale-no-op semantics | Without these, a healthy response immediately followed by a stale `{:rpc_timeout, id}` tears down a healthy subprocess. `tearing_down?` guards late frames after teardown. §3.3 step 5 + §3.3.1 |
+| D17 (codex round-2) | stderr log is 2-file rotating buffer, default 4 MiB cap | Unbounded append fills the operator disk and takes down unrelated state. Built-in cap is the only Tier-2-honest default. §3.7 |
 
 ## 11. Migration plan
 
