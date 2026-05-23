@@ -302,6 +302,24 @@ defmodule EzagentPluginLiveview.AdminLive do
      )}
   end
 
+  # PR-2 of Read Receipts rollout — `ViewportMarkRead` JS hook
+  # (IntersectionObserver + 250ms dwell) fires this event when a
+  # chat-stream row enters viewport. We mark `:displayed` for the
+  # current viewer on the current session. Fire-and-forget; mark
+  # failure must not block the LV (the marker is observability,
+  # not auth-critical).
+  def handle_event("mark_displayed", %{"msg_id" => msg_id}, socket)
+      when is_binary(msg_id) and msg_id != "" do
+    session_uri = socket.assigns.current_session_uri
+    viewer_uri = socket.assigns.current_entity_uri
+
+    _ = Ezagent.Chat.ReadMarker.mark(session_uri, viewer_uri, msg_id, :displayed)
+
+    {:noreply, socket}
+  end
+
+  def handle_event("mark_displayed", _params, socket), do: {:noreply, socket}
+
   def handle_event("switch_session", %{"session_uri" => session_uri_str}, socket) do
     case URI.new(session_uri_str) do
       {:ok, new_uri} ->
