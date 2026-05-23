@@ -34,9 +34,24 @@ in main. PR-C builds on PR-B's `{:partial, _}` convention. PR-D documents.
      — deterministic per `(SessionTemplate URI, owner URI)`. Per SPEC §1.2:
      `session://generic/<workspace>/<owner_name>-<template_name>`.
 2. `apps/ezagent_domain_chat/lib/ezagent/entity/session.ex` — add (private):
-   - `existing_routing_rule_for(table, matcher_ast, receiver_uris, scope_opts) :: %RuleRow{} | nil`
-     — wraps `RuleStore.list/1` + scope filter + matcher/receivers equality.
-3. **Audit** the call sites of `Session.spawn_from_template/2` (commit message
+   - `existing_routing_rule_for(table, matcher_ast, receiver_uris, workspace_uri) :: {:found, %RuleRow{}} | :not_found | {:disabled, %RuleRow{}}`
+     — wraps `RuleStore.list/1` + filter by `enabled == true` AND
+     `source == :system_default` AND normalized matcher (round-trip via
+     `Matcher.to_json/1`) AND receiver-set equality (canonical-string
+     compare) AND workspace scope. Returns `{:disabled, _}` when a row
+     matches everything except `enabled` (operator drift — SPEC §7-4).
+3. `apps/ezagent_domain_chat/lib/ezagent/entity/session.ex` — add (private):
+   - `cap_equal_ignoring_metadata?(%Capability{} = a, %Capability{} = b) :: boolean()`
+     — `{kind, behavior, instance, workspace_uri, granted_by}` equality;
+     ignores `granted_at`. The dispatch-gate for the reconciler's idempotent
+     `grant_scoped_caps` (SPEC §2 step 6, codex rev-2 HIGH-1).
+4. `apps/ezagent_domain_chat/lib/ezagent/entity/session.ex` — add (private):
+   - `worker_already_owned_by_us?(worker_uri, orch_uri, ws_uri) :: boolean()`
+     — the structural equivalent of `Workspace.Loader.bind_one_gated/3`'s
+     ownership predicate (lineage + workspace match). Used by both worker-slot
+     reconcile (SPEC §2 step 3) and orchestrator-adopt gate (SPEC §2 step 2,
+     codex rev-2 HIGH-6).
+5. **Audit** the call sites of `Session.spawn_from_template/2` (commit message
    records the result; SPEC §7-3 expects "none outside session_live.ex + tests"
    — confirm or surface):
    - `rg -n 'Session\.spawn_from_template' apps/`
@@ -48,9 +63,22 @@ in main. PR-C builds on PR-B's `{:partial, _}` convention. PR-D documents.
   - different owners → different URIs;
   - workspace segment ≡ owner's workspace.
 - `apps/ezagent_domain_chat/test/ezagent/entity/existing_routing_rule_test.exs`
-  - matcher + receivers + scope match → returns row;
-  - matcher matches but receivers differ → returns nil;
-  - workspace scope differs → returns nil.
+  - matcher + receivers + scope + enabled match → returns `{:found, _}`;
+  - matcher matches but receivers differ → returns `:not_found`;
+  - workspace scope differs → returns `:not_found`;
+  - `enabled == false` but otherwise matches → returns `{:disabled, _}` (codex rev-2 HIGH-5);
+  - `source == :admin` but otherwise matches → returns `:not_found` (operator's rule, not ours);
+  - matcher tuple vs JSON-roundtripped map equality holds.
+- `apps/ezagent_core/test/ezagent/capability_equal_ignoring_metadata_test.exs`
+  - same authority shape + different `granted_at` → true (codex rev-2 HIGH-1);
+  - same authority shape + different `granted_by` → false (provenance matters);
+  - different `instance` → false;
+  - different `workspace_uri` → false.
+- `apps/ezagent_domain_chat/test/ezagent/entity/worker_ownership_predicate_test.exs`
+  - live worker + lineage match + workspace match → true;
+  - live worker + lineage MISmatch → false;
+  - dead worker → false;
+  - mirrors `Workspace.Loader.bind_one_gated/3` test coverage.
 
 **No behaviour change.** All existing tests pass unmodified. The new
 helpers are unused in production code paths.

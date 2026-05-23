@@ -1,6 +1,20 @@
 # Generator → Reconciler (SessionTemplate `converge-to-spec`)
 
-> **Status**: DRAFT rev 1 — 2026-05-23. Author: Claude, per Allen Feishu
+> **Status**: DRAFT rev 2 — 2026-05-23. Author: Claude, per Allen Feishu
+>
+> - **rev 1**: initial SPEC.
+> - **rev 2**: first `codex adversarial-review` — 6 HIGH, all addressed
+>   inline. (a) cap idempotency requires logical equality ignoring
+>   `granted_at` — see §2 step 6 + §5 row "Identity grant_cap"; (b) per-slot
+>   AgentTemplate resolvability moves out of Step 0 into per-slot
+>   reconcile so V1-R4 (failed-slot retry) actually works — see §2 step 0
+>   + §2 step 3; (c) `populate_working_copy` becomes a MERGE not a replace
+>   so pending slots' prior tuples survive — see §2 step 5; (d)
+>   `update_agent_template` no-op detection runs BEFORE generation bump —
+>   see §4.1; (e) routing-rule idempotency probe requires `enabled == true`
+>   AND normalized matcher — see §2 step 4 + §5 row "RuleStore"; (f)
+>   orchestrator adoption uses the same ownership-gated pattern as worker
+>   slots (no `Agent.spawn` on a live foreign-lineage URI) — see §2 step 2.
 > 2026-05-22: *"Generator 现在'原子多步 + 失败回滚'的模型是错的抽象 — 正确的是
 > 声明式 SessionTemplate + reconciler(`spawn_from_template/2` 变成 `docker-compose
 > up`-style 收敛到 spec 的命令;残留状态是预期的;再跑一次从失败点继续)."*
@@ -234,14 +248,14 @@ step is a no-op). A step that cannot converge in this pass populates
 populate `pending`, but steps that DO NOT depend on it continue (so one
 blocked slot does not prevent other slots from converging).
 
-### Step 0 — Preflight (UNCHANGED from Phase-7 round-1..3)
+### Step 0 — Preflight (NARROWED from Phase-7 round-1..3 — codex rev-2 HIGH-2)
 
-The structural / authority gates run identically to today, BEFORE any side
-effects. A failure here returns `{:error, reason}` — these are the
-un-completable failures:
+The structural / authority gates run BEFORE any side effects. A failure
+here returns `{:error, reason}` — these are the un-completable failures
+that prevent *any* convergence (no Session is created):
 
-- `ensure_template_alive(session_template_uri)` — idempotent demand-spawn;
-  `{:already_started, _}` accepted;
+- `ensure_template_alive(session_template_uri)` — idempotent demand-spawn
+  of the SessionTemplate Kind itself; `{:already_started, _}` accepted;
 - `owner_instantiate_preflight(session_template_uri, owner_uri)` — owner
   must hold `template:instantiate` authority on the SessionTemplate's
   workspace;
@@ -250,15 +264,40 @@ un-completable failures:
   `default_workspace_uri` (Phase-7 round-1 HIGH-4);
 - `preflight_workspace_isolation/3` — the same-workspace rule (Phase-7
   round-2 CRITICAL: SessionTemplate workspace ≡ `default_workspace_uri` ≡
-  every slot's AgentTemplate workspace);
-- `preflight_agent_slots/1` — every slot's AgentTemplate Kind resolvable;
+  every slot's AgentTemplate URI's workspace SEGMENT — *structural URI*
+  check, no Kind aliveness probe; the slot URI just has to PARSE into the
+  right workspace);
 - `preflight_slot_name_uniqueness/1` — slot name collisions rejected (round
-  3);
+  3) — pure name analysis, no Kind probe;
 - `preflight_routing_rules/1` — every matcher round-trips through
-  `Matcher.to_json/1`.
+  `Matcher.to_json/1` — pure shape validation, no DB / Kind probe.
 
-These are NOT incremental — they validate the SessionTemplate IS a coherent
-spec. A re-run repeats them (cheap; pure reads + a structural validation).
+**MOVED OUT of Step 0** (codex rev-2 HIGH-2) — the following Phase-7
+preflight is RETIRED at the Generator-entry level and migrated INTO step
+3 (per-slot reconcile):
+
+- ~~`preflight_agent_slots/1` — every slot's AgentTemplate Kind resolvable~~
+  → MOVED INTO `reconcile_slot/5`. An unresolvable AgentTemplate (Kind
+  spawn fails because the plugin is not yet loaded) is a per-slot
+  partial outcome, NOT an up-front Generator denial. This is what makes
+  V1-R4 (failed-slot retry) possible: previously the WHOLE Generator
+  failed before any Session was created, so re-invocation had no partial
+  state to continue from; now the Session and other slots converge
+  while the unresolvable slot accumulates into `pending`.
+
+These Step-0 preflights are PURE (structural / authority checks against
+the in-hand template content, no spawning, no plugin-aliveness probes).
+A re-run repeats them cheaply.
+
+**`preflight_candidate_uris_free/3`** (Phase-7 round-3 MEDIUM-3 — rejecting
+orphan-live candidate worker URIs from a prior failed cleanup) is also
+RETIRED. Its job was to defend against the saga's incomplete cleanup
+leaving orphan workers at predictable candidate URIs; the reconciler
+WELCOMES those orphan workers IF they pass the ownership gate (`AgentLineage`
+points at this orchestrator AND `WorkspaceRegistry` points at this
+workspace) — they are "already-converged" slots from a prior partial run.
+The check moves into per-slot reconcile (§2 step 3) as the
+`verify_slot_candidate_ownership/5` round-8 gate, which is already there.
 
 ### Step 1 — Ensure Session Kind
 
@@ -288,48 +327,125 @@ Workspace-bind: `WorkspaceRegistry.bind(session_uri, workspace_uri)` —
 already idempotent (the registry's `bind/2` is an ETS put; identical pair is
 no-op).
 
-### Step 2 — Ensure Orchestrator
+### Step 2 — Ensure Orchestrator (ownership-gated adoption — codex rev-2 HIGH-6)
+
+The orchestrator URI is derived deterministically from the session URI
+(today's `cc_orchestrator-#{session_name}` pattern), so re-invocation
+computes the same candidate. The adoption-vs-creation decision uses the
+SAME ownership gate as worker slots (§2 step 3 + `Workspace.Loader`'s
+precedent — `gated_load_bind/3`):
 
 ```
 def ensure_orchestrator(session_uri, workspace_uri, owner_uri):
-  candidate_orchestrator_uri = derive_orchestrator_uri(session_uri)
-  # Same shape as today: "cc_orchestrator-#{session_name}"
-  case AgentLineage.lookup(candidate_orchestrator_uri) ++ KindRegistry.lookup(...):
-    both present + matches expected lineage (spawned_by: owner) -> SKIP
-    otherwise                                                    -> Agent.spawn(orch_template, name, ws, owner)
+  candidate_uri = derive_orchestrator_uri(session_uri)
+  live? = match?({:ok, _pid}, KindRegistry.lookup(candidate_uri))
+
+  cond do
+    live? and orchestrator_owned_by_us?(candidate_uri, owner_uri, workspace_uri) ->
+      # Already-converged: live process + lineaged to owner + bound to workspace.
+      {:ok, candidate_uri, :already_present}
+
+    live? ->
+      # Live BUT foreign — lineage points elsewhere OR workspace differs OR neither
+      # is recorded. This is a corruption / cross-tenant collision — partial, NOT
+      # an Agent.spawn call (which would silently adopt via `{:already_started, pid}`
+      # and re-parent/rebind to us). Operator decides.
+      {:error, {:orchestrator_foreign, candidate_uri}}
+
+    true ->
+      # Not live — fresh spawn. Agent.spawn establishes lineage + binding.
+      Agent.spawn(orch_template_uri, instance_name, workspace_uri, owner_uri)
+  end
+
+defp orchestrator_owned_by_us?(uri, owner_uri, workspace_uri):
+  # The same predicate the round-8 worker gate uses.
+  lineage_match?  = match?({:ok, ^owner_uri},    AgentLineage.lookup(uri))
+  workspace_match? = match?({:ok, ^workspace_uri}, WorkspaceRegistry.lookup(uri))
+  lineage_match? and workspace_match?
 ```
 
-`Agent.spawn/4` already returns `{:error, {:already_started, _pid}}` and
-the `spawn_or_resume/1` clause maps it to `{:ok, pid}` — INHERENTLY
-idempotent. Plus the `{spawned_by: owner_uri}` lineage check ensures we don't
-adopt a foreign orchestrator at the same URI (which would mean a corrupted
-prior state — surface as `{:error, :orchestrator_foreign_lineage}` →
-`{:partial, _}`, operator decides).
+**Why this matters**: pre-rev-2 the fallback was a direct `Agent.spawn`
+call, and `spawn_or_resume/1` (agent.ex:149) maps `{:error, {:already_started,
+pid}}` to `{:ok, pid}` — then unconditionally calls `WorkspaceRegistry.bind`
++ `AgentLineage.record` (agent.ex:140-143). So a live foreign-lineage
+orchestrator at the same URI would have been silently RE-PARENTED + REBOUND.
+Rev-2's `cond` gate refuses adoption WITHOUT the lineage/workspace match —
+mirroring the worker-slot `verify_slot_candidate_ownership/5` round-8
+contract — surfacing the foreign URI as `{:partial, _}` with
+`{:orchestrator_foreign, _}` for operator inspection.
 
-### Step 3 — Reconcile each agent slot
+The fresh-spawn branch's `Agent.spawn/4` still benefits from
+`spawn_or_resume/1`'s `{:already_started, _}` idempotency for the
+honest concurrent-second-caller race (two reconciler passes inflight
+at once is rare but possible). Such a race is HARMLESS — the second
+caller sees the first's just-published lineage + binding on its NEXT
+pass and skips. The dangerous case (live-but-foreign on FIRST inspection)
+is now refused.
+
+### Step 3 — Reconcile each agent slot (with per-slot template resolvability — codex rev-2 HIGH-2)
 
 For each slot in `template_content.agent_slots`, INDEPENDENTLY:
 
 ```
 def reconcile_slot(slot_name, agent_template_uri, session_uri, workspace_uri, orchestrator_uri):
   expected_worker_uri = derive_worker_uri(slot_name, session_uri, workspace_uri, agent_template_uri)
-  case (KindRegistry.lookup(expected_worker_uri),
-        AgentLineage.lookup(expected_worker_uri),
-        WorkspaceRegistry.lookup(expected_worker_uri)):
-    {{:ok, _pid}, {:ok, ^orchestrator_uri}, {:ok, ^workspace_uri}} ->
-      :already_converged  # skip — slot worker exists, lineage + binding match expected
-    _ ->
-      # one or more facts diverge from desired state — converge via dispatch:
-      dispatch(template.instantiate, agent_template_uri, %{
-        instance_name: derive_instance_name(slot_name, session_uri),
-        workspace_uri: workspace_uri,
-        spawned_by: orchestrator_uri
-      })
-      # The instantiate result's {:ok, workers: [_], fresh?: true|false} drives:
-      # - fresh?: true  -> lineage + binding established by spawn_from_template_content/4 (round 7); OK.
-      # - fresh?: false -> verify ownership (round 8); if foreign -> {:error, :slot_candidate_not_owned}
-      #                    accumulates into pending — operator decides (the OTHER slots still proceed).
+
+  # Already-converged FAST PATH — no AgentTemplate spawn needed:
+  if worker_already_owned_by_us?(expected_worker_uri, orchestrator_uri, workspace_uri),
+    do: return {:already_converged, expected_worker_uri}
+
+  # Per-slot AgentTemplate aliveness (formerly in Step-0 preflight_agent_slots/1).
+  # This is THE migration of HIGH-2: a per-slot failure here is a per-slot
+  # partial outcome, NOT a Generator-wide abort.
+  with {:ok, _pid} <- ensure_template_alive(agent_template_uri),
+       target      <- URI.parse("#{URI.to_string(agent_template_uri)}?action=template.instantiate"),
+       {:ok, %{workers: workers, fresh?: fresh?}} <-
+         Invocation.dispatch(%Invocation{target: target, mode: :call,
+           args: %{instance_name: derive_instance_name(slot_name, session_uri),
+                   workspace_uri: workspace_uri,
+                   spawned_by: orchestrator_uri},
+           ctx: %{caller: orchestrator_uri, caps: admin_caps(), reply: {:caller_inbox, self()}}}),
+       {:ok, worker_uri} <- first_worker(workers),
+       :ok <- verify_slot_candidate_ownership(fresh?, slot_name, worker_uri,
+                                              workspace_uri, orchestrator_uri) do
+    {:ok, worker_uri}
+  else
+    {:error, reason} ->
+      # Per-slot partial — accumulates into pending. The OTHER slots and
+      # routing/caps/working-copy steps continue.
+      {:error, {:slot, slot_name, reason}}
+  end
+
+defp worker_already_owned_by_us?(uri, orch_uri, ws_uri):
+  case KindRegistry.lookup(uri) do
+    {:ok, _pid} ->
+      # Mirror the round-8 ownership predicate (canonical-string compare).
+      lineage_ok = match?({:ok, ^orch_uri}, AgentLineage.lookup(uri))
+      ws_ok      = match?({:ok, ^ws_uri},   WorkspaceRegistry.lookup(uri))
+      lineage_ok and ws_ok
+    :error -> false
+  end
 ```
+
+**The fast path** (`worker_already_owned_by_us?`) is the load-bearing
+idempotency check. It is the structural equivalent of `Workspace.Loader.bind_one_gated/3`'s
+`worker_already_bound_to?/2` (`loader.ex:247-252`) plus the round-8
+`AgentLineage` parity check.
+
+**Slot outcomes** (the per-slot, per-pass result the loop accumulates):
+
+```
+slots: [
+  {"customer-bot",   {:already_converged, worker_uri_a}},   # skipped — fast-path hit
+  {"escalation-bot", {:ok,                worker_uri_b}},   # freshly spawned this pass
+  {"compliance-bot", {:error, {:slot, "compliance-bot",
+                              {:agent_slot_template_unresolvable, "compliance-bot", _}}}}
+]
+```
+
+`pending` carries `compliance-bot`; the next re-invocation tries again
+(after the AgentTemplate's plugin loads). The first two slots are correctly
+SKIPPED on the next pass via the fast path.
 
 Slots are reconciled SEQUENTIALLY but INDEPENDENTLY — one slot's failure
 does NOT halt the loop. A failed slot becomes a `pending` entry; the next
@@ -347,17 +463,74 @@ slots: [
 (presumably after the AgentTemplate's slice was populated). The two
 already-converged slots are correctly SKIPPED.
 
-### Step 4 — Reconcile routing rules
+### Step 4 — Reconcile routing rules (codex rev-2 HIGH-5)
 
 For each `(matcher_ast, [slot_name])` in `template_content.routing_rules`:
 
 ```
 def reconcile_routing_rule(matcher_ast, slot_names, slot_uri_by_name, workspace_uri, owner_uri):
-  receiver_uris = slot_names |> Enum.map(&slot_uri_by_name[&1]) |> Enum.reject(&is_nil/1)
-  existing_rules = RuleStore.list(table) |> Enum.filter(scope_matches?(_, workspace_uri))
-  matching = Enum.find(existing_rules, &(rule.matcher == matcher_ast and rule.receivers == receiver_uris))
-  if matching, do: :already_converged, else: {:add, matcher_ast, receiver_uris}
+  receiver_uris =
+    slot_names
+    |> Enum.map(&Map.get(slot_uri_by_name, to_string(&1)))
+    |> Enum.reject(&is_nil/1)
+
+  cond do
+    # Pending slot → some receiver_slot_name has no resolved URI yet:
+    # DEFER (don't install a half-receiver rule). Goes to pending.
+    length(receiver_uris) != length(slot_names) ->
+      {:pending, :receivers_unresolved}
+
+    receiver_uris == [] ->
+      :skip  # rule with no resolvable receivers — same drop semantics as today
+
+    true ->
+      existing = find_live_existing_rule(matcher_ast, receiver_uris, workspace_uri)
+      if existing, do: :already_converged, else: {:add, matcher_ast, receiver_uris}
+  end
+
+defp find_live_existing_rule(matcher_ast, receiver_uris, workspace_uri):
+  # Normalize both sides through Matcher.to_json/1 so a JSON-round-tripped
+  # matcher (`%{}` map) compares equal to a freshly-built one (tuple AST).
+  want_matcher = Matcher.to_json(matcher_ast)
+  want_recv_set = MapSet.new(receiver_uris, &URI.to_string/1)
+
+  RuleStore.list(table)
+  |> Enum.find(fn r ->
+    r.enabled == true                                    and  # rev-2 HIGH-5: must be live
+    r.workspace_uri == URI.to_string(workspace_uri)      and  # scope match
+    r.source         == RuleStore.system_default_source  and  # generator-installed (cf. RuleStore.source/0)
+    Matcher.to_json(r.matcher) == want_matcher           and  # normalized matcher equality
+    MapSet.new(r.receivers, &URI.to_string/1) == want_recv_set
+  end)
 ```
+
+**Why the rev-2 hardening matters** (codex rev-2 HIGH-5): the rev-1 probe
+filtered by `scope_matches?` + matcher/receivers but did NOT require
+`enabled == true`. `RuleStore.list/1` returns ALL rows for the table;
+`RuleStore.load_into_registry/1` only loads rows where `enabled == true`.
+A disabled row with matching matcher/receivers/scope would have been
+incorrectly classified as "already converged" — the reconciler would skip
+re-adding it, and the ETS RoutingRegistry would have NO live rule for
+that target. The fix: the equality predicate is the FULL live-rule contract:
+
+- `enabled == true` (rev-2 fix);
+- normalized matcher (round-trip through `Matcher.to_json/1` for shape
+  equivalence — `%{}` vs tuple AST);
+- workspace scope match;
+- receiver SET equality (canonical-string compare, order-insensitive);
+- `source` match (the Generator's installed rules are `source == :system_default`
+  per `RuleStore.system_default_source/0`; a `:admin`-source rule by an
+  operator is OFF-LIMITS for the Generator to "match against" — the
+  operator owns it).
+
+A disabled `:system_default` rule matching everything except `enabled`
+is DRIFT (an operator disabled a Generator rule). V1 contract: the
+reconciler treats this as `{:partial, :rule_disabled_by_operator}` —
+DOES NOT auto-re-enable (the operator's intent overrides the
+SessionTemplate spec). Operator decides: re-enable via admin UI, or
+remove the rule from the SessionTemplate. (Open question §7-4: should
+the reconciler emit a telemetry event on drift detection? V1 = yes,
+log + telemetry, no auto-action.)
 
 After collecting every `{:add, ...}` for this pass, ALL adds run inside ONE
 `Repo.transaction` (the Phase-7 round-4 invariant is preserved at the
@@ -365,28 +538,146 @@ After collecting every `{:add, ...}` for this pass, ALL adds run inside ONE
 pass's adds; rules added by PRIOR converged passes are NOT touched).
 `load_into_registry/1` runs once after commit.
 
-**A receiver `slot_name` not yet resolved (its slot is `pending`)** — the
-matching rule's `receiver_uris` is partially populated; we DEFER adding it
-this pass (else we'd install a half-receiver rule that drops the unresolved
-target). Deferred rules go into `pending` and are retried next pass.
+Deferred rules (`{:pending, :receivers_unresolved}` because some slot
+is still `pending`) accumulate into the pass's `pending` list and are
+retried next pass — the slot likely converges next time, then so does
+its dependent rule.
 
-### Step 5 — Populate `template_working_copy`
+### Step 5 — Populate `template_working_copy` (MERGE, not replace — codex rev-2 HIGH-3)
 
-`chat.set_working_copy` is a slice replace today; the reconciler writes the
-desired-state working copy on every pass (idempotent: identical content =
-no slice change = no snapshot row write per the `:on_change` policy). The
-`agent_slots` list passed in is the CONVERGED slots from step 3 (so a
-`pending` slot's tuple is the prior pass's value, NOT a freshly-empty
-entry — convergence MUST be monotonic from the working-copy's perspective).
+`chat.set_working_copy` is a slice REPLACE today; the rev-1 SPEC text
+said "convergence MUST be monotonic from the working-copy's perspective"
+but `populate_working_copy/5`'s body only knows the slots that CONVERGED
+on this pass — replacing with that list would DROP a previously-converged
+slot whose status is now `pending` (e.g. the worker died between passes).
 
-### Step 6 — Grant scoped caps to orchestrator
+The reconciler MERGES, preserving each pending slot's PRIOR tuple if and
+only if that prior tuple's worker is still owned by us (lineage + binding
+match):
 
-Caps #1 (`{:within_session, S}`) and #2 (`{:spawned_by, orch}`) and
-the delegable subset of caps #3/#4 (the template caps gated by owner-cap
-preflight, Phase-7 round-1 §1.4) all dispatch via `identity.grant_cap`.
-`grant_cap` is ALREADY idempotent (User-Kind caps are a `MapSet`; granting
-the same cap twice is a set insert — no-op). No reconciler-side check
-needed: just dispatch the four grants every pass; idempotent.
+```
+def merge_working_copy(session_uri, template_content, this_pass_slots, workspace_uri):
+  # this_pass_slots :: [{slot_name, agent_template_uri, worker_uri, generation}]
+  #   for slots that converged THIS pass — every entry's worker is alive + owned.
+  prior = read_working_copy(session_uri)  # via chat.read_working_copy dispatch
+  prior_slots_map = Map.new(prior.agent_slots, fn {n, _t, _w, _g} = e -> {n, e} end)
+  this_slots_map  = Map.new(this_pass_slots,    fn {n, _t, _w, _g} = e -> {n, e} end)
+
+  desired_slot_names = template_content.agent_slots |> normalize_agent_slots() |> Enum.map(&elem(&1, 0))
+
+  merged_slots =
+    Enum.map(desired_slot_names, fn name ->
+      cond do
+        # This-pass entry wins (just freshly converged).
+        Map.has_key?(this_slots_map, name) ->
+          this_slots_map[name]
+
+        # No this-pass entry; prior is present + still ownership-valid → keep.
+        prior_entry = prior_slots_map[name];
+        prior_entry != nil and prior_slot_still_owned?(prior_entry, workspace_uri) ->
+          prior_entry
+
+        # No reliable prior entry — slot is genuinely pending, write nil-worker tuple
+        # (so the operator sees "this slot has no live worker"). This tuple still
+        # carries the source AgentTemplate URI from the SessionTemplate, so the
+        # next pass can re-attempt the spawn.
+        true ->
+          source_template_uri = lookup_source_template_uri(template_content, name)
+          {name, source_template_uri, nil, 0}
+      end
+    end)
+
+  set_working_copy(session_uri, %{
+    agent_slots: merged_slots,
+    routing_rules: normalize_routing_rules(template_content.routing_rules),
+    orchestrator_template_uri: template_content.orchestrator_template_uri || default,
+    default_workspace_uri: workspace_uri,
+    description: template_content.description
+  })
+
+defp prior_slot_still_owned?({_name, _src, %URI{} = worker_uri, _gen}, %URI{} = ws_uri):
+  case KindRegistry.lookup(worker_uri) do
+    {:ok, _pid} -> match?({:ok, ^ws_uri}, WorkspaceRegistry.lookup(worker_uri))
+    :error      -> false
+  end
+defp prior_slot_still_owned?({_name, _src, nil, _gen}, _ws), do: false
+```
+
+**The merge is monotonic for converged slots and HONEST for pending slots.**
+A slot that was converged on pass 1 and is `pending` on pass 2 (the worker
+died, the AgentTemplate plugin was uninstalled, etc.) — we keep its prior
+tuple ONLY IF its worker is still alive and bound; otherwise we write a
+nil-worker tuple so the orchestrator's UI shows "this slot has no live
+worker, the reconciler will retry."
+
+**Slice-write idempotency**: when the merge produces the same map as
+what's already in the slice (the common case — full convergence + a
+re-run), the `Chat.set_working_copy` dispatch produces no slice change,
+the `:on_change` policy skips the snapshot row write, and `:invocations`
+records ONE successful invocation (acceptable telemetry churn — a re-run
+is an explicit operator action).
+
+### Step 6 — Grant scoped caps to orchestrator (logical-equality idempotent — codex rev-2 HIGH-1)
+
+Caps #1 (`{:within_session, S}`), #2 (`{:spawned_by, orch}`), and the
+delegable subset of caps #3/#4 (template caps gated by Phase-7 round-1
+§1.4 owner-cap preflight) are granted via `identity.grant_cap` dispatch.
+
+**The rev-1 claim was wrong**: `grant_cap` is NOT idempotent on the
+`%Capability{}` struct as currently built, because today's
+`grant_scoped_caps/3` (session.ex:1340-1407) STAMPS each cap with
+`granted_at: DateTime.utc_now()` before dispatch. Two passes produce
+two structs that differ ONLY in `granted_at` — `MapSet.put/2` treats
+them as distinct, so the User's `caps` set grows by 4 entries per
+reconciler pass. This violates V1-R2 (byte-equivalent state across
+re-runs) and burdens the audit log with duplicate grant invocations.
+
+**The fix — logical-equality check BEFORE dispatch**:
+
+```
+def grant_scoped_caps_idempotent(orchestrator_uri, session_uri, owner_uri):
+  workspace_uri = WorkspaceRegistry.lookup!(session_uri)
+  desired_caps  = build_desired_caps(orchestrator_uri, session_uri, owner_uri, workspace_uri)
+  # desired_caps :: [%Capability{}]  — granted_at unset / placeholder
+
+  current_caps = Identity.list_caps_for(orchestrator_uri)  # MapSet.t()
+
+  to_grant = Enum.reject(desired_caps, fn want ->
+    Enum.any?(current_caps, &cap_equal_ignoring_metadata?(&1, want))
+  end)
+
+  # Only dispatch grant_cap for caps the orchestrator does NOT already hold.
+  Enum.each(to_grant, fn want ->
+    cap = %{want | granted_at: DateTime.utc_now()}
+    dispatch(orchestrator_uri ? action=identity.grant_cap, %{cap: cap}, system_ctx)
+  end)
+
+defp cap_equal_ignoring_metadata?(%Capability{} = a, %Capability{} = b):
+  # The IDENTITY of a cap is the {kind, behavior, instance, workspace_uri} tuple
+  # — the authority being granted. `granted_at` (timestamp) and `granted_by`
+  # (provenance) are metadata; the same authority granted twice by the same
+  # principal should be a no-op.
+  a.kind          == b.kind          and
+  a.behavior      == b.behavior      and
+  a.instance      == b.instance      and
+  a.workspace_uri == b.workspace_uri and
+  a.granted_by    == b.granted_by
+```
+
+**Why `granted_by` is part of the identity but `granted_at` is not**:
+`granted_by` records WHO authorized the cap (the owner in Generator caps);
+two different owners granting the SAME cap shape are two real grants
+auditably (CapBAC's provenance rule). `granted_at` is purely a timestamp
+of WHEN the dispatch fired; the cap's effective authority is unchanged.
+
+**Effect on the audit log**: a fully-converged reconciler re-run produces
+ZERO `identity.grant_cap` dispatches (the equality check short-circuits all
+four), ZERO new `:invocations` rows, ZERO new User-Kind snapshot row
+(no slice change). This is what V1-R2 byte-equivalence requires.
+
+**On a NEW cap appearing** (Phase 9 added cap #5 in a future template
+revision): the existing 4 caps are skipped; only #5 is dispatched. Pass is
+still partial-converging-monotonically.
 
 ### Step 7 — Register MCP context
 
@@ -456,33 +747,73 @@ worker_uri, generation) tuple; the desired state is "(slot_name,
 new_template_uri, new_worker_uri, generation+1)"; existing state is the
 current tuple. Converge.
 
-### 4.1 The reconciler shape for per-slot update
+### 4.1 The reconciler shape for per-slot update (no-op detect BEFORE generation bump — codex rev-2 HIGH-4)
 
 ```
 def update_agent_template(slot_name, new_agent_template_uri, opts):
-  session_uri = opts[:session_uri]
-  workspace_uri = opts[:workspace_uri]
-  owner_uri = opts[:caller]
-  current_slot = find_slot_tuple(session_uri, slot_name)  # {name, src, worker, gen}
+  session_uri    = opts[:session_uri]
+  workspace_uri  = opts[:workspace_uri]
+  caller_uri     = opts[:caller]
+  current_slot   = find_slot_tuple(session_uri, slot_name)  # {name, src, worker, gen}
 
+  # ============== NO-OP DETECT — BEFORE any generation bump (HIGH-4) =====
+  # If the slot is ALREADY in the desired state — same template URI, alive
+  # worker, ownership-verified, routing pointing at it — this is an
+  # idempotent rerun. Return {:ok, current_slot.worker_uri}. NO generation
+  # bump, NO new worker URI computed (which would falsely diverge from
+  # current).
+  if slot_already_at_target?(current_slot, new_agent_template_uri,
+                             session_uri, workspace_uri, caller_uri),
+    do: return {:ok, current_slot.worker_uri}
+
+  # ============== CONVERGENCE WORK — only when drift exists ============
+  # The slot template differs from the request, OR the worker is dead, OR
+  # routing is off, OR ownership is foreign. Compute the new generation +
+  # converge.
   desired_state = %{
     slot_name: slot_name,
     template_uri: new_agent_template_uri,
     generation: current_slot.generation + 1,
-    worker_uri: derive_worker_uri(slot_name, session_uri, new_agent_template_uri, current_slot.generation + 1),
-    routing_target: <as above>
+    worker_uri: derive_worker_uri(slot_name, session_uri, new_agent_template_uri,
+                                  current_slot.generation + 1),
   }
 
-  reconcile_slot_to(desired_state, current_slot, session_uri, workspace_uri, owner_uri)
+  reconcile_slot_to(desired_state, current_slot, session_uri, workspace_uri, caller_uri)
+
+defp slot_already_at_target?(
+       {_name, current_src_uri, %URI{} = current_worker_uri, _gen},
+       %URI{} = new_template_uri,
+       session_uri, workspace_uri, orch_uri):
+  # All FIVE facts must agree for "already at target":
+  same_template?  = URI.to_string(current_src_uri) == URI.to_string(new_template_uri)
+  alive?          = match?({:ok, _pid}, KindRegistry.lookup(current_worker_uri))
+  lineage_ok?     = match?({:ok, ^orch_uri},      AgentLineage.lookup(current_worker_uri))
+  workspace_ok?   = match?({:ok, ^workspace_uri}, WorkspaceRegistry.lookup(current_worker_uri))
+  routing_pointed_at_current? = routing_targets_worker?(current_worker_uri, workspace_uri)
+
+  same_template? and alive? and lineage_ok? and workspace_ok? and routing_pointed_at_current?
+
+defp slot_already_at_target?({_n, _t, nil, _g}, _new, _s, _w, _o), do: false
 ```
 
-The convergence routine:
+**Why this matters** (codex rev-2 HIGH-4): the rev-1 algorithm always
+computed `desired_state.generation = current_slot.generation + 1` and
+THEN compared `current_slot.worker_uri` to `desired_state.worker_uri`.
+With generation folded into the worker URI (`Agent.session_instance_name/3`
+appends `--g<n>` for n ≥ 1), the equality check could NEVER hold for an
+idempotent rerun — a slot at generation N would always compute the
+desired worker URI at generation N+1, so equality fails. The rev-1
+"already-converged" branch was unreachable; every rerun rolled the
+generation counter and respawned the worker. This contradicted V1-R6
+"re-invocation after a successful update is a no-op."
 
-1. **Detect** — if `current_slot.worker_uri == desired_state.worker_uri` AND
-   the worker is alive AND lineage matches: **already converged**, return
-   `{:ok, current_slot.worker_uri}`. (This is the cc→cc same-flavor case
-   that today's `update_agent_template` handles via the generation bump;
-   the reconciler handles it via "already converged" — no work needed.)
+The rev-2 fix moves the no-op detection BEFORE the generation bump.
+Detection compares the slot's CURRENT template URI to the REQUESTED
+template URI; if they're the same AND the worker is healthy AND routing
+points at it, we're done. The generation bump only happens when there's
+actual drift to converge.
+
+### 4.2 The convergence routine (when drift exists)
 
 2. **Ensure new worker exists** — `template.instantiate` on
    `new_agent_template_uri` with the generation-bumped instance name
@@ -553,15 +884,15 @@ no-op + return the existing URI; otherwise create."** The audit:
 | Kind | Idempotency status | Action required |
 |---|---|---|
 | **Session Kind** (`Ezagent.Entity.Session`) | NEEDS WORK: today's `spawn_fresh_session/1` always allocates a NEW URI (`gen-<millis>-<unique_int>`); reconcile-by-URI requires a DETERMINISTIC URI from `(template, owner)`. | PR-A: introduce `derive_session_uri(template_content, workspace_uri, owner_uri)`. Stable per `(template, owner)`. See §7-1 for the slug-disambiguation question. |
-| **Orchestrator Agent Kind** (cc-flavor) | ALREADY IDEMPOTENT. `Agent.spawn/4` calls `SpawnRegistry.spawn` which returns `{:error, {:already_started, _pid}}`; `spawn_or_resume/1` already maps that to `{:ok, pid}`. The reconciler additionally checks `AgentLineage.lookup` to confirm the existing orchestrator is OURS (lineaged from this owner). | NO CHANGE needed. The lineage check is a reconciler-side guard, not an Agent-Kind change. |
+| **Orchestrator Agent Kind** (cc-flavor) | `Agent.spawn/4` is idempotent on the live process (via `spawn_or_resume/1`'s `{:already_started, _}` mapping) BUT will silently `WorkspaceRegistry.bind` + `AgentLineage.record` on adopt (agent.ex:140-143) — re-parenting a foreign URI (codex rev-2 HIGH-6). | Reconciler-side `cond` gate (§2 step 2) refuses adoption when `KindRegistry` finds the URI live but `AgentLineage`/`WorkspaceRegistry` don't match expected owner+workspace. `Agent.spawn` is only called when the URI is NOT live. Mirrors the worker-slot round-8 ownership predicate and the `Workspace.Loader.bind_one_gated/3` precedent. |
 | **Worker Agent Kinds** (cc/echo/curl flavors) | ALREADY IDEMPOTENT via the round-6 `{:ok, workers, %{fresh?: false}}` adoption path + round-7 `fresh?`-gated obligations + round-8 ownership gate. The dispatch `template.instantiate` returns the `fresh?` signal; the reconciler uses it to decide adoption-vs-creation. | NO CHANGE in the spawn path. Reconciler-side: implement "expected URI present + ownership matches → :already_converged" detection. |
 | **AgentTemplate Kind** (`Ezagent.Entity.AgentTemplate`) | ALREADY IDEMPOTENT (read-only from reconciler's perspective). `:template` slice `:write` is mutable + plain-replace (Phase-7 rev-5 — AgentTemplate is versionless). Reconciler reads only. | NO CHANGE. |
 | **SessionTemplate Kind** (`Ezagent.Entity.SessionTemplate`) | ALREADY IDEMPOTENT (write-once + hash-checked, rev-5 CRITICAL). The reconciler READS the SessionTemplate; doesn't write to it. | NO CHANGE. |
 | **PtyServer sidecar** (cc plugin) | ALREADY IDEMPOTENT (round-8 returns `fresh?: false` for already-started; no new sidecar OS process). | NO CHANGE. |
 | **`WorkspaceRegistry`** | ALREADY IDEMPOTENT (`bind/2` is an ETS upsert; identical (uri, workspace) pair is no-op). | NO CHANGE. |
 | **`AgentLineage`** | ALREADY IDEMPOTENT (`record/2` is an ETS upsert). The reconciler LOOKUPS, doesn't re-record. Existing record for our orchestrator + our workspace = ownership confirmed. | NO CHANGE. |
-| **`Identity` (grant_cap)** | ALREADY IDEMPOTENT (User caps are a `MapSet`; identical cap = set insert no-op). | NO CHANGE. |
-| **`RuleStore`** | PARTIALLY IDEMPOTENT (`add/5` always inserts a NEW row, even if a rule with identical matcher+receivers+scope exists). | PR-A small fix: reconciler uses `RuleStore.list(table)` + filter by scope to detect existing rules; only un-matched rules are added. `RuleStore.add/5` is NOT changed (no "skip if exists" inside it — keeps it simple); the reconciler does the detection. |
+| **`Identity` (grant_cap)** | NOT idempotent on the struct as currently built (codex rev-2 HIGH-1). `granted_at: DateTime.utc_now()` is stamped per dispatch; `MapSet.put` treats two structs differing only in `granted_at` as distinct. | Reconciler-side `cap_equal_ignoring_metadata?/2` (§2 step 6) compares `{kind, behavior, instance, workspace_uri, granted_by}` to gate the dispatch. `Identity.grant_cap` itself unchanged — the *MapSet* still trusts struct equality, the *reconciler* doesn't dispatch a redundant grant. |
+| **`RuleStore`** | PARTIALLY IDEMPOTENT (`add/5` always inserts a NEW row). Reconciler must detect "live equivalent rule already present" with the FULL contract: `enabled == true`, normalized matcher, scope, receiver-set, source (codex rev-2 HIGH-5). | PR-A helper `existing_routing_rule_for/4` does the full-contract check via `RuleStore.list/1` + filter; only un-matched rules are added. Disabled `:system_default` rows = OPERATOR DRIFT — reconciler logs + marks pending, does NOT auto-re-enable. |
 | **`McpRegistry`** | ALREADY IDEMPOTENT (ETS put). | NO CHANGE. |
 | **`Session.template_working_copy` slice** (`Chat.set_working_copy/2`) | ALREADY IDEMPOTENT at the slice level (`:on_change` snapshot policy — identical content = no row write). | NO CHANGE. |
 
@@ -706,6 +1037,25 @@ Two presentations:
 LiveView caller is now part of the test gate (PR-B's
 `partial_resume_test.exs` asserts the LV shows the retry button).
 
+### §7-4 — Routing rule drift detection: log-only, telemetry, auto-re-enable, or block?
+
+Codex rev-2 HIGH-5 surfaced: a disabled `:system_default` rule with matching
+matcher/receivers/scope is OPERATOR DRIFT (an operator disabled a
+Generator-installed rule). Options:
+
+- **A — Log + telemetry, classify as `:partial` with `:rule_disabled_by_operator`**
+  (this SPEC). The reconciler does NOT auto-re-enable; operator's intent
+  wins. The orchestrator's UI surfaces the drift so the operator can
+  re-enable or amend the SessionTemplate to remove the rule. **Recommended for V1.**
+- **B — Auto-re-enable** (the reconciler overrides operator intent). Risky
+  — operator may have disabled the rule deliberately during a migration;
+  auto-re-enable creates a fight loop.
+- **C — Block: refuse the SessionTemplate convergence entirely** until
+  operator resolves the drift. Heavy-handed; one disabled rule shouldn't
+  fail-stop the whole template.
+
+**Recommendation: Option A.** Allen confirms in PR-A review.
+
 ### §7-3 — Backward-compat: does any external caller depend on the strict-atomic-or-error contract today?
 
 Audit in PR-A (the non-breaking PR):
@@ -743,16 +1093,28 @@ happy path.**
 Test: `apps/ezagent_domain_chat/test/integration/spawn_from_template_full_convergence_test.exs`
 (repurpose existing test; assert the new `slots:` field too).
 
-### V1-R2 — Idempotent re-run
+### V1-R2 — Idempotent re-run (with cap + routing + audit churn assertions — codex rev-2)
 
 Two invocations of `spawn_from_template(template_uri, owner_uri)` in
 succession produce IDENTICAL outcomes (same session URI, same orchestrator
-URI, same slot worker URIs). `KindRegistry`, `AgentLineage`, `WorkspaceRegistry`,
-`routing_rules` table contain exactly the rows from invocation 1 — no
-duplicates, no extras.
+URI, same slot worker URIs). All of:
+
+- `KindRegistry` — same pids across both calls (`Process.info(_, :start_time)`).
+- `AgentLineage` — same row count + same `(uri, spawned_by)` pairs.
+- `WorkspaceRegistry` — same `(uri, workspace)` pairs.
+- `routing_rules` — same row count (no `add/5` dispatched on call 2).
+- `users.caps_json` (the orchestrator's User Kind) — same cap count;
+  per-cap logical equality (`{kind, behavior, instance, workspace_uri,
+  granted_by}` set equal); no extra grant invocation in `:invocations`
+  table between call 1's end and call 2's end. **(codex rev-2 HIGH-1 gate.)**
+- `kind_snapshots` — same row count for the Session + orchestrator + slots
+  + SessionTemplate Kinds (no slice change → no snapshot write).
+- `:invocations` table — call 2 emits ZERO `identity.grant_cap` dispatches,
+  ZERO `RuleStore.add` calls, ZERO `template.instantiate` dispatches that
+  result in fresh spawns. (Read-side `template.read` is fine; idempotent.)
 
 Test: `idempotent_re_run_test.exs` — invoke twice, snapshot every store
-between calls, assert byte equivalence.
+between calls, assert each item above.
 
 ### V1-R3 — Partial resume
 
@@ -797,12 +1159,18 @@ authority gates; it just retries on completable failures.
 - A successful slot update produces the expected worker + repointed
   routing + old worker terminated (regression from today).
 - A re-invocation of `update_agent_template` with the same args after
-  a successful update is a no-op (`:already_converged`).
+  a successful update is a no-op — `{:ok, current_worker_uri}` returned
+  WITHOUT bumping generation, WITHOUT spawning a new worker. **(codex
+  rev-2 HIGH-4 gate: assert `current_slot.generation` unchanged across
+  the re-invocation; assert `current_worker_uri` pid stable.)**
 - A failure mid-repoint (force-roll-back the routing transaction) leaves
   the new worker alive + the slot tuple at the OLD URI + routing at
   the OLD URI. Re-invocation detects "new worker present, slot still
   on old, routing still on old" → repoints + commits. The OLD worker
   is then terminated.
+- A re-invocation of `update_agent_template` with a slot that's
+  ALREADY at the requested template returns `{:ok, current_worker_uri}`
+  with NO generation bump and NO `template.instantiate` dispatch.
 
 Tests: `update_agent_template_reconciler_test.exs`.
 
