@@ -117,9 +117,24 @@ creating a new sandboxed AgentTemplate, the operator either:
 - Configures `api_key_helper` to provide a key directly, sidestepping
   interactive login.
 
-Automating this safely is deferred — the question is *which*
-credentials are safe to copy and from *where*, and the answer is
-deployment-specific. Document the seed path you used in the
+**One-liner for the copy approach** (Allen 2026-05-23):
+
+```bash
+mix ezagent.demo.seed_cc_sandbox --name my-agent --seed-template my-agent
+```
+
+This creates `~/.ezagent/cc-sandboxes/my-agent/` (chmod 700), copies
+`~/.claude/.credentials.json` into it (chmod 600), and seeds an
+AgentTemplate pointing at the sandbox. See
+`docs/runbook/cc-agent-e2e.md` § "Credential-copy: avoid re-login per
+agent" for the full flag list, manual equivalent, macOS Keychain
+caveat, and re-seeding semantics. The end-to-end file-layout +
+env-threading contract is locked by
+`apps/ezagent_plugin_cc/test/integration/cc_agent_sandbox_credentials_test.exs`.
+
+Automating credential rotation itself is still deferred — the question
+is *which* credentials are safe to copy and from *where*, and the
+answer is deployment-specific. Document the seed path you used in the
 AgentTemplate's `description`.
 
 ## Where this design lives in code
