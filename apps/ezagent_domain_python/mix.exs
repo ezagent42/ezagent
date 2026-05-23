@@ -16,15 +16,16 @@ defmodule EzagentDomainPython.MixProject do
     ]
   end
 
-  # Phase 6 PR 11: Python domain placeholder.
-  #
-  # First-class hook for ESR's "Python plugin ecosystem" north-star.
-  # Today: defines the JSON-RPC stdio CONTRACT a Python plugin would
-  # speak — no runtime implementation. Phase 7+ implements the actual
-  # subprocess host (port + protocol multiplexer + supervisor).
+  # Domain.Python — Tier-2 runtime for ezagent-launched Python
+  # subprocesses. Per SPEC 2026-05-23-domain-python.md §1.1 the app
+  # owns the Registry + DynamicSupervisor that parent
+  # Ezagent.Domain.Python.Server processes. erlexec is declared in
+  # both deps and extra_applications (codex round-2 HIGH-2) because
+  # Server calls :exec.run/2 + :exec.stop/1 directly.
   def application do
     [
-      extra_applications: [:logger]
+      extra_applications: [:logger, :erlexec],
+      mod: {EzagentDomainPython.Application, []}
     ]
   end
 
@@ -33,8 +34,13 @@ defmodule EzagentDomainPython.MixProject do
 
   defp deps do
     [
+      # Tier-2 rule: Domain apps depend on ezagent_core ONLY — no other
+      # Domain apps, no plugin apps.
       {:ezagent_core, in_umbrella: true},
-      {:jason, "~> 1.2"}
+      {:jason, "~> 1.2"},
+      # erlexec is the subprocess primitive — same dep
+      # apps/ezagent_domain_pty/mix.exs already pulls in.
+      {:erlexec, "~> 2.1"}
     ]
   end
 end
