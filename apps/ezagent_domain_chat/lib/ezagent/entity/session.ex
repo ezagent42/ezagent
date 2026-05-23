@@ -13,54 +13,9 @@ defmodule Ezagent.Entity.Session do
 
   ## Persistence: {:snapshot, :on_change} — session membership survives restart
 
-  Phase 2 originally used `:ephemeral` — members / monitors /
-  last_seen were rebuilt at each boot from PubSub re-announcements
-  and admin User re-join in `handle_continue(:announce_ready)`.
-  Historical message stream was persisted (via `Ezagent.MessageStore`);
-  only in-flight membership was ephemeral.
-
-  **Allen V1 acceptance 2026-05-22**: adding an agent (cc_demo) to a
-  session at runtime, then a phx restart, wiped it from `members`.
-  Root cause — `persistence/0` was still `:ephemeral`, so the Session
-  Kind's in-memory Chat slice (members map, last_seen, the
-  orchestrator's working-copy) was never snapshotted; any restart lost
-  every runtime mutation. ("Phase 7 PR 44/46" was supposed to flip
-  this for orchestrator working-copy durability — SPEC §7-3 — but the
-  flip never landed; only the moduledoc was updated to claim it had.)
-
-  `persistence/0` is now `{:snapshot, :on_change}` — the same mode the
-  `Ezagent.Entity.User` Kind already uses. After every Chat-slice
-  mutation (`:send` / `:join` / `:leave` / `:DOWN`), `Ezagent.Kind.Server`
-  writes the slice to `kind_snapshots`; on (re)spawn,
-  `Ezagent.Kind.Snapshot.load_or_init/3` rehydrates it. Membership,
-  last_seen, and the orchestrator working-copy now survive an unclean
-  crash, not just a graceful shutdown.
-
-  ### Slice serialization
-
-  The Chat slice (`Ezagent.Behavior.Chat`) holds `members`
-  (`%{URI => %{online: bool}}`), `monitors` (`%{reference => URI}`),
-  and `last_seen` (`%{URI => DateTime}`). `URI` structs, `DateTime`,
-  booleans, and `reference()` are all serializable via
-  `:erlang.term_to_binary/1` and decode safely under the `[:safe]`
-  flag — no pids, no funs, no anonymous closures. `monitors` refs are
-  stale across a restart (a `reference()` is only meaningful for a
-  live monitor), but that is harmless: a stale ref simply never
-  matches an incoming `:DOWN`, and a member rejoin via `chat.join`
-  re-monitors the live pid. `last_seen` reflects history, not live
-  state. Members get re-validated when their owning Kind comes up.
-
-  ### WorkspaceRegistry rebind (invariant 4)
-
-  When a Session Kind rehydrates after a restart, its
-  `WorkspaceRegistry` binding must be re-established so workspace-scoped
-  routing rules still fire. Per Phase 9 PR-7 the workspace lives in the
-  3-segment session URI (`session://<template>/<workspace>/<name>`), so
-  `WorkspaceRegistry` is a consistency cache and the binding is derived
-  structurally from the URI. The chat plugin's `session` spawn fn
-  (`EzagentDomainChat.Application.register_spawn_fns/0`) calls
-  `WorkspaceRegistry.bind/2` on every spawn — covering the lazy
-  demand-spawn rehydrate path as well as `EzagentDomainChat.create_session/2`.
+  See git history for the rationale (Allen V1 acceptance 2026-05-22) —
+  the slice is now snapshotted on every change so membership +
+  template_working_copy survive an unclean crash.
   """
 
   @behaviour Ezagent.Kind
@@ -73,117 +28,104 @@ defmodule Ezagent.Entity.Session do
   @impl Ezagent.Kind
   def behaviors, do: [Ezagent.Behavior.Chat]
 
-  # Allen V1 acceptance 2026-05-22 — session membership + chat config
-  # must survive a phx restart (even an unclean crash, hence :on_change
-  # not :on_terminate). The Chat slice is fully serializable; see the
-  # moduledoc "Slice serialization" section. Same persistence mode the
-  # User Kind already uses.
   @impl Ezagent.Kind
   def persistence, do: {:snapshot, :on_change}
 
-  # V1 prevention (Allen 2026-05-21): Session Kinds live under the
-  # chat domain's SessionSupervisor. `Ezagent.Kind.spawn/2` reads this.
   @impl Ezagent.Kind
   def supervisor, do: EzagentDomainChat.SessionSupervisor
 
   @doc """
   URI of the default Session instance spawned at boot.
 
-  SPEC v3 §3.6 (Phase 9 PR-7) — sessions are 3-segment:
-  `session://<template>/<workspace>/<name>`. The default session is
-  the canonical entry point and lives in `workspace://default` under
-  the `default` template name.
+  SPEC v3 §3.6 — sessions are 3-segment: `session://<template>/<workspace>/<name>`.
   """
   @spec default_uri() :: URI.t()
   def default_uri, do: URI.new!("session://default/default/main")
 
   @doc """
-  Phase 7 completion PR-4 — the **Generator**, fully (SPEC §2 PR-4).
+  Generator-reconciler refactor (SPEC `docs/superpowers/specs/2026-05-23-generator-reconciler.md`):
+  `spawn_from_template/2` is now an IDEMPOTENT RECONCILER (Workspace.Loader pattern).
 
-  Per SPEC D7-2 + Allen 2026-05-18 round 2: "创建一个新 session(自带
-  orchestrator)的一段程序是 generator". Not an agent — just the spawn
-  program. Each new session gets its own orchestrator instance baked in
-  AND the team of workers the SessionTemplate composes.
+  Replaces the previous atomic-saga `do_spawn/4` + `cleanup_partial/1`
+  scaffolding. The function converges the current system state to the
+  SessionTemplate's desired-state spec; partial residue from a previous
+  failed run is the EXPECTED intermediate state, and re-running with the
+  same `(template_uri, owner_uri)` continues from where the prior run
+  stopped.
 
-  ## The 8 phase7-SPEC steps (SPEC §2 PR-4)
+  ## Return shape (SPEC §1.2 — three-arm)
 
-  1. **Owner preflight (the Generator entry gate).** Before
-     instantiating anything, load the OWNER's actual caps via
-     `Ezagent.Identity.list_caps_for/1` and confirm the owner holds a
-     `Ezagent.Behavior.Template` cap for `:session_template` covering
-     the SessionTemplate's workspace. No authority → `{:error,
-     :unauthorized}` — the owner cannot create the session. This IS
-     the `template:instantiate` authority check (SPEC §2 PR-4 steps
-     6+7 reconciled to one coherent gate).
-  2. **Read the SessionTemplate `:template` content** — via a
-     `template.read` dispatch (the `Ezagent.Behavior.Template` `:read`
-     action). The content carries `agent_slots`, `routing_rules`,
-     `orchestrator_template_uri`, `default_workspace_uri`.
-  3. **Spawn a fresh Session** + bind its workspace.
-  4. **Spawn the orchestrator** agent into the session's workspace.
-  5. **Resolve `agent_slots`** — for each slot the SessionTemplate
-     cites an AgentTemplate URI; instantiate the worker by dispatching
-     `template.instantiate` on that AgentTemplate URI (the §1.0
-     `:instantiate` action → `spawn_from_template_content/4` → records
-     lineage under the orchestrator + binds workspace). NEVER
-     `Class.instantiate/3` directly.
-  6. **Populate `template_working_copy.agent_slots`** — record each
-     `{slot_name, source_agent_template_uri}` into the new Session's
-     `template_working_copy` `:chat`-slice field (PR-2).
-  7. **Resolve `routing_rules`** — the SessionTemplate's rules express
-     receivers as slot NAMES; resolve names → per-instance worker
-     URIs → install via `Ezagent.Routing.RuleStore.add/5`.
-  8. **Grant the orchestrator's scoped caps** — `grant_scoped_caps/3`
-     grants caps #1 (`{:within_session}`) + #2 (`{:spawned_by}`)
-     unconditionally, and caps #3 (`:session_template`) + #4
-     (`:agent_template`) — each ONLY after an owner-cap preflight
-     (§1.4) confirms the owner actually holds the delegated authority.
+  - `{:ok, %{session_uri, orchestrator_uri, slots}}` — full convergence.
+  - `{:partial, %{session_uri, orchestrator_uri, completed, pending, errors}}` —
+    one or more steps could not converge in this pass (e.g. an
+    AgentTemplate's plugin hasn't booted yet). The caller may re-invoke
+    with the same args to continue.
+  - `{:error, reason}` — refused at preflight (auth /
+    template-not-populated / cross-workspace denied / invalid input).
+    No Session was created. NOT recoverable by re-running.
 
-  ## Args
+  ## Determinism (SPEC §7-1 — Allen-approved Option A)
 
-  - `session_template_uri` — `template://session/<workspace>/<name>@<hash>`
-  - `owner_uri` — `%URI{}` of the human / principal triggering the
-    instantiation. The Generator's authority IS the owner's authority
-    — the owner-cap preflight (step 1) gates entry.
+  The Session URI is derived from `(SessionTemplate URI, owner URI)`
+  via `derive_session_uri/3`. Re-invocation with the same `(template,
+  owner)` pair always targets the same Session URI, so the reconciler
+  finds existing state and skips already-converged components. V1
+  trade-off: one owner cannot have two concurrent sessions from the
+  same SessionTemplate — fork the template for that case.
 
-  ## Return
+  ## What's KEPT from the saga (rounds 1-3 hardening — security-critical)
 
-  `{:ok, %{session_uri: URI.t(), orchestrator_uri: URI.t()}}` on success,
-  `{:error, reason}` on preflight denial / lookup / spawn failures.
+  - Owner-cap preflight (the un-completable `:unauthorized` denial).
+  - Workspace-isolation preflight (the un-completable
+    `:cross_workspace_denied` denial — SessionTemplate workspace must
+    equal default_workspace_uri must equal every slot AgentTemplate's
+    workspace).
+  - Slot-name uniqueness preflight + routing-matcher shape preflight.
+  - The round-7+ `fresh?`-gated post-spawn obligations (useful inside
+    the reconciler too — only fresh workers need lineage + binding).
+  - The round-8 ownership-verified `fresh?: false` worker adoption
+    gate (prevents silent re-parenting of a foreign worker).
+  - The round-10 spawner-cleans-its-own-fresh-spawn discipline (the
+    micro-atomicity at the spawn-helper level survives — only the
+    Generator-level saga goes away).
 
-  ## CapBAC gate
+  ## What's GONE
 
-  Per SPEC §2 PR-4: the Generator entry preflights the owner's
-  SessionTemplate `Behavior.Template` instantiate authority (step 1).
-  A caller without that cap is denied at entry — no session, no
-  orchestrator. This replaces the pre-PR-4 "Generator trusts the
-  caller" comment: authority is now enforced here, not at the LV.
+  - `do_spawn/4`'s `with`-chain wrapped in `guard/2`.
+  - `cleanup_partial/1`'s 5-store teardown enumeration.
+  - `terminate_kind/1` + `safe/1` helpers (only the saga called them).
+  - `preflight_agent_slots/1` — moved into per-slot reconcile so a
+    single un-resolvable slot becomes a `:partial` pending entry, NOT
+    a Generator-wide abort (codex rev-2 HIGH-2 / SPEC §2 step 3).
+  - `preflight_candidate_uris_free/3` — orphan workers ARE welcomed
+    if they pass the ownership gate; otherwise the per-slot reconcile
+    refuses adoption (SPEC §2 step 3, also covered by round-8 ownership
+    verification).
   """
   @spec spawn_from_template(URI.t(), URI.t()) ::
-          {:ok, %{session_uri: URI.t(), orchestrator_uri: URI.t()}} | {:error, term()}
+          {:ok,
+           %{
+             session_uri: URI.t(),
+             orchestrator_uri: URI.t(),
+             slots: [{String.t(), URI.t()}]
+           }}
+          | {:partial,
+             %{
+               session_uri: URI.t() | nil,
+               orchestrator_uri: URI.t() | nil,
+               completed: [atom()],
+               pending: [atom()],
+               errors: [{atom(), term()}]
+             }}
+          | {:error, term()}
   def spawn_from_template(%URI{} = session_template_uri_in, %URI{} = owner_uri_in) do
-    # Canonicalize both URIs through a parse round-trip. A `%URI{}` built
-    # via `URI.new!/1` has `authority: nil` while the same string parsed
-    # via `URI.parse/1` has `authority` populated — and `Capability`
-    # matching is exact struct equality on the `instance` URI. Without
-    # this, a Generator call whose caller built the URIs with `URI.new!`
-    # would fail the owner-cap preflight against caps stored in parsed
-    # form (register/lookup key parity).
+    # Canonicalize both URIs through a parse round-trip (cap-key parity
+    # — `URI.new!/1` and `URI.parse/1` produce structurally-different
+    # %URI{} structs; CapBAC matching is exact struct equality).
     session_template_uri = URI.parse(URI.to_string(session_template_uri_in))
     owner_uri = URI.parse(URI.to_string(owner_uri_in))
 
-    # ── MEDIUM-5 hardening: preflight EVERYTHING before any spawn ──────
-    #
-    # The pre-hardening Generator did irreversible side effects in a
-    # `with` chain with no cleanup — a late failure (a bad routing
-    # matcher, a missing AgentTemplate) left an orphaned session +
-    # workers + caps. The preflight below verifies, with NO side
-    # effects, every precondition that can be checked up front:
-    # template aliveness, owner authority, the destination workspace
-    # (HIGH-4), each agent-slot template's resolvability, and each
-    # routing matcher's validity. Only then does `do_spawn/4` start
-    # spawning — and `do_spawn/4` itself runs compensating cleanup if a
-    # post-spawn step fails.
+    # ── Preflights (SPEC §2 step 0) — un-completable failures up front ──
     with {:ok, _template_pid} <- ensure_template_alive(session_template_uri),
          :ok <- owner_instantiate_preflight(session_template_uri, owner_uri),
          {:ok, template_content} <- read_template_content(session_template_uri),
@@ -194,29 +136,1027 @@ defmodule Ezagent.Entity.Session do
              workspace_uri,
              template_content
            ),
-         :ok <- preflight_agent_slots(template_content),
          :ok <- preflight_slot_name_uniqueness(template_content),
          :ok <- preflight_routing_rules(template_content) do
-      do_spawn(template_content, workspace_uri, owner_uri, session_template_uri)
+      reconcile_loop(template_content, workspace_uri, owner_uri, session_template_uri)
     end
   end
 
-  # --- MEDIUM-3 (round 3): slot-name uniqueness preflight --------------
-  #
-  # Every agent slot spawns a worker whose live instance URI is derived
-  # deterministically from its generated instance name
-  # (`Agent.session_instance_name/3`). Two slots that generate the SAME
-  # instance name would produce the SAME worker URI — the second spawn
-  # would silently re-use the first slot's worker (`{:already_started}`).
-  #
-  # `Ezagent.Orchestrator.SlotNames.preflight/2` computes EVERY candidate
-  # instance name up front and rejects the Generator run if any two
-  # collide — BEFORE a single `template.instantiate` dispatch. Every
-  # Generator slot is generation 0; the session discriminator is shared
-  # by all slots, so a placeholder discriminator suffices here (a
-  # collision is independent of the discriminator — the suffix is
-  # appended identically to every slot's name). The real per-session
-  # discriminator is folded in at spawn time in `instantiate_agent_slots`.
+  # ─────────────────────────────────────────────────────────────────────
+  # Reconcile loop — SPEC §2
+  # ─────────────────────────────────────────────────────────────────────
+
+  defp reconcile_loop(template_content, workspace_uri, owner_uri, session_template_uri) do
+    # Step 1: ensure Session (deterministic URI; idempotent spawn + bind)
+    case ensure_session(template_content, workspace_uri, owner_uri) do
+      {:error, reason} ->
+        {:error, reason}
+
+      {:ok, session_uri, _session_outcome} ->
+        # Step 2: ensure orchestrator (ownership-gated adoption)
+        case ensure_orchestrator(session_uri, workspace_uri, owner_uri) do
+          {:error, reason} ->
+            partial_report(
+              session_uri: session_uri,
+              orchestrator_uri: nil,
+              completed: [:session],
+              pending: [:orchestrator],
+              errors: [{:orchestrator, reason}]
+            )
+
+          {:partial, %{orchestrator_pending: candidate_uri} = ev} ->
+            partial_report(
+              session_uri: session_uri,
+              orchestrator_uri: nil,
+              completed: [:session],
+              pending: [:orchestrator],
+              errors: [{:orchestrator, {:orchestrator_ownership_pending, candidate_uri, ev}}]
+            )
+
+          {:ok, orchestrator_uri, _orch_outcome} ->
+            # Step 3: reconcile each agent slot independently
+            slot_results =
+              reconcile_each_slot(
+                template_content,
+                session_uri,
+                workspace_uri,
+                orchestrator_uri
+              )
+
+            # Step 4: reconcile routing rules
+            routing_outcome =
+              reconcile_routing_rules(
+                template_content,
+                slot_results,
+                workspace_uri,
+                owner_uri
+              )
+
+            # Step 5: merge working copy (with this-pass revalidation —
+            # codex rev-4 HIGH-2)
+            wc_outcome =
+              merge_working_copy(
+                session_uri,
+                template_content,
+                slot_results,
+                workspace_uri,
+                orchestrator_uri
+              )
+
+            # Step 6: grant scoped caps (idempotent, logical-equality)
+            caps_outcome =
+              grant_scoped_caps_idempotent(
+                orchestrator_uri,
+                session_uri,
+                owner_uri
+              )
+
+            # Step 7: register MCP context (ETS put; always idempotent)
+            mcp_outcome =
+              register_orchestrator_mcp_context(
+                orchestrator_uri,
+                session_uri,
+                workspace_uri,
+                owner_uri,
+                session_template_uri
+              )
+
+            assemble_outcome(
+              session_uri,
+              orchestrator_uri,
+              slot_results,
+              routing_outcome,
+              wc_outcome,
+              caps_outcome,
+              mcp_outcome
+            )
+        end
+    end
+  end
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Step 1 — ensure_session  (SPEC §2 step 1)
+  # ─────────────────────────────────────────────────────────────────────
+
+  defp ensure_session(template_content, %URI{} = workspace_uri, %URI{} = owner_uri) do
+    session_uri = derive_session_uri(template_content, workspace_uri, owner_uri)
+
+    case Ezagent.KindRegistry.lookup(session_uri) do
+      {:ok, _pid} ->
+        # Workspace bind is idempotent (ETS upsert); call to assert.
+        :ok = Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)
+        {:ok, session_uri, :already_present}
+
+      :error ->
+        case Ezagent.SpawnRegistry.spawn(session_uri) do
+          {:ok, _pid} ->
+            :ok = Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)
+            {:ok, session_uri, :created}
+
+          {:error, {:already_started, _pid}} ->
+            # Won the lookup race; bind + return.
+            :ok = Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)
+            {:ok, session_uri, :already_present}
+
+          {:error, _} = err ->
+            err
+        end
+    end
+  end
+
+  @doc """
+  PR-A helper (SPEC §5 — the Kind-idempotency-enhancement table) —
+  derive the deterministic Session URI for `(SessionTemplate URI,
+  owner URI)`.
+
+  V1 Option A (SPEC §7-1, Allen-approved 2026-05-23): pure determinism,
+  no slug discriminator. Two concurrent sessions of the same template
+  for the same owner require forking the template. The session
+  workspace segment is the template's `default_workspace_uri` segment
+  (already resolved by `resolve_target_workspace/1`).
+
+  Shape: `session://<template_class>/<workspace>/<owner_name>-<template_name>`
+  — `<template_class>` is the SessionTemplate's `class` field (default
+  `generic` for SessionTemplates; SPEC v3 §3.6 puts template-class in
+  the type axis).
+
+  Public so the helper can be exercised directly from tests.
+  """
+  @spec derive_session_uri(map(), URI.t(), URI.t()) :: URI.t()
+  def derive_session_uri(template_content, %URI{} = workspace_uri, %URI{} = owner_uri) do
+    template_class =
+      Map.get(template_content, :class) ||
+        Map.get(template_content, "class") ||
+        "generic"
+
+    workspace_name = workspace_uri.host || "default"
+    owner_name = derive_session_owner_segment(owner_uri)
+    template_name = derive_session_template_segment(template_content)
+
+    URI.new!(
+      "session://#{template_class}/#{workspace_name}/#{owner_name}-#{template_name}"
+    )
+  end
+
+  defp derive_session_owner_segment(%URI{path: "/" <> rest}) do
+    case String.split(rest, "/", parts: 2) do
+      [_workspace, name] when name != "" -> uri_safe(name)
+      [single] -> uri_safe(single)
+      _ -> "owner"
+    end
+  end
+
+  defp derive_session_owner_segment(%URI{host: host}) when is_binary(host) and host != "",
+    do: uri_safe(host)
+
+  defp derive_session_owner_segment(_), do: "owner"
+
+  defp derive_session_template_segment(template_content) do
+    case Map.get(template_content, :name) || Map.get(template_content, "name") do
+      n when is_binary(n) and n != "" -> uri_safe(n)
+      _ -> "template"
+    end
+  end
+
+  # URI-safe: collapse anything outside [a-zA-Z0-9_-] to "-".
+  defp uri_safe(s) when is_binary(s) do
+    s
+    |> String.replace(~r/[^a-zA-Z0-9_-]/, "-")
+    |> case do
+      "" -> "x"
+      out -> out
+    end
+  end
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Step 2 — ensure_orchestrator  (SPEC §2 step 2, codex rev-4 HIGH-1/3)
+  # ─────────────────────────────────────────────────────────────────────
+
+  defp ensure_orchestrator(%URI{} = session_uri, %URI{} = workspace_uri, %URI{} = owner_uri) do
+    candidate_uri = derive_orchestrator_uri(session_uri, workspace_uri)
+    orch_template_uri = URI.parse("template://agent/default/cc-orchestrator")
+    instance_name = derive_orchestrator_instance_name(session_uri)
+
+    case check_orchestrator(candidate_uri, owner_uri, workspace_uri) do
+      {:owned, ^candidate_uri} ->
+        {:ok, candidate_uri, :already_present}
+
+      :not_live ->
+        # codex rev-4 HIGH-1: NEVER call the side-effecting `Agent.spawn/4`
+        # in the reconciler — that would silently re-parent any foreign
+        # process that claimed the URI in the TOCTOU window. Use the
+        # fresh-only `Agent.spawn_fresh/4` primitive; on `:already_started`
+        # re-enter the ownership gate.
+        case Ezagent.Entity.Agent.spawn_fresh(
+               orch_template_uri,
+               instance_name,
+               workspace_uri,
+               owner_uri
+             ) do
+          {:ok, %{fresh?: true, agent_uri: orch_uri}} ->
+            {:ok, orch_uri, :created}
+
+          {:ok, %{fresh?: false}} ->
+            # Lost the race; re-classify ownership.
+            retry_after_race(candidate_uri, owner_uri, workspace_uri)
+
+          {:error, _} = err ->
+            err
+        end
+
+      {:ownership_pending, _} ->
+        # codex rev-4 MEDIUM-3: bounded re-read (NOT auto-classified as
+        # foreign). On exhaust returns `{:partial, _}` so the operator's
+        # retry is the resolution path.
+        retry_after_race(candidate_uri, owner_uri, workspace_uri)
+
+      {:foreign, evidence} ->
+        # POSITIVE foreign evidence (lineage / workspace POSITIVELY
+        # mismatches). Real corruption / cross-tenant collision.
+        {:error, {:orchestrator_foreign, candidate_uri, evidence}}
+    end
+  end
+
+  # codex rev-4 HIGH-1 fix as REAL implementation (per the user's PR-A
+  # required-issues list): tail-recursive with bounded retries +
+  # bounded sleep. Pre-PR-A SPEC sketch used `Stream.unfold + List.last`
+  # which crashes on empty streams; reduce_while / explicit recursion
+  # avoid that. 3 retries × 50ms sleep = ≤150ms total worst case.
+  @retry_max 3
+  @retry_sleep_ms 50
+
+  defp retry_after_race(%URI{} = uri, %URI{} = owner_uri, %URI{} = workspace_uri) do
+    do_retry(uri, owner_uri, workspace_uri, @retry_max)
+  end
+
+  defp do_retry(%URI{} = uri, _owner_uri, _workspace_uri, 0) do
+    {:partial, %{orchestrator_pending: uri}}
+  end
+
+  defp do_retry(%URI{} = uri, owner_uri, workspace_uri, n) when n > 0 do
+    case check_orchestrator(uri, owner_uri, workspace_uri) do
+      {:owned, ^uri} ->
+        {:ok, uri, :already_present}
+
+      {:foreign, evidence} ->
+        {:error, {:orchestrator_foreign, uri, evidence}}
+
+      _ ->
+        Process.sleep(@retry_sleep_ms)
+        do_retry(uri, owner_uri, workspace_uri, n - 1)
+    end
+  end
+
+  # 3-way classification (codex rev-4 MEDIUM-3):
+  #   :owned — BOTH lineage + workspace POSITIVELY match us
+  #   {:foreign, ev} — at least one POSITIVELY mismatches
+  #   {:ownership_pending, _} — neither (one/both absent; spawn inflight)
+  #   :not_live — KindRegistry lookup missed
+  defp check_orchestrator(%URI{} = uri, %URI{} = owner_uri, %URI{} = workspace_uri) do
+    case Ezagent.KindRegistry.lookup(uri) do
+      :error ->
+        :not_live
+
+      {:ok, _pid} ->
+        lineage_state =
+          case Ezagent.AgentLineage.lookup(uri) do
+            {:ok, %URI{} = principal} ->
+              if URI.to_string(principal) == URI.to_string(owner_uri),
+                do: :match,
+                else: {:mismatch, URI.to_string(principal)}
+
+            :error ->
+              :absent
+          end
+
+        workspace_state =
+          case Ezagent.WorkspaceRegistry.lookup(uri) do
+            {:ok, %URI{} = bound} ->
+              if URI.to_string(bound) == URI.to_string(workspace_uri),
+                do: :match,
+                else: {:mismatch, URI.to_string(bound)}
+
+            :error ->
+              :absent
+          end
+
+        cond do
+          lineage_state == :match and workspace_state == :match ->
+            {:owned, uri}
+
+          match?({:mismatch, _}, lineage_state) or match?({:mismatch, _}, workspace_state) ->
+            {:foreign, %{lineage: lineage_state, workspace: workspace_state}}
+
+          true ->
+            {:ownership_pending, uri}
+        end
+    end
+  end
+
+  defp derive_orchestrator_uri(%URI{} = session_uri, %URI{} = workspace_uri) do
+    instance_name = derive_orchestrator_instance_name(session_uri)
+    workspace_name = workspace_uri.host || "default"
+    URI.new!("entity://agent/#{workspace_name}/#{instance_name}")
+  end
+
+  defp derive_orchestrator_instance_name(%URI{} = session_uri) do
+    # Preserve the historical "cc_orchestrator-<session_name>" shape.
+    "cc_orchestrator-#{session_discriminator(session_uri)}"
+  end
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Step 3 — reconcile_each_slot / reconcile_slot  (SPEC §2 step 3)
+  # ─────────────────────────────────────────────────────────────────────
+
+  # Returns `[{slot_name, outcome}]` where outcome is one of:
+  #   {:already_converged, agent_template_uri, worker_uri}
+  #   {:ok,                agent_template_uri, worker_uri}
+  #   {:error,             reason}
+  defp reconcile_each_slot(
+         template_content,
+         %URI{} = session_uri,
+         %URI{} = workspace_uri,
+         %URI{} = orchestrator_uri
+       ) do
+    slots = normalize_agent_slots(Map.get(template_content, :agent_slots, []))
+    discriminator = session_discriminator(session_uri)
+
+    Enum.map(slots, fn {slot_name, %URI{} = agent_template_uri} ->
+      outcome =
+        reconcile_slot(
+          slot_name,
+          agent_template_uri,
+          discriminator,
+          workspace_uri,
+          orchestrator_uri
+        )
+
+      {slot_name, outcome}
+    end)
+  end
+
+  defp reconcile_slot(
+         slot_name,
+         %URI{} = agent_template_uri,
+         discriminator,
+         %URI{} = workspace_uri,
+         %URI{} = orchestrator_uri
+       ) do
+    instance_name =
+      Ezagent.Entity.Agent.session_instance_name(slot_name, discriminator, 0)
+
+    # Fast path: a worker at the expected URI already owned by us is
+    # converged (lineage + workspace match). We don't even need to
+    # dispatch `template.instantiate` — the structural equivalent of
+    # `Workspace.Loader.bind_one_gated/3`.
+    case expected_worker_uri(slot_name, agent_template_uri, instance_name, workspace_uri) do
+      {:ok, worker_uri_candidate} ->
+        if worker_already_owned_by_us?(worker_uri_candidate, orchestrator_uri, workspace_uri) do
+          {:already_converged, agent_template_uri, worker_uri_candidate}
+        else
+          dispatch_slot_instantiate(
+            slot_name,
+            agent_template_uri,
+            instance_name,
+            workspace_uri,
+            orchestrator_uri
+          )
+        end
+
+      :unknown ->
+        # We could not derive a candidate URI ahead of time (no flavor on
+        # the template content yet). Dispatch and let `template.instantiate`
+        # return the actual worker URI.
+        dispatch_slot_instantiate(
+          slot_name,
+          agent_template_uri,
+          instance_name,
+          workspace_uri,
+          orchestrator_uri
+        )
+    end
+  end
+
+  defp dispatch_slot_instantiate(
+         slot_name,
+         %URI{} = agent_template_uri,
+         instance_name,
+         %URI{} = workspace_uri,
+         %URI{} = orchestrator_uri
+       ) do
+    # codex rev-2 HIGH-2: per-slot AgentTemplate aliveness is in the slot
+    # reconcile (not Generator-wide preflight) — a failure here becomes
+    # `:partial`, not abort.
+    with {:ok, _pid} <- ensure_template_alive(agent_template_uri),
+         target <-
+           URI.parse("#{URI.to_string(agent_template_uri)}?action=template.instantiate"),
+         {:ok, %{workers: workers, fresh?: fresh?}} <-
+           Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+             target: target,
+             mode: :call,
+             args: %{
+               instance_name: instance_name,
+               workspace_uri: workspace_uri,
+               spawned_by: orchestrator_uri
+             },
+             ctx: %{
+               caller: orchestrator_uri,
+               caps: Ezagent.Entity.User.admin_caps(),
+               reply: {:caller_inbox, self()}
+             }
+           }),
+         {:ok, worker_uri} <- first_worker(workers),
+         :ok <-
+           verify_slot_candidate_ownership(
+             fresh?,
+             slot_name,
+             worker_uri,
+             workspace_uri,
+             orchestrator_uri
+           ) do
+      {:ok, agent_template_uri, worker_uri}
+    else
+      {:error, reason} ->
+        {:error, {:slot, slot_name, reason}}
+
+      other ->
+        {:error, {:slot, slot_name, {:unexpected_instantiate_result, other}}}
+    end
+  end
+
+  defp first_worker([%URI{} = worker_uri | _]), do: {:ok, worker_uri}
+  defp first_worker([uri | _]) when is_binary(uri), do: {:ok, URI.parse(uri)}
+  defp first_worker([]), do: {:error, :instantiate_returned_no_worker}
+
+  # Try to compute the worker URI ahead of dispatch so we can fast-path
+  # an already-owned worker. Reads the AgentTemplate's `flavor` field
+  # without doing any spawn side effect (the AgentTemplate Kind itself
+  # may need to be alive — we already lazy-spawned it via the fast-path
+  # caller path; if it isn't, return `:unknown` and let the dispatch
+  # path handle it).
+  defp expected_worker_uri(_slot_name, %URI{} = agent_template_uri, instance_name, %URI{} = workspace_uri) do
+    case agent_template_flavor(agent_template_uri) do
+      {:ok, flavor} ->
+        workspace_name = workspace_uri.host || "default"
+        {:ok, URI.new!("entity://agent/#{workspace_name}/#{flavor}_#{instance_name}")}
+
+      :no_flavor ->
+        :unknown
+    end
+  end
+
+  # codex round-8 HIGH-2 — preserved unchanged (still the ownership gate
+  # for `fresh?: false` workers — orchestrator MUST match THIS one).
+  defp verify_slot_candidate_ownership(true, _slot_name, _worker_uri, _workspace_uri, _orch_uri),
+    do: :ok
+
+  defp verify_slot_candidate_ownership(
+         false,
+         slot_name,
+         %URI{} = worker_uri,
+         %URI{} = workspace_uri,
+         %URI{} = orchestrator_uri
+       ) do
+    if worker_already_owned_by_us?(worker_uri, orchestrator_uri, workspace_uri) do
+      :ok
+    else
+      {:error, {:slot_candidate_not_owned, slot_name, URI.to_string(worker_uri)}}
+    end
+  end
+
+  @doc """
+  PR-A helper (SPEC §5, codex rev-3 HIGH-1) — the ownership predicate
+  shared by:
+
+    * the worker-slot fast path (skip dispatch when already owned);
+    * the round-8 `fresh?: false` adoption gate;
+    * the working-copy merge's "is the prior tuple still ours?" check;
+    * the orchestrator-adopt gate (via `check_orchestrator/3`).
+
+  A worker is "owned by us" iff its `AgentLineage` row points at our
+  orchestrator AND its `WorkspaceRegistry` binding points at our
+  workspace. URI comparison is canonical-string (registries store
+  parsed structs derived from strings).
+  """
+  @spec worker_already_owned_by_us?(URI.t(), URI.t(), URI.t()) :: boolean()
+  def worker_already_owned_by_us?(%URI{} = worker_uri, %URI{} = orch_uri, %URI{} = ws_uri) do
+    case Ezagent.KindRegistry.lookup(worker_uri) do
+      {:ok, _pid} ->
+        lineage_ok? =
+          case Ezagent.AgentLineage.lookup(worker_uri) do
+            {:ok, %URI{} = sb} -> URI.to_string(sb) == URI.to_string(orch_uri)
+            :error -> false
+          end
+
+        ws_ok? =
+          case Ezagent.WorkspaceRegistry.lookup(worker_uri) do
+            {:ok, %URI{} = bw} -> URI.to_string(bw) == URI.to_string(ws_uri)
+            :error -> false
+          end
+
+        lineage_ok? and ws_ok?
+
+      :error ->
+        false
+    end
+  end
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Step 4 — reconcile_routing_rules  (SPEC §2 step 4, codex rev-2 HIGH-5)
+  # ─────────────────────────────────────────────────────────────────────
+
+  # Returns:
+  #   {:ok, [rule_id]}     — all converged (some skipped as already-installed)
+  #   {:partial, [{:rule, reason}], rule_ids_added}
+  #   {:error, reason}
+  defp reconcile_routing_rules(
+         template_content,
+         slot_results,
+         %URI{} = workspace_uri,
+         %URI{} = owner_uri
+       ) do
+    rules = normalize_routing_rules(Map.get(template_content, :routing_rules, []))
+    slot_uri_by_name = slot_uri_map(slot_results)
+    table = EzagentDomainChat.Routing.MentionRouting
+
+    # Pre-classify each rule: :converged | {:add, ...} | {:pending, _} |
+    # {:drift, %RuleRow{}} | :skip
+    classifications =
+      Enum.map(rules, fn {matcher_ast, slot_names} ->
+        classify_routing_rule(matcher_ast, slot_names, slot_uri_by_name, workspace_uri, table)
+      end)
+
+    pending =
+      Enum.flat_map(classifications, fn
+        {:pending, reason} -> [{:rule, reason}]
+        {:drift, row} -> [{:rule, {:rule_disabled_by_operator, row.id}}]
+        _ -> []
+      end)
+
+    to_add =
+      Enum.flat_map(classifications, fn
+        {:add, matcher_ast, receiver_uris} -> [{matcher_ast, receiver_uris}]
+        _ -> []
+      end)
+
+    case insert_routing_rules_txn(to_add, table, workspace_uri, owner_uri) do
+      {:ok, []} ->
+        # Nothing to add this pass.
+        if pending == [],
+          do: {:ok, []},
+          else: {:partial, pending, []}
+
+      {:ok, inserted_ids} ->
+        case safe_load_registry(table) do
+          :ok ->
+            if pending == [],
+              do: {:ok, inserted_ids},
+              else: {:partial, pending, inserted_ids}
+
+          {:error, reason} ->
+            # Best-effort delete the rows we just inserted (registry never
+            # hydrated — keep ETS clean + DB consistent).
+            Enum.each(inserted_ids, fn id ->
+              try_safe(fn -> RuleStore.delete(id, force: true) end)
+            end)
+
+            {:error, {:routing_install_raised, reason}}
+        end
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  defp classify_routing_rule(matcher_ast, slot_names, slot_uri_by_name, workspace_uri, table) do
+    receiver_uris =
+      slot_names
+      |> Enum.map(&Map.get(slot_uri_by_name, to_string(&1)))
+      |> Enum.reject(&is_nil/1)
+
+    cond do
+      length(receiver_uris) != length(slot_names) ->
+        # Some slot didn't resolve — defer this rule to a later pass.
+        {:pending, :receivers_unresolved}
+
+      receiver_uris == [] ->
+        :skip
+
+      true ->
+        case existing_routing_rule_for(table, matcher_ast, receiver_uris, workspace_uri) do
+          {:found, _row} ->
+            :converged
+
+          {:disabled, row} ->
+            # Operator drift — log + classify as pending; DO NOT
+            # auto-re-enable (SPEC §7-4 option A, Allen-approved).
+            require Logger
+
+            Logger.warning(
+              "Generator reconciler: routing rule id=#{row.id} matches the SessionTemplate " <>
+                "but is disabled by the operator — skipping (not auto-re-enabled). " <>
+                "Re-enable via admin UI or remove the rule from the SessionTemplate."
+            )
+
+            {:drift, row}
+
+          :not_found ->
+            {:add, matcher_ast, receiver_uris}
+        end
+    end
+  end
+
+  @doc """
+  PR-A helper (SPEC §5, codex rev-2 HIGH-5) — full-contract "is this
+  rule already installed and live?" probe.
+
+  Equality is the FULL live-rule contract:
+    * `enabled == true`;
+    * `source == system_default_source/0` (generator-installed only;
+      an `:admin`-source rule is OPERATOR-OWNED, not ours to match);
+    * workspace scope match (canonical-string);
+    * normalized matcher (round-trip both sides via
+      `Matcher.to_json/1` so tuple-AST matches map-form after a JSON
+      snapshot round-trip);
+    * receiver SET equality (canonical-string, order-insensitive).
+
+  Returns:
+    * `{:found, row}` — already installed + live (skip add).
+    * `{:disabled, row}` — matches everything except `enabled == true`
+      → operator drift (SPEC §7-4 — log + mark pending; do not
+      re-enable).
+    * `:not_found` — add this rule.
+  """
+  @spec existing_routing_rule_for(atom(), term(), [URI.t()], URI.t()) ::
+          {:found, RuleStore.t()} | {:disabled, RuleStore.t()} | :not_found
+  def existing_routing_rule_for(table, matcher_ast, receiver_uris, %URI{} = workspace_uri)
+      when is_atom(table) and is_list(receiver_uris) do
+    want_matcher = Ezagent.Routing.Matcher.to_json(matcher_ast)
+    want_recv_set = MapSet.new(receiver_uris, &URI.to_string/1)
+    want_ws = URI.to_string(workspace_uri)
+    system_default = RuleStore.system_default_source()
+
+    rows = RuleStore.list(table)
+
+    case Enum.find(rows, fn r ->
+           r.source == system_default and
+             r.workspace_uri == want_ws and
+             r.matcher_data == want_matcher and
+             MapSet.new(r.receivers || [], &to_string/1) == want_recv_set
+         end) do
+      nil ->
+        :not_found
+
+      %{enabled: true} = row ->
+        {:found, row}
+
+      %{enabled: false} = row ->
+        {:disabled, row}
+    end
+  end
+
+  defp slot_uri_map(slot_results) do
+    Map.new(slot_results, fn
+      {slot_name, {:ok, _src, worker_uri}} -> {slot_name, worker_uri}
+      {slot_name, {:already_converged, _src, worker_uri}} -> {slot_name, worker_uri}
+      {slot_name, {:error, _}} -> {slot_name, nil}
+    end)
+    |> Map.reject(fn {_k, v} -> v == nil end)
+  end
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Step 5 — merge_working_copy  (SPEC §2 step 5, codex rev-2 HIGH-3 +
+  # rev-3 HIGH-1 + rev-4 HIGH-2)
+  # ─────────────────────────────────────────────────────────────────────
+
+  defp merge_working_copy(
+         %URI{} = session_uri,
+         template_content,
+         slot_results,
+         %URI{} = workspace_uri,
+         %URI{} = orchestrator_uri
+       ) do
+    prior = read_template_working_copy(session_uri)
+
+    prior_slots_map =
+      Enum.reduce(prior.agent_slots || [], %{}, fn
+        {name, src, worker, gen}, acc -> Map.put(acc, to_string(name), {name, src, worker, gen})
+        _, acc -> acc
+      end)
+
+    desired_slot_names =
+      template_content
+      |> Map.get(:agent_slots, [])
+      |> normalize_agent_slots()
+      |> Enum.map(fn {n, _t} -> n end)
+
+    source_template_for =
+      template_content
+      |> Map.get(:agent_slots, [])
+      |> normalize_agent_slots()
+      |> Map.new()
+
+    this_pass_slots_map =
+      Enum.reduce(slot_results, %{}, fn
+        {name, {:ok, src, worker}}, acc -> Map.put(acc, to_string(name), {name, src, worker, 0})
+        {name, {:already_converged, src, worker}}, acc ->
+          Map.put(acc, to_string(name), {name, src, worker, 0})
+        _, acc -> acc
+      end)
+
+    merged_slots =
+      Enum.map(desired_slot_names, fn name ->
+        this_entry = Map.get(this_pass_slots_map, name)
+        prior_entry = Map.get(prior_slots_map, name)
+
+        cond do
+          # codex rev-4 HIGH-2: re-validate this-pass entry's ownership
+          # at MERGE time. A slot that converged earlier in THIS pass
+          # could be concurrently re-parented before the merge runs.
+          this_entry != nil and slot_still_owned?(this_entry, workspace_uri, orchestrator_uri) ->
+            this_entry
+
+          # No this-pass entry (or it just lost ownership); prior is
+          # present + still owned (codex rev-3 HIGH-1 — includes
+          # AgentLineage match, not just KindRegistry + workspace).
+          prior_entry != nil and slot_still_owned?(prior_entry, workspace_uri, orchestrator_uri) ->
+            prior_entry
+
+          # Genuinely pending — write nil-worker tuple so the
+          # orchestrator UI surfaces "this slot has no live worker".
+          true ->
+            source_uri = Map.get(source_template_for, name)
+            {name, source_uri, nil, 0}
+        end
+      end)
+
+    working_copy = %{
+      agent_slots: merged_slots,
+      routing_rules: normalize_routing_rules(Map.get(template_content, :routing_rules, [])),
+      orchestrator_template_uri:
+        Map.get(template_content, :orchestrator_template_uri) ||
+          URI.parse("template://agent/default/cc-orchestrator"),
+      default_workspace_uri: Map.get(template_content, :default_workspace_uri) || workspace_uri,
+      description: Map.get(template_content, :description, "")
+    }
+
+    case Ezagent.Behavior.Chat.system_set_working_copy(session_uri, working_copy) do
+      {:ok, _} -> :ok
+      {:error, _} = err -> err
+      other -> {:error, {:unexpected_set_working_copy_result, other}}
+    end
+  end
+
+  defp slot_still_owned?({_name, _src, %URI{} = worker_uri, _gen}, ws_uri, orch_uri) do
+    worker_already_owned_by_us?(worker_uri, orch_uri, ws_uri)
+  end
+
+  defp slot_still_owned?({_n, _s, nil, _g}, _ws, _orch), do: false
+  defp slot_still_owned?(_, _, _), do: false
+
+  defp read_template_working_copy(%URI{} = session_uri) do
+    case Ezagent.KindRegistry.lookup(session_uri) do
+      {:ok, pid} ->
+        chat_slice =
+          pid
+          |> :sys.get_state()
+          |> Map.get(:state, %{})
+          |> Map.get(Ezagent.Behavior.Chat.state_slice(), %{})
+
+        Ezagent.Behavior.Chat.template_working_copy(chat_slice)
+
+      :error ->
+        Ezagent.Behavior.Chat.default_template_working_copy()
+    end
+  end
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Step 6 — grant_scoped_caps_idempotent  (SPEC §2 step 6, codex rev-2
+  # HIGH-1)
+  # ─────────────────────────────────────────────────────────────────────
+
+  defp grant_scoped_caps_idempotent(
+         %URI{} = orchestrator_uri,
+         %URI{} = session_uri,
+         %URI{} = owner_uri
+       ) do
+    session_workspace =
+      case Ezagent.WorkspaceRegistry.lookup(session_uri) do
+        {:ok, ws} ->
+          ws
+
+        :error ->
+          raise "session #{URI.to_string(session_uri)} has no workspace binding " <>
+                  "— cannot derive workspace_uri for orchestrator scope caps"
+      end
+
+    desired = build_desired_caps(orchestrator_uri, session_uri, owner_uri, session_workspace)
+    current = Ezagent.Identity.list_caps_for(orchestrator_uri)
+
+    to_grant =
+      Enum.reject(desired, fn want ->
+        Enum.any?(current, &cap_equal_ignoring_metadata?(&1, want))
+      end)
+
+    target = URI.new!("#{URI.to_string(orchestrator_uri)}?action=identity.grant_cap")
+
+    ctx = %{
+      caller: owner_uri,
+      caps: Ezagent.Entity.User.admin_caps(),
+      reply: :ignore
+    }
+
+    results =
+      Enum.map(to_grant, fn want ->
+        cap = %{want | granted_at: DateTime.utc_now()}
+
+        Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+          target: target,
+          mode: :call,
+          args: %{cap: cap},
+          ctx: ctx
+        })
+      end)
+
+    case Enum.reject(results, &match?({:ok, _}, &1)) do
+      [] -> :ok
+      [err | _] -> {:error, {:scoped_cap_grant_failed, err}}
+    end
+  end
+
+  defp build_desired_caps(
+         %URI{} = orchestrator_uri,
+         %URI{} = session_uri,
+         %URI{} = owner_uri,
+         %URI{} = session_workspace
+       ) do
+    # Cap #1 + #2 — unconditional scope-bounded delegation.
+    unconditional = [
+      %Ezagent.Capability{
+        kind: :session,
+        behavior: :any,
+        instance: {:within_session, session_uri},
+        workspace_uri: session_workspace,
+        granted_by: owner_uri,
+        granted_at: nil
+      },
+      %Ezagent.Capability{
+        kind: :agent,
+        behavior: :any,
+        instance: {:spawned_by, orchestrator_uri},
+        workspace_uri: session_workspace,
+        granted_by: owner_uri,
+        granted_at: nil
+      }
+    ]
+
+    # Caps #3/#4 — gated by owner-cap preflight (§1.4).
+    template_caps = delegable_template_caps(owner_uri, session_workspace)
+
+    unconditional ++ template_caps
+  end
+
+  @doc """
+  PR-A helper (SPEC §5, codex rev-2 HIGH-1) — logical-equality
+  predicate for capabilities, IGNORING `granted_at` (a per-dispatch
+  timestamp).
+
+  The IDENTITY of a cap is `{kind, behavior, instance, workspace_uri,
+  granted_by}` — the authority being granted + WHO granted it. The
+  WHEN is metadata; the same authority granted twice should be a
+  no-op, NOT two distinct rows in the cap MapSet (which would burden
+  the audit log + grow the User snapshot on every reconciler re-run).
+  """
+  @spec cap_equal_ignoring_metadata?(Ezagent.Capability.t(), Ezagent.Capability.t()) ::
+          boolean()
+  def cap_equal_ignoring_metadata?(%Ezagent.Capability{} = a, %Ezagent.Capability{} = b) do
+    a.kind == b.kind and
+      a.behavior == b.behavior and
+      a.instance == b.instance and
+      a.workspace_uri == b.workspace_uri and
+      a.granted_by == b.granted_by
+  end
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Step 7 — register_orchestrator_mcp_context  (SPEC §2 step 7)
+  # ─────────────────────────────────────────────────────────────────────
+
+  defp register_orchestrator_mcp_context(
+         %URI{} = orchestrator_uri,
+         %URI{} = session_uri,
+         %URI{} = workspace_uri,
+         %URI{} = owner_uri,
+         %URI{} = parent_template_uri
+       ) do
+    Ezagent.Orchestrator.McpRegistry.register(orchestrator_uri,
+      session_uri: session_uri,
+      workspace_uri: workspace_uri,
+      owner_uri: owner_uri,
+      parent_template_uri: parent_template_uri
+    )
+  end
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Outcome assembly  (SPEC §2 "outcome assembly")
+  # ─────────────────────────────────────────────────────────────────────
+
+  defp assemble_outcome(
+         session_uri,
+         orchestrator_uri,
+         slot_results,
+         routing_outcome,
+         wc_outcome,
+         caps_outcome,
+         mcp_outcome
+       ) do
+    completed = [:session, :orchestrator]
+    pending = []
+    errors = []
+
+    # Slots
+    {completed, pending, errors, slot_pairs} =
+      Enum.reduce(slot_results, {completed, pending, errors, []}, fn
+        {slot, {:ok, _src, worker}}, {c, p, e, ok_slots} ->
+          {[{:slot, slot} | c], p, e, [{slot, worker} | ok_slots]}
+
+        {slot, {:already_converged, _src, worker}}, {c, p, e, ok_slots} ->
+          {[{:slot, slot} | c], p, e, [{slot, worker} | ok_slots]}
+
+        {slot, {:error, reason}}, {c, p, e, ok_slots} ->
+          {c, [{:slot, slot} | p], [{{:slot, slot}, reason} | e], ok_slots}
+      end)
+
+    slot_pairs = Enum.reverse(slot_pairs)
+
+    # Routing
+    {completed, pending, errors, _routing_ids} =
+      case routing_outcome do
+        {:ok, ids} ->
+          {[:routing | completed], pending, errors, ids}
+
+        {:partial, route_pending, ids} ->
+          {[:routing | completed], pending ++ Enum.map(route_pending, &elem(&1, 1)),
+           errors ++ Enum.map(route_pending, fn {:rule, r} -> {:routing, r} end), ids}
+
+        {:error, reason} ->
+          {completed, [:routing | pending], [{:routing, reason} | errors], []}
+      end
+
+    # Working copy
+    {completed, pending, errors} =
+      case wc_outcome do
+        :ok -> {[:working_copy | completed], pending, errors}
+        {:error, reason} -> {completed, [:working_copy | pending], [{:working_copy, reason} | errors]}
+      end
+
+    # Caps
+    {completed, pending, errors} =
+      case caps_outcome do
+        :ok -> {[:caps | completed], pending, errors}
+        {:error, reason} -> {completed, [:caps | pending], [{:caps, reason} | errors]}
+      end
+
+    # MCP context
+    {completed, pending, errors} =
+      case mcp_outcome do
+        :ok -> {[:mcp_context | completed], pending, errors}
+        {:error, reason} -> {completed, [:mcp_context | pending], [{:mcp_context, reason} | errors]}
+      end
+
+    if pending == [] and errors == [] do
+      {:ok,
+       %{
+         session_uri: session_uri,
+         orchestrator_uri: orchestrator_uri,
+         slots: slot_pairs
+       }}
+    else
+      {:partial,
+       %{
+         session_uri: session_uri,
+         orchestrator_uri: orchestrator_uri,
+         completed: Enum.reverse(completed),
+         pending: Enum.reverse(pending),
+         errors: Enum.reverse(errors)
+       }}
+    end
+  end
+
+  defp partial_report(opts) do
+    {:partial,
+     %{
+       session_uri: Keyword.get(opts, :session_uri),
+       orchestrator_uri: Keyword.get(opts, :orchestrator_uri),
+       completed: Keyword.get(opts, :completed, []),
+       pending: Keyword.get(opts, :pending, []),
+       errors: Keyword.get(opts, :errors, [])
+     }}
+  end
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Preflights — KEPT verbatim (rounds 1-3 hardening, security-critical)
+  # ─────────────────────────────────────────────────────────────────────
+
   defp preflight_slot_name_uniqueness(template_content) do
     slot_specs =
       template_content
@@ -227,45 +1167,6 @@ defmodule Ezagent.Entity.Session do
     Ezagent.Orchestrator.SlotNames.preflight(slot_specs, "preflight")
   end
 
-  # --- CRITICAL (round 2): SessionTemplate-composition workspace isolation
-  #
-  # ## The bug
-  #
-  # `instantiate_one_slot/5` dispatches each agent slot's
-  # `template.instantiate` with `Ezagent.Entity.User.admin_caps()` in
-  # `ctx.caps`. `owner_instantiate_preflight/2` only checks the OWNER
-  # against the SessionTemplate's OWN workspace — it never checks the
-  # `default_workspace_uri` the Generator resolves from template content,
-  # nor the workspace of each slot's AgentTemplate URI. A caller able to
-  # create/instantiate a SessionTemplate in workspace A could therefore
-  # encode a DIFFERENT `default_workspace_uri` and/or slot AgentTemplate
-  # URIs pointing at workspace B; every slot `template.instantiate` then
-  # runs as ADMIN against a B-workspace AgentTemplate → cross-workspace
-  # CapBAC + isolation bypass.
-  #
-  # ## The fix — the same-workspace rule
-  #
-  # A SessionTemplate may only compose AgentTemplates in its OWN
-  # workspace, and may only instantiate into its own workspace. We
-  # require, structurally:
-  #
-  #   SessionTemplate URI workspace
-  #     == resolved default_workspace_uri
-  #     == every agent-slot AgentTemplate URI workspace
-  #
-  # Any divergence → `{:error, :cross_workspace_denied}`, nothing
-  # spawned. This is chosen over a per-slot owner-cap preflight because
-  # (a) V1 has no cross-workspace templating — a SessionTemplate and the
-  # AgentTemplates it cites are authored together in one workspace —
-  # (b) it is a single structural invariant a reviewer can verify, and
-  # (c) it closes the escalation regardless of what the owner happens to
-  # hold (the per-slot owner-cap check would still PASS the dispatch
-  # under `admin_caps` — it only gates which caps were delegated to the
-  # orchestrator, not the slot-instantiation dispatch itself). The
-  # admin-cap slot dispatch is now safe because it can ONLY reach an
-  # AgentTemplate proven to be in the SessionTemplate's own workspace,
-  # for which the owner's authority was already established by
-  # `owner_instantiate_preflight/2`.
   defp preflight_workspace_isolation(
          %URI{} = session_template_uri,
          %URI{} = workspace_uri,
@@ -279,17 +1180,12 @@ defmodule Ezagent.Entity.Session do
     end
   end
 
-  # Compare two workspace URIs by their bare name (the `workspace://`
-  # host). `workspace_of/1` may return `:any` for a malformed URI — a
-  # non-`%URI{}` workspace is itself a cross-workspace denial.
   defp same_workspace(%URI{host: a}, %URI{host: b}, _which) when is_binary(a) and a == b,
     do: :ok
 
   defp same_workspace(_template_ws, _other_ws, which),
     do: {:error, {:cross_workspace_denied, which}}
 
-  # Every agent-slot AgentTemplate URI must live in the SessionTemplate's
-  # own workspace. A slot URI in another workspace → denial.
   defp slots_in_workspace(template_content, %URI{} = template_ws) do
     slots = normalize_agent_slots(Map.get(template_content, :agent_slots, []))
 
@@ -309,290 +1205,20 @@ defmodule Ezagent.Entity.Session do
   defp slot_workspace_label(%URI{} = uri), do: URI.to_string(uri)
   defp slot_workspace_label(other), do: other
 
-  # ── The spawn phase (MEDIUM-5) — irreversible side effects + cleanup ──
-  #
-  # Each step is irreversible; on failure of a LATER step,
-  # `cleanup_partial/1` tears down everything spawned so far so no
-  # half-built session/workers/rules/caps survive.
-  defp do_spawn(
-         template_content,
-         %URI{} = workspace_uri,
-         %URI{} = owner_uri,
-         %URI{} = session_template_uri
-       ) do
-    with {:ok, session_uri} <- spawn_fresh_session(workspace_uri),
-         # codex round-10 HIGH-1 — the session is LIVE the instant
-         # `spawn_fresh_session` returns. Both the workspace bind AND
-         # the orchestrator spawn are now wrapped in `guard/2` so a
-         # failure of either triggers `cleanup_partial/1` (terminate +
-         # unbind the session). Pre-round-10 a `bind` or
-         # `spawn_orchestrator` failure returned DIRECTLY from the
-         # `with` — `cleanup_partial/1` never ran — leaking a live
-         # Session Kind and (for an orchestrator failure that happens
-         # after the bind) its `WorkspaceRegistry` binding.
-         # `cleanup_partial/1` handles a `nil` `orchestrator_uri` (the
-         # orchestrator was never created in this failure path) via its
-         # `if orchestrator_uri` guard.
-         :ok <-
-           guard(
-             Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri),
-             %{session_uri: session_uri, orchestrator_uri: nil, slots: []}
-           ),
-         {:ok, orchestrator_uri} <-
-           guard(
-             spawn_orchestrator(session_uri, workspace_uri, owner_uri) ||
-               {:error, :orchestrator_spawn_failed},
-             %{session_uri: session_uri, orchestrator_uri: nil, slots: []}
-           ),
-         # MEDIUM-3 (round 4) — none of this run's candidate worker URIs
-         # may ALREADY be live in `KindRegistry` as orphans. The slot
-         # worker URIs fold the (just-created, globally-unique) session
-         # discriminator, so they are only computable now — after
-         # `spawn_fresh_session`. A live candidate URI here means a stale
-         # orphan from a prior failed cleanup would be silently adopted
-         # by `template.instantiate`'s plugin idempotency; reject before
-         # any slot spawns. Guarded so a rejection tears down the session
-         # + orchestrator already spawned.
-         :ok <-
-           guard(
-             preflight_candidate_uris_free(template_content, session_uri, workspace_uri),
-             %{session_uri: session_uri, orchestrator_uri: orchestrator_uri, slots: []}
-           ),
-         # codex round-9 HIGH-2 — `instantiate_agent_slots/4` returns a
-         # 3-element `{:error, reason, partial_slots}` when a later slot
-         # fails after earlier slots already spawned. `guard/2`'s
-         # 3-element clause merges `partial_slots` INTO the accumulator so
-         # `cleanup_partial/1` tears down the earlier fresh workers; it
-         # then returns the bare `{:error, reason}` the `with` chain
-         # expects. The 2-element ok/error path is unchanged.
-         {:ok, slot_instances} <-
-           guard(
-             instantiate_agent_slots(
-               template_content,
-               session_uri,
-               workspace_uri,
-               orchestrator_uri
-             ),
-             %{session_uri: session_uri, orchestrator_uri: orchestrator_uri, slots: []}
-           ),
-         :ok <-
-           guard(
-             populate_working_copy(
-               session_uri,
-               template_content,
-               slot_instances,
-               workspace_uri,
-               owner_uri
-             ),
-             %{
-               session_uri: session_uri,
-               orchestrator_uri: orchestrator_uri,
-               slots: slot_instances
-             }
-           ),
-         # HIGH-3 (round 2) — `install_routing_rules/5` now returns the
-         # IDs of the `routing_rules` rows it inserted; those IDs ride in
-         # the `spawned` accumulator so a LATER failure's
-         # `cleanup_partial/1` can DELETE exactly those rows (not just
-         # reload the registry, which would re-load the dead rows).
-         {:ok, routing_rule_ids} <-
-           guard(
-             install_routing_rules(
-               template_content,
-               slot_instances,
-               session_uri,
-               workspace_uri,
-               owner_uri
-             ),
-             %{
-               session_uri: session_uri,
-               orchestrator_uri: orchestrator_uri,
-               slots: slot_instances,
-               routing_rule_ids: []
-             }
-           ),
-         :ok <-
-           guard(
-             grant_scoped_caps(orchestrator_uri, session_uri, owner_uri),
-             %{
-               session_uri: session_uri,
-               orchestrator_uri: orchestrator_uri,
-               slots: slot_instances,
-               routing_rule_ids: routing_rule_ids
-             }
-           ),
-         :ok <-
-           guard(
-             register_orchestrator_mcp_context(
-               orchestrator_uri,
-               session_uri,
-               workspace_uri,
-               owner_uri,
-               session_template_uri
-             ),
-             %{
-               session_uri: session_uri,
-               orchestrator_uri: orchestrator_uri,
-               slots: slot_instances,
-               routing_rule_ids: routing_rule_ids
-             }
-           ) do
-      {:ok, %{session_uri: session_uri, orchestrator_uri: orchestrator_uri}}
-    end
-  end
-
-  # `spawn_orchestrator/3` returns `{:ok, _}` | `{:error, _}` already,
-  # so the `|| {:error, ...}` above is belt-and-braces against a nil.
-  # `guard/2` runs `cleanup_partial/1` when its first arg is an error.
-  #
-  # codex round-9 HIGH-2 — the 3-element `{:error, reason, partial_slots}`
-  # clause is for `instantiate_agent_slots/4`: a later slot failed after
-  # earlier slots already spawned (`fresh?: true` — lineage recorded,
-  # workspace bound, possibly a PTY sidecar started). `partial_slots` is
-  # MERGED into the `spawned` accumulator's `:slots` so `cleanup_partial/1`
-  # tears each earlier worker down — terminate + forget lineage + unbind
-  # workspace. The bare `{:error, reason}` is then returned so the `with`
-  # chain in `do_spawn/4` sees the same 2-element shape it always did.
-  defp guard({:error, reason, partial_slots}, spawned) when is_list(partial_slots) do
-    spawned_with_partials = Map.put(spawned, :slots, partial_slots)
-    cleanup_partial(spawned_with_partials)
-    {:error, reason}
-  end
-
-  defp guard({:error, reason}, spawned) do
-    cleanup_partial(spawned)
-    {:error, reason}
-  end
-
-  defp guard(ok, _spawned), do: ok
-
-  # MEDIUM-5 compensating cleanup — tear down everything `do_spawn`
-  # built so far. Best-effort: every step is wrapped so one failure
-  # does not prevent the rest. Order: workers, then orchestrator, then
-  # the session Kind, then its workspace binding.
-  #
-  # ## codex round-9 HIGH-2 — every spawned worker is torn down COMPLETELY
-  #
-  # The `slots` list now reflects REALITY: when a multi-slot template's
-  # later slot fails, `instantiate_agent_slots/4` returns the earlier
-  # slots created so far and `guard/2` merges them into `spawned`. Each
-  # accumulated slot worker — AND the orchestrator, itself a worker the
-  # Generator spawned — is terminated, has its `AgentLineage` record
-  # forgotten (`terminate_kind/1`), AND has its `WorkspaceRegistry`
-  # binding removed — so a failed multi-slot Generator run leaves NO
-  # live worker, NO stale lineage, NO stale binding.
-  #
-  # ## HIGH-3 (round 2) — DELETE the COMMITTED routing rows on a
-  # ## later-step failure
-  #
-  # `install_routing_rules/5` commits its routing rows in one
-  # transaction (HIGH-2 round 4); on the committed path it returns the
-  # row IDs, which ride in the `spawned` accumulator. If a LATER step
-  # (`grant_scoped_caps` / `register_orchestrator_mcp_context`) then
-  # fails, those committed rows must be torn down: cleanup DELETEs those
-  # exact rows BEFORE `load_into_registry/1`, so the reload sees them
-  # gone and they leave ETS too. (When the routing install itself fails,
-  # its transaction has already rolled back — `routing_rule_ids` is `[]`
-  # and there is nothing here to delete.)
-  defp cleanup_partial(spawned) do
-    session_uri = Map.get(spawned, :session_uri)
-    orchestrator_uri = Map.get(spawned, :orchestrator_uri)
-    slots = Map.get(spawned, :slots, [])
-    routing_rule_ids = Map.get(spawned, :routing_rule_ids, [])
-
-    # codex round-9 HIGH-2 — each accumulated slot worker is torn down
-    # COMPLETELY: `terminate_kind/1` stops the process AND forgets its
-    # `AgentLineage` record; `WorkspaceRegistry.unbind/1` removes its
-    # workspace binding. A `fresh?: true` slot recorded all three at
-    # spawn (lineage + binding + the live process), so a failed
-    # multi-slot Generator run must undo all three — leaving NO live
-    # worker, NO stale lineage, NO stale binding.
-    Enum.each(slots, fn
-      {_slot, _tmpl, %URI{} = worker_uri} ->
-        terminate_kind(worker_uri)
-        safe(fn -> Ezagent.WorkspaceRegistry.unbind(worker_uri) end)
-
-      _ ->
-        :ok
-    end)
-
-    # codex round-9 HIGH-2 — the orchestrator is itself a worker the
-    # Generator spawned (`spawn_orchestrator/3` → `Agent.spawn/4`, which
-    # binds its workspace). A failed run must leave it with NO live
-    # process, NO stale lineage (`terminate_kind/1`), AND NO stale
-    # `WorkspaceRegistry` binding — same three-part teardown as the slot
-    # workers above.
-    if orchestrator_uri do
-      terminate_kind(orchestrator_uri)
-      safe(fn -> Ezagent.WorkspaceRegistry.unbind(orchestrator_uri) end)
-    end
-
-    if session_uri, do: terminate_kind(session_uri)
-    if session_uri, do: Ezagent.WorkspaceRegistry.unbind(session_uri)
-
-    # HIGH-3 — delete the exact routing rows this Generator run inserted.
-    Enum.each(routing_rule_ids, fn id ->
-      safe(fn -> RuleStore.delete(id, force: true) end)
-    end)
-
-    # Re-hydrate the routing registry — now that the partially-installed
-    # rows are gone from SQLite, the reload drops them from ETS too.
-    safe(fn -> RuleStore.load_into_registry(EzagentDomainChat.Routing.MentionRouting) end)
-    :ok
-  end
-
-  # Terminate a Kind process (best-effort) and forget its lineage. The
-  # process is an Agent (worker / orchestrator) under `AgentSupervisor`
-  # or a Session under `SessionSupervisor`; we try both — a
-  # `terminate_child` against the wrong supervisor returns
-  # `{:error, :not_found}` harmlessly.
-  defp terminate_kind(%URI{} = uri) do
-    case Ezagent.KindRegistry.lookup(uri) do
-      {:ok, pid} ->
-        Enum.each(
-          [EzagentDomainChat.AgentSupervisor, EzagentDomainChat.SessionSupervisor],
-          fn sup -> safe(fn -> DynamicSupervisor.terminate_child(sup, pid) end) end
-        )
-
-      :error ->
-        :ok
-    end
-
-    safe(fn -> Ezagent.AgentLineage.forget(uri) end)
-    :ok
-  end
-
-  defp safe(fun) do
-    fun.()
-  rescue
-    _ -> :error
-  catch
-    _, _ -> :error
-  end
-
   defp ensure_template_alive(%URI{} = template_uri) do
     case Ezagent.KindRegistry.lookup(template_uri) do
-      {:ok, pid} -> {:ok, pid}
-      :error -> Ezagent.SpawnRegistry.spawn(template_uri)
+      {:ok, pid} ->
+        {:ok, pid}
+
+      :error ->
+        case Ezagent.SpawnRegistry.spawn(template_uri) do
+          {:ok, _} = ok -> ok
+          {:error, {:already_started, pid}} -> {:ok, pid}
+          {:error, _} = err -> err
+        end
     end
   end
 
-  # --- Step 1: owner-instantiate preflight -------------------------------
-
-  # The Generator entry gate (SPEC §2 PR-4 steps 6+7, reconciled).
-  #
-  # Before instantiating anything, confirm the OWNER actually holds the
-  # authority to instantiate this SessionTemplate. The check is a REAL
-  # match against the owner's actual caps — loaded via
-  # `Ezagent.Identity.list_caps_for/1` (NOT `admin_caps()`). The owner
-  # passes iff at least one of their real caps authorizes a
-  # `Ezagent.Behavior.Template` action on `:session_template` in the
-  # SessionTemplate's workspace (a `:any` admin cap, a
-  # `{:within_workspace, ws}` template cap, or a broader template cap
-  # all pass; an owner with no template authority is denied).
-  #
-  # This IS the `template:instantiate` authority gate — without it the
-  # owner cannot create the session at all (`{:error, :unauthorized}`).
   defp owner_instantiate_preflight(%URI{} = session_template_uri, %URI{} = owner_uri) do
     owner_caps = Ezagent.Identity.list_caps_for(owner_uri)
 
@@ -610,13 +1236,6 @@ defmodule Ezagent.Entity.Session do
     end
   end
 
-  # --- Step 2: read the SessionTemplate content --------------------------
-
-  # Read the SessionTemplate's `:template` slice via the
-  # `Ezagent.Behavior.Template` `:read` action — the dispatch path so
-  # the read is audited. The Generator runs as a privileged bootstrap
-  # program (consistent with `grant_scoped_caps/3`'s privileged grant
-  # context); the WHO-may-instantiate gate is the owner preflight above.
   defp read_template_content(%URI{} = session_template_uri) do
     target = URI.parse("#{URI.to_string(session_template_uri)}?action=template.read")
 
@@ -637,19 +1256,6 @@ defmodule Ezagent.Entity.Session do
     end
   end
 
-  # --- HIGH-4: honor the SessionTemplate's default_workspace_uri --------
-
-  # The pre-hardening Generator IGNORED `template_content.default_workspace_uri`
-  # and always created the session in `WorkspaceRegistry.default_workspace_uri/0`.
-  # A non-default-workspace SessionTemplate spawned into the WRONG
-  # workspace. `resolve_target_workspace/1` reads the field, validates
-  # it, and that workspace is then threaded through the session URI,
-  # orchestrator spawn, worker instantiation, routing install, and the
-  # delegated caps.
-  #
-  # A `nil` / absent field falls back to `WorkspaceRegistry`'s default
-  # — the common case is unchanged. A present-but-malformed value is a
-  # hard error (let-it-crash — no silent fallback past a real value).
   defp resolve_target_workspace(template_content) do
     case Map.get(template_content, :default_workspace_uri) ||
            Map.get(template_content, "default_workspace_uri") do
@@ -673,7 +1279,6 @@ defmodule Ezagent.Entity.Session do
     end
   end
 
-  # Invariant 11 — a workspace name must match `^[a-z][a-z0-9_-]*$`.
   defp validate_workspace_name(host, %URI{} = uri) do
     if Regex.match?(~r/^[a-z][a-z0-9_-]*$/, host) do
       {:ok, uri}
@@ -682,33 +1287,6 @@ defmodule Ezagent.Entity.Session do
     end
   end
 
-  # --- MEDIUM-5: agent-slot + routing preflight (no side effects) ------
-
-  # Every agent slot's AgentTemplate must be resolvable (the Kind can be
-  # brought up + has a populated `:template` slice). Bringing the
-  # Template Kind up is the lazy demand-spawn — it is idempotent and not
-  # a session side effect. A bad slot fails the WHOLE Generator BEFORE
-  # any session/worker is spawned.
-  defp preflight_agent_slots(template_content) do
-    slots = normalize_agent_slots(Map.get(template_content, :agent_slots, []))
-
-    Enum.reduce_while(slots, :ok, fn {slot_name, agent_template_uri}, :ok ->
-      case ensure_template_alive(agent_template_uri) do
-        {:ok, _pid} ->
-          {:cont, :ok}
-
-        {:error, {:already_started, _pid}} ->
-          {:cont, :ok}
-
-        {:error, reason} ->
-          {:halt, {:error, {:agent_slot_template_unresolvable, slot_name, reason}}}
-      end
-    end)
-  end
-
-  # Every routing-rule matcher must be a valid matcher AST. A matcher
-  # that does not round-trip through `Matcher.to_json/1` would fail at
-  # `RuleStore.add/5` AFTER the session is half-built — catch it here.
   defp preflight_routing_rules(template_content) do
     rules = normalize_routing_rules(Map.get(template_content, :routing_rules, []))
 
@@ -722,91 +1300,23 @@ defmodule Ezagent.Entity.Session do
     end)
   end
 
-  # SPEC v3 §3.6 (Phase 9 PR-7) — sessions are 3-segment:
-  # `session://<template>/<workspace>/<name>`. HIGH-4 — the session URI
-  # is built in the TARGET workspace (from the SessionTemplate's
-  # `default_workspace_uri`), not always `default`.
-  defp spawn_fresh_session(%URI{host: workspace_name}) when is_binary(workspace_name) do
-    unique_suffix = "#{System.system_time(:millisecond)}-#{System.unique_integer([:positive])}"
-    session_uri = URI.new!("session://generic/#{workspace_name}/gen-#{unique_suffix}")
+  # session discriminator: the session URI's name segment.
+  defp session_discriminator(%URI{} = session_uri) do
+    case session_uri.path do
+      "/" <> rest ->
+        case String.split(rest, "/", parts: 2) do
+          [_ws, name] when name != "" -> name
+          _ -> session_uri.host || "session"
+        end
 
-    case Ezagent.SpawnRegistry.spawn(session_uri) do
-      {:ok, _pid} -> {:ok, session_uri}
-      err -> err
+      _ ->
+        session_uri.host || "session"
     end
   end
 
-  defp spawn_orchestrator(session_uri, workspace_uri, owner_uri) do
-    # Spawn the cc-orchestrator (PR 45 seed) under a fresh instance
-    # name keyed to this session for traceability. SPEC v3 §3.6 PR-7
-    # — the orchestrator AgentTemplate is workspace-scoped to `default`
-    # (a shared seed); the orchestrator INSTANCE is spawned into the
-    # session's own (HIGH-4-resolved) workspace via `workspace_uri`.
-    template_uri = URI.parse("template://agent/default/cc-orchestrator")
-    # session_uri.path = "/<workspace>/<name>" → use name as suffix
-    session_name =
-      case session_uri.path do
-        "/" <> rest ->
-          case String.split(rest, "/", parts: 2) do
-            [_ws, name] -> name
-            _ -> session_uri.host
-          end
-
-        _ ->
-          session_uri.host
-      end
-
-    # SPEC §1.2 — agent instance URIs are `entity://agent/<ws>/<flavor>_<name>`.
-    # The orchestrator is a `cc`-flavored agent (the seed
-    # `cc-orchestrator` AgentTemplate has `flavor: "cc"`), so the
-    # instance name MUST carry the `cc_` flavor prefix — without it the
-    # chat plugin's agent-spawn resolver cannot map the URI to a
-    # `kind_module` (`{:error, :no_kind_module_for_agent}`).
-    instance_name = "cc_orchestrator-#{session_name}"
-
-    Ezagent.Entity.Agent.spawn(template_uri, instance_name, workspace_uri, owner_uri)
-  end
-
-  # --- MEDIUM-3 (round 4): candidate-worker-URI orphan preflight -------
-
-  # Compute every slot's FULL candidate worker URI
-  # (`entity://agent/<workspace>/<flavor>_<instance_name>` at generation
-  # 0, with this run's session discriminator) and reject the Generator
-  # run if any is ALREADY live in `KindRegistry` — a stale orphan a prior
-  # failed cleanup left behind, which `template.instantiate`'s plugin
-  # idempotency would otherwise silently adopt.
-  #
-  # No candidate has a legitimate live worker yet (this is a fresh
-  # session), so `expected_uri` is `nil` for every candidate. A slot
-  # whose AgentTemplate has no flavor is skipped here — `instantiate_one_slot`
-  # surfaces the flavor error.
-  defp preflight_candidate_uris_free(template_content, %URI{} = session_uri, %URI{} = workspace_uri) do
-    slots = normalize_agent_slots(Map.get(template_content, :agent_slots, []))
-    discriminator = session_discriminator(session_uri)
-    workspace_name = workspace_uri.host || "default"
-
-    candidates =
-      Enum.flat_map(slots, fn {slot_name, %URI{} = agent_template_uri} ->
-        instance_name = Ezagent.Entity.Agent.session_instance_name(slot_name, discriminator)
-
-        case agent_template_flavor(agent_template_uri) do
-          {:ok, flavor} ->
-            uri = URI.new!("entity://agent/#{workspace_name}/#{flavor}_#{instance_name}")
-            [{uri, nil}]
-
-          :no_flavor ->
-            []
-        end
-      end)
-
-    Ezagent.Orchestrator.SlotNames.preflight_live_worker_uris(candidates)
-  end
-
-  # Read an AgentTemplate's `flavor` from its `:template` slice content
-  # via the `template.read` dispatch (the AgentTemplate Kind is already
-  # alive — `preflight_agent_slots` ensured it). Returns `:no_flavor`
-  # when the content has no flavor or the read fails (the candidate URI
-  # is then underivable; `instantiate_one_slot` will surface the error).
+  # Read an AgentTemplate's `flavor` from its `:template` slice via the
+  # `template.read` dispatch. Returns `:no_flavor` when the read fails
+  # or the content has no flavor — caller falls back to dispatch path.
   defp agent_template_flavor(%URI{} = agent_template_uri) do
     target = URI.parse("#{URI.to_string(agent_template_uri)}?action=template.read")
 
@@ -831,248 +1341,6 @@ defmodule Ezagent.Entity.Session do
     end
   end
 
-  # --- Step 5: resolve + instantiate agent_slots -------------------------
-
-  # For each slot the SessionTemplate cites an AgentTemplate URI.
-  # Instantiate the worker by dispatching `template.instantiate` on that
-  # AgentTemplate URI — the `Ezagent.Behavior.Template` `:instantiate`
-  # action (§1.0). That action resolves the flavor Class and hands off to
-  # `Ezagent.Entity.Agent.spawn_from_template_content/4` (§1.6a), which
-  # delegates the launch + records lineage UNDER THE ORCHESTRATOR + binds
-  # the workspace. The Generator NEVER calls `Class.instantiate/3`
-  # directly and NEVER re-implements lineage/binding.
-  #
-  # `spawned_by: orchestrator_uri` is passed so each worker lands in the
-  # orchestrator's `AgentLineage` — cap #2 (`{:spawned_by, orchestrator}`)
-  # then resolves for the orchestrator's own workers.
-  #
-  # CRITICAL hardening fix — the LIVE worker `instance_name` is made
-  # **session-unique** via `Ezagent.Entity.Agent.session_instance_name/3`
-  # (the session URI's name segment is the discriminator). Two sessions
-  # from the SAME SessionTemplate therefore get DISJOINT live worker
-  # URIs, so neither overwrites the other's `AgentLineage` row.
-  #
-  # Returns `{:ok, [{slot_name, agent_template_uri, worker_uri}]}` — the
-  # working copy + the routing rules both consume this list. The
-  # `worker_uri` here is the durable record of the LIVE instance URI.
-  #
-  # ## codex round-9 HIGH-2 — return the PARTIAL slots on a slot failure
-  #
-  # Slots are instantiated SEQUENTIALLY: slot 1 may be `fresh?: true`
-  # (records lineage, binds the workspace, may start a PTY sidecar)
-  # before slot 2 fails. The pre-round-9 error path returned a bare
-  # `{:error, reason}` — the slots created so far were LOST, so
-  # `do_spawn/4`'s `guard/2` accumulator carried `slots: []` and
-  # `cleanup_partial/1` left slot 1's worker live, workspace-bound, and
-  # lineaged to a now-terminated orchestrator. A rejected slot was NOT
-  # zero-side-effect at the Generator level.
-  #
-  # On a slot failure this now returns the 3-element
-  # `{:error, reason, partial_slots}` — the slots created BEFORE the
-  # failure, in `{slot_name, agent_template_uri, worker_uri}` shape.
-  # `do_spawn/4` threads `partial_slots` into the `guard/2` accumulator
-  # so `cleanup_partial/1` tears each one down.
-  defp instantiate_agent_slots(
-         template_content,
-         %URI{} = session_uri,
-         %URI{} = workspace_uri,
-         %URI{} = orchestrator_uri
-       ) do
-    slots = normalize_agent_slots(Map.get(template_content, :agent_slots, []))
-    discriminator = session_discriminator(session_uri)
-
-    Enum.reduce_while(slots, {:ok, []}, fn {slot_name, agent_template_uri}, {:ok, acc} ->
-      case instantiate_one_slot(
-             slot_name,
-             agent_template_uri,
-             discriminator,
-             workspace_uri,
-             orchestrator_uri
-           ) do
-        {:ok, worker_uri} ->
-          {:cont, {:ok, [{slot_name, agent_template_uri, worker_uri} | acc]}}
-
-        {:error, reason} ->
-          # Carry the slots created BEFORE this failure (the reduce
-          # accumulator) into the error so `do_spawn/4` can clean them up.
-          {:halt, {:error, {:agent_slot_failed, slot_name, reason}, Enum.reverse(acc)}}
-      end
-    end)
-    |> case do
-      {:ok, instances} -> {:ok, Enum.reverse(instances)}
-      {:error, _reason, _partial} = err -> err
-    end
-  end
-
-  # The session-scoped discriminator folded into every LIVE worker
-  # instance name (CRITICAL fix) — the session URI's name segment,
-  # which `spawn_fresh_session/0` already makes globally unique
-  # (`gen-<millis>-<unique_int>`).
-  defp session_discriminator(%URI{} = session_uri) do
-    case session_uri.path do
-      "/" <> rest ->
-        case String.split(rest, "/", parts: 2) do
-          [_ws, name] when name != "" -> name
-          _ -> session_uri.host || "session"
-        end
-
-      _ ->
-        session_uri.host || "session"
-    end
-  end
-
-  # Instantiate ONE slot: dispatch `template.instantiate` on its
-  # AgentTemplate URI. `instance_name` is the SESSION-UNIQUE live
-  # instance name (CRITICAL fix round 1) — `session_instance_name/3`
-  # folds the session discriminator into the slot name so the
-  # `:instantiate` action builds a per-session flavor-prefixed worker
-  # URI.
-  #
-  # ## The `admin_caps` ctx is bounded (CRITICAL round 2)
-  #
-  # The dispatch ctx carries `admin_caps` so the Generator (a privileged
-  # bootstrap program) can instantiate the slot. This is SAFE here ONLY
-  # because `preflight_workspace_isolation/3` has already proven that
-  # `agent_template_uri` lives in the SAME workspace as the
-  # SessionTemplate — and `owner_instantiate_preflight/2` already
-  # established the owner holds `Behavior.Template` authority for THAT
-  # workspace. The admin-cap dispatch therefore cannot reach an
-  # AgentTemplate in a workspace the owner lacks authority over: the
-  # owner-authority preflight for this exact AgentTemplate's workspace
-  # has passed (transitively, via the same-workspace invariant). Without
-  # `preflight_workspace_isolation/3` this would be a cross-workspace
-  # escalation — see its moduledoc.
-  defp instantiate_one_slot(
-         slot_name,
-         %URI{} = agent_template_uri,
-         discriminator,
-         workspace_uri,
-         orchestrator_uri
-       ) do
-    instance_name = Ezagent.Entity.Agent.session_instance_name(slot_name, discriminator)
-
-    with {:ok, _pid} <- ensure_template_alive(agent_template_uri),
-         target <-
-           URI.parse("#{URI.to_string(agent_template_uri)}?action=template.instantiate"),
-         {:ok, %{workers: workers, fresh?: fresh?}} <-
-           Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-             target: target,
-             mode: :call,
-             args: %{
-               instance_name: instance_name,
-               workspace_uri: workspace_uri,
-               spawned_by: orchestrator_uri
-             },
-             ctx: %{
-               caller: orchestrator_uri,
-               caps: Ezagent.Entity.User.admin_caps(),
-               reply: {:caller_inbox, self()}
-             }
-           }) do
-      # codex round-8 HIGH-2 — the Generator MUST gate a `fresh?: false`
-      # worker on ownership verification before committing it.
-      #
-      # Round 7 made `spawn_from_template_content/4` record lineage +
-      # bind workspace ONLY for `fresh?: true` workers. A `fresh?: false`
-      # result therefore means NO lineage/workspace binding happened on
-      # THIS call. The Generator used to record the worker into the
-      # session working-copy + routing rules regardless of `fresh?` —
-      # so a candidate worker that appeared AFTER
-      # `preflight_candidate_uris_free/3` but BEFORE the atomic spawn
-      # (a TOCTOU window) was silently adopted into the session with
-      # UNKNOWN lineage + workspace — a worker the Generator neither
-      # created nor bound.
-      #
-      # The legitimate idempotent re-run still exists: `Workspace.Loader`
-      # re-runs the Generator on every boot pass; a re-instantiation of
-      # a worker THIS orchestrator + workspace already created + bound
-      # also reports `fresh?: false`. That re-run is fine — the worker
-      # IS owned. So a `fresh?: false` worker is committed ONLY IF
-      # ownership verifies: `AgentLineage.lookup` equals THIS
-      # orchestrator AND `WorkspaceRegistry.lookup` equals the target
-      # workspace. If it does not verify, the slot fails
-      # `:slot_candidate_not_owned` — the Generator does NOT silently
-      # adopt a foreign / unknown-lineage worker into the session.
-      with {:ok, worker_uri} <- first_worker(workers),
-           :ok <-
-             verify_slot_candidate_ownership(
-               fresh?,
-               slot_name,
-               worker_uri,
-               workspace_uri,
-               orchestrator_uri
-             ) do
-        {:ok, worker_uri}
-      end
-    else
-      {:error, _} = err -> err
-      other -> {:error, {:unexpected_instantiate_result, other}}
-    end
-  end
-
-  defp first_worker([worker_uri | _]), do: {:ok, worker_uri}
-  defp first_worker([]), do: {:error, :instantiate_returned_no_worker}
-
-  # codex round-8 HIGH-2 — ownership verification for a `fresh?: false`
-  # slot candidate.
-  #
-  # A `fresh?: true` worker was just created AND bound by THIS call's
-  # `spawn_from_template_content/4` (round 7 gating) — it is owned by
-  # construction, no check needed.
-  #
-  # A `fresh?: false` worker was NOT bound by this call. It is committed
-  # to the session only if it is already owned by THIS orchestrator +
-  # workspace — the legitimate idempotent `Workspace.Loader` re-run. The
-  # ownership predicate is structural: `AgentLineage.lookup(worker_uri)`
-  # must equal `orchestrator_uri` AND `WorkspaceRegistry.lookup(worker_uri)`
-  # must equal `workspace_uri`. A worker that appeared in the TOCTOU
-  # window (foreign / unknown lineage, or bound to a different
-  # workspace, or unbound entirely) fails the check — the Generator
-  # fails the slot rather than adopting it.
-  #
-  # URIs are compared by canonical string form: the registries store +
-  # return string-derived `%URI{}` values, while `orchestrator_uri` /
-  # `workspace_uri` are caller-supplied structs — `URI.to_string/1`
-  # normalizes both sides.
-  defp verify_slot_candidate_ownership(true, _slot_name, _worker_uri, _workspace_uri, _orch_uri),
-    do: :ok
-
-  defp verify_slot_candidate_ownership(
-         false,
-         slot_name,
-         %URI{} = worker_uri,
-         %URI{} = workspace_uri,
-         %URI{} = orchestrator_uri
-       ) do
-    lineage_ok? =
-      case Ezagent.AgentLineage.lookup(worker_uri) do
-        {:ok, %URI{} = spawned_by} ->
-          URI.to_string(spawned_by) == URI.to_string(orchestrator_uri)
-
-        :error ->
-          false
-      end
-
-    workspace_ok? =
-      case Ezagent.WorkspaceRegistry.lookup(worker_uri) do
-        {:ok, %URI{} = bound_ws} ->
-          URI.to_string(bound_ws) == URI.to_string(workspace_uri)
-
-        :error ->
-          false
-      end
-
-    if lineage_ok? and workspace_ok? do
-      :ok
-    else
-      {:error, {:slot_candidate_not_owned, slot_name, URI.to_string(worker_uri)}}
-    end
-  end
-
-  # `agent_slots` in the SessionTemplate content is
-  # `[{slot_name, agent_template_uri}]`. After a JSON snapshot round-trip
-  # the URI may be a plain string and the tuple a 2-element list —
-  # normalize both back to `{String.t(), %URI{}}`.
   defp normalize_agent_slots(slots) when is_list(slots) do
     Enum.map(slots, fn
       {slot_name, %URI{} = uri} -> {to_string(slot_name), uri}
@@ -1084,61 +1352,6 @@ defmodule Ezagent.Entity.Session do
 
   defp normalize_agent_slots(_), do: []
 
-  # --- Step 6: populate template_working_copy ----------------------------
-
-  # Record the durable `template_working_copy` field on the new Session's
-  # `:chat` slice (PR-2's field). `agent_slots` carries the 4-tuple
-  # `{slot_name, source_agent_template_uri, live_worker_uri, generation}`:
-  #
-  # - `slot_name` — the stable template-shaped SLOT key.
-  # - `source_agent_template_uri` — the AgentTemplate URI the slot was
-  #   spawned from (the durable source — survives a worker respawn).
-  # - `live_worker_uri` — the CURRENT live `entity://agent/...` instance
-  #   URI (CRITICAL fix). It is session-unique; storing it means
-  #   `resolve_slot_worker_uri` reads the truth instead of re-deriving a
-  #   collision-prone URI from `{workspace, flavor, slot_name}`.
-  # - `generation` — the swap counter (HIGH-6); 0 at Generator init,
-  #   incremented by each `update_agent_template`.
-  #
-  # `routing_rules` carries `{matcher_ast, [slot_name]}` — receivers as
-  # slot NAMES. Both come straight from the SessionTemplate content.
-  #
-  # Written via the `chat.set_working_copy` dispatch with the
-  # Generator's system-internal write path (the orchestrator-only cap
-  # gate, HIGH-2, does not apply to the Generator's bootstrap init
-  # write) — Session is `{:snapshot, :on_change}`, so the field survives
-  # a Session restart.
-  defp populate_working_copy(
-         %URI{} = session_uri,
-         template_content,
-         slot_instances,
-         %URI{} = workspace_uri,
-         %URI{} = _owner_uri
-       ) do
-    agent_slots =
-      Enum.map(slot_instances, fn {slot_name, agent_template_uri, worker_uri} ->
-        {slot_name, agent_template_uri, worker_uri, 0}
-      end)
-
-    working_copy = %{
-      agent_slots: agent_slots,
-      routing_rules: normalize_routing_rules(Map.get(template_content, :routing_rules, [])),
-      orchestrator_template_uri:
-        Map.get(template_content, :orchestrator_template_uri) ||
-          URI.parse("template://agent/default/cc-orchestrator"),
-      default_workspace_uri: Map.get(template_content, :default_workspace_uri) || workspace_uri,
-      description: Map.get(template_content, :description, "")
-    }
-
-    case Ezagent.Behavior.Chat.system_set_working_copy(session_uri, working_copy) do
-      {:ok, _} -> :ok
-      {:error, _} = err -> err
-      other -> {:error, {:unexpected_set_working_copy_result, other}}
-    end
-  end
-
-  # `routing_rules` content shape `[{matcher_ast, [slot_name]}]` — after a
-  # JSON snapshot round-trip the tuple may be a 2-element list; normalize.
   defp normalize_routing_rules(rules) when is_list(rules) do
     Enum.map(rules, fn
       {matcher_ast, receivers} when is_list(receivers) -> {matcher_ast, receivers}
@@ -1148,132 +1361,31 @@ defmodule Ezagent.Entity.Session do
 
   defp normalize_routing_rules(_), do: []
 
-  # --- Step 7: install routing rules -------------------------------------
+  # ─────────────────────────────────────────────────────────────────────
+  # Routing insert txn — KEPT structurally (the per-pass batch atomicity
+  # invariant survives the reconciler model — round-4 HIGH-1).
+  # ─────────────────────────────────────────────────────────────────────
 
-  # The SessionTemplate's `routing_rules` express receivers as slot
-  # NAMES. Resolve each name to the per-instance worker URI just spawned
-  # (step 5) and install the rule via `Ezagent.Routing.RuleStore.add/5`,
-  # scoped to the workspace passed by the Generator so workspace-scoped
-  # rules fire (invariant 4). Receivers a slot name doesn't resolve to
-  # are skipped — a rule whose every receiver is unknown is dropped.
-  #
-  # ## HIGH-3 hardening (round 1) — load the rules into the live registry
-  #
-  # `RuleStore.add/5` only inserts the SQLite row. The live resolver
-  # (`Ezagent.Routing.Resolver`) reads `RoutingRegistry` ETS, which is
-  # hydrated by `RuleStore.load_into_registry/1`. After committing the
-  # rows this step calls `load_into_registry/1` ONCE so every
-  # Generator-installed rule is live the instant the Generator returns.
-  #
-  # ## HIGH-2 hardening (round 4) — the insert batch is ONE transaction
-  #
-  # The whole `RuleStore.add/5` loop runs inside a single
-  # `EzagentCore.Repo.transaction/1` (`RuleStore` is `EzagentCore.Repo`-
-  # backed). On ANY failure mid-batch — a tagged `{:error, _}` from
-  # `RuleStore.add/5` OR an exception from any insert — `Repo.rollback/1`
-  # is called, so EVERY row this batch inserted is atomically undone by
-  # the DB. There is no partial routing state to compensate for: the
-  # matcher-based `scrub_routing_rows_for` (which deleted EVERY row
-  # sharing a batch matcher, regardless of workspace / created_by / id —
-  # a data-loss bug that could hard-delete OTHER sessions' rules) is
-  # GONE. `load_into_registry/1` runs ONLY after the transaction commits,
-  # so ETS only ever reflects committed rows; if the transaction rolled
-  # back there is nothing to load. `install_routing_rules/5` is therefore
-  # TOTAL — `{:ok, [rule_id]} | {:error, _}`, never raises after a
-  # commit — and `guard/2` always runs `cleanup_partial/1` on failure.
-  #
-  # On the COMMITTED path it returns `{:ok, [rule_id]}` — the IDs of the
-  # `routing_rules` rows the (now-durable) batch inserted. `do_spawn/4`
-  # threads them into the `spawned` accumulator so a LATER step's failure
-  # (`grant_scoped_caps` / `register_orchestrator_mcp_context`) has
-  # `cleanup_partial/1` DELETE exactly those committed rows.
-  defp install_routing_rules(
-         template_content,
-         slot_instances,
-         %URI{} = _session_uri,
-         %URI{} = workspace_uri,
-         %URI{} = owner_uri
-       ) do
-    rules = normalize_routing_rules(Map.get(template_content, :routing_rules, []))
+  defp insert_routing_rules_txn([], _table, _workspace_uri, _owner_uri), do: {:ok, []}
 
-    slot_uri_by_name =
-      Map.new(slot_instances, fn {slot_name, _tmpl, worker_uri} -> {slot_name, worker_uri} end)
-
-    table = EzagentDomainChat.Routing.MentionRouting
-
-    case insert_routing_rules_txn(rules, slot_uri_by_name, table, workspace_uri, owner_uri) do
-      {:ok, []} ->
-        # No rules committed — nothing to reload.
-        {:ok, []}
-
-      {:ok, inserted_ids} ->
-        # HIGH-3 — hydrate the live RoutingRegistry ETS so the rules fire
-        # at runtime immediately. This runs ONLY after the transaction
-        # committed, so ETS reflects exactly the committed rows. A raise
-        # here (an undeclared routing table) is captured as a tagged
-        # error; because the rows are already COMMITTED and `guard/2`
-        # would receive `routing_rule_ids: []` for the failed step, we
-        # delete the committed rows HERE before returning the error — the
-        # registry was never loaded, so ETS stays clean and the DB is
-        # restored to its pre-batch state. `install_routing_rules/5`
-        # stays total.
-        case safe_load_registry(table) do
-          :ok ->
-            {:ok, inserted_ids}
-
-          {:error, reason} ->
-            Enum.each(inserted_ids, fn id ->
-              safe(fn -> RuleStore.delete(id, force: true) end)
-            end)
-
-            {:error, {:routing_install_raised, reason}}
-        end
-
-      {:error, _} = err ->
-        # The transaction rolled back — ZERO rows from this batch
-        # persisted, so there is nothing to delete and nothing to
-        # reload. The live registry was never touched.
-        err
-    end
-  end
-
-  # HIGH-2 (round 4) — run the whole `RuleStore.add/5` batch inside ONE
-  # `Repo.transaction`. Any mid-batch failure (tagged error OR exception)
-  # calls `Repo.rollback/1`, atomically undoing every insert this batch
-  # made. Returns `{:ok, [rule_id]}` (committed) or `{:error, reason}`
-  # (rolled back — DB untouched). Never leaves partial routing rows.
-  defp insert_routing_rules_txn(rules, slot_uri_by_name, table, workspace_uri, owner_uri) do
+  defp insert_routing_rules_txn(rules, table, workspace_uri, owner_uri) do
     txn =
       EzagentCore.Repo.transaction(fn ->
         result =
-          Enum.reduce_while(rules, [], fn {matcher_ast, receiver_slot_names}, ids ->
-            receiver_uris =
-              receiver_slot_names
-              |> Enum.map(&Map.get(slot_uri_by_name, to_string(&1)))
-              |> Enum.reject(&is_nil/1)
+          Enum.reduce_while(rules, [], fn {matcher_ast, receiver_uris}, ids ->
+            case RuleStore.add(
+                   table,
+                   matcher_ast,
+                   receiver_uris,
+                   owner_uri,
+                   workspace_uri: workspace_uri,
+                   source: RuleStore.system_default_source()
+                 ) do
+              {:ok, %{id: id}} ->
+                {:cont, [id | ids]}
 
-            cond do
-              receiver_uris == [] ->
-                # No resolvable receiver — drop the rule (slot names that
-                # don't map to a spawned worker can't route anywhere).
-                {:cont, ids}
-
-              true ->
-                case RuleStore.add(
-                       table,
-                       matcher_ast,
-                       receiver_uris,
-                       owner_uri,
-                       workspace_uri: workspace_uri
-                     ) do
-                  {:ok, %{id: id}} ->
-                    {:cont, [id | ids]}
-
-                  {:error, reason} ->
-                    # Roll the WHOLE batch back — every row inserted so
-                    # far in this transaction is atomically undone.
-                    EzagentCore.Repo.rollback({:routing_rule_failed, reason})
-                end
+              {:error, reason} ->
+                EzagentCore.Repo.rollback({:routing_rule_failed, reason})
             end
           end)
 
@@ -1285,16 +1397,11 @@ defmodule Ezagent.Entity.Session do
       {:error, reason} -> {:error, reason}
     end
   rescue
-    # A `RuleStore.add/5` exception (a DB error) escapes the transaction
-    # fun; Ecto has already rolled the transaction back. Surface a tagged
-    # error — no partial rows survive.
     e -> {:error, {:routing_install_raised, e}}
   catch
     kind, reason -> {:error, {:routing_install_raised, {kind, reason}}}
   end
 
-  # Reload the routing registry, capturing a raise as a tagged error so
-  # the registry-reload step of `install_routing_rules/5` stays total.
   defp safe_load_registry(table) do
     RuleStore.load_into_registry(table)
     :ok
@@ -1304,165 +1411,22 @@ defmodule Ezagent.Entity.Session do
     kind, reason -> {:error, {:registry_reload_failed, {kind, reason}}}
   end
 
-  # Phase 7 PR 47 + completion PR-4 (step 8) — scope-bounded delegation
-  # per SPEC D7-3 + §1.4.
-  #
-  # After the orchestrator agent spawns, grant it FOUR caps:
-  #
-  # 1. `{kind: :session, behavior: :any, instance: {:within_session, S}}`
-  #    — orchestrator can dispatch on any URI inside its session S, but
-  #    nothing outside S. UNCONDITIONAL (structural to any orchestrator).
-  # 2. `{kind: :agent, behavior: :any, instance: {:spawned_by, orch}}`
-  #    — orchestrator can dispatch on agents it spawned (lineage recorded
-  #    by `spawn_from_template_content/4`), not on agents spawned by
-  #    others. UNCONDITIONAL.
-  # 3. `{kind: :session_template, behavior: Ezagent.Behavior.Template,
-  #    instance: {:within_workspace, ws}}` — read/write/instantiate
-  #    SessionTemplates in the orchestrator's workspace (the template
-  #    tools `update_template`/`save_template_as`/`list_templates`).
-  # 4. `{kind: :agent_template, behavior: Ezagent.Behavior.Template,
-  #    instance: {:within_workspace, ws}}` — read/instantiate
-  #    AgentTemplates in the orchestrator's workspace (`add_agent_slot`/
-  #    `list_templates`-agent-rows).
-  #
-  # Caps #3/#4 are delegated ONLY AFTER an owner-cap preflight (§1.4):
-  # the owner's ACTUAL caps (loaded via `Ezagent.Identity.list_caps_for/1`
-  # — NOT `admin_caps()`) must already authorize that delegated
-  # `{:within_workspace, ws}` `Behavior.Template` scope. A failing
-  # preflight skips ONLY that cap (fail closed — the orchestrator just
-  # can't use that tool). The Generator never fabricates authority the
-  # owner lacks. Caps #1/#2 stay unconditional — they are not template
-  # authority.
-  #
-  # The grant dispatch itself still runs as a privileged system context
-  # (the Generator is a bootstrap program). The preflight — NOT the
-  # grant's `ctx.caps` — is what enforces "no authority is fabricated".
-  defp grant_scoped_caps(orchestrator_uri, session_uri, owner_uri) do
-    # Phase 9 PR-3 (SPEC v3 §4): scope the orchestrator's bounded
-    # caps to the session's workspace. The session must already be
-    # bound (invariant 4 — Workspace.Loader.invoke_template /
-    # SessionTemplate spawn paths call WorkspaceRegistry.bind);
-    # without a binding we let it crash rather than silently grant
-    # a cross-workspace cap.
-    session_workspace =
-      case Ezagent.WorkspaceRegistry.lookup(session_uri) do
-        {:ok, ws} ->
-          ws
-
-        :error ->
-          raise "session #{URI.to_string(session_uri)} has no workspace binding " <>
-                  "— cannot derive workspace_uri for orchestrator scope caps"
-      end
-
-    # Caps #1/#2 — unconditional scope-bounded delegation.
-    unconditional_caps = [
-      %Ezagent.Capability{
-        kind: :session,
-        behavior: :any,
-        instance: {:within_session, session_uri},
-        workspace_uri: session_workspace,
-        granted_by: owner_uri,
-        granted_at: DateTime.utc_now()
-      },
-      %Ezagent.Capability{
-        kind: :agent,
-        behavior: :any,
-        instance: {:spawned_by, orchestrator_uri},
-        workspace_uri: session_workspace,
-        granted_by: owner_uri,
-        granted_at: DateTime.utc_now()
-      }
-    ]
-
-    # Caps #3/#4 — the two `Behavior.Template` caps, each gated by the
-    # owner-cap preflight (§1.4 steps 1-4). `delegable_template_caps/3`
-    # returns ONLY the caps whose preflight passed.
-    template_caps =
-      delegable_template_caps(owner_uri, session_workspace, orchestrator_uri)
-
-    caps = unconditional_caps ++ template_caps
-
-    target = URI.new!("#{URI.to_string(orchestrator_uri)}?action=identity.grant_cap")
-
-    ctx = %{
-      caller: owner_uri,
-      caps: Ezagent.Entity.User.admin_caps(),
-      reply: :ignore
-    }
-
-    results =
-      Enum.map(caps, fn cap ->
-        Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-          target: target,
-          mode: :call,
-          args: %{cap: cap},
-          ctx: ctx
-        })
-      end)
-
-    case Enum.reject(results, &match?({:ok, _}, &1)) do
-      [] -> :ok
-      [err | _] -> {:error, {:scoped_cap_grant_failed, err}}
-    end
+  defp try_safe(fun) do
+    fun.()
+  rescue
+    _ -> :error
+  catch
+    _, _ -> :error
   end
 
-  # --- Step 9: register the orchestrator's MCP-server context ----------
-  #
-  # Phase 7 completion PR-5 — bind the orchestrator's
-  # `(session, workspace, owner, parent-template)` context in
-  # `Ezagent.Orchestrator.McpRegistry`.
-  #
-  # The orchestrator's `claude` reaches the 7 tools through the MCP
-  # transport bridge (`priv/orchestrator_bridge.py` →
-  # `Ezagent.Orchestrator.McpChannel`). That bridge can only present
-  # the orchestrator's agent URI (token-authenticated). It cannot —
-  # and must not — supply session / workspace / caps, because those
-  # are exactly the context an untrusted `claude` process could spoof.
-  #
-  # Only the Generator knows the binding (it just spawned this
-  # orchestrator INTO this session). Registering it here is what lets
-  # the Channel reconstruct the correct, server-derived `%McpServer{}`
-  # for THIS orchestrator from the URI alone
-  # (`McpServer.from_orchestrator_uri/1`). `parent_template_uri` is the
-  # SessionTemplate the session was instantiated from — `update_template`
-  # needs it.
-  defp register_orchestrator_mcp_context(
-         %URI{} = orchestrator_uri,
-         %URI{} = session_uri,
-         %URI{} = workspace_uri,
-         %URI{} = owner_uri,
-         %URI{} = parent_template_uri
-       ) do
-    Ezagent.Orchestrator.McpRegistry.register(orchestrator_uri,
-      session_uri: session_uri,
-      workspace_uri: workspace_uri,
-      owner_uri: owner_uri,
-      parent_template_uri: parent_template_uri
-    )
-  end
+  # ─────────────────────────────────────────────────────────────────────
+  # Owner-cap preflight for caps #3 and #4  (KEPT verbatim — round-1 §1.4)
+  # ─────────────────────────────────────────────────────────────────────
 
-  # The owner-cap preflight (SPEC §1.4 steps 1-4) — returns the subset
-  # of {cap #3, cap #4} the owner is actually authorized to delegate.
-  #
-  # For EACH of #3 (`:session_template`) and #4 (`:agent_template`)
-  # independently:
-  #
-  # 1. load the owner's ACTUAL caps via `Ezagent.Identity.list_caps_for/1`
-  #    (NOT `admin_caps()` — a real check against real authority);
-  # 2. build the `needed` map for that delegated `{:within_workspace, ws}`
-  #    `Behavior.Template` scope, using a representative template URI in
-  #    the session's workspace;
-  # 3. include the cap iff at least one owner cap `matches?/2` it.
-  #
-  # A failing preflight DROPS that one cap (fail closed) — the
-  # orchestrator comes up without it and the corresponding tool DENIES
-  # at dispatch. The Generator does NOT raise, does NOT abort the
-  # session. No fabricated authority.
-  defp delegable_template_caps(%URI{} = owner_uri, %URI{} = session_workspace, %URI{} = _orch_uri) do
+  defp delegable_template_caps(%URI{} = owner_uri, %URI{} = session_workspace) do
     owner_caps = Ezagent.Identity.list_caps_for(owner_uri)
     workspace_name = session_workspace.host || "default"
 
-    # (kind, representative-template-URI-in-workspace) for #3 and #4.
     candidates = [
       {:session_template, URI.new!("template://session/#{workspace_name}/_preflight@_")},
       {:agent_template, URI.new!("template://agent/#{workspace_name}/_preflight")}
@@ -1486,7 +1450,7 @@ defmodule Ezagent.Entity.Session do
         instance: {:within_workspace, session_workspace},
         workspace_uri: session_workspace,
         granted_by: owner_uri,
-        granted_at: DateTime.utc_now()
+        granted_at: nil
       }
     end)
   end
