@@ -1,58 +1,61 @@
 defmodule EzagentDomainPython do
   @moduledoc """
-  Python plugin host domain — placeholder.
+  Domain.Python — Tier-2 runtime for ezagent-launched Python
+  subprocesses.
 
-  Phase 6 PR 11 lands the **contract** for a future Python plugin
-  ecosystem; the **runtime** (port + subprocess supervisor) ships in
-  Phase 7+. The placeholder is real code because the contract itself
-  is load-bearing: every Phase 6 design decision that mentions "Python
-  plugin" implicitly assumes this surface.
+  Per SPEC `docs/superpowers/specs/2026-05-23-domain-python.md`
+  (merged #254). This app owns the OS-process lifecycle for any
+  Python subprocess that ezagent itself launches via uv: one
+  `Ezagent.Domain.Python.Server` GenServer per managed handle,
+  parented by `EzagentDomainPython.Supervisor` and registered under
+  `EzagentDomainPython.Registry` (`:via` Registry keyed by the
+  canonical handle).
 
-  ## Why Python plugins
+  ## What Domain.Python is
 
-  Per the SPEC north-star: ESR core is Elixir, but most agent authors
-  write in Python. A Python plugin is one process per plugin, talking
-  to the BEAM via line-delimited JSON-RPC over stdio. The BEAM owns
-  state (registries / Repo); the Python side owns business logic
-  (Behavior :invoke implementations, Template :instantiate effects).
+  A unified runtime for Python subprocesses ezagent itself launches:
 
-  ## Contract — `EzagentDomainPython.JsonRpc`
+    * Future Python-implemented Agent Kinds whose `Behavior.Chat`
+      invoke delegates to `Ezagent.Domain.Python.call/4`.
+    * Future Behavior `:invoke` / Template `:instantiate`
+      implementations written in Python.
+    * Future Python plugins shipping a PEP-723 single-file script
+      or a `pyproject.toml` project.
 
-  See the module for the full spec. Summary:
+  ## What Domain.Python is NOT
 
-  - Frame: `Content-Length: N\r\n\r\n<json>` (LSP framing — single
-    parser, no line-mode ambiguity around embedded newlines).
-  - Request: `{"jsonrpc": "2.0", "id": N, "method": "...", "params": {}}`
-  - Response: `{"jsonrpc": "2.0", "id": N, "result": ...}` or
-    `{"jsonrpc": "2.0", "id": N, "error": {"code": N, "message": "..."}}`
-  - Notification: `{"jsonrpc": "2.0", "method": "...", "params": {}}` (no id)
+    * NOT the cc / MCP-bridge path — `apps/ezagent_plugin_cc/python/
+      ezagent_mcp_bridge.py` is spawned by claude (under Domain.Pty)
+      as an MCP server, not by ezagent. Per Allen 2026-05-22, MCP
+      bridges stay on Domain.Pty.
+    * NOT a PTY — uses `:exec.run/2` WITHOUT `:pty`; line-buffered
+      pipes only. Use `Ezagent.Domain.Pty` for terminal-style child
+      processes.
+    * NOT a sandbox / capability boundary — CapBAC is enforced at the
+      dispatch boundary, not at the OS-process boundary.
 
-  ## Methods (BEAM → Python)
+  ## Public surface
 
-  - `behavior.invoke` — `{kind, action, slice, args, ctx}` → `{ok, new_slice, output}` |
-    `{error, reason}`
-  - `behavior.actions` — `{}` → `[action_atoms]`
-  - `behavior.state_slice` — `{}` → `slice_key_atom`
-  - `behavior.init_slice` — `{args}` → `initial_slice_map`
-  - `template.form_fields` — `{}` → `[%{name, label, type, required}]`
-  - `template.instantiate` — `{args}` → `{ok, %{...}}` | `{error, reason}`
+  Use `Ezagent.Domain.Python` (the facade alias):
 
-  ## Methods (Python → BEAM)
+      Ezagent.Domain.Python.start_subprocess/1
+      Ezagent.Domain.Python.call/4
+      Ezagent.Domain.Python.notify/3
+      Ezagent.Domain.Python.stop/1
+      Ezagent.Domain.Python.alive?/1
 
-  - `kind.lookup` — `{uri}` → `{found, pid?, kind_module?}`
-  - `dispatch` — `{target, mode, args, ctx}` → `{ok, result}` | `{error, reason}`
-  - `audit.log` — `{level, event, meta}` → notification, no response
+  Plus `Ezagent.Domain.Python.Spec` for the input struct and
+  `Ezagent.Domain.Python.handle_key/1` for the canonicalization
+  rules (SPEC §1.2.1).
 
-  ## Why JSON-RPC over the alternatives
+  ## Wire — LSP-framed JSON-RPC 2.0
 
-  Considered: protobuf+grpc / msgpack / native Elixir-NIF.
-
-  Picked JSON-RPC stdio because:
-  - Plain JSON parses in every language (no schema compiler).
-  - stdio is the simplest channel — no port allocation, no auth, the
-    BEAM controls subprocess lifecycle directly.
-  - LSP-style framing is already battle-tested in editor tooling.
-  - Performance is fine for plugins doing ms-scale work (network LLM
-    calls dominate; the JSON encode/decode overhead is in the noise).
+  Domain.Python keeps the Phase-6 LSP framing
+  (`Content-Length: N\\r\\n\\r\\n<body>`) the Python plugin host
+  was originally specced with — binary-clean for embedded newlines,
+  base64 image data, arbitrary chat reply strings. See
+  `EzagentDomainPython.JsonRpc` for the encoder/decoder + the four
+  envelope shapes (request / response-ok / response-error /
+  notification).
   """
 end
