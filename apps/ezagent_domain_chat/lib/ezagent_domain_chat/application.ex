@@ -86,10 +86,18 @@ defmodule EzagentDomainChat.Application do
       # Phase 7 PR 38: supervisor for SessionTemplate Kinds. Same shape
       # as AgentTemplateSupervisor — 0 children at boot, lazy spawn.
       {DynamicSupervisor,
-       name: EzagentDomainChat.SessionTemplateSupervisor, strategy: :one_for_one}
+       name: EzagentDomainChat.SessionTemplateSupervisor, strategy: :one_for_one},
       # Phase 6 PR 2: admin User spawn moved to EzagentDomainIdentity.Application
       # (User Kind belongs to identity domain). Chat's start callback below
       # still dispatches admin → join default Session in test env only.
+
+      # Presence SPEC `docs/superpowers/specs/2026-05-23-presence.md` rev 3
+      # §8 + Decision Log #93 — fan out `Ezagent.Presence` diffs into
+      # per-session `:events` topics. Subscribes to
+      # `esr:session_membership:changes` (broadcast by
+      # `Ezagent.Behavior.Chat.broadcast_membership/2`) to maintain a
+      # reverse `user_uri → MapSet(session_uri)` index.
+      EzagentDomainChat.PresenceFanout
     ]
 
     case Supervisor.start_link(children, strategy: :one_for_one, name: __MODULE__) do
