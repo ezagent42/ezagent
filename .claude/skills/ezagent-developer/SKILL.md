@@ -55,12 +55,14 @@ Future devs add a new agent flavour / external integration / UI feature by writi
 
 Prefer a direct structural fix over a shim, a default value, an isolation whitelist, or a `:warning` + degrade path. When a URI shape, cap shape, or invariant changes, fix all call sites — do not absorb the change in the parser / matcher / Behavior with back-compat logic.
 *Why*: shims compound. Each back-compat path becomes a permanent silent-divergence surface. Existing DB data is wiped + rebuilt on migrations (uri-design §5.11).
+*Case study*: `docs/notes/2026-05-23-generator-reconciler-retrospective.md` — 10 rounds of saga-cleanup hardening that never converged (HIGH count stuck at 1-2 per round). The saga model was, structurally, a workaround — defaulting `cleanup_partial` against N enumerated stores. The structural fix was deleting the whole saga surface (reconciler + per-step idempotency); the result was ~800 LOC removed. **The cleanest available demonstration of "structural fix > accumulated defaults."**
 *See also*: uri-design §5.11; memory `feedback_let_it_crash_no_workarounds`.
 
 #### **P3. Single source of truth for any datum.**
 
 For any fact (which Behavior runs an agent / which workspace owns a session / what schemes parse / what plugins are installed / etc.), exactly one home. Other surfaces are caches, projections, or references — never independent records.
 *Why*: divergent SoTs silently drift; the bug surfaces months later in an audit. Examples: `Ezagent.URI.SchemeRegistry` ETS is THE scheme allowlist (uri-design §5.6, P19); MessageStore is THE chat history (Decision #89); the AgentTemplate's `kind_module` is THE source for "which Behavior runs this agent" (uri-design §5.14, P18); `WorkspaceRegistry` is now a *cache* of the workspace segment that already lives in the URI structurally (uri-design §5.15, P17).
+*Case study*: `docs/notes/2026-05-23-generator-reconciler-retrospective.md` — the Generator's old `cleanup_partial/1` saga threaded an accumulator ("what I just did") as a second SoT alongside the actual store state. Divergence between accumulator and store was the bug class codex kept finding (rounds 1-10). The reconciler dissolves the accumulator: SessionTemplate IS the desired-state SoT; live state IS the actual-state SoT; the reconciler is the function `converge(spec, current)`. Nothing to drift.
 *See also*: ARCHITECTURE Decision Log #89; uri-design §5.6, §5.14, §5.15.
 
 #### **P4. Production-usability is the selection criterion.**
@@ -627,8 +629,9 @@ Reference: `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex` (most complex
 2. Register at plugin boot: `:ok = Ezagent.TemplateRegistry.register(YourTemplateClass)`.
 3. If your Template Class spawns sessions, call `Ezagent.WorkspaceRegistry.bind/2` for each spawned session URI (invariant 4) — `Ezagent.Workspace.Loader.invoke_template` does this for the canonical session classes; custom Template Classes follow the same pattern.
 4. Per SPEC v2 §5.14: the AgentTemplate carries `kind_module` (the Behavior to use for instantiated agents). `Ezagent.AgentTypeRegistry` (PR #131) has been DELETED — the Template owns kind_module wiring directly.
+5. **If your Template Class orchestrates spawning multiple Kinds** (e.g. a Generator-like flow that wires up several agents + routing rules + caps), follow the **reconciler pattern** — NOT a saga with `cleanup_partial`. The canonical reference is `Ezagent.Workspace.Loader.load_one/1` + `invoke_template/2`: idempotent re-run, `{:already_started, _}` → no-op, `fresh?`-gated bind, errors logged not raised. `Session.spawn_from_template/2` follows the same shape (PR-A #259, PR-C #260). Use per-Kind idempotency helpers (`Agent.spawn_fresh/4`, `WorkspaceRegistry.bind_if_fresh/2`, `AgentLineage.record_if_fresh/3`, `RuleStore.upsert_by_logical_key/5`). See `docs/notes/2026-05-23-generator-reconciler-retrospective.md` for the post-mortem of why a saga over N stores is the wrong abstraction.
 
-Reference: `apps/ezagent_plugin_cc/lib/ezagent/template/cc_agent.ex` (current cc.agent class) + `apps/ezagent_domain_chat/lib/ezagent/template/generic_session.ex` (Session class).
+Reference: `apps/ezagent_plugin_cc/lib/ezagent/template/cc_agent.ex` (current cc.agent class) + `apps/ezagent_domain_chat/lib/ezagent/template/generic_session.ex` (Session class) + `apps/ezagent_domain_workspace/lib/ezagent/workspace/loader.ex` (the canonical reconciler reference for multi-Kind orchestration).
 
 ### How-to: add a routing rule
 
@@ -740,6 +743,8 @@ The durable record. When you (or a future contributor) need authoritative answer
 | `docs/phase-specs/phase7/PLAN.md` | 24-PR sequence + per-PR workflow + risk register |
 | `docs/phase-specs/phase7/DECISIONS.md` | Implementation-time IMPL-7-N decisions |
 | `docs/notes/phase-7-handoff.md` | Ezagent v1 release note + 3 trade-offs not to cargo-cult |
+| `docs/superpowers/specs/2026-05-23-generator-reconciler.md` | Reconciler SPEC (rev 4) — `Session.spawn_from_template/2` as `converge(spec, current)` instead of atomic-saga + cleanup_partial. Supersedes Phase-7-completion §"Spawn phase" + §1.6/§1.6a. |
+| `docs/notes/2026-05-23-generator-reconciler-retrospective.md` | Post-mortem of the 10-round saga-cleanup hardening (#239..#250) → reconciler dissolution (PR-A #259, PR-C #260). Canonical case study for P2 (let-it-crash) + P3 (single SoT). Numbered LESSONS for future devs. |
 | `docs/notes/phase-6-architecture-closeout.md` | Phase 6 forensic record (meta schema fix + User default caps + InboundDispatcher mode) |
 | `docs/notes/plugin-receiver-kind-contract.md` | Why Plugin X cannot PubSub.broadcast to Plugin Y (Decision #127) — note: SPEC v2 §5.8 supersedes the "Receiver Kind = own a scheme" framing; current pattern is "register a Behavior on the existing core Kind" |
 | `docs/notes/phase-7-resume-state.md` | Per-PR live status table (resume any session mid-Phase-7) |

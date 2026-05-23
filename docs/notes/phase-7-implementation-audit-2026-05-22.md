@@ -1,5 +1,50 @@
 # Phase 7 implementation audit — designed vs shipped (2026-05-22)
 
+> ### ✅ 2026-05-23 RESOLUTION
+>
+> The gaps this audit found drove the following work, all now merged on
+> `main`:
+>
+> 1. **Phase-7-completion 6-PR build (#231..#237 + PR-6)** — wired the
+>    Generator + the live Orchestrator + Behavior.Template +
+>    template-cap enforcement + `SessionTemplate.fork/3 + .create/3`.
+>    Killer feature (V2) became real.
+> 2. **10 rounds of codex adversarial hardening (#239 / #241 / #243 /
+>    #244 / #245 / #246 / #247 / #248 / #249 / #250)** — fixed CapBAC +
+>    workspace-isolation + `fresh?`-gating + per-step routing
+>    transactions. HIGH count stayed at 1-2/round; the saga abstraction
+>    never converged (see retrospective).
+> 3. **Reconciler refactor — PR-A (#259, commit `350e9c3`) + PR-C
+>    (#260, commit `526c401`)** — replaced the saga +
+>    `cleanup_partial/1` model with idempotent per-step reconciliation
+>    (`converge(spec, current_state)`); ~800 LOC removed across
+>    `session.ex` + `orchestrator/tools.ex`. CapBAC / workspace /
+>    `fresh?` invariants from hardening rounds KEPT.
+> 4. **PR-D (this PR, 2026-05-23)** — docs cleanup: reconciler SPEC
+>    onto main, Phase-7-completion SPEC annotated SUPERSEDED on the
+>    cleanup-saga sections, this RESOLUTION header, retrospective
+>    `docs/notes/2026-05-23-generator-reconciler-retrospective.md`,
+>    SKILL.md P3/P10 pointers.
+>
+> #### Status of each audit gap (numbered from "Concrete unfinished items" below)
+>
+> | # | Gap | Status now |
+> |---|---|---|
+> | 1 | Orchestrator does not run; cc-orchestrator seed is empty Kind | **CLOSED** — PR-5 (#237) wired the privileged MCP surface; PR-A/C made it reconciler-driven |
+> | 2 | `update_template` / `save_template_as` persist nothing | **CLOSED** — PR-3 (#234) added `Ezagent.TemplateTags` + `SessionTemplate.persist_version/2`; tools now write real `kind_snapshots` rows. Reconciler ensures idempotent re-write |
+> | 3 | Generator is "minimal PR-41" stub (no worker slots / routing / working-copy) | **CLOSED** — PR-4 (#236) made Generator fully wire slots + routing + lineage + owner-cap preflight; PR-A (#259) made it idempotent reconciler |
+> | 4 | `SessionTemplate.fork/2` + `.create/2` absent; no `template_tags` registry | **CLOSED** — PR-3 (#234) added TemplateTags registry; PR-6 added `.fork/3` + `.create/3` (3-segment URI required arity bump) |
+> | 5 | AgentTemplate / SessionTemplate are bare Kinds, not Template Classes | **CLOSED** — PR-1 (#231) added `Ezagent.Behavior.Template` (`:read`/`:write`/`:instantiate`) on both Template Kinds; AgentTemplate→cc adapter shipped |
+> | 6 | No `template:` cap ever enforced; Generator trusts caller | **CLOSED** — PR-1 (#231) enforces `template:read`/`write`/`instantiate` per-action; PR-4 (#236) adds owner-cap preflight before Generator delegates to orchestrator |
+> | 7 | ~7 V1-V5 gating tests missing | **CLOSED** — `generator_test.exs`, `orchestrator_mcp_e2e_test.exs`, `behavior/template_test.exs`, `session_template_fork_create_test.exs`, `template_immutable_hash_test.exs`, `template_fork_lineage_test.exs`, `template_tag_resolution_test.exs` all landed across PR-1..PR-6 |
+>
+> **What's the lesson from the 10-round saga hardening?** See
+> `docs/notes/2026-05-23-generator-reconciler-retrospective.md` —
+> *"wrong abstraction"*. A saga over N stores is a proof obligation
+> that grows with N. The reconciler dissolves it.
+>
+> ---
+
 > **Audit type:** READ-ONLY. No code changed. This note is the only artefact.
 > **Trigger:** Allen Feishu 2026-05-22 — "做 phase 7 审计，看起来 phase 7 很多没完成."
 > **Method:** Read the actual code (not grep-counts). Each Phase-7 element
