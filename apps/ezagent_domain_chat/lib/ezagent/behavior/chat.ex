@@ -695,10 +695,23 @@ defmodule Ezagent.Behavior.Chat do
   end
 
   defp broadcast_membership(session_uri, event) do
+    # Per-session fan-out — the LV chat stream subscribes here for
+    # its own session's events.
     Phoenix.PubSub.broadcast(
       EzagentCore.PubSub,
       session_events_topic(session_uri),
       event
+    )
+
+    # Global fan-out — `EzagentDomainChat.PresenceFanout` subscribes
+    # to maintain the `user_uri → MapSet(session_uri)` reverse index
+    # without coupling back to this module. Wrapper carries the
+    # session_uri the inner `event` lacks (events are
+    # `{:member_joined | :member_left | :member_offline, member_uri, ...}`).
+    Phoenix.PubSub.broadcast(
+      EzagentCore.PubSub,
+      "esr:session_membership:changes",
+      {:session_membership_change, session_uri, event}
     )
   end
 
