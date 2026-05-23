@@ -101,26 +101,50 @@ helpers are unused in production code paths.
 1. `apps/ezagent_domain_chat/lib/ezagent/entity/session.ex`:
    - DELETE: `do_spawn/4` (lines 317-442), `guard/2` (456-467),
      `cleanup_partial/1` (497-542), `terminate_kind/1` (549-563),
-     `safe/1` (565-571).
+     `safe/1` (565-571), `preflight_agent_slots/1` (692-707; codex rev-2
+     HIGH-2 — moves into per-slot reconcile), `preflight_candidate_uris_free/3`
+     (783-803; the reconciler accepts orphan workers IF they pass the
+     ownership gate).
    - REWRITE: `spawn_from_template/2` to call `reconcile_loop/3`.
    - ADD: `reconcile_loop/3` orchestrating the 7 step fns from SPEC §2.
    - ADD: 7 step fns (one per SPEC §2 step), each `:already_converged | {:ok, _} | {:error, reason}`:
-     - `ensure_session/3`
-     - `ensure_orchestrator/3`
-     - `reconcile_slot/5` (called per slot)
-     - `reconcile_routing_rules/4`
-     - `populate_working_copy/5` (KEPT body, no change)
-     - `grant_scoped_caps/3` (KEPT body, no change)
-     - `register_orchestrator_mcp_context/5` (KEPT body, no change)
-   - KEEP (per SPEC §3): all preflights (owner-instantiate, workspace-isolation,
-     agent-slots, slot-name-uniqueness, routing-rules), `resolve_target_workspace`,
-     `read_template_content`, `session_discriminator`, `agent_template_flavor`,
-     `verify_slot_candidate_ownership`, `populate_working_copy`,
-     `grant_scoped_caps` + `delegable_template_caps`, `register_orchestrator_mcp_context`.
-   - RESTRUCTURE: `instantiate_agent_slots/4` loses the `{:error, reason, partial_slots}`
-     3-tuple return form (the reconciler accumulates per-slot outcomes
-     itself); becomes `instantiate_one_slot/5` called directly from
-     `reconcile_slot/5`.
+     - `ensure_session/3` (SPEC §2 step 1)
+     - `ensure_orchestrator/3` (SPEC §2 step 2 — REWRITTEN with `cond` gate
+       + bounded re-read for live-but-ownership-unknown race; codex rev-2
+       HIGH-6 + rev-3 MEDIUM)
+     - `reconcile_slot/5` (SPEC §2 step 3 — REWRITTEN with fast-path
+       ownership check + per-slot `ensure_template_alive` formerly in Step 0;
+       codex rev-2 HIGH-2)
+     - `reconcile_routing_rules/4` (SPEC §2 step 4 — uses `existing_routing_rule_for/4`
+       full-contract probe; codex rev-2 HIGH-5)
+     - `merge_working_copy/5` (SPEC §2 step 5 — **NEW name + REWRITTEN body**;
+       replaces `populate_working_copy/5`; merges prior tuples for pending
+       slots via `worker_already_owned_by_us?/3` ownership check; codex rev-2
+       HIGH-3 + rev-3 HIGH-1)
+     - `grant_scoped_caps_idempotent/3` (SPEC §2 step 6 — **REWRITTEN body**;
+       replaces `grant_scoped_caps/3`; reads `Identity.list_caps_for/1`,
+       compares each desired cap via `cap_equal_ignoring_metadata?/2`,
+       dispatches only the missing ones; codex rev-2 HIGH-1)
+     - `register_orchestrator_mcp_context/5` (SPEC §2 step 7 — KEPT body
+       unchanged; ETS put is already idempotent)
+   - KEEP UNCHANGED (per SPEC §3): `owner_instantiate_preflight/2`,
+     `preflight_workspace_isolation/3` + `same_workspace/3` + `slots_in_workspace/2`
+     (the structural URI-segment check, no Kind probe — confirmed safe by
+     codex rev-2 review), `preflight_slot_name_uniqueness/1`,
+     `preflight_routing_rules/1` (pure matcher shape validation),
+     `resolve_target_workspace/1`, `validate_workspace_name/2`,
+     `read_template_content/1`, `session_discriminator/1`,
+     `agent_template_flavor/1`, `verify_slot_candidate_ownership/5`,
+     `delegable_template_caps/3` (the owner-cap preflight; the dispatch
+     loop around it is the part that gets rewritten as
+     `grant_scoped_caps_idempotent/3`).
+   - RESTRUCTURE: `instantiate_agent_slots/4` becomes `reconcile_each_slot/4`
+     — iterates slots, calls per-slot `reconcile_slot/5`, accumulates
+     `{slot_name, outcome}` tuples into `:slots`/`:pending`/`:errors`
+     buckets. Loses the `{:error, reason, partial_slots}` 3-tuple return
+     form. `instantiate_one_slot/5` body is FOLDED INTO `reconcile_slot/5`
+     (the per-slot fast-path comes first, then the `ensure_template_alive`
+     +`template.instantiate` dispatch).
 
 2. **Wire `derive_session_uri/3` from PR-A** into `ensure_session/3` (replaces
    `spawn_fresh_session/1`'s `gen-<millis>-<unique_int>` allocation).
@@ -163,6 +187,28 @@ helpers are unused in production code paths.
 
 - `apps/ezagent_plugin_liveview/test/ezagent_plugin_liveview/session_live_test.exs` — UPDATE.
   - Assert the LV shows the "Retry instantiation" button when result is `{:partial, _}`.
+
+- `apps/ezagent_domain_chat/test/integration/working_copy_merge_test.exs` — NEW (rev-3 HIGH-1).
+  - 3-slot template; reconcile to converged state;
+  - manually re-parent ONE slot's worker in `AgentLineage` to a foreign orchestrator;
+  - re-invoke reconciler;
+  - assert the merge writes a nil-worker tuple for that slot (not the re-parented worker);
+  - assert the slot accumulates into `pending` so the next pass attempts re-spawn.
+
+- `apps/ezagent_domain_chat/test/integration/orchestrator_concurrent_race_test.exs` — NEW (rev-3 MEDIUM).
+  - Spawn the Session;
+  - synchronously start TWO `spawn_from_template/2` callers in parallel tasks;
+  - assert: ONE caller succeeds with `{:ok, _}`, the OTHER also returns `{:ok, _}` with the SAME `orchestrator_uri`;
+  - neither returns `{:orchestrator_foreign, _}`;
+  - exactly ONE orchestrator process exists at the candidate URI;
+  - lineage + binding match expected owner / workspace.
+
+- `apps/ezagent_domain_chat/test/integration/cap_grant_no_duplicate_test.exs` — NEW (rev-2 HIGH-1).
+  - Reconcile a fresh template (4 caps granted on pass 1);
+  - capture `:invocations` row count for `identity.grant_cap`;
+  - re-invoke reconciler (pass 2);
+  - assert `:invocations` row count unchanged for the orchestrator URI;
+  - assert `Identity.list_caps_for(orchestrator_uri)` returns 4 entries (not 8).
 
 **KEPT WITHOUT MODIFICATION**:
 - `workspace_isolation_test.exs`
