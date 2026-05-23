@@ -99,9 +99,54 @@ One `Ezagent.Domain.Python.Server` GenServer per managed Python
 subprocess (parallel to `Ezagent.Domain.Pty.Server`). All servers run
 under a `DynamicSupervisor` (`EzagentDomainPython.Supervisor`) and
 register under a `:via` Registry (`EzagentDomainPython.Registry`)
-keyed by a caller-supplied **handle** (a `URI.t()` or any term that
-can be `:erlang.term_to_binary/1`-encoded for Registry-key stability —
-P5 UUID-canonical-identifier applies; URIs are the canonical case).
+keyed by the **canonical handle key** derived from the caller's
+handle (see §1.2.1 for the canonicalization rules — codex round-1
+HIGH-4).
+
+#### 1.2.1 Handle identity — canonicalization at the boundary (codex round-1 HIGH-4)
+
+The caller-facing `handle` accepts EXACTLY two shapes:
+
+- **`URI.t()`** — the production case. P5 UUID-canonical-identifier
+  applies; every per-tenant URI in ezagent already canonicalizes
+  through `Ezagent.URI.parse!/1`, so callers are already passing
+  parsed structs.
+- **binary** — restricted to a SINGLE production use (a static
+  service handle like `"system://python-sidecar/default"` that the
+  caller has already serialized) PLUS test fixtures. Any other
+  binary form raises at the boundary.
+
+`Ezagent.Domain.Python.handle_key/1` is the SOLE canonicalization
+point:
+
+```elixir
+@spec handle_key(URI.t() | binary()) :: binary()
+def handle_key(%URI{} = uri), do: URI.to_string(uri)
+def handle_key(bin) when is_binary(bin) do
+  # Defensive: roundtrip through URI.parse + back so an accidentally
+  # different-but-equivalent string (e.g. trailing slash, lowercased
+  # scheme) normalizes to one Registry key. URI.parse is lenient;
+  # for production URIs the caller should have used %URI{} directly.
+  case URI.new(bin) do
+    {:ok, %URI{} = uri} -> URI.to_string(uri)
+    {:error, _} -> bin  # test fixture or static handle — used as-is
+  end
+end
+def handle_key(other), do:
+  raise ArgumentError,
+        "Ezagent.Domain.Python: handle must be %URI{} or binary, got: #{inspect(other)}"
+```
+
+Both `start_subprocess/1` (via `Spec.validate/1`) AND `call / notify /
+stop / alive?` invoke `handle_key/1`. So passing a `%URI{}` for spawn
+and the URI's `to_string/1` for `call` resolve to the SAME Registry
+entry. **No tuples, no maps, no atoms.** The Registry key is always a
+binary; the type is enforced at the boundary so a typo
+(`call(:my_atom, ...)`) fails loudly, not silently as `:not_alive`.
+
+Invariant test (§9.3): start with `URI.parse("system://python/default")`,
+then call with the literal binary `"system://python/default"` — must
+hit the same Server pid.
 
 The Python subprocess is launched via `:exec.run/2` — the same
 primitive Domain.Pty uses — but **without** the `:pty` option. Pipes:
@@ -235,19 +280,25 @@ on missing required fields:
 
 ```elixir
 %Ezagent.Domain.Python.Spec{
-  handle:             URI.t() | binary(),   # required; Registry :via key
-  command:            [String.t()],         # required; argv. Element 0 must already be resolved absolute path
-                                            # OR the special atom `:uv_script` / `:uv_project` (Server resolves)
+  handle:             URI.t() | binary(),   # required; Registry :via key (canonicalized via handle_key/1)
+  command:            [String.t()] | :uv_script | :uv_project,  # required
   script_path:        String.t() | nil,     # required when command == :uv_script (path to .py with PEP-723 header)
   project_dir:        String.t() | nil,     # required when command == :uv_project (dir with pyproject.toml)
   entry_module:       String.t() | nil,     # required when command == :uv_project (module to `uv run -- python -m`)
   env:                %{String.t() => String.t()},   # optional extra env
-  cwd:                String.t(),           # required (defaults to File.cwd!/0 if omitted in to_argv/1)
+  cwd:                String.t(),           # required
   shutdown_grace_ms:  pos_integer(),        # default 2000
   ping_timeout_ms:    pos_integer(),        # default 5000
   test_mode:          boolean()             # default Mix.env() == :test; short-circuits :exec.run/2
 }
 ```
+
+`Spec.validate/1 :: (%Spec{}) -> :ok | {:error, reason}` runs in the
+CALLER process before `start_subprocess` touches the supervisor.
+Required-field check (`handle`, `command`, `cwd`); command-discriminator
+check (e.g. `command: :uv_script` requires non-nil `script_path`);
+`File.dir?(cwd)` returns `{:error, :bad_cwd}`. Each per-field error is
+a distinct atom so callers can map to operator-facing messages.
 
 The Spec's `command` field accepts THREE shapes (mirroring the
 three uv invocation patterns in §7):
@@ -272,23 +323,67 @@ Generator / instantiate failure path. (P2 let-it-crash; no silent
 shell fallback; mirrors the `:claude_not_found` precedent in
 `Ezagent.PluginCc.Template.CcAgent.resolve_claude_executable/1`.)
 
-### 3.2 Spawn sequence
+### 3.2 Spawn sequence — startup is a synchronous readiness gate (codex round-1 HIGH-1)
 
-1. `start_link` registers under `via(handle)` in the Registry.
-   Concurrent starts for the same handle collapse to
-   `{:error, {:already_started, pid}}` (P2 atomic dedup, mirroring
-   PtyServer's PR-D2 fix).
-2. `init/1` does `Process.flag(:trap_exit, true)` + `Process.monitor`
-   the erlexec port, returns `{:ok, state, {:continue, :spawn}}`.
-3. `handle_continue(:spawn, state)`: `Spec.to_argv/1` → `:exec.run/2`
-   (no `:pty`; `[:stdin, :stdout, :stderr, :monitor, {:env, env}, {:cd, cwd}]`).
-   On `{:error, reason}` → `{:stop, {:spawn_failed, reason}, state}`.
-4. Once spawned, BEAM issues `python.ping` and awaits the response.
-   If no response within `ping_timeout_ms`, Server logs error + stops
-   (DynSup restarts per strategy, see §3.4).
-5. `handle_info({:stdout, os_pid, bytes}, state)` feeds bytes into
-   `FrameBuffer`. Each completed frame is decoded via `JsonRpc.decode_body/1`
-   and dispatched:
+The naive pattern (`init/1 → {:ok, state, {:continue, :spawn}}` +
+`handle_continue` does spawn + ping) is REJECTED. With that pattern,
+`DynamicSupervisor.start_child/2` returns `{:ok, pid}` BEFORE spawn
+finishes — so `:uv_not_found`, bad cwd, script import errors, or a
+ping timeout produce a `{:ok, pid}` immediately followed by silent
+process death + restart. The Template Class's `instantiate/3` would
+report success while the runtime never became usable. Mirrors
+P4 production-usability and P6 completion-claim-requires-invariant-test.
+
+The CORRECT pattern: `start_subprocess/1` does preflight + spawn +
+ping SYNCHRONOUSLY before returning, and only returns `{:ok, pid}`
+once Python is **ready**.
+
+```
+Ezagent.Domain.Python.start_subprocess(%Spec{} = spec) ::
+  {:ok, pid} | {:error, reason}
+
+reason ::
+  :uv_not_found        # Spec.to_argv preflight
+  :bad_cwd             # cwd does not exist
+  {:spawn_failed, _}   # :exec.run/2 returned :error
+  :ping_timeout        # subprocess started but never answered python.ping
+  {:already_started, pid}  # Registry hit — caller can adopt
+  ...
+```
+
+Step-by-step:
+
+1. **Preflight in the calling process (NOT inside the GenServer):**
+   `Spec.validate/1` raises on missing required fields;
+   `Spec.to_argv/1` returns `{:error, :uv_not_found}` if uv missing;
+   `File.dir?(spec.cwd)` check returns `{:error, :bad_cwd}` if cwd
+   absent. Preflight failures are returned to the caller WITHOUT
+   touching the supervisor — no half-started child, no restart loop.
+2. **Atomic Registry dedup:** the Server's `start_link` uses
+   `name: via(handle_key(spec.handle))`. Concurrent starts for the
+   same handle collapse to `{:error, {:already_started, pid}}` which
+   `start_subprocess/1` returns AS-IS (caller decides whether to
+   adopt — mirrors the cc plugin's `:already_started` handling).
+3. **`init/1` performs the spawn synchronously:**
+   `Process.flag(:trap_exit, true)`, then `:exec.run/2` (no `:pty`;
+   `[:stdin, :stdout, :stderr, :monitor, {:env, env}, {:cd, cwd}]`).
+   On `{:error, reason}` → `{:stop, {:spawn_failed, reason}}`, which
+   `start_link` propagates as `{:error, {:spawn_failed, reason}}`.
+4. **`init/1` then issues `python.ping` and AWAITS it synchronously:**
+   write the ping frame, then `receive` `{:stdout, _, bytes}` chunks
+   feeding `FrameBuffer` until either the ping response arrives
+   (success, transition to `ready? := true`, return `{:ok, state}`)
+   or `ping_timeout_ms` elapses (`{:stop, :ping_timeout}` →
+   `start_link` returns `{:error, :ping_timeout}`). The Server stops
+   the subprocess (`:exec.stop/1`) before exiting on ping failure so
+   no orphan remains.
+   Edge case: if `{:DOWN, _, :process, _, reason}` arrives before
+   the ping response (subprocess crashed at import time), the Server
+   stops with `{:spawn_died_at_init, reason}`.
+5. **After `init/1` returns**, the GenServer is in normal message
+   loop. `handle_info({:stdout, os_pid, bytes}, state)` feeds bytes
+   into `FrameBuffer`. Each completed frame is decoded via
+   `JsonRpc.decode_body/1` and dispatched:
    - `{:result, id, _}` / `{:error, id, _, _, _}` → reply to the
      caller in `pending_requests` (drop the entry on match).
    - `{:notification, "log", params}` / `{:notification, "progress", params}` →
@@ -298,10 +393,25 @@ shell fallback; mirrors the `:claude_not_found` precedent in
    - `{:request, _, _, _}` → log warning + reply with
      `error: -32601 method not found` (V1 disallows Python → BEAM
      requests; an unsolicited request indicates a buggy plugin).
-6. `handle_info({:stderr, _, bytes}, state)` → append to a per-handle
+6. **`handle_info({:stderr, _, bytes}, state)`** → append to a per-handle
    stderr log file under `~/.ezagent/<profile>/logs/python-<slug>.log`
-   (slug = handle string with `://` → `-` and `/` → `_`, mirroring the
+   (slug = handle key with `://` → `-` and `/` → `_`, mirroring the
    `ezagent_mcp_bridge.py` log naming).
+
+**Why synchronous init/1 (vs `{:continue, :spawn}` async startup):**
+the contract `start_subprocess/1 returns {:ok, pid} only when ready`
+is the only way for Template Class `instantiate/3` to know whether
+to proceed. Async startup gives an `{:ok, pid}` whose pid may die in
+the next message — a TOCTOU window. Synchronous init removes the
+window by making the readiness check part of `start_link`'s
+return value. Init may take up to `ping_timeout_ms` (default 5s),
+which is acceptable for a Template Class spawn (cc's claude PTY
+spawn is comparable).
+
+**Invariant test** (§9.3): `start_subprocess` with `command:
+["false"]` (resolves to a process that exits immediately, no ping)
+MUST return `{:error, _}`, not `{:ok, pid}`. Test fails the moment
+someone refactors init/1 to async startup.
 
 ### 3.3 RPC: `call(server, method, params, timeout)` and `notify(server, method, params)`
 
@@ -311,7 +421,8 @@ shell fallback; mirrors the `:claude_not_found` precedent in
 2. Insert `{id, from, deadline_mref}` into `pending_requests`.
 3. Encode + write frame to subprocess stdin.
 4. Set a `Process.send_after(self(), {:rpc_timeout, id}, timeout)` ref;
-   on timeout reply with `{:error, :rpc_timeout}` + drop pending entry.
+   on timeout the Server treats the subprocess as **unhealthy** and
+   tears it down — see §3.3.1.
 5. When `{:result | :error}` for `id` arrives in `handle_info`,
    `GenServer.reply/2` to the original caller.
 
@@ -325,6 +436,51 @@ notification — Python-side handler failures inside a notification
 handler are logged on the Python side + relayed via the `log`
 notification.
 
+#### 3.3.1 RPC timeout = subprocess is unhealthy → terminate + restart (codex round-1 HIGH-2)
+
+The Python lib is single-threaded by design (§6.2): it reads ONE frame,
+dispatches, writes ONE response, loops. So a handler that blocks (hung
+HTTP call without timeout, infinite loop, deadlock) STOPS the entire
+subprocess from servicing any further call — including future
+`python.shutdown` notifications. `alive?/1` would still return `true`
+(the OS process is up), but every `call/4` would time out.
+
+The recovery contract is: **an RPC timeout means the subprocess can
+no longer be trusted; tear it down so the supervisor gives the next
+caller a fresh one.**
+
+On `{:rpc_timeout, id}`:
+
+1. Reply `{:error, :rpc_timeout}` to the caller pinned at `id`.
+2. Reply `{:error, :subprocess_unhealthy}` to every OTHER entry in
+   `pending_requests` (they are stuck behind the hung handler — no
+   point waiting).
+3. Force-stop the subprocess (`:exec.stop/1` → SIGTERM → 1s →
+   SIGKILL, per erlexec default).
+4. `{:stop, :subprocess_unhealthy, state}` → DynamicSupervisor
+   restarts the Server, which respawns Python via `init/1` (§3.2)
+   into a fresh ready state.
+
+Trade-off accepted: a single slow handler that happens to exceed its
+caller's `timeout` argument kills the subprocess. This is the right
+default because (a) the Python lib has no way to interrupt the
+running handler from outside, and (b) leaving the subprocess running
+with one stuck handler poisons all future callers. Callers who
+expect long-running work pass a larger `timeout` (the parameter
+exists for exactly this); the truly-long-running case (>30s LLM
+calls etc.) is the plugin's responsibility to declare a generous
+timeout for. If V2 grows an asyncio Python lib (§6.2 future-V2), per-
+handler cancellation becomes possible and this policy can soften.
+
+**Invariant test** (§9.3): start a subprocess; call a `block_forever`
+handler with `timeout: 100ms`; expected `{:error, :rpc_timeout}`;
+THEN call `ping` on the same handle — must either succeed against a
+fresh subprocess (DynSup restarted in test_mode it's a no-op so the
+invariant test is structured around `:subprocess_unhealthy` being
+returned to in-flight callers and the Server stopping). The "next
+call works" gate is the test that fails the moment someone reverts
+to "just drop the pending entry and keep going."
+
 ### 3.4 Crash + restart
 
 - **Python process exits unexpectedly** (any reason, including OOM
@@ -335,12 +491,15 @@ notification.
   DynamicSupervisor restarts per its strategy (default
   `:one_for_one`, `max_restarts: 3, max_seconds: 60` — mirrors PtyServer
   default).
+- **Subprocess unhealthy after RPC timeout**: covered in §3.3.1.
+  Same restart path as unexpected exit.
 - **Server process crashes**: `terminate/2` calls `:exec.stop/1` on
   the os_pid (best-effort). DynamicSupervisor restarts the Server,
   which respawns Python.
-- **Hung Python (no response to `python.shutdown` within
-  `shutdown_grace_ms`)**: `terminate/2` calls `:exec.stop/1` which
-  sends SIGTERM, waits 1s, then SIGKILL (erlexec's default behavior).
+- **Hung Python during graceful shutdown (no response to
+  `python.shutdown` within `shutdown_grace_ms`)**: `terminate/2`
+  calls `:exec.stop/1` which sends SIGTERM, waits 1s, then SIGKILL
+  (erlexec's default behavior).
 
 ### 3.5 Graceful shutdown via `stop(server)`
 
@@ -380,33 +539,62 @@ under `lib/ezagent/domain/python.ex`, mirroring Domain.Pty's
 `Ezagent.Domain.Pty`):
 
 ```elixir
-@doc "Start a managed Python subprocess for `handle` under EzagentDomainPython.Supervisor."
-@spec start_subprocess(Spec.t()) :: DynamicSupervisor.on_start_child()
+@type handle :: URI.t() | binary()   # canonicalized via handle_key/1 (§1.2.1)
+
+@doc """
+Start a managed Python subprocess for `spec.handle` under
+EzagentDomainPython.Supervisor. SYNCHRONOUSLY blocks until the
+subprocess answers `python.ping` (or fails) — when this returns
+`{:ok, pid}`, the runtime is ready to accept calls. May take up
+to `spec.ping_timeout_ms` (default 5s).
+
+Preflight failures (uv missing, bad cwd, invalid Spec) return
+{:error, _} WITHOUT touching the DynamicSupervisor — no half-started
+child, no restart loop.
+"""
+@spec start_subprocess(Spec.t()) ::
+        {:ok, pid}
+        | {:error, :uv_not_found | :bad_cwd | :ping_timeout |
+                   {:spawn_failed, term()} |
+                   {:spawn_died_at_init, term()} |
+                   {:already_started, pid}}
 def start_subprocess(%Spec{} = spec)
 
-@doc "Synchronous JSON-RPC call. `timeout` is end-to-end (including spawn-startup if not yet ready)."
-@spec call(handle :: term(), method :: String.t(), params :: map(), timeout :: pos_integer()) ::
-        {:ok, term()} | {:error, term()}
+@doc """
+Synchronous JSON-RPC call. `timeout` is wall-clock for the call only
+(start_subprocess already ensured readiness). On timeout the
+subprocess is treated as unhealthy and torn down — see §3.3.1.
+"""
+@spec call(handle(), method :: String.t(), params :: map(), timeout :: pos_integer()) ::
+        {:ok, term()}
+        | {:error, :not_alive | :rpc_timeout | :subprocess_unhealthy |
+                   {:subprocess_died, term()} | %{required(String.t()) => term()}}
 def call(handle, method, params, timeout \\ 5_000)
 
-@doc "Fire-and-forget JSON-RPC notification. Returns :ok immediately or {:error, :not_alive}."
-@spec notify(handle :: term(), method :: String.t(), params :: map()) ::
+@doc "Fire-and-forget JSON-RPC notification."
+@spec notify(handle(), method :: String.t(), params :: map()) ::
         :ok | {:error, :not_alive}
 def notify(handle, method, params)
 
 @doc "Graceful shutdown. Idempotent — returns :ok whether the server was alive or not."
-@spec stop(handle :: term()) :: :ok
+@spec stop(handle()) :: :ok
 def stop(handle)
+
+@doc "True iff a Server is registered + the process is alive for this handle."
+@spec alive?(handle()) :: boolean()
+def alive?(handle)
 ```
 
-`call/4` and `notify/3` both accept the handle (Registry key); the
-facade looks up the pid via `Registry.lookup(EzagentDomainPython.Registry, handle_key(handle))`
-internally. If not alive: `call` → `{:error, :not_alive}`, `notify` →
-`{:error, :not_alive}`.
+All four functions canonicalize the handle through `handle_key/1`
+(§1.2.1). Passing a `%URI{}` to `start_subprocess` and the URI's
+`URI.to_string/1` to a subsequent `call` resolves to the SAME Registry
+entry. Any other type (atom, tuple, integer, map) raises
+`ArgumentError` at the boundary — silent `:not_alive` on a typo is
+explicitly NOT a supported failure mode (P4 production-usability: fail
+loud).
 
-**Helper: `Ezagent.Domain.Python.alive?/1`** is also exposed (mirrors
-`Domain.Pty.alive?/1`) — common ergonomic for idempotent
-instantiate/3 paths.
+If not alive: `call` → `{:error, :not_alive}`, `notify` →
+`{:error, :not_alive}`, `alive?` → `false`, `stop` → `:ok`.
 
 **No Registry of "logical handle → server pid" beyond what the
 `:via` Registry already provides.** A higher-level mapping
@@ -660,7 +848,8 @@ def run() -> None:
 
 ### 6.3 How a plugin uses the lib
 
-PEP-723 single-file example (`my_plugin.py`):
+PEP-723 single-file example (`my_plugin.py`) — codex round-1 MEDIUM-3
+fixed (`os.environ` lookup, not literal `$VAR` string):
 
 ```python
 #!/usr/bin/env python3
@@ -669,14 +858,23 @@ PEP-723 single-file example (`my_plugin.py`):
 # dependencies = ["httpx>=0.27"]
 # ///
 """My plugin's Python entry point."""
+import os
 import sys
-sys.path.insert(0, "$EZAGENT_PYTHON_LIB_DIR")  # Domain.Python sets this env var
+
+# Domain.Python sets EZAGENT_PYTHON_LIB_DIR in the spawned subprocess's
+# env, pointing at apps/ezagent_domain_python/priv/python/ — the dir
+# that contains ezagent_python.py. Python does NOT expand env vars in
+# string literals, so this must be an explicit os.environ lookup.
+sys.path.insert(0, os.environ["EZAGENT_PYTHON_LIB_DIR"])
+
 from ezagent_python import method, run, log, RpcError
 import httpx
 
 @method("greet")
 def greet(params):
-    name = params.get("name") or (_ for _ in ()).throw(RpcError(-32602, "name required"))
+    name = params.get("name")
+    if not name:
+        raise RpcError(-32602, "name required")
     log("info", f"greeting {name}")
     return {"greeting": f"hello {name}"}
 
@@ -687,7 +885,9 @@ if __name__ == "__main__":
 Domain.Python sets `EZAGENT_PYTHON_LIB_DIR` to
 `:code.priv_dir(:ezagent_domain_python) |> Path.join("python")` in the
 spawned subprocess's environment, so plugins can import the library
-without copying it.
+without copying it. The integration test (§9.2) fixture imports the
+lib in exactly this way to make sure the documented pattern keeps
+working.
 
 ## 7. uv integration specifics
 
@@ -875,6 +1075,27 @@ invariant gets a failing-when-violated test:
 - **Registry collapses concurrent starts**: two parallel
   `start_subprocess` calls with the same handle → exactly one
   `{:ok, pid}` and one `{:error, {:already_started, pid}}`.
+- **Startup readiness is part of the contract** (codex round-1
+  HIGH-1): `start_subprocess(%Spec{command: ["/usr/bin/false"], ...})`
+  MUST return `{:error, _}`. Test fails the moment someone refactors
+  to async startup that returns `{:ok, pid}` for a soon-to-die child.
+- **Hung handler triggers subprocess teardown** (codex round-1 HIGH-2):
+  the echo_server fixture exposes a `block_forever` method;
+  `call(h, "block_forever", %{}, 100)` MUST return
+  `{:error, :rpc_timeout}` AND a follow-up `alive?(h)` shortly after
+  MUST return `false` (the Server stopped). A second parallel call
+  in flight at the same time MUST receive `{:error, :subprocess_unhealthy}`,
+  NOT a silent hang.
+- **Handle canonicalization round-trip** (codex round-1 HIGH-4):
+  `start_subprocess(%Spec{handle: URI.parse("system://python/default"), ...})`
+  → `{:ok, _}`; then `call("system://python/default", "echo", %{}, 1000)`
+  with the LITERAL BINARY of the same URI MUST hit the same Server.
+  Negative test: `call(:bogus_atom, ...)` MUST raise
+  `ArgumentError`, not silently return `:not_alive`.
+- **Python lib import contract matches the docs** (codex round-1
+  MEDIUM-3): the fixture script `test/support/echo_server.py` imports
+  the library via the exact `os.environ["EZAGENT_PYTHON_LIB_DIR"]`
+  pattern from §6.3. Integration test passing → docs work.
 
 ### 9.4 Future-readiness sketch (not implemented — design check)
 
@@ -900,6 +1121,10 @@ the OS-process primitive that backs such a Behavior.)
 | D6 | No `Ezagent.Domain.Python.Registry` higher-level mapping | Plugin-local concern (the Template Class owns "agent_uri → which python subprocess backs it"); P1 keeps it out of domain. §4 |
 | D7 | `stderr` captured to file under `~/.ezagent/<profile>/logs/python-<slug>.log` | Mirrors the `ezagent_mcp_bridge.py` log naming so operators already know where to look. §3.2 step 6 |
 | D8 | Handle is `URI.t() \| binary()`, not forced URI | URIs are the canonical case (P5) but Spec can be used by non-URI test fixtures and tooling without inventing a fake URI. §1.2 |
+| D9 (codex round-1) | `start_subprocess/1` is SYNCHRONOUSLY ready | `{:continue, :spawn}` pattern returns `{:ok, pid}` before spawn finishes — Template Class reports success while runtime never came up. Sync init/1 closes the TOCTOU window. §3.2 |
+| D10 (codex round-1) | RPC timeout = tear down subprocess | Python lib is single-threaded; hung handler poisons all future calls. Restart is the only recovery available in V1. §3.3.1 |
+| D11 (codex round-1) | Plugin docs use `os.environ["EZAGENT_PYTHON_LIB_DIR"]` | Python does not expand `$VAR` in string literals; the original draft would have broken every plugin copied from the SPEC. §6.3 |
+| D12 (codex round-1) | Handle is `URI.t() \| binary()` ONLY; canonicalize at boundary | "Any term" → silent `:not_alive` on typo; URI/string equivalence requires explicit `handle_key/1`. Atoms / tuples raise loud. §1.2.1 |
 
 ## 11. Migration plan
 
