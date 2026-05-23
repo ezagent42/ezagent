@@ -126,4 +126,48 @@ defmodule EzagentPluginLiveview.UsersLiveTest do
     assert {:ok, _} = Ezagent.Users.set_password(uri, "new-pw")
     assert Ezagent.Users.verify_password(uri, "new-pw")
   end
+
+  describe "Presence online dot (PR-D of Presence rollout)" do
+    test "user tracked in Presence renders the green dot", %{conn: conn} do
+      handle = "lv-online-#{System.unique_integer([:positive])}"
+      uri = URI.parse("entity://user/default/" <> handle)
+      {:ok, _} = Ezagent.Users.create(URI.to_string(uri), nil, [])
+
+      # Track from a separate process so the entry stays alive for
+      # the duration of the LV render.
+      tracker =
+        spawn(fn ->
+          {:ok, _} = Ezagent.Presence.track(uri, "test_dot", %{transport: :liveview})
+
+          receive do
+            :exit -> :ok
+          end
+        end)
+
+      # Give Phoenix.Presence a tick to register
+      Process.sleep(50)
+      assert Ezagent.Presence.present?(uri)
+
+      {:ok, _lv, html} = live(conn, "/identities/users")
+
+      # Green dot for online — bg-emerald-500 class
+      assert html =~ "bg-emerald-500"
+      # Tooltip mentions transport
+      assert html =~ "liveview"
+
+      send(tracker, :exit)
+    end
+
+    test "untracked user renders the gray dot", %{conn: conn} do
+      handle = "lv-offline-#{System.unique_integer([:positive])}"
+      uri = "entity://user/default/" <> handle
+      {:ok, _} = Ezagent.Users.create(uri, nil, [])
+
+      refute Ezagent.Presence.present?(URI.parse(uri))
+
+      {:ok, _lv, html} = live(conn, "/identities/users")
+
+      assert html =~ "bg-zinc-300"
+    end
+  end
 end
