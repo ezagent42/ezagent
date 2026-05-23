@@ -537,6 +537,24 @@ defmodule Ezagent.Orchestrator.McpServer do
     }
   end
 
+  # Generator-reconciler PR-C — reconciler tools return `{:partial, info}`
+  # when at least one converging step did not complete. Surface as a
+  # structured MCP tool error so the LLM sees the pending steps and the
+  # cue to RE-INVOKE (a re-invocation continues forward progress; the
+  # reconciler is idempotent). NOT a generic failure — distinct
+  # `:partial_convergence` code so the orchestrator can route this
+  # specifically.
+  defp to_mcp_result(_tool, {:partial, info}) when is_map(info) do
+    {code, message} = partial_to_mcp(info)
+
+    %{
+      "isError" => true,
+      "content" => [%{"type" => "text", "text" => message}],
+      "error" => %{"code" => to_string(code), "message" => message},
+      "structuredContent" => stringify(info)
+    }
+  end
+
   defp to_mcp_result(_tool, {:error, reason}) do
     {code, message} = error_to_mcp(reason)
     mcp_error(code, message)
@@ -572,24 +590,25 @@ defmodule Ezagent.Orchestrator.McpServer do
       {:parent_template_deleted,
        "The parent template is gone — use save_template_as to persist under a new name."}
 
-  defp error_to_mcp({:update_aborted, reason}),
-    do: {:update_aborted, "Update aborted, slot unchanged: #{inspect(reason)}"}
+  # Generator-reconciler PR-C — `:no_such_slot` and `:no_live_worker`
+  # are structured `update_agent_template` errors (preflight didn't
+  # find a slot to reconcile). Mapped to distinct codes so the LLM can
+  # distinguish "you asked about a slot that doesn't exist" from a
+  # real failure.
+  defp error_to_mcp(:no_such_slot),
+    do:
+      {:no_such_slot,
+       "No such slot — there is nothing to update. Use add_agent_slot first."}
 
-  # codex round-5 — `update_agent_template` is a saga that cannot be
-  # atomic; when a recovery step itself fails the swap HALTS in a
-  # safe-degraded state (all workers alive) rather than risk a corrupt
-  # state. Surface that as a distinct, explicitly "needs manual
-  # attention" message — NOT a generic failure — so the LLM escalates
-  # instead of blindly retrying.
-  defp error_to_mcp({:update_needs_manual_repair, info}) when is_map(info) do
-    {:update_needs_manual_repair,
-     "Update could NOT complete cleanly and HALTED in a safe state — manual repair " <>
-       "is required. All workers were kept alive (none terminated). " <>
-       "slot=#{inspect(info[:slot])} reason=#{inspect(info[:reason])} " <>
-       "old_worker=#{uri_str(info[:old_worker])} new_worker=#{uri_str(info[:new_worker])} " <>
-       "live_workers=#{inspect(Enum.map(info[:live_workers] || [], &uri_str/1))}. " <>
-       "Do not retry blindly — an operator must reconcile the slot, routing, and workers."}
-  end
+  defp error_to_mcp(:no_live_worker),
+    do:
+      {:no_live_worker,
+       "The slot has no live worker recorded — re-establish it via remove_agent_slot + add_agent_slot."}
+
+  defp error_to_mcp(:slot_conflict),
+    do:
+      {:slot_conflict,
+       "Slot already exists at a different template — use update_agent_template to change templates."}
 
   defp error_to_mcp({:missing_opt, key}),
     do: {:missing_context, "Missing orchestrator context: #{key}"}
@@ -614,6 +633,33 @@ defmodule Ezagent.Orchestrator.McpServer do
   defp error_to_mcp(reason),
     do: {:tool_error, "Operation failed: #{inspect(reason)}"}
 
+  # Generator-reconciler PR-C — render a `{:partial, info}` reconciler
+  # return as a structured MCP "still-converging" error. The LLM sees
+  # exactly which steps did not complete and the cue to RE-INVOKE the
+  # same tool (idempotent — the next pass continues from current
+  # reality).
+  defp partial_to_mcp(info) when is_map(info) do
+    pending = info[:pending] || []
+    errors = info[:errors] || []
+    slot = info[:slot]
+
+    detail =
+      cond do
+        slot && pending != [] ->
+          "slot=#{inspect(slot)} pending=#{inspect(pending)} errors=#{inspect(errors)}"
+
+        pending != [] ->
+          "pending=#{inspect(pending)} errors=#{inspect(errors)}"
+
+        true ->
+          inspect(info)
+      end
+
+    {:partial_convergence,
+     "Reconciler did not complete this pass — RE-INVOKE the same tool to continue. " <>
+       "All workers were kept alive (no rollback). " <> detail}
+  end
+
   defp describe_success(%URI{} = uri), do: "ok: #{URI.to_string(uri)}"
   defp describe_success(:removed), do: "ok: slot removed"
   defp describe_success(map) when is_map(map), do: "ok: #{inspect(stringify(map))}"
@@ -629,10 +675,6 @@ defmodule Ezagent.Orchestrator.McpServer do
   end
 
   defp stringify(other), do: other
-
-  # Render a URI (or anything else) as a string for an error message.
-  defp uri_str(%URI{} = uri), do: URI.to_string(uri)
-  defp uri_str(other), do: inspect(other)
 
   # --- GenServer (process form) ------------------------------------------
 

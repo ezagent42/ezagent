@@ -410,6 +410,64 @@ defmodule EzagentDomainChat.Integration.ReconcilerTest do
                "be re-introduced. The reconciler has no accumulator — each step's " <>
                "outcome merges directly into :pending / :errors buckets."
     end
+
+    # Generator-reconciler PR-C — extend the architectural gate to
+    # tools.ex. The 6 saga-recovery helpers DELETED in PR-C must not
+    # be re-introduced. Together with the session.ex gate above this
+    # is the cross-file invariant for the Generator-as-Reconciler model.
+    test "tools.ex contains no saga-recovery helpers (PR-C deletion gate)" do
+      tools_ex =
+        Path.join([__DIR__, "..", "..", "lib", "ezagent", "orchestrator", "tools.ex"])
+        |> Path.expand()
+
+      source = File.read!(tools_ex)
+
+      refute source =~ ~r/defp\s+compensate_orphan_worker\b/,
+             "Generator-reconciler PR-C: compensate_orphan_worker/_ must NOT be " <>
+               "re-introduced. The reconciler treats a just-spawned worker that did " <>
+               "not get a slot record as VALID intermediate state — the next pass " <>
+               "completes the slot write or detects + reuses the worker."
+
+      refute source =~ ~r/defp\s+abort_swap_after_repoint_rollback\b/,
+             "Generator-reconciler PR-C: abort_swap_after_repoint_rollback/_ must NOT " <>
+               "be re-introduced. The reconciler doesn't abort on routing rollback; " <>
+               "it leaves the new worker alive and re-attempts the repoint next pass."
+
+      refute source =~ ~r/defp\s+halt_routing_revert_failed\b/,
+             "Generator-reconciler PR-C: halt_routing_revert_failed/_ must NOT be " <>
+               "re-introduced. There is no recovery-of-recovery in the reconciler; " <>
+               "the next pass IS the recovery."
+
+      refute source =~ ~r/defp\s+manual_repair_error\b/,
+             "Generator-reconciler PR-C: manual_repair_error/_ must NOT be re-introduced. " <>
+               "Partial state is communicated via {:partial, info} on the return — a " <>
+               "structured outcome the LLM sees, not a saga's terminal error."
+
+      refute source =~ ~r/defp\s+rollback_slot_to_old\b/,
+             "Generator-reconciler PR-C: rollback_slot_to_old/_ must NOT be re-introduced. " <>
+               "The reconciler never rolls a slot back; if a step fails the slot " <>
+               "stays where it was committed and the next pass continues."
+
+      refute source =~ ~r/defp\s+revert_receivers_by_ids_txn\b/,
+             "Generator-reconciler PR-C: revert_receivers_by_ids_txn/_ must NOT be " <>
+               "re-introduced. The reconciler has no inverse-revert transaction; the " <>
+               "forward repoint txn's rollback IS the recovery."
+
+      # Belt-and-braces: the saga's terminal error shape must not be
+      # CONSTRUCTED or RETURNED. We match the atom in a tuple-construction
+      # context (`{:update_needs_manual_repair,` / `{:update_aborted,`)
+      # so the moduledoc's prose mention of the deleted shapes doesn't
+      # false-positive.
+      refute source =~ ~r/\{:update_needs_manual_repair,/,
+             "Generator-reconciler PR-C: the `:update_needs_manual_repair` saga error " <>
+               "shape must NOT be re-constructed. Partial convergence surfaces as " <>
+               "{:partial, info}."
+
+      refute source =~ ~r/\{:update_aborted,/,
+             "Generator-reconciler PR-C: the `:update_aborted` saga error shape must " <>
+               "NOT be re-constructed. There is no abort; preflight failures return " <>
+               "{:error, reason} directly, partial steps return {:partial, info}."
+    end
   end
 
   # ─────────────────────────────────────────────────────────────────────

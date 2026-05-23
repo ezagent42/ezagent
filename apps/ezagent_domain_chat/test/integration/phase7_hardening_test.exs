@@ -758,6 +758,17 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
   # ════════════════════════════════════════════════════════════════════
 
   describe "HIGH-7 — a post-spawn swap failure terminates the orphaned replacement" do
+    @tag :skip
+    # Generator-reconciler PR-C: this asserts the SAGA contract — a
+    # post-spawn working-copy write failure must `compensate_orphan_worker`
+    # the just-spawned replacement and return `{:update_aborted, _}`. The
+    # reconciler model inverts this: a failed working-copy write leaves
+    # the new worker alive (a valid intermediate state — lineaged +
+    # bound), returns `{:partial, _}` with `pending: [:slot]`, and the
+    # next `update_agent_template` invocation completes the slot commit.
+    # Equivalent reconciler-shape coverage lives in
+    # `apps/ezagent_domain_chat/test/integration/update_agent_template_reconciler_test.exs`
+    # (V1-R6 partial-resume / retry tests).
     test "a forced upsert_agent_slot failure terminates the newly-spawned replacement" do
       flavor = register_test_flavor()
       worker_tmpl = URI.new!("template://agent/default/ph7-h7-worker-#{uniq()}")
@@ -1257,7 +1268,9 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
           session_uri: session_uri
         )
 
-      assert result == {:error, {:update_aborted, :no_live_worker}},
+      # PR-C reconciler shape: plain `{:error, :no_live_worker}` (no
+      # `:update_aborted` wrapper — there is no saga to abort).
+      assert result == {:error, :no_live_worker},
              "a legacy 2-tuple slot must yield :no_live_worker, not a CaseClauseError. " <>
                "Got: #{inspect(result)}"
     end
@@ -1268,6 +1281,14 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
   # kept alive. ────────────────────────────────────────────────────────
 
   describe "HIGH-1 r3 — a routing re-point failure aborts the swap, OLD worker survives" do
+    @tag :skip
+    # Generator-reconciler PR-C: asserted the SAGA contract — a routing
+    # re-point failure must roll the slot back + leave the OLD worker
+    # alive. Under the reconciler the slot stays committed to the new
+    # worker, the new worker stays alive, and the routing failure is
+    # returned as `{:partial, %{pending: [:routing]}}`. The next pass
+    # completes the repoint. The new equivalent is in the V1-R6
+    # reconciler test (partial-routing convergence).
     test "a forced load_into_registry raise during the re-point keeps the old worker alive" do
       flavor = register_test_flavor()
       tmpl_a = URI.new!("template://agent/default/ph7r3-h1-a-#{uniq()}")
@@ -1628,6 +1649,13 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
   # persisted rows end up back on the OLD worker and the swap aborts. ──
 
   describe "HIGH-1 r4 — a routing re-point failure leaves the persisted rows on the OLD worker" do
+    @tag :skip
+    # Generator-reconciler PR-C: asserted the SAGA contract — a routing
+    # re-point failure must surface as `{:update_aborted, _}` and leave
+    # the slot pointing at the OLD worker. Under the reconciler the slot
+    # stays at the NEW worker (committed before routing); the routing
+    # failure is `{:partial, %{pending: [:routing]}}`. New equivalent in
+    # update_agent_template_reconciler_test.exs.
     test "after an aborted swap the DB routing rows still name the OLD worker, which is alive" do
       flavor = register_test_flavor()
       tmpl_a = URI.new!("template://agent/default/ph7r4-h1-a-#{uniq()}")
@@ -1833,6 +1861,14 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
   # HIGH-1 r5 — force the routing re-point's post-commit reload to fail
   # AND the slot rollback to fail; assert the swap HALTS fail-safe.
   describe "HIGH-1 r5 — a slot-rollback failure terminates nothing and halts fail-safe" do
+    @tag :skip
+    # Generator-reconciler PR-C: this asserted the SAGA-RECOVERY contract —
+    # if the slot revert ITSELF fails after a routing rollback, return
+    # `{:update_needs_manual_repair, _}`. There is no slot-revert in the
+    # reconciler model (it doesn't roll the slot back; it leaves it
+    # converged-or-pending and the next pass continues). `rollback_slot_to_old`
+    # is DELETED. New equivalent: forward-progress under partial routing
+    # in update_agent_template_reconciler_test.exs.
     test "a failed slot rollback keeps BOTH workers alive + returns :update_needs_manual_repair" do
       flavor = register_test_flavor()
       tmpl_a = URI.new!("template://agent/default/ph7r5-h1-a-#{uniq()}")
@@ -1914,6 +1950,14 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
   # committed forward txn; assert the swap HALTS fail-safe and that the
   # inverse revert is scoped to the forward txn's rule IDs only.
   describe "HIGH-2 r5 — an inverse-revert failure halts fail-safe; the revert is ID-scoped" do
+    @tag :skip
+    # Generator-reconciler PR-C: this asserted the SAGA-of-SAGA contract —
+    # if the inverse routing revert ITSELF fails after a committed
+    # forward txn, return `{:update_needs_manual_repair, _}`. The
+    # reconciler doesn't run inverse routing reverts (a forward txn
+    # rollback IS the recovery); there is no `revert_receivers_by_ids_txn`
+    # to fail. The function is DELETED. Equivalent reconciler coverage:
+    # partial-routing convergence in update_agent_template_reconciler_test.exs.
     test "a forward-txn-committed + inverse-revert-failed swap halts, both workers alive" do
       flavor = register_test_flavor()
       tmpl_a = URI.new!("template://agent/default/ph7r5-h2-a-#{uniq()}")
@@ -2102,8 +2146,10 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
       :telemetry.detach(handler_id)
 
       # MEDIUM-3 r5 — the swap REFUSES the already-live candidate; it
-      # does NOT silently adopt it.
-      assert result == {:error, {:update_aborted, :candidate_uri_already_live}},
+      # does NOT silently adopt it. PR-C reconciler returns the plain
+      # `{:error, :candidate_uri_already_live}` (no `:update_aborted`
+      # wrapper — there is no saga to abort).
+      assert result == {:error, :candidate_uri_already_live},
              "a candidate worker that became live in the TOCTOU window must abort the " <>
                "swap with :candidate_uri_already_live — never a silent adoption. " <>
                "Got: #{inspect(result)}"
@@ -2222,7 +2268,8 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
       # instantiate sees `:already_started` for the candidate URI, so
       # `spawn_from_template_content` reports `fresh?: false` and the
       # swap REJECTS it. The window is CLOSED — never a silent adoption.
-      assert result == {:error, {:update_aborted, :candidate_uri_already_live}},
+      # PR-C reconciler shape: plain `{:error, :candidate_uri_already_live}`.
+      assert result == {:error, :candidate_uri_already_live},
              "a worker registered before the plugin's atomic spawn must abort the swap " <>
                "with :candidate_uri_already_live — the TOCTOU window is closed. " <>
                "Got: #{inspect(result)}"
@@ -2265,6 +2312,15 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
   end
 
   describe "MEDIUM-2 r6 — a step-2 slot-commit exit after the replacement spawns halts fail-safe" do
+    @tag :skip
+    # Generator-reconciler PR-C: this asserted the SAGA-recovery contract —
+    # a slot-commit GenServer-exit returns `{:update_needs_manual_repair, _}`.
+    # The reconciler surfaces a slot-write `:uncertain` as `{:partial,
+    # %{pending: [:slot]}}` so a re-invocation can confirm + complete the
+    # slot write. The `commit_slot_step2/7` wrap is RETAINED (it still
+    # prevents the dispatch from crashing the tool), but the manual-repair
+    # error shape is GONE. Equivalent: partial-slot resume in
+    # update_agent_template_reconciler_test.exs.
     test "a killed Session on the step-2 commit keeps BOTH workers alive + :update_needs_manual_repair" do
       flavor = register_test_flavor()
       tmpl_a = URI.new!("template://agent/default/ph7r6-m2-a-#{uniq()}")
@@ -2425,7 +2481,8 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
                "did not exercise the fresh?: false adoption path"
 
       # The swap aborts — a `fresh?: false` candidate is never adopted.
-      assert result == {:error, {:update_aborted, :candidate_uri_already_live}},
+      # PR-C reconciler shape: plain `{:error, :candidate_uri_already_live}`.
+      assert result == {:error, :candidate_uri_already_live},
              "a pre-existing candidate worker must abort the swap with " <>
                ":candidate_uri_already_live. Got: #{inspect(result)}"
 
