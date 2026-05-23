@@ -40,7 +40,14 @@ defmodule EzagentPluginLiveview.UsersLive do
       |> Enum.map(fn u ->
         Map.merge(u, %{
           has_password: not is_nil(u.password_hash),
-          cap_count: length(u.caps)
+          cap_count: length(u.caps),
+          # PR-D of Presence rollout (SPEC
+          # `docs/superpowers/specs/2026-05-23-presence.md` rev 3 §7) —
+          # row carries `online?` from `Ezagent.Presence.list/1` to
+          # render the online dot. Re-queried on every mount; future PR
+          # can subscribe to `esr:presence:<uri>` for live update.
+          online?: Ezagent.Presence.present?(u.uri),
+          transports: u.uri |> Ezagent.Presence.list() |> transports_summary()
         })
       end)
 
@@ -53,6 +60,19 @@ defmodule EzagentPluginLiveview.UsersLive do
       uri_str = URI.to_string(u.uri)
       Map.put(u, :display_name, Map.get(display_map, uri_str, uri_str))
     end)
+  end
+
+  # `Ezagent.Presence.list/1` returns `%{transport_id => [meta]}`. For
+  # the table row we want a compact transports summary — the unique
+  # `:transport` atoms (e.g. `[:liveview, :feishu]`) — so the operator
+  # can see WHERE the user is connected.
+  defp transports_summary(presence_list) do
+    presence_list
+    |> Map.values()
+    |> Enum.flat_map(& &1)
+    |> Enum.map(&Map.get(&1, :transport))
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
   end
 
   @impl true
@@ -260,156 +280,242 @@ defmodule EzagentPluginLiveview.UsersLive do
           current_path="/identities/users"
           status={%{agents_alive: 0, bridges: 0, debug_events: 0, version: "dev"}}
         >
-      <:main_window>
-        <div class="flex-1 overflow-auto px-6 py-6">
-          <.page_header title={gettext("Users")}>
-            <:subtitle>{gettext("Provisioned principals (independent of User Kind snapshot per Q-MU-2).")}</:subtitle>
-          </.page_header>
+          <:main_window>
+            <div class="flex-1 overflow-auto px-6 py-6">
+              <.page_header title={gettext("Users")}>
+                <:subtitle>
+                  {gettext("Provisioned principals (independent of User Kind snapshot per Q-MU-2).")}
+                </:subtitle>
+              </.page_header>
 
-          <%!-- Username & Auth UI Tasks 1+2 — display name primary, URI
+              <%!-- Username & Auth UI Tasks 1+2 — display name primary, URI
                 mono subtitle, inline pencil to edit display name. --%>
-          <section id="users-list" class="mt-4">
-            <p :if={@users == []} class="text-sm italic text-zinc-500">{gettext("No users.")}</p>
+              <section id="users-list" class="mt-4">
+                <p :if={@users == []} class="text-sm italic text-zinc-500">{gettext("No users.")}</p>
 
-            <.card :if={@users != []}>
-              <table id="users-table" class="w-full text-sm">
-                <thead>
-                  <tr class="border-b-2 border-zinc-200 dark:border-zinc-800 text-left text-xs uppercase tracking-wide text-zinc-500">
-                    <th class="py-2">{gettext("Name / URI")}</th>
-                    <th>{gettext("Password")}</th>
-                    <th>{gettext("Caps")}</th>
-                    <th>{gettext("Set password")}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr :for={u <- @users} class="border-b border-zinc-100 dark:border-zinc-900 align-top">
-                    <td class="py-2 pr-3 max-w-md">
-                      <%= if @editing_uri == URI.to_string(u.uri) do %>
-                        <form phx-submit="save_display_name" phx-click-away="cancel_edit_display_name" class="flex gap-1 items-center">
-                          <input type="hidden" name="uri" value={URI.to_string(u.uri)} />
-                          <input
-                            type="text"
-                            name="display_name"
-                            value={u.display_name}
-                            autofocus
-                            phx-key="escape"
-                            phx-keydown="cancel_edit_display_name"
-                            class="flex-1 px-2 py-1 text-xs border border-blue-400 dark:border-blue-600 rounded bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
-                          />
-                          <button type="submit" class="p-1 text-emerald-600 hover:text-emerald-700 dark:text-emerald-400" aria-label={gettext("Save")}>
-                            <.icon name="check" size="xs" />
-                          </button>
-                          <button type="button" phx-click="cancel_edit_display_name" class="p-1 text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300" aria-label={gettext("Cancel")}>
-                            <.icon name="x" size="xs" />
-                          </button>
-                        </form>
-                      <% else %>
-                        <div class="flex items-center gap-1">
-                          <span class="font-medium text-zinc-900 dark:text-zinc-100">{u.display_name}</span>
-                          <button
-                            type="button"
-                            phx-click="edit_display_name"
-                            phx-value-uri={URI.to_string(u.uri)}
-                            aria-label={gettext("Edit display name for %{name}", name: u.display_name)}
-                            class="p-1 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded"
-                          >
-                            <.icon name="pencil" size="xs" />
-                          </button>
-                        </div>
-                      <% end %>
-                      <div class="font-mono text-[10px] text-zinc-500 break-all">{URI.to_string(u.uri)}</div>
-                    </td>
-                    <td class="text-xs">
-                      <.badge :if={u.has_password} variant="success">{gettext("set")}</.badge>
-                      <.badge :if={!u.has_password} variant="danger">{gettext("unset")}</.badge>
-                    </td>
-                    <td class="text-xs">{u.cap_count}</td>
-                    <td>
-                      <form phx-submit="set_password" class="flex gap-1">
-                        <input type="hidden" name="uri" value={URI.to_string(u.uri)} />
-                        <input
-                          type="password"
-                          name="password"
-                          placeholder={gettext("new password")}
-                          class="px-2 py-1 text-xs border border-zinc-300 dark:border-zinc-700 rounded bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 w-32"
-                        />
-                        <.button type="submit" variant="outline" size="sm">{gettext("Set")}</.button>
-                      </form>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </.card>
-          </section>
+                <.card :if={@users != []}>
+                  <table id="users-table" class="w-full text-sm">
+                    <thead>
+                      <tr class="border-b-2 border-zinc-200 dark:border-zinc-800 text-left text-xs uppercase tracking-wide text-zinc-500">
+                        <th class="py-2">{gettext("Name / URI")}</th>
+                        <th>{gettext("Password")}</th>
+                        <th>{gettext("Caps")}</th>
+                        <th>{gettext("Set password")}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr
+                        :for={u <- @users}
+                        class="border-b border-zinc-100 dark:border-zinc-900 align-top"
+                      >
+                        <td class="py-2 pr-3 max-w-md">
+                          <%= if @editing_uri == URI.to_string(u.uri) do %>
+                            <form
+                              phx-submit="save_display_name"
+                              phx-click-away="cancel_edit_display_name"
+                              class="flex gap-1 items-center"
+                            >
+                              <input type="hidden" name="uri" value={URI.to_string(u.uri)} />
+                              <input
+                                type="text"
+                                name="display_name"
+                                value={u.display_name}
+                                autofocus
+                                phx-key="escape"
+                                phx-keydown="cancel_edit_display_name"
+                                class="flex-1 px-2 py-1 text-xs border border-blue-400 dark:border-blue-600 rounded bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
+                              />
+                              <button
+                                type="submit"
+                                class="p-1 text-emerald-600 hover:text-emerald-700 dark:text-emerald-400"
+                                aria-label={gettext("Save")}
+                              >
+                                <.icon name="check" size="xs" />
+                              </button>
+                              <button
+                                type="button"
+                                phx-click="cancel_edit_display_name"
+                                class="p-1 text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+                                aria-label={gettext("Cancel")}
+                              >
+                                <.icon name="x" size="xs" />
+                              </button>
+                            </form>
+                          <% else %>
+                            <div class="flex items-center gap-1">
+                              <%!-- PR-D of Presence rollout — online dot.
+                               Green = at least one transport; gray = none. --%>
+                              <span
+                                class={[
+                                  "inline-block w-2 h-2 rounded-full mr-1",
+                                  u.online? && "bg-emerald-500",
+                                  !u.online? && "bg-zinc-300 dark:bg-zinc-700"
+                                ]}
+                                title={
+                                  if u.online?,
+                                    do:
+                                      gettext("online via %{transports}",
+                                        transports: Enum.join(u.transports, ", ")
+                                      ),
+                                    else: gettext("offline")
+                                }
+                              >
+                              </span>
+                              <span class="font-medium text-zinc-900 dark:text-zinc-100">
+                                {u.display_name}
+                              </span>
+                              <button
+                                type="button"
+                                phx-click="edit_display_name"
+                                phx-value-uri={URI.to_string(u.uri)}
+                                aria-label={
+                                  gettext("Edit display name for %{name}", name: u.display_name)
+                                }
+                                class="p-1 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded"
+                              >
+                                <.icon name="pencil" size="xs" />
+                              </button>
+                            </div>
+                          <% end %>
+                          <div class="font-mono text-[10px] text-zinc-500 break-all">
+                            {URI.to_string(u.uri)}
+                          </div>
+                        </td>
+                        <td class="text-xs">
+                          <.badge :if={u.has_password} variant="success">{gettext("set")}</.badge>
+                          <.badge :if={!u.has_password} variant="danger">{gettext("unset")}</.badge>
+                        </td>
+                        <td class="text-xs">{u.cap_count}</td>
+                        <td>
+                          <form phx-submit="set_password" class="flex gap-1">
+                            <input type="hidden" name="uri" value={URI.to_string(u.uri)} />
+                            <input
+                              type="password"
+                              name="password"
+                              placeholder={gettext("new password")}
+                              class="px-2 py-1 text-xs border border-zinc-300 dark:border-zinc-700 rounded bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 w-32"
+                            />
+                            <.button type="submit" variant="outline" size="sm">
+                              {gettext("Set")}
+                            </.button>
+                          </form>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </.card>
+              </section>
 
-          <%!-- Username & Auth UI Task 3 — bare-handle input. Type
+              <%!-- Username & Auth UI Task 3 — bare-handle input. Type
                 "allen" → backend creates entity://user/allen. Full URI
                 still accepted. --%>
-          <section id="create-user" class="mt-6">
-            <.card>
-              <h2 class="text-sm font-medium mb-3 text-zinc-900 dark:text-zinc-100">{gettext("+ Create user")}</h2>
+              <section id="create-user" class="mt-6">
+                <.card>
+                  <h2 class="text-sm font-medium mb-3 text-zinc-900 dark:text-zinc-100">
+                    {gettext("+ Create user")}
+                  </h2>
 
-              <.form for={@create_form} phx-submit="create_user" class="space-y-3">
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div>
-                    <label for="user_handle" class="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1">{gettext("Username")}</label>
-                    <input
-                      type="text"
-                      id="user_handle"
-                      name="user[handle]"
-                      placeholder="allen"
-                      value={@create_form.params["handle"]}
-                      class="w-full px-2 py-1.5 text-xs border border-zinc-300 dark:border-zinc-700 rounded font-mono bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
-                    />
-                    <p class="mt-1 text-[11px] text-zinc-500">{gettext("Accepts bare handle (%{handle}) or full URI (%{uri}).", handle: "allen", uri: "entity://user/default/allen")}</p>
-                  </div>
-                  <div>
-                    <label for="user_display_name" class="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1">{gettext("Display name")}</label>
-                    <input
-                      type="text"
-                      id="user_display_name"
-                      name="user[display_name]"
-                      placeholder="Allen Woods"
-                      value={@create_form.params["display_name"]}
-                      class="w-full px-2 py-1.5 text-xs border border-zinc-300 dark:border-zinc-700 rounded bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
-                    />
-                    <p class="mt-1 text-[11px] text-zinc-500">{gettext("Optional; editable later via pencil icon.")}</p>
-                  </div>
-                  <div>
-                    <label for="user_password" class="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1">{gettext("Password")}</label>
-                    <input
-                      type="password"
-                      id="user_password"
-                      name="user[password]"
-                      placeholder={gettext("(optional)")}
-                      class="w-full px-2 py-1.5 text-xs border border-zinc-300 dark:border-zinc-700 rounded bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
-                    />
-                    <p class="mt-1 text-[11px] text-zinc-500">{gettext("If unset, user can only sign in via magic link.")}</p>
-                  </div>
-                  <div>
-                    <label for="user_caps" class="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1">{gettext("Caps")}</label>
-                    <input
-                      type="text"
-                      id="user_caps"
-                      name="user[caps]"
-                      placeholder="chat.send,workspace.read"
-                      class="w-full px-2 py-1.5 text-xs border border-zinc-300 dark:border-zinc-700 rounded font-mono bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
-                    />
-                    <p class="mt-1 text-[11px] text-zinc-500">{gettext("%{format} comma-separated. %{wildcard} requires %{flag}.", format: "kind.behavior[@instance_uri]", wildcard: "*", flag: "--allow-allcaps")}</p>
-                  </div>
-                </div>
-                <div class="flex justify-end">
-                  <.button type="submit" variant="primary" size="sm">{gettext("Create user")}</.button>
-                </div>
-              </.form>
+                  <.form for={@create_form} phx-submit="create_user" class="space-y-3">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div>
+                        <label
+                          for="user_handle"
+                          class="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1"
+                        >
+                          {gettext("Username")}
+                        </label>
+                        <input
+                          type="text"
+                          id="user_handle"
+                          name="user[handle]"
+                          placeholder="allen"
+                          value={@create_form.params["handle"]}
+                          class="w-full px-2 py-1.5 text-xs border border-zinc-300 dark:border-zinc-700 rounded font-mono bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
+                        />
+                        <p class="mt-1 text-[11px] text-zinc-500">
+                          {gettext("Accepts bare handle (%{handle}) or full URI (%{uri}).",
+                            handle: "allen",
+                            uri: "entity://user/default/allen"
+                          )}
+                        </p>
+                      </div>
+                      <div>
+                        <label
+                          for="user_display_name"
+                          class="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1"
+                        >
+                          {gettext("Display name")}
+                        </label>
+                        <input
+                          type="text"
+                          id="user_display_name"
+                          name="user[display_name]"
+                          placeholder="Allen Woods"
+                          value={@create_form.params["display_name"]}
+                          class="w-full px-2 py-1.5 text-xs border border-zinc-300 dark:border-zinc-700 rounded bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
+                        />
+                        <p class="mt-1 text-[11px] text-zinc-500">
+                          {gettext("Optional; editable later via pencil icon.")}
+                        </p>
+                      </div>
+                      <div>
+                        <label
+                          for="user_password"
+                          class="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1"
+                        >
+                          {gettext("Password")}
+                        </label>
+                        <input
+                          type="password"
+                          id="user_password"
+                          name="user[password]"
+                          placeholder={gettext("(optional)")}
+                          class="w-full px-2 py-1.5 text-xs border border-zinc-300 dark:border-zinc-700 rounded bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
+                        />
+                        <p class="mt-1 text-[11px] text-zinc-500">
+                          {gettext("If unset, user can only sign in via magic link.")}
+                        </p>
+                      </div>
+                      <div>
+                        <label
+                          for="user_caps"
+                          class="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1"
+                        >
+                          {gettext("Caps")}
+                        </label>
+                        <input
+                          type="text"
+                          id="user_caps"
+                          name="user[caps]"
+                          placeholder="chat.send,workspace.read"
+                          class="w-full px-2 py-1.5 text-xs border border-zinc-300 dark:border-zinc-700 rounded font-mono bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
+                        />
+                        <p class="mt-1 text-[11px] text-zinc-500">
+                          {gettext("%{format} comma-separated. %{wildcard} requires %{flag}.",
+                            format: "kind.behavior[@instance_uri]",
+                            wildcard: "*",
+                            flag: "--allow-allcaps"
+                          )}
+                        </p>
+                      </div>
+                    </div>
+                    <div class="flex justify-end">
+                      <.button type="submit" variant="primary" size="sm">
+                        {gettext("Create user")}
+                      </.button>
+                    </div>
+                  </.form>
 
-              <p :if={@flash_error} class="text-rose-600 dark:text-rose-400 text-xs mt-3">{@flash_error}</p>
-              <p :if={@flash_info} class="text-emerald-600 dark:text-emerald-400 text-xs mt-3">{@flash_info}</p>
-            </.card>
-          </section>
-        </div>
-      </:main_window>
-
+                  <p :if={@flash_error} class="text-rose-600 dark:text-rose-400 text-xs mt-3">
+                    {@flash_error}
+                  </p>
+                  <p :if={@flash_info} class="text-emerald-600 dark:text-emerald-400 text-xs mt-3">
+                    {@flash_info}
+                  </p>
+                </.card>
+              </section>
+            </div>
+          </:main_window>
         </WorkspaceShell.workspace_shell>
       </:body>
     </AppShell.app_shell>
