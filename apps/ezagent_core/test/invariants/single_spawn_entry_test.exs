@@ -11,11 +11,20 @@ defmodule Ezagent.Invariants.SingleSpawnEntryTest do
   Kind" drift is impossible without conscious test edits.
 
   Sidecar / infrastructure processes (e.g., `Ezagent.Domain.Pty.Server`,
-  plugin per-app `DynamicSupervisor` declarations in `Application`
-  child lists) are exempt — they're not Kinds and have their own
-  supervision concerns. The exemption table is
+  `Ezagent.Domain.Python.Server`, plugin per-app `DynamicSupervisor`
+  declarations in `Application` child lists) are exempt — they're not
+  Kinds and have their own supervision concerns. The exemption table is
   `allowed_sidecar_paths/0` below; adding a new sidecar requires
   appending its path AND updating the moduledoc rationale.
+
+  ## Domain.Python (added 2026-05-23, np-agent plugin PR)
+
+  Domain.Python's facade (`apps/ezagent_domain_python/lib/ezagent/
+  domain/python.ex`) calls `DynamicSupervisor.start_child` to spawn
+  `Ezagent.Domain.Python.Server` — the uv-launched Python subprocess
+  wrapper. Server is a sidecar (not a Kind), managed by plugin
+  Template Classes (np.agent today; other Python-backed flavors
+  later). Mirror of the Domain.Pty exemption.
   """
   use ExUnit.Case, async: true
 
@@ -118,7 +127,21 @@ defmodule Ezagent.Invariants.SingleSpawnEntryTest do
       # cc_agent.ex's inline DynamicSupervisor.start_child; the PR
       # collapsed all start_child callsites for PtyServer down to this
       # one facade.
-      "apps/ezagent_domain_pty/lib/ezagent/domain/pty.ex"
+      "apps/ezagent_domain_pty/lib/ezagent/domain/pty.ex",
+      # Ezagent.Domain.Python.start_subprocess/1 is the facade over
+      # the Domain.Python supervision tree (Domain.Python SPEC
+      # 2026-05-23 §1.1, merged #256). The Server it starts is a
+      # sidecar managed by plugin Template Classes (np.agent today;
+      # other Python-backed flavors later) — NOT a Kind. The
+      # `child_spec/1` heredoc in server.ex is matched too (line 62 in
+      # the @doc string referencing DynamicSupervisor.start_child/2 as
+      # PROSE); the comment_or_docstring? heuristic catches the
+      # backtick-quoted reference, but the line lacks a backtick BEFORE
+      # the call name and was caught — exempting the file path is the
+      # safe + intentional fix (the server has exactly one start_link
+      # callsite, no real DynamicSupervisor.start_child call).
+      "apps/ezagent_domain_python/lib/ezagent/domain/python.ex",
+      "apps/ezagent_domain_python/lib/ezagent/domain/python/server.ex"
     ]
   end
 end
