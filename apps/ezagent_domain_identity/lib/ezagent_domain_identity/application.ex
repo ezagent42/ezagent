@@ -69,6 +69,15 @@ defmodule EzagentDomainIdentity.Application do
         # the seed on every boot (idempotent).
         :ok = maybe_ensure_admin_user()
 
+        # PR-A (Allen 2026-05-23) — seed a default NON-admin user so
+        # dev/prod systems always have a regular-permission user to
+        # exercise CapBAC paths against. Closes the "caps feel
+        # invisible because everyone runs as admin" gap surfaced in
+        # `docs/notes/caps-e2e-design.md` §2 reason #2.
+        # Same skip-in-test rule as admin — tests create their own
+        # non-admin via `Ezagent.Users.create/3`.
+        :ok = maybe_ensure_default_non_admin_user()
+
         # PR-M (Allen 2026-05-20) — test-env eager admin User Kind
         # spawn. Identity boots BEFORE chat, so spawning admin here
         # preserves the previous "admin alive at boot" guarantee that
@@ -191,6 +200,80 @@ defmodule EzagentDomainIdentity.Application do
           Logger.warning(
             "ensure_admin_user: DB unavailable at boot (#{inspect(e.__struct__)}); " <>
               "admin row provisioning deferred to next boot"
+          )
+
+          :ok
+      end
+    else
+      :ok
+    end
+  end
+
+  # PR-A (Allen 2026-05-23) — boot-time idempotent seed of a default
+  # non-admin operator user. Same pattern as `ensure_admin_user/0`:
+  #
+  #   - URI: `entity://user/default/operator` (3-segment, default
+  #     workspace per SPEC v3 §3 — NOT system workspace; that's
+  #     admin-only territory)
+  #   - Caps: `User.default_caps(workspace://default)` —
+  #     workspace-scoped session caps; CANNOT cross workspaces;
+  #     does NOT have admin's superset
+  #   - Password: nil (operator must `mix ezagent.user.set_password`
+  #     before login — same UX as admin)
+  #
+  # This user is what Allen will use to exercise CapBAC paths in
+  # production: log in as operator, observe denial for admin-only
+  # actions, observe success for workspace-scoped session actions.
+  defp maybe_ensure_default_non_admin_user do
+    if test_env?() do
+      :ok
+    else
+      ensure_default_non_admin_user()
+    end
+  end
+
+  defp ensure_default_non_admin_user do
+    operator_uri = "entity://user/default/operator"
+    workspace_uri = URI.parse("workspace://default")
+    operator_caps = User.default_caps(workspace_uri)
+
+    if Code.ensure_loaded?(Ezagent.Users) and
+         function_exported?(Ezagent.Users, :get_by_uri, 1) do
+      try do
+        case Ezagent.Users.get_by_uri(operator_uri) do
+          nil ->
+            case Ezagent.Users.create(operator_uri, nil, operator_caps) do
+              {:ok, _decoded} ->
+                require Logger
+
+                Logger.info(
+                  "ensure_default_non_admin_user: seeded #{operator_uri} with " <>
+                    "#{length(operator_caps)} workspace-scoped caps. " <>
+                    "Set password via `mix ezagent.user.set_password #{operator_uri} <pw>`."
+                )
+
+                :ok
+
+              {:error, reason} ->
+                require Logger
+
+                Logger.warning(
+                  "ensure_default_non_admin_user: create failed (#{inspect(reason)})"
+                )
+
+                :ok
+            end
+
+          _existing ->
+            :ok
+        end
+      rescue
+        e in [DBConnection.ConnectionError, DBConnection.OwnershipError] ->
+          require Logger
+
+          Logger.warning(
+            "ensure_default_non_admin_user: DB unavailable at boot " <>
+              "(#{inspect(e.__struct__)}); operator row provisioning deferred"
           )
 
           :ok
