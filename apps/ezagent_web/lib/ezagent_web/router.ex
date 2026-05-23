@@ -87,6 +87,10 @@ defmodule EzagentWeb.Router do
       # default-grant policies per Kind. Admin-only at the mount level
       # (matches `AdminSettingsLive`'s `@is_admin?` redirect pattern).
       live "/admin/caps", AdminCapsLive
+      # Design 2 from docs/notes/caps-e2e-design.md §5 — live stream of
+      # CapBAC :granted / :denied telemetry. Makes the cap system
+      # viscerally visible.
+      live "/admin/audit/authz", AdminAuthzAuditLive
       # V1 fix (Allen Feishu 2026-05-21 17:44): /settings moved here
       # from top-level. The page hosts admin-only config (SMTP +
       # registration domains); belongs under /admin (admin scope),
