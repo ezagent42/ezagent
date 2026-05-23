@@ -80,7 +80,47 @@ defmodule EzagentDomainChat.PresenceFanout do
   def init(_) do
     :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, @membership_topic)
     # State: %{user_uri => MapSet.t(session_uri)}
-    {:ok, %{}}
+    # Defer bootstrap rebuild to handle_continue so init/1 returns
+    # quickly (Sessions may not be alive yet at our boot time).
+    {:ok, %{}, {:continue, :bootstrap_rebuild}}
+  end
+
+  @impl true
+  def handle_continue(:bootstrap_rebuild, state) do
+    # PR-5 (Allen 2026-05-23) — close the V1 limitation in the
+    # @moduledoc: walk every live Session, peek its `:chat` slice for
+    # current members, register Presence subscriptions for each
+    # (member → session) pair.
+    #
+    # Safe across restarts: existing entries are already in our state
+    # (from membership-change events that happened before our restart);
+    # this fills in the GAP for sessions whose members joined BEFORE
+    # this Fanout's first boot.
+    #
+    # `:sys.get_state` blocks on the Session GenServer. Use a short
+    # timeout per session + recover gracefully — bootstrap rebuild
+    # is best-effort, not load-bearing for correctness (the
+    # `:session_membership_change` PubSub remains the primary
+    # source-of-truth path; this fills in PAST events only).
+    new_state =
+      try do
+        EzagentDomainChat.list_sessions()
+        |> Enum.reduce(state, fn session_uri, acc ->
+          add_session_members(acc, session_uri)
+        end)
+      rescue
+        e ->
+          require Logger
+
+          Logger.warning(
+            "PresenceFanout.bootstrap_rebuild: failed — #{inspect(e.__struct__)}. " <>
+              "Index will rebuild lazily from future :session_membership_change events."
+          )
+
+          state
+      end
+
+    {:noreply, new_state}
   end
 
   @impl true
@@ -177,4 +217,47 @@ defmodule EzagentDomainChat.PresenceFanout do
   end
 
   defp topic_to_member_uri(_), do: :error
+
+  # PR-5 (Allen 2026-05-23) bootstrap helper — peek a Session GenServer's
+  # `:chat` slice, register (member → session_uri) for each current
+  # member. Best-effort; failure is tolerated (next
+  # :session_membership_change event will fix the index).
+  defp add_session_members(state, session_uri) do
+    case Ezagent.KindRegistry.lookup(session_uri) do
+      {:ok, session_pid} ->
+        try do
+          # :sys.get_state is a debugging primitive but it's the only
+          # way to read a Kind's slice without adding a new dispatch
+          # path. Short timeout — bootstrap is best-effort.
+          wrapper = :sys.get_state(session_pid, 1_000)
+          slice = get_in(wrapper, [:state, :chat]) || %{}
+          members = Map.keys(Map.get(slice, :members, %{}))
+
+          Enum.reduce(members, state, fn member_uri, acc ->
+            register_member(acc, session_uri, member_uri)
+          end)
+        catch
+          :exit, _ ->
+            state
+        end
+
+      :error ->
+        state
+    end
+  end
+
+  defp register_member(state, %URI{} = session_uri, %URI{} = member_uri) do
+    sessions = Map.get(state, member_uri, MapSet.new())
+
+    # FIRST session for this member → subscribe to Presence diffs
+    # (idempotent; Phoenix.PubSub.subscribe is safe to call twice
+    # on the same topic from the same pid)
+    if MapSet.size(sessions) == 0 do
+      :ok = Presence.subscribe(member_uri, %{caps: :system})
+    end
+
+    Map.put(state, member_uri, MapSet.put(sessions, session_uri))
+  end
+
+  defp register_member(state, _, _), do: state
 end
