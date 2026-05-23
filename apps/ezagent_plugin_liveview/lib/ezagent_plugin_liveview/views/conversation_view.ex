@@ -47,7 +47,10 @@ defmodule EzagentPluginLiveview.Views.ConversationView do
 
     ~H"""
     <div class="flex-1 flex flex-col min-h-0">
-      <div :if={@oldest_cursor} class="text-center py-1 bg-zinc-50 dark:bg-zinc-950 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
+      <div
+        :if={@oldest_cursor}
+        class="text-center py-1 bg-zinc-50 dark:bg-zinc-950 border-b border-zinc-200 dark:border-zinc-800 shrink-0"
+      >
         <button
           type="button"
           id="load-older-btn"
@@ -82,25 +85,42 @@ defmodule EzagentPluginLiveview.Views.ConversationView do
         phx-hook="ScrollOnUpdate"
         class="flex-1 overflow-y-auto px-4 py-3 bg-zinc-50 dark:bg-zinc-950 space-y-2"
       >
+        <%!-- PR-2 of Read Receipts rollout — `ViewportMarkRead` JS
+              hook (IntersectionObserver + 250ms dwell) fires
+              `mark_displayed` with `{msg_id: row.id}` when this row
+              enters viewport. AdminLive's handle_event calls
+              `Ezagent.Chat.ReadMarker.mark(session, user, msg_id,
+              :displayed)`. Fire-once per element per mount. --%>
         <div
           :for={{dom_id, row} <- @messages_stream}
           id={dom_id}
+          phx-hook="ViewportMarkRead"
+          data-msg-id={row.id}
           class={[
             "max-w-2xl rounded-lg px-3 py-2 border",
-            row.sender_kind == :user && "bg-blue-50 dark:bg-blue-950 border-blue-200 dark:border-blue-800 ml-auto",
-            row.sender_kind == :agent && "bg-emerald-50 dark:bg-emerald-950 border-emerald-200 dark:border-emerald-800 mr-auto",
-            row.sender_kind == :other && "bg-zinc-100 dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 mx-auto"
+            row.sender_kind == :user &&
+              "bg-blue-50 dark:bg-blue-950 border-blue-200 dark:border-blue-800 ml-auto",
+            row.sender_kind == :agent &&
+              "bg-emerald-50 dark:bg-emerald-950 border-emerald-200 dark:border-emerald-800 mr-auto",
+            row.sender_kind == :other &&
+              "bg-zinc-100 dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 mx-auto"
           ]}
         >
           <%!-- Username & Auth UI Task 1 (PR-O) — display name primary,
                 URI secondary (mono). Falls back to URI when no profile. --%>
           <div class="flex items-baseline gap-2 text-[11px] text-zinc-500">
-            <span class="font-medium text-zinc-700 dark:text-zinc-300">{sender_display_for(row)}</span>
+            <span class="font-medium text-zinc-700 dark:text-zinc-300">
+              {sender_display_for(row)}
+            </span>
             <span>·</span>
             <span>{format_time(row.at)}</span>
           </div>
-          <div class="font-mono text-[10px] text-zinc-400 dark:text-zinc-600 break-all">{row.sender}</div>
-          <div :if={row.text != ""} class="mt-1 text-sm whitespace-pre-wrap break-words">{row.text}</div>
+          <div class="font-mono text-[10px] text-zinc-400 dark:text-zinc-600 break-all">
+            {row.sender}
+          </div>
+          <div :if={row.text != ""} class="mt-1 text-sm whitespace-pre-wrap break-words">
+            {row.text}
+          </div>
           <div :if={attachments_of(row) != []} class="mt-2 flex gap-1 flex-wrap">
             <a
               :for={{name, href} <- attachments_of(row)}
