@@ -331,19 +331,33 @@ defmodule EzagentDomainChat.Integration.GeneratorTest do
       assert Enum.sort(restored.agent_slots) == Enum.sort(before.agent_slots)
     end
 
-    test "re-instantiating the SAME SessionTemplate produces an identical team", %{
-      st_uri: st_uri,
-      owner_uri: owner_uri
-    } do
-      assert {:ok, %{session_uri: s1}} = Session.spawn_from_template(st_uri, owner_uri)
-      assert {:ok, %{session_uri: s2}} = Session.spawn_from_template(st_uri, owner_uri)
+    test "re-instantiating the SAME SessionTemplate is IDEMPOTENT — same session URI, same slots",
+         %{
+           st_uri: st_uri,
+           owner_uri: owner_uri
+         } do
+      # Generator-reconciler refactor (SPEC §7-1 Allen-approved
+      # Option A — deterministic session URI from
+      # `(template, owner)`): re-invocation finds the SAME session,
+      # detects already-converged components, and skips them. The
+      # pre-refactor behaviour ("each Generator call produces a fresh
+      # session") was the saga's signature; with the reconciler,
+      # idempotent re-run is the contract (V1-R2).
+      assert {:ok, %{session_uri: s1} = res1} =
+               Session.spawn_from_template(st_uri, owner_uri)
 
-      assert s1 != s2, "each Generator call produces a fresh session"
+      assert {:ok, %{session_uri: s2} = res2} =
+               Session.spawn_from_template(st_uri, owner_uri)
+
+      assert URI.to_string(s1) == URI.to_string(s2),
+             "reconciler re-run must target the SAME session URI " <>
+               "(SPEC §7-1 Option A determinism)"
+
+      assert URI.to_string(res1.orchestrator_uri) == URI.to_string(res2.orchestrator_uri),
+             "orchestrator URI is derived from session URI → also stable across re-runs"
 
       # Same slot → source-template mapping (the team config is
-      # identical). The CRITICAL hardening fix means the LIVE worker
-      # URIs DIFFER between the two sessions — so we compare only the
-      # {slot_name, source_agent_template_uri} projection.
+      # identical).
       wc1 = session_working_copy(s1)
       wc2 = session_working_copy(s2)
 
@@ -356,13 +370,17 @@ defmodule EzagentDomainChat.Integration.GeneratorTest do
       assert norm.(wc1) == norm.(wc2),
              "re-instantiating the same template yields the same slot → source-template team"
 
-      # ...and the LIVE worker URIs are DISJOINT (CRITICAL fix).
+      # ...and the LIVE worker URIs are IDENTICAL (reconciler skips
+      # re-spawn of an already-owned worker).
       live = fn wc ->
-        wc.agent_slots |> Enum.map(fn {_n, _s, live, _g} -> URI.to_string(live) end)
+        wc.agent_slots
+        |> Enum.map(fn {_n, _s, live, _g} -> live && URI.to_string(live) end)
+        |> Enum.reject(&is_nil/1)
+        |> Enum.sort()
       end
 
-      assert MapSet.disjoint?(MapSet.new(live.(wc1)), MapSet.new(live.(wc2))),
-             "two sessions from one SessionTemplate must get DISJOINT live worker URIs"
+      assert live.(wc1) == live.(wc2),
+             "reconciler re-run must NOT spawn duplicate workers — same live URIs"
     end
   end
 
@@ -571,14 +589,27 @@ defmodule EzagentDomainChat.Integration.GeneratorTest do
           template_cap(:agent_template, @workspace_uri)
         ])
 
-      # The Generator must REFUSE the foreign worker — the slot fails
-      # `:slot_candidate_not_owned`, wrapped by `instantiate_agent_slots`
-      # as `{:agent_slot_failed, slot_name, reason}`.
-      assert {:error, {:agent_slot_failed, "foreign-slot", reason}} =
-               Session.spawn_from_template(st_uri, owner_uri)
+      # Generator-reconciler refactor (SPEC §2 step 3): a foreign /
+      # unknown-lineage worker fails the per-slot ownership gate. With
+      # the reconciler, the failed slot is a `:partial` pending entry
+      # (NOT a Generator-wide abort, since the session DID converge —
+      # only this slot's spawn refused adoption). Operators can fix
+      # the lineage / remove the foreign worker and re-invoke.
+      assert {:partial, partial} = Session.spawn_from_template(st_uri, owner_uri)
 
-      assert {:slot_candidate_not_owned, "foreign-slot", _worker_uri_str} = reason,
-             "a fresh?: false worker with unknown lineage must NOT be silently adopted"
+      assert {:slot, "foreign-slot"} in partial.pending,
+             "foreign worker → slot accumulates into :pending (NOT silent adoption)"
+
+      assert Enum.any?(partial.errors, fn
+               {{:slot, "foreign-slot"},
+                {:slot, "foreign-slot", {:slot_candidate_not_owned, "foreign-slot", _}}} ->
+                 true
+
+               _ ->
+                 false
+             end),
+             "the partial report carries the slot_candidate_not_owned reason: " <>
+               inspect(partial.errors)
     end
 
     test "a fresh?: false worker already owned by this orchestrator+workspace succeeds (idempotent re-run)" do
