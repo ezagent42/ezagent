@@ -18,6 +18,8 @@ defmodule EzagentWeb.SessionController do
 
   import Plug.Conn
 
+  require Logger
+
   alias Ezagent.Entity
   alias EzagentWeb.SessionPrincipal
 
@@ -410,7 +412,9 @@ defmodule EzagentWeb.SessionController do
         @email_disabled_notice
         |> String.replace(
           "{{T_EMAIL_SIGN_IN_DISABLED}}",
-          esc(gettext("Email sign-in is not enabled. An admin can turn it on in Settings → SMTP."))
+          esc(
+            gettext("Email sign-in is not enabled. An admin can turn it on in Settings → SMTP.")
+          )
         )
       end
 
@@ -474,23 +478,79 @@ defmodule EzagentWeb.SessionController do
     {banner, hidden}
   end
 
-  # Returns :ok always (caller ignores it — anti-enumeration). Internally
-  # decides whether to actually mint + send.
+  # Returns :ok always (caller ignores it — anti-enumeration: the HTTP
+  # response is identical regardless of which path was taken, so an
+  # attacker cannot enumerate "which emails / domains are allowed").
+  # Per SKILL P27 — server-side observability is non-negotiable: each
+  # silent-drop path logs WHY, so operators can debug "user reports no
+  # email received" without code-spelunking. Logs reach
+  # `~/.openclaw/logs/*.log` in production.
   defp maybe_send_magic_link(conn, email) do
     ip = conn.remote_ip |> :inet.ntoa() |> to_string()
 
-    with true <- Ezagent.AppSettings.smtp_configured?(),
-         :ok <-
-           EzagentWeb.RateLimiter.check("login_email:" <> email, limit: 3, window_ms: 15 * 60_000),
-         :ok <-
-           EzagentWeb.RateLimiter.check("login_ip:" <> ip, limit: 10, window_ms: 60 * 60_000),
-         true <- send_allowed?(email) do
-      {:ok, raw} = Ezagent.Entity.MagicLinkToken.mint(email)
-      link = EzagentWeb.Endpoint.url() <> "/auth/magic/" <> raw
-      _ = EzagentWeb.Mailer.deliver_magic_link(email, link)
-      :ok
-    else
-      _ -> :ok
+    cond do
+      not Ezagent.AppSettings.smtp_configured?() ->
+        Logger.warning(
+          "magic_link silent_drop reason=smtp_not_configured email=#{email} ip=#{ip} — " <>
+            "admin must configure SMTP at /admin/settings before any sign-in email can send"
+        )
+
+        :ok
+
+      {:error, :rate_limited} ==
+          EzagentWeb.RateLimiter.check("login_email:" <> email,
+            limit: 3,
+            window_ms: 15 * 60_000
+          ) ->
+        Logger.info(
+          "magic_link silent_drop reason=email_rate_limited email=#{email} ip=#{ip} " <>
+            "limit=3/15min — user retried too quickly"
+        )
+
+        :ok
+
+      {:error, :rate_limited} ==
+          EzagentWeb.RateLimiter.check("login_ip:" <> ip,
+            limit: 10,
+            window_ms: 60 * 60_000
+          ) ->
+        Logger.warning(
+          "magic_link silent_drop reason=ip_rate_limited email=#{email} ip=#{ip} " <>
+            "limit=10/hour — possible enumeration probe OR shared NAT"
+        )
+
+        :ok
+
+      not send_allowed?(email) ->
+        Logger.warning(
+          "magic_link silent_drop reason=send_not_allowed email=#{email} ip=#{ip} — " <>
+            "email is neither an existing principal nor in `registration_domains` " <>
+            "whitelist; add the domain at /admin/settings → Allowed email domains"
+        )
+
+        :ok
+
+      true ->
+        do_send_magic_link(email, ip)
+    end
+  end
+
+  defp do_send_magic_link(email, ip) do
+    {:ok, raw} = Ezagent.Entity.MagicLinkToken.mint(email)
+    link = EzagentWeb.Endpoint.url() <> "/auth/magic/" <> raw
+
+    case EzagentWeb.Mailer.deliver_magic_link(email, link) do
+      {:ok, _} ->
+        Logger.info("magic_link sent email=#{email} ip=#{ip}")
+        :ok
+
+      {:error, reason} ->
+        Logger.error(
+          "magic_link silent_drop reason=mailer_failed email=#{email} ip=#{ip} " <>
+            "mailer_reason=#{inspect(reason)} — check SMTP config / connectivity / TLS"
+        )
+
+        :ok
     end
   end
 
