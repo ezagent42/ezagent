@@ -620,16 +620,29 @@ defmodule Ezagent.Behavior.Chat do
     # the Session is acting on behalf of the system-routed message.
     # Phase 4+ will refine to a dedicated "system-internal" cap when
     # multi-user authorization arrives.
-    Invocation.dispatch(%Invocation{
-      target: target,
-      mode: :cast,
-      args: %{message: msg},
-      ctx: %{
-        caller: session_uri,
-        caps: Ezagent.Entity.User.admin_caps(),
-        reply: :ignore
-      }
-    })
+    result =
+      Invocation.dispatch(%Invocation{
+        target: target,
+        mode: :cast,
+        args: %{message: msg},
+        ctx: %{
+          caller: session_uri,
+          caps: Ezagent.Entity.User.admin_caps(),
+          reply: :ignore
+        }
+      })
+
+    # PR-3 of Read Receipts rollout (SPEC
+    # `docs/superpowers/specs/2026-05-23-read-receipts.md` §10) —
+    # mark `:delivered` for the recipient when dispatch succeeds.
+    # "Delivered" here = the chat.receive dispatch reached the
+    # recipient Kind (cap-checked, queued for invoke). Fire-and-forget
+    # — mark failure must not block message fan-out.
+    if result == :ok do
+      _ = Ezagent.Chat.ReadMarker.mark(session_uri, recipient_uri, msg.id, :delivered)
+    end
+
+    result
   end
 
   # PR #144 SPEC v2 §5.8 — opportunistic external-mirror hook.
