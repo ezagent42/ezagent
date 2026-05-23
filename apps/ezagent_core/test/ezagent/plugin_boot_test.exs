@@ -105,6 +105,8 @@ defmodule Ezagent.Plugin.BootTest do
           @impl true
           def actions, do: [:do_thing]
           @impl true
+          def cap_subjects, do: [{:do_thing, "test fixture"}]
+          @impl true
           def state_slice, do: :boot_test
           @impl true
           def init_slice(_args), do: %{}
@@ -205,6 +207,25 @@ defmodule Ezagent.Plugin.BootTest do
     end
   end
 
+  # Inline fixture modules for the two-phase ordering test. Previously
+  # referenced as bare atoms — worked because BehaviorRegistry.register/3
+  # was a raw ETS insert that didn't load the module. After
+  # CapabilityRegistry migration (SPEC 2026-05-23-capability-registry §3.2)
+  # register/3 calls `behavior.cap_subjects/0`, so the module must exist.
+  defmodule OrderKind do
+    def type_name, do: :order_kind_test
+  end
+
+  defmodule OrderBehavior do
+    @behaviour Ezagent.Behavior
+    def actions, do: [:ordered_action]
+    def cap_subjects, do: [{:ordered_action, "test fixture — ordering probe"}]
+    def state_slice, do: :order_test
+    def init_slice(_), do: %{}
+    def invoke(_, slice, _, _), do: {:ok, slice}
+    def interface, do: %{}
+  end
+
   describe "boot/1 — two-phase ordering: children BEFORE publish (codex HIGH-2)" do
     test "a Phase-1 child observes the registry is NOT yet populated at its init" do
       test_pid = self()
@@ -249,6 +270,7 @@ defmodule Ezagent.Plugin.BootTest do
       # rev-1 bug) this would be `{:ok, _}`. Two-phase boot guarantees
       # `:error` — the publish had not happened yet.
       assert_received {:child_init, _child_pid, registry_at_init}
+
       assert registry_at_init == :error,
              "expected the Behavior to be UNPUBLISHED when the Phase-1 child " <>
                "started — children must boot before Phase-2 publish (SPEC §5)"

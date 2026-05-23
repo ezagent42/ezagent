@@ -38,7 +38,7 @@ defmodule EzagentDomainIdentity.Application do
 
   use Application
 
-  alias Ezagent.{BehaviorRegistry, SpawnRegistry}
+  alias Ezagent.{CapabilityRegistry, SpawnRegistry}
   alias Ezagent.Entity.User
   alias Ezagent.Behavior.{Identity, ApiKeys}
 
@@ -114,8 +114,12 @@ defmodule EzagentDomainIdentity.Application do
       # User Kind declares `EzagentDomainIdentity.Application.UserSupervisor`
       # via supervisor/0 — destination preserved.
       case Ezagent.Kind.spawn(User, %{uri: admin_uri, initial_caps: User.admin_caps()}) do
-        {:ok, _pid} -> :ok
-        {:error, {:already_started, _pid}} -> :ok
+        {:ok, _pid} ->
+          :ok
+
+        {:error, {:already_started, _pid}} ->
+          :ok
+
         {:error, reason} ->
           require Logger
 
@@ -162,7 +166,9 @@ defmodule EzagentDomainIdentity.Application do
             admin_cap_list = User.admin_caps() |> MapSet.to_list()
 
             case Ezagent.Users.create(admin_uri, nil, admin_cap_list) do
-              {:ok, _decoded} -> :ok
+              {:ok, _decoded} ->
+                :ok
+
               {:error, reason} ->
                 require Logger
 
@@ -219,21 +225,29 @@ defmodule EzagentDomainIdentity.Application do
 
   defp register_identity_behaviors do
     for action <- Identity.actions() do
-      :ok = BehaviorRegistry.register(User, action, Identity)
+      :ok = CapabilityRegistry.register(User, action, Identity)
       # Agent identity-cap binding stays here too — Agent Kind belongs
       # to chat plugin but identity actions on it are an Identity
       # concern. Both apps load before plugins start dispatching, so
       # registering against Ezagent.Entity.Agent here is safe even though
       # Agent is defined in ezagent_domain_chat.
-      :ok = BehaviorRegistry.register(Ezagent.Entity.Agent, action, Identity)
+      :ok = CapabilityRegistry.register(Ezagent.Entity.Agent, action, Identity)
     end
 
     # PR #126: per-user API key storage (DeepSeek/OpenAI/etc.). Only
     # on User Kind — Agents don't own their own keys, they look up
     # the caller User's key via dispatch.
     for action <- ApiKeys.actions() do
-      :ok = BehaviorRegistry.register(User, action, ApiKeys)
+      :ok = CapabilityRegistry.register(User, action, ApiKeys)
     end
+
+    # CapabilityRegistry SPEC rev 4 §5 — register User.default_caps/1
+    # with the registry so /admin/caps + future audit can enumerate
+    # "what does a fresh User get in this workspace". The function
+    # stays as-is in `Ezagent.Entity.User`; existing callers
+    # (`Users.create/3`, Feishu `BindingPolicy.ensure_user_default_caps/2`,
+    # `mix ezagent.stress`, tests) continue to call it directly.
+    :ok = CapabilityRegistry.register_default_grant(User, &User.default_caps/1)
 
     :ok
   end

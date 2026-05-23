@@ -14,6 +14,15 @@ defmodule Ezagent.Test.TestBehavior do
   def actions, do: [:noop, :fail, :raise]
 
   @impl Ezagent.Behavior
+  def cap_subjects do
+    [
+      {:noop, "test — no-op action"},
+      {:fail, "test — returns {:error, _}"},
+      {:raise, "test — raises an exception"}
+    ]
+  end
+
+  @impl Ezagent.Behavior
   def state_slice, do: :test
 
   @impl Ezagent.Behavior

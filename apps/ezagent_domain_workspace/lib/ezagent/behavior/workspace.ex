@@ -57,6 +57,22 @@ defmodule Ezagent.Behavior.Workspace do
   end
 
   @impl Ezagent.Behavior
+  def cap_subjects do
+    [
+      {:list_members, "list members (user URIs) of this workspace"},
+      {:add_member, "add a user URI to this workspace's member set"},
+      {:remove_member, "remove a user URI from this workspace's member set"},
+      {:list_templates,
+       "list templates (SessionTemplate / AgentTemplate) bound to this workspace"},
+      {:add_template, "bind a template version to this workspace"},
+      {:remove_template, "unbind a template from this workspace"},
+      {:list_routing_rules, "list workspace-scoped routing rules"},
+      {:set_routing_rules, "replace the workspace's routing rule set"},
+      {:instantiate, "instantiate a fresh workspace from a workspace template"}
+    ]
+  end
+
+  @impl Ezagent.Behavior
   def state_slice, do: :workspace
 
   @impl Ezagent.Behavior

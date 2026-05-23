@@ -71,7 +71,17 @@ defmodule EzagentCore.EtsOwner do
     # rows in SQLite (the CAS source of truth) and mirrors them into
     # this ETS table for O(1) `resolve/3`/`list/1` reads — the
     # `Ezagent.Routing.RuleStore` pattern.
-    {Ezagent.TemplateTags, :set}
+    {Ezagent.TemplateTags, :set},
+    # CapabilityRegistry (SPEC docs/superpowers/specs/2026-05-23-capability-registry.md):
+    # `:ezagent_capability_subjects` — keyed by `{kind, behavior, action}` →
+    # `%{description, dispatchable?}`. Non-bypassable cap-subject truth table;
+    # populated by each Application's `start/2` via
+    # `Ezagent.CapabilityRegistry.register/3` (which ALSO writes to
+    # `Ezagent.BehaviorRegistry` for dispatchable subjects).
+    {Ezagent.CapabilityRegistry.Subjects, :set},
+    # `:ezagent_capability_default_grants` — keyed by `kind` → grant_fn.
+    # Populated via `Ezagent.CapabilityRegistry.register_default_grant/2`.
+    {Ezagent.CapabilityRegistry.Defaults, :set}
   ]
 
   def start_link(_opts) do

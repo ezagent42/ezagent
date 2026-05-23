@@ -53,6 +53,9 @@ defmodule Ezagent.Integration.AddTemplateInvokesTest do
     def actions, do: [:ping]
 
     @impl true
+    def cap_subjects, do: [{:ping, "test fixture"}]
+
+    @impl true
     def state_slice, do: :probe
 
     @impl true

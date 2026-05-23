@@ -115,12 +115,12 @@ defmodule EzagentCore.Application do
   # sentinels (`system://bootstrap/default`, `system://migration-<id>`)
   # spawn through the standard SpawnRegistry path.
   defp register_system_kind do
-    alias Ezagent.BehaviorRegistry
     alias Ezagent.Behavior.Routing, as: RB
+    alias Ezagent.CapabilityRegistry
     alias Ezagent.Entity.System, as: SK
 
     Enum.each(RB.actions(), fn action ->
-      :ok = BehaviorRegistry.register(SK, action, RB)
+      :ok = CapabilityRegistry.register(SK, action, RB)
     end)
 
     :ok =

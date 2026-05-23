@@ -44,6 +44,14 @@ defmodule Ezagent.Behavior.Echo do
   def actions, do: [:say, :receive]
 
   @impl Ezagent.Behavior
+  def cap_subjects do
+    [
+      {:say, "programmatic echo invoke — returns the message verbatim"},
+      {:receive, "session-fanout echo — replies 'echo: <text>' back to the originating session"}
+    ]
+  end
+
+  @impl Ezagent.Behavior
   def state_slice, do: :echo
 
   @impl Ezagent.Behavior

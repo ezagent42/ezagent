@@ -44,6 +44,16 @@ defmodule Ezagent.Behavior.Identity do
   def actions, do: [:list_caps, :has_cap?, :grant_cap, :revoke_cap]
 
   @impl Ezagent.Behavior
+  def cap_subjects do
+    [
+      {:list_caps, "list all capabilities currently granted to this principal"},
+      {:has_cap?, "test whether this principal holds a specific capability shape"},
+      {:grant_cap, "grant a new capability to this principal (caller must hold admin cap)"},
+      {:revoke_cap, "revoke a capability from this principal (caller must hold admin cap)"}
+    ]
+  end
+
+  @impl Ezagent.Behavior
   def state_slice, do: :identity
 
   @impl Ezagent.Behavior

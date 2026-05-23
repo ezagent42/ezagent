@@ -81,6 +81,12 @@ defmodule EzagentWeb.Router do
       # SessionTemplate Kinds list, read-only. Detail link goes to
       # the existing /plugins/auto/:kind LV for raw slice inspection.
       live "/admin/templates", AdminTemplatesLive
+      # CapabilityRegistry SPEC `docs/superpowers/specs/2026-05-23-capability-registry.md`
+      # §8.1 — surfaces every cap subject registered via
+      # `Ezagent.CapabilityRegistry` (dispatchable + cap-only) plus
+      # default-grant policies per Kind. Admin-only at the mount level
+      # (matches `AdminSettingsLive`'s `@is_admin?` redirect pattern).
+      live "/admin/caps", AdminCapsLive
       # V1 fix (Allen Feishu 2026-05-21 17:44): /settings moved here
       # from top-level. The page hosts admin-only config (SMTP +
       # registration domains); belongs under /admin (admin scope),

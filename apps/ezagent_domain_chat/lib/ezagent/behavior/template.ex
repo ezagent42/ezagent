@@ -105,6 +105,15 @@ defmodule Ezagent.Behavior.Template do
   def actions, do: [:read, :write, :instantiate]
 
   @impl Ezagent.Behavior
+  def cap_subjects do
+    [
+      {:read, "read the template's content + metadata (write_count, last_version_hash)"},
+      {:write, "write a new immutable version of the template (CAS-keyed)"},
+      {:instantiate, "instantiate this template into a live Kind (Session / Agent / …)"}
+    ]
+  end
+
+  @impl Ezagent.Behavior
   def state_slice, do: :template
 
   @impl Ezagent.Behavior

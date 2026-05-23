@@ -59,6 +59,16 @@ defmodule Ezagent.Behavior.CurlAgent do
   def actions, do: [:receive, :reset_conversation, :configure]
 
   @impl Ezagent.Behavior
+  def cap_subjects do
+    [
+      {:receive,
+       "receive a session message and call the configured curl endpoint (LLM API mirror)"},
+      {:reset_conversation, "clear the curl agent's conversation history"},
+      {:configure, "set or update the curl agent's endpoint config (URL, headers, prompt)"}
+    ]
+  end
+
+  @impl Ezagent.Behavior
   def state_slice, do: :curl_agent
 
   @impl Ezagent.Behavior

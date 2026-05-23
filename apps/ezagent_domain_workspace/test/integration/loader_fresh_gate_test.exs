@@ -44,6 +44,9 @@ defmodule Ezagent.Integration.LoaderFreshGateTest do
     def actions, do: [:ping]
 
     @impl true
+    def cap_subjects, do: [{:ping, "test fixture"}]
+
+    @impl true
     def state_slice, do: :gate_probe
 
     @impl true
