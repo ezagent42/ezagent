@@ -137,6 +137,70 @@ defmodule EzagentDomainChat.PresenceFanoutTest do
     end
   end
 
+  describe "bootstrap rebuild (PR-5)" do
+    test "fanout restart picks up existing session members from KindRegistry" do
+      # Setup: create a session via the canonical facade so it's real,
+      # join an extra member, then RESTART the fanout and assert the
+      # index gets re-populated from the live Session's :chat slice.
+      member_uri =
+        URI.parse("entity://user/default/bootstrap_test_#{System.unique_integer([:positive])}")
+
+      # Spawn the member user Kind
+      {:ok, _} = Ezagent.Users.create(URI.to_string(member_uri), nil, [])
+      {:ok, _pid} = Ezagent.SpawnRegistry.spawn(member_uri)
+
+      # Create a session + join member
+      admin_uri = Ezagent.Entity.User.admin_uri()
+      {:ok, _} = Ezagent.SpawnRegistry.spawn(admin_uri)
+
+      short = "bootstrap_test_#{System.unique_integer([:positive])}"
+      {:ok, session_uri} = EzagentDomainChat.create_session(short, admin_uri)
+
+      # chat.join member
+      :ok =
+        case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+               target: URI.new!("#{URI.to_string(session_uri)}?action=chat.join"),
+               mode: :call,
+               args: %{member: member_uri},
+               ctx: %{
+                 caller: admin_uri,
+                 caps: Ezagent.Entity.User.admin_caps(),
+                 reply: :inline
+               }
+             }) do
+          {:ok, _} -> :ok
+          :ok -> :ok
+        end
+
+      # Wait for the :session_membership_change → fanout to settle
+      wait_for(fn -> Map.has_key?(PresenceFanout.__index__(), member_uri) end)
+
+      # Sanity: index has the member
+      assert Map.has_key?(PresenceFanout.__index__(), member_uri)
+
+      # Stop the fanout — supervisor will restart it
+      pid_before = Process.whereis(PresenceFanout)
+      ref = Process.monitor(pid_before)
+      Process.exit(pid_before, :kill)
+      assert_receive {:DOWN, ^ref, :process, ^pid_before, _}, 1_000
+
+      # Wait for supervisor restart
+      wait_for(fn ->
+        pid = Process.whereis(PresenceFanout)
+        is_pid(pid) and pid != pid_before
+      end)
+
+      # The new fanout's bootstrap_rebuild should have re-indexed
+      # the EXISTING session→member mapping from the live KindRegistry.
+      wait_for(fn -> Map.has_key?(PresenceFanout.__index__(), member_uri) end, 2_000)
+
+      assert MapSet.member?(
+               Map.get(PresenceFanout.__index__(), member_uri, MapSet.new()),
+               session_uri
+             )
+    end
+  end
+
   describe "presence-diff → session :events fan-out" do
     test "transport joining fans :member_presence online?: true to session topic" do
       session_uri = unique_session_uri("fanout_on")
