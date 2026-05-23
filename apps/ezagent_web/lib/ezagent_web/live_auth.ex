@@ -106,7 +106,44 @@ defmodule EzagentWeb.LiveAuth do
     # workspace LV.
     {:cont, socket} = on_mount(:cmdk_nav, params, session, socket)
 
-    require_entity_mount(session, socket)
+    case require_entity_mount(session, socket) do
+      {:cont, authed_socket} ->
+        # PR-B of Presence rollout (SPEC
+        # `docs/superpowers/specs/2026-05-23-presence.md` rev 3 §7) —
+        # track presence on the LV socket. Only on the WS connect (skip
+        # dead-render: a stateless HTTP request shouldn't register a
+        # presence entry). Phoenix.Presence monitors the LV socket pid
+        # → auto-untrack on socket exit. Failure must NOT block mount;
+        # we log + continue.
+        track_presence(authed_socket)
+
+      halt ->
+        halt
+    end
+  end
+
+  defp track_presence(socket) do
+    if Phoenix.LiveView.connected?(socket) do
+      uri = socket.assigns.current_entity_uri
+      transport_id = "liveview:" <> socket.id
+      meta = %{transport: :liveview, since: DateTime.utc_now()}
+
+      case Ezagent.Presence.track(uri, transport_id, meta) do
+        {:ok, _ref} ->
+          :ok
+
+        {:error, reason} ->
+          require Logger
+
+          Logger.warning(
+            "LiveAuth: Ezagent.Presence.track/3 failed " <>
+              "uri=#{URI.to_string(uri)} transport_id=#{transport_id} " <>
+              "reason=#{inspect(reason)} — LV will mount but won't appear online"
+          )
+      end
+    end
+
+    {:cont, socket}
   end
 
   defp require_entity_mount(session, socket) do
