@@ -105,6 +105,13 @@ defmodule EzagentPluginFeishu.Application do
     [
       {DynamicSupervisor, name: EzagentPluginFeishu.FeishuChatSupervisor, strategy: :one_for_one},
       EzagentPluginFeishu.Client,
+      # PR-C of Presence rollout (SPEC `docs/superpowers/specs/2026-05-23-presence.md`
+      # rev 3 §7) — mirrors Feishu-bound user activity into
+      # `Ezagent.Presence` as `:transport => :feishu`. Singleton; tracked
+      # entries persist for the duration of THIS process (Application
+      # lifetime). `InboundDispatcher.dispatch/1` casts `touch/1` after
+      # successful sender resolution.
+      EzagentPluginFeishu.PresenceMirror,
       # Phase 6 PR 15: WS long-connect to Feishu. Skipped at test boot
       # (Mix.env() == :test) and when EZAGENT_FEISHU_WS=0 (operator opt-out).
       maybe_ws_client_spec()

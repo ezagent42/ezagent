@@ -71,6 +71,12 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
         :ok
 
       {:ok, caller_uri, caps} ->
+        # PR-C of Presence rollout (SPEC `docs/superpowers/specs/2026-05-23-presence.md`
+        # rev 3 §7) — mark this user as present via Feishu. Cast through
+        # the singleton mirror so the entry rides on a long-lived pid
+        # (this process is short-lived per inbound request).
+        EzagentPluginFeishu.PresenceMirror.touch(caller_uri)
+
         case SessionBinding.resolve(chat_id) do
           {:ok, session_uri} ->
             case do_dispatch(session_uri, caller_uri, caps, body) do
