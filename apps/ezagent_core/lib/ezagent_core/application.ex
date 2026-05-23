@@ -176,6 +176,16 @@ defmodule EzagentCore.Application do
     :ok = Ezagent.CapabilityRegistry.register(Ezagent.Entity.User, :online, PB)
     :ok = Ezagent.CapabilityRegistry.register(Ezagent.Entity.Agent, :online, PB)
 
+    # PR-C Notifications (Allen 2026-05-23) — cap-only Behavior for
+    # the unified user-notifications inbox. Registered ONLY against
+    # User Kind (agents don't have an inbox; they receive via
+    # chat.receive dispatch). `Ezagent.Notifications.notify/2` checks
+    # `:notify` cap; `.subscribe/2` checks `:subscribe` cap.
+    alias Ezagent.Behavior.Notifications, as: NB
+
+    :ok = Ezagent.CapabilityRegistry.register(Ezagent.Entity.User, :notify, NB)
+    :ok = Ezagent.CapabilityRegistry.register(Ezagent.Entity.User, :subscribe, NB)
+
     :ok
   end
 end
