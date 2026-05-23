@@ -240,6 +240,18 @@ For `notifications/claude/channel` payloads (Anthropic channels-reference spec),
 *Why*: P3 + P10 — a SessionTemplate is a recipe (content-addressed via `@<hash>` — the only Kind with content addressing); a running session is the instance with its own history. Mixing them needs three-way merge mechanics that are explicitly deferred to dev-team-v1.x+.
 *See also*: Decision Log #141; invariant 10 below.
 
+#### **P27. Silent drops to clients OK only if security-motivated; silent drops in logs never OK.**
+
+Some user-facing surfaces MUST hide failure mode from the client response — e.g. magic-link request (anti-enumeration: an attacker shouldn't tell "valid email" from "invalid email" from "rate-limited" via response diffs). That uniformity is the security property; preserve it.
+
+But server-side observability is non-negotiable. Every code path that returns `:ok` to the client without doing the side effect MUST `Logger.info` / `Logger.warning` why, with enough context (email / IP / reason atom) for the operator to debug "user reports nothing happened". Anti-enumeration constrains the RESPONSE, not the logs.
+
+P18 covers the related "no silent drop on dispatch error to human-facing transport" case (Feishu reaction feedback); P27 generalizes the principle to ANY anti-enumeration-style success-on-failure path.
+
+*Why*: Allen 2026-05-23 hit `lin.yilun@h2oslabs.com` magic-link "no email received"; the controller's `maybe_send_magic_link/2` had 4 silent-drop paths (SMTP unconfigured / email rate-limited / IP rate-limited / domain not in whitelist) but ZERO Logger calls. Diagnosis required reading source — that's the failure mode this principle prevents.
+*CI gate*: code review catches `:ok ->` / `_ -> :ok` clauses in user-facing controllers without a preceding `Logger` call; no automated test (lints/AST scans don't reliably distinguish security-silent from bug-silent).
+*See also*: `apps/ezagent_web/lib/ezagent_web/controllers/session_controller.ex` `maybe_send_magic_link/2` post-PR for the canonical pattern; P18 (dispatch-side variant); P2 (anti-default rule that this complements).
+
 ---
 
 ### Where each old principle now lives
