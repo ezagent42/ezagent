@@ -30,6 +30,15 @@ defmodule EzagentCore.Application do
       # ⑤ PubSub — needed by LiveView audit:stream + future view fan-outs.
       {Phoenix.PubSub, name: EzagentCore.PubSub},
 
+      # ⑤·5 Presence (SPEC `docs/superpowers/specs/2026-05-23-presence.md`)
+      # — Phoenix.Presence CRDT for cross-node entity liveness. Must run
+      # AFTER PubSub (depends on it) and BEFORE any domain Application
+      # that subscribes. `permdown_on_shutdown: true` makes graceful node
+      # shutdown remove this node's local presences immediately; non-graceful
+      # crash still leaves remote view stale for `:down_period` (~30s) per
+      # SPEC §6.3 SLA.
+      {Ezagent.Presence.Tracker, [pool_size: 1, permdown_on_shutdown: true]},
+
       # ⑥ Audit batch writer — must come after Repo + PubSub.
       Ezagent.Audit.Writer,
 
@@ -69,6 +78,14 @@ defmodule EzagentCore.Application do
     # domain Applications and here for System. Global rules dispatch to
     # `system://routing/default`, spawned below.
     :ok = register_system_kind()
+
+    # Presence SPEC `docs/superpowers/specs/2026-05-23-presence.md` §4 —
+    # register the cap-only `Ezagent.Behavior.Presence` against User +
+    # Agent so `Ezagent.Presence.subscribe/2` finds a coherent cap shape
+    # via `CapabilityRegistry.needed_for/3`. `dispatchable?: false` keeps
+    # this out of `BehaviorRegistry` — `Invocation.dispatch/1` can never
+    # accidentally invoke `:online`.
+    :ok = register_presence_behavior()
 
     # Phase 7 completion PR-3 (SPEC §1.7 (c)) — hydrate the TemplateTags
     # ETS read cache from the `template_tags` SQLite table, the
@@ -144,5 +161,21 @@ defmodule EzagentCore.Application do
           err -> err
         end
     end
+  end
+
+  defp register_presence_behavior do
+    # Presence SPEC `docs/superpowers/specs/2026-05-23-presence.md` §4 —
+    # register cap-only Behavior against User + Agent. CapabilityRegistry
+    # handles the dispatchable?: false sentinel: subjects table gets
+    # `(User|Agent, :online, Ezagent.Behavior.Presence)` entries, but
+    # BehaviorRegistry is NOT touched. `Ezagent.Presence.subscribe/2`
+    # uses `CapabilityRegistry.needed_for(kind, :online, uri)` to build
+    # the needed-cap shape for authorization.
+    alias Ezagent.Behavior.Presence, as: PB
+
+    :ok = Ezagent.CapabilityRegistry.register(Ezagent.Entity.User, :online, PB)
+    :ok = Ezagent.CapabilityRegistry.register(Ezagent.Entity.Agent, :online, PB)
+
+    :ok
   end
 end
