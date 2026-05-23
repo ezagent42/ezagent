@@ -131,29 +131,60 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
 
   @impl true
   def handle_event("restart", _params, socket) do
-    # cc-specific operation — restart is currently only meaningful for
-    # cc-flavored agents (it restarts the PtyServer). Other flavors
-    # won't surface the Restart button in render/1. Direct plugin
-    # reference here is the documented exception per invariant 8:
-    # there's no domain-wide "restart agent" abstraction yet (V2
-    # work — see Lifecycle Behavior contract in v2-feedback-log).
-    case Ezagent.Domain.Pty.lookup(socket.assigns.agent_uri) do
-      {:ok, pid} ->
-        # Supervisor terminates → restart via :permanent restart spec.
-        # GenServer.stop(:normal) would suppress restart; use :shutdown
-        # to signal "restart-please, no crash logged".
-        Process.exit(pid, :shutdown)
+    # V-2 fix (audit 2026-05-23) — restart now routes through
+    # `Ezagent.Behavior.Lifecycle` `:terminate` dispatch instead of a
+    # direct `Process.exit/2` on a PtyServer pid. This restores all
+    # three principles the old path bypassed:
+    #
+    #   - P14 (dispatch is the only path) — `Invocation.dispatch/1`
+    #   - P15 (cap check) — step 5.5 enforces caller cap on the
+    #     `?action=lifecycle.terminate` target URI
+    #   - P22 (audit) — telemetry handler `cast`s an audit row async
+    #
+    # The Agent Kind's supervisor uses the `:permanent` restart spec, so
+    # terminating the worker brings it back automatically — the operator
+    # observes a brief "Restarting..." then the fresh status. The actual
+    # `DynamicSupervisor.terminate_child` is scheduled in a detached
+    # Task by `Behavior.Lifecycle` so the dispatch reply wins the race
+    # (the Behavior runs INSIDE the target's GenServer).
+    target =
+      URI.new!(URI.to_string(socket.assigns.agent_uri) <> "?action=lifecycle.terminate")
 
-        # Allow restart to settle before re-reading.
+    case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+           target: target,
+           mode: :call,
+           args: %{},
+           ctx: lifecycle_ctx(socket)
+         }) do
+      {:ok, _} ->
+        # Allow supervisor restart to settle before re-reading the status
+        # (Behavior.Lifecycle schedules termination with a 20ms yield, then
+        # supervisor restart is sub-100ms; 500ms is a safe operator-visible
+        # refresh window — same as the pre-V-2 path).
         Process.send_after(self(), :refresh, 500)
 
         {:noreply,
          socket
-         |> assign(:status, %{phase: :not_found, flavor: "cc", detail: nil})
+         |> assign(:status, %{phase: :not_found, flavor: status_flavor(socket), detail: nil})
          |> assign(:flash_error, nil)}
 
-      :error ->
-        {:noreply, assign(socket, :flash_error, gettext("no live PtyServer for this agent"))}
+      {:error, :unauthorized} ->
+        {:noreply,
+         assign(
+           socket,
+           :flash_error,
+           gettext(
+             "Restart denied — your account lacks the lifecycle.terminate cap on this agent."
+           )
+         )}
+
+      {:error, reason} ->
+        {:noreply,
+         assign(
+           socket,
+           :flash_error,
+           gettext("Restart failed: %{reason}", reason: inspect(reason))
+         )}
     end
   end
 
@@ -186,6 +217,32 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
       end
 
     %{caller: caller, caps: caps, reply: :ignore}
+  end
+
+  # Builds the dispatch ctx for `:lifecycle.terminate`. Caps lookup is
+  # identical to `pty_ctx/1` — the helper exists separately so future
+  # lifecycle actions (e.g. start, suspend) can override `reply` mode
+  # without affecting the PTY input path.
+  defp lifecycle_ctx(socket) do
+    caller = socket.assigns[:current_entity_uri] || Ezagent.Entity.User.admin_uri()
+
+    caps =
+      if URI.to_string(caller) == URI.to_string(Ezagent.Entity.User.admin_uri()) do
+        Ezagent.Entity.User.admin_caps()
+      else
+        Ezagent.Identity.list_caps_for(caller)
+      end
+
+    %{caller: caller, caps: caps, reply: :sync}
+  end
+
+  # Preserve flavor in the optimistic post-restart status so the LV doesn't
+  # flicker "unknown flavor" between the dispatch and the next :refresh.
+  defp status_flavor(socket) do
+    case Map.get(socket.assigns, :status) do
+      %{flavor: f} when is_binary(f) -> f
+      _ -> nil
+    end
   end
 
   @impl true

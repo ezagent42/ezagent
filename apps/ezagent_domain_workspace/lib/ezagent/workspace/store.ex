@@ -8,10 +8,26 @@ defmodule Ezagent.Workspace.Store do
       name              string unique  (short name, e.g. "default")
       uri               string unique  (workspace://default)
       member_uris       text   (Jason-encoded [String.t()])
-      session_templates text   (Jason-encoded map)
+      session_templates text   (Jason-encoded map)       -- DEPRECATED, see below
       routing_rules     text   (Jason-encoded [map])
       created_by        string (URI of creator)
       timestamps        utc_datetime_usec
+
+  ## DEPRECATED: `session_templates` field (G-12, audit 2026-05-23)
+
+  Despite the name, this column stores **spawn-template REGISTRATIONS**
+  (`cc.agent`, `echo.agent` template-class instances written by
+  `Ezagent.Workspace.add_template/3`) — NOT Phase-7 `SessionTemplate`
+  Kinds. The naming predates Phase-7 and is misleading.
+
+  Phase-7's `SessionTemplate` Kind (`Ezagent.Entity.SessionTemplate`)
+  is a separate construct living in `kind_snapshots`, exposed via the
+  `/admin/templates` LV. The two are not interchangeable; the legacy
+  field stays because it's still actively written by the
+  `AgentNewLive` create-agent flow.
+
+  Future work (V2): retire `session_templates` once `add_template/3`
+  also writes a real Template Kind, then drop this column.
 
   ## Why JSON-text columns
 

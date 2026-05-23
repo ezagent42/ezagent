@@ -40,6 +40,9 @@ defmodule EzagentPluginLiveview.RoutingLive do
   use Gettext, backend: EzagentPluginLiveview.Gettext
   alias EzagentDomainUi.WorkspaceShell
   alias EzagentPluginLiveview.AppShell
+  # V-4 scrub (audit 2026-05-23) — pull in `<.card>`, `<.button>`,
+  # `<.page_header>`, `<.badge>` atoms to retire inline style="" usage.
+  use EzagentDomainUi.Components
   use EzagentDomainUi.Primitives
   import Phoenix.Component
 
@@ -506,110 +509,127 @@ defmodule EzagentPluginLiveview.RoutingLive do
       </:resource_panel>
       <:main_window>
         <div class="flex-1 overflow-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
-          <header>
-            <h1 style="font-size: 22px; font-weight: 600;">{gettext("Routing Rules")}</h1>
-            <p style="font-size: 13px; color: #666;">
+          <.page_header title={gettext("Routing Rules")}>
+            <:subtitle>
               {gettext(
                 "Global RoutingRegistry tables. Per-workspace routing_rules stay config-only metadata (visible on Workspace detail page)."
               )}
-            </p>
-          </header>
+            </:subtitle>
+          </.page_header>
 
-          <section id="table-tabs" style="margin-top: 24px; display: flex; gap: 8px;">
+          <%!-- V-4 scrub (audit 2026-05-23) — inline style="" purged.
+                Use EzagentDomainUi atoms + Tailwind for table tabs and
+                buttons; `dark:` pairs preserved for dark-mode toggle. --%>
+          <section id="table-tabs" class="flex gap-2 mb-4">
             <button
               :for={{label, mod} <- @tables}
               type="button"
               phx-click="switch_table"
               phx-value-table={Atom.to_string(mod)}
-              style={tab_style(@current_table == mod)}
+              class={[
+                "px-4 py-1.5 border rounded-md text-xs transition-colors",
+                (@current_table == mod &&
+                   "bg-sky-600 dark:bg-sky-500 text-white border-sky-600 dark:border-sky-500") ||
+                  "bg-white dark:bg-zinc-900 text-sky-700 dark:text-sky-300 border-zinc-200 dark:border-zinc-800 hover:bg-sky-50 dark:hover:bg-zinc-800"
+              ]}
             >
               {label}
             </button>
           </section>
 
-          <section id="rules-list" style="margin-top: 16px;">
-            <p :if={@rules == []} id="rules-empty" style="color: #57606a; font-style: italic;">
+          <.card id="rules-list">
+            <p
+              :if={@rules == []}
+              id="rules-empty"
+              class="text-sm text-zinc-500 italic"
+            >
               {gettext("No rules in this table. Add one below.")}
             </p>
 
             <table
               :if={@rules != []}
               id="rules-table"
-              style="width: 100%; font-size: 13px; border-collapse: collapse;"
+              class="w-full text-xs border-collapse"
             >
               <thead>
-                <tr style="border-bottom: 1px solid #d1d5da;">
-                  <th style="text-align: left; padding: 6px 4px;">{gettext("ID")}</th>
-                  <th style="text-align: left;">{gettext("Source")}</th>
-                  <th style="text-align: left;">{gettext("Matcher")}</th>
-                  <th style="text-align: left;">{gettext("Receivers")}</th>
+                <tr class="border-b border-zinc-200 dark:border-zinc-800">
+                  <th class="text-left px-1 py-1.5">{gettext("ID")}</th>
+                  <th class="text-left">{gettext("Source")}</th>
+                  <th class="text-left">{gettext("Matcher")}</th>
+                  <th class="text-left">{gettext("Receivers")}</th>
                   <th></th>
                 </tr>
               </thead>
               <tbody>
                 <tr
                   :for={rule <- @rules}
-                  style={"border-bottom: 1px solid #eaeef2;" <> (if !rule.enabled, do: " opacity: 0.5;", else: "")}
+                  class={[
+                    "border-b border-zinc-100 dark:border-zinc-900",
+                    !rule.enabled && "opacity-50"
+                  ]}
                 >
-                  <td style="padding: 4px 4px;">{rule.id}</td>
-                  <td style="font-size: 11px;">
-                    <span style={source_badge_style(rule.source)}>{rule.source}</span>
-                    <span :if={!rule.enabled} style="color: #57606a; margin-left: 4px;">
+                  <td class="px-1 py-1">{rule.id}</td>
+                  <td class="text-[11px]">
+                    <.badge variant={source_badge_variant(rule.source)}>{rule.source}</.badge>
+                    <span :if={!rule.enabled} class="text-zinc-500 ml-1">
                       {gettext("(disabled)")}
                     </span>
                   </td>
-                  <td style="font-family: monospace; font-size: 11px;">{inspect(rule.matcher)}</td>
-                  <td style="font-family: monospace; font-size: 11px;">
+                  <td class="font-mono text-[11px] break-all">{inspect(rule.matcher)}</td>
+                  <td class="font-mono text-[11px]">
                     <span :for={r <- rule.receivers}>{render_receiver(r)}</span>
                   </td>
-                  <td>
-                    <button
+                  <td class="whitespace-nowrap">
+                    <.button
                       :if={rule.source != "system_default"}
+                      variant="outline"
+                      size="sm"
                       type="button"
                       phx-click="delete_rule"
                       phx-value-id={rule.id}
-                      style="padding: 4px 10px; background: white; color: #cf222e; border: 1px solid #cf222e; border-radius: 4px; cursor: pointer; font-size: 11px;"
+                      class="text-[11px] px-2 py-0.5 h-auto text-rose-700 dark:text-rose-300 border-rose-300 dark:border-rose-700"
                       data-confirm={gettext("Delete this rule?")}
                     >
                       {gettext("Delete")}
-                    </button>
-                    <button
+                    </.button>
+                    <.button
                       :if={rule.source == "system_default" and rule.enabled}
+                      variant="outline"
+                      size="sm"
                       type="button"
                       phx-click="disable_rule"
                       phx-value-id={rule.id}
-                      style="padding: 4px 10px; background: white; color: #9a6700; border: 1px solid #9a6700; border-radius: 4px; cursor: pointer; font-size: 11px;"
+                      class="text-[11px] px-2 py-0.5 h-auto text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-700"
                       data-confirm={gettext("Disable this system_default rule? (admin opt-out — re-enable via Enable button)")}
                     >
                       {gettext("Disable")}
-                    </button>
-                    <button
+                    </.button>
+                    <.button
                       :if={rule.source == "system_default" and !rule.enabled}
+                      variant="outline"
+                      size="sm"
                       type="button"
                       phx-click="enable_rule"
                       phx-value-id={rule.id}
-                      style="padding: 4px 10px; background: white; color: #1f883d; border: 1px solid #1f883d; border-radius: 4px; cursor: pointer; font-size: 11px;"
+                      class="text-[11px] px-2 py-0.5 h-auto text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-700"
                     >
                       {gettext("Enable")}
-                    </button>
+                    </.button>
                   </td>
                 </tr>
               </tbody>
             </table>
-          </section>
+          </.card>
 
-          <section
-            id="add-rule"
-            style="margin-top: 24px; padding: 16px; border: 1px solid #d1d5da; border-radius: 6px;"
-          >
-            <h2 style="font-size: 14px; font-weight: 500; margin: 0 0 12px 0;">{gettext("Add rule")}</h2>
+          <.card id="add-rule" class="mt-6">
+            <:header>{gettext("Add rule")}</:header>
 
-            <div style="margin-bottom: 12px; display: flex; gap: 8px;">
+            <div class="flex gap-2 mb-3">
               <button
                 type="button"
                 phx-click="toggle_mode"
                 phx-value-mode="form"
-                style={mode_btn_style(@matcher_mode == "form")}
+                class={mode_btn_class(@matcher_mode == "form")}
               >
                 {gettext("Form mode")}
               </button>
@@ -617,22 +637,22 @@ defmodule EzagentPluginLiveview.RoutingLive do
                 type="button"
                 phx-click="toggle_mode"
                 phx-value-mode="json"
-                style={mode_btn_style(@matcher_mode == "json")}
+                class={mode_btn_class(@matcher_mode == "json")}
               >
                 {gettext("JSON mode (combinators)")}
               </button>
             </div>
 
-            <.form for={@add_form} phx-submit="add_rule">
+            <.form for={@add_form} phx-submit="add_rule" class="flex flex-col gap-3">
               <input type="hidden" name="rule[table]" value={Atom.to_string(@current_table)} />
 
               <div
                 :if={@matcher_mode == "form"}
-                style="display: grid; grid-template-columns: 200px 1fr; gap: 8px; margin-bottom: 12px;"
+                class="grid grid-cols-[200px_1fr] gap-2"
               >
                 <select
                   name="rule[matcher_type]"
-                  style="padding: 6px 10px; border: 1px solid #d1d5da; border-radius: 4px;"
+                  class="block w-full px-3 py-2 text-sm rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
                 >
                   <option :for={{t, _arg_label} <- @matcher_types} value={t}>{t}</option>
                 </select>
@@ -653,16 +673,16 @@ defmodule EzagentPluginLiveview.RoutingLive do
                 />
               </div>
 
-              <div :if={@matcher_mode == "json"} style="margin-bottom: 12px;">
+              <div :if={@matcher_mode == "json"}>
                 <textarea
                   name="rule[matcher_json]"
                   rows="4"
                   placeholder={
                     ~s({"type":"and","items":[{"type":"mention","arg":"entity://agent/default/cc_x"},{"type":"from","arg":"entity://user/system/admin"}]})
                   }
-                  style="width: 100%; padding: 6px 10px; border: 1px solid #d1d5da; border-radius: 4px; font-family: monospace; font-size: 12px;"
+                  class="block w-full px-3 py-2 text-xs font-mono rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
                 ></textarea>
-                <p style="font-size: 11px; color: #57606a; margin: 4px 0 0;">
+                <p class="text-[11px] text-zinc-500 mt-1">
                   {gettext(
                     "Use full matcher JSON for combinators. Shapes: %{combinators} wrap leaf matchers (%{leaves}).",
                     combinators: "and / or / not",
@@ -671,7 +691,7 @@ defmodule EzagentPluginLiveview.RoutingLive do
                 </p>
               </div>
 
-              <div style="margin-bottom: 12px;">
+              <div>
                 <%!--
               V1 UI PR-1 (SPEC §1.2) — receivers is a :multi uri_picker
               (chips + autocomplete) over in-workspace entities +
@@ -688,18 +708,20 @@ defmodule EzagentPluginLiveview.RoutingLive do
                 />
               </div>
 
-              <button
-                type="submit"
-                style="padding: 8px 16px; background: #1f883d; color: white; border: none; border-radius: 4px; cursor: pointer;"
-              >
-                {gettext("Add rule")}
-              </button>
+              <div class="flex justify-end pt-2 border-t border-zinc-200 dark:border-zinc-800">
+                <.button variant="success" type="submit">
+                  {gettext("Add rule")}
+                </.button>
+              </div>
             </.form>
 
-            <p :if={@flash_error} style="color: #cf222e; font-size: 13px; margin-top: 8px;">
+            <p
+              :if={@flash_error}
+              class="text-rose-700 dark:text-rose-300 text-sm mt-2"
+            >
               {@flash_error}
             </p>
-          </section>
+          </.card>
         </div>
       </:main_window>
 
@@ -709,30 +731,20 @@ defmodule EzagentPluginLiveview.RoutingLive do
     """
   end
 
-  defp tab_style(true),
-    do: tab_base() <> "background: #0969da; color: white; border-color: #0969da;"
+  # V-4 scrub (audit 2026-05-23) — Tailwind classes replace inline
+  # style strings; tab styling is now inlined into the render template
+  # (single class list, no helper) for the table-tabs section.
 
-  defp tab_style(false), do: tab_base() <> "background: white; color: #0969da;"
-
-  defp tab_base,
+  defp mode_btn_class(true),
     do:
-      "padding: 6px 16px; border: 1px solid #d1d5da; border-radius: 4px; cursor: pointer; font-size: 13px; "
+      "px-3 py-1 bg-sky-600 dark:bg-sky-500 text-white rounded-md text-xs hover:bg-sky-700 dark:hover:bg-sky-600 transition-colors"
 
-  defp mode_btn_style(true),
+  defp mode_btn_class(false),
     do:
-      "padding: 4px 12px; background: #0969da; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;"
+      "px-3 py-1 bg-white dark:bg-zinc-900 text-sky-700 dark:text-sky-300 border border-zinc-200 dark:border-zinc-800 rounded-md text-xs hover:bg-sky-50 dark:hover:bg-zinc-800 transition-colors"
 
-  defp mode_btn_style(false),
-    do:
-      "padding: 4px 12px; background: white; color: #0969da; border: 1px solid #d1d5da; border-radius: 4px; cursor: pointer; font-size: 12px;"
-
-  defp source_badge_style("system_default"),
-    do:
-      "background: #ddf4ff; color: #0969da; padding: 2px 6px; border-radius: 3px; font-size: 10px;"
-
-  defp source_badge_style(_),
-    do:
-      "background: #f6f8fa; color: #57606a; padding: 2px 6px; border-radius: 3px; font-size: 10px;"
+  defp source_badge_variant("system_default"), do: "info"
+  defp source_badge_variant(_), do: "default"
 
   # Render magic tokens as human-friendly hints, regular URIs as-is.
   defp render_receiver("$session_members"),

@@ -4,11 +4,11 @@ defmodule EzagentPluginLiveview.AgentNewLive do
 
   Mounts at `/identities/agents/new`. Form fields:
 
-  - **flavor** — dropdown over the built-in agent flavors
-    (`cc / curl / echo`, matching `kind_module_from_flavor/1` in
-    `EzagentDomainChat.Application`). Hard-coded for v1; future work
-    can derive this list from `Ezagent.SpawnRegistry` once flavor
-    registration becomes data-driven.
+  - **flavor** — dropdown over the registered agent flavors. G-8 / V-1
+    fix (audit 2026-05-23): the dropdown now reads from
+    `Ezagent.AgentFlavorRegistry.list_all/0` at mount, so a new
+    flavor plugin (e.g. `np` from #258) auto-appears without editing
+    this LV. Plugin isolation (P11) restored.
   - **name** — short identifier; UI composes the full URI
     `entity://agent/<flavor>_<name>`. A live preview line shows the
     composed URI as the user types (phx-change "preview").
@@ -72,41 +72,53 @@ defmodule EzagentPluginLiveview.AgentNewLive do
   use EzagentDomainUi.Components
   import Phoenix.Component
 
-  alias Ezagent.{Capability, Invocation, KindRegistry}
+  alias Ezagent.{AgentFlavorRegistry, Capability, Invocation, KindRegistry}
   alias Phoenix.LiveView.JS
 
-  # Flavors mirror `kind_module_from_flavor/1` in
-  # `EzagentDomainChat.Application` (PR #149 §5.14). Order is
-  # creation-frequency-descending: cc is the common case (Claude-Code
-  # orchestrated agent), echo is the testing fixture, curl is the
-  # external-HTTP variant.
-  @flavors ~w(cc echo curl)
-
-  # Phase 8c follow-up (Allen 2026-05-20) — cc agents need a PtyServer to
-  # actually exec claude-code. PtyServer is started when a workspace's
-  # `cc.agent` template references the agent_uri. Until this step exists,
-  # AgentNewLive only created an identity skeleton ("Not running" forever).
-  # We now also register the template inline as part of create_agent so a
-  # fresh cc agent boots ready-to-use.
+  # G-8 / V-1 fix (audit 2026-05-23) — flavors are read at runtime from
+  # `Ezagent.AgentFlavorRegistry` so a new agent-flavor plugin
+  # (e.g. `np` from #258) auto-appears in the dropdown without touching
+  # this LV. Plugin isolation (P11) is restored.
   #
-  # Workspace target: hardcoded "default" for now. Per the
-  # workspace=deployment-unit doc, current-workspace context is a Phase 9
-  # concern; once it's a server-side concept this code reads from socket.
-  @default_workspace_name "default"
+  # `list_flavors/0` is the LV-facing helper added in this PR — it
+  # delegates to `AgentFlavorRegistry.list_all/0` (which returns
+  # `[{flavor, %{kind: ..., template_class: ...}}]`) and extracts just
+  # the flavor names sorted for stable rendering. The fallback list is
+  # used only if the registry isn't booted yet (e.g. in unit tests that
+  # don't start the umbrella) — we don't want the LV to render an empty
+  # `<select>` and silently break the form.
+  @fallback_flavors ~w(cc echo curl)
+
+  defp list_flavors do
+    case AgentFlavorRegistry.list_all() do
+      [] -> @fallback_flavors
+      entries -> entries |> Enum.map(fn {flavor, _decl} -> flavor end) |> Enum.sort()
+    end
+  end
+
+  # V-6 fix (audit 2026-05-23) — the hardcoded "default" workspace name
+  # is now only the LAST-RESORT fallback when the LV is mounted outside
+  # a workspace context (which shouldn't happen post-Phase-9). The
+  # primary path reads the caller's `current_workspace_uri` from
+  # socket assigns and uses its workspace segment.
+  @fallback_workspace_name "default"
 
   @impl true
   def mount(_params, _session, socket) do
+    flavors = list_flavors()
+    default_flavor = if "cc" in flavors, do: "cc", else: List.first(flavors) || "cc"
+
     {:ok,
      socket
-     |> assign(:flavors, @flavors)
-     |> assign(:flavor, "cc")
+     |> assign(:flavors, flavors)
+     |> assign(:flavor, default_flavor)
      |> assign(:name, "")
      |> assign(:caps_str, "")
      |> assign(:cwd, "")
      |> assign(:with_pty?, false)
      |> assign(:flash_error, nil)
      |> assign(:flash_info, nil)
-     |> assign(:preview_uri, preview_uri("cc", ""))}
+     |> assign(:preview_uri, preview_uri(default_flavor, "", workspace_name(socket)))}
   end
 
   @impl true
@@ -125,7 +137,7 @@ defmodule EzagentPluginLiveview.AgentNewLive do
      |> assign(:caps_str, caps_str)
      |> assign(:cwd, cwd)
      |> assign(:with_pty?, with_pty?)
-     |> assign(:preview_uri, preview_uri(flavor, name))}
+     |> assign(:preview_uri, preview_uri(flavor, name, workspace_name(socket)))}
   end
 
   def handle_event("create_agent", %{"agent" => params}, socket) do
@@ -135,13 +147,20 @@ defmodule EzagentPluginLiveview.AgentNewLive do
     cwd = Map.get(params, "cwd", "") |> String.trim()
     with_pty? = parse_checkbox(Map.get(params, "with_pty"))
 
-    with :ok <- validate_flavor(flavor),
+    workspace_name = workspace_name(socket)
+
+    with :ok <- validate_flavor(flavor, socket.assigns.flavors),
          :ok <- validate_name(name),
          :ok <- validate_cwd_for_flavor(flavor, with_pty?, cwd),
-         {:ok, agent_uri} <- compose_uri(flavor, name),
+         {:ok, agent_uri} <- compose_uri(flavor, name, workspace_name),
          :ok <- refuse_if_exists(agent_uri),
          {:ok, caps} <- Capability.Parser.parse(caps_str, caller_uri(socket)),
-         :ok <- register_and_instantiate(flavor, agent_uri, %{cwd: cwd, with_pty?: with_pty?}),
+         :ok <-
+           register_and_instantiate(flavor, agent_uri, %{
+             cwd: cwd,
+             with_pty?: with_pty?,
+             workspace_name: workspace_name
+           }),
          :ok <- grant_all(agent_uri, caps, socket) do
       encoded = URI.encode_www_form(URI.to_string(agent_uri))
       {:noreply, push_navigate(socket, to: "/identities/agents/#{encoded}")}
@@ -156,7 +175,7 @@ defmodule EzagentPluginLiveview.AgentNewLive do
          |> assign(:caps_str, caps_str)
          |> assign(:cwd, cwd)
          |> assign(:with_pty?, with_pty?)
-         |> assign(:preview_uri, preview_uri(flavor, name))}
+         |> assign(:preview_uri, preview_uri(flavor, name, workspace_name))}
     end
   end
 
@@ -171,9 +190,14 @@ defmodule EzagentPluginLiveview.AgentNewLive do
 
   # ── helpers ────────────────────────────────────────────────────────
 
-  defp validate_flavor(f) when f in @flavors, do: :ok
-  defp validate_flavor(""), do: {:error, :flavor_required}
-  defp validate_flavor(f), do: {:error, {:bad_flavor, f}}
+  # G-8 fix — validate against the LIVE flavor list (from socket assigns)
+  # rather than a compile-time constant, so a newly-installed flavor
+  # plugin is accepted on the next mount without a recompile.
+  defp validate_flavor("", _), do: {:error, :flavor_required}
+
+  defp validate_flavor(f, flavors) when is_list(flavors) do
+    if f in flavors, do: :ok, else: {:error, {:bad_flavor, f}}
+  end
 
   defp validate_name(""), do: {:error, :name_required}
 
@@ -219,7 +243,10 @@ defmodule EzagentPluginLiveview.AgentNewLive do
   # returns. NO pre-spawn via `SpawnRegistry.spawn/1` — that path is
   # what the V1 fix removed (it created the Kind out-of-order, leaving
   # cc.agent.instantiate to spawn only the PtyServer).
-  defp register_and_instantiate("cc", agent_uri, %{cwd: cwd}) do
+  #
+  # V-6 fix (audit 2026-05-23) — `workspace_name` now derived from the
+  # caller's `current_workspace_uri` instead of the hardcoded "default".
+  defp register_and_instantiate("cc", agent_uri, %{cwd: cwd, workspace_name: workspace_name}) do
     tmpl_name = "cc.agent." <> agent_name(agent_uri)
 
     tmpl = %{
@@ -228,7 +255,7 @@ defmodule EzagentPluginLiveview.AgentNewLive do
       "cwd" => Path.expand(cwd)
     }
 
-    case Ezagent.Workspace.add_template(@default_workspace_name, tmpl_name, tmpl) do
+    case Ezagent.Workspace.add_template(workspace_name, tmpl_name, tmpl) do
       :ok -> :ok
       {:error, reason} -> {:error, {:template_register_failed, reason}}
     end
@@ -241,7 +268,11 @@ defmodule EzagentPluginLiveview.AgentNewLive do
   # echo.agent.instantiate` ensures the Agent Kind AND (if
   # `with_pty: true`) the PtyServer are alive when this returns —
   # parallel to the cc.agent flow above.
-  defp register_and_instantiate("echo", agent_uri, %{cwd: cwd, with_pty?: with_pty?}) do
+  defp register_and_instantiate("echo", agent_uri, %{
+         cwd: cwd,
+         with_pty?: with_pty?,
+         workspace_name: workspace_name
+       }) do
     tmpl_name = "echo.agent." <> agent_name(agent_uri)
 
     tmpl = %{
@@ -254,19 +285,21 @@ defmodule EzagentPluginLiveview.AgentNewLive do
       "cwd" => if(with_pty?, do: Path.expand(cwd), else: cwd)
     }
 
-    case Ezagent.Workspace.add_template(@default_workspace_name, tmpl_name, tmpl) do
+    case Ezagent.Workspace.add_template(workspace_name, tmpl_name, tmpl) do
       :ok -> :ok
       {:error, reason} -> {:error, {:template_register_failed, reason}}
     end
   end
 
-  # curl has no per-instance lifecycle resource (no PTY, no cwd —
-  # owner User's api_keys carries the auth). Direct spawn is the V1
-  # path — see moduledoc for the rationale. `{:already_started, _}`
-  # is treated as success because `refuse_if_exists/1` upstream
-  # already rejected duplicates against a stale registry view; this
-  # guards against a tight race.
-  defp register_and_instantiate("curl", agent_uri, _params) do
+  # G-8 follow-on — any flavor NOT in this LV's hardcoded handler list
+  # (curl, np, future) goes through direct `SpawnRegistry.spawn/1`. The
+  # AgentFlavorRegistry guarantees the URI parses + the kind module is
+  # registered; SpawnRegistry handles the per-flavor spawn. This is the
+  # generic path that lets a future flavor plugin work without LV edits.
+  # `{:already_started, _}` is treated as success — `refuse_if_exists/1`
+  # upstream already rejected duplicates against a stale registry view;
+  # this guards against a tight race.
+  defp register_and_instantiate(_flavor, agent_uri, _params) do
     case Ezagent.SpawnRegistry.spawn(agent_uri) do
       {:ok, _pid} -> :ok
       {:error, {:already_started, _pid}} -> :ok
@@ -282,8 +315,11 @@ defmodule EzagentPluginLiveview.AgentNewLive do
     end
   end
 
-  defp compose_uri(flavor, name) do
-    full = "entity://agent/default/#{flavor}_#{name}"
+  # V-6 fix — `workspace_name` threaded from the caller's
+  # `current_workspace_uri`. The URI segment per SPEC v3 §3 is
+  # `entity://agent/<workspace>/<flavor>_<name>`.
+  defp compose_uri(flavor, name, workspace_name) do
+    full = "entity://agent/#{workspace_name}/#{flavor}_#{name}"
 
     case URI.new(full) do
       {:ok, %URI{scheme: "entity", host: "agent", path: "/" <> _} = u} -> {:ok, u}
@@ -298,10 +334,34 @@ defmodule EzagentPluginLiveview.AgentNewLive do
     end
   end
 
-  defp preview_uri(flavor, name) when is_binary(flavor) and is_binary(name) do
+  defp preview_uri(flavor, name, workspace_name)
+       when is_binary(flavor) and is_binary(name) and is_binary(workspace_name) do
     cond do
-      flavor == "" or name == "" -> "entity://agent/<flavor>_<name>"
-      true -> "entity://agent/default/#{flavor}_#{name}"
+      flavor == "" or name == "" -> "entity://agent/#{workspace_name}/<flavor>_<name>"
+      true -> "entity://agent/#{workspace_name}/#{flavor}_#{name}"
+    end
+  end
+
+  # V-6 fix — extract workspace name from socket's
+  # `current_workspace_uri`. Falls back to `@fallback_workspace_name`
+  # if the assign is missing (LV mounted outside a workspace context —
+  # shouldn't happen post-Phase-9 but kept as belt-and-suspenders).
+  defp workspace_name(socket) do
+    case Map.get(socket.assigns, :current_workspace_uri) do
+      %URI{scheme: "workspace", path: nil, host: name} when is_binary(name) and name != "" ->
+        name
+
+      uri_str when is_binary(uri_str) ->
+        case URI.new(uri_str) do
+          {:ok, %URI{scheme: "workspace", host: name}} when is_binary(name) and name != "" ->
+            name
+
+          _ ->
+            @fallback_workspace_name
+        end
+
+      _ ->
+        @fallback_workspace_name
     end
   end
 
@@ -347,7 +407,11 @@ defmodule EzagentPluginLiveview.AgentNewLive do
   defp friendly_error(:name_required), do: gettext("Name is required.")
 
   defp friendly_error({:bad_flavor, f}),
-    do: gettext("Unknown flavor: %{flavor}. Choose cc / echo / curl.", flavor: inspect(f))
+    do:
+      gettext("Unknown flavor: %{flavor}. Choose one of: %{available}.",
+        flavor: inspect(f),
+        available: Enum.join(list_flavors(), " / ")
+      )
 
   defp friendly_error({:bad_name, n}),
     do:
@@ -455,7 +519,7 @@ defmodule EzagentPluginLiveview.AgentNewLive do
                 </select>
                 <span class="text-[11px] text-zinc-500">
                   {gettext(
-                    "Which plugin runs this agent. cc = Claude-Code orchestrated; echo = test fixture; curl = external HTTP agent."
+                    "Which plugin runs this agent. Available flavors come from Ezagent.AgentFlavorRegistry; new flavor plugins auto-appear here."
                   )}
                 </span>
               </label>

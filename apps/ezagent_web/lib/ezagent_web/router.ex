@@ -77,6 +77,10 @@ defmodule EzagentWeb.Router do
       live "/admin/logs", ObservabilityLive
       live "/admin/registry", EntitiesLive
       live "/admin/snapshots", SnapshotsLive
+      # G-1 + G-2 V0 stop-gap (audit 2026-05-23): AgentTemplate +
+      # SessionTemplate Kinds list, read-only. Detail link goes to
+      # the existing /plugins/auto/:kind LV for raw slice inspection.
+      live "/admin/templates", AdminTemplatesLive
       # V1 fix (Allen Feishu 2026-05-21 17:44): /settings moved here
       # from top-level. The page hosts admin-only config (SMTP +
       # registration domains); belongs under /admin (admin scope),

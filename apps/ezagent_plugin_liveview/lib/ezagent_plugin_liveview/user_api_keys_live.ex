@@ -32,6 +32,9 @@ defmodule EzagentPluginLiveview.UserApiKeysLive do
   use Gettext, backend: EzagentPluginLiveview.Gettext
   alias EzagentDomainUi.WorkspaceShell
   alias EzagentPluginLiveview.AppShell
+  # V-4 scrub (audit 2026-05-23) — adopt the `<.card>`, `<.button>`,
+  # `<.page_header>`, `<.badge>` atoms in render/1.
+  use EzagentDomainUi.Components
   import Phoenix.Component
 
   alias Ezagent.{Invocation, KindRegistry}
@@ -190,98 +193,146 @@ defmodule EzagentPluginLiveview.UserApiKeysLive do
         >
       <:main_window>
         <div class="flex-1 overflow-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
-      <header>
-        <h1 style="font-size: 22px; font-weight: 600;">{gettext("API Keys for")} <code>{URI.to_string(@user_uri)}</code></h1>
-        <p style="font-size: 13px; color: #666;">
-          {gettext(
-            "Per-user secret storage for outbound LLM completion APIs (DeepSeek, OpenAI, etc.). The system itself holds no keys — every user supplies their own."
-          )}
-          <a href="/identities/users" style="margin-left: 16px; color: #0969da;">← {gettext("Users")}</a>
-        </p>
-      </header>
+          <.page_header title={gettext("API Keys")}>
+            <:subtitle>
+              <span class="font-mono text-xs">{URI.to_string(@user_uri)}</span>
+              — {gettext("Per-user secret storage for outbound LLM completion APIs (DeepSeek, OpenAI, etc.). The system itself holds no keys.")}
+            </:subtitle>
+            <:actions>
+              <a
+                href="/identities/users"
+                class="text-xs text-sky-700 dark:text-sky-300 hover:underline"
+              >
+                ← {gettext("Users")}
+              </a>
+            </:actions>
+          </.page_header>
 
-      <p :if={@flash_error} style="background: #fde8e8; color: #b91c1c; padding: 8px 12px; border-radius: 4px; font-size: 13px;">
-        {@flash_error}
-      </p>
-      <p :if={@flash_info} style="background: #e6f4ea; color: #15803d; padding: 8px 12px; border-radius: 4px; font-size: 13px;">
-        {@flash_info}
-      </p>
-
-      <section :if={@api_keys == :user_not_live} style="margin-top: 24px; padding: 12px; background: #fef3c7; border-radius: 4px; font-size: 13px;">
-        {gettext("User Kind not currently live in KindRegistry. Trigger any dispatch on this URI to spawn it (e.g. log in as that user once), then return here.")}
-      </section>
-
-      <section :if={match?({:error, _}, @api_keys)} style="margin-top: 24px; padding: 12px; background: #fde8e8; border-radius: 4px; font-size: 13px;">
-        {gettext("Error loading keys:")} <code>{inspect(elem(@api_keys, 1))}</code>
-      </section>
-
-      <section :if={is_list(@api_keys)} style="margin-top: 24px;">
-        <h2 style="font-size: 16px; font-weight: 500;">{gettext("Stored keys (%{count})", count: length(@api_keys))}</h2>
-
-        <p :if={@api_keys == []} style="font-size: 13px; color: #57606a; font-style: italic;">
-          {gettext("No API keys yet. Add one below to enable curl-agent instances that use this user as their owner.")}
-        </p>
-
-        <table :if={@api_keys != []} style="width: 100%; font-size: 13px; border-collapse: collapse; margin-top: 12px;">
-          <thead>
-            <tr style="border-bottom: 1px solid #d1d5da;">
-              <th style="text-align: left; padding: 6px 0;">provider</th>
-              <th style="text-align: left;">{gettext("masked")}</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr :for={entry <- @api_keys} style="border-bottom: 1px solid #eee;">
-              <td style="padding: 4px 0; font-family: monospace;">{entry.provider}</td>
-              <td style="font-family: monospace; color: #57606a;">{entry.masked}</td>
-              <td style="text-align: right;">
-                <button :if={@is_admin? or @self?} phx-click="delete" phx-value-provider={entry.provider} style="padding: 4px 10px; background: white; color: #b91c1c; border: 1px solid #b91c1c; border-radius: 4px; cursor: pointer; font-size: 12px;">{gettext("Delete")}</button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </section>
-
-      <section :if={is_list(@api_keys)} style="margin-top: 32px; padding: 16px; border: 1px solid #d1d5da; border-radius: 6px;">
-        <h2 style="font-size: 16px; font-weight: 500; margin: 0 0 12px 0;">{gettext("Add / rotate key")}</h2>
-        <p style="font-size: 12px; color: #57606a; margin: 0 0 12px 0;">
-          {gettext("Adding a key for an existing provider overwrites it (rotation). Same form serves both.")}
-        </p>
-
-        <.form for={@form} phx-submit="put">
-          <div style="margin-bottom: 8px;">
-            <label style="display: block; font-size: 13px; font-weight: 500;">provider</label>
-            <input
-              type="text"
-              name="api_key[provider]"
-              value={@form[:provider].value}
-              placeholder="deepseek"
-              style="width: 100%; padding: 6px 10px; border: 1px solid #d1d5da; border-radius: 4px;"
-            />
-          </div>
-
-          <div style="margin-bottom: 8px;">
-            <label style="display: block; font-size: 13px; font-weight: 500;">{gettext("key (plaintext — never re-displayed after save)")}</label>
-            <input
-              type="password"
-              name="api_key[key]"
-              value=""
-              placeholder="sk-..."
-              autocomplete="off"
-              style="width: 100%; padding: 6px 10px; border: 1px solid #d1d5da; border-radius: 4px; font-family: monospace;"
-            />
-          </div>
-
-          <button
-            :if={@is_admin? or @self?}
-            type="submit"
-            style="padding: 8px 16px; background: #0969da; color: white; border: none; border-radius: 4px; cursor: pointer;"
-          >{gettext("Save")}</button>
-          <p :if={not (@is_admin? or @self?)} style="font-size: 12px; color: #b91c1c;">
-            {gettext("You can only edit your own keys. Admin (entity://user/system/admin) can edit any.")}
+          <p
+            :if={@flash_error}
+            class="bg-rose-50 dark:bg-rose-950 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800 px-3 py-2 rounded-md text-sm mb-3"
+          >
+            {@flash_error}
           </p>
-        </.form>
-      </section>
+          <p
+            :if={@flash_info}
+            class="bg-emerald-50 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 px-3 py-2 rounded-md text-sm mb-3"
+          >
+            {@flash_info}
+          </p>
+
+          <.card
+            :if={@api_keys == :user_not_live}
+            class="mt-4 border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950"
+          >
+            <p class="text-sm text-amber-800 dark:text-amber-200">
+              {gettext("User Kind not currently live in KindRegistry. Trigger any dispatch on this URI to spawn it (e.g. log in as that user once), then return here.")}
+            </p>
+          </.card>
+
+          <.card
+            :if={match?({:error, _}, @api_keys)}
+            class="mt-4 border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950"
+          >
+            <p class="text-sm text-rose-700 dark:text-rose-300">
+              {gettext("Error loading keys:")}
+              <code class="font-mono text-xs">{inspect(elem(@api_keys, 1))}</code>
+            </p>
+          </.card>
+
+          <.card :if={is_list(@api_keys)} class="mt-4" id="stored-keys">
+            <:header>
+              {gettext("Stored keys (%{count})", count: length(@api_keys))}
+            </:header>
+
+            <p
+              :if={@api_keys == []}
+              class="text-sm text-zinc-500 italic"
+            >
+              {gettext("No API keys yet. Add one below to enable curl-agent instances that use this user as their owner.")}
+            </p>
+
+            <table
+              :if={@api_keys != []}
+              class="w-full text-xs border-collapse mt-2"
+            >
+              <thead>
+                <tr class="border-b border-zinc-200 dark:border-zinc-800">
+                  <th class="text-left px-1 py-1.5">provider</th>
+                  <th class="text-left">{gettext("masked")}</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  :for={entry <- @api_keys}
+                  class="border-b border-zinc-100 dark:border-zinc-900"
+                >
+                  <td class="px-1 py-1 font-mono">{entry.provider}</td>
+                  <td class="font-mono text-zinc-500">{entry.masked}</td>
+                  <td class="text-right">
+                    <.button
+                      :if={@is_admin? or @self?}
+                      variant="outline"
+                      size="sm"
+                      phx-click="delete"
+                      phx-value-provider={entry.provider}
+                      class="text-xs px-2 py-0.5 h-auto text-rose-700 dark:text-rose-300 border-rose-300 dark:border-rose-700"
+                    >
+                      {gettext("Delete")}
+                    </.button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </.card>
+
+          <.card :if={is_list(@api_keys)} class="mt-8" id="add-key-form">
+            <:header>{gettext("Add / rotate key")}</:header>
+
+            <p class="text-xs text-zinc-500 mb-3">
+              {gettext("Adding a key for an existing provider overwrites it (rotation). Same form serves both.")}
+            </p>
+
+            <.form for={@form} phx-submit="put" class="flex flex-col gap-3">
+              <label class="flex flex-col gap-1">
+                <span class="text-xs uppercase tracking-wide text-zinc-500">provider</span>
+                <input
+                  type="text"
+                  name="api_key[provider]"
+                  value={@form[:provider].value}
+                  placeholder="deepseek"
+                  class="block w-full px-3 py-2 text-sm rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
+                />
+              </label>
+
+              <label class="flex flex-col gap-1">
+                <span class="text-xs uppercase tracking-wide text-zinc-500">
+                  {gettext("key (plaintext — never re-displayed after save)")}
+                </span>
+                <input
+                  type="password"
+                  name="api_key[key]"
+                  value=""
+                  placeholder="sk-..."
+                  autocomplete="off"
+                  class="block w-full px-3 py-2 text-sm font-mono rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
+                />
+              </label>
+
+              <div class="flex justify-end pt-2 border-t border-zinc-200 dark:border-zinc-800">
+                <.button :if={@is_admin? or @self?} variant="primary" type="submit">
+                  {gettext("Save")}
+                </.button>
+              </div>
+              <p
+                :if={not (@is_admin? or @self?)}
+                class="text-xs text-rose-700 dark:text-rose-300"
+              >
+                {gettext("You can only edit your own keys. Admin (entity://user/system/admin) can edit any.")}
+              </p>
+            </.form>
+          </.card>
         </div>
       </:main_window>
 
