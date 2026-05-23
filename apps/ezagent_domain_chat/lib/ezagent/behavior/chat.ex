@@ -242,11 +242,39 @@ defmodule Ezagent.Behavior.Chat do
   def invoke(:receive, slice, %{message: %Message{} = msg}, ctx) do
     case ctx.kind_module do
       Ezagent.Entity.User ->
+        # PR migration (Allen 2026-05-23): the raw
+        # `Phoenix.PubSub.broadcast` to `esr:user:<uri>:events` is now
+        # the legacy path; new code routes through
+        # `Ezagent.Notifications.notify/3` (cap-gated unified entry,
+        # SPEC `apps/ezagent_core/lib/ezagent/notifications.ex`).
+        # System bypass via `ctx.caps == :system` — Chat is acting on
+        # behalf of the routed message.
+        #
+        # During transition, BOTH shapes coexist on the topic:
+        # - new: `{:notification, user_uri, %{type: :message_received,
+        #         body: %{msg: msg}, source: Ezagent.Behavior.Chat}}`
+        # - legacy: `{:message_received, msg}` — kept for any existing
+        #         LV consumer that hasn't migrated yet.
+        # After V1 deprecation period, drop the legacy broadcast.
+
+        # Legacy broadcast (kept for transition window)
         Phoenix.PubSub.broadcast(
           EzagentCore.PubSub,
           user_events_topic(ctx.self_uri),
           {:message_received, msg}
         )
+
+        # New unified path
+        :ok =
+          Ezagent.Notifications.notify(
+            ctx.self_uri,
+            %{
+              type: :message_received,
+              body: %{msg: msg},
+              source: __MODULE__
+            },
+            %{caps: :system}
+          )
 
         {:ok, slice}
 
