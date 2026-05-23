@@ -19,8 +19,27 @@
 > Phase 7's killer feature (the Generator + the live Orchestrator)
 > was **completed by the 6-PR Phase-7-completion effort
 > (2026-05-22 → 2026-05-23)** specified in
-> `docs/superpowers/specs/2026-05-22-phase-7-completion.md` (rev 5).
-> See **"What the Phase-7-completion effort shipped"** below.
+> `docs/superpowers/specs/2026-05-22-phase-7-completion.md` (rev 5),
+> **hardened** by 10 codex adversarial-review rounds (PRs #239..#250),
+> and then **simplified** by the **generator-reconciler refactor**
+> (PR-A #259 + PR-C #260). The hardening rounds fixed real CapBAC +
+> workspace-isolation + `fresh?`-gating bugs, but the HIGH count
+> never reached 0 because the underlying `cleanup_partial` saga was
+> the wrong abstraction. The reconciler refactor replaced it with
+> `converge(spec, current_state)` semantics (per-Kind idempotency
+> primitives, `docker-compose up`-style re-run continues from
+> partial state) and removed ~800 LOC. See
+> **"What the Phase-7-completion effort shipped"** below for the
+> 6-PR feature build, and
+> `docs/notes/2026-05-23-generator-reconciler-retrospective.md` for
+> the saga → reconciler post-mortem.
+>
+> **Phase 7 status now: feature-complete + reconciler-validated.**
+> The Generator instantiates teams idempotently; the Orchestrator
+> dispatches through CapBAC; templates persist as `kind_snapshots`
+> rows and re-instantiate; partial-failure re-run converges to spec.
+> See SPEC `docs/superpowers/specs/2026-05-23-generator-reconciler.md`
+> for the current Generator design (the SPEC the code now matches).
 
 > **STATUS HISTORY:**
 >

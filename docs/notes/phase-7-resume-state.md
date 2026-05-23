@@ -16,15 +16,27 @@
 >
 > **For Phase 7 status, use instead:**
 > - `docs/notes/phase-7-implementation-audit-2026-05-22.md` — the
->   honest as-built audit.
+>   honest as-built audit (with 2026-05-23 RESOLUTION header showing
+>   each gap closed).
 > - `docs/superpowers/specs/2026-05-22-phase-7-completion.md` — the
->   6-PR completion SPEC (rev 5).
+>   6-PR completion SPEC (rev 5; the atomic-cleanup-saga sections are
+>   marked SUPERSEDED by the reconciler refactor).
+> - `docs/superpowers/specs/2026-05-23-generator-reconciler.md` — the
+>   reconciler SPEC (rev 4) that replaced the saga model.
+> - `docs/notes/2026-05-23-generator-reconciler-retrospective.md` —
+>   the post-mortem of "what we learned: wrong abstraction."
 > - `docs/notes/phase-7-handoff.md` — corrected handoff (the false
 >   "v1 release" claim there is corrected as of 2026-05-23).
 >
 > Phase 7 was **completed 2026-05-23** by the Phase-7-completion 6-PR
-> effort (PRs #231–#237 + PR-6). The status table below is preserved
-> for historical record ONLY — it reflects the pre-completion state.
+> effort (PRs #231–#237 + PR-6), then **hardened** through 10 codex
+> review rounds (PRs #239..#250), then **simplified** by the
+> generator-reconciler refactor (PR-A #259 + PR-C #260) — the
+> saga-cleanup model was the wrong abstraction; a reconciler over
+> per-Kind idempotency primitives replaced it and removed ~800 LOC.
+> The status table below is preserved for historical record ONLY —
+> it reflects the pre-completion state, and the "saga" framing it
+> implicitly assumed is no longer how the Generator works.
 
 **Updated:** 2026-05-18 evening (after all 5 rc1 code blockers landed).
 **Status (HISTORICAL — superseded, see banner above):** the

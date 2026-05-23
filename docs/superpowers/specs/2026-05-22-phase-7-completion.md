@@ -1,5 +1,50 @@
 # Phase 7 completion — the Generator + the live Orchestrator
 
+> **⚠️ PARTIALLY SUPERSEDED (2026-05-23).** The Generator/orchestrator
+> **atomic-cleanup design** in this SPEC (the `do_spawn/4` + `guard/2` +
+> `cleanup_partial/1` saga in `update_agent_template` and friends — see
+> §"Spawn phase (MEDIUM-5)", the `guard`/`cleanup_partial` patterns
+> throughout §1.6 / §1.6a, and the 10 rounds of "round-N hardening"
+> referenced from PRs #239 / #241 / #243 / #244 / #245 / #246 / #247 /
+> #248 / #249 / #250) is **SUPERSEDED** by the **reconciler refactor**:
+>
+> - **Reconciler SPEC**: `docs/superpowers/specs/2026-05-23-generator-reconciler.md`
+> - **PR-A** (`#259`, commit `350e9c3`) — `Session.spawn_from_template/2`
+>   rewritten as an idempotent reconciler with per-Kind idempotency
+>   helpers; `cleanup_partial/1` deleted.
+> - **PR-C** (`#260`, commit `526c401`) — `update_agent_template` /
+>   `add_agent_slot` / `remove_agent_slot` rewritten as reconcilers;
+>   the ~6 remaining saga compensation helpers in
+>   `apps/ezagent_domain_chat/lib/ezagent/orchestrator/tools.ex`
+>   deleted; net ~800 LOC removed across session.ex + tools.ex.
+> - **Retrospective**: `docs/notes/2026-05-23-generator-reconciler-retrospective.md`
+>   (+ `.zh_cn.md`) — "what we learned: wrong abstraction." The 10
+>   hardening rounds never converged because saga rollback is
+>   combinatorially fragile; the right primitive is
+>   `converge(spec, current_state)` — docker-compose `up` semantics.
+>
+> **What from this SPEC remains AUTHORITATIVE** (NOT superseded):
+> - CapBAC design (template caps, scope-bounded delegation,
+>   `{:within_workspace, _}`, owner-cap preflight) — §1.0, §1.4, §1.5.
+> - Workspace isolation plumbing — §1.6 workspace bind step.
+> - The privileged MCP orchestrator surface — §1.5 PR-5.
+> - Template persistence (Behavior.Template, `kind_snapshots` model,
+>   working-copy slice, version_hash, parent_template_uri lineage,
+>   `template:` cap enforcement) — §1.0, §1.6, §1.7, PR-1..PR-3.
+> - AgentTemplate→cc adapter, `Ezagent.TemplateTags`,
+>   `SessionTemplate.persist_version/2`, `.fork/3`, `.create/3` — these
+>   features all landed in PR-1..PR-6.
+>
+> What is superseded is ONLY the *failure-handling abstraction* — the
+> atomic-saga + `cleanup_partial` model that the 10 hardening rounds
+> tried to make transactional. The reconciler keeps every feature this
+> SPEC delivered; it changes only HOW partial failures are recovered
+> (per-step idempotency on re-run instead of N-store rollback).
+>
+> Read the **reconciler SPEC §0 "Why — the abstraction mismatch"** for
+> the design rationale, and the **retrospective** for the post-mortem
+> of why this SPEC's atomic-cleanup model never converged.
+
 > **Status**: DRAFT rev 5 — 2026-05-22. Author: Claude, per Allen
 > Feishu 2026-05-22 ("和 codex 配合完成 Phase 7 的工作 … v1 要求是
 > 完整的生产可用性,不要留尾巴").
