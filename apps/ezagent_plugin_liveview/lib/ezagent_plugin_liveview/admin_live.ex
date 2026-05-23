@@ -165,8 +165,7 @@ defmodule EzagentPluginLiveview.AdminLive do
         {:noreply, select_session(socket, session_uri)}
 
       _ ->
-        {:noreply,
-         assign(socket, :flash_error, gettext("Bad session URI: %{uri}", uri: encoded))}
+        {:noreply, assign(socket, :flash_error, gettext("Bad session URI: %{uri}", uri: encoded))}
     end
   end
 
@@ -218,6 +217,33 @@ defmodule EzagentPluginLiveview.AdminLive do
      socket
      |> assign(:messages_empty?, false)
      |> stream_insert(:messages, message_to_row(msg), at: -1)}
+  end
+
+  # PR-4 of Read Receipts rollout — `EzagentDomainChat.PresenceFanout`
+  # broadcasts when a session member's Presence changes. Refresh the
+  # member panel so online/offline state in the MemberPanel updates
+  # live without browser refresh.
+  def handle_info({:member_presence, _session_uri, _user_uri, %{online?: _}}, socket) do
+    {:noreply, assign_session_context(socket, socket.assigns.current_session_uri)}
+  end
+
+  # PR-4 of Read Receipts rollout — `Ezagent.Chat.ReadMarker.mark/4`
+  # broadcasts on session events topic when a marker is created/bumped.
+  # V1: no UI change — the per-message ✓ / ✓✓ / ✓✓✓ render requires
+  # plumbing ReadMarker state into the chat-stream row, which is a
+  # bigger refactor. Documented as future work; LV doesn't crash on
+  # the event because this handler exists.
+  def handle_info({:read_marker_updated, _session, _user, _meta}, socket) do
+    {:noreply, socket}
+  end
+
+  # `Ezagent.Notifications.notify/3` (PR #276 / PR #281) — the new
+  # tagged envelope shape. Coexists with the legacy `:message_received`
+  # raw broadcast during the migration window. For chat messages, the
+  # legacy `:chat_message` handler above already updates the stream;
+  # we just acknowledge the notification here so the LV doesn't crash.
+  def handle_info({:notification, _user_uri, _payload}, socket) do
+    {:noreply, socket}
   end
 
   # --- User actions -----------------------------------------------------
@@ -303,7 +329,11 @@ defmodule EzagentPluginLiveview.AdminLive do
 
       {:error, reason} ->
         {:noreply,
-         assign(socket, :flash_error, gettext("Create failed: %{reason}", reason: inspect(reason)))}
+         assign(
+           socket,
+           :flash_error,
+           gettext("Create failed: %{reason}", reason: inspect(reason))
+         )}
     end
   end
 
@@ -498,8 +528,7 @@ defmodule EzagentPluginLiveview.AdminLive do
                 {:noreply, socket}
 
               {:error, reason} ->
-                {:noreply,
-                 assign(socket, :flash_error, TerminalSeam.input_error_message(reason))}
+                {:noreply, assign(socket, :flash_error, TerminalSeam.input_error_message(reason))}
             end
 
           _ ->
@@ -553,7 +582,11 @@ defmodule EzagentPluginLiveview.AdminLive do
 
         {:error, reason} ->
           {:noreply,
-           assign(socket, :flash_error, gettext("Toggle failed: %{reason}", reason: inspect(reason)))}
+           assign(
+             socket,
+             :flash_error,
+             gettext("Toggle failed: %{reason}", reason: inspect(reason))
+           )}
       end
     else
       _ ->
@@ -885,77 +918,77 @@ defmodule EzagentPluginLiveview.AdminLive do
           current_path="/sessions"
           status={@status}
         >
-      <:main_window>
-        <SessionEditor.session_editor
-          current_session_uri={@current_session_uri}
-          sessions={@sessions}
-          applicable_views={@applicable_views}
-          current_view={@current_view}
-          new_session_form={@new_session_form}
-          compose_form={@compose_form}
-          member_options={@member_options}
-          session_info={@session_info}
-          feishu_chat_ids={@feishu_chat_ids}
-          debug_open={@debug_open}
-          uploads={@uploads}
-          flash_error={@flash_error}
-        >
-          <:main_view>
-            <.render_active_view
-              view_module={@view_module}
-              messages_stream={@streams.messages}
-              oldest_cursor={@oldest_cursor}
-              active_pty_agent_uri={@active_pty_agent_uri}
-              empty_state?={@messages_empty?}
-              session_uri={@current_session_uri}
-              session_routing_rules={@session_routing_rules}
-              entity_options={@routing_entity_options}
-              receiver_options={@routing_receiver_options}
+          <:main_window>
+            <SessionEditor.session_editor
+              current_session_uri={@current_session_uri}
+              sessions={@sessions}
+              applicable_views={@applicable_views}
+              current_view={@current_view}
+              new_session_form={@new_session_form}
+              compose_form={@compose_form}
+              member_options={@member_options}
+              session_info={@session_info}
+              feishu_chat_ids={@feishu_chat_ids}
+              debug_open={@debug_open}
+              uploads={@uploads}
+              flash_error={@flash_error}
+            >
+              <:main_view>
+                <.render_active_view
+                  view_module={@view_module}
+                  messages_stream={@streams.messages}
+                  oldest_cursor={@oldest_cursor}
+                  active_pty_agent_uri={@active_pty_agent_uri}
+                  empty_state?={@messages_empty?}
+                  session_uri={@current_session_uri}
+                  session_routing_rules={@session_routing_rules}
+                  entity_options={@routing_entity_options}
+                  receiver_options={@routing_receiver_options}
+                />
+              </:main_view>
+            </SessionEditor.session_editor>
+
+            <section
+              :if={@debug_open}
+              class="border-t border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 max-h-48 overflow-y-auto p-3"
+            >
+              <h3 class="text-[10px] uppercase tracking-wide text-zinc-500 mb-1">
+                {gettext("Debug events (last 20)")}
+              </h3>
+              <p
+                :if={@cc_events == []}
+                class="text-[11px] text-zinc-500 dark:text-zinc-400 italic py-2"
+              >
+                {gettext("No debug events yet. CC hook errors + dispatch events will appear here.")}
+              </p>
+              <ul :if={@cc_events != []} class="space-y-1 text-[11px]">
+                <li :for={ev <- @cc_events} class="flex gap-2">
+                  <span class={[
+                    "px-1 rounded font-semibold",
+                    ev.level == "error" &&
+                      "bg-rose-100 dark:bg-rose-900 text-rose-700 dark:text-rose-300",
+                    ev.level == "warning" &&
+                      "bg-amber-100 dark:bg-amber-900 text-amber-700 dark:text-amber-300",
+                    ev.level not in ["error", "warning"] &&
+                      "bg-zinc-200 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300"
+                  ]}>
+                    {ev.level}
+                  </span>
+                  <span class="font-mono text-[10px] text-zinc-500">{ev.bridge_id}</span>
+                  <span class="flex-1">{ev.text}</span>
+                </li>
+              </ul>
+            </section>
+          </:main_window>
+
+          <:right_sidebar>
+            <MemberPanel.member_panel
+              members={@session_members}
+              display_map={@display_map}
+              invite_open={@invite_open}
+              invite_options={@invite_options}
             />
-          </:main_view>
-        </SessionEditor.session_editor>
-
-        <section
-          :if={@debug_open}
-          class="border-t border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 max-h-48 overflow-y-auto p-3"
-        >
-          <h3 class="text-[10px] uppercase tracking-wide text-zinc-500 mb-1">
-            {gettext("Debug events (last 20)")}
-          </h3>
-          <p
-            :if={@cc_events == []}
-            class="text-[11px] text-zinc-500 dark:text-zinc-400 italic py-2"
-          >
-            {gettext("No debug events yet. CC hook errors + dispatch events will appear here.")}
-          </p>
-          <ul :if={@cc_events != []} class="space-y-1 text-[11px]">
-            <li :for={ev <- @cc_events} class="flex gap-2">
-              <span class={[
-                "px-1 rounded font-semibold",
-                ev.level == "error" && "bg-rose-100 dark:bg-rose-900 text-rose-700 dark:text-rose-300",
-                ev.level == "warning" &&
-                  "bg-amber-100 dark:bg-amber-900 text-amber-700 dark:text-amber-300",
-                ev.level not in ["error", "warning"] &&
-                  "bg-zinc-200 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300"
-              ]}>
-                {ev.level}
-              </span>
-              <span class="font-mono text-[10px] text-zinc-500">{ev.bridge_id}</span>
-              <span class="flex-1">{ev.text}</span>
-            </li>
-          </ul>
-        </section>
-      </:main_window>
-
-      <:right_sidebar>
-        <MemberPanel.member_panel
-          members={@session_members}
-          display_map={@display_map}
-          invite_open={@invite_open}
-          invite_options={@invite_options}
-        />
-      </:right_sidebar>
-
+          </:right_sidebar>
         </WorkspaceShell.workspace_shell>
       </:body>
     </AppShell.app_shell>
