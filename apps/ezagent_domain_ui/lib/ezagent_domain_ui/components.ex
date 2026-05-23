@@ -32,14 +32,15 @@ defmodule EzagentDomainUi.Components do
       <.button variant="primary" phx-click="save">Save</.button>
       <.button variant="ghost" size="sm">Cancel</.button>
   """
-  attr :variant, :string,
+  attr(:variant, :string,
     default: "default",
     values: ~w(default primary success danger ghost outline)
+  )
 
-  attr :size, :string, default: "md", values: ~w(sm md lg)
-  attr :class, :string, default: ""
-  attr :rest, :global, include: ~w(type disabled phx-click phx-disable-with phx-value-name name)
-  slot :inner_block, required: true
+  attr(:size, :string, default: "md", values: ~w(sm md lg))
+  attr(:class, :string, default: "")
+  attr(:rest, :global, include: ~w(type disabled phx-click phx-disable-with phx-value-name name))
+  slot(:inner_block, required: true)
 
   def button(assigns) do
     ~H"""
@@ -63,12 +64,26 @@ defmodule EzagentDomainUi.Components do
   defp size_class("md"), do: "h-9 px-4 text-sm"
   defp size_class("lg"), do: "h-10 px-6 text-sm"
 
-  defp variant_class("default"), do: "bg-zinc-100 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 hover:bg-zinc-200 dark:hover:bg-zinc-700 border border-zinc-200 dark:border-zinc-800"
-  defp variant_class("primary"), do: "bg-zinc-900 dark:bg-zinc-100 text-zinc-50 dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-zinc-200 shadow-sm"
-  defp variant_class("success"), do: "bg-emerald-600 text-emerald-50 hover:bg-emerald-700 dark:hover:bg-emerald-500 shadow-sm"
-  defp variant_class("danger"), do: "bg-red-600 text-red-50 hover:bg-red-700 dark:hover:bg-red-500 shadow-sm"
-  defp variant_class("ghost"), do: "text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800"
-  defp variant_class("outline"), do: "bg-transparent border border-zinc-300 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-900"
+  defp variant_class("default"),
+    do:
+      "bg-zinc-100 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 hover:bg-zinc-200 dark:hover:bg-zinc-700 border border-zinc-200 dark:border-zinc-800"
+
+  defp variant_class("primary"),
+    do:
+      "bg-zinc-900 dark:bg-zinc-100 text-zinc-50 dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-zinc-200 shadow-sm"
+
+  defp variant_class("success"),
+    do: "bg-emerald-600 text-emerald-50 hover:bg-emerald-700 dark:hover:bg-emerald-500 shadow-sm"
+
+  defp variant_class("danger"),
+    do: "bg-red-600 text-red-50 hover:bg-red-700 dark:hover:bg-red-500 shadow-sm"
+
+  defp variant_class("ghost"),
+    do: "text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+
+  defp variant_class("outline"),
+    do:
+      "bg-transparent border border-zinc-300 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-900"
 
   @doc """
   Card — container with subtle border + shadow.
@@ -78,14 +93,20 @@ defmodule EzagentDomainUi.Components do
         <p>body content</p>
       </.card>
   """
-  attr :class, :string, default: ""
-  attr :rest, :global
-  slot :header
-  slot :inner_block, required: true
+  attr(:class, :string, default: "")
+  attr(:rest, :global)
+  slot(:header)
+  slot(:inner_block, required: true)
 
   def card(assigns) do
     ~H"""
-    <div class={["bg-white dark:bg-zinc-900 rounded-md border border-zinc-200 dark:border-zinc-800 shadow-sm", @class]} {@rest}>
+    <div
+      class={[
+        "bg-white dark:bg-zinc-900 rounded-md border border-zinc-200 dark:border-zinc-800 shadow-sm",
+        @class
+      ]}
+      {@rest}
+    >
       <div :if={@header != []} class="px-4 py-3 border-b border-zinc-200 dark:border-zinc-800">
         <h3 class="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{render_slot(@header)}</h3>
       </div>
@@ -103,12 +124,13 @@ defmodule EzagentDomainUi.Components do
       <.badge variant="success">online</.badge>
       <.badge variant="danger">offline</.badge>
   """
-  attr :variant, :string,
+  attr(:variant, :string,
     default: "default",
     values: ~w(default primary success warning danger info)
+  )
 
-  attr :class, :string, default: ""
-  slot :inner_block, required: true
+  attr(:class, :string, default: "")
+  slot(:inner_block, required: true)
 
   def badge(assigns) do
     ~H"""
@@ -122,12 +144,29 @@ defmodule EzagentDomainUi.Components do
     """
   end
 
-  defp badge_class("default"), do: "bg-zinc-100 dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 border-zinc-200 dark:border-zinc-800"
-  defp badge_class("primary"), do: "bg-zinc-900 dark:bg-zinc-100 text-zinc-50 dark:text-zinc-900 border-zinc-900 dark:border-zinc-100"
-  defp badge_class("success"), do: "bg-emerald-50 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800"
-  defp badge_class("warning"), do: "bg-amber-50 dark:bg-amber-950 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800"
-  defp badge_class("danger"), do: "bg-red-50 dark:bg-red-950 text-red-700 dark:text-red-300 border-red-200 dark:border-red-800"
-  defp badge_class("info"), do: "bg-sky-50 dark:bg-sky-950 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-800"
+  defp badge_class("default"),
+    do:
+      "bg-zinc-100 dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 border-zinc-200 dark:border-zinc-800"
+
+  defp badge_class("primary"),
+    do:
+      "bg-zinc-900 dark:bg-zinc-100 text-zinc-50 dark:text-zinc-900 border-zinc-900 dark:border-zinc-100"
+
+  defp badge_class("success"),
+    do:
+      "bg-emerald-50 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800"
+
+  defp badge_class("warning"),
+    do:
+      "bg-amber-50 dark:bg-amber-950 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800"
+
+  defp badge_class("danger"),
+    do:
+      "bg-red-50 dark:bg-red-950 text-red-700 dark:text-red-300 border-red-200 dark:border-red-800"
+
+  defp badge_class("info"),
+    do:
+      "bg-sky-50 dark:bg-sky-950 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-800"
 
   @doc """
   Page header — title + optional subtitle + actions slot.
@@ -139,14 +178,17 @@ defmodule EzagentDomainUi.Components do
         </:actions>
       </.page_header>
   """
-  attr :title, :string, required: true
-  attr :class, :string, default: ""
-  slot :subtitle
-  slot :actions
+  attr(:title, :string, required: true)
+  attr(:class, :string, default: "")
+  slot(:subtitle)
+  slot(:actions)
 
   def page_header(assigns) do
     ~H"""
-    <div class={["flex items-end justify-between mb-6 pb-4 border-b border-zinc-200 dark:border-zinc-800", @class]}>
+    <div class={[
+      "flex items-end justify-between mb-6 pb-4 border-b border-zinc-200 dark:border-zinc-800",
+      @class
+    ]}>
       <div>
         <h1 class="text-xl font-semibold text-zinc-900 dark:text-zinc-100">{@title}</h1>
         <p :if={@subtitle != []} class="mt-1 text-sm text-zinc-500">{render_slot(@subtitle)}</p>
@@ -168,24 +210,31 @@ defmodule EzagentDomainUi.Components do
   Items are `{label, href_or_nil}` tuples. The last item is expected to
   have `nil` href (it's the current page; don't link to self).
   """
-  attr :items, :list, required: true
-  attr :class, :string, default: ""
+  attr(:items, :list, required: true)
+  attr(:class, :string, default: "")
 
   def breadcrumb(assigns) do
     ~H"""
-    <nav class={["flex items-center gap-1 text-xs text-zinc-500 mb-3", @class]} aria-label="Breadcrumb">
+    <nav
+      class={["flex items-center gap-1 text-xs text-zinc-500 mb-3", @class]}
+      aria-label="Breadcrumb"
+    >
       <%= for {{label, href}, idx} <- Enum.with_index(@items) do %>
         <span :if={idx > 0} class="text-zinc-300 dark:text-zinc-600 select-none">/</span>
         <a
           :if={href}
           href={href}
           class="hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors"
-        >{label}</a>
+        >
+          {label}
+        </a>
         <span
           :if={is_nil(href)}
           class="text-zinc-700 dark:text-zinc-300"
           aria-current="page"
-        >{label}</span>
+        >
+          {label}
+        </span>
       <% end %>
     </nav>
     """
@@ -197,10 +246,10 @@ defmodule EzagentDomainUi.Components do
       <.stat label="Sessions" value={5} />
       <.stat label="Online" value={3} variant="success" />
   """
-  attr :label, :string, required: true
-  attr :value, :any, required: true
-  attr :variant, :string, default: "default", values: ~w(default success warning danger)
-  attr :class, :string, default: ""
+  attr(:label, :string, required: true)
+  attr(:value, :any, required: true)
+  attr(:variant, :string, default: "default", values: ~w(default success warning danger))
+  attr(:class, :string, default: "")
 
   def stat(assigns) do
     ~H"""
@@ -247,12 +296,12 @@ defmodule EzagentDomainUi.Components do
         config_label="Bindings"
       />
   """
-  attr :name, :string, required: true
-  attr :description, :string, required: true
-  attr :version, :string, required: true
-  attr :config_path, :string, default: nil
-  attr :config_label, :string, default: "Configure"
-  attr :class, :string, default: ""
+  attr(:name, :string, required: true)
+  attr(:description, :string, required: true)
+  attr(:version, :string, required: true)
+  attr(:config_path, :string, default: nil)
+  attr(:config_label, :string, default: "Configure")
+  attr(:class, :string, default: "")
 
   def plugin_card(assigns) do
     ~H"""
@@ -304,4 +353,67 @@ defmodule EzagentDomainUi.Components do
     </svg>
     """)
   end
+
+  @doc """
+  Flash group — renders `Phoenix.LiveView`-style flash messages
+  (`:info` / `:error`) consistently across all admin/plugin LVs.
+
+  PR-B (Allen 2026-05-23) — replaces the per-LV inline flash render
+  patterns that had drifted (`assign(:flash_error, ...)` +
+  conditional `<div class="error">...</div>` per LV). Single source
+  of truth for visual + a11y.
+
+  ## Usage
+
+      # In your LV mount:
+      put_flash(socket, :info, "Saved.")
+      put_flash(socket, :error, "Validation failed: ...")
+
+      # In your LV render:
+      <.flash_group flash={@flash} />
+
+  Renders nothing if both `:info` and `:error` are absent. Subscribers
+  to flash events can also pass extra slots; v1 keeps the API minimal.
+
+  ## Why not `<.flash_group>` from Phoenix's generator
+
+  Phoenix 1.7+ ships a `flash_group` in `<your_app>_web/components/`,
+  but each app's generator-output diverges. Putting the shared
+  primitive in `EzagentDomainUi.Components` ensures every admin/plugin
+  LV (which all already `use EzagentDomainUi.Components`) gets the
+  same component for free.
+  """
+  attr(:flash, :map, required: true, doc: "the @flash map from socket.assigns")
+  attr(:class, :string, default: "")
+
+  def flash_group(assigns) do
+    ~H"""
+    <div :if={flash_present?(@flash)} class={["space-y-2 mb-4", @class]}>
+      <div
+        :if={msg = Phoenix.Flash.get(@flash, :info)}
+        role="status"
+        class="px-3 py-2 rounded-md text-sm border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-200 flex items-start gap-2"
+      >
+        <span class="font-mono text-[10px] uppercase tracking-wider mt-0.5 opacity-70">info</span>
+        <span>{msg}</span>
+      </div>
+
+      <div
+        :if={msg = Phoenix.Flash.get(@flash, :error)}
+        role="alert"
+        class="px-3 py-2 rounded-md text-sm border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950 text-red-800 dark:text-red-200 flex items-start gap-2"
+      >
+        <span class="font-mono text-[10px] uppercase tracking-wider mt-0.5 opacity-70">error</span>
+        <span>{msg}</span>
+      </div>
+    </div>
+    """
+  end
+
+  defp flash_present?(flash) when is_map(flash) do
+    not is_nil(Phoenix.Flash.get(flash, :info)) or
+      not is_nil(Phoenix.Flash.get(flash, :error))
+  end
+
+  defp flash_present?(_), do: false
 end
