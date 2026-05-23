@@ -36,8 +36,8 @@ defmodule EzagentDomainUi.AdminShell do
       </AdminShell.admin_shell>
 
   `active_section` is one of `:overview | :workspaces | :logs |
-  :registry | :snapshots | :settings` (the keys returned by
-  `sections/0`) and controls which sidebar item is highlighted.
+  :registry | :snapshots | :templates | :settings` (the keys returned
+  by `sections/0`) and controls which sidebar item is highlighted.
   `nil` derives it from `current_path`.
   """
 
@@ -58,8 +58,8 @@ defmodule EzagentDomainUi.AdminShell do
     default: nil,
     doc: """
     Which sidebar item is highlighted. One of `:overview | :workspaces |
-    :logs | :registry | :snapshots | :settings`, OR `nil` to derive from
-    `current_path`.
+    :logs | :registry | :snapshots | :templates | :settings`, OR `nil` to
+    derive from `current_path`.
     """
   )
 
@@ -151,6 +151,9 @@ defmodule EzagentDomainUi.AdminShell do
       %{key: :logs, label: gettext("Logs & Audit"), icon: "bug", path: "/admin/logs"},
       %{key: :registry, label: gettext("Registry"), icon: "users", path: "/admin/registry"},
       %{key: :snapshots, label: gettext("Snapshots"), icon: "folder", path: "/admin/snapshots"},
+      # G-1 + G-2 V0 stop-gap (audit 2026-05-23) — AgentTemplate +
+      # SessionTemplate Kinds list, read-only.
+      %{key: :templates, label: gettext("Templates"), icon: "folder", path: "/admin/templates"},
       %{key: :settings, label: gettext("Settings"), icon: "settings", path: "/admin/settings"}
     ]
   end
@@ -194,6 +197,7 @@ defmodule EzagentDomainUi.AdminShell do
       String.starts_with?(path, "/admin/logs") -> :logs
       String.starts_with?(path, "/admin/registry") -> :registry
       String.starts_with?(path, "/admin/snapshots") -> :snapshots
+      String.starts_with?(path, "/admin/templates") -> :templates
       String.starts_with?(path, "/admin/settings") -> :settings
       String.starts_with?(path, "/workspaces") -> :workspaces
       true -> :overview

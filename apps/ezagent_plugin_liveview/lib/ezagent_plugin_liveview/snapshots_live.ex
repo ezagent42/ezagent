@@ -111,89 +111,97 @@ defmodule EzagentPluginLiveview.SnapshotsLive do
         <AdminShell.admin_shell current_path="/admin/snapshots" active_section={:snapshots}>
           <:main>
             <div class="px-6 py-6 text-zinc-900 dark:text-zinc-100">
-          <header>
-            <h1 style="font-size: 22px; font-weight: 600;">{gettext("Snapshots")}</h1>
-            <p style="font-size: 13px; color: #666;">
-              {gettext(
-                "Per-Kind runtime state snapshots (Phase 4-completion PR 2, Decision #115). One row per kind_snapshots.uri."
-              )}
-            </p>
-          </header>
+              <.page_header title={gettext("Snapshots")}>
+                <:subtitle>
+                  {gettext(
+                    "Per-Kind runtime state snapshots (Phase 4-completion PR 2, Decision #115). One row per kind_snapshots.uri."
+                  )}
+                </:subtitle>
+              </.page_header>
 
-          <section id="snapshots-list" style="margin-top: 16px;">
-            <p :if={@snapshots == []} style="color: #57606a; font-style: italic;">
-              {gettext("No snapshots yet.")}
-            </p>
+              <%!-- V-4 scrub (audit 2026-05-23): inline style="" purged
+                    in favour of EzagentDomainUi atoms + Tailwind tokens. --%>
+              <.card id="snapshots-list">
+                <p :if={@snapshots == []} class="text-sm text-zinc-500 italic">
+                  {gettext("No snapshots yet.")}
+                </p>
 
-            <table
-              :if={@snapshots != []}
-              id="snapshots-table"
-              style="width: 100%; font-size: 13px; border-collapse: collapse;"
-            >
-              <thead>
-                <tr style="border-bottom: 2px solid #d1d5da;">
-                  <th style="text-align: left; padding: 6px 4px;">{gettext("URI")}</th>
-                  <th style="text-align: left;">{gettext("Kind")}</th>
-                  <th style="text-align: right;">{gettext("Bytes")}</th>
-                  <th style="text-align: left;">{gettext("Version")}</th>
-                  <th style="text-align: left;">{gettext("Updated")}</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr :for={s <- @snapshots} style="border-bottom: 1px solid #eaeef2;">
-                  <td style="padding: 6px 4px; font-family: monospace; font-size: 11px;">{s.uri}</td>
-                  <td style="font-size: 11px;">{s.kind_type}</td>
-                  <td style="text-align: right; font-size: 11px;">{s.bytes}</td>
-                  <td style="font-size: 11px;">{s.version}</td>
-                  <td style="font-size: 11px; color: #57606a;">
-                    {DateTime.to_iso8601(s.updated_at)}
-                  </td>
-                  <td>
-                    <button
-                      type="button"
-                      phx-click="dump"
-                      phx-value-uri={s.uri}
-                      style="padding: 4px 10px; background: white; color: #0969da; border: 1px solid #0969da; border-radius: 4px; cursor: pointer; font-size: 11px; margin-right: 4px;"
+                <table
+                  :if={@snapshots != []}
+                  id="snapshots-table"
+                  class="w-full text-xs border-collapse"
+                >
+                  <thead>
+                    <tr class="border-b border-zinc-200 dark:border-zinc-800">
+                      <th class="text-left px-1 py-1.5">{gettext("URI")}</th>
+                      <th class="text-left">{gettext("Kind")}</th>
+                      <th class="text-right">{gettext("Bytes")}</th>
+                      <th class="text-left">{gettext("Version")}</th>
+                      <th class="text-left">{gettext("Updated")}</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr
+                      :for={s <- @snapshots}
+                      class="border-b border-zinc-100 dark:border-zinc-900"
                     >
-                      {gettext("Dump")}
-                    </button>
-                    <button
+                      <td class="px-1 py-1 font-mono text-[11px] break-all">{s.uri}</td>
+                      <td class="text-[11px]">{s.kind_type}</td>
+                      <td class="text-right text-[11px]">{s.bytes}</td>
+                      <td class="text-[11px]">{s.version}</td>
+                      <td class="text-[11px] text-zinc-500">
+                        {DateTime.to_iso8601(s.updated_at)}
+                      </td>
+                      <td class="whitespace-nowrap">
+                        <.button
+                          variant="outline"
+                          size="sm"
+                          type="button"
+                          phx-click="dump"
+                          phx-value-uri={s.uri}
+                          class="text-[11px] px-2 py-0.5 h-auto mr-1 text-sky-700 dark:text-sky-300 border-sky-300 dark:border-sky-700"
+                        >
+                          {gettext("Dump")}
+                        </.button>
+                        <.button
+                          variant="outline"
+                          size="sm"
+                          type="button"
+                          phx-click="clear"
+                          phx-value-uri={s.uri}
+                          class="text-[11px] px-2 py-0.5 h-auto text-rose-700 dark:text-rose-300 border-rose-300 dark:border-rose-700"
+                          data-confirm={gettext("Clear this snapshot? Next Kind spawn will init_fresh — granted caps / runtime state are LOST.")}
+                        >
+                          {gettext("Clear")}
+                        </.button>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </.card>
+
+              <.card :if={@selected_dump} id="dump-view" class="mt-6">
+                <:header>
+                  <div class="flex items-center justify-between gap-2">
+                    <span>{gettext("Dump:")} <code class="font-mono text-[11px]">{@selected_uri}</code></span>
+                    <.button
+                      variant="ghost"
+                      size="sm"
                       type="button"
-                      phx-click="clear"
-                      phx-value-uri={s.uri}
-                      style="padding: 4px 10px; background: white; color: #cf222e; border: 1px solid #cf222e; border-radius: 4px; cursor: pointer; font-size: 11px;"
-                      data-confirm={gettext("Clear this snapshot? Next Kind spawn will init_fresh — granted caps / runtime state are LOST.")}
+                      phx-click="close_dump"
+                      class="text-[11px] px-2 py-0.5 h-auto"
                     >
-                      {gettext("Clear")}
-                    </button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </section>
+                      {gettext("Close")}
+                    </.button>
+                  </div>
+                </:header>
+                <pre class="bg-zinc-50 dark:bg-zinc-950 p-3 rounded-md overflow-x-auto text-[11px] max-h-[480px] text-zinc-700 dark:text-zinc-300">{@selected_dump}</pre>
+              </.card>
 
-          <section
-            :if={@selected_dump}
-            id="dump-view"
-            style="margin-top: 24px; padding: 16px; border: 1px solid #d1d5da; border-radius: 6px;"
-          >
-            <h2 style="font-size: 14px; font-weight: 500; margin: 0 0 8px 0;">
-              {gettext("Dump:")} <code>{@selected_uri}</code>
-              <button
-                type="button"
-                phx-click="close_dump"
-                style="float: right; padding: 4px 10px; background: white; color: #57606a; border: 1px solid #d1d5da; border-radius: 4px; cursor: pointer; font-size: 11px;"
-              >
-                {gettext("Close")}
-              </button>
-            </h2>
-            <pre style="background: #f6f8fa; padding: 12px; border-radius: 4px; overflow-x: auto; font-size: 11px; max-height: 480px;">{@selected_dump}</pre>
-          </section>
-
-          <p :if={@flash_error} style="color: #cf222e; font-size: 12px; margin-top: 8px;">
-            {@flash_error}
-          </p>
+              <p :if={@flash_error} class="text-rose-700 dark:text-rose-300 text-xs mt-2">
+                {@flash_error}
+              </p>
             </div>
           </:main>
         </AdminShell.admin_shell>

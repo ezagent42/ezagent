@@ -99,75 +99,76 @@ defmodule EzagentPluginLiveview.EntitiesLive do
         <AdminShell.admin_shell current_path="/admin/registry" active_section={:registry}>
           <:main>
             <div class="px-6 py-6 text-zinc-900 dark:text-zinc-100">
-          <header>
-            <h1 style="font-size: 22px; font-weight: 600;">{gettext("Entities (live registry)")}</h1>
-            <p style="font-size: 13px; color: #666;">
-              {gettext(
-                "Every Kind currently registered in %{registry} — users, agents, sessions, workspaces, templates, system sentinels.",
-                registry: "Ezagent.KindRegistry"
-              )}
-            </p>
-          </header>
+              <.page_header title={gettext("Entities (live registry)")}>
+                <:subtitle>
+                  {gettext(
+                    "Every Kind currently registered in %{registry} — users, agents, sessions, workspaces, templates, system sentinels.",
+                    registry: "Ezagent.KindRegistry"
+                  )}
+                </:subtitle>
+              </.page_header>
 
-          <%!-- Phase 8c PR-F: filter chips inlined above the table since
-            the left rail is now the admin sub-section nav. --%>
-          <div class="flex items-center gap-1 flex-wrap mt-3">
-            <span class="text-[10px] uppercase tracking-wide text-zinc-500 mr-2">{gettext("Filters")}</span>
-            <.filter_chip filter={@filter} value="all" label="all" />
-            <.filter_chip filter={@filter} value="user" label="entity://user" />
-            <.filter_chip filter={@filter} value="agent" label="entity://agent" />
-            <.filter_chip filter={@filter} value="session" label="session://" />
-            <.filter_chip filter={@filter} value="workspace" label="workspace://" />
-            <.filter_chip filter={@filter} value="template" label="template://" />
-            <.filter_chip filter={@filter} value="system" label="system://" />
-          </div>
+              <%!-- V-4 scrub (audit 2026-05-23): inline style="" purged.
+                    Filter chips inlined above the table since the left
+                    rail is now the admin sub-section nav. --%>
+              <div class="flex items-center gap-1 flex-wrap mt-3 mb-4">
+                <span class="text-[10px] uppercase tracking-wide text-zinc-500 mr-2">{gettext("Filters")}</span>
+                <.filter_chip filter={@filter} value="all" label="all" />
+                <.filter_chip filter={@filter} value="user" label="entity://user" />
+                <.filter_chip filter={@filter} value="agent" label="entity://agent" />
+                <.filter_chip filter={@filter} value="session" label="session://" />
+                <.filter_chip filter={@filter} value="workspace" label="workspace://" />
+                <.filter_chip filter={@filter} value="template" label="template://" />
+                <.filter_chip filter={@filter} value="system" label="system://" />
+              </div>
 
-          <section style="margin-top: 16px;">
-            <p
-              :if={@entities == []}
-              id="entities-empty"
-              style="font-size: 13px; color: #57606a; font-style: italic;"
-            >
-              {gettext("No entities match the current filter.")}
-            </p>
+              <.card>
+                <p
+                  :if={@entities == []}
+                  id="entities-empty"
+                  class="text-sm text-zinc-500 italic"
+                >
+                  {gettext("No entities match the current filter.")}
+                </p>
 
-            <table
-              :if={@entities != []}
-              id="entities-table"
-              style="width: 100%; font-size: 13px; border-collapse: collapse;"
-            >
-              <thead>
-                <tr style="border-bottom: 2px solid #d1d5da;">
-                  <th style="text-align: left; padding: 6px 4px;">scheme</th>
-                  <th style="text-align: left;">host</th>
-                  <th style="text-align: left;">path</th>
-                  <th style="text-align: left;">pid</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr :for={e <- @entities} style="border-bottom: 1px solid #eaeef2;">
-                  <td style="padding: 6px 4px; font-family: monospace; font-size: 12px; color: #6f42c1;">
-                    {e.scheme || "—"}
-                  </td>
-                  <td style="font-family: monospace; font-size: 12px;">{e.host || "—"}</td>
-                  <td style="font-family: monospace; font-size: 12px;">{e.path || "—"}</td>
-                  <td style="font-family: monospace; font-size: 11px; color: #57606a;">
-                    {e.pid_str}
-                  </td>
-                  <td>
-                    <a
-                      :if={e.scheme}
-                      href={"/plugins/auto/#{e.scheme}/#{URI.encode_www_form(e.uri_str)}"}
-                      style="color: #0969da; font-size: 12px;"
+                <table
+                  :if={@entities != []}
+                  id="entities-table"
+                  class="w-full text-xs border-collapse"
+                >
+                  <thead>
+                    <tr class="border-b border-zinc-200 dark:border-zinc-800">
+                      <th class="text-left px-1 py-1.5">scheme</th>
+                      <th class="text-left">host</th>
+                      <th class="text-left">path</th>
+                      <th class="text-left">pid</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr
+                      :for={e <- @entities}
+                      class="border-b border-zinc-100 dark:border-zinc-900"
                     >
-                      {gettext("detail")} →
-                    </a>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </section>
+                      <td class="px-1 py-1 font-mono text-xs text-violet-700 dark:text-violet-400">
+                        {e.scheme || "—"}
+                      </td>
+                      <td class="font-mono text-xs">{e.host || "—"}</td>
+                      <td class="font-mono text-xs">{e.path || "—"}</td>
+                      <td class="font-mono text-[11px] text-zinc-500">{e.pid_str}</td>
+                      <td>
+                        <a
+                          :if={e.scheme}
+                          href={"/plugins/auto/#{e.scheme}/#{URI.encode_www_form(e.uri_str)}"}
+                          class="text-xs text-sky-700 dark:text-sky-300 hover:underline"
+                        >
+                          {gettext("detail")} →
+                        </a>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </.card>
             </div>
           </:main>
         </AdminShell.admin_shell>
@@ -184,20 +185,15 @@ defmodule EzagentPluginLiveview.EntitiesLive do
     ~H"""
     <a
       href={"/admin/registry?filter=#{@value}"}
-      style={chip_style(@filter == @value)}
+      class={[
+        "px-3 py-1 text-xs rounded-md transition-colors border",
+        (@filter == @value &&
+           "bg-zinc-900 dark:bg-zinc-100 text-zinc-50 dark:text-zinc-900 border-zinc-900 dark:border-zinc-100") ||
+          "bg-white dark:bg-zinc-900 text-sky-700 dark:text-sky-300 border-zinc-200 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+      ]}
     >
       {@label}
     </a>
     """
   end
-
-  defp chip_style(true),
-    do:
-      "padding: 4px 12px; background: #0969da; color: white; border-radius: 12px; " <>
-        "font-size: 12px; text-decoration: none;"
-
-  defp chip_style(false),
-    do:
-      "padding: 4px 12px; background: white; color: #0969da; border: 1px solid #d1d5da; " <>
-        "border-radius: 12px; font-size: 12px; text-decoration: none;"
 end

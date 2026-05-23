@@ -293,10 +293,68 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
             <div class="flex justify-between"><dt>{gettext("created")}</dt><dd class="text-[10px]">{format_dt(@session_info[:created_at])}</dd></div>
           </dl>
         </div>
+
+        <%!--
+          G-3 + G-5 stop-gap (audit 2026-05-23) — Generator info panel.
+          Shown only for Generator-spawned sessions (those whose `:chat`
+          slice has a non-empty template_working_copy). Ad-hoc sessions
+          do not render this block — `@session_info[:generator]` is nil.
+        --%>
+        <div
+          :if={@session_info[:generator]}
+          id="session-generator-info"
+          class="px-3 py-2 border-t border-zinc-200 dark:border-zinc-800"
+        >
+          <div class="text-[10px] uppercase tracking-wide text-zinc-500 mb-1">
+            {gettext("Generator")}
+          </div>
+          <dl class="space-y-0.5 text-zinc-700 dark:text-zinc-300">
+            <div class="flex justify-between">
+              <dt>{gettext("orchestrator")}</dt>
+              <dd class="font-mono text-[10px] truncate max-w-[60%]">
+                {generator_orchestrator(@session_info[:generator])}
+              </dd>
+            </div>
+            <div class="flex justify-between">
+              <dt>{gettext("slots")}</dt>
+              <dd>
+                {gettext("%{filled}/%{total} filled",
+                  filled: @session_info[:generator][:filled],
+                  total: @session_info[:generator][:filled] +
+                    @session_info[:generator][:pending])}
+                <span
+                  :if={@session_info[:generator][:pending] > 0}
+                  class="text-amber-700 dark:text-amber-300 ml-1"
+                >
+                  ({gettext("%{n} pending", n: @session_info[:generator][:pending])})
+                </span>
+              </dd>
+            </div>
+          </dl>
+          <ul
+            :if={@session_info[:generator][:agent_slots] != []}
+            class="mt-1 space-y-0.5"
+          >
+            <li
+              :for={{name, _src, worker, _gen} <- @session_info[:generator][:agent_slots]}
+              class="text-[10px] font-mono flex items-center gap-1"
+            >
+              <span class={[
+                "inline-block w-1.5 h-1.5 rounded-full",
+                (worker && "bg-emerald-500") || "bg-amber-500"
+              ]} />
+              <span class="truncate">{name}</span>
+            </li>
+          </ul>
+        </div>
       </div>
     </div>
     """
   end
+
+  defp generator_orchestrator(%{orchestrator_template_uri: %URI{} = uri}), do: URI.to_string(uri)
+  defp generator_orchestrator(%{orchestrator_template_uri: uri}) when is_binary(uri), do: uri
+  defp generator_orchestrator(_), do: "—"
 
   defp format_dt(%DateTime{} = dt), do: Calendar.strftime(dt, "%Y-%m-%d %H:%M")
   defp format_dt(_), do: "—"

@@ -29,10 +29,18 @@ defmodule EzagentPluginLiveview.AgentNewLiveTest do
     # the dance in each describe block.
     ensure_default_workspace()
 
+    # V-6 fix (audit 2026-05-23) — AgentNewLive now reads the workspace
+    # from socket assigns (set by EzagentWeb.LiveAuth from the
+    # `current_workspace_uri` session slot) instead of hardcoding
+    # "default". Tests opt into the default workspace explicitly so
+    # the suite stays workspace-aware AND the admin user (whose
+    # natural workspace is `system`) doesn't accidentally land in
+    # the wrong tenant.
     conn =
       Phoenix.ConnTest.build_conn()
       |> Plug.Test.init_test_session(%{
-        "current_entity_uri" => URI.to_string(Ezagent.Entity.User.admin_uri())
+        "current_entity_uri" => URI.to_string(Ezagent.Entity.User.admin_uri()),
+        "current_workspace_uri" => "workspace://default"
       })
 
     {:ok, conn: conn}
@@ -88,9 +96,11 @@ defmodule EzagentPluginLiveview.AgentNewLiveTest do
     assert html =~ "cc"
     assert html =~ "echo"
     assert html =~ "curl"
-    # Default preview
-    assert html =~ "entity://agent/&lt;flavor&gt;_&lt;name&gt;" or
-             html =~ "entity://agent/<flavor>_<name>"
+    # V-6 fix — preview now includes the caller's workspace
+    # segment, so the placeholder is `<flavor>_<name>` after
+    # `entity://agent/<workspace>/`.
+    assert html =~ "entity://agent/default/&lt;flavor&gt;_&lt;name&gt;" or
+             html =~ "entity://agent/default/<flavor>_<name>"
 
     # Submit button
     assert html =~ "Create agent"

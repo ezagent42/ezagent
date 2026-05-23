@@ -1212,8 +1212,78 @@ defmodule EzagentPluginLiveview.AdminLive do
     %{
       member_count: length(members),
       workspace_uri: workspace_str,
-      created_at: created_at
+      created_at: created_at,
+      # G-3 + G-5 stop-gap (audit 2026-05-23) — surface the durable
+      # `template_working_copy` slice + the spawn_from_template
+      # provenance so operators can answer "what template was this
+      # session generated from?" + "which slots are filled / pending?".
+      # `nil` for ad-hoc sessions (most sessions, today); a map for
+      # Generator-spawned sessions.
+      generator: load_generator_info(session_uri)
     }
+  end
+
+  # G-3 + G-5 stop-gap — read the `:chat` slice's `template_working_copy`
+  # via the existing `Behavior.Chat.template_working_copy/1` helper.
+  # Returns nil for:
+  #
+  #   - Sessions not registered (not yet spawned)
+  #   - Sessions with the default (empty) working copy (ad-hoc, NOT
+  #     Generator-spawned — `agent_slots` empty AND no
+  #     `orchestrator_template_uri`)
+  #
+  # Returns a map for Generator-spawned sessions:
+  #
+  #   %{
+  #     orchestrator_template_uri: URI.t() | nil,
+  #     agent_slots: [{name, source_template_uri, live_worker_uri | nil, gen}],
+  #     filled: non_neg_integer,
+  #     pending: non_neg_integer,
+  #     description: String.t()
+  #   }
+  defp load_generator_info(%URI{} = session_uri) do
+    case Ezagent.KindRegistry.lookup(session_uri) do
+      :error ->
+        nil
+
+      {:ok, pid} ->
+        slice =
+          try do
+            # The Kind.Server state map holds slice data under `:state`
+            # (per `Ezagent.Kind.Server` shape — confirmed via
+            # :sys.get_state on a live Session pid).
+            case :sys.get_state(pid, 500) do
+              %{state: %{chat: chat_slice}} -> chat_slice
+              _ -> nil
+            end
+          catch
+            :exit, _ -> nil
+          end
+
+        if is_map(slice) do
+          wc = Ezagent.Behavior.Chat.template_working_copy(slice)
+
+          # Ad-hoc session — no slots + no orchestrator means the session
+          # is NOT Generator-spawned. Hide the panel entirely (returns nil).
+          if (wc[:agent_slots] || []) == [] and is_nil(wc[:orchestrator_template_uri]) do
+            nil
+          else
+            slots = wc[:agent_slots] || []
+            filled = Enum.count(slots, fn {_n, _src, worker, _g} -> not is_nil(worker) end)
+            pending = length(slots) - filled
+
+            %{
+              orchestrator_template_uri: wc[:orchestrator_template_uri],
+              agent_slots: slots,
+              filled: filled,
+              pending: pending,
+              description: wc[:description] || ""
+            }
+          end
+        end
+    end
+  rescue
+    _ -> nil
   end
 
   # V1 Allen #2 — read rules in chat plugin's routing tables and

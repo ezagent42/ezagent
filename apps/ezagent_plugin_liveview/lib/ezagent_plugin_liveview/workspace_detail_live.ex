@@ -489,9 +489,30 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
           </.card>
 
           <.card id="templates" class="mt-6">
-            <h2 class="text-sm font-medium mb-3 text-zinc-900 dark:text-zinc-100">
-              {gettext("Session templates (%{count})", count: map_size(@workspace.session_templates))}
+            <h2 class="text-sm font-medium mb-1 text-zinc-900 dark:text-zinc-100">
+              {gettext("Spawn-template registrations (%{count})",
+                count: map_size(@workspace.session_templates)
+              )}
             </h2>
+            <%!--
+              G-12 partial (audit 2026-05-23) — distinguish the legacy
+              `Workspace.Store.session_templates` map (Phase-4d
+              spawn-template REGISTRATIONS like cc.agent / echo.agent)
+              from Phase-7 SessionTemplate KINDS. Phase-7 templates
+              live in their own surface — link to it so operators
+              don't conflate the two.
+            --%>
+            <p class="text-[11px] text-zinc-500 mb-3">
+              {gettext(
+                "These are Template Class registrations (cc.agent, echo.agent, …) — the recipes used when an agent is created in this workspace. NOT the Phase-7 SessionTemplate Kinds."
+              )}
+              <a
+                href="/admin/templates?type=session_template"
+                class="ml-1 text-sky-700 dark:text-sky-300 hover:underline"
+              >
+                {gettext("View SessionTemplate Kinds →")}
+              </a>
+            </p>
             <p
               :if={@workspace.session_templates == %{}}
               id="templates-empty"

@@ -125,6 +125,61 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
   @spec template_uri() :: String.t()
   def template_uri, do: @template_uri
 
+  @doc """
+  Inspect the cc-orchestrator seed status (G-9 fix, audit 2026-05-23).
+
+  Returns one of:
+
+  - `{:ok, %{template_uri: ..., template_content: map()}}` — the seed
+    populated the slice (Kind is alive, `:template` content has a
+    non-nil `flavor`).
+  - `{:partial, %{template_uri: ..., template_content: ...}}` — the
+    Kind is alive but the slice content is nil or missing the
+    `flavor` key (the soft sandbox-files write failed; the AgentTemplate
+    Kind exists but the orchestrator can't actually spawn from it).
+  - `{:missing, %{template_uri: ...}}` — the Kind is not registered at
+    all (seed failed at `ensure_kind/1` or app boot order issue).
+
+  Used by `EzagentPluginLiveview.PluginsLive` to surface a boot-time
+  status badge near the cc plugin card. Read-only — no side effects.
+  """
+  @spec seed_status() :: {:ok | :partial | :missing, map()}
+  def seed_status do
+    uri = URI.parse(@template_uri)
+
+    case Ezagent.KindRegistry.lookup(uri) do
+      :error ->
+        {:missing, %{template_uri: @template_uri}}
+
+      {:ok, pid} ->
+        case read_template_slice(pid) do
+          %{flavor: f} = content when is_binary(f) and f != "" ->
+            {:ok, %{template_uri: @template_uri, template_content: content}}
+
+          content ->
+            {:partial, %{template_uri: @template_uri, template_content: content}}
+        end
+    end
+  rescue
+    # Reading the slice can race with a restart; treat any error as
+    # :missing so the UI shows a degraded-but-actionable badge.
+    _ -> {:missing, %{template_uri: @template_uri}}
+  end
+
+  # The `:template` slice content is the orchestrator's seeded config.
+  # `:sys.get_state` returns the Kind.Server state map; slice data lives
+  # under the `:state` key (per `Ezagent.Kind.Server` shape — confirmed
+  # via :sys.get_state on a live AgentTemplate pid).
+  defp read_template_slice(pid) do
+    case :sys.get_state(pid, 500) do
+      %{state: %{template: %{content: content}}} when is_map(content) -> content
+      %{state: %{template: %{content: nil}}} -> %{}
+      _ -> %{}
+    end
+  catch
+    :exit, _ -> %{}
+  end
+
   # --- internals ---------------------------------------------------------
 
   defp ensure_kind(%URI{} = uri) do

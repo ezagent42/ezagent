@@ -35,7 +35,28 @@ defmodule EzagentPluginLiveview.PluginsLive do
 
   @impl true
   def mount(_params, _session, socket) do
-    {:ok, assign(socket, :plugins, list_plugins())}
+    {:ok,
+     socket
+     |> assign(:plugins, list_plugins())
+     |> assign(:cc_orchestrator_status, load_cc_orchestrator_status())}
+  end
+
+  # G-9 fix (audit 2026-05-23) — read the cc-orchestrator seed status
+  # from `Ezagent.Orchestrator.CcOrchestratorSeed.seed_status/0`. The
+  # function is soft-guarded via `Code.ensure_loaded?` so this LV stays
+  # decoupled from the chat domain at compile time (the seed lives in
+  # `ezagent_domain_chat`; we don't want a compile-time alias here to
+  # avoid back-pressure on the dep graph).
+  defp load_cc_orchestrator_status do
+    seed_module = Ezagent.Orchestrator.CcOrchestratorSeed
+
+    if Code.ensure_loaded?(seed_module) and function_exported?(seed_module, :seed_status, 0) do
+      seed_module.seed_status()
+    else
+      :unavailable
+    end
+  rescue
+    _ -> :unavailable
   end
 
   # Enumerate PluginRegistry — every card is built from the plugin's
@@ -107,6 +128,17 @@ defmodule EzagentPluginLiveview.PluginsLive do
               <.page_header title={gettext("Plugins")}>
                 <:subtitle>{gettext("Installed ezagent plugins. Each one extends a core capability.")}</:subtitle>
               </.page_header>
+
+              <%!--
+                G-9 fix (audit 2026-05-23) — Boot diagnostics. Today's
+                surfaced check: the cc-orchestrator AgentTemplate seed.
+                A silent seed failure used to leave the orchestrator
+                unable to spawn — operators had no way to see this
+                without grepping logs. Future boot checks slot into
+                this same card.
+              --%>
+              <.boot_diagnostics_card status={@cc_orchestrator_status} />
+
               <div class="grid grid-cols-2 gap-4 mt-4">
                 <.plugin_card
                   :for={p <- @plugins}
@@ -124,4 +156,76 @@ defmodule EzagentPluginLiveview.PluginsLive do
     </AppShell.app_shell>
     """
   end
+
+  # G-9 fix — the boot-diagnostics card. Renders a single line per
+  # check, with a colored status badge + a one-sentence operator-facing
+  # explanation. The card is always rendered (even when all checks
+  # pass) so operators see "everything OK" at a glance instead of
+  # wondering whether the page just hides its diagnostics.
+  attr :status, :any, required: true
+
+  defp boot_diagnostics_card(assigns) do
+    ~H"""
+    <.card class="mt-4" id="boot-diagnostics">
+      <:header>{gettext("Boot diagnostics")}</:header>
+      <div class="flex items-start justify-between gap-3" id="cc-orchestrator-seed-row">
+        <div class="min-w-0">
+          <div class="text-sm font-medium text-zinc-900 dark:text-zinc-100">
+            {gettext("cc-orchestrator AgentTemplate seed")}
+          </div>
+          <div class="text-xs text-zinc-500 mt-0.5">
+            {cc_seed_subtitle(@status)}
+          </div>
+        </div>
+        <div class="shrink-0">
+          {cc_seed_badge(assigns)}
+        </div>
+      </div>
+    </.card>
+    """
+  end
+
+  defp cc_seed_badge(%{status: {:ok, _}} = assigns) do
+    ~H"""
+    <.badge variant="success">{gettext("seeded")}</.badge>
+    """
+  end
+
+  defp cc_seed_badge(%{status: {:partial, _}} = assigns) do
+    ~H"""
+    <.badge variant="warning">{gettext("partial")}</.badge>
+    """
+  end
+
+  defp cc_seed_badge(%{status: {:missing, _}} = assigns) do
+    ~H"""
+    <.badge variant="danger">{gettext("missing")}</.badge>
+    """
+  end
+
+  defp cc_seed_badge(%{status: :unavailable} = assigns) do
+    ~H"""
+    <.badge variant="default">{gettext("unavailable")}</.badge>
+    """
+  end
+
+  defp cc_seed_subtitle({:ok, %{template_uri: uri}}),
+    do: gettext("Populated at %{uri}.", uri: uri)
+
+  defp cc_seed_subtitle({:partial, %{template_uri: uri}}),
+    do:
+      gettext(
+        "Kind alive at %{uri} but template slice is empty — soft sandbox-files write may have failed. Check application logs.",
+        uri: uri
+      )
+
+  defp cc_seed_subtitle({:missing, %{template_uri: uri}}),
+    do:
+      gettext(
+        "No Kind registered at %{uri} — seed did not run or failed at boot. Generator-spawned orchestrators will fail.",
+        uri: uri
+      )
+
+  defp cc_seed_subtitle(:unavailable),
+    do: gettext("Seed module not loaded — ezagent_domain_chat may not be running.")
 end
