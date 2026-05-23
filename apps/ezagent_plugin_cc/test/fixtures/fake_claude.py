@@ -45,6 +45,11 @@ invariant is non-bypassable end-to-end).
   * FAKE_CLAUDE_GRACE_MS — extra ms to keep the bridge alive after sending
     the reply, so the WS frame definitely lands (default 1500)
   * FAKE_CLAUDE_TIMEOUT_S — outer wall-clock cap (default 30)
+  * FAKE_CLAUDE_ECHO_CREDENTIALS — when "1", read
+    $CLAUDE_CONFIG_DIR/.credentials.json and prepend its contents (as a
+    `[creds:<contents>]` tag) to the reply text. Lets the sandbox +
+    credential-copy e2e prove the seeded credentials file is visible to
+    a claude process whose CLAUDE_CONFIG_DIR points at the sandbox.
 
 ## Failure modes (all exit non-zero, with diagnostics on stderr)
 
@@ -171,8 +176,29 @@ def main():
     reply_prefix = os.environ.get("FAKE_REPLY_PREFIX", "echo: ")
     grace_ms = int(os.environ.get("FAKE_CLAUDE_GRACE_MS", "1500"))
     timeout_s = float(os.environ.get("FAKE_CLAUDE_TIMEOUT_S", "30"))
+    echo_credentials = os.environ.get("FAKE_CLAUDE_ECHO_CREDENTIALS", "") == "1"
 
     settings, mcp_configs = parse_argv(sys.argv[1:])
+
+    # Probe the sandbox credentials file: prove a credentials file
+    # placed in <CLAUDE_CONFIG_DIR>/.credentials.json by the operator's
+    # `mix ezagent.demo.seed_cc_sandbox` is VISIBLE to a claude process
+    # whose CLAUDE_CONFIG_DIR points at that sandbox. The real claude
+    # binary would auth via this file; the fake just reads it back so
+    # the e2e can assert the file-layout mechanism works end-to-end.
+    sandbox_dir = os.environ.get("CLAUDE_CONFIG_DIR", "")
+    credentials_probe = {"path": "", "exists": False, "contents": None, "error": None}
+    if sandbox_dir:
+        cred_path = os.path.join(sandbox_dir, ".credentials.json")
+        credentials_probe["path"] = cred_path
+        if os.path.exists(cred_path):
+            credentials_probe["exists"] = True
+            try:
+                with open(cred_path, "r", encoding="utf-8") as f:
+                    credentials_probe["contents"] = f.read()
+            except Exception as e:
+                credentials_probe["error"] = str(e)
+
     status = {
         "argv": sys.argv,
         "cwd": os.getcwd(),
@@ -182,6 +208,7 @@ def main():
         },
         "settings_chain": settings,
         "mcp_config_chain": mcp_configs,
+        "credentials_probe": credentials_probe,
         "phase": "argv_parsed",
     }
     write_status(status_path, status)
@@ -271,7 +298,16 @@ def main():
             write_status(status_path, status)
             sys.exit(14)
 
-        reply_text = reply_prefix + content
+        # When FAKE_CLAUDE_ECHO_CREDENTIALS=1, the reply leads with a
+        # `[creds:<file contents>]` tag — proving the sandbox
+        # .credentials.json (copied in by `mix ezagent.demo.seed_cc_sandbox`
+        # or by hand) is visible to a process whose CLAUDE_CONFIG_DIR
+        # is the sandbox dir.
+        if echo_credentials and credentials_probe.get("exists"):
+            tag = "[creds:" + (credentials_probe.get("contents") or "") + "]"
+            reply_text = tag + reply_prefix + content
+        else:
+            reply_text = reply_prefix + content
         send_jsonrpc(p, {
             "jsonrpc": "2.0",
             "id": 3,

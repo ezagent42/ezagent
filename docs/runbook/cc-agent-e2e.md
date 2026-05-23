@@ -44,10 +44,112 @@ uv --version
 
 # 3. authenticated claude — either via `claude login` or an API key
 #    that resolves under the sandbox CLAUDE_CONFIG_DIR you'll use.
+#    See "Credential-copy: avoid re-login per agent" below.
 
 # 4. an ezagent dev DB
 mix ezagent.db.reset       # only if you want a clean slate
 ```
+
+## Credential-copy: avoid re-login per agent (Allen 2026-05-23)
+
+### Why credential-copy
+
+A cc agent in sandbox mode runs `claude` with
+`CLAUDE_CONFIG_DIR=<sandbox>`. claude in sandbox mode does **NOT**
+see your host `~/.claude/` — that is the whole point of the sandbox
+(isolated MCP cache, isolated session history, isolated credentials).
+
+Out of the box, this means every new sandboxed cc agent would need
+its own `claude login` — and the cc agent is launched
+non-interactively under a PTY, so a login prompt would just hang.
+
+To avoid re-logging-in for every agent, copy your authenticated
+`~/.claude/.credentials.json` into the sandbox **once**, before the
+agent first spawns. The spawned `claude` finds the credentials at
+`<sandbox>/.credentials.json` and authenticates without prompting.
+
+### The one-liner
+
+```bash
+mix ezagent.demo.seed_cc_sandbox --name my-agent --seed-template my-agent
+```
+
+What it does:
+
+1. Creates `~/.ezagent/cc-sandboxes/my-agent/` (chmod 700) if missing.
+2. Copies `~/.claude/.credentials.json` into it as `.credentials.json`
+   (chmod 600, atomic write).
+3. Seeds an `AgentTemplate` at `template://agent/default/cc-my-agent`
+   with `flavor: "cc"`, `working_directory` + `claude_config_dir` both
+   pointing at the sandbox.
+
+Flags:
+
+| Flag | Effect |
+|---|---|
+| `--name <s>` | sandbox name (used in default paths + template URI) |
+| `--sandbox-dir <p>` | override the default `~/.ezagent/cc-sandboxes/<name>` |
+| `--credentials-file <p>` | non-default source (e.g. for a non-standard host setup) |
+| `--force` | overwrite an existing `<sandbox>/.credentials.json` |
+| `--seed-template <s>` | also seed an AgentTemplate pointing at the sandbox |
+
+Failure modes (all loud — no silent fallthrough):
+
+- source `~/.claude/.credentials.json` missing →
+  `no host credentials to copy — claude login first, or pass --credentials-file <path>`
+- dest `<sandbox>/.credentials.json` exists without `--force` → refuses to clobber.
+
+### Manual equivalent
+
+```bash
+sandbox=~/.ezagent/cc-sandboxes/my-agent
+mkdir -p "$sandbox"
+chmod 700 "$sandbox"
+cp -p ~/.claude/.credentials.json "$sandbox/.credentials.json"
+chmod 600 "$sandbox/.credentials.json"
+```
+
+Then set `claude_config_dir = $sandbox` in your AgentTemplate (via
+the LV `/admin/agent_templates/new` form or programmatically).
+
+### macOS Keychain caveat (read this on macOS)
+
+`claude login` on macOS may store credentials in the **system Keychain**
+rather than `~/.claude/.credentials.json`. In that case
+`mix ezagent.demo.seed_cc_sandbox` finds no file to copy and fails
+loudly with the "no host credentials" error.
+
+Worse, on macOS `CLAUDE_CONFIG_DIR` does NOT isolate the Keychain:
+the spawned `claude` in the sandbox still shares Keychain access with
+your user account, so all sandboxes effectively share credentials.
+
+For true per-agent credential isolation on macOS, use an API key plus
+an `api_key_helper` instead of OAuth + Keychain — see
+`docs/runbook/cc-agent-config.md` (the `api_key_helper` field on
+AgentTemplate) for the workaround.
+
+This caveat does NOT apply on Linux, where `CLAUDE_CONFIG_DIR`
+isolates everything including credentials.
+
+### Re-seeding
+
+The sandbox + credentials persist across agent spawns. Re-seed only:
+
+- to start a fresh sandbox (delete the dir, re-run the one-liner);
+- to update credentials after a rotation on the host (re-run with `--force`);
+- to point an existing AgentTemplate at a different sandbox (edit the template).
+
+### Where this contract is verified
+
+- `apps/ezagent_plugin_cc/test/integration/cc_agent_sandbox_credentials_test.exs`
+  — proves the file-layout + env-threading contract end-to-end:
+  a credentials file placed at `<sandbox>/.credentials.json` IS visible
+  to a process spawned through the cc agent stack with
+  `CLAUDE_CONFIG_DIR=<sandbox>`. The fake claude reads the file back via
+  the reply path so the test asserts on the OBSERVED contents (not just
+  the env var).
+- Cross-links the `AgentTemplate` slice details in
+  `docs/runbook/cc-agent-config.md`.
 
 ## Smoke steps
 
@@ -244,10 +346,16 @@ subscription is stale; refresh.
 ## See also
 
 - `apps/ezagent_plugin_cc/test/integration/cc_agent_admin_reply_e2e_test.exs`
-  — the deterministic CI gate that proves this without the LLM.
+  — the deterministic CI gate that proves the full wiring without the LLM.
+- `apps/ezagent_plugin_cc/test/integration/cc_agent_sandbox_credentials_test.exs`
+  — the deterministic CI gate that proves the sandbox + credential-copy
+  file-layout / env-threading contract (the "avoid re-login" flow).
 - `apps/ezagent_plugin_cc/test/fixtures/fake_claude.py` — the
-  deterministic `claude` stand-in the CI gate uses.
+  deterministic `claude` stand-in the CI gates use.
+- `apps/ezagent_plugin_cc/lib/mix/tasks/ezagent.demo.seed_cc_sandbox.ex`
+  — the one-liner mix task referenced in "Credential-copy: avoid
+  re-login per agent" above.
 - `docs/runbook/cc-agent-config.md` — the AgentTemplate sandbox
-  config reference.
+  config reference (slice schema, `api_key_helper` macOS workaround).
 - `apps/ezagent_plugin_cc/lib/ezagent/template/cc_agent.ex` — the
   Template Class moduledoc with the full safety argv layout.
