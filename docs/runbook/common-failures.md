@@ -254,6 +254,31 @@ git grep "Ezagent.Bridge.V1Prototype" apps/
 
 ---
 
+## Symptom: `Phoenix.Ecto.PendingMigrationError` at `GET /`
+
+The browser shows "there are pending migrations for repo: EzagentCore.Repo. Try running `mix ecto.migrate`". The app boots OK but every web request 500s on the migration-check plug.
+
+**Root cause:** `EzagentCore.MigrationGate.skip?/0` (`apps/ezagent_core/lib/ezagent_core/migration_gate.ex`) decides whether the `Ecto.Migrator` child runs migrations on boot. It runs iff one of:
+
+- `RELEASE_NAME` env var is set (Mix release / `bin/ezagent start`)
+- `MIX_ENV=prod` (e.g. `MIX_ENV=prod mix phx.server` — the app.ezagent.chat deploy)
+
+Dev (`MIX_ENV=dev`) and test boots **never** auto-migrate — devs are expected to run `mix ecto.migrate` manually so the schema change is visible & deliberate.
+
+**Fix on the prod box:**
+
+```bash
+cd <ezagent-checkout> && MIX_ENV=prod mix ecto.migrate
+```
+
+Then refresh the browser. If you want this to apply automatically on the next deploy, double-check the start script actually exports `MIX_ENV=prod` before invoking `mix phx.server` — without it the gate falls back to skip.
+
+**Escape hatch:** if you ever need to boot prod WITHOUT applying a pending migration (e.g. troubleshooting, or rolling code back without rolling schema back), set `EZAGENT_SKIP_MIGRATIONS=1` for that boot. The override wins over both `RELEASE_NAME` and `MIX_ENV=prod`.
+
+**CI gate:** `apps/ezagent_core/test/ezagent_core/migration_gate_test.exs` — 13-case env-var matrix locking the run/skip decision.
+
+---
+
 ## When this runbook doesn't have your symptom
 
 In order:

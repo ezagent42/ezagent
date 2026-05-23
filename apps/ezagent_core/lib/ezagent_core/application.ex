@@ -23,7 +23,8 @@ defmodule EzagentCore.Application do
       # ④ SQLite repo + migrations (Phase 0 baseline).
       EzagentCore.Repo,
       {Ecto.Migrator,
-       repos: Application.fetch_env!(:ezagent_core, :ecto_repos), skip: skip_migrations?()},
+       repos: Application.fetch_env!(:ezagent_core, :ecto_repos),
+       skip: EzagentCore.MigrationGate.skip?()},
       {DNSCluster, query: Application.get_env(:ezagent_core, :dns_cluster_query) || :ignore},
 
       # ⑤ PubSub — needed by LiveView audit:stream + future view fan-outs.
@@ -143,10 +144,5 @@ defmodule EzagentCore.Application do
           err -> err
         end
     end
-  end
-
-  defp skip_migrations?() do
-    # By default, sqlite migrations are run when using a release
-    System.get_env("RELEASE_NAME") == nil
   end
 end
