@@ -51,6 +51,23 @@ in main. PR-C builds on PR-B's `{:partial, _}` convention. PR-D documents.
      ownership predicate (lineage + workspace match). Used by both worker-slot
      reconcile (SPEC §2 step 3) and orchestrator-adopt gate (SPEC §2 step 2,
      codex rev-2 HIGH-6).
+5. `apps/ezagent_domain_chat/lib/ezagent/entity/agent.ex` — add (public):
+   - `spawn_fresh(template_uri, instance_name, workspace_uri, granted_by) ::
+       {:ok, %{pid: pid(), fresh?: boolean()}} | {:error, term()}`
+     — the **side-effect-free-on-already-started** spawn primitive (codex
+     rev-4 HIGH-1). Calls `SpawnRegistry.spawn(agent_uri)`:
+     - `{:ok, pid}` → `WorkspaceRegistry.bind` + `AgentLineage.record` →
+       `{:ok, %{pid: pid, fresh?: true}}`;
+     - `{:error, {:already_started, pid}}` → `{:ok, %{pid: pid, fresh?: false}}`
+       WITHOUT touching `WorkspaceRegistry` or `AgentLineage`.
+     The current `Agent.spawn/4` (agent.ex:132-147) is REWRITTEN as
+     `spawn_fresh/4` + a thin `spawn/4` shim that calls `spawn_fresh/4`
+     then unconditionally records lineage + binds (preserving the
+     pre-rev-4 contract for callers that want the legacy behaviour —
+     none of the reconciler call sites do, but external V1 callers may).
+   - Reconciler call sites (orchestrator-ensure §2 step 2; worker-slot
+     fast-path bypass + slot create) use `spawn_fresh/4` and apply
+     ownership re-check on `fresh?: false`.
 5. **Audit** the call sites of `Session.spawn_from_template/2` (commit message
    records the result; SPEC §7-3 expects "none outside session_live.ex + tests"
    — confirm or surface):
@@ -79,6 +96,11 @@ in main. PR-C builds on PR-B's `{:partial, _}` convention. PR-D documents.
   - live worker + lineage MISmatch → false;
   - dead worker → false;
   - mirrors `Workspace.Loader.bind_one_gated/3` test coverage.
+- `apps/ezagent_domain_chat/test/ezagent/entity/agent_spawn_fresh_test.exs` (codex rev-4 HIGH-1)
+  - first spawn → `{:ok, %{fresh?: true}}` + lineage + binding recorded;
+  - second spawn of same URI → `{:ok, %{fresh?: false}}` + NO lineage/binding mutation;
+  - verifies `:already_started` does NOT trigger `WorkspaceRegistry.bind` or
+    `AgentLineage.record` (uses a Mox / tracer to assert zero invocations).
 
 **No behaviour change.** All existing tests pass unmodified. The new
 helpers are unused in production code paths.

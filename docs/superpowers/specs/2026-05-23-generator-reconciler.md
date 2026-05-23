@@ -3,6 +3,25 @@
 > **Status**: DRAFT rev 2 — 2026-05-23. Author: Claude, per Allen Feishu
 >
 > - **rev 1**: initial SPEC.
+> - **rev 4**: third `codex adversarial-review` — 2 HIGH + 1 MEDIUM, all
+>   addressed: (a) orchestrator `:not_live` → `Agent.spawn/4` branch still
+>   has a check-then-spawn TOCTOU window — a foreign process can claim
+>   the URI between the gate check and the spawn call; `Agent.spawn/4`
+>   maps `{:already_started, _}` to `{:ok, pid}` and unconditionally
+>   binds + records lineage, re-parenting the foreign worker. Fixed by
+>   requiring a new `Agent.spawn_fresh/4` primitive that reports
+>   `:fresh | :already_started` WITHOUT side-effects on already_started;
+>   the reconciler re-enters the ownership gate on already_started. (§2
+>   step 2 + new dependency in PR-A.) (b) Working-copy merge re-checks
+>   ownership only for prior tuples, not this-pass tuples — a slot
+>   re-parented BETWEEN reconcile_slot's commit and merge_working_copy
+>   could be written into the working copy as foreign. Fixed by
+>   re-validating every selected slot at merge time. (§2 step 5.) (c)
+>   Retry exhaustion may turn a transient pending state into a false
+>   foreign classification under load. Fixed by splitting
+>   check_orchestrator into POSITIVE foreign evidence vs ABSENT
+>   ownership evidence — only the former returns `:foreign`; the latter
+>   returns `:partial(:orchestrator_ownership_pending)`. (§2 step 2.)
 > - **rev 3**: second `codex adversarial-review` — 2 HIGH + 1 MEDIUM, all
 >   addressed: (a) PR-B plan contradicted the rev-2 SPEC by listing
 >   `populate_working_copy/5` + `grant_scoped_caps/3` + preflight_agent_slots
@@ -356,39 +375,86 @@ def ensure_orchestrator(session_uri, workspace_uri, owner_uri):
       {:ok, candidate_uri, :already_present}
 
     :not_live ->
-      Agent.spawn(orch_template_uri, instance_name, workspace_uri, owner_uri)
-
-    {:live_but_ownership_unknown, _} ->
-      # codex rev-3 MEDIUM: Agent.spawn/4 is process-spawn THEN bind-workspace
-      # THEN record-lineage (3 non-atomic steps in agent.ex:140-143). A second
-      # reconciler pass that interleaves between step 1 and step 3 of the FIRST
-      # pass legitimately sees a live process with no published lineage/binding
-      # yet. That race is NOT corruption. Treat live-but-ownership-unknown as a
-      # transient state: bounded re-read with backoff, before classifying as
-      # foreign. The retry budget is small (race window is microseconds in
-      # practice); a TRUE foreign state stays foreign across the retries.
-      with_retries(retries: 3, backoff_ms: 50, fn ->
-        case check_orchestrator(candidate_uri, owner_uri, workspace_uri) do
-          {:owned, _}                     -> {:ok, candidate_uri, :already_present}
-          {:live_but_ownership_unknown, _} -> :retry
-          :not_live                       -> :retry  # spawn race resolved + lost
-        end
-      end)
-      |> case do
-        {:ok, _, _} = ok -> ok
-        :retry_exhausted -> {:error, {:orchestrator_foreign, candidate_uri}}
+      # codex rev-4 HIGH-1: do NOT call the side-effecting Agent.spawn/4
+      # (which maps {:already_started, _} to {:ok, _} and unconditionally
+      # binds + records lineage — re-parenting any foreign process that
+      # claimed the URI in the TOCTOU window). Use the fresh-only primitive
+      # Agent.spawn_fresh/4 (PR-A addition) which reports :fresh vs
+      # :already_started WITHOUT side effects on :already_started; on
+      # :already_started we RE-ENTER the ownership gate.
+      case Agent.spawn_fresh(orch_template_uri, instance_name, workspace_uri, owner_uri) do
+        {:ok, %{pid: _, fresh?: true}}        -> {:ok, candidate_uri, :created}
+        {:ok, %{pid: _, fresh?: false}}       -> retry_after_race(candidate_uri, owner_uri, workspace_uri)
+        {:error, _} = err                     -> err
       end
+
+    {:ownership_pending, _} ->
+      # codex rev-4 MEDIUM-3: NOT classifying this as "foreign" — there is
+      # NO positive evidence (lineage/workspace either absent OR matches us).
+      # Bounded re-read (3 retries × 50ms = 150ms worst case) covers the
+      # interleaved-spawn race; on exhaust → :partial, NOT :error, so the
+      # operator's retry is the resolution path (not "investigate foreign
+      # corruption").
+      retry_after_race(candidate_uri, owner_uri, workspace_uri)
+
+    {:foreign, evidence} ->
+      # POSITIVE foreign evidence (lineage points at a DIFFERENT principal OR
+      # workspace points at a DIFFERENT workspace). This is real corruption /
+      # cross-tenant collision — no amount of retrying converges. Refuse.
+      {:error, {:orchestrator_foreign, candidate_uri, evidence}}
+  end
+
+defp retry_after_race(uri, owner_uri, workspace_uri):
+  Stream.unfold(3, fn
+    0 -> nil
+    n -> case check_orchestrator(uri, owner_uri, workspace_uri) do
+      {:owned, _}        -> {[{:ok, uri, :already_present}], 0}
+      {:foreign, ev}     -> {[{:error, {:orchestrator_foreign, uri, ev}}], 0}
+      _                  -> Process.sleep(50); {[:retry], n - 1}
+    end
+  end)
+  |> Enum.to_list()
+  |> List.last()
+  |> case do
+    {:ok, _, _} = ok -> ok
+    {:error, _} = err -> err
+    :retry           -> {:partial, %{orchestrator_pending: uri}}
   end
 
 defp check_orchestrator(uri, owner_uri, workspace_uri):
   case KindRegistry.lookup(uri) do
     :error -> :not_live
     {:ok, _pid} ->
-      lineage_ok  = match?({:ok, ^owner_uri},     AgentLineage.lookup(uri))
-      workspace_ok = match?({:ok, ^workspace_uri}, WorkspaceRegistry.lookup(uri))
+      # Three-way classification per codex rev-4 MEDIUM-3:
+      #   :owned             → BOTH lineage + workspace POSITIVELY match us
+      #   {:foreign, ev}     → at least one POSITIVELY mismatches (different principal/ws)
+      #   {:ownership_pending,_} → neither :owned nor :foreign (one or both absent;
+      #                            the spawn-bind-lineage sequence may still be inflight)
+      lineage_state =
+        case AgentLineage.lookup(uri) do
+          {:ok, ^owner_uri}      -> :match
+          {:ok, other_principal} -> {:mismatch, other_principal}
+          :error                 -> :absent
+        end
+
+      workspace_state =
+        case WorkspaceRegistry.lookup(uri) do
+          {:ok, ^workspace_uri}  -> :match
+          {:ok, other_ws}        -> {:mismatch, other_ws}
+          :error                 -> :absent
+        end
+
       cond do
-        lineage_ok and workspace_ok -> {:owned, uri}
-        true                         -> {:live_but_ownership_unknown, uri}
+        lineage_state == :match and workspace_state == :match ->
+          {:owned, uri}
+
+        match?({:mismatch, _}, lineage_state) or match?({:mismatch, _}, workspace_state) ->
+          # POSITIVE foreign evidence — record what was mismatched for the operator
+          {:foreign, %{lineage: lineage_state, workspace: workspace_state}}
+
+        true ->
+          # One or both absent, neither positively foreign — race window.
+          {:ownership_pending, uri}
       end
   end
 ```
@@ -398,10 +464,13 @@ call, and `spawn_or_resume/1` (agent.ex:149) maps `{:error, {:already_started,
 pid}}` to `{:ok, pid}` — then unconditionally calls `WorkspaceRegistry.bind`
 + `AgentLineage.record` (agent.ex:140-143). So a live foreign-lineage
 orchestrator at the same URI would have been silently RE-PARENTED + REBOUND.
-Rev-2's `cond` gate refuses adoption WITHOUT the lineage/workspace match —
-mirroring the worker-slot `verify_slot_candidate_ownership/5` round-8
-contract — surfacing the foreign URI as `{:partial, _}` with
-`{:orchestrator_foreign, _}` for operator inspection.
+Rev-2's `cond` gate refused adoption WITHOUT the lineage/workspace match
+when the URI was found live on FIRST inspection — but rev-4 codex found
+the residual TOCTOU: the `:not_live` → `Agent.spawn/4` branch ITSELF can
+race a foreign claim (a foreign process at the same URI between the check
+and the spawn). The rev-4 fix is `Agent.spawn_fresh/4` (the new PR-A
+primitive) which never side-effects on `:already_started`; the reconciler
+re-enters the ownership gate on that signal.
 
 **Race-handling decomposition** (codex rev-3 MEDIUM): the pre-rev-3 SPEC
 classified ANY `live? + no ownership match` as `:orchestrator_foreign`.
@@ -617,13 +686,22 @@ def merge_working_copy(session_uri, template_content, this_pass_slots, workspace
   merged_slots =
     Enum.map(desired_slot_names, fn name ->
       cond do
-        # This-pass entry wins (just freshly converged).
-        Map.has_key?(this_slots_map, name) ->
+        # This-pass entry wins — BUT codex rev-4 HIGH-2: re-validate ownership
+        # at merge time too. A slot that converged earlier in THIS pass could
+        # be concurrently re-parented (AgentLineage.record is an ETS upsert;
+        # nothing forbids a concurrent operator action against the worker URI)
+        # between reconcile_slot's commit and the merge. Re-checking here
+        # closes the window: if ownership is now lost, fall through to the
+        # prior-entry / nil-worker branches just like a slot that never
+        # converged this pass. This-pass adoption can be revoked at write
+        # time the same way prior-pass adoption can.
+        Map.has_key?(this_slots_map, name) and
+        this_pass_slot_still_owned?(this_slots_map[name], workspace_uri, orchestrator_uri) ->
           this_slots_map[name]
 
-        # No this-pass entry; prior is present + still ownership-valid (alive +
-        # lineage to us + workspace match) → keep. codex rev-3 HIGH-1: lineage
-        # check is included now.
+        # No this-pass entry (or it lost ownership above); prior is present +
+        # still ownership-valid (alive + lineage to us + workspace match) →
+        # keep. codex rev-3 HIGH-1: lineage check is included now.
         prior_entry = prior_slots_map[name];
         prior_entry != nil and prior_slot_still_owned?(prior_entry, workspace_uri, orchestrator_uri) ->
           prior_entry
@@ -657,6 +735,14 @@ defp prior_slot_still_owned?(
   # orchestrator-adopt gate (§2 step 2).
   worker_already_owned_by_us?(worker_uri, orch_uri, ws_uri)
 defp prior_slot_still_owned?({_name, _src, nil, _gen}, _ws, _orch), do: false
+
+# codex rev-4 HIGH-2: identical predicate, applied to this-pass entries —
+# revalidate at MERGE time, not just at the reconcile_slot commit time. The
+# distinction is moot at the predicate level (both are "is this worker URI
+# still owned by us") but it matters at the call site, so we name the
+# helper separately to make the SPEC-to-code mapping unambiguous.
+defp this_pass_slot_still_owned?(slot_tuple, ws_uri, orch_uri),
+  do: prior_slot_still_owned?(slot_tuple, ws_uri, orch_uri)
 ```
 
 **The merge is monotonic for converged slots and HONEST for pending slots.**
