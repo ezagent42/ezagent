@@ -520,18 +520,16 @@ defmodule Ezagent.Orchestrator.Tools do
     end
   end
 
-  # Dispatch `lifecycle.terminate` on the worker's instance URI.
-  #
-  # TODO (PR3, codex PR2 #288 round-4 HIGH-1): migrate to
-  # `sandbox.destroy` for agents carrying `Ezagent.Behavior.Sandbox`
-  # so the plugin Template Class's `destroy_config_dir/2` runs as
-  # part of teardown. Today this path bypasses sandbox cleanup → cc
-  # per-agent config dirs (containing copied credentials) leak on
-  # `remove_agent_slot` / `update_agent_template`. PR2 added the
-  # Sandbox Behavior but did NOT migrate call sites; PR3 closes that
-  # gap once cc plugin implements the callbacks.
+  # PR3 2026-05-24 (Allen) — dispatches `sandbox.destroy` (migrated from
+  # `lifecycle.terminate` per PR2 #288 round-4 HIGH-1). `sandbox.destroy`
+  # is a drop-in superset: it BOTH runs the plugin Template Class's
+  # `destroy_config_dir/2` FS cleanup AND schedules Kind-process
+  # termination (same detached-Task pattern as `lifecycle.terminate`).
+  # For agents with no `:sandbox` slice or no template_class (echo,
+  # curl, np that never populated), Sandbox short-circuits the cleanup
+  # and just schedules termination — safe drop-in for all flavors.
   defp terminate_worker(%URI{} = worker_uri, %URI{} = caller, caps) do
-    target = URI.parse("#{URI.to_string(worker_uri)}?action=lifecycle.terminate")
+    target = URI.parse("#{URI.to_string(worker_uri)}?action=sandbox.destroy")
 
     case Invocation.dispatch(%Invocation{
            target: target,
@@ -539,6 +537,26 @@ defmodule Ezagent.Orchestrator.Tools do
            args: %{},
            ctx: ctx(caller, caps)
          }) do
+      # PR3 round-1 HIGH-3 (codex) — propagate cleanup failures to
+      # the orchestrator caller. Process IS gone (sandbox.destroy
+      # schedules termination unconditionally), but the FS dir may
+      # still be on disk holding credentials. Surface as
+      # `{:error, {:terminated_with_cleanup_failure, reason}}` so the
+      # caller knows there's residue to investigate. (Sandbox slice
+      # is also preserved per round-4 HIGH-2 for ops retry.)
+      {:ok, %{destroyed: true, cleanup: :ok}} ->
+        :ok
+
+      {:ok, %{destroyed: true, cleanup: {:error, reason}}} ->
+        {:error, {:terminated_with_cleanup_failure, reason}}
+
+      # Defensive fallback if cleanup key is absent (e.g. a Sandbox
+      # version older than PR3 round-4 — treat as success).
+      {:ok, %{destroyed: true}} ->
+        :ok
+
+      # Legacy lifecycle.terminate shape — kept for safety during
+      # in-flight migrations; harmless after Sandbox lands.
       {:ok, {:ok, :terminated}} -> :ok
       {:ok, :terminated} -> :ok
       # The worker Kind is not alive — dispatch to an absent / not-ready
@@ -877,8 +895,24 @@ defmodule Ezagent.Orchestrator.Tools do
     {pending, errors} =
       if pending == [] and slot_outcome == :committed do
         case maybe_terminate_old(old_worker_uri, new_worker_uri, caller, caps) do
-          :ok -> {pending, errors}
-          {:error, reason} -> {[:old_worker | pending], [{:old_worker, reason} | errors]}
+          :ok ->
+            {pending, errors}
+
+          # PR3 round-2 MEDIUM-1 (codex) — distinct cleanup-failure
+          # bucket. The OLD worker IS terminated (sandbox.destroy
+          # always schedules termination), but its config dir leaked.
+          # A retry of update_agent_template hits the no-op path
+          # (slot already at new_worker), so the leak is NOT
+          # auto-recovered. PR4 follow-up: persist an explicit
+          # cleanup-required record so an ops dashboard / reconciler
+          # tick can retry. For now, surface as a distinct error so
+          # operator sees it (vs swallowing as :ok).
+          {:error, {:terminated_with_cleanup_failure, reason}} ->
+            {[:old_worker_config_cleanup | pending],
+             [{:old_worker_config_cleanup, reason} | errors]}
+
+          {:error, reason} ->
+            {[:old_worker | pending], [{:old_worker, reason} | errors]}
         end
       else
         # Routing or slot didn't converge — keep both workers alive.

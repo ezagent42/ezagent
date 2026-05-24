@@ -124,6 +124,10 @@ defmodule EzagentWeb.Router do
       # `:uri` param for AgentDetailLive.
       live "/identities/agents/new", AgentNewLive
       live "/identities/agents/:uri", AgentDetailLive
+      # PR3 2026-05-24 (Allen) — plugin-agnostic per-agent extension
+      # management LV. Dispatches via AgentFlavorRegistry → plugin
+      # Template Class's list_extensions/1 + toggle_extension/3.
+      live "/identities/agents/:uri/extensions", AgentExtensionsLive
       # Domain.Pty PR-D (2026-05-21) — standalone PTY terminal page.
       # Resource-first per SPEC §10 decision 2; sibling to /:uri/caps
       # and /:uri/api-keys. Bridge pattern per SPEC §13: `:uri` is the

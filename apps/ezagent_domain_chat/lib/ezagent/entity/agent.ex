@@ -451,7 +451,7 @@ defmodule Ezagent.Entity.Agent do
     with {:ok, template_class} <- resolve_template_class(template_content_map),
          {:ok, data} <-
            Ezagent.Entity.AgentTemplate.to_template_data(template_content_map, instance_uri),
-         {:ok, workers, fresh?} <-
+         {:ok, workers, fresh?, instantiate_meta} <-
            instantiate_workers(template_class, data, workspace_uri) do
       # codex round-7 HIGH-1 — the post-spawn obligations (lineage +
       # workspace binding) are side effects that OVERWRITE existing rows:
@@ -486,15 +486,36 @@ defmodule Ezagent.Entity.Agent do
       # residue. (`fresh?: false` adopts a pre-existing worker — no
       # obligations run, nothing to undo — round 7.)
       if fresh? do
-        case establish_post_spawn_obligations(workers, spawned_by_uri, workspace_uri) do
-          :ok ->
-            {:ok, %{workers: workers, fresh?: fresh?}}
-
+        # PR3 2026-05-24 — `record_sandbox_state/3` is a NEW CHECKED step
+        # after post-spawn obligations: dispatches `sandbox.write_path`
+        # on each worker so its `:sandbox` slice carries the per-agent
+        # config_dir + template_class. Without this, a destroy_config_dir
+        # callback later cannot know what to clean up.
+        #
+        # A failure here triggers `undo_fresh_workers/1` (same Round-10
+        # rollback as a post-spawn-obligation failure): terminate the
+        # worker, unbind workspace, forget lineage, AND (cc-specific)
+        # the plugin's own `rollback_agent_config_dir` already ran
+        # inside `instantiate/3` if PTY failed there. Here we additionally
+        # delete the dir we just created if the write_path dispatch
+        # itself fails — otherwise the agent terminates but the dir
+        # leaks because `Sandbox.invoke(:destroy, ...)` would never run
+        # (the agent never even came up).
+        with :ok <- establish_post_spawn_obligations(workers, spawned_by_uri, workspace_uri),
+             :ok <- record_sandbox_state(workers, instantiate_meta, template_class) do
+          {:ok, %{workers: workers, fresh?: fresh?}}
+        else
           {:error, reason} ->
             undo_fresh_workers(workers)
+            cleanup_partial_config_dirs(workers, template_class)
             {:error, reason}
         end
       else
+        # `fresh?: false` — adopted a pre-existing worker. Still
+        # write_path so its slice reflects the (already-existing)
+        # config_dir, but don't roll back on failure (we didn't create
+        # the worker).
+        _ = record_sandbox_state(workers, instantiate_meta, template_class)
         {:ok, %{workers: workers, fresh?: fresh?}}
       end
     end
@@ -504,25 +525,107 @@ defmodule Ezagent.Entity.Agent do
     {:error, :invalid_spawn_from_template_content_args}
   end
 
-  # codex round-6 HIGH-1 — call the plugin Template Class's
-  # `instantiate/3` and normalize its return to `{:ok, workers,
-  # fresh?}`. The 3-element `{:ok, workers, %{fresh?: _}}` form carries
-  # the atomic fresh-vs-adopted signal; the legacy 2-element
-  # `{:ok, workers}` form has no signal — `fresh?` is conservatively
-  # `false` (the swap then refuses a possible adoption).
+  # codex round-6 HIGH-1 + PR3 2026-05-24 — call the plugin Template
+  # Class's `instantiate/3` and normalize its return to `{:ok, workers,
+  # fresh?, meta}`. The 3-element `{:ok, workers, %{fresh?:, ...}}`
+  # form carries the atomic fresh-vs-adopted signal AND any
+  # plugin-supplied PR3-style per-spawn metadata (e.g.
+  # `:config_dir_path` for cc). The legacy 2-element `{:ok, workers}`
+  # form has no signal — `fresh?` defaults conservatively to `false`
+  # and meta is an empty map.
   defp instantiate_workers(template_class, data, %URI{} = workspace_uri) do
     case template_class.instantiate(template_class.template_name(), data, workspace_uri) do
       {:ok, workers, meta} when is_list(workers) and is_map(meta) ->
-        {:ok, workers, Map.get(meta, :fresh?, false) == true}
+        {:ok, workers, Map.get(meta, :fresh?, false) == true, meta}
 
       {:ok, workers} when is_list(workers) ->
-        {:ok, workers, false}
+        {:ok, workers, false, %{}}
 
       {:error, _} = err ->
         err
 
       other ->
         {:error, {:unexpected_instantiate_result, other}}
+    end
+  end
+
+  # PR3 2026-05-24 — dispatch `sandbox.write_path` on each worker URI
+  # so the agent's `:sandbox` slice carries the per-agent
+  # `config_dir_path` + `template_class`. Both fields are needed by
+  # `Sandbox.invoke(:destroy, ...)` to invoke the right cleanup callback
+  # with the right path.
+  #
+  # Codex PR3 round-2 HIGH-1 — SKIP dispatch entirely when meta lacks
+  # `:config_dir_path`. The :already_started loser path returns no
+  # config_dir_path; if we still dispatched, we'd write `nil` into the
+  # slice and CLOBBER the live state the :started winner just populated.
+  # The result would be a slice with no path → destroy_config_dir would
+  # never run → credential dir leaks.
+  #
+  # When meta carries :config_dir_path = nil EXPLICITLY (a plugin that
+  # opted out of per-agent dirs, e.g. echo template returning
+  # %{config_dir_path: nil}), we DO dispatch — recording that the
+  # template_class manages no dir is a meaningful state. The "missing
+  # key" vs "explicit nil" distinction is the gate.
+  defp record_sandbox_state(workers, meta, template_class) do
+    if Map.has_key?(meta, :config_dir_path) do
+      do_record_sandbox_state(workers, Map.get(meta, :config_dir_path), template_class)
+    else
+      # Loser/short-circuit path: meta has no :config_dir_path → don't
+      # touch the slice (it was populated by the winner OR was already
+      # in the right state). No-op = safe.
+      :ok
+    end
+  end
+
+  defp do_record_sandbox_state(workers, config_dir, template_class) do
+    Enum.reduce_while(workers, :ok, fn worker_uri, :ok ->
+      target = URI.parse("#{URI.to_string(worker_uri)}?action=sandbox.write_path")
+
+      case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+             target: target,
+             mode: :call,
+             args: %{
+               config_dir_path: config_dir,
+               template_class: template_class
+             },
+             ctx: %{
+               caller: Ezagent.Entity.User.admin_uri(),
+               caps: Ezagent.Entity.User.admin_caps(),
+               reply: {:caller_inbox, self()}
+             }
+           }) do
+        {:ok, _} -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, {:sandbox_write_path_failed, worker_uri, reason}}}
+      end
+    end)
+  end
+
+  # PR3 2026-05-24 — additional rollback (beyond `undo_fresh_workers/1`)
+  # for the case where `record_sandbox_state/3` itself fails: the per-
+  # agent config_dir was created by the plugin's `instantiate/3` but
+  # the slice was never populated, so `Sandbox.invoke(:destroy, ...)`
+  # would never know to clean it up. Call the plugin's
+  # `destroy_config_dir/2` directly with the path we know
+  # (template_class is the cc plugin's CcAgent which provides
+  # `agent_config_dir/1` as the canonical builder).
+  defp cleanup_partial_config_dirs(workers, template_class) do
+    cond do
+      not is_atom(template_class) ->
+        :ok
+
+      not function_exported?(template_class, :destroy_config_dir, 2) ->
+        :ok
+
+      not function_exported?(template_class, :agent_config_dir, 1) ->
+        # No canonical path builder — can't safely guess the dir.
+        :ok
+
+      true ->
+        Enum.each(workers, fn worker_uri ->
+          dir = template_class.agent_config_dir(worker_uri)
+          _ = template_class.destroy_config_dir(worker_uri, dir)
+        end)
     end
   end
 
