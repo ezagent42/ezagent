@@ -151,6 +151,46 @@ defmodule Ezagent.Kind do
     _, _ -> :ok
   end
 
+  @doc """
+  Read a specific Behavior slice from a live Kind instance.
+
+  Synchronous `GenServer.call` to the Kind.Server — returns the
+  current value of `state.state[slice_key]`. Used by lookups like
+  `Ezagent.Entity.Session.owner/1` (PR-OWN-2, caps-data-ownership
+  SPEC #306 §7) where a Behavior's `data_owner/1` callback needs
+  to read durable per-instance state without going through dispatch.
+
+  Returns `{:ok, slice}` (the slice may be `nil` or `%{}` if not
+  initialised), `{:error, :not_found}` if the URI has no live
+  Kind, or `{:error, reason}` if the call times out.
+
+  NOT a hot-path API — `Behavior.invoke/4` should read its own
+  slice via the `slice` argument; this is for cross-process
+  lookups during default-grant evaluation, admin LV display, etc.
+  """
+  @spec get_slice(URI.t() | String.t(), atom()) ::
+          {:ok, term()} | {:error, term()}
+  def get_slice(uri, slice_key) when is_atom(slice_key) do
+    uri_str =
+      case uri do
+        %URI{} = u -> URI.to_string(u)
+        s when is_binary(s) -> s
+      end
+
+    case Ezagent.KindRegistry.lookup(uri_str) do
+      {:ok, pid} when is_pid(pid) ->
+        try do
+          {:ok, slice} = GenServer.call(pid, {:ezagent_get_slice, slice_key}, 5_000)
+          {:ok, slice}
+        catch
+          :exit, reason -> {:error, {:get_slice_exit, reason}}
+        end
+
+      :error ->
+        {:error, :not_found}
+    end
+  end
+
   defp safe_kind_module(pid) when is_pid(pid) do
     {:ok, _} = GenServer.call(pid, :ezagent_kind_module, 5_000)
   rescue

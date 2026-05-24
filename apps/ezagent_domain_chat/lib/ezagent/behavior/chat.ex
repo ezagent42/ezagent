@@ -72,7 +72,7 @@ defmodule Ezagent.Behavior.Chat do
   def state_slice, do: :chat
 
   @impl Ezagent.Behavior
-  def init_slice(_args) do
+  def init_slice(args) do
     # Slice shape is the union across Kinds — Session uses all three
     # maps; User/Agent's :receive doesn't read or write the slice but
     # leaving the keys here means a `Map.get` on any Kind returns the
@@ -80,9 +80,21 @@ defmodule Ezagent.Behavior.Chat do
     # subset model where User/Agent don't list Chat in `behaviors/0`
     # and so don't init this slice anyway — `Kind.Runtime` defaults
     # missing slices to `%{}`, which the Session-only fields tolerate).
+    #
+    # PR-OWN-2 (caps-data-ownership SPEC #306 §7): `:owner_uri` carries
+    # the entity URI that "owns" this session (created it). Used by
+    # `data_owner/1` so `default_grants_from_data_owner/2` and
+    # `Behavior.Identity.grant_cap` §5.2 enforcement can resolve "who's
+    # legitimate to grant Chat caps on this session". `nil` for sessions
+    # spawned without an `:owner_uri` arg (system sessions, etc) — those
+    # fall back to `:no_owner` in `data_owner/1`, so only the bootstrap
+    # admin can grant. A pre-PR-2 Session snapshot has no `:owner_uri`;
+    # `Kind.Snapshot.load_or_init/3` merges fresh into loaded, so this
+    # default fills missing entries.
     %{
       # %{URI => %{online: bool}}
       members: %{},
+      owner_uri: Map.get(args, :owner_uri),
       # %{ref => URI} — Process.monitor refs
       monitors: %{},
       # %{URI => DateTime} — when last seen offline (only present for offline)
@@ -813,4 +825,31 @@ defmodule Ezagent.Behavior.Chat do
       inserted_at: :map
     }
   end
+
+  # PR-OWN-2 (caps-data-ownership SPEC #306 §3.3 + §7) — data_owner
+  # for Chat caps is the session's `:owner_uri` (the entity that
+  # created the session). Looked up via `Ezagent.Entity.Session.owner/1`.
+  #
+  # Return shapes:
+  #  - `%URI{}` — session has a recorded owner; that URI grants
+  #  - `:no_owner` — system session or pre-PR-OWN-2 snapshot without
+  #    `:owner_uri`; only the bootstrap admin can grant
+  #  - `:any` — input is `:any` (class-wide grant query at the
+  #    `CapabilityRegistry` level); workspace admin grants
+  #
+  # Chat's `data_owner/1` ONLY applies to instances under the Session
+  # Kind. Chat is also registered against User + Agent Kinds (for
+  # `:receive`), but those Kinds' data ownership is governed by
+  # `Behavior.Identity.data_owner/1` (PR-OWN-3) — Chat returning
+  # `:no_owner` for non-session URIs leaves Identity to be authoritative.
+  @impl Ezagent.Behavior
+  def data_owner(%URI{scheme: "session"} = session_uri) do
+    case Ezagent.Entity.Session.owner(session_uri) do
+      {:ok, %URI{} = owner} -> owner
+      _ -> :no_owner
+    end
+  end
+
+  def data_owner(:any), do: :any
+  def data_owner(_), do: :no_owner
 end

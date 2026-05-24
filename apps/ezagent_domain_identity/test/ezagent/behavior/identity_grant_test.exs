@@ -30,8 +30,14 @@ defmodule Ezagent.Behavior.IdentityGrantTest do
 
     new_cap = echo_cap()
 
+    # PR-OWN-2 §5.2: wildcard caps (`behavior: :any`) require the
+    # caller to hold the bootstrap admin marker. Provide admin caps
+    # in ctx — test direct invoke bypasses dispatch's CapBAC gate
+    # which would have set this in production.
+    ctx = %{caps: Ezagent.Entity.User.admin_caps()}
+
     {:ok, new_slice, %{caps: caps}} =
-      Identity.invoke(:grant_cap, slice, %{cap: new_cap}, %{})
+      Identity.invoke(:grant_cap, slice, %{cap: new_cap}, ctx)
 
     assert MapSet.size(new_slice.caps) == 1
     assert new_cap in caps
@@ -54,7 +60,11 @@ defmodule Ezagent.Behavior.IdentityGrantTest do
 
     slice = %{caps: MapSet.new([cap])}
 
-    {:ok, new_slice, _} = Identity.invoke(:grant_cap, slice, %{cap: cap}, %{})
+    # See sibling test — admin caps required for wildcard grants
+    # under PR-OWN-2 §5.2.
+    ctx = %{caps: Ezagent.Entity.User.admin_caps()}
+
+    {:ok, new_slice, _} = Identity.invoke(:grant_cap, slice, %{cap: cap}, ctx)
     assert MapSet.size(new_slice.caps) == 1
   end
 
@@ -63,5 +73,48 @@ defmodule Ezagent.Behavior.IdentityGrantTest do
     assert Map.has_key?(iface, :grant_cap)
     assert Map.has_key?(iface, :revoke_cap)
     assert iface.grant_cap.modes == [:call]
+  end
+
+  describe "§5.2 admin predicate (codex PR-OWN-2 round-2 HIGH-1 regression)" do
+    test "instance-scoped wildcard cap does NOT count as bootstrap admin" do
+      # Codex round-2 HIGH-1: round-1's holds_admin_caps?/1 omitted
+      # `instance: :any` from the match. A delegated cap with
+      # `kind: :any, behavior: :any, instance: <target>, workspace: :any`
+      # would have satisfied it — privilege escalation for that target.
+      # Round-2 requires ALL FOUR :any wildcards.
+      target_uri = URI.parse("entity://user/acme/victim-x")
+
+      delegated_wildcard = %Capability{
+        kind: :any,
+        behavior: :any,
+        # Narrowed to a specific instance — NOT bootstrap admin shape.
+        instance: target_uri,
+        workspace_uri: :any,
+        granted_by: @granter,
+        granted_at: DateTime.utc_now()
+      }
+
+      slice = %{caps: MapSet.new()}
+      cap_to_grant = echo_cap()
+
+      # Caller holds the delegated wildcard, attempts to grant
+      # another wildcard cap. Round-1 buggy predicate would have
+      # let this through. Round-2 must reject.
+      ctx = %{caps: MapSet.new([delegated_wildcard])}
+
+      assert {:error, :grant_wildcard_requires_admin} =
+               Identity.invoke(:grant_cap, slice, %{cap: cap_to_grant}, ctx)
+    end
+
+    test "only the all-four-wildcards bootstrap-admin shape qualifies" do
+      # Sanity: verify the EXACT shape passes (positive test pairing
+      # with the negative above).
+      slice = %{caps: MapSet.new()}
+      cap_to_grant = echo_cap()
+      ctx = %{caps: Ezagent.Entity.User.admin_caps()}
+
+      assert {:ok, _new_slice, _result} =
+               Identity.invoke(:grant_cap, slice, %{cap: cap_to_grant}, ctx)
+    end
   end
 end

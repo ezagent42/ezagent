@@ -248,7 +248,15 @@ defmodule Ezagent.Entity.Session do
         {:ok, session_uri, :already_present}
 
       :error ->
-        case Ezagent.SpawnRegistry.spawn(session_uri) do
+        # PR-OWN-2 (caps-data-ownership SPEC #306 §7) — pass
+        # `owner_uri` into the Kind init args so `Behavior.Chat.init_slice/1`
+        # records it on the `:chat` slice. `Behavior.Chat.data_owner/1`
+        # reads it back via `Session.owner/1` for cap-grant authorization.
+        # We bypass `Ezagent.SpawnRegistry.spawn/1` here (URI-only API)
+        # to pass extra args; the SpawnRegistry fn at session_app.ex:379
+        # remains the rehydrate path for lookups where owner_uri isn't
+        # available (snapshot restore on phx restart).
+        case Ezagent.Kind.spawn(__MODULE__, %{uri: session_uri, owner_uri: owner_uri}) do
           {:ok, _pid} ->
             :ok = Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)
             {:ok, session_uri, :created}
@@ -261,6 +269,30 @@ defmodule Ezagent.Entity.Session do
           {:error, _} = err ->
             err
         end
+    end
+  end
+
+  @doc """
+  PR-OWN-2 (caps-data-ownership SPEC #306 §7) — return the URI of the
+  entity that "owns" this session (the user/agent that created it).
+
+  Looks up the live Session Kind's `:chat` slice via
+  `Ezagent.Kind.get_slice/2`. Returns:
+  - `{:ok, %URI{}}` — the owner URI recorded at session creation
+  - `{:ok, nil}` — session exists but has no recorded owner
+    (system session, or pre-PR-OWN-2 snapshot without `:owner_uri`)
+  - `{:error, reason}` — session not live or call failed
+
+  Used by `Behavior.Chat.data_owner/1` which converts the result
+  into `%URI{} | :no_owner` for the cap-grant authorization path.
+  """
+  @spec owner(URI.t() | String.t()) :: {:ok, URI.t() | nil} | {:error, term()}
+  def owner(uri) do
+    case Ezagent.Kind.get_slice(uri, :chat) do
+      {:ok, %{owner_uri: owner_uri}} -> {:ok, owner_uri}
+      {:ok, nil} -> {:ok, nil}
+      {:ok, _} -> {:ok, nil}
+      {:error, _} = err -> err
     end
   end
 

@@ -151,16 +151,39 @@ defmodule Ezagent.Identity do
     granter = parse_uri(granter_uri)
     target = URI.new!("#{URI.to_string(target_uri)}?action=identity.grant_cap")
 
+    # PR-OWN-2 (caps-data-ownership SPEC #306 §5.2 + r4 fix): pass
+    # the granter's REAL caps into dispatch ctx, not a hardcoded
+    # `User.admin_caps()`. Round-1 SPEC's §5.2 wildcard pre-check
+    # was moot because every call presented as admin regardless of
+    # granter's actual caps. Now `Behavior.Identity.invoke(:grant_cap,
+    # ...)` (and the dispatch CapBAC) sees the granter's true cap set.
+    #
+    # **Known limitation (codex round-2 HIGH-1)**: the owner-delegated
+    # facade path is INCOMPLETE in PR-OWN-2. Dispatch step 5.5 (CapBAC)
+    # authorizes against the grantee/action BEFORE `invoke/4` runs the
+    # §5.2 owner check. A non-admin session owner trying to grant via
+    # this facade gets `:unauthorized` from dispatch — never reaches
+    # §5.2's owner branch.
+    #
+    # Admin-path grants (admin caps in granter's slice) still work
+    # correctly because dispatch CapBAC passes for them; §5.2 runs
+    # inside `invoke` and accepts admin under `holds_admin_caps?`.
+    #
+    # PR-OWN-3 fixes this by (a) splitting Identity into Identity
+    # (safe) + IdentityAdmin (privileged) so :grant_cap moves to a
+    # cap-only Behavior, AND (b) adding `Ezagent.Kind.trusted_slice_update/3`
+    # so the facade can do the §5.2 check itself + mutate grantee's
+    # slice without going through dispatch CapBAC. Until PR-OWN-3,
+    # owner-delegated grants must call lower-level APIs.
+    granter_caps = read_granter_caps(granter)
+
     inv = %Ezagent.Invocation{
       target: target,
       mode: :call,
       args: %{cap: cap},
       ctx: %{
         caller: granter,
-        # Granter's admin caps — Phase 9 PR-4 will replace with
-        # caller's actual caps once cross-workspace grant policy
-        # lives here.
-        caps: Ezagent.Entity.User.admin_caps(),
+        caps: granter_caps,
         reply: :sync
       }
     }
@@ -171,6 +194,13 @@ defmodule Ezagent.Identity do
       err -> err
     end
   end
+
+  # Read the granter's current Identity slice caps directly via
+  # `Ezagent.Kind.get_slice/2` (added in PR-OWN-2). Skips dispatch
+  # (which would itself need caps — chicken-and-egg). Falls back to
+  # an EMPTY MapSet if the granter has no live Kind or no Identity
+  # slice — that lets the §5.2 / dispatch CapBAC reject cleanly with
+  # an authorization error instead of a confusing nil-deref.
 
   def grant_cap(entity_uri, %{workspace_uri: _} = cap_params, granter_uri) do
     cap = build_cap_from_params(cap_params, granter_uri)
@@ -195,5 +225,50 @@ defmodule Ezagent.Identity do
       granted_by: parse_uri(granter_uri),
       granted_at: Map.get(p, :granted_at, DateTime.utc_now())
     }
+  end
+
+  # PR-OWN-2 (caps-data-ownership SPEC #306 §5.2 + r4):
+  # Read the granter's current Identity slice caps via
+  # `Ezagent.Kind.get_slice/2`. Skips dispatch (chicken-and-egg).
+  #
+  # Codex PR-OWN-2 round-2 HIGH-2 fix: REMOVED the URI-equality
+  # admin-caps fallback (spoofable). Round-1 trusted URI string
+  # equality; that lets any caller setting `granter_uri = admin_uri`
+  # mint admin grants without proving they're admin.
+  #
+  # Codex round-3 boot-order fix: when the Kind isn't live (e.g.
+  # admin facade call immediately after fresh app boot before any
+  # dispatch has lazily-spawned the admin Kind), fall back to the
+  # PERSISTED caps stored in the `users` table — NOT spoofable
+  # because the row's `caps_json` was written under the §5.2 gate
+  # (or by bootstrap before §5.2 was enforced; bootstrap admin's
+  # caps are the all-four-:any invariant shape minted at seed
+  # time and persisted with `granted_by` set to the bootstrap URI).
+  #
+  # The Kind-slice read is preferred when available (most recent
+  # in-memory state); DB fallback covers the boot-order gap.
+  # Empty MapSet for unknown URIs — dispatch CapBAC will reject.
+  defp read_granter_caps(granter_uri) do
+    case Ezagent.Kind.get_slice(granter_uri, :identity) do
+      {:ok, %{caps: caps}} when is_struct(caps, MapSet) ->
+        caps
+
+      {:ok, %{caps: caps}} when is_list(caps) ->
+        MapSet.new(caps)
+
+      _ ->
+        read_persisted_caps(granter_uri)
+    end
+  end
+
+  # Persisted-caps fallback — reads `users` table. Returns empty
+  # MapSet for non-user URIs (agents, system, etc) since this
+  # facade is User-scoped today; future Agent-grant flows would
+  # add an `Agents.get_by_uri/1` branch.
+  defp read_persisted_caps(granter_uri) do
+    case Ezagent.Users.get_by_uri(granter_uri) do
+      %{caps: caps} when is_list(caps) -> MapSet.new(caps)
+      _ -> MapSet.new()
+    end
   end
 end
