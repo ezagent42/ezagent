@@ -181,6 +181,42 @@ defmodule EzagentWeb.SessionController do
         border-radius: 8px;
         margin-bottom: 12px;
       }
+      /* Allen 2026-05-24 — mobile-visible flash bubble for the auth
+         boundary. Surfaces Phoenix.Flash via SessionController's
+         build_flash_html/1. Larger font + icon + heavier border so a
+         thumb-scroll user can't miss it. */
+      .flash-mobile {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        padding: 14px 16px;
+        margin-bottom: 16px;
+        border-radius: 10px;
+        border-width: 2px;
+        border-style: solid;
+        font-size: 15px;
+        line-height: 1.4;
+        font-weight: 500;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.04);
+      }
+      .flash-mobile .flash-icon {
+        font-size: 18px;
+        line-height: 1;
+        flex-shrink: 0;
+      }
+      .flash-mobile .flash-text {
+        flex: 1;
+      }
+      .flash-error {
+        color: var(--error-fg);
+        background: var(--error-bg);
+        border-color: var(--error-line);
+      }
+      .flash-info {
+        color: var(--info-fg);
+        background: var(--info-bg);
+        border-color: var(--info-line);
+      }
       .divider {
         display: flex;
         align-items: center;
@@ -388,6 +424,14 @@ defmodule EzagentWeb.SessionController do
         do: ~s(<div class="error">) <> Plug.HTML.html_escape(cred_error) <> "</div>",
         else: ""
 
+    # Allen 2026-05-24: surface Phoenix flash on /login so a redirect
+    # like `put_flash(:error, ...) |> redirect(to: "/login")` actually
+    # shows the user WHY they landed here. Mobile-visible styling
+    # (`.flash-mobile` — sticky-top + larger + high-contrast). Prepend
+    # to `notice` so it always appears at the top of the card.
+    flash_html = build_flash_html(conn)
+    notice = flash_html <> notice
+
     # Phase 9 PR-5 (SPEC v3 §6.4): show "Signing into <workspace>" banner
     # when the login form was reached via the workspace switcher
     # (logout-and-redirect with ?workspace=<name>). Bare-handle inputs
@@ -446,6 +490,32 @@ defmodule EzagentWeb.SessionController do
       bin when is_binary(bin) -> bin
       iodata -> IO.iodata_to_binary(iodata)
     end
+  end
+
+  # Allen 2026-05-24 UX fix: surface Phoenix.Flash on /login so a
+  # redirect (e.g. MagicLinkController consumed-token error) actually
+  # tells the user WHY they're on the login page. Mobile-visible
+  # `.flash-mobile` styling: sticky-top + larger font + emoji glyph
+  # so a thumb-scroll user doesn't miss it on a small viewport.
+  defp build_flash_html(conn) do
+    flash = conn.assigns[:flash] || %{}
+    info = Map.get(flash, "info")
+    error = Map.get(flash, "error")
+
+    [
+      build_flash_bubble("info", info, "ℹ"),
+      build_flash_bubble("error", error, "⚠")
+    ]
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.join("")
+  end
+
+  defp build_flash_bubble(_kind, nil, _icon), do: ""
+  defp build_flash_bubble(_kind, "", _icon), do: ""
+
+  defp build_flash_bubble(kind, msg, icon) when is_binary(msg) do
+    ~s(<div class="flash-mobile flash-#{kind}" role="alert"><span class="flash-icon">#{icon}</span><span class="flash-text">) <>
+      esc(msg) <> "</span></div>"
   end
 
   # Reads the workspace context from form params (POST) or query string
