@@ -269,4 +269,121 @@ defmodule Ezagent.CapabilityRegistry do
                 "is a caller bug — find the dup and decide which is correct."
     end
   end
+
+  # =================================================================
+  # PR-OWN-1 — data-ownership formalism
+  # docs/superpowers/specs/2026-05-24-caps-data-ownership-v2.md §4
+  # =================================================================
+
+  @doc """
+  Probe `behavior.data_owner(instance)` if exported, else return
+  `:no_owner` (the safe default for Behaviors that haven't migrated
+  yet — PR-OWN-2..6 sweeps them).
+
+  See `Ezagent.Behavior` `data_owner/1` callback for the contract.
+  """
+  @spec data_owner_of(
+          behavior :: module(),
+          instance ::
+            URI.t() | :any | {atom(), URI.t()}
+        ) ::
+          URI.t() | :any | :no_owner | {:scope, atom(), URI.t()}
+  def data_owner_of(behavior, instance) when is_atom(behavior) do
+    if function_exported?(behavior, :data_owner, 1) do
+      behavior.data_owner(instance)
+    else
+      :no_owner
+    end
+  end
+
+  @doc """
+  Walk every Behavior registered against `kind`, ask each one
+  `data_owner(target_uri)`, and return the list of
+  `{grantee_uri, %Capability{}}` tuples to grant.
+
+  Only concrete `%URI{}` owner returns produce a default grant:
+  `:any` / `:no_owner` / `{:scope, _, _}` produce NO entry because
+  those classes don't have a per-target owner — they rely on
+  explicit `grant_cap` from the appropriate admin (per SPEC §3.3).
+
+  Tuple form `{grantee, cap}` is mandatory because `%Capability{}`
+  carries only `granted_by`, not the grantee field — the spawn
+  caller needs `grantee` to know whose Identity slice receives the cap.
+
+  Behavior enumeration goes via the public
+  `subjects_for_kind/1` API (typed surface, includes BOTH
+  dispatchable and cap-only Behaviors). Round-1 SPEC used
+  `BehaviorRegistry.behaviors_for/1` which skipped cap-only;
+  round-4 used a wrong raw ETS match shape; round-5 uses this
+  public surface — lesson locked by SPEC §7 PR-OWN-1 acceptance
+  test that asserts dispatchable + cap-only both return.
+  """
+  @spec default_grants_from_data_owner(
+          kind :: module(),
+          target_uri :: URI.t()
+        ) ::
+          [{URI.t(), Ezagent.Capability.t()}]
+  def default_grants_from_data_owner(kind, %URI{} = target_uri) when is_atom(kind) do
+    workspace_uri =
+      case Ezagent.Capability.workspace_of(target_uri) do
+        %URI{} = ws -> ws
+        :any -> :any
+      end
+
+    granter_uri = bootstrap_granter()
+
+    kind
+    |> subjects_for_kind()
+    |> Enum.map(& &1.behavior)
+    |> Enum.uniq()
+    |> Enum.flat_map(fn behavior ->
+      case data_owner_of(behavior, target_uri) do
+        %URI{} = owner_uri ->
+          cap = %Ezagent.Capability{
+            kind: kind_type_name(kind),
+            behavior: behavior,
+            instance: target_uri,
+            workspace_uri: workspace_uri,
+            granted_by: granter_uri,
+            granted_at: DateTime.utc_now()
+          }
+
+          [{owner_uri, cap}]
+
+        _other ->
+          # :any | :no_owner | {:scope, _, _} → no default grant,
+          # caller relies on explicit grant_cap.
+          []
+      end
+    end)
+  end
+
+  # The synthesized granter for PR-OWN-1 default grants. `Ezagent.Entity.User`
+  # lives in `ezagent_domain_identity` which depends on `ezagent_core`,
+  # so we can't reference it from here at compile time. Resolution via
+  # `Code.ensure_loaded?/1` + `apply/3` at runtime so the dependency
+  # arrow stays correct and the URI matches the real admin once domain.identity
+  # is started. Falls back to `system://bootstrap/pr-own-1` if the User
+  # module isn't loaded (test envs without the identity app).
+  defp bootstrap_granter do
+    if Code.ensure_loaded?(Ezagent.Entity.User) and
+         function_exported?(Ezagent.Entity.User, :admin_uri, 0) do
+      apply(Ezagent.Entity.User, :admin_uri, [])
+    else
+      URI.parse("system://bootstrap/pr-own-1")
+    end
+  end
+
+  # Some test Kinds don't implement `type_name/0`; fall back to the
+  # module atom so the cap struct still has a key.
+  # `Code.ensure_loaded?/1` is required because `function_exported?/3`
+  # returns false for not-yet-loaded modules (e.g. test-only Kinds
+  # whose .ex file lives under `test/support/`).
+  defp kind_type_name(kind) do
+    if Code.ensure_loaded?(kind) and function_exported?(kind, :type_name, 0) do
+      kind.type_name()
+    else
+      kind
+    end
+  end
 end

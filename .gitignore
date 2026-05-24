@@ -49,3 +49,4 @@ docs/phase-specs/phase3/artifacts/phase3-multi-agent*
 # Python bytecode cache
 __pycache__/
 *.pyc
+.worktrees/
