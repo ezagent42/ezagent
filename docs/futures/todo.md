@@ -6,6 +6,28 @@
 
 ## Active follow-ups (post-2026-05-24 batch)
 
+### `Ezagent.Invocation.dispatch/1` ReadyGate ↔ PendingDelivery TOCTOU
+- **Where:** `apps/ezagent_core/lib/ezagent/invocation.ex` `dispatch/1`
+  reads `Ezagent.Kind.ReadyGate.status/1` then
+  `Ezagent.Kind.PendingDelivery.buffer/...` as two non-atomic
+  operations. A Kind that flips `not_ready → ready` between the two
+  reads can have an invocation neither buffered nor delivered.
+- **Surfaced by:** PR-EM-CORE (#312, 2026-05-24 / merged 2026-05-25) —
+  widening the not-ready window during the new post-init continuation
+  queue made the race more visible. Codex r4 of PR-EM-CORE flagged it.
+- **Pre-existing:** YES — the race exists on `main` independent of
+  PR-EM-CORE; PR-EM-CORE merged with the race documented as a
+  framework-wide separate concern (per Allen's "round-2 cap" rule +
+  autonomous merge authorization).
+- **Fix shape (TBD):** likely either (a) atomic
+  `ReadyGate.status_and_buffer/1` returning {:ready | {:buffered, _}}
+  in one ETS read+write, or (b) buffer-then-check + drain on
+  ready-flip. Needs a SPEC; not a quick patch.
+- **Priority:** MED — race window is microseconds in practice and the
+  drain-on-ready path picks up dropped invocations; no observed
+  message loss in the test suite. Worth fixing before ExternalMirror
+  GA but not blocking individual PR-EM-* merges.
+
 ### Marketplace install-from-source (PR3 cc.toggle_extension toggle-ON)
 - **Where:** `apps/ezagent_plugin_cc/lib/ezagent/template/cc_agent.ex` —
   `toggle_extension/3` returns `:install_from_source_not_implemented`
