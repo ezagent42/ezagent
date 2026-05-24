@@ -391,6 +391,70 @@ defmodule Ezagent.NotificationSubscriptionsTest do
     end
   end
 
+  describe "input validation (codex round-8 HIGH — public-input crash protection)" do
+    # Codex round-8: round-7 added a preflight that sends the
+    # entity_uri straight to the GenServer. `entity_to_string/1`
+    # raises on non-URI/non-binary input, which used to crash the
+    # GenServer (and on restart wipe the `:protected` ETS table).
+    # Round-8 adds is_struct/is_binary guards to all 4 public
+    # entry points so malformed input becomes
+    # `{:error, :invalid_args}` at the caller — registry stays alive.
+
+    test "register_subscription/3 with non-URI entity returns :invalid_args" do
+      stream = URI.parse("entity://user/acme/s-#{uniq()}")
+
+      assert {:error, :invalid_args} =
+               Subs.register_subscription(:not_a_uri, stream, %{caps: MapSet.new()})
+
+      assert is_pid(Process.whereis(Subs))
+    end
+
+    test "unregister_subscription/3 with malformed entity returns :invalid_args" do
+      stream = URI.parse("entity://user/acme/s-#{uniq()}")
+
+      assert {:error, :invalid_args} =
+               Subs.unregister_subscription(:atom_not_uri, stream, %{caps: MapSet.new()})
+
+      assert is_pid(Process.whereis(Subs))
+    end
+
+    test "subscribe/3 with non-URI stream returns :invalid_args" do
+      entity = URI.parse("entity://user/acme/a-#{uniq()}")
+
+      assert {:error, :invalid_args} =
+               Subs.subscribe(entity, 12345, %{
+                 caller: entity,
+                 caps: MapSet.new([notifications_admin_cap()])
+               })
+
+      assert is_pid(Process.whereis(Subs))
+    end
+
+    test "unsubscribe/3 with malformed entity preserves existing rows + GenServer" do
+      victim = URI.parse("entity://user/acme/victim-#{uniq()}")
+      stream = URI.parse("entity://user/acme/s-#{uniq()}")
+      seed(victim, stream)
+
+      original_pid = Process.whereis(Subs)
+      assert is_pid(original_pid)
+
+      assert {:error, :invalid_args} =
+               Subs.unsubscribe([1, 2, 3], stream, %{
+                 caller: victim,
+                 caps: MapSet.new()
+               })
+
+      assert Process.whereis(Subs) == original_pid
+      assert [{_, _}] = Subs.list_subscriptions(victim)
+
+      :ok =
+        Subs.unsubscribe(victim, stream, %{
+          caller: victim,
+          caps: MapSet.new()
+        })
+    end
+  end
+
   describe "subscribe/3 + unsubscribe/3 partial-failure ordering (codex round-6 HIGH)" do
     # Codex round-6 finding: round-5 inserted the registry row
     # before PubSub.subscribe; if the second step failed the row

@@ -137,7 +137,8 @@ defmodule Ezagent.NotificationSubscriptions do
   """
   @spec register_subscription(URI.t(), URI.t() | String.t(), map()) ::
           :ok | {:error, term()}
-  def register_subscription(%URI{} = entity_uri, stream_uri, ctx) when is_map(ctx) do
+  def register_subscription(%URI{} = entity_uri, stream_uri, ctx)
+      when is_map(ctx) and (is_struct(stream_uri, URI) or is_binary(stream_uri)) do
     # Codex PR-N1 round-3 CRITICAL fix: the public API MUST NOT
     # accept caller-supplied `%{caps: :system}`. Round-2 trusted
     # the ctx shape, so any plugin could pass `%{caps: :system}`
@@ -168,7 +169,10 @@ defmodule Ezagent.NotificationSubscriptions do
   """
   @spec unregister_subscription(URI.t() | String.t(), URI.t() | String.t(), map()) ::
           :ok | {:error, term()}
-  def unregister_subscription(entity_uri, stream_uri, ctx) when is_map(ctx) do
+  def unregister_subscription(entity_uri, stream_uri, ctx)
+      when is_map(ctx) and
+             (is_struct(entity_uri, URI) or is_binary(entity_uri)) and
+             (is_struct(stream_uri, URI) or is_binary(stream_uri)) do
     # Codex round-3 CRITICAL fix — see `register_subscription/3`.
     case ctx do
       %{caps: :system} ->
@@ -231,7 +235,8 @@ defmodule Ezagent.NotificationSubscriptions do
   """
   @spec subscribe(URI.t(), URI.t() | String.t(), map()) ::
           :ok | {:error, term()}
-  def subscribe(%URI{} = entity_uri, stream_uri, ctx) when is_map(ctx) do
+  def subscribe(%URI{} = entity_uri, stream_uri, ctx)
+      when is_map(ctx) and (is_struct(stream_uri, URI) or is_binary(stream_uri)) do
     # Codex PR-N1 round-6 HIGH fix: TRANSACTIONAL ordering.
     # Round-5 inserted the registry row first, then called
     # PubSub.subscribe. If the second step failed, the row was
@@ -282,7 +287,10 @@ defmodule Ezagent.NotificationSubscriptions do
   """
   @spec unsubscribe(URI.t() | String.t(), URI.t() | String.t(), map()) ::
           :ok | {:error, term()}
-  def unsubscribe(entity_uri, stream_uri, ctx) when is_map(ctx) do
+  def unsubscribe(entity_uri, stream_uri, ctx)
+      when is_map(ctx) and
+             (is_struct(entity_uri, URI) or is_binary(entity_uri)) and
+             (is_struct(stream_uri, URI) or is_binary(stream_uri)) do
     with :ok <- public_ctx?(ctx),
          :ok <- preflight_unsubscribe(entity_uri, ctx),
          :ok <- Ezagent.SliceChange.unsubscribe_unverified(stream_uri) do
