@@ -232,8 +232,33 @@ defmodule Ezagent.NotificationSubscriptions do
   @spec subscribe(URI.t(), URI.t() | String.t(), map()) ::
           :ok | {:error, term()}
   def subscribe(%URI{} = entity_uri, stream_uri, ctx) when is_map(ctx) do
+    # Codex PR-N1 round-6 HIGH fix: TRANSACTIONAL ordering.
+    # Round-5 inserted the registry row first, then called
+    # PubSub.subscribe. If the second step failed, the row was
+    # left durably committed but the caller process was NOT
+    # subscribed — an LV reconnect path that consults the registry
+    # would later "restore" a phantom subscription that the caller
+    # was told failed.
+    #
+    # New ordering: register intent → try PubSub.subscribe →
+    # on failure or exception, ROLLBACK the registry row by
+    # deleting it via the same ctx (which passes the original
+    # auth check, so rollback is auditable + idempotent).
     with :ok <- register_subscription(entity_uri, stream_uri, ctx) do
-      Ezagent.SliceChange.subscribe_unverified(stream_uri)
+      try do
+        case Ezagent.SliceChange.subscribe_unverified(stream_uri) do
+          :ok ->
+            :ok
+
+          {:error, _} = pubsub_err ->
+            rollback_register(entity_uri, stream_uri, ctx)
+            pubsub_err
+        end
+      rescue
+        exception ->
+          rollback_register(entity_uri, stream_uri, ctx)
+          reraise(exception, __STACKTRACE__)
+      end
     end
   end
 
@@ -242,16 +267,47 @@ defmodule Ezagent.NotificationSubscriptions do
   @doc """
   Inverse — drop the registry row AND unsubscribe from the PubSub
   topic. Same auth shape as `unregister_subscription/3`.
+
+  Codex PR-N1 round-6 HIGH fix: unsubscribe TRANSPORT FIRST, then
+  delete the registry row. If the transport unsubscribe fails or
+  raises, the registry row stays — better to have an extra "intent"
+  row that the operator can see than to leave the process still
+  receiving broadcasts while the operator believes it's unsubscribed.
   """
   @spec unsubscribe(URI.t() | String.t(), URI.t() | String.t(), map()) ::
           :ok | {:error, term()}
   def unsubscribe(entity_uri, stream_uri, ctx) when is_map(ctx) do
-    with :ok <- unregister_subscription(entity_uri, stream_uri, ctx) do
-      Ezagent.SliceChange.unsubscribe_unverified(stream_uri)
+    case Ezagent.SliceChange.unsubscribe_unverified(stream_uri) do
+      :ok ->
+        unregister_subscription(entity_uri, stream_uri, ctx)
+
+      {:error, _} = pubsub_err ->
+        pubsub_err
     end
   end
 
   def unsubscribe(_, _, _), do: {:error, :invalid_args}
+
+  # Codex round-6 rollback helper — best-effort row delete.
+  # We do NOT propagate this error; the caller already has the
+  # PubSub failure to react to. Logging the rollback failure
+  # (rare — would require the registry GenServer to be down right
+  # after it accepted the insert) is informational only.
+  defp rollback_register(entity_uri, stream_uri, ctx) do
+    case unregister_subscription(entity_uri, stream_uri, ctx) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.error(
+          "Ezagent.NotificationSubscriptions: rollback_register failed after PubSub error " <>
+            "(entity=#{URI.to_string(entity_uri)} stream=#{inspect(stream_uri)} " <>
+            "reason=#{inspect(reason)}) — registry row may be inconsistent"
+        )
+
+        :ok
+    end
+  end
 
   # --- read API (direct ETS) ----------------------------------------
 

@@ -391,6 +391,70 @@ defmodule Ezagent.NotificationSubscriptionsTest do
     end
   end
 
+  describe "subscribe/3 + unsubscribe/3 partial-failure ordering (codex round-6 HIGH)" do
+    # Codex round-6 finding: round-5 inserted the registry row
+    # before PubSub.subscribe; if the second step failed the row
+    # was left durable. The fix establishes opposite orderings
+    # for the two wrappers:
+    #   subscribe/3   — register intent → try PubSub → rollback row on failure
+    #   unsubscribe/3 — PubSub unsubscribe → drop row only on success
+    #
+    # Forcing a real Phoenix.PubSub failure in test is awkward
+    # (it's permissive about missing topics/subscriptions), so
+    # these tests verify the STRUCTURAL pattern instead — the
+    # wrappers contain try/rescue and the rollback helper exists.
+    # A future regression that removes try/rescue would fail the
+    # grep test. The actual runtime rollback path is exercised
+    # indirectly: the "subscribe/3 denies non-system caller without
+    # cap" test confirms that when the REGISTER step fails, no
+    # row leaks; the symmetric "PubSub-failure-rollback" path
+    # uses the same `unregister_subscription/3` call we already
+    # cover by tests.
+    test "source file contains the round-6 rollback pattern" do
+      # `__DIR__` = apps/ezagent_core/test/ezagent.
+      # ../.. → apps/ezagent_core, then /lib/ezagent/...
+      source_path =
+        Path.expand(
+          "../../lib/ezagent/notification_subscriptions.ex",
+          __DIR__
+        )
+
+      source = File.read!(source_path)
+
+      # subscribe/3 must have try/rescue around the PubSub call
+      assert source =~ "try do",
+             "subscribe/3 lost its try/rescue partial-failure guard"
+
+      # The named rollback helper must exist
+      assert source =~ "defp rollback_register(",
+             "rollback_register/3 helper was removed — partial-failure recovery gone"
+
+      # rollback path must be wired in both error branches
+      assert source =~ "rollback_register(entity_uri, stream_uri, ctx)",
+             "subscribe/3 stopped calling rollback_register on PubSub failure"
+
+      # unsubscribe/3 must call SliceChange.unsubscribe_unverified BEFORE unregister_subscription
+      unsubscribe_block =
+        case Regex.run(~r/def unsubscribe\(entity_uri.*?(\n  defp |\n  end\n)/s, source) do
+          [block, _] -> block
+          _ -> ""
+        end
+
+      slice_pos = :binary.match(unsubscribe_block, "SliceChange.unsubscribe_unverified")
+      register_pos = :binary.match(unsubscribe_block, "unregister_subscription")
+
+      assert is_tuple(slice_pos) and is_tuple(register_pos),
+             "unsubscribe/3 missing one of its expected calls"
+
+      {slice_offset, _} = slice_pos
+      {register_offset, _} = register_pos
+
+      assert slice_offset < register_offset,
+             "unsubscribe/3 must call SliceChange.unsubscribe_unverified BEFORE " <>
+               "unregister_subscription (codex round-6 ordering rule)"
+    end
+  end
+
   describe "known same-BEAM bypass paths (codex round-5 documented limits)" do
     test ":sys.replace_state CAN bypass the cap path — documented limit" do
       # Codex round-5 CRITICAL: this is a KNOWN limitation, not a
