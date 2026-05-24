@@ -13,9 +13,12 @@ defmodule Ezagent.Kind.Server do
 
   ```
   %{
-    kind: module(),           # the Kind module (e.g. Ezagent.Entity.Echo)
-    uri:  URI.t(),            # this instance's URI
-    state: %{atom() => map()} # per-Behavior slices, keyed by behavior.state_slice()
+    kind: module(),                # the Kind module (e.g. Ezagent.Entity.Echo)
+    uri:  URI.t(),                 # this instance's URI
+    state: %{atom() => map()},     # per-Behavior slices, keyed by behavior.state_slice()
+    post_init_queue: [{module(), term()}] # PR-EM-CORE: pending post-init continuations
+                                          # populated by init/1, drained by chained
+                                          # handle_continue/2 after :announce_ready
   }
   ```
 
@@ -23,6 +26,8 @@ defmodule Ezagent.Kind.Server do
 
   1. `init/1`:
      - build initial per-Behavior slices via `init_slice/1`
+     - call optional `post_init/2` on each Behavior (collects
+       continuation terms in `behaviors/0` declaration order)
      - put_new into `KindRegistry` (crash on duplicate)
      - mark `:not_ready` in `ReadyGate`
      - hand off to `handle_continue(:announce_ready, ...)`
@@ -31,10 +36,32 @@ defmodule Ezagent.Kind.Server do
      - flush any buffered `:cast` invocations via `PendingDelivery.flush`
      - both pre-ready writes and the window-leak class of bugs are
        absorbed by ReadyGate + PendingDelivery (see ARCHITECTURE §5.7.4)
-  3. `handle_call(:ezagent_dispatch, ...)` / `handle_cast(:ezagent_dispatch, ...)`:
+     - chain `{:continue, {:ezagent_post_init, queue}}` if any
+       Behavior returned `{:continue, term}` from `post_init/2`
+  3. `handle_continue({:ezagent_post_init, [{behavior, term} | rest]}, ...)`:
+     - invoke the Behavior's optional `handle_continue/3` callback
+       with `{term, slice, ctx}`; merge `{:ok, new_slice}` back into
+       `state.state[state_slice()]`
+     - chain to the next queued Behavior continuation (or stop when
+       the queue is empty)
+     - boot-order invariant: `:announce_ready` ALWAYS runs first;
+       post-init handlers run AFTER the Kind is `:ready` (so they
+       can dispatch back into themselves without a register-window
+       race)
+  4. `handle_call(:ezagent_dispatch, ...)` / `handle_cast(:ezagent_dispatch, ...)`:
      - delegate to `Ezagent.Kind.Runtime.handle_dispatch/3` which runs
        Appendix A steps 5-10 (BehaviorRegistry → authz stub → invoke →
        slice update → telemetry)
+
+  ## Post-init continuation hook (PR-EM-CORE)
+
+  The `post_init/2` + `handle_continue/3` callbacks on
+  `Ezagent.Behavior` let a Behavior schedule deferred work that runs
+  after `:announce_ready`. See `Ezagent.Behavior` moduledoc + the
+  ExternalMirror SPEC (`docs/superpowers/specs/2026-05-24-external-mirror-domain.md`)
+  §6.1 split-init pattern for the canonical use case (Worker Kind
+  subscribes to a Session Publisher AFTER `Kind.spawn/2` returns,
+  avoiding a synchronous-init deadlock).
 
   ## Why `:trap_exit`
 
@@ -64,10 +91,20 @@ defmodule Ezagent.Kind.Server do
     uri = Map.fetch!(args, :uri)
     uri_str = URI.to_string(uri)
 
+    slice_state = Ezagent.Kind.Snapshot.load_or_init(uri, kind_module, args)
+
+    # PR-EM-CORE: collect post_init/2 continuations in behaviors/0
+    # declaration order. `post_init/2` is OPTIONAL — Behaviors that
+    # don't export it (or return `:ok`) contribute nothing to the
+    # queue. The actual handle_continue/3 calls run AFTER
+    # :announce_ready (see handle_continue/2 below).
+    post_init_queue = collect_post_init_queue(kind_module, args, slice_state)
+
     state = %{
       kind: kind_module,
       uri: uri,
-      state: Ezagent.Kind.Snapshot.load_or_init(uri, kind_module, args)
+      state: slice_state,
+      post_init_queue: post_init_queue
     }
 
     case Ezagent.KindRegistry.put_new(uri_str, self()) do
@@ -82,6 +119,28 @@ defmodule Ezagent.Kind.Server do
     end
   end
 
+  # PR-EM-CORE: walk each Behavior, call its optional post_init/2 with
+  # (args, behavior's own slice), and collect `{behavior, term}` entries
+  # for any that returned `{:continue, term}`. Behaviors that don't
+  # export `post_init/2` or that returned `:ok` are skipped. Order is
+  # `kind_module.behaviors/0` (declaration order) — deterministic.
+  defp collect_post_init_queue(kind_module, args, slice_state) do
+    kind_module.behaviors()
+    |> Enum.reduce([], fn behavior, acc ->
+      if function_exported?(behavior, :post_init, 2) do
+        slice = Map.get(slice_state, behavior.state_slice(), %{})
+
+        case behavior.post_init(args, slice) do
+          :ok -> acc
+          {:continue, term} -> [{behavior, term} | acc]
+        end
+      else
+        acc
+      end
+    end)
+    |> Enum.reverse()
+  end
+
   defp schedule_periodic_snapshot(kind_module) do
     case kind_module.persistence() do
       {:snapshot, :periodic, ms} when is_integer(ms) and ms > 0 ->
@@ -94,7 +153,7 @@ defmodule Ezagent.Kind.Server do
   end
 
   @impl true
-  def handle_continue(:announce_ready, %{uri: uri} = state) do
+  def handle_continue(:announce_ready, %{uri: uri, post_init_queue: queue} = state) do
     uri_str = URI.to_string(uri)
     :ok = Ezagent.ReadyGate.mark_ready(uri_str)
 
@@ -106,7 +165,60 @@ defmodule Ezagent.Kind.Server do
       GenServer.cast(self(), {:ezagent_dispatch, buffered_inv})
     end)
 
-    {:noreply, state}
+    # PR-EM-CORE: chain Behavior post-init continuations AFTER
+    # :announce_ready completes. Empty queue → no further continuation
+    # (preserves the pre-PR-EM-CORE behavior for Kinds whose Behaviors
+    # don't declare `post_init/2`).
+    case queue do
+      [] -> {:noreply, state}
+      _ -> {:noreply, state, {:continue, {:ezagent_post_init, queue}}}
+    end
+  end
+
+  # PR-EM-CORE: process the head of the post-init queue. Each entry is
+  # `{behavior_module, term}` where `term` is the value the Behavior
+  # returned from `post_init/2`. We invoke the Behavior's optional
+  # `handle_continue/3` callback with `{term, slice, ctx}` and merge
+  # `{:ok, new_slice}` back into the state.
+  #
+  # If `handle_continue/3` is not exported, we log + skip — the
+  # Behavior returned `{:continue, _}` from `post_init/2` but did not
+  # implement the receiver. Treating this as a programmer error and
+  # logging (rather than crashing) keeps a buggy Behavior from taking
+  # down its host Kind on init; the Behavior author still sees the
+  # warning in test runs.
+  def handle_continue({:ezagent_post_init, [{behavior, term} | rest]}, state) do
+    %{kind: kind_module, uri: self_uri, state: slice_state} = state
+    new_slice_state = run_post_init_continuation(behavior, term, slice_state, kind_module, self_uri)
+    new_state = %{state | state: new_slice_state}
+
+    case rest do
+      [] -> {:noreply, new_state}
+      _ -> {:noreply, new_state, {:continue, {:ezagent_post_init, rest}}}
+    end
+  end
+
+  defp run_post_init_continuation(behavior, term, slice_state, kind_module, self_uri) do
+    if function_exported?(behavior, :handle_continue, 3) do
+      slice_key = behavior.state_slice()
+      slice = Map.get(slice_state, slice_key, %{})
+      ctx = %{kind_module: kind_module, self_uri: self_uri}
+
+      case behavior.handle_continue(term, slice, ctx) do
+        {:ok, new_slice} -> Map.put(slice_state, slice_key, new_slice)
+        :ignore -> slice_state
+      end
+    else
+      require Logger
+
+      Logger.warning(
+        "Ezagent.Kind.Server: Behavior #{inspect(behavior)} returned " <>
+          "{:continue, #{inspect(term)}} from post_init/2 but does not " <>
+          "export handle_continue/3; dropping continuation. URI=#{URI.to_string(self_uri)}"
+      )
+
+      slice_state
+    end
   end
 
   # codex round-10 HIGH — `Ezagent.Kind.terminate/1` needs the Kind
