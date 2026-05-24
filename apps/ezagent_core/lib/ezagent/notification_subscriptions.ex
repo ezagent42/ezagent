@@ -59,6 +59,46 @@ defmodule Ezagent.NotificationSubscriptions do
   qualify. Now requires `behavior == Ezagent.Behavior.Notifications
   AND workspace_uri == :any` — i.e., specifically a notifications-
   admin cap. Tested.
+
+  ## Threat model (codex PR-N1 round-5 disposition, option a, Allen 2026-05-24)
+
+  This registry enforces **USER-level authorization** (entity A is
+  allowed / forbidden to subscribe to entity B's stream). It does
+  **NOT** defend against malicious BEAM-resident code.
+
+  Specifically, the following bypass paths are KNOWN and accepted:
+
+  1. `:sys.replace_state(__MODULE__, fn s -> :ets.insert(table, …);
+     s end)` — runs in the owner-process context, bypasses cap
+     checks. OTP intends `:sys.*` messages to be usable by any
+     in-VM caller.
+  2. `Phoenix.PubSub.subscribe(EzagentCore.PubSub, "esr:entity:VICTIM:slice_changed")`
+     — topic names are public-derivable from URIs; PubSub has no
+     subscriber authorization. Listeners may receive broadcasts
+     they had no cap for.
+
+  Mitigations available IF FUTURE PHASES need plugin-vs-plugin
+  isolation:
+
+  - Move untrusted code to a separate BEAM node, talk via supervised
+    Erlang RPC (Roadmap §6+ federation)
+  - Run untrusted plugins in OS-level isolation (container / process)
+  - Per-recipient PubSub fan-out with subscriber tokens (instead of
+    open topics)
+
+  Current ezagent threat model assumes plugin authors are TRUSTED
+  (they ship code with full BEAM access by definition). The cap
+  system protects USER data (Alice can't unsubscribe Bob), not
+  PLUGIN code from other PLUGIN code.
+
+  ## Cap-gated subscribe (`subscribe/2`)
+
+  The companion to `Ezagent.SliceChange.subscribe_unverified/1` —
+  goes through this registry to record the intent AND then calls
+  the unverified subscribe. Use this from LV mounts + plugin
+  workers acting on behalf of a logged-in user; use the unverified
+  path only from internal machinery (e.g. a Kind subscribing to
+  its OWN topic).
   """
 
   use GenServer
@@ -168,6 +208,50 @@ defmodule Ezagent.NotificationSubscriptions do
   #
   # Until then: any caller wanting a subscription MUST present a
   # real `Behavior.Notifications` cap.
+
+  # --- cap-gated subscribe (codex round-5 option a) -----------------
+
+  @doc """
+  Cap-gated subscribe: record intent in the registry AND subscribe
+  the calling process to `Ezagent.SliceChange` events for `stream_uri`.
+
+  This is the audit-trail-friendly path. Bypassing this and calling
+  `SliceChange.subscribe_unverified/1` directly works at the BEAM
+  level (PubSub is open), but the registry won't know about your
+  subscription — LV reconnect re-subscribe + plugin reboot re-subscribe
+  + operator introspection of "who's listening to X" all lose
+  visibility.
+
+  Same authorisation as `register_subscription/3`: explicit `ctx`,
+  no `:system` shortcut, caller must be the entity or notifications-admin.
+
+  Returns `:ok | {:error, term()}`. On `:ok`, the calling process is
+  now subscribed (receives `{:slice_changed, event_map}`) AND the
+  registry row is in place.
+  """
+  @spec subscribe(URI.t(), URI.t() | String.t(), map()) ::
+          :ok | {:error, term()}
+  def subscribe(%URI{} = entity_uri, stream_uri, ctx) when is_map(ctx) do
+    with :ok <- register_subscription(entity_uri, stream_uri, ctx) do
+      Ezagent.SliceChange.subscribe_unverified(stream_uri)
+    end
+  end
+
+  def subscribe(_, _, _), do: {:error, :invalid_args}
+
+  @doc """
+  Inverse — drop the registry row AND unsubscribe from the PubSub
+  topic. Same auth shape as `unregister_subscription/3`.
+  """
+  @spec unsubscribe(URI.t() | String.t(), URI.t() | String.t(), map()) ::
+          :ok | {:error, term()}
+  def unsubscribe(entity_uri, stream_uri, ctx) when is_map(ctx) do
+    with :ok <- unregister_subscription(entity_uri, stream_uri, ctx) do
+      Ezagent.SliceChange.unsubscribe_unverified(stream_uri)
+    end
+  end
+
+  def unsubscribe(_, _, _), do: {:error, :invalid_args}
 
   # --- read API (direct ETS) ----------------------------------------
 

@@ -142,19 +142,40 @@ defmodule Ezagent.SliceChange do
   defp do_emit(_), do: :ok
 
   @doc """
-  Subscribe the calling process to slice-change events for `uri`.
+  Subscribe the calling process to slice-change events for `uri`
+  WITHOUT any capability check.
+
+  **Codex PR-N1 round-5 disposition (option a, Allen 2026-05-24):**
+  this function exists because `Phoenix.PubSub.subscribe/2` is itself
+  open — any in-VM code can call
+  `Phoenix.PubSub.subscribe(EzagentCore.PubSub, "esr:entity:victim:slice_changed")`
+  directly. The topic name is derived from the entity URI; there is
+  no secret. We **cannot** prevent same-BEAM code from receiving
+  broadcasts of topics it can compute.
+
+  Same-VM = same trust domain. The cap-gated subscribe path
+  (`Ezagent.NotificationSubscriptions.subscribe/2`) is for the
+  AUDIT TRAIL + ENROLLMENT (LV reconnect, plugin reboot
+  re-subscription) — it tracks INTENT, not transport access.
+
+  **For end-user-facing code paths** (LV mount on behalf of a
+  logged-in user, plugin workers tracking another entity), use
+  `NotificationSubscriptions.subscribe/2` so the registry knows
+  about the subscription. This function is for INTERNAL machinery
+  that has already passed cap gates (e.g. the Kind GenServer
+  subscribing to its OWN topic at boot).
 
   Returns `:ok`. Receives `{:slice_changed, event_map}` messages on
   the calling process.
   """
-  @spec subscribe(URI.t() | String.t()) :: :ok
-  def subscribe(uri) do
+  @spec subscribe_unverified(URI.t() | String.t()) :: :ok
+  def subscribe_unverified(uri) do
     Phoenix.PubSub.subscribe(EzagentCore.PubSub, topic(uri))
   end
 
-  @doc "Inverse of `subscribe/1`."
-  @spec unsubscribe(URI.t() | String.t()) :: :ok
-  def unsubscribe(uri) do
+  @doc "Inverse of `subscribe_unverified/1`."
+  @spec unsubscribe_unverified(URI.t() | String.t()) :: :ok
+  def unsubscribe_unverified(uri) do
     Phoenix.PubSub.unsubscribe(EzagentCore.PubSub, topic(uri))
   end
 end

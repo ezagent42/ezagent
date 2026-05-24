@@ -316,6 +316,134 @@ defmodule Ezagent.NotificationSubscriptionsTest do
     end
   end
 
+  describe "subscribe/3 cap-gated wrapper (codex round-5 option a)" do
+    test "subscribe/3 registers intent AND PubSub-subscribes the caller" do
+      entity = URI.parse("entity://user/acme/alice-#{uniq()}")
+      stream = URI.parse("entity://user/acme/bob-#{uniq()}")
+
+      # Self-subscribe with a real cap.
+      assert :ok =
+               Subs.subscribe(entity, stream, %{
+                 caller: entity,
+                 caps: MapSet.new([notifications_admin_cap()])
+               })
+
+      # Intent is in the registry.
+      assert [{stream_str, _}] = Subs.list_subscriptions(entity)
+      assert stream_str == URI.to_string(stream)
+
+      # And the caller process is PubSub-subscribed — fire an emit
+      # and the test process should receive it.
+      Application.put_env(:ezagent_core, :slice_change_hook, true)
+
+      try do
+        event = %{
+          self_uri: stream,
+          kind_module: SomeKind,
+          action: :test,
+          slice_key: :sk,
+          old_slice: %{},
+          new_slice: %{a: 1},
+          result: nil,
+          caller: nil,
+          at: DateTime.utc_now()
+        }
+
+        Ezagent.SliceChange.emit(event)
+
+        assert_receive {:slice_changed, ^event}, 200
+      after
+        Application.delete_env(:ezagent_core, :slice_change_hook)
+        Ezagent.SliceChange.unsubscribe_unverified(stream)
+      end
+    end
+
+    test "subscribe/3 denies non-system caller without cap" do
+      entity = URI.parse("entity://user/acme/alice-#{uniq()}")
+      stream = URI.parse("entity://user/acme/bob-#{uniq()}")
+
+      assert {:error, :unauthorized} =
+               Subs.subscribe(entity, stream, %{
+                 caller: entity,
+                 caps: MapSet.new()
+               })
+
+      assert Subs.list_subscriptions(entity) == []
+    end
+
+    test "unsubscribe/3 drops the registry row AND PubSub-unsubscribes" do
+      entity = URI.parse("entity://user/acme/alice-#{uniq()}")
+      stream = URI.parse("entity://user/acme/bob-#{uniq()}")
+
+      :ok =
+        Subs.subscribe(entity, stream, %{
+          caller: entity,
+          caps: MapSet.new([notifications_admin_cap()])
+        })
+
+      assert :ok =
+               Subs.unsubscribe(entity, stream, %{
+                 caller: entity,
+                 caps: MapSet.new()
+               })
+
+      assert Subs.list_subscriptions(entity) == []
+    end
+  end
+
+  describe "known same-BEAM bypass paths (codex round-5 documented limits)" do
+    test ":sys.replace_state CAN bypass the cap path — documented limit" do
+      # Codex round-5 CRITICAL: this is a KNOWN limitation, not a
+      # bug. BEAM same-VM trust model: any in-VM code can run
+      # arbitrary functions in the GenServer's owner process via
+      # `:sys.replace_state/2`, which gives `:ets.insert` access
+      # to the `:protected` table.
+      #
+      # We document this as accepted by including a passing test
+      # that DEMONSTRATES the bypass — future readers see "yes,
+      # this works; the cap system protects USERS not PLUGINS".
+      victim = URI.parse("entity://user/acme/victim-#{uniq()}")
+      stream = URI.parse("entity://user/acme/stream-#{uniq()}")
+      key = {URI.to_string(victim), URI.to_string(stream)}
+
+      # Confirm victim has no subscription via the legitimate API.
+      assert Subs.list_subscriptions(victim) == []
+
+      # Attack via :sys.replace_state — runs in owner process.
+      :sys.replace_state(Subs, fn state ->
+        :ets.insert(Subs.table(), {key, %{registered_at: DateTime.utc_now(), granted_by: :sys_attack}})
+        state
+      end)
+
+      # Bypass succeeded. (We're documenting the limit, not
+      # claiming defence.)
+      assert [{_, meta}] = Subs.list_subscriptions(victim)
+      assert meta.granted_by == :sys_attack
+
+      # Cleanup so we don't leak this row into other tests.
+      :sys.replace_state(Subs, fn state ->
+        :ets.delete(Subs.table(), key)
+        state
+      end)
+    end
+
+    test "Phoenix.PubSub.subscribe directly CAN receive any topic — documented limit" do
+      # Same-VM listener can subscribe to ANY topic with no cap
+      # check. The topic name is derivable from the entity URI;
+      # there is no secret. Cap-gated `NotificationSubscriptions.subscribe/3`
+      # is the AUDIT path, not a transport guard.
+      victim = URI.parse("entity://user/acme/peeped-#{uniq()}")
+
+      # No cap, no registry entry — just compute the topic and
+      # subscribe.
+      topic = Ezagent.SliceChange.topic(victim)
+      :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, topic)
+
+      # Confirm we got the subscription (no error). Cleanup.
+      :ok = Phoenix.PubSub.unsubscribe(EzagentCore.PubSub, topic)
+    end
+  end
+
   describe "cross-entity register poisoning (codex round-4 HIGH)" do
     test "caller with narrow stream-cap but not being the entity cannot poison" do
       # Codex round-4 HIGH: round-3 only checked the STREAM cap on
