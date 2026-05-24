@@ -55,7 +55,52 @@ defmodule Ezagent.Kind do
   @callback snapshot_version() :: non_neg_integer()
   @callback supervisor() :: module()
 
-  @optional_callbacks [uri_from_args: 1, snapshot_version: 0, supervisor: 0]
+  @typedoc """
+  Spawn-strategy override for Kinds that need a non-standard
+  supervision-tree shape. Returning `:standard` (or NOT exporting
+  the callback) uses the default `Kind.spawn/2` flow:
+  `DynamicSupervisor.start_child(supervisor, {Kind.Server,
+  {kind_module, params}})`.
+
+  Returning `{:custom, module, function}` delegates to
+  `apply(module, function, [params])` — the Kind's domain owns
+  the start-child shape (PerBindingSupervisor layering, registry
+  registration, etc.). Used by `Ezagent.Entity.ExternalMirrorWorker`
+  (SPEC `docs/superpowers/specs/2026-05-24-external-mirror-domain.md`
+  §6.3) — the two-tier RootSupervisor → PerBindingSupervisor →
+  Kind.Server topology cannot be expressed via the default
+  `DynamicSupervisor.start_child` shape because the supervisor
+  doesn't wrap child specs.
+  """
+  @type spawn_strategy ::
+          :standard
+          | {:custom, module(), atom()}
+
+  @doc """
+  Optional callback declaring how `Kind.spawn/2` should start an
+  instance of this Kind. Default (when not exported): `:standard`
+  — `Kind.spawn/2` issues `DynamicSupervisor.start_child(supervisor,
+  {Kind.Server, {kind_module, params}})`.
+
+  Custom strategy `{:custom, mod, fun}` makes `Kind.spawn/2`
+  delegate to `apply(mod, fun, [params])` — the Kind's domain
+  owns the supervision-tree layering. The custom function MUST
+  return the same shape as `DynamicSupervisor.start_child/2`
+  (`{:ok, pid()} | {:error, term()}`) so callers can match on
+  `{:error, {:already_started, pid}}` for idempotency.
+
+  This is the extension point for the ExternalMirror two-tier
+  supervisor topology (SPEC §6.3) — a Domain concern that does
+  NOT belong in core, hence the indirection.
+  """
+  @callback spawn_strategy() :: spawn_strategy()
+
+  @optional_callbacks [
+    uri_from_args: 1,
+    snapshot_version: 0,
+    supervisor: 0,
+    spawn_strategy: 0
+  ]
 
   @doc """
   The SOLE programmatic entry for spawning a Kind process.
@@ -91,8 +136,31 @@ defmodule Ezagent.Kind do
   """
   @spec spawn(module(), map()) :: DynamicSupervisor.on_start_child()
   def spawn(kind_module, params) when is_atom(kind_module) and is_map(params) do
-    supervisor = resolve_supervisor(kind_module)
-    DynamicSupervisor.start_child(supervisor, {Ezagent.Kind.Server, {kind_module, params}})
+    case spawn_strategy(kind_module) do
+      :standard ->
+        supervisor = resolve_supervisor(kind_module)
+        DynamicSupervisor.start_child(supervisor, {Ezagent.Kind.Server, {kind_module, params}})
+
+      {:custom, mod, fun} when is_atom(mod) and is_atom(fun) ->
+        # Domain-owned supervision-tree layering (e.g. ExternalMirror's
+        # two-tier RootSupervisor → PerBindingSupervisor → Kind.Server,
+        # SPEC `docs/superpowers/specs/2026-05-24-external-mirror-domain.md`
+        # §6.3). The custom function returns the same on_start_child
+        # shape so idempotent reconcilers can match `{:error,
+        # {:already_started, pid}}`.
+        apply(mod, fun, [params])
+    end
+  end
+
+  # Inlined to keep `spawn/2` flat. Defaults to `:standard` when the
+  # Kind module hasn't exported `spawn_strategy/0` — backward-compat
+  # with every pre-PR-EM-2 Kind.
+  defp spawn_strategy(kind_module) do
+    if function_exported?(kind_module, :spawn_strategy, 0) do
+      kind_module.spawn_strategy()
+    else
+      :standard
+    end
   end
 
   @doc """

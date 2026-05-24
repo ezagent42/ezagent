@@ -128,7 +128,22 @@ defmodule Ezagent.ExternalMirror.AdapterRegistry do
   # arity BEFORE inserting. (PR-EM-2's added callbacks get checked
   # then.)
   defp assert_required_callbacks!(adapter_module) do
-    required = [adapter_id: 0, display_name: 0, description: 0, binding_module: 0]
+    # PR-EM-2 expands the required-callback set per SPEC §2.2. The
+    # PR-EM-2 callbacks (`cap_subject/0`, `target_ownership_check/2`,
+    # `event_to_payload/1`) are now required so a plugin that ships
+    # only the PR-EM-1 stub set is rejected at registration time —
+    # `list_adapters/0` + the Worker dispatch path can rely on the
+    # full contract being present.
+    required = [
+      adapter_id: 0,
+      display_name: 0,
+      description: 0,
+      binding_module: 0,
+      # PR-EM-2 additions:
+      cap_subject: 0,
+      target_ownership_check: 2,
+      event_to_payload: 1
+    ]
 
     missing =
       Enum.reject(required, fn {fun, arity} ->

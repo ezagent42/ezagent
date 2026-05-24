@@ -110,7 +110,15 @@ defmodule Ezagent.ExternalMirror.BindingRegistry do
   # insert so Worker dispatch + Grill-5 bidirectional check can rely
   # on `binding_module.adapter_module()` being callable.
   defp assert_required_callbacks!(binding_module) do
-    required = [adapter_module: 0]
+    # PR-EM-2 expands the required-callback set per SPEC §2.3.
+    # `init/1` + `publish/2` join `adapter_module/0` as required;
+    # `terminate/2` stays optional (no-op default per SPEC §6.2).
+    required = [
+      adapter_module: 0,
+      # PR-EM-2 additions:
+      init: 1,
+      publish: 2
+    ]
 
     missing =
       Enum.reject(required, fn {fun, arity} ->

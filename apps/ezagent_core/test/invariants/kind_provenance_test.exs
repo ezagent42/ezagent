@@ -24,16 +24,8 @@ defmodule Ezagent.Invariants.KindProvenanceTest do
 
     supervised_pids =
       supervisors()
-      |> Enum.flat_map(fn sup ->
-        case Process.whereis(sup) do
-          nil ->
-            []
-
-          _pid ->
-            DynamicSupervisor.which_children(sup)
-        end
-      end)
-      |> Enum.map(fn {_id, pid, _type, _modules} -> pid end)
+      |> Enum.flat_map(&direct_children/1)
+      |> Enum.flat_map(&expand_via_tier/1)
       |> MapSet.new()
 
     unsupervised =
@@ -52,6 +44,36 @@ defmodule Ezagent.Invariants.KindProvenanceTest do
            """
   end
 
+  # First-tier children of a top-level DynamicSupervisor. Empty list
+  # when the supervisor isn't started in this test env.
+  defp direct_children(sup) do
+    case Process.whereis(sup) do
+      nil -> []
+      _pid -> DynamicSupervisor.which_children(sup)
+    end
+  end
+
+  # For most Kind supervisors the direct child IS the Kind.Server pid.
+  # For ExternalMirror's two-tier topology (SPEC §6.3, PR-EM-2), the
+  # direct child of `RootSupervisor` is a `PerBindingSupervisor`
+  # (NOT a Kind.Server) and the Kind.Server lives one tier deeper —
+  # so we recurse one level for `:supervisor`-typed children.
+  defp expand_via_tier({_id, child_pid, :supervisor, _modules}) when is_pid(child_pid) do
+    # The inner Supervisor's children are the actual Kind.Server pids.
+    inner =
+      child_pid
+      |> Supervisor.which_children()
+      |> Enum.map(fn {_id, pid, _type, _modules} -> pid end)
+      |> Enum.filter(&is_pid/1)
+
+    [child_pid | inner]
+  rescue
+    _ -> [child_pid]
+  end
+
+  defp expand_via_tier({_id, pid, _type, _modules}) when is_pid(pid), do: [pid]
+  defp expand_via_tier(_), do: []
+
   # Union of every `supervisor/0` declared on a Kind module + the
   # default. Adding a new per-Kind supervisor: append it here.
   defp supervisors do
@@ -64,7 +86,13 @@ defmodule Ezagent.Invariants.KindProvenanceTest do
       EzagentDomainChat.AgentSupervisor,
       EzagentDomainChat.AgentTemplateSupervisor,
       EzagentDomainChat.SessionTemplateSupervisor,
-      EzagentPluginCurlAgent.InstanceSupervisor
+      EzagentPluginCurlAgent.InstanceSupervisor,
+      # PR-EM-2: ExternalMirrorWorker Kinds spawn under a two-tier
+      # topology (SPEC §6.3) — RootSupervisor's direct children are
+      # PerBindingSupervisors (`:supervisor`-typed); the actual
+      # Kind.Server pids are the inner tier. `expand_via_tier/1`
+      # recurses one level for `:supervisor` children.
+      Ezagent.ExternalMirror.RootSupervisor
     ]
   end
 end
