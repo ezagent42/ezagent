@@ -56,6 +56,20 @@ defmodule EzagentWeb.Router do
   # PR-B: file download route for chat compose uploads. Mounted in the
   # EzagentWeb scope (so the controller resolves correctly), under the
   # same RequireEntity plug as the LV scope below.
+  #
+  # TODO (codex PR #305 round-4 HIGH, deferred): `/admin/uploads/:filename`
+  # is a controller route INSIDE the `:require_entity` plug, but it
+  # sits under the `/admin/*` URL prefix that the new
+  # `live_session :require_admin` (below) was supposed to gate
+  # uniformly. The controller is misnamed for its scope (chat
+  # compose uploads are user-scope, not admin-scope) — the URL
+  # should move to `/files/:filename` or similar, and
+  # `UploadsController` should verify the caller is the
+  # uploading user OR a session member with read cap. Tracked in
+  # `docs/futures/todo.md` as "uploads controller scope mismatch".
+  # Out of scope for THIS PR (which focuses on LiveView admin gates
+  # + audit-log workspace filter); flagged here so the next
+  # touch sees the boundary issue.
   scope "/", EzagentWeb do
     pipe_through [:browser, EzagentWeb.Plugs.RequireEntity]
 
