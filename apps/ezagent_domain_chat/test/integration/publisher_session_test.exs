@@ -110,12 +110,19 @@ defmodule EzagentDomainChat.Integration.PublisherSessionTest do
     })
   end
 
-  describe "Session.subscribe_from/3 with :latest (production path)" do
+  # Codex round-1 CRITICAL fix (2026-05-25) — Session.subscribe_from/3
+  # etc. now RAISE; production callers must use the 4-ary form with
+  # an explicit ctx. Tests supply admin caps explicitly.
+  defp admin_ctx do
+    %{caller: User.admin_uri(), caps: User.admin_caps()}
+  end
+
+  describe "Session.subscribe_from/4 with :latest (production path)" do
     test "subscriber receives the NEXT mutation's event (no backlog)" do
       session_uri = spawn_session()
 
       # Subscribe BEFORE mutating; cursor=0 at this point.
-      assert {:ok, 0} = Session.subscribe_from(session_uri, self(), :latest)
+      assert {:ok, 0} = Session.subscribe_from(session_uri, self(), :latest, admin_ctx())
 
       # Mutate (chat.join adds a new member to the :chat slice).
       assert {:ok, %{members: _}} = mutate_chat_slice(session_uri)
@@ -125,7 +132,7 @@ defmodule EzagentDomainChat.Integration.PublisherSessionTest do
     end
   end
 
-  describe "Session.subscribe_from/3 with :earliest" do
+  describe "Session.subscribe_from/4 with :earliest" do
     test "subscriber receives entire retained history in order" do
       session_uri = spawn_session()
 
@@ -146,38 +153,117 @@ defmodule EzagentDomainChat.Integration.PublisherSessionTest do
           send(parent, {:replayed, msgs})
         end)
 
-      assert {:ok, 3} = Session.subscribe_from(session_uri, pid, :earliest)
+      assert {:ok, 3} = Session.subscribe_from(session_uri, pid, :earliest, admin_ctx())
 
       assert_receive {:replayed, events}, 500
       assert Enum.map(events, & &1.cursor) == [1, 2, 3]
     end
   end
 
-  describe "Session.history/3 dispatch round-trip" do
+  describe "Session.history/4 dispatch round-trip" do
     test "returns the (from, to] window from the live ring" do
       session_uri = spawn_session()
 
       Enum.each(1..5, fn _ -> {:ok, _} = mutate_chat_slice(session_uri) end)
       wait_until_cursor(session_uri, 5)
 
-      assert {:ok, events} = Session.history(session_uri, 1, 3)
+      assert {:ok, events} = Session.history(session_uri, 1, 3, admin_ctx())
       assert Enum.map(events, & &1.cursor) == [2, 3]
     end
   end
 
-  describe "Session.snapshot/1 dispatch round-trip" do
+  describe "Session.snapshot/2 dispatch round-trip" do
     test "returns current cursor + the latest payload as state" do
       session_uri = spawn_session()
 
       {:ok, _} = mutate_chat_slice(session_uri)
       wait_until_cursor(session_uri, 1)
 
-      assert {:ok, %{cursor: 1, state: state}} = Session.snapshot(session_uri)
+      assert {:ok, %{cursor: 1, state: state}} = Session.snapshot(session_uri, admin_ctx())
       # `state` is the most recent event's payload — under the PR-EM-0
       # shape, that's a map with `:new_slice`. Just assert the shape;
       # exact content is the Chat Behavior's concern.
       assert is_map(state)
       assert Map.has_key?(state, :new_slice)
+    end
+  end
+
+  describe "no-ambient-caps invariant (codex round-1 CRITICAL fix)" do
+    test "Session.subscribe_from/3 raises — forces caller to supply ctx" do
+      assert_raise ArgumentError, ~r/requires an explicit caller ctx/, fn ->
+        Session.subscribe_from(URI.parse("session://default/default/x"), self(), :latest)
+      end
+    end
+
+    test "Session.snapshot/1 raises — forces caller to supply ctx" do
+      assert_raise ArgumentError, ~r/requires an explicit caller ctx/, fn ->
+        Session.snapshot(URI.parse("session://default/default/x"))
+      end
+    end
+
+    test "Session.history/3 raises — forces caller to supply ctx" do
+      assert_raise ArgumentError, ~r/requires an explicit caller ctx/, fn ->
+        Session.history(URI.parse("session://default/default/x"), 0, :latest)
+      end
+    end
+
+    test "a caller with empty caps cannot subscribe (step 5.5 denies)" do
+      session_uri = spawn_session()
+
+      empty_ctx = %{
+        caller: URI.parse("entity://user/default/no-caps-#{System.unique_integer([:positive])}"),
+        caps: MapSet.new()
+      }
+
+      assert {:error, :unauthorized} =
+               Session.subscribe_from(session_uri, self(), :latest, empty_ctx)
+    end
+  end
+
+  describe "durability invariant (codex round-1 HIGH fix)" do
+    test "publisher cursor + ring survive a Session restart" do
+      session_uri = spawn_session()
+
+      # Emit 3 events.
+      Enum.each(1..3, fn _ -> {:ok, _} = mutate_chat_slice(session_uri) end)
+      wait_until_cursor(session_uri, 3)
+
+      pre_restart = publisher_slice(session_uri)
+      assert pre_restart.cursor == 3
+      assert length(pre_restart.ring) == 3
+
+      # Restart the Session Kind.
+      {:ok, pid_before} = Ezagent.KindRegistry.lookup(session_uri)
+      :ok = DynamicSupervisor.terminate_child(EzagentDomainChat.SessionSupervisor, pid_before)
+
+      # Wait for it to be gone.
+      Enum.reduce_while(1..50, nil, fn _, _ ->
+        case Ezagent.KindRegistry.lookup(session_uri) do
+          :error ->
+            {:halt, :ok}
+
+          _ ->
+            Process.sleep(20)
+            {:cont, nil}
+        end
+      end)
+
+      # Respawn — snapshot restore should bring back cursor + ring.
+      {:ok, _new_pid} = Ezagent.Kind.spawn(Session, %{uri: session_uri})
+
+      :ok =
+        Ezagent.WorkspaceRegistry.bind(session_uri, Ezagent.Capability.workspace_of(session_uri))
+
+      post_restart = publisher_slice(session_uri)
+
+      assert post_restart.cursor == 3,
+             "Expected cursor=3 to survive restart; got #{post_restart.cursor}. " <>
+               "If this fails, Kind.Server's handle_info path is NOT persisting " <>
+               "SessionImpl's :slice_changed mutations — codex round-1 HIGH fix " <>
+               "regressed."
+
+      # Ring contents survive (cursors 1,2,3 still in the ring).
+      assert Enum.map(post_restart.ring, & &1.cursor) == [1, 2, 3]
     end
   end
 

@@ -56,11 +56,20 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
                "(SPEC §2.1 'first implementer'). Got: #{inspect(behaviours)}"
     end
 
-    test "Session exports all four Publisher callbacks" do
+    test "Session exports the four Publisher callbacks (3-ary contract)" do
       assert function_exported?(Ezagent.Entity.Session, :history_retention, 0)
       assert function_exported?(Ezagent.Entity.Session, :subscribe_from, 3)
       assert function_exported?(Ezagent.Entity.Session, :snapshot, 1)
       assert function_exported?(Ezagent.Entity.Session, :history, 3)
+    end
+
+    test "Session ALSO exports ctx-bearing variants (codex round-1 CRITICAL fix)" do
+      # The 3-ary contract callbacks RAISE (no-ambient-caps invariant);
+      # production callers use these 4-ary / 2-ary forms with explicit
+      # `ctx: %{caller, caps}`. See SessionImpl moduledoc.
+      assert function_exported?(Ezagent.Entity.Session, :subscribe_from, 4)
+      assert function_exported?(Ezagent.Entity.Session, :snapshot, 2)
+      assert function_exported?(Ezagent.Entity.Session, :history, 4)
     end
 
     test "Session.history_retention/0 == 100 (OQ-EM-A resolution: count-based, V1 default)" do

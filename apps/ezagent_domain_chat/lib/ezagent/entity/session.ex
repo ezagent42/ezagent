@@ -75,82 +75,118 @@ defmodule Ezagent.Entity.Session do
   Subscribe `subscriber_pid` to this Session's structured slice-change
   stream starting from `cursor` (`:latest`, `:earliest`, or an integer).
 
-  Dispatches `?action=publisher.subscribe_from` (mode `:call`); caps
-  gated by `Ezagent.Behavior.Publisher.SessionImpl.cap_subjects/0`.
-  Returns `{:ok, current_cursor}` (the cursor at the moment of
-  subscription — checkpoint this for resume).
+  ## Caller MUST supply their own ctx
+
+  The `@behaviour Ezagent.Behavior.Publisher` contract is 3-ary
+  (per SPEC §2.1). The 3-ary form raises with a clear pointer to
+  the 4-ary `subscribe_from/4` because the V1 codebase has no
+  ambient-caps mechanism: every dispatch requires explicit
+  `ctx.caller + ctx.caps` per CapBAC step 5.5, and a public 3-ary
+  function with a default admin-caps fallback would let any in-VM
+  caller bypass the Publisher cap (codex round-1 CRITICAL,
+  2026-05-25).
+
+  Use `subscribe_from/4` and pass an explicit `ctx` map containing
+  `:caller` (a `%URI{}`) and `:caps` (a MapSet of `%Capability{}`
+  the caller actually holds). Production Worker callers (PR-EM-2)
+  pass their own ctx; tests pass admin caps explicitly.
   """
   @impl Ezagent.Behavior.Publisher
-  def subscribe_from(%URI{} = publisher_uri, subscriber_pid, cursor)
+  def subscribe_from(%URI{} = _publisher_uri, subscriber_pid, _cursor)
       when is_pid(subscriber_pid) do
-    dispatch_publisher_action(
-      publisher_uri,
-      :subscribe_from,
-      %{subscriber_pid: subscriber_pid, cursor: cursor}
-    )
-    |> unwrap_cursor()
+    raise_no_ambient_caps!(:subscribe_from, 4)
   end
 
   @doc """
   Snapshot the Session's current publisher cursor + state without
-  subscribing. Used by late-joining UI / dashboards.
+  subscribing. See `subscribe_from/3` for the no-ambient-caps
+  rationale — use `snapshot/2` with explicit ctx.
   """
   @impl Ezagent.Behavior.Publisher
-  def snapshot(%URI{} = publisher_uri) do
-    dispatch_publisher_action(publisher_uri, :snapshot, %{})
+  def snapshot(%URI{} = _publisher_uri) do
+    raise_no_ambient_caps!(:snapshot, 2)
   end
 
   @doc """
   Read events in the `(from, to]` cursor window from the Session's
-  retained publisher ring.
-
-  Returns `{:error, :cursor_out_of_window}` if `from` is older than
-  the oldest retained event.
+  retained publisher ring. See `subscribe_from/3` for the
+  no-ambient-caps rationale — use `history/4` with explicit ctx.
   """
   @impl Ezagent.Behavior.Publisher
-  def history(%URI{} = publisher_uri, from, to) do
-    dispatch_publisher_action(
-      publisher_uri,
-      :history,
-      %{from: from, to: to}
+  def history(%URI{} = _publisher_uri, _from, _to) do
+    raise_no_ambient_caps!(:history, 4)
+  end
+
+  @doc """
+  4-ary `subscribe_from` that dispatches with the caller-supplied ctx.
+
+  `ctx` MUST contain:
+
+  - `:caller` — a `%URI{}` identifying the caller (used for CapBAC
+    step 5.5 + workspace isolation step 5.6 + audit trail)
+  - `:caps` — a `MapSet.t(%Ezagent.Capability{})` of caps the caller
+    actually holds; step 5.5 verifies one matches the
+    publisher-subscribe cap shape on this Session.
+
+  Returns `{:ok, current_cursor}` on success;
+  `{:error, :unauthorized}` if no held cap matches;
+  `{:error, :cursor_out_of_window}` if `cursor` predates the oldest
+  retained event; other `{:error, _}` shapes per the standard
+  dispatch envelope.
+  """
+  @spec subscribe_from(URI.t(), pid(), Ezagent.Behavior.Publisher.cursor(), map()) ::
+          {:ok, non_neg_integer()} | {:error, term()}
+  def subscribe_from(%URI{} = publisher_uri, subscriber_pid, cursor, ctx)
+      when is_pid(subscriber_pid) and is_map(ctx) do
+    publisher_uri
+    |> dispatch_publisher_action(
+      :subscribe_from,
+      %{subscriber_pid: subscriber_pid, cursor: cursor},
+      ctx
     )
+    |> unwrap_cursor()
+  end
+
+  @doc "2-ary `snapshot` with explicit caller ctx — see `subscribe_from/4`."
+  @spec snapshot(URI.t(), map()) :: {:ok, map()} | {:error, term()}
+  def snapshot(%URI{} = publisher_uri, ctx) when is_map(ctx) do
+    dispatch_publisher_action(publisher_uri, :snapshot, %{}, ctx)
+  end
+
+  @doc "4-ary `history` with explicit caller ctx — see `subscribe_from/4`."
+  @spec history(
+          URI.t(),
+          Ezagent.Behavior.Publisher.cursor(),
+          Ezagent.Behavior.Publisher.cursor(),
+          map()
+        ) ::
+          {:ok, [Ezagent.Publisher.Event.t()]} | {:error, term()}
+  def history(%URI{} = publisher_uri, from, to, ctx) when is_map(ctx) do
+    publisher_uri
+    |> dispatch_publisher_action(:history, %{from: from, to: to}, ctx)
     |> unwrap_events()
   end
 
-  # Internal — build + dispatch a publisher action against the publisher
-  # URI. Uses the caller's `:caps` from process dict if the caller is
-  # already inside a dispatched call; otherwise the cap check will deny.
-  # The Publisher API is meant to be called by Worker Kinds (PR-EM-2)
-  # holding a `publisher_subscribe_from` cap, or by admin paths /
-  # tests that supply caps explicitly via `dispatch_with/3` (added in
-  # PR-EM-1 when the Worker arrives).
-  #
-  # PR-EM-0 ships the dispatch helper minimal — caller responsibility
-  # to hold the cap. Tests use `:dispatch_with_caps/3` (a small
-  # test-helper-shaped wrapper that lets a test inject ctx fields).
-  defp dispatch_publisher_action(%URI{} = publisher_uri, action, args) do
-    target =
-      URI.parse("#{URI.to_string(publisher_uri)}?action=publisher.#{action}")
+  # Build + dispatch a publisher action against the publisher URI
+  # using the caller-supplied `ctx`. The ctx MUST carry `:caller` +
+  # `:caps`; if it doesn't, CapBAC step 5.5 will deny with
+  # `{:error, :unauthorized}` (the let-it-crash posture — no default
+  # caps, no implicit admin elevation).
+  defp dispatch_publisher_action(%URI{} = publisher_uri, action, args, ctx) do
+    target = URI.parse("#{URI.to_string(publisher_uri)}?action=publisher.#{action}")
 
-    # PR-EM-0: callers that want a non-default ctx pass it via
-    # `dispatch_publisher_action_with/4` (an internal helper not yet
-    # exposed); the public 3-arg signature uses admin caps so the V1
-    # acceptance tests + the future Worker (which will hold its own
-    # cap) both work. Production publisher callers (the Worker) will
-    # supply their own ctx through the cap-bearing dispatch path
-    # PR-EM-2 introduces.
-    inv = %Ezagent.Invocation{
+    # Normalise the reply field: callers that didn't supply it get
+    # `:ignore` (we still return the result via the synchronous dispatch
+    # tuple — the reply field is only consumed by :cast mode + outbound
+    # transports).
+    normalised_ctx = Map.put_new(ctx, :reply, :ignore)
+
+    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
       target: target,
       mode: :call,
       args: args,
-      ctx: %{
-        caller: Ezagent.Entity.User.admin_uri(),
-        caps: Ezagent.Entity.User.admin_caps(),
-        reply: {:caller_inbox, self()}
-      }
-    }
-
-    Ezagent.Invocation.dispatch(inv)
+      ctx: normalised_ctx
+    })
   end
 
   defp unwrap_cursor({:ok, %{cursor: cursor}}), do: {:ok, cursor}
@@ -158,6 +194,17 @@ defmodule Ezagent.Entity.Session do
 
   defp unwrap_events({:ok, %{events: events}}), do: {:ok, events}
   defp unwrap_events({:error, _} = err), do: err
+
+  defp raise_no_ambient_caps!(action, arity) do
+    raise ArgumentError,
+          "Ezagent.Entity.Session.#{action}/#{arity - 1} (the @behaviour " <>
+            "Ezagent.Behavior.Publisher 3-ary contract callback) requires an " <>
+            "explicit caller ctx — use Ezagent.Entity.Session.#{action}/#{arity} " <>
+            "with `ctx: %{caller: %URI{...}, caps: MapSet.new([...])}` instead. " <>
+            "The V1 codebase has no ambient-caps mechanism; every dispatch " <>
+            "must declare its caller + caps so CapBAC step 5.5 can gate " <>
+            "non-Worker access (codex round-1 CRITICAL, 2026-05-25)."
+  end
 
   @doc """
   Generator-reconciler refactor (SPEC `docs/superpowers/specs/2026-05-23-generator-reconciler.md`):
