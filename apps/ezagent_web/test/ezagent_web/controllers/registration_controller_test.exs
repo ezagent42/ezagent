@@ -3,8 +3,26 @@ defmodule EzagentWeb.RegistrationControllerTest do
 
   # String session key — get_session/2 looks keys up as strings; an
   # atom key here would simply not be found.
-  defp pending_conn(conn, email) do
-    Plug.Test.init_test_session(conn, %{"pending_registration_email" => email})
+  # PR-B 2026-05-24: `pending_workspace` is now also required — the
+  # onboarding step sets it before /register/complete is reached.
+  # Codex round-1 HIGH-2: /register/complete revalidates that the
+  # workspace still accepts the email; helper ensures a matching rule
+  # exists so the test's irreversible write isn't blocked.
+  defp pending_conn(conn, email, workspace \\ "default") do
+    ensure_rule(workspace, email)
+
+    Plug.Test.init_test_session(conn, %{
+      "pending_registration_email" => email,
+      "pending_workspace" => workspace
+    })
+  end
+
+  defp ensure_rule(workspace_name, email) do
+    # Create the workspace if missing, add a user_list rule for the
+    # email so workspace_still_valid?/2 returns true.
+    _ = Ezagent.Workspace.create(workspace_name, %{})
+    _ = Ezagent.Workspace.add_magic_link_rule("workspace://" <> workspace_name, "user_list", email)
+    :ok
   end
 
   test "GET /register/complete shows the form prefilled with a derived slug", %{conn: conn} do
@@ -17,6 +35,15 @@ defmodule EzagentWeb.RegistrationControllerTest do
     assert redirected_to(conn) == "/login"
   end
 
+  test "GET /register/complete without a workspace bounces to onboarding (PR-B)", %{conn: conn} do
+    conn =
+      conn
+      |> Plug.Test.init_test_session(%{"pending_registration_email" => "noworkspace@good.com"})
+      |> get("/register/complete")
+
+    assert redirected_to(conn) == "/onboarding/workspace"
+  end
+
   test "POST /register/complete creates the principal and logs in", %{conn: conn} do
     conn =
       conn
@@ -27,6 +54,17 @@ defmodule EzagentWeb.RegistrationControllerTest do
     assert get_session(conn, :current_entity_uri) == "entity://user/default/newbie"
     assert get_session(conn, :pending_registration_email) == nil
     assert Ezagent.Entity.Profile.by_email("newbie@good.com").entity_uri == "entity://user/default/newbie"
+  end
+
+  test "POST /register/complete in a CUSTOM workspace creates entity://user/<ws>/<slug>", %{conn: conn} do
+    # PR-B 2026-05-24 — the workspace from onboarding is honored.
+    conn =
+      conn
+      |> pending_conn("alice@acme.test", "acme")
+      |> post("/register/complete", %{"handle" => "alice", "display_name" => "Alice"})
+
+    assert redirected_to(conn) == "/sessions"
+    assert get_session(conn, :current_entity_uri) == "entity://user/acme/alice"
   end
 
   test "POST with a taken handle re-renders the form with a suggestion", %{conn: conn} do

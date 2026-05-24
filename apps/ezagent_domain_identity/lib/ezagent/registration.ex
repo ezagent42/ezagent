@@ -33,25 +33,30 @@ defmodule Ezagent.Registration do
     end
   end
 
-  @doc "True if no User exists at `entity://user/default/<slug>`."
-  @spec slug_available?(String.t()) :: boolean()
-  def slug_available?(slug) when is_binary(slug) do
-    # Phase 9 PR-2 (SPEC v3 §3): entity URIs carry a workspace
-    # segment. Until tenant-aware registration lands (PR-5), slugs
-    # default to the `default` workspace.
-    is_nil(Users.get_by_uri("entity://user/default/" <> slug))
+  @doc """
+  True if no User exists at `entity://user/<workspace>/<slug>`.
+
+  PR-B 2026-05-24 (Allen, SPEC v2): slug uniqueness is now
+  PER-WORKSPACE — `alice` in workspace `acme` and `alice` in
+  workspace `beta` are distinct principals. Legacy callers without
+  workspace context default to `"default"`; PR-C deletes
+  `default` and forces all callers explicit.
+  """
+  @spec slug_available?(String.t(), String.t()) :: boolean()
+  def slug_available?(slug, workspace \\ "default") when is_binary(slug) do
+    is_nil(Users.get_by_uri("entity://user/#{workspace}/" <> slug))
   end
 
-  @doc "Return the first free `<slug>`, `<slug>-2`, `<slug>-3`, ... variant."
-  @spec suggest_slug(String.t()) :: String.t()
-  def suggest_slug(slug) when is_binary(slug) do
-    if slug_available?(slug) do
+  @doc "Return the first free `<slug>`, `<slug>-2`, `<slug>-3`, ... variant in the workspace."
+  @spec suggest_slug(String.t(), String.t()) :: String.t()
+  def suggest_slug(slug, workspace \\ "default") when is_binary(slug) do
+    if slug_available?(slug, workspace) do
       slug
     else
       Stream.iterate(2, &(&1 + 1))
       |> Enum.find_value(fn n ->
         candidate = "#{slug}-#{n}"
-        if slug_available?(candidate), do: candidate
+        if slug_available?(candidate, workspace), do: candidate
       end)
     end
   end
@@ -129,20 +134,24 @@ defmodule Ezagent.Registration do
   Create a brand-new principal: `users` row (password-less, default
   caps), `entity_profiles` row, and a spawned + cap-hydrated User Kind.
 
+  PR-B 2026-05-24 (Allen, SPEC v2): now takes a `workspace` arg so
+  the user lives in their CHOSEN workspace (from the onboarding LV),
+  not a hardcoded `default`. Legacy 3-arity callers default to
+  `"default"` for back-compat during the PR-B transition; PR-C deletes
+  the `default` workspace which forces all callers to pass it.
+
   Returns `{:ok, uri}` or `{:error, :slug_taken | term()}`.
   """
-  @spec create_principal(String.t(), String.t(), String.t()) ::
+  @spec create_principal(String.t(), String.t(), String.t(), String.t()) ::
           {:ok, URI.t()} | {:error, term()}
-  def create_principal(slug, display_name, email)
-      when is_binary(slug) and is_binary(display_name) and is_binary(email) do
-    # Phase 9 PR-2 (SPEC v3 §3): entity URIs carry a workspace
-    # segment; registration defaults to the `default` workspace
-    # until tenant-aware registration lands (PR-5).
-    uri_str = "entity://user/default/" <> slug
+  def create_principal(slug, display_name, email, workspace \\ "default")
+      when is_binary(slug) and is_binary(display_name) and is_binary(email) and
+             is_binary(workspace) do
+    uri_str = "entity://user/#{workspace}/" <> slug
     uri = URI.parse(uri_str)
 
     cond do
-      not slug_available?(slug) ->
+      not slug_available?(slug, workspace) ->
         {:error, :slug_taken}
 
       true ->
@@ -168,11 +177,25 @@ defmodule Ezagent.Registration do
         case txn do
           {:ok, :created} ->
             :ok = Ezagent.Entity.spawn_principal(uri)
+            # PR-B 2026-05-24 — register the new user as a member of
+            # their chosen workspace. Lazy dispatch via apply/3 to
+            # avoid identity → workspace compile-time circular dep
+            # (same pattern as `email_allowed?/1`).
+            maybe_add_workspace_member(workspace, uri)
             {:ok, uri}
 
           {:error, reason} ->
             {:error, reason}
         end
     end
+  end
+
+  defp maybe_add_workspace_member(workspace, %URI{} = user_uri) do
+    if Code.ensure_loaded?(Ezagent.Workspace) and
+         function_exported?(Ezagent.Workspace, :add_member, 2) do
+      _ = apply(Ezagent.Workspace, :add_member, [workspace, user_uri])
+    end
+
+    :ok
   end
 end

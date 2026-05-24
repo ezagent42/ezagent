@@ -42,8 +42,9 @@ defmodule EzagentWeb.MagicLinkController do
 
   # Token is consumed but still within expires_at — recover email via
   # peek/1 + route based on registration state:
-  # - Email has no principal → re-enter /register/complete (user's
-  #   chance to finish what they started)
+  # - Email has no principal → re-enter /onboarding/workspace (PR-B
+  #   2026-05-24 — the user picks/creates a workspace first, then
+  #   /register/complete collects the handle)
   # - Email HAS a principal → user already registered + logged in
   #   elsewhere; tell them so and bounce to /login for re-auth
   # - Token gone / truly expired → fall through to default error
@@ -53,12 +54,12 @@ defmodule EzagentWeb.MagicLinkController do
         case Registration.principal_for_email(email) do
           :none ->
             # User clicked but never completed registration. Re-route
-            # to /register/complete with a fresh pending-registration
-            # session so they can resume.
+            # to /onboarding/workspace with a fresh pending-registration
+            # session so they can resume from the workspace pick step.
             conn
             |> configure_session(renew: true)
             |> put_session(:pending_registration_email, email)
-            |> redirect(to: "/register/complete")
+            |> redirect(to: "/onboarding/workspace")
 
           {:ok, _uri} ->
             # User IS registered — they probably clicked an older
@@ -92,12 +93,21 @@ defmodule EzagentWeb.MagicLinkController do
         |> redirect(to: "/sessions")
 
       :none ->
-        # New email -> carry the verified email into a short-lived
-        # pending-registration session, go collect handle + display name.
+        # PR-B 2026-05-24 (Allen, SPEC v2): new email → workspace
+        # onboarding. The user picks an existing workspace to join
+        # (matched by email rule) OR creates a new one. Then
+        # /register/complete collects the handle.
+        #
+        # Codex round-1 HIGH-2 — `configure_session(renew: true)` plus
+        # explicit `delete_session(:pending_workspace)` clears any
+        # stale onboarding state from a prior magic-link click. A
+        # subsequent /register/complete revalidates :pending_workspace
+        # before any irreversible write (registration_controller.ex).
         conn
         |> configure_session(renew: true)
         |> put_session(:pending_registration_email, email)
-        |> redirect(to: "/register/complete")
+        |> delete_session(:pending_workspace)
+        |> redirect(to: "/onboarding/workspace")
     end
   end
 
