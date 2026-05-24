@@ -46,7 +46,14 @@ defmodule Ezagent.Audit do
     # Phase 4-plus follow-up (2026-05-17): CC-side hook reports.
     # Audit table records the event so operators have a queryable
     # history even after the in-memory LV panel rolls over.
-    [:ezagent, :cc_bridge, :event]
+    [:ezagent, :cc_bridge, :event],
+    # Notifier/log audit 2026-05-24 MED — capture every Notifications
+    # emission for the audit trail. Lets operators see "who got
+    # notified what when" alongside the audit-authz events.
+    [:ezagent, :notification, :emit],
+    # Notifier/log audit 2026-05-24 MED — chat-receive drops were
+    # logged to Logger but never made the audit table. Now they do.
+    [:ezagent, :chat, :receive, :dropped]
   ]
 
   @doc """
@@ -247,6 +254,51 @@ defmodule Ezagent.Audit do
       inserted_at: DateTime.utc_now()
     }
   end
+
+  # Notifier/log audit 2026-05-24 MED — emitted by `Ezagent.Notifications.notify/3`.
+  defp build_row([:ezagent, :notification, :emit], _measurements, meta) do
+    user_uri = Map.get(meta, :user_uri)
+    caller = Map.get(meta, :caller)
+    kind = Map.get(meta, :kind)
+
+    %{
+      trace_id: nil,
+      caller: uri_to_string_or_nil(caller),
+      target: uri_to_string_or_nil(user_uri),
+      action: "notification.emit#{if kind, do: ":#{kind}", else: ""}",
+      args: nil,
+      result: nil,
+      duration_us: 0,
+      authz: "info",
+      exception: nil,
+      workspace_uri: derive_workspace(caller, user_uri),
+      inserted_at: DateTime.utc_now()
+    }
+  end
+
+  # Notifier/log audit 2026-05-24 MED — emitted by `Chat.invoke(:receive, ...)`
+  # when the recipient has no BridgeRegistry binding (the chat target
+  # was reached but no transport could push it). Pre-fix: Logger only,
+  # never made the audit table.
+  defp build_row([:ezagent, :chat, :receive, :dropped], _measurements, meta) do
+    %{
+      trace_id: nil,
+      caller: uri_to_string_or_nil(Map.get(meta, :sender)),
+      target: uri_to_string_or_nil(Map.get(meta, :recipient)),
+      action: "chat.receive.dropped",
+      args: nil,
+      result: nil,
+      duration_us: 0,
+      authz: "warn",
+      exception: Map.get(meta, :reason, "no_binding"),
+      workspace_uri: derive_workspace(Map.get(meta, :sender), Map.get(meta, :recipient)),
+      inserted_at: DateTime.utc_now()
+    }
+  end
+
+  defp uri_to_string_or_nil(%URI{} = u), do: URI.to_string(u)
+  defp uri_to_string_or_nil(s) when is_binary(s), do: s
+  defp uri_to_string_or_nil(_), do: nil
 
   # Phase 9 PR-6 (SPEC v3 §7) — derive the workspace_uri for an audit
   # row given the caller and target URI strings. Priority:

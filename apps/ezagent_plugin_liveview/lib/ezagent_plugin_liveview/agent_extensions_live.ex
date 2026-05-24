@@ -251,21 +251,21 @@ defmodule EzagentPluginLiveview.AgentExtensionsLive do
     end
   end
 
-  # CapBAC pre-check for the toggle mutation path. Builds the same
-  # cap shape `Ezagent.Capability.cap_for_action/3` would derive for
-  # `Sandbox :write_path` on the agent URI, then checks the caller's
-  # caps via `Capability.matches?/2`.
+  # CapBAC pre-check for the toggle mutation path. Arch audit
+  # 2026-05-24 LOW-3 fix: delegates to `Capability.cap_for_action/3`
+  # to derive the `needed` cap shape — keeps the LV in lock-step
+  # with the dispatcher's structural derivation instead of
+  # hand-rolling the map (drift risk).
   defp authorized_to_toggle?(socket) do
     caller_caps = socket.assigns.caller_caps
     agent_uri = socket.assigns.agent_uri
-    workspace_uri = Ezagent.Capability.workspace_of(agent_uri)
 
-    needed = %{
-      kind: :agent,
-      behavior: Ezagent.Behavior.Sandbox,
-      instance: agent_uri,
-      workspace_uri: workspace_uri
-    }
+    needed =
+      Ezagent.Capability.cap_for_action(
+        Ezagent.Entity.Agent,
+        :write_path,
+        agent_uri
+      )
 
     caller_caps
     |> normalize_caps()
