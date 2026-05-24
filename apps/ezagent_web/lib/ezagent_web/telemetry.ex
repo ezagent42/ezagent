@@ -1,4 +1,27 @@
 defmodule EzagentWeb.Telemetry do
+  @moduledoc """
+  Telemetry supervisor + metric declarations.
+
+  ## Reporter wiring
+
+  `metrics/0` is consumed by `Phoenix.LiveDashboard` (mounted at
+  `/dashboard` — see `EzagentWeb.Router` `live_dashboard "/dashboard",
+  metrics: EzagentWeb.Telemetry`). The metrics appear in LiveDashboard's
+  Metrics tab — no separate Prometheus/Console reporter needed for
+  the current single-node-ops setup.
+
+  If a Prometheus scrape endpoint becomes a requirement (multi-node
+  / external alerting), add `{TelemetryMetricsPrometheus, metrics:
+  metrics()}` to the `children` list below and expose the default
+  port via `mix.exs` deps; LiveDashboard will keep working in
+  parallel because both reporters subscribe to the same telemetry
+  events.
+
+  Audit reference: `docs/notes/2026-05-24-architecture-audit-loc-report.md`
+  LOW item — originally reported as "no reporter attached"; that
+  was incorrect (LiveDashboard already consumes this), corrected
+  in cleanup batch 2026-05-24.
+  """
   use Supervisor
   import Telemetry.Metrics
 
@@ -12,8 +35,10 @@ defmodule EzagentWeb.Telemetry do
       # Telemetry poller will execute the given period measurements
       # every 10_000ms. Learn more here: https://hexdocs.pm/telemetry_metrics
       {:telemetry_poller, measurements: periodic_measurements(), period: 10_000}
-      # Add reporters as children of your supervision tree.
-      # {Telemetry.Metrics.ConsoleReporter, metrics: metrics()}
+      # Reporters: `metrics/0` is consumed via LiveDashboard
+      # (`live_dashboard "/dashboard", metrics: EzagentWeb.Telemetry`).
+      # No standalone Console / Prometheus reporter needed for the
+      # single-node-ops setup; see moduledoc.
     ]
 
     Supervisor.init(children, strategy: :one_for_one)

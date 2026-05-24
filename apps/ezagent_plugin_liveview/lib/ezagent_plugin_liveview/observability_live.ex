@@ -24,12 +24,41 @@ defmodule EzagentPluginLiveview.ObservabilityLive do
   end
 
   defp assign_data(socket) do
+    # Notification + Log audit LOW fix (2026-05-24):
+    # Phase 9 PR-6 added `workspace_uri` to `invocations` +
+    # `kind_snapshots` for tenant isolation, but ObservabilityLive's
+    # READ path never landed the filter — an admin viewing
+    # `/admin/logs` saw EVERY tenant's audit rows, regardless of
+    # their workspace scope.
+    #
+    # Filter rule:
+    # - System admin (`is_admin?` AND `current_workspace_uri == :system`
+    #   OR membership in system workspace) sees ALL rows
+    # - Workspace admin sees only their workspace's rows
+    # - Non-admins shouldn't reach this LV (router-level gate); for
+    #   defence-in-depth the filter still applies if they do
+    workspace_filter = workspace_filter_for(socket.assigns)
+
     socket
     |> assign(:kinds_total, length(Ezagent.KindRegistry.list_all()))
     |> assign(:bridges, list_bridges())
-    |> assign(:audit_rows, list_recent_audit(50))
-    |> assign(:snapshots, list_snapshots())
+    |> assign(:audit_rows, list_recent_audit(50, workspace_filter))
+    |> assign(:snapshots, list_snapshots(workspace_filter))
+    |> assign(:workspace_filter, workspace_filter)
   end
+
+  # Returns either `:all` (system-admin) or `{:scoped, workspace_uri_string}`.
+  defp workspace_filter_for(%{is_system_member?: true}), do: :all
+
+  defp workspace_filter_for(%{current_workspace_uri: %URI{} = wsu}),
+    do: {:scoped, URI.to_string(wsu)}
+
+  defp workspace_filter_for(%{current_workspace_uri: wsu}) when is_binary(wsu),
+    do: {:scoped, wsu}
+
+  # Fail-closed: if neither flag is present, scope to a nonexistent
+  # workspace so the LV shows zero rows rather than leaking.
+  defp workspace_filter_for(_), do: {:scoped, "workspace://__none__"}
 
   defp list_bridges do
     if Code.ensure_loaded?(EzagentPluginCc.BridgeRegistry) do
@@ -39,7 +68,7 @@ defmodule EzagentPluginLiveview.ObservabilityLive do
     end
   end
 
-  defp list_recent_audit(limit) do
+  defp list_recent_audit(limit, :all) do
     case EzagentCore.Repo.query(
            "SELECT target, action, authz, duration_us, inserted_at FROM invocations ORDER BY id DESC LIMIT ?1",
            [limit]
@@ -49,10 +78,32 @@ defmodule EzagentPluginLiveview.ObservabilityLive do
     end
   end
 
-  defp list_snapshots do
+  defp list_recent_audit(limit, {:scoped, workspace_uri}) do
+    case EzagentCore.Repo.query(
+           "SELECT target, action, authz, duration_us, inserted_at FROM invocations " <>
+             "WHERE workspace_uri = ?1 ORDER BY id DESC LIMIT ?2",
+           [workspace_uri, limit]
+         ) do
+      {:ok, %{rows: rows}} -> rows
+      _ -> []
+    end
+  end
+
+  defp list_snapshots(:all) do
     case EzagentCore.Repo.query(
            "SELECT uri, kind_type, version, length(state_binary), updated_at FROM kind_snapshots ORDER BY updated_at DESC LIMIT 50",
            []
+         ) do
+      {:ok, %{rows: rows}} -> rows
+      _ -> []
+    end
+  end
+
+  defp list_snapshots({:scoped, workspace_uri}) do
+    case EzagentCore.Repo.query(
+           "SELECT uri, kind_type, version, length(state_binary), updated_at FROM kind_snapshots " <>
+             "WHERE workspace_uri = ?1 ORDER BY updated_at DESC LIMIT 50",
+           [workspace_uri]
          ) do
       {:ok, %{rows: rows}} -> rows
       _ -> []

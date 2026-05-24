@@ -59,7 +59,11 @@ defmodule Mix.Tasks.Ezagent.Routing.AddRule do
   """
   use Mix.Task
 
-  alias Ezagent.Routing.{Matcher, RuleStore}
+  # Deprecation stub — `run/1` raises with a migration message;
+  # the original `parse_table` / `parse_matcher` / `parse_receivers`
+  # helpers (+ `Matcher` / `RuleStore` aliases) were unreachable
+  # after PR #302 and are dropped here in the audit-LOWs batch
+  # (2026-05-24) to clear the `--warnings-as-errors` gate.
 
   @impl Mix.Task
   def run(_args) do
@@ -82,29 +86,4 @@ defmodule Mix.Tasks.Ezagent.Routing.AddRule do
     docs/notes/2026-05-24-cli-gui-parity-audit.md (HIGH-2).
     """)
   end
-
-  defp parse_table(s) when is_binary(s) do
-    try do
-      {:ok, String.to_existing_atom("Elixir." <> s)}
-    rescue
-      ArgumentError -> {:error, {:unknown_table, s}}
-    end
-  end
-
-  defp parse_matcher("always"), do: {:ok, Matcher.always()}
-  defp parse_matcher("mention:" <> uri), do: {:ok, Matcher.mention(uri)}
-  defp parse_matcher("from:" <> uri), do: {:ok, Matcher.from(uri)}
-  defp parse_matcher("text_contains:" <> s), do: {:ok, Matcher.text_contains(s)}
-
-  defp parse_matcher("text_matches:" <> re) do
-    try do
-      {:ok, Matcher.text_matches(re)}
-    rescue
-      _ -> {:error, {:bad_regex, re}}
-    end
-  end
-
-  defp parse_matcher(other), do: {:error, {:unknown_matcher, other}}
-
-  defp parse_receivers(csv), do: String.split(csv, ",", trim: true)
 end
