@@ -84,6 +84,27 @@ defmodule Ezagent.Kind.Runtime do
       # Step 9 — put_in state. Snapshot wiring is Phase 1 step 3.
       new_state = Map.put(state, slice_key, new_slice)
 
+      # Step 9.5 (SPEC v2 PR-N1, Allen 2026-05-24) — slice-change hook.
+      # Notification v2: slice mutation IS the notification trigger.
+      # `SliceChange.emit/1` is gated by config flag (default OFF
+      # in N1; PR-N3 flips on), and short-circuits when slice
+      # unchanged. NEVER fires on `{:error, _}` (we're inside the
+      # success branch of the `with`). The `:self_uri` ctx field
+      # carries the affected entity's URI.
+      if new_slice != slice do
+        Ezagent.SliceChange.emit(%{
+          self_uri: target,
+          kind_module: kind_module,
+          action: action,
+          slice_key: slice_key,
+          old_slice: slice,
+          new_slice: new_slice,
+          result: result_or_nil,
+          caller: Map.get(enriched_ctx, :caller),
+          at: DateTime.utc_now()
+        })
+      end
+
       # Step 10 — telemetry.
       :telemetry.execute(
         [:ezagent, :invoke, :stop],
