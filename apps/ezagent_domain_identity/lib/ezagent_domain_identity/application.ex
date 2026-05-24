@@ -242,6 +242,21 @@ defmodule EzagentDomainIdentity.Application do
       :ok = CapabilityRegistry.register(Ezagent.Entity.Agent, action, Identity)
     end
 
+    # PR-OWN-3 (caps-data-ownership SPEC #306 §7): register the
+    # split-out `IdentityAdmin` Behavior (cap-only, privileged
+    # actions). Registered against the same Kinds as `Identity`
+    # since both share the `:identity` slice.
+    for action <- Ezagent.Behavior.IdentityAdmin.actions() do
+      :ok = CapabilityRegistry.register(User, action, Ezagent.Behavior.IdentityAdmin)
+
+      :ok =
+        CapabilityRegistry.register(
+          Ezagent.Entity.Agent,
+          action,
+          Ezagent.Behavior.IdentityAdmin
+        )
+    end
+
     # PR #126: per-user API key storage (DeepSeek/OpenAI/etc.). Only
     # on User Kind — Agents don't own their own keys, they look up
     # the caller User's key via dispatch.

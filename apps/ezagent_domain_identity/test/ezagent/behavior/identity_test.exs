@@ -61,7 +61,10 @@ defmodule Ezagent.Behavior.IdentityTest do
 
   describe "Behavior contract" do
     test "actions/0" do
-      assert Identity.actions() == [:list_caps, :has_cap?, :grant_cap, :revoke_cap]
+      # PR-OWN-3: split — Identity holds only safe actions;
+      # :grant_cap and :revoke_cap moved to IdentityAdmin.
+      assert Identity.actions() == [:list_caps, :has_cap?]
+      assert Ezagent.Behavior.IdentityAdmin.actions() == [:grant_cap, :revoke_cap]
     end
 
     test "state_slice/0" do
