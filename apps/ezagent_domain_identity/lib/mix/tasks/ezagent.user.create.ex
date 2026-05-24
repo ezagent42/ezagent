@@ -7,10 +7,21 @@ defmodule Mix.Tasks.Ezagent.User.Create do
   > create` equivalent does NOT exist yet — deleting this task today
   > would lose operator capability. Tracked in
   > `docs/futures/todo.md` § "CLI ↔ GUI parity (audit findings #137
-  > still partial)". TODO: add the matching Behavior action + cap subject (NOT a bare FacadeRegistry op — codex PR #304 round-2 HIGH: that path bypasses Invocation.dispatch + caps + audit). mix esr auto-derives the CLI from interface/0. See the deferred-table guidance in docs/futures/todo.md HIGH-2
-  > `(:user, :create)` in `EzagentCli.Application.register_core_facade_ops/0`
-  > so `mix esr user create --uri … --password … --caps …` becomes
-  > available, then deprecate this task using the PR #302 stub pattern.
+  > still partial)".
+  >
+  > TODO (per codex PR #304 round-3 fix): add the
+  > `Ezagent.Entity.User` Behavior `:create` action + cap subject;
+  > `mix esr` will auto-derive `mix esr user create --uri … --password
+  > … --caps …` from the Behavior's `interface/0` via the standard
+  > `Ezagent.Invocation.dispatch/1` pipeline. Then deprecate this
+  > task using the PR #302 stub pattern.
+  >
+  > **DO NOT** add a `FacadeRegistry` op for this — codex PR #304
+  > round-2 HIGH established that `EzagentCli.FacadeRegistry` +
+  > `Dispatch.run_facade/3` skips Invocation/caller/caps/audit, so
+  > using it as the wire-through would close HIGH-2 by reproducing
+  > the bypass. See `docs/futures/todo.md` HIGH-2 deferred table for
+  > the canonical wire-through pattern.
 
   Phase 4-completion Spec 05 §A.2.1 — provision a non-admin User.
 
