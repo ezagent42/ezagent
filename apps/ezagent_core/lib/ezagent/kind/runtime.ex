@@ -39,10 +39,27 @@ defmodule Ezagent.Kind.Runtime do
   require Logger
 
   @type slice_state :: %{atom() => map()}
+  # PR-N1 round-2 MEDIUM: success branches now carry a 4th element —
+  # the optional `slice_change_event` for `Kind.Server` to fire
+  # AFTER `Snapshot.maybe_save/4`. Was a 2-tuple `{:ok, state}` and
+  # 3-tuple `{:ok, state, result}`. Backwards-compatible: legacy
+  # callers that only matched the success atom + state still work
+  # because the new shape extends, not replaces.
   @type result ::
-          {:ok, slice_state(), term()}
-          | {:ok, slice_state()}
+          {:ok, slice_state(), term(), slice_change_event() | nil}
+          | {:ok, slice_state(), nil, slice_change_event() | nil}
           | {:error, term()}
+  @type slice_change_event :: %{
+          required(:self_uri) => URI.t(),
+          required(:kind_module) => module(),
+          required(:action) => atom(),
+          required(:slice_key) => atom(),
+          required(:old_slice) => map(),
+          required(:new_slice) => map(),
+          required(:result) => term() | nil,
+          required(:caller) => URI.t() | nil,
+          required(:at) => DateTime.t()
+        }
 
   @spec handle_dispatch(Ezagent.Invocation.t(), slice_state(), module(), URI.t()) :: result()
   def handle_dispatch(
@@ -84,32 +101,36 @@ defmodule Ezagent.Kind.Runtime do
       # Step 9 — put_in state. Snapshot wiring is Phase 1 step 3.
       new_state = Map.put(state, slice_key, new_slice)
 
-      # Step 9.5 (SPEC v2 PR-N1, Allen 2026-05-24) — slice-change hook.
-      # Notification v2: slice mutation IS the notification trigger.
-      # `SliceChange.emit/1` is gated by config flag (default OFF
-      # in N1; PR-N3 flips on), and short-circuits when slice
-      # unchanged. NEVER fires on `{:error, _}` (we're inside the
-      # success branch of the `with`).
+      # Step 9.5 (SPEC v2 PR-N1, Allen 2026-05-24) — slice-change
+      # event preparation. Notification v2: slice mutation IS the
+      # notification trigger.
       #
-      # Codex PR-N1 round-1 HIGH-2 fix: use the BARE INSTANCE URI
-      # for both topic and payload — `target` contains `?action=…`
-      # query, but subscribers want one topic per Kind instance.
-      # `Ezagent.URI.instance/1` strips query + fragment.
-      if new_slice != slice do
-        instance_uri = Ezagent.URI.instance(target)
-
-        Ezagent.SliceChange.emit(%{
-          self_uri: instance_uri,
-          kind_module: kind_module,
-          action: action,
-          slice_key: slice_key,
-          old_slice: slice,
-          new_slice: new_slice,
-          result: result_or_nil,
-          caller: Map.get(enriched_ctx, :caller),
-          at: DateTime.utc_now()
-        })
-      end
+      # Codex PR-N1 round-2 MEDIUM fix: we no longer EMIT from here.
+      # Emit happens in `Kind.Server` AFTER `Snapshot.maybe_save/4`
+      # so a PubSub outage can never roll back a durably-persisted
+      # mutation. The event payload is computed here (we have the
+      # slice diff + action context), then returned in the result
+      # envelope for `Kind.Server` to fire post-commit.
+      #
+      # Codex PR-N1 round-1 HIGH-2 fix: bare INSTANCE URI for both
+      # topic + payload self_uri — `target` includes `?action=…`
+      # query but subscribers want one topic per Kind instance.
+      slice_change_event =
+        if new_slice != slice do
+          %{
+            self_uri: Ezagent.URI.instance(target),
+            kind_module: kind_module,
+            action: action,
+            slice_key: slice_key,
+            old_slice: slice,
+            new_slice: new_slice,
+            result: result_or_nil,
+            caller: Map.get(enriched_ctx, :caller),
+            at: DateTime.utc_now()
+          }
+        else
+          nil
+        end
 
       # Step 10 — telemetry.
       :telemetry.execute(
@@ -125,9 +146,13 @@ defmodule Ezagent.Kind.Runtime do
         }
       )
 
+      # 3-tuple result shape carries an optional `slice_change_event`
+      # for `Kind.Server` to fire after snapshot persistence. `nil`
+      # means no slice mutation happened (Behavior was read-only or
+      # the new slice equalled the old). Codex PR-N1 round-2 MEDIUM.
       case result_or_nil do
-        nil -> {:ok, new_state}
-        result -> {:ok, new_state, result}
+        nil -> {:ok, new_state, nil, slice_change_event}
+        result -> {:ok, new_state, result, slice_change_event}
       end
     else
       {:error, reason} = err ->

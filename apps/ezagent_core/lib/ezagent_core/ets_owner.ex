@@ -81,16 +81,16 @@ defmodule EzagentCore.EtsOwner do
     {Ezagent.CapabilityRegistry.Subjects, :set},
     # `:ezagent_capability_default_grants` — keyed by `kind` → grant_fn.
     # Populated via `Ezagent.CapabilityRegistry.register_default_grant/2`.
-    {Ezagent.CapabilityRegistry.Defaults, :set},
-    # Notification SPEC v2 PR-N1 (Allen 2026-05-24 amendment,
-    # docs/superpowers/specs/2026-05-24-notification-architecture-v2.md):
-    # `:ezagent_notification_subscriptions` — keyed by
-    # `{entity_uri_string, stream_uri_string}` → subscription metadata.
-    # CapabilityRegistry analogue: unified entry point for entities to
-    # register / list / unregister notification subscriptions; cap-gated
-    # writes. Codex PR-N1 round-1 MED-1 fix — was lazy-created `:public`
-    # with TOCTOU race; now supervised init under EtsOwner.
-    {Ezagent.NotificationSubscriptions, :set}
+    {Ezagent.CapabilityRegistry.Defaults, :set}
+    # Notification SPEC v2 PR-N1 (Allen 2026-05-24):
+    # `:ezagent_notification_subscriptions` is INTENTIONALLY NOT
+    # owned here. Codex PR-N1 round-2 HIGH-1: this is a
+    # security-gated registry where `:public` would let any process
+    # bypass cap enforcement via raw `:ets.insert`. It's owned by
+    # its own GenServer (`Ezagent.NotificationSubscriptions`) which
+    # creates a `:protected` table; writes serialise through the
+    # GenServer mailbox after `check_subscribe_cap/2` + admin-cap
+    # verification. Read path (`:ets.match/2`) stays direct.
   ]
 
   def start_link(_opts) do

@@ -59,15 +59,19 @@ defmodule Ezagent.SliceChange do
   @doc """
   Emit a slice-change event for `self_uri`.
 
-  Called by `Ezagent.Kind.Runtime.handle_dispatch/4` between step 9
-  (state update) and step 10 (telemetry), GATED on:
+  Called by `Ezagent.Kind.Server.commit_and_notify/3` AFTER
+  `Snapshot.maybe_save/4` succeeds (codex PR-N1 round-2 MEDIUM fix).
+  GATED on:
 
   1. The feature flag (default OFF in PR-N1)
-  2. `new_slice != old_slice` (no event when state unchanged)
+  2. `slice_change_event != nil` — Runtime sets `nil` when slice
+     unchanged or action returned read-only
   3. Success-path only (errors / cap-denied never reach here)
 
-  Returns `:ok` always. Best-effort — broadcast failures log + swallow
-  so a notification problem doesn't break the dispatch.
+  Returns `:ok` always. Failure is observable (`:telemetry.span`
+  exception event + Logger.warning) but non-fatal — the snapshot
+  is already persisted; we don't crash the Kind GenServer for a
+  PubSub outage.
   """
   @spec emit(map()) :: :ok
   def emit(%{} = event) do
@@ -85,34 +89,52 @@ defmodule Ezagent.SliceChange do
     Application.get_env(app, key, false) == true
   end
 
-  # Codex PR-N1 round-1 MED-2 fix: no catch-all rescue. A
-  # PubSub broadcast failure is infrastructure breakage — surface
-  # it as a crash in dev/test (caller is `Kind.Runtime.handle_dispatch`,
-  # which already isolates per-dispatch via supervised tasks), and
-  # let prod telemetry record the failure via the standard
-  # `[:ezagent, :slice_change, :emit, :exception]` event the
-  # `:telemetry.span` helper produces. The old `rescue _ -> :ok`
-  # silently dropped notifications, defeating the architectural goal
-  # of "slice mutation → state sync across surfaces is invariant".
+  # Codex PR-N1 round-2 MEDIUM fix: post-commit semantics.
+  #
+  # Caller (`Kind.Server.commit_and_notify/3`) invokes us AFTER
+  # `Snapshot.maybe_save/4` succeeds. The slice is already durably
+  # persisted; a PubSub broadcast failure here cannot lose the
+  # user's mutation. Round-1 used a bare `rescue _ -> :ok` swallow
+  # which silently dropped notifications; round-1 fix removed it but
+  # then a PubSub crash could roll back the mutation (because emit
+  # ran INSIDE Runtime, BEFORE snapshot). Round-2 keeps emit safe-to-
+  # crash by routing it through `:telemetry.span/3`: the span emits
+  # `[:ezagent, :slice_change, :emit, :exception]` if PubSub raises,
+  # so failures are observable, but we rescue the exception locally
+  # so the GenServer's commit-then-notify pair doesn't take down the
+  # Kind process for an infrastructure hiccup.
   defp do_emit(%{self_uri: %URI{} = self_uri} = event) do
-    :telemetry.span(
-      [:ezagent, :slice_change, :emit],
-      %{
-        self_uri: self_uri,
-        kind_module: Map.get(event, :kind_module),
-        action: Map.get(event, :action),
-        slice_key: Map.get(event, :slice_key)
-      },
-      fn ->
-        Phoenix.PubSub.broadcast(
-          EzagentCore.PubSub,
-          topic(self_uri),
-          {:slice_changed, event}
-        )
+    metadata = %{
+      self_uri: self_uri,
+      kind_module: Map.get(event, :kind_module),
+      action: Map.get(event, :action),
+      slice_key: Map.get(event, :slice_key)
+    }
 
-        {:ok, %{count: 1}}
-      end
-    )
+    try do
+      :telemetry.span(
+        [:ezagent, :slice_change, :emit],
+        metadata,
+        fn ->
+          Phoenix.PubSub.broadcast(
+            EzagentCore.PubSub,
+            topic(self_uri),
+            {:slice_changed, event}
+          )
+
+          {:ok, %{count: 1}}
+        end
+      )
+    rescue
+      error ->
+        # Observable + non-fatal: failures surface via telemetry +
+        # log; the Kind GenServer keeps running because the mutation
+        # is already snapshotted.
+        Logger.warning(
+          "Ezagent.SliceChange.emit failed for #{URI.to_string(self_uri)} (post-commit): " <>
+            inspect(error)
+        )
+    end
 
     :ok
   end
