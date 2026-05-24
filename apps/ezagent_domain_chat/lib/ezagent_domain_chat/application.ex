@@ -518,6 +518,20 @@ defmodule EzagentDomainChat.Application do
       :ok = CapabilityRegistry.register(Session, action, PublisherSI)
     end)
 
+    # ExternalMirror PR-EM-3 (SPEC §4.1 / §9 PR-EM-3) — register
+    # the `Ezagent.Behavior.ExternalMirror` (bind / unbind /
+    # list_bindings) Behavior on `Ezagent.Entity.Session`. Per the
+    # convention (`feedback_register_lookup_key_parity` / SPEC §5.1
+    # step 7): Kind ↔ Behavior wiring lives in the app that DEFINES
+    # the Kind — Session is here in `:ezagent_domain_chat`, so the
+    # registration lives here even though the Behavior module ships
+    # from `:ezagent_domain_external_mirror`.
+    alias Ezagent.Behavior.ExternalMirror, as: ExternalMirrorBehavior
+
+    Enum.each(ExternalMirrorBehavior.actions(), fn action ->
+      :ok = CapabilityRegistry.register(Session, action, ExternalMirrorBehavior)
+    end)
+
     # Phase 7 completion PR-5 (SPEC §1.6b) — register the new core
     # `Ezagent.Behavior.Lifecycle` Behavior's `:terminate` action on the
     # Agent Kind. After this, `entity://agent/...?action=lifecycle.terminate`

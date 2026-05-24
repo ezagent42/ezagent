@@ -1,3 +1,43 @@
+defmodule Ezagent.ExternalMirror.TestSupport.MockPublishAdapter.Allow do
+  @moduledoc """
+  PR-EM-3 — Per-adapter Allow Behavior for `MockPublishAdapter` (the
+  Cap 2 shape used by `Ezagent.ExternalMirror.bind/4`'s Check 2).
+
+  Cap-only (`dispatchable?/0 == false`); registered against
+  `Ezagent.Entity.Session` with action `:allow_mock_publish` by
+  `EzagentDomainExternalMirror.Application.start/2`.
+  """
+  @behaviour Ezagent.Behavior
+
+  @impl true
+  def actions, do: [:allow_mock_publish]
+
+  @impl true
+  def cap_subjects,
+    do: [{:allow_mock_publish, "Authorize binding the `mock_publish` adapter on this session."}]
+
+  @impl true
+  def dispatchable?, do: false
+
+  @impl true
+  def state_slice, do: :external_adapter_mock_publish
+
+  @impl true
+  def init_slice(_args), do: %{}
+
+  @impl true
+  def invoke(_action, _slice, _args, _ctx) do
+    raise "MockPublishAdapter.Allow is cap-only — Check 2 in the bind facade is its only consumer."
+  end
+
+  @impl true
+  def interface, do: %{}
+
+  # `:any` → workspace admin grants per caps-data-ownership §3.3.
+  @impl true
+  def data_owner(_), do: :any
+end
+
 defmodule Ezagent.ExternalMirror.TestSupport.MockPublishAdapter do
   @moduledoc """
   PR-EM-2 test support — Adapter for the Worker spawn / publish-flow

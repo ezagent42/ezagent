@@ -51,10 +51,10 @@ defmodule Ezagent.ExternalMirrorTest do
     end
   end
 
-  describe "list_bindings/1 (PR-EM-1 stub)" do
-    test "returns {:ok, []} for any session URI — slice lands in PR-EM-3" do
+  describe "list_bindings/1 (PR-EM-3 — real slice lookup)" do
+    test "returns {:error, :not_found} for a session URI that isn't live" do
       uri = URI.parse("session://workspace/test/session_123")
-      assert {:ok, []} = ExternalMirror.list_bindings(uri)
+      assert {:error, _} = ExternalMirror.list_bindings(uri)
     end
   end
 

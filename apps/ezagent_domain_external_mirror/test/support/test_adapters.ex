@@ -1,3 +1,75 @@
+defmodule Ezagent.ExternalMirror.TestSupport.MockAdapter.Allow do
+  @moduledoc """
+  Per-adapter Allow Behavior for `MockAdapter` (PR-EM-3 Check 2 cap
+  shape). Cap-only — `dispatchable?/0 == false` so dispatch can never
+  accidentally invoke it.
+
+  Registered against `Ezagent.Entity.Session` with action
+  `:allow_mock_em` by `EzagentDomainExternalMirror.Application.start/2`.
+  """
+  @behaviour Ezagent.Behavior
+
+  @impl true
+  def actions, do: [:allow_mock_em]
+
+  @impl true
+  def cap_subjects,
+    do: [{:allow_mock_em, "Authorize binding the `mock_em` adapter on this session."}]
+
+  @impl true
+  def dispatchable?, do: false
+
+  @impl true
+  def state_slice, do: :external_adapter_mock_em
+
+  @impl true
+  def init_slice(_args), do: %{}
+
+  @impl true
+  def invoke(_action, _slice, _args, _ctx) do
+    raise "MockAdapter.Allow is cap-only — Check 2 in the bind facade is its only consumer."
+  end
+
+  @impl true
+  def interface, do: %{}
+
+  # `:any` → workspace admin grants per caps-data-ownership §3.3.
+  @impl true
+  def data_owner(_), do: :any
+end
+
+defmodule Ezagent.ExternalMirror.TestSupport.OtherAdapter.Allow do
+  @moduledoc "Paired with `OtherAdapter` (collision tests share the adapter_id so this is functionally identical to MockAdapter.Allow above, but kept distinct for module-identity tests)."
+  @behaviour Ezagent.Behavior
+
+  @impl true
+  def actions, do: [:allow_mock_em]
+
+  @impl true
+  def cap_subjects,
+    do: [{:allow_mock_em, "Authorize binding the other-adapter shape on this session."}]
+
+  @impl true
+  def dispatchable?, do: false
+
+  @impl true
+  def state_slice, do: :external_adapter_other_em
+
+  @impl true
+  def init_slice(_args), do: %{}
+
+  @impl true
+  def invoke(_action, _slice, _args, _ctx) do
+    raise "OtherAdapter.Allow is cap-only."
+  end
+
+  @impl true
+  def interface, do: %{}
+
+  @impl true
+  def data_owner(_), do: :any
+end
+
 defmodule Ezagent.ExternalMirror.TestSupport.MockAdapter do
   @moduledoc """
   In-test mock Adapter for the AdapterRegistry / BindingRegistry /

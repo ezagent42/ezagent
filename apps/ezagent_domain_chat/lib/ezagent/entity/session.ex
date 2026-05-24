@@ -31,7 +31,18 @@ defmodule Ezagent.Entity.Session do
     # ExternalMirror PR-EM-0 (SPEC §8.1) — `Publisher.SessionImpl` owns
     # the `:publisher` slice + serves the 3 publisher actions; declared
     # alongside Chat so every Session Kind boots with both slices.
-    do: [Ezagent.Behavior.Chat, Ezagent.Behavior.Publisher.SessionImpl]
+    #
+    # ExternalMirror PR-EM-3 (SPEC §4.1) — `Behavior.ExternalMirror`
+    # owns the `:external_mirror` slice + the bind / unbind /
+    # list_bindings actions; declared here so `init_slice/1`
+    # rehydrates the binding list from the projection table on
+    # Session boot AND `post_init/2` schedules the worker
+    # reconciliation handle_continue per SPEC §3.1.
+    do: [
+      Ezagent.Behavior.Chat,
+      Ezagent.Behavior.Publisher.SessionImpl,
+      Ezagent.Behavior.ExternalMirror
+    ]
 
   @impl Ezagent.Kind
   def persistence, do: {:snapshot, :on_change}
