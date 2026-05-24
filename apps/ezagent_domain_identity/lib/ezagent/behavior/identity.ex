@@ -78,14 +78,27 @@ defmodule Ezagent.Behavior.Identity do
     {:ok, slice, %{has: has?}}
   end
 
-  # Phase 6 PR 6: live cap mutation via behavior action. The CapBAC
-  # gate at dispatch step 5.5 enforces that only callers with admin
-  # caps can grant — so the action itself stays unconditional and
-  # trusts the dispatch-level check.
+  # Phase 6 PR 6: live cap mutation via behavior action.
+  #
+  # PR-OWN-2 (caps-data-ownership SPEC #306 §5.2) adds a §5.2
+  # structural pre-check: for caps whose Behavior declares
+  # `data_owner/1` (i.e. has migrated to the new framework), the
+  # caller MUST be the data owner OR hold a recorded delegation cap
+  # — even if the dispatch-level CapBAC allowed them through with
+  # an admin cap. Behaviors that have NOT migrated keep the old
+  # admin-cap dispatch gate as the only check (incremental rollout
+  # per SPEC §7 PR-OWN-2 — Identity is not yet migrated as of this
+  # PR; PR-OWN-3 migrates it).
   def invoke(:grant_cap, slice, %{cap: cap}, ctx) do
-    new_slice = %{slice | caps: MapSet.put(slice.caps, cap)}
-    notify_cap_change(ctx, :cap_granted, "A new capability was granted to you.", cap)
-    {:ok, new_slice, %{caps: MapSet.to_list(new_slice.caps)}}
+    case check_grant_authorized(cap, ctx) do
+      :ok ->
+        new_slice = %{slice | caps: MapSet.put(slice.caps, cap)}
+        notify_cap_change(ctx, :cap_granted, "A new capability was granted to you.", cap)
+        {:ok, new_slice, %{caps: MapSet.to_list(new_slice.caps)}}
+
+      {:error, _} = err ->
+        err
+    end
   end
 
   def invoke(:revoke_cap, slice, %{cap: cap}, ctx) do
@@ -142,4 +155,74 @@ defmodule Ezagent.Behavior.Identity do
       }
     }
   end
+
+  # PR-OWN-2 §5.2 enforcement helpers — called from `invoke(:grant_cap,...)`.
+  # Three branches:
+  #   (1) wildcard cap shape — {kind: :any} or {behavior: :any} —
+  #       only the bootstrap admin can grant. Rejects with
+  #       :grant_wildcard_requires_admin otherwise.
+  #   (2) cap's Behavior declares data_owner/1 — caller must be
+  #       the data owner. Rejects with :grant_not_owner otherwise.
+  #   (3) cap's Behavior has NOT migrated — fall through to :ok
+  #       (incremental rollout; dispatch-level CapBAC remains the
+  #       only check).
+  defp check_grant_authorized(%Ezagent.Capability{kind: :any}, ctx),
+    do: require_bootstrap_admin(ctx, :grant_wildcard_requires_admin)
+
+  defp check_grant_authorized(%Ezagent.Capability{behavior: :any}, ctx),
+    do: require_bootstrap_admin(ctx, :grant_wildcard_requires_admin)
+
+  defp check_grant_authorized(
+         %Ezagent.Capability{behavior: behavior, instance: instance},
+         ctx
+       )
+       when is_atom(behavior) do
+    if Code.ensure_loaded?(behavior) and
+         function_exported?(behavior, :data_owner, 1) do
+      case Ezagent.CapabilityRegistry.data_owner_of(behavior, instance) do
+        %URI{} = owner ->
+          caller = Map.get(ctx, :caller)
+
+          cond do
+            caller == owner -> :ok
+            holds_admin_caps?(ctx) -> :ok
+            true -> {:error, :grant_not_owner}
+          end
+
+        # :any / :no_owner / {:scope, _, _} — class-wide or
+        # ownerless. Only bootstrap admin can grant; same as
+        # wildcard caps above.
+        _ ->
+          require_bootstrap_admin(ctx, :grant_owner_unresolvable)
+      end
+    else
+      # Behavior not yet migrated — incremental rollout fallthrough.
+      :ok
+    end
+  end
+
+  defp check_grant_authorized(_cap, _ctx), do: :ok
+
+  # Bootstrap admin holds at least one cap with `behavior: :any` AND
+  # `workspace_uri: :any`. This is the only legitimate granter for
+  # wildcard or ownerless caps. Existing `User.admin_caps/1` mints
+  # exactly this shape.
+  defp require_bootstrap_admin(ctx, error_tag) do
+    if holds_admin_caps?(ctx) do
+      :ok
+    else
+      {:error, error_tag}
+    end
+  end
+
+  defp holds_admin_caps?(%{caps: caps}) do
+    caps_list = if is_struct(caps, MapSet), do: MapSet.to_list(caps), else: List.wrap(caps)
+
+    Enum.any?(caps_list, fn
+      %Ezagent.Capability{kind: :any, behavior: :any, workspace_uri: :any} -> true
+      _ -> false
+    end)
+  end
+
+  defp holds_admin_caps?(_), do: false
 end

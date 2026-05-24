@@ -151,16 +151,25 @@ defmodule Ezagent.Identity do
     granter = parse_uri(granter_uri)
     target = URI.new!("#{URI.to_string(target_uri)}?action=identity.grant_cap")
 
+    # PR-OWN-2 (caps-data-ownership SPEC #306 §5.2 + r4 fix): pass
+    # the granter's REAL caps into dispatch ctx, not a hardcoded
+    # `User.admin_caps()`. Round-1 SPEC's §5.2 wildcard pre-check
+    # was moot because every call presented as admin regardless of
+    # granter's actual caps. Now `Behavior.Identity.invoke(:grant_cap,
+    # ...)` (and the dispatch CapBAC) sees the granter's true cap set:
+    # - existing admin-driven flows still work (admin URI → admin caps)
+    # - non-admin granter who is the data owner can grant via the
+    #   §5.2 owner branch (`Behavior.X.data_owner/1` returns caller URI)
+    # - non-admin granter who is NOT owner gets {:error, :grant_not_owner}
+    granter_caps = read_granter_caps(granter)
+
     inv = %Ezagent.Invocation{
       target: target,
       mode: :call,
       args: %{cap: cap},
       ctx: %{
         caller: granter,
-        # Granter's admin caps — Phase 9 PR-4 will replace with
-        # caller's actual caps once cross-workspace grant policy
-        # lives here.
-        caps: Ezagent.Entity.User.admin_caps(),
+        caps: granter_caps,
         reply: :sync
       }
     }
@@ -171,6 +180,13 @@ defmodule Ezagent.Identity do
       err -> err
     end
   end
+
+  # Read the granter's current Identity slice caps directly via
+  # `Ezagent.Kind.get_slice/2` (added in PR-OWN-2). Skips dispatch
+  # (which would itself need caps — chicken-and-egg). Falls back to
+  # an EMPTY MapSet if the granter has no live Kind or no Identity
+  # slice — that lets the §5.2 / dispatch CapBAC reject cleanly with
+  # an authorization error instead of a confusing nil-deref.
 
   def grant_cap(entity_uri, %{workspace_uri: _} = cap_params, granter_uri) do
     cap = build_cap_from_params(cap_params, granter_uri)
@@ -196,4 +212,39 @@ defmodule Ezagent.Identity do
       granted_at: Map.get(p, :granted_at, DateTime.utc_now())
     }
   end
+
+  # PR-OWN-2 (caps-data-ownership SPEC #306 §5.2 + r4): read the
+  # granter's current Identity slice caps via `Ezagent.Kind.get_slice/2`.
+  # Skips dispatch (chicken-and-egg).
+  #
+  # Backward-compat carve-out: the bootstrap admin URI keeps the
+  # hardcoded `User.admin_caps()` fallback. Existing call paths
+  # (`mix ezagent.user.create`, Admin LV grant button, all PRE-PR-OWN-2
+  # tests) invoke this facade with `granter_uri = admin_uri` even
+  # when the admin Kind isn't live in test sandboxes — they expect
+  # admin caps to flow through. The §5.2 wildcard pre-check still
+  # passes for admin caps so this is no relaxation.
+  #
+  # Non-admin granters get their REAL caps from the live Identity
+  # slice, or an empty MapSet if their Kind isn't live (let §5.2 /
+  # dispatch CapBAC reject cleanly).
+  defp read_granter_caps(granter_uri) do
+    if granter_is_bootstrap_admin?(granter_uri) do
+      Ezagent.Entity.User.admin_caps()
+    else
+      case Ezagent.Kind.get_slice(granter_uri, :identity) do
+        {:ok, %{caps: caps}} when is_struct(caps, MapSet) -> caps
+        {:ok, %{caps: caps}} when is_list(caps) -> MapSet.new(caps)
+        _ -> MapSet.new()
+      end
+    end
+  end
+
+  defp granter_is_bootstrap_admin?(%URI{} = uri) do
+    URI.to_string(uri) == URI.to_string(Ezagent.Entity.User.admin_uri())
+  rescue
+    _ -> false
+  end
+
+  defp granter_is_bootstrap_admin?(_), do: false
 end

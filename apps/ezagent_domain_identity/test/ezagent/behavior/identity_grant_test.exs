@@ -30,8 +30,14 @@ defmodule Ezagent.Behavior.IdentityGrantTest do
 
     new_cap = echo_cap()
 
+    # PR-OWN-2 §5.2: wildcard caps (`behavior: :any`) require the
+    # caller to hold the bootstrap admin marker. Provide admin caps
+    # in ctx — test direct invoke bypasses dispatch's CapBAC gate
+    # which would have set this in production.
+    ctx = %{caps: Ezagent.Entity.User.admin_caps()}
+
     {:ok, new_slice, %{caps: caps}} =
-      Identity.invoke(:grant_cap, slice, %{cap: new_cap}, %{})
+      Identity.invoke(:grant_cap, slice, %{cap: new_cap}, ctx)
 
     assert MapSet.size(new_slice.caps) == 1
     assert new_cap in caps
@@ -54,7 +60,11 @@ defmodule Ezagent.Behavior.IdentityGrantTest do
 
     slice = %{caps: MapSet.new([cap])}
 
-    {:ok, new_slice, _} = Identity.invoke(:grant_cap, slice, %{cap: cap}, %{})
+    # See sibling test — admin caps required for wildcard grants
+    # under PR-OWN-2 §5.2.
+    ctx = %{caps: Ezagent.Entity.User.admin_caps()}
+
+    {:ok, new_slice, _} = Identity.invoke(:grant_cap, slice, %{cap: cap}, ctx)
     assert MapSet.size(new_slice.caps) == 1
   end
 
