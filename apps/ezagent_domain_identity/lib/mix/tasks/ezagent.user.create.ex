@@ -1,6 +1,17 @@
 defmodule Mix.Tasks.Ezagent.User.Create do
   @shortdoc "Create a new ESR User with password + caps"
   @moduledoc """
+  > **CLI/GUI parity audit 2026-05-24 — Category C (deferred).**
+  > Bypasses dispatch: calls `Ezagent.Users.create/3` directly, so no
+  > CapBAC, no audit row, no cross-workspace check. The `mix esr user
+  > create` equivalent does NOT exist yet — deleting this task today
+  > would lose operator capability. Tracked in
+  > `docs/futures/todo.md` § "CLI ↔ GUI parity (audit findings #137
+  > still partial)". TODO: register a FacadeRegistry op
+  > `(:user, :create)` in `EzagentCli.Application.register_core_facade_ops/0`
+  > so `mix esr user create --uri … --password … --caps …` becomes
+  > available, then deprecate this task using the PR #302 stub pattern.
+
   Phase 4-completion Spec 05 §A.2.1 — provision a non-admin User.
 
   ## Usage

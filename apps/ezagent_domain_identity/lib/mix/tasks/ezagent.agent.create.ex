@@ -1,6 +1,20 @@
 defmodule Mix.Tasks.Ezagent.Agent.Create do
   @shortdoc "Create a new ESR Agent (flavor/_name pattern) with optional caps"
   @moduledoc """
+  > **CLI/GUI parity audit 2026-05-24 — Category C (deferred).**
+  > Bypasses dispatch AND diverges from the LV path: this task uses
+  > `SpawnRegistry.spawn + Identity.grant_cap` (no Template, no
+  > PtyServer sidecar) while `agent_new_live.ex` uses
+  > `Workspace.add_template + invoke_template_now` (Template + PTY).
+  > cc-flavor agents created via THIS task will not have a PTY. The
+  > `mix esr agent create` equivalent does NOT exist yet — deleting
+  > this task today would lose operator capability. Tracked in
+  > `docs/futures/todo.md` § "CLI ↔ GUI parity (audit findings #137
+  > still partial)". TODO: per audit Finding 4, register a
+  > FacadeRegistry op `(:agent, :create)` that wraps the LV's
+  > `Workspace.add_template + invoke_template_now` flow (single code
+  > path), then deprecate this task using the PR #302 stub pattern.
+
   Phase 8c PR-E (Allen 2026-05-20) — provision a new Agent Kind.
 
   Mirrors `mix ezagent.user.create` but for `entity://agent/<flavor>_<name>`.

@@ -1,6 +1,14 @@
 defmodule Mix.Tasks.Ezagent.Feishu.Unbind do
   @shortdoc "Remove a Feishu open_id binding"
   @moduledoc """
+  > **CLI/GUI parity audit 2026-05-24 — Category C (deferred).**
+  > Bypasses dispatch: calls `UserBinding.unbind/1` directly. The
+  > `mix esr feishu unbind` equivalent does NOT exist yet. Tracked in
+  > `docs/futures/todo.md` § "CLI ↔ GUI parity (audit findings #137
+  > still partial)". TODO: register FacadeRegistry op
+  > `(:feishu, :unbind)`, then deprecate this task using the PR #302
+  > stub pattern.
+
   Phase 6 PR 15.
 
       mix ezagent.feishu.unbind ou_6b11faf8e9...

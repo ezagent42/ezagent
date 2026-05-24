@@ -1,6 +1,21 @@
 defmodule Mix.Tasks.Ezagent.Feishu.Bind do
   @shortdoc "Bind a Feishu open_id to a local ESR user URI"
   @moduledoc """
+  > **CLI/GUI parity audit 2026-05-24 — Category C (deferred).**
+  > Bypasses dispatch: calls `UserBinding.bind/3 + BindingPolicy.apply/2`
+  > directly, so no CapBAC, no audit row, no cross-workspace check.
+  > The LV `feishu_bindings_live.ex:90` uses the SAME functions (same
+  > source ✓) but the CLI/LV split means the CLI never goes through
+  > the dispatch step that LV could grow tomorrow. The `mix esr feishu
+  > bind` equivalent does NOT exist yet — deleting this task today
+  > would lose operator capability. Tracked in
+  > `docs/futures/todo.md` § "CLI ↔ GUI parity (audit findings #137
+  > still partial)". TODO: register a FacadeRegistry op
+  > `(:feishu, :bind)` in `EzagentPluginFeishu.Application.start/2`
+  > so `mix esr feishu bind --open-id … --user-uri … [--admin …]`
+  > becomes available, then deprecate this task using the PR #302
+  > stub pattern.
+
   Phase 6 PR 15 — admin CLI for Feishu identity bindings.
 
       mix ezagent.feishu.bind ou_6b11faf8e9... entity://user/default/linyilun

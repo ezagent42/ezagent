@@ -1,6 +1,16 @@
 defmodule Mix.Tasks.Ezagent.Demo.SeedCcAgent do
   @shortdoc "Seed a demo cc agent into session://default/default/main"
   @moduledoc """
+  > **CLI/GUI parity audit 2026-05-24 — Category A (demo seeder).**
+  > Intentionally NOT a normal operator op. Demo-data seed used to
+  > populate `session://default/default/main` with a sample cc agent.
+  > The `chat.join` step DOES dispatch (with admin caps); the spawn
+  > step is a direct `SpawnRegistry.spawn` since there is no live
+  > Kind to invoke on yet. Stays as `mix ezagent.*`; do NOT migrate
+  > to `mix esr`. See
+  > `docs/notes/2026-05-24-cli-gui-parity-audit.md` Section 1 (this
+  > task is not in the audit matrix — it's a demo-fixtures helper).
+
   Operator-friendly seed task — spawns `entity://agent/default/cc_demo` and
   joins it to `session://default/default/main`. Idempotent.
 

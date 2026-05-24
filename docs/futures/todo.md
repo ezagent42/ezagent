@@ -32,6 +32,41 @@ open after HIGH-1 (admin fallback hole) closed in PR #298:
   example: `mix ezagent.routing.add_rule`. Approach: write a
   migration template, hold an invariant test that `mix esr` is the
   ONLY task allowed to call domain modules outside of bootstrap.
+
+  **Sweep progress (this PR — triage commit on
+  `cli-sweep/deprecate-bypass-tasks`):**
+
+  - ✅ `routing.add_rule` — already deprecated in PR #302 (Behavior
+    `Ezagent.Behavior.Routing` exists; `mix esr routing add_rule`
+    dispatches against `system://routing/default`).
+  - ⏳ **deferred to follow-up PRs** — each below needs a
+    FacadeRegistry op (or Behavior action) BEFORE its legacy task
+    can be deprecated. Without that, deprecation would lose operator
+    capability.
+
+    | Legacy task | Proposed `mix esr` | Wire-through |
+    |---|---|---|
+    | `mix ezagent.user.create` | `mix esr user create --uri … --password … --caps …` | New FacadeRegistry op `(:user, :create)` → `Ezagent.Users.create/3` |
+    | `mix ezagent.user.set_password` | `mix esr user set_password --uri … --password …` | New FacadeRegistry op `(:user, :set_password)` → `Ezagent.Users.set_password/2` |
+    | `mix ezagent.agent.create` | `mix esr agent create --uri … --caps …` | New FacadeRegistry op `(:agent, :create)` → `Ezagent.Workspace.add_template + invoke_template_now` (matching LV — audit Finding 4) |
+    | `mix ezagent.feishu.bind` | `mix esr feishu bind --open-id … --user-uri … [--admin …]` | New FacadeRegistry op `(:feishu, :bind)` → `UserBinding.bind/3 + BindingPolicy.apply/2` |
+    | `mix ezagent.feishu.unbind` | `mix esr feishu unbind --open-id …` | New FacadeRegistry op `(:feishu, :unbind)` → `UserBinding.unbind/1` |
+    | `mix ezagent.feishu.list` | `mix esr feishu list` | New FacadeRegistry op `(:feishu, :list)` → `UserBinding.list_all/0` |
+    | `mix ezagent.feishu.chat.bind` | `mix esr feishu chat_bind --chat-id … --session-uri …` | New FacadeRegistry op `(:feishu, :chat_bind)` → `SessionBinding.bind/2` |
+    | `mix ezagent.feishu.chat.unbind` | `mix esr feishu chat_unbind --chat-id …` | New FacadeRegistry op `(:feishu, :chat_unbind)` → `SessionBinding.unbind/1` |
+
+  - ✅ **CLI-only by design (will NOT be migrated, audit-confirmed
+    carve-outs):** `bootstrap`, `check_invariants`, `db.reset`,
+    `home.adopt_db`, `home.init`, `plugin.install`, `snapshot.list`,
+    `snapshot.dump`, `stress`, `user.token` (bootstrap-token
+    primitive; chicken-and-egg with `mix esr`), `auth.magic_link`
+    (operator-debug mirror of HTTP path), `demo.seed_cc_agent` /
+    `demo.seed_cc_sandbox` (demo seeders, not operator ops). Each
+    file now carries a "Category A" audit comment in its moduledoc.
+  - ⚠️ **partial-dispatch carve-out:** `snapshot.clear` — destructive
+    DB op that audit Finding 5 flags as "should arguably be a
+    Behavior so caps gate it". Tracked separately; the wider
+    `system://snapshots` Kind needs designing first.
 - **HIGH-3** (~12 LV handle_events have no CLI equivalent): need
   facade-ops for `create_session`, `add_member`, `promote_to_system`,
   `grant_cap`, `revoke_cap`, `save_smtp`, `save_registration_domains`

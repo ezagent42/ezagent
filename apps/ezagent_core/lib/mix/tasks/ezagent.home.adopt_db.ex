@@ -1,6 +1,13 @@
 defmodule Mix.Tasks.Ezagent.Home.AdoptDb do
   @shortdoc "Move repo-root ezagent_core_dev.db into $EZAGENT_HOME/<profile>/db/"
   @moduledoc """
+  > **CLI/GUI parity audit 2026-05-24 — Category A (DB maintenance).**
+  > Intentionally NOT a dispatched op. Moves the SQLite DB file on
+  > disk before/around the runtime BEAM. Stays as `mix ezagent.*`;
+  > do NOT migrate to `mix esr`. See
+  > `docs/notes/2026-05-24-cli-gui-parity-audit.md` Section 1
+  > (Bootstrap row) + Finding 2 carve-out.
+
   Phase 6 PR 1 — finishes the runtime-state migration started in Phase 5
   PR 1 by moving the dev SQLite DB out of the repo working tree and into
   `$EZAGENT_HOME/<profile>/db/ezagent_core.db`.

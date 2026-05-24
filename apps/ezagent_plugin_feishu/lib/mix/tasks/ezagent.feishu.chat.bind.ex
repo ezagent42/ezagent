@@ -1,6 +1,14 @@
 defmodule Mix.Tasks.Ezagent.Feishu.Chat.Bind do
   @shortdoc "Bind a Feishu chat_id to an ESR session URI"
   @moduledoc """
+  > **CLI/GUI parity audit 2026-05-24 — Category C (deferred).**
+  > Bypasses dispatch: calls `SessionBinding.bind/2` directly. The
+  > `mix esr feishu chat_bind` equivalent does NOT exist yet. Tracked
+  > in `docs/futures/todo.md` § "CLI ↔ GUI parity (audit findings #137
+  > still partial)". TODO: register FacadeRegistry op
+  > `(:feishu, :chat_bind)`, then deprecate this task using the PR
+  > #302 stub pattern.
+
   PR #144 SPEC v2 §5.8 — admin CLI for Feishu chat ↔ session bindings.
 
       mix ezagent.feishu.chat.bind oc_abc123 session://default/default/main

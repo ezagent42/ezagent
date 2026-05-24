@@ -1,6 +1,15 @@
 defmodule Mix.Tasks.Ezagent.User.Token do
   @shortdoc "Mint or revoke bearer tokens for an entity (user or agent)"
   @moduledoc """
+  > **CLI/GUI parity audit 2026-05-24 — Category A (CLI-only by design).**
+  > Intentionally NOT a dispatched op. This task IS the bootstrap-token
+  > primitive that lets operators mint the very token `mix esr` then
+  > uses to authenticate dispatched calls (PR #298 HIGH-1 fix). Putting
+  > it behind `mix esr` would be a chicken-and-egg loop. Stays as
+  > `mix ezagent.*`; do NOT migrate to `mix esr`. See
+  > `docs/notes/2026-05-24-cli-gui-parity-audit.md` Section 1 (Auth row,
+  > "CLI-only by design") + Section 6 PR-6.
+
   Manage bearer tokens via the `entity_tokens` table (PR #142 SPEC v2
   §5.12).
 

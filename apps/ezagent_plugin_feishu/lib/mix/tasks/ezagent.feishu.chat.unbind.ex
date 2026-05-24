@@ -1,6 +1,14 @@
 defmodule Mix.Tasks.Ezagent.Feishu.Chat.Unbind do
   @shortdoc "Remove a Feishu chat_id ↔ session binding"
   @moduledoc """
+  > **CLI/GUI parity audit 2026-05-24 — Category C (deferred).**
+  > Bypasses dispatch: calls `SessionBinding.unbind/1` directly. The
+  > `mix esr feishu chat_unbind` equivalent does NOT exist yet.
+  > Tracked in `docs/futures/todo.md` § "CLI ↔ GUI parity (audit
+  > findings #137 still partial)". TODO: register FacadeRegistry op
+  > `(:feishu, :chat_unbind)`, then deprecate this task using the PR
+  > #302 stub pattern.
+
   PR #144 SPEC v2 §5.8.
 
       mix ezagent.feishu.chat.unbind oc_abc123

@@ -2,6 +2,14 @@ defmodule Mix.Tasks.Ezagent.Plugin.Install do
   @shortdoc "Hot-load + start an OTP plugin app into a running ESR (no phx restart)"
 
   @moduledoc """
+  > **CLI/GUI parity audit 2026-05-24 — Category A (operator install).**
+  > Intentionally NOT a dispatched op. Mutates the runtime BEAM's
+  > code path + application supervision tree; cannot itself be
+  > dispatched (it adds the Kinds that would receive dispatch).
+  > Stays as `mix ezagent.*`; do NOT migrate to `mix esr`. See
+  > `docs/notes/2026-05-24-cli-gui-parity-audit.md` Section 1
+  > (Bootstrap row) + Finding 2 carve-out.
+
   Phase 7 PR 36 (D7-8) — install a plugin OTP app into a running ESR
   without restarting `phx.server`. Closes V1.4 (dev writes plugin →
   `mix ezagent.plugin.install` → Kinds + Behaviors reachable without
