@@ -213,38 +213,28 @@ defmodule Ezagent.Identity do
     }
   end
 
-  # PR-OWN-2 (caps-data-ownership SPEC #306 §5.2 + r4): read the
-  # granter's current Identity slice caps via `Ezagent.Kind.get_slice/2`.
-  # Skips dispatch (chicken-and-egg).
+  # PR-OWN-2 (caps-data-ownership SPEC #306 §5.2 + r4):
+  # Read the granter's current Identity slice caps via
+  # `Ezagent.Kind.get_slice/2`. Skips dispatch (chicken-and-egg).
   #
-  # Backward-compat carve-out: the bootstrap admin URI keeps the
-  # hardcoded `User.admin_caps()` fallback. Existing call paths
-  # (`mix ezagent.user.create`, Admin LV grant button, all PRE-PR-OWN-2
-  # tests) invoke this facade with `granter_uri = admin_uri` even
-  # when the admin Kind isn't live in test sandboxes — they expect
-  # admin caps to flow through. The §5.2 wildcard pre-check still
-  # passes for admin caps so this is no relaxation.
+  # Codex PR-OWN-2 round-2 HIGH-2 fix: REMOVED the URI-equality
+  # admin-caps fallback. Round-1 synthesized admin caps whenever
+  # `granter_uri == User.admin_uri()` regardless of whether the
+  # caller proved they were the admin — spoofable by any code path
+  # that lets a non-admin set the granter URI string.
   #
-  # Non-admin granters get their REAL caps from the live Identity
-  # slice, or an empty MapSet if their Kind isn't live (let §5.2 /
-  # dispatch CapBAC reject cleanly).
+  # The fallback now requires the live admin Kind to exist AND its
+  # Identity slice to actually contain the bootstrap-admin invariant
+  # cap (the all-four-wildcards shape). URI value alone grants
+  # nothing. Tests that don't spawn an admin Kind in setup will
+  # need to call `Identity.grant_cap` with an alternative trusted
+  # path (e.g. a dedicated bootstrap helper) — broken assumptions
+  # in those tests get surfaced rather than papered over.
   defp read_granter_caps(granter_uri) do
-    if granter_is_bootstrap_admin?(granter_uri) do
-      Ezagent.Entity.User.admin_caps()
-    else
-      case Ezagent.Kind.get_slice(granter_uri, :identity) do
-        {:ok, %{caps: caps}} when is_struct(caps, MapSet) -> caps
-        {:ok, %{caps: caps}} when is_list(caps) -> MapSet.new(caps)
-        _ -> MapSet.new()
-      end
+    case Ezagent.Kind.get_slice(granter_uri, :identity) do
+      {:ok, %{caps: caps}} when is_struct(caps, MapSet) -> caps
+      {:ok, %{caps: caps}} when is_list(caps) -> MapSet.new(caps)
+      _ -> MapSet.new()
     end
   end
-
-  defp granter_is_bootstrap_admin?(%URI{} = uri) do
-    URI.to_string(uri) == URI.to_string(Ezagent.Entity.User.admin_uri())
-  rescue
-    _ -> false
-  end
-
-  defp granter_is_bootstrap_admin?(_), do: false
 end

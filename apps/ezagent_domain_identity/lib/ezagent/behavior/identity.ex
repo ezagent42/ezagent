@@ -215,12 +215,29 @@ defmodule Ezagent.Behavior.Identity do
     end
   end
 
+  # Codex PR-OWN-2 round-2 HIGH-1 fix: bootstrap-admin predicate
+  # must require ALL four `:any` wildcards (kind, behavior, instance,
+  # workspace_uri). Round-1 omitted `instance: :any`, which let a
+  # narrow-instance delegated wildcard cap (e.g.
+  # `kind:any/behavior:any/instance:<target>/workspace:any`) satisfy
+  # the predicate — privilege escalation for that specific target.
+  # The bootstrap admin's `User.admin_caps()` mints exactly the
+  # all-four-wildcards shape; no legitimate delegated cap should
+  # have that exact shape.
   defp holds_admin_caps?(%{caps: caps}) do
     caps_list = if is_struct(caps, MapSet), do: MapSet.to_list(caps), else: List.wrap(caps)
 
     Enum.any?(caps_list, fn
-      %Ezagent.Capability{kind: :any, behavior: :any, workspace_uri: :any} -> true
-      _ -> false
+      %Ezagent.Capability{
+        kind: :any,
+        behavior: :any,
+        instance: :any,
+        workspace_uri: :any
+      } ->
+        true
+
+      _ ->
+        false
     end)
   end
 
