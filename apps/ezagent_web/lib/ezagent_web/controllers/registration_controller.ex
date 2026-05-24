@@ -15,38 +15,33 @@ defmodule EzagentWeb.RegistrationController do
   import Plug.Conn
 
   alias Ezagent.Registration
+  alias EzagentWeb.AuthBoundaryLayout
 
-  # i18n (Allen 2026-05-22) — the registration boundary page is a raw
-  # self-contained heredoc (auth boundary — keeps its own <style>, no
-  # app.css). Built at RUNTIME via `form_html/0` so its user-facing
-  # strings can pass through `gettext/1` (a compile-time `@form_html`
-  # module attribute cannot). `{{...}}` placeholders are still
-  # substituted in `render_form/5`.
-  defp form_html do
+  # PR-E (SPEC v2 §G7): registration page reuses the
+  # `AuthBoundaryLayout` chrome — same Geist font, same design tokens,
+  # same card, same dark-mode rules, same mobile-visible flash — so
+  # `/register/complete` looks like a sister page to `/login`. Only
+  # the card body (the handle + display_name form) lives here.
+  #
+  # Built at RUNTIME via `card_body/0` so user-facing strings pass
+  # through `gettext/1` (a compile-time `@card_body` module attribute
+  # cannot interpolate macros). `{{...}}` placeholders are substituted
+  # in `render_form/5`.
+  defp card_body do
     """
-    <!DOCTYPE html>
-    <html><head><title>#{gettext("Complete registration")}</title><meta charset="utf-8">
-    <style>
-      body { font-family: -apple-system, sans-serif; max-width: 420px; margin: 80px auto; padding: 24px; }
-      h1 { font-size: 22px; } form { display: flex; flex-direction: column; gap: 12px; }
-      label { font-size: 13px; color: #666; }
-      input { padding: 8px 10px; border: 1px solid #d1d5da; border-radius: 4px; font-size: 14px; }
-      button { padding: 10px; background: #1f883d; color: white; border: none; border-radius: 4px; cursor: pointer; }
-      .err { color: #cf222e; font-size: 13px; padding: 8px; background: #ffebe9; border-radius: 4px; }
-      .hint { color: #57606a; font-size: 12px; }
-    </style></head><body>
-    <h1>#{gettext("Complete your registration")}</h1>
-    {{ERROR}}
-    <form method="post" action="/register/complete">
-      <input type="hidden" name="_csrf_token" value="{{CSRF}}">
-      <label for="handle">#{gettext("Username (your permanent handle — entity://user/<handle>)")}</label>
-      <input type="text" id="handle" name="handle" value="{{HANDLE}}" required autofocus>
-      <label for="display_name">#{gettext("Display name (you can change this later)")}</label>
-      <input type="text" id="display_name" name="display_name" value="{{DISPLAY}}" required>
-      <button type="submit">#{gettext("Create my account")}</button>
-    </form>
-    <p class="hint">#{gettext("Signing up as")} {{EMAIL}}</p>
-    </body></html>
+        <p class="brand">ezagent</p>
+        <h1>#{gettext("Complete your registration")}</h1>
+        {{FLASH}}
+        {{ERROR}}
+        <form method="post" action="/register/complete">
+          <input type="hidden" name="_csrf_token" value="{{CSRF}}">
+          <label for="handle">#{gettext("Username (your permanent handle — entity://user/<handle>)")}</label>
+          <input type="text" id="handle" name="handle" value="{{HANDLE}}" required autofocus>
+          <label for="display_name">#{gettext("Display name (you can change this later)")}</label>
+          <input type="text" id="display_name" name="display_name" value="{{DISPLAY}}" required>
+          <button type="submit">#{gettext("Create my account")}</button>
+        </form>
+        <p class="hint">#{gettext("Signing up as")} <code>{{EMAIL}}</code></p>
     """
   end
 
@@ -124,15 +119,26 @@ defmodule EzagentWeb.RegistrationController do
 
   defp render_form(conn, email, handle, display, error) do
     error_block =
-      if error, do: ~s(<div class="err">#{Plug.HTML.html_escape(error)}</div>), else: ""
+      if error,
+        do: ~s(<div class="error">#{Plug.HTML.html_escape(error) |> safe_to_string()}</div>),
+        else: ""
 
-    html =
-      form_html()
+    card_body_html =
+      card_body()
+      |> String.replace("{{FLASH}}", AuthBoundaryLayout.flash_html(conn))
       |> String.replace("{{ERROR}}", error_block)
       |> String.replace("{{CSRF}}", Plug.CSRFProtection.get_csrf_token())
       |> String.replace("{{HANDLE}}", Plug.HTML.html_escape(handle) |> safe_to_string())
       |> String.replace("{{DISPLAY}}", Plug.HTML.html_escape(display) |> safe_to_string())
       |> String.replace("{{EMAIL}}", Plug.HTML.html_escape(email) |> safe_to_string())
+
+    html =
+      AuthBoundaryLayout.head_html(gettext("Complete registration")) <>
+        AuthBoundaryLayout.body_open() <>
+        AuthBoundaryLayout.card_open() <>
+        card_body_html <>
+        AuthBoundaryLayout.card_close() <>
+        AuthBoundaryLayout.body_close()
 
     conn
     |> put_resp_content_type("text/html")
