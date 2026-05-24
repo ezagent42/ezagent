@@ -268,25 +268,45 @@ defmodule Ezagent.NotificationSubscriptions do
   Inverse — drop the registry row AND unsubscribe from the PubSub
   topic. Same auth shape as `unregister_subscription/3`.
 
-  Codex PR-N1 round-6 HIGH fix: unsubscribe TRANSPORT FIRST, then
-  delete the registry row. If the transport unsubscribe fails or
-  raises, the registry row stays — better to have an extra "intent"
-  row that the operator can see than to leave the process still
-  receiving broadcasts while the operator believes it's unsubscribed.
+  Codex PR-N1 round-7 MED fix: AUTH PREFLIGHT FIRST (no side
+  effects on failure), THEN PubSub unsubscribe, THEN registry
+  delete. Round-6 reordered PubSub-then-row, which leaked a
+  PubSub-state mutation on unauthorized calls: an unauthorized
+  caller could silently `PubSub.unsubscribe` a victim process
+  before the cap check rejected the operation.
+
+  Failure-mode ordering for authorized calls:
+  - PubSub unsubscribe fails → registry row stays (operator-
+    visible intent beats silent process-still-subscribed leak)
+  - All steps :ok → caller cleanly off both transport + intent
   """
   @spec unsubscribe(URI.t() | String.t(), URI.t() | String.t(), map()) ::
           :ok | {:error, term()}
   def unsubscribe(entity_uri, stream_uri, ctx) when is_map(ctx) do
-    case Ezagent.SliceChange.unsubscribe_unverified(stream_uri) do
-      :ok ->
-        unregister_subscription(entity_uri, stream_uri, ctx)
-
-      {:error, _} = pubsub_err ->
-        pubsub_err
+    with :ok <- public_ctx?(ctx),
+         :ok <- preflight_unsubscribe(entity_uri, ctx),
+         :ok <- Ezagent.SliceChange.unsubscribe_unverified(stream_uri) do
+      unregister_subscription(entity_uri, stream_uri, ctx)
     end
   end
 
   def unsubscribe(_, _, _), do: {:error, :invalid_args}
+
+  # Codex round-7 MED — pure auth check (no side effects). Mirrors
+  # the auth path inside `authorize_unregister/2` but does NOT
+  # touch the table. Used by `unsubscribe/3` as a preflight so an
+  # unauthorized caller never reaches the PubSub side-effecting
+  # step. Defers to GenServer.call so we use the same predicate
+  # the real `unregister_subscription/3` will run.
+  defp preflight_unsubscribe(entity_uri, ctx) do
+    GenServer.call(__MODULE__, {:preflight_unsubscribe, entity_uri, ctx})
+  end
+
+  # Public-API ctx-shape guard — mirror the rejection in
+  # `unregister_subscription/3` so preflight surfaces the same
+  # error class for `%{caps: :system}` callers.
+  defp public_ctx?(%{caps: :system}), do: {:error, :system_caps_not_allowed_in_public_api}
+  defp public_ctx?(_), do: :ok
 
   # Codex round-6 rollback helper — best-effort row delete.
   # We do NOT propagate this error; the caller already has the
@@ -374,6 +394,15 @@ defmodule Ezagent.NotificationSubscriptions do
       end
 
     {:reply, reply, state}
+  end
+
+  # Codex round-7 MED — pure auth preflight used by `unsubscribe/3`
+  # to refuse unauthorized callers BEFORE they reach the PubSub
+  # side-effecting step. No mutation, no ETS read needed beyond
+  # the auth predicates.
+  def handle_call({:preflight_unsubscribe, entity_uri, ctx}, _from, state) do
+    entity_str = entity_to_string(entity_uri)
+    {:reply, authorize_unregister(entity_str, ctx), state}
   end
 
   # Codex round-4 CRITICAL fix — :system_register / :system_unregister

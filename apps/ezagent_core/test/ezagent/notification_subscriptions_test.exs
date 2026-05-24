@@ -452,6 +452,69 @@ defmodule Ezagent.NotificationSubscriptionsTest do
       assert slice_offset < register_offset,
              "unsubscribe/3 must call SliceChange.unsubscribe_unverified BEFORE " <>
                "unregister_subscription (codex round-6 ordering rule)"
+
+      # Codex round-7 MED: unsubscribe/3 must run an AUTH PREFLIGHT
+      # before any PubSub mutation. The preflight call lives in the
+      # source as `preflight_unsubscribe(`.
+      assert source =~ "preflight_unsubscribe(",
+             "unsubscribe/3 lost its codex round-7 auth preflight — " <>
+               "unauthorized callers could leak a PubSub.unsubscribe side effect"
+    end
+
+    test "unsubscribe/3 unauthorized stranger does NOT touch PubSub" do
+      # Codex round-7 MED regression: round-6 ordering let a
+      # stranger silently `Phoenix.PubSub.unsubscribe` a victim
+      # process before the cap check rejected the call. Round-7
+      # adds a preflight: stranger gets {:error, :unauthorized}
+      # WITHOUT the victim's subscription being touched.
+      owner = URI.parse("entity://user/acme/owner-#{uniq()}")
+      stranger = URI.parse("entity://user/acme/stranger-#{uniq()}")
+      stream = URI.parse("entity://user/acme/stream-#{uniq()}")
+
+      :ok =
+        Subs.subscribe(owner, stream, %{
+          caller: owner,
+          caps: MapSet.new([notifications_admin_cap()])
+        })
+
+      Application.put_env(:ezagent_core, :slice_change_hook, true)
+
+      try do
+        assert {:error, :unauthorized} =
+                 Subs.unsubscribe(owner, stream, %{
+                   caller: stranger,
+                   caps: MapSet.new()
+                 })
+
+        # Registry row still intact.
+        assert [{_, _}] = Subs.list_subscriptions(owner)
+
+        # Test process (= the owner subscriber) STILL receives
+        # broadcasts — the stranger's call did NOT leak a
+        # PubSub.unsubscribe.
+        event = %{
+          self_uri: stream,
+          kind_module: SomeKind,
+          action: :test,
+          slice_key: :sk,
+          old_slice: %{},
+          new_slice: %{a: 1},
+          result: nil,
+          caller: nil,
+          at: DateTime.utc_now()
+        }
+
+        Ezagent.SliceChange.emit(event)
+        assert_receive {:slice_changed, ^event}, 200
+      after
+        Application.delete_env(:ezagent_core, :slice_change_hook)
+
+        :ok =
+          Subs.unsubscribe(owner, stream, %{
+            caller: owner,
+            caps: MapSet.new()
+          })
+      end
     end
   end
 
