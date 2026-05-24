@@ -64,5 +64,96 @@ defmodule Ezagent.Kind.Template do
               | {:ok, [URI.t()], instantiate_meta()}
               | {:error, term()}
 
-  @optional_callbacks [validate: 1]
+  # --- per-agent extension management (PR2 2026-05-24, codex round-1) ---
+  #
+  # Allen 2026-05-24 architectural decision: every spawned agent gets
+  # its OWN config dir; the plugin Template Class owns the contract for
+  # enumerating, mutating, and destroying that dir. Core knows NOTHING
+  # about what lives in it (skills, plugins, MCP configs — that's
+  # plugin terminology).
+  #
+  # **NOTE on `create_config_dir`** (codex PR2 round-1 HIGH-1): there is
+  # NO `create_config_dir/N` callback by design. The 2-phase pattern
+  # ("init slice nil → late dispatch write_path") was too late for
+  # plugins that launch a sidecar during `instantiate/3` using a
+  # filesystem path (cc starts its PTY with `claude_config_dir` before
+  # any subsequent dispatch could populate the slice). Instead, the
+  # plugin's `instantiate/3` is the one that creates the per-agent dir
+  # (it is the only place that knows the full plugin-specific spawn
+  # timing) and returns the path through the existing
+  # `instantiate_meta()` shape — `Agent.spawn_from_template_content/4`
+  # then dispatches `sandbox.write_path` AFTER the plugin's instantiate
+  # succeeds. PR3 lands the meta-passing convention + cc plugin impl.
+  #
+  # The other 3 callbacks below ARE here because they are POST-create
+  # operations that the LV / destroy verb invoke against a known
+  # `config_dir_path` (read from the agent's `:sandbox` slice).
+  #
+  # All three callbacks are `@optional_callbacks` so existing Template
+  # Classes (echo, curl, np, generic_session) need NO change. **A Class
+  # that opts in MUST implement ALL THREE** (codex PR2 round-1 MEDIUM-3
+  # — partial opt-in leaks filesystem on destroy). The
+  # `Ezagent.Invariants.TemplateClassExtensionContractTest` invariant
+  # gates this at test time.
+  #
+  # "extension" is plugin-neutral terminology — cc plugin implements it
+  # as Claude Code "plugins" (Anthropic's term: bundles containing
+  # skills + agents + commands + MCP servers + hooks under
+  # `.claude/plugins/`); a future Codex plugin could implement it as
+  # prompt snippets; a Curl plugin could implement it as endpoint specs.
+
+  @type config_dir_path :: String.t()
+  @type extension_id :: String.t()
+  @type extension :: %{
+          required(:id) => extension_id(),
+          required(:name) => String.t(),
+          required(:description) => String.t(),
+          required(:enabled?) => boolean()
+        }
+  @type agent_uri :: URI.t()
+
+  @doc """
+  Enumerate the extensions available in `config_dir` with their current
+  enabled-state. Called by the plugin-agnostic
+  `/admin/agents/:uri/extensions` LV to render the toggle grid.
+
+  Returns `{:ok, [extension]}` — a flat list of extension descriptors.
+  Order is implementation-defined (LV sorts as needed).
+  """
+  @callback list_extensions(config_dir_path()) :: {:ok, [extension()]} | {:error, term()}
+
+  @doc """
+  Toggle `extension_id` on (`enabled? = true`) or off in `config_dir`.
+  Called by the LV when the operator clicks a checkbox.
+
+  Implementations mutate the config dir's filesystem (install or
+  uninstall the extension bundle, write `.claude/settings.json`, etc.).
+  Idempotent: re-toggling to the same state is `:ok`.
+  """
+  @callback toggle_extension(config_dir_path(), extension_id(), enabled? :: boolean()) ::
+              :ok | {:error, term()}
+
+  @doc """
+  Destroy the per-agent config dir at `config_dir_path`.
+
+  **Signature note (codex PR2 round-1 MEDIUM-3):** receives BOTH
+  `agent_uri` AND `config_dir_path` — the plugin does NOT have to
+  reverse-engineer the path from the URI (which would break for
+  non-deterministic paths or restored-from-snapshot agents). The path
+  the plugin's `instantiate/3` originally returned in meta is exactly
+  what `Sandbox.invoke(:destroy, ...)` reads from the slice and passes
+  back here.
+
+  Called by `Sandbox.invoke(:destroy, ...)` on agent teardown.
+  Best-effort — failure does NOT block the Agent process termination
+  but is logged.
+  """
+  @callback destroy_config_dir(agent_uri(), config_dir_path()) :: :ok | {:error, term()}
+
+  @optional_callbacks [
+    validate: 1,
+    list_extensions: 1,
+    toggle_extension: 3,
+    destroy_config_dir: 2
+  ]
 end

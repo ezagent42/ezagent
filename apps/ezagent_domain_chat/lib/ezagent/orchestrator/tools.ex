@@ -521,6 +521,15 @@ defmodule Ezagent.Orchestrator.Tools do
   end
 
   # Dispatch `lifecycle.terminate` on the worker's instance URI.
+  #
+  # TODO (PR3, codex PR2 #288 round-4 HIGH-1): migrate to
+  # `sandbox.destroy` for agents carrying `Ezagent.Behavior.Sandbox`
+  # so the plugin Template Class's `destroy_config_dir/2` runs as
+  # part of teardown. Today this path bypasses sandbox cleanup → cc
+  # per-agent config dirs (containing copied credentials) leak on
+  # `remove_agent_slot` / `update_agent_template`. PR2 added the
+  # Sandbox Behavior but did NOT migrate call sites; PR3 closes that
+  # gap once cc plugin implements the callbacks.
   defp terminate_worker(%URI{} = worker_uri, %URI{} = caller, caps) do
     target = URI.parse("#{URI.to_string(worker_uri)}?action=lifecycle.terminate")
 

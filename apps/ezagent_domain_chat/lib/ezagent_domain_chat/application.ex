@@ -520,6 +520,17 @@ defmodule EzagentDomainChat.Application do
       :ok = CapabilityRegistry.register(Agent, action, LifecycleB)
     end)
 
+    # PR2 2026-05-24 (Allen) — Sandbox Behavior registers the per-agent
+    # config_dir + extension-management actions. Listed in
+    # `Agent.behaviors/0` so init_slice fires; ALSO registered with
+    # CapabilityRegistry so dispatch (read / write_path / destroy) goes
+    # through CapBAC. Same pattern as Lifecycle above.
+    alias Ezagent.Behavior.Sandbox, as: SandboxB
+
+    Enum.each(SandboxB.actions(), fn action ->
+      :ok = CapabilityRegistry.register(Agent, action, SandboxB)
+    end)
+
     :ok
   end
 
