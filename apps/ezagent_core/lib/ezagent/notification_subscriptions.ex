@@ -141,35 +141,33 @@ defmodule Ezagent.NotificationSubscriptions do
 
   def unregister_subscription(_, _, _), do: {:error, :invalid_args}
 
-  # --- system call sites (grep-visible) -----------------------------
-
-  @doc """
-  Internal/system registration — bypasses cap check.
-
-  Use ONLY for trusted internal callers (bootstrap, infrastructure
-  re-subscriptions). Every call site is grep-visible — the
-  `test/invariants/notification_subscriptions_system_callsite_test.exs`
-  invariant enforces an allowlist of modules that may call this
-  function.
-
-  Codex round-3 CRITICAL: the system bypass moved from "trust ctx
-  shape" to "distinct GenServer message". The owner accepts ONLY
-  `{:system_register, ...}` from a code path that constructs it
-  here (no public way to forge the ctx-based bypass).
-  """
-  @spec system_register(URI.t(), URI.t() | String.t()) :: :ok
-  def system_register(%URI{} = entity_uri, stream_uri) do
-    GenServer.call(__MODULE__, {:system_register, entity_uri, stream_uri})
-  end
-
-  @doc """
-  Internal/system unregistration — bypasses cap check. Same trust
-  boundary semantics as `system_register/2`.
-  """
-  @spec system_unregister(URI.t() | String.t(), URI.t() | String.t()) :: :ok
-  def system_unregister(entity_uri, stream_uri) do
-    GenServer.call(__MODULE__, {:system_unregister, entity_uri, stream_uri})
-  end
+  # --- system call sites — DELETED (codex round-4 CRITICAL fix) ----
+  #
+  # Round-3 added `system_register/2` + `system_unregister/2` that
+  # dispatched to distinct `:system_register` / `:system_unregister`
+  # GenServer messages, which bypassed the cap check. Codex round-4
+  # correctly identified: message TAGS don't AUTHENTICATE callers.
+  # Any in-VM module could `GenServer.call(__MODULE__,
+  # {:system_register, victim, stream})` and reach the bypass path
+  # directly.
+  #
+  # Since PR-N1 has ZERO production callers of system_*, the safest
+  # fix is to delete the API + the GenServer clauses entirely. There
+  # is now NO system bypass — every write goes through the cap-gated
+  # public path.
+  #
+  # When PR-N2+ legitimately needs to seed subscriptions at boot
+  # (e.g. plugin-supplied default subscriptions), design a
+  # constrained mechanism then. Likely shape:
+  #   - `init/1` of this GenServer reads a config-derived seed list
+  #     ONCE during its own startup — the only trusted moment when
+  #     plugin code cannot have run yet to forge a message
+  #   - The seed list lives in `:ezagent_core, :notification_seeds`
+  #     compile-time config, populated by each plugin's `boot/1`
+  #     return value (not by runtime function calls)
+  #
+  # Until then: any caller wanting a subscription MUST present a
+  # real `Behavior.Notifications` cap.
 
   # --- read API (direct ETS) ----------------------------------------
 
@@ -238,42 +236,57 @@ defmodule Ezagent.NotificationSubscriptions do
     {:reply, reply, state}
   end
 
-  def handle_call({:system_register, entity_uri, stream_uri}, _from, state) do
-    stream_str = stream_to_string(stream_uri)
-
-    :ets.insert(@table, {
-      {URI.to_string(entity_uri), stream_str},
-      %{registered_at: DateTime.utc_now(), granted_by: :system}
-    })
-
-    {:reply, :ok, state}
+  # Codex round-4 CRITICAL fix — :system_register / :system_unregister
+  # handlers DELETED. The forgery-rejection catch-all below ensures
+  # any direct `GenServer.call(__MODULE__, {:system_register, ...})`
+  # from a plugin or other module gets `{:error, :unknown_message}`
+  # instead of crashing the GenServer (which would DOS-amplify a
+  # hostile call).
+  def handle_call(other, _from, state) do
+    {:reply, {:error, {:unknown_message, normalize_unknown(other)}}, state}
   end
 
-  def handle_call({:system_unregister, entity_uri, stream_uri}, _from, state) do
-    entity_str = entity_to_string(entity_uri)
-    stream_str = stream_to_string(stream_uri)
-
-    :ets.delete(@table, {entity_str, stream_str})
-    {:reply, :ok, state}
-  end
+  # Return a stable tag for the rejected message so tests can
+  # assert the rejection deterministically without leaking the
+  # full payload.
+  defp normalize_unknown({tag, _, _}) when is_atom(tag), do: tag
+  defp normalize_unknown({tag, _, _, _}) when is_atom(tag), do: tag
+  defp normalize_unknown(tag) when is_atom(tag), do: tag
+  defp normalize_unknown(_), do: :unrecognised
 
   defp do_register(entity_uri, stream_str, stream_uri_parsed, ctx) do
-    case check_subscribe_cap(stream_uri_parsed, ctx) do
-      :ok ->
-        :ets.insert(@table, {
-          {URI.to_string(entity_uri), stream_str},
-          %{
-            registered_at: DateTime.utc_now(),
-            granted_by: Map.get(ctx, :caller, :unknown)
-          }
-        })
+    # Codex round-4 HIGH fix — symmetric authorisation with
+    # unregister. Round-3 only checked stream cap; any caller with
+    # a valid Notifications cap on stream X could insert a
+    # subscription row keyed at any arbitrary `entity_uri`,
+    # poisoning another user's registry. Now require the caller to
+    # BE the entity OR hold a notifications-admin cap.
+    with :ok <- authorize_register(URI.to_string(entity_uri), ctx),
+         :ok <- check_subscribe_cap(stream_uri_parsed, ctx) do
+      :ets.insert(@table, {
+        {URI.to_string(entity_uri), stream_str},
+        %{
+          registered_at: DateTime.utc_now(),
+          granted_by: Map.get(ctx, :caller, :unknown)
+        }
+      })
 
-        :ok
-
-      {:error, _} = err ->
-        err
+      :ok
     end
   end
+
+  # Mirrors authorize_unregister — caller must be the entity OR an
+  # explicit notifications-admin. No `:system` shortcut (system
+  # path was deleted in round-4 CRITICAL).
+  defp authorize_register(entity_str, %{caller: %URI{} = caller} = ctx) do
+    cond do
+      URI.to_string(caller) == entity_str -> :ok
+      notifications_admin?(ctx) -> :ok
+      true -> {:error, :unauthorized_for_entity}
+    end
+  end
+
+  defp authorize_register(_, _), do: {:error, :unauthorized_for_entity}
 
   defp do_unregister(entity_str, stream_str, ctx) do
     case authorize_unregister(entity_str, ctx) do

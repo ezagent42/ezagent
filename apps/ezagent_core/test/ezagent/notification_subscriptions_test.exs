@@ -3,9 +3,10 @@ defmodule Ezagent.NotificationSubscriptionsTest do
   PR-N1 skeleton tests for the subscription registry (Allen
   2026-05-24 amendment).
 
-  Round-2 hardening: every call uses EXPLICIT ctx (codex round-2
-  CRITICAL). Trusted internal call sites use the `system_*` helpers.
-  Wider integration (LV mount consults registry) lands PR-N2.
+  Round-4 hardening: there is NO system bypass anymore (codex
+  round-4 CRITICAL — system_register/system_unregister deleted).
+  Every test that needs a pre-seeded row constructs a real
+  notifications-admin cap via `seed/2` helper.
   """
 
   use ExUnit.Case, async: false
@@ -36,13 +37,26 @@ defmodule Ezagent.NotificationSubscriptionsTest do
     }
   end
 
-  test "register + list + system-unregister flow" do
+  defp admin_ctx_for(%URI{} = caller) do
+    %{caller: caller, caps: MapSet.new([notifications_admin_cap()])}
+  end
+
+  # Replaces all the round-3-era `Subs.system_register(entity,
+  # stream)` calls — now uses the public cap-gated API with an
+  # admin ctx. This is the legitimate "I'm bootstrapping a test
+  # row" pathway under round-4.
+  defp seed(entity, stream) do
+    admin = URI.parse("entity://user/system/test-seeder")
+    :ok = Subs.register_subscription(entity, stream, admin_ctx_for(admin))
+  end
+
+  test "register + list + unregister flow (via cap path)" do
     entity = URI.parse("entity://user/acme/alice-#{uniq()}")
     stream = URI.parse("entity://user/acme/bob-#{uniq()}")
 
     assert Subs.list_subscriptions(entity) == []
 
-    assert :ok = Subs.system_register(entity, stream)
+    seed(entity, stream)
 
     subs = Subs.list_subscriptions(entity)
     assert length(subs) == 1
@@ -50,7 +64,11 @@ defmodule Ezagent.NotificationSubscriptionsTest do
     assert stream_str == URI.to_string(stream)
     assert %DateTime{} = meta.registered_at
 
-    assert :ok = Subs.system_unregister(entity, stream)
+    admin = URI.parse("entity://user/system/test-unregisterer")
+
+    assert :ok =
+             Subs.unregister_subscription(entity, stream, admin_ctx_for(admin))
+
     assert Subs.list_subscriptions(entity) == []
   end
 
@@ -59,8 +77,8 @@ defmodule Ezagent.NotificationSubscriptionsTest do
     alice = URI.parse("entity://user/acme/alice-#{uniq()}")
     bob = URI.parse("entity://user/acme/bob-#{uniq()}")
 
-    Subs.system_register(alice, stream)
-    Subs.system_register(bob, stream)
+    seed(alice, stream)
+    seed(bob, stream)
 
     subscribers = Subs.list_subscribers(stream) |> Enum.sort()
     assert URI.to_string(alice) in subscribers
@@ -73,8 +91,8 @@ defmodule Ezagent.NotificationSubscriptionsTest do
     s1 = URI.parse("entity://user/acme/s1-#{uniq()}")
     s2 = URI.parse("entity://user/acme/s2-#{uniq()}")
 
-    Subs.system_register(a, s1)
-    Subs.system_register(b, s2)
+    seed(a, s1)
+    seed(b, s2)
 
     a_subs = Subs.list_subscriptions(a) |> Enum.map(fn {s, _} -> s end)
     b_subs = Subs.list_subscriptions(b) |> Enum.map(fn {s, _} -> s end)
@@ -89,11 +107,11 @@ defmodule Ezagent.NotificationSubscriptionsTest do
     entity_str = "entity://user/acme/string-#{uniq()}"
     stream = URI.parse("entity://user/acme/s-#{uniq()}")
 
-    assert :ok = Subs.system_register(URI.parse(entity_str), stream)
+    seed(URI.parse(entity_str), stream)
     assert [{_, _}] = Subs.list_subscriptions(entity_str)
   end
 
-  describe "cap enforcement (codex PR-N1 round-1 CRITICAL fix)" do
+  describe "cap enforcement (codex round-1 CRITICAL)" do
     test "non-system caller with empty caps is denied (deny-by-default)" do
       entity = URI.parse("entity://user/acme/alice-#{uniq()}")
       stream = URI.parse("entity://user/acme/bob-#{uniq()}")
@@ -111,11 +129,11 @@ defmodule Ezagent.NotificationSubscriptionsTest do
       entity = URI.parse("entity://user/acme/alice-#{uniq()}")
       stream = URI.parse("entity://user/acme/bob-#{uniq()}")
 
-      assert {:error, :missing_caps_in_ctx} =
+      assert {:error, :unauthorized_for_entity} =
                Subs.register_subscription(entity, stream, %{})
     end
 
-    test "matching Behavior.Notifications cap is accepted" do
+    test "self-register with matching cap is accepted" do
       entity = URI.parse("entity://user/acme/alice-#{uniq()}")
       stream = URI.parse("entity://user/acme/bob-#{uniq()}")
 
@@ -129,37 +147,24 @@ defmodule Ezagent.NotificationSubscriptionsTest do
     end
   end
 
-  describe "explicit ctx required (codex PR-N1 round-2 CRITICAL fix)" do
-    test "register_subscription/2 (no ctx) is a function-clause error" do
+  describe "explicit ctx required (codex round-2 CRITICAL)" do
+    test "register_subscription/2 (no ctx) is not defined" do
       stream = URI.parse("entity://user/acme/bob-#{uniq()}")
 
-      # Arity-2 form was the bypass; it no longer exists. Confirm
-      # the function is undefined / arity-mismatch.
       refute function_exported?(Subs, :register_subscription, 2)
       refute function_exported?(Subs, :unregister_subscription, 2)
 
-      # And the 3-arity with invalid args returns :invalid_args, not :ok.
       assert {:error, :invalid_args} =
                Subs.register_subscription(:not_a_uri, stream, %{caps: :system})
     end
-
-    test "system_register/2 is the explicit trusted helper" do
-      entity = URI.parse("entity://user/acme/system-#{uniq()}")
-      stream = URI.parse("entity://user/acme/bob-#{uniq()}")
-
-      # Grep target: `system_register` call sites should be rare +
-      # auditable.
-      assert :ok = Subs.system_register(entity, stream)
-      assert [{_, _}] = Subs.list_subscriptions(entity)
-    end
   end
 
-  describe "unregister authorization (codex round-1 HIGH-3 + round-2 HIGH-3 fix)" do
+  describe "unregister authorization (codex round-1 HIGH-3 + round-2 HIGH-3)" do
     test "owner can unregister their own subscription" do
       entity = URI.parse("entity://user/acme/owner-#{uniq()}")
       stream = URI.parse("entity://user/acme/stream-#{uniq()}")
 
-      Subs.system_register(entity, stream)
+      seed(entity, stream)
 
       assert :ok =
                Subs.unregister_subscription(entity, stream, %{
@@ -175,7 +180,7 @@ defmodule Ezagent.NotificationSubscriptionsTest do
       stranger = URI.parse("entity://user/acme/stranger-#{uniq()}")
       stream = URI.parse("entity://user/acme/stream-#{uniq()}")
 
-      Subs.system_register(owner, stream)
+      seed(owner, stream)
 
       assert {:error, :unauthorized} =
                Subs.unregister_subscription(owner, stream, %{
@@ -191,27 +196,20 @@ defmodule Ezagent.NotificationSubscriptionsTest do
       admin = URI.parse("entity://user/system/admin-#{uniq()}")
       stream = URI.parse("entity://user/acme/stream-#{uniq()}")
 
-      Subs.system_register(owner, stream)
+      seed(owner, stream)
 
       assert :ok =
-               Subs.unregister_subscription(owner, stream, %{
-                 caller: admin,
-                 caps: MapSet.new([notifications_admin_cap()])
-               })
+               Subs.unregister_subscription(owner, stream, admin_ctx_for(admin))
 
       assert Subs.list_subscriptions(owner) == []
     end
 
     test "narrow cross-workspace cap (non-Notifications) does NOT count as admin" do
-      # Codex PR-N1 round-2 HIGH-3 regression test: round-1's
-      # `has_admin_cap?` matched ANY `workspace_uri: :any` cap. This
-      # asserts a cross-workspace Chat.send cap CANNOT unregister
-      # someone else's notification subscription.
       owner = URI.parse("entity://user/acme/owner-#{uniq()}")
       stranger = URI.parse("entity://user/acme/stranger-#{uniq()}")
       stream = URI.parse("entity://user/acme/stream-#{uniq()}")
 
-      Subs.system_register(owner, stream)
+      seed(owner, stream)
 
       assert {:error, :unauthorized} =
                Subs.unregister_subscription(owner, stream, %{
@@ -226,23 +224,18 @@ defmodule Ezagent.NotificationSubscriptionsTest do
       entity = URI.parse("entity://user/acme/alice-#{uniq()}")
       stream = URI.parse("entity://user/acme/stream-#{uniq()}")
 
-      Subs.system_register(entity, stream)
+      seed(entity, stream)
 
       assert {:error, :unauthorized} =
                Subs.unregister_subscription(entity, stream, %{caps: MapSet.new()})
     end
   end
 
-  describe "public API rejects :system ctx (codex PR-N1 round-3 CRITICAL fix)" do
-    test "register_subscription/3 with caps: :system returns :system_caps_not_allowed_in_public_api" do
+  describe "public API rejects :system ctx (codex round-3 CRITICAL)" do
+    test "register_subscription/3 with caps: :system is denied" do
       entity = URI.parse("entity://user/acme/sneaky-#{uniq()}")
       stream = URI.parse("entity://user/acme/target-#{uniq()}")
 
-      # Round-2 trusted caller-supplied `%{caps: :system}` → bypass.
-      # Round-3 explicitly rejects it. Public callers can NEVER get
-      # system authority via the public API; bootstrap callers must
-      # use `system_register/2` which uses a separate GenServer
-      # message tag, not a ctx shape.
       assert {:error, :system_caps_not_allowed_in_public_api} =
                Subs.register_subscription(entity, stream, %{
                  caps: :system,
@@ -252,11 +245,11 @@ defmodule Ezagent.NotificationSubscriptionsTest do
       assert Subs.list_subscriptions(entity) == []
     end
 
-    test "unregister_subscription/3 with caps: :system returns :system_caps_not_allowed_in_public_api" do
+    test "unregister_subscription/3 with caps: :system is denied" do
       owner = URI.parse("entity://user/acme/owner-#{uniq()}")
       stream = URI.parse("entity://user/acme/stream-#{uniq()}")
 
-      Subs.system_register(owner, stream)
+      seed(owner, stream)
 
       assert {:error, :system_caps_not_allowed_in_public_api} =
                Subs.unregister_subscription(owner, stream, %{
@@ -268,14 +261,11 @@ defmodule Ezagent.NotificationSubscriptionsTest do
     end
   end
 
-  describe "protected ETS boundary (codex PR-N1 round-2 HIGH-1 fix)" do
+  describe "protected ETS boundary (codex round-2 HIGH-1)" do
     test "table is :protected — direct :ets.insert from non-owner raises" do
       entity_str = "entity://user/acme/sneaky-#{uniq()}"
       stream_str = "entity://user/acme/target-#{uniq()}"
 
-      # Attempting to bypass the cap gate via raw `:ets.insert/2`
-      # MUST fail because the table is `:protected` and we are not
-      # the owner GenServer.
       assert_raise ArgumentError, fn ->
         :ets.insert(
           Subs.table(),
@@ -283,7 +273,6 @@ defmodule Ezagent.NotificationSubscriptionsTest do
         )
       end
 
-      # And no row leaked in.
       assert Subs.list_subscriptions(entity_str) == []
     end
 
@@ -291,6 +280,93 @@ defmodule Ezagent.NotificationSubscriptionsTest do
       assert_raise ArgumentError, fn ->
         :ets.delete(Subs.table(), {"any", "key"})
       end
+    end
+  end
+
+  describe "no system bypass (codex round-4 CRITICAL)" do
+    test "system_register/2 + system_unregister/2 are no longer exported" do
+      # The round-3 helpers + GenServer message tags were the
+      # forgeable bypass. They MUST NOT exist anymore.
+      refute function_exported?(Subs, :system_register, 2)
+      refute function_exported?(Subs, :system_unregister, 2)
+    end
+
+    test "direct GenServer.call forgery of :system_register is rejected" do
+      victim = URI.parse("entity://user/acme/victim-#{uniq()}")
+      stream = URI.parse("entity://user/acme/poison-#{uniq()}")
+
+      # Codex round-4 attack: send the system message tag directly.
+      # The catch-all handler now returns `:unknown_message` instead
+      # of crashing the GenServer (which would DOS-amplify).
+      assert {:error, {:unknown_message, :system_register}} =
+               GenServer.call(Subs, {:system_register, victim, stream})
+
+      assert {:error, {:unknown_message, :system_unregister}} =
+               GenServer.call(Subs, {:system_unregister, victim, stream})
+
+      # No row leaked.
+      assert Subs.list_subscriptions(victim) == []
+    end
+
+    test "unrecognised GenServer message returns the message tag" do
+      # The catch-all returns the message's leading atom so failures
+      # are debuggable. Real plugin code shouldn't be sending here.
+      assert {:error, {:unknown_message, :totally_made_up}} =
+               GenServer.call(Subs, :totally_made_up)
+    end
+  end
+
+  describe "cross-entity register poisoning (codex round-4 HIGH)" do
+    test "caller with narrow stream-cap but not being the entity cannot poison" do
+      # Codex round-4 HIGH: round-3 only checked the STREAM cap on
+      # `do_register`, not whether the caller was the entity. So a
+      # caller with a `Notifications` cap that matches the stream
+      # could insert subscription rows for ANY entity URI,
+      # poisoning future subscribers of that entity.
+      #
+      # This test uses a NARROW Notifications cap (scoped to the
+      # specific workspace, NOT `:any` admin) — it passes the
+      # stream-cap check but the caller is NOT the victim entity
+      # AND NOT a notifications-admin → must be rejected.
+      stranger = URI.parse("entity://user/acme/stranger-#{uniq()}")
+      victim = URI.parse("entity://user/acme/victim-#{uniq()}")
+      stream = URI.parse("entity://user/acme/stream-#{uniq()}")
+
+      narrow_stream_cap = %Ezagent.Capability{
+        kind: :user,
+        behavior: Ezagent.Behavior.Notifications,
+        instance: :any,
+        # NOT `:any` — scoped to this specific workspace, so it's
+        # NOT an admin cap.
+        workspace_uri: URI.parse("workspace://acme"),
+        granted_by: URI.parse("entity://user/system/test"),
+        granted_at: DateTime.utc_now()
+      }
+
+      assert {:error, :unauthorized_for_entity} =
+               Subs.register_subscription(victim, stream, %{
+                 caller: stranger,
+                 caps: MapSet.new([narrow_stream_cap])
+               })
+
+      # Row was NOT inserted.
+      assert Subs.list_subscriptions(victim) == []
+    end
+
+    test "notifications-admin CAN register on behalf of another entity" do
+      # Symmetric with unregister: a real admin (with the proper
+      # cap shape) is allowed to seed someone else's subscription.
+      admin = URI.parse("entity://user/system/admin-#{uniq()}")
+      entity = URI.parse("entity://user/acme/regular-#{uniq()}")
+      stream = URI.parse("entity://user/acme/stream-#{uniq()}")
+
+      assert :ok =
+               Subs.register_subscription(entity, stream, %{
+                 caller: admin,
+                 caps: MapSet.new([notifications_admin_cap()])
+               })
+
+      assert [{_, _}] = Subs.list_subscriptions(entity)
     end
   end
 end
