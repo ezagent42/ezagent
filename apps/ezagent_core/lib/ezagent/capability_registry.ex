@@ -324,8 +324,18 @@ defmodule Ezagent.CapabilityRegistry do
         ) ::
           [{URI.t(), Ezagent.Capability.t()}]
   def default_grants_from_data_owner(kind, %URI{} = target_uri) when is_atom(kind) do
+    # Codex PR-OWN-1 HIGH fix: canonicalize the target_uri via
+    # `Ezagent.URI.instance/1` BEFORE owner-lookup + cap-storage.
+    # Dispatch-side `Capability.matches?/2` runs against the canonical
+    # instance (no query string), so a cap stored on
+    # `entity://user/acme/alice?action=identity.list_caps` would never
+    # match the dispatch's canonical `entity://user/acme/alice`.
+    # Round-1 tests only used bare URIs so this silent broken-grant
+    # path wasn't covered — round-2 regression test below adds it.
+    instance_uri = Ezagent.URI.instance(target_uri)
+
     workspace_uri =
-      case Ezagent.Capability.workspace_of(target_uri) do
+      case Ezagent.Capability.workspace_of(instance_uri) do
         %URI{} = ws -> ws
         :any -> :any
       end
@@ -337,12 +347,12 @@ defmodule Ezagent.CapabilityRegistry do
     |> Enum.map(& &1.behavior)
     |> Enum.uniq()
     |> Enum.flat_map(fn behavior ->
-      case data_owner_of(behavior, target_uri) do
+      case data_owner_of(behavior, instance_uri) do
         %URI{} = owner_uri ->
           cap = %Ezagent.Capability{
             kind: kind_type_name(kind),
             behavior: behavior,
-            instance: target_uri,
+            instance: instance_uri,
             workspace_uri: workspace_uri,
             granted_by: granter_uri,
             granted_at: DateTime.utc_now()
@@ -357,6 +367,29 @@ defmodule Ezagent.CapabilityRegistry do
       end
     end)
   end
+
+  # --- MIGRATION CONSTRAINT for PR-OWN-3+ (codex PR-OWN-1 MEDIUM) ---
+  #
+  # The `%Capability{}` struct has no `action` dimension (SPEC §1
+  # CRITICAL-1 reframe: caps are behavior-scoped). Consequence: an
+  # owner cap on a Behavior grants ALL actions of that Behavior.
+  # For mixed-sensitivity Behaviors (e.g. `Behavior.Identity` whose
+  # `cap_subjects/0` includes both safe `:list_caps` / `:has_cap?`
+  # AND privileged `:grant_cap` / `:revoke_cap`), a single
+  # behavior-scoped owner cap would let users self-mutate their own
+  # caps — breaking the admin-only expectation for grant/revoke.
+  #
+  # MIGRATION RULE for PR-OWN-3 (Identity migration):
+  # SPLIT `Behavior.Identity` BEFORE adding `data_owner/1`:
+  #   - `Behavior.Identity` — owner-readable: :list_caps, :has_cap?
+  #     (data_owner = the entity itself)
+  #   - `Behavior.IdentityAdmin` — admin-only: :grant_cap,
+  #     :revoke_cap (data_owner = :no_owner; bootstrap admin only,
+  #     or workspace-admin via OQ-OWN-1 resolution)
+  #
+  # SAME RULE applies to any future multi-action Behavior where
+  # owner-default grant of all actions would over-authorize. Apply
+  # split-then-migrate per PR-OWN-3+ acceptance criterion.
 
   # The synthesized granter for PR-OWN-1 default grants. `Ezagent.Entity.User`
   # lives in `ezagent_domain_identity` which depends on `ezagent_core`,

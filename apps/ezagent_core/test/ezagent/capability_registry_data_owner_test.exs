@@ -137,6 +137,48 @@ defmodule Ezagent.CapabilityRegistry.DataOwnerTest do
     end
   end
 
+  describe "default_grants_from_data_owner/2 — URI canonicalization (codex PR-OWN-1 HIGH)" do
+    # Codex PR-OWN-1 HIGH: round-1 stored the raw target_uri in
+    # the cap's `:instance` field, so an action-query URI like
+    # `entity://user/acme/alice?action=identity.list_caps` would
+    # mint a cap that never matches dispatch's canonical instance
+    # (dispatch canonicalizes via `Ezagent.URI.instance/1`).
+    # Round-2 fix canonicalizes upfront in the helper.
+    test "action-query target URI yields a cap on the canonical bare instance" do
+      action_target = URI.parse("entity://user/acme/alice?action=read")
+      bare_target = URI.parse("entity://user/acme/alice")
+
+      grants = CapabilityRegistry.default_grants_from_data_owner(OwnedKind, action_target)
+
+      # Filter for OwnedBehavior (skip OwnedCapOnlyBehavior etc).
+      [{grantee, cap}] = Enum.filter(grants, fn {_g, c} -> c.behavior == OwnedBehavior end)
+
+      # grantee was computed from the CANONICAL bare URI (the test
+      # OwnedBehavior returns target as its own owner).
+      assert grantee == bare_target,
+             "owner-lookup must use canonical instance, not raw URI with query"
+
+      # cap.instance is the canonical bare URI — dispatch-side
+      # `Capability.matches?/2` will succeed.
+      assert cap.instance == bare_target,
+             "cap.instance must be canonical (no query) so it matches dispatch"
+
+      # And the canonical instance is NOT the raw action-query URI.
+      refute cap.instance == action_target
+    end
+
+    test "subresource target URI also canonicalizes" do
+      sub_target = URI.parse("entity://user/acme/alice/sessions/foo?action=write")
+      grants = CapabilityRegistry.default_grants_from_data_owner(OwnedKind, sub_target)
+
+      # Even with subresource path, `Ezagent.URI.instance/1` strips
+      # the query — the path is preserved. Assert the cap's instance
+      # has no query.
+      [{_g, cap}] = Enum.filter(grants, fn {_g, c} -> c.behavior == OwnedBehavior end)
+      assert cap.instance.query == nil
+    end
+  end
+
   describe "default_grants_from_data_owner/2 — non-URI owner returns no entry" do
     test ":any / :no_owner / {:scope, _, _} produce empty list" do
       defmodule AnyOwnerBehavior do
