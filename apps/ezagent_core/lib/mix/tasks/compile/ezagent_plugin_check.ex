@@ -81,7 +81,17 @@ defmodule Mix.Tasks.Compile.EzagentPluginCheck do
   fails the build with a precise diagnostic.
   """
 
-  @registry_grep_pattern ~r/\b(?:Ezagent\.)?(?:Behavior|Spawn|Template|Plugin|AgentFlavor|Routing)Registry\.(?:register|declare_table)\b/
+  # codex r1 MEDIUM-1 (ExternalMirror PR-EM-1): include the
+  # `Ezagent.ExternalMirror.AdapterRegistry` and
+  # `Ezagent.ExternalMirror.BindingRegistry` in the gate — without
+  # this, a plugin could bypass `adapters/0` (and the Grill-5
+  # bidirectional checks the compiler runs over it) by calling
+  # `Ezagent.ExternalMirror.AdapterRegistry.register/1` directly.
+  # The registries themselves now reject calls from modules that
+  # don't implement the relevant behaviour (defense in depth), but
+  # the compile-time grep keeps the plugin contract — "declare,
+  # don't call" (SPEC §3.2) — visible and enforceable at build.
+  @registry_grep_pattern ~r/\b(?:Ezagent\.)?(?:ExternalMirror\.)?(?:Adapter|Binding|Behavior|Spawn|Template|Plugin|AgentFlavor|Routing)Registry\.(?:register|register_module|declare_table)\b/
 
   @impl Mix.Task.Compiler
   def run(_argv) do

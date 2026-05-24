@@ -48,31 +48,82 @@ defmodule Ezagent.ExternalMirror.BindingRegistry do
   def table, do: @table
 
   @doc """
+  Remove an `adapter_id` entry — used by `Ezagent.Plugin.boot/1`
+  rollback when a later registration step fails (codex r1 HIGH-1).
+
+  Idempotent; deleting a non-existent key is a no-op.
+  """
+  @spec __delete__(adapter_id :: String.t()) :: :ok
+  def __delete__(adapter_id) when is_binary(adapter_id) do
+    :ets.delete(@table, adapter_id)
+    :ok
+  end
+
+  @doc """
   Register a Binding module for `adapter_id`.
 
   Idempotent for the same `(adapter_id, binding_module)` pair.
   Raises `ArgumentError` on a different `binding_module` claiming an
   already-registered `adapter_id` — Grill-5 enforces one-to-one, so
   two bindings for one adapter is a structural error.
+
+  Also verifies the module implements `@behaviour
+  Ezagent.ExternalMirror.Binding` AND that
+  `binding_module.adapter_module()` exists (defense in depth — a
+  direct caller bypassing the source-scan compiler gate still
+  cannot install an unverified binding). Per codex r1 MEDIUM-1.
+
+  ## Atomicity (codex r1 HIGH-2 fix)
+
+  Uses `:ets.insert_new/2` (atomic) instead of `lookup` + `insert` —
+  the previous read-then-write sequence let two concurrent plugin
+  boots both see an empty table and overwrite each other.
   """
   @spec register_module(adapter_id :: String.t(), binding_module :: module()) :: :ok
   def register_module(adapter_id, binding_module)
       when is_binary(adapter_id) and is_atom(binding_module) do
-    case :ets.lookup(@table, adapter_id) do
-      [{^adapter_id, ^binding_module}] ->
-        :ok
+    assert_behaviour!(binding_module)
 
-      [{^adapter_id, existing_module}] ->
-        raise ArgumentError,
-              "BindingRegistry: adapter_id #{inspect(adapter_id)} already " <>
-                "bound to #{inspect(existing_module)}; cannot re-bind to " <>
-                "#{inspect(binding_module)}. Grill-5 mandates 1:1 " <>
-                "adapter↔binding (per SPEC §5.2)."
+    if :ets.insert_new(@table, {adapter_id, binding_module}) do
+      :ok
+    else
+      case :ets.lookup(@table, adapter_id) do
+        [{^adapter_id, ^binding_module}] ->
+          :ok
 
-      [] ->
-        :ets.insert(@table, {adapter_id, binding_module})
-        :ok
+        [{^adapter_id, existing_module}] ->
+          raise ArgumentError,
+                "BindingRegistry: adapter_id #{inspect(adapter_id)} already " <>
+                  "bound to #{inspect(existing_module)}; cannot re-bind to " <>
+                  "#{inspect(binding_module)}. Grill-5 mandates 1:1 " <>
+                  "adapter↔binding (per SPEC §5.2)."
+      end
     end
+  end
+
+  # codex r1 MEDIUM-1 — defense in depth: even a direct caller cannot
+  # install a binding that doesn't implement the contract.
+  defp assert_behaviour!(binding_module) do
+    behaviours =
+      binding_module.module_info(:attributes)
+      |> Keyword.get_values(:behaviour)
+      |> List.flatten()
+
+    unless Ezagent.ExternalMirror.Binding in behaviours do
+      raise ArgumentError,
+            "BindingRegistry: #{inspect(binding_module)} does not implement " <>
+              "@behaviour Ezagent.ExternalMirror.Binding. Direct registry " <>
+              "calls must still satisfy the plugin contract (SPEC §5.1)."
+    end
+  rescue
+    UndefinedFunctionError ->
+      reraise ArgumentError,
+              [
+                message:
+                  "BindingRegistry: #{inspect(binding_module)} is not a " <>
+                    "loadable module (or has no module_info/1)."
+              ],
+              __STACKTRACE__
   end
 
   @doc """

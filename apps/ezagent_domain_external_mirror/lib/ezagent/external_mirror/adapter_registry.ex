@@ -44,6 +44,22 @@ defmodule Ezagent.ExternalMirror.AdapterRegistry do
   def table, do: @table
 
   @doc """
+  Remove an `adapter_id` entry — used by `Ezagent.Plugin.boot/1`
+  rollback when a later registration step fails (codex r1 HIGH-1).
+
+  Idempotent; deleting a non-existent key is a no-op.
+
+  This is intentionally `@doc false`-like — operator tools should
+  never call this. The only legitimate caller is the boot-rollback
+  path; future hot-uninstall (not in V1) would use it too.
+  """
+  @spec __delete__(adapter_id :: String.t()) :: :ok
+  def __delete__(adapter_id) when is_binary(adapter_id) do
+    :ets.delete(@table, adapter_id)
+    :ok
+  end
+
+  @doc """
   Register an adapter module. Reads `adapter_id/0` from the module to
   derive the key (single source of truth — the module's own answer
   is authoritative).
@@ -51,26 +67,72 @@ defmodule Ezagent.ExternalMirror.AdapterRegistry do
   Idempotent for the same module re-registering. Raises
   `ArgumentError` on a different module claiming an already-registered
   `adapter_id` (per SPEC §5.2 structural-error rule).
+
+  Also verifies the module implements `@behaviour
+  Ezagent.ExternalMirror.Adapter` — moves enough validation into the
+  API itself so a direct caller (bypassing `Ezagent.Plugin.boot/1`)
+  still cannot install an unverified adapter. This is the
+  defense-in-depth backstop to the source-scan compiler gate per
+  codex r1 MEDIUM-1.
+
+  ## Atomicity (codex r1 HIGH-2 fix)
+
+  Uses `:ets.insert_new/2` (atomic) instead of `lookup` + `insert` —
+  the previous read-then-write sequence let two concurrent plugin
+  boots both see an empty table and overwrite each other. The new
+  flow: try `insert_new`; if it fails, lookup to distinguish
+  idempotent-same-module-re-register from a real duplicate.
   """
   @spec register(module()) :: :ok
   def register(adapter_module) when is_atom(adapter_module) do
+    assert_behaviour!(adapter_module)
     adapter_id = adapter_module.adapter_id()
 
-    case :ets.lookup(@table, adapter_id) do
-      [{^adapter_id, ^adapter_module}] ->
-        :ok
+    if :ets.insert_new(@table, {adapter_id, adapter_module}) do
+      :ok
+    else
+      # Race-safe second read — the entry exists (insert_new returned
+      # false). Determine if it's the same module (idempotent) or a
+      # different one (real duplicate).
+      case :ets.lookup(@table, adapter_id) do
+        [{^adapter_id, ^adapter_module}] ->
+          :ok
 
-      [{^adapter_id, existing_module}] ->
-        raise ArgumentError,
-              "AdapterRegistry: adapter_id #{inspect(adapter_id)} already " <>
-                "registered by #{inspect(existing_module)}; " <>
-                "#{inspect(adapter_module)} cannot re-use it. Two adapters " <>
-                "must not claim the same adapter_id (per SPEC §5.2)."
-
-      [] ->
-        :ets.insert(@table, {adapter_id, adapter_module})
-        :ok
+        [{^adapter_id, existing_module}] ->
+          raise ArgumentError,
+                "AdapterRegistry: adapter_id #{inspect(adapter_id)} already " <>
+                  "registered by #{inspect(existing_module)}; " <>
+                  "#{inspect(adapter_module)} cannot re-use it. Two adapters " <>
+                  "must not claim the same adapter_id (per SPEC §5.2)."
+      end
     end
+  end
+
+  # codex r1 MEDIUM-1 — even a direct caller (bypassing the source-
+  # scan compiler gate) cannot install an adapter that doesn't
+  # implement the contract. The check uses module attributes (loaded
+  # at compile time), so it's cheap.
+  defp assert_behaviour!(adapter_module) do
+    behaviours =
+      adapter_module.module_info(:attributes)
+      |> Keyword.get_values(:behaviour)
+      |> List.flatten()
+
+    unless Ezagent.ExternalMirror.Adapter in behaviours do
+      raise ArgumentError,
+            "AdapterRegistry: #{inspect(adapter_module)} does not implement " <>
+              "@behaviour Ezagent.ExternalMirror.Adapter. Direct registry " <>
+              "calls must still satisfy the plugin contract (SPEC §5.1)."
+    end
+  rescue
+    UndefinedFunctionError ->
+      reraise ArgumentError,
+              [
+                message:
+                  "AdapterRegistry: #{inspect(adapter_module)} is not a " <>
+                    "loadable module (or has no module_info/1)."
+              ],
+              __STACKTRACE__
   end
 
   @doc """
