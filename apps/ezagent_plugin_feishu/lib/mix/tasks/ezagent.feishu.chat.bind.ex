@@ -5,7 +5,7 @@ defmodule Mix.Tasks.Ezagent.Feishu.Chat.Bind do
   > Bypasses dispatch: calls `SessionBinding.bind/2` directly. The
   > `mix esr feishu chat_bind` equivalent does NOT exist yet. Tracked
   > in `docs/futures/todo.md` § "CLI ↔ GUI parity (audit findings #137
-  > still partial)". TODO: register FacadeRegistry op
+  > still partial)". TODO: add the matching Behavior action + cap subject (NOT a bare FacadeRegistry op — codex PR #304 round-2 HIGH: that path bypasses Invocation.dispatch + caps + audit). mix esr auto-derives the CLI from interface/0. See the deferred-table guidance in docs/futures/todo.md HIGH-2
   > `(:feishu, :chat_bind)`, then deprecate this task using the PR
   > #302 stub pattern.
 

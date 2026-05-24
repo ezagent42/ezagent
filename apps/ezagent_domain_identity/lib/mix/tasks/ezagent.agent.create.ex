@@ -11,7 +11,7 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
   > this task today would lose operator capability. Tracked in
   > `docs/futures/todo.md` § "CLI ↔ GUI parity (audit findings #137
   > still partial)". TODO: per audit Finding 4, register a
-  > FacadeRegistry op `(:agent, :create)` that wraps the LV's
+  > Behavior `Ezagent.Entity.Agent` `:create` action + cap subject (codex PR #304 round-2 HIGH: NOT a bare FacadeRegistry op — that bypasses dispatch). The Behavior body that wraps the LV's
   > `Workspace.add_template + invoke_template_now` flow (single code
   > path), then deprecate this task using the PR #302 stub pattern.
 

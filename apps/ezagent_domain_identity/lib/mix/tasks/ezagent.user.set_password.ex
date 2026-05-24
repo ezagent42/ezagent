@@ -8,7 +8,7 @@ defmodule Mix.Tasks.Ezagent.User.SetPassword do
   > task today would lose operator capability (including admin's
   > first-password bootstrap). Tracked in
   > `docs/futures/todo.md` § "CLI ↔ GUI parity (audit findings #137
-  > still partial)". TODO: register a FacadeRegistry op
+  > still partial)". TODO: add the matching Behavior action + cap subject (NOT a bare FacadeRegistry op — codex PR #304 round-2 HIGH: that path bypasses Invocation.dispatch + caps + audit). mix esr auto-derives the CLI from interface/0. See the deferred-table guidance in docs/futures/todo.md HIGH-2
   > `(:user, :set_password)` so `mix esr user set_password --uri …
   > --password …` becomes available, then deprecate this task using
   > the PR #302 stub pattern.
