@@ -23,7 +23,9 @@ defmodule Ezagent.Kind.ServerPostInitTest do
     PostInitBehaviorB,
     PostInitCrashBehavior,
     PostInitCrashKind,
-    PostInitKind
+    PostInitKind,
+    SlowPostInitBehavior,
+    SlowPostInitKind
   }
 
   setup do
@@ -39,7 +41,7 @@ defmodule Ezagent.Kind.ServerPostInitTest do
   # -------------------------------------------------------------------
 
   describe "post-init continuation hook" do
-    test "runs handle_continue/3 AFTER :announce_ready and merges new slice back",
+    test "post-init handle_continue/3 runs BEFORE :ready is published and merges new slice back",
          %{tracker: tracker, suffix: suffix} do
       uri = URI.parse("entity://agent/default/test_post_init-#{suffix}")
       uri_str = URI.to_string(uri)
@@ -49,22 +51,26 @@ defmodule Ezagent.Kind.ServerPostInitTest do
       {:ok, pid} =
         Ezagent.Kind.Server.start_link({PostInitKind, %{uri: uri, tracker: tracker}})
 
-      # 1. announce_ready ran — KindRegistry has the URI and ReadyGate is :ready.
+      # 1. The Kind reaches :ready (round-2 HIGH-1 invariant: :ready
+      # only fires AFTER all post-init handle_continue/3 callbacks
+      # have completed).
       :ok = wait_until_ready(uri_str, 500)
       assert {:ok, ^pid} = Ezagent.KindRegistry.lookup(uri_str)
       assert :ready = Ezagent.ReadyGate.status(uri_str)
 
-      # 2. post_init handle_continue/3 ran — wait for it to finish writing back.
-      :ok = wait_until(fn -> OrderTracker.events(tracker) != [] end, 500)
-
-      # 3. Slice has the post-init mutation merged back via Kind.Server.
+      # 2. Slice has the post-init mutation merged back via Kind.Server +
+      #    snapshot commit path.
       {:ok, slice} = Ezagent.Kind.get_slice(uri_str, :post_init_behavior)
       assert slice.setup_done == true
       assert slice.continued_with == :setup_thing
 
-      # 4. Boot-order invariant: at the moment handle_continue/3 ran,
-      #    ReadyGate was already :ready — i.e. :announce_ready ran first.
-      assert [{:post_init, :ready}] = OrderTracker.events(tracker)
+      # 3. Boot-order invariant (codex round-2 HIGH-1): at the moment
+      #    handle_continue/3 ran, ReadyGate was STILL :not_ready BUT
+      #    KindRegistry was already populated. This is the safe-publish
+      #    property — external dispatchers cannot see :ready until
+      #    post-init has completed, so they never observe a half-
+      #    initialised Kind.
+      assert [{:post_init, :not_ready, true}] = OrderTracker.events(tracker)
     end
 
     # -----------------------------------------------------------------
@@ -179,6 +185,64 @@ defmodule Ezagent.Kind.ServerPostInitTest do
       # which would have left the buffer empty and the self-casted
       # invocations stuck in the dead process's mailbox.)
       assert Ezagent.PendingDelivery.buffer_size(uri) == 1
+    end
+
+    # -----------------------------------------------------------------
+    # Test 5 — codex round-2 HIGH-1 regression: a cast dispatched
+    # WHILE post-init is still running MUST see ReadyGate as
+    # :not_ready and buffer via PendingDelivery (NOT deliver
+    # directly into the GenServer mailbox, where it could die with
+    # a crashing post-init). After post-init completes, mark_ready
+    # + flush fires and the buffered cast is delivered.
+    # -----------------------------------------------------------------
+    test "cast dispatched during post-init window buffers via PendingDelivery (not mailbox)",
+         %{suffix: suffix} do
+      uri = URI.parse("entity://agent/default/test_dispatch_during_post_init-#{suffix}")
+      uri_str = URI.to_string(uri)
+
+      :ok = Ezagent.BehaviorRegistry.register(SlowPostInitKind, :noop, SlowPostInitBehavior)
+
+      # Start the Kind with a 50ms post-init sleep — gives the test
+      # time to assert the not-ready window + issue a dispatch.
+      {:ok, _pid} =
+        Ezagent.Kind.Server.start_link(
+          {SlowPostInitKind, %{uri: uri, post_init_sleep_ms: 50}}
+        )
+
+      # The Kind is registered immediately but `:not_ready` until
+      # post-init completes. Wait until KindRegistry has the URI,
+      # then assert ReadyGate is still :not_ready (we're in the
+      # post-init window).
+      :ok = wait_until(fn -> match?({:ok, _}, Ezagent.KindRegistry.lookup(uri_str)) end, 200)
+      assert :not_ready = Ezagent.ReadyGate.status(uri_str)
+
+      # Now dispatch a :cast while post-init is still running. With
+      # the round-2 HIGH-1 fix in place, this MUST buffer via
+      # PendingDelivery (because ReadyGate is :not_ready) — NOT
+      # land directly in the mailbox.
+      inv = %Ezagent.Invocation{
+        target: URI.parse("#{uri_str}?action=test.noop"),
+        mode: :cast,
+        args: %{msg: "during-post-init"},
+        ctx: %{
+          caller: URI.parse("entity://user/system/admin"),
+          caps: Ezagent.Entity.User.admin_caps(),
+          reply: {:caller_inbox, self()}
+        }
+      }
+
+      assert :ok = Ezagent.Invocation.dispatch(inv)
+
+      # After post-init completes, ReadyGate flips to :ready AND
+      # the buffered cast drains via PendingDelivery.flush/1 →
+      # GenServer.cast(self(), ...) → dispatch path → reply.
+      assert_receive {:ezagent_reply, {:ok, %{echoed: "during-post-init"}}}, 1000
+      assert :ready = Ezagent.ReadyGate.status(uri_str)
+
+      # Slice contains the message that flowed through the buffered
+      # cast — proves end-to-end delivery via PendingDelivery.
+      {:ok, slice} = Ezagent.Kind.get_slice(uri_str, :slow)
+      assert "during-post-init" in slice.msgs
     end
   end
 

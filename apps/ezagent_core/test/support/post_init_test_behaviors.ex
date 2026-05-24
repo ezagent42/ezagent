@@ -72,14 +72,22 @@ defmodule Ezagent.TestSupport.PostInitBehavior do
   @impl Ezagent.Behavior
   def handle_continue(:setup_thing, slice, %{self_uri: uri}) do
     if tracker = slice[:tracker] do
-      # Observe the ReadyGate status AT THE MOMENT the post-init
-      # continuation fires. Since both `:announce_ready` and the
-      # post-init `handle_continue` run on the same GenServer
-      # process serially, observing `:ready` here is a race-free
-      # proof that announce_ready ran first (the boot-order
-      # invariant introduced by PR-EM-CORE).
+      # Observe the ReadyGate status + KindRegistry lookup AT THE
+      # MOMENT the post-init continuation fires. Per codex round-2
+      # HIGH-1 fix, the Kind is registered but stays `:not_ready`
+      # through the entire post-init phase — `:ready` only flips
+      # AFTER the last post-init continuation completes. The
+      # safe-publish invariant the test asserts is: by the time
+      # `:ready` is observable to outside dispatchers, the URI is
+      # already registered AND every post-init `handle_continue/3`
+      # has run + been merged into state.
       ready_status = Ezagent.ReadyGate.status(uri)
-      Ezagent.TestSupport.OrderTracker.record(tracker, {:post_init, ready_status})
+      registered? = match?({:ok, _}, Ezagent.KindRegistry.lookup(uri))
+
+      Ezagent.TestSupport.OrderTracker.record(
+        tracker,
+        {:post_init, ready_status, registered?}
+      )
     end
 
     {:ok, %{slice | setup_done: true, continued_with: :setup_thing}}
@@ -289,6 +297,75 @@ defmodule Ezagent.TestSupport.PersistentPostInitBehavior do
   def handle_continue(:write_sentinel, slice, _ctx) do
     {:ok, %{slice | post_init_value: :written_by_post_init}}
   end
+end
+
+defmodule Ezagent.TestSupport.SlowPostInitBehavior do
+  @moduledoc """
+  Test-only Behavior whose `handle_continue/3` sleeps for a
+  configurable duration before returning — used to exercise the
+  round-2 HIGH-1 fix from the dispatcher side: while post-init is
+  running, an external `Ezagent.Invocation.dispatch/1` MUST see
+  `ReadyGate.status == :not_ready` and buffer the cast (or
+  fail-fast for :call) — NOT deliver into a mailbox that could
+  die with a crashing post-init.
+
+  Sleep duration is read from `args[:post_init_sleep_ms]`
+  (default 50ms — enough for the test to issue a dispatch).
+  """
+
+  @behaviour Ezagent.Behavior
+
+  @impl Ezagent.Behavior
+  def actions, do: [:noop]
+
+  @impl Ezagent.Behavior
+  def cap_subjects, do: [{:noop, "test — no-op"}]
+
+  @impl Ezagent.Behavior
+  def state_slice, do: :slow
+
+  @impl Ezagent.Behavior
+  def init_slice(args) do
+    %{
+      sleep_ms: Map.get(args, :post_init_sleep_ms, 50),
+      tracker: Map.get(args, :tracker),
+      msgs: []
+    }
+  end
+
+  @impl Ezagent.Behavior
+  def invoke(:noop, slice, %{msg: msg}, _ctx) do
+    {:ok, %{slice | msgs: slice.msgs ++ [msg]}, %{echoed: msg}}
+  end
+
+  @impl Ezagent.Behavior
+  def interface,
+    do: %{
+      noop: %{args: %{msg: :string}, returns: %{echoed: :string}, modes: [:call, :cast]}
+    }
+
+  @impl Ezagent.Behavior
+  def post_init(_args, _slice), do: {:continue, :sleep_then_return}
+
+  @impl Ezagent.Behavior
+  def handle_continue(:sleep_then_return, slice, _ctx) do
+    Process.sleep(slice.sleep_ms)
+    {:ok, slice}
+  end
+end
+
+defmodule Ezagent.TestSupport.SlowPostInitKind do
+  @moduledoc "Kind hosting SlowPostInitBehavior."
+  @behaviour Ezagent.Kind
+
+  @impl Ezagent.Kind
+  def type_name, do: :test
+
+  @impl Ezagent.Kind
+  def behaviors, do: [Ezagent.TestSupport.SlowPostInitBehavior]
+
+  @impl Ezagent.Kind
+  def persistence, do: :ephemeral
 end
 
 defmodule Ezagent.TestSupport.PersistentPostInitKind do

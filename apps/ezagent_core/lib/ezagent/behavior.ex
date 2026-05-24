@@ -25,9 +25,8 @@ defmodule Ezagent.Behavior do
   ## Post-init continuation hook (PR-EM-CORE)
 
   Two OPTIONAL callbacks let a Behavior schedule deferred work that
-  runs AFTER the Kind's standard `:announce_ready` continuation has
-  completed (i.e. AFTER the URI is registered + marked `:ready` in
-  `Ezagent.ReadyGate` and any buffered casts have been flushed):
+  runs between the URI being registered in `Ezagent.KindRegistry`
+  and the URI being published as `:ready` in `Ezagent.ReadyGate`:
 
   - `post_init/2` — called from `Ezagent.Kind.Server.init/1` just
     after `init_slice/1`. Returns either `:ok` (no post-init work
@@ -39,20 +38,31 @@ defmodule Ezagent.Behavior do
     (`%{kind_module:, self_uri:}`). Returns `{:ok, new_slice}` to
     update the slice or `:ignore` to leave it unchanged.
 
-  Boot-order invariant: `:announce_ready` ALWAYS runs first. The
-  per-Behavior `handle_continue/3` callbacks run in
-  `Kind.behaviors/0` declaration order, each as its own
+  Boot-order invariant (codex round-2 HIGH-1): the Kind is
+  registered + ALL post-init `handle_continue/3` callbacks have
+  completed BEFORE `Ezagent.ReadyGate.mark_ready/1` fires. External
+  dispatches arriving during post-init buffer to `PendingDelivery`
+  (`:cast`) or fail-fast (`:call`) — they are NOT delivered to a
+  half-initialised Kind. Per-Behavior `handle_continue/3` callbacks
+  run in `Kind.behaviors/0` declaration order, each as its own
   `handle_continue/2` step on the Kind.Server (so each is a fresh
   scheduler pass; long-running post-init work is not advised).
+
+  This means a post-init `handle_continue/3` MAY call OUT to other
+  ready Kinds (their ReadyGate is consulted independently) but
+  MUST NOT dispatch back into its own Kind synchronously — self
+  is still `:not_ready` and a `:call` would fail-fast; a `:cast`
+  would buffer to `PendingDelivery` and run AFTER post-init
+  completes. Both are surprising behaviours for a Behavior author
+  who hasn't read this doc.
 
   Canonical use case: the ExternalMirror Worker (see SPEC
   `docs/superpowers/specs/2026-05-24-external-mirror-domain.md`
   §6.1 split-init pattern) — `init_slice/1` returns minimal state
   with no subscriptions or external I/O, and the post-init
-  continuation does the subscribe + binding open AFTER dispatch is
-  ready. Without this hook a Worker calling back into its Session
-  during `init_slice/1` would deadlock against the Session's
-  synchronous `Kind.spawn/2`.
+  continuation does the subscribe + binding open. Without this hook
+  a Worker calling back into its Session during `init_slice/1`
+  would deadlock against the Session's synchronous `Kind.spawn/2`.
   """
 
   @type action :: atom()
