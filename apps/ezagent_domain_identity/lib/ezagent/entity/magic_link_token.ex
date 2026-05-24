@@ -75,6 +75,45 @@ defmodule Ezagent.Entity.MagicLinkToken do
 
   def consume(_), do: {:error, :invalid}
 
+  @doc """
+  PEEK at a token without consuming it. Returns the email + a status:
+
+  - `{:ok, email, :fresh}` — token exists, not consumed, not expired
+  - `{:ok, email, :consumed}` — token was consumed (but the email is
+    still recoverable while expires_at is in the future, for UX
+    recovery of "user clicked but didn't complete registration")
+  - `{:error, :invalid}` — token doesn't exist
+  - `{:error, :expired}` — token exists but expires_at is in the past
+
+  Allen 2026-05-24 UX fix: lets `MagicLinkController.consume/2` re-route
+  a consumed-but-pending-registration click back to /register/complete
+  instead of erroring with "already used". `peek/1` is read-only;
+  callers MUST still call `consume/1` to mark a successful login.
+  """
+  @spec peek(String.t()) ::
+          {:ok, String.t(), :fresh | :consumed}
+          | {:error, :invalid | :expired}
+  def peek(raw_token) when is_binary(raw_token) do
+    case Repo.get_by(__MODULE__, token_hash: hash(raw_token)) do
+      nil ->
+        {:error, :invalid}
+
+      %__MODULE__{expires_at: exp, consumed_at: consumed_at, email: email} ->
+        cond do
+          DateTime.compare(DateTime.utc_now(), exp) == :gt ->
+            {:error, :expired}
+
+          is_nil(consumed_at) ->
+            {:ok, email, :fresh}
+
+          true ->
+            {:ok, email, :consumed}
+        end
+    end
+  end
+
+  def peek(_), do: {:error, :invalid}
+
   @doc "Delete tokens minted before `cutoff`. Housekeeping."
   @spec prune(DateTime.t()) :: {non_neg_integer(), nil}
   def prune(cutoff) do

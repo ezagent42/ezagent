@@ -23,9 +23,58 @@ defmodule EzagentWeb.MagicLinkController do
       {:ok, email} ->
         route_by_email(conn, email)
 
+      {:error, :consumed} ->
+        # Allen 2026-05-24 UX fix: a token marked `consumed_at` but
+        # whose email never finished registration should LET THE USER
+        # RE-ENTER `/register/complete`. The original consume already
+        # delivered the email to /register/complete; if user closed
+        # the tab / didn't fill the form, click-again should resume
+        # the same registration session rather than the confusing
+        # "already used" error → login bounce.
+        consumed_fallback(conn, token)
+
       {:error, reason} ->
         conn
         |> put_flash(:error, error_message(reason))
+        |> redirect(to: "/login")
+    end
+  end
+
+  # Token is consumed but still within expires_at — recover email via
+  # peek/1 + route based on registration state:
+  # - Email has no principal → re-enter /register/complete (user's
+  #   chance to finish what they started)
+  # - Email HAS a principal → user already registered + logged in
+  #   elsewhere; tell them so and bounce to /login for re-auth
+  # - Token gone / truly expired → fall through to default error
+  defp consumed_fallback(conn, token) do
+    case MagicLinkToken.peek(token) do
+      {:ok, email, :consumed} ->
+        case Registration.principal_for_email(email) do
+          :none ->
+            # User clicked but never completed registration. Re-route
+            # to /register/complete with a fresh pending-registration
+            # session so they can resume.
+            conn
+            |> configure_session(renew: true)
+            |> put_session(:pending_registration_email, email)
+            |> redirect(to: "/register/complete")
+
+          {:ok, _uri} ->
+            # User IS registered — they probably clicked an older
+            # email after already signing in elsewhere. Bounce to
+            # /login with a clearer message.
+            conn
+            |> put_flash(
+              :info,
+              gettext("Your account is registered. Please sign in with your email or password.")
+            )
+            |> redirect(to: "/login")
+        end
+
+      _ ->
+        conn
+        |> put_flash(:error, error_message(:consumed))
         |> redirect(to: "/login")
     end
   end
