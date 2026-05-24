@@ -192,4 +192,26 @@ defmodule Ezagent.Behavior.Routing do
       }
     }
   end
+
+  # PR-OWN-4 round-3 (codex round-2 HIGH fix): Routing covers BOTH
+  # workspace-scoped routing tables AND the global
+  # `system://routing/default` sentinel. The latter affects all
+  # tenants — only bootstrap admin should grant. The former is
+  # workspace-admin-grantable.
+  #
+  # Differentiator: `Capability.workspace_of/1` on the instance.
+  # Workspace-scoped instances (`session://`, `workspace://`,
+  # `entity://`) return a concrete `%URI{}`. Global system
+  # instances (`system://routing/default`) return `:any` — those
+  # require bootstrap admin per the `:no_owner` branch.
+  @impl Ezagent.Behavior
+  def data_owner(%URI{} = instance) do
+    case Ezagent.Capability.workspace_of(instance) do
+      %URI{} -> :any
+      :any -> :no_owner
+    end
+  end
+
+  def data_owner(:any), do: :any
+  def data_owner(_), do: :no_owner
 end

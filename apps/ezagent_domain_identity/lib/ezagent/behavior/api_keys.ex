@@ -146,4 +146,12 @@ defmodule Ezagent.Behavior.ApiKeys do
         String.slice(key, 0..3) <> "..." <> String.slice(key, -4..-1)
     end
   end
+
+  # PR-OWN-4 (caps-data-ownership SPEC #306 §6): per-entity Behavior
+  # — the entity (user / agent) owns its own state for this Behavior.
+  @impl Ezagent.Behavior
+  def data_owner(%URI{} = entity_uri), do: Ezagent.URI.instance(entity_uri)
+  def data_owner(:any), do: :any
+  def data_owner(_), do: :no_owner
+
 end

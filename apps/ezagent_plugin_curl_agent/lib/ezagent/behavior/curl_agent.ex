@@ -297,4 +297,21 @@ defmodule Ezagent.Behavior.CurlAgent do
   defp format_error({:transport, reason}), do: "transport: #{inspect(reason)}"
   defp format_error({:decode, _}), do: "could not decode response"
   defp format_error(other), do: inspect(other)
+
+  # PR-OWN-4 round-2 (codex MED fix): CurlAgent has per-instance
+  # `owner_uri` (the user whose API key funds the agent + whose
+  # conversation history persists). Owner-derived grants follow
+  # the Chat pattern — read the live `:curl_agent` slice via
+  # `Ezagent.Kind.get_slice/2`. Returns `:no_owner` for missing
+  # Kind (test paths) so §5.2 falls back to bootstrap admin.
+  @impl Ezagent.Behavior
+  def data_owner(%URI{scheme: "entity", host: "agent"} = agent_uri) do
+    case Ezagent.Kind.get_slice(agent_uri, :curl_agent) do
+      {:ok, %{owner_uri: %URI{} = owner}} -> owner
+      _ -> :no_owner
+    end
+  end
+
+  def data_owner(:any), do: :any
+  def data_owner(_), do: :no_owner
 end
