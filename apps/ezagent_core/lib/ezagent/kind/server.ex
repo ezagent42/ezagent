@@ -13,9 +13,12 @@ defmodule Ezagent.Kind.Server do
 
   ```
   %{
-    kind: module(),           # the Kind module (e.g. Ezagent.Entity.Echo)
-    uri:  URI.t(),            # this instance's URI
-    state: %{atom() => map()} # per-Behavior slices, keyed by behavior.state_slice()
+    kind: module(),                # the Kind module (e.g. Ezagent.Entity.Echo)
+    uri:  URI.t(),                 # this instance's URI
+    state: %{atom() => map()},     # per-Behavior slices, keyed by behavior.state_slice()
+    post_init_queue: [{module(), term()}] # PR-EM-CORE: pending post-init continuations
+                                          # populated by init/1, drained by chained
+                                          # handle_continue/2 after :announce_ready
   }
   ```
 
@@ -23,18 +26,58 @@ defmodule Ezagent.Kind.Server do
 
   1. `init/1`:
      - build initial per-Behavior slices via `init_slice/1`
+     - call optional `post_init/2` on each Behavior (collects
+       continuation terms in `behaviors/0` declaration order)
      - put_new into `KindRegistry` (crash on duplicate)
      - mark `:not_ready` in `ReadyGate`
      - hand off to `handle_continue(:announce_ready, ...)`
   2. `handle_continue(:announce_ready, ...)`:
-     - mark `:ready` in `ReadyGate`
-     - flush any buffered `:cast` invocations via `PendingDelivery.flush`
-     - both pre-ready writes and the window-leak class of bugs are
-       absorbed by ReadyGate + PendingDelivery (see ARCHITECTURE §5.7.4)
-  3. `handle_call(:ezagent_dispatch, ...)` / `handle_cast(:ezagent_dispatch, ...)`:
+     - when no Behavior declared `post_init/2`: mark `:ready` in
+       `ReadyGate` + flush buffered `:cast` invocations via
+       `PendingDelivery.flush` — identical to pre-PR-EM-CORE
+       behaviour
+     - when at least one Behavior queued a post-init continuation:
+       defer BOTH the mark_ready + the flush; chain
+       `{:continue, {:ezagent_post_init, queue}}`. ReadyGate stays
+       `:not_ready` through the entire post-init phase (codex
+       round-2 HIGH-1 fix — otherwise external dispatches arriving
+       between mark_ready and the end of post-init would bypass
+       PendingDelivery and die with the process on a crashing
+       post-init handler)
+  3. `handle_continue({:ezagent_post_init, [{behavior, term} | rest]}, ...)`:
+     - invoke the Behavior's optional `handle_continue/3` callback
+       with `{term, slice, ctx}`; merge `{:ok, new_slice}` back into
+       `state.state[state_slice()]` via `Ezagent.Kind.Snapshot.commit/4`
+       (codex round-1 MEDIUM-1 fix — without this a
+       `{:snapshot, :on_change}` Kind silently loses post-init slice
+       mutations on restart)
+     - chain to the next queued Behavior continuation; on the LAST
+       entry mark `:ready` in `ReadyGate` AND drain
+       `PendingDelivery` (both deferred from step 2 per round-2
+       HIGH-1 fix)
+     - boot-order invariant: the URI is registered + post-init
+       complete BEFORE `:ready` is published; subscribers /
+       dispatchers see a fully-initialised Kind. Post-init
+       `handle_continue/3` callbacks can call OUT to other Kinds
+       (which gates ReadyGate on the target, not on self) but
+       cannot dispatch back into themselves (self is still
+       `:not_ready`; the dispatch would buffer via PendingDelivery
+       and run AFTER post-init completes — which is the documented
+       contract)
+  4. `handle_call(:ezagent_dispatch, ...)` / `handle_cast(:ezagent_dispatch, ...)`:
      - delegate to `Ezagent.Kind.Runtime.handle_dispatch/3` which runs
        Appendix A steps 5-10 (BehaviorRegistry → authz stub → invoke →
        slice update → telemetry)
+
+  ## Post-init continuation hook (PR-EM-CORE)
+
+  The `post_init/2` + `handle_continue/3` callbacks on
+  `Ezagent.Behavior` let a Behavior schedule deferred work that runs
+  after `:announce_ready`. See `Ezagent.Behavior` moduledoc + the
+  ExternalMirror SPEC (`docs/superpowers/specs/2026-05-24-external-mirror-domain.md`)
+  §6.1 split-init pattern for the canonical use case (Worker Kind
+  subscribes to a Session Publisher AFTER `Kind.spawn/2` returns,
+  avoiding a synchronous-init deadlock).
 
   ## Why `:trap_exit`
 
@@ -64,10 +107,20 @@ defmodule Ezagent.Kind.Server do
     uri = Map.fetch!(args, :uri)
     uri_str = URI.to_string(uri)
 
+    slice_state = Ezagent.Kind.Snapshot.load_or_init(uri, kind_module, args)
+
+    # PR-EM-CORE: collect post_init/2 continuations in behaviors/0
+    # declaration order. `post_init/2` is OPTIONAL — Behaviors that
+    # don't export it (or return `:ok`) contribute nothing to the
+    # queue. The actual handle_continue/3 calls run AFTER
+    # :announce_ready (see handle_continue/2 below).
+    post_init_queue = collect_post_init_queue(kind_module, args, slice_state)
+
     state = %{
       kind: kind_module,
       uri: uri,
-      state: Ezagent.Kind.Snapshot.load_or_init(uri, kind_module, args)
+      state: slice_state,
+      post_init_queue: post_init_queue
     }
 
     case Ezagent.KindRegistry.put_new(uri_str, self()) do
@@ -82,6 +135,28 @@ defmodule Ezagent.Kind.Server do
     end
   end
 
+  # PR-EM-CORE: walk each Behavior, call its optional post_init/2 with
+  # (args, behavior's own slice), and collect `{behavior, term}` entries
+  # for any that returned `{:continue, term}`. Behaviors that don't
+  # export `post_init/2` or that returned `:ok` are skipped. Order is
+  # `kind_module.behaviors/0` (declaration order) — deterministic.
+  defp collect_post_init_queue(kind_module, args, slice_state) do
+    kind_module.behaviors()
+    |> Enum.reduce([], fn behavior, acc ->
+      if function_exported?(behavior, :post_init, 2) do
+        slice = Map.get(slice_state, behavior.state_slice(), %{})
+
+        case behavior.post_init(args, slice) do
+          :ok -> acc
+          {:continue, term} -> [{behavior, term} | acc]
+        end
+      else
+        acc
+      end
+    end)
+    |> Enum.reverse()
+  end
+
   defp schedule_periodic_snapshot(kind_module) do
     case kind_module.persistence() do
       {:snapshot, :periodic, ms} when is_integer(ms) and ms > 0 ->
@@ -94,19 +169,171 @@ defmodule Ezagent.Kind.Server do
   end
 
   @impl true
-  def handle_continue(:announce_ready, %{uri: uri} = state) do
+  def handle_continue(:announce_ready, %{uri: uri, post_init_queue: queue} = state) do
     uri_str = URI.to_string(uri)
-    :ok = Ezagent.ReadyGate.mark_ready(uri_str)
 
-    # Drain any messages that arrived during the register→ready window.
-    # They were buffered by `Ezagent.Invocation.dispatch/1` via PendingDelivery.
-    uri_str
-    |> Ezagent.PendingDelivery.flush()
-    |> Enum.each(fn buffered_inv ->
-      GenServer.cast(self(), {:ezagent_dispatch, buffered_inv})
-    end)
+    # PR-EM-CORE codex round-2 HIGH-1 fix: defer BOTH ReadyGate mark +
+    # PendingDelivery flush until AFTER post-init completes. Round-1
+    # only deferred the flush, but marked `:ready` here — that opened
+    # a NEW loss window: external `dispatch/1` calls arriving between
+    # mark_ready and the end of post-init see `:ready`, send their
+    # cast directly to this GenServer's mailbox (bypassing
+    # PendingDelivery), and would be lost with the process if a later
+    # post-init `handle_continue/3` raised.
+    #
+    # The fix: stay `:not_ready` through the entire post-init phase.
+    # External casts arriving during post-init buffer to
+    # PendingDelivery (the standard not-ready path); external calls
+    # fail-fast (existing invariant #3). Then mark_ready + flush
+    # together on the LAST post-init continuation. On crash, ReadyGate
+    # stays `:not_ready`, buffer stays intact, supervisor restart
+    # re-runs init → post-init → mark_ready.
+    #
+    # Pre-PR behaviour for Kinds with no post-init Behaviors is still
+    # preserved exactly: empty queue → drain + mark_ready right here
+    # (the drain-then-mark order is the round-3 HIGH-1 fix, see the
+    # post-init clause below).
+    case queue do
+      [] ->
+        drain_then_mark_ready(uri_str)
+        {:noreply, state}
 
-    {:noreply, state}
+      _ ->
+        {:noreply, state, {:continue, {:ezagent_post_init, queue}}}
+    end
+  end
+
+  # PR-EM-CORE: process the head of the post-init queue. Each entry is
+  # `{behavior_module, term}` where `term` is the value the Behavior
+  # returned from `post_init/2`. We invoke the Behavior's optional
+  # `handle_continue/3` callback with `{term, slice, ctx}`, merge
+  # `{:ok, new_slice}` back via the same snapshot-commit path used by
+  # dispatch (codex round-1 MEDIUM-1 fix — `:snapshot, :on_change`
+  # Kinds otherwise lost post-init slice mutations on restart), then
+  # chain to the next entry. ReadyGate stays `:not_ready` during this
+  # phase (round-2 HIGH-1 fix); it flips to `:ready` only after the
+  # LAST entry, at which point we ALSO drain `PendingDelivery`.
+  #
+  # If `handle_continue/3` is not exported, we log + skip — the
+  # Behavior returned `{:continue, _}` from `post_init/2` but did not
+  # implement the receiver. Treating this as a programmer error and
+  # logging (rather than crashing) keeps a buggy Behavior from taking
+  # down its host Kind on init; the Behavior author still sees the
+  # warning in test runs.
+  def handle_continue({:ezagent_post_init, [{behavior, term} | rest]}, state) do
+    %{kind: kind_module, uri: self_uri, state: slice_state} = state
+    new_slice_state = run_post_init_continuation(behavior, term, slice_state, kind_module, self_uri)
+    commit_post_init(state, new_slice_state)
+    new_state = %{state | state: new_slice_state}
+
+    case rest do
+      [] ->
+        # All post-init continuations succeeded — drain any messages
+        # buffered during the entire register→post-init-complete
+        # window AND publish `:ready` atomically with respect to
+        # incoming dispatchers. The drain-then-mark order is the
+        # round-3 HIGH-1 fix (otherwise external `dispatch/1` calls
+        # arriving between mark_ready and the self-cast loop could
+        # overtake older buffered entries in the GenServer mailbox,
+        # breaking per-target FIFO).
+        drain_then_mark_ready(URI.to_string(self_uri))
+        {:noreply, new_state}
+
+      _ ->
+        {:noreply, new_state, {:continue, {:ezagent_post_init, rest}}}
+    end
+  end
+
+  defp run_post_init_continuation(behavior, term, slice_state, kind_module, self_uri) do
+    if function_exported?(behavior, :handle_continue, 3) do
+      slice_key = behavior.state_slice()
+      slice = Map.get(slice_state, slice_key, %{})
+      ctx = %{kind_module: kind_module, self_uri: self_uri}
+
+      case behavior.handle_continue(term, slice, ctx) do
+        {:ok, new_slice} -> Map.put(slice_state, slice_key, new_slice)
+        :ignore -> slice_state
+      end
+    else
+      require Logger
+
+      Logger.warning(
+        "Ezagent.Kind.Server: Behavior #{inspect(behavior)} returned " <>
+          "{:continue, #{inspect(term)}} from post_init/2 but does not " <>
+          "export handle_continue/3; dropping continuation. URI=#{URI.to_string(self_uri)}"
+      )
+
+      slice_state
+    end
+  end
+
+  # PR-EM-CORE codex round-1 MEDIUM-1 fix: route post-init slice
+  # mutations through the same snapshot commit path used by dispatch
+  # (`commit_and_notify/3` calls this same `Snapshot.commit/4`).
+  # Without this, a `{:snapshot, :on_change}` Kind whose post-init
+  # `handle_continue/3` returns `{:ok, new_slice}` keeps that slice
+  # in memory only — a restart before the next dispatch silently
+  # drops the post-init mutation.
+  #
+  # We deliberately skip `SliceChange.emit/1` here: post-init is the
+  # tail of the init phase, not a user-initiated mutation. Subscribers
+  # would see a confusing "the slice changed from X to Y" event for
+  # an entity that JUST became `:ready` — semantically the slice has
+  # always been Y from any observer's perspective. (Dispatch path
+  # emits SliceChange; init path does not.)
+  defp commit_post_init(%{state: old_slice_state}, new_slice_state)
+       when old_slice_state == new_slice_state do
+    # `:ignore` from handle_continue/3 leaves slice_state unchanged —
+    # skip the commit entirely (Snapshot.commit/4 would return
+    # `:not_durable` for an unchanged on_change Kind anyway, but this
+    # is the explicit fast path).
+    :ok
+  end
+
+  defp commit_post_init(%{uri: uri, kind: kind_module, state: old_slice_state}, new_slice_state) do
+    _ = Ezagent.Kind.Snapshot.commit(uri, kind_module, old_slice_state, new_slice_state)
+    :ok
+  end
+
+  # PR-EM-CORE codex round-3 HIGH-1 fix: ensure per-target FIFO across
+  # the not-ready → ready transition. The naive "mark_ready then
+  # flush" order (rounds 1+2) lets a concurrent external dispatch
+  # observe `:ready` and `GenServer.cast` directly into our mailbox
+  # AHEAD of the self-casts we issue for the older buffered entries —
+  # breaking FIFO for non-commutative actions.
+  #
+  # Drain order:
+  # 1. Flush PendingDelivery → self-cast each buffered entry into our
+  #    own mailbox. While ReadyGate is still `:not_ready`, concurrent
+  #    dispatchers buffer (so no external direct-cast can race ahead
+  #    in our mailbox).
+  # 2. Loop: if more entries arrived in PendingDelivery during step 1
+  #    (because dispatchers kept buffering), repeat step 1. Terminates
+  #    when the buffer is empty.
+  # 3. Mark ready ONLY when the buffer is empty AND all buffered
+  #    entries are already enqueued in our mailbox. From this point
+  #    external direct-casts go to the END of our mailbox, AFTER the
+  #    older self-casts. FIFO preserved.
+  #
+  # Bounded iteration: a buggy / hostile dispatcher producing entries
+  # faster than we can self-cast could theoretically loop forever.
+  # Kind init is not the hot dispatch path so this is acceptable for
+  # v1; if production data shows unbounded loops, switch to a
+  # `:draining` ReadyGate state with a hand-off semaphore.
+  defp drain_then_mark_ready(uri_str) when is_binary(uri_str) do
+    case Ezagent.PendingDelivery.flush(uri_str) do
+      [] ->
+        :ok = Ezagent.ReadyGate.mark_ready(uri_str)
+
+      entries ->
+        Enum.each(entries, fn buffered_inv ->
+          GenServer.cast(self(), {:ezagent_dispatch, buffered_inv})
+        end)
+
+        # Re-check — dispatchers may have added entries while we were
+        # self-casting (they still saw :not_ready).
+        drain_then_mark_ready(uri_str)
+    end
   end
 
   # codex round-10 HIGH — `Ezagent.Kind.terminate/1` needs the Kind

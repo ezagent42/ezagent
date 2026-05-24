@@ -21,6 +21,48 @@ defmodule Ezagent.Behavior do
   macro. The trade-off is identical to the Kind one (compile-time vs
   runtime isolation); same rationale applies (single Behavior in Phase 1,
   re-evaluate Phase 2+).
+
+  ## Post-init continuation hook (PR-EM-CORE)
+
+  Two OPTIONAL callbacks let a Behavior schedule deferred work that
+  runs between the URI being registered in `Ezagent.KindRegistry`
+  and the URI being published as `:ready` in `Ezagent.ReadyGate`:
+
+  - `post_init/2` — called from `Ezagent.Kind.Server.init/1` just
+    after `init_slice/1`. Returns either `:ok` (no post-init work
+    needed) or `{:continue, term()}` to schedule one
+    `handle_continue/3` round.
+  - `handle_continue/3` — invoked by `Ezagent.Kind.Server` once for
+    each `{:continue, term}` returned from `post_init/2`. Receives
+    the continuation term, this Behavior's slice, and a context map
+    (`%{kind_module:, self_uri:}`). Returns `{:ok, new_slice}` to
+    update the slice or `:ignore` to leave it unchanged.
+
+  Boot-order invariant (codex round-2 HIGH-1): the Kind is
+  registered + ALL post-init `handle_continue/3` callbacks have
+  completed BEFORE `Ezagent.ReadyGate.mark_ready/1` fires. External
+  dispatches arriving during post-init buffer to `PendingDelivery`
+  (`:cast`) or fail-fast (`:call`) — they are NOT delivered to a
+  half-initialised Kind. Per-Behavior `handle_continue/3` callbacks
+  run in `Kind.behaviors/0` declaration order, each as its own
+  `handle_continue/2` step on the Kind.Server (so each is a fresh
+  scheduler pass; long-running post-init work is not advised).
+
+  This means a post-init `handle_continue/3` MAY call OUT to other
+  ready Kinds (their ReadyGate is consulted independently) but
+  MUST NOT dispatch back into its own Kind synchronously — self
+  is still `:not_ready` and a `:call` would fail-fast; a `:cast`
+  would buffer to `PendingDelivery` and run AFTER post-init
+  completes. Both are surprising behaviours for a Behavior author
+  who hasn't read this doc.
+
+  Canonical use case: the ExternalMirror Worker (see SPEC
+  `docs/superpowers/specs/2026-05-24-external-mirror-domain.md`
+  §6.1 split-init pattern) — `init_slice/1` returns minimal state
+  with no subscriptions or external I/O, and the post-init
+  continuation does the subscribe + binding open. Without this hook
+  a Worker calling back into its Session during `init_slice/1`
+  would deadlock against the Session's synchronous `Kind.spawn/2`.
   """
 
   @type action :: atom()
@@ -172,5 +214,84 @@ defmodule Ezagent.Behavior do
               | :no_owner
               | {:scope, atom(), URI.t()}
 
-  @optional_callbacks [dispatchable?: 0, data_owner: 1]
+  @doc """
+  Post-init hook — invoked once by `Ezagent.Kind.Server.init/1`
+  after `init_slice/1` has populated this Behavior's slice and
+  BEFORE `:announce_ready` runs.
+
+  Returns:
+  - `:ok` — no deferred work; Server proceeds with its standard
+    `:announce_ready` continuation, then any other Behavior's
+    post-init continuations.
+  - `{:continue, term()}` — schedule one `handle_continue/3` round
+    on this Behavior. The term is opaque to `Kind.Server` (it is
+    just forwarded back when the continuation fires) and is
+    typically an atom or a small tuple naming the deferred step.
+
+  Boot-order guarantee: ALL `post_init/2` calls happen BEFORE the
+  Kind is marked `:ready`, but the resulting `handle_continue/3`
+  callbacks run AFTER `:announce_ready` has completed. This means
+  `post_init/2` MUST be cheap + side-effect free (it is on the
+  init critical path); side-effecting work goes in
+  `handle_continue/3`. See moduledoc + ExternalMirror SPEC §6.1
+  for the canonical split-init pattern.
+
+  Optional callback (default: not implemented → no post-init work).
+  """
+  @callback post_init(args :: args(), slice :: slice()) ::
+              :ok | {:continue, term()}
+
+  @doc """
+  Per-Behavior continuation handler invoked by
+  `Ezagent.Kind.Server.handle_continue/2` for each `{:continue, term}`
+  this Behavior returned from `post_init/2`.
+
+  Arguments:
+  - `term` — the opaque term this Behavior returned from `post_init/2`
+  - `slice` — this Behavior's current slice (key = `state_slice/0`)
+  - `ctx` — `%{kind_module: module(), self_uri: URI.t()}` so the
+    Behavior can identify itself (e.g. to pass `self_uri` as the
+    `caller` of an outbound dispatch)
+
+  Returns:
+  - `{:ok, new_slice}` — `Kind.Server` writes `new_slice` into
+    `state.state[state_slice()]` via the same snapshot-commit path
+    as dispatch
+  - `:ignore` — slice unchanged (no write-back)
+
+  Each post-init continuation is its own `handle_continue/2` step on
+  the Kind.Server — they do not block each other on the same
+  scheduler pass.
+
+  ## Dispatch state during post-init (codex round-2 HIGH-1 +
+  round-3 HIGH-1 — see moduledoc)
+
+  Self is `:not_ready` for the duration of post-init; `:ready` is
+  only published after the LAST `handle_continue/3` completes AND
+  the PendingDelivery buffer has been drained. Implications for the
+  Behavior author:
+
+  - Dispatching OUT to OTHER ready Kinds is fine — ReadyGate is
+    consulted per-target.
+  - Self-dispatching synchronously (`Invocation.dispatch/1` with
+    `mode: :call` targeting `self_uri`) will fail-fast with
+    `{:error, :not_ready}` (hard-invariant #3). Don't do it.
+  - Self-dispatching asynchronously (`mode: :cast`) will buffer to
+    PendingDelivery and run AFTER post-init completes — which is
+    rarely what the author intended. Prefer mutating the slice
+    directly via the `{:ok, new_slice}` return.
+
+  Optional callback (probed via `function_exported?/3` per call);
+  Behaviors that return `{:continue, term}` from `post_init/2` MUST
+  also export this callback.
+  """
+  @callback handle_continue(term :: term(), slice :: slice(), ctx :: ctx()) ::
+              {:ok, new_slice :: slice()} | :ignore
+
+  @optional_callbacks [
+    dispatchable?: 0,
+    data_owner: 1,
+    post_init: 2,
+    handle_continue: 3
+  ]
 end
