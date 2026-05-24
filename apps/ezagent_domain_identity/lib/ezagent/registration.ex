@@ -14,7 +14,6 @@ defmodule Ezagent.Registration do
   knob, not the slug.
   """
 
-  alias Ezagent.AppSettings
   alias Ezagent.Entity.Profile
   alias Ezagent.Users
 
@@ -61,29 +60,6 @@ defmodule Ezagent.Registration do
       end)
     end
   end
-
-  @doc """
-  True if `email`'s domain is in the legacy `registration_domains`
-  AppSetting.
-
-  **SPEC v2 PR-C (Allen 2026-05-24) — REMOVED from production path.**
-  `Registration.email_allowed?/1` no longer consults this; the
-  workspace's `magic_link_rule` rows are the sole gate. This function
-  remains exported ONLY for tests / observability tools that want to
-  inspect the legacy setting in a transitional environment. New code
-  must call `email_allowed?/1`.
-  """
-  @spec domain_allowed?(String.t()) :: boolean()
-  def domain_allowed?(email) when is_binary(email) do
-    domains = AppSettings.get("registration_domains") || []
-
-    case String.split(email, "@", parts: 2) do
-      [_, domain] -> String.downcase(String.trim(domain)) in Enum.map(domains, &String.downcase/1)
-      _ -> false
-    end
-  end
-
-  def domain_allowed?(_), do: false
 
   @doc """
   SPEC v2 PR-C (Allen 2026-05-24) — the SOLE send-side gate.

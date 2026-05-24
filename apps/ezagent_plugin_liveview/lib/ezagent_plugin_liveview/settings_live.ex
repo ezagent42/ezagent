@@ -47,10 +47,13 @@ defmodule EzagentPluginLiveview.SettingsLive do
        socket
        |> assign(:section, :smtp)
        |> load_smtp_form()
-       |> load_registration_domains()
        |> assign(:smtp_test_recipient, default_test_recipient(socket))
        |> assign(:smtp_test_result, nil)
        |> assign(:smtp_flash, nil)
+       # `registration_flash` retained for the SMTP test flash slot;
+       # the registration_domains form was removed (PR-G2,
+       # 2026-05-24) — per-workspace `magic_link_rule` rows are now
+       # the source of truth (managed via /workspaces).
        |> assign(:registration_flash, nil)}
     else
       # V1 fix (Allen 2026-05-21 17:44): /admin/settings is admin
@@ -139,32 +142,10 @@ defmodule EzagentPluginLiveview.SettingsLive do
   end
 
   # --- Task 4: registration domains ----------------------------------------
-
-  def handle_event("save_registration_domains", %{"domains" => raw}, socket) do
-    domains =
-      raw
-      |> String.split(~r/[\s,;\n]+/, trim: true)
-      |> Enum.map(&String.downcase/1)
-      |> Enum.uniq()
-
-    :ok = Ezagent.AppSettings.put("registration_domains", domains)
-
-    {:noreply,
-     socket
-     |> load_registration_domains()
-     |> assign(:registration_flash,
-       {:ok,
-        if(domains == [],
-          do: gettext("Allowlist cleared — self-registration disabled."),
-          else:
-            ngettext(
-              "Saved (%{count} domain).",
-              "Saved (%{count} domains).",
-              length(domains)
-            )
-        )}
-     )}
-  end
+  # REMOVED 2026-05-24 (PR-G2 cleanup, dead code audit finding):
+  # `save_registration_domains` handler + `load_registration_domains/1`
+  # helper deleted. Per-workspace `magic_link_rule` rows are now the
+  # source of truth — operators manage rules via /workspaces.
 
   defp load_smtp_form(socket) do
     cfg = Ezagent.AppSettings.get("smtp_config") || %{}
@@ -173,11 +154,6 @@ defmodule EzagentPluginLiveview.SettingsLive do
       smtp_config: cfg,
       smtp_configured?: Ezagent.AppSettings.smtp_configured?()
     )
-  end
-
-  defp load_registration_domains(socket) do
-    domains = Ezagent.AppSettings.get("registration_domains") || []
-    assign(socket, :registration_domains, domains)
   end
 
   defp default_test_recipient(socket) do
@@ -474,46 +450,21 @@ defmodule EzagentPluginLiveview.SettingsLive do
     <.page_header title={gettext("Registration")}>
         <:subtitle>
           {gettext(
-            "Self-registration allowlist. Empty list = self-registration disabled (only admin-created users can sign in via magic link)."
+            "Self-registration is now managed PER WORKSPACE via magic_link_rule rows. Each workspace specifies who may register into it (domain, user_list, or invite_only). See /workspaces."
           )}
         </:subtitle>
       </.page_header>
 
       <.card class="mt-4">
-        <h2 class="text-sm font-medium text-zinc-900 dark:text-zinc-100 mb-3">{gettext("Allowed email domains")}</h2>
-        <form phx-submit="save_registration_domains" class="space-y-3">
-          <textarea
-            name="domains"
-            rows="6"
-            placeholder="example.com&#10;company.com"
-            class="w-full px-2 py-1.5 text-xs border border-zinc-300 dark:border-zinc-700 rounded font-mono bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
-          ><%= Enum.join(@registration_domains, "\n") %></textarea>
-          <p class="text-[11px] text-zinc-500">
-            {gettext(
-              "One per line, or comma/semicolon separated. Lowercased on save. Domain match only (no port / no scheme)."
-            )}
-          </p>
-          <div class="flex justify-end">
-            <.button type="submit" variant="primary" size="sm">{gettext("Save allowlist")}</.button>
-          </div>
-        </form>
-
-        <p :if={match?({:ok, _}, @registration_flash)} class="text-emerald-600 dark:text-emerald-400 text-xs mt-3">
-          {elem(@registration_flash, 1)}
+        <h2 class="text-sm font-medium text-zinc-900 dark:text-zinc-100 mb-3">{gettext("Where did the registration_domains form go?")}</h2>
+        <p class="text-xs text-zinc-600 dark:text-zinc-400">
+          {gettext(
+            "SPEC v2 (2026-05-24) — the global `registration_domains` AppSetting was replaced by per-workspace rules. To allow a domain to register, create a workspace at /workspaces and add a `domain` rule. Multiple domains? Multiple workspaces, one each — admin can promote users to system after."
+          )}
         </p>
-        <p :if={match?({:error, _}, @registration_flash)} class="text-rose-600 dark:text-rose-400 text-xs mt-3">
-          {elem(@registration_flash, 1)}
+        <p class="text-xs text-zinc-600 dark:text-zinc-400 mt-2">
+          <a href="/workspaces" class="underline">{gettext("Manage workspaces →")}</a>
         </p>
-
-        <div class="mt-4 border-t border-zinc-200 dark:border-zinc-800 pt-3">
-          <div class="text-xs text-zinc-500 mb-1">{gettext("Currently allowed:")}</div>
-          <div :if={@registration_domains == []} class="text-xs italic text-zinc-500">
-            {gettext("None — self-registration disabled.")}
-          </div>
-          <div :if={@registration_domains != []} class="flex flex-wrap gap-1">
-            <span :for={d <- @registration_domains} class="inline-block px-2 py-0.5 text-[11px] font-mono bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 rounded">{d}</span>
-          </div>
-        </div>
       </.card>
     """
   end

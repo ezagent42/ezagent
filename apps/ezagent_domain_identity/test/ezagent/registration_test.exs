@@ -27,14 +27,17 @@ defmodule Ezagent.RegistrationTest do
     assert Registration.suggest_slug("taken", @test_workspace) == "taken-2"
   end
 
-  test "domain_allowed?/1 checks the configured allowlist" do
-    Ezagent.AppSettings.put("registration_domains", ["good.com"])
-    assert Registration.domain_allowed?("x@good.com")
-    refute Registration.domain_allowed?("x@bad.com")
-  end
+  # `Registration.domain_allowed?/1` was DELETED in SPEC v2 PR-G2
+  # (2026-05-24). Per-workspace `magic_link_rule` rows are the sole
+  # gate; tests should use `Registration.email_allowed?/1` which
+  # consults the new path.
+  test "email_allowed?/1 returns true when a workspace's rule accepts the email" do
+    _ = Ezagent.Workspace.create("rg-test-#{System.unique_integer([:positive])}", %{})
+    [ws | _] = Ezagent.Workspace.list_all() |> Enum.reverse()
+    _ = Ezagent.Workspace.add_magic_link_rule(ws.uri, "domain", "good.com")
 
-  test "domain_allowed?/1 is false when no domains are configured" do
-    refute Registration.domain_allowed?("x@anything.com")
+    assert Registration.email_allowed?("x@good.com")
+    refute Registration.email_allowed?("x@nowhere.test")
   end
 
   test "principal_for_email/1 resolves an existing profile" do
