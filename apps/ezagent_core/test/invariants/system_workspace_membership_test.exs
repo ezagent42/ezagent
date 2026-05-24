@@ -18,7 +18,9 @@ defmodule EzagentCore.Invariants.SystemWorkspaceMembershipTest do
   ## Coverage
 
   1. `workspace://system` exists at boot (chat plugin's
-     `ensure_default_workspace` creates it before `default`).
+     `ensure_system_workspace/0` creates it — SPEC v2 PR-C #295
+     deleted the previously-seeded `default` workspace, so `system`
+     is now the only boot-seeded workspace).
   2. The system workspace row has `visible: false`.
   3. `Ezagent.Workspace.list_visible/0` excludes it; `list_all/0`
      includes it.
@@ -34,11 +36,12 @@ defmodule EzagentCore.Invariants.SystemWorkspaceMembershipTest do
   alias Ezagent.Capability
 
   defp setup_workspaces do
-    # The chat plugin boots both workspaces in :dev/:prod via
-    # `ensure_default_workspace/0`; in :test the call is short-
-    # circuited (DataCase concerns), so we provision both rows
-    # ourselves here to make assertions independent of the test
-    # harness's boot setup.
+    # The chat plugin boots `workspace://system` in :dev/:prod via
+    # `ensure_system_workspace/0`; in :test the call is short-
+    # circuited (DataCase concerns). SPEC v2 PR-F (2026-05-24): the
+    # `default` row is no longer boot-seeded in production — we
+    # provision it here as a TEST FIXTURE so the cross-workspace
+    # assertions below have two workspaces to compare across.
     Enum.each(
       [
         {"system", %{visible: false}},
@@ -83,7 +86,7 @@ defmodule EzagentCore.Invariants.SystemWorkspaceMembershipTest do
 
       assert row,
              "workspace://system must exist after boot — chat plugin's " <>
-               "ensure_default_workspace/0 creates it. If this fails, the " <>
+               "ensure_system_workspace/0 creates it. If this fails, the " <>
                "boot seed order regressed and admin's URI workspace doesn't " <>
                "resolve."
 

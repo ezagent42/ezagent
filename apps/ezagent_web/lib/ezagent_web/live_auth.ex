@@ -231,8 +231,17 @@ defmodule EzagentWeb.LiveAuth do
   # the same PR).
   #
   # Defensive load — DB unavailable at LV-mount (e.g. test sandbox
-  # not checked out) returns an empty list + default workspace stub.
-  # The dropdown still renders sensibly with just "default".
+  # not checked out) returns an empty list. The dropdown's
+  # `Manage workspaces…` link is the user's escape hatch when no
+  # workspaces are visible.
+  #
+  # SPEC v2 PR-F (#296 follow-up) — the previous "always include
+  # `default`" stub was deleted: PR-C removed the boot-seeded
+  # `default` workspace, so injecting a synthetic `default` row
+  # would point operators at a non-existent workspace (P2: no
+  # silent defaults). Operators land in their email-domain
+  # workspace via the onboarding flow (PR-B) and create
+  # additional workspaces via the admin drawer.
   defp list_known_workspaces do
     # Phase 9 PR-8 (SPEC v3 §13.1) — use `list_visible/0` so the
     # `workspace://system` workspace stays out of the regular
@@ -258,19 +267,7 @@ defmodule EzagentWeb.LiveAuth do
         _ -> []
       end
 
-    # Always include `default` in the dropdown even if not yet
-    # persisted in the Store (e.g. fresh DB before
-    # `ensure_default_workspace/0` has run, or DB unavailable). The
-    # `Manage workspaces…` link is the user's escape hatch to the
-    # admin drawer.
-    default = %{name: "default", uri: URI.parse("workspace://default")}
-
-    if Enum.any?(persisted, &(&1.name == "default")) do
-      persisted
-    else
-      [default | persisted]
-    end
-    |> Enum.sort_by(& &1.name)
+    Enum.sort_by(persisted, & &1.name)
   end
 
   # PR #149 (S-8): accept entity://user/* and entity://agent/* uniformly.

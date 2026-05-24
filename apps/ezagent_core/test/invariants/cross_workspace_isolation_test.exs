@@ -107,9 +107,14 @@ defmodule EzagentCore.Invariants.CrossWorkspaceIsolationTest do
   defp setup_scenario do
     suffix = unique("xws")
 
-    # Two workspaces. workspace://default is already alive (chat plugin
-    # creates it on boot via ensure_default_workspace/0); we just need
-    # a second workspace alive.
+    # Two workspaces. SPEC v2 PR-C (#295): `workspace://default` is no
+    # longer boot-seeded — this test continues to use `default` as a
+    # test-fixture workspace name (the spawn below treats it as the
+    # second workspace's parent context, but no row is created here
+    # because the existing assertions only check `team-alpha-*`
+    # isolation). The session URI string below uses `default` as the
+    # workspace segment for the legacy session shape; PR-F's 1st-pass
+    # leaves test fixtures alone.
     team_alpha_name = "team-alpha-#{suffix}"
     team_alpha_uri = URI.new!("workspace://#{team_alpha_name}")
 

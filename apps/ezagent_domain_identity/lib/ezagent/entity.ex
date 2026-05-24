@@ -45,8 +45,8 @@ defmodule Ezagent.Entity do
   @spec authenticate(URI.t(), String.t()) :: result()
   def authenticate(uri, secret)
 
-  def authenticate(%URI{scheme: "entity", host: "user", path: "/" <> _name} = uri, password)
-      when is_binary(password) do
+  def authenticate(%URI{scheme: "entity", host: "user", path: "/" <> _name} = uri, secret)
+      when is_binary(secret) do
     uri_str = URI.to_string(uri)
 
     cond do
@@ -55,7 +55,17 @@ defmodule Ezagent.Entity do
         Bcrypt.no_user_verify()
         {:error, :no_such_user}
 
-      Users.verify_password(uri_str, password) ->
+      # Codex CLI/GUI audit 2026-05-24 HIGH-1: user URIs accept BOTH
+      # passwords (for the /login form) AND bearer tokens (for CLI
+      # access). Token.mint/2 already accepts user URIs; this
+      # completes the auth side. Try token first (cheaper; only checks
+      # entity_tokens table); fall through to password.
+      match?({:ok, _}, Token.verify(uri, secret)) ->
+        ensure_spawned(uri)
+        caps = Ezagent.Identity.list_caps_for(uri)
+        {:ok, %{caps: caps}}
+
+      Users.verify_password(uri_str, secret) ->
         ensure_spawned(uri)
         caps = Ezagent.Identity.list_caps_for(uri)
         {:ok, %{caps: caps}}

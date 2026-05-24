@@ -28,6 +28,15 @@ defmodule EzagentCli.Integration.CliLvSameServerInvariantTest do
   setup do
     :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
     Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
+
+    # CLI/GUI audit HIGH-1 — Dispatch no longer silent-fallbacks to
+    # admin. Tests set the per-process override that
+    # `EzagentCli.Exec.exec/2` would set in production after token auth.
+    Process.put(
+      :ezagent_cli_caller_override,
+      {Ezagent.Entity.User.admin_uri(), Ezagent.Entity.User.admin_caps()}
+    )
+
     :ok
   end
 
@@ -56,17 +65,36 @@ defmodule EzagentCli.Integration.CliLvSameServerInvariantTest do
              URI.to_string(k) == member_uri_str
            end)
 
+    # Mint an admin CLI token for the Exec path — codex CLI/GUI audit
+    # HIGH-1 closed the silent admin fallback, so Exec now requires
+    # explicit token + entity_uri opts (mirroring how the real
+    # /api/cli/exec route works after operator authenticates).
+    admin_uri = Ezagent.Entity.User.admin_uri()
+
+    # Idempotent — admin may already exist from boot.
+    _ =
+      case Ezagent.Users.get_by_uri(admin_uri) do
+        nil -> Ezagent.Users.create(admin_uri, nil, MapSet.to_list(Ezagent.Entity.User.admin_caps()))
+        _ -> :ok
+      end
+
+    {plain_token, _row} = Ezagent.Entity.Token.mint(admin_uri, label: "test-cli-token")
+
     # Call CLI server-side path (what /api/cli/exec does)
     result =
-      EzagentCli.Exec.exec([
-        "session",
-        "join",
-        "--session",
-        session_name,
-        "--member",
-        URI.to_string(member_uri),
-        "--cast"
-      ])
+      EzagentCli.Exec.exec(
+        [
+          "session",
+          "join",
+          "--session",
+          session_name,
+          "--member",
+          URI.to_string(member_uri),
+          "--cast"
+        ],
+        token: plain_token,
+        entity_uri: URI.to_string(admin_uri)
+      )
 
     assert result.exit_code == 0,
            "CLI exec returned non-zero: output=#{inspect(result.output)} exit=#{result.exit_code}"

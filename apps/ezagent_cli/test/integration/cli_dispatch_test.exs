@@ -6,6 +6,16 @@ defmodule EzagentCli.Integration.CLIDispatchTest do
   setup do
     :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
     Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
+
+    # Codex CLI/GUI audit 2026-05-24 HIGH-1: Dispatch.derive_caller/1
+    # no longer silently falls back to admin. Tests must set the same
+    # per-process caller override that `EzagentCli.Exec.exec/2` sets
+    # in production after token authentication.
+    Process.put(
+      :ezagent_cli_caller_override,
+      {Ezagent.Entity.User.admin_uri(), Ezagent.Entity.User.admin_caps()}
+    )
+
     :ok
   end
 

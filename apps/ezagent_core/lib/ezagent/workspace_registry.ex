@@ -57,12 +57,30 @@ defmodule Ezagent.WorkspaceRegistry do
   def table, do: @table
 
   @doc """
-  Phase 8c PR-E (Allen 2026-05-20) — canonical default workspace URI.
+  Legacy `workspace://default` fallback constant.
 
-  Returns `{:ok, URI.t()}` always (current impl is constant; future
-  override could read app config). The default workspace is the
-  implicit owner for sessions that aren't created via a SessionTemplate
-  with its own `default_workspace_uri` field (e.g. session://default/default/main).
+  ## Why "legacy"
+
+  Phase 8c PR-E (Allen 2026-05-20) introduced this as the canonical
+  default workspace URI. SPEC v2 PR-C (#295) deleted the boot-seeded
+  `default` workspace row (only `workspace://system` is seeded now);
+  SPEC v2 PR-F (this PR) leaves the function in place because:
+
+  - **Audit / snapshot fallback** (`Ezagent.Persistence.default_workspace_uri/0`,
+    `Ezagent.Audit.derive_workspace/2`) still needs a non-nullable
+    `workspace_uri` string for rows whose caller/target genuinely have
+    no workspace context (e.g. system bootstrap events). The string is
+    written as-is — there is no FK to `workspaces.uri`.
+  - **Test fixtures** that hardcode `session://default/default/main`
+    (~10 suites) read this through the chat facade fallback. PR-F's
+    1st-pass scope is production lib code only; test fixture cleanup
+    is the 2nd-pass.
+
+  Production code that creates sessions or per-tenant entities MUST
+  pass workspace explicitly (the wizard / onboarding LV / mix task
+  callers already do). Do NOT introduce new callers of this fallback.
+
+  Returns `{:ok, URI.t()}` always.
   """
   @spec default_workspace_uri() :: {:ok, URI.t()}
   def default_workspace_uri do

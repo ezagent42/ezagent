@@ -23,17 +23,20 @@ defmodule EzagentDomainChat.Application do
   2. **Children supervisor** — DynamicSupervisors for Agent / Session /
      AgentTemplate / SessionTemplate Kinds. All start with zero
      children; Kinds materialize on demand (snapshot restore on
-     reference, CLI spawn, or — for the default session — the
-     first-login wizard at `/`).
+     reference, CLI spawn, or — for the operator's first session —
+     the first-login wizard at `/`).
 
   3. **No hardcoded default session** — PR-J removed the static
      `session://default/default/main` supervisor child. The wizard
-     (`EzagentWeb.HomeLive`) creates the default session via
+     (`EzagentWeb.HomeLive`) creates the operator's first session via
      `EzagentDomainChat.create_session/2` (which spawns + binds the
-     default workspace + joins admin). In the `:test` environment,
+     chosen workspace + joins admin). In the `:test` environment,
      `maybe_seed_main_session_for_tests/0` calls the same facade at
-     boot so the ~10 test suites asserting against boot-time
-     `session://default/default/main` continue to pass without per-setup migration.
+     boot so legacy test suites asserting against boot-time
+     `session://default/default/main` continue to pass; SPEC v2 PR-F
+     left those tests untouched (test-fixture URIs only — the
+     `default` workspace itself is no longer boot-seeded; PR-C
+     #295).
 
   ## Why use Ezagent.Entity.User from ezagent_core (not move it here)
 
@@ -130,15 +133,14 @@ defmodule EzagentDomainChat.Application do
         # PR 12 closeout: replace with an explicit registry-ready gate.
         :ok = EzagentDomainWorkspace.Application.boot_complete()
 
-        # PR-M (Allen 2026-05-20) — idempotently persist
-        # `workspace://default` so it shows up in `/workspaces` listing
-        # and `/workspaces/default` detail loads. Previously the
-        # default workspace existed only as a `WorkspaceRegistry.bind/2`
-        # ETS entry (session→workspace), bypassing
-        # `Ezagent.Workspace.create/2` (the canonical "persist + spawn"
-        # API). Now goes through the same path every operator-created
-        # workspace uses. Test-env skip — see helper docstring.
-        :ok = ensure_default_workspace()
+        # PR-M (Allen 2026-05-20) — idempotently persist the system
+        # workspace via the canonical `Ezagent.Workspace.create/2` API.
+        # SPEC v2 PR-C (#295) deleted the seeded `default` workspace —
+        # only the hidden `system` workspace is boot-seeded now. PR-F
+        # (this PR) renamed the helper from `ensure_default_workspace`
+        # to match what it actually seeds. Test-env skip — see helper
+        # docstring.
+        :ok = ensure_system_workspace()
 
         # Plugin authoring contract PR-5 codex HIGH-2 — the default
         # Echo agent is NO LONGER seeded here. Seeding the echo agent
@@ -226,12 +228,13 @@ defmodule EzagentDomainChat.Application do
     :ok
   end
 
-  # PR-M (Allen 2026-05-20) — idempotently persist the default workspace
-  # via the standard `Ezagent.Workspace.create/2` API. Previously the
-  # default existed only as a session→workspace ETS binding via
-  # `Ezagent.WorkspaceRegistry.bind/2`; the Workspace row was never
-  # created in SQLite, so `/workspaces` listed nothing and
-  # `/workspaces/default` returned "not found".
+  # SPEC v2 PR-C (#295) + PR-F (this PR) — only `workspace://system`
+  # is boot-seeded. `admin`'s URI is `entity://user/system/admin`
+  # (Allen: 这个 user 唯一); membership in `system` confers cross-
+  # workspace authority via `Ezagent.Capability.cross_workspace?/2`.
+  # Regular users land in their email-domain workspace via the
+  # onboarding flow (PR-B #294); tests that need a workspace create
+  # one explicitly per setup.
   #
   # Idempotency: skip if the row exists. DB-unavailable at boot is
   # logged and tolerated — next boot retries (same pattern as workspace
@@ -240,19 +243,10 @@ defmodule EzagentDomainChat.Application do
   # Test-env skip: boot-time DB writes interact poorly with Ecto SQL
   # Sandbox checkout in tests that don't use DataCase (the Audit.Writer
   # GenServer mid-flush blocks Sandbox.checkout).
-  #
-  # SPEC v2 PR-C (Allen 2026-05-24): the `default` workspace is GONE.
-  # Boot creates ONLY `system` (hidden). All regular users land in
-  # their email-domain workspace via the onboarding flow (PR-B).
-  # Tests that need a workspace create one explicitly per setup.
-  defp ensure_default_workspace do
+  defp ensure_system_workspace do
     if test_env?() do
       :ok
     else
-      # SPEC v2 PR-C: only `workspace://system` is boot-seeded.
-      # `admin`'s URI is `entity://user/system/admin` (Allen: 这个
-      # user 唯一); membership in `system` confers cross-workspace
-      # authority via Ezagent.Capability.cross_workspace?/2.
       :ok = ensure_workspace("system", %{visible: false})
     end
   end

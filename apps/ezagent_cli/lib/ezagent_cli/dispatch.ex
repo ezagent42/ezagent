@@ -50,24 +50,32 @@ defmodule EzagentCli.Dispatch do
             end
           end
 
-        # Caller + caps
-        {caller_uri, caps} = derive_caller(options)
+        # Caller + caps — codex CLI/GUI audit HIGH-1: derive_caller
+        # may refuse with {:error, :no_identity | :as_not_allowed |
+        # {:bad_as_uri, _}} when no token + no valid --as flag. We
+        # let those error tuples propagate so the CLI exits with a
+        # clear message instead of silently elevating to admin.
+        case derive_caller(options) do
+          {%URI{} = caller_uri, caps} ->
+            deadline_ms = Map.get(options, :deadline_ms) || @default_deadline_ms
 
-        deadline_ms = Map.get(options, :deadline_ms) || @default_deadline_ms
+            inv = %Invocation{
+              target: target_uri,
+              mode: mode,
+              args: action_args,
+              ctx: %{
+                caller: caller_uri,
+                caps: caps,
+                reply: {:caller_inbox, self()},
+                deadline_ms: deadline_ms
+              }
+            }
 
-        inv = %Invocation{
-          target: target_uri,
-          mode: mode,
-          args: action_args,
-          ctx: %{
-            caller: caller_uri,
-            caps: caps,
-            reply: {:caller_inbox, self()},
-            deadline_ms: deadline_ms
-          }
-        }
+            do_dispatch(inv, mode, deadline_ms)
 
-        do_dispatch(inv, mode, deadline_ms)
+          {:error, _} = err ->
+            err
+        end
     end
   end
 
@@ -125,6 +133,13 @@ defmodule EzagentCli.Dispatch do
     # Phase 6 PR 7: per-process override set by `EzagentCli.Exec.exec/2`
     # when a valid CLI bearer token is presented. This takes precedence
     # over the legacy `--as` flag — token auth IS the caller identity.
+    #
+    # Codex CLI/GUI audit 2026-05-24 HIGH-1 / `feedback_let_it_crash_no_workarounds`:
+    # the previous code silently fell back to `admin_uri + admin_caps`
+    # when no token AND no --as flag was presented. Anyone with the
+    # runtime cookie file then ran every mix task as admin. Closed:
+    # we now REFUSE to run without an explicit identity. PR #123
+    # closed the same hole on `/api/v1`; CLI was the leftover.
     case Process.get(:ezagent_cli_caller_override) do
       {%URI{} = uri, %MapSet{} = caps} ->
         {uri, caps}
@@ -132,7 +147,13 @@ defmodule EzagentCli.Dispatch do
       _ ->
         case Map.get(options, :as) do
           nil ->
-            {Ezagent.Entity.User.admin_uri(), Ezagent.Entity.User.admin_caps()}
+            # No token + no --as = no identity. REFUSE rather than
+            # silently elevate. Caller must either:
+            # (a) set EZAGENT_USER_TOKEN + EZAGENT_ENTITY_URI (the
+            #     normal auth path used by `mix esr`), OR
+            # (b) opt into dev-only impersonation via
+            #     EZAGENT_CLI_ALLOW_AS=1 mix esr --as <uri> ...
+            {:error, :no_identity}
 
           as_str ->
             case System.get_env("EZAGENT_CLI_ALLOW_AS") do
