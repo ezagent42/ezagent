@@ -85,7 +85,12 @@ defmodule Mix.Tasks.Compile.EzagentPluginCheckTest do
       # not a mock) before entering the project.
       unless Code.ensure_loaded?(EzagentPluginConforming) do
         Code.compile_file(
-          Path.join([@fixtures_dir, "ezagent_plugin_conforming", "lib", "ezagent_plugin_conforming.ex"])
+          Path.join([
+            @fixtures_dir,
+            "ezagent_plugin_conforming",
+            "lib",
+            "ezagent_plugin_conforming.ex"
+          ])
         )
       end
 
@@ -97,6 +102,79 @@ defmodule Mix.Tasks.Compile.EzagentPluginCheckTest do
       assert {:ok, []} = result,
              "a conforming ezagent_plugin_* app must pass the gate — got #{inspect(result)}"
     end
+  end
+
+  describe "ExternalMirror PR-EM-1 — adapters/0 Grill-5 checks" do
+    @moduledoc """
+    SPEC `docs/superpowers/specs/2026-05-24-external-mirror-domain.md`
+    §5.1 + §9 PR-EM-1 acceptance tests 4 + 5.
+
+    Verifies the `:ezagent_plugin_check` compiler rejects:
+    - (i) a plugin where a single module implements BOTH Adapter and
+      Binding behaviours (Grill-5 e).
+    - (ii) a plugin where `adapter.binding_module()` != binding
+      module declared in `adapters/0` (Grill-5 c).
+
+    Positive control: a plugin declaring one valid pair passes.
+    """
+
+    test "PASSES for a fixture declaring one valid (adapter, binding) pair (positive control)" do
+      compile_fixture_module(
+        "ezagent_plugin_em_conforming",
+        "ezagent_plugin_em_conforming.ex"
+      )
+
+      result =
+        in_fixture_project(:ezagent_plugin_em_conforming, "ezagent_plugin_em_conforming", fn ->
+          EzagentPluginCheck.run([])
+        end)
+
+      assert {:ok, []} = result,
+             "a conforming ExternalMirror plugin must pass the gate — got #{inspect(result)}"
+    end
+
+    test "FAILS for a fixture where a single module implements BOTH behaviours (test 4 / Grill-5 e)" do
+      compile_fixture_module("ezagent_plugin_em_dual", "ezagent_plugin_em_dual.ex")
+
+      result =
+        in_fixture_project(:ezagent_plugin_em_dual, "ezagent_plugin_em_dual", fn ->
+          EzagentPluginCheck.run([])
+        end)
+
+      assert {:error, diagnostics} = result
+
+      assert Enum.any?(diagnostics, fn %{message: msg} ->
+               msg =~ "DIFFERENT modules" and msg =~ "Grill-5"
+             end),
+             "expected a Grill-5 (e) `DIFFERENT modules` diagnostic; got #{inspect(diagnostics)}"
+    end
+
+    test "FAILS for a fixture where adapter.binding_module() != declared binding (test 5 / Grill-5 c)" do
+      compile_fixture_module("ezagent_plugin_em_mismatch", "ezagent_plugin_em_mismatch.ex")
+
+      result =
+        in_fixture_project(:ezagent_plugin_em_mismatch, "ezagent_plugin_em_mismatch", fn ->
+          EzagentPluginCheck.run([])
+        end)
+
+      assert {:error, diagnostics} = result
+
+      assert Enum.any?(diagnostics, fn %{message: msg} ->
+               msg =~ "binding_module" and msg =~ "Grill-5"
+             end),
+             "expected a Grill-5 (c) bidirectional-mismatch diagnostic; got #{inspect(diagnostics)}"
+    end
+  end
+
+  # Compile a fixture's plugin .ex file into the loaded code path so
+  # `Code.ensure_compiled/1` (called inside the gate) resolves the
+  # fixture modules. Same pattern as the original conforming test.
+  defp compile_fixture_module(fixture_dir, source_file) do
+    path = Path.join([@fixtures_dir, fixture_dir, "lib", source_file])
+    Code.compile_file(path)
+  rescue
+    # Already loaded — that's the desired post-condition.
+    _ -> :ok
   end
 
   # Enter a fixture Mix project so `Mix.Project.config()` (read by the

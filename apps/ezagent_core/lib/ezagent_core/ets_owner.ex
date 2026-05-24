@@ -81,7 +81,27 @@ defmodule EzagentCore.EtsOwner do
     {Ezagent.CapabilityRegistry.Subjects, :set},
     # `:ezagent_capability_default_grants` — keyed by `kind` → grant_fn.
     # Populated via `Ezagent.CapabilityRegistry.register_default_grant/2`.
-    {Ezagent.CapabilityRegistry.Defaults, :set}
+    {Ezagent.CapabilityRegistry.Defaults, :set},
+    # ExternalMirror Domain PR-EM-1 (SPEC
+    # docs/superpowers/specs/2026-05-24-external-mirror-domain.md §5.2):
+    # AdapterRegistry — `adapter_id` (string) → `adapter_module`
+    # (atom). Populated at plugin boot from `adapters/0` via
+    # `Ezagent.Plugin.boot/1`. Per P22 the table lives here (NOT
+    # lazy-init in the Domain) so plugin authors cannot bypass it.
+    #
+    # KEYED BY LITERAL TABLE NAME (not by module) because the owning
+    # modules live downstream of `ezagent_core` in
+    # `ezagent_domain_external_mirror` — at this app's test/boot time
+    # those modules may not be on the codepath. The literal atom
+    # keeps the table-creation contract decoupled from the consumer
+    # module. The owning module's `table/0` returns the same atom for
+    # consistency (single source of truth).
+    {:literal, :ezagent_external_mirror_adapter_registry, :set},
+    # BindingRegistry — `adapter_id` (string) → `binding_module`
+    # (atom). Grill-5 one-to-one reverse lookup; populated alongside
+    # AdapterRegistry at plugin boot. Used by Worker `:publish`
+    # dispatch (PR-EM-2) to reach the Binding's `publish/2` callback.
+    {:literal, :ezagent_external_mirror_binding_registry, :set}
     # Notification SPEC v2 PR-N1 (Allen 2026-05-24):
     # `:ezagent_notification_subscriptions` is INTENTIONALLY NOT
     # owned here. Codex PR-N1 round-2 HIGH-1: this is a
@@ -99,10 +119,23 @@ defmodule EzagentCore.EtsOwner do
 
   @impl true
   def init(_) do
-    Enum.each(@tables, fn {mod, type} ->
-      :ets.new(mod.table(), [type, :public, :named_table, read_concurrency: true])
-    end)
+    table_names =
+      Enum.map(@tables, fn
+        # Downstream-app table: keyed by literal atom (the owning
+        # module isn't on this app's codepath at boot — see the
+        # `:literal` notes in the @tables list).
+        {:literal, name, type} ->
+          :ets.new(name, [type, :public, :named_table, read_concurrency: true])
+          name
 
-    {:ok, %{tables: Enum.map(@tables, fn {mod, _} -> mod.table() end)}}
+        # Core-owned table: ask the owning module for its table name
+        # (single source of truth via `mod.table/0`).
+        {mod, type} ->
+          name = mod.table()
+          :ets.new(name, [type, :public, :named_table, read_concurrency: true])
+          name
+      end)
+
+    {:ok, %{tables: table_names}}
   end
 end

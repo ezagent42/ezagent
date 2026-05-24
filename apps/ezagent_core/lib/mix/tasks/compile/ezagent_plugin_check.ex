@@ -81,7 +81,17 @@ defmodule Mix.Tasks.Compile.EzagentPluginCheck do
   fails the build with a precise diagnostic.
   """
 
-  @registry_grep_pattern ~r/\b(?:Ezagent\.)?(?:Behavior|Spawn|Template|Plugin|AgentFlavor|Routing)Registry\.(?:register|declare_table)\b/
+  # codex r1 MEDIUM-1 (ExternalMirror PR-EM-1): include the
+  # `Ezagent.ExternalMirror.AdapterRegistry` and
+  # `Ezagent.ExternalMirror.BindingRegistry` in the gate — without
+  # this, a plugin could bypass `adapters/0` (and the Grill-5
+  # bidirectional checks the compiler runs over it) by calling
+  # `Ezagent.ExternalMirror.AdapterRegistry.register/1` directly.
+  # The registries themselves now reject calls from modules that
+  # don't implement the relevant behaviour (defense in depth), but
+  # the compile-time grep keeps the plugin contract — "declare,
+  # don't call" (SPEC §3.2) — visible and enforceable at build.
+  @registry_grep_pattern ~r/\b(?:Ezagent\.)?(?:ExternalMirror\.)?(?:Adapter|Binding|Behavior|Spawn|Template|Plugin|AgentFlavor|Routing)Registry\.(?:register|register_module|declare_table)\b/
 
   @impl Mix.Task.Compiler
   def run(_argv) do
@@ -94,6 +104,7 @@ defmodule Mix.Tasks.Compile.EzagentPluginCheck do
           |> check_uses_behaviour(plugin_module)
           |> check_declared_modules(plugin_module)
           |> check_agent_flavors(plugin_module)
+          |> check_adapters(plugin_module)
           |> check_spawns_empty(plugin_module)
           |> check_config_surface(plugin_module)
           |> check_no_direct_registry_calls()
@@ -226,7 +237,11 @@ defmodule Mix.Tasks.Compile.EzagentPluginCheck do
         Ezagent.Behavior,
         "behaviors/0"
       )
-      |> check_modules(plugin_module.template_classes(), Ezagent.Kind.Template, "template_classes/0")
+      |> check_modules(
+        plugin_module.template_classes(),
+        Ezagent.Kind.Template,
+        "template_classes/0"
+      )
     else
       diagnostics
     end
@@ -358,6 +373,155 @@ defmodule Mix.Tasks.Compile.EzagentPluginCheck do
 
       true ->
         diagnostics
+    end
+  end
+
+  # --- check 4b — adapters/0 Grill-5 (ExternalMirror PR-EM-1) -----------
+  #
+  # SPEC `docs/superpowers/specs/2026-05-24-external-mirror-domain.md`
+  # §5.1: each `{adapter, binding}` entry must satisfy
+  #
+  #   (a) adapter implements `@behaviour Ezagent.ExternalMirror.Adapter`
+  #   (b) binding implements `@behaviour Ezagent.ExternalMirror.Binding`
+  #   (c) `adapter.binding_module() == binding`
+  #   (d) `binding.adapter_module() == adapter`
+  #   (e) `adapter != binding` (distinct modules — a single module
+  #       implementing both behaviours dissolves the boundary)
+  #
+  # All five run at compile time so a malformed plugin fails the build,
+  # not the runtime. `Ezagent.Plugin.boot/1` re-verifies the same set
+  # at runtime as defense-in-depth (catches a plugin hot-installed
+  # past the gate).
+  #
+  # Reachability caveat (same as `check_agent_flavors/2`): if a
+  # declared module is NOT on the plugin's codepath (e.g. core/domain
+  # module the plugin reuses) we cannot resolve it — the runtime
+  # `assert_adapter_decl!` is the backstop. A reachable-but-wrong
+  # module hard-fails the build.
+  defp check_adapters(diagnostics, plugin_module) do
+    if uses_plugin_behaviour?(plugin_module) and ensure_compiled?(plugin_module) do
+      Enum.reduce(plugin_module.adapters(), diagnostics, fn entry, acc ->
+        check_adapter_entry(acc, plugin_module, entry)
+      end)
+    else
+      diagnostics
+    end
+  rescue
+    _ -> diagnostics
+  end
+
+  defp check_adapter_entry(diagnostics, _plugin_module, {adapter, binding})
+       when is_atom(adapter) and is_atom(binding) do
+    src = "adapters/0 entry #{inspect({adapter, binding})}"
+
+    diagnostics
+    |> check_adapter_distinct(adapter, binding, src)
+    |> check_adapter_module(adapter, Ezagent.ExternalMirror.Adapter, src)
+    |> check_adapter_module(binding, Ezagent.ExternalMirror.Binding, src)
+    |> check_adapter_bidirectional(adapter, binding, src)
+  end
+
+  defp check_adapter_entry(diagnostics, _plugin_module, malformed) do
+    [
+      diagnostic(
+        "adapters/0 has a malformed entry #{inspect(malformed)} — each entry " <>
+          "must be `{adapter_module :: module(), binding_module :: module()}`."
+      )
+      | diagnostics
+    ]
+  end
+
+  defp check_adapter_distinct(diagnostics, adapter, binding, src) when adapter == binding do
+    [
+      diagnostic(
+        "#{src}: adapter and binding must be DIFFERENT modules. A single module " <>
+          "implementing both behaviours dissolves the adapter/binding boundary " <>
+          "(Grill-5 / SPEC §5.1)."
+      )
+      | diagnostics
+    ]
+  end
+
+  defp check_adapter_distinct(diagnostics, _adapter, _binding, _src), do: diagnostics
+
+  # An adapters/0 module: if reachable at compile time it MUST
+  # implement the behaviour (hard fail otherwise); if unreachable
+  # the check is deferred to runtime `assert_adapter_decl!`.
+  defp check_adapter_module(diagnostics, module, behaviour, src) do
+    cond do
+      not is_atom(module) ->
+        [
+          diagnostic("#{src} declares #{inspect(module)}, which is not a module.")
+          | diagnostics
+        ]
+
+      not ensure_compiled?(module) ->
+        # Not on plugin's compile-time codepath — defer to runtime gate.
+        diagnostics
+
+      not implements_behaviour?(module, behaviour) ->
+        [
+          diagnostic(
+            "#{src} declares #{inspect(module)}, which does not implement the " <>
+              "#{inspect(behaviour)} behaviour."
+          )
+          | diagnostics
+        ]
+
+      true ->
+        diagnostics
+    end
+  end
+
+  # Bidirectional declaration (Grill-5 c + d). Only verifies when
+  # BOTH modules are resolvable AND implement the right behaviour
+  # (otherwise the earlier checks already produced a diagnostic for
+  # the offending side, and calling `adapter.binding_module()` on a
+  # non-conforming module would raise UndefinedFunctionError).
+  defp check_adapter_bidirectional(diagnostics, adapter, binding, src) do
+    if ensure_compiled?(adapter) and ensure_compiled?(binding) and
+         implements_behaviour?(adapter, Ezagent.ExternalMirror.Adapter) and
+         implements_behaviour?(binding, Ezagent.ExternalMirror.Binding) do
+      diagnostics
+      |> maybe_diag_mismatch(
+        adapter,
+        :binding_module,
+        binding,
+        src,
+        "Grill-5 mandates bidirectional 1:1 declaration (SPEC §5.1)."
+      )
+      |> maybe_diag_mismatch(
+        binding,
+        :adapter_module,
+        adapter,
+        src,
+        "Grill-5 mandates bidirectional 1:1 declaration (SPEC §5.1)."
+      )
+    else
+      diagnostics
+    end
+  rescue
+    e ->
+      [
+        diagnostic("#{src}: calling bidirectional callbacks raised: " <> Exception.message(e))
+        | diagnostics
+      ]
+  end
+
+  defp maybe_diag_mismatch(diagnostics, mod, fun, expected, src, suffix) do
+    case apply(mod, fun, []) do
+      ^expected ->
+        diagnostics
+
+      actual ->
+        [
+          diagnostic(
+            "#{src}: #{inspect(mod)}.#{fun}() returned #{inspect(actual)}, " <>
+              "but the adapters/0 entry pairs it with #{inspect(expected)}. " <>
+              suffix
+          )
+          | diagnostics
+        ]
     end
   end
 

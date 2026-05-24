@@ -179,6 +179,33 @@ Still open after PR #300 + the batch fix that includes this todo:
   `workspace_uri` filter; Phase 9 PR-6 added the column but the
   READ-side never landed. Add the filter + a per-workspace caps check.
 
+### ETS-registries hardening (deferred from PR-EM-1 codex r2 HIGH-1)
+
+**Tracked**: PR #315 (PR-EM-1) added Ezagent.ExternalMirror.AdapterRegistry
++ BindingRegistry as `:public` ETS tables, matching the existing
+EtsOwner pattern (PluginRegistry, AgentFlavorRegistry, BehaviorRegistry,
+etc. are all `:public`). Codex round-2 HIGH-1 flagged that
+any in-VM code can call `:ets.insert/2` against these registries
+and bypass the validation in `register/1`.
+
+This applies to the **entire EtsOwner pattern**, not just the new
+ExternalMirror tables. Only `Ezagent.NotificationSubscriptions`
+uses `:protected` + GenServer-serialised writes (per its PR-N1
+codex round-2 HIGH-1), and that's because it gates cap-checked
+writes specifically.
+
+**SPEC question**: should every contract-enforced registry move
+to `:protected` + owning GenServer write API? Or is the current
+trust model (plugin code is treated as trusted; the
+`:ezagent_plugin_check` compile-time gate prevents accidental
+direct calls; the registry API enforces validation when called
+properly) the right one?
+
+**Owner**: TBD. Not blocking PR-EM-1; PR-EM-2 dispatch reads
+the same tables. If the answer is "yes, harden", the migration
+is SPEC + a sweep PR across every registry — out of scope for
+the ExternalMirror PR sequence.
+
 ### Architecture audit follow-ups
 From `docs/notes/2026-05-24-architecture-audit-v1.md` (5 LOW):
 1. **DONE** (this PR) — `Capability.cross_workspace?/2` `apply/3` →

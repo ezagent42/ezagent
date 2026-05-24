@@ -136,6 +136,18 @@ defmodule Ezagent.Plugin do
         }
 
   @typedoc """
+  An ExternalMirror `{adapter_module, binding_module}` pair (SPEC
+  `docs/superpowers/specs/2026-05-24-external-mirror-domain.md` §5.1).
+
+  Grill-5 enforces bidirectional 1:1 — `adapter.binding_module() ==
+  binding` AND `binding.adapter_module() == adapter` AND
+  `adapter != binding`. Verified at compile time by the
+  `:ezagent_plugin_check` Mix compiler; re-verified defensively at
+  boot by `Ezagent.Plugin.boot/1`.
+  """
+  @type adapter_decl :: {adapter_module :: module(), binding_module :: module()}
+
+  @typedoc """
   What the `/plugins` config icon opens. V1 is `:route | :flavor | nil`
   — `:form` is rejected until the plugin-settings store ships (V2,
   codex MEDIUM-6).
@@ -160,6 +172,19 @@ defmodule Ezagent.Plugin do
   @callback spawns() :: []
   @callback template_classes() :: [module()]
   @callback agent_flavors() :: [agent_flavor_decl()]
+
+  @doc """
+  ExternalMirror adapter+binding pairs (SPEC
+  `docs/superpowers/specs/2026-05-24-external-mirror-domain.md` §5.1).
+
+  Each entry is `{adapter_module, binding_module}`. `Ezagent.Plugin.boot/1`
+  verifies Grill-5 (both implement their behaviour, bidirectional
+  `binding_module/0` / `adapter_module/0` match, distinct modules)
+  then registers each pair via `AdapterRegistry.register/1` +
+  `BindingRegistry.register_module/2`. Default `[]` via
+  `use Ezagent.Plugin`.
+  """
+  @callback adapters() :: [adapter_decl()]
   @callback routing_tables() :: [routing_decl()]
   @callback config_surface() :: config_surface()
   @callback children() :: [Supervisor.child_spec() | {module(), term()}]
@@ -170,6 +195,7 @@ defmodule Ezagent.Plugin do
                       spawns: 0,
                       template_classes: 0,
                       agent_flavors: 0,
+                      adapters: 0,
                       routing_tables: 0,
                       config_surface: 0,
                       children: 0,
@@ -203,6 +229,7 @@ defmodule Ezagent.Plugin do
       def spawns, do: []
       def template_classes, do: []
       def agent_flavors, do: []
+      def adapters, do: []
       def routing_tables, do: []
       def config_surface, do: nil
       def children, do: []
@@ -213,6 +240,7 @@ defmodule Ezagent.Plugin do
                      spawns: 0,
                      template_classes: 0,
                      agent_flavors: 0,
+                     adapters: 0,
                      routing_tables: 0,
                      config_surface: 0,
                      children: 0,
@@ -331,6 +359,21 @@ defmodule Ezagent.Plugin do
       :ok = Ezagent.RoutingRegistry.declare_table(table_name, opts)
     end)
 
+    # ExternalMirror PR-EM-1 (SPEC §5.1) — codex r1 HIGH-1 fix:
+    # publish ALL adapter pairs atomically. Prevalidate every entry
+    # (Grill-5 + duplicate-id detection inside this batch) BEFORE
+    # any registry write; then write all pairs, rolling back the
+    # already-written rows on any registration failure.
+    #
+    # The previous shape iterated and wrote per-pair — a later
+    # validation failure left earlier pairs registered with no
+    # rollback, so `list_adapters/0` could advertise an adapter
+    # whose plugin boot never completed.
+    #
+    # Step 7 (CapabilityRegistry per `adapter.cap_subject()`) is
+    # DEFERRED to PR-EM-2 when `Behavior.ExternalMirror` lands.
+    publish_adapters!(plugin_module, plugin_module.adapters())
+
     :ok = Ezagent.PluginRegistry.register(plugin_module)
 
     :ok
@@ -404,6 +447,234 @@ defmodule Ezagent.Plugin do
           "#{inspect(plugin_module)} declared a malformed agent_flavors/0 entry: " <>
             "#{inspect(decl)}. Each entry must be a map " <>
             "%{flavor: String.t(), kind: module(), template_class: module()}."
+  end
+
+  # ExternalMirror PR-EM-1 — runtime Grill-5 verification for an
+  # `adapters/0` entry. Mirrors the `:ezagent_plugin_check` compiler
+  # checks (defense in depth: catches a plugin hot-installed past the
+  # build gate).
+  #
+  # Five checks per SPEC §5.1:
+  # 1. adapter implements `@behaviour Ezagent.ExternalMirror.Adapter`
+  # 2. binding implements `@behaviour Ezagent.ExternalMirror.Binding`
+  # 3. `adapter.binding_module() == binding`
+  # 4. `binding.adapter_module() == adapter`
+  # 5. `adapter != binding` (structural — single module implementing
+  #    both behaviours dissolves the boundary)
+  defp assert_adapter_decl!(plugin_module, {adapter, binding})
+       when is_atom(adapter) and is_atom(binding) do
+    src = "adapters/0 entry #{inspect({adapter, binding})}"
+
+    if adapter == binding do
+      raise ArgumentError,
+            "#{inspect(plugin_module)} #{src}: adapter and binding must be " <>
+              "DIFFERENT modules. A single module implementing both behaviours " <>
+              "dissolves the adapter/binding boundary (Grill-5 / SPEC §5.1)."
+    end
+
+    assert_implements!(plugin_module, adapter, Ezagent.ExternalMirror.Adapter, src)
+    assert_implements!(plugin_module, binding, Ezagent.ExternalMirror.Binding, src)
+
+    # Bidirectional declaration — both sides MUST name the other.
+    # These calls reach the modules' own `binding_module/0` /
+    # `adapter_module/0` answers; the system trusts the module over
+    # the plugin's `adapters/0` tuple if they disagree (the tuple is
+    # what the plugin author typed; the module's callback is the
+    # behaviour-checked source of truth).
+    #
+    # `assert_implements!` silently tolerates unreachable modules
+    # (reachability caveat — same as agent_flavors). If we land here
+    # with an unreachable adapter/binding, calling
+    # `adapter.binding_module()` would raise UndefinedFunctionError
+    # with a confusing stack. Defensive guard: ensure both callbacks
+    # are loadable BEFORE invoking. If either is missing, skip the
+    # bidirectional check — the compiler gate is the primary defense
+    # and will catch a real mismatch on the next compile. For PR-EM-1
+    # plugin adapters this is moot — the plugin owns both modules
+    # and they're always reachable — the guard keeps the runtime
+    # path crash-free for edge cases (e.g. a hot-installed plugin
+    # whose dependency hasn't loaded yet).
+    if function_exported?(adapter, :binding_module, 0) and
+         function_exported?(binding, :adapter_module, 0) do
+      check_bidirectional!(plugin_module, adapter, binding, src)
+    end
+
+    :ok
+  end
+
+  defp check_bidirectional!(plugin_module, adapter, binding, src) do
+    declared_binding = adapter.binding_module()
+    declared_adapter = binding.adapter_module()
+
+    cond do
+      declared_binding != binding ->
+        raise ArgumentError,
+              "#{inspect(plugin_module)} #{src}: " <>
+                "#{inspect(adapter)}.binding_module() returned " <>
+                "#{inspect(declared_binding)}, but the adapters/0 entry pairs it " <>
+                "with #{inspect(binding)}. Grill-5 mandates bidirectional 1:1 " <>
+                "declaration (SPEC §5.1)."
+
+      declared_adapter != adapter ->
+        raise ArgumentError,
+              "#{inspect(plugin_module)} #{src}: " <>
+                "#{inspect(binding)}.adapter_module() returned " <>
+                "#{inspect(declared_adapter)}, but the adapters/0 entry pairs it " <>
+                "with #{inspect(adapter)}. Grill-5 mandates bidirectional 1:1 " <>
+                "declaration (SPEC §5.1)."
+
+      true ->
+        :ok
+    end
+  end
+
+  defp assert_adapter_decl!(plugin_module, decl) do
+    raise ArgumentError,
+          "#{inspect(plugin_module)} declared a malformed adapters/0 entry: " <>
+            "#{inspect(decl)}. Each entry must be " <>
+            "`{adapter_module :: module(), binding_module :: module()}`."
+  end
+
+  # ExternalMirror PR-EM-1 (codex r1 HIGH-1) — all-or-nothing
+  # registration:
+  #
+  # Phase 1: validate every entry (Grill-5 + intra-batch duplicate
+  #          detection). Raises before touching any registry on bad
+  #          input. If two pairs in this plugin's `adapters/0` claim
+  #          the same `adapter_id`, the batch is rejected (single
+  #          source of truth — a plugin can't accidentally fight
+  #          itself across two declarations).
+  #
+  # Phase 2: insert into both registries. Each successful insert is
+  #          tracked so Phase 3 can roll back on failure.
+  #
+  # Phase 3: rollback. On any insert failure, delete every row this
+  #          boot attempt wrote (best-effort — `__delete__/1` is
+  #          idempotent), then re-raise the original error.
+  #
+  # Concurrency note: Phase 2 uses `:ets.insert_new/2` (atomic) in
+  # both registries — a concurrent boot for the SAME `adapter_id`
+  # will be detected and raise (not silently overwrite). This is
+  # the codex r1 HIGH-2 fix.
+  #
+  # Why `apply/3`: `Ezagent.ExternalMirror.{Adapter,Binding}Registry`
+  # live in `ezagent_domain_external_mirror`, downstream of
+  # `ezagent_core`. A direct call would emit "module not available"
+  # warnings at core's compile time.
+  defp publish_adapters!(_plugin_module, []), do: :ok
+
+  defp publish_adapters!(plugin_module, decls) when is_list(decls) do
+    # Phase 1 — validate every entry, including intra-batch duplicates.
+    Enum.each(decls, &assert_adapter_decl!(plugin_module, &1))
+
+    intra_batch_dup_check!(plugin_module, decls)
+
+    # Phase 2 — write atomically; track INSERT-ONLY receipts so the
+    # rollback path (Phase 3) deletes only what THIS boot attempt
+    # wrote, never rows that already existed (codex r2 HIGH-2 fix).
+    #
+    # The receipts list is built imperatively via a ref-backed
+    # process-dictionary key so a `rescue` (which loses the reduce
+    # accumulator) can still read it. Cleared in the `after` block
+    # so a passing boot leaves no residual state.
+    receipts_ref = make_ref()
+    Process.put({:em_pr1_receipts, receipts_ref}, [])
+
+    try do
+      Enum.each(decls, fn {adapter_module, binding_module} ->
+        adapter_id = adapter_module.adapter_id()
+
+        adapter_result =
+          apply(Ezagent.ExternalMirror.AdapterRegistry, :register, [adapter_module])
+
+        record_receipt!(receipts_ref, {:adapter, adapter_id, adapter_module, adapter_result})
+
+        binding_result =
+          apply(Ezagent.ExternalMirror.BindingRegistry, :register_module, [
+            adapter_id,
+            binding_module
+          ])
+
+        record_receipt!(receipts_ref, {:binding, adapter_id, binding_module, binding_result})
+      end)
+
+      :ok
+    rescue
+      e ->
+        # Phase 3 — rollback ONLY the registries this attempt
+        # inserted into (receipts where the registry returned `:ok`,
+        # not `{:ok, :already_present}`). Pre-existing rows survive.
+        rollback_adapters_from_receipts!(Process.get({:em_pr1_receipts, receipts_ref}, []))
+        reraise e, __STACKTRACE__
+    after
+      Process.delete({:em_pr1_receipts, receipts_ref})
+    end
+  end
+
+  defp record_receipt!(ref, receipt) do
+    Process.put({:em_pr1_receipts, ref}, [receipt | Process.get({:em_pr1_receipts, ref}, [])])
+  end
+
+  # Catches the case where a plugin's adapters/0 has TWO entries
+  # claiming the same adapter_id (would also be caught by the
+  # registry's atomic insert_new, but caught here we can fail in
+  # Phase 1 — before any write — so no rollback needed for that
+  # case. Defense in depth.)
+  defp intra_batch_dup_check!(plugin_module, decls) do
+    ids =
+      Enum.map(decls, fn {adapter_module, _binding} ->
+        {adapter_module.adapter_id(), adapter_module}
+      end)
+
+    case ids -- Enum.uniq(ids) do
+      [] ->
+        :ok
+
+      [{dup_id, _} | _] ->
+        raise ArgumentError,
+              "#{inspect(plugin_module)} adapters/0 declares two entries with " <>
+                "the same adapter_id #{inspect(dup_id)}. Each adapter_id must " <>
+                "be unique within a plugin (per SPEC §5.2)."
+    end
+  end
+
+  # codex r2 HIGH-2 — receipts-driven rollback. Only deletes rows
+  # whose receipt was `:ok` (the registry's `:insert_new` returned
+  # true, meaning THIS attempt wrote the row). Skips rows whose
+  # receipt was `{:ok, :already_present}` — those existed before
+  # and aren't ours to delete.
+  #
+  # Belt-and-suspenders: re-verify the registry still holds OUR
+  # module before deleting (a concurrent sibling write would have
+  # rejected via the `insert_new` atomicity, so this is defense in
+  # depth against a hypothetical race we missed).
+  defp rollback_adapters_from_receipts!(receipts) do
+    Enum.each(receipts, fn
+      {:adapter, adapter_id, adapter_module, :ok} ->
+        case apply(Ezagent.ExternalMirror.AdapterRegistry, :lookup, [adapter_id]) do
+          {:ok, ^adapter_module} ->
+            apply(Ezagent.ExternalMirror.AdapterRegistry, :__delete__, [adapter_id])
+
+          _ ->
+            :ok
+        end
+
+      {:binding, adapter_id, binding_module, :ok} ->
+        case apply(Ezagent.ExternalMirror.BindingRegistry, :lookup, [adapter_id]) do
+          {:ok, ^binding_module} ->
+            apply(Ezagent.ExternalMirror.BindingRegistry, :__delete__, [adapter_id])
+
+          _ ->
+            :ok
+        end
+
+      # `{:ok, :already_present}` receipts — leave alone, this
+      # attempt didn't write that row.
+      _ ->
+        :ok
+    end)
+
+    :ok
   end
 
   defp assert_implements!(plugin_module, module, behaviour, source) do
