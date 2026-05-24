@@ -508,7 +508,7 @@ defmodule Ezagent.Kind.Server do
   end
 
   @impl true
-  def terminate(_reason, %{kind: kind_module, uri: uri, state: slice_state}) do
+  def terminate(reason, %{kind: kind_module, uri: uri, state: slice_state} = _state) do
     # Phase 4-completion: :on_terminate strategy writes on graceful
     # shutdown. Use try/rescue so a failing save never prevents the
     # Kind from going down.
@@ -520,12 +520,62 @@ defmodule Ezagent.Kind.Server do
           _ -> :ok
         end
 
-        :ok
-
       _ ->
         :ok
     end
+
+    # PR-EM-2 codex round-1 HIGH-1 fix (2026-05-25): drain
+    # per-Behavior `terminate/3` callbacks so Behaviors with
+    # owned resources (e.g. `Ezagent.Behavior.ExternalMirrorWorker`
+    # whose `binding_module.terminate/2` releases transport state)
+    # actually get a chance to clean up on graceful shutdown.
+    #
+    # Optional callback — `function_exported?/3` probe; Behaviors
+    # without it skip. Each callback gets `(reason, slice, ctx)`
+    # where ctx mirrors `handle_kind_message/3`'s
+    # `%{kind_module:, self_uri:}`. Slice mutations from
+    # terminate/3 are NOT persisted (the process is exiting; any
+    # snapshot already happened above per persistence policy).
+    drain_behavior_terminates(reason, kind_module, uri, slice_state)
+
+    :ok
   end
 
   def terminate(_reason, _state), do: :ok
+
+  # PR-EM-2 codex round-1 HIGH-1 — invoke each Behavior's optional
+  # `terminate/3` callback in `behaviors/0` declaration order.
+  # Crashes inside a Behavior's terminate are isolated (try/rescue)
+  # so one buggy Behavior doesn't prevent siblings from cleaning up.
+  defp drain_behavior_terminates(reason, kind_module, uri, slice_state) do
+    ctx = %{kind_module: kind_module, self_uri: uri}
+
+    Enum.each(kind_module.behaviors(), fn behavior ->
+      if function_exported?(behavior, :terminate, 3) do
+        slice = Map.get(slice_state, behavior.state_slice(), %{})
+
+        try do
+          _ = behavior.terminate(reason, slice, ctx)
+        rescue
+          err ->
+            require Logger
+
+            Logger.warning(
+              "Ezagent.Kind.Server: Behavior #{inspect(behavior)}.terminate/3 " <>
+                "raised on Kind shutdown (#{inspect(err)}). Continuing teardown " <>
+                "of remaining behaviors. URI=#{URI.to_string(uri)}"
+            )
+        catch
+          kind, value ->
+            require Logger
+
+            Logger.warning(
+              "Ezagent.Kind.Server: Behavior #{inspect(behavior)}.terminate/3 " <>
+                "threw #{inspect({kind, value})} on Kind shutdown. Continuing " <>
+                "teardown of remaining behaviors. URI=#{URI.to_string(uri)}"
+            )
+        end
+      end
+    end)
+  end
 end

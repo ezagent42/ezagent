@@ -25,6 +25,24 @@ defmodule Ezagent.Invariants.SingleSpawnEntryTest do
   wrapper. Server is a sidecar (not a Kind), managed by plugin
   Template Classes (np.agent today; other Python-backed flavors
   later). Mirror of the Domain.Pty exemption.
+
+  ## ExternalMirror.WorkerSpawn (added 2026-05-25, PR-EM-2)
+
+  `Ezagent.ExternalMirror.WorkerSpawn.spawn/4` calls
+  `DynamicSupervisor.start_child(RootSupervisor, per_binding_sup_spec)`
+  to start a `PerBindingSupervisor` — NOT a Kind process directly. The
+  PerBindingSupervisor in turn starts the actual `Kind.Server` via its
+  own `Supervisor.init/1` children list, preserving the
+  "Kind.Server lives behind a sup boundary" topology mandated by
+  SPEC `docs/superpowers/specs/2026-05-24-external-mirror-domain.md`
+  §6.3 (r4 HIGH-2 two-tier fix).
+
+  This file (`worker_spawn.ex`) is the spawn-side bridge that the new
+  `Kind.spawn_strategy/0` callback on `Ezagent.Entity.ExternalMirrorWorker`
+  routes through. `Kind.spawn(ExternalMirrorWorker, params)` still
+  exists as the SOLE Kind-spawn entry — it just delegates the
+  child-spec shape to this Domain helper because the two-tier
+  topology is Domain-specific and doesn't belong in core.
   """
   use ExUnit.Case, async: true
 
@@ -89,6 +107,7 @@ defmodule Ezagent.Invariants.SingleSpawnEntryTest do
     case String.split(line, ":", parts: 3) do
       [_path, _lineno, body] ->
         trimmed = String.trim_leading(body)
+
         cond do
           String.starts_with?(trimmed, "#") -> true
           prose_reference?(body) -> true
@@ -141,7 +160,16 @@ defmodule Ezagent.Invariants.SingleSpawnEntryTest do
       # safe + intentional fix (the server has exactly one start_link
       # callsite, no real DynamicSupervisor.start_child call).
       "apps/ezagent_domain_python/lib/ezagent/domain/python.ex",
-      "apps/ezagent_domain_python/lib/ezagent/domain/python/server.ex"
+      "apps/ezagent_domain_python/lib/ezagent/domain/python/server.ex",
+      # Ezagent.ExternalMirror.WorkerSpawn (2026-05-25, PR-EM-2 / SPEC
+      # `docs/superpowers/specs/2026-05-24-external-mirror-domain.md`
+      # §6.3) — Kind.spawn(ExternalMirrorWorker, _) delegates here via
+      # the new `spawn_strategy/0` callback. The `start_child` call
+      # below spawns a `PerBindingSupervisor` (NOT a Kind directly);
+      # the PerBindingSupervisor's init/1 starts the Kind.Server child
+      # through `Supervisor.init/1` (not start_child). Two-tier
+      # topology preserved.
+      "apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/worker_spawn.ex"
     ]
   end
 end
