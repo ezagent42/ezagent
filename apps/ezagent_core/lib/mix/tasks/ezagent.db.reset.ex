@@ -2,6 +2,13 @@ defmodule Mix.Tasks.Ezagent.Db.Reset do
   @shortdoc "Wipe + recreate the local Ezagent SQLite DB (no prompts)"
 
   @moduledoc """
+  > **CLI/GUI parity audit 2026-05-24 — Category A (DB maintenance).**
+  > Intentionally NOT a dispatched op. Wipes + rebuilds the DB the
+  > runtime needs to even start. Stays as `mix ezagent.*`; do NOT
+  > migrate to `mix esr`. See
+  > `docs/notes/2026-05-24-cli-gui-parity-audit.md` Section 1
+  > (Bootstrap row) + Finding 2 carve-out.
+
   PR #141 SPEC v2 §5.11 — "no backward compatibility, clean rebuild".
 
   Existing DB data is wiped and the schema rebuilt from scratch via

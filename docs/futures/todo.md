@@ -32,6 +32,60 @@ open after HIGH-1 (admin fallback hole) closed in PR #298:
   example: `mix ezagent.routing.add_rule`. Approach: write a
   migration template, hold an invariant test that `mix esr` is the
   ONLY task allowed to call domain modules outside of bootstrap.
+
+  **Sweep progress (this PR — triage commit on
+  `cli-sweep/deprecate-bypass-tasks`):**
+
+  - ✅ `routing.add_rule` — already deprecated in PR #302 (Behavior
+    `Ezagent.Behavior.Routing` exists; `mix esr routing add_rule`
+    dispatches against `system://routing/default`).
+  - ⏳ **deferred to follow-up PRs** — each below needs a real
+    `Behavior` action reached via `Ezagent.Invocation.dispatch/1`
+    (NOT a bare FacadeRegistry op) BEFORE its legacy task can be
+    deprecated. **Codex PR #304 pre-merge review HIGH finding:** a
+    FacadeRegistry op that calls a domain function directly
+    reproduces the exact bypass HIGH-2 is supposed to retire —
+    `EzagentCli.Dispatch.run_facade/3` invokes `fun.(parsed)` with
+    no Invocation, no caller/caps, no audit. Each row below MUST
+    land its corresponding Behavior action + cap subject FIRST;
+    `mix esr` will then auto-derive the CLI from the Behavior's
+    `interface/0`. Wiring a FacadeRegistry shortcut "to ship it
+    faster" is the wrong fix — it would close HIGH-2 by closing
+    the wrong problem.
+
+    | Legacy task | Proposed `mix esr` | Behavior + action to add FIRST |
+    |---|---|---|
+    | `mix ezagent.user.create` | `mix esr user create --uri … --password … --caps …` | `Ezagent.Entity.User` Behavior action `:create` + cap subject; existing `Ezagent.Users.create/3` becomes its `invoke/4` body |
+    | `mix ezagent.user.set_password` | `mix esr user set_password --uri … --password …` | `Ezagent.Entity.User` `:set_password` action + cap (`:user, :set_password, …`); body wraps existing `Ezagent.Users.set_password/2` |
+    | `mix ezagent.agent.create` | `mix esr agent create --uri … --caps …` | `Ezagent.Entity.Agent` `:create` action + cap; body matches LV path (audit Finding 4) — `add_template + invoke_template_now` |
+    | `mix ezagent.user.token mint` | `mix esr user token mint --for … --label …` | `Ezagent.Entity.User` `:mint_token` action + cap. **Codex PR #304 MED carve-out:** `user.token` is NOT pure bootstrap (also lists + revokes for arbitrary users); only the FIRST-admin-bootstrap mint stays in the legacy task |
+    | `mix ezagent.user.token list` | `mix esr user token list` | `Ezagent.Entity.User` `:list_tokens` action + cap |
+    | `mix ezagent.user.token revoke` | `mix esr user token revoke --token-id …` | `Ezagent.Entity.User` `:revoke_token` action + cap |
+    | `mix ezagent.feishu.bind` | `mix esr feishu bind --open-id … --user-uri … [--admin …]` | new `EzagentPluginFeishu.Behavior.UserBinding` on `Workspace` Kind with `:bind` action + cap; body uses `UserBinding.bind/3 + BindingPolicy.apply/2` |
+    | `mix ezagent.feishu.unbind` | `mix esr feishu unbind --open-id …` | same Behavior, `:unbind` action |
+    | `mix ezagent.feishu.list` | `mix esr feishu list` | same Behavior, `:list` (read-only cap subject) |
+    | `mix ezagent.feishu.chat.bind` | `mix esr feishu chat_bind --chat-id … --session-uri …` | new `EzagentPluginFeishu.Behavior.SessionBinding` on `Session` Kind with `:bind` action + cap |
+    | `mix ezagent.feishu.chat.unbind` | `mix esr feishu chat_unbind --chat-id …` | same Behavior, `:unbind` action |
+
+    Rule of thumb for the implementer: if you're about to add a
+    `FacadeRegistry.register/3` for one of these without a matching
+    `Behavior` + cap subject + `Ezagent.Invocation.dispatch/1` call
+    path, STOP — you're recreating HIGH-2.
+
+  - ✅ **CLI-only by design (will NOT be migrated, audit-confirmed
+    carve-outs):** `bootstrap`, `check_invariants`, `db.reset`,
+    `home.adopt_db`, `home.init`, `plugin.install`, `snapshot.list`,
+    `snapshot.dump`, `stress`, `user.token` (**bootstrap mint ONLY**
+    — `list` + `revoke` move to deferred table above per codex MED
+    finding; the legacy task keeps a narrow first-admin mint mode),
+    `auth.magic_link` (operator-debug mirror of HTTP path),
+    `demo.seed_cc_agent` / `demo.seed_cc_sandbox` (demo seeders,
+    not operator ops). Each file now carries a "Category A" audit
+    comment in its moduledoc.
+  - ⚠️ **partial-dispatch carve-out:** `snapshot.clear` — destructive
+    DB op that audit Finding 5 flags as "should arguably be a
+    Behavior so caps gate it". Tracked separately; the wider
+    `system://snapshots` Kind needs designing first.
 - **HIGH-3** (~12 LV handle_events have no CLI equivalent): need
   facade-ops for `create_session`, `add_member`, `promote_to_system`,
   `grant_cap`, `revoke_cap`, `save_smtp`, `save_registration_domains`

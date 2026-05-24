@@ -1,6 +1,16 @@
 defmodule Mix.Tasks.Ezagent.Auth.MagicLink do
   @shortdoc "Operator debug — request a magic-link for <email>, print the result"
   @moduledoc """
+  > **CLI/GUI parity audit 2026-05-24 — Category A (CLI-only by design).**
+  > Intentionally NOT a dispatched op. Operator-debug mirror of the
+  > public `/login` HTTP path that intentionally DROPS anti-enumeration
+  > so the operator can diagnose silent-drop reasons (SMTP / rate /
+  > whitelist). The HTTP surface stays anti-enumeration-uniform; this
+  > CLI is the diagnostic counterpart. Stays as `mix ezagent.*`; do NOT
+  > migrate to `mix esr`. See
+  > `docs/notes/2026-05-24-cli-gui-parity-audit.md` Section 1 (Settings
+  > row "send_test_email" + Auth row "magic-link request").
+
   Operator/debug CLI for the magic-link flow. Mirrors the exact same
   decision logic as `EzagentWeb.SessionController.maybe_send_magic_link/2`
   BUT does NOT honor anti-enumeration: stdout prints exactly what

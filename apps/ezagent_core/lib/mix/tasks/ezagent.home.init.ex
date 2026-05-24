@@ -1,6 +1,13 @@
 defmodule Mix.Tasks.Ezagent.Home.Init do
   @shortdoc "Create the EZAGENT_HOME profile skeleton (credentials/db/snapshots/logs/plugins)"
   @moduledoc """
+  > **CLI/GUI parity audit 2026-05-24 — Category A (bootstrap).**
+  > Intentionally NOT a dispatched op. Creates the filesystem
+  > skeleton the runtime BEAM needs to even start. Stays as
+  > `mix ezagent.*`; do NOT migrate to `mix esr`. See
+  > `docs/notes/2026-05-24-cli-gui-parity-audit.md` Section 1
+  > (Bootstrap row) + Finding 2 carve-out.
+
   Phase 5 PR 1: bootstrap `$EZAGENT_HOME/$EZAGENT_PROFILE/` per `docs/phase-specs/phase5/EZAGENT_HOME.md`.
 
   Idempotent — safe to re-run; only creates missing pieces.

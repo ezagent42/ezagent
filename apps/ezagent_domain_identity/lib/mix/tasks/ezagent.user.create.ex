@@ -1,6 +1,28 @@
 defmodule Mix.Tasks.Ezagent.User.Create do
   @shortdoc "Create a new ESR User with password + caps"
   @moduledoc """
+  > **CLI/GUI parity audit 2026-05-24 — Category C (deferred).**
+  > Bypasses dispatch: calls `Ezagent.Users.create/3` directly, so no
+  > CapBAC, no audit row, no cross-workspace check. The `mix esr user
+  > create` equivalent does NOT exist yet — deleting this task today
+  > would lose operator capability. Tracked in
+  > `docs/futures/todo.md` § "CLI ↔ GUI parity (audit findings #137
+  > still partial)".
+  >
+  > TODO (per codex PR #304 round-3 fix): add the
+  > `Ezagent.Entity.User` Behavior `:create` action + cap subject;
+  > `mix esr` will auto-derive `mix esr user create --uri … --password
+  > … --caps …` from the Behavior's `interface/0` via the standard
+  > `Ezagent.Invocation.dispatch/1` pipeline. Then deprecate this
+  > task using the PR #302 stub pattern.
+  >
+  > **DO NOT** add a `FacadeRegistry` op for this — codex PR #304
+  > round-2 HIGH established that `EzagentCli.FacadeRegistry` +
+  > `Dispatch.run_facade/3` skips Invocation/caller/caps/audit, so
+  > using it as the wire-through would close HIGH-2 by reproducing
+  > the bypass. See `docs/futures/todo.md` HIGH-2 deferred table for
+  > the canonical wire-through pattern.
+
   Phase 4-completion Spec 05 §A.2.1 — provision a non-admin User.
 
   ## Usage

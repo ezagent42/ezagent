@@ -1,6 +1,18 @@
 defmodule Mix.Tasks.Ezagent.User.SetPassword do
   @shortdoc "Set or rotate an ESR User's password"
   @moduledoc """
+  > **CLI/GUI parity audit 2026-05-24 — Category C (deferred).**
+  > Bypasses dispatch: calls `Ezagent.Users.set_password/2` directly,
+  > so no CapBAC, no audit row, no cross-workspace check. The `mix esr
+  > user set_password` equivalent does NOT exist yet — deleting this
+  > task today would lose operator capability (including admin's
+  > first-password bootstrap). Tracked in
+  > `docs/futures/todo.md` § "CLI ↔ GUI parity (audit findings #137
+  > still partial)". TODO: add the matching Behavior action + cap subject (NOT a bare FacadeRegistry op — codex PR #304 round-2 HIGH: that path bypasses Invocation.dispatch + caps + audit). mix esr auto-derives the CLI from interface/0. See the deferred-table guidance in docs/futures/todo.md HIGH-2
+  > `(:user, :set_password)` so `mix esr user set_password --uri …
+  > --password …` becomes available, then deprecate this task using
+  > the PR #302 stub pattern.
+
   Phase 4-completion Spec 05 §A.2.5 — set admin's first password
   (migration seeds admin with empty hash; this task is the path to
   enable admin login) or rotate any user's password.

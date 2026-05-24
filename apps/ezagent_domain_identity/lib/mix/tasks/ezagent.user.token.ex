@@ -1,6 +1,34 @@
 defmodule Mix.Tasks.Ezagent.User.Token do
   @shortdoc "Mint or revoke bearer tokens for an entity (user or agent)"
   @moduledoc """
+  > **CLI/GUI parity audit 2026-05-24 — SPLIT classification
+  > (codex PR #304 round-2 MED).**
+  >
+  > Only `--mint` of the FIRST-admin-bootstrap token genuinely needs
+  > to stay outside dispatch (chicken-and-egg: that token IS what
+  > `mix esr` uses to authenticate). Round-1 classified the WHOLE
+  > task as Category A; codex round-2 correctly observed that the
+  > task ALSO mints tokens for arbitrary users, lists them, and
+  > revokes them — all auth-boundary operations that have no
+  > bootstrap excuse for skipping CapBAC + audit.
+  >
+  > **Bootstrap mode (`--mint` of the very first admin user when
+  >  no operator token exists):** Category A — STAYS here.
+  >
+  > **All other modes (`--mint` for arbitrary entities, `--list`,
+  >  `--revoke`):** Category C — DEFERRED to `mix esr user token
+  > mint|list|revoke` (each backed by a real `Ezagent.Entity.User`
+  > Behavior action + cap subject; `mix esr` auto-derives the CLI
+  > from `interface/0`). NOT a bare FacadeRegistry op — that path
+  > bypasses dispatch + caps + audit. See `docs/futures/todo.md`
+  > § "CLI ↔ GUI parity" deferred table for the per-mode rows.
+  >
+  > Until the deferred Behavior actions land, the non-bootstrap
+  > modes here are TRACKED BYPASS DEBT, not Category A. The
+  > invariant-test pattern an implementer will need: keep
+  > Category A allowlists narrow enough that token admin
+  > operations cannot be silently exempted.
+
   Manage bearer tokens via the `entity_tokens` table (PR #142 SPEC v2
   §5.12).
 

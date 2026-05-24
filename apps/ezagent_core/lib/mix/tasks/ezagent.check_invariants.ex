@@ -2,6 +2,13 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants do
   @shortdoc "Check ESR's 8 hard invariants — Phase 1 step-3 active"
 
   @moduledoc """
+  > **CLI/GUI parity audit 2026-05-24 — Category A (dev-loop tool).**
+  > Intentionally NOT a dispatched op. Source-tree grep that runs
+  > without the runtime BEAM. Stays as `mix ezagent.*`; do NOT
+  > migrate to `mix esr`. See
+  > `docs/notes/2026-05-24-cli-gui-parity-audit.md` Section 1
+  > (Bootstrap row) + Finding 2 carve-out.
+
   Greps the codebase for violations of ESR's 8 hard invariants
   (ARCHITECTURE.md Decision Log / GLOSSARY.md / VERIFICATION.md
   §不变式 grep 完整命令清单).

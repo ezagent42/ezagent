@@ -1,6 +1,13 @@
 defmodule Mix.Tasks.Ezagent.Snapshot.Dump do
   @shortdoc "Decode + print a Kind snapshot for inspection"
   @moduledoc """
+  > **CLI/GUI parity audit 2026-05-24 — Category A (read-only inspect).**
+  > Intentionally NOT a dispatched op. Read-only inspection of stored
+  > snapshot rows (debug tool). Stays as `mix ezagent.*`; do NOT
+  > migrate to `mix esr`. See
+  > `docs/notes/2026-05-24-cli-gui-parity-audit.md` Section 1
+  > (Snapshots row).
+
   Phase 5 PR 3:
 
       mix ezagent.snapshot.dump <uri>
