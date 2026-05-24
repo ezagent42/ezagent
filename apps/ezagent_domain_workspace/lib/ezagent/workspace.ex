@@ -84,6 +84,20 @@ defmodule Ezagent.Workspace do
 
         with {:ok, _} <- Store.update_members(name, new_members),
              :ok <- dispatch_mutation(name, "add_member", %{member: member_uri}) do
+          # Notifier/flash audit 2026-05-24 — surface to the affected
+          # user's notification stream. Pre-fix only `Chat.receive`
+          # called notify/3; cap/membership actions were silent.
+          # Skip for agent members (Notifications is user-only by
+          # design — agents don't have inboxes).
+          if user_uri?(member_uri) do
+            _ =
+              Ezagent.Notifications.notify(member_uri, %{
+                kind: :workspace_member_added,
+                text: "You were added to workspace #{name}.",
+                workspace_name: name
+              })
+          end
+
           :ok
         end
     end
@@ -100,6 +114,13 @@ defmodule Ezagent.Workspace do
 
         with {:ok, _} <- Store.update_members(name, new_members),
              :ok <- dispatch_mutation(name, "remove_member", %{member: member_uri}) do
+          _ =
+            Ezagent.Notifications.notify(member_uri, %{
+              kind: :workspace_member_removed,
+              text: "You were removed from workspace #{name}.",
+              workspace_name: name
+            })
+
           :ok
         end
     end
@@ -326,4 +347,11 @@ defmodule Ezagent.Workspace do
 
   @doc "Delete a magic-link rule by id. See `MagicLinkRule.delete/1`."
   defdelegate delete_magic_link_rule(id), to: MagicLinkRule, as: :delete
+
+  # Notifier/flash audit 2026-05-24 — `Ezagent.Notifications.notify/3`
+  # only accepts `entity://user/...` URIs (agents don't have inboxes
+  # by design). Use this guard at notify call sites where a member
+  # URI may be either user or agent.
+  defp user_uri?(%URI{scheme: "entity", host: "user"}), do: true
+  defp user_uri?(_), do: false
 end

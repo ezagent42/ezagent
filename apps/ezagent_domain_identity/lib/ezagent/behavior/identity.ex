@@ -82,14 +82,35 @@ defmodule Ezagent.Behavior.Identity do
   # gate at dispatch step 5.5 enforces that only callers with admin
   # caps can grant — so the action itself stays unconditional and
   # trusts the dispatch-level check.
-  def invoke(:grant_cap, slice, %{cap: cap}, _ctx) do
+  def invoke(:grant_cap, slice, %{cap: cap}, ctx) do
     new_slice = %{slice | caps: MapSet.put(slice.caps, cap)}
+    notify_cap_change(ctx, :cap_granted, "A new capability was granted to you.", cap)
     {:ok, new_slice, %{caps: MapSet.to_list(new_slice.caps)}}
   end
 
-  def invoke(:revoke_cap, slice, %{cap: cap}, _ctx) do
+  def invoke(:revoke_cap, slice, %{cap: cap}, ctx) do
     new_slice = %{slice | caps: MapSet.delete(slice.caps, cap)}
+    notify_cap_change(ctx, :cap_revoked, "A capability was revoked from you.", cap)
     {:ok, new_slice, %{caps: MapSet.to_list(new_slice.caps)}}
+  end
+
+  # Notifier/flash audit 2026-05-24 — surface cap changes to the
+  # affected user. The :self_uri ctx field is the URI whose Identity
+  # slice we're mutating (i.e. the target principal). User-only —
+  # agents don't have an inbox.
+  defp notify_cap_change(ctx, kind, text, cap) do
+    target_uri = Map.get(ctx, :self_uri)
+
+    if match?(%URI{scheme: "entity", host: "user"}, target_uri) do
+      _ =
+        Ezagent.Notifications.notify(target_uri, %{
+          kind: kind,
+          text: text,
+          cap_summary: inspect(cap)
+        })
+    end
+
+    :ok
   end
 
   @impl Ezagent.Behavior
