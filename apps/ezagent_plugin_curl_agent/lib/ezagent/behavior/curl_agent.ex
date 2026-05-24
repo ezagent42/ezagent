@@ -297,4 +297,15 @@ defmodule Ezagent.Behavior.CurlAgent do
   defp format_error({:transport, reason}), do: "transport: #{inspect(reason)}"
   defp format_error({:decode, _}), do: "could not decode response"
   defp format_error(other), do: inspect(other)
+
+  # PR-OWN-4 (caps-data-ownership SPEC #306 §6): admin-only
+  # Behavior — no per-entity owner; only bootstrap admin grants
+  # via §5.2 admin branch. Test/demo Behaviors + system control
+  # surfaces fall here pending dedicated SPEC for any specific
+  # owner model they need (e.g. FeishuOutbound: future PR could
+  # delegate to session owner like Chat does, but the current
+  # outbound path is admin-gated).
+  @impl Ezagent.Behavior
+  def data_owner(_), do: :no_owner
+
 end

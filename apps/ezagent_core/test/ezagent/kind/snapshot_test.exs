@@ -15,9 +15,19 @@ defmodule Ezagent.Kind.SnapshotTest do
   test "load_or_init for :on_change Kind without prior snapshot init_fresh" do
     uri = URI.parse("entity://user/default/snap-noprior-#{System.unique_integer([:positive])}")
     state = Snapshot.load_or_init(uri, Ezagent.Entity.User, %{uri: uri})
-    # PR #126 added ApiKeys behavior to User → :api_keys slice coexists
-    # with :identity. Both default to empty.
-    assert state == %{identity: %{caps: MapSet.new()}, api_keys: %{keys: %{}}}
+
+    # PR #126 added ApiKeys behavior to User → :api_keys slice
+    # coexists with :identity. ApiKeys default empty.
+    #
+    # PR-OWN-3 (caps-data-ownership-v2 SPEC #306) added self-Identity
+    # cap provisioning at init — the entity gets a `Behavior.Identity`
+    # cap on its own URI so dispatch-path list_caps/has_cap? authorize.
+    assert %{api_keys: %{keys: %{}}, identity: %{caps: caps}} = state
+
+    assert MapSet.size(caps) == 1
+    [self_cap] = MapSet.to_list(caps)
+    assert self_cap.behavior == Ezagent.Behavior.Identity
+    assert self_cap.instance == uri
   end
 
   test "maybe_save no-op for :ephemeral" do

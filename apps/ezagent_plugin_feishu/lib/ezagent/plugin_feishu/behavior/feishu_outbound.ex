@@ -297,4 +297,15 @@ defmodule EzagentPluginFeishu.Behavior.FeishuOutbound do
   defp maybe_uri(%URI{} = u), do: URI.to_string(u)
   defp maybe_uri(s) when is_binary(s), do: s
   defp maybe_uri(other), do: inspect(other)
+
+  # PR-OWN-4 (caps-data-ownership SPEC #306 §6): admin-only
+  # Behavior — no per-entity owner; only bootstrap admin grants
+  # via §5.2 admin branch. Test/demo Behaviors + system control
+  # surfaces fall here pending dedicated SPEC for any specific
+  # owner model they need (e.g. FeishuOutbound: future PR could
+  # delegate to session owner like Chat does, but the current
+  # outbound path is admin-gated).
+  @impl Ezagent.Behavior
+  def data_owner(_), do: :no_owner
+
 end

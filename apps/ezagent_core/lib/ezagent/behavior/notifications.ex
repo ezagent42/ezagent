@@ -47,4 +47,12 @@ defmodule Ezagent.Behavior.Notifications do
 
   @impl Ezagent.Behavior
   def interface, do: %{}
+
+  # PR-OWN-4 (caps-data-ownership SPEC #306 §6): per-entity Behavior
+  # — the entity (user / agent) owns its own state for this Behavior.
+  @impl Ezagent.Behavior
+  def data_owner(%URI{} = entity_uri), do: Ezagent.URI.instance(entity_uri)
+  def data_owner(:any), do: :any
+  def data_owner(_), do: :no_owner
+
 end

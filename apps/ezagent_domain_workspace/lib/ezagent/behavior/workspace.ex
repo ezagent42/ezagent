@@ -215,4 +215,11 @@ defmodule Ezagent.Behavior.Workspace do
       }
     }
   end
+
+  # PR-OWN-4 (caps-data-ownership SPEC #306 §6): workspace-scoped
+  # Behavior — workspace admin grants. `:any` return signals
+  # "class-wide cap, grantable by workspace admin via §5.2 admin branch".
+  @impl Ezagent.Behavior
+  def data_owner(_), do: :any
+
 end
