@@ -62,15 +62,15 @@ defmodule Ezagent.Registration do
   end
 
   @doc """
-  True if `email`'s domain is in the configured `registration_domains`.
+  True if `email`'s domain is in the legacy `registration_domains`
+  AppSetting.
 
-  **SPEC 2026-05-24 v2 PR-A (Allen) — DEPRECATED**. The flat global
-  `registration_domains` AppSetting is being replaced by per-workspace
-  `magic_link_rule` rows (`Ezagent.Workspace.MagicLinkRule`). PR-A
-  introduces the new path via `email_allowed?/1` below; the old path
-  remains during transition and is consulted as a fallback for
-  pre-existing deployments. PR-B removes the AppSetting consultation
-  entirely after the registration flow is rewritten.
+  **SPEC v2 PR-C (Allen 2026-05-24) — REMOVED from production path.**
+  `Registration.email_allowed?/1` no longer consults this; the
+  workspace's `magic_link_rule` rows are the sole gate. This function
+  remains exported ONLY for tests / observability tools that want to
+  inspect the legacy setting in a transitional environment. New code
+  must call `email_allowed?/1`.
   """
   @spec domain_allowed?(String.t()) :: boolean()
   def domain_allowed?(email) when is_binary(email) do
@@ -85,38 +85,26 @@ defmodule Ezagent.Registration do
   def domain_allowed?(_), do: false
 
   @doc """
-  SPEC 2026-05-24 v2 PR-A (Allen) — the NEW send-side gate.
+  SPEC v2 PR-C (Allen 2026-05-24) — the SOLE send-side gate.
 
-  `email_allowed?/1` returns true iff EITHER:
-  1. Some workspace's `magic_link_rule` accepts the email (the new
-     per-workspace gate), OR
-  2. The legacy `registration_domains` AppSetting still includes the
-     email's domain (back-compat — DB wipe means this is empty in
-     practice, but the fallback keeps the test fixtures green during
-     the PR-B transition).
-
-  Once PR-B lands and removes the AppSetting path, this function
-  collapses to `Ezagent.Workspace.any_workspace_accepts?/1`.
+  Returns true iff some workspace's `magic_link_rule` accepts the
+  email. PR-A introduced this path; PR-C removes the back-compat
+  `registration_domains` AppSetting fallback that v1/v2-transition
+  required.
   """
   @spec email_allowed?(String.t()) :: boolean()
   def email_allowed?(email) when is_binary(email) do
-    # `Ezagent.Workspace` lives in `ezagent_domain_workspace` which
-    # is NOT a hard dep of `ezagent_domain_identity` (circular —
-    # workspace depends on identity for cap defaults). Lazy lookup
-    # via `Code.ensure_loaded?` keeps the boundary one-way at
-    # compile time; at runtime both apps are always co-resident.
-    # `apply/3` bypasses compile-time module dispatch — the workspace
-    # module is loaded at runtime in dev/prod (umbrella co-resident)
-    # but identity's compile-time dep graph stays clean.
-    workspace_accept? =
-      if Code.ensure_loaded?(Ezagent.Workspace) and
-           function_exported?(Ezagent.Workspace, :any_workspace_accepts?, 1) do
-        apply(Ezagent.Workspace, :any_workspace_accepts?, [email])
-      else
-        false
-      end
-
-    workspace_accept? or domain_allowed?(email)
+    # `Ezagent.Workspace` lives in `ezagent_domain_workspace` which is
+    # NOT a hard dep of `ezagent_domain_identity` (circular —
+    # workspace depends on identity for cap defaults). `apply/3`
+    # bypasses compile-time module dispatch; both apps are runtime
+    # co-resident in dev/prod.
+    if Code.ensure_loaded?(Ezagent.Workspace) and
+         function_exported?(Ezagent.Workspace, :any_workspace_accepts?, 1) do
+      apply(Ezagent.Workspace, :any_workspace_accepts?, [email])
+    else
+      false
+    end
   end
 
   def email_allowed?(_), do: false
