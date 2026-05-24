@@ -58,8 +58,14 @@ defmodule Ezagent.Entity.Agent do
   # initial_caps is empty (Agent has no authority to initiate; chat
   # receive only). Operators can grant caps via Identity invoke if
   # they want to elevate a specific Agent.
+  #
+  # PR2 2026-05-24 (Allen): Sandbox Behavior added — per-agent
+  # config_dir_path + Kind.Template plugin extension callbacks. Empty
+  # by default (no FS dir until a Template Class's `create_config_dir/2`
+  # is called at spawn).
   @impl Ezagent.Kind
-  def behaviors, do: [Ezagent.Behavior.Chat, Ezagent.Behavior.Identity]
+  def behaviors,
+    do: [Ezagent.Behavior.Chat, Ezagent.Behavior.Identity, Ezagent.Behavior.Sandbox]
 
   # Phase 4-completion Spec 04: `:on_terminate` so granted Identity
   # caps survive graceful shutdown. Abrupt crash still loses them

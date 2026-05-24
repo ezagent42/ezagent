@@ -7,8 +7,14 @@ defmodule Ezagent.Entity.AgentTest do
       assert Agent.type_name() == :agent
     end
 
-    test "behaviors/0 returns [Ezagent.Behavior.Chat, Ezagent.Behavior.Identity]" do
-      assert Agent.behaviors() == [Ezagent.Behavior.Chat, Ezagent.Behavior.Identity]
+    test "behaviors/0 returns [Chat, Identity, Sandbox] (PR2 2026-05-24: Sandbox added)" do
+      # PR2 2026-05-24 (Allen): Sandbox Behavior added — per-agent
+      # config_dir_path + Kind.Template plugin extension callbacks.
+      assert Agent.behaviors() == [
+               Ezagent.Behavior.Chat,
+               Ezagent.Behavior.Identity,
+               Ezagent.Behavior.Sandbox
+             ]
     end
 
     test "persistence/0 is :on_terminate (Phase 4-completion Spec 04 §2.I)" do
