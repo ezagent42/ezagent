@@ -429,7 +429,7 @@ r4 reconciliation runs at TWO trigger points:
 Idempotency rules:
 - `Kind.spawn/2` is idempotent: existing → return `{:ok, existing_pid}`; new → spawn under appropriate supervisor.
 - The Worker's `handle_continue(:subscribe_and_init, ...)` is idempotent: if already subscribed to Publisher, no-op (Publisher's `subscribe_from` short-circuits on duplicate pid+publisher pairs — implementation detail of PR-EM-0).
-- The PerBindingSupervisor under RootSupervisor is started with id `{:binding_sup, binding_id}` so duplicate `DynamicSupervisor.start_child` attempts return `{:error, {:already_started, pid}}` which the reconciler treats as success.
+- **Idempotency** (r5 codex round-4 HIGH-3 fix): `DynamicSupervisor` does NOT enforce uniqueness via child id; the child spec id is opaque to the supervisor's start logic. The PerBindingSupervisor's child spec uses a `Registry`-backed Via name: `name: {:via, Registry, {Ezagent.ExternalMirror.WorkerRegistry, binding_uri}}` where `WorkerRegistry` is a `:unique` `Registry` started at app boot. Duplicate `start_child/2` attempts hit the Registry-enforced name collision → return `{:error, {:already_started, pid}}` which the reconciler (§3.1) treats as success. `binding_uri` is the full Worker Kind URI `entity://worker/<ws>/em_<hash>` so cross-workspace bindings cannot collide.
 
 Acceptance test in PR-EM-3 (e): bind a Feishu mirror → trigger a chat → assert mirror received; kill the Session Kind process → wait for restart → trigger another chat → assert mirror received WITHOUT manually re-binding. This is the test that fails if reconciliation isn't wired.
 
@@ -942,6 +942,49 @@ On `{:publisher_event, %Event{}}` in `handle_info`, the worker self-dispatches `
 
 Eight PRs. Each independently shippable; tests pass between.
 
+### PR-EM-CORE — `Ezagent.Kind.Server` post-init continuation hook (prerequisite)
+
+**Owner:** `apps/ezagent_core/` — touches core runtime, NOT external_mirror.
+
+Codex round-4 HIGH-1 fix: r4's split-init pattern (Worker
+`init_slice/1` returns slice; `handle_continue(:subscribe_and_init, ...)`
+does the side-effecting subscribe + binding init) requires
+`Ezagent.Kind.Server` to expose a post-init continuation point.
+Current `Server.init/1` only returns `{:continue, :announce_ready}`;
+Behaviors have no way to plug in.
+
+**Changes:**
+
+- Extend `Ezagent.Behavior` with new OPTIONAL callback:
+  `@callback post_init(args :: map(), slice :: map()) :: :ok | {:continue, term()}`
+  — returns either `:ok` (no post-init work) or a term that Server
+  routes through its own `handle_continue/2`.
+- Extend `Ezagent.Kind.Server.init/1` + `handle_continue/2` to chain:
+  `{:continue, :announce_ready}` → first; then if ANY Behavior on
+  this Kind returned `{:continue, term}` from `post_init`, queue
+  those continuations in order via successive `{:noreply, state, {:continue, term}}`.
+- Per-Behavior `handle_continue(term, slice, ctx)` callback (also optional)
+  receives the continuation term + writes back the slice via the
+  standard `Kind.Server` post-update path.
+
+**Acceptance:**
+- Add test-only `OwnedBehavior.PostInit` that returns
+  `{:continue, :setup_thing}` from `post_init/2` and writes a
+  flag in `handle_continue/3`. Assert that after Kind spawn, the
+  Server's `announce_ready` AND the Behavior's post-init both ran,
+  with announce_ready first (boot order invariant).
+- Backwards-compat test: existing Behaviors without
+  `post_init/2` declared spawn unchanged (no continuation noise).
+- `mix compile --warnings-as-errors` clean.
+
+**Why prerequisite to ExternalMirror PR-EM-2:** the Worker Kind
+needs to defer SliceChange subscribe + binding.init until after
+`announce_ready` (so dispatch is ready by the time the binding
+starts publishing back). Without this extension, the split-init
+pattern in §6.1 + §3 fails compile.
+
+**LOC est:** ~150 (core extension + Behavior callback + 3 tests).
+
 ### PR-EM-0 — Publisher behaviour + Session Kind implementation + retention policy
 
 **Owner:** `apps/ezagent_domain_chat/`.
@@ -975,7 +1018,7 @@ Eight PRs. Each independently shippable; tests pass between.
 
 **LOC est:** ~200.
 
-### PR-EM-2 — Adapter + Binding behaviours + Worker Kind + Worker Behavior
+### PR-EM-2 — Adapter + Binding behaviours + Worker Kind + Worker Behavior + two-tier supervision
 
 **Owner:** `apps/ezagent_domain_external_mirror/`.
 
@@ -983,13 +1026,21 @@ Eight PRs. Each independently shippable; tests pass between.
 - Define `Ezagent.ExternalMirror.Binding` behaviour (per §2.3 / §6).
 - Define `Ezagent.Entity.ExternalMirrorWorker` Kind (per §7.2 — URI shape `entity://worker/<ws>/em_<hash>`).
 - Define `Ezagent.Behavior.ExternalMirrorWorker` Behavior with `:publish` action (per §4.3 / §6.1).
-- Start `Ezagent.ExternalMirror.WorkerSupervisor` (DynamicSupervisor, `one_for_one`, `max_restarts: 3, max_seconds: 30`).
+- Two-tier supervision per §5.3 + §6.3 (r5 codex round-4 HIGH-2 + HIGH-3 fix — DO NOT regress to a single `WorkerSupervisor`):
+  - Start `Ezagent.ExternalMirror.RootSupervisor` (`DynamicSupervisor`, `:one_for_one`, `max_restarts: 100, max_seconds: 60`). Children = per-binding supervisors.
+  - Implement `Ezagent.ExternalMirror.PerBindingSupervisor` (`Supervisor`, `:one_for_one`, `max_restarts: 3, max_seconds: 30`). Owns ONE Worker child per binding.
+  - Worker child is `:permanent`; PerBindingSupervisor under RootSupervisor is `:transient`.
+- **Idempotency mechanism (r5 codex round-4 HIGH-3 fix):** `DynamicSupervisor` does NOT use child id for uniqueness — duplicate `start_child/2` would silently spawn a second PerBindingSupervisor + Worker. Use a `Registry` (stdlib) named `Ezagent.ExternalMirror.WorkerRegistry` (`:unique`, `keys: :unique`); the PerBindingSupervisor's child spec uses `{:via, Registry, {WorkerRegistry, binding_uri}}` as its `:name`. Concurrent `start_child` for the same `binding_uri` → second call returns `{:error, {:already_started, pid}}` (Registry-enforced); reconciler treats that as success. The §3 / §3.1 reconciliation guarantees rely on this exact uniqueness contract — `binding_uri` here is the full Worker Kind URI (`entity://worker/<ws>/em_<hash>`) so cross-workspace bindings can't collide.
 - `data_owner/1` on `Behavior.ExternalMirrorWorker` returns `:no_owner`.
-- Test with a mock adapter + mock binding (in test support): worker spawn via `Kind.spawn`, `:publish` dispatch routes through adapter.event_to_payload → binding.publish, slice updates carry cursor/count.
+- Test with mock adapter + mock binding (in test support): worker spawn via `Kind.spawn`, `:publish` dispatch routes through adapter.event_to_payload → binding.publish, slice updates carry cursor/count.
 
-**Acceptance:** worker spawn + publish + restart + per-binding isolation (kill one worker mid-publish; siblings keep running) covered in unit tests.
+**Acceptance:**
+- worker spawn + publish + slice update flow covered in unit tests
+- per-binding isolation regression: spawn 3 bindings; kill 1 worker mid-publish 10× to trip its PerBindingSupervisor; assert the OTHER 2 PerBindingSupervisors + Workers are unaffected (RootSupervisor child count = 2 after the crash, not 0)
+- **two-tier shape invariant test** (r5 HIGH-2): inspect `Supervisor.which_children(RootSupervisor)` → assert every child is itself a `Supervisor` (NOT an `Ezagent.Kind.Server`); assert each such child's `which_children` returns exactly one `Ezagent.Kind.Server`. Catches accidental regression to shared-supervisor topology
+- **idempotency regression test** (r5 HIGH-3): concurrent `start_child` for the same `binding_uri` from 10 tasks → exactly 1 Worker process exists at the Registry-keyed name; 9 calls returned `{:already_started, pid}`
 
-**LOC est:** ~280.
+**LOC est:** ~340 (+60 for two-tier topology + Registry wire-up + 2 new acceptance tests).
 
 ### PR-EM-3 — `Behavior.ExternalMirror` on Session + bind/unbind/list_bindings + §4.2 wiring
 

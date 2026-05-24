@@ -382,7 +382,7 @@ r4 reconciliation 在两个触发点跑:
 幂等规则:
 - `Kind.spawn/2` 幂等: 已存在 → 返 `{:ok, existing_pid}`; 新 → 在合适 supervisor 下 spawn.
 - Worker 的 `handle_continue(:subscribe_and_init, ...)` 幂等: 已订阅 Publisher 则 no-op (Publisher 的 `subscribe_from` 短路重复 pid+publisher 对 — PR-EM-0 实现细节).
-- RootSupervisor 下的 PerBindingSupervisor 用 id `{:binding_sup, binding_id}` 启动, 重复 `DynamicSupervisor.start_child` 返 `{:error, {:already_started, pid}}` reconciler 视为成功.
+- **幂等性**（r5 codex round-4 HIGH-3 修复）：`DynamicSupervisor` **不**通过 child id 强制唯一性 — start logic 视 child spec id 为不透明。PerBindingSupervisor 的 child spec 用 `Registry` 后端 Via 名：`name: {:via, Registry, {Ezagent.ExternalMirror.WorkerRegistry, binding_uri}}`，`WorkerRegistry` 是 app boot 时启动的 `:unique` `Registry`。重复 `start_child/2` 命中 Registry 强制的名字冲突 → 返 `{:error, {:already_started, pid}}` reconciler (§3.1) 视为成功。`binding_uri` 是完整 Worker Kind URI `entity://worker/<ws>/em_<hash>`，跨 workspace 绑定不会冲突。
 
 PR-EM-3 验收测试 (h): bind 一个 Feishu mirror → 触发一个 chat → assert mirror 收到; kill Session Kind process → 等 restart → 触发另一个 chat → assert mirror 收到 WITHOUT 手动重 bind. 这是没 wire reconciliation 时 fail 的测试.
 
@@ -799,6 +799,46 @@ handle_info 收到 `{:publisher_event, %Event{}}`, worker 自 dispatch `:publish
 
 8 个 PR. 每个独立可发; 之间 tests pass.
 
+### PR-EM-CORE — `Ezagent.Kind.Server` post-init continuation hook（前置）
+
+**Owner:** `apps/ezagent_core/` — 触核心 runtime，**不**触 external_mirror。
+
+Codex round-4 HIGH-1 修复：r4 的 split-init pattern（Worker
+`init_slice/1` 返 slice；`handle_continue(:subscribe_and_init, ...)`
+做副作用 subscribe + binding init）需要 `Ezagent.Kind.Server`
+暴露 post-init continuation 点。当前 `Server.init/1` 只返
+`{:continue, :announce_ready}`；Behaviors 没办法插入。
+
+**改：**
+
+- 给 `Ezagent.Behavior` 加新**可选**回调：
+  `@callback post_init(args :: map(), slice :: map()) :: :ok | {:continue, term()}`
+  — 返 `:ok`（无 post-init 工作）或 Server 通过自己的
+  `handle_continue/2` 路由的 term。
+- 扩展 `Ezagent.Kind.Server.init/1` + `handle_continue/2` 链式：
+  `{:continue, :announce_ready}` → 先；然后如有任何 Behavior
+  从 `post_init` 返了 `{:continue, term}`，通过连续
+  `{:noreply, state, {:continue, term}}` 排队这些 continuations。
+- 每 Behavior `handle_continue(term, slice, ctx)` 回调（也可选）
+  接收 continuation term + 通过标准 `Kind.Server` 后更新路径
+  写回 slice。
+
+**验收：**
+- 加 test-only `OwnedBehavior.PostInit` 从 `post_init/2` 返
+  `{:continue, :setup_thing}` 且在 `handle_continue/3` 里写
+  flag。断言 Kind spawn 后 Server `announce_ready` **和** Behavior
+  post-init 都跑了，announce_ready 先（boot order invariant）。
+- 向后兼容测试：现有未声明 `post_init/2` 的 Behaviors spawn 不变
+  （无 continuation 噪音）。
+- `mix compile --warnings-as-errors` 干净。
+
+**为什么是 ExternalMirror PR-EM-2 的前置：** Worker Kind 需要把
+SliceChange subscribe + binding.init 推迟到 `announce_ready`
+之后（这样 binding 开始 publish 回时 dispatch 已 ready）。没这个扩展，
+§6.1 + §3 的 split-init pattern 编译不过。
+
+**LOC 估：** ~150（核心扩展 + Behavior 回调 + 3 测试）。
+
 ### PR-EM-0 — Publisher behaviour + Session Kind 实现 + retention 策略
 
 **Owner:** `apps/ezagent_domain_chat/`.
@@ -832,7 +872,7 @@ handle_info 收到 `{:publisher_event, %Event{}}`, worker 自 dispatch `:publish
 
 **LOC 估:** ~200.
 
-### PR-EM-2 — Adapter + Binding behaviour + Worker Kind + Worker Behavior
+### PR-EM-2 — Adapter + Binding behaviour + Worker Kind + Worker Behavior + 双层监督
 
 **Owner:** `apps/ezagent_domain_external_mirror/`.
 
@@ -840,13 +880,21 @@ handle_info 收到 `{:publisher_event, %Event{}}`, worker 自 dispatch `:publish
 - 定义 `Ezagent.ExternalMirror.Binding` behaviour (按 §2.3 / §6).
 - 定义 `Ezagent.Entity.ExternalMirrorWorker` Kind (按 §7.2 — URI 形状 `entity://worker/<ws>/em_<hash>`).
 - 定义 `Ezagent.Behavior.ExternalMirrorWorker` Behavior 带 `:publish` action (按 §4.3 / §6.1).
-- 启 `Ezagent.ExternalMirror.WorkerSupervisor` (DynamicSupervisor, `one_for_one`, `max_restarts: 3, max_seconds: 30`).
+- 双层监督拓扑按 §5.3 + §6.3（r5 codex round-4 HIGH-2 + HIGH-3 修复 — **不要**退回单 `WorkerSupervisor`）：
+  - 启 `Ezagent.ExternalMirror.RootSupervisor`（`DynamicSupervisor`, `:one_for_one`, `max_restarts: 100, max_seconds: 60`）。子 = per-binding 监督者。
+  - 实现 `Ezagent.ExternalMirror.PerBindingSupervisor`（`Supervisor`, `:one_for_one`, `max_restarts: 3, max_seconds: 30`）。每个 binding 拥 ONE Worker child。
+  - Worker child `:permanent`；PerBindingSupervisor 在 RootSupervisor 下 `:transient`。
+- **幂等机制**（r5 codex round-4 HIGH-3 修复）：`DynamicSupervisor` **不**通过 child id 唯一性 — 重复 `start_child/2` 会默默 spawn 第二个 PerBindingSupervisor + Worker。用 stdlib `Registry` 命名 `Ezagent.ExternalMirror.WorkerRegistry`（`keys: :unique`）；PerBindingSupervisor 的 child spec 用 `{:via, Registry, {WorkerRegistry, binding_uri}}` 作 `:name`。并发 `start_child` 同一 `binding_uri` → 第二个返 `{:error, {:already_started, pid}}`（Registry 强制）；reconciler 视为成功。§3 / §3.1 reconciliation 保证依赖此唯一性契约 — `binding_uri` 是完整 Worker Kind URI 跨 workspace 不冲突。
 - `Behavior.ExternalMirrorWorker` 的 `data_owner/1` 返 `:no_owner`.
 - 用 mock adapter + mock binding (在 test support) 测: worker 通过 `Kind.spawn` spawn, `:publish` dispatch 路由 adapter.event_to_payload → binding.publish, slice 更新带 cursor/count.
 
-**验收:** worker spawn + publish + restart + per-binding 隔离 (kill 一个 worker mid-publish; 兄弟继续) 由单测覆盖.
+**验收：**
+- worker spawn + publish + slice 更新流程由单测覆盖
+- per-binding 隔离回归：spawn 3 个 binding；kill 1 个 worker mid-publish 10× 跳闸其 PerBindingSupervisor；断言**其他**两个 PerBindingSupervisor + Worker 不受影响（RootSupervisor child count 崩后 = 2 不是 0）
+- **双层拓扑 invariant test**（r5 HIGH-2）：`Supervisor.which_children(RootSupervisor)` → 断言每个 child 自己是 `Supervisor`（**不是** `Ezagent.Kind.Server`）；每个 child 的 `which_children` 恰返一个 `Ezagent.Kind.Server`。防 regression 到共享监督者拓扑
+- **幂等回归测试**（r5 HIGH-3）：10 个 task 并发 `start_child` 同一 `binding_uri` → Registry 键控名上恰 1 个 Worker 进程；9 个调用返 `{:already_started, pid}`
 
-**LOC 估:** ~280.
+**LOC 估:** ~340（+60 双层拓扑 + Registry wire-up + 2 新验收）。
 
 ### PR-EM-3 — `Behavior.ExternalMirror` 在 Session + bind/unbind/list_bindings + §4.2 wiring
 
