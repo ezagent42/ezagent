@@ -11,6 +11,8 @@ defmodule Ezagent.Kind.ServerPostInitTest do
 
   use ExUnit.Case, async: true
 
+  require Logger
+
   alias Ezagent.TestSupport.{
     MultiPostInitKind,
     NoPostInitBehavior,
@@ -19,6 +21,8 @@ defmodule Ezagent.Kind.ServerPostInitTest do
     PostInitBehavior,
     PostInitBehaviorA,
     PostInitBehaviorB,
+    PostInitCrashBehavior,
+    PostInitCrashKind,
     PostInitKind
   }
 
@@ -119,6 +123,62 @@ defmodule Ezagent.Kind.ServerPostInitTest do
       {:ok, slice_b} = Ezagent.Kind.get_slice(uri_str, :post_init_b)
       assert slice_a.ran == true
       assert slice_b.ran == true
+    end
+
+    # -----------------------------------------------------------------
+    # Test 4 — codex round-1 HIGH-1 regression: a pre-ready buffered
+    # cast combined with a crashing post-init continuation MUST NOT
+    # silently lose the buffered cast. With the fix in place,
+    # PendingDelivery.flush/1 is DEFERRED until after the last
+    # post-init continuation completes; a crashing post-init causes
+    # the process to die WITHOUT having flushed the buffer, so the
+    # buffered entries survive in ETS for the next attempt (or for a
+    # test like this one to observe).
+    # -----------------------------------------------------------------
+    test "pre-ready buffered cast survives a crashing post-init continuation",
+         %{suffix: suffix} do
+      uri = URI.parse("entity://agent/default/test_crash_post_init-#{suffix}")
+      uri_str = URI.to_string(uri)
+
+      :ok =
+        Ezagent.BehaviorRegistry.register(PostInitCrashKind, :noop, PostInitCrashBehavior)
+
+      pre_inv = %Ezagent.Invocation{
+        target: URI.parse("#{uri_str}?action=test.noop"),
+        mode: :cast,
+        args: %{},
+        ctx: %{
+          caller: URI.parse("entity://user/system/admin"),
+          caps: Ezagent.Entity.User.admin_caps(),
+          reply: :ignore
+        }
+      }
+
+      :ok = Ezagent.PendingDelivery.buffer(uri, pre_inv)
+      assert Ezagent.PendingDelivery.buffer_size(uri) == 1
+
+      # Suppress the expected crash + Logger.warning noise.
+      Process.flag(:trap_exit, true)
+      log_level = Logger.level()
+      Logger.configure(level: :critical)
+
+      try do
+        {:ok, pid} =
+          Ezagent.Kind.Server.start_link({PostInitCrashKind, %{uri: uri}})
+
+        # Wait for the process to crash (post-init raises).
+        ref = Process.monitor(pid)
+        assert_receive {:DOWN, ^ref, :process, ^pid, _reason}, 500
+      after
+        Logger.configure(level: log_level)
+      end
+
+      # Boot-order invariant: the deferred flush means the buffer is
+      # STILL POPULATED after the crash — no silent loss. (Pre-PR
+      # behaviour was to flush in :announce_ready BEFORE post-init,
+      # which would have left the buffer empty and the self-casted
+      # invocations stuck in the dead process's mailbox.)
+      assert Ezagent.PendingDelivery.buffer_size(uri) == 1
     end
   end
 

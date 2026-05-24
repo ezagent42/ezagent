@@ -203,6 +203,113 @@ defmodule Ezagent.TestSupport.PostInitKind do
   def persistence, do: :ephemeral
 end
 
+defmodule Ezagent.TestSupport.PostInitCrashBehavior do
+  @moduledoc """
+  Test-only Behavior whose `handle_continue/3` raises. Used by the
+  codex round-1 HIGH-1 regression test: a pre-ready buffered cast
+  combined with a crashing post-init MUST NOT lose the buffered
+  cast (the buffer must still be intact after the crash, since the
+  fix defers `PendingDelivery.flush/1` until AFTER post-init).
+  """
+
+  @behaviour Ezagent.Behavior
+
+  @impl Ezagent.Behavior
+  def actions, do: [:noop]
+
+  @impl Ezagent.Behavior
+  def cap_subjects, do: [{:noop, "test — no-op"}]
+
+  @impl Ezagent.Behavior
+  def state_slice, do: :crash
+
+  @impl Ezagent.Behavior
+  def init_slice(_args), do: %{}
+
+  @impl Ezagent.Behavior
+  def invoke(:noop, slice, _args, _ctx), do: {:ok, slice}
+
+  @impl Ezagent.Behavior
+  def interface, do: %{noop: %{args: %{}, returns: %{}, modes: [:call]}}
+
+  @impl Ezagent.Behavior
+  def post_init(_args, _slice), do: {:continue, :will_crash}
+
+  @impl Ezagent.Behavior
+  def handle_continue(:will_crash, _slice, _ctx), do: raise("boom from post_init")
+end
+
+defmodule Ezagent.TestSupport.PostInitCrashKind do
+  @moduledoc "Kind hosting the crashing post-init Behavior (regression test)."
+  @behaviour Ezagent.Kind
+
+  @impl Ezagent.Kind
+  def type_name, do: :test
+
+  @impl Ezagent.Kind
+  def behaviors, do: [Ezagent.TestSupport.PostInitCrashBehavior]
+
+  @impl Ezagent.Kind
+  def persistence, do: :ephemeral
+end
+
+defmodule Ezagent.TestSupport.PersistentPostInitBehavior do
+  @moduledoc """
+  Test-only Behavior whose post-init `handle_continue/3` mutates its
+  slice with a sentinel field — used by the codex round-1 MEDIUM-1
+  regression test (a `{:snapshot, :on_change}` Kind hosting this
+  Behavior must have the post-init mutation durably snapshotted, NOT
+  just held in memory).
+  """
+
+  @behaviour Ezagent.Behavior
+
+  @impl Ezagent.Behavior
+  def actions, do: [:noop]
+
+  @impl Ezagent.Behavior
+  def cap_subjects, do: [{:noop, "test — no-op"}]
+
+  @impl Ezagent.Behavior
+  def state_slice, do: :persistent
+
+  @impl Ezagent.Behavior
+  def init_slice(_args), do: %{post_init_value: nil, init_value: :from_init_slice}
+
+  @impl Ezagent.Behavior
+  def invoke(:noop, slice, _args, _ctx), do: {:ok, slice}
+
+  @impl Ezagent.Behavior
+  def interface, do: %{noop: %{args: %{}, returns: %{}, modes: [:call]}}
+
+  @impl Ezagent.Behavior
+  def post_init(_args, _slice), do: {:continue, :write_sentinel}
+
+  @impl Ezagent.Behavior
+  def handle_continue(:write_sentinel, slice, _ctx) do
+    {:ok, %{slice | post_init_value: :written_by_post_init}}
+  end
+end
+
+defmodule Ezagent.TestSupport.PersistentPostInitKind do
+  @moduledoc """
+  Kind with `{:snapshot, :on_change}` persistence policy hosting a
+  Behavior that mutates its slice in `handle_continue/3`. Used to
+  prove post-init writes are durably snapshotted (codex round-1
+  MEDIUM-1 regression).
+  """
+  @behaviour Ezagent.Kind
+
+  @impl Ezagent.Kind
+  def type_name, do: :test
+
+  @impl Ezagent.Kind
+  def behaviors, do: [Ezagent.TestSupport.PersistentPostInitBehavior]
+
+  @impl Ezagent.Kind
+  def persistence, do: {:snapshot, :on_change}
+end
+
 defmodule Ezagent.TestSupport.NoPostInitKind do
   @moduledoc "Kind hosting a Behavior with no `post_init/2` (Test 2)."
   @behaviour Ezagent.Kind
