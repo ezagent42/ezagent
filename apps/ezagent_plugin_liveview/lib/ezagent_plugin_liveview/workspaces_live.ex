@@ -1,9 +1,14 @@
 defmodule EzagentPluginLiveview.WorkspacesLive do
   @moduledoc """
-  /workspaces — list every persisted Workspace + form to create.
+  /workspaces — list every VISIBLE persisted Workspace + form to create.
 
-  Reads `Ezagent.Workspace.list_persisted/0` (which hits SQLite via
-  `Ezagent.Workspace.Store`) — the persisted set, not the live-Kind set.
+  Reads `Ezagent.Workspace.list_visible/0` (which filters out
+  `visible: false` rows like `system` — Phase 9 PR-8). SPEC 2026-05-24
+  PR-1 / Allen Q3 fix: previously used `list_persisted/0` which leaked
+  the system workspace to all logged-in users (only admins should see
+  it; admin-promote happens via membership in `system`, not via the
+  /workspaces page).
+
   Phase 4d separates "what's declared to exist" (Store) from "what's
   currently spawned" (KindRegistry); a healthy system has them equal,
   but during transient errors the Store row exists even when the live
@@ -45,8 +50,15 @@ defmodule EzagentPluginLiveview.WorkspacesLive do
      |> assign(:new_form, to_form(%{"name" => ""}, as: "new_workspace"))}
   end
 
+  # Codex PR3-companion / SPEC 2026-05-24 PR-1 (Allen Q3 bug fix):
+  # `list_persisted/0` returns ALL workspace rows including
+  # `visible: false` ones (e.g. `system`). Non-admin users would see
+  # the system workspace in the /workspaces page — a confusion +
+  # privilege-misperception bug. The dropdown (live_auth.ex) already
+  # uses `list_visible/0`; this LV was missed when Phase 9 PR-8
+  # added the visible flag.
   defp list_workspaces do
-    Ezagent.Workspace.list_persisted()
+    Ezagent.Workspace.list_visible()
     |> Enum.map(fn ws ->
       live_pid =
         case Ezagent.KindRegistry.lookup(ws.uri) do
