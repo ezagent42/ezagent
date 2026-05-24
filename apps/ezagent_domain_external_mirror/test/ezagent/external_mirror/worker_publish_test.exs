@@ -135,9 +135,10 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
 
       # Pick binding #2 to abuse: kill its inner Kind.Server 10×.
       # Each kill trips the per-binding 3/30s budget after the 3rd
-      # restart; the PerBindingSupervisor crashes and RootSupervisor
-      # restarts it ONCE (the `:transient` PerBindingSupervisor child
-      # treats supervisor-crash as not-:normal/:shutdown → restart).
+      # restart; the PerBindingSupervisor crashes with `:shutdown`
+      # and RootSupervisor restarts it (the `:permanent`
+      # PerBindingSupervisor child restarts on ANY exit, per the
+      # codex round-1 CRIT fix — see PerBindingSupervisor moduledoc).
       # After enough kills, the per-binding budget burns again, etc.
       # The KEY claim is the OTHER two PerBindingSupervisors are
       # unaffected throughout.

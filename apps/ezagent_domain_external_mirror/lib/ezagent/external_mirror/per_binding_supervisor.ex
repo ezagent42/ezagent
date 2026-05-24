@@ -15,11 +15,18 @@ defmodule Ezagent.ExternalMirror.PerBindingSupervisor do
   - **Supervisor itself:** `:one_for_one`, `max_restarts: 3,
     max_seconds: 30`. Tight per-binding budget: a flaky binding
     that keeps crashing exhausts this and the PerBindingSupervisor
-    itself crashes (Worker child config below stays `:permanent`).
-    When PerBindingSupervisor crashes, the RootSupervisor's
-    `:transient` strategy + the supervisor's `:shutdown` exit
-    reason controls whether it gets restarted (it does — `:exit`
-    other than `:normal`/`:shutdown` is treated as crash).
+    itself crashes with `:shutdown` (the OTP supervisor's reason
+    on intensity exhaustion).
+    When that happens, the RootSupervisor's child-spec restart
+    strategy controls whether it gets restarted. **Per codex
+    round-1 CRIT fix (2026-05-25), that strategy is `:permanent`
+    — NOT `:transient`** as round-1 had it. `:transient` does NOT
+    restart on `:shutdown`, so a single inner-budget exhaustion
+    would have left the binding permanently down. `:permanent`
+    restarts on ANY exit. Explicit unbind via
+    `DynamicSupervisor.terminate_child/2` still works because
+    `terminate_child` removes the child from the dynamic
+    supervisor's bookkeeping BEFORE propagating shutdown.
   - **Worker child:** `:permanent`. Always restart on crash within
     the inner budget — that's what the per-binding budget is for.
 
