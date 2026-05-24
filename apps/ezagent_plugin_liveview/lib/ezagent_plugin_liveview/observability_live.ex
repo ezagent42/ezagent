@@ -20,7 +20,27 @@ defmodule EzagentPluginLiveview.ObservabilityLive do
 
   @impl true
   def mount(_params, _session, socket) do
-    {:ok, socket |> assign(:tab, :overview) |> assign_data()}
+    # Codex PR #305 round-2 MEDIUM fix: `/admin/logs` was only
+    # behind `:require_entity` — any authenticated user could
+    # deep-link. The workspace_filter_for/1 below would scope
+    # them to their own tenant (no cross-tenant leak), but
+    # non-admins shouldn't be reading audit rows at ALL.
+    # Mount-time admin gate mirrors AdminCapsLive + SettingsLive.
+    if not admin?(socket.assigns) do
+      {:ok, redirect_non_admin(socket)}
+    else
+      {:ok, socket |> assign(:tab, :overview) |> assign_data()}
+    end
+  end
+
+  defp admin?(%{is_admin?: true}), do: true
+  defp admin?(%{is_system_member?: true}), do: true
+  defp admin?(_), do: false
+
+  defp redirect_non_admin(socket) do
+    socket
+    |> Phoenix.LiveView.put_flash(:error, "Admin access required.")
+    |> Phoenix.LiveView.push_navigate(to: "/")
   end
 
   defp assign_data(socket) do
