@@ -91,6 +91,21 @@ defmodule Ezagent.Notifications do
     validate_notification!(notification)
     check_cap!(ctx, parsed_uri, :notify)
 
+    # Notifier/log audit 2026-05-24 MED — emit telemetry so notifications
+    # become visible to the Audit pipeline. Per
+    # `feedback_north_star_plugin_isolation`, the audit sink subscribes
+    # to events; producers just emit. Add `[:ezagent, :notification, :emit]`
+    # to `Ezagent.Audit.@events` to persist.
+    :telemetry.execute(
+      [:ezagent, :notification, :emit],
+      %{count: 1},
+      %{
+        user_uri: parsed_uri,
+        kind: Map.get(notification, :kind),
+        caller: Map.get(ctx, :caller)
+      }
+    )
+
     Phoenix.PubSub.broadcast(
       EzagentCore.PubSub,
       topic(parsed_uri),
