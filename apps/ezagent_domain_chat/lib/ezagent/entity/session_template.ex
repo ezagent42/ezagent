@@ -398,29 +398,41 @@ defmodule Ezagent.Entity.SessionTemplate do
           {:ok, URI.t()} | {:error, term()}
   def fork(%URI{} = parent_uri, new_name, opts \\ [])
       when is_binary(new_name) and new_name != "" do
-    parent_workspace = Ezagent.Capability.workspace_of(parent_uri)
-    workspace = Keyword.get(opts, :workspace, parent_workspace)
-
+    # PR1 2026-05-24 (Allen): SHIM — the real fork logic now lives in
+    # `Ezagent.Behavior.Template.invoke(:fork, ...)` so AgentTemplate
+    # gets fork for free. This module function preserves the existing
+    # public API (caller-threaded opts, return shape) and just dispatches.
     with {:ok, caps} <- fetch_opt(opts, :caps),
          {:ok, caller_uri} <- fetch_opt(opts, :caller),
-         :ok <- require_session_template_cap(caps, workspace),
-         {:ok, parent_content} <- read_template_content(parent_uri) do
-      content =
-        parent_content
-        |> Map.put(:name, new_name)
-        |> Map.put(:parent_template_uri, parent_uri)
-        |> Map.put(:version_tag, nil)
-        |> Map.put(:created_by, caller_uri)
-        |> Map.put(:created_at, DateTime.utc_now())
+         {:ok, _pid} <- ensure_kind_alive(parent_uri) do
+      args = build_fork_args(new_name, opts, caller_uri)
+      ctx = build_fork_ctx(caller_uri, caps)
+      target = URI.parse("#{URI.to_string(parent_uri)}?action=template.fork")
 
-      persist_and_grant(
-        content,
-        workspace,
-        Keyword.get(opts, :owner, caller_uri),
-        caller: caller_uri,
-        caps: caps
-      )
+      case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+             target: target,
+             mode: :call,
+             args: args,
+             ctx: ctx
+           }) do
+        {:ok, %{template_uri: %URI{} = uri}} -> {:ok, uri}
+        {:error, _} = err -> err
+        other -> {:error, {:unexpected_fork_result, other}}
+      end
     end
+  end
+
+  defp build_fork_args(new_name, opts, caller_uri) do
+    owner = Keyword.get(opts, :owner, caller_uri)
+    %{new_name: new_name, owner: owner}
+  end
+
+  defp build_fork_ctx(caller_uri, caps) do
+    %{
+      caller: caller_uri,
+      caps: normalize_caps_set(caps),
+      reply: {:caller_inbox, self()}
+    }
   end
 
   @doc """
@@ -592,31 +604,11 @@ defmodule Ezagent.Entity.SessionTemplate do
     end
   end
 
-  # Read the `:template` content slice of a SessionTemplate via the
-  # `Behavior.Template` `:read` action. Brings the Kind up first (lazy
-  # demand-spawn — §1.7 (d)) so a fork of a snapshotted-but-not-spawned
-  # parent rehydrates from `kind_snapshots`.
-  defp read_template_content(%URI{} = template_uri) do
-    with {:ok, _pid} <- ensure_kind_alive(template_uri) do
-      target = URI.parse("#{URI.to_string(template_uri)}?action=template.read")
-
-      case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-             target: target,
-             mode: :call,
-             args: %{},
-             ctx: %{
-               caller: Ezagent.Entity.User.admin_uri(),
-               caps: Ezagent.Entity.User.admin_caps(),
-               reply: {:caller_inbox, self()}
-             }
-           }) do
-        {:ok, %{content: content}} when is_map(content) -> {:ok, content}
-        {:ok, %{content: nil}} -> {:error, :parent_template_not_populated}
-        {:error, _} = err -> err
-        other -> {:error, {:unexpected_template_read_result, other}}
-      end
-    end
-  end
+  # `read_template_content/1` was removed in PR1 2026-05-24 — the old
+  # `fork/3` used it to fetch the parent slice via dispatch; the lifted
+  # `Behavior.Template :fork` action runs IN-PROCESS with the parent
+  # slice already in hand (matches the `:instantiate` rev-5 HIGH-2
+  # deadlock-avoidance pattern).
 
   # Normalize a caller-supplied `config` map to atom keys for the known
   # SessionTemplate slice fields. String-keyed input (e.g. from a JSON

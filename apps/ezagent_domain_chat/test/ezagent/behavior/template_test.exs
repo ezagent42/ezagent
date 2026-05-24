@@ -14,8 +14,10 @@ defmodule Ezagent.Behavior.TemplateTest do
   alias Ezagent.Entity.{AgentTemplate, SessionTemplate}
 
   describe "Behavior contract surface" do
-    test "actions/0 returns [:read, :write, :instantiate]" do
-      assert Template.actions() == [:read, :write, :instantiate]
+    test "actions/0 returns [:read, :write, :instantiate, :fork]" do
+      # PR1 2026-05-24 (Allen): `:fork` added — generic Template-Kind concern
+      # lifted out of SessionTemplate.fork/3 so AgentTemplate also gets it.
+      assert Template.actions() == [:read, :write, :instantiate, :fork]
     end
 
     test "state_slice/0 is :template" do
@@ -32,10 +34,15 @@ defmodule Ezagent.Behavior.TemplateTest do
       assert Template.init_slice(%{content: content}) == %{content: content}
     end
 
-    test "interface/0 declares all three actions, all :call mode" do
+    test "interface/0 declares all four actions, all :call mode" do
       iface = Template.interface()
-      assert Map.keys(iface) |> Enum.sort() == [:instantiate, :read, :write]
+      assert Map.keys(iface) |> Enum.sort() == [:fork, :instantiate, :read, :write]
       for {_action, def} <- iface, do: assert(def.modes == [:call])
+    end
+
+    test "cap_subjects/0 includes :fork subject (PR1 — owner-grant + dispatch CapBAC)" do
+      subjects = Template.cap_subjects() |> Enum.map(&elem(&1, 0))
+      assert :fork in subjects
     end
   end
 

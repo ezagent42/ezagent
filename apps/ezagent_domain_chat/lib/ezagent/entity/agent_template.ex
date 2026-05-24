@@ -53,6 +53,12 @@ defmodule Ezagent.Entity.AgentTemplate do
         mcp_config_path:    String.t() | nil,  # --mcp-config override
         api_key_helper:     String.t() | nil,  # macOS multi-agent only
 
+        # lineage (PR1 2026-05-24 — Allen: fork lifted to Behavior.Template
+        # as a generic Template-Kind concern; AgentTemplate now carries
+        # lineage too). nil for ROOT templates; set to the source URI on
+        # fork.
+        parent_template_uri: URI.t() | nil,
+
         # ESR side
         default_caps:       [Ezagent.Capability.t()],
         created_by:         URI.t() | nil,
@@ -204,4 +210,95 @@ defmodule Ezagent.Entity.AgentTemplate do
       value -> value
     end
   end
+
+  @doc """
+  Fork an AgentTemplate — `fork(parent_uri, new_name, opts)` (PR1
+  2026-05-24, Allen architectural decision: fork is a generic
+  Template-Kind concern).
+
+  Configuration-only fork: the new AgentTemplate carries the parent's
+  content + `parent_template_uri: parent_uri` lineage. The destination
+  URI is `template://agent/<workspace>/<new_name>` (versionless, inherits
+  parent's workspace).
+
+  ## What it does
+
+  Delegates entirely to `Ezagent.Behavior.Template.invoke(:fork, ...)`
+  via dispatch — the real fork orchestration (parent content read, fork
+  content build, persist, owner-cap grant) lives there. This module
+  function exists for API symmetry with `SessionTemplate.fork/3` and to
+  give callers a typed, discoverable entry point.
+
+  ## Options
+
+  - `:caps` — the caller's cap set (`MapSet`/list of `Capability.t()`).
+    Required — dispatch CapBAC checks `Behavior.Template` against the
+    parent URI's workspace.
+  - `:caller` — `%URI{}` of the principal performing the fork. Required.
+  - `:owner` — `%URI{}` to receive the owner cap. Defaults to `:caller`.
+
+  ## Returns
+
+  - `{:ok, new_template_uri}` — the fork's
+    `template://agent/<ws>/<new_name>` URI.
+  - `{:error, :unauthorized}` / `{:error, :template_not_populated}` /
+    other dispatch error.
+
+  Does NOT spawn an agent — instantiation goes through
+  `Behavior.Template :instantiate` on the new template URI, which the
+  caller invokes separately.
+  """
+  @spec fork(URI.t(), String.t(), keyword()) ::
+          {:ok, URI.t()} | {:error, term()}
+  def fork(%URI{} = parent_uri, new_name, opts \\ [])
+      when is_binary(new_name) and new_name != "" do
+    with {:ok, caps} <- fetch_opt(opts, :caps),
+         {:ok, %URI{} = caller_uri} <- fetch_opt(opts, :caller),
+         {:ok, _pid} <- ensure_kind_alive(parent_uri) do
+      args = %{
+        new_name: new_name,
+        owner: Keyword.get(opts, :owner, caller_uri)
+      }
+
+      ctx = %{
+        caller: caller_uri,
+        caps: normalize_caps_set(caps),
+        reply: {:caller_inbox, self()}
+      }
+
+      target = URI.parse("#{URI.to_string(parent_uri)}?action=template.fork")
+
+      case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+             target: target,
+             mode: :call,
+             args: args,
+             ctx: ctx
+           }) do
+        {:ok, %{template_uri: %URI{} = uri}} -> {:ok, uri}
+        {:error, _} = err -> err
+        other -> {:error, {:unexpected_fork_result, other}}
+      end
+    end
+  end
+
+  # --- shim internals ----------------------------------------------------
+
+  defp fetch_opt(opts, key) do
+    case Keyword.get(opts, key) do
+      nil -> {:error, {:missing_opt, key}}
+      v -> {:ok, v}
+    end
+  end
+
+  defp ensure_kind_alive(uri) do
+    case Ezagent.SpawnRegistry.spawn(uri) do
+      {:ok, pid} -> {:ok, pid}
+      {:error, {:already_started, pid}} -> {:ok, pid}
+      {:error, _} = err -> err
+    end
+  end
+
+  defp normalize_caps_set(%MapSet{} = caps), do: caps
+  defp normalize_caps_set(caps) when is_list(caps), do: MapSet.new(caps)
+  defp normalize_caps_set(_), do: MapSet.new()
 end
