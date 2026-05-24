@@ -33,14 +33,15 @@ defmodule Ezagent.Behavior.Template do
 
   - **AgentTemplate `:template` content** — `name`, `description`,
     `flavor`, `working_directory`, `claude_config_dir`, `settings_path`,
-    `mcp_config_path`, `api_key_helper`, `default_caps`, `created_by`,
-    `created_at`.
+    `mcp_config_path`, `api_key_helper`, `default_caps`,
+    `parent_template_uri` (nil for roots; set to the source URI on fork —
+    PR1 2026-05-24), `created_by`, `created_at`.
   - **SessionTemplate `:template` content** — `name`, `description`,
     `agent_slots`, `orchestrator_template_uri`, `routing_rules`,
     `default_workspace_uri`, `parent_template_uri`, `version_hash`,
     `version_tag`, `created_by`, `created_at`.
 
-  ## Actions — `:read` / `:write` / `:instantiate`
+  ## Actions — `:read` / `:write` / `:instantiate` / `:fork`
 
   - **`:read`** (`:call`) — `{:ok, slice, %{content: map | nil}}`.
     Returns the `:template` slice content.
@@ -86,6 +87,25 @@ defmodule Ezagent.Behavior.Template do
     `{:error, :cross_workspace_denied}`. Cross-workspace instantiation
     is not a V1 feature — there is no second-cap path.
 
+  - **`:fork`** (`:call`, args `%{new_name: String.t(), owner: URI.t() | nil}`) —
+    Allen 2026-05-24 PR1: lifted out of `SessionTemplate.fork/3` so EVERY
+    Template Kind gets fork for free. Runs INSIDE the parent Template Kind
+    process (slice already in hand → no `:read` self-dispatch). Builds new
+    content = parent's content + `name: new_name` + `parent_template_uri:
+    self_uri` + refreshed `created_by`/`created_at`. Kind-specific URI
+    construction + owner-cap grant happen via the dispatcher on
+    `ctx[:kind_module]`:
+    - **SessionTemplate fork** → new URI is `template://session/<ws>/<new_name>@<hash>`
+      (hash recomputed over fork content); a fork inherits the parent's
+      workspace.
+    - **AgentTemplate fork** → new URI is `template://agent/<ws>/<new_name>`
+      (versionless); a fork inherits the parent's workspace.
+    Cap preflight is handled by **dispatch CapBAC** against the parent's
+    URI + `:fork` subject — a caller holding `Behavior.Template` on the
+    parent's workspace is authorized (the `:fork` cap_subject is for
+    documentation; matches by Behavior, not action). Returns
+    `{:ok, slice, %{template_uri: new_uri}}`.
+
   ## Relationship to `Ezagent.Kind.Template`
 
   `Ezagent.Kind.Template` (`template_name/0` + `validate/1` +
@@ -102,14 +122,17 @@ defmodule Ezagent.Behavior.Template do
   alias Ezagent.Entity.{AgentTemplate, SessionTemplate}
 
   @impl Ezagent.Behavior
-  def actions, do: [:read, :write, :instantiate]
+  def actions, do: [:read, :write, :instantiate, :fork]
 
   @impl Ezagent.Behavior
   def cap_subjects do
     [
       {:read, "read the template's content + metadata (write_count, last_version_hash)"},
       {:write, "write a new immutable version of the template (CAS-keyed)"},
-      {:instantiate, "instantiate this template into a live Kind (Session / Agent / …)"}
+      {:instantiate, "instantiate this template into a live Kind (Session / Agent / …)"},
+      {:fork,
+       "fork this template into a NEW Template Kind whose `parent_template_uri` " <>
+         "points back at this one (PR1 2026-05-24)"}
     ]
   end
 
@@ -141,6 +164,30 @@ defmodule Ezagent.Behavior.Template do
 
       other ->
         {:error, {:template_write_unsupported_for_kind, other}}
+    end
+  end
+
+  # --- :fork -------------------------------------------------------------
+
+  # Allen 2026-05-24 PR1 — fork lifted out of `SessionTemplate.fork/3` so
+  # every Template Kind gets fork for free. Runs IN-PROCESS with the
+  # parent's slice already in hand (NO `:read` self-dispatch — same
+  # deadlock-avoidance pattern as `:instantiate`).
+  #
+  # Kind-specific URI construction + owner-cap grant happen via the
+  # branch on `ctx[:kind_module]`. Cap preflight is delegated to the
+  # dispatch CapBAC against the parent URI (caller holding
+  # `Behavior.Template` on the parent's workspace is authorized).
+  def invoke(:fork, slice, args, ctx) do
+    case Map.get(ctx, :kind_module) do
+      SessionTemplate ->
+        fork_session_template(slice, args, ctx)
+
+      AgentTemplate ->
+        fork_agent_template(slice, args, ctx)
+
+      other ->
+        {:error, {:template_fork_unsupported_for_kind, other}}
     end
   end
 
@@ -200,6 +247,20 @@ defmodule Ezagent.Behavior.Template do
           spawned_by: {:option, :uri}
         },
         returns: %{workers: {:list, :uri}, fresh?: :boolean},
+        modes: [:call]
+      },
+      fork: %{
+        description:
+          "Fork this template into a NEW Template Kind whose " <>
+            "`parent_template_uri` points back at this one. The fork inherits " <>
+            "the parent's workspace; the destination URI is Kind-specific " <>
+            "(SessionTemplate → content-hash; AgentTemplate → versionless). " <>
+            "Owner cap is granted to `owner` (default: caller).",
+        args: %{
+          new_name: :string,
+          owner: {:option, :uri}
+        },
+        returns: %{template_uri: :uri},
         modes: [:call]
       }
     }
@@ -380,4 +441,191 @@ defmodule Ezagent.Behavior.Template do
   # Prefer the explicit arg; fall back to the dispatch caller.
   defp resolve_spawned_by(%{spawned_by: %URI{} = uri}, _ctx), do: uri
   defp resolve_spawned_by(_args, ctx), do: Map.get(ctx, :caller)
+
+  # --- :fork internals --------------------------------------------------
+
+  # PR1 2026-05-24 — both Kind branches share the same shape:
+  #   1. validate args.new_name + parent's slice content + self_uri
+  #   2. build fork content = parent content + name + parent_template_uri
+  #      + created_by/created_at (+ Kind-specific resets like version_tag)
+  #   3. compute Kind-specific destination URI
+  #   4. ensure new Kind alive + dispatch `:write` (with CALLER's ctx)
+  #   5. grant owner cap (default: caller) on the destination workspace
+  #
+  # The cross-Kind orchestration lives in Behavior.Template instead of
+  # the Kind module (Allen 2026-05-24 — fork is a generic Template-Kind
+  # concern, not Kind-specific). Each Kind branch just supplies its own
+  # URI builder + cap-shape + version-field reset.
+
+  defp fork_session_template(slice, args, ctx) do
+    with {:ok, parent_content} <- fetch_slice_content(slice),
+         {:ok, new_name} <- fetch_string_arg(args, :new_name),
+         {:ok, %URI{} = parent_uri} <- fetch_self_uri(ctx),
+         {:ok, %URI{} = workspace_uri} <- workspace_uri_of(parent_uri) do
+      caller_uri = Map.get(ctx, :caller)
+      owner_uri = Map.get(args, :owner, caller_uri)
+
+      content =
+        parent_content
+        |> Map.put(:name, new_name)
+        |> Map.put(:parent_template_uri, parent_uri)
+        # SessionTemplate is content-addressed — clearing the tag is
+        # required so the new content's hash is stable (matches the
+        # behavior of `SessionTemplate.fork/3` pre-lift).
+        |> Map.put(:version_tag, nil)
+        |> Map.put(:created_by, caller_uri)
+        |> Map.put(:created_at, DateTime.utc_now())
+
+      with {:ok, new_uri} <- persist_session_template_version(content, workspace_uri, ctx),
+           :ok <- grant_session_template_owner_cap(owner_uri, workspace_uri) do
+        {:ok, slice, %{template_uri: new_uri}}
+      end
+    end
+  end
+
+  defp fork_agent_template(slice, args, ctx) do
+    with {:ok, parent_content} <- fetch_slice_content(slice),
+         {:ok, new_name} <- fetch_string_arg(args, :new_name),
+         {:ok, %URI{} = parent_uri} <- fetch_self_uri(ctx),
+         {:ok, %URI{} = workspace_uri} <- workspace_uri_of(parent_uri) do
+      caller_uri = Map.get(ctx, :caller)
+      owner_uri = Map.get(args, :owner, caller_uri)
+      workspace_name = workspace_uri.host || "default"
+      new_uri = URI.new!("template://agent/#{workspace_name}/#{new_name}")
+
+      content =
+        parent_content
+        |> Map.put(:name, new_name)
+        |> Map.put(:parent_template_uri, parent_uri)
+        |> Map.put(:created_by, caller_uri)
+        |> Map.put(:created_at, DateTime.utc_now())
+
+      with {:ok, _pid} <- ensure_kind_alive(new_uri),
+           {:ok, _result} <- dispatch_template_write(new_uri, content, ctx),
+           :ok <- grant_agent_template_owner_cap(owner_uri, workspace_uri) do
+        {:ok, slice, %{template_uri: new_uri}}
+      end
+    end
+  end
+
+  # Shared shape helpers ---------------------------------------------------
+
+  defp fetch_slice_content(slice) do
+    case Map.get(slice, :content) do
+      content when is_map(content) -> {:ok, content}
+      _ -> {:error, :template_not_populated}
+    end
+  end
+
+  defp fetch_string_arg(args, key) do
+    case Map.get(args, key) do
+      v when is_binary(v) and v != "" -> {:ok, v}
+      _ -> {:error, {:missing_arg, key}}
+    end
+  end
+
+  defp fetch_self_uri(ctx) do
+    case Map.get(ctx, :self_uri) do
+      %URI{} = uri -> {:ok, uri}
+      _ -> {:error, :missing_self_uri}
+    end
+  end
+
+  defp workspace_uri_of(%URI{} = uri) do
+    case Ezagent.Capability.workspace_of(uri) do
+      %URI{} = ws -> {:ok, ws}
+      _ -> {:error, :cannot_derive_workspace}
+    end
+  end
+
+  defp ensure_kind_alive(uri) do
+    case Ezagent.SpawnRegistry.spawn(uri) do
+      {:ok, pid} -> {:ok, pid}
+      {:error, {:already_started, pid}} -> {:ok, pid}
+      {:error, _} = err -> err
+    end
+  end
+
+  defp dispatch_template_write(uri, content, ctx) do
+    target = URI.parse("#{URI.to_string(uri)}?action=template.write")
+
+    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      target: target,
+      mode: :call,
+      args: %{content: content},
+      ctx: ctx
+    })
+  end
+
+  # SessionTemplate-specific helpers --------------------------------------
+
+  # Persist a new SessionTemplate version using the existing module helper
+  # — that path already handles the content-hash URI construction +
+  # write-once semantics correctly (HIGH-9 caller-threaded variant).
+  defp persist_session_template_version(content, %URI{} = workspace_uri, ctx) do
+    SessionTemplate.persist_version(content, workspace_uri,
+      caller: Map.get(ctx, :caller),
+      caps: Map.get(ctx, :caps)
+    )
+  end
+
+  # Mirror of `SessionTemplate.grant_owner_template_cap/2` — we cannot
+  # call the private function so the logic lives here. The grant is
+  # idempotent across forks (CapBAC dedupes), so a fork by an existing
+  # template-owner is a harmless no-op grant.
+  defp grant_session_template_owner_cap(%URI{} = owner_uri, %URI{} = workspace_uri) do
+    cap = %Ezagent.Capability{
+      kind: :session_template,
+      behavior: __MODULE__,
+      instance: {:within_workspace, workspace_uri},
+      workspace_uri: workspace_uri,
+      granted_by: owner_uri,
+      granted_at: DateTime.utc_now()
+    }
+
+    grant_cap(owner_uri, cap)
+  end
+
+  defp grant_session_template_owner_cap(_, _), do: :ok
+
+  # AgentTemplate-specific helpers ----------------------------------------
+
+  defp grant_agent_template_owner_cap(%URI{} = owner_uri, %URI{} = workspace_uri) do
+    cap = %Ezagent.Capability{
+      kind: :agent_template,
+      behavior: __MODULE__,
+      instance: {:within_workspace, workspace_uri},
+      workspace_uri: workspace_uri,
+      granted_by: owner_uri,
+      granted_at: DateTime.utc_now()
+    }
+
+    grant_cap(owner_uri, cap)
+  end
+
+  defp grant_agent_template_owner_cap(_, _), do: :ok
+
+  # Generic owner-cap grant — dispatches `identity.grant_cap` on the
+  # owner's User Kind under a system ctx. The WHO-may-fork authority
+  # was already enforced by dispatch CapBAC against the parent URI's
+  # `:fork` action; this is purely the followup grant so the owner can
+  # later operate on the fork.
+  defp grant_cap(%URI{} = owner_uri, %Ezagent.Capability{} = cap) do
+    target = URI.parse("#{URI.to_string(owner_uri)}?action=identity.grant_cap")
+
+    case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+           target: target,
+           mode: :call,
+           args: %{cap: cap},
+           ctx: %{
+             caller: Ezagent.Entity.User.admin_uri(),
+             caps: Ezagent.Entity.User.admin_caps(),
+             reply: {:caller_inbox, self()}
+           }
+         }) do
+      {:ok, _} -> :ok
+      {:error, _} = err -> err
+      other -> {:error, {:owner_cap_grant_failed, other}}
+    end
+  end
 end
