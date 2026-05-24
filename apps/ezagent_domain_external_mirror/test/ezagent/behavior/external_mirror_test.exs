@@ -104,6 +104,110 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
       assert [] = BindingRow.list_for_session(session_uri)
       assert WorkerRegistry.lookup(URI.to_string(worker_uri)) == :error
     end
+
+    # codex r1 CRIT regression test (2026-05-25): two sessions binding
+    # the SAME (adapter, target) must produce TWO distinct projection
+    # rows, and unbinding one MUST NOT delete the other's row.
+    #
+    # Pre-fix, the DB row `:id` was just `"<adapter>/<target>"` —
+    # session-unscoped — so both inserts would collide on the PK and
+    # unbinding from session A would clobber session B's row.
+    test "two sessions can bind the same (adapter, target) without cross-session row collision" do
+      owner_a = unique_user_uri("owner-a")
+      owner_b = unique_user_uri("owner-b")
+      session_a = unique_session_uri("em3-cross-a")
+      session_b = unique_session_uri("em3-cross-b")
+
+      :ok = spawn_owner_and_session(owner_a, session_a)
+      :ok = spawn_owner_and_session(owner_b, session_b)
+
+      on_exit(fn ->
+        cleanup_session(session_a)
+        cleanup_session(session_b)
+      end)
+
+      shared_target = "tgt-shared-across-sessions"
+      MockPublishBinding.register_observer(shared_target, self())
+
+      ctx_a = owner_ctx(owner_a)
+      ctx_b = owner_ctx(owner_b)
+
+      assert {:ok, %{ok: true}} =
+               Facade.bind(session_a, "mock_publish", shared_target, %{}, ctx_a)
+
+      assert {:ok, %{ok: true}} =
+               Facade.bind(session_b, "mock_publish", shared_target, %{}, ctx_b)
+
+      # Both sessions have the binding in their slice.
+      assert {:ok, [%{adapter_id: "mock_publish", target_id: ^shared_target}]} =
+               Facade.list_bindings(session_a)
+
+      assert {:ok, [%{adapter_id: "mock_publish", target_id: ^shared_target}]} =
+               Facade.list_bindings(session_b)
+
+      # Two distinct projection rows.
+      rows_a = BindingRow.list_for_session(session_a)
+      rows_b = BindingRow.list_for_session(session_b)
+      assert length(rows_a) == 1
+      assert length(rows_b) == 1
+      [%BindingRow{id: id_a}] = rows_a
+      [%BindingRow{id: id_b}] = rows_b
+      assert id_a != id_b
+
+      # Unbind from session_a — session_b's row MUST survive.
+      assert {:ok, %{ok: true, unbound: true}} =
+               Facade.unbind(session_a, "mock_publish", shared_target, ctx_a)
+
+      assert [] = BindingRow.list_for_session(session_a)
+      assert [%BindingRow{id: ^id_b}] = BindingRow.list_for_session(session_b)
+      assert {:ok, [_]} = Facade.list_bindings(session_b)
+    end
+
+    # codex r1 HIGH regression test (2026-05-25): caller-supplied
+    # `opts` keys must NOT be atomized on rehydration (atom-leak DoS).
+    #
+    # Decoded opts must come back as a string-keyed map; the test
+    # asserts the type so a regression to `String.to_atom/1` would
+    # fail loudly.
+    test "rehydrated opts keys stay as STRINGS (no String.to_atom on caller input)" do
+      session_uri = unique_session_uri("em3-opts-strings")
+      owner_uri = unique_user_uri("opts-owner")
+      :ok = spawn_owner_and_session(owner_uri, session_uri)
+
+      on_exit(fn -> cleanup_session(session_uri) end)
+
+      ctx = owner_ctx(owner_uri)
+      target_id = "tgt-opts-keys"
+      MockPublishBinding.register_observer(target_id, self())
+
+      # Caller-controlled opts with a key that does NOT exist as an
+      # atom in the system. If decode_opts ever calls String.to_atom/1
+      # this would silently create a new atom every restart.
+      malicious_opts = %{"caller_controlled_unbounded_key" => 1}
+
+      assert {:ok, %{ok: true}} =
+               Facade.bind(session_uri, "mock_publish", target_id, malicious_opts, ctx)
+
+      # Re-spawn the Session to exercise the init_slice rehydration path.
+      {:ok, pid_a} = Ezagent.KindRegistry.lookup(session_uri)
+      :ok = DynamicSupervisor.terminate_child(EzagentDomainChat.SessionSupervisor, pid_a)
+      wait_until_dead(session_uri, 30)
+      {:ok, _pid_b} = Ezagent.SpawnRegistry.spawn(session_uri)
+      :ok = await_session_alive(session_uri, 50)
+
+      # Slice's binding carries the opts MAP back — keys MUST be
+      # strings (per codex r1 HIGH fix). String.to_atom would have
+      # converted "caller_controlled_unbounded_key" to an atom.
+      {:ok, [%{opts: opts}]} = Facade.list_bindings(session_uri)
+      assert is_map(opts)
+
+      Enum.each(Map.keys(opts), fn k ->
+        assert is_binary(k),
+               "opts key #{inspect(k)} is an atom — String.to_atom regressed (codex r1 HIGH)"
+      end)
+
+      assert opts["caller_controlled_unbounded_key"] == 1
+    end
   end
 
   # =========================================================================

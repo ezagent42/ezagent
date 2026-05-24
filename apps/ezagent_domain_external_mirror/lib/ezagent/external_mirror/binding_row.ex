@@ -161,13 +161,75 @@ defmodule Ezagent.ExternalMirror.BindingRow do
   end
 
   @doc """
-  Build the synthetic binding id from `(adapter_id, target_id)`. The
-  same shape is used in the in-memory slice's `:binding_id` field
-  so the row's `:id` matches the slice key.
+  Build the in-memory slice's `:binding_id` field from
+  `(adapter_id, target_id)` — `"<adapter_id>/<target_id>"`. This is
+  the slice-local key (one slice = one session, so the slice's bindings
+  list is already session-scoped — `binding_id` doesn't need to carry
+  the session URI).
+
+  **DO NOT use this as the DB row `:id`.** The DB row primary key
+  spans ALL sessions, so it MUST include the session URI to avoid
+  cross-session collisions on common targets (e.g. two sessions both
+  bound to Lark chat `oc_xxx` — see codex r1 CRIT 2026-05-25).
+
+  For the DB row id, use `row_id/3` below.
   """
   @spec binding_id(String.t(), String.t() | term()) :: String.t()
   def binding_id(adapter_id, target_id) when is_binary(adapter_id) do
     "#{adapter_id}/#{stringify_target(target_id)}"
+  end
+
+  @doc """
+  Build the canonical DB row `:id` for
+  `(session_uri, adapter_id, target_id)` — a SHA256-derived 24-hex
+  string that scopes across the WHOLE table.
+
+  ## Why a hash, not a compound string
+
+  - Stable: same triple → same id (so concurrent inserts collide
+    on the primary key AND on the natural-key unique index).
+  - Session-scoped: includes `session_uri` so two sessions binding
+    the same adapter target produce DIFFERENT row ids (fixes codex
+    r1 CRIT — pre-fix, the id was only `<adapter_id>/<target_id>`
+    so two sessions binding the same Lark chat collided on the PK
+    and an `:unbind` from one session would `Repo.get` the other's
+    row).
+  - Independent of the in-memory `binding_id`: the slice's
+    `binding_id` stays human-readable `"<adapter>/<target>"`
+    (it's slice-local — no cross-session collision risk because
+    each Session Kind's slice is independently keyed).
+
+  24 hex chars = 96 bits of entropy — collision-resistant for
+  hundreds of millions of bindings; same SHA shape PR-EM-2's
+  `WorkerSpawn.worker_uri_for/3` uses for Worker URI derivation,
+  so the row id matches the worker URI hash component naturally
+  (12 chars there for terse log URIs; 24 chars here for SQL PK
+  safety).
+  """
+  @spec row_id(URI.t(), String.t(), term()) :: String.t()
+  def row_id(%URI{} = session_uri, adapter_id, target_id) when is_binary(adapter_id) do
+    :crypto.hash(
+      :sha256,
+      URI.to_string(session_uri) <> "/" <> adapter_id <> "/" <> stringify_target(target_id)
+    )
+    |> Base.encode16(case: :lower)
+    |> String.slice(0, 24)
+  end
+
+  @doc """
+  Delete a binding row by its full natural key
+  `(session_uri, adapter_id, target_id)`. PR-EM-3 codex r1 CRIT fix
+  (2026-05-25) — the prior `delete_by_id/1` keyed only by the
+  slice's `binding_id` which is NOT session-scoped, so unbinding
+  one session's binding could delete another session's row.
+
+  Idempotent: returns `:ok` whether the row existed or not.
+  """
+  @spec delete_by_natural_key(URI.t(), String.t(), term()) :: :ok
+  def delete_by_natural_key(%URI{} = session_uri, adapter_id, target_id)
+      when is_binary(adapter_id) do
+    id = row_id(session_uri, adapter_id, target_id)
+    delete_by_id(id)
   end
 
   defp stringify_target(t) when is_binary(t), do: t

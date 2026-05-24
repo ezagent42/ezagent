@@ -285,7 +285,7 @@ defmodule Ezagent.Behavior.ExternalMirror do
     case Enum.split_with(slice.bindings, fn b -> b.binding_id == binding_id end) do
       {[], _} ->
         # Not bound — idempotent success (matches `:unbind` semantics
-        # on a missing row; mirrors `BindingRow.delete_by_id/1`).
+        # on a missing row).
         {:ok, slice, %{ok: true, unbound: false}}
 
       {_removed, keep} ->
@@ -294,7 +294,13 @@ defmodule Ezagent.Behavior.ExternalMirror do
         # which bypasses the `:permanent` restart strategy per
         # PR-EM-2 codex round-1 CRIT moduledoc.
         :ok = WorkerSpawn.terminate(session_uri, aid, tid)
-        :ok = BindingRow.delete_by_id(binding_id)
+
+        # codex r1 CRIT fix (2026-05-25): delete by the FULL natural
+        # key (session_uri + adapter_id + target_id) — NOT the
+        # session-unscoped `binding_id`. Pre-fix, a row deletion
+        # could clobber another session's row when two sessions
+        # bound to the same target.
+        :ok = BindingRow.delete_by_natural_key(session_uri, aid, tid)
 
         new_slice = %{slice | bindings: keep}
         {:ok, new_slice, %{ok: true, unbound: true}}
@@ -417,8 +423,16 @@ defmodule Ezagent.Behavior.ExternalMirror do
     workspace_uri = Ezagent.Persistence.workspace_uri_for!(session_uri)
     opts_json = encode_opts(binding.opts)
 
+    # codex r1 CRIT fix (2026-05-25): use `BindingRow.row_id/3` (which
+    # hashes session_uri + adapter_id + target_id) NOT the in-memory
+    # slice's `binding_id` (which is only `adapter_id/target_id`).
+    # The former is unique across all sessions; the latter would
+    # collide on the primary key for two sessions binding the same
+    # adapter target.
+    db_id = BindingRow.row_id(session_uri, binding.adapter_id, binding.target_id)
+
     attrs = %{
-      id: binding.binding_id,
+      id: db_id,
       session_uri: URI.to_string(session_uri),
       adapter_id: binding.adapter_id,
       target_id: stringify_target(binding.target_id),
@@ -448,8 +462,14 @@ defmodule Ezagent.Behavior.ExternalMirror do
   end
 
   defp row_to_slice_binding(%BindingRow{} = row) do
+    # codex r1 CRIT fix detail: the slice's `binding_id` is the
+    # session-local human-readable key (`"<adapter>/<target>"`) —
+    # NOT the DB row's `:id` (which is the session-scoped hash).
+    # `:unbind` action body looks up by the human-readable key, so
+    # rehydration must reconstruct it from (adapter_id, target_id)
+    # rather than reading row.id (the hash is opaque to the slice).
     %{
-      binding_id: row.id,
+      binding_id: BindingRow.binding_id(row.adapter_id, row.target_id),
       adapter_id: row.adapter_id,
       target_id: row.target_id,
       opts: decode_opts(row.opts_json),
@@ -467,21 +487,26 @@ defmodule Ezagent.Behavior.ExternalMirror do
 
   defp encode_opts(_), do: "{}"
 
+  # codex r1 HIGH fix (2026-05-25): NO `String.to_atom/1` on
+  # JSON-decoded caller-controlled data. The previous `atomize_keys`
+  # was an unbounded atom-generation DoS vector — a caller with
+  # bind permission could submit `opts: %{<random key>: _}` and
+  # leak unique atoms on every restart/rehydrate. Atoms are not
+  # garbage collected; this would eventually exhaust the VM's
+  # atom table.
+  #
+  # Adapters that need to read `opts` get a string-keyed map. If
+  # they want atom keys they MUST convert via `String.to_existing_atom/1`
+  # against a fixed allowlist of expected option keys (see SPEC
+  # §6 adapter contract — adapters own this layer of validation).
   defp decode_opts(json) when is_binary(json) do
     case Jason.decode(json) do
-      {:ok, map} when is_map(map) -> atomize_keys(map)
+      {:ok, map} when is_map(map) -> map
       _ -> %{}
     end
   end
 
   defp decode_opts(_), do: %{}
-
-  defp atomize_keys(map) when is_map(map) do
-    Map.new(map, fn
-      {k, v} when is_binary(k) -> {String.to_atom(k), v}
-      {k, v} -> {k, v}
-    end)
-  end
 
   defp stringify_target(t) when is_binary(t), do: t
   defp stringify_target(t) when is_atom(t), do: Atom.to_string(t)
