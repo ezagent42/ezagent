@@ -19,11 +19,13 @@ defmodule EzagentWeb.MagicLinkControllerTest do
     assert get_session(conn, :current_entity_uri) == "entity://user/default/known"
   end
 
-  test "consuming a token for a new email starts registration", %{conn: conn} do
+  test "consuming a token for a new email starts onboarding (PR-B SPEC v2)", %{conn: conn} do
+    # PR-B 2026-05-24 (Allen) — new emails first pick a workspace
+    # in /onboarding/workspace; /register/complete is the second step.
     {:ok, raw} = MagicLinkToken.mint("newcomer@good.com")
 
     conn = get(conn, "/auth/magic/#{raw}")
-    assert redirected_to(conn) == "/register/complete"
+    assert redirected_to(conn) == "/onboarding/workspace"
     assert get_session(conn, :pending_registration_email) == "newcomer@good.com"
   end
 
@@ -32,22 +34,24 @@ defmodule EzagentWeb.MagicLinkControllerTest do
     assert redirected_to(conn) == "/login"
   end
 
-  test "a consumed token for an UNREGISTERED user re-enters /register/complete (Allen 2026-05-24 UX fix)" do
-    # User clicks link → /register/complete → closes tab without
-    # filling form → clicks SAME link again. Per the UX fix, the
-    # second click should re-route to /register/complete (let them
-    # finish), NOT bounce to /login with "already used" error.
+  test "a consumed token for an UNREGISTERED user re-enters /onboarding/workspace (PR-B SPEC v2 update of Allen UX fix)" do
+    # User clicks link → /onboarding/workspace → closes tab without
+    # picking a workspace → clicks SAME link again. Per the UX fix,
+    # the second click should re-route to /onboarding/workspace (let
+    # them finish), NOT bounce to /login with "already used" error.
+    # PR-B 2026-05-24: same UX rule, just one step earlier in the flow
+    # (workspace pick is now step 1, registration is step 2).
     {:ok, raw} = MagicLinkToken.mint("pending@good.com")
 
-    # First click — consumes the token + redirects to /register/complete
+    # First click — consumes the token + redirects to /onboarding/workspace
     first = get(build_conn(), "/auth/magic/#{raw}")
-    assert redirected_to(first) == "/register/complete"
+    assert redirected_to(first) == "/onboarding/workspace"
     assert get_session(first, :pending_registration_email) == "pending@good.com"
 
     # Second click of the SAME (now-consumed) link — UX fix re-routes
-    # back to /register/complete with the email restored in session
+    # back to /onboarding/workspace with the email restored in session
     second = get(build_conn(), "/auth/magic/#{raw}")
-    assert redirected_to(second) == "/register/complete"
+    assert redirected_to(second) == "/onboarding/workspace"
     assert get_session(second, :pending_registration_email) == "pending@good.com"
   end
 

@@ -46,10 +46,17 @@ defmodule EzagentWeb.RegistrationController do
   end
 
   def complete_new(conn, _params) do
-    case get_session(conn, :pending_registration_email) do
-      email when is_binary(email) ->
-        slug = Registration.suggest_slug(Registration.derive_slug(email))
+    case {get_session(conn, :pending_registration_email),
+          get_session(conn, :pending_workspace)} do
+      {email, workspace} when is_binary(email) and is_binary(workspace) ->
+        # PR-B 2026-05-24: workspace MUST be set by the onboarding
+        # controller. If it isn't, redirect back to onboarding.
+        slug = Registration.suggest_slug(Registration.derive_slug(email), workspace)
         render_form(conn, email, slug, default_display(email), nil)
+
+      {email, _} when is_binary(email) ->
+        # Email but no workspace — back to onboarding.
+        redirect(conn, to: "/onboarding/workspace")
 
       _ ->
         redirect(conn, to: "/login")
@@ -57,47 +64,31 @@ defmodule EzagentWeb.RegistrationController do
   end
 
   def complete_create(conn, %{"handle" => handle, "display_name" => display_name}) do
-    case get_session(conn, :pending_registration_email) do
-      email when is_binary(email) ->
-        case Registration.principal_for_email(email) do
-          {:ok, uri} ->
-            # Concurrent-registration / re-entry guard (spec §7): the
-            # email became a principal since the magic link was issued.
-            # Email ownership was already proven by the link -> log in,
-            # do NOT double-create.
-            login_and_redirect(conn, uri)
+    case {get_session(conn, :pending_registration_email),
+          get_session(conn, :pending_workspace)} do
+      {email, workspace} when is_binary(email) and is_binary(workspace) ->
+        # Codex PR-B round-1 HIGH-2: REVALIDATE at registration time
+        # that the workspace still exists AND accepts this email.
+        # Pre-fix: stale :pending_workspace from a since-deleted
+        # workspace or a rule that was removed becomes permanent
+        # tenant membership — irreversibly. Re-check immediately
+        # before the user/member write.
+        cond do
+          not workspace_still_valid?(workspace, email) ->
+            conn
+            |> put_flash(
+              :error,
+              gettext("That workspace no longer accepts your email. Please pick again.")
+            )
+            |> delete_session(:pending_workspace)
+            |> redirect(to: "/onboarding/workspace")
 
-          :none ->
-            slug = handle |> String.trim() |> String.downcase()
-
-            case Registration.create_principal(slug, display_name, email) do
-              {:ok, uri} ->
-                login_and_redirect(conn, uri)
-
-              {:error, :slug_taken} ->
-                suggestion = Registration.suggest_slug(slug)
-
-                render_form(
-                  conn,
-                  email,
-                  suggestion,
-                  display_name,
-                  gettext("“%{slug}” is taken. Try “%{suggestion}”.",
-                    slug: slug,
-                    suggestion: suggestion
-                  )
-                )
-
-              {:error, reason} ->
-                render_form(
-                  conn,
-                  email,
-                  slug,
-                  display_name,
-                  gettext("Could not register: %{reason}", reason: inspect(reason))
-                )
-            end
+          true ->
+            do_complete_create(conn, handle, display_name, email, workspace)
         end
+
+      {email, _} when is_binary(email) ->
+        redirect(conn, to: "/onboarding/workspace")
 
       _ ->
         redirect(conn, to: "/login")
@@ -106,6 +97,52 @@ defmodule EzagentWeb.RegistrationController do
 
   def complete_create(conn, _params) do
     redirect(conn, to: "/register/complete")
+  end
+
+  defp workspace_still_valid?(workspace_name, email) do
+    Ezagent.Workspace.accepts_email?("workspace://" <> workspace_name, email)
+  end
+
+  defp do_complete_create(conn, handle, display_name, email, workspace) do
+    case Registration.principal_for_email(email) do
+      {:ok, uri} ->
+        # Concurrent-registration / re-entry guard (spec §7): the
+        # email became a principal since the magic link was issued.
+        # Email ownership was already proven by the link -> log in,
+        # do NOT double-create.
+        login_and_redirect(conn, uri)
+
+      :none ->
+        slug = handle |> String.trim() |> String.downcase()
+
+        case Registration.create_principal(slug, display_name, email, workspace) do
+          {:ok, uri} ->
+            login_and_redirect(conn, uri)
+
+          {:error, :slug_taken} ->
+            suggestion = Registration.suggest_slug(slug, workspace)
+
+            render_form(
+              conn,
+              email,
+              suggestion,
+              display_name,
+              gettext("“%{slug}” is taken. Try “%{suggestion}”.",
+                slug: slug,
+                suggestion: suggestion
+              )
+            )
+
+          {:error, reason} ->
+            render_form(
+              conn,
+              email,
+              slug,
+              display_name,
+              gettext("Could not register: %{reason}", reason: inspect(reason))
+            )
+        end
+    end
   end
 
   defp login_and_redirect(conn, uri) do

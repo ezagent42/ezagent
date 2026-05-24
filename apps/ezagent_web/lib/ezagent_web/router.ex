@@ -38,6 +38,14 @@ defmodule EzagentWeb.Router do
     delete "/logout", SessionController, :delete
     post "/logout", SessionController, :delete
     get "/auth/magic/:token", MagicLinkController, :consume
+    # PR-B 2026-05-24 (Allen, SPEC v2): workspace onboarding for new
+    # users. MagicLinkController redirects here after email verify when
+    # there's no existing principal. The user picks an existing
+    # workspace to join (matched by magic_link_rule) OR creates a new
+    # one (OQ-V2-1 Option A — non-admin self-serve). Sets
+    # :pending_workspace in session, then bounces to /register/complete.
+    get "/onboarding/workspace", OnboardingController, :show
+    post "/onboarding/workspace", OnboardingController, :submit
     get "/register/complete", RegistrationController, :complete_new
     post "/register/complete", RegistrationController, :complete_create
   end
