@@ -4,8 +4,24 @@ defmodule Ezagent.Behavior.IdentityTest do
   alias Ezagent.{Capability, Entity.User}
 
   describe "init_slice/1" do
-    test "default initial_caps is empty MapSet" do
-      assert %{caps: caps} = Identity.init_slice(%{uri: URI.new!("entity://user/default/x")})
+    test "default initial_caps contains owner-derived self-Identity cap (PR-OWN-3)" do
+      # PR-OWN-3 codex round-1 MED fix: init_slice provisions the
+      # owner-derived `Behavior.Identity` cap on the entity's own URI
+      # so dispatch-path `identity.list_caps` succeeds for the entity
+      # reading their own caps.
+      uri = URI.new!("entity://user/default/x")
+      assert %{caps: caps} = Identity.init_slice(%{uri: uri})
+      assert MapSet.size(caps) == 1
+
+      [self_cap] = MapSet.to_list(caps)
+      assert self_cap.behavior == Identity
+      assert self_cap.instance == uri
+    end
+
+    test "init_slice without :uri arg yields empty MapSet" do
+      # Test-shortcut path: when callers don't provide :uri (only
+      # legacy direct-invoke test setups), no self-cap is provisioned.
+      assert %{caps: caps} = Identity.init_slice(%{})
       assert MapSet.size(caps) == 0
     end
 

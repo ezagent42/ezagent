@@ -81,7 +81,54 @@ defmodule Ezagent.Behavior.Identity do
         list when is_list(list) -> MapSet.new(list)
       end
 
+    # PR-OWN-3 codex round-1 MED fix: provision the owner-derived
+    # safe Identity cap at slice init. `data_owner/1` declares the
+    # entity as owner of its own list_caps/has_cap?; without this
+    # init-time grant the public dispatch path would deny a user
+    # reading their own caps (their cap set wouldn't include the
+    # matching `Behavior.Identity` cap). Codex correctly noted this
+    # left the safe Identity half of the split unprovisioned.
+    #
+    # Synthesized via `CapabilityRegistry.default_grants_from_data_owner/2`
+    # against User Kind (the helper iterates all Behaviors registered
+    # for that Kind; here we only consume the Identity cap row).
+    # Skipped if `args[:uri]` is missing (test scenarios constructing
+    # slices directly).
+    caps =
+      case Map.get(args, :uri) do
+        %URI{} = uri ->
+          add_owner_identity_cap(caps, uri)
+
+        _ ->
+          caps
+      end
+
     %{caps: caps}
+  end
+
+  defp add_owner_identity_cap(caps, %URI{} = uri) do
+    self_identity_cap = %Ezagent.Capability{
+      kind: kind_for_uri(uri),
+      behavior: __MODULE__,
+      instance: Ezagent.URI.instance(uri),
+      workspace_uri: Ezagent.Capability.workspace_of(uri),
+      granted_by: bootstrap_granter(),
+      granted_at: DateTime.utc_now()
+    }
+
+    MapSet.put(caps, self_identity_cap)
+  end
+
+  defp kind_for_uri(%URI{scheme: "entity", host: "user"}), do: :user
+  defp kind_for_uri(%URI{scheme: "entity", host: "agent"}), do: :agent
+  defp kind_for_uri(_), do: :user
+
+  defp bootstrap_granter do
+    if function_exported?(Ezagent.Entity.User, :admin_uri, 0) do
+      Ezagent.Entity.User.admin_uri()
+    else
+      URI.parse("system://bootstrap/pr-own-3")
+    end
   end
 
   @impl Ezagent.Behavior
