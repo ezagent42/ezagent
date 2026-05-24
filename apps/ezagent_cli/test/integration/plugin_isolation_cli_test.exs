@@ -73,6 +73,14 @@ defmodule EzagentCli.Integration.PluginIsolationCLITest do
   setup do
     :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
     Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
+
+    # CLI/GUI audit HIGH-1 — Dispatch no longer silent-fallbacks to
+    # admin. Tests set the per-process caller override.
+    Process.put(
+      :ezagent_cli_caller_override,
+      {Ezagent.Entity.User.admin_uri(), Ezagent.Entity.User.admin_caps()}
+    )
+
     :ok
   end
 

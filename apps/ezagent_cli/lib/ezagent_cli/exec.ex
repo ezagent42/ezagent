@@ -35,12 +35,33 @@ defmodule EzagentCli.Exec do
     * `:entity_uri` — the URI the token belongs to (required when
       `:token` is set; `entity_tokens` is keyed by URI).
 
-  If both are present and valid, derived caller = that entity URI +
-  its caps. If absent, falls back to admin caps (BC for single-user
-  installs).
+  Codex CLI/GUI audit 2026-05-24 HIGH-1 (`feedback_let_it_crash_no_workarounds`):
+  the previous code fell back to admin caps when no token was
+  supplied ("BC for single-user installs"). That's a silent
+  privilege elevation: anyone reaching this entry point with no
+  credentials ran as admin. CLOSED — no token now means refuse.
   """
+  # Argv that don't need authentication — help / version / unknown
+  # commands surface usage info without dispatching anything.
+  defp help_only_argv?([]), do: true
+  defp help_only_argv?(["--help" | _]), do: true
+  defp help_only_argv?(["-h" | _]), do: true
+  defp help_only_argv?(["--version" | _]), do: true
+  defp help_only_argv?(_), do: false
+
   @spec exec([String.t()], keyword()) :: %{output: String.t(), exit_code: integer()}
   def exec(argv, opts) when is_list(argv) and is_list(opts) do
+    # Codex CLI/GUI audit HIGH-1 — help / version / no-args paths
+    # bypass auth (they don't dispatch any action). All real argv
+    # require a token.
+    if help_only_argv?(argv) do
+      do_exec(argv)
+    else
+      exec_with_auth(argv, opts)
+    end
+  end
+
+  defp exec_with_auth(argv, opts) do
     case resolve_caller(opts[:token], opts[:entity_uri]) do
       {:ok, caller_uri, caller_caps} ->
         # Store on the per-call process dict so Dispatch.derive_caller
@@ -53,6 +74,15 @@ defmodule EzagentCli.Exec do
         after
           Process.delete(:ezagent_cli_caller_override)
         end
+
+      {:error, :no_token} ->
+        %{
+          output:
+            "error: CLI calls require authentication. Pass --token + --uri\n" <>
+              "       (or set EZAGENT_USER_TOKEN + EZAGENT_ENTITY_URI). Mint a\n" <>
+              "       token with `mix ezagent.user.token mint <entity-uri>`.\n",
+          exit_code: 4
+        }
 
       {:error, :invalid_token} ->
         %{output: "error: invalid or revoked CLI token\n", exit_code: 4}
@@ -95,9 +125,12 @@ defmodule EzagentCli.Exec do
     end
   end
 
-  # nil / empty token → no override → Dispatch falls through to admin.
-  defp resolve_caller(nil, _), do: {:ok, nil, nil}
-  defp resolve_caller("", _), do: {:ok, nil, nil}
+  # Codex CLI/GUI audit HIGH-1: nil/empty token = no authentication =
+  # REFUSE. Previously this returned {:ok, nil, nil} which Dispatch
+  # then turned into admin caps (the silent fallback path). Now we
+  # surface `:no_token` so Exec returns a clear exit-4 error.
+  defp resolve_caller(nil, _), do: {:error, :no_token}
+  defp resolve_caller("", _), do: {:error, :no_token}
 
   defp resolve_caller(token, nil) when is_binary(token), do: {:error, :missing_entity_uri}
   defp resolve_caller(token, "") when is_binary(token), do: {:error, :missing_entity_uri}
