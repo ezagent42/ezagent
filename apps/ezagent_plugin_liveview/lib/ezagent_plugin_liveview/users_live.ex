@@ -35,6 +35,17 @@ defmodule EzagentPluginLiveview.UsersLive do
   end
 
   defp list_users do
+    # PR-D (SPEC v2, Allen 2026-05-24) — `system_members` is the set
+    # of URIs that have membership in `workspace://system`. Used to
+    # render the "Promote to system" / "Revoke" toggle per row, and
+    # to gate cross-workspace authority via the existing
+    # `Ezagent.Capability.cross_workspace?/2` membership path.
+    system_members =
+      case Ezagent.Workspace.Store.get_by_name("system") do
+        %{members: members} -> MapSet.new(members, &URI.to_string/1)
+        _ -> MapSet.new()
+      end
+
     users =
       Ezagent.Users.list_all()
       |> Enum.map(fn u ->
@@ -47,7 +58,8 @@ defmodule EzagentPluginLiveview.UsersLive do
           # render the online dot. Re-queried on every mount; future PR
           # can subscribe to `esr:presence:<uri>` for live update.
           online?: Ezagent.Presence.present?(u.uri),
-          transports: u.uri |> Ezagent.Presence.list() |> transports_summary()
+          transports: u.uri |> Ezagent.Presence.list() |> transports_summary(),
+          system_member?: MapSet.member?(system_members, URI.to_string(u.uri))
         })
       end)
 
@@ -190,6 +202,48 @@ defmodule EzagentPluginLiveview.UsersLive do
     {:noreply, assign(socket, :flash_error, gettext("password cannot be empty"))}
   end
 
+  # PR-D (SPEC v2, Allen 2026-05-24) — promote a user to
+  # `workspace://system` membership. System membership confers
+  # cross-workspace authority via the existing
+  # `Ezagent.Capability.cross_workspace?/2` membership path
+  # (capability.ex:221-238). NO new cap rows are created — membership
+  # IS the cap.
+  def handle_event("promote_to_system", %{"uri" => uri_str}, socket) do
+    with {:ok, user_uri} <- parse_user_uri(uri_str),
+         :ok <- Ezagent.Workspace.add_member("system", user_uri) do
+      {:noreply,
+       socket
+       |> assign(:users, list_users())
+       |> assign(:flash_info, gettext("Promoted %{uri} to system workspace.", uri: uri_str))}
+    else
+      err ->
+        {:noreply,
+         assign(
+           socket,
+           :flash_error,
+           gettext("Promote failed: %{reason}", reason: inspect(err))
+         )}
+    end
+  end
+
+  def handle_event("revoke_system", %{"uri" => uri_str}, socket) do
+    with {:ok, user_uri} <- parse_user_uri(uri_str),
+         :ok <- Ezagent.Workspace.remove_member("system", user_uri) do
+      {:noreply,
+       socket
+       |> assign(:users, list_users())
+       |> assign(:flash_info, gettext("Revoked system membership for %{uri}.", uri: uri_str))}
+    else
+      err ->
+        {:noreply,
+         assign(
+           socket,
+           :flash_error,
+           gettext("Revoke failed: %{reason}", reason: inspect(err))
+         )}
+    end
+  end
+
   # PR #141 + #145: entity:// scheme; user URIs are entity://user/<name>.
   # Phase 9 PR-3 (SPEC v3 §3): now 3-segment
   # entity://user/<workspace>/<name>. Accepts both shapes — 2-segment
@@ -300,6 +354,7 @@ defmodule EzagentPluginLiveview.UsersLive do
                         <th class="py-2">{gettext("Name / URI")}</th>
                         <th>{gettext("Password")}</th>
                         <th>{gettext("Caps")}</th>
+                        <th>{gettext("System")}</th>
                         <th>{gettext("Set password")}</th>
                       </tr>
                     </thead>
@@ -386,6 +441,44 @@ defmodule EzagentPluginLiveview.UsersLive do
                           <.badge :if={!u.has_password} variant="danger">{gettext("unset")}</.badge>
                         </td>
                         <td class="text-xs">{u.cap_count}</td>
+                        <td class="text-xs">
+                          <%!-- PR-D (SPEC v2, Allen 2026-05-24) — system membership
+                            toggle. Members of `workspace://system` get cross-workspace
+                            authority via Ezagent.Capability.cross_workspace?/2
+                            membership path. No new cap rows — membership IS the cap. --%>
+                          <%= if u.system_member? do %>
+                            <button
+                              type="button"
+                              phx-click="revoke_system"
+                              phx-value-uri={URI.to_string(u.uri)}
+                              data-confirm={
+                                gettext("Revoke system membership for %{name}?",
+                                  name: u.display_name
+                                )
+                              }
+                              class="px-2 py-1 rounded text-xs bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-100 hover:bg-emerald-200"
+                              title={gettext("System member — click to revoke")}
+                            >
+                              ✓ {gettext("System")}
+                            </button>
+                          <% else %>
+                            <button
+                              type="button"
+                              phx-click="promote_to_system"
+                              phx-value-uri={URI.to_string(u.uri)}
+                              data-confirm={
+                                gettext(
+                                  "Promote %{name} to system workspace? They gain " <>
+                                    "cross-workspace authority.",
+                                  name: u.display_name
+                                )
+                              }
+                              class="px-2 py-1 rounded text-xs bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 hover:bg-zinc-200"
+                            >
+                              {gettext("Promote")}
+                            </button>
+                          <% end %>
+                        </td>
                         <td>
                           <form phx-submit="set_password" class="flex gap-1">
                             <input type="hidden" name="uri" value={URI.to_string(u.uri)} />
