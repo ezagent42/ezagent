@@ -133,5 +133,44 @@ defmodule Ezagent.Behavior do
   """
   @callback dispatchable?() :: boolean()
 
-  @optional_callbacks [dispatchable?: 0]
+  @doc """
+  Return the URI that legitimately grants caps for this Behavior's data
+  on the given `instance`. The SPEC at
+  `docs/superpowers/specs/2026-05-24-caps-data-ownership-v2.md` §3
+  defines the contract: every cap = CRUD authorization on a class of
+  data; only the data owner (or a delegate chain ending at the owner)
+  may grant that cap.
+
+  ## Return shapes
+
+  | Return | Meaning | Who can grant via `grant_cap` |
+  |---|---|---|
+  | `%URI{}` | Concrete owner — Behavior resolves the owner of THIS instance | Only that URI (or its delegate chain) |
+  | `:any` | Class-wide cap (instance is `:any` or workspace-scoped) | Workspace admin |
+  | `:no_owner` | System-scope data (no domain owner exists) | Only bootstrap admin |
+  | `{:scope, atom(), URI.t()}` | Scope-bounded cap (e.g. `{:within_session, S}`) | Owner of the scope URI |
+
+  PR-OWN-1 ships this as an OPTIONAL callback (default `:no_owner`).
+  PR-OWN-2..6 migrate concrete Behaviors to declare real `data_owner/1`.
+  PR-OWN-FINAL adds an invariant test that every Behavior declaring
+  `cap_subjects/0` MUST also declare `data_owner/1`.
+
+  Lookup via `Ezagent.CapabilityRegistry.data_owner_of/2` which uses
+  `function_exported?/3` to probe — Behaviors that don't implement
+  this callback fall through to `:no_owner`.
+
+  Optional callback.
+  """
+  @callback data_owner(
+              instance ::
+                URI.t()
+                | :any
+                | {atom(), URI.t()}
+            ) ::
+              URI.t()
+              | :any
+              | :no_owner
+              | {:scope, atom(), URI.t()}
+
+  @optional_callbacks [dispatchable?: 0, data_owner: 1]
 end

@@ -269,4 +269,164 @@ defmodule Ezagent.CapabilityRegistry do
                 "is a caller bug — find the dup and decide which is correct."
     end
   end
+
+  # =================================================================
+  # PR-OWN-1 — data-ownership formalism
+  # docs/superpowers/specs/2026-05-24-caps-data-ownership-v2.md §4
+  # =================================================================
+
+  @doc """
+  Probe `behavior.data_owner(instance)` if exported, else return
+  `:no_owner` (the safe default for Behaviors that haven't migrated
+  yet — PR-OWN-2..6 sweeps them).
+
+  See `Ezagent.Behavior` `data_owner/1` callback for the contract.
+  """
+  @spec data_owner_of(
+          behavior :: module(),
+          instance ::
+            URI.t() | :any | {atom(), URI.t()}
+        ) ::
+          URI.t() | :any | :no_owner | {:scope, atom(), URI.t()}
+  def data_owner_of(behavior, instance) when is_atom(behavior) do
+    if function_exported?(behavior, :data_owner, 1) do
+      behavior.data_owner(instance)
+    else
+      :no_owner
+    end
+  end
+
+  @doc """
+  Walk every Behavior registered against `kind`, ask each one
+  `data_owner(target_uri)`, and return the list of
+  `{grantee_uri, %Capability{}}` tuples to grant.
+
+  Only concrete `%URI{}` owner returns produce a default grant:
+  `:any` / `:no_owner` / `{:scope, _, _}` produce NO entry because
+  those classes don't have a per-target owner — they rely on
+  explicit `grant_cap` from the appropriate admin (per SPEC §3.3).
+
+  Tuple form `{grantee, cap}` is mandatory because `%Capability{}`
+  carries only `granted_by`, not the grantee field — the spawn
+  caller needs `grantee` to know whose Identity slice receives the cap.
+
+  Behavior enumeration goes via the public
+  `subjects_for_kind/1` API (typed surface, includes BOTH
+  dispatchable and cap-only Behaviors). Round-1 SPEC used
+  `BehaviorRegistry.behaviors_for/1` which skipped cap-only;
+  round-4 used a wrong raw ETS match shape; round-5 uses this
+  public surface — lesson locked by SPEC §7 PR-OWN-1 acceptance
+  test that asserts dispatchable + cap-only both return.
+  """
+  @spec default_grants_from_data_owner(
+          kind :: module(),
+          target_uri :: URI.t()
+        ) ::
+          [{URI.t(), Ezagent.Capability.t()}]
+  def default_grants_from_data_owner(kind, %URI{} = target_uri) when is_atom(kind) do
+    # Codex PR-OWN-1 HIGH fix: canonicalize the target_uri via
+    # `Ezagent.URI.instance/1` BEFORE owner-lookup + cap-storage.
+    # Dispatch-side `Capability.matches?/2` runs against the canonical
+    # instance (no query string), so a cap stored on
+    # `entity://user/acme/alice?action=identity.list_caps` would never
+    # match the dispatch's canonical `entity://user/acme/alice`.
+    # Round-1 tests only used bare URIs so this silent broken-grant
+    # path wasn't covered — round-2 regression test below adds it.
+    instance_uri = Ezagent.URI.instance(target_uri)
+
+    # Codex PR-OWN-1 round-2 MEDIUM fix: derive `workspace_uri` from
+    # the RAW `target_uri`, matching `Ezagent.Capability.cap_for_action/3`
+    # exactly (capability.ex:494). If we derived from `instance_uri`
+    # instead, `workspace://default/subresource?action=…` would canon-
+    # icalize to `workspace://default` (path dropped), then yield
+    # `workspace_uri: workspace://default` — but dispatch's
+    # `cap_for_action` uses RAW target and `workspace_of(workspace://...)`
+    # preserves the full path, so dispatch's needed cap would carry
+    # `workspace_uri: workspace://default/subresource`. Mismatch on the
+    # workspace dimension → cap silently fails `matches?/2`.
+    workspace_uri =
+      case Ezagent.Capability.workspace_of(target_uri) do
+        %URI{} = ws -> ws
+        :any -> :any
+      end
+
+    granter_uri = bootstrap_granter()
+
+    kind
+    |> subjects_for_kind()
+    |> Enum.map(& &1.behavior)
+    |> Enum.uniq()
+    |> Enum.flat_map(fn behavior ->
+      case data_owner_of(behavior, instance_uri) do
+        %URI{} = owner_uri ->
+          cap = %Ezagent.Capability{
+            kind: kind_type_name(kind),
+            behavior: behavior,
+            instance: instance_uri,
+            workspace_uri: workspace_uri,
+            granted_by: granter_uri,
+            granted_at: DateTime.utc_now()
+          }
+
+          [{owner_uri, cap}]
+
+        _other ->
+          # :any | :no_owner | {:scope, _, _} → no default grant,
+          # caller relies on explicit grant_cap.
+          []
+      end
+    end)
+  end
+
+  # --- MIGRATION CONSTRAINT for PR-OWN-3+ (codex PR-OWN-1 MEDIUM) ---
+  #
+  # The `%Capability{}` struct has no `action` dimension (SPEC §1
+  # CRITICAL-1 reframe: caps are behavior-scoped). Consequence: an
+  # owner cap on a Behavior grants ALL actions of that Behavior.
+  # For mixed-sensitivity Behaviors (e.g. `Behavior.Identity` whose
+  # `cap_subjects/0` includes both safe `:list_caps` / `:has_cap?`
+  # AND privileged `:grant_cap` / `:revoke_cap`), a single
+  # behavior-scoped owner cap would let users self-mutate their own
+  # caps — breaking the admin-only expectation for grant/revoke.
+  #
+  # MIGRATION RULE for PR-OWN-3 (Identity migration):
+  # SPLIT `Behavior.Identity` BEFORE adding `data_owner/1`:
+  #   - `Behavior.Identity` — owner-readable: :list_caps, :has_cap?
+  #     (data_owner = the entity itself)
+  #   - `Behavior.IdentityAdmin` — admin-only: :grant_cap,
+  #     :revoke_cap (data_owner = :no_owner; bootstrap admin only,
+  #     or workspace-admin via OQ-OWN-1 resolution)
+  #
+  # SAME RULE applies to any future multi-action Behavior where
+  # owner-default grant of all actions would over-authorize. Apply
+  # split-then-migrate per PR-OWN-3+ acceptance criterion.
+
+  # The synthesized granter for PR-OWN-1 default grants. `Ezagent.Entity.User`
+  # lives in `ezagent_domain_identity` which depends on `ezagent_core`,
+  # so we can't reference it from here at compile time. Resolution via
+  # `Code.ensure_loaded?/1` + `apply/3` at runtime so the dependency
+  # arrow stays correct and the URI matches the real admin once domain.identity
+  # is started. Falls back to `system://bootstrap/pr-own-1` if the User
+  # module isn't loaded (test envs without the identity app).
+  defp bootstrap_granter do
+    if Code.ensure_loaded?(Ezagent.Entity.User) and
+         function_exported?(Ezagent.Entity.User, :admin_uri, 0) do
+      apply(Ezagent.Entity.User, :admin_uri, [])
+    else
+      URI.parse("system://bootstrap/pr-own-1")
+    end
+  end
+
+  # Some test Kinds don't implement `type_name/0`; fall back to the
+  # module atom so the cap struct still has a key.
+  # `Code.ensure_loaded?/1` is required because `function_exported?/3`
+  # returns false for not-yet-loaded modules (e.g. test-only Kinds
+  # whose .ex file lives under `test/support/`).
+  defp kind_type_name(kind) do
+    if Code.ensure_loaded?(kind) and function_exported?(kind, :type_name, 0) do
+      kind.type_name()
+    else
+      kind
+    end
+  end
 end
