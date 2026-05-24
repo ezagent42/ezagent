@@ -8,7 +8,7 @@ defmodule Ezagent.Behavior.IdentityGrantTest do
   """
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Behavior.Identity
+  alias Ezagent.Behavior.{Identity, IdentityAdmin}
   alias Ezagent.Capability
 
   @workspace_uri URI.new!("workspace://default")
@@ -37,7 +37,7 @@ defmodule Ezagent.Behavior.IdentityGrantTest do
     ctx = %{caps: Ezagent.Entity.User.admin_caps()}
 
     {:ok, new_slice, %{caps: caps}} =
-      Identity.invoke(:grant_cap, slice, %{cap: new_cap}, ctx)
+      IdentityAdmin.invoke(:grant_cap, slice, %{cap: new_cap}, ctx)
 
     assert MapSet.size(new_slice.caps) == 1
     assert new_cap in caps
@@ -49,7 +49,7 @@ defmodule Ezagent.Behavior.IdentityGrantTest do
     slice = %{caps: MapSet.new([cap])}
 
     {:ok, new_slice, %{caps: caps}} =
-      Identity.invoke(:revoke_cap, slice, %{cap: cap}, %{})
+      IdentityAdmin.invoke(:revoke_cap, slice, %{cap: cap}, %{})
 
     assert MapSet.size(new_slice.caps) == 0
     assert caps == []
@@ -64,12 +64,12 @@ defmodule Ezagent.Behavior.IdentityGrantTest do
     # under PR-OWN-2 §5.2.
     ctx = %{caps: Ezagent.Entity.User.admin_caps()}
 
-    {:ok, new_slice, _} = Identity.invoke(:grant_cap, slice, %{cap: cap}, ctx)
+    {:ok, new_slice, _} = IdentityAdmin.invoke(:grant_cap, slice, %{cap: cap}, ctx)
     assert MapSet.size(new_slice.caps) == 1
   end
 
-  test "interface declares grant_cap + revoke_cap" do
-    iface = Identity.interface()
+  test "IdentityAdmin interface declares grant_cap + revoke_cap (PR-OWN-3 split)" do
+    iface = IdentityAdmin.interface()
     assert Map.has_key?(iface, :grant_cap)
     assert Map.has_key?(iface, :revoke_cap)
     assert iface.grant_cap.modes == [:call]
@@ -103,7 +103,7 @@ defmodule Ezagent.Behavior.IdentityGrantTest do
       ctx = %{caps: MapSet.new([delegated_wildcard])}
 
       assert {:error, :grant_wildcard_requires_admin} =
-               Identity.invoke(:grant_cap, slice, %{cap: cap_to_grant}, ctx)
+               IdentityAdmin.invoke(:grant_cap, slice, %{cap: cap_to_grant}, ctx)
     end
 
     test "only the all-four-wildcards bootstrap-admin shape qualifies" do
@@ -114,7 +114,7 @@ defmodule Ezagent.Behavior.IdentityGrantTest do
       ctx = %{caps: Ezagent.Entity.User.admin_caps()}
 
       assert {:ok, _new_slice, _result} =
-               Identity.invoke(:grant_cap, slice, %{cap: cap_to_grant}, ctx)
+               IdentityAdmin.invoke(:grant_cap, slice, %{cap: cap_to_grant}, ctx)
     end
   end
 end

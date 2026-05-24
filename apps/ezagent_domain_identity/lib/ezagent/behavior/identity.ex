@@ -40,18 +40,34 @@ defmodule Ezagent.Behavior.Identity do
 
   @behaviour Ezagent.Behavior
 
+  # PR-OWN-3 (caps-data-ownership SPEC #306 §7): SPLIT — Identity
+  # keeps only the safe read actions (`:list_caps`, `:has_cap?`).
+  # Privileged write actions (`:grant_cap`, `:revoke_cap`) moved to
+  # `Ezagent.Behavior.IdentityAdmin` (cap-only). The split is the
+  # workaround for the SPEC §1 reframe (caps are behavior-scoped):
+  # a single Behavior cap can't distinguish safe + privileged
+  # actions, so we use two Behaviors with separate cap_subjects
+  # + separate data_owner/1 rules.
   @impl Ezagent.Behavior
-  def actions, do: [:list_caps, :has_cap?, :grant_cap, :revoke_cap]
+  def actions, do: [:list_caps, :has_cap?]
 
   @impl Ezagent.Behavior
   def cap_subjects do
     [
       {:list_caps, "list all capabilities currently granted to this principal"},
-      {:has_cap?, "test whether this principal holds a specific capability shape"},
-      {:grant_cap, "grant a new capability to this principal (caller must hold admin cap)"},
-      {:revoke_cap, "revoke a capability from this principal (caller must hold admin cap)"}
+      {:has_cap?, "test whether this principal holds a specific capability shape"}
     ]
   end
+
+  # PR-OWN-3 SPEC #306 §3.3: data_owner for Identity is the
+  # entity itself (Alice owns Alice's list_caps/has_cap?). Means
+  # users get default `Behavior.Identity` cap on their own URI at
+  # creation — they can read their own caps without admin
+  # intervention.
+  @impl Ezagent.Behavior
+  def data_owner(%URI{} = entity_uri), do: entity_uri
+  def data_owner(:any), do: :any
+  def data_owner(_), do: :no_owner
 
   @impl Ezagent.Behavior
   def state_slice, do: :identity
@@ -65,7 +81,54 @@ defmodule Ezagent.Behavior.Identity do
         list when is_list(list) -> MapSet.new(list)
       end
 
+    # PR-OWN-3 codex round-1 MED fix: provision the owner-derived
+    # safe Identity cap at slice init. `data_owner/1` declares the
+    # entity as owner of its own list_caps/has_cap?; without this
+    # init-time grant the public dispatch path would deny a user
+    # reading their own caps (their cap set wouldn't include the
+    # matching `Behavior.Identity` cap). Codex correctly noted this
+    # left the safe Identity half of the split unprovisioned.
+    #
+    # Synthesized via `CapabilityRegistry.default_grants_from_data_owner/2`
+    # against User Kind (the helper iterates all Behaviors registered
+    # for that Kind; here we only consume the Identity cap row).
+    # Skipped if `args[:uri]` is missing (test scenarios constructing
+    # slices directly).
+    caps =
+      case Map.get(args, :uri) do
+        %URI{} = uri ->
+          add_owner_identity_cap(caps, uri)
+
+        _ ->
+          caps
+      end
+
     %{caps: caps}
+  end
+
+  defp add_owner_identity_cap(caps, %URI{} = uri) do
+    self_identity_cap = %Ezagent.Capability{
+      kind: kind_for_uri(uri),
+      behavior: __MODULE__,
+      instance: Ezagent.URI.instance(uri),
+      workspace_uri: Ezagent.Capability.workspace_of(uri),
+      granted_by: bootstrap_granter(),
+      granted_at: DateTime.utc_now()
+    }
+
+    MapSet.put(caps, self_identity_cap)
+  end
+
+  defp kind_for_uri(%URI{scheme: "entity", host: "user"}), do: :user
+  defp kind_for_uri(%URI{scheme: "entity", host: "agent"}), do: :agent
+  defp kind_for_uri(_), do: :user
+
+  defp bootstrap_granter do
+    if function_exported?(Ezagent.Entity.User, :admin_uri, 0) do
+      Ezagent.Entity.User.admin_uri()
+    else
+      URI.parse("system://bootstrap/pr-own-3")
+    end
   end
 
   @impl Ezagent.Behavior
@@ -78,17 +141,82 @@ defmodule Ezagent.Behavior.Identity do
     {:ok, slice, %{has: has?}}
   end
 
-  # Phase 6 PR 6: live cap mutation via behavior action.
-  #
-  # PR-OWN-2 (caps-data-ownership SPEC #306 §5.2) adds a §5.2
-  # structural pre-check: for caps whose Behavior declares
-  # `data_owner/1` (i.e. has migrated to the new framework), the
-  # caller MUST be the data owner OR hold a recorded delegation cap
-  # — even if the dispatch-level CapBAC allowed them through with
-  # an admin cap. Behaviors that have NOT migrated keep the old
-  # admin-cap dispatch gate as the only check (incremental rollout
-  # per SPEC §7 PR-OWN-2 — Identity is not yet migrated as of this
-  # PR; PR-OWN-3 migrates it).
+  # PR-OWN-3: `:grant_cap` + `:revoke_cap` moved to
+  # `Ezagent.Behavior.IdentityAdmin`. The `notify_cap_change/4` helper
+  # is shared via that module (called from IdentityAdmin's invokes).
+
+  # PR-OWN-3: `notify_cap_change/4` moved to IdentityAdmin Behavior
+  # which now owns the cap-mutation actions.
+
+  @impl Ezagent.Behavior
+  def interface do
+    %{
+      list_caps: %{
+        description: "List the principal's capability set",
+        args: %{},
+        returns: %{caps: {:list, :map}},
+        modes: [:call]
+      },
+      has_cap?: %{
+        description: "Check whether the principal holds a capability matching the needed shape",
+        args: %{cap: :map},
+        returns: %{has: :boolean},
+        modes: [:call]
+      }
+    }
+  end
+end
+
+defmodule Ezagent.Behavior.IdentityAdmin do
+  @moduledoc """
+  IdentityAdmin Behavior — privileged cap mutation actions on a
+  principal's `:identity` slice.
+
+  PR-OWN-3 (caps-data-ownership SPEC #306 §7) split-out from
+  `Ezagent.Behavior.Identity`. Reasoning (codex PR-OWN-1 round-1 MED
+  + SPEC §1 reframe): caps are behavior-scoped, so a single Identity
+  Behavior cap would have collapsed safe (`:list_caps`, `:has_cap?`)
+  and privileged (`:grant_cap`, `:revoke_cap`) actions into one
+  grant surface — letting users self-mutate their own caps.
+
+  This Behavior holds ONLY the privileged actions; `Identity` keeps
+  the safe ones. `data_owner/1` returns `:no_owner` here so the
+  §5.2 gate routes IdentityAdmin grants only through the bootstrap
+  admin path.
+
+  Shares the `:identity` slice with `Ezagent.Behavior.Identity` (both
+  Behaviors registered against User + Agent Kinds).
+  """
+
+  @behaviour Ezagent.Behavior
+
+  @impl Ezagent.Behavior
+  def actions, do: [:grant_cap, :revoke_cap]
+
+  @impl Ezagent.Behavior
+  def cap_subjects do
+    [
+      {:grant_cap, "grant a new capability to this principal (admin)"},
+      {:revoke_cap, "revoke a capability from this principal (admin)"}
+    ]
+  end
+
+  # PR-OWN-3: data_owner = :no_owner. Privileged ops have no
+  # per-instance owner; only bootstrap admin (via §5.2's
+  # `holds_admin_caps?` check) can dispatch these.
+  @impl Ezagent.Behavior
+  def data_owner(_), do: :no_owner
+
+  @impl Ezagent.Behavior
+  def state_slice, do: :identity
+
+  @impl Ezagent.Behavior
+  def init_slice(args) do
+    # Defer to Identity for slice init shape — both Behaviors share it.
+    Ezagent.Behavior.Identity.init_slice(args)
+  end
+
+  @impl Ezagent.Behavior
   def invoke(:grant_cap, slice, %{cap: cap}, ctx) do
     case check_grant_authorized(cap, ctx) do
       :ok ->
@@ -107,40 +235,9 @@ defmodule Ezagent.Behavior.Identity do
     {:ok, new_slice, %{caps: MapSet.to_list(new_slice.caps)}}
   end
 
-  # Notifier/flash audit 2026-05-24 — surface cap changes to the
-  # affected user. The :self_uri ctx field is the URI whose Identity
-  # slice we're mutating (i.e. the target principal). User-only —
-  # agents don't have an inbox.
-  defp notify_cap_change(ctx, kind, text, cap) do
-    target_uri = Map.get(ctx, :self_uri)
-
-    if match?(%URI{scheme: "entity", host: "user"}, target_uri) do
-      _ =
-        Ezagent.Notifications.notify(target_uri, %{
-          kind: kind,
-          text: text,
-          cap_summary: inspect(cap)
-        })
-    end
-
-    :ok
-  end
-
   @impl Ezagent.Behavior
   def interface do
     %{
-      list_caps: %{
-        description: "List the principal's capability set",
-        args: %{},
-        returns: %{caps: {:list, :map}},
-        modes: [:call]
-      },
-      has_cap?: %{
-        description: "Check whether the principal holds a capability matching the needed shape",
-        args: %{cap: :map},
-        returns: %{has: :boolean},
-        modes: [:call]
-      },
       grant_cap: %{
         description: "Add a capability to the principal's set",
         args: %{cap: :map},
@@ -154,6 +251,21 @@ defmodule Ezagent.Behavior.Identity do
         modes: [:call]
       }
     }
+  end
+
+  defp notify_cap_change(ctx, kind, text, cap) do
+    target_uri = Map.get(ctx, :self_uri)
+
+    if match?(%URI{scheme: "entity", host: "user"}, target_uri) do
+      _ =
+        Ezagent.Notifications.notify(target_uri, %{
+          kind: kind,
+          text: text,
+          cap_summary: inspect(cap)
+        })
+    end
+
+    :ok
   end
 
   # PR-OWN-2 §5.2 enforcement helpers — called from `invoke(:grant_cap,...)`.
