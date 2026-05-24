@@ -250,18 +250,36 @@ defmodule Ezagent.Behavior do
   - `term` — the opaque term this Behavior returned from `post_init/2`
   - `slice` — this Behavior's current slice (key = `state_slice/0`)
   - `ctx` — `%{kind_module: module(), self_uri: URI.t()}` so the
-    Behavior can route based on Kind / dispatch back into itself
+    Behavior can identify itself (e.g. to pass `self_uri` as the
+    `caller` of an outbound dispatch)
 
   Returns:
   - `{:ok, new_slice}` — `Kind.Server` writes `new_slice` into
-    `state.state[state_slice()]`
+    `state.state[state_slice()]` via the same snapshot-commit path
+    as dispatch
   - `:ignore` — slice unchanged (no write-back)
 
-  Runs AFTER `:announce_ready` has completed, so dispatch is open by
-  the time the Behavior performs any side-effecting subscribe /
-  external I/O. Each post-init continuation is its own
-  `handle_continue/2` step on the Kind.Server — they do not block
-  each other or anything else on the same scheduler pass.
+  Each post-init continuation is its own `handle_continue/2` step on
+  the Kind.Server — they do not block each other on the same
+  scheduler pass.
+
+  ## Dispatch state during post-init (codex round-2 HIGH-1 +
+  round-3 HIGH-1 — see moduledoc)
+
+  Self is `:not_ready` for the duration of post-init; `:ready` is
+  only published after the LAST `handle_continue/3` completes AND
+  the PendingDelivery buffer has been drained. Implications for the
+  Behavior author:
+
+  - Dispatching OUT to OTHER ready Kinds is fine — ReadyGate is
+    consulted per-target.
+  - Self-dispatching synchronously (`Invocation.dispatch/1` with
+    `mode: :call` targeting `self_uri`) will fail-fast with
+    `{:error, :not_ready}` (hard-invariant #3). Don't do it.
+  - Self-dispatching asynchronously (`mode: :cast`) will buffer to
+    PendingDelivery and run AFTER post-init completes — which is
+    rarely what the author intended. Prefer mutating the slice
+    directly via the `{:ok, new_slice}` return.
 
   Optional callback (probed via `function_exported?/3` per call);
   Behaviors that return `{:continue, term}` from `post_init/2` MUST

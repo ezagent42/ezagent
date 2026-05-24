@@ -244,6 +244,78 @@ defmodule Ezagent.Kind.ServerPostInitTest do
       {:ok, slice} = Ezagent.Kind.get_slice(uri_str, :slow)
       assert "during-post-init" in slice.msgs
     end
+
+    # -----------------------------------------------------------------
+    # Test 6 — codex round-3 HIGH-1 regression: per-target FIFO across
+    # the not-ready → ready transition. With the round-3 fix in place
+    # (`drain_then_mark_ready/1` flushes PendingDelivery BEFORE
+    # mark_ready, looping until empty), older buffered entries are
+    # ALWAYS in our mailbox before any external direct-cast that hits
+    # `:ready`. The structural assertion below is that by the time
+    # ReadyGate becomes `:ready` externally observable, the
+    # PendingDelivery buffer for that URI is empty — i.e. there are
+    # no "straggler" buffered entries that a post-ready dispatcher
+    # could overtake by direct-casting.
+    # -----------------------------------------------------------------
+    test "PendingDelivery buffer is empty by the time ReadyGate is :ready",
+         %{suffix: suffix} do
+      uri = URI.parse("entity://agent/default/test_fifo_post_init-#{suffix}")
+      uri_str = URI.to_string(uri)
+
+      :ok = Ezagent.BehaviorRegistry.register(SlowPostInitKind, :noop, SlowPostInitBehavior)
+
+      # Pre-buffer multiple casts (they all land in PendingDelivery
+      # because the URI doesn't exist yet → dispatch buffers).
+      for n <- 1..3 do
+        inv = %Ezagent.Invocation{
+          target: URI.parse("#{uri_str}?action=test.noop"),
+          mode: :cast,
+          args: %{msg: "pre-ready-#{n}"},
+          ctx: %{
+            caller: URI.parse("entity://user/system/admin"),
+            caps: Ezagent.Entity.User.admin_caps(),
+            reply: :ignore
+          }
+        }
+
+        :ok = Ezagent.PendingDelivery.buffer(uri, inv)
+      end
+
+      assert Ezagent.PendingDelivery.buffer_size(uri) == 3
+
+      {:ok, _pid} =
+        Ezagent.Kind.Server.start_link(
+          {SlowPostInitKind, %{uri: uri, post_init_sleep_ms: 20}}
+        )
+
+      # Wait until ReadyGate flips to :ready (post-init done, drain done).
+      :ok = wait_until_ready(uri_str, 500)
+
+      # Round-3 HIGH-1 invariant: PendingDelivery buffer is EMPTY at
+      # the moment :ready is observable. Without the
+      # drain-then-mark order this could be non-zero (entries that
+      # arrived during the drain-flush window stayed buffered after
+      # mark_ready, then would be overtaken by post-ready
+      # direct-casts on the next dispatch).
+      assert Ezagent.PendingDelivery.buffer_size(uri) == 0
+
+      # Sanity: all 3 pre-buffered casts eventually applied to the
+      # slice — proves the drain delivered them all (not just
+      # cleared the buffer).
+      :ok =
+        wait_until(
+          fn ->
+            case Ezagent.Kind.get_slice(uri_str, :slow) do
+              {:ok, %{msgs: msgs}} -> length(msgs) == 3
+              _ -> false
+            end
+          end,
+          500
+        )
+
+      {:ok, %{msgs: msgs}} = Ezagent.Kind.get_slice(uri_str, :slow)
+      assert msgs == ["pre-ready-1", "pre-ready-2", "pre-ready-3"]
+    end
   end
 
   # -------------------------------------------------------------------

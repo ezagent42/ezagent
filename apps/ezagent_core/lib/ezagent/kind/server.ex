@@ -190,11 +190,12 @@ defmodule Ezagent.Kind.Server do
     # re-runs init → post-init → mark_ready.
     #
     # Pre-PR behaviour for Kinds with no post-init Behaviors is still
-    # preserved exactly: empty queue → mark_ready + flush right here.
+    # preserved exactly: empty queue → drain + mark_ready right here
+    # (the drain-then-mark order is the round-3 HIGH-1 fix, see the
+    # post-init clause below).
     case queue do
       [] ->
-        :ok = Ezagent.ReadyGate.mark_ready(uri_str)
-        drain_pending_delivery(uri_str)
+        drain_then_mark_ready(uri_str)
         {:noreply, state}
 
       _ ->
@@ -227,14 +228,15 @@ defmodule Ezagent.Kind.Server do
 
     case rest do
       [] ->
-        # All post-init continuations succeeded — NOW the Kind is
-        # safe to publish as `:ready` AND we can drain any messages
+        # All post-init continuations succeeded — drain any messages
         # buffered during the entire register→post-init-complete
-        # window (deferred from :announce_ready per round-2 HIGH-1
-        # fix above).
-        uri_str = URI.to_string(self_uri)
-        :ok = Ezagent.ReadyGate.mark_ready(uri_str)
-        drain_pending_delivery(uri_str)
+        # window AND publish `:ready` atomically with respect to
+        # incoming dispatchers. The drain-then-mark order is the
+        # round-3 HIGH-1 fix (otherwise external `dispatch/1` calls
+        # arriving between mark_ready and the self-cast loop could
+        # overtake older buffered entries in the GenServer mailbox,
+        # breaking per-target FIFO).
+        drain_then_mark_ready(URI.to_string(self_uri))
         {:noreply, new_state}
 
       _ ->
@@ -293,12 +295,45 @@ defmodule Ezagent.Kind.Server do
     :ok
   end
 
-  defp drain_pending_delivery(uri_str) when is_binary(uri_str) do
-    uri_str
-    |> Ezagent.PendingDelivery.flush()
-    |> Enum.each(fn buffered_inv ->
-      GenServer.cast(self(), {:ezagent_dispatch, buffered_inv})
-    end)
+  # PR-EM-CORE codex round-3 HIGH-1 fix: ensure per-target FIFO across
+  # the not-ready → ready transition. The naive "mark_ready then
+  # flush" order (rounds 1+2) lets a concurrent external dispatch
+  # observe `:ready` and `GenServer.cast` directly into our mailbox
+  # AHEAD of the self-casts we issue for the older buffered entries —
+  # breaking FIFO for non-commutative actions.
+  #
+  # Drain order:
+  # 1. Flush PendingDelivery → self-cast each buffered entry into our
+  #    own mailbox. While ReadyGate is still `:not_ready`, concurrent
+  #    dispatchers buffer (so no external direct-cast can race ahead
+  #    in our mailbox).
+  # 2. Loop: if more entries arrived in PendingDelivery during step 1
+  #    (because dispatchers kept buffering), repeat step 1. Terminates
+  #    when the buffer is empty.
+  # 3. Mark ready ONLY when the buffer is empty AND all buffered
+  #    entries are already enqueued in our mailbox. From this point
+  #    external direct-casts go to the END of our mailbox, AFTER the
+  #    older self-casts. FIFO preserved.
+  #
+  # Bounded iteration: a buggy / hostile dispatcher producing entries
+  # faster than we can self-cast could theoretically loop forever.
+  # Kind init is not the hot dispatch path so this is acceptable for
+  # v1; if production data shows unbounded loops, switch to a
+  # `:draining` ReadyGate state with a hand-off semaphore.
+  defp drain_then_mark_ready(uri_str) when is_binary(uri_str) do
+    case Ezagent.PendingDelivery.flush(uri_str) do
+      [] ->
+        :ok = Ezagent.ReadyGate.mark_ready(uri_str)
+
+      entries ->
+        Enum.each(entries, fn buffered_inv ->
+          GenServer.cast(self(), {:ezagent_dispatch, buffered_inv})
+        end)
+
+        # Re-check — dispatchers may have added entries while we were
+        # self-casting (they still saw :not_ready).
+        drain_then_mark_ready(uri_str)
+    end
   end
 
   # codex round-10 HIGH — `Ezagent.Kind.terminate/1` needs the Kind
