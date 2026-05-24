@@ -43,8 +43,10 @@ defmodule Ezagent.ExternalMirror.BindingRegistryTest do
     end
 
     test "re-registering the same (adapter_id, binding_module) pair is idempotent" do
+      # First call inserts → `:ok`. Second call sees the existing
+      # row → `{:ok, :already_present}` (codex r2 HIGH-2).
       assert :ok = BindingRegistry.register_module("mock_em", MockBinding)
-      assert :ok = BindingRegistry.register_module("mock_em", MockBinding)
+      assert {:ok, :already_present} = BindingRegistry.register_module("mock_em", MockBinding)
       assert {:ok, MockBinding} = BindingRegistry.lookup("mock_em")
     end
 

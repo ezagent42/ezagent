@@ -47,8 +47,12 @@ defmodule Ezagent.ExternalMirror.AdapterRegistryTest do
     end
 
     test "registering the same module twice is idempotent" do
+      # First call inserts → `:ok`. Second call sees an existing row
+      # for the same module → `{:ok, :already_present}` (codex r2
+      # HIGH-2 distinguished return so the rollback path can avoid
+      # over-deleting pre-existing rows).
       assert :ok = AdapterRegistry.register(MockAdapter)
-      assert :ok = AdapterRegistry.register(MockAdapter)
+      assert {:ok, :already_present} = AdapterRegistry.register(MockAdapter)
       assert {:ok, MockAdapter} = AdapterRegistry.lookup("mock_em")
     end
 

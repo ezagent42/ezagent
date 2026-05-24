@@ -569,36 +569,50 @@ defmodule Ezagent.Plugin do
 
     intra_batch_dup_check!(plugin_module, decls)
 
-    # Phase 2 — write atomically; track rollback receipts.
+    # Phase 2 — write atomically; track INSERT-ONLY receipts so the
+    # rollback path (Phase 3) deletes only what THIS boot attempt
+    # wrote, never rows that already existed (codex r2 HIGH-2 fix).
+    #
+    # The receipts list is built imperatively via a ref-backed
+    # process-dictionary key so a `rescue` (which loses the reduce
+    # accumulator) can still read it. Cleared in the `after` block
+    # so a passing boot leaves no residual state.
+    receipts_ref = make_ref()
+    Process.put({:em_pr1_receipts, receipts_ref}, [])
+
     try do
-      Enum.reduce(decls, [], fn {adapter_module, binding_module}, written ->
+      Enum.each(decls, fn {adapter_module, binding_module} ->
         adapter_id = adapter_module.adapter_id()
 
-        :ok = apply(Ezagent.ExternalMirror.AdapterRegistry, :register, [adapter_module])
+        adapter_result =
+          apply(Ezagent.ExternalMirror.AdapterRegistry, :register, [adapter_module])
 
-        :ok =
+        record_receipt!(receipts_ref, {:adapter, adapter_id, adapter_module, adapter_result})
+
+        binding_result =
           apply(Ezagent.ExternalMirror.BindingRegistry, :register_module, [
             adapter_id,
             binding_module
           ])
 
-        [adapter_id | written]
+        record_receipt!(receipts_ref, {:binding, adapter_id, binding_module, binding_result})
       end)
 
       :ok
     rescue
       e ->
-        # Phase 3 — rollback every adapter_id THIS boot attempt wrote
-        # in this batch. Use a process-dictionary trick? No — pass
-        # the written list explicitly. The reduce's accumulator is
-        # gone after the rescue, so re-walk every decl and delete any
-        # entry whose registered module matches what we just tried.
-        # Safer alternative: enumerate decls and delete by adapter_id
-        # IF the registry currently holds our module (so we don't
-        # accidentally delete a sibling plugin's row that races us).
-        rollback_adapters!(decls)
+        # Phase 3 — rollback ONLY the registries this attempt
+        # inserted into (receipts where the registry returned `:ok`,
+        # not `{:ok, :already_present}`). Pre-existing rows survive.
+        rollback_adapters_from_receipts!(Process.get({:em_pr1_receipts, receipts_ref}, []))
         reraise e, __STACKTRACE__
+    after
+      Process.delete({:em_pr1_receipts, receipts_ref})
     end
+  end
+
+  defp record_receipt!(ref, receipt) do
+    Process.put({:em_pr1_receipts, ref}, [receipt | Process.get({:em_pr1_receipts, ref}, [])])
   end
 
   # Catches the case where a plugin's adapters/0 has TWO entries
@@ -624,20 +638,19 @@ defmodule Ezagent.Plugin do
     end
   end
 
-  # Best-effort rollback: for each declared adapter, if the registry
-  # currently holds OUR module, delete the row. Won't clobber a
-  # sibling that won a concurrency race with us — we only delete
-  # rows we plausibly wrote.
-  defp rollback_adapters!(decls) do
-    Enum.each(decls, fn {adapter_module, binding_module} ->
-      adapter_id =
-        try do
-          adapter_module.adapter_id()
-        rescue
-          _ -> nil
-        end
-
-      if is_binary(adapter_id) do
+  # codex r2 HIGH-2 — receipts-driven rollback. Only deletes rows
+  # whose receipt was `:ok` (the registry's `:insert_new` returned
+  # true, meaning THIS attempt wrote the row). Skips rows whose
+  # receipt was `{:ok, :already_present}` — those existed before
+  # and aren't ours to delete.
+  #
+  # Belt-and-suspenders: re-verify the registry still holds OUR
+  # module before deleting (a concurrent sibling write would have
+  # rejected via the `insert_new` atomicity, so this is defense in
+  # depth against a hypothetical race we missed).
+  defp rollback_adapters_from_receipts!(receipts) do
+    Enum.each(receipts, fn
+      {:adapter, adapter_id, adapter_module, :ok} ->
         case apply(Ezagent.ExternalMirror.AdapterRegistry, :lookup, [adapter_id]) do
           {:ok, ^adapter_module} ->
             apply(Ezagent.ExternalMirror.AdapterRegistry, :__delete__, [adapter_id])
@@ -646,6 +659,7 @@ defmodule Ezagent.Plugin do
             :ok
         end
 
+      {:binding, adapter_id, binding_module, :ok} ->
         case apply(Ezagent.ExternalMirror.BindingRegistry, :lookup, [adapter_id]) do
           {:ok, ^binding_module} ->
             apply(Ezagent.ExternalMirror.BindingRegistry, :__delete__, [adapter_id])
@@ -653,7 +667,11 @@ defmodule Ezagent.Plugin do
           _ ->
             :ok
         end
-      end
+
+      # `{:ok, :already_present}` receipts — leave alone, this
+      # attempt didn't write that row.
+      _ ->
+        :ok
     end)
 
     :ok

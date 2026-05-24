@@ -79,17 +79,22 @@ defmodule Ezagent.ExternalMirror.BindingRegistry do
   the previous read-then-write sequence let two concurrent plugin
   boots both see an empty table and overwrite each other.
   """
-  @spec register_module(adapter_id :: String.t(), binding_module :: module()) :: :ok
+  @spec register_module(adapter_id :: String.t(), binding_module :: module()) ::
+          :ok | {:ok, :already_present}
   def register_module(adapter_id, binding_module)
       when is_binary(adapter_id) and is_atom(binding_module) do
     assert_behaviour!(binding_module)
+    assert_required_callbacks!(binding_module)
 
     if :ets.insert_new(@table, {adapter_id, binding_module}) do
       :ok
     else
+      # codex r2 HIGH-2: distinguish "we inserted this attempt" from
+      # "already present" so Plugin.boot/1 rollback only deletes its
+      # own writes.
       case :ets.lookup(@table, adapter_id) do
         [{^adapter_id, ^binding_module}] ->
-          :ok
+          {:ok, :already_present}
 
         [{^adapter_id, existing_module}] ->
           raise ArgumentError,
@@ -98,6 +103,30 @@ defmodule Ezagent.ExternalMirror.BindingRegistry do
                   "#{inspect(binding_module)}. Grill-5 mandates 1:1 " <>
                   "adapter↔binding (per SPEC §5.2)."
       end
+    end
+  end
+
+  # codex r2 MEDIUM fix — verify required callback exports BEFORE
+  # insert so Worker dispatch + Grill-5 bidirectional check can rely
+  # on `binding_module.adapter_module()` being callable.
+  defp assert_required_callbacks!(binding_module) do
+    required = [adapter_module: 0]
+
+    missing =
+      Enum.reject(required, fn {fun, arity} ->
+        function_exported?(binding_module, fun, arity)
+      end)
+
+    unless missing == [] do
+      missing_str =
+        missing
+        |> Enum.map(fn {f, a} -> "#{f}/#{a}" end)
+        |> Enum.join(", ")
+
+      raise ArgumentError,
+            "BindingRegistry: #{inspect(binding_module)} declares " <>
+              "@behaviour Ezagent.ExternalMirror.Binding but does not " <>
+              "implement: #{missing_str} (codex r2 MEDIUM)."
     end
   end
 

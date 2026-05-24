@@ -83,20 +83,28 @@ defmodule Ezagent.ExternalMirror.AdapterRegistry do
   flow: try `insert_new`; if it fails, lookup to distinguish
   idempotent-same-module-re-register from a real duplicate.
   """
-  @spec register(module()) :: :ok
+  @spec register(module()) :: :ok | {:ok, :already_present}
   def register(adapter_module) when is_atom(adapter_module) do
     assert_behaviour!(adapter_module)
+    assert_required_callbacks!(adapter_module)
     adapter_id = adapter_module.adapter_id()
 
     if :ets.insert_new(@table, {adapter_id, adapter_module}) do
       :ok
     else
       # Race-safe second read — the entry exists (insert_new returned
-      # false). Determine if it's the same module (idempotent) or a
-      # different one (real duplicate).
+      # false). Same module → idempotent `{:ok, :already_present}` so
+      # the caller (Plugin.boot/1 rollback path) can distinguish
+      # "we inserted it this attempt" from "it already existed";
+      # different module → real duplicate, raise.
+      #
+      # codex r2 HIGH-2 fix: the prior `:ok` for both cases let the
+      # rollback path delete pre-existing rows (the previous reduce
+      # accumulator was lost on rescue). Returning a distinguishable
+      # value forces the caller to track receipts properly.
       case :ets.lookup(@table, adapter_id) do
         [{^adapter_id, ^adapter_module}] ->
-          :ok
+          {:ok, :already_present}
 
         [{^adapter_id, existing_module}] ->
           raise ArgumentError,
@@ -105,6 +113,41 @@ defmodule Ezagent.ExternalMirror.AdapterRegistry do
                   "#{inspect(adapter_module)} cannot re-use it. Two adapters " <>
                   "must not claim the same adapter_id (per SPEC §5.2)."
       end
+    end
+  end
+
+  # codex r2 MEDIUM fix: Elixir's `@behaviour` enforces callback
+  # presence as a compiler WARNING, not a runtime guarantee. A
+  # plugin could ship a module with `@behaviour Adapter`,
+  # `adapter_id/0`, and `binding_module/0` but no `display_name/0`
+  # or `description/0` — register/1 would accept it, then
+  # `list_adapters/0` would crash with UndefinedFunctionError when
+  # the facade enumerates.
+  #
+  # Verify every PR-EM-1 required callback exports at the expected
+  # arity BEFORE inserting. (PR-EM-2's added callbacks get checked
+  # then.)
+  defp assert_required_callbacks!(adapter_module) do
+    required = [adapter_id: 0, display_name: 0, description: 0, binding_module: 0]
+
+    missing =
+      Enum.reject(required, fn {fun, arity} ->
+        function_exported?(adapter_module, fun, arity)
+      end)
+
+    unless missing == [] do
+      missing_str =
+        missing
+        |> Enum.map(fn {f, a} -> "#{f}/#{a}" end)
+        |> Enum.join(", ")
+
+      raise ArgumentError,
+            "AdapterRegistry: #{inspect(adapter_module)} declares " <>
+              "@behaviour Ezagent.ExternalMirror.Adapter but does not " <>
+              "implement: #{missing_str}. Elixir behaviours surface " <>
+              "missing callbacks as compiler warnings — the registry " <>
+              "checks at insert time so `list_adapters/0` can never crash " <>
+              "(codex r2 MEDIUM)."
     end
   end
 

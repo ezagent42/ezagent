@@ -87,6 +87,128 @@ defmodule Ezagent.ExternalMirror.PluginContractTest do
     end
   end
 
+  # codex r2 HIGH-2 — rollback does NOT delete pre-existing rows.
+  # The previous reduce-accumulator-lost-on-rescue bug had
+  # `rollback_adapters!(decls)` re-walking every declaration and
+  # deleting any row whose module matched. A boot that hit a later
+  # failure could unregister rows other plugins (or earlier idempotent
+  # registrations) had written. Receipts-driven rollback fixes it:
+  # only rows whose receipt was `:ok` (this attempt's insert_new
+  # returned true) get deleted.
+  describe "codex r2 HIGH-2 — rollback preserves pre-existing rows" do
+    test "second boot attempt that fails late does NOT delete row inserted by first boot" do
+      # First boot — registers MockAdapter (insert_new returns true).
+      plugin_a = define_plugin("preexist_a", [{MockAdapter, MockBinding}])
+      assert {:ok, _} = Ezagent.Plugin.boot(plugin_a)
+      assert {:ok, MockAdapter} = AdapterRegistry.lookup("mock_em")
+
+      # Second boot — declares the SAME pair (idempotent re-register
+      # returns `{:ok, :already_present}`), then a MALFORMED second
+      # entry that triggers Phase 1 validation failure AFTER the
+      # idempotent re-register. Wait — Phase 1 catches malformed
+      # entries BEFORE any write, so a malformed entry won't reach
+      # the rollback path.
+      #
+      # The real risk: Phase 2 succeeds for one pair then fails for
+      # another (e.g. concurrent race detected at insert_new). To
+      # simulate, declare TWO pairs where the second collides with
+      # a DIFFERENT pre-registered adapter — the first pair's
+      # idempotent re-register returns `{:already_present}` (no
+      # rollback needed); the second pair's register raises (dup id
+      # from different module).
+      alias Ezagent.ExternalMirror.TestSupport.OtherAdapter
+      alias Ezagent.ExternalMirror.TestSupport.OtherBinding
+
+      # Pre-register OtherAdapter under a DIFFERENT id we'll cause
+      # a collision against — actually OtherAdapter and MockAdapter
+      # share id "mock_em", so trying to register OtherAdapter when
+      # MockAdapter is present raises. That's our failing Phase 2.
+
+      # Second-boot plugin: idempotent same pair + a colliding pair.
+      plugin_b =
+        define_plugin("preexist_b", [
+          # Phase 2 step 1: idempotent re-register → `{:ok, :already_present}`
+          {MockAdapter, MockBinding},
+          # Phase 2 step 2: dup id from different module → raise.
+          {OtherAdapter, OtherBinding}
+        ])
+
+      # Plugin B's boot must raise...
+      assert_raise ArgumentError, fn -> Ezagent.Plugin.boot(plugin_b) end
+
+      # ...AND the pre-existing row from plugin_a must survive
+      # untouched (receipts-driven rollback ignored the
+      # `:already_present` receipt).
+      assert {:ok, MockAdapter} = AdapterRegistry.lookup("mock_em"),
+             "rollback over-deleted: MockAdapter row was inserted by " <>
+               "plugin_a's earlier boot; plugin_b's failed boot must NOT " <>
+               "delete it (codex r2 HIGH-2 regression)"
+
+      assert {:ok, MockBinding} = BindingRegistry.lookup("mock_em")
+    end
+
+    test "successful boot leaves no receipts in process dictionary (cleanup)" do
+      # Belt-and-suspenders: the receipts ref is process-local and
+      # MUST be cleared by `after` so it can't leak across boots.
+      keys_before = Process.get_keys()
+      plugin = define_plugin("cleanup_v1", [{MockAdapter, MockBinding}])
+      assert {:ok, _} = Ezagent.Plugin.boot(plugin)
+      keys_after = Process.get_keys()
+
+      em_receipts_keys =
+        Enum.filter(keys_after -- keys_before, fn k ->
+          match?({:em_pr1_receipts, _}, k)
+        end)
+
+      assert em_receipts_keys == [],
+             "receipts leaked: #{inspect(em_receipts_keys)}"
+    end
+  end
+
+  # codex r2 MEDIUM — registry rejects modules missing required
+  # callbacks (Elixir's @behaviour is a compiler warning, not
+  # runtime guarantee).
+  describe "codex r2 MEDIUM — required-callback verification" do
+    defmodule HalfBakedAdapter do
+      # Declares @behaviour but only implements 2 of 4 callbacks.
+      @behaviour Ezagent.ExternalMirror.Adapter
+
+      @impl true
+      def adapter_id, do: "half_baked"
+
+      @impl true
+      def binding_module, do: HalfBakedBinding
+      # No display_name/0, no description/0.
+    end
+
+    defmodule HalfBakedBinding do
+      @behaviour Ezagent.ExternalMirror.Binding
+      # No adapter_module/0!
+    end
+
+    test "AdapterRegistry.register/1 rejects an adapter missing display_name/0 + description/0" do
+      err =
+        assert_raise ArgumentError, fn ->
+          AdapterRegistry.register(HalfBakedAdapter)
+        end
+
+      assert err.message =~ "display_name/0"
+      assert err.message =~ "description/0"
+
+      refute err.message =~ "adapter_id/0",
+             "adapter_id/0 IS implemented — should not be in missing list"
+    end
+
+    test "BindingRegistry.register_module/2 rejects a binding missing adapter_module/0" do
+      err =
+        assert_raise ArgumentError, fn ->
+          BindingRegistry.register_module("anything", HalfBakedBinding)
+        end
+
+      assert err.message =~ "adapter_module/0"
+    end
+  end
+
   # codex r1 HIGH-1 — multi-adapter boot rollback.
   # If a plugin declares MULTIPLE adapter pairs and a later one
   # fails validation or registration, NO earlier pair may remain
@@ -143,9 +265,20 @@ defmodule Ezagent.ExternalMirror.PluginContractTest do
 
       results = Task.await_many(tasks, 5_000)
 
-      assert Enum.all?(results, &(&1 == :ok)),
-             "concurrent same-module register/1 must all return :ok " <>
-               "(idempotent); got #{inspect(results)}"
+      # Exactly ONE task's `insert_new/2` returns true → `:ok`. The
+      # other 19 see the row already exists for the SAME module →
+      # `{:ok, :already_present}`. No raises (would mean a different
+      # module won and ours lost — but every task uses MockAdapter).
+      # codex r2 HIGH-2 distinguished return shape.
+      ok_count = Enum.count(results, &(&1 == :ok))
+      already_count = Enum.count(results, &(&1 == {:ok, :already_present}))
+
+      assert ok_count == 1,
+             "exactly one task should win the atomic insert; got " <>
+               "#{ok_count} :ok / #{already_count} {:ok, :already_present} " <>
+               "/ raw: #{inspect(results)}"
+
+      assert already_count == 19
 
       assert {:ok, MockAdapter} = AdapterRegistry.lookup("mock_em")
     end
