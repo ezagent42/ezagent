@@ -812,16 +812,51 @@ This section answers "what concretely changes in core / `domain.chat` / the new 
 
 The retention policy is a slice field defaulting to 100 events. PR-EM-0 adds it; the retention is operator-tunable per session via a future `:set_retention` action (not in V1 — OQ-EM-A defers).
 
-### 8.2 Bind action wiring with caps-data-ownership (r4: bounded async target check)
+### 8.2 Bind action wiring with caps-data-ownership (r6: target check moved out of GenServer)
 
-The `:bind` action body in `Behavior.ExternalMirror` runs §4.2's three checks then:
+**r6 codex round-5 HIGH-2 fix**: r4 ran `target_ownership_check` via
+`Task.Supervisor.async_nolink/3` + `Task.yield(task, timeout)` INSIDE the
+Session GenServer's `:bind` action body — but `Task.yield` blocks the
+calling process (the Session GenServer) for the whole timeout window.
+While waiting, the Session can't service chat sends, publisher subscribes,
+unbinds, or anything else. A slow Lark API takes the Session down for
+5 seconds.
+
+r6 splits the bind flow into a **two-step facade pattern**:
+
+1. **`Ezagent.ExternalMirror.bind/3` facade** (lives in
+   `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror.ex`,
+   NOT inside the Session GenServer) — runs Check 1 (cap shape via
+   `Capability.matches?`) + Check 2 (adapter-allow cap) + Check 3
+   (target_ownership_check, in a Task with bounded timeout). All checks
+   complete BEFORE the dispatch. The Session GenServer is never blocked.
+
+2. **Session's `:bind` action body** (dispatched only after the facade's
+   checks return :ok) — assumes pre-validated inputs, does the slice
+   mutation + worker spawn synchronously (both fast / pure-Elixir).
+   No external I/O inside the GenServer.
 
 ```elixir
-def invoke(:bind, slice, %{adapter_id: aid, target_id: tid, metadata: md}, ctx) do
-  with :ok <- check_adapter_allow_cap(ctx.caps, ctx.target_uri, aid),                     # Check 2
-       adapter = AdapterRegistry.lookup!(aid),
-       :ok <- run_target_ownership_check(adapter, ctx.caller, tid) do                     # Check 3 (r4)
-    binding = %{
+# Facade (NOT in Session GenServer — runs in caller process)
+def bind(session_uri, %{adapter_id: aid, target_id: tid, metadata: md}, caller, ctx) do
+  with {:ok, adapter} <- AdapterRegistry.lookup(aid),
+       :ok <- check_adapter_allow_cap(ctx.caps, session_uri, aid),                      # Check 2
+       :ok <- run_target_ownership_check(adapter, caller, tid) do                        # Check 3
+    # Check 1 + slice mutation + worker spawn dispatch ONLY after checks pass.
+    inv = %Ezagent.Invocation{
+      target: URI.new!("#{URI.to_string(session_uri)}?action=external_mirror.bind"),
+      mode: :call,
+      args: %{adapter_id: aid, target_id: tid, metadata: md, _facade_checks_ok: true},
+      ctx: ctx
+    }
+    Ezagent.Invocation.dispatch(inv)
+  end
+end
+
+# Session GenServer's :bind action — short, synchronous, no external I/O
+def invoke(:bind, slice, %{adapter_id: aid, target_id: tid, metadata: md,
+                          _facade_checks_ok: true}, ctx) do
+  binding = %{
       binding_id:  "#{aid}/#{tid}",
       adapter_id:  aid,
       target_id:   tid,
@@ -835,27 +870,41 @@ def invoke(:bind, slice, %{adapter_id: aid, target_id: tid, metadata: md}, ctx) 
     # Per r4 HIGH-1: worker's init_slice/1 does NOT subscribe; subscription
     # happens in worker's handle_continue AFTER this Kind.spawn returns and
     # AFTER :bind returns. No deadlock.
+    # r6 codex round-5 HIGH-1 fix: `Kind.spawn/2` returns
+    # `DynamicSupervisor.on_start_child()` = `{:ok, pid}` on fresh
+    # spawn OR `{:error, {:already_started, pid}}` on idempotent
+    # adoption. Both are SUCCESS for bind purposes. Other errors
+    # propagate as a bind failure (slice mutation already done; the
+    # caller sees the error + can :unbind to clean up).
     worker_uri = worker_uri_for(ctx.target_uri, binding)
-    :ok = Ezagent.Kind.spawn(Ezagent.Entity.ExternalMirrorWorker,
-                             %{uri: worker_uri,
-                               session_uri: ctx.target_uri,
-                               binding: binding})
+
+    case Ezagent.Kind.spawn(Ezagent.Entity.ExternalMirrorWorker,
+                            %{uri: worker_uri,
+                              session_uri: ctx.target_uri,
+                              binding: binding}) do
+      {:ok, _pid} -> :ok
+      {:error, {:already_started, _pid}} -> :ok
+      {:error, reason} -> throw({:bind_worker_spawn_failed, reason})
+    end
 
     # Update BindingRegistry read-cache.
     :ok = BindingRegistry.add(aid, tid, ctx.target_uri)
 
-    {:ok, %{binding_id: binding.binding_id}, new_slice}
-  else
-    {:error, :adapter_not_authorized} = err -> err
-    {:error, :target_check_timeout}    -> {:error, :target_check_timeout}
-    {:error, reason}                   -> {:error, {:target_ownership_denied, reason}}
-  end
+  {:ok, %{binding_id: binding.binding_id}, new_slice}
 end
+```
 
-# r4 (round-3 MEDIUM fix): target ownership check runs in a supervised Task
-# with a bounded timeout. Session GenServer stays responsive; adapter cannot
-# stall the Session by being slow. Adapter cannot recurse via dispatch
-# (enforced by PR-EM-FINAL invariant test g).
+The Session GenServer's action body is now bounded by slice update + cheap
+`Kind.spawn` (the spawn returns once the worker's lightweight `init_slice/1`
+returns per HIGH-1 fix; subscription happens later via `handle_continue`).
+No external I/O inside the GenServer.
+
+The facade's `run_target_ownership_check/3` (NOW in the facade, NOT the
+Session GenServer) — runs in a supervised Task with bounded timeout. Adapter
+cannot recurse via dispatch (enforced by PR-EM-FINAL invariant test g).
+
+```elixir
+# Facade-side helper (caller-process scope, NOT Session GenServer)
 defp run_target_ownership_check(adapter, caller, target_id) do
   timeout =
     if function_exported?(adapter, :target_ownership_check_timeout, 0),
@@ -1047,9 +1096,10 @@ pattern in §6.1 + §3 fails compile.
 **Owner:** `apps/ezagent_domain_external_mirror/`.
 
 - Define `Ezagent.Behavior.ExternalMirror` with `:bind`, `:unbind`, `:list_bindings` actions (per §4.1).
+- **r6 HIGH-2 fix**: bind flow split into facade + GenServer-action two steps. Implement `Ezagent.ExternalMirror.bind/4` facade (NOT inside Session Kind) — runs Check 2 (adapter cap) + Check 3 (`run_target_ownership_check` with Task + timeout) before dispatch. Facade-only adapter I/O; GenServer-action only slice mutation + worker spawn.
 - `data_owner/1` per §4.1 (session owner via `Ezagent.Entity.Session.owner/1` — already exists, PR-OWN-2 #308).
 - `init_slice/1` rehydrates from `external_mirror_bindings` table (Ecto schema + migration in this PR).
-- `:bind` action body runs §4.2 three checks then eager-spawns worker + updates BindingRegistry.
+- `:bind` action body assumes `_facade_checks_ok: true` arg; mutates slice + idempotently spawns worker. **r6 HIGH-1 fix**: spawn result handling treats `{:ok, _pid}` AND `{:error, {:already_started, _pid}}` as success.
 - `:unbind` action body removes from slice + BindingRegistry + sends graceful shutdown to worker.
 - Register the Behavior on `Ezagent.Entity.Session` via Domain's `Application.start/2`.
 - Add `external_mirror_bindings` to the `per_tenant_tables_have_workspace_column_test.exs` invariant test's expected list.
@@ -1063,7 +1113,9 @@ pattern in §6.1 + §3 fails compile.
 - (f) target_ownership_check timeout (mock adapter that sleeps > timeout → `:target_check_timeout`);
 - (g) cross-workspace denial;
 - (h) **rehydration after Kind restart preserves bindings AND restarts workers** (r4 HIGH-3 fix): bind a probe adapter, send a slice change, assert probe receives; kill the Session Kind process via `Process.exit(session_pid, :kill)`; wait for Kind respawn; send another slice change; assert probe RECEIVES the new event (proving worker was reconciled, NOT just the binding row);
-- (i) worker eager-spawned on bind success WITHOUT deadlock (r4 HIGH-1 fix): time the `:bind` action call — must return within 100ms even though worker subscribes to Publisher (which is a `GenServer.call` against the Session Kind that's currently executing `:bind`); test fails (hangs / times out) if r3's synchronous subscribe-in-init pattern is reintroduced.
+- (i) worker eager-spawned on bind success WITHOUT deadlock (r4 HIGH-1 fix): time the `:bind` action call — must return within 100ms even though worker subscribes to Publisher (which is a `GenServer.call` against the Session Kind that's currently executing `:bind`); test fails (hangs / times out) if r3's synchronous subscribe-in-init pattern is reintroduced;
+- (j) **bind idempotency at facade level** (r6 HIGH-1): spawn 10 concurrent `ExternalMirror.bind/4` calls with same `{session, adapter, target}` — assert exactly 1 binding row in slice + exactly 1 Worker process in WorkerRegistry; the 9 losers return `:ok` (treating `{:already_started, _}` from `Kind.spawn` as success), NOT an error. Catches regression to round-5's `:ok = Kind.spawn(...)` hard-match;
+- (k) **Session GenServer not blocked during target check** (r6 HIGH-2): mock adapter's `target_ownership_check/2` sleeps 3 seconds. While `bind` is in flight, fire a `Chat.send` action on the SAME session from another process — assert it returns within 50ms (NOT blocked behind the 3s sleep). Confirms target check runs in facade Task, not inside Session GenServer.
 
 **Depends on:** PR-EM-0 (Publisher), PR-EM-1 (registries), PR-EM-2 (worker Kind).
 
