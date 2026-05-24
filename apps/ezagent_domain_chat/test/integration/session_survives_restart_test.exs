@@ -162,6 +162,7 @@ defmodule EzagentDomainChat.Integration.SessionSurvivesRestartTest do
       # Spawn via the production `session` SpawnRegistry fn — this is the
       # path that runs `bind_session_workspace/1`.
       {:ok, pid1} = Ezagent.SpawnRegistry.spawn(session_uri)
+
       assert {:ok, %URI{scheme: "workspace", host: "default"}} =
                Ezagent.WorkspaceRegistry.lookup(session_uri)
 
@@ -190,17 +191,35 @@ defmodule EzagentDomainChat.Integration.SessionSurvivesRestartTest do
   end
 
   describe "Snapshot.load_or_init for Session Kind" do
-    test "a Session snapshot round-trips its Chat slice" do
+    test "a Session snapshot round-trips its Chat slice (other behaviors get fresh init per Q5 merge)" do
       session_uri =
         URI.parse("session://default/default/load-init-#{System.unique_integer([:positive])}")
 
       member = URI.parse("entity://user/default/m-#{System.unique_integer([:positive])}")
-      slice = %{chat: %{members: %{member => %{online: true}}, monitors: %{}, last_seen: %{}}}
 
-      :ok = Snapshot.save_now(session_uri, Session, slice)
+      # Old-shape snapshot (chat slice only — pre-PR-EM-0 Session had
+      # only [Chat] in behaviors/0). Saved verbatim to simulate a
+      # snapshot taken before PR-EM-0 landed.
+      chat_only_slice = %{
+        chat: %{members: %{member => %{online: true}}, monitors: %{}, last_seen: %{}}
+      }
+
+      :ok = Snapshot.save_now(session_uri, Session, chat_only_slice)
 
       loaded = Snapshot.load_or_init(session_uri, Session, %{uri: session_uri})
-      assert loaded == slice
+
+      # The chat slice survives the round-trip verbatim.
+      assert loaded.chat == chat_only_slice.chat
+
+      # The :publisher slice (added by ExternalMirror PR-EM-0) gets
+      # fresh init values via the Q5 merge path in
+      # `Ezagent.Kind.Snapshot.load_with_fallback/3`. This is the
+      # CORRECT behavior — a pre-PR-EM-0 snapshot doesn't have a
+      # :publisher field, and the merge ensures the new Behavior
+      # boots with empty ring + cursor=0 rather than crashing on
+      # KeyError. See SessionImpl.init_slice/1 for the default shape.
+      assert %{ring: [], cursor: 0, retention: 100, subscribers: %{}, monitors: %{}} =
+               loaded.publisher
     end
   end
 

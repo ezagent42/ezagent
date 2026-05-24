@@ -222,7 +222,10 @@ defmodule Ezagent.Kind.Server do
   # warning in test runs.
   def handle_continue({:ezagent_post_init, [{behavior, term} | rest]}, state) do
     %{kind: kind_module, uri: self_uri, state: slice_state} = state
-    new_slice_state = run_post_init_continuation(behavior, term, slice_state, kind_module, self_uri)
+
+    new_slice_state =
+      run_post_init_continuation(behavior, term, slice_state, kind_module, self_uri)
+
     commit_post_init(state, new_slice_state)
     new_state = %{state | state: new_slice_state}
 
@@ -454,6 +457,30 @@ defmodule Ezagent.Kind.Server do
         forward_to_behavior(behavior, message, acc_state, kind_module, self_uri)
       end)
 
+    # ExternalMirror PR-EM-0 codex round-1 HIGH fix (2026-05-25):
+    # persist slice mutations made by `handle_kind_message/3` via the
+    # same snapshot commit path used by dispatch (`commit_and_notify/3`).
+    # Without this, a Kind whose `handle_kind_message` mutates state
+    # (Publisher's cursor + ring, Chat's :DOWN-driven offline flag,
+    # any future hook-driven Behavior) would lose those mutations on
+    # a crash + restart — the in-memory slice would advance but the
+    # `kind_snapshots` row would still hold the pre-mutation slice.
+    #
+    # Per the same posture as `commit_and_notify/3`, we deliberately
+    # do NOT emit a new `Ezagent.SliceChange` event here: a
+    # `handle_info` message is a downstream effect of some upstream
+    # action (a SliceChange already emitted, a Process.monitor :DOWN
+    # fired by the runtime), NOT a fresh slice-mutating action. Emitting
+    # would amplify a single dispatch into N (for Publisher SessionImpl,
+    # would create an emit loop until the `slice_key == :publisher`
+    # gate inside SessionImpl.handle_kind_message dropped it).
+    #
+    # Same defensive shape as commit_and_notify/3: skip the snapshot
+    # write entirely when the slice is unchanged (slice_state == new_slice_state)
+    # so `:ephemeral` / `:periodic` / unchanged-on-change Kinds incur
+    # zero DB cost on a no-op handle_info.
+    _ = persist_handle_info_mutation(self_uri, kind_module, slice_state, new_slice_state)
+
     {:noreply, %{wrapper | state: new_slice_state}}
   end
 
@@ -470,6 +497,14 @@ defmodule Ezagent.Kind.Server do
     else
       slice_state
     end
+  end
+
+  # ExternalMirror PR-EM-0 codex round-1 HIGH fix — see handle_info/2 moduledoc.
+  defp persist_handle_info_mutation(_uri, _kind_module, slice_state, slice_state),
+    do: :not_durable
+
+  defp persist_handle_info_mutation(uri, kind_module, old_slice_state, new_slice_state) do
+    Ezagent.Kind.Snapshot.commit(uri, kind_module, old_slice_state, new_slice_state)
   end
 
   @impl true
