@@ -19,10 +19,13 @@ defmodule Ezagent.Invariants.CapsDataOwnerTest do
   use ExUnit.Case, async: true
 
   test "every Behavior with cap_subjects/0 declares data_owner/1" do
+    # Codex PR-OWN-4 round-1 MED fix: enumerate from compiled BEAM
+    # under umbrella apps' build dirs — NOT `:code.all_loaded()`
+    # (load order is incidental and a Behavior could evade if no
+    # earlier test happened to load it). Walking the build dirs +
+    # `Code.ensure_loaded?/1` is deterministic.
     rows =
-      :code.all_loaded()
-      |> Enum.map(&elem(&1, 0))
-      |> Enum.filter(&behavior_module?/1)
+      umbrella_apps_behavior_modules()
       |> Enum.map(&audit_row/1)
       |> Enum.filter(& &1.cap_subjects?)
 
@@ -56,6 +59,22 @@ defmodule Ezagent.Invariants.CapsDataOwnerTest do
   end
 
   defp behavior_module?(_), do: false
+
+  # Deterministic enumeration of all `*.Behavior.*` modules
+  # compiled under the umbrella apps' build dirs. Force-loads each
+  # via `Code.ensure_loaded?/1` so `function_exported?/3` works.
+  defp umbrella_apps_behavior_modules do
+    # All loaded apps that match ezagent_* — these are the umbrella
+    # member apps. Mix.Project gives the build dir per app.
+    for {app, _, _} <- Application.loaded_applications(),
+        Atom.to_string(app) |> String.starts_with?("ezagent"),
+        module <- Application.spec(app, :modules) || [],
+        behavior_module?(module),
+        Code.ensure_loaded?(module),
+        uniq: true do
+      module
+    end
+  end
 
   defp audit_row(module) do
     %{

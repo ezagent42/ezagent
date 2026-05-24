@@ -285,7 +285,7 @@ defmodule Ezagent.Behavior.IdentityAdmin do
     do: require_bootstrap_admin(ctx, :grant_wildcard_requires_admin)
 
   defp check_grant_authorized(
-         %Ezagent.Capability{behavior: behavior, instance: instance},
+         %Ezagent.Capability{behavior: behavior, instance: instance, workspace_uri: cap_ws} = cap,
          ctx
        )
        when is_atom(behavior) do
@@ -301,9 +301,17 @@ defmodule Ezagent.Behavior.IdentityAdmin do
             true -> {:error, :grant_not_owner}
           end
 
-        # :any / :no_owner / {:scope, _, _} — class-wide or
-        # ownerless. Only bootstrap admin can grant; same as
-        # wildcard caps above.
+        # Codex PR-OWN-4 round-1 HIGH fix: `:any` means workspace-
+        # scoped — workspace admin should be able to grant.
+        # Round-1 routed `:any` to bootstrap-admin-only, blocking
+        # workspace-admin delegation that SPEC §3/§5.2 mandates.
+        # Now: require concrete `cap.workspace_uri` + caller holds
+        # admin cap for that workspace (or bootstrap admin).
+        :any ->
+          require_workspace_admin(ctx, cap_ws, cap)
+
+        # :no_owner / {:scope, _, _} — ownerless, bootstrap-admin
+        # only (same as wildcard caps above).
         _ ->
           require_bootstrap_admin(ctx, :grant_owner_unresolvable)
       end
@@ -314,6 +322,47 @@ defmodule Ezagent.Behavior.IdentityAdmin do
   end
 
   defp check_grant_authorized(_cap, _ctx), do: :ok
+
+  # Workspace-admin grant predicate (PR-OWN-4 codex HIGH fix).
+  # The cap being granted MUST carry a concrete `workspace_uri`
+  # (cannot grant `workspace_uri: :any` here — that's bootstrap-
+  # admin territory). Caller must hold either bootstrap admin OR
+  # a `Behavior.Workspace` cap covering the same workspace.
+  defp require_workspace_admin(_ctx, :any, _cap),
+    do: {:error, :grant_workspace_any_requires_admin}
+
+  defp require_workspace_admin(ctx, %URI{} = cap_ws, _cap) do
+    if holds_admin_caps?(ctx) or holds_workspace_admin_cap?(ctx, cap_ws) do
+      :ok
+    else
+      {:error, :grant_workspace_admin_required}
+    end
+  end
+
+  defp require_workspace_admin(_ctx, _, _), do: {:error, :grant_workspace_uri_invalid}
+
+  # Holder of a workspace-admin cap on `workspace_uri`. The
+  # canonical shape: any `Behavior.Workspace` cap on this workspace.
+  # Workspace Behavior's `data_owner` returns `:any`, so by SPEC §5.2
+  # the cap was minted by a bootstrap admin or transitively by a
+  # workspace admin. Either is acceptable for further delegation
+  # within the same workspace.
+  defp holds_workspace_admin_cap?(%{caps: caps}, %URI{} = ws_uri) do
+    caps_list = if is_struct(caps, MapSet), do: MapSet.to_list(caps), else: List.wrap(caps)
+
+    Enum.any?(caps_list, fn
+      %Ezagent.Capability{
+        behavior: Ezagent.Behavior.Workspace,
+        workspace_uri: ^ws_uri
+      } ->
+        true
+
+      _ ->
+        false
+    end)
+  end
+
+  defp holds_workspace_admin_cap?(_, _), do: false
 
   # Bootstrap admin holds at least one cap with `behavior: :any` AND
   # `workspace_uri: :any`. This is the only legitimate granter for
