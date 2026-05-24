@@ -177,6 +177,32 @@ defmodule Ezagent.CapabilityRegistry.DataOwnerTest do
       [{_g, cap}] = Enum.filter(grants, fn {_g, c} -> c.behavior == OwnedBehavior end)
       assert cap.instance.query == nil
     end
+
+    test "match-level regression: generated cap matches dispatch's needed cap (codex round-2 MED)" do
+      # Round-2 fix: derive `workspace_uri` from RAW target_uri so
+      # the helper mirrors `Capability.cap_for_action/3` exactly.
+      # This test asserts the END contract — round-1 + round-2 unit
+      # tests only verified URI fields piecewise; this asserts that
+      # `Capability.matches?/2` actually succeeds, the real authz gate.
+      target = URI.parse("entity://user/acme/alice?action=read")
+
+      [{_grantee, granted_cap}] =
+        CapabilityRegistry.default_grants_from_data_owner(OwnedKind, target)
+        |> Enum.filter(fn {_g, c} -> c.behavior == OwnedBehavior end)
+
+      # Build dispatch's needed-cap shape directly (mirrors what
+      # `Ezagent.Kind.Runtime.handle_dispatch` step 5.5 does).
+      needed = %{
+        kind: :owned_test_kind,
+        behavior: OwnedBehavior,
+        instance: Ezagent.URI.instance(target),
+        workspace_uri: Ezagent.Capability.workspace_of(target)
+      }
+
+      assert Ezagent.Capability.matches?(granted_cap, needed),
+             "owner default grant must authorize dispatch on the same target — " <>
+               "round-2 workspace_uri derivation matters"
+    end
   end
 
   describe "default_grants_from_data_owner/2 — non-URI owner returns no entry" do
