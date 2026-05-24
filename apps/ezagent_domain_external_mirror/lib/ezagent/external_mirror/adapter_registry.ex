@@ -90,6 +90,15 @@ defmodule Ezagent.ExternalMirror.AdapterRegistry do
     adapter_id = adapter_module.adapter_id()
 
     if :ets.insert_new(@table, {adapter_id, adapter_module}) do
+      # codex r2 HIGH-1 + HIGH-3 unified fix (2026-05-25): the moment
+      # an adapter becomes observable in the registry, install its
+      # cap subject + reconcile its persisted bindings. The old shape
+      # left these to a one-shot Application.start/2 pass that ran
+      # BEFORE plugin adapters registered → cap subjects + persisted
+      # workers silently never landed. AdapterInstall.install/1 is
+      # tolerant of bare-test environments (no Repo, no
+      # CapabilityRegistry).
+      :ok = Ezagent.ExternalMirror.AdapterInstall.install(adapter_module)
       :ok
     else
       # Race-safe second read — the entry exists (insert_new returned
@@ -102,6 +111,12 @@ defmodule Ezagent.ExternalMirror.AdapterRegistry do
       # rollback path delete pre-existing rows (the previous reduce
       # accumulator was lost on rescue). Returning a distinguishable
       # value forces the caller to track receipts properly.
+      #
+      # The `:already_present` branch does NOT re-run install/1 —
+      # the prior `:ok` insert already triggered it. install/1 IS
+      # idempotent (cap registration is idempotent; spawn is
+      # idempotent) but skipping the redundant call keeps registry
+      # re-registration cheap.
       case :ets.lookup(@table, adapter_id) do
         [{^adapter_id, ^adapter_module}] ->
           {:ok, :already_present}

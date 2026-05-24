@@ -90,7 +90,7 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
 
       # list_bindings returns the binding from the live slice.
       assert {:ok, [%{binding_id: ^bid, adapter_id: "mock_publish", target_id: ^target_id}]} =
-               Facade.list_bindings(session_uri)
+               Facade.list_bindings(session_uri, ctx)
 
       # Projection row exists.
       assert [%BindingRow{adapter_id: "mock_publish", target_id: ^target_id}] =
@@ -100,7 +100,7 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
       assert {:ok, %{ok: true, unbound: true}} =
                Facade.unbind(session_uri, "mock_publish", target_id, ctx)
 
-      assert {:ok, []} = Facade.list_bindings(session_uri)
+      assert {:ok, []} = Facade.list_bindings(session_uri, ctx)
       assert [] = BindingRow.list_for_session(session_uri)
       assert WorkerRegistry.lookup(URI.to_string(worker_uri)) == :error
     end
@@ -140,10 +140,10 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
 
       # Both sessions have the binding in their slice.
       assert {:ok, [%{adapter_id: "mock_publish", target_id: ^shared_target}]} =
-               Facade.list_bindings(session_a)
+               Facade.list_bindings(session_a, ctx_a)
 
       assert {:ok, [%{adapter_id: "mock_publish", target_id: ^shared_target}]} =
-               Facade.list_bindings(session_b)
+               Facade.list_bindings(session_b, ctx_b)
 
       # Two distinct projection rows.
       rows_a = BindingRow.list_for_session(session_a)
@@ -160,7 +160,7 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
 
       assert [] = BindingRow.list_for_session(session_a)
       assert [%BindingRow{id: ^id_b}] = BindingRow.list_for_session(session_b)
-      assert {:ok, [_]} = Facade.list_bindings(session_b)
+      assert {:ok, [_]} = Facade.list_bindings(session_b, ctx_b)
     end
 
     # codex r1 HIGH regression test (2026-05-25): caller-supplied
@@ -198,7 +198,7 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
       # Slice's binding carries the opts MAP back — keys MUST be
       # strings (per codex r1 HIGH fix). String.to_atom would have
       # converted "caller_controlled_unbounded_key" to an atom.
-      {:ok, [%{opts: opts}]} = Facade.list_bindings(session_uri)
+      {:ok, [%{opts: opts}]} = Facade.list_bindings(session_uri, ctx)
       assert is_map(opts)
 
       Enum.each(Map.keys(opts), fn k ->
@@ -330,7 +330,7 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
                Facade.bind(session_uri, "em_timeout", "deny:not_a_member", %{}, ctx)
 
       # Nothing was written to slice or DB.
-      assert {:ok, []} = Facade.list_bindings(session_uri)
+      assert {:ok, []} = Facade.list_bindings(session_uri, ctx)
       assert [] = BindingRow.list_for_session(session_uri)
     end
   end
@@ -548,7 +548,7 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
       end)
 
       # Exactly one slice entry.
-      {:ok, slice_bindings} = Facade.list_bindings(session_uri)
+      {:ok, slice_bindings} = Facade.list_bindings(session_uri, ctx)
       assert length(slice_bindings) == 1
 
       # Exactly one projection row.
@@ -649,6 +649,165 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
       assert elapsed_ms < 100,
              "list_bindings took #{elapsed_ms}ms while target_check was sleeping. " <>
                "Expected < 100ms — Session GenServer blocked behind target check (HIGH-2 regression)."
+    end
+  end
+
+  # =========================================================================
+  # PR-EM-3 r3 codex regressions — HIGH-1 / HIGH-2 / HIGH-3
+  # =========================================================================
+
+  describe "PR-EM-3 r3 HIGH-3 regression — AdapterRegistry.register/1 ALSO registers per-adapter cap subject" do
+    test "registering an adapter immediately lands its cap subject in CapabilityRegistry" do
+      # Use a fresh adapter (re-register tolerant; first :ok triggers
+      # install/1). Test asserts the per-adapter cap subject
+      # `(Session, allow_<adapter_id>)` is observable IMMEDIATELY
+      # after register/1 returns — not deferred to some later
+      # Application-level pass that NEVER runs in production because
+      # adapter plugins boot AFTER external_mirror (codex r2 HIGH-3).
+      #
+      # The cap subject for MockPublishAdapter is
+      # `MockPublishAdapter.Allow` with action atom `:allow_mock_publish`.
+      AdapterRegistry.register(MockPublishAdapter)
+
+      assert {:ok, %{behavior: MockPublishAdapter.Allow}} =
+               Ezagent.CapabilityRegistry.lookup_subject(
+                 Ezagent.Entity.Session,
+                 :allow_mock_publish
+               )
+    end
+  end
+
+  describe "PR-EM-3 r3 HIGH-1 regression — AdapterRegistry.register/1 reconciles persisted bindings" do
+    test "registering an adapter idempotently spawns Workers for already-persisted bindings",
+         %{owner_uri: owner_uri, session_uri: session_uri} do
+      # Set up: bind once normally so a row exists in
+      # external_mirror_bindings AND a Worker is alive.
+      :ok = spawn_owner_and_session(owner_uri, session_uri)
+      ctx = owner_ctx(owner_uri)
+
+      target_id = "tgt-r3-h1-persistence"
+      MockPublishBinding.register_observer(target_id, self())
+
+      assert {:ok, %{ok: true, worker_uri: worker_uri}} =
+               Facade.bind(session_uri, "mock_publish", target_id, %{}, ctx)
+
+      # Confirm the row + worker exist.
+      assert [%BindingRow{adapter_id: "mock_publish", target_id: ^target_id}] =
+               BindingRow.list_for_session(session_uri)
+
+      # Give the WorkerRegistry via-registration a tick to settle —
+      # `Facade.bind` returns once the supervisor `start_child`
+      # call resolves, but the inner Kind.Server's KindRegistry
+      # entry can lag by a small async window.
+      :ok = await_worker_registry_alive(worker_uri, 25)
+
+      # Kill the worker out-of-band (simulates a fresh boot where the
+      # worker process is gone but the row persists).
+      cleanup_workers()
+      :ok = await_worker_registry_dead(worker_uri, 25)
+
+      # Wipe the adapter registry entry (simulates the pre-fix state
+      # where the adapter plugin hadn't yet booted).
+      :ets.delete(AdapterRegistry.table(), "mock_publish")
+      assert :error = AdapterRegistry.lookup("mock_publish")
+
+      # NOW re-register the adapter — this MUST reconcile the
+      # persisted binding by spawning its Worker. The test is the
+      # whole point of codex r2 HIGH-1: prior code waited for a
+      # one-shot Application boot pass that NEVER re-ran after
+      # plugin boot order resolved.
+      :ok = AdapterRegistry.register(MockPublishAdapter)
+
+      # The Worker MUST be alive again within ~500ms of register/1.
+      assert :ok = await_worker_registry_alive(worker_uri, 25)
+    end
+  end
+
+  defp await_worker_registry_alive(_uri, 0), do: :error
+
+  defp await_worker_registry_alive(%URI{} = uri, retries) do
+    case WorkerRegistry.lookup(URI.to_string(uri)) do
+      {:ok, _} -> :ok
+      _ -> Process.sleep(20) && await_worker_registry_alive(uri, retries - 1)
+    end
+  end
+
+  defp await_worker_registry_dead(_uri, 0), do: :error
+
+  defp await_worker_registry_dead(%URI{} = uri, retries) do
+    case WorkerRegistry.lookup(URI.to_string(uri)) do
+      :error -> :ok
+      _ -> Process.sleep(20) && await_worker_registry_dead(uri, retries - 1)
+    end
+  end
+
+  describe "PR-EM-3 r3 HIGH-2 regression — read facade enforces CapBAC" do
+    test "list_bindings/2 with no caps returns {:error, :unauthorized}",
+         %{owner_uri: owner_uri, session_uri: session_uri} do
+      :ok = spawn_owner_and_session(owner_uri, session_uri)
+
+      # Bind once with admin ctx so a binding exists.
+      owner = owner_ctx(owner_uri)
+      target_id = "tgt-r3-h2-readgate"
+      MockPublishBinding.register_observer(target_id, self())
+
+      assert {:ok, _} = Facade.bind(session_uri, "mock_publish", target_id, %{}, owner)
+
+      # A stranger ctx with NO caps (the stranger isn't even a
+      # registered User Kind — we just supply caller + empty caps
+      # because dispatch only looks at ctx.caps for authz step 5.5).
+      stranger = unique_user_uri("stranger-r3")
+      :ok = spawn_user(stranger, MapSet.new())
+
+      stranger_ctx = %{
+        caller: stranger,
+        caps: MapSet.new(),
+        reply: :ignore
+      }
+
+      # Pre-fix this returned {:ok, [_]} (slice read bypass); post-fix
+      # it routes through dispatch and the CapBAC step 5.5 denies.
+      assert {:error, :unauthorized} = Facade.list_bindings(session_uri, stranger_ctx)
+    end
+
+    test "sessions_for_adapter/2 filters by caller workspace",
+         %{owner_uri: owner_uri, session_uri: session_uri} do
+      # Setup: bind one session in the default workspace.
+      :ok = spawn_owner_and_session(owner_uri, session_uri)
+      owner = owner_ctx(owner_uri)
+      target_id = "tgt-r3-h2-wsfilter"
+      MockPublishBinding.register_observer(target_id, self())
+
+      assert {:ok, _} = Facade.bind(session_uri, "mock_publish", target_id, %{}, owner)
+
+      # Admin caller (wildcard cap) sees the session.
+      admin_ctx = %{
+        caller: URI.parse("system://bootstrap/default"),
+        caps:
+          MapSet.new([
+            %Ezagent.Capability{
+              kind: :any,
+              behavior: :any,
+              instance: :any,
+              workspace_uri: :any,
+              granted_by: URI.parse("system://bootstrap/default"),
+              granted_at: ~U[2026-01-01 00:00:00Z]
+            }
+          ]),
+        reply: :ignore
+      }
+
+      assert {:ok, admin_sessions} = Facade.sessions_for_adapter("mock_publish", admin_ctx)
+      assert session_uri in admin_sessions
+
+      # A caller in a DIFFERENT workspace (no admin cap) sees NO sessions.
+      foreign_ctx = %{
+        caller: URI.parse("entity://user/other-ws/foreigner"),
+        caps: MapSet.new(),
+        reply: :ignore
+      }
+
+      assert {:ok, []} = Facade.sessions_for_adapter("mock_publish", foreign_ctx)
     end
   end
 

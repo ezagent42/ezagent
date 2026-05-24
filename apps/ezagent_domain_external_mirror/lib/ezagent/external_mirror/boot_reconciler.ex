@@ -1,32 +1,32 @@
 defmodule Ezagent.ExternalMirror.BootReconciler do
   @moduledoc """
   `Ezagent.ExternalMirror.BootReconciler` — application-boot
-  reconciliation of persisted bindings.
+  Session-rehydration safety net.
 
   SPEC `docs/superpowers/specs/2026-05-24-external-mirror-domain.md`
-  §3.1 trigger (2) — closes HIGH-3 (persisted bindings have no
-  worker after rehydrate).
+  §3.1 trigger (2).
 
-  ## What it does
+  ## What it does (post r3 — Session-only)
 
   On application boot, walks every row in `external_mirror_bindings`
-  and idempotently:
+  and idempotently ensures the Session Kind exists via
+  `SpawnRegistry.spawn/1` (the Session's `init_slice/1` rehydration
+  rebuilds the `:external_mirror` slice + `post_init/2` schedules a
+  `handle_continue(:reconcile_external_mirror_workers, ...)` that
+  spawns each Worker via `Kind.spawn/2`).
 
-  1. Ensures the Session Kind exists via `SpawnRegistry.spawn/1`
-     (the Session's `init_slice/1` rehydration will rebuild the
-     `:external_mirror` slice + `post_init/2` schedules a
-     `handle_continue(:reconcile_external_mirror_workers, ...)`
-     that spawns each Worker via `Kind.spawn/2`).
-  2. Idempotently spawns the Worker directly via
-     `Kind.spawn(ExternalMirrorWorker, ...)`. This is belt-and-
-     suspenders against the case where Session-init reconciliation
-     fired but the Worker spawn race lost (a different node beat
-     us — V1 single-node so this is a no-op safety net).
+  Worker spawn no longer happens here — codex r2 HIGH-1 moved
+  per-adapter Worker reconciliation into
+  `Ezagent.ExternalMirror.AdapterInstall.install/1`, which is
+  triggered the moment a plugin adapter registers (event-driven,
+  not poll-driven). BootReconciler keeps the Session-existence
+  safety net because a session that has bindings but no other
+  trigger to spawn (no chat traffic, no LV subscription) would
+  otherwise stay un-rehydrated until first use.
 
-  Per **P16**, both `Kind.spawn/2`s are idempotent (Session via
-  `SpawnRegistry`'s own check; Worker via the two-tier RootSupervisor
-  + Registry-keyed `:via` name). Already-alive Kinds return
-  `{:error, {:already_started, _pid}}` which we treat as success.
+  Per **P16**, `SpawnRegistry.spawn/1` is idempotent — already-
+  alive Session Kinds return `{:error, {:already_started, _pid}}`
+  which we treat as success.
 
   ## One-shot — exits cleanly after a single pass
 
@@ -40,12 +40,11 @@ defmodule Ezagent.ExternalMirror.BootReconciler do
   ## Boot ordering
 
   Listed in `EzagentDomainExternalMirror.Application.children/0`
-  AFTER `WorkerRegistry` + `RootSupervisor` + `TargetCheckTaskSup` so
-  the supervisors it uses (`RootSupervisor` for Worker spawns) are
-  already alive when `handle_continue/2` runs. The session-side
-  `SpawnRegistry` lives in `:ezagent_core` and is started by chat's
-  Application; reconciliation tolerates SpawnRegistry not being
-  populated yet (best-effort — logs + continues).
+  AFTER `WorkerRegistry` + `RootSupervisor` + `TargetCheckTaskSup`.
+  The session-side `SpawnRegistry` lives in `:ezagent_core` and is
+  started by chat's Application; reconciliation tolerates the
+  session:// scheme handler not being registered yet (best-effort
+  — logs + continues).
 
   ## DB tolerance
 
@@ -53,8 +52,8 @@ defmodule Ezagent.ExternalMirror.BootReconciler do
   (Ecto Sandbox not checked out in test env, repo not started,
   fresh DB without migration), the GenServer logs a warning and
   exits without touching any Kind. Each Session Kind's own
-  `init_slice/1` is the primary rehydration path; BootReconciler is
-  the multi-node safety net.
+  `init_slice/1` is the primary rehydration path; this is the
+  multi-node / cold-start safety net.
   """
 
   use GenServer
@@ -80,16 +79,35 @@ defmodule Ezagent.ExternalMirror.BootReconciler do
   def handle_continue(:reconcile, state) do
     case safe_list_all_rows() do
       {:ok, rows} ->
-        results =
-          Enum.reduce(rows, %{ok: 0, session_failed: 0, worker_failed: 0}, fn row, acc ->
-            reconcile_row(row, acc)
+        # Deduplicate by session_uri — Session Kind spawn is per-
+        # session, not per-binding, so 10 bindings on one session
+        # only need one spawn attempt.
+        session_uris =
+          rows
+          |> Enum.map(& &1.session_uri)
+          |> Enum.uniq()
+          |> Enum.map(&URI.parse/1)
+
+        {ok_count, fail_count} =
+          Enum.reduce(session_uris, {0, 0}, fn session_uri, {ok_acc, fail_acc} ->
+            case ensure_session_alive(session_uri) do
+              :ok ->
+                {ok_acc + 1, fail_acc}
+
+              other ->
+                Logger.warning(
+                  "ExternalMirror.BootReconciler: session spawn failed for " <>
+                    "#{URI.to_string(session_uri)}: #{inspect(other)}"
+                )
+
+                {ok_acc, fail_acc + 1}
+            end
           end)
 
-        if results.ok > 0 or results.session_failed > 0 or results.worker_failed > 0 do
+        if ok_count > 0 or fail_count > 0 do
           Logger.info(
             "ExternalMirror.BootReconciler: pass complete — " <>
-              "reconciled=#{results.ok} session_failed=#{results.session_failed} " <>
-              "worker_failed=#{results.worker_failed}"
+              "sessions_reconciled=#{ok_count} sessions_failed=#{fail_count}"
           )
         end
 
@@ -111,35 +129,6 @@ defmodule Ezagent.ExternalMirror.BootReconciler do
     err -> {:error, err}
   end
 
-  defp reconcile_row(%BindingRow{} = row, acc) do
-    session_uri = URI.parse(row.session_uri)
-
-    session_outcome = ensure_session_alive(session_uri)
-    worker_outcome = ensure_worker_alive(row, session_uri)
-
-    cond do
-      session_outcome == :ok and worker_outcome == :ok ->
-        %{acc | ok: acc.ok + 1}
-
-      session_outcome != :ok ->
-        Logger.warning(
-          "ExternalMirror.BootReconciler: session spawn failed for #{row.session_uri}: " <>
-            inspect(session_outcome)
-        )
-
-        %{acc | session_failed: acc.session_failed + 1}
-
-      true ->
-        Logger.warning(
-          "ExternalMirror.BootReconciler: worker spawn failed for " <>
-            "#{row.session_uri}/#{row.adapter_id}/#{row.target_id}: " <>
-            inspect(worker_outcome)
-        )
-
-        %{acc | worker_failed: acc.worker_failed + 1}
-    end
-  end
-
   defp ensure_session_alive(%URI{} = session_uri) do
     # SpawnRegistry is the public idempotent entry for any URI scheme;
     # the session:// dispatcher (registered by EzagentDomainChat) calls
@@ -155,71 +144,4 @@ defmodule Ezagent.ExternalMirror.BootReconciler do
   rescue
     err -> {:error, err}
   end
-
-  defp ensure_worker_alive(%BindingRow{} = row, %URI{} = session_uri) do
-    # Belt-and-suspenders: skip if the adapter isn't registered. The
-    # Worker's post-init `handle_continue` would raise KeyError on
-    # `AdapterRegistry.lookup!/1` (per SPEC §5.2 structural-error
-    # rule) — which would crash the Worker, exhaust the
-    # PerBindingSupervisor's 3/30s budget, then trip the
-    # RootSupervisor's 100/60s budget if many bindings reference
-    # missing adapters. The result was a cascade that could bring
-    # down the entire ExternalMirror Application during test runs
-    # where rows from prior runs lingered in the DB but their
-    # adapters weren't yet plugin-booted.
-    #
-    # The proper fix: skip rows for unregistered adapters with a
-    # warning. The Worker WILL be reconciled later when the
-    # plugin's adapter eventually registers (e.g. on next boot when
-    # plugin boot ordering settles).
-    case Ezagent.ExternalMirror.AdapterRegistry.lookup(row.adapter_id) do
-      {:ok, _adapter_module} ->
-        do_spawn_worker(row, session_uri)
-
-      :error ->
-        Logger.debug(
-          "ExternalMirror.BootReconciler: skipping row for unregistered adapter " <>
-            "#{inspect(row.adapter_id)} (#{row.session_uri}/#{row.target_id}) — " <>
-            "adapter not in registry yet"
-        )
-
-        :ok
-    end
-  rescue
-    err -> {:error, err}
-  end
-
-  defp do_spawn_worker(%BindingRow{} = row, %URI{} = session_uri) do
-    worker_uri =
-      Ezagent.ExternalMirror.WorkerSpawn.worker_uri_for(
-        session_uri,
-        row.adapter_id,
-        row.target_id
-      )
-
-    params = %{
-      uri: worker_uri,
-      session_uri: session_uri,
-      adapter_id: row.adapter_id,
-      target_id: row.target_id,
-      opts: decode_opts(row.opts_json)
-    }
-
-    case Ezagent.Kind.spawn(Ezagent.Entity.ExternalMirrorWorker, params) do
-      {:ok, _pid} -> :ok
-      {:error, {:already_started, _pid}} -> :ok
-      other -> other
-    end
-  rescue
-    err -> {:error, err}
-  end
-
-  defp decode_opts(json) when is_binary(json) do
-    case Jason.decode(json) do
-      {:ok, map} when is_map(map) -> map
-      _ -> %{}
-    end
-  end
-
-  defp decode_opts(_), do: %{}
 end

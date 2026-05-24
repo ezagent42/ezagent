@@ -145,7 +145,7 @@ defmodule Ezagent.ExternalMirror.BindingRow do
 
   @doc """
   Reverse lookup: every session URI bound to `adapter_id`. Used by
-  the `Ezagent.ExternalMirror.sessions_for_adapter/1` facade
+  the `Ezagent.ExternalMirror.sessions_for_adapter/2` facade
   (replaces the PR-EM-1 stub).
   """
   @spec sessions_for_adapter(String.t()) :: [URI.t()]
@@ -158,6 +158,23 @@ defmodule Ezagent.ExternalMirror.BindingRow do
       )
     )
     |> Enum.map(&URI.parse/1)
+  end
+
+  @doc """
+  List every binding row for `adapter_id` (full rows, not just session
+  URIs). Used by `Ezagent.ExternalMirror.AdapterInstall.install/1`
+  to reconcile persisted bindings the moment a plugin adapter
+  registers — addressing codex r2 HIGH-1 (BootReconciler ran before
+  adapter plugins booted).
+  """
+  @spec list_for_adapter(String.t()) :: [t()]
+  def list_for_adapter(adapter_id) when is_binary(adapter_id) do
+    Repo.all(
+      from(r in __MODULE__,
+        where: r.adapter_id == ^adapter_id,
+        order_by: r.bound_at
+      )
+    )
   end
 
   @doc """

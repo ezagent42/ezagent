@@ -168,19 +168,46 @@ defmodule Ezagent.ExternalMirror do
   # ----- Reads --------------------------------------------------------------
 
   @doc """
-  List bindings on `session_uri`. Reads the Session Kind's
-  `:external_mirror` slice via `Ezagent.Kind.get_slice/2`.
+  List bindings on `session_uri`. Routes through
+  `Ezagent.Invocation.dispatch/1` with action
+  `external_mirror.list_bindings` so CapBAC step 5.5 enforces the
+  session-level `:list_bindings` cap (declared in
+  `Ezagent.Behavior.ExternalMirror.cap_subjects/0`) AND step 5.6
+  enforces cross-workspace isolation.
 
-  Returns `{:ok, []}` for sessions that have never bound (slice
-  defaults to `%{bindings: []}` in `init_slice/1`). Returns
-  `{:error, _}` if the Session Kind isn't alive.
+  Returns:
+  - `{:ok, [binding()]}` — caller authorized, session alive
+  - `{:error, :unauthorized}` — caller lacks the cap
+  - `{:error, :cross_workspace_denied}` — caller's workspace
+    differs from the session's
+  - `{:error, :not_ready}` / `{:error, :no_such_actor}` — session
+    not running
+
+  ## codex r2 HIGH-2 fix (2026-05-25)
+
+  The pre-fix `list_bindings/1` read the slice directly via
+  `Ezagent.Kind.get_slice/2`, bypassing the newly-registered
+  `:list_bindings` action and exposing target IDs + opts to any
+  in-VM caller. The fix routes through dispatch so the CapBAC
+  gates run.
   """
-  @spec list_bindings(URI.t()) :: {:ok, [binding()]} | {:error, term()}
-  def list_bindings(%URI{} = session_uri) do
-    case Ezagent.Kind.get_slice(session_uri, :external_mirror) do
+  @spec list_bindings(URI.t(), caller_ctx()) :: {:ok, [binding()]} | {:error, term()}
+  def list_bindings(%URI{} = session_uri, ctx) when is_map(ctx) do
+    target =
+      URI.parse("#{URI.to_string(session_uri)}?action=external_mirror.list_bindings")
+
+    inv = %Ezagent.Invocation{
+      target: target,
+      mode: :call,
+      args: %{},
+      ctx: ensure_reply(ctx)
+    }
+
+    case Ezagent.Invocation.dispatch(inv) do
       {:ok, %{bindings: bindings}} -> {:ok, bindings}
-      {:ok, _} -> {:ok, []}
+      {:ok, _other} -> {:ok, []}
       {:error, _} = err -> err
+      :ok -> {:ok, []}
     end
   end
 
@@ -188,16 +215,89 @@ defmodule Ezagent.ExternalMirror do
   List sessions with at least one binding for `adapter_id`. Reads
   the `external_mirror_bindings` projection table (the slice can't
   answer cross-session queries without scanning every Session
-  Kind).
+  Kind), then FILTERS by the caller's workspace.
+
+  Returns `{:ok, [URI.t()]}` where every returned session URI is in
+  the caller's workspace (per `Ezagent.Capability.workspace_of/1`).
+  Callers holding a workspace-wildcard cap (i.e. an admin cap with
+  `workspace_uri: :any` for the matching `kind/behavior`) see every
+  session.
+
+  ## codex r2 HIGH-2 fix (2026-05-25)
+
+  Pre-fix, `sessions_for_adapter/1` returned every matching session
+  across all workspaces with no caller context — a workspace-A user
+  could enumerate workspace-B's bound sessions. The fix derives the
+  caller's workspace from `ctx.caller` and filters the result set.
+  An admin cap (`workspace_uri: :any` against
+  `Ezagent.Behavior.ExternalMirror :list_bindings` on `:any`) skips
+  the filter.
   """
-  @spec sessions_for_adapter(adapter_id :: String.t()) :: {:ok, [URI.t()]}
-  def sessions_for_adapter(adapter_id) when is_binary(adapter_id) do
-    {:ok, BindingRow.sessions_for_adapter(adapter_id)}
+  @spec sessions_for_adapter(adapter_id :: String.t(), caller_ctx()) :: {:ok, [URI.t()]}
+  def sessions_for_adapter(adapter_id, ctx) when is_binary(adapter_id) and is_map(ctx) do
+    all_sessions = safe_sessions_for_adapter(adapter_id)
+
+    filtered =
+      if admin_wildcard?(ctx) do
+        all_sessions
+      else
+        caller_workspace = caller_workspace(ctx)
+        Enum.filter(all_sessions, &session_in_workspace?(&1, caller_workspace))
+      end
+
+    {:ok, filtered}
+  end
+
+  defp safe_sessions_for_adapter(adapter_id) do
+    BindingRow.sessions_for_adapter(adapter_id)
   rescue
     # DB unavailable — empty list rather than crash (read-side
     # safety net; same posture as PR-EM-1 stub).
-    _ -> {:ok, []}
+    _ -> []
   end
+
+  defp caller_workspace(ctx) do
+    case Map.get(ctx, :caller) do
+      %URI{} = caller_uri -> Ezagent.Capability.workspace_of(caller_uri)
+      _ -> :any
+    end
+  end
+
+  defp session_in_workspace?(_session_uri, :any), do: true
+
+  defp session_in_workspace?(%URI{} = session_uri, %URI{} = caller_workspace) do
+    case Ezagent.Capability.workspace_of(session_uri) do
+      %URI{} = session_workspace ->
+        URI.to_string(session_workspace) == URI.to_string(caller_workspace)
+
+      :any ->
+        true
+    end
+  end
+
+  # An "admin wildcard" cap = a Capability with `:any` workspace
+  # against the `Ezagent.Behavior.ExternalMirror` Behavior's
+  # `:list_bindings` action (or the `:any/:any` bootstrap admin cap).
+  # When the caller holds one of these, sessions_for_adapter/2 skips
+  # the workspace filter — admin tooling needs the unfiltered view.
+  defp admin_wildcard?(ctx) do
+    caps = Map.get(ctx, :caps, MapSet.new())
+
+    Enum.any?(caps, fn cap ->
+      cap.workspace_uri == :any and cap_admin_shape?(cap)
+    end)
+  end
+
+  defp cap_admin_shape?(%{kind: :any, behavior: :any, instance: :any}), do: true
+
+  defp cap_admin_shape?(%{
+         kind: :session,
+         behavior: Ezagent.Behavior.ExternalMirror,
+         instance: :any
+       }),
+       do: true
+
+  defp cap_admin_shape?(_), do: false
 
   @doc """
   List all registered adapters as `%{id, display_name, description}`
