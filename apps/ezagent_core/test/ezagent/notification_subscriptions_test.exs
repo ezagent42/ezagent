@@ -233,6 +233,41 @@ defmodule Ezagent.NotificationSubscriptionsTest do
     end
   end
 
+  describe "public API rejects :system ctx (codex PR-N1 round-3 CRITICAL fix)" do
+    test "register_subscription/3 with caps: :system returns :system_caps_not_allowed_in_public_api" do
+      entity = URI.parse("entity://user/acme/sneaky-#{uniq()}")
+      stream = URI.parse("entity://user/acme/target-#{uniq()}")
+
+      # Round-2 trusted caller-supplied `%{caps: :system}` → bypass.
+      # Round-3 explicitly rejects it. Public callers can NEVER get
+      # system authority via the public API; bootstrap callers must
+      # use `system_register/2` which uses a separate GenServer
+      # message tag, not a ctx shape.
+      assert {:error, :system_caps_not_allowed_in_public_api} =
+               Subs.register_subscription(entity, stream, %{
+                 caps: :system,
+                 caller: entity
+               })
+
+      assert Subs.list_subscriptions(entity) == []
+    end
+
+    test "unregister_subscription/3 with caps: :system returns :system_caps_not_allowed_in_public_api" do
+      owner = URI.parse("entity://user/acme/owner-#{uniq()}")
+      stream = URI.parse("entity://user/acme/stream-#{uniq()}")
+
+      Subs.system_register(owner, stream)
+
+      assert {:error, :system_caps_not_allowed_in_public_api} =
+               Subs.unregister_subscription(owner, stream, %{
+                 caps: :system,
+                 caller: URI.parse("entity://user/acme/stranger-#{uniq()}")
+               })
+
+      assert [{_, _}] = Subs.list_subscriptions(owner)
+    end
+  end
+
   describe "protected ETS boundary (codex PR-N1 round-2 HIGH-1 fix)" do
     test "table is :protected — direct :ets.insert from non-owner raises" do
       entity_str = "entity://user/acme/sneaky-#{uniq()}"

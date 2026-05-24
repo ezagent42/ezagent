@@ -133,31 +133,105 @@ defmodule Ezagent.Kind.Snapshot do
 
   Returns `:ok` even on write failure (logged + telemetry); the caller
   (Kind.Server) treats the in-memory slice as the truth.
+
+  **For callers that need to know whether durable persistence
+  actually happened, use `commit/4` instead** (see codex PR-N1
+  round-3 HIGH-1 fix below).
   """
   @spec maybe_save(URI.t() | String.t(), module(), %{atom() => map()}, %{atom() => map()}) :: :ok
   def maybe_save(uri, kind_module, old_state, new_state) do
+    _ = commit(uri, kind_module, old_state, new_state)
+    :ok
+  end
+
+  @doc """
+  Codex PR-N1 round-3 HIGH-1 fix — `maybe_save/4` lies (returns `:ok`
+  on write failure), so callers that need to know "is the state
+  durable yet?" must use this.
+
+  Return shape:
+
+  - `:ok` — durable write succeeded, slice survives a restart
+  - `:not_durable` — policy doesn't require a durable write here
+    (ephemeral / external / unchanged / periodic-deferred). Callers
+    that want to emit post-commit notifications CAN emit on this
+    because there's no durability promise being made
+  - `{:error, reason}` — durable write was attempted and FAILED.
+    Callers MUST NOT emit downstream "your state changed" signals
+    because the GenServer holds state that won't survive crash
+
+  `Kind.Server.commit_and_notify/3` consumes this to gate
+  `SliceChange.emit/1`.
+  """
+  @spec commit(URI.t() | String.t(), module(), %{atom() => map()}, %{atom() => map()}) ::
+          :ok | :not_durable | {:error, term()}
+  def commit(uri, kind_module, old_state, new_state) do
     case kind_module.persistence() do
       :ephemeral ->
-        :ok
+        :not_durable
 
       :external ->
-        :ok
+        :not_durable
 
       :on_terminate ->
         # Only written via save_now/3 in terminate; not in dispatch hot path.
-        :ok
+        :not_durable
 
       {:snapshot, :on_change} ->
         if old_state == new_state do
-          :ok
+          :not_durable
         else
-          save_now(uri, kind_module, new_state)
+          # save_now/3 returns `:ok` regardless of write success (it
+          # logs + emits :failed telemetry on error); we re-derive
+          # the strict result by re-attempting via a strict variant
+          # to avoid breaking existing callers of save_now/3.
+          save_now_strict(uri, kind_module, new_state)
         end
 
       {:snapshot, :periodic, _ms} ->
         # Async via Writer. Timer in Server fires save_now via Writer cast.
-        # maybe_save itself is a no-op for periodic (only the timer writes).
+        # commit/4 itself doesn't block on the timer.
+        :not_durable
+    end
+  end
+
+  # Strict variant — returns the real outcome so `commit/4` can
+  # tell `Kind.Server` whether to emit.
+  defp save_now_strict(uri, kind_module, state) do
+    uri_str = uri_to_str(uri)
+    kind_type_str = Atom.to_string(kind_module.type_name())
+    version = snapshot_version_of(kind_module)
+    binary = :erlang.term_to_binary(state)
+    workspace_uri_str = derive_workspace_uri(uri)
+
+    try do
+      KindSnapshot.upsert(uri_str, kind_type_str, binary, version, workspace_uri_str)
+    rescue
+      e in [DBConnection.ConnectionError, DBConnection.OwnershipError] ->
+        {:error, e}
+    end
+    |> case do
+      {:ok, _row} ->
+        :telemetry.execute(
+          [:ezagent, :persistence, :written],
+          %{bytes: byte_size(binary)},
+          %{uri: uri_str, kind_type: kind_type_str, version: version}
+        )
+
         :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "Ezagent.Kind.Snapshot.commit/4: save failed for #{uri_str}: #{inspect(reason)}"
+        )
+
+        :telemetry.execute(
+          [:ezagent, :persistence, :failed],
+          %{},
+          %{uri: uri_str, kind_type: kind_type_str, reason: reason}
+        )
+
+        {:error, reason}
     end
   end
 

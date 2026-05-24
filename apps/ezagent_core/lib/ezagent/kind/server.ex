@@ -150,20 +150,26 @@ defmodule Ezagent.Kind.Server do
     end
   end
 
-  # Commit-then-notify ordering (codex PR-N1 round-2 MEDIUM fix):
-  # 1. Snapshot.maybe_save first — slice is durably persisted
-  # 2. Then SliceChange.emit — notification "your slice changed"
-  #    cannot fire until the change is permanent
-  # If the emit step ever fails (PubSub crash etc), the slice is
-  # already saved — the failure logs + telemetry but doesn't roll
-  # back. Inverse order would risk emitting before persistence,
-  # so a snapshot-save crash would notify subscribers of state
-  # they'll never see again after restart.
+  # Commit-then-notify ordering (codex PR-N1 round-2 MEDIUM +
+  # round-3 HIGH-1 fix):
+  # 1. `Snapshot.commit/4` returns the STRICT outcome:
+  #    `:ok` = durably persisted; `:not_durable` = policy doesn't
+  #    require a durable write here (ephemeral / unchanged / periodic);
+  #    `{:error, _}` = durable policy attempted + failed
+  # 2. Emit ONLY on `:ok` or `:not_durable`:
+  #    - `:ok` — slice survives restart, subscribers safe to act
+  #    - `:not_durable` — by-design no durability promise (e.g. an
+  #      `:ephemeral` Kind); in-memory slice IS the truth so notify
+  #      is correct
+  #    - `{:error, _}` — GenServer holds state that won't survive
+  #      crash. Ghost-notify would tell LV "Alice → Bob" but a
+  #      restart re-loads "Alice → Carol". Suppress emit. `commit/4`
+  #      has already logged + emitted `:failed` telemetry.
   defp commit_and_notify(state, new_slice_state, slice_change_event) do
-    :ok =
-      Ezagent.Kind.Snapshot.maybe_save(state.uri, state.kind, state.state, new_slice_state)
+    commit_result =
+      Ezagent.Kind.Snapshot.commit(state.uri, state.kind, state.state, new_slice_state)
 
-    if slice_change_event do
+    if slice_change_event && commit_result in [:ok, :not_durable] do
       Ezagent.SliceChange.emit(slice_change_event)
     end
 

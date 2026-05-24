@@ -98,7 +98,19 @@ defmodule Ezagent.NotificationSubscriptions do
   @spec register_subscription(URI.t(), URI.t() | String.t(), map()) ::
           :ok | {:error, term()}
   def register_subscription(%URI{} = entity_uri, stream_uri, ctx) when is_map(ctx) do
-    GenServer.call(__MODULE__, {:register, entity_uri, stream_uri, ctx})
+    # Codex PR-N1 round-3 CRITICAL fix: the public API MUST NOT
+    # accept caller-supplied `%{caps: :system}`. Round-2 trusted
+    # the ctx shape, so any plugin could pass `%{caps: :system}`
+    # and bypass cap enforcement entirely. The distinct
+    # `:public_register` GenServer message guarantees the cap path
+    # ALWAYS runs for this entry point.
+    case ctx do
+      %{caps: :system} ->
+        {:error, :system_caps_not_allowed_in_public_api}
+
+      _ ->
+        GenServer.call(__MODULE__, {:public_register, entity_uri, stream_uri, ctx})
+    end
   end
 
   def register_subscription(_, _, _), do: {:error, :invalid_args}
@@ -117,7 +129,14 @@ defmodule Ezagent.NotificationSubscriptions do
   @spec unregister_subscription(URI.t() | String.t(), URI.t() | String.t(), map()) ::
           :ok | {:error, term()}
   def unregister_subscription(entity_uri, stream_uri, ctx) when is_map(ctx) do
-    GenServer.call(__MODULE__, {:unregister, entity_uri, stream_uri, ctx})
+    # Codex round-3 CRITICAL fix — see `register_subscription/3`.
+    case ctx do
+      %{caps: :system} ->
+        {:error, :system_caps_not_allowed_in_public_api}
+
+      _ ->
+        GenServer.call(__MODULE__, {:public_unregister, entity_uri, stream_uri, ctx})
+    end
   end
 
   def unregister_subscription(_, _, _), do: {:error, :invalid_args}
@@ -128,15 +147,19 @@ defmodule Ezagent.NotificationSubscriptions do
   Internal/system registration — bypasses cap check.
 
   Use ONLY for trusted internal callers (bootstrap, infrastructure
-  re-subscriptions). Every call site is grep-visible to make the
-  trust boundary auditable.
+  re-subscriptions). Every call site is grep-visible — the
+  `test/invariants/notification_subscriptions_system_callsite_test.exs`
+  invariant enforces an allowlist of modules that may call this
+  function.
+
+  Codex round-3 CRITICAL: the system bypass moved from "trust ctx
+  shape" to "distinct GenServer message". The owner accepts ONLY
+  `{:system_register, ...}` from a code path that constructs it
+  here (no public way to forge the ctx-based bypass).
   """
   @spec system_register(URI.t(), URI.t() | String.t()) :: :ok
   def system_register(%URI{} = entity_uri, stream_uri) do
-    GenServer.call(
-      __MODULE__,
-      {:register, entity_uri, stream_uri, %{caps: :system, caller: :system}}
-    )
+    GenServer.call(__MODULE__, {:system_register, entity_uri, stream_uri})
   end
 
   @doc """
@@ -145,10 +168,7 @@ defmodule Ezagent.NotificationSubscriptions do
   """
   @spec system_unregister(URI.t() | String.t(), URI.t() | String.t()) :: :ok
   def system_unregister(entity_uri, stream_uri) do
-    GenServer.call(
-      __MODULE__,
-      {:unregister, entity_uri, stream_uri, %{caps: :system, caller: :system}}
-    )
+    GenServer.call(__MODULE__, {:system_unregister, entity_uri, stream_uri})
   end
 
   # --- read API (direct ETS) ----------------------------------------
@@ -183,46 +203,87 @@ defmodule Ezagent.NotificationSubscriptions do
   # --- GenServer callbacks ------------------------------------------
 
   @impl true
-  def handle_call({:register, entity_uri, stream_uri, ctx}, _from, state) do
+  def handle_call({:public_register, entity_uri, stream_uri, ctx}, _from, state) do
     stream_str = stream_to_string(stream_uri)
     stream_uri_parsed = parse_stream_uri(stream_uri)
 
+    # Defence-in-depth — public path should never see `:system` ctx
+    # (entry point already rejected it), but a misuse of internal
+    # GenServer.call/cast would land here; force-deny.
     reply =
-      case check_subscribe_cap(stream_uri_parsed, ctx) do
-        :ok ->
-          :ets.insert(@table, {
-            {URI.to_string(entity_uri), stream_str},
-            %{
-              registered_at: DateTime.utc_now(),
-              granted_by: Map.get(ctx, :caller, :system)
-            }
-          })
+      case ctx do
+        %{caps: :system} ->
+          {:error, :system_caps_not_allowed_in_public_api}
 
-          :ok
-
-        {:error, _} = err ->
-          err
+        _ ->
+          do_register(entity_uri, stream_str, stream_uri_parsed, ctx)
       end
 
     {:reply, reply, state}
   end
 
-  @impl true
-  def handle_call({:unregister, entity_uri, stream_uri, ctx}, _from, state) do
+  def handle_call({:public_unregister, entity_uri, stream_uri, ctx}, _from, state) do
     entity_str = entity_to_string(entity_uri)
     stream_str = stream_to_string(stream_uri)
 
     reply =
-      case authorize_unregister(entity_str, ctx) do
-        :ok ->
-          :ets.delete(@table, {entity_str, stream_str})
-          :ok
+      case ctx do
+        %{caps: :system} ->
+          {:error, :system_caps_not_allowed_in_public_api}
 
-        {:error, _} = err ->
-          err
+        _ ->
+          do_unregister(entity_str, stream_str, ctx)
       end
 
     {:reply, reply, state}
+  end
+
+  def handle_call({:system_register, entity_uri, stream_uri}, _from, state) do
+    stream_str = stream_to_string(stream_uri)
+
+    :ets.insert(@table, {
+      {URI.to_string(entity_uri), stream_str},
+      %{registered_at: DateTime.utc_now(), granted_by: :system}
+    })
+
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:system_unregister, entity_uri, stream_uri}, _from, state) do
+    entity_str = entity_to_string(entity_uri)
+    stream_str = stream_to_string(stream_uri)
+
+    :ets.delete(@table, {entity_str, stream_str})
+    {:reply, :ok, state}
+  end
+
+  defp do_register(entity_uri, stream_str, stream_uri_parsed, ctx) do
+    case check_subscribe_cap(stream_uri_parsed, ctx) do
+      :ok ->
+        :ets.insert(@table, {
+          {URI.to_string(entity_uri), stream_str},
+          %{
+            registered_at: DateTime.utc_now(),
+            granted_by: Map.get(ctx, :caller, :unknown)
+          }
+        })
+
+        :ok
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  defp do_unregister(entity_str, stream_str, ctx) do
+    case authorize_unregister(entity_str, ctx) do
+      :ok ->
+        :ets.delete(@table, {entity_str, stream_str})
+        :ok
+
+      {:error, _} = err ->
+        err
+    end
   end
 
   # --- internals ----------------------------------------------------
@@ -236,10 +297,12 @@ defmodule Ezagent.NotificationSubscriptions do
   defp parse_stream_uri(%URI{} = u), do: u
   defp parse_stream_uri(s) when is_binary(s), do: URI.parse(s)
 
-  # Codex round-1 CRITICAL + round-2 reinforcement: deny-by-default,
-  # `:system` ctx allowed (explicit), otherwise caller must hold a
-  # matching `Behavior.Notifications` cap.
-  defp check_subscribe_cap(_stream_uri, %{caps: :system}), do: :ok
+  # Codex round-3 CRITICAL fix: REMOVED the `%{caps: :system} -> :ok`
+  # clause entirely. System callers no longer go through this
+  # predicate — they use the dedicated `:system_register` /
+  # `:system_unregister` GenServer messages which skip the cap
+  # check by message-tag, not by trusting caller-supplied ctx.
+  # Public callers ALWAYS hit a real cap check now.
 
   defp check_subscribe_cap(%URI{} = stream_uri, %{caps: caps}) do
     needed = %{
@@ -258,10 +321,10 @@ defmodule Ezagent.NotificationSubscriptions do
 
   defp check_subscribe_cap(_, _), do: {:error, :missing_caps_in_ctx}
 
-  # Codex round-1 HIGH-3 + round-2 HIGH-3 reinforcement: caller must
-  # be the entity, `:system`, or hold a NOTIFICATIONS-admin cap
-  # (behavior + :any). Generic `:any` caps no longer qualify.
-  defp authorize_unregister(_entity_str, %{caps: :system}), do: :ok
+  # Codex round-3 CRITICAL fix: REMOVED the `%{caps: :system} -> :ok`
+  # clause — same rationale as `check_subscribe_cap/2`. System
+  # unregister goes through the `:system_unregister` GenServer
+  # message which never reaches this predicate.
 
   defp authorize_unregister(entity_str, %{caller: %URI{} = caller} = ctx) do
     cond do
