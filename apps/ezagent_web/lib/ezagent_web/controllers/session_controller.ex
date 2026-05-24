@@ -376,11 +376,15 @@ defmodule EzagentWeb.SessionController do
   end
 
   # Existing principal -> always allowed (login). New email -> must be
-  # on the registration domain allowlist.
+  # accepted by at least one workspace's `magic_link_rule` (SPEC v2
+  # PR-A, Allen 2026-05-24, codex round-1 HIGH-1 fix). `email_allowed?/1`
+  # consults the new per-workspace rule path AND the legacy
+  # `registration_domains` AppSetting (back-compat during PR-B
+  # transition; PR-B removes the AppSetting consultation entirely).
   defp send_allowed?(email) do
     case Ezagent.Registration.principal_for_email(email) do
       {:ok, _uri} -> true
-      :none -> Ezagent.Registration.domain_allowed?(email)
+      :none -> Ezagent.Registration.email_allowed?(email)
     end
   end
 
