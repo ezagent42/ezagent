@@ -234,10 +234,7 @@ defmodule Ezagent.Capability do
   def cross_workspace?(%__MODULE__{workspace_uri: :any}, _caller_uri), do: true
 
   def cross_workspace?(%__MODULE__{}, %URI{} = caller_uri) do
-    case workspace_of_caller_safe(caller_uri) do
-      %URI{} = workspace -> URI.to_string(workspace) == "workspace://system"
-      _ -> false
-    end
+    home_is_system?(caller_uri) or member_of_system?(caller_uri)
   end
 
   # `:system` (atom) caller + `nil` caller paths: degraded — cannot
@@ -245,6 +242,37 @@ defmodule Ezagent.Capability do
   # step 5.6 has its own `:system` short-circuit before calling here,
   # so this branch fires only for unusual callers (test fixtures).
   def cross_workspace?(%__MODULE__{}, _), do: false
+
+  # Caller's HOME workspace IS system (admin's structural URI:
+  # `entity://user/system/admin`). Pre-existing structural path.
+  defp home_is_system?(caller_uri) do
+    case workspace_of_caller_safe(caller_uri) do
+      %URI{} = workspace -> URI.to_string(workspace) == "workspace://system"
+      _ -> false
+    end
+  end
+
+  # SPEC v2 PR-D (Allen 2026-05-24): caller is a MEMBER of
+  # workspace://system. The "Promote to system" admin action uses
+  # this path — a regular user (`entity://user/<their-ws>/<name>`)
+  # gains cross-workspace authority by membership, not by a special
+  # URI host. Lazy lookup via apply/3 to avoid compile-time core →
+  # workspace circular dep.
+  defp member_of_system?(%URI{} = caller_uri) do
+    if Code.ensure_loaded?(Ezagent.Workspace.Store) and
+         function_exported?(Ezagent.Workspace.Store, :get_by_name, 1) do
+      case apply(Ezagent.Workspace.Store, :get_by_name, ["system"]) do
+        %{members: members} when is_list(members) ->
+          caller_str = URI.to_string(caller_uri)
+          Enum.any?(members, fn m -> URI.to_string(m) == caller_str end)
+
+        _ ->
+          false
+      end
+    else
+      false
+    end
+  end
 
   defp workspace_of_caller_safe(%URI{} = uri) do
     try do
