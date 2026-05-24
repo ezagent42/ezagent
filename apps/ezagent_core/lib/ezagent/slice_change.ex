@@ -85,35 +85,36 @@ defmodule Ezagent.SliceChange do
     Application.get_env(app, key, false) == true
   end
 
+  # Codex PR-N1 round-1 MED-2 fix: no catch-all rescue. A
+  # PubSub broadcast failure is infrastructure breakage — surface
+  # it as a crash in dev/test (caller is `Kind.Runtime.handle_dispatch`,
+  # which already isolates per-dispatch via supervised tasks), and
+  # let prod telemetry record the failure via the standard
+  # `[:ezagent, :slice_change, :emit, :exception]` event the
+  # `:telemetry.span` helper produces. The old `rescue _ -> :ok`
+  # silently dropped notifications, defeating the architectural goal
+  # of "slice mutation → state sync across surfaces is invariant".
   defp do_emit(%{self_uri: %URI{} = self_uri} = event) do
-    try do
-      Phoenix.PubSub.broadcast(
-        EzagentCore.PubSub,
-        topic(self_uri),
-        {:slice_changed, event}
-      )
-
-      :telemetry.execute(
-        [:ezagent, :slice_change, :emit],
-        %{count: 1},
-        %{
-          self_uri: self_uri,
-          kind_module: Map.get(event, :kind_module),
-          action: Map.get(event, :action),
-          slice_key: Map.get(event, :slice_key)
-        }
-      )
-
-      :ok
-    rescue
-      error ->
-        Logger.warning(
-          "Ezagent.SliceChange.emit failed for #{URI.to_string(self_uri)}: " <>
-            inspect(error)
+    :telemetry.span(
+      [:ezagent, :slice_change, :emit],
+      %{
+        self_uri: self_uri,
+        kind_module: Map.get(event, :kind_module),
+        action: Map.get(event, :action),
+        slice_key: Map.get(event, :slice_key)
+      },
+      fn ->
+        Phoenix.PubSub.broadcast(
+          EzagentCore.PubSub,
+          topic(self_uri),
+          {:slice_changed, event}
         )
 
-        :ok
-    end
+        {:ok, %{count: 1}}
+      end
+    )
+
+    :ok
   end
 
   defp do_emit(_), do: :ok

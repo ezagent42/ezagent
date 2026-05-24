@@ -89,11 +89,17 @@ defmodule Ezagent.Kind.Runtime do
       # `SliceChange.emit/1` is gated by config flag (default OFF
       # in N1; PR-N3 flips on), and short-circuits when slice
       # unchanged. NEVER fires on `{:error, _}` (we're inside the
-      # success branch of the `with`). The `:self_uri` ctx field
-      # carries the affected entity's URI.
+      # success branch of the `with`).
+      #
+      # Codex PR-N1 round-1 HIGH-2 fix: use the BARE INSTANCE URI
+      # for both topic and payload — `target` contains `?action=…`
+      # query, but subscribers want one topic per Kind instance.
+      # `Ezagent.URI.instance/1` strips query + fragment.
       if new_slice != slice do
+        instance_uri = Ezagent.URI.instance(target)
+
         Ezagent.SliceChange.emit(%{
-          self_uri: target,
+          self_uri: instance_uri,
           kind_module: kind_module,
           action: action,
           slice_key: slice_key,

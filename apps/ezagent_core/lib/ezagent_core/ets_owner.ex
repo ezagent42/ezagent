@@ -81,7 +81,16 @@ defmodule EzagentCore.EtsOwner do
     {Ezagent.CapabilityRegistry.Subjects, :set},
     # `:ezagent_capability_default_grants` — keyed by `kind` → grant_fn.
     # Populated via `Ezagent.CapabilityRegistry.register_default_grant/2`.
-    {Ezagent.CapabilityRegistry.Defaults, :set}
+    {Ezagent.CapabilityRegistry.Defaults, :set},
+    # Notification SPEC v2 PR-N1 (Allen 2026-05-24 amendment,
+    # docs/superpowers/specs/2026-05-24-notification-architecture-v2.md):
+    # `:ezagent_notification_subscriptions` — keyed by
+    # `{entity_uri_string, stream_uri_string}` → subscription metadata.
+    # CapabilityRegistry analogue: unified entry point for entities to
+    # register / list / unregister notification subscriptions; cap-gated
+    # writes. Codex PR-N1 round-1 MED-1 fix — was lazy-created `:public`
+    # with TOCTOU race; now supervised init under EtsOwner.
+    {Ezagent.NotificationSubscriptions, :set}
   ]
 
   def start_link(_opts) do
