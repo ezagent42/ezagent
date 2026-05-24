@@ -7,8 +7,19 @@ defmodule Ezagent.Entity.SessionTest do
       assert Session.type_name() == :session
     end
 
-    test "behaviors/0 returns [Ezagent.Behavior.Chat]" do
-      assert Session.behaviors() == [Ezagent.Behavior.Chat]
+    test "behaviors/0 returns [Chat, Publisher.SessionImpl] — ExternalMirror PR-EM-0 added SessionImpl" do
+      # SPEC `docs/superpowers/specs/2026-05-24-external-mirror-domain.md`
+      # §8.1: Session implements `@behaviour Ezagent.Behavior.Publisher`
+      # via the `Publisher.SessionImpl` Kind-Behavior, which owns the
+      # `:publisher` slice + serves the 3 publisher actions. Added
+      # alongside Chat (not nested into Chat's slice) so the Publisher
+      # contract is orthogonal to chat semantics — future publisher
+      # Kinds add their own SessionImpl-equivalent without touching
+      # Chat.
+      assert Session.behaviors() == [
+               Ezagent.Behavior.Chat,
+               Ezagent.Behavior.Publisher.SessionImpl
+             ]
     end
 
     test "persistence/0 is {:snapshot, :on_change} (Allen V1 acceptance 2026-05-22)" do

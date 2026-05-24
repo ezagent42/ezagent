@@ -501,6 +501,23 @@ defmodule EzagentDomainChat.Application do
       :ok = CapabilityRegistry.register(SessionTemplate, action, TemplateB)
     end)
 
+    # ExternalMirror PR-EM-0 (SPEC `docs/superpowers/specs/2026-05-24-external-mirror-domain.md`
+    # §8.1, Allen 2026-05-25) — register the `Ezagent.Behavior.Publisher.SessionImpl`
+    # Kind-Behavior on `Ezagent.Entity.Session`. The three publisher
+    # actions (`:publisher_subscribe_from`, `:publisher_snapshot`,
+    # `:publisher_history`) gate via standard step 5.5 CapBAC; the
+    # session-side implementation owns the `:publisher` slice +
+    # subscribes to its own SliceChange topic via `post_init/2`'s
+    # continuation. SessionImpl is registered ONLY against Session
+    # because Session is the V1 publisher (option (a) — implementer
+    # lives in the publishing domain). Future publisher Kinds will
+    # add their own per-Kind registration alongside this one.
+    alias Ezagent.Behavior.Publisher.SessionImpl, as: PublisherSI
+
+    Enum.each(PublisherSI.actions(), fn action ->
+      :ok = CapabilityRegistry.register(Session, action, PublisherSI)
+    end)
+
     # Phase 7 completion PR-5 (SPEC §1.6b) — register the new core
     # `Ezagent.Behavior.Lifecycle` Behavior's `:terminate` action on the
     # Agent Kind. After this, `entity://agent/...?action=lifecycle.terminate`

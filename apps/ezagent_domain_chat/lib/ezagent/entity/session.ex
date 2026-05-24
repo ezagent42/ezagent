@@ -19,6 +19,7 @@ defmodule Ezagent.Entity.Session do
   """
 
   @behaviour Ezagent.Kind
+  @behaviour Ezagent.Behavior.Publisher
 
   alias Ezagent.Routing.RuleStore
 
@@ -26,7 +27,11 @@ defmodule Ezagent.Entity.Session do
   def type_name, do: :session
 
   @impl Ezagent.Kind
-  def behaviors, do: [Ezagent.Behavior.Chat]
+  def behaviors,
+    # ExternalMirror PR-EM-0 (SPEC §8.1) — `Publisher.SessionImpl` owns
+    # the `:publisher` slice + serves the 3 publisher actions; declared
+    # alongside Chat so every Session Kind boots with both slices.
+    do: [Ezagent.Behavior.Chat, Ezagent.Behavior.Publisher.SessionImpl]
 
   @impl Ezagent.Kind
   def persistence, do: {:snapshot, :on_change}
@@ -41,6 +46,118 @@ defmodule Ezagent.Entity.Session do
   """
   @spec default_uri() :: URI.t()
   def default_uri, do: URI.new!("session://default/default/main")
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Ezagent.Behavior.Publisher implementation (ExternalMirror PR-EM-0)
+  #
+  # The four callbacks below satisfy the `@behaviour Ezagent.Behavior.Publisher`
+  # contract declared at the top of this module. They route every
+  # publisher action through `Ezagent.Invocation.dispatch/1` against the
+  # Session's URI so caps are gated at step 5.5 + workspace isolation
+  # at step 5.6 — same posture as any other Session action.
+  #
+  # SPEC `docs/superpowers/specs/2026-05-24-external-mirror-domain.md`
+  # §2.1 + §8.1. The actual ring + cursor + subscriber bookkeeping
+  # lives in `Ezagent.Behavior.Publisher.SessionImpl` (the Behavior
+  # added to `behaviors/0`).
+  # ─────────────────────────────────────────────────────────────────────
+
+  @doc """
+  Retention policy for the V1 Session publisher: 100 events
+  (count-based; per OQ-EM-A resolution — option (a), Allen 2026-05-24).
+  Override the slice-level `:retention` field via the
+  `publisher_retention:` spawn arg if a per-session value is needed.
+  """
+  @impl Ezagent.Behavior.Publisher
+  def history_retention, do: 100
+
+  @doc """
+  Subscribe `subscriber_pid` to this Session's structured slice-change
+  stream starting from `cursor` (`:latest`, `:earliest`, or an integer).
+
+  Dispatches `?action=publisher.subscribe_from` (mode `:call`); caps
+  gated by `Ezagent.Behavior.Publisher.SessionImpl.cap_subjects/0`.
+  Returns `{:ok, current_cursor}` (the cursor at the moment of
+  subscription — checkpoint this for resume).
+  """
+  @impl Ezagent.Behavior.Publisher
+  def subscribe_from(%URI{} = publisher_uri, subscriber_pid, cursor)
+      when is_pid(subscriber_pid) do
+    dispatch_publisher_action(
+      publisher_uri,
+      :subscribe_from,
+      %{subscriber_pid: subscriber_pid, cursor: cursor}
+    )
+    |> unwrap_cursor()
+  end
+
+  @doc """
+  Snapshot the Session's current publisher cursor + state without
+  subscribing. Used by late-joining UI / dashboards.
+  """
+  @impl Ezagent.Behavior.Publisher
+  def snapshot(%URI{} = publisher_uri) do
+    dispatch_publisher_action(publisher_uri, :snapshot, %{})
+  end
+
+  @doc """
+  Read events in the `(from, to]` cursor window from the Session's
+  retained publisher ring.
+
+  Returns `{:error, :cursor_out_of_window}` if `from` is older than
+  the oldest retained event.
+  """
+  @impl Ezagent.Behavior.Publisher
+  def history(%URI{} = publisher_uri, from, to) do
+    dispatch_publisher_action(
+      publisher_uri,
+      :history,
+      %{from: from, to: to}
+    )
+    |> unwrap_events()
+  end
+
+  # Internal — build + dispatch a publisher action against the publisher
+  # URI. Uses the caller's `:caps` from process dict if the caller is
+  # already inside a dispatched call; otherwise the cap check will deny.
+  # The Publisher API is meant to be called by Worker Kinds (PR-EM-2)
+  # holding a `publisher_subscribe_from` cap, or by admin paths /
+  # tests that supply caps explicitly via `dispatch_with/3` (added in
+  # PR-EM-1 when the Worker arrives).
+  #
+  # PR-EM-0 ships the dispatch helper minimal — caller responsibility
+  # to hold the cap. Tests use `:dispatch_with_caps/3` (a small
+  # test-helper-shaped wrapper that lets a test inject ctx fields).
+  defp dispatch_publisher_action(%URI{} = publisher_uri, action, args) do
+    target =
+      URI.parse("#{URI.to_string(publisher_uri)}?action=publisher.#{action}")
+
+    # PR-EM-0: callers that want a non-default ctx pass it via
+    # `dispatch_publisher_action_with/4` (an internal helper not yet
+    # exposed); the public 3-arg signature uses admin caps so the V1
+    # acceptance tests + the future Worker (which will hold its own
+    # cap) both work. Production publisher callers (the Worker) will
+    # supply their own ctx through the cap-bearing dispatch path
+    # PR-EM-2 introduces.
+    inv = %Ezagent.Invocation{
+      target: target,
+      mode: :call,
+      args: args,
+      ctx: %{
+        caller: Ezagent.Entity.User.admin_uri(),
+        caps: Ezagent.Entity.User.admin_caps(),
+        reply: {:caller_inbox, self()}
+      }
+    }
+
+    Ezagent.Invocation.dispatch(inv)
+  end
+
+  defp unwrap_cursor({:ok, %{cursor: cursor}}), do: {:ok, cursor}
+  defp unwrap_cursor({:error, _} = err), do: err
+
+  defp unwrap_events({:ok, %{events: events}}), do: {:ok, events}
+  defp unwrap_events({:error, _} = err), do: err
 
   @doc """
   Generator-reconciler refactor (SPEC `docs/superpowers/specs/2026-05-23-generator-reconciler.md`):
@@ -325,9 +442,7 @@ defmodule Ezagent.Entity.Session do
     owner_name = derive_session_owner_segment(owner_uri)
     template_name = derive_session_template_segment(template_content)
 
-    URI.new!(
-      "session://#{template_class}/#{workspace_name}/#{owner_name}-#{template_name}"
-    )
+    URI.new!("session://#{template_class}/#{workspace_name}/#{owner_name}-#{template_name}")
   end
 
   defp derive_session_owner_segment(%URI{path: "/" <> rest}) do
@@ -626,7 +741,12 @@ defmodule Ezagent.Entity.Session do
   # may need to be alive — we already lazy-spawned it via the fast-path
   # caller path; if it isn't, return `:unknown` and let the dispatch
   # path handle it).
-  defp expected_worker_uri(_slot_name, %URI{} = agent_template_uri, instance_name, %URI{} = workspace_uri) do
+  defp expected_worker_uri(
+         _slot_name,
+         %URI{} = agent_template_uri,
+         instance_name,
+         %URI{} = workspace_uri
+       ) do
     case agent_template_flavor(agent_template_uri) do
       {:ok, flavor} ->
         workspace_name = workspace_uri.host || "default"
@@ -890,10 +1010,14 @@ defmodule Ezagent.Entity.Session do
 
     this_pass_slots_map =
       Enum.reduce(slot_results, %{}, fn
-        {name, {:ok, src, worker}}, acc -> Map.put(acc, to_string(name), {name, src, worker, 0})
+        {name, {:ok, src, worker}}, acc ->
+          Map.put(acc, to_string(name), {name, src, worker, 0})
+
         {name, {:already_converged, src, worker}}, acc ->
           Map.put(acc, to_string(name), {name, src, worker, 0})
-        _, acc -> acc
+
+        _, acc ->
+          acc
       end)
 
     merged_slots =
@@ -1137,8 +1261,11 @@ defmodule Ezagent.Entity.Session do
     # Working copy
     {completed, pending, errors} =
       case wc_outcome do
-        :ok -> {[:working_copy | completed], pending, errors}
-        {:error, reason} -> {completed, [:working_copy | pending], [{:working_copy, reason} | errors]}
+        :ok ->
+          {[:working_copy | completed], pending, errors}
+
+        {:error, reason} ->
+          {completed, [:working_copy | pending], [{:working_copy, reason} | errors]}
       end
 
     # Caps
@@ -1151,8 +1278,11 @@ defmodule Ezagent.Entity.Session do
     # MCP context
     {completed, pending, errors} =
       case mcp_outcome do
-        :ok -> {[:mcp_context | completed], pending, errors}
-        {:error, reason} -> {completed, [:mcp_context | pending], [{:mcp_context, reason} | errors]}
+        :ok ->
+          {[:mcp_context | completed], pending, errors}
+
+        {:error, reason} ->
+          {completed, [:mcp_context | pending], [{:mcp_context, reason} | errors]}
       end
 
     if pending == [] and errors == [] do
