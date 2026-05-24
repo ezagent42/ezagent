@@ -281,4 +281,49 @@ defmodule Ezagent.Workspace do
   """
   @spec list_visible() :: [map()]
   def list_visible, do: Store.list_visible()
+
+  # --- magic-link rules (SPEC 2026-05-24 v2 PR-A) ----------------------
+
+  alias Ezagent.Workspace.MagicLinkRule
+
+  @doc """
+  Does any workspace's magic-link rule accept `email`?
+
+  This is the SEND-side gate (OQ-V2-3): when an operator clicks
+  "send magic link" for an email, we OR across all workspaces and
+  reject if no rule matches. Pre-PR-A this was a flat global
+  `registration_domains` AppSetting; now it's per-workspace rules.
+  """
+  @spec any_workspace_accepts?(String.t()) :: boolean()
+  def any_workspace_accepts?(email) when is_binary(email) do
+    MagicLinkRule.workspaces_accepting(email) != []
+  end
+
+  def any_workspace_accepts?(_), do: false
+
+  @doc """
+  Does a specific workspace accept `email`? Used by the CLICK-side
+  gate (OQ-V2-3) after the token is verified, AND by the onboarding
+  LV (PR-B) when the user tries to join workspace X by name.
+  """
+  @spec accepts_email?(URI.t() | String.t(), String.t()) :: boolean()
+  def accepts_email?(workspace_uri, email),
+    do: MagicLinkRule.accepts_email?(workspace_uri, email)
+
+  @doc """
+  List workspaces that would accept `email` — for the onboarding LV
+  (PR-B) to suggest "you can join any of these existing workspaces."
+  Returns workspace URIs as strings.
+  """
+  @spec workspaces_accepting(String.t()) :: [String.t()]
+  def workspaces_accepting(email), do: MagicLinkRule.workspaces_accepting(email)
+
+  @doc "Add a magic-link rule to a workspace. See `MagicLinkRule.add/3`."
+  defdelegate add_magic_link_rule(workspace_uri, rule_type, rule_value), to: MagicLinkRule, as: :add
+
+  @doc "List magic-link rules for a workspace. See `MagicLinkRule.list_for/1`."
+  defdelegate list_magic_link_rules(workspace_uri), to: MagicLinkRule, as: :list_for
+
+  @doc "Delete a magic-link rule by id. See `MagicLinkRule.delete/1`."
+  defdelegate delete_magic_link_rule(id), to: MagicLinkRule, as: :delete
 end
