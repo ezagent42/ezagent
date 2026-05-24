@@ -41,14 +41,6 @@ defmodule EzagentCli.Exec do
   privilege elevation: anyone reaching this entry point with no
   credentials ran as admin. CLOSED — no token now means refuse.
   """
-  # Argv that don't need authentication — help / version / unknown
-  # commands surface usage info without dispatching anything.
-  defp help_only_argv?([]), do: true
-  defp help_only_argv?(["--help" | _]), do: true
-  defp help_only_argv?(["-h" | _]), do: true
-  defp help_only_argv?(["--version" | _]), do: true
-  defp help_only_argv?(_), do: false
-
   @spec exec([String.t()], keyword()) :: %{output: String.t(), exit_code: integer()}
   def exec(argv, opts) when is_list(argv) and is_list(opts) do
     # Codex CLI/GUI audit HIGH-1 — help / version / no-args paths
@@ -60,6 +52,14 @@ defmodule EzagentCli.Exec do
       exec_with_auth(argv, opts)
     end
   end
+
+  # Argv that don't need authentication — help / version / no-args
+  # commands surface usage info without dispatching anything.
+  defp help_only_argv?([]), do: true
+  defp help_only_argv?(["--help" | _]), do: true
+  defp help_only_argv?(["-h" | _]), do: true
+  defp help_only_argv?(["--version" | _]), do: true
+  defp help_only_argv?(_), do: false
 
   defp exec_with_auth(argv, opts) do
     case resolve_caller(opts[:token], opts[:entity_uri]) do

@@ -83,15 +83,19 @@ defmodule Mix.Tasks.Ezagent.Auth.MagicLink do
 
       not send_allowed?(email) ->
         Mix.shell().error("DROP reason=send_not_allowed")
-        Mix.shell().info("→ This email is neither an existing principal nor in the")
-        Mix.shell().info("  `registration_domains` whitelist.")
-        Mix.shell().info("→ Inspect current whitelist:")
-        Mix.shell().info("    Ezagent.AppSettings.get(\"registration_domains\")")
-        Mix.shell().info("→ Add the domain via /admin/settings → Allowed email domains")
-        Mix.shell().info("  OR programmatically:")
+        Mix.shell().info("→ This email is neither an existing principal nor accepted by")
+        Mix.shell().info("  any workspace's magic_link_rule.")
+        Mix.shell().info("→ SPEC v2 PR-A/B/C (2026-05-24): registration is now per-workspace.")
+        Mix.shell().info("  To allow this email:")
+        Mix.shell().info("  (a) Create a workspace at /workspaces and add a domain rule, OR")
+        Mix.shell().info("  (b) Programmatically:")
 
         Mix.shell().info(
-          "    Ezagent.AppSettings.put(\"registration_domains\", [\"#{domain_of(email)}\"])"
+          "      Ezagent.Workspace.create(\"#{slug_of_domain(email)}\", %{})"
+        )
+
+        Mix.shell().info(
+          "      Ezagent.Workspace.add_magic_link_rule(\"workspace://#{slug_of_domain(email)}\", \"domain\", \"#{domain_of(email)}\")"
         )
 
         System.halt(1)
@@ -121,9 +125,12 @@ defmodule Mix.Tasks.Ezagent.Auth.MagicLink do
   end
 
   defp send_allowed?(email) do
+    # SPEC v2 PR-G2 (2026-05-24): align with production
+    # `session_controller.send_allowed?/1` — uses `email_allowed?/1`
+    # which consults per-workspace `magic_link_rule` rows.
     case Ezagent.Registration.principal_for_email(email) do
       {:ok, _uri} -> true
-      :none -> Ezagent.Registration.domain_allowed?(email)
+      :none -> Ezagent.Registration.email_allowed?(email)
     end
   end
 
@@ -132,5 +139,11 @@ defmodule Mix.Tasks.Ezagent.Auth.MagicLink do
       [_, domain] -> domain
       _ -> "<unknown>"
     end
+  end
+
+  # Best-effort: "user@h2oslabs.com" → "h2oslabs" for suggested
+  # workspace slug.
+  defp slug_of_domain(email) do
+    email |> domain_of() |> String.replace(~r/\.[^.]+$/, "")
   end
 end
