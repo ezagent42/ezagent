@@ -227,6 +227,50 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
 
   def handle_kind_message(_other, _slice, _ctx), do: :ignore
 
+  @doc """
+  PR-EM-2 codex round-1 HIGH-1 fix (2026-05-25): graceful shutdown
+  hook — invoked by `Ezagent.Kind.Server.terminate/2` on Kind
+  exit. Calls `binding_module.terminate(reason, binding_state)`
+  per SPEC §6.2 ("`terminate/2` runs on graceful unbind ... the
+  Worker Kind's `terminate/2` callback calls the binding module's
+  `terminate/2` to release transport resources").
+
+  Defensive: if the Binding's terminate is not exported (optional
+  per SPEC §2.3), skip. If the slice was never advanced past
+  `:pending` (e.g. terminate during handle_continue), there's no
+  binding_state to clean up — skip.
+  """
+  def terminate(reason, slice, _ctx) do
+    cond do
+      slice.subscription_state != :active ->
+        # Binding never finished init (still :pending) — no
+        # transport handle to release.
+        :ok
+
+      not is_atom(slice.binding_module) ->
+        :ok
+
+      not function_exported?(slice.binding_module, :terminate, 2) ->
+        # Binding.terminate/2 is optional per SPEC §2.3.
+        :ok
+
+      true ->
+        try do
+          _ = slice.binding_module.terminate(reason, slice.binding_state)
+          :ok
+        rescue
+          err ->
+            Logger.warning(
+              "ExternalMirrorWorker: binding #{inspect(slice.binding_module)}.terminate/2 " <>
+                "raised on shutdown (#{inspect(err)}); transport resources may leak. " <>
+                "binding_id=#{slice.adapter_id}/#{inspect(slice.target_id)}"
+            )
+
+            :ok
+        end
+    end
+  end
+
   # ----- The :publish action ------------------------------------------------
 
   @impl Ezagent.Behavior
@@ -316,10 +360,24 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
   # cap (`{:within_session, session_uri}` per SPEC §7.3 Cap 3)
   # delegated to the Session Kind at bind time.
   #
-  # This is the ONE place a Worker holds admin caps and ONLY for
-  # the duration of the subscribe call. The publish path uses the
-  # Worker's own caps (default-granted on spawn — PR-EM-3 will
-  # wire formal delegation).
+  # codex round-1 STRUCTURAL fix (2026-05-25): the PR-EM-2 deferral
+  # to PR-EM-3 covers BOTH internal dispatch sites — `subscribe_to_
+  # session_publisher/2` AND `dispatch_publish_to_self/2` (the
+  # `:publish` self-cast on `{:publisher_event, _}` mailbox
+  # message). Both currently use the inline admin caps; PR-EM-3
+  # will:
+  #
+  #   - subscribe path: switch to the scope-bounded
+  #     `{:within_session, session_uri}` Cap 3 delegated at bind time
+  #   - publish path: switch to the Worker's own default-granted
+  #     publish cap (auto-granted on spawn per SPEC §7.3 Cap 3 +
+  #     caps-data-ownership §4.1)
+  #
+  # The Worker NEVER accepts admin caps from external callers;
+  # admin caps appear ONLY in these two internal self-dispatches
+  # for the structural reason that ezagent's dispatch pipeline
+  # has no ambient-caps mechanism (every Invocation.dispatch/1
+  # requires explicit ctx.caps per CapBAC step 5.5).
   #
   # We don't call `Ezagent.Entity.Session.subscribe_from/4`
   # directly: `:ezagent_domain_chat` depends on

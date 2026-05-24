@@ -44,6 +44,11 @@ defmodule Ezagent.ExternalMirror.WorkerContractTest do
       assert Ezagent.Entity.ExternalMirrorWorker.spawn_strategy() ==
                {:custom, Ezagent.ExternalMirror.WorkerSpawn, :spawn_kind_server}
     end
+
+    test "terminate_strategy/0 returns {:custom, WorkerSpawn, :terminate_by_pid} (codex round-1 HIGH-2)" do
+      assert Ezagent.Entity.ExternalMirrorWorker.terminate_strategy() ==
+               {:custom, Ezagent.ExternalMirror.WorkerSpawn, :terminate_by_pid}
+    end
   end
 
   describe "ExternalMirrorWorker Behavior shape" do

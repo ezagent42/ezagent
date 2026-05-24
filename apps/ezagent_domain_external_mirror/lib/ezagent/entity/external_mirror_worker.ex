@@ -89,10 +89,28 @@ defmodule Ezagent.Entity.ExternalMirrorWorker do
   def spawn_strategy, do: {:custom, WorkerSpawn, :spawn_kind_server}
 
   @doc """
+  PR-EM-2 codex round-1 HIGH-2 fix (2026-05-25): companion to
+  `spawn_strategy/0`. The standard `Kind.terminate/1` path calls
+  `DynamicSupervisor.terminate_child(supervisor(),
+  kind_server_pid)` — that does NOT work for the two-tier
+  topology because `RootSupervisor` owns the PerBindingSupervisor
+  pid, NOT the Kind.Server pid. `terminate_strategy/0` declares
+  the custom teardown so `Kind.terminate/1` delegates to
+  `WorkerSpawn.terminate_by_pid/2` which resolves the
+  PerBindingSupervisor via the Kind.Server's URI + the
+  WorkerRegistry, then calls
+  `DynamicSupervisor.terminate_child(RootSupervisor,
+  per_binding_sup_pid)`.
+  """
+  @impl Ezagent.Kind
+  def terminate_strategy, do: {:custom, WorkerSpawn, :terminate_by_pid}
+
+  @doc """
   The two-tier root that owns all ExternalMirrorWorker instances.
-  Reading via `supervisor/0` keeps the rest of the framework
-  consistent (e.g. `Ezagent.Kind.terminate/1` resolves the
-  destination supervisor via this callback when tearing down).
+  Read by `Ezagent.Kind.terminate/1`'s `:standard` strategy path
+  (which we OVERRIDE via `terminate_strategy/0` above, but we
+  still declare `supervisor/0` so framework code that asks "where
+  does this Kind live?" gets the right top-level answer).
   """
   @impl Ezagent.Kind
   def supervisor, do: RootSupervisor

@@ -24,12 +24,22 @@ defmodule Ezagent.ExternalMirror.RootSupervisor do
     only crashes when its OWN Worker exhausts the inner 3/30s
     budget (a binding stuck in restart loop). Even 50 concurrent
     per-binding crashes stay well under the 100/60s envelope.
-  - **Per-binding child restart strategy:** `:transient`. A
-    PerBindingSupervisor that exits with `:normal` / `:shutdown`
-    (graceful unbind via `DynamicSupervisor.terminate_child/2`)
-    must NOT be restarted. A PerBindingSupervisor that crashes
-    (its Worker exhausted the inner budget) DOES get restarted —
-    standard `:transient` semantics.
+  - **Per-binding child restart strategy:** `:permanent` (codex
+    round-1 CRIT fix, 2026-05-25). r1 used `:transient` reasoning
+    that "supervisor budget exhaustion crashes the supervisor →
+    restart". But OTP supervisor intensity exhaustion exits with
+    EXIT REASON `:shutdown`, and `:transient` explicitly does NOT
+    restart on `:shutdown` (only on non-`:normal`/`:shutdown`
+    crashes). So a single restart-storm would leave the binding
+    permanently down after the FIRST inner-budget exhaustion —
+    the documented "inner burns → RootSupervisor restarts →
+    cycle" loop never fired.
+    `:permanent` restarts on ANY exit including `:shutdown`. The
+    graceful-unbind path (`DynamicSupervisor.terminate_child/2`)
+    bypasses the restart strategy entirely (`terminate_child`
+    removes the child from the dynamic supervisor's bookkeeping
+    BEFORE propagating shutdown), so explicit termination never
+    respawns even with `:permanent`.
 
   ## Why two-tier (NOT a flat shared supervisor)
 

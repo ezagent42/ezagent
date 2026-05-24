@@ -288,10 +288,42 @@ defmodule Ezagent.Behavior do
   @callback handle_continue(term :: term(), slice :: slice(), ctx :: ctx()) ::
               {:ok, new_slice :: slice()} | :ignore
 
+  @doc """
+  Optional terminate hook invoked by `Ezagent.Kind.Server.terminate/2`
+  on graceful Kind shutdown (NOT on a brutal crash — the Kind.Server
+  itself must reach its OTP terminate callback for this to fire,
+  which requires the supervisor to send `:shutdown` rather than
+  `:kill`).
+
+  Use this for per-Behavior resource cleanup that needs to run
+  before the process exits — e.g. closing transport handles owned
+  by `Ezagent.Behavior.ExternalMirrorWorker`'s bound
+  `Ezagent.ExternalMirror.Binding.terminate/2` callback.
+
+  Each Behavior's `terminate/3` runs in `behaviors/0` declaration
+  order. A raise / throw / exit inside one Behavior's terminate
+  does NOT prevent siblings from cleaning up (isolated by
+  try/rescue in `Kind.Server.terminate/2`); the failure is logged
+  and teardown continues. The process IS exiting regardless of
+  the callback's outcome.
+
+  Slice mutations from `terminate/3` are NOT persisted — by the
+  time this runs, the snapshot for the persistence policy has
+  already been written (`:on_terminate` saves above this drain;
+  `:on_change` / `:periodic` already persisted on the last
+  mutation).
+
+  Optional callback — `function_exported?/3` probed at call time.
+
+  Added 2026-05-25 as part of PR-EM-2 codex round-1 HIGH-1 fix.
+  """
+  @callback terminate(reason :: term(), slice :: slice(), ctx :: ctx()) :: :ok
+
   @optional_callbacks [
     dispatchable?: 0,
     data_owner: 1,
     post_init: 2,
-    handle_continue: 3
+    handle_continue: 3,
+    terminate: 3
   ]
 end

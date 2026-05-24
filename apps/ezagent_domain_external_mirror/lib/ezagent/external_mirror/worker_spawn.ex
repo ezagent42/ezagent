@@ -89,7 +89,23 @@ defmodule Ezagent.ExternalMirror.WorkerSpawn do
       start:
         {PerBindingSupervisor, :start_link,
          [%{binding_uri: binding_uri, worker_args: worker_args}]},
-      restart: :transient,
+      # codex round-1 CRIT (2026-05-25): r1 had `restart: :transient`
+      # but OTP supervisor intensity exhaustion exits with `:shutdown`,
+      # and `:transient` does NOT restart on `:shutdown`. The intended
+      # SPEC §6.3 loop ("inner 3/30s burns → RootSupervisor restarts
+      # PerBindingSupervisor → cycle continues until RootSupervisor's
+      # 100/60s burns") never fired — a single restart-storm would
+      # leave the binding permanently down after one inner-budget
+      # exhaustion.
+      #
+      # `:permanent` is correct: ANY exit (`:normal`, `:shutdown`,
+      # crash) restarts. The graceful-unbind path
+      # (`DynamicSupervisor.terminate_child/2` from `terminate/3` below)
+      # bypasses the restart strategy entirely — `terminate_child`
+      # removes the child from the dynamic supervisor's bookkeeping
+      # before propagating shutdown, so even `:permanent` children
+      # do not respawn after explicit termination.
+      restart: :permanent,
       type: :supervisor
     }
 
@@ -137,6 +153,35 @@ defmodule Ezagent.ExternalMirror.WorkerSpawn do
   @spec terminate(URI.t(), String.t(), term()) :: :ok | {:error, term()}
   def terminate(%URI{} = session_uri, adapter_id, target_id) when is_binary(adapter_id) do
     worker_uri = worker_uri_for(session_uri, adapter_id, target_id)
+    terminate_by_uri(worker_uri)
+  end
+
+  @doc """
+  Companion to `spawn_kind_server/1` — declared via
+  `Ezagent.Entity.ExternalMirrorWorker.terminate_strategy/0`
+  per the `Ezagent.Kind.terminate_strategy` callback contract.
+  Called by `Ezagent.Kind.terminate/1` with the Worker URI +
+  Kind.Server pid.
+
+  Resolves the PerBindingSupervisor pid via the WorkerRegistry
+  (the Kind.Server's URI is the WorkerRegistry key) and
+  terminates THAT supervisor via
+  `DynamicSupervisor.terminate_child(RootSupervisor, _)`. The
+  `pid` arg (the Kind.Server pid) is IGNORED — the standard
+  `DynamicSupervisor.terminate_child(RootSupervisor, kind_server_pid)`
+  call returns `:not_found` because RootSupervisor only knows about
+  PerBindingSupervisor pids, not their inner Kind.Server children.
+  This is exactly the bug `terminate_strategy/0` exists to fix
+  (codex round-1 HIGH-2, 2026-05-25).
+
+  Idempotent — already-absent URI returns `:ok`.
+  """
+  @spec terminate_by_pid(URI.t(), pid()) :: :ok
+  def terminate_by_pid(%URI{} = worker_uri, _kind_server_pid) do
+    terminate_by_uri(worker_uri)
+  end
+
+  defp terminate_by_uri(%URI{} = worker_uri) do
     binding_uri = URI.to_string(worker_uri)
 
     case WorkerRegistry.lookup(binding_uri) do
@@ -144,7 +189,7 @@ defmodule Ezagent.ExternalMirror.WorkerSpawn do
         case DynamicSupervisor.terminate_child(RootSupervisor, sup_pid) do
           :ok -> :ok
           {:error, :not_found} -> :ok
-          other -> other
+          _other -> :ok
         end
 
       :error ->

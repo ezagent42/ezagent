@@ -187,6 +187,112 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
     end
   end
 
+  describe "PerBindingSupervisor restart-strategy correctness (codex round-1 CRIT fix)" do
+    # Verifies the PR-EM-2 r1→r2 transition from
+    # `restart: :transient` → `:permanent`. r1 was a CRIT bug:
+    # supervisor budget exhaustion exits with reason `:shutdown`, and
+    # `:transient` does NOT restart on `:shutdown`. So a single
+    # restart-storm would leave the binding permanently down after
+    # one inner-budget exhaustion — the "RootSupervisor restarts the
+    # PerBindingSupervisor" loop the SPEC §6.3 documents never fired.
+    #
+    # This test trips the inner 3/30s budget by killing the Worker
+    # 5 times rapidly, then asserts the PerBindingSupervisor is
+    # STILL alive in the WorkerRegistry — i.e. RootSupervisor
+    # restarted it. With r1's broken `:transient`, the Registry
+    # would show the binding gone.
+    test "inner 3/30s budget exhaustion → RootSupervisor restarts the PerBindingSupervisor",
+         %{session_uri: session_uri} do
+      target_id = "tgt-restart-survive"
+      MockPublishBinding.register_observer(target_id, self())
+
+      {:ok, original_sup_pid} = WorkerSpawn.spawn(session_uri, "mock_publish", target_id)
+      Process.sleep(50)
+
+      worker_uri = WorkerSpawn.worker_uri_for(session_uri, "mock_publish", target_id)
+      binding_uri = URI.to_string(worker_uri)
+
+      # Kill the inner Worker 5 times rapidly to trip the 3/30s
+      # PerBindingSupervisor budget at LEAST once. After the 3rd
+      # kill in 30s, the PerBindingSupervisor exits with
+      # `:shutdown`. With `:permanent`, RootSupervisor restarts it.
+      Enum.each(1..5, fn _ ->
+        case WorkerRegistry.lookup(binding_uri) do
+          {:ok, sup_pid} ->
+            case Supervisor.which_children(sup_pid) do
+              [{_id, inner_pid, _, _}] when is_pid(inner_pid) ->
+                Process.exit(inner_pid, :kill)
+
+              _ ->
+                :ok
+            end
+
+          :error ->
+            :ok
+        end
+
+        Process.sleep(10)
+      end)
+
+      # Give the RootSupervisor time to restart the PerBindingSupervisor
+      # after the inner budget exhausted.
+      Process.sleep(100)
+
+      # The binding is STILL registered (RootSupervisor restarted the
+      # PerBindingSupervisor — possibly with a NEW pid, that's fine).
+      assert {:ok, new_sup_pid} = WorkerRegistry.lookup(binding_uri),
+             "PerBindingSupervisor permanently gone after inner budget exhaustion. " <>
+               "If this fails, the codex round-1 CRIT regression came back — " <>
+               "check `restart:` field on the child_spec in WorkerSpawn.spawn/4."
+
+      # If RootSupervisor restarted, new_sup_pid likely differs from
+      # original_sup_pid — but the binding_uri keeps the new pid alive
+      # in the Registry either way.
+      assert Process.alive?(new_sup_pid)
+
+      _ = original_sup_pid
+    end
+  end
+
+  describe "graceful shutdown — Binding.terminate/2 (codex round-1 HIGH-1 fix)" do
+    test "Kind.terminate(worker_uri) calls binding.terminate/2 before exit",
+         %{session_uri: session_uri} do
+      target_id = "tgt-graceful-shutdown"
+      MockPublishBinding.register_observer(target_id, self())
+
+      {:ok, _} = WorkerSpawn.spawn(session_uri, "mock_publish", target_id)
+      Process.sleep(50)
+
+      # Tear down via the public Kind API — exercises the custom
+      # terminate_strategy/0 path (codex HIGH-2 fix).
+      worker_uri = WorkerSpawn.worker_uri_for(session_uri, "mock_publish", target_id)
+      :ok = Ezagent.Kind.terminate(worker_uri)
+
+      # MockPublishBinding.terminate/2 sends {:terminated, target_id, count}.
+      assert_receive {:terminated, ^target_id, _count}, 1_000
+
+      # The PerBindingSupervisor is gone from the Registry — explicit
+      # termination via terminate_child does NOT respawn (`:permanent`
+      # restart strategy + terminate_child removes from sup bookkeeping
+      # BEFORE the shutdown propagates).
+      Process.sleep(50)
+      binding_uri = URI.to_string(worker_uri)
+      assert WorkerRegistry.lookup(binding_uri) == :error
+    end
+
+    test "WorkerSpawn.terminate/3 (the unbind path) also fires binding.terminate/2",
+         %{session_uri: session_uri} do
+      target_id = "tgt-unbind"
+      MockPublishBinding.register_observer(target_id, self())
+
+      {:ok, _} = WorkerSpawn.spawn(session_uri, "mock_publish", target_id)
+      Process.sleep(50)
+
+      :ok = WorkerSpawn.terminate(session_uri, "mock_publish", target_id)
+      assert_receive {:terminated, ^target_id, _count}, 1_000
+    end
+  end
+
   describe "restart cursor reset (PR-EM-2 acceptance test #6 / OQ-EM-10)" do
     test "killing a Worker resets its slice cursor to :latest on respawn",
          %{session_uri: session_uri} do
