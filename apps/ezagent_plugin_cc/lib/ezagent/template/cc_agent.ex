@@ -313,36 +313,71 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
     with {:ok, started_or_adopted} <- ensure_agent_kind(agent_uri) do
       case started_or_adopted do
         :already_started ->
+          # Codex PR3 round-2 HIGH-2 — DO NOT call create_agent_config_dir
+          # from the loser branch. A concurrent :started winner may be
+          # mid-cp_r (marker not yet written); the loser would see
+          # marker-absent and rm_rf the dir the winner is still copying.
+          # The winner is responsible for dir creation; the loser just
+          # adopts. The Agent slice was already populated by the
+          # winner's record_sandbox_state when it spawned — slice still
+          # carries the path.
+          #
+          # We also do NOT supply :config_dir_path in meta. The caller's
+          # record_sandbox_state skips slice-dispatch when meta lacks
+          # :config_dir_path (codex round-2 HIGH-1 fix in Agent module),
+          # so the existing slice is preserved verbatim.
           {:ok, [agent_uri], %{fresh?: false}}
 
         :started ->
-          # codex round-10 HIGH-2 — the Template Class owns its OWN
-          # partial-spawn teardown. `ensure_agent_kind/1` FRESHLY
-          # started the Agent Kind on this call; if `ensure_pty_server/3`
-          # (PTY / `claude` startup) now fails, the just-started Agent
-          # Kind would leak — a live orphan the Generator's
-          # `cleanup_partial/1` cannot see (the slot returned a bare
-          # `{:error, _}` with no worker URI). So if a step AFTER the
-          # fresh Kind start fails, the Template Class terminates the
-          # Kind it itself started BEFORE returning the error. The
-          # function then either fully succeeds or leaves ZERO residue.
-          # (An `:already_started` Kind is NEVER terminated here — this
-          # call did not create it; that branch already returned early
-          # above with `fresh?: false`.) The Template Class terminates
-          # only the Kind PROCESS — lineage / workspace binding are
-          # ESR-domain registries the plugin must not touch (3-tier);
-          # `spawn_from_template_content/4` had not recorded either yet
-          # (it gates them on the `{:ok, ..., fresh?: true}` it never
-          # received).
-          case ensure_pty_server(agent_uri, cwd, tmpl) do
-            :ok ->
-              {:ok, [agent_uri], %{fresh?: true}}
-
+          # codex round-10 HIGH-2 + PR3 2026-05-24 cascade:
+          # 1. Create per-agent config_dir BEFORE PTY launch (so the
+          #    cc process gets `CLAUDE_CONFIG_DIR=<per-agent-dir>`
+          #    immediately).
+          # 2. If config_dir creation fails → terminate the freshly-
+          #    started Agent Kind (rollback what we created), return
+          #    error.
+          # 3. Thread `agent_config_dir` into `tmpl` so `build_claude_cmd/3`
+          #    reads the PER-AGENT dir (not the template's reference
+          #    dir).
+          # 4. If `ensure_pty_server/3` fails → terminate the Kind AND
+          #    remove the just-created config_dir (full rollback).
+          # 5. On full success: return `config_dir_path: dir` in meta
+          #    so caller dispatches `sandbox.write_path`.
+          with {:ok, config_dir} <- create_agent_config_dir(agent_uri, tmpl),
+               tmpl_with_dir = put_agent_config_dir(tmpl, config_dir),
+               :ok <- ensure_pty_server(agent_uri, cwd, tmpl_with_dir) do
+            {:ok, [agent_uri], %{fresh?: true, config_dir_path: config_dir}}
+          else
             {:error, reason} ->
               _ = Ezagent.Kind.terminate(agent_uri)
+              rollback_agent_config_dir(agent_uri)
               {:error, reason}
           end
       end
+    end
+  end
+
+  defp put_agent_config_dir(tmpl, nil), do: tmpl
+  defp put_agent_config_dir(tmpl, dir), do: Map.put(tmpl, "agent_config_dir", dir)
+
+  # Roll back a partially-created config dir on PTY-startup failure.
+  # Best-effort — failure to remove is logged but does NOT block the
+  # error return (the agent's already in an error state, telemetry
+  # cares more than additional cleanup retries).
+  defp rollback_agent_config_dir(agent_uri) do
+    dir = agent_config_dir(agent_uri)
+
+    case File.rm_rf(dir) do
+      {:ok, _} ->
+        :ok
+
+      {:error, reason, _path} ->
+        Logger.warning(
+          "cc.agent: rollback of #{dir} failed: #{inspect(reason)} " <>
+            "(agent_uri=#{URI.to_string(agent_uri)})"
+        )
+
+        :ok
     end
   end
 
@@ -503,18 +538,54 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
         "EZAGENT_AGENT_TOKEN" => agent_token
       }
 
-      cmd_env =
-        case Map.get(tmpl, "claude_config_dir") do
-          dir when is_binary(dir) and dir != "" ->
-            Map.put(base_env, "CLAUDE_CONFIG_DIR", dir)
-
-          _ ->
-            base_env
-        end
+      # PR3 2026-05-24 + codex round-1 MEDIUM-1 — the per-agent dir
+      # takes precedence over the template's reference dir. Both are
+      # validated as non-empty binaries up-front (a previous `cond`
+      # binding form silently let `""` win the branch and DROP
+      # CLAUDE_CONFIG_DIR — hiding template misconfiguration).
+      #
+      # If BOTH keys are present but `agent_config_dir` is invalid,
+      # we raise rather than fall back — a freshly-spawned agent
+      # whose per-agent dir was misset would otherwise silently use
+      # the SHARED template ref dir (cross-agent credential leak).
+      cmd_env = build_claude_config_env(base_env, tmpl)
 
       {:ok, {argv, cmd_env}}
     end
   end
+
+  # Strict precedence — codex PR3 round-1 MEDIUM-1.
+  # 1. valid `agent_config_dir` → use it
+  # 2. invalid `agent_config_dir` (present but not valid binary) AND
+  #    `claude_config_dir` also present → RAISE (would silently leak
+  #    cross-agent credentials via shared ref dir)
+  # 3. no `agent_config_dir` + valid `claude_config_dir` → use it (legacy)
+  # 4. neither valid → no CLAUDE_CONFIG_DIR (claude uses ~/.claude)
+  defp build_claude_config_env(base_env, tmpl) do
+    agent_dir = Map.get(tmpl, "agent_config_dir")
+    template_dir = Map.get(tmpl, "claude_config_dir")
+
+    cond do
+      valid_dir?(agent_dir) ->
+        Map.put(base_env, "CLAUDE_CONFIG_DIR", agent_dir)
+
+      not is_nil(agent_dir) and valid_dir?(template_dir) ->
+        raise ArgumentError,
+              "cc.agent: invalid agent_config_dir #{inspect(agent_dir)} but " <>
+                "claude_config_dir is also present — refusing to fall back to " <>
+                "the shared template reference dir (cross-agent credential leak risk). " <>
+                "Fix the per-agent dir creation."
+
+      valid_dir?(template_dir) ->
+        Map.put(base_env, "CLAUDE_CONFIG_DIR", template_dir)
+
+      true ->
+        base_env
+    end
+  end
+
+  defp valid_dir?(d) when is_binary(d) and d != "", do: true
+  defp valid_dir?(_), do: false
 
   @doc false
   # codex review of the PR-1 hardening (#233) — resolve the `claude`
@@ -628,6 +699,306 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   end
 
   defp pty_server_alive?(agent_uri), do: Ezagent.Domain.Pty.alive?(agent_uri)
+
+  # --- Per-agent config_dir + extension management (PR3 2026-05-24) -----------
+  #
+  # Allen 2026-05-24 architectural decision (PR2 + PR3): every spawned cc
+  # agent gets its OWN config dir (copied from the template's reference
+  # `claude_config_dir` at spawn). The dir is the per-agent CLAUDE_CONFIG_DIR
+  # — claude reads `.credentials.json` etc. from it — and houses an
+  # installable extensions tree at `<dir>/.claude/plugins/<ext_id>/`
+  # (Anthropic Claude Code "plugin" bundles, per the marketplace cache
+  # convention at `~/.claude/plugins/cache/<marketplace>/<plugin>/<ver>/`).
+  #
+  # cc Template Class implements ALL THREE extension callbacks together
+  # (the all-or-nothing invariant in
+  # `apps/ezagent_core/test/invariants/template_class_extension_contract_test.exs`
+  # enforces this).
+
+  # PR3 layout — what `agent_config_dir/1` looks like on disk:
+  #
+  #   <Ezagent.Home.path("cc-agents")>/<workspace>/<flavor>_<name>/   (chmod 700)
+  #   ├── .credentials.json                        (chmod 600 — copied from template)
+  #   └── .claude/
+  #       └── plugins/
+  #           ├── <ext_id_1>/.claude-plugin/plugin.json
+  #           └── <ext_id_2>/...
+  #
+  # `agent_config_dir/1` is the canonical path builder; the cleanup
+  # callback (`destroy_config_dir/2`) verifies the path it removes
+  # equals this — defense-in-depth against being handed a bogus path.
+
+  @doc false
+  def agent_config_dir(%URI{} = agent_uri) do
+    workspace = agent_workspace_segment(agent_uri)
+    name = agent_name_segment(agent_uri)
+    Path.join([Ezagent.Home.path("cc-agents"), workspace, name])
+  end
+
+  defp agent_workspace_segment(%URI{host: "agent", path: "/" <> rest}) do
+    case String.split(rest, "/", parts: 2) do
+      [workspace, _name] when workspace != "" -> workspace
+      _ -> "default"
+    end
+  end
+
+  defp agent_workspace_segment(_), do: "default"
+
+  defp agent_name_segment(%URI{host: "agent", path: "/" <> rest}) do
+    case String.split(rest, "/", parts: 2) do
+      [_workspace, name] when name != "" -> name
+      _ -> "unknown"
+    end
+  end
+
+  defp agent_name_segment(_), do: "unknown"
+
+  # `list_extensions/1` — scan `<config_dir>/.claude/plugins/*` for
+  # installed Claude Code plugin bundles. A bundle is recognized by
+  # `<dir>/.claude-plugin/plugin.json` (the manifest the
+  # Anthropic CC marketplace stores). The manifest's `name` / `description`
+  # surface in the LV; the directory NAME is the `id` (operators can
+  # rename bundles by dir-rename, but the LV uses dir-name as the
+  # stable handle).
+  @impl Ezagent.Kind.Template
+  def list_extensions(config_dir) when is_binary(config_dir) do
+    plugins_dir = Path.join([config_dir, ".claude", "plugins"])
+
+    case File.ls(plugins_dir) do
+      {:ok, entries} ->
+        extensions =
+          entries
+          |> Enum.filter(fn name -> File.dir?(Path.join(plugins_dir, name)) end)
+          |> Enum.map(fn dir_name -> read_extension_manifest(plugins_dir, dir_name) end)
+          |> Enum.reject(&is_nil/1)
+          |> Enum.sort_by(& &1.name)
+
+        {:ok, extensions}
+
+      {:error, :enoent} ->
+        # No plugins dir yet (agent has none installed). Not an error.
+        {:ok, []}
+
+      {:error, reason} ->
+        {:error, {:list_plugins_failed, reason}}
+    end
+  end
+
+  def list_extensions(_), do: {:error, :invalid_config_dir}
+
+  # Read `<plugins_dir>/<dir_name>/.claude-plugin/plugin.json` and turn
+  # it into the standard extension descriptor. Returns `nil` if the dir
+  # is NOT a plugin bundle (no manifest) — those are silently filtered
+  # out (operator dropped some unrelated file in plugins/).
+  defp read_extension_manifest(plugins_dir, dir_name) do
+    manifest_path = Path.join([plugins_dir, dir_name, ".claude-plugin", "plugin.json"])
+
+    with {:ok, body} <- File.read(manifest_path),
+         {:ok, json} <- Jason.decode(body) do
+      %{
+        id: dir_name,
+        name: Map.get(json, "name", dir_name),
+        description: Map.get(json, "description", ""),
+        # presence-in-dir == enabled (uninstalling = toggle off = rmdir)
+        enabled?: true
+      }
+    else
+      _ -> nil
+    end
+  end
+
+  # `toggle_extension/3` — install or uninstall an extension bundle in
+  # the per-agent config dir.
+  #
+  # PR3 V1 scope: TOGGLE-OFF only is fully implemented (= `rm -rf`
+  # `<config_dir>/.claude/plugins/<ext_id>/`). TOGGLE-ON is NOT
+  # implemented yet — needs a SOURCE (a marketplace registry / a
+  # known plugin cache to copy FROM); the LV will surface a
+  # "Unsupported: install from marketplace" message until that
+  # source is wired (separate PR — likely once marketplace integration
+  # lands). For now `toggle_extension(_, _, true)` returns
+  # `{:error, :install_from_source_not_implemented}` so the LV can
+  # render a clear "not yet available" hint.
+  @impl Ezagent.Kind.Template
+  def toggle_extension(config_dir, extension_id, enabled?)
+      when is_binary(config_dir) and is_binary(extension_id) and is_boolean(enabled?) do
+    target = Path.join([config_dir, ".claude", "plugins", extension_id])
+
+    cond do
+      # Pre-validate extension_id BEFORE Path.join can do anything
+      # dangerous (an absolute path or `/` segment would otherwise
+      # let toggle escape the plugins dir).
+      not valid_extension_id?(extension_id) ->
+        {:error, :unsafe_extension_path}
+
+      # Belt-and-braces post-join check.
+      not safe_extension_path?(config_dir, target) ->
+        {:error, :unsafe_extension_path}
+
+      enabled? == false ->
+        case File.rm_rf(target) do
+          {:ok, _removed} -> :ok
+          {:error, reason, _path} -> {:error, {:rm_failed, reason}}
+        end
+
+      enabled? == true ->
+        # PR3 V1: install-from-source is deferred to the marketplace
+        # PR. An operator can still install manually (`cp -r` a bundle
+        # under `<config_dir>/.claude/plugins/`); the LV reflects the
+        # new state on next refresh.
+        {:error, :install_from_source_not_implemented}
+    end
+  end
+
+  def toggle_extension(_, _, _), do: {:error, :invalid_args}
+
+  # Defense-in-depth: the target plugin path MUST be under the agent's
+  # `<config_dir>/.claude/plugins/` subtree. A maliciously-crafted
+  # `extension_id` like `"../../etc"` or `"/etc/passwd"` would
+  # otherwise let toggle-off delete arbitrary paths.
+  #
+  # Three checks (any failure → unsafe):
+  #   1. ext_id contains no `/` (would let Path.join concatenate
+  #      additional path segments)
+  #   2. ext_id is not absolute (would let Path.join replace prefix —
+  #      e.g. `Path.join(["/a/b", "/c"])` discards `/a/b`)
+  #   3. Path.expand(target) is under Path.expand(plugins_dir) — the
+  #      belt + braces final check (catches any tricks the first two
+  #      missed)
+  defp safe_extension_path?(config_dir, target) do
+    plugins_dir = Path.expand(Path.join([config_dir, ".claude", "plugins"]))
+    actual = Path.expand(target)
+    String.starts_with?(actual, plugins_dir <> "/")
+  end
+
+  # Pre-validate the extension_id BEFORE it gets near Path.join.
+  defp valid_extension_id?(ext_id) when is_binary(ext_id) and ext_id != "" do
+    not String.contains?(ext_id, "/") and
+      not String.contains?(ext_id, "\\") and
+      ext_id != "." and
+      ext_id != ".."
+  end
+
+  defp valid_extension_id?(_), do: false
+
+  # `destroy_config_dir/2` — `rm -rf <config_dir>`. Called at agent
+  # teardown by `Ezagent.Behavior.Sandbox.invoke(:destroy, ...)`.
+  #
+  # Defense-in-depth: the path MUST equal what `agent_config_dir/1`
+  # would compute for this agent_uri. A buggy caller passing an
+  # arbitrary path (e.g. `/`) would otherwise be catastrophic.
+  @impl Ezagent.Kind.Template
+  def destroy_config_dir(%URI{} = agent_uri, config_dir) when is_binary(config_dir) do
+    expected = agent_config_dir(agent_uri)
+
+    if Path.expand(config_dir) == Path.expand(expected) do
+      case File.rm_rf(config_dir) do
+        {:ok, _removed} -> :ok
+        {:error, reason, _path} -> {:error, {:rm_rf_failed, reason}}
+      end
+    else
+      {:error, {:path_mismatch, expected: expected, got: config_dir}}
+    end
+  end
+
+  def destroy_config_dir(_, _), do: {:error, :invalid_args}
+
+  # Create a fresh per-agent config dir by copying the template's
+  # reference dir into the agent-private location.
+  #
+  # Called from `spawn_for_local_pty/2` BEFORE PTY launch so the
+  # cc process gets `CLAUDE_CONFIG_DIR=<per-agent-dir>` and reads its
+  # own private credentials/settings. The reference dir is the
+  # template's `claude_config_dir` field (now interpreted as
+  # "reference" — not the dir the process actually uses).
+  #
+  # Returns `{:ok, path}` where path is the absolute per-agent dir.
+  # If no reference dir is configured on the template, returns
+  # `{:ok, nil}` — agent runs without `CLAUDE_CONFIG_DIR` (legacy
+  # behavior, valid for agents that need no sandbox).
+  @doc false
+  @spec create_agent_config_dir(URI.t(), map()) ::
+          {:ok, String.t() | nil} | {:error, term()}
+  def create_agent_config_dir(%URI{} = agent_uri, tmpl) when is_map(tmpl) do
+    reference_dir = Map.get(tmpl, "claude_config_dir")
+
+    case reference_dir do
+      ref when is_binary(ref) and ref != "" ->
+        do_create_agent_config_dir(agent_uri, ref)
+
+      _ ->
+        # No reference dir on template — the agent runs without one
+        # (legacy: claude reads from `~/.claude` on the operator's
+        # machine). The Sandbox slice's config_dir_path will be nil.
+        {:ok, nil}
+    end
+  end
+
+  # Marker file written at the END of a successful copy. The dir is
+  # considered "valid" ONLY if the marker exists — a half-copied dir
+  # (process killed mid-cp_r) or stale leftover lacks the marker and
+  # gets fully re-created. Codex PR3 round-1 HIGH-2.
+  @config_complete_marker ".ezagent-config-complete"
+
+  defp do_create_agent_config_dir(agent_uri, reference_dir) do
+    target = agent_config_dir(agent_uri)
+    marker = Path.join(target, @config_complete_marker)
+
+    cond do
+      not File.dir?(reference_dir) ->
+        {:error, {:reference_dir_missing, reference_dir}}
+
+      File.dir?(target) and File.exists?(marker) ->
+        # Already exists AND marker present → completed copy from a
+        # prior spawn. Idempotent — return the path (live state).
+        {:ok, target}
+
+      File.dir?(target) ->
+        # Stale / partially-copied dir (marker absent). Wipe + re-copy
+        # rather than silently adopting corrupted state. Codex PR3
+        # round-1 HIGH-2: a partial cp_r leaves missing files; PTY
+        # would launch with corrupt credentials. Better to fail loudly
+        # and re-create than ignore.
+        case File.rm_rf(target) do
+          {:ok, _} ->
+            do_atomic_copy(reference_dir, target, marker)
+
+          {:error, reason, _} ->
+            {:error, {:stale_dir_cleanup_failed, reason}}
+        end
+
+      true ->
+        do_atomic_copy(reference_dir, target, marker)
+    end
+  end
+
+  # Copy + chmod + write marker as the LAST step. If anything before
+  # the marker fails, the next spawn sees marker-absent → wipes + retries.
+  defp do_atomic_copy(reference_dir, target, marker) do
+    with :ok <- File.mkdir_p(Path.dirname(target)),
+         {:ok, _} <- File.cp_r(reference_dir, target),
+         :ok <- File.chmod(target, 0o700),
+         :ok <- chmod_credentials(target),
+         :ok <- File.write(marker, "ok\n") do
+      {:ok, target}
+    else
+      {:error, reason} -> {:error, {:copy_reference_dir_failed, reason}}
+      err -> {:error, {:copy_reference_dir_failed, err}}
+    end
+  end
+
+  # The seed convention chmods `.credentials.json` to 0600 (file
+  # contains the Anthropic API key). Mirror that here so a copy
+  # preserves the convention even if the operator's reference dir
+  # had laxer perms.
+  defp chmod_credentials(dir) do
+    creds = Path.join(dir, ".credentials.json")
+
+    case File.exists?(creds) do
+      true -> File.chmod(creds, 0o600)
+      false -> :ok
+    end
+  end
 
   # --- Ezagent.UI.Form ---------------------------------------------------------
 

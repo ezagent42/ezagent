@@ -1,0 +1,242 @@
+defmodule Ezagent.PluginCc.Template.CcAgentExtensionsTest do
+  @moduledoc """
+  PR3 2026-05-24 (Allen) — cc Template Class implementation of the 3
+  `Ezagent.Kind.Template` extension callbacks:
+
+  - `list_extensions/1` — scan `<config_dir>/.claude/plugins/*` for
+    Claude Code plugin bundles (recognized by `.claude-plugin/plugin.json`).
+  - `toggle_extension/3` — TOGGLE-OFF rm-rf's the bundle dir.
+    TOGGLE-ON is stubbed (`{:error, :install_from_source_not_implemented}`)
+    pending marketplace integration.
+  - `destroy_config_dir/2` — `rm -rf <config_dir>` after verifying the
+    path matches `agent_config_dir/1` (defense-in-depth path lock).
+
+  Plus `create_agent_config_dir/2` — the helper called by
+  `instantiate/3` BEFORE PTY launch to copy the template's reference
+  dir into the per-agent location.
+  """
+
+  use ExUnit.Case, async: true
+
+  alias Ezagent.PluginCc.Template.CcAgent
+
+  defp uniq, do: System.unique_integer([:positive])
+
+  defp make_tmpdir(suffix) do
+    dir = Path.join(System.tmp_dir!(), "cc-ext-#{suffix}-#{uniq()}")
+    File.mkdir_p!(dir)
+    on_exit(fn -> File.rm_rf(dir) end)
+    dir
+  end
+
+  defp write_plugin_manifest(plugins_dir, ext_id, name, description) do
+    bundle_dir = Path.join([plugins_dir, ext_id])
+    manifest_dir = Path.join(bundle_dir, ".claude-plugin")
+    File.mkdir_p!(manifest_dir)
+    File.write!(Path.join(manifest_dir, "plugin.json"), Jason.encode!(%{
+      "name" => name,
+      "description" => description,
+      "version" => "1.0.0"
+    }))
+
+    bundle_dir
+  end
+
+  describe "list_extensions/1" do
+    test "scans <config_dir>/.claude/plugins/* and reads each manifest" do
+      config_dir = make_tmpdir("list-ok")
+      plugins_dir = Path.join([config_dir, ".claude", "plugins"])
+      File.mkdir_p!(plugins_dir)
+
+      write_plugin_manifest(plugins_dir, "alpha-ext", "Alpha Extension", "Does alpha things")
+      write_plugin_manifest(plugins_dir, "beta-ext", "Beta Extension", "Does beta things")
+
+      assert {:ok, exts} = CcAgent.list_extensions(config_dir)
+
+      ids = Enum.map(exts, & &1.id) |> Enum.sort()
+      assert ids == ["alpha-ext", "beta-ext"]
+
+      alpha = Enum.find(exts, &(&1.id == "alpha-ext"))
+      assert alpha.name == "Alpha Extension"
+      assert alpha.description == "Does alpha things"
+      assert alpha.enabled? == true
+    end
+
+    test "returns empty list when plugins dir does not exist" do
+      config_dir = make_tmpdir("list-empty")
+
+      assert {:ok, []} = CcAgent.list_extensions(config_dir)
+    end
+
+    test "silently skips dirs without a plugin.json manifest (operator drop-ins ignored)" do
+      config_dir = make_tmpdir("list-skip")
+      plugins_dir = Path.join([config_dir, ".claude", "plugins"])
+      File.mkdir_p!(plugins_dir)
+
+      # A real bundle
+      write_plugin_manifest(plugins_dir, "real", "Real", "Real")
+      # A directory without a manifest (operator's stray scratch dir)
+      File.mkdir_p!(Path.join(plugins_dir, "scratch"))
+      # A non-dir entry
+      File.write!(Path.join(plugins_dir, "notes.txt"), "ignore me")
+
+      assert {:ok, exts} = CcAgent.list_extensions(config_dir)
+      assert Enum.map(exts, & &1.id) == ["real"]
+    end
+
+    test "rejects non-binary input" do
+      assert {:error, :invalid_config_dir} = CcAgent.list_extensions(nil)
+      assert {:error, :invalid_config_dir} = CcAgent.list_extensions(:atom)
+    end
+  end
+
+  describe "toggle_extension/3 — toggle-off" do
+    test "rm -rf's the bundle dir for enabled? = false" do
+      config_dir = make_tmpdir("toggle-off")
+      plugins_dir = Path.join([config_dir, ".claude", "plugins"])
+      File.mkdir_p!(plugins_dir)
+      bundle = write_plugin_manifest(plugins_dir, "to-remove", "ToRemove", "x")
+
+      assert File.dir?(bundle)
+      assert :ok = CcAgent.toggle_extension(config_dir, "to-remove", false)
+      refute File.dir?(bundle)
+    end
+
+    test "toggle-off on a non-existent bundle is :ok (idempotent)" do
+      config_dir = make_tmpdir("toggle-off-absent")
+      # No plugins dir at all → toggle-off of a non-existent bundle
+      # succeeds (rm_rf returns {:ok, []}).
+      assert :ok = CcAgent.toggle_extension(config_dir, "ghost", false)
+    end
+  end
+
+  describe "toggle_extension/3 — toggle-on is stubbed" do
+    test "returns :install_from_source_not_implemented" do
+      config_dir = make_tmpdir("toggle-on")
+
+      assert {:error, :install_from_source_not_implemented} =
+               CcAgent.toggle_extension(config_dir, "anything", true)
+    end
+  end
+
+  describe "toggle_extension/3 — path safety (defense in depth)" do
+    test "rejects extension_id with path-traversal (../)" do
+      config_dir = make_tmpdir("toggle-traversal")
+      assert {:error, :unsafe_extension_path} =
+               CcAgent.toggle_extension(config_dir, "../../etc", false)
+    end
+
+    test "rejects extension_id with absolute-path prefix" do
+      config_dir = make_tmpdir("toggle-abs")
+      # An absolute path string in extension_id — Path.join still
+      # composes it but Path.expand reveals it's outside the plugins
+      # dir, so safe_extension_path? rejects.
+      assert {:error, :unsafe_extension_path} =
+               CcAgent.toggle_extension(config_dir, "/etc/passwd", false)
+    end
+  end
+
+  describe "destroy_config_dir/2 — path lock" do
+    test "rm -rf's the dir when path matches agent_config_dir/1" do
+      agent_uri = URI.new!("entity://agent/default/cc_destroy-test-#{uniq()}")
+      canonical = CcAgent.agent_config_dir(agent_uri)
+      File.mkdir_p!(canonical)
+      File.write!(Path.join(canonical, "marker"), "x")
+      on_exit(fn -> File.rm_rf(canonical) end)
+
+      assert File.dir?(canonical)
+      assert :ok = CcAgent.destroy_config_dir(agent_uri, canonical)
+      refute File.dir?(canonical)
+    end
+
+    test "REJECTS mismatched paths (e.g. someone passes / or /etc)" do
+      agent_uri = URI.new!("entity://agent/default/cc_lock-test-#{uniq()}")
+
+      assert {:error, {:path_mismatch, _}} =
+               CcAgent.destroy_config_dir(agent_uri, "/etc")
+
+      assert {:error, {:path_mismatch, _}} =
+               CcAgent.destroy_config_dir(agent_uri, "/tmp/random")
+    end
+
+    test "rejects invalid args" do
+      assert {:error, :invalid_args} = CcAgent.destroy_config_dir(nil, "/tmp/x")
+      assert {:error, :invalid_args} = CcAgent.destroy_config_dir("not_a_uri", "/tmp/x")
+    end
+  end
+
+  describe "create_agent_config_dir/2" do
+    test "copies the reference dir to the per-agent location + chmods" do
+      reference = make_tmpdir("cc-ref")
+      File.write!(Path.join(reference, ".credentials.json"), "{}")
+      File.write!(Path.join(reference, "settings.json"), "{}")
+
+      agent_uri = URI.new!("entity://agent/default/cc_create-test-#{uniq()}")
+      tmpl = %{"claude_config_dir" => reference}
+
+      assert {:ok, dir} = CcAgent.create_agent_config_dir(agent_uri, tmpl)
+      on_exit(fn -> File.rm_rf(dir) end)
+
+      assert dir == CcAgent.agent_config_dir(agent_uri)
+      assert File.dir?(dir)
+      assert File.exists?(Path.join(dir, ".credentials.json"))
+      assert File.exists?(Path.join(dir, "settings.json"))
+
+      {:ok, stat} = File.stat(dir)
+      # Lower 9 bits = perms; 0o700 = owner rwx, group/other none
+      assert Bitwise.band(stat.mode, 0o777) == 0o700
+
+      {:ok, creds_stat} = File.stat(Path.join(dir, ".credentials.json"))
+      assert Bitwise.band(creds_stat.mode, 0o777) == 0o600
+    end
+
+    test "is IDEMPOTENT — re-call on existing dir is a no-op success" do
+      reference = make_tmpdir("cc-idem-ref")
+      File.write!(Path.join(reference, ".credentials.json"), "{}")
+
+      agent_uri = URI.new!("entity://agent/default/cc_idem-test-#{uniq()}")
+      tmpl = %{"claude_config_dir" => reference}
+
+      assert {:ok, dir1} = CcAgent.create_agent_config_dir(agent_uri, tmpl)
+      on_exit(fn -> File.rm_rf(dir1) end)
+
+      # Drop a marker so we can detect a re-copy (which would wipe it).
+      File.write!(Path.join(dir1, "user-added-marker"), "x")
+
+      assert {:ok, dir2} = CcAgent.create_agent_config_dir(agent_uri, tmpl)
+      assert dir1 == dir2
+      assert File.exists?(Path.join(dir1, "user-added-marker")),
+             "re-call must NOT re-copy from reference (would wipe live state)"
+    end
+
+    test "returns {:ok, nil} when template has no claude_config_dir" do
+      agent_uri = URI.new!("entity://agent/default/cc_no-ref-#{uniq()}")
+      tmpl = %{"agent_uri" => URI.to_string(agent_uri), "cwd" => "/tmp", "class" => "cc.agent"}
+
+      assert {:ok, nil} = CcAgent.create_agent_config_dir(agent_uri, tmpl)
+    end
+
+    test "returns error if reference dir doesn't exist" do
+      agent_uri = URI.new!("entity://agent/default/cc_missing-ref-#{uniq()}")
+      tmpl = %{"claude_config_dir" => "/nonexistent/path/123"}
+
+      assert {:error, {:reference_dir_missing, "/nonexistent/path/123"}} =
+               CcAgent.create_agent_config_dir(agent_uri, tmpl)
+    end
+  end
+
+  describe "agent_config_dir/1 — canonical path builder" do
+    test "produces a workspace-scoped per-agent path" do
+      uri = URI.new!("entity://agent/team-alpha/cc_foo")
+      dir = CcAgent.agent_config_dir(uri)
+      assert String.ends_with?(dir, "/team-alpha/cc_foo")
+      assert String.contains?(dir, "cc-agents")
+    end
+
+    test "extracts workspace + name correctly from default workspace" do
+      uri = URI.new!("entity://agent/default/cc_bar")
+      dir = CcAgent.agent_config_dir(uri)
+      assert String.ends_with?(dir, "/default/cc_bar")
+    end
+  end
+end
