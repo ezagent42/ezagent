@@ -92,17 +92,26 @@ defmodule EzagentPluginLiveview.AdminLive do
     # already alive; only spawns on the cold-start path.
     current_session_uri = ensure_main_session(@main_session_uri, socket)
 
+    caller_uri = socket.assigns.current_entity_uri
+
     if connected?(socket) do
       Phoenix.PubSub.subscribe(EzagentCore.PubSub, Ezagent.Audit.stream_topic())
       Phoenix.PubSub.subscribe(EzagentCore.PubSub, bridge_topic_safely())
       Phoenix.PubSub.subscribe(EzagentCore.PubSub, Ezagent.CCEvents.topic())
 
+      # Notifier/flash audit 2026-05-24 HIGH-1 — wire AdminLive as the
+      # consumer for the current entity's notification stream. Pre-fix:
+      # `Notifications.notify/3` broadcast to a topic NO LV subscribed
+      # to → dead feature. Post-fix: the active operator's LV
+      # subscribes; messages bridge to flash via handle_info below.
+      if caller_uri do
+        Phoenix.PubSub.subscribe(EzagentCore.PubSub, Ezagent.Notifications.topic(caller_uri))
+      end
+
       for session_uri <- EzagentDomainChat.list_sessions() do
         Phoenix.PubSub.subscribe(EzagentCore.PubSub, session_events_topic(session_uri))
       end
     end
-
-    caller_uri = socket.assigns.current_entity_uri
 
     caller_caps =
       if URI.to_string(caller_uri) == URI.to_string(Ezagent.Entity.User.admin_uri()) do
@@ -237,14 +246,29 @@ defmodule EzagentPluginLiveview.AdminLive do
     {:noreply, socket}
   end
 
-  # `Ezagent.Notifications.notify/3` (PR #276 / PR #281) — the new
-  # tagged envelope shape. Coexists with the legacy `:message_received`
-  # raw broadcast during the migration window. For chat messages, the
-  # legacy `:chat_message` handler above already updates the stream;
-  # we just acknowledge the notification here so the LV doesn't crash.
-  def handle_info({:notification, _user_uri, _payload}, socket) do
-    {:noreply, socket}
+  # `Ezagent.Notifications.notify/3` (PR #276 / PR #281) — the
+  # tagged envelope shape. Notifier/flash audit 2026-05-24 HIGH-1
+  # fix: bridge the notification to a flash so the operator actually
+  # SEES it. Pre-fix this was a silent no-op stub.
+  #
+  # Payload shape per `notifications.ex:80-110` is plugin-defined
+  # (just `is_map(notification)`). We surface a best-effort summary
+  # using common keys + fall back to inspecting the map.
+  def handle_info({:notification, _user_uri, payload}, socket) do
+    {:noreply, put_flash(socket, :info, format_notification(payload))}
   end
+
+  defp format_notification(%{} = payload) do
+    cond do
+      is_binary(payload[:text]) -> payload[:text]
+      is_binary(payload["text"]) -> payload["text"]
+      is_binary(payload[:summary]) -> payload[:summary]
+      is_binary(payload["summary"]) -> payload["summary"]
+      true -> "Notification: #{inspect(payload)}"
+    end
+  end
+
+  defp format_notification(other), do: "Notification: #{inspect(other)}"
 
   # --- User actions -----------------------------------------------------
 
