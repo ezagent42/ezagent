@@ -293,16 +293,22 @@ def default_grants_from_data_owner(kind, %URI{} = target_uri) do
   # 只有具体 URI 返回产生 default grant；:any / :no_owner /
   # {:scope, _, _} 不产生条目（caller 依赖显式 grant_cap）。
   #
-  # r4 修复（codex CRITICAL）：通过 `CapabilityRegistry.Subjects`（ETS-backed
-  # 真值表）迭代而**不是** `BehaviorRegistry.behaviors_for/1`。后者只返回
-  # dispatchable Behavior（dispatchable?: true）。cap-only Behavior 如
-  # `Notifications` 和 `Presence`（`dispatchable?: false`）会被静默跳过，
-  # 那些 Behavior 的 default-grant 规则永远不会触发。Subjects 表 key 是
-  # `{kind, action}` → behavior，每次 `CapabilityRegistry.register/3` 都
-  # 写入（含 cap-only）。
+  # r5 修复（codex round-4 HIGH）：用公共 `subjects_for_kind/1` API，
+  # **不要**用裸 `:ets.match`。Round-4 SPEC 试 `{{kind, :_}, :"$1", :_}` 但
+  # 真实 `CapabilityRegistry.register/3` 写入 shape 是
+  # `{{kind, behavior, action}, meta}`（2 元素外 tuple，3 元素 key）——
+  # round-4 的 match pattern 返回 ZERO 行，整个 helper 静默产生空 list，
+  # 摧毁了 cap-only 的修复。
+  #
+  # 为什么用公共 API 而不是 `:ets.match_object/2` 加正确 shape
+  # `{{kind, :"$1", :_}, :_}`：`subjects_for_kind/1` 是文档化契约且对未来
+  # ETS 布局调整（例如 registry 加 sharded 后端存储）有韧性。Round-1
+  # SPEC 没抓住是因为抽象错（BehaviorRegistry）；round-4 没抓住是因为
+  # ETS pattern 错；round-5 用类型化公共 surface。
   behaviors_for_kind =
-    :ets.match(Ezagent.CapabilityRegistry.Subjects.table(), {{kind, :_}, :"$1", :_})
-    |> List.flatten()
+    kind
+    |> Ezagent.CapabilityRegistry.subjects_for_kind()
+    |> Enum.map(& &1.behavior)
     |> Enum.uniq()
 
   for behavior <- behaviors_for_kind,
@@ -435,7 +441,8 @@ SPEC **不**把这些合并成一个入口 —— 那会强制重度迁移。代
 **验收：**
 - `mix compile --warnings-as-errors` 干净。
 - `mix ezagent.caps.audit` 报 baseline（PR-OWN-1 后生产 Behavior 0 个有 `data_owner/1`；`--strict` flag 非零退出 —— PR-OWN-FINAL 用）。
-- PR-OWN-1 里的单元测试：定义 `Ezagent.TestSupport.OwnedBehavior`（一个仅测试用的 fresh Behavior，实现 `data_owner/1` 和一个合成 Kind），断言 `CapabilityRegistry.default_grants_from_data_owner/2` 返回期望的 `[%Capability{}]`。这个测试**只**依赖 PR-OWN-1 代码 —— 不碰任何真实 Behavior。
+- PR-OWN-1 里的单元测试：定义 `Ezagent.TestSupport.OwnedBehavior`（一个仅测试用的 fresh Behavior，实现 `data_owner/1` 和一个合成 Kind），断言 `CapabilityRegistry.default_grants_from_data_owner/2` 返回期望的 `[{grantee_uri, %Capability{}}]` tuple 列表。这个测试**只**依赖 PR-OWN-1 代码 —— 不碰任何真实 Behavior。
+- **Registry-shape 回归测试（r5，codex round-4 HIGH）**：注册一个合成 dispatchable Behavior 带**多个** action（如 `:read`、`:write`）**加**一个 cap-only Behavior（`dispatchable?: false`）到同一个测试 Kind。调 `default_grants_from_data_owner/2` 断言**两个** owner/cap tuple 都返回（dispatchable Behavior 通过 `Enum.uniq` 出现一次 + cap-only 一个）。没这个测试，round-4 错 ETS pattern 静默产生空 list —— 用测试锁定公共 API 枚举防止 `subjects_for_kind/1` 语义未来漂移。
 - 没有现有测试破。
 
 **LOC 估：** ~120（callback + helper + task + docs + test support）。

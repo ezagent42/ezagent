@@ -293,16 +293,24 @@ def default_grants_from_data_owner(kind, %URI{} = target_uri) do
   # Only concrete URI returns produce a default grant; :any / :no_owner /
   # {:scope, _, _} produce no entry (caller relies on explicit grant_cap).
   #
-  # r4 fix (codex CRITICAL): iterate via `CapabilityRegistry.Subjects` (the
-  # ETS-backed truth table) NOT `BehaviorRegistry.behaviors_for/1`. The
-  # latter only returns dispatchable Behaviors (dispatchable?: true). Cap-only
-  # Behaviors like `Notifications` and `Presence` (`dispatchable?: false`)
-  # would be silently skipped, so any default-grant rule for those would
-  # never fire. The Subjects table is keyed by `{kind, action}` → behavior,
-  # populated by every `CapabilityRegistry.register/3` call (incl cap-only).
+  # r5 fix (codex round-4 HIGH): use the public `subjects_for_kind/1` API,
+  # NOT raw `:ets.match`. Round-4 SPEC tried `{{kind, :_}, :"$1", :_}` but
+  # the actual `CapabilityRegistry.register/3` insert shape is
+  # `{{kind, behavior, action}, meta}` (2-element outer tuple, 3-element key)
+  # — the round-4 match pattern returned ZERO rows so the entire helper
+  # silently produced an empty list, defeating the cap-only fix.
+  #
+  # Why the public API and not `:ets.match_object/2` with the correct
+  # shape `{{kind, :"$1", :_}, :_}`: `subjects_for_kind/1` is the
+  # documented contract and changes-resistant to future ETS layout
+  # tweaks (e.g. if the registry grows a sharded backing store).
+  # Round-1 SPEC didn't catch this because it had the wrong abstraction
+  # (BehaviorRegistry); round-4 didn't catch it because it had the
+  # wrong ETS pattern; round-5 uses the typed public surface.
   behaviors_for_kind =
-    :ets.match(Ezagent.CapabilityRegistry.Subjects.table(), {{kind, :_}, :"$1", :_})
-    |> List.flatten()
+    kind
+    |> Ezagent.CapabilityRegistry.subjects_for_kind()
+    |> Enum.map(& &1.behavior)
     |> Enum.uniq()
 
   for behavior <- behaviors_for_kind,
@@ -435,7 +443,8 @@ Each PR is independently shippable (compiles, tests pass, no behavior change unl
 **Acceptance:**
 - `mix compile --warnings-as-errors` clean.
 - `mix ezagent.caps.audit` reports baseline (0 production Behaviors have `data_owner/1` after PR-OWN-1; `--strict` flag exits non-zero — used by PR-OWN-FINAL).
-- Unit test in PR-OWN-1: define `Ezagent.TestSupport.OwnedBehavior` (a fresh test-only Behavior implementing `data_owner/1` and a synthetic Kind), assert `CapabilityRegistry.default_grants_from_data_owner/2` returns the expected `[%Capability{}]`. This test depends ONLY on PR-OWN-1 code — no real Behavior is touched.
+- Unit test in PR-OWN-1: define `Ezagent.TestSupport.OwnedBehavior` (a fresh test-only Behavior implementing `data_owner/1` and a synthetic Kind), assert `CapabilityRegistry.default_grants_from_data_owner/2` returns the expected `[{grantee_uri, %Capability{}}]` tuple list. This test depends ONLY on PR-OWN-1 code — no real Behavior is touched.
+- **Registry-shape regression test (r5, codex round-4 HIGH)**: register a synthetic dispatchable Behavior with MULTIPLE actions (e.g. `:read`, `:write`) PLUS a cap-only Behavior (`dispatchable?: false`) against the same test Kind. Call `default_grants_from_data_owner/2` and assert BOTH owner/cap tuples are returned (the dispatchable Behavior once via `Enum.uniq`, plus the cap-only one). Without this test, round-4's wrong ETS pattern silently produced an empty list — locking the public-API enumeration via test prevents future drift if `subjects_for_kind/1` semantics change.
 - No existing test breaks.
 
 **LOC est:** ~120 (callback + helper + task + docs + test support).
