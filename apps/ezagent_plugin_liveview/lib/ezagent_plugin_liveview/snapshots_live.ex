@@ -21,54 +21,90 @@ defmodule EzagentPluginLiveview.SnapshotsLive do
 
   @impl true
   def mount(_params, _session, socket) do
+    # Admin gate enforced upstream by `live_session :require_admin`
+    # in `EzagentWeb.Router` (codex PR #305 round-2 HIGH fix).
+    # The codex round-1 finding (KindSnapshot.list_all/0 leaking
+    # cross-tenant rows + clear/dump touching other tenants' state)
+    # is still addressed below by `workspace_filter_for/1` and the
+    # per-handler `workspace_allowed?/2` check — defence-in-depth
+    # so a workspace admin only sees their own workspace, never
+    # the system-scope all-rows view.
+    workspace_filter = workspace_filter_for(socket.assigns)
+
     {:ok,
      socket
-     |> assign(:snapshots, list_snapshots())
+     |> assign(:workspace_filter, workspace_filter)
+     |> assign(:snapshots, list_snapshots(workspace_filter))
      |> assign(:selected_uri, nil)
      |> assign(:selected_dump, nil)
      |> assign(:flash_error, nil)}
   end
 
-  defp list_snapshots do
-    KindSnapshot.list_all()
-    |> Enum.map(fn row ->
-      bytes =
-        if is_binary(row.state_binary), do: byte_size(row.state_binary), else: 0
+  defp workspace_filter_for(%{is_system_member?: true}), do: :all
 
-      %{
-        uri: row.uri,
-        kind_type: row.kind_type,
-        bytes: bytes,
-        version: row.version,
-        updated_at: row.updated_at
-      }
-    end)
+  defp workspace_filter_for(%{current_workspace_uri: %URI{} = wsu}),
+    do: {:scoped, URI.to_string(wsu)}
+
+  defp workspace_filter_for(%{current_workspace_uri: wsu}) when is_binary(wsu),
+    do: {:scoped, wsu}
+
+  defp workspace_filter_for(_), do: {:scoped, "workspace://__none__"}
+
+  defp list_snapshots(:all) do
+    KindSnapshot.list_all() |> Enum.map(&row_to_view/1)
+  end
+
+  defp list_snapshots({:scoped, workspace_uri}) do
+    KindSnapshot.list_in_workspace(workspace_uri) |> Enum.map(&row_to_view/1)
+  end
+
+  defp row_to_view(row) do
+    bytes = if is_binary(row.state_binary), do: byte_size(row.state_binary), else: 0
+
+    %{
+      uri: row.uri,
+      kind_type: row.kind_type,
+      bytes: bytes,
+      version: row.version,
+      updated_at: row.updated_at,
+      workspace_uri: row.workspace_uri
+    }
   end
 
   @impl true
   def handle_event("dump", %{"uri" => uri}, socket) do
-    case KindSnapshot.get(uri) do
+    # Codex PR #305 round-2 HIGH fix: verify the row's
+    # workspace_uri before decoding/showing it. The list page is
+    # already filtered, but a hostile deep-link could POST a `uri`
+    # from another tenant via the dump handler.
+    with row when not is_nil(row) <- KindSnapshot.get(uri),
+         :ok <- workspace_allowed?(row.workspace_uri, socket.assigns.workspace_filter) do
+      decoded =
+        case KindSnapshot.decode_state(row) do
+          {:ok, state} ->
+            # Use inspect/2 since term_to_binary may contain MapSet etc.
+            # which JSON can't represent.
+            inspect(state, pretty: true, limit: :infinity, width: 80)
+
+          {:error, reason} ->
+            "(decode error: #{inspect(reason)})"
+        end
+
+      {:noreply,
+       socket
+       |> assign(:selected_uri, uri)
+       |> assign(:selected_dump, decoded)
+       |> assign(:flash_error, nil)}
+    else
       nil ->
         {:noreply,
          assign(socket, :flash_error, gettext("snapshot not found: %{uri}", uri: uri))}
 
-      row ->
-        decoded =
-          case KindSnapshot.decode_state(row) do
-            {:ok, state} ->
-              # Use inspect/2 since term_to_binary may contain MapSet etc.
-              # which JSON can't represent.
-              inspect(state, pretty: true, limit: :infinity, width: 80)
-
-            {:error, reason} ->
-              "(decode error: #{inspect(reason)})"
-          end
-
+      {:error, :cross_workspace} ->
+        # Fail-closed: don't reveal that the row exists in another
+        # tenant; mirror the "not found" message.
         {:noreply,
-         socket
-         |> assign(:selected_uri, uri)
-         |> assign(:selected_dump, decoded)
-         |> assign(:flash_error, nil)}
+         assign(socket, :flash_error, gettext("snapshot not found: %{uri}", uri: uri))}
     end
   end
 
@@ -80,15 +116,37 @@ defmodule EzagentPluginLiveview.SnapshotsLive do
   end
 
   def handle_event("clear", %{"uri" => uri}, socket) do
-    :ok = KindSnapshot.delete(uri)
+    # Codex PR #305 round-2 HIGH fix: verify workspace before DELETE.
+    # Cross-tenant deletion would destroy state the operator can't
+    # see + can't undo.
+    with row when not is_nil(row) <- KindSnapshot.get(uri),
+         :ok <- workspace_allowed?(row.workspace_uri, socket.assigns.workspace_filter) do
+      :ok = KindSnapshot.delete(uri)
 
-    {:noreply,
-     socket
-     |> assign(:snapshots, list_snapshots())
-     |> assign(:selected_uri, nil)
-     |> assign(:selected_dump, nil)
-     |> assign(:flash_error, nil)}
+      {:noreply,
+       socket
+       |> assign(:snapshots, list_snapshots(socket.assigns.workspace_filter))
+       |> assign(:selected_uri, nil)
+       |> assign(:selected_dump, nil)
+       |> assign(:flash_error, nil)}
+    else
+      nil ->
+        {:noreply,
+         assign(socket, :flash_error, gettext("snapshot not found: %{uri}", uri: uri))}
+
+      {:error, :cross_workspace} ->
+        {:noreply,
+         assign(socket, :flash_error, gettext("snapshot not found: %{uri}", uri: uri))}
+    end
   end
+
+  defp workspace_allowed?(_row_workspace, :all), do: :ok
+
+  defp workspace_allowed?(row_workspace, {:scoped, scope_workspace})
+       when row_workspace == scope_workspace,
+       do: :ok
+
+  defp workspace_allowed?(_row_workspace, {:scoped, _}), do: {:error, :cross_workspace}
 
   @impl true
   def render(assigns) do
