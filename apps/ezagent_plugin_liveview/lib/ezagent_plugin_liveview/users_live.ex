@@ -274,9 +274,15 @@ defmodule EzagentPluginLiveview.UsersLive do
   # helpful error.
   #
   # Phase 9 PR-3 (SPEC v3 §3): entity URIs are 3-segment
-  # `entity://user/<workspace>/<name>`. Bare handles default into
-  # the `default` workspace; legacy 2-segment full URIs are upgraded
-  # by injecting `default/`. Workspace selection UI lands in PR-5.
+  # `entity://user/<workspace>/<name>`. Bare handles + legacy
+  # 2-segment URIs are upgraded into the `default` workspace string
+  # below.
+  #
+  # SPEC v2 PR-C (#295) + PR-F (this PR) — known follow-up: the
+  # `default` workspace is no longer boot-seeded; an admin-created
+  # user here lands in a workspace that may not have a backing row.
+  # The proper fix is an explicit workspace picker in the admin
+  # create-user form; tracked as a deferred UX item.
   defp normalize_handle_to_uri(""), do: ""
 
   defp normalize_handle_to_uri("entity://user/" <> rest = full) do

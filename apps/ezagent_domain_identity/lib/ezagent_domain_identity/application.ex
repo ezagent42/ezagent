@@ -69,14 +69,13 @@ defmodule EzagentDomainIdentity.Application do
         # the seed on every boot (idempotent).
         :ok = maybe_ensure_admin_user()
 
-        # PR-A (Allen 2026-05-23) — seed a default NON-admin user so
-        # dev/prod systems always have a regular-permission user to
-        # exercise CapBAC paths against. Closes the "caps feel
-        # invisible because everyone runs as admin" gap surfaced in
-        # `docs/notes/caps-e2e-design.md` §2 reason #2.
-        # Same skip-in-test rule as admin — tests create their own
-        # non-admin via `Ezagent.Users.create/3`.
-        :ok = maybe_ensure_default_non_admin_user()
+        # PR-A (Allen 2026-05-23) seeded a `default` non-admin operator
+        # user under the `default` workspace; SPEC v2 PR-C (#295)
+        # deleted that workspace, and SPEC v2 PR-F (this PR) deletes the
+        # now-dead callsite + stub. Regular users land in their email-
+        # domain workspace via the onboarding LV (PR-B); CapBAC paths
+        # are exercised by the per-test non-admin users tests provision
+        # via `Ezagent.Users.create/3`.
 
         # PR-M (Allen 2026-05-20) — test-env eager admin User Kind
         # spawn. Identity boots BEFORE chat, so spawning admin here
@@ -208,33 +207,6 @@ defmodule EzagentDomainIdentity.Application do
       :ok
     end
   end
-
-  # PR-A (Allen 2026-05-23) — boot-time idempotent seed of a default
-  # non-admin operator user. Same pattern as `ensure_admin_user/0`:
-  #
-  #   - URI: `entity://user/default/operator` (3-segment, default
-  #     workspace per SPEC v3 §3 — NOT system workspace; that's
-  #     admin-only territory)
-  #   - Caps: `User.default_caps(workspace://default)` —
-  #     workspace-scoped session caps; CANNOT cross workspaces;
-  #     does NOT have admin's superset
-  #   - Password: nil (operator must `mix ezagent.user.set_password`
-  #     before login — same UX as admin)
-  #
-  # This user is what Allen will use to exercise CapBAC paths in
-  # production: log in as operator, observe denial for admin-only
-  # actions, observe success for workspace-scoped session actions.
-  # SPEC v2 PR-C (Allen 2026-05-24) — DELETED. The `default` workspace
-  # is gone; the operator user seed was a Phase 9 stop-gap to make
-  # CapBAC behavior visible. Per Allen's mental model, regular users
-  # land in their email-domain workspace via the onboarding flow
-  # (PR-B). Boot creates ONLY admin + system workspace.
-  #
-  # The functions previously here:
-  #   maybe_ensure_default_non_admin_user/0
-  #   ensure_default_non_admin_user/0
-  # are gone with this PR. Callsite at line 79 is also removed.
-  defp maybe_ensure_default_non_admin_user, do: :ok
 
   defp register_user_only_entity_spawn_fn do
     :ok =

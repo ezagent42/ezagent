@@ -38,18 +38,19 @@ defmodule Ezagent.Registration do
 
   PR-B 2026-05-24 (Allen, SPEC v2): slug uniqueness is now
   PER-WORKSPACE — `alice` in workspace `acme` and `alice` in
-  workspace `beta` are distinct principals. Legacy callers without
-  workspace context default to `"default"`; PR-C deletes
-  `default` and forces all callers explicit.
+  workspace `beta` are distinct principals. PR-F (this PR) removes
+  the legacy `\\ "default"` default — all callers MUST pass an
+  explicit workspace now that the `default` workspace itself is
+  gone (PR-C #295).
   """
   @spec slug_available?(String.t(), String.t()) :: boolean()
-  def slug_available?(slug, workspace \\ "default") when is_binary(slug) do
+  def slug_available?(slug, workspace) when is_binary(slug) and is_binary(workspace) do
     is_nil(Users.get_by_uri("entity://user/#{workspace}/" <> slug))
   end
 
   @doc "Return the first free `<slug>`, `<slug>-2`, `<slug>-3`, ... variant in the workspace."
   @spec suggest_slug(String.t(), String.t()) :: String.t()
-  def suggest_slug(slug, workspace \\ "default") when is_binary(slug) do
+  def suggest_slug(slug, workspace) when is_binary(slug) and is_binary(workspace) do
     if slug_available?(slug, workspace) do
       slug
     else
@@ -122,17 +123,17 @@ defmodule Ezagent.Registration do
   Create a brand-new principal: `users` row (password-less, default
   caps), `entity_profiles` row, and a spawned + cap-hydrated User Kind.
 
-  PR-B 2026-05-24 (Allen, SPEC v2): now takes a `workspace` arg so
-  the user lives in their CHOSEN workspace (from the onboarding LV),
-  not a hardcoded `default`. Legacy 3-arity callers default to
-  `"default"` for back-compat during the PR-B transition; PR-C deletes
-  the `default` workspace which forces all callers to pass it.
+  PR-B 2026-05-24 (Allen, SPEC v2): takes a `workspace` arg so the
+  user lives in their CHOSEN workspace (from the onboarding LV). PR-F
+  (this PR) removes the legacy `\\ "default"` default — all callers
+  MUST pass an explicit workspace now that the `default` workspace
+  itself is gone (PR-C #295).
 
   Returns `{:ok, uri}` or `{:error, :slug_taken | term()}`.
   """
   @spec create_principal(String.t(), String.t(), String.t(), String.t()) ::
           {:ok, URI.t()} | {:error, term()}
-  def create_principal(slug, display_name, email, workspace \\ "default")
+  def create_principal(slug, display_name, email, workspace)
       when is_binary(slug) and is_binary(display_name) and is_binary(email) and
              is_binary(workspace) do
     uri_str = "entity://user/#{workspace}/" <> slug
