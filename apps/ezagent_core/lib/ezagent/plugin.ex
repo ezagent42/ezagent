@@ -136,6 +136,18 @@ defmodule Ezagent.Plugin do
         }
 
   @typedoc """
+  An ExternalMirror `{adapter_module, binding_module}` pair (SPEC
+  `docs/superpowers/specs/2026-05-24-external-mirror-domain.md` §5.1).
+
+  Grill-5 enforces bidirectional 1:1 — `adapter.binding_module() ==
+  binding` AND `binding.adapter_module() == adapter` AND
+  `adapter != binding`. Verified at compile time by the
+  `:ezagent_plugin_check` Mix compiler; re-verified defensively at
+  boot by `Ezagent.Plugin.boot/1`.
+  """
+  @type adapter_decl :: {adapter_module :: module(), binding_module :: module()}
+
+  @typedoc """
   What the `/plugins` config icon opens. V1 is `:route | :flavor | nil`
   — `:form` is rejected until the plugin-settings store ships (V2,
   codex MEDIUM-6).
@@ -160,6 +172,19 @@ defmodule Ezagent.Plugin do
   @callback spawns() :: []
   @callback template_classes() :: [module()]
   @callback agent_flavors() :: [agent_flavor_decl()]
+
+  @doc """
+  ExternalMirror adapter+binding pairs (SPEC
+  `docs/superpowers/specs/2026-05-24-external-mirror-domain.md` §5.1).
+
+  Each entry is `{adapter_module, binding_module}`. `Ezagent.Plugin.boot/1`
+  verifies Grill-5 (both implement their behaviour, bidirectional
+  `binding_module/0` / `adapter_module/0` match, distinct modules)
+  then registers each pair via `AdapterRegistry.register/1` +
+  `BindingRegistry.register_module/2`. Default `[]` via
+  `use Ezagent.Plugin`.
+  """
+  @callback adapters() :: [adapter_decl()]
   @callback routing_tables() :: [routing_decl()]
   @callback config_surface() :: config_surface()
   @callback children() :: [Supervisor.child_spec() | {module(), term()}]
@@ -170,6 +195,7 @@ defmodule Ezagent.Plugin do
                       spawns: 0,
                       template_classes: 0,
                       agent_flavors: 0,
+                      adapters: 0,
                       routing_tables: 0,
                       config_surface: 0,
                       children: 0,
@@ -203,6 +229,7 @@ defmodule Ezagent.Plugin do
       def spawns, do: []
       def template_classes, do: []
       def agent_flavors, do: []
+      def adapters, do: []
       def routing_tables, do: []
       def config_surface, do: nil
       def children, do: []
@@ -213,6 +240,7 @@ defmodule Ezagent.Plugin do
                      spawns: 0,
                      template_classes: 0,
                      agent_flavors: 0,
+                     adapters: 0,
                      routing_tables: 0,
                      config_surface: 0,
                      children: 0,
@@ -331,6 +359,42 @@ defmodule Ezagent.Plugin do
       :ok = Ezagent.RoutingRegistry.declare_table(table_name, opts)
     end)
 
+    # ExternalMirror PR-EM-1 (SPEC §5.1): for each declared
+    # `{adapter, binding}` pair, defensively re-verify Grill-5
+    # (the `:ezagent_plugin_check` compiler also enforces this at
+    # build time; runtime re-check catches a hot-installed plugin
+    # that bypassed the gate — same defense-in-depth as
+    # `assert_agent_flavor!`), then register both halves.
+    #
+    # Step 7 (CapabilityRegistry per `adapter.cap_subject()`) is
+    # DEFERRED to PR-EM-2 when `Behavior.ExternalMirror` lands and
+    # fixes the cap_subject shape. Adding it here would require
+    # inventing a shape, which violates the no-unilateral-stubs
+    # rule. The Grill-5 + registry wiring still ships in PR-EM-1.
+    Enum.each(plugin_module.adapters(), fn decl ->
+      assert_adapter_decl!(plugin_module, decl)
+
+      {adapter_module, binding_module} = decl
+
+      # `apply/3` because `Ezagent.ExternalMirror.{Adapter,Binding}Registry`
+      # live in `ezagent_domain_external_mirror`, downstream of
+      # `ezagent_core`. A direct call would emit
+      # "module is not available or is yet to be defined" warnings
+      # when compiling core (the modules ARE on the runtime
+      # codepath, since any app that declares `adapters/0` depends
+      # on external_mirror — but core compiles BEFORE external_mirror).
+      # Same pattern as duck-typed dispatch elsewhere in the
+      # codebase. The registries' modules are loaded by the BEAM on
+      # first call (umbrella shared code path).
+      :ok = apply(Ezagent.ExternalMirror.AdapterRegistry, :register, [adapter_module])
+
+      :ok =
+        apply(Ezagent.ExternalMirror.BindingRegistry, :register_module, [
+          adapter_module.adapter_id(),
+          binding_module
+        ])
+    end)
+
     :ok = Ezagent.PluginRegistry.register(plugin_module)
 
     :ok
@@ -404,6 +468,70 @@ defmodule Ezagent.Plugin do
           "#{inspect(plugin_module)} declared a malformed agent_flavors/0 entry: " <>
             "#{inspect(decl)}. Each entry must be a map " <>
             "%{flavor: String.t(), kind: module(), template_class: module()}."
+  end
+
+  # ExternalMirror PR-EM-1 — runtime Grill-5 verification for an
+  # `adapters/0` entry. Mirrors the `:ezagent_plugin_check` compiler
+  # checks (defense in depth: catches a plugin hot-installed past the
+  # build gate).
+  #
+  # Five checks per SPEC §5.1:
+  # 1. adapter implements `@behaviour Ezagent.ExternalMirror.Adapter`
+  # 2. binding implements `@behaviour Ezagent.ExternalMirror.Binding`
+  # 3. `adapter.binding_module() == binding`
+  # 4. `binding.adapter_module() == adapter`
+  # 5. `adapter != binding` (structural — single module implementing
+  #    both behaviours dissolves the boundary)
+  defp assert_adapter_decl!(plugin_module, {adapter, binding})
+       when is_atom(adapter) and is_atom(binding) do
+    src = "adapters/0 entry #{inspect({adapter, binding})}"
+
+    if adapter == binding do
+      raise ArgumentError,
+            "#{inspect(plugin_module)} #{src}: adapter and binding must be " <>
+              "DIFFERENT modules. A single module implementing both behaviours " <>
+              "dissolves the adapter/binding boundary (Grill-5 / SPEC §5.1)."
+    end
+
+    assert_implements!(plugin_module, adapter, Ezagent.ExternalMirror.Adapter, src)
+    assert_implements!(plugin_module, binding, Ezagent.ExternalMirror.Binding, src)
+
+    # Bidirectional declaration — both sides MUST name the other.
+    # These calls reach the modules' own `binding_module/0` /
+    # `adapter_module/0` answers; the system trusts the module over
+    # the plugin's `adapters/0` tuple if they disagree (the tuple is
+    # what the plugin author typed; the module's callback is the
+    # behaviour-checked source of truth).
+    declared_binding = adapter.binding_module()
+    declared_adapter = binding.adapter_module()
+
+    cond do
+      declared_binding != binding ->
+        raise ArgumentError,
+              "#{inspect(plugin_module)} #{src}: " <>
+                "#{inspect(adapter)}.binding_module() returned " <>
+                "#{inspect(declared_binding)}, but the adapters/0 entry pairs it " <>
+                "with #{inspect(binding)}. Grill-5 mandates bidirectional 1:1 " <>
+                "declaration (SPEC §5.1)."
+
+      declared_adapter != adapter ->
+        raise ArgumentError,
+              "#{inspect(plugin_module)} #{src}: " <>
+                "#{inspect(binding)}.adapter_module() returned " <>
+                "#{inspect(declared_adapter)}, but the adapters/0 entry pairs it " <>
+                "with #{inspect(adapter)}. Grill-5 mandates bidirectional 1:1 " <>
+                "declaration (SPEC §5.1)."
+
+      true ->
+        :ok
+    end
+  end
+
+  defp assert_adapter_decl!(plugin_module, decl) do
+    raise ArgumentError,
+          "#{inspect(plugin_module)} declared a malformed adapters/0 entry: " <>
+            "#{inspect(decl)}. Each entry must be " <>
+            "`{adapter_module :: module(), binding_module :: module()}`."
   end
 
   defp assert_implements!(plugin_module, module, behaviour, source) do
