@@ -94,6 +94,40 @@ defmodule EzagentWeb.LiveAuth do
     {:cont, assign(socket, :cmdk_nav_routes, EzagentWeb.CommandRoutes.command_routes())}
   end
 
+  # Codex PR #305 round-2 HIGH fix — centralized admin gate.
+  # `/admin/*` LVs (ObservabilityLive, SnapshotsLive, EntitiesLive,
+  # AdminDashboardLive, AdminTemplatesLive) ALL had the same bug
+  # where non-admin authenticated users could deep-link in and
+  # enumerate cross-tenant data. Per-LV gates fixed two of them
+  # but missed three; codex correctly recommended a centralized
+  # `live_session :require_admin` so the next /admin LV inherits
+  # the gate automatically.
+  #
+  # Chains `:require_entity` first (sets `is_admin?` / `is_system_member?`)
+  # then halts non-admins with a flash + redirect to `/`.
+  def on_mount(:require_admin, params, session, socket) do
+    case on_mount(:require_entity, params, session, socket) do
+      {:cont, %{assigns: %{is_admin?: true}} = authed_socket} ->
+        {:cont, authed_socket}
+
+      {:cont, %{assigns: %{is_system_member?: true}} = authed_socket} ->
+        {:cont, authed_socket}
+
+      {:cont, authed_socket} ->
+        # Redirect target matches the pre-existing per-LV admin
+        # redirects (`AdminCapsLive`, `SettingsLive`, etc) so tests
+        # that assert "non-admin → /sessions" keep passing.
+        {:halt,
+         authed_socket
+         |> put_flash(:error, "Admin access required.")
+         |> redirect(to: "/sessions")}
+
+      halt ->
+        # `:require_entity` already redirected (e.g. no session).
+        halt
+    end
+  end
+
   def on_mount(:require_entity, params, session, socket) do
     # Locale must be set on the LV process too — chain to :put_locale
     # first so any redirect message (e.g. "Please sign in") + every

@@ -80,31 +80,6 @@ defmodule EzagentWeb.Router do
       # Sessions Activity (was /admin in Phase 8).
       live "/sessions", AdminLive
 
-      # Admin dashboard + sysadmin sub-pages.
-      live "/admin", AdminDashboardLive
-      live "/admin/logs", ObservabilityLive
-      live "/admin/registry", EntitiesLive
-      live "/admin/snapshots", SnapshotsLive
-      # G-1 + G-2 V0 stop-gap (audit 2026-05-23): AgentTemplate +
-      # SessionTemplate Kinds list, read-only. Detail link goes to
-      # the existing /plugins/auto/:kind LV for raw slice inspection.
-      live "/admin/templates", AdminTemplatesLive
-      # CapabilityRegistry SPEC `docs/superpowers/specs/2026-05-23-capability-registry.md`
-      # §8.1 — surfaces every cap subject registered via
-      # `Ezagent.CapabilityRegistry` (dispatchable + cap-only) plus
-      # default-grant policies per Kind. Admin-only at the mount level
-      # (matches `AdminSettingsLive`'s `@is_admin?` redirect pattern).
-      live "/admin/caps", AdminCapsLive
-      # Design 2 from docs/notes/caps-e2e-design.md §5 — live stream of
-      # CapBAC :granted / :denied telemetry. Makes the cap system
-      # viscerally visible.
-      live "/admin/audit/authz", AdminAuthzAuditLive
-      # V1 fix (Allen Feishu 2026-05-21 17:44): /settings moved here
-      # from top-level. The page hosts admin-only config (SMTP +
-      # registration domains); belongs under /admin (admin scope),
-      # not the avatar Preference dropdown (personal scope).
-      live "/admin/settings", SettingsLive
-
       # Workspaces Activity.
       live "/workspaces", WorkspacesLive
       live "/workspaces/:name", WorkspaceDetailLive
@@ -154,6 +129,44 @@ defmodule EzagentWeb.Router do
       # Top-level Profile (reached via avatar dropdown — personal
       # config). Settings moved to /admin/settings above (admin scope).
       live "/profile", ProfileLive
+    end
+
+    # Codex PR #305 round-2 HIGH fix — centralized admin gate.
+    # Round-1 only added per-LV admin checks to ObservabilityLive +
+    # SnapshotsLive; codex found EntitiesLive + AdminDashboardLive +
+    # AdminTemplatesLive had the same gap. The structural fix is a
+    # separate live_session that on_mount-gates `is_admin?` /
+    # `is_system_member?` so every CURRENT and FUTURE /admin LV
+    # inherits the gate automatically. `:require_admin` chains
+    # `:require_entity` first (sets the admin flags) then halts
+    # non-admins with a flash + redirect.
+    live_session :require_admin, on_mount: {EzagentWeb.LiveAuth, :require_admin} do
+      # Admin dashboard + sysadmin sub-pages — all routed through the
+      # centralized admin gate (see codex review above).
+      live "/admin", AdminDashboardLive
+      live "/admin/logs", ObservabilityLive
+      live "/admin/registry", EntitiesLive
+      live "/admin/snapshots", SnapshotsLive
+      # G-1 + G-2 V0 stop-gap (audit 2026-05-23): AgentTemplate +
+      # SessionTemplate Kinds list, read-only. Detail link goes to
+      # the existing /plugins/auto/:kind LV for raw slice inspection.
+      live "/admin/templates", AdminTemplatesLive
+      # CapabilityRegistry SPEC `docs/superpowers/specs/2026-05-23-capability-registry.md`
+      # §8.1 — surfaces every cap subject registered via
+      # `Ezagent.CapabilityRegistry` (dispatchable + cap-only) plus
+      # default-grant policies per Kind. Per-LV `@is_admin?` redirect
+      # is now redundant (the live_session gate already enforces it)
+      # but kept as defence-in-depth.
+      live "/admin/caps", AdminCapsLive
+      # Design 2 from docs/notes/caps-e2e-design.md §5 — live stream of
+      # CapBAC :granted / :denied telemetry. Makes the cap system
+      # viscerally visible.
+      live "/admin/audit/authz", AdminAuthzAuditLive
+      # V1 fix (Allen Feishu 2026-05-21 17:44): /settings moved here
+      # from top-level. The page hosts admin-only config (SMTP +
+      # registration domains); belongs under /admin (admin scope),
+      # not the avatar Preference dropdown (personal scope).
+      live "/admin/settings", SettingsLive
     end
   end
 

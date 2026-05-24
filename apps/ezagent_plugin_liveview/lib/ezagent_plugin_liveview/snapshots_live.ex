@@ -21,41 +21,23 @@ defmodule EzagentPluginLiveview.SnapshotsLive do
 
   @impl true
   def mount(_params, _session, socket) do
-    # Codex PR #305 round-2 HIGH fix: same workspace_uri isolation
-    # gap as ObservabilityLive — `KindSnapshot.list_all/0` is
-    # explicitly system-scope boot-time read; per-tenant reads go
-    # through `list_in_workspace/1`. Without this gate, any
-    # authenticated user deep-linking to /admin/snapshots saw
-    # EVERY tenant's snapshots + could clear rows outside their
-    # tenant (data leak + state destruction).
-    #
-    # Admin gate first — non-admins can't reach this page even
-    # with their own workspace filter. Mirrors AdminCapsLive +
-    # SettingsLive pattern.
-    if not admin?(socket.assigns) do
-      {:ok, socket |> redirect_non_admin()}
-    else
-      workspace_filter = workspace_filter_for(socket.assigns)
+    # Admin gate enforced upstream by `live_session :require_admin`
+    # in `EzagentWeb.Router` (codex PR #305 round-2 HIGH fix).
+    # The codex round-1 finding (KindSnapshot.list_all/0 leaking
+    # cross-tenant rows + clear/dump touching other tenants' state)
+    # is still addressed below by `workspace_filter_for/1` and the
+    # per-handler `workspace_allowed?/2` check — defence-in-depth
+    # so a workspace admin only sees their own workspace, never
+    # the system-scope all-rows view.
+    workspace_filter = workspace_filter_for(socket.assigns)
 
-      {:ok,
-       socket
-       |> assign(:workspace_filter, workspace_filter)
-       |> assign(:snapshots, list_snapshots(workspace_filter))
-       |> assign(:selected_uri, nil)
-       |> assign(:selected_dump, nil)
-       |> assign(:flash_error, nil)}
-    end
-  end
-
-  # Codex round-2 HIGH — see ObservabilityLive for the matching helper.
-  defp admin?(%{is_admin?: true}), do: true
-  defp admin?(%{is_system_member?: true}), do: true
-  defp admin?(_), do: false
-
-  defp redirect_non_admin(socket) do
-    socket
-    |> Phoenix.LiveView.put_flash(:error, "Admin access required.")
-    |> Phoenix.LiveView.push_navigate(to: "/")
+    {:ok,
+     socket
+     |> assign(:workspace_filter, workspace_filter)
+     |> assign(:snapshots, list_snapshots(workspace_filter))
+     |> assign(:selected_uri, nil)
+     |> assign(:selected_dump, nil)
+     |> assign(:flash_error, nil)}
   end
 
   defp workspace_filter_for(%{is_system_member?: true}), do: :all
