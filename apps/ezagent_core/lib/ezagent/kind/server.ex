@@ -123,17 +123,11 @@ defmodule Ezagent.Kind.Server do
   @impl true
   def handle_call({:ezagent_dispatch, %Ezagent.Invocation{} = inv}, _from, state) do
     case Ezagent.Kind.Runtime.handle_dispatch(inv, state.state, state.kind, state.uri) do
-      {:ok, new_slice_state, result} ->
-        :ok =
-          Ezagent.Kind.Snapshot.maybe_save(state.uri, state.kind, state.state, new_slice_state)
+      {:ok, new_slice_state, result, slice_change_event} ->
+        commit_and_notify(state, new_slice_state, slice_change_event)
 
-        {:reply, {:ok, result}, %{state | state: new_slice_state}}
-
-      {:ok, new_slice_state} ->
-        :ok =
-          Ezagent.Kind.Snapshot.maybe_save(state.uri, state.kind, state.state, new_slice_state)
-
-        {:reply, :ok, %{state | state: new_slice_state}}
+        reply = if is_nil(result), do: :ok, else: {:ok, result}
+        {:reply, reply, %{state | state: new_slice_state}}
 
       {:error, _} = err ->
         {:reply, err, state}
@@ -143,24 +137,43 @@ defmodule Ezagent.Kind.Server do
   @impl true
   def handle_cast({:ezagent_dispatch, %Ezagent.Invocation{} = inv}, state) do
     case Ezagent.Kind.Runtime.handle_dispatch(inv, state.state, state.kind, state.uri) do
-      {:ok, new_slice_state, result} ->
-        :ok =
-          Ezagent.Kind.Snapshot.maybe_save(state.uri, state.kind, state.state, new_slice_state)
+      {:ok, new_slice_state, result, slice_change_event} ->
+        commit_and_notify(state, new_slice_state, slice_change_event)
 
         # cast still replies via ctx.reply if set (e.g. caller_inbox).
         Ezagent.Invocation.reply(inv.ctx, {:ok, result})
-        {:noreply, %{state | state: new_slice_state}}
-
-      {:ok, new_slice_state} ->
-        :ok =
-          Ezagent.Kind.Snapshot.maybe_save(state.uri, state.kind, state.state, new_slice_state)
-
         {:noreply, %{state | state: new_slice_state}}
 
       {:error, reason} ->
         Ezagent.Invocation.reply(inv.ctx, {:error, reason})
         {:noreply, state}
     end
+  end
+
+  # Commit-then-notify ordering (codex PR-N1 round-2 MEDIUM +
+  # round-3 HIGH-1 fix):
+  # 1. `Snapshot.commit/4` returns the STRICT outcome:
+  #    `:ok` = durably persisted; `:not_durable` = policy doesn't
+  #    require a durable write here (ephemeral / unchanged / periodic);
+  #    `{:error, _}` = durable policy attempted + failed
+  # 2. Emit ONLY on `:ok` or `:not_durable`:
+  #    - `:ok` — slice survives restart, subscribers safe to act
+  #    - `:not_durable` — by-design no durability promise (e.g. an
+  #      `:ephemeral` Kind); in-memory slice IS the truth so notify
+  #      is correct
+  #    - `{:error, _}` — GenServer holds state that won't survive
+  #      crash. Ghost-notify would tell LV "Alice → Bob" but a
+  #      restart re-loads "Alice → Carol". Suppress emit. `commit/4`
+  #      has already logged + emitted `:failed` telemetry.
+  defp commit_and_notify(state, new_slice_state, slice_change_event) do
+    commit_result =
+      Ezagent.Kind.Snapshot.commit(state.uri, state.kind, state.state, new_slice_state)
+
+    if slice_change_event && commit_result in [:ok, :not_durable] do
+      Ezagent.SliceChange.emit(slice_change_event)
+    end
+
+    :ok
   end
 
   # Unified forwarder: any GenServer message a Kind's Behaviors might want

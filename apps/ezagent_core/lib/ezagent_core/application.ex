@@ -42,6 +42,17 @@ defmodule EzagentCore.Application do
       # ⑥ Audit batch writer — must come after Repo + PubSub.
       Ezagent.Audit.Writer,
 
+      # ⑥·5 Notification subscription registry (SPEC v2 PR-N1,
+      # docs/superpowers/specs/2026-05-24-notification-architecture-v2.md).
+      # Dedicated GenServer with `:protected` ETS — codex PR-N1
+      # round-2 HIGH-1: cannot live in EtsOwner because `:public`
+      # would let raw `:ets.insert` bypass cap enforcement. Writes
+      # serialise through this GenServer's mailbox after cap check;
+      # reads stay direct (`:ets.match/2` on `:protected` works
+      # cross-process). Starts after PubSub because LV mount-time
+      # re-subscriptions (PR-N2) depend on both being up.
+      Ezagent.NotificationSubscriptions,
+
       # ⑦ Snapshot async writer (Phase 4-completion Spec 04) — handles
       # `:periodic` strategy; `:on_change` / `:on_terminate` go through
       # `Ezagent.Kind.Snapshot.save_now/3` synchronously.
