@@ -239,18 +239,21 @@ defmodule EzagentDomainChat.Application do
   #
   # Test-env skip: boot-time DB writes interact poorly with Ecto SQL
   # Sandbox checkout in tests that don't use DataCase (the Audit.Writer
-  # GenServer mid-flush blocks Sandbox.checkout). Tests that need the
-  # row can call `Ezagent.Workspace.create("default", %{})` explicitly
-  # in setup; the UI verification path is dev/prod-only.
+  # GenServer mid-flush blocks Sandbox.checkout).
+  #
+  # SPEC v2 PR-C (Allen 2026-05-24): the `default` workspace is GONE.
+  # Boot creates ONLY `system` (hidden). All regular users land in
+  # their email-domain workspace via the onboarding flow (PR-B).
+  # Tests that need a workspace create one explicitly per setup.
   defp ensure_default_workspace do
     if test_env?() do
       :ok
     else
-      # Phase 9 PR-8 (SPEC v3 §13.4) — order matters: system workspace
-      # is created first so admin's URI (`entity://user/system/admin`)
-      # resolves its workspace; then default for regular users.
+      # SPEC v2 PR-C: only `workspace://system` is boot-seeded.
+      # `admin`'s URI is `entity://user/system/admin` (Allen: 这个
+      # user 唯一); membership in `system` confers cross-workspace
+      # authority via Ezagent.Capability.cross_workspace?/2.
       :ok = ensure_workspace("system", %{visible: false})
-      :ok = ensure_workspace("default", %{})
     end
   end
 

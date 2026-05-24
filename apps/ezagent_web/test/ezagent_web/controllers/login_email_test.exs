@@ -14,7 +14,12 @@ defmodule EzagentWeb.LoginEmailTest do
       "from_address" => "no-reply@test.local"
     })
 
-    Ezagent.AppSettings.put("registration_domains", ["good.com"])
+    # SPEC v2 PR-A/B/C: the magic-link gate now consults per-workspace
+    # `magic_link_rule` rows, NOT the legacy `registration_domains`
+    # AppSetting. Create a workspace with a domain rule for the test
+    # email's domain so the send-side `email_allowed?/1` returns true.
+    _ = Ezagent.Workspace.create("good-test", %{})
+    _ = Ezagent.Workspace.add_magic_link_rule("workspace://good-test", "domain", "good.com")
     :ok
   end
 

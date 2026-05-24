@@ -224,64 +224,17 @@ defmodule EzagentDomainIdentity.Application do
   # This user is what Allen will use to exercise CapBAC paths in
   # production: log in as operator, observe denial for admin-only
   # actions, observe success for workspace-scoped session actions.
-  defp maybe_ensure_default_non_admin_user do
-    if test_env?() do
-      :ok
-    else
-      ensure_default_non_admin_user()
-    end
-  end
-
-  defp ensure_default_non_admin_user do
-    operator_uri = "entity://user/default/operator"
-    workspace_uri = URI.parse("workspace://default")
-    operator_caps = User.default_caps(workspace_uri)
-
-    if Code.ensure_loaded?(Ezagent.Users) and
-         function_exported?(Ezagent.Users, :get_by_uri, 1) do
-      try do
-        case Ezagent.Users.get_by_uri(operator_uri) do
-          nil ->
-            case Ezagent.Users.create(operator_uri, nil, operator_caps) do
-              {:ok, _decoded} ->
-                require Logger
-
-                Logger.info(
-                  "ensure_default_non_admin_user: seeded #{operator_uri} with " <>
-                    "#{length(operator_caps)} workspace-scoped caps. " <>
-                    "Set password via `mix ezagent.user.set_password #{operator_uri} <pw>`."
-                )
-
-                :ok
-
-              {:error, reason} ->
-                require Logger
-
-                Logger.warning(
-                  "ensure_default_non_admin_user: create failed (#{inspect(reason)})"
-                )
-
-                :ok
-            end
-
-          _existing ->
-            :ok
-        end
-      rescue
-        e in [DBConnection.ConnectionError, DBConnection.OwnershipError] ->
-          require Logger
-
-          Logger.warning(
-            "ensure_default_non_admin_user: DB unavailable at boot " <>
-              "(#{inspect(e.__struct__)}); operator row provisioning deferred"
-          )
-
-          :ok
-      end
-    else
-      :ok
-    end
-  end
+  # SPEC v2 PR-C (Allen 2026-05-24) — DELETED. The `default` workspace
+  # is gone; the operator user seed was a Phase 9 stop-gap to make
+  # CapBAC behavior visible. Per Allen's mental model, regular users
+  # land in their email-domain workspace via the onboarding flow
+  # (PR-B). Boot creates ONLY admin + system workspace.
+  #
+  # The functions previously here:
+  #   maybe_ensure_default_non_admin_user/0
+  #   ensure_default_non_admin_user/0
+  # are gone with this PR. Callsite at line 79 is also removed.
+  defp maybe_ensure_default_non_admin_user, do: :ok
 
   defp register_user_only_entity_spawn_fn do
     :ok =
