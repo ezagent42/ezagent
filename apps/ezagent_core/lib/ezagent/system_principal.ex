@@ -90,8 +90,8 @@ defmodule Ezagent.SystemPrincipal do
 
     # Catalog.caps_for!/1 raises if uri is not registered — defense
     # in depth so a caller cannot mint an ad-hoc system principal.
-    cap_strings = Catalog.caps_for!(parsed)
-    initial_caps = caps_from_strings(cap_strings)
+    # Post-PR-CC-2-v2 the catalog returns `[%Capability{}]` directly.
+    initial_caps = parsed |> Catalog.caps_for!() |> MapSet.new()
 
     case Ezagent.Kind.spawn(Ezagent.Entity.User, %{
            uri: parsed,
@@ -125,70 +125,49 @@ defmodule Ezagent.SystemPrincipal do
   end
 
   @doc """
-  Legacy-shape caps for `uri` — the PR-CC-1 bridge for callers that
-  still feed `ctx.caps` directly.
+  Caps for `uri` — pass-through from `Catalog.caps_for!/1`, returned
+  as a `MapSet.t(Ezagent.Capability.t())`.
 
-  Returns `MapSet.t(Ezagent.Capability.t())` derived from the
-  Catalog:
+  Post-PR-CC-2-v2 the catalog itself holds `[%Capability{}]` struct
+  values (SPEC §5), so this function is a thin shape converter:
+  list → MapSet. The PR-CC-1 string→wildcard widening is gone — the
+  caps you get back are precisely the catalog's declared narrowing
+  (system://bootstrap and system://mix-task remain wildcards; every
+  other principal is narrowed).
 
-  - `"*"` in the catalog list → one wildcard cap
-    (`%Capability{kind: :any, behavior: :any, instance: :any,
-     workspace_uri: :any, granted_by: system://bootstrap/default}`) —
-    the same shape `User.admin_caps/0` returned in PR-1.
-  - Concrete cap strings (e.g. `"session.chat.send"`) → one
-    wildcard cap (same shape). The string narrowing comes online
-    when the new dispatch path (PR-CC-2b) reads
-    `required_caps/0` + `holds_cap?/2`.
-  - `[]` → empty MapSet (the `system://lv-anon-mount` case from
-    SPEC §4.4: anonymous LV mounts get NO caps so the auth bug
-    surfaces).
+  Per SPEC §4.4 row 1 ("`caps:` field removed") — PR-CC-2c removes
+  the `ctx.caps` plumbing entirely. Until then, this bridge keeps
+  callers that still pass caps directly working.
 
-  ## Why all non-empty entries return wildcard
+  ## `lv-anon-mount` semantics preserved
 
-  PR-CC-1 keeps the OLD dispatch path (`Capability.matches?/2`)
-  working. That matcher doesn't understand cap STRINGS — it only
-  understands the struct shape with `:any` / module / URI fields.
-  Translating each catalog string to a precisely-narrowed struct
-  shape would re-invent half of PR-CC-2b. The contract of this
-  function is "give callers an authorization handle equivalent to
-  what `User.admin_caps/0` gave them for system call sites" — that's
-  satisfied by the wildcard cap.
-
-  The Catalog's STRINGS still narrow the principal's documented
-  authority (the `caps_for!/1` consumers + invariant tests +
-  PR-CC-2c data migration use them). The legacy bridge is the
-  one-line slack until PR-CC-2b removes `ctx.caps` entirely.
+  `system://lv-anon-mount` keeps `[]` (per SPEC §4.4 — anonymous LV
+  mounts get NO caps so the auth bug surfaces). The empty list maps
+  to `MapSet.new()`, no special-casing needed.
   """
   @spec caps(URI.t() | String.t()) :: MapSet.t(Ezagent.Capability.t())
   def caps(uri) do
     parsed = parse!(uri)
     enforce_system_scheme!(parsed)
-    cap_strings = Catalog.caps_for!(parsed)
-    caps_from_strings(cap_strings)
+
+    parsed
+    |> Catalog.caps_for!()
+    |> MapSet.new()
   end
 
   # --- internals ---------------------------------------------------------
 
   defp caps_from_strings([]), do: MapSet.new()
 
-  defp caps_from_strings(strings) when is_list(strings) do
-    # Every non-empty Catalog entry maps to the same wildcard cap
-    # struct in PR-CC-1. The strings themselves are recorded
-    # verbatim on the Kind's slice (via `initial_caps` snapshot)
-    # for PR-CC-2 / forensic inspection, but the OLD
-    # `Capability.matches?/2` path needs the struct shape.
-    MapSet.new([wildcard_cap()])
-  end
-
-  defp wildcard_cap do
-    %Ezagent.Capability{
-      kind: :any,
-      behavior: :any,
-      instance: :any,
-      workspace_uri: :any,
-      granted_by: @bootstrap_granted_by,
-      granted_at: @bootstrap_granted_at
-    }
+  # Pre-PR-CC-2-v2 the catalog held strings + this helper widened to a
+  # uniform wildcard. Post-PR-CC-2-v2 the catalog holds struct values
+  # directly; `caps_from_strings/1` is only used by `ensure/1` below.
+  # When we eventually delete `ensure/1`'s string-input path, this
+  # helper goes with it.
+  defp caps_from_strings(items) when is_list(items) do
+    # Items are now `%Capability{}` structs (catalog post-PR-CC-2-v2).
+    # MapSet de-dupes identical structs.
+    MapSet.new(items)
   end
 
   defp parse!(%URI{} = u), do: u
