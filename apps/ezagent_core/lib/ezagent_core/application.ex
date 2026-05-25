@@ -20,6 +20,15 @@ defmodule EzagentCore.Application do
       # take the ETS owner with it.
       Ezagent.Idempotency.Sweeper,
 
+      # ③·5 Plugin RegistrationHooks (SPEC
+      # docs/superpowers/specs/2026-05-25-external-mirror-auth-model-audit.md §5)
+      # — backing GenServer for `Ezagent.Plugin.publish_after_all_registered/2`,
+      # the cross-registry "wait for both/all populated" hook primitive.
+      # Started BEFORE any plugin boots (plugin boots run via each plugin's
+      # OTP Application — those start AFTER ezagent_core via umbrella mix
+      # deps). First consumer: ExternalMirror's AdapterInstall.
+      Ezagent.Plugin.RegistrationHooks,
+
       # ④ SQLite repo + migrations (Phase 0 baseline).
       EzagentCore.Repo,
       {Ecto.Migrator,

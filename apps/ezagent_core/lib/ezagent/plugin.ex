@@ -255,6 +255,60 @@ defmodule Ezagent.Plugin do
   end
 
   # ============================================================
+  # publish_after_all_registered/2 — cross-registry hook primitive
+  # (SPEC docs/superpowers/specs/2026-05-25-external-mirror-auth-model-audit.md §5)
+  # ============================================================
+
+  @doc """
+  Register `hook_fn` to fire ONCE when every `(registry_module, key)`
+  in `registries` has a lookup hit.
+
+  This is the cross-registry "wait until both/all are populated"
+  primitive lifted from `Ezagent.ExternalMirror.AdapterInstall`'s
+  symmetric `maybe_install*/1` pair per the audit SPEC.
+
+  ## Contract
+
+  - `registries` is a non-empty list of `{registry_module, key}` pairs.
+    Each `registry_module` MUST implement `lookup/1` returning
+    `{:ok, value} | :error` AND MUST call
+    `Ezagent.Plugin.RegistrationHooks.notify_subscribers(__MODULE__, key)`
+    from its successful-insert path.
+  - `hook_fn` is a zero-arity function fired ONCE when ALL registries
+    resolve. If they all resolve at call time, fires synchronously
+    before this function returns. Otherwise the hook is queued.
+  - Idempotent: if a hook's registries-list is fully resolved by a
+    later `notify_subscribers/2` call, the hook fires exactly once
+    and is deleted from the pending table.
+  - Hot uninstall is V2 — removing a registry entry does NOT
+    trigger any "uninstall" hook.
+
+  ## Example — ExternalMirror's AdapterInstall (first consumer)
+
+      Ezagent.Plugin.publish_after_all_registered(
+        [
+          {Ezagent.ExternalMirror.AdapterRegistry, adapter_id},
+          {Ezagent.ExternalMirror.BindingRegistry, adapter_id}
+        ],
+        fn -> Ezagent.ExternalMirror.AdapterInstall.install(adapter_module) end
+      )
+
+  Whichever of AdapterRegistry / BindingRegistry calls
+  `notify_subscribers/2` SECOND will trigger `install/1`. The plugin's
+  `Plugin.publish_adapters!` registration order is irrelevant; both
+  registries are populated by the time install runs, so
+  `BindingRegistry.lookup!/1` in the worker dispatch path resolves.
+  """
+  @spec publish_after_all_registered(
+          [{module(), term()}],
+          (-> :ok)
+        ) :: :ok
+  def publish_after_all_registered(registries, hook_fn)
+      when is_list(registries) and registries != [] and is_function(hook_fn, 0) do
+    Ezagent.Plugin.RegistrationHooks.publish_after_all_registered(registries, hook_fn)
+  end
+
+  # ============================================================
   # boot/1 — two-phase declarative boot (SPEC §5)
   # ============================================================
 

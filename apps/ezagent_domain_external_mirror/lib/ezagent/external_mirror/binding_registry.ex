@@ -87,21 +87,23 @@ defmodule Ezagent.ExternalMirror.BindingRegistry do
     assert_required_callbacks!(binding_module)
 
     if :ets.insert_new(@table, {adapter_id, binding_module}) do
-      # codex r5 HIGH-A fix (2026-05-25): fire AdapterInstall.maybe_install/1
-      # symmetrically from BOTH registries so install runs once BOTH
-      # entries are populated, regardless of which registry's
-      # insert lands first. In production `Plugin.publish_adapters!`
-      # always calls `AdapterRegistry.register/1` first then
-      # `BindingRegistry.register_module/2` — so install here fires
-      # AFTER both registries have the entry, which is the safe
-      # ordering for `AdapterInstall.reconcile_persisted_bindings/1`
-      # to walk rows and spawn workers whose dispatch path looks up
-      # the binding module via `BindingRegistry.lookup!/1`.
-      #
-      # If the adapter registers SECOND (test ordering, hot install),
-      # `AdapterRegistry.register/1`'s own `maybe_install` call will
-      # be the one that fires install — same end state.
-      :ok = Ezagent.ExternalMirror.AdapterInstall.maybe_install_by_adapter_id(adapter_id)
+      # SPEC docs/superpowers/specs/2026-05-25-external-mirror-auth-model-audit.md
+      # §5 / §4.5: the historical r5 HIGH-A symmetric maybe_install_by_adapter_id
+      # path is now expressed via the core
+      # `Ezagent.Plugin.publish_after_all_registered/2` primitive.
+      # AdapterInstall registers the cross-registry hook either when
+      # AdapterRegistry.register/1 lands first (its insert path) or
+      # when BindingRegistry.register_module/2 lands first (here — we
+      # register the hook even though we don't yet know the
+      # adapter_module; the hook resolves the module via
+      # AdapterRegistry.lookup/1 at fire time). notify_subscribers tells
+      # the primitive this side just landed.
+      :ok =
+        Ezagent.ExternalMirror.AdapterInstall.ensure_install_hook_registered_for_adapter_id(
+          adapter_id
+        )
+
+      Ezagent.Plugin.RegistrationHooks.notify_subscribers(__MODULE__, adapter_id)
       :ok
     else
       # codex r2 HIGH-2: distinguish "we inserted this attempt" from
