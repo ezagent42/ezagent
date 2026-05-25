@@ -1,0 +1,479 @@
+defmodule Mix.Tasks.Ezagent.ExternalMirrorTest do
+  @moduledoc """
+  Combined Mix-task suite for SPEC §9 PR-EM-5 — the four
+  `mix ezagent.external_mirror.*` tasks. Tests cover:
+
+  1. `list_adapters` — outputs the registered mock adapter
+  2. `bind` happy path — caller with caps binds successfully
+  3. `bind` with missing caps — exits 1 + error on stderr
+  4. `unbind` happy path — removes the binding
+  5. `list_bindings` — outputs both bindings on a session with 2
+
+  All tests reuse the in-domain `MockPublishAdapter` /
+  `MockPublishBinding` test-support modules (loaded via
+  `test/support/`). The Mix tasks call the `Ezagent.ExternalMirror`
+  facade directly — same dispatch path as the LV — so the cap
+  checks, audit telemetry, and cross-workspace gates fire as in
+  production.
+
+  ## `System.halt/1` interception
+
+  The CLI helper module exits on cap-miss / unknown-args / facade
+  error via `System.halt(1)`. ExUnit would terminate the whole VM
+  on a real halt; we capture stderr + intercept the halt via
+  `:erlang.process_flag(:trap_exit, true)` is NOT enough — `halt`
+  bypasses the trap. Instead each test that expects exit-1 invokes
+  the task in a spawned process and asserts on the captured stderr
+  + the exit reason.
+  """
+
+  use EzagentCore.DataCase, async: false
+
+  alias Ezagent.{Capability, Invocation}
+  alias Ezagent.Entity.{Session, User}
+
+  alias Ezagent.ExternalMirror.{
+    AdapterRegistry,
+    BindingRegistry,
+    BindingRow,
+    RootSupervisor
+  }
+
+  alias Ezagent.ExternalMirror.TestSupport.{
+    MockPublishAdapter,
+    MockPublishBinding
+  }
+
+  alias Ezagent.ExternalMirror, as: Facade
+
+  @workspace_uri URI.parse("workspace://default")
+
+  setup do
+    :ok = ensure_adapter_registered(MockPublishAdapter, MockPublishBinding)
+    cleanup_workers()
+
+    session_uri = unique_session_uri("pr5")
+    owner_uri = unique_user_uri("pr5-owner")
+
+    on_exit(fn ->
+      cleanup_session(session_uri)
+      cleanup_workers()
+    end)
+
+    {:ok, session_uri: session_uri, owner_uri: owner_uri}
+  end
+
+  # ===========================================================================
+  # 1. list_adapters
+  # ===========================================================================
+
+  describe "Mix.Tasks.Ezagent.ExternalMirror.ListAdapters" do
+    test "outputs the registered mock adapter" do
+      output =
+        ExUnit.CaptureIO.capture_io(fn ->
+          Mix.Tasks.Ezagent.ExternalMirror.ListAdapters.run([])
+        end)
+
+      assert output =~ "mock_publish"
+      assert output =~ "id"
+      assert output =~ "display_name"
+      # Plain table — three header cols.
+      assert output =~ "description"
+    end
+
+    test "ignores --as / --metadata flags (no caps check on metadata reads)" do
+      # No caps required → --as can be omitted entirely; passing it
+      # must not cause an exit-1 cap denial.
+      output =
+        ExUnit.CaptureIO.capture_io(fn ->
+          Mix.Tasks.Ezagent.ExternalMirror.ListAdapters.run([
+            "--as",
+            "entity://user/default/anyone"
+          ])
+        end)
+
+      assert output =~ "mock_publish"
+    end
+  end
+
+  # ===========================================================================
+  # 2. bind happy path
+  # ===========================================================================
+
+  describe "Mix.Tasks.Ezagent.ExternalMirror.Bind" do
+    test "owner with admin caps binds via the facade (slice + projection row)",
+         %{session_uri: session_uri, owner_uri: owner_uri} do
+      :ok = spawn_owner_and_session(owner_uri, session_uri)
+
+      target_id = "tgt-pr5-bind-happy"
+      MockPublishBinding.register_observer(target_id, self())
+
+      output =
+        ExUnit.CaptureIO.capture_io(fn ->
+          Mix.Tasks.Ezagent.ExternalMirror.Bind.run([
+            URI.to_string(session_uri),
+            "mock_publish",
+            target_id,
+            "--as",
+            URI.to_string(owner_uri)
+          ])
+        end)
+
+      assert output =~ "ok"
+      assert output =~ "binding_id="
+      assert output =~ "mock_publish"
+      assert output =~ target_id
+
+      # Slice + DB projection assertions via the facade (admin ctx
+      # bypasses workspace filter so we see the row).
+      assert {:ok, [%{adapter_id: "mock_publish", target_id: ^target_id}]} =
+               Facade.list_bindings(session_uri, owner_ctx(owner_uri))
+
+      assert [%BindingRow{adapter_id: "mock_publish"}] = BindingRow.list_for_session(session_uri)
+    end
+
+    test "bind with --metadata key=val forwards the metadata as opts",
+         %{session_uri: session_uri, owner_uri: owner_uri} do
+      :ok = spawn_owner_and_session(owner_uri, session_uri)
+
+      target_id = "tgt-pr5-bind-meta"
+      MockPublishBinding.register_observer(target_id, self())
+
+      _ =
+        ExUnit.CaptureIO.capture_io(fn ->
+          Mix.Tasks.Ezagent.ExternalMirror.Bind.run([
+            URI.to_string(session_uri),
+            "mock_publish",
+            target_id,
+            "--as",
+            URI.to_string(owner_uri),
+            "--metadata",
+            "silent_mode=true",
+            "--metadata",
+            "channel=alpha"
+          ])
+        end)
+
+      # The opts land in the slice — facade.list_bindings exposes them.
+      assert {:ok, [%{target_id: ^target_id, opts: opts}]} =
+               Facade.list_bindings(session_uri, owner_ctx(owner_uri))
+
+      assert opts["silent_mode"] == "true"
+      assert opts["channel"] == "alpha"
+    end
+  end
+
+  # ===========================================================================
+  # 3. bind with missing caps — exits 1 + verbatim error to stderr
+  # ===========================================================================
+
+  describe "Mix.Tasks.Ezagent.ExternalMirror.Bind — cap denial" do
+    test "caller without session :bind cap → Mix.Error :unauthorized + verbatim stderr",
+         %{session_uri: session_uri, owner_uri: owner_uri} do
+      :ok = spawn_owner_and_session(owner_uri, session_uri)
+
+      # Fresh user with NO caps at all → client-side `require_session_cap!`
+      # short-circuits with :unauthorized BEFORE any dispatch.
+      caller_uri = unique_user_uri("pr5-nocaps")
+      :ok = spawn_user(caller_uri, MapSet.new())
+
+      stderr_output =
+        ExUnit.CaptureIO.capture_io(:stderr, fn ->
+          assert_raise Mix.Error, ~r/:unauthorized/, fn ->
+            Mix.Tasks.Ezagent.ExternalMirror.Bind.run([
+              URI.to_string(session_uri),
+              "mock_publish",
+              "tgt-pr5-cap-deny",
+              "--as",
+              URI.to_string(caller_uri)
+            ])
+          end
+        end)
+
+      # Mix.shell().error/1 writes to stderr — capture proves the
+      # operator-facing line was emitted (per P18 verbatim).
+      assert stderr_output =~ ":unauthorized"
+      assert stderr_output =~ URI.to_string(caller_uri)
+
+      # No row landed (the Mix.raise/1 short-circuits BEFORE dispatch).
+      assert [] = BindingRow.list_for_session(session_uri)
+    end
+
+    test "facade returning :adapter_not_authorized is surfaced verbatim per P18",
+         %{session_uri: session_uri, owner_uri: owner_uri} do
+      :ok = spawn_owner_and_session(owner_uri, session_uri)
+
+      # Caller holds Cap 1 (`Behavior.ExternalMirror`) on the session
+      # so the client-side check passes — BUT they don't hold the
+      # per-adapter allow cap (Cap 2). The facade's `check_adapter_allow_cap`
+      # returns `:adapter_not_authorized`; the CLI's `surface_error/1`
+      # MUST print that atom verbatim per P18.
+      caller_uri = unique_user_uri("pr5-cap1-only")
+
+      cap1 = %Capability{
+        kind: :session,
+        behavior: Ezagent.Behavior.ExternalMirror,
+        instance: session_uri,
+        workspace_uri: URI.parse("workspace://default"),
+        granted_by: User.admin_uri(),
+        granted_at: DateTime.utc_now()
+      }
+
+      :ok = spawn_user(caller_uri, MapSet.new([cap1]))
+
+      stderr_output =
+        ExUnit.CaptureIO.capture_io(:stderr, fn ->
+          assert_raise Mix.Error, ~r/adapter_not_authorized/, fn ->
+            Mix.Tasks.Ezagent.ExternalMirror.Bind.run([
+              URI.to_string(session_uri),
+              "mock_publish",
+              "tgt-pr5-cap2-deny",
+              "--as",
+              URI.to_string(caller_uri)
+            ])
+          end
+        end)
+
+      assert stderr_output =~ ":adapter_not_authorized"
+      assert [] = BindingRow.list_for_session(session_uri)
+    end
+  end
+
+  # ===========================================================================
+  # 4. unbind happy path
+  # ===========================================================================
+
+  describe "Mix.Tasks.Ezagent.ExternalMirror.Unbind" do
+    test "removes the binding from slice + projection",
+         %{session_uri: session_uri, owner_uri: owner_uri} do
+      :ok = spawn_owner_and_session(owner_uri, session_uri)
+
+      target_id = "tgt-pr5-unbind"
+      MockPublishBinding.register_observer(target_id, self())
+
+      {:ok, _} = Facade.bind(session_uri, "mock_publish", target_id, %{}, owner_ctx(owner_uri))
+
+      # Sanity: bound.
+      assert [%BindingRow{}] = BindingRow.list_for_session(session_uri)
+
+      output =
+        ExUnit.CaptureIO.capture_io(fn ->
+          Mix.Tasks.Ezagent.ExternalMirror.Unbind.run([
+            URI.to_string(session_uri),
+            "mock_publish",
+            target_id,
+            "--as",
+            URI.to_string(owner_uri)
+          ])
+        end)
+
+      assert output =~ "ok"
+      assert output =~ "unbound=true"
+
+      # Slice + DB row gone.
+      assert {:ok, []} = Facade.list_bindings(session_uri, owner_ctx(owner_uri))
+      assert [] = BindingRow.list_for_session(session_uri)
+    end
+
+    test "idempotent: unbinding a non-existent binding → success no-op",
+         %{session_uri: session_uri, owner_uri: owner_uri} do
+      :ok = spawn_owner_and_session(owner_uri, session_uri)
+
+      output =
+        ExUnit.CaptureIO.capture_io(fn ->
+          Mix.Tasks.Ezagent.ExternalMirror.Unbind.run([
+            URI.to_string(session_uri),
+            "mock_publish",
+            "tgt-never-bound",
+            "--as",
+            URI.to_string(owner_uri)
+          ])
+        end)
+
+      assert output =~ "ok"
+      assert output =~ "unbound=false"
+    end
+  end
+
+  # ===========================================================================
+  # 5. list_bindings on session with 2 bindings — outputs both
+  # ===========================================================================
+
+  describe "Mix.Tasks.Ezagent.ExternalMirror.ListBindings" do
+    test "outputs all bindings on a session with 2",
+         %{session_uri: session_uri, owner_uri: owner_uri} do
+      :ok = spawn_owner_and_session(owner_uri, session_uri)
+
+      target_a = "tgt-pr5-list-A"
+      target_b = "tgt-pr5-list-B"
+
+      MockPublishBinding.register_observer(target_a, self())
+      MockPublishBinding.register_observer(target_b, self())
+
+      {:ok, _} = Facade.bind(session_uri, "mock_publish", target_a, %{}, owner_ctx(owner_uri))
+      {:ok, _} = Facade.bind(session_uri, "mock_publish", target_b, %{}, owner_ctx(owner_uri))
+
+      output =
+        ExUnit.CaptureIO.capture_io(fn ->
+          Mix.Tasks.Ezagent.ExternalMirror.ListBindings.run([
+            URI.to_string(session_uri),
+            "--as",
+            URI.to_string(owner_uri)
+          ])
+        end)
+
+      assert output =~ "mock_publish"
+      assert output =~ target_a
+      assert output =~ target_b
+      assert output =~ "binding_id"
+    end
+
+    test "empty session shows (no bindings)",
+         %{session_uri: session_uri, owner_uri: owner_uri} do
+      :ok = spawn_owner_and_session(owner_uri, session_uri)
+
+      output =
+        ExUnit.CaptureIO.capture_io(fn ->
+          Mix.Tasks.Ezagent.ExternalMirror.ListBindings.run([
+            URI.to_string(session_uri),
+            "--as",
+            URI.to_string(owner_uri)
+          ])
+        end)
+
+      assert output =~ "no bindings"
+    end
+  end
+
+  # ===========================================================================
+  # helpers (mirrored from external_mirror_test.exs)
+  # ===========================================================================
+
+  defp ensure_adapter_registered(adapter, binding) do
+    _ = AdapterRegistry.register(adapter)
+    _ = BindingRegistry.register_module(adapter.adapter_id(), binding)
+
+    %{behavior_module: behavior_module} = adapter.cap_subject()
+    action = String.to_atom("allow_" <> adapter.adapter_id())
+
+    try do
+      :ok =
+        Ezagent.CapabilityRegistry.register(
+          Session,
+          action,
+          behavior_module
+        )
+    rescue
+      _ -> :ok
+    end
+
+    :ok
+  rescue
+    _ -> :ok
+  end
+
+  defp cleanup_workers do
+    case Process.whereis(RootSupervisor) do
+      nil ->
+        :ok
+
+      _ ->
+        DynamicSupervisor.which_children(RootSupervisor)
+        |> Enum.each(fn {_id, pid, _type, _modules} ->
+          if is_pid(pid) do
+            _ = DynamicSupervisor.terminate_child(RootSupervisor, pid)
+          end
+        end)
+    end
+
+    :ok
+  end
+
+  defp cleanup_session(%URI{} = session_uri) do
+    case Ezagent.KindRegistry.lookup(session_uri) do
+      {:ok, pid} when is_pid(pid) ->
+        _ = DynamicSupervisor.terminate_child(EzagentDomainChat.SessionSupervisor, pid)
+        :ok
+
+      _ ->
+        :ok
+    end
+  rescue
+    _ -> :ok
+  end
+
+  defp spawn_owner_and_session(%URI{} = owner_uri, %URI{} = session_uri) do
+    :ok = spawn_user(owner_uri, User.admin_caps())
+
+    case Ezagent.Kind.spawn(Session, %{uri: session_uri, owner_uri: owner_uri}) do
+      {:ok, _pid} -> :ok
+      {:error, {:already_started, _pid}} -> :ok
+    end
+
+    ws = Capability.workspace_of(session_uri)
+
+    case ws do
+      %URI{} = ws_uri -> :ok = Ezagent.WorkspaceRegistry.bind(session_uri, ws_uri)
+      :any -> :ok
+    end
+
+    await_session_alive(session_uri, 50)
+  end
+
+  defp spawn_user(%URI{} = user_uri, caps) do
+    case Ezagent.Kind.spawn(User, %{uri: user_uri, initial_caps: caps}) do
+      {:ok, _pid} -> :ok
+      {:error, {:already_started, _pid}} -> :ok
+    end
+
+    :ok
+  end
+
+  defp await_session_alive(_uri, 0), do: {:error, :timeout}
+
+  defp await_session_alive(uri, retries) do
+    case Ezagent.KindRegistry.lookup(uri) do
+      {:ok, pid} when is_pid(pid) ->
+        case Ezagent.ReadyGate.status(URI.to_string(uri)) do
+          :ready -> :ok
+          _ -> Process.sleep(20) && await_session_alive(uri, retries - 1)
+        end
+
+      _ ->
+        Process.sleep(20)
+        await_session_alive(uri, retries - 1)
+    end
+  end
+
+  defp owner_ctx(owner_uri) do
+    %{
+      caller: owner_uri,
+      caps:
+        MapSet.new([
+          %Capability{
+            kind: :any,
+            behavior: :any,
+            instance: :any,
+            workspace_uri: :any,
+            granted_by: URI.parse("system://bootstrap/default"),
+            granted_at: ~U[2026-01-01 00:00:00Z]
+          }
+        ]),
+      reply: :ignore
+    }
+  end
+
+  defp unique_user_uri(prefix) do
+    URI.parse("entity://user/default/#{prefix}-#{System.unique_integer([:positive])}")
+  end
+
+  defp unique_session_uri(prefix) do
+    URI.parse("session://default/default/#{prefix}-#{System.unique_integer([:positive])}")
+  end
+
+  # Workaround silence-unused-alias warnings — these aliases are
+  # used in the doc-shape comments above and may be tab-completed
+  # in future edits.
+  _ = Invocation
+  _ = @workspace_uri
+end

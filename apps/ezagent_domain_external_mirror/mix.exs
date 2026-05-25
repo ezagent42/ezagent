@@ -57,7 +57,16 @@ defmodule EzagentDomainExternalMirror.MixProject do
     # PR-EM-1 keeps deps/0 as only `:ezagent_core`; comment documents
     # why the brief's literal instruction would have broken the build.
     [
-      {:ezagent_core, in_umbrella: true}
+      {:ezagent_core, in_umbrella: true},
+      # PR-EM-5 (2026-05-25): the `mix ezagent.external_mirror.*` Mix
+      # tasks under `lib/mix/tasks/` need `Ezagent.Identity.list_caps_for/1`
+      # for client-side cap checks (SPEC §9 PR-EM-5 — "All commands
+      # check caps client-side AND surface dispatch errors verbatim").
+      # `:ezagent_domain_identity` only depends on `:ezagent_core`
+      # (same tier, no chat / external_mirror reference), so this dep
+      # edge is cycle-free — adds external_mirror → identity at the
+      # domain tier alongside chat → identity.
+      {:ezagent_domain_identity, in_umbrella: true}
     ]
   end
 end
