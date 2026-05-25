@@ -151,14 +151,49 @@ defmodule EzagentPluginFeishu.FeishuAdapter do
   @doc """
   Translate a Publisher event into a Lark API payload. Pure — no I/O.
 
-  - `:chat` slice changes carrying a `%Ezagent.Message{}` → emit the
-    Lark text + attachment payloads (same shape as the retired
-    `FeishuOutbound.mirror_to_chats/5`).
-  - All other slice keys → `:skip`. V1 parity: today's FeishuOutbound
-    is wired to `:notify_external` which fires only on chat sends.
-    Adapters that want to mirror agent state / membership / etc. ship
-    later (the `:skip` path is the documented extension point).
-  - Self-echo (body carries `_feishu_origin`) → `:skip` (loop guard).
+  ## Envelope contract (PR-EM-6 r3)
+
+  Reads the real Publisher envelope as built by
+  `Ezagent.Behavior.Publisher.SessionImpl.build_payload/1`:
+
+      %Ezagent.Publisher.Event{
+        slice_key: :chat,
+        payload: %{
+          action: atom(),                # the Behavior action that fired
+          caller: URI.t() | nil,
+          new_slice: chat_slice_map(),   # post-mutation snapshot
+          old_slice: chat_slice_map() | nil  # pre-mutation snapshot (nil on first emit)
+        }
+      }
+
+  The chat slice carries the three PR-EM-6-PRE fields the rewrite
+  depends on (`apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex`
+  `init_slice/1`):
+
+  - `:last_message_id` — id of the most recent `Chat.send` message
+  - `:last_message` — full `%Ezagent.Message{}` (sender / body /
+    attachments / session_uri / workspace_uri / inserted_at)
+  - `:send_cursor` — monotonic counter, bumped on every `:send`
+    invocation even when `msg.id` collides with a prior persisted row
+    (handles MessageStore's idempotent `on_conflict: :nothing` retry
+    case — without this, a retried send wouldn't change the slice).
+
+  ## Skip semantics
+
+  - `slice_key != :chat` → `:skip`. V1 parity: today's external
+    mirrors only act on chat sends. Adapters that want member / agent
+    state diffs ship later.
+  - `new_slice.last_message_id == old_slice.last_message_id` AND
+    `new_slice.send_cursor == old_slice.send_cursor` → `:skip`. The
+    chat slice changed for some non-send reason (e.g. a future
+    `:add_member` mutation lands on the same slice). Without this
+    guard, every member-list change would re-publish the last chat
+    message.
+  - `new_slice.last_message` missing or not a `%Ezagent.Message{}` →
+    `:skip` (defensive — pre-PR-EM-6-PRE legacy snapshot, or a future
+    slice mutation that intentionally leaves `:last_message` `nil`).
+  - Self-echo (`body[:_feishu_origin]` or `body["_feishu_origin"]`)
+    → `:skip` (loop guard preserved from old FeishuOutbound).
 
   ## Multi-event payload shape
 
@@ -169,24 +204,32 @@ defmodule EzagentPluginFeishu.FeishuAdapter do
   the list so a 429 on one attachment doesn't lose the rest.
   """
   @impl Ezagent.ExternalMirror.Adapter
-  def event_to_payload(%Event{slice_key: :chat, payload: payload}) do
-    case extract_message(payload) do
-      {:ok, msg} ->
-        cond do
-          from_feishu?(msg) ->
-            :skip
+  def event_to_payload(%Event{slice_key: :chat, payload: %{} = payload}) do
+    new_slice = Map.get(payload, :new_slice) || Map.get(payload, "new_slice")
+    old_slice = Map.get(payload, :old_slice) || Map.get(payload, "old_slice")
 
-          true ->
-            payload_list = build_lark_payloads(msg, payload)
-
-            case payload_list do
-              [] -> :skip
-              list -> {:publish, list}
-            end
-        end
-
-      :error ->
+    cond do
+      not is_map(new_slice) ->
         :skip
+
+      not chat_send_occurred?(new_slice, old_slice) ->
+        :skip
+
+      true ->
+        case extract_last_message(new_slice) do
+          {:ok, msg} ->
+            if from_feishu?(msg) do
+              :skip
+            else
+              case build_lark_payloads(msg) do
+                [] -> :skip
+                list -> {:publish, list}
+              end
+            end
+
+          :error ->
+            :skip
+        end
     end
   end
 
@@ -251,28 +294,50 @@ defmodule EzagentPluginFeishu.FeishuAdapter do
 
   # ----- internals: event_to_payload ---------------------------------------
 
-  # The Session Publisher emits SliceChange envelopes wrapped in
-  # `%Ezagent.Publisher.Event{}` where `payload` is the chat slice's
-  # `:new_slice` map (per PR-EM-0 Event docs). For chat sends, the
-  # Session.invoke(:send, ...) updates `slice.messages` (most recent
-  # at head) and the slice's `:last_message` field carries the
-  # struct directly — but in r2's wire shape we look at whatever the
-  # SliceChange envelope carries.
+  # Did this slice change carry a NEW chat send?
   #
-  # Defensive: we accept both `:last_message` (atom key, fresh write)
-  # and `"last_message"` (string key, post-JSON-roundtrip persisted
-  # rehydrate path). The struct round-trip caveat in old FeishuOutbound
-  # applied to BODY only; the message itself comes straight off the
-  # Publisher event before any DB hop.
-  defp extract_message(%{last_message: %Ezagent.Message{} = msg}), do: {:ok, msg}
-  defp extract_message(%{"last_message" => %Ezagent.Message{} = msg}), do: {:ok, msg}
+  # The chat slice mutates for `Chat.send` (PR-EM-6-PRE) and may mutate
+  # for other future actions (`:add_member`, `:remove_member`,
+  # `template_working_copy` edits, …). External mirroring only cares
+  # about sends, so we compare the two PR-EM-6-PRE marker fields:
+  #
+  # - `:last_message_id` — changes when a NEW message id lands.
+  # - `:send_cursor` — bumps on EVERY `:send` invocation, including
+  #   retries that collide on `msg.id` (MessageStore's
+  #   `on_conflict: :nothing` returns the same row). The cursor delta
+  #   is what lets us re-publish a retried send (`feedback_let_it_crash`
+  #   — we surface the retry to the operator rather than silently
+  #   dropping it).
+  #
+  # `nil` old_slice (first event ever from this publisher) — treat as
+  # "send occurred" iff the new_slice already carries a message
+  # (covers the cold-start race where the very first emitted event IS
+  # the first send).
+  defp chat_send_occurred?(new_slice, nil) do
+    Map.get(new_slice, :last_message_id) != nil or
+      Map.get(new_slice, :send_cursor, 0) > 0
+  end
 
-  defp extract_message(%{messages: [%Ezagent.Message{} = msg | _]}), do: {:ok, msg}
-  defp extract_message(%{"messages" => [%Ezagent.Message{} = msg | _]}), do: {:ok, msg}
+  defp chat_send_occurred?(new_slice, old_slice) when is_map(old_slice) do
+    new_id = Map.get(new_slice, :last_message_id)
+    old_id = Map.get(old_slice, :last_message_id)
+    new_cursor = Map.get(new_slice, :send_cursor, 0)
+    old_cursor = Map.get(old_slice, :send_cursor, 0)
 
-  defp extract_message(%{message: %Ezagent.Message{} = msg}), do: {:ok, msg}
+    new_id != old_id or new_cursor != old_cursor
+  end
 
-  defp extract_message(_), do: :error
+  defp chat_send_occurred?(_, _), do: false
+
+  # Pull the full Message struct out of the new slice's `:last_message`.
+  # Defensive: accept both atom (fresh in-memory write) AND string key
+  # (post-JSON-roundtrip persisted rehydrate path). The struct
+  # round-trip caveat in old FeishuOutbound applied to BODY only; the
+  # message itself comes straight off the Publisher event before any
+  # DB hop, so the atom-key path is the production path.
+  defp extract_last_message(%{last_message: %Ezagent.Message{} = msg}), do: {:ok, msg}
+  defp extract_last_message(%{"last_message" => %Ezagent.Message{} = msg}), do: {:ok, msg}
+  defp extract_last_message(_), do: :error
 
   # Self-echo guard — preserved from old FeishuOutbound. Inbound Feishu
   # messages get `_feishu_origin: true` stamped on body by
@@ -284,11 +349,11 @@ defmodule EzagentPluginFeishu.FeishuAdapter do
   defp from_feishu?(%Ezagent.Message{body: %{"_feishu_origin" => true}}), do: true
   defp from_feishu?(_), do: false
 
-  defp build_lark_payloads(%Ezagent.Message{} = msg, slice_payload) do
+  defp build_lark_payloads(%Ezagent.Message{} = msg) do
     text = extract_text(msg.body)
     attachments = extract_attachments(msg.body)
     sender_label = sender_label(msg.sender)
-    source_label = source_session_label(slice_payload)
+    source_label = source_session_label(msg)
     prefix = "[#{source_label} | #{sender_label}] "
 
     text_payload =
@@ -383,11 +448,13 @@ defmodule EzagentPluginFeishu.FeishuAdapter do
   defp sender_label(%URI{} = u), do: URI.to_string(u)
   defp sender_label(other), do: inspect(other)
 
-  defp source_session_label(slice_payload) do
-    case Map.get(slice_payload, :session_uri) || Map.get(slice_payload, "session_uri") do
-      %URI{} = u -> URI.to_string(u)
-      s when is_binary(s) -> s
-      _ -> "session"
-    end
-  end
+  # Source session for the `[session | sender]` prefix. PR-EM-6-PRE
+  # stamps `session_uri` on the Message in `MessageStore.write/2`, so
+  # we read it straight off the struct (no need to plumb the
+  # publisher_uri or slice payload). Defensive `"session"` fallback
+  # for the legacy case where a Message somehow lacks the field —
+  # better operator-visible than a crash.
+  defp source_session_label(%Ezagent.Message{session_uri: %URI{} = u}), do: URI.to_string(u)
+  defp source_session_label(%Ezagent.Message{session_uri: s}) when is_binary(s), do: s
+  defp source_session_label(_), do: "session"
 end

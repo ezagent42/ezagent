@@ -96,27 +96,55 @@ defmodule EzagentPluginFeishu.FeishuAdapterTest do
     end
   end
 
-  describe "event_to_payload/1 — skip paths" do
-    test ":skip for non-chat slice changes" do
+  describe "event_to_payload/1 — skip paths (envelope-correct)" do
+    test ":skip for non-chat slice changes (e.g. :members)" do
+      # A members slice change carries the actual Publisher envelope
+      # shape; the adapter must skip on slice_key regardless of payload.
       event = %Event{
         cursor: 1,
         publisher_uri: URI.parse("session://default/default/main"),
         slice_key: :members,
         event_at: DateTime.utc_now(),
-        payload: %{joined: ["entity://user/default/alice"]}
+        payload: %{
+          action: :add_member,
+          caller: URI.parse("entity://user/default/admin"),
+          new_slice: %{joined: ["entity://user/default/alice"]},
+          old_slice: %{joined: []}
+        }
       }
 
       assert FeishuAdapter.event_to_payload(event) == :skip
     end
 
-    test ":skip when chat slice payload has no recognisable message field" do
-      event = %Event{
-        cursor: 1,
-        publisher_uri: URI.parse("session://default/default/main"),
-        slice_key: :chat,
-        event_at: DateTime.utc_now(),
-        payload: %{some_other_field: 42}
-      }
+    test ":skip when chat slice mutates but last_message_id + send_cursor unchanged" do
+      # Models a future non-send chat slice mutation (e.g. read-marker
+      # bump, template_working_copy edit). last_message_id stays equal
+      # to old_slice's, send_cursor stays equal — adapter must skip.
+      msg = build_msg(%{text: "earlier message"})
+
+      common = %{last_message_id: msg.id, last_message: msg, send_cursor: 5}
+
+      event =
+        chat_event(%{
+          action: :update_template,
+          caller: URI.parse("entity://user/default/admin"),
+          # Mutate a different field; last_message_* untouched.
+          new_slice: Map.put(common, :template_working_copy, %{x: 1}),
+          old_slice: Map.put(common, :template_working_copy, %{x: 0})
+        })
+
+      assert FeishuAdapter.event_to_payload(event) == :skip
+    end
+
+    test ":skip when new_slice missing last_message (legacy slice shape)" do
+      # Pre-PR-EM-6-PRE snapshot or a future intentional nil — defensive.
+      event =
+        chat_event(%{
+          action: :send,
+          caller: nil,
+          new_slice: %{last_message_id: "msg_x", send_cursor: 1},
+          old_slice: %{last_message_id: nil, send_cursor: 0}
+        })
 
       assert FeishuAdapter.event_to_payload(event) == :skip
     end
@@ -124,7 +152,7 @@ defmodule EzagentPluginFeishu.FeishuAdapterTest do
     test ":skip when message body carries _feishu_origin (atom key)" do
       msg = build_msg(%{text: "hi", _feishu_origin: true})
 
-      event = chat_event(%{last_message: msg})
+      event = chat_send_event(msg, prev_cursor: 0)
 
       assert FeishuAdapter.event_to_payload(event) == :skip
     end
@@ -132,26 +160,22 @@ defmodule EzagentPluginFeishu.FeishuAdapterTest do
     test ":skip when message body carries `_feishu_origin` (string key)" do
       msg = build_msg(%{"text" => "hi", "_feishu_origin" => true})
 
-      event = chat_event(%{last_message: msg})
+      event = chat_send_event(msg, prev_cursor: 0)
 
       assert FeishuAdapter.event_to_payload(event) == :skip
     end
   end
 
-  describe "event_to_payload/1 — publish paths" do
+  describe "event_to_payload/1 — publish paths (envelope-correct)" do
     test "plain text message → single :lark_text payload" do
       msg = build_msg(%{text: "hello world"})
 
-      event =
-        chat_event(%{
-          last_message: msg,
-          session_uri: "session://default/default/main"
-        })
+      event = chat_send_event(msg, prev_cursor: 0)
 
       assert {:publish, payloads} = FeishuAdapter.event_to_payload(event)
       assert [{:lark_text, text}] = payloads
       assert text =~ "hello world"
-      # Prefix includes session + sender
+      # Prefix includes session (from msg.session_uri) + sender
       assert text =~ "session://default/default/main"
       assert text =~ URI.to_string(msg.sender)
     end
@@ -163,11 +187,7 @@ defmodule EzagentPluginFeishu.FeishuAdapterTest do
 
       msg = build_msg(%{text: "look at this", attachments: attachments})
 
-      event =
-        chat_event(%{
-          last_message: msg,
-          session_uri: "session://default/default/main"
-        })
+      event = chat_send_event(msg, prev_cursor: 0)
 
       assert {:publish, payloads} = FeishuAdapter.event_to_payload(event)
 
@@ -190,11 +210,7 @@ defmodule EzagentPluginFeishu.FeishuAdapterTest do
       # No body text — only attachment.
       msg = build_msg(%{text: "", attachments: attachments})
 
-      event =
-        chat_event(%{
-          last_message: msg,
-          session_uri: "session://default/default/main"
-        })
+      event = chat_send_event(msg, prev_cursor: 0)
 
       assert {:publish, payloads} = FeishuAdapter.event_to_payload(event)
 
@@ -205,6 +221,48 @@ defmodule EzagentPluginFeishu.FeishuAdapterTest do
                _ ->
                  false
              end)
+    end
+
+    test "retry of same msg.id — cursor delta alone still publishes" do
+      # MessageStore is idempotent on (msg.id, session_uri) — a retried
+      # send returns the same row. PR-EM-6-PRE bumps :send_cursor on
+      # every invocation so the slice still changes. The adapter must
+      # honour this: same last_message_id, bumped send_cursor → publish.
+      msg = build_msg(%{text: "retry me"})
+
+      common = %{last_message_id: msg.id, last_message: msg}
+
+      event =
+        chat_event(%{
+          action: :send,
+          caller: nil,
+          new_slice: Map.put(common, :send_cursor, 6),
+          old_slice: Map.put(common, :send_cursor, 5)
+        })
+
+      assert {:publish, payloads} = FeishuAdapter.event_to_payload(event)
+      assert [{:lark_text, text}] = payloads
+      assert text =~ "retry me"
+    end
+
+    test "first-ever event (old_slice == nil) with a real send → publishes" do
+      # Cold-start: publisher's first emit could carry nil old_slice if
+      # SliceChange's initial baseline is nil. The chat_send_occurred?/2
+      # nil-clause treats new_slice's non-nil last_message_id as proof a
+      # send happened.
+      msg = build_msg(%{text: "first ever"})
+
+      event =
+        chat_event(%{
+          action: :send,
+          caller: nil,
+          new_slice: %{last_message_id: msg.id, last_message: msg, send_cursor: 1},
+          old_slice: nil
+        })
+
+      assert {:publish, payloads} = FeishuAdapter.event_to_payload(event)
+      assert [{:lark_text, text}] = payloads
+      assert text =~ "first ever"
     end
   end
 
@@ -227,8 +285,12 @@ defmodule EzagentPluginFeishu.FeishuAdapterTest do
 
   # ----- test helpers -------------------------------------------------------
 
+  # Build a Message stamped with session_uri the way `MessageStore.write/2`
+  # would — the adapter reads source label off `msg.session_uri`, not
+  # off the event envelope.
   defp build_msg(body) do
     sender = URI.parse("entity://user/default/alice")
+    session_uri = URI.parse("session://default/default/main")
 
     %Ezagent.Message{
       id: "msg_test_" <> Integer.to_string(System.unique_integer([:positive])),
@@ -236,11 +298,15 @@ defmodule EzagentPluginFeishu.FeishuAdapterTest do
       mentions: [],
       body: body,
       ref_id: nil,
+      session_uri: session_uri,
+      workspace_uri: "workspace://default/default",
       inserted_at: DateTime.utc_now()
     }
   end
 
-  defp chat_event(payload) do
+  # Wrap an explicit (action, caller, new_slice, old_slice) payload in
+  # a real Publisher.Event — used by the non-send and edge-case tests.
+  defp chat_event(payload) when is_map(payload) do
     %Event{
       cursor: 1,
       publisher_uri: URI.parse("session://default/default/main"),
@@ -248,5 +314,34 @@ defmodule EzagentPluginFeishu.FeishuAdapterTest do
       event_at: DateTime.utc_now(),
       payload: payload
     }
+  end
+
+  # Convenience for the "normal :send mutation" envelope shape produced
+  # by `Behavior.Chat.invoke(:send, ...)` + `SessionImpl.build_payload/1`:
+  # action=:send, both slices populated, send_cursor bumped, msg id
+  # promoted into `:last_message_id` + full struct into `:last_message`.
+  defp chat_send_event(msg, opts) do
+    prev_cursor = Keyword.fetch!(opts, :prev_cursor)
+    prev_msg_id = Keyword.get(opts, :prev_msg_id)
+    prev_last_msg = Keyword.get(opts, :prev_last_msg)
+
+    new_slice = %{
+      last_message_id: msg.id,
+      last_message: msg,
+      send_cursor: prev_cursor + 1
+    }
+
+    old_slice = %{
+      last_message_id: prev_msg_id,
+      last_message: prev_last_msg,
+      send_cursor: prev_cursor
+    }
+
+    chat_event(%{
+      action: :send,
+      caller: msg.sender,
+      new_slice: new_slice,
+      old_slice: old_slice
+    })
   end
 end
