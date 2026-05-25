@@ -875,6 +875,158 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
              "expected chat-related flash; got: #{inspect(flash["info"])}"
     end
 
+    test "format_slice_change/1 resolves cursor in :recent_messages ring (PR-N3 r4 race fix)" do
+      # PR-N3 r4 (Allen 2026-05-25) — codex r3 HIGH-1 fix. The
+      # critical property: when 3 events arrive in burst, each
+      # `format_slice_change/1` call MUST render its OWN message,
+      # NOT the latest pointer. Pre-r4 all 3 rendered identically
+      # (race on `:last_received`); post-r4 each ring lookup by
+      # cursor returns the correct msg_id.
+      receiver =
+        URI.new!("entity://user/default/n3-race-#{System.unique_integer([:positive])}")
+
+      sender =
+        URI.new!("entity://user/default/n3-race-snd-#{System.unique_integer([:positive])}")
+
+      {:ok, _} = Ezagent.SpawnRegistry.spawn(receiver)
+      {:ok, _} = Ezagent.SpawnRegistry.spawn(sender)
+
+      session_uri =
+        URI.new!("session://default/default/n3-race-#{System.unique_integer([:positive])}")
+
+      # Send 3 distinct messages in succession through the real
+      # dispatch path. Each :receive bumps the cursor + pushes the
+      # ring entry; the slice ends up with [{C3, m3}, {C2, m2}, {C1,
+      # m1}] (newest first). We then resolve each historic event
+      # AFTER all 3 have committed — the race window.
+      msgs =
+        for n <- 1..3 do
+          msg = Ezagent.Message.new(sender, %{text: "race msg #{n}", attachments: []})
+          {:ok, stored} = Ezagent.MessageStore.write(msg, session_uri)
+
+          :ok =
+            Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+              target: URI.new!("#{URI.to_string(receiver)}?action=chat.receive"),
+              mode: :cast,
+              args: %{message: stored},
+              ctx: %{
+                caller: sender,
+                caps: Ezagent.Entity.User.admin_caps(),
+                reply: :ignore
+              }
+            })
+
+          stored
+        end
+
+      # Drain the receiver's mailbox so the slice is fully committed.
+      Process.sleep(100)
+
+      # Pull the ring to learn what cursors got assigned (we can't
+      # predict the absolute numbers — Cursors counter is shared
+      # across tests; we only know they're consecutive for this
+      # receiver).
+      {:ok, %{recent_messages: ring}} = Ezagent.Kind.get_slice(receiver, :chat)
+
+      # Each ring entry is one of our 3 sends (head is newest).
+      assert length(ring) >= 3, "expected >= 3 ring entries, got #{inspect(ring)}"
+
+      [m1, m2, m3] = msgs
+
+      cursors_by_msg = Map.new(ring)
+      reverse_index = for {c, m_id} <- ring, into: %{}, do: {m_id, c}
+
+      c1 = Map.fetch!(reverse_index, m1.id)
+      c2 = Map.fetch!(reverse_index, m2.id)
+      c3 = Map.fetch!(reverse_index, m3.id)
+
+      # Sanity: cursors are monotonic in dispatch order.
+      assert c1 < c2 and c2 < c3, "expected cursors to be monotonic, got #{inspect({c1, c2, c3})}"
+
+      # NOW the race-resolution property: each event resolves to its
+      # OWN msg_id, NOT the latest. Run the format function for each
+      # historic cursor AFTER all 3 have committed (the burst race
+      # window).
+      event_for = fn cursor ->
+        %{
+          uri: receiver,
+          slice_key: :chat,
+          cursor: cursor,
+          event_at: DateTime.utc_now(),
+          result_summary: :ok
+        }
+      end
+
+      flash_for_c1 = EzagentPluginLiveview.AdminLive.format_slice_change(event_for.(c1))
+      flash_for_c2 = EzagentPluginLiveview.AdminLive.format_slice_change(event_for.(c2))
+      flash_for_c3 = EzagentPluginLiveview.AdminLive.format_slice_change(event_for.(c3))
+
+      # The pre-r4 bug: all 3 returned the latest message's text.
+      # Post-r4: each returns its OWN message's text.
+      assert flash_for_c1 =~ "race msg 1",
+             "cursor #{c1} should resolve to msg 1, got: #{inspect(flash_for_c1)}"
+
+      assert flash_for_c2 =~ "race msg 2",
+             "cursor #{c2} should resolve to msg 2, got: #{inspect(flash_for_c2)}"
+
+      assert flash_for_c3 =~ "race msg 3",
+             "cursor #{c3} should resolve to msg 3, got: #{inspect(flash_for_c3)}"
+
+      # Belt-and-suspenders: assert the 3 flashes are DISTINCT (the
+      # original bug class was "3 identical flashes").
+      assert flash_for_c1 != flash_for_c2
+      assert flash_for_c2 != flash_for_c3
+      assert flash_for_c1 != flash_for_c3
+
+      # Reference the cursors_by_msg binding to keep the compiler
+      # happy (the inverted map is part of the assertion narrative).
+      assert is_map(cursors_by_msg)
+    end
+
+    test "format_slice_change/1 cursor not in ring → graceful fallback (not crash)" do
+      # Older-than-ring-depth cursor: ring trimmed it out. Bridge
+      # MUST still render a flash (generic line).
+      receiver =
+        URI.new!("entity://user/default/n3-stale-#{System.unique_integer([:positive])}")
+
+      {:ok, _} = Ezagent.SpawnRegistry.spawn(receiver)
+
+      sender =
+        URI.new!("entity://user/default/n3-stale-snd-#{System.unique_integer([:positive])}")
+
+      {:ok, _} = Ezagent.SpawnRegistry.spawn(sender)
+
+      msg = Ezagent.Message.new(sender, %{text: "stale", attachments: []})
+      {:ok, stored} = Ezagent.MessageStore.write(msg, receiver)
+
+      :ok =
+        Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+          target: URI.new!("#{URI.to_string(receiver)}?action=chat.receive"),
+          mode: :cast,
+          args: %{message: stored},
+          ctx: %{
+            caller: sender,
+            caps: Ezagent.Entity.User.admin_caps(),
+            reply: :ignore
+          }
+        })
+
+      Process.sleep(50)
+
+      # Synthesize an event with a cursor we know isn't in the ring
+      # (well past any real allocation).
+      event = %{
+        uri: receiver,
+        slice_key: :chat,
+        cursor: 999_999,
+        event_at: DateTime.utc_now(),
+        result_summary: :ok
+      }
+
+      flash = EzagentPluginLiveview.AdminLive.format_slice_change(event)
+      assert flash == "New chat update on #{URI.to_string(receiver)}"
+    end
+
     test "cap-grant notification reaches AdminLive handler without crashing", %{conn: conn} do
       {:ok, lv, _html} = live(conn, "/sessions")
 

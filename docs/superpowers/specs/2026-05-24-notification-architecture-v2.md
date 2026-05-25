@@ -188,6 +188,65 @@ Subscribers that need the actual slice content (e.g. AdminLive rendering a chat-
 
 **Same-Kind reads from `handle_kind_message`**: Behaviors that need to read OTHER slices on the SAME Kind from within their `handle_kind_message/3` callback (e.g. the Publisher reading `:chat` after a `:slice_changed` event for that slice) must NOT call `Ezagent.Kind.get_slice/2` — it would self-`GenServer.call` from inside `handle_info` and deadlock. Instead, `Ezagent.Kind.Server` injects the full slice_state into `ctx.slice_state` for read-only access. The Behavior's own slice is still the legitimate WRITE target via the callback's return value.
 
+### 2.1.3 Subscriber pattern for slices with mutable single-pointer fields (PR-N3 r4 amendment — Allen 2026-05-25)
+
+**The race**. The security-minimal envelope (§2.1.1) strips slice content, so subscribers re-fetch via `Ezagent.Kind.get_slice/2` (§2.1.2). For a slice that exposes a *single-pointer* "what's the latest?" field (e.g. `:last_received.message_id`), the re-fetch races the producer when events arrive faster than the subscriber can drain its mailbox:
+
+```
+T=0  producer mutates slice with msg A  →  broadcasts envelope cursor 10
+T=1  producer mutates slice with msg B  →  broadcasts envelope cursor 11
+T=2  subscriber processes cursor=10 → get_slice → reads :last_received = B (WRONG; should be A)
+T=3  subscriber processes cursor=11 → get_slice → reads :last_received = B (correct, but identical to T=2)
+```
+
+Result: both flashes render msg B; msg A's notification is silently lost. Codex r3 (PR #328) flagged this as PR-N3 HIGH-1.
+
+**The pattern — cursor-indexed bounded ring**. Slices whose subscribers need the per-event payload (typically the message id / record id derived from the action's argument) must expose a **bounded ring keyed by the broadcast cursor** alongside the single-pointer convenience field:
+
+```elixir
+# In the Behavior's :slice_changed-producing action:
+%{
+  # ... existing slice fields ...
+  last_received: %{message_id: msg.id, at: now},  # single-pointer convenience (retained for legacy fallback)
+  recent_messages: [{ctx.slice_change_cursor, msg.id} | prior_ring] |> Enum.take(20)
+}
+```
+
+Subscriber resolution:
+
+```elixir
+def handle_info({:slice_changed, %{uri: uri, slice_key: :chat, cursor: c}}, socket) do
+  {:ok, slice} = Ezagent.Kind.get_slice(uri, :chat)
+  case List.keyfind(slice.recent_messages, c, 0) do
+    {^c, msg_id} -> render_message(msg_id)
+    nil          -> render_generic_fallback(uri)  # older than ring depth
+  end
+end
+```
+
+**Cursor allocation contract**. The broadcast envelope cursor (`Ezagent.SliceChange.Cursors.next/1`) is **pre-allocated by `Ezagent.Kind.Runtime` before invoke** and threaded into `ctx.slice_change_cursor`. The Behavior reads it from ctx when building the ring entry; `Ezagent.SliceChange.emit/1` reads it from the producer event (instead of re-allocating) so envelope ↔ ring keys match exactly. Without this contract the ring's cursor would lag the envelope by one or more (depending on action order), defeating the lookup.
+
+**Ring depth — SPEC-pinned, not configurable**. The ring bound is a module constant (e.g. `@recent_messages_ring_depth 20` in `Ezagent.Behavior.Chat`), exposed as a reader function for test assertions. Per `feedback_let_it_crash_no_workarounds` it is NOT a runtime knob — operators have no business tuning this; if 20 is wrong for production load, the Behavior author bumps the constant in source. The bound balances:
+
+- **Burst capacity** — worst-case backlog the subscriber can resolve after a flood. 20 = ~10× a typical AdminLive instance's per-second event rate.
+- **Persisted size** — each entry is `{int, binary}` ≈ 40 bytes; the ring adds ≤ 800 bytes to every Kind snapshot.
+- **Lookup cost** — `List.keyfind/3` is O(N); N=20 is well below any measurable threshold.
+
+**Graceful skip semantics**. When the subscriber receives a cursor older than the ring depth (rare — only under sustained burst exceeding `@ring_depth × inter-event-time`), the lookup returns `:not_found` and the subscriber falls back to a generic line ("Update on `<uri>`") — observability degradation, never silent wrong-render and never a crash. The bridge ALWAYS fires the flash; the content fidelity is best-effort. This is preferred to "raise on cursor miss" because the subscriber is observability-tier infrastructure, not a correctness boundary — losing a *preview* under sustained burst is acceptable; losing a *flash* is not.
+
+**When to apply this pattern**. Any slice where ALL of:
+
+1. The subscriber needs the per-event payload (not just "something changed")
+2. The producer can mutate the slice faster than subscribers drain (any chat-like fan-out, any auto-emitting state machine)
+3. The payload is derivable from a slice field at emit time (msg.id from the action's arg)
+
+Slices that fail (3) — where the per-event payload is computed lazily from the new_slice state — should use a cap-gated `:get_*` Behavior read action instead (§2.1.2 path 2), accepting the inherent race as part of their consistency model.
+
+**Reference implementation**. `Ezagent.Behavior.Chat` `:recent_messages` ring on the User-branch `:receive` slice mutation; cursor pre-allocation in `Ezagent.Kind.Runtime.handle_dispatch/4`; envelope cursor honored from event in `Ezagent.SliceChange.build_broadcast_event/2`. Test surface:
+
+- `apps/ezagent_domain_chat/test/ezagent/behavior/chat_test.exs` — ring populate / trim / lookup / missing-cursor-tolerance
+- `apps/ezagent_plugin_liveview/test/admin_live_test.exs` — end-to-end race regression (3-message burst resolves to 3 distinct flashes)
+
 ### 2.2 What `Notifications.notify/3` becomes
 
 Three viable end-states; recommendation in §5.

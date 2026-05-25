@@ -214,10 +214,25 @@ defmodule Ezagent.SliceChange do
 
     result_summary = summarize_result(Map.get(producer_event, :result))
 
+    # PR-N3 r4 (Allen 2026-05-25) — use the pre-allocated cursor from
+    # the producer event if present; fall back to fresh allocation
+    # for the legacy code path (any caller that builds a producer
+    # event without going through `Ezagent.Kind.Runtime`). The
+    # pre-allocated path is the production path post-PR-N3-r4 — it's
+    # what guarantees the broadcast envelope's `:cursor` matches the
+    # slice's `:recent_messages` ring key so flash subscribers can
+    # resolve the correct message id without racing the latest
+    # pointer (codex r3 HIGH-1 race fix).
+    cursor =
+      case Map.get(producer_event, :cursor) do
+        c when is_integer(c) and c > 0 -> c
+        _ -> Cursors.next(self_uri)
+      end
+
     %{
       uri: self_uri,
       slice_key: slice_key,
-      cursor: Cursors.next(self_uri),
+      cursor: cursor,
       event_at: event_at,
       result_summary: result_summary
     }

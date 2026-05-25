@@ -380,11 +380,50 @@ defmodule EzagentPluginLiveview.AdminLive do
   # synchronous. A failed fetch (Kind not alive, etc.) degrades to a
   # generic "Update on <uri>" line so the flash always surfaces.
   #
-  # For chat (`slice_key == :chat`) we look at the fetched slice's
-  # `:last_received.message_id` and load the actual `Ezagent.Message`
-  # row from `MessageStore` to build the "<sender>: <preview>" line.
+  # For chat (`slice_key == :chat`) we look up the event's `:cursor`
+  # in the slice's cursor-indexed `:recent_messages` ring (PR-N3 r4
+  # codex r3 HIGH-1 race fix). Pre-r4 we read `:last_received` (a
+  # single pointer) which raced under burst: 3 events arriving
+  # faster than the LV mailbox drained all read the latest pointer,
+  # rendering 3 identical flashes and losing 2 distinct
+  # notifications. Now: receive envelope cursor C → re-fetch slice →
+  # `List.keyfind(ring, C, 0)` returns the `{C, msg_id}` tuple for
+  # THIS event regardless of how many later events have committed,
+  # so each flash renders its correct message.
+  #
+  # Fallback chain:
+  # 1. Ring has cursor C → load + render that msg_id
+  # 2. Ring missing C (older than @recent_messages_ring_depth, slice
+  #    not loaded yet, or pre-PR-N3-r4 snapshot without the field) →
+  #    fall back to `:last_received.message_id` for the LATEST event
+  #    only (preserves the pre-r4 behavior — single-event case still
+  #    renders correctly; burst case degrades to "1 of N correct,
+  #    N-1 generic" which is strictly better than r3's "0 of N
+  #    correct, N identical")
+  # 3. Slice unreadable / no chat data → generic "New chat update"
+  #    line (the bridge ALWAYS fires a flash; the worst case is
+  #    losing the sender + preview, never losing the flash itself)
+  #
   # Other slice keys (`:identity` / `:workspace` / etc — PR-N4
   # producers) get the generic fallback until bespoke formatters land.
+  def format_slice_change(%{uri: %URI{} = uri, slice_key: :chat, cursor: cursor} = _event)
+      when is_integer(cursor) do
+    case Ezagent.Kind.get_slice(uri, :chat) do
+      {:ok, %{} = slice} ->
+        case chat_msg_id_for_cursor(slice, cursor) do
+          {:ok, msg_id} -> chat_flash_for(msg_id)
+          :not_found -> "New chat update on #{URI.to_string(uri)}"
+        end
+
+      _ ->
+        "New chat update on #{URI.to_string(uri)}"
+    end
+  end
+
+  # Legacy / synthesised event without a cursor (pre-PR-N3-r4 test
+  # fixtures + the `:not_a_map` / other-shape paths). Keep the old
+  # `:last_received` resolution so existing tests + any unmigrated
+  # producer surface a flash.
   def format_slice_change(%{uri: %URI{} = uri, slice_key: :chat} = _event) do
     case Ezagent.Kind.get_slice(uri, :chat) do
       {:ok, %{last_received: %{message_id: msg_id}}} when is_binary(msg_id) ->
@@ -401,6 +440,21 @@ defmodule EzagentPluginLiveview.AdminLive do
   end
 
   def format_slice_change(other), do: "Slice changed: #{inspect(other)}"
+
+  # PR-N3 r4 (Allen 2026-05-25) — look up the msg_id for a given
+  # broadcast envelope cursor in the slice's `:recent_messages` ring.
+  # Each ring entry is `{cursor, msg_id}` (newest first); cursors
+  # match `SliceChange` broadcast envelope cursors exactly. Returns
+  # `:not_found` for cursors older than the ring's bound, missing
+  # ring (pre-PR-N3-r4 snapshot), or non-binary msg_id (defensive).
+  defp chat_msg_id_for_cursor(slice, cursor) when is_map(slice) and is_integer(cursor) do
+    ring = Map.get(slice, :recent_messages, [])
+
+    case List.keyfind(ring, cursor, 0) do
+      {^cursor, msg_id} when is_binary(msg_id) -> {:ok, msg_id}
+      _ -> :not_found
+    end
+  end
 
   # Build the chat-style flash from a persisted message id. Splitting
   # this out makes the `:chat` clause a single match-and-render so the
