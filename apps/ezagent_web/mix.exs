@@ -88,6 +88,14 @@ defmodule EzagentWeb.MixProject do
       # per-user API keys). Application boot registers the Template
       # Class so it shows up in the workspace add-template form.
       {:ezagent_plugin_curl_agent, in_umbrella: true},
+      # PR #258 follow-up (2026-05-25): np-agent plugin (Python NPC
+      # agent over subprocess). Was created in PR #258 but never wired
+      # into the web release; Application.start never ran so the "np"
+      # flavor was missing from AgentFlavorRegistry and invites
+      # failed with :no_kind_module_for_agent. The
+      # `all_plugin_apps_wired_to_web_test` invariant in
+      # ezagent_core/test/invariants/ locks this in.
+      {:ezagent_plugin_np, in_umbrella: true},
       {:jason, "~> 1.2"},
       {:bandit, "~> 1.5"}
     ]
