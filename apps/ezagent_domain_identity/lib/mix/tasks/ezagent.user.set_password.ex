@@ -1,17 +1,32 @@
 defmodule Mix.Tasks.Ezagent.User.SetPassword do
-  @shortdoc "Set or rotate an ESR User's password"
+  @shortdoc "DEPRECATED — use `mix esr user set_password` (HIGH-2 completion)"
   @moduledoc """
-  > **CLI/GUI parity audit 2026-05-24 — Category C (deferred).**
-  > Bypasses dispatch: calls `Ezagent.Users.set_password/2` directly,
-  > so no CapBAC, no audit row, no cross-workspace check. The `mix esr
-  > user set_password` equivalent does NOT exist yet — deleting this
-  > task today would lose operator capability (including admin's
-  > first-password bootstrap). Tracked in
-  > `docs/futures/todo.md` § "CLI ↔ GUI parity (audit findings #137
-  > still partial)". TODO: add the matching Behavior action + cap subject (NOT a bare FacadeRegistry op — codex PR #304 round-2 HIGH: that path bypasses Invocation.dispatch + caps + audit). mix esr auto-derives the CLI from interface/0. See the deferred-table guidance in docs/futures/todo.md HIGH-2
-  > `(:user, :set_password)` so `mix esr user set_password --uri …
-  > --password …` becomes available, then deprecate this task using
-  > the PR #302 stub pattern.
+  > **DEPRECATED 2026-05-26 (HIGH-2 completion — todo.md "CLI ↔ GUI parity").**
+  >
+  > The dispatch-backed equivalent now exists. New callers should use
+  > the auto-derived `mix esr` command, which goes through
+  > `Ezagent.Invocation.dispatch/1` → step 5.5 CapBAC → step 5.6
+  > cross-workspace iso → audit telemetry. The cap shape is
+  > `(:user, Ezagent.Behavior.UserCredentials, :set_password)`; a
+  > user can hold this against THEIR OWN URI for self-rotation, and
+  > admin holds the `:any`-instance form for cross-user reset.
+  >
+  >     # NEW — preferred path:
+  >     mix esr user set_password \\
+  >         --user entity://user/<workspace>/<name> \\
+  >         --password '<new-pw>'
+  >
+  > This legacy task is retained for muscle memory pending operator
+  > migration (the PR #355 pattern). The internals still call
+  > `Ezagent.Users.set_password/2` directly — same business logic,
+  > but bypasses CapBAC + audit. **NOTE:** the legacy task is the
+  > only path that works on a fresh DB BEFORE the admin user has a
+  > token to authenticate `mix esr` calls — that bootstrap mode is
+  > a narrow carve-out comparable to `mix ezagent.user.token --mint`
+  > (see its moduledoc). New scripts should switch to `mix esr
+  > user set_password`; this task will be removed in a future release
+  > once the admin-bootstrap flow is replaced by the chicken-and-egg
+  > `--mint` carve-out.
 
   Phase 4-completion Spec 05 §A.2.5 — set admin's first password
   (migration seeds admin with empty hash; this task is the path to
@@ -26,6 +41,19 @@ defmodule Mix.Tasks.Ezagent.User.SetPassword do
 
   @impl Mix.Task
   def run(args) do
+    Mix.shell().info("""
+    NOTE: `mix ezagent.user.set_password` is deprecated as of 2026-05-26.
+    Use the dispatch-backed equivalent (CapBAC + audit + cross-workspace iso):
+
+        mix esr user set_password \\
+            --user entity://user/<workspace>/<name> \\
+            --password '<new-pw>'
+
+    This task still works (admin-bootstrap carve-out — first password
+    must be set BEFORE the admin has a token for `mix esr`) but
+    bypasses dispatch. New scripts should switch to `mix esr`.
+    """)
+
     {:ok, _} = Application.ensure_all_started(:ezagent_core)
 
     {opts, positional, _} =

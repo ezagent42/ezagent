@@ -40,7 +40,7 @@ defmodule EzagentDomainIdentity.Application do
 
   alias Ezagent.{CapabilityRegistry, SpawnRegistry}
   alias Ezagent.Entity.User
-  alias Ezagent.Behavior.{Identity, ApiKeys}
+  alias Ezagent.Behavior.{Identity, ApiKeys, UserCredentials}
 
   @impl true
   def start(_type, _args) do
@@ -275,6 +275,15 @@ defmodule EzagentDomainIdentity.Application do
     # the caller User's key via dispatch.
     for action <- ApiKeys.actions() do
       :ok = CapabilityRegistry.register(User, action, ApiKeys)
+    end
+
+    # HIGH-2 completion (2026-05-26): UserCredentials Behavior — the
+    # dispatch-backed `:set_password` action that replaces the legacy
+    # `mix ezagent.user.set_password` direct call into
+    # `Ezagent.Users.set_password/2`. Registered ONLY on User Kind
+    # (Agent Kinds don't have passwords).
+    for action <- UserCredentials.actions() do
+      :ok = CapabilityRegistry.register(User, action, UserCredentials)
     end
 
     # CapabilityRegistry SPEC rev 4 §5 — register User.default_caps/1
