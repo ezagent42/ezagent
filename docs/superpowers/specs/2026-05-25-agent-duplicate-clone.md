@@ -77,7 +77,7 @@ In-scope:
 - New `Ezagent.Behavior.Agent` module (apps/ezagent_domain_chat/lib/ezagent/behavior/agent.ex) — the Agent Kind currently has no Behavior file of its own. New module hosts `:duplicate` as the first action.
 - New action `:duplicate` on that Behavior. Args: `%{target_uri: URI.t(), target_owner_uri: URI.t()}` (source_uri is the dispatch self_uri).
 - New `Kind.Template` optional callback: `snapshot_config_dir/2` (source plugin-side quiesce + temp-dir manifest) — paired with existing `create_config_dir/2` (target plugin-side unpack). cc plugin implements both.
-- Cap subject `{Behavior.Agent, :duplicate}` — `data_owner/1` returns `:no_owner` (codex r1 HIGH-2: source agent URI as data_owner would silently grant cap to the agent itself, not the owning user). Cap is granted **explicitly at agent-spawn** to the agent's creator (the user that called `create_agent`).
+- Cap subject `{Behavior.Agent, :duplicate}` — `data_owner/1` resolves to the agent's owning USER URI via `AgentOwnership.lookup/1` (§3.8). `default_grants_from_data_owner/2` synthesizes the `:duplicate` cap to the user; `Provisioning` helper (§3.9) wires the call into spawn lifecycle.
 - Target spawn via a dedicated path (NOT `Workspace.create_agent`): direct `SpawnRegistry.spawn_detailed/1` against `target_uri`, then explicit `WorkspaceRegistry.bind` + `AgentLineage.record` + `Sandbox.write_path` + plugin-side `restore_from_snapshot` of the staged dir + PTY start. Atomic `:started` vs `:already_started` is reified — adoption refused (codex r1 HIGH-4).
 - Mix task `Mix.Tasks.Ezagent.Agent.Duplicate` (`mix ezagent.agent.duplicate`) — thin construct-args + dispatch wrapper.
 - ExUnit acceptance tests (in impl PR) covering: happy path, BOTH cap-denial scenarios (source-cap missing / target-cap missing), collision, missing source, cross-workspace consensual, snapshot failure rollback, spawn-after-snapshot failure rollback.
@@ -115,18 +115,18 @@ defmodule Ezagent.Behavior.Agent do
   Future actions (out of scope for V1): `:rename`, `:archive`,
   `:restore`.
 
-  ## CapBAC — `data_owner/1` is `:no_owner`
+  ## CapBAC — `data_owner/1` resolves to owning USER via AgentOwnership (rev 3+)
 
-  `data_owner/1` returns `:no_owner` (NOT the source agent URI).
-  Rationale (codex r1 HIGH-2): the existing
-  `CapabilityRegistry.default_grants_from_data_owner/2` treats a
-  returned URI as the grantee directly. If we returned source_uri
-  the cap would be silently granted to the AGENT itself, not the
-  owning user. There is no built-in "agent → owning user" resolver
-  in the current architecture (lineage holds `granted_by`, not
-  `owner`); rather than smuggle one in via this Behavior, we
-  declare `:no_owner` and grant the cap EXPLICITLY at agent-spawn
-  time to the agent's creator (see §4.3).
+  `data_owner(agent_uri)` looks up the agent's owning USER URI via
+  `Ezagent.AgentOwnership.lookup/1` (§3.8 — SQLite-backed ETS cache).
+  Returning `source_uri` would grant cap to the AGENT itself
+  (codex r1 HIGH-2 lesson); returning `:no_owner` would block
+  default_grants_from_data_owner/2 synthesis (codex r2 HIGH-2 lesson).
+  The AgentOwnership-backed resolution returns the user URI so the
+  standard CapabilityRegistry machinery synthesizes the `:duplicate`
+  cap to the owner. Wiring into spawn lifecycle is via the
+  `Provisioning` helper (§3.9 / §4.3) — `Kind.Server` does NOT
+  auto-synthesize (codex r3 confirmed).
   """
 
   @behaviour Ezagent.Behavior
@@ -157,12 +157,19 @@ defmodule Ezagent.Behavior.Agent do
   @impl Ezagent.Behavior
   def interface, do: # ... see §3.3
 
-  # codex r1 HIGH-2 fix — :no_owner, not source_uri. The Identity-
-  # style "entity is its own owner" pattern doesn't work here
-  # because the Behavior subject (the agent) is NOT the user we
-  # want to grant. The cap is granted explicitly at agent-spawn
-  # to the creator (see §4.3).
+  # rev 3+ — resolve agent's owning USER URI via AgentOwnership (§3.8).
+  # AgentOwnership.lookup/1 returns {:ok, %URI{} = owner_user_uri} for
+  # spawn-time-recorded ownership; :error fallback (legacy agents)
+  # yields :no_owner (backfill via mix ezagent.agent.set_owner).
   @impl Ezagent.Behavior
+  def data_owner(%URI{scheme: "entity", host: "agent"} = agent_uri) do
+    case Ezagent.AgentOwnership.lookup(agent_uri) do
+      {:ok, %URI{} = owner_user_uri} -> owner_user_uri
+      :error -> :no_owner
+    end
+  end
+
+  def data_owner(:any), do: :any
   def data_owner(_), do: :no_owner
 end
 ```
@@ -197,11 +204,12 @@ def invoke(:duplicate, _slice, args, ctx) do
        # is the cap_subject this action runs under). The target-create cap
        # is the SECOND check this action body does explicitly.
 
-       # STAGE — snapshot source config to temp dir (codex r1 MEDIUM-5):
-       {:ok, staged_path}    <- snapshot_source_config_to_temp(source_meta, source_uri, target_uri),
+       # STAGE — snapshot via core adapter (handles plugins with NO
+       # callback by returning {:ok, %{path: nil, manifest: %{}}}):
+       {:ok, snapshot}       <- Ezagent.Kind.Template.snapshot_or_default(source_meta.template_class, source_uri, source_meta.config_dir_path),
 
        # SPAWN — dedicated path, NOT Workspace.create_agent (codex r1 HIGH-4):
-       {:ok, result}         <- spawn_target_directly(target_uri, source_meta, target_ws_uri, target_owner_uri, staged_path) do
+       {:ok, result}         <- spawn_target_directly(target_uri, source_meta, target_ws_uri, target_owner_uri, snapshot) do
     {:ok, %{}, %{
       source_uri: source_uri,
       target_uri: result.agent_uri,
@@ -209,7 +217,7 @@ def invoke(:duplicate, _slice, args, ctx) do
     }}
   else
     {:error, _reason} = err ->
-      # Atomic rollback (codex r1 HIGH-3) — staged_path is cleaned
+      # Atomic rollback (codex r1 HIGH-3) — snapshot.path is cleaned
       # by spawn_target_directly on failure; here we don't need
       # extra cleanup because we abort BEFORE target is registered.
       err
@@ -219,16 +227,17 @@ end
 
 Where each helper is:
 
-- `check_target_create_cap/3` — synthesizes the needed cap
-  (`%Capability{kind: :workspace, behavior: Behavior.Workspace, instance: target_ws_uri, ...}`)
-  matching against the caller's caps via `Ezagent.Capability.matches?/2`. Same
-  check the workspace-admin pathway uses (per `caps-data-ownership-v2.md` §5.2).
+- `check_target_create_cap/3` — synthesizes the needed cap and matches against
+  caller's caps via `Ezagent.Capability.matches?/2` (per
+  `caps-data-ownership-v2.md` §5.2 admin branch).
 - `read_source_metadata/1` — dispatch `sandbox.read` against source to get
-  `config_dir_path` + `template_class`. Source flavor derived from URI prefix.
-- `snapshot_source_config_to_temp/3` — calls the plugin Template Class's new
-  `snapshot_config_dir/2` callback (see §3.6). Returns absolute path to a
-  TEMP dir containing the snapshot + manifest. Plugin owns quiesce semantics.
-- `spawn_target_directly/5` — see §3.4.
+  `config_dir_path` + `template_class`.
+- `Ezagent.Kind.Template.snapshot_or_default/3` — core adapter (§3.6). Calls
+  `template_class.snapshot_config_dir/2` if exported; returns
+  `{:ok, %{path: nil, manifest: %{}}}` for plugins with no callback. Snapshot
+  shape is `%{path: nil | String.t(), manifest: map()}`.
+- `spawn_target_directly/5` — see §3.4 (takes the `snapshot` map; uses
+  `Kind.Template.restore_or_noop/3` to apply via the same adapter).
 
 ### 3.3 Interface schema
 
@@ -264,14 +273,15 @@ Per codex r1 HIGH-4, routing through `Ezagent.Workspace.create_agent/3` would:
 1. Register a workspace-scoped template (the cc/echo path) in the workspace's `session_templates` slice → persists to `Workspace.Store` → exactly the "throwaway template residue" memory `feedback_agent_clone_not_via_template` warns against.
 2. The create_agent path's catch-all `:already_started` → `:ok` collapse means a concurrent spawn at `target_uri` would be silently adopted as success, after which step 5 (config restore) would overwrite a foreign agent's dir.
 
-The dedicated `spawn_target_directly/5` (rev 5 — Provisioning helper is the ONE post-spawn provisioning step):
+The dedicated `spawn_target_directly/5` (rev 6 — takes the `snapshot` map from §3.6 adapter, not a raw path; Provisioning is the ONE post-spawn step):
 
 ```elixir
-defp spawn_target_directly(target_uri, source_meta, target_ws_uri, target_owner_uri, staged_path) do
+defp spawn_target_directly(target_uri, source_meta, target_ws_uri, target_owner_uri, snapshot) do
   with {:ok, :started, _pid}   <- spawn_atomic_fresh(target_uri),  # NO adoption (§3.4.1)
        :ok                     <- WorkspaceRegistry.bind(target_uri, target_ws_uri),
        :ok                     <- AgentLineage.record(target_uri, target_owner_uri),
-       {:ok, final_dir}        <- restore_snapshot_into_target(source_meta, target_uri, staged_path),
+       restore_result          <- Ezagent.Kind.Template.restore_or_noop(source_meta.template_class, target_uri, snapshot),
+       {:ok, final_dir}        <- normalize_restore(restore_result),
        :ok                     <- dispatch_sandbox_write_path(target_uri, final_dir, source_meta.template_class),
        # §3.9 Provisioning is the ONE post-spawn ownership+caps step.
        # Bootstrap-admin context: the dispatch-time cap check on :duplicate
@@ -280,9 +290,15 @@ defp spawn_target_directly(target_uri, source_meta, target_ws_uri, target_owner_
        :ok                     <- start_pty_or_no_pty(target_uri, source_meta, target_ws_uri) do
     {:ok, %{agent_uri: target_uri}}
   else
-    err -> rollback_partial_target(target_uri, staged_path, err)
+    err -> rollback_partial_target(target_uri, snapshot.path, err)
   end
 end
+
+# Helper — normalizes Kind.Template.restore_or_noop/3's three return
+# shapes to {:ok, final_dir | nil} or {:error, _}.
+defp normalize_restore(:noop), do: {:ok, nil}            # plugin had no snapshot/restore
+defp normalize_restore({:ok, dir}), do: {:ok, dir}        # plugin restored
+defp normalize_restore({:error, _} = err), do: err
 ```
 
 The `Provisioning.provision_agent/3` call replaces what rev-2 / earlier drafts called `grant_initial_caps_for_owner/2` — there is NO separate cap-grant step anymore. §3.9 owns it. Any text in older revisions of this SPEC referring to a separate "Kind.Server post-spawn auto-synthesis" pathway is OBSOLETE (codex r3 grep confirmed that pathway does not exist in current code; rev 4 made the provisioning explicit; rev 5 ensures the spawn snippet calls it).
@@ -1043,7 +1059,12 @@ No CLAUDE.md change. Mix task `--help` auto-renders. Operator docs go in `docs/o
   - §6 now REQUIRES the `agent_ownership` Ecto migration with boot-ordering assertion; §7 row 17 new tests upgrade-from-pre-rev-5-DB path.
   - §7 row 16a new tests partial-grant rollback grantee-side cleanup.
 - **Rev 5**: codex r5 returned `needs-attention` with 2 HIGH + 1 MEDIUM (architecture is solid, remaining issues are text-consistency only): §3.8 still had a "Kind.Server auto-synthesis" sentence; zh_CN §3.4/§3.9 still carried rev-3 grant_initial_caps_for_owner; Ecto `created_at` vs `inserted_at` naming inconsistency. All addressed in rev 6.
-- **Rev 6** (this revision): codex r6 adversarial review will run. If r6 is clean OR returns only MEDIUM/LOW findings, this SPEC merges via admin merge per `feedback_admin_merge_authorized`. If r6 still returns CRITICAL or HIGH findings, the SPEC remains open and Allen is notified via Feishu — at that point further iteration likely requires architectural input beyond this subagent's scope.
+- **Rev 6**: codex r6 returned `needs-attention` with 2 HIGH — text-consistency, no architectural defects: English §3.1 `Behavior.Agent` module still implemented `data_owner(_), do: :no_owner` contradicting §3.8/§4.2; English §3.2/§3.4 still used `snapshot_source_config_to_temp` / `staged_path` instead of the `Kind.Template.snapshot_or_default/3` adapter. Both fixed in rev 6.5 (this revision):
+  - §3.1 `data_owner/1` snippet now resolves via `Ezagent.AgentOwnership.lookup/1`, matching §3.8 and the zh_CN version.
+  - §3.2 action body now binds `{:ok, snapshot} <- Ezagent.Kind.Template.snapshot_or_default(...)` and passes the snapshot map into `spawn_target_directly/5`.
+  - §3.4 `spawn_target_directly/5` signature takes `snapshot` (not `staged_path`); uses `Kind.Template.restore_or_noop/3` with a `normalize_restore/1` helper for the `:noop` / `{:ok, dir}` / `{:error, _}` three return shapes; rollback calls `File.rm_rf(snapshot.path)` (safe when `path == nil`).
+  - §2 scope bullet text aligned with the corrected `data_owner` description.
+- **Rev 6.5** (this revision): if codex r7 is clean OR returns only MEDIUM/LOW findings, this SPEC merges via admin merge. If r7 still returns CRITICAL or HIGH findings, the SPEC remains open and Allen is notified via Feishu.
 
 ---
 
