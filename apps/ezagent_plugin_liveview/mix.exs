@@ -69,7 +69,15 @@ defmodule EzagentPluginLiveview.MixProject do
       # Phase 5 PR 6: Feishu adapter — Template Class for
       # session ↔ chat_id binding + outbound subscriber + webhook plug.
       # Direct dep ensures Application.start fires + WebhookPlug compiles.
-      {:ezagent_plugin_feishu, in_umbrella: true}
+      {:ezagent_plugin_feishu, in_umbrella: true},
+      # PR-EM-4 (2026-05-25): admin LV /admin/sessions/:id/external_mirror
+      # consumes the `Ezagent.ExternalMirror` facade (bind / unbind /
+      # list_bindings / list_adapters) + `Ezagent.ExternalMirror.WorkerSpawn.
+      # worker_uri_for/3` + the per-adapter cap_subject() for caps-filtered
+      # adapter dropdown. Per-LV admin tooling is the canonical caller for
+      # the facade, so the dep is direct (no transitive coverage from any
+      # of the existing :ezagent_plugin_* / :ezagent_domain_* deps).
+      {:ezagent_domain_external_mirror, in_umbrella: true}
     ]
   end
 end
