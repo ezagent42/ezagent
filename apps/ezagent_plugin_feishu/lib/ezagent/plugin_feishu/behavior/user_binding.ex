@@ -156,15 +156,23 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
     bound_by = Map.get(ctx, :caller) || default_admin_uri()
     user_uri_str = uri_to_str(user_uri)
 
-    # Codex r1 P1.2: enforce workspace scope on the user URI BEFORE
+    # Codex r1 P1.2: enforce workspace scope on the NEW user URI BEFORE
     # any side-effect. The table is global (no workspace column) so
     # we structurally derive the user's workspace from their URI and
     # require it to match the dispatch target's workspace — unless
     # the caller holds a bootstrap-admin cap (defence in depth for
     # cross-tenant migrations).
+    #
+    # Codex r2 P1: ALSO check the EXISTING binding (if any) belongs
+    # to the target workspace. Without this, a workspace://team-alpha
+    # caller could re-bind an open_id currently held by team-beta to
+    # a team-alpha user — hijacking the other tenant's Feishu
+    # identity. Two structural checks: the new user_uri AND any
+    # existing row both must match the target workspace.
     with :ok <- ensure_same_workspace(user_uri_str, ctx),
+         :ok <- ensure_no_cross_workspace_hijack(open_id, ctx),
          {:ok, _row} <- UserBinding.bind(open_id, user_uri_str, bound_by),
-         :ok <- BindingPolicy.apply(user_uri_str, bound_by) do
+         :ok <- apply_policy_or_rollback(open_id, user_uri_str, bound_by) do
       # Codex r1 P1.1: the Workspace Kind only initializes the
       # `:workspace` slice in its init_slice/1 — plugin-registered
       # Behavior slices arrive as `%{}` from `Map.get(state, slice_key,
@@ -331,6 +339,76 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
 
       :error ->
         {:error, :not_found}
+    end
+  end
+
+  # Codex r2 P1: rebind check. If `open_id` is already bound to a
+  # user in a DIFFERENT workspace, refuse the rebind — that would let
+  # workspace://A hijack workspace://B's Feishu identity by upserting
+  # against the global primary key. `:ok` returned for both "no
+  # existing binding" (clean bind) and "existing binding is in target
+  # workspace" (legitimate rebind within the same tenant).
+  #
+  # Bootstrap admin (target = :any) bypasses — step 5.5 already
+  # validated the cap; cross-workspace operator move is intentional.
+  defp ensure_no_cross_workspace_hijack(open_id, ctx) do
+    case UserBinding.resolve(open_id) do
+      :error ->
+        # No existing binding — fresh bind path. :ok.
+        :ok
+
+      {:ok, %URI{} = existing_user_uri} ->
+        case ensure_same_workspace(URI.to_string(existing_user_uri), ctx) do
+          :ok ->
+            :ok
+
+          {:error, {:cross_workspace_user, _}} ->
+            {:error,
+             {:cross_workspace_rebind,
+              open_id: open_id, existing_user: URI.to_string(existing_user_uri)}}
+
+          err ->
+            err
+        end
+    end
+  end
+
+  # Codex r2 P2: rollback the DB row if BindingPolicy.apply/2 fails
+  # after UserBinding.bind/3 committed. Without rollback, the inbound
+  # Feishu resolution would map the open_id to the user even though
+  # the caller saw the operation as failed (caps weren't actually
+  # granted). The rollback is best-effort (delete the row we just
+  # wrote); a rollback failure is logged but the ORIGINAL policy
+  # error is what propagates — operator needs to see the first
+  # failure, not the rollback's.
+  defp apply_policy_or_rollback(open_id, user_uri_str, bound_by) do
+    case BindingPolicy.apply(user_uri_str, bound_by) do
+      :ok ->
+        :ok
+
+      {:error, _} = err ->
+        rollback_binding(open_id, err)
+        err
+
+      other ->
+        rollback_binding(open_id, {:error, other})
+        {:error, {:policy_apply_failed, other}}
+    end
+  end
+
+  defp rollback_binding(open_id, original_err) do
+    case UserBinding.unbind(open_id) do
+      :ok ->
+        :ok
+
+      {:error, rollback_reason} ->
+        require Logger
+
+        Logger.error(
+          "EzagentPluginFeishu.Behavior.UserBinding.:bind: BindingPolicy failed + rollback failed: " <>
+            "open_id=#{open_id} rollback_reason=#{inspect(rollback_reason)} " <>
+            "original_err=#{inspect(original_err)}"
+        )
     end
   end
 
