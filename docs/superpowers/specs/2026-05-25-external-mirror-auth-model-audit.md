@@ -60,10 +60,25 @@ These two findings together make the case: the parent SPEC's "facade runs Checks
 
 | # | Gate | Where enforced | Cost | Failure shape | Findings that surfaced gaps |
 |---|------|----------------|------|---------------|------------------------------|
+| **0** | **Adapter lookup** — `adapter_id` resolves in `AdapterRegistry` | Facade (`lookup_adapter/1`) AFTER Gate 1 (per codex r1 audit-SPEC HIGH-2) | O(1) ETS lookup | `{:error, :unknown_adapter}` | codex r1 audit-SPEC HIGH-2 — pre-fix this ran BEFORE Gate 1 → no-cap caller could enumerate adapter IDs by probing |
 | 1 | **Cap 1** — caller holds `{kind: :session, behavior: Ezagent.Behavior.ExternalMirror, instance: <session>, workspace_uri: <ws>}` | Facade INLINE (`check_session_bind_cap/2`) + Dispatch §5.5 (defense in depth) | O(caps) MapSet scan; sub-µs | `{:error, :unauthorized}` | r4 MED — was post-Check-3 → caller w/o session cap triggered adapter I/O |
 | 2 | **Cap 2** — caller holds `{kind: :session, behavior: <adapter.cap_subject.behavior_module>, instance: <session>, workspace_uri: <ws>}` | Facade Check 2 (`check_adapter_allow_cap/3`) + Dispatch §5.5 (auto-derived because adapter's per-session allow cap registers as a Behavior on Session at AdapterInstall time) | O(caps) MapSet scan; sub-µs | `{:error, :adapter_not_authorized}` | r2 HIGH-3 — was never registered because Application.start ran before plugin boot |
 | 3 | **Workspace iso pre-check** — caller's workspace == session's workspace | Facade `check_workspace_iso/2` (NEW per this audit) + Dispatch §5.6 (defense in depth) | O(1) URI compare | `{:error, :cross_workspace_denied}` | NEW (Q4 — facade pre-check avoids wasting Check 4's adapter I/O on a cross-workspace target) |
 | 4 | **`target_ownership_check`** — adapter-side I/O verifies the caller owns `target_id` on the adapter's external surface | Facade Task w/ 5s timeout (`run_target_ownership_check/3`) | bounded 5s adapter I/O | `{:error, {:target_ownership_denied, reason}}` / `{:error, :target_check_timeout}` / `{:error, {:target_check_crashed, reason}}` | r4 MED ordering (must come last); r4 HIGH-1 originally part of dispatch (deadlock) |
+
+**Canonical sequence in code (per `Ezagent.ExternalMirror.bind/5`):**
+
+```elixir
+with :ok <- check_session_bind_cap(ctx, session_uri),         # Gate 1 — no adapter info
+     {:ok, adapter_module} <- lookup_adapter(adapter_id),     # Gate 0 — only after caller proves general access
+     :ok <- check_adapter_allow_cap(ctx, session_uri, adapter_module),  # Gate 2
+     :ok <- check_workspace_iso(ctx, session_uri),            # Gate 3
+     :ok <- run_target_ownership_check(adapter_module, ctx.caller, target_id) do  # Gate 4
+  claim_nonce_and_dispatch(...)
+end
+```
+
+Gate 1 BEFORE Gate 0 closes the adapter-enumeration leak: a caller without the session bind cap sees `{:error, :unauthorized}` for ANY adapter_id (real, fake, or probed) — they cannot distinguish "adapter doesn't exist" from "I'm not authorized for ExternalMirror on this session". An attacker probing adapter IDs gets one error shape regardless of input.
 
 ### 2.2 Why this exact order
 
@@ -115,38 +130,66 @@ The naive solution (PR #317 r2 shape) was `args[:_facade_checks_ok] = true`. **T
 
 ### 3.3 The FacadeNonceTable pattern — formalized
 
-The fix shipped in PR #317 (commit `4a1637d8`) introduces `Ezagent.ExternalMirror.FacadeNonceTable`. This audit formalizes it as **the** trust-transfer primitive between facade and action body.
+The fix shipped in PR #317 (commit `4a1637d8`) introduces `Ezagent.ExternalMirror.FacadeNonceTable`. This audit formalizes it as **the** trust-transfer primitive between facade and action body — AND closes the codex r1 audit-SPEC CRIT-1 forgery vector that the pre-audit shape had open.
 
-**Properties (the contract):**
+**The corrected trust-transfer model (codex r1 audit-SPEC CRIT-1 fix):**
 
-1. **`:protected, :named_table` ETS, GenServer-owned.** Only the FacadeNonceTable GenServer can `:ets.insert/2`. Any in-VM caller can `:ets.lookup/2` (which is fine — the lookup returns the stored tuple but consuming requires going through the GenServer for atomic delete-on-read). Forgery via direct ETS write requires elevation past the BEAM's ETS access model — out of scope for application-level auth (a process that can write to a `:protected` table owned by a foreign pid has already broken every other security boundary).
+The pre-audit shape exposed `FacadeNonceTable.claim_nonce/4` as a freely-callable public function. **That itself was a bypass** — any in-VM caller holding only the session bind cap could call `claim_nonce` directly to mint a nonce for any `(session, adapter, target, caller)` tuple, then direct-dispatch `external_mirror.bind` with that nonce, skipping gates 2 and 4.
 
-2. **32-byte nonce from `:crypto.strong_rand_bytes/1`.** 256 bits of entropy. Guessing in a single-bind window (~20ms typical, 5s upper bound) is infeasible.
+**The structural fix:** `claim_nonce/5` is no longer a "freely callable nonce minter". It is **THE gate-enforcing operation**. Its contract:
 
-3. **SPEC-pinned 5-second TTL.** NOT configurable per-deployment (per `feedback_let_it_crash_no_workarounds` — config knobs ARE workarounds; a deployment that needs a different TTL has a structural problem in its dispatch latency that the SPEC should address instead). The 5s ceiling is 250× the p99 dispatch latency (~20ms slice mutation + Kind.spawn), giving headroom for slow CI / debug builds / contention storms while keeping the stolen-nonce exploit window negligible. **Test-only override** via a private `claim_nonce/5` ttl param is permitted (marked `@doc false`) so the nonce-expiry invariant test can run in milliseconds; production callers MUST NOT pass it.
+```elixir
+@spec claim_nonce(
+        URI.t(),                # session_uri
+        Ezagent.ExternalMirror.caller_ctx(),  # caller ctx (caps + caller_uri)
+        adapter_module :: module(),
+        target_id :: term()
+      ) :: {:ok, binary()} | {:error, term()}
+```
 
-4. **Bound to the exact tuple `(session_uri, adapter_id, target_id, caller_uri, expires_at)`.** Consume verifies all four URI/term equalities + the expiry. ANY mismatch → `:error`.
+`claim_nonce` internally re-runs Gates 1, 2, 3, AND 4 for the supplied `(session, caller_ctx, adapter, target)` tuple. If any gate fails, it returns the gate's error shape (`:unauthorized` / `:adapter_not_authorized` / `:cross_workspace_denied` / `{:target_ownership_denied, _}` / `:target_check_timeout` / etc.). If ALL gates pass, it claims and returns the nonce.
 
-5. **Atomic consume via single GenServer call.** `consume_nonce/2` reads + verifies + deletes in one `handle_call`. Two concurrent attempts to consume the same nonce: exactly one returns `:ok`, the other returns `:error` (read-then-delete inside the call is atomic by the BEAM's single-process serialization).
+**The facade `Ezagent.ExternalMirror.bind/5` becomes a thin wrapper** that calls `claim_nonce` (which enforces all gates) then dispatches with the nonce. An in-VM caller calling `claim_nonce` directly **must satisfy the same gates** — they get a nonce only if they would have gotten one via the facade. The forgery vector closes structurally because there is no path to a valid nonce that doesn't pass the gates.
 
-6. **Periodic sweep** (30s interval) removes expired rows so the table cannot grow unbounded. Sweep uses `:ets.select_delete/2` (atomic per-row).
+The action body's `consume_nonce/2` is then ONLY about single-use semantics + replay protection — NOT a sole authorization gate. Gates have already run by definition (a nonce in the table means gates passed).
 
-7. **Failure shape:** missing nonce, expired nonce, tuple mismatch, replay (second consume) — **ALL four reject with `{:error, :bind_must_go_through_facade}`**. The action body propagates this verbatim. Callers see the same atom for any forgery attempt — no information leak about which check tripped (an attacker probing different forgery vectors should not get a hint).
+**Properties (the corrected contract):**
 
-### 3.4 Forgery analysis — what an attacker can and cannot do
+1. **`:private, :named_table` ETS, GenServer-owned.** Per codex r1 audit-SPEC CRIT-1 second sub-finding: `:protected` was world-readable, letting another in-VM process enumerate live nonces and either steal them for direct dispatch OR consume-delete them to DoS the legitimate facade caller. `:private` semantics: only the owner pid (the FacadeNonceTable GenServer) can read OR write the table. All reads go through `GenServer.call` (which already happens — `consume_nonce` is a `handle_call`). External enumeration becomes structurally impossible.
+
+2. **`claim_nonce/4` enforces all 4 gates internally.** See structural fix above. Public API; safe because the enforcement runs inside.
+
+3. **32-byte nonce from `:crypto.strong_rand_bytes/1`.** 256 bits of entropy. Guessing in a single-bind window (~20ms typical, 5s upper bound) is infeasible. (Forgery via guess remains theoretically open but computationally infeasible; the CRIT-1 fix closes the realistic vector.)
+
+4. **SPEC-pinned 5-second TTL.** NOT configurable per-deployment (per `feedback_let_it_crash_no_workarounds`). The 5s ceiling is 250× the p99 dispatch latency (~20ms slice mutation + Kind.spawn). **Test-only `@doc false` 5-arity form** with explicit `ttl_ms` param permitted so the nonce-expiry invariant test runs in milliseconds; production callers MUST use the 4-arity form.
+
+5. **Bound to the exact tuple `(session_uri, adapter_id, target_id, caller_uri, expires_at)`.** Consume verifies all four URI/term equalities + the expiry. ANY mismatch → `:error` (action body returns `:bind_must_go_through_facade`).
+
+6. **Atomic consume via single GenServer call.** `consume_nonce/2` reads + verifies + deletes in one `handle_call`. Two concurrent attempts to consume the same nonce: exactly one returns `:ok`, the other returns `:error`.
+
+7. **Periodic sweep** (30s interval) removes expired rows so the table cannot grow unbounded. Sweep uses `:ets.select_delete/2` (atomic per-row).
+
+8. **Failure shape from `consume_nonce`:** missing / expired / tuple mismatch / replay — **all four reject with `{:error, :bind_must_go_through_facade}`** at the action body. The action body propagates verbatim. No information leak about which check tripped.
+
+### 3.4 Forgery analysis — what an attacker can and cannot do (corrected)
 
 | Attack | What it requires | Why it fails |
 |--------|------------------|--------------|
+| Call `claim_nonce` directly to mint a nonce for a target the caller doesn't own | Pass Gates 1+2+3+4 inside `claim_nonce` | `claim_nonce` enforces all 4 gates internally — no nonce returned unless gates pass |
+| Steal a live nonce by reading the ETS table | Read access to a `:private` ETS table owned by a foreign pid | Impossible — `:private` denies all non-owner reads |
+| Race to consume a nonce before the legitimate caller | Bypass GenServer serialization | Single GenServer call ensures exactly one `:ok` per nonce |
 | Guess a valid nonce | 2^256 attempts | Computationally infeasible |
-| Write a forged nonce directly to ETS | Elevation to owner pid OR `:public` access | Table is `:protected`; only the FacadeNonceTable GenServer can write |
+| Write a forged nonce directly to ETS | Elevation to owner pid | Impossible — `:private` denies non-owner writes |
 | Replay a captured nonce | Same nonce consumed twice | First consume deletes; second returns `:error` |
-| Reuse one nonce for a different target | Nonce bound to original tuple | Consume verifies tuple equality; mismatch returns `:error` |
+| Reuse one nonce for a different `(session, adapter, target)` | Nonce bound to original tuple | Consume verifies tuple equality; mismatch returns `:error` |
 | Wait past TTL then consume | `expires_at` check in consume | `now > expires_at` returns `:error`; sweep also removes |
-| Race two consumes of the same nonce | Two concurrent processes | Single GenServer serializes; exactly one `:ok`, other `:error` |
+| Direct-dispatch `external_mirror.bind` with a random nonce | Have a nonce in the table | Random nonce → no row in table → consume returns `:error` |
+| Direct-dispatch with no nonce at all | `args[:_facade_nonce]` missing | Action body's `nonce_consume/2` short-circuits to `:error` |
+| Direct-dispatch ignoring the facade entirely | Pass dispatch step 5.5 (Cap 1) AND consume a valid nonce from the table | Cap 1 is dispatch-side defense in depth; AND the nonce can only have been minted by a `claim_nonce` call that passed Gates 1+2+3+4 — so even the "skip facade" path is gated. Action body sees a valid nonce only if all 4 gates passed somewhere upstream. |
 | Forge by intercepting facade-to-dispatch network | No network — facade is in-process | All in-BEAM, no wire format to intercept |
 | BEAM memory dump → read live nonces | Root on the host running BEAM | Out of scope for app-level auth |
 
-The only known weakness — root on the host running BEAM — is explicitly out of scope. The threat model is **in-VM callers holding partial caps**, not **host root**. This is the same threat model the parent SPEC §4.2 implicitly assumed.
+The threat model is **in-VM callers holding partial caps**, not host root. With the corrected `claim_nonce` (enforces gates) + `:private` ETS (no enumeration/DoS), every in-VM forgery path closes structurally. The remaining "BEAM memory dump" attack is explicitly out of scope and unchanged from the parent SPEC's implicit threat model.
 
 ### 3.5 Why not generalize to a `TrustTransfer` core primitive
 
@@ -266,16 +309,27 @@ Ezagent.Plugin.publish_after_all_registered(
 )
 ```
 
-### 5.3 Contract
+### 5.3 Contract (corrected per codex r1 audit-SPEC HIGH-3)
 
-1. **`registries`** — a non-empty list of `{registry_module, key}` pairs. Each `registry_module` MUST implement two callbacks:
-   - `subscribe_register/2 :: (key, ({:ok, value} | :error -> :ok)) -> :ok` — subscribe to fire when `register/n` (any arity) inserts a fresh entry for `key`.
+1. **`registries`** — a non-empty list of `{registry_module, key}` pairs. Each `registry_module` MUST implement ONE callback the primitive consults:
    - `lookup/1 :: (key) -> {:ok, value} | :error` — synchronous check whether `key` already has an entry.
-   - These callbacks are the contract `publish_after_all_registered` calls; the registry module owns the implementation detail.
 
-2. **`hook_fn`** — a zero-arity function fired ONCE when all `registries` have entries for their keys. Idempotent: if all are already registered at call time, fires immediately and synchronously; if not, registers a one-shot hook that fires when the last one lands.
+   The registry module ALSO drives the primitive forward by calling
+   `Ezagent.Plugin.RegistrationHooks.notify_subscribers(__MODULE__, key)`
+   from its own successful-insert path. This is NOT a callback the
+   primitive requires (no `@callback` contract); it is an integration
+   the registry module opts into by adding the call alongside its
+   `:ets.insert_new/2`. A registry that doesn't call `notify_subscribers`
+   simply never fires hooks for its insertions — `publish_after_all_registered`
+   degrades to "all already-registered check at call time" semantics for
+   that registry.
 
-3. **Idempotent across re-calls:** calling `publish_after_all_registered` twice with the same `(registries, hook_fn)` fires `hook_fn` at most once per "all-present" transition. The current ExternalMirror consumer pattern (maybe_install fires `install/1` whose body is idempotent) handles the rare second-fire gracefully; future consumers should write idempotent hooks.
+2. **`hook_fn`** — a zero-arity function. Behavior:
+   - If all `registries` already resolve at call time → fires **synchronously inside `publish_after_all_registered`** before it returns.
+   - Otherwise → the hook is registered in `RegistrationHooks` with a fresh internal hook_id. Fires when a `notify_subscribers/2` call observes that all registries now resolve.
+   - **Fires exactly once per call to `publish_after_all_registered/2`**, NOT once per `(registries, hook_fn)` tuple. The primitive cannot compare anonymous functions for equality; each call registers an independent hook tracked by an opaque hook_id. **Hook authors MUST write idempotent hook bodies** so the rare second call (e.g. a domain re-running registration on hot reload) doesn't double-execute side effects.
+
+3. **`hook_fn` exceptions are isolated.** If the user-supplied function raises, `RegistrationHooks` catches via try/rescue, logs at `:error`, and continues. A buggy hook does NOT crash the GenServer or lose other pending hooks.
 
 4. **Hot uninstall (V2):** when a registry entry is REMOVED (e.g. `__delete__/1`), the primitive does NOT fire any "uninstall" hook. Hot uninstall is V2 scope per parent-SPEC §10.
 
@@ -308,30 +362,40 @@ Per `feedback_completion_requires_invariant_test`: this audit is "done" only whe
 
 **Location:** `apps/ezagent_domain_external_mirror/test/invariants/auth_model_invariant_test.exs`
 
-**Shape:** ONE test file (NOT one test). 14 scenarios (numbered `1..14` matching §6.2 below), each with:
+**Shape:** ONE test file (NOT one test). 22 scenarios (numbered `0`, `1..10`, `10b`, `11..20` matching §6.2 below), each with:
 
 - A `@moduledoc` header citing the originating PR #317 codex finding it regression-protects (e.g. `# scenario 7 — regression for PR #317 codex r3 CRIT: _facade_checks_ok forgery`).
 - A focused `test` block.
 - Assertions that prove BOTH (a) the failure shape is exactly the spec'd one AND (b) NO downstream work happened (no adapter I/O fired, no DB row written, no worker spawned, no slice mutation).
 
-### 6.2 The 14 scenarios
+### 6.2 The 22 scenarios
+
+Extended from 14 to 20 per codex r1 audit-SPEC HIGH-4: the original 14 missed regressions for 6 of the 12 PR #317 findings (r1 row collision, r1 atom DoS, r2 HIGH-2 read-side leaks, r2 HIGH-3 cap subject visibility, r3 HIGH-2 unique-conflict, r4 HIGH-1 BootReconciler retry). Scenarios 15-20 add direct regression protection.
 
 | # | Name | Tests | Regression for |
 |---|------|-------|----------------|
+| 0 | Adapter enumeration denial | No-cap caller calling `bind(_, "real_adapter_id", ...)` AND `bind(_, "nonexistent_id", ...)` get the SAME `{:error, :unauthorized}` response — cannot distinguish | codex r1 audit-SPEC HIGH-2 |
 | 1 | Cap 1 denial (no session :bind cap) | Returns `{:error, :unauthorized}`; mock adapter's `target_ownership_check/2` call counter == 0; no row in DB | PR #317 r4 MED |
-| 2 | Cap 2 denial (has session cap, no per-adapter cap) | Returns `{:error, :adapter_not_authorized}`; mock adapter call counter == 0; no row in DB | PR #317 r2 HIGH-3 |
+| 2 | Cap 2 denial (has session cap, no per-adapter cap) | Returns `{:error, :adapter_not_authorized}`; mock adapter call counter == 0; no row in DB | PR #317 r2 HIGH-3 (enforcement) |
 | 3 | Workspace iso denial (facade pre-check, gate 3) | Returns `{:error, :cross_workspace_denied}`; mock adapter call counter == 0; no row in DB | NEW (Q4 = B) |
 | 4 | Workspace iso denial (dispatch §5.6, bypass facade) | Direct `Invocation.dispatch/1` with cross-workspace caller still returns `{:error, :cross_workspace_denied}` | Defense in depth |
 | 5 | `target_ownership_check` denial | Returns `{:error, {:target_ownership_denied, :not_a_member}}`; no row in DB; no worker in registry | parent SPEC §8.2 r6 (facade-vs-action split) |
 | 6 | `target_ownership_check` timeout | Mock adapter sleeps > 5s (test uses lowered timeout); returns `{:error, :target_check_timeout}`; no row; no worker | parent SPEC r4 MED |
 | 7 | Nonce forgery (random nonce in args) | Direct dispatch with `args[:_facade_nonce] = <random 32 bytes>` returns `{:error, :bind_must_go_through_facade}`; no row; no worker; no slice mutation | PR #317 r3 CRIT |
 | 8 | Nonce replay (consume same nonce twice) | First consume succeeds; second consume returns `:error` from FacadeNonceTable → action body returns `{:error, :bind_must_go_through_facade}` | PR #317 r3 CRIT |
-| 9 | Nonce expiry (sleep past TTL) | Claim nonce w/ tiny TTL; sleep past expiry; consume returns `:error`; action body returns `{:error, :bind_must_go_through_facade}` | PR #317 r3 CRIT |
+| 9 | Nonce expiry (sleep past TTL) | Claim nonce w/ tiny TTL via `@doc false` 5-arity form; sleep past expiry; consume returns `:error`; action body returns `{:error, :bind_must_go_through_facade}` | PR #317 r3 CRIT |
 | 10 | Nonce tuple mismatch (different session/adapter/target) | Claim for tuple A; consume with tuple B → `:error`; action body returns `{:error, :bind_must_go_through_facade}` | PR #317 r3 CRIT |
+| 10b | **Direct claim_nonce bypass** (NEW per codex r1 audit-SPEC CRIT-1) | An in-VM caller missing cap 2 calls `FacadeNonceTable.claim_nonce/4` directly with their own ctx — claim_nonce internally fails Gate 2 and returns `{:error, :adapter_not_authorized}`; no nonce returned; no row; no worker | codex r1 audit-SPEC CRIT-1 |
 | 11 | DB insert NOT NULL violation | Force `BindingRow.insert/1` to fail with a non-unique changeset error; action body returns `{:error, {:db_insert_failed, _}}`; NOT idempotent success; no worker spawned | PR #317 r5 HIGH-B |
 | 12 | Worker spawn failure AFTER row persisted | Pre-register foreign pid in `KindRegistry` under worker URI; bind triggers compensating delete; row removed; error `{:error, :worker_spawn_failed}` returned | PR #317 r4 HIGH-2 + r5 HIGH-B |
 | 13 | AdapterInstall ordering (registries land in either order) | Register adapter alone → no workers spawned (BindingRegistry empty); register binding → install fires; workers spawn. Then symmetric: binding-first → adapter-second → install fires. | PR #317 r5 HIGH-A |
 | 14 | Happy path (all gates pass) | All 4 gates pass; exactly 1 row in DB; exactly 1 worker in `KindRegistry`; slice has exactly 1 binding; nonce consumed (no leftover in FacadeNonceTable) | Sanity gate |
+| **15** | **Row id collision across sessions** (NEW per codex r1 audit-SPEC HIGH-4) | Two sessions bind same `(adapter_id, target_id)` → two distinct DB rows with different `row_id` hashes; unbind from session A leaves session B's row + worker intact | PR #317 r1 CRIT |
+| **16** | **Atom-DoS via opts keys** (NEW per codex r1 audit-SPEC HIGH-4) | Bind with `opts: %{"<random string key>" => "v"}`; restart Session via DynamicSupervisor.terminate_child + SpawnRegistry.spawn; rehydrated opts keys are ALL strings (any atom appearance proves regression) | PR #317 r1 HIGH |
+| **17** | **Read-side `list_bindings/2` unauthorized** (NEW per codex r1 audit-SPEC HIGH-4) | A caller without `:list_bindings` cap calls `Ezagent.ExternalMirror.list_bindings/2` → returns `{:error, :unauthorized}` (dispatch §5.5 rejects); no binding tuples leaked | PR #317 r2 HIGH-2 + r3 HIGH-1 |
+| **18** | **Cap subject CapabilityRegistry visibility** (NEW per codex r1 audit-SPEC HIGH-4) | After AdapterInstall fires for adapter "test_em_a", `CapabilityRegistry.list_subjects(Ezagent.Entity.Session)` includes the `(Session, allow_test_em_a, _)` entry — admins can grant per-adapter caps via the normal grant path | PR #317 r2 HIGH-3 |
+| **19** | **Unique-conflict returns changeset, not raise** (NEW per codex r1 audit-SPEC HIGH-4) | Insert a `BindingRow` for `(S, A, T)`; insert a SECOND row for the SAME `(S, A, T)` triple — `BindingRow.insert/1` returns `{:error, %Ecto.Changeset{} = cs}` carrying `constraint: :unique` in the errors keyword (NOT a raised `Ecto.ConstraintError`); `do_bind`'s wrapper classifies as `{:ok, :idempotent_unique_conflict}` (per §4.2) | PR #317 r3 HIGH-2 |
+| **20** | **BootReconciler retry survives missing session spawn handler** (NEW per codex r1 audit-SPEC HIGH-4) | Boot with `external_mirror_bindings` rows present BEFORE `:ezagent_domain_chat` registers `session://` spawn handler; BootReconciler initial pass returns `{:retry, _}` for each row; later (during test setup) chat registers its handler; reconciler's next retry pass succeeds; all rows reconciled within bounded retry budget | PR #317 r4 HIGH-1 |
 
 ### 6.3 What the test asserts beyond return values
 
@@ -357,18 +421,26 @@ defp assert_no_downstream_work(session_uri, adapter_id, target_id, mock_adapter)
 end
 ```
 
-Scenarios 5+6 exempt assertion #1 (the adapter call MUST fire for gate 4 to deny). Scenarios 7–10 exempt #1 (gate 4 already passed in the facade's "claim" path; the denial is at the action body's consume). Scenario 11 exempts #3 (insert fails BEFORE spawn). Scenario 12 expects #2 to flip from "row present" to "row absent" mid-test as compensation runs.
+Scenarios 5+6 exempt assertion #1 (the adapter call MUST fire for gate 4 to deny). Scenarios 7–10 exempt #1 (gate 4 already passed in the facade's "claim" path; the denial is at the action body's consume). Scenario 10b exempts #1 only when Gate 2 fails inside claim_nonce (the adapter call would not have been reached yet). Scenario 11 exempts #3 (insert fails BEFORE spawn). Scenario 12 expects #2 to flip from "row present" to "row absent" mid-test as compensation runs. Scenarios 13, 18 use registry-state assertions instead of `assert_no_downstream_work` (they're about boot-ordering observability, not bind denial). Scenario 14, 15, 16, 19, 20 assert positive state (1 row, 2 rows, all-string keys, idempotent classification, retry success respectively) instead of denial state. Scenario 17 asserts a `dispatch.dispatch/1` rejection through the read facade, not a bind denial.
 
 ### 6.4 What this invariant prevents
 
 If a future contributor:
 - Reorders gates 1–4 in the facade → scenarios 1, 5 likely fail (cap denial returns wrong shape OR adapter I/O fires when it shouldn't).
+- Moves `lookup_adapter` BEFORE Gate 1 → scenario 0 fails (no-cap caller can enumerate adapter IDs).
 - Re-introduces a forgeable trust-transfer flag → scenario 7 fails.
+- Exposes a public `claim_nonce` that doesn't enforce gates → scenario 10b fails (caller missing cap 2 obtains a nonce).
 - Forgets the FacadeNonceTable expiry check → scenario 9 fails.
 - Removes the persist-first ordering → scenario 11 may silently pass (depends on which path was broken) BUT scenario 12 fails (compensating delete + row state).
 - Reverts AdapterInstall to fire unconditionally on AdapterRegistry insert → scenario 13 fails (workers spawn before binding registered).
 - Returns `:ok` instead of `{:error, :worker_spawn_failed}` on spawn exhaustion → scenarios 12, 14 fail (state divergence).
 - Breaks workspace iso facade pre-check OR dispatch §5.6 → scenarios 3 or 4 fail respectively.
+- Regresses `BindingRow.row_id/3` to use the session-unscoped `binding_id` → scenario 15 fails (cross-session collision).
+- Reintroduces `String.to_atom` on JSON-decoded opts keys → scenario 16 fails (atom appearance in rehydrated keys).
+- Removes the read-side dispatch route for `list_bindings/2` → scenario 17 fails (unauthorized caller sees data).
+- Skips AdapterInstall's cap-subject registration step → scenario 18 fails (cap subject absent from registry).
+- Removes `BindingRow.insert/1`'s `unique_constraint/3` declarations → scenario 19 fails (insert raises instead of returning changeset).
+- Removes BootReconciler's bounded retry loop → scenario 20 fails (rows stuck un-reconciled when handler registers late).
 
 **The invariant test IS the gate.** Per `feedback_completion_requires_invariant_test`, "the test that would fail if the architectural goal is unmet — that's the gate". This test failing is structurally equivalent to "the audit's goal is unmet".
 
@@ -405,15 +477,15 @@ This audit produces **TWO PRs**:
   - `apps/ezagent_core/lib/ezagent/plugin.ex` — `publish_after_all_registered/2` (~30 LOC public API)
   - `apps/ezagent_core/lib/ezagent/plugin/registration_hooks.ex` — backing GenServer (~50 LOC)
   - `apps/ezagent_core/test/ezagent/plugin/registration_hooks_test.exs` — unit tests for the primitive (~80 LOC, ~5 scenarios)
-  - `apps/ezagent_domain_external_mirror/test/invariants/auth_model_invariant_test.exs` — the 14-scenario architectural gate (~400 LOC)
-  - `apps/ezagent_domain_external_mirror/test/support/auth_model_test_helpers.ex` — test ergonomics (~120 LOC)
+  - `apps/ezagent_domain_external_mirror/test/invariants/auth_model_invariant_test.exs` — the **22-scenario** (0, 1..10, 10b, 11..20) architectural gate (~600 LOC)
+  - `apps/ezagent_domain_external_mirror/test/support/auth_model_test_helpers.ex` — test ergonomics (~150 LOC)
 - Modifies:
   - `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/adapter_install.ex` — `maybe_install*/1` body becomes one call to `publish_after_all_registered/2`
-  - `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/adapter_registry.ex` — add `subscribe_register/2` callback
-  - `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/binding_registry.ex` — add `subscribe_register/2` callback
-  - `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror.ex` — add `check_workspace_iso/2` gate 3 facade pre-check (§2 table)
-  - `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/facade_nonce_table.ex` — mark `claim_nonce/5` ttl param `@doc false` per §3.3 (no other change)
-- Net LOC: ~+650 production / +100 test refactor (the existing 8 r3 nonce tests + 5 r5 atomicity tests merge into the 14-scenario invariant suite where overlap exists)
+  - `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/adapter_registry.ex` — call `RegistrationHooks.notify_subscribers/2` from successful-insert path
+  - `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/binding_registry.ex` — call `RegistrationHooks.notify_subscribers/2` from successful-insert path
+  - `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror.ex` — reorder gates per §2.1 (Gate 1 BEFORE Gate 0 lookup_adapter) + add `check_workspace_iso/2` gate 3 facade pre-check + thin `bind/5` body since `claim_nonce` now enforces gates
+  - `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/facade_nonce_table.ex` — **structural rework per codex r1 audit-SPEC CRIT-1**: change ETS to `:private`; `claim_nonce/4` (public, 4-ary) takes `caller_ctx + adapter_module + target_id` and internally enforces Gates 1+2+3+4 before claiming; `@doc false` 5-ary form keeps the `ttl_ms` override for the invariant test
+- Net LOC: ~+850 production+test (the existing 8 r3 nonce tests + 5 r5 atomicity tests merge into the 21-scenario invariant suite where overlap exists)
 - Title: `feat(external-mirror): facade auth-model audit — primitive + invariant test`
 - Codex: `/codex:adversarial-review --background`. Up to r2 if needed. r3+ escalates to Allen.
 - Merge: `gh pr merge --admin --squash --delete-branch` after clean

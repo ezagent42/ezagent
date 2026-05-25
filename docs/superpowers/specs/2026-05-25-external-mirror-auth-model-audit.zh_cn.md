@@ -60,10 +60,25 @@ PR #317 实现了父 SPEC §4.2 / §8.2 r6 定义的 `Ezagent.ExternalMirror.bin
 
 | # | Gate | enforce 在哪 | 成本 | 失败形状 | 触发缺口的 findings |
 |---|------|-------------|------|---------|------------------|
+| **0** | **Adapter lookup** — `adapter_id` 在 `AdapterRegistry` 解析 | Facade (`lookup_adapter/1`) 在 Gate 1 **之后** (按 codex r1 audit-SPEC HIGH-2) | O(1) ETS lookup | `{:error, :unknown_adapter}` | codex r1 audit-SPEC HIGH-2 — 修前在 Gate 1 之前跑 → 无 cap 的 caller 可探测枚举 adapter IDs |
 | 1 | **Cap 1** — caller 持有 `{kind: :session, behavior: Ezagent.Behavior.ExternalMirror, instance: <session>, workspace_uri: <ws>}` | facade INLINE (`check_session_bind_cap/2`) + Dispatch §5.5 (纵深) | O(caps) MapSet 扫描；亚 µs | `{:error, :unauthorized}` | r4 MED — 原来在 Check 3 之后 → 无 session cap 的 caller 触发 adapter I/O |
 | 2 | **Cap 2** — caller 持有 `{kind: :session, behavior: <adapter.cap_subject.behavior_module>, instance: <session>, workspace_uri: <ws>}` | facade Check 2 (`check_adapter_allow_cap/3`) + Dispatch §5.5 (自动推导，因为 adapter 的 per-session allow cap 在 AdapterInstall 时注册为 Session 上的 Behavior) | O(caps) MapSet 扫描；亚 µs | `{:error, :adapter_not_authorized}` | r2 HIGH-3 — 从未注册过，因为 Application.start 在 plugin boot 前跑 |
 | 3 | **Workspace 隔离预检** — caller 的 workspace == session 的 workspace | facade `check_workspace_iso/2` (本审计新增) + Dispatch §5.6 (纵深) | O(1) URI 比较 | `{:error, :cross_workspace_denied}` | NEW (Q4 — facade 预检避免在跨 workspace target 上浪费 Check 4 的 adapter I/O) |
 | 4 | **`target_ownership_check`** — adapter 侧 I/O 验证 caller 在该 adapter 的外部表面拥有 `target_id` | facade Task 带 5s 超时 (`run_target_ownership_check/3`) | bounded 5s adapter I/O | `{:error, {:target_ownership_denied, reason}}` / `{:error, :target_check_timeout}` / `{:error, {:target_check_crashed, reason}}` | r4 MED 顺序 (必须最后跑); r4 HIGH-1 原本在 dispatch 内部 (死锁) |
+
+**代码中的规范序列 (按 `Ezagent.ExternalMirror.bind/5`):**
+
+```elixir
+with :ok <- check_session_bind_cap(ctx, session_uri),         # Gate 1 — 无 adapter 信息
+     {:ok, adapter_module} <- lookup_adapter(adapter_id),     # Gate 0 — 只在 caller 证明通用访问后才查
+     :ok <- check_adapter_allow_cap(ctx, session_uri, adapter_module),  # Gate 2
+     :ok <- check_workspace_iso(ctx, session_uri),            # Gate 3
+     :ok <- run_target_ownership_check(adapter_module, ctx.caller, target_id) do  # Gate 4
+  claim_nonce_and_dispatch(...)
+end
+```
+
+Gate 1 先于 Gate 0 关上 adapter 枚举泄漏: 无 session bind cap 的 caller 对任意 adapter_id (真实、假、被探测的) 都看到 `{:error, :unauthorized}` — 他们无法区分 "adapter 不存在" 与 "我对此 session 无 ExternalMirror 授权"。探测 adapter ID 的攻击者无论输入都得到同一种错误形状。
 
 ### 2.2 为什么这个精确顺序
 
@@ -115,38 +130,66 @@ Gate 4 **在 dispatch 侧无纵深防御** — 没有 "在 action body 里重跑
 
 ### 3.3 FacadeNonceTable pattern — 规范化
 
-PR #317 (commit `4a1637d8`) 中的修复引入了 `Ezagent.ExternalMirror.FacadeNonceTable`。本审计把它规范化为 facade 与 action body 之间的 **唯一** 信任传递原语。
+PR #317 (commit `4a1637d8`) 中的修复引入了 `Ezagent.ExternalMirror.FacadeNonceTable`。本审计把它规范化为 facade 与 action body 之间的 **唯一** 信任传递原语 — 同时关上 codex r1 audit-SPEC CRIT-1 在审计前形状上留下的伪造向量。
 
-**性质 (契约):**
+**修正后的信任传递模型 (codex r1 audit-SPEC CRIT-1 修复):**
 
-1. **`:protected, :named_table` ETS，GenServer 拥有。** 只有 FacadeNonceTable GenServer 能 `:ets.insert/2`。任何 VM 内 caller 能 `:ets.lookup/2` (没关系 — lookup 返回存的元组但 consume 要走 GenServer 实现原子 delete-on-read)。靠直接 ETS 写来伪造要求 elevation 越过 BEAM 的 ETS 访问模型 — 超出应用层 auth 范围 (能写到外部 pid 拥有的 `:protected` 表的进程已经破坏了其他所有安全边界)。
+审计前的形状把 `FacadeNonceTable.claim_nonce/4` 暴露为可自由调用的公共函数。**那本身就是 bypass** — 任何只持 session bind cap 的 VM 内 caller 都可以直接调 `claim_nonce` 为任意 `(session, adapter, target, caller)` 元组铸一个 nonce，然后直接 dispatch `external_mirror.bind` 带那个 nonce，跳过 gates 2 与 4。
 
-2. **来自 `:crypto.strong_rand_bytes/1` 的 32 字节 nonce。** 256 bit 熵。在单次 bind 窗口内 (~20ms 典型，5s 上限) 猜测不可行。
+**结构性修复:** `claim_nonce/5` 不再是 "可自由调用的 nonce 铸造器"。它**就是 gate enforce 操作**。其契约:
 
-3. **SPEC-pinned 5 秒 TTL。** 不按部署可配 (按 `feedback_let_it_crash_no_workarounds` — 配置开关本身就是 workaround；需要不同 TTL 的部署在 dispatch 延迟上有结构性问题，应当被 SPEC 修复)。5s 上限是 p99 dispatch 延迟 (~20ms slice 变更 + Kind.spawn) 的 250×，给慢 CI / debug 构建 / 竞争风暴留出余量，同时让被偷 nonce 的利用窗口可忽略。**只允许测试覆盖**: 私有 `claim_nonce/5` ttl 参数 (标 `@doc false`) 让 nonce 过期 invariant 测试能毫秒级跑完; 生产 caller 严禁传它。
+```elixir
+@spec claim_nonce(
+        URI.t(),                # session_uri
+        Ezagent.ExternalMirror.caller_ctx(),  # caller ctx (caps + caller_uri)
+        adapter_module :: module(),
+        target_id :: term()
+      ) :: {:ok, binary()} | {:error, term()}
+```
 
-4. **绑定到精确元组 `(session_uri, adapter_id, target_id, caller_uri, expires_at)`。** consume 验证四个 URI/term 相等性 + 过期。任何失配 → `:error`。
+`claim_nonce` 内部为提供的 `(session, caller_ctx, adapter, target)` 元组重跑 Gates 1、2、3 **以及** 4。任何 gate 失败，返回 gate 的错误形状 (`:unauthorized` / `:adapter_not_authorized` / `:cross_workspace_denied` / `{:target_ownership_denied, _}` / `:target_check_timeout` / 等)。如果**所有** gate 通过，它 claim 并返回 nonce。
 
-5. **靠单次 GenServer call 原子 consume。** `consume_nonce/2` 在一个 `handle_call` 内读取 + 验证 + 删除。两个并发 consume 同一 nonce: 恰好一个 `:ok`，另一个 `:error` (call 内 read-then-delete 由 BEAM 单进程串行化保证原子)。
+**facade `Ezagent.ExternalMirror.bind/5` 变为薄包装** 调用 `claim_nonce` (它 enforce 所有 gate) 然后带 nonce dispatch。直接调 `claim_nonce` 的 VM 内 caller **必须满足同样的 gate** — 他们只在本来会从 facade 拿到 nonce 的情况下才拿到 nonce。伪造向量结构上关闭，因为通向合法 nonce 的路径都过 gate。
 
-6. **周期扫描** (30s 间隔) 删除过期行使表不能无限增长。扫描用 `:ets.select_delete/2` (每行原子)。
+action body 的 `consume_nonce/2` 然后**只关于单次使用语义 + 重放保护** — 不是唯一授权 gate。按定义 gate 已跑过 (表里有 nonce 意味着 gate 通过)。
 
-7. **失败形状:** 缺 nonce、过期 nonce、元组失配、replay (第二次 consume) — **四种都拒为 `{:error, :bind_must_go_through_facade}`**。action body 原样传播。caller 对任何伪造尝试都看到同一个 atom — 不泄露具体绊到哪个检查的信息 (探测不同伪造向量的攻击者不应得到提示)。
+**性质 (修正后契约):**
 
-### 3.4 伪造分析 — 攻击者能与不能
+1. **`:private, :named_table` ETS，GenServer 拥有。** 按 codex r1 audit-SPEC CRIT-1 第二个子 finding: `:protected` 世界可读，让另一个 VM 内进程能枚举活 nonce 然后 (a) 偷它们直接 dispatch (盗 nonce 伪造) 或 (b) 通过假直接调用 consume-删除来 DoS 合法 facade caller。`:private` 语义: 只有 owner pid (FacadeNonceTable GenServer) 能读**或**写表。所有读走 `GenServer.call` (已经如此 — `consume_nonce` 是 `handle_call`)。外部枚举结构上不可能。
+
+2. **`claim_nonce/4` 内部 enforce 所有 4 个 gate。** 见上面结构性修复。公共 API；安全因为 enforcement 在内部跑。
+
+3. **来自 `:crypto.strong_rand_bytes/1` 的 32 字节 nonce。** 256 bit 熵。在单次 bind 窗口内 (~20ms 典型, 5s 上限) 猜测不可行。(猜测伪造理论上仍开但计算不可行; CRIT-1 修复关上现实向量。)
+
+4. **SPEC-pinned 5 秒 TTL。** 不按部署可配 (按 `feedback_let_it_crash_no_workarounds`)。5s 上限是 p99 dispatch 延迟 (~20ms slice 变更 + Kind.spawn) 的 250×。**仅测试覆盖通过 `@doc false` 5-arity 形式** 显式 `ttl_ms` 参数允许，使 nonce 过期 invariant 测试能毫秒级跑完; 生产 caller 必须用 4-arity 形式。
+
+5. **绑定到精确元组 `(session_uri, adapter_id, target_id, caller_uri, expires_at)`。** consume 验证四个 URI/term 相等性 + 过期。任何失配 → `:error` (action body 返回 `:bind_must_go_through_facade`)。
+
+6. **靠单次 GenServer call 原子 consume。** `consume_nonce/2` 在一个 `handle_call` 内读取 + 验证 + 删除。两个并发 consume 同一 nonce: 恰好一个 `:ok`，另一个 `:error`。
+
+7. **周期扫描** (30s 间隔) 删除过期行使表不能无限增长。扫描用 `:ets.select_delete/2` (每行原子)。
+
+8. **`consume_nonce` 失败形状:** 缺 / 过期 / 元组失配 / replay — **四种在 action body 都拒为 `{:error, :bind_must_go_through_facade}`**。action body 原样传播。不泄露具体绊到哪个检查。
+
+### 3.4 伪造分析 — 攻击者能与不能 (修正)
 
 | 攻击 | 需要什么 | 为什么失败 |
 |------|---------|----------|
+| 直接调 `claim_nonce` 为 caller 不拥有的 target 铸 nonce | 在 `claim_nonce` 内通过 Gates 1+2+3+4 | `claim_nonce` 内部 enforce 所有 4 个 gate — gate 不过不返回 nonce |
+| 读 ETS 表偷活 nonce | 对外部 pid 拥有的 `:private` ETS 表的读访问 | 不可能 — `:private` 拒绝所有非 owner 读 |
+| 在合法 caller 之前 race consume nonce | 绕过 GenServer 串行化 | 单 GenServer call 确保每个 nonce 恰一次 `:ok` |
 | 猜中合法 nonce | 2^256 次尝试 | 计算上不可行 |
-| 直接往 ETS 写伪造 nonce | elevation 到 owner pid 或 `:public` 访问 | 表是 `:protected`；只有 FacadeNonceTable GenServer 能写 |
+| 直接往 ETS 写伪造 nonce | elevation 到 owner pid | 不可能 — `:private` 拒绝非 owner 写 |
 | Replay 捕获的 nonce | 同 nonce 被消费两次 | 第一次 consume 删除；第二次返回 `:error` |
-| 把一个 nonce 重用给不同 target | nonce 绑定到原元组 | consume 验证元组相等；失配返回 `:error` |
+| 把一个 nonce 重用给不同 `(session, adapter, target)` | nonce 绑定到原元组 | consume 验证元组相等；失配返回 `:error` |
 | 等过 TTL 再 consume | consume 中的 `expires_at` 检查 | `now > expires_at` 返回 `:error`；扫描也会删 |
-| 并发两次 consume 同 nonce | 两个并发进程 | 单 GenServer 串行化；恰一个 `:ok`，另一个 `:error` |
+| 直接 dispatch `external_mirror.bind` 带随机 nonce | 表里有 nonce | 随机 nonce → 表无行 → consume 返回 `:error` |
+| 直接 dispatch 完全不带 nonce | `args[:_facade_nonce]` 缺失 | action body 的 `nonce_consume/2` 短路为 `:error` |
+| 完全绕开 facade 直接 dispatch | 过 dispatch step 5.5 (Cap 1) 且从表 consume 合法 nonce | Cap 1 是 dispatch 侧纵深防御; 而 nonce 只能由通过 Gates 1+2+3+4 的 `claim_nonce` 调用铸出 — 所以连 "跳过 facade" 路径也是被 gate 的。action body 只有在所有 4 个 gate 在上游某处通过时才看到合法 nonce。 |
 | 拦截 facade-to-dispatch 网络伪造 | 无网络 — facade 在进程内 | 全在 BEAM 内，无线协议可拦 |
 | BEAM 内存 dump → 读活 nonce | 跑 BEAM 主机上的 root | 超出应用层 auth 范围 |
 
-唯一已知弱点 — BEAM 主机上的 root — 明确出于范围。威胁模型是 **持部分 cap 的 VM 内 caller**，不是 **主机 root**。这与父 SPEC §4.2 隐含假设的威胁模型一致。
+威胁模型是 **持部分 cap 的 VM 内 caller**，不是主机 root。修正后的 `claim_nonce` (enforce gate) + `:private` ETS (无枚举/DoS)，每条 VM 内伪造路径都结构性关闭。剩余 "BEAM 内存 dump" 攻击明确出范围，与父 SPEC 隐含假设威胁模型不变。
 
 ### 3.5 为什么不把 `TrustTransfer` 抽到 core 原语
 
@@ -266,16 +309,20 @@ Ezagent.Plugin.publish_after_all_registered(
 )
 ```
 
-### 5.3 契约
+### 5.3 契约 (按 codex r1 audit-SPEC HIGH-3 修正)
 
-1. **`registries`** — 非空的 `{registry_module, key}` 列表。每个 `registry_module` 必须实现两个 callback:
-   - `subscribe_register/2 :: (key, ({:ok, value} | :error -> :ok)) -> :ok` — 订阅在 `register/n` (任意 arity) 为 `key` 插入新条目时触发。
+1. **`registries`** — 非空的 `{registry_module, key}` 列表。每个 `registry_module` 必须实现原语会查询的**一个** callback:
    - `lookup/1 :: (key) -> {:ok, value} | :error` — 同步检查 `key` 是否已有条目。
-   - 这些 callback 是 `publish_after_all_registered` 调用的契约；registry 模块拥有实现细节。
 
-2. **`hook_fn`** — 零参函数，所有 `registries` 对其 key 都有条目时**触发一次**。幂等: 如果调用时已经全部注册，立即同步触发；如果未，注册一次性 hook，最后一个落下时触发。
+   registry 模块**还**通过从自己的成功 insert 路径调用
+   `Ezagent.Plugin.RegistrationHooks.notify_subscribers(__MODULE__, key)` 推动原语前进。这**不**是原语要求的 callback (无 `@callback` 契约); 是 registry 模块通过把调用加到 `:ets.insert_new/2` 旁边自愿接入的集成。不调 `notify_subscribers` 的 registry 对其插入根本不触发 hook — `publish_after_all_registered` 对该 registry 降级为 "调用时 all-already-registered 检查" 语义。
 
-3. **跨重新调用幂等:** 同一 `(registries, hook_fn)` 调用两次，`hook_fn` 在 "全部到位" 转换中最多触发一次。当前 ExternalMirror 消费者模式 (maybe_install 触发其 body 幂等的 `install/1`) 优雅处理罕见的二次触发；未来消费者应写幂等的 hook。
+2. **`hook_fn`** — 零参函数。行为:
+   - 如果所有 `registries` 调用时已解析 → 在 `publish_after_all_registered` 返回前**同步内部触发**。
+   - 否则 → hook 用新内部 hook_id 注册到 `RegistrationHooks`。当 `notify_subscribers/2` 调用观察到所有 registry 现在都解析时触发。
+   - **每次调用 `publish_after_all_registered/2` 恰好触发一次**，**不**是每个 `(registries, hook_fn)` 元组一次。原语无法比较匿名函数相等性；每次调用注册由不透明 hook_id 跟踪的独立 hook。**Hook 作者必须写幂等的 hook body** 使罕见的第二次调用 (如热重载时 domain 重跑注册) 不会双执行副作用。
+
+3. **`hook_fn` 异常被隔离。** 如果用户提供的函数 raise，`RegistrationHooks` 通过 try/rescue 捕获，以 `:error` 日志，继续。buggy hook **不**会 crash GenServer 或丢失其他待触发 hook。
 
 4. **热卸载 (V2):** 当 registry 条目被**移除** (如 `__delete__/1`)，原语不触发任何 "uninstall" hook。按父 SPEC §10，热卸载是 V2 scope。
 
@@ -308,30 +355,40 @@ PR-EM-AUDIT (实现 PR) 把 `Ezagent.ExternalMirror.AdapterInstall.maybe_install
 
 **位置:** `apps/ezagent_domain_external_mirror/test/invariants/auth_model_invariant_test.exs`
 
-**形状:** 单一测试**文件** (不是单一测试)。14 个场景 (按 §6.2 编号 `1..14`)，每个有:
+**形状:** 单一测试**文件** (不是单一测试)。22 个场景 (按 §6.2 编号 `0`, `1..10`, `10b`, `11..20`)，每个有:
 
 - `@moduledoc` 头引用其回归保护的 PR #317 codex finding 来源 (如 `# scenario 7 — regression for PR #317 codex r3 CRIT: _facade_checks_ok forgery`)。
 - 聚焦的 `test` 块。
 - 断言同时证明 (a) 失败形状恰好是规格化的，**且** (b) 没有下游工作发生 (无 adapter I/O、无 DB 行写入、无 worker spawn、无 slice 变更)。
 
-### 6.2 14 个场景
+### 6.2 22 个场景
+
+按 codex r1 audit-SPEC HIGH-4 从 14 扩到 22: 原 14 漏盖 PR #317 12 finding 中 6 个的回归 (r1 row 冲突、r1 atom DoS、r2 HIGH-2 读侧泄漏、r2 HIGH-3 cap subject 可见性、r3 HIGH-2 unique-conflict、r4 HIGH-1 BootReconciler retry)。场景 15-20 加直接回归保护。
 
 | # | 名称 | 测试 | 回归保护 |
 |---|------|------|---------|
+| 0 | Adapter 枚举拒绝 | 无 cap caller 调 `bind(_, "real_adapter_id", ...)` **和** `bind(_, "nonexistent_id", ...)` 得到**同样**的 `{:error, :unauthorized}` 响应 — 无法区分 | codex r1 audit-SPEC HIGH-2 |
 | 1 | Cap 1 拒绝 (无 session :bind cap) | 返回 `{:error, :unauthorized}`；mock adapter 的 `target_ownership_check/2` 调用计数 == 0；DB 无行 | PR #317 r4 MED |
-| 2 | Cap 2 拒绝 (有 session cap，无 per-adapter cap) | 返回 `{:error, :adapter_not_authorized}`；mock adapter 调用计数 == 0；DB 无行 | PR #317 r2 HIGH-3 |
+| 2 | Cap 2 拒绝 (有 session cap，无 per-adapter cap) | 返回 `{:error, :adapter_not_authorized}`；mock adapter 调用计数 == 0；DB 无行 | PR #317 r2 HIGH-3 (enforce) |
 | 3 | Workspace 隔离拒绝 (facade 预检，gate 3) | 返回 `{:error, :cross_workspace_denied}`；mock adapter 调用计数 == 0；DB 无行 | NEW (Q4 = B) |
 | 4 | Workspace 隔离拒绝 (dispatch §5.6，绕 facade) | 直接 `Invocation.dispatch/1` 跨 workspace caller 仍返回 `{:error, :cross_workspace_denied}` | 纵深防御 |
 | 5 | `target_ownership_check` 拒绝 | 返回 `{:error, {:target_ownership_denied, :not_a_member}}`；DB 无行；registry 无 worker | 父 SPEC §8.2 r6 (facade-vs-action 划分) |
 | 6 | `target_ownership_check` 超时 | Mock adapter sleep > 5s (测试用降低的超时)；返回 `{:error, :target_check_timeout}`；无行；无 worker | 父 SPEC r4 MED |
 | 7 | Nonce 伪造 (args 中随机 nonce) | 直接 dispatch 带 `args[:_facade_nonce] = <random 32 bytes>` 返回 `{:error, :bind_must_go_through_facade}`；无行；无 worker；无 slice 变更 | PR #317 r3 CRIT |
 | 8 | Nonce replay (同 nonce 消费两次) | 第一次 consume 成功；第二次 consume 从 FacadeNonceTable 返回 `:error` → action body 返回 `{:error, :bind_must_go_through_facade}` | PR #317 r3 CRIT |
-| 9 | Nonce 过期 (sleep 过 TTL) | 用很短 TTL claim nonce；sleep 过期；consume 返回 `:error`；action body 返回 `{:error, :bind_must_go_through_facade}` | PR #317 r3 CRIT |
+| 9 | Nonce 过期 (sleep 过 TTL) | 用很短 TTL claim nonce (通过 `@doc false` 5-arity 形式)；sleep 过期；consume 返回 `:error`；action body 返回 `{:error, :bind_must_go_through_facade}` | PR #317 r3 CRIT |
 | 10 | Nonce 元组失配 (不同 session/adapter/target) | 为元组 A claim；用元组 B consume → `:error`；action body 返回 `{:error, :bind_must_go_through_facade}` | PR #317 r3 CRIT |
+| 10b | **直接 claim_nonce 绕过** (NEW 按 codex r1 audit-SPEC CRIT-1) | 缺 cap 2 的 VM 内 caller 用自己的 ctx 直接调 `FacadeNonceTable.claim_nonce/4` — claim_nonce 内部失败 Gate 2 返回 `{:error, :adapter_not_authorized}`；无 nonce 返回；无行；无 worker | codex r1 audit-SPEC CRIT-1 |
 | 11 | DB insert NOT NULL 违反 | 强制 `BindingRow.insert/1` 以非 unique changeset 错误失败；action body 返回 `{:error, {:db_insert_failed, _}}`；**不**是幂等成功；无 worker spawn | PR #317 r5 HIGH-B |
 | 12 | Worker spawn 在 row 持久化**之后**失败 | 在 worker URI 下的 `KindRegistry` 预注册外部 pid；bind 触发补偿删除；行移除；返回错误 `{:error, :worker_spawn_failed}` | PR #317 r4 HIGH-2 + r5 HIGH-B |
 | 13 | AdapterInstall 顺序 (registry 任意顺序落) | register adapter alone → 无 worker spawn (BindingRegistry 空)；register binding → install 触发；worker spawn。再对称: binding-first → adapter-second → install 触发。 | PR #317 r5 HIGH-A |
 | 14 | Happy path (所有 gate 通过) | 4 个 gate 全通过；DB 恰好 1 行；`KindRegistry` 恰好 1 worker；slice 恰好 1 binding；nonce 已 consume (FacadeNonceTable 无残留) | Sanity gate |
+| **15** | **跨 session row id 冲突** (NEW 按 codex r1 audit-SPEC HIGH-4) | 两个 session bind 同 `(adapter_id, target_id)` → 两个不同 `row_id` 哈希的 DB 行；从 session A unbind 不动 session B 的行 + worker | PR #317 r1 CRIT |
+| **16** | **opts keys 的 Atom-DoS** (NEW 按 codex r1 audit-SPEC HIGH-4) | bind 带 `opts: %{"<随机字符串 key>" => "v"}`；通过 DynamicSupervisor.terminate_child + SpawnRegistry.spawn 重启 Session；rehydrate 的 opts keys **全部**是字符串 (任何 atom 出现证明回归) | PR #317 r1 HIGH |
+| **17** | **读侧 `list_bindings/2` unauthorized** (NEW 按 codex r1 audit-SPEC HIGH-4) | 无 `:list_bindings` cap 的 caller 调 `Ezagent.ExternalMirror.list_bindings/2` → 返回 `{:error, :unauthorized}` (dispatch §5.5 拒)；无 binding 元组泄漏 | PR #317 r2 HIGH-2 + r3 HIGH-1 |
+| **18** | **Cap subject CapabilityRegistry 可见性** (NEW 按 codex r1 audit-SPEC HIGH-4) | AdapterInstall 为 adapter "test_em_a" 触发后, `CapabilityRegistry.list_subjects(Ezagent.Entity.Session)` 包含 `(Session, allow_test_em_a, _)` 条目 — admin 可通过正常 grant 路径授予 per-adapter cap | PR #317 r2 HIGH-3 |
+| **19** | **Unique-conflict 返回 changeset 不 raise** (NEW 按 codex r1 audit-SPEC HIGH-4) | 为 `(S, A, T)` insert 一个 `BindingRow`；为同 `(S, A, T)` 元组 insert **第二**个 — `BindingRow.insert/1` 返回 `{:error, %Ecto.Changeset{} = cs}` errors keyword 含 `constraint: :unique` (**不**是 raised `Ecto.ConstraintError`); `do_bind` 包装分类为 `{:ok, :idempotent_unique_conflict}` (按 §4.2) | PR #317 r3 HIGH-2 |
+| **20** | **BootReconciler retry 在 session spawn handler 缺失下存活** (NEW 按 codex r1 audit-SPEC HIGH-4) | 在 `:ezagent_domain_chat` 注册 `session://` spawn handler **之前** 有 `external_mirror_bindings` 行的状态下 boot; BootReconciler 初始 pass 对每行返回 `{:retry, _}`; 之后 (测试 setup 中) chat 注册其 handler; reconciler 下次 retry pass 成功; 所有行在 bounded retry 预算内被对账 | PR #317 r4 HIGH-1 |
 
 ### 6.3 测试在返回值之外断言什么
 
@@ -357,18 +414,26 @@ defp assert_no_downstream_work(session_uri, adapter_id, target_id, mock_adapter)
 end
 ```
 
-场景 5+6 豁免断言 #1 (adapter 调用**必须**触发以使 gate 4 拒绝)。场景 7-10 豁免 #1 (gate 4 已在 facade 的 "claim" 路径通过；拒绝在 action body 的 consume)。场景 11 豁免 #3 (insert 在 spawn 前失败)。场景 12 预期 #2 在测试中从 "行存在" 翻到 "行不存在" 当补偿运行时。
+场景 5+6 豁免断言 #1 (adapter 调用**必须**触发以使 gate 4 拒绝)。场景 7-10 豁免 #1 (gate 4 已在 facade 的 "claim" 路径通过；拒绝在 action body 的 consume)。场景 10b 仅在 Gate 2 在 claim_nonce 内失败时豁免 #1 (adapter 调用本来还没到)。场景 11 豁免 #3 (insert 在 spawn 前失败)。场景 12 预期 #2 在测试中从 "行存在" 翻到 "行不存在" 当补偿运行时。场景 13、18 用 registry 状态断言代替 `assert_no_downstream_work` (它们是关于 boot 顺序可观察性, 不是 bind 拒绝)。场景 14、15、16、19、20 断言正向状态 (分别 1 行、2 行、全字符串 keys、幂等分类、retry 成功) 而非拒绝状态。场景 17 断言通过读 facade 的 `dispatch.dispatch/1` 拒绝, 不是 bind 拒绝。
 
 ### 6.4 此 invariant 防止什么
 
 如果未来贡献者:
 - 重排 facade 中 gate 1-4 → 场景 1、5 可能失败 (cap 拒绝返回错形状或 adapter I/O 在不该触发时触发)。
+- 把 `lookup_adapter` 移到 Gate 1 之前 → 场景 0 失败 (无 cap caller 能枚举 adapter ID)。
 - 重新引入可伪造的信任传递 flag → 场景 7 失败。
+- 暴露不 enforce gate 的公共 `claim_nonce` → 场景 10b 失败 (缺 cap 2 的 caller 拿到 nonce)。
 - 忘记 FacadeNonceTable 过期检查 → 场景 9 失败。
 - 移除 persist-first 顺序 → 场景 11 可能 silently 通过 (取决于哪条路径被破坏) **但** 场景 12 失败 (补偿删除 + row 状态)。
 - 把 AdapterInstall 回退到 AdapterRegistry insert 无条件触发 → 场景 13 失败 (worker 在 binding 注册前 spawn)。
 - spawn 耗尽时返回 `:ok` 而非 `{:error, :worker_spawn_failed}` → 场景 12、14 失败 (状态分歧)。
 - 破坏 workspace 隔离 facade 预检**或** dispatch §5.6 → 场景 3 或 4 分别失败。
+- 把 `BindingRow.row_id/3` 回退到用 session-unscoped `binding_id` → 场景 15 失败 (跨 session 冲突)。
+- 在 JSON 解码的 opts keys 上重新引入 `String.to_atom` → 场景 16 失败 (rehydrate 的 keys 出现 atom)。
+- 移除 `list_bindings/2` 的读侧 dispatch 路由 → 场景 17 失败 (unauthorized caller 看到数据)。
+- 跳过 AdapterInstall 的 cap-subject 注册步 → 场景 18 失败 (cap subject 不在 registry)。
+- 移除 `BindingRow.insert/1` 的 `unique_constraint/3` 声明 → 场景 19 失败 (insert raise 而非返 changeset)。
+- 移除 BootReconciler 的 bounded retry 循环 → 场景 20 失败 (handler 后注册时行卡住未对账)。
 
 **invariant 测试就是 gate。** 按 `feedback_completion_requires_invariant_test`: "在架构目标未达成时会失败的测试 — 那就是 gate"。此测试失败结构上等价于 "审计目标未达成"。
 
@@ -405,15 +470,15 @@ end
   - `apps/ezagent_core/lib/ezagent/plugin.ex` — `publish_after_all_registered/2` (~30 LOC 公开 API)
   - `apps/ezagent_core/lib/ezagent/plugin/registration_hooks.ex` — 背后的 GenServer (~50 LOC)
   - `apps/ezagent_core/test/ezagent/plugin/registration_hooks_test.exs` — 原语的单元测试 (~80 LOC, ~5 场景)
-  - `apps/ezagent_domain_external_mirror/test/invariants/auth_model_invariant_test.exs` — 14 场景架构 gate (~400 LOC)
-  - `apps/ezagent_domain_external_mirror/test/support/auth_model_test_helpers.ex` — 测试人体工学 (~120 LOC)
+  - `apps/ezagent_domain_external_mirror/test/invariants/auth_model_invariant_test.exs` — **22 场景** (0, 1..10, 10b, 11..20) 架构 gate (~600 LOC)
+  - `apps/ezagent_domain_external_mirror/test/support/auth_model_test_helpers.ex` — 测试人体工学 (~150 LOC)
 - 改:
   - `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/adapter_install.ex` — `maybe_install*/1` body 变为对 `publish_after_all_registered/2` 的一次调用
-  - `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/adapter_registry.ex` — 加 `subscribe_register/2` callback
-  - `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/binding_registry.ex` — 加 `subscribe_register/2` callback
-  - `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror.ex` — 加 `check_workspace_iso/2` gate 3 facade 预检 (§2 表)
-  - `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/facade_nonce_table.ex` — 按 §3.3 标 `claim_nonce/5` ttl 参数 `@doc false` (无其他变更)
-- 净 LOC: ~+650 生产 / +100 测试重构 (已有 8 个 r3 nonce 测试 + 5 个 r5 原子性测试在重叠处并入 14 场景 invariant 套件)
+  - `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/adapter_registry.ex` — 从成功 insert 路径调 `RegistrationHooks.notify_subscribers/2`
+  - `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/binding_registry.ex` — 从成功 insert 路径调 `RegistrationHooks.notify_subscribers/2`
+  - `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror.ex` — 按 §2.1 重排 gate (Gate 1 在 Gate 0 lookup_adapter 之前) + 加 `check_workspace_iso/2` gate 3 facade 预检 + bind/5 body 变薄因为 claim_nonce 现在 enforce gate
+  - `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/facade_nonce_table.ex` — **按 codex r1 audit-SPEC CRIT-1 结构性返工**: ETS 改 `:private`; `claim_nonce/4` (公开, 4-ary) 取 `caller_ctx + adapter_module + target_id` 并内部 enforce Gates 1+2+3+4 后 claim; `@doc false` 5-ary 形式保留 `ttl_ms` override 供 invariant 测试
+- 净 LOC: ~+850 生产+测试 (已有 8 个 r3 nonce 测试 + 5 个 r5 原子性测试在重叠处并入 22 场景 invariant 套件)
 - 标题: `feat(external-mirror): facade auth-model audit — primitive + invariant test`
 - Codex: `/codex:adversarial-review --background`。如需可到 r2。r3+ 升级 Allen。
 - 合并: 通过后 `gh pr merge --admin --squash --delete-branch`
