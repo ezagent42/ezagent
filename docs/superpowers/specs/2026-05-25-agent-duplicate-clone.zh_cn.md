@@ -1,6 +1,6 @@
 # SPEC — Agent 复制/克隆原语 (Behavior.Agent `:duplicate`)
 
-**状态:** DRAFT rev 5 · 2026-05-25（codex r1 + r2 + r3 + r4 修复）
+**状态:** DRAFT rev 6 · 2026-05-25（codex r1 + r2 + r3 + r4 + r5 修复）
 **层级:** `apps/ezagent_domain_chat/`（新 `Behavior.Agent` + action）+ `apps/ezagent_core/`（新 `AgentOwnership` registry + Kind.Template snapshot callback 适配器 + BehaviorRegistry 插槽）+ `apps/ezagent_plugin_cc/`（cc snapshot+restore 实现）+ `apps/ezagent_domain_workspace/`（mix task 包装 + `:create_agent` 的 ownership-write）
 **触发:** Allen 2026-05-24（memory `feedback_agent_clone_not_via_template`）—— "agent 创建的 template 如果不走正常的 template 创建和 fork 流程，可能导致开发 drift，但如果走标准流程，又可能导致 Template Registry 里面大量临时创建后再也不用的 template"。Clone 必须作为 domain.agent primitive 存在，**绝不**走 Template Registry。
 **前置:** 同英文版。
@@ -13,15 +13,20 @@
 - HIGH: 不走 `Workspace.create_agent` —— 专用原语避免 template 残留 + adoption TOCTOU（§3.4）
 - MEDIUM: 新 `Kind.Template.snapshot_config_dir/2` callback —— plugin 拥有 quiesce + manifest（§3.6）
 
+**Rev 6 变更（codex r5 verdict needs-attention 3 HIGH → 已处理）:**
+- HIGH-1: 移除 §3.8 关于 "Kind.Server post-spawn auto-synthesizes grants" 的段落 —— 替换为显式说明该 auto-synthesis path **不**存在（codex r3 grep）+ Provisioning helper (§3.9) 是唯一接线方式.
+- HIGH-2: zh_CN §3.4 spawn 片段同步到 rev-5 设计 —— 现调 `Provisioning.provision_agent/3`（不再分别调 `AgentOwnership.record` + `grant_initial_caps_for_owner`）；zh §3.9 也同步含 `apply_grants_tracked` + `revoke_all`.
+- MEDIUM: Ecto timestamp 列统一为 `inserted_at`（裸 `timestamps()` 的 Ecto 默认）—— 之前 prose 用 `created_at` 与 migration macro 隐式的 `inserted_at` 不一致，所有 schema 引用更新.
+
 **Rev 5 变更（codex r4 verdict needs-attention → 已处理）:**
 - HIGH-1: `provision_agent/3` 现在跟踪每个已 apply 的 `{grantee, cap}`，later failure 时**反向**revoke **再** forget ownership（§3.9 重写）。Failure-injection 测试（§7 row 16a 新）断言 rollback 后 grantee 的 `Identity.list_caps` 无残留 cap.
 - HIGH-2: 移除所有 rev-3 残留 —— §3.4 `spawn_target_directly/5` 片段现调 `Provisioning.provision_agent/3`（不调 `grant_initial_caps_for_owner`）；§4.3 重写为一行指向 §3.9（不再有 "Kind.Server 自动合成" 说法）。SPEC 现有 ONE 权威 provisioning 路径.
-- HIGH-3: §6 迁移段现在**要求** `agent_ownership(agent_uri pk, owner_uri, created_at)` 的 Ecto migration；规定 deploy/boot 顺序（`Workspace.Store.boot_done?` → `AgentOwnership.boot_load/0` → 后续 EzagentCore.EtsOwner 完成 → 才开 dispatch）。§7 row 17 新：从 pre-rev-5 DB 开始的 upgrade 测试.
+- HIGH-3: §6 迁移段现在**要求** `agent_ownership(agent_uri pk, owner_uri, inserted_at)` 的 Ecto migration；规定 deploy/boot 顺序（`Workspace.Store.boot_done?` → `AgentOwnership.boot_load/0` → 后续 EzagentCore.EtsOwner 完成 → 才开 dispatch）。§7 row 17 新：从 pre-rev-5 DB 开始的 upgrade 测试.
 
 **Rev 4 变更（codex r3 verdict needs-attention → 已处理）:**
 - CRITICAL: rollback 现在**同步**等待 target Kind 进程死后**再**删 `Kind.Snapshot` 行。Rev-3 中 `Sandbox.:destroy` 的延迟 termination Task 可能在我们 delete 之**后**重写 snapshot. Rev 4 改顺序：先用 `DynamicSupervisor.terminate_child` + `Process.monitor` 同步等 `:DOWN`，**再**删 snapshot。Snapshot 删时进程已死，无 re-write 可能（§3.4.2 重写）。
 - HIGH: 新 `Ezagent.Agent.Provisioning.provision_agent/3` 模块（`apps/ezagent_domain_chat/lib/ezagent/agent/provisioning.ex`）供 `Behavior.Workspace.:create_agent` **和** `Behavior.Agent.:duplicate` 共用。步骤：(1) `AgentOwnership.record/2`，(2) `CapabilityRegistry.default_grants_from_data_owner/2` 对 Agent Kind 每个 Behavior → 通过 `Identity.grant_cap` apply，(3) (2) 失败回滚 (1)。关闭 codex r3 HIGH-2（避免"spawn lifecycle 自动合成"的假设 —— codex grep 证伪）。§3.9 新.
-- HIGH: `Ezagent.AgentOwnership` 现在是 **SQLite-backed ETS cache**（不是纯 ETS）。镜像 `Workspace.Store` 的 SQLite-backing 模式：SQLite 表 `agent_ownership(agent_uri pk, owner_uri, created_at)` 是 durable source of truth；ETS 是 boot-time-hydrated 读缓存。`record/2` 写两者（同步）。`forget/1` 删两者。Restart 测试（§7 row 15 新）创 agent、重启 runtime、验证 owner 仍解析+能 delegate `:duplicate`.
+- HIGH: `Ezagent.AgentOwnership` 现在是 **SQLite-backed ETS cache**（不是纯 ETS）。镜像 `Workspace.Store` 的 SQLite-backing 模式：SQLite 表 `agent_ownership(agent_uri pk, owner_uri, inserted_at)` 是 durable source of truth；ETS 是 boot-time-hydrated 读缓存。`record/2` 写两者（同步）。`forget/1` 删两者。Restart 测试（§7 row 15 新）创 agent、重启 runtime、验证 owner 仍解析+能 delegate `:duplicate`.
 
 **Rev 3 变更（codex r2 verdict needs-attention → 已处理）:**
 - CRITICAL: rollback 现在堵上 `:on_terminate` 持久化漏洞 —— 在 `Kind.terminate/1` 之**前**先 dispatch `Sandbox.:destroy`（清 slice + plugin 端清理）+ 删 `KindSnapshot` 行 + 撤销已 grant 的 caps。每个 post-spawn 步骤都加 failure-injection 测试（§3.4.2 + §7）。
@@ -176,11 +181,13 @@ defp spawn_target_directly(target_uri, source_meta, target_ws_uri, target_owner_
   with {:ok, :started, _pid}   <- spawn_atomic_fresh(target_uri),
        :ok                     <- WorkspaceRegistry.bind(target_uri, target_ws_uri),
        :ok                     <- AgentLineage.record(target_uri, target_owner_uri),
-       :ok                     <- AgentOwnership.record(target_uri, target_owner_uri),
        restore_result          <- Kind.Template.restore_or_noop(source_meta.template_class, target_uri, snapshot),
        {:ok, final_dir}        <- normalize_restore(restore_result),
        :ok                     <- dispatch_sandbox_write_path(target_uri, final_dir, source_meta.template_class),
-       :ok                     <- grant_initial_caps_for_owner(target_uri, target_owner_uri),
+       # rev 5 —— §3.9 Provisioning 是唯一 post-spawn ownership+caps 步骤
+       # （含 AgentOwnership.record + default-grants apply + tracked rollback）.
+       # Bootstrap-admin context: 因为 dispatch 时 :duplicate cap 已检 caller.
+       :ok                     <- Ezagent.Agent.Provisioning.provision_agent(target_uri, target_owner_uri, %{caller: bootstrap_granter(), caps: bootstrap_admin_caps()}),
        :ok                     <- start_pty_or_no_pty(target_uri, source_meta, target_ws_uri) do
     {:ok, %{agent_uri: target_uri}}
   else
@@ -188,6 +195,8 @@ defp spawn_target_directly(target_uri, source_meta, target_ws_uri, target_owner_
   end
 end
 ```
+
+注意 rev 5：`Provisioning.provision_agent/3` 是**唯一** post-spawn provisioning step（替代旧版本的 `AgentOwnership.record` + `grant_initial_caps_for_owner`两步）。`Provisioning` 内部做 ownership record + default-grants apply + 失败时跟踪式 revoke（详 §3.9 rev 5 实现）。
 
 #### 3.4.1 `spawn_atomic_fresh/1` —— 拒绝 adoption
 
@@ -305,7 +314,7 @@ mix ezagent.agent.set_owner <agent_uri> <user_uri>   # legacy agent 回填
 
 ### 3.8 `Ezagent.AgentOwnership` registry —— SQLite-backed ETS cache（codex r2 HIGH-2 + codex r3 HIGH-3 修复）
 
-**存储布局（rev 4）**：两层 —— SQLite 表 `agent_ownership(agent_uri pk, owner_uri, created_at)` 为 durable source of truth；ETS 表 `:ezagent_agent_ownership` 为 boot-time-hydrated 读缓存。Rev-3 是 ETS-only；codex r3 HIGH-3 指出 ETS 易失，重启后所有 agent 落到 `:no_owner`。镜像 `Workspace.Store` 的 SQLite-backing 模式。
+**存储布局（rev 4 / rev 6 schema fix）**：两层 —— SQLite 表 `agent_ownership(agent_uri pk, owner_uri, inserted_at)` 为 durable source of truth；ETS 表 `:ezagent_agent_ownership` 为 boot-time-hydrated 读缓存。Rev-3 是 ETS-only；codex r3 HIGH-3 指出 ETS 易失。镜像 `Workspace.Store` 的 SQLite-backing 模式。
 
 ```elixir
 defmodule Ezagent.AgentOwnership do
@@ -387,13 +396,47 @@ defmodule Ezagent.Agent.Provisioning do
     with :ok                 <- validate_owner_is_user(owner_user_uri),
          :ok                 <- Ezagent.AgentOwnership.record(agent_uri, owner_user_uri),
          {:ok, grants}        = {:ok, Ezagent.CapabilityRegistry.default_grants_from_data_owner(Ezagent.Entity.Agent, agent_uri)},
-         :ok                 <- apply_grants(grants, ctx) do
+         {:ok, _applied}     <- apply_grants_tracked(grants, ctx, []) do
       :ok
     else
+      # Rev 5 HIGH-1 修复 —— 跟踪式 revoke applied grants 后才 forget ownership.
+      {:error, {:grant_failed, _grantee, _cap, _reason, applied}} = err ->
+        revoke_all(applied, ctx)
+        _ = Ezagent.AgentOwnership.forget(agent_uri)
+        {:error, {:provisioning_failed, err}}
+
       {:error, reason} ->
         _ = Ezagent.AgentOwnership.forget(agent_uri)
         {:error, {:provisioning_failed, reason}}
     end
+  end
+
+  # 跟踪每个成功 apply 的 {grantee, cap}，later failure 时可反向 revoke.
+  defp apply_grants_tracked([], _ctx, applied), do: {:ok, applied}
+
+  defp apply_grants_tracked([{grantee_uri, cap} | rest], ctx, applied) do
+    target = URI.new!("#{URI.to_string(grantee_uri)}?action=identity_admin.grant_cap")
+    case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+           target: target, mode: :call, args: %{cap: cap},
+           ctx: %{caller: ctx.caller, caps: ctx.caps, reply: {:caller_inbox, self()}}
+         }) do
+      {:ok, _} ->
+        apply_grants_tracked(rest, ctx, [{grantee_uri, cap} | applied])
+      {:error, reason} ->
+        {:error, {:grant_failed, grantee_uri, cap, reason, applied}}
+    end
+  end
+
+  # 最大努力反向 revoke. IdentityAdmin 层幂等（revoke 不存在的 cap 是 no-op）.
+  defp revoke_all(applied, ctx) do
+    for {grantee_uri, cap} <- applied do
+      target = URI.new!("#{URI.to_string(grantee_uri)}?action=identity_admin.revoke_cap")
+      _ = Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+            target: target, mode: :call, args: %{cap: cap},
+            ctx: %{caller: ctx.caller, caps: ctx.caps, reply: {:caller_inbox, self()}}
+          })
+    end
+    :ok
   end
 end
 ```
@@ -561,7 +604,8 @@ end
 - **Rev 2**：1 CRITICAL（rollback durable 漏洞）+ 2 HIGH（data_owner 关闭 bilateral consent；snapshot optional callback 抛错）+ 1 MEDIUM（snapshot 不 point-in-time）. Rev 3 处理.
 - **Rev 3**：codex 返回 `needs-attention`，1 CRITICAL（rollback 在延迟 terminate 重写 snapshot 前删 snapshot）+ 2 HIGH（default_grants_from_data_owner 没被 spawn lifecycle 调用 → owner-derived caps 是幻影；AgentOwnership 易失 ETS → 重启丢失授权）. Rev 4 处理（§3.4.2 重写为 terminate-then-purge、§3.9 新 Provisioning helper、§3.8 改为 SQLite-backed cache、§7 加 row 15+16）.
 - **Rev 4**：codex 返回 `needs-attention`，3 HIGH（无 CRITICAL，进步）：partial-grant rollback gap、§3.4/§4.3 rev-3 残留、schema migration 未要求. Rev 5 全部处理（§3.9 跟踪+revoke、§3.4/§4.3 重写、§6 要求 migration + boot ordering、§7 row 16a + row 17 新）。
-- **Rev 5**（本版本）：codex r5 将跑. r5 干净则通过 admin merge. r5 若仍 CRIT+ 则视为 "需更多架构输入"，飞书通知 Allen 再迭代.
+- **Rev 5**：codex r5 返回 `needs-attention` 2 HIGH + 1 MEDIUM（架构稳，剩文本一致性）：§3.8 还有 "Kind.Server auto-synthesis" 句；zh_CN §3.4/§3.9 还带 rev-3 `grant_initial_caps_for_owner`；Ecto `created_at` vs `inserted_at` 不一致. Rev 6 全部处理.
+- **Rev 6**（本版本）：codex r6 将跑. r6 干净或只 MEDIUM/LOW 则通过 admin merge. r6 若仍 CRIT 或 HIGH，SPEC 保持开放，飞书通知 Allen —— 此时进一步迭代可能需本 subagent 范围之外的架构输入.
 
 ---
 
