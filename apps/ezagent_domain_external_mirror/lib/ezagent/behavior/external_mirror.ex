@@ -318,38 +318,93 @@ defmodule Ezagent.Behavior.ExternalMirror do
           bound_at: bound_at
         }
 
-        # Spawn worker idempotently FIRST (so if the spawn raises
-        # we don't leave a slice/DB row pointing at a non-existent
-        # worker). `Kind.spawn/2` returns either {:ok, _pid} (fresh)
-        # or {:error, {:already_started, _pid}} (idempotent) — both
-        # are success per SPEC §3.1 r6 HIGH-1 fix.
+        # codex r5 HIGH-B (2026-05-25): persist-FIRST, spawn-AFTER
+        # with explicit changeset error discrimination + compensating
+        # delete on spawn failure.
         #
-        # codex r4 HIGH-2 (2026-05-25): retry-exhausted spawn now
-        # returns `{:error, :worker_spawn_failed}` (was `:ok` —
-        # silent "binding exists but no worker" bug). Abort BEFORE
-        # persist + slice mutation so callers see the failure
-        # honestly and the projection table stays consistent with
-        # the live worker population.
-        case spawn_worker_idempotently(session_uri, binding) do
-          :ok ->
-            # Persist projection row. Concurrent :bind for the same
-            # triple from another node would race here; the unique
-            # index on (session_uri, adapter_id, target_id) rejects
-            # the duplicate with a constraint violation, which we
-            # treat as success (the in-memory winner already exists).
-            :ok = persist_binding_row(session_uri, binding)
+        # PRE-FIX (r4): spawn → persist. Two latent bugs:
+        # (1) Worker spawn succeeded, then DB insert failed →
+        #     orphan worker with no DB row; after restart the
+        #     rehydration path (init_slice) couldn't see this
+        #     binding → silent loss.
+        # (2) `persist_binding_row` swallowed ANY `{:error, changeset}`
+        #     as `:ok` for unique-constraint idempotency, but the
+        #     mapping was BLANKET — a NOT NULL / FK / other changeset
+        #     error also returned `:ok` → row never created, bind
+        #     claimed success, observably broken state.
+        #
+        # POST-FIX:
+        #   - Persist FIRST. DB-level atomicity guarantees either the
+        #     row exists (then we spawn) or we have a clear error to
+        #     return (no worker leaked because no worker spawned yet).
+        #   - Match ONLY unique-constraint errors as idempotency
+        #     success. Every other changeset error → return
+        #     `{:error, {:db_insert_failed, _}}`.
+        #   - If spawn fails AFTER persist succeeded, run a
+        #     compensating delete on the row so the projection table
+        #     stays consistent with the live worker population (no
+        #     "binding row but no worker" state).
+        case insert_binding_row(session_uri, binding) do
+          {:ok, :persisted} ->
+            do_spawn_after_persist(session_uri, binding, slice, aid, tid, binding_id)
 
-            new_slice = update_in(slice.bindings, &[binding | &1])
+          {:ok, :idempotent_unique_conflict} ->
+            # Concurrent :bind from another caller for the SAME triple
+            # beat us — the row already exists, and (per the
+            # idempotency contract) some worker is either alive or
+            # will be spawned by the racing caller's `:ok` path. Try
+            # an idempotent spawn here so this caller also returns
+            # success; `{:already_started, _}` from the racing winner
+            # is the expected path.
+            do_spawn_after_persist(session_uri, binding, slice, aid, tid, binding_id)
 
-            worker_uri = WorkerSpawn.worker_uri_for(session_uri, aid, tid)
-            {:ok, new_slice, %{ok: true, binding_id: binding_id, worker_uri: worker_uri}}
-
-          {:error, :worker_spawn_failed} = err ->
-            # Slice NOT mutated; row NOT persisted. Caller's `bind/5`
-            # returns this error and can retry — the spawn race storm
-            # settled to no live worker.
+          {:error, {:db_insert_failed, _cs}} = err ->
+            # Real DB error (NOT NULL / FK / etc.) — NOT an
+            # idempotency case. Slice unchanged; no worker spawned.
+            # Caller sees the honest failure.
             err
         end
+    end
+  end
+
+  # codex r5 HIGH-B (2026-05-25): post-persist spawn + compensating
+  # delete on spawn failure. Extracted so the two callers (fresh
+  # insert AND concurrent-race insert that hit the unique constraint)
+  # share the same spawn + rollback logic.
+  defp do_spawn_after_persist(session_uri, binding, slice, aid, tid, binding_id) do
+    case spawn_worker_idempotently(session_uri, binding) do
+      :ok ->
+        new_slice = update_in(slice.bindings, &[binding | &1])
+        worker_uri = WorkerSpawn.worker_uri_for(session_uri, aid, tid)
+        {:ok, new_slice, %{ok: true, binding_id: binding_id, worker_uri: worker_uri}}
+
+      {:error, :worker_spawn_failed} = err ->
+        # Compensating delete: row was persisted but the worker
+        # spawn race settled to NO live worker. Delete the row so
+        # the projection table doesn't carry a binding the system
+        # can't service. The next bind attempt will re-persist +
+        # re-spawn cleanly.
+        #
+        # Only the FRESH-insert caller needs this — but it's also
+        # safe for the concurrent-race caller because
+        # `delete_by_natural_key/3` is idempotent. If the racing
+        # winner is happily alive, our compensating delete on
+        # exhaustion still removes the row, which is wrong for the
+        # winner. BUT: if our spawn exhausted with `:worker_spawn_failed`,
+        # the winner's spawn would have exhausted too (same
+        # `KindRegistry.put_new` foreign-pid blocker). So either both
+        # exhaust and the row is correctly deleted, or one succeeds
+        # and the other gets `{:already_started, _}` (== `:ok`,
+        # which lands in the success branch above). Belt-and-
+        # suspenders: log so an unexpected combination is observable.
+        Logger.warning(
+          "Behavior.ExternalMirror.do_bind: worker spawn failed after row " <>
+            "persisted for #{URI.to_string(session_uri)}/#{aid}/#{inspect(tid)} — " <>
+            "running compensating delete"
+        )
+
+        :ok = BindingRow.delete_by_natural_key(session_uri, aid, tid)
+        err
     end
   end
 
@@ -529,7 +584,20 @@ defmodule Ezagent.Behavior.ExternalMirror do
     end
   end
 
-  defp persist_binding_row(%URI{} = session_uri, %{} = binding) do
+  # codex r5 HIGH-B (2026-05-25): replaces `persist_binding_row/2`.
+  # Returns a discriminated tuple so the caller can distinguish:
+  #
+  #   - `{:ok, :persisted}`                — fresh insert
+  #   - `{:ok, :idempotent_unique_conflict}` — natural-key unique-index
+  #     collision (concurrent :bind from another caller for the SAME
+  #     `(session_uri, adapter_id, target_id)` triple). Per the
+  #     idempotency contract this is success.
+  #   - `{:error, {:db_insert_failed, %Ecto.Changeset{}}}` — any other
+  #     changeset error (NOT NULL, FK, validation, etc.). Pre-r5 the
+  #     mapping was BLANKET-to-`:ok` which silently lost real failures;
+  #     post-r5 the caller propagates the error and the slice + worker
+  #     are NOT mutated.
+  defp insert_binding_row(%URI{} = session_uri, %{} = binding) do
     workspace_uri = Ezagent.Persistence.workspace_uri_for!(session_uri)
     opts_json = encode_opts(binding.opts)
 
@@ -554,21 +622,53 @@ defmodule Ezagent.Behavior.ExternalMirror do
 
     case BindingRow.insert(attrs) do
       {:ok, _row} ->
-        :ok
+        {:ok, :persisted}
 
-      {:error, changeset} ->
-        # Likely a unique-index collision — concurrent :bind from
-        # another node beat us. Treat as success (the in-memory
-        # slice + worker are the SoT; the row already exists).
-        # Log for visibility.
-        Logger.debug(
-          "external_mirror_bindings.insert collision (idempotent) for " <>
-            "#{URI.to_string(session_uri)}/#{binding.adapter_id}/#{inspect(binding.target_id)}: " <>
-            "#{inspect(changeset.errors)}"
-        )
+      {:error, %Ecto.Changeset{} = cs} ->
+        if unique_constraint_violation?(cs) do
+          Logger.debug(
+            "external_mirror_bindings.insert idempotent unique-conflict for " <>
+              "#{URI.to_string(session_uri)}/#{binding.adapter_id}/" <>
+              "#{inspect(binding.target_id)}: #{inspect(cs.errors)}"
+          )
 
-        :ok
+          {:ok, :idempotent_unique_conflict}
+        else
+          # Real changeset error — NOT NULL, FK, validation, etc.
+          # Pre-r5 this was silently mapped to `:ok` and the bind
+          # claimed success with no row created. Post-r5 the caller
+          # propagates this and the slice + worker stay untouched.
+          Logger.warning(
+            "external_mirror_bindings.insert FAILED (non-unique error) for " <>
+              "#{URI.to_string(session_uri)}/#{binding.adapter_id}/" <>
+              "#{inspect(binding.target_id)}: #{inspect(cs.errors)}"
+          )
+
+          {:error, {:db_insert_failed, cs}}
+        end
     end
+  end
+
+  # codex r5 HIGH-B: discriminate "unique-constraint violation"
+  # (idempotency success path) from every other changeset error
+  # (real failure). The changeset shape from `BindingRow.insert/1`
+  # carries the constraint metadata in the error opts list:
+  #
+  #   {:adapter_id, {"binding already exists",
+  #     [constraint: :unique, constraint_name: "..."]}}
+  #
+  # Match on `constraint: :unique` ANYWHERE in the changeset errors —
+  # the same triple can fire either the PK constraint OR the
+  # natural-key unique index depending on race timing; both are
+  # idempotency cases.
+  defp unique_constraint_violation?(%Ecto.Changeset{errors: errors}) do
+    Enum.any?(errors, fn
+      {_field, {_msg, opts}} when is_list(opts) ->
+        Keyword.get(opts, :constraint) == :unique
+
+      _ ->
+        false
+    end)
   end
 
   defp row_to_slice_binding(%BindingRow{} = row) do

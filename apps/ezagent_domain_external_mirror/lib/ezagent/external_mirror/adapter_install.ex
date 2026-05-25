@@ -67,12 +67,12 @@ defmodule Ezagent.ExternalMirror.AdapterInstall do
   require Logger
 
   alias Ezagent.CapabilityRegistry
-  alias Ezagent.ExternalMirror.{BindingRow, WorkerSpawn}
+  alias Ezagent.ExternalMirror.{AdapterRegistry, BindingRegistry, BindingRow, WorkerSpawn}
 
   @doc """
   Install per-adapter cap subject + reconcile persisted bindings for
   `adapter_module`. Called from `AdapterRegistry.register/1` on
-  successful fresh insert.
+  successful fresh insert (via `maybe_install/1`).
 
   Returns `:ok` always — every step is best-effort with logging;
   failures do not propagate so an `AdapterRegistry.register/1` in a
@@ -86,6 +86,76 @@ defmodule Ezagent.ExternalMirror.AdapterInstall do
     :ok = reconcile_persisted_bindings(adapter_id)
 
     :ok
+  end
+
+  @doc """
+  codex r5 HIGH-A fix (2026-05-25): fire `install/1` only when BOTH
+  registries (AdapterRegistry AND BindingRegistry) have an entry for
+  this adapter. Called from `AdapterRegistry.register/1` on a fresh
+  insert — if the binding hasn't registered yet, this is a no-op
+  (the binding's own `register_module/2` will fire `install/1` when
+  it lands).
+
+  Rationale: `AdapterInstall.install/1` walks persisted binding rows
+  and spawns Workers whose dispatch path looks up the binding module
+  via `BindingRegistry.lookup!/1`. If install runs while the
+  BindingRegistry is empty for this adapter_id, the spawned worker
+  would crash on its first publish event with a `KeyError`. The
+  symmetric `maybe_install`/`maybe_install_by_adapter_id` pair guards
+  against this regardless of which registry's insert lands first.
+  """
+  @spec maybe_install(module()) :: :ok
+  def maybe_install(adapter_module) when is_atom(adapter_module) do
+    adapter_id = adapter_module.adapter_id()
+
+    if binding_registered?(adapter_id) do
+      install(adapter_module)
+    else
+      Logger.debug(
+        "ExternalMirror.AdapterInstall: deferring install for " <>
+          "#{inspect(adapter_module)} (adapter_id=#{inspect(adapter_id)}) — " <>
+          "BindingRegistry not yet populated; BindingRegistry.register_module/2 " <>
+          "will fire install when it lands."
+      )
+
+      :ok
+    end
+  end
+
+  @doc """
+  codex r5 HIGH-A fix (2026-05-25): symmetric counterpart to
+  `maybe_install/1`. Called from `BindingRegistry.register_module/2`
+  on a fresh insert — fires `install/1` if the AdapterRegistry already
+  has the paired adapter module.
+
+  When the BindingRegistry registers SECOND (the production order set
+  by `Plugin.publish_adapters!`), this is the call that actually fires
+  `install/1` — by that point both registries are populated, so
+  install can safely walk binding rows + spawn workers whose dispatch
+  path can resolve the binding via `BindingRegistry.lookup!/1`.
+  """
+  @spec maybe_install_by_adapter_id(String.t()) :: :ok
+  def maybe_install_by_adapter_id(adapter_id) when is_binary(adapter_id) do
+    case AdapterRegistry.lookup(adapter_id) do
+      {:ok, adapter_module} ->
+        install(adapter_module)
+
+      :error ->
+        Logger.debug(
+          "ExternalMirror.AdapterInstall: deferring install for adapter_id=" <>
+            "#{inspect(adapter_id)} — AdapterRegistry not yet populated; " <>
+            "AdapterRegistry.register/1 will fire install when it lands."
+        )
+
+        :ok
+    end
+  end
+
+  defp binding_registered?(adapter_id) do
+    case BindingRegistry.lookup(adapter_id) do
+      {:ok, _module} -> true
+      :error -> false
+    end
   end
 
   # ----- Step 1: per-adapter cap subject (HIGH-3 fix) ---------------------

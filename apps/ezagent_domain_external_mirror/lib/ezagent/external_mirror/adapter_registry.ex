@@ -92,13 +92,23 @@ defmodule Ezagent.ExternalMirror.AdapterRegistry do
     if :ets.insert_new(@table, {adapter_id, adapter_module}) do
       # codex r2 HIGH-1 + HIGH-3 unified fix (2026-05-25): the moment
       # an adapter becomes observable in the registry, install its
-      # cap subject + reconcile its persisted bindings. The old shape
-      # left these to a one-shot Application.start/2 pass that ran
-      # BEFORE plugin adapters registered → cap subjects + persisted
-      # workers silently never landed. AdapterInstall.install/1 is
-      # tolerant of bare-test environments (no Repo, no
-      # CapabilityRegistry).
-      :ok = Ezagent.ExternalMirror.AdapterInstall.install(adapter_module)
+      # cap subject + reconcile its persisted bindings.
+      #
+      # codex r5 HIGH-A fix (2026-05-25): the install REQUIRES the
+      # paired BindingRegistry entry to exist too — `AdapterInstall`
+      # uses `BindingRegistry.lookup!/1` indirectly via the Worker's
+      # dispatch path, AND production `Plugin.publish_adapters!`
+      # registers the binding AFTER the adapter. Pre-fix, firing
+      # install/1 here unconditionally meant install ran with the
+      # BindingRegistry empty for THIS adapter_id → workers couldn't
+      # bind their publish target.
+      #
+      # The new contract: fire install ONLY when the BindingRegistry
+      # also has an entry. If we're the first registry to land,
+      # `BindingRegistry.register_module/2` will fire install when it
+      # lands second. If we're second (binding registered first
+      # somehow), we fire install now.
+      :ok = Ezagent.ExternalMirror.AdapterInstall.maybe_install(adapter_module)
       :ok
     else
       # Race-safe second read — the entry exists (insert_new returned

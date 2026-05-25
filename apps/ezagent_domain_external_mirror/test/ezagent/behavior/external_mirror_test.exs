@@ -1225,6 +1225,269 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
   end
 
   # =========================================================================
+  # PR-EM-3 codex r5 (this PR's final round) regressions — HIGH-A + HIGH-B
+  # =========================================================================
+
+  describe "PR-EM-3 codex r5 HIGH-B — atomic persist-then-spawn with discriminated changeset errors" do
+    # Test 1: non-unique changeset error (NOT NULL violation) MUST NOT
+    # be mapped to :ok. Pre-fix, the BLANKET `{:error, changeset} → :ok`
+    # mapping silently swallowed real DB failures. Post-fix, only
+    # unique-constraint violations are mapped to idempotency success;
+    # every other changeset error returns {:error, {:db_insert_failed, _}}.
+    test "BindingRow.insert/1 with a NOT NULL violation returns changeset (and Behavior would surface it)" do
+      # Craft attrs with `:bound_at` missing (validate_required). The
+      # changeset error is NOT a unique-constraint error, so the new
+      # `unique_constraint_violation?/1` discriminator returns false
+      # and the Behavior would return {:error, {:db_insert_failed, _}}.
+      session_uri = unique_session_uri("em3-r5-ha-notnull")
+      adapter_id = "mock_publish"
+      target_id = "tgt-r5-ha-notnull"
+
+      bad_attrs = %{
+        id: BindingRow.row_id(session_uri, adapter_id, target_id),
+        session_uri: URI.to_string(session_uri),
+        adapter_id: adapter_id,
+        target_id: target_id,
+        opts_json: "{}",
+        # bound_by missing → validate_required failure
+        bound_at: DateTime.utc_now(),
+        workspace_uri: URI.to_string(@workspace_uri)
+      }
+
+      assert {:error, %Ecto.Changeset{} = cs} = BindingRow.insert(bad_attrs)
+
+      # Assert this is NOT a unique-constraint error.
+      refute Enum.any?(cs.errors, fn
+               {_field, {_msg, opts}} when is_list(opts) ->
+                 Keyword.get(opts, :constraint) == :unique
+
+               _ ->
+                 false
+             end),
+             "Changeset error must NOT carry constraint: :unique for the " <>
+               "non-unique failure mode test (got: #{inspect(cs.errors)})"
+
+      # No row landed.
+      assert [] = BindingRow.list_for_session(session_uri)
+    end
+
+    # Test 2: spawn failure AFTER persist succeeded runs the
+    # compensating delete so the projection table stays consistent
+    # with the live worker population. Re-uses the KindRegistry
+    # blocker pattern from r5 H2 — but here we verify the row
+    # is deleted post-exhaustion (it would have been persisted
+    # FIRST under the new persist-then-spawn flow, so the
+    # compensating delete is the only thing that prevents an
+    # orphan row).
+    test "spawn failure after row persisted runs compensating delete (no orphan row)" do
+      session_uri = unique_session_uri("em3-r5-hb-comp-delete")
+      owner_uri = unique_user_uri("hb-comp-delete")
+      :ok = spawn_owner_and_session(owner_uri, session_uri)
+
+      on_exit(fn -> cleanup_session(session_uri) end)
+
+      ctx = owner_ctx(owner_uri)
+      target_id = "tgt-r5-hb-comp-delete"
+      MockPublishBinding.register_observer(target_id, self())
+
+      worker_uri = WorkerSpawn.worker_uri_for(session_uri, "mock_publish", target_id)
+      worker_uri_str = URI.to_string(worker_uri)
+
+      blocker_parent = self()
+
+      blocker =
+        spawn(fn ->
+          {:ok, _} = Registry.register(Ezagent.KindRegistry, worker_uri_str, :blocker)
+          send(blocker_parent, :blocker_registered)
+
+          receive do
+            :release -> :ok
+          end
+        end)
+
+      assert_receive :blocker_registered, 500
+
+      try do
+        # Pre-flight: confirm no row exists yet.
+        assert [] = BindingRow.list_for_session(session_uri)
+
+        result = Facade.bind(session_uri, "mock_publish", target_id, %{}, ctx)
+
+        # Spawn exhausts → bind returns error.
+        assert match?({:error, :worker_spawn_failed}, result),
+               "expected {:error, :worker_spawn_failed} after spawn exhaustion, " <>
+                 "got #{inspect(result)}"
+
+        # The crux of HIGH-B: even though the row was persisted FIRST
+        # under the new flow (persist-then-spawn), the compensating
+        # delete on spawn failure leaves NO orphan row. Pre-fix
+        # (spawn-then-persist) didn't have this concern — but it had
+        # the inverse: spawn-succeeded-but-DB-insert-failed leaked an
+        # orphan worker. Post-fix, neither orphan state is reachable.
+        assert [] = BindingRow.list_for_session(session_uri),
+               "compensating delete failed — orphan row left after spawn exhaustion"
+
+        # Slice also empty.
+        assert {:ok, []} = Facade.list_bindings(session_uri, ctx)
+      after
+        send(blocker, :release)
+        Process.sleep(20)
+      end
+    end
+
+    # Test 3: 10 concurrent binds for the same triple → exactly 1 row
+    # + 1 worker. This is the test j semantic, but with the post-fix
+    # persist-first flow — verifies the idempotency contract holds
+    # end-to-end when the FIRST DB insert wins and the 9 others land
+    # on the natural-key unique-constraint path (idempotent success).
+    test "10 concurrent binds for same triple → 1 row + 1 worker (idempotency holds under persist-first)" do
+      session_uri = unique_session_uri("em3-r5-hb-concurrent")
+      owner_uri = unique_user_uri("hb-concurrent")
+      :ok = spawn_owner_and_session(owner_uri, session_uri)
+
+      on_exit(fn -> cleanup_session(session_uri) end)
+
+      ctx = owner_ctx(owner_uri)
+      target_id = "tgt-r5-hb-concurrent"
+      MockPublishBinding.register_observer(target_id, self())
+
+      tasks =
+        Enum.map(1..10, fn _ ->
+          Task.async(fn ->
+            Facade.bind(session_uri, "mock_publish", target_id, %{}, ctx)
+          end)
+        end)
+
+      results = Enum.map(tasks, &Task.await(&1, 5_000))
+
+      # Every result is success — winners are {:ok, %{ok: true}};
+      # losers either hit the existing-binding branch in `do_bind`
+      # (Enum.find match) and return `{idempotent: true}`, OR hit
+      # the unique-constraint branch in insert_binding_row.
+      Enum.each(results, fn r ->
+        assert {:ok, %{ok: true}} = r
+      end)
+
+      # Exactly one projection row.
+      rows = BindingRow.list_for_session(session_uri)
+      assert length(rows) == 1, "expected 1 row, got #{length(rows)}"
+
+      # Exactly one slice entry.
+      {:ok, slice_bindings} = Facade.list_bindings(session_uri, ctx)
+      assert length(slice_bindings) == 1
+    end
+  end
+
+  describe "PR-EM-3 codex r5 HIGH-A — AdapterInstall fires only after BOTH registries populated" do
+    # Uses MockAdapter / MockBinding (the bare-registry mocks) so this
+    # test exercises the ordering contract without interfering with
+    # the MockPublishAdapter caps set up by the outer `setup`.
+    #
+    # Pre-fix: AdapterRegistry.register/1 fired install/1 unconditionally,
+    # so install ran BEFORE the binding was registered → workers
+    # spawned for persisted rows of this adapter would crash on
+    # BindingRegistry.lookup!/1 from the dispatch path.
+    #
+    # Post-fix: install fires only when BOTH registries have entries.
+    # Whichever registers SECOND triggers install.
+    test "register adapter alone → cap subject NOT yet installed; register binding → installed" do
+      alias Ezagent.ExternalMirror.TestSupport.{MockAdapter, MockBinding}
+
+      adapter_id = MockAdapter.adapter_id()
+      %{behavior_module: behavior_module} = MockAdapter.cap_subject()
+      cap_action = String.to_atom("allow_" <> adapter_id)
+
+      # Reset BOTH registries for this adapter_id + drop the cap
+      # subject so the post-condition assertions are meaningful.
+      :ets.delete(AdapterRegistry.table(), adapter_id)
+      :ets.delete(BindingRegistry.table(), adapter_id)
+
+      # Drop the cap subject directly via the Subjects ETS table —
+      # CapabilityRegistry deliberately exposes no public `delete/2`
+      # since cap subjects are install-once-at-boot in production.
+      try do
+        :ets.match_delete(
+          Ezagent.CapabilityRegistry.Subjects.table(),
+          {{Ezagent.Entity.Session, :_, cap_action}, :_}
+        )
+      rescue
+        _ -> :ok
+      end
+
+      # Step 1: register adapter alone → maybe_install/1 sees the
+      # BindingRegistry empty for this adapter_id → DEFERS install.
+      assert :ok = AdapterRegistry.register(MockAdapter)
+
+      # Cap subject should NOT be installed yet (install deferred).
+      assert :error =
+               Ezagent.CapabilityRegistry.lookup_subject(
+                 Ezagent.Entity.Session,
+                 cap_action
+               ),
+             "install/1 should have been DEFERRED until BindingRegistry " <>
+               "also has #{inspect(adapter_id)} — but cap subject was registered"
+
+      # Step 2: register binding → maybe_install_by_adapter_id/1 sees
+      # the AdapterRegistry already populated → FIRES install.
+      assert :ok = BindingRegistry.register_module(adapter_id, MockBinding)
+
+      # Cap subject MUST now be installed.
+      assert {:ok, %{behavior: ^behavior_module}} =
+               Ezagent.CapabilityRegistry.lookup_subject(
+                 Ezagent.Entity.Session,
+                 cap_action
+               ),
+             "install/1 did not fire after BOTH registries populated"
+    end
+
+    test "register binding first, then adapter → install fires when adapter lands" do
+      alias Ezagent.ExternalMirror.TestSupport.{MockAdapter, MockBinding}
+
+      adapter_id = MockAdapter.adapter_id()
+      %{behavior_module: behavior_module} = MockAdapter.cap_subject()
+      cap_action = String.to_atom("allow_" <> adapter_id)
+
+      # Reset.
+      :ets.delete(AdapterRegistry.table(), adapter_id)
+      :ets.delete(BindingRegistry.table(), adapter_id)
+
+      # Drop the cap subject directly via the Subjects ETS table —
+      # CapabilityRegistry deliberately exposes no public `delete/2`
+      # since cap subjects are install-once-at-boot in production.
+      try do
+        :ets.match_delete(
+          Ezagent.CapabilityRegistry.Subjects.table(),
+          {{Ezagent.Entity.Session, :_, cap_action}, :_}
+        )
+      rescue
+        _ -> :ok
+      end
+
+      # Step 1: register binding alone → maybe_install_by_adapter_id/1
+      # sees AdapterRegistry empty → DEFERS install.
+      assert :ok = BindingRegistry.register_module(adapter_id, MockBinding)
+
+      assert :error =
+               Ezagent.CapabilityRegistry.lookup_subject(
+                 Ezagent.Entity.Session,
+                 cap_action
+               ),
+             "install/1 should have been deferred — AdapterRegistry not yet populated"
+
+      # Step 2: register adapter → maybe_install/1 sees BindingRegistry
+      # populated → FIRES install.
+      assert :ok = AdapterRegistry.register(MockAdapter)
+
+      assert {:ok, %{behavior: ^behavior_module}} =
+               Ezagent.CapabilityRegistry.lookup_subject(
+                 Ezagent.Entity.Session,
+                 cap_action
+               ),
+             "install/1 did not fire when adapter registered second"
+    end
+  end
+
+  # =========================================================================
   # Helpers
   # =========================================================================
 

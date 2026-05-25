@@ -87,6 +87,21 @@ defmodule Ezagent.ExternalMirror.BindingRegistry do
     assert_required_callbacks!(binding_module)
 
     if :ets.insert_new(@table, {adapter_id, binding_module}) do
+      # codex r5 HIGH-A fix (2026-05-25): fire AdapterInstall.maybe_install/1
+      # symmetrically from BOTH registries so install runs once BOTH
+      # entries are populated, regardless of which registry's
+      # insert lands first. In production `Plugin.publish_adapters!`
+      # always calls `AdapterRegistry.register/1` first then
+      # `BindingRegistry.register_module/2` — so install here fires
+      # AFTER both registries have the entry, which is the safe
+      # ordering for `AdapterInstall.reconcile_persisted_bindings/1`
+      # to walk rows and spawn workers whose dispatch path looks up
+      # the binding module via `BindingRegistry.lookup!/1`.
+      #
+      # If the adapter registers SECOND (test ordering, hot install),
+      # `AdapterRegistry.register/1`'s own `maybe_install` call will
+      # be the one that fires install — same end state.
+      :ok = Ezagent.ExternalMirror.AdapterInstall.maybe_install_by_adapter_id(adapter_id)
       :ok
     else
       # codex r2 HIGH-2: distinguish "we inserted this attempt" from
