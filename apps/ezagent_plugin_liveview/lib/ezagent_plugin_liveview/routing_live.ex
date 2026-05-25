@@ -152,15 +152,24 @@ defmodule EzagentPluginLiveview.RoutingLive do
   # tabs landed.
   @impl true
   def handle_params(params, _uri, socket) do
+    # Self-review MEDIUM (2026-05-25): clear `flash_error` on tab
+    # patch so a Rules-tab error (e.g. "Rejected URI") doesn't bleed
+    # into the Bindings tab's render and confuse the operator. Per P27
+    # — server-side observability is non-negotiable, but the
+    # per-tab UI surface should not carry stale state.
     case Map.get(params, "tab") do
       "bindings" ->
         {:noreply,
          socket
          |> assign(:active_tab, :bindings)
+         |> assign(:flash_error, nil)
          |> assign(:bindings, load_all_bindings(socket))}
 
       _ ->
-        {:noreply, assign(socket, :active_tab, :rules)}
+        {:noreply,
+         socket
+         |> assign(:active_tab, :rules)
+         |> assign(:flash_error, nil)}
     end
   end
 
