@@ -95,8 +95,32 @@ defmodule Ezagent.MessageStore do
                  on_conflict: :nothing,
                  conflict_target: [:message_id, :session_uri]
                ) do
-            {:ok, _} -> msg_with_session
-            {:error, reason} -> Repo.rollback(reason)
+            {:ok, _} ->
+              # PR-EM-6-PRE codex r2 HIGH (2026-05-25) — return the
+              # ACTUALLY-PERSISTED row, not the caller-built struct.
+              # With `on_conflict: :nothing, conflict_target: :id`,
+              # `Repo.insert/2` returns `{:ok, _}` even when an earlier
+              # row with the same id already existed; the returned
+              # struct in that case is the caller's input, NOT the
+              # persisted row. Downstream consumers (PR-EM-6-PRE
+              # external mirror via SliceChange.new_slice.last_message)
+              # depend on this being the row in `messages`, otherwise
+              # a misbehaving client that reuses an id with a different
+              # body could cause mirrors to publish content that never
+              # made it to durable storage.
+              #
+              # Re-fetch by id inside the same transaction so we hand
+              # back the authoritative row. The row MUST exist at this
+              # point (we just :ok-ed either an insert or a conflict on
+              # the same id), so `nil` here is a let-it-crash bug, not
+              # a normal control-flow signal.
+              case Repo.get(Message, msg.id) do
+                %Message{} = persisted -> persisted
+                nil -> Repo.rollback({:persisted_row_missing, msg.id})
+              end
+
+            {:error, reason} ->
+              Repo.rollback(reason)
           end
 
         {:error, reason} ->

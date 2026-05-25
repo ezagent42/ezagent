@@ -58,7 +58,7 @@ defmodule Ezagent.MessageStoreTest do
       assert loaded.session_uri == @session_a
     end
 
-    test "preserves the Message envelope unchanged (identity invariant)" do
+    test "preserves the Message envelope identity (Decision #40)" do
       mention = URI.new!("entity://agent/default/test_cc-builder")
       ref_id = "aabbccdd00000000"
 
@@ -70,15 +70,27 @@ defmodule Ezagent.MessageStoreTest do
 
       {:ok, written} = MessageStore.write(msg, @session_a)
 
-      # `session_uri` is metadata stamped at write boundary; sender / body /
-      # mentions / ref_id / id / inserted_at all unchanged (Decision #40 —
-      # Message identity invariant).
+      # `session_uri` is metadata stamped at write boundary; sender /
+      # mentions / ref_id / id / inserted_at all unchanged (Decision
+      # #40 — Message identity invariant).
       assert written.id == msg.id
       assert written.sender == msg.sender
       assert written.mentions == [mention]
-      assert written.body == msg.body
       assert written.ref_id == ref_id
       assert written.inserted_at == msg.inserted_at
+
+      # PR-EM-6-PRE codex r2 HIGH (2026-05-25) — `write/2` now returns
+      # the actually-persisted row (not the caller's struct) so
+      # downstream consumers (chat slice `:last_message` →
+      # SliceChange.new_slice → external mirror Publisher event) can't
+      # publish content the DB never stored. The body field is
+      # JSON-roundtripped by ecto_sqlite3, so what comes back has
+      # string keys regardless of how the caller built the input —
+      # Chat already tolerates both (`body_text/1` + `body_attachments/1`
+      # pattern-match atom OR string keys). Assert the LOGICAL identity
+      # by checking the values via the shape helpers.
+      assert written.body["text"] == "carry-through"
+      assert written.body["attachments"] == []
     end
   end
 

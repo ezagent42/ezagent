@@ -290,10 +290,18 @@ defmodule Ezagent.Behavior.ChatTest do
       # payload purely (no DB lookup). The full Message must ride the
       # slice — with sender / body / mentions / inserted_at AND the
       # `:session_uri` that MessageStore.write stamps on persist.
+      #
+      # codex r2 HIGH (2026-05-25) — `MessageStore.write/2` returns
+      # the ACTUALLY-PERSISTED row (not the caller's struct), so the
+      # body field is JSON-roundtripped by ecto_sqlite3 (string keys).
+      # Chat's `body_text/1` + `body_attachments/1` pattern-match both
+      # shapes, so this is safe downstream; assert logical-identity
+      # via the JSON shape here.
       assert %Message{} = new_slice.last_message
       assert new_slice.last_message.id == msg.id
       assert new_slice.last_message.sender == sender
-      assert new_slice.last_message.body == msg.body
+      assert new_slice.last_message.body["text"] == "ping"
+      assert new_slice.last_message.body["attachments"] == []
       assert new_slice.last_message.session_uri == session_uri
 
       # Cursor bumped from the initial 0
@@ -368,6 +376,63 @@ defmodule Ezagent.Behavior.ChatTest do
       # `Kind.Runtime` step 9.5 will build a non-nil slice_change_event.
       assert slice2.send_cursor == 2
       refute slice2 == slice1
+    end
+
+    # codex r2 HIGH regression test (2026-05-25): a misbehaving (or
+    # adversarial) client that reuses a previously-persisted msg.id
+    # with a DIFFERENT body must NOT cause `:last_message` to carry
+    # the second body. MessageStore.write/2 is idempotent on id
+    # conflict (`on_conflict: :nothing, conflict_target: :id`) but
+    # now returns the actually-persisted row, so the slice always
+    # reflects DB truth — external mirrors via SliceChange can never
+    # publish content that isn't in `messages` for that id.
+    test "duplicate msg.id with different body: :last_message reflects ORIGINAL DB row (codex r2 HIGH)" do
+      session_uri =
+        URI.new!("session://default/default/lmi-dup-id-#{System.unique_integer([:positive])}")
+
+      bind_to_default(session_uri)
+      sender = URI.new!("entity://user/system/admin")
+      ctx = %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: sender}
+
+      original_body = %{text: "original truth", attachments: []}
+      original = Message.new(sender, original_body)
+
+      # Build a SECOND Message struct with the same id but a wholly
+      # different body — simulating a misbehaving client.
+      adversarial =
+        %Message{original | body: %{text: "adversarial overwrite", attachments: []}}
+
+      assert original.id == adversarial.id
+      refute original.body == adversarial.body
+
+      slice = Chat.init_slice(%{})
+
+      # First send persists the original
+      assert {:ok, slice1, %{stored: true}} =
+               Chat.invoke(:send, slice, %{message: original}, ctx)
+
+      assert slice1.last_message_id == original.id
+      assert slice1.last_message.body["text"] == "original truth"
+
+      # Second send with same id but different body. MessageStore
+      # treats the id as already-persisted (on_conflict: :nothing) and
+      # returns the ORIGINAL row — :last_message in the new slice
+      # MUST be the original row, not the adversarial one.
+      assert {:ok, slice2, %{stored: true}} =
+               Chat.invoke(:send, slice1, %{message: adversarial}, ctx)
+
+      assert slice2.last_message_id == original.id
+      assert slice2.last_message.body["text"] == "original truth"
+      refute slice2.last_message.body["text"] == "adversarial overwrite"
+
+      # Send-cursor still bumps (HIGH-1: SliceChange must fire for the
+      # retry even when last_message content is byte-identical to the
+      # prior).
+      assert slice2.send_cursor == 2
+
+      # DB row matches what we put in the slice
+      assert {:ok, persisted} = MessageStore.by_id(original.id)
+      assert persisted.body["text"] == "original truth"
     end
 
     test "pre-PR-EM-6-PRE slice (none of the keys) gets all three on send" do
