@@ -322,7 +322,7 @@ defmodule EzagentPluginLiveview.AgentNewLive do
     do: gettext("Working directory %{cwd} doesn't exist or isn't a directory.", cwd: inspect(cwd))
 
   defp friendly_error({:template_register_failed, reason}),
-    do: gettext("cc.agent template registration failed: %{reason}", reason: inspect(reason))
+    do: gettext("Template registration failed: %{reason}", reason: inspect(reason))
 
   defp friendly_error({:spawn_failed, reason}),
     do: gettext("Agent spawn failed: %{reason}", reason: inspect(reason))
@@ -332,6 +332,33 @@ defmodule EzagentPluginLiveview.AgentNewLive do
 
   defp friendly_error(:unauthorized),
     do: gettext("You don't have permission to create agents in this workspace.")
+
+  # Codex PR #330 r1 MEDIUM-8 — raw error shapes returned by the
+  # dispatched action body that previously fell through to the
+  # generic "Create failed: ..." clause. Each gets a clearer user-
+  # facing message tied to the action's validate / Loader path so
+  # operators can debug without reading source.
+  defp friendly_error(:missing_class_field),
+    do: gettext("The selected agent flavor is missing a Template Class binding (internal bug).")
+
+  defp friendly_error({:no_template_class, class_name}),
+    do:
+      gettext(
+        "Template Class %{class} is not registered. Is the plugin booted?",
+        class: inspect(class_name)
+      )
+
+  defp friendly_error({:template_not_found, tmpl_name}),
+    do: gettext("Template %{name} not found in the workspace.", name: inspect(tmpl_name))
+
+  defp friendly_error(:workspace_not_found),
+    do: gettext("Workspace not found in the database.")
+
+  defp friendly_error({:bad_cwd, cwd}),
+    do: gettext("Working directory must be a string (got %{cwd}).", cwd: inspect(cwd))
+
+  defp friendly_error({:bad_with_pty, v}),
+    do: gettext("With-PTY flag must be a boolean (got %{v}).", v: inspect(v))
 
   defp friendly_error(other),
     do: gettext("Create failed: %{reason}", reason: inspect(other))

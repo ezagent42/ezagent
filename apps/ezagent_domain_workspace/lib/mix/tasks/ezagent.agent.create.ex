@@ -76,6 +76,21 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
     {:ok, _} = Application.ensure_all_started(:ezagent_domain_chat)
     {:ok, _} = Application.ensure_all_started(:ezagent_domain_workspace)
 
+    # Boot every flavor plugin we know about so AgentFlavorRegistry
+    # populates. Without this the action body's `validate_flavor/1`
+    # only sees `cc` (chat domain's flavor) and rejects echo / curl /
+    # np with `{:bad_flavor, _}`. Each `ensure_all_started/1` is a
+    # no-op if the app is missing from this build so the task degrades
+    # to whatever plugins are compiled in.
+    for plugin <- [
+          :ezagent_plugin_cc,
+          :ezagent_plugin_echo,
+          :ezagent_plugin_curl_agent,
+          :ezagent_plugin_np
+        ] do
+      _ = Application.ensure_all_started(plugin)
+    end
+
     {opts, positional, _} =
       OptionParser.parse(args,
         strict: [

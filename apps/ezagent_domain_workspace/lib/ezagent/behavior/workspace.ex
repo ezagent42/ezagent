@@ -288,13 +288,23 @@ defmodule Ezagent.Behavior.Workspace do
   # own UX-facing validators for early feedback, the action body
   # re-runs as a safety net (defence in depth).
 
-  # Tolerate atom OR string keys (CLI builds atom-keyed maps; dispatch
-  # from a future remote LV may carry string keys depending on adapter).
+  # CLI builds atom-keyed maps. The current dispatch path (local-
+  # in-process for the mix task + LV) preserves atom keys end-to-end;
+  # `Ezagent.InterfaceValidator` also only checks atom-keyed schemas
+  # (codex PR #330 r1 MEDIUM noted string-key support was dead code).
+  # We keep atom-only here — a future remote-RPC adapter that
+  # serialises to JSON would coerce string keys back to atoms BEFORE
+  # dispatch as part of its parse step, not inside the action body.
+  #
+  # Codex PR #330 r1 MEDIUM-7 also flagged a `false || true` bug:
+  # `args[:with_pty] || args["with_pty"] || false` would treat an
+  # explicit `with_pty: false` as falsy and fall through. Switched
+  # to `Map.get/3` with a default so an explicit `false` is preserved.
   defp coerce_create_args(args) do
-    flavor = Map.get(args, :flavor) || Map.get(args, "flavor")
-    name = Map.get(args, :name) || Map.get(args, "name")
-    cwd = Map.get(args, :cwd) || Map.get(args, "cwd") || ""
-    with_pty = Map.get(args, :with_pty) || Map.get(args, "with_pty") || false
+    flavor = Map.get(args, :flavor)
+    name = Map.get(args, :name)
+    cwd = Map.get(args, :cwd, "")
+    with_pty = Map.get(args, :with_pty, false)
 
     cond do
       not is_binary(flavor) ->
@@ -450,6 +460,17 @@ defmodule Ezagent.Behavior.Workspace do
   # call site per `agent_create_single_path_test.exs`. `{:already_started, _}`
   # is treated as success — `refuse_if_exists/1` upstream already rejected
   # duplicates against a stale registry view; this guards against a tight race.
+  #
+  # Codex PR #330 r1 HIGH-4: curl + np have registered Template
+  # Classes (CurlAgentTemplate / NpAgentTemplate) that this catch-all
+  # silently bypasses. PRESERVED PRE-PR BEHAVIOUR — the LV's old
+  # `register_and_instantiate(_, agent_uri, _)` direct-spawned them
+  # for the same reason: their Template Classes require flavor-
+  # specific fields (`provider`, `api_url`, `model` for curl;
+  # `cwd`, `timeout` for np) that this action's args don't carry.
+  # FOLLOW-UP: extend args to accept `template_args :: map()` so the
+  # action can build a full template for any flavor with a registered
+  # Template Class. Tracked in `docs/futures/todo.md`.
   defp do_create_agent(_other_flavor, agent_uri, slice, _params) do
     case Ezagent.SpawnRegistry.spawn(agent_uri) do
       {:ok, _pid} ->
@@ -465,8 +486,17 @@ defmodule Ezagent.Behavior.Workspace do
 
   # Register the template in the Workspace's session_templates slice +
   # persist via Store, then call Loader.invoke_template to bring the
-  # Agent Kind (+ sidecars) live. Mirrors what
-  # `Ezagent.Workspace.add_template/3` did before this unified path.
+  # Agent Kind (+ sidecars) live.
+  #
+  # Codex PR #330 r1 HIGH-1 fix: if invoke_template_now fails, roll
+  # back the Store write so the DB doesn't carry a template the caller
+  # was told failed. Without rollback, the next boot's
+  # Loader.load_all/0 would silently instantiate the failed template
+  # (no CapBAC re-check, no operator visibility). The slice itself is
+  # NOT committed (the action returns {:error, _} so Kind.Server skips
+  # the snapshot write); the Store is the surface that diverges.
+  # Same risk existed pre-PR in `Ezagent.Workspace.add_template/3`;
+  # this is the first fix and a follow-up may lift it into the facade.
   defp register_and_invoke_template(
          slice,
          workspace_name,
@@ -482,10 +512,45 @@ defmodule Ezagent.Behavior.Workspace do
              workspace_name,
              new_slice.session_templates
            ),
-         :ok <- invoke_template_now(workspace_uri, tmpl_name) do
+         :ok <- invoke_or_rollback(workspace_uri, workspace_name, tmpl_name, slice) do
       {:ok, new_slice, %{agent_uri: agent_uri, template_name: tmpl_name}}
     else
       {:error, _} = err -> err
+    end
+  end
+
+  # Codex PR #330 r1 HIGH-1 — call invoke_template_now; on failure,
+  # roll back the Store.update_templates write to the original slice's
+  # session_templates so the DB matches the (uncommitted) starting
+  # state. A rollback failure is logged but the original error is the
+  # return — operator needs to see the FIRST failure, not the rollback's.
+  defp invoke_or_rollback(workspace_uri, workspace_name, tmpl_name, original_slice) do
+    case invoke_template_now(workspace_uri, tmpl_name) do
+      :ok ->
+        :ok
+
+      {:error, _} = err ->
+        rollback_store_templates(workspace_name, original_slice, tmpl_name, err)
+        err
+    end
+  end
+
+  defp rollback_store_templates(workspace_name, original_slice, tmpl_name, original_err) do
+    case Ezagent.Workspace.Store.update_templates(
+           workspace_name,
+           original_slice.session_templates
+         ) do
+      {:ok, _} ->
+        :ok
+
+      {:error, rollback_reason} ->
+        require Logger
+
+        Logger.error(
+          "Behavior.Workspace.:create_agent: Store rollback failed for " <>
+            "workspace=#{workspace_name} tmpl=#{tmpl_name}: " <>
+            "#{inspect(rollback_reason)} (original error: #{inspect(original_err)})"
+        )
     end
   end
 
