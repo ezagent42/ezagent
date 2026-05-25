@@ -44,13 +44,27 @@ defmodule Ezagent.ExternalMirror.Invariants.NoPubsubBypassTest do
 
   V1 single-node enforcement is structural: every binding module is
   declared via `Plugin.adapters/0` and the binding module declares
-  `@behaviour Ezagent.ExternalMirror.Binding` at the source level.
+  `@behaviour Ezagent.ExternalMirror.Binding` (either spelled-out
+  or via `alias`).
 
-  Source-level scan strategy (codex r1 P1 fix; the prior `:code.which/1`
-  → snake-case-path mapping silently mapped to non-existent files):
-  Phase 1 greps every `.ex` under `apps/` for a top-of-line
-  `@behaviour Ezagent.ExternalMirror.Binding` declaration; Phase 2
-  greps the owning app's `lib/` tree for `Phoenix.PubSub.subscribe`.
+  Discovery strategy (codex r2 P2 fix — was missing aliased
+  declarations like `alias Ezagent.ExternalMirror.Binding` followed
+  by `@behaviour Binding`):
+
+  - **Phase 1 — runtime module discovery.** Walk `:code.all_loaded/0`
+    and filter modules whose `module_info(:attributes)[:behaviour]`
+    list contains `Ezagent.ExternalMirror.Binding`. This catches the
+    aliased AND the fully-qualified spelling — Elixir resolves both
+    to the same attribute value at compile time.
+  - **Phase 2 — source-file lookup via beam compile_info.** Use
+    `:beam_lib.chunks(beam_path, [:compile_info])[:source]` to get
+    the absolute source path the compiler recorded. This avoids the
+    `:code.which/1` → snake-case-path fragility codex r1 P1 caught.
+  - **Phase 3 — owning-app lib scan.** For each binding source path,
+    derive `apps/<app>/lib/` and grep the full tree for
+    `(?:Phoenix\.)?PubSub\.subscribe` — catches both fully-qualified
+    AND aliased `alias Phoenix.PubSub` + `PubSub.subscribe` (codex r2
+    P2).
 
   ## Vacuous-pass posture today
 
@@ -64,7 +78,12 @@ defmodule Ezagent.ExternalMirror.Invariants.NoPubsubBypassTest do
   """
   use ExUnit.Case, async: true
 
-  @forbidden ~r/Phoenix\.PubSub\.subscribe/
+  # Match BOTH the fully-qualified call AND the aliased form
+  # (`alias Phoenix.PubSub` followed by `PubSub.subscribe`). Codex r2
+  # P2: the original `Phoenix\.PubSub\.subscribe` regex silently
+  # missed the aliased shape — valid Elixir spelling that bypasses
+  # the gate without violating any other contract.
+  @forbidden ~r/(?:Phoenix\.)?PubSub\.subscribe/
 
   test "no Phoenix.PubSub.subscribe under apps/ezagent_domain_external_mirror/lib/" do
     domain_lib =
@@ -86,22 +105,20 @@ defmodule Ezagent.ExternalMirror.Invariants.NoPubsubBypassTest do
   end
 
   test "no Phoenix.PubSub.subscribe in any source file declaring @behaviour Ezagent.ExternalMirror.Binding (or its same-app helpers)" do
-    # Two-phase scan:
-    #   Phase 1 — grep every `.ex` under `apps/` for a source-level
-    #     `@behaviour Ezagent.ExternalMirror.Binding` declaration;
-    #     collect the OWNING APP directories.
-    #   Phase 2 — grep every `.ex` under those owning-app `lib/` trees
-    #     for `Phoenix.PubSub.subscribe`. Covers BOTH the Binding
-    #     module itself AND any same-app helper it transitively calls
-    #     (SPEC §10 (f) "binding module's transitive deps" — for V1
-    #     single-node, "transitive deps" reduces to "same plugin app
-    #     code" because plugin authors don't reach across plugin apps).
+    # Three-phase scan (codex r2 P2 fix — discovery now uses runtime
+    # module attributes, not source-text regex, so aliased
+    # `alias Ezagent.ExternalMirror.Binding` declarations are caught):
     #
-    # Source-level @behaviour grep avoids the `:code.which/1` →
-    # snake-case-path mapping fragility codex r1 P1 caught (the prior
-    # implementation derived `apps/<app>/lib/Elixir.Some.Mod.ex` from
-    # `_build/.../Elixir.Some.Mod.beam` — that path NEVER exists since
-    # real source paths are snake_case + nested directories).
+    #   Phase 1 — `:code.all_loaded/0` filtered by
+    #     `module_info(:attributes)[:behaviour]` containing
+    #     `Ezagent.ExternalMirror.Binding`. Elixir resolves both
+    #     `@behaviour Ezagent.ExternalMirror.Binding` AND
+    #     `alias Ezagent.ExternalMirror.Binding` + `@behaviour Binding`
+    #     to the same compile-time attribute value.
+    #   Phase 2 — `:beam_lib.chunks(beam, [:compile_info])[:source]`
+    #     gives the absolute source path the compiler recorded.
+    #   Phase 3 — grep each owning-app's lib/ tree for the forbidden
+    #     pattern. Covers Binding modules AND same-app helpers.
 
     binding_apps = find_apps_with_binding_modules()
 
@@ -134,35 +151,107 @@ defmodule Ezagent.ExternalMirror.Invariants.NoPubsubBypassTest do
            """
   end
 
-  # Phase 1 — find every app whose `lib/` contains a source file with
-  # an ACTUAL `@behaviour Ezagent.ExternalMirror.Binding` declaration
-  # at the top of a line (i.e. module-level attribute, NOT a runtime
-  # mention inside a string/AST inspection in something like
-  # `ezagent_plugin_check.ex`).
+  # Phase 1+2 — beam-walk + runtime-attribute discovery. Enumerates
+  # every `.beam` under `_build/<env>/lib/<app>/ebin/`, ensures the
+  # module is loaded (Code.ensure_loaded/1 — lazy modules wouldn't
+  # show up in `:code.all_loaded/0` in a fresh ExUnit process),
+  # filters by `@behaviour Ezagent.ExternalMirror.Binding`, then
+  # maps each to its source via `:beam_lib.chunks/2`'s `:compile_info`
+  # chunk and the owning `apps/<app>/lib/` directory.
   #
-  # Regex: optional leading whitespace + literal `@behaviour` + ws +
-  # the fully-qualified module + word-boundary. Excludes any line where
-  # the `@behaviour` is preceded by `:` (atom in a list), `"` (string),
-  # backtick (doc), or `,` (inside a list literal).
+  # This is robust against the codex r2 P2 alias finding: Elixir
+  # records the resolved module atom in `:behaviour` attributes, so
+  # both spellings (`@behaviour Ezagent.ExternalMirror.Binding` AND
+  # `alias Ezagent.ExternalMirror.Binding` + `@behaviour Binding`)
+  # produce the same attribute value.
   defp find_apps_with_binding_modules do
-    {output, _exit} =
-      System.cmd(
-        "grep",
-        [
-          "-rEl",
-          "^\\s*@behaviour\\s+Ezagent\\.ExternalMirror\\.Binding\\b",
-          apps_root(),
-          "--include=*.ex"
-        ],
-        stderr_to_stdout: true
-      )
-
-    output
-    |> String.split("\n", trim: true)
+    all_beams()
+    |> Enum.map(&module_from_beam/1)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.map(&ensure_loaded/1)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.filter(&binding_behaviour?/1)
+    |> Enum.flat_map(&source_for_module/1)
     |> Enum.reject(&String.contains?(&1, "/test/"))
     |> Enum.map(&owning_app_lib_dir/1)
     |> Enum.reject(&is_nil/1)
     |> Enum.uniq()
+  end
+
+  defp all_beams do
+    build_dir = Path.join([umbrella_root(), "_build", to_string(Mix.env()), "lib"])
+
+    case File.ls(build_dir) do
+      {:ok, apps} ->
+        Enum.flat_map(apps, fn app ->
+          ebin = Path.join([build_dir, app, "ebin"])
+
+          # CRITICAL: prepend each app's ebin to the BEAM code path so
+          # `Code.ensure_loaded/1` can find modules from apps that AREN'T
+          # listed in this app's mix.exs deps. Without this, the test
+          # only sees modules from `:ezagent_core` + `:ezagent_domain_identity`
+          # (this app's declared deps) and silently misses any binding
+          # module defined in `:ezagent_plugin_*` (a sibling app, not a
+          # dep) — that's a false-negative on the SPEC §10 (f) gate.
+          :code.add_pathz(String.to_charlist(ebin))
+
+          case File.ls(ebin) do
+            {:ok, files} ->
+              files
+              |> Enum.filter(&String.ends_with?(&1, ".beam"))
+              |> Enum.map(&Path.join(ebin, &1))
+
+            _ ->
+              []
+          end
+        end)
+
+      _ ->
+        []
+    end
+  end
+
+  defp module_from_beam(beam_path) do
+    base = Path.basename(beam_path, ".beam")
+    String.to_atom(base)
+  rescue
+    _ -> nil
+  end
+
+  defp ensure_loaded(module) do
+    case Code.ensure_loaded(module) do
+      {:module, ^module} -> module
+      _ -> nil
+    end
+  end
+
+  defp umbrella_root do
+    {out, 0} = System.cmd("git", ["rev-parse", "--show-toplevel"])
+    String.trim(out)
+  end
+
+  defp binding_behaviour?(module) do
+    module.module_info(:attributes)
+    |> Keyword.get_values(:behaviour)
+    |> List.flatten()
+    |> Enum.member?(Ezagent.ExternalMirror.Binding)
+  rescue
+    _ -> false
+  end
+
+  # Returns the absolute source path the compiler recorded for a
+  # module, OR `[]` if unavailable (some test-only modules have no
+  # `:compile_info` chunk). Single-element list so callers can use
+  # `Enum.flat_map/2`.
+  defp source_for_module(module) do
+    with beam_path when is_list(beam_path) <- :code.which(module),
+         {:ok, {_, [{:compile_info, info}]}} <-
+           :beam_lib.chunks(beam_path, [:compile_info]),
+         source when is_list(source) <- Keyword.get(info, :source) do
+      [List.to_string(source)]
+    else
+      _ -> []
+    end
   end
 
   # Map a source path like `/.../apps/ezagent_plugin_feishu/lib/.../foo.ex`
@@ -210,13 +299,24 @@ defmodule Ezagent.ExternalMirror.Invariants.NoPubsubBypassTest do
     end
   end
 
+  # Heuristic: a line where the forbidden call appears inside backticks
+  # OR after the arrow `→` (used in moduledoc / @doc tables) is prose,
+  # not a real call site. Both the fully-qualified `Phoenix.PubSub.subscribe`
+  # AND the aliased `PubSub.subscribe` are handled (codex r2 P2 fix —
+  # the forbidden pattern now matches both spellings).
   defp prose_reference?(body) do
-    case String.split(body, "Phoenix.PubSub.subscribe", parts: 2) do
-      [prefix, _] ->
-        String.contains?(prefix, "`") or String.contains?(prefix, "→")
+    cond do
+      contains_with_backtick?(body, "PubSub.subscribe") -> true
+      String.contains?(body, "→ PubSub.subscribe") -> true
+      String.contains?(body, "→ Phoenix.PubSub.subscribe") -> true
+      true -> false
+    end
+  end
 
-      _ ->
-        false
+  defp contains_with_backtick?(body, marker) do
+    case String.split(body, marker, parts: 2) do
+      [prefix, _] -> String.contains?(prefix, "`")
+      _ -> false
     end
   end
 
