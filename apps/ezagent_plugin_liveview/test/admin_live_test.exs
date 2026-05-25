@@ -651,6 +651,37 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
              }) =~ "Notification: %{"
     end
 
+    # Codex r2 on PR #320 — when a mixed-shape transition payload has
+    # `:body` (v2 contract) but the human text is still at the OUTER
+    # level (legacy), the fallback must check the OUTER payload, not
+    # re-inspect `body`. Pre-r2 the body-branch's fallback was
+    # `format_notification_legacy(body)`, which would never see a
+    # top-level `:summary` and would render the empty body as
+    # `"Notification: %{}"`.
+    test "format_notification/1 mixed-shape: body present but empty, top-level summary wins" do
+      mixed = %{
+        type: :transition_event,
+        body: %{},
+        source: __MODULE__,
+        summary: "rendered from top-level summary fallback"
+      }
+
+      assert EzagentPluginLiveview.AdminLive.format_notification(mixed) ==
+               "rendered from top-level summary fallback"
+    end
+
+    test "format_notification/1 mixed-shape: body present without text, top-level text wins" do
+      mixed = %{
+        type: :transition_event,
+        body: %{some_field: 42},
+        source: __MODULE__,
+        text: "rendered from top-level text fallback"
+      }
+
+      assert EzagentPluginLiveview.AdminLive.format_notification(mixed) ==
+               "rendered from top-level text fallback"
+    end
+
     test "cap-grant notification reaches AdminLive handler without crashing", %{conn: conn} do
       {:ok, lv, _html} = live(conn, "/sessions")
 

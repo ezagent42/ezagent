@@ -338,17 +338,22 @@ defmodule EzagentPluginLiveview.AdminLive do
   # contract shape (apps/ezagent_core/.../notifications.ex):
   #   %{type: atom, body: map, source: module}
   # Prefer `body.text` / `body.summary` (current contract); fall back to
-  # legacy top-level `:text` / `:summary` for any in-flight stragglers
-  # during the transition window. Codex r1 (PR #320) flagged the
-  # pre-fix formatter as rendering cap-grant notifications as raw maps
-  # because it only read top-level keys.
-  def format_notification(%{body: %{} = body}) do
+  # top-level `:text` / `:summary` on the OUTER payload for mixed-shape
+  # transition stragglers (a producer that's added :body but kept the
+  # human text at the top level during incremental migration). Codex r1
+  # (PR #320) flagged the pre-fix formatter as rendering cap-grant
+  # notifications as raw maps because it only read top-level keys.
+  # Codex r2 (PR #320) fixed the fallback ordering — pre-fix the body
+  # branch called `format_notification_legacy(body)` instead of falling
+  # through to the OUTER payload's top-level keys, so a payload like
+  # `%{body: %{x: 1}, summary: "fallback"}` lost the summary.
+  def format_notification(%{body: %{} = body} = payload) do
     cond do
       is_binary(body[:text]) -> body[:text]
       is_binary(body["text"]) -> body["text"]
       is_binary(body[:summary]) -> body[:summary]
       is_binary(body["summary"]) -> body["summary"]
-      true -> format_notification_legacy(body)
+      true -> format_notification_legacy(payload)
     end
   end
 
