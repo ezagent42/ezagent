@@ -237,7 +237,7 @@ defmodule Ezagent.Kind.Runtime do
 
       :ok
     else
-      needed = resolve_required_cap(behavior_module, action, target)
+      needed = resolve_required_cap(kind_module, behavior_module, action, target)
 
       meta = %{
         kind_module: kind_module,
@@ -276,16 +276,16 @@ defmodule Ezagent.Kind.Runtime do
   # + `workspace_uri: :any` (the common shape for a Behavior author);
   # at dispatch time we substitute the actual target URI + target
   # workspace so the check fires against THIS dispatch.
-  defp resolve_required_cap(behavior_module, action, %URI{} = target) do
+  defp resolve_required_cap(kind_module, behavior_module, action, %URI{} = target) do
     cond do
       not function_exported?(behavior_module, :required_caps, 0) ->
-        # Behavior hasn't implemented required_caps/0 yet (PR-CC-2-v2
-        # is the sweep PR that adds them to all 19 Behaviors). Falling
-        # back to the legacy `cap_for_action/3` shape keeps the dispatch
-        # path live during the in-PR sweep ordering — once every
-        # Behavior declares, this branch is dead and the invariant
-        # test catches any regression.
-        legacy_cap_map(behavior_module, action, target)
+        # Behavior hasn't implemented required_caps/0 yet (e.g. test
+        # support modules without the callback). Fall back to the
+        # legacy `cap_for_action/3` shape so the dispatch path still
+        # authorizes via `ctx.caps`. Production code paths trigger the
+        # invariant test (`BehaviorRequiredCapsParityTest`) so this
+        # fallback is dead for production Behaviors.
+        legacy_cap_map(kind_module, action, target)
 
       true ->
         try do
@@ -308,40 +308,60 @@ defmodule Ezagent.Kind.Runtime do
                   other -> other
                 end
 
+              # When the declared kind axis is `:any` (multi-Kind
+              # Behavior — e.g. Chat / Routing / Presence / Identity /
+              # Template), substitute the actual target Kind's
+              # type_name/0 so the check matches a cap held against
+              # the concrete Kind. SPEC §7 check 11(b).
+              kind_axis =
+                case declared.kind do
+                  :any -> safe_type_name(kind_module)
+                  other -> other
+                end
+
               %{
-                kind: declared.kind,
+                kind: kind_axis,
                 behavior: declared.behavior,
                 instance: instance,
                 workspace_uri: workspace_uri
               }
 
             nil ->
-              nil
+              # required_caps/0 exists but doesn't declare this action.
+              # Fall back to legacy shape — a Behavior that exports
+              # actions/0 with action X but no required_caps[X] is a
+              # bug; the invariant test catches it.
+              legacy_cap_map(kind_module, action, target)
           end
         rescue
-          _ -> legacy_cap_map(behavior_module, action, target)
+          _ -> legacy_cap_map(kind_module, action, target)
         catch
-          _, _ -> legacy_cap_map(behavior_module, action, target)
+          _, _ -> legacy_cap_map(kind_module, action, target)
         end
     end
   end
 
-  defp legacy_cap_map(_behavior_module, action, target) do
-    # `cap_for_action/3` derives behavior via BehaviorRegistry lookup;
-    # we already know it but feed kind_module via the target's
-    # KindRegistry binding lazily — for the legacy fallback path only.
-    case Ezagent.KindRegistry.lookup(Ezagent.URI.instance(target)) do
-      {:ok, _pid} ->
-        # We don't have the kind_module in scope here without an extra
-        # round-trip; return nil to fail-deny. The Behavior should have
-        # declared required_caps/0 by now anyway.
-        _ = action
-        nil
-
-      :error ->
-        nil
+  defp legacy_cap_map(kind_module, action, %URI{} = target) when is_atom(kind_module) do
+    try do
+      Ezagent.Capability.cap_for_action(kind_module, action, target)
+    rescue
+      _ -> nil
+    catch
+      _, _ -> nil
     end
   end
+
+  defp legacy_cap_map(_, _, _), do: nil
+
+  defp safe_type_name(kind_module) when is_atom(kind_module) do
+    if function_exported?(kind_module, :type_name, 0) do
+      kind_module.type_name()
+    else
+      :any
+    end
+  end
+
+  defp safe_type_name(_), do: :any
 
   defp granted_via_holds_cap?(ctx, needed_map) do
     caller = Map.get(ctx, :caller)

@@ -387,6 +387,14 @@ defmodule Ezagent.Behavior.IdentityAdmin do
   # the cap was minted by a bootstrap admin or transitively by a
   # workspace admin. Either is acceptable for further delegation
   # within the same workspace.
+  #
+  # PR-CC-2-v2 (SPEC §5 catalog narrowing): a `Behavior.Workspace`
+  # cap with `workspace_uri: :any` is the cross-workspace shape held
+  # by system principals like `system://template-materialize` and
+  # `system://workspace-loader` — those principals are the
+  # legitimate granters of template caps across workspaces, so the
+  # predicate accepts the `:any` workspace_uri form too. The narrower
+  # `^ws_uri` literal still matches for delegated workspace admins.
   defp holds_workspace_admin_cap?(%{caps: caps}, %URI{} = ws_uri) do
     caps_list = if is_struct(caps, MapSet), do: MapSet.to_list(caps), else: List.wrap(caps)
 
@@ -394,6 +402,12 @@ defmodule Ezagent.Behavior.IdentityAdmin do
       %Ezagent.Capability{
         behavior: Ezagent.Behavior.Workspace,
         workspace_uri: ^ws_uri
+      } ->
+        true
+
+      %Ezagent.Capability{
+        behavior: Ezagent.Behavior.Workspace,
+        workspace_uri: :any
       } ->
         true
 

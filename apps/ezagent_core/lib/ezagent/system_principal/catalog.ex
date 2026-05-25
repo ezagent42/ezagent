@@ -130,16 +130,24 @@ defmodule Ezagent.SystemPrincipal.Catalog do
        ]},
       {"system://chat-router",
        [
-         # Deviation from SPEC §5 provisional table: the original string
-         # `session.chat.system_message` referenced a non-existent action;
-         # only :send is kept.
-         Capability.cap(:session, Chat, :send)
+         # Deviation from SPEC §5 provisional table:
+         # 1. The original string `session.chat.system_message` referenced
+         #    a non-existent action; dropped.
+         # 2. kind broadened from `:session` to `:any` — chat-router
+         #    fans out `chat.receive` to BOTH User and Agent Kinds (per
+         #    Chat.send recipient resolution); the string-cap shape
+         #    `session.chat.send` misleadingly implied Session-only. The
+         #    actual runtime semantic is "chat behavior across all Kinds
+         #    chat is registered on" (User + Agent + Session).
+         Capability.cap(:any, Chat, :any)
        ]},
       {"system://chat-reply",
        [
          # Deviation: original string `session.chat.reaction` referenced
-         # a non-existent action; only :send is kept.
-         Capability.cap(:session, Chat, :send)
+         # a non-existent action; dropped. Same multi-Kind broadening as
+         # chat-router — Plugin CC's channel dispatches chat.send AND
+         # chat.receive across Kinds.
+         Capability.cap(:any, Chat, :any)
        ]},
       {"system://worker-publish",
        [
@@ -152,8 +160,21 @@ defmodule Ezagent.SystemPrincipal.Catalog do
          # to a Template Behavior cap on :any-Kind (template:// is
          # cross-cutting). The session-spawn half of the original glob
          # `session.*` becomes a Chat-wildcard cap on Session Kind.
+         # PR-CC-2-v2 added IdentityAdmin grant_cap on User — the
+         # `grant_owner_template_cap/2` flow in SessionTemplate.create/3
+         # / fork/3 dispatches `identity.grant_cap` on the owner User
+         # Kind under this principal (template materialization side-
+         # effect). Pre-PR-CC-2-v2 worked because the bridge widened
+         # every non-empty entry to a wildcard cap; post-narrowing this
+         # MUST be declared structurally. The Workspace Behavior cap
+         # (`workspace_uri: :any`) is the cross-workspace authority
+         # needed so `IdentityAdmin.check_grant_authorized` accepts the
+         # principal as a "workspace admin" for the target workspace
+         # (per the PR-CC-2-v2 amendment to `holds_workspace_admin_cap?`).
          Capability.cap(:any, Template, :any),
-         Capability.cap(:session, Chat, :any)
+         Capability.cap(:session, Chat, :any),
+         Capability.cap(:user, IdentityAdmin, :grant_cap),
+         Capability.cap(:workspace, Workspace, :any)
        ]},
       {"system://orchestrator-tools",
        [
@@ -165,8 +186,11 @@ defmodule Ezagent.SystemPrincipal.Catalog do
        [
          # Deviation: original `workspace.workspace.read` mapped to a
          # Workspace Behavior wildcard cap so session-internal can read
-         # any workspace state. Original `session.chat.*` stays.
-         Capability.cap(:session, Chat, :any),
+         # any workspace state. Original `session.chat.*` widened to
+         # `:any`-Kind Chat — session-internal dispatches `chat.receive`
+         # on User AND Agent Kinds during fan-out, so the Kind axis must
+         # cross those (same multi-Kind pattern as chat-router).
+         Capability.cap(:any, Chat, :any),
          Capability.cap(:workspace, Workspace, :any)
        ]},
       {"system://agent-internal",
