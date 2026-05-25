@@ -141,9 +141,28 @@ defmodule Ezagent.Behavior.Lifecycle do
             source: __MODULE__
           })
       rescue
-        _ -> :ok
+        error ->
+          # Codex r1 MED (med-batch 2026-05-26) — P27 server-side
+          # observability: rescue keeps termination non-blocking but
+          # the operator must be able to debug "user reports they
+          # never got the agent-terminated notification". Log type +
+          # target + exception summary.
+          Logger.warning(
+            "Ezagent.Behavior.Lifecycle: :agent_terminated notify to " <>
+              "#{URI.to_string(parent_uri)} raised #{inspect(error)}; " <>
+              "termination of #{URI.to_string(agent_uri)} proceeds"
+          )
+
+          :ok
       catch
-        _, _ -> :ok
+        kind, reason ->
+          Logger.warning(
+            "Ezagent.Behavior.Lifecycle: :agent_terminated notify to " <>
+              "#{URI.to_string(parent_uri)} threw #{inspect({kind, reason})}; " <>
+              "termination of #{URI.to_string(agent_uri)} proceeds"
+          )
+
+          :ok
       end
     else
       _ -> :ok

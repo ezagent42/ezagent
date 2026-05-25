@@ -119,6 +119,8 @@ defmodule Ezagent.Behavior.Template do
 
   @behaviour Ezagent.Behavior
 
+  require Logger
+
   alias Ezagent.Entity.{AgentTemplate, SessionTemplate}
 
   @impl Ezagent.Behavior
@@ -550,9 +552,28 @@ defmodule Ezagent.Behavior.Template do
             source: __MODULE__
           })
       rescue
-        _ -> :ok
+        error ->
+          # Codex r1 MED (med-batch 2026-05-26) — P27 server-side
+          # observability: rescue keeps fork success non-blocking
+          # (owner-cap already granted, new template already
+          # persisted) but the operator must be able to debug
+          # "user forked a template, never got notified".
+          Logger.warning(
+            "Ezagent.Behavior.Template: :agent_template_forked notify to " <>
+              "#{URI.to_string(owner_uri)} raised #{inspect(error)}; " <>
+              "fork #{URI.to_string(parent_uri)} → #{URI.to_string(new_uri)} proceeds"
+          )
+
+          :ok
       catch
-        _, _ -> :ok
+        kind, reason ->
+          Logger.warning(
+            "Ezagent.Behavior.Template: :agent_template_forked notify to " <>
+              "#{URI.to_string(owner_uri)} threw #{inspect({kind, reason})}; " <>
+              "fork #{URI.to_string(parent_uri)} → #{URI.to_string(new_uri)} proceeds"
+          )
+
+          :ok
       end
     end
 
