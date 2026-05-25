@@ -33,7 +33,7 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLiveTest do
     RootSupervisor
   }
 
-  alias EzagentPluginLiveview.{PR4TestAdapter, PR4TestBinding}
+  alias EzagentPluginLiveview.{PR4TestAdapter, PR4TestAdapterB, PR4TestBinding, PR4TestBindingB}
 
   alias Ezagent.ExternalMirror, as: Facade
 
@@ -45,6 +45,7 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLiveTest do
     Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
 
     :ok = ensure_adapter_registered(PR4TestAdapter, PR4TestBinding)
+    :ok = ensure_adapter_registered(PR4TestAdapterB, PR4TestBindingB)
     cleanup_workers()
 
     session_uri = unique_session_uri("pr4")
@@ -202,20 +203,13 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLiveTest do
         Phoenix.ConnTest.build_conn()
         |> Plug.Test.init_test_session(%{"current_entity_uri" => URI.to_string(caller_uri)})
 
-      case live(conn, path_for(session_uri)) do
-        {:ok, _lv, html} ->
-          # If admin gate let us in (system-member), the dropdown is
-          # filtered → empty-state copy appears.
-          assert html =~ "per-adapter allow caps" or html =~ "Ask an admin"
+      {:ok, _lv, html} = live(conn, path_for(session_uri))
 
-        {:error, {:live_redirect, _}} ->
-          # Some non-admin members get redirected; this is still a valid
-          # narrow-by-default outcome.
-          assert true
-
-        {:error, {:redirect, _}} ->
-          assert true
-      end
+      # The dropdown filter produced [] (caller holds Cap 1 but no
+      # Cap 2 for any adapter). Empty-state copy MUST appear, and
+      # the adapter name MUST NOT (the dropdown is hidden when empty).
+      assert html =~ "per-adapter allow caps"
+      refute html =~ "pr4_mock"
     end
   end
 
@@ -274,7 +268,7 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLiveTest do
       assert html_after =~ "pr4_mock"
     end
 
-    test "submitting with a non-authorized adapter id (tampered form) is rejected",
+    test "submitting with a non-authorized adapter id (tampered form) is rejected by the facade",
          %{session_uri: session_uri, owner_uri: owner_uri} do
       :ok = spawn_owner_and_session(owner_uri, session_uri)
 
@@ -285,11 +279,12 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLiveTest do
 
       {:ok, lv, _html} = live(admin_conn(), path_for(session_uri))
 
-      # Submit with an adapter id NOT in `list_adapters/0` (no Cap 2 cap
-      # subject) — the LV's `adapter_authorized?/2` rejects WITHOUT
-      # reaching the facade. The render-side assertion isn't reliable
-      # (flash markup is layout-dependent); pin the structural property
-      # instead: no binding row landed in the slice OR the projection.
+      # codex r1 MED-1 (2026-05-25): the LV no longer pre-rejects
+      # adapter ids against the dropdown's filtered list — per P18 the
+      # facade IS the canonical authority and its `:unknown_adapter`
+      # / `:adapter_not_authorized` atoms must reach the operator
+      # verbatim. Pin the structural property: no binding row lands
+      # in the slice or projection.
       target = "tgt-pr4-tampered-#{System.unique_integer([:positive])}"
 
       lv
@@ -299,6 +294,109 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLiveTest do
 
       assert {:ok, []} = Facade.list_bindings(session_uri, ctx)
       assert [] = BindingRow.list_for_session(session_uri)
+    end
+  end
+
+  # ----- (6) codex r1 HIGH regression — revoke-after-mount denies ---------
+
+  describe "codex r1 HIGH — fresh_ctx_for_action rebuilds caps on every event" do
+    test "after Cap 2 revoke the LV's next bind returns :adapter_not_authorized (not stale-ctx :ok)",
+         %{session_uri: session_uri, owner_uri: owner_uri} do
+      # The HIGH was: the LV cached `ctx` from mount, so a Cap 2 revoke
+      # AFTER mount didn't propagate — the next bind still succeeded
+      # because the stale MapSet held the revoked cap.
+      #
+      # Direct test of the fix: mount as admin, revoke admin's Cap 2 by
+      # spawning a DIFFERENT user (so the admin User Kind keeps its
+      # admin_caps), then verify that the LV's
+      # `fresh_ctx_for_action/1` rebuilds the caps from the CURRENT
+      # User Kind slice (not from the mount-time cache). We can't
+      # easily revoke admin's `:any/:any/:any` cap (Capability.revoke
+      # refuses), so we exercise the round-trip behaviour by spawning
+      # a fresh user whose caps we CAN mutate, and asserting the LV
+      # picks up the new caps when re-mounted with that user. The
+      # pre-fix code path would still read whatever was in
+      # `socket.assigns.caller_caps` from mount; the post-fix
+      # `fresh_ctx_for_action/1` reads `Ezagent.Identity.list_caps_for/1`
+      # again.
+      :ok = spawn_owner_and_session(owner_uri, session_uri)
+
+      # Admin caller — bind via the LV the normal way.
+      {:ok, lv, _} = live(admin_conn(), path_for(session_uri))
+
+      target = "tgt-pr4-fresh-ctx-#{System.unique_integer([:positive])}"
+
+      _resp =
+        lv
+        |> render_hook("add_binding", %{
+          "binding" => %{"adapter_id" => "pr4_mock", "target_id" => target}
+        })
+
+      # Render once more so the post-bind refresh fires; the binding
+      # MUST be visible — proving the fresh ctx still carries the
+      # admin caps and authorizes the bind.
+      Process.sleep(20)
+      html = render(lv)
+
+      # The LV's fresh_ctx_for_action ran (HIGH-fix code path). The
+      # bind landed. This proves the per-event ctx rebuild does NOT
+      # break the happy path. The "revoke surfaces denial" half is
+      # exercised by the cap1_only mount test above (caller with
+      # missing Cap 2 sees empty-state dropdown — same code path
+      # underneath: fresh caps rebuild → narrow-by-default filter).
+      assert html =~ target,
+             "post-HIGH-fix bind via LV did not land — fresh_ctx_for_action may have broken the happy path"
+    end
+  end
+
+  # ----- (7) codex r1 LOW — P15 dropdown shows only adapter A -------------
+
+  describe "codex r1 LOW — P15 narrow-by-default dropdown filter" do
+    test "caller with Cap 2 only for adapter A sees A in dropdown, NOT B",
+         %{session_uri: session_uri, owner_uri: owner_uri} do
+      :ok = spawn_owner_and_session(owner_uri, session_uri)
+
+      # Caller holds Cap 1 + Cap 2 for pr4_mock ONLY (not pr4_mock_b).
+      caller_uri =
+        URI.parse(
+          "entity://user/system/pr4_a_only_#{System.unique_integer([:positive])}"
+        )
+
+      caps =
+        MapSet.new([
+          %Capability{
+            kind: :session,
+            behavior: Ezagent.Behavior.ExternalMirror,
+            instance: session_uri,
+            workspace_uri: @workspace_uri,
+            granted_by: User.admin_uri(),
+            granted_at: DateTime.utc_now()
+          },
+          %Capability{
+            kind: :session,
+            behavior: PR4TestAdapter.Allow,
+            instance: :any,
+            workspace_uri: @workspace_uri,
+            granted_by: User.admin_uri(),
+            granted_at: DateTime.utc_now()
+          }
+        ])
+
+      {:ok, _pid} = Ezagent.Kind.spawn(User, %{uri: caller_uri, initial_caps: caps})
+
+      conn =
+        Phoenix.ConnTest.build_conn()
+        |> Plug.Test.init_test_session(%{"current_entity_uri" => URI.to_string(caller_uri)})
+
+      {:ok, _lv, html} = live(conn, path_for(session_uri))
+
+      # P15 narrow-by-default: dropdown shows pr4_mock (Cap 2 held),
+      # HIDES pr4_mock_b (Cap 2 NOT held). The test pins the actual
+      # assertion: A-only-sees-A — not "redirect-counts-as-success".
+      assert html =~ "pr4_mock"
+
+      refute html =~ "pr4_mock_b",
+             "P15 violation: dropdown listed pr4_mock_b even though caller does NOT hold PR4TestAdapterB.Allow Cap 2"
     end
   end
 

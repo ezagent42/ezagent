@@ -118,7 +118,12 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLive do
          |> assign(:available_adapters, filter_adapters_by_cap(caller_caps, session_uri))
          |> assign(:bind_form, fresh_bind_form())
          |> assign(:expanded_binding_id, nil)
-         |> assign(:audit_events, [])}
+         # codex r1 MED-2 (2026-05-25): per-binding ring keyed by
+         # binding_id ("<adapter_id>/<target_id>") + a separate ring
+         # for session-level :bind / :unbind events. A noisy binding
+         # can no longer evict another binding's history.
+         |> assign(:binding_audit_events, %{})
+         |> assign(:session_audit_events, [])}
 
       {:error, reason} ->
         {:ok,
@@ -137,19 +142,28 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLive do
   end
 
   def handle_info({:audit_event, event}, socket) do
-    # Only ring events that relate to one of THIS session's bindings:
-    # either targeted at the session URI itself (bind / unbind / list)
-    # or at one of its workers' URIs.
-    interesting? = audit_event_interesting?(event, socket.assigns.bindings, socket.assigns.session_uri_str)
+    # codex r1 MED-2 (2026-05-25): partition into a PER-BINDING ring +
+    # a separate ring for session-level events (`:bind` / `:unbind`
+    # itself). Previously a single 20-event global ring meant a noisy
+    # binding could evict another binding's events — the expanded
+    # panel was not actually "last 20 per binding."
+    target = audit_event_target(event)
 
-    if interesting? do
-      events =
-        [event | socket.assigns.audit_events]
-        |> Enum.take(@audit_ring_max)
+    cond do
+      is_nil(target) ->
+        {:noreply, socket}
 
-      {:noreply, assign(socket, :audit_events, events)}
-    else
-      {:noreply, socket}
+      session_event?(target, socket.assigns.session_uri_str) ->
+        {:noreply, prepend_to_ring(socket, :session_audit_events, event)}
+
+      true ->
+        case binding_for_target(target, socket.assigns.bindings) do
+          %{binding_id: binding_id} ->
+            {:noreply, prepend_to_binding_ring(socket, binding_id, event)}
+
+          nil ->
+            {:noreply, socket}
+        end
     end
   end
 
@@ -168,6 +182,14 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLive do
     adapter_id = String.trim(to_string(adapter_id))
     target_id = String.trim(to_string(target_id))
 
+    # codex r1 HIGH (2026-05-25): rebuild ctx from fresh caps so a
+    # revoke-after-mount can no longer authorize a bind. Caching
+    # `socket.assigns.ctx` from mount let a long-lived admin LV keep
+    # dispatching mutations after Cap 1 / Cap 2 were removed from the
+    # caller's slice. `caller_caps/1` round-trips through the dispatch
+    # path so the cap set IS the live User Kind's `:identity` slice.
+    fresh_ctx = fresh_ctx_for_action(socket)
+
     cond do
       adapter_id == "" ->
         {:noreply, put_flash(socket, :error, gettext("Pick an adapter."))}
@@ -175,39 +197,42 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLive do
       target_id == "" ->
         {:noreply, put_flash(socket, :error, gettext("Target id is required."))}
 
-      not adapter_authorized?(adapter_id, socket.assigns.available_adapters) ->
-        # The dropdown filtered by cap; this branch only fires on a
-        # tampered hidden form input (per P15 narrow-by-default + the
-        # dispatch path will also refuse).
-        {:noreply,
-         put_flash(
-           socket,
-           :error,
-           gettext("Not authorized to bind adapter %{a}.", a: adapter_id)
-         )}
-
       true ->
+        # codex r1 MED-1 (2026-05-25): NO precheck on adapter_id against
+        # the dropdown's filtered list. Per P18 the facade is the
+        # canonical authority — surface whatever it returns. The dropdown
+        # filter remains a UX narrowing (P15 narrow-by-default); the
+        # facade's `:unknown_adapter` (for ghost ids) and
+        # `:adapter_not_authorized` (for ids the caller doesn't hold
+        # Cap 2 for) reach the operator verbatim, so a tampered hidden
+        # form input gets the precise error the facade would log
+        # instead of a generic "not authorized" string.
         case ExternalMirror.bind(
                socket.assigns.session_uri,
                adapter_id,
                target_id,
                %{},
-               socket.assigns.ctx
+               fresh_ctx
              ) do
           {:ok, _result} ->
             {:noreply,
              socket
              |> assign(:bind_form, fresh_bind_form())
+             |> assign(:ctx, fresh_ctx)
+             |> assign(:caller_caps, fresh_ctx.caps)
              |> put_flash(:info, gettext("Bound %{a} → %{t}.", a: adapter_id, t: target_id))
              |> refresh_bindings()}
 
           {:error, reason} ->
             # Per P18 surface the dispatch error verbatim — operators
-            # need to see :adapter_not_authorized / :target_check_timeout
-            # / {:target_ownership_denied, _} to debug.
+            # need to see :adapter_not_authorized / :unknown_adapter /
+            # :target_check_timeout / {:target_ownership_denied, _} to
+            # debug. The atom IS the contract; don't translate.
             {:noreply,
-             put_flash(
-               socket,
+             socket
+             |> assign(:ctx, fresh_ctx)
+             |> assign(:caller_caps, fresh_ctx.caps)
+             |> put_flash(
                :error,
                gettext("Bind failed: %{r}", r: inspect(reason))
              )}
@@ -220,22 +245,30 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLive do
         %{"adapter-id" => adapter_id, "target-id" => target_id},
         socket
       ) do
+    # codex r1 HIGH (2026-05-25): rebuild ctx from fresh caps — see
+    # the same fix in add_binding above.
+    fresh_ctx = fresh_ctx_for_action(socket)
+
     case ExternalMirror.unbind(
            socket.assigns.session_uri,
            adapter_id,
            target_id,
-           socket.assigns.ctx
+           fresh_ctx
          ) do
       {:ok, _result} ->
         {:noreply,
          socket
+         |> assign(:ctx, fresh_ctx)
+         |> assign(:caller_caps, fresh_ctx.caps)
          |> put_flash(:info, gettext("Unbound %{a} → %{t}.", a: adapter_id, t: target_id))
          |> refresh_bindings()}
 
       {:error, reason} ->
         {:noreply,
-         put_flash(
-           socket,
+         socket
+         |> assign(:ctx, fresh_ctx)
+         |> assign(:caller_caps, fresh_ctx.caps)
+         |> put_flash(
            :error,
            gettext("Unbind failed: %{r}", r: inspect(reason))
          )}
@@ -354,20 +387,41 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLive do
   end
 
   defp refresh_bindings(socket) do
-    case ExternalMirror.list_bindings(socket.assigns.session_uri, socket.assigns.ctx) do
+    # codex r1 HIGH (2026-05-25): refresh ALSO re-resolves the caller's
+    # caps so the dropdown's narrow-by-default reflects the live cap
+    # state (revocation post-mount shrinks the dropdown on the next
+    # poll cycle, not just on the next bind/unbind).
+    fresh_ctx = fresh_ctx_for_action(socket)
+
+    case ExternalMirror.list_bindings(socket.assigns.session_uri, fresh_ctx) do
       {:ok, bindings} ->
         socket
+        |> assign(:ctx, fresh_ctx)
+        |> assign(:caller_caps, fresh_ctx.caps)
         |> assign(:bindings, decorate_bindings(bindings, socket.assigns.session_uri))
         |> assign(
           :available_adapters,
-          filter_adapters_by_cap(socket.assigns.caller_caps, socket.assigns.session_uri)
+          filter_adapters_by_cap(fresh_ctx.caps, socket.assigns.session_uri)
         )
 
       {:error, _reason} ->
         # Don't navigate away on a transient refresh failure; surface a
         # flash so the operator knows.
-        put_flash(socket, :error, gettext("Refresh failed — caps may have changed."))
+        socket
+        |> assign(:ctx, fresh_ctx)
+        |> assign(:caller_caps, fresh_ctx.caps)
+        |> put_flash(:error, gettext("Refresh failed — caps may have changed."))
     end
+  end
+
+  # codex r1 HIGH (2026-05-25): fresh ctx round-trips through
+  # `Ezagent.Identity.list_caps_for/1` so the resulting MapSet IS the
+  # User Kind's current `:identity` slice — not whatever was cached
+  # at mount. Long-lived admin LVs would otherwise keep the original
+  # mount-time caps and bypass post-mount revocation.
+  defp fresh_ctx_for_action(socket) do
+    caller_uri = socket.assigns.caller_uri
+    build_ctx(caller_uri, caller_caps(caller_uri))
   end
 
   # P15 narrow-by-default: drop any adapter whose per-adapter allow cap
@@ -422,28 +476,35 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLive do
     _, _ -> :error
   end
 
-  defp adapter_authorized?(adapter_id, available_adapters) do
-    Enum.any?(available_adapters, fn %{id: id} -> id == adapter_id end)
-  end
-
   defp fresh_bind_form, do: to_form(%{"adapter_id" => "", "target_id" => ""}, as: "binding")
-
-  defp audit_event_interesting?(event, bindings, session_uri_str) do
-    target = audit_event_target(event)
-
-    cond do
-      is_nil(target) -> false
-      target == session_uri_str -> true
-      String.starts_with?(target, session_uri_str <> "?") -> true
-      Enum.any?(bindings, fn b -> target == b.worker_uri_str end) -> true
-      Enum.any?(bindings, fn b -> String.starts_with?(target, b.worker_uri_str <> "?") end) -> true
-      true -> false
-    end
-  end
 
   defp audit_event_target(%{metadata: %{target: t}}) when is_binary(t), do: t
   defp audit_event_target(%{metadata: %{target: %URI{} = t}}), do: URI.to_string(t)
   defp audit_event_target(_), do: nil
+
+  defp session_event?(target, session_uri_str) do
+    target == session_uri_str or
+      String.starts_with?(target, session_uri_str <> "?")
+  end
+
+  defp binding_for_target(target, bindings) do
+    Enum.find(bindings, fn b ->
+      target == b.worker_uri_str or
+        String.starts_with?(target, b.worker_uri_str <> "?")
+    end)
+  end
+
+  defp prepend_to_ring(socket, assign_key, event) do
+    existing = Map.get(socket.assigns, assign_key, [])
+    update(socket, assign_key, fn _ -> Enum.take([event | existing], @audit_ring_max) end)
+  end
+
+  defp prepend_to_binding_ring(socket, binding_id, event) do
+    rings = Map.get(socket.assigns, :binding_audit_events, %{})
+    current = Map.get(rings, binding_id, [])
+    new_ring = Enum.take([event | current], @audit_ring_max)
+    assign(socket, :binding_audit_events, Map.put(rings, binding_id, new_ring))
+  end
 
   # ----- render --------------------------------------------------------------
 
@@ -567,10 +628,10 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLive do
                       <tr :if={@expanded_binding_id == binding.binding_id}>
                         <td colspan="9" class="bg-zinc-50 dark:bg-zinc-900 px-4 py-3">
                           <div class="text-[10px] uppercase tracking-wide text-zinc-500 mb-2">
-                            {gettext("Recent audit events (last 20)")}
+                            {gettext("Recent audit events (last 20 — per binding)")}
                           </div>
                           <div
-                            :if={recent_events_for(@audit_events, binding) == []}
+                            :if={events_for_binding(@binding_audit_events, binding) == []}
                             class="text-xs italic text-zinc-500"
                           >
                             {gettext(
@@ -578,14 +639,29 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLive do
                             )}
                           </div>
                           <ul
-                            :if={recent_events_for(@audit_events, binding) != []}
+                            :if={events_for_binding(@binding_audit_events, binding) != []}
                             class="space-y-1 font-mono text-[11px]"
                           >
-                            <li :for={ev <- recent_events_for(@audit_events, binding)} class="text-zinc-700 dark:text-zinc-300">
+                            <li
+                              :for={ev <- events_for_binding(@binding_audit_events, binding)}
+                              class="text-zinc-700 dark:text-zinc-300"
+                            >
                               <span class="text-zinc-500">{DateTime.to_iso8601(ev.at)}</span>
                               <span class="ml-2">{format_audit_event(ev)}</span>
                             </li>
                           </ul>
+
+                          <div :if={@session_audit_events != []} class="mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-800">
+                            <div class="text-[10px] uppercase tracking-wide text-zinc-500 mb-2">
+                              {gettext("Session-level events (bind / unbind / list)")}
+                            </div>
+                            <ul class="space-y-1 font-mono text-[11px]">
+                              <li :for={ev <- @session_audit_events} class="text-zinc-600 dark:text-zinc-400">
+                                <span class="text-zinc-500">{DateTime.to_iso8601(ev.at)}</span>
+                                <span class="ml-2">{format_audit_event(ev)}</span>
+                              </li>
+                            </ul>
+                          </div>
                         </td>
                       </tr>
                     <% end %>
@@ -682,19 +758,8 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLive do
   defp format_ts(%DateTime{} = dt), do: DateTime.to_iso8601(dt)
   defp format_ts(other), do: inspect(other)
 
-  defp recent_events_for(audit_events, binding) do
-    worker_uri_str = binding.worker_uri_str
-
-    Enum.filter(audit_events, fn ev ->
-      case audit_event_target(ev) do
-        nil ->
-          false
-
-        target ->
-          target == worker_uri_str or
-            String.starts_with?(target, worker_uri_str <> "?")
-      end
-    end)
+  defp events_for_binding(binding_audit_events, %{binding_id: binding_id}) do
+    Map.get(binding_audit_events, binding_id, [])
   end
 
   defp format_audit_event(%{event: event_path, metadata: meta}) do
