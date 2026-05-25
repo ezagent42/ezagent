@@ -603,6 +603,81 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
       assert Process.alive?(lv_pid),
              "AdminLive crashed after receiving legacy and/or :slice_changed envelopes"
     end
+
+    # Codex r1 on PR #320 — `Notifications.notify/2` contract is
+    # `%{type:, body:, source:}`, but the pre-fix `format_notification/1`
+    # only read top-level `:text`/`:summary`, so cap-grant notifications
+    # rendered as `inspect(payload)` in the flash bridge. These tests
+    # exercise `format_notification/1` directly (faster + deterministic
+    # than asserting against the layout's rendered flash region) and
+    # round-trip a contract-shape notification through the LV mailbox
+    # to verify the handler doesn't crash on the new shape.
+    test "format_notification/1 extracts body.text from v2 contract payload" do
+      payload = %{
+        type: :cap_granted,
+        body: %{
+          text: "A new capability was granted to you.",
+          cap_summary: "%Ezagent.Capability{kind: :echo, behavior: :any, ...}"
+        },
+        source: Ezagent.Behavior.IdentityAdmin
+      }
+
+      assert EzagentPluginLiveview.AdminLive.format_notification(payload) ==
+               "A new capability was granted to you."
+    end
+
+    test "format_notification/1 extracts body.summary from v2 contract payload" do
+      payload = %{
+        type: :workspace_member_added,
+        body: %{summary: "Added to workspace acme."},
+        source: Ezagent.Workspace
+      }
+
+      assert EzagentPluginLiveview.AdminLive.format_notification(payload) ==
+               "Added to workspace acme."
+    end
+
+    test "format_notification/1 falls back to top-level :text for legacy payloads" do
+      # Stragglers from any not-yet-migrated producers during transition.
+      assert EzagentPluginLiveview.AdminLive.format_notification(%{text: "legacy text"}) ==
+               "legacy text"
+    end
+
+    test "format_notification/1 inspects unknown shapes (last-resort branch)" do
+      assert EzagentPluginLiveview.AdminLive.format_notification(%{
+               type: :x,
+               body: %{},
+               source: __MODULE__
+             }) =~ "Notification: %{"
+    end
+
+    test "cap-grant notification reaches AdminLive handler without crashing", %{conn: conn} do
+      {:ok, lv, _html} = live(conn, "/sessions")
+
+      caller_uri = Ezagent.Entity.User.admin_uri()
+      lv_pid = lv.pid
+
+      :ok =
+        Phoenix.PubSub.broadcast(
+          EzagentCore.PubSub,
+          Ezagent.Notifications.topic(caller_uri),
+          {:notification, caller_uri,
+           %{
+             type: :cap_granted,
+             body: %{
+               text: "A new capability was granted to you.",
+               cap_summary: "%Ezagent.Capability{...}"
+             },
+             source: Ezagent.Behavior.IdentityAdmin
+           }}
+        )
+
+      _ = render(lv)
+
+      assert Process.alive?(lv_pid),
+             "AdminLive crashed after receiving v2-contract cap_granted notification " <>
+               "(pre-Codex-r1 fix the formatter raised on body-only payloads)"
+    end
   end
 
   # Inspect a Phoenix.PubSub topic's local subscriber pids. Walks
