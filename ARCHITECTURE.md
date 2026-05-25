@@ -1036,16 +1036,44 @@ Phase 2 加 `:uri` primitive(Decision #92):匹配 `%URI{}` struct,**拒绝裸字
 
 ### 6.3 Standard Behavior library
 
-`ezagent_core` 不强制依赖任何具体 Behavior。但 Ezagent 提供一组**标准 Behavior plugin**,作为独立 OTP app 分发,供常见场景直接挂载:
+`ezagent_core` 不强制依赖任何具体 Behavior。但 Ezagent 提供一组**标准 Behavior**,分布在 `ezagent_domain_*` 和 `ezagent_plugin_*` 里 — 每个 Behavior `@behaviour Ezagent.Behavior`,实现 `state_slice/0` + `init_slice/1` + `interface/0` + `invoke/4` + `required_caps/0` (PR-CC-2-v2, 2026-05-25) 。
 
-| Plugin | Behavior | 用途 |
-|---|---|---|
-| `esr_behavior_identity` | `Ezagent.Behavior.Identity` | principal_id、display_name、自描述 |
-| `esr_behavior_os_process` | `Ezagent.Behavior.OSProcess` | 跑 sh/py/node 外部进程(底层 `:erlexec`) |
-| `esr_behavior_pty` | `Ezagent.Behavior.Pty` | 跑 PTY 子进程(底层 `:ex_pty`) |
-| `esr_behavior_chat` | `Ezagent.Behavior.Chat` | Entity-Entity Message 接收 + 路由(session 内消息流的主 Behavior) |
-| `esr_behavior_session_routing` | `Ezagent.Behavior.SessionRouting` | 编辑 session 的 routing rules(set-default / add-rule / invite 等) |
-| `esr_behavior_audit` | `Ezagent.Behavior.AuditLog` | Cross-cutting,可 attach 到任何 Kind |
+#### Domain Behaviors (load-bearing — 不能卸载)
+
+| Domain | Behavior 模块 | 注册到的 Kind | 用途 |
+|---|---|---|---|
+| `ezagent_domain_chat` | `Ezagent.Behavior.Chat` | Session | Entity-Entity Message 接收 + 路由(session 内消息流的主 Behavior) |
+| `ezagent_domain_chat` | `Ezagent.Behavior.SessionRouting` | Session | 编辑 session 的 routing rules(set-default / add-rule / invite 等) |
+| `ezagent_domain_chat` | `Ezagent.Behavior.Lifecycle` | Session / Agent | terminate / spawn 状态机 |
+| `ezagent_domain_identity` | `Ezagent.Behavior.Identity` | User / Agent | principal_id、display_name、cap 管理(grant/revoke) |
+| `ezagent_domain_identity` | `Ezagent.Behavior.ApiKeys` | User / Agent | API key issuance + revocation |
+| `ezagent_domain_identity` | `Ezagent.Behavior.UserCredentials` | User | `:set_password` — 专用 Behavior,carve 自 Identity (PR #356) |
+| `ezagent_domain_identity` | `Ezagent.Behavior.UserTokens` | User | `:mint` / `:list` / `:revoke` — token lifecycle (PR #356) |
+| `ezagent_domain_workspace` | `Ezagent.Behavior.Workspace` | Workspace | `:add_member` / `:remove_member` / `:list_members` |
+| `ezagent_domain_workspace` | `Ezagent.Behavior.WorkspaceUserAdmin` | Workspace | `:create_user` — 特权 action carve (PR #356 codex r1 CRIT) |
+| `ezagent_domain_external_mirror` | `Ezagent.Behavior.Publisher` | Session / Agent | slice-change 流的下行订阅入口 (binding 通过 `subscribe_from/3` 订阅) |
+
+#### Plugin Behaviors (可选)
+
+| Plugin | Behavior | 注册到的 Kind | 用途 |
+|---|---|---|---|
+| `ezagent_plugin_feishu` | `Ezagent.Behavior.FeishuReceive` | User | Lark 入站消息接收(取代已删的 `feishu://` scheme — SPEC v2 §5.8) |
+| `ezagent_plugin_feishu` | `Ezagent.Behavior.FeishuUserBinding` | User | feishu_open_id ↔ user URI 绑定(PR #355 case study — per-Kind chokepoint) |
+| `ezagent_plugin_feishu` | `Ezagent.Behavior.FeishuSessionBinding` | Session | feishu_chat_id ↔ session URI 绑定 |
+| `ezagent_plugin_feishu` | `Ezagent.Behavior.ExternalAdapter.Feishu.Allow` | Session | cap-only — 授权一个 session 被 Feishu adapter bind |
+| `ezagent_plugin_cc` | `Ezagent.Behavior.CcPty` | Agent | PTY 子进程驱动 (底层 `:ex_pty`) |
+| `ezagent_plugin_cc` | `Ezagent.Behavior.CcChannel` | Agent | CC `notifications/claude/channel` stdio 协议 |
+
+#### Cap-only Behaviors (`dispatchable?/0 → false`)
+
+某些 Behavior 只作为 cap 主体存在,不实际 dispatch(只在 step 5.5 chokepoint 被 consult):
+
+- `Ezagent.Behavior.Notifications` (User Kind) — `:subscribe` cap subject;Boot 时为每个新建 User 默认授予自己 URI 上的 `Notifications.:subscribe` cap (notifications.md §4)
+- `Ezagent.Behavior.ExternalAdapter.<Name>.Allow` (Session Kind, 每个 ExternalMirror adapter 一个) — 授权 binding 该 adapter 接管 session
+
+完整 Behavior list 维护在 `Ezagent.BehaviorRegistry.list_all/0` 运行时 ETS — 是 SoT;此文档表只作 orientation 用。
+
+**OSProcess 的例子**(原 v0.2 `os-process` Process impl 的归位):
 
 **OSProcess 的例子**(原 v0.2 `os-process` Process impl 的归位):
 
@@ -1105,12 +1133,42 @@ end
 
 ### 7.1 模型
 
-- **粒度**:Behavior 级。持有 `cap(Kind, Behavior)` 即可调用该 Behavior 内所有 action
+- **粒度**:Behavior × action 级。持有 `cap(Kind, Behavior, action)` 即可在该 Kind 上调用该 Behavior 的某 action。多 action 的 Behavior 当前(2026-05-26)在 `Capability` 上仅匹配 kind+behavior+instance+workspace,**没有 action 轴** — 多 action Behavior 用"特权 action 单拆 Behavior"模式 (e.g. `Ezagent.Behavior.WorkspaceUserAdmin.:create_user` 从 `Workspace` 拆出 — PR #356 codex r1 CRIT 修复)
 - **携带方式**:Push。Caller 在 `ctx.caps` 装 `MapSet<Capability>`
-- **校验点**:Kind instance,Invocation flow step 5.5
-- **校验函数**:纯 MapSet 成员检查(`Ezagent.Capability.matches?/2`)
+- **校验点**:Kind instance,Invocation flow **step 5.5** — `Kind.holds_cap?/2` chokepoint 回调 (PR-CC-2-v2, 2026-05-25)
+- **校验函数**:`Kind.holds_cap?(caller_caps, Behavior.required_caps()[action])` — Behavior 上每个 action 通过 `required_caps/0` 声明所需 cap 模板;Kind 上的 `holds_cap?/2` 是单一 chokepoint,把"Behavior 需要什么"和"caller 持有什么"两边对上 (Behavior × Entity 边界关切)
 
 > **Implementation**:`MapSet` + struct,~30 LOC。**不用第三方 ACL 库**。
+
+#### Chokepoint 边界关切 (PR-CC-2-v2, 2026-05-25)
+
+cap 检查是 **Behavior × Entity 边界关切**,**严格只在 dispatch step 5.5 发生一次**。LV `handle_event` / controller / Behavior body 内的 `Capability.matches?/2` 调用全部被 `cap_check_only_at_chokepoint_test.exs` invariant 禁止(生产代码,定义 chokepoint 自身除外)。LV 的"前置 cap 检查"(用来藏按钮)只允许作为防御性 hint,**不能**是权威源 — 权威源永远是 dispatch step 5.5 跑过的 `Kind.holds_cap?/2` 返回。
+
+#### Behavior `required_caps/0`
+
+每个 Behavior 实现 `required_caps/0 :: %{action_atom => [cap_template, ...]}`:
+
+```elixir
+@impl Ezagent.Behavior
+def required_caps do
+  %{
+    send:        [Ezagent.Capability.cap(kind: :session, behavior: __MODULE__, action: :send)],
+    join:        [Ezagent.Capability.cap(kind: :session, behavior: __MODULE__, action: :join)],
+    leave:       [Ezagent.Capability.cap(kind: :session, behavior: __MODULE__, action: :leave)]
+  }
+end
+```
+
+返回 `%{}` 表示"无需 cap"(对所有人 dispatchable;仅限只读公共 action)。`dispatch_uses_required_caps_test.exs` invariant 验证每个 Behavior 的 `interface/0` 列出的 action 都在 `required_caps/0` 里有条目(或显式 `:no_cap_required` 标记)。
+
+#### 构造帮手:`Capability.cap/3` 和 `cap/5`
+
+`Ezagent.Capability` 暴露两个构造帮手:
+
+- `cap(kind, behavior, action)` — 通用模板,instance/workspace 留 `:any`
+- `cap(kind, behavior, action, instance, workspace_uri)` — 具体 cap
+
+action 字段当前(2026-05-26)在 `matches?/2` 中**不参与比较** — 见 docs/futures/todo.md "Capability struct lacks an action axis"。作为过渡,新加的 Behavior 把特权 action 单拆成专用 Behavior(`WorkspaceUserAdmin.:create_user` / `UserCredentials.:set_password` / `UserTokens.:mint`/`:list`/`:revoke` / Feishu `UserBinding`/`SessionBinding`),以保证 cap 持有者只能调用预期 action。SPEC 级的 action 轴变更跟踪在 todo.md 中。
 
 ### 7.2 Scope 三档
 
@@ -1156,29 +1214,48 @@ ctx.token :: %Ezagent.Token{}
 - ❌ Attenuation(部分授权)
 - ❌ Revocation graph
 
-### 7.6 Admin principal — bootstrap + 不可 revoke
+### 7.6 System principals — bootstrap + closed allowlist (PR-CC-1, 2026-05-25)
 
-Ezagent 的 cap 系统需要一个"种子 principal" — 系统首次启动时由谁创建其他 user / agent / 授 cap。**这个种子是 `user://admin`**:
+Ezagent 的 cap 系统需要"种子 principal" — 系统首次启动时由谁创建其他 user / agent / 授 cap。**SPEC v3 之后 (URI 3-segment) 这个种子是 `entity://user/system/admin`**;此外还有 13 个系统内部 principal(boot reconciler / async replay / sidecar coordinator / 等),每个都有专属 cap 声明。
 
-- BEAM 首次启动时,`Ezagent.Bootstrap` 检查 `users` 表为空 → 自动创建 `user://admin` 并授全部 cap(`%Capability{kind: :all, behavior: :all, instance: :all}`)
-- 后续启动 → 跳过(检查 `user://admin` 已存在)
-- Phase 1-3c 的 LiveView / CLI 在 authz stub 期默认 `ctx.caller = user://admin`(占位一致),Phase 3d 起 cap 真实化后 `user://admin` 仍持 all-caps
+**PR-CC-1 (2026-05-25) 移除了 ambient authority pattern** — 之前 Behavior body 里散布的 `URI.parse("entity://system/...")` 内联合成 + 用合成 URI 做"我以系统身份在调用"的隐式提权,已统一通过 `Ezagent.SystemPrincipal.Catalog` 替代。
 
-**结构性不变式:`user://admin` 的 all-cap 不可 revoke**。`Ezagent.Capability.revoke/2` 在 step 1 检查:
+#### `Ezagent.SystemPrincipal.Catalog` — 封闭 allowlist
+
+Catalog 是 `ezagent_core` 内 14 个系统内部 principal URI 的封闭枚举,每个 URI 配套其 cap 声明:
 
 ```elixir
-def revoke(subject, cap) do
-  if subject == "user://admin" and cap_is_all?(cap) do
-    {:error, :cannot_revoke_admin}
-  else
-    # normal revoke path
-  end
+defmodule Ezagent.SystemPrincipal.Catalog do
+  @moduledoc "Closed allowlist of system-internal principals (PR-CC-1)."
+
+  @entries [
+    {URI.parse("entity://user/system/admin"),
+     [cap(kind: :all, behavior: :all, instance: :any, workspace_uri: :any)],
+     "Bootstrap admin — sole singleton matching Identity.admin?/1"},
+    {URI.parse("entity://system/boot_reconciler/default"),
+     [cap(kind: :workspace, behavior: Ezagent.Behavior.Workspace, action: :spawn_default_session, ...)],
+     "Boot-time session reconciler"},
+    # ... 13 more
+  ]
+
+  def admin_uri, do: URI.parse("entity://user/system/admin")
+  def caller?(uri), do: Enum.any?(@entries, fn {u, _, _} -> URI.to_string(u) == URI.to_string(uri) end)
+  def caps_for(uri), do: # ...
 end
 ```
 
-**集中在 `revoke/2` 路径里检查,不允许调用方加 if 绕过**。理由:`user://admin` 是 bootstrap principal,revoke 它会让系统永远无法授权——自锁死。这个检查是**架构 invariant**,不是 policy(policy 可以变,invariant 不能)。
+**结构性不变式**:
 
-未来多 user 场景:管理员通过 `user://admin` 创建普通 user,授予部分 cap;`user://admin` 自身不能被普通 user 影响(普通 user 没有 `cap(user://admin, ...)` 的修改权)。
+- `no_wildcard_system_principals_test.exs` invariant — 生产代码内 grep 禁止 `URI.parse("entity://system/...")` 这种内联合成 (Catalog 模块自身除外)。所有系统内部调用必须通过 `Catalog.<accessor>` 获取。
+- `Identity.admin?/1` 仍只对 `Catalog.admin_uri()` 返回 true — `entity://user/system/admin` 是唯一的 bootstrap admin singleton。
+
+**`entity://user/system/admin` 的 all-cap 不可 revoke**。`Ezagent.Capability.revoke/2` 在 step 1 检查 caller 是不是 Catalog admin_uri + cap_is_all — 若是,拒绝。**集中在 `revoke/2` 路径里检查,不允许调用方加 if 绕过**。理由:bootstrap principal revoke 会让系统永远无法授权——自锁死。这个检查是**架构 invariant**,不是 policy(policy 可以变,invariant 不能)。
+
+未来多 user 场景:管理员通过 `entity://user/system/admin` 创建普通 user,授予部分 cap;`entity://user/system/admin` 自身不能被普通 user 影响(普通 user 没有该 URI 上的 `Identity.:grant_cap` cap)。
+
+#### Workspace-scoped principal (PR-CC-2-v2, 2026-05-25)
+
+`Behavior.workspace_scoped?/0` 在 dispatch **step 5.6** 强制执行 workspace 隔离 — 默认 `true` (per-tenant Kind)。返回 `false` 的 Behavior 跨 workspace 可调用 (e.g. system-scoped 配置读取)。`workspace_sot_test.exs` invariant 验证 workspace URI 段是权威 (而非 WorkspaceRegistry — registry 是 cache,URI 段才是 SoT)。
 
 ---
 
