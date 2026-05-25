@@ -169,10 +169,17 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
     # a team-alpha user — hijacking the other tenant's Feishu
     # identity. Two structural checks: the new user_uri AND any
     # existing row both must match the target workspace.
+    #
+    # Codex r3 P2: snapshot the prior row BEFORE the upsert so the
+    # rollback path on `apply_policy_or_rollback` failure can RESTORE
+    # the prior binding (legitimate same-workspace rebind that fails
+    # mid-policy must not destroy the operator's existing setup).
+    prior_row = snapshot_existing_binding(open_id)
+
     with :ok <- ensure_same_workspace(user_uri_str, ctx),
          :ok <- ensure_no_cross_workspace_hijack(open_id, ctx),
          {:ok, _row} <- UserBinding.bind(open_id, user_uri_str, bound_by),
-         :ok <- apply_policy_or_rollback(open_id, user_uri_str, bound_by) do
+         :ok <- apply_policy_or_rollback(open_id, user_uri_str, bound_by, prior_row) do
       # Codex r1 P1.1: the Workspace Kind only initializes the
       # `:workspace` slice in its init_slice/1 — plugin-registered
       # Behavior slices arrive as `%{}` from `Map.get(state, slice_key,
@@ -373,43 +380,85 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
     end
   end
 
-  # Codex r2 P2: rollback the DB row if BindingPolicy.apply/2 fails
-  # after UserBinding.bind/3 committed. Without rollback, the inbound
-  # Feishu resolution would map the open_id to the user even though
-  # the caller saw the operation as failed (caps weren't actually
-  # granted). The rollback is best-effort (delete the row we just
-  # wrote); a rollback failure is logged but the ORIGINAL policy
-  # error is what propagates — operator needs to see the first
-  # failure, not the rollback's.
-  defp apply_policy_or_rollback(open_id, user_uri_str, bound_by) do
+  # Codex r2 P2 + r3 P2: rollback the DB row if BindingPolicy.apply/2
+  # fails after UserBinding.bind/3 committed. Without rollback, the
+  # inbound Feishu resolution would map the open_id to the user even
+  # though the caller saw the operation as failed (caps weren't
+  # actually granted).
+  #
+  # Codex r3 P2: if this was a REBIND (prior_row != nil), restore the
+  # prior binding instead of unconditionally deleting — a same-workspace
+  # rotation that fails mid-policy must not lose the operator's
+  # existing setup. Restore is "rebind to the prior user_uri" (idempotent
+  # on the open_id primary key).
+  #
+  # Rollback failure is logged but the ORIGINAL policy error
+  # propagates — operator needs to see the first failure, not the
+  # rollback's.
+  defp apply_policy_or_rollback(open_id, user_uri_str, bound_by, prior_row) do
     case BindingPolicy.apply(user_uri_str, bound_by) do
       :ok ->
         :ok
 
       {:error, _} = err ->
-        rollback_binding(open_id, err)
+        rollback_binding(open_id, prior_row, err)
         err
 
       other ->
-        rollback_binding(open_id, {:error, other})
+        rollback_binding(open_id, prior_row, {:error, other})
         {:error, {:policy_apply_failed, other}}
     end
   end
 
-  defp rollback_binding(open_id, original_err) do
+  # Snapshot the existing row (if any) BEFORE the upsert so the
+  # rollback path can restore it. Reads the full row (not just the
+  # user_uri) so `bound_by` + `bound_at` survive the rotation-rollback.
+  defp snapshot_existing_binding(open_id) do
+    case EzagentCore.Repo.get(EzagentPluginFeishu.UserBinding, open_id) do
+      nil -> nil
+      %EzagentPluginFeishu.UserBinding{} = row -> row
+    end
+  end
+
+  defp rollback_binding(open_id, nil, original_err) do
+    # No prior row — fresh bind that failed. Delete the row we wrote.
     case UserBinding.unbind(open_id) do
       :ok ->
         :ok
 
       {:error, rollback_reason} ->
-        require Logger
-
-        Logger.error(
-          "EzagentPluginFeishu.Behavior.UserBinding.:bind: BindingPolicy failed + rollback failed: " <>
-            "open_id=#{open_id} rollback_reason=#{inspect(rollback_reason)} " <>
-            "original_err=#{inspect(original_err)}"
-        )
+        log_rollback_failure(open_id, :delete, rollback_reason, original_err)
     end
+  end
+
+  defp rollback_binding(
+         open_id,
+         %EzagentPluginFeishu.UserBinding{user_uri: prior_user, bound_by: prior_by},
+         original_err
+       ) do
+    # Codex r3 P2: restore the prior binding instead of deleting.
+    # `UserBinding.bind/3` is upsert-on-`open_id`, so re-running it
+    # with the prior values brings the row back to its pre-rebind
+    # state. `bound_at` will be refreshed by the upsert; the
+    # `bound_by` attribution survives so audit trail is preserved.
+    case UserBinding.bind(open_id, prior_user, prior_by) do
+      {:ok, _row} ->
+        :ok
+
+      {:error, rollback_reason} ->
+        log_rollback_failure(open_id, :restore, rollback_reason, original_err)
+    end
+  end
+
+  defp log_rollback_failure(open_id, mode, rollback_reason, original_err) do
+    require Logger
+
+    Logger.error(
+      "EzagentPluginFeishu.Behavior.UserBinding.:bind: BindingPolicy failed + " <>
+        "rollback (#{mode}) failed: open_id=#{open_id} " <>
+        "rollback_reason=#{inspect(rollback_reason)} " <>
+        "original_err=#{inspect(original_err)}"
+    )
   end
 
   # Pull the target Workspace URI out of dispatch ctx. `self_uri` is
