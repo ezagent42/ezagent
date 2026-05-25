@@ -31,7 +31,7 @@ defmodule Ezagent.ExternalMirror do
   - `list_adapters/0` — reads AdapterRegistry (PR-EM-1).
   """
 
-  alias Ezagent.ExternalMirror.{AdapterRegistry, BindingRow, FacadeNonceTable}
+  alias Ezagent.ExternalMirror.{AdapterRegistry, BindingRow, FacadeNonceTable, Gates}
 
   require Logger
 
@@ -65,8 +65,6 @@ defmodule Ezagent.ExternalMirror do
           required(:caps) => MapSet.t(Ezagent.Capability.t()),
           optional(:reply) => Ezagent.Invocation.reply_target()
         }
-
-  @default_target_check_timeout 5_000
 
   # ----- Mutations (the bind/unbind facade) ---------------------------------
 
@@ -152,19 +150,32 @@ defmodule Ezagent.ExternalMirror do
              | term()}
   def bind(%URI{} = session_uri, adapter_id, target_id, opts, ctx)
       when is_binary(adapter_id) and is_map(opts) and is_map(ctx) do
-    # codex r4 MED fix (2026-05-25): Check 1 (session :bind cap)
-    # MUST run BEFORE Check 3 (target_ownership_check — adapter I/O).
-    # Pre-fix, a caller with the adapter allow cap (Check 2) but no
-    # session :bind cap could trigger arbitrary adapter target-
-    # ownership probes (DoS / target enumeration surface). Inline
-    # Check 1 here matches what dispatch step 5.5
-    # (`Kind.Runtime.authz_check/4`) enforces post-dispatch — see
-    # `check_session_bind_cap/2` below for the precise cap shape.
-    with {:ok, adapter_module} <- lookup_adapter(adapter_id),
-         :ok <- check_session_bind_cap(ctx, session_uri),
-         :ok <- check_adapter_allow_cap(ctx, session_uri, adapter_module),
-         :ok <- run_target_ownership_check(adapter_module, ctx.caller, target_id) do
-      do_dispatch_bind(session_uri, adapter_id, target_id, opts, ctx)
+    # SPEC docs/superpowers/specs/2026-05-25-external-mirror-auth-model-audit.md
+    # §3.3 (audit-SPEC CRIT-1 corrected shape): the facade is a thin
+    # wrapper:
+    #
+    #   1. Gate 1 (session bind cap) — cheapest gate, runs BEFORE
+    #      Gate 0 lookup_adapter so a no-cap caller cannot enumerate
+    #      adapter IDs by probing (scenario 0 invariant).
+    #   2. Gate 0 (lookup_adapter) — resolve adapter_id → adapter_module
+    #      AFTER Gate 1 passes.
+    #   3. `FacadeNonceTable.claim_nonce/4` — enforces Gates 2+3+4
+    #      internally (per audit-SPEC CRIT-1; `claim_nonce` is no
+    #      longer a freely-callable mint, it IS the gate-enforcing
+    #      entry point). Returns the nonce only if all gates pass.
+    #   4. Dispatch `:bind` with the nonce in args; the action body
+    #      atomically consumes it.
+    #
+    # An in-VM caller bypassing this facade by calling `claim_nonce/4`
+    # directly still cannot obtain a nonce without passing Gates 1+2+3+4
+    # internally — defense in depth. The gates are SoT in
+    # `Ezagent.ExternalMirror.Gates`; this facade and `claim_nonce/4`
+    # both delegate so they cannot drift (P3 single source of truth).
+    with :ok <- Gates.check_session_bind_cap(ctx, session_uri),
+         {:ok, adapter_module} <- Gates.lookup_adapter(adapter_id),
+         {:ok, nonce} <-
+           FacadeNonceTable.claim_nonce(session_uri, ctx, adapter_module, target_id) do
+      do_dispatch_bind(session_uri, adapter_id, target_id, opts, ctx, nonce)
     end
   end
 
@@ -394,126 +405,30 @@ defmodule Ezagent.ExternalMirror do
   end
 
   # ----- Facade internals --------------------------------------------------
-
-  defp lookup_adapter(adapter_id) do
-    case AdapterRegistry.lookup(adapter_id) do
-      {:ok, mod} -> {:ok, mod}
-      :error -> {:error, :unknown_adapter}
-    end
-  end
-
-  # codex r4 MED fix (2026-05-25): Check 1 per SPEC §4.2 — caller
-  # holds the session-level `Behavior.ExternalMirror` `:bind` cap.
-  # Inlined here so it runs BEFORE Check 3 (which does adapter I/O).
-  # The cap shape mirrors what dispatch step 5.5 enforces via
-  # `Ezagent.Capability.cap_for_action(Ezagent.Entity.Session, :bind,
-  # <session?action=external_mirror.bind>)`:
   #
-  #   %{kind: :session, behavior: Ezagent.Behavior.ExternalMirror,
-  #     instance: <session_uri instance>,
-  #     workspace_uri: <session workspace or :any>}
+  # Audit-SPEC CRIT-1 (2026-05-25): the previous facade-internal helpers
+  # `lookup_adapter/1`, `check_session_bind_cap/2`, `check_adapter_allow_cap/3`,
+  # `check_workspace_iso/2`, `run_target_ownership_check/3` were ALL lifted
+  # to `Ezagent.ExternalMirror.Gates` so `FacadeNonceTable.claim_nonce/4`
+  # could call the same SoT (P3) when enforcing gates from a direct-claim
+  # bypass attempt. The facade `bind/5` and `claim_nonce/4` both delegate
+  # to `Gates.*`; they cannot drift.
   #
-  # On miss → `{:error, :unauthorized}`. Same error atom dispatch
-  # would return so the caller's contract is unchanged (and matches
-  # SPEC §9 PR-EM-3 test b).
-  defp check_session_bind_cap(ctx, %URI{} = session_uri) do
-    instance = Ezagent.URI.instance(session_uri)
+  # Read-side helpers (`admin_wildcard?/1`, `caller_workspace/1`,
+  # `session_in_workspace?/2`, `caller_can_list_bindings?/2`,
+  # `workspace_of_or_any/1`, `cap_admin_shape?/1`) stay here — they're
+  # the read-path filter logic for `sessions_for_adapter/2` and
+  # `list_bindings/2`, NOT the bind-path gate enforcement.
 
-    workspace_uri =
-      case Ezagent.Capability.workspace_of(session_uri) do
-        %URI{} = ws -> ws
-        :any -> :any
-      end
-
-    needed = %{
-      kind: :session,
-      behavior: Ezagent.Behavior.ExternalMirror,
-      instance: instance,
-      workspace_uri: workspace_uri
-    }
-
-    caps = Map.get(ctx, :caps, MapSet.new())
-
-    if Enum.any?(caps, &Ezagent.Capability.matches?(&1, needed)) do
-      :ok
-    else
-      {:error, :unauthorized}
-    end
-  end
-
-  # Check 2 per SPEC §4.2: caller holds the per-adapter allow cap.
-  defp check_adapter_allow_cap(ctx, %URI{} = session_uri, adapter_module) do
-    %{behavior_module: behavior_module} = adapter_module.cap_subject()
-
-    instance = Ezagent.URI.instance(session_uri)
-
-    workspace_uri =
-      case Ezagent.Capability.workspace_of(session_uri) do
-        %URI{} = ws -> ws
-        :any -> :any
-      end
-
-    needed = %{
-      kind: :session,
-      behavior: behavior_module,
-      instance: instance,
-      workspace_uri: workspace_uri
-    }
-
-    caps = Map.get(ctx, :caps, MapSet.new())
-
-    if Enum.any?(caps, &Ezagent.Capability.matches?(&1, needed)) do
-      :ok
-    else
-      {:error, :adapter_not_authorized}
-    end
-  end
-
-  # Check 3 per SPEC §4.2 / §8.2: adapter membership check in a
-  # supervised Task with bounded timeout. The Task runs OUTSIDE the
-  # Session GenServer (in the caller process via async_nolink) — see
-  # r6 HIGH-2 fix moduledoc above.
-  defp run_target_ownership_check(adapter_module, caller, target_id) do
-    timeout =
-      if function_exported?(adapter_module, :target_ownership_check_timeout, 0) do
-        adapter_module.target_ownership_check_timeout()
-      else
-        @default_target_check_timeout
-      end
-
-    task =
-      Task.Supervisor.async_nolink(
-        Ezagent.ExternalMirror.TargetCheckTaskSup,
-        fn -> adapter_module.target_ownership_check(caller, target_id) end
-      )
-
-    case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
-      {:ok, :ok} ->
-        :ok
-
-      {:ok, {:error, reason}} ->
-        {:error, {:target_ownership_denied, reason}}
-
-      {:exit, reason} ->
-        {:error, {:target_check_crashed, reason}}
-
-      nil ->
-        {:error, :target_check_timeout}
-    end
-  end
-
-  defp do_dispatch_bind(%URI{} = session_uri, adapter_id, target_id, opts, ctx) do
-    # codex r3 CRIT fix (2026-05-25): claim a single-use nonce from
-    # the `:protected`-ETS FacadeNonceTable. The action body MUST
-    # call `FacadeNonceTable.consume_nonce/2` with the EXACT same
-    # (session, adapter, target, caller) tuple — any mismatch (or
-    # missing nonce, or expired nonce, or replayed nonce) is rejected
-    # with `:bind_must_go_through_facade`.
-    caller_uri = Map.fetch!(ctx, :caller)
-
-    {:ok, nonce} =
-      FacadeNonceTable.claim_nonce(session_uri, adapter_id, target_id, caller_uri)
-
+  defp do_dispatch_bind(%URI{} = session_uri, adapter_id, target_id, opts, ctx, nonce)
+       when is_binary(nonce) do
+    # Audit-SPEC §3.3: the nonce was already claimed (and gates
+    # already enforced) by `FacadeNonceTable.claim_nonce/4` in the
+    # caller. Dispatch carries it as `args[:_facade_nonce]`; the
+    # action body atomically consumes it via
+    # `FacadeNonceTable.consume_nonce/2`. Any mismatch (missing /
+    # expired / replayed / tuple mismatch) → action body returns
+    # `:bind_must_go_through_facade`.
     target =
       URI.parse("#{URI.to_string(session_uri)}?action=external_mirror.bind")
 

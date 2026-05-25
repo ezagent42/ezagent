@@ -89,73 +89,79 @@ defmodule Ezagent.ExternalMirror.AdapterInstall do
   end
 
   @doc """
-  codex r5 HIGH-A fix (2026-05-25): fire `install/1` only when BOTH
-  registries (AdapterRegistry AND BindingRegistry) have an entry for
-  this adapter. Called from `AdapterRegistry.register/1` on a fresh
-  insert — if the binding hasn't registered yet, this is a no-op
-  (the binding's own `register_module/2` will fire `install/1` when
-  it lands).
+  SPEC docs/superpowers/specs/2026-05-25-external-mirror-auth-model-audit.md
+  §5: register the cross-registry install hook for `adapter_id` via
+  `Ezagent.Plugin.publish_after_all_registered/2`. Called from
+  `AdapterRegistry.register/1` on a fresh insert.
 
-  Rationale: `AdapterInstall.install/1` walks persisted binding rows
-  and spawns Workers whose dispatch path looks up the binding module
-  via `BindingRegistry.lookup!/1`. If install runs while the
-  BindingRegistry is empty for this adapter_id, the spawned worker
-  would crash on its first publish event with a `KeyError`. The
-  symmetric `maybe_install`/`maybe_install_by_adapter_id` pair guards
-  against this regardless of which registry's insert lands first.
+  The hook subscribes to BOTH `AdapterRegistry` and `BindingRegistry`
+  for this `adapter_id`. The primitive fires `install/1` exactly once
+  when both have entries (whichever side calls `notify_subscribers/2`
+  SECOND triggers fire). The fire-handler resolves `adapter_module`
+  via `AdapterRegistry.lookup/1` at fire time so this entry-point
+  doesn't need to capture it (mirrors the binding-first counterpart
+  which doesn't have the module either).
+
+  Idempotent — duplicate calls register the same hook twice in the
+  RegistrationHooks table; both hooks fire when the registry pair
+  resolves, but `install/1`'s body is itself idempotent (cap
+  registration + spawn are both idempotent).
+
+  Replaces the r5 HIGH-A `maybe_install`/`maybe_install_by_adapter_id`
+  symmetric pair with a single call through the core primitive.
   """
-  @spec maybe_install(module()) :: :ok
-  def maybe_install(adapter_module) when is_atom(adapter_module) do
-    adapter_id = adapter_module.adapter_id()
-
-    if binding_registered?(adapter_id) do
-      install(adapter_module)
-    else
-      Logger.debug(
-        "ExternalMirror.AdapterInstall: deferring install for " <>
-          "#{inspect(adapter_module)} (adapter_id=#{inspect(adapter_id)}) — " <>
-          "BindingRegistry not yet populated; BindingRegistry.register_module/2 " <>
-          "will fire install when it lands."
-      )
-
-      :ok
-    end
+  @spec ensure_install_hook_registered(String.t(), module()) :: :ok
+  def ensure_install_hook_registered(adapter_id, _adapter_module)
+      when is_binary(adapter_id) do
+    register_install_hook(adapter_id)
   end
 
   @doc """
-  codex r5 HIGH-A fix (2026-05-25): symmetric counterpart to
-  `maybe_install/1`. Called from `BindingRegistry.register_module/2`
-  on a fresh insert — fires `install/1` if the AdapterRegistry already
-  has the paired adapter module.
+  Counterpart to `ensure_install_hook_registered/2` — called from
+  `BindingRegistry.register_module/2` on a fresh insert.
 
-  When the BindingRegistry registers SECOND (the production order set
-  by `Plugin.publish_adapters!`), this is the call that actually fires
-  `install/1` — by that point both registries are populated, so
-  install can safely walk binding rows + spawn workers whose dispatch
-  path can resolve the binding via `BindingRegistry.lookup!/1`.
+  Same hook shape; the BindingRegistry side doesn't have the adapter
+  module either, so both sides delegate to the same private
+  `register_install_hook/1` which resolves the module from
+  AdapterRegistry at fire time.
   """
-  @spec maybe_install_by_adapter_id(String.t()) :: :ok
-  def maybe_install_by_adapter_id(adapter_id) when is_binary(adapter_id) do
-    case AdapterRegistry.lookup(adapter_id) do
-      {:ok, adapter_module} ->
-        install(adapter_module)
-
-      :error ->
-        Logger.debug(
-          "ExternalMirror.AdapterInstall: deferring install for adapter_id=" <>
-            "#{inspect(adapter_id)} — AdapterRegistry not yet populated; " <>
-            "AdapterRegistry.register/1 will fire install when it lands."
-        )
-
-        :ok
-    end
+  @spec ensure_install_hook_registered_for_adapter_id(String.t()) :: :ok
+  def ensure_install_hook_registered_for_adapter_id(adapter_id) when is_binary(adapter_id) do
+    register_install_hook(adapter_id)
   end
 
-  defp binding_registered?(adapter_id) do
-    case BindingRegistry.lookup(adapter_id) do
-      {:ok, _module} -> true
-      :error -> false
-    end
+  defp register_install_hook(adapter_id) do
+    Ezagent.Plugin.publish_after_all_registered(
+      [
+        {AdapterRegistry, adapter_id},
+        {BindingRegistry, adapter_id}
+      ],
+      fn ->
+        # Resolve adapter module at fire time — both sides delegate
+        # here, so we cannot rely on a captured module. By the time the
+        # hook fires both registries have entries; `lookup/1` resolves.
+        case AdapterRegistry.lookup(adapter_id) do
+          {:ok, adapter_module} ->
+            install(adapter_module)
+            :ok
+
+          :error ->
+            # Should be unreachable — the hook only fires when
+            # AdapterRegistry.lookup/1 returns {:ok, _} per the primitive's
+            # all_registered? check. Log + no-op as a structural-error
+            # canary rather than crash the RegistrationHooks GenServer.
+            Logger.error(
+              "ExternalMirror.AdapterInstall: hook fired for adapter_id=" <>
+                "#{inspect(adapter_id)} but AdapterRegistry.lookup/1 returned " <>
+                ":error — RegistrationHooks invariant broken."
+            )
+
+            :ok
+        end
+      end
+    )
+
+    :ok
   end
 
   # ----- Step 1: per-adapter cap subject (HIGH-3 fix) ---------------------

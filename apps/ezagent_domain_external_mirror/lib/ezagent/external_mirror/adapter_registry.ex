@@ -90,25 +90,23 @@ defmodule Ezagent.ExternalMirror.AdapterRegistry do
     adapter_id = adapter_module.adapter_id()
 
     if :ets.insert_new(@table, {adapter_id, adapter_module}) do
-      # codex r2 HIGH-1 + HIGH-3 unified fix (2026-05-25): the moment
-      # an adapter becomes observable in the registry, install its
-      # cap subject + reconcile its persisted bindings.
-      #
-      # codex r5 HIGH-A fix (2026-05-25): the install REQUIRES the
-      # paired BindingRegistry entry to exist too — `AdapterInstall`
-      # uses `BindingRegistry.lookup!/1` indirectly via the Worker's
-      # dispatch path, AND production `Plugin.publish_adapters!`
-      # registers the binding AFTER the adapter. Pre-fix, firing
-      # install/1 here unconditionally meant install ran with the
-      # BindingRegistry empty for THIS adapter_id → workers couldn't
-      # bind their publish target.
-      #
-      # The new contract: fire install ONLY when the BindingRegistry
-      # also has an entry. If we're the first registry to land,
-      # `BindingRegistry.register_module/2` will fire install when it
-      # lands second. If we're second (binding registered first
-      # somehow), we fire install now.
-      :ok = Ezagent.ExternalMirror.AdapterInstall.maybe_install(adapter_module)
+      # SPEC docs/superpowers/specs/2026-05-25-external-mirror-auth-model-audit.md
+      # §5 / §4.5: the historical r5 HIGH-A symmetric maybe_install pattern
+      # is now expressed via the core `Ezagent.Plugin.publish_after_all_registered/2`
+      # primitive. AdapterInstall.ensure_install_hook_registered/2 idempotently
+      # registers the cross-registry hook for this adapter_id (subscribing on
+      # BOTH AdapterRegistry and BindingRegistry); notify_subscribers below
+      # tells the primitive this side just landed. Whichever side calls
+      # notify SECOND triggers install/1 — guaranteed safe to walk binding
+      # rows + spawn workers because BindingRegistry.lookup!/1 in the worker
+      # dispatch path now resolves.
+      :ok =
+        Ezagent.ExternalMirror.AdapterInstall.ensure_install_hook_registered(
+          adapter_id,
+          adapter_module
+        )
+
+      Ezagent.Plugin.RegistrationHooks.notify_subscribers(__MODULE__, adapter_id)
       :ok
     else
       # Race-safe second read — the entry exists (insert_new returned

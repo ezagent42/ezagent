@@ -899,15 +899,19 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
     end
 
     test "FacadeNonceTable.consume_nonce/2 is single-use (replay protection)" do
+      # Audit-SPEC CRIT-1 (2026-05-25): claim_nonce/4 now enforces
+      # Gates 1+2+3+4 internally. Provide admin caller + the real
+      # MockPublishAdapter so the gates pass + a nonce is minted.
       session_uri = unique_session_uri("nonce-replay")
       caller_uri = unique_user_uri("nonce-replay")
+      ctx = owner_ctx(caller_uri)
 
       {:ok, nonce} =
         FacadeNonceTable.claim_nonce(
           session_uri,
-          "mock_publish",
-          "tgt-replay",
-          caller_uri
+          ctx,
+          MockPublishAdapter,
+          "tgt-replay"
         )
 
       assert :ok =
@@ -925,16 +929,20 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
     end
 
     test "FacadeNonceTable.consume_nonce/2 rejects tuple mismatch (session/adapter/target/caller)" do
+      # Audit-SPEC CRIT-1 (2026-05-25): claim_nonce/4 now enforces
+      # Gates 1+2+3+4 internally. Provide admin caller + the real
+      # MockPublishAdapter so the gates pass + a nonce is minted.
       session_a = unique_session_uri("nonce-tup-a")
       session_b = unique_session_uri("nonce-tup-b")
       caller_uri = unique_user_uri("nonce-tup")
+      ctx = owner_ctx(caller_uri)
 
       {:ok, nonce} =
         FacadeNonceTable.claim_nonce(
           session_a,
-          "mock_publish",
-          "tgt-A",
-          caller_uri
+          ctx,
+          MockPublishAdapter,
+          "tgt-A"
         )
 
       # Different session → reject (also consumes the nonce — single-use even on mismatch)
@@ -953,16 +961,20 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
     end
 
     test "FacadeNonceTable.consume_nonce/2 rejects expired nonces (TTL)" do
+      # Audit-SPEC CRIT-1 (2026-05-25): claim_nonce/5 (test-only
+      # @doc false form) takes ctx + adapter_module + ttl_ms; gates
+      # run internally before mint.
       session_uri = unique_session_uri("nonce-ttl")
       caller_uri = unique_user_uri("nonce-ttl")
+      ctx = owner_ctx(caller_uri)
 
       # 50ms TTL so the test doesn't have to wait 5 seconds.
       {:ok, nonce} =
         FacadeNonceTable.claim_nonce(
           session_uri,
-          "mock_publish",
+          ctx,
+          MockPublishAdapter,
           "tgt-ttl",
-          caller_uri,
           50
         )
 
