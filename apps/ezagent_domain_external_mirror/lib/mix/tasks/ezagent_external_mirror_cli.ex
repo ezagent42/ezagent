@@ -48,24 +48,77 @@ defmodule Mix.Tasks.Ezagent.ExternalMirror.CLI do
 
   @doc """
   Parse the standard CLI argument set used by every `external_mirror`
-  task. Returns `{positional, opts}` where `opts` includes `:as` and
-  `:metadata`.
+  task. Returns `{positional, opts}` where `opts` includes `:as`,
+  `:metadata`, and `:help?`.
 
-  `--as <uri>` overrides `EZAGENT_AS_USER` overrides the bootstrap
-  admin URI.
+  ## Caller resolution
+
+  - `caller_required: true` (the default for bind / unbind /
+    list_bindings) — requires `--as <user_uri>` OR
+    `EZAGENT_AS_USER` env. Missing → `Mix.raise/1` (exit 1). NO
+    silent admin fallback (codex r1 HIGH 2026-05-25 — defaulting
+    to admin made a typoed flag run privileged).
+  - `caller_required: false` (only for unauthed metadata reads —
+    `list_adapters`) — falls back to `entity://user/system/admin`.
+    Per SPEC §9 PR-EM-1: adapter metadata is intentionally
+    unauthed; the caller URI is only used for the audit row.
+
+  ## Invalid option handling
+
+  Strict parse + fail on unknown options (codex r1 MED-1
+  2026-05-25). `--ass alice` was previously silently dropped + ran
+  the task with the admin fallback; now it raises with the
+  offending switch in the error.
   """
-  @spec parse_argv([String.t()]) :: {[String.t()], map()}
-  def parse_argv(argv) do
-    {parsed, positional, _invalid} =
+  @spec parse_argv([String.t()], keyword()) :: {[String.t()], map()}
+  def parse_argv(argv, opts \\ []) do
+    caller_required? = Keyword.get(opts, :caller_required, true)
+
+    {parsed, positional, invalid} =
       OptionParser.parse(argv,
         strict: [as: :string, metadata: :keep, help: :boolean],
         aliases: [h: :help]
       )
 
-    as_uri = parsed[:as] || System.get_env("EZAGENT_AS_USER") || "entity://user/system/admin"
+    if invalid != [] do
+      Mix.shell().error(
+        "error: unknown options: #{inspect(invalid)} — accepted: --as, --metadata k=v, --help"
+      )
+
+      Mix.raise("unknown options")
+    end
+
+    as_uri = resolve_caller(parsed[:as], caller_required?)
     metadata = parse_metadata_kv(Keyword.get_values(parsed, :metadata))
 
     {positional, %{as: as_uri, metadata: metadata, help?: Keyword.get(parsed, :help, false)}}
+  end
+
+  defp resolve_caller(flag_value, caller_required?)
+
+  defp resolve_caller(value, _required?) when is_binary(value) and byte_size(value) > 0, do: value
+
+  defp resolve_caller(_nil_or_empty, caller_required?) do
+    env = System.get_env("EZAGENT_AS_USER")
+
+    cond do
+      is_binary(env) and byte_size(env) > 0 ->
+        env
+
+      caller_required? ->
+        Mix.shell().error(
+          "error: caller URI required — pass --as <entity://user/...> or set " <>
+            "EZAGENT_AS_USER env. NO silent admin fallback (codex r1 HIGH 2026-05-25 — a " <>
+            "typoed flag could have run privileged)."
+        )
+
+        Mix.raise("missing --as")
+
+      true ->
+        # caller_required: false (unauthed metadata commands only — e.g.
+        # list_adapters). Admin default keeps the audit row populated.
+        "entity://user/system/admin"
+    end
   end
 
   defp parse_metadata_kv(pairs) when is_list(pairs) do
@@ -97,10 +150,19 @@ defmodule Mix.Tasks.Ezagent.ExternalMirror.CLI do
     %{caller: caller_uri, caps: caps, reply: :ignore}
   end
 
+  # codex r1 MED-2 (2026-05-25): NO blanket rescue. Pre-fix, a runtime
+  # / cap-store failure (e.g. KindRegistry not started, Identity
+  # behavior crash) silently became `MapSet.new()` here — which then
+  # surfaced as `:unauthorized` at the next cap check. That violates
+  # P18 + masks real bugs as auth denials.
+  #
+  # `Ezagent.Identity.list_caps_for/1` already documents the
+  # safe-fallback case (User Kind not spawned → `MapSet.new()`) — that's
+  # the legitimate "user has no caps yet" answer, distinct from an
+  # operational failure. So we just call it directly and let any raise
+  # propagate; Mix will print the exception + exit 1.
   defp load_caps(%URI{} = caller_uri) do
     Ezagent.Identity.list_caps_for(caller_uri)
-  rescue
-    _ -> MapSet.new()
   end
 
   @doc """

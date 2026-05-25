@@ -3,8 +3,25 @@ defmodule Mix.Tasks.Ezagent.ExternalMirror.ListAdapters do
   @moduledoc """
   List every adapter registered with
   `Ezagent.ExternalMirror.AdapterRegistry` (the operator-facing
-  metadata view per SPEC §4.4). No caps check — `list_adapters/0` is
-  unauthed metadata per SPEC §9 PR-EM-1.
+  metadata view per SPEC §4.4).
+
+  ## Caps exception (SPEC §9 PR-EM-1 + PR-EM-5)
+
+  This is the ONE `external_mirror` command without a caps check.
+  Per SPEC §4.4: "`list_adapters/0` returns the operator-facing
+  adapter descriptor list" — pure registry metadata, no per-tenant
+  data. SPEC §9 PR-EM-5 says "All commands check caps client-side"
+  but PR-EM-1 (§4.4) defined `list_adapters/0` as unauthed; the
+  intent is that operator-facing CLI tooling can enumerate
+  registered adapter ids without holding any cap (otherwise a
+  fresh user couldn't even discover what to bind).
+
+  Codex r1 MED-3 (2026-05-25): documenting this exception
+  explicitly so the discrepancy with PR-EM-5's "all commands"
+  language is grep-able.
+
+  All four other tasks (bind / unbind / list_bindings) DO enforce
+  caps — see their moduledocs.
 
   ## Usage
 
@@ -32,7 +49,11 @@ defmodule Mix.Tasks.Ezagent.ExternalMirror.ListAdapters do
 
   @impl Mix.Task
   def run(argv) do
-    {_positional, %{help?: help?}} = CLI.parse_argv(argv)
+    # `caller_required: false` — the admin default for caller URI is
+    # legitimate here (only used for the audit row; no cap check
+    # happens against this URI). All other tasks set the default
+    # `caller_required: true` so missing `--as` raises.
+    {_positional, %{help?: help?}} = CLI.parse_argv(argv, caller_required: false)
 
     if help? do
       Mix.shell().info(@moduledoc)

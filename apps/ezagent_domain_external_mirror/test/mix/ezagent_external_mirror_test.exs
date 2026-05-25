@@ -16,15 +16,15 @@ defmodule Mix.Tasks.Ezagent.ExternalMirrorTest do
   checks, audit telemetry, and cross-workspace gates fire as in
   production.
 
-  ## `System.halt/1` interception
+  ## `Mix.raise/1` interception
 
   The CLI helper module exits on cap-miss / unknown-args / facade
-  error via `System.halt(1)`. ExUnit would terminate the whole VM
-  on a real halt; we capture stderr + intercept the halt via
-  `:erlang.process_flag(:trap_exit, true)` is NOT enough — `halt`
-  bypasses the trap. Instead each test that expects exit-1 invokes
-  the task in a spawned process and asserts on the captured stderr
-  + the exit reason.
+  error via `Mix.raise/1` (which raises `Mix.Error` and exits with
+  1 when run via `mix`). ExUnit catches `Mix.Error` cleanly via
+  `assert_raise/3` + `ExUnit.CaptureIO.capture_io(:stderr, ...)`.
+  Earlier drafts used `System.halt/1` which would terminate the
+  whole VM under test; that approach was replaced (codex r1 fix
+  2026-05-25).
   """
 
   use EzagentCore.DataCase, async: false
@@ -236,6 +236,96 @@ defmodule Mix.Tasks.Ezagent.ExternalMirrorTest do
 
       assert stderr_output =~ ":adapter_not_authorized"
       assert [] = BindingRow.list_for_session(session_uri)
+    end
+  end
+
+  # ===========================================================================
+  # 3b. codex r1 HIGH regressions — caller URI required (no silent admin fallback)
+  # ===========================================================================
+
+  describe "codex r1 HIGH — caller URI required for bind / unbind / list_bindings" do
+    test "bind WITHOUT --as and WITHOUT EZAGENT_AS_USER → Mix.Error + stderr explains",
+         %{session_uri: session_uri} do
+      System.delete_env("EZAGENT_AS_USER")
+
+      stderr_output =
+        ExUnit.CaptureIO.capture_io(:stderr, fn ->
+          assert_raise Mix.Error, ~r/missing --as/, fn ->
+            Mix.Tasks.Ezagent.ExternalMirror.Bind.run([
+              URI.to_string(session_uri),
+              "mock_publish",
+              "tgt-pr5-missing-as"
+            ])
+          end
+        end)
+
+      assert stderr_output =~ "--as"
+      assert stderr_output =~ "EZAGENT_AS_USER"
+      assert stderr_output =~ "NO silent admin fallback"
+    end
+
+    test "unbind without caller → Mix.Error", %{session_uri: session_uri} do
+      System.delete_env("EZAGENT_AS_USER")
+
+      _ =
+        ExUnit.CaptureIO.capture_io(:stderr, fn ->
+          assert_raise Mix.Error, ~r/missing --as/, fn ->
+            Mix.Tasks.Ezagent.ExternalMirror.Unbind.run([
+              URI.to_string(session_uri),
+              "mock_publish",
+              "tgt"
+            ])
+          end
+        end)
+    end
+
+    test "list_bindings without caller → Mix.Error", %{session_uri: session_uri} do
+      System.delete_env("EZAGENT_AS_USER")
+
+      _ =
+        ExUnit.CaptureIO.capture_io(:stderr, fn ->
+          assert_raise Mix.Error, ~r/missing --as/, fn ->
+            Mix.Tasks.Ezagent.ExternalMirror.ListBindings.run([URI.to_string(session_uri)])
+          end
+        end)
+    end
+
+    test "list_adapters WITHOUT --as is OK (unauthed metadata exception, SPEC §9 PR-EM-1)" do
+      System.delete_env("EZAGENT_AS_USER")
+
+      output =
+        ExUnit.CaptureIO.capture_io(fn ->
+          Mix.Tasks.Ezagent.ExternalMirror.ListAdapters.run([])
+        end)
+
+      # No raise; the admin fallback inside parse_argv with
+      # `caller_required: false` is the legitimate exception.
+      assert output =~ "id"
+    end
+  end
+
+  # ===========================================================================
+  # 3c. codex r1 MED-1 regression — unknown options rejected (no silent drop)
+  # ===========================================================================
+
+  describe "codex r1 MED-1 — unknown options rejected" do
+    test "bind with --ass (typo) → Mix.Error, does NOT silently fall through to admin",
+         %{session_uri: session_uri, owner_uri: owner_uri} do
+      stderr_output =
+        ExUnit.CaptureIO.capture_io(:stderr, fn ->
+          assert_raise Mix.Error, ~r/unknown options/, fn ->
+            Mix.Tasks.Ezagent.ExternalMirror.Bind.run([
+              URI.to_string(session_uri),
+              "mock_publish",
+              "tgt-pr5-typo",
+              "--ass",
+              URI.to_string(owner_uri)
+            ])
+          end
+        end)
+
+      assert stderr_output =~ "unknown options"
+      assert stderr_output =~ "ass"
     end
   end
 
