@@ -177,26 +177,41 @@ end
 ### 3.4 Target spawn —— 专用原语
 
 ```elixir
-defp spawn_target_directly(target_uri, source_meta, target_ws_uri, target_owner_uri, snapshot) do
-  with {:ok, :started, _pid}   <- spawn_atomic_fresh(target_uri),
-       :ok                     <- WorkspaceRegistry.bind(target_uri, target_ws_uri),
-       :ok                     <- AgentLineage.record(target_uri, target_owner_uri),
-       restore_result          <- Kind.Template.restore_or_noop(source_meta.template_class, target_uri, snapshot),
-       {:ok, final_dir}        <- normalize_restore(restore_result),
-       :ok                     <- dispatch_sandbox_write_path(target_uri, final_dir, source_meta.template_class),
-       # rev 5 —— §3.9 Provisioning 是唯一 post-spawn ownership+caps 步骤
-       # （含 AgentOwnership.record + default-grants apply + tracked rollback）.
-       # Bootstrap-admin context: 因为 dispatch 时 :duplicate cap 已检 caller.
-       :ok                     <- Ezagent.Agent.Provisioning.provision_agent(target_uri, target_owner_uri, %{caller: bootstrap_granter(), caps: bootstrap_admin_caps()}),
-       :ok                     <- start_pty_or_no_pty(target_uri, source_meta, target_ws_uri) do
-    {:ok, %{agent_uri: target_uri}}
-  else
-    err -> rollback_partial_target(target_uri, snapshot.path, err)
+defp spawn_target_directly(target_uri, source_meta, target_ws_uri, target_owner_uri, snapshot, caller_uri) do
+  # codex r7 HIGH-1 + r8 CRITICAL 修复：
+  # - AgentLineage 记 "spawned by" = caller_uri（principal）；
+  # - AgentOwnership 记 "owned by" = target_owner_uri（recipient）；
+  # - spawn_atomic_fresh 失败（包含 {:adopted_not_fresh, _}）**不**路由
+  #   destructive rollback，否则会终止外来 agent + 清其 slice + 删其 snapshot 行.
+  case spawn_atomic_fresh(target_uri) do
+    {:ok, :started, _pid} ->
+      with :ok                     <- WorkspaceRegistry.bind(target_uri, target_ws_uri),
+           :ok                     <- AgentLineage.record(target_uri, caller_uri),  # SPAWNER
+           restore_result          <- Ezagent.Kind.Template.restore_or_noop(source_meta.template_class, target_uri, snapshot),
+           {:ok, final_dir}        <- normalize_restore(restore_result),
+           :ok                     <- dispatch_sandbox_write_path(target_uri, final_dir, source_meta.template_class),
+           :ok                     <- Ezagent.Agent.Provisioning.provision_agent(target_uri, target_owner_uri, %{caller: bootstrap_granter(), caps: bootstrap_admin_caps()}),
+           :ok                     <- start_pty_or_no_pty(target_uri, source_meta, target_ws_uri) do
+        # r8 HIGH-2 修复：成功路径显式清 snapshot temp dir.
+        _ = if snapshot.path, do: File.rm_rf(snapshot.path)
+        {:ok, %{agent_uri: target_uri}}
+      else
+        err -> rollback_partial_target(target_uri, snapshot.path, err)
+      end
+
+    {:error, {:adopted_not_fresh, _}} = err ->
+      # r8 CRITICAL：未创建 target，只清自己的 snapshot temp，外来 agent 不动.
+      _ = if snapshot.path, do: File.rm_rf(snapshot.path)
+      err
+
+    {:error, _} = err ->
+      _ = if snapshot.path, do: File.rm_rf(snapshot.path)
+      err
   end
 end
 ```
 
-注意 rev 5：`Provisioning.provision_agent/3` 是**唯一** post-spawn provisioning step（替代旧版本的 `AgentOwnership.record` + `grant_initial_caps_for_owner`两步）。`Provisioning` 内部做 ownership record + default-grants apply + 失败时跟踪式 revoke（详 §3.9 rev 5 实现）。
+注意（rev 6.9）：`Provisioning.provision_agent/3` 是**唯一** post-spawn ownership+caps step. `spawn_atomic_fresh` 失败时只清 snapshot temp，**不**调 `rollback_partial_target`（避免破坏外来 agent；r8 CRITICAL 教训）。成功路径显式 `File.rm_rf(snapshot.path)`（snapshot 含 credential 拷贝，不能留盘上）。Action body 入口 caller 通过 ctx.caller 传到 `spawn_target_directly/6`，作 `AgentLineage.record` 的 spawned_by。
 
 #### 3.4.1 `spawn_atomic_fresh/1` —— 拒绝 adoption
 
@@ -565,6 +580,9 @@ end
 16. **Provisioning end-to-end**（codex r3 HIGH-2）—— `:create_agent` 后，caller user 通过 `Identity.list_caps` 查到 `{Behavior.Agent, :duplicate}` cap 在新 agent URI 上. 断言 `Provisioning.provision_agent/3` helper 实际触发并端到端应用 grants（不只是 row 14 那样隔离地 record ownership）.
     - **16a（codex r4 HIGH-1）**：在 `Provisioning.provision_agent/3` 第二次 grant 时注入失败；验证第一次的 grant 已从 grantee user 的 `Identity.list_caps` 中 revoke 掉，**且** `AgentOwnership` 行不存在. 断言 rev-5 partial-grant rollback 结构上工作 —— 无残留 cap.
 17. **Migration upgrade test**（codex r4 HIGH-3）—— 从 pre-rev-5 DB 快照（无 `agent_ownership` 表）启动；跑 `mix ecto.migrate`；通过 `:create_agent` 创 agent；验证 `AgentOwnership.lookup/1` 返回 owner；停+起 runtime；验证 `AgentOwnership.lookup/1` 仍从 SQLite-backed `boot_load/0` 返回 owner.
+18. **Lineage vs ownership 分离**（codex r7 HIGH-1）—— target-ws admin（caller `admin@ws_b`）克隆源到 ws_b owned by `alice@ws_b`. Spawn 后：`AgentLineage.lookup(target_uri) == admin@ws_b`（spawner）+ `AgentOwnership.lookup(target_uri) == alice@ws_b`（owner）.
+19. **TOCTOU adoption-refused 保留外来 target**（codex r8 CRITICAL）—— snapshot 和 spawn 之间，并发进程在 target_uri 创 agent. Duplicate 的 `spawn_atomic_fresh/1` 返回 `{:adopted_not_fresh, _}`. 验证错误返回后：外来 target Kind **仍存活**；`Kind.Snapshot.get(target_uri)` **仍有**行；Sandbox slice 不变；WorkspaceRegistry binding 不变；AgentLineage/AgentOwnership 行不变. 仅 duplicate 自己的 snapshot temp 被清.
+20. **成功路径 snapshot 清理**（codex r8 HIGH-2）—— 成功 clone 后断言 `File.exists?(snapshot.path) == false`. Snapshot 可能含 credential 拷贝.
 
 ---
 

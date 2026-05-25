@@ -281,25 +281,51 @@ The dedicated `spawn_target_directly/5` (rev 6 — takes the `snapshot` map from
 defp spawn_target_directly(target_uri, source_meta, target_ws_uri, target_owner_uri, snapshot, caller_uri) do
   # codex r7 HIGH-1 fix — AgentLineage records "spawned by" (the
   # principal authorizing this call); AgentOwnership records "owned
-  # by" (the resulting agent's owner user). The two are distinct:
-  # when a target-ws admin performs a duplicate FOR a different
-  # target_owner_uri, lineage points at the admin (the spawner) and
-  # ownership points at the owner (the recipient). Conflating these
-  # breaks `{:spawned_by, _}` cap shape resolution per Decision #137.
-  with {:ok, :started, _pid}   <- spawn_atomic_fresh(target_uri),  # NO adoption (§3.4.1)
-       :ok                     <- WorkspaceRegistry.bind(target_uri, target_ws_uri),
-       :ok                     <- AgentLineage.record(target_uri, caller_uri),  # SPAWNER (codex r7 HIGH-1)
-       restore_result          <- Ezagent.Kind.Template.restore_or_noop(source_meta.template_class, target_uri, snapshot),
-       {:ok, final_dir}        <- normalize_restore(restore_result),
-       :ok                     <- dispatch_sandbox_write_path(target_uri, final_dir, source_meta.template_class),
-       # §3.9 Provisioning is the ONE post-spawn ownership+caps step.
-       # Bootstrap-admin context: the dispatch-time cap check on :duplicate
-       # already validated the caller; this synthesis is a system op.
-       :ok                     <- Ezagent.Agent.Provisioning.provision_agent(target_uri, target_owner_uri, %{caller: bootstrap_granter(), caps: bootstrap_admin_caps()}),
-       :ok                     <- start_pty_or_no_pty(target_uri, source_meta, target_ws_uri) do
-    {:ok, %{agent_uri: target_uri}}
-  else
-    err -> rollback_partial_target(target_uri, snapshot.path, err)
+  # by" (the resulting agent's owner user).
+  #
+  # codex r8 CRITICAL fix — `spawn_atomic_fresh/1` failure (including
+  # {:adopted_not_fresh, _}) MUST NOT route through the destructive
+  # rollback_partial_target, because that would terminate the foreign
+  # agent + clear its slices + delete its snapshot row. Pre-spawn errors
+  # only clean the SNAPSHOT TEMP DIR (which this call DID create); they
+  # do NOT touch the target Kind / registries.
+  case spawn_atomic_fresh(target_uri) do
+    {:ok, :started, _pid} ->
+      # We own the target — proceed; rollback_partial_target IS allowed
+      # because every subsequent step's side-effects are this call's
+      # responsibility to undo.
+      with :ok                     <- WorkspaceRegistry.bind(target_uri, target_ws_uri),
+           :ok                     <- AgentLineage.record(target_uri, caller_uri),  # SPAWNER
+           restore_result          <- Ezagent.Kind.Template.restore_or_noop(source_meta.template_class, target_uri, snapshot),
+           {:ok, final_dir}        <- normalize_restore(restore_result),
+           :ok                     <- dispatch_sandbox_write_path(target_uri, final_dir, source_meta.template_class),
+           # §3.9 Provisioning is the ONE post-spawn ownership+caps step.
+           :ok                     <- Ezagent.Agent.Provisioning.provision_agent(target_uri, target_owner_uri, %{caller: bootstrap_granter(), caps: bootstrap_admin_caps()}),
+           :ok                     <- start_pty_or_no_pty(target_uri, source_meta, target_ws_uri) do
+        # codex r8 HIGH-2 fix — success path explicitly cleans the
+        # snapshot temp dir. Snapshot may contain copied credentials;
+        # leaving it on disk indefinitely is a leak. restore_or_noop's
+        # contract is "caller is responsible for rm'ing", so we do it
+        # here regardless of whether restore was :noop or {:ok, dir}.
+        _ = if snapshot.path, do: File.rm_rf(snapshot.path)
+        {:ok, %{agent_uri: target_uri}}
+      else
+        err -> rollback_partial_target(target_uri, snapshot.path, err)
+      end
+
+    {:error, {:adopted_not_fresh, _}} = err ->
+      # codex r8 CRITICAL — we did NOT create the target; clean only
+      # our own snapshot temp dir and return error. Foreign target
+      # untouched: Kind alive, slices intact, snapshot row preserved,
+      # registries unmodified.
+      _ = if snapshot.path, do: File.rm_rf(snapshot.path)
+      err
+
+    {:error, _} = err ->
+      # Other spawn-registry failures (e.g. supervisor refused) — we
+      # didn't create anything. Clean only the snapshot temp dir.
+      _ = if snapshot.path, do: File.rm_rf(snapshot.path)
+      err
   end
 end
 
@@ -995,6 +1021,8 @@ The bar:
     - **16a (codex r4 HIGH-1):** in `Provisioning.provision_agent/3`, inject failure at the 2nd grant of a multi-grant batch (e.g. by stubbing one grantee's IdentityAdmin to refuse); verify the FIRST grant was successfully revoked off the grantee user's `Identity.list_caps` AND the `AgentOwnership` row is absent. Asserts the rev-5 partial-grant rollback works structurally — no stale cap escapes.
 17. **Migration upgrade test (codex r4 HIGH-3)** — start from a pre-rev-5 DB snapshot (no `agent_ownership` table); run `mix ecto.migrate`; create an agent via `:create_agent`; verify `AgentOwnership.lookup/1` returns the owner; stop+start the runtime; verify `AgentOwnership.lookup/1` still returns the owner from SQLite-backed `boot_load/0`. If migration ordering regresses (e.g. EtsOwner starts before SQLite-backed Repo is up), this test catches it.
 18. **Lineage vs ownership divergence (codex r7 HIGH-1)** — target-ws admin (caller `admin@ws_b`) clones a source agent into ws_b owned by a DIFFERENT user `alice@ws_b` (i.e. `target_owner_uri = alice@ws_b`, caller = `admin@ws_b`). Verify after spawn: `AgentLineage.lookup(target_uri) == admin@ws_b` (the spawner) AND `AgentOwnership.lookup(target_uri) == alice@ws_b` (the owner). Asserts the two registries are not conflated; `{:spawned_by, admin@ws_b}` cap shape resolves correctly to the target agent.
+19. **TOCTOU adoption-refused preserves foreign target (codex r8 CRITICAL)** — between snapshot and spawn, a concurrent process creates an agent at `target_uri`. Duplicate's `spawn_atomic_fresh/1` returns `{:adopted_not_fresh, _}`. Verify after the error returns: foreign target Kind STILL ALIVE; `Kind.Snapshot.get(target_uri)` STILL has its row; `Sandbox` slice unchanged; `WorkspaceRegistry` binding unchanged; `AgentLineage` / `AgentOwnership` rows unchanged. Only the duplicate's snapshot temp dir is cleaned. This asserts the rev 6.9 control-flow fix — adoption refusal does NOT route through destructive rollback.
+20. **Success-path snapshot cleanup (codex r8 HIGH-2)** — after a successful clone, assert `File.exists?(snapshot.path) == false`. Snapshot copies may contain credential material; leaving them on disk indefinitely is a leak.
 
 ---
 
