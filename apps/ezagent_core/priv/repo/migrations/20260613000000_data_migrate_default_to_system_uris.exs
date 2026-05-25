@@ -203,6 +203,99 @@ defmodule EzagentCore.Repo.Migrations.DataMigrateDefaultToSystemUris do
      WHERE workspace_uri = 'workspace://default'
     """
 
+    # entity_profiles — caught in static review of PR #343 (codex r1
+    # was unreachable today due to API 529s; main-agent self-review
+    # at 2026-05-25 ~17:55 audited every URI-shaped column across
+    # the schema and added the four below).
+    execute """
+    UPDATE entity_profiles
+       SET entity_uri = REPLACE(entity_uri, 'entity://user/default/', 'entity://user/system/')
+     WHERE entity_uri LIKE 'entity://user/default/%'
+    """
+
+    execute """
+    UPDATE entity_profiles
+       SET entity_uri = REPLACE(entity_uri, 'entity://agent/default/', 'entity://agent/system/')
+     WHERE entity_uri LIKE 'entity://agent/default/%'
+    """
+
+    execute """
+    UPDATE entity_profiles
+       SET workspace_uri = 'workspace://system'
+     WHERE workspace_uri = 'workspace://default'
+    """
+
+    # routing_rules — additional URI-shaped columns beyond `source`.
+    # `matcher_data` / `receivers` / `applies_to_users` are JSON; the
+    # REPLACE-on-substring stays JSON-safe because URI literals
+    # inside JSON are double-quoted strings — substituting a URI
+    # prefix doesn't disturb structural punctuation.
+    execute """
+    UPDATE routing_rules
+       SET created_by = REPLACE(created_by, 'entity://user/default/', 'entity://user/system/')
+     WHERE created_by LIKE 'entity://user/default/%'
+    """
+
+    execute """
+    UPDATE routing_rules
+       SET created_by = REPLACE(created_by, 'entity://agent/default/', 'entity://agent/system/')
+     WHERE created_by LIKE 'entity://agent/default/%'
+    """
+
+    execute """
+    UPDATE routing_rules
+       SET workspace_uri = 'workspace://system'
+     WHERE workspace_uri = 'workspace://default'
+    """
+
+    execute """
+    UPDATE routing_rules
+       SET matcher_data = REPLACE(matcher_data, 'entity://user/default/', 'entity://user/system/')
+     WHERE matcher_data LIKE '%entity://user/default/%'
+    """
+
+    execute """
+    UPDATE routing_rules
+       SET matcher_data = REPLACE(matcher_data, 'entity://agent/default/', 'entity://agent/system/')
+     WHERE matcher_data LIKE '%entity://agent/default/%'
+    """
+
+    execute """
+    UPDATE routing_rules
+       SET matcher_data = REPLACE(matcher_data, 'session://default/', 'session://system/')
+     WHERE matcher_data LIKE '%session://default/%'
+    """
+
+    execute """
+    UPDATE routing_rules
+       SET matcher_data = REPLACE(matcher_data, 'workspace://default', 'workspace://system')
+     WHERE matcher_data LIKE '%workspace://default%'
+    """
+
+    execute """
+    UPDATE routing_rules
+       SET receivers = REPLACE(receivers, 'entity://user/default/', 'entity://user/system/')
+     WHERE receivers LIKE '%entity://user/default/%'
+    """
+
+    execute """
+    UPDATE routing_rules
+       SET receivers = REPLACE(receivers, 'entity://agent/default/', 'entity://agent/system/')
+     WHERE receivers LIKE '%entity://agent/default/%'
+    """
+
+    execute """
+    UPDATE routing_rules
+       SET receivers = REPLACE(receivers, 'session://default/', 'session://system/')
+     WHERE receivers LIKE '%session://default/%'
+    """
+
+    execute """
+    UPDATE routing_rules
+       SET applies_to_users = REPLACE(applies_to_users, 'entity://user/default/', 'entity://user/system/')
+     WHERE applies_to_users LIKE '%entity://user/default/%'
+    """
+
     # messages — URI columns only, NOT body
     execute """
     UPDATE messages

@@ -45,7 +45,19 @@ defmodule EzagentCore.Invariants.NoDefaultWorkspaceRefsTest do
     {"message_routings", ["session_uri"]},
     {"feishu_user_bindings", ["user_uri"]},
     {"read_markers", ["workspace_uri", "session_uri", "user_uri"]},
-    {"routing_rules", ["source"]},
+    {"entity_profiles", ["entity_uri", "workspace_uri"]},
+    {"routing_rules",
+     [
+       "source",
+       "created_by",
+       "workspace_uri",
+       # JSON columns — URI literals inside appear as double-quoted
+       # strings; the LIKE patterns in count_default_refs/2 match the
+       # URI prefixes regardless of JSON quoting.
+       "matcher_data",
+       "receivers",
+       "applies_to_users"
+     ]},
     {"invocations", ["caller", "target", "workspace_uri"]},
     # NOTE: `messages.body` intentionally EXCLUDED — natural-language
     # content. URI-shaped message columns ARE checked.
