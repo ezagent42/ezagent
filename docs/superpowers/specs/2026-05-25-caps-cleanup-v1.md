@@ -1,6 +1,6 @@
 # SPEC — Caps cleanup v1 (3-issue architectural rectification)
 
-**Status:** r1 (DRAFT). 2026-05-25.
+**Status:** r2 (DRAFT). 2026-05-25.
 **Tier:** `apps/ezagent_core/` framework rectification + sweep across every domain + plugin.
 **Trigger:** Allen 2026-05-25 (Feishu) — three verbatim directives addressing accumulated cap-system pathology surfaced during the data-ownership-v2 / external-mirror-audit work:
 
@@ -27,7 +27,21 @@
 
 ---
 
-## 0. Open questions for Allen review
+## 0a. r2 revision notes (what changed vs r1)
+
+Codex r1 returned **needs-attention** with 4 HIGH + 1 MEDIUM. r2 closes all five structurally:
+
+1. **HIGH fixed — migration widens workspace-scoped grants (was §5.8 conversion table).** r1's `CapMigration.convert/1` dropped the `workspace_uri` field on the assumption that the instance URI would carry workspace info. But for cap shapes with `instance: "any"` AND a concrete `workspace_uri` (e.g. the `User.default_caps/1` shape `{kind: :session, behavior: :any, instance: :any, workspace_uri: workspace://team}`), the migration produced a globally-scoped string like `"session.*"` — silently widening the original workspace-A grant into authorization on workspace B. r2 introduces a workspace suffix in the cap grammar (`;ws=<workspace_uri>`) AND extends the migration to preserve workspace dimension on every cap whose original `workspace_uri` is concrete. New invariant test §9.4 asserts no migrated cap authorizes a workspace it was not originally scoped to. Workspace iso (§5.5) gains a second arm: when a cap carries `;ws=` it constrains BOTH whether the cap matches AND the workspace check.
+2. **HIGH fixed — system principal catalog not enforceable (was §4.1 / §4.2).** r1's `SystemPrincipal.ensure/2` accepted any `system://` URI and any cap list. r2 makes the catalog an executable allowlist: `Ezagent.SystemPrincipal.Catalog` (compile-time module) declares the 14 principals AND their permitted caps. `ensure/2` reads the catalog and rejects any URI not in it; the catalog is the single source of truth. A new invariant test §9.5 greps every `system://` URI literal in `apps/*/lib` and asserts it appears in the catalog. Compile-time check via `:ezagent_plugin_check` extension §6.1 check 11 — any module containing a `system://` URI literal that isn't in `SystemPrincipal.Catalog` fails the build.
+3. **HIGH fixed — dispatch reads mutable slice without snapshot semantics (was §5.3).** r1's `read_caller_slice/1` did a fresh ETS read per dispatch with no version contract; concurrent grant/revoke could reach §5.5 / §5.6 / facade Gate 1-3 each seeing different cap states. r2 adds a cap-snapshot contract: `Ezagent.Identity.get_slice_versioned/1` returns `{caps :: [String.t()], revision :: pos_integer()}`. Dispatch reads it ONCE at dispatch admission (new step 5.0a) and propagates `{caps, revision}` through `ctx.caps_snapshot` for ALL downstream cap-consuming code (5.5, 5.6, facade gates). Cap mutations (`grant_cap`, `revoke_cap`) bump the revision; the action body's first CAS step (new step 8.5 — only for caps-mutating actions) verifies the snapshot revision still matches the entity's current revision before commit. If not, the action returns `{:error, :cap_snapshot_stale}` and the caller retries. Defines clear admission-time semantics that close the TOCTOU window.
+4. **HIGH fixed — compile gate too weak (was §6.1 check 10).** r1 only verified values are binaries. r2 extends `:ezagent_plugin_check` to PARSE every `required_caps/0` value through `Ezagent.Cap.Parser.parse_strict/1` (new strict variant — rejects unknown kind atoms, unknown behavior atoms, malformed `@instance`, malformed `;ws=` suffixes). Cross-validates: cap's `kind` segment MUST match the parent Kind's `type_name/0`; cap's `behavior` segment MUST match the Behavior's `state_slice/0` OR `*`; cap's `action` segment MUST be one of the Behavior's `actions/0` OR `*`. Special strings `"*"` and `"cross-workspace:*"` are added to a SHORT explicit allowlist in the parser — documented, not undocumented exceptions. Runtime warn-only typo check (was §10.3) PROMOTED to compile-time hard failure.
+5. **MEDIUM fixed — §0 OQs treated as ship-ready (was §0).** r2 moves the 6 OQs into "decisions" status with explicit closure rationale. The picked option becomes the decision; alternatives stay documented for traceability. PR-CC-2c (the irreversible migration sub-PR) gains a new acceptance gate: "all §0 decisions stamped 'Allen-approved YYYY-MM-DD' before merge." If Allen has not stamped a decision by then, PR-CC-2c blocks at review.
+
+---
+
+## 0. Decisions (formerly Open Questions)
+
+Six decisions surfaced by brainstorm. Each carries the picked option as the SPEC's decision; alternatives stay documented for traceability. PR-CC-2c acceptance gate (§8) requires every decision stamped `Allen-approved YYYY-MM-DD` before merge — until then PR-CC-2c blocks at review.
 
 Six questions surfaced by the brainstorm. SPEC currently picks the option marked **[picked]**; Allen approval flips any of them before implementation.
 
@@ -200,44 +214,108 @@ Each system-internal dispatch gets a named principal URI under the `system://` s
 | `system://feishu-binding-policy` | `Plugin.Feishu.BindingPolicy.apply/2` re-grant of default session caps | `"user.identity.grant_cap"` |
 | `system://lv-anon-mount` | LV mount path when no `current_entity_uri` is in session | `[]` (empty — LV anon mounts cannot dispatch; replaces the silent `User.admin_caps()` fallback that hid auth bugs) |
 
-Total: 14 principals. The list is exhaustive — any future system-internal dispatch site adds a row HERE, never re-introduces `User.admin_caps()`.
+Total: 14 principals. **The list is enforced closed — `Ezagent.SystemPrincipal.Catalog` is the single source of truth (per r2 HIGH-2 fix).** Adding a 15th principal requires (a) editing `Catalog`, (b) editing this SPEC, (c) shipping in a separate PR. The catalog is enforced at three layers:
 
-### 4.2 Seed flow
+1. Runtime: `SystemPrincipal.ensure/2` rejects URIs not in the catalog (raise).
+2. Compile-time: `:ezagent_plugin_check` check 11 greps every `system://` URI literal in app source and asserts membership in the catalog (build fails).
+3. Invariant test (§9.5): same grep, fail-loud at test time as defense in depth.
+
+### 4.2 Catalog module (r2 HIGH-2)
+
+`Ezagent.SystemPrincipal.Catalog` (new compile-time module in `apps/ezagent_core/lib/ezagent/system_principal/catalog.ex`):
+
+```elixir
+defmodule Ezagent.SystemPrincipal.Catalog do
+  @moduledoc """
+  The closed allowlist of system principal URIs and their permitted caps.
+
+  Any `system://` URI used as a dispatch principal MUST appear here.
+  `:ezagent_plugin_check` enforces this at compile time; the runtime
+  `SystemPrincipal.ensure/2` enforces it at boot.
+
+  Adding a 15th principal requires:
+  1. Add row here.
+  2. Update SPEC `caps-cleanup-v1.md` §4.1 catalog table.
+  3. Ship in a separate PR (review surface = "are we adding ambient authority?").
+  """
+
+  @catalog %{
+    "system://bootstrap"                 => ["*"],
+    "system://boot-reconciler"           => ["session.external_mirror.*"],
+    "system://adapter-install"           => ["session.*.bind"],
+    "system://chat-router"               => ["session.chat.send", "session.chat.system_message"],
+    "system://chat-reply"                => ["session.chat.send", "session.chat.reaction"],
+    "system://worker-publish"            => ["session.external_mirror.publish"],
+    "system://template-materialize"      => ["workspace.template.*", "session.*"],
+    "system://orchestrator-tools"        => ["session.*"],
+    "system://session-internal"          => ["session.chat.*", "workspace.workspace.read"],
+    "system://agent-internal"            => ["user.identity.grant_cap"],
+    "system://workspace-loader"          => ["workspace.workspace.*"],
+    "system://mix-task"                  => ["*"],
+    "system://feishu-binding-policy"     => ["user.identity.grant_cap"],
+    "system://lv-anon-mount"             => []
+  }
+
+  @doc "Is this URI a registered system principal?"
+  @spec member?(URI.t() | String.t()) :: boolean()
+  def member?(uri), do: Map.has_key?(@catalog, normalize(uri))
+
+  @doc "Permitted caps for this principal. Raises if not in catalog."
+  @spec caps_for!(URI.t() | String.t()) :: [String.t()]
+  def caps_for!(uri) do
+    key = normalize(uri)
+
+    case Map.fetch(@catalog, key) do
+      {:ok, caps} -> caps
+      :error -> raise ArgumentError,
+        "#{key} is not in SystemPrincipal.Catalog (caps-cleanup-v1 §4.1). " <>
+        "Add the row to Catalog + SPEC + open a separate PR."
+    end
+  end
+
+  @doc "List every catalog URI (for invariant test §9.5)."
+  @spec uris() :: [String.t()]
+  def uris, do: Map.keys(@catalog)
+
+  defp normalize(%URI{} = u), do: URI.to_string(u)
+  defp normalize(s) when is_binary(s), do: s
+end
+```
+
+### 4.3 Seed flow
 
 Each domain Application that needs a system principal seeds it in its `start/2` via:
 
 ```elixir
-Ezagent.SystemPrincipal.ensure(
-  URI.parse("system://boot-reconciler"),
-  ["session.external_mirror.*"]
-)
+Ezagent.SystemPrincipal.ensure(URI.parse("system://boot-reconciler"))
 ```
 
-`Ezagent.SystemPrincipal.ensure/2` (new module in `apps/ezagent_core/lib/ezagent/system_principal.ex`):
+`Ezagent.SystemPrincipal.ensure/1` (new module in `apps/ezagent_core/lib/ezagent/system_principal.ex`):
+- Reads the cap list from `Catalog.caps_for!/1` — no second arg; caller cannot pass arbitrary caps.
 - Spawns an Entity Kind with `:identity` slice carrying the cap list (same as a User Kind, but URI is `system://...` not `entity://user/...`).
 - Idempotent: if already spawned, no-op.
 - Persists via the same `users` table (column `caps_json` carries the list of strings).
-- Hard-raises if called with a non-`system://` URI (defense against accidental misuse).
+- Hard-raises if URI is not in the catalog OR is non-`system://` (defense in depth).
 
 `Behavior.Identity.init_slice/1` already handles the slice shape — only the URI scheme changes.
 
-### 4.3 Migration of system call sites
+### 4.4 Migration of system call sites
 
 | Old | New |
 |---|---|
-| `caps: User.admin_caps()` in dispatch ctx | `caps: Ezagent.SystemPrincipal.caps(URI.parse("system://<service>"))` |
+| `caps: User.admin_caps()` in dispatch ctx | DELETE — `ctx.caps` field removed per r2 HIGH-3 fix (§5.3 cap-snapshot). Dispatch reads caller slice from caller URI directly; system principals are loaded via the same path |
 | `caller: User.admin_uri()` in dispatch ctx | `caller: URI.parse("system://<service>")` |
 | Bare `User.admin_caps()` call | DELETE — function deleted from `Entity.User` (compile error if used) |
 
 Each LV that today falls back to `User.admin_caps()` for anonymous mounts (`agent_extensions_live`, `terminal_live`, etc.) switches to `system://lv-anon-mount` with EMPTY caps. The LV mount path that previously silently elevated to admin will now correctly deny anonymous access. This is the existing auth-bug surfacer — anonymous LV mounts SHOULD have been denied; the `User.admin_caps()` fallback was hiding it. Per memory `feedback_let_it_crash_no_workarounds`, the fix is to make the bug visible at the gate, not to preserve the fallback.
 
-### 4.4 Audit log changes
+### 4.5 Audit log changes
 
 `telemetry.execute([:ezagent, :authz, :granted], ...)`'s `caller` field today shows `entity://user/system/admin` for both real admin operations AND every system-internal dispatch. After this PR, those split: real admin operations still show admin URI; system operations show `system://<service>`.
 
 Codex r2 will demand the audit consumers (today: `audit.ex` writes to `audit_events` table) handle the new URI scheme. They already do — `audit_events.caller` is a String column with no constraint on scheme. The CSV / `/admin/audit` LV displays the URI verbatim.
 
-### 4.5 Invariant test
+### 4.6 Invariant test
 
 `apps/ezagent_core/test/invariants/no_admin_caps_fallback_test.exs` (new):
 
@@ -325,9 +403,33 @@ end
 
 The matcher is ~50 LOC, fully unit-tested, no external dependencies.
 
-### 5.3 Dispatch step 5.5 simplification
+### 5.3 Dispatch step 5.5 simplification + cap snapshot contract (r2 HIGH-3)
 
 Today `apps/ezagent_core/lib/ezagent/kind/runtime.ex:215-239` (`authz_check/4`) reads `Capability.cap_for_action/3` + iterates `ctx.caps` MapSet through `Capability.matches?/2`. After this SPEC:
+
+**New step 5.0a — cap snapshot at dispatch admission.** `Invocation.dispatch/1` (after step 1's idempotency, before step 5.5) reads the caller's caps ONCE per dispatch and pins them to `ctx.caps_snapshot`:
+
+```elixir
+defp admit_cap_snapshot(%Invocation{ctx: ctx} = inv) do
+  case Ezagent.Identity.get_slice_versioned(ctx.caller) do
+    {:ok, %{caps: caps, revision: rev}} ->
+      snapshot = %{caps: caps, revision: rev, taken_at_us: System.monotonic_time(:microsecond)}
+      %{inv | ctx: Map.put(ctx, :caps_snapshot, snapshot)}
+
+    :not_found ->
+      # Caller URI not spawned — system principals MUST be ensured at
+      # boot; user principals MUST be spawned at login. Hard-raise per
+      # feedback_let_it_crash_no_workarounds — no silent empty-caps
+      # fallback (that's the User.admin_caps() pathology in a new costume).
+      raise ArgumentError,
+        "caller #{URI.to_string(ctx.caller)} has no Identity slice; cannot dispatch"
+  end
+end
+```
+
+The snapshot is the ONLY source of caller caps for the lifetime of the dispatch. Steps 5.5 (CapBAC), 5.6 (workspace iso), and any facade-internal cap re-checks (ExternalMirror Gates 1-3) read `ctx.caps_snapshot.caps` — never re-read the slice.
+
+**Step 5.5 — uses the snapshot:**
 
 ```elixir
 defp authz_check(kind_module, action, target, ctx) do
@@ -335,46 +437,107 @@ defp authz_check(kind_module, action, target, ctx) do
   needed_cap = Map.fetch!(behavior.required_caps(), action)
   needed_with_instance = "#{needed_cap}@#{URI.to_string(Ezagent.URI.instance(target))}"
 
-  caller_slice = read_caller_slice(ctx.caller)  # via Ezagent.Identity.get_slice/1
-
-  if kind_module.holds_cap?(caller_slice, needed_with_instance) do
-    :telemetry.execute([:ezagent, :authz, :granted], %{}, meta(ctx, target, action, needed_with_instance))
+  if cap_in_snapshot?(ctx.caps_snapshot.caps, needed_with_instance) do
+    :telemetry.execute([:ezagent, :authz, :granted], %{revision: ctx.caps_snapshot.revision},
+                       meta(ctx, target, action, needed_with_instance))
     :ok
   else
-    :telemetry.execute([:ezagent, :authz, :denied], %{}, meta(ctx, target, action, needed_with_instance))
+    :telemetry.execute([:ezagent, :authz, :denied], %{revision: ctx.caps_snapshot.revision},
+                       meta(ctx, target, action, needed_with_instance))
     {:error, :unauthorized}
+  end
+end
+
+defp cap_in_snapshot?(caps_list, needed) when is_list(caps_list) do
+  Enum.any?(caps_list, &Ezagent.Cap.matches?(&1, needed))
+end
+```
+
+**New step 8.5 — CAS guard for cap-mutating actions.** For actions whose `Behavior.mutates_caps?/0` returns `true` (default `false`; only `Behavior.IdentityAdmin.grant_cap` / `revoke_cap` override), Kind.Server's invoke wrapper compares `ctx.caps_snapshot.revision` against the **caller**'s current Identity slice revision BEFORE the action commits. If the revision drifted, return `{:error, :cap_snapshot_stale}` and the caller may retry with a fresh snapshot.
+
+```elixir
+defp cas_guard_for_cap_mutating(inv, kind_module, action) do
+  behavior = lookup_behavior(kind_module, action)
+
+  if behavior_mutates_caps?(behavior, action) do
+    current = Ezagent.Identity.get_revision(inv.ctx.caller)
+
+    if current == inv.ctx.caps_snapshot.revision do
+      :ok
+    else
+      {:error, :cap_snapshot_stale}
+    end
+  else
+    :ok
   end
 end
 ```
 
-Key changes:
-- `ctx.caps` is GONE. The cap check reads the caller's slice directly via `read_caller_slice/1` (which goes through `Ezagent.Identity.get_slice/1` — a lightweight ETS lookup, not dispatch). This collapses the "caller must pre-load caps into ctx" pattern that was forcing every dispatcher to either know caps in advance OR fall back to `User.admin_caps()`.
-- `Capability.matches?/2` is GONE — replaced by `Kind.holds_cap?/2` which delegates to `Ezagent.Cap.matches?/2`.
-- `Capability.cap_for_action/3` is GONE — replaced by `Behavior.required_caps()[action]` lookup.
+For non-cap-mutating actions (the 99% case — chat send, session join, etc.) the CAS guard is skipped: those actions don't care if caps drift mid-dispatch because they neither read nor write caps after step 5.5.
 
-### 5.4 Cap string format (canonical grammar)
+**Identity slice revision semantics.** Added to `Ezagent.Identity` slice:
+- New slice key `:revision` — monotonically increasing counter.
+- `grant_cap` and `revoke_cap` bump `:revision` atomically with the cap-list mutation (single ETS update).
+- `get_slice_versioned/1` reads `{caps, revision}` in one ETS lookup.
+- `get_revision/1` reads `revision` alone (used by CAS guard).
+
+Revision is per-Entity. A grant on user-A doesn't bump user-B's revision; concurrent dispatches against different users never CAS-fail each other.
+
+**Key changes summary:**
+- `ctx.caps` is GONE (was the pre-loaded MapSet that needed `User.admin_caps()` as fallback). Replaced by `ctx.caps_snapshot` set at admission.
+- Cap check reads from snapshot, not from live ETS.
+- Cap-mutating actions CAS-guard against stale snapshots; other actions skip the check.
+- `Capability.matches?/2` is GONE — replaced by `Ezagent.Cap.matches?/2`.
+- `Capability.cap_for_action/3` is GONE — replaced by `Behavior.required_caps()[action]` lookup.
+- All facade-internal cap-rechecks (ExternalMirror Gates 1-3) read `ctx.caps_snapshot.caps` — never re-fetch.
+
+### 5.4 Cap string format (canonical grammar — r2 HIGH-1 + HIGH-4)
 
 ```
-cap_string := all_wildcard | scoped_cap
-all_wildcard := "*"
-scoped_cap := authority [ "@" instance_uri ]
+cap_string := allowlisted_special | scoped_cap
+allowlisted_special := "*" | "cross-workspace:*"
+scoped_cap := authority instance_suffix? workspace_suffix?
 authority := kind "." behavior ( "." action | ".*" )?
+instance_suffix := "@" instance_uri
+workspace_suffix := ";ws=" workspace_uri
 kind := atom_string | "*"
 behavior := atom_string | "*"
 action := atom_string
-instance_uri := URI.t() string form
+instance_uri := URI.t() string form (no '@', no ';' inside path)
+workspace_uri := full workspace:// URI string
 
 Examples:
-"*"                                          # admin all
-"session.*"                                  # all session-kind actions
-"session.chat"                               # all session.chat.* actions
-"session.chat.send"                          # specific action
-"session.chat@session://default/team/main"   # all chat actions on one session
-"session.chat.send@session://default/team/main"  # one action on one session
-"cross-workspace:*"                          # cross-workspace bypass cap (§5.5)
+"*"                                                     # admin all (allowlisted)
+"cross-workspace:*"                                     # cross-workspace bypass (allowlisted)
+"session.*"                                             # all session-kind actions, ANY workspace
+"session.*;ws=workspace://team-alpha"                   # all session-kind actions, only in team-alpha workspace
+"session.chat"                                          # all session.chat.* actions, ANY workspace
+"session.chat.send"                                     # specific action, ANY workspace
+"session.chat@session://default/team/main"              # all chat actions on one session (workspace structural via instance)
+"session.chat.send@session://default/team/main"         # one action on one session
+"session.chat.send;ws=workspace://team-alpha"           # one action, scoped to team-alpha workspace (no specific instance)
 ```
 
-The grammar is a strict extension of the existing `Capability.Parser` grammar — every string today's CLI accepts continues to work.
+**Workspace suffix `;ws=<workspace_uri>` (r2 HIGH-1 fix).** When the cap has no instance suffix but the original `%Capability{}` carried a concrete `workspace_uri`, the suffix preserves that dimension. Matching semantics (§5.2 `Cap.matches?/2` extended):
+
+- A cap WITHOUT `;ws=` matches a needed cap in ANY workspace.
+- A cap WITH `;ws=W` matches a needed cap only if the needed cap's target is in workspace W (or its instance URI structurally derives to W).
+- The `@instance_uri` suffix is STRONGER than `;ws=` — if both are present, the instance URI's workspace MUST equal the `;ws=` value (compile-time contradictions like `session.chat@session://default/team/main;ws=workspace://other` fail the parser).
+
+**Allowlisted specials.** The two strings `"*"` and `"cross-workspace:*"` are NOT regular cap shapes — they're documented escape hatches with explicit allowlist in the parser. Adding a third special requires SPEC amendment. This closes codex r1's "unstated exceptions" concern (HIGH-4).
+
+**Strict parser `Cap.Parser.parse_strict/1`** (r2 HIGH-4):
+- Used by `:ezagent_plugin_check` at compile time.
+- Rejects unknown kind atoms (via `String.to_existing_atom` — kind must be a registered Kind name).
+- Rejects unknown behavior atoms similarly.
+- Rejects unknown action atoms (must be in declaring Behavior's `actions/0`).
+- Rejects malformed `@instance_uri` (URI parse must succeed; scheme must be one of the registered scheme allowlist).
+- Rejects malformed `;ws=` (must parse to `workspace://*` URI).
+- Rejects unknown specials (only `"*"` and `"cross-workspace:*"` admitted).
+
+The lenient `Cap.Parser.parse/1` exists for runtime / CLI input where the cap may reference plugins not yet loaded — it falls back gracefully (same behavior as today's `Capability.Parser`).
+
+The grammar is a strict extension of the existing `Capability.Parser` grammar — every string today's CLI accepts continues to work; the new `;ws=` suffix and explicit allowlist are additive.
 
 ### 5.5 Workspace iso separation (per OQ-CC-2)
 
@@ -402,13 +565,14 @@ defp workspace_isolation_check(behavior, target, ctx) do
   if behavior.workspace_scoped?() do
     caller_ws = workspace_of_caller(ctx.caller)
     target_ws = Ezagent.URI.workspace_of(target)
+    snapshot_caps = ctx.caps_snapshot.caps  # r2 HIGH-3 — snapshot, not live
 
     cond do
-      caller_ws == :any -> :ok                                 # system caller
-      target_ws == :any -> :ok                                 # cross-cutting target
-      caller_ws == target_ws -> :ok                            # same workspace
-      caller_holds?(ctx.caller, "cross-workspace:*") -> :ok    # explicit bypass cap
-      caller_in_system_workspace?(ctx.caller) -> :ok           # membership bypass (Phase 9 PR-8)
+      caller_ws == :any -> :ok                                          # system caller
+      target_ws == :any -> :ok                                          # cross-cutting target
+      caller_ws == target_ws -> :ok                                     # same workspace
+      Enum.member?(snapshot_caps, "cross-workspace:*") -> :ok           # explicit bypass cap
+      caller_in_system_workspace?(ctx.caller) -> :ok                    # membership bypass (Phase 9 PR-8)
       true -> {:error, :cross_workspace_denied}
     end
   else
@@ -417,7 +581,7 @@ defp workspace_isolation_check(behavior, target, ctx) do
 end
 ```
 
-The cap struct's `workspace_uri` field is gone; iso is per-Behavior data + per-caller membership.
+The cap struct's `workspace_uri` field is gone; iso is per-Behavior data + per-caller membership + the `;ws=<workspace_uri>` cap suffix (which the §5.5 `Cap.matches?/2` consults so a cap scoped to workspace A cannot authorize an action in workspace B — see §5.4 for matching semantics).
 
 ### 5.6 FacadeNonceTable interaction (PRESERVED)
 
@@ -447,18 +611,54 @@ Total touched files: ~50-70 across PRs CC-2a..2d (which we sub-split per §7.2 b
 
 ### 5.8 Data migration
 
-Existing `users.caps_json` rows store `[%{kind, behavior, instance, workspace_uri, granted_by, granted_at}]`. One-shot conversion script (`apps/ezagent_core/priv/repo/data_migrations/20260525_caps_to_strings.exs`):
+Existing `users.caps_json` rows store `[%{kind, behavior, instance, workspace_uri, granted_by, granted_at}]`. One-shot conversion script (`apps/ezagent_core/priv/repo/data_migrations/20260525_caps_to_strings.exs`).
+
+**r2 HIGH-1 fix — workspace dimension MUST be preserved.** r1's migration dropped `workspace_uri` on the assumption that `instance` would carry it. But for caps with `instance: "any"` AND concrete `workspace_uri` (the `User.default_caps/1` shape is the canonical example), the converted string `"session.*"` is GLOBALLY scoped — silently widening a workspace-A grant into authorization on workspace B. The fix uses the `;ws=<workspace_uri>` suffix from §5.4 to preserve the scope:
 
 ```elixir
 defmodule CapMigration do
-  def convert(%{"kind" => "any", "behavior" => "any", "instance" => "any"}), do: "*"
+  # Admin's structural cap: all dimensions :any → the allowlisted special.
+  def convert(%{"kind" => "any", "behavior" => "any", "instance" => "any",
+                "workspace_uri" => "any"}), do: "*"
 
-  def convert(%{"kind" => kind, "behavior" => behavior, "instance" => "any"}) do
+  # Admin's cross-workspace cap shape (rare).
+  def convert(%{"kind" => "any", "behavior" => "any", "instance" => "any",
+                "workspace_uri" => ws}) when ws != "any" do
+    # Even admin gets workspace-pinned if the original was workspace-scoped.
+    # (Pathological — admin caps SHOULD all be :any. Migration preserves
+    # whatever was on disk; an invariant test catches stragglers.)
+    "*;ws=#{ws}"
+  end
+
+  # Common case: kind+behavior-scoped, no specific instance,
+  # original was workspace-scoped (e.g. User.default_caps shape).
+  def convert(%{"kind" => kind, "behavior" => behavior, "instance" => "any",
+                "workspace_uri" => ws}) when ws != "any" do
+    "#{kind}.#{deatomize_behavior(behavior)};ws=#{ws}"
+  end
+
+  # Kind+behavior-scoped, cross-workspace (rare; explicit admin grant).
+  def convert(%{"kind" => kind, "behavior" => behavior, "instance" => "any",
+                "workspace_uri" => "any"}) do
     "#{kind}.#{deatomize_behavior(behavior)}"
   end
 
-  def convert(%{"kind" => kind, "behavior" => behavior, "instance" => instance_str}) do
-    "#{kind}.#{deatomize_behavior(behavior)}@#{instance_str}"
+  # Instance-scoped: instance URI carries workspace structurally.
+  # Assert workspace_uri matches the instance URI's workspace OR is :any
+  # — else the original cap was malformed and we hard-raise (let-it-crash).
+  def convert(%{"kind" => kind, "behavior" => behavior, "instance" => instance_str,
+                "workspace_uri" => ws}) do
+    instance_ws = Ezagent.URI.workspace_of_string(instance_str)
+
+    cond do
+      ws == "any" or ws == instance_ws ->
+        "#{kind}.#{deatomize_behavior(behavior)}@#{instance_str}"
+
+      true ->
+        raise "Cap migration sanity check failed: cap on instance #{instance_str} " <>
+              "(workspace #{instance_ws}) has workspace_uri=#{ws} which does not " <>
+              "match. Original cap is structurally malformed."
+    end
   end
 
   defp deatomize_behavior("any"), do: "*"
@@ -466,7 +666,7 @@ defmodule CapMigration do
 end
 ```
 
-Workspace dimension is dropped (per OQ-CC-6) — the instance URI carries workspace info structurally. Provenance (`granted_by`, `granted_at`) is dropped per OQ-CC-6 sub-question.
+Provenance (`granted_by`, `granted_at`) is dropped per §0 decision OQ-CC-6.
 
 The script:
 1. Reads every `users` row.
@@ -561,22 +761,61 @@ defp check_required_caps_keys_match_actions(diagnostics, plugin_module) do
   end)
 end
 
-# New check 10 — every required_caps/0 value is a binary
-defp check_required_caps_values_are_strings(diagnostics, plugin_module) do
+# New check 10 — every required_caps/0 value parses with the strict
+# cap parser AND cross-validates against the declaring Behavior/Kind
+# (r2 HIGH-4 fix — was "is_binary?" only)
+defp check_required_caps_values_parse_strict(diagnostics, plugin_module) do
   plugin_module.behaviors()
-  |> Enum.map(fn {_, _, b} -> b end)
-  |> Enum.uniq()
-  |> Enum.filter(&function_exported?(&1, :required_caps, 0))
-  |> Enum.reduce(diagnostics, fn behavior, acc ->
-    bad = Enum.reject(behavior.required_caps(), fn {_k, v} -> is_binary(v) end)
+  |> Enum.uniq_by(fn {_, _, b} -> b end)
+  |> Enum.filter(fn {_, _, b} -> function_exported?(b, :required_caps, 0) end)
+  |> Enum.reduce(diagnostics, fn {kind, _action, behavior}, acc ->
+    Enum.reduce(behavior.required_caps(), acc, fn {action, cap_str}, inner_acc ->
+      cond do
+        not is_binary(cap_str) ->
+          [diagnostic("#{inspect(behavior)}: required_caps/0[#{inspect(action)}] " <>
+            "is #{inspect(cap_str)}; must be a binary cap string (SPEC §6).") | inner_acc]
 
-    if bad == [] do
-      acc
-    else
-      [diagnostic("#{inspect(behavior)}: required_caps/0 values must be " <>
-        "cap strings (binary). Offending entries: #{inspect(bad)} (SPEC §6).") | acc]
-    end
+        true ->
+          case Ezagent.Cap.Parser.parse_strict(cap_str,
+                  expected_kind: kind, expected_behavior: behavior, expected_action: action) do
+            :ok -> inner_acc
+
+            {:error, reason} ->
+              [diagnostic("#{inspect(behavior)}: required_caps/0[#{inspect(action)}] " <>
+                "= #{inspect(cap_str)} fails strict parse: #{inspect(reason)} " <>
+                "(SPEC §5.4 + §6).") | inner_acc]
+          end
+      end
+    end)
   end)
+end
+
+# New check 11 — every `system://` URI literal in app source must
+# appear in Ezagent.SystemPrincipal.Catalog (r2 HIGH-2 fix)
+defp check_system_principals_in_catalog(diagnostics) do
+  source_files = Path.wildcard("lib/**/*.ex")
+
+  system_uri_pattern = ~r/"(system:\/\/[a-zA-Z0-9_\-\/]+)"/
+
+  unauthorized =
+    source_files
+    |> Enum.flat_map(fn file ->
+      content = File.read!(file)
+
+      Regex.scan(system_uri_pattern, content, capture: :all_but_first)
+      |> Enum.map(fn [uri] -> {file, uri} end)
+    end)
+    |> Enum.reject(fn {_file, uri} -> Ezagent.SystemPrincipal.Catalog.member?(uri) end)
+
+  if unauthorized == [] do
+    diagnostics
+  else
+    msg = Enum.map_join(unauthorized, "\n  ", fn {f, u} -> "#{u} in #{f}" end)
+
+    [diagnostic("System principal URIs found in source that are NOT in " <>
+      "Ezagent.SystemPrincipal.Catalog. Add to the catalog (caps-cleanup-v1 §4.2) " <>
+      "OR remove the literal:\n  #{msg}") | diagnostics]
+  end
 end
 ```
 
@@ -592,9 +831,10 @@ diagnostics =
   |> check_spawns_empty(plugin_module)
   |> check_config_surface(plugin_module)
   |> check_no_direct_registry_calls()
-  |> check_required_caps_exported(plugin_module)        # NEW
-  |> check_required_caps_keys_match_actions(plugin_module)  # NEW
-  |> check_required_caps_values_are_strings(plugin_module)  # NEW
+  |> check_required_caps_exported(plugin_module)              # NEW (8)
+  |> check_required_caps_keys_match_actions(plugin_module)    # NEW (9)
+  |> check_required_caps_values_parse_strict(plugin_module)   # NEW (10, r2)
+  |> check_system_principals_in_catalog()                     # NEW (11, r2)
 ```
 
 Plus `ezagent_core` itself needs a parallel check for `@behaviour Ezagent.Behavior` modules that live in `ezagent_core` / `ezagent_domain_*` (the compiler runs against EACH app, with the same wiring). Each domain app already wires `:ezagent_plugin_check` in `mix.exs` (or gets it added in PR-CC-3).
@@ -604,6 +844,8 @@ Plus `ezagent_core` itself needs a parallel check for `@behaviour Ezagent.Behavi
 - Missing `required_caps/0` → build fails with `(ezagent_plugin_check) Ezagent.Behavior.X (a declared Behavior) does not export required_caps/0...`
 - Key mismatch with `actions/0` → build fails with diff of missing + extra keys.
 - Non-string value → build fails listing the bad entries.
+- **Strict-parse failure (r2 HIGH-4)** — cap string with unknown kind atom / behavior atom / action atom, or malformed `@instance_uri` / `;ws=` suffix, or unrecognized special string fails the build with the parser's `{:error, reason}`. The runtime warn-only typo check from r1 §10.3 is DELETED — typos fail at compile time.
+- **Uncataloged `system://` URI (r2 HIGH-2)** — any source file containing a `system://...` literal not in `SystemPrincipal.Catalog` fails the build.
 
 Per memory `feedback_let_it_crash_no_workarounds`: NO warning + degrade. The build fails. CI catches it before merge.
 
@@ -699,7 +941,7 @@ Acceptance:
 | CC-1 | (a) Invariant `no_admin_caps_fallback_test.exs` passes; (b) `grep -rn "User.admin_caps" apps/lib` returns 0 lines; (c) audit log on `/admin/audit` shows `system://` URI for boot-reconciler dispatch within 5 seconds of fresh boot |
 | CC-2a | All 29 Behaviors export `required_caps/0`; `mix test apps/ezagent_core` green |
 | CC-2b | Dispatch `[:ezagent, :authz, :granted]` telemetry payload includes `needed_cap` as a binary; old `Capability.matches?/2` invoked 0 times in a full test run (verify via :telemetry hook in invariant test) |
-| CC-2c | `caps_schema_version == 2`; all 22 `list_caps_for/1` call sites removed (grep `Identity\.list_caps_for` outside test/support returns 0); existing user with seeded caps still authorized for their session post-migration (e2e test) |
+| CC-2c | (a) `caps_schema_version == 2`; (b) all 22 `list_caps_for/1` call sites removed (grep `Identity\.list_caps_for` outside test/support returns 0); (c) existing user with seeded caps still authorized for their session post-migration (e2e test); (d) **§0 decisions stamped `Allen-approved YYYY-MM-DD`** — PR-CC-2c is BLOCKED at review until every decision row in §0 carries Allen's explicit stamp (r2 MEDIUM-5 fix); (e) invariant test §9.4 passes (no migration widening) |
 | CC-2d | `Capability`, `CapabilityRegistry`, `Identity.{list_caps_for,grant_cap,revoke_cap}` modules / functions deleted; `mix compile` green; full test suite green |
 | CC-3 | Deliberately-broken fixture Behavior fails build with `(ezagent_plugin_check)` diagnostic; existing Behaviors all pass |
 
@@ -775,6 +1017,113 @@ end
 
 The 3 sub-tests cover the 3 failure modes from §6.2. Each spawns a real `mix compile` on a fixture to verify the gate is non-bypassable.
 
+### 9.4 — Workspace dimension preserved across migration (r2 HIGH-1)
+
+`apps/ezagent_core/test/invariants/cap_migration_no_widening_test.exs` (NEW):
+
+```elixir
+test "no migrated cap authorizes a workspace it was not originally scoped to" do
+  # Read pre-migration snapshot (a fixture file representing the
+  # actual schema-v1 caps_json shape from prod) + post-migration
+  # output. For every (user, original_cap) → migrated_cap pair,
+  # assert that migrated_cap.matches?(needed) ⇒
+  # original_cap.matches?(needed) for every needed shape involving
+  # a different workspace.
+
+  pre = load_fixture("pre_migration_caps_v1.json")
+  post = CapMigration.run(pre)
+
+  for {user_uri, old_caps} <- pre, {user_uri_p, new_caps} <- post, user_uri == user_uri_p do
+    Enum.zip(old_caps, new_caps)
+    |> Enum.each(fn {old, new} ->
+      # The cross-workspace probe: for every workspace OTHER than the
+      # original's workspace_uri, the migrated cap MUST NOT authorize.
+      other_ws = "workspace://probe-#{:rand.uniform(1_000_000)}"
+      needed = "session.chat.send@session://default/#{other_ws}/probe"
+
+      if old["workspace_uri"] != "any" do
+        refute Ezagent.Cap.matches?(new, needed),
+               "Cap migration widened: original cap #{inspect(old)} was scoped to " <>
+               "workspace #{old["workspace_uri"]} but migrated cap #{inspect(new)} " <>
+               "now authorizes #{needed} (different workspace)."
+      end
+    end)
+  end
+end
+```
+
+This is the structural lock against r2 HIGH-1's regression.
+
+### 9.5 — System principal catalog closed (r2 HIGH-2)
+
+`apps/ezagent_core/test/invariants/system_principals_in_catalog_test.exs` (NEW):
+
+```elixir
+test "every system:// URI literal in source is in SystemPrincipal.Catalog" do
+  source_files = Path.wildcard("apps/*/lib/**/*.ex")
+
+  uri_pattern = ~r/"(system:\/\/[a-zA-Z0-9_\-\/]+)"/
+
+  found =
+    source_files
+    |> Enum.flat_map(fn file ->
+      Regex.scan(uri_pattern, File.read!(file), capture: :all_but_first)
+      |> Enum.map(fn [uri] -> {file, uri} end)
+    end)
+
+  uncataloged = Enum.reject(found, fn {_f, u} ->
+    Ezagent.SystemPrincipal.Catalog.member?(u)
+  end)
+
+  assert uncataloged == [],
+         "Uncataloged system:// URIs found:\n  " <>
+         Enum.map_join(uncataloged, "\n  ", fn {f, u} -> "#{u} in #{f}" end)
+end
+
+test "SystemPrincipal.ensure rejects URIs not in catalog" do
+  assert_raise ArgumentError, ~r/not in SystemPrincipal.Catalog/, fn ->
+    Ezagent.SystemPrincipal.ensure(URI.parse("system://hypothetical-ambient-authority"))
+  end
+end
+```
+
+### 9.6 — Cap snapshot CAS for cap-mutating actions (r2 HIGH-3)
+
+`apps/ezagent_core/test/invariants/cap_snapshot_cas_test.exs` (NEW):
+
+```elixir
+test "concurrent grant_cap dispatches detect snapshot drift" do
+  # Spawn caller-A with `"user.identity_admin.grant_cap"` cap on target user T.
+  # Open two dispatches D1 + D2 that both want to call grant_cap on T,
+  # at the same revision. D1 commits first, bumping T's revision.
+  # D2's invoke wrapper (step 8.5 CAS) MUST return {:error, :cap_snapshot_stale}.
+
+  {caller, target} = setup_users()
+  rev = Ezagent.Identity.get_revision(caller)
+
+  inv1 = build_invocation(caller, target, :grant_cap, %{cap: "session.chat.send"}, rev)
+  inv2 = build_invocation(caller, target, :grant_cap, %{cap: "session.chat.join"}, rev)
+
+  # Dispatch D1 inline, then D2 — D2's snapshot should now be stale.
+  assert :ok = Invocation.dispatch(inv1)
+  assert {:error, :cap_snapshot_stale} = Invocation.dispatch(inv2)
+end
+
+test "non-cap-mutating dispatch does not CAS-fail across cap mutations" do
+  # The 99% case: send a chat message; concurrent grant_cap on the
+  # caller's slice must NOT cause the chat dispatch to fail.
+  {caller, target_session} = setup_chat_user_session()
+  rev = Ezagent.Identity.get_revision(caller)
+
+  chat_inv = build_chat_send_invocation(caller, target_session, rev)
+
+  # Concurrently bump caller's revision by granting a new cap.
+  Task.async(fn -> grant_unrelated_cap(caller) end)
+
+  assert :ok = Invocation.dispatch(chat_inv)
+end
+```
+
 ---
 
 ## 10. Risks + rollback
@@ -787,11 +1136,9 @@ The 3 sub-tests cover the 3 failure modes from §6.2. Each spawns a real `mix co
 
 If a production user has a cap shape unforeseen by `CapMigration.convert/1`, the script raises. Mitigation: dry-run the script on a snapshot first; the script logs every conversion; failures are reported with the offending row UUID for manual fixup. Per `feedback_let_it_crash_no_workarounds`, no fallback — better to surface unknown shapes than silently default.
 
-### 10.3 Risk — Cap-string typos pass compile but fail at runtime
+### 10.3 Risk — Cap-string typos (CLOSED by r2 HIGH-4 fix)
 
-A Behavior author writes `required_caps: %{send: "session.chta.send"}` (typo). Build passes (it's a binary). Runtime dispatch checks against `"session.chta.send"` which no caller holds → all dispatches denied.
-
-Mitigation: a SOFT runtime check (warn-only) on first dispatch comparing the cap-string's kind/behavior prefix against the Behavior's actual `state_slice/0` + parent Kind. If it doesn't match, emit a `:telemetry` warning. Future PR can promote to hard fail once the convention beds in. Compile-time check would require Behavior-to-Kind resolution which is plugin-boot-order sensitive — staying runtime keeps this simple.
+**RESOLVED in r2.** r1 §10.3 proposed a runtime warn-only typo check. Codex r1 HIGH-4 correctly identified this as too weak — the spec's compile-time enforcement goal demands that `"session.chta.send"` fail at build time. r2 §6.1 check 10 (`check_required_caps_values_parse_strict`) calls `Ezagent.Cap.Parser.parse_strict/1` which cross-validates the cap's `kind` segment against the parent Kind's `type_name/0`, the `behavior` segment against `state_slice/0`, and the `action` segment against the Behavior's `actions/0`. Typos fail the build with a precise diagnostic. The runtime warning path is DELETED.
 
 ### 10.4 Rollback
 
@@ -808,12 +1155,14 @@ Each sub-PR is rebase-and-revert-clean. The migration script is one-way (no undo
 
 ---
 
-## 12. Sequencing for r2 codex review
+## 12. Sequencing for r3 codex review (if needed)
 
-This SPEC has a Round-2 cap per the dispatch prompt. If codex r1 returns HIGH/CRIT findings clustered around:
+r1 codex returned `needs-attention` (4 HIGH + 1 MEDIUM). r2 (this revision) closes all five structurally per §0a. The round-2 cap per dispatch prompt allows ONE more codex cycle.
 
-- **OQ-CC-1 / 2 / 6** (cap representation choices) — fix in-SPEC and re-submit.
-- **§5.7 migration table accuracy** (real call-site count differs from estimate) — re-grep, update table, re-submit.
-- **§9 invariant test under-specification** — strengthen the assertions.
+If r2 codex still HIGH/CRIT:
+- **Workspace dimension** (§5.4 `;ws=` suffix, §5.8 migration, §9.4 invariant) — review whether the suffix grammar is unambiguous and the migration's `instance_ws` derivation handles all real cap shapes (specifically `system://` caller URIs that have `:any` workspace).
+- **Catalog enforceability** (§4.2 / §6.1 check 11, §9.5 invariant) — review whether the grep pattern catches every literal form (string concatenation, sigils, atom-interpolated URIs).
+- **Snapshot/CAS contract** (§5.3 step 5.0a + 8.5, §9.6 invariant) — review whether `:cap_snapshot_stale` retry semantics propagate correctly to facade gates (ExternalMirror's 4-gate flow has multi-step state).
+- **Strict parser** (§5.4, §6.1 check 10) — review whether plugin-boot-order dependency is handled: a plugin author's `required_caps` may reference a Behavior from a sibling plugin not yet loaded at compile time.
 
-Escalate to Allen if r2 still HIGH/CRIT. Per memory `feedback_spec_codex_adversarial_review`.
+Escalate to Allen if r3 still HIGH/CRIT — likely indicates a deeper architectural disagreement that needs a brainstorm reset. Per memory `feedback_spec_codex_adversarial_review`.

@@ -1,6 +1,6 @@
 # SPEC — Caps 清理 v1（三件架构纠偏）
 
-**状态:** r1 (DRAFT)。2026-05-25。
+**状态:** r2 (DRAFT)。2026-05-25。
 **层级:** `apps/ezagent_core/` 框架纠偏 + 所有 domain + plugin 的清扫。
 **触发:** Allen 2026-05-25 (Feishu) — 在 data-ownership-v2 / external-mirror-audit 工作中暴露的三条逐字指令，针对累积的 cap 系统病灶：
 
@@ -27,9 +27,21 @@
 
 ---
 
-## 0. 待 Allen 审定的开放问题
+## 0a. r2 修订说明（vs r1 变更）
 
-brainstorm 浮出的六个问题。SPEC 当前选择标 **[picked]**；Allen 同意会在实施前翻转任一选择。
+Codex r1 返回 **needs-attention**（4 HIGH + 1 MEDIUM）。r2 结构性闭合全部 5 项。详细说明见英文 §0a；以下为简要：
+
+1. **HIGH — 迁移让 workspace-scoped 宽 cap 全局化。** r1 `CapMigration.convert/1` 丢 `workspace_uri`，让 workspace-A 授权扩到 workspace B。r2 加 cap 后缀 `;ws=<workspace_uri>` + 迁移保留 workspace 维度 + 新 invariant test §9.4。
+2. **HIGH — system principal catalog 不可强制。** r1 `SystemPrincipal.ensure/2` 接受任意 URI。r2 加可执行 allowlist `Ezagent.SystemPrincipal.Catalog`（编译期模块）+ `:ezagent_plugin_check` check 11 + invariant test §9.5。
+3. **HIGH — dispatch 读 mutable slice 无 snapshot 语义。** r1 每 dispatch 一次 fresh ETS 读，并发 grant/revoke 导致不同 gate 见不同状态。r2 加 cap-snapshot 契约：admission 时 `Identity.get_slice_versioned/1` 一次性读，pin 到 `ctx.caps_snapshot`，cap-mutating action 经 step 8.5 CAS 守护 + 新 invariant test §9.6。
+4. **HIGH — 编译期 gate 太弱。** r1 仅 binary 校验。r2 用 `Cap.Parser.parse_strict/1` 严格解析 + 交叉校验 kind/behavior/action 段对 declaring 模块。特殊字符串 `"*"` 与 `"cross-workspace:*"` 显式 allowlist。运行时 warn-only 笔误检查（原 §10.3）删除，提升为编译期硬失败。
+5. **MEDIUM — §0 OQ 当作 ship-ready。** r2 把 6 个 OQ 移到 "decisions" 状态。PR-CC-2c 验收门要求每决策在 merge 前盖 "Allen-approved YYYY-MM-DD" 章。
+
+---
+
+## 0. 决策（原 Open Questions）
+
+brainstorm 浮出的六个决策。每项以 picked option 为 SPEC 决策；备选保留作可追溯。PR-CC-2c 验收门（§8）要求每决策在 merge 前盖 `Allen-approved YYYY-MM-DD` 章 — 否则 PR-CC-2c 在 review 时阻塞。
 
 ### OQ-CC-1 — Cap 字符串格式：`@<instance_uri>` 是否保留？
 
@@ -200,44 +212,56 @@ Plugin 作者每次都需 *发明* trust model。PR #303 NotificationSubscriptio
 | `system://feishu-binding-policy` | `Plugin.Feishu.BindingPolicy.apply/2` 默认 session cap 的重新授权 | `"user.identity.grant_cap"` |
 | `system://lv-anon-mount` | session 中无 `current_entity_uri` 时的 LV mount 路径 | `[]`（空 — LV 匿名 mount 不能 dispatch；替代隐藏 auth bug 的静默 `User.admin_caps()` 回退） |
 
-共 14 个 principal。列表是穷举的 — 任何未来 system-internal dispatch 点在此添加行，永不重新引入 `User.admin_caps()`。
+共 14 个 principal。**r2 HIGH-2 修复 — 列表强制 closed，`Ezagent.SystemPrincipal.Catalog` 是唯一真源。** 加第 15 个 principal 需要 (a) 编辑 `Catalog`、(b) 编辑本 SPEC、(c) 独立 PR 出货。Catalog 三层强制：
 
-### 4.2 播种流程
+1. 运行时：`SystemPrincipal.ensure/2` 拒绝不在 catalog 中的 URI（raise）。
+2. 编译期：`:ezagent_plugin_check` check 11 grep app 源中每个 `system://` URI literal 并断言成员资格（build 失败）。
+3. Invariant test（§9.5）：同 grep，test 时大声失败作防御深度。
+
+### 4.2 Catalog 模块（r2 HIGH-2）
+
+`Ezagent.SystemPrincipal.Catalog`（`apps/ezagent_core/lib/ezagent/system_principal/catalog.ex` 新编译期模块）— 详细代码见英文 §4.2。关键 API：
+
+```elixir
+Ezagent.SystemPrincipal.Catalog.member?(uri)    # 是否注册 principal
+Ezagent.SystemPrincipal.Catalog.caps_for!(uri)  # 允许 cap 列表（不在 catalog raise）
+Ezagent.SystemPrincipal.Catalog.uris()          # 列每个 catalog URI（invariant test §9.5 用）
+```
+
+### 4.3 播种流程
 
 每个需要 system principal 的 domain Application 在其 `start/2` 中播种：
 
 ```elixir
-Ezagent.SystemPrincipal.ensure(
-  URI.parse("system://boot-reconciler"),
-  ["session.external_mirror.*"]
-)
+Ezagent.SystemPrincipal.ensure(URI.parse("system://boot-reconciler"))
 ```
 
-`Ezagent.SystemPrincipal.ensure/2`（`apps/ezagent_core/lib/ezagent/system_principal.ex` 新模块）：
+`Ezagent.SystemPrincipal.ensure/1`（`apps/ezagent_core/lib/ezagent/system_principal.ex` 新模块；r2 HIGH-2 修：单参，从 catalog 读 cap 列表，caller 不能传任意 cap）：
+- 从 `Catalog.caps_for!/1` 读 cap 列表 — 无第二参。
 - 以 `:identity` slice 携带 cap 列表 spawn Entity Kind（与 User Kind 同形，仅 URI 是 `system://...` 而非 `entity://user/...`）。
 - 幂等：若已 spawn，no-op。
 - 经现有 `users` 表持久化（列 `caps_json` 携字符串列表）。
-- 若以非 `system://` URI 调用则硬 raise（防意外误用）。
+- 若 URI 不在 catalog 中 OR 是非 `system://` URI 则硬 raise（防御深度）。
 
 `Behavior.Identity.init_slice/1` 已处理 slice shape — 仅 URI scheme 改变。
 
-### 4.3 System 调用点迁移
+### 4.4 System 调用点迁移
 
 | 旧 | 新 |
 |---|---|
-| dispatch ctx 中 `caps: User.admin_caps()` | `caps: Ezagent.SystemPrincipal.caps(URI.parse("system://<service>"))` |
+| dispatch ctx 中 `caps: User.admin_caps()` | 删 — `ctx.caps` 字段移除（r2 HIGH-3 修，见 §5.3 cap-snapshot）。Dispatch 直接从 caller URI 读 caller slice；system principal 经同路径加载 |
 | dispatch ctx 中 `caller: User.admin_uri()` | `caller: URI.parse("system://<service>")` |
 | 裸 `User.admin_caps()` 调用 | 删除 — 函数从 `Entity.User` 删除（若使用则编译错误） |
 
 每个今天为匿名 mount 回退到 `User.admin_caps()` 的 LV（`agent_extensions_live`、`terminal_live` 等）切到带空 cap 的 `system://lv-anon-mount`。原先静默提升为 admin 的 LV mount 路径现在会正确拒绝匿名访问。这是现有的 auth-bug 暴露器 — 匿名 LV mount **本应** 被拒绝；`User.admin_caps()` 回退在隐藏它。按 memory `feedback_let_it_crash_no_workarounds`，修复是让 bug 在 gate 处可见，而非保留回退。
 
-### 4.4 审计日志变更
+### 4.5 审计日志变更
 
 `telemetry.execute([:ezagent, :authz, :granted], ...)` 的 `caller` 字段今天对真实 admin 操作 AND 每次 system-internal dispatch 都显示 `entity://user/system/admin`。本 PR 后分裂：真实 admin 操作仍显示 admin URI；system 操作显示 `system://<service>`。
 
 Codex r2 会要求审计消费者（今天：`audit.ex` 写入 `audit_events` 表）处理新 URI scheme。它们已处理 — `audit_events.caller` 是字符串列无 scheme 约束。CSV / `/admin/audit` LV 逐字显示 URI。
 
-### 4.5 Invariant test
+### 4.6 Invariant test
 
 `apps/ezagent_core/test/invariants/no_admin_caps_fallback_test.exs`（新）：
 
@@ -324,9 +348,21 @@ end
 
 匹配器 ~50 LOC，完整单测，无外部依赖。
 
-### 5.3 Dispatch step 5.5 简化
+### 5.3 Dispatch step 5.5 简化 + cap snapshot 契约（r2 HIGH-3）
 
 今天 `apps/ezagent_core/lib/ezagent/kind/runtime.ex:215-239`（`authz_check/4`）读 `Capability.cap_for_action/3` + 通过 `Capability.matches?/2` 迭代 `ctx.caps` MapSet。本 SPEC 后：
+
+**r2 HIGH-3 核心补充**：dispatch admission 时（新 step 5.0a）一次性读 caller caps 并 pin 到 `ctx.caps_snapshot`，下游所有 cap 消费（step 5.5、5.6、facade gate）读 snapshot 不重读 ETS。Cap-mutating action（`grant_cap`/`revoke_cap`）经新 step 8.5 CAS 守护对比 caller Identity slice revision；漂移则返回 `{:error, :cap_snapshot_stale}` 让 caller 重试。非 cap-mutating action（99% 情况）跳过 CAS。Identity slice 加 `:revision` 单调递增 counter；`grant_cap`/`revoke_cap` 原子 bump。详见英文 §5.3 代码。
+
+变更总结：
+- `ctx.caps` 消失（曾是预加载的 MapSet，需要 `User.admin_caps()` 回退）。替为 admission 时设置的 `ctx.caps_snapshot`。
+- Cap 检查从 snapshot 读，非 live ETS。
+- Cap-mutating action 对 stale snapshot CAS 守护；其他 action 跳过检查。
+- `Capability.matches?/2` 消失 — 由 `Ezagent.Cap.matches?/2` 替。
+- `Capability.cap_for_action/3` 消失 — 由 `Behavior.required_caps()[action]` 查找替。
+- 所有 facade 内 cap 重检查（ExternalMirror Gate 1-3）读 `ctx.caps_snapshot.caps` — 永不重 fetch。
+
+原 r1 简化（保留）：
 
 ```elixir
 defp authz_check(kind_module, action, target, ctx) do
@@ -351,29 +387,53 @@ end
 - `Capability.matches?/2` 消失 — 由 `Kind.holds_cap?/2` 替代，委托给 `Ezagent.Cap.matches?/2`。
 - `Capability.cap_for_action/3` 消失 — 由 `Behavior.required_caps()[action]` 查找替代。
 
-### 5.4 Cap 字符串格式（canonical 语法）
+### 5.4 Cap 字符串格式（canonical 语法 — r2 HIGH-1 + HIGH-4）
 
 ```
-cap_string := all_wildcard | scoped_cap
-all_wildcard := "*"
-scoped_cap := authority [ "@" instance_uri ]
+cap_string := allowlisted_special | scoped_cap
+allowlisted_special := "*" | "cross-workspace:*"
+scoped_cap := authority instance_suffix? workspace_suffix?
 authority := kind "." behavior ( "." action | ".*" )?
+instance_suffix := "@" instance_uri
+workspace_suffix := ";ws=" workspace_uri
 kind := atom_string | "*"
 behavior := atom_string | "*"
 action := atom_string
-instance_uri := URI.t() 字符串形式
+instance_uri := URI.t() 字符串形式（路径不含 '@'、';'）
+workspace_uri := 完整 workspace:// URI 字符串
 
 例：
-"*"                                          # admin all
-"session.*"                                  # 所有 session-kind action
-"session.chat"                               # 所有 session.chat.* action
-"session.chat.send"                          # 特定 action
-"session.chat@session://default/team/main"   # 一个 session 上所有 chat action
-"session.chat.send@session://default/team/main"  # 一个 session 上一个 action
-"cross-workspace:*"                          # 跨 workspace 旁路 cap（§5.5）
+"*"                                                     # admin all（allowlist）
+"cross-workspace:*"                                     # 跨 workspace 旁路（allowlist）
+"session.*"                                             # 所有 session-kind action，任意 workspace
+"session.*;ws=workspace://team-alpha"                   # 所有 session-kind action，仅 team-alpha workspace
+"session.chat"                                          # 所有 session.chat.* action，任意 workspace
+"session.chat.send"                                     # 特定 action，任意 workspace
+"session.chat@session://default/team/main"              # 一个 session 上所有 chat action（结构性 workspace）
+"session.chat.send@session://default/team/main"         # 一个 session 上一个 action
+"session.chat.send;ws=workspace://team-alpha"           # 一个 action，限于 team-alpha workspace（无特定 instance）
 ```
 
-该语法是现有 `Capability.Parser` 语法的严格扩展 — 今天 CLI 接受的每个字符串继续可用。
+**workspace 后缀 `;ws=<workspace_uri>`（r2 HIGH-1 修）。** 当 cap 无 instance 后缀但原 `%Capability{}` 携具体 `workspace_uri` 时，后缀保留该维度。匹配语义（§5.2 `Cap.matches?/2` 扩展）：
+
+- 无 `;ws=` 的 cap 匹配任意 workspace 的 needed cap。
+- 带 `;ws=W` 的 cap 仅当 needed cap 的 target 在 workspace W（或其 instance URI 结构性派生为 W）时匹配。
+- `@instance_uri` 后缀强于 `;ws=` — 同时出现时 instance URI 的 workspace 必须等于 `;ws=` 值（编译期矛盾如 `session.chat@session://default/team/main;ws=workspace://other` parser 失败）。
+
+**Allowlisted specials.** 两个字符串 `"*"` 与 `"cross-workspace:*"` 非普通 cap shape — 是显式 allowlist 的文档化逃生口。加第三个 special 需要 SPEC 修订。这闭合 codex r1 "未文档化的例外" 关切（HIGH-4）。
+
+**严格 parser `Cap.Parser.parse_strict/1`**（r2 HIGH-4）：
+- 由 `:ezagent_plugin_check` 在编译期使用。
+- 拒绝未知 kind atom（经 `String.to_existing_atom` — kind 必须是已注册 Kind 名）。
+- 同样拒绝未知 behavior atom。
+- 拒绝未知 action atom（必须在 declaring Behavior 的 `actions/0` 中）。
+- 拒绝错乱 `@instance_uri`（URI parse 必须成功；scheme 必须在注册 scheme allowlist 中）。
+- 拒绝错乱 `;ws=`（必须 parse 为 `workspace://*` URI）。
+- 拒绝未知 special（仅 `"*"` 与 `"cross-workspace:*"` 入允）。
+
+宽松 `Cap.Parser.parse/1` 为运行时 / CLI 输入存在（cap 可能引用尚未加载的 plugin）— 优雅回退（与今天 `Capability.Parser` 同行为）。
+
+该语法是现有 `Capability.Parser` 语法的严格扩展 — 今天 CLI 接受的每个字符串继续可用；新 `;ws=` 后缀与显式 allowlist 是 additive。
 
 ### 5.5 Workspace 隔离分离（按 OQ-CC-2）
 
@@ -401,13 +461,14 @@ defp workspace_isolation_check(behavior, target, ctx) do
   if behavior.workspace_scoped?() do
     caller_ws = workspace_of_caller(ctx.caller)
     target_ws = Ezagent.URI.workspace_of(target)
+    snapshot_caps = ctx.caps_snapshot.caps  # r2 HIGH-3 — snapshot 不 live
 
     cond do
-      caller_ws == :any -> :ok                                 # system caller
-      target_ws == :any -> :ok                                 # 跨 workspace target
-      caller_ws == target_ws -> :ok                            # 同 workspace
-      caller_holds?(ctx.caller, "cross-workspace:*") -> :ok    # 显式旁路 cap
-      caller_in_system_workspace?(ctx.caller) -> :ok           # 成员旁路（Phase 9 PR-8）
+      caller_ws == :any -> :ok                                          # system caller
+      target_ws == :any -> :ok                                          # 跨 workspace target
+      caller_ws == target_ws -> :ok                                     # 同 workspace
+      Enum.member?(snapshot_caps, "cross-workspace:*") -> :ok           # 显式旁路 cap
+      caller_in_system_workspace?(ctx.caller) -> :ok                    # 成员旁路（Phase 9 PR-8）
       true -> {:error, :cross_workspace_denied}
     end
   else
@@ -416,7 +477,7 @@ defp workspace_isolation_check(behavior, target, ctx) do
 end
 ```
 
-Cap struct 的 `workspace_uri` 字段消失；隔离是 per-Behavior 数据 + per-caller 成员关系。
+Cap struct 的 `workspace_uri` 字段消失；隔离是 per-Behavior 数据 + per-caller 成员关系 + cap 的 `;ws=<workspace_uri>` 后缀（§5.5 `Cap.matches?/2` 查它，使得 scoped 到 workspace A 的 cap 不能授权 workspace B 的 action — 见 §5.4 匹配语义）。
 
 ### 5.6 FacadeNonceTable 交互（保留）
 
@@ -446,26 +507,16 @@ External-mirror-audit 的 `FacadeNonceTable`（`apps/ezagent_domain_external_mir
 
 ### 5.8 数据迁移
 
-现有 `users.caps_json` 行存 `[%{kind, behavior, instance, workspace_uri, granted_by, granted_at}]`。一次性转换脚本（`apps/ezagent_core/priv/repo/data_migrations/20260525_caps_to_strings.exs`）：
+现有 `users.caps_json` 行存 `[%{kind, behavior, instance, workspace_uri, granted_by, granted_at}]`。一次性转换脚本（`apps/ezagent_core/priv/repo/data_migrations/20260525_caps_to_strings.exs`）。
 
-```elixir
-defmodule CapMigration do
-  def convert(%{"kind" => "any", "behavior" => "any", "instance" => "any"}), do: "*"
+**r2 HIGH-1 修 — workspace 维度必须保留。** r1 迁移丢 `workspace_uri` 假定 `instance` 携带 workspace。但对 `instance: "any"` 且 `workspace_uri` 具体的 cap（`User.default_caps/1` 是典型例），转换字符串 `"session.*"` 全局化 — 静默把 workspace-A 授权扩到 workspace B。修复用 §5.4 的 `;ws=<workspace_uri>` 后缀保留 scope。详细映射代码见英文 §5.8。关键转换：
 
-  def convert(%{"kind" => kind, "behavior" => behavior, "instance" => "any"}) do
-    "#{kind}.#{deatomize_behavior(behavior)}"
-  end
+- 全 :any → `"*"`
+- `kind+behavior` scoped + 原 workspace 具体 → `"#{kind}.#{behavior};ws=#{ws}"`
+- `kind+behavior` scoped + cross-workspace → `"#{kind}.#{behavior}"`
+- Instance-scoped → `"#{kind}.#{behavior}@#{instance_str}"`（断言 instance 的 workspace == workspace_uri OR workspace_uri == "any"；否则 raise）
 
-  def convert(%{"kind" => kind, "behavior" => behavior, "instance" => instance_str}) do
-    "#{kind}.#{deatomize_behavior(behavior)}@#{instance_str}"
-  end
-
-  defp deatomize_behavior("any"), do: "*"
-  defp deatomize_behavior("Elixir.Ezagent.Behavior." <> name), do: Macro.underscore(name)
-end
-```
-
-Workspace 维度丢弃（按 OQ-CC-6）— instance URI 结构性携带 workspace 信息。Provenance（`granted_by`、`granted_at`）按 OQ-CC-6 子问题丢弃。
+Provenance（`granted_by`、`granted_at`）按 §0 决策 OQ-CC-6 丢弃。
 
 脚本：
 1. 读每行 `users`。
@@ -602,6 +653,8 @@ diagnostics =
 - 缺 `required_caps/0` → 以 `(ezagent_plugin_check) Ezagent.Behavior.X (a declared Behavior) does not export required_caps/0...` 失败 build。
 - Key 与 `actions/0` 不匹配 → 以 missing + extra key 的 diff 失败 build。
 - 非字符串值 → 以错误条目列表失败 build。
+- **严格 parse 失败（r2 HIGH-4）** — 带未知 kind atom / behavior atom / action atom，或错乱 `@instance_uri` / `;ws=` 后缀，或未识别 special 字符串的 cap 字符串以 parser 的 `{:error, reason}` 失败 build。r1 §10.3 的运行时 warn-only 笔误检查删除 — 笔误编译期失败。
+- **未编入 catalog 的 `system://` URI（r2 HIGH-2）** — 任何含未在 `SystemPrincipal.Catalog` 的 `system://...` literal 的源文件失败 build。
 
 按 memory `feedback_let_it_crash_no_workarounds`：无 warning + degrade。Build 失败。CI 在合并前抓住。
 
@@ -697,7 +750,7 @@ diagnostics =
 | CC-1 | (a) Invariant `no_admin_caps_fallback_test.exs` 通过；(b) `grep -rn "User.admin_caps" apps/lib` 返回 0 行；(c) `/admin/audit` 在 fresh boot 5 秒内显示 boot-reconciler dispatch 的 `system://` URI |
 | CC-2a | 全部 29 个 Behavior 导出 `required_caps/0`；`mix test apps/ezagent_core` 绿 |
 | CC-2b | Dispatch `[:ezagent, :authz, :granted]` telemetry payload 含 `needed_cap` 为 binary；全测试运行中旧 `Capability.matches?/2` 调用 0 次（经 :telemetry hook 在 invariant test 验证） |
-| CC-2c | `caps_schema_version == 2`；全部 22 个 `list_caps_for/1` 调用点删除（grep `Identity\.list_caps_for` test/support 外返回 0）；带 seed cap 的现有 user 迁后对其 session 仍授权（e2e test） |
+| CC-2c | (a) `caps_schema_version == 2`；(b) 全部 22 个 `list_caps_for/1` 调用点删除（grep `Identity\.list_caps_for` test/support 外返回 0）；(c) 带 seed cap 的现有 user 迁后对其 session 仍授权（e2e test）；(d) **§0 决策全部盖 `Allen-approved YYYY-MM-DD` 章**（r2 MEDIUM-5 修）— PR-CC-2c 在 review 时阻塞直到每条决策行有 Allen 显式戳章；(e) invariant test §9.4 通过（无迁移加宽） |
 | CC-2d | `Capability`、`CapabilityRegistry`、`Identity.{list_caps_for,grant_cap,revoke_cap}` 模块 / 函数删除；`mix compile` 绿；全测试套件绿 |
 | CC-3 | 故意破坏的 fixture Behavior 以 `(ezagent_plugin_check)` 诊断失败 build；现有 Behavior 全通过 |
 
@@ -773,6 +826,18 @@ end
 
 3 个 sub-test 覆盖 §6.2 的 3 种失败模式。每个 spawn 真实 `mix compile` 到 fixture 以验证 gate 不可旁路。
 
+### 9.4 — Workspace 维度迁移保留（r2 HIGH-1）
+
+`apps/ezagent_core/test/invariants/cap_migration_no_widening_test.exs`（新）— 断言无迁移后 cap 授权原 cap 未涵盖的 workspace。详细代码见英文 §9.4。
+
+### 9.5 — System principal catalog closed（r2 HIGH-2）
+
+`apps/ezagent_core/test/invariants/system_principals_in_catalog_test.exs`（新）— 两个测试：(a) 源中每个 `system://` URI literal 必须在 catalog；(b) `SystemPrincipal.ensure` 拒绝不在 catalog 的 URI。详细代码见英文 §9.5。
+
+### 9.6 — Cap snapshot CAS（r2 HIGH-3）
+
+`apps/ezagent_core/test/invariants/cap_snapshot_cas_test.exs`（新）— 两个测试：(a) 并发 grant_cap dispatch 探测 snapshot 漂移（D1 commit 后 D2 应得 `:cap_snapshot_stale`）；(b) 非 cap-mutating dispatch 在 cap 变更并发下不 CAS 失败。详细代码见英文 §9.6。
+
 ---
 
 ## 10. 风险 + 回滚
@@ -785,11 +850,9 @@ end
 
 若生产 user 有 `CapMigration.convert/1` 未预见的 cap 形态，脚本 raise。缓解：先在快照上 dry-run；脚本记录每次转换；失败带涉事 row UUID 报告供手动修复。按 `feedback_let_it_crash_no_workarounds`，无回退 — 暴露未知形态优于静默默认。
 
-### 10.3 风险 — Cap 字符串拼写错误通过编译但运行时失败
+### 10.3 风险 — Cap 字符串拼写错误（r2 HIGH-4 闭合）
 
-Behavior 作者写 `required_caps: %{send: "session.chta.send"}`（笔误）。Build 通过（是 binary）。运行时 dispatch 对 `"session.chta.send"` 检查，无 caller 持有 → 所有 dispatch 拒绝。
-
-缓解：对首次 dispatch 比较 cap 字符串的 kind/behavior 前缀与 Behavior 实际 `state_slice/0` + parent Kind 的软运行时检查（warn-only）。若不匹配，emit `:telemetry` warning。一旦约定形成可由未来 PR 提升为硬失败。编译期检查需要 Behavior-to-Kind 解析，对 plugin boot-order 敏感 — 停留 runtime 保持简单。
+**r2 解决。** r1 §10.3 提议运行时 warn-only 笔误检查。Codex r1 HIGH-4 正确指出过弱 — SPEC 编译期强制目标要求 `"session.chta.send"` build 时失败。r2 §6.1 check 10（`check_required_caps_values_parse_strict`）调用 `Ezagent.Cap.Parser.parse_strict/1` 交叉校验 cap 的 `kind` 段对 parent Kind 的 `type_name/0`、`behavior` 段对 `state_slice/0`、`action` 段对 Behavior 的 `actions/0`。笔误以精确诊断失败 build。运行时 warning 路径删除。
 
 ### 10.4 回滚
 
@@ -806,12 +869,14 @@ Behavior 作者写 `required_caps: %{send: "session.chta.send"}`（笔误）。B
 
 ---
 
-## 12. r2 codex review 排序
+## 12. r3 codex review 排序（如需）
 
-本 SPEC 按 dispatch prompt 有 Round-2 cap。若 codex r1 返回的 HIGH/CRIT finding 集中于：
+r1 codex 返回 `needs-attention`（4 HIGH + 1 MEDIUM）。r2（本修订）按 §0a 结构性闭合全 5 项。dispatch prompt 的 round-2 cap 允许再一个 codex 周期。
 
-- **OQ-CC-1 / 2 / 6**（cap 表示选择）— in-SPEC 修并重交。
-- **§5.7 迁移表准确性**（真实调用点数与估计不符）— 重 grep、更新表、重交。
-- **§9 invariant test 欠规定** — 强化断言。
+若 r2 codex 仍 HIGH/CRIT：
+- **Workspace 维度**（§5.4 `;ws=` 后缀、§5.8 迁移、§9.4 invariant）— 审 suffix 语法是否无歧义、迁移的 `instance_ws` 派生是否处理所有真实 cap shape（特别是 `system://` caller URI 有 `:any` workspace）。
+- **Catalog 可强制性**（§4.2 / §6.1 check 11、§9.5 invariant）— 审 grep 模式是否抓住每种 literal 形式（字符串拼接、sigil、atom 插值 URI）。
+- **Snapshot/CAS 契约**（§5.3 step 5.0a + 8.5、§9.6 invariant）— 审 `:cap_snapshot_stale` 重试语义是否正确传到 facade gate（ExternalMirror 4-gate flow 有多步状态）。
+- **严格 parser**（§5.4、§6.1 check 10）— 审 plugin-boot-order 依赖处理：plugin 作者的 `required_caps` 可能引用 sibling plugin 中尚未在编译期加载的 Behavior。
 
-若 r2 仍 HIGH/CRIT 升级到 Allen。按 memory `feedback_spec_codex_adversarial_review`。
+若 r3 仍 HIGH/CRIT 升级 Allen — 可能指更深层架构分歧，需要 brainstorm reset。按 memory `feedback_spec_codex_adversarial_review`。
