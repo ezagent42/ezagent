@@ -1,0 +1,87 @@
+# Anti-patterns the skill refuses
+
+If a contributor (or your own draft) attempts any of these, push back BEFORE writing code. Each refusal cites the violated Decision Log entry / SPEC section + the CI gate that will fail.
+
+## "I'll PubSub.broadcast from this plugin to that one"
+
+Refuse. Bypasses dispatch → bypasses CapBAC → bypasses audit → bypasses idempotency. Per SPEC v2 §5.8 + invariant 1 + 8: register a Behavior on the existing core Kind (User for per-user channels, Session for per-room channels) and dispatch through it. Reference impl: `apps/ezagent_plugin_feishu/lib/ezagent/behavior/feishu_receive.ex`.
+
+## "I'll add a new top-level scheme for my plugin's domain (slack://, discord://, etc.)"
+
+Refuse. SPEC v2 §5.6 + §5.8: exactly six schemes ever. Extend via type segment (only sometimes — agent flavor is free-form per §5.14) or register a Behavior on an existing core Kind. The Feishu plugin's `feishu://` scheme was DELETED in PR #143 — your new plugin does not get to reintroduce the anti-pattern. CI gate: `Ezagent.URI.SchemeRegistry` ETS lockdown.
+
+## "I'll dispatch via path-style `/behavior/X/Y`"
+
+Refuse. SPEC v2 §5.2 + PR #146: action invocation uses query string, never path. `?action=chat.send`, `?action=routing.add_rule`, `?action=pty.write`. The old `/behavior/<kind>/<action>` syntax is removed entirely — no transitional shim. Update audit logs, route tables, doctests at the same time as code.
+
+## "I'll add `user://X` or `agent://X` back as an alias"
+
+Refuse. SPEC v2 §5.12 + PR #141: `user://` and `agent://` merged into `entity://`. Canonical forms: `entity://user/<workspace>/<name>`, `entity://agent/<workspace>/<flavor>_<name>`. No 1-segment fallback, no legacy URI form accepted, no `default`-injection logic. `Ezagent.URI.parse!/1` rejects un-canonical input.
+
+## "I'll use Message.uri"
+
+Refuse. SPEC v2 §5.13 + PR #149: `Ezagent.Message.uri` field is renamed to `id` and stores a plain UUID string (no `message://` prefix). Reply-to references store the message id directly. LV stream `dom_id` uses the message id.
+
+## "I'll resurrect routing-admin:// or pty-input:// as a singleton"
+
+Refuse. SPEC v2 §5.7 + PR #144: synthetic singleton Kinds dissolved. Routing rule mutation dispatches to the rule's actual scope-owning Kind (`workspace://`, `session://`, or `system://routing/default`); PTY input dispatches to the target agent (`entity://agent/<workspace>/cc_X?action=pty.write`). Find the Kind whose scope the action naturally owns and add a Behavior there.
+
+## "I'll bypass the cap check with admin_caps()"
+
+Refuse. `admin_caps()` is the bootstrap principal's structural cap, NOT a goto for "make this work right now." If your code needs to act on behalf of a system component, use a scope-bounded delegation cap (`{:within_session, _}` or `{:spawned_by, _}` per Decision #137) — narrow, named, auditable. The ambient-authority pattern (looking up "who am I impersonating") was removed by PR-CC-1 (2026-05-25); use `Ezagent.SystemPrincipal.Catalog` for system-internal principals.
+
+## "I'll add a new system principal URI inline"
+
+Refuse. Per PR-CC-1 (2026-05-25): every system-internal principal URI is registered in `Ezagent.SystemPrincipal.Catalog` (closed allowlist). Adding a new system principal means editing the catalog module + adding its cap declaration. The catalog is part of `core` (invariant 8 list); inline URI synthesis (`URI.parse("entity://system/...")` from a Behavior) is rejected by the `no_wildcard_system_principals` invariant test.
+
+## "I'll write the behavior as :chat in the cap struct"
+
+Refuse. `Capability.behavior` is a module reference; the atom `:chat` is structurally different from `Ezagent.Behavior.Chat` and `matches?/2` will return false. Use the module reference. If a circular dep prevents that, use `:any` + narrow `:kind` (invariant 2 / forensic note).
+
+## "I'll put structured data into channel notification meta"
+
+Refuse. Decision #132: `meta` is `Record<string, string>`. Use `content` for structured data (as text), or `tools/call` round-trip if claude needs to read a file. The only structured-ish field allowed in meta is the single optional `file_path` string.
+
+## "Inbound transport handler uses :cast for this dispatch"
+
+Refuse for user-facing inbound transports (Feishu, future Slack/Discord/email). Decision #134 + `feedback_explicit_stop_signal_after_feishu`: human surfaces need synchronous error feedback. Use `:call` mode + decompose result + send error back through the channel + reaction emoji on denial.
+
+## "Let's abstract a generic 'channel' covering both text + media"
+
+Refuse. ROADMAP §9c + brainstorm trade-off: text/file = request-response (fits dispatch); streaming media = continuous flow (doesn't fit Behavior model). Generic abstraction hides the difference and invites misuse. Separate interfaces: Ezagent is control plane (signaling, auth, session, audit), media bytes go to external SFU (Dyte / LiveKit / Volcengine).
+
+## "Make orchestrator deterministic — write the logic in Elixir"
+
+Refuse. Decision D7-1 (#136): orchestrator is LLM-driven for team-composition reasoning. Permission control (the supposed benefit of deterministic dispatch) is preserved by scope-bounded cap delegation (Decision #137), not by removing reasoning.
+
+## "SessionTemplate should fork with message history"
+
+Refuse. Decision #141 (D7-7): fork unit = configuration only. Including message history would require three-way merge mechanics that are explicitly deferred to dev-team-v1.x+.
+
+## "Add `mix ezagent.plugin.uninstall`"
+
+Refuse for now. Decision #142 (D7-8): plugin unload requires Kind lifecycle management for live instances of the unregistered Kind — non-trivial. Defer until dev team agrees they need it, then design carefully (not as a symmetric mirror of `install`).
+
+## "I'll add a backward-compat shim so old URIs still parse"
+
+Refuse. SPEC v2 §5.11 + memory `feedback_let_it_crash_no_workarounds`: no back-compat shims. Existing DB data is wiped + rebuilt on migration. No operator shorthand. No legacy URI form accepted. Every URI in CLI input, LV form input, stored data, audit log, KindRegistry, routing matchers is canonical from day 1. Fix the call sites instead of compensating in the parser.
+
+## "I'll `DynamicSupervisor.start_child` a Kind module directly"
+
+Refuse. V1 structural prevention (Phase 9 follow-up, Allen 2026-05-21): all Kind processes go through `Ezagent.Kind.spawn(kind_module, params)` — the SOLE programmatic entry. Each Kind declares its target supervisor via the `supervisor/0` callback; `Ezagent.Kind.spawn/2` resolves it and calls `DynamicSupervisor.start_child` exactly once (inside `Ezagent.Kind`). Direct `DynamicSupervisor.start_child` calls for Kind modules are caught by CI gate `apps/ezagent_core/test/invariants/single_spawn_entry_test.exs` + runtime invariant `apps/ezagent_core/test/invariants/kind_provenance_test.exs`. Sidecars (PtyServer etc.) are exempt but explicitly listed in `allowed_sidecar_paths/0` — adding a new sidecar requires editing both the spawn-entry test's exemption list AND the moduledoc explanation.
+
+## "I'll duplicate the Feishu one-off outbound shape for my new integration"
+
+Refuse. As of Stream 2 PR-EM-0..FINAL (SPEC `docs/superpowers/specs/2026-05-24-external-mirror-domain.md`, Decision #122), **every** outbound mirror — Session slice → external system — goes through the **ExternalMirror Domain**. The plugin author writes **two modules + one declaration**: an Adapter (`@behaviour Ezagent.ExternalMirror.Adapter` — `event_to_payload/1` pure + `target_ownership_check/2` + `cap_subject/0`), a Binding (`@behaviour Ezagent.ExternalMirror.Binding` — `init/1` + `publish/2` + optional `terminate/2`), and `adapters/0` returning `[{Adapter, Binding}]` in the plugin module. Per-binding crash isolation, FacadeNonceTable forgery-proof handoff, two-tier supervision, eager spawn + restart adoption, rehydration on restart — ALL provided by the Domain. Re-implementing any of this in a plugin one-off is a P1 violation (plugin isolation north star) AND a P11 violation (PubSub-bypass — bindings MUST subscribe via `Publisher.subscribe_from/3`, never `Phoenix.PubSub.subscribe` directly).
+
+## "I'll `Phoenix.PubSub.subscribe` from inside my Binding's `init/1` to get slice changes"
+
+Refuse. SPEC §10 (f) + invariant `no_pubsub_bypass_in_external_mirror_test.exs` (grep gate). Bindings subscribe to slice changes via `Ezagent.Behavior.Publisher.subscribe_from/3` ONLY — which the Worker Kind invokes from its own `handle_continue`. Direct `Phoenix.PubSub.subscribe` from a Binding bypasses (a) per-binding crash boundary (the Worker's PerBindingSupervisor catches the publish failure; a raw PubSub consumer in some other process does not), (b) the Worker `:publish` CapBAC gate (step 5.5 enforces against the Worker Kind, not against the Binding GenServer), and (c) Publisher retention + cursor semantics. The structural enforcement is the grep gate — any binding module whose source carries `Phoenix.PubSub.subscribe` fails CI.
+
+## "I'll call `Ezagent.Invocation.dispatch` from inside `target_ownership_check/2` to look up the session's chat slice"
+
+Refuse. SPEC §10 (g) + invariant `no_dispatch_in_target_ownership_check_test.exs`. `target_ownership_check/2` runs inside the bind facade's `Task.Supervisor.async_nolink/3` — but `:bind` is itself a dispatched action; re-entering dispatch creates a dispatch-during-dispatch deadlock. The callback is ALLOWED to make external API calls (Lark/Slack/etc — that's its whole purpose) but MUST NOT re-enter ezagent. If you need session state inside this check, take it as an arg from the facade call site, or read via `Ezagent.Kind.get_slice/2` (NOT dispatch).
+
+## "I'll cap-check inside the LV / inside a controller, not at dispatch"
+
+Refuse. Per PR-CC-2-v2 (2026-05-25): cap-checking is a Behavior × Entity boundary concern, performed exactly once at **dispatch step 5.5** via the chokepoint callback `Kind.holds_cap?/2` consulting `Behavior.required_caps/0`. LV `handle_event` calls dispatch → step 5.5 fires → result propagates back. Pre-dispatch cap checks inside the LV are a defence-in-depth pattern only (e.g. to hide a button); they MUST NOT be the source of authority. The `cap_check_only_at_chokepoint` invariant test fails any module under `apps/ezagent_*` (except the chokepoint itself) that calls `Capability.matches?/2` in production code.
