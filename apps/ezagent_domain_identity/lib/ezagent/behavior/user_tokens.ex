@@ -103,10 +103,15 @@ defmodule Ezagent.Behavior.UserTokens do
   @impl Ezagent.Behavior
   def init_slice(_args), do: %{mint_count: 0, revoke_count: 0}
 
-  # PR-OWN-4: same shape as UserCredentials — the User Kind owns its
-  # tokens; admin's :any-instance cap is the cross-user override.
+  # PR-OWN-4 / codex PR #356 r1 MED fix: same shape as Identity /
+  # ApiKeys / UserCredentials — the User Kind owns its tokens.
+  # Concrete URI → self; `:any` → `:any`; otherwise no owner.
+  # Admin's cross-user authority is via the bootstrap `:any`-instance
+  # cap which short-circuits at step 5.5.
   @impl Ezagent.Behavior
-  def data_owner(_), do: :self
+  def data_owner(%URI{} = entity_uri), do: entity_uri
+  def data_owner(:any), do: :any
+  def data_owner(_), do: :no_owner
 
   # =================================================================
   # Action bodies
@@ -114,36 +119,31 @@ defmodule Ezagent.Behavior.UserTokens do
 
   @impl Ezagent.Behavior
   def invoke(:mint_token, slice, args, ctx) when is_map(args) do
-    case target_user_uri(ctx) do
-      {:ok, user_uri} ->
-        label = Map.get(args, :label)
-        expires_at = Map.get(args, :expires_at)
+    with {:ok, user_uri} <- target_user_uri(ctx),
+         label = Map.get(args, :label),
+         {:ok, expires_at} <- coerce_expires_at(Map.get(args, :expires_at)) do
+      opts =
+        []
+        |> maybe_put(:label, label)
+        |> maybe_put(:expires_at, expires_at)
 
-        opts =
-          []
-          |> maybe_put(:label, label)
-          |> maybe_put(:expires_at, expires_at)
+      case Ezagent.Entity.Token.mint(user_uri, opts) do
+        {plain, row} when is_binary(plain) ->
+          new_slice = Map.update(slice, :mint_count, 1, &(&1 + 1))
 
-        case Ezagent.Entity.Token.mint(user_uri, opts) do
-          {plain, row} when is_binary(plain) ->
-            new_slice = Map.update(slice, :mint_count, 1, &(&1 + 1))
+          {:ok, new_slice,
+           %{
+             token_id: row.id,
+             plain: plain,
+             label: row.label
+           }}
 
-            {:ok, new_slice,
-             %{
-               token_id: row.id,
-               plain: plain,
-               label: row.label
-             }}
+        {:error, _} = err ->
+          err
 
-          {:error, _} = err ->
-            err
-
-          other ->
-            {:error, {:mint_failed, other}}
-        end
-
-      {:error, _} = err ->
-        err
+        other ->
+          {:error, {:mint_failed, other}}
+      end
     end
   end
 
@@ -170,12 +170,26 @@ defmodule Ezagent.Behavior.UserTokens do
     end
   end
 
-  def invoke(:revoke_token, slice, %{token_id: token_id}, _ctx)
+  def invoke(:revoke_token, slice, %{token_id: token_id}, ctx)
       when is_integer(token_id) do
-    :ok = Ezagent.Entity.Token.revoke(token_id)
-    new_slice = Map.update(slice, :revoke_count, 1, &(&1 + 1))
+    # Codex PR #356 r1 HIGH fix: `Ezagent.Entity.Token.revoke/1`
+    # deletes globally by row id — no entity_uri check. Without
+    # pre-validation, Alice (with revoke cap on her own URI) could
+    # pass Bob's token_id and delete it. The cap-check at step 5.5
+    # only enforces that Alice can call revoke against her OWN
+    # User Kind; it doesn't bind to a specific token row.
+    #
+    # Fix: pre-fetch the row + assert its entity_uri matches the
+    # dispatch target's URI (`ctx.self_uri`) BEFORE delete. Unknown
+    # row returns :not_found (DISTINCT from "found but doesn't
+    # belong to you" which is :cross_entity_token); both fail closed.
+    with {:ok, user_uri} <- target_user_uri(ctx),
+         :ok <- ensure_token_belongs_to(user_uri, token_id) do
+      :ok = Ezagent.Entity.Token.revoke(token_id)
+      new_slice = Map.update(slice, :revoke_count, 1, &(&1 + 1))
 
-    {:ok, new_slice, %{revoked: token_id}}
+      {:ok, new_slice, %{revoked: token_id}}
+    end
   end
 
   def invoke(:revoke_token, _slice, args, _ctx) do
@@ -234,6 +248,61 @@ defmodule Ezagent.Behavior.UserTokens do
     end
   end
 
+  # Codex PR #356 r1 HIGH fix — cross-entity revoke prevention.
+  # Pre-fetch the token row and verify its `entity_uri` matches the
+  # dispatch target's URI. Returns:
+  # - `:ok` — row exists AND belongs to the target user
+  # - `{:error, :not_found}` — row doesn't exist (clean idempotent
+  #   shape for "revoke something already gone")
+  # - `{:error, :cross_entity_token}` — row exists but belongs to a
+  #   different entity; refuse with a distinct error atom so the
+  #   operator can distinguish "typo" from "auth boundary hit"
+  defp ensure_token_belongs_to(%URI{} = user_uri, token_id) when is_integer(token_id) do
+    user_uri_str = URI.to_string(user_uri)
+
+    case EzagentCore.Repo.get(Ezagent.Entity.Token, token_id) do
+      nil ->
+        {:error, :not_found}
+
+      %Ezagent.Entity.Token{entity_uri: ^user_uri_str} ->
+        :ok
+
+      %Ezagent.Entity.Token{entity_uri: other_uri} ->
+        {:error, {:cross_entity_token, requested_owner: user_uri_str, actual_owner: other_uri}}
+    end
+  end
+
   defp maybe_put(opts, _key, nil), do: opts
   defp maybe_put(opts, key, value), do: Keyword.put(opts, key, value)
+
+  # Codex PR #356 r1 MED fix: `Token.mint/2` expects `%DateTime{}`
+  # for `:expires_at`, but `interface/0` advertises `:string`
+  # (because argv carries strings — RFC3339 is the natural CLI
+  # shape). Parse here so a CLI/JSON caller can pass `"2026-12-31T23:59:59Z"`
+  # and a programmatic caller can still pass a `%DateTime{}` directly.
+  # `nil` is the no-expiry default (matches the legacy task's option
+  # absence).
+  defp coerce_expires_at(nil), do: {:ok, nil}
+
+  defp coerce_expires_at(%DateTime{} = dt) do
+    # The `entity_tokens.expires_at` column is `:utc_datetime_usec`,
+    # so Ecto refuses second-precision values at dump time. Promote
+    # to microsecond precision so callers can pass either.
+    {:ok, ensure_usec(dt)}
+  end
+
+  defp coerce_expires_at(s) when is_binary(s) do
+    case DateTime.from_iso8601(s) do
+      {:ok, dt, _offset} -> {:ok, ensure_usec(dt)}
+      {:error, reason} -> {:error, {:bad_expires_at, s, reason}}
+    end
+  end
+
+  defp coerce_expires_at(other), do: {:error, {:bad_expires_at, other}}
+
+  defp ensure_usec(%DateTime{microsecond: {_, 6}} = dt), do: dt
+
+  defp ensure_usec(%DateTime{} = dt) do
+    %DateTime{dt | microsecond: {elem(dt.microsecond, 0), 6}}
+  end
 end

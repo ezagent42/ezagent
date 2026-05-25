@@ -115,9 +115,14 @@ defmodule Ezagent.Behavior.WorkspaceTest do
   end
 
   describe "Behavior contract" do
-    test "actions/0 lists all 11 actions" do
-      # HIGH-2 completion (2026-05-26): `:create_user` is the 11th
-      # action — closes the `mix ezagent.user.create` bypass.
+    test "actions/0 lists all 10 actions" do
+      # SPEC 2026-05-25-agent-create-cli-gui-parity added `:create_agent`
+      # as the 10th action — unified entry for CLI + LV agent creation.
+      # Codex PR #356 r1 CRIT fix: `:create_user` was briefly added here
+      # and then moved out to `Ezagent.Behavior.WorkspaceUserAdmin` to
+      # give it a distinct cap subject (the Capability struct has no
+      # action axis, so co-locating privileged actions with
+      # member-management ones is an escalation surface).
       assert WB.actions() == [
                :list_members,
                :add_member,
@@ -128,8 +133,7 @@ defmodule Ezagent.Behavior.WorkspaceTest do
                :list_routing_rules,
                :set_routing_rules,
                :instantiate,
-               :create_agent,
-               :create_user
+               :create_agent
              ]
     end
 
@@ -140,17 +144,6 @@ defmodule Ezagent.Behavior.WorkspaceTest do
         assert Map.has_key?(caps, action),
                "required_caps/0 missing #{action} — dispatch step 5.5 would crash"
       end
-
-      # Spot-check the new :create_user cap shape — must be a struct
-      # via Capability.cap/3 (per P15 — module reference, not atom).
-      %Ezagent.Capability{kind: kind, behavior: behavior, instance: instance} =
-        caps[:create_user]
-
-      assert kind == :workspace
-      assert behavior == Ezagent.Behavior.Workspace
-      # `Capability.cap/3` builds class-wide caps (instance == :any);
-      # action atom (third arg) is documentation only at this arity.
-      assert instance == :any
     end
 
     test "state_slice/0 is :workspace" do

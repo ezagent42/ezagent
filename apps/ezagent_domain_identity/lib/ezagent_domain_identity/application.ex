@@ -40,7 +40,7 @@ defmodule EzagentDomainIdentity.Application do
 
   alias Ezagent.{CapabilityRegistry, SpawnRegistry}
   alias Ezagent.Entity.User
-  alias Ezagent.Behavior.{Identity, ApiKeys, UserCredentials, UserTokens}
+  alias Ezagent.Behavior.{Identity, ApiKeys, UserCredentials, UserTokens, WorkspaceUserAdmin}
 
   @impl true
   def start(_type, _args) do
@@ -296,6 +296,17 @@ defmodule EzagentDomainIdentity.Application do
     # them to model after yet).
     for action <- UserTokens.actions() do
       :ok = CapabilityRegistry.register(User, action, UserTokens)
+    end
+
+    # Codex PR #356 r1 CRIT fix (2026-05-26): split `:create_user`
+    # from `Behavior.Workspace` into its OWN Behavior on Workspace
+    # Kind so the cap shape is distinct. Without this, any holder of
+    # a `Behavior.Workspace` cap (e.g. `:add_member`) would ALSO be
+    # authorized for `:create_user` and could mint users with
+    # arbitrary caps. Registered cross-domain because the action body
+    # wraps `Ezagent.Users.create/3` from the identity domain.
+    for action <- WorkspaceUserAdmin.actions() do
+      :ok = CapabilityRegistry.register(Ezagent.Entity.Workspace, action, WorkspaceUserAdmin)
     end
 
     # CapabilityRegistry SPEC rev 4 §5 — register User.default_caps/1

@@ -61,8 +61,14 @@ defmodule Ezagent.Behavior.UserCredentialsTest do
       end
     end
 
-    test "data_owner/0 is :self (User Kind owns its credentials)" do
-      assert UC.data_owner(:set_password) == :self
+    test "data_owner/1 mirrors Identity (self-owned for concrete URIs, :any wildcard)" do
+      # Codex PR #356 r1 MED fix: :self is NOT a valid return shape per
+      # Ezagent.Behavior @callback data_owner. Mirrors the Identity /
+      # ApiKeys pattern: concrete URI → itself, :any → :any, else no_owner.
+      user_uri = URI.parse("entity://user/team-alpha/alice")
+      assert UC.data_owner(user_uri) == user_uri
+      assert UC.data_owner(:any) == :any
+      assert UC.data_owner(:set_password) == :no_owner
     end
   end
 

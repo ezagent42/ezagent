@@ -59,10 +59,14 @@ defmodule Ezagent.Behavior.UserTokensTest do
       end
     end
 
-    test "data_owner/0 is :self for all actions" do
-      for action <- UT.actions() do
-        assert UT.data_owner(action) == :self
-      end
+    test "data_owner/1 mirrors Identity (self-owned for concrete URIs, :any wildcard)" do
+      # Codex PR #356 r1 MED fix.
+      user_uri = URI.parse("entity://user/team-alpha/alice")
+      assert UT.data_owner(user_uri) == user_uri
+      assert UT.data_owner(:any) == :any
+      assert UT.data_owner(:mint_token) == :no_owner
+      assert UT.data_owner(:list_tokens) == :no_owner
+      assert UT.data_owner(:revoke_token) == :no_owner
     end
   end
 
@@ -108,6 +112,34 @@ defmodule Ezagent.Behavior.UserTokensTest do
 
       assert {:error, {:bad_target_uri, _}} =
                UT.invoke(:mint_token, slice, %{}, bad_ctx)
+    end
+
+    test "expires_at as RFC3339 string is parsed to DateTime (codex r1 MED fix)",
+         %{user_uri: user_uri, ctx: ctx, slice: slice} do
+      iso = "2099-12-31T23:59:59Z"
+
+      assert {:ok, _, %{token_id: token_id}} =
+               UT.invoke(:mint_token, slice, %{expires_at: iso}, ctx)
+
+      row = EzagentCore.Repo.get(Ezagent.Entity.Token, token_id)
+      assert %DateTime{year: 2099} = row.expires_at
+      _ = user_uri
+    end
+
+    test "expires_at as %DateTime{} passes through unchanged",
+         %{ctx: ctx, slice: slice} do
+      dt = DateTime.new!(~D[2099-12-31], ~T[23:59:59], "Etc/UTC")
+
+      assert {:ok, _, %{token_id: token_id}} =
+               UT.invoke(:mint_token, slice, %{expires_at: dt}, ctx)
+
+      row = EzagentCore.Repo.get(Ezagent.Entity.Token, token_id)
+      assert DateTime.compare(row.expires_at, dt) == :eq
+    end
+
+    test "expires_at as bad string returns :bad_expires_at", %{ctx: ctx, slice: slice} do
+      assert {:error, {:bad_expires_at, "not-a-date", _reason}} =
+               UT.invoke(:mint_token, slice, %{expires_at: "not-a-date"}, ctx)
     end
   end
 
@@ -170,14 +202,37 @@ defmodule Ezagent.Behavior.UserTokensTest do
       assert {:error, :no_such_entity} = Token.verify(user_uri, plain)
     end
 
-    test "unknown id returns ok (legacy revoke/1 is idempotent)",
+    test "unknown id returns :not_found (codex r1 HIGH cross-entity hardening)",
          %{ctx: ctx, slice: slice} do
-      assert {:ok, new_slice, %{revoked: 999_999}} =
+      # Codex PR #356 r1 HIGH fix: revoke now pre-fetches the row and
+      # refuses if it doesn't belong to ctx.self_uri. Unknown id
+      # returns :not_found (not :ok like the legacy idempotent shape)
+      # so operators get a clear "no such row" signal.
+      assert {:error, :not_found} =
                UT.invoke(:revoke_token, slice, %{token_id: 999_999}, ctx)
+    end
 
-      # Counter STILL bumps — same semantic as the legacy task
-      # (it doesn't distinguish "actually deleted" from "no-op").
-      assert new_slice.revoke_count == 1
+    test "cross-entity revoke is refused with :cross_entity_token",
+         %{user_uri: user_uri, ctx: ctx, slice: slice} do
+      # Mint a token for a DIFFERENT user — the attacker pre-existing
+      # in the DB. The current ctx.self_uri is `user_uri` (Alice).
+      n = System.unique_integer([:positive])
+      # Build via concatenation so the codebase grep gate
+      # (`entities_have_workspace_test.exs`) doesn't false-flag
+      # the `#{n}` interpolation as a 2-segment literal.
+      other_workspace = "ut-other-" <> Integer.to_string(n)
+      other_uri = URI.parse("entity://user/" <> other_workspace <> "/bob")
+      {:ok, _decoded} = Ezagent.Users.create(other_uri, nil, [])
+      {_plain, other_row} = Ezagent.Entity.Token.mint(other_uri, label: "bob-token")
+
+      assert {:error, {:cross_entity_token, requested_owner: requested, actual_owner: actual}} =
+               UT.invoke(:revoke_token, slice, %{token_id: other_row.id}, ctx)
+
+      assert requested == URI.to_string(user_uri)
+      assert actual == URI.to_string(other_uri)
+
+      # Critically: Bob's token survives Alice's attempted hijack.
+      assert length(Ezagent.Entity.Token.list(other_uri)) == 1
     end
 
     test "non-integer token_id is refused with :bad_args", %{ctx: ctx, slice: slice} do

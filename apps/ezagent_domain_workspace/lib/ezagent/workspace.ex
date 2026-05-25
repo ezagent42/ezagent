@@ -447,8 +447,13 @@ defmodule Ezagent.Workspace do
           | {:error, term()}
   def create_user(%URI{scheme: "workspace"} = workspace_uri, args, ctx)
       when is_map(args) and is_map(ctx) do
+    # Codex PR #356 r1 CRIT fix: `:create_user` lives on the new
+    # `Ezagent.Behavior.WorkspaceUserAdmin` (slice `:workspace_user_admin`),
+    # NOT on `Behavior.Workspace` — so the cap subject is distinct.
     target =
-      URI.new!("#{URI.to_string(workspace_uri)}?action=workspace.create_user")
+      URI.new!(
+        "#{URI.to_string(workspace_uri)}?action=workspace_user_admin.create_user"
+      )
 
     caller = Map.fetch!(ctx, :caller)
     caps = Map.fetch!(ctx, :caps)

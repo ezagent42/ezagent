@@ -87,13 +87,23 @@ defmodule Ezagent.Behavior.UserCredentials do
   @impl Ezagent.Behavior
   def init_slice(_args), do: %{set_password_count: 0}
 
-  # PR-OWN-4 data_owner pattern: the user (the Kind instance itself)
-  # owns its credentials. The dispatch chokepoint reads
-  # `ctx.self_uri` for the cap-check; structural authority is the
-  # owning user, with admin's `:any`-instance cap as the cross-user
-  # override.
+  # PR-OWN-4 data_owner pattern: mirrors `Behavior.Identity` /
+  # `Behavior.ApiKeys` — the user (the Kind instance) owns its
+  # credentials. Concrete user URIs map to themselves (self-owned;
+  # the user holds the instance-scoped cap on their own URI for
+  # self-rotation); `:any` matches `:any`; everything else has no
+  # owner (no default grant). Admin's cross-user reset is via the
+  # bootstrap `:any`-instance cap which short-circuits at step 5.5.
+  #
+  # Codex PR #356 r1 MED fix (2026-05-26): `:self` was NOT a valid
+  # `data_owner/1` return shape per `Ezagent.Behavior` callback spec
+  # (URI.t() | :any | :no_owner | {:scope, atom(), URI.t()}). The
+  # original intent ("self-owned") IS expressed by returning the
+  # entity URI itself — that's exactly what Identity does.
   @impl Ezagent.Behavior
-  def data_owner(_), do: :self
+  def data_owner(%URI{} = entity_uri), do: entity_uri
+  def data_owner(:any), do: :any
+  def data_owner(_), do: :no_owner
 
   # =================================================================
   # Action body
