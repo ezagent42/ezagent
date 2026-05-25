@@ -169,8 +169,14 @@ defmodule EzagentDomainChat.Integration.MentionGatedRoutingTest do
 
     msg = dispatch_send(session, sender, "ping, no mention")
 
-    assert_receive {:slice_changed, %{action: :receive, new_slice: new_slice}}, 1_000
-    assert new_slice.last_received.message_id == msg.id
+    # PR-N3 codex r2 HIGH-1 (Allen 2026-05-25): the slice-change
+    # broadcast envelope is security-minimal — `uri / slice_key /
+    # cursor / event_at / result_summary`. Slice content is fetched
+    # via `Kind.get_slice/2` per the new contract; see
+    # `apps/ezagent_core/test/invariants/slice_change_event_carries_no_slice_content_test.exs`.
+    assert_receive {:slice_changed, %{uri: ^user_member, slice_key: :chat}}, 1_000
+    {:ok, slice} = Ezagent.Kind.get_slice(user_member, :chat)
+    assert slice.last_received.message_id == msg.id
   end
 
   test "§6.8 — the session stream broadcast is unconditional (no mention)" do

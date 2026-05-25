@@ -570,29 +570,24 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
            %{type: :pr_n2_legacy, body: %{}, source: __MODULE__, summary: "legacy bridge"}}
         )
 
-      # 2. New `{:slice_changed, _}` envelope (PR-N1 shape via
-      # `SliceChange.emit/1`). Enable the feature flag so the emit
-      # actually broadcasts; the AdminLive subscription side does
-      # not gate on the flag (it just subscribes).
-      Application.put_env(:ezagent_core, :slice_change_hook, true)
+      # 2. New `{:slice_changed, _}` envelope (PR-N3 codex r2 HIGH-1
+      # security-minimal shape via `SliceChange.emit/1`). Pass the
+      # legacy fat producer-side event — `emit/1` filters down to the
+      # 5 allowed broadcast keys at its boundary, so the LV receives
+      # the new shape regardless of what we hand the producer side.
+      event = %{
+        self_uri: caller_uri,
+        kind_module: Ezagent.Entity.User,
+        action: :pr_n2_integration,
+        slice_key: :test_slice,
+        old_slice: %{n: 1},
+        new_slice: %{n: 2},
+        result: nil,
+        caller: caller_uri,
+        at: DateTime.utc_now()
+      }
 
-      try do
-        event = %{
-          self_uri: caller_uri,
-          kind_module: Ezagent.Entity.User,
-          action: :pr_n2_integration,
-          slice_key: :test_slice,
-          old_slice: %{n: 1},
-          new_slice: %{n: 2},
-          result: nil,
-          caller: caller_uri,
-          at: DateTime.utc_now()
-        }
-
-        :ok = Ezagent.SliceChange.emit(event)
-      after
-        Application.delete_env(:ezagent_core, :slice_change_hook)
-      end
+      :ok = Ezagent.SliceChange.emit(event)
 
       # Round-trip a benign event to flush the message queue — once
       # `render/2` returns from the test we know all queued
@@ -688,10 +683,15 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
     # logging no-op; PR-N3 wires it to put_flash so users actually
     # see chat notifications post-migration).
     test "format_slice_change/1 renders Chat User-branch event as sender + preview" do
-      # Persist a real Message in MessageStore so the lookup branch
-      # exercises the production path.
+      # PR-N3 codex r2 HIGH-1 (Allen 2026-05-25) — security-minimal
+      # envelope. The flash bridge re-fetches the receiver's `:chat`
+      # slice via `Kind.get_slice/2`; assertions drive a real spawned
+      # User so the lookup hits the production path.
       sender = URI.new!("entity://user/default/n3-fmt-#{System.unique_integer([:positive])}")
       receiver = URI.new!("entity://user/default/n3-rcv-#{System.unique_integer([:positive])}")
+
+      {:ok, _} = Ezagent.SpawnRegistry.spawn(sender)
+      {:ok, _} = Ezagent.SpawnRegistry.spawn(receiver)
 
       session_uri =
         URI.new!("session://default/default/n3-fmt-#{System.unique_integer([:positive])}")
@@ -699,16 +699,29 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
       msg = Ezagent.Message.new(sender, %{text: "n3 preview text", attachments: []})
       {:ok, stored} = Ezagent.MessageStore.write(msg, session_uri)
 
+      # Populate the receiver's :chat slice via the real :receive
+      # dispatch (mirrors the production path that triggers the
+      # SliceChange envelope in the first place).
+      :ok =
+        Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+          target: URI.new!("#{URI.to_string(receiver)}?action=chat.receive"),
+          mode: :cast,
+          args: %{message: stored},
+          ctx: %{
+            caller: sender,
+            caps: Ezagent.Entity.User.admin_caps(),
+            reply: :ignore
+          }
+        })
+
+      Process.sleep(50)
+
       event = %{
-        self_uri: receiver,
-        kind_module: Ezagent.Entity.User,
-        action: :receive,
+        uri: receiver,
         slice_key: :chat,
-        old_slice: %{},
-        new_slice: %{last_received: %{message_id: stored.id, at: DateTime.utc_now()}},
-        result: nil,
-        caller: session_uri,
-        at: DateTime.utc_now()
+        cursor: 1,
+        event_at: DateTime.utc_now(),
+        result_summary: :ok
       }
 
       assert EzagentPluginLiveview.AdminLive.format_slice_change(event) ==
@@ -716,40 +729,92 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
     end
 
     test "format_slice_change/1 falls back to id when MessageStore has no row" do
+      # The receiver Kind is live but its :chat slice carries a
+      # message_id that MessageStore won't find. Production path:
+      # message was deleted between :receive and the flash bridge
+      # waking up.
+      receiver = URI.new!("entity://user/default/n3-miss-#{System.unique_integer([:positive])}")
+      {:ok, _} = Ezagent.SpawnRegistry.spawn(receiver)
+
+      # Drive a synthetic chat.receive with a sender + a fake
+      # message_id that won't resolve. We dispatch a real message
+      # then mutate the in-memory slice to point at a non-existent
+      # id — simplest reliable route is to write+then delete, but
+      # MessageStore doesn't expose delete; instead build a Message
+      # with a known id, write it, dispatch :receive, then erase
+      # by overwriting the slice via a synthetic chat.receive whose
+      # message-id we don't persist.
+      sender =
+        URI.new!("entity://user/default/n3-miss-snd-#{System.unique_integer([:positive])}")
+
+      {:ok, _} = Ezagent.SpawnRegistry.spawn(sender)
+
+      # Build a Message with the canary id but DON'T write it to
+      # MessageStore — the :receive dispatch reads `args.message`
+      # directly and just stores the message_id in the slice.
+      ghost_msg =
+        Ezagent.Message.new(sender, %{text: "ghost", attachments: []},
+          id: "msg-does-not-exist"
+        )
+
+      :ok =
+        Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+          target: URI.new!("#{URI.to_string(receiver)}?action=chat.receive"),
+          mode: :cast,
+          args: %{message: ghost_msg},
+          ctx: %{
+            caller: sender,
+            caps: Ezagent.Entity.User.admin_caps(),
+            reply: :ignore
+          }
+        })
+
+      Process.sleep(50)
+
       event = %{
-        self_uri: URI.new!("entity://user/default/n3-miss-#{System.unique_integer([:positive])}"),
-        kind_module: Ezagent.Entity.User,
-        action: :receive,
+        uri: receiver,
         slice_key: :chat,
-        old_slice: %{},
-        new_slice: %{last_received: %{message_id: "msg-does-not-exist", at: DateTime.utc_now()}},
-        result: nil,
-        caller: nil,
-        at: DateTime.utc_now()
+        cursor: 1,
+        event_at: DateTime.utc_now(),
+        result_summary: :ok
       }
 
       assert EzagentPluginLiveview.AdminLive.format_slice_change(event) ==
                "New chat message (id msg-does-not-exist)"
     end
 
-    test "format_slice_change/1 falls back to generic line for non-Chat shapes (PR-N4 producers)" do
+    test "format_slice_change/1 falls back to generic line for non-chat shapes (PR-N4 producers)" do
       # Forward-compat: when PR-N4 migrates workspace.add_member /
       # identity.grant_cap to the auto-hook, the bridge MUST keep
       # surfacing flashes even before bespoke formatters land.
       generic_event = %{
-        self_uri: URI.new!("workspace://acme"),
-        kind_module: Ezagent.Entity.Workspace,
-        action: :add_member,
+        uri: URI.new!("workspace://acme"),
         slice_key: :workspace,
-        old_slice: %{},
-        new_slice: %{members: %{some: :uri}},
-        result: nil,
-        caller: nil,
-        at: DateTime.utc_now()
+        cursor: 7,
+        event_at: DateTime.utc_now(),
+        result_summary: :ok
       }
 
       assert EzagentPluginLiveview.AdminLive.format_slice_change(generic_event) ==
-               "Update on Ezagent.Entity.Workspace — :add_member"
+               "Update on workspace://acme (workspace)"
+    end
+
+    test "format_slice_change/1 degrades gracefully when chat slice re-fetch fails" do
+      # The Kind isn't alive — `Kind.get_slice/2` returns
+      # `{:error, :not_found}`. The bridge MUST still surface a flash.
+      missing_uri =
+        URI.new!("entity://user/default/n3-none-#{System.unique_integer([:positive])}")
+
+      event = %{
+        uri: missing_uri,
+        slice_key: :chat,
+        cursor: 1,
+        event_at: DateTime.utc_now(),
+        result_summary: :ok
+      }
+
+      assert EzagentPluginLiveview.AdminLive.format_slice_change(event) ==
+               "New chat update on #{URI.to_string(missing_uri)}"
     end
 
     test "format_slice_change/1 inspects unknown shapes (last-resort branch)" do
@@ -757,14 +822,19 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
     end
 
     test "slice_change handler puts a flash on AdminLive (end-to-end)", %{conn: conn} do
+      # PR-N3 codex r2 HIGH-1 (Allen 2026-05-25) — broadcast the new
+      # security-minimal envelope. The handler re-fetches the admin's
+      # :chat slice via `Kind.get_slice/2`; because the admin Kind
+      # isn't carrying a `:last_received` populated by this test, the
+      # bridge degrades to the "New chat update on <uri>" line —
+      # which is the right default-secure behavior (the slice ISN'T
+      # there to read; nothing leaks; the flash still fires).
       {:ok, lv, _html} = live(conn, "/sessions")
       caller_uri = Ezagent.Entity.User.admin_uri()
       lv_pid = lv.pid
 
-      msg_id = "lv-bridge-no-row-#{System.unique_integer([:positive])}"
-
-      # Broadcast a generic slice_change event directly to the LV's
-      # subscribed topic. The handler calls put_flash via
+      # Broadcast a security-minimal slice_change event directly to
+      # the LV's subscribed topic. The handler calls put_flash via
       # format_slice_change/1 — verify the flash assign appears in
       # the LV socket. We inspect the socket state directly because
       # the flash region renders in the parent Layouts.app component,
@@ -775,17 +845,11 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
           Ezagent.SliceChange.topic(caller_uri),
           {:slice_changed,
            %{
-             self_uri: caller_uri,
-             kind_module: Ezagent.Entity.User,
-             action: :receive,
+             uri: caller_uri,
              slice_key: :chat,
-             old_slice: %{},
-             new_slice: %{
-               last_received: %{message_id: msg_id, at: DateTime.utc_now()}
-             },
-             result: nil,
-             caller: nil,
-             at: DateTime.utc_now()
+             cursor: 1,
+             event_at: DateTime.utc_now(),
+             result_summary: :ok
            }}
         )
 
@@ -801,8 +865,14 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
         |> Map.get(:assigns)
         |> Map.get(:flash, %{})
 
-      assert flash["info"] == "New chat message (id #{msg_id})",
+      assert is_binary(flash["info"]),
              "expected slice_change handler to put_flash; got flash=#{inspect(flash)}"
+
+      # Either branch is acceptable: re-fetch succeeded -> "New
+      # chat message" / "New message from"; re-fetch failed (no
+      # populated slice / Kind missing) -> "New chat update on ...".
+      assert flash["info"] =~ "chat",
+             "expected chat-related flash; got: #{inspect(flash["info"])}"
     end
 
     test "cap-grant notification reaches AdminLive handler without crashing", %{conn: conn} do

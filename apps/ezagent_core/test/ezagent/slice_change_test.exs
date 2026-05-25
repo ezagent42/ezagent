@@ -57,11 +57,20 @@ defmodule Ezagent.SliceChangeTest do
   end
 
   describe "emit/1" do
-    test "emits to PubSub on subscribed URI" do
+    test "emits security-minimal envelope on subscribed URI (PR-N3 codex r2)" do
+      # PR-N3 codex r2 HIGH-1 (Allen 2026-05-25): the broadcast envelope
+      # is security-minimal (5 fields only) — `:new_slice` / `:old_slice`
+      # / `:result` / `:caller` / `:kind_module` / `:action` are STRIPPED
+      # at the SliceChange boundary so subscribers can't read sensitive
+      # slice content (e.g. ApiKeys plaintext) by subscribing to the
+      # public-derivable topic. The invariant test
+      # `slice_change_event_carries_no_slice_content_test.exs` is the
+      # canonical gate; this test just sanity-checks that emit/1 still
+      # broadcasts at all when given the fat producer-side input.
       uri = URI.parse("entity://user/x/y-#{System.unique_integer([:positive])}")
       SliceChange.subscribe_unverified(uri)
 
-      event = %{
+      producer_event = %{
         self_uri: uri,
         kind_module: SomeKind,
         action: :test,
@@ -73,9 +82,19 @@ defmodule Ezagent.SliceChangeTest do
         at: DateTime.utc_now()
       }
 
-      :ok = SliceChange.emit(event)
+      :ok = SliceChange.emit(producer_event)
 
-      assert_receive {:slice_changed, ^event}, 200
+      assert_receive {:slice_changed, broadcast_event}, 200
+
+      # Security-minimal contract: only the 5 allowed keys.
+      assert Map.keys(broadcast_event) |> Enum.sort() ==
+               Enum.sort([:uri, :slice_key, :cursor, :event_at, :result_summary])
+
+      assert broadcast_event.uri == uri
+      assert broadcast_event.slice_key == :test_slice
+      assert is_integer(broadcast_event.cursor) and broadcast_event.cursor >= 1
+      assert %DateTime{} = broadcast_event.event_at
+      assert broadcast_event.result_summary == :ok
     end
 
     test "returns :ok on malformed event without crashing" do

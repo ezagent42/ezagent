@@ -192,7 +192,9 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
   slice-change event, which would add an entry to the ring). The
   Publisher mirrors slice changes from OTHER slices (`:chat` etc).
   """
-  def handle_kind_message({:slice_changed, %{} = event}, slice, %{self_uri: self_uri}) do
+  def handle_kind_message({:slice_changed, %{} = event}, slice, ctx) do
+    self_uri = Map.fetch!(ctx, :self_uri)
+
     cond do
       not is_publisher_target?(event, self_uri) ->
         :ignore
@@ -208,8 +210,9 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
           cursor: new_cursor,
           publisher_uri: self_uri,
           slice_key: Map.get(event, :slice_key),
-          event_at: Map.get(event, :at) || DateTime.utc_now(),
-          payload: build_payload(event)
+          # PR-N3 codex r2 HIGH-1: envelope field renamed `:at` -> `:event_at`.
+          event_at: Map.get(event, :event_at) || DateTime.utc_now(),
+          payload: build_payload(event, ctx)
         }
 
         new_ring = append_with_retention(slice.ring, publisher_event, slice.retention)
@@ -326,23 +329,44 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
   @doc false
   def default_retention, do: @default_retention
 
+  # PR-N3 codex r2 HIGH-1 (Allen 2026-05-25) — SliceChange's broadcast
+  # envelope is now security-minimal (`uri / slice_key / cursor /
+  # event_at / result_summary`). The `self_uri` field is renamed
+  # `uri` and the slice-content fields (`new_slice`/`old_slice`/
+  # `result`/`action`/`caller`) are stripped. We update the target
+  # check to read `:uri` and re-fetch the slice via `Kind.get_slice/2`
+  # in `build_payload/2` — same trust boundary because the Publisher
+  # Kind reads its OWN slice (the Kind's own pid runs this code).
   defp is_publisher_target?(event, self_uri) do
-    case Map.get(event, :self_uri) do
+    case Map.get(event, :uri) do
       %URI{} = uri -> URI.to_string(uri) == URI.to_string(self_uri)
       _ -> false
     end
   end
 
-  defp build_payload(event) do
-    # PR-EM-0: ship the new_slice as payload; PR-EM-2's Worker layer
-    # will diff via `adapter.event_to_payload/1`. Keep `:action` and
-    # `:caller` as metadata so adapters that want a "who did this"
-    # breadcrumb have it.
+  defp build_payload(event, ctx) do
+    # PR-N3 codex r2 HIGH-1: SliceChange's broadcast envelope no
+    # longer carries slice content. The Publisher reads the affected
+    # slice directly from `ctx.slice_state` — `Kind.Server` injects
+    # the full slice_state into ctx for exactly this case (a
+    # `Kind.get_slice/2` call here would self-`GenServer.call`
+    # from inside `handle_info`, which deadlocks). The Publisher
+    # Kind reading its OWN state is the canonical safe read — same
+    # trust domain, same process.
+    #
+    # `:action` / `:caller` are no longer in the envelope — adapters
+    # that want a "who did this" breadcrumb must source it from
+    # elsewhere (the slice's own metadata; the receiving message's
+    # `:sender` field; etc.). PR-EM-0's `event_to_payload/1` adapter
+    # contract doesn't currently rely on these — the payload is
+    # passed through opaquely.
+    slice_key = Map.get(event, :slice_key)
+    slice_state = Map.get(ctx, :slice_state, %{})
+
+    new_slice = Map.get(slice_state, slice_key)
+
     %{
-      action: Map.get(event, :action),
-      caller: Map.get(event, :caller),
-      new_slice: Map.get(event, :new_slice),
-      old_slice: Map.get(event, :old_slice)
+      new_slice: new_slice
     }
   end
 

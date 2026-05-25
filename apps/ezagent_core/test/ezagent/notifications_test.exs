@@ -133,30 +133,34 @@ defmodule Ezagent.NotificationsTest do
 
       assert :ok = Notifications.subscribe_slice_change(uri)
 
-      # Force the SliceChange hook on so emit/1 actually broadcasts
-      # — PR-N2 tests this end-to-end so a future regression in the
-      # delegate (wrong topic, wrong PubSub name) fails here.
-      Application.put_env(:ezagent_core, :slice_change_hook, true)
+      # PR-N3 (Allen 2026-05-25) — `enabled?/0` is now an unconditional
+      # `true`; the legacy config-knob force-on no longer applies.
+      # PR-N3 codex r2 HIGH-1 (Allen 2026-05-25) — emit/1 broadcasts
+      # the security-minimal envelope (5 fields), NOT the fat producer
+      # event. Assertion shape updates accordingly. The invariant test
+      # `slice_change_event_carries_no_slice_content_test.exs` is the
+      # canonical envelope-shape gate; this test only proves the
+      # subscribe-helper wires to the same topic.
+      producer_event = %{
+        self_uri: uri,
+        kind_module: __MODULE__,
+        action: :pr_n2_unit,
+        slice_key: :test,
+        old_slice: %{n: 1},
+        new_slice: %{n: 2},
+        result: nil,
+        caller: nil,
+        at: DateTime.utc_now()
+      }
 
-      try do
-        event = %{
-          self_uri: uri,
-          kind_module: __MODULE__,
-          action: :pr_n2_unit,
-          slice_key: :test,
-          old_slice: %{n: 1},
-          new_slice: %{n: 2},
-          result: nil,
-          caller: nil,
-          at: DateTime.utc_now()
-        }
+      :ok = Ezagent.SliceChange.emit(producer_event)
 
-        :ok = Ezagent.SliceChange.emit(event)
-
-        assert_receive {:slice_changed, ^event}, 500
-      after
-        Application.delete_env(:ezagent_core, :slice_change_hook)
-      end
+      assert_receive {:slice_changed, broadcast_event}, 500
+      assert broadcast_event.uri == uri
+      assert broadcast_event.slice_key == :test
+      assert is_integer(broadcast_event.cursor)
+      assert %DateTime{} = broadcast_event.event_at
+      assert broadcast_event.result_summary == :ok
     end
 
     test "accepts a String URI argument (mirrors subscribe/2 polymorphism)" do

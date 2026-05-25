@@ -1,6 +1,7 @@
 defmodule Ezagent.SliceChange do
   @moduledoc """
-  Slice-change-as-notification primitive (SPEC v2 PR-N1, Allen 2026-05-24).
+  Slice-change-as-notification primitive (SPEC v2 PR-N1, Allen 2026-05-24;
+  security-minimal envelope PR-N3 codex r2 HIGH-1, Allen 2026-05-25).
 
   ## The model (from `docs/superpowers/specs/2026-05-24-notification-architecture-v2.md`)
 
@@ -17,19 +18,35 @@ defmodule Ezagent.SliceChange do
   Subscribers get every slice change for that entity (Allen OQ-V2-N-1:
   per-entity wholesale, not per-slice; simpler).
 
-  ## Message shape
+  ## Broadcast envelope shape (security-minimal — PR-N3 codex r2 HIGH-1)
 
       {:slice_changed, %{
-        self_uri: URI.t(),
-        kind_module: module(),
-        action: atom(),
-        slice_key: atom(),
-        old_slice: map() | nil,
-        new_slice: map(),
-        result: term() | nil,
-        caller: URI.t() | nil,
-        at: DateTime.t()
+        uri:            URI.t(),              # which Kind instance
+        slice_key:      atom(),               # which slice changed
+        cursor:         non_neg_integer(),    # monotonic per-URI sequence
+        event_at:       DateTime.t(),         # wall-clock
+        result_summary: :ok | :error          # atom summary; no error detail
       }}
+
+  **Nothing else.** No `old_slice`, no `new_slice`, no `result` map,
+  no `caller`, no `kind_module`, no `action`. The pre-fix envelope
+  leaked sensitive slice content (e.g. `Ezagent.Behavior.ApiKeys`'s
+  plaintext keys) to any same-VM subscriber of the public-derivable
+  topic — bypassing Behavior cap gates like `identity:api_keys:read`.
+  Codex r2 (PR #328) flagged this as HIGH-1; Allen approved the
+  Option C fix (parallel pattern to `Ezagent.Publisher.Event` from
+  PR-EM-0).
+
+  Subscribers that need the actual slice content MUST re-fetch via
+  `Ezagent.Kind.get_slice/2` (synchronous read of the live Kind's
+  current slice) or `Ezagent.Invocation.dispatch/1` (cap-gated read
+  via a Behavior `:list_*` / `:get_*` action). The framework is
+  default-secure: the event itself doesn't leak; what each
+  subscriber fetches afterward is its own cap concern.
+
+  Invariant test:
+  `apps/ezagent_core/test/invariants/slice_change_event_carries_no_slice_content_test.exs`
+  asserts the broadcast envelope has ONLY the 5 allowed keys.
 
   ## Gate: hard switch (PR-N3, Allen 2026-05-25)
 
@@ -49,9 +66,13 @@ defmodule Ezagent.SliceChange do
     internal (invariant grep)
   - `Phoenix.PubSub.broadcast` to entity-stream topics is forbidden
     outside this module
+  - The broadcast envelope MUST stay at the 5-key minimal shape
+    (`slice_change_event_carries_no_slice_content_test.exs`)
   """
 
   require Logger
+
+  alias Ezagent.SliceChange.Cursors
 
   @doc "Topic shape — `esr:entity:<self_uri>:slice_changed`."
   @spec topic(URI.t() | String.t()) :: String.t()
@@ -68,6 +89,15 @@ defmodule Ezagent.SliceChange do
   1. `slice_change_event != nil` — Runtime sets `nil` when slice
      unchanged or action returned read-only
   2. Success-path only (errors / cap-denied never reach here)
+
+  **Input shape**: accepts the "fat" producer-side event map (with
+  `:old_slice` / `:new_slice` / `:result` / `:caller` / etc.) that
+  `Ezagent.Kind.Runtime.handle_dispatch/4` constructs. Internally
+  computes the security-minimal broadcast envelope (5 fields only;
+  see moduledoc). This is the boundary where slice content is
+  filtered out — call sites upstream may legitimately need the diff
+  for other purposes (audit telemetry, future in-process callbacks);
+  what crosses PubSub is the minimal shape.
 
   Returns `:ok` always. Failure is observable (`:telemetry.span`
   exception event + Logger.warning) but non-fatal — the snapshot
@@ -104,13 +134,21 @@ defmodule Ezagent.SliceChange do
   # so failures are observable, but we rescue the exception locally
   # so the GenServer's commit-then-notify pair doesn't take down the
   # Kind process for an infrastructure hiccup.
-  defp do_emit(%{self_uri: %URI{} = self_uri} = event) do
+  #
+  # Codex PR-N3 round-2 HIGH-1 fix (Allen 2026-05-25): broadcast the
+  # security-minimal envelope (5 fields only). Slice content
+  # (`old_slice` / `new_slice` / `result`) is filtered out at this
+  # boundary — subscribers re-fetch via `Kind.get_slice/2` /
+  # `Invocation.dispatch/1` if they need it (cap-gated).
+  defp do_emit(%{self_uri: %URI{} = self_uri} = producer_event) do
     metadata = %{
       self_uri: self_uri,
-      kind_module: Map.get(event, :kind_module),
-      action: Map.get(event, :action),
-      slice_key: Map.get(event, :slice_key)
+      kind_module: Map.get(producer_event, :kind_module),
+      action: Map.get(producer_event, :action),
+      slice_key: Map.get(producer_event, :slice_key)
     }
+
+    broadcast_event = build_broadcast_event(self_uri, producer_event)
 
     try do
       :telemetry.span(
@@ -120,7 +158,7 @@ defmodule Ezagent.SliceChange do
           Phoenix.PubSub.broadcast(
             EzagentCore.PubSub,
             topic(self_uri),
-            {:slice_changed, event}
+            {:slice_changed, broadcast_event}
           )
 
           {:ok, %{count: 1}}
@@ -142,6 +180,48 @@ defmodule Ezagent.SliceChange do
 
   defp do_emit(_), do: :ok
 
+  # Build the broadcast envelope from the producer-side event map.
+  # This is the ONE place that decides what crosses PubSub —
+  # changing it without updating
+  # `slice_change_event_carries_no_slice_content_test.exs` is the
+  # regression we're locking out.
+  defp build_broadcast_event(%URI{} = self_uri, producer_event) do
+    slice_key =
+      case Map.get(producer_event, :slice_key) do
+        k when is_atom(k) -> k
+        _ -> nil
+      end
+
+    event_at =
+      case Map.get(producer_event, :at) do
+        %DateTime{} = dt -> dt
+        _ -> DateTime.utc_now()
+      end
+
+    result_summary = summarize_result(Map.get(producer_event, :result))
+
+    %{
+      uri: self_uri,
+      slice_key: slice_key,
+      cursor: Cursors.next(self_uri),
+      event_at: event_at,
+      result_summary: result_summary
+    }
+  end
+
+  # The Runtime hook only reaches `emit/1` on success paths (the
+  # `{:error, _}` branch returns before constructing the
+  # slice_change_event). So in practice `result` is always a "success"
+  # value — either `nil` (read-only Behavior returned no result map) or
+  # a result map (which by construction means `{:ok, _, result_map}`).
+  # `:error` is reserved for any future caller that wants to surface
+  # "the post-commit step failed" semantics — keeping it expressible
+  # avoids forcing callers to drop a class of event.
+  defp summarize_result(nil), do: :ok
+  defp summarize_result({:error, _}), do: :error
+  defp summarize_result(:error), do: :error
+  defp summarize_result(_), do: :ok
+
   @doc """
   Subscribe the calling process to slice-change events for `uri`
   WITHOUT any capability check.
@@ -159,6 +239,15 @@ defmodule Ezagent.SliceChange do
   AUDIT TRAIL + ENROLLMENT (LV reconnect, plugin reboot
   re-subscription) — it tracks INTENT, not transport access.
 
+  **Codex PR-N3 r2 HIGH-1 (Allen 2026-05-25):** the broadcast envelope
+  no longer carries slice content (only `uri / slice_key / cursor /
+  event_at / result_summary`). Subscribing to the topic reveals the
+  EXISTENCE + TIMING of a slice change, never its content. To read
+  slice content, the subscriber dispatches `Ezagent.Kind.get_slice/2`
+  or a cap-gated Behavior read action — which run their own cap gates.
+  The previous risk (`new_slice`/`result` field exfil) is closed at
+  the producer; subscriber-side trust is preserved by re-fetch.
+
   **For end-user-facing code paths** (LV mount on behalf of a
   logged-in user, plugin workers tracking another entity), use
   `NotificationSubscriptions.subscribe/2` so the registry knows
@@ -167,7 +256,7 @@ defmodule Ezagent.SliceChange do
   subscribing to its OWN topic at boot).
 
   Returns `:ok`. Receives `{:slice_changed, event_map}` messages on
-  the calling process.
+  the calling process — see moduledoc for the envelope shape.
   """
   @spec subscribe_unverified(URI.t() | String.t()) :: :ok
   def subscribe_unverified(uri) do

@@ -131,20 +131,27 @@ defmodule EzagentDomainChat.Integration.ChatReceiveUserSliceChangeTest do
 
       assert_receive {:slice_changed, event}, 1_000
 
-      # The auto-hook event carries the action + URI + diff payload
-      # that the SliceChange contract (apps/ezagent_core/.../slice_change.ex
-      # moduledoc) promises subscribers.
-      assert event.self_uri == receiver
-      assert event.action == :receive
-      assert event.kind_module == Ezagent.Entity.User
+      # PR-N3 codex r2 HIGH-1 (Allen 2026-05-25): the broadcast
+      # envelope is security-minimal — `uri / slice_key / cursor /
+      # event_at / result_summary` only. Subscribers needing slice
+      # content re-fetch via `Ezagent.Kind.get_slice/2`. The previous
+      # `event.new_slice.last_received.message_id` assertion violated
+      # the new contract (and the cap-bypass attack surface that
+      # contract closes — see
+      # `apps/ezagent_core/test/invariants/slice_change_event_carries_no_slice_content_test.exs`).
+      assert event.uri == receiver
       assert event.slice_key == :chat
-      assert event.new_slice.last_received.message_id == msg.id
-      assert %DateTime{} = event.new_slice.last_received.at
+      assert is_integer(event.cursor) and event.cursor >= 1
+      assert %DateTime{} = event.event_at
+      assert event.result_summary == :ok
 
-      # The slice actually changed — old_slice MUST NOT equal
-      # new_slice (otherwise Runtime would have built a nil event
-      # and `commit_and_notify` would have skipped emit/1).
-      refute event.old_slice == event.new_slice
+      # The slice fact still holds — re-fetched via the cap-respecting
+      # `Kind.get_slice/2` path (this test runs in-VM so the read
+      # succeeds; production code would dispatch a cap-gated read
+      # action like `chat.list_recent` instead).
+      {:ok, slice} = Ezagent.Kind.get_slice(receiver, :chat)
+      assert slice.last_received.message_id == msg.id
+      assert %DateTime{} = slice.last_received.at
     end
 
     test "legacy paths are silent for the migrated User-branch" do

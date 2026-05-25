@@ -302,17 +302,28 @@ defmodule EzagentPluginLiveview.AdminLive do
   # the notification — codex r1 HIGH-1 (correctly) flagged the no-op
   # as a user-visible regression if shipped without this hookup.
   #
+  # ## Envelope shape (PR-N3 codex r2 HIGH-1, Allen 2026-05-25)
+  #
+  # The broadcast envelope is security-minimal: `uri / slice_key /
+  # cursor / event_at / result_summary` only. Slice content
+  # (`new_slice` / `old_slice` / `result`) is NOT in the envelope —
+  # pre-fix it leaked plaintext slice fields (e.g.
+  # `Ezagent.Behavior.ApiKeys.put_api_key`'s plaintext key) to any
+  # same-VM subscriber of the public-derivable topic. Codex r2 (PR
+  # #328) flagged this; the invariant test
+  # `slice_change_event_carries_no_slice_content_test.exs` locks
+  # the new shape in.
+  #
   # ## Routing
   #
-  # The slice-change event carries (`self_uri`, `kind_module`,
-  # `action`, `slice_key`, `old_slice`, `new_slice`, `result`,
-  # `caller`, `at`). We pattern-match `:receive` on the User Kind to
-  # synthesize a chat-style flash: "<sender>: <preview>". Other
-  # slice-change shapes (workspace.add_member, identity.grant_cap —
-  # PR-N4 producers) get a generic fallback via
-  # `format_slice_change/1`. The previous legacy
-  # `{:notification, _, _}` handler stays in place (PR-N2 / N5 sweep)
-  # for any unmigrated producer.
+  # To synthesize the chat flash, `format_slice_change/1` re-fetches
+  # the affected entity's slice via `Ezagent.Kind.get_slice/2`. This
+  # runs in the LV process (the admin's session); the LV mount only
+  # subscribes the caller to its OWN `caller_uri` topic, so the
+  # re-fetch is on the caller's own slice. Future per-session
+  # subscriptions (PR-N3/N4 with NotificationSubscriptions) get the
+  # same default-secure shape — the event doesn't leak, the re-fetch
+  # is the subscriber's own cap concern.
   def handle_info({:slice_changed, %{} = event}, socket) do
     {:noreply, put_flash(socket, :info, format_slice_change(event))}
   end
@@ -358,27 +369,43 @@ defmodule EzagentPluginLiveview.AdminLive do
 
   @doc false
   # Public for unit testing (otherwise `defp`). Formats a SliceChange
-  # event (PR-N1 envelope shape — see
+  # event (PR-N3 codex r2 HIGH-1 security-minimal shape — see
   # `apps/ezagent_core/lib/ezagent/slice_change.ex` moduledoc) into a
-  # human-readable flash string. Pattern-matches the migrated
-  # producer site (Chat User-branch :receive) to produce a chat-style
-  # preview; falls back to a generic "<scheme>: <action>" line for
-  # PR-N4 producer shapes (workspace member add, identity cap grant)
-  # so flashes still surface usefully during the transition.
+  # human-readable flash string.
   #
-  # Chat preview lookup goes through `Ezagent.MessageStore.by_id/1` —
-  # the message was persisted by `Behavior.Chat.invoke(:send, ...)`
-  # before the receive fan-out, so the row is already durable by the
-  # time the slice-change event lands. A miss (deleted message,
-  # store down) degrades to the generic format.
-  def format_slice_change(
-        %{
-          kind_module: Ezagent.Entity.User,
-          action: :receive,
-          new_slice: %{last_received: %{message_id: msg_id}}
-        } = _event
-      )
-      when is_binary(msg_id) do
+  # The envelope carries `uri / slice_key / cursor / event_at /
+  # result_summary` only — to render anything richer we re-fetch
+  # the affected entity's slice via `Ezagent.Kind.get_slice/2`.
+  # That call goes to the live Kind GenServer; the read is in-VM and
+  # synchronous. A failed fetch (Kind not alive, etc.) degrades to a
+  # generic "Update on <uri>" line so the flash always surfaces.
+  #
+  # For chat (`slice_key == :chat`) we look at the fetched slice's
+  # `:last_received.message_id` and load the actual `Ezagent.Message`
+  # row from `MessageStore` to build the "<sender>: <preview>" line.
+  # Other slice keys (`:identity` / `:workspace` / etc — PR-N4
+  # producers) get the generic fallback until bespoke formatters land.
+  def format_slice_change(%{uri: %URI{} = uri, slice_key: :chat} = _event) do
+    case Ezagent.Kind.get_slice(uri, :chat) do
+      {:ok, %{last_received: %{message_id: msg_id}}} when is_binary(msg_id) ->
+        chat_flash_for(msg_id)
+
+      _ ->
+        "New chat update on #{URI.to_string(uri)}"
+    end
+  end
+
+  def format_slice_change(%{uri: %URI{} = uri, slice_key: slice_key} = _event)
+      when is_atom(slice_key) do
+    "Update on #{URI.to_string(uri)} (#{slice_key})"
+  end
+
+  def format_slice_change(other), do: "Slice changed: #{inspect(other)}"
+
+  # Build the chat-style flash from a persisted message id. Splitting
+  # this out makes the `:chat` clause a single match-and-render so the
+  # re-fetch failure path stays readable.
+  defp chat_flash_for(msg_id) when is_binary(msg_id) do
     case Ezagent.MessageStore.by_id(msg_id) do
       {:ok, %Ezagent.Message{sender: sender, body: body}} ->
         "New message from #{URI.to_string(sender)}: #{message_preview(body)}"
@@ -387,12 +414,6 @@ defmodule EzagentPluginLiveview.AdminLive do
         "New chat message (id #{msg_id})"
     end
   end
-
-  def format_slice_change(%{kind_module: kind_module, action: action} = _event) do
-    "Update on #{inspect(kind_module)} — #{inspect(action)}"
-  end
-
-  def format_slice_change(other), do: "Slice changed: #{inspect(other)}"
 
   # Best-effort preview from a Message body. Body may be either an
   # atom-keyed map (newly-built) or string-keyed (post-DB roundtrip —
