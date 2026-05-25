@@ -77,6 +77,10 @@ defmodule EzagentPluginLiveview.AdminLive do
     # re-asserting here keeps admin_live tests robust to ETS pollution
     # (same belt-and-suspenders shape as the TerminalView line above).
     :ok = SessionViewRegistry.register(EzagentDomainUi.Routing.RoutingView)
+    # 2026-05-25 — ExternalMirror Bindings SessionView. Same belt-and-
+    # suspenders re-registration so admin_live tests stay robust to
+    # session_view_registry_test.exs's setup wipe.
+    :ok = SessionViewRegistry.register(EzagentDomainUi.ExternalMirror.View)
 
     # Phase 8c follow-up (Allen 2026-05-20) — auto-spawn session://default/system/main
     # if missing. Without this the LV mounts with a hardcoded
@@ -1281,6 +1285,7 @@ defmodule EzagentPluginLiveview.AdminLive do
                   session_routing_rules={@session_routing_rules}
                   entity_options={@routing_entity_options}
                   receiver_options={@routing_receiver_options}
+                  session_bindings={@session_bindings}
                 />
               </:main_view>
             </SessionEditor.session_editor>
@@ -1346,6 +1351,8 @@ defmodule EzagentPluginLiveview.AdminLive do
   # V1 UI PR-1 — RoutingView's uri_picker option lists.
   attr(:entity_options, :list, default: [])
   attr(:receiver_options, :list, default: [])
+  # 2026-05-25 — ExternalMirror Bindings SessionView reads this.
+  attr(:session_bindings, :list, default: [])
 
   defp render_active_view(assigns) do
     case assigns.view_module do
@@ -1406,6 +1413,13 @@ defmodule EzagentPluginLiveview.AdminLive do
 
     session_routing_rules = list_session_scoped_rules(session_uri)
 
+    # 2026-05-25 — per-session ExternalMirror bindings list, surfaced by
+    # `EzagentDomainUi.ExternalMirror.View`. Read via the dispatched
+    # `list_bindings` action so CapBAC step 5.5 enforces Cap 1; a
+    # caller without the cap gets [] (the view renders the empty state
+    # AND a navigate link to the per-session admin LV).
+    session_bindings = list_session_bindings(socket, session_uri)
+
     display_map = Ezagent.EntityPresenter.display_many(member_uris)
 
     member_options =
@@ -1425,8 +1439,33 @@ defmodule EzagentPluginLiveview.AdminLive do
     |> assign(:session_info, build_session_info(session_uri, members))
     |> assign(:feishu_chat_ids, feishu_chat_ids_for(session_uri))
     |> assign(:session_routing_rules, session_routing_rules)
+    |> assign(:session_bindings, session_bindings)
     |> assign_routing_uri_options()
   end
+
+  # ExternalMirror bindings for a session, via the dispatched
+  # `list_bindings` facade so the CapBAC gate runs. Read failures (no
+  # Cap 1 / not_ready / cross_workspace_denied / no_such_actor) are
+  # absorbed to [] — the view renders the empty state, which already
+  # explains how to proceed (navigate to the per-session admin LV).
+  defp list_session_bindings(socket, %URI{} = session_uri) do
+    ctx = %{
+      caller: Map.get(socket.assigns, :caller_uri) || socket.assigns.current_entity_uri,
+      caps: Map.get(socket.assigns, :caller_caps, MapSet.new()),
+      reply: :ignore
+    }
+
+    case Ezagent.ExternalMirror.list_bindings(session_uri, ctx) do
+      {:ok, bindings} -> bindings
+      _ -> []
+    end
+  rescue
+    # ExternalMirror facade missing / DB down / etc. — view falls
+    # through to empty state.
+    _ -> []
+  end
+
+  defp list_session_bindings(_socket, _), do: []
 
   # V1 UI SPEC §2C.3 — entity option list for the Invite modal's
   # `:single` uri_picker, scoped to the SESSION's workspace and pruned
@@ -1529,10 +1568,13 @@ defmodule EzagentPluginLiveview.AdminLive do
   end
 
   # V1 Allen #2 — explicit display order for the Session view-switcher.
-  # Chat (`:conversation`) first, Routing (`:routing`) middle, Terminal
+  # Chat (`:conversation`) first, Routing (`:routing`) second,
+  # ExternalMirror Bindings (`:external_mirror`) third, Terminal
   # (`:pty`) last. Unknown ids (future plugin views) fall to the end in
   # registration order so adding a new view doesn't silently disappear.
-  @view_display_order [:conversation, :routing, :pty]
+  # 2026-05-25 — `:external_mirror` slot added between routing + pty
+  # per Allen's "Routing-rules + ExternalMirror-bindings tabs" intent.
+  @view_display_order [:conversation, :routing, :external_mirror, :pty]
   defp sort_views(views) do
     Enum.sort_by(views, fn %{id: id} ->
       case Enum.find_index(@view_display_order, &(&1 == id)) do

@@ -82,7 +82,7 @@ defmodule EzagentDomainUi.Routing.RoutingView do
             {session_uri_string(@session_uri)}
           </code>
           {gettext("via an in_session matcher. Global + workspace rules also fire for this session — see")}
-          <a href="/routing" class="text-blue-600 dark:text-blue-400 hover:underline">/routing</a>
+          <a href="/admin/routing" class="text-blue-600 dark:text-blue-400 hover:underline">/routing</a>
           {gettext("for all scopes.")}
         </p>
 
@@ -130,7 +130,7 @@ defmodule EzagentDomainUi.Routing.RoutingView do
             class="text-center py-8 text-sm text-zinc-500 dark:text-zinc-400 border border-dashed border-zinc-300 dark:border-zinc-700 rounded"
           >
             {gettext("No session-scoped rules. Add one below, or see")}
-            <a href="/routing" class="text-blue-600 dark:text-blue-400 hover:underline">/routing</a>
+            <a href="/admin/routing" class="text-blue-600 dark:text-blue-400 hover:underline">/routing</a>
             {gettext("for workspace/global rules.")}
           </div>
         </div>

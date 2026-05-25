@@ -68,8 +68,10 @@ defmodule EzagentPluginLiveview.CommandPaletteComponentTest do
       html = lv |> form("#cmdk form", %{"q" => "routing"}) |> render_change()
 
       assert html =~ "Routing"
-      # phx-value-key on the result row is the stable CommandSource key.
-      assert html =~ ~s(phx-value-key="nav:/routing")
+      # 2026-05-25 — /routing relocated to /admin/routing (admin scope).
+      # phx-value-key on the result row is the stable CommandSource key
+      # (the path itself).
+      assert html =~ ~s(phx-value-key="nav:/admin/routing")
     end
 
     test "typing 'sessions' surfaces the Sessions nav result", %{conn: conn} do
@@ -111,9 +113,10 @@ defmodule EzagentPluginLiveview.CommandPaletteComponentTest do
 
       # cmdk_select fires with phx-value-key; the component looks the
       # key up in its %{key => result} map and push_navigates.
-      assert {:error, {:live_redirect, %{to: "/routing"}}} =
+      # 2026-05-25 — /routing relocated to /admin/routing.
+      assert {:error, {:live_redirect, %{to: "/admin/routing"}}} =
                lv
-               |> element(~s(#cmdk button[phx-value-key="nav:/routing"]))
+               |> element(~s(#cmdk button[phx-value-key="nav:/admin/routing"]))
                |> render_click()
     end
   end

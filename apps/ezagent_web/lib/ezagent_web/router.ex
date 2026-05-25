@@ -98,9 +98,6 @@ defmodule EzagentWeb.Router do
       live "/workspaces", WorkspacesLive
       live "/workspaces/:name", WorkspaceDetailLive
 
-      # Routing Activity.
-      live "/routing", RoutingLive
-
       # Identities Activity (address book: users + agents are entity sub-types).
       live "/identities", IdentitiesLive
       live "/identities/users", UsersLive
@@ -181,6 +178,14 @@ defmodule EzagentWeb.Router do
       # registration domains); belongs under /admin (admin scope),
       # not the avatar Preference dropdown (personal scope).
       live "/admin/settings", SettingsLive
+      # 2026-05-25 — Routing relocated from top-level `/routing` to
+      # `/admin/routing` (admin scope). Routing-rule mutation is an
+      # operator-level concern; the sidebar Routing tile was dropped
+      # from the workspace activity_bar (same precedent as the
+      # Workspaces tile drop in PR-L). The page now adds an
+      # ExternalMirror Bindings cross-session admin tab alongside the
+      # MentionRouting rules editor.
+      live "/admin/routing", RoutingLive
       # PR-EM-4 (2026-05-25, SPEC §9 PR-EM-4): per-session admin LV for
       # ExternalMirror Domain. URL `:id` is the URL-encoded canonical
       # session URI (same convention as `/identities/agents/:uri/caps`).

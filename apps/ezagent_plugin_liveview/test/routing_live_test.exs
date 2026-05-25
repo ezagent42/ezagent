@@ -24,10 +24,13 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
     {:ok, conn: conn}
   end
 
-  test "GET /routing renders MentionRouting form + retirement blurb (no SessionRouting tab)",
+  test "GET /admin/routing renders MentionRouting form + retirement blurb (no SessionRouting tab)",
        %{conn: conn} do
-    {:ok, _lv, html} = live(conn, "/routing")
-    assert html =~ "Routing Rules"
+    {:ok, _lv, html} = live(conn, "/admin/routing")
+    # 2026-05-25 — page header changed from "Routing Rules" to
+    # "Routing" (tab strip below has "Rules" + "ExternalMirror
+    # Bindings" tabs).
+    assert html =~ "Routing"
     assert html =~ "MentionRouting"
     assert html =~ "Add rule"
     assert html =~ "Form mode"
@@ -43,7 +46,7 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
   end
 
   test "matcher arg + receivers render uri_picker components", %{conn: conn} do
-    {:ok, lv, html} = live(conn, "/routing")
+    {:ok, lv, html} = live(conn, "/admin/routing")
     # V1 UI PR-1 — raw text inputs replaced with uri_picker.
     assert html =~ ~s(phx-hook="UriPicker")
     assert html =~ ~s(data-mode="single")
@@ -55,7 +58,7 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
   end
 
   test "add_rule via form-mode mention persists + appears in list", %{conn: conn} do
-    {:ok, lv, _html} = live(conn, "/routing")
+    {:ok, lv, _html} = live(conn, "/admin/routing")
 
     # The uri_picker hidden inputs are JS-managed (empty in a
     # dead-render). Set form-real fields (table/matcher_type) via
@@ -84,7 +87,7 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
   # main_window top-tab strip nor in the resource_panel sidebar.
 
   test "add_rule via JSON mode supports combinators", %{conn: conn} do
-    {:ok, lv, _html} = live(conn, "/routing")
+    {:ok, lv, _html} = live(conn, "/admin/routing")
 
     lv |> element("button[phx-value-mode='json']") |> render_click()
 
@@ -111,7 +114,7 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
   end
 
   test "add_rule rejects empty receivers", %{conn: conn} do
-    {:ok, lv, _html} = live(conn, "/routing")
+    {:ok, lv, _html} = live(conn, "/admin/routing")
 
     lv
     |> form("#add-rule form",
@@ -129,7 +132,7 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
   # --- V1 UI PR-1 (SPEC §1.6) — server-side revalidation ---------------------
 
   test "add_rule rejects a tampered out-of-workspace matcher arg", %{conn: conn} do
-    {:ok, lv, _html} = live(conn, "/routing")
+    {:ok, lv, _html} = live(conn, "/admin/routing")
 
     # The picker is scoped to workspace://team-alpha; a hand-tampered
     # hidden input naming an entity in another workspace must be
@@ -153,7 +156,7 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
   end
 
   test "add_rule rejects a tampered out-of-workspace receiver", %{conn: conn} do
-    {:ok, lv, _html} = live(conn, "/routing")
+    {:ok, lv, _html} = live(conn, "/admin/routing")
 
     lv
     |> form("#add-rule form",
@@ -174,7 +177,7 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
   end
 
   test "add_rule rejects a malformed receiver URI", %{conn: conn} do
-    {:ok, lv, _html} = live(conn, "/routing")
+    {:ok, lv, _html} = live(conn, "/admin/routing")
 
     lv
     |> form("#add-rule form",
@@ -197,7 +200,7 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
   # --- Mention-gated routing (SPEC §3 / §6.7) — broadcast option -------------
 
   test "receiver picker offers the 'All session members (broadcast)' option", %{conn: conn} do
-    {:ok, _lv, html} = live(conn, "/routing")
+    {:ok, _lv, html} = live(conn, "/admin/routing")
 
     # The broadcast option is prepended to the receiver picker's
     # data-options; selecting it submits the $session_members token.
@@ -206,7 +209,7 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
   end
 
   test "add_rule accepts the $session_members broadcast token as a receiver", %{conn: conn} do
-    {:ok, lv, _html} = live(conn, "/routing")
+    {:ok, lv, _html} = live(conn, "/admin/routing")
 
     matcher_arg = "entity://agent/team-alpha/test_bcast-#{System.unique_integer([:positive])}"
 
@@ -227,7 +230,7 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
   end
 
   test "add_rule accepts $session_users + $mentions magic tokens as receivers", %{conn: conn} do
-    {:ok, lv, _html} = live(conn, "/routing")
+    {:ok, lv, _html} = live(conn, "/admin/routing")
 
     matcher_arg = "entity://agent/team-alpha/test_mg-#{System.unique_integer([:positive])}"
 
@@ -256,8 +259,30 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
   # render the palette. /routing is a non-Admin ide_shell LV — if a
   # future LV is added without the `:command_palette` slot, the same
   # class of gap regresses; this test catches it on at least one of them.
-  test "CmdK command palette renders on /routing (non-Admin ide_shell LV)", %{conn: conn} do
-    {:ok, _lv, html} = live(conn, "/routing")
+  # 2026-05-25 — /routing was relocated to /admin/routing under the
+  # admin scope. The page now ships two tabs: Rules (default) +
+  # ExternalMirror Bindings.
+  test "tab strip renders Rules + ExternalMirror Bindings entries", %{conn: conn} do
+    {:ok, _lv, html} = live(conn, "/admin/routing")
+    assert html =~ ~s(id="tab-rules")
+    assert html =~ ~s(id="tab-bindings")
+    assert html =~ "ExternalMirror Bindings"
+    # Default tab is Rules — the form-mode editor renders.
+    assert html =~ ~s(id="rules-tab")
+    refute html =~ ~s(id="bindings-tab")
+  end
+
+  test "?tab=bindings switches into the bindings tab (read-only)", %{conn: conn} do
+    {:ok, _lv, html} = live(conn, "/admin/routing?tab=bindings")
+    assert html =~ ~s(id="bindings-tab")
+    # bindings-empty surfaces when the admin viewer has no bindings
+    # visible (test setup uses bootstrap admin, no bindings created).
+    assert html =~ ~s(id="bindings-empty") or html =~ ~s(id="bindings-table")
+    refute html =~ ~s(id="rules-tab")
+  end
+
+  test "CmdK command palette renders on /admin/routing (admin LV)", %{conn: conn} do
+    {:ok, _lv, html} = live(conn, "/admin/routing")
 
     # The CommandPaletteComponent root carries `id="cmdk"` and the
     # `data-cmdk-open` JS push that app.js execJS-es on the ⌘K keybind.

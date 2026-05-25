@@ -1,6 +1,7 @@
 defmodule EzagentPluginLiveview.RoutingLive do
   @moduledoc """
-  /routing — global MentionRouting rules editor.
+  /admin/routing — admin-scope routing editor + ExternalMirror Bindings
+  cross-session admin tab.
 
   Per Phase 4-completion Spec 05 Part B B.2 — replaces the
   `mix ezagent.routing.add_rule` CLI workflow for admin operators.
@@ -8,6 +9,26 @@ defmodule EzagentPluginLiveview.RoutingLive do
   (Q-RT-1 default γ); this LV manages the **global**
   `EzagentDomainChat.Routing.MentionRouting` table from the chat
   plugin.
+
+  ## /routing → /admin/routing relocation (2026-05-25)
+
+  Routing-rule mutation is an operator-level concern; the workspace
+  sidebar tile was dropped (`workspace_shell.ex#activity_items/0`),
+  the route moved into the `:require_admin` scope, and the LV now
+  wears the admin chrome (`AdminShell` instead of `WorkspaceShell`).
+  Same precedent as the Workspaces tile drop (PR-L).
+
+  ## Two tabs: Rules + ExternalMirror Bindings
+
+  - **Rules tab** (default) — the MentionRouting editor (unchanged
+    behaviour from the previous `/routing` page).
+  - **ExternalMirror Bindings tab** (`?tab=bindings`) — read-only
+    cross-session list of `external_mirror_bindings` rows. Sourced
+    from `Ezagent.ExternalMirror.list_all_bindings/1`, which applies
+    the same workspace + per-session-cap filter as
+    `sessions_for_adapter/2`. Each row links to the per-session
+    `/admin/sessions/:id/external_mirror` LV for the full bind /
+    unbind / audit-drilldown surface.
 
   ## SessionRouting retirement (2026-05-25)
 
@@ -49,7 +70,7 @@ defmodule EzagentPluginLiveview.RoutingLive do
   # i18n (Allen 2026-05-22) — runtime backend reference; no compile-time
   # dep on :ezagent_web.
   use Gettext, backend: EzagentPluginLiveview.Gettext
-  alias EzagentDomainUi.WorkspaceShell
+  alias EzagentDomainUi.AdminShell
   alias EzagentPluginLiveview.AppShell
   # V-4 scrub (audit 2026-05-23) — pull in `<.card>`, `<.button>`,
   # `<.page_header>`, `<.badge>` atoms to retire inline style="" usage.
@@ -102,6 +123,8 @@ defmodule EzagentPluginLiveview.RoutingLive do
      |> assign(:matcher_mode, "form")
      |> assign(:caller_uri, caller_uri)
      |> assign(:caller_caps, caller_caps)
+     |> assign(:active_tab, :rules)
+     |> assign(:bindings, [])
      |> assign(:entity_options, UriOptions.entities(caller_uri, workspace_uri))
      |> assign(
        :receiver_options,
@@ -120,6 +143,51 @@ defmodule EzagentPluginLiveview.RoutingLive do
          as: "rule"
        )
      )}
+  end
+
+  # `?tab=bindings` switches into the ExternalMirror Bindings tab and
+  # lazy-loads the cross-session row list via the facade. The default
+  # (no `tab` param OR any unknown value) is `:rules` — backward-
+  # compatible with bookmarked `/admin/routing` URLs from before the
+  # tabs landed.
+  @impl true
+  def handle_params(params, _uri, socket) do
+    # Self-review MEDIUM (2026-05-25): clear `flash_error` on tab
+    # patch so a Rules-tab error (e.g. "Rejected URI") doesn't bleed
+    # into the Bindings tab's render and confuse the operator. Per P27
+    # — server-side observability is non-negotiable, but the
+    # per-tab UI surface should not carry stale state.
+    case Map.get(params, "tab") do
+      "bindings" ->
+        {:noreply,
+         socket
+         |> assign(:active_tab, :bindings)
+         |> assign(:flash_error, nil)
+         |> assign(:bindings, load_all_bindings(socket))}
+
+      _ ->
+        {:noreply,
+         socket
+         |> assign(:active_tab, :rules)
+         |> assign(:flash_error, nil)}
+    end
+  end
+
+  # ExternalMirror Bindings cross-session admin tab (2026-05-25). The
+  # facade applies the workspace + per-session-cap filter for non-
+  # wildcard admins; an admin LV viewer with no list_bindings cap on
+  # any session sees `[]`.
+  defp load_all_bindings(socket) do
+    ctx = %{
+      caller: socket.assigns.caller_uri,
+      caps: socket.assigns.caller_caps,
+      reply: :ignore
+    }
+
+    case Ezagent.ExternalMirror.list_all_bindings(ctx) do
+      {:ok, bindings} -> bindings
+      _ -> []
+    end
   end
 
   defp load_rules(table) do
@@ -462,7 +530,9 @@ defmodule EzagentPluginLiveview.RoutingLive do
 
   @impl true
   def render(assigns) do
-    # Phase 8 阶段 C: wrap in IdeShell.
+    # 2026-05-25 — admin-scope chrome (`AdminShell`) replaces the
+    # previous workspace chrome. Two tabs: Rules (default) +
+    # ExternalMirror Bindings.
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
         URI.to_string(assigns.current_entity_uri || URI.parse("entity://user/system/admin"))
@@ -470,7 +540,7 @@ defmodule EzagentPluginLiveview.RoutingLive do
 
     ~H"""
     <AppShell.app_shell
-      perspective={:workspace}
+      perspective={:admin}
       current_entity_uri={@current_entity_uri_str}
       current_workspace_uri={@current_workspace_uri}
       is_admin?={@is_admin?}
@@ -479,33 +549,113 @@ defmodule EzagentPluginLiveview.RoutingLive do
       cmdk_nav_routes={@cmdk_nav_routes}
     >
       <:body>
-        <WorkspaceShell.workspace_shell
-          current_entity_uri={@current_entity_uri_str}
-          current_path="/routing"
-          status={%{agents_alive: 0, bridges: 0, debug_events: 0, version: "dev"}}
-        >
-          <:resource_panel>
-            <div class="p-3 flex flex-col gap-2">
-              <div class="text-[10px] uppercase tracking-wide text-zinc-500">{gettext("Table")}</div>
-              <div class="px-2 py-1 text-xs rounded font-mono bg-zinc-100 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100">
-                MentionRouting
-              </div>
-              <p class="text-[11px] text-zinc-500 mt-1">
-                {gettext(
-                  "SessionRouting was retired on 2026-05-25 — Feishu chat ↔ session bridging moved to the ExternalMirror domain (PR #317)."
-                )}
-              </p>
-            </div>
-          </:resource_panel>
-          <:main_window>
+        <AdminShell.admin_shell current_path="/admin/routing" active_section={:routing}>
+          <:main>
             <div class="flex-1 overflow-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
-              <.page_header title={gettext("Routing Rules")}>
+              <.page_header title={gettext("Routing")}>
                 <:subtitle>
                   {gettext(
-                    "Global RoutingRegistry table. Per-workspace routing_rules stay config-only metadata (visible on Workspace detail page)."
+                    "Global RoutingRegistry table + ExternalMirror Bindings (cross-session, read-only)."
                   )}
                 </:subtitle>
               </.page_header>
+
+              <%!-- Tab strip: Rules + ExternalMirror Bindings.
+                URL-driven so refresh + bookmark + back/forward all work
+                (handled by `handle_params/3`). --%>
+              <nav id="routing-tabs" class="mb-4 border-b border-zinc-200 dark:border-zinc-800 flex gap-1">
+                <.link
+                  patch="/admin/routing"
+                  id="tab-rules"
+                  class={tab_class(@active_tab == :rules)}
+                  aria-current={(@active_tab == :rules && "page") || nil}
+                >
+                  {gettext("Rules")}
+                </.link>
+                <.link
+                  patch="/admin/routing?tab=bindings"
+                  id="tab-bindings"
+                  class={tab_class(@active_tab == :bindings)}
+                  aria-current={(@active_tab == :bindings && "page") || nil}
+                >
+                  {gettext("ExternalMirror Bindings")}
+                </.link>
+              </nav>
+
+              <%!-- ExternalMirror Bindings tab (cross-session read-only).
+                Per-row link → /admin/sessions/:id/external_mirror for the
+                full bind/unbind/audit surface. --%>
+              <div :if={@active_tab == :bindings} id="bindings-tab">
+                <.card id="bindings-list">
+                  <:header>
+                    {gettext("ExternalMirror Bindings")}
+                    <span class="ml-2 inline-block px-1.5 py-0.5 text-[10px] font-mono bg-zinc-100 dark:bg-zinc-800 rounded">
+                      {length(@bindings)}
+                    </span>
+                  </:header>
+
+                  <p
+                    :if={@bindings == []}
+                    id="bindings-empty"
+                    class="text-sm text-zinc-500 italic"
+                  >
+                    {gettext(
+                      "No bindings visible — either none exist, or you don't hold the :list_bindings cap on any session. Bind a session via /admin/sessions/<id>/external_mirror."
+                    )}
+                  </p>
+
+                  <table
+                    :if={@bindings != []}
+                    id="bindings-table"
+                    class="w-full text-xs border-collapse"
+                  >
+                    <thead>
+                      <tr class="border-b border-zinc-200 dark:border-zinc-800">
+                        <th class="text-left px-1 py-1.5">{gettext("Session")}</th>
+                        <th class="text-left">{gettext("Adapter")}</th>
+                        <th class="text-left">{gettext("Target")}</th>
+                        <th class="text-left">{gettext("Bound by")}</th>
+                        <th class="text-left">{gettext("Bound at")}</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr
+                        :for={b <- @bindings}
+                        id={"binding-row-#{b.adapter_id}-#{b.target_id}"}
+                        class="border-b border-zinc-100 dark:border-zinc-900"
+                      >
+                        <td class="font-mono text-[11px] break-all py-1">
+                          {format_uri(b.session_uri)}
+                        </td>
+                        <td class="font-mono text-[11px]">{b.adapter_id}</td>
+                        <td class="font-mono text-[11px] break-all">{b.target_id}</td>
+                        <td class="font-mono text-[11px]">{b.bound_by}</td>
+                        <td class="font-mono text-[11px] whitespace-nowrap">
+                          {format_dt(b.bound_at)}
+                        </td>
+                        <td class="whitespace-nowrap text-right">
+                          <.link
+                            navigate={
+                              "/admin/sessions/" <>
+                                URI.encode_www_form(format_uri(b.session_uri)) <>
+                                "/external_mirror"
+                            }
+                            class="text-[11px] text-sky-700 dark:text-sky-300 hover:underline"
+                          >
+                            {gettext("Manage")}
+                          </.link>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </.card>
+              </div>
+
+              <%!-- Rules tab (MentionRouting editor). Wrapped in
+                `:if={@active_tab == :rules}` so the heavy form HTML
+                doesn't render on the Bindings tab. --%>
+              <div :if={@active_tab == :rules} id="rules-tab">
 
               <%!-- 2026-05-25: SessionRouting retired — see moduledoc.
                 With only MentionRouting left, the old <section
@@ -768,13 +918,31 @@ defmodule EzagentPluginLiveview.RoutingLive do
                   {@flash_error}
                 </p>
               </.card>
+              </div>
             </div>
-          </:main_window>
-        </WorkspaceShell.workspace_shell>
+          </:main>
+        </AdminShell.admin_shell>
       </:body>
     </AppShell.app_shell>
     """
   end
+
+  # Tab strip styling — active vs inactive. Mirrors the underline-tab
+  # pattern used elsewhere in the admin UI.
+  defp tab_class(true) do
+    "px-4 py-2 text-sm font-medium border-b-2 border-orange-500 text-zinc-900 dark:text-zinc-100"
+  end
+
+  defp tab_class(false) do
+    "px-4 py-2 text-sm font-medium border-b-2 border-transparent text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 hover:border-zinc-300 dark:hover:border-zinc-700"
+  end
+
+  defp format_uri(%URI{} = uri), do: URI.to_string(uri)
+  defp format_uri(s) when is_binary(s), do: s
+  defp format_uri(_), do: "—"
+
+  defp format_dt(%DateTime{} = dt), do: DateTime.to_iso8601(dt)
+  defp format_dt(_), do: "—"
 
   # V-4 scrub (audit 2026-05-23) — Tailwind classes replace inline
   # style strings; tab styling is now inlined into the render template

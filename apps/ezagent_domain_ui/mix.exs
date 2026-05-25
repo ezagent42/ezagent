@@ -49,6 +49,12 @@ defmodule EzagentDomainUi.MixProject do
       {:ezagent_core, in_umbrella: true},
       {:ezagent_domain_pty, in_umbrella: true},
       {:ezagent_domain_identity, in_umbrella: true},
+      # 2026-05-25 — ExternalMirror Bindings SessionView (under
+      # `EzagentDomainUi.ExternalMirror.View`) consumes
+      # `Ezagent.ExternalMirror.list_bindings/2` to render the per-
+      # session bindings tab in the `/sessions` view-switcher. Domain
+      # → Domain dep (no cycle: external_mirror depends only on core).
+      {:ezagent_domain_external_mirror, in_umbrella: true},
       {:phoenix_live_view, ">= 0.0.0"},
       {:phoenix_html, "~> 4.1"},
       # i18n (Allen 2026-05-22) — domain_ui owns its own Gettext backend

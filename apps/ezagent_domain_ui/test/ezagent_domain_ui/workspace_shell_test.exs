@@ -34,11 +34,12 @@ defmodule EzagentDomainUi.WorkspaceShellTest do
         """)
 
       assert html =~ ~s(id="workspace-shell")
-      # Activity Bar — 4 items.
+      # Activity Bar — 3 items (2026-05-25: Routing tile dropped, moved
+      # to admin scope at /admin/routing).
       assert html =~ "Sessions"
       assert html =~ "Identities"
-      assert html =~ "Routing"
       assert html =~ "Plugins"
+      refute html =~ ~s(title="Routing")
       # Main Window slot rendered.
       assert html =~ "MAIN_CONTENT"
       # Status Bar.
@@ -126,16 +127,21 @@ defmodule EzagentDomainUi.WorkspaceShellTest do
   end
 
   describe "activity helpers" do
-    test "activity_items/0 returns the 4 SPEC-defined items" do
+    # 2026-05-25 — Routing tile dropped from workspace activity bar
+    # (admin-scope only now; lives at /admin/routing). Bar is now 3
+    # items: Sessions / Identities / Plugins.
+    test "activity_items/0 returns the 3 SPEC-defined items (Routing dropped)" do
       keys = Enum.map(WorkspaceShell.activity_items(), & &1.key)
-      assert keys == [:sessions, :identities, :routing, :plugins]
+      assert keys == [:sessions, :identities, :plugins]
+      refute :routing in keys
     end
 
     test "activity_for_path/1 maps known paths" do
       assert WorkspaceShell.activity_for_path("/sessions") == :sessions
       assert WorkspaceShell.activity_for_path("/identities") == :identities
-      assert WorkspaceShell.activity_for_path("/routing") == :routing
       assert WorkspaceShell.activity_for_path("/plugins") == :plugins
+      # /routing was relocated to /admin/routing; admin paths return nil.
+      assert WorkspaceShell.activity_for_path("/admin/routing") == nil
       assert WorkspaceShell.activity_for_path("/admin/logs") == nil
       assert WorkspaceShell.activity_for_path("/workspaces") == nil
       assert WorkspaceShell.activity_for_path("/unknown") == :sessions
