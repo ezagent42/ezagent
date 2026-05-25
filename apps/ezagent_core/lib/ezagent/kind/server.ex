@@ -126,12 +126,56 @@ defmodule Ezagent.Kind.Server do
     case Ezagent.KindRegistry.put_new(uri_str, self()) do
       :ok ->
         :ok = Ezagent.ReadyGate.put(uri_str, :not_ready)
+        persist_initial_snapshot(uri, kind_module, slice_state)
         schedule_periodic_snapshot(kind_module)
         {:ok, state, {:continue, :announce_ready}}
 
       {:error, {:already_registered, _other_pid}} ->
         # Let-it-crash — duplicate spawn is a bug at the caller layer.
         {:stop, {:already_registered, uri_str}}
+    end
+  end
+
+  # Allen 2026-05-25 — CLI persistence fix.
+  #
+  # `Kind.Server.init/1` historically only wrote a snapshot when a
+  # dispatch mutated the slice (`commit_and_notify/3`), the periodic
+  # timer fired, or `terminate/2` ran (`:on_terminate` strategy). All
+  # three assume a long-lived BEAM.
+  #
+  # `mix ezagent.agent.create` (and any other `mix` task that spawns
+  # Kinds) runs in a short-lived BEAM that exits seconds after
+  # `Ezagent.Kind.spawn/2` returns — well before the periodic timer
+  # fires and before the supervisor can drain `terminate/2` reliably.
+  # Result: the freshly-init'd Kind exists in memory only, never lands
+  # in `kind_snapshots`, and is invisible to any subsequent BEAM that
+  # tries to look it up. The CLI demo
+  # `mix ezagent.agent.create entity://agent/system/cc_linyilun-default`
+  # silently lost the Agent on mix exit.
+  #
+  # Fix: synchronously write the initial slice once the Kind is in
+  # `KindRegistry`, regardless of strategy. We deliberately use
+  # `save_now/3` (not `commit/4`) because `commit/4` policy-gates and
+  # would return `:not_durable` for `:on_terminate` / `:periodic` —
+  # exactly the strategies we need to fix. For `:ephemeral` /
+  # `:external` we skip: those strategies are documented "no DB
+  # touch."
+  #
+  # `save_now/3` swallows DB failures (logs + telemetry) per its
+  # moduledoc contract; an unwritable initial snapshot does not
+  # prevent the Kind from booting (the in-memory slice is still the
+  # truth until the next write attempt). Lesson 2026-05-25.
+  defp persist_initial_snapshot(uri, kind_module, slice_state) do
+    case kind_module.persistence() do
+      :ephemeral ->
+        :ok
+
+      :external ->
+        :ok
+
+      _ ->
+        _ = Ezagent.Kind.Snapshot.save_now(uri, kind_module, slice_state)
+        :ok
     end
   end
 

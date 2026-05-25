@@ -112,13 +112,19 @@ defmodule Ezagent.Integration.SnapshotRestartTest do
 
       uri_str = URI.to_string(uri)
 
-      # Before terminate: no row
-      assert nil == KindSnapshot.get(uri_str)
+      # Allen 2026-05-25 — CLI persistence fix: `Kind.Server.init/1` now
+      # writes an initial snapshot for any non-ephemeral strategy so
+      # mix-task-spawned Kinds survive BEAM exit. The pre-terminate row
+      # therefore EXISTS now (it didn't before this fix); the meaningful
+      # invariant is "terminate updates the row," which we capture below
+      # by asserting `kind_type: "agent"` post-terminate (same as
+      # before).
+      assert %KindSnapshot{kind_type: "agent"} = KindSnapshot.get(uri_str)
 
       # Graceful terminate via supervisor — triggers terminate/2 hook
       :ok = DynamicSupervisor.terminate_child(EzagentDomainChat.AgentSupervisor, pid)
 
-      # Row should now exist
+      # Row should still exist (now updated by terminate/2)
       wait_until(fn -> not is_nil(KindSnapshot.get(uri_str)) end, 100)
       assert %KindSnapshot{kind_type: "agent"} = KindSnapshot.get(uri_str)
     end
