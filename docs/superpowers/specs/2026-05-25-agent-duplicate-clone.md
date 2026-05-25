@@ -1,7 +1,7 @@
 # SPEC — Agent duplicate/clone primitive (Behavior.Agent `:duplicate`)
 
-**Status:** DRAFT rev 2 · 2026-05-25 (codex r1 fixes)
-**Tier:** `apps/ezagent_domain_chat/` (new `Behavior.Agent` + action) + `apps/ezagent_core/` (Kind.Template snapshot callback + BehaviorRegistry slot) + `apps/ezagent_plugin_cc/` (cc snapshot impl) + `apps/ezagent_domain_workspace/` (mix task wrapper)
+**Status:** DRAFT rev 3 · 2026-05-25 (codex r1 + r2 fixes)
+**Tier:** `apps/ezagent_domain_chat/` (new `Behavior.Agent` + action) + `apps/ezagent_core/` (new `AgentOwnership` registry + Kind.Template snapshot callback adapter + BehaviorRegistry slot) + `apps/ezagent_plugin_cc/` (cc snapshot+restore impl) + `apps/ezagent_domain_workspace/` (mix task wrapper + ownership-write on `:create_agent`)
 **Trigger:** Allen 2026-05-24 (memory `feedback_agent_clone_not_via_template`) — "agent 创建的 template 如果不走正常的 template 创建和 fork 流程，可能导致开发 drift，但如果走标准流程，又可能导致 Template Registry 里面大量临时创建后再也不用的 template". Clone must live as a domain.agent primitive, NEVER via Template Registry.
 **Predecessors:**
 - `docs/superpowers/specs/2026-05-25-agent-create-cli-gui-parity.md` — `Behavior.Workspace.:create_agent` (NOT reused for spawn — see §3.4 rev-2 fix)
@@ -20,6 +20,12 @@
 - HIGH: all-or-nothing target spawn — config staged to temp + verified BEFORE target Kind comes up (§3.5)
 - HIGH: no `Workspace.create_agent` routing — dedicated primitive avoids template residue + adoption TOCTOU (§3.4)
 - MEDIUM: new `Kind.Template.snapshot_config_dir/2` callback owns plugin-side quiesce + manifest (§3.6)
+
+**Rev 3 changes (codex r2 verdict needs-attention → addressed):**
+- CRITICAL: rollback now closes the `:on_terminate` persistence hole — dispatches `Sandbox.:destroy` (clears slice + plugin-side cleanup) + deletes `KindSnapshot` row + revokes any granted caps BEFORE `Kind.terminate/1`. Failure-injection tests added for every post-spawn step (§3.4.2 + §7).
+- HIGH: `Behavior.Agent.data_owner(agent_uri)` now resolves to the **owning user URI** via a new `Ezagent.AgentOwnership` registry (ETS, parallel to `AgentLineage`). Source-owner can delegate the `:duplicate` cap to a target-ws admin via standard `Identity.grant_cap` — bilateral consent is now structurally possible, not bootstrap-admin-only (§3.8 + §4.2).
+- HIGH: `Kind.Template` snapshot callbacks remain `@optional` BUT the action body calls a core adapter `Ezagent.Kind.Template.snapshot_or_default/2` that checks `function_exported?` and normalizes missing callbacks to `{:ok, %{path: nil, manifest: %{}}}`. Acceptance test against a plugin with no callback (§7 row 10 expanded).
+- MEDIUM: cc snapshot manifest now content-hashes every file before + after copy, fails if any hash differs. `.credentials.json` rotation mid-snapshot is detected (§3.6.1 rewritten). §1 wording softened: "snapshot consistency is enforced by manifest verification; live writes during snapshot ABORT cleanly" (no more "point-in-time" claim that the V1 impl couldn't honor).
 
 ---
 
@@ -42,7 +48,7 @@ These are SPEC defaults. If reviewers want different semantics, raise in PR revi
 **Add a single dispatchable Behavior action — `Ezagent.Behavior.Agent.:duplicate` — that clones an existing agent into a new agent URI, optionally in a different workspace and/or owned by a different user, with all-or-nothing semantics and explicit two-sided authorization.** No Template Registry intermediary; no `save_as_template + fork + spawn` round-trip; no Template-Class drift risk; no `Workspace.create_agent` routing (avoids template residue + TOCTOU adoption — codex r1 HIGH-4).
 
 After this SPEC's impl PR lands:
-- `mix ezagent.agent.duplicate <source_uri> <target_uri> --owner <owner_uri>` produces a brand-new live agent at `target_uri`, with its own config_dir (FS-independent of source, point-in-time-consistent snapshot), fresh Identity caps, and **NO** chat-history coupling to source.
+- `mix ezagent.agent.duplicate <source_uri> <target_uri> --owner <owner_uri>` produces a brand-new live agent at `target_uri`, with its own config_dir (FS-independent of source; snapshot consistency enforced by per-file hash manifest — live writes during snapshot ABORT the clone cleanly, no half-copied state escapes), fresh Identity caps, and **NO** chat-history coupling to source.
 - The clone primitive lives on the **Agent Kind**, not on Template Registry. Template Class metadata is *referenced* (target agent keeps the same flavor + template_class) but no new Template Class is registered.
 - **Two-sided authorization** (codex r1 CRITICAL): caller needs BOTH (a) `{Behavior.Agent, :duplicate}` cap on **source** (held by source-owner or source-ws-admin) AND (b) `{Behavior.Workspace, :create_agent}` cap on **target workspace** (held by target-ws-admin). Target-ws-admin alone CANNOT exfiltrate source config.
 - **All-or-nothing** (codex r1 HIGH-3): config snapshot + verification happen BEFORE target Kind spawns. If snapshot fails, no target is created. If post-snapshot spawn fails, the staged dir is cleaned + caller sees a clean error.
@@ -275,27 +281,52 @@ end
 
 This differs from the existing `:already_started → :ok` patterns. For duplicate we MUST be the one that created the target — an adopted target's config we're about to overwrite is not our property.
 
-#### 3.4.2 `rollback_partial_target/3`
+#### 3.4.2 `rollback_partial_target/3` — durable cleanup (codex r2 CRITICAL fix)
+
+Codex r2 CRITICAL: Agent declares `persistence: :on_terminate`. `Kind.Server.terminate/2` writes the current slice via `Kind.Snapshot.put/3` on graceful shutdown. If we call `Kind.terminate/1` after `restore_snapshot`, `sandbox_write_path`, or `grant_initial_caps_for_owner` have mutated the target's slices, the partial state is persisted to durable storage — and a future spawn of the same `target_uri` would rehydrate the failed clone. Rollback must clear the slices BEFORE termination triggers the snapshot write.
 
 ```elixir
 defp rollback_partial_target(target_uri, staged_path, err) do
-  # Order matters: terminate Kind first (stops any in-flight work on the
-  # target's slice), then registry cleanup, then FS cleanup.
-  _ = Ezagent.Kind.terminate(target_uri)
-  _ = Ezagent.WorkspaceRegistry.unbind(target_uri)
+  # 1. Dispatch Sandbox.:destroy synchronously (clears the :sandbox slice
+  #    to `%{config_dir_path: nil, template_class: nil}` AND calls the
+  #    plugin's destroy_config_dir/2 for FS cleanup). Sandbox already
+  #    schedules a Task that terminates the Kind 20ms later, so this is
+  #    the durable cleanup pathway the Sandbox Behavior was designed for.
+  _ = dispatch_sandbox_destroy(target_uri)
+
+  # 2. Revoke caps granted by this action (Identity slice has been
+  #    mutated by grant_initial_caps_for_owner if we got that far). Calling
+  #    `Identity.revoke_cap` for each cap we attempted to grant clears them
+  #    from the slice; if revoke_cap is itself the failure, this is a no-op.
+  _ = revoke_initial_caps_if_granted(target_uri)
+
+  # 3. Forget AgentOwnership + AgentLineage rows (ESR registries).
+  _ = Ezagent.AgentOwnership.forget(target_uri)
   _ = Ezagent.AgentLineage.forget(target_uri)
-  # Remove the staged config dir AND the final-dir if restore_snapshot
-  # progressed that far. Final-dir is `template_class.agent_config_dir(target_uri)`.
+  _ = Ezagent.WorkspaceRegistry.unbind(target_uri)
+
+  # 4. Delete the persisted KindSnapshot row for target_uri. Step 1 cleared
+  #    the slice but the snapshot write hasn't happened yet (still inside
+  #    the Sandbox destroy task's 20ms window); deleting now ensures even
+  #    if a slice mutation races us, there's no row to load on next spawn.
+  #    Kind.Snapshot.delete/1 is idempotent (no-op if row absent).
+  _ = Ezagent.Kind.Snapshot.delete(target_uri)
+
+  # 5. Clean up the staging temp dir (Sandbox.:destroy handled the FINAL
+  #    config_dir under template_class.agent_config_dir(target_uri); the
+  #    snapshot temp is outside that tree and Sandbox doesn't know about
+  #    it, so this caller-side cleanup is still required).
   _ = File.rm_rf(staged_path)
-  case template_class_for(target_uri) do
-    {:ok, tc} when is_atom(tc) -> _ = tc.destroy_config_dir(target_uri, tc.agent_config_dir(target_uri))
-    _ -> :ok
-  end
+
   err
 end
 ```
 
-This is the only "checked rollback" shape allowed under `feedback_let_it_crash_no_workarounds` — it's not a defensive catch-all, it's a deterministic teardown of resources THIS action created, with the error preserved verbatim.
+Each step is idempotent. `dispatch_sandbox_destroy/1` is a `call`-mode dispatch (so it returns after the destroy action body has run + the slice has been cleared by `Kind.Server.commit_and_notify/3`); the Kind-termination Task it schedules runs asynchronously but the slice IS already clean when termination's snapshot-on-shutdown fires.
+
+**Failure-injection acceptance tests (§7 rows 7-9):** for each post-spawn step (`restore_snapshot`, `sandbox.write_path`, `grant_initial_caps`, `start_pty`), assert post-rollback: no `Kind.Snapshot.get(target_uri)` row, no `WorkspaceRegistry.lookup(target_uri)` binding, no `AgentLineage.lookup(target_uri)` row, no `AgentOwnership.lookup(target_uri)` row, no `template_class.agent_config_dir(target_uri)` on FS, no `staged_path` on FS.
+
+This is the "checked rollback" shape `feedback_let_it_crash_no_workarounds` allows — not a defensive catch-all, but a deterministic teardown of resources THIS action created, with the original error preserved verbatim.
 
 ### 3.5 Stage → spawn ordering rationale (codex r1 HIGH-3)
 
@@ -305,47 +336,48 @@ Rev-2: snapshot source to temp → spawn target → restore snapshot into target
 
 Why the two-phase: the SNAPSHOT phase is purely source-side + temp-dir; if it fails, no target was ever created (target_uri stays free). The SPAWN phase is bounded by `rollback_partial_target/3`. The single failure that creates an inconsistent state (cp_r fails after target is up but BEFORE rollback) is now self-recovered: the rollback runs Kind termination + dir cleanup, leaving target_uri free for retry.
 
-### 3.6 `Kind.Template.snapshot_config_dir/2` — new optional callback
+### 3.6 `Kind.Template.snapshot_config_dir/2` — new optional callback + core adapter (codex r2 HIGH-3 fix)
 
 New `@optional_callback` on `Ezagent.Kind.Template`:
 
 ```elixir
 @doc """
-Take a point-in-time snapshot of the source agent's config_dir into
-a temp dir, returning the temp path + a manifest.
-
-The plugin owns quiesce semantics — for cc, this means (V1): record
-the source PTY state, run `cp_r` with a marker, verify file count
-matches a pre-cp_r `find . | wc -l` (basic partial-write detector).
-Future cc V2 may add real quiesce (pause claude, fsync, copy, resume).
+Snapshot the source agent's config_dir into a temp dir, returning
+the temp path + a content-hash manifest. The manifest enables
+post-copy verification that no source file changed during snapshot
+(codex r2 MEDIUM-4 fix).
 
 The temp dir lives under `Ezagent.Home.path("cc-agents/.snapshots")/<uuid>/`
-so it's outside the agent-config tree and can be safely rm'd.
+— outside the agent-config tree, safely rm'able.
 
-Returns `{:ok, %{path: String.t(), manifest: map()}}` or
-`{:error, term()}`. On failure, the plugin MUST clean its own temp
-partial — the caller (Behavior.Agent.:duplicate) does NOT attempt
-to clean a path it never received.
+Returns `{:ok, %{path: String.t(), manifest: map()}}` or `{:error, term()}`.
+On failure, the plugin MUST clean its own temp partial — the caller
+does NOT attempt to clean a path it never received.
 
-@param source_uri  — the source agent URI
-@param source_dir  — the source's current config_dir_path
+For agents with no config_dir to snapshot (echo, curl, np), the
+plugin SHOULD return `{:ok, %{path: nil, manifest: %{}}}` —
+positive "I have nothing to snapshot" rather than missing-function.
+Plugins that don't implement the callback at all are handled by
+the `snapshot_or_default/2` core adapter (see below).
 
-The manifest carries plugin-specific metadata that
-`restore_from_snapshot/3` (next callback) needs to do the unpack.
-For cc V1: `%{file_count: N, marker: "...", taken_at: DateTime}`.
+Manifest shape (cc V1): `%{file_count: N, files: %{relpath => %{size:, mtime:, sha256:}}, taken_at: DateTime, source_uri: String}`.
 """
 @callback snapshot_config_dir(source_uri :: URI.t(), source_dir :: String.t()) ::
-            {:ok, %{path: String.t(), manifest: map()}} | {:error, term()}
+            {:ok, %{path: String.t() | nil, manifest: map()}} | {:error, term()}
 
 @doc """
-Restore a snapshot (as produced by `snapshot_config_dir/2`) into the
-target agent's per-agent config_dir location. The plugin computes
-the target path via its `agent_config_dir/1` builder, atomically
-moves the snapshot into place, then writes the
-`.ezagent-config-complete` marker as the LAST step.
+Restore a snapshot into the target agent's per-agent config_dir
+location. Plugin uses its `agent_config_dir/1` builder for target
+path, atomically moves the snapshot into place, writes the
+`.ezagent-config-complete` marker LAST.
 
 Caller (Behavior.Agent.:duplicate) is responsible for rm'ing the
 snapshot temp dir on success or failure.
+
+When `snapshot_path == nil` (echo/curl/np / opted-out), the
+plugin's `restore_from_snapshot/3` is NOT called by the action
+body — the action body checks `snapshot.path == nil` and skips
+the restore step entirely.
 
 Returns `{:ok, final_path}` or `{:error, term()}`.
 """
@@ -358,11 +390,72 @@ Returns `{:ok, final_path}` or `{:error, term()}`.
 @optional_callbacks snapshot_config_dir: 2, restore_from_snapshot: 3
 ```
 
-Plugins that don't implement these (echo, curl, np — anything that doesn't manage config_dir) result in `source_meta.template_class.snapshot_config_dir` returning `:no_op` and the action body skipping the stage+restore — those agents clone "structurally" only (the spawn happens, but there's no FS state to carry).
+**Core adapter (`Ezagent.Kind.Template.snapshot_or_default/2`)** — the action body calls THIS, not `template_class.snapshot_config_dir/2` directly. The adapter checks `function_exported?` and returns the default for plugins that opted out:
 
-For echo/curl/np: `snapshot_config_dir/2` SHOULD be implemented to return `{:ok, %{path: nil, manifest: %{}}}` explicitly — making "I have no config_dir to snapshot" a positive callback, not a missing-function default. The action body checks `path == nil` and skips restore entirely.
+```elixir
+defmodule Ezagent.Kind.Template do
+  # ... existing contract definitions ...
 
-#### 3.6.1 cc V1 snapshot impl (illustrative)
+  @doc """
+  Adapter — calls `template_class.snapshot_config_dir(source_uri, source_dir)`
+  if the callback is exported, returns the no-op default otherwise.
+
+  Returns `{:ok, %{path: nil | String.t(), manifest: map()}}` or `{:error, _}`.
+  """
+  @spec snapshot_or_default(module(), URI.t(), String.t() | nil) ::
+          {:ok, %{path: String.t() | nil, manifest: map()}} | {:error, term()}
+  def snapshot_or_default(template_class, source_uri, source_dir)
+      when is_atom(template_class) do
+    cond do
+      is_nil(source_dir) ->
+        # Plugin doesn't manage a dir for this agent — snapshot has no
+        # content. Skip without involving the plugin.
+        {:ok, %{path: nil, manifest: %{}}}
+
+      function_exported?(template_class, :snapshot_config_dir, 2) ->
+        template_class.snapshot_config_dir(source_uri, source_dir)
+
+      true ->
+        # Template Class exists but didn't implement the optional callback.
+        # Treat as "I have nothing to snapshot".
+        {:ok, %{path: nil, manifest: %{}}}
+    end
+  end
+
+  @doc """
+  Paired adapter — calls `template_class.restore_from_snapshot/3`
+  if `snapshot.path != nil` and the callback is exported.
+  Returns `:noop` when the action body should skip restore entirely.
+  """
+  @spec restore_or_noop(module(), URI.t(), map()) ::
+          {:ok, String.t()} | :noop | {:error, term()}
+  def restore_or_noop(_tc, _target_uri, %{path: nil}), do: :noop
+
+  def restore_or_noop(template_class, target_uri, %{path: path, manifest: manifest})
+      when is_atom(template_class) and is_binary(path) do
+    if function_exported?(template_class, :restore_from_snapshot, 3) do
+      template_class.restore_from_snapshot(target_uri, path, manifest)
+    else
+      # Snapshot produced a path but plugin can't restore — contract violation.
+      # Better to crash than silently skip restore of a real snapshot.
+      {:error, {:restore_callback_missing, template_class}}
+    end
+  end
+end
+```
+
+The action body uses these:
+
+```elixir
+{:ok, snapshot} <- Kind.Template.snapshot_or_default(source_meta.template_class, source_uri, source_meta.config_dir_path),
+# ...
+result <- Kind.Template.restore_or_noop(source_meta.template_class, target_uri, snapshot)
+# result is :noop OR {:ok, final_dir} OR {:error, _}
+```
+
+Acceptance test (§7 row 10 expanded): a plugin with NO callback definitions at all → `snapshot_or_default/3` returns `{:ok, %{path: nil, manifest: %{}}}`; `restore_or_noop/3` returns `:noop`; action body completes with `sandbox.config_dir_path: nil`.
+
+#### 3.6.1 cc V1 snapshot impl — content-hash manifest (codex r2 MEDIUM-4 fix)
 
 ```elixir
 @impl Ezagent.Kind.Template
@@ -371,14 +464,26 @@ def snapshot_config_dir(%URI{} = source_uri, source_dir) when is_binary(source_d
   snapshot_dir = Path.join(snapshots_root, "#{:erlang.unique_integer([:positive])}-#{System.os_time(:millisecond)}")
 
   with :ok               <- File.mkdir_p(snapshots_root),
-       pre_count          = file_count(source_dir),
+       # 1. Pre-copy manifest — every regular file under source_dir,
+       #    `%{relpath => %{size, mtime, sha256}}`. Symlinks and special
+       #    files are explicitly REJECTED here (cp_r handles them but the
+       #    manifest can't hash them; we refuse to snapshot a dir
+       #    containing them rather than silently skip).
+       {:ok, pre_manifest} <- build_file_manifest(source_dir),
+       # 2. Atomic cp_r.
        {:ok, _}           <- File.cp_r(source_dir, snapshot_dir),
-       post_count         = file_count(snapshot_dir),
-       true               <- pre_count == post_count or {:error, {:partial_copy, pre_count, post_count}},
        :ok                <- File.chmod(snapshot_dir, 0o700),
-       :ok                <- chmod_credentials(snapshot_dir) do
+       :ok                <- chmod_credentials(snapshot_dir),
+       # 3. Post-copy manifest of the SOURCE (not the snapshot) — verifies
+       #    no source file changed during cp_r. Detects `.credentials.json`
+       #    rotation, plugin add/remove, etc. If any file's size/mtime/sha
+       #    differs from pre_manifest, snapshot fails — caller sees a
+       #    clean error AND the snapshot_dir is rm'd.
+       {:ok, post_manifest} <- build_file_manifest(source_dir),
+       :ok                <- compare_manifests(pre_manifest, post_manifest) do
     manifest = %{
-      file_count: post_count,
+      file_count: map_size(pre_manifest),
+      files: pre_manifest,
       taken_at: DateTime.utc_now(),
       source_uri: URI.to_string(source_uri)
     }
@@ -392,9 +497,107 @@ def snapshot_config_dir(%URI{} = source_uri, source_dir) when is_binary(source_d
       {:error, {:snapshot_failed, other}}
   end
 end
+
+# build_file_manifest/1 walks source_dir, returns
+# {:ok, %{relpath_string => %{size: int, mtime: int, sha256: binary}}}
+# or {:error, {:unsupported_file_type, path}} if it encounters a
+# symlink / device / fifo / socket (cc config dirs should only have
+# regular files + subdirs; anything else is suspicious).
+#
+# compare_manifests/2 returns :ok if every key matches on size+mtime+sha,
+# {:error, {:source_changed_during_snapshot, [diffs]}} otherwise.
 ```
 
-The `pre_count == post_count` check is a coarse "did we miss files" gate. It won't catch a `.credentials.json` mid-rotation (file count stays same, content changes); V1 documents this as a known limitation. The invariant test (§8) doesn't trigger this race because it uses static canary files.
+The pre/post-source manifest comparison detects:
+- Same-file content mutation (`.credentials.json` rotation): sha256 differs.
+- File added during snapshot: post has key pre lacks.
+- File removed during snapshot: pre has key post lacks.
+- File size/mtime change: detected even when reading the file mid-write would yield inconsistent sha (the in-process compare picks up either way).
+
+Symlink/special-file rejection is enforced (the manifest builder refuses them) — defense-in-depth against operator-crafted dirs that contain unsafe FS entries.
+
+**Acceptance test for live-mutation race (§7 row 13 new):** snapshot a cc dir while a concurrent task mutates a credentials-like file → expect `{:error, {:source_changed_during_snapshot, _}}`; verify no `staged_path` left behind; verify no target spawned.
+
+### 3.8 `Ezagent.AgentOwnership` registry — new ETS table (codex r2 HIGH-2 fix)
+
+Codex r2 HIGH-2 noted that rev-2's `data_owner: :no_owner` defaults all `:duplicate` cap grants to bootstrap-admin only — source-owner CANNOT delegate the cap to a target-ws admin via standard `Identity.grant_cap`, breaking the bilateral consent path the spec promises.
+
+The fix is a real "agent → owning user" resolution. We add a new ETS registry parallel to `AgentLineage`:
+
+```elixir
+defmodule Ezagent.AgentOwnership do
+  @moduledoc """
+  Agent ownership registry — `agent_uri → owner_user_uri`.
+
+  Distinct from `AgentLineage`:
+  - `AgentLineage.spawned_by(agent_uri)` = who SPAWNED this agent
+    (orchestrator chain — may be another agent, used for `:spawned_by`
+    cap shape per Decision #137).
+  - `AgentOwnership.lookup(agent_uri)` = which USER OWNS this agent
+    (always a `entity://user/...` URI; never a chain). Used by
+    `Behavior.Agent.data_owner/1` to resolve cap grantees.
+
+  Populated at agent-spawn by `Behavior.Workspace.:create_agent`'s
+  action body: the calling user (from `ctx.caller`, validated to be
+  a User URI) becomes the new agent's owner. A future `:transfer`
+  action could mutate; V1 ownership is write-once at spawn.
+
+  ## ETS layout
+  `:ezagent_agent_ownership` set table owned by `EzagentCore.EtsOwner`.
+
+  ## API
+  - `record(agent_uri, owner_user_uri)` — idempotent insert
+  - `lookup(agent_uri)` — `{:ok, %URI{}}` or `:error`
+  - `forget(agent_uri)` — idempotent delete (called by rollback + agent destroy)
+  """
+
+  @table :ezagent_agent_ownership
+
+  @spec record(URI.t() | String.t(), URI.t() | String.t()) :: :ok
+  def record(agent_uri, owner_uri) do
+    :ets.insert(@table, {to_string(agent_uri), to_string(owner_uri)})
+    :ok
+  end
+
+  @spec lookup(URI.t() | String.t()) :: {:ok, URI.t()} | :error
+  def lookup(agent_uri) do
+    case :ets.lookup(@table, to_string(agent_uri)) do
+      [{_, owner_str}] -> {:ok, URI.parse(owner_str)}
+      [] -> :error
+    end
+  end
+
+  @spec forget(URI.t() | String.t()) :: :ok
+  def forget(agent_uri) do
+    :ets.delete(@table, to_string(agent_uri))
+    :ok
+  end
+end
+```
+
+Then `Behavior.Agent.data_owner/1` becomes:
+
+```elixir
+@impl Ezagent.Behavior
+def data_owner(%URI{scheme: "entity", host: "agent"} = agent_uri) do
+  case Ezagent.AgentOwnership.lookup(agent_uri) do
+    {:ok, %URI{} = owner_user_uri} -> owner_user_uri  # grants to the user
+    :error -> :no_owner  # legacy / pre-registry agent: bootstrap-admin only
+  end
+end
+
+def data_owner(:any), do: :any
+def data_owner(_), do: :no_owner
+```
+
+This wires the `default_grants_from_data_owner/2` machinery correctly:
+- New agent created via `Behavior.Workspace.:create_agent` → `AgentOwnership.record(agent_uri, ctx.caller)` runs in the action body BEFORE the dispatch returns; `BehaviorRegistry.default_grants_from_data_owner(Entity.Agent, agent_uri)` is then called by `Kind.Server` post-spawn (the standard PR-OWN-3 pathway), iterates `Behavior.Agent`, sees `data_owner -> user_uri`, synthesizes a `{Behavior.Agent, :duplicate}` cap grant to `user_uri`.
+- The owner can then delegate to any other principal via the standard `Identity.grant_cap` mechanism (per IdentityAdmin's owner-branch).
+- A target-ws admin who receives the delegated cap satisfies cap #1; their existing target-ws admin satisfies cap #2; bilateral consent works.
+
+**Concern: Behavior coupling to ESR-domain registry.** This DOES couple `Behavior.Agent` to `AgentOwnership`. Justification: the same coupling already exists for `Behavior.Chat.data_owner/1` (reads Session slice's `:owner_uri`) and Workspace's admin branch (reads workspace data). The north-star principle (`feedback_north_star_plugin_isolation`) targets PLUGIN-to-CORE coupling — not Behavior-to-its-own-domain-registry. AgentOwnership lives in `ezagent_core` (boot-time available, plugin-independent); Behavior.Agent lives in `ezagent_domain_chat`. The coupling is core-from-domain (legitimate) not plugin-from-core (forbidden).
+
+Acceptance test (§7 row 14 new): a non-bootstrap user creates an agent → that user can call `Identity.grant_cap` to grant `{Behavior.Agent, :duplicate}` on their agent to a target-ws admin → target-ws admin successfully dispatches `:duplicate`.
 
 ### 3.7 Mix task — `mix ezagent.agent.duplicate`
 
@@ -428,16 +631,29 @@ Body mirrors `agent.create.ex` (`parse_uri` + `decompose` + `Invocation.dispatch
 
 **Both** must succeed. The pre-rev-2 design's "target-ws-admin alone is enough" was the codex r1 CRITICAL — it turned target-admin into a source-data export capability. Rev-2 closes this: a target-ws-admin who cannot satisfy cap #1 sees a clean dispatch denial; their cap on target workspace is irrelevant if source-owner hasn't authorized the export.
 
-### 4.2 Cap resolution
+### 4.2 Cap resolution (rev 3 — backed by AgentOwnership)
 
-`Behavior.Agent.data_owner/1` returns `:no_owner`. Consequence: `default_grants_from_data_owner/2` synthesizes NO automatic grant of `{Behavior.Agent, :duplicate}` on agent-spawn. The cap is granted EXPLICITLY (see §4.3).
+`Behavior.Agent.data_owner(agent_uri)` resolves to the agent's owning USER URI via `AgentOwnership.lookup(agent_uri)` (see §3.8). Consequence: `default_grants_from_data_owner/2` synthesizes an AUTOMATIC grant of `{Behavior.Agent, :duplicate}` to that user at agent-spawn time. The owner can then delegate the cap via standard `Identity.grant_cap` (PR-OWN-3 owner-branch in `IdentityAdmin`) — making bilateral consent for cross-tenant clone a normal user operation, NOT a bootstrap-admin operation (closing codex r2 HIGH-2).
 
-This is intentional. The alternative (returning source_uri as data_owner) would silently grant the cap to the agent itself (codex r1 HIGH-2 — `default_grants_from_data_owner/2:371` uses the returned URI verbatim as grantee). And adding "agent → owning user" resolution requires either (a) a new lineage field that doesn't exist OR (b) reaching into Workspace owner_uri / AgentLineage.granted_by from inside the Behavior, which couples Behavior to ESR-domain registries (anti-pattern per `feedback_north_star_plugin_isolation`).
+**Pre-AgentOwnership agents:** agents that existed before this PR have no row in `AgentOwnership`; `data_owner/1` falls back to `:no_owner` for them → only bootstrap-admin can grant `:duplicate`. Operators can backfill via a one-shot mix task `mix ezagent.agent.set_owner <agent_uri> <user_uri>` (also in this PR; trivial wrapper around `AgentOwnership.record/2`).
 
-### 4.3 Where the `:duplicate` cap comes from
+Why this is NOT the same as the rev-2 HIGH-2 (`data_owner: source_uri`) mistake: the previous draft would have grant`:duplicate` cap to `source_uri` (the agent URI itself), and `IdentityAdmin`'s grant-authorization treats agents as not-quite-users. The rev-3 design resolves to the **user URI** via the registry; standard user-grants-user pathway applies; the codex critique is structurally addressed.
 
-At agent-spawn (`Behavior.Workspace.:create_agent` action body, after the Agent Kind is alive), an additional explicit grant runs:
+### 4.3 Where the `:duplicate` cap comes from (rev 3 — synthesized, not explicit)
 
+At agent-spawn (`Behavior.Workspace.:create_agent` action body, after target spawn), a single NEW step runs BEFORE post-spawn obligations:
+
+```elixir
+# new line in Behavior.Workspace.:create_agent action body, BEFORE
+# Kind.Server's post-spawn default-grants step
+:ok <- Ezagent.AgentOwnership.record(agent_uri, ctx.caller),
+```
+
+Then `Kind.Server`'s existing post-spawn pathway (PR-OWN-1) iterates the Agent Kind's Behaviors, calls `data_owner/1` on each, and synthesizes the per-Behavior default grants. With §3.8's `data_owner -> user_uri`, the `{Behavior.Agent, :duplicate}` cap is synthesized AUTOMATICALLY to the owner. The previous rev-2 "explicit grant_initial_caps" line is REMOVED in favor of the standard PR-OWN-1 synthesis path — fewer special cases, one mechanism.
+
+Source-ws admin grant for `:duplicate` happens via `caps-data-ownership-v2.md` §5.2 (Workspace.data_owner = `:any` → admin branch). No spec change needed for that pathway.
+
+<!-- legacy rev-2 explicit-grant block kept for diff context, now superseded
 ```elixir
 # new step in Behavior.Workspace.:create_agent action body, after target spawn
 :ok <- grant_initial_caps(agent_uri, [
@@ -483,30 +699,50 @@ ADDITIONALLY, the snapshot manifest (§3.6) is logged (info level) at snapshot t
 
 ## 6. Migration
 
-**Schema-level:** None. New Behavior's slice empty; new Kind.Template callbacks `@optional`.
+**Schema-level:** None. New Behavior's slice empty; new Kind.Template callbacks `@optional`; new ETS table created at `EzagentCore.EtsOwner` startup.
 
-**Existing-agent cap:** the `{Behavior.Agent, :duplicate}` cap on PRE-EXISTING agents (those alive before this PR) is NOT retroactively granted. The grant happens only at NEW agent-spawn via the §4.3 grant-list change. Operators wanting clone on a legacy agent must run an explicit `mix ezagent.identity.grant_cap` (existing CLI). Documented in the impl PR's CHANGELOG.
+**Existing-agent ownership:** agents that existed before this PR have no `AgentOwnership` row → `data_owner -> :no_owner` → only bootstrap-admin can grant `:duplicate` on them. Operator backfill via new mix task:
 
-Rationale: a one-shot retroactive grant migration is a destructive change to a live cap set (`feedback_destructive_migration_anti_pattern`); the explicit-grant path is the standard cap workflow.
+```bash
+mix ezagent.agent.set_owner entity://agent/<ws>/<flavor>_<name> entity://user/<ws>/<user>
+```
+
+Trivial wrapper around `AgentOwnership.record/2`. NOT a destructive one-shot — operators apply it agent-by-agent as needed. Listed in impl PR's CHANGELOG.
+
+Rationale: a bulk retroactive migration is a destructive change to a live cap set (`feedback_destructive_migration_anti_pattern`); per-agent operator action is the standard pattern.
 
 ---
 
 ## 7. Acceptance tests
 
-In impl PR. The bar:
+In impl PR. Rows 7-9 are the codex-r2-CRITICAL durable-cleanup tests; row 10 covers the codex-r2-HIGH-3 no-callback adapter; row 13 covers the codex-r2-MEDIUM-4 live-mutation race; row 14 covers the codex-r2-HIGH-2 bilateral-consent path.
 
-1. **Happy path (same workspace, same owner)** — creator clones own cc agent → new agent has independent config_dir; sandbox slice carries new path; new Identity caps are creator's defaults; source unchanged.
-2. **Bilateral cross-tenant clone** — source-owner grants `:duplicate` to a target-workspace admin; target-ws admin runs duplicate; succeeds.
+The bar:
+
+1. **Happy path (same workspace, same owner)** — creator clones own cc agent → new agent has independent config_dir; sandbox slice carries new path; new Identity caps are creator's defaults; AgentOwnership row written for target_uri pointing to target_owner_uri; source unchanged.
+2. **Bilateral cross-tenant clone (NON-bootstrap)** — non-bootstrap user creates source agent; user delegates `:duplicate` to a target-workspace admin via `Identity.grant_cap`; target-ws admin dispatches `:duplicate`; succeeds. Asserts the codex-r2 HIGH-2 fix is structurally real (not bootstrap-admin-gated).
 3. **Cap denial — target-ws admin, NO source grant** — `{:error, :unauthorized}` at dispatch-time. NO target spawn attempted. NO snapshot taken.
 4. **Cap denial — source-owner, no target-ws admin** — `{:error, :unauthorized}` at action-body-time. NO target spawn attempted. NO snapshot taken.
 5. **Target URI collision** — `target_uri` already alive → `{:error, {:already_exists, target_uri}}`. NO snapshot taken (collision check runs BEFORE snapshot per §3.2 `with` order).
 6. **Source missing** — dispatch fails at lookup time.
-7. **Snapshot failure** — inject a partial-cp_r fault in `snapshot_config_dir/2`; verify `{:error, {:partial_copy, _, _}}` returned; verify NO target spawn happened; verify snapshot temp dir cleaned.
-8. **Post-spawn restore failure** — inject failure in `restore_from_snapshot/3`; verify target Kind terminated; WorkspaceRegistry unbound; AgentLineage forgotten; staged_path removed; target_uri free for retry.
-9. **Deep-copy isolation** — modify a file in source `config_dir` post-clone; target's file at same relative path unchanged. **(Invariant — §8.)**
-10. **Non-cc flavor (echo)** — `snapshot_config_dir/2` returns `{:ok, %{path: nil, manifest: %{}}}`; restore skipped; target spawns without FS state; sandbox slice `config_dir_path: nil`.
+7. **Snapshot failure rollback** — inject a partial-cp_r fault in `snapshot_config_dir/2`; verify `{:error, {:source_changed_during_snapshot, _}}` returned; verify NO target spawn happened; verify snapshot temp dir cleaned; verify no `AgentOwnership` / `AgentLineage` / `WorkspaceRegistry` rows for target_uri.
+8. **restore_from_snapshot failure → DURABLE rollback (codex r2 CRITICAL)** — inject failure in `restore_from_snapshot/3`; verify:
+   - target Kind terminated
+   - `Kind.Snapshot.get(target_uri)` returns `:error` (snapshot row deleted)
+   - `WorkspaceRegistry.lookup(target_uri)` returns `:error`
+   - `AgentLineage.lookup(target_uri)` returns `:error`
+   - `AgentOwnership.lookup(target_uri)` returns `:error`
+   - `template_class.agent_config_dir(target_uri)` does NOT exist on FS
+   - `staged_path` does NOT exist on FS
+   - target_uri is free for retry (next `:duplicate` succeeds without `{:already_exists, _}`)
+9. **sandbox.write_path failure → DURABLE rollback** — same assertions as row 8 but injection point is the `dispatch_sandbox_write_path/3` step. Critically, verify the `:sandbox` slice did NOT persist via `:on_terminate` snapshot (this is the precise hole codex r2 CRITICAL identified).
+   - **9a.** Same with injection at `grant_initial_caps_for_owner` step — verify `:identity` slice did NOT persist with the partial cap set.
+   - **9b.** Same with injection at `start_pty` step — verify PtyServer is not running, no stranded process.
+10. **Plugin with NO snapshot callback (adapter path)** — a Template Class that doesn't implement `snapshot_config_dir/2` at all → `Kind.Template.snapshot_or_default/2` returns `{:ok, %{path: nil, manifest: %{}}}`; `restore_or_noop/3` returns `:noop`; action body completes; target's `sandbox.config_dir_path` is `nil`. (Asserts codex r2 HIGH-3 fix.)
 11. **Adoption-refused TOCTOU** — race: pre-create target_uri via concurrent `SpawnRegistry.spawn`, then run duplicate; verify duplicate fails with `{:adopted_not_fresh, target_uri}`. Pre-existing agent at target_uri unchanged.
 12. **Invariant: no `Workspace.create_agent` routing** — static grep test asserts `:duplicate` action body never calls the create_agent facade.
+13. **Live mutation during snapshot (codex r2 MEDIUM-4)** — start snapshot, concurrently mutate a credentials-like file in source_dir mid-cp_r; expect `{:error, {:source_changed_during_snapshot, _}}`; verify staging cleaned; no target spawned.
+14. **AgentOwnership write at spawn (codex r2 HIGH-2 prerequisite)** — `Behavior.Workspace.:create_agent` writes `AgentOwnership.record(agent_uri, ctx.caller)` before post-spawn obligations run; verify row exists with correct user_uri. Verify `Behavior.Agent.data_owner(agent_uri)` returns the user URI, and `default_grants_from_data_owner` synthesizes the `:duplicate` cap to that user.
 
 ---
 
@@ -556,19 +792,21 @@ No CLAUDE.md change. Mix task `--help` auto-renders. Operator docs go in `docs/o
 
 ## 10. Open follow-ups (deferred — flagged per `feedback_dont_defer_what_is_solvable_now`)
 
-- **True cc quiesce.** V1 cc snapshot uses pre/post file-count gate. A `.credentials.json` rotation during snapshot would not be detected. Future PR: add a `claude --quiesce` analog OR a brief PTY pause + fsync OR a hash manifest. V1 documents the limitation; production cloning of a freshly-token-rotating agent is rare.
+- **True cc quiesce.** Rev-3 cc snapshot uses content-hash manifest (pre+post comparison) which DETECTS live mutation — but doesn't PREVENT it. A mid-rotation `.credentials.json` causes snapshot to abort cleanly (test §7 row 13); the operator can retry. Future PR: add a `claude --quiesce` analog OR brief PTY pause + fsync to make snapshots succeed across writes. V1 detects + aborts.
 - **LV admin UI for clone.** `/admin/agents/<uri>/clone` form. Deferred per §2.
 - **MCP tool surface.** 10-line wrapper post-primitive.
 - **Bulk clone.** Wrapper around primitive.
 - **Cross-host federation.** cwd semantics on cross-host clone; out of V1.
-- **Retroactive duplicate-cap grant for legacy agents.** Documented in §6 — operators run `mix ezagent.identity.grant_cap` explicitly.
+- **Backfill of AgentOwnership for legacy agents.** `mix ezagent.agent.set_owner` ships in this PR; operators run per-agent.
+- **`Behavior.Agent` future actions.** `:rename`, `:archive`, `:transfer-ownership`, etc. — `:transfer-ownership` is a natural follow-up that mutates AgentOwnership; out of V1.
 
 ---
 
 ## 11. Codex adversarial review (per `feedback_spec_codex_adversarial_review`)
 
-- **Rev 1** (initial draft): codex returned `needs-attention` with 1 CRITICAL, 3 HIGH, 1 MEDIUM. All addressed in rev 2 (see header `Rev 2 changes` bullet list + §3.4 §3.5 §3.6 §4 rewrites).
-- **Rev 2** (this revision): codex adversarial review will run on this branch before the impl PR opens.
+- **Rev 1** (initial draft): codex returned `needs-attention` with 1 CRITICAL, 3 HIGH, 1 MEDIUM. All addressed in rev 2.
+- **Rev 2**: codex returned `needs-attention` with 1 CRITICAL (rollback durable-state hole) + 2 HIGH (data_owner :no_owner closed bilateral consent, snapshot optional-callback raises) + 1 MEDIUM (snapshot not actually point-in-time). All addressed in rev 3 (see header `Rev 3 changes` bullet list + §3.4.2 rewrite, §3.6 adapter + §3.6.1 hash manifest, §3.8 AgentOwnership registry, §4.2 / §4.3 owner-resolution).
+- **Rev 3** (this revision): codex r3 adversarial review will run on this branch before the impl PR opens. If r3 is clean, this SPEC merges via admin merge per `feedback_admin_merge_authorized`.
 
 ---
 
