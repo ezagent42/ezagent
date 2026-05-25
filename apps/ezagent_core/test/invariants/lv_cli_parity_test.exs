@@ -120,12 +120,21 @@ defmodule EzagentCore.Invariants.LvCliParityTest do
       {:cli, "mix esr workspace disable_rule / enable_rule (depending on toggle target)"},
 
     # --- Identity ops ---
+    # HIGH-2 completion (2026-05-26): `:create_user` action landed on
+    # Behavior.Workspace; `mix esr workspace create_user` auto-derives
+    # from interface/0. Legacy `mix ezagent.user.create` retained for
+    # muscle memory but now prints a deprecation notice.
     "create_user" =>
-      {:deferred,
-       "docs/futures/todo.md HIGH-2 — needs Behavior.Workspace :create_user (parallels :create_agent); `mix ezagent.user.create` exists but bypasses dispatch (Category C)"},
+      {:cli,
+       "mix esr workspace create_user --workspace <name> --user-uri <uri> --password <pw> --caps <list>"},
+    # HIGH-2 completion (2026-05-26): `:set_password` action landed on
+    # the new `Ezagent.Behavior.UserCredentials` registered on User
+    # Kind. Auto-derives `mix esr user set_password`. Legacy
+    # `mix ezagent.user.set_password` retained as the admin-bootstrap
+    # carve-out (chicken-and-egg: admin needs a password BEFORE they
+    # can mint a token for `mix esr` calls).
     "set_password" =>
-      {:deferred,
-       "docs/futures/todo.md HIGH-2 — needs Behavior.Identity :set_password OR a new Behavior.UserCredentials action; `mix ezagent.user.set_password` exists but bypasses dispatch"},
+      {:cli, "mix esr user set_password --user <uri> --password <pw>"},
     # display_name save — LV calls Ezagent.Entity.Profile.upsert/1
     # directly. Needs a Behavior on User Kind: :set_display_name
     # (or extend Behavior.Identity). Profile is its own slice today.

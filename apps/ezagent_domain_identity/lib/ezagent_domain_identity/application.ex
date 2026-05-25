@@ -40,7 +40,7 @@ defmodule EzagentDomainIdentity.Application do
 
   alias Ezagent.{CapabilityRegistry, SpawnRegistry}
   alias Ezagent.Entity.User
-  alias Ezagent.Behavior.{Identity, ApiKeys}
+  alias Ezagent.Behavior.{Identity, ApiKeys, UserCredentials, UserTokens, WorkspaceUserAdmin}
 
   @impl true
   def start(_type, _args) do
@@ -275,6 +275,38 @@ defmodule EzagentDomainIdentity.Application do
     # the caller User's key via dispatch.
     for action <- ApiKeys.actions() do
       :ok = CapabilityRegistry.register(User, action, ApiKeys)
+    end
+
+    # HIGH-2 completion (2026-05-26): UserCredentials Behavior — the
+    # dispatch-backed `:set_password` action that replaces the legacy
+    # `mix ezagent.user.set_password` direct call into
+    # `Ezagent.Users.set_password/2`. Registered ONLY on User Kind
+    # (Agent Kinds don't have passwords).
+    for action <- UserCredentials.actions() do
+      :ok = CapabilityRegistry.register(User, action, UserCredentials)
+    end
+
+    # HIGH-2 completion (2026-05-26): UserTokens Behavior — the
+    # dispatch-backed `:mint_token` / `:list_tokens` / `:revoke_token`
+    # actions that replace the legacy `mix ezagent.user.token --mint/
+    # --list/--revoke` direct calls into `Ezagent.Entity.Token.*`.
+    # Bootstrap-mint carve-out STAYS in the legacy task per codex
+    # PR #304 MED finding. Registered ONLY on User Kind (Agent tokens
+    # are still minted via the legacy task — there's no LV path for
+    # them to model after yet).
+    for action <- UserTokens.actions() do
+      :ok = CapabilityRegistry.register(User, action, UserTokens)
+    end
+
+    # Codex PR #356 r1 CRIT fix (2026-05-26): split `:create_user`
+    # from `Behavior.Workspace` into its OWN Behavior on Workspace
+    # Kind so the cap shape is distinct. Without this, any holder of
+    # a `Behavior.Workspace` cap (e.g. `:add_member`) would ALSO be
+    # authorized for `:create_user` and could mint users with
+    # arbitrary caps. Registered cross-domain because the action body
+    # wraps `Ezagent.Users.create/3` from the identity domain.
+    for action <- WorkspaceUserAdmin.actions() do
+      :ok = CapabilityRegistry.register(Ezagent.Entity.Workspace, action, WorkspaceUserAdmin)
     end
 
     # CapabilityRegistry SPEC rev 4 §5 — register User.default_caps/1

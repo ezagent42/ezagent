@@ -95,22 +95,28 @@ defmodule EzagentCli.Dispatch do
   end
 
   defp build_target_uri(type_name, instance, behavior_module, action, %URI{} = caller_uri) do
-    scheme = scheme_for(type_name)
     behavior_seg = behavior_module.state_slice() |> to_string()
+    action_qs = "?action=#{behavior_seg}.#{to_string(action)}"
 
-    # SPEC v2 §5.2 (PR #148): action lives in ?action=<behavior>.<action> query.
-    # SPEC v3 §3.6 (Phase 9 PR-7): session/template/resource URIs are
-    # 3-segment; if the caller passed a bare instance name (e.g.
-    # `--session foo`), promote it to the default-template + caller's
-    # workspace form (SPEC #324 — workspace derived structurally from
-    # the caller URI; admin → system, tenant → their workspace).
-    # Operators needing a different workspace can pass the full URI form.
-    caller_workspace = workspace_name_from_caller(caller_uri)
-    promoted_instance = promote_to_3seg(scheme, instance, caller_workspace)
+    # Codex PR #356 r1 HIGH fix: if the operator passes a full
+    # `entity://user/<workspace>/<name>` (or any other valid full URI)
+    # as the instance, use it AS-IS and only append the action query
+    # string. Without this, the CLI would build
+    # `user://entity://user/...` which is malformed — the User Kind's
+    # actual URIs are `entity://user/...` (3-segment per SPEC v3 §3),
+    # not `user://...`.
+    case URI.new(instance) do
+      {:ok, %URI{scheme: scheme} = parsed_uri} when is_binary(scheme) and scheme != "" ->
+        # Full URI passed — use it as-is + append action.
+        URI.parse(URI.to_string(parsed_uri) <> action_qs)
 
-    URI.parse(
-      "#{scheme}://#{promoted_instance}?action=#{behavior_seg}.#{to_string(action)}"
-    )
+      _ ->
+        # Bare name — fall back to legacy scheme = type_name + promote.
+        scheme = scheme_for(type_name)
+        caller_workspace = workspace_name_from_caller(caller_uri)
+        promoted_instance = promote_to_3seg(scheme, instance, caller_workspace)
+        URI.parse("#{scheme}://#{promoted_instance}#{action_qs}")
+    end
   end
 
   # Phase 4 completion: scheme defaults to type_name. Echo overrides

@@ -1,33 +1,32 @@
 defmodule Mix.Tasks.Ezagent.User.Token do
-  @shortdoc "Mint or revoke bearer tokens for an entity (user or agent)"
+  @shortdoc "DEPRECATED (mostly) — use `mix esr user mint_token/list_tokens/revoke_token`"
   @moduledoc """
-  > **CLI/GUI parity audit 2026-05-24 — SPLIT classification
-  > (codex PR #304 round-2 MED).**
+  > **DEPRECATED 2026-05-26 (HIGH-2 completion).**
   >
-  > Only `--mint` of the FIRST-admin-bootstrap token genuinely needs
-  > to stay outside dispatch (chicken-and-egg: that token IS what
-  > `mix esr` uses to authenticate). Round-1 classified the WHOLE
-  > task as Category A; codex round-2 correctly observed that the
-  > task ALSO mints tokens for arbitrary users, lists them, and
-  > revokes them — all auth-boundary operations that have no
-  > bootstrap excuse for skipping CapBAC + audit.
+  > The dispatch-backed equivalents now exist via the new
+  > `Ezagent.Behavior.UserTokens` registered on User Kind. New
+  > callers should use the auto-derived `mix esr` commands; they go
+  > through `Ezagent.Invocation.dispatch/1` → step 5.5 CapBAC →
+  > step 5.6 cross-workspace iso → audit telemetry.
   >
-  > **Bootstrap mode (`--mint` of the very first admin user when
-  >  no operator token exists):** Category A — STAYS here.
+  >     # NEW — preferred paths:
+  >     mix esr user mint_token   --user <uri> --label <name>
+  >     mix esr user list_tokens  --user <uri>
+  >     mix esr user revoke_token --user <uri> --token-id <id>
   >
-  > **All other modes (`--mint` for arbitrary entities, `--list`,
-  >  `--revoke`):** Category C — DEFERRED to `mix esr user token
-  > mint|list|revoke` (each backed by a real `Ezagent.Entity.User`
-  > Behavior action + cap subject; `mix esr` auto-derives the CLI
-  > from `interface/0`). NOT a bare FacadeRegistry op — that path
-  > bypasses dispatch + caps + audit. See `docs/futures/todo.md`
-  > § "CLI ↔ GUI parity" deferred table for the per-mode rows.
+  > **Carve-out preserved**: the first-admin-bootstrap mint
+  > (chicken-and-egg — admin needs a token BEFORE they can dispatch
+  > anything via `mix esr`) stays as `mix ezagent.user.token --mint`
+  > per codex PR #304 MED finding. Operators bootstrapping a fresh
+  > DB should use this task ONCE for the admin's first token, then
+  > switch to `mix esr` for everything else (rotation, agent tokens,
+  > etc.).
   >
-  > Until the deferred Behavior actions land, the non-bootstrap
-  > modes here are TRACKED BYPASS DEBT, not Category A. The
-  > invariant-test pattern an implementer will need: keep
-  > Category A allowlists narrow enough that token admin
-  > operations cannot be silently exempted.
+  > Agent token minting (`entity://agent/...`) also stays here for
+  > now — there's no LV path to model after, and the Behavior is
+  > registered on User Kind only. Agent-token operations will be
+  > addressed in a follow-up if/when the LV grows an agent-token
+  > admin surface. Tracked in `docs/futures/todo.md`.
 
   Manage bearer tokens via the `entity_tokens` table (PR #142 SPEC v2
   §5.12).
@@ -77,6 +76,23 @@ defmodule Mix.Tasks.Ezagent.User.Token do
 
     cond do
       opts[:mint] ->
+        # Bootstrap-mint carve-out: this is the chicken-and-egg path
+        # — admin needs a token BEFORE they can dispatch via `mix esr`
+        # for any other op. The notice is gentle here (vs --list /
+        # --revoke which always have a dispatch alternative).
+        if mint_is_user?(uri) do
+          Mix.shell().info("""
+          NOTE: `mix ezagent.user.token --mint` is deprecated for non-bootstrap
+          use as of 2026-05-26. Prefer the dispatch-backed equivalent for
+          subsequent mints (CapBAC + audit):
+
+              mix esr user mint_token --user <uri> --label <name>
+
+          This bootstrap-mint mode remains for the very first admin token
+          (chicken-and-egg: needed BEFORE `mix esr` can authenticate).
+          """)
+        end
+
         # `Token.mint/2` returns `{plain, row}` on success OR
         # `{:error, reason}` (unsupported entity URI). Both are
         # 2-tuples — the `{:error, _}` clause MUST come first, else
@@ -97,6 +113,17 @@ defmodule Mix.Tasks.Ezagent.User.Token do
         end
 
       opts[:list] ->
+        if mint_is_user?(uri) do
+          Mix.shell().info("""
+          NOTE: `mix ezagent.user.token --list` is deprecated as of 2026-05-26.
+          Use the dispatch-backed equivalent (CapBAC + audit):
+
+              mix esr user list_tokens --user <uri>
+
+          This task still works but bypasses dispatch.
+          """)
+        end
+
         rows = Ezagent.Entity.Token.list(uri)
 
         if rows == [] do
@@ -113,6 +140,17 @@ defmodule Mix.Tasks.Ezagent.User.Token do
         end
 
       is_integer(opts[:revoke]) ->
+        if mint_is_user?(uri) do
+          Mix.shell().info("""
+          NOTE: `mix ezagent.user.token --revoke` is deprecated as of 2026-05-26.
+          Use the dispatch-backed equivalent (CapBAC + audit):
+
+              mix esr user revoke_token --user <uri> --token-id <id>
+
+          This task still works but bypasses dispatch.
+          """)
+        end
+
         :ok = Ezagent.Entity.Token.revoke(opts[:revoke])
         Mix.shell().info("Revoked token id=#{opts[:revoke]}.")
 
@@ -120,4 +158,11 @@ defmodule Mix.Tasks.Ezagent.User.Token do
         Mix.raise("must pass --mint, --list, or --revoke ID")
     end
   end
+
+  # Only print deprecation notice for user URIs — agent token ops have
+  # no dispatch alternative yet (the UserTokens Behavior is registered
+  # on User Kind only). For agents the legacy task is still the
+  # canonical path; notice would be misleading.
+  defp mint_is_user?(%URI{scheme: "entity", host: "user"}), do: true
+  defp mint_is_user?(_), do: false
 end

@@ -122,8 +122,23 @@ defmodule Ezagent.Entity.User do
   # so per-user secret storage (DeepSeek, OpenAI, etc.) coexists with
   # cap state on the same Kind. Both slices serialize through the
   # existing `{:snapshot, :on_change}` persistence.
+  #
+  # HIGH-2 completion (2026-05-26): UserCredentials Behavior carries
+  # password mutation via dispatch (closes the legacy
+  # `mix ezagent.user.set_password` bypass). UserTokens Behavior
+  # carries bearer-token CRUD via dispatch (closes the legacy
+  # `mix ezagent.user.token --mint/list/revoke` bypass except for the
+  # admin-bootstrap mint carve-out). Both slices (`:user_credentials`
+  # / `:user_tokens`) are incidental counters; durable storage is the
+  # `users.password_hash` column + the `entity_tokens` table.
   @impl Ezagent.Kind
-  def behaviors, do: [Ezagent.Behavior.Identity, Ezagent.Behavior.ApiKeys]
+  def behaviors,
+    do: [
+      Ezagent.Behavior.Identity,
+      Ezagent.Behavior.ApiKeys,
+      Ezagent.Behavior.UserCredentials,
+      Ezagent.Behavior.UserTokens
+    ]
 
   @impl Ezagent.Kind
   def persistence, do: {:snapshot, :on_change}

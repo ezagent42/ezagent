@@ -48,9 +48,19 @@ defmodule Ezagent.Entity.UserTest do
     assert {:error, :cannot_revoke_admin} = Capability.revoke(caps, admin_cap)
   end
 
-  test "Kind callbacks return Phase 3d values (Identity behavior added) + PR #126 ApiKeys" do
+  test "Kind callbacks return all four User-Kind Behaviors" do
+    # Phase 3d added Identity; PR #126 added ApiKeys; HIGH-2 completion
+    # (2026-05-26) added UserCredentials + UserTokens for dispatch-backed
+    # password + token CRUD.
     assert User.type_name() == :user
-    assert User.behaviors() == [Ezagent.Behavior.Identity, Ezagent.Behavior.ApiKeys]
+
+    assert User.behaviors() == [
+             Ezagent.Behavior.Identity,
+             Ezagent.Behavior.ApiKeys,
+             Ezagent.Behavior.UserCredentials,
+             Ezagent.Behavior.UserTokens
+           ]
+
     assert User.persistence() == {:snapshot, :on_change}
   end
 

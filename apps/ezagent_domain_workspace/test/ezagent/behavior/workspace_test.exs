@@ -118,6 +118,11 @@ defmodule Ezagent.Behavior.WorkspaceTest do
     test "actions/0 lists all 10 actions" do
       # SPEC 2026-05-25-agent-create-cli-gui-parity added `:create_agent`
       # as the 10th action — unified entry for CLI + LV agent creation.
+      # Codex PR #356 r1 CRIT fix: `:create_user` was briefly added here
+      # and then moved out to `Ezagent.Behavior.WorkspaceUserAdmin` to
+      # give it a distinct cap subject (the Capability struct has no
+      # action axis, so co-locating privileged actions with
+      # member-management ones is an escalation surface).
       assert WB.actions() == [
                :list_members,
                :add_member,
@@ -130,6 +135,15 @@ defmodule Ezagent.Behavior.WorkspaceTest do
                :instantiate,
                :create_agent
              ]
+    end
+
+    test "required_caps/0 has an entry per action" do
+      caps = WB.required_caps()
+
+      for action <- WB.actions() do
+        assert Map.has_key?(caps, action),
+               "required_caps/0 missing #{action} — dispatch step 5.5 would crash"
+      end
     end
 
     test "state_slice/0 is :workspace" do
