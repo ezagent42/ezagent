@@ -14,11 +14,15 @@ defmodule Mix.Tasks.Ezagent.ExternalMirror.Bind do
 
   ## Options
 
-      --as <user_uri>       Run AS this user (default $EZAGENT_AS_USER
-                            or entity://user/system/admin).
+      --as <user_uri>       REQUIRED — caller URI for the cap check.
+                            Falls back to $EZAGENT_AS_USER. No silent
+                            admin default (codex r1 HIGH 2026-05-25 —
+                            a typoed flag would have run privileged).
       --metadata key=val    Optional binding-time metadata (repeatable;
                             forwarded to the adapter's Binding.init/1
                             as `opts`).
+      --help / -h           Print this help and exit 0 (no caller
+                            required for --help).
 
   ## Examples
 

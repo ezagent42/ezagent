@@ -53,14 +53,27 @@ defmodule Mix.Tasks.Ezagent.ExternalMirror.ListAdapters do
     # legitimate here (only used for the audit row; no cap check
     # happens against this URI). All other tasks set the default
     # `caller_required: true` so missing `--as` raises.
-    {_positional, %{help?: help?}} = CLI.parse_argv(argv, caller_required: false)
+    {positional, %{help?: help?}} = CLI.parse_argv(argv, caller_required: false)
 
-    if help? do
-      Mix.shell().info(@moduledoc)
-    else
-      CLI.ensure_app_started!()
-      adapters = Ezagent.ExternalMirror.list_adapters()
-      Mix.shell().info(CLI.format_adapters(adapters))
+    cond do
+      help? ->
+        Mix.shell().info(@moduledoc)
+
+      positional != [] ->
+        # codex r2 LOW (2026-05-25): reject stray positional args so
+        # `mix ezagent.external_mirror.list_adapters garbage` doesn't
+        # silently succeed. Operator-facing surface: every silent
+        # drop is a future bug report.
+        Mix.shell().error(
+          "error: list_adapters takes no positional args; got: #{inspect(positional)}"
+        )
+
+        Mix.raise("unexpected positional args")
+
+      true ->
+        CLI.ensure_app_started!()
+        adapters = Ezagent.ExternalMirror.list_adapters()
+        Mix.shell().info(CLI.format_adapters(adapters))
     end
   end
 end

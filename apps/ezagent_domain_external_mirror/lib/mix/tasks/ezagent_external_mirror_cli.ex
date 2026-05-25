@@ -6,9 +6,13 @@ defmodule Mix.Tasks.Ezagent.ExternalMirror.CLI do
   Responsibilities:
 
   1. **Caller URI resolution** — read `--as <user_uri>` flag OR
-     `EZAGENT_AS_USER` env var; default `entity://user/system/admin`
-     when neither is set (matches the project convention for other
-     `mix ezagent.*` tasks like `ezagent.feishu.bind --admin`).
+     `EZAGENT_AS_USER` env var. Required for the three protected
+     commands (bind / unbind / list_bindings) — missing → `Mix.raise/1`.
+     codex r1 HIGH (2026-05-25): NO silent admin fallback for
+     protected commands; a typoed flag must not run privileged.
+     The `list_adapters` task is the documented PR-EM-1 exception
+     (unauthed adapter metadata) — it uses `caller_required: false`
+     and falls back to admin for the audit row only.
   2. **Client-side cap check** — load the caller's caps via
      `Ezagent.Identity.list_caps_for/1` and verify the required cap
      for the action exists BEFORE attempting dispatch. On miss: print
@@ -88,10 +92,20 @@ defmodule Mix.Tasks.Ezagent.ExternalMirror.CLI do
       Mix.raise("unknown options")
     end
 
-    as_uri = resolve_caller(parsed[:as], caller_required?)
+    help? = Keyword.get(parsed, :help, false)
+
+    # codex r2 MED (2026-05-25): `--help` MUST short-circuit caller
+    # resolution. The r1 fix moved cap resolution into parse_argv,
+    # which made `mix ezagent.external_mirror.bind --help` raise
+    # `:missing --as` before printing the help text. Honour
+    # `--help` (or `-h`) regardless of `caller_required?` —
+    # documentation is free.
+    as_uri =
+      if help?, do: nil, else: resolve_caller(parsed[:as], caller_required?)
+
     metadata = parse_metadata_kv(Keyword.get_values(parsed, :metadata))
 
-    {positional, %{as: as_uri, metadata: metadata, help?: Keyword.get(parsed, :help, false)}}
+    {positional, %{as: as_uri, metadata: metadata, help?: help?}}
   end
 
   defp resolve_caller(flag_value, caller_required?)

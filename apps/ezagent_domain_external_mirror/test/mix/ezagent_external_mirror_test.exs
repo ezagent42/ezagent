@@ -305,6 +305,83 @@ defmodule Mix.Tasks.Ezagent.ExternalMirrorTest do
   end
 
   # ===========================================================================
+  # 3b2. codex r2 MED regression — --help short-circuits caller resolution
+  # ===========================================================================
+
+  describe "codex r2 MED — --help short-circuits caller resolution" do
+    test "bind --help without --as or EZAGENT_AS_USER → prints help (no Mix.raise)",
+         %{session_uri: session_uri} do
+      System.delete_env("EZAGENT_AS_USER")
+
+      # Pre-r2-fix: parse_argv resolved caller BEFORE noticing --help,
+      # so help text would raise `:missing --as`. Post-fix: help
+      # short-circuits, print + return ok.
+      output =
+        ExUnit.CaptureIO.capture_io(fn ->
+          Mix.Tasks.Ezagent.ExternalMirror.Bind.run([
+            URI.to_string(session_uri),
+            "mock_publish",
+            "tgt",
+            "--help"
+          ])
+        end)
+
+      # Help text mentions the module's purpose. No exception raised.
+      assert output =~ "Bind" or output =~ "bind"
+    end
+
+    test "unbind --help without --as → prints help",
+         %{session_uri: session_uri} do
+      System.delete_env("EZAGENT_AS_USER")
+
+      output =
+        ExUnit.CaptureIO.capture_io(fn ->
+          Mix.Tasks.Ezagent.ExternalMirror.Unbind.run([
+            URI.to_string(session_uri),
+            "mock_publish",
+            "tgt",
+            "--help"
+          ])
+        end)
+
+      assert output =~ "Unbind" or output =~ "unbind"
+    end
+
+    test "list_bindings --help without --as → prints help",
+         %{session_uri: session_uri} do
+      System.delete_env("EZAGENT_AS_USER")
+
+      output =
+        ExUnit.CaptureIO.capture_io(fn ->
+          Mix.Tasks.Ezagent.ExternalMirror.ListBindings.run([
+            URI.to_string(session_uri),
+            "--help"
+          ])
+        end)
+
+      assert output =~ "list_bindings" or output =~ "List"
+    end
+  end
+
+  # ===========================================================================
+  # 3b3. codex r2 LOW — list_adapters rejects stray positional args
+  # ===========================================================================
+
+  describe "codex r2 LOW — list_adapters rejects stray positional args" do
+    test "list_adapters with extra arg → Mix.Error :unexpected positional args" do
+      stderr_output =
+        ExUnit.CaptureIO.capture_io(:stderr, fn ->
+          assert_raise Mix.Error, ~r/unexpected positional args/, fn ->
+            Mix.Tasks.Ezagent.ExternalMirror.ListAdapters.run(["garbage"])
+          end
+        end)
+
+      assert stderr_output =~ "garbage"
+      assert stderr_output =~ "no positional args"
+    end
+  end
+
+  # ===========================================================================
   # 3c. codex r1 MED-1 regression — unknown options rejected (no silent drop)
   # ===========================================================================
 
