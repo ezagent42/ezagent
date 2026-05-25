@@ -333,7 +333,29 @@ defmodule EzagentPluginLiveview.AdminLive do
     {:noreply, socket}
   end
 
-  defp format_notification(%{} = payload) do
+  @doc false
+  # Public for unit testing (otherwise `defp`). `Notifications.notify/2`
+  # contract shape (apps/ezagent_core/.../notifications.ex):
+  #   %{type: atom, body: map, source: module}
+  # Prefer `body.text` / `body.summary` (current contract); fall back to
+  # legacy top-level `:text` / `:summary` for any in-flight stragglers
+  # during the transition window. Codex r1 (PR #320) flagged the
+  # pre-fix formatter as rendering cap-grant notifications as raw maps
+  # because it only read top-level keys.
+  def format_notification(%{body: %{} = body}) do
+    cond do
+      is_binary(body[:text]) -> body[:text]
+      is_binary(body["text"]) -> body["text"]
+      is_binary(body[:summary]) -> body[:summary]
+      is_binary(body["summary"]) -> body["summary"]
+      true -> format_notification_legacy(body)
+    end
+  end
+
+  def format_notification(%{} = payload), do: format_notification_legacy(payload)
+  def format_notification(other), do: "Notification: #{inspect(other)}"
+
+  defp format_notification_legacy(%{} = payload) do
     cond do
       is_binary(payload[:text]) -> payload[:text]
       is_binary(payload["text"]) -> payload["text"]
@@ -343,7 +365,7 @@ defmodule EzagentPluginLiveview.AdminLive do
     end
   end
 
-  defp format_notification(other), do: "Notification: #{inspect(other)}"
+  defp format_notification_legacy(other), do: "Notification: #{inspect(other)}"
 
   # --- User actions -----------------------------------------------------
 
