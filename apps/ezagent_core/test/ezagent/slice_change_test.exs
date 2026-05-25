@@ -104,6 +104,36 @@ defmodule Ezagent.SliceChangeTest do
       assert :ok = SliceChange.emit(%{not_a_self_uri: :nope})
     end
 
+    test "envelope construction failure stays non-fatal (codex r3 MED)" do
+      # Codex r3 MEDIUM (Allen 2026-05-25): pre-fix `build_broadcast_event/2`
+      # ran OUTSIDE the rescue. If `Cursors.next/1` failed (missing ETS
+      # table during EtsOwner restart / boot skew) the `ArgumentError`
+      # raised straight out of `emit/1`, crashing the Kind GenServer that
+      # called `Kind.Server.commit_and_notify/3` AFTER the commit had
+      # already persisted — exactly the non-fatal post-commit contract
+      # this function exists to preserve.
+      #
+      # Fix: envelope construction (including cursor allocation) moved
+      # INSIDE the try/rescue. We simulate the failure by passing a
+      # `self_uri` whose `URI.to_string/1` raises — `Cursors.next/1`'s
+      # first step is `URI.to_string(uri)`, which gets triggered inside
+      # the now-guarded path. Whole-emit must still return :ok.
+      bad_uri = %URI{scheme: "entity", host: {:not, :a, :string}}
+
+      assert :ok =
+               SliceChange.emit(%{
+                 self_uri: bad_uri,
+                 kind_module: SomeKind,
+                 action: :test,
+                 slice_key: :test_slice,
+                 old_slice: %{},
+                 new_slice: %{a: 1},
+                 result: nil,
+                 caller: nil,
+                 at: DateTime.utc_now()
+               })
+    end
+
     test "subscribe_unverified + unsubscribe_unverified contract" do
       uri = URI.parse("entity://user/x/sub-#{System.unique_integer([:positive])}")
       assert :ok = SliceChange.subscribe_unverified(uri)

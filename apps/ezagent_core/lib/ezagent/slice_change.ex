@@ -148,13 +148,21 @@ defmodule Ezagent.SliceChange do
       slice_key: Map.get(producer_event, :slice_key)
     }
 
-    broadcast_event = build_broadcast_event(self_uri, producer_event)
-
+    # Codex r3 MEDIUM (Allen 2026-05-25) — moved `build_broadcast_event/2`
+    # INSIDE the try block. Pre-fix, `Cursors.next/1` called
+    # `:ets.update_counter/4` against the EtsOwner-owned table; if the
+    # table was unavailable (EtsOwner restart window, boot skew, test
+    # tear-down race), the `ArgumentError` raised OUTSIDE the rescue and
+    # crashed the Kind GenServer AFTER `commit_and_notify/3` had already
+    # persisted the slice — exactly the non-fatal post-commit contract
+    # this function exists to preserve.
     try do
       :telemetry.span(
         [:ezagent, :slice_change, :emit],
         metadata,
         fn ->
+          broadcast_event = build_broadcast_event(self_uri, producer_event)
+
           Phoenix.PubSub.broadcast(
             EzagentCore.PubSub,
             topic(self_uri),
@@ -169,8 +177,14 @@ defmodule Ezagent.SliceChange do
         # Observable + non-fatal: failures surface via telemetry +
         # log; the Kind GenServer keeps running because the mutation
         # is already snapshotted.
+        #
+        # Codex r3 MEDIUM follow-on: log the URI defensively via inspect
+        # rather than `URI.to_string/1` — a malformed `%URI{}` (the same
+        # class of failure that lands us in this rescue branch in the
+        # first place) would re-raise from the formatter and defeat the
+        # non-fatal contract.
         Logger.warning(
-          "Ezagent.SliceChange.emit failed for #{URI.to_string(self_uri)} (post-commit): " <>
+          "Ezagent.SliceChange.emit failed for #{inspect(self_uri)} (post-commit): " <>
             inspect(error)
         )
     end
