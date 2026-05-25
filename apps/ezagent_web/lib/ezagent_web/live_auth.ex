@@ -283,21 +283,23 @@ defmodule EzagentWeb.LiveAuth do
     # `workspace://system` workspace stays out of the regular
     # operator-facing dropdown. System members still see it from the
     # admin tooling, but it is never a click-to-switch target.
+    #
+    # med-batch MED-2 (2026-05-25): the previous defensive fallback to
+    # `list_persisted/0` was dead — `Ezagent.Workspace` always exports
+    # `list_visible/0` (verified by `workspace_sot_test.exs`). Removed
+    # so the SoT invariant test can grep for `list_persisted/0` in
+    # operator scope and assert zero occurrences. If `Ezagent.Workspace`
+    # is unavailable at runtime (test boot, partial app start), return
+    # `[]` — the operator-facing dropdown degrades to "no workspaces"
+    # rather than leaking hidden ones.
     persisted =
       try do
-        cond do
-          Code.ensure_loaded?(Ezagent.Workspace) and
-              function_exported?(Ezagent.Workspace, :list_visible, 0) ->
-            Ezagent.Workspace.list_visible()
-            |> Enum.map(fn ws -> %{name: ws.name, uri: ws.uri} end)
-
-          Code.ensure_loaded?(Ezagent.Workspace) and
-              function_exported?(Ezagent.Workspace, :list_persisted, 0) ->
-            Ezagent.Workspace.list_persisted()
-            |> Enum.map(fn ws -> %{name: ws.name, uri: ws.uri} end)
-
-          true ->
-            []
+        if Code.ensure_loaded?(Ezagent.Workspace) and
+             function_exported?(Ezagent.Workspace, :list_visible, 0) do
+          Ezagent.Workspace.list_visible()
+          |> Enum.map(fn ws -> %{name: ws.name, uri: ws.uri} end)
+        else
+          []
         end
       rescue
         _ -> []
