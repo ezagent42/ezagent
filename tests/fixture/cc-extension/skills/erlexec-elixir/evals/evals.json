@@ -1,0 +1,26 @@
+{
+  "skill_name": "erlexec-elixir",
+  "evals": [
+    {
+      "id": 0,
+      "name": "tmux-control-mode",
+      "prompt": "I need to write an Elixir GenServer that wraps a long-running tmux session started in control mode (`tmux -C new-session -s mysession -c /some/dir`). Requirements: (1) send tmux control-protocol commands to the tmux process via stdin, (2) parse tmux's control-mode output (events like %begin, %end, %output, %exit) arriving on stdout, (3) guarantee the tmux session dies when my Elixir supervisor tears down the owning GenServer — including on BEAM SIGKILL. Target Elixir 1.19 / OTP 28. The package `:erlexec` (~> 2.2) is available. Write the complete GenServer module.",
+      "expected_output": "A GenServer using :exec.run_link with [:stdin, :stdout, {:stderr, :stdout}, :monitor, :pty], correctly distinguishes os_pid from pid (uses os_pid for :exec.send and :exec.stop), handles {:stdout, os_pid, bytes} messages with buffer-and-split-lines pattern, handles {:DOWN, os_pid, :process, pid, reason}, includes :exec.start() call in init. Does NOT use :exec.send on the Erlang pid, does NOT use {:line, N} option (not supported), does NOT forget :pty.",
+      "files": []
+    },
+    {
+      "id": 1,
+      "name": "python-sidecar-json-line",
+      "prompt": "Help me wrap a Python sidecar `python -m my_app.voice_asr` from Elixir so I can: (1) send line-delimited JSON requests to its stdin, (2) receive line-delimited JSON replies from its stdout, (3) have it cleanly die when my Elixir GenServer exits (normal or SIGKILL of BEAM). Use erlexec (~> 2.2). Write the GenServer module.",
+      "expected_output": "A GenServer using :exec.run_link with [:stdin, :stdout, :monitor] (NO :pty — JSON-line protocol doesn't need a terminal), sends via :exec.send(os_pid, json_line), buffers stdout chunks and splits on newlines (erlexec doesn't do line framing), parses each line as JSON. Sets PYTHONUNBUFFERED=1 in env option with charlist values. Does NOT invent :exec APIs.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "erlexec-stop-vs-kill-question",
+      "prompt": "Quick Elixir erlexec question: what's the correct way to gracefully stop a child process I started with `:exec.run_link/2`? I want to send it SIGTERM first, wait a few seconds, then SIGKILL if it hasn't exited. Also, do I call the function with the Erlang pid or the os_pid return value? Show me the exact API calls and explain any gotchas.",
+      "expected_output": "Answer clearly states: (a) use :exec.stop(os_pid) for graceful shutdown — it sends SIGTERM, waits kill_timeout seconds (default 5, configurable via {:kill_timeout, seconds} in run_link opts), then SIGKILL. (b) The argument is os_pid (the integer), NOT the Erlang pid — this is the #1 source of bugs. (c) For arbitrary signals, use :exec.kill(os_pid, signum). (d) Does NOT invent functions like :exec.graceful_stop, :exec.terminate, or pass the Erlang pid to any of these.",
+      "files": []
+    }
+  ]
+}
