@@ -43,13 +43,20 @@ defmodule Ezagent.Behavior.ChatTest do
       assert Chat.state_slice() == :chat
     end
 
-    test "init_slice/1 returns slice with members / monitors / last_seen empty maps + empty template_working_copy" do
+    test "init_slice/1 returns slice with members / monitors / last_seen / last_message_id + empty template_working_copy" do
       # Phase 7 completion PR-2 — the `:chat` slice now also carries the
       # durable `template_working_copy` field (SPEC §1.3 / §1.6).
+      # PR-EM-6-PRE (Allen 2026-05-25) — fresh sessions have
+      # `:last_message_id == nil` (no message yet); `:owner_uri`
+      # defaults to `Map.get(args, :owner_uri)` = `nil` for arg-less
+      # init (PR-OWN-2 introduced the field; the original assertion in
+      # this test was stale and missed it).
       assert Chat.init_slice(%{}) == %{
                members: %{},
+               owner_uri: nil,
                monitors: %{},
                last_seen: %{},
+               last_message_id: nil,
                template_working_copy: Chat.default_template_working_copy()
              }
     end
@@ -149,7 +156,7 @@ defmodule Ezagent.Behavior.ChatTest do
   end
 
   describe "invoke(:send, ...)" do
-    test "writes to MessageStore + broadcasts on session events topic + returns {:ok, slice, %{stored: true}}" do
+    test "writes to MessageStore + broadcasts on session events topic + returns {:ok, new_slice, %{stored: true}}" do
       session_uri = URI.new!("session://default/default/chat-test-#{System.unique_integer([:positive])}")
       bind_to_default(session_uri)
       sender = URI.new!("entity://user/system/admin")
@@ -161,8 +168,20 @@ defmodule Ezagent.Behavior.ChatTest do
       topic = Chat.session_events_topic(session_uri)
       :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, topic)
 
-      assert {:ok, ^slice, %{stored: true}} =
+      # PR-EM-6-PRE (Allen 2026-05-25) — `:send` now mutates the slice
+      # (sets `:last_message_id`), so this is no longer a `^slice` pin
+      # match. The bound `new_slice` shape is asserted below.
+      assert {:ok, new_slice, %{stored: true}} =
                Chat.invoke(:send, slice, %{message: msg}, ctx)
+
+      # Slice mutation: last_message_id tracks the just-persisted msg.id
+      assert new_slice.last_message_id == msg.id
+      # All other fields unchanged from the fresh init
+      assert new_slice.members == slice.members
+      assert new_slice.monitors == slice.monitors
+      assert new_slice.last_seen == slice.last_seen
+      assert new_slice.owner_uri == slice.owner_uri
+      assert new_slice.template_working_copy == slice.template_working_copy
 
       # MessageStore now has it
       assert {:ok, loaded} = MessageStore.by_id(msg.id)
@@ -212,6 +231,153 @@ defmodule Ezagent.Behavior.ChatTest do
       assert_raise FunctionClauseError, fn ->
         Chat.invoke(:send, slice, %{message: msg}, ctx)
       end
+    end
+  end
+
+  describe "invoke(:send, ...) — PR-EM-6-PRE slice mutation + SliceChange emit" do
+    # PR-EM-6-PRE (Allen 2026-05-25) — Chat.send must mutate the :chat
+    # slice so the SliceChange hook in `Kind.Runtime` fires per send.
+    # This is the architectural seam external-mirror plugins ride on
+    # after PR-EM-6 deletes the legacy `maybe_notify_external/3` path.
+    # See `apps/ezagent_core/lib/ezagent/kind/runtime.ex` step 9.5 for
+    # the `new_slice != slice` predicate that gates the event.
+
+    test "fresh session has slice.last_message_id == nil" do
+      slice = Chat.init_slice(%{})
+      assert Map.has_key?(slice, :last_message_id)
+      assert slice.last_message_id == nil
+    end
+
+    test "send → slice.last_message_id == msg.id (string)" do
+      session_uri = URI.new!("session://default/default/lmi-mutation-#{System.unique_integer([:positive])}")
+      bind_to_default(session_uri)
+      sender = URI.new!("entity://user/system/admin")
+      msg = Message.new(sender, %{text: "ping", attachments: []})
+
+      slice = Chat.init_slice(%{})
+      ctx = %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: sender}
+
+      assert {:ok, new_slice, %{stored: true}} =
+               Chat.invoke(:send, slice, %{message: msg}, ctx)
+
+      assert is_binary(msg.id)
+      assert new_slice.last_message_id == msg.id
+      # The mutation is detectable by `new_slice != slice` — that's the
+      # exact predicate `Ezagent.Kind.Runtime` uses to build the
+      # slice_change_event payload (see runtime.ex step 9.5).
+      refute new_slice == slice
+    end
+
+    test "second send overwrites slice.last_message_id with the newer msg.id" do
+      session_uri = URI.new!("session://default/default/lmi-overwrite-#{System.unique_integer([:positive])}")
+      bind_to_default(session_uri)
+      sender = URI.new!("entity://user/system/admin")
+      ctx = %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: sender}
+
+      msg1 = Message.new(sender, %{text: "first", attachments: []})
+      msg2 = Message.new(sender, %{text: "second", attachments: []})
+      # Sanity: independent message ids
+      refute msg1.id == msg2.id
+
+      slice = Chat.init_slice(%{})
+
+      assert {:ok, slice1, _} = Chat.invoke(:send, slice, %{message: msg1}, ctx)
+      assert slice1.last_message_id == msg1.id
+
+      assert {:ok, slice2, _} = Chat.invoke(:send, slice1, %{message: msg2}, ctx)
+      assert slice2.last_message_id == msg2.id
+      refute slice2.last_message_id == msg1.id
+    end
+
+    test "pre-PR-EM-6-PRE slice (no :last_message_id key) gets the key on send" do
+      # A pre-existing on-disk Session snapshot might carry a `:chat`
+      # slice without the `:last_message_id` key. The invoke path uses
+      # `Map.put/3` so it covers both the fresh-init shape (key present,
+      # nil value) and the legacy shape (key absent).
+      session_uri = URI.new!("session://default/default/lmi-legacy-#{System.unique_integer([:positive])}")
+      bind_to_default(session_uri)
+      sender = URI.new!("entity://user/system/admin")
+      msg = Message.new(sender, %{text: "legacy slice send", attachments: []})
+
+      legacy_slice = %{members: %{}, monitors: %{}, last_seen: %{}}
+      refute Map.has_key?(legacy_slice, :last_message_id)
+
+      ctx = %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: sender}
+
+      assert {:ok, new_slice, %{stored: true}} =
+               Chat.invoke(:send, legacy_slice, %{message: msg}, ctx)
+
+      assert new_slice.last_message_id == msg.id
+    end
+
+    test "SliceChange.emit fires on send when the hook is enabled (full Runtime path)" do
+      # End-to-end: drive the Chat behavior via Kind.Runtime so the
+      # slice_change_event hook fires (per runtime.ex step 9.5). With
+      # `:last_message_id` mutated by `:send`, subscribers should
+      # receive a `{:slice_changed, %{slice_key: :chat, ...}}` event.
+      # Without this PR's slice mutation, `new_slice == slice` and the
+      # hook short-circuits with `nil` — no event reaches the topic.
+
+      Application.put_env(:ezagent_core, :slice_change_hook, true)
+      on_exit(fn -> Application.delete_env(:ezagent_core, :slice_change_hook) end)
+
+      session_uri = URI.new!("session://default/default/lmi-slicechange-#{System.unique_integer([:positive])}")
+      bind_to_default(session_uri)
+      sender = URI.new!("entity://user/system/admin")
+      msg = Message.new(sender, %{text: "emit me", attachments: []})
+
+      slice = Chat.init_slice(%{})
+
+      # Subscribe to the entity's slice-changed topic. The hook fires
+      # only via `Kind.Server.commit_and_notify/3` → `SliceChange.emit/1`
+      # post-snapshot; we drive the full `Kind.Runtime.handle_dispatch/4`
+      # path so the event shape matches production.
+      Ezagent.SliceChange.subscribe_unverified(session_uri)
+      on_exit(fn -> Ezagent.SliceChange.unsubscribe_unverified(session_uri) end)
+
+      # Build a dispatch envelope identical to what `Invocation.dispatch/1`
+      # would land in a Session GenServer's handle_call/cast.
+      target = URI.new!("#{URI.to_string(session_uri)}?action=chat.send")
+
+      inv = %Ezagent.Invocation{
+        target: target,
+        mode: :cast,
+        args: %{message: msg},
+        ctx: %{
+          caller: sender,
+          caps: Ezagent.Entity.User.admin_caps(),
+          reply: :ignore
+        }
+      }
+
+      # Initial state: just the :chat slice. Runtime defaults missing
+      # slices to %{}, so we only need to seed this one.
+      initial_state = %{chat: slice}
+
+      assert {:ok, new_state, _result, slice_change_event} =
+               Ezagent.Kind.Runtime.handle_dispatch(
+                 inv,
+                 initial_state,
+                 Ezagent.Entity.Session,
+                 session_uri
+               )
+
+      # Runtime built the event (proves new_slice != slice)
+      assert is_map(slice_change_event)
+      assert slice_change_event.slice_key == :chat
+      assert slice_change_event.action == :send
+      assert slice_change_event.kind_module == Ezagent.Entity.Session
+      assert slice_change_event.new_slice.last_message_id == msg.id
+      assert slice_change_event.old_slice.last_message_id == nil
+
+      # State carries the mutated slice
+      assert new_state.chat.last_message_id == msg.id
+
+      # Fire emit directly the same way Kind.Server.commit_and_notify/3
+      # does post-snapshot — and assert subscribers receive the event.
+      :ok = Ezagent.SliceChange.emit(slice_change_event)
+
+      assert_receive {:slice_changed, ^slice_change_event}, 500
     end
   end
 

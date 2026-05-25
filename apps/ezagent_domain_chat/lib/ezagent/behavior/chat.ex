@@ -99,6 +99,20 @@ defmodule Ezagent.Behavior.Chat do
       monitors: %{},
       # %{URI => DateTime} — when last seen offline (only present for offline)
       last_seen: %{},
+      # PR-EM-6-PRE (Allen 2026-05-25) — the id of the most recently
+      # `:send`-persisted Message on this session. Mutating this field
+      # in `invoke(:send, ...)` is what makes `Chat.send` cause a
+      # `SliceChange.emit/1` — the slice diff trigger fires when
+      # `new_slice != slice`, and prior to this field every `:send`
+      # returned an unchanged slice, so SliceChange never fired for
+      # chat messages. After PR-EM-6 deletes `maybe_notify_external/3`,
+      # this field IS the architectural seam external-mirror plugins
+      # (Feishu / future Slack / etc) ride on: Publisher event →
+      # ExternalMirror Worker → adapter dispatch.
+      #
+      # Initially `nil` (no message yet); set to `msg.id` (a string)
+      # after each successful `MessageStore.write/2`.
+      last_message_id: nil,
       # Phase 7 completion PR-2 (SPEC §1.3 / §1.6) — the durable
       # source-template record for the orchestrator's working copy.
       # `template_working_copy` is template-SHAPED, not live-runtime
@@ -242,7 +256,23 @@ defmodule Ezagent.Behavior.Chat do
         # plugin-agnostic — no `feishu_*` references here.
         maybe_notify_external(Map.get(ctx, :kind_module), session_uri, msg)
 
-        {:ok, slice, %{stored: true}}
+        # PR-EM-6-PRE (Allen 2026-05-25) — mutate the slice so the
+        # SliceChange hook in `Kind.Runtime` fires for every send. The
+        # field is the freshly-persisted message's id (string). Without
+        # this mutation `new_slice == slice` and no SliceChange event
+        # reaches the Publisher → ExternalMirror Worker path that
+        # plugin-owned outbound mirrors (Feishu / future Slack / etc)
+        # subscribe to after PR-EM-6 deletes `maybe_notify_external/3`.
+        #
+        # `slice` here may be a pre-PR-EM-6-PRE snapshot lacking the
+        # `:last_message_id` key (Session's `:chat` slice is loaded
+        # merged-into-fresh via `Kind.Snapshot.load_or_init/3`, but a
+        # pre-existing on-disk slice could shadow the fresh init's
+        # default). `Map.put/3` covers both shapes — sets it to msg.id
+        # whether or not the key existed.
+        new_slice = Map.put(slice, :last_message_id, msg.id)
+
+        {:ok, new_slice, %{stored: true}}
 
       {:error, reason} ->
         {:error, {:message_store_write_failed, reason}}
