@@ -62,6 +62,28 @@ defmodule Ezagent.Behavior.Workspace do
     ]
   end
 
+  # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
+  # Workspace is registered on the Workspace Kind only — kind axis is
+  # `:workspace`. workspace_scoped? defaults to true (intra-workspace
+  # admin); the structural ws-cap-set on `workspace://system` members
+  # bypasses isolation via step 5.6.
+  @impl Ezagent.Behavior
+  def required_caps do
+    %{
+      list_members: Ezagent.Capability.cap(:workspace, __MODULE__, :list_members),
+      add_member: Ezagent.Capability.cap(:workspace, __MODULE__, :add_member),
+      remove_member: Ezagent.Capability.cap(:workspace, __MODULE__, :remove_member),
+      list_templates: Ezagent.Capability.cap(:workspace, __MODULE__, :list_templates),
+      add_template: Ezagent.Capability.cap(:workspace, __MODULE__, :add_template),
+      remove_template: Ezagent.Capability.cap(:workspace, __MODULE__, :remove_template),
+      list_routing_rules:
+        Ezagent.Capability.cap(:workspace, __MODULE__, :list_routing_rules),
+      set_routing_rules: Ezagent.Capability.cap(:workspace, __MODULE__, :set_routing_rules),
+      instantiate: Ezagent.Capability.cap(:workspace, __MODULE__, :instantiate),
+      create_agent: Ezagent.Capability.cap(:workspace, __MODULE__, :create_agent)
+    }
+  end
+
   @impl Ezagent.Behavior
   def cap_subjects do
     [

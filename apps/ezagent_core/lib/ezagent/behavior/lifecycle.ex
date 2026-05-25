@@ -58,6 +58,20 @@ defmodule Ezagent.Behavior.Lifecycle do
   @impl Ezagent.Behavior
   def actions, do: [:terminate]
 
+  # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
+  # Lifecycle is registered on the Agent Kind (per
+  # `Ezagent.Domain.Chat.Application` register_lifecycle_behavior) —
+  # kind axis is `:agent`. workspace_scoped? = true (default): an
+  # orchestrator's `{:spawned_by, principal_uri}` cap is workspace-
+  # scoped via the underlying URI, so cross-workspace termination is
+  # blocked structurally.
+  @impl Ezagent.Behavior
+  def required_caps do
+    %{
+      terminate: Ezagent.Capability.cap(:agent, __MODULE__, :terminate)
+    }
+  end
+
   @impl Ezagent.Behavior
   def cap_subjects do
     [

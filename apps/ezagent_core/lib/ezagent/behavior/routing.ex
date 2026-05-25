@@ -58,6 +58,25 @@ defmodule Ezagent.Behavior.Routing do
   @impl Ezagent.Behavior
   def actions, do: [:add_rule, :delete_rule, :disable_rule, :enable_rule]
 
+  # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
+  # Routing is registered on System + Workspace + Session — kind axis is
+  # `:any` per check 11(b)'s multi-Kind escape. workspace_scoped? = false:
+  # the system-routing dispatch target (system://routing/default) is
+  # cross-workspace by nature; dispatching routing rules to a workspace://
+  # or session:// target stays workspace-scoped via the target URI shape.
+  @impl Ezagent.Behavior
+  def required_caps do
+    %{
+      add_rule: Ezagent.Capability.cap(:any, __MODULE__, :add_rule),
+      delete_rule: Ezagent.Capability.cap(:any, __MODULE__, :delete_rule),
+      disable_rule: Ezagent.Capability.cap(:any, __MODULE__, :disable_rule),
+      enable_rule: Ezagent.Capability.cap(:any, __MODULE__, :enable_rule)
+    }
+  end
+
+  @impl Ezagent.Behavior
+  def workspace_scoped?, do: false
+
   @impl Ezagent.Behavior
   def cap_subjects do
     [

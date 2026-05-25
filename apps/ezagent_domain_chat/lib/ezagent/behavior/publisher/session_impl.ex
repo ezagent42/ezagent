@@ -97,6 +97,18 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
   @impl Ezagent.Behavior
   def actions, do: [:subscribe_from, :snapshot, :history]
 
+  # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
+  # Publisher.SessionImpl is registered on Session Kind only — kind axis
+  # is `:session`.
+  @impl Ezagent.Behavior
+  def required_caps do
+    %{
+      subscribe_from: Ezagent.Capability.cap(:session, __MODULE__, :subscribe_from),
+      snapshot: Ezagent.Capability.cap(:session, __MODULE__, :snapshot),
+      history: Ezagent.Capability.cap(:session, __MODULE__, :history)
+    }
+  end
+
   @impl Ezagent.Behavior
   def state_slice, do: :publisher
 

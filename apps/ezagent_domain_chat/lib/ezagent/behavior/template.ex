@@ -124,6 +124,24 @@ defmodule Ezagent.Behavior.Template do
   @impl Ezagent.Behavior
   def actions, do: [:read, :write, :instantiate, :fork]
 
+  # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
+  # Template is registered on both AgentTemplate AND SessionTemplate
+  # Kinds — kind axis is `:any` per check 11(b)'s multi-Kind escape.
+  # template:// URIs are cross-cutting (workspace_uri segment is :any
+  # at the scheme level), so workspace_scoped? = false.
+  @impl Ezagent.Behavior
+  def required_caps do
+    %{
+      read: Ezagent.Capability.cap(:any, __MODULE__, :read),
+      write: Ezagent.Capability.cap(:any, __MODULE__, :write),
+      instantiate: Ezagent.Capability.cap(:any, __MODULE__, :instantiate),
+      fork: Ezagent.Capability.cap(:any, __MODULE__, :fork)
+    }
+  end
+
+  @impl Ezagent.Behavior
+  def workspace_scoped?, do: false
+
   @impl Ezagent.Behavior
   def cap_subjects do
     [

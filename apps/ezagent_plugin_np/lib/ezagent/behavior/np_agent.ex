@@ -55,6 +55,18 @@ defmodule Ezagent.Behavior.NpAgent do
   @impl Ezagent.Behavior
   def actions, do: [:receive, :reset, :configure]
 
+  # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
+  # NpAgent is registered on Entity.NpAgent Kind (type_name :np_agent) —
+  # kind axis is `:np_agent`.
+  @impl Ezagent.Behavior
+  def required_caps do
+    %{
+      receive: Ezagent.Capability.cap(:np_agent, __MODULE__, :receive),
+      reset: Ezagent.Capability.cap(:np_agent, __MODULE__, :reset),
+      configure: Ezagent.Capability.cap(:np_agent, __MODULE__, :configure)
+    }
+  end
+
   @impl Ezagent.Behavior
   def cap_subjects do
     [

@@ -92,6 +92,16 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
   @impl Ezagent.Behavior
   def actions, do: [:publish]
 
+  # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
+  # ExternalMirrorWorker is registered on the ExternalMirrorWorker Kind
+  # only — kind axis is `:external_mirror_worker`.
+  @impl Ezagent.Behavior
+  def required_caps do
+    %{
+      publish: Ezagent.Capability.cap(:external_mirror_worker, __MODULE__, :publish)
+    }
+  end
+
   @impl Ezagent.Behavior
   def state_slice, do: :external_mirror_worker
 

@@ -76,6 +76,17 @@ defmodule Ezagent.Behavior.Sandbox do
   @impl Ezagent.Behavior
   def actions, do: [:read, :write_path, :destroy]
 
+  # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
+  # Sandbox is registered on the Agent Kind — kind axis is `:agent`.
+  @impl Ezagent.Behavior
+  def required_caps do
+    %{
+      read: Ezagent.Capability.cap(:agent, __MODULE__, :read),
+      write_path: Ezagent.Capability.cap(:agent, __MODULE__, :write_path),
+      destroy: Ezagent.Capability.cap(:agent, __MODULE__, :destroy)
+    }
+  end
+
   @impl Ezagent.Behavior
   def cap_subjects do
     [
