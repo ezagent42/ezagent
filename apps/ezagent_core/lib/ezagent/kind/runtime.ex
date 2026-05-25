@@ -118,8 +118,8 @@ defmodule Ezagent.Kind.Runtime do
 
     with {:ok, {behavior_name_atom, action}} <- Ezagent.URI.behavior_action(target),
          {:ok, behavior_module} <- lookup_behavior(kind_module, action),
-         :ok <- authz_check(kind_module, action, target, enriched_ctx),
-         :ok <- workspace_isolation_check(target, enriched_ctx),
+         :ok <- authz_check(behavior_module, kind_module, action, target, enriched_ctx),
+         :ok <- workspace_isolation_check(behavior_module, target, enriched_ctx),
          :ok <- validate_args(behavior_module, action, args),
          slice_key <- behavior_module.state_slice(),
          slice <- Map.get(state, slice_key, %{}),
@@ -207,38 +207,253 @@ defmodule Ezagent.Kind.Runtime do
     end
   end
 
-  # Phase 3d hard flip (per P3-D6): real cap check via Capability.matches?.
-  # `:stub_grant` telemetry is GONE — replaced with `:granted` (success)
-  # and `:denied` (failure). Per memory feedback_let_it_crash_no_workarounds:
-  # no feature flag, no parallel paths; the alarm path is "this function
-  # ever emits :stub_grant" which check_invariants #9 enforces.
-  defp authz_check(kind_module, action, target, ctx) do
-    needed = Ezagent.Capability.cap_for_action(kind_module, action, target)
-    caps = Map.get(ctx, :caps, MapSet.new())
+  # PR-CC-2b (SPEC caps-cleanup-v1 §5.3 — partial) — dual-path cap check.
+  #
+  # During PR-CC-2b's transitional window, dispatch evaluates BOTH:
+  #
+  # 1. **Legacy path** (`Capability.matches?/2` against `ctx.caps`) — preserved
+  #    so existing call sites that pass `caps: SystemPrincipal.caps(...)` (a
+  #    `MapSet` of `%Capability{}` wildcard structs) keep authorizing while
+  #    PR-CC-2c migrates them.
+  #
+  # 2. **New string-cap path** (`Behavior.required_caps/0` + `Kind.holds_cap?/2`
+  #    against the caller's `:identity` slice) — the post-cleanup target.
+  #    Looks up the needed cap string for `(behavior_module, action)`,
+  #    substitutes any `*` kind segment with the target Kind's actual
+  #    `type_name()`, then asks the caller's Kind whether the slice holds it.
+  #
+  # Grant if EITHER path authorizes. Deny ONLY if both deny. This means:
+  # - Every test fixture that passes `ctx.caps` continues to work (legacy
+  #   grants).
+  # - System principals seeded as Kinds via `SystemPrincipal.ensure/1` exercise
+  #   the new path when dispatched as `caller: system://<service>`.
+  # - PR-CC-2c drops the legacy arm + migrates remaining call sites.
+  #
+  # Telemetry distinguishes the path that granted (`:via` in meta) so PR-CC-2c
+  # can verify the legacy arm is unused before deletion.
+  #
+  # Per `feedback_let_it_crash_no_workarounds`: this is NOT a shim — both
+  # implementations are first-class, the deny gate is "both deny", and the
+  # transition is bounded (PR-CC-2c deletes the legacy arm). A shim would be
+  # "if new fails, fall back to a default value" which we do not do.
+  #
+  # Order: legacy first, then the string-cap path runs ONLY if legacy denied.
+  # The string-cap path does a `GenServer.call(:ezagent_get_slice, ...)`
+  # which contends with the Kind.Server's snapshot-write path under heavy
+  # parallel load (observed in CrossWorkspaceIsolationTest during PR-CC-2b
+  # development). The discovery cost only fires on legacy-deny, which is
+  # the case where we WANT the new path to have a chance — legacy-grant
+  # was already going to succeed regardless.
+  defp authz_check(behavior_module, kind_module, action, target, ctx) do
+    legacy_needed = Ezagent.Capability.cap_for_action(kind_module, action, target)
+    legacy_granted? = legacy_caps_match?(ctx, legacy_needed)
 
-    granted? =
-      Enum.any?(caps, fn cap ->
-        Ezagent.Capability.matches?(cap, needed)
-      end)
-
-    meta = %{
+    meta_base = %{
+      behavior_module: behavior_module,
       kind_module: kind_module,
       action: action,
       target: target,
       caller: Map.get(ctx, :caller),
-      needed: needed
+      needed: legacy_needed
     }
 
-    if granted? do
-      :telemetry.execute([:ezagent, :authz, :granted], %{}, meta)
-      :ok
-    else
-      :telemetry.execute([:ezagent, :authz, :denied], %{}, meta)
-      {:error, :unauthorized}
+    cond do
+      legacy_granted? ->
+        :telemetry.execute(
+          [:ezagent, :authz, :granted],
+          %{},
+          Map.put(meta_base, :via, :legacy_struct)
+        )
+
+        :ok
+
+      true ->
+        # Legacy denied → try the new string-cap path.
+        case string_cap_check(behavior_module, kind_module, action, target, ctx) do
+          {needed_string, true} ->
+            :telemetry.execute(
+              [:ezagent, :authz, :granted],
+              %{},
+              meta_base
+              |> Map.put(:via, :string_cap)
+              |> Map.put(:needed_cap, needed_string)
+            )
+
+            :ok
+
+          {needed_string, false} ->
+            :telemetry.execute(
+              [:ezagent, :authz, :denied],
+              %{},
+              Map.put(meta_base, :needed_cap, needed_string)
+            )
+
+            {:error, :unauthorized}
+        end
     end
   end
 
+  defp legacy_caps_match?(ctx, needed) do
+    caps = Map.get(ctx, :caps, MapSet.new())
+
+    Enum.any?(caps, fn cap ->
+      Ezagent.Capability.matches?(cap, needed)
+    end)
+  end
+
+  # String-cap path (PR-CC-2b new arm).
+  #
+  # Looks up `needed_cap = behavior.required_caps()[action]`, performs the
+  # wildcard-kind substitution (Behaviors registered against multiple Kinds
+  # declare the kind segment as `*` — substitute it with the target Kind's
+  # actual `type_name()` so concrete-kind caps held by the caller match),
+  # and asks the caller's Kind whether it holds that cap via
+  # `Kind.holds_cap?/3` against its `:identity` slice.
+  #
+  # Returns `{needed_string | nil, granted_boolean}` so telemetry can record
+  # what was checked even on denial.
+  #
+  # Special cases:
+  # - `caller == :system` or `caller == nil`: returns `{needed_string, false}`.
+  #   These callers do not have an Identity slice to consult — the legacy
+  #   path handles them via `ctx.caps`. (PR-CC-2c will spawn `system://*`
+  #   principal Kinds and migrate these sites to use real callers.)
+  # - Behavior doesn't export `required_caps/0`, or the action isn't in the
+  #   map: returns `{nil, false}` — let the legacy path decide. Per memory
+  #   `feedback_let_it_crash_no_workarounds`, the assertive deny only fires
+  #   once the new path is the sole arm (PR-CC-2c).
+  defp string_cap_check(behavior_module, kind_module, action, target, ctx) do
+    case Ezagent.Behavior.required_cap_for(behavior_module, action) do
+      nil ->
+        {nil, false}
+
+      raw_needed when is_binary(raw_needed) ->
+        target_kind = target_kind_module(target, kind_module)
+
+        needed =
+          raw_needed
+          |> substitute_wildcard_kind(target_kind)
+          |> append_target_instance(target)
+
+        granted? = caller_holds_string_cap?(Map.get(ctx, :caller), needed)
+        {needed, granted?}
+    end
+  end
+
+  # PR-CC-2b (codex round-1 HIGH-4 fix) — append `@<target_instance_uri>`
+  # to the needed cap so that an instance-scoped held cap (e.g.
+  # `session.chat.send@session://default/team/main`) authorizes a needed
+  # cap that came from `required_caps/0` (e.g. `session.chat.send`).
+  #
+  # The matcher's instance semantics are asymmetric (`Ezagent.Cap.instance_match?/2`):
+  # - Held instance `:absent` matches any needed instance — broad cap
+  #   authorizes specific instance.
+  # - Needed instance `:absent` does NOT match a held instance — narrow
+  #   cap CANNOT authorize an unscoped needed cap (false in the catch-all
+  #   `instance_match?(_, _)` clause).
+  #
+  # Without this append, holders with instance-scoped caps would be
+  # denied — the inverse of the intent. SPEC `2026-05-25-caps-cleanup-v1.md`
+  # §5.3 sketches `needed_with_instance = "#{needed_cap}@#{URI.to_string(Ezagent.URI.instance(target))}"`.
+  defp append_target_instance(needed_cap_string, %URI{} = target) do
+    needed_cap_string <> "@" <> URI.to_string(Ezagent.URI.instance(target))
+  end
+
+  defp append_target_instance(needed_cap_string, _), do: needed_cap_string
+
+  # Substitute `*` in the kind segment of a cap string with the target Kind's
+  # actual `type_name()`. Behaviors registered against multiple Kinds (Routing
+  # on Workspace+Session+System; Chat `:receive` on User+Agent; Identity on
+  # User+Agent; IdentityAdmin on User+Agent) declare the kind segment as `*`
+  # because the required cap is per-target-Kind. Without substitution, a
+  # holder with concrete cap `session.chat.receive` would not match the
+  # wildcard needed `*.chat.receive` (the matcher's wildcard-in-held semantics
+  # are asymmetric — wildcard on held authorizes everything, wildcard on
+  # needed is treated as a literal `*` segment).
+  #
+  # Only the FIRST segment is substituted. `cap-strings` with `*` in
+  # behavior or action segments are left as-is — that shape is reserved for
+  # an authorized holder (e.g. `session.*` granting all session-kind actions
+  # of any behavior).
+  @doc false
+  @spec substitute_wildcard_kind(String.t(), module()) :: String.t()
+  def substitute_wildcard_kind(needed_cap_string, target_kind_module)
+      when is_binary(needed_cap_string) and is_atom(target_kind_module) do
+    case String.split(needed_cap_string, ".", parts: 3) do
+      ["*", behavior, action] ->
+        target_kind = type_name_string(target_kind_module)
+        Enum.join([target_kind, behavior, action], ".")
+
+      ["*", behavior] ->
+        target_kind = type_name_string(target_kind_module)
+        Enum.join([target_kind, behavior], ".")
+
+      _ ->
+        needed_cap_string
+    end
+  end
+
+  # Derive the target Kind module from the target URI. The Kind module
+  # hosting THIS dispatch is `kind_module` (from the GenServer state), which
+  # is the right answer for intra-Kind dispatches — and for the
+  # cross-Kind-registered Behaviors (Chat on User+Agent, etc.) the target's
+  # Kind module IS the Kind module currently handling the dispatch. So this
+  # is a passthrough today; isolated as a function so future schemes (e.g.
+  # facade Tasks routing across Kinds) can override.
+  defp target_kind_module(_target, kind_module), do: kind_module
+
+  defp type_name_string(kind_module) do
+    kind_module
+    |> apply(:type_name, [])
+    |> Atom.to_string()
+  rescue
+    _ ->
+      # Defensive — every Kind exports type_name/0 (it's a required
+      # callback). The rescue covers a hypothetical mis-declared module
+      # reaching dispatch; rather than crash dispatch we leave the
+      # wildcard unresolved (which denies) and let the legacy arm or a
+      # later test catch it.
+      "*"
+  end
+
+  # Look up the caller's identity slice and call `Kind.holds_cap?/2`.
+  # Returns false for `nil` / `:system` / `:any` (atom) callers and for
+  # unspawned URIs.
+  #
+  # We use the DEFAULT `Kind.holds_cap?/2` (no Kind-module override) here.
+  # Override via `Kind.holds_cap?/3` is reserved for Kinds with a
+  # non-standard cap source — none ship today; PR-CC-2c+ will wire them
+  # if they appear.
+  defp caller_holds_string_cap?(nil, _needed), do: false
+  defp caller_holds_string_cap?(:system, _needed), do: false
+  defp caller_holds_string_cap?(:any, _needed), do: false
+
+  defp caller_holds_string_cap?(%URI{} = caller_uri, needed) when is_binary(needed) do
+    case Ezagent.Kind.get_slice(caller_uri, :identity) do
+      {:ok, identity_slice} when is_map(identity_slice) ->
+        # `Kind.holds_cap?/2` reads `slice[:identity][:caps]` — but
+        # `get_slice/2` returns the slice DIRECTLY (i.e. what would be
+        # at `state[:identity]`). Wrap it back so the default
+        # implementation's `get_in(slice, [:identity, :caps])` finds the
+        # cap list.
+        Ezagent.Kind.holds_cap?(%{identity: identity_slice}, needed)
+
+      _ ->
+        false
+    end
+  end
+
+  defp caller_holds_string_cap?(_other, _needed), do: false
+
   # Phase 9 PR-4 (SPEC v3 §5) step 5.6 — workspace isolation.
+  #
+  # PR-CC-2b (SPEC caps-cleanup-v1 §5.5) — gated on `Behavior.workspace_scoped?/0`.
+  # Behaviors operating on cross-cutting data (system://, template://,
+  # resource://) override `workspace_scoped?/0` to `false` and skip this
+  # check entirely (`Ezagent.Behavior.Routing` is the canonical example —
+  # routing rules live on scope-owning Kinds across workspaces). For
+  # backwards-compat, Behaviors that haven't migrated default to `true`
+  # via `Ezagent.Behavior.workspace_scoped?/1`'s probe fallback.
   #
   # Caller's workspace must equal target's workspace, OR caller must
   # hold a cross-workspace cap (`workspace_uri: :any`). Bypass
@@ -263,7 +478,15 @@ defmodule Ezagent.Kind.Runtime do
   # otherwise. The atom is distinct from `:unauthorized` (invariant 9
   # — inbound transports must surface this with a different message +
   # reaction so users see why dispatch failed).
-  defp workspace_isolation_check(target, ctx) do
+  defp workspace_isolation_check(behavior_module, target, ctx) do
+    if Ezagent.Behavior.workspace_scoped?(behavior_module) do
+      do_workspace_isolation_check(target, ctx)
+    else
+      :ok
+    end
+  end
+
+  defp do_workspace_isolation_check(target, ctx) do
     caller_ws = workspace_of_caller(Map.get(ctx, :caller))
     target_ws = Ezagent.Capability.workspace_of(target)
 

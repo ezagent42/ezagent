@@ -129,11 +129,75 @@ defmodule EzagentDomainExternalMirror.Application do
         # (delegating to `Ezagent.ExternalMirror.AdapterInstall.install/1`).
         # Nothing for this Application to do post-boot for
         # per-adapter caps.
+
+        # PR-CC-2b (SPEC caps-cleanup-v1 §4.3) — seed external_mirror-owned
+        # system principals per §4.1 Operating context. Idempotent;
+        # test-env skip.
+        :ok = seed_external_mirror_system_principals()
+
         {:ok, sup_pid}
 
       other ->
         other
     end
+  end
+
+  # PR-CC-2b (SPEC caps-cleanup-v1 §4.3) — external_mirror-owned principals:
+  #
+  # - `system://boot-reconciler` — `BootReconciler` reconciles persisted
+  #   bindings at app boot
+  # - `system://adapter-install` — `AdapterInstall` installs per-adapter
+  #   cap subjects against Session Kind
+  # - `system://worker-publish` — `Behavior.ExternalMirrorWorker` outbound
+  #   publish dispatches
+  defp seed_external_mirror_system_principals do
+    if test_env?() do
+      :ok
+    else
+      Enum.each(
+        [
+          "system://boot-reconciler",
+          "system://adapter-install",
+          "system://worker-publish"
+        ],
+        &ensure_principal_logged/1
+      )
+
+      :ok
+    end
+  end
+
+  # PR-CC-2b (codex round-1 HIGH-1 fix) — wrap ensure/1 in try/catch
+  # so EXITs from absent supervisors don't kill external_mirror boot.
+  defp ensure_principal_logged(uri_str) do
+    try do
+      case Ezagent.SystemPrincipal.ensure(URI.parse(uri_str)) do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          log_seed_failure(uri_str, reason)
+      end
+    rescue
+      e -> log_seed_failure(uri_str, e)
+    catch
+      kind, reason -> log_seed_failure(uri_str, {kind, reason})
+    end
+  end
+
+  defp log_seed_failure(uri_str, reason) do
+    Logger.warning(
+      "EzagentDomainExternalMirror seed: ensure(#{uri_str}) failed " <>
+        "(#{inspect(reason)}); idempotent retry on next boot."
+    )
+
+    :ok
+  end
+
+  defp test_env? do
+    Code.ensure_loaded?(Mix) and Mix.env() == :test
+  rescue
+    _ -> false
   end
 
   # Register the Worker Behavior's `:publish` action against the

@@ -122,6 +122,19 @@ defmodule EzagentCore.Application do
       :ok = Ezagent.Runtime.configure_for_runtime!()
     end
 
+    # PR-CC-2b (SPEC caps-cleanup-v1 §4.3) — seed the operator-/UI-shaped
+    # system principals whose Operating context is core (no domain owns
+    # the call sites). `mix-task` is invoked from any `mix ezagent.*`
+    # task; `lv-anon-mount` is invoked from LV mount paths when no
+    # `current_entity_uri` is in session. Seeding here is idempotent and
+    # ensures the Identity slice exists when the lazy callers fire.
+    #
+    # Test-env skip mirrors `EzagentDomainIdentity.maybe_seed_admin_kind_for_tests/0`
+    # — tests that need these principals alive at boot must invoke
+    # `SystemPrincipal.ensure/1` in setup against the Sandbox-owned repo
+    # connection. Dev / prod see the seed on every boot.
+    :ok = seed_core_system_principals()
+
     result
   end
 
@@ -181,6 +194,77 @@ defmodule EzagentCore.Application do
           err -> err
         end
     end
+  end
+
+  # PR-CC-2b (SPEC caps-cleanup-v1 §4.3) — seed system principals whose
+  # Operating context (§4.1 table) is the core application:
+  #
+  # - `system://mix-task` — every `mix ezagent.*` task that needs caps.
+  #   No domain owns this — Mix tasks are operator entry points so the
+  #   core Application is the boot home.
+  #
+  # Each call is idempotent; `ensure/1` is safe across application restarts.
+  #
+  # Boot-order note: `Ezagent.Kind.spawn(Entity.User, ...)` reads
+  # `Ezagent.Entity.User.supervisor/0` which returns
+  # `EzagentDomainIdentity.Application.UserSupervisor`. That supervisor
+  # is started by identity's `Application.start/2` — identity boots
+  # AFTER core (`ezagent_domain_identity` depends on `ezagent_core`).
+  # So at this point in core's start/2, identity has NOT yet booted
+  # and the supervisor is absent. We capture the error + log; lazy
+  # callers re-run `ensure/1` once identity is up (`ensure/1` is
+  # idempotent so the second call succeeds). Future PR may move this
+  # into `Ezagent.Plugin.RegistrationHooks.publish_after_all_registered/2`
+  # gated on `EzagentDomainIdentity.Application` boot completion.
+  defp seed_core_system_principals do
+    if is_test?() do
+      :ok
+    else
+      ensure_principal_logged("system://mix-task")
+    end
+  end
+
+  # PR-CC-2b (codex round-1 HIGH-1 fix) — `SystemPrincipal.ensure/1`
+  # calls `Ezagent.Kind.spawn(Entity.User, ...)`, which reads
+  # `EzagentDomainIdentity.Application.UserSupervisor` via `User.supervisor/0`.
+  # That supervisor is started by identity's `Application.start/2` —
+  # `ezagent_domain_identity` depends on `ezagent_core`, so identity boots
+  # AFTER core. At core's seed point, `UserSupervisor` does NOT yet exist;
+  # `DynamicSupervisor.start_child/2` against an absent named supervisor
+  # EXITS with `:noproc`. The `case do {:ok, _} / {:error, _}` clause
+  # below cannot catch an exit — without the try/catch, this kills core
+  # boot. Wrap the whole call.
+  #
+  # The lazy callers (`mix ezagent.*` tasks) re-invoke `ensure/1` once
+  # identity is up; the idempotency arm (`{:already_started, _}` /
+  # `{:already_registered, _}`) makes the second call cheap.
+  defp ensure_principal_logged(uri_str) do
+    try do
+      case Ezagent.SystemPrincipal.ensure(URI.parse(uri_str)) do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          log_seed_failure(uri_str, reason)
+      end
+    rescue
+      e ->
+        log_seed_failure(uri_str, e)
+    catch
+      kind, reason ->
+        log_seed_failure(uri_str, {kind, reason})
+    end
+  end
+
+  defp log_seed_failure(uri_str, reason) do
+    require Logger
+
+    Logger.warning(
+      "seed_core_system_principals: ensure(#{uri_str}) failed " <>
+        "(#{inspect(reason)}); lazy caller will retry — idempotent."
+    )
+
+    :ok
   end
 
   defp register_presence_behavior do
