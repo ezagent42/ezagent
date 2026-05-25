@@ -137,13 +137,123 @@ defmodule Ezagent.Kind do
   """
   @callback terminate_strategy() :: terminate_strategy()
 
+  @doc """
+  Does the entity (or principal) at `entity_uri` hold a cap that
+  authorizes the `needed` capability?
+
+  Called by `Ezagent.Kind.Runtime.handle_dispatch/4` step 5.5 (the
+  dispatch authz chokepoint, post-PR-CC-2-v2). Returns `true` only when
+  the entity's `:identity` slice contains at least one `%Capability{}`
+  cap that matches `needed` per `Capability.matches?/2`.
+
+  ## Default implementation
+
+  When a Kind does not export `holds_cap?/2`, dispatch uses
+  `Ezagent.Kind.default_holds_cap?/2` which:
+
+  1. Resolves the entity's caps via `Ezagent.Identity.list_caps_for/1`.
+  2. Converts the `needed` `%Capability{}` into the 4-field map
+     `Capability.matches?/2` consumes.
+  3. Returns `true` iff any held cap matches.
+
+  ## Override semantics
+
+  Kinds MAY override `holds_cap?/2` for Kind-specific bypass logic.
+  The override MUST preserve the "any held cap matches needed"
+  semantic. The two known overrides today:
+
+  - `Ezagent.Entity.User` short-circuits when the user is the structural
+    bootstrap admin (`User.admin_invariant?/1`).
+  - `Ezagent.Kind.Template` reads its caps from `TemplateRegistry`
+    directly to avoid re-entering dispatch during materialization.
+
+  SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §3.
+  """
+  @callback holds_cap?(entity_uri :: URI.t() | String.t(), needed :: Ezagent.Capability.t()) ::
+              boolean()
+
   @optional_callbacks [
     uri_from_args: 1,
     snapshot_version: 0,
     supervisor: 0,
     spawn_strategy: 0,
-    terminate_strategy: 0
+    terminate_strategy: 0,
+    holds_cap?: 2
   ]
+
+  @doc """
+  Default `holds_cap?/2` impl — used by `Ezagent.Kind.holds_cap?/3`
+  when the target Kind module does not export the optional callback.
+
+  Reads the entity's caps via `Ezagent.Identity.list_caps_for/1` (which
+  returns a `MapSet.t(Capability.t())`) and tests each against `needed`
+  via `Capability.matches?/2`. Returns `false` on any error in the
+  lookup path (per `feedback_let_it_crash_no_workarounds` — the dispatch
+  step deny-by-default is the safer posture; a malformed slice is a bug
+  for separate forensic investigation, not a permission grant).
+
+  SPEC §3 default impl.
+  """
+  @spec default_holds_cap?(URI.t() | String.t() | :system | nil, Ezagent.Capability.t()) ::
+          boolean()
+  def default_holds_cap?(:system, %Ezagent.Capability{}), do: true
+
+  def default_holds_cap?(nil, %Ezagent.Capability{}), do: false
+
+  def default_holds_cap?(entity_uri, %Ezagent.Capability{} = needed) do
+    needed_map = %{
+      kind: needed.kind,
+      behavior: needed.behavior,
+      instance: needed.instance,
+      workspace_uri: needed.workspace_uri
+    }
+
+    # Read the entity's `:identity` slice directly via `Kind.get_slice/2`
+    # (a `GenServer.call` to the Kind.Server, NOT a re-entry into
+    # `Invocation.dispatch/1`). This breaks the self-reference
+    # recursion that an `Identity.list_caps_for/1`-based lookup would
+    # otherwise introduce when step 5.5 runs against the User Kind's
+    # own `:list_caps` action.
+    #
+    # Per the Behavior.Identity contract, the slice shape is
+    # `%{caps: MapSet.t(Capability.t())}`. A missing / nil slice
+    # (Kind not yet alive, or non-cap-bearing Kind) → no held caps →
+    # deny-by-default per `feedback_let_it_crash_no_workarounds`.
+    case get_slice(entity_uri, :identity) do
+      {:ok, %{caps: caps}} when is_struct(caps, MapSet) ->
+        Enum.any?(caps, fn held ->
+          try do
+            Ezagent.Capability.matches?(held, needed_map)
+          rescue
+            _ -> false
+          catch
+            _, _ -> false
+          end
+        end)
+
+      _ ->
+        false
+    end
+  end
+
+  @doc """
+  Resolve `holds_cap?/2` for `kind_module`, defaulting to
+  `default_holds_cap?/2` when the optional callback is not exported.
+
+  This is the entry point dispatch step 5.5 uses — never call
+  `kind_module.holds_cap?(...)` directly without going through this
+  helper, or you skip the default impl for the (common) Kinds that
+  haven't overridden it.
+  """
+  @spec holds_cap?(module(), URI.t() | String.t(), Ezagent.Capability.t()) :: boolean()
+  def holds_cap?(kind_module, entity_uri, %Ezagent.Capability{} = needed)
+      when is_atom(kind_module) do
+    if function_exported?(kind_module, :holds_cap?, 2) do
+      kind_module.holds_cap?(entity_uri, needed)
+    else
+      default_holds_cap?(entity_uri, needed)
+    end
+  end
 
   @doc """
   The SOLE programmatic entry for spawning a Kind process.
