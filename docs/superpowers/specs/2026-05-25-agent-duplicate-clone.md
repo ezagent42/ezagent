@@ -1,6 +1,6 @@
 # SPEC — Agent duplicate/clone primitive (Behavior.Agent `:duplicate`)
 
-**Status:** DRAFT rev 3 · 2026-05-25 (codex r1 + r2 fixes)
+**Status:** DRAFT rev 4 · 2026-05-25 (codex r1 + r2 + r3 fixes)
 **Tier:** `apps/ezagent_domain_chat/` (new `Behavior.Agent` + action) + `apps/ezagent_core/` (new `AgentOwnership` registry + Kind.Template snapshot callback adapter + BehaviorRegistry slot) + `apps/ezagent_plugin_cc/` (cc snapshot+restore impl) + `apps/ezagent_domain_workspace/` (mix task wrapper + ownership-write on `:create_agent`)
 **Trigger:** Allen 2026-05-24 (memory `feedback_agent_clone_not_via_template`) — "agent 创建的 template 如果不走正常的 template 创建和 fork 流程，可能导致开发 drift，但如果走标准流程，又可能导致 Template Registry 里面大量临时创建后再也不用的 template". Clone must live as a domain.agent primitive, NEVER via Template Registry.
 **Predecessors:**
@@ -20,6 +20,11 @@
 - HIGH: all-or-nothing target spawn — config staged to temp + verified BEFORE target Kind comes up (§3.5)
 - HIGH: no `Workspace.create_agent` routing — dedicated primitive avoids template residue + adoption TOCTOU (§3.4)
 - MEDIUM: new `Kind.Template.snapshot_config_dir/2` callback owns plugin-side quiesce + manifest (§3.6)
+
+**Rev 4 changes (codex r3 verdict needs-attention → addressed):**
+- CRITICAL: rollback now waits for target Kind process death BEFORE deleting `Kind.Snapshot` row. `Sandbox.:destroy`'s delayed termination Task previously could re-write the snapshot AFTER our delete. Rev 4 changes the rollback order: terminate synchronously (`DynamicSupervisor.terminate_child` + `Process.monitor` wait for `:DOWN`), THEN delete snapshot. Snapshot delete now happens on a dead process — no re-write possible (§3.4.2 rewritten).
+- HIGH: explicit `Ezagent.Agent.Provisioning.provision_agent/3` helper module (NEW; in `apps/ezagent_domain_chat/lib/ezagent/agent/provisioning.ex`) shared by BOTH `Behavior.Workspace.:create_agent` and `Behavior.Agent.:duplicate` spawn paths. Steps: (1) `AgentOwnership.record/2`, (2) `CapabilityRegistry.default_grants_from_data_owner/2` for every Behavior of Agent Kind → apply via `Identity.grant_cap`, (3) failure of (2) rolls back (1). Closes codex r3 HIGH-2 (avoiding the "spawn lifecycle auto-synthesizes" assumption that codex grep'd as false). §3.9 new.
+- HIGH: `Ezagent.AgentOwnership` is now a **dets-backed ETS cache** (NOT pure ETS). Mirrors `Workspace.Store`'s SQLite-backing pattern: SQLite table `agent_ownership(agent_uri pk, owner_uri, created_at)` is the durable source of truth; ETS table is a boot-time-hydrated read cache. `record/2` writes BOTH (sync). `forget/1` deletes BOTH. Restart test (§7 row 15 new) creates an agent, restarts the runtime, verifies owner still resolves + can delegate `:duplicate`.
 
 **Rev 3 changes (codex r2 verdict needs-attention → addressed):**
 - CRITICAL: rollback now closes the `:on_terminate` persistence hole — dispatches `Sandbox.:destroy` (clears slice + plugin-side cleanup) + deletes `KindSnapshot` row + revokes any granted caps BEFORE `Kind.terminate/1`. Failure-injection tests added for every post-spawn step (§3.4.2 + §7).
@@ -281,52 +286,81 @@ end
 
 This differs from the existing `:already_started → :ok` patterns. For duplicate we MUST be the one that created the target — an adopted target's config we're about to overwrite is not our property.
 
-#### 3.4.2 `rollback_partial_target/3` — durable cleanup (codex r2 CRITICAL fix)
+#### 3.4.2 `rollback_partial_target/3` — terminate-then-purge (codex r3 CRITICAL fix)
 
-Codex r2 CRITICAL: Agent declares `persistence: :on_terminate`. `Kind.Server.terminate/2` writes the current slice via `Kind.Snapshot.put/3` on graceful shutdown. If we call `Kind.terminate/1` after `restore_snapshot`, `sandbox_write_path`, or `grant_initial_caps_for_owner` have mutated the target's slices, the partial state is persisted to durable storage — and a future spawn of the same `target_uri` would rehydrate the failed clone. Rollback must clear the slices BEFORE termination triggers the snapshot write.
+Codex r3 CRITICAL: rev-3 ordering had `dispatch_sandbox_destroy/1` schedule a delayed Task (20ms) that calls `Kind.Server.terminate/2`. That terminate's `:on_terminate` snapshot write could fire AFTER our `Kind.Snapshot.delete(target_uri)` — re-writing the row we just deleted. Rev-4 fix: terminate SYNCHRONOUSLY (await `:DOWN`), THEN delete snapshot on a process that can no longer write.
 
 ```elixir
 defp rollback_partial_target(target_uri, staged_path, err) do
-  # 1. Dispatch Sandbox.:destroy synchronously (clears the :sandbox slice
-  #    to `%{config_dir_path: nil, template_class: nil}` AND calls the
-  #    plugin's destroy_config_dir/2 for FS cleanup). Sandbox already
-  #    schedules a Task that terminates the Kind 20ms later, so this is
-  #    the durable cleanup pathway the Sandbox Behavior was designed for.
-  _ = dispatch_sandbox_destroy(target_uri)
-
-  # 2. Revoke caps granted by this action (Identity slice has been
-  #    mutated by grant_initial_caps_for_owner if we got that far). Calling
-  #    `Identity.revoke_cap` for each cap we attempted to grant clears them
-  #    from the slice; if revoke_cap is itself the failure, this is a no-op.
+  # Step 1: revoke any caps we granted (Identity slice clear).
+  #   Done synchronously via dispatch BEFORE termination so any
+  #   :on_terminate snapshot write does NOT contain stale caps.
   _ = revoke_initial_caps_if_granted(target_uri)
 
-  # 3. Forget AgentOwnership + AgentLineage rows (ESR registries).
+  # Step 2: dispatch Sandbox.:destroy (call mode, synchronous) — clears
+  #   :sandbox slice + invokes plugin destroy_config_dir/2 for FS
+  #   cleanup of the AGENT-config-dir (not staging). Returns after the
+  #   slice mutation is committed via Kind.Server.commit_and_notify/3,
+  #   so subsequent slice reads see the cleared state. Sandbox.:destroy
+  #   ALSO schedules a delayed terminate Task — we explicitly DO NOT
+  #   rely on that; we run our own synchronous termination next.
+  _ = dispatch_sandbox_destroy(target_uri)
+
+  # Step 3 (rev-4 critical fix): SYNCHRONOUSLY terminate the target
+  #   Kind process and AWAIT death. Use the supervisor's
+  #   terminate_child path with Process.monitor so we know the process
+  #   is gone before proceeding. This is the cleaner kill path
+  #   (`:shutdown` exit reason) — Kind.Server.terminate/2 still runs
+  #   and will write the :on_terminate snapshot, BUT at this point
+  #   slices have been cleared by step 1+2 so the snapshot written
+  #   carries no stale state. After this returns, the process is dead
+  #   and no further snapshot writes are possible from it.
+  :ok = terminate_target_synchronously(target_uri)
+
+  # Step 4: forget registries (ESR-domain registry rows).
   _ = Ezagent.AgentOwnership.forget(target_uri)
   _ = Ezagent.AgentLineage.forget(target_uri)
   _ = Ezagent.WorkspaceRegistry.unbind(target_uri)
 
-  # 4. Delete the persisted KindSnapshot row for target_uri. Step 1 cleared
-  #    the slice but the snapshot write hasn't happened yet (still inside
-  #    the Sandbox destroy task's 20ms window); deleting now ensures even
-  #    if a slice mutation races us, there's no row to load on next spawn.
-  #    Kind.Snapshot.delete/1 is idempotent (no-op if row absent).
-  _ = Ezagent.Kind.Snapshot.delete(target_uri)
+  # Step 5: now safe to delete the persisted KindSnapshot row.
+  #   The target process is dead (step 3 awaited :DOWN); no
+  #   further writes from Kind.Server.terminate/2 can race us.
+  #   Idempotent — no-op if row absent.
+  :ok = Ezagent.Kind.Snapshot.delete(target_uri)
 
-  # 5. Clean up the staging temp dir (Sandbox.:destroy handled the FINAL
-  #    config_dir under template_class.agent_config_dir(target_uri); the
-  #    snapshot temp is outside that tree and Sandbox doesn't know about
-  #    it, so this caller-side cleanup is still required).
+  # Step 6: clean up the staging temp dir (outside agent-config tree,
+  #   not handled by Sandbox.:destroy).
   _ = File.rm_rf(staged_path)
 
   err
 end
+
+# Synchronous terminate-and-wait. Returns :ok only after the process
+# is confirmed dead. Idempotent (no-op if target wasn't registered).
+defp terminate_target_synchronously(target_uri) do
+  case Ezagent.KindRegistry.lookup(target_uri) do
+    {:ok, pid} ->
+      ref = Process.monitor(pid)
+      _ = DynamicSupervisor.terminate_child(target_supervisor(target_uri), pid)
+      receive do
+        {:DOWN, ^ref, :process, ^pid, _reason} -> :ok
+      after
+        5_000 -> {:error, :terminate_timeout}  # exceptional; let-it-crash
+      end
+    :error -> :ok
+  end
+end
 ```
 
-Each step is idempotent. `dispatch_sandbox_destroy/1` is a `call`-mode dispatch (so it returns after the destroy action body has run + the slice has been cleared by `Kind.Server.commit_and_notify/3`); the Kind-termination Task it schedules runs asynchronously but the slice IS already clean when termination's snapshot-on-shutdown fires.
+**Why slice-clear BEFORE terminate (not after):**
 
-**Failure-injection acceptance tests (§7 rows 7-9):** for each post-spawn step (`restore_snapshot`, `sandbox.write_path`, `grant_initial_caps`, `start_pty`), assert post-rollback: no `Kind.Snapshot.get(target_uri)` row, no `WorkspaceRegistry.lookup(target_uri)` binding, no `AgentLineage.lookup(target_uri)` row, no `AgentOwnership.lookup(target_uri)` row, no `template_class.agent_config_dir(target_uri)` on FS, no `staged_path` on FS.
+The slice mutation done by `revoke_initial_caps_if_granted` and `dispatch_sandbox_destroy` runs via the public dispatch path (`Invocation.dispatch/1`), which routes to `Kind.Server.handle_call(:ezagent_dispatch, ...)` → `Behavior.invoke/4` → `Kind.Server.commit_and_notify/3` → in-memory slice update. The slice IS committed to memory before the dispatch returns. When `terminate_target_synchronously/1` then runs the Kind's `terminate/2` callback, it reads the (already-cleared) slice and writes that EMPTY shape to `Kind.Snapshot`. Step 5's `delete/1` then runs on a dead process and removes the (empty) row.
 
-This is the "checked rollback" shape `feedback_let_it_crash_no_workarounds` allows — not a defensive catch-all, but a deterministic teardown of resources THIS action created, with the original error preserved verbatim.
+So the snapshot write from `:on_terminate` is harmless in rev 4: it writes empty slice. Step 5 deletes that empty row entirely so even a hypothetical "load the empty row on next spawn" can't happen.
+
+**Failure-injection acceptance tests (§7 rows 7-9):** for each post-spawn step (`restore_snapshot`, `sandbox.write_path`, `grant_initial_caps`, `start_pty`), assert post-rollback: no `Kind.Snapshot.get(target_uri)` row, no `WorkspaceRegistry.lookup(target_uri)` binding, no `AgentLineage.lookup(target_uri)` row, no `AgentOwnership.lookup(target_uri)` row, no `template_class.agent_config_dir(target_uri)` on FS, no `staged_path` on FS, AND no process at `KindRegistry.lookup(target_uri)`. The rollback test must include `Process.alive?(pid)` check returning false BEFORE checking snapshot absence — otherwise a flaky test could observe the row deleted then the terminate's snapshot write race-replaces it.
+
+This is the "checked rollback" shape `feedback_let_it_crash_no_workarounds` allows — not a defensive catch-all, but a deterministic teardown that AWAITS each step's completion before the next.
 
 ### 3.5 Stage → spawn ordering rationale (codex r1 HIGH-3)
 
@@ -518,7 +552,7 @@ Symlink/special-file rejection is enforced (the manifest builder refuses them) �
 
 **Acceptance test for live-mutation race (§7 row 13 new):** snapshot a cc dir while a concurrent task mutates a credentials-like file → expect `{:error, {:source_changed_during_snapshot, _}}`; verify no `staged_path` left behind; verify no target spawned.
 
-### 3.8 `Ezagent.AgentOwnership` registry — new ETS table (codex r2 HIGH-2 fix)
+### 3.8 `Ezagent.AgentOwnership` registry — SQLite-backed ETS cache (codex r2 HIGH-2 + codex r3 HIGH-3 fix)
 
 Codex r2 HIGH-2 noted that rev-2's `data_owner: :no_owner` defaults all `:duplicate` cap grants to bootstrap-admin only — source-owner CANNOT delegate the cap to a target-ws admin via standard `Identity.grant_cap`, breaking the bilateral consent path the spec promises.
 
@@ -542,36 +576,65 @@ defmodule Ezagent.AgentOwnership do
   a User URI) becomes the new agent's owner. A future `:transfer`
   action could mutate; V1 ownership is write-once at spawn.
 
-  ## ETS layout
-  `:ezagent_agent_ownership` set table owned by `EzagentCore.EtsOwner`.
+  ## Storage layout (rev 4 — durable, codex r3 HIGH-3 fix)
+
+  Two-tier:
+  - **Durable source of truth:** SQLite table `agent_ownership(agent_uri pk, owner_uri, created_at)` in the existing ezagent DB (same Ecto repo `Workspace.Store` uses). Migration in this PR adds the table.
+  - **ETS read cache:** `:ezagent_agent_ownership` table owned by `EzagentCore.EtsOwner`. Hydrated at boot via `boot_load/0` (reads ALL rows from SQLite into ETS); subsequent reads avoid SQL round-trip.
+
+  Why two-tier (not ETS-only): rev-3 had ETS-only; codex r3 HIGH-3 noted ETS is volatile so a node restart loses ownership and every agent falls back to `:no_owner` (bootstrap-admin-only). Mirroring `Workspace.Store`'s SQLite-backing pattern gives durability without sacrificing the sync-read property `data_owner/1` needs.
 
   ## API
-  - `record(agent_uri, owner_user_uri)` — idempotent insert
-  - `lookup(agent_uri)` — `{:ok, %URI{}}` or `:error`
-  - `forget(agent_uri)` — idempotent delete (called by rollback + agent destroy)
+  - `record(agent_uri, owner_user_uri)` — writes SQLite first, then ETS. Idempotent (`on_conflict: :nothing` for legacy ownership; new ownership replaces). Synchronous; returns after SQLite commit.
+  - `lookup(agent_uri)` — reads ETS only (cache; populated at boot from SQLite); falls back to SQLite + repopulates ETS if cache miss (handles ETS owner crash + restart).
+  - `forget(agent_uri)` — deletes from SQLite, then ETS. Synchronous.
+  - `boot_load/0` — called once by `EzagentCore.EtsOwner` after creating the ETS table; populates from SQLite. Idempotent if called multiple times.
   """
 
   @table :ezagent_agent_ownership
 
   @spec record(URI.t() | String.t(), URI.t() | String.t()) :: :ok
   def record(agent_uri, owner_uri) do
-    :ets.insert(@table, {to_string(agent_uri), to_string(owner_uri)})
+    a = to_string(agent_uri)
+    o = to_string(owner_uri)
+    # 1. Durable write first — if SQLite fails, no ETS poisoning
+    :ok = persist(a, o)
+    # 2. ETS cache update
+    :ets.insert(@table, {a, o})
     :ok
   end
 
   @spec lookup(URI.t() | String.t()) :: {:ok, URI.t()} | :error
   def lookup(agent_uri) do
-    case :ets.lookup(@table, to_string(agent_uri)) do
+    a = to_string(agent_uri)
+    case :ets.lookup(@table, a) do
       [{_, owner_str}] -> {:ok, URI.parse(owner_str)}
-      [] -> :error
+      [] -> lookup_from_sqlite_and_warm(a)  # ETS cache miss → re-load
     end
   end
 
   @spec forget(URI.t() | String.t()) :: :ok
   def forget(agent_uri) do
-    :ets.delete(@table, to_string(agent_uri))
+    a = to_string(agent_uri)
+    :ok = delete_from_sqlite(a)
+    :ets.delete(@table, a)
     :ok
   end
+
+  @spec boot_load() :: :ok
+  def boot_load do
+    # Called by EzagentCore.EtsOwner after :ets.new/2 creates the table.
+    # SELECT * FROM agent_ownership; foreach insert into ETS.
+    # Idempotent — repeat calls clear+reload.
+    :ets.delete_all_objects(@table)
+    for {a, o} <- load_all_from_sqlite(), do: :ets.insert(@table, {a, o})
+    :ok
+  end
+
+  defp persist(a, o), do: # Ecto.insert via Repo (Workspace.Store.repo)
+  defp delete_from_sqlite(a), do: # Ecto.delete via Repo
+  defp load_all_from_sqlite, do: # Ecto query
+  defp lookup_from_sqlite_and_warm(a), do: # SELECT one + populate ETS
 end
 ```
 
@@ -598,6 +661,106 @@ This wires the `default_grants_from_data_owner/2` machinery correctly:
 **Concern: Behavior coupling to ESR-domain registry.** This DOES couple `Behavior.Agent` to `AgentOwnership`. Justification: the same coupling already exists for `Behavior.Chat.data_owner/1` (reads Session slice's `:owner_uri`) and Workspace's admin branch (reads workspace data). The north-star principle (`feedback_north_star_plugin_isolation`) targets PLUGIN-to-CORE coupling — not Behavior-to-its-own-domain-registry. AgentOwnership lives in `ezagent_core` (boot-time available, plugin-independent); Behavior.Agent lives in `ezagent_domain_chat`. The coupling is core-from-domain (legitimate) not plugin-from-core (forbidden).
 
 Acceptance test (§7 row 14 new): a non-bootstrap user creates an agent → that user can call `Identity.grant_cap` to grant `{Behavior.Agent, :duplicate}` on their agent to a target-ws admin → target-ws admin successfully dispatches `:duplicate`.
+
+### 3.9 `Ezagent.Agent.Provisioning.provision_agent/3` — shared owner+caps helper (codex r3 HIGH-2 fix)
+
+Codex r3 HIGH-2 noted that rev-3 §4.3 claimed "`Kind.Server`'s existing post-spawn pathway iterates the Agent Kind's Behaviors, calls `data_owner/1` on each, and synthesizes the per-Behavior default grants" — but `default_grants_from_data_owner/2` is NOT called by any current spawn lifecycle (grep confirmed). And the rev-3 spawn body still called `grant_initial_caps_for_owner/2`. The owner-derived `:duplicate` grant pathway was a phantom.
+
+Rev 4 makes provisioning explicit and shared. New module `Ezagent.Agent.Provisioning`:
+
+```elixir
+defmodule Ezagent.Agent.Provisioning do
+  @moduledoc """
+  Shared agent-provisioning helper — records ownership AND applies
+  data_owner-derived default caps. Used by BOTH:
+  - `Behavior.Workspace.:create_agent` (post-spawn step)
+  - `Behavior.Agent.:duplicate` (post-spawn step)
+
+  Replaces the rev-2 `grant_initial_caps_for_owner/2` snippet (which
+  was hand-rolled per spawn site, drifted between paths). One
+  helper → one code path → one source of cap semantics.
+
+  ## Steps
+
+  1. `AgentOwnership.record(agent_uri, owner_user_uri)` — durable write
+  2. `CapabilityRegistry.default_grants_from_data_owner(Entity.Agent, agent_uri)`
+     iterates every Behavior on Agent Kind, asks each `data_owner/1`,
+     synthesizes `[{grantee, %Capability{}}]`. With §3.8 in place,
+     Behavior.Agent contributes `{owner_user_uri, :duplicate_cap}`;
+     other Behaviors contribute their own. The synthesizer returns
+     a flat list.
+  3. For each `{grantee, cap}` in the list, dispatch
+     `entity://user/<grantee>?action=identity_admin.grant_cap`
+     (admin-mode dispatch — `caller: bootstrap_admin`, `caps:
+     bootstrap_admin_caps`). Idempotent at the IdentityAdmin layer
+     (re-grant of same cap is no-op).
+  4. On any grant failure, roll back (1): `AgentOwnership.forget(agent_uri)`.
+     Caller's spawn-rollback path then handles broader cleanup.
+
+  ## Return
+
+  `:ok` on full success, `{:error, {:provisioning_failed, step, reason}}` otherwise.
+
+  ## Why split out of `:create_agent` action body
+
+  - DRY: same logic in two places, kept identical structurally
+  - Testable: unit test the helper without dragging full action body in
+  - Composable: future actions (rename / fork / transfer) reuse it
+  """
+
+  @spec provision_agent(URI.t(), URI.t(), map()) ::
+          :ok | {:error, term()}
+  def provision_agent(%URI{} = agent_uri, %URI{} = owner_user_uri, ctx)
+      when is_map(ctx) do
+    with :ok                 <- validate_owner_is_user(owner_user_uri),
+         :ok                 <- Ezagent.AgentOwnership.record(agent_uri, owner_user_uri),
+         {:ok, grants}        = {:ok, Ezagent.CapabilityRegistry.default_grants_from_data_owner(Ezagent.Entity.Agent, agent_uri)},
+         :ok                 <- apply_grants(grants, ctx) do
+      :ok
+    else
+      {:error, reason} ->
+        # Step 4 — partial-grant rollback. AgentOwnership is the only
+        # mutation we own at this layer; caller's broader rollback
+        # handles Workspace + Kind state.
+        _ = Ezagent.AgentOwnership.forget(agent_uri)
+        {:error, {:provisioning_failed, reason}}
+    end
+  end
+
+  defp apply_grants([], _ctx), do: :ok
+  defp apply_grants([{grantee_uri, cap} | rest], ctx) do
+    target = URI.new!("#{URI.to_string(grantee_uri)}?action=identity_admin.grant_cap")
+    case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+           target: target,
+           mode: :call,
+           args: %{cap: cap},
+           ctx: %{caller: ctx.caller, caps: ctx.caps, reply: {:caller_inbox, self()}}
+         }) do
+      {:ok, _} -> apply_grants(rest, ctx)
+      {:error, reason} -> {:error, {:grant_failed, grantee_uri, cap, reason}}
+    end
+  end
+
+  defp validate_owner_is_user(%URI{scheme: "entity", host: "user"}), do: :ok
+  defp validate_owner_is_user(other), do: {:error, {:owner_not_a_user, other}}
+end
+```
+
+`Behavior.Workspace.:create_agent`'s action body adds (right before the existing return):
+
+```elixir
+:ok <- Ezagent.Agent.Provisioning.provision_agent(agent_uri, ctx.caller, ctx),
+```
+
+`Behavior.Agent.:duplicate`'s `spawn_target_directly/5` replaces the `grant_initial_caps_for_owner` step with:
+
+```elixir
+:ok <- Ezagent.Agent.Provisioning.provision_agent(target_uri, target_owner_uri, %{caller: bootstrap_granter(), caps: bootstrap_admin_caps()}),
+```
+
+(Bootstrap-admin context here because we're synthesizing the defaults; the duplicate action's CALLER cap-check already gated whether this call should happen. The provisioning step itself is a system-trusted operation.)
+
+Acceptance test (§7 row 16 new): explicitly assert that after `:create_agent`, the caller user has `{Behavior.Agent, :duplicate}` cap on the new agent URI (via `Identity.list_caps`). Without this test row, the §7 row 14 assertion is testing one half of the chain in isolation; row 16 tests the full Provisioning round-trip end-to-end.
 
 ### 3.7 Mix task — `mix ezagent.agent.duplicate`
 
@@ -743,6 +906,8 @@ The bar:
 12. **Invariant: no `Workspace.create_agent` routing** — static grep test asserts `:duplicate` action body never calls the create_agent facade.
 13. **Live mutation during snapshot (codex r2 MEDIUM-4)** — start snapshot, concurrently mutate a credentials-like file in source_dir mid-cp_r; expect `{:error, {:source_changed_during_snapshot, _}}`; verify staging cleaned; no target spawned.
 14. **AgentOwnership write at spawn (codex r2 HIGH-2 prerequisite)** — `Behavior.Workspace.:create_agent` writes `AgentOwnership.record(agent_uri, ctx.caller)` before post-spawn obligations run; verify row exists with correct user_uri. Verify `Behavior.Agent.data_owner(agent_uri)` returns the user URI, and `default_grants_from_data_owner` synthesizes the `:duplicate` cap to that user.
+15. **Restart durability (codex r3 HIGH-3)** — create an agent → confirm AgentOwnership has row + caller has `:duplicate` cap → simulate runtime restart (stop+start `EzagentCore.EtsOwner`) → confirm `AgentOwnership.lookup(agent_uri)` still returns owner_user_uri from SQLite-backed boot reload → confirm owner can dispatch `:duplicate` (no bootstrap-admin required). Also test ETS owner crash mid-flight: kill the ETS owner process, let supervisor restart it, confirm boot_load repopulates from SQLite.
+16. **Provisioning end-to-end (codex r3 HIGH-2)** — after `:create_agent`, the caller user holds `{Behavior.Agent, :duplicate}` cap on the new agent URI per `Identity.list_caps` query. Asserts the `Provisioning.provision_agent/3` helper actually fires AND applies grants end-to-end (not just records ownership in isolation per row 14).
 
 ---
 
@@ -805,8 +970,13 @@ No CLAUDE.md change. Mix task `--help` auto-renders. Operator docs go in `docs/o
 ## 11. Codex adversarial review (per `feedback_spec_codex_adversarial_review`)
 
 - **Rev 1** (initial draft): codex returned `needs-attention` with 1 CRITICAL, 3 HIGH, 1 MEDIUM. All addressed in rev 2.
-- **Rev 2**: codex returned `needs-attention` with 1 CRITICAL (rollback durable-state hole) + 2 HIGH (data_owner :no_owner closed bilateral consent, snapshot optional-callback raises) + 1 MEDIUM (snapshot not actually point-in-time). All addressed in rev 3 (see header `Rev 3 changes` bullet list + §3.4.2 rewrite, §3.6 adapter + §3.6.1 hash manifest, §3.8 AgentOwnership registry, §4.2 / §4.3 owner-resolution).
-- **Rev 3** (this revision): codex r3 adversarial review will run on this branch before the impl PR opens. If r3 is clean, this SPEC merges via admin merge per `feedback_admin_merge_authorized`.
+- **Rev 2**: codex returned `needs-attention` with 1 CRITICAL (rollback durable-state hole) + 2 HIGH (data_owner :no_owner closed bilateral consent, snapshot optional-callback raises) + 1 MEDIUM (snapshot not actually point-in-time). All addressed in rev 3.
+- **Rev 3**: codex returned `needs-attention` with 1 CRITICAL (rollback deletes snapshot BEFORE delayed terminate re-writes it) + 2 HIGH (default_grants_from_data_owner not actually called by spawn lifecycle → owner-derived caps are phantom; AgentOwnership is volatile ETS → restart loses authorization). All addressed in rev 4:
+  - §3.4.2 rewritten: synchronous terminate-then-purge ordering with `Process.monitor` `:DOWN` await.
+  - §3.9 new: `Ezagent.Agent.Provisioning.provision_agent/3` makes ownership-record + default-grants application explicit and shared between create_agent and duplicate.
+  - §3.8 rewritten: SQLite-backed AgentOwnership with ETS read cache (mirroring `Workspace.Store` pattern), `boot_load/0` rehydrates on restart.
+  - §7 rows 15 + 16 new: restart durability test + provisioning end-to-end test.
+- **Rev 4** (this revision): codex r4 adversarial review will run on this branch before the impl PR opens. If r4 is clean, this SPEC merges via admin merge per `feedback_admin_merge_authorized`. If r4 still finds CRITICAL+ findings, this becomes a "needs more architectural input" pause — Allen is notified via Feishu before further iteration.
 
 ---
 

@@ -1,6 +1,6 @@
 # SPEC — Agent 复制/克隆原语 (Behavior.Agent `:duplicate`)
 
-**状态:** DRAFT rev 3 · 2026-05-25（codex r1 + r2 修复）
+**状态:** DRAFT rev 4 · 2026-05-25（codex r1 + r2 + r3 修复）
 **层级:** `apps/ezagent_domain_chat/`（新 `Behavior.Agent` + action）+ `apps/ezagent_core/`（新 `AgentOwnership` registry + Kind.Template snapshot callback 适配器 + BehaviorRegistry 插槽）+ `apps/ezagent_plugin_cc/`（cc snapshot+restore 实现）+ `apps/ezagent_domain_workspace/`（mix task 包装 + `:create_agent` 的 ownership-write）
 **触发:** Allen 2026-05-24（memory `feedback_agent_clone_not_via_template`）—— "agent 创建的 template 如果不走正常的 template 创建和 fork 流程，可能导致开发 drift，但如果走标准流程，又可能导致 Template Registry 里面大量临时创建后再也不用的 template"。Clone 必须作为 domain.agent primitive 存在，**绝不**走 Template Registry。
 **前置:** 同英文版。
@@ -12,6 +12,11 @@
 - HIGH: 全有或全无的 target spawn —— config 在 target Kind 起来**之前**已 stage 到 temp 并验证（§3.5）
 - HIGH: 不走 `Workspace.create_agent` —— 专用原语避免 template 残留 + adoption TOCTOU（§3.4）
 - MEDIUM: 新 `Kind.Template.snapshot_config_dir/2` callback —— plugin 拥有 quiesce + manifest（§3.6）
+
+**Rev 4 变更（codex r3 verdict needs-attention → 已处理）:**
+- CRITICAL: rollback 现在**同步**等待 target Kind 进程死后**再**删 `Kind.Snapshot` 行。Rev-3 中 `Sandbox.:destroy` 的延迟 termination Task 可能在我们 delete 之**后**重写 snapshot. Rev 4 改顺序：先用 `DynamicSupervisor.terminate_child` + `Process.monitor` 同步等 `:DOWN`，**再**删 snapshot。Snapshot 删时进程已死，无 re-write 可能（§3.4.2 重写）。
+- HIGH: 新 `Ezagent.Agent.Provisioning.provision_agent/3` 模块（`apps/ezagent_domain_chat/lib/ezagent/agent/provisioning.ex`）供 `Behavior.Workspace.:create_agent` **和** `Behavior.Agent.:duplicate` 共用。步骤：(1) `AgentOwnership.record/2`，(2) `CapabilityRegistry.default_grants_from_data_owner/2` 对 Agent Kind 每个 Behavior → 通过 `Identity.grant_cap` apply，(3) (2) 失败回滚 (1)。关闭 codex r3 HIGH-2（避免"spawn lifecycle 自动合成"的假设 —— codex grep 证伪）。§3.9 新.
+- HIGH: `Ezagent.AgentOwnership` 现在是 **SQLite-backed ETS cache**（不是纯 ETS）。镜像 `Workspace.Store` 的 SQLite-backing 模式：SQLite 表 `agent_ownership(agent_uri pk, owner_uri, created_at)` 是 durable source of truth；ETS 是 boot-time-hydrated 读缓存。`record/2` 写两者（同步）。`forget/1` 删两者。Restart 测试（§7 row 15 新）创 agent、重启 runtime、验证 owner 仍解析+能 delegate `:duplicate`.
 
 **Rev 3 变更（codex r2 verdict needs-attention → 已处理）:**
 - CRITICAL: rollback 现在堵上 `:on_terminate` 持久化漏洞 —— 在 `Kind.terminate/1` 之**前**先 dispatch `Sandbox.:destroy`（清 slice + plugin 端清理）+ 删 `KindSnapshot` 行 + 撤销已 grant 的 caps。每个 post-spawn 步骤都加 failure-injection 测试（§3.4.2 + §7）。
@@ -191,29 +196,48 @@ defp spawn_atomic_fresh(target_uri) do
 end
 ```
 
-#### 3.4.2 `rollback_partial_target/3` —— **durable cleanup（codex r2 CRITICAL 修复）**
+#### 3.4.2 `rollback_partial_target/3` —— **terminate-then-purge（codex r3 CRITICAL 修复）**
 
-Codex r2 CRITICAL: Agent 声明 `persistence: :on_terminate`。如果在 slice 已 mutated 之**后**调用 `Kind.terminate/1`，部分状态会持久化 —— 同 URI 下次 spawn 会 rehydrate 失败的 clone state。
+Codex r3 CRITICAL: rev-3 顺序中 `dispatch_sandbox_destroy/1` 调度一个延迟 Task（20ms）调 `Kind.Server.terminate/2`。那个 terminate 的 `:on_terminate` snapshot 写可能在我们 `Kind.Snapshot.delete(target_uri)` 之**后**触发 —— 重写我们刚删的行。Rev-4 修复：**同步**终止（等 `:DOWN`），**再**在已死的进程上删 snapshot。
 
 ```elixir
 defp rollback_partial_target(target_uri, staged_path, err) do
-  # 1. 同步 dispatch Sandbox.:destroy —— 清 :sandbox slice + plugin 端 FS 清理
-  _ = dispatch_sandbox_destroy(target_uri)
-  # 2. 撤销 grant 的 caps
+  # 1. 撤销 grant 的 caps（Identity slice 清空）。
   _ = revoke_initial_caps_if_granted(target_uri)
-  # 3. 忘掉 AgentOwnership + AgentLineage + WorkspaceRegistry
+  # 2. 同步 dispatch Sandbox.:destroy —— 清 :sandbox slice + plugin FS 清理。
+  _ = dispatch_sandbox_destroy(target_uri)
+  # 3 (rev-4 critical fix): SYNCHRONOUSLY 终止 target Kind + AWAIT 死亡。
+  :ok = terminate_target_synchronously(target_uri)
+  # 4. 忘掉 registries
   _ = Ezagent.AgentOwnership.forget(target_uri)
   _ = Ezagent.AgentLineage.forget(target_uri)
   _ = Ezagent.WorkspaceRegistry.unbind(target_uri)
-  # 4. 删 KindSnapshot 持久行
-  _ = Ezagent.Kind.Snapshot.delete(target_uri)
-  # 5. 清 staging temp dir
+  # 5. 现在可安全删 KindSnapshot（进程已死，无 race）
+  :ok = Ezagent.Kind.Snapshot.delete(target_uri)
+  # 6. 清 staging temp dir
   _ = File.rm_rf(staged_path)
   err
 end
+
+# 同步 terminate + 等死。:ok 只在进程确认死后才返回。
+defp terminate_target_synchronously(target_uri) do
+  case Ezagent.KindRegistry.lookup(target_uri) do
+    {:ok, pid} ->
+      ref = Process.monitor(pid)
+      _ = DynamicSupervisor.terminate_child(target_supervisor(target_uri), pid)
+      receive do
+        {:DOWN, ^ref, :process, ^pid, _reason} -> :ok
+      after
+        5_000 -> {:error, :terminate_timeout}
+      end
+    :error -> :ok
+  end
+end
 ```
 
-每步幂等。**Failure-injection 验收测试**（§7 rows 7-9）：对每个 post-spawn 步骤注入失败，断言 rollback 后无 `Kind.Snapshot` 行、无 registry 绑定、无 lineage、无 ownership 行、无 config dir、无 staged path。
+**为何 slice-clear 在 terminate 之前（不在之后）**：步 1+2 通过 dispatch 路径同步清 slice，Kind.Server `commit_and_notify/3` 在 dispatch 返回前已提交。步 3 跑 `terminate/2` 时读到（已清空的）slice，`:on_terminate` 写空。步 5 删（空）行。所以 rev 4 中 `:on_terminate` snapshot 写无害：写空 slice；步 5 删空行。
+
+**Failure-injection 验收测试**（§7 rows 7-9）：对每个 post-spawn 步骤注入失败，断言 rollback 后无 `Kind.Snapshot` 行、无 registry 绑定、无 FS 残留，**和**无进程 `KindRegistry.lookup(target_uri)`. Rollback 测试必须包含 `Process.alive?(pid)` 返回 false **之前**再检查 snapshot 不存在 —— 否则脆性测试可能看到行删后 terminate 的 snapshot 写 race-replace 它。
 
 ### 3.5 Stage → spawn 顺序
 
@@ -274,40 +298,55 @@ mix ezagent.agent.duplicate <source_uri> <target_uri> --owner <owner_uri>
 mix ezagent.agent.set_owner <agent_uri> <user_uri>   # legacy agent 回填
 ```
 
-### 3.8 `Ezagent.AgentOwnership` registry —— 新 ETS 表（codex r2 HIGH-2 修复）
+### 3.8 `Ezagent.AgentOwnership` registry —— SQLite-backed ETS cache（codex r2 HIGH-2 + codex r3 HIGH-3 修复）
+
+**存储布局（rev 4）**：两层 —— SQLite 表 `agent_ownership(agent_uri pk, owner_uri, created_at)` 为 durable source of truth；ETS 表 `:ezagent_agent_ownership` 为 boot-time-hydrated 读缓存。Rev-3 是 ETS-only；codex r3 HIGH-3 指出 ETS 易失，重启后所有 agent 落到 `:no_owner`。镜像 `Workspace.Store` 的 SQLite-backing 模式。
 
 ```elixir
 defmodule Ezagent.AgentOwnership do
   @moduledoc """
   Agent 所有权 registry —— agent_uri → owner_user_uri.
+  Durable: SQLite. Cache: ETS, boot-loaded.
 
-  与 AgentLineage 不同：
-  - AgentLineage.spawned_by(agent_uri) = 谁 SPAWN（orchestrator 链）
-  - AgentOwnership.lookup(agent_uri) = 哪个 USER 拥有（永远 entity://user/...）
-
-  在 agent-spawn 时由 Behavior.Workspace.:create_agent 填充：
-  调用 user 成为新 agent 的 owner. V1 是 spawn 时一次写。
+  API:
+  - record/2 — 先写 SQLite，再写 ETS. 同步.
+  - lookup/1 — 读 ETS; cache miss 时 fall back SQLite + warm ETS.
+  - forget/1 — 删 SQLite + ETS.
+  - boot_load/0 — EzagentCore.EtsOwner 启动后调一次，SQLite → ETS.
   """
 
   @table :ezagent_agent_ownership
 
   @spec record(URI.t() | String.t(), URI.t() | String.t()) :: :ok
   def record(agent_uri, owner_uri) do
-    :ets.insert(@table, {to_string(agent_uri), to_string(owner_uri)})
+    a = to_string(agent_uri)
+    o = to_string(owner_uri)
+    :ok = persist(a, o)            # SQLite first
+    :ets.insert(@table, {a, o})    # then ETS cache
     :ok
   end
 
   @spec lookup(URI.t() | String.t()) :: {:ok, URI.t()} | :error
   def lookup(agent_uri) do
-    case :ets.lookup(@table, to_string(agent_uri)) do
+    a = to_string(agent_uri)
+    case :ets.lookup(@table, a) do
       [{_, owner_str}] -> {:ok, URI.parse(owner_str)}
-      [] -> :error
+      [] -> lookup_from_sqlite_and_warm(a)
     end
   end
 
   @spec forget(URI.t() | String.t()) :: :ok
   def forget(agent_uri) do
-    :ets.delete(@table, to_string(agent_uri))
+    a = to_string(agent_uri)
+    :ok = delete_from_sqlite(a)
+    :ets.delete(@table, a)
+    :ok
+  end
+
+  @spec boot_load() :: :ok
+  def boot_load do
+    :ets.delete_all_objects(@table)
+    for {a, o} <- load_all_from_sqlite(), do: :ets.insert(@table, {a, o})
     :ok
   end
 end
@@ -316,6 +355,57 @@ end
 让 `Behavior.Agent.data_owner -> user_uri`，`default_grants_from_data_owner` 正确合成 `:duplicate` cap 给 owner user. User 通过 `Identity.grant_cap` 委托.
 
 **Behavior 与 ESR-domain registry 耦合的关注**：同样耦合已存在 `Behavior.Chat`（读 Session slice `:owner_uri`）。north-star 针对 PLUGIN-to-CORE，不是 Behavior-to-domain-registry. AgentOwnership 在 `ezagent_core`，Behavior.Agent 在 `ezagent_domain_chat` —— core-from-domain（合法）。
+
+### 3.9 `Ezagent.Agent.Provisioning.provision_agent/3` —— 共享 owner+caps helper（codex r3 HIGH-2 修复）
+
+Codex r3 HIGH-2 指出 rev-3 §4.3 宣称 "`Kind.Server` 的现有 post-spawn 路径会自动合成 cap" —— 但 `default_grants_from_data_owner/2` **没**被任何现有 spawn lifecycle 调用（grep 证实）。Rev-2 spawn body 还在用 `grant_initial_caps_for_owner/2`. Owner-derived `:duplicate` grant 路径是幻影.
+
+Rev 4 让 provisioning 显式且共享。新模块 `Ezagent.Agent.Provisioning`:
+
+```elixir
+defmodule Ezagent.Agent.Provisioning do
+  @moduledoc """
+  共享 agent-provisioning helper —— 记录 ownership 并应用 data_owner-derived
+  默认 caps。被 BOTH `Behavior.Workspace.:create_agent` 和
+  `Behavior.Agent.:duplicate` 用. 一个 helper → 一条 code path → 一处 cap 语义.
+
+  步骤：
+  1. AgentOwnership.record(agent_uri, owner_user_uri) —— durable write
+  2. CapabilityRegistry.default_grants_from_data_owner(Entity.Agent, agent_uri)
+     遍历 Agent Kind 每个 Behavior，问 data_owner/1，合成 [{grantee, cap}]
+  3. 对每个 {grantee, cap} dispatch identity_admin.grant_cap （admin 模式）
+  4. 任何 grant 失败回滚 (1)
+  """
+
+  @spec provision_agent(URI.t(), URI.t(), map()) :: :ok | {:error, term()}
+  def provision_agent(%URI{} = agent_uri, %URI{} = owner_user_uri, ctx) when is_map(ctx) do
+    with :ok                 <- validate_owner_is_user(owner_user_uri),
+         :ok                 <- Ezagent.AgentOwnership.record(agent_uri, owner_user_uri),
+         {:ok, grants}        = {:ok, Ezagent.CapabilityRegistry.default_grants_from_data_owner(Ezagent.Entity.Agent, agent_uri)},
+         :ok                 <- apply_grants(grants, ctx) do
+      :ok
+    else
+      {:error, reason} ->
+        _ = Ezagent.AgentOwnership.forget(agent_uri)
+        {:error, {:provisioning_failed, reason}}
+    end
+  end
+end
+```
+
+`Behavior.Workspace.:create_agent` action body 加：
+
+```elixir
+:ok <- Ezagent.Agent.Provisioning.provision_agent(agent_uri, ctx.caller, ctx),
+```
+
+`Behavior.Agent.:duplicate` 的 `spawn_target_directly/5` 把 `grant_initial_caps_for_owner` 步**替换**为：
+
+```elixir
+:ok <- Ezagent.Agent.Provisioning.provision_agent(target_uri, target_owner_uri, %{caller: bootstrap_granter(), caps: bootstrap_admin_caps()}),
+```
+
+验收测试 row 16 显式断言 `:create_agent` 后 caller user 在新 agent URI 上持 `{Behavior.Agent, :duplicate}` cap（通过 `Identity.list_caps` 查）。
 
 ---
 
@@ -390,6 +480,8 @@ Dispatch 链记录每个 `Invocation.dispatch/1` + snapshot manifest hash.
 12. **Invariant: 无 `Workspace.create_agent` 路由**
 13. **Live mutation during snapshot**（codex r2 MEDIUM-4）—— `{:error, {:source_changed_during_snapshot, _}}`
 14. **AgentOwnership 在 spawn 时写入**（codex r2 HIGH-2 前置）
+15. **Restart 持久性**（codex r3 HIGH-3）—— 创 agent → 确认 AgentOwnership 有行 + caller 有 `:duplicate` cap → 模拟 runtime 重启（stop+start `EzagentCore.EtsOwner`）→ 确认 `AgentOwnership.lookup(agent_uri)` 从 SQLite-backed boot reload 仍返回 owner_user_uri → 确认 owner 能 dispatch `:duplicate`（无需 bootstrap-admin）. 也测 ETS owner 中途 crash：杀 ETS owner 进程，让 supervisor 重启，确认 `boot_load` 从 SQLite 重新 populate.
+16. **Provisioning end-to-end**（codex r3 HIGH-2）—— `:create_agent` 后，caller user 通过 `Identity.list_caps` 查到 `{Behavior.Agent, :duplicate}` cap 在新 agent URI 上. 断言 `Provisioning.provision_agent/3` helper 实际触发并端到端应用 grants（不只是 row 14 那样隔离地 record ownership）.
 
 ---
 
@@ -427,7 +519,8 @@ Dispatch 链记录每个 `Invocation.dispatch/1` + snapshot manifest hash.
 
 - **Rev 1**：1 CRITICAL + 3 HIGH + 1 MEDIUM. Rev 2 处理.
 - **Rev 2**：1 CRITICAL（rollback durable 漏洞）+ 2 HIGH（data_owner 关闭 bilateral consent；snapshot optional callback 抛错）+ 1 MEDIUM（snapshot 不 point-in-time）. Rev 3 处理.
-- **Rev 3**（本版本）：codex r3 将跑. r3 干净则通过 admin merge.
+- **Rev 3**：codex 返回 `needs-attention`，1 CRITICAL（rollback 在延迟 terminate 重写 snapshot 前删 snapshot）+ 2 HIGH（default_grants_from_data_owner 没被 spawn lifecycle 调用 → owner-derived caps 是幻影；AgentOwnership 易失 ETS → 重启丢失授权）. Rev 4 处理（§3.4.2 重写为 terminate-then-purge、§3.9 新 Provisioning helper、§3.8 改为 SQLite-backed cache、§7 加 row 15+16）.
+- **Rev 4**（本版本）：codex r4 将跑. r4 干净则通过 admin merge. r4 若仍 CRIT+ 则视为 "需更多架构输入"，飞书通知 Allen 再迭代.
 
 ---
 
