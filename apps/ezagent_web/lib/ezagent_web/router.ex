@@ -181,6 +181,17 @@ defmodule EzagentWeb.Router do
       # registration domains); belongs under /admin (admin scope),
       # not the avatar Preference dropdown (personal scope).
       live "/admin/settings", SettingsLive
+      # PR-EM-4 (2026-05-25, SPEC §9 PR-EM-4): per-session admin LV for
+      # ExternalMirror Domain. URL `:id` is the URL-encoded canonical
+      # session URI (same convention as `/identities/agents/:uri/caps`).
+      # Mount-time cap check: caller must hold the session-level
+      # `Behavior.ExternalMirror` cap (Cap 1) — enforced by routing
+      # `list_bindings/2` through `Ezagent.Invocation.dispatch/1`
+      # (CapBAC step 5.5). Non-holders see a flash + redirect.
+      # See `Ezagent.ExternalMirror` facade moduledoc for the two-step
+      # bind flow this LV drives.
+      live "/admin/sessions/:id/external_mirror",
+           Admin.SessionExternalMirrorLive
     end
   end
 
