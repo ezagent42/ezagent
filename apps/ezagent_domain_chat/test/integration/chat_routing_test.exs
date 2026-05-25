@@ -68,6 +68,20 @@ defmodule EzagentDomainChat.Integration.ChatRoutingTest do
     # Message landed in MessageStore
     assert {:ok, loaded} = MessageStore.by_id(msg.id)
     assert loaded.session_uri == session_uri
+
+    # PR-EM-6-PRE (Allen 2026-05-25) — `:send` now mutates the `:chat`
+    # slice (sets last_message_id / last_message / send_cursor), and
+    # Session is `{:snapshot, :on_change}`, so every send triggers a
+    # Snapshot.commit which runs under the Session GenServer's
+    # mailbox. Without this sync the test process may exit before the
+    # snapshot finishes, killing its Sandbox-checked-out connection
+    # mid-write — Exqlite logs an :owner_exited error and the test
+    # appears flaky. `:sys.get_state` serializes through the
+    # GenServer, so by the time it returns any prior handle_cast
+    # (including commit_and_notify's Snapshot.commit) has drained.
+    {:ok, session_pid} = KindRegistry.lookup(session_uri)
+    %{state: %{chat: chat_slice}} = :sys.get_state(session_pid)
+    assert chat_slice.last_message_id == msg.id
   end
 
   test ":DOWN forwarder marks member offline and records last_seen" do
