@@ -142,6 +142,114 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
     end
   end
 
+  describe "Ezagent.Workspace.create_agent/3 — `--from` source resolution (agent.duplicate simple SPEC)" do
+    # These tests exercise the contract surface of the `--from` flag:
+    #   - flavor gating (only `cc` supports clone)
+    #   - source resolution failures (no_such_actor, not_readable)
+    #
+    # The end-to-end deep-copy is covered in the cc plugin test
+    # (`cc_agent_clone_from_test.exs`) since the actual `File.cp_r/2`
+    # lives in `Ezagent.PluginCc.Template.CcAgent.create_agent_config_dir/2`.
+
+    test "echo flavor with --from returns {:error, {:from_unsupported_for_flavor, _}}", %{
+      workspace_uri: workspace_uri,
+      admin_ctx: admin_ctx
+    } do
+      source_uri = URI.parse("entity://agent/system/cc_some-source")
+
+      assert {:error, {:from_unsupported_for_flavor, "echo"}} =
+               Workspace.create_agent(
+                 workspace_uri,
+                 %{
+                   flavor: "echo",
+                   name: "clone-me",
+                   cwd: "",
+                   with_pty: false,
+                   from: source_uri
+                 },
+                 admin_ctx
+               )
+    end
+
+    test "cc + --from pointing at a non-existent source returns {:error, :source_not_found}",
+         %{ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
+      {:ok, _apps} = Application.ensure_all_started(:ezagent_domain_chat)
+
+      # A real `cc_` URI shape so coerce + validate pass; the URI must
+      # NOT correspond to a live Agent Kind — `sandbox.read` dispatch
+      # short-circuits at ReadyGate with `:no_such_actor`.
+      source_uri =
+        URI.parse(
+          "entity://agent/#{ws_name}/cc_definitely-does-not-exist-#{System.unique_integer([:positive])}"
+        )
+
+      # cwd MUST exist for the cc validator to get past `:cwd_not_a_dir`
+      # — we want to exercise the source-resolution branch, not earlier
+      # validation.
+      assert {:error, :source_not_found} =
+               Workspace.create_agent(
+                 workspace_uri,
+                 %{
+                   flavor: "cc",
+                   name: "new-clone",
+                   cwd: System.tmp_dir!(),
+                   with_pty: false,
+                   from: source_uri
+                 },
+                 admin_ctx
+               )
+    end
+
+    test "bad --from shape (not an entity://agent/ URI) is rejected at the dispatch validator",
+         %{workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
+      # Two layers of defense:
+      #  - dispatch-level: `InterfaceValidator` rejects anything that
+      #    isn't `%URI{}` for the `from` arg (`{:option, :uri}` schema)
+      #    → `{:invalid_args, [{[:from], {:type_mismatch, _}}]}`.
+      #  - action-body: `coerce_create_args/1`'s `valid_from?/1`
+      #    rejects a `%URI{}` whose scheme/host isn't entity/agent
+      #    → `{:bad_from, _}`.
+      # This test asserts the FIRST gate fires for a non-URI string.
+      assert {:error, {:invalid_args, violations}} =
+               Workspace.create_agent(
+                 workspace_uri,
+                 %{
+                   flavor: "cc",
+                   name: "x",
+                   cwd: System.tmp_dir!(),
+                   with_pty: false,
+                   from: "not-a-uri-string"
+                 },
+                 admin_ctx
+               )
+
+      assert [{[:from], {:type_mismatch, _}}] = violations
+    end
+
+    test "bad --from URI (right type, wrong scheme) is rejected by valid_from?/1", %{
+      workspace_uri: workspace_uri,
+      admin_ctx: admin_ctx
+    } do
+      # The action body's `valid_from?/1` rejects a `%URI{}` that
+      # doesn't conform to `entity://agent/...`. This guards against a
+      # caller bypassing the CLI parser (e.g. LV building its own args).
+      bad_uri = URI.parse("http://example.com/not-an-agent")
+
+      assert {:error, {:bad_from, ^bad_uri}} =
+               Workspace.create_agent(
+                 workspace_uri,
+                 %{
+                   flavor: "cc",
+                   name: "x",
+                   cwd: System.tmp_dir!(),
+                   with_pty: false,
+                   from: bad_uri
+                 },
+                 admin_ctx
+               )
+    end
+  end
+
   describe "Ezagent.Workspace.create_agent/3 — end-to-end direct-spawn (codex r1 MEDIUM-6 / r2 MEDIUM-1)" do
     setup do
       # Codex PR #330 r2 MEDIUM-1: explicitly start :ezagent_domain_chat

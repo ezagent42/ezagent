@@ -14,6 +14,7 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
       mix ezagent.agent.create entity://agent/<workspace>/<flavor>_<name> \\
           --cwd <dir> \\
           [--with-pty] \\
+          [--from <source-agent-uri>] \\
           [--caps 'kind.behavior,...'] \\
           [--allow-allcaps]
 
@@ -40,11 +41,25 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
           --cwd /tmp \\
           --caps '*' --allow-allcaps
 
+      # Clone an existing cc agent's config_dir into a new agent
+      # (deep-copy of source's per-agent CLAUDE_CONFIG_DIR — credentials,
+      # settings, installed plugins). Chat history is NOT carried over;
+      # the new agent starts with a fresh chat slice.
+      mix ezagent.agent.create entity://agent/system/cc_user-alice \\
+          --from entity://agent/system/cc_linyilun-default \\
+          --cwd /tmp/alice-cwd
+
   ## Flags
 
   - `--cwd <dir>` — working directory. Required for `cc` flavor + for
     `echo` when `--with-pty` is passed. Must exist on the host.
   - `--with-pty` — echo opt-in for a `/bin/bash -i` PTY sidecar.
+  - `--from <uri>` — clone source agent's per-agent config_dir
+    (the CLAUDE_CONFIG_DIR contents — credentials, settings, plugins)
+    into the new agent. Only `cc` flavor; the source must be a `cc`
+    agent the caller has `sandbox.read` cap on (else
+    `{:error, :source_not_readable}`). Deep filesystem copy; chat
+    history is NOT carried (the new agent's chat slice starts fresh).
   - `--caps <str>` — comma-separated cap specs (see
     `Ezagent.Capability.Parser` for grammar). Default empty.
   - `--allow-allcaps` — required if `--caps '*'` (anti-foot-gun).
@@ -97,7 +112,8 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
           caps: :string,
           allow_allcaps: :boolean,
           cwd: :string,
-          with_pty: :boolean
+          with_pty: :boolean,
+          from: :string
         ]
       )
 
@@ -107,10 +123,13 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
 
       _ ->
         Mix.raise("""
-        usage: mix ezagent.agent.create <agent_uri> [--cwd <dir>] [--with-pty] [--caps 'kind.behavior,...'] [--allow-allcaps]
+        usage: mix ezagent.agent.create <agent_uri> [--cwd <dir>] [--with-pty] [--from <source-uri>] [--caps 'kind.behavior,...'] [--allow-allcaps]
 
         Example:
           mix ezagent.agent.create entity://agent/system/cc_demo --cwd /tmp --caps 'chat.send,workspace.read'
+
+        Clone an existing cc agent's config_dir:
+          mix ezagent.agent.create entity://agent/system/cc_alice --from entity://agent/system/cc_linyilun-default --cwd /tmp/alice
 
         Agent URI format: entity://agent/<workspace>/<flavor>_<name>
           where <flavor> is one of cc, echo, curl, np (or any registered flavor)
@@ -123,6 +142,7 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
     allow_allcaps = Keyword.get(opts, :allow_allcaps, false)
     cwd = Keyword.get(opts, :cwd, "")
     with_pty? = Keyword.get(opts, :with_pty, false)
+    from_str = Keyword.get(opts, :from)
 
     admin_uri = Ezagent.Entity.User.admin_uri()
     admin_caps = Ezagent.Entity.User.admin_caps()
@@ -130,22 +150,43 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
 
     with {:ok, agent_uri} <- parse_uri(agent_uri_str),
          {:ok, workspace_uri, flavor, name} <- decompose(agent_uri),
+         {:ok, from_uri} <- parse_from(from_str),
          :ok <- check_allcaps_flag(caps_str, allow_allcaps),
          {:ok, caps} <- Ezagent.Capability.Parser.parse(caps_str, admin_uri),
+         create_args =
+           build_create_args(%{
+             flavor: flavor,
+             name: name,
+             cwd: cwd,
+             with_pty: with_pty?,
+             from: from_uri
+           }),
          {:ok, %{agent_uri: created_uri, template_name: tmpl_name}} <-
-           Ezagent.Workspace.create_agent(
-             workspace_uri,
-             %{flavor: flavor, name: name, cwd: cwd, with_pty: with_pty?},
-             admin_ctx
-           ),
+           Ezagent.Workspace.create_agent(workspace_uri, create_args, admin_ctx),
          :ok <- Ezagent.Workspace.grant_initial_caps(created_uri, caps, admin_ctx) do
       Mix.shell().info("✓ created #{URI.to_string(created_uri)}")
       if tmpl_name, do: Mix.shell().info("  template: #{tmpl_name}")
+      if from_uri, do: Mix.shell().info("  cloned from: #{URI.to_string(from_uri)}")
       Mix.shell().info("  caps granted: #{length(caps)}")
     else
       {:error, reason} -> Mix.raise("create failed: #{inspect(reason)}")
     end
   end
+
+  # `--from` is optional. When omitted → no `:from` key in args.
+  # When present, parse as an entity://agent/<workspace>/<flavor>_<name>
+  # URI; the action body handles cap-check + source resolution.
+  defp parse_from(nil), do: {:ok, nil}
+
+  defp parse_from(s) when is_binary(s) do
+    case parse_uri(s) do
+      {:ok, uri} -> {:ok, uri}
+      {:error, reason} -> {:error, {:bad_from_uri, reason}}
+    end
+  end
+
+  defp build_create_args(%{from: nil} = base), do: Map.delete(base, :from)
+  defp build_create_args(base), do: base
 
   defp parse_uri(s) when is_binary(s) do
     # Phase 9 PR-2 (SPEC v3 §3): route through Ezagent.URI.parse!/1
