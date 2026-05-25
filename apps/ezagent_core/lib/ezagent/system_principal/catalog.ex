@@ -74,10 +74,12 @@ defmodule Ezagent.SystemPrincipal.Catalog do
   # for readability; lazy-loaded at compile time so behavior modules
   # from non-loaded apps (e.g. plugin Behaviors during a core-only
   # build) don't break.
+  alias Ezagent.Behavior.ApiKeys
   alias Ezagent.Behavior.Chat
   alias Ezagent.Behavior.ExternalMirror
   alias Ezagent.Behavior.ExternalMirrorWorker
   alias Ezagent.Behavior.IdentityAdmin
+  alias Ezagent.Behavior.Sandbox
   alias Ezagent.Behavior.Template
   alias Ezagent.Behavior.Workspace
 
@@ -130,24 +132,29 @@ defmodule Ezagent.SystemPrincipal.Catalog do
        ]},
       {"system://chat-router",
        [
-         # Deviation from SPEC §5 provisional table:
-         # 1. The original string `session.chat.system_message` referenced
-         #    a non-existent action; dropped.
-         # 2. kind broadened from `:session` to `:any` — chat-router
-         #    fans out `chat.receive` to BOTH User and Agent Kinds (per
-         #    Chat.send recipient resolution); the string-cap shape
-         #    `session.chat.send` misleadingly implied Session-only. The
-         #    actual runtime semantic is "chat behavior across all Kinds
-         #    chat is registered on" (User + Agent + Session).
-         Capability.cap(:any, Chat, :any)
+         # `cap(:any, Chat, :any)` covers Chat-registered receivers
+         # (Session, User). But chat fan-out also dispatches
+         # `chat.receive` to Agent Kinds whose BehaviorRegistry routes
+         # `:receive` to a PLUGIN-DEFINED Behavior (e.g. Echo's
+         # `Behavior.Echo` for `entity://agent/<ws>/echo_X`). Each
+         # plugin declares its own `required_caps[:receive]`; the
+         # catalog cannot enumerate them across the open plugin set.
+         # The wildcard cap is therefore STRUCTURAL — chat-router
+         # legitimately needs admin authority for the `:receive` fan-out.
+         # This is the smallest deviation from the bootstrap-wildcard
+         # bridge that preserves the open-plugin chat-router semantic;
+         # the SPEC §5 narrowing applies to single-Behavior principals
+         # (workspace-loader, agent-internal, …) which have a closed
+         # cap set.
+         bootstrap_wildcard()
        ]},
       {"system://chat-reply",
        [
-         # Deviation: original string `session.chat.reaction` referenced
-         # a non-existent action; dropped. Same multi-Kind broadening as
-         # chat-router — Plugin CC's channel dispatches chat.send AND
-         # chat.receive across Kinds.
-         Capability.cap(:any, Chat, :any)
+         # Same rationale as chat-router — Plugin CC's channel
+         # dispatches `chat.send` AND `chat.receive` across plugin
+         # Behaviors (Echo, NpAgent, …). Wildcard is the structural
+         # right shape for an open-plugin fan-out principal.
+         bootstrap_wildcard()
        ]},
       {"system://worker-publish",
        [
@@ -196,7 +203,17 @@ defmodule Ezagent.SystemPrincipal.Catalog do
       {"system://agent-internal",
        [
          # `user.identity.grant_cap` → IdentityAdmin Behavior on User Kind.
-         Capability.cap(:user, IdentityAdmin, :grant_cap)
+         Capability.cap(:user, IdentityAdmin, :grant_cap),
+         # Agent.do_record_sandbox_state/3 dispatches sandbox.write_path
+         # under this principal (pathology-B follow-up: PR-CC-2-v2's
+         # bootstrap-wildcard bridge masked this dependency). The cap
+         # is narrowed to the exact Behavior + action; the runtime
+         # dispatch path substitutes the per-agent instance + workspace.
+         Capability.cap(:agent, Sandbox, :write_path),
+         # CurlAgent.fetch_owner_api_key/2 dispatches identity.get_api_key
+         # on the owner User under this principal (same masking).
+         # ApiKeys is on User Kind; cap is read-only get_api_key.
+         Capability.cap(:user, ApiKeys, :get_api_key)
        ]},
       {"system://workspace-loader",
        [
@@ -213,7 +230,17 @@ defmodule Ezagent.SystemPrincipal.Catalog do
       {"system://feishu-binding-policy",
        [
          # `user.identity.grant_cap` → IdentityAdmin Behavior on User.
-         Capability.cap(:user, IdentityAdmin, :grant_cap)
+         Capability.cap(:user, IdentityAdmin, :grant_cap),
+         # Workspace cap (any workspace) — so the policy can grant
+         # `User.default_caps/1` (which mints session-scoped caps with
+         # a concrete workspace_uri); `check_grant_authorized` requires
+         # workspace-admin authority for the target workspace, and a
+         # `:any`-workspace `Workspace` cap satisfies that check (see
+         # `holds_workspace_admin_cap?/2`). Pathology-B follow-up:
+         # before the bootstrap-wildcard bridge removal, the policy
+         # received admin authority transitively and didn't need this
+         # explicit cap.
+         Capability.cap(:workspace, Workspace, :any)
        ]},
       {"system://lv-anon-mount", []}
     ]

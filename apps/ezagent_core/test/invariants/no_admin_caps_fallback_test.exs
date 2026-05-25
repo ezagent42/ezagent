@@ -124,12 +124,15 @@ defmodule EzagentCore.Invariants.NoAdminCapsFallbackTest do
                cap
     end
 
-    test "caps/1 returns narrowed struct caps for non-bootstrap principals" do
-      # system://chat-router was string-cap-narrowed to [send,
-      # system_message] pre-PR-CC-2-v2 but the bridge widened it to a
-      # wildcard. Post-PR-CC-2-v2 the bridge returns the catalog's
-      # actual narrow struct(s).
-      caps = Ezagent.SystemPrincipal.caps("system://chat-router")
+    test "caps/1 returns narrowed struct caps for narrow-catalog principals" do
+      # Pathology-B follow-up to PR-CC-2-v2: chat-router/chat-reply are
+      # in the wildcard-exempt allowlist now (open-plugin fan-out
+      # structural — see catalog.ex moduledoc +
+      # no_wildcard_system_principals_test.exs). Pick
+      # `system://workspace-loader` for the narrow-catalog assertion —
+      # a single-Behavior principal that legitimately should NOT hold
+      # a wildcard.
+      caps = Ezagent.SystemPrincipal.caps("system://workspace-loader")
       assert %MapSet{} = caps
       assert MapSet.size(caps) >= 1
 
@@ -137,7 +140,7 @@ defmodule EzagentCore.Invariants.NoAdminCapsFallbackTest do
                cap.kind == :any and cap.behavior == :any and
                  cap.instance == :any and cap.workspace_uri == :any
              end),
-             "non-bootstrap principal must not carry a wildcard cap"
+             "narrow-catalog principal must not carry a wildcard cap"
     end
 
     test "caps/1 returns empty MapSet for system://lv-anon-mount" do

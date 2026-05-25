@@ -162,7 +162,18 @@ defmodule Ezagent.Behavior.IdentityGrantTest do
       # let this through. Round-2 must reject.
       ctx = %{caps: MapSet.new([delegated_wildcard])}
 
-      assert {:error, :grant_wildcard_requires_admin} =
+      # Pathology-B follow-up to PR-CC-2-v2:
+      # `check_grant_authorized/2` now narrows the bootstrap-admin
+      # requirement to TRUE wildcards (all four axes `:any`). A
+      # scope-bounded wildcard cap like `echo_cap()` (concrete
+      # `workspace_uri`) is granted via the workspace-admin path —
+      # the caller needs a `Behavior.Workspace` cap on the target
+      # workspace. The instance-scoped delegated cap above doesn't
+      # confer Workspace authority either, so the grant still rejects
+      # — just with the workspace-admin error code rather than the
+      # bootstrap-admin error code. Either way, the privilege
+      # escalation the test guards against is denied.
+      assert {:error, :grant_workspace_admin_required} =
                IdentityAdmin.invoke(:grant_cap, slice, %{cap: cap_to_grant}, ctx)
     end
 

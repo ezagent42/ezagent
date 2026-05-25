@@ -309,20 +309,57 @@ defmodule Ezagent.Behavior.IdentityAdmin do
   end
 
   # PR-OWN-2 §5.2 enforcement helpers — called from `invoke(:grant_cap,...)`.
-  # Three branches:
-  #   (1) wildcard cap shape — {kind: :any} or {behavior: :any} —
-  #       only the bootstrap admin can grant. Rejects with
+  #
+  # Wildcard analysis (pathology-B sweep follow-up to PR-CC-2-v2):
+  # A cap is "true wildcard" (admin authority) ONLY when ALL of these
+  # are unbounded:
+  #   - `kind` is `:any`
+  #   - `behavior` is `:any`
+  #   - `instance` is `:any`
+  #   - `workspace_uri` is `:any`
+  # That exact shape is `bootstrap_wildcard()` — the structural admin
+  # invariant per Decision #81 and only legitimately held by
+  # `system://bootstrap` + `system://mix-task`.
+  #
+  # Anything narrower is a SCOPE-BOUNDED grant and goes the
+  # workspace-admin path:
+  #   - `kind: :any` / `behavior: :any` with a concrete
+  #     `workspace_uri` — "wildcard within workspace W"; the workspace
+  #     admin for W is the legitimate granter.
+  #   - `behavior: :any` with a scope-bounded `instance` tuple
+  #     (`{:within_session, _}` / `{:spawned_by, _}` per Decision #137)
+  #     — bounded to a single session or an orchestrator's descendants;
+  #     workspace admin grants. This is the orchestrator delegation
+  #     shape `Session.build_desired_caps/4` mints (Cap #1 + Cap #2).
+  #
+  # Branches:
+  #   (1) TRUE wildcard cap shape (all four axes `:any`) — only the
+  #       bootstrap admin can grant. Rejects with
   #       :grant_wildcard_requires_admin otherwise.
+  #   (1b) Scope-bounded wildcard (`kind: :any` or `behavior: :any` but
+  #       narrowed on workspace_uri or instance) — workspace-admin
+  #       grants for the cap's workspace_uri.
   #   (2) cap's Behavior declares data_owner/1 — caller must be
   #       the data owner. Rejects with :grant_not_owner otherwise.
   #   (3) cap's Behavior has NOT migrated — fall through to :ok
   #       (incremental rollout; dispatch-level CapBAC remains the
   #       only check).
-  defp check_grant_authorized(%Ezagent.Capability{kind: :any}, ctx),
-    do: require_bootstrap_admin(ctx, :grant_wildcard_requires_admin)
+  defp check_grant_authorized(
+         %Ezagent.Capability{
+           kind: :any,
+           behavior: :any,
+           instance: :any,
+           workspace_uri: :any
+         },
+         ctx
+       ),
+       do: require_bootstrap_admin(ctx, :grant_wildcard_requires_admin)
 
-  defp check_grant_authorized(%Ezagent.Capability{behavior: :any}, ctx),
-    do: require_bootstrap_admin(ctx, :grant_wildcard_requires_admin)
+  defp check_grant_authorized(%Ezagent.Capability{kind: :any} = cap, ctx),
+    do: require_workspace_admin(ctx, cap.workspace_uri, cap)
+
+  defp check_grant_authorized(%Ezagent.Capability{behavior: :any} = cap, ctx),
+    do: require_workspace_admin(ctx, cap.workspace_uri, cap)
 
   defp check_grant_authorized(
          %Ezagent.Capability{behavior: behavior, instance: instance, workspace_uri: cap_ws} = cap,
@@ -363,13 +400,26 @@ defmodule Ezagent.Behavior.IdentityAdmin do
 
   defp check_grant_authorized(_cap, _ctx), do: :ok
 
-  # Workspace-admin grant predicate (PR-OWN-4 codex HIGH fix).
-  # The cap being granted MUST carry a concrete `workspace_uri`
-  # (cannot grant `workspace_uri: :any` here — that's bootstrap-
-  # admin territory). Caller must hold either bootstrap admin OR
-  # a `Behavior.Workspace` cap covering the same workspace.
-  defp require_workspace_admin(_ctx, :any, _cap),
-    do: {:error, :grant_workspace_any_requires_admin}
+  # Workspace-admin grant predicate (PR-OWN-4 codex HIGH fix +
+  # pathology-B follow-up to PR-CC-2-v2).
+  #
+  # The cap being granted MUST carry a workspace authority the caller
+  # can mint:
+  # - `workspace_uri: :any` (cross-workspace grant) — caller must
+  #   hold either bootstrap admin OR a `Behavior.Workspace`
+  #   `workspace_uri: :any` cap (the operator surface for granting
+  #   `:any`-workspace caps to other entities, e.g. admin LV grants).
+  # - `workspace_uri: %URI{}` (concrete workspace grant) — caller
+  #   must hold either bootstrap admin OR a `Behavior.Workspace` cap
+  #   covering that workspace (the `:any` workspace_uri Workspace cap
+  #   also matches — cross-workspace operator authority).
+  defp require_workspace_admin(ctx, :any, _cap) do
+    if holds_admin_caps?(ctx) or holds_cross_workspace_admin_cap?(ctx) do
+      :ok
+    else
+      {:error, :grant_workspace_any_requires_admin}
+    end
+  end
 
   defp require_workspace_admin(ctx, %URI{} = cap_ws, _cap) do
     if holds_admin_caps?(ctx) or holds_workspace_admin_cap?(ctx, cap_ws) do
@@ -380,6 +430,41 @@ defmodule Ezagent.Behavior.IdentityAdmin do
   end
 
   defp require_workspace_admin(_ctx, _, _), do: {:error, :grant_workspace_uri_invalid}
+
+  # Cross-workspace operator authority — the EXACT operator shape:
+  # `Behavior.Workspace` on `:workspace` Kind, `instance: :any`,
+  # `workspace_uri: :any`. This is the shape held by
+  # `system://template-materialize` + `system://workspace-loader` (both
+  # declared as `Capability.cap(:workspace, Workspace, :any)` in
+  # `Ezagent.SystemPrincipal.Catalog`, which builds the operator shape
+  # via `Capability.cap/3`).
+  #
+  # Pathology-B narrowing (codex round-1 MED-1): the predicate
+  # demands EXACTLY this shape so a narrowly-scoped Workspace cap
+  # (e.g. `kind: :session, behavior: Workspace, instance: <uri>,
+  # workspace_uri: :any`) does NOT confer cross-workspace grant
+  # authority. The four-axis pattern matches the cap_for_action shape
+  # the dispatch chokepoint builds against `Behavior.Workspace`, so
+  # only a cap that genuinely authorizes any-workspace Workspace
+  # actions passes here.
+  defp holds_cross_workspace_admin_cap?(%{caps: caps}) do
+    caps_list = if is_struct(caps, MapSet), do: MapSet.to_list(caps), else: List.wrap(caps)
+
+    Enum.any?(caps_list, fn
+      %Ezagent.Capability{
+        kind: :workspace,
+        behavior: Ezagent.Behavior.Workspace,
+        instance: :any,
+        workspace_uri: :any
+      } ->
+        true
+
+      _ ->
+        false
+    end)
+  end
+
+  defp holds_cross_workspace_admin_cap?(_), do: false
 
   # Holder of a workspace-admin cap on `workspace_uri`. The
   # canonical shape: any `Behavior.Workspace` cap on this workspace.
