@@ -142,52 +142,50 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
     end
   end
 
-  describe "Ezagent.Workspace.create_agent/3 — end-to-end direct-spawn (codex r1 MEDIUM-6)" do
+  describe "Ezagent.Workspace.create_agent/3 — end-to-end direct-spawn (codex r1 MEDIUM-6 / r2 MEDIUM-1)" do
+    setup do
+      # Codex PR #330 r2 MEDIUM-1: explicitly start :ezagent_domain_chat
+      # so the `agent` SpawnRegistry scheme is registered. Without this
+      # the test would skip in CI's per-app test runs.
+      {:ok, _apps} = Application.ensure_all_started(:ezagent_domain_chat)
+      :ok
+    end
+
     @tag :integration
-    test "curl flavor — actually spawns the agent + returns {:ok, %{agent_uri}}",
+    test "curl flavor — actually spawns the agent + returns {:ok, %{agent_uri}} + live in KindRegistry",
          %{ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
-      # curl uses the direct-spawn path (no Template Class in this code
-      # path — codex r1 HIGH-4 flagged + accepted). Verifies the full
-      # dispatch + action body + SpawnRegistry chain end-to-end, not
-      # just the early-exit shapes.
-      #
-      # Requires the chat domain's agent spawn fn to be registered;
-      # EzagentCore.DataCase starts the umbrella so this holds.
+      # Bootstrap guard (codex r2 MEDIUM-1): even after starting the
+      # chat domain, the `agent` scheme might be absent if SpawnRegistry
+      # wasn't initialised yet (e.g. EtsOwner timing). In that narrow
+      # window, skip explicitly rather than accept any spawn failure
+      # shape — the original test body accepted `{:error, {:spawn_failed, _}}`
+      # which made it pass even when no agent was actually spawned.
+      # SpawnRegistry registers schemes; agent URIs have scheme `entity`.
+      if not function_exported?(Ezagent.SpawnRegistry, :registered_schemes, 0) or
+           "entity" not in Ezagent.SpawnRegistry.registered_schemes() do
+        IO.puts(:stderr, "SKIP: entity spawn fn not registered (test bootstrap incomplete)")
+        :ok
+      else
+        name = "ee-#{System.unique_integer([:positive])}"
+        expected_uri_str = "entity://agent/#{ws_name}/curl_#{name}"
 
-      name = "ee-#{System.unique_integer([:positive])}"
-      expected_uri_str = "entity://agent/#{ws_name}/curl_#{name}"
+        # Hard requirement: dispatch must return {:ok, _} AND the agent
+        # MUST be alive in KindRegistry afterward. Per codex r2 MEDIUM-1
+        # — close the original coverage gap fully.
+        assert {:ok, %{agent_uri: agent_uri, template_name: nil}} =
+                 Workspace.create_agent(
+                   workspace_uri,
+                   %{flavor: "curl", name: name, cwd: "", with_pty: false},
+                   admin_ctx
+                 )
 
-      case Workspace.create_agent(
-             workspace_uri,
-             %{flavor: "curl", name: name, cwd: "", with_pty: false},
-             admin_ctx
-           ) do
-        {:ok, %{agent_uri: agent_uri, template_name: nil}} ->
-          # End-to-end success: the URI was composed correctly and
-          # the action returned the expected shape. (The chat plugin's
-          # agent spawn fn handles the actual spawn.)
-          assert URI.to_string(agent_uri) == expected_uri_str
+        assert URI.to_string(agent_uri) == expected_uri_str
 
-        {:error, :no_spawn_fn} ->
-          # Chat domain didn't register the agent spawn fn in this
-          # test bootstrap — skip rather than mask the real test.
-          :ok = ExUnit.Callbacks.on_exit(fn -> :ok end)
-          IO.puts(:stderr, "skipping: agent spawn fn not registered in this bootstrap")
-
-        {:error, {:spawn_failed, reason}} ->
-          # Spawn fn ran but Kind init crashed (curl agent expects
-          # provider config it can't find in a bare test bootstrap).
-          # The dispatch+action wiring still worked — that's what
-          # this test verifies. Log + accept.
-          IO.puts(
-            :stderr,
-            "spawn attempted but Kind init failed (expected in bare test bootstrap): #{inspect(reason)}"
-          )
-
-          :ok
-
-        other ->
-          flunk("unexpected create_agent result: #{inspect(other)}")
+        # The agent Kind must be alive in KindRegistry — this is the
+        # invariant the original test was supposed to cover. Without
+        # this assertion the test was vacuous on spawn failures.
+        assert {:ok, _pid} = Ezagent.KindRegistry.lookup(agent_uri),
+               "agent should be alive in KindRegistry after create_agent returned :ok"
       end
     end
   end

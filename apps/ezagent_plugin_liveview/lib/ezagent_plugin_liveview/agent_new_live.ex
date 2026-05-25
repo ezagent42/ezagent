@@ -360,6 +360,49 @@ defmodule EzagentPluginLiveview.AgentNewLive do
   defp friendly_error({:bad_with_pty, v}),
     do: gettext("With-PTY flag must be a boolean (got %{v}).", v: inspect(v))
 
+  # Codex PR #330 r2 MEDIUM-2 — additional shapes the Loader /
+  # Template Class instantiate paths return that the previous
+  # round still left falling through to the generic clause.
+
+  defp friendly_error(:claude_not_found),
+    do:
+      gettext(
+        "The `claude` CLI was not found on PATH. Install Claude Code or fix the operator PATH."
+      )
+
+  defp friendly_error({:bad_template_return, return}),
+    do:
+      gettext(
+        "Template Class returned an unexpected shape (got %{return}).",
+        return: inspect(return)
+      )
+
+  defp friendly_error({:loader_uri_workspace_mismatch, detail}),
+    do:
+      gettext(
+        "Workspace mismatch from Template instantiate: %{detail}",
+        detail: inspect(detail)
+      )
+
+  defp friendly_error({:loader_adopt_not_owned, detail}),
+    do:
+      gettext(
+        "Refusing to adopt an existing agent not owned by this workspace: %{detail}",
+        detail: inspect(detail)
+      )
+
+  defp friendly_error({:agent_kind_spawn_failed, reason}),
+    do: gettext("Agent Kind failed to spawn: %{reason}", reason: inspect(reason))
+
+  defp friendly_error({:pty_server_spawn_failed, reason}),
+    do: gettext("PtyServer failed to spawn: %{reason}", reason: inspect(reason))
+
+  defp friendly_error({:agent_spawn_failed, reason}),
+    do: gettext("Agent spawn failed: %{reason}", reason: inspect(reason))
+
+  defp friendly_error({:pty_start_failed, reason}),
+    do: gettext("PTY sidecar failed to start: %{reason}", reason: inspect(reason))
+
   defp friendly_error(other),
     do: gettext("Create failed: %{reason}", reason: inspect(other))
 
