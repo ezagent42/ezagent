@@ -1,6 +1,6 @@
 # SPEC — Agent 复制/克隆原语 (Behavior.Agent `:duplicate`)
 
-**状态:** DRAFT rev 4 · 2026-05-25（codex r1 + r2 + r3 修复）
+**状态:** DRAFT rev 5 · 2026-05-25（codex r1 + r2 + r3 + r4 修复）
 **层级:** `apps/ezagent_domain_chat/`（新 `Behavior.Agent` + action）+ `apps/ezagent_core/`（新 `AgentOwnership` registry + Kind.Template snapshot callback 适配器 + BehaviorRegistry 插槽）+ `apps/ezagent_plugin_cc/`（cc snapshot+restore 实现）+ `apps/ezagent_domain_workspace/`（mix task 包装 + `:create_agent` 的 ownership-write）
 **触发:** Allen 2026-05-24（memory `feedback_agent_clone_not_via_template`）—— "agent 创建的 template 如果不走正常的 template 创建和 fork 流程，可能导致开发 drift，但如果走标准流程，又可能导致 Template Registry 里面大量临时创建后再也不用的 template"。Clone 必须作为 domain.agent primitive 存在，**绝不**走 Template Registry。
 **前置:** 同英文版。
@@ -12,6 +12,11 @@
 - HIGH: 全有或全无的 target spawn —— config 在 target Kind 起来**之前**已 stage 到 temp 并验证（§3.5）
 - HIGH: 不走 `Workspace.create_agent` —— 专用原语避免 template 残留 + adoption TOCTOU（§3.4）
 - MEDIUM: 新 `Kind.Template.snapshot_config_dir/2` callback —— plugin 拥有 quiesce + manifest（§3.6）
+
+**Rev 5 变更（codex r4 verdict needs-attention → 已处理）:**
+- HIGH-1: `provision_agent/3` 现在跟踪每个已 apply 的 `{grantee, cap}`，later failure 时**反向**revoke **再** forget ownership（§3.9 重写）。Failure-injection 测试（§7 row 16a 新）断言 rollback 后 grantee 的 `Identity.list_caps` 无残留 cap.
+- HIGH-2: 移除所有 rev-3 残留 —— §3.4 `spawn_target_directly/5` 片段现调 `Provisioning.provision_agent/3`（不调 `grant_initial_caps_for_owner`）；§4.3 重写为一行指向 §3.9（不再有 "Kind.Server 自动合成" 说法）。SPEC 现有 ONE 权威 provisioning 路径.
+- HIGH-3: §6 迁移段现在**要求** `agent_ownership(agent_uri pk, owner_uri, created_at)` 的 Ecto migration；规定 deploy/boot 顺序（`Workspace.Store.boot_done?` → `AgentOwnership.boot_load/0` → 后续 EzagentCore.EtsOwner 完成 → 才开 dispatch）。§7 row 17 新：从 pre-rev-5 DB 开始的 upgrade 测试.
 
 **Rev 4 变更（codex r3 verdict needs-attention → 已处理）:**
 - CRITICAL: rollback 现在**同步**等待 target Kind 进程死后**再**删 `Kind.Snapshot` 行。Rev-3 中 `Sandbox.:destroy` 的延迟 termination Task 可能在我们 delete 之**后**重写 snapshot. Rev 4 改顺序：先用 `DynamicSupervisor.terminate_child` + `Process.monitor` 同步等 `:DOWN`，**再**删 snapshot。Snapshot 删时进程已死，无 re-write 可能（§3.4.2 重写）。
@@ -426,15 +431,23 @@ end
 
 Pre-AgentOwnership agents 通过 `mix ezagent.agent.set_owner` 回填.
 
-### 4.3 `:duplicate` cap 从哪来（rev 3 —— 合成，不显式）
+### 4.3 `:duplicate` cap 从哪来（rev 5 —— 单一 Provisioning helper）
 
-在 `Behavior.Workspace.:create_agent` action body（target spawn 后，post-spawn obligations 前）新加一行：
+在 agent-spawn（`Behavior.Workspace.:create_agent` action body **和** `Behavior.Agent.:duplicate` 的 `spawn_target_directly/5`），唯一 post-spawn step 是：
 
 ```elixir
-:ok <- Ezagent.AgentOwnership.record(agent_uri, ctx.caller),
+:ok <- Ezagent.Agent.Provisioning.provision_agent(agent_uri, owner_user_uri, ctx),
 ```
 
-然后 `Kind.Server` 标准 PR-OWN-1 post-spawn 路径自动合成 `{Behavior.Agent, :duplicate}` cap 给 owner. Rev-2 的"显式 grant_initial_caps"行**被移除** —— 少特例，一机制.
+`Provisioning.provision_agent/3`（§3.9）是**唯一**权威路径. 它：
+1. 写 `AgentOwnership.record(agent_uri, owner_user_uri)`
+2. 调 `CapabilityRegistry.default_grants_from_data_owner(Entity.Agent, agent_uri)` 枚举合成的 `[{grantee, cap}]`
+3. 对每个 dispatch `identity_admin.grant_cap`
+4. 任何失败时，**反向** revoke 已 apply 的 grants（rev 5 HIGH-1 修复）+ forget ownership
+
+Rev-3 及之前提到 "Kind.Server post-spawn auto-synthesis pathway"；codex r3 证实该路径在当前 codebase **不**存在. Rev 4 引入 `Provisioning` 作为显式替代；rev 5 让它成为唯一 normative path. 任何旧 spec 提 auto-synthesis 的文本均**作废**.
+
+源 ws admin grant `:duplicate` 通过 `caps-data-ownership-v2.md` §5.2 (Workspace.data_owner = `:any` → admin branch). 无 SPEC 改动需要.
 
 ### 4.4 Caller 场景
 
@@ -456,7 +469,32 @@ Dispatch 链记录每个 `Invocation.dispatch/1` + snapshot manifest hash.
 
 ## 6. 迁移
 
-**Schema 层:** 无。**已有 agent ownership**: 无 AgentOwnership 行 → `:no_owner`. Operator 通过 `mix ezagent.agent.set_owner` per-agent 回填.
+**Schema 层（rev 5 —— 要求 migration）:** 实现 PR **必须**包含 Ecto migration 加 `agent_ownership` 表：
+
+```elixir
+# priv/repo/migrations/<timestamp>_create_agent_ownership.exs
+defmodule Ezagent.Repo.Migrations.CreateAgentOwnership do
+  use Ecto.Migration
+
+  def change do
+    create table(:agent_ownership, primary_key: false) do
+      add :agent_uri,  :text, primary_key: true
+      add :owner_uri,  :text, null: false
+      timestamps(type: :utc_datetime_usec, updated_at: false)
+    end
+
+    create index(:agent_ownership, [:owner_uri])
+  end
+end
+```
+
+与 `Workspace.Store` 同一个 Ecto repo. 没有此 migration，`AgentOwnership.record/2` / `lookup/1` / `boot_load/0` 全部 runtime 失败.
+
+**Boot 顺序:** `EzagentCore.EtsOwner` 必须 (a) 创建 `:ezagent_agent_ownership` ETS 表，(b) 调 `AgentOwnership.boot_load/0` 从 SQLite populate，**之前**才让 dispatch 开放. 由 `EzagentCore.Application.start/2` 的 supervision tree 顺序强制；实现 PR 加 `Application.fetch_env!(:ezagent_core, :boot_ordering)` 断言保证 `AgentOwnership` 在 `:dispatch_open` 之前.
+
+**Upgrade test（§7 row 17 新）**: 从 pre-rev-5 DB 快照（无 `agent_ownership` 表）启动；跑 `mix ecto.migrate`；创建 agent；重启 runtime；验证 `AgentOwnership.lookup/1` 仍返回 owner.
+
+**已有 agent ownership**: 无 AgentOwnership 行 → `:no_owner`. Operator 通过 `mix ezagent.agent.set_owner` per-agent 回填.
 
 ---
 
@@ -482,6 +520,8 @@ Dispatch 链记录每个 `Invocation.dispatch/1` + snapshot manifest hash.
 14. **AgentOwnership 在 spawn 时写入**（codex r2 HIGH-2 前置）
 15. **Restart 持久性**（codex r3 HIGH-3）—— 创 agent → 确认 AgentOwnership 有行 + caller 有 `:duplicate` cap → 模拟 runtime 重启（stop+start `EzagentCore.EtsOwner`）→ 确认 `AgentOwnership.lookup(agent_uri)` 从 SQLite-backed boot reload 仍返回 owner_user_uri → 确认 owner 能 dispatch `:duplicate`（无需 bootstrap-admin）. 也测 ETS owner 中途 crash：杀 ETS owner 进程，让 supervisor 重启，确认 `boot_load` 从 SQLite 重新 populate.
 16. **Provisioning end-to-end**（codex r3 HIGH-2）—— `:create_agent` 后，caller user 通过 `Identity.list_caps` 查到 `{Behavior.Agent, :duplicate}` cap 在新 agent URI 上. 断言 `Provisioning.provision_agent/3` helper 实际触发并端到端应用 grants（不只是 row 14 那样隔离地 record ownership）.
+    - **16a（codex r4 HIGH-1）**：在 `Provisioning.provision_agent/3` 第二次 grant 时注入失败；验证第一次的 grant 已从 grantee user 的 `Identity.list_caps` 中 revoke 掉，**且** `AgentOwnership` 行不存在. 断言 rev-5 partial-grant rollback 结构上工作 —— 无残留 cap.
+17. **Migration upgrade test**（codex r4 HIGH-3）—— 从 pre-rev-5 DB 快照（无 `agent_ownership` 表）启动；跑 `mix ecto.migrate`；通过 `:create_agent` 创 agent；验证 `AgentOwnership.lookup/1` 返回 owner；停+起 runtime；验证 `AgentOwnership.lookup/1` 仍从 SQLite-backed `boot_load/0` 返回 owner.
 
 ---
 
@@ -520,7 +560,8 @@ Dispatch 链记录每个 `Invocation.dispatch/1` + snapshot manifest hash.
 - **Rev 1**：1 CRITICAL + 3 HIGH + 1 MEDIUM. Rev 2 处理.
 - **Rev 2**：1 CRITICAL（rollback durable 漏洞）+ 2 HIGH（data_owner 关闭 bilateral consent；snapshot optional callback 抛错）+ 1 MEDIUM（snapshot 不 point-in-time）. Rev 3 处理.
 - **Rev 3**：codex 返回 `needs-attention`，1 CRITICAL（rollback 在延迟 terminate 重写 snapshot 前删 snapshot）+ 2 HIGH（default_grants_from_data_owner 没被 spawn lifecycle 调用 → owner-derived caps 是幻影；AgentOwnership 易失 ETS → 重启丢失授权）. Rev 4 处理（§3.4.2 重写为 terminate-then-purge、§3.9 新 Provisioning helper、§3.8 改为 SQLite-backed cache、§7 加 row 15+16）.
-- **Rev 4**（本版本）：codex r4 将跑. r4 干净则通过 admin merge. r4 若仍 CRIT+ 则视为 "需更多架构输入"，飞书通知 Allen 再迭代.
+- **Rev 4**：codex 返回 `needs-attention`，3 HIGH（无 CRITICAL，进步）：partial-grant rollback gap、§3.4/§4.3 rev-3 残留、schema migration 未要求. Rev 5 全部处理（§3.9 跟踪+revoke、§3.4/§4.3 重写、§6 要求 migration + boot ordering、§7 row 16a + row 17 新）。
+- **Rev 5**（本版本）：codex r5 将跑. r5 干净则通过 admin merge. r5 若仍 CRIT+ 则视为 "需更多架构输入"，飞书通知 Allen 再迭代.
 
 ---
 

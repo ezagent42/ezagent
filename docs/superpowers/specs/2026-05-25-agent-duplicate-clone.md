@@ -1,6 +1,6 @@
 # SPEC — Agent duplicate/clone primitive (Behavior.Agent `:duplicate`)
 
-**Status:** DRAFT rev 4 · 2026-05-25 (codex r1 + r2 + r3 fixes)
+**Status:** DRAFT rev 5 · 2026-05-25 (codex r1 + r2 + r3 + r4 fixes)
 **Tier:** `apps/ezagent_domain_chat/` (new `Behavior.Agent` + action) + `apps/ezagent_core/` (new `AgentOwnership` registry + Kind.Template snapshot callback adapter + BehaviorRegistry slot) + `apps/ezagent_plugin_cc/` (cc snapshot+restore impl) + `apps/ezagent_domain_workspace/` (mix task wrapper + ownership-write on `:create_agent`)
 **Trigger:** Allen 2026-05-24 (memory `feedback_agent_clone_not_via_template`) — "agent 创建的 template 如果不走正常的 template 创建和 fork 流程，可能导致开发 drift，但如果走标准流程，又可能导致 Template Registry 里面大量临时创建后再也不用的 template". Clone must live as a domain.agent primitive, NEVER via Template Registry.
 **Predecessors:**
@@ -20,6 +20,11 @@
 - HIGH: all-or-nothing target spawn — config staged to temp + verified BEFORE target Kind comes up (§3.5)
 - HIGH: no `Workspace.create_agent` routing — dedicated primitive avoids template residue + adoption TOCTOU (§3.4)
 - MEDIUM: new `Kind.Template.snapshot_config_dir/2` callback owns plugin-side quiesce + manifest (§3.6)
+
+**Rev 5 changes (codex r4 verdict needs-attention → addressed):**
+- HIGH-1: `provision_agent/3` now tracks every `{grantee, cap}` it applies and revokes them in reverse on later failure BEFORE forgetting ownership (§3.9 rewritten). Failure-injection test (§7 row 16a new) asserts no stale cap remains on grantee's `Identity.list_caps` after rollback.
+- HIGH-2: removed all rev-3 leftover text — `spawn_target_directly/5` snippet in §3.4 now calls `Provisioning.provision_agent/3` (not `grant_initial_caps_for_owner`); §4.3 rewritten as one-liner pointing at §3.9 (was "the §3.9 helper is invoked here" with no claim that Kind.Server auto-synthesizes). The spec now has ONE authoritative provisioning path.
+- HIGH-3: §6 migration section now REQUIRES the Ecto migration for `agent_ownership(agent_uri pk, owner_uri, created_at)`; specifies deploy/boot ordering (`Workspace.Store.boot_done?` → `AgentOwnership.boot_load/0` → subsequent EzagentCore.EtsOwner finalization → only then is dispatch open). §7 row 17 new: upgrade test starting from pre-rev-5 DB (no `agent_ownership` table) verifies migration + create + restart works end-to-end.
 
 **Rev 4 changes (codex r3 verdict needs-attention → addressed):**
 - CRITICAL: rollback now waits for target Kind process death BEFORE deleting `Kind.Snapshot` row. `Sandbox.:destroy`'s delayed termination Task previously could re-write the snapshot AFTER our delete. Rev 4 changes the rollback order: terminate synchronously (`DynamicSupervisor.terminate_child` + `Process.monitor` wait for `:DOWN`), THEN delete snapshot. Snapshot delete now happens on a dead process — no re-write possible (§3.4.2 rewritten).
@@ -254,7 +259,7 @@ Per codex r1 HIGH-4, routing through `Ezagent.Workspace.create_agent/3` would:
 1. Register a workspace-scoped template (the cc/echo path) in the workspace's `session_templates` slice → persists to `Workspace.Store` → exactly the "throwaway template residue" memory `feedback_agent_clone_not_via_template` warns against.
 2. The create_agent path's catch-all `:already_started` → `:ok` collapse means a concurrent spawn at `target_uri` would be silently adopted as success, after which step 5 (config restore) would overwrite a foreign agent's dir.
 
-The dedicated `spawn_target_directly/5`:
+The dedicated `spawn_target_directly/5` (rev 5 — Provisioning helper is the ONE post-spawn provisioning step):
 
 ```elixir
 defp spawn_target_directly(target_uri, source_meta, target_ws_uri, target_owner_uri, staged_path) do
@@ -263,7 +268,10 @@ defp spawn_target_directly(target_uri, source_meta, target_ws_uri, target_owner_
        :ok                     <- AgentLineage.record(target_uri, target_owner_uri),
        {:ok, final_dir}        <- restore_snapshot_into_target(source_meta, target_uri, staged_path),
        :ok                     <- dispatch_sandbox_write_path(target_uri, final_dir, source_meta.template_class),
-       :ok                     <- grant_initial_caps_for_owner(target_uri, target_owner_uri),
+       # §3.9 Provisioning is the ONE post-spawn ownership+caps step.
+       # Bootstrap-admin context: the dispatch-time cap check on :duplicate
+       # already validated the caller; this synthesis is a system op.
+       :ok                     <- Ezagent.Agent.Provisioning.provision_agent(target_uri, target_owner_uri, %{caller: bootstrap_granter(), caps: bootstrap_admin_caps()}),
        :ok                     <- start_pty_or_no_pty(target_uri, source_meta, target_ws_uri) do
     {:ok, %{agent_uri: target_uri}}
   else
@@ -271,6 +279,8 @@ defp spawn_target_directly(target_uri, source_meta, target_ws_uri, target_owner_
   end
 end
 ```
+
+The `Provisioning.provision_agent/3` call replaces what rev-2 / earlier drafts called `grant_initial_caps_for_owner/2` — there is NO separate cap-grant step anymore. §3.9 owns it. Any text in older revisions of this SPEC referring to a separate "Kind.Server post-spawn auto-synthesis" pathway is OBSOLETE (codex r3 grep confirmed that pathway does not exist in current code; rev 4 made the provisioning explicit; rev 5 ensures the spawn snippet calls it).
 
 #### 3.4.1 `spawn_atomic_fresh/1` — refuses adoption
 
@@ -715,20 +725,33 @@ defmodule Ezagent.Agent.Provisioning do
     with :ok                 <- validate_owner_is_user(owner_user_uri),
          :ok                 <- Ezagent.AgentOwnership.record(agent_uri, owner_user_uri),
          {:ok, grants}        = {:ok, Ezagent.CapabilityRegistry.default_grants_from_data_owner(Ezagent.Entity.Agent, agent_uri)},
-         :ok                 <- apply_grants(grants, ctx) do
+         {:ok, _applied}     <- apply_grants_tracked(grants, ctx, []) do
       :ok
     else
+      {:error, {:grant_failed, _grantee, _cap, _reason, applied}} = err ->
+        # Rev 5 HIGH-1 fix — revoke EVERY successfully-applied grant
+        # before forgetting ownership. Without this, a partial grant
+        # set survives on the grantee user's Identity slice and can
+        # authorize access if target_uri is reused.
+        revoke_all(applied, ctx)
+        _ = Ezagent.AgentOwnership.forget(agent_uri)
+        {:error, {:provisioning_failed, err}}
+
       {:error, reason} ->
-        # Step 4 — partial-grant rollback. AgentOwnership is the only
-        # mutation we own at this layer; caller's broader rollback
-        # handles Workspace + Kind state.
+        # Ownership-record failure (or earlier validation) — no grants
+        # applied yet, only the ownership row may exist.
         _ = Ezagent.AgentOwnership.forget(agent_uri)
         {:error, {:provisioning_failed, reason}}
     end
   end
 
-  defp apply_grants([], _ctx), do: :ok
-  defp apply_grants([{grantee_uri, cap} | rest], ctx) do
+  # Applies grants one at a time, tracking successfully-applied
+  # {grantee, cap} tuples so we can revoke them on a later failure.
+  # On failure, returns the failure reason TOGETHER with the list of
+  # tuples already applied (so the rollback knows exactly what to undo).
+  defp apply_grants_tracked([], _ctx, applied), do: {:ok, applied}
+
+  defp apply_grants_tracked([{grantee_uri, cap} | rest], ctx, applied) do
     target = URI.new!("#{URI.to_string(grantee_uri)}?action=identity_admin.grant_cap")
     case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
            target: target,
@@ -736,9 +759,26 @@ defmodule Ezagent.Agent.Provisioning do
            args: %{cap: cap},
            ctx: %{caller: ctx.caller, caps: ctx.caps, reply: {:caller_inbox, self()}}
          }) do
-      {:ok, _} -> apply_grants(rest, ctx)
-      {:error, reason} -> {:error, {:grant_failed, grantee_uri, cap, reason}}
+      {:ok, _} ->
+        apply_grants_tracked(rest, ctx, [{grantee_uri, cap} | applied])
+      {:error, reason} ->
+        {:error, {:grant_failed, grantee_uri, cap, reason, applied}}
     end
+  end
+
+  # Best-effort reverse-order revoke. Idempotent at IdentityAdmin layer
+  # (revoke of an absent cap is no-op).
+  defp revoke_all(applied, ctx) do
+    for {grantee_uri, cap} <- applied do
+      target = URI.new!("#{URI.to_string(grantee_uri)}?action=identity_admin.revoke_cap")
+      _ = Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+            target: target,
+            mode: :call,
+            args: %{cap: cap},
+            ctx: %{caller: ctx.caller, caps: ctx.caps, reply: {:caller_inbox, self()}}
+          })
+    end
+    :ok
   end
 
   defp validate_owner_is_user(%URI{scheme: "entity", host: "user"}), do: :ok
@@ -802,34 +842,23 @@ Body mirrors `agent.create.ex` (`parse_uri` + `decompose` + `Invocation.dispatch
 
 Why this is NOT the same as the rev-2 HIGH-2 (`data_owner: source_uri`) mistake: the previous draft would have grant`:duplicate` cap to `source_uri` (the agent URI itself), and `IdentityAdmin`'s grant-authorization treats agents as not-quite-users. The rev-3 design resolves to the **user URI** via the registry; standard user-grants-user pathway applies; the codex critique is structurally addressed.
 
-### 4.3 Where the `:duplicate` cap comes from (rev 3 — synthesized, not explicit)
+### 4.3 Where the `:duplicate` cap comes from (rev 5 — single Provisioning helper)
 
-At agent-spawn (`Behavior.Workspace.:create_agent` action body, after target spawn), a single NEW step runs BEFORE post-spawn obligations:
+At agent-spawn (both `Behavior.Workspace.:create_agent` action body AND `Behavior.Agent.:duplicate`'s `spawn_target_directly/5`), the ONE post-spawn step is:
 
 ```elixir
-# new line in Behavior.Workspace.:create_agent action body, BEFORE
-# Kind.Server's post-spawn default-grants step
-:ok <- Ezagent.AgentOwnership.record(agent_uri, ctx.caller),
+:ok <- Ezagent.Agent.Provisioning.provision_agent(agent_uri, owner_user_uri, ctx),
 ```
 
-Then `Kind.Server`'s existing post-spawn pathway (PR-OWN-1) iterates the Agent Kind's Behaviors, calls `data_owner/1` on each, and synthesizes the per-Behavior default grants. With §3.8's `data_owner -> user_uri`, the `{Behavior.Agent, :duplicate}` cap is synthesized AUTOMATICALLY to the owner. The previous rev-2 "explicit grant_initial_caps" line is REMOVED in favor of the standard PR-OWN-1 synthesis path — fewer special cases, one mechanism.
+`Provisioning.provision_agent/3` (§3.9) is the SOLE authoritative path. It:
+1. Writes `AgentOwnership.record(agent_uri, owner_user_uri)`
+2. Calls `CapabilityRegistry.default_grants_from_data_owner(Entity.Agent, agent_uri)` to enumerate the synthesized `[{grantee, cap}]` tuples (Behavior.Agent contributes `{owner_user_uri, :duplicate_cap}`; sibling Behaviors contribute their own)
+3. Dispatches `identity_admin.grant_cap` for each tuple
+4. On any failure, revokes every cap it already applied (rev 5 HIGH-1 fix) AND forgets ownership
+
+Rev-3 and earlier referred to a "Kind.Server post-spawn default-grants auto-synthesis pathway"; codex r3 confirmed that pathway DOES NOT exist in the current codebase. Rev 4 introduced `Provisioning` as the explicit replacement; rev 5 makes it the only normative path. Any older spec text referencing auto-synthesis is OBSOLETE.
 
 Source-ws admin grant for `:duplicate` happens via `caps-data-ownership-v2.md` §5.2 (Workspace.data_owner = `:any` → admin branch). No spec change needed for that pathway.
-
-<!-- legacy rev-2 explicit-grant block kept for diff context, now superseded
-```elixir
-# new step in Behavior.Workspace.:create_agent action body, after target spawn
-:ok <- grant_initial_caps(agent_uri, [
-  {Behavior.Agent, :duplicate, instance: agent_uri},
-  # ... existing Identity grants
-], ctx_with_creator_caps)
-```
-
-The agent's **creator** (the user that called `create_agent`) gets `{Behavior.Agent, :duplicate}` on the new agent's URI. Workspace admins ALSO get this cap via §5.2 admin branch on the workspace (Workspace `cap_subjects` enumeration + `Workspace.data_owner = :any` already routes admin grants per `caps-data-ownership-v2.md`).
-
-This means: a freshly-created agent's `:duplicate` cap is held by (a) its creator and (b) the workspace admin of the source workspace — NEVER automatically by the target-workspace admin (until source-side explicitly grants it).
-
-The grant step lives in SPEC #330's already-shipped `Behavior.Workspace.:create_agent` body (line 158-176 of `apps/ezagent_domain_workspace/lib/ezagent/behavior/workspace.ex`); this SPEC's impl PR adds the duplicate-cap row to that grant list.
 
 ### 4.4 Caller scenarios (rev-2)
 
@@ -862,9 +891,32 @@ ADDITIONALLY, the snapshot manifest (§3.6) is logged (info level) at snapshot t
 
 ## 6. Migration
 
-**Schema-level:** None. New Behavior's slice empty; new Kind.Template callbacks `@optional`; new ETS table created at `EzagentCore.EtsOwner` startup.
+**Schema-level (rev 5 — REQUIRED migration):** the impl PR MUST include an Ecto migration adding the `agent_ownership` table:
 
-**Existing-agent ownership:** agents that existed before this PR have no `AgentOwnership` row → `data_owner -> :no_owner` → only bootstrap-admin can grant `:duplicate` on them. Operator backfill via new mix task:
+```elixir
+# priv/repo/migrations/<timestamp>_create_agent_ownership.exs
+defmodule Ezagent.Repo.Migrations.CreateAgentOwnership do
+  use Ecto.Migration
+
+  def change do
+    create table(:agent_ownership, primary_key: false) do
+      add :agent_uri,  :text, primary_key: true
+      add :owner_uri,  :text, null: false
+      timestamps(type: :utc_datetime_usec, updated_at: false)
+    end
+
+    create index(:agent_ownership, [:owner_uri])
+  end
+end
+```
+
+Uses the same Ecto repo as `Workspace.Store`. Without this migration, `AgentOwnership.record/2`, `lookup/1`, and `boot_load/0` all fail at runtime.
+
+**Boot ordering:** `EzagentCore.EtsOwner` must (a) create the `:ezagent_agent_ownership` ETS table, (b) call `AgentOwnership.boot_load/0` to populate from SQLite, BEFORE the dispatch system opens for traffic. This is enforced by the application supervision tree: `EtsOwner` is a `:permanent` child of `EzagentCore.Application` and starts BEFORE `WorkspaceRegistry` / `SpawnRegistry` / any dispatch-handling supervisors. Impl PR adds an assertion in `EzagentCore.Application.start/2` that `Application.fetch_env!(:ezagent_core, :boot_ordering)` includes `AgentOwnership` before `:dispatch_open`.
+
+**Upgrade test (§7 row 17 new):** the impl PR includes an upgrade test starting from a pre-rev-5 DB snapshot (no `agent_ownership` table), runs `mix ecto.migrate`, then creates an agent, restarts the runtime, verifies `AgentOwnership.lookup(agent_uri)` returns the owner from SQLite-backed boot_load. Without this test the migration ordering could regress silently.
+
+**Existing-agent ownership backfill:** agents that existed before this PR have no `AgentOwnership` row → `data_owner -> :no_owner` → only bootstrap-admin can grant `:duplicate` on them. Operator backfill via new mix task:
 
 ```bash
 mix ezagent.agent.set_owner entity://agent/<ws>/<flavor>_<name> entity://user/<ws>/<user>
@@ -908,6 +960,8 @@ The bar:
 14. **AgentOwnership write at spawn (codex r2 HIGH-2 prerequisite)** — `Behavior.Workspace.:create_agent` writes `AgentOwnership.record(agent_uri, ctx.caller)` before post-spawn obligations run; verify row exists with correct user_uri. Verify `Behavior.Agent.data_owner(agent_uri)` returns the user URI, and `default_grants_from_data_owner` synthesizes the `:duplicate` cap to that user.
 15. **Restart durability (codex r3 HIGH-3)** — create an agent → confirm AgentOwnership has row + caller has `:duplicate` cap → simulate runtime restart (stop+start `EzagentCore.EtsOwner`) → confirm `AgentOwnership.lookup(agent_uri)` still returns owner_user_uri from SQLite-backed boot reload → confirm owner can dispatch `:duplicate` (no bootstrap-admin required). Also test ETS owner crash mid-flight: kill the ETS owner process, let supervisor restart it, confirm boot_load repopulates from SQLite.
 16. **Provisioning end-to-end (codex r3 HIGH-2)** — after `:create_agent`, the caller user holds `{Behavior.Agent, :duplicate}` cap on the new agent URI per `Identity.list_caps` query. Asserts the `Provisioning.provision_agent/3` helper actually fires AND applies grants end-to-end (not just records ownership in isolation per row 14).
+    - **16a (codex r4 HIGH-1):** in `Provisioning.provision_agent/3`, inject failure at the 2nd grant of a multi-grant batch (e.g. by stubbing one grantee's IdentityAdmin to refuse); verify the FIRST grant was successfully revoked off the grantee user's `Identity.list_caps` AND the `AgentOwnership` row is absent. Asserts the rev-5 partial-grant rollback works structurally — no stale cap escapes.
+17. **Migration upgrade test (codex r4 HIGH-3)** — start from a pre-rev-5 DB snapshot (no `agent_ownership` table); run `mix ecto.migrate`; create an agent via `:create_agent`; verify `AgentOwnership.lookup/1` returns the owner; stop+start the runtime; verify `AgentOwnership.lookup/1` still returns the owner from SQLite-backed `boot_load/0`. If migration ordering regresses (e.g. EtsOwner starts before SQLite-backed Repo is up), this test catches it.
 
 ---
 
@@ -976,7 +1030,12 @@ No CLAUDE.md change. Mix task `--help` auto-renders. Operator docs go in `docs/o
   - §3.9 new: `Ezagent.Agent.Provisioning.provision_agent/3` makes ownership-record + default-grants application explicit and shared between create_agent and duplicate.
   - §3.8 rewritten: SQLite-backed AgentOwnership with ETS read cache (mirroring `Workspace.Store` pattern), `boot_load/0` rehydrates on restart.
   - §7 rows 15 + 16 new: restart durability test + provisioning end-to-end test.
-- **Rev 4** (this revision): codex r4 adversarial review will run on this branch before the impl PR opens. If r4 is clean, this SPEC merges via admin merge per `feedback_admin_merge_authorized`. If r4 still finds CRITICAL+ findings, this becomes a "needs more architectural input" pause — Allen is notified via Feishu before further iteration.
+- **Rev 4**: codex returned `needs-attention` with 3 HIGH (NO CRITICAL — progress): partial-grant rollback gap, contradictory rev-3 text in §3.4/§4.3, schema migration not specified as required. All addressed in rev 5:
+  - §3.9 `Provisioning.provision_agent/3` now tracks applied `{grantee, cap}` tuples and revokes them on later failure (`apply_grants_tracked/3` + `revoke_all/2`).
+  - §3.4 spawn snippet calls `Provisioning.provision_agent/3` directly (no more `grant_initial_caps_for_owner`); §4.3 rewritten as single authoritative path pointing at §3.9, all rev-3 "Kind.Server auto-synthesis" text labeled OBSOLETE.
+  - §6 now REQUIRES the `agent_ownership` Ecto migration with boot-ordering assertion; §7 row 17 new tests upgrade-from-pre-rev-5-DB path.
+  - §7 row 16a new tests partial-grant rollback grantee-side cleanup.
+- **Rev 5** (this revision): codex r5 adversarial review will run on this branch before the impl PR opens. If r5 is clean, this SPEC merges via admin merge per `feedback_admin_merge_authorized`. If r5 still finds CRITICAL+ findings, this becomes a "needs more architectural input" pause — Allen is notified via Feishu before further iteration.
 
 ---
 
