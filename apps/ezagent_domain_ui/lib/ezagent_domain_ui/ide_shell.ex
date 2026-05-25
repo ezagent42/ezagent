@@ -137,8 +137,9 @@ defmodule EzagentDomainUi.IdeShell do
   Differs from `top_command_bar/1` in that the left context affordance
   is driven by the `perspective` attr (SPEC §2):
 
-  - `:workspace` → `workspace_dropdown` (or plain `ezagent / <ws>`
-    text when no `workspaces` list is passed).
+  - `:workspace` → `workspace_dropdown` (always — empty-list state
+    shows a placeholder row + the "Manage workspaces..." footer
+    link, since the dropdown is the sole entry to `/workspaces`).
   - `:admin` → plain `ezagent · System` system-context label.
 
   It carries no resource-panel toggle — panel toggles belong to the
@@ -156,8 +157,14 @@ defmodule EzagentDomainUi.IdeShell do
     <header class="h-10 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-3 flex items-center gap-3 shrink-0">
       <%!-- SPEC §2 — context affordance. `:admin` shows a plain
             system-context label (you do not switch tenant workspace
-            while editing global config); `:workspace` shows the
-            workspace dropdown (or plain text when no list given). --%>
+            while editing global config); `:workspace` always shows
+            the `workspace_dropdown` — even with an empty workspaces
+            list, the dropdown is the only entry point to
+            `/workspaces` (Activity Bar dropped its Workspaces tile
+            in PR-L). Workspace-rename (#335) removed the seeded
+            `default` workspace; first-time operators land here with
+            `@workspaces == []` and MUST be able to reach
+            "Manage workspaces..." to create the first one. --%>
       <%= if @perspective == :admin do %>
         <div class="flex items-center gap-2 shrink-0">
           <span class="font-semibold text-xs tracking-tight">ezagent</span>
@@ -165,26 +172,11 @@ defmodule EzagentDomainUi.IdeShell do
           <span class="text-xs text-zinc-600 dark:text-zinc-400">{gettext("System")}</span>
         </div>
       <% else %>
-        <%= if @workspaces != [] do %>
-          <.workspace_dropdown
-            workspace_name={@workspace_name}
-            workspaces={@workspaces}
-            is_system_member?={@is_system_member?}
-          />
-        <% else %>
-          <div class="flex items-center gap-2 shrink-0">
-            <span class="font-semibold text-xs tracking-tight">ezagent</span>
-            <span :if={@workspace_name} class="text-zinc-400 dark:text-zinc-600 select-none">
-              /
-            </span>
-            <span
-              :if={@workspace_name}
-              class="font-mono text-xs text-zinc-600 dark:text-zinc-400"
-            >
-              {@workspace_name}
-            </span>
-          </div>
-        <% end %>
+        <.workspace_dropdown
+          workspace_name={@workspace_name}
+          workspaces={@workspaces}
+          is_system_member?={@is_system_member?}
+        />
       <% end %>
 
       <%!-- search / ⌘K trigger — universal, present on every page. --%>
@@ -314,6 +306,20 @@ defmodule EzagentDomainUi.IdeShell do
           <div class="text-[10px] uppercase tracking-wide text-zinc-500">{gettext("Workspaces")}</div>
         </div>
         <div class="py-1 max-h-64 overflow-y-auto">
+          <%!-- Empty-state placeholder (workspace-rename #335 follow-up,
+                Allen 2026-05-25). After PR #335 deleted the seeded
+                `default` workspace, fresh DBs and freshly-onboarded
+                users land here with `@workspaces == []`. We keep the
+                dropdown trigger visible (it's the sole entry to
+                /workspaces — Activity Bar dropped its tile in PR-L)
+                and show a placeholder row so the menu doesn't look
+                broken; the "Manage workspaces..." footer link below
+                stays reachable. --%>
+          <%= if @workspaces == [] do %>
+            <div class="px-3 py-3 text-xs text-zinc-500 dark:text-zinc-400 italic">
+              {gettext("No workspaces yet")}
+            </div>
+          <% end %>
           <%= for ws <- @workspaces do %>
             <% ws_name = workspace_item_name(ws) %>
             <% current? = ws_name == @workspace_name %>
