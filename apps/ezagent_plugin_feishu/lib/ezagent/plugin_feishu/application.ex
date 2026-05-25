@@ -59,8 +59,10 @@ defmodule EzagentPluginFeishu.Application do
   require Logger
 
   alias Ezagent.Entity.Session, as: SessionKind
+  alias Ezagent.Entity.Workspace, as: WorkspaceKind
   alias EzagentPluginFeishu.{FeishuAdapter, FeishuChatBinding}
   alias EzagentPluginFeishu.Behavior.ExternalAdapter.Feishu.Allow, as: FeishuAllow
+  alias EzagentPluginFeishu.Behavior.UserBinding, as: UserBindingBehavior
 
   # --- OTP Application -------------------------------------------------
 
@@ -84,11 +86,27 @@ defmodule EzagentPluginFeishu.Application do
   # `FeishuOutbound` `:notify_external` registration is gone — chat
   # fan-out flows generically via Session Publisher → ExternalMirror
   # Worker → FeishuChatBinding (SPEC §2.4).
+  #
+  # PR cli-lv-parity (HIGH-2): also register
+  # `EzagentPluginFeishu.Behavior.UserBinding` on Workspace Kind so
+  # the legacy `mix ezagent.feishu.bind/unbind/list` triplet has a
+  # dispatch-backed `mix esr workspace bind/unbind/list_feishu_bindings`
+  # equivalent. Each action goes through `Ezagent.Invocation.dispatch/1`
+  # → step 5.5 cap check via `required_caps/0` (PR-CC-2-v2). No
+  # FacadeRegistry shortcut per codex PR #304 r1 HIGH.
   @impl Ezagent.Plugin
   def behaviors do
-    for action <- FeishuAllow.actions() do
-      {SessionKind, action, FeishuAllow}
-    end
+    session_behaviors =
+      for action <- FeishuAllow.actions() do
+        {SessionKind, action, FeishuAllow}
+      end
+
+    user_binding_behaviors =
+      for action <- UserBindingBehavior.actions() do
+        {WorkspaceKind, action, UserBindingBehavior}
+      end
+
+    session_behaviors ++ user_binding_behaviors
   end
 
   # PR-EM-6 (SPEC §5.1 + §9 PR-EM-6) — declare the generic ExternalMirror

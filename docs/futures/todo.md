@@ -127,19 +127,19 @@ open after HIGH-1 (admin fallback hole) closed in PR #298:
     faster" is the wrong fix — it would close HIGH-2 by closing
     the wrong problem.
 
-    | Legacy task | Proposed `mix esr` | Behavior + action to add FIRST |
+    | Legacy task | Proposed `mix esr` | Status |
     |---|---|---|
-    | `mix ezagent.user.create` | `mix esr user create --uri … --password … --caps …` | `Ezagent.Entity.User` Behavior action `:create` + cap subject; existing `Ezagent.Users.create/3` becomes its `invoke/4` body |
-    | `mix ezagent.user.set_password` | `mix esr user set_password --uri … --password …` | `Ezagent.Entity.User` `:set_password` action + cap (`:user, :set_password, …`); body wraps existing `Ezagent.Users.set_password/2` |
-    | `mix ezagent.agent.create` | `mix esr agent create --uri … --caps …` | `Ezagent.Entity.Agent` `:create` action + cap; body matches LV path (audit Finding 4) — `add_template + invoke_template_now` |
-    | `mix ezagent.user.token mint` | `mix esr user token mint --for … --label …` | `Ezagent.Entity.User` `:mint_token` action + cap. **Codex PR #304 MED carve-out:** `user.token` is NOT pure bootstrap (also lists + revokes for arbitrary users); only the FIRST-admin-bootstrap mint stays in the legacy task |
-    | `mix ezagent.user.token list` | `mix esr user token list` | `Ezagent.Entity.User` `:list_tokens` action + cap |
-    | `mix ezagent.user.token revoke` | `mix esr user token revoke --token-id …` | `Ezagent.Entity.User` `:revoke_token` action + cap |
-    | `mix ezagent.feishu.bind` | `mix esr feishu bind --open-id … --user-uri … [--admin …]` | new `EzagentPluginFeishu.Behavior.UserBinding` on `Workspace` Kind with `:bind` action + cap; body uses `UserBinding.bind/3 + BindingPolicy.apply/2` |
-    | `mix ezagent.feishu.unbind` | `mix esr feishu unbind --open-id …` | same Behavior, `:unbind` action |
-    | `mix ezagent.feishu.list` | `mix esr feishu list` | same Behavior, `:list` (read-only cap subject) |
-    | `mix ezagent.feishu.chat.bind` | `mix esr feishu chat_bind --chat-id … --session-uri …` | new `EzagentPluginFeishu.Behavior.SessionBinding` on `Session` Kind with `:bind` action + cap |
-    | `mix ezagent.feishu.chat.unbind` | `mix esr feishu chat_unbind --chat-id …` | same Behavior, `:unbind` action |
+    | `mix ezagent.feishu.bind` | `mix esr workspace bind --workspace <name> --open-id … --user-uri …` | ✅ **DONE in cli-lv-parity-high-2-3 branch.** `EzagentPluginFeishu.Behavior.UserBinding` registered on Workspace Kind with `:bind` action + cap. Legacy task kept as-is pending muscle-memory transition. |
+    | `mix ezagent.feishu.unbind` | `mix esr workspace unbind --workspace <name> --open-id …` | ✅ **DONE.** Same Behavior, `:unbind` action. |
+    | `mix ezagent.feishu.list` | `mix esr workspace list_feishu_bindings --workspace <name>` | ✅ **DONE.** Same Behavior, `:list_feishu_bindings` (read-only). |
+    | ~~`mix ezagent.feishu.chat.bind`~~ | ~~`mix esr feishu chat_bind`~~ | **OBSOLETE.** Removed in PR-EM-6; chat→session bindings now go via `mix ezagent.external_mirror.bind <session-uri> feishu <chat_id>` (generic ExternalMirror Domain). |
+    | ~~`mix ezagent.feishu.chat.unbind`~~ | ~~`mix esr feishu chat_unbind`~~ | **OBSOLETE.** Same as above; use `mix ezagent.external_mirror.unbind`. |
+    | `mix ezagent.user.create` | `mix esr workspace create_user --workspace <name> --handle … --password … --caps …` | ⏳ **NEXT PR.** Design: add `:create_user` action on existing `Ezagent.Behavior.Workspace` (parallels existing `:create_agent` from PR #344). Target URI is the Workspace; body wraps `Ezagent.Users.create/3 + Workspace.add_member`. The `Ezagent.Entity.User` Kind doesn't exist at creation time so dispatching on it is impossible — Workspace is the natural parent (matches the PR #344 pattern). |
+    | `mix ezagent.user.set_password` | `mix esr user set_password --user <uri> --password …` | ⏳ **NEXT PR.** Design: add `:set_password` action on a new `Ezagent.Behavior.UserCredentials` registered on User Kind. Cannot live on `Behavior.Identity` (cap-shape would conflate self-mutation rights with admin password reset). Wraps `Ezagent.Users.set_password/2`. |
+    | `mix ezagent.agent.create` | `mix esr workspace create_agent --workspace <name> --flavor … --name …` | ✅ **ACTION EXISTS** (PR #344 / `Behavior.Workspace :create_agent`); legacy task still calls the action body directly (single-path invariant test enforces). Auto-derived `mix esr workspace create_agent` already wired. |
+    | `mix ezagent.user.token mint` | `mix esr user mint_token --user <uri> --label …` | ⏳ **NEXT PR.** Design: add `:mint_token` action on a new `Ezagent.Behavior.UserTokens` registered on User Kind. Body wraps `Ezagent.Entity.Token.mint/2`. **Carve-out preserved:** the first-admin-bootstrap mint stays in the legacy task per codex PR #304 MED (no live user to dispatch against at bootstrap). |
+    | `mix ezagent.user.token list` | `mix esr user list_tokens --user <uri>` | ⏳ **NEXT PR.** Same Behavior, `:list_tokens` action. Cap-shape `(:user, UserTokens, :list_tokens)` so a user can list their own tokens; admin uses `:any` cap for cross-user. |
+    | `mix ezagent.user.token revoke` | `mix esr user revoke_token --user <uri> --token-id …` | ⏳ **NEXT PR.** Same Behavior, `:revoke_token` action. Caller authorization: self OR admin (matches LV path). |
 
     Rule of thumb for the implementer: if you're about to add a
     `FacadeRegistry.register/3` for one of these without a matching
@@ -160,13 +160,44 @@ open after HIGH-1 (admin fallback hole) closed in PR #298:
     DB op that audit Finding 5 flags as "should arguably be a
     Behavior so caps gate it". Tracked separately; the wider
     `system://snapshots` Kind needs designing first.
-- **HIGH-3** (~12 LV handle_events have no CLI equivalent): need
-  facade-ops for `create_session`, `add_member`, `promote_to_system`,
-  `grant_cap`, `revoke_cap`, `save_smtp`, `save_registration_domains`
-  [now removed per PR #299], `delete_rule`, `disable_rule`,
-  `enable_rule`. Per `feedback_completion_requires_invariant_test`,
-  add an enumerating invariant that fails when an LV event has no
-  CLI counterpart.
+- **HIGH-3** (~12 LV handle_events have no CLI equivalent):
+  ✅ **enumerating invariant landed** as
+  `apps/ezagent_core/test/invariants/lv_cli_parity_test.exs` in
+  cli-lv-parity-high-2-3 branch. Walks every LV file, categorises every
+  `handle_event/3` clause into `:cli | :ui_only | :pty_stream | :deferred`
+  with explicit per-event row + reason. Currently 61 events tracked
+  (27 CLI / 26 UI-only / 2 PTY-stream / 6 deferred).
+
+  **Re-mapping after the invariant landed** (audit notes from
+  2026-05-24 now stale; this is the current state):
+
+  | Event | Status |
+  |---|---|
+  | `add_member`, `remove_member`, `add_template`, `remove_template`, `create_workspace` | ✅ `mix esr workspace ...` / `mix ezagent.workspace.*` (PR #344) |
+  | `promote_to_system`, `revoke_system` | ✅ aliased to `workspace.add_member/remove_member system <uri>` |
+  | `grant`, `revoke` (entity_caps) | ✅ auto-derived `mix esr user grant_cap/revoke_cap` via `Behavior.IdentityAdmin` |
+  | `delete_rule`, `disable_rule`, `enable_rule` | ✅ auto-derived `mix esr workspace delete_rule/...` via `Behavior.Routing` |
+  | `add_rule` | ✅ auto-derived `mix esr workspace add_rule` |
+  | `routing_rule_add_session` | ✅ auto-derived `mix esr session add_rule` (Routing registered on Session Kind) |
+  | `routing_rule_toggle` | ✅ aliased to `mix esr workspace enable_rule/disable_rule` per toggle direction |
+  | `restart` (agent) | ✅ auto-derived `mix esr agent terminate` |
+  | `toggle` (agent extensions) | ✅ auto-derived `mix esr template toggle_extension` |
+  | `bind`, `unbind` (feishu) | ✅ auto-derived `mix esr workspace bind/unbind` (this PR — Behavior.UserBinding) |
+  | `put`, `delete` (api_keys) | ✅ auto-derived `mix esr user put_api_key/delete_api_key` |
+  | `dump`, `clear` (snapshots) | ✅ `mix ezagent.snapshot.*` |
+  | `add_binding`, `unbind` (ext mirror) | ✅ `mix ezagent.external_mirror.*` |
+  | `send_test_email` | ⚠️ semi-covered by `mix ezagent.auth.magic_link` (different intent — operator-debug) |
+  | **`create_session`** | ⏳ DEFERRED. Needs a `:create_session` action on `Behavior.Workspace` (parallels `:create_agent` from PR #344). LV currently calls `EzagentDomainChat.create_session/3` directly — bypasses dispatch in BOTH surfaces. |
+  | **`create_user`** | ⏳ DEFERRED. Needs `:create_user` action on `Behavior.Workspace` (see HIGH-2 table). |
+  | **`set_password`** | ⏳ DEFERRED. Needs `:set_password` on a new `Behavior.UserCredentials` (see HIGH-2 table). |
+  | **`save_display_name`** | ⏳ DEFERRED. Needs Behavior on User Kind for `:set_display_name` (Profile slice); LV uses `Ezagent.Entity.Profile.upsert/1` directly. |
+  | **`save_smtp`** | ⏳ DEFERRED. Needs Behavior on App/SystemSettings Kind for `:save_smtp_config`; LV uses `Ezagent.AppSettings.put/2` directly. |
+  | **`chat_compose`** | ⏳ DEFERRED. CLI is partial — text-only via `mix esr session send`; file attachments need a `resource://` upload primitive that doesn't exist yet (audit Finding row 1). |
+
+  The 6 ⏳ DEFERRED rows are the residual gaps. Each is enumerated in
+  the invariant test's `@event_to_cli` table with category `:deferred`
+  and a `docs/futures/todo.md` citation. Next PR (or split into 2-3
+  follow-up PRs grouped by Behavior) will close them.
 
 ### ~~`/admin/uploads/:filename` controller route — scope mismatch~~ — RESOLVED 2026-05-25
 Codex PR #305 round-4 HIGH (2026-05-24): the chat-compose-upload
