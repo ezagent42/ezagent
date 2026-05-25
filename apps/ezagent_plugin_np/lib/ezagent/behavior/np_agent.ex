@@ -65,16 +65,6 @@ defmodule Ezagent.Behavior.NpAgent do
     ]
   end
 
-  # PR-CC-2a (SPEC caps-cleanup-v1 §5.1) — per-action cap STRING.
-  # NpAgent registers on Agent Kind.
-  @impl Ezagent.Behavior
-  def required_caps,
-    do: %{
-      receive: "agent.np_agent.receive",
-      reset: "agent.np_agent.reset",
-      configure: "agent.np_agent.configure"
-    }
-
   @impl Ezagent.Behavior
   def state_slice, do: :np_agent
 

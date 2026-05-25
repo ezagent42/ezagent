@@ -142,8 +142,7 @@ defmodule Ezagent.Kind do
     snapshot_version: 0,
     supervisor: 0,
     spawn_strategy: 0,
-    terminate_strategy: 0,
-    holds_cap?: 2
+    terminate_strategy: 0
   ]
 
   @doc """
@@ -342,89 +341,5 @@ defmodule Ezagent.Kind do
     else
       Ezagent.KindSupervisor
     end
-  end
-
-  # =====================================================================
-  # PR-CC-2a — caps-cleanup-v1 §5.2 — Entity holds_cap?/2 default impl
-  # =====================================================================
-
-  @doc """
-  Does the entity's persisted state grant the given cap string?
-
-  Default implementation reads `slice[:identity][:caps]` and matches
-  via `Ezagent.Cap.matches?/2` (SPEC §5.4 grammar with glob wildcards).
-
-  ## Coexistence with `%Capability{}` struct (PR-CC-2a transitional)
-
-  PR-CC-2a coexists with the legacy struct path. When the Identity
-  slice still carries `%Capability{}` structs (existing rows) the
-  helper falls back to `false` for now — PR-CC-2c migrates the slice
-  shape to string caps. PR-CC-2b switches dispatch step 5.5 to call
-  this helper.
-
-  ## Override (rare)
-
-  Kinds with a non-standard cap-source can override by exporting
-  their own `holds_cap?/2` (e.g. an Agent Kind that consults its
-  lineage's caps). Probed via `function_exported?/3`.
-
-  Returns `false` when the slice has no `:identity` sub-key or no
-  `:caps` list. Per `feedback_let_it_crash_no_workarounds`, an entity
-  with zero caps deny-by-default — no ambient elevation.
-  """
-  @spec holds_cap?(map(), String.t()) :: boolean()
-  def holds_cap?(slice, cap_string) when is_map(slice) and is_binary(cap_string) do
-    case get_in(slice, [:identity, :caps]) do
-      caps when is_list(caps) ->
-        Ezagent.Cap.any_match?(filter_string_caps(caps), cap_string)
-
-      %MapSet{} = caps ->
-        # Legacy MapSet shape (will be migrated to plain list in PR-CC-2c).
-        Ezagent.Cap.any_match?(caps |> MapSet.to_list() |> filter_string_caps(), cap_string)
-
-      _ ->
-        false
-    end
-  end
-
-  def holds_cap?(_slice, _cap_string), do: false
-
-  @doc """
-  Variant that calls a Kind's own `holds_cap?/2` if exported, else
-  the default impl above. Probed via `function_exported?/3`.
-
-  Used by dispatch step 5.5 (post-PR-CC-2b): looks up the caller's
-  Identity slice via `get_slice/2`, then asks the caller's Kind
-  module whether it holds the required cap.
-  """
-  @spec holds_cap?(module(), map(), String.t()) :: boolean()
-  def holds_cap?(kind_module, slice, cap_string)
-      when is_atom(kind_module) and is_map(slice) and is_binary(cap_string) do
-    if function_exported?(kind_module, :holds_cap?, 2) do
-      kind_module.holds_cap?(slice, cap_string)
-    else
-      holds_cap?(slice, cap_string)
-    end
-  end
-
-  @doc """
-  Optional callback — override `holds_cap?/2` semantics for a Kind
-  whose cap-source is non-standard. SPEC caps-cleanup-v1 §5.2.
-
-  Probed via `function_exported?/3` from the arity-3 helper above;
-  Behaviors that don't implement this callback fall through to the
-  default `Ezagent.Kind.holds_cap?/2`.
-
-  Optional callback.
-  """
-  @callback holds_cap?(slice :: map(), cap_string :: String.t()) :: boolean()
-
-  # PR-CC-2a transitional: the Identity slice may contain a mix of
-  # string caps (new) and `%Ezagent.Capability{}` structs (legacy,
-  # pre-migration). The matcher only understands strings — filter
-  # out structs so they don't crash `Cap.matches?/2`. PR-CC-2c
-  # removes the struct path entirely.
-  defp filter_string_caps(caps) when is_list(caps) do
-    Enum.filter(caps, &is_binary/1)
   end
 end

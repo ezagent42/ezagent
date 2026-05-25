@@ -68,16 +68,6 @@ defmodule Ezagent.Behavior.CurlAgent do
     ]
   end
 
-  # PR-CC-2a (SPEC caps-cleanup-v1 §5.1) — per-action cap STRING.
-  # CurlAgent registers on Agent Kind.
-  @impl Ezagent.Behavior
-  def required_caps,
-    do: %{
-      receive: "agent.curl_agent.receive",
-      reset_conversation: "agent.curl_agent.reset_conversation",
-      configure: "agent.curl_agent.configure"
-    }
-
   @impl Ezagent.Behavior
   def state_slice, do: :curl_agent
 

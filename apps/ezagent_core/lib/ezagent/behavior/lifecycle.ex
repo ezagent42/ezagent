@@ -66,11 +66,6 @@ defmodule Ezagent.Behavior.Lifecycle do
     ]
   end
 
-  # PR-CC-2a (SPEC caps-cleanup-v1 §5.1) — per-action cap STRING.
-  # Registered on Agent Kind via the chat domain's Application.start/2.
-  @impl Ezagent.Behavior
-  def required_caps, do: %{terminate: "agent.lifecycle.terminate"}
-
   @impl Ezagent.Behavior
   def state_slice, do: :lifecycle
 
