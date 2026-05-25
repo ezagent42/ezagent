@@ -18,8 +18,8 @@ defmodule Mix.Tasks.Ezagent.Feishu.Bind do
 
   Phase 6 PR 15 — admin CLI for Feishu identity bindings.
 
-      mix ezagent.feishu.bind ou_6b11faf8e9... entity://user/default/linyilun
-      mix ezagent.feishu.bind ou_xxx entity://user/default/linyilun --admin entity://user/system/admin
+      mix ezagent.feishu.bind ou_6b11faf8e9... entity://user/team-alpha/linyilun
+      mix ezagent.feishu.bind ou_xxx entity://user/team-alpha/linyilun --admin entity://user/system/admin
 
   After binding, `EzagentPluginFeishu.BindingPolicy.apply/2` ensures
   the bound user has `Ezagent.Entity.User.default_caps/0` (the

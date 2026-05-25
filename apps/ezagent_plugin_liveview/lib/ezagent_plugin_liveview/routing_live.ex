@@ -728,7 +728,7 @@ defmodule EzagentPluginLiveview.RoutingLive do
                       name="rule[matcher_json]"
                       rows="4"
                       placeholder={
-                        ~s({"type":"and","items":[{"type":"mention","arg":"entity://agent/default/cc_x"},{"type":"from","arg":"entity://user/system/admin"}]})
+                        ~s({"type":"and","items":[{"type":"mention","arg":"entity://agent/team-alpha/cc_x"},{"type":"from","arg":"entity://user/system/admin"}]})
                       }
                       class="w-full px-2 py-1.5 text-xs font-mono border rounded-md border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
                     ></textarea>

@@ -39,20 +39,20 @@ defmodule EzagentCore.Invariants.EntitiesHaveWorkspaceTest do
     end
 
     test "accepts 3-segment entity URI" do
-      # Phase 9 PR-8: use a default-workspace user (NOT admin which
-      # moved to workspace://system) so this test still pins the
-      # "default workspace segment in path" invariant.
-      uri = Ezagent.URI.parse!("entity://user/default/allen")
+      # SPEC #324: tenant users live in workspace://<tenant>, not the
+      # deleted `default`. Use team-alpha to pin the
+      # "workspace segment in path" invariant.
+      uri = Ezagent.URI.parse!("entity://user/team-alpha/allen")
       assert uri.scheme == "entity"
       assert uri.host == "user"
-      assert uri.path == "/default/allen"
+      assert uri.path == "/team-alpha/allen"
     end
   end
 
   describe "Ezagent.URI.entity_workspace_uri/1 — SPEC v3 §3.3" do
-    test "extracts workspace URI from default-workspace user entity" do
-      uri = Ezagent.URI.parse!("entity://user/default/allen")
-      assert Ezagent.URI.entity_workspace_uri(uri) == URI.new!("workspace://default")
+    test "extracts workspace URI from tenant-workspace user entity" do
+      uri = Ezagent.URI.parse!("entity://user/team-alpha/allen")
+      assert Ezagent.URI.entity_workspace_uri(uri) == URI.new!("workspace://team-alpha")
     end
 
     test "extracts workspace URI from cross-workspace agent entity" do
@@ -66,8 +66,8 @@ defmodule EzagentCore.Invariants.EntitiesHaveWorkspaceTest do
     end
 
     test "ignores query string when extracting workspace" do
-      uri = Ezagent.URI.parse!("entity://user/default/allen?action=identity.list_caps")
-      assert Ezagent.URI.entity_workspace_uri(uri) == URI.new!("workspace://default")
+      uri = Ezagent.URI.parse!("entity://user/team-alpha/allen?action=identity.list_caps")
+      assert Ezagent.URI.entity_workspace_uri(uri) == URI.new!("workspace://team-alpha")
     end
   end
 

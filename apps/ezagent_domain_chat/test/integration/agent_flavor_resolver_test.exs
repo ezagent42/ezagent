@@ -52,7 +52,7 @@ defmodule EzagentDomainChat.Integration.AgentFlavorResolverTest do
         })
 
       name = "#{flavor}_demo-#{System.unique_integer([:positive])}"
-      uri = URI.parse("entity://agent/default/#{name}")
+      uri = URI.parse("entity://agent/team-alpha/#{name}")
 
       # Drives the real resolver: SpawnRegistry → entity:// spawn fn →
       # spawn_agent → kind_module_from_flavor → AgentFlavorRegistry.
@@ -68,7 +68,7 @@ defmodule EzagentDomainChat.Integration.AgentFlavorResolverTest do
       # Boot-ordering tolerance: a flavor whose plugin has not (yet)
       # registered yields `{:error, {:no_kind_module_for_agent, _}}`,
       # NOT a crash.
-      uri = URI.parse("entity://agent/default/nosuchflavor_x")
+      uri = URI.parse("entity://agent/team-alpha/nosuchflavor_x")
       assert {:error, {:no_kind_module_for_agent, _}} = Ezagent.SpawnRegistry.spawn(uri)
     end
 
@@ -76,7 +76,7 @@ defmodule EzagentDomainChat.Integration.AgentFlavorResolverTest do
       # `test_*` agents are mention/routing test fixtures with no owning
       # plugin — kept as an explicit non-registry fallback to
       # `Ezagent.Entity.Agent`.
-      uri = URI.parse("entity://agent/default/test_resolver-#{System.unique_integer([:positive])}")
+      uri = URI.parse("entity://agent/team-alpha/test_resolver-#{System.unique_integer([:positive])}")
       assert {:ok, pid} = Ezagent.SpawnRegistry.spawn(uri)
       assert Process.alive?(pid)
     end

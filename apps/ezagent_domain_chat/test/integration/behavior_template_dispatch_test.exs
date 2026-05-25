@@ -89,7 +89,7 @@ defmodule EzagentDomainChat.Integration.BehaviorTemplateDispatchTest do
       mcp_config_path: nil,
       api_key_helper: nil,
       default_caps: [],
-      created_by: URI.parse("entity://user/default/admin"),
+      created_by: URI.parse("entity://user/team-alpha/admin"),
       created_at: ~U[2026-05-22 00:00:00Z]
     }
   end
@@ -100,11 +100,11 @@ defmodule EzagentDomainChat.Integration.BehaviorTemplateDispatchTest do
       description: "team",
       agent_slots: [],
       routing_rules: [],
-      orchestrator_template_uri: URI.parse("template://agent/default/cc-orchestrator"),
-      default_workspace_uri: URI.parse("workspace://default"),
+      orchestrator_template_uri: URI.parse("template://agent/system/cc-orchestrator"),
+      default_workspace_uri: URI.parse("workspace://team-alpha"),
       parent_template_uri: nil,
       version_tag: nil,
-      created_by: URI.parse("entity://user/default/admin"),
+      created_by: URI.parse("entity://user/team-alpha/admin"),
       created_at: ~U[2026-05-22 00:00:00Z]
     }
   end
@@ -120,7 +120,7 @@ defmodule EzagentDomainChat.Integration.BehaviorTemplateDispatchTest do
 
   describe "cap_for_action/3" do
     test "AgentTemplate :write derives behavior == Ezagent.Behavior.Template, kind :agent_template" do
-      uri = URI.new!("template://agent/default/cap-probe-#{uniq()}")
+      uri = URI.new!("template://agent/team-alpha/cap-probe-#{uniq()}")
       needed = Capability.cap_for_action(AgentTemplate, :write, uri)
 
       assert needed.behavior == Ezagent.Behavior.Template
@@ -130,7 +130,7 @@ defmodule EzagentDomainChat.Integration.BehaviorTemplateDispatchTest do
 
   describe "AgentTemplate — :write then :read round-trip + snapshot" do
     test "a dispatched :write populates the slice, :read returns it, and a kind_snapshots row exists" do
-      uri = URI.new!("template://agent/default/at-rt-#{uniq()}")
+      uri = URI.new!("template://agent/team-alpha/at-rt-#{uniq()}")
       uri_str = URI.to_string(uri)
       :ok = KindSnapshot.delete(uri_str)
 
@@ -150,7 +150,7 @@ defmodule EzagentDomainChat.Integration.BehaviorTemplateDispatchTest do
       content = session_content()
       hash = SessionTemplate.compute_version_hash(content)
       name = "st-imm-#{uniq()}"
-      uri = SessionTemplate.build_uri(name, hash)
+      uri = SessionTemplate.build_uri(name, hash, workspace: "team-alpha")
       :ok = KindSnapshot.delete(URI.to_string(uri))
 
       _pid = spawn_template(uri)
@@ -166,7 +166,7 @@ defmodule EzagentDomainChat.Integration.BehaviorTemplateDispatchTest do
     test "a divergent :write to a hash-addressed URI → :hash_mismatch (write-once defense)" do
       content = session_content()
       hash = SessionTemplate.compute_version_hash(content)
-      uri = SessionTemplate.build_uri("st-div-#{uniq()}", hash)
+      uri = SessionTemplate.build_uri("st-div-#{uniq()}", hash, workspace: "team-alpha")
       :ok = KindSnapshot.delete(URI.to_string(uri))
 
       _pid = spawn_template(uri)
@@ -186,7 +186,7 @@ defmodule EzagentDomainChat.Integration.BehaviorTemplateDispatchTest do
       content = session_content()
       # Build the Kind at a URI whose @<hash> belongs to DIFFERENT content.
       wrong_hash = SessionTemplate.compute_version_hash(%{content | description: "other"})
-      uri = SessionTemplate.build_uri("st-hm-#{uniq()}", wrong_hash)
+      uri = SessionTemplate.build_uri("st-hm-#{uniq()}", wrong_hash, workspace: "team-alpha")
       :ok = KindSnapshot.delete(URI.to_string(uri))
 
       _pid = spawn_template(uri)
@@ -197,7 +197,7 @@ defmodule EzagentDomainChat.Integration.BehaviorTemplateDispatchTest do
     test "SessionTemplate :instantiate → {:error, :use_generator}" do
       content = session_content()
       hash = SessionTemplate.compute_version_hash(content)
-      uri = SessionTemplate.build_uri("st-inst-#{uniq()}", hash)
+      uri = SessionTemplate.build_uri("st-inst-#{uniq()}", hash, workspace: "team-alpha")
       :ok = KindSnapshot.delete(URI.to_string(uri))
 
       _pid = spawn_template(uri)
@@ -207,7 +207,7 @@ defmodule EzagentDomainChat.Integration.BehaviorTemplateDispatchTest do
 
   describe "3-segment URI round-trip + cross-workspace non-collision (SPEC §1.2)" do
     test "a 3-segment AgentTemplate URI round-trips through the snapshot" do
-      uri = URI.new!("template://agent/default/3seg-#{uniq()}")
+      uri = URI.new!("template://agent/team-alpha/3seg-#{uniq()}")
       uri_str = URI.to_string(uri)
       :ok = KindSnapshot.delete(uri_str)
 
@@ -217,12 +217,12 @@ defmodule EzagentDomainChat.Integration.BehaviorTemplateDispatchTest do
 
       row = KindSnapshot.get(uri_str)
       assert row.uri == uri_str
-      assert row.workspace_uri == "workspace://default"
+      assert row.workspace_uri == "workspace://team-alpha"
     end
 
     test "the same template name in two workspaces are distinct Kinds (no collision)" do
       name = "shared-name-#{uniq()}"
-      uri_a = URI.new!("template://agent/default/#{name}")
+      uri_a = URI.new!("template://agent/team-alpha/#{name}")
       uri_b = URI.new!("template://agent/team-alpha/#{name}")
       :ok = KindSnapshot.delete(URI.to_string(uri_a))
       :ok = KindSnapshot.delete(URI.to_string(uri_b))

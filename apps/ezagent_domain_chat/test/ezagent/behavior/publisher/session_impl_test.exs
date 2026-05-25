@@ -11,7 +11,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
   alias Ezagent.Behavior.Publisher.SessionImpl
   alias Ezagent.Publisher.Event
 
-  defp ctx(self_uri \\ URI.parse("session://default/default/unit-test")) do
+  defp ctx(self_uri \\ URI.parse("session://default/team-alpha/unit-test")) do
     %{
       self_uri: self_uri,
       kind_module: Ezagent.Entity.Session,
@@ -133,7 +133,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
 
   describe "handle_kind_message({:slice_changed, _})" do
     test "appends an Event with cursor=1 on the first slice change" do
-      self_uri = URI.parse("session://default/default/append-1")
+      self_uri = URI.parse("session://default/team-alpha/append-1")
       slice = fresh_slice()
 
       change =
@@ -147,8 +147,8 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
     end
 
     test "ignores slice_changed events for OTHER URIs (topic shape is per-URI but defense-in-depth)" do
-      self_uri = URI.parse("session://default/default/me")
-      other_uri = URI.parse("session://default/default/other")
+      self_uri = URI.parse("session://default/team-alpha/me")
+      other_uri = URI.parse("session://default/team-alpha/other")
       slice = fresh_slice()
 
       change = slice_change(other_uri, %{x: 1})
@@ -158,7 +158,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
     end
 
     test "ignores slice_changed events whose slice_key is :publisher (no emit-loop)" do
-      self_uri = URI.parse("session://default/default/no-loop")
+      self_uri = URI.parse("session://default/team-alpha/no-loop")
       slice = fresh_slice()
 
       change = slice_change(self_uri, %{x: 1}, slice_key: :publisher)
@@ -168,7 +168,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
     end
 
     test "trims the ring to retention on overflow (newest events kept)" do
-      self_uri = URI.parse("session://default/default/trim")
+      self_uri = URI.parse("session://default/team-alpha/trim")
       slice = fresh_slice(retention: 3)
 
       slice =
@@ -188,7 +188,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
     end
 
     test "fans events out to all subscribers via {:publisher_event, %Event{}}" do
-      self_uri = URI.parse("session://default/default/fanout")
+      self_uri = URI.parse("session://default/team-alpha/fanout")
 
       # Two listener pids.
       task1 =
@@ -226,7 +226,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
 
   describe "invoke(:subscribe_from, _, %{cursor: :latest}, _)" do
     test "monitors subscriber pid; replays NOTHING; returns current cursor" do
-      self_uri = URI.parse("session://default/default/sub-latest")
+      self_uri = URI.parse("session://default/team-alpha/sub-latest")
 
       # Pre-populate the slice with 3 events to confirm latest skips them.
       slice =
@@ -266,7 +266,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
 
   describe "invoke(:subscribe_from, _, %{cursor: :earliest}, _)" do
     test "replays the entire retained history in cursor-ascending order" do
-      self_uri = URI.parse("session://default/default/sub-earliest")
+      self_uri = URI.parse("session://default/team-alpha/sub-earliest")
 
       slice =
         Enum.reduce(1..3, fresh_slice(), fn n, acc ->
@@ -301,7 +301,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
 
   describe "invoke(:subscribe_from, _, %{cursor: <integer>}, _)" do
     test "replays only events with cursor > N (window: exclusive lower bound)" do
-      self_uri = URI.parse("session://default/default/sub-cursor")
+      self_uri = URI.parse("session://default/team-alpha/sub-cursor")
 
       slice =
         Enum.reduce(1..5, fresh_slice(), fn n, acc ->
@@ -335,7 +335,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
     end
 
     test "returns {:error, :cursor_out_of_window} when cursor is older than oldest retained" do
-      self_uri = URI.parse("session://default/default/sub-oow")
+      self_uri = URI.parse("session://default/team-alpha/sub-oow")
 
       # retention=2, emit 5 → oldest retained cursor is 4.
       slice =
@@ -361,7 +361,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
 
   describe "invoke(:snapshot, _, _, _)" do
     test "returns the current cursor + the most-recent payload as state" do
-      self_uri = URI.parse("session://default/default/snap")
+      self_uri = URI.parse("session://default/team-alpha/snap")
       slice = fresh_slice()
 
       change = slice_change(self_uri, %{x: 1}, slice_key: :chat, action: :send)
@@ -396,7 +396,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
 
   describe "invoke(:history, _, %{from, to}, _)" do
     test "returns events in the (from, to] window — from exclusive, to inclusive" do
-      self_uri = URI.parse("session://default/default/hist")
+      self_uri = URI.parse("session://default/team-alpha/hist")
 
       slice =
         Enum.reduce(1..5, fresh_slice(), fn n, acc ->
@@ -416,7 +416,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
     end
 
     test "defaults: from=:earliest, to=:latest → entire ring" do
-      self_uri = URI.parse("session://default/default/hist-all")
+      self_uri = URI.parse("session://default/team-alpha/hist-all")
 
       slice =
         Enum.reduce(1..3, fresh_slice(), fn n, acc ->
@@ -435,7 +435,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
     end
 
     test "returns :cursor_out_of_window when from precedes oldest retained" do
-      self_uri = URI.parse("session://default/default/hist-oow")
+      self_uri = URI.parse("session://default/team-alpha/hist-oow")
 
       slice =
         Enum.reduce(1..5, fresh_slice(retention: 2), fn n, acc ->
@@ -454,7 +454,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
 
   describe "handle_kind_message({:DOWN, ...}) subscriber cleanup" do
     test "removes a subscriber on DOWN; new slice has neither the subscriber nor the monitor ref" do
-      self_uri = URI.parse("session://default/default/down")
+      self_uri = URI.parse("session://default/team-alpha/down")
 
       # Spawn a subscriber + monitor it.
       pid = spawn(fn -> :ok end)
@@ -484,7 +484,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
     end
 
     test "publisher still works after a subscriber DOWN (no leak / no crash on next emit)" do
-      self_uri = URI.parse("session://default/default/down-then-emit")
+      self_uri = URI.parse("session://default/team-alpha/down-then-emit")
 
       # Subscriber that exits immediately.
       pid = spawn(fn -> :ok end)

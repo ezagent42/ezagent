@@ -5,7 +5,7 @@ defmodule Ezagent.ReadyGateTest do
 
   setup do
     # Each test uses a unique URI so we don't trip on prior state.
-    uri = "entity://agent/default/test_ready-gate-test-#{System.unique_integer([:positive])}"
+    uri = "entity://agent/team-alpha/test_ready-gate-test-#{System.unique_integer([:positive])}"
     {:ok, uri: uri}
   end
 

@@ -215,9 +215,22 @@ defmodule Mix.Tasks.Ezagent.ExternalMirror.MigrateFeishuBindings do
 
   defp workspace_uri_for(session_uri) do
     case Ezagent.Persistence.workspace_uri_for(session_uri) do
-      {:ok, ws} when is_binary(ws) -> ws
-      {:ok, %URI{} = ws} -> URI.to_string(ws)
-      _ -> "workspace://default"
+      {:ok, ws} when is_binary(ws) ->
+        ws
+
+      {:ok, %URI{} = ws} ->
+        URI.to_string(ws)
+
+      _ ->
+        # SPEC #324 rev 3 (Allen 2026-05-25): no silent workspace
+        # fallback. A session_uri that doesn't yield a workspace is a
+        # structural bug in the source bindings table — fail loud so
+        # the operator fixes the data before running the migration.
+        raise ArgumentError,
+              "Cannot derive workspace from session_uri=#{inspect(session_uri)}. " <>
+                "The source feishu_session_bindings row is structurally invalid; " <>
+                "fix the row (or drop it) before re-running the migration. " <>
+                "Per SPEC #324, no silent fallback to any workspace is allowed."
     end
   end
 

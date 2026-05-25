@@ -21,7 +21,7 @@ defmodule Ezagent.PresenceTest do
 
   defp unique_user_uri(suffix) do
     URI.parse(
-      "entity://user/default/presence_test_#{suffix}_#{System.unique_integer([:positive])}"
+      "entity://user/team-alpha/presence_test_#{suffix}_#{System.unique_integer([:positive])}"
     )
   end
 
@@ -187,7 +187,7 @@ defmodule Ezagent.PresenceTest do
         behavior: Ezagent.Behavior.Presence,
         instance: :any,
         workspace_uri: workspace_uri,
-        granted_by: URI.parse("entity://user/default/system"),
+        granted_by: URI.parse("entity://user/team-alpha/system"),
         granted_at: ~U[2026-01-01 00:00:00Z]
       }
 
@@ -203,7 +203,7 @@ defmodule Ezagent.PresenceTest do
         behavior: Ezagent.Behavior.Chat,
         instance: :any,
         workspace_uri: workspace_uri,
-        granted_by: URI.parse("entity://user/default/system"),
+        granted_by: URI.parse("entity://user/team-alpha/system"),
         granted_at: ~U[2026-01-01 00:00:00Z]
       }
 
@@ -216,20 +216,20 @@ defmodule Ezagent.PresenceTest do
   describe "subscribe/2 — argument validation" do
     test "non-User/Agent scheme raises ArgumentError" do
       assert_raise ArgumentError, ~r/no Presence Behavior registered/, fn ->
-        Presence.subscribe(URI.parse("session://default/default/main"), %{caps: :system})
+        Presence.subscribe(URI.parse("session://default/system/main"), %{caps: :system})
       end
     end
   end
 
   describe "topic/1" do
     test "wraps URI in esr:presence:" do
-      uri = URI.parse("entity://user/default/topic_test")
-      assert Presence.topic(uri) == "esr:presence:entity://user/default/topic_test"
+      uri = URI.parse("entity://user/team-alpha/topic_test")
+      assert Presence.topic(uri) == "esr:presence:entity://user/team-alpha/topic_test"
     end
 
     test "accepts string URI too" do
-      assert Presence.topic("entity://user/default/abc") ==
-               "esr:presence:entity://user/default/abc"
+      assert Presence.topic("entity://user/team-alpha/abc") ==
+               "esr:presence:entity://user/team-alpha/abc"
     end
   end
 end

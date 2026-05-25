@@ -18,7 +18,7 @@ defmodule Ezagent.NotificationsTest do
   defp unique_user_uri(suffix),
     do:
       URI.parse(
-        "entity://user/default/notif_test_#{suffix}_#{System.unique_integer([:positive])}"
+        "entity://user/team-alpha/notif_test_#{suffix}_#{System.unique_integer([:positive])}"
       )
 
   defp sample_notification do
@@ -62,7 +62,7 @@ defmodule Ezagent.NotificationsTest do
 
     test "non-system caller with correct :notify cap succeeds" do
       uri = unique_user_uri("notify_ok")
-      ws = URI.parse("workspace://default")
+      ws = URI.parse("workspace://team-alpha")
 
       notify_cap = %Capability{
         kind: :user,
@@ -108,7 +108,7 @@ defmodule Ezagent.NotificationsTest do
     test "non-User URI raises ArgumentError" do
       assert_raise ArgumentError, ~r/only entity:\/\/user/, fn ->
         Notifications.notify(
-          "session://default/default/x",
+          "session://default/team-alpha/x",
           sample_notification(),
           %{caps: :system}
         )
@@ -118,8 +118,8 @@ defmodule Ezagent.NotificationsTest do
 
   describe "topic/1" do
     test "wraps URI in esr:user:...:events" do
-      uri = URI.parse("entity://user/default/topic_test")
-      assert Notifications.topic(uri) == "esr:user:entity://user/default/topic_test:events"
+      uri = URI.parse("entity://user/team-alpha/topic_test")
+      assert Notifications.topic(uri) == "esr:user:entity://user/team-alpha/topic_test:events"
     end
   end
 
@@ -164,14 +164,14 @@ defmodule Ezagent.NotificationsTest do
     end
 
     test "accepts a String URI argument (mirrors subscribe/2 polymorphism)" do
-      uri_str = "entity://user/default/slice_sub_str_#{System.unique_integer([:positive])}"
+      uri_str = "entity://user/team-alpha/slice_sub_str_#{System.unique_integer([:positive])}"
 
       assert :ok = Notifications.subscribe_slice_change(uri_str)
       assert :ok = Notifications.unsubscribe_slice_change(uri_str)
     end
 
     test "delegates topic to Ezagent.SliceChange.topic/1 (no shape drift)" do
-      uri = URI.parse("entity://user/default/topic_delegate_test")
+      uri = URI.parse("entity://user/team-alpha/topic_delegate_test")
 
       # Subscribe via the helper, then sanity-check we can also drive
       # the underlying PubSub with the SAME topic string — if the

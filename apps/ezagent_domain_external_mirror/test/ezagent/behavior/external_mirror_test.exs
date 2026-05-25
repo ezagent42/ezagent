@@ -48,7 +48,7 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
 
   alias Ezagent.ExternalMirror, as: Facade
 
-  @workspace_uri URI.parse("workspace://default")
+  @workspace_uri URI.parse("workspace://team-alpha")
 
   setup do
     :ok = ensure_adapter_registered(MockPublishAdapter, MockPublishBinding)
@@ -1004,7 +1004,7 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
       # Post-fix must return [] because the caller holds no
       # `:list_bindings` cap on the session.
       same_ws_caller =
-        URI.parse("entity://user/default/h1-empty-#{System.unique_integer([:positive])}")
+        URI.parse("entity://user/team-alpha/h1-empty-#{System.unique_integer([:positive])}")
 
       empty_ctx = %{
         caller: same_ws_caller,
@@ -1043,7 +1043,7 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
 
       # Caller holds :list_bindings cap on session_b only.
       caller_uri =
-        URI.parse("entity://user/default/h1-caller-#{System.unique_integer([:positive])}")
+        URI.parse("entity://user/team-alpha/h1-caller-#{System.unique_integer([:positive])}")
 
       caller_caps =
         MapSet.new([
@@ -1080,7 +1080,7 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
         adapter_id: adapter_id,
         target_id: target_id,
         opts_json: "{}",
-        bound_by: "entity://user/default/h2",
+        bound_by: "entity://user/team-alpha/h2",
         bound_at: DateTime.utc_now(),
         workspace_uri: URI.to_string(@workspace_uri)
       }
@@ -1686,11 +1686,11 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
   end
 
   defp unique_user_uri(prefix) do
-    URI.parse("entity://user/default/#{prefix}-#{System.unique_integer([:positive])}")
+    URI.parse("entity://user/team-alpha/#{prefix}-#{System.unique_integer([:positive])}")
   end
 
   defp unique_session_uri(prefix) do
-    URI.parse("session://default/default/#{prefix}-#{System.unique_integer([:positive])}")
+    URI.parse("session://default/team-alpha/#{prefix}-#{System.unique_integer([:positive])}")
   end
 
   # Trigger a chat-slice change on the Session to fire a Publisher

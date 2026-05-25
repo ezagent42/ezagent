@@ -25,7 +25,7 @@ defmodule EzagentDomainUi.IdeShellOuterTest do
         current_entity_uri: "entity://user/system/admin",
         workspace_name: "default",
         workspaces: [
-          %{name: "default", uri: "workspace://default"},
+          %{name: "default", uri: "workspace://team-alpha"},
           %{name: "demo", uri: "workspace://demo"}
         ]
       }
@@ -86,7 +86,7 @@ defmodule EzagentDomainUi.IdeShellOuterTest do
         current_entity_uri: "entity://user/system/admin",
         # An :admin page must NOT show the tenant switcher even if a
         # workspaces list is somehow passed.
-        workspaces: [%{name: "default", uri: "workspace://default"}]
+        workspaces: [%{name: "default", uri: "workspace://team-alpha"}]
       }
 
       html =

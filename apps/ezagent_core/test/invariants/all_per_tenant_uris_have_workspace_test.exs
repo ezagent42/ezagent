@@ -54,13 +54,13 @@ defmodule Ezagent.Invariants.AllPerTenantURIsHaveWorkspaceTest do
     end
 
     test "accepts 3-segment session URI" do
-      uri = Ezagent.URI.parse!("session://default/default/main")
+      uri = Ezagent.URI.parse!("session://default/system/main")
       assert uri.scheme == "session"
       assert uri.host == "default"
-      assert uri.path == "/default/main"
+      assert uri.path == "/system/main"
 
       assert Ezagent.Capability.workspace_of(uri) |> URI.to_string() ==
-               "workspace://default"
+               "workspace://system"
     end
 
     test "accepts 3-segment template URI" do
@@ -74,16 +74,16 @@ defmodule Ezagent.Invariants.AllPerTenantURIsHaveWorkspaceTest do
     end
 
     test "accepts 3-segment resource URI" do
-      uri = Ezagent.URI.parse!("resource://uploads/default/file-abc")
+      uri = Ezagent.URI.parse!("resource://uploads/team-alpha/file-abc")
 
       assert Ezagent.Capability.workspace_of(uri) |> URI.to_string() ==
-               "workspace://default"
+               "workspace://team-alpha"
     end
 
     test "workspace:// (1-seg) unchanged — tenant root" do
-      uri = Ezagent.URI.parse!("workspace://default")
+      uri = Ezagent.URI.parse!("workspace://team-alpha")
       assert uri.scheme == "workspace"
-      assert uri.host == "default"
+      assert uri.host == "team-alpha"
     end
 
     test "system:// (2-seg) unchanged — cross-workspace" do
@@ -98,8 +98,10 @@ defmodule Ezagent.Invariants.AllPerTenantURIsHaveWorkspaceTest do
 
   describe "WorkspaceRegistry consistency (SPEC v3 §3.6 PR-7)" do
     test "binding equals URI workspace segment" do
-      session_uri = "session://default/default/all-per-tenant-#{System.unique_integer([:positive])}"
-      Ezagent.WorkspaceRegistry.bind(session_uri, "workspace://default")
+      session_uri =
+        "session://default/team-alpha/all-per-tenant-#{System.unique_integer([:positive])}"
+
+      Ezagent.WorkspaceRegistry.bind(session_uri, "workspace://team-alpha")
 
       {:ok, bound} = Ezagent.WorkspaceRegistry.lookup(URI.parse(session_uri))
 
@@ -113,9 +115,7 @@ defmodule Ezagent.Invariants.AllPerTenantURIsHaveWorkspaceTest do
       # PR-7 SoT-to-cache demotion: an unbound session still resolves to
       # the workspace in its URI path.
       session_uri =
-        URI.parse(
-          "session://default/team-beta/unbound-#{System.unique_integer([:positive])}"
-        )
+        URI.parse("session://default/team-beta/unbound-#{System.unique_integer([:positive])}")
 
       # Deliberately NO WorkspaceRegistry.bind.
       ws = Ezagent.Capability.workspace_of(session_uri)

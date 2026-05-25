@@ -19,7 +19,7 @@ defmodule Ezagent.Kind.TerminateTest do
   defp uniq, do: System.unique_integer([:positive])
 
   defp test_uri,
-    do: URI.parse("entity://agent/default/test_kind-terminate-#{uniq()}")
+    do: URI.parse("entity://agent/team-alpha/test_kind-terminate-#{uniq()}")
 
   defp wait_gone(uri, attempts \\ 200)
   defp wait_gone(_uri, 0), do: :still_there
@@ -68,6 +68,6 @@ defmodule Ezagent.Kind.TerminateTest do
     # A well-formed URI that was never spawned: no KindRegistry entry,
     # the `with` falls through to `:ok`. A teardown step on a failure
     # exit must never mask the original error with a raise.
-    assert :ok = Ezagent.Kind.terminate(URI.parse("session://default/default/never-#{uniq()}"))
+    assert :ok = Ezagent.Kind.terminate(URI.parse("session://default/team-alpha/never-#{uniq()}"))
   end
 end

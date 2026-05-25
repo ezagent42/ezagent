@@ -16,7 +16,7 @@ defmodule Ezagent.Kind.ServerPostInitPersistentTest do
 
   test "post-init slice mutation is durably snapshotted for :on_change Kind" do
     suffix = System.unique_integer([:positive])
-    uri = URI.parse("entity://agent/default/test_persistent_post_init-#{suffix}")
+    uri = URI.parse("entity://agent/team-alpha/test_persistent_post_init-#{suffix}")
     uri_str = URI.to_string(uri)
 
     :ok =

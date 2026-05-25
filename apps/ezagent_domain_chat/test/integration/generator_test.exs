@@ -138,15 +138,15 @@ defmodule EzagentDomainChat.Integration.GeneratorTest do
       description: "test team #{name}",
       agent_slots: agent_slots,
       routing_rules: routing_rules,
-      orchestrator_template_uri: URI.parse("template://agent/default/cc-orchestrator"),
-      default_workspace_uri: URI.parse("workspace://default"),
+      orchestrator_template_uri: URI.parse("template://agent/system/cc-orchestrator"),
+      default_workspace_uri: URI.parse("workspace://team-alpha"),
       parent_template_uri: nil,
       version_tag: nil,
       created_by: User.admin_uri(),
       created_at: ~U[2026-05-22 00:00:00Z]
     }
 
-    {:ok, uri} = SessionTemplate.persist_version(content, "default")
+    {:ok, uri} = SessionTemplate.persist_version(content, "team-alpha")
     uri
   end
 
@@ -192,7 +192,7 @@ defmodule EzagentDomainChat.Integration.GeneratorTest do
     Ezagent.Behavior.Chat.template_working_copy(chat_slice)
   end
 
-  @workspace_uri URI.new!("workspace://default")
+  @workspace_uri URI.new!("workspace://team-alpha")
 
   # --- the happy path: multi-slot team -----------------------------------
 
@@ -201,8 +201,8 @@ defmodule EzagentDomainChat.Integration.GeneratorTest do
       flavor = register_test_flavor()
 
       # Two worker AgentTemplates.
-      backend_uri = URI.new!("template://agent/default/gen-backend-#{uniq()}")
-      frontend_uri = URI.new!("template://agent/default/gen-frontend-#{uniq()}")
+      backend_uri = URI.new!("template://agent/team-alpha/gen-backend-#{uniq()}")
+      frontend_uri = URI.new!("template://agent/team-alpha/gen-frontend-#{uniq()}")
       :ok = create_agent_template(backend_uri, agent_template_content(flavor, "backend"))
       :ok = create_agent_template(frontend_uri, agent_template_content(flavor, "frontend"))
 
@@ -217,7 +217,7 @@ defmodule EzagentDomainChat.Integration.GeneratorTest do
 
       # An owner holding a SessionTemplate Behavior.Template cap (so the
       # Generator-entry preflight passes) AND an AgentTemplate one.
-      owner_uri = URI.parse("entity://user/default/gen-owner-#{uniq()}")
+      owner_uri = URI.parse("entity://user/team-alpha/gen-owner-#{uniq()}")
 
       :ok =
         spawn_owner(owner_uri, [
@@ -262,7 +262,7 @@ defmodule EzagentDomainChat.Integration.GeneratorTest do
                  "(cap #2 {:spawned_by, orchestrator} depends on it)"
 
         assert {:ok, ws} = Ezagent.WorkspaceRegistry.lookup(worker_uri)
-        assert URI.to_string(ws) == "workspace://default"
+        assert URI.to_string(ws) == "workspace://team-alpha"
       end
     end
 
@@ -401,7 +401,7 @@ defmodule EzagentDomainChat.Integration.GeneratorTest do
   describe "owner-cap preflight (SPEC §1.4)" do
     setup do
       flavor = register_test_flavor()
-      worker_uri = URI.new!("template://agent/default/gen-pf-worker-#{uniq()}")
+      worker_uri = URI.new!("template://agent/team-alpha/gen-pf-worker-#{uniq()}")
       :ok = create_agent_template(worker_uri, agent_template_content(flavor, "worker"))
 
       st_uri =
@@ -418,7 +418,7 @@ defmodule EzagentDomainChat.Integration.GeneratorTest do
       st_uri: st_uri
     } do
       # Owner holds no template caps at all.
-      owner_uri = URI.parse("entity://user/default/gen-pf-nocap-#{uniq()}")
+      owner_uri = URI.parse("entity://user/team-alpha/gen-pf-nocap-#{uniq()}")
       :ok = spawn_owner(owner_uri, [])
 
       assert {:error, :unauthorized} = Session.spawn_from_template(st_uri, owner_uri)
@@ -427,7 +427,7 @@ defmodule EzagentDomainChat.Integration.GeneratorTest do
     test "owner with cap #3 but NOT cap #4 → orchestrator gets #3, omits #4", %{st_uri: st_uri} do
       # Owner holds ONLY a :session_template cap — passes the Generator
       # entry gate + the cap-#3 preflight, but FAILS the cap-#4 preflight.
-      owner_uri = URI.parse("entity://user/default/gen-pf-only3-#{uniq()}")
+      owner_uri = URI.parse("entity://user/team-alpha/gen-pf-only3-#{uniq()}")
       :ok = spawn_owner(owner_uri, [template_cap(:session_template, @workspace_uri)])
 
       assert {:ok, %{orchestrator_uri: orch_uri}} =
@@ -449,7 +449,7 @@ defmodule EzagentDomainChat.Integration.GeneratorTest do
     test "owner with full template authority → orchestrator gets both #3 and #4", %{
       st_uri: st_uri
     } do
-      owner_uri = URI.parse("entity://user/default/gen-pf-full-#{uniq()}")
+      owner_uri = URI.parse("entity://user/team-alpha/gen-pf-full-#{uniq()}")
 
       :ok =
         spawn_owner(owner_uri, [
@@ -571,7 +571,7 @@ defmodule EzagentDomainChat.Integration.GeneratorTest do
           template_class: ForeignWorkerClass
         })
 
-      worker_uri = URI.new!("template://agent/default/gen-foreign-worker-#{uniq()}")
+      worker_uri = URI.new!("template://agent/team-alpha/gen-foreign-worker-#{uniq()}")
       :ok = create_agent_template(worker_uri, agent_template_content(flavor, "foreign"))
 
       st_uri =
@@ -581,7 +581,7 @@ defmodule EzagentDomainChat.Integration.GeneratorTest do
           []
         )
 
-      owner_uri = URI.parse("entity://user/default/gen-foreign-owner-#{uniq()}")
+      owner_uri = URI.parse("entity://user/team-alpha/gen-foreign-owner-#{uniq()}")
 
       :ok =
         spawn_owner(owner_uri, [
@@ -622,7 +622,7 @@ defmodule EzagentDomainChat.Integration.GeneratorTest do
           template_class: OwnedRerunClass
         })
 
-      worker_uri = URI.new!("template://agent/default/gen-rerun-worker-#{uniq()}")
+      worker_uri = URI.new!("template://agent/team-alpha/gen-rerun-worker-#{uniq()}")
       :ok = create_agent_template(worker_uri, agent_template_content(flavor, "rerun"))
 
       st_uri =
@@ -632,7 +632,7 @@ defmodule EzagentDomainChat.Integration.GeneratorTest do
           []
         )
 
-      owner_uri = URI.parse("entity://user/default/gen-rerun-owner-#{uniq()}")
+      owner_uri = URI.parse("entity://user/team-alpha/gen-rerun-owner-#{uniq()}")
 
       :ok =
         spawn_owner(owner_uri, [
@@ -657,7 +657,7 @@ defmodule EzagentDomainChat.Integration.GeneratorTest do
       assert URI.to_string(lineage) == URI.to_string(orch_uri)
 
       assert {:ok, ws} = Ezagent.WorkspaceRegistry.lookup(live_worker_uri)
-      assert URI.to_string(ws) == "workspace://default"
+      assert URI.to_string(ws) == "workspace://team-alpha"
     end
   end
 

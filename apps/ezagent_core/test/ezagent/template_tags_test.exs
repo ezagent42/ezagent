@@ -25,20 +25,21 @@ defmodule Ezagent.TemplateTagsTest do
 
   describe "put/5 + resolve/3 round-trip" do
     test "a put makes the tag resolvable to its hash" do
-      ws = "workspace://default"
+      ws = "workspace://team-alpha"
       name = "code-review-#{uniq()}"
       hash = hexhash("v1")
 
-      assert :ok = TemplateTags.put(ws, name, "stable", hash, "entity://user/default/admin")
+      assert :ok = TemplateTags.put(ws, name, "stable", hash, "entity://user/team-alpha/admin")
       assert {:ok, ^hash} = TemplateTags.resolve(ws, name, "stable")
     end
 
     test "resolve of an unknown tag returns :error" do
-      assert :error = TemplateTags.resolve("workspace://default", "no-such-#{uniq()}", "stable")
+      assert :error =
+               TemplateTags.resolve("workspace://team-alpha", "no-such-#{uniq()}", "stable")
     end
 
     test "a second put to the same tag overwrites the hash" do
-      ws = "workspace://default"
+      ws = "workspace://team-alpha"
       name = "overwrite-#{uniq()}"
       h1 = hexhash("a")
       h2 = hexhash("b")
@@ -55,7 +56,7 @@ defmodule Ezagent.TemplateTagsTest do
     end
 
     test "a URI struct workspace argument is accepted" do
-      ws = URI.new!("workspace://default")
+      ws = URI.new!("workspace://team-alpha")
       name = "uri-arg-#{uniq()}"
       hash = hexhash("u")
 
@@ -67,8 +68,8 @@ defmodule Ezagent.TemplateTagsTest do
   describe "cross-workspace non-collision (SPEC §1.2, codex rev-2 CRITICAL)" do
     test "`stable` in workspace A and `stable` in workspace B are distinct" do
       name = "shared-template-#{uniq()}"
-      ws_a = "workspace://default"
-      ws_b = "workspace://team-alpha"
+      ws_a = "workspace://team-alpha"
+      ws_b = "workspace://team-beta"
       hash_a = hexhash("in-A")
       hash_b = hexhash("in-B")
 
@@ -90,15 +91,15 @@ defmodule Ezagent.TemplateTagsTest do
 
     test "a put in workspace A is invisible to a resolve in workspace B" do
       name = "only-in-a-#{uniq()}"
-      assert :ok = TemplateTags.put("workspace://default", name, "stable", hexhash("a"), nil)
+      assert :ok = TemplateTags.put("workspace://team-alpha", name, "stable", hexhash("a"), nil)
 
-      assert :error = TemplateTags.resolve("workspace://team-alpha", name, "stable")
+      assert :error = TemplateTags.resolve("workspace://team-beta", name, "stable")
     end
   end
 
   describe "template_tags rows carry a non-nil workspace_uri (invariant 14)" do
     test "every persisted row has a workspace_uri" do
-      ws = "workspace://default"
+      ws = "workspace://team-alpha"
       name = "ws-col-#{uniq()}"
       assert :ok = TemplateTags.put(ws, name, "stable", hexhash("x"), nil)
 
@@ -121,9 +122,11 @@ defmodule Ezagent.TemplateTagsTest do
         updated_at: DateTime.utc_now()
       }
 
-      assert_raise Exqlite.Error, ~r/NOT NULL constraint failed: template_tags.workspace_uri/, fn ->
-        EzagentCore.Repo.insert(row)
-      end
+      assert_raise Exqlite.Error,
+                   ~r/NOT NULL constraint failed: template_tags.workspace_uri/,
+                   fn ->
+                     EzagentCore.Repo.insert(row)
+                   end
     end
   end
 
@@ -145,7 +148,7 @@ defmodule Ezagent.TemplateTagsTest do
 
   describe "CAS move/5" do
     test "move re-points a tag only when the expected hash matches" do
-      ws = "workspace://default"
+      ws = "workspace://team-alpha"
       name = "cas-basic-#{uniq()}"
       h_old = hexhash("old")
       h_new = hexhash("new")
@@ -156,7 +159,7 @@ defmodule Ezagent.TemplateTagsTest do
     end
 
     test "move with a stale expected hash fails with :tag_moved" do
-      ws = "workspace://default"
+      ws = "workspace://team-alpha"
       name = "cas-stale-#{uniq()}"
       h_old = hexhash("old")
       h_actual = hexhash("actual")
@@ -173,7 +176,7 @@ defmodule Ezagent.TemplateTagsTest do
     test "move of a non-existent tag fails with :no_such_tag" do
       assert {:error, :no_such_tag} =
                TemplateTags.move(
-                 "workspace://default",
+                 "workspace://team-alpha",
                  "missing-#{uniq()}",
                  "stable",
                  hexhash("e"),
@@ -182,7 +185,7 @@ defmodule Ezagent.TemplateTagsTest do
     end
 
     test "concurrent moves race — exactly one wins, the rest get :tag_moved" do
-      ws = "workspace://default"
+      ws = "workspace://team-alpha"
       name = "cas-race-#{uniq()}"
       h_start = hexhash("start")
 
@@ -219,7 +222,7 @@ defmodule Ezagent.TemplateTagsTest do
 
   describe "load_into_registry/0" do
     test "hydrates the ETS cache from the DB" do
-      ws = "workspace://default"
+      ws = "workspace://team-alpha"
       name = "hydrate-#{uniq()}"
       hash = hexhash("h")
 

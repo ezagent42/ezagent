@@ -38,7 +38,7 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLiveTest do
   alias Ezagent.ExternalMirror, as: Facade
 
   @endpoint EzagentWeb.Endpoint
-  @workspace_uri URI.parse("workspace://default")
+  @workspace_uri URI.parse("workspace://team-alpha")
 
   setup do
     :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
@@ -607,10 +607,10 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLiveTest do
   end
 
   defp unique_user_uri(prefix) do
-    URI.parse("entity://user/default/#{prefix}-#{System.unique_integer([:positive])}")
+    URI.parse("entity://user/team-alpha/#{prefix}-#{System.unique_integer([:positive])}")
   end
 
   defp unique_session_uri(prefix) do
-    URI.parse("session://default/default/#{prefix}-#{System.unique_integer([:positive])}")
+    URI.parse("session://default/team-alpha/#{prefix}-#{System.unique_integer([:positive])}")
   end
 end

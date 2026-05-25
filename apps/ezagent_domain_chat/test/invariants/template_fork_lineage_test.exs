@@ -28,7 +28,7 @@ defmodule EzagentDomainChat.Invariants.TemplateForkLineageTest do
   alias Ezagent.Ecto.KindSnapshot
   alias Ezagent.Entity.{AgentTemplate, SessionTemplate, User}
 
-  @workspace_uri URI.new!("workspace://default")
+  @workspace_uri URI.new!("workspace://team-alpha")
 
   defp uniq, do: System.unique_integer([:positive])
 
@@ -51,7 +51,7 @@ defmodule EzagentDomainChat.Invariants.TemplateForkLineageTest do
 
   # Build + persist an AgentTemplate at a fresh URI; return the URI.
   defp persist_agent_template(name) do
-    uri = URI.new!("template://agent/default/#{name}")
+    uri = URI.new!("template://agent/team-alpha/#{name}")
     uri_str = URI.to_string(uri)
     :ok = KindSnapshot.delete(uri_str)
     {:ok, _pid} = SpawnRegistry.spawn(uri)
@@ -82,7 +82,7 @@ defmodule EzagentDomainChat.Invariants.TemplateForkLineageTest do
       description: "fork-lineage session parent",
       agent_slots: [],
       routing_rules: [],
-      orchestrator_template_uri: URI.parse("template://agent/default/cc-orchestrator"),
+      orchestrator_template_uri: URI.parse("template://agent/system/cc-orchestrator"),
       default_workspace_uri: @workspace_uri,
       parent_template_uri: nil,
       version_tag: nil,
@@ -91,9 +91,9 @@ defmodule EzagentDomainChat.Invariants.TemplateForkLineageTest do
     }
 
     hash = SessionTemplate.compute_version_hash(content)
-    uri = SessionTemplate.build_uri(name, hash)
+    uri = SessionTemplate.build_uri(name, hash, workspace: "team-alpha")
     :ok = KindSnapshot.delete(URI.to_string(uri))
-    {:ok, uri} = SessionTemplate.persist_version(content, "default")
+    {:ok, uri} = SessionTemplate.persist_version(content, "team-alpha")
     track(uri)
     {uri, content}
   end
@@ -131,7 +131,7 @@ defmodule EzagentDomainChat.Invariants.TemplateForkLineageTest do
   end
 
   defp spawn_owner(caps) do
-    owner_uri = URI.parse("entity://user/default/fl-owner-#{uniq()}")
+    owner_uri = URI.parse("entity://user/team-alpha/fl-owner-#{uniq()}")
 
     {:ok, _pid} =
       Ezagent.Kind.spawn(User, %{uri: owner_uri, initial_caps: MapSet.new(caps)})
@@ -156,7 +156,7 @@ defmodule EzagentDomainChat.Invariants.TemplateForkLineageTest do
       track(fork_uri)
 
       # New Kind at a versionless URI — distinct from the parent.
-      assert URI.to_string(fork_uri) == "template://agent/default/#{new_name}"
+      assert URI.to_string(fork_uri) == "template://agent/team-alpha/#{new_name}"
       refute fork_uri == parent_uri
 
       fork_content = read_content(fork_uri)

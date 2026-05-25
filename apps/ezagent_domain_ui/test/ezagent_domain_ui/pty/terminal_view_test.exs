@@ -29,7 +29,7 @@ defmodule EzagentDomainUi.Pty.TerminalViewTest do
   describe "applies_to?/1" do
     test "returns false for non-URI input" do
       refute TerminalView.applies_to?(nil)
-      refute TerminalView.applies_to?("entity://agent/default/cc_demo")
+      refute TerminalView.applies_to?("entity://agent/team-alpha/cc_demo")
       refute TerminalView.applies_to?(:atom)
     end
 
@@ -37,7 +37,7 @@ defmodule EzagentDomainUi.Pty.TerminalViewTest do
       # No real session spawned — KindRegistry.lookup/1 returns :error,
       # which the impl converts to `false` (safe-default failure mode:
       # the Terminal tab simply doesn't show up).
-      missing = URI.new!("session://default/default/missing-#{System.unique_integer([:positive])}")
+      missing = URI.new!("session://default/team-alpha/missing-#{System.unique_integer([:positive])}")
       refute TerminalView.applies_to?(missing)
     end
   end
@@ -57,7 +57,7 @@ defmodule EzagentDomainUi.Pty.TerminalViewTest do
     end
 
     test "renders xterm mount when active_pty_agent_uri is set" do
-      uri_str = "entity://agent/default/cc_demo"
+      uri_str = "entity://agent/team-alpha/cc_demo"
       html = render_component(&TerminalView.render/1, active_pty_agent_uri: uri_str)
 
       assert html =~ "Terminal —"

@@ -1010,7 +1010,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
         type: :uri,
         label: "Agent URI (entity://agent/<workspace>/cc_<name>)",
         required: true,
-        placeholder: "entity://agent/default/cc_architect"
+        placeholder: "entity://agent/team-alpha/cc_architect"
       },
       %{
         name: "cwd",

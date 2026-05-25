@@ -54,6 +54,7 @@ defmodule Ezagent.Invariants.CapsDataOwnerTest do
 
   defp behavior_module?(module) when is_atom(module) do
     s = Atom.to_string(module)
+
     String.starts_with?(s, "Elixir.Ezagent.Behavior.") or
       String.contains?(s, ".Behavior.")
   end

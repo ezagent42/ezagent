@@ -13,7 +13,7 @@ defmodule Ezagent.Entity.User do
     landed real snapshot impl; granted caps survive restart
 
   Non-admin Users (Phase 4-completion PR 4-5):
-  - Provisioned via `mix ezagent.user.create entity://user/default/X --password Y --caps ...`
+  - Provisioned via `mix ezagent.user.create entity://user/<workspace>/X --password Y --caps ...`
   - Authenticated via `/login` (`EzagentWeb.SessionController` +
     `Ezagent.Users.verify_password/2`)
   - Their caps live in `Ezagent.Users.caps_json` SQLite column AND mirror
@@ -21,7 +21,7 @@ defmodule Ezagent.Entity.User do
   """
 
   # Phase 9 PR-2 (SPEC v3 §3): entity URIs carry a workspace segment.
-  # Phase 9 PR-8 (SPEC v3 §13.1): admin moved from `workspace://default`
+  # Phase 9 PR-8 (SPEC v3 §13.1): admin moved from the legacy default workspace
   # to `workspace://system` — the Keycloak realm-admin model. System
   # members hold cross-workspace authority by membership (see
   # `Ezagent.Capability.cross_workspace?/2`); the structural admin cap

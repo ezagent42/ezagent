@@ -7,7 +7,7 @@ defmodule EzagentDomainChat.Integration.PresenceReadReceiptsE2ETest do
 
   Scenario:
 
-  1. Spawn `entity://agent/default/cc_demo_<unique>` Agent Kind
+  1. Spawn `entity://agent/team-alpha/cc_demo_<unique>` Agent Kind
   2. Spawn a fresh Session (so PresenceFanout sees `:member_joined`
      events and subscribes to admin + cc-demo's Presence)
   3. Admin sends a chat message → Chat.invoke(:send) fan-out
@@ -78,7 +78,7 @@ defmodule EzagentDomainChat.Integration.PresenceReadReceiptsE2ETest do
   defp build_session_for_pair do
     suffix = unique_suffix()
     short_name = "cc_demo_e2e_#{suffix}"
-    cc_demo_uri = URI.parse("entity://agent/default/cc_demo_#{suffix}")
+    cc_demo_uri = URI.parse("entity://agent/team-alpha/cc_demo_#{suffix}")
 
     # Spawn the agent (live in KindRegistry — :member_joined can find it)
     {:ok, _pid} = Ezagent.SpawnRegistry.spawn(cc_demo_uri)

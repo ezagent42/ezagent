@@ -201,9 +201,19 @@ defmodule Ezagent.Audit do
   # operators see snapshot lifecycle in the same /admin Audit Log stream.
   # Defensive target fallback: build_row must never produce NULL target
   # (NOT NULL constraint on invocations.target).
+  #
+  # r2 codex tightening (SPEC #324 rev 3): when `meta[:uri]` is missing
+  # (e.g. `Ezagent.Audit.Writer` flush failure emits `%{component:
+  # :audit_writer}` with no URI), use a `system://` synthetic identifier
+  # so the strict `derive_workspace/2` allowlist accepts it AND the
+  # workspace lands in `workspace://system` (admin's structural sink
+  # for operational telemetry). The prior `snapshot://unknown` literal
+  # was not in the allowlist and would have raised inside the telemetry
+  # handler for the audit pipeline's own failure path — exactly when we
+  # need the diagnostic event most.
   defp build_row([:ezagent, :persistence, phase], measurements, meta)
        when phase in [:restored, :written, :failed] do
-    target = Map.get(meta, :uri) || "snapshot://unknown"
+    target = Map.get(meta, :uri) || synthetic_persistence_target(meta)
 
     %{
       trace_id: nil,
@@ -226,9 +236,20 @@ defmodule Ezagent.Audit do
         else
           nil
         end,
+      # `derive_workspace` accepts the synthetic `system://` target via
+      # the strict allowlist (system_scoped_uri?/1).
       workspace_uri: derive_workspace(nil, target),
       inserted_at: DateTime.utc_now()
     }
+  end
+
+  # r2 codex tightening: structured synthetic target for persistence-
+  # telemetry rows that lack a `meta[:uri]`. The component name is the
+  # path segment so operators can grep audit rows by source emitter
+  # (e.g. `system://audit-writer/flush`).
+  defp synthetic_persistence_target(meta) do
+    component = Map.get(meta, :component) || :persistence
+    "system://#{component}/flush"
   end
 
   # Phase 4-plus follow-up: CC bridge hook reports persist as audit
@@ -246,11 +267,14 @@ defmodule Ezagent.Audit do
       duration_us: 0,
       authz: Map.get(meta, :level, "info"),
       exception: Map.get(meta, :text),
-      # cc-bridge:// is a synthetic identifier — workspace_uri is
-      # derived from the bridge's owning agent via a future indirection
-      # (out of scope for PR-6); for now we default to keep the audit
-      # log writable.
-      workspace_uri: Ezagent.Persistence.default_workspace_uri(),
+      # SPEC #324 rev 3 — cc-bridge:// is a synthetic identifier (not
+      # in the 6-scheme allowlist); the event payload does not carry
+      # the bridge's owning agent URI. cc-bridge events are admin-
+      # instrumented operational telemetry, so landing them in
+      # workspace://system (the admin workspace) is structurally
+      # correct: a `system://`-shaped audit event for the admin tier.
+      # Inlined literal — no global default function per Allen 2026-05-25.
+      workspace_uri: "workspace://system",
       inserted_at: DateTime.utc_now()
     }
   end
@@ -302,32 +326,78 @@ defmodule Ezagent.Audit do
   defp uri_to_string_or_nil(s) when is_binary(s), do: s
   defp uri_to_string_or_nil(_), do: nil
 
-  # Phase 9 PR-6 (SPEC v3 §7) — derive the workspace_uri for an audit
-  # row given the caller and target URI strings. Priority:
-  # 1. Caller's workspace (the principal on whose behalf the action ran)
-  # 2. Target's workspace
-  # 3. Default workspace (audit log must never have NULL workspace_uri)
+  # Phase 9 PR-6 (SPEC v3 §7) + SPEC #324 rev 3 (Allen 2026-05-25) +
+  # r1 codex tightening — derive the workspace_uri for an audit row.
   #
-  # `caller` may be nil (system events have no human principal); `target`
-  # is always set per the build_row contract.
+  # Rules:
+  # 1. Caller's workspace if derivable structurally (entity / workspace /
+  #    session URI).
+  # 2. Target's workspace if derivable structurally.
+  # 3. If ALL provided URIs are exactly `system://`-scheme (strict — no
+  #    "anything not entity/workspace/session" wildcard), land in
+  #    `workspace://system` (admin's workspace; structural sink for
+  #    system-tier events — SPEC v3 §13.1).
+  # 4. Otherwise RAISE. r1 codex caught: the prior `cross_cutting_or_nil?/1`
+  #    predicate accepted nil, malformed input, AND any non-{entity,
+  #    workspace, session} scheme as "cross-cutting", which silently
+  #    routed unknown / future tenant-scoped schemes into the system
+  #    workspace — the exact silent-default bug class Allen deleted.
+  #
+  # Synthetic operational identifiers (cc-bridge://) MUST NOT rely on
+  # this fallback — those build_row clauses inline `"workspace://system"`
+  # directly with a comment (see the `:cc_bridge, :event` clause above).
   defp derive_workspace(caller, target) do
-    [caller, target]
-    |> Enum.reject(&is_nil/1)
-    |> Enum.find_value(fn uri ->
-      case Ezagent.Persistence.workspace_uri_for(uri) do
-        {:ok, ws} -> ws
-        {:error, :no_workspace} -> nil
-      end
-    end)
-    |> case do
-      nil -> Ezagent.Persistence.default_workspace_uri()
-      ws -> ws
+    uris = Enum.reject([caller, target], &is_nil/1)
+
+    derived =
+      Enum.find_value(uris, fn uri ->
+        case Ezagent.Persistence.workspace_uri_for(uri) do
+          {:ok, ws} -> ws
+          {:error, :no_workspace} -> nil
+        end
+      end)
+
+    cond do
+      not is_nil(derived) ->
+        derived
+
+      # Strict allowlist — every provided URI must be a system:// URI
+      # for the system fallback to apply. Empty `uris` (both caller +
+      # target nil) also hits this branch — a "no provided URIs" event
+      # is a structural bug in the emitter (the telemetry handler MUST
+      # know who/what triggered it), so the underlying assertion that
+      # there is at least one URI is enforced by build_row.
+      uris != [] and Enum.all?(uris, &system_scoped_uri?/1) ->
+        "workspace://system"
+
+      true ->
+        raise ArgumentError,
+              "Ezagent.Audit.derive_workspace/2: no workspace could be derived from " <>
+                "caller=#{inspect(caller)}, target=#{inspect(target)}. Per SPEC #324 " <>
+                "rev 3, audit emitters MUST pass entity / workspace / session URIs " <>
+                "(which carry workspace structurally), or `system://` URIs (admin- " <>
+                "scope). Unknown / synthetic schemes (cc-bridge:// etc.) must inline " <>
+                "the workspace at the build_row clause — never rely on a fallback " <>
+                "predicate, because that's the silent-default bug class Allen deleted " <>
+                "on 2026-05-25."
     end
-  rescue
-    # Any failure deriving (malformed URI, registry miss, etc.) →
-    # default workspace. The audit log is the catch-all observability
-    # surface — it must never be the cause of a write failure.
-    _ -> Ezagent.Persistence.default_workspace_uri()
+  end
+
+  # r1 codex tightening: a URI is system-scoped if its scheme is EXACTLY
+  # `system`. Synthetic / unknown / malformed URIs do NOT pass this gate —
+  # those must be handled explicitly at the build_row level.
+  defp system_scoped_uri?(uri) do
+    parsed =
+      case uri do
+        %URI{} = u -> u
+        s when is_binary(s) -> URI.parse(s)
+        _ -> nil
+      end
+
+    case parsed do
+      %URI{scheme: "system"} -> true
+      _ -> false
+    end
   end
 
   defp serialise_metadata(meta) do

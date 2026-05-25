@@ -40,7 +40,7 @@ defmodule EzagentPluginLiveview.AgentNewLiveTest do
       Phoenix.ConnTest.build_conn()
       |> Plug.Test.init_test_session(%{
         "current_entity_uri" => URI.to_string(Ezagent.Entity.User.admin_uri()),
-        "current_workspace_uri" => "workspace://default"
+        "current_workspace_uri" => "workspace://team-alpha"
       })
 
     {:ok, conn: conn}
@@ -99,8 +99,8 @@ defmodule EzagentPluginLiveview.AgentNewLiveTest do
     # V-6 fix — preview now includes the caller's workspace
     # segment, so the placeholder is `<flavor>_<name>` after
     # `entity://agent/<workspace>/`.
-    assert html =~ "entity://agent/default/&lt;flavor&gt;_&lt;name&gt;" or
-             html =~ "entity://agent/default/<flavor>_<name>"
+    assert html =~ "entity://agent/team-alpha/&lt;flavor&gt;_&lt;name&gt;" or
+             html =~ "entity://agent/team-alpha/<flavor>_<name>"
 
     # Submit button
     assert html =~ "Create agent"
@@ -116,7 +116,7 @@ defmodule EzagentPluginLiveview.AgentNewLiveTest do
       })
       |> render_change()
 
-    assert html =~ "entity://agent/default/echo_preview-demo"
+    assert html =~ "entity://agent/team-alpha/echo_preview-demo"
   end
 
   test "submit with valid inputs spawns agent + redirects", %{conn: conn} do
@@ -132,12 +132,12 @@ defmodule EzagentPluginLiveview.AgentNewLiveTest do
              })
              |> render_submit()
 
-    expected_uri = URI.encode_www_form("entity://agent/default/echo_#{name}")
+    expected_uri = URI.encode_www_form("entity://agent/team-alpha/echo_#{name}")
     assert to == "/identities/agents/#{expected_uri}"
 
     # Verify the agent actually exists in the live KindRegistry.
     {:ok, _pid} =
-      Ezagent.KindRegistry.lookup(URI.parse("entity://agent/default/echo_#{name}"))
+      Ezagent.KindRegistry.lookup(URI.parse("entity://agent/team-alpha/echo_#{name}"))
   end
 
   test "submit with empty name surfaces error and stays on page", %{conn: conn} do
@@ -170,7 +170,7 @@ defmodule EzagentPluginLiveview.AgentNewLiveTest do
 
   test "submit pre-existing URI surfaces 'already exists' error", %{conn: conn} do
     name = "dup-#{System.unique_integer([:positive])}"
-    uri = URI.parse("entity://agent/default/echo_#{name}")
+    uri = URI.parse("entity://agent/team-alpha/echo_#{name}")
 
     # Pre-create the agent.
     {:ok, _pid} = Ezagent.SpawnRegistry.spawn(uri)
@@ -210,7 +210,7 @@ defmodule EzagentPluginLiveview.AgentNewLiveTest do
              })
              |> render_submit()
 
-    agent_uri = URI.parse("entity://agent/default/echo_#{name}")
+    agent_uri = URI.parse("entity://agent/team-alpha/echo_#{name}")
     {:ok, _pid} = Ezagent.KindRegistry.lookup(agent_uri)
 
     # Verify caps parser accepts the placeholder string. This is the
@@ -322,7 +322,7 @@ defmodule EzagentPluginLiveview.AgentNewLiveTest do
     test "echo + with_pty=true + cwd → instantiates template → Agent Kind AND PtyServer alive",
          %{conn: conn} do
       name = "echo-pty-#{System.unique_integer([:positive])}"
-      agent_uri = URI.parse("entity://agent/default/echo_#{name}")
+      agent_uri = URI.parse("entity://agent/team-alpha/echo_#{name}")
 
       {:ok, lv, _html} = live(conn, "/identities/agents/new")
 
@@ -365,7 +365,7 @@ defmodule EzagentPluginLiveview.AgentNewLiveTest do
     test "echo + with_pty=false → only the Agent Kind is alive (no PtyServer)",
          %{conn: conn} do
       name = "echo-no-pty-#{System.unique_integer([:positive])}"
-      agent_uri = URI.parse("entity://agent/default/echo_#{name}")
+      agent_uri = URI.parse("entity://agent/team-alpha/echo_#{name}")
 
       {:ok, lv, _html} = live(conn, "/identities/agents/new")
 
@@ -418,7 +418,7 @@ defmodule EzagentPluginLiveview.AgentNewLiveTest do
     test "create_agent for cc → BOTH Agent Kind AND PtyServer alive (no `Not running`)",
          %{conn: conn} do
       name = "v1fix-#{System.unique_integer([:positive])}"
-      agent_uri = URI.parse("entity://agent/default/cc_#{name}")
+      agent_uri = URI.parse("entity://agent/team-alpha/cc_#{name}")
 
       {:ok, lv, _html} = live(conn, "/identities/agents/new")
 

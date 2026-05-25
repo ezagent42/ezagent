@@ -1,9 +1,9 @@
 defmodule Mix.Tasks.Ezagent.Demo.SeedCcAgent do
-  @shortdoc "Seed a demo cc agent into session://default/default/main"
+  @shortdoc "Seed a demo cc agent into session://default/system/main"
   @moduledoc """
   > **CLI/GUI parity audit 2026-05-24 — Category A (demo seeder).**
   > Intentionally NOT a normal operator op. Demo-data seed used to
-  > populate `session://default/default/main` with a sample cc agent.
+  > populate `session://default/system/main` with a sample cc agent.
   > The `chat.join` step DOES dispatch (with admin caps); the spawn
   > step is a direct `SpawnRegistry.spawn` since there is no live
   > Kind to invoke on yet. Stays as `mix ezagent.*`; do NOT migrate
@@ -11,14 +11,14 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcAgent do
   > `docs/notes/2026-05-24-cli-gui-parity-audit.md` Section 1 (this
   > task is not in the audit matrix — it's a demo-fixtures helper).
 
-  Operator-friendly seed task — spawns `entity://agent/default/cc_demo` and
-  joins it to `session://default/default/main`. Idempotent.
+  Operator-friendly seed task — spawns `entity://agent/team-alpha/cc_demo` and
+  joins it to `session://default/system/main`. Idempotent.
 
-  Allen 2026-05-20: "session://default/default/main 中帮我加入 cc agent demo".
+  Allen 2026-05-20: "session://default/system/main 中帮我加入 cc agent demo".
 
   This task replaces the implicit "you have a cc agent in main because
   Phase 1 created it for you" boot-time behavior. With Phase 8c PR-J the
-  session://default/default/main hardcoded boot child is removed (wizard creates it on
+  session://default/system/main hardcoded boot child is removed (wizard creates it on
   first login); demo data lives outside the boot path so production
   deployments don't get injected with demo agents on every cold start.
 
@@ -28,9 +28,9 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcAgent do
 
   ## What it does
 
-  1. Ensures `entity://agent/default/cc_demo` is spawned in KindRegistry. If
+  1. Ensures `entity://agent/team-alpha/cc_demo` is spawned in KindRegistry. If
      already alive, no-op (idempotent).
-  2. Dispatches `chat.join` to `session://default/default/main` with the cc_demo agent
+  2. Dispatches `chat.join` to `session://default/system/main` with the cc_demo agent
      as the member to add. Session must exist (created via the first-
      login wizard at `/`); if not, the task prints a friendly note + exit.
   3. Prints a short confirmation summary.
@@ -50,8 +50,8 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcAgent do
   """
   use Mix.Task
 
-  @agent_uri_str "entity://agent/default/cc_demo"
-  @session_uri_str "session://default/default/main"
+  @agent_uri_str "entity://agent/system/cc_demo"
+  @session_uri_str "session://default/system/main"
 
   @impl Mix.Task
   def run(_args) do
@@ -72,14 +72,14 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcAgent do
         agent:   #{@agent_uri_str}
         session: #{@session_uri_str}
 
-      The cc_demo agent now appears in session://default/default/main members. Open the
+      The cc_demo agent now appears in session://default/system/main members. Open the
       web UI and visit /sessions to interact.
       """)
     else
       {:error, {:session_missing, _uri}} ->
         Mix.shell().info("""
 
-        session://default/default/main has not been created yet.
+        session://default/system/main has not been created yet.
 
         Visit `/` in the web UI and complete the first-login wizard to
         create the default session, then re-run `mix ezagent.demo.seed_cc_agent`.
@@ -122,10 +122,14 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcAgent do
         # error so the caller prints the friendly wizard hint.
         case Ezagent.SpawnRegistry.spawn(session_uri) do
           {:ok, _pid} ->
-            # Re-bind to default workspace — same invariant as the
-            # wizard's create path.
-            {:ok, workspace_uri} = Ezagent.WorkspaceRegistry.default_workspace_uri()
-            :ok = Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)
+            # Re-bind to workspace structurally derived from session URI —
+            # same invariant as the wizard's create path (SPEC #324).
+            :ok =
+              Ezagent.WorkspaceRegistry.bind(
+                session_uri,
+                Ezagent.Capability.workspace_of(session_uri)
+              )
+
             :ok
 
           {:error, _} ->

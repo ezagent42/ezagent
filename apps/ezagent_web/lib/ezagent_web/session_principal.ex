@@ -65,9 +65,12 @@ defmodule EzagentWeb.SessionPrincipal do
   @doc """
   Same as `put/2` plus options. Currently:
 
-  - `:workspace` — override default workspace for bare-handle
-    canonicalization (default `"default"`). Ignored when `raw` is
-    already a full `entity://` URI.
+  - `:workspace` — workspace name for bare-handle canonicalization
+    (e.g. `"system"`, `"team-alpha"`). REQUIRED for bare handles per
+    SPEC #324 rev 3 — `canonicalize/2` raises `ArgumentError` if a
+    bare handle is passed without `:workspace`. Ignored when `raw` is
+    already a full `entity://` URI (the URI carries its workspace
+    segment structurally).
   """
   @spec put(Plug.Conn.t(), String.t(), keyword()) :: Plug.Conn.t()
   def put(conn, raw, opts) when is_binary(raw) and is_list(opts) do
@@ -113,12 +116,36 @@ defmodule EzagentWeb.SessionPrincipal do
   @doc """
   Same as `canonicalize/1` plus options. Currently:
 
-  - `:workspace` — override default workspace for bare-handle
-    canonicalization (default `"default"`).
+  - `:workspace` — workspace name used for bare-handle canonicalization
+    (e.g. `"system"`, `"team-alpha"`). REQUIRED — there is no silent
+    default per SPEC #324. Callers (magic_link_controller / sign-in
+    controller / etc.) must pass the workspace explicitly. Admin login
+    passes `"system"`; tenant login passes the tenant's workspace
+    name from the magic-link flow.
   """
   @spec canonicalize(String.t(), keyword()) :: String.t()
   def canonicalize(raw, opts) when is_binary(raw) and is_list(opts) do
-    workspace = Keyword.get(opts, :workspace, "default")
+    trimmed = String.trim(raw)
+
+    workspace =
+      cond do
+        # Full URI: workspace is encoded structurally — no opts needed.
+        String.starts_with?(trimmed, "entity://") ->
+          nil
+
+        # Bare handle: workspace must be supplied (SPEC #324 — no
+        # silent "default" fallback).
+        true ->
+          Keyword.get(opts, :workspace) ||
+            raise(
+              ArgumentError,
+              "EzagentWeb.SessionPrincipal.canonicalize/2 requires opts[:workspace] " <>
+                "for bare-handle input (SPEC #324 — no silent \"default\" fallback). " <>
+                "Admin login passes \"system\"; tenant login passes the tenant's " <>
+                "workspace name; full entity:// URIs ignore the opt."
+            )
+      end
+
     candidate = normalize(raw, workspace)
 
     case URI.parse(candidate) do

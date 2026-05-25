@@ -5,8 +5,8 @@ defmodule Ezagent.Workspace.Store do
   ## Schema
 
       id                integer pk
-      name              string unique  (short name, e.g. "default")
-      uri               string unique  (workspace://default)
+      name              string unique  (short name, e.g. "team-alpha")
+      uri               string unique  (workspace://team-alpha)
       member_uris       text   (Jason-encoded [String.t()])
       session_templates text   (Jason-encoded map)       -- DEPRECATED, see below
       routing_rules     text   (Jason-encoded [map])

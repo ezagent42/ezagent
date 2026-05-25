@@ -52,7 +52,7 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcSandbox do
   | `--sandbox-dir <p>` | `~/.ezagent/cc-sandboxes/<name>` | absolute path for the sandbox |
   | `--credentials-file <p>` | `~/.claude/.credentials.json` | source credentials to copy |
   | `--force` | `false` | overwrite `<sandbox>/.credentials.json` if it already exists |
-  | `--seed-template <s>` | (none) | also dispatch `AgentTemplate` `:write` for `template://agent/default/cc-<s>` pointing at the sandbox |
+  | `--seed-template <s>` | (none) | also dispatch `AgentTemplate` `:write` for `template://agent/system/cc-<s>` pointing at the sandbox |
 
   ## Failure modes (operator-friendly)
 
@@ -188,7 +188,7 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcSandbox do
 
   # When --seed-template <s> is supplied, dispatch the chat domain's
   # `Ezagent.Behavior.Template` `:write` to populate the `:template`
-  # slice for `template://agent/default/cc-<s>`. Same pattern as
+  # slice for `template://agent/system/cc-<s>`. Same pattern as
   # `Ezagent.Orchestrator.CcOrchestratorSeed.write_template_slice/2`.
   defp maybe_seed_template(nil, _sandbox_dir), do: :ok
 
@@ -197,7 +197,7 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcSandbox do
     {:ok, _} = Application.ensure_all_started(:ezagent_domain_chat)
     {:ok, _} = Application.ensure_all_started(:ezagent_plugin_cc)
 
-    uri_str = "template://agent/default/cc-#{template_name}"
+    uri_str = "template://agent/system/cc-#{template_name}"
     uri = URI.parse(uri_str)
 
     with {:ok, _pid} <- ensure_template_kind(uri),
@@ -268,7 +268,7 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcSandbox do
           "  (no AgentTemplate seeded — pass --seed-template <name> to also create one)"
 
         s ->
-          "  template URI:    template://agent/default/cc-#{s}"
+          "  template URI:    template://agent/system/cc-#{s}"
       end
 
     Mix.shell().info("""

@@ -14,10 +14,10 @@ defmodule Ezagent.MessageStoreTest do
   alias Ezagent.{Message, MessageStore}
   alias EzagentCore.Repo
 
-  @session_a URI.new!("session://default/default/main")
-  @session_b URI.new!("session://default/default/other")
+  @session_a URI.new!("session://default/system/main")
+  @session_b URI.new!("session://default/team-alpha/other")
   @admin URI.new!("entity://user/system/admin")
-  @bot URI.new!("entity://agent/default/test_cc-builder")
+  @bot URI.new!("entity://agent/team-alpha/test_cc-builder")
 
   setup do
     :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
@@ -27,7 +27,7 @@ defmodule Ezagent.MessageStoreTest do
     # workspace_uri via WorkspaceRegistry.lookup/1 on session_uri.
     # Bind both test sessions to the default workspace so writes
     # don't crash on "no workspace binding".
-    default_ws = URI.new!("workspace://default")
+    default_ws = URI.new!("workspace://team-alpha")
     :ok = Ezagent.WorkspaceRegistry.bind(@session_a, default_ws)
     :ok = Ezagent.WorkspaceRegistry.bind(@session_b, default_ws)
 
@@ -59,7 +59,7 @@ defmodule Ezagent.MessageStoreTest do
     end
 
     test "preserves the Message envelope identity (Decision #40)" do
-      mention = URI.new!("entity://agent/default/test_cc-builder")
+      mention = URI.new!("entity://agent/team-alpha/test_cc-builder")
       ref_id = "aabbccdd00000000"
 
       msg =

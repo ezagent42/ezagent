@@ -138,7 +138,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentExtensionsTest do
 
   describe "destroy_config_dir/2 — path lock" do
     test "rm -rf's the dir when path matches agent_config_dir/1" do
-      agent_uri = URI.new!("entity://agent/default/cc_destroy-test-#{uniq()}")
+      agent_uri = URI.new!("entity://agent/team-alpha/cc_destroy-test-#{uniq()}")
       canonical = CcAgent.agent_config_dir(agent_uri)
       File.mkdir_p!(canonical)
       File.write!(Path.join(canonical, "marker"), "x")
@@ -150,7 +150,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentExtensionsTest do
     end
 
     test "REJECTS mismatched paths (e.g. someone passes / or /etc)" do
-      agent_uri = URI.new!("entity://agent/default/cc_lock-test-#{uniq()}")
+      agent_uri = URI.new!("entity://agent/team-alpha/cc_lock-test-#{uniq()}")
 
       assert {:error, {:path_mismatch, _}} =
                CcAgent.destroy_config_dir(agent_uri, "/etc")
@@ -171,7 +171,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentExtensionsTest do
       File.write!(Path.join(reference, ".credentials.json"), "{}")
       File.write!(Path.join(reference, "settings.json"), "{}")
 
-      agent_uri = URI.new!("entity://agent/default/cc_create-test-#{uniq()}")
+      agent_uri = URI.new!("entity://agent/team-alpha/cc_create-test-#{uniq()}")
       tmpl = %{"claude_config_dir" => reference}
 
       assert {:ok, dir} = CcAgent.create_agent_config_dir(agent_uri, tmpl)
@@ -194,7 +194,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentExtensionsTest do
       reference = make_tmpdir("cc-idem-ref")
       File.write!(Path.join(reference, ".credentials.json"), "{}")
 
-      agent_uri = URI.new!("entity://agent/default/cc_idem-test-#{uniq()}")
+      agent_uri = URI.new!("entity://agent/team-alpha/cc_idem-test-#{uniq()}")
       tmpl = %{"claude_config_dir" => reference}
 
       assert {:ok, dir1} = CcAgent.create_agent_config_dir(agent_uri, tmpl)
@@ -210,14 +210,14 @@ defmodule Ezagent.PluginCc.Template.CcAgentExtensionsTest do
     end
 
     test "returns {:ok, nil} when template has no claude_config_dir" do
-      agent_uri = URI.new!("entity://agent/default/cc_no-ref-#{uniq()}")
+      agent_uri = URI.new!("entity://agent/team-alpha/cc_no-ref-#{uniq()}")
       tmpl = %{"agent_uri" => URI.to_string(agent_uri), "cwd" => "/tmp", "class" => "cc.agent"}
 
       assert {:ok, nil} = CcAgent.create_agent_config_dir(agent_uri, tmpl)
     end
 
     test "returns error if reference dir doesn't exist" do
-      agent_uri = URI.new!("entity://agent/default/cc_missing-ref-#{uniq()}")
+      agent_uri = URI.new!("entity://agent/team-alpha/cc_missing-ref-#{uniq()}")
       tmpl = %{"claude_config_dir" => "/nonexistent/path/123"}
 
       assert {:error, {:reference_dir_missing, "/nonexistent/path/123"}} =
@@ -233,10 +233,10 @@ defmodule Ezagent.PluginCc.Template.CcAgentExtensionsTest do
       assert String.contains?(dir, "cc-agents")
     end
 
-    test "extracts workspace + name correctly from default workspace" do
-      uri = URI.new!("entity://agent/default/cc_bar")
+    test "extracts workspace + name correctly from team-alpha workspace" do
+      uri = URI.new!("entity://agent/team-alpha/cc_bar")
       dir = CcAgent.agent_config_dir(uri)
-      assert String.ends_with?(dir, "/default/cc_bar")
+      assert String.ends_with?(dir, "/team-alpha/cc_bar")
     end
   end
 end

@@ -60,7 +60,7 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
       end
     end)
 
-    {:ok, session_uri: URI.parse("session://default/default/main")}
+    {:ok, session_uri: URI.parse("session://default/system/main")}
   end
 
   describe "post_init handle_continue chain (PR-EM-2 acceptance test #5)" do
@@ -392,7 +392,7 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
   # trigger SliceChange. chat.join writes `members` + `monitors`.
   defp send_chat_to_session(%URI{} = session_uri, _label) do
     member_uri =
-      URI.parse("entity://user/default/em-pub-test-#{System.unique_integer([:positive])}")
+      URI.parse("entity://user/team-alpha/em-pub-test-#{System.unique_integer([:positive])}")
 
     # Spawn the member User Kind first (chat.join needs the member's
     # Kind alive so :receive dispatches can land later).

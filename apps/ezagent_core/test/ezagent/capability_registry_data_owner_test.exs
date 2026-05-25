@@ -31,6 +31,7 @@ defmodule Ezagent.CapabilityRegistry.DataOwnerTest do
       # so this test doesn't leak into other test files.
       :ets.delete(CapabilityRegistry.Subjects.table(), {OwnedKind, OwnedBehavior, :read})
       :ets.delete(CapabilityRegistry.Subjects.table(), {OwnedKind, OwnedBehavior, :write})
+
       :ets.delete(
         CapabilityRegistry.Subjects.table(),
         {OwnedKind, OwnedCapOnlyBehavior, :subscribe}

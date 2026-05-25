@@ -5,7 +5,7 @@ defmodule Ezagent.PluginCurlAgent.Template do
 
   Form fields (auto-derived UI via `Ezagent.UI.Form`):
 
-  - `agent_uri` — `entity://agent/default/curl_<name>` (PR #141 SPEC v2)
+  - `agent_uri` — `entity://agent/team-alpha/curl_<name>` (PR #141 SPEC v2)
   - `provider` — `"deepseek"` / `"openai"` / ... (matches the key
     provider stored on the owner User's `api_keys` slice)
   - `api_url` — full URL of the OpenAI-compatible
@@ -62,7 +62,7 @@ defmodule Ezagent.PluginCurlAgent.Template do
   defp check_class(%{"class" => other}), do: {:error, {:wrong_class, other}}
   defp check_class(_), do: {:error, :missing_class_field}
 
-  # PR #141 (SPEC v2 §5.14): strict `entity://agent/default/curl_<name>` shape.
+  # PR #141 (SPEC v2 §5.14): strict `entity://agent/team-alpha/curl_<name>` shape.
   # The legacy `agent://curl/<name>` and `curl-agent://` schemes are
   # both rejected — clean rebuild per SPEC §5.11.
   defp check_agent_uri(%{"agent_uri" => uri_str}) when is_binary(uri_str) and uri_str != "" do
@@ -191,9 +191,9 @@ defmodule Ezagent.PluginCurlAgent.Template do
       %{
         name: "agent_uri",
         type: :uri,
-        label: "Agent URI (entity://agent/default/curl_<name> — appears in mention/floating dropdowns)",
+        label: "Agent URI (entity://agent/team-alpha/curl_<name> — appears in mention/floating dropdowns)",
         required: true,
-        placeholder: "entity://agent/default/curl_my-deepseek"
+        placeholder: "entity://agent/team-alpha/curl_my-deepseek"
       },
       %{
         name: "provider",

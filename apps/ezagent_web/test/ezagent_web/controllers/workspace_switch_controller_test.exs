@@ -36,7 +36,7 @@ defmodule EzagentWeb.WorkspaceSwitchControllerTest do
       _ -> :ok
     end
 
-    regular_uri = "entity://user/default/wsswitch-#{System.unique_integer([:positive])}"
+    regular_uri = "entity://user/team-alpha/wsswitch-#{System.unique_integer([:positive])}"
     {:ok, _} = Ezagent.Users.create(regular_uri, "pw", [])
 
     %{
@@ -77,7 +77,7 @@ defmodule EzagentWeb.WorkspaceSwitchControllerTest do
         build_conn()
         |> Plug.Test.init_test_session(%{
           "current_entity_uri" => uri,
-          "current_workspace_uri" => "workspace://default"
+          "current_workspace_uri" => "workspace://team-alpha"
         })
         |> post("/workspaces/switch", %{"workspace" => target})
 
@@ -90,7 +90,7 @@ defmodule EzagentWeb.WorkspaceSwitchControllerTest do
       # Session preserved — user can keep using their current
       # workspace if they cancel.
       assert Plug.Conn.get_session(conn, :current_entity_uri) == uri
-      assert Plug.Conn.get_session(conn, :current_workspace_uri) == "workspace://default"
+      assert Plug.Conn.get_session(conn, :current_workspace_uri) == "workspace://team-alpha"
     end
   end
 
@@ -101,13 +101,13 @@ defmodule EzagentWeb.WorkspaceSwitchControllerTest do
         build_conn()
         |> Plug.Test.init_test_session(%{
           "current_entity_uri" => uri,
-          "current_workspace_uri" => "workspace://default"
+          "current_workspace_uri" => "workspace://team-alpha"
         })
         |> post("/workspaces/switch", %{"workspace" => "no-such-workspace"})
 
       assert redirected_to(conn) == "/sessions"
       assert Plug.Conn.get_session(conn, :current_entity_uri) == uri
-      assert Plug.Conn.get_session(conn, :current_workspace_uri) == "workspace://default"
+      assert Plug.Conn.get_session(conn, :current_workspace_uri) == "workspace://team-alpha"
       assert Phoenix.Flash.get(conn.assigns.flash, :error) =~ "Unknown workspace"
     end
 
@@ -117,7 +117,7 @@ defmodule EzagentWeb.WorkspaceSwitchControllerTest do
         build_conn()
         |> Plug.Test.init_test_session(%{
           "current_entity_uri" => uri,
-          "current_workspace_uri" => "workspace://default"
+          "current_workspace_uri" => "workspace://team-alpha"
         })
         |> post("/workspaces/switch", %{"workspace" => "system"})
 

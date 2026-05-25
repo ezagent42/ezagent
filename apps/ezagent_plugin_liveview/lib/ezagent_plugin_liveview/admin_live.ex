@@ -52,7 +52,7 @@ defmodule EzagentPluginLiveview.AdminLive do
   alias EzagentPluginLiveview.AppShell
   alias Ezagent.UI.SessionViewRegistry
 
-  @main_session_uri URI.new!("session://default/default/main")
+  @main_session_uri URI.new!("session://default/system/main")
   @message_limit 50
 
   @impl true
@@ -78,14 +78,15 @@ defmodule EzagentPluginLiveview.AdminLive do
     # (same belt-and-suspenders shape as the TerminalView line above).
     :ok = SessionViewRegistry.register(EzagentDomainUi.Routing.RoutingView)
 
-    # Phase 8c follow-up (Allen 2026-05-20) — auto-spawn session://default/default/main
+    # Phase 8c follow-up (Allen 2026-05-20) — auto-spawn session://default/system/main
     # if missing. Without this the LV mounts with a hardcoded
     # `current_session_uri` for a session that doesn't exist; the right
     # panel shows "No members — Chat plugin failed to start?" which is
     # misleading copy AND blames the wrong subsystem.
     #
-    # Root cause: PR-J removed session://default/default/main from the boot static
-    # children (workspace://default seeds it via Workspace.Loader). On
+    # Root cause: PR-J removed session://default/system/main from the boot static
+    # children (the wizard creates it via Workspace.Loader on first login).
+    # On
     # cold start before any session-creating action, KindRegistry has
     # no session://main. The wizard at `/` creates one, but the
     # post-login redirect lands on /sessions directly (Phase 8c PR-L:
@@ -1205,8 +1206,8 @@ defmodule EzagentPluginLiveview.AdminLive do
       |> assign_new(:view_render_fn, fn -> resolve_view_render(assigns) end)
       # Phase 8c PR-F: top-left `ezagent / <workspace>` label +
       # avatar dropdown "Admin" link gate. workspace_name reads the
-      # current session's bound workspace (PR-E #2 binds session://default/default/main
-      # to workspace://default, so this typically resolves to "default").
+      # current session's bound workspace (PR-E #2 binds session://default/system/main
+      # to workspace://system, so this typically resolves to "system").
       |> assign_new(:workspace_name, fn ->
         workspace_name_for(assigns.current_session_uri)
       end)
@@ -2018,7 +2019,7 @@ defmodule EzagentPluginLiveview.AdminLive do
     do: gettext("%{action} failed: %{reason}", action: action, reason: inspect(reason))
 
   # Phase 8c PR-F: look up the workspace name bound to the current
-  # session. Returns the URI host (e.g. "default" for workspace://default)
+  # session. Returns the URI host (e.g. "system" for workspace://system)
   # or nil if the session isn't bound to any workspace. Used for the
   # top-left `ezagent / <name>` label.
   defp workspace_name_for(nil), do: nil

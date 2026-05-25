@@ -81,7 +81,7 @@ defmodule EzagentPluginNp.Integration.Comprehensive4AgentE2eTest do
   alias Ezagent.PluginNp.Test.MockDeepSeek
   alias Ezagent.Routing.{Matcher, Resolver}
 
-  @workspace_uri URI.new!("workspace://default")
+  @workspace_uri URI.new!("workspace://team-alpha")
 
   @uv_path System.find_executable("uv")
   @missing_uv (if is_nil(@uv_path),
@@ -176,7 +176,7 @@ defmodule EzagentPluginNp.Integration.Comprehensive4AgentE2eTest do
       mock_deepseek_url = start_mock_deepseek!()
 
       # ---- 1. Spawn admin user + session ------------------------------
-      session_uri = URI.new!("session://default/default/np-e2e-#{uniq()}")
+      session_uri = URI.new!("session://default/team-alpha/np-e2e-#{uniq()}")
       admin_uri = User.admin_uri()
 
       {:ok, _} = Ezagent.SpawnRegistry.spawn(session_uri)
@@ -191,7 +191,7 @@ defmodule EzagentPluginNp.Integration.Comprehensive4AgentE2eTest do
 
       # ---- 2. Spawn the fake-cc agent (a generic Ezagent.Entity.Agent
       #         Kind with a transient Behavior registration to FakeCcAgent)
-      cc_uri = URI.new!("entity://agent/default/test_cc-#{uniq()}")
+      cc_uri = URI.new!("entity://agent/team-alpha/test_cc-#{uniq()}")
       {:ok, _} = Ezagent.SpawnRegistry.spawn(cc_uri)
 
       :ok =
@@ -213,7 +213,7 @@ defmodule EzagentPluginNp.Integration.Comprehensive4AgentE2eTest do
       end)
 
       # ---- 3. Spawn the real curl-agent + point it at the mock --------
-      curl_uri = URI.new!("entity://agent/default/curl_np-e2e-#{uniq()}")
+      curl_uri = URI.new!("entity://agent/team-alpha/curl_np-e2e-#{uniq()}")
 
       {:ok, _curl_pid} =
         Ezagent.Kind.spawn(Ezagent.Entity.CurlAgent, %{
@@ -242,7 +242,7 @@ defmodule EzagentPluginNp.Integration.Comprehensive4AgentE2eTest do
                })
 
       # ---- 4. Spawn the real np-agent via its Template Class ----------
-      np_uri_str = "entity://agent/default/np_e2e-#{uniq()}"
+      np_uri_str = "entity://agent/team-alpha/np_e2e-#{uniq()}"
 
       assert {:ok, [%URI{} = np_uri], %{fresh?: true}} =
                NpTemplate.instantiate(

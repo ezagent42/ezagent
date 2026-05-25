@@ -23,7 +23,7 @@ defmodule Ezagent.Behavior.SandboxTest do
     end
 
     test "init_slice/1 defaults both fields to nil for an unconfigured agent" do
-      assert Sandbox.init_slice(%{uri: URI.new!("entity://agent/default/x")}) ==
+      assert Sandbox.init_slice(%{uri: URI.new!("entity://agent/team-alpha/x")}) ==
                %{config_dir_path: nil, template_class: nil}
     end
 

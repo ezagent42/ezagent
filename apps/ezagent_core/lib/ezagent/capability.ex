@@ -122,11 +122,11 @@ defmodule Ezagent.Capability do
     session_str = URI.to_string(session_uri)
 
     # Match if needed URI is the session URI itself, or a sub-URI of
-    # it (e.g. `session://default/default/main?action=chat.send` is within
-    # `session://default/default/main`). String prefix is sufficient given URI
+    # it (e.g. `session://default/team-alpha/main?action=chat.send` is within
+    # `session://default/team-alpha/main`). String prefix is sufficient given URI
     # canonical form; we add a `/` boundary check to avoid false
-    # positives like `session://default/default/main2` matching `{:within_session,
-    # session://default/default/main}`.
+    # positives like `session://default/team-alpha/main2` matching `{:within_session,
+    # session://default/team-alpha/main}`.
     needed_str == session_str or
       String.starts_with?(needed_str, session_str <> "/")
   end
@@ -350,7 +350,7 @@ defmodule Ezagent.Capability do
   # hand-constructed URIs bypassing parse!/1 raise here (structural
   # programming error — let it crash rather than mask).
   #
-  # NB: a URI like `session://default/default/main` parses to
+  # NB: a URI like `session://default/team-alpha/main` parses to
   # `%URI{host: "default", path: "/default/main"}`. The path's first
   # segment is the workspace name; the second is the instance name.
   # The `<type>` axis lives in `host`, NOT in the path.
@@ -454,8 +454,8 @@ defmodule Ezagent.Capability do
   target URI) tuple — for dispatch step 5.5 to feed into `matches?/2`.
 
   Phase 3d (P3-D6 hard flip + #P1-8): the target URI is required so
-  we can extract the `instance` part (e.g. `session://default/default/main` from
-  `session://default/default/main?action=chat.send`). `behavior` is looked up via
+  we can extract the `instance` part (e.g. `session://default/team-alpha/main` from
+  `session://default/team-alpha/main?action=chat.send`). `behavior` is looked up via
   `BehaviorRegistry.lookup(kind_module, action)` — same lookup
   `Kind.Runtime` does for invoke routing.
 

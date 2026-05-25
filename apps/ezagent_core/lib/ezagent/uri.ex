@@ -41,14 +41,14 @@ defmodule Ezagent.URI do
   ### Examples
 
       entity://user/system/admin                             # PR-2 entity
-      entity://agent/default/cc_demo?action=chat.receive      # entity + action
+      entity://agent/team-alpha/cc_demo?action=chat.receive      # entity + action
       entity://agent/team-alpha/curl_my-deepseek              # cross-workspace entity
-      session://default/default/main?action=chat.send         # PR-7 session
-      template://agent/default/cc-orchestrator                # PR-7 agent template
-      template://session/default/code-review@abc123           # PR-7 session template
-      resource://uploads/default/file-abc                     # PR-7 resource
-      workspace://default                                     # unchanged (tenant root)
-      workspace://default/main?action=routing.add_rule        # unchanged
+      session://default/team-alpha/main?action=chat.send         # PR-7 session
+      template://agent/system/cc-orchestrator                # PR-7 agent template
+      template://session/team-alpha/code-review@abc123        # PR-7 session template
+      resource://uploads/team-alpha/file-abc                  # PR-7 resource
+      workspace://team-alpha                                     # unchanged (tenant root)
+      workspace://team-alpha/main?action=routing.add_rule        # unchanged
       system://routing/default?action=add_rule                # unchanged (cross-workspace)
 
   ## SPEC v3 deltas
@@ -113,9 +113,9 @@ defmodule Ezagent.URI do
   `template://` / `resource://` PR-7), the path MUST be
   `/<workspace>/<name>`:
 
-  - 2-segment paths (`session://default/default/main`) raise with
+  - 2-segment paths (`session://default/team-alpha/main`) raise with
     `ArgumentError: <scheme> URI must include workspace segment`.
-  - 4+ segments (`session://default/default/main/extra`) raise with
+  - 4+ segments (`session://default/team-alpha/main/extra`) raise with
     `ArgumentError: <scheme> URI sub-resource positions are reserved`.
 
   Cross-cutting schemes (`workspace://`, `system://`) are unchanged
@@ -205,17 +205,17 @@ defmodule Ezagent.URI do
 
   Examples:
   - `entity://user/system/admin` → unchanged
-  - `entity://agent/default/cc_demo?action=chat.receive`
+  - `entity://agent/team-alpha/cc_demo?action=chat.receive`
     → `%URI{scheme: "entity", host: "agent", path: "/default/cc_demo"}`
-  - `session://default/default/main?action=chat.send`
+  - `session://default/team-alpha/main?action=chat.send`
     → `%URI{scheme: "session", host: "default", path: "/default/main"}`
-  - `template://agent/default/cc-orchestrator`
+  - `template://agent/system/cc-orchestrator`
     → unchanged (already in instance form)
   - `system://routing/default?action=add_rule`
     → `%URI{scheme: "system", host: "routing", path: "/default"}`
-  - `workspace://default/main?action=routing.add_rule`
+  - `workspace://team-alpha/main?action=routing.add_rule`
     → `%URI{scheme: "workspace", host: "default", path: nil}` (1-seg)
-  - `workspace://default` → unchanged
+  - `workspace://team-alpha` → unchanged
 
   Used by dispatch to find the instance pid in KindRegistry.
   """
@@ -279,7 +279,7 @@ defmodule Ezagent.URI do
   - Capability matcher (Phase 9 PR-3) to enforce workspace dimension.
 
   Examples:
-  - `entity://user/system/admin` → `workspace://default`
+  - `entity://user/system/admin` → `workspace://system`
   - `entity://agent/team-alpha/cc_demo` → `workspace://team-alpha`
 
   Raises `ArgumentError` if the URI is not a 3-segment entity URI
@@ -347,12 +347,12 @@ defmodule Ezagent.URI do
   key and converts the value (e.g. dotted form for action+behavior).
 
   Examples:
-  - `entity://agent/default/echo_default?action=echo.say` → `{:ok, {:echo, :say}}`
-  - `entity://agent/default/cc_demo-builder?action=chat.receive` → `{:ok, {:chat, :receive}}`
-  - `session://default/default/main?action=chat.send` → `{:ok, {:chat, :send}}`
-  - `entity://agent/default/cc_demo-builder` → `{:error, :missing_action}`
-  - `entity://agent/default/cc_demo-builder?action=` → `{:error, :missing_action}`
-  - `entity://agent/default/cc_demo-builder?action=justone` → `{:error, :malformed_action}`
+  - `entity://agent/system/echo_default?action=echo.say` → `{:ok, {:echo, :say}}`
+  - `entity://agent/team-alpha/cc_demo-builder?action=chat.receive` → `{:ok, {:chat, :receive}}`
+  - `session://default/team-alpha/main?action=chat.send` → `{:ok, {:chat, :send}}`
+  - `entity://agent/team-alpha/cc_demo-builder` → `{:error, :missing_action}`
+  - `entity://agent/team-alpha/cc_demo-builder?action=` → `{:error, :missing_action}`
+  - `entity://agent/team-alpha/cc_demo-builder?action=justone` → `{:error, :malformed_action}`
   """
   @spec behavior_action(URI.t()) ::
           {:ok, {atom(), atom()}} | {:error, :missing_action | :malformed_action}
@@ -389,9 +389,9 @@ defmodule Ezagent.URI do
 
   Examples:
   - `entity://user/system/admin` → `""`
-  - `entity://agent/default/cc_demo-builder?action=chat.receive` → `"behavior/chat/receive"`
+  - `entity://agent/team-alpha/cc_demo-builder?action=chat.receive` → `"behavior/chat/receive"`
   - `entity://agent/cc_demo-builder/auth/login` → `"auth/login"`
-  - `session://default/default/main?action=chat.send` → `"behavior/chat/send"`
+  - `session://default/team-alpha/main?action=chat.send` → `"behavior/chat/send"`
   """
   @spec subresource(URI.t()) :: String.t()
   def subresource(%URI{path: nil}), do: ""

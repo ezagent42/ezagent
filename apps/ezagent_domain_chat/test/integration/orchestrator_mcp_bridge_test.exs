@@ -109,7 +109,7 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpBridgeTest do
 
   @endpoint TestEndpoint
 
-  @workspace_uri URI.new!("workspace://default")
+  @workspace_uri URI.new!("workspace://team-alpha")
 
   setup_all do
     # ChannelTest needs the endpoint configured + alive (no HTTP
@@ -145,14 +145,14 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpBridgeTest do
   # `caps` — `McpServer.from_orchestrator_uri/1` loads caps from there
   # (the agent's own slice), never from the wire.
   defp spawn_orchestrator_with_caps(caps) do
-    orchestrator_uri = URI.parse("entity://agent/default/cc_orch-bridge-#{uniq()}")
+    orchestrator_uri = URI.parse("entity://agent/team-alpha/cc_orch-bridge-#{uniq()}")
     {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: orchestrator_uri, initial_caps: caps})
     :ok = Ezagent.WorkspaceRegistry.bind(orchestrator_uri, @workspace_uri)
     orchestrator_uri
   end
 
   defp spawn_session do
-    session_uri = URI.parse("session://generic/default/orch-bridge-#{uniq()}")
+    session_uri = URI.parse("session://generic/team-alpha/orch-bridge-#{uniq()}")
     {:ok, _pid} = Ezagent.Kind.spawn(Session, %{uri: session_uri})
     :ok = Ezagent.WorkspaceRegistry.bind(session_uri, @workspace_uri)
     session_uri
@@ -302,7 +302,7 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpBridgeTest do
 
     test "an authenticated agent that is NOT a registered orchestrator is denied the join" do
       # An agent with a valid URI but no McpRegistry row — fail-closed.
-      orphan = URI.parse("entity://agent/default/cc_not-an-orch-#{uniq()}")
+      orphan = URI.parse("entity://agent/team-alpha/cc_not-an-orch-#{uniq()}")
       {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: orphan})
 
       result =
@@ -458,9 +458,9 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpBridgeTest do
 
   describe "McpRegistry binds the server-derived orchestrator context" do
     test "register/lookup round-trips the (session, workspace, owner, parent) context" do
-      orch = URI.parse("entity://agent/default/cc_reg-#{uniq()}")
-      session_uri = URI.parse("session://generic/default/reg-#{uniq()}")
-      parent = URI.parse("template://session/default/reg-parent@abc123")
+      orch = URI.parse("entity://agent/team-alpha/cc_reg-#{uniq()}")
+      session_uri = URI.parse("session://generic/team-alpha/reg-#{uniq()}")
+      parent = URI.parse("template://session/team-alpha/reg-parent@abc123")
 
       :ok =
         McpRegistry.register(orch,
@@ -481,7 +481,7 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpBridgeTest do
     end
 
     test "from_orchestrator_uri/1 fails closed for an unregistered orchestrator" do
-      orch = URI.parse("entity://agent/default/cc_unreg-#{uniq()}")
+      orch = URI.parse("entity://agent/team-alpha/cc_unreg-#{uniq()}")
       assert {:error, :orchestrator_not_registered} = McpServer.from_orchestrator_uri(orch)
     end
   end

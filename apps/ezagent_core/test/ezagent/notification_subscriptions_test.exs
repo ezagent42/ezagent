@@ -576,7 +576,6 @@ defmodule Ezagent.NotificationSubscriptionsTest do
         assert broadcast_event.uri == stream
         assert broadcast_event.slice_key == :sk
       after
-
         :ok =
           Subs.unsubscribe(owner, stream, %{
             caller: owner,
@@ -606,7 +605,11 @@ defmodule Ezagent.NotificationSubscriptionsTest do
 
       # Attack via :sys.replace_state — runs in owner process.
       :sys.replace_state(Subs, fn state ->
-        :ets.insert(Subs.table(), {key, %{registered_at: DateTime.utc_now(), granted_by: :sys_attack}})
+        :ets.insert(
+          Subs.table(),
+          {key, %{registered_at: DateTime.utc_now(), granted_by: :sys_attack}}
+        )
+
         state
       end)
 

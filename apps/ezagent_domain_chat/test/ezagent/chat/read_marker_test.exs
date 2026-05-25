@@ -23,13 +23,13 @@ defmodule Ezagent.Chat.ReadMarkerTest do
 
   defp unique_session_uri(suffix) do
     URI.parse(
-      "session://default/default/read_marker_#{suffix}_#{System.unique_integer([:positive])}"
+      "session://default/team-alpha/read_marker_#{suffix}_#{System.unique_integer([:positive])}"
     )
   end
 
   defp unique_user_uri(suffix) do
     URI.parse(
-      "entity://user/default/read_marker_user_#{suffix}_#{System.unique_integer([:positive])}"
+      "entity://user/team-alpha/read_marker_user_#{suffix}_#{System.unique_integer([:positive])}"
     )
   end
 

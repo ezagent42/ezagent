@@ -16,7 +16,7 @@ defmodule Ezagent.Behavior.WorkspaceTest do
         WB.init_slice(%{
           members: [
             URI.parse("entity://user/system/admin"),
-            URI.parse("entity://agent/default/test_x")
+            URI.parse("entity://agent/team-alpha/test_x")
           ]
         })
 
@@ -36,7 +36,7 @@ defmodule Ezagent.Behavior.WorkspaceTest do
         WB.init_slice(%{
           members: [
             URI.parse("entity://user/system/admin"),
-            URI.parse("entity://agent/default/test_x")
+            URI.parse("entity://agent/team-alpha/test_x")
           ]
         })
 
@@ -82,7 +82,7 @@ defmodule Ezagent.Behavior.WorkspaceTest do
   describe "routing_rules actions" do
     test "set + list round-trip" do
       slice = WB.init_slice(%{})
-      rules = [%{matcher: %{type: "always"}, receivers: ["session://default/default/main"]}]
+      rules = [%{matcher: %{type: "always"}, receivers: ["session://default/system/main"]}]
 
       {:ok, slice2} = WB.invoke(:set_routing_rules, slice, %{rules: rules}, %{})
 
@@ -95,7 +95,7 @@ defmodule Ezagent.Behavior.WorkspaceTest do
     test "returns child list with one entry per member" do
       uris = [
         URI.parse("entity://user/system/admin"),
-        URI.parse("entity://agent/default/test_cc-builder")
+        URI.parse("entity://agent/team-alpha/test_cc-builder")
       ]
 
       slice = WB.init_slice(%{members: uris})

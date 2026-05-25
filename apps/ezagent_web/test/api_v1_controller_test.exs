@@ -38,7 +38,7 @@ defmodule EzagentWeb.ApiV1ControllerTest do
   end
 
   test "POST with unknown kind returns 404", %{conn: conn} do
-    conn = post(conn, "/api/v1/nope/say", %{"target" => "entity://agent/default/test_x"})
+    conn = post(conn, "/api/v1/nope/say", %{"target" => "entity://agent/team-alpha/test_x"})
 
     assert conn.status == 404
     body = Jason.decode!(conn.resp_body)

@@ -29,8 +29,6 @@ defmodule EzagentCli.Dispatch do
         {:error, {:missing_instance_arg, type_name}}
 
       instance ->
-        target_uri = build_target_uri(type_name, instance, behavior_module, action)
-
         # Extract action args (everything except --<type_name>, --as, --deadline-ms)
         reserved = MapSet.new([type_name, :as, :deadline_ms])
         action_args = Map.drop(options, MapSet.to_list(reserved))
@@ -57,6 +55,12 @@ defmodule EzagentCli.Dispatch do
         # clear message instead of silently elevating to admin.
         case derive_caller(options) do
           {%URI{} = caller_uri, caps} ->
+            # SPEC #324: bare-name `--session foo` promotion derives
+            # workspace structurally from caller_uri instead of the
+            # legacy silent `"default"` default.
+            target_uri =
+              build_target_uri(type_name, instance, behavior_module, action, caller_uri)
+
             deadline_ms = Map.get(options, :deadline_ms) || @default_deadline_ms
 
             inv = %Invocation{
@@ -90,17 +94,19 @@ defmodule EzagentCli.Dispatch do
     end
   end
 
-  defp build_target_uri(type_name, instance, behavior_module, action) do
+  defp build_target_uri(type_name, instance, behavior_module, action, %URI{} = caller_uri) do
     scheme = scheme_for(type_name)
     behavior_seg = behavior_module.state_slice() |> to_string()
 
     # SPEC v2 §5.2 (PR #148): action lives in ?action=<behavior>.<action> query.
     # SPEC v3 §3.6 (Phase 9 PR-7): session/template/resource URIs are
     # 3-segment; if the caller passed a bare instance name (e.g.
-    # `--session foo`), promote it to the default-template + default-
-    # workspace form (`session://default/default/foo`). Operators
-    # needing a different workspace can pass the full URI form.
-    promoted_instance = promote_to_3seg(scheme, instance)
+    # `--session foo`), promote it to the default-template + caller's
+    # workspace form (SPEC #324 — workspace derived structurally from
+    # the caller URI; admin → system, tenant → their workspace).
+    # Operators needing a different workspace can pass the full URI form.
+    caller_workspace = workspace_name_from_caller(caller_uri)
+    promoted_instance = promote_to_3seg(scheme, instance, caller_workspace)
 
     URI.parse(
       "#{scheme}://#{promoted_instance}?action=#{behavior_seg}.#{to_string(action)}"
@@ -112,18 +118,37 @@ defmodule EzagentCli.Dispatch do
   # consistently. Phase 5+ can add scheme/0 callback on Kind if needed.
   defp scheme_for(type_name), do: to_string(type_name)
 
-  # SPEC v3 §3.6 (Phase 9 PR-7) — fill in missing template/workspace
-  # segments for the unified per-tenant schemes when the operator
-  # passed a bare name on the CLI.
-  defp promote_to_3seg("session", instance), do: fill_default("default", instance)
-  defp promote_to_3seg("template", instance), do: fill_default("default", instance)
-  defp promote_to_3seg("resource", instance), do: fill_default("default", instance)
-  defp promote_to_3seg(_scheme, instance), do: instance
+  # SPEC #324: extract workspace name from caller URI structurally.
+  # Falls back to `"system"` only for non-entity callers (test fixtures
+  # / unknown schemes). The fallback is safe because production callers
+  # always have an entity:// URI from the CLI bearer-token auth path.
+  defp workspace_name_from_caller(%URI{scheme: "entity"} = uri) do
+    %URI{host: name} = Ezagent.URI.entity_workspace_uri(uri)
+    name
+  end
 
-  defp fill_default(type_default, instance) do
+  defp workspace_name_from_caller(_), do: "system"
+
+  # SPEC v3 §3.6 (Phase 9 PR-7) + SPEC #324 — fill in missing
+  # template/workspace segments for the unified per-tenant schemes when
+  # the operator passed a bare name on the CLI. Workspace is taken from
+  # the caller URI structurally rather than the silent `"default"`
+  # legacy default.
+  defp promote_to_3seg("session", instance, workspace),
+    do: fill_caller_workspace("default", workspace, instance)
+
+  defp promote_to_3seg("template", instance, workspace),
+    do: fill_caller_workspace("default", workspace, instance)
+
+  defp promote_to_3seg("resource", instance, workspace),
+    do: fill_caller_workspace("default", workspace, instance)
+
+  defp promote_to_3seg(_scheme, instance, _workspace), do: instance
+
+  defp fill_caller_workspace(type_default, workspace, instance) do
     case String.split(instance, "/") do
-      [bare] -> "#{type_default}/default/#{bare}"
-      [type, bare] -> "#{type}/default/#{bare}"
+      [bare] -> "#{type_default}/#{workspace}/#{bare}"
+      [type, bare] -> "#{type}/#{workspace}/#{bare}"
       [_type, _ws, _name | _rest] -> instance
       _ -> instance
     end

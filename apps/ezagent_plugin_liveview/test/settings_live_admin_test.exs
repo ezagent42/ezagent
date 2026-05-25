@@ -42,7 +42,7 @@ defmodule EzagentPluginLiveview.SettingsLiveAdminTest do
     # real entity that EzagentWeb.Plugs.RequireEntity will accept but
     # `Ezagent.Identity.admin?/1` will reject. The URI must be a
     # 3-segment entity URI (workspace segment required, SPEC v3 §5.15).
-    uri = "entity://user/default/v1_settings_to_admin_test_user"
+    uri = "entity://user/team-alpha/v1_settings_to_admin_test_user"
     {:ok, _user} = Ezagent.Users.create(URI.parse(uri), nil, [])
 
     Phoenix.ConnTest.build_conn()

@@ -27,13 +27,13 @@ defmodule EzagentDomainChat.Application do
      the first-login wizard at `/`).
 
   3. **No hardcoded default session** — PR-J removed the static
-     `session://default/default/main` supervisor child. The wizard
+     `session://default/system/main` supervisor child. The wizard
      (`EzagentWeb.HomeLive`) creates the operator's first session via
      `EzagentDomainChat.create_session/2` (which spawns + binds the
      chosen workspace + joins admin). In the `:test` environment,
      `maybe_seed_main_session_for_tests/0` calls the same facade at
      boot so legacy test suites asserting against boot-time
-     `session://default/default/main` continue to pass; SPEC v2 PR-F
+     `session://default/system/main` continue to pass; SPEC v2 PR-F
      left those tests untouched (test-fixture URIs only — the
      `default` workspace itself is no longer boot-seeded; PR-C
      #295).
@@ -69,14 +69,14 @@ defmodule EzagentDomainChat.Application do
     # lazy-`init/0` pattern as `EzagentPluginCc.BridgeRegistry`.
     :ok = Ezagent.Orchestrator.McpRegistry.init()
 
-    # Phase 8c PR-J (Allen 2026-05-20) — `session://default/default/main` is no longer
+    # Phase 8c PR-J (Allen 2026-05-20) — `session://default/system/main` is no longer
     # a static supervisor child. The first-login wizard at `/` creates
     # the default session via the canonical `EzagentDomainChat.create_session/2`
     # facade (which binds workspace + joins admin). In `:test`
     # environment the previous boot behavior is preserved via
     # `seed_main_session_for_tests/0` below — too many tests (~10) hard-
-    # coded `session://default/default/main` alive at boot to require setup migration in
-    # a single PR. Dev / prod boot WITHOUT session://default/default/main; the wizard
+    # coded `session://default/system/main` alive at boot to require setup migration in
+    # a single PR. Dev / prod boot WITHOUT session://default/system/main; the wizard
     # populates it on first user visit.
     children = [
       {DynamicSupervisor, name: EzagentDomainChat.AgentSupervisor, strategy: :one_for_one},
@@ -158,7 +158,7 @@ defmodule EzagentDomainChat.Application do
 
         # Phase 7 PR 45: install the cc-orchestrator AgentTemplate seed
         # so SessionTemplate-instantiation paths (PR 41 Generator) can
-        # reference `template://agent/default/cc-orchestrator` without operator
+        # reference `template://agent/system/cc-orchestrator` without operator
         # setup. Idempotent: re-install on existing template is a no-op.
         :ok = seed_cc_orchestrator_template()
 
@@ -183,7 +183,7 @@ defmodule EzagentDomainChat.Application do
   end
 
   # Test-environment seed: many existing test suites (~10 across
-  # apps/ezagent_*) assert against `session://default/default/main` alive at boot. Until
+  # apps/ezagent_*) assert against `session://default/system/main` alive at boot. Until
   # those setups are migrated to per-test seeding, the chat Application
   # creates the default session in `:test` env via the same canonical
   # `EzagentDomainChat.create_session/2` facade the wizard uses. In
@@ -195,7 +195,7 @@ defmodule EzagentDomainChat.Application do
       # creator via SpawnRegistry before dispatching `chat.join` (see
       # `join_creator/2`). Admin User Kind is no longer a static child;
       # the demand-spawn covers the gap so admin appears in
-      # session://default/default/main's members map post-seed.
+      # session://default/system/main's members map post-seed.
       case EzagentDomainChat.create_session("main", User.admin_uri()) do
         {:ok, _uri} ->
           :ok
@@ -207,7 +207,7 @@ defmodule EzagentDomainChat.Application do
           require Logger
 
           Logger.warning(
-            "test seed of session://default/default/main failed: #{inspect(reason)}; tests asserting on boot-time main may fail"
+            "test seed of session://default/system/main failed: #{inspect(reason)}; tests asserting on boot-time main may fail"
           )
 
           :ok
@@ -308,7 +308,7 @@ defmodule EzagentDomainChat.Application do
   # The cc-orchestrator is the LLM-driven session-internal manager
   # (Decision D7-1, #136). Every SessionTemplate's
   # `orchestrator_template_uri` field defaults to
-  # `template://agent/default/cc-orchestrator` — so the template must
+  # `template://agent/system/cc-orchestrator` — so the template must
   # exist by the time the Generator tries to spawn an orchestrator
   # instance.
   #
@@ -579,7 +579,7 @@ defmodule EzagentDomainChat.Application do
 
   # Phase 8c PR-J — `kind_server_spec/4`, `bind_default_session_to_default_workspace/0`,
   # and `admin_user_joins_default_session/0` removed. All three were
-  # workarounds for the static-child `session://default/default/main` bypass. The
+  # workarounds for the static-child `session://default/system/main` bypass. The
   # wizard's call to `EzagentDomainChat.create_session/2` does the
   # bind + admin join in one place — same code path for every session,
   # including the default.

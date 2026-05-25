@@ -255,7 +255,7 @@ defmodule Ezagent.PluginNp.Template.NpAgent do
         type: :uri,
         label: "Agent URI (entity://agent/<workspace>/np_<name>)",
         required: true,
-        placeholder: "entity://agent/default/np_my-calc"
+        placeholder: "entity://agent/team-alpha/np_my-calc"
       },
       %{
         name: "cwd",

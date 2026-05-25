@@ -58,7 +58,7 @@ defmodule EzagentDomainUi.Primitives do
   Monogram or icon avatar for an Entity URI.
 
       <.avatar uri="entity://user/system/admin" />
-      <.avatar uri="entity://agent/default/cc_demo" size="md" />
+      <.avatar uri="entity://agent/team-alpha/cc_demo" size="md" />
   """
   attr(:uri, :any, required: true)
   attr(:size, :string, default: "sm", values: ~w(xs sm md))
@@ -266,7 +266,7 @@ defmodule EzagentDomainUi.Primitives do
 
       <.tree_list>
         <:section title="Direct Sessions">
-          <:item>session://default/default/dm-1</:item>
+          <:item>session://default/team-alpha/dm-1</:item>
         </:section>
       </.tree_list>
 
@@ -744,7 +744,7 @@ defmodule EzagentDomainUi.Primitives do
           name={uri_picker_freetext_name(@name, @mode)}
           value={@freetext_value}
           disabled
-          placeholder="entity://agent/default/cc_demo"
+          placeholder="entity://agent/team-alpha/cc_demo"
           class="mt-1 w-full px-2 py-1.5 text-xs border rounded-md font-mono border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
         />
       </details>

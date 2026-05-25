@@ -5,7 +5,7 @@ defmodule Ezagent.Entity.CurlAgent do
 
   ## URI scheme (PR #141 SPEC v2)
 
-  `entity://agent/default/curl_<instance_name>` — flavor `curl` prefix on
+  `entity://agent/team-alpha/curl_<instance_name>` — flavor `curl` prefix on
   the name segment distinguishes from `cc_*` (PTY-based Claude Code
   agents). When the chat router dispatches
   `<receiver>?action=chat.receive`, the BehaviorRegistry maps

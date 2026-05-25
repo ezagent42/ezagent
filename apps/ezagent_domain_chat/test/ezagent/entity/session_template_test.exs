@@ -50,7 +50,7 @@ defmodule Ezagent.Entity.SessionTemplateTest do
     test "same slice content → same hash (deterministic)" do
       slice = %{
         name: "stable",
-        agent_slots: [{"a", URI.parse("template://agent/default/x")}],
+        agent_slots: [{"a", URI.parse("template://agent/team-alpha/x")}],
         version_hash: nil
       }
 
@@ -86,14 +86,14 @@ defmodule Ezagent.Entity.SessionTemplateTest do
         name: "stable",
         agent_slots: [],
         created_at: ~U[2026-05-18 10:00:00Z],
-        created_by: URI.parse("entity://user/default/alice")
+        created_by: URI.parse("entity://user/team-alpha/alice")
       }
 
       slice_b = %{
         name: "stable",
         agent_slots: [],
         created_at: ~U[2026-12-31 23:59:59Z],
-        created_by: URI.parse("entity://user/default/bob")
+        created_by: URI.parse("entity://user/team-alpha/bob")
       }
 
       assert SessionTemplate.compute_version_hash(slice_a) ==
@@ -116,12 +116,12 @@ defmodule Ezagent.Entity.SessionTemplateTest do
   describe "build_uri/2" do
     test "constructs template://session/<workspace>/<name>@<hash> URI shape (SPEC v3 §3.6 PR-7)" do
       hash = String.duplicate("a", 64)
-      uri = SessionTemplate.build_uri("code-review", hash)
+      uri = SessionTemplate.build_uri("code-review", hash, workspace: "team-alpha")
 
       assert uri.scheme == "template"
       assert uri.host == "session"
-      # PR-7 adds workspace segment; default workspace is `default`.
-      assert uri.path == "/default/code-review@" <> hash
+      # SPEC #324: workspace is required (no silent `"default"` fallback).
+      assert uri.path == "/team-alpha/code-review@" <> hash
     end
 
     test "build_uri/3 with explicit workspace places template in workspace path segment" do

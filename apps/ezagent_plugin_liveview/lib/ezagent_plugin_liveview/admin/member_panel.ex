@@ -32,7 +32,7 @@ defmodule EzagentPluginLiveview.Admin.MemberPanel do
   the no-silent-drop invariant).
 
   Phase 8b — for every cc-managed agent member
-  (`entity://agent/default/cc_*`) the row renders a small PTY (🖥️)
+  (`entity://agent/team-alpha/cc_*`) the row renders a small PTY (🖥️)
   button. Click dispatches `switch_to_pty_for_agent` which sets the
   SessionEditor view-mode to `:pty` and binds xterm.js to that agent.
   """

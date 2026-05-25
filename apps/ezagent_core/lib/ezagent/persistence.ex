@@ -49,7 +49,7 @@ defmodule Ezagent.Persistence do
   ## Examples
 
       iex> import Ecto.Query
-      iex> q = Ezagent.Persistence.scope_by_workspace(Ezagent.Message, URI.new!("workspace://default"))
+      iex> q = Ezagent.Persistence.scope_by_workspace(Ezagent.Message, URI.new!("workspace://team-alpha"))
       iex> %Ecto.Query{} = q
       iex> Macro.to_string(q.wheres |> hd() |> Map.get(:expr)) =~ "workspace_uri"
       true
@@ -77,10 +77,16 @@ defmodule Ezagent.Persistence do
   For cross-workspace / cross-cutting URIs (`system://`, `template://`,
   `resource://`, unknown schemes), `Capability.workspace_of/1` returns
   `:any` — this module REJECTS that with `{:error, :no_workspace}` so
-  the caller is forced to supply an explicit fallback (typically
-  `Ezagent.WorkspaceRegistry.default_workspace_uri/0`). The column is
-  `null: false`, so silent `:any` would crash the insert with a less
-  helpful error.
+  the caller is forced to supply an explicit fallback. The
+  column is `null: false`, so silent `:any` would crash the insert
+  with a less helpful error.
+
+  Per SPEC #324 rev 3 (Allen 2026-05-25): there is NO global default
+  workspace function. Cross-cutting writers (audit / snapshot of
+  `system://` URIs) inline the `"workspace://system"` literal at the
+  write site — never via a shared helper, because a shared helper hides
+  "no workspace passed" bugs as silent fallbacks. Every other writer
+  derives workspace structurally from the entity URI or raises.
   """
   @spec workspace_uri_for(URI.t() | String.t()) ::
           {:ok, String.t()} | {:error, :no_workspace}
@@ -103,7 +109,9 @@ defmodule Ezagent.Persistence do
   @spec workspace_uri_for!(URI.t() | String.t()) :: String.t()
   def workspace_uri_for!(uri) do
     case workspace_uri_for(uri) do
-      {:ok, ws} -> ws
+      {:ok, ws} ->
+        ws
+
       {:error, :no_workspace} ->
         raise ArgumentError,
               "no workspace can be derived from #{inspect(uri)} — " <>
@@ -112,15 +120,14 @@ defmodule Ezagent.Persistence do
     end
   end
 
-  @doc """
-  Default workspace_uri string, for insert sites that legitimately
-  predate workspace context (e.g. audit rows captured before caller
-  is identified, snapshot of system://routing). Calls
-  `Ezagent.WorkspaceRegistry.default_workspace_uri/0` and stringifies.
-  """
-  @spec default_workspace_uri() :: String.t()
-  def default_workspace_uri do
-    {:ok, ws} = Ezagent.WorkspaceRegistry.default_workspace_uri()
-    URI.to_string(ws)
-  end
+  # SPEC #324 rev 3 (Allen 2026-05-25): `default_workspace_uri/0` was
+  # DELETED. A global fallback hides "no workspace passed" bugs as
+  # silent silent-defaults — exactly what `feedback_let_it_crash_no_workarounds`
+  # forbids. Cross-cutting writers (audit / snapshot of `system://` URIs)
+  # MUST inline the `"workspace://system"` literal at the write site
+  # with a comment explaining why (a system:// URI naturally lands in
+  # the admin workspace, which exists at deploy seed time). Every other
+  # writer derives workspace structurally via
+  # `Ezagent.URI.entity_workspace_uri/1` or `workspace_uri_for!/1`, or
+  # raises ArgumentError.
 end

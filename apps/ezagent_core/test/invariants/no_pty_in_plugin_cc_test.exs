@@ -60,9 +60,13 @@ defmodule EzagentCore.Invariants.NoPtyInPluginCcTest do
       @forbidden
       |> Enum.flat_map(fn name ->
         case System.cmd("grep", ["-rn", name, cc_lib, "--include=*.ex"], stderr_to_stdout: true) do
-          {output, 0} -> String.split(output, "\n", trim: true)
+          {output, 0} ->
+            String.split(output, "\n", trim: true)
+
           # grep exit 1 = no matches found → no violations for this name
-          {_output, 1} -> []
+          {_output, 1} ->
+            []
+
           # grep exit ≥2 = actual error (path doesn't exist, etc.) — surface it
           {output, code} ->
             flunk("grep failed (exit #{code}) for #{name}: #{output}")

@@ -29,11 +29,11 @@ defmodule EzagentWeb.LiveAuthTest do
                LiveAuth.on_mount(
                  :require_entity,
                  %{},
-                 %{"current_entity_uri" => "entity://user/default/admin"},
+                 %{"current_entity_uri" => "entity://user/team-alpha/admin"},
                  socket
                )
 
-      assert %URI{scheme: "entity", host: "user", path: "/default/admin"} =
+      assert %URI{scheme: "entity", host: "user", path: "/team-alpha/admin"} =
                socket.assigns.current_entity_uri
     end
 
@@ -44,11 +44,11 @@ defmodule EzagentWeb.LiveAuthTest do
                LiveAuth.on_mount(
                  :require_entity,
                  %{},
-                 %{"current_entity_uri" => "entity://agent/default/cc_demo"},
+                 %{"current_entity_uri" => "entity://agent/team-alpha/cc_demo"},
                  socket
                )
 
-      assert %URI{scheme: "entity", host: "agent", path: "/default/cc_demo"} =
+      assert %URI{scheme: "entity", host: "agent", path: "/team-alpha/cc_demo"} =
                socket.assigns.current_entity_uri
     end
 
@@ -91,14 +91,14 @@ defmodule EzagentWeb.LiveAuthTest do
       assert {:redirect, %{to: "/login"}} = socket.redirected
     end
 
-    test "REJECTS non-entity scheme (session://default/default/main)" do
+    test "REJECTS non-entity scheme (session://default/system/main)" do
       socket = build_socket()
 
       assert {:halt, socket} =
                LiveAuth.on_mount(
                  :require_entity,
                  %{},
-                 %{"current_entity_uri" => "session://default/default/main"},
+                 %{"current_entity_uri" => "session://default/system/main"},
                  socket
                )
 

@@ -62,8 +62,8 @@ defmodule EzagentDomainChat.Integration.WorkspaceIsolationTest do
     :ok = Ezagent.WorkspaceRegistry.bind(session_a, workspace_a)
     :ok = Ezagent.WorkspaceRegistry.bind(session_b, workspace_b)
 
-    sender = URI.new!("entity://user/default/#{unique("sender")}")
-    eavesdropper = URI.new!("entity://user/default/#{unique("eavesdropper")}")
+    sender = URI.new!("entity://user/team-alpha/#{unique("sender")}")
+    eavesdropper = URI.new!("entity://user/team-alpha/#{unique("eavesdropper")}")
 
     {:ok, _} = Ezagent.SpawnRegistry.spawn(sender)
     {:ok, _} = Ezagent.SpawnRegistry.spawn(eavesdropper)

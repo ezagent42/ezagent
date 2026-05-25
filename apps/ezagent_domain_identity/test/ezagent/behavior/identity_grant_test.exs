@@ -11,7 +11,7 @@ defmodule Ezagent.Behavior.IdentityGrantTest do
   alias Ezagent.Behavior.{Identity, IdentityAdmin}
   alias Ezagent.Capability
 
-  @workspace_uri URI.new!("workspace://default")
+  @workspace_uri URI.new!("workspace://team-alpha")
   @granter URI.parse("entity://user/system/admin")
 
   defp echo_cap do
@@ -82,13 +82,13 @@ defmodule Ezagent.Behavior.IdentityGrantTest do
     # `Ezagent.Notifications.notify/2` now requires
     # `%{type: atom, body: map, source: module}` and raises
     # `ArgumentError` otherwise. Surfaced via
-    # `mix ezagent.feishu.bind ou_xxx entity://user/default/<u>`:
+    # `mix ezagent.feishu.bind ou_xxx entity://user/team-alpha/<u>`:
     # the binding row was saved but BindingPolicy cap-grant crashed
     # the dispatch path for non-admin users.
     test "grant_cap with `:self_uri` user ctx does NOT raise ArgumentError" do
       # Subscribe so we (a) verify no crash AND (b) verify the
       # notification reaches the user inbox with the new contract shape.
-      user_uri = URI.parse("entity://user/default/notify_shape_grant")
+      user_uri = URI.parse("entity://user/team-alpha/notify_shape_grant")
       :ok = Ezagent.Notifications.subscribe(user_uri, %{caps: :system})
 
       ctx = %{
@@ -115,7 +115,7 @@ defmodule Ezagent.Behavior.IdentityGrantTest do
     end
 
     test "revoke_cap with `:self_uri` user ctx does NOT raise ArgumentError" do
-      user_uri = URI.parse("entity://user/default/notify_shape_revoke")
+      user_uri = URI.parse("entity://user/team-alpha/notify_shape_revoke")
       :ok = Ezagent.Notifications.subscribe(user_uri, %{caps: :system})
 
       ctx = %{self_uri: user_uri}

@@ -131,7 +131,11 @@ defmodule Mix.Tasks.Ezagent.Stress do
 
     log("=== V1 stress-test scenario #{String.upcase(scenario)} ===")
     log("ramp=#{inspect(ramp)} hold_ms=#{hold_ms} rate=#{rate}/s turn_cap=#{turn_cap}")
-    log("schedulers=#{:erlang.system_info(:schedulers_online)}/#{:erlang.system_info(:schedulers)}")
+
+    log(
+      "schedulers=#{:erlang.system_info(:schedulers_online)}/#{:erlang.system_info(:schedulers)}"
+    )
+
     log("mem ceiling=#{mem_ceiling} MB  process_limit=#{:erlang.system_info(:process_limit)}")
     log("DB: #{db_info()}")
 
@@ -183,7 +187,7 @@ defmodule Mix.Tasks.Ezagent.Stress do
   defp run_step(%{scenario: "a"} = cfg, n, _prev) do
     # Scenario A — one session, N agent members. Re-create the session
     # fresh each step so membership is exactly N.
-    workspace = "default"
+    workspace = "system"
     session_uri = uri!("session://default/#{workspace}/stress_a_#{n}")
 
     {spawn_us, :ok} =
@@ -262,7 +266,7 @@ defmodule Mix.Tasks.Ezagent.Stress do
     # Scenario B — ramp concurrent sessions. Each new step adds
     # (n - prev) sessions, each with 1 user + 2 sink agents. Sessions
     # accumulate across steps (we measure HOLDING many sessions).
-    workspace = "default"
+    workspace = "system"
     StressMetrics.reset()
 
     {spawn_us, :ok} =
@@ -311,7 +315,7 @@ defmodule Mix.Tasks.Ezagent.Stress do
   defp run_step(%{scenario: "c"} = cfg, n, prev) do
     # Scenario C — ramp concurrent User Kinds. Users accumulate across
     # steps; mostly idle.
-    workspace = "default"
+    workspace = "system"
     StressMetrics.reset()
 
     {spawn_us, :ok} =

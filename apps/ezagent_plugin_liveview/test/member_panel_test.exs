@@ -56,13 +56,13 @@ defmodule EzagentPluginLiveview.Admin.MemberPanelTest do
       # name, the URI, an online dot. Nothing flags "this one was
       # floating".
       members = [
-        %{uri: "entity://user/default/admin", online: true, last_seen: nil},
-        %{uri: "entity://agent/default/cc_demo", online: false, last_seen: nil}
+        %{uri: "entity://user/team-alpha/admin", online: true, last_seen: nil},
+        %{uri: "entity://agent/team-alpha/cc_demo", online: false, last_seen: nil}
       ]
 
       display_map = %{
-        "entity://user/default/admin" => "Admin",
-        "entity://agent/default/cc_demo" => "CC Demo"
+        "entity://user/team-alpha/admin" => "Admin",
+        "entity://agent/team-alpha/cc_demo" => "CC Demo"
       }
 
       html = render_panel(base_assigns(members: members, display_map: display_map))
@@ -73,9 +73,9 @@ defmodule EzagentPluginLiveview.Admin.MemberPanelTest do
 
       # Both members render — display name + URI.
       assert html =~ "Admin"
-      assert html =~ "entity://user/default/admin"
+      assert html =~ "entity://user/team-alpha/admin"
       assert html =~ "CC Demo"
-      assert html =~ "entity://agent/default/cc_demo"
+      assert html =~ "entity://agent/team-alpha/cc_demo"
 
       # Both rows carry a procedural avatar (the `<.avatar>` atom emits
       # a conic-gradient span). Two members → two avatar gradients.
@@ -88,7 +88,7 @@ defmodule EzagentPluginLiveview.Admin.MemberPanelTest do
       # The cc-agent row keeps its per-row PTY button; the user row
       # does not get one.
       assert html =~ ~s(phx-click="switch_to_pty_for_agent")
-      assert html =~ ~s(phx-value-agent="entity://agent/default/cc_demo")
+      assert html =~ ~s(phx-value-agent="entity://agent/team-alpha/cc_demo")
     end
 
     test "empty member list shows the placeholder, not the table" do
@@ -102,7 +102,7 @@ defmodule EzagentPluginLiveview.Admin.MemberPanelTest do
 
   describe "FLOATING AGENTS section removed (SPEC §2C.2)" do
     test "no <select> floating-agent picker is rendered" do
-      members = [%{uri: "entity://user/default/admin", online: true, last_seen: nil}]
+      members = [%{uri: "entity://user/team-alpha/admin", online: true, last_seen: nil}]
       html = render_panel(base_assigns(members: members))
 
       # The old `<select name="agent_uri">` + its "Floating agents"
@@ -141,7 +141,7 @@ defmodule EzagentPluginLiveview.Admin.MemberPanelTest do
 
     test "modal carries the Add-existing uri_picker + Create-new-agent link" do
       options = [
-        %{uri: "entity://agent/default/cc_pick", label: "CC Pick", kind: :entity, flavor: "cc"}
+        %{uri: "entity://agent/team-alpha/cc_pick", label: "CC Pick", kind: :entity, flavor: "cc"}
       ]
 
       html = render_panel(base_assigns(invite_open: true, invite_options: options))
@@ -152,7 +152,7 @@ defmodule EzagentPluginLiveview.Admin.MemberPanelTest do
       assert html =~ ~s(name="member_uri")
       assert html =~ ~s(phx-hook="UriPicker")
       assert html =~ ~s(data-mode="single")
-      assert html =~ "entity://agent/default/cc_pick"
+      assert html =~ "entity://agent/team-alpha/cc_pick"
 
       # "Create new agent" — a link to the EXISTING AgentNewLive route,
       # not a rebuilt form.

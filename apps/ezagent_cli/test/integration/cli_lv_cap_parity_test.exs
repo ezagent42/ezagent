@@ -48,8 +48,8 @@ defmodule EzagentCli.Integration.CliLvCapParityTest do
 
   setup do
     suffix = "parity-#{System.unique_integer([:positive])}"
-    user_uri = URI.new!("entity://user/default/#{suffix}")
-    agent_uri = URI.new!("entity://agent/default/cc_#{suffix}")
+    user_uri = URI.new!("entity://user/team-alpha/#{suffix}")
+    agent_uri = URI.new!("entity://agent/team-alpha/cc_#{suffix}")
     {:ok, %{user_uri: user_uri, agent_uri: agent_uri, suffix: suffix}}
   end
 
@@ -72,7 +72,7 @@ defmodule EzagentCli.Integration.CliLvCapParityTest do
       behavior: :any,
       instance: :any,
       # Phase 9 PR-3 (SPEC v3 §4): explicit workspace scope.
-      workspace_uri: URI.new!("workspace://default"),
+      workspace_uri: URI.new!("workspace://team-alpha"),
       granted_by: URI.parse("entity://user/system/admin"),
       granted_at: ~U[2026-05-18 00:00:00Z]
     }

@@ -61,12 +61,12 @@ defmodule Ezagent.Invariants.CapHasWorkspaceTest do
           kind: :session,
           behavior: :any,
           instance: :any,
-          workspace_uri: URI.new!("workspace://default"),
+          workspace_uri: URI.new!("workspace://team-alpha"),
           granted_by: URI.parse("entity://user/system/admin"),
           granted_at: ~U[2026-05-21 00:00:00Z]
         })
 
-      assert URI.to_string(cap.workspace_uri) == "workspace://default"
+      assert URI.to_string(cap.workspace_uri) == "workspace://team-alpha"
     end
   end
 
@@ -87,7 +87,7 @@ defmodule Ezagent.Invariants.CapHasWorkspaceTest do
       # A bootstrap-granted cap with a CONCRETE workspace is NOT the
       # admin structural invariant — it's a workspace-admin cap that
       # would be revokable. The matcher is strict on workspace_uri.
-      workspace_admin = %{admin_cap | workspace_uri: URI.new!("workspace://default")}
+      workspace_admin = %{admin_cap | workspace_uri: URI.new!("workspace://team-alpha")}
 
       refute Capability.admin_invariant?(workspace_admin),
              "admin_invariant? must require workspace_uri: :any in addition to " <>
@@ -97,28 +97,28 @@ defmodule Ezagent.Invariants.CapHasWorkspaceTest do
   end
 
   describe "User.default_caps/1 scopes to user workspace" do
-    test "user provisioned in workspace://default → default cap carries it" do
-      caps = Ezagent.Entity.User.default_caps(URI.new!("workspace://default"))
-
-      for c <- caps do
-        assert %URI{} = c.workspace_uri
-        assert URI.to_string(c.workspace_uri) == "workspace://default"
-      end
-    end
-
     test "user provisioned in workspace://team-alpha → default cap carries it" do
       caps = Ezagent.Entity.User.default_caps(URI.new!("workspace://team-alpha"))
 
       for c <- caps do
-        assert URI.to_string(c.workspace_uri) == "workspace://team-alpha",
+        assert %URI{} = c.workspace_uri
+        assert URI.to_string(c.workspace_uri) == "workspace://team-alpha"
+      end
+    end
+
+    test "user provisioned in workspace://team-beta → default cap carries it" do
+      caps = Ezagent.Entity.User.default_caps(URI.new!("workspace://team-beta"))
+
+      for c <- caps do
+        assert URI.to_string(c.workspace_uri) == "workspace://team-beta",
                "default_caps/1 must use the workspace_uri passed in, not a " <>
-                 "hardcoded default — otherwise users in team-alpha would " <>
+                 "hardcoded default — otherwise users in team-beta would " <>
                  "lose their session-participation cap"
       end
     end
 
     test "default_caps/1 does NOT mint a workspace_uri: :any cap (only admin gets cross-workspace)" do
-      caps = Ezagent.Entity.User.default_caps(URI.new!("workspace://default"))
+      caps = Ezagent.Entity.User.default_caps(URI.new!("workspace://team-alpha"))
 
       refute Enum.any?(caps, fn c -> c.workspace_uri == :any end),
              "default_caps/1 must NEVER mint a :any-workspace cap — that's the " <>

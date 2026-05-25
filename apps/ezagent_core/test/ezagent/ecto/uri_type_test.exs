@@ -10,15 +10,15 @@ defmodule Ezagent.Ecto.URITest do
 
   describe "cast/1" do
     test "accepts %URI{} struct unchanged" do
-      uri = URI.new!("entity://agent/default/test_cc-builder")
+      uri = URI.new!("entity://agent/team-alpha/test_cc-builder")
       assert {:ok, ^uri} = URIType.cast(uri)
     end
 
     test "accepts string + parses to %URI{}" do
-      assert {:ok, %URI{} = uri} = URIType.cast("entity://agent/default/test_cc-builder")
+      assert {:ok, %URI{} = uri} = URIType.cast("entity://agent/team-alpha/test_cc-builder")
       assert uri.scheme == "entity"
       assert uri.host == "agent"
-      assert uri.path == "/default/test_cc-builder"
+      assert uri.path == "/team-alpha/test_cc-builder"
     end
 
     test "rejects non-URI non-string input" do
@@ -30,10 +30,10 @@ defmodule Ezagent.Ecto.URITest do
 
   describe "load/1" do
     test "DB string → %URI{} struct" do
-      assert {:ok, %URI{} = uri} = URIType.load("session://default/default/main")
+      assert {:ok, %URI{} = uri} = URIType.load("session://default/system/main")
       assert uri.scheme == "session"
       assert uri.host == "default"
-      assert uri.path == "/default/main"
+      assert uri.path == "/system/main"
     end
 
     test "rejects non-string" do
@@ -49,7 +49,8 @@ defmodule Ezagent.Ecto.URITest do
     end
 
     test "accepts already-string (idempotent)" do
-      assert {:ok, "session://default/default/main"} = URIType.dump("session://default/default/main")
+      assert {:ok, "session://default/system/main"} =
+               URIType.dump("session://default/system/main")
     end
 
     test "rejects others" do
@@ -60,7 +61,7 @@ defmodule Ezagent.Ecto.URITest do
 
   describe "round-trip" do
     test "cast → dump → load preserves URI semantics" do
-      original = URI.new!("entity://agent/default/test_cc-builder")
+      original = URI.new!("entity://agent/team-alpha/test_cc-builder")
       {:ok, casted} = URIType.cast(original)
       {:ok, dumped} = URIType.dump(casted)
       {:ok, loaded} = URIType.load(dumped)

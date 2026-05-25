@@ -39,7 +39,7 @@ defmodule Ezagent.Behavior.PtyTest do
     # is exercised across tests; per-test PtyServer write_calls counter is
     # asserted with `>=` to tolerate cross-test accumulation.
     name = "cc_pty-input-test-#{System.unique_integer([:positive])}"
-    agent_uri = URI.parse("entity://agent/default/#{name}")
+    agent_uri = URI.parse("entity://agent/team-alpha/#{name}")
 
     # Ensure the Agent Kind is alive so `Behavior.Pty.invoke(:write, ...)`
     # against `entity://agent/<name>?action=pty.write` resolves.
@@ -98,7 +98,7 @@ defmodule Ezagent.Behavior.PtyTest do
 
   test "non-admin without per-agent pty cap → :unauthorized", %{agent_uri: agent_uri} do
     non_admin_ctx = %{
-      caller: URI.parse("entity://user/default/non-admin-pty-test"),
+      caller: URI.parse("entity://user/team-alpha/non-admin-pty-test"),
       caps: MapSet.new(),
       reply: {:caller_inbox, self()}
     }
@@ -119,7 +119,7 @@ defmodule Ezagent.Behavior.PtyTest do
 
   test "dispatch against an agent with no PtyServer → :no_pty_server" do
     # Spawn the Agent Kind (so dispatch resolves) but no PtyServer.
-    bare_uri = URI.parse("entity://agent/default/cc_no-pty-#{System.unique_integer([:positive])}")
+    bare_uri = URI.parse("entity://agent/team-alpha/cc_no-pty-#{System.unique_integer([:positive])}")
     {:ok, _kind_pid} = Ezagent.SpawnRegistry.spawn(bare_uri)
 
     assert {:error, :no_pty_server} =

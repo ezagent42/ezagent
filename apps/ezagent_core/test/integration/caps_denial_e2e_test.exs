@@ -38,7 +38,7 @@ defmodule Ezagent.Integration.CapsDenialE2ETest do
   end
 
   defp setup_non_admin_user(handle, caps \\ []) do
-    uri_str = "entity://user/default/" <> handle <> "_#{System.unique_integer([:positive])}"
+    uri_str = "entity://user/team-alpha/" <> handle <> "_#{System.unique_integer([:positive])}"
     {:ok, _} = Users.create(uri_str, nil, caps)
 
     uri = URI.parse(uri_str)
@@ -95,12 +95,12 @@ defmodule Ezagent.Integration.CapsDenialE2ETest do
   describe "Scenario 3 — non-admin with correct :online cap CAN subscribe" do
     test "Presence.subscribe/2 returns :ok" do
       # Watcher holds a workspace-scoped :online cap on Ezagent.Behavior.Presence
-      # → can subscribe to ANY entity://user/... in workspace://default
+      # → can subscribe to ANY entity://user/... in workspace://team-alpha
       cap_online = %Capability{
         kind: :user,
         behavior: Ezagent.Behavior.Presence,
         instance: :any,
-        workspace_uri: URI.parse("workspace://default"),
+        workspace_uri: URI.parse("workspace://team-alpha"),
         granted_by: Ezagent.Entity.User.admin_uri(),
         granted_at: ~U[2026-01-01 00:00:00Z]
       }
@@ -108,7 +108,7 @@ defmodule Ezagent.Integration.CapsDenialE2ETest do
       {_watcher_uri, watcher_caps} = setup_non_admin_user("watcher", [cap_online])
 
       # Watcher subscribes to another user's presence — :ok
-      target = URI.parse("entity://user/default/observed_target")
+      target = URI.parse("entity://user/team-alpha/observed_target")
 
       assert :ok = Presence.subscribe(target, %{caps: watcher_caps})
 
@@ -137,14 +137,14 @@ defmodule Ezagent.Integration.CapsDenialE2ETest do
         kind: :user,
         behavior: Ezagent.Behavior.Chat,
         instance: :any,
-        workspace_uri: URI.parse("workspace://default"),
+        workspace_uri: URI.parse("workspace://team-alpha"),
         granted_by: Ezagent.Entity.User.admin_uri(),
         granted_at: ~U[2026-01-01 00:00:00Z]
       }
 
       {_watcher_uri, watcher_caps} = setup_non_admin_user("wrong_behavior", [cap_chat])
 
-      target = URI.parse("entity://user/default/some_target")
+      target = URI.parse("entity://user/team-alpha/some_target")
 
       assert_raise Ezagent.Capability.Unauthorized, fn ->
         Presence.subscribe(target, %{caps: watcher_caps})

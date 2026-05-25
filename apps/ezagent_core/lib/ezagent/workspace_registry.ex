@@ -56,36 +56,22 @@ defmodule Ezagent.WorkspaceRegistry do
 
   def table, do: @table
 
-  @doc """
-  Legacy `workspace://default` fallback constant.
-
-  ## Why "legacy"
-
-  Phase 8c PR-E (Allen 2026-05-20) introduced this as the canonical
-  default workspace URI. SPEC v2 PR-C (#295) deleted the boot-seeded
-  `default` workspace row (only `workspace://system` is seeded now);
-  SPEC v2 PR-F (this PR) leaves the function in place because:
-
-  - **Audit / snapshot fallback** (`Ezagent.Persistence.default_workspace_uri/0`,
-    `Ezagent.Audit.derive_workspace/2`) still needs a non-nullable
-    `workspace_uri` string for rows whose caller/target genuinely have
-    no workspace context (e.g. system bootstrap events). The string is
-    written as-is — there is no FK to `workspaces.uri`.
-  - **Test fixtures** that hardcode `session://default/default/main`
-    (~10 suites) read this through the chat facade fallback. PR-F's
-    1st-pass scope is production lib code only; test fixture cleanup
-    is the 2nd-pass.
-
-  Production code that creates sessions or per-tenant entities MUST
-  pass workspace explicitly (the wizard / onboarding LV / mix task
-  callers already do). Do NOT introduce new callers of this fallback.
-
-  Returns `{:ok, URI.t()}` always.
-  """
-  @spec default_workspace_uri() :: {:ok, URI.t()}
-  def default_workspace_uri do
-    {:ok, URI.new!("workspace://default")}
-  end
+  # NOTE: `default_workspace_uri/0` was DELETED in SPEC #324 (workspace
+  # rename `default` → `system`). The function previously returned
+  # the legacy default workspace URI as a silent fallback for callers that hadn't
+  # plumbed workspace through. Per `feedback_let_it_crash_no_workarounds`
+  # + the SPEC's cross-workspace security analysis, callers now either:
+  #
+  # - **Derive structurally** from a caller URI via
+  #   `Ezagent.URI.entity_workspace_uri/1` (the workspace is the second
+  #   path segment of any per-tenant URI), or
+  # - **Pass workspace explicitly** in their public API, or
+  # - **Fail fast** with `ArgumentError` when neither is available.
+  #
+  # Audit / snapshot fallback callers (which legitimately predate
+  # workspace context — system bootstrap events) write the literal
+  # `"workspace://system"` string directly. The string is NOT FK'd to
+  # `workspaces.uri`, so this is safe.
 
   @doc """
   Record that `session_uri` belongs to `workspace_uri`. Idempotent —

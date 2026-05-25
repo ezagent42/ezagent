@@ -51,7 +51,7 @@ defmodule Ezagent.Entity.Token do
     # the workspace name as its first path segment). Token operations
     # are scoped to the workspace the entity belongs to — a CLI token
     # for `entity://user/team-alpha/alice` can only authenticate as
-    # alice in team-alpha, never the homonym in workspace://default.
+    # alice in team-alpha, never the homonym in workspace://team-beta.
     field(:workspace_uri, :string)
     timestamps(type: :utc_datetime_usec)
   end
@@ -126,7 +126,7 @@ defmodule Ezagent.Entity.Token do
 
   **Workspace-scoped via URI key** (Phase 9 PR-6 / SPEC v3 §7.2) —
   filters by `entity_uri` which is 3-segment workspace-bound; an
-  entity in workspace://default cannot leak its tokens to a
+  entity in workspace://team-beta cannot leak its tokens to a
   homonym in workspace://team-alpha. Same exemption pattern as
   `Ezagent.EntityPresenter`.
   """

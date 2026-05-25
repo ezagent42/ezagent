@@ -9,7 +9,7 @@ defmodule Ezagent.Behavior.IdentityTest do
       # owner-derived `Behavior.Identity` cap on the entity's own URI
       # so dispatch-path `identity.list_caps` succeeds for the entity
       # reading their own caps.
-      uri = URI.new!("entity://user/default/x")
+      uri = URI.new!("entity://user/team-alpha/x")
       assert %{caps: caps} = Identity.init_slice(%{uri: uri})
       assert MapSet.size(caps) == 1
 
@@ -54,8 +54,8 @@ defmodule Ezagent.Behavior.IdentityTest do
       needed = %{
         kind: :session,
         behavior: Ezagent.Behavior.Chat,
-        instance: URI.new!("session://default/default/main"),
-        workspace_uri: URI.new!("workspace://default")
+        instance: URI.new!("session://default/system/main"),
+        workspace_uri: URI.new!("workspace://team-alpha")
       }
 
       assert {:ok, ^slice, %{has: true}} = Identity.invoke(:has_cap?, slice, %{cap: needed}, %{})
@@ -67,8 +67,8 @@ defmodule Ezagent.Behavior.IdentityTest do
       needed = %{
         kind: :session,
         behavior: Ezagent.Behavior.Chat,
-        instance: URI.new!("session://default/default/main"),
-        workspace_uri: URI.new!("workspace://default")
+        instance: URI.new!("session://default/system/main"),
+        workspace_uri: URI.new!("workspace://team-alpha")
       }
 
       assert {:ok, ^slice, %{has: false}} = Identity.invoke(:has_cap?, slice, %{cap: needed}, %{})
@@ -105,8 +105,8 @@ defmodule Ezagent.Behavior.IdentityTest do
       assert Capability.matches?(admin_cap, %{
                kind: :anything,
                behavior: SomeMod,
-               instance: URI.new!("entity://agent/default/test_X"),
-               workspace_uri: URI.new!("workspace://default")
+               instance: URI.new!("entity://agent/team-alpha/test_X"),
+               workspace_uri: URI.new!("workspace://team-alpha")
              })
     end
   end

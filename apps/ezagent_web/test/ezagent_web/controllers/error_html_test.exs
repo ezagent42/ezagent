@@ -31,7 +31,13 @@ defmodule EzagentWeb.ErrorHTMLTest do
     test "debug details HIDDEN for non-admin in test env" do
       # test env: :show_error_debug = false; session has no admin URI.
       conn = Phoenix.ConnTest.build_conn(:get, "/broken") |> Plug.Test.init_test_session(%{})
-      html = render_to_string(EzagentWeb.ErrorHTML, "500", "html", conn: conn, reason: %RuntimeError{message: "boom"})
+
+      html =
+        render_to_string(EzagentWeb.ErrorHTML, "500", "html",
+          conn: conn,
+          reason: %RuntimeError{message: "boom"}
+        )
+
       refute html =~ "Debug info"
       refute html =~ "boom"
     end

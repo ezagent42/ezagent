@@ -9,7 +9,7 @@ defmodule Ezagent.Entity.UserTest do
     assert uri.scheme == "entity"
     assert uri.host == "user"
     # Phase 9 PR-8 (SPEC v3 §13.1): admin lives in workspace://system,
-    # not workspace://default — Keycloak realm-admin model.
+    # not workspace://team-alpha — Keycloak realm-admin model.
     assert uri.path == "/system/admin"
   end
 
@@ -37,7 +37,7 @@ defmodule Ezagent.Entity.UserTest do
     assert Capability.matches?(cap, %{
              kind: :random,
              behavior: SomeMod,
-             instance: URI.parse("entity://agent/default/test_anything"),
+             instance: URI.parse("entity://agent/team-alpha/test_anything"),
              workspace_uri: URI.new!("workspace://anything")
            })
   end
@@ -55,7 +55,7 @@ defmodule Ezagent.Entity.UserTest do
   end
 
   describe "default_caps/1 (PR 27 + Phase 9 PR-3)" do
-    @workspace URI.new!("workspace://default")
+    @workspace URI.new!("workspace://team-alpha")
 
     test "includes a kind=:session cap so every user can attempt session behaviors" do
       caps = User.default_caps(@workspace)

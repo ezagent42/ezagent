@@ -21,7 +21,9 @@ defmodule Ezagent.Integration.SnapshotRestartTest do
 
   describe "{:snapshot, :on_change} restart roundtrip — THE GATE" do
     test "User caps granted before restart are present after restart" do
-      uri = URI.parse("entity://user/default/snap-restart-#{System.unique_integer([:positive])}")
+      uri =
+        URI.parse("entity://user/team-alpha/snap-restart-#{System.unique_integer([:positive])}")
+
       caps = Ezagent.Entity.User.admin_caps()
 
       # 1. Spawn fresh User Kind with initial admin_caps
@@ -97,7 +99,10 @@ defmodule Ezagent.Integration.SnapshotRestartTest do
   describe ":on_terminate writes on graceful shutdown" do
     test "Agent flips to :on_terminate (Spec 04 §2.I) — graceful kill writes row" do
       # Use a unique URI; spawn under the chat plugin's agent supervisor
-      uri = URI.parse("entity://agent/default/test_snap-term-#{System.unique_integer([:positive])}")
+      uri =
+        URI.parse(
+          "entity://agent/team-alpha/test_snap-term-#{System.unique_integer([:positive])}"
+        )
 
       {:ok, pid} =
         DynamicSupervisor.start_child(

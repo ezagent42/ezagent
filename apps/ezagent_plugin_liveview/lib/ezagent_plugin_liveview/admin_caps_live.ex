@@ -112,8 +112,22 @@ defmodule EzagentPluginLiveview.AdminCapsLive do
   end
 
   defp current_workspace_uri(socket) do
-    Map.get(socket.assigns, :current_workspace_uri) ||
-      URI.parse("workspace://default")
+    # SPEC #324: no silent global fallback. LV must always be mounted
+    # with `:current_workspace_uri` (set by `EzagentWeb.LiveAuth`
+    # on_mount(:require_entity) per Phase 9 PR-5). A missing assign
+    # here is a mount-discipline bug — fail-fast so the operator sees
+    # the structural error instead of silently landing in `system`.
+    case Map.get(socket.assigns, :current_workspace_uri) do
+      %URI{} = uri ->
+        uri
+
+      _ ->
+        raise ArgumentError,
+              "EzagentPluginLiveview.AdminCapsLive: socket.assigns[:current_workspace_uri] " <>
+                "is required (set by EzagentWeb.LiveAuth.on_mount(:require_entity) " <>
+                "per Phase 9 PR-5). Got nil — this LV mounted outside the " <>
+                ":require_entity live_session."
+    end
   end
 
   defp filter_subjects(subjects, "") do

@@ -113,10 +113,10 @@ defmodule EzagentCore.Invariants.DemoSmokeTest do
       assert "entity://user/system/admin" in uris
     end
 
-    test "list_instances(:session) finds session://default/default/main" do
+    test "list_instances(:session) finds session://default/system/main" do
       instances = EzagentDomainUi.AutoDerive.list_instances(:session)
       uris = Enum.map(instances, &URI.to_string(&1.uri))
-      assert "session://default/default/main" in uris
+      assert "session://default/system/main" in uris
     end
 
     test "instance_detail/1 returns a populated map for entity://user/system/admin" do

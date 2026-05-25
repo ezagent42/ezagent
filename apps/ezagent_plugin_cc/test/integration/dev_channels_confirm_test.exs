@@ -102,7 +102,7 @@ defmodule Ezagent.PluginCc.DevChannelsConfirmTest do
 
     {:ok, pid} =
       PtyServer.start_link(%{
-        agent_uri: URI.parse("entity://agent/default/test_e2e-test"),
+        agent_uri: URI.parse("entity://agent/team-alpha/test_e2e-test"),
         cwd: test_cwd,
         # Force real-spawn even in test env
         test_mode: false,

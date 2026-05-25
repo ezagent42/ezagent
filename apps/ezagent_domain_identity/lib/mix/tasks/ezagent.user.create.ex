@@ -27,7 +27,7 @@ defmodule Mix.Tasks.Ezagent.User.Create do
 
   ## Usage
 
-      mix ezagent.user.create entity://user/default/allen \\
+      mix ezagent.user.create entity://user/team-alpha/allen \\
           --password 'temp-pw-rotate-me' \\
           --caps 'workspace.read,chat.send'
 
@@ -50,10 +50,10 @@ defmodule Mix.Tasks.Ezagent.User.Create do
   ## Examples
 
       # Read-only operator
-      mix ezagent.user.create entity://user/default/qa --password X --caps 'workspace.read,chat.send'
+      mix ezagent.user.create entity://user/team-alpha/qa --password X --caps 'workspace.read,chat.send'
 
       # Make a second admin (require explicit allow flag)
-      mix ezagent.user.create entity://user/default/allen2 --password X --caps '*' --allow-allcaps
+      mix ezagent.user.create entity://user/team-alpha/allen2 --password X --caps '*' --allow-allcaps
   """
   use Mix.Task
 
@@ -81,7 +81,7 @@ defmodule Mix.Tasks.Ezagent.User.Create do
         usage: mix ezagent.user.create <user_uri> [--password X] [--caps 'kind.behavior,...'] [--allow-allcaps]
 
         Example:
-          mix ezagent.user.create entity://user/default/allen --password 'pw' --caps 'workspace.read,chat.send'
+          mix ezagent.user.create entity://user/team-alpha/allen --password 'pw' --caps 'workspace.read,chat.send'
         """)
     end
   end

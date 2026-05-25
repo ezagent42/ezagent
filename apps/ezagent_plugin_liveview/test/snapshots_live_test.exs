@@ -24,7 +24,7 @@ defmodule EzagentPluginLiveview.SnapshotsLiveTest do
   end
 
   test "snapshot list shows persisted rows", %{conn: conn} do
-    uri = URI.parse("entity://user/default/snap-lv-#{System.unique_integer([:positive])}")
+    uri = URI.parse("entity://user/team-alpha/snap-lv-#{System.unique_integer([:positive])}")
     :ok = Ezagent.Kind.Snapshot.save_now(uri, Ezagent.Entity.User, %{identity: %{caps: MapSet.new()}})
 
     {:ok, _lv, html} = live(conn, "/admin/snapshots")
@@ -32,7 +32,7 @@ defmodule EzagentPluginLiveview.SnapshotsLiveTest do
   end
 
   test "clear deletes the snapshot row", %{conn: conn} do
-    uri = URI.parse("entity://user/default/snap-clear-#{System.unique_integer([:positive])}")
+    uri = URI.parse("entity://user/team-alpha/snap-clear-#{System.unique_integer([:positive])}")
     uri_str = URI.to_string(uri)
     :ok = Ezagent.Kind.Snapshot.save_now(uri, Ezagent.Entity.User, %{identity: %{caps: MapSet.new()}})
     assert %{} = Ezagent.Ecto.KindSnapshot.get(uri_str)

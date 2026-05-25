@@ -337,12 +337,12 @@ defmodule Ezagent.CapabilityRegistry do
     # Codex PR-OWN-1 round-2 MEDIUM fix: derive `workspace_uri` from
     # the RAW `target_uri`, matching `Ezagent.Capability.cap_for_action/3`
     # exactly (capability.ex:494). If we derived from `instance_uri`
-    # instead, `workspace://default/subresource?action=…` would canon-
-    # icalize to `workspace://default` (path dropped), then yield
-    # `workspace_uri: workspace://default` — but dispatch's
+    # instead, `workspace://team-alpha/subresource?action=…` would canon-
+    # icalize to `workspace://team-alpha` (path dropped), then yield
+    # `workspace_uri: workspace://team-alpha` — but dispatch's
     # `cap_for_action` uses RAW target and `workspace_of(workspace://...)`
     # preserves the full path, so dispatch's needed cap would carry
-    # `workspace_uri: workspace://default/subresource`. Mismatch on the
+    # `workspace_uri: workspace://team-alpha/subresource`. Mismatch on the
     # workspace dimension → cap silently fails `matches?/2`.
     workspace_uri =
       case Ezagent.Capability.workspace_of(target_uri) do

@@ -44,9 +44,9 @@ defmodule Ezagent.Domain.AgentTest do
     test "derives flavor from agent name prefix (cc_*, echo_*, curl_*)" do
       # The URI doesn't need to be registered; derive_flavor just
       # parses the name. :not_found still carries the derived flavor.
-      cc_uri = URI.parse("entity://agent/default/cc_unregistered-#{u()}")
-      echo_uri = URI.parse("entity://agent/default/echo_unregistered-#{u()}")
-      curl_uri = URI.parse("entity://agent/default/curl_unregistered-#{u()}")
+      cc_uri = URI.parse("entity://agent/team-alpha/cc_unregistered-#{u()}")
+      echo_uri = URI.parse("entity://agent/team-alpha/echo_unregistered-#{u()}")
+      curl_uri = URI.parse("entity://agent/team-alpha/curl_unregistered-#{u()}")
 
       assert %{phase: :not_found, flavor: "cc", detail: nil} =
                Agent.lifecycle_status(cc_uri)
@@ -59,8 +59,8 @@ defmodule Ezagent.Domain.AgentTest do
     end
 
     test "returns nil flavor for unrecognized URI shape" do
-      not_an_agent = URI.parse("entity://user/default/admin")
-      workspace = URI.parse("workspace://default")
+      not_an_agent = URI.parse("entity://user/team-alpha/admin")
+      workspace = URI.parse("workspace://team-alpha")
 
       assert %{phase: :not_found, flavor: nil, detail: nil} =
                Agent.lifecycle_status(not_an_agent)
@@ -72,7 +72,7 @@ defmodule Ezagent.Domain.AgentTest do
 
   describe "lifecycle_status/1 — echo flavor (alive Kind, no PTY layer)" do
     test "alive echo Kind returns %{phase: :alive, flavor: \"echo\", detail: %{}}" do
-      echo_uri = URI.parse("entity://agent/default/echo_lifecycle-#{u()}")
+      echo_uri = URI.parse("entity://agent/team-alpha/echo_lifecycle-#{u()}")
 
       # Spawn the echo Kind via the standardized SpawnRegistry path
       # (chat's entity:// spawn fn → spawn_agent/1 → flavor-prefix
@@ -93,7 +93,7 @@ defmodule Ezagent.Domain.AgentTest do
       # report :registered, not :not_found, so the UI can
       # distinguish "agent never existed" from "agent exists but
       # PTY isn't up yet".
-      cc_uri = URI.parse("entity://agent/default/cc_lifecycle-#{u()}")
+      cc_uri = URI.parse("entity://agent/team-alpha/cc_lifecycle-#{u()}")
       {:ok, pid} = SpawnRegistry.spawn(cc_uri)
       assert is_pid(pid) and Process.alive?(pid)
 
@@ -106,7 +106,7 @@ defmodule Ezagent.Domain.AgentTest do
 
   describe "lifecycle_status/1 — unregistered URI" do
     test "non-existent agent URI returns :not_found with derived flavor" do
-      cc_uri = URI.parse("entity://agent/default/cc_does-not-exist-#{u()}")
+      cc_uri = URI.parse("entity://agent/team-alpha/cc_does-not-exist-#{u()}")
 
       assert %{phase: :not_found, flavor: "cc", detail: nil} =
                Agent.lifecycle_status(cc_uri)

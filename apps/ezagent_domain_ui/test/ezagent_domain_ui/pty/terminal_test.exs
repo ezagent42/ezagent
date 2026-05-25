@@ -14,11 +14,11 @@ defmodule EzagentDomainUi.Pty.TerminalTest do
 
   describe "pty_dom_id/1" do
     test "builds a stable, encoded id from a string URI" do
-      assert Terminal.pty_dom_id("entity://agent/default/cc_demo") =~ "pty-terminal-"
+      assert Terminal.pty_dom_id("entity://agent/team-alpha/cc_demo") =~ "pty-terminal-"
     end
 
     test "accepts a %URI{} struct" do
-      uri = URI.parse("entity://agent/default/cc_demo")
+      uri = URI.parse("entity://agent/team-alpha/cc_demo")
       assert Terminal.pty_dom_id(uri) == Terminal.pty_dom_id(URI.to_string(uri))
     end
 
@@ -30,7 +30,7 @@ defmodule EzagentDomainUi.Pty.TerminalTest do
 
   describe "mount/1" do
     test "renders the xterm.js mount point with the PtyTerminal hook" do
-      html = render_component(&Terminal.mount/1, agent_uri: "entity://agent/default/cc_demo")
+      html = render_component(&Terminal.mount/1, agent_uri: "entity://agent/team-alpha/cc_demo")
 
       assert html =~ ~s(phx-hook="PtyTerminal")
       assert html =~ ~s(phx-update="ignore")
@@ -40,7 +40,7 @@ defmodule EzagentDomainUi.Pty.TerminalTest do
     test "accepts a custom class via attr" do
       html =
         render_component(&Terminal.mount/1,
-          agent_uri: "entity://agent/default/cc_demo",
+          agent_uri: "entity://agent/team-alpha/cc_demo",
           class: "h-64 w-full"
         )
 

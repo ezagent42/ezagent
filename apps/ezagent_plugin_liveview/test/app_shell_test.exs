@@ -40,9 +40,9 @@ defmodule EzagentPluginLiveview.AppShellTest do
        socket
        |> assign(:perspective, perspective)
        |> assign(:current_entity_uri, "entity://user/system/admin")
-       |> assign(:current_workspace_uri, "workspace://default")
+       |> assign(:current_workspace_uri, "workspace://team-alpha")
        |> assign(:workspace_name, "default")
-       |> assign(:workspaces, [%{name: "default", uri: "workspace://default"}])
+       |> assign(:workspaces, [%{name: "default", uri: "workspace://team-alpha"}])
        |> assign(:cmdk_nav_routes, [])}
     end
 
