@@ -526,6 +526,66 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
              "expected AdminLive pid in subscribers of #{new_topic} (subs=#{inspect(new_subs)})"
     end
 
+    # PR-N2 codex r1 MEDIUM-2 fix — `mount/3` mirrors EVERY session
+    # the legacy `session_events_topic/1` loop subscribes to with a
+    # parallel slice-change subscription on the SAME session URI.
+    # Without this, after PR-N5 deletes the legacy fan-out, session-
+    # scoped Behavior mutations (chat / member / read marker) that
+    # emit slice-change events on the SESSION URI would be invisible
+    # to AdminLive — only the caller's USER URI slice-change is
+    # subscribed in PR-N2's first cut.
+    test "mount also subscribes to slice_change for every legacy session topic",
+         %{conn: conn} do
+      {:ok, lv, _html} = live(conn, "/sessions")
+
+      sessions = EzagentDomainChat.list_sessions()
+
+      assert sessions != [],
+             "expected at least one session in the boot list (default/default/main)"
+
+      for session_uri <- sessions do
+        slice_topic = Ezagent.SliceChange.topic(session_uri)
+        subs = subscribers_for(slice_topic)
+
+        assert lv.pid in subs,
+               "expected AdminLive pid in subscribers of session slice_change topic " <>
+                 "#{slice_topic} (got subs=#{inspect(subs)})"
+      end
+    end
+
+    test "session-scoped {:slice_changed, _} delivers cleanly (no handler crash)",
+         %{conn: conn} do
+      {:ok, lv, _html} = live(conn, "/sessions")
+      lv_pid = lv.pid
+
+      session_uri = URI.new!("session://default/default/main")
+
+      Application.put_env(:ezagent_core, :slice_change_hook, true)
+
+      try do
+        event = %{
+          self_uri: session_uri,
+          kind_module: :session_kind_stub,
+          action: :pr_n2_session_scoped,
+          slice_key: :chat,
+          old_slice: %{messages: 0},
+          new_slice: %{messages: 1},
+          result: nil,
+          caller: Ezagent.Entity.User.admin_uri(),
+          at: DateTime.utc_now()
+        }
+
+        :ok = Ezagent.SliceChange.emit(event)
+      after
+        Application.delete_env(:ezagent_core, :slice_change_hook)
+      end
+
+      _ = render(lv)
+
+      assert Process.alive?(lv_pid),
+             "AdminLive crashed after receiving session-scoped {:slice_changed, _}"
+    end
+
     test "both topics deliver cleanly to AdminLive (no handler crash)", %{conn: conn} do
       {:ok, lv, _html} = live(conn, "/sessions")
       lv_pid = lv.pid

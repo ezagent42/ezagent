@@ -40,6 +40,10 @@ defmodule EzagentPluginLiveview.AdminLive do
   # i18n (Allen 2026-05-22): runtime backend reference — EzagentWeb.Gettext
   # lives in the host app; no compile-time dep on :ezagent_web.
   use Gettext, backend: EzagentPluginLiveview.Gettext
+  # PR-N2 codex r1 — Logger required for the :slice_changed
+  # handler's debug log; module-level require is more idiomatic
+  # than an in-function require.
+  require Logger
 
   alias EzagentPluginLiveview.Admin.{SessionEditor, MemberPanel}
   alias EzagentPluginLiveview.Views.ConversationView
@@ -122,6 +126,15 @@ defmodule EzagentPluginLiveview.AdminLive do
 
       for session_uri <- EzagentDomainChat.list_sessions() do
         Phoenix.PubSub.subscribe(EzagentCore.PubSub, session_events_topic(session_uri))
+        # PR-N2 codex r1 MEDIUM fix — mirror the legacy session
+        # event subscription with a slice-change subscription on
+        # the SAME session URI. After PR-N3 the auto-hook fires
+        # under the mutated Kind's instance URI (the session URI
+        # for session-scoped Behaviors), not the caller's URI; if
+        # we only subscribed `caller_uri` to slice_change, session-
+        # scoped UI updates would silently stop after PR-N5 deletes
+        # the legacy session-events fan-out.
+        :ok = Ezagent.Notifications.subscribe_slice_change(session_uri)
       end
     end
 
@@ -270,25 +283,41 @@ defmodule EzagentPluginLiveview.AdminLive do
     {:noreply, put_flash(socket, :info, format_notification(payload))}
   end
 
-  # PR-N2 (SPEC v2 notification architecture, Allen 2026-05-24) —
-  # new `:slice_changed` envelope coming off
+  # PR-N2 (SPEC v2 notification architecture, Allen 2026-05-24,
+  # §3 lines 200-202) — new `:slice_changed` envelope coming off
   # `Ezagent.SliceChange.topic/1`. Subscribed in `mount/3`
   # alongside the legacy `Notifications.topic/1`. Today the auto-
   # hook is DISABLED (`SliceChange.enabled?/0` defaults false) so
-  # this clause only fires in tests that drive `SliceChange.emit/1`
-  # directly — but keeping the handler present means PR-N3 can
-  # flip the flag without crashing AdminLive.
+  # in production this clause is unreachable; in tests that drive
+  # `SliceChange.emit/1` directly it fires and no-ops cleanly.
+  # Keeping the handler present means PR-N3 can flip the flag
+  # without crashing AdminLive on FunctionClauseError.
   #
-  # The flash bridge + per-slice UI render lands in PR-N3 once the
-  # first producer is migrated and we know the real event shape.
-  # For PR-N2 we just acknowledge + log at :debug so the LV stays
-  # crash-free under the new topic.
+  # ## Why no flash bridge yet — deliberate SPEC scoping
+  #
+  # SPEC §3 PR-N2 lines 200-202 (verbatim): "`handle_info({:slice_changed,
+  # ...}, socket)` clause added alongside the existing
+  # `{:notification, ...}` clause. For PR-N2: just log/no-op the
+  # event content. The flash bridge + UI render comes in PR-N3
+  # when producers flip."
+  #
+  # Rationale: in PR-N2 there are ZERO producers on the new
+  # topic. A flash bridge here would never fire in production —
+  # only in test fixtures. Worse, locking in a flash mapping
+  # before the first real producer ships (PR-N3 migrates Chat's
+  # `:receive` User-branch) risks a mapping that doesn't fit the
+  # real event shape and gets rewritten in PR-N3 anyway.
+  #
+  # PR-N3 adds the flash bridge atomically with the producer
+  # flip, so subscribers and producers ship in the same PR and
+  # the first real event hits a working bridge. Codex r1 HIGH-1
+  # flagged this no-op as a regression risk; the SPEC scoping
+  # makes the deferral explicit and PR-N3 closes the gap.
   def handle_info({:slice_changed, %{} = event}, socket) do
-    require Logger
-
     Logger.debug(fn ->
       "AdminLive: received :slice_changed for " <>
-        "#{inspect(Map.get(event, :self_uri))} action=#{inspect(Map.get(event, :action))}"
+        "#{inspect(Map.get(event, :self_uri))} action=#{inspect(Map.get(event, :action))}" <>
+        " (PR-N2 no-op; PR-N3 wires the flash bridge)"
     end)
 
     {:noreply, socket}
@@ -397,6 +426,13 @@ defmodule EzagentPluginLiveview.AdminLive do
       {:ok, session_uri} ->
         if connected?(socket) do
           Phoenix.PubSub.subscribe(EzagentCore.PubSub, session_events_topic(session_uri))
+          # PR-N2 codex r1 MEDIUM fix — mirror in lockstep with the
+          # mount/3 boot loop so newly-created sessions get the
+          # slice-change subscription too. Without this, sessions
+          # created during the LV's lifetime would silently lose
+          # slice-change visibility after PR-N5 deletes the legacy
+          # session-events fan-out.
+          :ok = Ezagent.Notifications.subscribe_slice_change(session_uri)
         end
 
         {:noreply,
