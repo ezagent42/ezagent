@@ -32,15 +32,34 @@ defmodule Ezagent.Plugin.RegistrationHooksTest do
 
   setup do
     # Each test starts with fresh stub state + cleared hooks table.
+    # Defensive Agent.stop — between Process.whereis returning a pid
+    # and Agent.stop running, the pid may exit (race with concurrent
+    # cleanup or supervisor activity). Catch the :noproc exit so
+    # cleanup doesn't surface as a test failure unrelated to the
+    # test body.
     on_exit(fn ->
-      if Process.whereis(StubRegistryA), do: Agent.stop(StubRegistryA)
-      if Process.whereis(StubRegistryB), do: Agent.stop(StubRegistryB)
+      safe_stop_agent(StubRegistryA)
+      safe_stop_agent(StubRegistryB)
     end)
 
     {:ok, _} = StubRegistryA.start_state()
     {:ok, _} = StubRegistryB.start_state()
     :ok = RegistrationHooks.__clear_all__()
     :ok
+  end
+
+  defp safe_stop_agent(name) do
+    case Process.whereis(name) do
+      nil ->
+        :ok
+
+      pid when is_pid(pid) ->
+        try do
+          Agent.stop(pid)
+        catch
+          :exit, _ -> :ok
+        end
+    end
   end
 
   test "fires synchronously when all registries already have the key" do

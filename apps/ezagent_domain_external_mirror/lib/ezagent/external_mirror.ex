@@ -31,7 +31,7 @@ defmodule Ezagent.ExternalMirror do
   - `list_adapters/0` — reads AdapterRegistry (PR-EM-1).
   """
 
-  alias Ezagent.ExternalMirror.{AdapterRegistry, BindingRow, FacadeNonceTable, Gates}
+  alias Ezagent.ExternalMirror.{AdapterRegistry, BindingRow, FacadeNonceTable}
 
   require Logger
 
@@ -151,30 +151,29 @@ defmodule Ezagent.ExternalMirror do
   def bind(%URI{} = session_uri, adapter_id, target_id, opts, ctx)
       when is_binary(adapter_id) and is_map(opts) and is_map(ctx) do
     # SPEC docs/superpowers/specs/2026-05-25-external-mirror-auth-model-audit.md
-    # §3.3 (audit-SPEC CRIT-1 corrected shape): the facade is a thin
-    # wrapper:
+    # §3.3 (audit-SPEC CRIT-1 corrected shape + codex PR-AUDIT r1 fix):
+    # the facade is a thin wrapper around
+    # `FacadeNonceTable.claim_nonce/4`, which itself enforces ALL 4
+    # gates internally via `Gates.run_all/4` against the REGISTRY-
+    # resolved adapter module (NOT a caller-supplied module).
     #
-    #   1. Gate 1 (session bind cap) — cheapest gate, runs BEFORE
-    #      Gate 0 lookup_adapter so a no-cap caller cannot enumerate
-    #      adapter IDs by probing (scenario 0 invariant).
-    #   2. Gate 0 (lookup_adapter) — resolve adapter_id → adapter_module
-    #      AFTER Gate 1 passes.
-    #   3. `FacadeNonceTable.claim_nonce/4` — enforces Gates 2+3+4
-    #      internally (per audit-SPEC CRIT-1; `claim_nonce` is no
-    #      longer a freely-callable mint, it IS the gate-enforcing
-    #      entry point). Returns the nonce only if all gates pass.
-    #   4. Dispatch `:bind` with the nonce in args; the action body
-    #      atomically consumes it.
+    # claim_nonce/4 takes the adapter_id STRING and resolves to the
+    # real adapter_module via AdapterRegistry — this closes the
+    # spoof-module bypass codex r1 CRIT identified (caller cannot
+    # smuggle in a fake module whose adapter_id/0 lies).
     #
-    # An in-VM caller bypassing this facade by calling `claim_nonce/4`
-    # directly still cannot obtain a nonce without passing Gates 1+2+3+4
-    # internally — defense in depth. The gates are SoT in
+    # An in-VM caller bypassing this facade still cannot obtain a
+    # nonce without passing Gates 1+2+3+4 against the registry-
+    # resolved module. The gates are SoT in
     # `Ezagent.ExternalMirror.Gates`; this facade and `claim_nonce/4`
-    # both delegate so they cannot drift (P3 single source of truth).
-    with :ok <- Gates.check_session_bind_cap(ctx, session_uri),
-         {:ok, adapter_module} <- Gates.lookup_adapter(adapter_id),
-         {:ok, nonce} <-
-           FacadeNonceTable.claim_nonce(session_uri, ctx, adapter_module, target_id) do
+    # both delegate so they cannot drift (P3).
+    #
+    # Gate 1 runs INSIDE Gates.run_all BEFORE Gate 0 (lookup_adapter),
+    # so a no-cap caller probing fake adapter IDs sees :unauthorized
+    # before lookup_adapter could return :unknown_adapter — preserving
+    # scenario 0's anti-enumeration property.
+    with {:ok, nonce} <-
+           FacadeNonceTable.claim_nonce(session_uri, ctx, adapter_id, target_id) do
       do_dispatch_bind(session_uri, adapter_id, target_id, opts, ctx, nonce)
     end
   end

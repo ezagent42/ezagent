@@ -128,6 +128,20 @@ defmodule Ezagent.ExternalMirror.FacadeNonceTable do
   must satisfy the same 4 gates as a caller going through the
   `Ezagent.ExternalMirror.bind/5` facade.
 
+  ## codex PR-AUDIT r1 CRIT fix (2026-05-25) — adapter module trust
+
+  The `adapter_id` parameter is a STRING — we resolve it to the real
+  `adapter_module` via `AdapterRegistry.lookup/1` here instead of
+  trusting a caller-supplied module. Pre-fix, the caller passed in
+  the module directly; an in-VM caller could supply a spoof module
+  whose `adapter_id/0` returned a real adapter's ID, whose
+  `cap_subject/0` named a cap they already hold, and whose
+  `target_ownership_check/2` returned `:ok`. The gates passed against
+  the spoof, the nonce was minted for the REAL adapter's ID, and the
+  action body bound to the real adapter — bypassing its real Cap 2
+  + Gate 4. The fix: only the registry's resolved module participates
+  in gates 2 and 4.
+
   See moduledoc + `Ezagent.ExternalMirror.Gates` for the gate
   definitions and `Ezagent.ExternalMirror.bind/5` for the canonical
   caller. The facade is now a thin wrapper that calls this function
@@ -136,39 +150,43 @@ defmodule Ezagent.ExternalMirror.FacadeNonceTable do
   Default TTL is SPEC-pinned at 5 seconds. For test-only millisecond
   TTLs, use the `@doc false` 5-arity form below.
   """
-  @spec claim_nonce(URI.t(), Gates.caller_ctx(), module(), term()) ::
+  @spec claim_nonce(URI.t(), Gates.caller_ctx(), String.t(), term()) ::
           {:ok, binary()}
           | {:error,
-             :unauthorized
+             :unknown_adapter
+             | :unauthorized
              | :adapter_not_authorized
              | :cross_workspace_denied
              | :target_check_timeout
              | {:target_ownership_denied, term()}
              | {:target_check_crashed, term()}}
-  def claim_nonce(%URI{} = session_uri, ctx, adapter_module, target_id)
-      when is_map(ctx) and is_atom(adapter_module) do
-    claim_nonce(session_uri, ctx, adapter_module, target_id, @default_ttl_ms)
+  def claim_nonce(%URI{} = session_uri, ctx, adapter_id, target_id)
+      when is_map(ctx) and is_binary(adapter_id) do
+    claim_nonce(session_uri, ctx, adapter_id, target_id, @default_ttl_ms)
   end
 
   @doc false
   # Test-only 5-arity form — see audit SPEC §3.3 note. Production
   # callers MUST use the 4-arity `claim_nonce/4` above.
-  @spec claim_nonce(URI.t(), Gates.caller_ctx(), module(), term(), pos_integer()) ::
+  @spec claim_nonce(URI.t(), Gates.caller_ctx(), String.t(), term(), pos_integer()) ::
           {:ok, binary()} | {:error, term()}
-  def claim_nonce(%URI{} = session_uri, ctx, adapter_module, target_id, ttl_ms)
-      when is_map(ctx) and is_atom(adapter_module) and is_integer(ttl_ms) and ttl_ms > 0 do
-    # Audit-SPEC CRIT-1 structural fix: gates run INSIDE claim_nonce.
-    # An in-VM caller bypassing the facade and calling this directly
-    # must satisfy the same gates. We re-derive the adapter_id from
-    # the supplied adapter_module so the call shape is unambiguous
-    # (the module IS the contract; adapter_id is a property of it).
-    adapter_id = adapter_module.adapter_id()
+  def claim_nonce(%URI{} = session_uri, ctx, adapter_id, target_id, ttl_ms)
+      when is_map(ctx) and is_binary(adapter_id) and is_integer(ttl_ms) and ttl_ms > 0 do
+    # codex PR-AUDIT r1 CRIT fix (2026-05-25): resolve adapter_module
+    # via AdapterRegistry — never trust the caller. A spoof module
+    # whose `adapter_id/0` lies about its identity cannot pass through
+    # this path because Gate 2 + Gate 4 run against the REGISTRY-
+    # resolved module, not the caller's input.
+    #
+    # Gates 1+0+2+3+4 in canonical order per Gates.run_all/4 (same
+    # ordering as the facade) — the unified Gates SoT means an in-VM
+    # caller bypassing the facade by calling claim_nonce/4 directly
+    # still cannot get a nonce without passing all 4 gates against
+    # the real registry-resolved module.
+    caller_uri = Map.fetch!(ctx, :caller)
 
-    with :ok <- Gates.check_session_bind_cap(ctx, session_uri),
-         :ok <- Gates.check_adapter_allow_cap(ctx, session_uri, adapter_module),
-         :ok <- Gates.check_workspace_iso(ctx, session_uri),
-         caller_uri = Map.fetch!(ctx, :caller),
-         :ok <- Gates.run_target_ownership_check(adapter_module, caller_uri, target_id) do
+    with {:ok, _adapter_module} <-
+           Gates.run_all(session_uri, ctx, adapter_id, target_id) do
       GenServer.call(
         __MODULE__,
         {:claim, session_uri, adapter_id, target_id, caller_uri, ttl_ms}

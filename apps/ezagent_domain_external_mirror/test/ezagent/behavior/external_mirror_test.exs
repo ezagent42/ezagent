@@ -910,7 +910,7 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
         FacadeNonceTable.claim_nonce(
           session_uri,
           ctx,
-          MockPublishAdapter,
+          "mock_publish",
           "tgt-replay"
         )
 
@@ -941,7 +941,7 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
         FacadeNonceTable.claim_nonce(
           session_a,
           ctx,
-          MockPublishAdapter,
+          "mock_publish",
           "tgt-A"
         )
 
@@ -973,7 +973,7 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
         FacadeNonceTable.claim_nonce(
           session_uri,
           ctx,
-          MockPublishAdapter,
+          "mock_publish",
           "tgt-ttl",
           50
         )

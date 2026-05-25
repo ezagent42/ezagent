@@ -398,7 +398,7 @@ defmodule Ezagent.ExternalMirror.AuthModelInvariantTest do
         FacadeNonceTable.claim_nonce(
           session_uri,
           ctx,
-          MockPublishAdapter,
+          "mock_publish",
           "tgt-s8"
         )
 
@@ -431,7 +431,7 @@ defmodule Ezagent.ExternalMirror.AuthModelInvariantTest do
         FacadeNonceTable.claim_nonce(
           session_uri,
           ctx,
-          MockPublishAdapter,
+          "mock_publish",
           "tgt-s9",
           50
         )
@@ -461,7 +461,7 @@ defmodule Ezagent.ExternalMirror.AuthModelInvariantTest do
         FacadeNonceTable.claim_nonce(
           session_a,
           ctx,
-          MockPublishAdapter,
+          "mock_publish",
           "tgt-s10"
         )
 
@@ -519,7 +519,7 @@ defmodule Ezagent.ExternalMirror.AuthModelInvariantTest do
                FacadeNonceTable.claim_nonce(
                  session_uri,
                  bypass_ctx,
-                 MockPublishAdapter,
+                 "mock_publish",
                  "tgt-s10b"
                )
 
@@ -542,8 +542,53 @@ defmodule Ezagent.ExternalMirror.AuthModelInvariantTest do
                FacadeNonceTable.claim_nonce(
                  session_uri,
                  ctx,
-                 MockPublishAdapter,
+                 "mock_publish",
                  "tgt-s10b2"
+               )
+    end
+
+    # codex PR-AUDIT r1 CRIT regression — adapter spoofing via
+    # caller-supplied module
+    #
+    # Pre-fix, claim_nonce took adapter_module directly + ran Gate 2
+    # (cap_subject lookup) + Gate 4 (target_ownership_check) against
+    # the caller-supplied module. An in-VM attacker could construct
+    # a spoof module whose adapter_id/0 returned a real registered
+    # adapter's ID, whose cap_subject/0 pointed at a cap they already
+    # hold, and whose target_ownership_check/2 returned :ok. Gates
+    # passed against the spoof, nonce was minted for the REAL
+    # adapter's ID, and the action body bound to the real adapter
+    # bypassing its real Cap 2 + Gate 4.
+    #
+    # Post-fix: claim_nonce takes adapter_id STRING; the registry
+    # resolves it to the real module. A spoof attempt via direct
+    # `__MODULE__` reference cannot bypass — there's no module
+    # parameter to spoof. This test asserts the public API surface
+    # rejects the attack vector by construction.
+    test "claim_nonce/4 takes adapter_id STRING — no caller-supplied module parameter to spoof" do
+      session_uri = H.unique_session_uri("s10c")
+      caller_uri = H.unique_user_uri("s10c-caller")
+      ctx = build_admin_ctx(caller_uri)
+
+      # Unregistered adapter_id → :unknown_adapter (Gate 0). The
+      # caller cannot smuggle in a spoof module; the only way to
+      # "name" an adapter is via its registered ID.
+      assert {:error, :unknown_adapter} =
+               FacadeNonceTable.claim_nonce(
+                 session_uri,
+                 ctx,
+                 "nonexistent_spoofed_id",
+                 "tgt-s10c"
+               )
+
+      # Registered adapter_id → real module resolved by registry.
+      # Admin ctx → all gates pass → nonce minted.
+      assert {:ok, _nonce} =
+               FacadeNonceTable.claim_nonce(
+                 session_uri,
+                 ctx,
+                 "mock_publish",
+                 "tgt-s10c-real"
                )
     end
   end
