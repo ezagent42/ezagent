@@ -56,22 +56,14 @@ defmodule Ezagent.WorkspaceRegistry do
 
   def table, do: @table
 
-  # NOTE: `default_workspace_uri/0` was DELETED in SPEC #324 (workspace
-  # rename `default` → `system`). The function previously returned
-  # the legacy default workspace URI as a silent fallback for callers that hadn't
-  # plumbed workspace through. Per `feedback_let_it_crash_no_workarounds`
-  # + the SPEC's cross-workspace security analysis, callers now either:
-  #
-  # - **Derive structurally** from a caller URI via
-  #   `Ezagent.URI.entity_workspace_uri/1` (the workspace is the second
-  #   path segment of any per-tenant URI), or
-  # - **Pass workspace explicitly** in their public API, or
-  # - **Fail fast** with `ArgumentError` when neither is available.
-  #
-  # Audit / snapshot fallback callers (which legitimately predate
-  # workspace context — system bootstrap events) write the literal
-  # `"workspace://system"` string directly. The string is NOT FK'd to
-  # `workspaces.uri`, so this is safe.
+  # `default_workspace_uri/0` was deleted in PR #335 per SPEC #324 rev 3
+  # (no silent workspace fallbacks). Callers derive workspace
+  # structurally from a caller URI via `Ezagent.URI.entity_workspace_uri/1`,
+  # pass workspace explicitly, or — for genuine system-tier bootstrap
+  # writes — inline the literal `"workspace://system"` at the write site.
+  # Invariant pattern #9 in
+  # `apps/ezagent_core/test/invariants/no_default_workspace_test.exs`
+  # gates against re-introduction.
 
   @doc """
   Record that `session_uri` belongs to `workspace_uri`. Idempotent —
