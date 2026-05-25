@@ -186,6 +186,65 @@ defmodule EzagentWeb.UploadsControllerTest do
     end
   end
 
+  describe "GET /files/:filename — bypass attempts (codex r1 HIGH)" do
+    test "403 when caller sent a message whose TEXT mentions the filename (not attachments)",
+         %{conn: conn} do
+      # The pre-codex-r1 implementation matched a SQL LIKE against the
+      # whole `CAST(body AS TEXT)` — so an attacker could put the
+      # victim's filename in `body.text` (with `attachments: []`) and
+      # the LIKE pattern `%/<filename>"%` would hit the JSON-quoted
+      # text. Authoritative check now verifies the resource URI is
+      # actually in the decoded attachments list.
+      uploader = user_uri("alice-#{uniq()}")
+      attacker = user_uri("eve-#{uniq()}")
+      uploader_session = session_uri("alice-s-#{uniq()}")
+      attacker_session = session_uri("eve-s-#{uniq()}")
+      filename = uploaded_filename()
+      {_, _content, _} = write_upload(filename)
+      :ok = attach_in_message(uploader, uploader_session, filename)
+
+      # Attacker sends a TEXT message (not attachment) referencing the
+      # filename in their own, unrelated session.
+      attachment_uri =
+        URI.parse("resource://uploads/#{@workspace_name}/#{filename}")
+
+      bad_msg =
+        Message.new(attacker, %{
+          text: "please fetch #{URI.to_string(attachment_uri)}",
+          attachments: []
+        })
+
+      {:ok, _} = MessageStore.write(bad_msg, attacker_session)
+
+      # Attacker must still be denied — they have no attachment record
+      # for `filename` and aren't a participant in uploader's session.
+      conn = conn |> sign_in(attacker) |> get("/files/" <> filename)
+
+      assert conn.status == 403
+      assert conn.resp_body == "forbidden"
+    end
+
+    test "filenames with `_` still authz-match for the real uploader (SQLite LIKE ESCAPE)",
+         %{conn: conn} do
+      # The pre-codex-r1 implementation built a LIKE pattern with `\_`
+      # but never passed `ESCAPE '\'` to SQLite, so legitimate filenames
+      # containing `_` (e.g. `my_file.txt` — sanitize_filename allows
+      # underscores) silently failed the participant search. Fix uses
+      # an explicit `ESCAPE '\'` clause. Pin the legitimate path so a
+      # future refactor can't silently re-break it.
+      uploader = user_uri("alice-#{uniq()}")
+      session = session_uri("s-#{uniq()}")
+      filename = "#{Ecto.UUID.generate()}-my_file_with_underscores.txt"
+      {_, content, _} = write_upload(filename)
+      :ok = attach_in_message(uploader, session, filename)
+
+      conn = conn |> sign_in(uploader) |> get("/files/" <> filename)
+
+      assert conn.status == 200
+      assert conn.resp_body == content
+    end
+  end
+
   describe "GET /files/:filename — input validation" do
     test "400 on empty filename slug", %{conn: conn} do
       uploader = user_uri("alice-#{uniq()}")
@@ -199,13 +258,14 @@ defmodule EzagentWeb.UploadsControllerTest do
       assert conn.status == 400
     end
 
-    test "404 for valid-shaped filename that doesn't exist on disk",
+    test "404 for valid-shaped filename that doesn't exist on disk (authorized caller)",
          %{conn: conn} do
-      uploader = user_uri("alice-#{uniq()}")
       # Filename never written but caller is admin to bypass authz
-      # (so we can isolate the "not on disk" branch).
+      # (so we can isolate the "not on disk" branch). Authorized
+      # callers get a precise signal — file existence is INFORMATION
+      # they're allowed to learn (codex r1 LOW oracle fix applies
+      # only to UNAUTHORIZED callers).
       admin = Ezagent.Entity.User.admin_uri()
-      _ = uploader
 
       conn =
         conn
@@ -214,6 +274,23 @@ defmodule EzagentWeb.UploadsControllerTest do
 
       assert conn.status == 404
       assert conn.resp_body == "upload not found"
+    end
+
+    test "403 (not 404) when unauthorized caller asks for a non-existent file (no existence oracle)",
+         %{conn: conn} do
+      # Codex r1 LOW: previously, an unauthorized caller could probe
+      # whether a filename existed on disk by comparing 403 (exists,
+      # forbidden) vs 404 (not found). Fix: authorize BEFORE checking
+      # disk, so unauthorized callers ALWAYS get 403 regardless of
+      # whether the file is present.
+      stranger = user_uri("eve-#{uniq()}")
+      bogus_filename = uploaded_filename()
+      # Do NOT write the file to disk.
+
+      conn = conn |> sign_in(stranger) |> get("/files/" <> bogus_filename)
+
+      assert conn.status == 403
+      assert conn.resp_body == "forbidden"
     end
   end
 

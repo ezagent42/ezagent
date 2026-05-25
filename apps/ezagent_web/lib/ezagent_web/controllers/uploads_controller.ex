@@ -29,37 +29,66 @@ defmodule EzagentWeb.UploadsController do
      allows ops/debugging access to any upload.
 
   2. **Uploader** — the caller is the `sender` of any persisted
-     `Ezagent.Message` whose `body.attachments` references this
-     filename.
+     `Ezagent.Message` whose **decoded** `body.attachments` list
+     contains a `resource://uploads/<workspace>/<filename>` URI for
+     the requested filename. Authoritative match — we materialize
+     the Message rows (Ecto decodes `body` from JSON) and compare
+     the attachment URI list in Elixir. A SQL `LIKE` is used ONLY
+     to narrow the candidate set; it is NOT sufficient on its own
+     (codex 2026-05-25 r1 HIGH — a `LIKE` over the whole body JSON
+     would let an attacker self-authorize by sending text that
+     mentions the filename).
 
   3. **Session participant** — the caller is the `sender` of any
      persisted message routed to a session that ALSO contains a
-     message attaching this filename. This is a defensible
-     persistent proxy for "session member with read-cap": you can
-     only have sent a message in a session if you were a member
-     (slice membership gates `:send`), and chat-cap-granted
-     members effectively see all attachments in that session.
-     (A member who joined but never sent is an edge case; admins
-     can fall back to bypass #1, and they can grant explicit
-     `Behavior.Identity` access if needed.)
+     message whose **decoded** attachments include the file's
+     resource URI. Persistent proxy for "session member with
+     read-cap": you can only have sent a message in a session if
+     you were a member (slice membership gates `:send`), and
+     chat-cap-granted members effectively see all attachments in
+     that session.
+
+     **Known limitation** (codex r1 MED, accepted for v1): this is
+     historical, not current. A removed user or revoked-cap user
+     who has filename foreknowledge could still fetch a future
+     attachment in a session they used to participate in. A
+     stricter "current session read-cap" check is tracked as a
+     follow-up; for v1 the bar is "cross-user filename guessing
+     yields 403," which this check satisfies.
 
   All other callers — including signed-in users who simply guess
-  filenames — get `403 Forbidden`. Filename validation (basename,
-  reject empty / `.` / `..`) still runs first so an attacker can't
-  use path traversal to read outside the uploads dir.
+  filenames — get `403 Forbidden`. The authz decision is computed
+  BEFORE inspecting the filesystem so a non-authorized caller
+  cannot use the `404 not found` / `403 forbidden` distinction as
+  a filename-existence oracle (codex r1 LOW): unauthorized always
+  yields the same response regardless of disk presence.
+
+  Filename validation (basename, reject empty / `.` / `..`) still
+  runs first so an attacker can't use path traversal to read
+  outside the uploads dir.
 
   See `docs/futures/todo.md` for the gating TODO this controller
   closes; the regression test
   (`apps/ezagent_web/test/ezagent_web/controllers/uploads_controller_test.exs`)
-  pins the cross-user-isolation invariant.
+  pins the cross-user-isolation invariants.
   """
 
   use EzagentWeb, :controller
 
   import Ecto.Query
 
-  alias Ezagent.{Home, Message, MessageRouting}
+  alias Ezagent.{Home, Message, MessageRouting, MessageStore}
   alias EzagentCore.Repo
+
+  # Cap on the number of candidate Message rows we'll fully load +
+  # decode to verify an attachment match. Messages with the filename
+  # appearing literally anywhere in `body` (after SQL LIKE narrowing)
+  # are rare in practice; this bound is just defense against
+  # pathological cases (e.g., a chatty session that text-quoted the
+  # filename N times). If we ever exceed it, the participant check
+  # falls through to deny — admin bypass remains the operator
+  # escape hatch.
+  @candidate_cap 256
 
   def show(conn, %{"filename" => filename}) do
     safe = Path.basename(filename)
@@ -71,41 +100,38 @@ defmodule EzagentWeb.UploadsController do
         |> text("invalid filename")
 
       true ->
-        full = Path.join(Home.path("uploads"), safe)
         caller_uri = conn.assigns[:current_entity_uri]
 
-        cond do
-          not File.regular?(full) ->
+        # Authorize BEFORE looking at the disk so the response can't
+        # leak file existence to an unauthorized caller (codex r1 LOW).
+        if authorized?(caller_uri, safe) do
+          full = Path.join(Home.path("uploads"), safe)
+
+          if File.regular?(full) do
+            send_download(conn, {:file, full}, filename: original_name(safe))
+          else
             conn
             |> put_status(:not_found)
             |> text("upload not found")
-
-          authorized?(caller_uri, safe) ->
-            send_download(conn, {:file, full}, filename: original_name(safe))
-
-          true ->
-            # Deny-by-default. 403 (not 404) so a legitimate uploader
-            # who hits a transient DB hiccup gets a deterministic
-            # signal rather than a misleading "missing" message.
-            conn
-            |> put_status(:forbidden)
-            |> text("forbidden")
+          end
+        else
+          conn
+          |> put_status(:forbidden)
+          |> text("forbidden")
         end
     end
   end
 
-  # --- Authorization helpers -------------------------------------------------
+  # --- Authorization ---------------------------------------------------------
 
-  # Hook for the SessionPrincipal-less path. RequireEntity already
-  # bounced an anon caller, so reaching here without a URI is an
-  # invariant violation — let-it-crash.
+  # RequireEntity should have bounced an anon caller before we reach
+  # here; defensive `nil` clause stays false rather than crashing.
   defp authorized?(nil, _filename), do: false
 
   defp authorized?(%URI{} = caller_uri, filename) do
     cond do
       admin?(caller_uri) -> true
-      uploader?(caller_uri, filename) -> true
-      session_participant?(caller_uri, filename) -> true
+      caller_in_attaching_messages?(caller_uri, filename) -> true
       true -> false
     end
   end
@@ -122,78 +148,128 @@ defmodule EzagentWeb.UploadsController do
     end
   end
 
-  # True iff there exists a persisted Message whose sender == caller
-  # AND body.attachments references `filename`.
-  defp uploader?(%URI{} = caller_uri, filename) when is_binary(filename) do
-    pattern = attachment_like_pattern(filename)
-    caller_str = URI.to_string(caller_uri)
+  # Combined uploader + session-participant check. Loads candidate
+  # Message rows (narrowed by SQL LIKE on body), decodes each row's
+  # `body.attachments` in Elixir, and confirms the filename is in
+  # the ACTUAL attachment URI list — NOT just substring-present in
+  # the body JSON (codex r1 HIGH — that would let `body.text`
+  # text-content match).
+  defp caller_in_attaching_messages?(%URI{} = caller_uri, filename) do
+    candidates = load_candidate_messages(filename)
 
-    query =
-      from(m in Message,
-        where:
-          m.sender == ^caller_str and
-            like(fragment("CAST(? AS TEXT)", m.body), ^pattern),
-        select: 1,
-        limit: 1
-      )
+    # Step 1: messages that genuinely attach `filename`.
+    attaching = Enum.filter(candidates, &message_attaches?(&1, filename))
 
-    Repo.exists?(query)
-  end
-
-  # True iff caller has sent ≥1 message in some session_uri that ALSO
-  # contains a routing for a message attaching `filename`. Two-query
-  # form (rather than a single JOIN) so we can keep the body LIKE
-  # search on a small candidate set.
-  defp session_participant?(%URI{} = caller_uri, filename) when is_binary(filename) do
-    pattern = attachment_like_pattern(filename)
-    caller_str = URI.to_string(caller_uri)
-
-    # Step 1: sessions that contain a message attaching this file.
-    attaching_session_uris =
-      from(m in Message,
-        join: r in MessageRouting,
-        on: r.message_id == m.id,
-        where: like(fragment("CAST(? AS TEXT)", m.body), ^pattern),
-        select: r.session_uri,
-        distinct: true
-      )
-      |> Repo.all()
-
-    case attaching_session_uris do
+    case attaching do
       [] ->
         false
 
-      sessions ->
-        # Step 2: has caller sent any message routed to one of those sessions?
-        from(m in Message,
-          join: r in MessageRouting,
-          on: r.message_id == m.id,
-          where: m.sender == ^caller_str and r.session_uri in ^sessions,
-          select: 1,
-          limit: 1
-        )
-        |> Repo.exists?()
+      msgs ->
+        caller_str = URI.to_string(caller_uri)
+
+        # Uploader branch: caller sent any of those attaching messages.
+        uploader? =
+          Enum.any?(msgs, fn m -> URI.to_string(m.sender) == caller_str end)
+
+        if uploader? do
+          true
+        else
+          # Session-participant branch: caller has sent at least one
+          # message routed to any session that any attaching message
+          # was routed to. `MessageStore.sessions_for_message/1`
+          # returns `[String.t()]`.
+          attaching_session_uris =
+            msgs
+            |> Enum.flat_map(fn m -> MessageStore.sessions_for_message(m.id) end)
+            |> Enum.uniq()
+
+          caller_sent_in_any_session?(caller_str, attaching_session_uris)
+        end
     end
   end
 
-  # Build a SQL LIKE pattern that matches an attachment URI ending
-  # in `/<filename>`. Resource URIs are `resource://uploads/<workspace>/<filename>`,
-  # so the trailing `/<filename>"` (with the JSON-quote-close) is a
-  # tight pin against the body JSON.
-  #
-  # Filenames are `<36-char-uuid>-<original>`, sanitized at upload
-  # time via `sanitize_filename/1` in AdminLive — no `%`, `_`, or `\`
-  # injection surface. Defense-in-depth: we still escape the SQL
-  # LIKE wildcards in case sanitize_filename's allowlist ever loosens.
-  defp attachment_like_pattern(filename) do
+  # Pull at most @candidate_cap message rows whose body JSON contains
+  # the filename substring (uses SQL LIKE for index-free SQLite scan +
+  # ESCAPE so `%`, `_`, `\` in filenames don't act as wildcards). The
+  # SQL match is intentionally LOOSE — false positives are filtered out
+  # in `message_attaches?/2` by inspecting the decoded attachments list.
+  defp load_candidate_messages(filename) do
+    pattern = like_pattern(filename)
+    escape = like_escape_char()
+
+    from(m in Message,
+      where:
+        fragment(
+          "CAST(? AS TEXT) LIKE ? ESCAPE ?",
+          m.body,
+          ^pattern,
+          ^escape
+        ),
+      limit: @candidate_cap
+    )
+    |> Repo.all()
+  end
+
+  # Authoritative match: the resource URI for this filename must be in
+  # the decoded `body.attachments` list. Tolerates either string OR
+  # `%URI{}` items (body is a `:map` field stored as raw JSON; on
+  # decode, attachments come back as strings — though tests build
+  # them as URI structs in-memory).
+  defp message_attaches?(%Message{body: body}, filename) do
+    attachments =
+      case body do
+        %{attachments: list} when is_list(list) -> list
+        %{"attachments" => list} when is_list(list) -> list
+        _ -> []
+      end
+
+    Enum.any?(attachments, &attachment_matches?(&1, filename))
+  end
+
+  # Resource URI shape: `resource://uploads/<workspace>/<filename>`.
+  # Match the host + last path segment exactly.
+  defp attachment_matches?(%URI{scheme: "resource", host: "uploads", path: "/" <> rest}, filename) do
+    Path.basename(rest) == filename
+  end
+
+  defp attachment_matches?(s, filename) when is_binary(s) do
+    case URI.new(s) do
+      {:ok, uri} -> attachment_matches?(uri, filename)
+      _ -> false
+    end
+  end
+
+  defp attachment_matches?(_, _), do: false
+
+  defp caller_sent_in_any_session?(_caller_str, []), do: false
+
+  defp caller_sent_in_any_session?(caller_str, session_uris) when is_list(session_uris) do
+    from(m in Message,
+      join: r in MessageRouting,
+      on: r.message_id == m.id,
+      where: m.sender == ^caller_str and r.session_uri in ^session_uris,
+      select: 1,
+      limit: 1
+    )
+    |> Repo.exists?()
+  end
+
+  # SQL LIKE pattern that matches the filename anywhere in the
+  # CAST(body AS TEXT) representation. We escape `%`, `_`, and `\`
+  # using `\` as the escape character (SQLite doesn't default to one);
+  # the caller pairs this with an explicit `ESCAPE '\'` clause in
+  # `load_candidate_messages/1` — see codex r1 MED.
+  defp like_pattern(filename) do
     escaped =
       filename
       |> String.replace("\\", "\\\\")
       |> String.replace("%", "\\%")
       |> String.replace("_", "\\_")
 
-    "%/" <> escaped <> "\"%"
+    "%" <> escaped <> "%"
   end
+
+  defp like_escape_char, do: "\\"
 
   defp original_name(<<_uuid::binary-size(36), "-", rest::binary>>), do: rest
   defp original_name(other), do: other
