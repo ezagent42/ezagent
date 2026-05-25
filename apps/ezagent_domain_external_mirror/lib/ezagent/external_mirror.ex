@@ -8,12 +8,14 @@ defmodule Ezagent.ExternalMirror do
 
   **Mutations (the bind/unbind facade — r6 two-step flow):**
 
-  - `bind/4` — runs Check 2 (per-adapter allow cap) + Check 3
+  - `bind/4` — runs Check 1 (session-level `:bind` cap, inlined
+    per codex r4 MED so it short-circuits BEFORE any adapter I/O) +
+    Check 2 (per-adapter allow cap) + Check 3
     (`target_ownership_check/2` in a supervised Task with bounded
     timeout) BEFORE dispatching `:bind` on the Session Kind. The
     facade is the ONLY place adapter I/O happens. Dispatch CapBAC
-    step 5.5 handles Check 1 (the session-level
-    `Behavior.ExternalMirror` bind cap); step 5.6 handles
+    step 5.5 ALSO enforces Check 1 (defence-in-depth: direct
+    dispatch attempts still hit it); step 5.6 handles
     cross-workspace denial.
   - `unbind/3` — straightforward dispatch of `:unbind` (no Task /
     no adapter I/O; the cleanup path is pure slice mutation +
@@ -73,6 +75,13 @@ defmodule Ezagent.ExternalMirror do
   `(adapter_id, target_id)` with caller-supplied `opts`.
 
   Performs (in order):
+
+  0. **Check 1** — caller holds the session-level `:bind` cap
+     (`{kind: :session, behavior: Behavior.ExternalMirror,
+     instance: session_uri, workspace_uri: ws}`). Returns
+     `{:error, :unauthorized}` on miss. (codex r4 MED 2026-05-25
+     — inlined here so Check 3's adapter I/O doesn't run for a
+     caller missing the session cap.)
 
   1. **Check 2** — caller holds the per-adapter allow cap
      (`{kind: :session, behavior: <adapter.cap_subject.behavior_module>,
@@ -135,6 +144,7 @@ defmodule Ezagent.ExternalMirror do
           {:ok, map()}
           | {:error,
              :unknown_adapter
+             | :unauthorized
              | :adapter_not_authorized
              | :target_check_timeout
              | {:target_ownership_denied, term()}
@@ -142,7 +152,16 @@ defmodule Ezagent.ExternalMirror do
              | term()}
   def bind(%URI{} = session_uri, adapter_id, target_id, opts, ctx)
       when is_binary(adapter_id) and is_map(opts) and is_map(ctx) do
+    # codex r4 MED fix (2026-05-25): Check 1 (session :bind cap)
+    # MUST run BEFORE Check 3 (target_ownership_check — adapter I/O).
+    # Pre-fix, a caller with the adapter allow cap (Check 2) but no
+    # session :bind cap could trigger arbitrary adapter target-
+    # ownership probes (DoS / target enumeration surface). Inline
+    # Check 1 here matches what dispatch step 5.5
+    # (`Kind.Runtime.authz_check/4`) enforces post-dispatch — see
+    # `check_session_bind_cap/2` below for the precise cap shape.
     with {:ok, adapter_module} <- lookup_adapter(adapter_id),
+         :ok <- check_session_bind_cap(ctx, session_uri),
          :ok <- check_adapter_allow_cap(ctx, session_uri, adapter_module),
          :ok <- run_target_ownership_check(adapter_module, ctx.caller, target_id) do
       do_dispatch_bind(session_uri, adapter_id, target_id, opts, ctx)
@@ -380,6 +399,45 @@ defmodule Ezagent.ExternalMirror do
     case AdapterRegistry.lookup(adapter_id) do
       {:ok, mod} -> {:ok, mod}
       :error -> {:error, :unknown_adapter}
+    end
+  end
+
+  # codex r4 MED fix (2026-05-25): Check 1 per SPEC §4.2 — caller
+  # holds the session-level `Behavior.ExternalMirror` `:bind` cap.
+  # Inlined here so it runs BEFORE Check 3 (which does adapter I/O).
+  # The cap shape mirrors what dispatch step 5.5 enforces via
+  # `Ezagent.Capability.cap_for_action(Ezagent.Entity.Session, :bind,
+  # <session?action=external_mirror.bind>)`:
+  #
+  #   %{kind: :session, behavior: Ezagent.Behavior.ExternalMirror,
+  #     instance: <session_uri instance>,
+  #     workspace_uri: <session workspace or :any>}
+  #
+  # On miss → `{:error, :unauthorized}`. Same error atom dispatch
+  # would return so the caller's contract is unchanged (and matches
+  # SPEC §9 PR-EM-3 test b).
+  defp check_session_bind_cap(ctx, %URI{} = session_uri) do
+    instance = Ezagent.URI.instance(session_uri)
+
+    workspace_uri =
+      case Ezagent.Capability.workspace_of(session_uri) do
+        %URI{} = ws -> ws
+        :any -> :any
+      end
+
+    needed = %{
+      kind: :session,
+      behavior: Ezagent.Behavior.ExternalMirror,
+      instance: instance,
+      workspace_uri: workspace_uri
+    }
+
+    caps = Map.get(ctx, :caps, MapSet.new())
+
+    if Enum.any?(caps, &Ezagent.Capability.matches?(&1, needed)) do
+      :ok
+    else
+      {:error, :unauthorized}
     end
   end
 

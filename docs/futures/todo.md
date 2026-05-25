@@ -6,6 +6,27 @@
 
 ## Active follow-ups (post-2026-05-24 batch)
 
+### Facade-auth-model security audit (deferred from PR-EM-3 codex iteration)
+
+- **Where:** `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror.ex` (facade) + `behavior/external_mirror.ex` (action body)
+- **Pattern observed (2026-05-25):** PR-EM-3 hit 5 rounds of codex review (r1-r5);
+  each round surfaced 2-3 new HIGH/CRIT findings related to the bind/unbind
+  facade's auth-model enforcement: flag forgery (r3 CRIT), read-side cap
+  bypass (r2 HIGH), spawn-error swallowing (r4 HIGH), ordering of cap-check
+  vs target-ownership-check (r4 MED), and BootReconciler ordering (r4 HIGH).
+  The pattern suggests structural under-specification in SPEC §4.2 not
+  fully addressed by point fixes.
+- **Recommendation:** post-Stream-2 standalone audit PR that
+  (a) defines a single comprehensive invariant test exercising all 4
+  enforcement gates (cap-1 / cap-2 / target-check / workspace-iso) +
+  forgery resistance + ordering + failure modes;
+  (b) reviews the facade vs action-body split per `feedback_let_it_crash_no_workarounds`;
+  (c) adds a security-focused doc to `docs/superpowers/specs/` capturing
+  the auth model formally.
+- **Priority:** post-Stream-2 (PR-EM-FINAL or first follow-up). Each
+  individual PR-EM-3 finding is fixed; the META-finding is the
+  pattern of finding-them.
+
 ### `Ezagent.Invocation.dispatch/1` ReadyGate ↔ PendingDelivery TOCTOU
 - **Where:** `apps/ezagent_core/lib/ezagent/invocation.ex` `dispatch/1`
   reads `Ezagent.Kind.ReadyGate.status/1` then

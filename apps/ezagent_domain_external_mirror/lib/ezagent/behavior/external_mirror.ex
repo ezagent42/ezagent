@@ -194,7 +194,22 @@ defmodule Ezagent.Behavior.ExternalMirror do
     Enum.each(bindings, fn binding ->
       case AdapterRegistry.lookup(binding.adapter_id) do
         {:ok, _module} ->
-          spawn_worker_idempotently(session_uri, binding)
+          # codex r4 HIGH-2 (2026-05-25): spawn may return
+          # `{:error, :worker_spawn_failed}` after retry exhaustion.
+          # In the rehydration path we just log + skip — the next
+          # adapter install or admin retry will re-attempt. The
+          # binding row already exists in the projection table.
+          case spawn_worker_idempotently(session_uri, binding) do
+            :ok ->
+              :ok
+
+            {:error, :worker_spawn_failed} ->
+              Logger.warning(
+                "Behavior.ExternalMirror: rehydration spawn failed for " <>
+                  "#{URI.to_string(session_uri)}/#{binding.adapter_id}/" <>
+                  "#{inspect(binding.target_id)} — will retry on next event"
+              )
+          end
 
         :error ->
           Logger.debug(
@@ -277,12 +292,19 @@ defmodule Ezagent.Behavior.ExternalMirror do
         # the same triple lands here on the second call). Confirm
         # the worker is alive (defensive — if it died between
         # rehydrate + this dispatch, respawn now).
-        :ok = spawn_worker_idempotently(session_uri, existing)
+        case spawn_worker_idempotently(session_uri, existing) do
+          :ok ->
+            worker_uri = WorkerSpawn.worker_uri_for(session_uri, aid, tid)
 
-        worker_uri = WorkerSpawn.worker_uri_for(session_uri, aid, tid)
+            {:ok, slice,
+             %{ok: true, binding_id: binding_id, worker_uri: worker_uri, idempotent: true}}
 
-        {:ok, slice,
-         %{ok: true, binding_id: binding_id, worker_uri: worker_uri, idempotent: true}}
+          {:error, :worker_spawn_failed} = err ->
+            # codex r4 HIGH-2: don't claim idempotent success when
+            # the worker is actually dead. Slice already carries the
+            # binding row; the next bind attempt will retry spawn.
+            err
+        end
 
       nil ->
         bound_at = DateTime.utc_now()
@@ -301,19 +323,33 @@ defmodule Ezagent.Behavior.ExternalMirror do
         # worker). `Kind.spawn/2` returns either {:ok, _pid} (fresh)
         # or {:error, {:already_started, _pid}} (idempotent) — both
         # are success per SPEC §3.1 r6 HIGH-1 fix.
-        :ok = spawn_worker_idempotently(session_uri, binding)
+        #
+        # codex r4 HIGH-2 (2026-05-25): retry-exhausted spawn now
+        # returns `{:error, :worker_spawn_failed}` (was `:ok` —
+        # silent "binding exists but no worker" bug). Abort BEFORE
+        # persist + slice mutation so callers see the failure
+        # honestly and the projection table stays consistent with
+        # the live worker population.
+        case spawn_worker_idempotently(session_uri, binding) do
+          :ok ->
+            # Persist projection row. Concurrent :bind for the same
+            # triple from another node would race here; the unique
+            # index on (session_uri, adapter_id, target_id) rejects
+            # the duplicate with a constraint violation, which we
+            # treat as success (the in-memory winner already exists).
+            :ok = persist_binding_row(session_uri, binding)
 
-        # Persist projection row. Concurrent :bind for the same
-        # triple from another node would race here; the unique
-        # index on (session_uri, adapter_id, target_id) rejects
-        # the duplicate with a constraint violation, which we
-        # treat as success (the in-memory winner already exists).
-        :ok = persist_binding_row(session_uri, binding)
+            new_slice = update_in(slice.bindings, &[binding | &1])
 
-        new_slice = update_in(slice.bindings, &[binding | &1])
+            worker_uri = WorkerSpawn.worker_uri_for(session_uri, aid, tid)
+            {:ok, new_slice, %{ok: true, binding_id: binding_id, worker_uri: worker_uri}}
 
-        worker_uri = WorkerSpawn.worker_uri_for(session_uri, aid, tid)
-        {:ok, new_slice, %{ok: true, binding_id: binding_id, worker_uri: worker_uri}}
+          {:error, :worker_spawn_failed} = err ->
+            # Slice NOT mutated; row NOT persisted. Caller's `bind/5`
+            # returns this error and can retry — the spawn race storm
+            # settled to no live worker.
+            err
+        end
     end
   end
 
@@ -420,6 +456,22 @@ defmodule Ezagent.Behavior.ExternalMirror do
   # This keeps the 10-way concurrent bind idempotency test (test j)
   # green: after the storm, EXACTLY ONE Worker is alive (the last
   # successful spawn), and all 10 callers see :ok.
+  #
+  # ## codex r4 HIGH-2 fix (2026-05-25) — let-it-crash on exhaustion
+  #
+  # Pre-fix, retry exhaustion fell through to `:ok` — a `:warning +
+  # degrade` pattern that violates
+  # `feedback_let_it_crash_no_workarounds`. Worse, `do_bind` then
+  # treated this as success and persisted the binding row + mutated
+  # the slice → silent "binding exists but no worker" state.
+  #
+  # Post-fix, retry exhaustion returns `{:error, :worker_spawn_failed}`.
+  # `do_bind` MUST propagate the error so the slice + row are NOT
+  # mutated. Callers (`:bind` action body, `handle_kind_message`
+  # rehydration loop) decide what to do per-context. The `:bind`
+  # action body returns the error to the facade caller. The
+  # rehydration loop logs at warning and skips — the next adapter
+  # install or admin retry will re-attempt.
   defp spawn_worker_idempotently(%URI{} = session_uri, %{} = binding, retries \\ 3) do
     worker_uri =
       WorkerSpawn.worker_uri_for(session_uri, binding.adapter_id, binding.target_id)
@@ -445,12 +497,32 @@ defmodule Ezagent.Behavior.ExternalMirror do
         Process.sleep(5)
         spawn_worker_idempotently(session_uri, binding, retries - 1)
 
+      # codex r4 HIGH-2 (2026-05-25): the inner `KindRegistry.put_new`
+      # surface returns the bare `{:error, {:already_registered, _}}`
+      # shape (no `{:shutdown, {:failed_to_start_child, _, _}}`
+      # wrapper) when the URI is held by a foreign pid. Treat as
+      # transient retry so test + production cover the same branch.
+      {:error, {:already_registered, _}} when retries > 0 ->
+        Process.sleep(5)
+        spawn_worker_idempotently(session_uri, binding, retries - 1)
+
       {:error, {:shutdown, {:failed_to_start_child, _, {:already_registered, _}}}} ->
-        # Retries exhausted — accept as idempotent success (some
-        # racing spawn DID succeed at one point, the storm settled
-        # to no live worker; next bind/event will respawn). Logging
-        # at debug to avoid noise.
-        :ok
+        # codex r4 HIGH-2: retries exhausted with NO live worker —
+        # return error so do_bind aborts BEFORE persisting any row.
+        Logger.warning(
+          "Behavior.ExternalMirror: spawn_worker_idempotently exhausted retries " <>
+            "for #{URI.to_string(worker_uri)} — no live worker after storm settled"
+        )
+
+        {:error, :worker_spawn_failed}
+
+      {:error, {:already_registered, _}} ->
+        Logger.warning(
+          "Behavior.ExternalMirror: spawn_worker_idempotently exhausted retries " <>
+            "for #{URI.to_string(worker_uri)} — URI registered to foreign pid"
+        )
+
+        {:error, :worker_spawn_failed}
 
       {:error, reason} ->
         throw({:external_mirror_worker_spawn_failed, reason})

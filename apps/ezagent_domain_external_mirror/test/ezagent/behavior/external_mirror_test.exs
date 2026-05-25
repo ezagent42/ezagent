@@ -1117,6 +1117,114 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
   end
 
   # =========================================================================
+  # PR-EM-3 r5 (codex r4 → r5) regressions
+  # =========================================================================
+
+  describe "PR-EM-3 r5 HIGH-2 — spawn_worker_idempotently retry-exhausted does NOT silently persist" do
+    test "Kind.spawn returning the inner-race shape repeatedly → :bind returns error AND no row + no slice entry" do
+      session_uri = unique_session_uri("em3-r5-h2-spawn-exhaust")
+      owner_uri = unique_user_uri("h2-spawn-exhaust")
+      :ok = spawn_owner_and_session(owner_uri, session_uri)
+
+      on_exit(fn -> cleanup_session(session_uri) end)
+
+      ctx = owner_ctx(owner_uri)
+      target_id = "tgt-r5-h2-spawn-exhaust"
+      MockPublishBinding.register_observer(target_id, self())
+
+      # Drive retry exhaustion by pre-registering a FOREIGN pid in
+      # `Ezagent.KindRegistry` under the Worker URI BEFORE the bind.
+      # When the dispatch's `Kind.spawn` cascade reaches the inner
+      # `Kind.Server.init/1` → `KindRegistry.put_new`, it returns
+      # `{:error, {:already_registered, <foreign_pid>}}`. The
+      # init crashes; the PerBindingSupervisor's start_child
+      # returns the
+      # `{:shutdown, {:failed_to_start_child, _, {:already_registered, _}}}`
+      # shape. The retry loop sees this 3 times in a row and exhausts.
+      worker_uri = WorkerSpawn.worker_uri_for(session_uri, "mock_publish", target_id)
+      worker_uri_str = URI.to_string(worker_uri)
+
+      blocker_parent = self()
+
+      blocker =
+        spawn(fn ->
+          {:ok, _} = Registry.register(Ezagent.KindRegistry, worker_uri_str, :blocker)
+          send(blocker_parent, :blocker_registered)
+
+          receive do
+            :release -> :ok
+          end
+        end)
+
+      assert_receive :blocker_registered, 500
+
+      try do
+        result = Facade.bind(session_uri, "mock_publish", target_id, %{}, ctx)
+
+        # The spawn loop hits the `:already_registered` shape every
+        # retry (3 attempts). After exhaustion, do_bind MUST return an
+        # error — NOT silently persist the row + claim ok.
+        assert match?({:error, :worker_spawn_failed}, result),
+               "expected {:error, :worker_spawn_failed} after retry exhaustion, " <>
+                 "got #{inspect(result)}"
+
+        # Slice unchanged.
+        assert {:ok, []} = Facade.list_bindings(session_uri, ctx)
+
+        # Projection row NOT persisted.
+        assert [] = BindingRow.list_for_session(session_uri)
+      after
+        # Release the blocker so the registry entry frees.
+        send(blocker, :release)
+        Process.sleep(20)
+      end
+    end
+  end
+
+  describe "PR-EM-3 r5 MED — bind/5 enforces session :bind cap BEFORE running target_ownership_check" do
+    test "caller without session :bind cap + with adapter allow cap → :unauthorized AND adapter check NOT invoked" do
+      owner_uri = unique_user_uri("med-owner")
+      session_uri = unique_session_uri("em3-r5-med-order")
+      :ok = spawn_owner_and_session(owner_uri, session_uri)
+
+      on_exit(fn -> cleanup_session(session_uri) end)
+
+      # Caller in same workspace, holds the per-adapter allow cap
+      # (Check 2 would pass), but NO session :bind cap. Pre-fix, the
+      # facade ran Check 2 + Check 3 (adapter I/O) BEFORE dispatch
+      # discovered the missing session :bind cap — DoS / target
+      # enumeration surface.
+      caller_uri = unique_user_uri("med-caller")
+      :ok = spawn_user(caller_uri, MapSet.new())
+
+      caller_caps =
+        MapSet.new([
+          adapter_allow_cap(@workspace_uri, "em_timeout", TimeoutAdapter.Allow)
+        ])
+
+      ctx = %{caller: caller_uri, caps: caller_caps, reply: :ignore}
+
+      # Use TimeoutAdapter sleep:500 — Check 3 sleeps 500ms but the
+      # adapter timeout is 200ms. If the facade ran Check 3 we'd see
+      # `:target_check_timeout`. Post-fix Check 1 short-circuits
+      # BEFORE Check 3, so we see `:unauthorized` essentially
+      # instantly (<50ms) — no adapter I/O fired.
+      {elapsed_us, result} =
+        :timer.tc(fn ->
+          Facade.bind(session_uri, "em_timeout", "sleep:500", %{}, ctx)
+        end)
+
+      elapsed_ms = div(elapsed_us, 1_000)
+
+      assert {:error, :unauthorized} = result
+
+      assert elapsed_ms < 100,
+             "bind/5 took #{elapsed_ms}ms — Check 3 ran before Check 1 (pre-fix order). " <>
+               "Post-fix must short-circuit on session :bind cap miss BEFORE adapter I/O."
+    end
+  end
+
+  # =========================================================================
   # Helpers
   # =========================================================================
 
