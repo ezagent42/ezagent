@@ -366,4 +366,86 @@ defmodule Ezagent.Workspace do
   # URI may be either user or agent.
   defp user_uri?(%URI{scheme: "entity", host: "user"}), do: true
   defp user_uri?(_), do: false
+
+  # --- create_agent (SPEC 2026-05-25-agent-create-cli-gui-parity) -----
+
+  @doc """
+  Unified agent-create entry — CLI and LV both call this. Dispatches
+  `Behavior.Workspace.:create_agent` against the target workspace's
+  Kind, which runs the validate + register-template + Loader.invoke_template
+  chain inside the Workspace GenServer.
+
+  ## Args
+
+  - `workspace_uri` — `%URI{scheme: "workspace", host: "<name>"}` of
+    the workspace the new agent belongs to.
+  - `args` — map with keys:
+      - `:flavor` — `"cc" | "echo" | "curl" | <future>`
+      - `:name` — entity-name suffix (composed as `<flavor>_<name>`)
+      - `:cwd` — working directory (required for cc + echo-with-PTY,
+        ignored otherwise)
+      - `:with_pty` — boolean (echo opt-in for `/bin/bash -i` sidecar)
+  - `ctx` — caller context: `%{caller: caller_uri, caps: caller_caps}`.
+    The CapBAC check is enforced at dispatch; caller MUST hold a
+    `Behavior.Workspace` cap on this workspace (or admin).
+
+  ## Return
+
+  `{:ok, %{agent_uri: %URI{}, template_name: String.t() | nil}}` on
+  success — `template_name` is `nil` for direct-spawn flavors (curl
+  and future no-template flavors).
+
+  `{:error, reason}` for shape / validation / cap-denial / spawn
+  failures (see `coerce_create_args/1` + `validate_*` in the action body).
+  """
+  @spec create_agent(URI.t(), map(), map()) ::
+          {:ok, %{agent_uri: URI.t(), template_name: String.t() | nil}}
+          | {:error, term()}
+  def create_agent(%URI{scheme: "workspace"} = workspace_uri, args, ctx)
+      when is_map(args) and is_map(ctx) do
+    target =
+      URI.new!("#{URI.to_string(workspace_uri)}?action=workspace.create_agent")
+
+    caller = Map.fetch!(ctx, :caller)
+    caps = Map.fetch!(ctx, :caps)
+
+    Invocation.dispatch(%Invocation{
+      target: target,
+      mode: :call,
+      args: args,
+      ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+    })
+  end
+
+  @doc """
+  Loop `identity.grant_cap` dispatches against `agent_uri`, one per cap.
+  Uses the CALLER's context (caps + URI) so the cap grants stay
+  CapBAC-bound (LV's existing `grant_all/3` pattern, lifted into a
+  shared helper so CLI can call it too).
+
+  Returns `:ok` if all grants succeed, `{:error, {:grant_failed, cap,
+  reason}}` on the first failure (does not continue past a failure —
+  partial provisioning surfaces immediately).
+  """
+  @spec grant_initial_caps(URI.t(), [Ezagent.Capability.t()], map()) ::
+          :ok | {:error, term()}
+  def grant_initial_caps(_agent_uri, [], _ctx), do: :ok
+
+  def grant_initial_caps(%URI{} = agent_uri, [cap | rest], ctx) when is_map(ctx) do
+    target =
+      URI.new!("#{URI.to_string(agent_uri)}?action=identity.grant_cap")
+
+    caller = Map.fetch!(ctx, :caller)
+    caps = Map.fetch!(ctx, :caps)
+
+    case Invocation.dispatch(%Invocation{
+           target: target,
+           mode: :call,
+           args: %{cap: cap},
+           ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+         }) do
+      {:ok, _} -> grant_initial_caps(agent_uri, rest, ctx)
+      {:error, reason} -> {:error, {:grant_failed, cap, reason}}
+    end
+  end
 end
