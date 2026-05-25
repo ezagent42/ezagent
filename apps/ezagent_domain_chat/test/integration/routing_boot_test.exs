@@ -1,8 +1,15 @@
 defmodule EzagentDomainChat.Integration.RoutingBootTest do
   @moduledoc """
-  Phase 3a-step 4: boot integration — chat plugin must declare two
-  RoutingRegistry tables (MentionRouting + SessionRouting) at app
-  start so plugin authors / admin tooling can write to them.
+  Boot integration — chat plugin must declare the MentionRouting
+  RoutingRegistry table at app start so plugin authors / admin tooling
+  can write to it.
+
+  2026-05-25 — the sibling SessionRouting table was deleted. Its
+  Feishu chat ↔ session bridge responsibility moved to the
+  ExternalMirror domain's `external_mirror_bindings` table (PR-EM-3
+  #317). The old "SessionRouting table is declared at chat plugin
+  boot" test was removed; an additional `refute` test below now
+  guards that SessionRouting is NOT (re-)introduced.
   """
 
   use ExUnit.Case
@@ -20,8 +27,11 @@ defmodule EzagentDomainChat.Integration.RoutingBootTest do
     assert is_list(RoutingRegistry.list_all(EzagentDomainChat.Routing.MentionRouting))
   end
 
-  test "SessionRouting table is declared at chat plugin boot" do
-    assert is_list(RoutingRegistry.list_all(EzagentDomainChat.Routing.SessionRouting))
+  test "SessionRouting table is NOT declared (retired 2026-05-25)" do
+    # ETS table names are atoms produced via `:"ezagent_routing_..."`.
+    # A whereis check is precise + does NOT raise on missing.
+    assert :ets.whereis(:"ezagent_routing_Elixir.EzagentDomainChat.Routing.SessionRouting") ==
+             :undefined
   end
 
   test "DefaultRules.bootstrap is idempotent" do

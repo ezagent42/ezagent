@@ -1,23 +1,34 @@
 defmodule EzagentPluginLiveview.RoutingLive do
   @moduledoc """
-  /admin/routing — global RoutingRegistry rules editor.
+  /routing — global MentionRouting rules editor.
 
   Per Phase 4-completion Spec 05 Part B B.2 — replaces the
   `mix ezagent.routing.add_rule` CLI workflow for admin operators.
   Workspace.routing_rules per Workspace stays config-only metadata
-  (Q-RT-1 default γ); this LV manages the **global** RoutingRegistry
-  tables (MentionRouting + SessionRouting from chat plugin).
+  (Q-RT-1 default γ); this LV manages the **global**
+  `EzagentDomainChat.Routing.MentionRouting` table from the chat
+  plugin.
+
+  ## SessionRouting retirement (2026-05-25)
+
+  The sibling `SessionRouting` table was deleted in this PR. It used
+  to carry the Feishu chat ↔ session bridge; that responsibility now
+  lives in the ExternalMirror domain's `external_mirror_bindings`
+  table (PR-EM-3 #317 — see `Ezagent.ExternalMirror`). With only
+  MentionRouting left, the top tab strip + left-sidebar table
+  switcher are gone; the page renders MentionRouting directly with
+  an explanatory blurb at the top.
 
   ## Form shape
 
-  - **Table** select — registered table modules
-    (`EzagentDomainChat.Routing.MentionRouting` / `SessionRouting`)
   - **Matcher** — two modes via toggle:
     - **Form mode** (default): pick leaf type (mention / from /
       text_contains / text_matches / always) + arg input
     - **JSON mode**: paste arbitrary matcher JSON (for combinators —
       and/or/not). Live-validated via `Matcher.from_json/1`
-  - **Receivers** — comma-separated URI strings
+  - **Receivers** — entity / session URI list (uri_picker, multi).
+    Magic tokens `$session_users` / `$mentions` / `$session_members`
+    expand at resolve time.
 
   ## Auth (PR #146 — SPEC v2 §5.7)
 
@@ -53,10 +64,12 @@ defmodule EzagentPluginLiveview.RoutingLive do
   # System Kind sentinel for routing.
   @global_routing_uri Ezagent.Entity.System.routing_default_uri()
 
-  @tables [
-    {"MentionRouting", EzagentDomainChat.Routing.MentionRouting},
-    {"SessionRouting", EzagentDomainChat.Routing.SessionRouting}
-  ]
+  # NOTE (2026-05-25): SessionRouting deleted — see moduledoc. Only
+  # MentionRouting remains, so the table is a constant rather than a
+  # list with a selector. The hidden form input `rule[table]` still
+  # carries this URI-encoded module atom so dispatched payloads stay
+  # shape-compatible with the routing-admin Behavior.
+  @table EzagentDomainChat.Routing.MentionRouting
 
   @matcher_types [
     {"mention", "URI"},
@@ -68,8 +81,6 @@ defmodule EzagentPluginLiveview.RoutingLive do
 
   @impl true
   def mount(_params, _session, socket) do
-    [{_, first_table} | _] = @tables
-
     # PR #123 hardening: live_session :require_user on_mount sets
     # current_entity_uri before mount/3 runs; admin fallback deleted.
     caller_uri = socket.assigns.current_entity_uri
@@ -88,10 +99,9 @@ defmodule EzagentPluginLiveview.RoutingLive do
 
     {:ok,
      socket
-     |> assign(:tables, @tables)
+     |> assign(:table, @table)
      |> assign(:matcher_types, @matcher_types)
-     |> assign(:current_table, first_table)
-     |> assign(:rules, load_rules(first_table))
+     |> assign(:rules, load_rules(@table))
      |> assign(:flash_error, nil)
      |> assign(:matcher_mode, "form")
      |> assign(:caller_uri, caller_uri)
@@ -105,7 +115,7 @@ defmodule EzagentPluginLiveview.RoutingLive do
        :add_form,
        to_form(
          %{
-           "table" => Atom.to_string(first_table),
+           "table" => Atom.to_string(@table),
            "matcher_type" => "mention",
            "matcher_arg" => "",
            "matcher_json" => "",
@@ -137,26 +147,14 @@ defmodule EzagentPluginLiveview.RoutingLive do
   end
 
   @impl true
-  def handle_event("switch_table", %{"table" => table_str}, socket) do
-    case parse_table(table_str) do
-      {:ok, table} ->
-        {:noreply,
-         socket
-         |> assign(:current_table, table)
-         |> assign(:rules, load_rules(table))
-         |> assign(:flash_error, nil)}
-
-      _ ->
-        {:noreply,
-         assign(socket, :flash_error, gettext("unknown table: %{table}", table: table_str))}
-    end
-  end
-
   def handle_event("toggle_mode", %{"mode" => mode}, socket) when mode in ["form", "json"] do
     {:noreply, assign(socket, :matcher_mode, mode)}
   end
 
   def handle_event("add_rule", %{"rule" => params}, socket) do
+    # NOTE (2026-05-25): the submitted `rule[table]` is always
+    # MentionRouting now (SessionRouting deleted — see moduledoc) but
+    # we still validate the hidden input to reject tampered values.
     with {:ok, table} <- parse_table(Map.get(params, "table", "")),
          {:ok, matcher} <- parse_matcher(socket.assigns.matcher_mode, params),
          receivers when is_list(receivers) <-
@@ -178,14 +176,13 @@ defmodule EzagentPluginLiveview.RoutingLive do
            }) do
       {:noreply,
        socket
-       |> assign(:current_table, table)
-       |> assign(:rules, load_rules(table))
+       |> assign(:rules, load_rules(@table))
        |> assign(:flash_error, nil)
        |> assign(
          :add_form,
          to_form(
            %{
-             "table" => Atom.to_string(table),
+             "table" => Atom.to_string(@table),
              "matcher_type" => "mention",
              "matcher_arg" => "",
              "matcher_json" => "",
@@ -257,12 +254,12 @@ defmodule EzagentPluginLiveview.RoutingLive do
       {id, ""} ->
         case dispatch_routing_admin(socket, action, %{
                id: id,
-               table: socket.assigns.current_table
+               table: @table
              }) do
           {:ok, _result} ->
             {:noreply,
              socket
-             |> assign(:rules, load_rules(socket.assigns.current_table))
+             |> assign(:rules, load_rules(@table))
              |> assign(:flash_error, nil)}
 
           {:error, :unauthorized} ->
@@ -317,13 +314,16 @@ defmodule EzagentPluginLiveview.RoutingLive do
     })
   end
 
+  # NOTE (2026-05-25): SessionRouting was deleted. The submitted
+  # `rule[table]` hidden field is fixed to MentionRouting; we still
+  # parse + whitelist-validate to reject any tampered value.
   defp parse_table(""), do: {:error, :missing_table}
 
   defp parse_table(s) when is_binary(s) do
-    try do
-      {:ok, String.to_existing_atom(s)}
-    rescue
-      ArgumentError -> {:error, {:unknown_table, s}}
+    if s == Atom.to_string(@table) do
+      {:ok, @table}
+    else
+      {:error, {:unknown_table, s}}
     end
   end
 
@@ -488,243 +488,292 @@ defmodule EzagentPluginLiveview.RoutingLive do
           current_path="/routing"
           status={%{agents_alive: 0, bridges: 0, debug_events: 0, version: "dev"}}
         >
-      <:resource_panel>
-        <div class="p-3 flex flex-col gap-1">
-          <div class="text-[10px] uppercase tracking-wide text-zinc-500 mb-1">{gettext("Tables")}</div>
-          <button
-            :for={{label, mod} <- @tables}
-            type="button"
-            phx-click="switch_table"
-            phx-value-table={Atom.to_string(mod)}
-            class={[
-              "text-left px-2 py-1 text-xs rounded font-mono",
-              (@current_table == mod &&
-                 "bg-zinc-100 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100") ||
-                "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800"
-            ]}
-          >
-            {label}
-          </button>
-        </div>
-      </:resource_panel>
-      <:main_window>
-        <div class="flex-1 overflow-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
-          <.page_header title={gettext("Routing Rules")}>
-            <:subtitle>
-              {gettext(
-                "Global RoutingRegistry tables. Per-workspace routing_rules stay config-only metadata (visible on Workspace detail page)."
-              )}
-            </:subtitle>
-          </.page_header>
-
-          <%!-- V-4 scrub (audit 2026-05-23) — inline style="" purged.
-                Use EzagentDomainUi atoms + Tailwind for table tabs and
-                buttons; `dark:` pairs preserved for dark-mode toggle. --%>
-          <section id="table-tabs" class="flex gap-2 mb-4">
-            <button
-              :for={{label, mod} <- @tables}
-              type="button"
-              phx-click="switch_table"
-              phx-value-table={Atom.to_string(mod)}
-              class={[
-                "px-4 py-1.5 border rounded-md text-xs transition-colors",
-                (@current_table == mod &&
-                   "bg-sky-600 dark:bg-sky-500 text-white border-sky-600 dark:border-sky-500") ||
-                  "bg-white dark:bg-zinc-900 text-sky-700 dark:text-sky-300 border-zinc-200 dark:border-zinc-800 hover:bg-sky-50 dark:hover:bg-zinc-800"
-              ]}
-            >
-              {label}
-            </button>
-          </section>
-
-          <.card id="rules-list">
-            <p
-              :if={@rules == []}
-              id="rules-empty"
-              class="text-sm text-zinc-500 italic"
-            >
-              {gettext("No rules in this table. Add one below.")}
-            </p>
-
-            <table
-              :if={@rules != []}
-              id="rules-table"
-              class="w-full text-xs border-collapse"
-            >
-              <thead>
-                <tr class="border-b border-zinc-200 dark:border-zinc-800">
-                  <th class="text-left px-1 py-1.5">{gettext("ID")}</th>
-                  <th class="text-left">{gettext("Source")}</th>
-                  <th class="text-left">{gettext("Matcher")}</th>
-                  <th class="text-left">{gettext("Receivers")}</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  :for={rule <- @rules}
-                  class={[
-                    "border-b border-zinc-100 dark:border-zinc-900",
-                    !rule.enabled && "opacity-50"
-                  ]}
-                >
-                  <td class="px-1 py-1">{rule.id}</td>
-                  <td class="text-[11px]">
-                    <.badge variant={source_badge_variant(rule.source)}>{rule.source}</.badge>
-                    <span :if={!rule.enabled} class="text-zinc-500 ml-1">
-                      {gettext("(disabled)")}
-                    </span>
-                  </td>
-                  <td class="font-mono text-[11px] break-all">{inspect(rule.matcher)}</td>
-                  <td class="font-mono text-[11px]">
-                    <span :for={r <- rule.receivers}>{render_receiver(r)}</span>
-                  </td>
-                  <td class="whitespace-nowrap">
-                    <.button
-                      :if={rule.source != "system_default"}
-                      variant="outline"
-                      size="sm"
-                      type="button"
-                      phx-click="delete_rule"
-                      phx-value-id={rule.id}
-                      class="text-[11px] px-2 py-0.5 h-auto text-rose-700 dark:text-rose-300 border-rose-300 dark:border-rose-700"
-                      data-confirm={gettext("Delete this rule?")}
-                    >
-                      {gettext("Delete")}
-                    </.button>
-                    <.button
-                      :if={rule.source == "system_default" and rule.enabled}
-                      variant="outline"
-                      size="sm"
-                      type="button"
-                      phx-click="disable_rule"
-                      phx-value-id={rule.id}
-                      class="text-[11px] px-2 py-0.5 h-auto text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-700"
-                      data-confirm={gettext("Disable this system_default rule? (admin opt-out — re-enable via Enable button)")}
-                    >
-                      {gettext("Disable")}
-                    </.button>
-                    <.button
-                      :if={rule.source == "system_default" and !rule.enabled}
-                      variant="outline"
-                      size="sm"
-                      type="button"
-                      phx-click="enable_rule"
-                      phx-value-id={rule.id}
-                      class="text-[11px] px-2 py-0.5 h-auto text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-700"
-                    >
-                      {gettext("Enable")}
-                    </.button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </.card>
-
-          <.card id="add-rule" class="mt-6">
-            <:header>{gettext("Add rule")}</:header>
-
-            <div class="flex gap-2 mb-3">
-              <button
-                type="button"
-                phx-click="toggle_mode"
-                phx-value-mode="form"
-                class={mode_btn_class(@matcher_mode == "form")}
-              >
-                {gettext("Form mode")}
-              </button>
-              <button
-                type="button"
-                phx-click="toggle_mode"
-                phx-value-mode="json"
-                class={mode_btn_class(@matcher_mode == "json")}
-              >
-                {gettext("JSON mode (combinators)")}
-              </button>
+          <:resource_panel>
+            <div class="p-3 flex flex-col gap-2">
+              <div class="text-[10px] uppercase tracking-wide text-zinc-500">{gettext("Table")}</div>
+              <div class="px-2 py-1 text-xs rounded font-mono bg-zinc-100 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100">
+                MentionRouting
+              </div>
+              <p class="text-[11px] text-zinc-500 mt-1">
+                {gettext(
+                  "SessionRouting was retired on 2026-05-25 — Feishu chat ↔ session bridging moved to the ExternalMirror domain (PR #317)."
+                )}
+              </p>
             </div>
+          </:resource_panel>
+          <:main_window>
+            <div class="flex-1 overflow-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
+              <.page_header title={gettext("Routing Rules")}>
+                <:subtitle>
+                  {gettext(
+                    "Global RoutingRegistry table. Per-workspace routing_rules stay config-only metadata (visible on Workspace detail page)."
+                  )}
+                </:subtitle>
+              </.page_header>
 
-            <.form for={@add_form} phx-submit="add_rule" class="flex flex-col gap-3">
-              <input type="hidden" name="rule[table]" value={Atom.to_string(@current_table)} />
+              <%!-- 2026-05-25: SessionRouting retired — see moduledoc.
+                With only MentionRouting left, the old <section
+                id="table-tabs"> top-tab strip is gone. The MentionRouting
+                explainer below replaces it; the left resource_panel
+                still shows the table name (one item) for orientation. --%>
+              <.card id="mention-routing-blurb" class="mb-4">
+                <div class="space-y-3 text-xs leading-relaxed text-zinc-700 dark:text-zinc-300">
+                  <%!-- HEEx note: `{...}` is the tag-engine's expression
+                    interpolation, so literal Elixir-tuple syntax like
+                    `{:mention, X}` would be parsed as an expression and
+                    fail to compile. The matcher snippets are rendered
+                    via `Phoenix.HTML.raw/1` of pre-built strings to
+                    keep literal braces in the output. --%>
+                  <%!-- English copy --%>
+                  <div>
+                    <p>
+                      <strong class="font-semibold">MentionRouting</strong>
+                      — the general message routing rule table. Matchers {Phoenix.HTML.raw(
+                        ~s(<code class="font-mono">{:mention, X}</code>)
+                      )} / {Phoenix.HTML.raw(~s(<code class="font-mono">{:from, Y}</code>))} / {Phoenix.HTML.raw(
+                        ~s(<code class="font-mono">{:always}</code>)
+                      )} match messages, dispatching to receivers (URIs + magic
+                      tokens like <code class="font-mono">$session_users</code>
+                      / <code class="font-mono">$mentions</code>
+                      / <code class="font-mono">$session_members</code>). 90% of
+                      rules here are admin-authored. The <code class="font-mono">system_default</code>
+                      mention-gated rule lives here too.
+                    </p>
+                    <p class="mt-2 text-zinc-500">
+                      <strong class="font-semibold">NOTE (2026-05-25)</strong>: SessionRouting table was removed —
+                      it used to manage Feishu chat → session bridging; that
+                      responsibility has migrated to the ExternalMirror domain's
+                      <code class="font-mono">external_mirror_bindings</code>
+                      table (PR-EM-3, #317).
+                    </p>
+                  </div>
 
-              <div
-                :if={@matcher_mode == "form"}
-                class="grid grid-cols-[200px_1fr] gap-2"
-              >
-                <select
-                  name="rule[matcher_type]"
-                  class="block w-full px-3 py-2 text-sm rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
+                  <%!-- Chinese copy (bilingual_docs convention) --%>
+                  <div lang="zh" class="border-t border-zinc-200 dark:border-zinc-800 pt-3">
+                    <p>
+                      <strong class="font-semibold">MentionRouting</strong>
+                      — 通用消息路由规则表。matcher {Phoenix.HTML.raw(
+                        ~s(<code class="font-mono">{:mention, X}</code>)
+                      )} / {Phoenix.HTML.raw(~s(<code class="font-mono">{:from, Y}</code>))} / {Phoenix.HTML.raw(
+                        ~s(<code class="font-mono">{:always}</code>)
+                      )} 匹配消息，对应 receivers 列表（包含 magic tokens
+                      <code class="font-mono">$session_users</code>
+                      / <code class="font-mono">$mentions</code>
+                      / <code class="font-mono">$session_members</code>）。这里
+                      90% 的规则是 admin 手动加的。 <code class="font-mono">system_default</code>
+                      那条 mention-gated rule 也在这。
+                    </p>
+                    <p class="mt-2 text-zinc-500">
+                      <strong class="font-semibold">NOTE (2026-05-25)</strong>: SessionRouting 表已删除 —
+                      它原管 Feishu chat → session 的桥接，职责已迁移到 ExternalMirror domain 的
+                      <code class="font-mono">external_mirror_bindings</code>
+                      表（PR-EM-3, #317）。
+                    </p>
+                  </div>
+                </div>
+              </.card>
+
+              <.card id="rules-list">
+                <p
+                  :if={@rules == []}
+                  id="rules-empty"
+                  class="text-sm text-zinc-500 italic"
                 >
-                  <option :for={{t, _arg_label} <- @matcher_types} value={t}>{t}</option>
-                </select>
-                <%!--
+                  {gettext("No rules yet. Add one below.")}
+                </p>
+
+                <table
+                  :if={@rules != []}
+                  id="rules-table"
+                  class="w-full text-xs border-collapse"
+                >
+                  <thead>
+                    <tr class="border-b border-zinc-200 dark:border-zinc-800">
+                      <th class="text-left px-1 py-1.5">{gettext("ID")}</th>
+                      <th class="text-left">{gettext("Source")}</th>
+                      <th class="text-left">{gettext("Matcher")}</th>
+                      <th class="text-left">{gettext("Receivers")}</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr
+                      :for={rule <- @rules}
+                      class={[
+                        "border-b border-zinc-100 dark:border-zinc-900",
+                        !rule.enabled && "opacity-50"
+                      ]}
+                    >
+                      <td class="px-1 py-1">{rule.id}</td>
+                      <td class="text-[11px]">
+                        <.badge variant={source_badge_variant(rule.source)}>{rule.source}</.badge>
+                        <span :if={!rule.enabled} class="text-zinc-500 ml-1">
+                          {gettext("(disabled)")}
+                        </span>
+                      </td>
+                      <td class="font-mono text-[11px] break-all">{inspect(rule.matcher)}</td>
+                      <td class="font-mono text-[11px]">
+                        <span :for={r <- rule.receivers}>{render_receiver(r)}</span>
+                      </td>
+                      <td class="whitespace-nowrap">
+                        <.button
+                          :if={rule.source != "system_default"}
+                          variant="outline"
+                          size="sm"
+                          type="button"
+                          phx-click="delete_rule"
+                          phx-value-id={rule.id}
+                          class="text-[11px] px-2 py-0.5 h-auto text-rose-700 dark:text-rose-300 border-rose-300 dark:border-rose-700"
+                          data-confirm={gettext("Delete this rule?")}
+                        >
+                          {gettext("Delete")}
+                        </.button>
+                        <.button
+                          :if={rule.source == "system_default" and rule.enabled}
+                          variant="outline"
+                          size="sm"
+                          type="button"
+                          phx-click="disable_rule"
+                          phx-value-id={rule.id}
+                          class="text-[11px] px-2 py-0.5 h-auto text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-700"
+                          data-confirm={
+                            gettext(
+                              "Disable this system_default rule? (admin opt-out — re-enable via Enable button)"
+                            )
+                          }
+                        >
+                          {gettext("Disable")}
+                        </.button>
+                        <.button
+                          :if={rule.source == "system_default" and !rule.enabled}
+                          variant="outline"
+                          size="sm"
+                          type="button"
+                          phx-click="enable_rule"
+                          phx-value-id={rule.id}
+                          class="text-[11px] px-2 py-0.5 h-auto text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-700"
+                        >
+                          {gettext("Enable")}
+                        </.button>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </.card>
+
+              <.card id="add-rule" class="mt-6">
+                <:header>{gettext("Add rule")}</:header>
+
+                <div class="flex gap-2 mb-3">
+                  <button
+                    type="button"
+                    phx-click="toggle_mode"
+                    phx-value-mode="form"
+                    class={mode_btn_class(@matcher_mode == "form")}
+                  >
+                    {gettext("Form mode")}
+                  </button>
+                  <button
+                    type="button"
+                    phx-click="toggle_mode"
+                    phx-value-mode="json"
+                    class={mode_btn_class(@matcher_mode == "json")}
+                  >
+                    {gettext("JSON mode (combinators)")}
+                  </button>
+                </div>
+
+                <.form for={@add_form} phx-submit="add_rule" class="flex flex-col gap-3">
+                  <input type="hidden" name="rule[table]" value={Atom.to_string(@table)} />
+
+                  <div
+                    :if={@matcher_mode == "form"}
+                    class="grid grid-cols-[200px_1fr] gap-2"
+                  >
+                    <%!-- 2026-05-25: matcher-type select. NOTE: we'd prefer
+                      `<.input type="select">` from Phoenix CoreComponents,
+                      but :ezagent_plugin_liveview deliberately does NOT
+                      depend on :ezagent_web (would create a compile cycle —
+                      see mix.exs comment). EzagentDomainUi.Primitives
+                      ships <.form_field> (text inputs only) + <.uri_picker>
+                      (entity URIs) but no <.select>, so we render the
+                      <select> inline with the same shadcn-style classes as
+                      <.uri_picker>'s filter input below: px-2 py-1.5 text-xs
+                      border rounded-md font-mono + zinc palette. --%>
+                    <select
+                      name="rule[matcher_type]"
+                      class="w-full px-2 py-1.5 text-xs border rounded-md font-mono border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
+                    >
+                      <option :for={{t, _arg_label} <- @matcher_types} value={t}>{t}</option>
+                    </select>
+                    <%!--
               V1 UI PR-1 (SPEC §1.2) — matcher arg is a :single
               uri_picker over in-workspace entities. allow_freetext is
               ON so text_contains / text_matches matchers (substring /
               regex args, not URIs) can still be entered via the
               manual-entry disclosure.
             --%>
-                <.uri_picker
-                  name="rule[matcher_arg]"
-                  mode={:single}
-                  kinds={[:entity]}
-                  options={@entity_options}
-                  allow_freetext={true}
-                  placeholder={gettext("pick an entity, or enter a substring/regex below")}
-                />
-              </div>
+                    <.uri_picker
+                      name="rule[matcher_arg]"
+                      mode={:single}
+                      kinds={[:entity]}
+                      options={@entity_options}
+                      allow_freetext={true}
+                      placeholder={gettext("pick an entity, or enter a substring/regex below")}
+                    />
+                  </div>
 
-              <div :if={@matcher_mode == "json"}>
-                <textarea
-                  name="rule[matcher_json]"
-                  rows="4"
-                  placeholder={
-                    ~s({"type":"and","items":[{"type":"mention","arg":"entity://agent/default/cc_x"},{"type":"from","arg":"entity://user/system/admin"}]})
-                  }
-                  class="block w-full px-3 py-2 text-xs font-mono rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
-                ></textarea>
-                <p class="text-[11px] text-zinc-500 mt-1">
-                  {gettext(
-                    "Use full matcher JSON for combinators. Shapes: %{combinators} wrap leaf matchers (%{leaves}).",
-                    combinators: "and / or / not",
-                    leaves: "mention, from, text_contains, text_matches, always"
-                  )}
-                </p>
-              </div>
+                  <div :if={@matcher_mode == "json"}>
+                    <textarea
+                      name="rule[matcher_json]"
+                      rows="4"
+                      placeholder={
+                        ~s({"type":"and","items":[{"type":"mention","arg":"entity://agent/default/cc_x"},{"type":"from","arg":"entity://user/system/admin"}]})
+                      }
+                      class="w-full px-2 py-1.5 text-xs font-mono border rounded-md border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
+                    ></textarea>
+                    <p class="text-[11px] text-zinc-500 mt-1">
+                      {gettext(
+                        "Use full matcher JSON for combinators. Shapes: %{combinators} wrap leaf matchers (%{leaves}).",
+                        combinators: "and / or / not",
+                        leaves: "mention, from, text_contains, text_matches, always"
+                      )}
+                    </p>
+                  </div>
 
-              <div>
-                <%!--
+                  <div>
+                    <%!--
               V1 UI PR-1 (SPEC §1.2) — receivers is a :multi uri_picker
               (chips + autocomplete) over in-workspace entities +
               sessions. Submits as rule[receivers][] — a list, same
               shape parse_receivers/1 + dispatch already expect.
             --%>
-                <.uri_picker
-                  name="rule[receivers]"
-                  mode={:multi}
-                  kinds={[:entity, :session]}
-                  options={@receiver_options}
-                  label={gettext("Receivers")}
-                  placeholder={gettext("add entities + sessions")}
-                />
-              </div>
+                    <.uri_picker
+                      name="rule[receivers]"
+                      mode={:multi}
+                      kinds={[:entity, :session]}
+                      options={@receiver_options}
+                      label={gettext("Receivers")}
+                      placeholder={gettext("add entities + sessions")}
+                    />
+                  </div>
 
-              <div class="flex justify-end pt-2 border-t border-zinc-200 dark:border-zinc-800">
-                <.button variant="success" type="submit">
-                  {gettext("Add rule")}
-                </.button>
-              </div>
-            </.form>
+                  <div class="flex justify-end pt-2 border-t border-zinc-200 dark:border-zinc-800">
+                    <.button variant="success" type="submit">
+                      {gettext("Add rule")}
+                    </.button>
+                  </div>
+                </.form>
 
-            <p
-              :if={@flash_error}
-              class="text-rose-700 dark:text-rose-300 text-sm mt-2"
-            >
-              {@flash_error}
-            </p>
-          </.card>
-        </div>
-      </:main_window>
-
+                <p
+                  :if={@flash_error}
+                  class="text-rose-700 dark:text-rose-300 text-sm mt-2"
+                >
+                  {@flash_error}
+                </p>
+              </.card>
+            </div>
+          </:main_window>
         </WorkspaceShell.workspace_shell>
       </:body>
     </AppShell.app_shell>

@@ -1476,9 +1476,11 @@ defmodule EzagentPluginLiveview.AdminLive do
   #
   # The RoutingView shows ONLY this slice; global + workspace rules
   # live on /routing's full editor.
+  # NOTE (2026-05-25): SessionRouting was removed; the Feishu chat ↔
+  # session bridge it once held now lives in `external_mirror_bindings`
+  # (PR-EM-3 #317). MentionRouting remains the sole routing-rule table.
   @routing_tables_for_session [
-    EzagentDomainChat.Routing.MentionRouting,
-    EzagentDomainChat.Routing.SessionRouting
+    EzagentDomainChat.Routing.MentionRouting
   ]
 
   defp list_session_scoped_rules(%URI{} = session_uri) do

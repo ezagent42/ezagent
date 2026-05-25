@@ -24,14 +24,22 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
     {:ok, conn: conn}
   end
 
-  test "GET /routing renders tabs + form", %{conn: conn} do
+  test "GET /routing renders MentionRouting form + retirement blurb (no SessionRouting tab)",
+       %{conn: conn} do
     {:ok, _lv, html} = live(conn, "/routing")
     assert html =~ "Routing Rules"
     assert html =~ "MentionRouting"
-    assert html =~ "SessionRouting"
     assert html =~ "Add rule"
     assert html =~ "Form mode"
     assert html =~ "JSON mode"
+
+    # 2026-05-25 — SessionRouting retired. Selectable tabs / sidebar
+    # buttons for it must be gone; the table name itself only appears
+    # inside the explanatory "was removed" copy of the blurb.
+    refute html =~ "phx-value-table='Elixir.EzagentDomainChat.Routing.SessionRouting'"
+    refute html =~ ~s(phx-click="switch_table")
+    assert html =~ "SessionRouting table was removed"
+    assert html =~ "external_mirror_bindings"
   end
 
   test "matcher arg + receivers render uri_picker components", %{conn: conn} do
@@ -69,18 +77,11 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
     assert html =~ "entity://agent/default/test_lv-test"
   end
 
-  test "switch_table changes view", %{conn: conn} do
-    {:ok, lv, _html} = live(conn, "/routing")
-
-    lv
-    |> element(
-      "#table-tabs button[phx-value-table='Elixir.EzagentDomainChat.Routing.SessionRouting']"
-    )
-    |> render_click()
-
-    html = render(lv)
-    assert html =~ "Routing Rules"
-  end
+  # 2026-05-25 — `switch_table` regression test removed. With
+  # SessionRouting gone (PR-EM-3 #317 moved its bridge responsibility
+  # to ExternalMirror's external_mirror_bindings), MentionRouting is
+  # the only table. No table switcher renders — neither in the
+  # main_window top-tab strip nor in the resource_panel sidebar.
 
   test "add_rule via JSON mode supports combinators", %{conn: conn} do
     {:ok, lv, _html} = live(conn, "/routing")
