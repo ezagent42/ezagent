@@ -17,47 +17,24 @@ defmodule EzagentPluginLiveview.AgentNewLive do
     Empty is fine — agents can be created with no caps and have caps
     granted later via `/identities/agents/<uri>/caps`.
 
-  Submit (`create_agent`) follows the **template-produces-Kind**
-  architecture (Allen 2026-05-21 V1 fix):
+  Submit (`create_agent`) dispatches `Behavior.Workspace.:create_agent`
+  via the unified facade `Ezagent.Workspace.create_agent/3` (SPEC
+  `docs/superpowers/specs/2026-05-25-agent-create-cli-gui-parity.md`).
+  The same facade is what `mix ezagent.agent.create` calls — CLI and
+  LV share one code path.
 
-  1. Parse flavor + name → build `%URI{}`
-  2. Validate name (non-empty, no `_` collision with flavor prefix)
-  3. Refuse if the URI already exists in `KindRegistry` (no
-     misleading "Create" on a noop — per memory
-     `feedback_ui_no_misleading_buttons`)
-  4. Parse caps via `Ezagent.Capability.Parser.parse/3`
-  5. `register_and_instantiate/3` — for `cc`, registers the
-     `cc.agent` template which chains through
-     `Workspace.add_template → invoke_template → cc.agent.instantiate`
-     and BOTH the Agent Kind AND the PtyServer come up. For
-     `echo`, registers the `echo.agent` template (Domain.Pty SPEC
-     v1 §10 row 3 / §11 item 6 — deferred PR-D sub-task, now in
-     scope per Allen Feishu 2026-05-22); the same chain runs and
-     a PtyServer is started iff the operator checked "With PTY".
-     For `curl` (no template-driven per-instance lifecycle resource)
-     we call `Ezagent.SpawnRegistry.spawn/1` directly.
-  6. For each parsed cap: dispatch `identity.grant_cap` (same path as
-     `EntityCapsLive`)
-  7. `push_navigate(to: /identities/agents/<encoded>)`
-
-  ### Why echo gets a template class now (was direct-spawn pre-2026-05-22)
-
-  Pre Domain.Pty SPEC v1: echo had no per-instance lifecycle
-  resource (no PTY, no token, no cwd), so direct
-  `SpawnRegistry.spawn/1` was the clearer V1 choice. SPEC v1 §4
-  introduced cross-flavor PTY opt-in: any plugin can attach a
-  `Ezagent.Domain.Pty.Server` sidecar by branching in its template's
-  `instantiate/3`. Echo's `echo.agent` template implements that
-  branch — `with_pty: false` (default) spawns the Kind alone (same
-  end state as the old direct path); `with_pty: true` ALSO starts a
-  `/bin/bash -i` PtyServer so the agent shows up in the SessionView
-  Terminal tab + `/identities/agents/:uri/terminal` standalone page.
-
-  ### Why curl still goes direct
-
-  curl agents have no PTY (HTTP only) and no working directory —
-  per-instance state lives entirely in the owner User's `api_keys`
-  slice. A minimal template class would be empty boilerplate.
+  1. Parse flavor + name + cwd + with_pty from form params
+  2. Early UX validators (`validate_flavor/2`, `validate_name/1`,
+     `validate_cwd_for_flavor/3`) for immediate feedback (the action
+     body re-runs them as a safety net — defence in depth)
+  3. Parse caps via `Ezagent.Capability.Parser.parse/3`
+  4. `Ezagent.Workspace.create_agent(workspace_uri, args, caller_ctx)`
+     — dispatches the action; the body handles template registration
+     (cc/echo) or direct spawn (curl/future) + brings up PTY for cc
+     and echo-with-PTY
+  5. `Ezagent.Workspace.grant_initial_caps(agent_uri, caps, caller_ctx)`
+     — dispatches `identity.grant_cap` per cap (caller's ctx, CapBAC-checked)
+  6. `push_navigate(to: /identities/agents/<encoded>)`
 
   Wraps in `AppShell.app_shell` (`perspective: :workspace`) over
   `WorkspaceShell.workspace_shell` — agent creation is workflow, not
@@ -72,7 +49,7 @@ defmodule EzagentPluginLiveview.AgentNewLive do
   use EzagentDomainUi.Components
   import Phoenix.Component
 
-  alias Ezagent.{AgentFlavorRegistry, Capability, Invocation, KindRegistry}
+  alias Ezagent.{AgentFlavorRegistry, Capability}
   alias Phoenix.LiveView.JS
 
   # G-8 / V-1 fix (audit 2026-05-23) — flavors are read at runtime from
@@ -148,20 +125,25 @@ defmodule EzagentPluginLiveview.AgentNewLive do
     with_pty? = parse_checkbox(Map.get(params, "with_pty"))
 
     workspace_name = workspace_name(socket)
+    workspace_uri = URI.new!("workspace://#{workspace_name}")
+    caller_ctx = %{caller: caller_uri(socket), caps: caller_caps(socket)}
 
+    # SPEC 2026-05-25-agent-create-cli-gui-parity — the LV keeps its
+    # UX-facing validators for early form feedback; the dispatched
+    # action body re-runs them as a safety net. CLI ↔ LV parity is
+    # locked by `Ezagent.Workspace.create_agent/3` being the single
+    # entry both surfaces call.
     with :ok <- validate_flavor(flavor, socket.assigns.flavors),
          :ok <- validate_name(name),
          :ok <- validate_cwd_for_flavor(flavor, with_pty?, cwd),
-         {:ok, agent_uri} <- compose_uri(flavor, name, workspace_name),
-         :ok <- refuse_if_exists(agent_uri),
          {:ok, caps} <- Capability.Parser.parse(caps_str, caller_uri(socket)),
-         :ok <-
-           register_and_instantiate(flavor, agent_uri, %{
-             cwd: cwd,
-             with_pty?: with_pty?,
-             workspace_name: workspace_name
-           }),
-         :ok <- grant_all(agent_uri, caps, socket) do
+         {:ok, %{agent_uri: agent_uri}} <-
+           Ezagent.Workspace.create_agent(
+             workspace_uri,
+             %{flavor: flavor, name: name, cwd: cwd, with_pty: with_pty?},
+             caller_ctx
+           ),
+         :ok <- Ezagent.Workspace.grant_initial_caps(agent_uri, caps, caller_ctx) do
       encoded = URI.encode_www_form(URI.to_string(agent_uri))
       {:noreply, push_navigate(socket, to: "/identities/agents/#{encoded}")}
     else
@@ -236,103 +218,18 @@ defmodule EzagentPluginLiveview.AgentNewLive do
     end
   end
 
-  # V1 fix Allen 2026-05-21 — template instantiate PRODUCES the Kind.
-  # For cc: register the cc.agent template; the chain
-  # `Workspace.add_template → invoke_template → cc.agent.instantiate`
-  # ensures BOTH the Agent Kind AND the PtyServer are alive when this
-  # returns. NO pre-spawn via `SpawnRegistry.spawn/1` — that path is
-  # what the V1 fix removed (it created the Kind out-of-order, leaving
-  # cc.agent.instantiate to spawn only the PtyServer).
+  # SPEC 2026-05-25-agent-create-cli-gui-parity (impl PR): the per-flavor
+  # `register_and_instantiate/3` clauses (cc / echo / direct-spawn)
+  # were DELETED from this LV. The orchestration lives inside
+  # `Ezagent.Behavior.Workspace.invoke(:create_agent, ...)` — CLI + LV
+  # both dispatch the SAME action, single code path.
   #
-  # V-6 fix (audit 2026-05-23) — `workspace_name` now derived from the
-  # caller's `current_workspace_uri` instead of the hardcoded "default".
-  defp register_and_instantiate("cc", agent_uri, %{cwd: cwd, workspace_name: workspace_name}) do
-    tmpl_name = "cc.agent." <> agent_name(agent_uri)
-
-    tmpl = %{
-      "class" => "cc.agent",
-      "agent_uri" => URI.to_string(agent_uri),
-      "cwd" => Path.expand(cwd)
-    }
-
-    case Ezagent.Workspace.add_template(workspace_name, tmpl_name, tmpl) do
-      :ok -> :ok
-      {:error, reason} -> {:error, {:template_register_failed, reason}}
-    end
-  end
-
-  # Domain.Pty SPEC v1 §10 row 3 + §11 item 6 (deferred PR-D sub-task,
-  # now in scope per Allen Feishu 2026-05-22): echo gets a Template
-  # Class so the operator can opt into a `/bin/bash -i` PTY sidecar.
-  # The chain `Workspace.add_template → invoke_template →
-  # echo.agent.instantiate` ensures the Agent Kind AND (if
-  # `with_pty: true`) the PtyServer are alive when this returns —
-  # parallel to the cc.agent flow above.
-  defp register_and_instantiate("echo", agent_uri, %{
-         cwd: cwd,
-         with_pty?: with_pty?,
-         workspace_name: workspace_name
-       }) do
-    tmpl_name = "echo.agent." <> agent_name(agent_uri)
-
-    tmpl = %{
-      "class" => "echo.agent",
-      "agent_uri" => URI.to_string(agent_uri),
-      "with_pty" => with_pty?,
-      # Always write the cwd field; the template validator only
-      # requires it when `with_pty: true`. Path.expand on "" is "" so
-      # this round-trips safely for the no-PTY case.
-      "cwd" => if(with_pty?, do: Path.expand(cwd), else: cwd)
-    }
-
-    case Ezagent.Workspace.add_template(workspace_name, tmpl_name, tmpl) do
-      :ok -> :ok
-      {:error, reason} -> {:error, {:template_register_failed, reason}}
-    end
-  end
-
-  # G-8 follow-on — any flavor NOT in this LV's hardcoded handler list
-  # (curl, np, future) goes through direct `SpawnRegistry.spawn/1`. The
-  # AgentFlavorRegistry guarantees the URI parses + the kind module is
-  # registered; SpawnRegistry handles the per-flavor spawn. This is the
-  # generic path that lets a future flavor plugin work without LV edits.
-  # `{:already_started, _}` is treated as success — `refuse_if_exists/1`
-  # upstream already rejected duplicates against a stale registry view;
-  # this guards against a tight race.
-  defp register_and_instantiate(_flavor, agent_uri, _params) do
-    case Ezagent.SpawnRegistry.spawn(agent_uri) do
-      {:ok, _pid} -> :ok
-      {:error, {:already_started, _pid}} -> :ok
-      {:error, reason} -> {:error, {:spawn_failed, reason}}
-    end
-  end
-
-  defp agent_name(%URI{path: "/" <> rest}) do
-    # Phase 9 PR-2 (SPEC v3 §3): entity URI is /<workspace>/<entity_name>.
-    case String.split(rest, "/", parts: 2) do
-      [_workspace, entity_name] -> entity_name
-      [name] -> name
-    end
-  end
-
-  # V-6 fix — `workspace_name` threaded from the caller's
-  # `current_workspace_uri`. The URI segment per SPEC v3 §3 is
-  # `entity://agent/<workspace>/<flavor>_<name>`.
-  defp compose_uri(flavor, name, workspace_name) do
-    full = "entity://agent/#{workspace_name}/#{flavor}_#{name}"
-
-    case URI.new(full) do
-      {:ok, %URI{scheme: "entity", host: "agent", path: "/" <> _} = u} -> {:ok, u}
-      _ -> {:error, {:bad_uri, full}}
-    end
-  end
-
-  defp refuse_if_exists(uri) do
-    case KindRegistry.lookup(uri) do
-      :error -> :ok
-      {:ok, _pid} -> {:error, {:already_exists, URI.to_string(uri)}}
-    end
-  end
+  # Helpers also moved into the action body: `compose_uri/3`,
+  # `refuse_if_exists/1`, `agent_name/1`. `grant_all/3` moved into
+  # `Ezagent.Workspace.grant_initial_caps/3`. The LV keeps only the
+  # form-facing validators (`validate_flavor/2`, `validate_name/1`,
+  # `validate_cwd_for_flavor/3`) for early UX feedback; the action
+  # body re-runs them as a safety net.
 
   defp preview_uri(flavor, name, workspace_name)
        when is_binary(flavor) and is_binary(name) and is_binary(workspace_name) do
@@ -382,27 +279,6 @@ defmodule EzagentPluginLiveview.AgentNewLive do
     end
   end
 
-  defp grant_all(_agent_uri, [], _socket), do: :ok
-
-  defp grant_all(agent_uri, [cap | rest], socket) do
-    target =
-      URI.new!("#{URI.to_string(agent_uri)}?action=identity.grant_cap")
-
-    case Invocation.dispatch(%Invocation{
-           target: target,
-           mode: :call,
-           args: %{cap: cap},
-           ctx: %{
-             caller: caller_uri(socket),
-             caps: caller_caps(socket),
-             reply: :sync
-           }
-         }) do
-      {:ok, _} -> grant_all(agent_uri, rest, socket)
-      {:error, reason} -> {:error, {:grant_failed, cap, reason}}
-    end
-  end
-
   defp friendly_error(:flavor_required), do: gettext("Flavor is required.")
   defp friendly_error(:name_required), do: gettext("Name is required.")
 
@@ -443,14 +319,19 @@ defmodule EzagentPluginLiveview.AgentNewLive do
       )
 
   defp friendly_error({:cwd_not_a_dir, cwd}),
-    do:
-      gettext("Working directory %{cwd} doesn't exist or isn't a directory.", cwd: inspect(cwd))
+    do: gettext("Working directory %{cwd} doesn't exist or isn't a directory.", cwd: inspect(cwd))
 
   defp friendly_error({:template_register_failed, reason}),
     do: gettext("cc.agent template registration failed: %{reason}", reason: inspect(reason))
 
   defp friendly_error({:spawn_failed, reason}),
     do: gettext("Agent spawn failed: %{reason}", reason: inspect(reason))
+
+  defp friendly_error({:bad_workspace_uri, uri}),
+    do: gettext("Workspace URI was unrecognized (got %{uri}).", uri: inspect(uri))
+
+  defp friendly_error(:unauthorized),
+    do: gettext("You don't have permission to create agents in this workspace.")
 
   defp friendly_error(other),
     do: gettext("Create failed: %{reason}", reason: inspect(other))
@@ -482,65 +363,76 @@ defmodule EzagentPluginLiveview.AgentNewLive do
           current_path="/identities"
           status={%{agents_alive: 0, bridges: 0, debug_events: 0, version: "dev"}}
         >
-      <:main_window>
-        <div class="flex-1 overflow-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
-          <.breadcrumb items={[{gettext("Identities"), "/identities"}, {gettext("New agent"), nil}]} />
+          <:main_window>
+            <div class="flex-1 overflow-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
+              <.breadcrumb items={[
+                {gettext("Identities"), "/identities"},
+                {gettext("New agent"), nil}
+              ]} />
 
-          <.page_header title={gettext("New agent")}>
-            <:subtitle>
-              {gettext(
-                "Spawns a new Agent Kind into the registry. Same backend as %{cmd}.",
-                cmd: "mix ezagent.agent.create"
-              )}
-            </:subtitle>
-          </.page_header>
-
-          <p :if={@flash_info} class="text-emerald-700 dark:text-emerald-300 text-sm mb-3">
-            {@flash_info}
-          </p>
-          <p :if={@flash_error} class="text-red-700 dark:text-red-300 text-sm mb-3" id="flash-error">
-            {@flash_error}
-          </p>
-
-          <.card class="max-w-2xl">
-            <form
-              id="agent-new-form"
-              phx-change="preview"
-              phx-submit="create_agent"
-              class="flex flex-col gap-4"
-            >
-              <label class="flex flex-col gap-1">
-                <span class="text-xs uppercase tracking-wide text-zinc-500">{gettext("Flavor")}</span>
-                <select
-                  name="agent[flavor]"
-                  class="block w-full px-3 py-2 text-sm rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
-                >
-                  <option :for={f <- @flavors} value={f} selected={f == @flavor}>{f}</option>
-                </select>
-                <span class="text-[11px] text-zinc-500">
+              <.page_header title={gettext("New agent")}>
+                <:subtitle>
                   {gettext(
-                    "Which plugin runs this agent. Available flavors come from Ezagent.AgentFlavorRegistry; new flavor plugins auto-appear here."
+                    "Spawns a new Agent Kind into the registry. Same backend as %{cmd}.",
+                    cmd: "mix ezagent.agent.create"
                   )}
-                </span>
-              </label>
+                </:subtitle>
+              </.page_header>
 
-              <label class="flex flex-col gap-1">
-                <span class="text-xs uppercase tracking-wide text-zinc-500">{gettext("Name")}</span>
-                <input
-                  type="text"
-                  name="agent[name]"
-                  value={@name}
-                  placeholder="demo"
-                  autocomplete="off"
-                  class="block w-full px-3 py-2 text-sm rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 font-mono"
-                />
-                <span class="text-[11px] text-zinc-500">
-                  {gettext("Creates")}
-                  <code class="font-mono text-zinc-700 dark:text-zinc-300">{@preview_uri}</code>
-                </span>
-              </label>
+              <p :if={@flash_info} class="text-emerald-700 dark:text-emerald-300 text-sm mb-3">
+                {@flash_info}
+              </p>
+              <p
+                :if={@flash_error}
+                class="text-red-700 dark:text-red-300 text-sm mb-3"
+                id="flash-error"
+              >
+                {@flash_error}
+              </p>
 
-              <%!--
+              <.card class="max-w-2xl">
+                <form
+                  id="agent-new-form"
+                  phx-change="preview"
+                  phx-submit="create_agent"
+                  class="flex flex-col gap-4"
+                >
+                  <label class="flex flex-col gap-1">
+                    <span class="text-xs uppercase tracking-wide text-zinc-500">
+                      {gettext("Flavor")}
+                    </span>
+                    <select
+                      name="agent[flavor]"
+                      class="block w-full px-3 py-2 text-sm rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
+                    >
+                      <option :for={f <- @flavors} value={f} selected={f == @flavor}>{f}</option>
+                    </select>
+                    <span class="text-[11px] text-zinc-500">
+                      {gettext(
+                        "Which plugin runs this agent. Available flavors come from Ezagent.AgentFlavorRegistry; new flavor plugins auto-appear here."
+                      )}
+                    </span>
+                  </label>
+
+                  <label class="flex flex-col gap-1">
+                    <span class="text-xs uppercase tracking-wide text-zinc-500">
+                      {gettext("Name")}
+                    </span>
+                    <input
+                      type="text"
+                      name="agent[name]"
+                      value={@name}
+                      placeholder="demo"
+                      autocomplete="off"
+                      class="block w-full px-3 py-2 text-sm rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 font-mono"
+                    />
+                    <span class="text-[11px] text-zinc-500">
+                      {gettext("Creates")}
+                      <code class="font-mono text-zinc-700 dark:text-zinc-300">{@preview_uri}</code>
+                    </span>
+                  </label>
+
+                  <%!--
                 Domain.Pty SPEC v1 §10 row 3 + §11 item 6 — echo agents
                 can opt into a /bin/bash -i PTY sidecar via the
                 `echo.agent` Template Class. The hidden `false` input
@@ -551,82 +443,84 @@ defmodule EzagentPluginLiveview.AgentNewLive do
                 — but explicit is clearer and matches the change-event
                 payload shape between checked → unchecked transitions).
               --%>
-              <label :if={@flavor == "echo"} class="flex items-center gap-2" id="with-pty-row">
-                <input type="hidden" name="agent[with_pty]" value="false" />
-                <input
-                  type="checkbox"
-                  id="agent_with_pty"
-                  name="agent[with_pty]"
-                  value="true"
-                  checked={@with_pty?}
-                  class="h-4 w-4 rounded border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-emerald-600 dark:text-emerald-400 focus:ring-emerald-500 dark:focus:ring-emerald-400"
-                />
-                <span class="text-sm text-zinc-700 dark:text-zinc-300">
-                  {gettext(
-                    "With local PTY — echo agent gets a /bin/bash -i sidecar so it shows up in the Sessions Terminal tab + at /identities/agents/<uri>/terminal."
-                  )}
-                </span>
-              </label>
+                  <label :if={@flavor == "echo"} class="flex items-center gap-2" id="with-pty-row">
+                    <input type="hidden" name="agent[with_pty]" value="false" />
+                    <input
+                      type="checkbox"
+                      id="agent_with_pty"
+                      name="agent[with_pty]"
+                      value="true"
+                      checked={@with_pty?}
+                      class="h-4 w-4 rounded border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-emerald-600 dark:text-emerald-400 focus:ring-emerald-500 dark:focus:ring-emerald-400"
+                    />
+                    <span class="text-sm text-zinc-700 dark:text-zinc-300">
+                      {gettext(
+                        "With local PTY — echo agent gets a /bin/bash -i sidecar so it shows up in the Sessions Terminal tab + at /identities/agents/<uri>/terminal."
+                      )}
+                    </span>
+                  </label>
 
-              <label
-                :if={@flavor == "cc" or (@flavor == "echo" and @with_pty?)}
-                class="flex flex-col gap-1"
-              >
-                <span class="text-xs uppercase tracking-wide text-zinc-500">
-                  {gettext("Working directory")} <span class="text-red-600 dark:text-red-400">*</span>
-                </span>
-                <input
-                  type="text"
-                  name="agent[cwd]"
-                  value={@cwd}
-                  placeholder={
-                    if @flavor == "echo",
-                      do: "/tmp/echo-sandbox",
-                      else: "/Users/you/Workspace/my-project"
-                  }
-                  autocomplete="off"
-                  class="block w-full px-3 py-2 text-sm rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 font-mono"
-                />
-                <span :if={@flavor == "cc"} class="text-[11px] text-zinc-500">
-                  {gettext(
-                    "Where claude-code runs. Required for cc flavor — the PtyServer starts in this directory. Must exist on the host. Registers a cc.agent template in workspace default so the agent boots ready-to-use."
-                  )}
-                </span>
-                <span :if={@flavor == "echo" and @with_pty?} class="text-[11px] text-zinc-500">
-                  {gettext(
-                    "Where the echo agent's /bin/bash -i sidecar runs. Required because the operator selected With local PTY. Must exist on the host."
-                  )}
-                </span>
-              </label>
+                  <label
+                    :if={@flavor == "cc" or (@flavor == "echo" and @with_pty?)}
+                    class="flex flex-col gap-1"
+                  >
+                    <span class="text-xs uppercase tracking-wide text-zinc-500">
+                      {gettext("Working directory")}
+                      <span class="text-red-600 dark:text-red-400">*</span>
+                    </span>
+                    <input
+                      type="text"
+                      name="agent[cwd]"
+                      value={@cwd}
+                      placeholder={
+                        if @flavor == "echo",
+                          do: "/tmp/echo-sandbox",
+                          else: "/Users/you/Workspace/my-project"
+                      }
+                      autocomplete="off"
+                      class="block w-full px-3 py-2 text-sm rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 font-mono"
+                    />
+                    <span :if={@flavor == "cc"} class="text-[11px] text-zinc-500">
+                      {gettext(
+                        "Where claude-code runs. Required for cc flavor — the PtyServer starts in this directory. Must exist on the host. Registers a cc.agent template in workspace default so the agent boots ready-to-use."
+                      )}
+                    </span>
+                    <span :if={@flavor == "echo" and @with_pty?} class="text-[11px] text-zinc-500">
+                      {gettext(
+                        "Where the echo agent's /bin/bash -i sidecar runs. Required because the operator selected With local PTY. Must exist on the host."
+                      )}
+                    </span>
+                  </label>
 
-              <label class="flex flex-col gap-1">
-                <span class="text-xs uppercase tracking-wide text-zinc-500">{gettext("Initial caps")}</span>
-                <input
-                  type="text"
-                  name="agent[caps]"
-                  value={@caps_str}
-                  placeholder="chat.send, workspace.read"
-                  autocomplete="off"
-                  class="block w-full px-3 py-2 text-sm rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 font-mono"
-                />
-                <span class="text-[11px] text-zinc-500">
-                  {gettext(
-                    "Comma-separated kind.behavior specs (Ezagent.Capability.Parser). Leave empty to create with no caps and grant them later."
-                  )}
-                </span>
-              </label>
+                  <label class="flex flex-col gap-1">
+                    <span class="text-xs uppercase tracking-wide text-zinc-500">
+                      {gettext("Initial caps")}
+                    </span>
+                    <input
+                      type="text"
+                      name="agent[caps]"
+                      value={@caps_str}
+                      placeholder="chat.send, workspace.read"
+                      autocomplete="off"
+                      class="block w-full px-3 py-2 text-sm rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 font-mono"
+                    />
+                    <span class="text-[11px] text-zinc-500">
+                      {gettext(
+                        "Comma-separated kind.behavior specs (Ezagent.Capability.Parser). Leave empty to create with no caps and grant them later."
+                      )}
+                    </span>
+                  </label>
 
-              <div class="flex justify-end gap-2 pt-2 border-t border-zinc-200 dark:border-zinc-800">
-                <.button variant="ghost" type="button" phx-click={JS.navigate("/identities")}>
-                  {gettext("Cancel")}
-                </.button>
-                <.button variant="primary" type="submit">{gettext("Create agent")}</.button>
-              </div>
-            </form>
-          </.card>
-        </div>
-      </:main_window>
-
+                  <div class="flex justify-end gap-2 pt-2 border-t border-zinc-200 dark:border-zinc-800">
+                    <.button variant="ghost" type="button" phx-click={JS.navigate("/identities")}>
+                      {gettext("Cancel")}
+                    </.button>
+                    <.button variant="primary" type="submit">{gettext("Create agent")}</.button>
+                  </div>
+                </form>
+              </.card>
+            </div>
+          </:main_window>
         </WorkspaceShell.workspace_shell>
       </:body>
     </AppShell.app_shell>

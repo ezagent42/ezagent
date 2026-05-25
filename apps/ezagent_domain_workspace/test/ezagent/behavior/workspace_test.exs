@@ -12,7 +12,14 @@ defmodule Ezagent.Behavior.WorkspaceTest do
     end
 
     test "accepts members as list and converts to MapSet" do
-      slice = WB.init_slice(%{members: [URI.parse("entity://user/system/admin"), URI.parse("entity://agent/default/test_x")]})
+      slice =
+        WB.init_slice(%{
+          members: [
+            URI.parse("entity://user/system/admin"),
+            URI.parse("entity://agent/default/test_x")
+          ]
+        })
+
       assert MapSet.size(slice.members) == 2
     end
 
@@ -25,7 +32,13 @@ defmodule Ezagent.Behavior.WorkspaceTest do
 
   describe "member actions" do
     test "list_members returns all member URIs" do
-      slice = WB.init_slice(%{members: [URI.parse("entity://user/system/admin"), URI.parse("entity://agent/default/test_x")]})
+      slice =
+        WB.init_slice(%{
+          members: [
+            URI.parse("entity://user/system/admin"),
+            URI.parse("entity://agent/default/test_x")
+          ]
+        })
 
       assert {:ok, ^slice, %{members: members}} = WB.invoke(:list_members, slice, %{}, %{})
       assert length(members) == 2
@@ -80,7 +93,11 @@ defmodule Ezagent.Behavior.WorkspaceTest do
 
   describe "instantiate (north-star action)" do
     test "returns child list with one entry per member" do
-      uris = [URI.parse("entity://user/system/admin"), URI.parse("entity://agent/default/test_cc-builder")]
+      uris = [
+        URI.parse("entity://user/system/admin"),
+        URI.parse("entity://agent/default/test_cc-builder")
+      ]
+
       slice = WB.init_slice(%{members: uris})
 
       assert {:ok, ^slice, %{children: children}} =
@@ -98,7 +115,9 @@ defmodule Ezagent.Behavior.WorkspaceTest do
   end
 
   describe "Behavior contract" do
-    test "actions/0 lists all 9 actions" do
+    test "actions/0 lists all 10 actions" do
+      # SPEC 2026-05-25-agent-create-cli-gui-parity added `:create_agent`
+      # as the 10th action — unified entry for CLI + LV agent creation.
       assert WB.actions() == [
                :list_members,
                :add_member,
@@ -108,7 +127,8 @@ defmodule Ezagent.Behavior.WorkspaceTest do
                :remove_template,
                :list_routing_rules,
                :set_routing_rules,
-               :instantiate
+               :instantiate,
+               :create_agent
              ]
     end
 
