@@ -1,9 +1,16 @@
 # Default workspace 改名: `default` → `system` (收尾清扫)
 
-> **状态:** SPEC, 待 Allen review + codex adversarial-review (1 轮)。
+> **状态:** SPEC rev 2 — 已纳入 codex SPEC review (3 MUST-FIX + 3 nice-to-have, 2026-05-25)。待 Allen review。
 > **作者:** main agent 派发的 subagent, Allen 2026-05-25 指令。
 > **运维约束:** Allen 已授权 DB wipe — 不做迁移 / 不做 back-compat (`feedback_let_it_crash_no_workarounds`, 2026-05-25 重申)。
-> **英文版:** `2026-05-25-workspace-default-to-system.md`。
+> **英文版:** `2026-05-25-workspace-default-to-system.md` (权威; 此文件为对照, 详细见英文)。
+
+> **Rev 2 changelog (codex review 2026-05-25):**
+> - §8 OQ-1 解修订: 租户用户**不能**住在 `workspace://system` (会通过 `Capability.cross_workspace?/2` 的 `home_is_system?` shortcut 获得 cross-workspace 绕过)。新解: **删除** `default_workspace_uri/0`; 调用方从 caller URI 结构性派生 workspace 或显式传入。Admin 向导 session 自然落到 `workspace://system` 因为 admin 的 home 结构上就是 system。
+> - §3 新增 codex 发现的 5 处遗漏 production 字面量: `session_principal.ex` (bare-handle 规范化)、`session_controller.ex` (workspace_param fallback)、`users_live.ex` (admin 建用户)、`session_template.ex` (build_uri 默认值)、`echo_plugin/application.ex` (`@default_uri`)。
+> - §3.6 新增: 演示 `echo_default` agent + 向导挂钩改名为 `entity://agent/system/echo_default`。
+> - §6 invariant regex 扩展, 覆盖 `entity://(user|agent)/default/`、`template://(session|agent)/default/`、`session://[^/]+/default/`, 以及 `:workspace, "default"` Keyword 默认值的代码模式检查。
+> - §9 实施工作量预估上调到 4-5 小时 (从 2-3 小时), 因 `default_workspace_uri/0` 删除是真正的 audit (~10 production caller) 而非字面量替换。
 
 ---
 
