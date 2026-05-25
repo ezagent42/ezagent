@@ -331,14 +331,32 @@ v1.5 cross-workspace cap-bridge tracked separately when it lands.
 
 ### Audit gaps from notification-log audit
 Still open after PR #300 + the batch fix that includes this todo:
-- **LOW** — `EzagentWeb.Telemetry.metrics/0` defines 16 metrics but
-  no reporter is attached in prod. Either attach a `TelemetryMetricsPrometheus`
-  reporter at boot OR delete the unused metrics decl.
-- **LOW** — write a SPEC for the notifications system at
-  `docs/superpowers/specs/notifications.md` (currently only moduledoc).
-- **LOW** — `ObservabilityLive` reads audit rows without
-  `workspace_uri` filter; Phase 9 PR-6 added the column but the
-  READ-side never landed. Add the filter + a per-workspace caps check.
+- **DONE (low-doc-batch 2026-05-26)** — `EzagentWeb.Telemetry.metrics/0`
+  defines 16 metrics; the original report claimed "no reporter attached"
+  but `Phoenix.LiveDashboard` at `/dashboard` consumes `metrics:
+  EzagentWeb.Telemetry` (verified at `apps/ezagent_web/lib/ezagent_web/
+  router.ex:250` — `live_dashboard "/dashboard", metrics: EzagentWeb.
+  Telemetry`). The moduledoc already documents this correction in the
+  2026-05-24 cleanup batch. Single-node-ops setup needs no separate
+  Prometheus reporter; adding `{TelemetryMetricsPrometheus, ...}` to
+  `EzagentWeb.Telemetry.init/1`'s children is a one-line future change
+  if multi-node alerting becomes a requirement (LiveDashboard would
+  keep working in parallel because both reporters subscribe to the
+  same telemetry events).
+- **DONE (low-doc-batch 2026-05-26)** — SPEC for the notifications
+  system at `docs/superpowers/specs/notifications.md` is the stable-
+  contract index pointing at the canonical v2 SPEC
+  (`2026-05-24-notification-architecture-v2.md`). Expanded in this
+  batch to include §1-§9 (Context / Goals / Architecture / Cap model /
+  Producer list / Consumer LVs / Failure modes / Invariant tests /
+  Out-of-scope). Bilingual `notifications.zh_cn.md` added.
+- **DONE (low-doc-batch 2026-05-26)** — `ObservabilityLive` workspace
+  filter landed earlier (see `apps/ezagent_plugin_liveview/lib/
+  ezagent_plugin_liveview/observability_live.ex:30-65` —
+  `workspace_filter_for/1` + scoped queries). This batch added the
+  regression test
+  (`apps/ezagent_plugin_liveview/test/observability_live_test.exs`)
+  that fails when the filter is removed.
 
 ### ETS-registries hardening (deferred from PR-EM-1 codex r2 HIGH-1)
 
