@@ -194,14 +194,6 @@ batch + would touch the chat upload pipeline which has its own
 LV tests to update). Tracked here as the gating follow-up
 before the admin-gate invariant can be claimed complete.
 
-### `Workspace.Registry.default_workspace_uri/0` legacy fallback
-Still returns `"workspace://default"` for the NOT NULL `workspace_uri`
-on audit/snapshot rows fired by system events. After PR-C #295 +
-PR-F #297 deleted the `default` workspace from boot, this fallback
-points at a non-existent row. Re-routing requires a ~100-fixture
-migration; flagged in `apps/ezagent_domain_workspace/lib/ezagent/workspace_registry.ex`
-docstring as legacy.
-
 ### Notifications consumer coverage
 PR #300 wired AdminLive as the operator subscriber + added notify
 calls to `Workspace.add/remove_member` and `Identity.grant/revoke_cap`.

@@ -123,12 +123,4 @@ defmodule Ezagent.Test.CapHelper do
   @doc "Stable tenant test workspace URI: `workspace://team-alpha`."
   @spec tenant_workspace_uri() :: URI.t()
   def tenant_workspace_uri, do: @tenant_workspace
-
-  @doc """
-  DEPRECATED — was the SPEC v2 PR-F transitional helper. Now returns
-  `workspace://system` to match the renamed `@system_workspace`.
-  New tests should call `system_workspace_uri/0` directly.
-  """
-  @spec default_workspace_uri() :: URI.t()
-  def default_workspace_uri, do: @system_workspace
 end
