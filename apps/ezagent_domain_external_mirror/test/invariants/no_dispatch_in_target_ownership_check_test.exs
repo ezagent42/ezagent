@@ -54,21 +54,27 @@ defmodule Ezagent.ExternalMirror.Invariants.NoDispatchInTargetOwnershipCheckTest
     "Behavior\\.invoke\\("
   ]
 
-  test "no adapter module calls Ezagent.Invocation.dispatch / Kind.spawn / Behavior.invoke in its source" do
-    adapter_modules =
-      :code.all_loaded()
-      |> Enum.map(fn {mod, _file} -> mod end)
-      |> Enum.filter(&adapter_behaviour?/1)
+  test "no adapter source file calls Ezagent.Invocation.dispatch / Kind.spawn / Behavior.invoke" do
+    # Source-level scan: grep every `.ex` under `apps/` for the
+    # `@behaviour Ezagent.ExternalMirror.Adapter` declaration; those
+    # files ARE the adapter sources. Then grep those files for the
+    # forbidden patterns.
+    #
+    # Source-level @behaviour grep avoids the `:code.which/1` →
+    # snake-case-path mapping fragility codex r1 P1 caught (the prior
+    # implementation derived `apps/<app>/lib/Elixir.Some.Mod.ex` from
+    # `_build/.../Elixir.Some.Mod.beam` — that path NEVER exists since
+    # real source paths are snake_case + nested directories).
+
+    adapter_source_files = find_adapter_source_files()
 
     violations =
-      adapter_modules
-      |> Enum.flat_map(&source_files_for_module/1)
-      |> Enum.uniq()
+      adapter_source_files
       |> Enum.flat_map(&scan_file/1)
 
     assert violations == [],
            """
-           Adapter module(s) re-enter ezagent dispatch — violates
+           Adapter source file(s) re-enter ezagent dispatch — violates
            SPEC §10 (g) / PR-EM-FINAL invariant.
 
            `target_ownership_check/2` runs inside the facade's Task; a
@@ -89,38 +95,33 @@ defmodule Ezagent.ExternalMirror.Invariants.NoDispatchInTargetOwnershipCheckTest
            Offenders:
            #{Enum.join(violations, "\n")}
 
-           Adapters checked: #{inspect(adapter_modules)}
+           Adapter source files scanned:
+           #{Enum.join(adapter_source_files, "\n")}
            """
   end
 
-  defp adapter_behaviour?(module) do
-    behaviours =
-      module.module_info(:attributes)
-      |> Keyword.get_values(:behaviour)
-      |> List.flatten()
+  # Find every `.ex` file in `apps/` that has an ACTUAL
+  # `@behaviour Ezagent.ExternalMirror.Adapter` declaration at the
+  # start of a line (module-level attribute) — NOT a comment / heredoc
+  # mention inside something like `ezagent_plugin_check.ex` or
+  # `binding.ex`'s contract doc.
+  defp find_adapter_source_files do
+    {output, _exit} =
+      System.cmd(
+        "grep",
+        [
+          "-rEl",
+          "^\\s*@behaviour\\s+Ezagent\\.ExternalMirror\\.Adapter\\b",
+          apps_root(),
+          "--include=*.ex"
+        ],
+        stderr_to_stdout: true
+      )
 
-    Ezagent.ExternalMirror.Adapter in behaviours
-  rescue
-    _ -> false
-  end
-
-  defp source_files_for_module(module) do
-    case :code.which(module) do
-      beam_path when is_list(beam_path) ->
-        beam_str = List.to_string(beam_path)
-
-        candidates =
-          [
-            beam_str
-            |> String.replace(~r{/_build/.*?/lib/(.+?)/ebin/}, "/apps/\\1/lib/")
-            |> String.replace(~r{\.beam$}, ".ex")
-          ]
-
-        Enum.filter(candidates, &File.exists?/1)
-
-      _ ->
-        []
-    end
+    output
+    |> String.split("\n", trim: true)
+    |> Enum.reject(&String.contains?(&1, "/test/"))
+    |> Enum.uniq()
   end
 
   defp scan_file(file) do
@@ -139,18 +140,11 @@ defmodule Ezagent.ExternalMirror.Invariants.NoDispatchInTargetOwnershipCheckTest
     end)
   end
 
+  # `grep -n` output is `<lineno>:<body>` on the per-file form; the
+  # `scan_file/1` prefixer makes it `<file>:<lineno>:<body>` (3 parts).
   defp comment_or_docstring?(line) do
-    case String.split(line, ":", parts: 4) do
-      [_path, _path2, _lineno, body] ->
-        trimmed = String.trim_leading(body)
-
-        cond do
-          String.starts_with?(trimmed, "#") -> true
-          prose_reference?(body) -> true
-          true -> false
-        end
-
-      [_path, _lineno, body] ->
+    case String.split(line, ":", parts: 3) do
+      [_file, _lineno, body] ->
         trimmed = String.trim_leading(body)
 
         cond do
@@ -168,5 +162,10 @@ defmodule Ezagent.ExternalMirror.Invariants.NoDispatchInTargetOwnershipCheckTest
     String.contains?(body, "`Ezagent.Invocation.dispatch") or
       String.contains?(body, "`Ezagent.Kind.spawn") or
       String.contains?(body, "`Behavior.invoke")
+  end
+
+  defp apps_root do
+    {out, 0} = System.cmd("git", ["rev-parse", "--show-toplevel"])
+    Path.join(String.trim(out), "apps")
   end
 end

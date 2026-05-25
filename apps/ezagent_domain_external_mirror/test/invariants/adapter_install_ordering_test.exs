@@ -143,52 +143,106 @@ defmodule Ezagent.ExternalMirror.Invariants.AdapterInstallOrderingTest do
            """
   end
 
-  test "after BOTH registries are populated, the cap subject IS registered (end state)" do
-    # End-state assertion uses the production fixture pair (MockAdapter /
-    # MockBinding). The same fixtures are used by plugin_contract_test
-    # and the registry tests — by the time this test runs, they MAY have
-    # been registered already; we just check the end-state invariant
-    # holds regardless of which path got us there.
-    alias Ezagent.ExternalMirror.TestSupport.{MockAdapter, MockBinding}
+  test "after BOTH registries populate the SAME fresh adapter_id (Adapter first, Binding second), cap subject IS registered" do
+    # Codex r1 P2 fix: hermetic end-state assertion using a fresh
+    # synthetic adapter_id per test run — does NOT depend on whether
+    # MockAdapter / MockBinding were already registered by an earlier
+    # test (which would mask a broken `register_module/2 → maybe_install_by_adapter_id`
+    # hook because the cap subject was already present from setup_all
+    # in another test).
+    fresh_id = "ordering_test_em_endstate_a_#{System.unique_integer([:positive])}"
+    {adapter_module, binding_module} = build_synthetic_pair(fresh_id)
+    expected_action = String.to_atom("allow_" <> fresh_id)
+    %{behavior_module: expected_behavior} = adapter_module.cap_subject()
 
-    _ = AdapterRegistry.register(MockAdapter)
-    _ = BindingRegistry.register_module("mock_em", MockBinding)
+    # Pre-condition: cap subject NOT yet registered.
+    assert :error =
+             CapabilityRegistry.lookup_subject(Ezagent.Entity.Session, expected_action)
 
-    expected_action = :allow_mock_em
-    expected_behavior = MockAdapter.Allow
+    # Production ordering: Adapter first, Binding second. The
+    # AdapterRegistry.register/1 call's maybe_install/1 defers; the
+    # subsequent BindingRegistry.register_module/2 call's
+    # maybe_install_by_adapter_id/1 fires install once BOTH registries
+    # are populated.
+    :ok = AdapterRegistry.register(adapter_module)
+
+    # Pre-condition mid-flight: still not registered (no binding yet).
+    assert :error =
+             CapabilityRegistry.lookup_subject(Ezagent.Entity.Session, expected_action)
+
+    :ok = BindingRegistry.register_module(fresh_id, binding_module)
+
+    # Post-condition: NOW the cap subject is in CapabilityRegistry.
+    assert {:ok, %{behavior: ^expected_behavior}} =
+             CapabilityRegistry.lookup_subject(Ezagent.Entity.Session, expected_action),
+           """
+           CapabilityRegistry MISSING the per-adapter cap subject for
+           adapter_id=#{inspect(fresh_id)} after BOTH registries
+           registered (Adapter first, then Binding) — violates SPEC §5.1
+           r5 HIGH-A end-state contract.
+
+           BindingRegistry.register_module/2 must call
+           AdapterInstall.maybe_install_by_adapter_id/1 which fires
+           install when it observes that AdapterRegistry already has
+           the paired adapter for this id.
+           """
+  end
+
+  test "after BOTH registries populate the SAME fresh adapter_id (Binding first, Adapter second), cap subject IS registered" do
+    # Symmetric ordering scenario, also hermetic.
+    fresh_id = "ordering_test_em_endstate_b_#{System.unique_integer([:positive])}"
+    {adapter_module, binding_module} = build_synthetic_pair(fresh_id)
+    expected_action = String.to_atom("allow_" <> fresh_id)
+    %{behavior_module: expected_behavior} = adapter_module.cap_subject()
+
+    assert :error =
+             CapabilityRegistry.lookup_subject(Ezagent.Entity.Session, expected_action)
+
+    :ok = BindingRegistry.register_module(fresh_id, binding_module)
+
+    # Mid-flight: still not registered (no adapter yet).
+    assert :error =
+             CapabilityRegistry.lookup_subject(Ezagent.Entity.Session, expected_action)
+
+    :ok = AdapterRegistry.register(adapter_module)
 
     assert {:ok, %{behavior: ^expected_behavior}} =
              CapabilityRegistry.lookup_subject(Ezagent.Entity.Session, expected_action),
            """
-           CapabilityRegistry MISSING the per-adapter cap subject after
-           BOTH registries registered MockAdapter / MockBinding —
-           violates SPEC §5.1 r5 HIGH-A end-state contract.
+           CapabilityRegistry MISSING the per-adapter cap subject for
+           adapter_id=#{inspect(fresh_id)} after BOTH registries
+           registered (Binding first, then Adapter) — violates SPEC §5.1
+           r5 HIGH-A end-state contract.
 
-           Either: AdapterRegistry.register/1 didn't fire
-           AdapterInstall.maybe_install/1, OR
-           BindingRegistry.register_module/2 didn't fire
-           AdapterInstall.maybe_install_by_adapter_id/1, OR install/1
-           skipped the cap-subject step entirely.
+           AdapterRegistry.register/1 must call
+           AdapterInstall.maybe_install/1 which fires install when it
+           observes that BindingRegistry already has the paired binding
+           for this id.
            """
   end
 
-  # Build a throwaway adapter module with a unique adapter_id so we can
-  # observe maybe_install/1's deferral behavior without polluting the
-  # production fixtures.
-  defp build_synthetic_adapter(adapter_id) do
-    behavior_module_name =
+  # Build a throwaway `{adapter_module, binding_module}` pair with a
+  # unique adapter_id. Per Grill-5 (rule e), adapter and binding MUST
+  # be different modules — so we synthesize both. Returns the adapter
+  # module only when called via `build_synthetic_adapter/1` (back-compat
+  # for the deferral-only tests that never register the binding side).
+  defp build_synthetic_pair(adapter_id) do
+    suffix = System.unique_integer([:positive])
+    allow_action = String.to_atom("allow_" <> adapter_id)
+
+    cap_behavior_name =
       String.to_atom(
-        "Elixir.Ezagent.ExternalMirror.Invariants.AdapterInstallOrderingTest.SyntheticAllow#{System.unique_integer([:positive])}"
+        "Elixir.Ezagent.ExternalMirror.Invariants.AdapterInstallOrderingTest.SyntheticAllow#{suffix}"
       )
 
     Module.create(
-      behavior_module_name,
+      cap_behavior_name,
       quote do
         @behaviour Ezagent.Behavior
         @impl true
-        def actions, do: [unquote(String.to_atom("allow_" <> adapter_id))]
+        def actions, do: [unquote(allow_action)]
         @impl true
-        def cap_subjects, do: [{unquote(String.to_atom("allow_" <> adapter_id)), "synth"}]
+        def cap_subjects, do: [{unquote(allow_action), "synth"}]
         @impl true
         def dispatchable?, do: false
         @impl true
@@ -205,10 +259,31 @@ defmodule Ezagent.ExternalMirror.Invariants.AdapterInstallOrderingTest do
       Macro.Env.location(__ENV__)
     )
 
+    binding_module_name =
+      String.to_atom(
+        "Elixir.Ezagent.ExternalMirror.Invariants.AdapterInstallOrderingTest.SyntheticBinding#{suffix}"
+      )
+
     adapter_module_name =
       String.to_atom(
-        "Elixir.Ezagent.ExternalMirror.Invariants.AdapterInstallOrderingTest.SyntheticAdapter#{System.unique_integer([:positive])}"
+        "Elixir.Ezagent.ExternalMirror.Invariants.AdapterInstallOrderingTest.SyntheticAdapter#{suffix}"
       )
+
+    Module.create(
+      binding_module_name,
+      quote do
+        @behaviour Ezagent.ExternalMirror.Binding
+        @impl true
+        def adapter_module, do: unquote(adapter_module_name)
+        @impl true
+        def init({_target_id, _adapter, options}), do: {:ok, options}
+        @impl true
+        def publish(_payload, state), do: {:ok, state}
+        @impl true
+        def terminate(_, _), do: :ok
+      end,
+      Macro.Env.location(__ENV__)
+    )
 
     Module.create(
       adapter_module_name,
@@ -221,10 +296,10 @@ defmodule Ezagent.ExternalMirror.Invariants.AdapterInstallOrderingTest do
         @impl true
         def description, do: "synthetic"
         @impl true
-        def binding_module, do: __MODULE__
+        def binding_module, do: unquote(binding_module_name)
         @impl true
         def cap_subject,
-          do: %{behavior_module: unquote(behavior_module_name), description: "synth"}
+          do: %{behavior_module: unquote(cap_behavior_name), description: "synth"}
 
         @impl true
         def target_ownership_check(_, _), do: :ok
@@ -234,6 +309,13 @@ defmodule Ezagent.ExternalMirror.Invariants.AdapterInstallOrderingTest do
       Macro.Env.location(__ENV__)
     )
 
-    adapter_module_name
+    {adapter_module_name, binding_module_name}
+  end
+
+  # Back-compat for deferral-only tests that don't register the binding
+  # side. Drops the binding module.
+  defp build_synthetic_adapter(adapter_id) do
+    {adapter_module, _binding_module} = build_synthetic_pair(adapter_id)
+    adapter_module
   end
 end

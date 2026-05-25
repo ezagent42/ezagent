@@ -66,26 +66,34 @@ defmodule Ezagent.ExternalMirror.Invariants.NoStringToAtomOnUserInputTest do
            """
   end
 
-  # Each entry is `{path_substring, rationale}`. The path match is a
-  # substring on the full grep line (which starts with the absolute
-  # file path), so a partial path uniquely identifies the file.
+  # Each entry is `{path_substring, line_signature_substring, rationale}`.
+  # Codex r1 P2: the prior file-wide allowlist exempted EVERY String.to_atom
+  # callsite in the named file, so a future edit adding an unsafe
+  # conversion in the same file would slip through. The new contract:
+  # match BOTH the path AND a content signature of the specific call
+  # (e.g. `"allow_" <> adapter_id`) so only the exact line shape is
+  # exempted; any other String.to_atom call in the same file would fail
+  # the gate.
   defp allowed_call_sites do
     [
       {
         "ezagent_domain_external_mirror/lib/ezagent/external_mirror/adapter_install.ex",
-        # The `String.to_atom("allow_" <> adapter_id)` callsite. The
-        # adapter_id originates from `adapter_module.adapter_id/0` —
-        # plugin module code, fixed at deploy time. Bounded by the
-        # number of registered adapter modules. See AdapterInstall
-        # moduledoc + the inline comment at the callsite.
+        # The `String.to_atom("allow_" <> adapter_id)` callsite — adapter_id
+        # comes from `adapter_module.adapter_id/0` (plugin compile-time
+        # fixed). See AdapterInstall moduledoc + inline comment at callsite.
+        ~s|String.to_atom("allow_" <> adapter_id)|,
         "bounded by adapter_id which is plugin-compile-time fixed"
       }
     ]
   end
 
+  # A line is allowed iff there is an entry whose `path_substring`
+  # matches the file path component AND whose `line_signature` appears
+  # in the line body. Both conditions must hold — file-wide blanket
+  # exemption is no longer possible (codex r1 P2 fix).
   defp allowed?(line) do
-    Enum.any?(allowed_call_sites(), fn {path_substring, _rationale} ->
-      String.contains?(line, path_substring)
+    Enum.any?(allowed_call_sites(), fn {path_substring, line_signature, _rationale} ->
+      String.contains?(line, path_substring) and String.contains?(line, line_signature)
     end)
   end
 

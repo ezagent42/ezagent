@@ -747,12 +747,22 @@ Three modules + one declaration. The Domain owns everything else.
      end
      @impl true
      def publish(payload, state) do
-       # All transport I/O goes here. Returning {:error, _} crashes the
-       # Worker, which the PerBindingSupervisor catches with the 3/30s
-       # budget. NEVER call Phoenix.PubSub.subscribe from this module —
+       # All transport I/O goes here. Return shapes (SPEC §2.3 +
+       # `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/binding.ex`):
+       #   {:ok, new_state}                — success
+       #   {:error, reason, new_state}     — RECOVERABLE failure
+       #     (4xx/5xx, transient network blip). Worker LOGS + emits
+       #     telemetry but does NOT crash; state carries forward
+       #     (retry counter, backoff deadline, etc).
+       #   raise/throw                     — UNrecoverable invariant
+       #     violation; let-it-crash → PerBindingSupervisor 3/30s
+       #     budget catches it.
+       # NEVER call Phoenix.PubSub.subscribe from this module —
        # invariant 16 grep gate.
-       :ok = MyName.API.send(state.token, state.target_id, payload)
-       {:ok, state}
+       case MyName.API.send(state.token, state.target_id, payload) do
+         :ok -> {:ok, state}
+         {:error, reason} -> {:error, reason, state}
+       end
      end
      @impl true
      def terminate(_reason, _state), do: :ok
