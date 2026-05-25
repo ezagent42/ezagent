@@ -1,6 +1,8 @@
 # SPEC — Caps 清理 v1（三件架构纠偏）
 
-**状态:** r3-FINAL（已合入）。2026-05-25。信任模型已接受；MED-1 dedupe 修复已应用；进入实施（PR-CC-1/CC-2/CC-3）。
+**状态:** **r4（revert 后修订）。** 2026-05-25。Issue 1 已实施（PR-CC-1 #345 已合入）。Issue 2 实施被 revert（PR-CC-2a #347 + PR-CC-2b #348 经 #349 撤回）；本 SPEC 原定的 `struct → string` cap 表示切换**已撤销**。Issue 2 的*结构性*目标（声明式 `Behavior.required_caps/0`、`Entity.holds_cap?/2` 边界、dispatch step 5.5 为唯一 cap-check chokepoint）**仍然有效**，将以保留的 `%Ezagent.Capability{}` struct 形态重新实现（通配符通过现有的 `:any` atom 字段值实现）。Issue 3 未启动。完整决策路径见下文 §0d r4 修订说明。
+
+**前述状态:** r3-FINAL（已合入）。2026-05-25。信任模型已接受；MED-1 dedupe 修复已应用；进入实施（PR-CC-1/CC-2/CC-3）。
 **层级:** `apps/ezagent_core/` 框架纠偏 + 所有 domain + plugin 的清扫。
 **触发:** Allen 2026-05-25 (Feishu) — 在 data-ownership-v2 / external-mirror-audit 工作中暴露的三条逐字指令，针对累积的 cap 系统病灶：
 
@@ -24,6 +26,116 @@
 - `feedback_bilingual_docs_convention` — 中文镜像在 `.zh_cn.md`。
 
 **配套:** `2026-05-25-caps-cleanup-v1.md`（英文）。
+
+---
+
+## 0d. r4 修订说明（revert 之后；struct 保留）
+
+> 🔄 **本 SPEC 在实施之后被修订。** PR-CC-2a + PR-CC-2b 按原设计落地了 string-cap 表示切换，随后于 Allen 2026-05-25 13:18 指令下通过 PR #349 回退。下文 SPEC 主体（§5、§6、§7、§8、§9）仍描述**已撤销的 string-cap 设计**作为历史记录。**现行设计**在本 §0d 中总结。未来 PR 必须以 §0d 为准，而非以 §5–§9 的字面文本为准。
+
+### r4.1 哪些回退、哪些保留
+
+| PR | 状态 | 说明 |
+|---|---|---|
+| PR-CC-1 #345（Issue 1 — 删 ambient authority） | ✅ 已合入，保留 — **但 catalog cap-shape 缺口见 §0d.1b** | `User.admin_caps/0` 已删；`Ezagent.SystemPrincipal.Catalog`（14 个 system principal）就位；16 个调用点已迁移。Catalog 的 cap-string 值是在 r1–r3 string 假设下写的；struct-kept r4 里那些 string 当前被 `SystemPrincipal.caps/1` 渲染成通配 `%Capability{kind: :any, behavior: :any, instance: :any, workspace_uri: :any}`，而非 catalog 表格命名的逐 principal 收窄声明。Named-principal 审计 trail 工作；least-privilege **不**工作。PR-CC-2-v2 必须把每个 catalog 条目转成精确的 `%Capability{}` spec — 见 §0d.1b 阻断 gate。 |
+| PR-CC-2a #347（additive primitives：`Ezagent.Cap` matcher + `Behavior.required_caps/0` + `Kind.holds_cap?/2`） | ❌ 经 #349 回退 | `Cap` 模块 + 19 个 Behavior 注解 + 109 个新测试全部删除。 |
+| PR-CC-2b #348（dispatch flip + boot seed system principals + dual-path） | ❌ 经 #349 回退 | Dual-path step 5.5 + wildcard substitution + 14 boot seeds + `workspace_scoped?/0` enforcement 全部撤销。Boot-seeding *意图*在 §0d.5 保留，但使用现存 struct-cap 形态。 |
+| PR-CC-1 `SystemPrincipal.caps/1`（legacy-shape 桥） | ✅ 仍在，现为永久 | 该桥返回 `[%Capability{}]`；r4 使其成为永久 API。不再是 "legacy" 或 "transitional"——它就是 API。可以择机改名。 |
+| `Ezagent.Capability` struct（6 字段） | ✅ 保留在 `apps/ezagent_core/lib/ezagent/capability.ex` | 通配符通过 `:any` atom 在 `kind` / `behavior` / `instance` / `workspace_uri` 字段上已支持。未来密码学字段（signature, nonce, issued_at）以 additive 方式扩展 struct。 |
+| `Ezagent.CapabilityRegistry` ETS | ✅ 保留 | Single-entry registration 纪律 + `cap_subjects/0` callback 均保留。Single-Path 原则（cap subject 声明的唯一 chokepoint）不变。 |
+| `Identity.list_caps_for/1` / `grant_cap/3` / `revoke_cap/3` | ✅ 保留，struct 形态 | API + 调用者签名保持；r4 forward 工作直接使用。 |
+| `caps_json` DB 列 | ✅ struct JSON，未迁移 | SPEC §5.8 的 `caps_schema_version v1→v2` 迁移**已撤销**。现有行保持 `[%Capability{...}]` JSON 形态。 |
+| `ctx.caps` 字段 | ✅ 保留 | `Invocation` struct 保留其 `caps :: [%Capability{}]` 字段。SPEC §5.3 r2 HIGH-3 "delete ctx.caps" 决定**已撤销**——`ctx.caps` 是 dispatch / action body 用于子 cap 决策的快照，那个触发删除的 snapshot-staleness 病灶通过 §5.3 step 8.5 的 revision-CAS（r3-FINAL 设计）解决更好，而不是删除。 |
+
+### r4.1b SystemPrincipal.Catalog cap-shape 缺口（PR-CC-2-v2 阻断 gate）
+
+PR-CC-1 的 `Ezagent.SystemPrincipal.Catalog`（`apps/ezagent_core/lib/ezagent/system_principal/catalog.ex`）声明了 14 个 principal 的 **string 值 cap 条目**，比如 `["session.external_mirror.*"]`、`["session.chat.send", "session.chat.system_message"]` 等——是在本 SPEC §4.1 仍假设 string cap 为清理后线格式的时候写的。
+
+r4 revert 保留 struct cap 之后，`SystemPrincipal.caps/1` 桥**不**把那些 string parse 成逐 cap 的 `%Capability{}` spec。检查 `system_principal.ex` 大约 138/151/174 行：每个非空 string list 坍缩成单个通配 cap `%Capability{kind: :any, behavior: :any, instance: :any, workspace_uri: :any, granted_by: principal_uri, granted_at: now}`。这跟被删的 `User.admin_caps/0` 是同样的权限形态——比 catalog 表格中收窄的 string 声明更宽。
+
+**今天什么工作：**
+- Named-principal 审计 trail（`ctx.caller = system://boot-reconciler` 等）正确。`/admin/audit` 显示真实操作 principal。
+- Catalog 成员强制（`SystemPrincipal.ensure/2` 拒绝表中没有的 URI）工作。
+
+**今天什么不工作：**
+- Least-privilege。`system://chat-router`（声明为 `["session.chat.send", "session.chat.system_message"]`）当前持有完全通配权限，跟 bootstrap admin 一样。`Behavior.Chat` 系统消息 dispatch 路径的 bug 可能通过 chat-router principal 写入任意 session。
+
+**PR-CC-2-v2 验收 gate (c')：**
+PR-CC-2-v2 必须把每个 catalog 条目转成等价的 `%Capability{}` 列表。Catalog 表值类型从 `[String.t()]` 变 `[%Capability{}]`。转换是机械的（按 §5.4 文法 atom 映射 parse 每个现有 string → struct 字段），`:behavior` 解出的 atom 从 catalog 的 "Operating context" 列推导。PR-CC-2-v2 加 invariant test：每个 principal 的 caps 列表无 `%Capability{kind: :any, behavior: :any, instance: :any}` 条目，除非 principal 是 `system://bootstrap`（唯一合法通配）。
+
+PR-CC-2-v2 落地前，system principals 跑的权限比文档化的更宽。按 `feedback_let_it_crash_no_workarounds` + SPEC §10.5 in-VM 信任模型（in-VM 可信；带 bug 的 Behavior 通过过宽 system principal 写入受部署卫生约束），这是**可接受的 v1 限制**，但**不是**post-v1 可接受的——上述 gate 阻断。
+
+### r4.2 为什么 revert string（Allen 2026-05-25 13:18）
+
+> 仔细思考，我觉得应该 revert 回 struct，因为未来我们不可能简单的使用 string 匹配的形式，必然要通过 token 验证等密码学方式来确保 caps 的有效性，到时候，还是要转回 struct
+
+未来的 cap 验证模型将使用密码学签名（caller 提交 token；系统对照已发 cap 验证签名）——这需要带元数据字段（signature, nonce, issued_at, granted_by）的结构化 cap。现在迁到 string，未来再迁回 struct + signature 是一次浪费的往返。从一开始就保留 struct，在 token 验证工作落地时 additive 增加密码学字段更省。
+
+这个 forward-looking 关切在 r1–r3 **没有被代表**。r1–r3 优化的是 plugin 作者 UX（`%{send: "session.chat.send"}` 比构造 struct 短）和 IAM/RBAC 工业标准对齐，两者仍然成立——但都比不过 token 验证临近时的往返成本。
+
+### r4.3 Issue 2 结构性目标（G2）哪些幸存
+
+原 G2 outcome 仍然适用：
+
+> **G2 — Caps 只活在 Behavior × Entity 边界。** `Behavior.required_caps/0` 按 action 声明 [caps]。`Entity.holds_cap?/2` 决定成员。`Invocation.dispatch/1` step 5.5 同时调用两者。其它所有模块对 cap 透明。
+
+唯一改变：`[caps]` 类型是 `%{required(atom()) => %Capability{}}`（struct 值），不是 `%{required(atom()) => String.t()}`。G2 的所有其它方面——Behavior 边界的声明式 cap、dispatch step 5.5 的唯一 chokepoint、`_live` 模块 / plugin facade / 手写 predicate 中没有散落的 cap-check——**仍然是值得追求的目标**。string vs struct 是实现选择，不是架构目标本身。
+
+具体地，未来的 Issue-2 PR（PR-CC-2-v2）用 struct 形态 callback 重新实现边界清理：
+
+- `Behavior.required_caps/0 :: %{required(atom()) => %Capability{}}` —— 按 action 的声明式 struct map。通配符通过 `:any` atom 字段（例如 `%Capability{kind: :chat, behavior: Chat, action: :send, instance: :any, workspace_uri: :any, granted_by: ..., granted_at: ...}` 表 "任意 chat session、任意 workspace"）。
+- `Entity.holds_cap?/2 :: (URI.t() | atom(), %Capability{}) :: boolean()` —— default 实现读 entity 的 `:identity` slice 的 `caps` 字段，通过 `Capability.matches?/2`（现有函数）过滤，返回布尔。
+- Dispatch step 5.5：`needed = behavior.required_caps()[action]; if !Kind.holds_cap?(caller, needed), do: {:error, {:unauthorized, needed}}`。逻辑结构同 PR-CC-2b 的设计，只是比较操作数是 struct 不是 string。
+- `Behavior.workspace_scoped?/0` callback：可选，default `true`。Step 5.6 通过此 gate 跨 workspace dispatch。
+- `CapabilityRegistry` ETS + `cap_subjects/0` + `dispatchable?/0` callback **全部保留**。原 §5 的 "删 CapabilityRegistry" 是 string 时代的简化，struct 保留则不再需要。
+
+### r4.4 Issue 3（G3 — 编译期强制）哪些幸存
+
+原 G3 outcome 仍然适用，唯独 parse-strict 检查现在变为 struct-shape 检查：
+
+> **G3 — 编译期强制是数据，不是宏。** 每个 `@behaviour Ezagent.Behavior` 模块导出有效的 `required_caps/0`。Build 失败 + 精确诊断当 (a) callback 缺失、(b) key set 与 `actions/0` 不一致、或 (c) 任一 value 不是有效的 `%Capability{}`。
+
+`(c)` 更新："是能被 `Cap.Parser.parse_strict/1` parse 的二进制 cap 字符串" → "是 `%Capability{}` struct 且字段匹配父 Kind 的 `type_name/0` 和 Behavior 的 `state_slice/0`"。§6.1 check 10 / 11 保留，predicate 调整。
+
+### r4.5 迁移计划修订（§7 撤销）
+
+原 §7 是 4 个子 PR（CC-2a/2b/2c/2d）做 struct→string 切换 + DB 迁移。保留 struct 之后，§7 缩减为**单个 PR（PR-CC-2-v2）**：
+
+1. 在 `Ezagent.Behavior` 加 `required_caps/0` callback（mandatory）。
+2. 在 `Ezagent.Kind` 加 `Entity.holds_cap?/2` callback（mandatory），带 default 实现。
+3. 给每个 Behavior 注解 `required_caps/0` map（struct 形态）。
+4. 切 dispatch step 5.5 从 `CapabilityRegistry.lookup_required_cap/3`（或当前的具体路径）到 `behavior.required_caps()[action]` + `Kind.holds_cap?/2`。
+5. 硬删新 chokepoint 替代的所有散落 cap-check 代码（§1.2 Pathology B 列表）。
+6. Invariant test §9.2 —— cap-transparency 在 chokepoint 之外的 12 个 probe（P1-P12），**保留**，grep 目标从字符串字面量调整到 struct 构造点。
+
+无 DB 迁移。无 `caps_schema_version` bump。`caps_json` 列形态不变。
+
+### r4.6 Forward note —— 密码学 cap 验证（v1 之后）
+
+超出本 SPEC 范围，但记在此处以让 §0d 决策可追溯到其动机：
+
+PR-CC-2-v2 落地后，`%Ezagent.Capability{}` struct 可以 additive 增加可选字段而不破坏边界纪律：
+
+- `signature :: binary() | nil` —— 对 `(kind, behavior, action, instance, workspace_uri, granted_by, granted_at, nonce, target_principal_uri)` 由 granter 做的 Ed25519 签名。
+- `nonce :: binary() | nil` —— 防重放。
+- `issuer_pubkey_fingerprint :: binary() | nil` —— granter 签名密钥的指纹（通过未来 `signing_keys` 表查询）。
+
+`Capability.matches?/2` 在 `signature != nil` 时增加一条签名验证分支。匹配 API 形态不变；plugin 作者不变；密码学升级是单个 PR 的 additive 改动。Cap string 路线则需要先重新引入 struct 再扩展——两次 PR 的扰动而非一次。
+
+完整威胁模型——重放缓存语义、撤销列表 / TTL 设计、签名密钥轮换、签名验证失败模式（degrade-vs-deny、坏签名上报 telemetry、对已撤销 cap 的审计）——**超出本 SPEC 范围**，推迟到未来的密码学 cap SPEC。上述字段是 non-normative 动机，表明 additive 路径存在；formal specification 由未来 SPEC 拥有。
+
+### r4.7 行动项
+
+1. ✅ 本 SPEC 修订（r4 notes）—— 本 PR 落地。
+2. ⛔ **阻断 PR-CC-2-v2** —— 开 follow-up `2026-05-25-caps-cleanup-v1-r4-impl.md` SPEC，具体描述：(a) `Behavior.required_caps/0` callback 签名 + 返回类型；(b) `Entity.holds_cap?/2` callback + default 实现；(c) PR-CC-2-v2 §9.2 12 探针 invariant grep 目标重新指向 struct 构造点；(d) §0d.1b 的 catalog cap-shape 转换 gate；(e) §9.3 G3 编译期 check 10/11 的 struct-shape predicate。没有这个 sibling SPEC，PR-CC-2-v2 派遣会撞上 codex 在 PR #350 r1 标记的同样 SPEC-vs-实现漂移。
+3. ✅ 镜像本 §0d 到 `.md` —— 本 PR 已完成。
+4. ⏳ Issue 3（G3）编译期强制：PR-CC-3 仍然在计划内，scope 为 struct-shape check。
+
+### r4.8 已验证的 memory
+
+- `feedback_let_it_crash_no_workarounds` —— revert 本身是 let-it-crash 决策：string-cap 在 PR-CC-2a/b 实施中生长的 shim（`SystemPrincipal.caps/1`、dual-path step 5.5、Kind.holds_cap?/2 transitional struct→string filter）都是 anti-pattern。Revert 一举清除。
+- `feedback_completion_requires_invariant_test` —— Issue 2 **未完成**因为边界纪律没有对应的 test。PR-CC-2-v2 配套 §9.2 12-probe invariant。
+- `feedback_north_star_plugin_isolation` —— plugin 作者写 struct map 比 string map 稍冗。缓解：`Ezagent.Capability.cap/N` 构造帮助函数（`Capability.cap(:chat, Chat, :send)` 以合理默认构造 struct 的 instance/workspace_uri/granted_by/granted_at），让调用点只比 string 形态略长。Net "plugin 作者挡在 core 之外" 性质保持。
 
 ---
 
@@ -191,6 +303,8 @@ Plugin 作者每次都需 *发明* trust model。PR #303 NotificationSubscriptio
 
 ## 2. Goals（结果陈述）
 
+> 🔄 **r4 修订:** G1 由 PR-CC-1（#345 已合入）实现。G2 的结构性目标（caps 只在 Behavior×Entity；单一 chokepoint；其它模块对 cap 透明）仍然有效——下文 "per-action cap 字符串" 措辞由 §0d.3 取代（per-action `%Capability{}` struct map）。G3 的 "有效 cap 字符串" 由 §0d.4 取代（有效 `%Capability{}` 形态按父 Kind + Behavior）。G2 admin 权限措辞——"wildcard `\"*\"` cap 字符串"——由 §0d.1 取代为 "wildcard `%Capability{kind: :any, behavior: :any, instance: :any, workspace_uri: :any}` cap"。
+
 本 SPEC 的 3 个 PR 合并后：
 
 **G1 — Ambient authority 消失。** `grep -rn "User.admin_caps" apps/` 在 `test/support/` 之外返回 0。每次 dispatch 在 `ctx.caller` 携带真实 principal URI。审计日志显示每次内部操作的真实操作 principal。Admin Entity 的 cap slice 仍包含 wildcard `"*"` cap 字符串 — admin 权限是数据，不是代码。
@@ -202,6 +316,8 @@ Plugin 作者每次都需 *发明* trust model。PR #303 NotificationSubscriptio
 ---
 
 ## 3. Non-goals
+
+> 🔄 **r4 修订:** §3 中 "cap 字符串" / "struct → string" / "cap *表示* 改变（struct → string）" 等措辞由 §0d 取代——r4 保留 struct 形态。"不切到 RBAC" 意图保留；"不改 dispatch 其它步骤" 意图保留；"不改 `data_owner/1`" 意图保留；"不加 cap 出处审计表" 意图保留。其中依赖 string 切换的 non-goal 条目视为撤销（例如丢 `granted_by`/`granted_at` 撤销——这些字段保留在 struct 里）。
 
 - **不切换 RBAC**（role-based）— cap 模型不变。"role" 只是命名的 cap 字符串 bundle，调用方可一次性授权。
 - **不替换 external-mirror-audit 的 FacadeNonceTable**。facade Task 与 action body 间的 trust transfer 与 cap 简化正交。
@@ -270,6 +386,8 @@ Ezagent.SystemPrincipal.ensure(URI.parse("system://boot-reconciler"))
 
 ### 4.4 System 调用点迁移
 
+> 🔄 **r4 修订:** 下表 "DELETE — `ctx.caps` 字段按 r2 HIGH-3 fix 移除" **撤销**。`ctx.caps` 按 §0d.1 保留。`caller: User.admin_uri()` → `caller: URI.parse("system://<service>")` 的 16 个调用点迁移在 PR-CC-1 #345 已落地并保留在 main。§0d.1b 的 catalog cap-shape 缺口适用于此处所有行。
+
 | 旧 | 新 |
 |---|---|
 | dispatch ctx 中 `caps: User.admin_caps()` | 删 — `ctx.caps` 字段移除（r2 HIGH-3 修，见 §5.3 cap-snapshot）。Dispatch 直接从 caller URI 读 caller slice；system principal 经同路径加载 |
@@ -312,6 +430,8 @@ end
 ---
 
 ## 5. Issue 2 — Caps 在 Behavior × Entity 边界
+
+> 🔄 **r4 修订:** 下文 §5 整体描述**已撤销的 string-cap 设计**。现行 struct-cap 版本见 §0d.3。结构性目标（§5.1 `required_caps/0` callback、§5.2 `holds_cap?/2`、§5.3 dispatch step 5.5 为唯一 chokepoint、§5.5 通过 `workspace_scoped?/0` 做 workspace 隔离）**全部仍然适用**——只是 cap *类型*是 `%Capability{}` 而非 `String.t()`。§5.4 cap-string 文法撤销（struct 字段替代）。§5.6 / §5.7 / §5.8（数据迁移 + Identity API 形态变更）撤销。下文保留作为历史记录。
 
 ### 5.1 `Behavior.required_caps/0` callback（普通函数）
 
@@ -705,6 +825,8 @@ Plugin 作者的 cap 系统接触总面：2 行 callback（`required_caps/0`、`
 
 ## 6. Issue 3 — 经 `:ezagent_plugin_check` 的编译期强制
 
+> 🔄 **r4 修订:** §6 整体形态保留——扩展现有 `:ezagent_plugin_check` Mix compiler 加 check 10/11——但每个 "字符串经 `Cap.Parser.parse_strict/1` parse" predicate 变成 "是 `%Capability{}` struct 且字段有效"，按 §0d.4 处理。`Ezagent.Cap.Parser.parse_strict/1` 函数引用撤销（string 时代遗物）。r3-FINAL 的三重 key `Enum.uniq_by/2` MED-1 修复保留——那是去重形态决策，不是 cap-shape 决策。
+
 ### 6.1 现有 compiler 扩展
 
 `apps/ezagent_core/lib/mix/tasks/compile/ezagent_plugin_check.ex` 长出 **四** 个新 check（~80 LOC）—— 注意：r1 三个 check 的 check 10 在 r2 升级为严格 parse（HIGH-4 修复），r2 新增 check 11 作 catalog 强制（HIGH-2 修复）。
@@ -846,7 +968,9 @@ diagnostics =
 
 ---
 
-## 7. 迁移计划（3 个 PR，有序）
+## 7. 历史迁移计划（已撤销 — 见 §0d.5）
+
+> 🔄 **r4 修订:** 下文 §7 描述**已撤销的 3+1 PR 序列**。现行计划见 §0d.5：单个 PR-CC-2-v2 实现 §0d.3 的 struct-shape callback。无 `caps_json` DB 迁移。无 `caps_schema_version` bump。"PR-CC-2 当时拆 2a/2b/2c/2d" 是历史；v2 是单个协调 PR，因为 struct 保留意味着不存在 shim 窗口。
 
 ### 7.1 PR-CC-1 — Issue 1（Ambient authority 移除）
 
@@ -931,6 +1055,8 @@ diagnostics =
 
 ## 8. 验收准则（每 PR）
 
+> 🔄 **r4 修订:** §8.1（PR-CC-1）验收准则在已合入的 #345 全部 PASSED——保留。§8.2（原 PR-CC-2）和 §8.3（原 PR-CC-3）描述 string 时代准则；现行 PR-CC-2-v2 验收 gate 是：(a) 每个 `@behaviour Ezagent.Behavior` 模块导出 `required_caps/0` 返回 `%{atom() => %Capability{}}`；(b) `Entity.holds_cap?/2` callback 存在带 default 实现；(c) dispatch step 5.5 读 `required_caps/0`；(d) chokepoint allowlist 之外的生产代码不直接调 `Capability.matches?/2`（§9.2 的 12-probe invariant——保留，grep 目标调到 struct 构造点）。
+
 | PR | Gate |
 |---|---|
 | CC-1 | (a) Invariant `no_admin_caps_fallback_test.exs` 通过；(b) `grep -rn "User.admin_caps" apps/lib` 返回 0 行；(c) `/admin/audit` 在 fresh boot 5 秒内显示 boot-reconciler dispatch 的 `system://` URI |
@@ -943,6 +1069,8 @@ diagnostics =
 ---
 
 ## 9. Invariant test（按 `feedback_completion_requires_invariant_test` 的架构 gate）
+
+> 🔄 **r4 修订:** §9.1 G1 invariant（`no production-lib reference to User.admin_caps/0`）在 PR #345 已 PASS——保留。§9.2 G2 12-probe invariant **保留**但 grep 目标重新指向：P1-P2（ambient authority）不变；P3-P5 / P7-P11（cap-check 泄漏 / mutation-API 泄漏 / caller-spoofing 等）重新瞄准 chokepoint 之外的 `%Capability{}` 构造点 + `Capability.matches?/2` 调用，而非 cap-string parse 点；P12（macro 声明）不变。§9.3 G3（编译期 gate）按 §0d.4 重新瞄向 struct 形态。§9.4 / §9.5 / §9.6（workspace-suffix 迁移 / catalog 强制 / cap-snapshot CAS）——§9.4 撤销（无 DB 迁移）；§9.5 保留（catalog 强制是 cap-shape-agnostic）；§9.6 保留（CAS 是 TOCTOU 修复，与 cap shape 正交）。
 
 每个 issue 的结构目标由当目标未达成时失败的测试 gate — 这些是防止未来回归的锁。
 
@@ -1041,6 +1169,8 @@ end
 
 ## 10. 风险 + 回滚
 
+> 🔄 **r4 修订:** 下文回滚讨论假设 `caps_schema_version v1→v2` 迁移已跑。按 §0d.5 该迁移撤销；`caps_json` 列形态不变。"反向重跑迁移" 回滚路径不适用。§10.5 in-VM 信任模型保留。§0d.6 forward note 覆盖 post-v1 密码学验证设计空间。
+
 ### 10.1 风险 — PR-CC-2 进行中与并发 SPEC 冲突
 
 `feat/workspace-default-to-system-impl`（#335）和 `feat/agent-duplicate-simple-from-flag`（#338）在进行中。两者都邻接触 cap。缓解：PR-CC-1 独立可先落地；PR-CC-2 等它们合并 OR 协调同步 rebase。
@@ -1082,6 +1212,8 @@ Codex r3 提出两条发现（HIGH-1 principal 伪造、HIGH-2 system caller wor
 
 ## 11. 范围外（futures）
 
+> 🔄 **r4 修订:** 任何提议扩展 cap 字符串文法（instance 后缀、workspace 后缀、role/group 语法）的 "未来" 项目都撤销——struct 保留让这些扩展变成 struct 字段增加而非字符串文法 parse。密码学验证 future 移到 §0d.6。
+
 - **Cap provenance 审计表** — 若未来用例需要 "谁授我 cap X"，`cap_grants(grantee_uri, cap_string, granter_uri, granted_at)` 表 additive 落地，不改 cap 形态。
 - **Role bundle** — 把 "frontend-admin" 作为命名 cap 字符串 bundle 授权的操作员 UX 是 UI feature，非结构变化。Cap 形态不变；bundle 是 grant 时的 server 端展开。
 - **跨 workspace cap delegation** — 今天只 admin 持有 `"cross-workspace:*"`。未来 SPEC 可允许 per-Behavior 跨 workspace 授权（如 "User-X 可跨 workspace dispatch chat action"）。会作新 cap 字符串语法落地（可能 `"session.chat@*"`）；与本 SPEC 正交。
@@ -1093,7 +1225,8 @@ Codex r3 提出两条发现（HIGH-1 principal 伪造、HIGH-2 system caller wor
 
 - **r1 codex：** `needs-attention` — 4 HIGH + 1 MEDIUM。按 §0a 在 r2 闭合。
 - **r2 codex：** `needs-attention` — 3 HIGH + 1 MEDIUM。按 §0b 在 r3 闭合。
-- **r3 codex：** `needs-attention` — 2 HIGH + 1 MEDIUM。按 §0c 在 r3-FINAL 闭合：HIGH-1 + HIGH-2 接受为文档化的 v1 信任模型限制（§10.5）；MED-1 dedupe 键结构性修复（§6.1）。无 r4 轮次，按 Allen 2026-05-25 手动裁决。
+- **r3 codex：** `needs-attention` — 2 HIGH + 1 MEDIUM。按 §0c 在 r3-FINAL 闭合：HIGH-1 + HIGH-2 接受为文档化的 v1 信任模型限制（§10.5）；MED-1 dedupe 键结构性修复（§6.1）。无 r4 codex 轮次，按 Allen 2026-05-25 手动裁决。
+- **r4（revert 后，非 codex 驱动）:** Allen 2026-05-25 13:18 裁决——经 PR #349 revert string-cap 表示（PR-CC-2a #347 + PR-CC-2b #348），为预见未来密码学验证保留 struct-shape cap。SPEC 主体 §5–§9 保留作为历史记录；§0d 文档化现行 struct-shape 设计。PR-CC-2-v2 将按 §0d.3 用 struct callback 重新实现 Issue 2 的结构性目标。
 
 若 r3 codex 仍 HIGH/CRIT，review 聚焦于：
 - **Target CAS 原子性**（§5.3 step 8.5、§9.6 invariant）— 审 `Ezagent.Identity.cas_update_caps/2` 经 `:ets.select_replace/2` 在并发 grant 负载下是否真原子（或需序列化 `GenServer.call`）。

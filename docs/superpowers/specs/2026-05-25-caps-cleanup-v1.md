@@ -1,6 +1,8 @@
 # SPEC — Caps cleanup v1 (3-issue architectural rectification)
 
-**Status:** r3-FINAL (MERGED). 2026-05-25. Trust-model accepted; MED-1 dedupe fix applied; proceeding to impl (PR-CC-1/CC-2/CC-3).
+**Status:** **r4 (REVISED post-revert).** 2026-05-25. Issue 1 IMPLEMENTED (PR-CC-1 #345 merged). Issue 2 IMPLEMENTATION REVERTED (PR-CC-2a #347 + PR-CC-2b #348 reverted via #349); the `struct → string` cap representation switch this SPEC originally specified is now **withdrawn**. Issue 2's *structural* goals (declarative `Behavior.required_caps/0`, `Entity.holds_cap?/2` at the boundary, dispatch step 5.5 as the sole cap-check chokepoint) **remain valid** and will be re-implemented with the existing `%Ezagent.Capability{}` struct shape kept intact (wildcards via the existing `:any` atom field values). Issue 3 NOT STARTED. See §0d r4 revision notes below for the full decision path.
+
+**Prior status:** r3-FINAL (MERGED). 2026-05-25. Trust-model accepted; MED-1 dedupe fix applied; proceeded to impl (PR-CC-1/CC-2/CC-3).
 **Tier:** `apps/ezagent_core/` framework rectification + sweep across every domain + plugin.
 **Trigger:** Allen 2026-05-25 (Feishu) — three verbatim directives addressing accumulated cap-system pathology surfaced during the data-ownership-v2 / external-mirror-audit work:
 
@@ -24,6 +26,116 @@
 - `feedback_bilingual_docs_convention` — Chinese mirror at `.zh_cn.md`.
 
 **Companion:** `2026-05-25-caps-cleanup-v1.zh_cn.md`.
+
+---
+
+## 0d. r4 revision notes (post-revert; struct stays)
+
+> 🔄 **This SPEC has been amended after implementation.** PR-CC-2a + PR-CC-2b landed the string-cap representation switch as designed, then were reverted via PR #349 on Allen's 2026-05-25 13:18 directive. The body of this SPEC (§5, §6, §7, §8, §9) below still describes the **withdrawn string-cap design** as historical record. The currently-in-force design is summarised in this §0d. Future PRs MUST reconcile against §0d, not against the literal text of §5–§9.
+
+### r4.1 What was reverted + what was kept
+
+| PR | Status | Notes |
+|---|---|---|
+| PR-CC-1 #345 (Issue 1 — ambient authority removal) | ✅ MERGED, KEPT — **but see §0d.1b below for catalog cap-shape gap** | `User.admin_caps/0` deleted; `Ezagent.SystemPrincipal.Catalog` (14 system principals) in place; 16 call sites migrated. The catalog's cap-string values were written under the r1–r3 string assumption; in struct-kept r4 those strings are currently rendered by `SystemPrincipal.caps/1` as wildcard `%Capability{kind: :any, behavior: :any, instance: :any, workspace_uri: :any}` instead of the narrowing per-principal cap declarations the catalog table names. Named-principal audit trail works; least-privilege does NOT. PR-CC-2-v2 must convert each catalog entry to its exact `%Capability{}` spec — see §0d.1b for the blocking gate. |
+| PR-CC-2a #347 (additive primitives: `Ezagent.Cap` matcher + `Behavior.required_caps/0` + `Kind.holds_cap?/2`) | ❌ REVERTED via #349 | The `Cap` module + all 19 Behavior annotations + 109 new tests deleted. |
+| PR-CC-2b #348 (dispatch flip + boot seed system principals + dual-path) | ❌ REVERTED via #349 | Dual-path step 5.5 + wildcard substitution + 14 boot seeds + `workspace_scoped?/0` enforcement all undone. The boot-seeding *intent* survives in §0d.5 below but uses the existing struct-cap shape. |
+| PR-CC-1 `SystemPrincipal.caps/1` (legacy-shape bridge) | ✅ STILL THERE, NOW PERMANENT | The bridge returned `[%Capability{}]`; r4 makes that the permanent shape. No longer "legacy" or "transitional" — it's the API. Rename if/when convenient. |
+| `Ezagent.Capability` struct (6 fields) | ✅ KEPT in `apps/ezagent_core/lib/ezagent/capability.ex` | Wildcards already supported via `:any` atom on `kind` / `behavior` / `instance` / `workspace_uri`. Future cryptographic fields (signature, nonce, issued_at) extend the struct additively. |
+| `Ezagent.CapabilityRegistry` ETS | ✅ KEPT | Single-entry registration discipline + `cap_subjects/0` callback both stay. The Single-Path principle (one chokepoint for cap subject declaration) is unchanged. |
+| `Identity.list_caps_for/1` / `grant_cap/3` / `revoke_cap/3` | ✅ KEPT, struct shape | API + caller signatures stay; r4 forward work uses these as-is. |
+| `caps_json` DB column | ✅ struct JSON, NOT migrated | The SPEC §5.8 `caps_schema_version v1→v2` migration is **withdrawn**. Existing rows keep the `[%Capability{...}]` JSON shape. |
+| `ctx.caps` field | ✅ KEPT | The `Invocation` struct keeps its `caps :: [%Capability{}]` field. The SPEC §5.3 r2 HIGH-3 "delete ctx.caps" decision is **withdrawn** — `ctx.caps` is the snapshot dispatch/action bodies read for sub-cap decisions, and the snapshot-staleness pathology that motivated deletion is better addressed via the existing revision-CAS in §5.3 step 8.5 (r3-FINAL design) than by deletion.
+
+### r4.1b SystemPrincipal.Catalog cap-shape gap (PR-CC-2-v2 blocking gate)
+
+PR-CC-1's `Ezagent.SystemPrincipal.Catalog` (`apps/ezagent_core/lib/ezagent/system_principal/catalog.ex`) declares 14 principals with **string-valued cap entries** like `["session.external_mirror.*"]`, `["session.chat.send", "session.chat.system_message"]`, etc. — written when this SPEC's §4.1 still assumed string caps were the post-cleanup wire format.
+
+After the r4 revert keeps struct caps, the bridge `SystemPrincipal.caps/1` does NOT parse those strings into per-cap `%Capability{}` specs. Inspect `system_principal.ex` lines ~138/151/174: every non-empty string list collapses to a single wildcard cap `%Capability{kind: :any, behavior: :any, instance: :any, workspace_uri: :any, granted_by: principal_uri, granted_at: now}`. That is the same authority shape as the deleted `User.admin_caps/0` — broader than the catalog table's narrowing strings document.
+
+**What works today:**
+- Named-principal audit trail (`ctx.caller = system://boot-reconciler` etc.) is correct. `/admin/audit` shows the real operating principal.
+- Catalog membership enforcement (`SystemPrincipal.ensure/2` rejects URIs not in the table) works.
+
+**What does NOT work today:**
+- Least-privilege. `system://chat-router` (declared as `["session.chat.send", "session.chat.system_message"]`) currently holds full wildcard authority, same as the bootstrap admin. A bug in `Behavior.Chat`'s system-message dispatch path could write to ANY session via the chat-router principal.
+
+**PR-CC-2-v2 acceptance gate (c'):**
+PR-CC-2-v2 MUST convert each catalog entry to the equivalent `%Capability{}` list. The catalog table value type changes from `[String.t()]` to `[%Capability{}]`. The conversion is mechanical (parse each existing string per §5.4 grammar's atom mapping → struct fields), with the parsed atom for `:behavior` derived from the catalog's "Operating context" column. Invariant test added in PR-CC-2-v2: every principal's caps list has no `%Capability{kind: :any, behavior: :any, instance: :any}` entry unless the principal is `system://bootstrap` (the only legitimate wildcard).
+
+Until PR-CC-2-v2 lands, system principals run with broader-than-documented authority. This is **acceptable v1 limit** per `feedback_let_it_crash_no_workarounds` + SPEC §10.5 in-VM trust model (in-VM is trusted; a buggy Behavior writing via an over-broad system principal is bounded by deployment hygiene), but it is NOT acceptable post-v1 — the gate above is blocking.
+
+### r4.2 Why string was reverted (Allen 2026-05-25 13:18)
+
+> 仔细思考，我觉得应该 revert 回 struct，因为未来我们不可能简单的使用 string 匹配的形式，必然要通过 token 验证等密码学方式来确保 caps 的有效性，到时候，还是要转回 struct
+
+Translation: the future cap-verification model will use cryptographic signatures (caller presents a token; system verifies the signature against issued caps) — that requires structured caps with metadata fields (signature, nonce, issued_at, granted_by). Migrating to string now and then re-migrating to struct + signature later is a wasted round-trip. Better to keep the struct from the start and add cryptographic fields additively when the verification work lands.
+
+This forward-looking concern was **not represented in r1–r3** of this SPEC. r1–r3 optimised for plugin-author UX (`%{send: "session.chat.send"}` is shorter than struct construction) and IAM/RBAC-industry alignment, both of which remain true — but neither outweighs the round-trip cost when token verification is on the near-term roadmap.
+
+### r4.3 What survives of Issue 2's structural goals (G2)
+
+The original G2 outcome statement still applies:
+
+> **G2 — Caps live only at Behavior × Entity.** `Behavior.required_caps/0` declares per-action [caps]. `Entity.holds_cap?/2` decides membership. `Invocation.dispatch/1` step 5.5 calls both. Every other module is cap-transparent.
+
+The only change: `[caps]` is `%{required(atom()) => %Capability{}}` (struct-valued), not `%{required(atom()) => String.t()}`. Everything else about G2 — declarative caps at the Behavior boundary, single chokepoint at dispatch step 5.5, no scattered cap-checks in `_live` modules / plugin facades / hand-written predicates — is **still a goal worth pursuing**. The string vs struct decision was an implementation choice, not the architectural goal.
+
+Concretely, the future Issue-2 PR (PR-CC-2-v2) re-attempts the boundary cleanup with struct-shape callbacks:
+
+- `Behavior.required_caps/0 :: %{required(atom()) => %Capability{}}` — declarative struct map per action. Wildcards via `:any` atom fields (e.g. `%Capability{kind: :chat, behavior: Chat, action: :send, instance: :any, workspace_uri: :any, granted_by: ..., granted_at: ...}` for "any chat session, any workspace").
+- `Entity.holds_cap?/2 :: (URI.t() | atom(), %Capability{}) :: boolean()` — default impl reads the entity's `:identity` slice's `caps` field, filters via `Capability.matches?/2` (existing function), returns boolean.
+- Dispatch step 5.5: `needed = behavior.required_caps()[action]; if !Kind.holds_cap?(caller, needed), do: {:error, {:unauthorized, needed}}`. Same logical structure as PR-CC-2b's design, but the comparison operand is a struct, not a string.
+- `Behavior.workspace_scoped?/0` callback: optional, default `true`. Step 5.6 gates cross-workspace dispatches via this.
+- `CapabilityRegistry` ETS + `cap_subjects/0` + `dispatchable?/0` callbacks **all stay**. The original §5's "delete CapabilityRegistry" was a string-era simplification that is no longer warranted when struct caps remain.
+
+### r4.4 What survives of Issue 3 (G3 — compile-time enforcement)
+
+The original G3 outcome statement still applies, modulo the parse-strict check now becoming a struct-shape check:
+
+> **G3 — Compile-time enforcement is data, not macros.** Every `@behaviour Ezagent.Behavior` module exports a valid `required_caps/0`. Build fails with a precise diagnostic if (a) the callback is missing, (b) the key set differs from `actions/0`, or (c) any value is not a valid `%Capability{}`.
+
+`(c)` updates: "is a binary cap string parseable by `Cap.Parser.parse_strict/1`" → "is a `%Capability{}` struct whose fields match the parent Kind's `type_name/0` AND the Behavior's `state_slice/0`". §6.1 check 10 / 11 stay with adjusted predicates.
+
+### r4.5 Migration plan amendment (§7 withdrawn)
+
+The original §7 was 4 sub-PRs (CC-2a/2b/2c/2d) for the struct→string switch + DB migration. With struct kept, §7 reduces to a **single PR (PR-CC-2-v2)**:
+
+1. Add `Behavior.required_caps/0` callback to `Ezagent.Behavior` (mandatory).
+2. Add `Entity.holds_cap?/2` callback to `Ezagent.Kind` (mandatory) with default impl.
+3. Annotate every Behavior with its `required_caps/0` map (struct shape).
+4. Switch dispatch step 5.5 from `CapabilityRegistry.lookup_required_cap/3` (or whatever the current path is) to `behavior.required_caps()[action]` + `Kind.holds_cap?/2`.
+5. Hard-delete any scattered cap-check code that the new chokepoint replaces (§1.2 Pathology B list).
+6. Invariant test §9.2 — the 12 probes (P1-P12) for cap-transparency outside the chokepoint, **kept** with grep targets adjusted from string-shape literals to struct-construction literals.
+
+No DB migration. No `caps_schema_version` bump. `caps_json` column shape unchanged.
+
+### r4.6 Forward note — cryptographic cap validation (post-v1)
+
+Out of scope for this SPEC, but documented here so the §0d decision is traceable to its motivation:
+
+After PR-CC-2-v2 lands, the `%Ezagent.Capability{}` struct can grow optional fields additively without breaking the boundary discipline:
+
+- `signature :: binary() | nil` — Ed25519 signature of `(kind, behavior, action, instance, workspace_uri, granted_by, granted_at, nonce, target_principal_uri)` by the granter.
+- `nonce :: binary() | nil` — anti-replay.
+- `issuer_pubkey_fingerprint :: binary() | nil` — fingerprint of the granter's signing key (looked up via a future `signing_keys` table).
+
+`Capability.matches?/2` grows a signature-verification branch when `signature != nil`. The matching API stays the same shape; plugin authors don't change anything; the cryptographic upgrade is a single-PR additive change. Cap strings would have required re-introducing the struct first, then growing it — two PRs of churn instead of one.
+
+The full threat model — replay-cache semantics, revocation list / TTL design, signing-key rotation, signature-verification failure modes (degrade-vs-deny, telemetry on bad signatures, audit-on-revoked-cap) — is **out of scope for this SPEC** and deferred to a future cryptographic-cap SPEC. The fields listed above are non-normative motivation showing the additive path exists; the future SPEC owns the formal specification.
+
+### r4.7 Action items
+
+1. ✅ This SPEC amendment (r4 notes) — landed in this PR.
+2. ⛔ **BLOCKING for PR-CC-2-v2** — open follow-up `2026-05-25-caps-cleanup-v1-r4-impl.md` SPEC describing in concrete file:line terms: (a) `Behavior.required_caps/0` callback signature + return type; (b) `Entity.holds_cap?/2` callback + default impl; (c) PR-CC-2-v2 §9.2 12-probe invariant grep targets re-pointed to struct construction sites; (d) the catalog cap-shape conversion gate from §0d.1b; (e) §9.3 G3 compile-time check 10/11 struct-shape predicates. Without this sibling SPEC the PR-CC-2-v2 dispatch will hit the same SPEC-vs-implementation drift codex flagged in PR #350 r1.
+3. ✅ Mirror this §0d into `.zh_cn.md` — done in this PR.
+4. ⏳ Issue 3 (G3) compile-time enforcement: PR-CC-3 still planned, scoped to struct-shape checks.
+
+### r4.8 Memories validated
+
+- `feedback_let_it_crash_no_workarounds` — the revert is itself a let-it-crash decision: the string-cap shim (`SystemPrincipal.caps/1`, dual-path step 5.5, the Kind.holds_cap?/2 transitional struct→string filter) were anti-pattern shims that grew during PR-CC-2a/b implementation. The revert clears them in one move.
+- `feedback_completion_requires_invariant_test` — Issue 2 is NOT complete because the boundary discipline has no test asserting it. PR-CC-2-v2 ships with the §9.2 12-probe invariant.
+- `feedback_north_star_plugin_isolation` — plugin authors writing `required_caps/0` as struct maps is slightly more verbose than string maps. Mitigation: a `Ezagent.Capability.cap/N` constructor helper (`Capability.cap(:chat, Chat, :send)` builds the struct with sensible defaults for instance/workspace_uri/granted_by/granted_at) makes the call site only marginally longer than the string form. Net plugin-author-out-of-core property holds.
 
 ---
 
@@ -193,6 +305,8 @@ This SPEC unwinds all three pathologies in one coordinated cleanup:
 
 ## 2. Goals (outcome statements)
 
+> 🔄 **r4 amend:** G1 is fulfilled by PR-CC-1 (#345 merged). G2's STRUCTURAL goal (caps only at Behavior×Entity; single chokepoint; other modules cap-transparent) stays valid — the phrase "per-action cap strings" below is superseded by §0d.3 (per-action `%Capability{}` struct map). G3's "valid cap string" is superseded by §0d.4 (valid `%Capability{}` shape per parent Kind + Behavior). G2 admin authority phrasing — "the wildcard `\"*\"` cap string" — supersedes to "the wildcard `%Capability{kind: :any, behavior: :any, instance: :any, workspace_uri: :any}` cap" per §0d.1.
+
 After this SPEC's 3 PRs are merged:
 
 **G1 — Ambient authority is gone.** `grep -rn "User.admin_caps" apps/` returns 0 results outside `test/support/`. Every dispatch carries a real principal URI in `ctx.caller`. Audit log shows the actual operating principal for every internal operation. The admin Entity's caps slice still contains the wildcard `"*"` cap string — admin authority is data, not code.
@@ -204,6 +318,8 @@ After this SPEC's 3 PRs are merged:
 ---
 
 ## 3. Non-goals
+
+> 🔄 **r4 amend:** the phrasing "cap strings" / "struct → string" / "the cap *representation* changes (struct → string)" throughout §3 is superseded — r4 keeps the struct shape per §0d. The "NOT switching to RBAC" intent stays; the "NOT touching dispatch's other steps" intent stays; the "NOT changing `data_owner/1`" intent stays; the "NOT adding cap provenance audit table" intent stays. Where a non-goal bullet hinges on the string switch, treat it as withdrawn (e.g. dropping `granted_by`/`granted_at` is withdrawn — those fields stay in the struct).
 
 - **NOT switching to RBAC** (role-based) — the cap model stays. A "role" is just a named bundle of cap strings that callers can grant atomically.
 - **NOT replacing the FacadeNonceTable** from external-mirror-audit. Trust transfer between facade Task and action body is orthogonal to cap simplification.
@@ -324,6 +440,8 @@ Ezagent.SystemPrincipal.ensure(URI.parse("system://boot-reconciler"))
 
 ### 4.4 Migration of system call sites
 
+> 🔄 **r4 amend:** "DELETE — `ctx.caps` field removed per r2 HIGH-3 fix" in the table below is **withdrawn**. `ctx.caps` stays per §0d.1. The 16 call-site migration of `caller: User.admin_uri()` → `caller: URI.parse("system://<service>")` did land in PR-CC-1 #345 and is preserved on main. The catalog cap-shape gap from §0d.1b applies to all rows here.
+
 | Old | New |
 |---|---|
 | `caps: User.admin_caps()` in dispatch ctx | DELETE — `ctx.caps` field removed per r2 HIGH-3 fix (§5.3 cap-snapshot). Dispatch reads caller slice from caller URI directly; system principals are loaded via the same path |
@@ -366,6 +484,8 @@ The first asserts the cleanup is complete; the second asserts the escape hatch i
 ---
 
 ## 5. Issue 2 — Caps at Behavior × Entity boundary
+
+> 🔄 **r4 amend:** the entirety of §5 below describes the **withdrawn string-cap design**. See §0d.3 for the in-force struct-cap version. The structural goals (§5.1 `required_caps/0` callback, §5.2 `holds_cap?/2`, §5.3 dispatch step 5.5 as single chokepoint, §5.5 workspace iso via `workspace_scoped?/0`) **all still apply** — only the cap *type* is `%Capability{}` not `String.t()`. §5.4 cap-string grammar is withdrawn (struct fields replace it). §5.6 / §5.7 / §5.8 (data migration + Identity API shape changes) are withdrawn. The body below stays as historical record.
 
 ### 5.1 `Behavior.required_caps/0` callback (plain function)
 
@@ -819,6 +939,8 @@ This IS the north-star: plugin authors stay out of core (memory `feedback_north_
 
 ## 6. Issue 3 — Compile-time enforcement via `:ezagent_plugin_check`
 
+> 🔄 **r4 amend:** §6's overall shape stays — extend the existing `:ezagent_plugin_check` Mix compiler with checks 10/11 — but every "string parses via `Cap.Parser.parse_strict/1`" predicate becomes "is a `%Capability{}` struct with valid fields" per §0d.4. The `Ezagent.Cap.Parser.parse_strict/1` function reference is withdrawn (string-era artifact). The triple-keyed `Enum.uniq_by/2` MED-1 fix from r3-FINAL stays — that's a dedupe shape, not a cap-shape, decision.
+
 ### 6.1 Extension to existing compiler
 
 `apps/ezagent_core/lib/mix/tasks/compile/ezagent_plugin_check.ex` grows three new checks (~80 LOC):
@@ -964,7 +1086,9 @@ Per memory `feedback_let_it_crash_no_workarounds`: NO warning + degrade. The bui
 
 ---
 
-## 7. Migration plan (3 PRs, ordered)
+## 7. Historical migration plan (withdrawn — see §0d.5)
+
+> 🔄 **r4 amend:** §7 below describes the **withdrawn 3+1 PR sequence**. In-force plan per §0d.5: a single PR-CC-2-v2 implementing §0d.3's struct-shape callbacks. No `caps_json` DB migration. No `caps_schema_version` bump. The "PR-CC-2 was originally split into 2a/2b/2c/2d" detail is historical — the v2 attempt is a single coordinated PR because the struct kept means no shim window exists.
 
 ### 7.1 PR-CC-1 — Issue 1 (Ambient authority removal)
 
@@ -1049,6 +1173,8 @@ Acceptance:
 
 ## 8. Acceptance criteria (per-PR)
 
+> 🔄 **r4 amend:** §8.1 (PR-CC-1) acceptance criteria all PASSED on the merged PR #345 — preserve as-is. §8.2 (original PR-CC-2 acceptance) and §8.3 (original PR-CC-3) describe string-era criteria; the in-force PR-CC-2-v2 acceptance gates are: (a) every `@behaviour Ezagent.Behavior` module exports `required_caps/0` returning `%{atom() => %Capability{}}`; (b) `Entity.holds_cap?/2` callback present with default impl; (c) dispatch step 5.5 reads `required_caps/0`; (d) no production code outside the chokepoint allowlist calls `Capability.matches?/2` directly (the §9.2 12-probe invariant — kept, with grep targets adjusted to struct construction sites).
+
 | PR | Gate |
 |---|---|
 | CC-1 | (a) Invariant `no_admin_caps_fallback_test.exs` passes; (b) `grep -rn "User.admin_caps" apps/lib` returns 0 lines; (c) audit log on `/admin/audit` shows `system://` URI for boot-reconciler dispatch within 5 seconds of fresh boot |
@@ -1061,6 +1187,8 @@ Acceptance:
 ---
 
 ## 9. Invariant tests (the architectural gates per `feedback_completion_requires_invariant_test`)
+
+> 🔄 **r4 amend:** §9.1 G1 invariant (`no production-lib reference to User.admin_caps/0`) PASSED on PR #345 — preserved. §9.2 G2 12-probe invariant **kept** but with grep targets re-pointed: P1-P2 (ambient authority) unchanged; P3-P5 / P7-P11 (cap-check leakage / mutation-API leak / caller-spoofing / etc.) re-aimed at `%Capability{}` construction sites + `Capability.matches?/2` calls outside the chokepoint, instead of cap-string parse sites; P12 (macro declaration) unchanged. §9.3 G3 (compile-time gate) re-aimed at struct shape per §0d.4. §9.4 / §9.5 / §9.6 (workspace-suffix migration / catalog enforcement / cap-snapshot CAS) — §9.4 withdrawn (no DB migration); §9.5 kept (catalog enforcement is cap-shape-agnostic); §9.6 kept (CAS is a TOCTOU fix, orthogonal to cap shape).
 
 Each issue's structural goal is gated by a test that fails when the goal is unmet — these are the locks against future regression.
 
@@ -1525,6 +1653,8 @@ The r3 fix is specifically the FIRST and FIFTH test — they fail against r2's c
 
 ## 10. Risks + rollback
 
+> 🔄 **r4 amend:** rollback discussion below assumes a `caps_schema_version v1→v2` migration ran. Per §0d.5 that migration is withdrawn; `caps_json` column shape unchanged. The "rollback by re-running the migration in reverse" path is N/A. The in-VM trust model §10.5 stays. The forward note in §0d.6 covers post-v1 cryptographic verification design space.
+
 ### 10.1 Risk — PR-CC-2 mid-flight conflicts with concurrent SPECs
 
 `feat/workspace-default-to-system-impl` (#335) and `feat/agent-duplicate-simple-from-flag` (#338) are in flight. Both touch caps adjacently. Mitigation: PR-CC-1 is independent and can land first; PR-CC-2 waits for those to merge OR coordinates a synchronized rebase.
@@ -1566,6 +1696,8 @@ Documented in `feedback_let_it_crash_no_workarounds` style: we choose explicit a
 
 ## 11. Out-of-scope (futures)
 
+> 🔄 **r4 amend:** any "future" bullet that proposes extending the cap-string grammar (instance suffix, workspace suffix, role/group syntax) is withdrawn — struct keeps make those extensions struct-field additions, not string-grammar parsing. The cryptographic-verification future moves to §0d.6.
+
 - **Cap provenance audit table** — if a future use case needs "who granted me cap X", a `cap_grants(grantee_uri, cap_string, granter_uri, granted_at)` table lands additively without changing the cap shape.
 - **Role bundles** — operator UX for granting "frontend-admin" as a named bundle of cap strings is a UI feature, not a structural change. The cap shape is unchanged; the bundle is just a server-side expansion at grant time.
 - **Cross-workspace cap delegation** — today only admin holds `"cross-workspace:*"`. A future SPEC may allow per-Behavior cross-workspace grants (e.g. "User-X may dispatch chat actions across workspaces"). Would land as a new cap-string syntax (`"session.chat@*"` perhaps); orthogonal to this SPEC.
@@ -1577,7 +1709,8 @@ Documented in `feedback_let_it_crash_no_workarounds` style: we choose explicit a
 
 - **r1 codex:** `needs-attention` — 4 HIGH + 1 MEDIUM. Closed in r2 per §0a.
 - **r2 codex:** `needs-attention` — 3 HIGH + 1 MEDIUM. Closed in r3 per §0b.
-- **r3 codex:** `needs-attention` — 2 HIGH + 1 MEDIUM. Closed in r3-FINAL per §0c: HIGH-1 + HIGH-2 ACCEPTED as documented v1 trust-model limits (§10.5); MED-1 dedupe key FIXED structurally (§6.1). No r4 round per Allen 2026-05-25 manual ruling.
+- **r3 codex:** `needs-attention` — 2 HIGH + 1 MEDIUM. Closed in r3-FINAL per §0c: HIGH-1 + HIGH-2 ACCEPTED as documented v1 trust-model limits (§10.5); MED-1 dedupe key FIXED structurally (§6.1). No r4 codex round per Allen 2026-05-25 manual ruling.
+- **r4 (post-revert, not codex-driven):** Allen 2026-05-25 13:18 ruling — revert the string-cap representation (PR-CC-2a #347 + PR-CC-2b #348) via PR #349 to keep struct-shape caps in anticipation of future cryptographic verification. SPEC body §5–§9 preserved as historical record; §0d documents the in-force struct-shape design. PR-CC-2-v2 will re-implement Issue 2's structural goals with struct callbacks per §0d.3.
 
 If r3 codex still HIGH/CRIT, focus review on:
 - **Target CAS atomicity** (§5.3 step 8.5, §9.6 invariant) — review whether `Ezagent.Identity.cas_update_caps/2` via `:ets.select_replace/2` is truly atomic under concurrent-grant load (or if it needs a serialized `GenServer.call` instead).
