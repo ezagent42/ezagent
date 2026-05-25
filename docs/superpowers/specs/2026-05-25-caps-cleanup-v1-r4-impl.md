@@ -91,6 +91,37 @@ declarative requirement, not an issued grant" convention.
 
 ---
 
+### 2b. `Behavior.workspace_scoped?/0` callback (workspace-iso enforcement at step 5.6)
+
+**Same file:** `apps/ezagent_core/lib/ezagent/behavior.ex` — sibling callback to `required_caps/0`.
+
+Per parent SPEC r4 §0d.3: "`Behavior.workspace_scoped?/0` callback: optional, default `true`. Step 5.6 gates cross-workspace dispatches via this."
+
+**Signature:**
+
+```elixir
+@doc """
+Does this Behavior's actions require the caller and target to be in the
+same workspace?
+
+Read by `Invocation.dispatch/1` step 5.6 (workspace iso enforcement).
+When `true` (the default), dispatch denies cross-workspace targets
+unless the caller holds a cross-workspace-explicit cap. When `false`,
+the workspace-iso check is skipped (e.g., for genuinely workspace-
+agnostic Behaviors like `Lifecycle` admin operations or read-only
+listing actions).
+
+Defaults to `true` so a Behavior author who forgets to declare gets
+the safer behavior.
+"""
+@callback workspace_scoped?() :: boolean()
+@optional_callbacks workspace_scoped?: 0
+```
+
+The PR-CC-2-v2 dispatch step 5.6 calls `behavior.workspace_scoped?()` (with `function_exported?` fallback to `true`). No invariant test is required for this callback since it's optional + safer-default; the behavior of `:false` callers is verified by their existing integration tests.
+
+---
+
 ## 3. `Kind.holds_cap?/2` callback (THE dispatch-step-5.5 chokepoint)
 
 **File to add the callback to:** `apps/ezagent_core/lib/ezagent/kind.ex`
@@ -289,7 +320,12 @@ end
 
 **Note on "mix-task" wildcard:** `system://mix-task` legitimately wants admin-level authority because operators driving mix tasks already have shell access (in-VM trust model §10.5). The invariant test exempts it AND bootstrap.
 
-**Refinement for table** (cited above): some entries use `Behavior` module names as the `behavior` axis where the original string had a wildcard segment. The exact mapping requires reading each Behavior's `actions/0` to know which action atoms are valid; the PR-CC-2-v2 dispatch should produce the conversion table by inspection AND record any deviations from the original string semantics in the PR body.
+**Refinement for table — action atoms are PROVISIONAL** (cited above): the action atoms (`:template_invoke`, `:publish`, etc.) in this table are the SPEC author's reading of what the original strings (`workspace.template.*`, `session.external_mirror.publish`, etc.) likely map to. The PR-CC-2-v2 dispatch subagent MUST verify each atom against the actual `Behavior.<Module>.actions/0` callback on main BEFORE writing the catalog entry. If `:template_invoke` is actually `:materialize` on `Behavior.Template`, etc., the subagent corrects the table and records the correction in the PR body. The SPEC provides INTENT (which Behavior is doing the work); the subagent provides PRECISION (which action atom name).
+
+**Hypothesis-level dependencies (PR-CC-2-v2 subagent verifies before implementing):**
+- `Identity.list_caps_for/1` return shape — assumed `{:ok, [%Capability{}]} | {:error, _} | :error` in §3 default impl. If actual shape differs, §3's default impl needs adjustment.
+- `Capability.matches?/2` wildcard semantics — assumed it handles `:any` on both sides + URI equality on instance/workspace_uri + ignores granted_by/granted_at. If actual implementation diverges, either fix matches?/2 OR adjust §3's default impl.
+- The 19 Behavior count in §8 — derived from PR-CC-2a (reverted) subagent's report. The PR-CC-2-v2 subagent should re-grep `apps/ -lr "@behaviour Ezagent.Behavior"` and report the actual count in the brainstorm Feishu.
 
 ---
 
@@ -363,6 +399,9 @@ end
 
 For every module implementing `@behaviour Ezagent.Behavior`:
 
+**Note on cap-exempt actions:** if a Behavior has actions that are intentionally NOT cap-gated (e.g., a read-only `:status` action that's pure data inspection), declare them via an optional `cap_exempt_actions/0` callback returning `[atom()]`. The check then asserts `MapSet.new(actions/0) -- cap_exempt_actions/0 == MapSet.new(required_caps_keys)`. Default impl of `cap_exempt_actions/0` returns `[]` (every action needs a cap).
+
+
 ```elixir
 defp check_required_caps_callback(behavior_module) do
   # (a) callback exported
@@ -401,7 +440,13 @@ defp check_required_caps_values_struct_strict(behavior_module) do
     end
 
     # (b) kind segment matches the Behavior's parent Kind's type_name/0
-    #     (or :any for cross-Kind Behaviors per Kind.behaviors/0 multi-registration)
+    #     (or :any for cross-Kind Behaviors per Kind.behaviors/0 multi-registration).
+    #     Example — Behavior.Routing is on Workspace+Session+System; its
+    #     required_caps/0 declares `kind: :any` per action because the
+    #     single declaration must match all three host Kinds. The dispatch
+    #     step 5.5 wildcard-substitution (parent SPEC §5.3 design) fills
+    #     in the actual target Kind's type_name/0 at runtime before
+    #     calling Kind.holds_cap?/2.
     expected_kinds = MapSet.new([kind_of_module])
     unless cap_value.kind in expected_kinds or cap_value.kind == :any do
       raise CompileError,
@@ -504,6 +549,13 @@ Codex round 1 via codex:codex-rescue with verbatim no-mix clause:
 If codex 529s, fall back to self-static-review (12 adversarial questions with file:line evidence).
 
 Admin-merge: gh pr merge <N> --admin --squash --delete-branch.
+
+Communication standards (per the prior PR-CC-1 / PR-CC-2a / PR-CC-2b dispatch patterns that worked):
+- Prefix every Feishu message with [N% — PR-CC-2-v2] per `feedback_progress_percentage_in_replies`.
+- End every Feishu message with explicit `继续` / `停` / `等你定` per `feedback_explicit_stop_signal_after_feishu`.
+- Send a 1-2 sentence heads-up Feishu BEFORE `git push` / `gh pr create` / `gh pr merge --admin` per `feedback_feishu_notify_before_remote_ops`.
+- No paternalistic "want to stop?" — Allen explicitly directed "make calls, don't bother me" per `feedback_no_paternalistic_stop_suggestions`.
+- Default to wake-but-don't-stop: notify decision points + proceed with recommendation per `feedback_wake_but_dont_stop`.
 ```
 
 ---
@@ -548,6 +600,7 @@ Tracked here so the SPEC scope is unambiguous; each is a future SPEC's job:
 - **`Cap.Parser` deletion.** The string parser still exists for legacy operator-CLI input paths (`mix ezagent.user.grant_cap --cap "session.chat.send"` etc.). Whether to delete it is a separate UX-level decision; the parser is not in the chokepoint path post-PR-CC-2-v2.
 - **`Identity.grant_cap/3` ergonomics.** Currently takes a `%Capability{}`; could grow keyword-arg variant for operator convenience. Future polish PR.
 - **Workspace-suffix grammar.** Parent r2's `;ws=<workspace_uri>` instance-suffix syntax for string caps is permanently withdrawn — struct's `workspace_uri` field handles this natively.
+- **`revoke_cap` CAS atomicity.** Parent SPEC r3 §5.3 step 8.5 introduced the cap-snapshot CAS contract (`Identity.cas_update_caps/2` via `:ets.select_replace/2`) to close TOCTOU between concurrent `grant_cap` and `revoke_cap` calls. r4 keeps that design intact (orthogonal to cap shape — the CAS protects revision atomicity, not field shape). PR-CC-2-v2 does NOT touch it; if a future stress test surfaces a race, the fix lands as a separate PR.
 
 ---
 

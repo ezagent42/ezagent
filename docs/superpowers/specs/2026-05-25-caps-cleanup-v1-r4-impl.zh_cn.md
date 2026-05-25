@@ -89,6 +89,34 @@ helper 的 `:plugin_declared` / `:compile_time` 哨兵值（`granted_by` /
 
 ---
 
+### 2b. `Behavior.workspace_scoped?/0` callback（step 5.6 workspace-iso 强制）
+
+**同一文件:** `apps/ezagent_core/lib/ezagent/behavior.ex` —— `required_caps/0` 的姊妹 callback。
+
+按父 SPEC r4 §0d.3："`Behavior.workspace_scoped?/0` callback：可选，default `true`。Step 5.6 通过此 gate 跨 workspace dispatch。"
+
+**签名:**
+
+```elixir
+@doc """
+本 Behavior 的 action 是否要求 caller 和 target 在同一 workspace？
+
+由 `Invocation.dispatch/1` step 5.6（workspace iso 强制）读取。
+当 `true`（默认）时，dispatch 拒绝跨 workspace target 除非 caller 持有
+跨 workspace-explicit cap。当 `false` 时，workspace-iso 检查跳过
+（例如真正 workspace-agnostic 的 Behavior 如 `Lifecycle` 管理操作或
+只读列表 action）。
+
+默认 `true` 这样 Behavior 作者忘记声明时获得更安全行为。
+"""
+@callback workspace_scoped?() :: boolean()
+@optional_callbacks workspace_scoped?: 0
+```
+
+PR-CC-2-v2 的 dispatch step 5.6 调 `behavior.workspace_scoped?()`（带 `function_exported?` fallback 到 `true`）。本 callback 无需 invariant test 因为它是可选的 + 更安全的默认；`:false` 调用者的行为由它们现有的集成测试验证。
+
+---
+
 ## 3. `Kind.holds_cap?/2` callback（dispatch-step-5.5 chokepoint）
 
 **新增 callback 的文件:** `apps/ezagent_core/lib/ezagent/kind.ex`
@@ -282,7 +310,12 @@ end
 
 **关于 "mix-task" 通配:** `system://mix-task` 合法想要 admin 级权限因为操作 mix task 的 operator 已经有 shell 权限（in-VM 信任模型 §10.5）。invariant test 豁免它和 bootstrap。
 
-**表格精炼**（上引）：某些条目用 `Behavior` 模块名作为 `behavior` 轴在原 string 有通配段的位置。精确映射需要读每个 Behavior 的 `actions/0` 知道哪些 action atom 合法；PR-CC-2-v2 dispatch 应通过检查产生转换表，并在 PR body 中记录跟原 string 语义的偏离。
+**表格精炼 —— action atom 为 PROVISIONAL**（上引）：表中的 action atom（`:template_invoke`、`:publish` 等）是 SPEC 作者对原 string（`workspace.template.*`、`session.external_mirror.publish` 等）映射的读法。PR-CC-2-v2 dispatch subagent 必须在写 catalog 条目之前对照 main 上实际 `Behavior.<Module>.actions/0` callback 验证每个 atom。如果 `:template_invoke` 在 `Behavior.Template` 上实际是 `:materialize` 等，subagent 纠正表并在 PR body 记录纠正。SPEC 提供意图（哪个 Behavior 在做工作）；subagent 提供精度（哪个 action atom 名）。
+
+**Hypothesis-level 依赖（PR-CC-2-v2 subagent 在实施前验证）:**
+- `Identity.list_caps_for/1` 返回形态 —— §3 default 实现假设 `{:ok, [%Capability{}]} | {:error, _} | :error`。如果实际形态不同，§3 default 实现需要调整。
+- `Capability.matches?/2` 通配语义 —— 假设它处理两侧 `:any` + instance/workspace_uri 上的 URI 相等 + 忽略 granted_by/granted_at。如果实际实现偏离，要么修 matches?/2 要么调整 §3 default 实现。
+- §8 中的 19 个 Behavior 计数 —— 来自 PR-CC-2a（已 revert）subagent 报告。PR-CC-2-v2 subagent 应该重新 grep `apps/ -lr "@behaviour Ezagent.Behavior"` 并在 brainstorm Feishu 报告实际计数。
 
 ---
 
@@ -355,6 +388,9 @@ end
 ### Check 10 — `required_caps/0` callback 存在 + key 等价
 
 对每个实现 `@behaviour Ezagent.Behavior` 的模块：
+
+**关于 cap-exempt action 的说明:** 如果 Behavior 有故意不 cap-gate 的 action（例如纯数据检视的只读 `:status` action），通过可选 `cap_exempt_actions/0` callback 返 `[atom()]` 声明。check 然后 assert `MapSet.new(actions/0) -- cap_exempt_actions/0 == MapSet.new(required_caps_keys)`。`cap_exempt_actions/0` default 实现返 `[]`（每个 action 都需要 cap）。
+
 
 ```elixir
 defp check_required_caps_callback(behavior_module) do
@@ -497,6 +533,13 @@ Codex round 1 经 codex:codex-rescue 用逐字 no-mix 子句:
 如 codex 529，回退到 self-static-review（12 个 adversarial 问题带 file:line 证据）。
 
 Admin-merge: gh pr merge <N> --admin --squash --delete-branch。
+
+通信标准（按前面有效的 PR-CC-1 / PR-CC-2a / PR-CC-2b dispatch 模式）：
+- 按 `feedback_progress_percentage_in_replies` 每个 Feishu 消息前缀 [N% — PR-CC-2-v2]。
+- 按 `feedback_explicit_stop_signal_after_feishu` 每个 Feishu 消息以显式 `继续` / `停` / `等你定` 结尾。
+- 按 `feedback_feishu_notify_before_remote_ops` 在 `git push` / `gh pr create` / `gh pr merge --admin` 之前发 1-2 句 Feishu 头通知。
+- 按 `feedback_no_paternalistic_stop_suggestions` 无家长式 "要停吗？" —— Allen 明确指示 "做决定，别烦我"。
+- 按 `feedback_wake_but_dont_stop` 默认 wake-but-don't-stop：通知决策点 + 用推荐方案推进。
 ```
 
 ---
@@ -541,6 +584,7 @@ PR-CC-2-v2 仅当以下全部成立时合并：
 - **`Cap.Parser` 删除。** 字符串 parser 仍存在用于 legacy operator-CLI 输入路径（`mix ezagent.user.grant_cap --cap "session.chat.send"` 等）。是否删它是单独的 UX-level 决定；parser 在 PR-CC-2-v2 后不在 chokepoint 路径中。
 - **`Identity.grant_cap/3` 人体工程。** 当前接 `%Capability{}`；可能加 keyword-arg 变体用于操作员便利。未来打磨 PR。
 - **Workspace-suffix 文法。** 父 r2 的 `;ws=<workspace_uri>` instance-suffix 字符串 cap 语法永久撤销 —— struct 的 `workspace_uri` 字段原生处理。
+- **`revoke_cap` CAS 原子性。** 父 SPEC r3 §5.3 step 8.5 引入 cap-snapshot CAS 契约（`Identity.cas_update_caps/2` 经 `:ets.select_replace/2`）以关闭并发 `grant_cap` 和 `revoke_cap` 调用间的 TOCTOU。r4 保持那个设计不变（跟 cap shape 正交 —— CAS 保护 revision 原子性，不是字段形态）。PR-CC-2-v2 不动它；如果未来压力测试浮现 race，修复作单独 PR。
 
 ---
 
