@@ -81,19 +81,22 @@ defmodule EzagentPluginLiveview.AgentExtensionsLive do
     end
   end
 
-  # Mirror of admin_live.ex:107-112 — admin entity gets admin_caps,
-  # everyone else gets their actual identity caps. Falls back to
-  # admin_uri when current_entity_uri is missing (only happens during
-  # unauthenticated probes — the LV won't render anyway since the
-  # outer pipeline rejects).
-  defp resolve_caller_caps(nil), do: Ezagent.Entity.User.admin_caps()
+  # SPEC caps-cleanup-v1 §4.4 — anonymous LV mount path runs under
+  # `system://lv-anon-mount` (closed Catalog) with EMPTY caps. This
+  # surfaces auth bugs that the previous admin-caps fallback
+  # was hiding: anonymous mounts SHOULD have been denied. The outer
+  # session pipeline still rejects unauthenticated probes; this guard
+  # is defense in depth.
+  #
+  # For authenticated callers, `Ezagent.Identity.list_caps_for/1`
+  # reads from the User Kind's slice — admin's slice already carries
+  # the bootstrap wildcard cap (seeded via `SystemPrincipal` at
+  # identity-domain boot), so no admin special-case is needed.
+  defp resolve_caller_caps(nil),
+    do: Ezagent.SystemPrincipal.caps("system://lv-anon-mount")
 
   defp resolve_caller_caps(caller_uri) do
-    if URI.to_string(caller_uri) == URI.to_string(Ezagent.Entity.User.admin_uri()) do
-      Ezagent.Entity.User.admin_caps()
-    else
-      Ezagent.Identity.list_caps_for(caller_uri)
-    end
+    Ezagent.Identity.list_caps_for(caller_uri)
   end
 
   # Mirror `AgentDetailLive.parse_agent_uri/1` — entity://agent/<ws>/<flavor>_<name>.
@@ -183,8 +186,11 @@ defmodule EzagentPluginLiveview.AgentExtensionsLive do
            target: target,
            mode: :call,
            args: %{},
+           # SPEC caps-cleanup-v1 §4.4 — missing caller falls back to
+           # the `system://lv-anon-mount` principal (closed Catalog),
+           # not the deleted ambient admin_uri.
            ctx: %{
-             caller: caller_uri || Ezagent.Entity.User.admin_uri(),
+             caller: caller_uri || Ezagent.SystemPrincipal.uri("lv-anon-mount"),
              caps: caller_caps,
              reply: {:caller_inbox, self()}
            }

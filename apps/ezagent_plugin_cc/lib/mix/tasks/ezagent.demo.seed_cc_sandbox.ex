@@ -246,9 +246,11 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcSandbox do
       target: target,
       mode: :call,
       args: %{content: content},
+      # SPEC caps-cleanup-v1 §4.4 — operator demo mix task runs under
+      # `system://mix-task` (closed Catalog).
       ctx: %{
-        caller: Ezagent.Entity.User.admin_uri(),
-        caps: Ezagent.Entity.User.admin_caps(),
+        caller: Ezagent.SystemPrincipal.uri("mix-task"),
+        caps: Ezagent.SystemPrincipal.caps("system://mix-task"),
         reply: {:caller_inbox, self()}
       }
     })

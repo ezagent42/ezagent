@@ -687,9 +687,12 @@ defmodule Ezagent.Behavior.Chat do
            target: target,
            mode: :call,
            args: %{template_working_copy: working_copy},
+           # SPEC caps-cleanup-v1 §4.4 — Session slice-internal write
+           # of the durable template working_copy runs under
+           # `system://session-internal` (closed Catalog).
            ctx: %{
-             caller: Ezagent.Entity.User.admin_uri(),
-             caps: Ezagent.Entity.User.admin_caps(),
+             caller: Ezagent.SystemPrincipal.uri("session-internal"),
+             caps: Ezagent.SystemPrincipal.caps("system://session-internal"),
              system_internal: true,
              reply: {:caller_inbox, self()}
            }
@@ -809,7 +812,9 @@ defmodule Ezagent.Behavior.Chat do
       args: %{message: msg},
       ctx: %{
         caller: msg.sender,
-        caps: Ezagent.Entity.User.admin_caps(),
+        # SPEC caps-cleanup-v1 §4.4 — cross-session forwarding is
+        # system-routed; `system://chat-router` per Catalog.
+        caps: Ezagent.SystemPrincipal.caps("system://chat-router"),
         reply: :ignore
       }
     })
@@ -818,10 +823,9 @@ defmodule Ezagent.Behavior.Chat do
   defp dispatch_receive(recipient_uri, %Message{} = msg, session_uri) do
     target = URI.new!("#{URI.to_string(recipient_uri)}?action=chat.receive")
 
-    # Phase 3d: Session's fan-out to recipients runs under admin caps —
-    # the Session is acting on behalf of the system-routed message.
-    # Phase 4+ will refine to a dedicated "system-internal" cap when
-    # multi-user authorization arrives.
+    # SPEC caps-cleanup-v1 §4.4 — Session fan-out is system-routed
+    # message delivery; runs under `system://chat-router` (closed
+    # Catalog). The session URI stays as caller for provenance.
     result =
       Invocation.dispatch(%Invocation{
         target: target,
@@ -829,7 +833,7 @@ defmodule Ezagent.Behavior.Chat do
         args: %{message: msg},
         ctx: %{
           caller: session_uri,
-          caps: Ezagent.Entity.User.admin_caps(),
+          caps: Ezagent.SystemPrincipal.caps("system://chat-router"),
           reply: :ignore
         }
       })

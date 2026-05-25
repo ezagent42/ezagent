@@ -155,9 +155,12 @@ defmodule EzagentDomainChat do
         target: target,
         mode: :cast,
         args: %{member: creator_uri},
+        # SPEC caps-cleanup-v1 §4.4 — Session creator-join is
+        # Session slice-internal (member sync); runs under
+        # `system://session-internal` (closed Catalog).
         ctx: %{
           caller: creator_uri,
-          caps: User.admin_caps(),
+          caps: Ezagent.SystemPrincipal.caps("system://session-internal"),
           reply: :ignore
         }
       })

@@ -182,15 +182,16 @@ defmodule Ezagent.Orchestrator.McpServer do
   end
 
   # Read the orchestrator agent's `:identity` slice caps via the
-  # `identity.list_caps` dispatch. The `ctx` uses `admin_caps()` —
-  # this is TRUSTED INFRASTRUCTURE reading the orchestrator's OWN
-  # delegated caps to bind its MCP server, the same privileged-read
-  # pattern the Generator's `read_template_content/2` uses. It does
-  # NOT grant the orchestrator anything: the loaded caps are exactly
-  # what the Generator delegated (§1.4) — the four scope-bounded caps,
-  # or fewer if a preflight dropped one. An orchestrator with no
-  # delegated caps yields an empty set, and every tool then DENIES
-  # (no `admin_caps` fallback — SPEC §2 PR-5 HIGH-1).
+  # `identity.list_caps` dispatch. The `ctx` runs under
+  # `system://orchestrator-tools` (SPEC caps-cleanup-v1 §4.4) — this
+  # is TRUSTED INFRASTRUCTURE reading the orchestrator's OWN delegated
+  # caps to bind its MCP server, the same privileged-read pattern the
+  # Generator's `read_template_content/2` uses. It does NOT grant the
+  # orchestrator anything: the loaded caps are exactly what the
+  # Generator delegated (§1.4) — the four scope-bounded caps, or fewer
+  # if a preflight dropped one. An orchestrator with no delegated caps
+  # yields an empty set, and every tool then DENIES (no `admin_caps`
+  # fallback — SPEC §2 PR-5 HIGH-1).
   defp load_orchestrator_caps(%URI{} = orchestrator_uri) do
     target = URI.parse("#{URI.to_string(orchestrator_uri)}?action=identity.list_caps")
 
@@ -199,8 +200,8 @@ defmodule Ezagent.Orchestrator.McpServer do
            mode: :call,
            args: %{},
            ctx: %{
-             caller: Ezagent.Entity.User.admin_uri(),
-             caps: Ezagent.Entity.User.admin_caps(),
+             caller: Ezagent.SystemPrincipal.uri("orchestrator-tools"),
+             caps: Ezagent.SystemPrincipal.caps("system://orchestrator-tools"),
              reply: {:caller_inbox, self()}
            }
          }) do

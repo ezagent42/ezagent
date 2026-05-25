@@ -139,16 +139,18 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcAgent do
   end
 
   defp join_agent_to_session(%URI{} = agent_uri, %URI{} = session_uri) do
-    admin_uri = Ezagent.Entity.User.admin_uri()
     target = URI.new!("#{URI.to_string(session_uri)}?action=chat.join")
 
+    # SPEC caps-cleanup-v1 §4.4 — operator demo mix task runs under
+    # `system://mix-task` (closed Catalog; operator already has shell
+    # access, principal exists for audit traceability).
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
       target: target,
       mode: :cast,
       args: %{member: agent_uri},
       ctx: %{
-        caller: admin_uri,
-        caps: Ezagent.Entity.User.admin_caps(),
+        caller: Ezagent.SystemPrincipal.uri("mix-task"),
+        caps: Ezagent.SystemPrincipal.caps("system://mix-task"),
         reply: :ignore
       }
     })

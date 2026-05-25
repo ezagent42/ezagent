@@ -343,9 +343,14 @@ defmodule Ezagent.Entity.SessionTemplate do
   defp normalize_caps_set(_), do: MapSet.new()
 
   defp system_ctx do
+    # SPEC caps-cleanup-v1 §4.4 — SessionTemplate system context for
+    # opts-less calls runs under `system://template-materialize`
+    # (closed Catalog). Caller paths supplying their own ctx
+    # (`persist_version/3` with caller_opts) preserve operator
+    # provenance per HIGH-9.
     %{
-      caller: Ezagent.Entity.User.admin_uri(),
-      caps: Ezagent.Entity.User.admin_caps(),
+      caller: Ezagent.SystemPrincipal.uri("template-materialize"),
+      caps: Ezagent.SystemPrincipal.caps("system://template-materialize"),
       reply: {:caller_inbox, self()}
     }
   end
@@ -608,9 +613,13 @@ defmodule Ezagent.Entity.SessionTemplate do
              target: target,
              mode: :call,
              args: %{cap: cap},
+             # SPEC caps-cleanup-v1 §4.4 — granting owner the
+             # `:within_workspace` SessionTemplate cap is template
+             # materialization side-effect; runs under
+             # `system://template-materialize` (closed Catalog).
              ctx: %{
-               caller: Ezagent.Entity.User.admin_uri(),
-               caps: Ezagent.Entity.User.admin_caps(),
+               caller: Ezagent.SystemPrincipal.uri("template-materialize"),
+               caps: Ezagent.SystemPrincipal.caps("system://template-materialize"),
                reply: {:caller_inbox, self()}
              }
            }) do

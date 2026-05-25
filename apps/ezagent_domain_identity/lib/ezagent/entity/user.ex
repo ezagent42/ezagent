@@ -38,31 +38,23 @@ defmodule Ezagent.Entity.User do
   @spec admin_uri() :: URI.t()
   def admin_uri, do: @admin_uri
 
-  @doc """
-  Admin's structural all-caps capability set.
-
-  One capability with triple-`:any` granted by `system://bootstrap` —
-  this is the invariant `Ezagent.Capability.revoke/2` refuses to remove.
-  Returned as a `MapSet` so `Ezagent.Capability.matches?/2` lookups via
-  `Enum.any?(caps, ...)` are O(n) of constant n=1 in Phase 1.
-  """
-  @spec admin_caps() :: MapSet.t(Ezagent.Capability.t())
-  def admin_caps do
-    MapSet.new([
-      %Ezagent.Capability{
-        kind: :any,
-        behavior: :any,
-        instance: :any,
-        # Phase 9 PR-3 (SPEC v3 §4.4): admin's structural cap is
-        # cross-workspace by design — the only cap with
-        # `workspace_uri: :any` outside of explicit
-        # `cross-workspace:dispatch` grants.
-        workspace_uri: :any,
-        granted_by: @system_bootstrap_uri,
-        granted_at: @admin_granted_at
-      }
-    ])
-  end
+  # SPEC caps-cleanup-v1 §4 / §4.6 (PR-CC-1): `admin_caps/0` DELETED.
+  # The ambient all-caps escape hatch is replaced by the closed
+  # `Ezagent.SystemPrincipal.Catalog` allowlist of 14 system
+  # principals + their permitted caps. Admin's bootstrap caps now
+  # come from `Ezagent.SystemPrincipal.caps("system://bootstrap")`,
+  # which mints the same structural wildcard cap (granted by
+  # `system://bootstrap/default`) so the `Capability.revoke/2`
+  # admin-invariant + admin-bootstrap behavior are preserved.
+  #
+  # Per `feedback_let_it_crash_no_workarounds`: there is no shim
+  # here — any remaining caller fails at compile time, and the
+  # invariant test `no_admin_caps_fallback_test.exs` is the gate
+  # against re-introduction.
+  #
+  # `@system_bootstrap_uri` + `@admin_granted_at` constants kept
+  # because `default_caps/1` (below) still uses them as the cap's
+  # `granted_by` / `granted_at` attribution.
 
   @doc """
   Default caps every non-admin User starts life with.

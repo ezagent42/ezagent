@@ -764,9 +764,13 @@ defmodule Ezagent.Entity.Session do
                workspace_uri: workspace_uri,
                spawned_by: orchestrator_uri
              },
+             # SPEC caps-cleanup-v1 §4.4 — Session asking template
+             # to instantiate workers; runs under
+             # `system://template-materialize` (closed Catalog).
+             # Orchestrator URI stays as caller for provenance.
              ctx: %{
                caller: orchestrator_uri,
-               caps: Ezagent.Entity.User.admin_caps(),
+               caps: Ezagent.SystemPrincipal.caps("system://template-materialize"),
                reply: {:caller_inbox, self()}
              }
            }),
@@ -1174,9 +1178,13 @@ defmodule Ezagent.Entity.Session do
 
     target = URI.new!("#{URI.to_string(orchestrator_uri)}?action=identity.grant_cap")
 
+    # SPEC caps-cleanup-v1 §4.4 — granting scoped caps to the
+    # orchestrator at session creation is template materialization;
+    # runs under `system://template-materialize` (closed Catalog).
+    # `owner_uri` stays as caller for provenance.
     ctx = %{
       caller: owner_uri,
-      caps: Ezagent.Entity.User.admin_caps(),
+      caps: Ezagent.SystemPrincipal.caps("system://template-materialize"),
       reply: :ignore
     }
 
@@ -1463,9 +1471,12 @@ defmodule Ezagent.Entity.Session do
            target: target,
            mode: :call,
            args: %{},
+           # SPEC caps-cleanup-v1 §4.4 — reading template content
+           # during materialization; runs under
+           # `system://template-materialize` (closed Catalog).
            ctx: %{
-             caller: Ezagent.Entity.User.admin_uri(),
-             caps: Ezagent.Entity.User.admin_caps(),
+             caller: Ezagent.SystemPrincipal.uri("template-materialize"),
+             caps: Ezagent.SystemPrincipal.caps("system://template-materialize"),
              reply: {:caller_inbox, self()}
            }
          }) do
@@ -1549,9 +1560,12 @@ defmodule Ezagent.Entity.Session do
            target: target,
            mode: :call,
            args: %{},
+           # SPEC caps-cleanup-v1 §4.4 — reading agent template flavor
+           # during materialization; runs under
+           # `system://template-materialize` (closed Catalog).
            ctx: %{
-             caller: Ezagent.Entity.User.admin_uri(),
-             caps: Ezagent.Entity.User.admin_caps(),
+             caller: Ezagent.SystemPrincipal.uri("template-materialize"),
+             caps: Ezagent.SystemPrincipal.caps("system://template-materialize"),
              reply: {:caller_inbox, self()}
            }
          }) do

@@ -261,9 +261,11 @@ defmodule Ezagent.Workspace do
            target: target,
            mode: :cast,
            args: args,
+           # SPEC caps-cleanup-v1 §4.4 — Workspace mutation runs under
+           # `system://workspace-loader` (closed Catalog).
            ctx: %{
-             caller: Ezagent.Entity.User.admin_uri(),
-             caps: Ezagent.Entity.User.admin_caps(),
+             caller: Ezagent.SystemPrincipal.uri("workspace-loader"),
+             caps: Ezagent.SystemPrincipal.caps("system://workspace-loader"),
              reply: :ignore
            }
          }) do

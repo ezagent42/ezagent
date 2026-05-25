@@ -1431,9 +1431,12 @@ defmodule Ezagent.Orchestrator.Tools do
            target: target,
            mode: :call,
            args: %{cap: cap},
+           # SPEC caps-cleanup-v1 §4.4 — granting the owner the
+           # newly-created template's cap is a template materialization
+           # side-effect; runs under `system://template-materialize`.
            ctx: %{
-             caller: Ezagent.Entity.User.admin_uri(),
-             caps: Ezagent.Entity.User.admin_caps(),
+             caller: Ezagent.SystemPrincipal.uri("template-materialize"),
+             caps: Ezagent.SystemPrincipal.caps("system://template-materialize"),
              reply: :ignore
            }
          }) do

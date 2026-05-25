@@ -125,9 +125,12 @@ defmodule Ezagent.Template.GenericSession do
               target: target,
               mode: :cast,
               args: %{member: member_uri},
+              # SPEC caps-cleanup-v1 §4.4 — GenericSession member
+              # join is part of template instantiation; runs under
+              # `system://template-materialize` (closed Catalog).
               ctx: %{
-                caller: Ezagent.Entity.User.admin_uri(),
-                caps: Ezagent.Entity.User.admin_caps(),
+                caller: Ezagent.SystemPrincipal.uri("template-materialize"),
+                caps: Ezagent.SystemPrincipal.caps("system://template-materialize"),
                 reply: :ignore
               }
             })

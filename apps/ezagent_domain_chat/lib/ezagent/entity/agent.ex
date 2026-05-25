@@ -607,9 +607,12 @@ defmodule Ezagent.Entity.Agent do
                config_dir_path: config_dir,
                template_class: template_class
              },
+             # SPEC caps-cleanup-v1 §4.4 — Agent sandbox-state record
+             # is an agent-internal action; runs under
+             # `system://agent-internal` (closed Catalog).
              ctx: %{
-               caller: Ezagent.Entity.User.admin_uri(),
-               caps: Ezagent.Entity.User.admin_caps(),
+               caller: Ezagent.SystemPrincipal.uri("agent-internal"),
+               caps: Ezagent.SystemPrincipal.caps("system://agent-internal"),
                reply: {:caller_inbox, self()}
              }
            }) do

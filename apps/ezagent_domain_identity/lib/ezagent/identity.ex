@@ -153,7 +153,7 @@ defmodule Ezagent.Identity do
 
     # PR-OWN-2 (caps-data-ownership SPEC #306 §5.2 + r4 fix): pass
     # the granter's REAL caps into dispatch ctx, not a hardcoded
-    # `User.admin_caps()`. Round-1 SPEC's §5.2 wildcard pre-check
+    # admin-caps shape. Round-1 SPEC's §5.2 wildcard pre-check
     # was moot because every call presented as admin regardless of
     # granter's actual caps. Now `Behavior.Identity.invoke(:grant_cap,
     # ...)` (and the dispatch CapBAC) sees the granter's true cap set.

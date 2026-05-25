@@ -40,7 +40,7 @@ defmodule EzagentDomainChat.Application do
 
   ## Why use Ezagent.Entity.User from ezagent_core (not move it here)
 
-  `admin_uri/0` + `admin_caps/0` are widely referenced (snapshot tests,
+  `admin_uri/0` is widely referenced (snapshot tests,
   invocation tests, LV admin page, plugin Echo integration tests).
   Keeping User in ezagent_core means readers don't depend on this plugin.
 
@@ -347,16 +347,19 @@ defmodule EzagentDomainChat.Application do
       Ezagent.SpawnRegistry.register("entity", fn uri ->
         case uri.host do
           "user" ->
-            # PR-M (2026-05-20): special-case admin URI to seed
-            # `initial_caps: User.admin_caps()`. Non-admin users have
-            # caps_json hydrated via the login path's
+            # PR-M (2026-05-20): special-case admin URI to seed the
+            # bootstrap caps. SPEC caps-cleanup-v1 §4.4 (PR-CC-1):
+            # admin's caps are conceptually granted by
+            # `system://bootstrap` — `SystemPrincipal.caps/1` mints the
+            # equivalent MapSet from the closed Catalog. Non-admin
+            # users have caps_json hydrated via the login path's
             # `Ezagent.Entity.ensure_spawned/1` (see ezagent/entity.ex);
             # admin has no login path (password is nil until operator
             # sets it), so demand-spawn from a `chat.join` dispatch
             # (caller=admin) needs the bootstrap caps inline.
             initial_caps =
               if uri == User.admin_uri() do
-                User.admin_caps()
+                Ezagent.SystemPrincipal.caps("system://bootstrap")
               else
                 MapSet.new()
               end

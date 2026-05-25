@@ -78,7 +78,10 @@ defmodule Mix.Tasks.Ezagent.Stress do
   defp user_mod, do: @user_mod
   defp echo_mod, do: @echo_mod
   defp admin_uri, do: apply(@user_mod, :admin_uri, [])
-  defp admin_caps, do: apply(@user_mod, :admin_caps, [])
+  # SPEC caps-cleanup-v1 §4.4 — operator stress task runs under
+  # `system://mix-task` (closed Catalog). The local `admin_caps/0`
+  # helper now returns the SystemPrincipal bridge MapSet.
+  defp admin_caps, do: Ezagent.SystemPrincipal.caps("system://mix-task")
   defp user_default_caps(ws_uri), do: apply(@user_mod, :default_caps, [ws_uri])
 
   @switches [

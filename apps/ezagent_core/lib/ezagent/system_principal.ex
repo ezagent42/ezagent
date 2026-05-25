@@ -28,7 +28,7 @@ defmodule Ezagent.SystemPrincipal do
   SPEC §4.4 row 1 ("`caps:` field removed") is PR-CC-2b's deliverable
   — it requires the new dispatch path (`required_caps/0` callback +
   `holds_cap?/2` + cap-snapshot contract) which doesn't exist yet.
-  Until then, callers that previously passed `caps: User.admin_caps()`
+  Until then, callers that previously passed `caps: <admin caps>`
   must continue to pass SOMETHING for the existing
   `Ezagent.Capability.matches?/2` check in `Kind.Runtime` step 5.5.
   `SystemPrincipal.caps/1` is that SOMETHING — it returns an

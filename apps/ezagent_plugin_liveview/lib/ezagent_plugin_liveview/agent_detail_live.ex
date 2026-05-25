@@ -206,34 +206,31 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
   # pushEvent doesn't generate `[unhandled]` warnings.
   def handle_event("pty_resize", _params, socket), do: {:noreply, socket}
 
+  # SPEC caps-cleanup-v1 §4.4 — admin caps now live in the User
+  # Kind's slice (seeded by SystemPrincipal at boot); no special
+  # admin branch needed. Anonymous mount falls back to
+  # `system://lv-anon-mount` (empty caps).
   defp pty_ctx(socket) do
-    caller = socket.assigns[:current_entity_uri] || Ezagent.Entity.User.admin_uri()
-
-    caps =
-      if URI.to_string(caller) == URI.to_string(Ezagent.Entity.User.admin_uri()) do
-        Ezagent.Entity.User.admin_caps()
-      else
-        Ezagent.Identity.list_caps_for(caller)
-      end
-
+    {caller, caps} = resolve_caller(socket)
     %{caller: caller, caps: caps, reply: :ignore}
   end
 
-  # Builds the dispatch ctx for `:lifecycle.terminate`. Caps lookup is
-  # identical to `pty_ctx/1` — the helper exists separately so future
-  # lifecycle actions (e.g. start, suspend) can override `reply` mode
-  # without affecting the PTY input path.
+  # Builds the dispatch ctx for `:lifecycle.terminate`. Same caller
+  # resolution as `pty_ctx/1`; reply mode differs.
   defp lifecycle_ctx(socket) do
-    caller = socket.assigns[:current_entity_uri] || Ezagent.Entity.User.admin_uri()
-
-    caps =
-      if URI.to_string(caller) == URI.to_string(Ezagent.Entity.User.admin_uri()) do
-        Ezagent.Entity.User.admin_caps()
-      else
-        Ezagent.Identity.list_caps_for(caller)
-      end
-
+    {caller, caps} = resolve_caller(socket)
     %{caller: caller, caps: caps, reply: :sync}
+  end
+
+  defp resolve_caller(socket) do
+    case socket.assigns[:current_entity_uri] do
+      nil ->
+        {Ezagent.SystemPrincipal.uri("lv-anon-mount"),
+         Ezagent.SystemPrincipal.caps("system://lv-anon-mount")}
+
+      caller ->
+        {caller, Ezagent.Identity.list_caps_for(caller)}
+    end
   end
 
   # Preserve flavor in the optimistic post-restart status so the LV doesn't

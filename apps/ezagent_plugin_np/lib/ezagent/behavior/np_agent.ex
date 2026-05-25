@@ -38,9 +38,9 @@ defmodule Ezagent.Behavior.NpAgent do
 
   ## Cap reuse
 
-  Reply dispatch runs under `Ezagent.Entity.User.admin_caps/0` — same
-  v1 trust model as curl_agent / echo. Granular per-agent caps are a
-  Phase 9 concern.
+  Reply dispatch runs under `Ezagent.SystemPrincipal` (`system://chat-reply`)
+  per SPEC caps-cleanup-v1 §4.4 — same v1 trust model as curl_agent / echo.
+  Granular per-agent caps are a Phase 9 concern (PR-CC-2 sub-PRs).
   """
 
   @behaviour Ezagent.Behavior
@@ -250,7 +250,9 @@ defmodule Ezagent.Behavior.NpAgent do
           args: %{message: msg},
           ctx: %{
             caller: agent_uri,
-            caps: Ezagent.Entity.User.admin_caps(),
+            # SPEC caps-cleanup-v1 §4.4 — agent reply runs under
+            # `system://chat-reply` (closed Catalog).
+            caps: Ezagent.SystemPrincipal.caps("system://chat-reply"),
             reply: :ignore
           }
         })

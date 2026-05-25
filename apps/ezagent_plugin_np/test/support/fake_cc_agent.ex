@@ -126,9 +126,11 @@ defmodule Ezagent.PluginNp.Test.FakeCcAgent do
       target: target,
       mode: :cast,
       args: %{message: msg},
+      # SPEC caps-cleanup-v1 §4.4 — test stub mirroring the real CC
+      # agent reply path (`system://chat-reply`).
       ctx: %{
         caller: agent_uri,
-        caps: Ezagent.Entity.User.admin_caps(),
+        caps: Ezagent.SystemPrincipal.caps("system://chat-reply"),
         reply: :ignore
       }
     })
