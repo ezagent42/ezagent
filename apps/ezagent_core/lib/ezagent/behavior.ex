@@ -289,6 +289,77 @@ defmodule Ezagent.Behavior do
               {:ok, new_slice :: slice()} | :ignore
 
   @doc """
+  Map from action atom to the required capability for that action.
+
+  Read by `Ezagent.Kind.Runtime.handle_dispatch/4` step 5.5 (the dispatch
+  authz chokepoint, post-PR-CC-2-v2). Every action returned by `actions/0`
+  MUST have an entry here unless the action is listed in
+  `cap_exempt_actions/0` (see below).
+
+  Compile-time / runtime invariant: the keys of `required_caps/0` ∪
+  `cap_exempt_actions/0` MUST equal `actions/0` exactly. Enforced by
+  `:ezagent_plugin_check` check 10 (for plugin Behaviors) +
+  `Ezagent.Invariants.BehaviorRequiredCapsParityTest` (for core/domain).
+
+  ## Plugin-author UX
+
+  The recommended construction site uses the `Ezagent.Capability.cap/3`
+  helper (a regular function, NOT a macro):
+
+      @impl true
+      def required_caps do
+        %{
+          send:    Ezagent.Capability.cap(:chat, __MODULE__, :send),
+          receive: Ezagent.Capability.cap(:chat, __MODULE__, :receive),
+          join:    Ezagent.Capability.cap(:chat, __MODULE__, :join)
+        }
+      end
+
+  Direct struct construction is also valid (more verbose; useful when
+  declaring a workspace- or instance-bounded cap inline).
+
+  SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
+  """
+  @callback required_caps() :: %{required(action :: atom()) => Ezagent.Capability.t()}
+
+  @doc """
+  Optional: actions that intentionally are NOT cap-gated.
+
+  Default: `[]` (every action requires a cap declaration). Used for
+  read-only / pure-inspection actions where a cap check is gratuitous
+  (e.g. a future `:status` probe). The presence of this callback
+  weakens `:ezagent_plugin_check` check 10's keys-equal-actions
+  assertion: `keys(required_caps) ∪ cap_exempt_actions == actions`.
+
+  Optional callback — `function_exported?/3` probed at call time;
+  defaults to `[]` when not exported.
+
+  SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §7
+  (LOW-1 check-10 escape hatch).
+  """
+  @callback cap_exempt_actions() :: [atom()]
+
+  @doc """
+  Does this Behavior's actions require the caller and target to be in
+  the same workspace?
+
+  Read by `Ezagent.Kind.Runtime.handle_dispatch/4` step 5.6 (workspace
+  isolation enforcement). Defaults to `true` — when not exported, the
+  Behavior is assumed to need workspace isolation (the safer default
+  per memory `feedback_let_it_crash_no_workarounds`).
+
+  Return `false` for genuinely workspace-agnostic Behaviors — typically
+  `Lifecycle` (admin termination), pure data-inspection callbacks, or
+  system-scope Behaviors whose targets are `:any`-workspace by URI
+  shape.
+
+  Optional callback — `function_exported?/3` probed at call time.
+
+  SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2b.
+  """
+  @callback workspace_scoped?() :: boolean()
+
+  @doc """
   Optional terminate hook invoked by `Ezagent.Kind.Server.terminate/2`
   on graceful Kind shutdown (NOT on a brutal crash — the Kind.Server
   itself must reach its OTP terminate callback for this to fire,
@@ -324,6 +395,34 @@ defmodule Ezagent.Behavior do
     data_owner: 1,
     post_init: 2,
     handle_continue: 3,
-    terminate: 3
+    terminate: 3,
+    cap_exempt_actions: 0,
+    workspace_scoped?: 0
   ]
+
+  @doc """
+  Read `cap_exempt_actions/0` from `behavior_module`, defaulting to `[]`
+  when the optional callback is not exported.
+  """
+  @spec cap_exempt_actions_of(module()) :: [atom()]
+  def cap_exempt_actions_of(behavior_module) when is_atom(behavior_module) do
+    if function_exported?(behavior_module, :cap_exempt_actions, 0) do
+      behavior_module.cap_exempt_actions()
+    else
+      []
+    end
+  end
+
+  @doc """
+  Read `workspace_scoped?/0` from `behavior_module`, defaulting to `true`
+  when the optional callback is not exported (per SPEC §2b — safer default).
+  """
+  @spec workspace_scoped?(module()) :: boolean()
+  def workspace_scoped?(behavior_module) when is_atom(behavior_module) do
+    if function_exported?(behavior_module, :workspace_scoped?, 0) do
+      behavior_module.workspace_scoped?()
+    else
+      true
+    end
+  end
 end

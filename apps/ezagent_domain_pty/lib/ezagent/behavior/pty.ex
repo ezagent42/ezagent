@@ -51,6 +51,15 @@ defmodule Ezagent.Behavior.Pty do
   @impl Ezagent.Behavior
   def actions, do: [:write]
 
+  # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
+  # Pty is registered on the Agent Kind — kind axis is `:agent`.
+  @impl Ezagent.Behavior
+  def required_caps do
+    %{
+      write: Ezagent.Capability.cap(:agent, __MODULE__, :write)
+    }
+  end
+
   @impl Ezagent.Behavior
   def cap_subjects do
     [

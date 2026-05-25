@@ -101,6 +101,18 @@ defmodule Ezagent.Behavior.ExternalMirror do
   @impl Ezagent.Behavior
   def actions, do: [:bind, :unbind, :list_bindings]
 
+  # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
+  # ExternalMirror is registered on Session Kind only — kind axis is
+  # `:session`.
+  @impl Ezagent.Behavior
+  def required_caps do
+    %{
+      bind: Ezagent.Capability.cap(:session, __MODULE__, :bind),
+      unbind: Ezagent.Capability.cap(:session, __MODULE__, :unbind),
+      list_bindings: Ezagent.Capability.cap(:session, __MODULE__, :list_bindings)
+    }
+  end
+
   @impl Ezagent.Behavior
   def state_slice, do: :external_mirror
 

@@ -58,6 +58,18 @@ defmodule Ezagent.Behavior.CurlAgent do
   @impl Ezagent.Behavior
   def actions, do: [:receive, :reset_conversation, :configure]
 
+  # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
+  # CurlAgent is registered on Entity.CurlAgent Kind (type_name
+  # :curl_agent) — kind axis is `:curl_agent`.
+  @impl Ezagent.Behavior
+  def required_caps do
+    %{
+      receive: Ezagent.Capability.cap(:curl_agent, __MODULE__, :receive),
+      reset_conversation: Ezagent.Capability.cap(:curl_agent, __MODULE__, :reset_conversation),
+      configure: Ezagent.Capability.cap(:curl_agent, __MODULE__, :configure)
+    }
+  end
+
   @impl Ezagent.Behavior
   def cap_subjects do
     [

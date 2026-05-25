@@ -38,9 +38,96 @@ defmodule Ezagent.Capability do
           behavior: module() | :any,
           instance: URI.t() | :any | scope_tuple(),
           workspace_uri: URI.t() | :any,
-          granted_by: URI.t(),
-          granted_at: DateTime.t()
+          granted_by: URI.t() | :plugin_declared,
+          granted_at: DateTime.t() | :compile_time
         }
+
+  # Sentinel values for declarative caps (e.g. those returned by
+  # `Behavior.required_caps/0`). Recorded here so callers using
+  # `function/1` patterns can match them as well.
+  @plugin_declared_granter :plugin_declared
+  @compile_time_granted_at :compile_time
+
+  @doc """
+  Action atom for cap declarations: `:any` action axis.
+
+  Provided so a Behavior author writing `required_caps/0` can declare a
+  catch-all "any action on this Behavior" cap (used by
+  `:ezagent_plugin_check` check 11d as the wildcard-action escape hatch
+  for orchestrator-style Behaviors).
+  """
+  @spec any_action() :: :any
+  def any_action, do: :any
+
+  @doc """
+  Construct a declarative capability for use in `Behavior.required_caps/0`
+  or for issuing a grant.
+
+  The 3-arity form fills `instance` and `workspace_uri` with `:any` (matches
+  any target / any workspace) — the common shape for `required_caps/0`
+  declarations. The 5-arity form takes explicit `instance` and
+  `workspace_uri` for grant sites that need narrowing.
+
+  `granted_by` defaults to `:plugin_declared` (sentinel meaning "this is a
+  declarative requirement, not an issued grant"); `granted_at` defaults to
+  `:compile_time`. At grant time (`Identity.grant_cap/3` etc.), callers
+  override these fields to the actual granter URI + timestamp.
+
+  ## Examples
+
+      # required_caps/0 declaration
+      Capability.cap(:chat, Ezagent.Behavior.Chat, :send)
+      # => %Capability{kind: :chat, behavior: Ezagent.Behavior.Chat, action: removed,
+      #                instance: :any, workspace_uri: :any,
+      #                granted_by: :plugin_declared,
+      #                granted_at: :compile_time}
+
+      # narrow grant
+      Capability.cap(:chat, Chat, :send, session_uri, workspace_uri)
+
+  ## Action axis
+
+  The `action` argument is currently NOT stored in the struct (the
+  struct has 6 fields; action is encoded inside the `behavior` axis +
+  the action atom keyed in `Behavior.required_caps/0`). The helper
+  accepts `action` for forward-compatible UX symmetry with PR-CC-2-v2's
+  Behavior author API (`Capability.cap(:chat, Chat, :send)` is the
+  recommended call shape per SPEC §2) and to make the call site readable
+  — the action atom is the key in the `required_caps/0` map, so
+  duplication here is intentional documentation. Future SPECs may grow
+  the struct to record action; for now it's a documented no-op argument
+  on the constructor.
+  """
+  @spec cap(atom() | :any, module() | :any, atom() | :any) :: t()
+  def cap(kind, behavior, _action) when is_atom(kind) and is_atom(behavior) do
+    %__MODULE__{
+      kind: kind,
+      behavior: behavior,
+      instance: :any,
+      workspace_uri: :any,
+      granted_by: @plugin_declared_granter,
+      granted_at: @compile_time_granted_at
+    }
+  end
+
+  @spec cap(
+          atom() | :any,
+          module() | :any,
+          atom() | :any,
+          URI.t() | :any | scope_tuple(),
+          URI.t() | :any
+        ) :: t()
+  def cap(kind, behavior, _action, instance, workspace_uri)
+      when is_atom(kind) and is_atom(behavior) do
+    %__MODULE__{
+      kind: kind,
+      behavior: behavior,
+      instance: instance,
+      workspace_uri: workspace_uri,
+      granted_by: @plugin_declared_granter,
+      granted_at: @compile_time_granted_at
+    }
+  end
 
   @doc """
   Does this capability authorize the given invocation?

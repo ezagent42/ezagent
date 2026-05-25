@@ -48,6 +48,18 @@ defmodule Ezagent.Behavior.ApiKeys do
   @impl Ezagent.Behavior
   def actions, do: [:list_api_keys, :put_api_key, :delete_api_key, :get_api_key]
 
+  # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
+  # ApiKeys is registered on the User Kind — kind axis is `:user`.
+  @impl Ezagent.Behavior
+  def required_caps do
+    %{
+      list_api_keys: Ezagent.Capability.cap(:user, __MODULE__, :list_api_keys),
+      put_api_key: Ezagent.Capability.cap(:user, __MODULE__, :put_api_key),
+      delete_api_key: Ezagent.Capability.cap(:user, __MODULE__, :delete_api_key),
+      get_api_key: Ezagent.Capability.cap(:user, __MODULE__, :get_api_key)
+    }
+  end
+
   @impl Ezagent.Behavior
   def cap_subjects do
     [

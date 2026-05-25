@@ -43,6 +43,17 @@ defmodule Ezagent.Behavior.Echo do
   @impl Ezagent.Behavior
   def actions, do: [:say, :receive]
 
+  # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
+  # Echo is registered on Entity.Echo Kind (type_name :echo) — kind axis
+  # is `:echo`.
+  @impl Ezagent.Behavior
+  def required_caps do
+    %{
+      say: Ezagent.Capability.cap(:echo, __MODULE__, :say),
+      receive: Ezagent.Capability.cap(:echo, __MODULE__, :receive)
+    }
+  end
+
   @impl Ezagent.Behavior
   def cap_subjects do
     [

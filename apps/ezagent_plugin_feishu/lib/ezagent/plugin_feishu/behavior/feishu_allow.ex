@@ -44,6 +44,16 @@ defmodule EzagentPluginFeishu.Behavior.ExternalAdapter.Feishu.Allow do
   @impl Ezagent.Behavior
   def actions, do: [:allow_feishu]
 
+  # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
+  # FeishuAllow is a cap-only marker Behavior registered on the Session
+  # Kind — kind axis is `:session`.
+  @impl Ezagent.Behavior
+  def required_caps do
+    %{
+      allow_feishu: Ezagent.Capability.cap(:session, __MODULE__, :allow_feishu)
+    }
+  end
+
   @impl Ezagent.Behavior
   def cap_subjects,
     do: [

@@ -53,6 +53,20 @@ defmodule Ezagent.Behavior.Identity do
   @impl Ezagent.Behavior
   def actions, do: [:list_caps, :has_cap?]
 
+  # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
+  # Identity is registered on both User AND Agent — kind axis is `:any`
+  # per check 11(b)'s multi-Kind escape. The self-list-caps default-grant
+  # in `init_slice/1` carries the same cap shape (kind narrowed via
+  # `kind_for_uri/1`) — the runtime substitution at step 5.5 reconciles
+  # the declarative `:any` with the per-instance held cap.
+  @impl Ezagent.Behavior
+  def required_caps do
+    %{
+      list_caps: Ezagent.Capability.cap(:any, __MODULE__, :list_caps),
+      has_cap?: Ezagent.Capability.cap(:any, __MODULE__, :has_cap?)
+    }
+  end
+
   @impl Ezagent.Behavior
   def cap_subjects do
     [
@@ -194,6 +208,24 @@ defmodule Ezagent.Behavior.IdentityAdmin do
 
   @impl Ezagent.Behavior
   def actions, do: [:grant_cap, :revoke_cap]
+
+  # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
+  # IdentityAdmin is registered on the User Kind only (per
+  # `EzagentDomainIdentity.Application` line ~263) — kind axis is `:user`.
+  # workspace_scoped? = false: admin grant/revoke routinely crosses
+  # workspaces (an admin in workspace://system grants caps to users in
+  # other workspaces) — the existing `check_grant_authorized/2` enforces
+  # admin authority directly.
+  @impl Ezagent.Behavior
+  def required_caps do
+    %{
+      grant_cap: Ezagent.Capability.cap(:user, __MODULE__, :grant_cap),
+      revoke_cap: Ezagent.Capability.cap(:user, __MODULE__, :revoke_cap)
+    }
+  end
+
+  @impl Ezagent.Behavior
+  def workspace_scoped?, do: false
 
   @impl Ezagent.Behavior
   def cap_subjects do
@@ -355,6 +387,14 @@ defmodule Ezagent.Behavior.IdentityAdmin do
   # the cap was minted by a bootstrap admin or transitively by a
   # workspace admin. Either is acceptable for further delegation
   # within the same workspace.
+  #
+  # PR-CC-2-v2 (SPEC §5 catalog narrowing): a `Behavior.Workspace`
+  # cap with `workspace_uri: :any` is the cross-workspace shape held
+  # by system principals like `system://template-materialize` and
+  # `system://workspace-loader` — those principals are the
+  # legitimate granters of template caps across workspaces, so the
+  # predicate accepts the `:any` workspace_uri form too. The narrower
+  # `^ws_uri` literal still matches for delegated workspace admins.
   defp holds_workspace_admin_cap?(%{caps: caps}, %URI{} = ws_uri) do
     caps_list = if is_struct(caps, MapSet), do: MapSet.to_list(caps), else: List.wrap(caps)
 
@@ -362,6 +402,12 @@ defmodule Ezagent.Behavior.IdentityAdmin do
       %Ezagent.Capability{
         behavior: Ezagent.Behavior.Workspace,
         workspace_uri: ^ws_uri
+      } ->
+        true
+
+      %Ezagent.Capability{
+        behavior: Ezagent.Behavior.Workspace,
+        workspace_uri: :any
       } ->
         true
 

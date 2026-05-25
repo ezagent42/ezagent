@@ -108,6 +108,8 @@ defmodule Mix.Tasks.Compile.EzagentPluginCheck do
           |> check_spawns_empty(plugin_module)
           |> check_config_surface(plugin_module)
           |> check_no_direct_registry_calls()
+          |> check_required_caps_callbacks(plugin_module)
+          |> check_required_caps_values_struct(plugin_module)
 
         if diagnostics == [] do
           {:ok, []}
@@ -637,6 +639,105 @@ defmodule Mix.Tasks.Compile.EzagentPluginCheck do
         )
         | diagnostics
       ]
+    end
+  end
+
+  # --- check 10 — required_caps/0 callback presence + key parity --------
+  #
+  # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §7.
+  #
+  # Iterate every Behavior module the plugin declares via behaviors/0.
+  # Each MUST export required_caps/0; the returned map's keys ∪
+  # cap_exempt_actions/0 (optional, default []) must equal actions/0.
+
+  defp check_required_caps_callbacks(diagnostics, plugin_module) do
+    if not uses_plugin_behaviour?(plugin_module) or not ensure_compiled?(plugin_module) do
+      diagnostics
+    else
+      behavior_modules =
+        plugin_module.behaviors() |> Enum.map(fn {_kind, _action, b} -> b end) |> Enum.uniq()
+
+      Enum.reduce(behavior_modules, diagnostics, &check_behavior_required_caps/2)
+    end
+  rescue
+    _ -> diagnostics
+  end
+
+  defp check_behavior_required_caps(behavior_module, diagnostics) do
+    cond do
+      not ensure_compiled?(behavior_module) ->
+        diagnostics
+
+      not function_exported?(behavior_module, :required_caps, 0) ->
+        [
+          diagnostic(
+            "#{inspect(behavior_module)} must export required_caps/0 per SPEC " <>
+              "docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md §2."
+          )
+          | diagnostics
+        ]
+
+      true ->
+        declared = behavior_module.actions()
+        cap_keys = Map.keys(behavior_module.required_caps())
+        exempt = Ezagent.Behavior.cap_exempt_actions_of(behavior_module)
+
+        if MapSet.new(declared) == MapSet.new(cap_keys ++ exempt) do
+          diagnostics
+        else
+          [
+            diagnostic(
+              "#{inspect(behavior_module)} required_caps/0 keys ∪ cap_exempt_actions/0 " <>
+                "must equal actions/0 exactly; declared=#{inspect(declared)} " <>
+                "cap_keys=#{inspect(cap_keys)} exempt=#{inspect(exempt)}."
+            )
+            | diagnostics
+          ]
+        end
+    end
+  end
+
+  # --- check 11 — required_caps/0 values are valid %Capability{} ---------
+
+  defp check_required_caps_values_struct(diagnostics, plugin_module) do
+    if not uses_plugin_behaviour?(plugin_module) or not ensure_compiled?(plugin_module) do
+      diagnostics
+    else
+      behavior_modules =
+        plugin_module.behaviors() |> Enum.map(fn {_kind, _action, b} -> b end) |> Enum.uniq()
+
+      Enum.reduce(behavior_modules, diagnostics, &check_behavior_required_caps_struct/2)
+    end
+  rescue
+    _ -> diagnostics
+  end
+
+  defp check_behavior_required_caps_struct(behavior_module, diagnostics) do
+    cond do
+      not ensure_compiled?(behavior_module) ->
+        diagnostics
+
+      not function_exported?(behavior_module, :required_caps, 0) ->
+        diagnostics
+
+      true ->
+        bad =
+          for {action, cap} <- behavior_module.required_caps(),
+              not match?(%Ezagent.Capability{}, cap),
+              do: {action, cap}
+
+        if bad == [] do
+          diagnostics
+        else
+          [
+            diagnostic(
+              "#{inspect(behavior_module)}.required_caps/0 values MUST be " <>
+                "%Ezagent.Capability{} structs (use Capability.cap/3 / cap/5). " <>
+                "Bad entries: #{inspect(bad)}"
+            )
+            | diagnostics
+          ]
+        end
     end
   end
 

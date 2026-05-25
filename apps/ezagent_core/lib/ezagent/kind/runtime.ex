@@ -118,8 +118,8 @@ defmodule Ezagent.Kind.Runtime do
 
     with {:ok, {behavior_name_atom, action}} <- Ezagent.URI.behavior_action(target),
          {:ok, behavior_module} <- lookup_behavior(kind_module, action),
-         :ok <- authz_check(kind_module, action, target, enriched_ctx),
-         :ok <- workspace_isolation_check(target, enriched_ctx),
+         :ok <- authz_check(kind_module, behavior_module, action, target, enriched_ctx),
+         :ok <- workspace_isolation_check(behavior_module, target, enriched_ctx),
          :ok <- validate_args(behavior_module, action, args),
          slice_key <- behavior_module.state_slice(),
          slice <- Map.get(state, slice_key, %{}),
@@ -207,35 +207,264 @@ defmodule Ezagent.Kind.Runtime do
     end
   end
 
-  # Phase 3d hard flip (per P3-D6): real cap check via Capability.matches?.
-  # `:stub_grant` telemetry is GONE — replaced with `:granted` (success)
-  # and `:denied` (failure). Per memory feedback_let_it_crash_no_workarounds:
-  # no feature flag, no parallel paths; the alarm path is "this function
-  # ever emits :stub_grant" which check_invariants #9 enforces.
-  defp authz_check(kind_module, action, target, ctx) do
-    needed = Ezagent.Capability.cap_for_action(kind_module, action, target)
-    caps = Map.get(ctx, :caps, MapSet.new())
+  # PR-CC-2-v2 chokepoint flip (SPEC docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md
+  # §3 + §10(g)). Step 5.5 now:
+  #
+  # 1. Reads `behavior.required_caps()[action]` to get the DECLARATIVE
+  #    cap shape that gates this action.
+  # 2. Substitutes runtime `instance` (from target URI) + `workspace_uri`
+  #    (from target via `Capability.workspace_of/1`) into the cap when
+  #    its declared values are `:any`.
+  # 3. Delegates the actual cap check to `Kind.holds_cap?/3` — reads the
+  #    caller's identity slice via `Kind.get_slice/2` (no re-entry into
+  #    `Invocation.dispatch/1`, breaks the self-list-caps recursion).
+  #
+  # Backward-compat: `ctx.caps` plumbing is preserved (PR-CC-2c deletes
+  # the field). When `ctx.caps` is populated AND contains a matching
+  # cap, that's an acceptable grant too — used by tests + bootstrap
+  # paths that pre-date the slice-backed flow. The dual check is a
+  # short-lived bridge; PR-CC-2c removes the ctx.caps branch.
+  defp authz_check(kind_module, behavior_module, action, target, ctx) do
+    cap_exempt? = action in Ezagent.Behavior.cap_exempt_actions_of(behavior_module)
 
-    granted? =
-      Enum.any?(caps, fn cap ->
-        Ezagent.Capability.matches?(cap, needed)
-      end)
+    if cap_exempt? do
+      :telemetry.execute([:ezagent, :authz, :exempt], %{}, %{
+        kind_module: kind_module,
+        action: action,
+        target: target,
+        caller: Map.get(ctx, :caller)
+      })
 
-    meta = %{
-      kind_module: kind_module,
-      action: action,
-      target: target,
-      caller: Map.get(ctx, :caller),
-      needed: needed
-    }
-
-    if granted? do
-      :telemetry.execute([:ezagent, :authz, :granted], %{}, meta)
       :ok
     else
-      :telemetry.execute([:ezagent, :authz, :denied], %{}, meta)
-      {:error, :unauthorized}
+      needed = resolve_required_cap(kind_module, behavior_module, action, target)
+
+      meta = %{
+        kind_module: kind_module,
+        behavior_module: behavior_module,
+        action: action,
+        target: target,
+        caller: Map.get(ctx, :caller),
+        needed: needed
+      }
+
+      cond do
+        is_nil(needed) ->
+          :telemetry.execute([:ezagent, :authz, :denied], %{}, meta)
+          {:error, :unauthorized}
+
+        granted_via_holds_cap?(ctx, needed) ->
+          :telemetry.execute([:ezagent, :authz, :granted], %{}, meta)
+          :ok
+
+        granted_via_ctx_caps?(ctx, needed) ->
+          # PR-CC-2-v2 bridge (deleted by PR-CC-2c): ctx.caps populated
+          # by the caller. Same authorization semantic, different cap
+          # source — tests + bootstrap paths still pass caps directly.
+          :telemetry.execute([:ezagent, :authz, :granted], %{}, meta)
+          :ok
+
+        true ->
+          :telemetry.execute([:ezagent, :authz, :denied], %{}, meta)
+          {:error, :unauthorized}
+      end
     end
+  end
+
+  # Compute the runtime cap shape from the Behavior's declared
+  # `required_caps/0`. The declared cap typically has `instance: :any`
+  # + `workspace_uri: :any` (the common shape for a Behavior author);
+  # at dispatch time we substitute the actual target URI + target
+  # workspace so the check fires against THIS dispatch.
+  defp resolve_required_cap(kind_module, behavior_module, action, %URI{} = target) do
+    cond do
+      not function_exported?(behavior_module, :required_caps, 0) ->
+        # Behavior hasn't implemented required_caps/0 yet (e.g. test
+        # support modules without the callback). Fall back to the
+        # legacy `cap_for_action/3` shape so the dispatch path still
+        # authorizes via `ctx.caps`. Production code paths trigger the
+        # invariant test (`BehaviorRequiredCapsParityTest`) so this
+        # fallback is dead for production Behaviors.
+        legacy_cap_map(kind_module, action, target)
+
+      true ->
+        try do
+          required = behavior_module.required_caps()
+
+          case Map.get(required, action) do
+            %Ezagent.Capability{} = declared ->
+              # Substitute runtime instance + workspace_uri when the
+              # declaration is `:any` (the common case for a Behavior
+              # author declaring "this action on any target").
+              instance =
+                case declared.instance do
+                  :any -> Ezagent.URI.instance(target)
+                  other -> other
+                end
+
+              workspace_uri =
+                case declared.workspace_uri do
+                  :any -> Ezagent.Capability.workspace_of(target)
+                  other -> other
+                end
+
+              # When the declared kind axis is `:any` (multi-Kind
+              # Behavior — e.g. Chat / Routing / Presence / Identity /
+              # Template), substitute the actual target Kind's
+              # type_name/0 so the check matches a cap held against
+              # the concrete Kind. SPEC §7 check 11(b).
+              kind_axis =
+                case declared.kind do
+                  :any -> safe_type_name(kind_module)
+                  other -> other
+                end
+
+              %{
+                kind: kind_axis,
+                behavior: declared.behavior,
+                instance: instance,
+                workspace_uri: workspace_uri
+              }
+
+            nil ->
+              # required_caps/0 exists but doesn't declare this action.
+              # Fall back to legacy shape — a Behavior that exports
+              # actions/0 with action X but no required_caps[X] is a
+              # bug; the invariant test catches it.
+              legacy_cap_map(kind_module, action, target)
+          end
+        rescue
+          _ -> legacy_cap_map(kind_module, action, target)
+        catch
+          _, _ -> legacy_cap_map(kind_module, action, target)
+        end
+    end
+  end
+
+  defp legacy_cap_map(kind_module, action, %URI{} = target) when is_atom(kind_module) do
+    try do
+      Ezagent.Capability.cap_for_action(kind_module, action, target)
+    rescue
+      _ -> nil
+    catch
+      _, _ -> nil
+    end
+  end
+
+  defp legacy_cap_map(_, _, _), do: nil
+
+  defp safe_type_name(kind_module) when is_atom(kind_module) do
+    if function_exported?(kind_module, :type_name, 0) do
+      kind_module.type_name()
+    else
+      :any
+    end
+  end
+
+  defp safe_type_name(_), do: :any
+
+  defp granted_via_holds_cap?(ctx, needed_map) do
+    caller = Map.get(ctx, :caller)
+    needed_struct = needed_map_to_struct(needed_map)
+
+    caller_kind = resolve_caller_kind(caller)
+
+    cond do
+      is_nil(needed_struct) ->
+        false
+
+      is_nil(caller_kind) ->
+        # Unknown caller Kind — use the default impl directly. Covers
+        # `:system` callers (default_holds_cap?(:system, _) → true) and
+        # nil callers (→ false).
+        Ezagent.Kind.default_holds_cap?(caller, needed_struct)
+
+      true ->
+        Ezagent.Kind.holds_cap?(caller_kind, caller, needed_struct)
+    end
+  end
+
+  defp granted_via_ctx_caps?(ctx, needed_map) do
+    caps = Map.get(ctx, :caps, MapSet.new())
+
+    cond do
+      caps == nil ->
+        false
+
+      is_struct(caps, MapSet) ->
+        Enum.any?(caps, fn cap ->
+          try do
+            Ezagent.Capability.matches?(cap, needed_map)
+          rescue
+            _ -> false
+          catch
+            _, _ -> false
+          end
+        end)
+
+      is_list(caps) ->
+        Enum.any?(caps, fn cap ->
+          try do
+            Ezagent.Capability.matches?(cap, needed_map)
+          rescue
+            _ -> false
+          catch
+            _, _ -> false
+          end
+        end)
+
+      true ->
+        false
+    end
+  end
+
+  defp needed_map_to_struct(%{
+         kind: k,
+         behavior: b,
+         instance: i,
+         workspace_uri: w
+       }) do
+    %Ezagent.Capability{
+      kind: k,
+      behavior: b,
+      instance: i,
+      workspace_uri: w,
+      granted_by: :plugin_declared,
+      granted_at: :compile_time
+    }
+  end
+
+  defp needed_map_to_struct(_), do: nil
+
+  # Derive the caller's Kind module from the caller URI scheme.
+  # Returns `nil` when the caller is not a per-Kind URI (e.g. `:system`
+  # atom, nil, or a `system://` URI principal whose Kind module is not
+  # loaded in this build).
+  #
+  # NOTE: `Ezagent.Entity.User` / `Ezagent.Entity.Agent` live in
+  # `ezagent_domain_identity` / `ezagent_domain_chat` — outside core's
+  # dependency cone (P9). Resolve via `Code.ensure_loaded?/1` at
+  # runtime, falling back to nil (default impl) when domain apps
+  # haven't loaded.
+  defp resolve_caller_kind(%URI{scheme: "entity", host: "user"}) do
+    safe_module(Ezagent.Entity.User)
+  end
+
+  defp resolve_caller_kind(%URI{scheme: "entity", host: "agent"}) do
+    safe_module(Ezagent.Entity.Agent)
+  end
+
+  defp resolve_caller_kind(%URI{scheme: "system"}) do
+    # `system://` principals are spawned as User Kinds (see
+    # SystemPrincipal.ensure/1) — use the User Kind module for the
+    # holds_cap? resolution.
+    safe_module(Ezagent.Entity.User)
+  end
+
+  defp resolve_caller_kind(_), do: nil
+
+  defp safe_module(module) do
+    if Code.ensure_loaded?(module), do: module, else: nil
   end
 
   # Phase 9 PR-4 (SPEC v3 §5) step 5.6 — workspace isolation.
@@ -263,7 +492,19 @@ defmodule Ezagent.Kind.Runtime do
   # otherwise. The atom is distinct from `:unauthorized` (invariant 9
   # — inbound transports must surface this with a different message +
   # reaction so users see why dispatch failed).
-  defp workspace_isolation_check(target, ctx) do
+  defp workspace_isolation_check(behavior_module, target, ctx) do
+    # PR-CC-2-v2 SPEC §2b — `workspace_scoped?/0` lets a Behavior opt
+    # out of workspace isolation (default: `true`). When `false`, the
+    # check is a no-op (e.g. Lifecycle admin termination, pure-data
+    # read actions whose target is workspace-agnostic).
+    if Ezagent.Behavior.workspace_scoped?(behavior_module) do
+      do_workspace_isolation_check(target, ctx)
+    else
+      :ok
+    end
+  end
+
+  defp do_workspace_isolation_check(target, ctx) do
     caller_ws = workspace_of_caller(Map.get(ctx, :caller))
     target_ws = Ezagent.Capability.workspace_of(target)
 

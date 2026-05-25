@@ -87,6 +87,23 @@ defmodule Ezagent.Behavior.Chat do
   @impl Ezagent.Behavior
   def actions, do: [:send, :receive, :join, :leave, :set_working_copy]
 
+  # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
+  # Chat is registered on:
+  #   - Session Kind for :send, :join, :leave, :set_working_copy
+  #   - User Kind for :receive
+  #   - Agent Kind for :receive
+  # The multi-Kind registration → kind axis is `:any` (check 11(b) escape).
+  @impl Ezagent.Behavior
+  def required_caps do
+    %{
+      send: Ezagent.Capability.cap(:any, __MODULE__, :send),
+      receive: Ezagent.Capability.cap(:any, __MODULE__, :receive),
+      join: Ezagent.Capability.cap(:any, __MODULE__, :join),
+      leave: Ezagent.Capability.cap(:any, __MODULE__, :leave),
+      set_working_copy: Ezagent.Capability.cap(:any, __MODULE__, :set_working_copy)
+    }
+  end
+
   @impl Ezagent.Behavior
   def cap_subjects do
     [

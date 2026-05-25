@@ -111,12 +111,33 @@ defmodule EzagentCore.Invariants.NoAdminCapsFallbackTest do
   end
 
   describe "SystemPrincipal bridge" do
-    test "caps/1 returns wildcard MapSet for catalog entries with non-empty strings" do
+    test "caps/1 returns the catalog's struct caps as a MapSet" do
       caps = Ezagent.SystemPrincipal.caps("system://bootstrap")
       assert %MapSet{} = caps
-      # PR-CC-1 bridge — non-empty Catalog entries collapse to one
-      # wildcard cap until PR-CC-2b's per-string narrowing.
+      # PR-CC-2-v2 narrowing: each catalog entry holds the cap structs
+      # the principal needs. system://bootstrap remains a single
+      # wildcard cap (the all-caps invariant per Decision #81).
       assert MapSet.size(caps) == 1
+      [cap] = MapSet.to_list(caps)
+
+      assert %Ezagent.Capability{kind: :any, behavior: :any, instance: :any, workspace_uri: :any} =
+               cap
+    end
+
+    test "caps/1 returns narrowed struct caps for non-bootstrap principals" do
+      # system://chat-router was string-cap-narrowed to [send,
+      # system_message] pre-PR-CC-2-v2 but the bridge widened it to a
+      # wildcard. Post-PR-CC-2-v2 the bridge returns the catalog's
+      # actual narrow struct(s).
+      caps = Ezagent.SystemPrincipal.caps("system://chat-router")
+      assert %MapSet{} = caps
+      assert MapSet.size(caps) >= 1
+
+      refute Enum.any?(caps, fn cap ->
+               cap.kind == :any and cap.behavior == :any and
+                 cap.instance == :any and cap.workspace_uri == :any
+             end),
+             "non-bootstrap principal must not carry a wildcard cap"
     end
 
     test "caps/1 returns empty MapSet for system://lv-anon-mount" do

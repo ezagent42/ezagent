@@ -24,6 +24,17 @@ defmodule Ezagent.Behavior.Presence do
   @impl Ezagent.Behavior
   def actions, do: [:online]
 
+  # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
+  # Presence is registered on both User AND Agent — kind axis is `:any`
+  # per check 11(b)'s multi-Kind escape (dispatch substitutes the actual
+  # target's type_name/0 at step 5.5 runtime).
+  @impl Ezagent.Behavior
+  def required_caps do
+    %{
+      online: Ezagent.Capability.cap(:any, __MODULE__, :online)
+    }
+  end
+
   @impl Ezagent.Behavior
   def cap_subjects do
     [{:online, "observe an entity's online/offline status across all transports"}]

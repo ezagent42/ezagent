@@ -22,6 +22,17 @@ defmodule Ezagent.Behavior.Notifications do
   @impl Ezagent.Behavior
   def actions, do: [:notify, :subscribe]
 
+  # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
+  # Notifications is cap-only and registered on User Kind only — kind
+  # axis is `:user`.
+  @impl Ezagent.Behavior
+  def required_caps do
+    %{
+      notify: Ezagent.Capability.cap(:user, __MODULE__, :notify),
+      subscribe: Ezagent.Capability.cap(:user, __MODULE__, :subscribe)
+    }
+  end
+
   @impl Ezagent.Behavior
   def cap_subjects do
     [
