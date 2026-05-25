@@ -181,11 +181,10 @@ defmodule Ezagent.Kind.Snapshot do
         if old_state == new_state do
           :not_durable
         else
-          # save_now/3 returns `:ok` regardless of write success (it
-          # logs + emits :failed telemetry on error); we re-derive
-          # the strict result by re-attempting via a strict variant
-          # to avoid breaking existing callers of save_now/3.
-          save_now_strict(uri, kind_module, new_state)
+          # save_now/3 is now strict (issue #342, Allen 2026-05-25 —
+          # rescue removed) so its return is exactly what `commit/4`'s
+          # caller needs to gate the SliceChange emit on.
+          save_now(uri, kind_module, new_state)
         end
 
       {:snapshot, :periodic, _ms} ->
@@ -195,63 +194,30 @@ defmodule Ezagent.Kind.Snapshot do
     end
   end
 
-  # Strict variant — returns the real outcome so `commit/4` can
-  # tell `Kind.Server` whether to emit.
-  defp save_now_strict(uri, kind_module, state) do
-    uri_str = uri_to_str(uri)
-    kind_type_str = Atom.to_string(kind_module.type_name())
-    version = snapshot_version_of(kind_module)
-    binary = :erlang.term_to_binary(state)
-    workspace_uri_str = derive_workspace_uri(uri)
-
-    try do
-      KindSnapshot.upsert(uri_str, kind_type_str, binary, version, workspace_uri_str)
-    rescue
-      # Allen 2026-05-25 — CLI persistence fix r1 fallout: the
-      # narrow `[DBConnection.ConnectionError, DBConnection.OwnershipError]`
-      # rescue let `%Exqlite.Error{message: "Database busy"}` (and any
-      # other Exqlite-level raise) escape — breaking the moduledoc
-      # contract "write failure does NOT crash the Kind." Pre-fix this
-      # was masked because `save_now/3` was only called from
-      # dispatch / terminate / periodic — paths where a Database-busy
-      # was rare. The CLI fix calls `save_now/3` at init time too,
-      # surfacing the sandbox-busy case from concurrent test setup.
-      #
-      # Widen to a generic `e` rescue and return `{:error, e}` —
-      # `save_now/3` still converts that to `:ok` (with log +
-      # `:failed` telemetry) per its contract; `save_now_strict/3`
-      # returns it to the caller so `commit_and_notify/3` can suppress
-      # the SliceChange emit on a failed durable write (P-N1 round-3).
-      e -> {:error, e}
-    end
-    |> case do
-      {:ok, _row} ->
-        :telemetry.execute(
-          [:ezagent, :persistence, :written],
-          %{bytes: byte_size(binary)},
-          %{uri: uri_str, kind_type: kind_type_str, version: version}
-        )
-
-        :ok
-
-      {:error, reason} ->
-        Logger.warning(
-          "Ezagent.Kind.Snapshot.commit/4: save failed for #{uri_str}: #{inspect(reason)}"
-        )
-
-        :telemetry.execute(
-          [:ezagent, :persistence, :failed],
-          %{},
-          %{uri: uri_str, kind_type: kind_type_str, reason: reason}
-        )
-
-        {:error, reason}
-    end
-  end
-
   @doc """
   Synchronous write — used by `:on_change`, `:on_terminate`, and the
-  Writer's flush path. Logs + emits `:failed` telemetry on error.
+  Writer's flush path.
+
+  Returns `:ok` on success, `{:error, reason}` on changeset failure.
+  Raises on infrastructure failures (`DBConnection.ConnectionError`,
+  `Exqlite.Error`, etc.) — the caller decides whether to rescue.
+
+  ## Why no internal rescue (let-it-crash; issue #342, Allen 2026-05-25)
+
+  Previously `save_now/3` wrapped `KindSnapshot.upsert/5` in
+  `try/rescue` and silently returned `:ok` on DB errors (logged +
+  `:failed` telemetry only). This was a workaround that violated the
+  let-it-crash discipline: every layer above this point trusted the
+  `:ok` and reported success to its caller, so a mix-task `agent.create`
+  could return success to the operator while no DB row was written.
+
+  The fix: surface the failure naturally. Callers that genuinely need
+  best-effort semantics (e.g. background `Writer` flushes, `terminate/2`
+  shutdowns, periodic ticks) wrap the call in `try/rescue` at THEIR
+  boundary, where the decision is local and explicit. Callers that
+  need durability (e.g. `Kind.Server.init/1`'s
+  `persist_initial_snapshot/3`, the dispatch reply path) propagate the
+  error to their own caller.
 
   Phase 9 PR-6 (SPEC v3 §7) + SPEC #324 rev 3 (Allen 2026-05-25) —
   derives `workspace_uri` for the snapshot row from the Kind URI. For
@@ -259,11 +225,10 @@ defmodule Ezagent.Kind.Snapshot do
   return `:any` from the derivation helper, inlines the literal
   `"workspace://system"` (the admin workspace, structural sink for
   system-tier state — these snapshots own no per-tenant data, so
-  landing in admin is structurally correct). No global default helper:
-  inline literals at the write site so the silent-fallback bug class
-  Allen deleted on 2026-05-25 cannot regress.
+  landing in admin is structurally correct).
   """
-  @spec save_now(URI.t() | String.t(), module(), %{atom() => map()}) :: :ok
+  @spec save_now(URI.t() | String.t(), module(), %{atom() => map()}) ::
+          :ok | {:error, term()}
   def save_now(uri, kind_module, state) do
     uri_str = uri_to_str(uri)
     kind_type_str = Atom.to_string(kind_module.type_name())
@@ -271,37 +236,7 @@ defmodule Ezagent.Kind.Snapshot do
     binary = :erlang.term_to_binary(state)
     workspace_uri_str = derive_workspace_uri(uri)
 
-    # `KindSnapshot.upsert/5` returns `{:error, _}` for changeset
-    # failures, but `Repo.get`/`Repo.insert` can also *raise*
-    # (`DBConnection.ConnectionError` / `DBConnection.OwnershipError`)
-    # when the connection pool is unavailable. The moduledoc contract
-    # is "write failure does NOT crash the Kind" — so we rescue the
-    # raised case too and treat it identically to a returned error.
-    # Without this, an `:on_change` Kind whose snapshot write hits a
-    # pool error (notably the boot-time Session under the ExUnit SQL
-    # Sandbox when a prior test's owner has exited) would crash mid
-    # `handle_cast`. Phase 9 follow-up — Allen V1 acceptance 2026-05-22.
-    try do
-      KindSnapshot.upsert(uri_str, kind_type_str, binary, version, workspace_uri_str)
-    rescue
-      # Allen 2026-05-25 — CLI persistence fix r1 fallout: the
-      # narrow `[DBConnection.ConnectionError, DBConnection.OwnershipError]`
-      # rescue let `%Exqlite.Error{message: "Database busy"}` (and any
-      # other Exqlite-level raise) escape — breaking the moduledoc
-      # contract "write failure does NOT crash the Kind." Pre-fix this
-      # was masked because `save_now/3` was only called from
-      # dispatch / terminate / periodic — paths where a Database-busy
-      # was rare. The CLI fix calls `save_now/3` at init time too,
-      # surfacing the sandbox-busy case from concurrent test setup.
-      #
-      # Widen to a generic `e` rescue and return `{:error, e}` —
-      # `save_now/3` still converts that to `:ok` (with log +
-      # `:failed` telemetry) per its contract; `save_now_strict/3`
-      # returns it to the caller so `commit_and_notify/3` can suppress
-      # the SliceChange emit on a failed durable write (P-N1 round-3).
-      e -> {:error, e}
-    end
-    |> case do
+    case KindSnapshot.upsert(uri_str, kind_type_str, binary, version, workspace_uri_str) do
       {:ok, _row} ->
         :telemetry.execute(
           [:ezagent, :persistence, :written],
@@ -320,7 +255,7 @@ defmodule Ezagent.Kind.Snapshot do
           %{uri: uri_str, kind_type: kind_type_str, reason: inspect(reason)}
         )
 
-        :ok
+        {:error, reason}
     end
   end
 

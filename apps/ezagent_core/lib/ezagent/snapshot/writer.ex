@@ -75,8 +75,37 @@ defmodule Ezagent.Snapshot.Writer do
   end
 
   defp flush_now(buffer) do
+    # Issue #342 (Allen 2026-05-25 — let-it-crash): `save_now/3` is
+    # now strict — it raises on infra failures and returns
+    # `{:error, _}` on changeset failures, so callers MUST decide what
+    # to do at their boundary. The Writer is the canonical
+    # best-effort caller: this is the async batched flush path
+    # (`@flush_interval_ms` between attempts), and one poison-pill
+    # snapshot row should not crash the Writer and drop the whole
+    # buffer. Rescue here, log + continue with the next entry.
     Enum.each(buffer, fn {_uri_str, {uri, kind_module, state}} ->
-      _ = Ezagent.Kind.Snapshot.save_now(uri, kind_module, state)
+      try do
+        _ = Ezagent.Kind.Snapshot.save_now(uri, kind_module, state)
+      rescue
+        e ->
+          require Logger
+
+          Logger.warning(
+            "Ezagent.Snapshot.Writer.flush_now: save_now raised for " <>
+              "#{inspect(uri)}: #{inspect(e)} — continuing batch"
+          )
+      catch
+        # Issue #342 — also catch :exit so a linked DB connection
+        # process death (sandbox owner exit in tests, DBConnection
+        # crash in prod) doesn't drop the entire batch.
+        :exit, reason ->
+          require Logger
+
+          Logger.warning(
+            "Ezagent.Snapshot.Writer.flush_now: save_now exited for " <>
+              "#{inspect(uri)}: #{inspect(reason)} — continuing batch"
+          )
+      end
     end)
   end
 
