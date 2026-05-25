@@ -85,12 +85,24 @@ defmodule EzagentDomainUi.AdminShellTest do
   end
 
   describe "section helpers" do
-    test "sections/0 returns the 7 sub-sections in display order" do
+    test "sections/0 returns the 8 sub-sections in display order" do
       # G-1 + G-2 V0 stop-gap (audit 2026-05-23) — `:templates` added
       # between `:snapshots` and `:settings`. AgentTemplate +
       # SessionTemplate Kinds list lives at /admin/templates.
+      # 2026-05-25 — `:routing` added between `:templates` and
+      # `:settings`. /routing relocated to /admin/routing (admin scope).
       keys = Enum.map(AdminShell.sections(), & &1.key)
-      assert keys == [:overview, :workspaces, :logs, :registry, :snapshots, :templates, :settings]
+
+      assert keys == [
+               :overview,
+               :workspaces,
+               :logs,
+               :registry,
+               :snapshots,
+               :templates,
+               :routing,
+               :settings
+             ]
     end
 
     test "section_for_path/1 maps known paths" do
@@ -99,6 +111,8 @@ defmodule EzagentDomainUi.AdminShellTest do
       assert AdminShell.section_for_path("/admin/registry") == :registry
       assert AdminShell.section_for_path("/admin/snapshots") == :snapshots
       assert AdminShell.section_for_path("/admin/templates") == :templates
+      # 2026-05-25 — /admin/routing maps to :routing.
+      assert AdminShell.section_for_path("/admin/routing") == :routing
       assert AdminShell.section_for_path("/admin/settings") == :settings
       assert AdminShell.section_for_path("/workspaces") == :workspaces
       assert AdminShell.section_for_path("/workspaces/demo") == :workspaces

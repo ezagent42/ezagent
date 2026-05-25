@@ -23,12 +23,18 @@ defmodule EzagentWeb.CommandRoutesTest do
       end
     end
 
-    test "includes the L1 nav pages (/sessions, /identities, /routing, /plugins)" do
+    test "includes the L1 nav pages (/sessions, /identities, /plugins) + admin /admin/routing" do
+      # 2026-05-25 — /routing relocated to /admin/routing (admin scope).
+      # The workspace-tile triplet is now Sessions / Identities / Plugins;
+      # Routing lives in the Admin group of the palette.
       paths = CommandRoutes.command_routes() |> Enum.map(& &1.path)
 
-      for expected <- ["/sessions", "/identities", "/routing", "/plugins"] do
+      for expected <- ["/sessions", "/identities", "/plugins", "/admin/routing"] do
         assert expected in paths, "expected #{expected} in command routes, got: #{inspect(paths)}"
       end
+
+      refute "/routing" in paths,
+             "stale /routing path leaked into palette catalog after 2026-05-25 relocation"
     end
 
     test "the /sessions route carries its curated label + group" do

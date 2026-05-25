@@ -54,7 +54,6 @@ defmodule EzagentWeb.CommandRoutes do
     "/identities" => %{label: "Identities", icon: "users", group: "Navigate"},
     "/identities/users" => %{label: "Users", icon: "users", group: "Navigate"},
     "/identities/agents" => %{label: "Agents", icon: "users", group: "Navigate"},
-    "/routing" => %{label: "Routing", icon: "route", group: "Navigate"},
     "/plugins" => %{label: "Plugins", icon: "puzzle", group: "Navigate"},
     "/workspaces" => %{label: "Workspaces", icon: "dashboard", group: "Navigate"},
     "/profile" => %{label: "Profile", icon: "users", group: "Navigate"},
@@ -62,6 +61,7 @@ defmodule EzagentWeb.CommandRoutes do
     "/admin/logs" => %{label: "Observability", icon: "activity", group: "Admin"},
     "/admin/registry" => %{label: "Registry", icon: "puzzle", group: "Admin"},
     "/admin/snapshots" => %{label: "Snapshots", icon: "folder", group: "Admin"},
+    "/admin/routing" => %{label: "Routing", icon: "route", group: "Admin"},
     "/admin/settings" => %{label: "Settings", icon: "settings", group: "Admin"}
   }
 

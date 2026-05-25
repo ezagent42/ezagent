@@ -36,9 +36,9 @@ defmodule EzagentDomainUi.AdminShell do
       </AdminShell.admin_shell>
 
   `active_section` is one of `:overview | :workspaces | :logs |
-  :registry | :snapshots | :templates | :settings` (the keys returned
-  by `sections/0`) and controls which sidebar item is highlighted.
-  `nil` derives it from `current_path`.
+  :registry | :snapshots | :templates | :routing | :settings` (the keys
+  returned by `sections/0`) and controls which sidebar item is
+  highlighted. `nil` derives it from `current_path`.
   """
 
   use Phoenix.Component
@@ -58,8 +58,8 @@ defmodule EzagentDomainUi.AdminShell do
     default: nil,
     doc: """
     Which sidebar item is highlighted. One of `:overview | :workspaces |
-    :logs | :registry | :snapshots | :templates | :settings`, OR `nil` to
-    derive from `current_path`.
+    :logs | :registry | :snapshots | :templates | :routing | :settings`,
+    OR `nil` to derive from `current_path`.
     """
   )
 
@@ -154,6 +154,11 @@ defmodule EzagentDomainUi.AdminShell do
       # G-1 + G-2 V0 stop-gap (audit 2026-05-23) — AgentTemplate +
       # SessionTemplate Kinds list, read-only.
       %{key: :templates, label: gettext("Templates"), icon: "folder", path: "/admin/templates"},
+      # 2026-05-25 — Routing-rule editor relocated from `/routing`
+      # (workspace activity bar tile) to `/admin/routing` (admin scope).
+      # The page also surfaces the ExternalMirror Bindings projection
+      # across all sessions.
+      %{key: :routing, label: gettext("Routing"), icon: "route", path: "/admin/routing"},
       %{key: :settings, label: gettext("Settings"), icon: "settings", path: "/admin/settings"}
     ]
   end
@@ -198,6 +203,7 @@ defmodule EzagentDomainUi.AdminShell do
       String.starts_with?(path, "/admin/registry") -> :registry
       String.starts_with?(path, "/admin/snapshots") -> :snapshots
       String.starts_with?(path, "/admin/templates") -> :templates
+      String.starts_with?(path, "/admin/routing") -> :routing
       String.starts_with?(path, "/admin/settings") -> :settings
       String.starts_with?(path, "/workspaces") -> :workspaces
       true -> :overview

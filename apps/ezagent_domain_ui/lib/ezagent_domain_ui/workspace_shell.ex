@@ -148,16 +148,21 @@ defmodule EzagentDomainUi.WorkspaceShell do
   end
 
   @doc """
-  List of all 4 Activity Bar items in display order: Sessions /
-  Identities / Routing / Plugins.
+  List of the 3 Activity Bar items in display order: Sessions /
+  Identities / Plugins.
 
   Copy of `EzagentDomainUi.IdeShell.activity_items/0` (nested-shell PR-1).
+
+  2026-05-25 — Routing tile dropped from the workspace activity bar.
+  Routing-rule mutation is admin-scope (moved to `/admin/routing`);
+  per-session routing lives in the Session view-switcher
+  (`EzagentDomainUi.Routing.RoutingView`). Same precedent as the
+  Workspaces tile drop (PR-L).
   """
   def activity_items do
     [
       %{key: :sessions, label: gettext("Sessions"), icon: "message-square", path: "/sessions"},
       %{key: :identities, label: gettext("Identities"), icon: "users", path: "/identities"},
-      %{key: :routing, label: gettext("Routing"), icon: "route", path: "/routing"},
       %{key: :plugins, label: gettext("Plugins"), icon: "puzzle", path: "/plugins"}
     ]
   end
@@ -184,8 +189,11 @@ defmodule EzagentDomainUi.WorkspaceShell do
       String.starts_with?(path, "/sessions") -> :sessions
       String.starts_with?(path, "/workspaces") -> nil
       String.starts_with?(path, "/identities") -> :identities
-      String.starts_with?(path, "/routing") -> :routing
       String.starts_with?(path, "/plugins") -> :plugins
+      # /routing was relocated to /admin/routing on 2026-05-25; the
+      # tile was dropped from the activity bar. Falls through to the
+      # `/admin*` clause below which returns nil (admin paths don't
+      # highlight any workspace activity).
       String.starts_with?(path, "/admin") -> nil
       String.starts_with?(path, "/profile") -> :sessions
       true -> :sessions

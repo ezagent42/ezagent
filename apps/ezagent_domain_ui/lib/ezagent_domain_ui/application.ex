@@ -53,6 +53,13 @@ defmodule EzagentDomainUi.Application do
     :ok = Ezagent.UI.SessionViewRegistry.init()
     :ok = Ezagent.UI.SessionViewRegistry.register(EzagentDomainUi.Pty.TerminalView)
     :ok = Ezagent.UI.SessionViewRegistry.register(EzagentDomainUi.Routing.RoutingView)
+    # 2026-05-25 — ExternalMirror Bindings SessionView. Allen acceptance:
+    # the `/sessions` view-switcher gains a per-session bindings tab as
+    # a peer of Chat / Routing / Terminal. The full bind/unbind/audit
+    # surface stays on the per-session admin LV
+    # (`/admin/sessions/:id/external_mirror`); this tab is the
+    # read-only operator glance + navigate-to-admin link.
+    :ok = Ezagent.UI.SessionViewRegistry.register(EzagentDomainUi.ExternalMirror.View)
     :ok
   end
 end

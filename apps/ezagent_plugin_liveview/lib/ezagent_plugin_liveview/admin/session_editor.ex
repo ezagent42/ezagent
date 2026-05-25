@@ -193,7 +193,13 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
   attr :debug_open, :boolean, default: false
 
   defp setting_dropdown(assigns) do
-    routing_href = "/routing?session=" <> URI.encode_www_form(URI.to_string(assigns.current_session_uri))
+    # 2026-05-25 — /routing relocated to /admin/routing (admin scope).
+    # The setting dropdown's "Routing rules for this session" link
+    # still ships the session URI as a `session=` query arg so the
+    # admin LV can pre-scope its rule list when this hand-off is wired
+    # (today the admin LV doesn't read the arg yet; the link target
+    # update is the half that lands here).
+    routing_href = "/admin/routing?session=" <> URI.encode_www_form(URI.to_string(assigns.current_session_uri))
     assigns = assign(assigns, :routing_href, routing_href)
 
     ~H"""

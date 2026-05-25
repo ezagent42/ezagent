@@ -37,7 +37,7 @@ defmodule EzagentDomainUi.Routing.RoutingViewTest do
   describe "render/1" do
     import Phoenix.LiveViewTest, only: [render_component: 2]
 
-    test "renders header + session URI + link to /routing" do
+    test "renders header + session URI + link to /admin/routing" do
       html =
         render_component(&RoutingView.render/1,
           session_uri: URI.parse("session://default/system/main"),
@@ -46,7 +46,8 @@ defmodule EzagentDomainUi.Routing.RoutingViewTest do
 
       assert html =~ "Session Routing Rules"
       assert html =~ "session://default/system/main"
-      assert html =~ ~s(href="/routing")
+      # 2026-05-25 — /routing relocated to /admin/routing (admin scope).
+      assert html =~ ~s(href="/admin/routing")
     end
 
     test "renders empty state when no rules" do

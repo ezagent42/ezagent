@@ -315,6 +315,98 @@ defmodule Ezagent.ExternalMirror do
     {:ok, filtered}
   end
 
+  @doc """
+  List EVERY `external_mirror_bindings` row visible to the caller, as
+  decorated maps suitable for the admin `/admin/routing` Bindings tab
+  (2026-05-25). Same filter posture as `sessions_for_adapter/2`:
+
+  1. **Admin wildcard** (`:any/:any` bootstrap admin OR a
+     `session/Behavior.ExternalMirror/:any` cap with `workspace_uri:
+     :any`) — sees every row.
+  2. **Workspace-scoped admin** — sees rows where the binding's
+     workspace matches the caller's workspace AND the caller holds a
+     per-session `:list_bindings` cap on that session.
+
+  Each returned row is a map with `:session_uri` (URI struct),
+  `:adapter_id`, `:target_id`, `:bound_by`, `:bound_at`,
+  `:workspace_uri` (URI struct), and `:opts_json` — the same shape
+  the SessionExternalMirrorLive `decorate_bindings/2` accepts minus
+  the per-binding worker stats (the cross-session admin view is a
+  flat list; clicking a row navigates to the per-session detail LV
+  for stats + audit drill-down).
+
+  Read-only: never mutates the table. Callers without `caller_uri` /
+  `caps` in `ctx` get `{:ok, []}` — the LV's `:require_admin` mount
+  already redirected them; this is defence-in-depth.
+  """
+  @type all_binding_row :: %{
+          session_uri: URI.t(),
+          adapter_id: String.t(),
+          target_id: String.t(),
+          bound_by: String.t(),
+          bound_at: DateTime.t(),
+          workspace_uri: URI.t() | nil,
+          opts_json: String.t()
+        }
+  @spec list_all_bindings(caller_ctx()) :: {:ok, [all_binding_row()]}
+  def list_all_bindings(ctx) when is_map(ctx) do
+    rows = safe_list_all_rows()
+
+    filtered =
+      if admin_wildcard?(ctx) do
+        rows
+      else
+        caller_workspace = caller_workspace(ctx)
+
+        rows
+        |> Enum.filter(fn row -> row_in_workspace?(row, caller_workspace) end)
+        |> Enum.filter(fn row -> caller_can_list_bindings?(ctx, row.session_uri) end)
+      end
+
+    {:ok, filtered}
+  end
+
+  defp safe_list_all_rows do
+    BindingRow.list_all()
+    |> Enum.map(&decorate_row/1)
+  rescue
+    _ -> []
+  end
+
+  defp decorate_row(%BindingRow{} = row) do
+    %{
+      session_uri: safe_parse_uri(row.session_uri),
+      adapter_id: row.adapter_id,
+      target_id: row.target_id,
+      bound_by: row.bound_by,
+      bound_at: row.bound_at,
+      workspace_uri: safe_parse_uri(row.workspace_uri),
+      opts_json: row.opts_json
+    }
+  end
+
+  defp safe_parse_uri(nil), do: nil
+
+  defp safe_parse_uri(s) when is_binary(s) do
+    URI.parse(s)
+  rescue
+    _ -> nil
+  end
+
+  defp row_in_workspace?(_row, :any), do: true
+
+  defp row_in_workspace?(%{workspace_uri: %URI{} = ws}, %URI{} = caller_ws) do
+    URI.to_string(ws) == URI.to_string(caller_ws)
+  end
+
+  defp row_in_workspace?(%{session_uri: %URI{} = session_uri}, %URI{} = caller_ws) do
+    # Fallback when workspace_uri wasn't denormalized — derive from
+    # the session URI's workspace segment per SPEC v3 §5.15.
+    session_in_workspace?(session_uri, caller_ws)
+  end
+
+  defp row_in_workspace?(_row, _caller_ws), do: false
+
   # codex r3 HIGH-1 (2026-05-25): does the caller hold a cap that
   # authorizes `:list_bindings` on `session_uri`? Uses the same
   # `Ezagent.Capability.matches?/2` shape `Ezagent.Capability.cap_for_action/3`

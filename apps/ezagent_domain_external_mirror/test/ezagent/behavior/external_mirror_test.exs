@@ -810,6 +810,52 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
 
       assert {:ok, []} = Facade.sessions_for_adapter("mock_publish", foreign_ctx)
     end
+
+    test "list_all_bindings/1 returns decorated rows for admin, [] for foreign caller (2026-05-25 /admin/routing Bindings tab)",
+         %{owner_uri: owner_uri, session_uri: session_uri} do
+      :ok = spawn_owner_and_session(owner_uri, session_uri)
+      owner = owner_ctx(owner_uri)
+      target_id = "tgt-list-all-bindings"
+      MockPublishBinding.register_observer(target_id, self())
+
+      assert {:ok, _} = Facade.bind(session_uri, "mock_publish", target_id, %{}, owner)
+
+      # Admin wildcard sees the binding row.
+      admin_ctx = %{
+        caller: URI.parse("system://bootstrap/default"),
+        caps:
+          MapSet.new([
+            %Ezagent.Capability{
+              kind: :any,
+              behavior: :any,
+              instance: :any,
+              workspace_uri: :any,
+              granted_by: URI.parse("system://bootstrap/default"),
+              granted_at: ~U[2026-01-01 00:00:00Z]
+            }
+          ]),
+        reply: :ignore
+      }
+
+      assert {:ok, admin_rows} = Facade.list_all_bindings(admin_ctx)
+      assert is_list(admin_rows)
+
+      assert Enum.any?(admin_rows, fn row ->
+               row.adapter_id == "mock_publish" and
+                 row.target_id == target_id and
+                 match?(%URI{}, row.session_uri)
+             end)
+
+      # Foreign caller in a different workspace with no caps sees nothing.
+      foreign_ctx = %{
+        caller: URI.parse("entity://user/other-ws/foreigner"),
+        caps: MapSet.new(),
+        reply: :ignore
+      }
+
+      assert {:ok, foreign_rows} = Facade.list_all_bindings(foreign_ctx)
+      refute Enum.any?(foreign_rows, fn row -> row.target_id == target_id end)
+    end
   end
 
   # =========================================================================
