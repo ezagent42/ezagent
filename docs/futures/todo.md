@@ -6,6 +6,13 @@
 
 ## Active follow-ups (post-2026-05-24 batch)
 
+### AdapterRegistry / BindingRegistry `:public` ETS hardening (facade-audit r5 CRIT deferred)
+- **Where:** `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/adapter_registry.ex` + `binding_registry.ex` (both `:public` ETS managed by `EzagentCore.EtsOwner`)
+- **Surfaced by:** PR #334 (facade-audit IMPL) codex r5 — CRITICAL: in-VM caller can `:ets.insert(table, ...)` against either registry, spoofing an adapter/binding pair that the Plugin contract never validated → bypass Grill-5 + bypass `assert_required_callbacks!` + dispatch a fake `:bind` to a non-existent adapter module.
+- **Fix shape (TBD):** convert `:public` → `:protected` (only GenServer owner writes); expose `register/1` API enforced by Plugin.boot only; update ~15 test sites that do direct `:ets.delete*` against these tables to use a sandbox-clear API instead.
+- **Why deferred:** PR #334 was already at codex r5 + the fix touches PR-EM-1 + PR-EM-2 modules — out of facade-audit scope. Same systemic concern earlier flagged for OTHER `:public` ETS registries (Plugin/AgentFlavor/Behavior/Template) per docs/futures/todo "ETS-registries hardening" entry. Worth one combined SPEC + impl.
+- **Priority:** MED — exploitable only by in-VM code (BEAM access already implies trust); production deployment posture treats BEAM access as trusted. Worth fixing pre-multi-tenant GA but not v1 blocker.
+
 ### Facade-auth-model security audit (deferred from PR-EM-3 codex iteration)
 
 - **Where:** `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror.ex` (facade) + `behavior/external_mirror.ex` (action body)
