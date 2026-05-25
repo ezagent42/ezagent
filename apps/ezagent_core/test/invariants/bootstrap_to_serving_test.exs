@@ -38,9 +38,7 @@ defmodule Ezagent.Invariants.BootstrapToServingTest do
 
     test "the bootstrap task documents its D7-9 contract + health-check step" do
       source =
-        File.read!(
-          Path.join(__DIR__, "../../lib/mix/tasks/ezagent.bootstrap.ex")
-        )
+        File.read!(Path.join(__DIR__, "../../lib/mix/tasks/ezagent.bootstrap.ex"))
 
       assert source =~ "Health check",
              "the bootstrap moduledoc must document the health-check step — " <>
@@ -96,6 +94,7 @@ defmodule Ezagent.Invariants.BootstrapToServingTest do
       db_path = Ezagent.Home.path(:db)
 
       assert is_binary(profile_dir) and profile_dir != ""
+
       assert Path.type(profile_dir) == :absolute,
              "EZAGENT_HOME profile dir must be an absolute path"
 

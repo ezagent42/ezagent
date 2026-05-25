@@ -51,12 +51,12 @@ defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
   defp sample_working_copy do
     %{
       agent_slots: [
-        {"backend", URI.parse("template://agent/default/cc-backend")},
-        {"frontend", URI.parse("template://agent/default/cc-frontend")}
+        {"backend", URI.parse("template://agent/system/cc-backend")},
+        {"frontend", URI.parse("template://agent/team-alpha/cc-frontend")}
       ],
       routing_rules: [{{:mention, "backend"}, ["backend"]}],
-      orchestrator_template_uri: URI.parse("template://agent/default/cc-orchestrator"),
-      default_workspace_uri: URI.parse("workspace://default"),
+      orchestrator_template_uri: URI.parse("template://agent/system/cc-orchestrator"),
+      default_workspace_uri: URI.parse("workspace://team-alpha"),
       description: "two-agent team"
     }
   end
@@ -87,7 +87,7 @@ defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
   describe "build_working_copy/4 emits template-shaped slices (via save_template_as/2)" do
     test "emits template://agent URIs + slot-name routing — not live entity://agent URIs" do
       session_uri =
-        URI.parse("session://default/default/bwc-shape-#{System.unique_integer([:positive])}")
+        URI.parse("session://default/team-alpha/bwc-shape-#{System.unique_integer([:positive])}")
 
       working_copy = sample_working_copy()
       _pid = spawn_session_with_working_copy(session_uri, working_copy)
@@ -95,9 +95,9 @@ defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
       assert {:ok, %URI{} = template_uri} =
                Tools.save_template_as("shape-team",
                  session_uri: session_uri,
-                 workspace_uri: URI.parse("workspace://default"),
-                 caller: URI.parse("entity://agent/default/cc_orch"),
-                 caps: caps_3(URI.parse("workspace://default"))
+                 workspace_uri: URI.parse("workspace://team-alpha"),
+                 caller: URI.parse("entity://agent/team-alpha/cc_orch"),
+                 caps: caps_3(URI.parse("workspace://team-alpha"))
                )
 
       assert template_uri.scheme == "template"
@@ -119,14 +119,14 @@ defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
         description: "two-agent team",
         agent_slots:
           Enum.sort([
-            {"backend", URI.parse("template://agent/default/cc-backend")},
-            {"frontend", URI.parse("template://agent/default/cc-frontend")}
+            {"backend", URI.parse("template://agent/system/cc-backend")},
+            {"frontend", URI.parse("template://agent/team-alpha/cc-frontend")}
           ]),
-        orchestrator_template_uri: URI.parse("template://agent/default/cc-orchestrator"),
+        orchestrator_template_uri: URI.parse("template://agent/system/cc-orchestrator"),
         routing_rules: [{{:mention, "backend"}, ["backend"]}],
-        default_workspace_uri: URI.parse("workspace://default"),
+        default_workspace_uri: URI.parse("workspace://team-alpha"),
         parent_template_uri: nil,
-        created_by: URI.parse("entity://agent/default/cc_orch")
+        created_by: URI.parse("entity://agent/team-alpha/cc_orch")
       }
 
       assert uri_hash == SessionTemplate.compute_version_hash(expected_slice),
@@ -141,7 +141,7 @@ defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
       # Chat.template_working_copy/1 → the empty default; the emitted
       # slice has empty agent_slots / routing_rules, not a crash.
       session_uri =
-        URI.parse("session://default/default/bwc-empty-#{System.unique_integer([:positive])}")
+        URI.parse("session://default/team-alpha/bwc-empty-#{System.unique_integer([:positive])}")
 
       :ok = KindSnapshot.delete(URI.to_string(session_uri))
       {:ok, pid} = Ezagent.Kind.spawn(Session, %{uri: session_uri})
@@ -155,9 +155,9 @@ defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
       assert {:ok, %URI{} = template_uri} =
                Tools.save_template_as("empty-team",
                  session_uri: session_uri,
-                 workspace_uri: URI.parse("workspace://default"),
-                 caller: URI.parse("entity://agent/default/cc_orch"),
-                 caps: caps_3(URI.parse("workspace://default"))
+                 workspace_uri: URI.parse("workspace://team-alpha"),
+                 caller: URI.parse("entity://agent/team-alpha/cc_orch"),
+                 caps: caps_3(URI.parse("workspace://team-alpha"))
                )
 
       [_name, uri_hash] =
@@ -169,11 +169,11 @@ defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
       empty_slice = %{
         description: "",
         agent_slots: [],
-        orchestrator_template_uri: URI.parse("template://agent/default/cc-orchestrator"),
+        orchestrator_template_uri: URI.parse("template://agent/system/cc-orchestrator"),
         routing_rules: [],
-        default_workspace_uri: URI.parse("workspace://default"),
+        default_workspace_uri: URI.parse("workspace://team-alpha"),
         parent_template_uri: nil,
-        created_by: URI.parse("entity://agent/default/cc_orch")
+        created_by: URI.parse("entity://agent/team-alpha/cc_orch")
       }
 
       assert uri_hash == SessionTemplate.compute_version_hash(empty_slice)
@@ -185,16 +185,16 @@ defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
       working_copy = sample_working_copy()
 
       session_a =
-        URI.parse("session://default/default/bwc-gate-a-#{System.unique_integer([:positive])}")
+        URI.parse("session://default/team-alpha/bwc-gate-a-#{System.unique_integer([:positive])}")
 
       session_b =
-        URI.parse("session://default/default/bwc-gate-b-#{System.unique_integer([:positive])}")
+        URI.parse("session://default/team-alpha/bwc-gate-b-#{System.unique_integer([:positive])}")
 
       _pid_a = spawn_session_with_working_copy(session_a, working_copy)
       _pid_b = spawn_session_with_working_copy(session_b, working_copy)
 
-      caller = URI.parse("entity://agent/default/cc_orch")
-      ws = URI.parse("workspace://default")
+      caller = URI.parse("entity://agent/team-alpha/cc_orch")
+      ws = URI.parse("workspace://team-alpha")
       caps = caps_3(ws)
 
       assert {:ok, uri_a} =

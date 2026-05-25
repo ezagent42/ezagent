@@ -132,16 +132,16 @@ defmodule EzagentDomainChat.Integration.UpdateAgentTemplateReconcilerTest do
   end
 
   defp create_session_template(name, agent_slots, routing_rules, opts \\ []) do
-    workspace = Keyword.get(opts, :workspace, "default")
+    workspace = Keyword.get(opts, :workspace, "team-alpha")
 
     content = %{
       name: name,
       description: "test team #{name}",
       agent_slots: agent_slots,
       routing_rules: routing_rules,
-      orchestrator_template_uri: URI.parse("template://agent/default/cc-orchestrator"),
+      orchestrator_template_uri: URI.parse("template://agent/system/cc-orchestrator"),
       default_workspace_uri:
-        Keyword.get(opts, :default_workspace_uri, URI.parse("workspace://default")),
+        Keyword.get(opts, :default_workspace_uri, URI.parse("workspace://team-alpha")),
       parent_template_uri: nil,
       version_tag: nil,
       created_by: User.admin_uri(),
@@ -216,7 +216,7 @@ defmodule EzagentDomainChat.Integration.UpdateAgentTemplateReconcilerTest do
     end)
   end
 
-  @default_ws URI.new!("workspace://default")
+  @default_ws URI.new!("workspace://team-alpha")
 
   # ════════════════════════════════════════════════════════════════════
   # update_agent_template — V1-R6 reconciler semantics
@@ -225,8 +225,8 @@ defmodule EzagentDomainChat.Integration.UpdateAgentTemplateReconcilerTest do
   describe "V1-R6 — update_agent_template no-op detect (codex rev-2 HIGH-4)" do
     setup do
       flavor = register_test_flavor()
-      tmpl_a = URI.new!("template://agent/default/uat-r6-a-#{uniq()}")
-      tmpl_b = URI.new!("template://agent/default/uat-r6-b-#{uniq()}")
+      tmpl_a = URI.new!("template://agent/team-alpha/uat-r6-a-#{uniq()}")
+      tmpl_b = URI.new!("template://agent/team-alpha/uat-r6-b-#{uniq()}")
       :ok = create_agent_template(tmpl_a, agent_template_content(flavor, "config-a"))
       :ok = create_agent_template(tmpl_b, agent_template_content(flavor, "config-b"))
 
@@ -299,7 +299,7 @@ defmodule EzagentDomainChat.Integration.UpdateAgentTemplateReconcilerTest do
   describe "V1-R6 — update_agent_template structured errors (no saga wrap)" do
     test "an absent slot surfaces :no_such_slot (no :update_aborted wrapper)" do
       flavor = register_test_flavor()
-      tmpl = URI.new!("template://agent/default/uat-r6-none-#{uniq()}")
+      tmpl = URI.new!("template://agent/team-alpha/uat-r6-none-#{uniq()}")
       :ok = create_agent_template(tmpl, agent_template_content(flavor, "x"))
       st = create_session_template("uat-r6-none-team-#{uniq()}", [], [])
       owner = full_template_owner(@default_ws)
@@ -330,8 +330,8 @@ defmodule EzagentDomainChat.Integration.UpdateAgentTemplateReconcilerTest do
   describe "add_agent_slot reconciler semantics" do
     setup do
       flavor = register_test_flavor()
-      tmpl = URI.new!("template://agent/default/uat-add-#{uniq()}")
-      tmpl_other = URI.new!("template://agent/default/uat-add-other-#{uniq()}")
+      tmpl = URI.new!("template://agent/team-alpha/uat-add-#{uniq()}")
+      tmpl_other = URI.new!("template://agent/team-alpha/uat-add-other-#{uniq()}")
       :ok = create_agent_template(tmpl, agent_template_content(flavor, "x"))
       :ok = create_agent_template(tmpl_other, agent_template_content(flavor, "other"))
 
@@ -407,7 +407,7 @@ defmodule EzagentDomainChat.Integration.UpdateAgentTemplateReconcilerTest do
   describe "remove_agent_slot reconciler semantics" do
     test "an absent slot returns {:ok, :already_removed} (idempotent no-op)" do
       flavor = register_test_flavor()
-      tmpl = URI.new!("template://agent/default/uat-rm-#{uniq()}")
+      tmpl = URI.new!("template://agent/team-alpha/uat-rm-#{uniq()}")
       :ok = create_agent_template(tmpl, agent_template_content(flavor, "x"))
       _ = tmpl
 
@@ -434,7 +434,7 @@ defmodule EzagentDomainChat.Integration.UpdateAgentTemplateReconcilerTest do
 
     test "removing a present slot terminates the worker + drops the slot tuple" do
       flavor = register_test_flavor()
-      tmpl = URI.new!("template://agent/default/uat-rmp-#{uniq()}")
+      tmpl = URI.new!("template://agent/team-alpha/uat-rmp-#{uniq()}")
       :ok = create_agent_template(tmpl, agent_template_content(flavor, "x"))
 
       st = create_session_template("uat-rmp-team-#{uniq()}", [], [])
@@ -481,8 +481,8 @@ defmodule EzagentDomainChat.Integration.UpdateAgentTemplateReconcilerTest do
   describe "V1-R6 — partial-routing convergence (replaces HIGH-1 r3/r4/r5)" do
     test "a routing-step failure returns {:partial, _}; the next pass converges" do
       flavor = register_test_flavor()
-      tmpl_a = URI.new!("template://agent/default/uat-r6r-a-#{uniq()}")
-      tmpl_b = URI.new!("template://agent/default/uat-r6r-b-#{uniq()}")
+      tmpl_a = URI.new!("template://agent/team-alpha/uat-r6r-a-#{uniq()}")
+      tmpl_b = URI.new!("template://agent/team-alpha/uat-r6r-b-#{uniq()}")
       :ok = create_agent_template(tmpl_a, agent_template_content(flavor, "config-a"))
       :ok = create_agent_template(tmpl_b, agent_template_content(flavor, "config-b"))
 

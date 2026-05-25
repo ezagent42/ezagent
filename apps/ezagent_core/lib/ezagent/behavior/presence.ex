@@ -53,5 +53,4 @@ defmodule Ezagent.Behavior.Presence do
   def data_owner(%URI{} = entity_uri), do: Ezagent.URI.instance(entity_uri)
   def data_owner(:any), do: :any
   def data_owner(_), do: :no_owner
-
 end

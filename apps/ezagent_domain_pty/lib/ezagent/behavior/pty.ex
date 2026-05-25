@@ -8,7 +8,7 @@ defmodule Ezagent.Behavior.Pty do
   The previous synthetic `pty-input://default` singleton is dissolved.
   PTY input now dispatches to the target agent's own URI:
 
-      entity://agent/default/cc_<name>?action=pty.write   args: %{bytes: "..."}
+      entity://agent/team-alpha/cc_<name>?action=pty.write   args: %{bytes: "..."}
 
   The Agent Kind hosts this Behavior; `ctx.self_uri` (injected by
   `Ezagent.Kind.Runtime`) is the agent URI used to locate the

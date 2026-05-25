@@ -79,7 +79,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentSandboxCredentialsTest do
   alias Ezagent.Entity.User
   alias EzagentPluginCc.BridgeRegistry
 
-  @workspace_uri URI.parse("workspace://default")
+  @workspace_uri URI.parse("workspace://team-alpha")
 
   @uv_path System.find_executable("uv")
   @python_path System.find_executable("python3")
@@ -248,7 +248,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentSandboxCredentialsTest do
         File.rm(status_file)
       end)
 
-      agent_uri_str = "entity://agent/default/cc_sbxcreds-#{uniq()}"
+      agent_uri_str = "entity://agent/team-alpha/cc_sbxcreds-#{uniq()}"
       agent_uri = URI.parse(agent_uri_str)
 
       tmpl = %{
@@ -335,7 +335,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentSandboxCredentialsTest do
                "Status: #{File.exists?(status_file) && File.read!(status_file) || "(no status file yet)"}"
 
       # ---- 9. session + admin, join both
-      session_uri = URI.parse("session://default/default/sbxcreds-#{uniq()}")
+      session_uri = URI.parse("session://default/team-alpha/sbxcreds-#{uniq()}")
       admin_uri = User.admin_uri()
 
       {:ok, _} = Ezagent.SpawnRegistry.spawn(session_uri)

@@ -3,7 +3,7 @@ defmodule Ezagent.PendingDeliveryTest do
   alias Ezagent.PendingDelivery
 
   setup do
-    uri = "entity://agent/default/test_pending-test-#{System.unique_integer([:positive])}"
+    uri = "entity://agent/team-alpha/test_pending-test-#{System.unique_integer([:positive])}"
     {:ok, uri: uri}
   end
 

@@ -33,9 +33,9 @@ defmodule Ezagent.Routing.ResolverMentionGatedTest do
     {:ok, table: test_table}
   end
 
-  # session://default/default/main — workspace is `default`.
-  @session URI.new!("session://default/default/main")
-  @sender "entity://user/default/admin"
+  # session://default/system/main — workspace is `default`.
+  @session URI.new!("session://default/team-alpha/main")
+  @sender "entity://user/team-alpha/admin"
 
   defp msg(text, mentions \\ []) do
     Message.new(URI.new!(@sender), %{text: text, attachments: []},
@@ -56,7 +56,7 @@ defmodule Ezagent.Routing.ResolverMentionGatedTest do
       assert Resolver.magic_token?("$session_members")
       assert Resolver.magic_token?("$session_users")
       assert Resolver.magic_token?("$mentions")
-      refute Resolver.magic_token?("entity://user/default/admin")
+      refute Resolver.magic_token?("entity://user/team-alpha/admin")
       refute Resolver.magic_token?(:anything)
     end
 
@@ -72,14 +72,14 @@ defmodule Ezagent.Routing.ResolverMentionGatedTest do
 
       members = [
         URI.new!(@sender),
-        URI.new!("entity://user/default/bob"),
-        URI.new!("entity://agent/default/cc_echo")
+        URI.new!("entity://user/team-alpha/bob"),
+        URI.new!("entity://agent/team-alpha/cc_echo")
       ]
 
       result = Resolver.resolve(msg("hi"), @session, members)
       # admin is sender (excluded), cc_echo is an Agent (not a User);
       # only bob survives.
-      assert strs(result) == ["entity://user/default/bob"]
+      assert strs(result) == ["entity://user/team-alpha/bob"]
     end
   end
 
@@ -87,7 +87,7 @@ defmodule Ezagent.Routing.ResolverMentionGatedTest do
     test "expands to validly-mentioned members only", %{table: t} do
       :ok = RoutingRegistry.put(t, Matcher.always(), ["$mentions"])
 
-      agent = "entity://agent/default/cc_echo"
+      agent = "entity://agent/team-alpha/cc_echo"
 
       members = [
         URI.new!(@sender),
@@ -101,7 +101,7 @@ defmodule Ezagent.Routing.ResolverMentionGatedTest do
     test "no mention → empty (mention is the gate)", %{table: t} do
       :ok = RoutingRegistry.put(t, Matcher.always(), ["$mentions"])
 
-      members = [URI.new!(@sender), URI.new!("entity://agent/default/cc_echo")]
+      members = [URI.new!(@sender), URI.new!("entity://agent/team-alpha/cc_echo")]
       assert Resolver.resolve(msg("hey", []), @session, members) == []
     end
   end
@@ -117,7 +117,10 @@ defmodule Ezagent.Routing.ResolverMentionGatedTest do
     test "(a) non-member is dropped" do
       # cc_echo is mentioned but is NOT in the members list.
       members = [URI.new!(@sender)]
-      result = Resolver.resolve(msg("hi", ["entity://agent/default/cc_echo"]), @session, members)
+
+      result =
+        Resolver.resolve(msg("hi", ["entity://agent/team-alpha/cc_echo"]), @session, members)
+
       assert result == []
     end
 
@@ -133,7 +136,7 @@ defmodule Ezagent.Routing.ResolverMentionGatedTest do
     test "(c) a different session's URI is dropped" do
       # A session:// URI for a different session — not a member of
       # THIS session, and (if it were) cross-session.
-      other = "session://default/default/other"
+      other = "session://default/team-alpha/other"
       members = [URI.new!(@sender), URI.new!(other)]
       result = Resolver.resolve(msg("hi", [other]), @session, members)
       assert result == []
@@ -155,10 +158,10 @@ defmodule Ezagent.Routing.ResolverMentionGatedTest do
     # binary path ran the strict parser. It must be dropped even
     # when it is present in `members`.
     test "(e) a %URI{} agent member with an extra path segment is dropped" do
-      # entity://agent/default/cc_x/extra — 4-segment, reserved
+      # entity://agent/team-alpha/cc_x/extra — 4-segment, reserved
       # sub-resource position. `URI.new!/1` builds it happily; the
       # strict `Ezagent.URI.parse!/1` rejects it.
-      bad = %URI{scheme: "entity", host: "agent", path: "/default/cc_x/extra"}
+      bad = %URI{scheme: "entity", host: "agent", path: "/team-alpha/cc_x/extra"}
       m = Message.new(URI.new!(@sender), %{text: "hi", attachments: []}, mentions: [bad])
       # Present in members — the membership check alone would have
       # accepted it; the strict shape check is what drops it.
@@ -167,7 +170,7 @@ defmodule Ezagent.Routing.ResolverMentionGatedTest do
     end
 
     test "(f) a %URI{} user member with an extra path segment is dropped" do
-      bad = %URI{scheme: "entity", host: "user", path: "/default/bob/extra"}
+      bad = %URI{scheme: "entity", host: "user", path: "/team-alpha/bob/extra"}
       m = Message.new(URI.new!(@sender), %{text: "hi", attachments: []}, mentions: [bad])
       members = [URI.new!(@sender), bad]
       assert Resolver.resolve(m, @session, members) == []
@@ -193,9 +196,9 @@ defmodule Ezagent.Routing.ResolverMentionGatedTest do
     end
 
     test "in-workspace User member IS delivered (positive control)" do
-      members = [URI.new!(@sender), URI.new!("entity://user/default/bob")]
+      members = [URI.new!(@sender), URI.new!("entity://user/team-alpha/bob")]
       result = Resolver.resolve(msg("hi"), @session, members)
-      assert strs(result) == ["entity://user/default/bob"]
+      assert strs(result) == ["entity://user/team-alpha/bob"]
     end
 
     # codex HIGH-1: an extra-segment %URI{} User struct sitting in
@@ -203,7 +206,7 @@ defmodule Ezagent.Routing.ResolverMentionGatedTest do
     # not from `message.mentions`) must also be dropped — the strict
     # shape validation applies to BOTH tokens.
     test "(g) a %URI{} user member with an extra path segment receives NOTHING" do
-      bad = %URI{scheme: "entity", host: "user", path: "/default/bob/extra"}
+      bad = %URI{scheme: "entity", host: "user", path: "/team-alpha/bob/extra"}
       members = [URI.new!(@sender), bad]
       result = Resolver.resolve(msg("hi"), @session, members)
       assert result == []
@@ -212,13 +215,13 @@ defmodule Ezagent.Routing.ResolverMentionGatedTest do
 
   describe "valid_member?/2 directly" do
     test "true for an in-workspace, registered member" do
-      bob = URI.new!("entity://user/default/bob")
+      bob = URI.new!("entity://user/team-alpha/bob")
       assert Resolver.valid_member?(bob, @session, [bob])
     end
 
     test "false for a non-member" do
       refute Resolver.valid_member?(
-               URI.new!("entity://user/default/bob"),
+               URI.new!("entity://user/team-alpha/bob"),
                @session,
                []
              )
@@ -230,7 +233,7 @@ defmodule Ezagent.Routing.ResolverMentionGatedTest do
     end
 
     test "false for a cross-session member" do
-      other_session = URI.new!("session://default/default/other")
+      other_session = URI.new!("session://default/team-alpha/other")
       refute Resolver.valid_member?(other_session, @session, [other_session])
     end
 
@@ -244,8 +247,8 @@ defmodule Ezagent.Routing.ResolverMentionGatedTest do
     # strict `Ezagent.URI.parse!/1` validation applies to BOTH input
     # forms, not just binaries.
     test "false for a %URI{} struct with an extra path segment (binary + struct parity)" do
-      bad_str = "entity://agent/default/cc_x/extra"
-      bad_struct = %URI{scheme: "entity", host: "agent", path: "/default/cc_x/extra"}
+      bad_str = "entity://agent/team-alpha/cc_x/extra"
+      bad_struct = %URI{scheme: "entity", host: "agent", path: "/team-alpha/cc_x/extra"}
 
       # Both forms present in members — only the strict shape check
       # rejects them.
@@ -261,7 +264,7 @@ defmodule Ezagent.Routing.ResolverMentionGatedTest do
     test "a peer session:// URI is cross-session → invalid (SPEC §6.4 c)" do
       # Even in the same workspace and even if it is in `members`, a
       # session:// URL naming a DIFFERENT session is cross-session.
-      peer = URI.new!("session://default/default/peer")
+      peer = URI.new!("session://default/team-alpha/peer")
       refute Resolver.valid_member?(peer, @session, [peer])
     end
 

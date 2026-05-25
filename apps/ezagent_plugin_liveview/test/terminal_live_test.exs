@@ -51,7 +51,7 @@ defmodule EzagentPluginLiveview.TerminalLiveTest do
     test "user scheme URI redirects (only entity://agent/... accepted)", %{conn: conn} do
       # User URI is well-formed but wrong host/scheme combo for
       # TerminalLive (which is agent-only).
-      bad = URI.encode_www_form("entity://user/default/admin")
+      bad = URI.encode_www_form("entity://user/team-alpha/admin")
 
       assert {:error, {:live_redirect, %{to: "/identities"}}} =
                live(conn, "/identities/agents/#{bad}/terminal")
@@ -63,7 +63,7 @@ defmodule EzagentPluginLiveview.TerminalLiveTest do
       # Well-formed agent URI but no Kind spawned at it.
       ghost =
         URI.parse(
-          "entity://agent/default/cc_ghost-#{System.unique_integer([:positive])}"
+          "entity://agent/team-alpha/cc_ghost-#{System.unique_integer([:positive])}"
         )
 
       encoded = URI.encode_www_form(URI.to_string(ghost))
@@ -91,7 +91,7 @@ defmodule EzagentPluginLiveview.TerminalLiveTest do
       # is offered when there's no PTY behind it.
       agent_uri =
         URI.parse(
-          "entity://agent/default/echo_t#{System.unique_integer([:positive])}"
+          "entity://agent/team-alpha/echo_t#{System.unique_integer([:positive])}"
         )
 
       {:ok, _pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
@@ -112,7 +112,7 @@ defmodule EzagentPluginLiveview.TerminalLiveTest do
       # `apps/ezagent_domain_pty/test/...` server tests.
       agent_uri =
         URI.parse(
-          "entity://agent/default/cc_term-#{System.unique_integer([:positive])}"
+          "entity://agent/team-alpha/cc_term-#{System.unique_integer([:positive])}"
         )
 
       {:ok, _pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
@@ -139,7 +139,7 @@ defmodule EzagentPluginLiveview.TerminalLiveTest do
     test "pty_resize is a no-op (matches admin_live convention)", %{conn: conn} do
       agent_uri =
         URI.parse(
-          "entity://agent/default/cc_resize-#{System.unique_integer([:positive])}"
+          "entity://agent/team-alpha/cc_resize-#{System.unique_integer([:positive])}"
         )
 
       {:ok, _pid} = Ezagent.SpawnRegistry.spawn(agent_uri)

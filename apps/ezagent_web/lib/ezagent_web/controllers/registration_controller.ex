@@ -46,8 +46,7 @@ defmodule EzagentWeb.RegistrationController do
   end
 
   def complete_new(conn, _params) do
-    case {get_session(conn, :pending_registration_email),
-          get_session(conn, :pending_workspace)} do
+    case {get_session(conn, :pending_registration_email), get_session(conn, :pending_workspace)} do
       {email, workspace} when is_binary(email) and is_binary(workspace) ->
         # PR-B 2026-05-24: workspace MUST be set by the onboarding
         # controller. If it isn't, redirect back to onboarding.
@@ -64,8 +63,7 @@ defmodule EzagentWeb.RegistrationController do
   end
 
   def complete_create(conn, %{"handle" => handle, "display_name" => display_name}) do
-    case {get_session(conn, :pending_registration_email),
-          get_session(conn, :pending_workspace)} do
+    case {get_session(conn, :pending_registration_email), get_session(conn, :pending_workspace)} do
       {email, workspace} when is_binary(email) and is_binary(workspace) ->
         # Codex PR-B round-1 HIGH-2: REVALIDATE at registration time
         # that the workspace still exists AND accepts this email.

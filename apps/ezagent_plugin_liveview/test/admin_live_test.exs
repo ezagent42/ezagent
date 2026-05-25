@@ -48,7 +48,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
     {:ok, _lv, html} = live(conn, "/sessions")
 
     # Section header
-    assert html =~ "session://default/default/main"
+    assert html =~ "session://default/system/main"
     # admin URI listed
     assert html =~ "entity://user/system/admin"
     # admin is online (boot post-spawn dispatched chat/join)
@@ -86,13 +86,13 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
     assert wait_until_html(lv, admin_text)
 
     # Simulate an agent reply landing via the chat_message broadcast.
-    agent_uri = URI.new!("entity://agent/default/test_test-#{System.unique_integer([:positive])}")
+    agent_uri = URI.new!("entity://agent/team-alpha/test_test-#{System.unique_integer([:positive])}")
     agent_msg = Ezagent.Message.new(agent_uri, %{text: "agent reply test", attachments: []})
 
     Phoenix.PubSub.broadcast(
       EzagentCore.PubSub,
-      Ezagent.Behavior.Chat.session_events_topic(URI.new!("session://default/default/main")),
-      {:chat_message, URI.new!("session://default/default/main"), agent_msg}
+      Ezagent.Behavior.Chat.session_events_topic(URI.new!("session://default/system/main")),
+      {:chat_message, URI.new!("session://default/system/main"), agent_msg}
     )
 
     assert wait_until_html(lv, "agent reply test")
@@ -116,7 +116,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
   end
 
   test "Load older button paginates history (Phase 5 PR 5 invariant)", %{conn: conn} do
-    session_uri = URI.new!("session://default/default/main")
+    session_uri = URI.new!("session://default/system/main")
     base = ~U[2026-05-17 09:00:00.000000Z]
 
     for i <- 1..100 do
@@ -187,7 +187,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
       {:ok, lv, _html} = live(conn, "/sessions")
 
       render_hook(lv, "switch_to_pty_for_agent", %{
-        "agent" => "entity://agent/default/cc_demo"
+        "agent" => "entity://agent/team-alpha/cc_demo"
       })
 
       html = render(lv)
@@ -214,12 +214,12 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
     # is cross-flavor — `Ezagent.Domain.Pty.alive?/1` for ANY member —
     # so we explicitly start a Domain.Pty.Server in test_mode below.
     test "terminal icon click flips the rendered view to TerminalView (V1 UI fix)", %{conn: conn} do
-      session_uri = URI.new!("session://default/default/main")
+      session_uri = URI.new!("session://default/system/main")
 
       # Spawn a real cc agent + start its PTY sidecar + join it as a
       # member so TerminalView applies.
       name = "cc_demo-uifix-#{System.unique_integer([:positive])}"
-      agent_uri = URI.parse("entity://agent/default/#{name}")
+      agent_uri = URI.parse("entity://agent/team-alpha/#{name}")
       {:ok, _kind_pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
       {:ok, _pty_pid} = Ezagent.Domain.Pty.start(agent_uri, %{cwd: "/tmp", test_mode: true})
       on_exit(fn -> Ezagent.Domain.Pty.stop(agent_uri) end)
@@ -277,9 +277,9 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
     # "Chat"; clicking it MUST also re-resolve `:view_module`, not
     # just flip `:current_view`.
     test "switch_view to :pty flips the rendered view to TerminalView", %{conn: conn} do
-      session_uri = URI.new!("session://default/default/main")
+      session_uri = URI.new!("session://default/system/main")
       name = "cc_demo-switchview-#{System.unique_integer([:positive])}"
-      agent_uri = URI.parse("entity://agent/default/#{name}")
+      agent_uri = URI.parse("entity://agent/team-alpha/#{name}")
       {:ok, _kind_pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
       {:ok, _pty_pid} = Ezagent.Domain.Pty.start(agent_uri, %{cwd: "/tmp", test_mode: true})
       on_exit(fn -> Ezagent.Domain.Pty.stop(agent_uri) end)
@@ -382,7 +382,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
     # the unified list and the modal closes.
     test "invite_member with a valid entity → member added + modal closes", %{conn: conn} do
       name = "cc_demo-invite-#{System.unique_integer([:positive])}"
-      agent_uri = URI.parse("entity://agent/default/#{name}")
+      agent_uri = URI.parse("entity://agent/team-alpha/#{name}")
       {:ok, _kind_pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
 
       {:ok, lv, _html} = live(conn, "/sessions")
@@ -410,7 +410,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
     # A hand-tampered out-of-workspace URI is rejected with a flash and
     # is NEVER dispatched (the entity does not become a member).
     test "invite_member with an out-of-workspace URI → flash, NOT dispatched", %{conn: conn} do
-      # session://default/default/main lives in workspace `default`; a
+      # session://default/system/main lives in workspace `default`; a
       # URI whose workspace segment is `otherws` fails the shared
       # `UriOptions.valid_for?/4` workspace check even for a system
       # caller (a picker field is scoped to ONE workspace).
@@ -436,13 +436,13 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
     # MapSet) is denied by CapBAC.
     test "invite_member surfacing :unauthorized → distinct flash, no silent drop", %{conn: _conn} do
       name = "cc_demo-unauth-#{System.unique_integer([:positive])}"
-      agent_uri = URI.parse("entity://agent/default/#{name}")
+      agent_uri = URI.parse("entity://agent/team-alpha/#{name}")
       {:ok, _kind_pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
 
       # A non-admin caller in workspace `default` (same workspace as
-      # session://default/default/main, so the denial is :unauthorized,
+      # session://default/system/main, so the denial is :unauthorized,
       # not :cross_workspace_denied) with NO caps.
-      non_admin = "entity://user/default/tester-#{System.unique_integer([:positive])}"
+      non_admin = "entity://user/team-alpha/tester-#{System.unique_integer([:positive])}"
 
       conn =
         Phoenix.ConnTest.build_conn()

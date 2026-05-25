@@ -23,14 +23,14 @@ defmodule Ezagent.Behavior.CurlAgentTest do
           model: "gpt-4o-mini",
           system_prompt: "You are pirate.",
           max_history: 10,
-          owner_uri: URI.parse("entity://user/default/alice")
+          owner_uri: URI.parse("entity://user/team-alpha/alice")
         })
 
       assert slice.provider == "openai"
       assert slice.model == "gpt-4o-mini"
       assert slice.system_prompt == "You are pirate."
       assert slice.max_history == 10
-      assert URI.to_string(slice.owner_uri) == "entity://user/default/alice"
+      assert URI.to_string(slice.owner_uri) == "entity://user/team-alpha/alice"
     end
   end
 
@@ -69,7 +69,7 @@ defmodule Ezagent.Behavior.CurlAgentTest do
         system_prompt: "concise",
         max_history: 5,
         # Deliberately try to change owner via configure — must be ignored.
-        owner_uri: URI.parse("entity://user/default/attacker")
+        owner_uri: URI.parse("entity://user/team-alpha/attacker")
       }
 
       assert {:ok, new_slice, %{ok: true}} = CurlAgent.invoke(:configure, slice, args, %{})

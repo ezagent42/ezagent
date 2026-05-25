@@ -125,7 +125,9 @@ defmodule Ezagent.TestSupport.PostInitBehaviorA do
 
   @impl Ezagent.Behavior
   def handle_continue(:run_a, slice, _ctx) do
-    if tracker = slice[:tracker], do: Ezagent.TestSupport.OrderTracker.record(tracker, :post_init_a)
+    if tracker = slice[:tracker],
+      do: Ezagent.TestSupport.OrderTracker.record(tracker, :post_init_a)
+
     {:ok, %{slice | ran: true}}
   end
 end
@@ -163,7 +165,9 @@ defmodule Ezagent.TestSupport.PostInitBehaviorB do
 
   @impl Ezagent.Behavior
   def handle_continue(:run_b, slice, _ctx) do
-    if tracker = slice[:tracker], do: Ezagent.TestSupport.OrderTracker.record(tracker, :post_init_b)
+    if tracker = slice[:tracker],
+      do: Ezagent.TestSupport.OrderTracker.record(tracker, :post_init_b)
+
     {:ok, %{slice | ran: true}}
   end
 end

@@ -34,7 +34,10 @@ defmodule Mix.Tasks.Ezagent.Caps.Audit do
     miss_count = Enum.count(rows, &(&1.cap_subjects? and not &1.data_owner?))
 
     Mix.shell().info("")
-    Mix.shell().info("Summary: #{length(rows)} Behavior modules, #{miss_count} missing data_owner/1.")
+
+    Mix.shell().info(
+      "Summary: #{length(rows)} Behavior modules, #{miss_count} missing data_owner/1."
+    )
 
     if strict? and miss_count > 0 do
       Mix.raise("--strict mode: #{miss_count} Behavior(s) missing data_owner/1")
@@ -55,6 +58,7 @@ defmodule Mix.Tasks.Ezagent.Caps.Audit do
 
   defp behavior_module?(module) when is_atom(module) do
     s = Atom.to_string(module)
+
     String.starts_with?(s, "Elixir.Ezagent.Behavior.") or
       String.contains?(s, ".Behavior.")
   end
@@ -87,7 +91,11 @@ defmodule Mix.Tasks.Ezagent.Caps.Audit do
 
   defp print_table(rows) do
     Mix.shell().info(String.duplicate("=", 90))
-    Mix.shell().info(:io_lib.format("~-60s ~-10s ~-15s", ["Behavior module", "caps?", "data_owner?"]))
+
+    Mix.shell().info(
+      :io_lib.format("~-60s ~-10s ~-15s", ["Behavior module", "caps?", "data_owner?"])
+    )
+
     Mix.shell().info(String.duplicate("-", 90))
 
     Enum.each(rows, fn row ->

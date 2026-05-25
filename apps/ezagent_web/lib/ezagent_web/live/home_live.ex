@@ -15,7 +15,7 @@ defmodule EzagentWeb.HomeLive do
 
   ## Phase 8c PR-J context
 
-  Before PR-J, `session://default/default/main` was a static supervisor child of
+  Before PR-J, `session://default/system/main` was a static supervisor child of
   `EzagentDomainChat.Application` — hardcoded outside the canonical
   creation flow (`Session.spawn_from_template/2` / `create_session/2`).
   That bypass forced two boot-time workarounds (workspace bind +
@@ -28,9 +28,10 @@ defmodule EzagentWeb.HomeLive do
   Allen's brief 2026-05-20: "99% of users just press one button". The
   form pre-fills "main" so the default flow is literally one click.
   Power users can pick a different name. No workspace picker yet —
-  every new session lands on `workspace://default` per the canonical
-  binding. Future enhancement: workspace selector when multi-workspace
-  becomes a meaningful surface.
+  the wizard's session is bound to the admin's structural workspace
+  (`workspace://system` per SPEC #324), so the single admin flow
+  doesn't need a picker. Tenant onboarding goes through a separate
+  magic-link flow that creates the tenant's own workspace.
   """
   use EzagentWeb, :live_view
 
@@ -102,7 +103,7 @@ defmodule EzagentWeb.HomeLive do
   # Echo's :receive action emits a chat reply (PR-J), so the user
   # gets a working ping-pong loop out of the box.
   defp join_echo_agent(session_uri, caller_uri) do
-    echo_uri = URI.parse("entity://agent/default/echo_default")
+    echo_uri = URI.parse("entity://agent/system/echo_default")
     # Make sure the echo Kind is live (spawn is idempotent — returns
     # `{:error, {:already_started, _}}` if already up). Spawn happens
     # in the echo plugin's Application.start; this is a defensive
@@ -179,7 +180,11 @@ defmodule EzagentWeb.HomeLive do
                 class="w-full px-3 py-2 text-sm bg-white dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700 rounded-md text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-zinc-500 dark:focus:border-zinc-500"
               />
               <p class="mt-1 text-xs text-zinc-500">
-                {gettext("Creates")} <span class="font-mono">session://default/default/<span id="short-name-preview">{@form[:short_name].value}</span></span> {gettext("bound to")} <span class="font-mono">workspace://default</span>.
+                {gettext("Creates")}
+                <span class="font-mono">
+                  session://default/system/<span id="short-name-preview">{@form[:short_name].value}</span>
+                </span>
+                {gettext("bound to")} <span class="font-mono">workspace://system</span>.
               </p>
             </div>
 
@@ -197,7 +202,10 @@ defmodule EzagentWeb.HomeLive do
               <span class="text-xs text-zinc-700 dark:text-zinc-300">
                 {gettext("Include echo demo agent")}
                 <span class="block text-zinc-500">
-                  {gettext("Adds")} <span class="font-mono">entity://agent/default/echo_default</span> {gettext("as a session member so you can verify the chat round-trip works.")}
+                  {gettext("Adds")}
+                  <span class="font-mono">entity://agent/system/echo_default</span> {gettext(
+                    "as a session member so you can verify the chat round-trip works."
+                  )}
                 </span>
               </span>
             </label>

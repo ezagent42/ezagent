@@ -6,17 +6,17 @@ defmodule EzagentWeb.MagicLinkControllerTest do
   test "consuming a token for an existing user logs them in", %{conn: conn} do
     {:ok, _} =
       Profile.upsert(%{
-        entity_uri: "entity://user/default/known",
+        entity_uri: "entity://user/team-alpha/known",
         display_name: "Known",
         email: "known@good.com"
       })
 
-    {:ok, _} = Ezagent.Users.create("entity://user/default/known", nil, [])
+    {:ok, _} = Ezagent.Users.create("entity://user/team-alpha/known", nil, [])
     {:ok, raw} = MagicLinkToken.mint("known@good.com")
 
     conn = get(conn, "/auth/magic/#{raw}")
     assert redirected_to(conn) == "/sessions"
-    assert get_session(conn, :current_entity_uri) == "entity://user/default/known"
+    assert get_session(conn, :current_entity_uri) == "entity://user/team-alpha/known"
   end
 
   test "consuming a token for a new email starts onboarding (PR-B SPEC v2)", %{conn: conn} do
@@ -62,12 +62,12 @@ defmodule EzagentWeb.MagicLinkControllerTest do
     # magic link).
     {:ok, _} =
       Profile.upsert(%{
-        entity_uri: "entity://user/default/already-registered-target",
+        entity_uri: "entity://user/team-alpha/already-registered-target",
         display_name: "Target",
         email: "already-registered@good.com"
       })
 
-    {:ok, _} = Ezagent.Users.create("entity://user/default/already-registered-target", nil, [])
+    {:ok, _} = Ezagent.Users.create("entity://user/team-alpha/already-registered-target", nil, [])
 
     {:ok, raw} = MagicLinkToken.mint("already-registered@good.com")
 

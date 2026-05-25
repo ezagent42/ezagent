@@ -307,11 +307,23 @@ defmodule Ezagent.Behavior.Sandbox do
         end
       rescue
         error ->
-          log_cleanup_failure(self_uri, config_dir, template_class, {:rescue, error, __STACKTRACE__})
+          log_cleanup_failure(
+            self_uri,
+            config_dir,
+            template_class,
+            {:rescue, error, __STACKTRACE__}
+          )
+
           {:error, {:rescue, error}}
       catch
         kind, reason ->
-          log_cleanup_failure(self_uri, config_dir, template_class, {kind, reason, __STACKTRACE__})
+          log_cleanup_failure(
+            self_uri,
+            config_dir,
+            template_class,
+            {kind, reason, __STACKTRACE__}
+          )
+
           {:error, {kind, reason}}
       end
     else
@@ -393,5 +405,4 @@ defmodule Ezagent.Behavior.Sandbox do
   def data_owner(%URI{} = entity_uri), do: Ezagent.URI.instance(entity_uri)
   def data_owner(:any), do: :any
   def data_owner(_), do: :no_owner
-
 end

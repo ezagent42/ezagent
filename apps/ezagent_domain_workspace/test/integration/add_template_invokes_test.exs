@@ -8,7 +8,7 @@ defmodule Ezagent.Integration.AddTemplateInvokesTest do
 
   ## The bug this test prevents (Allen V1 acceptance fail)
 
-  Operator created `entity://agent/default/cc_demo` via
+  Operator created `entity://agent/team-alpha/cc_demo` via
   `AgentNewLive`. The UI showed "Not running" indefinitely because:
   1. `AgentNewLive.handle_event("create_agent")` called `Workspace
      .add_template/3` to register `cc.agent` in `session_templates`

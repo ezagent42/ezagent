@@ -27,7 +27,7 @@ defmodule Ezagent.TemplateCapsTest do
 
   Phase 9 PR-3 (SPEC v3 §4): template-kind caps are workspace-
   scoped same as session caps; the helper threads
-  `workspace_uri: workspace://default` through both sides.
+  `workspace_uri: workspace://team-alpha` through both sides.
   """
 
   use ExUnit.Case, async: true
@@ -55,7 +55,7 @@ defmodule Ezagent.TemplateCapsTest do
 
   describe "template:read cap" do
     test "matches when needed action is template:read on the granted instance" do
-      template_uri = URI.parse("template://session/default/code-review@abc123")
+      template_uri = URI.parse("template://session/team-alpha/code-review@abc123")
       c = template_cap(:read, template_uri)
 
       n = needed_template_action(:read, template_uri)
@@ -63,7 +63,7 @@ defmodule Ezagent.TemplateCapsTest do
     end
 
     test "does NOT match template:write needed (read is strictly narrower)" do
-      template_uri = URI.parse("template://session/default/code-review@abc123")
+      template_uri = URI.parse("template://session/team-alpha/code-review@abc123")
       c = template_cap(:read, template_uri)
 
       n = needed_template_action(:write, template_uri)
@@ -76,7 +76,7 @@ defmodule Ezagent.TemplateCapsTest do
 
   describe "template:write cap" do
     test "matches when needed action is template:write on the granted instance" do
-      template_uri = URI.parse("template://session/default/code-review@abc123")
+      template_uri = URI.parse("template://session/team-alpha/code-review@abc123")
       c = template_cap(:write, template_uri)
 
       n = needed_template_action(:write, template_uri)
@@ -84,8 +84,8 @@ defmodule Ezagent.TemplateCapsTest do
     end
 
     test "does NOT match template:write on a different instance" do
-      cap_uri = URI.parse("template://session/default/code-review@abc123")
-      other_uri = URI.parse("template://session/default/other-team@xyz789")
+      cap_uri = URI.parse("template://session/team-alpha/code-review@abc123")
+      other_uri = URI.parse("template://session/team-alpha/other-team@xyz789")
       c = template_cap(:write, cap_uri)
 
       n = needed_template_action(:write, other_uri)
@@ -99,7 +99,7 @@ defmodule Ezagent.TemplateCapsTest do
 
   describe "template:instantiate cap" do
     test "matches when needed action is template:instantiate on the granted instance" do
-      template_uri = URI.parse("template://session/default/code-review@abc123")
+      template_uri = URI.parse("template://session/team-alpha/code-review@abc123")
       c = template_cap(:instantiate, template_uri)
 
       n = needed_template_action(:instantiate, template_uri)
@@ -107,7 +107,7 @@ defmodule Ezagent.TemplateCapsTest do
     end
 
     test "does NOT match template:write needed (instantiate ≠ write)" do
-      template_uri = URI.parse("template://session/default/code-review@abc123")
+      template_uri = URI.parse("template://session/team-alpha/code-review@abc123")
       c = template_cap(:instantiate, template_uri)
 
       n = needed_template_action(:write, template_uri)
@@ -121,7 +121,7 @@ defmodule Ezagent.TemplateCapsTest do
 
   describe "template:any wildcard" do
     test "template:any matches all three actions on the granted instance" do
-      template_uri = URI.parse("template://session/default/code-review@abc123")
+      template_uri = URI.parse("template://session/team-alpha/code-review@abc123")
       c = template_cap(:any, template_uri)
 
       for action <- [:read, :write, :instantiate] do
@@ -135,14 +135,14 @@ defmodule Ezagent.TemplateCapsTest do
 
   describe "kind boundary" do
     test "template:read on instance X does NOT match action targeting :session kind" do
-      template_uri = URI.parse("template://session/default/x@hash")
+      template_uri = URI.parse("template://session/team-alpha/x@hash")
       c = template_cap(:read, template_uri)
 
       n =
         needed(
           kind: :session,
           behavior: :read,
-          instance: URI.parse("session://default/default/x")
+          instance: URI.parse("session://default/team-alpha/x")
         )
 
       refute Capability.matches?(c, n),

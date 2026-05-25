@@ -290,7 +290,7 @@ defmodule Ezagent.Routing.Resolver do
        arrived as a binary or as a pre-built `%URI{}` struct — the
        real mention sources build `%URI{}` via `URI.new/URI.new!`
        (NOT `Ezagent.URI.parse!`), so a hand-built struct carrying an
-       extra path segment (`entity://user/default/bob/extra`) would
+       extra path segment (`entity://user/team-alpha/bob/extra`) would
        otherwise bypass the shape rule. `current_session_uri` is
        held to the same strict standard.
     2. It is NOT a cross-session URI — a `session://` candidate
@@ -338,7 +338,7 @@ defmodule Ezagent.Routing.Resolver do
   # `Ezagent.URI.parse!/1` validator. The real mention sources build
   # `%URI{}` via `URI.new/URI.new!` — NOT `Ezagent.URI.parse!` — so a
   # struct path that skipped strict validation let a crafted member
-  # with an extra path segment (`entity://user/default/bob/extra`)
+  # with an extra path segment (`entity://user/team-alpha/bob/extra`)
   # bypass the SPEC-v3 3-segment / reserved-sub-resource rule and
   # become a `chat.receive` target under `admin_caps`. Routing the
   # struct through `URI.to_string/1` then `parse!/1` applies IDENTICAL

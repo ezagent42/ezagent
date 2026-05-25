@@ -75,8 +75,8 @@ defmodule Ezagent.Entity.Workspace do
   in cap checks and KindRegistry lookups, identical pattern to
   `session://<type>/<name>` and `entity://agent/<flavor>_<name>`.
 
-      iex> Ezagent.Entity.Workspace.uri_for("default") |> URI.to_string()
-      "workspace://default/main"
+      iex> Ezagent.Entity.Workspace.uri_for("team-alpha") |> URI.to_string()
+      "workspace://team-alpha"
   """
   @spec uri_for(String.t()) :: URI.t()
   def uri_for(name) when is_binary(name) and name != "" do

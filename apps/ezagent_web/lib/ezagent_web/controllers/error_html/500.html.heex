@@ -175,7 +175,9 @@
 
       <%= if EzagentWeb.ErrorHTML.show_debug?(@conn) do %>
         <details open={EzagentWeb.ErrorHTML.debug_open?(@conn)}>
-          <summary>Debug info (visible because: {EzagentWeb.ErrorHTML.debug_reason(@conn)})</summary>
+          <summary>
+            Debug info (visible because: {EzagentWeb.ErrorHTML.debug_reason(@conn)})
+          </summary>
           <%= if assigns[:reason] do %>
             <div class="debug-label">Exception</div>
             <pre>{inspect(@reason, pretty: true, limit: :infinity)}</pre>

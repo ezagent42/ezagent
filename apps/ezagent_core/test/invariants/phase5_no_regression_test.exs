@@ -16,7 +16,7 @@ defmodule EzagentCore.Invariants.Phase5NoRegressionTest do
   alias Ezagent.{BehaviorRegistry, KindRegistry, RoutingRegistry}
 
   describe "Phase 5: foundational Kinds" do
-    test "session://default/default/main is registered" do
+    test "session://default/system/main is registered" do
       uri = Ezagent.Entity.Session.default_uri()
       assert {:ok, pid} = KindRegistry.lookup(uri)
       assert Process.alive?(pid)

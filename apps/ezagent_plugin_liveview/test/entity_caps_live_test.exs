@@ -43,7 +43,7 @@ defmodule EzagentPluginLiveview.EntityCapsLiveTest do
 
   test "GET /identities/agents/:uri/caps renders grant form for a live agent", %{conn: conn} do
     agent_uri =
-      URI.parse("entity://agent/default/test_caps-render-#{System.unique_integer([:positive])}")
+      URI.parse("entity://agent/team-alpha/test_caps-render-#{System.unique_integer([:positive])}")
 
     {:ok, _pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
 
@@ -59,7 +59,7 @@ defmodule EzagentPluginLiveview.EntityCapsLiveTest do
 
   test "grant + revoke round-trip works on a live agent", %{conn: conn} do
     agent_uri =
-      URI.parse("entity://agent/default/test_caps-grant-#{System.unique_integer([:positive])}")
+      URI.parse("entity://agent/team-alpha/test_caps-grant-#{System.unique_integer([:positive])}")
 
     {:ok, _pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
 
@@ -87,7 +87,7 @@ defmodule EzagentPluginLiveview.EntityCapsLiveTest do
 
   test "/identities lists agents with a Caps link", %{conn: conn} do
     agent_uri =
-      URI.parse("entity://agent/default/test_caps-list-#{System.unique_integer([:positive])}")
+      URI.parse("entity://agent/team-alpha/test_caps-list-#{System.unique_integer([:positive])}")
 
     {:ok, _pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
 

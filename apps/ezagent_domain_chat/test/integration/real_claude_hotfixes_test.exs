@@ -46,8 +46,8 @@ defmodule EzagentDomainChat.Integration.RealClaudeHotfixesTest do
 
   describe "fix #1: to_claude payload meta includes source session" do
     test "Chat.invoke(:receive) on Agent sends {:to_claude, %{meta}} to bound channel pid with session key" do
-      agent_uri = URI.new!("entity://agent/default/test_meta-test-#{System.unique_integer([:positive])}")
-      session_uri = URI.new!("session://default/default/meta-source-#{System.unique_integer([:positive])}")
+      agent_uri = URI.new!("entity://agent/team-alpha/test_meta-test-#{System.unique_integer([:positive])}")
+      session_uri = URI.new!("session://default/team-alpha/meta-source-#{System.unique_integer([:positive])}")
 
       # Spawn the Agent Kind (mirrors what Channel.join/3 does via
       # SpawnRegistry.spawn at bridge join time).

@@ -33,7 +33,7 @@ defmodule Ezagent.Integration.RoutingCapTest do
 
   defp non_admin_ctx do
     %{
-      caller: URI.parse("entity://user/default/non-admin-test"),
+      caller: URI.parse("entity://user/team-alpha/non-admin-test"),
       caps: MapSet.new(),
       reply: {:caller_inbox, self()}
     }
@@ -56,7 +56,7 @@ defmodule Ezagent.Integration.RoutingCapTest do
                args: %{
                  table: MentionRouting,
                  matcher_json: Matcher.to_json(matcher),
-                 receivers: ["session://default/default/cap-test"]
+                 receivers: ["session://default/team-alpha/cap-test"]
                },
                ctx: admin_ctx()
              })
@@ -72,7 +72,7 @@ defmodule Ezagent.Integration.RoutingCapTest do
                args: %{
                  table: MentionRouting,
                  matcher_json: Matcher.to_json(Matcher.always()),
-                 receivers: ["session://default/default/x"]
+                 receivers: ["session://default/team-alpha/x"]
                },
                ctx: non_admin_ctx()
              })

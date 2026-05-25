@@ -10,7 +10,7 @@ defmodule Ezagent.AuditTest do
   end
 
   test "[:ezagent, :invoke, :stop] is broadcast to esr:audit:stream" do
-    target = URI.parse("entity://agent/default/test_audit-test")
+    target = URI.parse("entity://agent/team-alpha/test_audit-test")
 
     :telemetry.execute(
       [:ezagent, :invoke, :stop],
@@ -28,11 +28,11 @@ defmodule Ezagent.AuditTest do
     assert_receive {:audit_event, event}, 500
     assert event.event == [:ezagent, :invoke, :stop]
     assert event.measurements == %{duration_us: 123}
-    assert event.metadata.target == "entity://agent/default/test_audit-test"
+    assert event.metadata.target == "entity://agent/team-alpha/test_audit-test"
   end
 
   test "[:ezagent, :invoke, :error] is also broadcast" do
-    target = URI.parse("entity://agent/default/test_audit-test")
+    target = URI.parse("entity://agent/team-alpha/test_audit-test")
 
     :telemetry.execute(
       [:ezagent, :invoke, :error],

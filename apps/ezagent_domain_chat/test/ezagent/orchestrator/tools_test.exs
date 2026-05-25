@@ -84,7 +84,7 @@ defmodule Ezagent.Orchestrator.ToolsTest do
     end
 
     test "add_agent_slot/4 surfaces :missing_opt for required ctx — proves body is wired" do
-      template_uri = URI.parse("template://agent/default/cc-orchestrator")
+      template_uri = URI.parse("template://agent/system/cc-orchestrator")
 
       assert {:error, {:missing_opt, :caller}} =
                Tools.add_agent_slot("test-slot", template_uri, nil, [])
@@ -97,7 +97,7 @@ defmodule Ezagent.Orchestrator.ToolsTest do
 
     test "update_agent_template/3 surfaces :missing_opt without full ctx" do
       assert {:error, {:missing_opt, :caller}} =
-               Tools.update_agent_template("x", URI.parse("template://agent/default/x"), [])
+               Tools.update_agent_template("x", URI.parse("template://agent/team-alpha/x"), [])
     end
 
     test "write_matcher/3 surfaces :missing_opt without ctx" do
@@ -117,10 +117,10 @@ defmodule Ezagent.Orchestrator.ToolsTest do
       results = [
         {:list_templates, Tools.list_templates()},
         {:add_agent_slot,
-         Tools.add_agent_slot("x", URI.parse("template://agent/default/x"), nil, [])},
+         Tools.add_agent_slot("x", URI.parse("template://agent/team-alpha/x"), nil, [])},
         {:remove_agent_slot, Tools.remove_agent_slot("x")},
         {:update_agent_template,
-         Tools.update_agent_template("x", URI.parse("template://agent/default/x"), [])},
+         Tools.update_agent_template("x", URI.parse("template://agent/team-alpha/x"), [])},
         {:write_matcher, Tools.write_matcher({:mention, "x"}, ["x"], [])},
         {:update_template, Tools.update_template([])},
         {:save_template_as, Tools.save_template_as("x", [])}

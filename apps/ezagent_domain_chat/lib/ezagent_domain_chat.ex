@@ -8,7 +8,7 @@ defmodule EzagentDomainChat do
 
   ## PR-J (Phase 8c, Allen 2026-05-20)
 
-  The previous `:main_is_static` restriction was removed. `session://default/default/main`
+  The previous `:main_is_static` restriction was removed. `session://default/system/main`
   is no longer a hardcoded static supervisor child of
   `EzagentDomainChat.Application` — it now goes through the same code
   path as every other session, created by the first-login wizard. The
@@ -16,9 +16,10 @@ defmodule EzagentDomainChat do
   `EzagentDomainChat.Application` (test-only branch).
 
   `create_session/2` is the canonical session-creation API: it spawns
-  the Kind, binds it to the default workspace (workspace contract
-  invariant), and joins the creator. Idempotent for same short_name —
-  re-call returns the existing URI + (re)joins creator.
+  the Kind, binds it to the creator's workspace (derived structurally
+  from the caller's entity URI per SPEC v3 §3.3), and joins the
+  creator. Idempotent for same short_name — re-call returns the
+  existing URI + (re)joins creator.
   """
 
   alias Ezagent.{Invocation, KindRegistry}
@@ -26,17 +27,24 @@ defmodule EzagentDomainChat do
 
   @doc """
   Spawn a new Session Kind under `EzagentDomainChat.SessionSupervisor`,
-  bind it to the default workspace, and join `creator_uri` to it.
+  bind it to the creator's workspace, and join `creator_uri` to it.
 
   SPEC v3 §3.6 (Phase 9 PR-7) — sessions are
   `session://<template>/<workspace>/<name>`. `short_name` becomes the
-  `<name>` segment. The default template is `default` and the default
-  workspace is `default`. Callers needing a different workspace can
-  pass `opts[:workspace_uri]` or `opts[:template_name]`.
+  `<name>` segment. The default template is `default`. The workspace
+  is **derived structurally** from `creator_uri`
+  (`Ezagent.URI.entity_workspace_uri/1`) — no silent global fallback
+  per SPEC #324. Callers needing a different workspace can pass
+  `opts[:workspace_uri]` explicitly (e.g. cross-workspace admin
+  flows). `opts[:template_name]` overrides the default template.
 
   Returns `{:ok, session_uri}` on success, `{:error, reason}` on:
   - `{:already_registered, _}` — session URI already in KindRegistry
   - other DynamicSupervisor errors propagated as-is
+
+  Raises `ArgumentError` if neither `creator_uri` nor
+  `opts[:workspace_uri]` is supplied (a `nil` creator with no explicit
+  workspace cannot be assigned a workspace structurally).
 
   Idempotent re-spawn of same short_name returns `{:ok, existing_uri}`
   (via `{:already_started, pid}` → reuse pid).
@@ -47,8 +55,25 @@ defmodule EzagentDomainChat do
 
   def create_session(short_name, creator_uri, opts)
       when is_binary(short_name) and short_name != "" do
-    {:ok, default_workspace_uri} = Ezagent.WorkspaceRegistry.default_workspace_uri()
-    workspace_uri = Keyword.get(opts, :workspace_uri, default_workspace_uri)
+    workspace_uri =
+      case Keyword.fetch(opts, :workspace_uri) do
+        {:ok, ws} ->
+          ws
+
+        :error ->
+          case creator_uri do
+            %URI{scheme: "entity"} = uri ->
+              Ezagent.URI.entity_workspace_uri(uri)
+
+            _ ->
+              raise ArgumentError,
+                    "EzagentDomainChat.create_session/3 requires either a non-nil " <>
+                      "entity creator_uri (to derive workspace structurally) or " <>
+                      "an explicit opts[:workspace_uri]. Got creator_uri=" <>
+                      "#{inspect(creator_uri)}, opts=#{inspect(opts)}."
+          end
+      end
+
     template_name = Keyword.get(opts, :template_name, "default")
     workspace_name = workspace_name_of!(workspace_uri)
 

@@ -88,7 +88,7 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpE2eTest do
 
   defp uniq, do: System.unique_integer([:positive])
 
-  @workspace_uri URI.new!("workspace://default")
+  @workspace_uri URI.new!("workspace://team-alpha")
 
   # Register a unique synthetic flavor: the worker Kind is the plain
   # `Ezagent.Entity.Agent` (no PTY, no claude). The flavor name is the
@@ -185,7 +185,7 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpE2eTest do
   # Spawn a fresh Session Kind + bind its workspace.
   defp spawn_session do
     session_uri =
-      URI.parse("session://generic/default/mcp-e2e-#{uniq()}")
+      URI.parse("session://generic/team-alpha/mcp-e2e-#{uniq()}")
 
     {:ok, _pid} = Ezagent.Kind.spawn(Session, %{uri: session_uri})
     :ok = Ezagent.WorkspaceRegistry.bind(session_uri, @workspace_uri)
@@ -196,7 +196,7 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpE2eTest do
   # Generator would have spawned).
   defp spawn_orchestrator do
     orchestrator_uri =
-      URI.parse("entity://agent/default/cc_orch-#{uniq()}")
+      URI.parse("entity://agent/team-alpha/cc_orch-#{uniq()}")
 
     {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: orchestrator_uri})
     :ok = Ezagent.WorkspaceRegistry.bind(orchestrator_uri, @workspace_uri)
@@ -290,7 +290,7 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpE2eTest do
 
       mcp =
         mcp_server(session_uri, orchestrator_uri, caps,
-          parent_template_uri: URI.parse("template://session/default/x@abc")
+          parent_template_uri: URI.parse("template://session/team-alpha/x@abc")
         )
 
       result = McpServer.handle_tool_call(mcp, "update_template", %{})
@@ -307,7 +307,7 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpE2eTest do
       flavor = register_test_flavor()
 
       # One AgentTemplate + one SessionTemplate in the workspace.
-      at_uri = URI.new!("template://agent/default/mcp-list-at-#{uniq()}")
+      at_uri = URI.new!("template://agent/team-alpha/mcp-list-at-#{uniq()}")
       :ok = create_agent_template(at_uri, flavor, "list-worker")
 
       st_content = %{
@@ -315,14 +315,14 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpE2eTest do
         description: "list test team",
         agent_slots: [],
         routing_rules: [],
-        orchestrator_template_uri: URI.parse("template://agent/default/cc-orchestrator"),
+        orchestrator_template_uri: URI.parse("template://agent/system/cc-orchestrator"),
         default_workspace_uri: @workspace_uri,
         parent_template_uri: nil,
         created_by: User.admin_uri(),
         created_at: ~U[2026-05-22 00:00:00Z]
       }
 
-      {:ok, st_uri} = SessionTemplate.persist_version(st_content, "default")
+      {:ok, st_uri} = SessionTemplate.persist_version(st_content, "team-alpha")
 
       session_uri = spawn_session()
       orchestrator_uri = spawn_orchestrator()
@@ -391,8 +391,8 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpE2eTest do
     setup do
       flavor = register_test_flavor()
 
-      backend_uri = URI.new!("template://agent/default/mcp-backend-#{uniq()}")
-      replacement_uri = URI.new!("template://agent/default/mcp-replacement-#{uniq()}")
+      backend_uri = URI.new!("template://agent/team-alpha/mcp-backend-#{uniq()}")
+      replacement_uri = URI.new!("template://agent/team-alpha/mcp-replacement-#{uniq()}")
       :ok = create_agent_template(backend_uri, flavor, "backend")
       :ok = create_agent_template(replacement_uri, flavor, "replacement")
 
@@ -544,7 +544,7 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpE2eTest do
   describe "write_matcher dispatches routing.add_rule on the session (cap-#1)" do
     setup do
       flavor = register_test_flavor()
-      backend_uri = URI.new!("template://agent/default/mcp-wm-backend-#{uniq()}")
+      backend_uri = URI.new!("template://agent/team-alpha/mcp-wm-backend-#{uniq()}")
       :ok = create_agent_template(backend_uri, flavor, "wm-backend")
 
       session_uri = spawn_session()
@@ -619,14 +619,14 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpE2eTest do
         description: "parent team",
         agent_slots: [],
         routing_rules: [],
-        orchestrator_template_uri: URI.parse("template://agent/default/cc-orchestrator"),
+        orchestrator_template_uri: URI.parse("template://agent/system/cc-orchestrator"),
         default_workspace_uri: @workspace_uri,
         parent_template_uri: nil,
         created_by: User.admin_uri(),
         created_at: ~U[2026-05-22 00:00:00Z]
       }
 
-      {:ok, parent_uri} = SessionTemplate.persist_version(parent_content, "default")
+      {:ok, parent_uri} = SessionTemplate.persist_version(parent_content, "team-alpha")
 
       mcp =
         mcp_server(ctx.session_uri, ctx.orchestrator_uri, ctx.caps, parent_template_uri: parent_uri)
@@ -645,7 +645,7 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpE2eTest do
       mcp =
         mcp_server(ctx.session_uri, ctx.orchestrator_uri, ctx.caps,
           parent_template_uri:
-            URI.parse("template://session/default/never-existed-#{uniq()}@deadbeef")
+            URI.parse("template://session/team-alpha/never-existed-#{uniq()}@deadbeef")
         )
 
       result = McpServer.handle_tool_call(mcp, "update_template", %{})
@@ -692,7 +692,7 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpE2eTest do
   describe "McpServer as a process" do
     test "start_link + tool_call run a tool against the bound context" do
       flavor = register_test_flavor()
-      backend_uri = URI.new!("template://agent/default/mcp-proc-#{uniq()}")
+      backend_uri = URI.new!("template://agent/team-alpha/mcp-proc-#{uniq()}")
       :ok = create_agent_template(backend_uri, flavor, "proc-worker")
 
       session_uri = spawn_session()

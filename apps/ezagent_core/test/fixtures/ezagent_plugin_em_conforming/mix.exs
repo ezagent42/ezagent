@@ -34,8 +34,7 @@ defmodule EzagentPluginEmConforming.MixProject do
   defp deps do
     [
       {:ezagent_core, path: "../../../../ezagent_core"},
-      {:ezagent_domain_external_mirror,
-       path: "../../../../ezagent_domain_external_mirror"}
+      {:ezagent_domain_external_mirror, path: "../../../../ezagent_domain_external_mirror"}
     ]
   end
 end

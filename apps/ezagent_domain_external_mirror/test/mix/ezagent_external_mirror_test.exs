@@ -46,7 +46,7 @@ defmodule Mix.Tasks.Ezagent.ExternalMirrorTest do
 
   alias Ezagent.ExternalMirror, as: Facade
 
-  @workspace_uri URI.parse("workspace://default")
+  @workspace_uri URI.parse("workspace://team-alpha")
 
   setup do
     :ok = ensure_adapter_registered(MockPublishAdapter, MockPublishBinding)
@@ -88,7 +88,7 @@ defmodule Mix.Tasks.Ezagent.ExternalMirrorTest do
         ExUnit.CaptureIO.capture_io(fn ->
           Mix.Tasks.Ezagent.ExternalMirror.ListAdapters.run([
             "--as",
-            "entity://user/default/anyone"
+            "entity://user/team-alpha/anyone"
           ])
         end)
 
@@ -214,7 +214,7 @@ defmodule Mix.Tasks.Ezagent.ExternalMirrorTest do
         kind: :session,
         behavior: Ezagent.Behavior.ExternalMirror,
         instance: session_uri,
-        workspace_uri: URI.parse("workspace://default"),
+        workspace_uri: URI.parse("workspace://team-alpha"),
         granted_by: User.admin_uri(),
         granted_at: DateTime.utc_now()
       }
@@ -631,11 +631,11 @@ defmodule Mix.Tasks.Ezagent.ExternalMirrorTest do
   end
 
   defp unique_user_uri(prefix) do
-    URI.parse("entity://user/default/#{prefix}-#{System.unique_integer([:positive])}")
+    URI.parse("entity://user/team-alpha/#{prefix}-#{System.unique_integer([:positive])}")
   end
 
   defp unique_session_uri(prefix) do
-    URI.parse("session://default/default/#{prefix}-#{System.unique_integer([:positive])}")
+    URI.parse("session://default/team-alpha/#{prefix}-#{System.unique_integer([:positive])}")
   end
 
   # Workaround silence-unused-alias warnings — these aliases are

@@ -13,12 +13,12 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
     # `current_workspace_uri`. The admin is a `workspace://system`
     # member (cross-workspace authority), so it can operate in the
     # `default` workspace; set the session slot explicitly so the
-    # picker + server revalidation both scope to `workspace://default`.
+    # picker + server revalidation both scope to `workspace://team-alpha`.
     conn =
       Phoenix.ConnTest.build_conn()
       |> Plug.Test.init_test_session(%{
         "current_entity_uri" => URI.to_string(Ezagent.Entity.User.admin_uri()),
-        "current_workspace_uri" => "workspace://default"
+        "current_workspace_uri" => "workspace://team-alpha"
       })
 
     {:ok, conn: conn}
@@ -60,8 +60,8 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
     # The uri_picker hidden inputs are JS-managed (empty in a
     # dead-render). Set form-real fields (table/matcher_type) via
     # form/3; pass the picker-managed URIs via render_submit/2 extras.
-    matcher_arg = "entity://agent/default/test_lv-test-#{System.unique_integer([:positive])}"
-    receiver = "session://default/default/lv-rcv-#{System.unique_integer([:positive])}"
+    matcher_arg = "entity://agent/team-alpha/test_lv-test-#{System.unique_integer([:positive])}"
+    receiver = "session://default/team-alpha/lv-rcv-#{System.unique_integer([:positive])}"
 
     lv
     |> form("#add-rule form",
@@ -74,7 +74,7 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
 
     html = render(lv)
     assert html =~ "mention"
-    assert html =~ "entity://agent/default/test_lv-test"
+    assert html =~ "entity://agent/team-alpha/test_lv-test"
   end
 
   # 2026-05-25 — `switch_table` regression test removed. With
@@ -92,7 +92,7 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
       Jason.encode!(%{
         "type" => "and",
         "items" => [
-          %{"type" => "mention", "arg" => "entity://agent/default/test_lv-combo"},
+          %{"type" => "mention", "arg" => "entity://agent/team-alpha/test_lv-combo"},
           %{"type" => "from", "arg" => "entity://user/system/admin"}
         ]
       })
@@ -104,7 +104,7 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
         matcher_json: combinator_json
       }
     )
-    |> render_submit(%{rule: %{receivers: ["session://default/default/oncall"]}})
+    |> render_submit(%{rule: %{receivers: ["session://default/team-alpha/oncall"]}})
 
     html = render(lv)
     assert html =~ ":and"
@@ -120,7 +120,7 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
         matcher_type: "mention"
       }
     )
-    |> render_submit(%{rule: %{matcher_arg: "entity://agent/default/test_x"}})
+    |> render_submit(%{rule: %{matcher_arg: "entity://agent/team-alpha/test_x"}})
 
     html = render(lv)
     assert html =~ "receiver"
@@ -131,7 +131,7 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
   test "add_rule rejects a tampered out-of-workspace matcher arg", %{conn: conn} do
     {:ok, lv, _html} = live(conn, "/routing")
 
-    # The picker is scoped to workspace://default; a hand-tampered
+    # The picker is scoped to workspace://team-alpha; a hand-tampered
     # hidden input naming an entity in another workspace must be
     # rejected server-side, NOT dispatched.
     lv
@@ -144,7 +144,7 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
     |> render_submit(%{
       rule: %{
         matcher_arg: "entity://agent/other-tenant/cc_evil",
-        receivers: ["session://default/default/oncall"]
+        receivers: ["session://default/team-alpha/oncall"]
       }
     })
 
@@ -164,7 +164,7 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
     )
     |> render_submit(%{
       rule: %{
-        matcher_arg: "entity://agent/default/test_ok",
+        matcher_arg: "entity://agent/team-alpha/test_ok",
         receivers: ["entity://agent/other-tenant/cc_leak"]
       }
     })
@@ -185,7 +185,7 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
     )
     |> render_submit(%{
       rule: %{
-        matcher_arg: "entity://agent/default/test_ok",
+        matcher_arg: "entity://agent/team-alpha/test_ok",
         receivers: ["not-a-valid-uri"]
       }
     })
@@ -208,7 +208,7 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
   test "add_rule accepts the $session_members broadcast token as a receiver", %{conn: conn} do
     {:ok, lv, _html} = live(conn, "/routing")
 
-    matcher_arg = "entity://agent/default/test_bcast-#{System.unique_integer([:positive])}"
+    matcher_arg = "entity://agent/team-alpha/test_bcast-#{System.unique_integer([:positive])}"
 
     lv
     |> form("#add-rule form",
@@ -229,7 +229,7 @@ defmodule EzagentPluginLiveview.RoutingLiveTest do
   test "add_rule accepts $session_users + $mentions magic tokens as receivers", %{conn: conn} do
     {:ok, lv, _html} = live(conn, "/routing")
 
-    matcher_arg = "entity://agent/default/test_mg-#{System.unique_integer([:positive])}"
+    matcher_arg = "entity://agent/team-alpha/test_mg-#{System.unique_integer([:positive])}"
 
     lv
     |> form("#add-rule form",

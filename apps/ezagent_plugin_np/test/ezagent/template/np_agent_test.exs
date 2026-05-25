@@ -14,7 +14,7 @@ defmodule Ezagent.PluginNp.Template.NpAgentTest do
       assert :ok =
                Tmpl.validate(%{
                  "class" => "np.agent",
-                 "agent_uri" => "entity://agent/default/np_compute"
+                 "agent_uri" => "entity://agent/team-alpha/np_compute"
                })
     end
 
@@ -32,14 +32,14 @@ defmodule Ezagent.PluginNp.Template.NpAgentTest do
   describe "validate/1 — class field" do
     test "rejects missing class" do
       assert {:error, :missing_class_field} =
-               Tmpl.validate(%{"agent_uri" => "entity://agent/default/np_x"})
+               Tmpl.validate(%{"agent_uri" => "entity://agent/team-alpha/np_x"})
     end
 
     test "rejects wrong class" do
       assert {:error, {:wrong_class, "echo.agent"}} =
                Tmpl.validate(%{
                  "class" => "echo.agent",
-                 "agent_uri" => "entity://agent/default/np_x"
+                 "agent_uri" => "entity://agent/team-alpha/np_x"
                })
     end
   end
@@ -75,7 +75,7 @@ defmodule Ezagent.PluginNp.Template.NpAgentTest do
       assert {:error, {:wrong_agent_flavor, "cc", expected: "np"}} =
                Tmpl.validate(%{
                  "class" => "np.agent",
-                 "agent_uri" => "entity://agent/default/cc_x"
+                 "agent_uri" => "entity://agent/team-alpha/cc_x"
                })
     end
 
@@ -83,7 +83,7 @@ defmodule Ezagent.PluginNp.Template.NpAgentTest do
       assert {:error, {:missing_flavor_prefix, _, _}} =
                Tmpl.validate(%{
                  "class" => "np.agent",
-                 "agent_uri" => "entity://agent/default/nameonly"
+                 "agent_uri" => "entity://agent/team-alpha/nameonly"
                })
     end
 
@@ -91,7 +91,7 @@ defmodule Ezagent.PluginNp.Template.NpAgentTest do
       assert {:error, {:bad_agent_uri, _}} =
                Tmpl.validate(%{
                  "class" => "np.agent",
-                 "agent_uri" => "session://default/default/x"
+                 "agent_uri" => "session://default/team-alpha/x"
                })
     end
   end
@@ -101,7 +101,7 @@ defmodule Ezagent.PluginNp.Template.NpAgentTest do
       assert {:error, {:bad_cwd, "/this/path/should/not/exist"}} =
                Tmpl.validate(%{
                  "class" => "np.agent",
-                 "agent_uri" => "entity://agent/default/np_x",
+                 "agent_uri" => "entity://agent/team-alpha/np_x",
                  "cwd" => "/this/path/should/not/exist"
                })
     end
@@ -110,7 +110,7 @@ defmodule Ezagent.PluginNp.Template.NpAgentTest do
       assert :ok =
                Tmpl.validate(%{
                  "class" => "np.agent",
-                 "agent_uri" => "entity://agent/default/np_x",
+                 "agent_uri" => "entity://agent/team-alpha/np_x",
                  "timeout_ms" => "5000"
                })
     end
@@ -119,7 +119,7 @@ defmodule Ezagent.PluginNp.Template.NpAgentTest do
       assert {:error, {:bad_timeout, "abc"}} =
                Tmpl.validate(%{
                  "class" => "np.agent",
-                 "agent_uri" => "entity://agent/default/np_x",
+                 "agent_uri" => "entity://agent/team-alpha/np_x",
                  "timeout_ms" => "abc"
                })
     end

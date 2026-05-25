@@ -103,11 +103,11 @@ defmodule EzagentPluginLiveview.AdminLiveRoutingViewTest do
       render_hook(lv, "switch_view", %{"view" => "routing"})
 
       # V1 UI PR-1 — the RoutingView pickers are scoped to the
-      # session's workspace (session://default/default/main → default).
+      # session's workspace (session://default/system/main → default).
       # URIs must be in `default`; pass them via render_submit/2 since
       # the uri_picker hidden inputs are JS-managed (empty dead-render).
-      receiver = "entity://agent/default/echo-receiver-#{System.unique_integer([:positive])}"
-      mention_arg = "entity://user/default/admin"
+      receiver = "entity://agent/team-alpha/echo-receiver-#{System.unique_integer([:positive])}"
+      mention_arg = "entity://user/team-alpha/admin"
 
       lv
       |> form("#session-routing-add-form", %{
@@ -139,7 +139,7 @@ defmodule EzagentPluginLiveview.AdminLiveRoutingViewTest do
       |> form("#session-routing-add-form", %{
         "rule" => %{"matcher_type" => "mention"}
       })
-      |> render_submit(%{"rule" => %{"matcher_arg" => "entity://user/default/admin"}})
+      |> render_submit(%{"rule" => %{"matcher_arg" => "entity://user/team-alpha/admin"}})
 
       html = render(lv)
       assert html =~ "receiver"
@@ -157,7 +157,7 @@ defmodule EzagentPluginLiveview.AdminLiveRoutingViewTest do
       })
       |> render_submit(%{
         "rule" => %{
-          "matcher_arg" => "entity://user/default/admin",
+          "matcher_arg" => "entity://user/team-alpha/admin",
           "receivers" => ["entity://agent/other-tenant/cc_leak"]
         }
       })
@@ -177,7 +177,7 @@ defmodule EzagentPluginLiveview.AdminLiveRoutingViewTest do
       |> render_submit(%{
         "rule" => %{
           "matcher_arg" => "entity://user/other-tenant/admin",
-          "receivers" => ["entity://agent/default/echo_default"]
+          "receivers" => ["entity://agent/team-alpha/echo_default"]
         }
       })
 
@@ -199,7 +199,7 @@ defmodule EzagentPluginLiveview.AdminLiveRoutingViewTest do
       })
       |> render_submit(%{
         "rule" => %{
-          "matcher_arg" => "entity://user/default/admin",
+          "matcher_arg" => "entity://user/team-alpha/admin",
           "receivers" => ["$session_members"]
         }
       })
@@ -223,7 +223,7 @@ defmodule EzagentPluginLiveview.AdminLiveRoutingViewTest do
       })
       |> render_submit(%{
         "rule" => %{
-          "matcher_arg" => "entity://user/default/admin",
+          "matcher_arg" => "entity://user/team-alpha/admin",
           "receivers" => ["$session_users", "$mentions"]
         }
       })

@@ -81,11 +81,11 @@ defmodule Ezagent.Entity.SessionTemplatePersistVersionTest do
       description: "a team",
       agent_slots: [],
       routing_rules: [],
-      orchestrator_template_uri: URI.parse("template://agent/default/cc-orchestrator"),
-      default_workspace_uri: URI.parse("workspace://default"),
+      orchestrator_template_uri: URI.parse("template://agent/system/cc-orchestrator"),
+      default_workspace_uri: URI.parse("workspace://team-alpha"),
       parent_template_uri: nil,
       version_tag: nil,
-      created_by: URI.parse("entity://user/default/admin"),
+      created_by: URI.parse("entity://user/team-alpha/admin"),
       created_at: ~U[2026-05-22 00:00:00Z]
     }
   end
@@ -95,19 +95,19 @@ defmodule Ezagent.Entity.SessionTemplatePersistVersionTest do
       name = "pv-basic-#{uniq()}"
       content = session_content(name)
       expected_hash = SessionTemplate.compute_version_hash(content)
-      :ok = KindSnapshot.delete(URI.to_string(SessionTemplate.build_uri(name, expected_hash)))
+      :ok = KindSnapshot.delete(URI.to_string(SessionTemplate.build_uri(name, expected_hash, workspace: "team-alpha")))
 
-      assert {:ok, %URI{} = uri} = SessionTemplate.persist_version(content, "workspace://default")
+      assert {:ok, %URI{} = uri} = SessionTemplate.persist_version(content, "workspace://team-alpha")
       track(uri)
 
       # The URI is the content-addressed template://session/<ws>/<name>@<hash>.
-      assert URI.to_string(uri) == "template://session/default/#{name}@#{expected_hash}"
+      assert URI.to_string(uri) == "template://session/team-alpha/#{name}@#{expected_hash}"
 
       # The Kind is alive and its :template slice holds the content.
       assert {:ok, %{content: ^content}} = read(uri)
 
       # The {:snapshot, :on_change} :write mutation wrote a kind_snapshots row.
-      assert %KindSnapshot{kind_type: "session_template", workspace_uri: "workspace://default"} =
+      assert %KindSnapshot{kind_type: "session_template", workspace_uri: "workspace://team-alpha"} =
                KindSnapshot.get(URI.to_string(uri))
     end
 
@@ -115,17 +115,17 @@ defmodule Ezagent.Entity.SessionTemplatePersistVersionTest do
       name = "pv-bare-ws-#{uniq()}"
       content = session_content(name)
       hash = SessionTemplate.compute_version_hash(content)
-      :ok = KindSnapshot.delete(URI.to_string(SessionTemplate.build_uri(name, hash)))
+      :ok = KindSnapshot.delete(URI.to_string(SessionTemplate.build_uri(name, hash, workspace: "team-alpha")))
 
-      assert {:ok, %URI{} = uri} = SessionTemplate.persist_version(content, "default")
+      assert {:ok, %URI{} = uri} = SessionTemplate.persist_version(content, "team-alpha")
       track(uri)
-      assert URI.to_string(uri) == "template://session/default/#{name}@#{hash}"
+      assert URI.to_string(uri) == "template://session/team-alpha/#{name}@#{hash}"
     end
 
     test "missing :name in the content map → {:error, :missing_template_name}" do
       content = session_content("ignored") |> Map.delete(:name)
       assert {:error, :missing_template_name} =
-               SessionTemplate.persist_version(content, "workspace://default")
+               SessionTemplate.persist_version(content, "workspace://team-alpha")
     end
   end
 
@@ -134,14 +134,14 @@ defmodule Ezagent.Entity.SessionTemplatePersistVersionTest do
       name = "pv-idem-#{uniq()}"
       content = session_content(name)
       hash = SessionTemplate.compute_version_hash(content)
-      :ok = KindSnapshot.delete(URI.to_string(SessionTemplate.build_uri(name, hash)))
+      :ok = KindSnapshot.delete(URI.to_string(SessionTemplate.build_uri(name, hash, workspace: "team-alpha")))
 
-      assert {:ok, uri1} = SessionTemplate.persist_version(content, "workspace://default")
+      assert {:ok, uri1} = SessionTemplate.persist_version(content, "workspace://team-alpha")
       track(uri1)
 
       # Second persist of the SAME content — same hash ⇒ same URI ⇒ the
       # Kind is already alive; the :write identical-retry no-ops. No error.
-      assert {:ok, uri2} = SessionTemplate.persist_version(content, "workspace://default")
+      assert {:ok, uri2} = SessionTemplate.persist_version(content, "workspace://team-alpha")
 
       assert uri1 == uri2
 
@@ -169,7 +169,7 @@ defmodule Ezagent.Entity.SessionTemplatePersistVersionTest do
       wrong_hash =
         SessionTemplate.compute_version_hash(%{content | description: "different"})
 
-      wrong_uri = SessionTemplate.build_uri(name, wrong_hash)
+      wrong_uri = SessionTemplate.build_uri(name, wrong_hash, workspace: "team-alpha")
       :ok = KindSnapshot.delete(URI.to_string(wrong_uri))
 
       {:ok, _pid} = Ezagent.SpawnRegistry.spawn(wrong_uri)
@@ -203,9 +203,9 @@ defmodule Ezagent.Entity.SessionTemplatePersistVersionTest do
       name = "pv-consistent-#{uniq()}"
       content = session_content(name)
       hash = SessionTemplate.compute_version_hash(content)
-      :ok = KindSnapshot.delete(URI.to_string(SessionTemplate.build_uri(name, hash)))
+      :ok = KindSnapshot.delete(URI.to_string(SessionTemplate.build_uri(name, hash, workspace: "team-alpha")))
 
-      assert {:ok, uri} = SessionTemplate.persist_version(content, "workspace://default")
+      assert {:ok, uri} = SessionTemplate.persist_version(content, "workspace://team-alpha")
       track(uri)
       assert String.ends_with?(URI.to_string(uri), "@#{hash}")
     end

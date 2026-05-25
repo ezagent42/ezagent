@@ -141,8 +141,8 @@ defmodule Ezagent.UI.UriOptionsTest do
     end
 
     test "a malformed caller URI yields [] (never leaks, never crashes)" do
-      assert UriOptions.entities("not-a-uri", "workspace://default") == []
-      assert UriOptions.entities(nil, "workspace://default") == []
+      assert UriOptions.entities("not-a-uri", "workspace://team-alpha") == []
+      assert UriOptions.entities(nil, "workspace://team-alpha") == []
     end
   end
 

@@ -40,7 +40,7 @@ defmodule EzagentPluginLiveview.AgentDetailLiveTest do
          %{conn: conn} do
       agent_uri =
         URI.parse(
-          "entity://agent/default/cc_inline-#{System.unique_integer([:positive])}"
+          "entity://agent/team-alpha/cc_inline-#{System.unique_integer([:positive])}"
         )
 
       {:ok, _pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
@@ -73,7 +73,7 @@ defmodule EzagentPluginLiveview.AgentDetailLiveTest do
       # Echo agent — no PTY behind it. Per SPEC §5.3 + feedback_ui_no_misleading_buttons,
       # we don't surface a terminal UI when there's nothing to render.
       agent_uri =
-        URI.parse("entity://agent/default/echo_d-#{System.unique_integer([:positive])}")
+        URI.parse("entity://agent/team-alpha/echo_d-#{System.unique_integer([:positive])}")
 
       {:ok, _pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
 
@@ -93,7 +93,7 @@ defmodule EzagentPluginLiveview.AgentDetailLiveTest do
     test "pty_resize event is handled (no-op) without crashing the LV", %{conn: conn} do
       agent_uri =
         URI.parse(
-          "entity://agent/default/cc_resize-#{System.unique_integer([:positive])}"
+          "entity://agent/team-alpha/cc_resize-#{System.unique_integer([:positive])}"
         )
 
       {:ok, _pid} = Ezagent.SpawnRegistry.spawn(agent_uri)

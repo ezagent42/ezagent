@@ -17,7 +17,7 @@ defmodule Ezagent.SpawnRegistry do
         end
       end)
 
-  When the Loader sees `entity://agent/default/cc_builder` it calls
+  When the Loader sees `entity://agent/team-alpha/cc_builder` it calls
   `Ezagent.SpawnRegistry.spawn(uri)` and ezagent_core never has to know
   about `EzagentDomainChat.AgentSupervisor`.
 

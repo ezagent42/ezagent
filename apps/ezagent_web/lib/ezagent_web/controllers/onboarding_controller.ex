@@ -228,12 +228,10 @@ defmodule EzagentWeb.OnboardingController do
 
     cond do
       String.length(trimmed) < 2 ->
-        {:error, :invalid_workspace_name,
-         gettext("Workspace name too short (min 2 characters).")}
+        {:error, :invalid_workspace_name, gettext("Workspace name too short (min 2 characters).")}
 
       String.length(trimmed) > 32 ->
-        {:error, :invalid_workspace_name,
-         gettext("Workspace name too long (max 32 characters).")}
+        {:error, :invalid_workspace_name, gettext("Workspace name too long (max 32 characters).")}
 
       not Regex.match?(~r/^[a-z0-9][a-z0-9-]*[a-z0-9]$/, trimmed) ->
         {:error, :invalid_workspace_name,
@@ -252,9 +250,7 @@ defmodule EzagentWeb.OnboardingController do
   end
 
   defp canonicalize_workspace_name(_),
-    do:
-      {:error, :invalid_workspace_name,
-       gettext("Workspace name is required.")}
+    do: {:error, :invalid_workspace_name, gettext("Workspace name is required.")}
 
   defp pick_rule_value("domain", email, params) do
     Map.get(params, "rule_value_domain") || extract_domain(email)

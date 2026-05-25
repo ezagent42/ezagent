@@ -27,7 +27,7 @@ defmodule Ezagent.Behavior.NpAgentTest do
 
   describe "init_slice/1" do
     test "captures python_handle (via :python_handle or fallback :uri)" do
-      uri = URI.parse("entity://agent/default/np_test")
+      uri = URI.parse("entity://agent/team-alpha/np_test")
       s1 = NpAgent.init_slice(%{python_handle: uri})
       assert s1.python_handle == uri
 
@@ -36,7 +36,7 @@ defmodule Ezagent.Behavior.NpAgentTest do
     end
 
     test "defaults timeout_ms to 10s" do
-      s = NpAgent.init_slice(%{uri: URI.parse("entity://agent/default/np_test")})
+      s = NpAgent.init_slice(%{uri: URI.parse("entity://agent/team-alpha/np_test")})
       assert s.timeout_ms == 10_000
       assert s.last_input == nil
       assert s.last_result == nil
@@ -44,7 +44,7 @@ defmodule Ezagent.Behavior.NpAgentTest do
     end
 
     test "accepts timeout_ms override" do
-      s = NpAgent.init_slice(%{uri: URI.parse("entity://agent/default/np_x"), timeout_ms: 5_000})
+      s = NpAgent.init_slice(%{uri: URI.parse("entity://agent/team-alpha/np_x"), timeout_ms: 5_000})
       assert s.timeout_ms == 5_000
     end
   end
@@ -52,7 +52,7 @@ defmodule Ezagent.Behavior.NpAgentTest do
   describe "invoke(:reset)" do
     test "clears last_input / last_result / last_error" do
       slice =
-        NpAgent.init_slice(%{uri: URI.parse("entity://agent/default/np_x")})
+        NpAgent.init_slice(%{uri: URI.parse("entity://agent/team-alpha/np_x")})
         |> Map.put(:last_input, "2+2")
         |> Map.put(:last_result, 4)
         |> Map.put(:last_error, {:python_error, -32_602, "x"})
@@ -66,7 +66,7 @@ defmodule Ezagent.Behavior.NpAgentTest do
 
   describe "invoke(:configure)" do
     test "updates timeout_ms" do
-      slice = NpAgent.init_slice(%{uri: URI.parse("entity://agent/default/np_x")})
+      slice = NpAgent.init_slice(%{uri: URI.parse("entity://agent/team-alpha/np_x")})
 
       assert {:ok, new_slice, %{ok: true}} =
                NpAgent.invoke(:configure, slice, %{timeout_ms: 30_000}, %{})
@@ -77,13 +77,13 @@ defmodule Ezagent.Behavior.NpAgentTest do
 
   describe "loop safety on :receive" do
     test "ignores messages whose sender is self_uri" do
-      agent_uri = URI.parse("entity://agent/default/np_self")
+      agent_uri = URI.parse("entity://agent/team-alpha/np_self")
       slice = NpAgent.init_slice(%{uri: agent_uri})
 
       # Message sent by the agent itself — the behavior must not call
       # into Python (the test would crash since Python is not started).
       msg = Ezagent.Message.new(agent_uri, %{text: "should_not_run"})
-      ctx = %{self_uri: agent_uri, caller: URI.parse("session://default/default/x")}
+      ctx = %{self_uri: agent_uri, caller: URI.parse("session://default/team-alpha/x")}
 
       assert {:ok, ^slice} = NpAgent.invoke(:receive, slice, %{message: msg}, ctx)
     end

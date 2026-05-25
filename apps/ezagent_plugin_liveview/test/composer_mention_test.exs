@@ -23,7 +23,7 @@ defmodule EzagentPluginLiveview.ComposerMentionTest do
 
   @endpoint EzagentWeb.Endpoint
 
-  @session URI.new!("session://default/default/main")
+  @session URI.new!("session://default/system/main")
 
   setup do
     :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
@@ -70,7 +70,7 @@ defmodule EzagentPluginLiveview.ComposerMentionTest do
   test "composing '@<agent_uri>' actuates exactly that mentioned, joined agent", %{conn: conn} do
     # A real echo agent joined to the default session. valid_member?/2
     # requires the mention to be a registered member, so it MUST join.
-    agent = URI.new!("entity://agent/default/echo_compose-#{System.unique_integer([:positive])}")
+    agent = URI.new!("entity://agent/team-alpha/echo_compose-#{System.unique_integer([:positive])}")
     {:ok, _} = Ezagent.SpawnRegistry.spawn(agent)
     join(agent)
 
@@ -99,7 +99,7 @@ defmodule EzagentPluginLiveview.ComposerMentionTest do
   test "composing plain agent-name text (no @) does NOT actuate the agent", %{conn: conn} do
     # The mention-gated default actuates ONLY on a validated @-mention.
     # Plain prose naming the agent must not.
-    agent = URI.new!("entity://agent/default/echo_plain-#{System.unique_integer([:positive])}")
+    agent = URI.new!("entity://agent/team-alpha/echo_plain-#{System.unique_integer([:positive])}")
     {:ok, _} = Ezagent.SpawnRegistry.spawn(agent)
     join(agent)
 

@@ -46,7 +46,7 @@ defmodule EzagentDomainChat.Integration.PublisherSessionTest do
 
   defp spawn_session do
     session_uri =
-      URI.parse("session://default/default/publisher-test-#{System.unique_integer([:positive])}")
+      URI.parse("session://default/team-alpha/publisher-test-#{System.unique_integer([:positive])}")
 
     {:ok, _pid} = Ezagent.Kind.spawn(Session, %{uri: session_uri})
 
@@ -76,7 +76,7 @@ defmodule EzagentDomainChat.Integration.PublisherSessionTest do
   # a no-op for our Publisher hook.
   defp spawn_member_user do
     member_uri =
-      URI.parse("entity://user/default/pub-test-member-#{System.unique_integer([:positive])}")
+      URI.parse("entity://user/team-alpha/pub-test-member-#{System.unique_integer([:positive])}")
 
     {:ok, pid} =
       Ezagent.Kind.spawn(User, %{uri: member_uri, initial_caps: MapSet.new()})
@@ -191,19 +191,19 @@ defmodule EzagentDomainChat.Integration.PublisherSessionTest do
   describe "no-ambient-caps invariant (codex round-1 CRITICAL fix)" do
     test "Session.subscribe_from/3 raises — forces caller to supply ctx" do
       assert_raise ArgumentError, ~r/requires an explicit caller ctx/, fn ->
-        Session.subscribe_from(URI.parse("session://default/default/x"), self(), :latest)
+        Session.subscribe_from(URI.parse("session://default/team-alpha/x"), self(), :latest)
       end
     end
 
     test "Session.snapshot/1 raises — forces caller to supply ctx" do
       assert_raise ArgumentError, ~r/requires an explicit caller ctx/, fn ->
-        Session.snapshot(URI.parse("session://default/default/x"))
+        Session.snapshot(URI.parse("session://default/team-alpha/x"))
       end
     end
 
     test "Session.history/3 raises — forces caller to supply ctx" do
       assert_raise ArgumentError, ~r/requires an explicit caller ctx/, fn ->
-        Session.history(URI.parse("session://default/default/x"), 0, :latest)
+        Session.history(URI.parse("session://default/team-alpha/x"), 0, :latest)
       end
     end
 
@@ -211,7 +211,7 @@ defmodule EzagentDomainChat.Integration.PublisherSessionTest do
       session_uri = spawn_session()
 
       empty_ctx = %{
-        caller: URI.parse("entity://user/default/no-caps-#{System.unique_integer([:positive])}"),
+        caller: URI.parse("entity://user/team-alpha/no-caps-#{System.unique_integer([:positive])}"),
         caps: MapSet.new()
       }
 

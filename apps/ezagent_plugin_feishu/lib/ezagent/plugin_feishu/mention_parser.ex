@@ -13,7 +13,7 @@ defmodule EzagentPluginFeishu.MentionParser do
       @<agent-name>  →  entity://agent/<flavor>_<agent-name>
 
   ESR is the source of truth for agent URIs, and the chat is just a
-  human-readable surface. If you have an `entity://agent/default/cc_architect`
+  human-readable surface. If you have an `entity://agent/team-alpha/cc_architect`
   live and someone types `@architect 看看`, the message routes only
   to that agent via MentionRouting (the existing matcher).
 

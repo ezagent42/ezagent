@@ -115,15 +115,15 @@ defmodule EzagentDomainChat.Integration.ReconcilerTest do
       description: "test team #{name}",
       agent_slots: agent_slots,
       routing_rules: routing_rules,
-      orchestrator_template_uri: URI.parse("template://agent/default/cc-orchestrator"),
-      default_workspace_uri: URI.parse("workspace://default"),
+      orchestrator_template_uri: URI.parse("template://agent/system/cc-orchestrator"),
+      default_workspace_uri: URI.parse("workspace://team-alpha"),
       parent_template_uri: nil,
       version_tag: nil,
       created_by: User.admin_uri(),
       created_at: ~U[2026-05-23 00:00:00Z]
     }
 
-    {:ok, uri} = SessionTemplate.persist_version(content, "default")
+    {:ok, uri} = SessionTemplate.persist_version(content, "team-alpha")
     uri
   end
 
@@ -143,7 +143,7 @@ defmodule EzagentDomainChat.Integration.ReconcilerTest do
     }
   end
 
-  @workspace_uri URI.new!("workspace://default")
+  @workspace_uri URI.new!("workspace://team-alpha")
 
   # ─────────────────────────────────────────────────────────────────────
   # V1-R1 — Full convergence (regression)
@@ -152,8 +152,8 @@ defmodule EzagentDomainChat.Integration.ReconcilerTest do
   describe "V1-R1 — full convergence" do
     setup do
       flavor = register_test_flavor()
-      a = URI.new!("template://agent/default/r1-a-#{uniq()}")
-      b = URI.new!("template://agent/default/r1-b-#{uniq()}")
+      a = URI.new!("template://agent/team-alpha/r1-a-#{uniq()}")
+      b = URI.new!("template://agent/team-alpha/r1-b-#{uniq()}")
       :ok = create_agent_template(a, agent_template_content(flavor, "a"))
       :ok = create_agent_template(b, agent_template_content(flavor, "b"))
 
@@ -164,7 +164,7 @@ defmodule EzagentDomainChat.Integration.ReconcilerTest do
           [{{:text_contains, "deploy"}, ["alpha"]}]
         )
 
-      owner = URI.parse("entity://user/default/r1-owner-#{uniq()}")
+      owner = URI.parse("entity://user/team-alpha/r1-owner-#{uniq()}")
 
       :ok =
         spawn_owner(owner, [
@@ -195,10 +195,10 @@ defmodule EzagentDomainChat.Integration.ReconcilerTest do
   describe "V1-R2 — idempotent re-run" do
     setup do
       flavor = register_test_flavor()
-      a = URI.new!("template://agent/default/r2-a-#{uniq()}")
+      a = URI.new!("template://agent/team-alpha/r2-a-#{uniq()}")
       :ok = create_agent_template(a, agent_template_content(flavor, "a"))
       st = create_session_template("r2-team-#{uniq()}", [{"only", a}], [])
-      owner = URI.parse("entity://user/default/r2-owner-#{uniq()}")
+      owner = URI.parse("entity://user/team-alpha/r2-owner-#{uniq()}")
 
       :ok =
         spawn_owner(owner, [
@@ -269,9 +269,9 @@ defmodule EzagentDomainChat.Integration.ReconcilerTest do
   describe "V1-R3 — partial resume after killed worker" do
     setup do
       flavor = register_test_flavor()
-      a = URI.new!("template://agent/default/r3-a-#{uniq()}")
-      b = URI.new!("template://agent/default/r3-b-#{uniq()}")
-      c = URI.new!("template://agent/default/r3-c-#{uniq()}")
+      a = URI.new!("template://agent/team-alpha/r3-a-#{uniq()}")
+      b = URI.new!("template://agent/team-alpha/r3-b-#{uniq()}")
+      c = URI.new!("template://agent/team-alpha/r3-c-#{uniq()}")
       :ok = create_agent_template(a, agent_template_content(flavor, "a"))
       :ok = create_agent_template(b, agent_template_content(flavor, "b"))
       :ok = create_agent_template(c, agent_template_content(flavor, "c"))
@@ -283,7 +283,7 @@ defmodule EzagentDomainChat.Integration.ReconcilerTest do
           []
         )
 
-      owner = URI.parse("entity://user/default/r3-owner-#{uniq()}")
+      owner = URI.parse("entity://user/team-alpha/r3-owner-#{uniq()}")
 
       :ok =
         spawn_owner(owner, [
@@ -342,11 +342,11 @@ defmodule EzagentDomainChat.Integration.ReconcilerTest do
   describe "V1-R4 — failed-slot retry" do
     test "slot with un-populated AgentTemplate → :partial, repopulate + re-run → :ok" do
       flavor = register_test_flavor()
-      good_tmpl = URI.new!("template://agent/default/r4-good-#{uniq()}")
+      good_tmpl = URI.new!("template://agent/team-alpha/r4-good-#{uniq()}")
       :ok = create_agent_template(good_tmpl, agent_template_content(flavor, "good"))
 
       # The "bad" template's Kind exists but its slice is NOT populated.
-      bad_tmpl = URI.new!("template://agent/default/r4-bad-#{uniq()}")
+      bad_tmpl = URI.new!("template://agent/team-alpha/r4-bad-#{uniq()}")
       {:ok, _pid} = Ezagent.SpawnRegistry.spawn(bad_tmpl)
       # Intentionally do NOT call template.write — the slice stays empty.
 
@@ -357,7 +357,7 @@ defmodule EzagentDomainChat.Integration.ReconcilerTest do
           []
         )
 
-      owner = URI.parse("entity://user/default/r4-owner-#{uniq()}")
+      owner = URI.parse("entity://user/team-alpha/r4-owner-#{uniq()}")
 
       :ok =
         spawn_owner(owner, [
@@ -477,10 +477,10 @@ defmodule EzagentDomainChat.Integration.ReconcilerTest do
   describe "residual codex #1 — retry_after_race (real implementation)" do
     setup do
       flavor = register_test_flavor()
-      a = URI.new!("template://agent/default/race-a-#{uniq()}")
+      a = URI.new!("template://agent/team-alpha/race-a-#{uniq()}")
       :ok = create_agent_template(a, agent_template_content(flavor, "a"))
       st = create_session_template("race-team-#{uniq()}", [{"only", a}], [])
-      owner = URI.parse("entity://user/default/race-owner-#{uniq()}")
+      owner = URI.parse("entity://user/team-alpha/race-owner-#{uniq()}")
 
       :ok =
         spawn_owner(owner, [
@@ -527,11 +527,11 @@ defmodule EzagentDomainChat.Integration.ReconcilerTest do
       # `{:ownership_pending, _}` indefinitely, so retry_after_race
       # must EXHAUST and return `{:partial, _}`, NOT `{:error, _}`.
       flavor = register_test_flavor()
-      a = URI.new!("template://agent/default/exhaust-a-#{uniq()}")
+      a = URI.new!("template://agent/team-alpha/exhaust-a-#{uniq()}")
       :ok = create_agent_template(a, agent_template_content(flavor, "a"))
 
       st = create_session_template("exhaust-team-#{uniq()}", [{"only", a}], [])
-      owner = URI.parse("entity://user/default/exhaust-owner-#{uniq()}")
+      owner = URI.parse("entity://user/team-alpha/exhaust-owner-#{uniq()}")
 
       :ok =
         spawn_owner(owner, [
@@ -647,8 +647,8 @@ defmodule EzagentDomainChat.Integration.ReconcilerTest do
       # The second pass's merge_working_copy revalidation MUST detect
       # the lost ownership and put a nil-worker tuple in its place.
       flavor = register_test_flavor()
-      a = URI.new!("template://agent/default/wcm-a-#{uniq()}")
-      b = URI.new!("template://agent/default/wcm-b-#{uniq()}")
+      a = URI.new!("template://agent/team-alpha/wcm-a-#{uniq()}")
+      b = URI.new!("template://agent/team-alpha/wcm-b-#{uniq()}")
       :ok = create_agent_template(a, agent_template_content(flavor, "a"))
       :ok = create_agent_template(b, agent_template_content(flavor, "b"))
 
@@ -659,7 +659,7 @@ defmodule EzagentDomainChat.Integration.ReconcilerTest do
           []
         )
 
-      owner = URI.parse("entity://user/default/wcm-owner-#{uniq()}")
+      owner = URI.parse("entity://user/team-alpha/wcm-owner-#{uniq()}")
 
       :ok =
         spawn_owner(owner, [
@@ -676,7 +676,7 @@ defmodule EzagentDomainChat.Integration.ReconcilerTest do
       # is still alive + workspace-bound, but lineage no longer points
       # at our orchestrator. Both `worker_already_owned_by_us?` and
       # `slot_still_owned?` will return false.
-      foreign_orch = URI.parse("entity://agent/default/cc_orchestrator-foreign-#{uniq()}")
+      foreign_orch = URI.parse("entity://agent/team-alpha/cc_orchestrator-foreign-#{uniq()}")
       :ok = AgentLineage.record(beta_worker, foreign_orch)
 
       # Re-run the reconciler. The this-pass slot reconcile for beta

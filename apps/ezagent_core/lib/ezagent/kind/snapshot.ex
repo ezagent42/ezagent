@@ -239,13 +239,15 @@ defmodule Ezagent.Kind.Snapshot do
   Synchronous write — used by `:on_change`, `:on_terminate`, and the
   Writer's flush path. Logs + emits `:failed` telemetry on error.
 
-  Phase 9 PR-6 (SPEC v3 §7) — derives `workspace_uri` for the
-  snapshot row from the Kind URI. For cross-cutting URIs (`system://`,
-  `template://`, `resource://`) which return `:any` from the
-  derivation helper, falls back to the default workspace
-  (`Ezagent.WorkspaceRegistry.default_workspace_uri/0`) so the
-  NOT NULL column can be satisfied — these snapshots are pre-tenant
-  scope by design (they own no workspace-specific data).
+  Phase 9 PR-6 (SPEC v3 §7) + SPEC #324 rev 3 (Allen 2026-05-25) —
+  derives `workspace_uri` for the snapshot row from the Kind URI. For
+  cross-cutting URIs (`system://`, `template://`, `resource://`) which
+  return `:any` from the derivation helper, inlines the literal
+  `"workspace://system"` (the admin workspace, structural sink for
+  system-tier state — these snapshots own no per-tenant data, so
+  landing in admin is structurally correct). No global default helper:
+  inline literals at the write site so the silent-fallback bug class
+  Allen deleted on 2026-05-25 cannot regress.
   """
   @spec save_now(URI.t() | String.t(), module(), %{atom() => map()}) :: :ok
   def save_now(uri, kind_module, state) do
@@ -294,9 +296,25 @@ defmodule Ezagent.Kind.Snapshot do
     end
   end
 
-  # Phase 9 PR-6 — derive workspace string for snapshot row. Cross-cutting
-  # schemes fall back to the default workspace to satisfy NOT NULL; they
-  # own no per-tenant data so any non-null choice is structurally correct.
+  # Phase 9 PR-6 + SPEC #324 rev 3 (Allen 2026-05-25) + r1 codex
+  # tightening — derive workspace string for snapshot row.
+  #
+  # Rules:
+  # 1. `entity://` / `workspace://` / `session://` — derive workspace
+  #    structurally via `workspace_uri_for/1` (returns `{:ok, ws}`).
+  # 2. `system://` — admin-tier snapshot; inline `"workspace://system"`
+  #    literal with comment. This is the ONLY cross-cutting scheme
+  #    allowed to fall through to system.
+  # 3. Anything else (`template://`, `resource://`, unknown / malformed
+  #    schemes) — RAISE. r1 codex caught: lumping these under the
+  #    "cross-cutting" fallback reintroduces the silent-default bug
+  #    class Allen deleted (a future tenant-scoped URI would be
+  #    snapshotted into the hidden system workspace, invisible to
+  #    tenant reads + visible to admin paths).
+  #
+  # Inlined literal (not via a global helper) per SPEC #324 rev 3: a
+  # shared `default_workspace_uri/0` was the silent fallback Allen
+  # deleted.
   defp derive_workspace_uri(uri) do
     parsed =
       case uri do
@@ -305,8 +323,31 @@ defmodule Ezagent.Kind.Snapshot do
       end
 
     case Ezagent.Persistence.workspace_uri_for(parsed) do
-      {:ok, ws} -> ws
-      {:error, :no_workspace} -> Ezagent.Persistence.default_workspace_uri()
+      {:ok, ws} ->
+        ws
+
+      {:error, :no_workspace} ->
+        # `workspace_uri_for/1` returns `:no_workspace` for any scheme
+        # whose `Capability.workspace_of/1` is `:any`. We accept only
+        # `system://` here — every other unknown/malformed scheme
+        # raises, so the operator sees the structural error instead
+        # of silent admin-workspace pollution.
+        case parsed do
+          %URI{scheme: "system"} ->
+            # System-tier snapshot — admin's workspace is the
+            # structural sink (SPEC v3 §13.1). Inlined literal.
+            "workspace://system"
+
+          other ->
+            raise ArgumentError,
+                  "Ezagent.Kind.Snapshot.derive_workspace_uri/1: cannot derive " <>
+                    "workspace for URI=#{inspect(other)}. Per SPEC #324 rev 3, only " <>
+                    "the 4 per-tenant schemes (entity/workspace/session derive " <>
+                    "structurally) and `system://` (lands in workspace://system) " <>
+                    "are accepted. Adding this URI to the snapshot path requires " <>
+                    "either making its scheme workspace-aware or explicitly " <>
+                    "declaring it system-scope at the call site."
+        end
     end
   end
 

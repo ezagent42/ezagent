@@ -104,7 +104,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentAdminReplyE2eTest do
   alias Ezagent.PluginCc.Template.CcAgent
   alias EzagentPluginCc.{BridgeRegistry, McpConfigWriter}
 
-  @workspace_uri URI.parse("workspace://default")
+  @workspace_uri URI.parse("workspace://team-alpha")
 
   @uv_path System.find_executable("uv")
   @python_path System.find_executable("python3")
@@ -308,7 +308,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentAdminReplyE2eTest do
         File.rm(status_file)
       end)
 
-      agent_uri_str = "entity://agent/default/cc_v1signoff-#{uniq()}"
+      agent_uri_str = "entity://agent/team-alpha/cc_v1signoff-#{uniq()}"
       agent_uri = URI.parse(agent_uri_str)
 
       # The cc.agent Template Class data — exactly what
@@ -440,7 +440,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentAdminReplyE2eTest do
                "Status: #{File.exists?(status_file) && File.read!(status_file) || "(no status file yet)"}"
 
       # ---- 9. set up a session + admin user, join the agent + admin
-      session_uri = URI.parse("session://default/default/v1signoff-#{uniq()}")
+      session_uri = URI.parse("session://default/team-alpha/v1signoff-#{uniq()}")
       admin_uri = User.admin_uri()
 
       {:ok, _} = Ezagent.SpawnRegistry.spawn(session_uri)

@@ -27,11 +27,13 @@ defmodule Ezagent.InterfaceValidatorTest do
     end
 
     test ":uri accepts %URI{} struct, rejects bare string" do
-      uri = URI.new!("entity://agent/default/test_cc-builder")
+      uri = URI.new!("entity://agent/team-alpha/test_cc-builder")
       assert :ok = InterfaceValidator.validate(%{u: uri}, %{u: :uri})
 
       assert {:error, {:invalid_args, [{[:u], {:type_mismatch, _}}]}} =
-               InterfaceValidator.validate(%{u: "entity://agent/default/test_cc-builder"}, %{u: :uri})
+               InterfaceValidator.validate(%{u: "entity://agent/team-alpha/test_cc-builder"}, %{
+                 u: :uri
+               })
     end
   end
 

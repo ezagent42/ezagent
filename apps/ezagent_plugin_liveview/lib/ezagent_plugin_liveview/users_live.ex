@@ -10,7 +10,7 @@ defmodule EzagentPluginLiveview.UsersLive do
   - Display name primary, URI mono subtitle (Task 1).
   - Inline display-name editing via pencil button (Task 2).
   - Bare-handle input on create form (Task 3) — type `allen`, get
-    `entity://user/default/allen` (also accepts full URI).
+    `entity://user/<workspace>/allen` (also accepts full URI; workspace picker is required).
   """
 
   use Phoenix.LiveView
@@ -30,8 +30,20 @@ defmodule EzagentPluginLiveview.UsersLive do
   end
 
   # Task 3 — bare handle, not preformatted URI. Backend normalizes.
+  # SPEC #324 rev 3 (Allen 2026-05-25): `workspace` is required AND has
+  # NO default — admin must consciously pick which workspace the new
+  # user belongs to. Auto-selecting `"system"` (rev 1/2) silently
+  # promoted every created user to admin-equivalent cross-workspace
+  # authority. The empty default forces an explicit choice; the
+  # validation in `handle_event("create_user", ...)` rejects empty.
   defp create_form_defaults do
-    %{"handle" => "", "password" => "", "caps" => "", "display_name" => ""}
+    %{
+      "handle" => "",
+      "password" => "",
+      "caps" => "",
+      "display_name" => "",
+      "workspace" => ""
+    }
   end
 
   defp list_users do
@@ -89,16 +101,23 @@ defmodule EzagentPluginLiveview.UsersLive do
 
   @impl true
   def handle_event("create_user", %{"user" => params}, socket) do
-    # Task 3 — accept bare handle (`allen`) OR full URI (`entity://user/default/allen`).
-    # Backend normalizes to canonical entity://user/<slug>.
+    # Task 3 — accept bare handle (`allen`) OR full URI (`entity://user/<ws>/allen`).
+    # Backend normalizes to canonical entity://user/<ws>/<slug>.
+    # SPEC #324: workspace is required (no silent default); form
+    # defaults to `"system"` so admin's "create another admin" stays
+    # one-click.
     handle_or_uri = Map.get(params, "handle", "") |> String.trim()
     password = Map.get(params, "password", "")
     caps_str = Map.get(params, "caps", "")
     display_name = Map.get(params, "display_name", "") |> String.trim()
+    workspace = Map.get(params, "workspace", "") |> String.trim()
 
-    uri = normalize_handle_to_uri(handle_or_uri)
+    uri = normalize_handle_to_uri(handle_or_uri, workspace)
 
     cond do
+      workspace == "" ->
+        {:noreply, assign(socket, :flash_error, gettext("Workspace required (pick from dropdown)"))}
+
       uri == "" ->
         {:noreply, assign(socket, :flash_error, gettext("Username required (e.g. allen)"))}
 
@@ -269,37 +288,50 @@ defmodule EzagentPluginLiveview.UsersLive do
     :ok
   end
 
-  # Task 3 — bare handle (`allen`) or full URI (`entity://user/default/allen`).
+  # Task 3 — bare handle (`allen`) or full URI (`entity://user/<ws>/allen`).
   # Anything else falls through and parse_user_uri rejects with a
   # helpful error.
   #
   # Phase 9 PR-3 (SPEC v3 §3): entity URIs are 3-segment
   # `entity://user/<workspace>/<name>`. Bare handles + legacy
-  # 2-segment URIs are upgraded into the `default` workspace string
-  # below.
+  # 2-segment URIs are upgraded into the workspace string passed in.
   #
-  # SPEC v2 PR-C (#295) + PR-F (this PR) — known follow-up: the
-  # `default` workspace is no longer boot-seeded; an admin-created
-  # user here lands in a workspace that may not have a backing row.
-  # The proper fix is an explicit workspace picker in the admin
-  # create-user form; tracked as a deferred UX item.
-  defp normalize_handle_to_uri(""), do: ""
+  # SPEC #324: workspace is supplied by the form (no silent
+  # `"default"`). The form defaults to `"system"` for admin's typical
+  # flow, but admin can pick any workspace from the dropdown.
+  defp normalize_handle_to_uri("", _workspace), do: ""
 
-  defp normalize_handle_to_uri("entity://user/" <> rest = full) do
+  defp normalize_handle_to_uri("entity://user/" <> rest = full, workspace) do
     if String.contains?(rest, "/") do
-      # Already has workspace segment.
+      # Already has workspace segment — trust the URI's segment over
+      # the form workspace (admin explicitly typed a different ws).
       full
     else
-      # Legacy 2-segment shape — upgrade to 3-segment under `default`.
-      "entity://user/default/" <> rest
+      # Legacy 2-segment shape — upgrade to 3-segment under the
+      # form-selected workspace.
+      "entity://user/#{workspace}/" <> rest
     end
   end
 
-  defp normalize_handle_to_uri(handle) do
+  defp normalize_handle_to_uri(handle, workspace) do
     # Strip leading "@" if user typed `@allen`. Slug whitespace is invalid.
     handle = String.trim_leading(handle, "@") |> String.trim()
-    "entity://user/default/" <> handle
+    "entity://user/#{workspace}/" <> handle
   end
+
+  # SPEC #324: admin needs `system` AND every tenant workspace in the
+  # create-user picker. `@workspaces` from LiveAuth uses
+  # `Ezagent.Workspace.list_visible/0`, which excludes `system` (it's
+  # `visible: false` per Phase 9 PR-8). Prepend `system` here so admin
+  # can create the typical "another admin" user without leaving the
+  # form.
+  defp workspace_options(workspaces) when is_list(workspaces) do
+    system = %{name: "system", uri: URI.parse("workspace://system")}
+    visible = Enum.reject(workspaces, &(&1.name == "system"))
+    [system | visible]
+  end
+
+  defp workspace_options(_), do: [%{name: "system", uri: URI.parse("workspace://system")}]
 
   # Task 1 + Task 2 — when create form supplies a display_name, persist
   # it. Best-effort: a failure here doesn't block user creation (the
@@ -518,6 +550,37 @@ defmodule EzagentPluginLiveview.UsersLive do
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
                       <div>
                         <label
+                          for="user_workspace"
+                          class="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1"
+                        >
+                          {gettext("Workspace")}
+                        </label>
+                        <select
+                          id="user_workspace"
+                          name="user[workspace]"
+                          class="w-full px-2 py-1.5 text-xs border border-zinc-300 dark:border-zinc-700 rounded font-mono bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100"
+                        >
+                          <%!-- SPEC #324: workspace picker is required (no
+                            silent `"default"` fallback). Defaults to
+                            `system` for the admin's typical "add another
+                            admin" flow. --%>
+                          <option
+                            :for={ws <- workspace_options(@workspaces)}
+                            value={ws.name}
+                            selected={ws.name == (@create_form.params["workspace"] || "system")}
+                          >
+                            {ws.name}
+                          </option>
+                        </select>
+                        <p class="mt-1 text-[11px] text-zinc-500">
+                          {gettext(
+                            "Workspace the new user lives in (admin → %{sys}, tenants → their workspace).",
+                            sys: "system"
+                          )}
+                        </p>
+                      </div>
+                      <div>
+                        <label
                           for="user_handle"
                           class="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1"
                         >
@@ -534,7 +597,7 @@ defmodule EzagentPluginLiveview.UsersLive do
                         <p class="mt-1 text-[11px] text-zinc-500">
                           {gettext("Accepts bare handle (%{handle}) or full URI (%{uri}).",
                             handle: "allen",
-                            uri: "entity://user/default/allen"
+                            uri: "entity://user/system/allen"
                           )}
                         </p>
                       </div>

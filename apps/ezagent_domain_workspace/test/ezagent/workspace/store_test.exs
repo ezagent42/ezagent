@@ -17,9 +17,9 @@ defmodule Ezagent.Workspace.StoreTest do
 
     test "encodes members + templates + rules round-trip" do
       name = "store-rt-#{System.unique_integer([:positive])}"
-      members = [URI.parse("entity://user/system/admin"), URI.parse("entity://agent/default/test_x")]
+      members = [URI.parse("entity://user/system/admin"), URI.parse("entity://agent/team-alpha/test_x")]
       tmpls = %{"main" => %{"members" => ["entity://user/system/admin"]}}
-      rules = [%{"matcher" => "always", "receivers" => ["session://default/default/a"]}]
+      rules = [%{"matcher" => "always", "receivers" => ["session://default/team-alpha/a"]}]
 
       {:ok, decoded} =
         Store.create(name, %{
@@ -50,7 +50,7 @@ defmodule Ezagent.Workspace.StoreTest do
     end
 
     test "update_members replaces the list", %{name: name} do
-      new_members = [URI.parse("entity://user/system/admin"), URI.parse("entity://agent/default/test_new")]
+      new_members = [URI.parse("entity://user/system/admin"), URI.parse("entity://agent/team-alpha/test_new")]
       {:ok, _} = Store.update_members(name, new_members)
 
       assert %{members: actual} = Store.get_by_name(name)
@@ -67,7 +67,7 @@ defmodule Ezagent.Workspace.StoreTest do
     end
 
     test "update_routing_rules replaces the list", %{name: name} do
-      rules = [%{"matcher" => "always", "receivers" => ["session://default/default/x"]}]
+      rules = [%{"matcher" => "always", "receivers" => ["session://default/team-alpha/x"]}]
       {:ok, _} = Store.update_routing_rules(name, rules)
 
       assert %{routing_rules: ^rules} = Store.get_by_name(name)

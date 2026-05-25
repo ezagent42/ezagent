@@ -48,7 +48,7 @@ defmodule Ezagent.Entity.AgentTemplateTest do
   end
 
   describe "to_template_data/2 (Phase 7 completion PR-1, SPEC §1.5 (b))" do
-    @instance_uri URI.new!("entity://agent/default/cc_worker-1")
+    @instance_uri URI.new!("entity://agent/team-alpha/cc_worker-1")
 
     test "round-trips a cc-flavored content map to the cc.agent data shape" do
       content = %{
@@ -60,7 +60,7 @@ defmodule Ezagent.Entity.AgentTemplateTest do
 
       assert {:ok, data} = AgentTemplate.to_template_data(content, @instance_uri)
       assert data["class"] == "cc.agent"
-      assert data["agent_uri"] == "entity://agent/default/cc_worker-1"
+      assert data["agent_uri"] == "entity://agent/team-alpha/cc_worker-1"
       assert data["cwd"] == "/tmp/proj"
       # The four optional keys are absent when the content sets none —
       # so the legacy 3-key cc.agent form still validates.

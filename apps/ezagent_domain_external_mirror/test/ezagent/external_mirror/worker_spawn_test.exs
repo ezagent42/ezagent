@@ -40,9 +40,9 @@ defmodule Ezagent.ExternalMirror.WorkerSpawnTest do
     # The Worker subscribes to the Session Publisher in its
     # `handle_continue(:subscribe_and_init, ...)` callback (SPEC §6.1).
     # The test env's `EzagentDomainChat.Application.start/2` seeds
-    # `session://default/default/main`; we use that as the Publisher
+    # `session://default/system/main`; we use that as the Publisher
     # for these tests so subscribe succeeds.
-    session_uri = URI.parse("session://default/default/main")
+    session_uri = URI.parse("session://default/system/main")
 
     on_exit(fn -> cleanup_workers() end)
 

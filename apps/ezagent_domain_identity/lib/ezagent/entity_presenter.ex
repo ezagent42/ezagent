@@ -14,7 +14,7 @@ defmodule Ezagent.EntityPresenter do
   ## Workspace scoping (Phase 9 PR-6 / SPEC v3 §7.2 — documented exception)
 
   Lookups are by `entity_uri` which is 3-segment workspace-bound
-  (PR-2 / SPEC v3 §3). Looking up `entity://user/default/alice` will
+  (PR-2 / SPEC v3 §3). Looking up `entity://user/team-alpha/alice` will
   NEVER return a profile for `entity://user/team-alpha/alice` — the
   URI key IS the workspace partition. We intentionally skip
   `Ezagent.Persistence.scope_by_workspace/2` here because the URI

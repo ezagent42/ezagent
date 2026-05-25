@@ -19,13 +19,13 @@ defmodule EzagentDomainChat.PresenceFanoutTest do
   defp unique_session_uri(suffix),
     do:
       URI.parse(
-        "session://default/default/presence_fanout_#{suffix}_#{System.unique_integer([:positive])}"
+        "session://default/team-alpha/presence_fanout_#{suffix}_#{System.unique_integer([:positive])}"
       )
 
   defp unique_user_uri(suffix),
     do:
       URI.parse(
-        "entity://user/default/presence_fanout_#{suffix}_#{System.unique_integer([:positive])}"
+        "entity://user/team-alpha/presence_fanout_#{suffix}_#{System.unique_integer([:positive])}"
       )
 
   defp broadcast_change(session_uri, event) do
@@ -143,7 +143,7 @@ defmodule EzagentDomainChat.PresenceFanoutTest do
       # join an extra member, then RESTART the fanout and assert the
       # index gets re-populated from the live Session's :chat slice.
       member_uri =
-        URI.parse("entity://user/default/bootstrap_test_#{System.unique_integer([:positive])}")
+        URI.parse("entity://user/team-alpha/bootstrap_test_#{System.unique_integer([:positive])}")
 
       # Spawn the member user Kind
       {:ok, _} = Ezagent.Users.create(URI.to_string(member_uri), nil, [])

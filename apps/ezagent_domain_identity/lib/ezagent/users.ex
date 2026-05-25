@@ -143,7 +143,7 @@ defmodule Ezagent.Users do
   because the URI itself is already 3-segment (carries the workspace),
   so the unique-on-`uri` index serves as the workspace partition. A
   caller asking for `entity://user/team-alpha/alice` cannot
-  accidentally receive `entity://user/default/alice`.
+  accidentally receive `entity://user/team-alpha/alice`.
   """
   @spec get_by_uri(URI.t() | String.t()) :: decoded() | nil
   def get_by_uri(uri) do

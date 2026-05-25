@@ -43,7 +43,7 @@ defmodule Ezagent.Kind.ServerPostInitTest do
   describe "post-init continuation hook" do
     test "post-init handle_continue/3 runs BEFORE :ready is published and merges new slice back",
          %{tracker: tracker, suffix: suffix} do
-      uri = URI.parse("entity://agent/default/test_post_init-#{suffix}")
+      uri = URI.parse("entity://agent/team-alpha/test_post_init-#{suffix}")
       uri_str = URI.to_string(uri)
 
       :ok = Ezagent.BehaviorRegistry.register(PostInitKind, :noop, PostInitBehavior)
@@ -79,7 +79,7 @@ defmodule Ezagent.Kind.ServerPostInitTest do
     # -----------------------------------------------------------------
     test "Behavior without post_init/2 boots unchanged (backwards-compat)",
          %{suffix: suffix} do
-      uri = URI.parse("entity://agent/default/test_no_post_init-#{suffix}")
+      uri = URI.parse("entity://agent/team-alpha/test_no_post_init-#{suffix}")
       uri_str = URI.to_string(uri)
 
       :ok = Ezagent.BehaviorRegistry.register(NoPostInitKind, :noop, NoPostInitBehavior)
@@ -108,7 +108,7 @@ defmodule Ezagent.Kind.ServerPostInitTest do
     # -----------------------------------------------------------------
     test "multiple Behaviors' post-init continuations run in behaviors/0 order",
          %{tracker: tracker, suffix: suffix} do
-      uri = URI.parse("entity://agent/default/test_multi_post_init-#{suffix}")
+      uri = URI.parse("entity://agent/team-alpha/test_multi_post_init-#{suffix}")
       uri_str = URI.to_string(uri)
 
       :ok = Ezagent.BehaviorRegistry.register(MultiPostInitKind, :noop, PostInitBehaviorA)
@@ -143,7 +143,7 @@ defmodule Ezagent.Kind.ServerPostInitTest do
     # -----------------------------------------------------------------
     test "pre-ready buffered cast survives a crashing post-init continuation",
          %{suffix: suffix} do
-      uri = URI.parse("entity://agent/default/test_crash_post_init-#{suffix}")
+      uri = URI.parse("entity://agent/team-alpha/test_crash_post_init-#{suffix}")
       uri_str = URI.to_string(uri)
 
       :ok =
@@ -197,7 +197,7 @@ defmodule Ezagent.Kind.ServerPostInitTest do
     # -----------------------------------------------------------------
     test "cast dispatched during post-init window buffers via PendingDelivery (not mailbox)",
          %{suffix: suffix} do
-      uri = URI.parse("entity://agent/default/test_dispatch_during_post_init-#{suffix}")
+      uri = URI.parse("entity://agent/team-alpha/test_dispatch_during_post_init-#{suffix}")
       uri_str = URI.to_string(uri)
 
       :ok = Ezagent.BehaviorRegistry.register(SlowPostInitKind, :noop, SlowPostInitBehavior)
@@ -205,9 +205,7 @@ defmodule Ezagent.Kind.ServerPostInitTest do
       # Start the Kind with a 50ms post-init sleep — gives the test
       # time to assert the not-ready window + issue a dispatch.
       {:ok, _pid} =
-        Ezagent.Kind.Server.start_link(
-          {SlowPostInitKind, %{uri: uri, post_init_sleep_ms: 50}}
-        )
+        Ezagent.Kind.Server.start_link({SlowPostInitKind, %{uri: uri, post_init_sleep_ms: 50}})
 
       # The Kind is registered immediately but `:not_ready` until
       # post-init completes. Wait until KindRegistry has the URI,
@@ -259,7 +257,7 @@ defmodule Ezagent.Kind.ServerPostInitTest do
     # -----------------------------------------------------------------
     test "PendingDelivery buffer is empty by the time ReadyGate is :ready",
          %{suffix: suffix} do
-      uri = URI.parse("entity://agent/default/test_fifo_post_init-#{suffix}")
+      uri = URI.parse("entity://agent/team-alpha/test_fifo_post_init-#{suffix}")
       uri_str = URI.to_string(uri)
 
       :ok = Ezagent.BehaviorRegistry.register(SlowPostInitKind, :noop, SlowPostInitBehavior)
@@ -284,9 +282,7 @@ defmodule Ezagent.Kind.ServerPostInitTest do
       assert Ezagent.PendingDelivery.buffer_size(uri) == 3
 
       {:ok, _pid} =
-        Ezagent.Kind.Server.start_link(
-          {SlowPostInitKind, %{uri: uri, post_init_sleep_ms: 20}}
-        )
+        Ezagent.Kind.Server.start_link({SlowPostInitKind, %{uri: uri, post_init_sleep_ms: 20}})
 
       # Wait until ReadyGate flips to :ready (post-init done, drain done).
       :ok = wait_until_ready(uri_str, 500)

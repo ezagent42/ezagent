@@ -16,14 +16,14 @@ defmodule Ezagent.Entity.SessionReconcilerHelpersTest do
   alias Ezagent.Entity.{Session, User}
   alias Ezagent.Routing.RuleStore
 
-  @default_ws URI.new!("workspace://default")
+  @default_ws URI.new!("workspace://team-alpha")
 
   defp uniq, do: System.unique_integer([:positive])
 
   describe "derive_session_uri/3 — SPEC §7-1 Option A determinism" do
     test "identical (template_content, owner) → identical URI" do
       content = %{name: "support-team", class: "generic"}
-      owner = URI.parse("entity://user/default/alice")
+      owner = URI.parse("entity://user/team-alpha/alice")
 
       uri1 = Session.derive_session_uri(content, @default_ws, owner)
       uri2 = Session.derive_session_uri(content, @default_ws, owner)
@@ -33,8 +33,8 @@ defmodule Ezagent.Entity.SessionReconcilerHelpersTest do
 
     test "different owners → different URIs" do
       content = %{name: "team", class: "generic"}
-      alice = URI.parse("entity://user/default/alice")
-      bob = URI.parse("entity://user/default/bob")
+      alice = URI.parse("entity://user/team-alpha/alice")
+      bob = URI.parse("entity://user/team-alpha/bob")
 
       uri_a = Session.derive_session_uri(content, @default_ws, alice)
       uri_b = Session.derive_session_uri(content, @default_ws, bob)
@@ -45,7 +45,7 @@ defmodule Ezagent.Entity.SessionReconcilerHelpersTest do
     test "different templates → different URIs" do
       content_a = %{name: "team-a", class: "generic"}
       content_b = %{name: "team-b", class: "generic"}
-      owner = URI.parse("entity://user/default/alice")
+      owner = URI.parse("entity://user/team-alpha/alice")
 
       uri_a = Session.derive_session_uri(content_a, @default_ws, owner)
       uri_b = Session.derive_session_uri(content_b, @default_ws, owner)
@@ -55,7 +55,7 @@ defmodule Ezagent.Entity.SessionReconcilerHelpersTest do
 
     test "workspace segment matches the resolved workspace name" do
       content = %{name: "team", class: "generic"}
-      owner = URI.parse("entity://user/default/alice")
+      owner = URI.parse("entity://user/team-alpha/alice")
       ws = URI.new!("workspace://team-alpha")
 
       uri = Session.derive_session_uri(content, ws, owner)
@@ -74,7 +74,7 @@ defmodule Ezagent.Entity.SessionReconcilerHelpersTest do
         behavior: Keyword.get(opts, :behavior, :any),
         instance: Keyword.get(opts, :instance, :any),
         workspace_uri: Keyword.get(opts, :workspace_uri, @default_ws),
-        granted_by: Keyword.get(opts, :granted_by, URI.parse("entity://user/default/alice")),
+        granted_by: Keyword.get(opts, :granted_by, URI.parse("entity://user/team-alpha/alice")),
         granted_at: Keyword.get(opts, :granted_at, DateTime.utc_now())
       }
     end
@@ -87,15 +87,15 @@ defmodule Ezagent.Entity.SessionReconcilerHelpersTest do
     end
 
     test "same authority, different granted_by → false (provenance matters)" do
-      a = base_cap(granted_by: URI.parse("entity://user/default/alice"))
-      b = base_cap(granted_by: URI.parse("entity://user/default/bob"))
+      a = base_cap(granted_by: URI.parse("entity://user/team-alpha/alice"))
+      b = base_cap(granted_by: URI.parse("entity://user/team-alpha/bob"))
 
       refute Session.cap_equal_ignoring_metadata?(a, b)
     end
 
     test "different :instance → false" do
       a = base_cap(instance: :any)
-      b = base_cap(instance: {:within_session, URI.new!("session://x/default/s1")})
+      b = base_cap(instance: {:within_session, URI.new!("session://x/team-alpha/s1")})
 
       refute Session.cap_equal_ignoring_metadata?(a, b)
     end
@@ -114,7 +114,7 @@ defmodule Ezagent.Entity.SessionReconcilerHelpersTest do
     test "exact match (matcher + receivers + scope + enabled + source) → {:found, _}" do
       marker = "helper-found-#{uniq()}"
       matcher = {:text_contains, marker}
-      receivers = [URI.parse("entity://agent/default/worker-#{uniq()}")]
+      receivers = [URI.parse("entity://agent/team-alpha/worker-#{uniq()}")]
 
       assert {:ok, _row} =
                RuleStore.add(
@@ -133,8 +133,8 @@ defmodule Ezagent.Entity.SessionReconcilerHelpersTest do
     test "receivers differ → :not_found" do
       marker = "helper-recvdiff-#{uniq()}"
       matcher = {:text_contains, marker}
-      inserted = [URI.parse("entity://agent/default/worker-a-#{uniq()}")]
-      probed = [URI.parse("entity://agent/default/worker-b-#{uniq()}")]
+      inserted = [URI.parse("entity://agent/team-alpha/worker-a-#{uniq()}")]
+      probed = [URI.parse("entity://agent/team-alpha/worker-b-#{uniq()}")]
 
       assert {:ok, _row} =
                RuleStore.add(
@@ -153,7 +153,7 @@ defmodule Ezagent.Entity.SessionReconcilerHelpersTest do
     test "workspace scope differs → :not_found" do
       marker = "helper-wsdiff-#{uniq()}"
       matcher = {:text_contains, marker}
-      receivers = [URI.parse("entity://agent/default/worker-#{uniq()}")]
+      receivers = [URI.parse("entity://agent/team-alpha/worker-#{uniq()}")]
       other_ws = URI.new!("workspace://other-helper-#{uniq()}")
 
       assert {:ok, _row} =
@@ -173,7 +173,7 @@ defmodule Ezagent.Entity.SessionReconcilerHelpersTest do
     test "enabled == false but otherwise matches → {:disabled, _}" do
       marker = "helper-disabled-#{uniq()}"
       matcher = {:text_contains, marker}
-      receivers = [URI.parse("entity://agent/default/worker-#{uniq()}")]
+      receivers = [URI.parse("entity://agent/team-alpha/worker-#{uniq()}")]
 
       assert {:ok, row} =
                RuleStore.add(
@@ -198,7 +198,7 @@ defmodule Ezagent.Entity.SessionReconcilerHelpersTest do
     test "source == admin → :not_found (operator's rule, not ours)" do
       marker = "helper-adminsource-#{uniq()}"
       matcher = {:text_contains, marker}
-      receivers = [URI.parse("entity://agent/default/worker-#{uniq()}")]
+      receivers = [URI.parse("entity://agent/team-alpha/worker-#{uniq()}")]
 
       # Default source = "admin" (RuleStore.add/5 default)
       assert {:ok, _row} =
@@ -213,8 +213,8 @@ defmodule Ezagent.Entity.SessionReconcilerHelpersTest do
 
   describe "worker_already_owned_by_us?/3 — codex rev-3 HIGH-1 ownership predicate" do
     test "dead worker (KindRegistry miss) → false" do
-      worker_uri = URI.parse("entity://agent/default/dead-worker-#{uniq()}")
-      orch_uri = URI.parse("entity://agent/default/cc_orchestrator-x")
+      worker_uri = URI.parse("entity://agent/team-alpha/dead-worker-#{uniq()}")
+      orch_uri = URI.parse("entity://agent/team-alpha/cc_orchestrator-x")
 
       refute Session.worker_already_owned_by_us?(worker_uri, orch_uri, @default_ws)
     end
@@ -230,10 +230,10 @@ defmodule Ezagent.Entity.SessionReconcilerHelpersTest do
           template_class: nil
         })
 
-      worker_uri = URI.parse("entity://agent/default/#{flavor}_owned-#{uniq()}")
+      worker_uri = URI.parse("entity://agent/team-alpha/#{flavor}_owned-#{uniq()}")
       {:ok, _pid} = Ezagent.SpawnRegistry.spawn(worker_uri)
 
-      orch_uri = URI.parse("entity://agent/default/cc_orchestrator-ownerpred-#{uniq()}")
+      orch_uri = URI.parse("entity://agent/team-alpha/cc_orchestrator-ownerpred-#{uniq()}")
       :ok = Ezagent.AgentLineage.record(worker_uri, orch_uri)
       :ok = Ezagent.WorkspaceRegistry.bind(worker_uri, @default_ws)
 
@@ -250,11 +250,11 @@ defmodule Ezagent.Entity.SessionReconcilerHelpersTest do
           template_class: nil
         })
 
-      worker_uri = URI.parse("entity://agent/default/#{flavor}_mis-#{uniq()}")
+      worker_uri = URI.parse("entity://agent/team-alpha/#{flavor}_mis-#{uniq()}")
       {:ok, _pid} = Ezagent.SpawnRegistry.spawn(worker_uri)
 
-      foreign_orch = URI.parse("entity://agent/default/cc_orchestrator-foreign-#{uniq()}")
-      our_orch = URI.parse("entity://agent/default/cc_orchestrator-ours-#{uniq()}")
+      foreign_orch = URI.parse("entity://agent/team-alpha/cc_orchestrator-foreign-#{uniq()}")
+      our_orch = URI.parse("entity://agent/team-alpha/cc_orchestrator-ours-#{uniq()}")
 
       :ok = Ezagent.AgentLineage.record(worker_uri, foreign_orch)
       :ok = Ezagent.WorkspaceRegistry.bind(worker_uri, @default_ws)
@@ -273,10 +273,10 @@ defmodule Ezagent.Entity.SessionReconcilerHelpersTest do
           template_class: nil
         })
 
-      worker_uri = URI.parse("entity://agent/default/#{flavor}_wsm-#{uniq()}")
+      worker_uri = URI.parse("entity://agent/team-alpha/#{flavor}_wsm-#{uniq()}")
       {:ok, _pid} = Ezagent.SpawnRegistry.spawn(worker_uri)
 
-      orch_uri = URI.parse("entity://agent/default/cc_orchestrator-wsm-#{uniq()}")
+      orch_uri = URI.parse("entity://agent/team-alpha/cc_orchestrator-wsm-#{uniq()}")
       other_ws = URI.new!("workspace://elsewhere-#{uniq()}")
 
       :ok = Ezagent.AgentLineage.record(worker_uri, orch_uri)

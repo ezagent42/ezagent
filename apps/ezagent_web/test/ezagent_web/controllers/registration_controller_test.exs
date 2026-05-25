@@ -21,7 +21,10 @@ defmodule EzagentWeb.RegistrationControllerTest do
     # Create the workspace if missing, add a user_list rule for the
     # email so workspace_still_valid?/2 returns true.
     _ = Ezagent.Workspace.create(workspace_name, %{})
-    _ = Ezagent.Workspace.add_magic_link_rule("workspace://" <> workspace_name, "user_list", email)
+
+    _ =
+      Ezagent.Workspace.add_magic_link_rule("workspace://" <> workspace_name, "user_list", email)
+
     :ok
   end
 
@@ -51,12 +54,16 @@ defmodule EzagentWeb.RegistrationControllerTest do
       |> post("/register/complete", %{"handle" => "newbie", "display_name" => "New Bie"})
 
     assert redirected_to(conn) == "/sessions"
-    assert get_session(conn, :current_entity_uri) == "entity://user/default/newbie"
+    assert get_session(conn, :current_entity_uri) == "entity://user/team-alpha/newbie"
     assert get_session(conn, :pending_registration_email) == nil
-    assert Ezagent.Entity.Profile.by_email("newbie@good.com").entity_uri == "entity://user/default/newbie"
+
+    assert Ezagent.Entity.Profile.by_email("newbie@good.com").entity_uri ==
+             "entity://user/team-alpha/newbie"
   end
 
-  test "POST /register/complete in a CUSTOM workspace creates entity://user/<ws>/<slug>", %{conn: conn} do
+  test "POST /register/complete in a CUSTOM workspace creates entity://user/<ws>/<slug>", %{
+    conn: conn
+  } do
     # PR-B 2026-05-24 — the workspace from onboarding is honored.
     conn =
       conn
@@ -68,7 +75,7 @@ defmodule EzagentWeb.RegistrationControllerTest do
   end
 
   test "POST with a taken handle re-renders the form with a suggestion", %{conn: conn} do
-    {:ok, _} = Ezagent.Users.create("entity://user/default/taken", nil, [])
+    {:ok, _} = Ezagent.Users.create("entity://user/team-alpha/taken", nil, [])
 
     conn =
       conn

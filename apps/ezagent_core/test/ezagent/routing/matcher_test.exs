@@ -12,31 +12,31 @@ defmodule Ezagent.Routing.MatcherTest do
 
   describe "mention/1" do
     test "matches when URI present in mentions" do
-      target = URI.new!("entity://agent/default/test_cc-builder")
+      target = URI.new!("entity://agent/team-alpha/test_cc-builder")
       m = msg(mentions: [target])
 
       assert Matcher.match?(Matcher.mention(target), m)
-      assert Matcher.match?(Matcher.mention("entity://agent/default/test_cc-builder"), m)
+      assert Matcher.match?(Matcher.mention("entity://agent/team-alpha/test_cc-builder"), m)
     end
 
     test "no match when mentions empty" do
-      refute Matcher.match?(Matcher.mention("entity://agent/default/test_cc-builder"), msg())
+      refute Matcher.match?(Matcher.mention("entity://agent/team-alpha/test_cc-builder"), msg())
     end
 
     test "no match for different URI" do
-      m = msg(mentions: [URI.new!("entity://agent/default/test_other")])
-      refute Matcher.match?(Matcher.mention("entity://agent/default/test_cc-builder"), m)
+      m = msg(mentions: [URI.new!("entity://agent/team-alpha/test_other")])
+      refute Matcher.match?(Matcher.mention("entity://agent/team-alpha/test_cc-builder"), m)
     end
   end
 
   describe "from/1" do
     test "matches when sender == uri" do
-      m = msg(sender: URI.new!("entity://agent/default/test_cc-builder"))
-      assert Matcher.match?(Matcher.from("entity://agent/default/test_cc-builder"), m)
+      m = msg(sender: URI.new!("entity://agent/team-alpha/test_cc-builder"))
+      assert Matcher.match?(Matcher.from("entity://agent/team-alpha/test_cc-builder"), m)
     end
 
     test "no match for different sender" do
-      refute Matcher.match?(Matcher.from("entity://agent/default/test_cc-builder"), msg())
+      refute Matcher.match?(Matcher.from("entity://agent/team-alpha/test_cc-builder"), msg())
     end
   end
 
@@ -85,7 +85,7 @@ defmodule Ezagent.Routing.MatcherTest do
     test "all 5 matchers round-trip cleanly" do
       cases = [
         Matcher.mention("entity://user/system/admin"),
-        Matcher.from("entity://agent/default/test_cc-builder"),
+        Matcher.from("entity://agent/team-alpha/test_cc-builder"),
         Matcher.text_contains("hi"),
         Matcher.text_matches("^cmd"),
         Matcher.always()

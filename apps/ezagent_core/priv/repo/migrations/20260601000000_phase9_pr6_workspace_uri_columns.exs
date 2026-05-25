@@ -111,8 +111,10 @@ defmodule EzagentCore.Repo.Migrations.Phase9Pr6WorkspaceUriColumns do
     execute("ALTER TABLE messages_new RENAME TO messages")
 
     # Preserve indexes from phase2_messages migration.
-    execute("CREATE INDEX messages_session_uri_inserted_at_index " <>
-              "ON messages (session_uri, inserted_at)")
+    execute(
+      "CREATE INDEX messages_session_uri_inserted_at_index " <>
+        "ON messages (session_uri, inserted_at)"
+    )
 
     execute("CREATE INDEX messages_sender_index ON messages (sender)")
     execute("CREATE INDEX messages_workspace_uri_index ON messages (workspace_uri)")
@@ -185,9 +187,7 @@ defmodule EzagentCore.Repo.Migrations.Phase9Pr6WorkspaceUriColumns do
     execute("DROP TABLE kind_snapshots")
     execute("ALTER TABLE kind_snapshots_new RENAME TO kind_snapshots")
 
-    execute(
-      "CREATE INDEX kind_snapshots_workspace_uri_index ON kind_snapshots (workspace_uri)"
-    )
+    execute("CREATE INDEX kind_snapshots_workspace_uri_index ON kind_snapshots (workspace_uri)")
   end
 
   defp rebuild_users do
@@ -264,9 +264,7 @@ defmodule EzagentCore.Repo.Migrations.Phase9Pr6WorkspaceUriColumns do
     execute("DROP TABLE entity_tokens")
     execute("ALTER TABLE entity_tokens_new RENAME TO entity_tokens")
 
-    execute(
-      "CREATE INDEX entity_tokens_workspace_uri_index ON entity_tokens (workspace_uri)"
-    )
+    execute("CREATE INDEX entity_tokens_workspace_uri_index ON entity_tokens (workspace_uri)")
   end
 
   defp rebuild_entity_profiles do
@@ -302,8 +300,6 @@ defmodule EzagentCore.Repo.Migrations.Phase9Pr6WorkspaceUriColumns do
         "ON entity_profiles (email) WHERE email IS NOT NULL"
     )
 
-    execute(
-      "CREATE INDEX entity_profiles_workspace_uri_index ON entity_profiles (workspace_uri)"
-    )
+    execute("CREATE INDEX entity_profiles_workspace_uri_index ON entity_profiles (workspace_uri)")
   end
 end

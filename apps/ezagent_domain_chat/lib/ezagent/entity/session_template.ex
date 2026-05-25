@@ -167,14 +167,24 @@ defmodule Ezagent.Entity.SessionTemplate do
   @doc """
   Build the URI for a SessionTemplate given name + version hash.
 
-  SPEC v3 §3.6 (Phase 9 PR-7) — defaults the workspace segment to
-  `default`. Callers needing a different workspace can pass
-  `workspace:` (string, no scheme prefix).
+  SPEC v3 §3.6 (Phase 9 PR-7) — workspace is the second path segment.
+  Per SPEC #324, there is no silent global default — `opts[:workspace]`
+  is REQUIRED (string, no scheme prefix). Callers (`AgentNewLive`,
+  `Workspace.add_template`, mix tasks, `create/3` below) all pass it
+  explicitly; missing key raises `ArgumentError`.
   """
   @spec build_uri(String.t(), String.t(), keyword()) :: URI.t()
   def build_uri(name, version_hash, opts \\ [])
       when is_binary(name) and is_binary(version_hash) do
-    workspace = Keyword.get(opts, :workspace, "default")
+    workspace =
+      Keyword.get(opts, :workspace) ||
+        raise(
+          ArgumentError,
+          "Ezagent.Entity.SessionTemplate.build_uri/3 requires opts[:workspace] " <>
+            "(SPEC #324 — no silent \"default\" fallback). Pass the workspace name " <>
+            "(e.g. \"system\" for admin templates, \"team-alpha\" for tenant)."
+        )
+
     URI.new!("template://session/#{workspace}/#{name}@#{version_hash}")
   end
 
@@ -471,8 +481,9 @@ defmodule Ezagent.Entity.SessionTemplate do
   - `:caps` — the caller's cap set. Required.
   - `:caller` — `%URI{}` of the principal. Required.
   - `:owner` — `%URI{}` to receive the owner cap. Defaults to `:caller`.
-  - `:workspace` — the workspace the root is created in. Defaults to
-    `"default"`.
+  - `:workspace` — the workspace the root is created in. REQUIRED
+    (SPEC #324 — no silent `"default"` fallback). Pass the workspace
+    name string (e.g. `"system"`, `"team-alpha"`).
 
   ## Returns
 
@@ -486,7 +497,13 @@ defmodule Ezagent.Entity.SessionTemplate do
           {:ok, URI.t()} | {:error, term()}
   def create(new_name, config \\ %{}, opts \\ [])
       when is_binary(new_name) and new_name != "" and is_map(config) do
-    workspace = Keyword.get(opts, :workspace, "default")
+    workspace =
+      Keyword.get(opts, :workspace) ||
+        raise(
+          ArgumentError,
+          "Ezagent.Entity.SessionTemplate.create/3 requires opts[:workspace] " <>
+            "(SPEC #324 — no silent \"default\" fallback)."
+        )
 
     with {:ok, caps} <- fetch_opt(opts, :caps),
          {:ok, caller_uri} <- fetch_opt(opts, :caller),

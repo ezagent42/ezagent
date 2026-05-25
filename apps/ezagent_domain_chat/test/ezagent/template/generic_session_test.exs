@@ -21,7 +21,7 @@ defmodule Ezagent.Template.GenericSessionTest do
                GenericSession.validate(%{
                  "class" => "session.generic",
                  "session_name" => "demo",
-                 "members" => ["entity://user/system/admin", "entity://agent/default/test_x"]
+                 "members" => ["entity://user/system/admin", "entity://agent/team-alpha/test_x"]
                })
     end
 

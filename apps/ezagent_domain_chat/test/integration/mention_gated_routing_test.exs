@@ -65,11 +65,11 @@ defmodule EzagentDomainChat.Integration.MentionGatedRoutingTest do
     table
   end
 
-  # Spawn a real Session bound to workspace://default + return its URI.
+  # Spawn a real Session bound to workspace://team-alpha + return its URI.
   defp spawn_session do
-    session = URI.new!("session://default/default/#{u("mg-sess")}")
+    session = URI.new!("session://default/team-alpha/#{u("mg-sess")}")
     {:ok, _} = Ezagent.SpawnRegistry.spawn(session)
-    :ok = Ezagent.WorkspaceRegistry.bind(session, URI.new!("workspace://default"))
+    :ok = Ezagent.WorkspaceRegistry.bind(session, URI.new!("workspace://team-alpha"))
     on_exit(fn -> Ezagent.WorkspaceRegistry.unbind(session) end)
     session
   end
@@ -120,9 +120,9 @@ defmodule EzagentDomainChat.Integration.MentionGatedRoutingTest do
     install_default_rule_table()
     session = spawn_session()
 
-    sender = URI.new!("entity://user/default/#{u("sender")}")
-    user_member = URI.new!("entity://user/default/#{u("usermem")}")
-    agent_member = URI.new!("entity://agent/default/echo_#{u("a")}")
+    sender = URI.new!("entity://user/team-alpha/#{u("sender")}")
+    user_member = URI.new!("entity://user/team-alpha/#{u("usermem")}")
+    agent_member = URI.new!("entity://agent/team-alpha/echo_#{u("a")}")
 
     {:ok, _} = Ezagent.SpawnRegistry.spawn(sender)
     {:ok, _} = Ezagent.SpawnRegistry.spawn(user_member)
@@ -156,8 +156,8 @@ defmodule EzagentDomainChat.Integration.MentionGatedRoutingTest do
     install_default_rule_table()
     session = spawn_session()
 
-    sender = URI.new!("entity://user/default/#{u("sender")}")
-    user_member = URI.new!("entity://user/default/#{u("usermem")}")
+    sender = URI.new!("entity://user/team-alpha/#{u("sender")}")
+    user_member = URI.new!("entity://user/team-alpha/#{u("usermem")}")
 
     {:ok, _} = Ezagent.SpawnRegistry.spawn(sender)
     {:ok, _} = Ezagent.SpawnRegistry.spawn(user_member)
@@ -182,7 +182,7 @@ defmodule EzagentDomainChat.Integration.MentionGatedRoutingTest do
   test "§6.8 — the session stream broadcast is unconditional (no mention)" do
     install_default_rule_table()
     session = spawn_session()
-    sender = URI.new!("entity://user/default/#{u("sender")}")
+    sender = URI.new!("entity://user/team-alpha/#{u("sender")}")
     {:ok, _} = Ezagent.SpawnRegistry.spawn(sender)
     join(session, sender)
 
@@ -198,9 +198,9 @@ defmodule EzagentDomainChat.Integration.MentionGatedRoutingTest do
     install_default_rule_table()
     session = spawn_session()
 
-    sender = URI.new!("entity://user/default/#{u("sender")}")
-    mentioned = URI.new!("entity://agent/default/echo_#{u("hit")}")
-    other = URI.new!("entity://agent/default/echo_#{u("miss")}")
+    sender = URI.new!("entity://user/team-alpha/#{u("sender")}")
+    mentioned = URI.new!("entity://agent/team-alpha/echo_#{u("hit")}")
+    other = URI.new!("entity://agent/team-alpha/echo_#{u("miss")}")
 
     {:ok, _} = Ezagent.SpawnRegistry.spawn(sender)
     {:ok, _} = Ezagent.SpawnRegistry.spawn(mentioned)
@@ -226,13 +226,13 @@ defmodule EzagentDomainChat.Integration.MentionGatedRoutingTest do
     install_default_rule_table()
     session = spawn_session()
 
-    sender = URI.new!("entity://user/default/#{u("sender")}")
+    sender = URI.new!("entity://user/team-alpha/#{u("sender")}")
     {:ok, _} = Ezagent.SpawnRegistry.spawn(sender)
     join(session, sender)
 
     agents =
       for _ <- 1..5 do
-        a = URI.new!("entity://agent/default/echo_#{u("cascade")}")
+        a = URI.new!("entity://agent/team-alpha/echo_#{u("cascade")}")
         {:ok, _} = Ezagent.SpawnRegistry.spawn(a)
         join(session, a)
         a

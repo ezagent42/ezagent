@@ -67,7 +67,7 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
 
   require Logger
 
-  @template_uri "template://agent/default/cc-orchestrator"
+  @template_uri "template://agent/system/cc-orchestrator"
 
   # The orchestrator MCP bridge script + its exported schema file, as
   # they ship in this app's priv/ dir.

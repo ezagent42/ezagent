@@ -34,6 +34,7 @@ defmodule Ezagent.CapabilityRegistryTest do
     @behaviour Ezagent.Behavior
 
     def actions, do: [:mock_test_action_d, :mock_test_action_d2]
+
     def cap_subjects do
       [
         {:mock_test_action_d, "mock dispatchable test action 1"},
@@ -155,7 +156,7 @@ defmodule Ezagent.CapabilityRegistryTest do
           behavior: :any,
           instance: :any,
           workspace_uri: workspace_uri,
-          granted_by: URI.parse("entity://user/default/system"),
+          granted_by: URI.parse("entity://user/team-alpha/system"),
           granted_at: ~U[2026-01-01 00:00:00Z]
         },
         %Capability{
@@ -163,7 +164,7 @@ defmodule Ezagent.CapabilityRegistryTest do
           behavior: :any,
           instance: :any,
           workspace_uri: workspace_uri,
-          granted_by: URI.parse("entity://user/default/system"),
+          granted_by: URI.parse("entity://user/team-alpha/system"),
           granted_at: ~U[2026-01-01 00:00:00Z]
         }
       ]
@@ -193,7 +194,7 @@ defmodule Ezagent.CapabilityRegistryTest do
     test "returns 4-field map for registered subject" do
       :ok = CapabilityRegistry.register(Session, :mock_test_action_d, MockDispatchableBehavior)
 
-      target = URI.parse("session://default/default/test-needed-for")
+      target = URI.parse("session://default/team-alpha/test-needed-for")
       needed = CapabilityRegistry.needed_for(Session, :mock_test_action_d, target)
 
       assert needed.kind == Session.type_name()
@@ -201,11 +202,11 @@ defmodule Ezagent.CapabilityRegistryTest do
       assert %URI{} = needed.instance
       # Compare URI string form — URI.parse vs URI.new! produce
       # equivalent shape but Erlang struct field order may differ.
-      assert URI.to_string(needed.workspace_uri) == "workspace://default"
+      assert URI.to_string(needed.workspace_uri) == "workspace://team-alpha"
     end
 
     test "raises KeyError on unregistered (kind, action)" do
-      target = URI.parse("entity://user/default/x")
+      target = URI.parse("entity://user/team-alpha/x")
 
       assert_raise KeyError, ~r/no cap subject registered/, fn ->
         CapabilityRegistry.needed_for(User, :totally_unregistered_xyz, target)
@@ -245,6 +246,7 @@ defmodule Ezagent.CapabilityRegistryTest do
       @behaviour Ezagent.Behavior
 
       def actions, do: [:full_action_a, :full_action_b, :full_action_c]
+
       def cap_subjects do
         [
           {:full_action_a, "action a"},
@@ -269,11 +271,15 @@ defmodule Ezagent.CapabilityRegistryTest do
 
     test "different Kinds can register different subsets of a Behavior's actions" do
       # Kind 1 gets only :full_action_a
-      :ok = CapabilityRegistry.register(MockKindForSubset1, :full_action_a, MockMultiActionBehavior)
+      :ok =
+        CapabilityRegistry.register(MockKindForSubset1, :full_action_a, MockMultiActionBehavior)
 
       # Kind 2 gets only :full_action_b + :full_action_c
-      :ok = CapabilityRegistry.register(MockKindForSubset2, :full_action_b, MockMultiActionBehavior)
-      :ok = CapabilityRegistry.register(MockKindForSubset2, :full_action_c, MockMultiActionBehavior)
+      :ok =
+        CapabilityRegistry.register(MockKindForSubset2, :full_action_b, MockMultiActionBehavior)
+
+      :ok =
+        CapabilityRegistry.register(MockKindForSubset2, :full_action_c, MockMultiActionBehavior)
 
       subjects_k1 = CapabilityRegistry.subjects_for_kind(MockKindForSubset1)
       subjects_k2 = CapabilityRegistry.subjects_for_kind(MockKindForSubset2)

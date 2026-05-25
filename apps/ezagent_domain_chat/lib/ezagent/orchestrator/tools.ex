@@ -54,7 +54,7 @@ defmodule Ezagent.Orchestrator.Tools do
   orchestrator's caller context:
 
       Tools.add_agent_slot("backend-dev",
-        URI.parse("template://agent/default/cc-backend"),
+        URI.parse("template://agent/system/cc-backend"),
         nil,
         caller: %URI{} = orchestrator_uri,
         caps: caps,
@@ -1746,7 +1746,7 @@ defmodule Ezagent.Orchestrator.Tools do
 
     orchestrator_template_uri =
       Map.get(wc, :orchestrator_template_uri) ||
-        URI.parse("template://agent/default/cc-orchestrator")
+        URI.parse("template://agent/system/cc-orchestrator")
 
     default_workspace_uri = Map.get(wc, :default_workspace_uri) || workspace_uri
 

@@ -5,6 +5,7 @@ defmodule EzagentCore.Repo.Migrations.Phase4Workspaces do
     create table(:workspaces) do
       add :name, :string, null: false
       add :uri, :string, null: false
+
       # JSON-encoded list of member URIs (e.g. ["entity://user/default/admin","entity://agent/default/test_x"])
       add :member_uris, :text, null: false, default: "[]"
       # JSON-encoded map name → template_data

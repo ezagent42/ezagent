@@ -67,8 +67,9 @@ defmodule EzagentPluginEcho.Application do
 
   # PR #141 (SPEC v2): `agent://` scheme deleted; merged into `entity://`.
   # Agent flavor moves to free-form name prefix (SPEC §5.14):
-  # Echo's default instance is `entity://agent/default/echo_default`.
-  @default_uri URI.parse("entity://agent/default/echo_default")
+  # Echo's default instance is `entity://agent/system/echo_default` —
+  # admin's workspace, since echo is the admin demo agent (SPEC #324).
+  @default_uri URI.parse("entity://agent/system/echo_default")
 
   # --- OTP Application -------------------------------------------------
 

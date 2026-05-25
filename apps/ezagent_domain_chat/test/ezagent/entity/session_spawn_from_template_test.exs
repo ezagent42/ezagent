@@ -30,7 +30,7 @@ defmodule Ezagent.Entity.SessionSpawnFromTemplateTest do
     uri = Session.default_uri()
     assert uri.scheme == "session"
     assert uri.host == "default"
-    assert uri.path == "/default/main"
+    assert uri.path == "/system/main"
   end
 
   test "Generator module is Session itself (not a separate Generator module)" do

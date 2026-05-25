@@ -22,8 +22,8 @@ defmodule Ezagent.Entity.AgentSpawnFreshTest do
   alias Ezagent.Entity.Agent
   alias Ezagent.{AgentLineage, AgentFlavorRegistry, SpawnRegistry, WorkspaceRegistry}
 
-  @default_ws URI.new!("workspace://default")
-  @template_uri URI.parse("template://agent/default/cc-orchestrator")
+  @default_ws URI.new!("workspace://team-alpha")
+  @template_uri URI.parse("template://agent/system/cc-orchestrator")
 
   defp uniq, do: System.unique_integer([:positive])
 
@@ -44,13 +44,13 @@ defmodule Ezagent.Entity.AgentSpawnFreshTest do
     test "first spawn → fresh?: true + lineage + binding recorded" do
       flavor = register_no_class_flavor()
       instance = "#{flavor}_first-#{uniq()}"
-      granted_by = URI.parse("entity://user/default/granter-#{uniq()}")
+      granted_by = URI.parse("entity://user/team-alpha/granter-#{uniq()}")
 
       assert {:ok, %{pid: pid, fresh?: true, agent_uri: agent_uri}} =
                Agent.spawn_fresh(@template_uri, instance, @default_ws, granted_by)
 
       assert is_pid(pid)
-      assert URI.to_string(agent_uri) == "entity://agent/default/#{instance}"
+      assert URI.to_string(agent_uri) == "entity://agent/team-alpha/#{instance}"
 
       # Side effects ARE recorded for a fresh worker.
       assert {:ok, %URI{} = bound} = WorkspaceRegistry.lookup(agent_uri)
@@ -64,8 +64,8 @@ defmodule Ezagent.Entity.AgentSpawnFreshTest do
       flavor = register_no_class_flavor()
       instance = "#{flavor}_second-#{uniq()}"
 
-      first_granter = URI.parse("entity://user/default/first-#{uniq()}")
-      other_granter = URI.parse("entity://user/default/other-#{uniq()}")
+      first_granter = URI.parse("entity://user/team-alpha/first-#{uniq()}")
+      other_granter = URI.parse("entity://user/team-alpha/other-#{uniq()}")
 
       # First call records the ORIGINAL lineage + binding.
       assert {:ok, %{fresh?: true, agent_uri: agent_uri}} =
@@ -109,12 +109,12 @@ defmodule Ezagent.Entity.AgentSpawnFreshTest do
     test "first call → {:ok, agent_uri} (pre-PR-A shape preserved)" do
       flavor = register_no_class_flavor()
       instance = "#{flavor}_shim-first-#{uniq()}"
-      granted_by = URI.parse("entity://user/default/shim-granter-#{uniq()}")
+      granted_by = URI.parse("entity://user/team-alpha/shim-granter-#{uniq()}")
 
       assert {:ok, %URI{} = agent_uri} =
                Agent.spawn(@template_uri, instance, @default_ws, granted_by)
 
-      assert URI.to_string(agent_uri) == "entity://agent/default/#{instance}"
+      assert URI.to_string(agent_uri) == "entity://agent/team-alpha/#{instance}"
 
       assert {:ok, _} = AgentLineage.lookup(agent_uri)
       assert {:ok, _} = WorkspaceRegistry.lookup(agent_uri)
@@ -124,8 +124,8 @@ defmodule Ezagent.Entity.AgentSpawnFreshTest do
       flavor = register_no_class_flavor()
       instance = "#{flavor}_shim-second-#{uniq()}"
 
-      first_granter = URI.parse("entity://user/default/shim-first-#{uniq()}")
-      second_granter = URI.parse("entity://user/default/shim-second-#{uniq()}")
+      first_granter = URI.parse("entity://user/team-alpha/shim-first-#{uniq()}")
+      second_granter = URI.parse("entity://user/team-alpha/shim-second-#{uniq()}")
 
       # First call.
       assert {:ok, agent_uri} =

@@ -35,7 +35,7 @@ defmodule EzagentDomainChat.Integration.NonAdminGrantFlowE2ETest do
   end
 
   defp setup_non_admin(handle, caps \\ []) do
-    uri_str = "entity://user/default/" <> handle <> "_#{System.unique_integer([:positive])}"
+    uri_str = "entity://user/team-alpha/" <> handle <> "_#{System.unique_integer([:positive])}"
     {:ok, _} = Users.create(uri_str, nil, caps)
 
     uri = URI.parse(uri_str)
@@ -90,7 +90,7 @@ defmodule EzagentDomainChat.Integration.NonAdminGrantFlowE2ETest do
                chat_send(operator_uri, operator_caps_empty, session_uri, "first try")
 
       # ---------- Step 2: admin grants operator a workspace session cap ----------
-      workspace_uri = URI.parse("workspace://default")
+      workspace_uri = URI.parse("workspace://team-alpha")
 
       session_cap = %Capability{
         kind: :session,

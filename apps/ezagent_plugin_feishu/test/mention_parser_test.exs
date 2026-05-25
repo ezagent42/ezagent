@@ -24,7 +24,7 @@ defmodule EzagentPluginFeishu.MentionParserTest do
 
     assert [%URI{} = uri] = MentionParser.extract_agent_mentions("@#{name} look")
     # PR #141 SPEC v2: agent URIs are entity://agent/<flavor>_<name>
-    assert URI.to_string(uri) == "entity://agent/default/cc_#{name}"
+    assert URI.to_string(uri) == "entity://agent/team-alpha/cc_#{name}"
   end
 
   test "duplicates dedup'd" do
@@ -57,7 +57,7 @@ defmodule EzagentPluginFeishu.MentionParserTest do
     # the AgentTypeRegistry needs a registered fn for whatever flavor
     # we use. The chat plugin registers "cc" → Entity.Agent in normal
     # boot, so spawn one of those here.
-    uri = URI.parse("entity://agent/default/cc_" <> name)
+    uri = URI.parse("entity://agent/team-alpha/cc_" <> name)
     {:ok, _pid} = Ezagent.SpawnRegistry.spawn(uri)
     on_exit(fn -> :ok end)
     :ok

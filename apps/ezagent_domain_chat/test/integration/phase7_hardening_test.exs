@@ -336,16 +336,16 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
   end
 
   defp create_session_template(name, agent_slots, routing_rules, opts \\ []) do
-    workspace = Keyword.get(opts, :workspace, "default")
+    workspace = Keyword.get(opts, :workspace, "team-alpha")
 
     content = %{
       name: name,
       description: "test team #{name}",
       agent_slots: agent_slots,
       routing_rules: routing_rules,
-      orchestrator_template_uri: URI.parse("template://agent/default/cc-orchestrator"),
+      orchestrator_template_uri: URI.parse("template://agent/system/cc-orchestrator"),
       default_workspace_uri:
-        Keyword.get(opts, :default_workspace_uri, URI.parse("workspace://default")),
+        Keyword.get(opts, :default_workspace_uri, URI.parse("workspace://team-alpha")),
       parent_template_uri: nil,
       version_tag: nil,
       created_by: User.admin_uri(),
@@ -418,7 +418,7 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
     end
   end
 
-  @default_ws URI.new!("workspace://default")
+  @default_ws URI.new!("workspace://team-alpha")
 
   # ════════════════════════════════════════════════════════════════════
   # CRITICAL — two sessions from one SessionTemplate get disjoint worker
@@ -437,7 +437,7 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
     # forked template (V1 trade-off).
     test "two reconciler calls with same args produce the SAME session + same workers" do
       flavor = register_test_flavor()
-      worker_tmpl = URI.new!("template://agent/default/ph7-crit-worker-#{uniq()}")
+      worker_tmpl = URI.new!("template://agent/team-alpha/ph7-crit-worker-#{uniq()}")
       :ok = create_agent_template(worker_tmpl, agent_template_content(flavor, "worker"))
 
       st_uri =
@@ -475,7 +475,7 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
   describe "HIGH-2 — chat.set_working_copy authorization" do
     setup do
       flavor = register_test_flavor()
-      worker_tmpl = URI.new!("template://agent/default/ph7-h2-worker-#{uniq()}")
+      worker_tmpl = URI.new!("template://agent/team-alpha/ph7-h2-worker-#{uniq()}")
       :ok = create_agent_template(worker_tmpl, agent_template_content(flavor, "worker"))
 
       st_uri =
@@ -494,7 +494,7 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
       # :any}` cap — exactly what every user inherits. Step 5.5 CapBAC
       # passes (the cap is structurally broad), but the HIGH-2 in-invoke
       # gate must still deny.
-      user_uri = URI.parse("entity://user/default/ph7-h2-normal-#{uniq()}")
+      user_uri = URI.parse("entity://user/team-alpha/ph7-h2-normal-#{uniq()}")
 
       user_caps =
         MapSet.new([
@@ -552,7 +552,7 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
   describe "HIGH-3 — Generator-installed routing rules are loaded into the live registry" do
     test "a matching chat message right after Generator completion is delivered to the worker" do
       flavor = register_test_flavor()
-      worker_tmpl = URI.new!("template://agent/default/ph7-h3-worker-#{uniq()}")
+      worker_tmpl = URI.new!("template://agent/team-alpha/ph7-h3-worker-#{uniq()}")
       :ok = create_agent_template(worker_tmpl, agent_template_content(flavor, "worker"))
 
       # A SessionTemplate whose routing rule fires on `text_contains
@@ -650,7 +650,7 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
   describe "MEDIUM-5 — preflight + compensating cleanup" do
     test "an invalid routing matcher is rejected by preflight — no session/workers spawned" do
       flavor = register_test_flavor()
-      worker_tmpl = URI.new!("template://agent/default/ph7-m5-worker-#{uniq()}")
+      worker_tmpl = URI.new!("template://agent/team-alpha/ph7-m5-worker-#{uniq()}")
       :ok = create_agent_template(worker_tmpl, agent_template_content(flavor, "worker"))
 
       # A SessionTemplate with a structurally-BROKEN routing matcher —
@@ -683,7 +683,7 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
       # and the OTHER slots still converge while this slot
       # accumulates into `pending`. Operators can resolve (start the
       # plugin / persist the template) and re-invoke to converge.
-      missing_tmpl = URI.new!("template://agent/default/ph7-m5-missing-#{uniq()}")
+      missing_tmpl = URI.new!("template://agent/team-alpha/ph7-m5-missing-#{uniq()}")
 
       st_uri =
         create_session_template("ph7-m5-miss-#{uniq()}", [{"dev", missing_tmpl}], [])
@@ -703,8 +703,8 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
     test "a same-flavor template swap spawns a NEW (generation-bumped) worker URI" do
       flavor = register_test_flavor()
 
-      tmpl_a = URI.new!("template://agent/default/ph7-h6-a-#{uniq()}")
-      tmpl_b = URI.new!("template://agent/default/ph7-h6-b-#{uniq()}")
+      tmpl_a = URI.new!("template://agent/team-alpha/ph7-h6-a-#{uniq()}")
+      tmpl_b = URI.new!("template://agent/team-alpha/ph7-h6-b-#{uniq()}")
       :ok = create_agent_template(tmpl_a, agent_template_content(flavor, "config-a"))
       :ok = create_agent_template(tmpl_b, agent_template_content(flavor, "config-b"))
 
@@ -771,7 +771,7 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
     # (V1-R6 partial-resume / retry tests).
     test "a forced upsert_agent_slot failure terminates the newly-spawned replacement" do
       flavor = register_test_flavor()
-      worker_tmpl = URI.new!("template://agent/default/ph7-h7-worker-#{uniq()}")
+      worker_tmpl = URI.new!("template://agent/team-alpha/ph7-h7-worker-#{uniq()}")
       :ok = create_agent_template(worker_tmpl, agent_template_content(flavor, "worker"))
 
       st_uri = create_session_template("ph7-h7-team-#{uniq()}", [{"dev", worker_tmpl}], [])
@@ -823,7 +823,7 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
   describe "HIGH-8 — update_template checks durable parent existence" do
     test "a snapshotted-but-not-live parent SessionTemplate → update_template succeeds" do
       flavor = register_test_flavor()
-      worker_tmpl = URI.new!("template://agent/default/ph7-h8-worker-#{uniq()}")
+      worker_tmpl = URI.new!("template://agent/team-alpha/ph7-h8-worker-#{uniq()}")
       :ok = create_agent_template(worker_tmpl, agent_template_content(flavor, "worker"))
 
       parent_uri =
@@ -864,15 +864,15 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
       # pass. A parent with neither a live Kind nor a snapshot row is
       # still reported deleted.
       parent_uri =
-        URI.parse("template://session/default/ph7-h8-ghost-#{uniq()}@deadbeefdeadbeef")
+        URI.parse("template://session/team-alpha/ph7-h8-ghost-#{uniq()}@deadbeefdeadbeef")
 
       caps = MapSet.new([template_cap(:session_template, @default_ws)])
 
       assert {:error, :parent_template_deleted} =
                Tools.update_template(
-                 session_uri: URI.parse("session://default/default/ph7-h8-ghost"),
+                 session_uri: URI.parse("session://default/team-alpha/ph7-h8-ghost"),
                  workspace_uri: @default_ws,
-                 caller: URI.parse("entity://agent/default/cc_ph7-h8-orch"),
+                 caller: URI.parse("entity://agent/team-alpha/cc_ph7-h8-orch"),
                  caps: caps,
                  parent_template_uri: parent_uri
                )
@@ -900,7 +900,7 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
 
     test "save_template_as dispatches template.write WITHOUT admin caps in ctx" do
       flavor = register_test_flavor()
-      worker_tmpl = URI.new!("template://agent/default/ph7-h9-worker-#{uniq()}")
+      worker_tmpl = URI.new!("template://agent/team-alpha/ph7-h9-worker-#{uniq()}")
       :ok = create_agent_template(worker_tmpl, agent_template_content(flavor, "worker"))
 
       st_uri = create_session_template("ph7-h9-team-#{uniq()}", [{"dev", worker_tmpl}], [])
@@ -957,7 +957,7 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
       # DENY — proving there is no admin fallback (if there were, the
       # admin cap would silently authorize the write).
       flavor = register_test_flavor()
-      worker_tmpl = URI.new!("template://agent/default/ph7-h9b-worker-#{uniq()}")
+      worker_tmpl = URI.new!("template://agent/team-alpha/ph7-h9b-worker-#{uniq()}")
       :ok = create_agent_template(worker_tmpl, agent_template_content(flavor, "worker"))
 
       st_uri = create_session_template("ph7-h9b-team-#{uniq()}", [{"dev", worker_tmpl}], [])
@@ -968,7 +968,7 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
           %Capability{
             kind: :session,
             behavior: :any,
-            instance: {:within_session, URI.parse("session://generic/default/ph7-h9b")},
+            instance: {:within_session, URI.parse("session://generic/team-alpha/ph7-h9b")},
             workspace_uri: @default_ws,
             granted_by: User.admin_uri(),
             granted_at: DateTime.utc_now()
@@ -982,7 +982,7 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
 
       assert {:error, :unauthorized} =
                Tools.save_template_as("ph7-h9b-saved-#{uniq()}",
-                 caller: URI.parse("entity://agent/default/cc_ph7-h9b-orch"),
+                 caller: URI.parse("entity://agent/team-alpha/cc_ph7-h9b-orch"),
                  caps: caps,
                  session_uri: session_uri,
                  workspace_uri: @default_ws
@@ -1005,7 +1005,7 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
       # The SessionTemplate + the worker AgentTemplate both live in
       # `default`, but the template encodes a default_workspace_uri
       # pointing at a DIFFERENT workspace — the cross-workspace escalation.
-      worker_tmpl = URI.new!("template://agent/default/ph7r2-crit-a-#{uniq()}")
+      worker_tmpl = URI.new!("template://agent/team-alpha/ph7r2-crit-a-#{uniq()}")
       :ok = create_agent_template(worker_tmpl, agent_template_content(flavor, "worker"))
 
       other_ws = URI.new!("workspace://ph7r2crit#{uniq()}")
@@ -1015,7 +1015,7 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
           "ph7r2-crit-team-#{uniq()}",
           [{"dev", worker_tmpl}],
           [],
-          workspace: "default",
+          workspace: "team-alpha",
           default_workspace_uri: other_ws
         )
 
@@ -1044,8 +1044,8 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
           "ph7r2-crit-team-#{uniq()}",
           [{"dev", cross_slot_tmpl}],
           [],
-          workspace: "default",
-          default_workspace_uri: URI.parse("workspace://default")
+          workspace: "team-alpha",
+          default_workspace_uri: URI.parse("workspace://team-alpha")
         )
 
       owner_uri = full_template_owner(@default_ws)
@@ -1061,7 +1061,7 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
 
     test "an all-same-workspace SessionTemplate still spawns (no false denial)" do
       flavor = register_test_flavor()
-      worker_tmpl = URI.new!("template://agent/default/ph7r2-crit-ok-#{uniq()}")
+      worker_tmpl = URI.new!("template://agent/team-alpha/ph7r2-crit-ok-#{uniq()}")
       :ok = create_agent_template(worker_tmpl, agent_template_content(flavor, "worker"))
 
       st_uri = create_session_template("ph7r2-crit-ok-#{uniq()}", [{"dev", worker_tmpl}], [])
@@ -1078,8 +1078,8 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
   describe "HIGH-2 r2 — update_agent_template re-points routing rules" do
     test "a message matching a rule that targeted the old slot is delivered to the NEW worker" do
       flavor = register_test_flavor()
-      tmpl_a = URI.new!("template://agent/default/ph7r2-h2-a-#{uniq()}")
-      tmpl_b = URI.new!("template://agent/default/ph7r2-h2-b-#{uniq()}")
+      tmpl_a = URI.new!("template://agent/team-alpha/ph7r2-h2-a-#{uniq()}")
+      tmpl_b = URI.new!("template://agent/team-alpha/ph7r2-h2-b-#{uniq()}")
       :ok = create_agent_template(tmpl_a, agent_template_content(flavor, "config-a"))
       :ok = create_agent_template(tmpl_b, agent_template_content(flavor, "config-b"))
 
@@ -1176,7 +1176,7 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
       table = EzagentDomainChat.Routing.MentionRouting
 
       flavor = register_orchestrator_killer_flavor()
-      worker_tmpl = URI.new!("template://agent/default/ph7r2-h3-worker-#{uniq()}")
+      worker_tmpl = URI.new!("template://agent/team-alpha/ph7r2-h3-worker-#{uniq()}")
       :ok = create_agent_template(worker_tmpl, agent_template_content(flavor, "worker"))
 
       # A routing rule the Generator will install BEFORE the failure —
@@ -1236,9 +1236,9 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
   describe "HIGH-4 r2 — legacy 2-tuple agent_slots in update_agent_template" do
     test "a pre-hardening 2-tuple slot yields a controlled :no_live_worker error" do
       flavor = register_test_flavor()
-      worker_tmpl = URI.new!("template://agent/default/ph7r2-h4-worker-#{uniq()}")
+      worker_tmpl = URI.new!("template://agent/team-alpha/ph7r2-h4-worker-#{uniq()}")
       :ok = create_agent_template(worker_tmpl, agent_template_content(flavor, "worker"))
-      new_tmpl = URI.new!("template://agent/default/ph7r2-h4-new-#{uniq()}")
+      new_tmpl = URI.new!("template://agent/team-alpha/ph7r2-h4-new-#{uniq()}")
       :ok = create_agent_template(new_tmpl, agent_template_content(flavor, "new"))
 
       st_uri = create_session_template("ph7r2-h4-team-#{uniq()}", [{"dev", worker_tmpl}], [])
@@ -1291,8 +1291,8 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
     # reconciler test (partial-routing convergence).
     test "a forced load_into_registry raise during the re-point keeps the old worker alive" do
       flavor = register_test_flavor()
-      tmpl_a = URI.new!("template://agent/default/ph7r3-h1-a-#{uniq()}")
-      tmpl_b = URI.new!("template://agent/default/ph7r3-h1-b-#{uniq()}")
+      tmpl_a = URI.new!("template://agent/team-alpha/ph7r3-h1-a-#{uniq()}")
+      tmpl_b = URI.new!("template://agent/team-alpha/ph7r3-h1-b-#{uniq()}")
       :ok = create_agent_template(tmpl_a, agent_template_content(flavor, "config-a"))
       :ok = create_agent_template(tmpl_b, agent_template_content(flavor, "config-b"))
 
@@ -1394,7 +1394,7 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
     # (PR-A `idempotent_re_run_test.exs` / `partial_resume_test.exs`).
     test "a raise after row inserts returns a tagged error and leaks nothing" do
       flavor = register_test_flavor()
-      worker_tmpl = URI.new!("template://agent/default/ph7r3-h2-worker-#{uniq()}")
+      worker_tmpl = URI.new!("template://agent/team-alpha/ph7r3-h2-worker-#{uniq()}")
       :ok = create_agent_template(worker_tmpl, agent_template_content(flavor, "worker"))
 
       # A unique marker so the routing row this Generator run inserts is
@@ -1466,7 +1466,7 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
   describe "MEDIUM-3 r3 — slot-name uniqueness preflight" do
     test "two normal slots produce DISTINCT worker URIs" do
       flavor = register_test_flavor()
-      tmpl = URI.new!("template://agent/default/ph7r3-m3-worker-#{uniq()}")
+      tmpl = URI.new!("template://agent/team-alpha/ph7r3-m3-worker-#{uniq()}")
       :ok = create_agent_template(tmpl, agent_template_content(flavor, "worker"))
 
       st_uri =
@@ -1495,7 +1495,7 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
       # the deterministic worst case. The preflight must reject the
       # Generator run BEFORE a single template.instantiate dispatch.
       flavor = register_test_flavor()
-      tmpl = URI.new!("template://agent/default/ph7r3-m3-dup-#{uniq()}")
+      tmpl = URI.new!("template://agent/team-alpha/ph7r3-m3-dup-#{uniq()}")
       :ok = create_agent_template(tmpl, agent_template_content(flavor, "worker"))
 
       st_uri =
@@ -1568,7 +1568,7 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
       # persisted row that names a DIFFERENT worker and shares the
       # matcher. It MUST survive the failed Generator run.
       other_session_worker =
-        URI.parse("entity://agent/default/ph7r4_other-session-worker-#{uniq()}")
+        URI.parse("entity://agent/team-alpha/ph7r4_other-session-worker-#{uniq()}")
 
       assert {:ok, %{id: pre_existing_id}} =
                Ezagent.Routing.RuleStore.add(
@@ -1583,7 +1583,7 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
       # matcher. Force `RuleStore.load_into_registry` to RAISE so the
       # routing-install step fails AFTER inserting its own row(s).
       flavor = register_test_flavor()
-      worker_tmpl = URI.new!("template://agent/default/ph7r4-h2-worker-#{uniq()}")
+      worker_tmpl = URI.new!("template://agent/team-alpha/ph7r4-h2-worker-#{uniq()}")
       :ok = create_agent_template(worker_tmpl, agent_template_content(flavor, "worker"))
 
       st_uri =
@@ -1658,8 +1658,8 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
     # update_agent_template_reconciler_test.exs.
     test "after an aborted swap the DB routing rows still name the OLD worker, which is alive" do
       flavor = register_test_flavor()
-      tmpl_a = URI.new!("template://agent/default/ph7r4-h1-a-#{uniq()}")
-      tmpl_b = URI.new!("template://agent/default/ph7r4-h1-b-#{uniq()}")
+      tmpl_a = URI.new!("template://agent/team-alpha/ph7r4-h1-a-#{uniq()}")
+      tmpl_b = URI.new!("template://agent/team-alpha/ph7r4-h1-b-#{uniq()}")
       :ok = create_agent_template(tmpl_a, agent_template_content(flavor, "config-a"))
       :ok = create_agent_template(tmpl_b, agent_template_content(flavor, "config-b"))
 
@@ -1738,7 +1738,7 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
   describe "MEDIUM-3 r4 — SlotNames rejects a candidate URI already live as an orphan" do
     test "an absent candidate URI passes; a live-but-unexpected one is rejected" do
       flavor = register_test_flavor()
-      worker_tmpl = URI.new!("template://agent/default/ph7r4-m3-worker-#{uniq()}")
+      worker_tmpl = URI.new!("template://agent/team-alpha/ph7r4-m3-worker-#{uniq()}")
       :ok = create_agent_template(worker_tmpl, agent_template_content(flavor, "worker"))
 
       st_uri = create_session_template("ph7r4-m3-team-#{uniq()}", [{"dev", worker_tmpl}], [])
@@ -1749,7 +1749,7 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
       [live_worker] = live_workers_of(orch_uri)
 
       # A URI that is NOT registered — passes (no orphan).
-      absent = URI.parse("entity://agent/default/ph7r4_m3-absent-#{uniq()}")
+      absent = URI.parse("entity://agent/team-alpha/ph7r4_m3-absent-#{uniq()}")
 
       assert Ezagent.Orchestrator.SlotNames.preflight_live_worker_uris([{absent, nil}]) == :ok,
              "an absent candidate URI must pass the orphan check"
@@ -1775,7 +1775,7 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
       # compute, so the Generator's candidate-URI preflight finds it live
       # as an orphan and rejects the run before instantiating any slot.
       flavor = register_test_flavor()
-      worker_tmpl = URI.new!("template://agent/default/ph7r4-m3g-worker-#{uniq()}")
+      worker_tmpl = URI.new!("template://agent/team-alpha/ph7r4-m3g-worker-#{uniq()}")
       :ok = create_agent_template(worker_tmpl, agent_template_content(flavor, "worker"))
 
       st_uri = create_session_template("ph7r4-m3g-team-#{uniq()}", [{"dev", worker_tmpl}], [])
@@ -1871,8 +1871,8 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
     # in update_agent_template_reconciler_test.exs.
     test "a failed slot rollback keeps BOTH workers alive + returns :update_needs_manual_repair" do
       flavor = register_test_flavor()
-      tmpl_a = URI.new!("template://agent/default/ph7r5-h1-a-#{uniq()}")
-      tmpl_b = URI.new!("template://agent/default/ph7r5-h1-b-#{uniq()}")
+      tmpl_a = URI.new!("template://agent/team-alpha/ph7r5-h1-a-#{uniq()}")
+      tmpl_b = URI.new!("template://agent/team-alpha/ph7r5-h1-b-#{uniq()}")
       :ok = create_agent_template(tmpl_a, agent_template_content(flavor, "config-a"))
       :ok = create_agent_template(tmpl_b, agent_template_content(flavor, "config-b"))
 
@@ -1960,8 +1960,8 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
     # partial-routing convergence in update_agent_template_reconciler_test.exs.
     test "a forward-txn-committed + inverse-revert-failed swap halts, both workers alive" do
       flavor = register_test_flavor()
-      tmpl_a = URI.new!("template://agent/default/ph7r5-h2-a-#{uniq()}")
-      tmpl_b = URI.new!("template://agent/default/ph7r5-h2-b-#{uniq()}")
+      tmpl_a = URI.new!("template://agent/team-alpha/ph7r5-h2-a-#{uniq()}")
+      tmpl_b = URI.new!("template://agent/team-alpha/ph7r5-h2-b-#{uniq()}")
       :ok = create_agent_template(tmpl_a, agent_template_content(flavor, "config-a"))
       :ok = create_agent_template(tmpl_b, agent_template_content(flavor, "config-b"))
 
@@ -2090,8 +2090,8 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
   describe "MEDIUM-3 r5 — the swap rejects an already-live candidate worker" do
     test "a candidate URI registered in the TOCTOU window is rejected, not adopted" do
       flavor = register_test_flavor()
-      tmpl_a = URI.new!("template://agent/default/ph7r5-m3-a-#{uniq()}")
-      tmpl_b = URI.new!("template://agent/default/ph7r5-m3-b-#{uniq()}")
+      tmpl_a = URI.new!("template://agent/team-alpha/ph7r5-m3-a-#{uniq()}")
+      tmpl_b = URI.new!("template://agent/team-alpha/ph7r5-m3-b-#{uniq()}")
       :ok = create_agent_template(tmpl_a, agent_template_content(flavor, "config-a"))
       :ok = create_agent_template(tmpl_b, agent_template_content(flavor, "config-b"))
 
@@ -2170,11 +2170,11 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
       # The `fresh?` signal at its source — first spawn is fresh, a
       # re-spawn at the same URI adopts (not fresh).
       flavor = register_test_flavor()
-      tmpl = URI.new!("template://agent/default/ph7r5-m3sig-#{uniq()}")
+      tmpl = URI.new!("template://agent/team-alpha/ph7r5-m3sig-#{uniq()}")
       content = agent_template_content(flavor, "sig")
       :ok = create_agent_template(tmpl, content)
 
-      instance_uri = URI.parse("entity://agent/default/#{flavor}_ph7r5sig-#{uniq()}")
+      instance_uri = URI.parse("entity://agent/team-alpha/#{flavor}_ph7r5sig-#{uniq()}")
       spawned_by = User.admin_uri()
 
       assert {:ok, %{workers: [^instance_uri], fresh?: true}} =
@@ -2209,8 +2209,8 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
   describe "HIGH-1 r6 — the TOCTOU window is CLOSED: a worker registered before the plugin spawn is rejected" do
     test "a candidate registered after the probe but before the plugin spawn aborts the swap" do
       flavor = register_test_flavor()
-      tmpl_a = URI.new!("template://agent/default/ph7r6-h1-a-#{uniq()}")
-      tmpl_b = URI.new!("template://agent/default/ph7r6-h1-b-#{uniq()}")
+      tmpl_a = URI.new!("template://agent/team-alpha/ph7r6-h1-a-#{uniq()}")
+      tmpl_b = URI.new!("template://agent/team-alpha/ph7r6-h1-b-#{uniq()}")
       :ok = create_agent_template(tmpl_a, agent_template_content(flavor, "config-a"))
       :ok = create_agent_template(tmpl_b, agent_template_content(flavor, "config-b"))
 
@@ -2292,11 +2292,11 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
       # lie; the atomic `spawn_detailed` inside the plugin instantiate
       # cannot be fooled — it reports the true outcome.
       flavor = register_test_flavor()
-      tmpl = URI.new!("template://agent/default/ph7r6-sig-#{uniq()}")
+      tmpl = URI.new!("template://agent/team-alpha/ph7r6-sig-#{uniq()}")
       content = agent_template_content(flavor, "sig")
       :ok = create_agent_template(tmpl, content)
 
-      instance_uri = URI.parse("entity://agent/default/#{flavor}_ph7r6sig-#{uniq()}")
+      instance_uri = URI.parse("entity://agent/team-alpha/#{flavor}_ph7r6sig-#{uniq()}")
       spawned_by = User.admin_uri()
 
       # Pre-register the worker — model a concurrent spawn that already
@@ -2323,8 +2323,8 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
     # update_agent_template_reconciler_test.exs.
     test "a killed Session on the step-2 commit keeps BOTH workers alive + :update_needs_manual_repair" do
       flavor = register_test_flavor()
-      tmpl_a = URI.new!("template://agent/default/ph7r6-m2-a-#{uniq()}")
-      tmpl_b = URI.new!("template://agent/default/ph7r6-m2-b-#{uniq()}")
+      tmpl_a = URI.new!("template://agent/team-alpha/ph7r6-m2-a-#{uniq()}")
+      tmpl_b = URI.new!("template://agent/team-alpha/ph7r6-m2-b-#{uniq()}")
       :ok = create_agent_template(tmpl_a, agent_template_content(flavor, "config-a"))
       :ok = create_agent_template(tmpl_b, agent_template_content(flavor, "config-b"))
 
@@ -2407,8 +2407,8 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
   describe "HIGH-1 r7 — a rejected fresh?: false adoption has ZERO side effects" do
     test "a pre-existing candidate worker keeps its own lineage + workspace binding after a rejected swap" do
       flavor = register_test_flavor()
-      tmpl_a = URI.new!("template://agent/default/ph7r7-h1-a-#{uniq()}")
-      tmpl_b = URI.new!("template://agent/default/ph7r7-h1-b-#{uniq()}")
+      tmpl_a = URI.new!("template://agent/team-alpha/ph7r7-h1-a-#{uniq()}")
+      tmpl_b = URI.new!("template://agent/team-alpha/ph7r7-h1-b-#{uniq()}")
       :ok = create_agent_template(tmpl_a, agent_template_content(flavor, "config-a"))
       :ok = create_agent_template(tmpl_b, agent_template_content(flavor, "config-b"))
 
@@ -2424,7 +2424,7 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
       # The candidate replacement worker URI — old worker URI + `--g1`.
       # This is the URI the swap will compute for the gen-1 worker.
       candidate = URI.parse(URI.to_string(old_worker) <> "--g1")
-      foreign_spawner = URI.parse("entity://agent/default/#{flavor}_foreign-orch-#{uniq()}")
+      foreign_spawner = URI.parse("entity://agent/team-alpha/#{flavor}_foreign-orch-#{uniq()}")
       foreign_workspace = URI.new!("workspace://foreign-ws-#{uniq()}")
 
       # Model a worker created by some OTHER operation, registered in the
@@ -2529,12 +2529,12 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
       # workspace; an adoption (fresh?: false) of the SAME URI does NOT
       # overwrite either — it returns the worker with zero side effects.
       flavor = register_test_flavor()
-      tmpl = URI.new!("template://agent/default/ph7r7-sig-#{uniq()}")
+      tmpl = URI.new!("template://agent/team-alpha/ph7r7-sig-#{uniq()}")
       content = agent_template_content(flavor, "sig")
       :ok = create_agent_template(tmpl, content)
 
-      instance_uri = URI.parse("entity://agent/default/#{flavor}_ph7r7sig-#{uniq()}")
-      first_spawner = URI.parse("entity://agent/default/#{flavor}_first-orch-#{uniq()}")
+      instance_uri = URI.parse("entity://agent/team-alpha/#{flavor}_ph7r7sig-#{uniq()}")
+      first_spawner = URI.parse("entity://agent/team-alpha/#{flavor}_first-orch-#{uniq()}")
 
       # First call — freshly creates the worker → lineage + binding recorded.
       assert {:ok, %{workers: [^instance_uri], fresh?: true}} =
@@ -2553,7 +2553,7 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
       # is `:already_started` → fresh?: false. A DIFFERENT spawner +
       # workspace are passed, but because fresh? is false the side effects
       # are SKIPPED — the original lineage + binding survive untouched.
-      other_spawner = URI.parse("entity://agent/default/#{flavor}_other-orch-#{uniq()}")
+      other_spawner = URI.parse("entity://agent/team-alpha/#{flavor}_other-orch-#{uniq()}")
       other_workspace = URI.new!("workspace://other-ws-#{uniq()}")
 
       assert {:ok, %{workers: [^instance_uri], fresh?: false}} =
@@ -2609,14 +2609,14 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
       # `instantiate/3` actually spawns the worker Agent Kind
       # (`fresh?: true` — records lineage, binds the workspace).
       ok_flavor = register_test_flavor()
-      slot1_tmpl = URI.new!("template://agent/default/ph7r9-h2-slot1-#{uniq()}")
+      slot1_tmpl = URI.new!("template://agent/team-alpha/ph7r9-h2-slot1-#{uniq()}")
       :ok = create_agent_template(slot1_tmpl, agent_template_content(ok_flavor, "slot1"))
 
       # Slot 2 — a flavor whose `instantiate/3` ALWAYS fails. Slots are
       # instantiated SEQUENTIALLY, so slot 1 has already spawned (fresh)
       # by the time slot 2 fails.
       fail_flavor = register_failing_flavor()
-      slot2_tmpl = URI.new!("template://agent/default/ph7r9-h2-slot2-#{uniq()}")
+      slot2_tmpl = URI.new!("template://agent/team-alpha/ph7r9-h2-slot2-#{uniq()}")
       :ok = create_agent_template(slot2_tmpl, agent_template_content(fail_flavor, "slot2"))
 
       st_uri =
@@ -2660,7 +2660,7 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
                "Leaked: #{inspect(MapSet.to_list(leaked_bindings))}"
 
       # ── (3) slot-1's worker process is dead ──
-      # The slot-1 worker URI is `entity://agent/default/<ok_flavor>_<name>`
+      # The slot-1 worker URI is `entity://agent/team-alpha/<ok_flavor>_<name>`
       # where the instance name folds the session discriminator. We
       # cannot compute the discriminator (the session URI is gone), so
       # assert no LIVE Agent Kind exists for the `ok_flavor` this test
@@ -2691,7 +2691,7 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
       # is empty, cleanup is a no-op, the session/orchestrator are still
       # torn down).
       fail_flavor = register_failing_flavor()
-      slot_tmpl = URI.new!("template://agent/default/ph7r9-h2b-#{uniq()}")
+      slot_tmpl = URI.new!("template://agent/team-alpha/ph7r9-h2b-#{uniq()}")
       :ok = create_agent_template(slot_tmpl, agent_template_content(fail_flavor, "only"))
 
       st_uri = create_session_template("ph7r9-h2b-team-#{uniq()}", [{"dev", slot_tmpl}], [])
@@ -2754,7 +2754,7 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
       # ONLY failure point is the orchestrator spawn, which runs BEFORE
       # any slot. The session has been created + bound by then.
       slot_flavor = register_test_flavor()
-      slot_tmpl = URI.new!("template://agent/default/ph7r10-h1-slot-#{uniq()}")
+      slot_tmpl = URI.new!("template://agent/team-alpha/ph7r10-h1-slot-#{uniq()}")
       :ok = create_agent_template(slot_tmpl, agent_template_content(slot_flavor, "slot"))
 
       st_uri = create_session_template("ph7r10-h1-team-#{uniq()}", [{"dev", slot_tmpl}], [])
@@ -2848,7 +2848,7 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
       # (the slot returns a bare `{:error, _}`), so the self-cleanup is
       # the ONLY thing that prevents an orphan.
       partial_flavor = register_partial_spawn_flavor()
-      slot_tmpl = URI.new!("template://agent/default/ph7r10-h2-slot-#{uniq()}")
+      slot_tmpl = URI.new!("template://agent/team-alpha/ph7r10-h2-slot-#{uniq()}")
       :ok = create_agent_template(slot_tmpl, agent_template_content(partial_flavor, "slot"))
 
       st_uri = create_session_template("ph7r10-h2-team-#{uniq()}", [{"dev", slot_tmpl}], [])

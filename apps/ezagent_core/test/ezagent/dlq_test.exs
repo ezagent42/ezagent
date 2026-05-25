@@ -27,7 +27,7 @@ defmodule Ezagent.DLQTest do
     )
 
     payload = %Ezagent.Invocation{
-      target: URI.parse("entity://agent/default/echo_dlq-test?action=echo.say"),
+      target: URI.parse("entity://agent/team-alpha/echo_dlq-test?action=echo.say"),
       mode: :call,
       args: %{msg: "lost"},
       ctx: %{

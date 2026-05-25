@@ -123,6 +123,12 @@ defmodule EzagentWeb.SessionController do
   # canonicalization. Full `entity://` URIs ignore it (the URI already
   # carries its workspace segment).
   def credentials_create(conn, %{"entity_uri" => uri_str, "secret" => secret} = params) do
+    # SPEC #324 rev 3 (Allen 2026-05-25): full entity:// URIs carry
+    # workspace structurally; bare handles REQUIRE explicit workspace
+    # param. workspace_param/2 returns `nil` (not "system") on missing —
+    # canonicalize/2 raises ArgumentError on a bare handle without
+    # :workspace, which we catch below to render the page with a
+    # "select workspace" error.
     workspace = workspace_param(conn, params)
 
     case SessionPrincipal.canonicalize(uri_str, workspace: workspace) do
@@ -141,9 +147,9 @@ defmodule EzagentWeb.SessionController do
         end
     end
   rescue
-    # User typed something that isn't a valid handle / URI at all
-    # (e.g. "foo@bar.com" or whitespace) — same UX as bad credentials,
-    # no enumeration leak.
+    # ArgumentError covers (a) bare handle without :workspace (SPEC #324
+    # rev 3), and (b) malformed URI/handle. Either way, same UX —
+    # render the page with an inline error, no enumeration leak.
     ArgumentError ->
       render_login_page(conn,
         cred_error: gettext("Invalid URI or credentials."),
@@ -270,20 +276,29 @@ defmodule EzagentWeb.SessionController do
   end
 
   # Reads the workspace context from form params (POST) or query string
-  # (GET). Returns the requested workspace name as a string, or "default"
-  # as the safe fallback. The fallback matches `SessionPrincipal`'s
-  # built-in default so behavior is identical when the param is absent.
+  # (GET). Returns the requested workspace name as a string, or `nil`
+  # if no workspace was requested.
+  #
+  # SPEC #324 rev 3 (Allen 2026-05-25): there is NO silent fallback to
+  # `"system"` (or any workspace). Callers MUST handle nil:
+  # - full `entity://` URIs ignore the workspace param (URI carries it)
+  # - bare handles with nil workspace → `canonicalize/2` raises
+  #   ArgumentError → caught by the credentials_create rescue clause,
+  #   which renders the page with an inline error.
+  #
+  # Removing the silent `|| "system"` fallback fixes the bug where a
+  # tenant user posting bare `/login/credentials` would silently land
+  # in the admin workspace.
   defp workspace_param(conn, params) do
-    Map.get(params, "workspace") ||
-      Map.get(conn.query_params, "workspace") ||
-      "default"
+    Map.get(params, "workspace") || Map.get(conn.query_params, "workspace")
   end
 
   # Renders the workspace banner + hidden form field when a non-default
-  # workspace is requested. Returns empty strings for `nil` / "default"
-  # so the form is unchanged on the happy path (direct /login visit).
+  # workspace is requested. Returns empty strings for `nil` / `"system"`
+  # (the admin-login default) so the form is unchanged on the happy
+  # path (direct /login visit).
   defp workspace_form_bits(nil), do: {"", ""}
-  defp workspace_form_bits("default"), do: {"", ""}
+  defp workspace_form_bits("system"), do: {"", ""}
 
   defp workspace_form_bits(workspace) when is_binary(workspace) do
     escaped = Plug.HTML.html_escape(workspace)

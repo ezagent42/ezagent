@@ -8,7 +8,7 @@ defmodule EzagentWeb.HomeLiveTest do
   end
 
   test "GET / with session AND existing sessions redirects to /sessions", %{conn: conn} do
-    # The chat Application's `:test`-env seed populates `session://default/default/main`
+    # The chat Application's `:test`-env seed populates `session://default/system/main`
     # at boot, so `list_sessions/0` returns non-empty by default in the
     # web test suite. Verify the redirect path under that condition.
     assert EzagentDomainChat.list_sessions() != []
@@ -34,7 +34,7 @@ defmodule EzagentWeb.HomeLiveTest do
       on_exit(fn ->
         # Re-seed any session we terminated so this test file's teardown
         # doesn't poison subsequent test files (most of which assume
-        # `session://default/default/main` alive at boot).
+        # `session://default/system/main` alive at boot).
         for short <- torn_down do
           EzagentDomainChat.create_session(short, Ezagent.Entity.User.admin_uri())
         end
@@ -73,11 +73,11 @@ defmodule EzagentWeb.HomeLiveTest do
                |> form("#first-session-wizard", %{"wizard" => %{"short_name" => "main"}})
                |> render_submit()
 
-      # session://default/default/main is now registered.
-      assert {:ok, _pid} = Ezagent.KindRegistry.lookup(URI.new!("session://default/default/main"))
+      # session://default/system/main is now registered.
+      assert {:ok, _pid} = Ezagent.KindRegistry.lookup(URI.new!("session://default/system/main"))
       # …and bound to the default workspace (invariant).
       assert {:ok, _workspace_uri} =
-               Ezagent.WorkspaceRegistry.lookup(URI.new!("session://default/default/main"))
+               Ezagent.WorkspaceRegistry.lookup(URI.new!("session://default/system/main"))
     end
   end
 

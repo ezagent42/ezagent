@@ -24,18 +24,25 @@ defmodule EzagentPluginLiveview.AdminCapsLiveTest do
   end
 
   defp admin_conn do
+    # SPEC #324 rev 3: LV expects both `current_entity_uri` AND
+    # `current_workspace_uri` in the session (set by LiveAuth on the
+    # production mount path). Tests must inject both.
     Phoenix.ConnTest.build_conn()
     |> Plug.Test.init_test_session(%{
-      "current_entity_uri" => URI.to_string(Ezagent.Entity.User.admin_uri())
+      "current_entity_uri" => URI.to_string(Ezagent.Entity.User.admin_uri()),
+      "current_workspace_uri" => "workspace://system"
     })
   end
 
   defp non_admin_conn do
-    uri = "entity://user/default/admin_caps_test_user"
+    uri = "entity://user/team-alpha/admin_caps_test_user"
     {:ok, _user} = Ezagent.Users.create(URI.parse(uri), nil, [])
 
     Phoenix.ConnTest.build_conn()
-    |> Plug.Test.init_test_session(%{"current_entity_uri" => uri})
+    |> Plug.Test.init_test_session(%{
+      "current_entity_uri" => uri,
+      "current_workspace_uri" => "workspace://team-alpha"
+    })
   end
 
   describe "/admin/caps admin gate" do

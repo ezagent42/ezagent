@@ -36,7 +36,7 @@ defmodule Ezagent.Behavior.Routing do
 
   - For `workspace://X` targets: cap needed `kind: :workspace,
     behavior: Ezagent.Behavior.Routing, instance: <workspace uri>`.
-  - For `session://default/default/Y` targets: cap needed `kind: :session, behavior:
+  - For `session://default/team-alpha/Y` targets: cap needed `kind: :session, behavior:
     Ezagent.Behavior.Routing, instance: <session uri>`.
   - For `system://routing/default` targets: cap needed `kind: :system,
     behavior: Ezagent.Behavior.Routing, instance: <system uri>`.

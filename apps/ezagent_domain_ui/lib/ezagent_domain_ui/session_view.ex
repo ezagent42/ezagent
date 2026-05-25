@@ -13,7 +13,7 @@ defmodule Ezagent.UI.SessionView do
   Default views shipped:
   - `:conversation` (in ezagent_plugin_liveview) — chat message stream
   - `:pty` (in ezagent_plugin_cc) — xterm.js terminal, only for sessions
-    that have a `entity://agent/default/cc_*` member
+    that have a `entity://agent/team-alpha/cc_*` member
 
   ## Namespacing
 

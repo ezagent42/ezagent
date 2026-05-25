@@ -100,9 +100,7 @@ defmodule Mix.Tasks.Ezagent.Auth.MagicLink do
         Mix.shell().info("  (a) Create a workspace at /workspaces and add a domain rule, OR")
         Mix.shell().info("  (b) Programmatically:")
 
-        Mix.shell().info(
-          "      Ezagent.Workspace.create(\"#{slug_of_domain(email)}\", %{})"
-        )
+        Mix.shell().info("      Ezagent.Workspace.create(\"#{slug_of_domain(email)}\", %{})")
 
         Mix.shell().info(
           "      Ezagent.Workspace.add_magic_link_rule(\"workspace://#{slug_of_domain(email)}\", \"domain\", \"#{domain_of(email)}\")"

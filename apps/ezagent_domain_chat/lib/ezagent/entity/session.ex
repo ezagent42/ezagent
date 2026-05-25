@@ -7,7 +7,7 @@ defmodule Ezagent.Entity.Session do
   Session handles `:send / :join / :leave` actions; the member-side
   `:receive` action runs on the recipient Kind (User / Agent).
 
-  Phase 2 spawns exactly one default instance — `session://default/default/main` —
+  Phase 2 spawns exactly one default instance — `session://default/system/main` —
   at `EzagentDomainChat.Application.start/2`. Multi-Session support is
   intentionally out of scope (Phase 3+).
 
@@ -56,7 +56,7 @@ defmodule Ezagent.Entity.Session do
   SPEC v3 §3.6 — sessions are 3-segment: `session://<template>/<workspace>/<name>`.
   """
   @spec default_uri() :: URI.t()
-  def default_uri, do: URI.new!("session://default/default/main")
+  def default_uri, do: URI.new!("session://default/system/main")
 
   # ─────────────────────────────────────────────────────────────────────
   # Ezagent.Behavior.Publisher implementation (ExternalMirror PR-EM-0)
@@ -539,7 +539,7 @@ defmodule Ezagent.Entity.Session do
 
   defp ensure_orchestrator(%URI{} = session_uri, %URI{} = workspace_uri, %URI{} = owner_uri) do
     candidate_uri = derive_orchestrator_uri(session_uri, workspace_uri)
-    orch_template_uri = URI.parse("template://agent/default/cc-orchestrator")
+    orch_template_uri = URI.parse("template://agent/system/cc-orchestrator")
     instance_name = derive_orchestrator_instance_name(session_uri)
 
     case check_orchestrator(candidate_uri, owner_uri, workspace_uri) do
@@ -1109,7 +1109,7 @@ defmodule Ezagent.Entity.Session do
       routing_rules: normalize_routing_rules(Map.get(template_content, :routing_rules, [])),
       orchestrator_template_uri:
         Map.get(template_content, :orchestrator_template_uri) ||
-          URI.parse("template://agent/default/cc-orchestrator"),
+          URI.parse("template://agent/system/cc-orchestrator"),
       default_workspace_uri: Map.get(template_content, :default_workspace_uri) || workspace_uri,
       description: Map.get(template_content, :description, "")
     }
@@ -1480,7 +1480,12 @@ defmodule Ezagent.Entity.Session do
     case Map.get(template_content, :default_workspace_uri) ||
            Map.get(template_content, "default_workspace_uri") do
       nil ->
-        Ezagent.WorkspaceRegistry.default_workspace_uri()
+        # SPEC #324: no silent global fallback. A SessionTemplate
+        # without a `default_workspace_uri` is a structural bug — it
+        # cannot tell us which workspace to instantiate the session
+        # in. Fail-fast so the caller (Generator / orchestrator) sees
+        # the missing field instead of silently landing in `system`.
+        {:error, :default_workspace_uri_missing_on_template}
 
       %URI{scheme: "workspace", host: host} = uri when is_binary(host) ->
         validate_workspace_name(host, uri)

@@ -23,10 +23,10 @@ defmodule EzagentDomainChat.Integration.SandboxDestroyTest do
   alias Ezagent.Entity.{Agent, User}
 
   defp uniq, do: System.unique_integer([:positive])
-  @workspace_uri URI.new!("workspace://default")
+  @workspace_uri URI.new!("workspace://team-alpha")
 
   defp spawn_agent_kind do
-    uri = URI.parse("entity://agent/default/test_sandbox-#{uniq()}")
+    uri = URI.parse("entity://agent/team-alpha/test_sandbox-#{uniq()}")
     {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: uri})
     :ok = Ezagent.WorkspaceRegistry.bind(uri, @workspace_uri)
     uri

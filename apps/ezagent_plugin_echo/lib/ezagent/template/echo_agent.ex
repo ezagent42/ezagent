@@ -77,7 +77,7 @@ defmodule Ezagent.PluginEcho.Template.EchoAgent do
 
   ## Backward compat
 
-  The default echo agent (`entity://agent/default/echo_default`)
+  The default echo agent (`entity://agent/system/echo_default`)
   continues to be spawned post-boot by the chat plugin via
   `Ezagent.SpawnRegistry.spawn/1` (see `EzagentPluginEcho.Application`
   PR-M notes). This Template Class is purely an additional creation
@@ -297,7 +297,7 @@ defmodule Ezagent.PluginEcho.Template.EchoAgent do
         type: :uri,
         label: "Agent URI (entity://agent/<workspace>/echo_<name>)",
         required: true,
-        placeholder: "entity://agent/default/echo_my-bot"
+        placeholder: "entity://agent/team-alpha/echo_my-bot"
       },
       %{
         name: "with_pty",

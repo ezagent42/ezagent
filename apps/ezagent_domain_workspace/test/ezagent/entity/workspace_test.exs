@@ -24,7 +24,7 @@ defmodule Ezagent.Entity.WorkspaceTest do
 
   describe "uri_for/1" do
     test "builds workspace://name URI" do
-      assert WK.uri_for("default") |> URI.to_string() == "workspace://default"
+      assert WK.uri_for("default") |> URI.to_string() == "workspace://team-alpha"
     end
 
     test "preserves hyphenated names" do

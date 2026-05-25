@@ -24,13 +24,13 @@ defmodule Ezagent.Routing.RuleStoreTest do
       RuleStore.add(
         table,
         Matcher.text_contains("urgent"),
-        ["session://default/default/oncall"],
+        ["session://default/team-alpha/oncall"],
         URI.new!("entity://user/system/admin")
       )
 
     assert row.table_name == Atom.to_string(table)
     assert row.matcher_data == %{"type" => "text_contains", "arg" => "urgent"}
-    assert row.receivers == ["session://default/default/oncall"]
+    assert row.receivers == ["session://default/team-alpha/oncall"]
     assert row.created_by == "entity://user/system/admin"
 
     [loaded] = admin_rules(table)
@@ -50,15 +50,15 @@ defmodule Ezagent.Routing.RuleStoreTest do
       RuleStore.add(
         EzagentDomainChat.Routing.MentionRouting,
         Matcher.always(),
-        ["session://default/default/a"],
+        ["session://default/team-alpha/a"],
         nil
       )
 
     {:ok, _} =
       RuleStore.add(
         other_table,
-        Matcher.from("entity://agent/default/test_x"),
-        ["session://default/default/b"],
+        Matcher.from("entity://agent/team-alpha/test_x"),
+        ["session://default/team-alpha/b"],
         nil
       )
 
@@ -71,7 +71,7 @@ defmodule Ezagent.Routing.RuleStoreTest do
       RuleStore.add(
         EzagentDomainChat.Routing.MentionRouting,
         Matcher.always(),
-        ["session://default/default/x"],
+        ["session://default/team-alpha/x"],
         nil
       )
 
@@ -85,10 +85,10 @@ defmodule Ezagent.Routing.RuleStoreTest do
       RuleStore.add(
         EzagentDomainChat.Routing.MentionRouting,
         Matcher.always(),
-        [URI.new!("session://default/default/x"), URI.new!("session://default/default/y")],
+        [URI.new!("session://default/team-alpha/x"), URI.new!("session://default/team-alpha/y")],
         URI.new!("entity://user/system/admin")
       )
 
-    assert row.receivers == ["session://default/default/x", "session://default/default/y"]
+    assert row.receivers == ["session://default/team-alpha/x", "session://default/team-alpha/y"]
   end
 end

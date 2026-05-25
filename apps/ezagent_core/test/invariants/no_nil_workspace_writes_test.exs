@@ -53,7 +53,7 @@ defmodule EzagentCore.Invariants.NoNilWorkspaceWritesTest do
     test "kind_snapshots without workspace_uri raises NOT NULL violation" do
       row =
         %Ezagent.Ecto.KindSnapshot{
-          uri: "entity://user/default/no-ws-snapshot",
+          uri: "entity://user/team-alpha/no-ws-snapshot",
           kind_type: "user",
           state_binary: :erlang.term_to_binary(%{}),
           version: 0,
@@ -79,9 +79,11 @@ defmodule EzagentCore.Invariants.NoNilWorkspaceWritesTest do
 
              Fix each: derive workspace via
              `Ezagent.Persistence.workspace_uri_for!/1` (entity / session
-             URI) or `Ezagent.Persistence.default_workspace_uri/0`
-             (cross-cutting fallback), and pass it in the changeset attrs
-             or struct literal.
+             URI). For cross-cutting writers (audit / snapshot of
+             `system://` URIs), inline the literal `"workspace://system"`
+             at the write site with a comment explaining why — per SPEC
+             #324 rev 3, no global `default_workspace_uri/0` helper
+             exists (the silent-fallback bug class Allen deleted).
 
              If a call site is legitimately writing system-scope data and
              needs to bypass this rule, add the comment

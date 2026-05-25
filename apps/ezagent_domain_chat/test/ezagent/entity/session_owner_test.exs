@@ -19,7 +19,7 @@ defmodule Ezagent.Entity.SessionOwnerTest do
   describe "Behavior.Chat.data_owner/1 (PR-OWN-2 §3.3)" do
     test "session URI without live Kind returns :no_owner" do
       session_uri =
-        URI.parse("session://generic/default/dead-#{uniq()}")
+        URI.parse("session://generic/team-alpha/dead-#{uniq()}")
 
       assert :no_owner = Ezagent.Behavior.Chat.data_owner(session_uri)
     end
@@ -37,7 +37,7 @@ defmodule Ezagent.Entity.SessionOwnerTest do
   describe "Session.owner/1 lookup contract" do
     test "missing session returns {:error, :not_found}" do
       session_uri =
-        URI.parse("session://generic/default/ghost-#{uniq()}")
+        URI.parse("session://generic/team-alpha/ghost-#{uniq()}")
 
       assert {:error, :not_found} = Ezagent.Entity.Session.owner(session_uri)
     end

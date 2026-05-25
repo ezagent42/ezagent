@@ -22,7 +22,7 @@ defmodule Ezagent.EntityTest do
 
   describe "authenticate/2 — user URI + password (bcrypt path)" do
     test "happy: known user + correct password → {:ok, %{caps: caps}}" do
-      uri_str = "entity://user/default/auth-test-#{System.unique_integer([:positive])}"
+      uri_str = "entity://user/team-alpha/auth-test-#{System.unique_integer([:positive])}"
       {:ok, _} = Users.create(uri_str, "correct-password", [])
 
       uri = URI.parse(uri_str)
@@ -34,7 +34,7 @@ defmodule Ezagent.EntityTest do
     end
 
     test "wrong password → {:error, :invalid_credentials}" do
-      uri_str = "entity://user/default/auth-wrong-pw-#{System.unique_integer([:positive])}"
+      uri_str = "entity://user/team-alpha/auth-wrong-pw-#{System.unique_integer([:positive])}"
       {:ok, _} = Users.create(uri_str, "correct-password", [])
 
       uri = URI.parse(uri_str)
@@ -43,7 +43,7 @@ defmodule Ezagent.EntityTest do
     end
 
     test "unknown user → {:error, :no_such_user}" do
-      uri = URI.parse("entity://user/default/never-existed-#{System.unique_integer([:positive])}")
+      uri = URI.parse("entity://user/team-alpha/never-existed-#{System.unique_integer([:positive])}")
       assert {:error, :no_such_user} = Entity.authenticate(uri, "anything")
     end
 
@@ -63,7 +63,7 @@ defmodule Ezagent.EntityTest do
 
   describe "authenticate/2 — agent URI + token (entity_tokens path)" do
     test "happy: agent + valid token → {:ok, %{caps: caps}}" do
-      uri = URI.parse("entity://agent/default/cc_auth-test-#{System.unique_integer([:positive])}")
+      uri = URI.parse("entity://agent/team-alpha/cc_auth-test-#{System.unique_integer([:positive])}")
       {plain_token, _row} = Ezagent.Entity.Token.mint(uri, label: "test-token")
 
       assert {:ok, %{caps: caps}} = Entity.authenticate(uri, plain_token)
@@ -71,26 +71,26 @@ defmodule Ezagent.EntityTest do
     end
 
     test "wrong token → {:error, :invalid_credentials}" do
-      uri = URI.parse("entity://agent/default/cc_wrong-token-#{System.unique_integer([:positive])}")
+      uri = URI.parse("entity://agent/team-alpha/cc_wrong-token-#{System.unique_integer([:positive])}")
       {_plain, _row} = Ezagent.Entity.Token.mint(uri, label: "real")
 
       assert {:error, :invalid_credentials} = Entity.authenticate(uri, "fake-token-string")
     end
 
     test "unknown agent (no tokens) → {:error, :no_such_entity}" do
-      uri = URI.parse("entity://agent/default/cc_never-#{System.unique_integer([:positive])}")
+      uri = URI.parse("entity://agent/team-alpha/cc_never-#{System.unique_integer([:positive])}")
       assert {:error, :no_such_entity} = Entity.authenticate(uri, "any-token")
     end
   end
 
   describe "authenticate/2 — unsupported entity URIs" do
     test "session URI rejected" do
-      uri = URI.parse("session://default/default/main")
+      uri = URI.parse("session://default/system/main")
       assert {:error, {:unsupported_entity_uri, ^uri}} = Entity.authenticate(uri, "x")
     end
 
     test "workspace URI rejected" do
-      uri = URI.parse("workspace://default/main")
+      uri = URI.parse("workspace://team-alpha/main")
       assert {:error, {:unsupported_entity_uri, ^uri}} = Entity.authenticate(uri, "x")
     end
 

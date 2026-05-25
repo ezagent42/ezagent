@@ -22,11 +22,11 @@ defmodule EzagentDomainChat.Integration.LifecycleTerminateTest do
   alias Ezagent.Entity.{Agent, User}
 
   defp uniq, do: System.unique_integer([:positive])
-  @workspace_uri URI.new!("workspace://default")
+  @workspace_uri URI.new!("workspace://team-alpha")
 
   # Spawn an Agent Kind, bind workspace, record lineage under `spawned_by`.
   defp spawn_worker(spawned_by) do
-    worker_uri = URI.parse("entity://agent/default/test_worker-#{uniq()}")
+    worker_uri = URI.parse("entity://agent/team-alpha/test_worker-#{uniq()}")
     {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: worker_uri})
     :ok = Ezagent.WorkspaceRegistry.bind(worker_uri, @workspace_uri)
     :ok = AgentLineage.record(worker_uri, spawned_by)
@@ -71,7 +71,7 @@ defmodule EzagentDomainChat.Integration.LifecycleTerminateTest do
   end
 
   test "an in-lineage worker is terminated via dispatch (cap-#2 happy path)" do
-    orchestrator = URI.parse("entity://agent/default/cc_orch-#{uniq()}")
+    orchestrator = URI.parse("entity://agent/team-alpha/cc_orch-#{uniq()}")
     worker_uri = spawn_worker(orchestrator)
 
     assert {:ok, _pid} = KindRegistry.lookup(worker_uri)
@@ -85,8 +85,8 @@ defmodule EzagentDomainChat.Integration.LifecycleTerminateTest do
   end
 
   test "cap-#2 control — terminating an agent NOT in your lineage is :unauthorized" do
-    orchestrator_a = URI.parse("entity://agent/default/cc_orch-a-#{uniq()}")
-    orchestrator_b = URI.parse("entity://agent/default/cc_orch-b-#{uniq()}")
+    orchestrator_a = URI.parse("entity://agent/team-alpha/cc_orch-a-#{uniq()}")
+    orchestrator_b = URI.parse("entity://agent/team-alpha/cc_orch-b-#{uniq()}")
 
     # The worker is spawned by A.
     worker_uri = spawn_worker(orchestrator_a)
@@ -102,7 +102,7 @@ defmodule EzagentDomainChat.Integration.LifecycleTerminateTest do
   end
 
   test "termination is idempotent — a second terminate on a gone agent still succeeds" do
-    orchestrator = URI.parse("entity://agent/default/cc_orch-idem-#{uniq()}")
+    orchestrator = URI.parse("entity://agent/team-alpha/cc_orch-idem-#{uniq()}")
     worker_uri = spawn_worker(orchestrator)
     caps = MapSet.new([spawned_by_cap(orchestrator)])
 
