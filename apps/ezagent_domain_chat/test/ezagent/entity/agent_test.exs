@@ -17,8 +17,14 @@ defmodule Ezagent.Entity.AgentTest do
              ]
     end
 
-    test "persistence/0 is :on_terminate (Phase 4-completion Spec 04 §2.I)" do
-      assert Agent.persistence() == :on_terminate
+    test "persistence/0 is {:snapshot, :on_change} (CLI persistence fix 2026-05-25)" do
+      # Allen 2026-05-25 — bumped from `:on_terminate` to
+      # `{:snapshot, :on_change}` as part of the CLI persistence fix
+      # (codex PR r1 HIGH). Under `:on_terminate`, `mix
+      # ezagent.agent.create --caps …` would lose the granted caps
+      # on mix BEAM exit because `Snapshot.commit/4` returned
+      # `:not_durable` on the cap-grant dispatch.
+      assert Agent.persistence() == {:snapshot, :on_change}
     end
   end
 

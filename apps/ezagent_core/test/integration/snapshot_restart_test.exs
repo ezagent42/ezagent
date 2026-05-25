@@ -96,9 +96,15 @@ defmodule Ezagent.Integration.SnapshotRestartTest do
     end
   end
 
-  describe ":on_terminate writes on graceful shutdown" do
-    test "Agent flips to :on_terminate (Spec 04 §2.I) — graceful kill writes row" do
-      # Use a unique URI; spawn under the chat plugin's agent supervisor
+  describe "Agent (:on_change) writes at init and survives shutdown" do
+    test "Agent init writes row immediately; graceful kill keeps it" do
+      # Allen 2026-05-25 — CLI persistence fix: `Ezagent.Entity.Agent`
+      # bumped from `:on_terminate` to `{:snapshot, :on_change}` so
+      # post-spawn cap grants (`grant_initial_caps` dispatch) land
+      # durably before mix BEAM exit. This test validates the
+      # combined behaviour: init writes the row, and a subsequent
+      # graceful terminate leaves it intact (no regression in the
+      # restart roundtrip).
       uri =
         URI.parse(
           "entity://agent/team-alpha/test_snap-term-#{System.unique_integer([:positive])}"
@@ -112,19 +118,13 @@ defmodule Ezagent.Integration.SnapshotRestartTest do
 
       uri_str = URI.to_string(uri)
 
-      # Allen 2026-05-25 — CLI persistence fix: `Kind.Server.init/1` now
-      # writes an initial snapshot for any non-ephemeral strategy so
-      # mix-task-spawned Kinds survive BEAM exit. The pre-terminate row
-      # therefore EXISTS now (it didn't before this fix); the meaningful
-      # invariant is "terminate updates the row," which we capture below
-      # by asserting `kind_type: "agent"` post-terminate (same as
-      # before).
+      # Row exists immediately after init (CLI persistence fix).
       assert %KindSnapshot{kind_type: "agent"} = KindSnapshot.get(uri_str)
 
-      # Graceful terminate via supervisor — triggers terminate/2 hook
+      # Graceful terminate via supervisor
       :ok = DynamicSupervisor.terminate_child(EzagentDomainChat.AgentSupervisor, pid)
 
-      # Row should still exist (now updated by terminate/2)
+      # Row should still exist
       wait_until(fn -> not is_nil(KindSnapshot.get(uri_str)) end, 100)
       assert %KindSnapshot{kind_type: "agent"} = KindSnapshot.get(uri_str)
     end

@@ -207,8 +207,22 @@ defmodule Ezagent.Kind.Snapshot do
     try do
       KindSnapshot.upsert(uri_str, kind_type_str, binary, version, workspace_uri_str)
     rescue
-      e in [DBConnection.ConnectionError, DBConnection.OwnershipError] ->
-        {:error, e}
+      # Allen 2026-05-25 — CLI persistence fix r1 fallout: the
+      # narrow `[DBConnection.ConnectionError, DBConnection.OwnershipError]`
+      # rescue let `%Exqlite.Error{message: "Database busy"}` (and any
+      # other Exqlite-level raise) escape — breaking the moduledoc
+      # contract "write failure does NOT crash the Kind." Pre-fix this
+      # was masked because `save_now/3` was only called from
+      # dispatch / terminate / periodic — paths where a Database-busy
+      # was rare. The CLI fix calls `save_now/3` at init time too,
+      # surfacing the sandbox-busy case from concurrent test setup.
+      #
+      # Widen to a generic `e` rescue and return `{:error, e}` —
+      # `save_now/3` still converts that to `:ok` (with log +
+      # `:failed` telemetry) per its contract; `save_now_strict/3`
+      # returns it to the caller so `commit_and_notify/3` can suppress
+      # the SliceChange emit on a failed durable write (P-N1 round-3).
+      e -> {:error, e}
     end
     |> case do
       {:ok, _row} ->
@@ -270,8 +284,22 @@ defmodule Ezagent.Kind.Snapshot do
     try do
       KindSnapshot.upsert(uri_str, kind_type_str, binary, version, workspace_uri_str)
     rescue
-      e in [DBConnection.ConnectionError, DBConnection.OwnershipError] ->
-        {:error, e}
+      # Allen 2026-05-25 — CLI persistence fix r1 fallout: the
+      # narrow `[DBConnection.ConnectionError, DBConnection.OwnershipError]`
+      # rescue let `%Exqlite.Error{message: "Database busy"}` (and any
+      # other Exqlite-level raise) escape — breaking the moduledoc
+      # contract "write failure does NOT crash the Kind." Pre-fix this
+      # was masked because `save_now/3` was only called from
+      # dispatch / terminate / periodic — paths where a Database-busy
+      # was rare. The CLI fix calls `save_now/3` at init time too,
+      # surfacing the sandbox-busy case from concurrent test setup.
+      #
+      # Widen to a generic `e` rescue and return `{:error, e}` —
+      # `save_now/3` still converts that to `:ok` (with log +
+      # `:failed` telemetry) per its contract; `save_now_strict/3`
+      # returns it to the caller so `commit_and_notify/3` can suppress
+      # the SliceChange emit on a failed durable write (P-N1 round-3).
+      e -> {:error, e}
     end
     |> case do
       {:ok, _row} ->

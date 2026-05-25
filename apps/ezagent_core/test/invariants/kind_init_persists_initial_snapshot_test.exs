@@ -98,4 +98,71 @@ defmodule Ezagent.Invariants.KindInitPersistsInitialSnapshotTest do
       assert nil == KindSnapshot.get(uri_str)
     end
   end
+
+  # Codex r1 HIGH (2026-05-25) — the bare init-time write is not
+  # enough by itself: any provisioning-via-dispatch that follows the
+  # spawn must ALSO land durably before the BEAM can exit. Before
+  # Agent was bumped from `:on_terminate` to `{:snapshot, :on_change}`
+  # the CLI flow `mix ezagent.agent.create … --caps …` would write
+  # the empty initial slice at init, then NOT write the cap grant
+  # (because `Snapshot.commit/4` returns `:not_durable` for
+  # `:on_terminate`), then race terminate against BEAM halt.
+  describe "post-spawn dispatch mutations are durable without relying on terminate/2" do
+    test "Agent dispatch-time slice mutation persists immediately (no wait, no terminate)" do
+      # Spawn a real Agent Kind directly under its supervisor (same
+      # entry as `Ezagent.SpawnRegistry.spawn/1`).
+      suffix = System.unique_integer([:positive])
+      uri = URI.parse("entity://agent/team-alpha/test_cli-cap-persist-#{suffix}")
+      uri_str = URI.to_string(uri)
+
+      {:ok, _pid} =
+        DynamicSupervisor.start_child(
+          EzagentDomainChat.AgentSupervisor,
+          {Ezagent.Kind.Server, {Ezagent.Entity.Agent, %{uri: uri, initial_caps: MapSet.new()}}}
+        )
+
+      # Init-time row exists with empty caps.
+      assert %KindSnapshot{kind_type: "agent"} = row_init = KindSnapshot.get(uri_str)
+
+      # Dispatch `identity.grant_cap` — the exact action that
+      # `Ezagent.Workspace.grant_initial_caps/3` loops over from the
+      # CLI `mix ezagent.agent.create --caps …` path.
+      target = URI.new!("#{uri_str}?action=identity.grant_cap")
+
+      # Use a workspace-scoped cap (workspace_uri == agent's
+      # workspace) so dispatch's `:grant_workspace_any_requires_admin`
+      # guard isn't relevant to what we're testing here — we just
+      # need a slice mutation to exercise the dispatch →
+      # `commit_and_notify/3` → `Snapshot.commit/4` path.
+      cap = %Ezagent.Capability{
+        kind: :agent,
+        behavior: Ezagent.Behavior.Chat,
+        instance: :any,
+        workspace_uri: URI.new!("workspace://team-alpha"),
+        granted_by: Ezagent.Entity.User.admin_uri(),
+        granted_at: DateTime.utc_now()
+      }
+
+      assert {:ok, _} =
+               Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+                 target: target,
+                 mode: :call,
+                 args: %{cap: cap},
+                 ctx: %{
+                   caller: Ezagent.Entity.User.admin_uri(),
+                   caps: Ezagent.Entity.User.admin_caps(),
+                   reply: {:caller_inbox, self()}
+                 }
+               })
+
+      # The invariant: WITHOUT terminate, WITHOUT waiting, the row
+      # is updated to reflect the mutation. Pre-fix (Agent =
+      # :on_terminate), `Snapshot.commit/4` returns `:not_durable`
+      # on this dispatch path and `updated_at` would equal the init
+      # write's timestamp — the row would still hold the empty pre-
+      # mutation state, and a fresh BEAM would not see the change.
+      row_after = KindSnapshot.get(uri_str)
+      assert row_after.updated_at != row_init.updated_at
+    end
+  end
 end
