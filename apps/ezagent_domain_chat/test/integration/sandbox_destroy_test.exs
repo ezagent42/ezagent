@@ -41,7 +41,7 @@ defmodule EzagentDomainChat.Integration.SandboxDestroyTest do
       args: args,
       ctx: %{
         caller: User.admin_uri(),
-        caps: User.admin_caps(),
+        caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
         reply: {:caller_inbox, self()}
       }
     })

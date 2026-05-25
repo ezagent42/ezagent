@@ -44,7 +44,7 @@ defmodule Ezagent.WorkspaceTest do
                  args: %{},
                  ctx: %{
                    caller: Ezagent.Entity.User.admin_uri(),
-                   caps: Ezagent.Entity.User.admin_caps(),
+                   caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
                    reply: {:caller_inbox, self()}
                  }
                })
@@ -70,7 +70,7 @@ defmodule Ezagent.WorkspaceTest do
                  args: %{},
                  ctx: %{
                    caller: Ezagent.Entity.User.admin_uri(),
-                   caps: Ezagent.Entity.User.admin_caps(),
+                   caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
                    reply: {:caller_inbox, self()}
                  }
                })

@@ -69,7 +69,7 @@ defmodule Ezagent.Entity.SessionTemplatePersistVersionTest do
       args: %{},
       ctx: %{
         caller: User.admin_uri(),
-        caps: User.admin_caps(),
+        caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
         reply: {:caller_inbox, self()}
       }
     })
@@ -184,7 +184,7 @@ defmodule Ezagent.Entity.SessionTemplatePersistVersionTest do
           args: %{content: content},
           ctx: %{
             caller: User.admin_uri(),
-            caps: User.admin_caps(),
+            caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
             reply: {:caller_inbox, self()}
           }
         })

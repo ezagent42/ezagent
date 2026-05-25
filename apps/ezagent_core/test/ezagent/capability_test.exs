@@ -274,7 +274,7 @@ defmodule Ezagent.CapabilityTest do
     end
 
     test "admin all-cap matches the needed shape (closed-loop integration)" do
-      [admin_cap] = MapSet.to_list(Ezagent.Entity.User.admin_caps())
+      [admin_cap] = MapSet.to_list(Ezagent.SystemPrincipal.caps("system://bootstrap"))
 
       session_uri =
         URI.new!(

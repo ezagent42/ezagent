@@ -59,7 +59,7 @@ defmodule EzagentPluginLiveview.ComposerMentionTest do
         args: %{member: member},
         ctx: %{
           caller: member,
-          caps: Ezagent.Entity.User.admin_caps(),
+          caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
           reply: :ignore
         }
       })

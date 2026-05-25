@@ -544,7 +544,7 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLiveTest do
   end
 
   defp spawn_owner_and_session(%URI{} = owner_uri, %URI{} = session_uri) do
-    :ok = spawn_user(owner_uri, User.admin_caps())
+    :ok = spawn_user(owner_uri, Ezagent.SystemPrincipal.caps("system://bootstrap"))
 
     case Ezagent.Kind.spawn(Session, %{uri: session_uri, owner_uri: owner_uri}) do
       {:ok, _pid} -> :ok

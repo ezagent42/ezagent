@@ -499,7 +499,7 @@ defmodule Ezagent.Behavior.ChatTest do
         args: %{message: msg},
         ctx: %{
           caller: sender,
-          caps: Ezagent.Entity.User.admin_caps(),
+          caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
           reply: :ignore
         }
       }

@@ -332,7 +332,7 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
   end
 
   defp admin_ctx do
-    %{caller: User.admin_uri(), caps: User.admin_caps(), reply: {:caller_inbox, self()}}
+    %{caller: User.admin_uri(), caps: Ezagent.SystemPrincipal.caps("system://bootstrap"), reply: {:caller_inbox, self()}}
   end
 
   defp create_session_template(name, agent_slots, routing_rules, opts \\ []) do

@@ -79,7 +79,7 @@ defmodule Ezagent.Kind.SnapshotTest do
 
   test "load_or_init restores from DB if snapshot present (round-trip)" do
     uri = URI.parse("entity://user/team-alpha/snap-rt-#{System.unique_integer([:positive])}")
-    caps = Ezagent.Entity.User.admin_caps()
+    caps = Ezagent.SystemPrincipal.caps("system://bootstrap")
 
     :ok = Snapshot.save_now(uri, Ezagent.Entity.User, %{identity: %{caps: caps}})
 
@@ -93,7 +93,7 @@ defmodule Ezagent.Kind.SnapshotTest do
 
   test "term_to_binary survives MapSet round-trip (Q1: lossless encoding)" do
     uri = URI.parse("entity://user/team-alpha/snap-mapset-#{System.unique_integer([:positive])}")
-    caps = Ezagent.Entity.User.admin_caps()
+    caps = Ezagent.SystemPrincipal.caps("system://bootstrap")
 
     :ok = Snapshot.save_now(uri, Ezagent.Entity.User, %{identity: %{caps: caps}})
 

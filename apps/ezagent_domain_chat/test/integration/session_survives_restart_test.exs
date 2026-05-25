@@ -69,7 +69,7 @@ defmodule EzagentDomainChat.Integration.SessionSurvivesRestartTest do
       args: %{member: member_uri},
       ctx: %{
         caller: User.admin_uri(),
-        caps: User.admin_caps(),
+        caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
         reply: {:caller_inbox, self()}
       }
     })

@@ -164,7 +164,7 @@ defmodule EzagentDomainChat.PresenceFanoutTest do
                args: %{member: member_uri},
                ctx: %{
                  caller: admin_uri,
-                 caps: Ezagent.Entity.User.admin_caps(),
+                 caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
                  reply: :inline
                }
              }) do

@@ -104,7 +104,7 @@ defmodule EzagentDomainChat.Integration.PublisherSessionTest do
       args: %{member: member_uri},
       ctx: %{
         caller: User.admin_uri(),
-        caps: User.admin_caps(),
+        caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
         reply: {:caller_inbox, self()}
       }
     })
@@ -114,7 +114,7 @@ defmodule EzagentDomainChat.Integration.PublisherSessionTest do
   # etc. now RAISE; production callers must use the 4-ary form with
   # an explicit ctx. Tests supply admin caps explicitly.
   defp admin_ctx do
-    %{caller: User.admin_uri(), caps: User.admin_caps()}
+    %{caller: User.admin_uri(), caps: Ezagent.SystemPrincipal.caps("system://bootstrap")}
   end
 
   describe "Session.subscribe_from/4 with :latest (production path)" do

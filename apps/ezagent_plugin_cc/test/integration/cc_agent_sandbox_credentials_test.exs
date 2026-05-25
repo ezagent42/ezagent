@@ -368,7 +368,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentSandboxCredentialsTest do
           args: %{message: inbound_msg},
           ctx: %{
             caller: admin_uri,
-            caps: User.admin_caps(),
+            caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
             reply: :ignore
           }
         })
@@ -443,7 +443,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentSandboxCredentialsTest do
       args: %{member: member_uri},
       ctx: %{
         caller: member_uri,
-        caps: User.admin_caps(),
+        caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
         reply: {:caller_inbox, self()}
       }
     })

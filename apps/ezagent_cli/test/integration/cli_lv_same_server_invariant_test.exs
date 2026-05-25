@@ -34,7 +34,7 @@ defmodule EzagentCli.Integration.CliLvSameServerInvariantTest do
     # `EzagentCli.Exec.exec/2` would set in production after token auth.
     Process.put(
       :ezagent_cli_caller_override,
-      {Ezagent.Entity.User.admin_uri(), Ezagent.Entity.User.admin_caps()}
+      {Ezagent.Entity.User.admin_uri(), Ezagent.SystemPrincipal.caps("system://bootstrap")}
     )
 
     :ok
@@ -74,7 +74,7 @@ defmodule EzagentCli.Integration.CliLvSameServerInvariantTest do
     # Idempotent — admin may already exist from boot.
     _ =
       case Ezagent.Users.get_by_uri(admin_uri) do
-        nil -> Ezagent.Users.create(admin_uri, nil, MapSet.to_list(Ezagent.Entity.User.admin_caps()))
+        nil -> Ezagent.Users.create(admin_uri, nil, MapSet.to_list(Ezagent.SystemPrincipal.caps("system://bootstrap")))
         _ -> :ok
       end
 

@@ -80,7 +80,7 @@ defmodule EzagentDomainChat.Integration.MentionGatedRoutingTest do
         target: URI.new!("#{URI.to_string(session)}?action=chat.join"),
         mode: :cast,
         args: %{member: member},
-        ctx: %{caller: member, caps: User.admin_caps(), reply: :ignore}
+        ctx: %{caller: member, caps: Ezagent.SystemPrincipal.caps("system://bootstrap"), reply: :ignore}
       })
 
     Process.sleep(50)
@@ -95,7 +95,7 @@ defmodule EzagentDomainChat.Integration.MentionGatedRoutingTest do
         target: URI.new!("#{URI.to_string(session)}?action=chat.send"),
         mode: :cast,
         args: %{message: msg},
-        ctx: %{caller: sender, caps: User.admin_caps(), reply: :ignore}
+        ctx: %{caller: sender, caps: Ezagent.SystemPrincipal.caps("system://bootstrap"), reply: :ignore}
       })
 
     if Process.whereis(Ezagent.Audit.Writer), do: send(Ezagent.Audit.Writer, :flush)
