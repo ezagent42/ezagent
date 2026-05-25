@@ -75,6 +75,66 @@ defmodule Ezagent.Behavior.IdentityGrantTest do
     assert iface.grant_cap.modes == [:call]
   end
 
+  describe "notify_cap_change — `Notifications.notify` shape (regression: E2E 2026-05-25)" do
+    # Bug: `IdentityAdmin.invoke(:grant_cap, ...)` calls private
+    # `notify_cap_change/4` which posted a notification with the
+    # legacy `%{kind:, text:, cap_summary:}` shape — but
+    # `Ezagent.Notifications.notify/2` now requires
+    # `%{type: atom, body: map, source: module}` and raises
+    # `ArgumentError` otherwise. Surfaced via
+    # `mix ezagent.feishu.bind ou_xxx entity://user/default/<u>`:
+    # the binding row was saved but BindingPolicy cap-grant crashed
+    # the dispatch path for non-admin users.
+    test "grant_cap with `:self_uri` user ctx does NOT raise ArgumentError" do
+      # Subscribe so we (a) verify no crash AND (b) verify the
+      # notification reaches the user inbox with the new contract shape.
+      user_uri = URI.parse("entity://user/default/notify_shape_grant")
+      :ok = Ezagent.Notifications.subscribe(user_uri, %{caps: :system})
+
+      ctx = %{
+        caps: Ezagent.Entity.User.admin_caps(),
+        self_uri: user_uri
+      }
+
+      slice = %{caps: MapSet.new()}
+      cap = echo_cap()
+
+      assert {:ok, _new_slice, _result} =
+               IdentityAdmin.invoke(:grant_cap, slice, %{cap: cap}, ctx)
+
+      assert_receive {:notification, ^user_uri,
+                      %{
+                        type: :cap_granted,
+                        body: %{text: text, cap_summary: cap_summary},
+                        source: Ezagent.Behavior.IdentityAdmin
+                      }},
+                     1_000
+
+      assert is_binary(text)
+      assert is_binary(cap_summary)
+    end
+
+    test "revoke_cap with `:self_uri` user ctx does NOT raise ArgumentError" do
+      user_uri = URI.parse("entity://user/default/notify_shape_revoke")
+      :ok = Ezagent.Notifications.subscribe(user_uri, %{caps: :system})
+
+      ctx = %{self_uri: user_uri}
+      cap = echo_cap()
+      slice = %{caps: MapSet.new([cap])}
+
+      assert {:ok, _new_slice, _result} =
+               IdentityAdmin.invoke(:revoke_cap, slice, %{cap: cap}, ctx)
+
+      assert_receive {:notification, ^user_uri,
+                      %{
+                        type: :cap_revoked,
+                        body: %{text: _, cap_summary: _},
+                        source: Ezagent.Behavior.IdentityAdmin
+                      }},
+                     1_000
+    end
+  end
+
   describe "§5.2 admin predicate (codex PR-OWN-2 round-2 HIGH-1 regression)" do
     test "instance-scoped wildcard cap does NOT count as bootstrap admin" do
       # Codex round-2 HIGH-1: round-1's holds_admin_caps?/1 omitted

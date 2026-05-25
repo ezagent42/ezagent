@@ -92,9 +92,12 @@ defmodule Ezagent.Workspace do
           if user_uri?(member_uri) do
             _ =
               Ezagent.Notifications.notify(member_uri, %{
-                kind: :workspace_member_added,
-                text: "You were added to workspace #{name}.",
-                workspace_name: name
+                type: :workspace_member_added,
+                body: %{
+                  text: "You were added to workspace #{name}.",
+                  workspace_name: name
+                },
+                source: __MODULE__
               })
           end
 
@@ -114,12 +117,19 @@ defmodule Ezagent.Workspace do
 
         with {:ok, _} <- Store.update_members(name, new_members),
              :ok <- dispatch_mutation(name, "remove_member", %{member: member_uri}) do
-          _ =
-            Ezagent.Notifications.notify(member_uri, %{
-              kind: :workspace_member_removed,
-              text: "You were removed from workspace #{name}.",
-              workspace_name: name
-            })
+          # Skip for agent members (Notifications is user-only by design —
+          # agents don't have inboxes); mirrors the `add_member` guard.
+          if user_uri?(member_uri) do
+            _ =
+              Ezagent.Notifications.notify(member_uri, %{
+                type: :workspace_member_removed,
+                body: %{
+                  text: "You were removed from workspace #{name}.",
+                  workspace_name: name
+                },
+                source: __MODULE__
+              })
+          end
 
           :ok
         end
@@ -340,7 +350,9 @@ defmodule Ezagent.Workspace do
   def workspaces_accepting(email), do: MagicLinkRule.workspaces_accepting(email)
 
   @doc "Add a magic-link rule to a workspace. See `MagicLinkRule.add/3`."
-  defdelegate add_magic_link_rule(workspace_uri, rule_type, rule_value), to: MagicLinkRule, as: :add
+  defdelegate add_magic_link_rule(workspace_uri, rule_type, rule_value),
+    to: MagicLinkRule,
+    as: :add
 
   @doc "List magic-link rules for a workspace. See `MagicLinkRule.list_for/1`."
   defdelegate list_magic_link_rules(workspace_uri), to: MagicLinkRule, as: :list_for

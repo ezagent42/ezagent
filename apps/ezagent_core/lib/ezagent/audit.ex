@@ -259,13 +259,15 @@ defmodule Ezagent.Audit do
   defp build_row([:ezagent, :notification, :emit], _measurements, meta) do
     user_uri = Map.get(meta, :user_uri)
     caller = Map.get(meta, :caller)
-    kind = Map.get(meta, :kind)
+    # Notification contract uses `:type`; fall back to legacy `:kind`
+    # for any stragglers during transition.
+    type = Map.get(meta, :type) || Map.get(meta, :kind)
 
     %{
       trace_id: nil,
       caller: uri_to_string_or_nil(caller),
       target: uri_to_string_or_nil(user_uri),
-      action: "notification.emit#{if kind, do: ":#{kind}", else: ""}",
+      action: "notification.emit#{if type, do: ":#{type}", else: ""}",
       args: nil,
       result: nil,
       duration_us: 0,
