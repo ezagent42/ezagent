@@ -122,4 +122,83 @@ defmodule Ezagent.NotificationsTest do
       assert Notifications.topic(uri) == "esr:user:entity://user/default/topic_test:events"
     end
   end
+
+  # PR-N2 (SPEC v2 §3, Allen 2026-05-24) — subscriber-side dual
+  # topic helper. Mirrors `subscribe/2` shape but targets the new
+  # `esr:entity:<uri>:slice_changed` topic with NO cap check
+  # (SPEC §2.3 self-serve subscribers).
+  describe "subscribe_slice_change/1 — PR-N2 transition helper" do
+    test "subscribes the caller to Ezagent.SliceChange.topic/1" do
+      uri = unique_user_uri("slice_sub")
+
+      assert :ok = Notifications.subscribe_slice_change(uri)
+
+      # Force the SliceChange hook on so emit/1 actually broadcasts
+      # — PR-N2 tests this end-to-end so a future regression in the
+      # delegate (wrong topic, wrong PubSub name) fails here.
+      Application.put_env(:ezagent_core, :slice_change_hook, true)
+
+      try do
+        event = %{
+          self_uri: uri,
+          kind_module: __MODULE__,
+          action: :pr_n2_unit,
+          slice_key: :test,
+          old_slice: %{n: 1},
+          new_slice: %{n: 2},
+          result: nil,
+          caller: nil,
+          at: DateTime.utc_now()
+        }
+
+        :ok = Ezagent.SliceChange.emit(event)
+
+        assert_receive {:slice_changed, ^event}, 500
+      after
+        Application.delete_env(:ezagent_core, :slice_change_hook)
+      end
+    end
+
+    test "accepts a String URI argument (mirrors subscribe/2 polymorphism)" do
+      uri_str = "entity://user/default/slice_sub_str_#{System.unique_integer([:positive])}"
+
+      assert :ok = Notifications.subscribe_slice_change(uri_str)
+      assert :ok = Notifications.unsubscribe_slice_change(uri_str)
+    end
+
+    test "delegates topic to Ezagent.SliceChange.topic/1 (no shape drift)" do
+      uri = URI.parse("entity://user/default/topic_delegate_test")
+
+      # Subscribe via the helper, then sanity-check we can also drive
+      # the underlying PubSub with the SAME topic string — if the
+      # helper ever computed a different topic shape, this test
+      # would diverge.
+      assert :ok = Notifications.subscribe_slice_change(uri)
+
+      :ok =
+        Phoenix.PubSub.broadcast(
+          EzagentCore.PubSub,
+          Ezagent.SliceChange.topic(uri),
+          {:slice_changed, %{probe: true}}
+        )
+
+      assert_receive {:slice_changed, %{probe: true}}, 500
+    end
+
+    test "unsubscribe_slice_change/1 stops further deliveries" do
+      uri = unique_user_uri("slice_unsub")
+
+      :ok = Notifications.subscribe_slice_change(uri)
+      :ok = Notifications.unsubscribe_slice_change(uri)
+
+      :ok =
+        Phoenix.PubSub.broadcast(
+          EzagentCore.PubSub,
+          Ezagent.SliceChange.topic(uri),
+          {:slice_changed, %{should_not_arrive: true}}
+        )
+
+      refute_receive {:slice_changed, %{should_not_arrive: true}}, 100
+    end
+  end
 end
