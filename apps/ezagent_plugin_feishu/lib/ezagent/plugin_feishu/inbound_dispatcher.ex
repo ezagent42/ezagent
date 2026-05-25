@@ -153,6 +153,27 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
                 {:error, reason}
             end
 
+          {:error, :ambiguous_chat_binding} ->
+            # codex r1 HIGH fix (2026-05-25): InboundChatLookup now
+            # fails closed when the same chat_id is bound to multiple
+            # sessions (was silently routing to the oldest, hiding
+            # operator misconfig). Surface the conflict back to
+            # Feishu so the operator unbinds the stale row(s).
+            Logger.error(
+              "Feishu inbound: ambiguous binding for chat_id #{chat_id} (multiple " <>
+                "external_mirror_bindings rows); sending text back, no dispatch"
+            )
+
+            send_dispatch_error(
+              chat_id,
+              message_id,
+              "THUMBSDOWN",
+              "⚠️ ESR: 该 Feishu chat 被绑定到多个 session 上（运维错误）。" <>
+                "请用 `mix ezagent.external_mirror.unbind` 解绑多余的 session 后重试。"
+            )
+
+            {:error, :ambiguous_chat_binding}
+
           :error ->
             Logger.info(
               "Feishu inbound: no session binding for chat_id #{chat_id} — drop (no react)"

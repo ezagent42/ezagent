@@ -10,15 +10,27 @@ defmodule EzagentPluginFeishu.InboundChatLookup do
   (PR-EM-3). Inbound direction reads the same table the outbound
   Worker subscribes off of — single SoT, no parallel join table.
 
-  ## Cardinality
+  ## Cardinality (codex r1 HIGH fix 2026-05-25 — fail-closed)
 
-  V1: one chat_id maps to at most one session per
-  `(adapter_id, target_id)` natural key. The query selects on
-  `adapter_id = "feishu"` AND `target_id = chat_id` — if the same
-  chat_id is bound to multiple sessions (operator misconfig), the
-  first row by `bound_at` wins. We log a warning so the operator
-  sees the conflict, but we do NOT fail inbound delivery (P18 — no
-  silent drops on user-facing surfaces).
+  The `external_mirror_bindings` natural key is
+  `(session_uri, adapter_id, target_id)` — so the SAME Feishu
+  chat_id CAN be bound to multiple sessions. The retired
+  `feishu_session_bindings` had `chat_id` as PRIMARY KEY so this
+  ambiguity was impossible; the new schema permits it.
+
+  V1 policy: **fail closed on ambiguity** rather than silently
+  routing to the oldest (the pre-r1 behavior). An operator who
+  legitimately wants a shared chat must explicitly resolve the
+  policy. The inbound dispatcher receives
+  `{:error, :ambiguous_chat_binding}` and surfaces it back to
+  Feishu with a distinct react + text body so the operator sees
+  the exact reason rather than messages mysteriously landing in
+  the wrong session.
+
+  Per `feedback_let_it_crash_no_workarounds`: no `:warning` + degrade
+  paths. A duplicate binding is an operator-actionable
+  misconfiguration; the inbound surface flags it loudly + drops
+  the message rather than picking one arbitrarily.
 
   ## Why a tiny query module not inline in the dispatcher
 
@@ -40,12 +52,18 @@ defmodule EzagentPluginFeishu.InboundChatLookup do
   @doc """
   Resolve a Feishu `chat_id` to its bound session URI.
 
-  Returns `{:ok, %URI{}}` when exactly one binding exists for the
-  chat_id under adapter `"feishu"`; `{:ok, %URI{}}` with a warning
-  log when multiple bindings exist (first by `bound_at` wins); or
-  `:error` when no binding exists.
+  Returns:
+
+  - `{:ok, %URI{}}` when EXACTLY ONE binding exists for the chat_id
+    under adapter `"feishu"`.
+  - `{:error, :ambiguous_chat_binding}` when 2+ bindings exist
+    (codex r1 HIGH fix — fail-closed instead of silently routing
+    to the oldest). The caller (`InboundDispatcher`) surfaces
+    the error back to the user via a distinct Feishu react +
+    text body.
+  - `:error` when no binding exists.
   """
-  @spec resolve(String.t()) :: {:ok, URI.t()} | :error
+  @spec resolve(String.t()) :: {:ok, URI.t()} | {:error, :ambiguous_chat_binding} | :error
   def resolve(chat_id) when is_binary(chat_id) and chat_id != "" do
     rows =
       from(r in BindingRow,
@@ -62,13 +80,20 @@ defmodule EzagentPluginFeishu.InboundChatLookup do
       [session_uri_str] ->
         {:ok, URI.parse(session_uri_str)}
 
-      [session_uri_str | _rest] ->
-        Logger.warning(
-          "InboundChatLookup: chat_id #{chat_id} resolves to multiple sessions " <>
-            "(#{length(rows)} bindings); using the first by bound_at (#{session_uri_str})"
+      multiple ->
+        # codex r1 HIGH fix (2026-05-25): fail closed on duplicate
+        # bindings instead of silently picking the oldest. The
+        # external_mirror_bindings natural key is
+        # (session_uri, adapter_id, target_id), so the same Feishu
+        # chat_id CAN be bound to multiple sessions — that's an
+        # operator misconfig and must surface as a hard error.
+        Logger.error(
+          "InboundChatLookup: chat_id #{chat_id} resolves to MULTIPLE sessions " <>
+            "(#{length(multiple)} bindings): #{inspect(multiple)} — failing closed " <>
+            "(operator must unbind the stale row(s) explicitly)"
         )
 
-        {:ok, URI.parse(session_uri_str)}
+        {:error, :ambiguous_chat_binding}
     end
   end
 

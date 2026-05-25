@@ -105,28 +105,81 @@ defmodule EzagentPluginFeishu.FeishuChatBinding do
     {:error, {:invalid_payload, other}, state}
   end
 
+  # codex r1 HIGH fix (2026-05-25): distinguish PRE-publish failure
+  # from PARTIAL-publish failure. The Worker
+  # (`Ezagent.Behavior.ExternalMirrorWorker.invoke(:publish, ...)`)
+  # advances `publisher_cursor` on `{:error, _, _}` returns —
+  # treating ANY publish failure as recoverable silently drops the
+  # unsent remainder of a multi-payload mirror (text + N attachments
+  # where one attachment fails → text-only in Lark + unsent
+  # attachments lost forever, cursor moves on).
+  #
+  # Fix:
+  #
+  # 1. **Pre-publish failure** (`sent == 0`) — nothing reached Lark
+  #    yet; recoverable `{:error, _, _}` is correct (next slice
+  #    change retries cleanly).
+  #
+  # 2. **Partial-publish failure** (`sent >= 1`) — some bytes already
+  #    landed in Lark. RAISE so the Worker crashes;
+  #    PerBindingSupervisor restarts; cursor resets to `:latest` per
+  #    SPEC §3 (no replay). Partial Lark state is observable but the
+  #    NEXT message gets a fresh attempt — no silent payload loss,
+  #    no cursor-advance past unprocessed data.
+  #
+  # Per-message atomicity is impossible (Lark has no transactional
+  # multi-send); RAISE preserves the invariant that
+  # `cursor-advance => every payload for the event was attempted`.
   defp do_publish_each([], state),
     do: {:ok, %{state | publish_count: state.publish_count + 1}}
 
-  defp do_publish_each([payload | rest], state) do
+  defp do_publish_each(payloads, state) when is_list(payloads),
+    do: do_publish_each_with_sent(payloads, state, 0)
+
+  defp do_publish_each_with_sent([], state, _sent),
+    do: {:ok, %{state | publish_count: state.publish_count + 1}}
+
+  defp do_publish_each_with_sent([payload | rest], state, sent) do
     case do_publish_one(payload, state) do
       :ok ->
-        do_publish_each(rest, state)
+        do_publish_each_with_sent(rest, state, sent + 1)
 
-      {:error, reason} ->
+      {:error, reason} when sent == 0 ->
         Logger.warning(
-          "FeishuChatBinding publish failed: chat_id=#{state.chat_id} " <>
-            "reason=#{inspect(reason)}; aborting remainder of payload list " <>
-            "(#{length(rest)} items)"
+          "FeishuChatBinding publish failed (pre-send, recoverable): " <>
+            "chat_id=#{state.chat_id} reason=#{inspect(reason)} " <>
+            "remaining=#{length(rest) + 1}"
         )
 
         {:error, reason,
          %{state | error_count: state.error_count + 1, last_retry_at: DateTime.utc_now()}}
+
+      {:error, reason} ->
+        Logger.error(
+          "FeishuChatBinding partial-publish failure (raising to prevent " <>
+            "cursor-advance past unprocessed payloads): chat_id=#{state.chat_id} " <>
+            "reason=#{inspect(reason)} sent=#{sent} unsent_remaining=#{length(rest) + 1}"
+        )
+
+        raise "FeishuChatBinding partial-publish failure on chat_id=#{state.chat_id} " <>
+                "after #{sent} payload(s) succeeded: #{inspect(reason)}"
     end
   end
 
   # Tag dispatch — keeps the binding stateless w.r.t. the tag shape;
   # adding a new payload tag in FeishuAdapter is one new clause here.
+
+  # Test-only payload tags: let unit tests exercise the partial-publish
+  # RAISE branch without mocking the Client GenServer. NOT produced by
+  # FeishuAdapter.event_to_payload/1 (production callers never emit
+  # these). Compiled IN under `Mix.env() == :test` only — `if` guards
+  # at runtime would still ship the clause; we use module attribute
+  # branching at compile time.
+  if Mix.env() == :test do
+    defp do_publish_one({:lark_test_ok, _label}, _state), do: :ok
+    defp do_publish_one({:lark_test_fail, reason}, _state), do: {:error, reason}
+  end
+
   defp do_publish_one({:lark_text, text}, state) when is_binary(text),
     do: Client.send_text(state.chat_id, text)
 

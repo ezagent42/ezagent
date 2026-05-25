@@ -73,14 +73,70 @@ defmodule EzagentPluginFeishu.FeishuChatBindingTest do
                FeishuChatBinding.publish(%{whatever: 1}, state)
     end
 
-    test "an unknown payload tag in the list returns a recoverable error + bumps error_count" do
+    test "an unknown payload tag at pos-0 returns a recoverable {:error, _, _} (sent==0 path)" do
       state = base_state()
 
+      # First payload fails → sent==0 → recoverable per codex r1 HIGH fix.
+      # The partial-publish RAISE branch (sent>=1) requires a successful
+      # Client.send_text/2 followed by a failure — that needs a real
+      # (mocked) Client and is exercised by the integration/E2E test.
+      # Pure-unit coverage of the contract is the assertion below.
       assert {:error, {:unknown_payload_tag, {:something_new, "x"}}, new_state} =
                FeishuChatBinding.publish([{:something_new, "x"}], state)
 
       assert new_state.error_count == state.error_count + 1
       assert new_state.last_retry_at != nil
+    end
+
+    # codex r1 HIGH fix (2026-05-25) — partial-publish RAISE branch.
+    # Uses the test-only `:lark_test_ok` / `:lark_test_fail` payload
+    # tags (compiled in only under Mix.env() == :test) so the unit
+    # test can exercise the (sent >= 1 + later-payload-fails) →
+    # RAISE branch without mocking the Client GenServer.
+    test "partial-publish (sent >= 1 then a later payload fails) RAISES" do
+      state = base_state()
+
+      assert_raise RuntimeError, ~r/partial-publish failure/, fn ->
+        FeishuChatBinding.publish(
+          [
+            {:lark_test_ok, "first-succeeds"},
+            {:lark_test_fail, :synthetic_429}
+          ],
+          state
+        )
+      end
+    end
+
+    test "pre-publish failure (sent == 0) stays recoverable {:error, _, _}" do
+      state = base_state()
+
+      # First payload fails → pre-send path → recoverable error.
+      assert {:error, :synthetic_lark_down, new_state} =
+               FeishuChatBinding.publish(
+                 [
+                   {:lark_test_fail, :synthetic_lark_down},
+                   {:lark_test_ok, "would-have-followed"}
+                 ],
+                 state
+               )
+
+      assert new_state.error_count == state.error_count + 1
+    end
+
+    test "all payloads succeed → ok + publish_count bumped" do
+      state = base_state()
+
+      assert {:ok, new_state} =
+               FeishuChatBinding.publish(
+                 [
+                   {:lark_test_ok, "first"},
+                   {:lark_test_ok, "second"},
+                   {:lark_test_ok, "third"}
+                 ],
+                 state
+               )
+
+      assert new_state.publish_count == state.publish_count + 1
     end
   end
 

@@ -299,44 +299,44 @@ defmodule EzagentPluginFeishu.FeishuAdapter do
     text_payload ++ attachment_payloads
   end
 
-  defp lark_attachment_payloads(
-         %{type: type, source: "feishu", file_key: key, name: name},
-         prefix
-       )
-       when is_binary(key) do
-    case type do
-      :image ->
+  # codex r1 MED fix (2026-05-25): no `String.to_atom/1` on untrusted
+  # attachment maps. Dispatch on the att-type allowlist via
+  # `att_type/1` (atom result coerced from `{:image | :file | "image"
+  # | "file"}` — anything else falls into `:unsupported` without
+  # interning a new atom). Field reads use the dual atom/string
+  # `att_get/2` so MessageStore JSON-roundtrip rehydrate works
+  # without `String.to_atom/1`.
+  defp lark_attachment_payloads(%{} = att, prefix) do
+    type = att_type(att)
+    source = att_get(att, :source)
+    file_key = att_get(att, :file_key)
+    local_path = att_get(att, :local_path)
+    name = att_get(att, :name) || "attachment"
+
+    cond do
+      type == :unsupported ->
+        [{:lark_text, prefix <> "[unsupported attachment name=#{name}]"}]
+
+      source == "feishu" and is_binary(file_key) and type == :image ->
         [
           {:lark_text, prefix <> "[image: #{name}]"},
-          {:lark_image_passthrough, key, name}
+          {:lark_image_passthrough, file_key, name}
         ]
 
-      :file ->
+      source == "feishu" and is_binary(file_key) and type == :file ->
         [
           {:lark_text, prefix <> "[file: #{name}]"},
-          {:lark_file_passthrough, key, name}
+          {:lark_file_passthrough, file_key, name}
         ]
 
-      other ->
-        [
-          {:lark_text, prefix <> "[unsupported attachment type=#{other} name=#{name}]"}
-        ]
-    end
-  end
+      is_binary(local_path) and type == :image ->
+        [{:lark_image_upload, local_path, name, prefix}]
 
-  defp lark_attachment_payloads(%{type: type, local_path: path, name: name}, prefix)
-       when is_binary(path) do
-    case type do
-      :image ->
-        [{:lark_image_upload, path, name, prefix}]
+      is_binary(local_path) and type == :file ->
+        [{:lark_file_upload, local_path, name, prefix}]
 
-      :file ->
-        [{:lark_file_upload, path, name, prefix}]
-
-      other ->
-        [
-          {:lark_text, prefix <> "[unsupported outbound attachment type=#{other} path=#{path}]"}
-        ]
+      true ->
+        [{:lark_text, prefix <> "[attachment metadata only: #{inspect(att)}]"}]
     end
   end
 
@@ -349,25 +349,36 @@ defmodule EzagentPluginFeishu.FeishuAdapter do
   defp extract_text(other) when is_map(other), do: ""
   defp extract_text(other), do: inspect(other)
 
-  defp extract_attachments(%{attachments: list}) when is_list(list),
-    do: Enum.map(list, &normalize_attachment/1)
-
-  defp extract_attachments(%{"attachments" => list}) when is_list(list),
-    do: Enum.map(list, &normalize_attachment/1)
-
+  defp extract_attachments(%{attachments: list}) when is_list(list), do: list
+  defp extract_attachments(%{"attachments" => list}) when is_list(list), do: list
   defp extract_attachments(_), do: []
 
-  defp normalize_attachment(%{} = m) do
-    Map.new(m, fn
-      {k, v} when is_binary(k) -> {String.to_atom(k), normalize_attachment_value(k, v)}
-      kv -> kv
-    end)
+  # codex r1 MED fix (2026-05-25): the prior `normalize_attachment/1`
+  # called `String.to_atom/1` on untrusted attachment keys + the
+  # `type` string value. Atom-interning attacker-controlled bytes
+  # exhausts the VM atom table (P9 stdlib non-negotiable).
+  # We now access attachment fields via the dual atom/string fetcher
+  # below, and compare `type` values against a fixed allowlist of
+  # known atoms (so a hostile `type: "syscalls"` never coerces to a
+  # new atom — it just falls through to the "unsupported" branch).
+  defp att_type(att) do
+    case att_get(att, :type) do
+      :image -> :image
+      :file -> :file
+      "image" -> :image
+      "file" -> :file
+      _ -> :unsupported
+    end
   end
 
-  defp normalize_attachment(other), do: other
+  defp att_get(%{} = att, key) when is_atom(key) do
+    case Map.fetch(att, key) do
+      {:ok, v} -> v
+      :error -> Map.get(att, Atom.to_string(key))
+    end
+  end
 
-  defp normalize_attachment_value("type", v) when is_binary(v), do: String.to_atom(v)
-  defp normalize_attachment_value(_, v), do: v
+  defp att_get(_, _), do: nil
 
   defp sender_label(%URI{} = u), do: URI.to_string(u)
   defp sender_label(other), do: inspect(other)

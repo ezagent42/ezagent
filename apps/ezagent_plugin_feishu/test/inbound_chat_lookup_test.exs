@@ -55,6 +55,20 @@ defmodule EzagentPluginFeishu.InboundChatLookupTest do
 
       assert :error = InboundChatLookup.resolve(chat_id)
     end
+
+    # codex r1 HIGH fix (2026-05-25) — fail closed on duplicate bindings.
+    # The external_mirror_bindings natural key is
+    # (session_uri, adapter_id, target_id) so the same Feishu chat_id
+    # CAN be bound to multiple sessions at the DB level. Pre-fix this
+    # silently picked the oldest by bound_at → wrong-session routing
+    # + the correct rebind could never win. Post-fix: hard error.
+    test "returns {:error, :ambiguous_chat_binding} when 2+ sessions are bound to the same chat_id" do
+      chat_id = "oc_dup_" <> uniq()
+      insert_row("session://default/default/team_a_" <> uniq(), "feishu", chat_id)
+      insert_row("session://default/default/team_b_" <> uniq(), "feishu", chat_id)
+
+      assert {:error, :ambiguous_chat_binding} = InboundChatLookup.resolve(chat_id)
+    end
   end
 
   describe "chat_ids_for/1" do
