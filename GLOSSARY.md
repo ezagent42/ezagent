@@ -185,7 +185,7 @@ Adapter subprocess 由谁拉起:
 
 ### Behavior
 
-Kind 上的能力切片,跨 Kind 复用。每个 Behavior 模块定义 `actions/0`、`state_slice/0`、`init_slice/1`、`invoke/4`。Behavior 是 plugin,不是 core(core 只有 behaviour 契约)。
+Kind 上的能力切片,跨 Kind 复用。每个 Behavior 模块定义 `actions/0`、`state_slice/0`、`init_slice/1`、`invoke/4`,以及 (PR-CC-2-v2, 2026-05-25 起强制) `required_caps/0`、可选 `workspace_scoped?/0`。Behavior 是 domain 或 plugin,不是 core(core 只有 behaviour 契约)。
 
 ```elixir
 defmodule Ezagent.Behavior.Chat do
@@ -198,10 +198,28 @@ defmodule Ezagent.Behavior.Chat do
   def state_slice, do: :chat_state
   def init_slice(_), do: %{...}
   def invoke(:receive, slice, args, ctx), do: ...
+  def required_caps, do: %{receive: [...], send: [...]}    # PR-CC-2-v2
+  def workspace_scoped?, do: true                          # PR-CC-2-v2 default
 end
 ```
 
-参考: ARCHITECTURE.md §6,Decision #2
+参考: ARCHITECTURE.md §6,Decision #2,PR-CC-2-v2
+
+### `Behavior.required_caps/0`(PR-CC-2-v2, 2026-05-25)
+
+每个 Behavior 的 per-action cap 声明回调,签名 `required_caps() :: %{action_atom => [cap_template, ...]}`。Dispatch **step 5.5** 通过 `Kind.holds_cap?/2` 把 Behavior 这边的 `required_caps()[action]` 跟 caller 持有的 caps 对上 — 这是 cap 检查的唯一 chokepoint(`cap_check_only_at_chokepoint` invariant 禁止生产代码内别处的 `Capability.matches?/2` 调用)。
+
+返 `%{}` 表示该 Behavior 所有 action 都不需要 cap(对所有人 dispatchable;仅限只读公共 action)。`dispatch_uses_required_caps_test.exs` invariant 验证 `interface/0` 列出的每个 action 都在 `required_caps/0` 里有条目。
+
+参考: ARCHITECTURE.md §7.1; references/architecture-invariants.md invariant 5; PR-CC-2-v2 SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1.md`
+
+### `Behavior.workspace_scoped?/0`(PR-CC-2-v2, 2026-05-25)
+
+Behavior 上可选的 workspace 隔离声明,签名 `workspace_scoped?() :: boolean()`,默认 `true`(per-tenant Kind)。Dispatch **step 5.6**(在 step 5.5 cap 检查后)读这个回调:`true` → 触发 workspace 隔离检查(caller workspace == target workspace,或 4 项例外之一 — invariant 13);`false` → 跨 workspace 可调用(e.g. system-scoped 配置读取)。
+
+跟 invariant 13(cross-workspace dispatch)是同一枚硬币的两面:invariant 13 是"什么样的 caller 能跨 workspace 调用",`workspace_scoped?/0` 是"什么样的 Behavior 允许被跨 workspace 调用"。
+
+参考: ARCHITECTURE.md §7.6 末段; references/architecture-invariants.md invariant 13
 
 ### BehaviorRegistry
 
@@ -227,17 +245,33 @@ Capability-based access control。Ezagent 的权限模型——每个 Invocation
 
 ### Capability(`%Ezagent.Capability{}`)
 
-权限 token,struct(不是字符串)。字段:
+权限 token,struct(不是字符串)。字段(SPEC v3 + 2026-05-25 caps-cleanup batch):
 
 ```elixir
 %Ezagent.Capability{
-  kind: module() | :all,           # 哪种 Kind 类型
-  behavior: module() | :all,       # 哪个 Behavior
-  instance: URI.t() | module() | :all  # 哪个 instance (or scope)
+  kind: module() | :all,                    # 哪种 Kind 类型
+  behavior: module() | :all,                # 哪个 Behavior (模块引用,NOT atom — 见 invariant 2)
+  instance: URI.t() | module() | tuple() | :all,  # 哪个 instance (或 scope-bounded tuple)
+  workspace_uri: URI.t() | :any,            # workspace scope (Phase 9 §13)
+  action: atom() | :any,                    # 当前在 matches?/2 中不参与比较 — 见 todo.md
+  granted_by: URI.t() | atom()              # 授权链
 }
 ```
 
-参考: ARCHITECTURE.md §7,Decision #38
+⚠️ **`action` 字段当前不在 `matches?/2` 比较内** — 多 action Behavior 的特权 action 必须 carve 出独立 Behavior(PR #356 模式 — `WorkspaceUserAdmin.:create_user` 从 `Workspace` 拆出),否则任何持有 cap-on-Behavior 的 principal 可以调用所有 action。SPEC 级 action 轴变更跟踪在 `docs/futures/todo.md` "Capability struct lacks an action axis"。
+
+参考: ARCHITECTURE.md §7,Decision #38, #133, #137; PR-CC-2-v2 (2026-05-25)
+
+### `Capability.cap/3` / `Capability.cap/5`(构造帮手,PR-CC-2-v2 2026-05-25)
+
+`Ezagent.Capability` 暴露两个构造帮手,简化新 cap 构造:
+
+- **`cap(kind, behavior, action)`** — 通用模板;`instance`/`workspace_uri` 留 `:any`;用于 `Behavior.required_caps/0` 这种 "我需要这种 cap" 模板
+- **`cap(kind, behavior, action, instance, workspace_uri)`** — 具体 cap;用于 grant 给具体 principal 的实际 cap 实例
+
+两者都返 `%Ezagent.Capability{}` struct。`Capability.cap_for_action/3` 是更早的反查 helper(给定 target_uri + action → 需要的 cap 模板)。
+
+参考: ARCHITECTURE.md §7.1; PR-CC-2-v2 (2026-05-25)
 
 ### Channel(Claude Code Channel)
 
@@ -402,7 +436,25 @@ Ezagent 所有可寻址实体的"class"。每个 Kind 在 `Ezagent.<Category>.<K
 
 三子类:**Session** / **Entity** / **Resource**(Decision #7)。
 
-参考: ARCHITECTURE.md §3,Decision #1
+每个 Kind 实现 `type_name/0`、`behaviors/0`、`persistence/0`,以及 (PR-CC-2-v2, 2026-05-25 起强制) `holds_cap?/2`。
+
+参考: ARCHITECTURE.md §3,Decision #1,PR-CC-2-v2
+
+### `Kind.holds_cap?/2`(PR-CC-2-v2 chokepoint 回调, 2026-05-25)
+
+dispatch **step 5.5** 单一 cap 检查 chokepoint 回调。签名:
+
+```elixir
+@callback holds_cap?(caller_caps :: [Ezagent.Capability.t()],
+                     needed :: [Ezagent.Capability.t()]) ::
+            :ok | {:error, :unauthorized}
+```
+
+实现典型形如 `Enum.any?(needed, fn n -> Enum.any?(caller_caps, &Capability.matches?(&1, n)) end)`。Kind 必须实现这个回调(invariant `dispatch_uses_required_caps_test.exs` 同时验证 Kind 的 holds_cap?/2 跟 Behavior 的 required_caps/0 在 dispatch 流里被实际 consult)。
+
+这是 cap 检查的**唯一**生产入口 — `cap_check_only_at_chokepoint_test.exs` invariant 禁止 LV / controller / Behavior body 等别处调用 `Capability.matches?/2` (chokepoint 定义自身除外)。LV 的 "前置 cap 检查"(为了藏按钮)只允许作为 hint,**不能**是权威源。
+
+参考: ARCHITECTURE.md §7.1 chokepoint 边界关切; references/architecture-invariants.md invariant 2/5; PR-CC-2-v2 SPEC
 
 ### KindRegistry
 
@@ -622,11 +674,49 @@ Ezagent 寻址 scheme。格式: `<scheme>://<segment>/<...>/behavior/<behavior_n
 
 参考: ARCHITECTURE.md §3.4,Decision #6
 
-### `user://admin`
+### `user://admin` → `entity://user/system/admin`(SPEC v3 canonical)
 
-Bootstrap principal,系统首次启动自动创建,持 all-caps。**不可 revoke**(结构性 invariant 在 `Ezagent.Capability.revoke/2` 集中检查)。Phase 1-3c LiveView/CLI 默认 `ctx.caller = user://admin`(authz stub 期占位);Phase 3d 起仍持 all-caps。
+Bootstrap principal,系统首次启动自动创建,持 all-caps。**不可 revoke**(结构性 invariant 在 `Ezagent.Capability.revoke/2` 集中检查)。SPEC v3 (Phase 9) 之后 URI 形态从 2-segment `user://admin` 变成 3-segment `entity://user/system/admin`;legacy URI 不再 parse。
 
-参考: ARCHITECTURE.md §7.6,Decision #81
+PR-CC-1 (2026-05-25) 之后该 URI 注册在 `Ezagent.SystemPrincipal.Catalog`(见下),不再通过 inline `URI.parse` 合成。`Identity.admin?/1` 仍只对 `Catalog.admin_uri()` 返 true — 它是唯一的 bootstrap admin singleton。
+
+参考: ARCHITECTURE.md §7.6,Decision #81;PR-CC-1 (2026-05-25)
+
+### `Ezagent.SystemPrincipal.Catalog`(PR-CC-1, 2026-05-25)
+
+`ezagent_core` 内 14 个系统内部 principal URI 的封闭 allowlist 模块,每个 URI 配套 cap 声明 + 用途描述。取代 PR-CC-1 之前散布在 Behavior body 里的 `URI.parse("entity://system/...")` 内联合成 + 隐式提权 (ambient authority) 模式。
+
+```elixir
+defmodule Ezagent.SystemPrincipal.Catalog do
+  @entries [
+    {URI.parse("entity://user/system/admin"),
+     [cap(kind: :all, behavior: :all, instance: :any, workspace_uri: :any)],
+     "Bootstrap admin singleton (Identity.admin?/1 唯一返 true 的 URI)"},
+    {URI.parse("entity://system/boot_reconciler/default"),
+     [cap(kind: :workspace, behavior: Behavior.Workspace, action: :spawn_default_session, ...)],
+     "Boot-time session reconciler"},
+    # ... 12 more
+  ]
+
+  def admin_uri, do: URI.parse("entity://user/system/admin")
+  def caller?(uri), do: # is uri in @entries?
+  def caps_for(uri), do: # cap list for uri
+end
+```
+
+**结构性不变式**:`no_wildcard_system_principals_test.exs` invariant — 生产代码内 grep 禁止 `URI.parse("entity://system/...")` 这种内联合成 (Catalog 模块自身除外)。所有需要系统身份的内部调用必须通过 `Catalog.<accessor>` 获取。
+
+跟 `admin_caps()` 区分:`admin_caps()` 是某个 URI(`Catalog.admin_uri()`)持有的 cap **内容**;Catalog 是 system principal 的**身份集**(URI + 它持有的 cap)。
+
+参考: ARCHITECTURE.md §7.6;PR-CC-1 SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1.md`
+
+### `lv_cli_parity` invariant(PR-CC-2-v2, 2026-05-25)
+
+每个 LV `handle_event` 都有对应的 `mix esr` CLI invocation,这样 headless ops(脚本 / CI / Feishu / e2e 测试)可以在不打开 LV 的情况下驱动系统。invariant 测试 `lv_cli_parity_test.exs` 扫描所有 LV 模块的 `handle_event/3` clauses,对每个找到的 event,检查 `apps/ezagent_cli/lib/mix/tasks/` 下有没有对应的 `mix esr.<scope>.<action>` 任务。
+
+为什么:Allen 的 production-usability 选择标准 (P4) — LV 是给人用的,CLI 是给运维 / 脚本用的;新功能加 LV 的时候,**必须**同时加 CLI 入口,否则 e2e 测试只能开浏览器,这违反 Allen 2026-05-04 设的 ESR e2e 标准。
+
+参考: P4; PR-CC-2-v2 SPEC; `apps/ezagent_core/test/invariants/lv_cli_parity_test.exs`
 
 ### View
 
