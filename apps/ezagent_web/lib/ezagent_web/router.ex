@@ -57,23 +57,19 @@ defmodule EzagentWeb.Router do
   # EzagentWeb scope (so the controller resolves correctly), under the
   # same RequireEntity plug as the LV scope below.
   #
-  # TODO (codex PR #305 round-4 HIGH, deferred): `/admin/uploads/:filename`
-  # is a controller route INSIDE the `:require_entity` plug, but it
-  # sits under the `/admin/*` URL prefix that the new
-  # `live_session :require_admin` (below) was supposed to gate
-  # uniformly. The controller is misnamed for its scope (chat
-  # compose uploads are user-scope, not admin-scope) — the URL
-  # should move to `/files/:filename` or similar, and
-  # `UploadsController` should verify the caller is the
-  # uploading user OR a session member with read cap. Tracked in
-  # `docs/futures/todo.md` as "uploads controller scope mismatch".
-  # Out of scope for THIS PR (which focuses on LiveView admin gates
-  # + audit-log workspace filter); flagged here so the next
-  # touch sees the boundary issue.
+  # 2026-05-25 fix (PR #305 r4 HIGH — uploads-route scope mismatch):
+  # the chat-compose upload download was at `/admin/uploads/:filename`,
+  # which made it LOOK admin-gated (the `/admin/*` URL prefix is) but
+  # it's a controller route — `live_session :require_admin` (below)
+  # ONLY gates LiveView mounts. Moved to `/files/:filename` so the
+  # URL reflects the actual scope (user-scope, not admin-scope), and
+  # UploadsController now enforces per-user authz directly (caller
+  # must be admin, the uploading user, OR a participant in any
+  # session the file is attached to — see UploadsController.show/2).
   scope "/", EzagentWeb do
     pipe_through [:browser, EzagentWeb.Plugs.RequireEntity]
 
-    get "/admin/uploads/:filename", UploadsController, :show
+    get "/files/:filename", UploadsController, :show
 
     # Phase 9 PR-5 (SPEC v3 §6.4 amended): workspace switcher endpoint.
     # Logged-in users POST here from the top-left workspace dropdown;
@@ -151,6 +147,18 @@ defmodule EzagentWeb.Router do
     # inherits the gate automatically. `:require_admin` chains
     # `:require_entity` first (sets the admin flags) then halts
     # non-admins with a flash + redirect.
+    #
+    # Invariant (PR #305 r4 fix, 2026-05-25): EVERY remaining route
+    # under `/admin/*` MUST be a `live` route declared inside this
+    # `live_session :require_admin` block. The previous outlier —
+    # `get "/admin/uploads/:filename"` (a plain controller route that
+    # `live_session` does NOT gate) — has been moved to
+    # `/files/:filename` above, with per-user authz in
+    # UploadsController. If a future PR adds another controller-style
+    # route at `/admin/*`, that PR is wrong: either lift it to a LV
+    # (and put it here), or rename the URL out of `/admin/*` and
+    # gate it with an explicit plug. By inspection of this file
+    # (grep `"/admin`), the gate is now complete.
     live_session :require_admin, on_mount: {EzagentWeb.LiveAuth, :require_admin} do
       # Admin dashboard + sysadmin sub-pages — all routed through the
       # centralized admin gate (see codex review above).

@@ -1963,8 +1963,22 @@ defmodule EzagentPluginLiveview.AdminLive do
 
   defp body_attachments(_), do: []
 
-  defp att_to_link(%URI{scheme: "resource", host: "uploads", path: "/" <> filename}),
-    do: {display_name(filename), "/admin/uploads/#{filename}"}
+  # `resource://uploads/<workspace>/<stored_name>` — extract just the
+  # stored_name segment for the download URL. The on-disk file is named
+  # `<stored_name>` (no workspace prefix); the workspace is metadata
+  # in the URI for tenant-scoping the resource namespace.
+  #
+  # 2026-05-25: URL changed from `/admin/uploads/:filename` to
+  # `/files/:filename` (PR #305 r4 HIGH — uploads-route scope fix).
+  # The old URL was both misleading (looked admin-gated but wasn't)
+  # AND broken (the multi-segment path bypassed the single-segment
+  # `:filename` route param; this `Path.basename` strips the
+  # workspace prefix to match the actual on-disk filename + the
+  # new route's single-segment shape).
+  defp att_to_link(%URI{scheme: "resource", host: "uploads", path: "/" <> rest}) do
+    stored_name = Path.basename(rest)
+    {display_name(stored_name), "/files/#{stored_name}"}
+  end
 
   defp att_to_link(%URI{} = uri),
     do: {URI.to_string(uri), URI.to_string(uri)}
