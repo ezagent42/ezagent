@@ -39,7 +39,7 @@
 **Rev 3 changes (codex r2 verdict needs-attention → addressed):**
 - CRITICAL: rollback now closes the `:on_terminate` persistence hole — dispatches `Sandbox.:destroy` (clears slice + plugin-side cleanup) + deletes `KindSnapshot` row + revokes any granted caps BEFORE `Kind.terminate/1`. Failure-injection tests added for every post-spawn step (§3.4.2 + §7).
 - HIGH: `Behavior.Agent.data_owner(agent_uri)` now resolves to the **owning user URI** via a new `Ezagent.AgentOwnership` registry (ETS, parallel to `AgentLineage`). Source-owner can delegate the `:duplicate` cap to a target-ws admin via standard `Identity.grant_cap` — bilateral consent is now structurally possible, not bootstrap-admin-only (§3.8 + §4.2).
-- HIGH: `Kind.Template` snapshot callbacks remain `@optional` BUT the action body calls a core adapter `Ezagent.Kind.Template.snapshot_or_default/2` that checks `function_exported?` and normalizes missing callbacks to `{:ok, %{path: nil, manifest: %{}}}`. Acceptance test against a plugin with no callback (§7 row 10 expanded).
+- HIGH: `Kind.Template` snapshot callbacks remain `@optional` BUT the action body calls a core adapter `Ezagent.Kind.Template.snapshot_or_default/3` that checks `function_exported?` and normalizes missing callbacks to `{:ok, %{path: nil, manifest: %{}}}`. Acceptance test against a plugin with no callback (§7 row 10 expanded).
 - MEDIUM: cc snapshot manifest now content-hashes every file before + after copy, fails if any hash differs. `.credentials.json` rotation mid-snapshot is detected (§3.6.1 rewritten). §1 wording softened: "snapshot consistency is enforced by manifest verification; live writes during snapshot ABORT cleanly" (no more "point-in-time" claim that the V1 impl couldn't honor).
 
 ---
@@ -209,7 +209,9 @@ def invoke(:duplicate, _slice, args, ctx) do
        {:ok, snapshot}       <- Ezagent.Kind.Template.snapshot_or_default(source_meta.template_class, source_uri, source_meta.config_dir_path),
 
        # SPAWN — dedicated path, NOT Workspace.create_agent (codex r1 HIGH-4):
-       {:ok, result}         <- spawn_target_directly(target_uri, source_meta, target_ws_uri, target_owner_uri, snapshot) do
+       # caller is passed as `spawned_by_uri` (codex r7 HIGH-1 — lineage
+       # distinct from ownership).
+       {:ok, result}         <- spawn_target_directly(target_uri, source_meta, target_ws_uri, target_owner_uri, snapshot, caller) do
     {:ok, %{}, %{
       source_uri: source_uri,
       target_uri: result.agent_uri,
@@ -276,10 +278,17 @@ Per codex r1 HIGH-4, routing through `Ezagent.Workspace.create_agent/3` would:
 The dedicated `spawn_target_directly/5` (rev 6 — takes the `snapshot` map from §3.6 adapter, not a raw path; Provisioning is the ONE post-spawn step):
 
 ```elixir
-defp spawn_target_directly(target_uri, source_meta, target_ws_uri, target_owner_uri, snapshot) do
+defp spawn_target_directly(target_uri, source_meta, target_ws_uri, target_owner_uri, snapshot, caller_uri) do
+  # codex r7 HIGH-1 fix — AgentLineage records "spawned by" (the
+  # principal authorizing this call); AgentOwnership records "owned
+  # by" (the resulting agent's owner user). The two are distinct:
+  # when a target-ws admin performs a duplicate FOR a different
+  # target_owner_uri, lineage points at the admin (the spawner) and
+  # ownership points at the owner (the recipient). Conflating these
+  # breaks `{:spawned_by, _}` cap shape resolution per Decision #137.
   with {:ok, :started, _pid}   <- spawn_atomic_fresh(target_uri),  # NO adoption (§3.4.1)
        :ok                     <- WorkspaceRegistry.bind(target_uri, target_ws_uri),
-       :ok                     <- AgentLineage.record(target_uri, target_owner_uri),
+       :ok                     <- AgentLineage.record(target_uri, caller_uri),  # SPAWNER (codex r7 HIGH-1)
        restore_result          <- Ezagent.Kind.Template.restore_or_noop(source_meta.template_class, target_uri, snapshot),
        {:ok, final_dir}        <- normalize_restore(restore_result),
        :ok                     <- dispatch_sandbox_write_path(target_uri, final_dir, source_meta.template_class),
@@ -423,7 +432,7 @@ For agents with no config_dir to snapshot (echo, curl, np), the
 plugin SHOULD return `{:ok, %{path: nil, manifest: %{}}}` —
 positive "I have nothing to snapshot" rather than missing-function.
 Plugins that don't implement the callback at all are handled by
-the `snapshot_or_default/2` core adapter (see below).
+the `snapshot_or_default/3` core adapter (see below).
 
 Manifest shape (cc V1): `%{file_count: N, files: %{relpath => %{size:, mtime:, sha256:}}, taken_at: DateTime, source_uri: String}`.
 """
@@ -455,7 +464,7 @@ Returns `{:ok, final_path}` or `{:error, term()}`.
 @optional_callbacks snapshot_config_dir: 2, restore_from_snapshot: 3
 ```
 
-**Core adapter (`Ezagent.Kind.Template.snapshot_or_default/2`)** — the action body calls THIS, not `template_class.snapshot_config_dir/2` directly. The adapter checks `function_exported?` and returns the default for plugins that opted out:
+**Core adapter (`Ezagent.Kind.Template.snapshot_or_default/3`)** — the action body calls THIS, not `template_class.snapshot_config_dir/2` directly. The adapter checks `function_exported?` and returns the default for plugins that opted out:
 
 ```elixir
 defmodule Ezagent.Kind.Template do
@@ -976,7 +985,7 @@ The bar:
 9. **sandbox.write_path failure → DURABLE rollback** — same assertions as row 8 but injection point is the `dispatch_sandbox_write_path/3` step. Critically, verify the `:sandbox` slice did NOT persist via `:on_terminate` snapshot (this is the precise hole codex r2 CRITICAL identified).
    - **9a.** Same with injection at `grant_initial_caps_for_owner` step — verify `:identity` slice did NOT persist with the partial cap set.
    - **9b.** Same with injection at `start_pty` step — verify PtyServer is not running, no stranded process.
-10. **Plugin with NO snapshot callback (adapter path)** — a Template Class that doesn't implement `snapshot_config_dir/2` at all → `Kind.Template.snapshot_or_default/2` returns `{:ok, %{path: nil, manifest: %{}}}`; `restore_or_noop/3` returns `:noop`; action body completes; target's `sandbox.config_dir_path` is `nil`. (Asserts codex r2 HIGH-3 fix.)
+10. **Plugin with NO snapshot callback (adapter path)** — a Template Class that doesn't implement `snapshot_config_dir/2` at all → `Kind.Template.snapshot_or_default/3` returns `{:ok, %{path: nil, manifest: %{}}}`; `restore_or_noop/3` returns `:noop`; action body completes; target's `sandbox.config_dir_path` is `nil`. (Asserts codex r2 HIGH-3 fix.)
 11. **Adoption-refused TOCTOU** — race: pre-create target_uri via concurrent `SpawnRegistry.spawn`, then run duplicate; verify duplicate fails with `{:adopted_not_fresh, target_uri}`. Pre-existing agent at target_uri unchanged.
 12. **Invariant: no `Workspace.create_agent` routing** — static grep test asserts `:duplicate` action body never calls the create_agent facade.
 13. **Live mutation during snapshot (codex r2 MEDIUM-4)** — start snapshot, concurrently mutate a credentials-like file in source_dir mid-cp_r; expect `{:error, {:source_changed_during_snapshot, _}}`; verify staging cleaned; no target spawned.
@@ -985,6 +994,7 @@ The bar:
 16. **Provisioning end-to-end (codex r3 HIGH-2)** — after `:create_agent`, the caller user holds `{Behavior.Agent, :duplicate}` cap on the new agent URI per `Identity.list_caps` query. Asserts the `Provisioning.provision_agent/3` helper actually fires AND applies grants end-to-end (not just records ownership in isolation per row 14).
     - **16a (codex r4 HIGH-1):** in `Provisioning.provision_agent/3`, inject failure at the 2nd grant of a multi-grant batch (e.g. by stubbing one grantee's IdentityAdmin to refuse); verify the FIRST grant was successfully revoked off the grantee user's `Identity.list_caps` AND the `AgentOwnership` row is absent. Asserts the rev-5 partial-grant rollback works structurally — no stale cap escapes.
 17. **Migration upgrade test (codex r4 HIGH-3)** — start from a pre-rev-5 DB snapshot (no `agent_ownership` table); run `mix ecto.migrate`; create an agent via `:create_agent`; verify `AgentOwnership.lookup/1` returns the owner; stop+start the runtime; verify `AgentOwnership.lookup/1` still returns the owner from SQLite-backed `boot_load/0`. If migration ordering regresses (e.g. EtsOwner starts before SQLite-backed Repo is up), this test catches it.
+18. **Lineage vs ownership divergence (codex r7 HIGH-1)** — target-ws admin (caller `admin@ws_b`) clones a source agent into ws_b owned by a DIFFERENT user `alice@ws_b` (i.e. `target_owner_uri = alice@ws_b`, caller = `admin@ws_b`). Verify after spawn: `AgentLineage.lookup(target_uri) == admin@ws_b` (the spawner) AND `AgentOwnership.lookup(target_uri) == alice@ws_b` (the owner). Asserts the two registries are not conflated; `{:spawned_by, admin@ws_b}` cap shape resolves correctly to the target agent.
 
 ---
 

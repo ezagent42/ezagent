@@ -31,7 +31,7 @@
 **Rev 3 变更（codex r2 verdict needs-attention → 已处理）:**
 - CRITICAL: rollback 现在堵上 `:on_terminate` 持久化漏洞 —— 在 `Kind.terminate/1` 之**前**先 dispatch `Sandbox.:destroy`（清 slice + plugin 端清理）+ 删 `KindSnapshot` 行 + 撤销已 grant 的 caps。每个 post-spawn 步骤都加 failure-injection 测试（§3.4.2 + §7）。
 - HIGH: `Behavior.Agent.data_owner(agent_uri)` 现在通过新 `Ezagent.AgentOwnership` registry（ETS，平行于 `AgentLineage`）解析到**所属 user URI**。源所有者通过标准 `Identity.grant_cap` 把 `:duplicate` cap 委托给目标 ws admin —— 双向 consent 现在结构上可能，不是 bootstrap-admin 限定（§3.8 + §4.2）。
-- HIGH: `Kind.Template` snapshot callback 仍 `@optional`，但 action body 调用核心适配器 `Ezagent.Kind.Template.snapshot_or_default/2`，检查 `function_exported?` 并对缺失 callback 归一化为 `{:ok, %{path: nil, manifest: %{}}}`。加无 callback 的 plugin 验收测试（§7 row 10 扩）。
+- HIGH: `Kind.Template` snapshot callback 仍 `@optional`，但 action body 调用核心适配器 `Ezagent.Kind.Template.snapshot_or_default/3`，检查 `function_exported?` 并对缺失 callback 归一化为 `{:ok, %{path: nil, manifest: %{}}}`。加无 callback 的 plugin 验收测试（§7 row 10 扩）。
 - MEDIUM: cc snapshot manifest 现在对每个文件 copy 前+后做 content-hash，任何 hash 差则失败。Snapshot 期间 `.credentials.json` 轮换会被检测（§3.6.1 重写）。§1 措辞软化：snapshot 一致性由 manifest 验证保证；snapshot 期间的 live writes 干净 ABORT。
 
 ---
@@ -57,7 +57,7 @@
 - 新 `Ezagent.Behavior.Agent`（apps/ezagent_domain_chat/lib/ezagent/behavior/agent.ex）
 - 新 action `:duplicate`，args `%{target_uri, target_owner_uri}`
 - 新 **`Ezagent.AgentOwnership`** ETS registry（agent_uri → owner_user_uri；§3.8）
-- 新 `Kind.Template` 可选 callback `snapshot_config_dir/2` + `restore_from_snapshot/3`，配核心适配器 `snapshot_or_default/2` + `restore_or_noop/3`
+- 新 `Kind.Template` 可选 callback `snapshot_config_dir/2` + `restore_from_snapshot/3`，配核心适配器 `snapshot_or_default/3` + `restore_or_noop/3`
 - Cap subject `{Behavior.Agent, :duplicate}` —— `data_owner/1` 通过 AgentOwnership 解析到 user URI
 - 专用 spawn 路径（**不**走 `Workspace.create_agent`），拒绝 adoption
 - Mix tasks: `mix ezagent.agent.duplicate` + `mix ezagent.agent.set_owner`（legacy 回填）
@@ -269,7 +269,7 @@ snapshot 源 → spawn target → restore → 任何 post-spawn 失败完全 rol
 @optional_callbacks snapshot_config_dir: 2, restore_from_snapshot: 3
 ```
 
-**核心适配器** `Ezagent.Kind.Template.snapshot_or_default/2` / `restore_or_noop/3`：检查 `function_exported?`，缺失 callback 返回 `{:ok, %{path: nil, manifest: %{}}}` / `:noop`。Action body 调适配器，不直接调 plugin。
+**核心适配器** `Ezagent.Kind.Template.snapshot_or_default/3` / `restore_or_noop/3`：检查 `function_exported?`，缺失 callback 返回 `{:ok, %{path: nil, manifest: %{}}}` / `:noop`。Action body 调适配器，不直接调 plugin。
 
 #### 3.6.1 cc V1 snapshot 实现 —— 内容 hash manifest（codex r2 MEDIUM-4 修复）
 
