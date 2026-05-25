@@ -59,6 +59,9 @@ defmodule Ezagent.Behavior.ChatTest do
       # `:owner_uri` defaults to `Map.get(args, :owner_uri)` = `nil`
       # for arg-less init (PR-OWN-2 introduced the field; the
       # original assertion in this test was stale and missed it).
+      # PR-N3 r4 (Allen 2026-05-25) — `:recent_messages` cursor-indexed
+      # ring added to support AdminLive's flash bridge under burst
+      # (codex r3 HIGH-1 race fix). Fresh slice starts with empty ring.
       assert Chat.init_slice(%{}) == %{
                members: %{},
                owner_uri: nil,
@@ -67,6 +70,7 @@ defmodule Ezagent.Behavior.ChatTest do
                last_message_id: nil,
                last_message: nil,
                send_cursor: 0,
+               recent_messages: [],
                template_working_copy: Chat.default_template_working_copy()
              }
     end
@@ -101,7 +105,9 @@ defmodule Ezagent.Behavior.ChatTest do
 
   describe "invoke(:send, ...) routing (Phase 3c-step 1)" do
     test "with no routing rules → falls through to in-session members fan-out" do
-      session_uri = URI.new!("session://default/default/chat-fallback-#{System.unique_integer([:positive])}")
+      session_uri =
+        URI.new!("session://default/default/chat-fallback-#{System.unique_integer([:positive])}")
+
       bind_to_default(session_uri)
       sender = URI.new!("entity://user/system/admin")
       other_member = URI.new!("entity://user/default/other-#{System.unique_integer([:positive])}")
@@ -137,7 +143,9 @@ defmodule Ezagent.Behavior.ChatTest do
         end
       end)
 
-      target_session = URI.new!("session://default/default/chat-routed-#{System.unique_integer([:positive])}")
+      target_session =
+        URI.new!("session://default/default/chat-routed-#{System.unique_integer([:positive])}")
+
       session_uri = URI.new!("session://default/default/current")
       bind_to_default(session_uri)
       bind_to_default(target_session)
@@ -167,7 +175,9 @@ defmodule Ezagent.Behavior.ChatTest do
 
   describe "invoke(:send, ...)" do
     test "writes to MessageStore + broadcasts on session events topic + returns {:ok, new_slice, %{stored: true}}" do
-      session_uri = URI.new!("session://default/default/chat-test-#{System.unique_integer([:positive])}")
+      session_uri =
+        URI.new!("session://default/default/chat-test-#{System.unique_integer([:positive])}")
+
       bind_to_default(session_uri)
       sender = URI.new!("entity://user/system/admin")
       msg = Message.new(sender, %{text: "hello world", attachments: []})
@@ -210,10 +220,15 @@ defmodule Ezagent.Behavior.ChatTest do
     end
 
     test "fan-out :receive on members when no mentions" do
-      session_uri = URI.new!("session://default/default/chat-fanout-#{System.unique_integer([:positive])}")
+      session_uri =
+        URI.new!("session://default/default/chat-fanout-#{System.unique_integer([:positive])}")
+
       bind_to_default(session_uri)
       sender = URI.new!("entity://user/system/admin")
-      member_2 = URI.new!("entity://agent/default/test_test-bot-#{System.unique_integer([:positive])}")
+
+      member_2 =
+        URI.new!("entity://agent/default/test_test-bot-#{System.unique_integer([:positive])}")
+
       msg = Message.new(sender, %{text: "everyone hi", attachments: []})
 
       # Two members in slice (no Process.monitor needed for this test —
@@ -543,31 +558,220 @@ defmodule Ezagent.Behavior.ChatTest do
       # does post-snapshot — and assert subscribers receive the event.
       :ok = Ezagent.SliceChange.emit(slice_change_event)
 
-      assert_receive {:slice_changed, ^slice_change_event}, 500
+      # PR-N3 r2 HIGH-1 (Allen 2026-05-25) — broadcast envelope is the
+      # security-minimal shape (uri / slice_key / cursor / event_at /
+      # result_summary). The fat producer event (with old_slice /
+      # new_slice / result / caller) is what Runtime hands to emit/1;
+      # what crosses PubSub is the filtered envelope. Subscribers that
+      # need slice content re-fetch via `Kind.get_slice/2`.
+      #
+      # PR-N3 r4 (Allen 2026-05-25) — Runtime now pre-allocates the
+      # cursor and threads it into both the producer event AND the
+      # broadcast envelope so the values match exactly (no second
+      # `Cursors.next/1` call in `SliceChange.emit`).
+      assert_receive {:slice_changed,
+                      %{
+                        uri: ^session_uri,
+                        slice_key: :chat,
+                        cursor: cursor,
+                        event_at: %DateTime{},
+                        result_summary: :ok
+                      } = received_envelope},
+                     500
+
+      assert is_integer(cursor) and cursor > 0
+      assert received_envelope.cursor == slice_change_event.cursor
     end
   end
 
   describe "invoke(:receive, ...) — User branch" do
-    test "broadcasts {:message_received, msg} on user events topic" do
-      user_uri = URI.new!("entity://user/default/admin-recv-#{System.unique_integer([:positive])}")
+    # PR-N3 (SPEC v2 notification-architecture-v2 §2.4 + §3 lines
+    # 204-211, Allen 2026-05-25) — producer-side migration. The
+    # legacy `{:message_received, msg}` raw broadcast and the
+    # `Notifications.notify/3` call site were deleted; the
+    # User-branch is now a pure slice mutation that the
+    # `Ezagent.SliceChange` auto-hook in
+    # `Kind.Server.commit_and_notify/3` picks up post-commit. This
+    # unit test asserts the mutation shape (the hook itself is
+    # tested integration-side via
+    # `chat_receive_user_slice_change_test.exs`).
+    test "appends :last_received to the slice (auto-hook fodder; no raw broadcast)" do
+      user_uri =
+        URI.new!("entity://user/default/admin-recv-#{System.unique_integer([:positive])}")
+
       sender = URI.new!("entity://agent/default/test_cc-builder")
       msg = Message.new(sender, %{text: "reply incoming", attachments: []})
 
-      topic = Chat.user_events_topic(user_uri)
-      :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, topic)
+      # Regression guard for the deleted legacy paths — the unit
+      # invoke MUST NOT broadcast on the legacy topic or push a
+      # `:notification` envelope. We subscribe to both legacy topics
+      # and refute receipt to lock the deletions in.
+      legacy_topic = Chat.user_events_topic(user_uri)
+      :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, legacy_topic)
+      :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, Ezagent.Notifications.topic(user_uri))
 
       slice = %{}
       ctx = %{self_uri: user_uri, kind_module: Ezagent.Entity.User, caller: sender}
 
-      assert {:ok, ^slice} = Chat.invoke(:receive, slice, %{message: msg}, ctx)
-      assert_receive {:message_received, %Message{id: rid}}, 500
-      assert rid == msg.id
+      assert {:ok, new_slice} = Chat.invoke(:receive, slice, %{message: msg}, ctx)
+      assert new_slice.last_received.message_id == msg.id
+      assert %DateTime{} = new_slice.last_received.at
+
+      refute_receive {:message_received, _}, 50
+      refute_receive {:notification, _, _}, 50
+    end
+  end
+
+  describe "invoke(:receive, ...) — :recent_messages cursor ring (PR-N3 r4)" do
+    # PR-N3 r4 (Allen 2026-05-25) — codex r3 HIGH-1 race fix. The
+    # User-branch `:receive` now pushes a `{cursor, msg_id}` tuple
+    # into a bounded cursor-indexed ring (`:recent_messages`) on the
+    # slice. The cursor comes from `ctx.slice_change_cursor`
+    # (pre-allocated by `Ezagent.Kind.Runtime` so it matches the
+    # `SliceChange` broadcast envelope cursor exactly), enabling
+    # AdminLive's flash bridge to resolve the correct msg_id under
+    # burst without racing the latest-pointer.
+    #
+    # The slice mutation contract is now: `:last_received` (latest
+    # pointer, retained for legacy fallback) + `:recent_messages`
+    # (cursor-indexed bounded ring, primary lookup).
+    test "single receive populates ring head with {cursor, msg_id}" do
+      user_uri =
+        URI.new!("entity://user/default/n3-ring-#{System.unique_integer([:positive])}")
+
+      sender = URI.new!("entity://user/system/admin")
+      msg = Message.new(sender, %{text: "ring entry", attachments: []})
+
+      slice = Chat.init_slice(%{})
+
+      ctx = %{
+        self_uri: user_uri,
+        kind_module: Ezagent.Entity.User,
+        caller: sender,
+        slice_change_cursor: 42
+      }
+
+      assert {:ok, new_slice} = Chat.invoke(:receive, slice, %{message: msg}, ctx)
+
+      # Ring populated with the {cursor, msg_id} tuple Runtime
+      # pre-allocated.
+      assert [{42, msg_id} | _] = new_slice.recent_messages
+      assert msg_id == msg.id
+
+      # `:last_received` legacy pointer still set (for the fallback
+      # path in `AdminLive.format_slice_change/1` when the cursor
+      # isn't in the ring).
+      assert new_slice.last_received.message_id == msg.id
+    end
+
+    test "ring trims at @recent_messages_ring_depth (20); oldest cursor dropped" do
+      # Send 25 messages; assert ring has exactly 20 entries
+      # (newest), oldest cursor dropped.
+      user_uri =
+        URI.new!("entity://user/default/n3-trim-#{System.unique_integer([:positive])}")
+
+      sender = URI.new!("entity://user/system/admin")
+
+      # Confirm the SPEC-pinned constant matches what we're testing
+      # against (decouples the test from the literal 20).
+      depth = Chat.recent_messages_ring_depth()
+      assert depth == 20
+
+      final_slice =
+        Enum.reduce(1..25, Chat.init_slice(%{}), fn n, acc_slice ->
+          msg = Message.new(sender, %{text: "msg #{n}", attachments: []})
+
+          ctx = %{
+            self_uri: user_uri,
+            kind_module: Ezagent.Entity.User,
+            caller: sender,
+            slice_change_cursor: n
+          }
+
+          {:ok, new_slice} = Chat.invoke(:receive, acc_slice, %{message: msg}, ctx)
+          new_slice
+        end)
+
+      # Exactly 20 entries, newest first.
+      assert length(final_slice.recent_messages) == depth
+
+      # Head is cursor 25 (most recent), tail is cursor 6 (25 - 20 + 1).
+      assert [{25, _} | _] = final_slice.recent_messages
+      {oldest_cursor, _} = List.last(final_slice.recent_messages)
+      assert oldest_cursor == 6
+
+      # Cursors 1..5 have been dropped.
+      for dropped_cursor <- 1..5 do
+        refute List.keyfind(final_slice.recent_messages, dropped_cursor, 0)
+      end
+    end
+
+    test "ring lookup by cursor returns the right msg_id (race-resolution path)" do
+      # The mechanic the AdminLive flash bridge relies on: receive
+      # envelope cursor C → `List.keyfind(ring, C, 0)` → returns the
+      # correct msg_id even if later events have committed.
+      user_uri =
+        URI.new!("entity://user/default/n3-lookup-#{System.unique_integer([:positive])}")
+
+      sender = URI.new!("entity://user/system/admin")
+
+      msgs =
+        for n <- 1..3 do
+          Message.new(sender, %{text: "msg #{n}", attachments: []})
+        end
+
+      final_slice =
+        msgs
+        |> Enum.with_index(100)
+        |> Enum.reduce(Chat.init_slice(%{}), fn {msg, cursor}, acc_slice ->
+          ctx = %{
+            self_uri: user_uri,
+            kind_module: Ezagent.Entity.User,
+            caller: sender,
+            slice_change_cursor: cursor
+          }
+
+          {:ok, new_slice} = Chat.invoke(:receive, acc_slice, %{message: msg}, ctx)
+          new_slice
+        end)
+
+      # Lookup each cursor independently — each must return its OWN
+      # msg_id, not the latest. This is the property that fixes the
+      # race in AdminLive.
+      [msg100, msg101, msg102] = msgs
+
+      assert {100, msg100.id} == List.keyfind(final_slice.recent_messages, 100, 0)
+      assert {101, msg101.id} == List.keyfind(final_slice.recent_messages, 101, 0)
+      assert {102, msg102.id} == List.keyfind(final_slice.recent_messages, 102, 0)
+    end
+
+    test "ring tolerates missing :slice_change_cursor in ctx (legacy direct invoke)" do
+      # A unit test or legacy caller that invokes the Behavior
+      # directly (bypassing Runtime) won't have `slice_change_cursor`
+      # in ctx. The ring entry's cursor key becomes nil; AdminLive's
+      # `List.keyfind/3` returns nil for any numeric cursor → graceful
+      # degrade to the generic flash. No crash here.
+      user_uri =
+        URI.new!("entity://user/default/n3-nocursor-#{System.unique_integer([:positive])}")
+
+      sender = URI.new!("entity://user/system/admin")
+      msg = Message.new(sender, %{text: "no cursor", attachments: []})
+
+      slice = Chat.init_slice(%{})
+      # NO :slice_change_cursor key
+      ctx = %{self_uri: user_uri, kind_module: Ezagent.Entity.User, caller: sender}
+
+      assert {:ok, new_slice} = Chat.invoke(:receive, slice, %{message: msg}, ctx)
+      assert [{nil, msg_id} | _] = new_slice.recent_messages
+      assert msg_id == msg.id
     end
   end
 
   describe "invoke(:receive, ...) — Agent branch" do
     test "returns {:ok, slice} unchanged (Agent has no chat slice state)" do
-      agent_uri = URI.new!("entity://agent/default/test_cc-builder-#{System.unique_integer([:positive])}")
+      agent_uri =
+        URI.new!("entity://agent/default/test_cc-builder-#{System.unique_integer([:positive])}")
+
       sender = URI.new!("entity://user/system/admin")
       msg = Message.new(sender, %{text: "hi agent", attachments: []})
 
@@ -584,9 +788,15 @@ defmodule Ezagent.Behavior.ChatTest do
     # which broke the inbound path for ~3 weeks before discovery.
 
     test "to_claude payload meta values are all strings (no list/map smuggling)" do
-      agent_uri = URI.new!("entity://agent/default/test_cc-meta-string-#{System.unique_integer([:positive])}")
+      agent_uri =
+        URI.new!(
+          "entity://agent/default/test_cc-meta-string-#{System.unique_integer([:positive])}"
+        )
+
       sender = URI.new!("entity://user/system/admin")
-      session_uri = URI.new!("session://default/default/meta-#{System.unique_integer([:positive])}")
+
+      session_uri =
+        URI.new!("session://default/default/meta-#{System.unique_integer([:positive])}")
 
       msg = Message.new(sender, %{text: "plain text", attachments: []})
 
@@ -604,6 +814,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       for {k, v} <- meta do
         assert is_binary(k), "meta key not string: #{inspect(k)}"
+
         assert is_binary(v),
                "meta value for key #{inspect(k)} is not string: #{inspect(v)}"
       end
@@ -615,9 +826,13 @@ defmodule Ezagent.Behavior.ChatTest do
     end
 
     test "attachment → meta.file_path is the first attachment's local_path string" do
-      agent_uri = URI.new!("entity://agent/default/test_cc-meta-att-#{System.unique_integer([:positive])}")
+      agent_uri =
+        URI.new!("entity://agent/default/test_cc-meta-att-#{System.unique_integer([:positive])}")
+
       sender = URI.new!("entity://user/system/admin")
-      session_uri = URI.new!("session://default/default/meta-att-#{System.unique_integer([:positive])}")
+
+      session_uri =
+        URI.new!("session://default/default/meta-att-#{System.unique_integer([:positive])}")
 
       msg =
         Message.new(sender, %{
@@ -651,9 +866,15 @@ defmodule Ezagent.Behavior.ChatTest do
     test "attachment with string-keyed body (post-DB roundtrip) still produces file_path" do
       # MessageStore stores body as JSON → Ecto load returns string keys.
       # body_attachments + first_attachment_path must tolerate either shape.
-      agent_uri = URI.new!("entity://agent/default/test_cc-meta-stringkey-#{System.unique_integer([:positive])}")
+      agent_uri =
+        URI.new!(
+          "entity://agent/default/test_cc-meta-stringkey-#{System.unique_integer([:positive])}"
+        )
+
       sender = URI.new!("entity://user/system/admin")
-      session_uri = URI.new!("session://default/default/meta-stringkey-#{System.unique_integer([:positive])}")
+
+      session_uri =
+        URI.new!("session://default/default/meta-stringkey-#{System.unique_integer([:positive])}")
 
       string_keyed_body = %{
         "text" => "from db",
@@ -682,8 +903,11 @@ defmodule Ezagent.Behavior.ChatTest do
 
   describe "invoke(:join, ...)" do
     test "Process.monitor target Kind + add to members + returns members list" do
-      session_uri = URI.new!("session://default/default/join-#{System.unique_integer([:positive])}")
-      member_uri = URI.new!("entity://user/default/transient-#{System.unique_integer([:positive])}")
+      session_uri =
+        URI.new!("session://default/default/join-#{System.unique_integer([:positive])}")
+
+      member_uri =
+        URI.new!("entity://user/default/transient-#{System.unique_integer([:positive])}")
 
       # Spawn a minimal GenServer to play the member role; it self-registers
       # so KindRegistry.lookup returns ITS pid (the Registry's owner-pid).
@@ -705,8 +929,11 @@ defmodule Ezagent.Behavior.ChatTest do
     end
 
     test "returns error when member URI not in KindRegistry" do
-      session_uri = URI.new!("session://default/default/join-missing-#{System.unique_integer([:positive])}")
-      missing_uri = URI.new!("entity://user/default/does-not-exist-#{System.unique_integer([:positive])}")
+      session_uri =
+        URI.new!("session://default/default/join-missing-#{System.unique_integer([:positive])}")
+
+      missing_uri =
+        URI.new!("entity://user/default/does-not-exist-#{System.unique_integer([:positive])}")
 
       slice = Chat.init_slice(%{})
       ctx = %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: missing_uri}
@@ -716,7 +943,9 @@ defmodule Ezagent.Behavior.ChatTest do
     end
 
     test "replays missed messages on rejoin (last_seen populated)" do
-      session_uri = URI.new!("session://default/default/replay-#{System.unique_integer([:positive])}")
+      session_uri =
+        URI.new!("session://default/default/replay-#{System.unique_integer([:positive])}")
+
       bind_to_default(session_uri)
       member_uri = URI.new!("entity://user/default/rejoin-#{System.unique_integer([:positive])}")
       sender = URI.new!("entity://user/default/other")
@@ -753,7 +982,9 @@ defmodule Ezagent.Behavior.ChatTest do
 
   describe "invoke(:leave, ...)" do
     test "drops member + demonitors + clears last_seen" do
-      session_uri = URI.new!("session://default/default/leave-#{System.unique_integer([:positive])}")
+      session_uri =
+        URI.new!("session://default/default/leave-#{System.unique_integer([:positive])}")
+
       member_uri = URI.new!("entity://user/default/leaver-#{System.unique_integer([:positive])}")
       ref = make_ref()
 
@@ -784,7 +1015,10 @@ defmodule Ezagent.Behavior.ChatTest do
         last_seen: %{}
       }
 
-      ctx = %{self_uri: URI.new!("session://default/default/x"), kind_module: Ezagent.Entity.Session}
+      ctx = %{
+        self_uri: URI.new!("session://default/default/x"),
+        kind_module: Ezagent.Entity.Session
+      }
 
       down_msg = {:DOWN, ref, :process, self(), :normal}
 
@@ -796,7 +1030,11 @@ defmodule Ezagent.Behavior.ChatTest do
 
     test "ignores unknown refs" do
       slice = %{members: %{}, monitors: %{}, last_seen: %{}}
-      ctx = %{self_uri: URI.new!("session://default/default/y"), kind_module: Ezagent.Entity.Session}
+
+      ctx = %{
+        self_uri: URI.new!("session://default/default/y"),
+        kind_module: Ezagent.Entity.Session
+      }
 
       assert :ignore =
                Chat.handle_kind_message(
@@ -808,7 +1046,11 @@ defmodule Ezagent.Behavior.ChatTest do
 
     test "ignores non-:DOWN messages" do
       slice = Chat.init_slice(%{})
-      ctx = %{self_uri: URI.new!("session://default/default/z"), kind_module: Ezagent.Entity.Session}
+
+      ctx = %{
+        self_uri: URI.new!("session://default/default/z"),
+        kind_module: Ezagent.Entity.Session
+      }
 
       assert :ignore = Chat.handle_kind_message(:tick, slice, ctx)
       assert :ignore = Chat.handle_kind_message({:any, "thing"}, slice, ctx)
@@ -830,7 +1072,12 @@ defmodule Ezagent.Behavior.ChatTest do
 
     test ":join args schema accepts URI member, rejects string" do
       schema = Chat.interface()[:join].args
-      assert :ok = InterfaceValidator.validate(%{member: URI.new!("entity://user/system/admin")}, schema)
+
+      assert :ok =
+               InterfaceValidator.validate(
+                 %{member: URI.new!("entity://user/system/admin")},
+                 schema
+               )
 
       assert {:error, {:invalid_args, _}} =
                InterfaceValidator.validate(%{member: "entity://user/system/admin"}, schema)

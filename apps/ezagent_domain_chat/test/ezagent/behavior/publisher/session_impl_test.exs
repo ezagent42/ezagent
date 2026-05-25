@@ -24,17 +24,21 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
     SessionImpl.init_slice(%{publisher_retention: Keyword.get(opts, :retention, 100)})
   end
 
-  defp slice_change(self_uri, new_slice_map, opts \\ []) do
+  # PR-N3 codex r2 HIGH-1 (Allen 2026-05-25) — the SliceChange
+  # broadcast envelope is security-minimal: `uri / slice_key /
+  # cursor / event_at / result_summary`. The `:self_uri` field was
+  # renamed `:uri`; slice content (`new_slice`/`old_slice`/`result`)
+  # is stripped. SessionImpl re-fetches via `Kind.get_slice/2`;
+  # unit tests pass a `nil` payload because no live Kind exists.
+  # `new_slice_map` is kept as a positional arg for test legibility
+  # (the test wants to assert on cursor / count, not payload).
+  defp slice_change(self_uri, _new_slice_map, opts \\ []) do
     %{
-      self_uri: self_uri,
-      kind_module: Ezagent.Entity.Session,
-      action: Keyword.get(opts, :action, :send),
+      uri: self_uri,
       slice_key: Keyword.get(opts, :slice_key, :chat),
-      old_slice: Keyword.get(opts, :old_slice, %{}),
-      new_slice: new_slice_map,
-      result: nil,
-      caller: nil,
-      at: DateTime.utc_now()
+      cursor: Keyword.get(opts, :cursor, 1),
+      event_at: DateTime.utc_now(),
+      result_summary: :ok
     }
   end
 
@@ -371,7 +375,15 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
       assert {:ok, ^slice, %{cursor: 1, state: state}} =
                SessionImpl.invoke(:snapshot, slice, %{}, ctx(self_uri))
 
-      assert state.new_slice == %{x: 1}
+      # PR-N3 codex r2 HIGH-1 (Allen 2026-05-25) — `build_payload/2`
+      # re-fetches the slice via `Kind.get_slice/2`. In this unit
+      # test no live Kind exists for `self_uri`, so the re-fetch
+      # returns `:not_found` and `:new_slice` resolves to `nil`. The
+      # integration test
+      # `EzagentDomainChat.Integration.PublisherSessionTest` covers
+      # the live-Kind path and asserts on actual slice content.
+      assert Map.has_key?(state, :new_slice)
+      assert state.new_slice == nil
     end
 
     test "returns cursor=0 + state=nil when the ring is empty" do

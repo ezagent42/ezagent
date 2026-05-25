@@ -88,9 +88,7 @@ defmodule EzagentDomainChat.Integration.MentionGatedRoutingTest do
 
   defp dispatch_send(session, sender, text, mentions \\ []) do
     msg =
-      Message.new(sender, %{text: text, attachments: []},
-        mentions: mentions
-      )
+      Message.new(sender, %{text: text, attachments: []}, mentions: mentions)
 
     :ok =
       Invocation.dispatch(%Invocation{
@@ -146,7 +144,15 @@ defmodule EzagentDomainChat.Integration.MentionGatedRoutingTest do
            "an un-mentioned Agent member must get NO chat.receive (mention-gated)"
   end
 
-  test "§6.2 — no mention: the User member's esr:user: notification still fires" do
+  test "§6.2 — no mention: the User member's slice-change notification still fires" do
+    # PR-N3 (SPEC v2 notification-architecture-v2, Allen 2026-05-25) —
+    # the legacy `esr:user:<uri>:events` topic + `{:message_received, _}`
+    # envelope were replaced by the slice-change auto-hook
+    # (`esr:entity:<uri>:slice_changed` + `{:slice_changed, event_map}`).
+    # The §6.2 invariant ("un-mentioned User still gets a per-user
+    # notification") is preserved structurally: the Chat User-branch
+    # now mutates the User's `:chat` slice on every receive, and the
+    # hook emits the slice-change event to the user's stream.
     install_default_rule_table()
     session = spawn_session()
 
@@ -159,12 +165,18 @@ defmodule EzagentDomainChat.Integration.MentionGatedRoutingTest do
     join(session, sender)
     join(session, user_member)
 
-    :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, Chat.user_events_topic(user_member))
+    :ok = Ezagent.Notifications.subscribe_slice_change(user_member)
 
     msg = dispatch_send(session, sender, "ping, no mention")
 
-    assert_receive {:message_received, %Message{id: rid}}, 1_000
-    assert rid == msg.id
+    # PR-N3 codex r2 HIGH-1 (Allen 2026-05-25): the slice-change
+    # broadcast envelope is security-minimal — `uri / slice_key /
+    # cursor / event_at / result_summary`. Slice content is fetched
+    # via `Kind.get_slice/2` per the new contract; see
+    # `apps/ezagent_core/test/invariants/slice_change_event_carries_no_slice_content_test.exs`.
+    assert_receive {:slice_changed, %{uri: ^user_member, slice_key: :chat}}, 1_000
+    {:ok, slice} = Ezagent.Kind.get_slice(user_member, :chat)
+    assert slice.last_received.message_id == msg.id
   end
 
   test "§6.8 — the session stream broadcast is unconditional (no mention)" do

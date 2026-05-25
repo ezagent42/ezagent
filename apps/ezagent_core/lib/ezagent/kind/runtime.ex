@@ -58,7 +58,12 @@ defmodule Ezagent.Kind.Runtime do
           required(:new_slice) => map(),
           required(:result) => term() | nil,
           required(:caller) => URI.t() | nil,
-          required(:at) => DateTime.t()
+          required(:at) => DateTime.t(),
+          # PR-N3 r4 — pre-allocated SliceChange broadcast cursor;
+          # `SliceChange.emit/1` uses this instead of allocating a
+          # fresh one so the envelope cursor matches the value the
+          # Behavior used as the `:recent_messages` ring key.
+          required(:cursor) => pos_integer()
         }
 
   @spec handle_dispatch(Ezagent.Invocation.t(), slice_state(), module(), URI.t()) :: result()
@@ -83,11 +88,33 @@ defmodule Ezagent.Kind.Runtime do
     # no way to know which session a dispatch is happening in, so
     # scope-bounded delegation can't be enforced. Derivation is pure
     # URI parsing — no dispatch, no registry lookup, O(1).
+    # PR-N3 r4 (Allen 2026-05-25) — pre-allocate the `SliceChange`
+    # broadcast cursor BEFORE invoke so the Behavior can write
+    # cursor-keyed entries into its slice that match what subscribers
+    # will receive in the envelope. Allocation here means every
+    # dispatch (even read-only Behaviors that don't mutate the slice)
+    # burns a cursor number; the moduledoc on
+    # `Ezagent.SliceChange.Cursors` documents skipping is acceptable
+    # (cursors are a "low-cost ordering hint", not a tight log
+    # primary key). The alternative — allocating AFTER invoke — would
+    # force the Behavior to write cursor-less ring entries and then
+    # have Runtime back-patch them, which violates the "Behavior owns
+    # invoke contract" boundary and is more code for the same
+    # outcome. Pre-allocation keeps the Behavior the SoT for its own
+    # slice.
+    #
+    # `SliceChange.emit/1` reads the pre-allocated cursor from the
+    # producer event (instead of calling `Cursors.next/1` itself —
+    # see `Ezagent.SliceChange.build_broadcast_event/2`) so the
+    # envelope's `:cursor` matches the slice's ring entry exactly.
+    slice_change_cursor = Ezagent.SliceChange.Cursors.next(self_uri)
+
     enriched_ctx =
       ctx
       |> Map.put(:kind_module, kind_module)
       |> Map.put(:self_uri, self_uri)
       |> Map.put(:session_uri, derive_session_uri(target))
+      |> Map.put(:slice_change_cursor, slice_change_cursor)
 
     with {:ok, {behavior_name_atom, action}} <- Ezagent.URI.behavior_action(target),
          {:ok, behavior_module} <- lookup_behavior(kind_module, action),
@@ -126,7 +153,13 @@ defmodule Ezagent.Kind.Runtime do
             new_slice: new_slice,
             result: result_or_nil,
             caller: Map.get(enriched_ctx, :caller),
-            at: DateTime.utc_now()
+            at: DateTime.utc_now(),
+            # PR-N3 r4 (Allen 2026-05-25) — pass the pre-allocated
+            # cursor through to `SliceChange.emit/1` so the broadcast
+            # envelope's `:cursor` field matches the value the
+            # Behavior used as the slice ring key. See the cursor
+            # allocation comment at the top of this function.
+            cursor: slice_change_cursor
           }
         else
           nil

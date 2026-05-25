@@ -53,6 +53,37 @@ defmodule Ezagent.Behavior.Chat do
 
   alias Ezagent.{Invocation, KindRegistry, Message, MessageStore}
 
+  # PR-N3 r4 (Allen 2026-05-25) — bounded cursor-indexed ring depth for
+  # the User-branch `:receive` `:recent_messages` ring. SPEC-pinned (NOT
+  # a runtime config knob — per `feedback_let_it_crash_no_workarounds`
+  # config knobs are anti-patterns; structural constants belong here).
+  #
+  # Why 20: AdminLive's flash bridge re-fetches the slice on each
+  # `:slice_changed` event. Between "envelope cursor C broadcast" and
+  # "LV process pulls slice", N more :receive events may have committed
+  # (LV mailbox under burst). Ring depth caps the worst-case
+  # backlog the bridge can resolve — 20 is ~10x typical bursts (single
+  # AdminLive instance processing ~2-3 events/sec under load) and well
+  # below the cost-of-carry threshold (each entry is `{int, binary}` =
+  # ~40 bytes; 20 entries = ~800 bytes added to every persisted
+  # Session/User snapshot). Older events fall off the tail; the bridge
+  # falls back to the "New chat update on <uri>" generic line for any
+  # envelope cursor that's no longer in the ring (graceful skip —
+  # observability degradation, not correctness loss).
+  @recent_messages_ring_depth 20
+
+  @doc """
+  Ring depth for the `:recent_messages` cursor-indexed ring on the
+  `:chat` slice (PR-N3 r4 cursor-race fix).
+
+  Exposed as a function (rather than module attr access from outside)
+  so tests can assert against the SPEC-pinned constant without coupling
+  to compile-time internals. SPEC §2.1.3 documents the rationale; this
+  is the canonical reader for the bound.
+  """
+  @spec recent_messages_ring_depth() :: pos_integer()
+  def recent_messages_ring_depth, do: @recent_messages_ring_depth
+
   @impl Ezagent.Behavior
   def actions, do: [:send, :receive, :join, :leave, :set_working_copy]
 
@@ -141,6 +172,40 @@ defmodule Ezagent.Behavior.Chat do
       last_message_id: nil,
       last_message: nil,
       send_cursor: 0,
+      # PR-N3 r4 (Allen 2026-05-25) — cursor-indexed bounded ring of
+      # recent message ids for the User-branch `:receive` action. Each
+      # entry is `{slice_change_cursor :: pos_integer(), msg_id ::
+      # String.t()}`; the cursor matches the `SliceChange` broadcast
+      # envelope cursor (pre-allocated by `Ezagent.Kind.Runtime` and
+      # passed via `ctx.slice_change_cursor`), so a flash subscriber
+      # that receives envelope cursor C can re-fetch the slice and
+      # look up the correct `msg_id` via `List.keyfind(ring, C, 0)`
+      # WITHOUT racing the latest pointer.
+      #
+      # Pre-fix (r3): User-branch :receive wrote a single
+      # `:last_received` pointer. Under burst (N events arriving faster
+      # than AdminLive's LV process drained its mailbox), every flash
+      # re-fetch read the LATEST pointer — so all N flashes rendered
+      # the same (most-recent) message, losing N-1 distinct
+      # notifications. Codex r3 PR-N3 flagged this as HIGH-1.
+      #
+      # Ring depth is SPEC-pinned via
+      # `recent_messages_ring_depth/0` (NOT a runtime config knob —
+      # per `feedback_let_it_crash_no_workarounds`). Entries past the
+      # bound fall off the tail; the bridge gracefully degrades to the
+      # "New chat update on <uri>" line for any envelope cursor that's
+      # no longer in the ring (no crash, no silent wrong-render — the
+      # flash still fires, just generic).
+      #
+      # Newest-first ordering; HEAD is the most recently received
+      # message. `List.keyfind/3` is O(N) on N=20 = fine.
+      #
+      # Legacy slice shape (pre-PR-N3-r4): missing key.
+      # `Kind.Snapshot.load_or_init/3` merges loaded INTO fresh, so
+      # pre-PR snapshots keep their `:chat` slice without this key
+      # until the next `:receive` populates it. Readers MUST default
+      # via `Map.get(slice, :recent_messages, [])`.
+      recent_messages: [],
       # Phase 7 completion PR-2 (SPEC §1.3 / §1.6) — the durable
       # source-template record for the orchestrator's working copy.
       # `template_working_copy` is template-SHAPED, not live-runtime
@@ -327,41 +392,64 @@ defmodule Ezagent.Behavior.Chat do
   def invoke(:receive, slice, %{message: %Message{} = msg}, ctx) do
     case ctx.kind_module do
       Ezagent.Entity.User ->
-        # PR migration (Allen 2026-05-23): the raw
-        # `Phoenix.PubSub.broadcast` to `esr:user:<uri>:events` is now
-        # the legacy path; new code routes through
-        # `Ezagent.Notifications.notify/3` (cap-gated unified entry,
-        # SPEC `apps/ezagent_core/lib/ezagent/notifications.ex`).
-        # System bypass via `ctx.caps == :system` — Chat is acting on
-        # behalf of the routed message.
+        # PR-N3 (SPEC v2 notification-architecture-v2 §2.4 + §3 lines
+        # 204-211, Allen 2026-05-25) — producer-pattern proof.
         #
-        # During transition, BOTH shapes coexist on the topic:
-        # - new: `{:notification, user_uri, %{type: :message_received,
-        #         body: %{msg: msg}, source: Ezagent.Behavior.Chat}}`
-        # - legacy: `{:message_received, msg}` — kept for any existing
-        #         LV consumer that hasn't migrated yet.
-        # After V1 deprecation period, drop the legacy broadcast.
+        # Both the legacy raw `Phoenix.PubSub.broadcast` to
+        # `esr:user:<uri>:events` and the new `Ezagent.Notifications.notify/3`
+        # call were DELETED here. SPEC §2.4 / §3 PR-N3: the User-branch
+        # is just "append `msg` to the receive slice; return `{:ok,
+        # new_slice}`." `Ezagent.Kind.Runtime.handle_dispatch/4` detects
+        # `new_slice != old_slice` and `Kind.Server.commit_and_notify/3`
+        # routes the slice-change event through `Ezagent.SliceChange.emit/1`
+        # post-commit (PR-N1 wiring + PR-N3 hard-switch flip).
+        # AdminLive's PR-N2 subscription on
+        # `Ezagent.Notifications.subscribe_slice_change/1` picks it up.
+        #
+        # The slice mutation we make is the structural notification:
+        # `:last_received` records the message id + arrival timestamp.
+        # Always-mutating (DateTime.utc_now/0 differs across calls), so
+        # the auto-hook fires on every legitimate receive. The User's
+        # `:chat` slice is initialized to `%{}` (User Kind does NOT list
+        # Chat in `behaviors/0` — SPEC v2 §5.14 + chat.ex `init_slice/1`
+        # moduledoc), so `Map.put/3` is safe on a default-empty map.
+        #
+        # PR-N3 r4 (Allen 2026-05-25) — ALSO push the {cursor, msg_id}
+        # tuple into the cursor-indexed `:recent_messages` ring so
+        # AdminLive's flash bridge can resolve the correct message even
+        # under burst (codex r3 HIGH-1 race fix). Cursor comes from
+        # `ctx.slice_change_cursor` — pre-allocated by
+        # `Ezagent.Kind.Runtime.handle_dispatch/4` step 9.5 and
+        # threaded into ctx so the slice's ring key matches the
+        # `SliceChange` broadcast envelope's `:cursor` field exactly.
+        #
+        # Defaults:
+        # - `ctx.slice_change_cursor` may be absent on legacy code
+        #   paths that bypass Runtime (e.g. a unit test calling
+        #   `invoke/4` directly). In that case `nil` is the cursor
+        #   key, the ring still records the entry, and AdminLive's
+        #   `List.keyfind/3` returns nil for a numeric cursor — which
+        #   degrades to the "New chat update on <uri>" generic
+        #   fallback (no crash, no wrong render).
+        # - `:recent_messages` may be absent on a pre-PR-N3-r4 slice
+        #   snapshot; `Map.get/3` defaults to `[]`.
+        cursor = Map.get(ctx, :slice_change_cursor)
+        prior_ring = Map.get(slice, :recent_messages, [])
+        new_entry = {cursor, msg.id}
 
-        # Legacy broadcast (kept for transition window)
-        Phoenix.PubSub.broadcast(
-          EzagentCore.PubSub,
-          user_events_topic(ctx.self_uri),
-          {:message_received, msg}
-        )
+        trimmed_ring =
+          [new_entry | prior_ring]
+          |> Enum.take(@recent_messages_ring_depth)
 
-        # New unified path
-        :ok =
-          Ezagent.Notifications.notify(
-            ctx.self_uri,
-            %{
-              type: :message_received,
-              body: %{msg: msg},
-              source: __MODULE__
-            },
-            %{caps: :system}
-          )
+        new_slice =
+          slice
+          |> Map.put(:last_received, %{
+            message_id: msg.id,
+            at: DateTime.utc_now()
+          })
+          |> Map.put(:recent_messages, trimmed_ring)
 
-        {:ok, slice}
+        {:ok, new_slice}
 
       Ezagent.Entity.Agent ->
         # Phase 7 PR 32c: v1 prototype deleted; v2 CC channel

@@ -101,7 +101,20 @@ defmodule EzagentCore.EtsOwner do
     # (atom). Grill-5 one-to-one reverse lookup; populated alongside
     # AdapterRegistry at plugin boot. Used by Worker `:publish`
     # dispatch (PR-EM-2) to reach the Binding's `publish/2` callback.
-    {:literal, :ezagent_external_mirror_binding_registry, :set}
+    {:literal, :ezagent_external_mirror_binding_registry, :set},
+    # Notification SPEC v2 PR-N3 codex r2 HIGH-1 fix (Allen 2026-05-25):
+    # `:ezagent_slice_change_cursors` — keyed by URI string → integer.
+    # Per-URI monotonic cursor for `Ezagent.SliceChange.emit/1`'s
+    # broadcast envelope. Owned here (rather than lazy-init in
+    # SliceChange) so we get the same crash-recovery + boot-order
+    # discipline as every other reliability primitive table.
+    #
+    # Cursor reset on owner restart is acceptable: the broadcast
+    # envelope is transport-level, not a persisted log — subscribers
+    # that need durable ordering use `Ezagent.MessageStore` /
+    # `Ezagent.Kind.Snapshot`. The cursor is a "you missed N events
+    # since you last saw cursor X" hint, not a primary key.
+    {Ezagent.SliceChange.Cursors, :set}
     # Notification SPEC v2 PR-N1 (Allen 2026-05-24):
     # `:ezagent_notification_subscriptions` is INTENTIONALLY NOT
     # owned here. Codex PR-N1 round-2 HIGH-1: this is a

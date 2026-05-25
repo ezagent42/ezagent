@@ -334,10 +334,12 @@ defmodule Ezagent.NotificationSubscriptionsTest do
 
       # And the caller process is PubSub-subscribed — fire an emit
       # and the test process should receive it.
-      Application.put_env(:ezagent_core, :slice_change_hook, true)
-
+      # PR-N3 codex r2 HIGH-1 (Allen 2026-05-25) — emit/1 broadcasts
+      # the security-minimal envelope (5 fields only); assertion shape
+      # matches the new contract. The fat producer event still goes
+      # IN to emit/1; the broadcast envelope is the filtered subset.
       try do
-        event = %{
+        producer_event = %{
           self_uri: stream,
           kind_module: SomeKind,
           action: :test,
@@ -349,11 +351,12 @@ defmodule Ezagent.NotificationSubscriptionsTest do
           at: DateTime.utc_now()
         }
 
-        Ezagent.SliceChange.emit(event)
+        Ezagent.SliceChange.emit(producer_event)
 
-        assert_receive {:slice_changed, ^event}, 200
+        assert_receive {:slice_changed, broadcast_event}, 200
+        assert broadcast_event.uri == stream
+        assert broadcast_event.slice_key == :sk
       after
-        Application.delete_env(:ezagent_core, :slice_change_hook)
         Ezagent.SliceChange.unsubscribe_unverified(stream)
       end
     end
@@ -541,8 +544,6 @@ defmodule Ezagent.NotificationSubscriptionsTest do
           caps: MapSet.new([notifications_admin_cap()])
         })
 
-      Application.put_env(:ezagent_core, :slice_change_hook, true)
-
       try do
         assert {:error, :unauthorized} =
                  Subs.unsubscribe(owner, stream, %{
@@ -556,7 +557,9 @@ defmodule Ezagent.NotificationSubscriptionsTest do
         # Test process (= the owner subscriber) STILL receives
         # broadcasts — the stranger's call did NOT leak a
         # PubSub.unsubscribe.
-        event = %{
+        # PR-N3 codex r2 HIGH-1: emit/1 broadcasts security-minimal
+        # envelope; assert on filtered shape.
+        producer_event = %{
           self_uri: stream,
           kind_module: SomeKind,
           action: :test,
@@ -568,10 +571,11 @@ defmodule Ezagent.NotificationSubscriptionsTest do
           at: DateTime.utc_now()
         }
 
-        Ezagent.SliceChange.emit(event)
-        assert_receive {:slice_changed, ^event}, 200
+        Ezagent.SliceChange.emit(producer_event)
+        assert_receive {:slice_changed, broadcast_event}, 200
+        assert broadcast_event.uri == stream
+        assert broadcast_event.slice_key == :sk
       after
-        Application.delete_env(:ezagent_core, :slice_change_hook)
 
         :ok =
           Subs.unsubscribe(owner, stream, %{

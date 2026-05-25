@@ -293,44 +293,116 @@ defmodule EzagentPluginLiveview.AdminLive do
     {:noreply, put_flash(socket, :info, format_notification(payload))}
   end
 
-  # PR-N2 (SPEC v2 notification architecture, Allen 2026-05-24,
-  # §3 lines 200-202) — new `:slice_changed` envelope coming off
-  # `Ezagent.SliceChange.topic/1`. Subscribed in `mount/3`
-  # alongside the legacy `Notifications.topic/1`. Today the auto-
-  # hook is DISABLED (`SliceChange.enabled?/0` defaults false) so
-  # in production this clause is unreachable; in tests that drive
-  # `SliceChange.emit/1` directly it fires and no-ops cleanly.
-  # Keeping the handler present means PR-N3 can flip the flag
-  # without crashing AdminLive on FunctionClauseError.
+  # PR-N3 (SPEC v2 notification architecture, Allen 2026-05-25) —
+  # the `:slice_changed` envelope is now produced by the Chat User-
+  # branch (chat.ex `:receive` User clause + PR-N1's auto-hook
+  # post-commit in `Kind.Server.commit_and_notify/3`). PR-N2 shipped
+  # this clause as a logging no-op (deferred-by-design — no producers
+  # existed yet); PR-N3 wires the flash bridge so users actually SEE
+  # the notification — codex r1 HIGH-1 (correctly) flagged the no-op
+  # as a user-visible regression if shipped without this hookup.
   #
-  # ## Why no flash bridge yet — deliberate SPEC scoping
+  # ## Envelope shape (PR-N3 codex r2 HIGH-1, Allen 2026-05-25)
   #
-  # SPEC §3 PR-N2 lines 200-202 (verbatim): "`handle_info({:slice_changed,
-  # ...}, socket)` clause added alongside the existing
-  # `{:notification, ...}` clause. For PR-N2: just log/no-op the
-  # event content. The flash bridge + UI render comes in PR-N3
-  # when producers flip."
+  # The broadcast envelope is security-minimal: `uri / slice_key /
+  # cursor / event_at / result_summary` only. Slice content
+  # (`new_slice` / `old_slice` / `result`) is NOT in the envelope —
+  # pre-fix it leaked plaintext slice fields (e.g.
+  # `Ezagent.Behavior.ApiKeys.put_api_key`'s plaintext key) to any
+  # same-VM subscriber of the public-derivable topic. Codex r2 (PR
+  # #328) flagged this; the invariant test
+  # `slice_change_event_carries_no_slice_content_test.exs` locks
+  # the new shape in.
   #
-  # Rationale: in PR-N2 there are ZERO producers on the new
-  # topic. A flash bridge here would never fire in production —
-  # only in test fixtures. Worse, locking in a flash mapping
-  # before the first real producer ships (PR-N3 migrates Chat's
-  # `:receive` User-branch) risks a mapping that doesn't fit the
-  # real event shape and gets rewritten in PR-N3 anyway.
+  # ## Routing
   #
-  # PR-N3 adds the flash bridge atomically with the producer
-  # flip, so subscribers and producers ship in the same PR and
-  # the first real event hits a working bridge. Codex r1 HIGH-1
-  # flagged this no-op as a regression risk; the SPEC scoping
-  # makes the deferral explicit and PR-N3 closes the gap.
+  # To synthesize the chat flash, `format_slice_change/1` re-fetches
+  # the affected entity's slice via `Ezagent.Kind.get_slice/2`. This
+  # runs in the LV process (the admin's session); the LV mount only
+  # subscribes the caller to its OWN `caller_uri` topic, so the
+  # re-fetch is on the caller's own slice. Future per-session
+  # subscriptions (PR-N3/N4 with NotificationSubscriptions) get the
+  # same default-secure shape — the event doesn't leak, the re-fetch
+  # is the subscriber's own cap concern.
   def handle_info({:slice_changed, %{} = event}, socket) do
-    Logger.debug(fn ->
-      "AdminLive: received :slice_changed for " <>
-        "#{inspect(Map.get(event, :self_uri))} action=#{inspect(Map.get(event, :action))}" <>
-        " (PR-N2 no-op; PR-N3 wires the flash bridge)"
-    end)
+    # PR-N3 r4 codex r4 MEDIUM (Allen 2026-05-25) — verify the
+    # event's `:uri` matches a URI this LV legitimately subscribes
+    # to before doing any slice re-fetch. The LV subscribes the
+    # caller's own topic ONLY (`mount/3` line ~124); a wrong-topic
+    # broadcast or buggy producer that sent a foreign URI on this
+    # topic would otherwise cause us to read the OTHER entity's
+    # chat slice and render its preview. Default-deny: anything
+    # not on the allowlist degrades to a no-op (telemetry only).
+    if event_uri_authorized?(event, socket) do
+      # PR-N3 r4 codex r4 HIGH-1 (Allen 2026-05-25) — bounded-
+      # blocking format. `format_slice_change/1`'s chat branch
+      # calls `Kind.get_slice/2` (a synchronous `GenServer.call`
+      # with default 5s timeout) followed by a `MessageStore`
+      # lookup. Under burst (busy Kind, wedged Repo) this would
+      # block the LV mailbox for up to 5s × N events, stalling
+      # renders/clicks/uploads. The fix: cap the resolution time
+      # at 250ms via `Task.async` + `Task.yield`. If resolution
+      # doesn't return in time, shut the task down and degrade
+      # to the generic flash — the flash ALWAYS fires; what
+      # degrades under load is the preview fidelity, never the
+      # responsiveness.
+      flash = format_slice_change_bounded(event, 250)
+      {:noreply, put_flash(socket, :info, flash)}
+    else
+      :telemetry.execute(
+        [:ezagent, :liveview, :slice_changed, :uri_rejected],
+        %{count: 1},
+        %{event_uri: Map.get(event, :uri), caller_uri: socket.assigns[:caller_uri]}
+      )
 
-    {:noreply, socket}
+      {:noreply, socket}
+    end
+  end
+
+  # PR-N3 r4 codex r4 MEDIUM — the allowlist. Today AdminLive
+  # subscribes exactly one topic (the caller's own); future
+  # multi-subscription (per-session inbox, plugin-owned entities)
+  # extends this to `socket.assigns[:subscribed_uris]` MapSet.
+  # Until then, the caller URI IS the allowlist.
+  defp event_uri_authorized?(%{uri: %URI{} = event_uri}, %{assigns: assigns}) do
+    case assigns[:caller_uri] do
+      %URI{} = caller_uri -> URI.to_string(event_uri) == URI.to_string(caller_uri)
+      _ -> false
+    end
+  end
+
+  defp event_uri_authorized?(_, _), do: false
+
+  # PR-N3 r4 codex r4 HIGH-1 — bounded-blocking wrapper around
+  # `format_slice_change/1`. Spawn a short-lived Task to do the
+  # actual `Kind.get_slice` + `MessageStore` lookup; yield up to
+  # `timeout_ms`; on timeout, shut the task down and return the
+  # generic fallback. The LV mailbox never blocks longer than
+  # `timeout_ms` regardless of producer/Repo health.
+  #
+  # Why not `Task.Supervisor.async_nolink`: AdminLive doesn't own
+  # a TaskSupervisor (would require app-level wiring + per-plugin
+  # boilerplate). `Task.async` + `Task.shutdown` is sufficient
+  # for a fire-and-forget format with no parent-trapping semantics
+  # — the task is linked but if it crashes inside the format
+  # function (e.g. malformed slice), we want the LV to know via
+  # the `{ref, result}` message OR the `:DOWN` after shutdown.
+  # `Task.shutdown(task, :brutal_kill)` cleans up cleanly.
+  defp format_slice_change_bounded(event, timeout_ms) do
+    task = Task.async(fn -> format_slice_change(event) end)
+
+    case Task.yield(task, timeout_ms) || Task.shutdown(task, :brutal_kill) do
+      {:ok, flash} when is_binary(flash) ->
+        flash
+
+      _ ->
+        # Timeout or crash. Generic fallback — the flash still
+        # fires, just without the message preview.
+        case Map.get(event, :uri) do
+          %URI{} = uri -> "Update on #{URI.to_string(uri)}"
+          _ -> "Update received"
+        end
+    end
   end
 
   @doc false
@@ -371,6 +443,124 @@ defmodule EzagentPluginLiveview.AdminLive do
   end
 
   defp format_notification_legacy(other), do: "Notification: #{inspect(other)}"
+
+  @doc false
+  # Public for unit testing (otherwise `defp`). Formats a SliceChange
+  # event (PR-N3 codex r2 HIGH-1 security-minimal shape — see
+  # `apps/ezagent_core/lib/ezagent/slice_change.ex` moduledoc) into a
+  # human-readable flash string.
+  #
+  # The envelope carries `uri / slice_key / cursor / event_at /
+  # result_summary` only — to render anything richer we re-fetch
+  # the affected entity's slice via `Ezagent.Kind.get_slice/2`.
+  # That call goes to the live Kind GenServer; the read is in-VM and
+  # synchronous. A failed fetch (Kind not alive, etc.) degrades to a
+  # generic "Update on <uri>" line so the flash always surfaces.
+  #
+  # For chat (`slice_key == :chat`) we look up the event's `:cursor`
+  # in the slice's cursor-indexed `:recent_messages` ring (PR-N3 r4
+  # codex r3 HIGH-1 race fix). Pre-r4 we read `:last_received` (a
+  # single pointer) which raced under burst: 3 events arriving
+  # faster than the LV mailbox drained all read the latest pointer,
+  # rendering 3 identical flashes and losing 2 distinct
+  # notifications. Now: receive envelope cursor C → re-fetch slice →
+  # `List.keyfind(ring, C, 0)` returns the `{C, msg_id}` tuple for
+  # THIS event regardless of how many later events have committed,
+  # so each flash renders its correct message.
+  #
+  # Fallback chain:
+  # 1. Ring has cursor C → load + render that msg_id
+  # 2. Ring missing C (older than @recent_messages_ring_depth, slice
+  #    not loaded yet, or pre-PR-N3-r4 snapshot without the field) →
+  #    fall back to `:last_received.message_id` for the LATEST event
+  #    only (preserves the pre-r4 behavior — single-event case still
+  #    renders correctly; burst case degrades to "1 of N correct,
+  #    N-1 generic" which is strictly better than r3's "0 of N
+  #    correct, N identical")
+  # 3. Slice unreadable / no chat data → generic "New chat update"
+  #    line (the bridge ALWAYS fires a flash; the worst case is
+  #    losing the sender + preview, never losing the flash itself)
+  #
+  # Other slice keys (`:identity` / `:workspace` / etc — PR-N4
+  # producers) get the generic fallback until bespoke formatters land.
+  def format_slice_change(%{uri: %URI{} = uri, slice_key: :chat, cursor: cursor} = _event)
+      when is_integer(cursor) do
+    case Ezagent.Kind.get_slice(uri, :chat) do
+      {:ok, %{} = slice} ->
+        case chat_msg_id_for_cursor(slice, cursor) do
+          {:ok, msg_id} -> chat_flash_for(msg_id)
+          :not_found -> "New chat update on #{URI.to_string(uri)}"
+        end
+
+      _ ->
+        "New chat update on #{URI.to_string(uri)}"
+    end
+  end
+
+  # Legacy / synthesised event without a cursor (pre-PR-N3-r4 test
+  # fixtures + the `:not_a_map` / other-shape paths). Keep the old
+  # `:last_received` resolution so existing tests + any unmigrated
+  # producer surface a flash.
+  def format_slice_change(%{uri: %URI{} = uri, slice_key: :chat} = _event) do
+    case Ezagent.Kind.get_slice(uri, :chat) do
+      {:ok, %{last_received: %{message_id: msg_id}}} when is_binary(msg_id) ->
+        chat_flash_for(msg_id)
+
+      _ ->
+        "New chat update on #{URI.to_string(uri)}"
+    end
+  end
+
+  def format_slice_change(%{uri: %URI{} = uri, slice_key: slice_key} = _event)
+      when is_atom(slice_key) do
+    "Update on #{URI.to_string(uri)} (#{slice_key})"
+  end
+
+  def format_slice_change(other), do: "Slice changed: #{inspect(other)}"
+
+  # PR-N3 r4 (Allen 2026-05-25) — look up the msg_id for a given
+  # broadcast envelope cursor in the slice's `:recent_messages` ring.
+  # Each ring entry is `{cursor, msg_id}` (newest first); cursors
+  # match `SliceChange` broadcast envelope cursors exactly. Returns
+  # `:not_found` for cursors older than the ring's bound, missing
+  # ring (pre-PR-N3-r4 snapshot), or non-binary msg_id (defensive).
+  defp chat_msg_id_for_cursor(slice, cursor) when is_map(slice) and is_integer(cursor) do
+    ring = Map.get(slice, :recent_messages, [])
+
+    case List.keyfind(ring, cursor, 0) do
+      {^cursor, msg_id} when is_binary(msg_id) -> {:ok, msg_id}
+      _ -> :not_found
+    end
+  end
+
+  # Build the chat-style flash from a persisted message id. Splitting
+  # this out makes the `:chat` clause a single match-and-render so the
+  # re-fetch failure path stays readable.
+  defp chat_flash_for(msg_id) when is_binary(msg_id) do
+    case Ezagent.MessageStore.by_id(msg_id) do
+      {:ok, %Ezagent.Message{sender: sender, body: body}} ->
+        "New message from #{URI.to_string(sender)}: #{message_preview(body)}"
+
+      _ ->
+        "New chat message (id #{msg_id})"
+    end
+  end
+
+  # Best-effort preview from a Message body. Body may be either an
+  # atom-keyed map (newly-built) or string-keyed (post-DB roundtrip —
+  # the MessageStore ↔ Ecto pair JSON-encodes on write and decodes
+  # with string keys on read). Mirrors the dual-shape tolerance in
+  # `Behavior.Chat.body_text/1` / `body_attachments/1`.
+  defp message_preview(%{text: t}) when is_binary(t), do: truncate_preview(t)
+  defp message_preview(%{"text" => t}) when is_binary(t), do: truncate_preview(t)
+  defp message_preview(_), do: "(attachment-only message)"
+
+  defp truncate_preview(text) when is_binary(text) do
+    case String.length(text) do
+      n when n <= 80 -> text
+      _ -> String.slice(text, 0, 77) <> "..."
+    end
+  end
 
   # --- User actions -----------------------------------------------------
 

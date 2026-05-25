@@ -570,29 +570,24 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
            %{type: :pr_n2_legacy, body: %{}, source: __MODULE__, summary: "legacy bridge"}}
         )
 
-      # 2. New `{:slice_changed, _}` envelope (PR-N1 shape via
-      # `SliceChange.emit/1`). Enable the feature flag so the emit
-      # actually broadcasts; the AdminLive subscription side does
-      # not gate on the flag (it just subscribes).
-      Application.put_env(:ezagent_core, :slice_change_hook, true)
+      # 2. New `{:slice_changed, _}` envelope (PR-N3 codex r2 HIGH-1
+      # security-minimal shape via `SliceChange.emit/1`). Pass the
+      # legacy fat producer-side event — `emit/1` filters down to the
+      # 5 allowed broadcast keys at its boundary, so the LV receives
+      # the new shape regardless of what we hand the producer side.
+      event = %{
+        self_uri: caller_uri,
+        kind_module: Ezagent.Entity.User,
+        action: :pr_n2_integration,
+        slice_key: :test_slice,
+        old_slice: %{n: 1},
+        new_slice: %{n: 2},
+        result: nil,
+        caller: caller_uri,
+        at: DateTime.utc_now()
+      }
 
-      try do
-        event = %{
-          self_uri: caller_uri,
-          kind_module: Ezagent.Entity.User,
-          action: :pr_n2_integration,
-          slice_key: :test_slice,
-          old_slice: %{n: 1},
-          new_slice: %{n: 2},
-          result: nil,
-          caller: caller_uri,
-          at: DateTime.utc_now()
-        }
-
-        :ok = Ezagent.SliceChange.emit(event)
-      after
-        Application.delete_env(:ezagent_core, :slice_change_hook)
-      end
+      :ok = Ezagent.SliceChange.emit(event)
 
       # Round-trip a benign event to flush the message queue — once
       # `render/2` returns from the test we know all queued
@@ -680,6 +675,403 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
 
       assert EzagentPluginLiveview.AdminLive.format_notification(mixed) ==
                "rendered from top-level text fallback"
+    end
+
+    # PR-N3 (SPEC v2 notification-architecture-v2 §3 lines 204-211,
+    # Allen 2026-05-25) — flash bridge for the new `:slice_changed`
+    # envelope (codex r1 HIGH-1 fix: PR-N2 shipped the handler as a
+    # logging no-op; PR-N3 wires it to put_flash so users actually
+    # see chat notifications post-migration).
+    test "format_slice_change/1 renders Chat User-branch event as sender + preview" do
+      # PR-N3 codex r2 HIGH-1 (Allen 2026-05-25) — security-minimal
+      # envelope. The flash bridge re-fetches the receiver's `:chat`
+      # slice via `Kind.get_slice/2`; assertions drive a real spawned
+      # User so the lookup hits the production path.
+      sender = URI.new!("entity://user/default/n3-fmt-#{System.unique_integer([:positive])}")
+      receiver = URI.new!("entity://user/default/n3-rcv-#{System.unique_integer([:positive])}")
+
+      {:ok, _} = Ezagent.SpawnRegistry.spawn(sender)
+      {:ok, _} = Ezagent.SpawnRegistry.spawn(receiver)
+
+      session_uri =
+        URI.new!("session://default/default/n3-fmt-#{System.unique_integer([:positive])}")
+
+      msg = Ezagent.Message.new(sender, %{text: "n3 preview text", attachments: []})
+      {:ok, stored} = Ezagent.MessageStore.write(msg, session_uri)
+
+      # Populate the receiver's :chat slice via the real :receive
+      # dispatch (mirrors the production path that triggers the
+      # SliceChange envelope in the first place).
+      :ok =
+        Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+          target: URI.new!("#{URI.to_string(receiver)}?action=chat.receive"),
+          mode: :cast,
+          args: %{message: stored},
+          ctx: %{
+            caller: sender,
+            caps: Ezagent.Entity.User.admin_caps(),
+            reply: :ignore
+          }
+        })
+
+      Process.sleep(50)
+
+      event = %{
+        uri: receiver,
+        slice_key: :chat,
+        cursor: 1,
+        event_at: DateTime.utc_now(),
+        result_summary: :ok
+      }
+
+      assert EzagentPluginLiveview.AdminLive.format_slice_change(event) ==
+               "New message from #{URI.to_string(sender)}: n3 preview text"
+    end
+
+    test "format_slice_change/1 falls back to id when MessageStore has no row" do
+      # The receiver Kind is live but its :chat slice carries a
+      # message_id that MessageStore won't find. Production path:
+      # message was deleted between :receive and the flash bridge
+      # waking up.
+      receiver = URI.new!("entity://user/default/n3-miss-#{System.unique_integer([:positive])}")
+      {:ok, _} = Ezagent.SpawnRegistry.spawn(receiver)
+
+      # Drive a synthetic chat.receive with a sender + a fake
+      # message_id that won't resolve. We dispatch a real message
+      # then mutate the in-memory slice to point at a non-existent
+      # id — simplest reliable route is to write+then delete, but
+      # MessageStore doesn't expose delete; instead build a Message
+      # with a known id, write it, dispatch :receive, then erase
+      # by overwriting the slice via a synthetic chat.receive whose
+      # message-id we don't persist.
+      sender =
+        URI.new!("entity://user/default/n3-miss-snd-#{System.unique_integer([:positive])}")
+
+      {:ok, _} = Ezagent.SpawnRegistry.spawn(sender)
+
+      # Build a Message with the canary id but DON'T write it to
+      # MessageStore — the :receive dispatch reads `args.message`
+      # directly and just stores the message_id in the slice.
+      ghost_msg =
+        Ezagent.Message.new(sender, %{text: "ghost", attachments: []},
+          id: "msg-does-not-exist"
+        )
+
+      :ok =
+        Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+          target: URI.new!("#{URI.to_string(receiver)}?action=chat.receive"),
+          mode: :cast,
+          args: %{message: ghost_msg},
+          ctx: %{
+            caller: sender,
+            caps: Ezagent.Entity.User.admin_caps(),
+            reply: :ignore
+          }
+        })
+
+      Process.sleep(50)
+
+      event = %{
+        uri: receiver,
+        slice_key: :chat,
+        cursor: 1,
+        event_at: DateTime.utc_now(),
+        result_summary: :ok
+      }
+
+      assert EzagentPluginLiveview.AdminLive.format_slice_change(event) ==
+               "New chat message (id msg-does-not-exist)"
+    end
+
+    test "format_slice_change/1 falls back to generic line for non-chat shapes (PR-N4 producers)" do
+      # Forward-compat: when PR-N4 migrates workspace.add_member /
+      # identity.grant_cap to the auto-hook, the bridge MUST keep
+      # surfacing flashes even before bespoke formatters land.
+      generic_event = %{
+        uri: URI.new!("workspace://acme"),
+        slice_key: :workspace,
+        cursor: 7,
+        event_at: DateTime.utc_now(),
+        result_summary: :ok
+      }
+
+      assert EzagentPluginLiveview.AdminLive.format_slice_change(generic_event) ==
+               "Update on workspace://acme (workspace)"
+    end
+
+    test "format_slice_change/1 degrades gracefully when chat slice re-fetch fails" do
+      # The Kind isn't alive — `Kind.get_slice/2` returns
+      # `{:error, :not_found}`. The bridge MUST still surface a flash.
+      missing_uri =
+        URI.new!("entity://user/default/n3-none-#{System.unique_integer([:positive])}")
+
+      event = %{
+        uri: missing_uri,
+        slice_key: :chat,
+        cursor: 1,
+        event_at: DateTime.utc_now(),
+        result_summary: :ok
+      }
+
+      assert EzagentPluginLiveview.AdminLive.format_slice_change(event) ==
+               "New chat update on #{URI.to_string(missing_uri)}"
+    end
+
+    test "format_slice_change/1 inspects unknown shapes (last-resort branch)" do
+      assert EzagentPluginLiveview.AdminLive.format_slice_change(:not_a_map) =~ "Slice changed:"
+    end
+
+    test "slice_change handler puts a flash on AdminLive (end-to-end)", %{conn: conn} do
+      # PR-N3 codex r2 HIGH-1 (Allen 2026-05-25) — broadcast the new
+      # security-minimal envelope. The handler re-fetches the admin's
+      # :chat slice via `Kind.get_slice/2`; because the admin Kind
+      # isn't carrying a `:last_received` populated by this test, the
+      # bridge degrades to the "New chat update on <uri>" line —
+      # which is the right default-secure behavior (the slice ISN'T
+      # there to read; nothing leaks; the flash still fires).
+      {:ok, lv, _html} = live(conn, "/sessions")
+      caller_uri = Ezagent.Entity.User.admin_uri()
+      lv_pid = lv.pid
+
+      # Broadcast a security-minimal slice_change event directly to
+      # the LV's subscribed topic. The handler calls put_flash via
+      # format_slice_change/1 — verify the flash assign appears in
+      # the LV socket. We inspect the socket state directly because
+      # the flash region renders in the parent Layouts.app component,
+      # which `render/1` against the LV process body does not include.
+      :ok =
+        Phoenix.PubSub.broadcast(
+          EzagentCore.PubSub,
+          Ezagent.SliceChange.topic(caller_uri),
+          {:slice_changed,
+           %{
+             uri: caller_uri,
+             slice_key: :chat,
+             cursor: 1,
+             event_at: DateTime.utc_now(),
+             result_summary: :ok
+           }}
+        )
+
+      # Round-trip render flushes the LV's mailbox so handle_info
+      # has run by the time we read socket.assigns.
+      _ = render(lv)
+
+      assert Process.alive?(lv_pid)
+
+      flash =
+        :sys.get_state(lv_pid)
+        |> Map.get(:socket)
+        |> Map.get(:assigns)
+        |> Map.get(:flash, %{})
+
+      assert is_binary(flash["info"]),
+             "expected slice_change handler to put_flash; got flash=#{inspect(flash)}"
+
+      # Either branch is acceptable: re-fetch succeeded -> "New
+      # chat message" / "New message from"; re-fetch failed (no
+      # populated slice / Kind missing) -> "New chat update on ...".
+      assert flash["info"] =~ "chat",
+             "expected chat-related flash; got: #{inspect(flash["info"])}"
+    end
+
+    test "format_slice_change/1 resolves cursor in :recent_messages ring (PR-N3 r4 race fix)" do
+      # PR-N3 r4 (Allen 2026-05-25) — codex r3 HIGH-1 fix. The
+      # critical property: when 3 events arrive in burst, each
+      # `format_slice_change/1` call MUST render its OWN message,
+      # NOT the latest pointer. Pre-r4 all 3 rendered identically
+      # (race on `:last_received`); post-r4 each ring lookup by
+      # cursor returns the correct msg_id.
+      receiver =
+        URI.new!("entity://user/default/n3-race-#{System.unique_integer([:positive])}")
+
+      sender =
+        URI.new!("entity://user/default/n3-race-snd-#{System.unique_integer([:positive])}")
+
+      {:ok, _} = Ezagent.SpawnRegistry.spawn(receiver)
+      {:ok, _} = Ezagent.SpawnRegistry.spawn(sender)
+
+      session_uri =
+        URI.new!("session://default/default/n3-race-#{System.unique_integer([:positive])}")
+
+      # Send 3 distinct messages in succession through the real
+      # dispatch path. Each :receive bumps the cursor + pushes the
+      # ring entry; the slice ends up with [{C3, m3}, {C2, m2}, {C1,
+      # m1}] (newest first). We then resolve each historic event
+      # AFTER all 3 have committed — the race window.
+      msgs =
+        for n <- 1..3 do
+          msg = Ezagent.Message.new(sender, %{text: "race msg #{n}", attachments: []})
+          {:ok, stored} = Ezagent.MessageStore.write(msg, session_uri)
+
+          :ok =
+            Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+              target: URI.new!("#{URI.to_string(receiver)}?action=chat.receive"),
+              mode: :cast,
+              args: %{message: stored},
+              ctx: %{
+                caller: sender,
+                caps: Ezagent.Entity.User.admin_caps(),
+                reply: :ignore
+              }
+            })
+
+          stored
+        end
+
+      # Drain the receiver's mailbox so the slice is fully committed.
+      Process.sleep(100)
+
+      # Pull the ring to learn what cursors got assigned (we can't
+      # predict the absolute numbers — Cursors counter is shared
+      # across tests; we only know they're consecutive for this
+      # receiver).
+      {:ok, %{recent_messages: ring}} = Ezagent.Kind.get_slice(receiver, :chat)
+
+      # Each ring entry is one of our 3 sends (head is newest).
+      assert length(ring) >= 3, "expected >= 3 ring entries, got #{inspect(ring)}"
+
+      [m1, m2, m3] = msgs
+
+      cursors_by_msg = Map.new(ring)
+      reverse_index = for {c, m_id} <- ring, into: %{}, do: {m_id, c}
+
+      c1 = Map.fetch!(reverse_index, m1.id)
+      c2 = Map.fetch!(reverse_index, m2.id)
+      c3 = Map.fetch!(reverse_index, m3.id)
+
+      # Sanity: cursors are monotonic in dispatch order.
+      assert c1 < c2 and c2 < c3, "expected cursors to be monotonic, got #{inspect({c1, c2, c3})}"
+
+      # NOW the race-resolution property: each event resolves to its
+      # OWN msg_id, NOT the latest. Run the format function for each
+      # historic cursor AFTER all 3 have committed (the burst race
+      # window).
+      event_for = fn cursor ->
+        %{
+          uri: receiver,
+          slice_key: :chat,
+          cursor: cursor,
+          event_at: DateTime.utc_now(),
+          result_summary: :ok
+        }
+      end
+
+      flash_for_c1 = EzagentPluginLiveview.AdminLive.format_slice_change(event_for.(c1))
+      flash_for_c2 = EzagentPluginLiveview.AdminLive.format_slice_change(event_for.(c2))
+      flash_for_c3 = EzagentPluginLiveview.AdminLive.format_slice_change(event_for.(c3))
+
+      # The pre-r4 bug: all 3 returned the latest message's text.
+      # Post-r4: each returns its OWN message's text.
+      assert flash_for_c1 =~ "race msg 1",
+             "cursor #{c1} should resolve to msg 1, got: #{inspect(flash_for_c1)}"
+
+      assert flash_for_c2 =~ "race msg 2",
+             "cursor #{c2} should resolve to msg 2, got: #{inspect(flash_for_c2)}"
+
+      assert flash_for_c3 =~ "race msg 3",
+             "cursor #{c3} should resolve to msg 3, got: #{inspect(flash_for_c3)}"
+
+      # Belt-and-suspenders: assert the 3 flashes are DISTINCT (the
+      # original bug class was "3 identical flashes").
+      assert flash_for_c1 != flash_for_c2
+      assert flash_for_c2 != flash_for_c3
+      assert flash_for_c1 != flash_for_c3
+
+      # Reference the cursors_by_msg binding to keep the compiler
+      # happy (the inverted map is part of the assertion narrative).
+      assert is_map(cursors_by_msg)
+    end
+
+    test "format_slice_change/1 cursor not in ring → graceful fallback (not crash)" do
+      # Older-than-ring-depth cursor: ring trimmed it out. Bridge
+      # MUST still render a flash (generic line).
+      receiver =
+        URI.new!("entity://user/default/n3-stale-#{System.unique_integer([:positive])}")
+
+      {:ok, _} = Ezagent.SpawnRegistry.spawn(receiver)
+
+      sender =
+        URI.new!("entity://user/default/n3-stale-snd-#{System.unique_integer([:positive])}")
+
+      {:ok, _} = Ezagent.SpawnRegistry.spawn(sender)
+
+      msg = Ezagent.Message.new(sender, %{text: "stale", attachments: []})
+      {:ok, stored} = Ezagent.MessageStore.write(msg, receiver)
+
+      :ok =
+        Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+          target: URI.new!("#{URI.to_string(receiver)}?action=chat.receive"),
+          mode: :cast,
+          args: %{message: stored},
+          ctx: %{
+            caller: sender,
+            caps: Ezagent.Entity.User.admin_caps(),
+            reply: :ignore
+          }
+        })
+
+      Process.sleep(50)
+
+      # Synthesize an event with a cursor we know isn't in the ring
+      # (well past any real allocation).
+      event = %{
+        uri: receiver,
+        slice_key: :chat,
+        cursor: 999_999,
+        event_at: DateTime.utc_now(),
+        result_summary: :ok
+      }
+
+      flash = EzagentPluginLiveview.AdminLive.format_slice_change(event)
+      assert flash == "New chat update on #{URI.to_string(receiver)}"
+    end
+
+    test "slice_change handler rejects foreign event.uri (codex r4 MEDIUM URI allowlist)",
+         %{conn: conn} do
+      # PR-N3 r4 codex r4 MEDIUM (Allen 2026-05-25) — the handler
+      # MUST verify event.uri matches the LV's subscribed caller
+      # before doing any slice re-fetch. A wrong-topic broadcast
+      # carrying a foreign URI on the caller's topic (producer
+      # bug, in-VM plugin misdirection) would otherwise leak that
+      # other entity's chat preview to this admin.
+      {:ok, lv, _html} = live(conn, "/sessions")
+      caller_uri = Ezagent.Entity.User.admin_uri()
+      lv_pid = lv.pid
+
+      # Foreign URI in the event — NOT the admin's URI.
+      foreign_uri =
+        URI.new!("entity://user/default/some-other-#{System.unique_integer([:positive])}")
+
+      :ok =
+        Phoenix.PubSub.broadcast(
+          EzagentCore.PubSub,
+          Ezagent.SliceChange.topic(caller_uri),
+          {:slice_changed,
+           %{
+             uri: foreign_uri,
+             slice_key: :chat,
+             cursor: 1,
+             event_at: DateTime.utc_now(),
+             result_summary: :ok
+           }}
+        )
+
+      _ = render(lv)
+
+      assert Process.alive?(lv_pid)
+
+      flash =
+        :sys.get_state(lv_pid)
+        |> Map.get(:socket)
+        |> Map.get(:assigns)
+        |> Map.get(:flash, %{})
+
+      # Foreign URI rejected → no flash, no slice re-fetch on the
+      # foreign URI. The LV keeps running; absence of a flash is
+      # the correct default-secure behavior.
+      refute flash["info"],
+             "expected NO flash for foreign-URI event; got: #{inspect(flash)}"
     end
 
     test "cap-grant notification reaches AdminLive handler without crashing", %{conn: conn} do

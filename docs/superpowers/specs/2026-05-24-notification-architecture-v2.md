@@ -139,6 +139,114 @@ end
 
 A unified per-URI shape (`esr:entity:<uri>:slice_changed`) is preferred over the current per-scheme shape (`esr:user:<uri>:events`) because the auto-hook treats all Kinds uniformly — the scheme prefix in the URI is sufficient; a separate `esr:user:` vs `esr:agent:` distinction is redundant and forces the helper to branch on Kind. Subscribers that only care about User events still subscribe per-URI; the topic doesn't need to encode the Kind.
 
+### 2.1.1 Event payload — security-minimal shape (PR-N3 codex r2 HIGH-1 amendment)
+
+**Allen-approved 2026-05-25; reviewed Option C against Option A (drop the auto-hook entirely) and Option B (cap-gate every subscribe). C is the chosen shape because it preserves the §2.1 SoT property — slice mutation IS the trigger — while closing the cap-bypass attack surface that codex r2 flagged.**
+
+The §2.1 sketch shows a producer event with `old_slice`, `new_slice`, `result`, `caller`, `kind_module`, `action`. Codex review on PR-N3 (issue HIGH-1) observed that **broadcasting this full event to a public-derivable PubSub topic bypasses Behavior cap gates**. Concretely:
+
+- `Ezagent.Behavior.ApiKeys.invoke(:put_api_key, ...)` writes plaintext API keys to its `:api_keys` slice. The slice-change event then broadcasts `new_slice.keys[provider]` (plaintext) to any same-VM subscriber of `esr:entity:<user_uri>:slice_changed`. Subscriber doesn't need the `identity:api_keys:read` cap. The cap gate is bypassed.
+- Same risk for `Identity` cap-grant slices, future credential storage, anything else stored in a slice.
+- `Phoenix.PubSub.subscribe/2` is open at the BEAM level — `subscribe_unverified/1` exists because we can't physically prevent a same-VM process from subscribing to a topic whose name is derivable from public data.
+
+**The fix**: the `{:slice_changed, event}` broadcast envelope is reduced to a typed, security-minimal map with EXACTLY five fields:
+
+```elixir
+%{
+  uri:            URI.t(),               # which Kind instance emitted
+  slice_key:      atom(),                # which slice changed
+  cursor:         non_neg_integer(),     # monotonic per-URI sequence
+  event_at:       DateTime.t(),          # wall-clock
+  result_summary: :ok | :error           # atom summary; no error detail
+}
+```
+
+**Forbidden in the broadcast envelope**: `old_slice`, `new_slice`, `result` (besides the atom summary), `caller`, `kind_module`, `action`. Any of these would re-open the cap-bypass surface. The Runtime hook may construct a "fat" producer-side event map (it has the slice diff in scope) for internal use — but only the 5 allowed fields cross PubSub.
+
+**Why a cursor**: subscribers that re-fetch the slice (see §2.1.2) need a way to detect "I missed events between cursor X and Y" — the cursor lets them order events and re-sync without persistent log access. The cursor is per-URI, monotonic, atomic-increment via ETS; resets on `EzagentCore.EtsOwner` restart (transport-level, not a primary key).
+
+**Why `result_summary: :ok | :error`** (not the raw `result`): subscribers that need to know "did the operation succeed?" get a binary signal. The full result map can carry sensitive content (e.g. `ApiKeys.invoke(:get_api_key)` returns `%{key: <plaintext>}`) and is excluded for the same reason as `new_slice`.
+
+**Pattern source**: this shape parallels `Ezagent.Publisher.Event` from PR-EM-0 (`apps/ezagent_domain_external_mirror/lib/ezagent/publisher/event.ex`) — `cursor + event_at + slice_key` is the same metadata core. The Publisher's `payload` field carries diff data because Publisher subscribers go through a cap-gated `:subscribe_from` action; the SliceChange broadcast envelope has no such cap gate so the diff is omitted.
+
+**Invariant test gate**: `apps/ezagent_core/test/invariants/slice_change_event_carries_no_slice_content_test.exs` asserts the broadcast envelope has ONLY the 5 allowed keys. The test drives a synthetic emit with a sentinel "LEAKY-KEY" plaintext payload and `refute` asserts the sentinel string appears anywhere in the broadcast — the structural canary per `feedback_completion_requires_invariant_test`.
+
+### 2.1.2 Subscriber pattern — re-fetch via cap-gated dispatch
+
+Subscribers that need the actual slice content (e.g. AdminLive rendering a chat-preview flash from a `chat.receive` event) **MUST re-fetch** via one of two paths:
+
+1. **`Ezagent.Kind.get_slice(uri, slice_key)`** — synchronous read of the live Kind's current slice via `GenServer.call`. **NOT cap-gated at the read layer** — the cap gate is the SUBSCRIBER's pid being trusted to read the slice. Use only when:
+   - The subscriber's process IS the data owner (Kind reading its own slice — Publisher SessionImpl is the canonical example, reading `ctx.slice_state` injected by `Kind.Server` to avoid self-deadlock)
+   - The subscriber's process is trusted by the operator (admin LV running on behalf of an admin user)
+   - The subscriber doesn't care about cap-gated content (per-URI subscribers that only read non-sensitive metadata)
+
+2. **`Ezagent.Invocation.dispatch/1`** to a cap-gated Behavior read action (`:list_*`, `:get_*`) — passes through step 5.5 (CapBAC) like every other dispatch. Use when:
+   - The slice contains sensitive content (API keys, caps, credentials, etc.) AND
+   - The subscriber's caps may not include direct slice-read authority — let the dispatch decide
+
+**The framework is default-secure**: the broadcast event reveals the EXISTENCE + TIMING + RESULT_SUMMARY of a slice change, never its content. What each subscriber fetches afterward is its own cap concern. A subscriber that subscribes to a topic but holds no caps for slice reads sees the event arrive but gets nothing back from the dispatch.
+
+**Same-Kind reads from `handle_kind_message`**: Behaviors that need to read OTHER slices on the SAME Kind from within their `handle_kind_message/3` callback (e.g. the Publisher reading `:chat` after a `:slice_changed` event for that slice) must NOT call `Ezagent.Kind.get_slice/2` — it would self-`GenServer.call` from inside `handle_info` and deadlock. Instead, `Ezagent.Kind.Server` injects the full slice_state into `ctx.slice_state` for read-only access. The Behavior's own slice is still the legitimate WRITE target via the callback's return value.
+
+### 2.1.3 Subscriber pattern for slices with mutable single-pointer fields (PR-N3 r4 amendment — Allen 2026-05-25)
+
+**The race**. The security-minimal envelope (§2.1.1) strips slice content, so subscribers re-fetch via `Ezagent.Kind.get_slice/2` (§2.1.2). For a slice that exposes a *single-pointer* "what's the latest?" field (e.g. `:last_received.message_id`), the re-fetch races the producer when events arrive faster than the subscriber can drain its mailbox:
+
+```
+T=0  producer mutates slice with msg A  →  broadcasts envelope cursor 10
+T=1  producer mutates slice with msg B  →  broadcasts envelope cursor 11
+T=2  subscriber processes cursor=10 → get_slice → reads :last_received = B (WRONG; should be A)
+T=3  subscriber processes cursor=11 → get_slice → reads :last_received = B (correct, but identical to T=2)
+```
+
+Result: both flashes render msg B; msg A's notification is silently lost. Codex r3 (PR #328) flagged this as PR-N3 HIGH-1.
+
+**The pattern — cursor-indexed bounded ring**. Slices whose subscribers need the per-event payload (typically the message id / record id derived from the action's argument) must expose a **bounded ring keyed by the broadcast cursor** alongside the single-pointer convenience field:
+
+```elixir
+# In the Behavior's :slice_changed-producing action:
+%{
+  # ... existing slice fields ...
+  last_received: %{message_id: msg.id, at: now},  # single-pointer convenience (retained for legacy fallback)
+  recent_messages: [{ctx.slice_change_cursor, msg.id} | prior_ring] |> Enum.take(20)
+}
+```
+
+Subscriber resolution:
+
+```elixir
+def handle_info({:slice_changed, %{uri: uri, slice_key: :chat, cursor: c}}, socket) do
+  {:ok, slice} = Ezagent.Kind.get_slice(uri, :chat)
+  case List.keyfind(slice.recent_messages, c, 0) do
+    {^c, msg_id} -> render_message(msg_id)
+    nil          -> render_generic_fallback(uri)  # older than ring depth
+  end
+end
+```
+
+**Cursor allocation contract**. The broadcast envelope cursor (`Ezagent.SliceChange.Cursors.next/1`) is **pre-allocated by `Ezagent.Kind.Runtime` before invoke** and threaded into `ctx.slice_change_cursor`. The Behavior reads it from ctx when building the ring entry; `Ezagent.SliceChange.emit/1` reads it from the producer event (instead of re-allocating) so envelope ↔ ring keys match exactly. Without this contract the ring's cursor would lag the envelope by one or more (depending on action order), defeating the lookup.
+
+**Ring depth — SPEC-pinned, not configurable**. The ring bound is a module constant (e.g. `@recent_messages_ring_depth 20` in `Ezagent.Behavior.Chat`), exposed as a reader function for test assertions. Per `feedback_let_it_crash_no_workarounds` it is NOT a runtime knob — operators have no business tuning this; if 20 is wrong for production load, the Behavior author bumps the constant in source. The bound balances:
+
+- **Burst capacity** — worst-case backlog the subscriber can resolve after a flood. 20 = ~10× a typical AdminLive instance's per-second event rate.
+- **Persisted size** — each entry is `{int, binary}` ≈ 40 bytes; the ring adds ≤ 800 bytes to every Kind snapshot.
+- **Lookup cost** — `List.keyfind/3` is O(N); N=20 is well below any measurable threshold.
+
+**Graceful skip semantics**. When the subscriber receives a cursor older than the ring depth (rare — only under sustained burst exceeding `@ring_depth × inter-event-time`), the lookup returns `:not_found` and the subscriber falls back to a generic line ("Update on `<uri>`") — observability degradation, never silent wrong-render and never a crash. The bridge ALWAYS fires the flash; the content fidelity is best-effort. This is preferred to "raise on cursor miss" because the subscriber is observability-tier infrastructure, not a correctness boundary — losing a *preview* under sustained burst is acceptable; losing a *flash* is not.
+
+**When to apply this pattern**. Any slice where ALL of:
+
+1. The subscriber needs the per-event payload (not just "something changed")
+2. The producer can mutate the slice faster than subscribers drain (any chat-like fan-out, any auto-emitting state machine)
+3. The payload is derivable from a slice field at emit time (msg.id from the action's arg)
+
+Slices that fail (3) — where the per-event payload is computed lazily from the new_slice state — should use a cap-gated `:get_*` Behavior read action instead (§2.1.2 path 2), accepting the inherent race as part of their consistency model.
+
+**Reference implementation**. `Ezagent.Behavior.Chat` `:recent_messages` ring on the User-branch `:receive` slice mutation; cursor pre-allocation in `Ezagent.Kind.Runtime.handle_dispatch/4`; envelope cursor honored from event in `Ezagent.SliceChange.build_broadcast_event/2`. Test surface:
+
+- `apps/ezagent_domain_chat/test/ezagent/behavior/chat_test.exs` — ring populate / trim / lookup / missing-cursor-tolerance
+- `apps/ezagent_plugin_liveview/test/admin_live_test.exs` — end-to-end race regression (3-message burst resolves to 3 distinct flashes)
+
 ### 2.2 What `Notifications.notify/3` becomes
 
 Three viable end-states; recommendation in §5.
@@ -209,6 +317,8 @@ Five PRs. The order is chosen so each step is independently verifiable and the s
 - The existing `[:ezagent, :notification, :emit]` telemetry continues to fire from the surviving `Notifications.notify/3` call sites (workspace, identity); audit pipeline sees both events.
 - New integration test: send a message, verify (a) AdminLive receives `{:slice_changed, ...}` and (b) the legacy `{:notification, ...}` is NOT emitted for this code path anymore.
 - **Producer pattern proven on one site before sweeping.**
+
+**r2 codex security amendment (Allen 2026-05-25 — shipped in same PR before merge)**: codex round-2 HIGH-1 flagged that the fat broadcast envelope (`old_slice / new_slice / result / caller / ...`) bypasses Behavior cap gates by exfiltrating slice content over a public-derivable PubSub topic. The fix lands inside PR-N3 — see §2.1.1 (security-minimal envelope: 5 fields only) and §2.1.2 (subscribers re-fetch via `Kind.get_slice/2` or cap-gated dispatch). Event shape is FINAL post-merge; PR-N4 producers inherit the new envelope automatically (the Runtime hook is the choke point). The PR-N3 invariant test `slice_change_event_carries_no_slice_content_test.exs` is the architectural gate; no future PR can re-add slice-content fields to the broadcast without breaking it.
 
 ### PR-N4: Migrate remaining producer sites
 

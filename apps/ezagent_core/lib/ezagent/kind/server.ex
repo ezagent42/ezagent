@@ -488,7 +488,21 @@ defmodule Ezagent.Kind.Server do
     if function_exported?(behavior, :handle_kind_message, 3) do
       slice_key = behavior.state_slice()
       slice = Map.get(slice_state, slice_key, %{})
-      ctx = %{kind_module: kind_module, self_uri: self_uri}
+
+      # PR-N3 codex r2 HIGH-1 (Allen 2026-05-25) — expose the full
+      # slice_state via `ctx.slice_state` so Behaviors that need to
+      # read OTHER slices on the same Kind (the Publisher's
+      # SessionImpl reading `:chat` after a `:slice_changed` event
+      # for that slice) can do so WITHOUT calling
+      # `Kind.get_slice/2` — that would be a self-`GenServer.call`
+      # from inside `handle_info`, which deadlocks. Each Behavior's
+      # own slice is still the legitimate WRITE target via the
+      # return value; `slice_state` is READ-ONLY context.
+      ctx = %{
+        kind_module: kind_module,
+        self_uri: self_uri,
+        slice_state: slice_state
+      }
 
       case behavior.handle_kind_message(message, slice, ctx) do
         {:ok, new_slice} -> Map.put(slice_state, slice_key, new_slice)
