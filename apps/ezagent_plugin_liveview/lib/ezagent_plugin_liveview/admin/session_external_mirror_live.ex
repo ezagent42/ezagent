@@ -154,7 +154,18 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLive do
         {:noreply, socket}
 
       session_event?(target, socket.assigns.session_uri_str) ->
-        {:noreply, prepend_to_ring(socket, :session_audit_events, event)}
+        # codex r2 MED (2026-05-25): the LV polls `list_bindings` every
+        # 5s, which fires `:external_mirror.list_bindings` audit
+        # events. Without an action filter those would saturate the
+        # 20-event session ring inside ~100 seconds, evicting the
+        # `:bind`/`:unbind` events the panel exists to surface.
+        # Accept only the mutating actions; the read action is
+        # observability noise.
+        if interesting_session_action?(event) do
+          {:noreply, prepend_to_ring(socket, :session_audit_events, event)}
+        else
+          {:noreply, socket}
+        end
 
       true ->
         case binding_for_target(target, socket.assigns.bindings) do
@@ -404,9 +415,27 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLive do
           filter_adapters_by_cap(fresh_ctx.caps, socket.assigns.session_uri)
         )
 
+      {:error, reason} when reason in [:unauthorized, :cross_workspace_denied] ->
+        # codex r2 HIGH (2026-05-25): Cap 1 revoked mid-LV-session.
+        # The previous render still shows the binding rows + worker
+        # URIs the (now-unauthorized) caller can see. Per P18 + the
+        # mount-side handling, an authorization loss is NOT
+        # transient — clear the privileged surface AND navigate
+        # away. Same shape mount uses for the same error class.
+        socket
+        |> assign(:bindings, [])
+        |> assign(:available_adapters, [])
+        |> assign(:binding_audit_events, %{})
+        |> assign(:session_audit_events, [])
+        |> assign(:ctx, fresh_ctx)
+        |> assign(:caller_caps, fresh_ctx.caps)
+        |> put_flash(:error, unauthorized_message(reason))
+        |> push_navigate(to: "/sessions")
+
       {:error, _reason} ->
-        # Don't navigate away on a transient refresh failure; surface a
-        # flash so the operator knows.
+        # Transient (e.g. :not_ready / :no_such_actor / network glitch
+        # during dispatch). Keep the LV mounted + surface a flash so
+        # the operator knows; the next refresh cycle will recover.
         socket
         |> assign(:ctx, fresh_ctx)
         |> assign(:caller_caps, fresh_ctx.caps)
@@ -486,6 +515,17 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLive do
     target == session_uri_str or
       String.starts_with?(target, session_uri_str <> "?")
   end
+
+  # codex r2 MED (2026-05-25): mutating bind/unbind only. `:list_bindings`
+  # fires every 5s from the LV's own poll loop + from the operator
+  # mounting the LV — both routine read noise that would saturate the
+  # 20-event ring inside ~100s.
+  defp interesting_session_action?(%{metadata: meta}) do
+    action = Map.get(meta, :action)
+    action in [:bind, :unbind, "bind", "unbind"]
+  end
+
+  defp interesting_session_action?(_), do: false
 
   defp binding_for_target(target, bindings) do
     Enum.find(bindings, fn b ->

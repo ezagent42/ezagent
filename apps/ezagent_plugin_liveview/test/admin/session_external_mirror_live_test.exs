@@ -297,10 +297,98 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLiveTest do
     end
   end
 
-  # ----- (6) codex r1 HIGH regression — revoke-after-mount denies ---------
+  # ----- (6) codex r1+r2 HIGH regression — revoke-after-mount denies ------
 
-  describe "codex r1 HIGH — fresh_ctx_for_action rebuilds caps on every event" do
-    test "after Cap 2 revoke the LV's next bind returns :adapter_not_authorized (not stale-ctx :ok)",
+  describe "codex r1+r2 HIGH — fresh_ctx_for_action + refresh clears + redirects on revoke" do
+    test "Cap 1 revoke after mount: next refresh poll surfaces :unauthorized → clear bindings + redirect",
+         %{session_uri: session_uri, owner_uri: owner_uri} do
+      # r1 fix: `fresh_ctx_for_action/1` reads the live User Kind slice
+      # on every privileged event + refresh cycle (no mount-time cache).
+      # r2 fix: when refresh's `list_bindings` returns `:unauthorized` /
+      # `:cross_workspace_denied`, the LV clears the privileged
+      # surface (bindings, dropdown, audit rings) AND
+      # `push_navigate(to: "/sessions")` — so a Cap 1 revoke
+      # mid-LV-session can't leave stale binding rows on screen.
+      :ok = spawn_owner_and_session(owner_uri, session_uri)
+
+      # System-member caller (workspace://system) so `:require_admin`
+      # admin gate admits via `is_system_member?`. Has Cap 1 so mount's
+      # `list_bindings` succeeds.
+      caller_uri =
+        URI.parse(
+          "entity://user/system/pr4_revoke_#{System.unique_integer([:positive])}"
+        )
+
+      cap1 = %Capability{
+        kind: :session,
+        behavior: Ezagent.Behavior.ExternalMirror,
+        instance: session_uri,
+        workspace_uri: @workspace_uri,
+        granted_by: User.admin_uri(),
+        granted_at: DateTime.utc_now()
+      }
+
+      {:ok, user_pid} =
+        Ezagent.Kind.spawn(User, %{
+          uri: caller_uri,
+          initial_caps: MapSet.new([cap1])
+        })
+
+      conn =
+        Phoenix.ConnTest.build_conn()
+        |> Plug.Test.init_test_session(%{"current_entity_uri" => URI.to_string(caller_uri)})
+
+      {:ok, lv, mount_html} = live(conn, path_for(session_uri))
+      # Sanity: mount succeeded (Cap 1 admits the list_bindings call).
+      assert mount_html =~ URI.to_string(session_uri)
+
+      # Now REVOKE Cap 1 from the User Kind slice. Direct sys mutation
+      # simulates "admin grants/revokes caps through some other path"
+      # (production: `Behavior.IdentityAdmin.invoke(:revoke_cap, ...)`).
+      # Self-Identity cap left intact so the post-revoke
+      # `list_caps_for` dispatch still admits step 5.5.
+      :sys.replace_state(user_pid, fn state ->
+        Map.update!(state, :state, fn slice_map ->
+          Map.update!(slice_map, :identity, fn identity ->
+            Map.update!(identity, :caps, fn caps -> MapSet.delete(caps, cap1) end)
+          end)
+        end)
+      end)
+
+      # Trigger the LV's refresh. The r2 fix navigates away on
+      # `{:error, :unauthorized}`. `render_hook` raises an
+      # `Phoenix.LiveViewTest.RedirectError` (or returns
+      # `{:error, {:redirect, _}}` shape) when the LV pushes a
+      # navigate. Catch either; the structural property is "the LV
+      # left the page" — exactly what the r2 fix promises.
+      result =
+        try do
+          render_hook(lv, "refresh", %{})
+        catch
+          :error, other -> {:caught, other}
+        end
+
+      case result do
+        {:error, {:live_redirect, %{to: "/sessions"}}} ->
+          :ok
+
+        {:error, {:redirect, %{to: "/sessions"}}} ->
+          :ok
+
+        html when is_binary(html) ->
+          # If the LV didn't navigate, the r2 fix is broken — stale
+          # bindings would still be in @bindings. Fail loudly.
+          flunk(
+            "expected push_navigate(to: \"/sessions\") on Cap 1 revoke; got HTML: " <>
+              String.slice(html, 0, 400)
+          )
+
+        other ->
+          flunk("refresh returned unexpected: " <> inspect(other))
+      end
+    end
+
+    test "happy path: per-event ctx rebuild does NOT break ordinary bind",
          %{session_uri: session_uri, owner_uri: owner_uri} do
       # The HIGH was: the LV cached `ctx` from mount, so a Cap 2 revoke
       # AFTER mount didn't propagate — the next bind still succeeded
