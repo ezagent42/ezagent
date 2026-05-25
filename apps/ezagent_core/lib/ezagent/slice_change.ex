@@ -31,13 +31,17 @@ defmodule Ezagent.SliceChange do
         at: DateTime.t()
       }}
 
-  ## Gate: feature flag
+  ## Gate: hard switch (PR-N3, Allen 2026-05-25)
 
-  This module ships in PR-N1 with the emission **DISABLED** by
-  default — `Application.get_env(:ezagent_core, :slice_change_hook, false)`.
-  PR-N3 flips the flag on after PR-N2 wires the subscribers in
-  dual-mode (old `Notifications.notify/3` topic + new
-  `:slice_changed` topic). PR-N5 deletes the old path.
+  The hook is unconditionally enabled. PR-N1 shipped with a temporary
+  `Application.get_env(:ezagent_core, :slice_change_hook, false)`
+  scaffold (default OFF) so PR-N1 + PR-N2 could land without firing
+  events at unmigrated producers. PR-N3 removes the config knob per
+  `feedback_let_it_crash_no_workarounds` (knobs are anti-patterns —
+  prefer a hard structural switch). `enabled?/0` survives only as a
+  compile-time-constant predicate so existing call sites
+  (`Kind.Server.commit_and_notify/3`) keep their shape; PR-N5 deletes
+  it entirely once the legacy `Notifications.notify/3` is gone.
 
   ## Drift prevention (PR-N5 invariants)
 
@@ -48,8 +52,6 @@ defmodule Ezagent.SliceChange do
   """
 
   require Logger
-
-  @config_flag {:ezagent_core, :slice_change_hook}
 
   @doc "Topic shape — `esr:entity:<self_uri>:slice_changed`."
   @spec topic(URI.t() | String.t()) :: String.t()
@@ -63,10 +65,9 @@ defmodule Ezagent.SliceChange do
   `Snapshot.maybe_save/4` succeeds (codex PR-N1 round-2 MEDIUM fix).
   GATED on:
 
-  1. The feature flag (default OFF in PR-N1)
-  2. `slice_change_event != nil` — Runtime sets `nil` when slice
+  1. `slice_change_event != nil` — Runtime sets `nil` when slice
      unchanged or action returned read-only
-  3. Success-path only (errors / cap-denied never reach here)
+  2. Success-path only (errors / cap-denied never reach here)
 
   Returns `:ok` always. Failure is observable (`:telemetry.span`
   exception event + Logger.warning) but non-fatal — the snapshot
@@ -74,20 +75,20 @@ defmodule Ezagent.SliceChange do
   PubSub outage.
   """
   @spec emit(map()) :: :ok
-  def emit(%{} = event) do
-    if enabled?() do
-      do_emit(event)
-    else
-      :ok
-    end
-  end
+  def emit(%{} = event), do: do_emit(event)
 
-  @doc "True iff the slice-change hook is enabled."
+  @doc """
+  True iff the slice-change hook is enabled.
+
+  PR-N3 (Allen 2026-05-25) hardened this from a config-driven
+  predicate to an unconditional `true` per
+  `feedback_let_it_crash_no_workarounds`. Retained as a function
+  (rather than inlined) so `Kind.Server` and any test that
+  inspected the gate keep the same call shape; PR-N5 deletes it
+  along with the rest of the legacy notification surface.
+  """
   @spec enabled?() :: boolean()
-  def enabled? do
-    {app, key} = @config_flag
-    Application.get_env(app, key, false) == true
-  end
+  def enabled?, do: true
 
   # Codex PR-N1 round-2 MEDIUM fix: post-commit semantics.
   #

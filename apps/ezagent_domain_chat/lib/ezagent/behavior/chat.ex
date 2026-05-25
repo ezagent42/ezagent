@@ -327,41 +327,34 @@ defmodule Ezagent.Behavior.Chat do
   def invoke(:receive, slice, %{message: %Message{} = msg}, ctx) do
     case ctx.kind_module do
       Ezagent.Entity.User ->
-        # PR migration (Allen 2026-05-23): the raw
-        # `Phoenix.PubSub.broadcast` to `esr:user:<uri>:events` is now
-        # the legacy path; new code routes through
-        # `Ezagent.Notifications.notify/3` (cap-gated unified entry,
-        # SPEC `apps/ezagent_core/lib/ezagent/notifications.ex`).
-        # System bypass via `ctx.caps == :system` — Chat is acting on
-        # behalf of the routed message.
+        # PR-N3 (SPEC v2 notification-architecture-v2 §2.4 + §3 lines
+        # 204-211, Allen 2026-05-25) — producer-pattern proof.
         #
-        # During transition, BOTH shapes coexist on the topic:
-        # - new: `{:notification, user_uri, %{type: :message_received,
-        #         body: %{msg: msg}, source: Ezagent.Behavior.Chat}}`
-        # - legacy: `{:message_received, msg}` — kept for any existing
-        #         LV consumer that hasn't migrated yet.
-        # After V1 deprecation period, drop the legacy broadcast.
+        # Both the legacy raw `Phoenix.PubSub.broadcast` to
+        # `esr:user:<uri>:events` and the new `Ezagent.Notifications.notify/3`
+        # call were DELETED here. SPEC §2.4 / §3 PR-N3: the User-branch
+        # is just "append `msg` to the receive slice; return `{:ok,
+        # new_slice}`." `Ezagent.Kind.Runtime.handle_dispatch/4` detects
+        # `new_slice != old_slice` and `Kind.Server.commit_and_notify/3`
+        # routes the slice-change event through `Ezagent.SliceChange.emit/1`
+        # post-commit (PR-N1 wiring + PR-N3 hard-switch flip).
+        # AdminLive's PR-N2 subscription on
+        # `Ezagent.Notifications.subscribe_slice_change/1` picks it up.
+        #
+        # The slice mutation we make is the structural notification:
+        # `:last_received` records the message id + arrival timestamp.
+        # Always-mutating (DateTime.utc_now/0 differs across calls), so
+        # the auto-hook fires on every legitimate receive. The User's
+        # `:chat` slice is initialized to `%{}` (User Kind does NOT list
+        # Chat in `behaviors/0` — SPEC v2 §5.14 + chat.ex `init_slice/1`
+        # moduledoc), so `Map.put/3` is safe on a default-empty map.
+        new_slice =
+          Map.put(slice, :last_received, %{
+            message_id: msg.id,
+            at: DateTime.utc_now()
+          })
 
-        # Legacy broadcast (kept for transition window)
-        Phoenix.PubSub.broadcast(
-          EzagentCore.PubSub,
-          user_events_topic(ctx.self_uri),
-          {:message_received, msg}
-        )
-
-        # New unified path
-        :ok =
-          Ezagent.Notifications.notify(
-            ctx.self_uri,
-            %{
-              type: :message_received,
-              body: %{msg: msg},
-              source: __MODULE__
-            },
-            %{caps: :system}
-          )
-
-        {:ok, slice}
+        {:ok, new_slice}
 
       Ezagent.Entity.Agent ->
         # Phase 7 PR 32c: v1 prototype deleted; v2 CC channel

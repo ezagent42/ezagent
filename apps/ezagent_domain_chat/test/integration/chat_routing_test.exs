@@ -37,11 +37,17 @@ defmodule EzagentDomainChat.Integration.ChatRoutingTest do
   test "full send → broadcast → receive path through dispatch" do
     sender = User.admin_uri()
     session_uri = Session.default_uri()
-    msg = Message.new(sender, %{text: "integration-send #{System.unique_integer()}", attachments: []})
 
-    # Subscribe to user:events for admin (the :receive path broadcasts here)
-    user_topic = Chat.user_events_topic(sender)
-    :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, user_topic)
+    msg =
+      Message.new(sender, %{text: "integration-send #{System.unique_integer()}", attachments: []})
+
+    # PR-N3 (2026-05-25): the legacy `Chat.user_events_topic(sender)`
+    # subscription was removed here — the User-branch no longer
+    # broadcasts to `esr:user:<uri>:events`; it mutates the slice and
+    # the auto-hook publishes a `:slice_changed` event on
+    # `esr:entity:<uri>:slice_changed` (see
+    # `chat_receive_user_slice_change_test.exs`). This test asserts the
+    # session-stream + MessageStore path only.
 
     # Subscribe to session:events (the :send path broadcasts here)
     session_topic = Chat.session_events_topic(session_uri)
@@ -88,7 +94,9 @@ defmodule EzagentDomainChat.Integration.ChatRoutingTest do
     session_uri = Session.default_uri()
     {:ok, session_pid} = KindRegistry.lookup(session_uri)
 
-    transient_uri = URI.new!("entity://user/default/transient-down-#{System.unique_integer([:positive])}")
+    transient_uri =
+      URI.new!("entity://user/default/transient-down-#{System.unique_integer([:positive])}")
+
     {:ok, transient_pid} = GenServer.start(__MODULE__.NoopServer, transient_uri)
 
     # Join transient member to session
