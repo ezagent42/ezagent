@@ -124,6 +124,18 @@ defmodule Ezagent.Behavior.Template do
   @impl Ezagent.Behavior
   def actions, do: [:read, :write, :instantiate, :fork]
 
+  # PR-CC-2a (SPEC caps-cleanup-v1 §5.1) — per-action cap STRING.
+  # Template registers on AgentTemplate + SessionTemplate Kinds; the
+  # cap-string kind segment is `template` matching the URI scheme.
+  @impl Ezagent.Behavior
+  def required_caps,
+    do: %{
+      read: "template.template.read",
+      write: "template.template.write",
+      instantiate: "template.template.instantiate",
+      fork: "template.template.fork"
+    }
+
   @impl Ezagent.Behavior
   def cap_subjects do
     [

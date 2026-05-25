@@ -81,6 +81,23 @@ defmodule Ezagent.Behavior.Workspace do
     ]
   end
 
+  # PR-CC-2a (SPEC caps-cleanup-v1 §5.1) — per-action cap STRING.
+  # Workspace registers on Workspace Kind.
+  @impl Ezagent.Behavior
+  def required_caps,
+    do: %{
+      list_members: "workspace.workspace.list_members",
+      add_member: "workspace.workspace.add_member",
+      remove_member: "workspace.workspace.remove_member",
+      list_templates: "workspace.workspace.list_templates",
+      add_template: "workspace.workspace.add_template",
+      remove_template: "workspace.workspace.remove_template",
+      list_routing_rules: "workspace.workspace.list_routing_rules",
+      set_routing_rules: "workspace.workspace.set_routing_rules",
+      instantiate: "workspace.workspace.instantiate",
+      create_agent: "workspace.workspace.create_agent"
+    }
+
   @impl Ezagent.Behavior
   def state_slice, do: :workspace
 

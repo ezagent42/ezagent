@@ -61,6 +61,16 @@ defmodule Ezagent.Behavior.Identity do
     ]
   end
 
+  # PR-CC-2a (SPEC caps-cleanup-v1 §5.1) — per-action cap STRING.
+  # Identity registers on User + Agent Kinds; cap-string kind uses `*`
+  # so a single declaration covers both entity types.
+  @impl Ezagent.Behavior
+  def required_caps,
+    do: %{
+      list_caps: "*.identity.list_caps",
+      has_cap?: "*.identity.has_cap"
+    }
+
   # PR-OWN-3 SPEC #306 §3.3: data_owner for Identity is the
   # entity itself (Alice owns Alice's list_caps/has_cap?). Means
   # users get default `Behavior.Identity` cap on their own URI at
@@ -202,6 +212,15 @@ defmodule Ezagent.Behavior.IdentityAdmin do
       {:revoke_cap, "revoke a capability from this principal (admin)"}
     ]
   end
+
+  # PR-CC-2a (SPEC caps-cleanup-v1 §5.1) — per-action cap STRING.
+  # IdentityAdmin registers on User + Agent Kinds.
+  @impl Ezagent.Behavior
+  def required_caps,
+    do: %{
+      grant_cap: "*.identity_admin.grant_cap",
+      revoke_cap: "*.identity_admin.revoke_cap"
+    }
 
   # PR-OWN-3: data_owner = :no_owner. Privileged ops have no
   # per-instance owner; only bootstrap admin (via §5.2's

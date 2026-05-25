@@ -103,6 +103,12 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
     ]
   end
 
+  # PR-CC-2a (SPEC caps-cleanup-v1 §5.1) — per-action cap STRING.
+  # The Worker Kind is per-binding under `entity://external_mirror_worker/...`.
+  @impl Ezagent.Behavior
+  def required_caps,
+    do: %{publish: "session.external_mirror.publish"}
+
   @impl Ezagent.Behavior
   def init_slice(args) do
     # SPEC §8.3 r4 HIGH-1 fix: minimal slice. NO Publisher.subscribe_from
