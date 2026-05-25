@@ -715,6 +715,71 @@ defmodule Ezagent.Behavior.ChatTest do
                Chat.invoke(:join, slice, %{member: missing_uri}, ctx)
     end
 
+    test "notifies the joinee when member is a user URI (todo.md notification coverage)" do
+      # med-batch MED-3 — :join must emit a `:session_member_joined`
+      # notification to the joinee's inbox so a freshly-added member
+      # learns they were added to a session. Gated by user_uri?/1:
+      # only user URIs get notifications (agents have no inbox).
+      session_uri =
+        URI.new!("session://default/team-alpha/join-notify-#{System.unique_integer([:positive])}")
+
+      member_uri =
+        URI.new!("entity://user/team-alpha/notify-#{System.unique_integer([:positive])}")
+
+      :ok = Ezagent.Notifications.subscribe(member_uri, %{caps: :system})
+
+      {:ok, member_pid} = GenServer.start_link(__MODULE__.NoopServer, member_uri)
+
+      slice = Chat.init_slice(%{})
+      ctx = %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: member_uri}
+
+      assert {:ok, _slice, _result} = Chat.invoke(:join, slice, %{member: member_uri}, ctx)
+
+      assert_receive {:notification, ^member_uri,
+                      %{
+                        type: :session_member_joined,
+                        body: %{text: text, session_uri: ^session_uri},
+                        source: Ezagent.Behavior.Chat
+                      }},
+                     1_000
+
+      assert is_binary(text)
+
+      GenServer.stop(member_pid)
+    end
+
+    test "does NOT notify when member is an agent URI" do
+      # Agents have no inbox — the gate must filter them out, mirroring
+      # the `Workspace.add_member` precedent. Test by subscribing to the
+      # agent URI's inbox (works structurally) and asserting no msg
+      # arrives.
+      session_uri =
+        URI.new!("session://default/team-alpha/join-agent-#{System.unique_integer([:positive])}")
+
+      agent_uri =
+        URI.new!("entity://agent/team-alpha/cc_notify-#{System.unique_integer([:positive])}")
+
+      # Subscribe directly to the topic (agent URI Notifications.subscribe
+      # would reject because Notifications is user-only; bypass via
+      # raw PubSub to detect any stray broadcast).
+      :ok =
+        Phoenix.PubSub.subscribe(
+          EzagentCore.PubSub,
+          Ezagent.Notifications.topic(agent_uri)
+        )
+
+      {:ok, agent_pid} = GenServer.start_link(__MODULE__.NoopServer, agent_uri)
+
+      slice = Chat.init_slice(%{})
+      ctx = %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: agent_uri}
+
+      assert {:ok, _slice, _result} = Chat.invoke(:join, slice, %{member: agent_uri}, ctx)
+
+      refute_receive {:notification, ^agent_uri, _}, 200
+
+      GenServer.stop(agent_pid)
+    end
+
     test "replays missed messages on rejoin (last_seen populated)" do
       session_uri = URI.new!("session://default/team-alpha/replay-#{System.unique_integer([:positive])}")
       bind_to_default(session_uri)

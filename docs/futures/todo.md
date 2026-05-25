@@ -220,23 +220,58 @@ misnamed — chat uploads are user-scope, not admin-scope.
    in `router.ex` near the admin scope documenting the
    invariant + an explicit anti-regression note.
 
-### Notifications consumer coverage
+### ~~Notifications consumer coverage~~ — RESOLVED 2026-05-26 (med-batch)
 PR #300 wired AdminLive as the operator subscriber + added notify
 calls to `Workspace.add/remove_member` and `Identity.grant/revoke_cap`.
-Additional producers still silent:
-- `Chat.join` — should notify the joinee
-- `agent.terminate` — should notify spawning principal
-- `agent_template.fork` — should notify the fork-owner
+~~Additional producers still silent~~ — all 3 wired in med-batch:
+- ✅ `Chat.join` notifies joinee (`apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex` `invoke(:join, …)` — `:session_member_joined`)
+- ✅ `agent.terminate` notifies spawning principal via `AgentLineage.lookup/1` (`apps/ezagent_core/lib/ezagent/behavior/lifecycle.ex` `invoke(:terminate, …)` — `:agent_terminated`)
+- ✅ `agent_template.fork` notifies fork-owner (`apps/ezagent_domain_chat/lib/ezagent/behavior/template.ex` `fork_agent_template/3` — `:agent_template_forked`)
 
-Add to relevant Behavior `:action` clauses, gated by `user_uri?/1`.
+All gated by `user_uri?/1`. Tests added to `chat_test.exs`,
+`lifecycle_terminate_test.exs`, `template_fork_lineage_test.exs`.
 
-### PR5: `Agent.duplicate/clone` (cross-user agent copy)
-Per `feedback_agent_clone_not_via_template` — direct agent-to-agent
-copy via a new `Ezagent.Entity.Agent.clone/3` primitive (NOT through
-Template Registry). Reads source agent's `:sandbox.config_dir_path`,
-copies to a new agent-private location, reuses same `template_class`,
-spawns new Agent Kind. Cross-workspace caps via a separate cap-bridge
-mechanism (TBD).
+### ~~PR5: `Agent.duplicate/clone` (cross-user agent copy)~~ — RESOLVED 2026-05-26 (via PR #338)
+
+Per `feedback_agent_clone_not_via_template`: direct agent-to-agent
+copy. **Landed in PR #338 (`9120952`)** via `--from <source-uri>` arg
+on `Ezagent.Workspace.create_agent/3`. The clone primitive is
+`Behavior.Workspace.:create_agent` with `from:` arg:
+
+- **Source resolution** — `resolve_source_config_dir/2` in
+  `apps/ezagent_domain_workspace/lib/ezagent/behavior/workspace.ex:469`
+  dispatches `sandbox.read` against the source agent URI WITH THE
+  CALLER'S CAPS (standard CapBAC, no parallel auth path), returns
+  the source's `config_dir_path` from its `:sandbox` slice.
+
+- **Copy + spawn** — `do_create_agent("cc", …)` at
+  `apps/ezagent_domain_workspace/lib/ezagent/behavior/workspace.ex:526`
+  builds a cc Template with `claude_config_dir` = source's per-agent
+  dir; the cc Template Class's existing `create_agent_config_dir/2`
+  does the `File.cp_r/2` deep copy at spawn (Allen 2026-05-24 PR3).
+  Result: new agent has same `template_class` + own
+  config_dir path (deep-copy independent from source).
+
+- **CLI** — `mix ezagent.agent.create <uri> --from <source-uri>`
+  already wires through the action (no separate `mix esr agent
+  clone` subcommand; the operator surface uses
+  `mix ezagent.agent.create` with the source as a flag).
+
+- **Cross-workspace cap-bridge** — still deferred to v1.5. The
+  current path requires the caller to hold `sandbox.read` on source
+  AND `Behavior.Workspace.:create_agent` on destination workspace —
+  same-workspace works structurally; cross-workspace caps need the
+  bridge SPEC.
+
+**Architectural rationale for NOT adding `Ezagent.Entity.Agent.clone/3`:**
+Adding a parallel primitive on the Agent module would create dual
+SoT (P3 violation) — the action body already lives on
+`Behavior.Workspace.:create_agent` per Allen's 2026-05-25
+simplification (closes #332). `feedback_agent_clone_not_via_template`'s
+intent was "not via Template Registry" — Workspace IS the natural
+parent Kind (per the `:create_agent` precedent), not a Template
+Registry concern. Status documented per `feedback_dont_defer_what_is_solvable_now`:
+v1.5 cross-workspace cap-bridge tracked separately when it lands.
 
 ### Audit gaps from notification-log audit
 Still open after PR #300 + the batch fix that includes this todo:
@@ -278,15 +313,23 @@ the ExternalMirror PR sequence.
 
 ### Architecture audit follow-ups
 From `docs/notes/2026-05-24-architecture-audit-v1.md` (5 LOW):
-1. **DONE** (this PR) — `Capability.cross_workspace?/2` `apply/3` →
+1. **DONE** — `Capability.cross_workspace?/2` `apply/3` →
    `Workspace.Store` is documented in `feedback_let_it_crash_no_workarounds`-
    compliant style; layer_purity_test explicit allowlist update
    pending.
-2. **DONE** (this PR) — marketplace toggle deferred record (see top).
-3. **TBD** — `AgentExtensionsLive.authorized_to_toggle?/1` rebuilds
-   cap shape by hand; should call `Capability.cap_for_action/3`.
-4. **TBD** — workspace SoT (`list_visible` vs `list_persisted`) is
-   enforced by convention only; needs an invariant test (e.g. grep
-   that no operator LV calls `list_persisted/0`).
+2. **DONE** — marketplace toggle deferred record (see top).
+3. **DONE (med-batch 2026-05-26)** — `AgentExtensionsLive.authorized_to_toggle?/1`
+   uses `Capability.cap_for_action/3` (file:line
+   `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/agent_extensions_live.ex:265-279`).
+   Audit-time grep across operator scope finds zero remaining
+   `%Capability{kind:` hand-constructed structs (one `needed`-map
+   site in `session_external_mirror_live.ex:486` uses an
+   adapter-supplied `behavior_module`, not `BehaviorRegistry.lookup` —
+   different code shape, not a drift risk).
+4. **DONE (med-batch 2026-05-26)** — `workspace_sot_test.exs`
+   added at `apps/ezagent_core/test/invariants/workspace_sot_test.exs`.
+   Greps `apps/ezagent_plugin_liveview/lib` + `apps/ezagent_web/lib`
+   for `Workspace.list_persisted/0` / `Workspace.Store.list_all/0` —
+   fails with zero allowlist entries.
 5. **DONE** (PR-F #297) — `Registration.create_principal/3` "default"
    default arg removed.

@@ -119,6 +119,8 @@ defmodule Ezagent.Behavior.Template do
 
   @behaviour Ezagent.Behavior
 
+  require Logger
+
   alias Ezagent.Entity.{AgentTemplate, SessionTemplate}
 
   @impl Ezagent.Behavior
@@ -521,10 +523,67 @@ defmodule Ezagent.Behavior.Template do
       with {:ok, _pid} <- ensure_kind_alive(new_uri),
            {:ok, _result} <- dispatch_template_write(new_uri, content, ctx),
            :ok <- grant_agent_template_owner_cap(owner_uri, workspace_uri) do
+        notify_fork_owner(owner_uri, parent_uri, new_uri)
         {:ok, slice, %{template_uri: new_uri}}
       end
     end
   end
+
+  # Notifier/flash audit 2026-05-24 — todo.md "Notifications consumer
+  # coverage" — surface a successful AgentTemplate fork to the new
+  # template's owner. Gated by `user_uri?/1`: an agent-owned fork
+  # (orchestrator forking on behalf of itself) generates no
+  # notification. Wrapped so a notify failure never bubbles up past
+  # the action result — the fork itself already succeeded by this
+  # point and the owner-cap grant landed.
+  defp notify_fork_owner(%URI{} = owner_uri, %URI{} = parent_uri, %URI{} = new_uri) do
+    if user_uri?(owner_uri) do
+      try do
+        _ =
+          Ezagent.Notifications.notify(owner_uri, %{
+            type: :agent_template_forked,
+            body: %{
+              text:
+                "AgentTemplate forked: #{URI.to_string(parent_uri)} → " <>
+                  URI.to_string(new_uri),
+              parent_template_uri: parent_uri,
+              new_template_uri: new_uri
+            },
+            source: __MODULE__
+          })
+      rescue
+        error ->
+          # Codex r1 MED (med-batch 2026-05-26) — P27 server-side
+          # observability: rescue keeps fork success non-blocking
+          # (owner-cap already granted, new template already
+          # persisted) but the operator must be able to debug
+          # "user forked a template, never got notified".
+          Logger.warning(
+            "Ezagent.Behavior.Template: :agent_template_forked notify to " <>
+              "#{URI.to_string(owner_uri)} raised #{inspect(error)}; " <>
+              "fork #{URI.to_string(parent_uri)} → #{URI.to_string(new_uri)} proceeds"
+          )
+
+          :ok
+      catch
+        kind, reason ->
+          Logger.warning(
+            "Ezagent.Behavior.Template: :agent_template_forked notify to " <>
+              "#{URI.to_string(owner_uri)} threw #{inspect({kind, reason})}; " <>
+              "fork #{URI.to_string(parent_uri)} → #{URI.to_string(new_uri)} proceeds"
+          )
+
+          :ok
+      end
+    end
+
+    :ok
+  end
+
+  defp notify_fork_owner(_, _, _), do: :ok
+
+  defp user_uri?(%URI{scheme: "entity", host: "user"}), do: true
+  defp user_uri?(_), do: false
 
   # Shared shape helpers ---------------------------------------------------
 

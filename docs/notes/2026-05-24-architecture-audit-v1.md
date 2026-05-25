@@ -145,19 +145,19 @@ Files: `apps/ezagent_core/lib/ezagent/capability.ex` (`cross_workspace?/2` now O
 - **Where**: `apps/ezagent_plugin_cc/lib/ezagent/template/cc_agent.ex` (toggle-on branch) + `agent_extensions_live.ex` flash handling.
 - **Recommendation**: add to `docs/futures/todo.md` (per `project_durable_todo_list`) with a target ("PR-Marketplace-1: install-from-source for cc extensions"). Today the deferral is reasonable because no marketplace exists yet.
 
-### Finding 3 — LV `authorized_to_toggle?/1` re-implements cap construction
+### Finding 3 — LV `authorized_to_toggle?/1` re-implements cap construction — RESOLVED 2026-05-26 (med-batch)
 
 - **Severity**: LOW
-- **What**: `AgentExtensionsLive.authorized_to_toggle?/1` (PR3) builds the `needed` cap shape by hand instead of using `Ezagent.Capability.cap_for_action/3`. Two construction paths can drift.
-- **Where**: `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/agent_extensions_live.ex:228-243`.
-- **Recommendation**: replace the hand-constructed map with `Ezagent.Capability.cap_for_action(Ezagent.Entity.Agent, :write_path, agent_uri)`. Small refactor; eliminates drift risk.
+- **What**: `AgentExtensionsLive.authorized_to_toggle?/1` (PR3) built the `needed` cap shape by hand instead of using `Ezagent.Capability.cap_for_action/3`. Two construction paths could drift.
+- **Where**: `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/agent_extensions_live.ex:265-279`.
+- **Resolution (med-batch 2026-05-26):** the LV already delegates to `Ezagent.Capability.cap_for_action(Ezagent.Entity.Agent, :write_path, agent_uri)` (see `agent_extensions_live.ex:265-279`). Hand-rebuild eliminated in an interim PR; audit-time grep across `apps/ezagent_plugin_liveview/lib` + `apps/ezagent_web/lib` finds zero hand-built `%Capability{kind:` struct construction outside `behavior/identity.ex` (Pathology B scope, defined matching not construction) and `behavior/chat.ex:671` (pattern-match clause, not construction). One related site — `admin/session_external_mirror_live.ex:486` — hand-builds a needed-MAP (not a Capability struct) because its `behavior_module` comes from `adapter_module.cap_subject()`, not BehaviorRegistry; `cap_for_action/3` doesn't fit that signature. Acceptable — it's a different code shape, not a drift risk.
 
-### Finding 4 — Workspace listing SoT discipline
+### Finding 4 — Workspace listing SoT discipline — RESOLVED 2026-05-26 (med-batch)
 
 - **Severity**: LOW
-- **What**: PR #290 fixed the workspaces LV that leaked `system`. Other LVs that list workspaces could repeat the bug — currently the discipline is "use `list_visible/0`, never `list_persisted/0`" by convention.
+- **What**: PR #290 fixed the workspaces LV that leaked `system`. Other LVs that list workspaces could repeat the bug — discipline ("use `list_visible/0`, never `list_persisted/0`") was enforced by convention only.
 - **Where**: any future `Ezagent.Workspace.list_*/0` caller.
-- **Recommendation**: add an invariant test that greps for `Workspace.list_persisted` in LV / web code, asserts each call site has either an explicit exemption comment or is in admin-only scope. Same pattern as the Template Class extension contract test.
+- **Resolution (med-batch 2026-05-26):** added `apps/ezagent_core/test/invariants/workspace_sot_test.exs` — greps every `.ex` file under `apps/ezagent_plugin_liveview/lib` + `apps/ezagent_web/lib` for `Workspace.list_persisted/0` / `Workspace.Store.list_all/0` and fails with zero allowlist entries. Second test pins `Ezagent.Workspace.list_visible/0` as exported. Side-cleanup: removed the dead defensive cond/fallback in `apps/ezagent_web/lib/ezagent_web/live_auth.ex:286-307` that fell back to `list_persisted/0` if `list_visible/0` was unloadable — `list_visible/0` is always exported (the invariant test pins this).
 
 ### Finding 5 — `Registration.create_principal/3` default arg
 
