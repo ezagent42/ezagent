@@ -302,30 +302,27 @@ defp spawn_target_directly(target_uri, source_meta, target_ws_uri, target_owner_
            # §3.9 Provisioning is the ONE post-spawn ownership+caps step.
            :ok                     <- Ezagent.Agent.Provisioning.provision_agent(target_uri, target_owner_uri, %{caller: bootstrap_granter(), caps: bootstrap_admin_caps()}),
            :ok                     <- start_pty_or_no_pty(target_uri, source_meta, target_ws_uri) do
-        # codex r8 HIGH-2 fix — success path explicitly cleans the
-        # snapshot temp dir. Snapshot may contain copied credentials;
-        # leaving it on disk indefinitely is a leak. restore_or_noop's
-        # contract is "caller is responsible for rm'ing", so we do it
-        # here regardless of whether restore was :noop or {:ok, dir}.
-        _ = if snapshot.path, do: File.rm_rf(snapshot.path)
+        # codex r9 HIGH fix — return the result; cleanup is handled by
+        # the tap_clean_snapshot_or_log/2 pipe at the end of this
+        # branch (CHECKED, not best-effort — credential-bearing
+        # snapshot leaks now surface as {:error, {:snapshot_cleanup_failed, _, _}}).
         {:ok, %{agent_uri: target_uri}}
       else
         err -> rollback_partial_target(target_uri, snapshot.path, err)
       end
+      |> tap_clean_snapshot_or_log(snapshot.path)
 
     {:error, {:adopted_not_fresh, _}} = err ->
       # codex r8 CRITICAL — we did NOT create the target; clean only
       # our own snapshot temp dir and return error. Foreign target
       # untouched: Kind alive, slices intact, snapshot row preserved,
       # registries unmodified.
-      _ = if snapshot.path, do: File.rm_rf(snapshot.path)
-      err
+      clean_snapshot_checked(snapshot.path, err)
 
     {:error, _} = err ->
       # Other spawn-registry failures (e.g. supervisor refused) — we
       # didn't create anything. Clean only the snapshot temp dir.
-      _ = if snapshot.path, do: File.rm_rf(snapshot.path)
-      err
+      clean_snapshot_checked(snapshot.path, err)
   end
 end
 
@@ -334,6 +331,55 @@ end
 defp normalize_restore(:noop), do: {:ok, nil}            # plugin had no snapshot/restore
 defp normalize_restore({:ok, dir}), do: {:ok, dir}        # plugin restored
 defp normalize_restore({:error, _} = err), do: err
+
+# codex r9 HIGH fix — snapshot cleanup is CHECKED, not best-effort.
+# Snapshot temp dir may contain copied credentials (`.credentials.json`
+# from source cc agent); a silent leak is unacceptable.
+#
+# Three return shapes:
+# - input was `{:ok, result}` AND cleanup succeeded → `{:ok, result}` unchanged
+# - input was `{:ok, result}` AND cleanup FAILED → `{:error, {:snapshot_cleanup_failed,
+#   reason, original_result}}` (operator must see the leak)
+# - input was `{:error, _}` → preserve original error AND emit telemetry/log
+#   on cleanup failure (caller already has an error to return; layering a
+#   cleanup-failure error on top would mask the original cause)
+defp tap_clean_snapshot_or_log({:ok, _result} = ok, path) do
+  case File.rm_rf(path) do
+    {:ok, _} -> ok
+    {:error, reason, _} ->
+      {:error, {:snapshot_cleanup_failed, reason, ok}}
+  end
+end
+defp tap_clean_snapshot_or_log({:error, _} = err, path) do
+  # Original error wins; cleanup failure logged + telemetry
+  case File.rm_rf(path) do
+    {:ok, _} -> err
+    {:error, reason, _} ->
+      :telemetry.execute([:ezagent, :duplicate, :snapshot_leak],
+                         %{count: 1},
+                         %{path: path, reason: reason, original_error: err})
+      Logger.error("agent.duplicate: snapshot temp dir leaked at #{path}: " <>
+                     "#{inspect(reason)} (original error: #{inspect(err)})")
+      err
+  end
+end
+defp tap_clean_snapshot_or_log(other, _path), do: other
+
+# Direct cleanup for pre-spawn error branches (where we never built up
+# state and just need to clean + return).
+defp clean_snapshot_checked(nil, err), do: err
+defp clean_snapshot_checked(path, err) do
+  case File.rm_rf(path) do
+    {:ok, _} -> err
+    {:error, reason, _} ->
+      :telemetry.execute([:ezagent, :duplicate, :snapshot_leak],
+                         %{count: 1},
+                         %{path: path, reason: reason, original_error: err})
+      Logger.error("agent.duplicate: snapshot temp dir leaked at #{path} (pre-spawn err): " <>
+                     "#{inspect(reason)} (original error: #{inspect(err)})")
+      err
+  end
+end
 ```
 
 The `Provisioning.provision_agent/3` call replaces what rev-2 / earlier drafts called `grant_initial_caps_for_owner/2` — there is NO separate cap-grant step anymore. §3.9 owns it. Any text in older revisions of this SPEC referring to a separate "Kind.Server post-spawn auto-synthesis" pathway is OBSOLETE (codex r3 grep confirmed that pathway does not exist in current code; rev 4 made the provisioning explicit; rev 5 ensures the spawn snippet calls it).
@@ -1023,6 +1069,8 @@ The bar:
 18. **Lineage vs ownership divergence (codex r7 HIGH-1)** — target-ws admin (caller `admin@ws_b`) clones a source agent into ws_b owned by a DIFFERENT user `alice@ws_b` (i.e. `target_owner_uri = alice@ws_b`, caller = `admin@ws_b`). Verify after spawn: `AgentLineage.lookup(target_uri) == admin@ws_b` (the spawner) AND `AgentOwnership.lookup(target_uri) == alice@ws_b` (the owner). Asserts the two registries are not conflated; `{:spawned_by, admin@ws_b}` cap shape resolves correctly to the target agent.
 19. **TOCTOU adoption-refused preserves foreign target (codex r8 CRITICAL)** — between snapshot and spawn, a concurrent process creates an agent at `target_uri`. Duplicate's `spawn_atomic_fresh/1` returns `{:adopted_not_fresh, _}`. Verify after the error returns: foreign target Kind STILL ALIVE; `Kind.Snapshot.get(target_uri)` STILL has its row; `Sandbox` slice unchanged; `WorkspaceRegistry` binding unchanged; `AgentLineage` / `AgentOwnership` rows unchanged. Only the duplicate's snapshot temp dir is cleaned. This asserts the rev 6.9 control-flow fix — adoption refusal does NOT route through destructive rollback.
 20. **Success-path snapshot cleanup (codex r8 HIGH-2)** — after a successful clone, assert `File.exists?(snapshot.path) == false`. Snapshot copies may contain credential material; leaving them on disk indefinitely is a leak.
+    - **20a (codex r9 HIGH-1):** inject a `File.rm_rf/1` failure (e.g. by chmod-ing the snapshot temp dir read-only before cleanup runs) on the SUCCESS path; verify the clone result is `{:error, {:snapshot_cleanup_failed, _reason, _original_ok}}` (NOT a silent `{:ok, _}`). Verify telemetry event `[:ezagent, :duplicate, :snapshot_leak]` was emitted with `path` + `reason` + `original_error` metadata. Asserts checked-cleanup contract.
+    - **20b:** inject `File.rm_rf/1` failure on the PRE-SPAWN error path (snapshot succeeded, `spawn_atomic_fresh` returned `{:adopted_not_fresh, _}`, cleanup fails); verify the returned error is the ORIGINAL spawn error (not layered with cleanup error) AND the telemetry event was emitted with the original_error context. Asserts the original-error-wins + log+telemetry contract.
 
 ---
 
