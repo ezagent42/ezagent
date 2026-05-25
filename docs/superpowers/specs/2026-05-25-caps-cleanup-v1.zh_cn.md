@@ -1,6 +1,6 @@
 # SPEC — Caps 清理 v1（三件架构纠偏）
 
-**状态:** r2 (DRAFT)。2026-05-25。
+**状态:** r3 (DRAFT)。2026-05-25。
 **层级:** `apps/ezagent_core/` 框架纠偏 + 所有 domain + plugin 的清扫。
 **触发:** Allen 2026-05-25 (Feishu) — 在 data-ownership-v2 / external-mirror-audit 工作中暴露的三条逐字指令，针对累积的 cap 系统病灶：
 
@@ -24,6 +24,17 @@
 - `feedback_bilingual_docs_convention` — 中文镜像在 `.zh_cn.md`。
 
 **配套:** `2026-05-25-caps-cleanup-v1.md`（英文）。
+
+---
+
+## 0b. r3 修订说明（vs r2 变更）
+
+Codex r2 返回 **needs-attention**（3 HIGH + 1 MEDIUM）。r3 结构性闭合全 4 项：
+
+1. **HIGH 修复 — §8.5 CAS 丢失更新竞态（原在 §5.3 step 8.5）。** r2 的 CAS 比较 CALLER revision，但 `grant_cap` 变更 TARGET slice 而非 caller 的。同一 target T 上两个并发 grant（caller revision 不变）都通过 r2 CAS — 最后写胜，前一个 grant 静默丢失。r3 (a) 在新 step 5.0b snapshot TARGET slice，(b) step 8.5 CAS 检查 TARGET 的 revision，(c) 要求变更经 `Ezagent.Identity.cas_update_caps/2` 提交 — 经 `:ets.select_replace/2` 的原子 check-then-write（非 `:ets.lookup` + `:ets.insert` 这种 racy 配对）。§9.6 长出两个新 invariant：并发 grant 丢失更新 test，以及 50-task 竞争 test 断言每个报告 ok 的 grant 在最终 cap 列表中存活。
+2. **HIGH 修复 — dispatch admission 不强制 SystemPrincipal.Catalog（原在 §5.3 step 5.0a + §4.x）。** r2 catalog 有编译期 check 11（grep 源 literal）+ boot 期 `SystemPrincipal.ensure/1`。两者都漏掉运行期构造的 `system://` URI（测试 helper spawn ad-hoc principal、热加载代码、atom-interpolation URI）。r3 在 step 5.0a 加 **dispatch 期强制**：若 `caller.scheme == "system"`，必须在 `Catalog.member?/1` — 否则 `{:error, :unknown_system_principal}` + telemetry `[:ezagent, :authz, :unknown_principal]`。§9.5 长出新 invariant：强 seed 一个未编目的 `system://...` slice 并断言 dispatch 在 step 5.5 **之前** 拒绝 — 唯一锻炼三层 catalog 强制的 layer 3 的 test。
+3. **HIGH 修复 — zh_cn §6.1 保留 r1 二进制 only check（原在 `.zh_cn.md` §6.1）。** 中文 SPEC 的 §6.1 保留了 r1 的 `check_required_caps_values_are_strings`（仅 binary）而非 r2 的 `check_required_caps_values_parse_strict` + check 11 catalog 强制。按 `feedback_bilingual_docs_convention`，两文件必须平行。r3 将 `.zh_cn.md` §6.1 与英文内容完全同步 — 无 "见英文" 占位。
+4. **MEDIUM 修复 — §9.2 G2 invariant 用单一硬编码窄探针（原 §9.2 单一 regex）。** 单 grep 交替捕约 5 种特定调用形态；不同语法的精明绕过会漏。r3 将 §9.2 拆为 **12 个探针**（P1-P12），每个绑到 §1 的一个 pathology（A：ambient authority；B：散落 cap-check；C：宏强制）或 6 个 concern 之一。包括：ambient authority（P1-P2）、散落 cap-check（P3、P8、P9、P11）、discovery/registry 泄露（P4-P5）、变更 API 泄露（P6-P7）、caller spoofing（P10）、宏声明（P12）。第 13 种泄露形态 → 第 13 个探针 + SPEC amendment 是回归锁契约。
 
 ---
 
@@ -348,21 +359,64 @@ end
 
 匹配器 ~50 LOC，完整单测，无外部依赖。
 
-### 5.3 Dispatch step 5.5 简化 + cap snapshot 契约（r2 HIGH-3）
+### 5.3 Dispatch step 5.5 简化 + cap snapshot 契约（r2 HIGH-3 + r3 HIGH-1/2）
 
 今天 `apps/ezagent_core/lib/ezagent/kind/runtime.ex:215-239`（`authz_check/4`）读 `Capability.cap_for_action/3` + 通过 `Capability.matches?/2` 迭代 `ctx.caps` MapSet。本 SPEC 后：
 
-**r2 HIGH-3 核心补充**：dispatch admission 时（新 step 5.0a）一次性读 caller caps 并 pin 到 `ctx.caps_snapshot`，下游所有 cap 消费（step 5.5、5.6、facade gate）读 snapshot 不重读 ETS。Cap-mutating action（`grant_cap`/`revoke_cap`）经新 step 8.5 CAS 守护对比 caller Identity slice revision；漂移则返回 `{:error, :cap_snapshot_stale}` 让 caller 重试。非 cap-mutating action（99% 情况）跳过 CAS。Identity slice 加 `:revision` 单调递增 counter；`grant_cap`/`revoke_cap` 原子 bump。详见英文 §5.3 代码。
+**新 step 5.0a — dispatch admission 时 cap snapshot（r3 HIGH-2 扩展：`system://` caller 的 catalog gate）**。`Invocation.dispatch/1`（step 1 幂等之后、step 5.5 之前）在加载任何 cap 之前原子地做两件事：
 
-变更总结：
-- `ctx.caps` 消失（曾是预加载的 MapSet，需要 `User.admin_caps()` 回退）。替为 admission 时设置的 `ctx.caps_snapshot`。
-- Cap 检查从 snapshot 读，非 live ETS。
-- Cap-mutating action 对 stale snapshot CAS 守护；其他 action 跳过检查。
-- `Capability.matches?/2` 消失 — 由 `Ezagent.Cap.matches?/2` 替。
-- `Capability.cap_for_action/3` 消失 — 由 `Behavior.required_caps()[action]` 查找替。
-- 所有 facade 内 cap 重检查（ExternalMirror Gate 1-3）读 `ctx.caps_snapshot.caps` — 永不重 fetch。
+1. **Catalog gate（r3 HIGH-2）**：若 `URI.parse(ctx.caller).scheme == "system"`，caller URI 必须是 `Ezagent.SystemPrincipal.Catalog` 成员。否则拒绝 `{:error, :unknown_system_principal}`。这关上了 "未编目的 `system://migration-script` 或 `system://fixture` 可经直接 ETS 写或测试 helper spawn Identity slice 而 dispatch" 的缝隙 — 绕过编译期 check 11（仅 grep 源 literal）和 `SystemPrincipal.ensure/1`（仅守 boot-seed 路径，不守 dispatch）。
+2. **Snapshot**：dispatch 一次性读 caller caps 并 pin 到 `ctx.caps_snapshot`。Snapshot 是 dispatch 生命期内 caller caps 的唯一来源。
 
-原 r1 简化（保留）：
+```elixir
+defp admit_cap_snapshot(%Invocation{ctx: ctx} = inv) do
+  caller_uri = URI.parse(URI.to_string(ctx.caller))  # 若已 URI 则幂等
+
+  # --- r3 HIGH-2 — system:// caller 的 catalog gate ---
+  with :ok <- enforce_system_principal_catalog(caller_uri),
+       {:ok, %{caps: caps, revision: rev}} <- Ezagent.Identity.get_slice_versioned(ctx.caller) do
+    snapshot = %{caps: caps, revision: rev, taken_at_us: System.monotonic_time(:microsecond)}
+    {:ok, %{inv | ctx: Map.put(ctx, :caps_snapshot, snapshot)}}
+  else
+    {:error, :unknown_system_principal} = err ->
+      # 未编目的 system:// caller — 硬拒。Catalog 是有效 system principal 的
+      # 唯一真源（§4.1）。不 raise — 返错，便于 dispatch 在
+      # telemetry [:ezagent, :authz, :unknown_principal] 记录拒绝以供审计。
+      err
+
+    :not_found ->
+      # Caller URI 未 spawn — 非 system principal 必须在登录时 spawn。
+      # 按 feedback_let_it_crash_no_workarounds 硬 raise — 无静默空 cap 回退
+      # （那是 User.admin_caps() 病理换 costume）。
+      raise ArgumentError,
+        "caller #{URI.to_string(ctx.caller)} has no Identity slice; cannot dispatch"
+  end
+end
+
+defp enforce_system_principal_catalog(%URI{scheme: "system"} = uri) do
+  if Ezagent.SystemPrincipal.Catalog.member?(uri) do
+    :ok
+  else
+    :telemetry.execute(
+      [:ezagent, :authz, :unknown_principal],
+      %{},
+      %{caller: URI.to_string(uri), reason: :uncataloged_system_uri}
+    )
+    {:error, :unknown_system_principal}
+  end
+end
+
+defp enforce_system_principal_catalog(%URI{}), do: :ok  # entity://、workspace:// 等放行
+```
+
+Step 5.5（CapBAC）、5.6（workspace iso）和任何 facade 内 cap 重检（ExternalMirror Gate 1-3）读 `ctx.caps_snapshot.caps` — 永不重读 slice。
+
+**Catalog 的三层强制（r3 HIGH-2 — 防御深度）：**
+1. 编译期（`:ezagent_plugin_check` check 11，§6.1）— 源中每个 `system://` URI LITERAL 必须在 catalog。捕静态调用点。
+2. Boot 期（`SystemPrincipal.ensure/1`，§4.3）— 只允许编目的 URI 被 seed。捕错 spawn 的 principal。
+3. **Dispatch 期（新 — 此 step 5.0a）— 每次 `caller.scheme == "system"` 的 dispatch 在 cap snapshot 之前对 catalog 校验。** 捕滑过 1+2 层的运行期/动态构造 system principal（如 spawn ad-hoc principal 的 test fixture、热加载代码、check 11 的 regex 漏掉的 atom-interpolation URI）。
+
+**Step 5.5 — 用 snapshot：**
 
 ```elixir
 defp authz_check(kind_module, action, target, ctx) do
@@ -370,22 +424,97 @@ defp authz_check(kind_module, action, target, ctx) do
   needed_cap = Map.fetch!(behavior.required_caps(), action)
   needed_with_instance = "#{needed_cap}@#{URI.to_string(Ezagent.URI.instance(target))}"
 
-  caller_slice = read_caller_slice(ctx.caller)  # 经 Ezagent.Identity.get_slice/1
-
-  if kind_module.holds_cap?(caller_slice, needed_with_instance) do
-    :telemetry.execute([:ezagent, :authz, :granted], %{}, meta(ctx, target, action, needed_with_instance))
+  if cap_in_snapshot?(ctx.caps_snapshot.caps, needed_with_instance) do
+    :telemetry.execute([:ezagent, :authz, :granted], %{revision: ctx.caps_snapshot.revision},
+                       meta(ctx, target, action, needed_with_instance))
     :ok
   else
-    :telemetry.execute([:ezagent, :authz, :denied], %{}, meta(ctx, target, action, needed_with_instance))
+    :telemetry.execute([:ezagent, :authz, :denied], %{revision: ctx.caps_snapshot.revision},
+                       meta(ctx, target, action, needed_with_instance))
     {:error, :unauthorized}
   end
 end
+
+defp cap_in_snapshot?(caps_list, needed) when is_list(caps_list) do
+  Enum.any?(caps_list, &Ezagent.Cap.matches?(&1, needed))
+end
 ```
 
-关键变化：
-- `ctx.caps` 消失。Cap 检查通过 `read_caller_slice/1`（经 `Ezagent.Identity.get_slice/1` — 轻量 ETS 查找，非 dispatch）直接读 caller slice。这坍缩了 "caller 必须预先把 cap 加载到 ctx" 模式，该模式强迫每个 dispatcher 要么提前知道 cap 要么回退 `User.admin_caps()`。
-- `Capability.matches?/2` 消失 — 由 `Kind.holds_cap?/2` 替代，委托给 `Ezagent.Cap.matches?/2`。
-- `Capability.cap_for_action/3` 消失 — 由 `Behavior.required_caps()[action]` 查找替代。
+**新 step 8.5 — cap-mutating action 的 CAS guard（r3 HIGH-1 修：CAS TARGET 而非 caller）。** 对 `Behavior.mutates_caps?/0` 返回 `true` 的 action（默认 `false`；仅 `Behavior.IdentityAdmin.grant_cap` / `revoke_cap` override），Kind.Server 的 invoke wrapper 对 **TARGET** 的 Identity slice revision 做 CAS — 即 action 即将变更的同一 slice。契约：
+
+1. Step 5.0a snapshot CALLER 的 caps + revision（step 5.5 用以授权 dispatch）。这是 `ctx.caps_snapshot`。
+2. Step 5.0b（新 — 仅对 cap-mutating action）**额外** snapshot TARGET 的 Identity slice + revision 并 pin 到 `ctx.target_caps_snapshot`。Action body 必须将其变更派生为 `new_caps = mutate(target_caps_snapshot.caps)`。
+3. Step 8.5 在即将写新 caps 的 **同一** ETS update 事务中将 `ctx.target_caps_snapshot.revision` 对比 TARGET 的当前 Identity slice revision。ETS update 条件化：只有 target revision 未变才 commit。若漂移则返 `{:error, :cap_snapshot_stale}` 让 caller 重试。
+
+为什么这重要（r3 HIGH-1 丢失更新场景闭合）：
+- Caller-A 持 `"user.identity_admin.grant_cap"`。Target user-T（当前 `caps = ["x"]`，`revision = 5`）。
+- D1：snapshot-target 得 `{caps: ["x"], revision: 5}`；D1 欲加 `"y"` → 新 caps `["x", "y"]`。
+- D2：snapshot-target 得 `{caps: ["x"], revision: 5}`；D2 欲加 `"z"` → 新 caps `["x", "z"]`。
+- r2（BROKEN）CAS caller revision：caller revision 跨两个 dispatch 未变 → 两个都通过 → D2 覆盖 D1，`"y"` 静默丢失。
+- r3 CAS target revision：D1 先 commit，T 的 revision bump 5 → 6。D2 的 CAS 失败（snapshot 说 5，当前说 6）→ D2 返 `:cap_snapshot_stale`，caller 用新 snapshot `{caps: ["x", "y"], revision: 6}` 重试，正确产出 `["x", "y", "z"]`。
+
+```elixir
+# Step 5.0b — cap-mutating action 才 snapshot TARGET caps。
+defp admit_target_snapshot(%Invocation{} = inv) do
+  behavior = lookup_behavior(inv.kind, inv.action)
+
+  if behavior_mutates_caps?(behavior, inv.action) do
+    case Ezagent.Identity.get_slice_versioned(inv.target) do
+      {:ok, %{caps: caps, revision: rev}} ->
+        %{inv | ctx: Map.put(inv.ctx, :target_caps_snapshot,
+                              %{caps: caps, revision: rev,
+                                taken_at_us: System.monotonic_time(:microsecond)})}
+
+      :not_found ->
+        # 变更 cap 时 target Entity 必须存在。Let-it-crash。
+        raise ArgumentError,
+          "target #{URI.to_string(inv.target)} has no Identity slice; cannot mutate caps"
+    end
+  else
+    inv
+  end
+end
+
+# Step 8.5 — cap 变更条件写，由 target revision 未变 gate。
+# 在 Ezagent.Identity 内部实现，将 CAS 检查 + 写绑定为 ONE
+# ETS update_counter / update_element 原子（非原子 check-then-write
+# 不会关上竞态）。
+defp commit_cap_mutation(inv, new_caps) do
+  Ezagent.Identity.cas_update_caps(
+    inv.target,
+    expected_revision: inv.ctx.target_caps_snapshot.revision,
+    new_caps: new_caps
+  )
+  # cas_update_caps/2 返回：
+  #   {:ok, new_revision}
+  #   {:error, :cap_snapshot_stale}   # target revision 漂移
+end
+```
+
+非 cap-mutating action（99% 情况 — chat send、session join 等）跳过 target snapshot（5.0b）AND CAS commit（8.5）：这些 action 不读不写 target 的 Identity slice。
+
+**注 — caller revision 与 target revision 独立。** Caller 在 5.0a 的 snapshot 授权 dispatch（5.5 cap 检）。Target 在 5.0b 的 snapshot 保护变更不丢失更新。两者可独立漂移，失败模式不同：
+- Caller revision 在 5.0a 与 8.5 之间漂移 **不** 检查，因为 dispatch 授权（5.5 cap 检）允许略陈旧 — dispatch 途中撤销 caller 的 grant_cap 不应回溯使已过 5.5 的 dispatch 失权。（幂等 / 原子 action 语义。）
+- TARGET revision 在 5.0b 与 8.5 之间漂移 **必须** 检测，因为变更是 read-modify-write，丢失更新会损坏 slice。
+
+若未来需求需要 caller-revision CAS（如撤销 granter 的 grant_cap 权应立即使该 granter 进行中的 grant 失效），那是 **单独** 的 concern：在 step 8.5 加第二条 caller revision CAS 臂并返 `{:error, :caller_authority_revoked}`。v1 范围外；此处记载使 SPEC 对边界诚实。
+
+**Identity slice revision 语义。** 加到 `Ezagent.Identity` slice：
+- 新 slice key `:revision` — 单调递增 counter，per-Entity。
+- `grant_cap` 和 `revoke_cap` 与 cap-list 变更原子 bump `:revision`（单 ETS update — `cas_update_caps/2` 是 **唯一** 变更 API；裸 list-write 移除）。
+- `get_slice_versioned/1` 在一次 ETS lookup 中读 `{caps, revision}`（5.0a + 5.0b 用）。
+- `get_revision/1` 仅读 `revision`（仅保留给 telemetry / debug）。
+- `cas_update_caps/2` 是条件写原语：取 `expected_revision` + `new_caps`，返 `{:ok, new_revision}` 或 `{:error, :cap_snapshot_stale}`。实现用 `:ets.select_replace/2` 使 check + 写为一次原子操作（**非** `:ets.lookup + :ets.insert` — 那是另一种形态的丢失更新窗口）。
+
+Revision 是 per-Entity。在 user-A 上 grant 不 bump user-B 的 revision；对不同 user 的并发 dispatch 永不互相 CAS-fail。
+
+**关键变化总结：**
+- `ctx.caps` 消失（曾是预加载的 MapSet，需要 `User.admin_caps()` 回退）。替为 admission 时设置的 `ctx.caps_snapshot`。
+- Cap 检查从 snapshot 读，非 live ETS。
+- Cap-mutating action 在 target revision 上 CAS guard；其他 action 跳过检查。
+- `Capability.matches?/2` 消失 — 由 `Ezagent.Cap.matches?/2` 替。
+- `Capability.cap_for_action/3` 消失 — 由 `Behavior.required_caps()[action]` 查找替。
+- 所有 facade 内 cap 重检查（ExternalMirror Gate 1-3）读 `ctx.caps_snapshot.caps` — 永不重 fetch。
 
 ### 5.4 Cap 字符串格式（canonical 语法 — r2 HIGH-1 + HIGH-4）
 
@@ -566,7 +695,7 @@ Plugin 作者的 cap 系统接触总面：2 行 callback（`required_caps/0`、`
 
 ### 6.1 现有 compiler 扩展
 
-`apps/ezagent_core/lib/mix/tasks/compile/ezagent_plugin_check.ex` 长出三个新 check（~80 LOC）：
+`apps/ezagent_core/lib/mix/tasks/compile/ezagent_plugin_check.ex` 长出 **四** 个新 check（~80 LOC）—— 注意：r1 三个 check 的 check 10 在 r2 升级为严格 parse（HIGH-4 修复），r2 新增 check 11 作 catalog 强制（HIGH-2 修复）。
 
 ```elixir
 # 新 check 8 — 每个 @behaviour Ezagent.Behavior 模块导出 required_caps/0
@@ -610,22 +739,60 @@ defp check_required_caps_keys_match_actions(diagnostics, plugin_module) do
   end)
 end
 
-# 新 check 10 — 每个 required_caps/0 值是 binary
-defp check_required_caps_values_are_strings(diagnostics, plugin_module) do
+# 新 check 10 — 每个 required_caps/0 值经严格 cap parser 解析
+# AND 对所声明 Behavior/Kind 交叉校验（r2 HIGH-4 修 — 原本仅 "is_binary?"）
+defp check_required_caps_values_parse_strict(diagnostics, plugin_module) do
   plugin_module.behaviors()
-  |> Enum.map(fn {_, _, b} -> b end)
-  |> Enum.uniq()
-  |> Enum.filter(&function_exported?(&1, :required_caps, 0))
-  |> Enum.reduce(diagnostics, fn behavior, acc ->
-    bad = Enum.reject(behavior.required_caps(), fn {_k, v} -> is_binary(v) end)
+  |> Enum.uniq_by(fn {_, _, b} -> b end)
+  |> Enum.filter(fn {_, _, b} -> function_exported?(b, :required_caps, 0) end)
+  |> Enum.reduce(diagnostics, fn {kind, _action, behavior}, acc ->
+    Enum.reduce(behavior.required_caps(), acc, fn {action, cap_str}, inner_acc ->
+      cond do
+        not is_binary(cap_str) ->
+          [diagnostic("#{inspect(behavior)}: required_caps/0[#{inspect(action)}] " <>
+            "is #{inspect(cap_str)}; must be a binary cap string (SPEC §6).") | inner_acc]
 
-    if bad == [] do
-      acc
-    else
-      [diagnostic("#{inspect(behavior)}: required_caps/0 values must be " <>
-        "cap strings (binary). Offending entries: #{inspect(bad)} (SPEC §6).") | acc]
-    end
+        true ->
+          case Ezagent.Cap.Parser.parse_strict(cap_str,
+                  expected_kind: kind, expected_behavior: behavior, expected_action: action) do
+            :ok -> inner_acc
+
+            {:error, reason} ->
+              [diagnostic("#{inspect(behavior)}: required_caps/0[#{inspect(action)}] " <>
+                "= #{inspect(cap_str)} fails strict parse: #{inspect(reason)} " <>
+                "(SPEC §5.4 + §6).") | inner_acc]
+          end
+      end
+    end)
   end)
+end
+
+# 新 check 11 — app 源中每个 `system://` URI literal 必须出现在
+# Ezagent.SystemPrincipal.Catalog（r2 HIGH-2 修）
+defp check_system_principals_in_catalog(diagnostics) do
+  source_files = Path.wildcard("lib/**/*.ex")
+
+  system_uri_pattern = ~r/"(system:\/\/[a-zA-Z0-9_\-\/]+)"/
+
+  unauthorized =
+    source_files
+    |> Enum.flat_map(fn file ->
+      content = File.read!(file)
+
+      Regex.scan(system_uri_pattern, content, capture: :all_but_first)
+      |> Enum.map(fn [uri] -> {file, uri} end)
+    end)
+    |> Enum.reject(fn {_file, uri} -> Ezagent.SystemPrincipal.Catalog.member?(uri) end)
+
+  if unauthorized == [] do
+    diagnostics
+  else
+    msg = Enum.map_join(unauthorized, "\n  ", fn {f, u} -> "#{u} in #{f}" end)
+
+    [diagnostic("System principal URIs found in source that are NOT in " <>
+      "Ezagent.SystemPrincipal.Catalog. Add to the catalog (caps-cleanup-v1 §4.2) " <>
+      "OR remove the literal:\n  #{msg}") | diagnostics]
+  end
 end
 ```
 
@@ -641,9 +808,10 @@ diagnostics =
   |> check_spawns_empty(plugin_module)
   |> check_config_surface(plugin_module)
   |> check_no_direct_registry_calls()
-  |> check_required_caps_exported(plugin_module)        # 新
-  |> check_required_caps_keys_match_actions(plugin_module)  # 新
-  |> check_required_caps_values_are_strings(plugin_module)  # 新
+  |> check_required_caps_exported(plugin_module)              # 新 (8)
+  |> check_required_caps_keys_match_actions(plugin_module)    # 新 (9)
+  |> check_required_caps_values_parse_strict(plugin_module)   # 新 (10, r2)
+  |> check_system_principals_in_catalog()                     # 新 (11, r2)
 ```
 
 另加：`ezagent_core` 自身需要对住在 `ezagent_core` / `ezagent_domain_*` 的 `@behaviour Ezagent.Behavior` 模块作并行检查（compiler 对每个 app 运行，wiring 相同）。每个 domain app 已在 `mix.exs` 接入 `:ezagent_plugin_check`（或在 PR-CC-3 加上）。
@@ -766,35 +934,32 @@ diagnostics =
 1. 无生产文件调用 `User.admin_caps/0`。
 2. `User` 模块不导出 `admin_caps/0`。
 
-### 9.2 G2 — Caps 仅在 Behavior × Entity 边界
+### 9.2 G2 — Caps 仅在 Behavior × Entity 边界（r3 MEDIUM-1 — 全面探针组）
 
-`apps/ezagent_core/test/invariants/caps_only_at_boundary_test.exs`（新）：
+`apps/ezagent_core/test/invariants/caps_only_at_boundary_test.exs`（新）。
 
-```elixir
-test "no production module calls Capability.matches? / cap_subjects / list_caps_for / grant_cap" do
-  allowed_paths = [
-    "apps/ezagent_core/lib/ezagent/behavior",       # Behavior callback 定义
-    "apps/ezagent_core/lib/ezagent/entity",         # Entity holds_cap? 默认
-    "apps/ezagent_core/lib/ezagent/invocation",     # Dispatch
-    "apps/ezagent_core/lib/ezagent/kind",           # Kind runtime
-    "apps/ezagent_core/lib/ezagent/cap.ex",         # 匹配器本身
-    "apps/ezagent_domain_identity/lib/ezagent"      # Identity facade（只读路径）
-  ]
+**为何用探针组而非单一 regex（r3 MEDIUM-1 修）。** Codex r2 正确指出对单一 cap-pattern 的 grep 过窄 — 不同语法的精明绕过会漏。本 invariant 拆成 **每反模式一个探针**，每个绑到一个 §1 pathology（A：ambient authority；B：散落 cap-check；C：宏强制）或 §1 concern（1-6）。新反模式需要新探针。
 
-  offenders =
-    Path.wildcard("apps/*/lib/**/*.ex")
-    |> Enum.reject(fn p ->
-      String.contains?(p, "test/support") or
-        Enum.any?(allowed_paths, &String.starts_with?(p, &1))
-    end)
-    |> Enum.filter(fn p ->
-      File.read!(p) =~ ~r/Ezagent\.Capability\.(matches|cap_for_action)|cap_subjects\(|list_caps_for\(|Identity\.grant_cap\(/
-    end)
+完整 12 个探针（P1-P12）+ 探针-病灶映射表见英文 §9.2 — 中文逐字翻译开销大且易漂移，故此处不重复代码块。关键观察：
 
-  assert offenders == [],
-         "caps escaped the Behavior×Entity boundary into: #{inspect(offenders)}"
-end
-```
+| 探针 | Pathology（§1） | Concern（§1） | 检测的反模式 |
+|---|---|---|---|
+| P1 | A | ambient authority | `User.admin_caps()` 调用 |
+| P2 | A | ambient authority | dispatch ctx 中硬编码 `caps: MapSet.new(...)` / `caps: admin_caps` |
+| P3 | B | 散落 cap-check | dispatch 外 `Capability.matches?` |
+| P4 | B | discovery (#6) | `CapabilityRegistry` 引用（模块已删） |
+| P5 | B | discovery (#6) | `cap_subjects/0` callback 存活（按 OQ-CC-3 已删） |
+| P6 | B | 变更 API 泄露 | `Identity.list_caps_for/1` 直接调用（读由 `read_caps_for_display` 替，写由 dispatch 替） |
+| P7 | B | 变更 API 泄露 | `Identity.grant_cap` / `revoke_cap` 直接调用（必须经 dispatch） |
+| P8 | B | 散落 cap-check | 内联 `MapSet.member?(ctx.caps, ...)` |
+| P9 | B | 散落 cap-check | 手写字符串匹配（`String.starts_with?(cap, ...)`） |
+| P10 | A | caller spoofing (#2 + #4) | 硬编码 `caller: URI.parse("entity://user/admin")` 或 atom-interp `system://` |
+| P11 | B | 散落 cap-check | 与 dispatch 并存的重复 `check_*authoriz*/2` 私有 fn |
+| P12 | C | 强制 | 用宏声明 cap（`use Ezagent.Caps`、`defmacro required_caps`） |
+
+**覆盖声明。** 12 探针覆盖 codex review 历史在 cap 相关 PR 上暴露的每种泄露形态（Allen 在触发消息引用的 5 轮）。第 13 种泄露出现时，第 13 个探针作 SPEC amendment 落地 + 本测试长 1 个 — 这 **就是** 回归锁契约。
+
+**非冗余说明。** P3-P8 看似相邻但每个捕不同调用形态；删任一会留下有记录的逃生口。冗余是 **故意**：防御深度抵御未来变形旁路。
 
 ### 9.3 G3 — 编译期强制非可旁路
 
@@ -830,13 +995,29 @@ end
 
 `apps/ezagent_core/test/invariants/cap_migration_no_widening_test.exs`（新）— 断言无迁移后 cap 授权原 cap 未涵盖的 workspace。详细代码见英文 §9.4。
 
-### 9.5 — System principal catalog closed（r2 HIGH-2）
+### 9.5 — System principal catalog closed（r2 HIGH-2 + r3 HIGH-2 dispatch gate）
 
-`apps/ezagent_core/test/invariants/system_principals_in_catalog_test.exs`（新）— 两个测试：(a) 源中每个 `system://` URI literal 必须在 catalog；(b) `SystemPrincipal.ensure` 拒绝不在 catalog 的 URI。详细代码见英文 §9.5。
+`apps/ezagent_core/test/invariants/system_principals_in_catalog_test.exs`（新）— **5 个测试**：
 
-### 9.6 — Cap snapshot CAS（r2 HIGH-3）
+1. **源中每个 `system://` URI literal 必须在 catalog**（r2 HIGH-2 编译/grep 层）。
+2. **`SystemPrincipal.ensure` 拒绝不在 catalog 的 URI**（r2 HIGH-2 boot 层）。
+3. **dispatch admission 拒绝带 seed slice 的未编目 `system://` caller**（r3 HIGH-2 dispatch 层）。这是 r3 的 **承重** invariant — 锻炼 r2 两层（编译 + boot）强制 **漏掉** 的 bypass：用 `Ezagent.Identity.bypass_seed_for_test!/2` 强 seed 一个未编目 URI 的 slice，然后 dispatch；MUST 返 `{:error, :unknown_system_principal}`（在 5.5 之前）+ telemetry `[:ezagent, :authz, :unknown_principal]` 触发。
+4. **dispatch admission 接受已编目 `system://` caller**（positive control）。
+5. **非 `system://` caller 绕过 catalog gate**（entity://、workspace:// 不受 layer 3 约束）。
 
-`apps/ezagent_core/test/invariants/cap_snapshot_cas_test.exs`（新）— 两个测试：(a) 并发 grant_cap dispatch 探测 snapshot 漂移（D1 commit 后 D2 应得 `:cap_snapshot_stale`）；(b) 非 cap-mutating dispatch 在 cap 变更并发下不 CAS 失败。详细代码见英文 §9.6。
+详细代码见英文 §9.5。
+
+### 9.6 — Cap-mutating action 的 Cap snapshot CAS（r2 HIGH-3 + r3 HIGH-1 丢失更新）
+
+`apps/ezagent_core/test/invariants/cap_snapshot_cas_test.exs`（新）— **5 个测试**：
+
+1. **同一 target 上并发 grant_cap dispatch 探测丢失更新（r3 HIGH-1）。** r2 CAS 未关上的丢失更新场景：两个 dispatch 变更同一 target T 的 caps。r2 在 CALLER revision 上 CAS（未变 → 两个都通过 → 最后写胜 → grant 丢失）。r3 在 TARGET revision 上 CAS（D1 bump T 的 revision；D2 的 snapshot 现陈旧 → `:cap_snapshot_stale`）。**含丢失更新断言**：D1 的 grant 必须存活，D2 的 grant 必须 **不** 在最终 cap 列表（因 D2 报 stale）。
+2. **新 target snapshot 重试成功。** `:cap_snapshot_stale` 后，caller 重读 target snapshot 并重试 — 现应在 D1 的变更之上 commit。
+3. **不同 target 的并发 grant 不互相 CAS-fail。** Per-Entity revision：T1 上的 D1 不应使 T2 上的 D2 失效。
+4. **非 cap-mutating dispatch 跳过 target snapshot + CAS guard。** 99% 情况：发送 chat 消息；caller 或 target slice 上并发 grant_cap 必须 **不** 使 chat dispatch 失败。
+5. **`cas_update_caps` 在重竞争下原子 — 无丢失更新。** 用 N=50 并发 grant_cap dispatch 锤一个 target，每个 grant 唯一 cap 字符串。某些 **必须** `:cap_snapshot_stale`，但每个成功 grant **必须** 出现在最终 cap 列表（无静默丢失）。
+
+第一个和第五个测试特别针对 r3 修复 — 它们在 r2 的 caller-revision CAS 下失败，只在 CAS 切到 target revision + 原子 check-then-write 时通过。详细代码见英文 §9.6。
 
 ---
 
@@ -869,14 +1050,14 @@ end
 
 ---
 
-## 12. r3 codex review 排序（如需）
+## 12. Codex review 历史排序
 
-r1 codex 返回 `needs-attention`（4 HIGH + 1 MEDIUM）。r2（本修订）按 §0a 结构性闭合全 5 项。dispatch prompt 的 round-2 cap 允许再一个 codex 周期。
+- **r1 codex：** `needs-attention` — 4 HIGH + 1 MEDIUM。按 §0a 在 r2 闭合。
+- **r2 codex：** `needs-attention` — 3 HIGH + 1 MEDIUM。按 §0b 在 r3（本修订）闭合。
+- **r3 codex：** 待定。r3 是 dispatch prompt 的 **最终** 轮；若 r3 仍返 HIGH/CRIT，带新发现列表升级 Allen — 可能指更深层架构分歧，需要 brainstorm reset。按 memory `feedback_spec_codex_adversarial_review`。
 
-若 r2 codex 仍 HIGH/CRIT：
-- **Workspace 维度**（§5.4 `;ws=` 后缀、§5.8 迁移、§9.4 invariant）— 审 suffix 语法是否无歧义、迁移的 `instance_ws` 派生是否处理所有真实 cap shape（特别是 `system://` caller URI 有 `:any` workspace）。
-- **Catalog 可强制性**（§4.2 / §6.1 check 11、§9.5 invariant）— 审 grep 模式是否抓住每种 literal 形式（字符串拼接、sigil、atom 插值 URI）。
-- **Snapshot/CAS 契约**（§5.3 step 5.0a + 8.5、§9.6 invariant）— 审 `:cap_snapshot_stale` 重试语义是否正确传到 facade gate（ExternalMirror 4-gate flow 有多步状态）。
-- **严格 parser**（§5.4、§6.1 check 10）— 审 plugin-boot-order 依赖处理：plugin 作者的 `required_caps` 可能引用 sibling plugin 中尚未在编译期加载的 Behavior。
-
-若 r3 仍 HIGH/CRIT 升级 Allen — 可能指更深层架构分歧，需要 brainstorm reset。按 memory `feedback_spec_codex_adversarial_review`。
+若 r3 codex 仍 HIGH/CRIT，review 聚焦于：
+- **Target CAS 原子性**（§5.3 step 8.5、§9.6 invariant）— 审 `Ezagent.Identity.cas_update_caps/2` 经 `:ets.select_replace/2` 在并发 grant 负载下是否真原子（或需序列化 `GenServer.call`）。
+- **Catalog dispatch gate**（§5.3 step 5.0a、§9.5 新 invariant）— 审 bypass test 的 `bypass_seed_for_test!` 是否代表真实世界 bypass 形态，以及 telemetry `[:ezagent, :authz, :unknown_principal]` 是否传到审计表。
+- **反模式探针组**（§9.2 P1-P12）— 审 12 探针是否对 test-support 代码有假阳险（`@allowed_paths` allowlist）或假阴漏（第 13 种形态）。
+- **双语同步**（`.zh_cn.md` §6.1 等）— codex 抽检英中 §6.1 / §9.2 / §9.5 / §9.6 是否说同一件事。

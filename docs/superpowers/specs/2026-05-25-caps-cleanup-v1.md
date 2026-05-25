@@ -1,6 +1,6 @@
 # SPEC — Caps cleanup v1 (3-issue architectural rectification)
 
-**Status:** r2 (DRAFT). 2026-05-25.
+**Status:** r3 (DRAFT). 2026-05-25.
 **Tier:** `apps/ezagent_core/` framework rectification + sweep across every domain + plugin.
 **Trigger:** Allen 2026-05-25 (Feishu) — three verbatim directives addressing accumulated cap-system pathology surfaced during the data-ownership-v2 / external-mirror-audit work:
 
@@ -24,6 +24,17 @@
 - `feedback_bilingual_docs_convention` — Chinese mirror at `.zh_cn.md`.
 
 **Companion:** `2026-05-25-caps-cleanup-v1.zh_cn.md`.
+
+---
+
+## 0b. r3 revision notes (what changed vs r2)
+
+Codex r2 returned **needs-attention** with 3 HIGH + 1 MEDIUM. r3 closes all four structurally:
+
+1. **HIGH fixed — §8.5 CAS lost-update race (was in §5.3 step 8.5).** r2's CAS compared CALLER revision against itself across cap-mutating dispatches. But `grant_cap` mutates the TARGET slice, not the caller's. Two concurrent grants on the same target T (with unchanged caller revision) both pass r2's CAS — last-write wins, the earlier grant silently dropped. r3 (a) snapshots the TARGET slice at new step 5.0b, (b) makes step 8.5's CAS check the TARGET's revision, (c) requires the mutation to commit via `Ezagent.Identity.cas_update_caps/2` — an atomic check-then-write via `:ets.select_replace/2` (not the racy `:ets.lookup` + `:ets.insert` pair). §9.6 grows two new invariants: a concurrent-grant lost-update test, and a 50-task contention test asserting every reported-ok grant survives in the final cap list.
+2. **HIGH fixed — dispatch admission doesn't enforce SystemPrincipal.Catalog (was §5.3 step 5.0a + §4.x).** r2's catalog had compile-time check 11 (greps source literals) and boot-time `SystemPrincipal.ensure/1`. Both miss runtime-constructed `system://` URIs (test helpers spawning ad-hoc principals, hot-loaded code, atom-interpolated URIs). r3 adds **dispatch-time enforcement** at step 5.0a: if `caller.scheme == "system"`, MUST be in `Catalog.member?/1` — otherwise `{:error, :unknown_system_principal}` + telemetry `[:ezagent, :authz, :unknown_principal]`. §9.5 grows a new invariant that force-seeds an uncataloged `system://...` slice and asserts dispatch rejects it BEFORE step 5.5 — the only test that exercises layer 3 of the three-layer catalog enforcement.
+3. **HIGH fixed — zh_cn §6.1 left as r1 binary-only check (was §6.1 in `.zh_cn.md`).** The Chinese SPEC's §6.1 retained r1's `check_required_caps_values_are_strings` (binary-only) instead of r2's `check_required_caps_values_parse_strict` + check 11 catalog enforcement. Per `feedback_bilingual_docs_convention`, both files must be parallel. r3 fully syncs `.zh_cn.md` §6.1 with the English content — no "see English" stubs.
+4. **MEDIUM fixed — §9.2 G2 invariant used one hardcoded narrow probe (was §9.2 single regex).** A single grep alternation catches ~5 specific call shapes; a savvy bypass with different syntax slips through. r3 decomposes §9.2 into **12 probes** (P1-P12), each pinned to one of §1's pathologies (A: ambient authority, B: scattered cap-check, C: macro enforcement) or one of the 6 concerns. Includes probes for: ambient authority (P1-P2), scattered cap-check (P3, P8, P9, P11), discovery/registry leak (P4-P5), mutation API leak (P6-P7), caller spoofing (P10), macro declaration (P12). A 13th leak shape → a 13th probe + SPEC amendment is the regression-lock contract.
 
 ---
 
@@ -407,27 +418,70 @@ The matcher is ~50 LOC, fully unit-tested, no external dependencies.
 
 Today `apps/ezagent_core/lib/ezagent/kind/runtime.ex:215-239` (`authz_check/4`) reads `Capability.cap_for_action/3` + iterates `ctx.caps` MapSet through `Capability.matches?/2`. After this SPEC:
 
-**New step 5.0a — cap snapshot at dispatch admission.** `Invocation.dispatch/1` (after step 1's idempotency, before step 5.5) reads the caller's caps ONCE per dispatch and pins them to `ctx.caps_snapshot`:
+**New step 5.0a — cap snapshot at dispatch admission (r3 HIGH-2 extension — catalog gate for `system://` callers).** `Invocation.dispatch/1` (after step 1's idempotency, before step 5.5) does TWO things atomically before any cap is loaded:
+
+1. **Catalog gate (r3 HIGH-2):** if `URI.parse(ctx.caller).scheme == "system"`, the caller URI MUST be a member of `Ezagent.SystemPrincipal.Catalog`. Reject `{:error, :unknown_system_principal}` otherwise. This closes the gap where an uncataloged `system://migration-script` or `system://fixture` could spawn an Identity slice (via direct ETS write or test helper) and dispatch — bypassing both compile-time check 11 (which only greps source literals) and `SystemPrincipal.ensure/1` (which only guards the boot-seed path, not dispatch).
+2. **Snapshot:** read the caller's caps ONCE per dispatch and pin them to `ctx.caps_snapshot`. The snapshot is the ONLY source of caller caps for the lifetime of the dispatch.
 
 ```elixir
 defp admit_cap_snapshot(%Invocation{ctx: ctx} = inv) do
-  case Ezagent.Identity.get_slice_versioned(ctx.caller) do
-    {:ok, %{caps: caps, revision: rev}} ->
-      snapshot = %{caps: caps, revision: rev, taken_at_us: System.monotonic_time(:microsecond)}
-      %{inv | ctx: Map.put(ctx, :caps_snapshot, snapshot)}
+  caller_uri = URI.parse(URI.to_string(ctx.caller))  # idempotent if already URI
+
+  # --- r3 HIGH-2 — catalog gate for system:// callers ---
+  with :ok <- enforce_system_principal_catalog(caller_uri),
+       {:ok, %{caps: caps, revision: rev}} <- Ezagent.Identity.get_slice_versioned(ctx.caller) do
+    snapshot = %{caps: caps, revision: rev, taken_at_us: System.monotonic_time(:microsecond)}
+    {:ok, %{inv | ctx: Map.put(ctx, :caps_snapshot, snapshot)}}
+  else
+    {:error, :unknown_system_principal} = err ->
+      # Uncataloged system:// caller — reject hard. The catalog is the
+      # SINGLE SOURCE OF TRUTH for valid system principals (§4.1).
+      # Do NOT raise — return an error so dispatch can record the rejection
+      # in telemetry [:ezagent, :authz, :unknown_principal] for audit.
+      err
 
     :not_found ->
-      # Caller URI not spawned — system principals MUST be ensured at
-      # boot; user principals MUST be spawned at login. Hard-raise per
-      # feedback_let_it_crash_no_workarounds — no silent empty-caps
-      # fallback (that's the User.admin_caps() pathology in a new costume).
+      # Caller URI not spawned — non-system principals MUST be spawned at
+      # login. Hard-raise per feedback_let_it_crash_no_workarounds — no
+      # silent empty-caps fallback (that's the User.admin_caps() pathology
+      # in a new costume).
       raise ArgumentError,
         "caller #{URI.to_string(ctx.caller)} has no Identity slice; cannot dispatch"
   end
 end
+
+defp enforce_system_principal_catalog(%URI{scheme: "system"} = uri) do
+  if Ezagent.SystemPrincipal.Catalog.member?(uri) do
+    :ok
+  else
+    :telemetry.execute(
+      [:ezagent, :authz, :unknown_principal],
+      %{},
+      %{caller: URI.to_string(uri), reason: :uncataloged_system_uri}
+    )
+    {:error, :unknown_system_principal}
+  end
+end
+
+defp enforce_system_principal_catalog(%URI{}), do: :ok  # entity://, workspace://, etc. pass through
 ```
 
-The snapshot is the ONLY source of caller caps for the lifetime of the dispatch. Steps 5.5 (CapBAC), 5.6 (workspace iso), and any facade-internal cap re-checks (ExternalMirror Gates 1-3) read `ctx.caps_snapshot.caps` — never re-read the slice.
+Steps 5.5 (CapBAC), 5.6 (workspace iso), and any facade-internal cap re-checks (ExternalMirror Gates 1-3) read `ctx.caps_snapshot.caps` — never re-read the slice.
+
+**Three-layer enforcement of the catalog (r3 HIGH-2 — defense in depth):**
+1. Compile-time (`:ezagent_plugin_check` check 11, §6.1) — every `system://` URI LITERAL in source must be in the catalog. Catches static call sites.
+2. Boot-time (`SystemPrincipal.ensure/1`, §4.3) — only catalogued URIs can be seeded. Catches mis-spawned principals.
+3. **Dispatch-time (new — this step 5.0a) — every dispatch whose `caller.scheme == "system"` is checked against the catalog before the cap snapshot is taken.** Catches dynamic / runtime-constructed system principals that slipped past layers 1+2 (e.g. test fixtures that spawn ad-hoc principals, hot-loaded code, atom-interpolated URIs that check 11's regex misses).
+
+Without layer 3, a malicious or buggy code path could:
+```elixir
+# spawn ad-hoc system principal — no compile-time literal, no
+# SystemPrincipal.ensure call — passes layers 1+2.
+Ezagent.Identity.init_slice(URI.parse("system://my-backdoor"), %{caps: ["*"]})
+# dispatch with that caller — r2 admission would accept it
+Invocation.dispatch(%Invocation{caller: URI.parse("system://my-backdoor"), ...})
+```
+Layer 3 catches this: the URI is not in the catalog → `:unknown_system_principal`.
 
 **Step 5.5 — uses the snapshot:**
 
@@ -453,33 +507,72 @@ defp cap_in_snapshot?(caps_list, needed) when is_list(caps_list) do
 end
 ```
 
-**New step 8.5 — CAS guard for cap-mutating actions.** For actions whose `Behavior.mutates_caps?/0` returns `true` (default `false`; only `Behavior.IdentityAdmin.grant_cap` / `revoke_cap` override), Kind.Server's invoke wrapper compares `ctx.caps_snapshot.revision` against the **caller**'s current Identity slice revision BEFORE the action commits. If the revision drifted, return `{:error, :cap_snapshot_stale}` and the caller may retry with a fresh snapshot.
+**New step 8.5 — CAS guard for cap-mutating actions (r3 HIGH-1 fix — CAS the TARGET, not the caller).** For actions whose `Behavior.mutates_caps?/0` returns `true` (default `false`; only `Behavior.IdentityAdmin.grant_cap` / `revoke_cap` override), Kind.Server's invoke wrapper performs a CAS on the **TARGET**'s Identity slice revision — the same slice the action is about to mutate. The contract is:
+
+1. Step 5.0a snapshots the CALLER's caps + revision (used by step 5.5 to authorize the dispatch). This is `ctx.caps_snapshot`.
+2. Step 5.0b (new — only for cap-mutating actions) ALSO snapshots the TARGET's Identity slice + revision and pins to `ctx.target_caps_snapshot`. The action body MUST derive its mutation as `new_caps = mutate(target_caps_snapshot.caps)`.
+3. Step 8.5 compares `ctx.target_caps_snapshot.revision` against the TARGET's current Identity slice revision INSIDE the same ETS update transaction that will write the new caps. The ETS update is conditional: only commits if the target revision is unchanged. If drifted, returns `{:error, :cap_snapshot_stale}` and the caller may retry.
+
+Why this matters (r3 HIGH-1 lost-update scenario closed):
+- Caller-A holds `"user.identity_admin.grant_cap"`. Targets user-T (currently `caps = ["x"]`, `revision = 5`).
+- D1: snapshot-target gives `{caps: ["x"], revision: 5}`; D1 wants to add `"y"` → new caps `["x", "y"]`.
+- D2: snapshot-target gives `{caps: ["x"], revision: 5}`; D2 wants to add `"z"` → new caps `["x", "z"]`.
+- r2 (BROKEN) CAS'd on caller revision: caller's revision unchanged across both dispatches → both pass → D2 overwrites D1, `"y"` silently lost.
+- r3 CAS on target revision: D1 commits first, T's revision bumps 5 → 6. D2's CAS fails (snapshot says 5, current says 6) → D2 returns `:cap_snapshot_stale`, caller retries with fresh snapshot `{caps: ["x", "y"], revision: 6}` and now correctly produces `["x", "y", "z"]`.
 
 ```elixir
-defp cas_guard_for_cap_mutating(inv, kind_module, action) do
-  behavior = lookup_behavior(kind_module, action)
+# Step 5.0b — snapshot TARGET caps for cap-mutating actions ONLY.
+defp admit_target_snapshot(%Invocation{} = inv) do
+  behavior = lookup_behavior(inv.kind, inv.action)
 
-  if behavior_mutates_caps?(behavior, action) do
-    current = Ezagent.Identity.get_revision(inv.ctx.caller)
+  if behavior_mutates_caps?(behavior, inv.action) do
+    case Ezagent.Identity.get_slice_versioned(inv.target) do
+      {:ok, %{caps: caps, revision: rev}} ->
+        %{inv | ctx: Map.put(inv.ctx, :target_caps_snapshot,
+                              %{caps: caps, revision: rev,
+                                taken_at_us: System.monotonic_time(:microsecond)})}
 
-    if current == inv.ctx.caps_snapshot.revision do
-      :ok
-    else
-      {:error, :cap_snapshot_stale}
+      :not_found ->
+        # Target Entity must exist for cap mutation. Let-it-crash.
+        raise ArgumentError,
+          "target #{URI.to_string(inv.target)} has no Identity slice; cannot mutate caps"
     end
   else
-    :ok
+    inv
   end
+end
+
+# Step 8.5 — conditional write of the cap-mutation, gated on
+# target revision unchanged. Implemented inside Ezagent.Identity to
+# bind the CAS check + the write into ONE ETS update_counter /
+# update_element atom (a non-atomic check-then-write would not close
+# the race).
+defp commit_cap_mutation(inv, new_caps) do
+  Ezagent.Identity.cas_update_caps(
+    inv.target,
+    expected_revision: inv.ctx.target_caps_snapshot.revision,
+    new_caps: new_caps
+  )
+  # cas_update_caps/2 returns:
+  #   {:ok, new_revision}
+  #   {:error, :cap_snapshot_stale}   # target revision drifted
 end
 ```
 
-For non-cap-mutating actions (the 99% case — chat send, session join, etc.) the CAS guard is skipped: those actions don't care if caps drift mid-dispatch because they neither read nor write caps after step 5.5.
+For non-cap-mutating actions (the 99% case — chat send, session join, etc.) BOTH the target snapshot step (5.0b) and the CAS commit step (8.5) are skipped: those actions don't read or write the target's Identity slice.
+
+**Note — caller revision and target revision are independent.** The caller's snapshot at 5.0a authorizes the dispatch (cap check at 5.5). The target's snapshot at 5.0b protects against lost-updates on the mutation. Both can drift independently and the failure modes are different:
+- Caller revision drift between 5.0a and 8.5 is NOT checked because the dispatch's authorization (the cap check at 5.5) is allowed to be slightly stale — revoking grant_cap from the caller mid-dispatch doesn't retroactively unauthorize a dispatch already past step 5.5. (Idempotency / atomic-action semantics.)
+- TARGET revision drift between 5.0b and 8.5 MUST be detected because the mutation is read-modify-write and lost-updates corrupt the slice.
+
+If a future requirement needs caller-revision CAS too (e.g. revoking a granter's grant_cap power should immediately invalidate any in-flight grants by that granter), that's a SEPARATE concern: add a second CAS arm on caller revision in step 8.5 and return `{:error, :caller_authority_revoked}`. Out of scope for v1; documented here so the SPEC is honest about the boundary.
 
 **Identity slice revision semantics.** Added to `Ezagent.Identity` slice:
-- New slice key `:revision` — monotonically increasing counter.
-- `grant_cap` and `revoke_cap` bump `:revision` atomically with the cap-list mutation (single ETS update).
-- `get_slice_versioned/1` reads `{caps, revision}` in one ETS lookup.
-- `get_revision/1` reads `revision` alone (used by CAS guard).
+- New slice key `:revision` — monotonically increasing counter, per-Entity.
+- `grant_cap` and `revoke_cap` bump `:revision` atomically with the cap-list mutation (single ETS update — `cas_update_caps/2` is the only mutation API; bare list-write is removed).
+- `get_slice_versioned/1` reads `{caps, revision}` in one ETS lookup (used by step 5.0a + 5.0b).
+- `get_revision/1` reads `revision` alone (kept for telemetry / debug only).
+- `cas_update_caps/2` is the conditional-write primitive: takes `expected_revision` + `new_caps`, returns `{:ok, new_revision}` or `{:error, :cap_snapshot_stale}`. Implementation uses `:ets.select_replace/2` to make the check + write a single atomic operation (NOT `:ets.lookup + :ets.insert` — that's the lost-update window in another shape).
 
 Revision is per-Entity. A grant on user-A doesn't bump user-B's revision; concurrent dispatches against different users never CAS-fail each other.
 
@@ -957,35 +1050,201 @@ Each issue's structural goal is gated by a test that fails when the goal is unme
 1. No production file calls `User.admin_caps/0`.
 2. `User` module does not export `admin_caps/0`.
 
-### 9.2 G2 — Caps only at Behavior × Entity boundary
+### 9.2 G2 — Caps only at Behavior × Entity boundary (r3 MEDIUM-1 — comprehensive probe set)
 
-`apps/ezagent_core/test/invariants/caps_only_at_boundary_test.exs` (NEW):
+`apps/ezagent_core/test/invariants/caps_only_at_boundary_test.exs` (NEW).
+
+**Why a probe set, not a single regex (r3 MEDIUM-1 fix).** Codex r2 correctly identified that a single grep on one cap-pattern is too narrow — a savvy bypass using different syntax slips through. This invariant decomposes into ONE probe per anti-pattern, each pinned to a §1 pathology (A: ambient authority, B: cap-check scattered across non-Behavior layers) or a §1 concern (1-6). A new anti-pattern needs a new probe.
 
 ```elixir
-test "no production module calls Capability.matches? / cap_subjects / list_caps_for / grant_cap" do
-  allowed_paths = [
-    "apps/ezagent_core/lib/ezagent/behavior",       # Behavior callback definitions
-    "apps/ezagent_core/lib/ezagent/entity",         # Entity holds_cap? default
-    "apps/ezagent_core/lib/ezagent/invocation",     # Dispatch
-    "apps/ezagent_core/lib/ezagent/kind",           # Kind runtime
-    "apps/ezagent_core/lib/ezagent/cap.ex",         # The matcher itself
-    "apps/ezagent_domain_identity/lib/ezagent"      # Identity facade (read-only path)
-  ]
+# ----- Test infra: a shared file set + an "allowed paths" allowlist. -----
 
-  offenders =
-    Path.wildcard("apps/*/lib/**/*.ex")
-    |> Enum.reject(fn p ->
-      String.contains?(p, "test/support") or
-        Enum.any?(allowed_paths, &String.starts_with?(p, &1))
-    end)
-    |> Enum.filter(fn p ->
-      File.read!(p) =~ ~r/Ezagent\.Capability\.(matches|cap_for_action)|cap_subjects\(|list_caps_for\(|Identity\.grant_cap\(/
-    end)
+@allowed_paths [
+  "apps/ezagent_core/lib/ezagent/behavior",         # Behavior callback definitions
+  "apps/ezagent_core/lib/ezagent/entity",           # Entity holds_cap? default
+  "apps/ezagent_core/lib/ezagent/invocation",       # Dispatch (5.0a, 5.0b, 5.5, 5.6, 8.5)
+  "apps/ezagent_core/lib/ezagent/kind",             # Kind runtime
+  "apps/ezagent_core/lib/ezagent/cap.ex",           # The matcher itself
+  "apps/ezagent_core/lib/ezagent/cap/",             # Cap parser, etc.
+  "apps/ezagent_core/lib/ezagent/system_principal", # SystemPrincipal catalog + ensure
+  "apps/ezagent_domain_identity/lib/ezagent"        # Identity facade (read-only path)
+]
 
+defp prod_source_files do
+  Path.wildcard("apps/*/lib/**/*.ex")
+  |> Enum.reject(fn p ->
+    String.contains?(p, "test/support") or
+      Enum.any?(@allowed_paths, &String.starts_with?(p, &1))
+  end)
+end
+
+defp offenders_for(pattern) when is_struct(pattern, Regex) do
+  prod_source_files()
+  |> Enum.filter(fn p -> File.read!(p) =~ pattern end)
+end
+
+# ----- Probe 1 (Pathology A — concern: ambient authority via User.admin_caps()) -----
+
+test "P1: no production file references User.admin_caps/0 or its aliases" do
+  # Catches: User.admin_caps(), Ezagent.Entity.User.admin_caps(),
+  # rebinding aliases (alias Ezagent.Entity.User, as: U; U.admin_caps()).
+  offenders = offenders_for(~r/\b(?:[A-Z][A-Za-z0-9_]*\.)*User\.admin_caps\s*\(\s*\)/)
   assert offenders == [],
-         "caps escaped the Behavior×Entity boundary into: #{inspect(offenders)}"
+         "Pathology A leak — User.admin_caps fallback: #{inspect(offenders)}"
+end
+
+# ----- Probe 2 (Pathology A — concern: ambient caps MapSet) -----
+
+test "P2: no production file hard-codes 'admin' caps fields in dispatch ctx" do
+  # Catches: %{caps: User.admin_caps(), ...}, caps: MapSet.new([...all the things...]),
+  # `caps: admin_caps()`, and the per-LV `defp default_caps, do: User.admin_caps()` pattern.
+  offenders = offenders_for(~r/\bcaps:\s*(?:User\.admin_caps|admin_caps|MapSet\.new\(\s*\[\s*%Ezagent\.Capability)/)
+  assert offenders == [],
+         "Pathology A leak — ambient cap MapSet construction: #{inspect(offenders)}"
+end
+
+# ----- Probe 3 (Pathology B — concern: cap-check at non-Behavior layer) -----
+
+test "P3: no production file calls Capability.matches? / cap_for_action outside core dispatch" do
+  # Catches: the legacy struct-matcher used in random LVs / plugins.
+  offenders = offenders_for(~r/\bEzagent\.Capability\.(?:matches\??|cap_for_action)\s*\(/)
+  assert offenders == [],
+         "Pathology B leak — Capability struct matcher outside dispatch: #{inspect(offenders)}"
+end
+
+# ----- Probe 4 (Pathology B — concern: CapabilityRegistry direct access) -----
+
+test "P4: no production file calls CapabilityRegistry" do
+  # The module is deleted per §7.2 PR-CC-2d. Any remaining reference
+  # is dead code that must be removed (compile would fail too —
+  # belt-and-braces invariant).
+  offenders = offenders_for(~r/\bEzagent\.CapabilityRegistry\b|\bCapabilityRegistry\.(?:register|needed_for|lookup_subject)\s*\(/)
+  assert offenders == [],
+         "Pathology B leak — CapabilityRegistry references: #{inspect(offenders)}"
+end
+
+# ----- Probe 5 (Pathology B — concern: cap subjects callback) -----
+
+test "P5: no production file declares or invokes cap_subjects/0 callback" do
+  # The callback is removed per OQ-CC-3 / §7.2 PR-CC-2d (replaced by
+  # required_caps/0). Any leftover `def cap_subjects` or
+  # `behavior.cap_subjects()` is a regression.
+  offenders = offenders_for(~r/\bdef\s+cap_subjects\s*\(|\.cap_subjects\s*\(/)
+  assert offenders == [],
+         "Pathology B leak — cap_subjects/0 callback survives: #{inspect(offenders)}"
+end
+
+# ----- Probe 6 (Pathology B — concern: list_caps_for outside Identity facade) -----
+
+test "P6: list_caps_for/1 is called only from Identity facade or LV display path" do
+  # The mutation-grade list_caps_for/1 is deleted per §5.7 / §7.2 PR-CC-2d.
+  # LV display path uses read_caps_for_display/1 instead.
+  offenders = offenders_for(~r/\b(?:Ezagent\.)?Identity\.list_caps_for\s*\(/)
+  assert offenders == [],
+         "Pathology B leak — Identity.list_caps_for (deleted API): #{inspect(offenders)}"
+end
+
+# ----- Probe 7 (Pathology B — concern: grant_cap/revoke_cap outside Behavior.IdentityAdmin) -----
+
+test "P7: grant_cap / revoke_cap is called via dispatch on Behavior.IdentityAdmin, never directly" do
+  # Catches: Identity.grant_cap(...), Ezagent.Identity.grant_cap(...),
+  # Identity.revoke_cap(...). The new path is dispatch:
+  # Ezagent.Invocation.dispatch(%Invocation{kind: User, action: :grant_cap, ...}).
+  offenders = offenders_for(~r/\b(?:Ezagent\.)?Identity\.(?:grant_cap|revoke_cap)\s*\(/)
+  assert offenders == [],
+         "Pathology B leak — direct grant_cap/revoke_cap (must go through dispatch): #{inspect(offenders)}"
+end
+
+# ----- Probe 8 (Pathology B — concern: inline cap-set membership checks) -----
+
+test "P8: no production file does inline MapSet/Enum cap-set membership against ctx.caps" do
+  # Catches: MapSet.member?(ctx.caps, ...), Enum.member?(caps, ...),
+  # ctx.caps |> Enum.any?(..., ctx.caps_snapshot |> MapSet.member?
+  # OUTSIDE allowed paths. The ONLY place this should happen is
+  # core dispatch step 5.5 / 5.6.
+  offenders = offenders_for(~r/(?:MapSet|Enum)\.(?:member\?|any\?)\s*\(\s*(?:ctx\.caps|ctx\.caps_snapshot|caps_snapshot)\b/)
+  assert offenders == [],
+         "Pathology B leak — inline cap-set membership outside dispatch: #{inspect(offenders)}"
+end
+
+# ----- Probe 9 (Pathology B — concern: hand-rolled cap string substring matching) -----
+
+test "P9: no production file does substring/prefix matching on a cap string outside Cap matcher" do
+  # Catches: String.starts_with?(cap, "admin"), cap == "*",
+  # cap_string =~ ~r/admin/, String.contains?(cap, "grant_cap").
+  # These reimplement Cap.matches? badly and break wildcard semantics.
+  pattern = ~r/\b(?:String\.(?:starts_with\?|contains\?|ends_with\?)|=~)\s*\(?\s*(?:cap|cap_string|needed_cap|cap_str)\b/
+  offenders = offenders_for(pattern)
+  assert offenders == [],
+         "Pathology B leak — hand-rolled cap string matching: #{inspect(offenders)}"
+end
+
+# ----- Probe 10 (Pathology A — concern: instance string substitution / spoofing) -----
+
+test "P10: no production file builds a dispatch ctx by substituting an arbitrary caller URI" do
+  # Catches the "fake the caller" anti-pattern:
+  # %Invocation{caller: URI.parse("entity://user/admin"), ...},
+  # ctx = %{caller: URI.parse("system://" <> name), ...} where name
+  # is non-literal (atom interp / variable). The catalog gate at 5.0a
+  # catches system:// at runtime; this probe catches it at source.
+  pattern = ~r/caller:\s*URI\.parse\(\s*(?:"entity:\/\/user\/admin"|"system:\/\/"\s*<>\s*\w)/
+  offenders = offenders_for(pattern)
+  assert offenders == [],
+         "Pathology A leak — caller URI spoofing in dispatch ctx: #{inspect(offenders)}"
+end
+
+# ----- Probe 11 (Pathology A — concern: multi-channel cap check / parallel auth paths) -----
+
+test "P11: no production file does cap-check at >1 layer for the same call" do
+  # The data-ownership-v2 PR landed `check_grant_authorized/2` INSIDE
+  # Behavior.Identity. That logic moves into dispatch step 5.5 per §5.7.
+  # Detect any file with BOTH a `check_*authoriz*` private function AND
+  # a `dispatch` or `Invocation` call within the same module — likely
+  # the duplicate-check anti-pattern.
+  offenders =
+    prod_source_files()
+    |> Enum.filter(fn p ->
+      content = File.read!(p)
+      content =~ ~r/defp\s+check_\w*authoriz\w*\s*\(/ and
+        content =~ ~r/\b(?:Invocation\.dispatch|Ezagent\.Invocation)\b/
+    end)
+  assert offenders == [],
+         "Pathology B leak — duplicate cap-check layer: #{inspect(offenders)}"
+end
+
+# ----- Probe 12 (Pathology C — concern: macro-based cap declaration) -----
+
+test "P12: no production file uses macros to declare caps" do
+  # Allen's Q3 — "使用宏是必要的吗". Answer: no. required_caps/0 is a
+  # plain function callback. Detect `use Ezagent.{Caps,Capability}.*`,
+  # `defmacro required_caps`, `__using__` patterns that inject caps.
+  pattern = ~r/\buse\s+Ezagent\.(?:Caps|Capability)\b|defmacro\s+required_caps\b|defmacro\s+cap_subjects\b/
+  offenders = offenders_for(pattern)
+  assert offenders == [],
+         "Pathology C leak — macro-based cap declaration: #{inspect(offenders)}"
 end
 ```
+
+**Probe-to-pathology map** (each anti-pattern surfaced by codex history or §1 analysis gets exactly one probe):
+
+| Probe | Pathology (§1) | Concern (§1) | Anti-pattern detected |
+|---|---|---|---|
+| P1 | A | ambient authority | `User.admin_caps()` calls |
+| P2 | A | ambient authority | `caps: MapSet.new(...)` / `caps: admin_caps` hardcoded in dispatch ctx |
+| P3 | B | scattered cap-check | `Capability.matches?` outside dispatch |
+| P4 | B | discovery (#6) | `CapabilityRegistry` references (module deleted) |
+| P5 | B | discovery (#6) | `cap_subjects/0` callback survives (deleted per OQ-CC-3) |
+| P6 | B | mutation API leak | `Identity.list_caps_for/1` direct call (replaced by `read_caps_for_display` for read, dispatch for mutate) |
+| P7 | B | mutation API leak | `Identity.grant_cap` / `revoke_cap` direct call (must go through dispatch) |
+| P8 | B | scattered cap-check | inline `MapSet.member?(ctx.caps, ...)` |
+| P9 | B | scattered cap-check | hand-rolled string match (`String.starts_with?(cap, ...)`) |
+| P10 | A | caller spoofing (#2 + #4) | hardcoded `caller: URI.parse("entity://user/admin")` or atom-interp `system://` |
+| P11 | B | scattered cap-check | duplicate `check_*authoriz*/2` private fn alongside dispatch |
+| P12 | C | enforcement | macros for cap declaration (`use Ezagent.Caps`, `defmacro required_caps`) |
+
+**Coverage statement.** The 12 probes cover every leak pattern surfaced by codex review history on cap-related PRs (the 5 rounds Allen referenced in his trigger message). When a 13th leak appears, a 13th probe lands as a SPEC amendment + this test grows by one — that IS the regression-lock contract.
+
+**Non-redundancy note.** Probes P3-P8 look adjacent but each catches a distinct call shape; deleting any one would leave a documented escape hatch. The redundancy is INTENTIONAL — defense in depth against future shape-shifting bypasses.
 
 ### 9.3 G3 — Compile-time enforcement is non-bypassable
 
@@ -1054,7 +1313,7 @@ end
 
 This is the structural lock against r2 HIGH-1's regression.
 
-### 9.5 — System principal catalog closed (r2 HIGH-2)
+### 9.5 — System principal catalog closed (r2 HIGH-2 + r3 HIGH-2 dispatch gate)
 
 `apps/ezagent_core/test/invariants/system_principals_in_catalog_test.exs` (NEW):
 
@@ -1085,44 +1344,162 @@ test "SystemPrincipal.ensure rejects URIs not in catalog" do
     Ezagent.SystemPrincipal.ensure(URI.parse("system://hypothetical-ambient-authority"))
   end
 end
+
+test "dispatch admission rejects uncataloged system:// caller even with seeded slice (r3 HIGH-2)" do
+  # The bypass scenario the r2 SPEC did not close: somehow an
+  # uncataloged system:// URI obtains a real Identity slice (via
+  # direct test helper, hot-loaded code, or atom-interpolated URI
+  # that compile-check 11's regex misses). Dispatch MUST reject the
+  # call BEFORE step 5.5 reads any caps.
+  bypass_uri = URI.parse("system://test-only-uncataloged-#{:rand.uniform(1_000_000)}")
+  refute Ezagent.SystemPrincipal.Catalog.member?(bypass_uri),
+         "test setup invariant: probe URI must not be in catalog"
+
+  # Force-seed an Identity slice for this URI (simulating the bypass):
+  # bypass_seed_for_test! is a test-only helper that goes around
+  # SystemPrincipal.ensure and writes directly to the slice table.
+  Ezagent.Identity.bypass_seed_for_test!(bypass_uri, caps: ["*"], revision: 1)
+
+  # Build a dispatch with the bypass URI as caller.
+  inv = build_invocation(bypass_uri, some_target(), :any_action, %{})
+
+  # MUST reject with :unknown_system_principal — the catalog gate at
+  # step 5.0a fires before any cap check.
+  assert {:error, :unknown_system_principal} = Ezagent.Invocation.dispatch(inv)
+
+  # Telemetry [:ezagent, :authz, :unknown_principal] MUST have fired
+  # with the bypass URI for audit forensics.
+  assert_received {:telemetry, [:ezagent, :authz, :unknown_principal], _,
+                   %{caller: caller_str, reason: :uncataloged_system_uri}}
+  assert caller_str == URI.to_string(bypass_uri)
+end
+
+test "dispatch admission accepts cataloged system:// caller" do
+  # Positive control: a real catalog entry must pass admission.
+  cataloged = URI.parse("system://boot-reconciler")
+  assert Ezagent.SystemPrincipal.Catalog.member?(cataloged)
+
+  Ezagent.SystemPrincipal.ensure(cataloged)
+  inv = build_invocation(cataloged, some_target(), :some_action, %{})
+  # Either :ok (action authorized) or {:error, :unauthorized} (cap missing for action)
+  # but NEVER :unknown_system_principal.
+  assert match?({:error, :unknown_system_principal}, Ezagent.Invocation.dispatch(inv)) == false
+end
+
+test "non-system:// callers bypass the catalog gate" do
+  # User and workspace callers are not subject to the SystemPrincipal
+  # catalog — only the system:// scheme triggers the layer-3 check.
+  user_uri = URI.parse("entity://user/test-user-#{:rand.uniform(1_000_000)}")
+  Ezagent.Identity.bypass_seed_for_test!(user_uri, caps: [], revision: 1)
+
+  inv = build_invocation(user_uri, some_target(), :some_action, %{})
+  # Reaches the cap check at step 5.5 (not blocked at 5.0a):
+  refute match?({:error, :unknown_system_principal}, Ezagent.Invocation.dispatch(inv))
+end
 ```
 
-### 9.6 — Cap snapshot CAS for cap-mutating actions (r2 HIGH-3)
+The third test (`dispatch admission rejects uncataloged system:// caller even with seeded slice`) is the load-bearing r3 HIGH-2 invariant: it exercises the bypass that r2's two-layer (compile + boot) enforcement misses.
+
+### 9.6 — Cap snapshot CAS for cap-mutating actions (r2 HIGH-3 + r3 HIGH-1 lost-update)
 
 `apps/ezagent_core/test/invariants/cap_snapshot_cas_test.exs` (NEW):
 
 ```elixir
-test "concurrent grant_cap dispatches detect snapshot drift" do
-  # Spawn caller-A with `"user.identity_admin.grant_cap"` cap on target user T.
-  # Open two dispatches D1 + D2 that both want to call grant_cap on T,
-  # at the same revision. D1 commits first, bumping T's revision.
-  # D2's invoke wrapper (step 8.5 CAS) MUST return {:error, :cap_snapshot_stale}.
-
+test "concurrent grant_cap dispatches against the SAME target detect lost-update (r3 HIGH-1)" do
+  # The lost-update scenario the r2 CAS did not close: two dispatches
+  # mutate the same target T's caps. r2 CAS'd on CALLER revision
+  # (unchanged → both pass → last-write wins → grant lost). r3 CAS's
+  # on TARGET revision (D1 bumps T's revision; D2's snapshot now
+  # stale → :cap_snapshot_stale).
   {caller, target} = setup_users()
-  rev = Ezagent.Identity.get_revision(caller)
+  target_rev = Ezagent.Identity.get_revision(target)
 
-  inv1 = build_invocation(caller, target, :grant_cap, %{cap: "session.chat.send"}, rev)
-  inv2 = build_invocation(caller, target, :grant_cap, %{cap: "session.chat.join"}, rev)
+  inv1 = build_invocation(caller, target, :grant_cap,
+                          %{cap: "session.chat.send"}, target_rev: target_rev)
+  inv2 = build_invocation(caller, target, :grant_cap,
+                          %{cap: "session.chat.join"}, target_rev: target_rev)
 
-  # Dispatch D1 inline, then D2 — D2's snapshot should now be stale.
+  # Dispatch D1 inline → commits, target revision bumps.
   assert :ok = Invocation.dispatch(inv1)
+
+  # D2's target snapshot is now stale → step 8.5 CAS fails.
   assert {:error, :cap_snapshot_stale} = Invocation.dispatch(inv2)
+
+  # Confirm D1's grant survived (this is THE lost-update assertion):
+  assert "session.chat.send" in Ezagent.Identity.list_caps_for_display(target)
+  refute "session.chat.join" in Ezagent.Identity.list_caps_for_display(target)
 end
 
-test "non-cap-mutating dispatch does not CAS-fail across cap mutations" do
-  # The 99% case: send a chat message; concurrent grant_cap on the
-  # caller's slice must NOT cause the chat dispatch to fail.
+test "retry with fresh target snapshot succeeds" do
+  # After :cap_snapshot_stale, the caller re-reads target's snapshot
+  # and retries — should now commit on top of D1's mutation.
+  {caller, target} = setup_users()
+
+  inv1 = build_grant_invocation(caller, target, "session.chat.send")
+  assert :ok = Invocation.dispatch(inv1)
+
+  # Retry with a fresh snapshot.
+  inv2_retry = build_grant_invocation(caller, target, "session.chat.join")
+  assert :ok = Invocation.dispatch(inv2_retry)
+
+  caps = Ezagent.Identity.list_caps_for_display(target)
+  assert "session.chat.send" in caps
+  assert "session.chat.join" in caps
+end
+
+test "concurrent grants against DIFFERENT targets do not CAS-fail each other" do
+  # Per-Entity revision: D1 on T1 must not invalidate D2 on T2.
+  {caller, t1} = setup_users()
+  {_, t2} = setup_users()
+
+  inv1 = build_grant_invocation(caller, t1, "session.chat.send")
+  inv2 = build_grant_invocation(caller, t2, "session.chat.send")
+
+  assert :ok = Invocation.dispatch(inv1)
+  assert :ok = Invocation.dispatch(inv2)
+end
+
+test "non-cap-mutating dispatch skips both target snapshot + CAS guard" do
+  # The 99% case: send a chat message; concurrent grant_cap on either
+  # caller OR target slice must NOT cause the chat dispatch to fail.
   {caller, target_session} = setup_chat_user_session()
-  rev = Ezagent.Identity.get_revision(caller)
 
-  chat_inv = build_chat_send_invocation(caller, target_session, rev)
+  chat_inv = build_chat_send_invocation(caller, target_session)
 
-  # Concurrently bump caller's revision by granting a new cap.
+  # Concurrently bump revisions on adjacent entities.
   Task.async(fn -> grant_unrelated_cap(caller) end)
+  Task.async(fn -> grant_unrelated_cap_to_session_member(target_session) end)
 
   assert :ok = Invocation.dispatch(chat_inv)
 end
+
+test "cas_update_caps is atomic — no lost update under heavy contention" do
+  # Hammer one target with N concurrent grant_cap dispatches, each
+  # granting a unique cap string. Some MUST fail with :cap_snapshot_stale,
+  # but every successful grant MUST appear in the final cap list (no silent loss).
+  {caller, target} = setup_users()
+  n = 50
+
+  results =
+    1..n
+    |> Task.async_stream(fn i ->
+      retry_grant(caller, target, "session.chat.send@session://probe-#{i}", max_retries: 10)
+    end, max_concurrency: 16, timeout: 5_000)
+    |> Enum.to_list()
+
+  ok_count = Enum.count(results, &match?({:ok, :ok}, &1))
+  final_caps = Ezagent.Identity.list_caps_for_display(target)
+
+  # Either every retry eventually succeeded (preferred), or some gave up;
+  # in either case the count of caps starting with "session.chat.send@session://probe-"
+  # MUST EQUAL ok_count — no lost grant.
+  granted = Enum.count(final_caps, &String.starts_with?(&1, "session.chat.send@session://probe-"))
+  assert granted == ok_count,
+         "lost-update detected: #{ok_count} grants reported ok but only #{granted} survive"
+end
 ```
+
+The r3 fix is specifically the FIRST and FIFTH test — they fail against r2's caller-revision CAS and pass only when CAS is on target revision with atomic check-then-write.
 
 ---
 
@@ -1155,14 +1532,14 @@ Each sub-PR is rebase-and-revert-clean. The migration script is one-way (no undo
 
 ---
 
-## 12. Sequencing for r3 codex review (if needed)
+## 12. Sequencing for codex review history
 
-r1 codex returned `needs-attention` (4 HIGH + 1 MEDIUM). r2 (this revision) closes all five structurally per §0a. The round-2 cap per dispatch prompt allows ONE more codex cycle.
+- **r1 codex:** `needs-attention` — 4 HIGH + 1 MEDIUM. Closed in r2 per §0a.
+- **r2 codex:** `needs-attention` — 3 HIGH + 1 MEDIUM. Closed in r3 (this revision) per §0b.
+- **r3 codex:** pending. r3 is the **FINAL** round per dispatch prompt; if r3 still returns HIGH/CRIT, escalate to Allen with the new finding list — likely indicates a deeper architectural disagreement that needs a brainstorm reset. Per memory `feedback_spec_codex_adversarial_review`.
 
-If r2 codex still HIGH/CRIT:
-- **Workspace dimension** (§5.4 `;ws=` suffix, §5.8 migration, §9.4 invariant) — review whether the suffix grammar is unambiguous and the migration's `instance_ws` derivation handles all real cap shapes (specifically `system://` caller URIs that have `:any` workspace).
-- **Catalog enforceability** (§4.2 / §6.1 check 11, §9.5 invariant) — review whether the grep pattern catches every literal form (string concatenation, sigils, atom-interpolated URIs).
-- **Snapshot/CAS contract** (§5.3 step 5.0a + 8.5, §9.6 invariant) — review whether `:cap_snapshot_stale` retry semantics propagate correctly to facade gates (ExternalMirror's 4-gate flow has multi-step state).
-- **Strict parser** (§5.4, §6.1 check 10) — review whether plugin-boot-order dependency is handled: a plugin author's `required_caps` may reference a Behavior from a sibling plugin not yet loaded at compile time.
-
-Escalate to Allen if r3 still HIGH/CRIT — likely indicates a deeper architectural disagreement that needs a brainstorm reset. Per memory `feedback_spec_codex_adversarial_review`.
+If r3 codex still HIGH/CRIT, focus review on:
+- **Target CAS atomicity** (§5.3 step 8.5, §9.6 invariant) — review whether `Ezagent.Identity.cas_update_caps/2` via `:ets.select_replace/2` is truly atomic under concurrent-grant load (or if it needs a serialized `GenServer.call` instead).
+- **Catalog dispatch gate** (§5.3 step 5.0a, §9.5 new invariant) — review whether the bypass test's `bypass_seed_for_test!` is representative of real-world bypass shapes, and whether telemetry `[:ezagent, :authz, :unknown_principal]` propagates to the audit table.
+- **Anti-pattern probe set** (§9.2 P1-P12) — review whether the 12 probes have false-positive risk on test-support code (the `@allowed_paths` allowlist) or false-negative gaps (a 13th pattern shape).
+- **Bilingual sync** (`.zh_cn.md` §6.1 and elsewhere) — codex spot-check that English and Chinese §6.1 / §9.2 / §9.5 / §9.6 say the same things.
