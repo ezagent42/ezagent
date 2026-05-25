@@ -37,60 +37,7 @@ defmodule EzagentDomainWorkspace.Application do
       {DynamicSupervisor, name: Ezagent.Workspace.Supervisor, strategy: :one_for_one}
     ]
 
-    result = Supervisor.start_link(children, strategy: :one_for_one, name: __MODULE__)
-
-    # PR-CC-2b (SPEC caps-cleanup-v1 §4.3) — seed the workspace-loader
-    # system principal owned by this Application. Idempotent;
-    # test-env skip.
-    :ok = seed_workspace_system_principals()
-
-    result
-  end
-
-  # PR-CC-2b (SPEC caps-cleanup-v1 §4.3) — Operating context (§4.1):
-  # `system://workspace-loader` is used by `Ezagent.Workspace.Loader`
-  # when re-spawning persisted workspaces at boot.
-  defp seed_workspace_system_principals do
-    if test_env?() do
-      :ok
-    else
-      ensure_principal_logged("system://workspace-loader")
-    end
-  end
-
-  # PR-CC-2b (codex round-1 HIGH-1 fix) — wrap ensure/1 in try/catch
-  # so EXITs from absent supervisors don't kill workspace boot.
-  defp ensure_principal_logged(uri_str) do
-    try do
-      case Ezagent.SystemPrincipal.ensure(URI.parse(uri_str)) do
-        :ok ->
-          :ok
-
-        {:error, reason} ->
-          log_seed_failure(uri_str, reason)
-      end
-    rescue
-      e -> log_seed_failure(uri_str, e)
-    catch
-      kind, reason -> log_seed_failure(uri_str, {kind, reason})
-    end
-  end
-
-  defp log_seed_failure(uri_str, reason) do
-    require Logger
-
-    Logger.warning(
-      "EzagentDomainWorkspace seed: ensure(#{uri_str}) failed " <>
-        "(#{inspect(reason)}); idempotent retry on next boot."
-    )
-
-    :ok
-  end
-
-  defp test_env? do
-    Code.ensure_loaded?(Mix) and Mix.env() == :test
-  rescue
-    _ -> false
+    Supervisor.start_link(children, strategy: :one_for_one, name: __MODULE__)
   end
 
   defp register_workspace_behavior do
