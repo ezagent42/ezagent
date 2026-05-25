@@ -43,20 +43,30 @@ defmodule Ezagent.Behavior.ChatTest do
       assert Chat.state_slice() == :chat
     end
 
-    test "init_slice/1 returns slice with members / monitors / last_seen / last_message_id + empty template_working_copy" do
-      # Phase 7 completion PR-2 — the `:chat` slice now also carries the
-      # durable `template_working_copy` field (SPEC §1.3 / §1.6).
-      # PR-EM-6-PRE (Allen 2026-05-25) — fresh sessions have
-      # `:last_message_id == nil` (no message yet); `:owner_uri`
-      # defaults to `Map.get(args, :owner_uri)` = `nil` for arg-less
-      # init (PR-OWN-2 introduced the field; the original assertion in
-      # this test was stale and missed it).
+    test "init_slice/1 returns slice with all PR-EM-6-PRE fields + empty template_working_copy" do
+      # Phase 7 completion PR-2 — the `:chat` slice now also carries
+      # the durable `template_working_copy` field (SPEC §1.3 / §1.6).
+      #
+      # PR-EM-6-PRE (Allen 2026-05-25) — fresh sessions have three
+      # send-tracking fields at their identity defaults
+      # (`:last_message_id == nil`, `:last_message == nil`,
+      # `:send_cursor == 0`). All three are necessary: ids cover the
+      # stable cross-reference, the struct carries adapter-facing
+      # body/sender data without DB lookups (HIGH-2), the cursor
+      # guarantees `new_slice != slice` for retried sends with
+      # idempotent msg.id writes (HIGH-1).
+      #
+      # `:owner_uri` defaults to `Map.get(args, :owner_uri)` = `nil`
+      # for arg-less init (PR-OWN-2 introduced the field; the
+      # original assertion in this test was stale and missed it).
       assert Chat.init_slice(%{}) == %{
                members: %{},
                owner_uri: nil,
                monitors: %{},
                last_seen: %{},
                last_message_id: nil,
+               last_message: nil,
+               send_cursor: 0,
                template_working_copy: Chat.default_template_working_copy()
              }
     end
@@ -169,13 +179,20 @@ defmodule Ezagent.Behavior.ChatTest do
       :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, topic)
 
       # PR-EM-6-PRE (Allen 2026-05-25) — `:send` now mutates the slice
-      # (sets `:last_message_id`), so this is no longer a `^slice` pin
-      # match. The bound `new_slice` shape is asserted below.
+      # (sets `:last_message_id` + `:last_message` + bumps
+      # `:send_cursor`), so this is no longer a `^slice` pin match.
+      # The bound `new_slice` shape is asserted below.
       assert {:ok, new_slice, %{stored: true}} =
                Chat.invoke(:send, slice, %{message: msg}, ctx)
 
-      # Slice mutation: last_message_id tracks the just-persisted msg.id
+      # Slice mutation: id stamp + full message + cursor bump (the
+      # three fields that make `new_slice != slice` for both first
+      # send AND idempotent retry — see init_slice/1 doc HIGH-1+2).
       assert new_slice.last_message_id == msg.id
+      assert %Message{id: id} = new_slice.last_message
+      assert id == msg.id
+      assert new_slice.send_cursor == 1
+
       # All other fields unchanged from the fresh init
       assert new_slice.members == slice.members
       assert new_slice.monitors == slice.monitors
@@ -242,13 +259,19 @@ defmodule Ezagent.Behavior.ChatTest do
     # See `apps/ezagent_core/lib/ezagent/kind/runtime.ex` step 9.5 for
     # the `new_slice != slice` predicate that gates the event.
 
-    test "fresh session has slice.last_message_id == nil" do
+    test "fresh session has nil id, nil message, cursor 0" do
       slice = Chat.init_slice(%{})
+
       assert Map.has_key?(slice, :last_message_id)
+      assert Map.has_key?(slice, :last_message)
+      assert Map.has_key?(slice, :send_cursor)
+
       assert slice.last_message_id == nil
+      assert slice.last_message == nil
+      assert slice.send_cursor == 0
     end
 
-    test "send → slice.last_message_id == msg.id (string)" do
+    test "send → id stamp + full Message struct + cursor=1 (codex r1 HIGH-2 — adapters need the body)" do
       session_uri = URI.new!("session://default/default/lmi-mutation-#{System.unique_integer([:positive])}")
       bind_to_default(session_uri)
       sender = URI.new!("entity://user/system/admin")
@@ -262,13 +285,27 @@ defmodule Ezagent.Behavior.ChatTest do
 
       assert is_binary(msg.id)
       assert new_slice.last_message_id == msg.id
+
+      # HIGH-2: external-mirror adapters convert Publisher.Event →
+      # payload purely (no DB lookup). The full Message must ride the
+      # slice — with sender / body / mentions / inserted_at AND the
+      # `:session_uri` that MessageStore.write stamps on persist.
+      assert %Message{} = new_slice.last_message
+      assert new_slice.last_message.id == msg.id
+      assert new_slice.last_message.sender == sender
+      assert new_slice.last_message.body == msg.body
+      assert new_slice.last_message.session_uri == session_uri
+
+      # Cursor bumped from the initial 0
+      assert new_slice.send_cursor == 1
+
       # The mutation is detectable by `new_slice != slice` — that's the
       # exact predicate `Ezagent.Kind.Runtime` uses to build the
       # slice_change_event payload (see runtime.ex step 9.5).
       refute new_slice == slice
     end
 
-    test "second send overwrites slice.last_message_id with the newer msg.id" do
+    test "send overwrites :last_message + :last_message_id and increments :send_cursor" do
       session_uri = URI.new!("session://default/default/lmi-overwrite-#{System.unique_integer([:positive])}")
       bind_to_default(session_uri)
       sender = URI.new!("entity://user/system/admin")
@@ -283,17 +320,62 @@ defmodule Ezagent.Behavior.ChatTest do
 
       assert {:ok, slice1, _} = Chat.invoke(:send, slice, %{message: msg1}, ctx)
       assert slice1.last_message_id == msg1.id
+      assert slice1.last_message.id == msg1.id
+      assert slice1.send_cursor == 1
 
       assert {:ok, slice2, _} = Chat.invoke(:send, slice1, %{message: msg2}, ctx)
       assert slice2.last_message_id == msg2.id
+      assert slice2.last_message.id == msg2.id
+      assert slice2.send_cursor == 2
       refute slice2.last_message_id == msg1.id
     end
 
-    test "pre-PR-EM-6-PRE slice (no :last_message_id key) gets the key on send" do
+    # codex r1 HIGH-1 regression test (2026-05-25): retried sends of the
+    # SAME msg.id MUST still produce a slice diff. MessageStore.write/2
+    # uses `Repo.insert(_, on_conflict: :nothing, conflict_target: :id)`
+    # at message_store.ex:86 — a resend of the same id is idempotent at
+    # the DB layer (succeeds + returns the same struct). Without the
+    # `:send_cursor` bump, `last_message_id` + `last_message` would be
+    # byte-identical to the prior send and `new_slice != slice` would
+    # be FALSE — Kind.Runtime would emit `nil` for slice_change_event,
+    # external mirrors would silently miss the retry while in-session
+    # subscribers still receive the dispatch.
+    test "retry of same msg.id still mutates slice (HIGH-1 — :send_cursor guarantees diff)" do
+      session_uri = URI.new!("session://default/default/lmi-retry-#{System.unique_integer([:positive])}")
+      bind_to_default(session_uri)
+      sender = URI.new!("entity://user/system/admin")
+      ctx = %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: sender}
+
+      msg = Message.new(sender, %{text: "same payload, sent twice", attachments: []})
+
+      slice = Chat.init_slice(%{})
+
+      assert {:ok, slice1, %{stored: true}} = Chat.invoke(:send, slice, %{message: msg}, ctx)
+      assert slice1.last_message_id == msg.id
+      assert slice1.send_cursor == 1
+
+      # Resend the SAME msg (same id, same body, same sender).
+      # MessageStore is idempotent on `(msg.id, session_uri)`; the
+      # second invoke succeeds without crashing and still returns
+      # `{:ok, _, %{stored: true}}`.
+      assert {:ok, slice2, %{stored: true}} = Chat.invoke(:send, slice1, %{message: msg}, ctx)
+
+      # The id + message itself are byte-equal across the retry...
+      assert slice2.last_message_id == slice1.last_message_id
+      assert slice2.last_message.id == slice1.last_message.id
+
+      # ...but the cursor MUST advance, so `slice2 != slice1` and
+      # `Kind.Runtime` step 9.5 will build a non-nil slice_change_event.
+      assert slice2.send_cursor == 2
+      refute slice2 == slice1
+    end
+
+    test "pre-PR-EM-6-PRE slice (none of the keys) gets all three on send" do
       # A pre-existing on-disk Session snapshot might carry a `:chat`
-      # slice without the `:last_message_id` key. The invoke path uses
-      # `Map.put/3` so it covers both the fresh-init shape (key present,
-      # nil value) and the legacy shape (key absent).
+      # slice without any of the PR-EM-6-PRE keys. The invoke path
+      # uses `Map.get/3` + `Map.put/3` so it covers both the fresh-init
+      # shape (keys present at defaults) and the legacy shape (keys
+      # absent). The cursor starts from 0 → 1 in either case.
       session_uri = URI.new!("session://default/default/lmi-legacy-#{System.unique_integer([:positive])}")
       bind_to_default(session_uri)
       sender = URI.new!("entity://user/system/admin")
@@ -301,6 +383,8 @@ defmodule Ezagent.Behavior.ChatTest do
 
       legacy_slice = %{members: %{}, monitors: %{}, last_seen: %{}}
       refute Map.has_key?(legacy_slice, :last_message_id)
+      refute Map.has_key?(legacy_slice, :last_message)
+      refute Map.has_key?(legacy_slice, :send_cursor)
 
       ctx = %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: sender}
 
@@ -308,15 +392,20 @@ defmodule Ezagent.Behavior.ChatTest do
                Chat.invoke(:send, legacy_slice, %{message: msg}, ctx)
 
       assert new_slice.last_message_id == msg.id
+      assert new_slice.last_message.id == msg.id
+      assert new_slice.send_cursor == 1
     end
 
-    test "SliceChange.emit fires on send when the hook is enabled (full Runtime path)" do
+    test "SliceChange.emit fires on send (full Runtime path) and event carries last_message struct" do
       # End-to-end: drive the Chat behavior via Kind.Runtime so the
       # slice_change_event hook fires (per runtime.ex step 9.5). With
-      # `:last_message_id` mutated by `:send`, subscribers should
-      # receive a `{:slice_changed, %{slice_key: :chat, ...}}` event.
-      # Without this PR's slice mutation, `new_slice == slice` and the
-      # hook short-circuits with `nil` — no event reaches the topic.
+      # the three send-tracking fields mutated by `:send`, subscribers
+      # should receive a `{:slice_changed, %{slice_key: :chat, ...}}`
+      # event carrying the full Message in `new_slice.last_message`
+      # (HIGH-2 — adapters convert the event without DB lookups).
+      # Without this PR's slice mutation, `new_slice == slice` and
+      # the hook short-circuits with `nil` — no event reaches the
+      # topic.
 
       Application.put_env(:ezagent_core, :slice_change_hook, true)
       on_exit(fn -> Application.delete_env(:ezagent_core, :slice_change_hook) end)
@@ -367,11 +456,23 @@ defmodule Ezagent.Behavior.ChatTest do
       assert slice_change_event.slice_key == :chat
       assert slice_change_event.action == :send
       assert slice_change_event.kind_module == Ezagent.Entity.Session
+
+      # All three send-tracking fields carry across in `new_slice` and
+      # are at their pre-send defaults in `old_slice`.
       assert slice_change_event.new_slice.last_message_id == msg.id
+      assert slice_change_event.new_slice.last_message.id == msg.id
+      assert slice_change_event.new_slice.last_message.sender == sender
+      assert slice_change_event.new_slice.last_message.session_uri == session_uri
+      assert slice_change_event.new_slice.send_cursor == 1
+
       assert slice_change_event.old_slice.last_message_id == nil
+      assert slice_change_event.old_slice.last_message == nil
+      assert slice_change_event.old_slice.send_cursor == 0
 
       # State carries the mutated slice
       assert new_state.chat.last_message_id == msg.id
+      assert new_state.chat.last_message.id == msg.id
+      assert new_state.chat.send_cursor == 1
 
       # Fire emit directly the same way Kind.Server.commit_and_notify/3
       # does post-snapshot — and assert subscribers receive the event.

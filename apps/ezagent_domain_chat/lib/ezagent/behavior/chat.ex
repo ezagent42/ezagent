@@ -99,20 +99,48 @@ defmodule Ezagent.Behavior.Chat do
       monitors: %{},
       # %{URI => DateTime} — when last seen offline (only present for offline)
       last_seen: %{},
-      # PR-EM-6-PRE (Allen 2026-05-25) — the id of the most recently
-      # `:send`-persisted Message on this session. Mutating this field
-      # in `invoke(:send, ...)` is what makes `Chat.send` cause a
-      # `SliceChange.emit/1` — the slice diff trigger fires when
-      # `new_slice != slice`, and prior to this field every `:send`
-      # returned an unchanged slice, so SliceChange never fired for
-      # chat messages. After PR-EM-6 deletes `maybe_notify_external/3`,
-      # this field IS the architectural seam external-mirror plugins
-      # (Feishu / future Slack / etc) ride on: Publisher event →
-      # ExternalMirror Worker → adapter dispatch.
+      # PR-EM-6-PRE (Allen 2026-05-25) — the architectural seam
+      # external-mirror plugins (Feishu / future Slack / etc) ride on
+      # after PR-EM-6 deletes `maybe_notify_external/3`. The flow is
+      # Chat.send → slice mutation → `Kind.Runtime` step 9.5 builds
+      # `slice_change_event` (gated on `new_slice != slice`) →
+      # `Kind.Server.commit_and_notify/3` → `SliceChange.emit/1` →
+      # Publisher → ExternalMirror Worker → adapter dispatch.
       #
-      # Initially `nil` (no message yet); set to `msg.id` (a string)
-      # after each successful `MessageStore.write/2`.
+      # Three fields, three jobs (codex r1 2026-05-25 HIGH-1 + HIGH-2):
+      #
+      # - `:last_message_id` — the id of the most recently persisted
+      #   Message. Stable cross-reference for MessageStore + ReadMarker
+      #   rows; NOT sufficient on its own because a retried send of the
+      #   same msg.id leaves it byte-equal (HIGH-1).
+      #
+      # - `:last_message` — the full `Ezagent.Message.t()` returned by
+      #   `MessageStore.write/2` (has `:session_uri` + `:workspace_uri`
+      #   stamped). ExternalMirror adapters convert `Publisher.Event` →
+      #   payload as PURE FUNCTIONS (no DB lookup); carrying the
+      #   message here lets adapters render sender / body / attachments
+      #   / mentions directly from the event without an out-of-band
+      #   MessageStore round-trip (HIGH-2).
+      #
+      # - `:send_cursor` — monotonically-incrementing counter, bumped
+      #   on EVERY `:send` that successfully persists, even when
+      #   `msg.id` matches an earlier write (MessageStore is idempotent
+      #   on `(msg.id, session_uri)` per its `on_conflict: :nothing`).
+      #   Without this, a resend of an already-persisted message id
+      #   would leave `last_message_id` + `last_message` byte-equal,
+      #   SliceChange would short-circuit, and external mirrors would
+      #   silently miss the retry while in-session subscribers received
+      #   it (HIGH-1).
+      #
+      # All three start `nil` / `0` on a fresh session; readers must
+      # tolerate the legacy shape where the keys are absent entirely
+      # (pre-PR-EM-6-PRE snapshots — `Kind.Snapshot.load_or_init/3`
+      # merges loaded INTO fresh, so a Session that pre-dates this PR
+      # keeps its pre-existing `:chat` slice without these keys until
+      # its next `:send`).
       last_message_id: nil,
+      last_message: nil,
+      send_cursor: 0,
       # Phase 7 completion PR-2 (SPEC §1.3 / §1.6) — the durable
       # source-template record for the orchestrator's working copy.
       # `template_working_copy` is template-SHAPED, not live-runtime
@@ -257,20 +285,35 @@ defmodule Ezagent.Behavior.Chat do
         maybe_notify_external(Map.get(ctx, :kind_module), session_uri, msg)
 
         # PR-EM-6-PRE (Allen 2026-05-25) — mutate the slice so the
-        # SliceChange hook in `Kind.Runtime` fires for every send. The
-        # field is the freshly-persisted message's id (string). Without
-        # this mutation `new_slice == slice` and no SliceChange event
-        # reaches the Publisher → ExternalMirror Worker path that
-        # plugin-owned outbound mirrors (Feishu / future Slack / etc)
-        # subscribe to after PR-EM-6 deletes `maybe_notify_external/3`.
+        # SliceChange hook in `Kind.Runtime` fires for every send. See
+        # `init_slice/1` for the three-field rationale (HIGH-1 +
+        # HIGH-2 from codex r1 2026-05-25).
         #
-        # `slice` here may be a pre-PR-EM-6-PRE snapshot lacking the
-        # `:last_message_id` key (Session's `:chat` slice is loaded
-        # merged-into-fresh via `Kind.Snapshot.load_or_init/3`, but a
-        # pre-existing on-disk slice could shadow the fresh init's
-        # default). `Map.put/3` covers both shapes — sets it to msg.id
-        # whether or not the key existed.
-        new_slice = Map.put(slice, :last_message_id, msg.id)
+        # - `:last_message_id` + `:last_message`: cross-reference id +
+        #   the full stamped Message struct (sender / body / mentions /
+        #   workspace_uri / session_uri / inserted_at). Adapters
+        #   downstream get everything they need from the
+        #   `Publisher.Event.new_slice` without a MessageStore lookup.
+        #
+        # - `:send_cursor`: monotonic per-invocation counter. Bumped
+        #   even when `msg.id` matches a prior send (MessageStore is
+        #   idempotent on `(id, session_uri)` per `on_conflict:
+        #   :nothing` in `Repo.insert/2` at message_store.ex:86). The
+        #   cursor delta is what guarantees `new_slice != slice` for
+        #   retried sends — without it, external mirrors would miss
+        #   any send whose id collides with a previously-persisted
+        #   row, while in-session members still receive the dispatch.
+        #
+        # `Map.get/3` defaults cover the legacy slice shape
+        # (pre-PR-EM-6-PRE snapshots lack these keys); `Map.put/3` for
+        # the assignment side covers the same.
+        prev_cursor = Map.get(slice, :send_cursor, 0)
+
+        new_slice =
+          slice
+          |> Map.put(:last_message_id, msg.id)
+          |> Map.put(:last_message, msg)
+          |> Map.put(:send_cursor, prev_cursor + 1)
 
         {:ok, new_slice, %{stored: true}}
 
