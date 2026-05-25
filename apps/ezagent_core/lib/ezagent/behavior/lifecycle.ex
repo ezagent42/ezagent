@@ -166,10 +166,7 @@ defmodule Ezagent.Behavior.Lifecycle do
   # Behavior — no per-entity owner; only bootstrap admin grants
   # via §5.2 admin branch. Test/demo Behaviors + system control
   # surfaces fall here pending dedicated SPEC for any specific
-  # owner model they need (e.g. FeishuOutbound: future PR could
-  # delegate to session owner like Chat does, but the current
-  # outbound path is admin-gated).
+  # owner model they need.
   @impl Ezagent.Behavior
   def data_owner(_), do: :no_owner
-
 end

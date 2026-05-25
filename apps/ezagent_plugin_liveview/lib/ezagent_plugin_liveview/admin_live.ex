@@ -841,15 +841,14 @@ defmodule EzagentPluginLiveview.AdminLive do
     {:noreply, assign(socket, :debug_open, not socket.assigns.debug_open)}
   end
 
-  # Phase 8b §1.6 — Feishu binding unbind action.
-  def handle_event("unbind_feishu_chat", %{"chat_id" => chat_id}, socket) do
-    _ =
-      if Code.ensure_loaded?(EzagentPluginFeishu.SessionBinding) do
-        EzagentPluginFeishu.SessionBinding.unbind(chat_id)
-      end
-
-    {:noreply, assign_session_context(socket, socket.assigns.current_session_uri)}
-  end
+  # PR-EM-6: the `unbind_feishu_chat` handler was retired along with
+  # `EzagentPluginFeishu.SessionBinding`. Per-session chat unbind now
+  # flows through the generic admin LV at
+  # `/admin/sessions/:id/external_mirror` (PR-EM-4), which uses
+  # `Ezagent.ExternalMirror.unbind/4`. No template in this LV bound
+  # `unbind_feishu_chat`; the handler was already unreachable from
+  # the UI as of PR-EM-4. The `feishu_chat_ids` assign (read-only
+  # display) is now backed by `EzagentPluginFeishu.InboundChatLookup`.
 
   # PTY input dispatch — when PtyView is active, xterm pushes pty_input.
   # Routed through the shared `EzagentDomainUi.Pty.TerminalSeam` (the
@@ -1723,8 +1722,11 @@ defmodule EzagentPluginLiveview.AdminLive do
   defp matcher_targets_session?(_, _), do: false
 
   defp feishu_chat_ids_for(%URI{} = session_uri) do
-    if Code.ensure_loaded?(EzagentPluginFeishu.SessionBinding) do
-      EzagentPluginFeishu.SessionBinding.chat_ids_for(session_uri)
+    # PR-EM-6: reads `external_mirror_bindings` filtered to
+    # adapter_id="feishu", replacing the retired
+    # `EzagentPluginFeishu.SessionBinding.chat_ids_for/1`.
+    if Code.ensure_loaded?(EzagentPluginFeishu.InboundChatLookup) do
+      EzagentPluginFeishu.InboundChatLookup.chat_ids_for(session_uri)
     else
       []
     end

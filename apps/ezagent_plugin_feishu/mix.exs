@@ -40,6 +40,13 @@ defmodule EzagentPluginFeishu.MixProject do
       {:ezagent_domain_identity, in_umbrella: true},
       {:ezagent_domain_workspace, in_umbrella: true},
       {:ezagent_domain_chat, in_umbrella: true},
+      # PR-EM-6: ExternalMirror Adapter + Binding behaviours +
+      # BindingRow projection table. The Feishu plugin's FeishuAdapter
+      # / FeishuChatBinding implement these contracts; the inbound
+      # dispatcher reads BindingRow for chat_id → session_uri reverse
+      # lookup; the migration mix task uses WorkerSpawn + BindingRow
+      # directly to migrate legacy feishu_session_bindings rows.
+      {:ezagent_domain_external_mirror, in_umbrella: true},
       {:jason, "~> 1.2"},
       {:plug, "~> 1.18"},
       {:yaml_elixir, "~> 2.9"}

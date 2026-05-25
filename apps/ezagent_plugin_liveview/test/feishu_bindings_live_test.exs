@@ -2,24 +2,18 @@ defmodule EzagentPluginLiveview.FeishuBindingsLiveTest do
   @moduledoc """
   /plugins/feishu/bindings LiveView integration tests.
 
-  Covers both binding sections:
-
-  1. User bindings (open_id ↔ user URI) — pre-existing surface.
-  2. Session bindings (chat_id ↔ session URI) — V1 fix, Allen Feishu
-     2026-05-22. The session-binding section previously had no UI;
-     these tests pin the new list + bind form + unbind contract.
-
-  The two ESR-URI fields (`user_uri`, `session_uri`) use the
-  `uri_picker` component (fix 2026-05-22); the picker-render +
-  server-side revalidation contract is pinned in the `uri_picker`
-  describe block.
+  PR-EM-6 reshape: the session-bindings section was retired (moved to
+  the generic ExternalMirror admin LV at
+  `/admin/sessions/:id/external_mirror`). This test file now covers
+  ONLY the user-bindings surface (open_id ↔ user_uri) which remains
+  the Feishu plugin's responsibility.
   """
 
   use ExUnit.Case
   import Phoenix.ConnTest
   import Phoenix.LiveViewTest
 
-  alias EzagentPluginFeishu.SessionBinding
+  alias EzagentPluginFeishu.UserBinding
 
   @endpoint EzagentWeb.Endpoint
 
@@ -42,107 +36,51 @@ defmodule EzagentPluginLiveview.FeishuBindingsLiveTest do
     {:ok, conn: conn}
   end
 
-  describe "session-binding section" do
-    test "renders the session-binding section with empty state", %{conn: conn} do
+  describe "user-binding section" do
+    test "renders the user-binding form with empty state", %{conn: conn} do
       {:ok, _lv, html} = live(conn, "/plugins/feishu/bindings")
 
-      assert html =~ "Session bindings"
-      assert html =~ "Bind chat_id ↔ session URI"
-      assert html =~ "No session bindings yet"
-      # placeholder per spec
-      assert html =~ "session://default/default/main"
+      assert html =~ "Feishu user bindings"
+      assert html =~ "Bind open_id ↔ user URI"
+      assert html =~ "No bindings yet"
     end
 
-    test "lists existing session bindings", %{conn: conn} do
-      {:ok, _row} = SessionBinding.bind("oc_existing_row", "session://default/default/main")
+    test "lists existing user bindings", %{conn: conn} do
+      {:ok, _row} =
+        UserBinding.bind(
+          "ou_existing",
+          "entity://user/default/alice",
+          "entity://user/system/admin"
+        )
 
       {:ok, _lv, html} = live(conn, "/plugins/feishu/bindings")
 
-      assert html =~ "oc_existing_row"
-      assert html =~ "session://default/default/main"
-      assert html =~ "enabled"
-      refute html =~ "No session bindings yet"
+      assert html =~ "ou_existing"
+      assert html =~ "entity://user/default/alice"
+      refute html =~ "No bindings yet"
     end
   end
 
-  describe "bind_session" do
-    # The session_uri uri_picker hidden input is JS-managed (only ""
-    # is valid in a dead-render). Set the form-real field (chat_id) via
-    # form/3; pass the picker-managed session_uri via render_submit/2
-    # extras — mirrors routing_live_test's pattern.
-    test "valid submit creates a SessionBinding row", %{conn: conn} do
-      {:ok, lv, _html} = live(conn, "/plugins/feishu/bindings")
+  describe "session-bindings redirect (PR-EM-6)" do
+    test "renders the redirect card pointing operators at the generic surface", %{conn: conn} do
+      {:ok, _lv, html} = live(conn, "/plugins/feishu/bindings")
 
-      assert SessionBinding.list_all() == []
-
-      html =
-        lv
-        |> form("form[phx-submit=bind_session]", %{
-          "session_bind" => %{"chat_id" => "oc_test_chat_42"}
-        })
-        |> render_submit(%{
-          "session_bind" => %{"session_uri" => "session://default/default/main"}
-        })
-
-      assert html =~ "Bound oc_test_chat_42"
-
-      assert [%SessionBinding{chat_id: "oc_test_chat_42", session_uri: uri}] =
-               SessionBinding.list_all()
-
-      assert uri == "session://default/default/main"
-    end
-
-    test "rejects a chat_id that does not start with oc_", %{conn: conn} do
-      {:ok, lv, _html} = live(conn, "/plugins/feishu/bindings")
-
-      html =
-        lv
-        |> form("form[phx-submit=bind_session]", %{
-          "session_bind" => %{"chat_id" => "bad_chat"}
-        })
-        |> render_submit(%{
-          "session_bind" => %{"session_uri" => "session://default/default/main"}
-        })
-
-      assert html =~ "must start with `oc_`"
-      assert SessionBinding.list_all() == []
-    end
-
-    test "rejects a session_uri that is not a session:// URI", %{conn: conn} do
-      {:ok, lv, _html} = live(conn, "/plugins/feishu/bindings")
-
-      html =
-        lv
-        |> form("form[phx-submit=bind_session]", %{
-          "session_bind" => %{"chat_id" => "oc_test_chat"}
-        })
-        |> render_submit(%{
-          "session_bind" => %{"session_uri" => "entity://user/default/main"}
-        })
-
-      # An entity:// URI is the wrong scheme for a [:session] picker —
-      # the shared validator rejects it server-side.
-      assert html =~ "Rejected"
-      assert html =~ "must be a session URI"
-      assert SessionBinding.list_all() == []
+      assert html =~ "moved"
+      assert html =~ "ezagent.external_mirror.bind"
+      assert html =~ "/admin/sessions/"
     end
   end
-
-  # --- uri_picker (fix 2026-05-22) -------------------------------------------
 
   describe "uri_picker" do
-    test "both URI fields render uri_picker :single components", %{conn: conn} do
+    test "the user_uri field renders as a uri_picker :single component", %{conn: conn} do
       {:ok, _lv, html} = live(conn, "/plugins/feishu/bindings")
 
-      # The two ESR-URI fields are pickers, not raw text inputs.
       assert html =~ ~s(phx-hook="UriPicker")
       assert html =~ ~s(data-mode="single")
       assert html =~ ~s(data-name="bind[user_uri]")
-      assert html =~ ~s(data-name="session_bind[session_uri]")
 
-      # Feishu identifiers stay raw text inputs (not URIs).
+      # Feishu identifier stays a raw text input (not a URI).
       assert html =~ ~s(name="bind[open_id]")
-      assert html =~ ~s(name="session_bind[chat_id]")
     end
 
     test "rejects a tampered out-of-workspace user_uri", %{conn: conn} do
@@ -150,8 +88,7 @@ defmodule EzagentPluginLiveview.FeishuBindingsLiveTest do
 
       # The picker is scoped to workspace://default; a hand-tampered
       # hidden input naming an entity in another workspace must be
-      # rejected server-side, NOT bound. The picker hidden input is
-      # JS-managed, so the tampered URI rides in render_submit/2 extras.
+      # rejected server-side, NOT bound.
       html =
         lv
         |> form("form[phx-submit=bind]", %{
@@ -162,40 +99,7 @@ defmodule EzagentPluginLiveview.FeishuBindingsLiveTest do
         })
 
       assert html =~ "Rejected"
-      assert EzagentPluginFeishu.UserBinding.list_all() == []
-    end
-
-    test "rejects a tampered out-of-workspace session_uri", %{conn: conn} do
-      {:ok, lv, _html} = live(conn, "/plugins/feishu/bindings")
-
-      html =
-        lv
-        |> form("form[phx-submit=bind_session]", %{
-          "session_bind" => %{"chat_id" => "oc_tamper_chat"}
-        })
-        |> render_submit(%{
-          "session_bind" => %{"session_uri" => "session://default/other-tenant/leak"}
-        })
-
-      assert html =~ "Rejected"
-      assert SessionBinding.list_all() == []
-    end
-  end
-
-  describe "unbind_session" do
-    test "removes the SessionBinding row", %{conn: conn} do
-      {:ok, _row} = SessionBinding.bind("oc_to_remove", "session://default/default/main")
-
-      {:ok, lv, html} = live(conn, "/plugins/feishu/bindings")
-      assert html =~ "oc_to_remove"
-
-      html =
-        lv
-        |> element("button[phx-value-chat-id=oc_to_remove]")
-        |> render_click()
-
-      assert html =~ "Unbound oc_to_remove"
-      assert SessionBinding.list_all() == []
+      assert UserBinding.list_all() == []
     end
   end
 end
