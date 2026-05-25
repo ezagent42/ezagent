@@ -10,14 +10,22 @@ defmodule Ezagent.Plugin.RegistrationHooks do
   pair to a core primitive so future plugin extensions with
   cross-registry dependencies can reuse it without re-inventing.
 
-  ## Why a `:protected` ETS
+  ## Why a `:private` ETS
 
   The hook table holds zero-arity closures + `{registry_module, key}` lists.
-  Only this GenServer's owner pid is permitted to write — public ETS would
-  let any caller insert / mutate hooks (auth bypass surface for any future
-  consumer whose hook does sensitive work). Reads stay direct via
-  `:ets.lookup/2` from `notify_subscribers/2` for the O(1) hot path; the
-  fire-and-delete happens through the GenServer for atomicity.
+  Hook closures often perform privileged work (cap subject registration,
+  persisted-binding reconciliation), so they MUST NOT be extractable +
+  callable from outside the GenServer.
+
+  `:private` denies all non-owner reads AND writes — only this GenServer's
+  pid can touch the table. All public access goes through `GenServer.call`
+  (`__clear_all__/0`) or `GenServer.cast` (`notify_subscribers/2`). This
+  closes the codex PR-AUDIT r4 finding that an in-VM caller could
+  `:ets.lookup/2` or `:ets.tab2list/1` against a `:protected` table to
+  extract a pending hook closure and call it directly, bypassing both
+  the all_registered? gate AND the safe_fire/1 isolation.
+
+  Symmetric with the FacadeNonceTable hardening shipped in this PR.
 
   ## Idempotency contract
 
@@ -90,7 +98,20 @@ defmodule Ezagent.Plugin.RegistrationHooks do
     tid =
       :ets.new(@table, [
         :set,
-        :protected,
+        # codex PR-AUDIT r4 HIGH fix (2026-05-25): `:private` instead
+        # of `:protected`. Pre-fix, any in-VM process could `:ets.lookup/2`
+        # or `:ets.tab2list/1` to extract a pending hook closure and call
+        # it directly — bypassing the all_registered? gate AND the
+        # safe_fire/1 isolation. Hook closures often perform privileged
+        # work (cap subject registration, persisted-binding reconciliation);
+        # exposing them outside the GenServer breaks the once-after-all-
+        # registered contract.
+        #
+        # `:private` denies all non-owner reads AND writes — only this
+        # GenServer's pid can touch the table. All public access goes
+        # through `GenServer.call`/`cast`. Symmetric with the
+        # FacadeNonceTable hardening shipped in this PR.
+        :private,
         :named_table,
         read_concurrency: true
       ])

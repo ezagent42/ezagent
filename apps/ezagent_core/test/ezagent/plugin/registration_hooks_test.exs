@@ -236,6 +236,49 @@ defmodule Ezagent.Plugin.RegistrationHooksTest do
     assert Process.whereis(RegistrationHooks) == pid_before
   end
 
+  # codex PR-AUDIT r4 HIGH regression — `:private` ETS denies external reads
+  #
+  # Pre-fix, the hooks table was `:protected` — any in-VM process could
+  # `:ets.lookup/2` or `:ets.tab2list/1` to extract a pending hook
+  # closure and call it directly, bypassing both the all_registered?
+  # gate AND the safe_fire/1 isolation. Hook closures often perform
+  # privileged work (cap subject registration, persisted-binding
+  # reconciliation); exposing them outside the GenServer breaks the
+  # once-after-all-registered contract.
+  #
+  # Post-fix, `:private` denies all non-owner reads + writes. The
+  # caller process (this test pid) is not the table owner.
+  test "hooks ETS table is :private — non-owner reads raise ArgumentError (codex r4 HIGH gate)" do
+    me = self()
+    ref = make_ref()
+
+    # Queue a deferred hook so the table has a non-counter row.
+    :ok =
+      RegistrationHooks.publish_after_all_registered(
+        [{StubRegistryA, "private-r4"}, {StubRegistryB, "private-r4"}],
+        fn ->
+          send(me, {:fired, ref})
+          :ok
+        end
+      )
+
+    # Non-owner read attempt → BEAM raises ArgumentError on a `:private`
+    # named table from a non-owner pid.
+    assert_raise ArgumentError, fn ->
+      :ets.tab2list(:ezagent_plugin_registration_hooks)
+    end
+
+    assert_raise ArgumentError, fn ->
+      :ets.lookup(:ezagent_plugin_registration_hooks, 1)
+    end
+
+    # Pending hook still works via the normal path (GenServer-mediated).
+    StubRegistryA.set("private-r4")
+    StubRegistryB.set("private-r4")
+    :ok = RegistrationHooks.notify_subscribers(StubRegistryB, "private-r4")
+    assert_receive {:fired, ^ref}, 100
+  end
+
   test "hook throw does not crash the GenServer" do
     StubRegistryA.set("throw-ada")
     StubRegistryB.set("throw-ada")
