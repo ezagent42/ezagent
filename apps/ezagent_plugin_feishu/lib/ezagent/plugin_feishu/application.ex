@@ -131,7 +131,37 @@ defmodule EzagentPluginFeishu.Application do
   def after_boot do
     _ = Ezagent.Workspace.Loader.load_all()
     :ok = seed_initial_user_bindings()
+
+    # PR-CC-2b (SPEC caps-cleanup-v1 §4.3) — seed the feishu-owned
+    # system principal per §4.1 Operating context. Test-env skip.
+    :ok = seed_feishu_system_principals()
     :ok
+  end
+
+  # PR-CC-2b — Operating context (§4.1): `system://feishu-binding-policy`
+  # is used by `Plugin.Feishu.BindingPolicy.apply/2` when re-granting
+  # default session caps as part of operator-driven binding adjustments.
+  defp seed_feishu_system_principals do
+    if Mix.env() == :test do
+      :ok
+    else
+      ensure_principal_logged("system://feishu-binding-policy")
+    end
+  end
+
+  defp ensure_principal_logged(uri_str) do
+    case Ezagent.SystemPrincipal.ensure(URI.parse(uri_str)) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "EzagentPluginFeishu seed: ensure(#{uri_str}) failed " <>
+            "(#{inspect(reason)}); idempotent retry on next boot."
+        )
+
+        :ok
+    end
   end
 
   # --- internals ------------------------------------------------------

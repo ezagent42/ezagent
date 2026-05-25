@@ -93,6 +93,12 @@ defmodule EzagentDomainIdentity.Application do
         # the spawn itself.
         :ok = maybe_seed_admin_kind_for_tests()
 
+        # PR-CC-2b (SPEC caps-cleanup-v1 §4.3) — seed the bootstrap
+        # system principal owned by identity. Idempotent; test-env skip
+        # because boot-time `Kind.spawn` against the Sandbox is racy
+        # (same constraint that gates `maybe_seed_admin_kind_for_tests`).
+        :ok = seed_identity_system_principals()
+
         {:ok, sup_pid}
 
       other ->
@@ -153,6 +159,41 @@ defmodule EzagentDomainIdentity.Application do
     Code.ensure_loaded?(Mix) and Mix.env() == :test
   rescue
     _ -> false
+  end
+
+  # PR-CC-2b (SPEC caps-cleanup-v1 §4.3) — seed system principals whose
+  # Operating context (§4.1 table) is identity:
+  #
+  # - `system://bootstrap` — Admin User spawn at first boot.
+  #
+  # Test-env skip mirrors `maybe_seed_admin_kind_for_tests/0` — the
+  # `Kind.spawn` snapshot path interacts poorly with the test SQLite
+  # Sandbox boot-time setup. Tests that need this principal alive at
+  # boot can invoke `SystemPrincipal.ensure(URI.parse("system://bootstrap"))`
+  # in setup after `Sandbox.checkout`.
+  defp seed_identity_system_principals do
+    if test_env?() do
+      :ok
+    else
+      ensure_principal_logged("system://bootstrap")
+    end
+  end
+
+  defp ensure_principal_logged(uri_str) do
+    case Ezagent.SystemPrincipal.ensure(URI.parse(uri_str)) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        require Logger
+
+        Logger.warning(
+          "EzagentDomainIdentity seed: ensure(#{uri_str}) failed " <>
+            "(#{inspect(reason)}); idempotent retry on next boot."
+        )
+
+        :ok
+    end
   end
 
   # PR-M (Allen 2026-05-20) — idempotent admin User DB row provisioning

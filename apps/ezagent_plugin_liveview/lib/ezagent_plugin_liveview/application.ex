@@ -66,4 +66,34 @@ defmodule EzagentPluginLiveview.Application do
   # config_surface/0 keeps the `use Ezagent.Plugin` default `nil` — the
   # liveview plugin IS the web UI; it has no separate config surface
   # (SPEC §6.1).
+
+  # PR-CC-2b (SPEC caps-cleanup-v1 §4.3) — Operating context (§4.1):
+  # `system://lv-anon-mount` is used by LV mount paths when no
+  # `current_entity_uri` is in session. Seeded here so the lazy callers
+  # in `agent_extensions_live` / `agent_new_live` / `terminal_live` /
+  # `agent_detail_live` find the principal alive on first mount.
+  #
+  # Test-env skip — the Sandbox boot-time DB write is racy and tests
+  # that need the principal call `SystemPrincipal.ensure/1` in setup.
+  @impl Ezagent.Plugin
+  def after_boot do
+    if Mix.env() == :test do
+      :ok
+    else
+      case Ezagent.SystemPrincipal.ensure(URI.parse("system://lv-anon-mount")) do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          require Logger
+
+          Logger.warning(
+            "EzagentPluginLiveview seed: ensure(system://lv-anon-mount) failed " <>
+              "(#{inspect(reason)}); idempotent retry on next boot."
+          )
+
+          :ok
+      end
+    end
+  end
 end
