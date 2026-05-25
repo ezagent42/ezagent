@@ -1,6 +1,6 @@
 # SPEC — Caps 清理 v1（三件架构纠偏）
 
-**状态:** r3 (DRAFT)。2026-05-25。
+**状态:** r3-FINAL（已合入）。2026-05-25。信任模型已接受；MED-1 dedupe 修复已应用；进入实施（PR-CC-1/CC-2/CC-3）。
 **层级:** `apps/ezagent_core/` 框架纠偏 + 所有 domain + plugin 的清扫。
 **触发:** Allen 2026-05-25 (Feishu) — 在 data-ownership-v2 / external-mirror-audit 工作中暴露的三条逐字指令，针对累积的 cap 系统病灶：
 
@@ -24,6 +24,18 @@
 - `feedback_bilingual_docs_convention` — 中文镜像在 `.zh_cn.md`。
 
 **配套:** `2026-05-25-caps-cleanup-v1.md`（英文）。
+
+---
+
+## 0c. r3-FINAL 修订说明（codex r3 之后变更）
+
+Codex r3 返回三条发现：HIGH-1（principal 伪造）、HIGH-2（system caller workspace iso 默认）、MED-1（编译期 gate 的 `Enum.uniq_by` 仅按 Behavior 去重）。Allen 2026-05-25 裁决：
+
+1. **HIGH-1 接受为 v1 限制。** 在新 §10.5 文档化：BEAM 边界即信任边界；VM 内 principal 伪造在 v1 cap 强制范畴之外，由部署纪律 + plugin 代码评审处理。v2 将把 `caller_uri` 从 dispatch 参数移到 server 戳印 context。
+2. **HIGH-2 接受为 v1 限制。** 在新 §10.5 文档化：`system://` principal 默认携带 `workspace_uri: :any`；这是跨 workspace 操作（BootReconciler、AdapterInstall 等）的文档化契约，非 bug。Non-system caller 仍按 §5.5 强制 workspace iso。
+3. **MED-1 结构性修复。** §6.1 check 10（`check_required_caps_values_parse_strict`）`Enum.uniq_by/2` 键从 `fn {_, _, b} -> b end` 改为 `fn {k, a, b} -> {k, b, a} end`。仅按 Behavior 的键静默丢弃了同一 Behavior 在不同 Kind 下（或不同 per-action cap 主体的）注册，使其 required_caps 未被检查。三元组键去重只折叠真正的重复。
+
+进入实施。无 r4 codex 轮次，按 Allen 2026-05-25 手动裁决。
 
 ---
 
@@ -740,10 +752,16 @@ defp check_required_caps_keys_match_actions(diagnostics, plugin_module) do
 end
 
 # 新 check 10 — 每个 required_caps/0 值经严格 cap parser 解析
-# AND 对所声明 Behavior/Kind 交叉校验（r2 HIGH-4 修 — 原本仅 "is_binary?"）
+# AND 对所声明 Behavior/Kind 交叉校验（r2 HIGH-4 修 — 原本仅 "is_binary?"；
+#  r3-FINAL MED-1 修 — 去重键改为 {Kind, Behavior, action} 三元组而非仅 Behavior。
+#  同一 Behavior 可能在多个 Kind 下注册（如 `Behavior.Chat` 同时挂 `Kind.Session`
+#  与 `Kind.Agent`），或按 (Kind, action) 配以不同 cap 主体。仅按 Behavior 去重
+#  会静默丢弃第二个及之后的注册，导致其 required_caps 未被检查。新三元组键只
+#  折叠真正的重复 — 同 Kind + 同 Behavior + 同 action — 这是 `behaviors/0` 在
+#  Behavior 重导出时可能合法重复的场景。)
 defp check_required_caps_values_parse_strict(diagnostics, plugin_module) do
   plugin_module.behaviors()
-  |> Enum.uniq_by(fn {_, _, b} -> b end)
+  |> Enum.uniq_by(fn {k, a, b} -> {k, b, a} end)
   |> Enum.filter(fn {_, _, b} -> function_exported?(b, :required_caps, 0) end)
   |> Enum.reduce(diagnostics, fn {kind, _action, behavior}, acc ->
     Enum.reduce(behavior.required_caps(), acc, fn {action, cap_str}, inner_acc ->
@@ -1039,6 +1057,27 @@ end
 
 每个 sub-PR rebase-and-revert 干净。迁移脚本是单向（无 undo）— `caps_schema_version` 升是 Rubicon。回滚到 PR-CC-2c 之前需要 DB 恢复，非代码 revert。这可接受，因为抹掉重建模式匹配 Phase 9 SPEC v3 §8 且该部署故事是 Allen 明确选择。
 
+### 10.5 v1 接受的限制 — VM 内 caller 被信任（信任模型）
+
+ezagent v1 遵循标准 Elixir release 信任模型：**BEAM 边界即信任边界**。VM 内运行的任何代码都视为 operator "已部署"且受信；`Invocation.dispatch/1` 上的 principal 字段是信息性 + 可审计的，并非密码学认证。
+
+Codex r3 提出两条发现（HIGH-1 principal 伪造、HIGH-2 system caller workspace iso），在 v1 中 **不是 bug** — 它们是信任模型的显式、已文档化的后果。Allen 2026-05-25 确认模型 + 接受。
+
+**本模型 **DO** 保护的：**
+- Operator 审计 + 问责：每次 invocation 在 `invocations` 表中记录（声称的）caller，包括 catalog 未命中的 telemetry `[:ezagent, :authz, :unknown_principal]`（§5.3 step 5.0a）。
+- Cap 形态校验：caller 在没有匹配 cap 时不能 dispatch action（§5.5）。
+- Non-system caller 的 workspace iso：常规 user URI 派生自 workspace 且被强制（§5.5 第二臂、§9.4）。
+
+**本模型 **DO NOT** 保护的：**
+- **Principal 伪造（codex r3 HIGH-1）：** VM 内代码可调 `dispatch(%{caller_uri: "system://catalog-中的任意"})`；system principal catalog（§4.2）只校验 URI 在 allowlist 中，不校验 caller 实际 **就是** 该 principal。缓解：外部代码注入在 OS / 部署层防御（已审 Elixir release、无第三方 RCE 面、部署时 plugin 代码评审）。伪造 principal 的唯一途径是在 VM 中跑未授权代码，这与让你直接读 DB 加密 key 是同一威胁 — 在 cap 级强制范畴之外。
+- **System caller workspace iso（codex r3 HIGH-2）：** `system://` principal 默认配 `workspace_uri: :any`，有意旁路 workspace iso 以让跨 workspace 操作（BootReconciler、AdapterInstall、迁移脚本等）能工作。这不是 bug — 是 system principal 的文档化契约。Non-system caller（每个 `user://`、`agent://`、`session://` URI）按 §5.5 正常强制 workspace iso。
+
+**v2 需求**（多租户 / plugin marketplace 引入后）：
+- Principal 认证经 server 戳印 context（Plug.Conn 式 `assigns`）；`caller_uri` 从 dispatch 参数移到 derived-from-context 值，由 dispatch caller 不可伪造的认证层计算。
+- 新 SPEC `caps-cleanup-v2` 将重新设计 dispatch context。参考：本节 + codex r3 HIGH-1 + HIGH-2 发现是 v2 输入集。
+
+按 `feedback_let_it_crash_no_workarounds` 风格文档化：我们选择显式接受 + 文档化未来计划，而非给出虚假安全感的静默部分缓解。
+
 ---
 
 ## 11. 范围外（futures）
@@ -1053,8 +1092,8 @@ end
 ## 12. Codex review 历史排序
 
 - **r1 codex：** `needs-attention` — 4 HIGH + 1 MEDIUM。按 §0a 在 r2 闭合。
-- **r2 codex：** `needs-attention` — 3 HIGH + 1 MEDIUM。按 §0b 在 r3（本修订）闭合。
-- **r3 codex：** 待定。r3 是 dispatch prompt 的 **最终** 轮；若 r3 仍返 HIGH/CRIT，带新发现列表升级 Allen — 可能指更深层架构分歧，需要 brainstorm reset。按 memory `feedback_spec_codex_adversarial_review`。
+- **r2 codex：** `needs-attention` — 3 HIGH + 1 MEDIUM。按 §0b 在 r3 闭合。
+- **r3 codex：** `needs-attention` — 2 HIGH + 1 MEDIUM。按 §0c 在 r3-FINAL 闭合：HIGH-1 + HIGH-2 接受为文档化的 v1 信任模型限制（§10.5）；MED-1 dedupe 键结构性修复（§6.1）。无 r4 轮次，按 Allen 2026-05-25 手动裁决。
 
 若 r3 codex 仍 HIGH/CRIT，review 聚焦于：
 - **Target CAS 原子性**（§5.3 step 8.5、§9.6 invariant）— 审 `Ezagent.Identity.cas_update_caps/2` 经 `:ets.select_replace/2` 在并发 grant 负载下是否真原子（或需序列化 `GenServer.call`）。

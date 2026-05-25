@@ -1,6 +1,6 @@
 # SPEC — Caps cleanup v1 (3-issue architectural rectification)
 
-**Status:** r3 (DRAFT). 2026-05-25.
+**Status:** r3-FINAL (MERGED). 2026-05-25. Trust-model accepted; MED-1 dedupe fix applied; proceeding to impl (PR-CC-1/CC-2/CC-3).
 **Tier:** `apps/ezagent_core/` framework rectification + sweep across every domain + plugin.
 **Trigger:** Allen 2026-05-25 (Feishu) — three verbatim directives addressing accumulated cap-system pathology surfaced during the data-ownership-v2 / external-mirror-audit work:
 
@@ -24,6 +24,18 @@
 - `feedback_bilingual_docs_convention` — Chinese mirror at `.zh_cn.md`.
 
 **Companion:** `2026-05-25-caps-cleanup-v1.zh_cn.md`.
+
+---
+
+## 0c. r3-FINAL revision notes (what changed after codex r3)
+
+Codex r3 returned three findings: HIGH-1 (principal forgery), HIGH-2 (system-caller workspace iso default), MED-1 (`Enum.uniq_by` in compile gate dedupes by Behavior alone). Allen 2026-05-25 ruling:
+
+1. **HIGH-1 ACCEPTED as v1 limit.** Documented in new §10.5: the BEAM boundary is the trust boundary; in-VM principal forgery is out of scope for v1 cap enforcement, addressed by deployment hygiene + plugin code review. v2 will move `caller_uri` from dispatch parameter to server-stamped context.
+2. **HIGH-2 ACCEPTED as v1 limit.** Documented in new §10.5: `system://` principals carry `workspace_uri: :any` by default; this is the documented contract for cross-workspace operations (BootReconciler, AdapterInstall, etc.), not a bug. Non-system callers remain workspace-iso-enforced per §5.5.
+3. **MED-1 FIXED structurally.** §6.1 check 10 (`check_required_caps_values_parse_strict`) `Enum.uniq_by/2` key changed from `fn {_, _, b} -> b end` to `fn {k, a, b} -> {k, b, a} end`. The Behavior-only key silently dropped registrations of the same Behavior under different Kinds (or with different per-action cap subjects), leaving their required_caps unchecked. Triple-keyed dedupe collapses only TRUE duplicates.
+
+Proceeding to impl. No r4 codex round per Allen 2026-05-25 manual call.
 
 ---
 
@@ -856,10 +868,18 @@ end
 
 # New check 10 — every required_caps/0 value parses with the strict
 # cap parser AND cross-validates against the declaring Behavior/Kind
-# (r2 HIGH-4 fix — was "is_binary?" only)
+# (r2 HIGH-4 fix — was "is_binary?" only;
+#  r3-FINAL MED-1 fix — dedupe key is {Kind, Behavior, action} triple, not
+#  Behavior alone. The same Behavior may be registered under multiple Kinds
+#  (e.g. `Behavior.Chat` on both `Kind.Session` and `Kind.Agent`) OR with
+#  different cap subjects per (Kind, action) pair. Deduping by Behavior
+#  silently dropped the second and subsequent registrations, leaving their
+#  required_caps unchecked. New triple-keyed dedupe collapses only TRUE
+#  duplicates — same Kind + same Behavior + same action — which `behaviors/0`
+#  may legitimately list more than once when a Behavior re-exports.)
 defp check_required_caps_values_parse_strict(diagnostics, plugin_module) do
   plugin_module.behaviors()
-  |> Enum.uniq_by(fn {_, _, b} -> b end)
+  |> Enum.uniq_by(fn {k, a, b} -> {k, b, a} end)
   |> Enum.filter(fn {_, _, b} -> function_exported?(b, :required_caps, 0) end)
   |> Enum.reduce(diagnostics, fn {kind, _action, behavior}, acc ->
     Enum.reduce(behavior.required_caps(), acc, fn {action, cap_str}, inner_acc ->
@@ -1521,6 +1541,27 @@ If a production user has a cap shape unforeseen by `CapMigration.convert/1`, the
 
 Each sub-PR is rebase-and-revert-clean. The migration script is one-way (no undo) — `caps_schema_version` bump is a Rubicon. Rollback past PR-CC-2c requires DB restore, not a code revert. This is acceptable because the wipe-and-rebuild pattern matches Phase 9 SPEC v3 §8 and the deployment story for that was Allen's explicit choice.
 
+### 10.5 Accepted v1 limits — in-VM caller is trusted (the trust model)
+
+ezagent v1 follows the standard Elixir release trust model: **the BEAM boundary IS the trust boundary**. Any code that runs inside the VM is "deployed" by the operator and considered trusted; the principal field on `Invocation.dispatch/1` is informational + auditable, not cryptographically authenticated.
+
+Codex r3 raised two findings (HIGH-1 principal forgery, HIGH-2 system-caller workspace iso) that are NOT bugs in v1 — they're explicit, documented consequences of the trust model. Allen 2026-05-25 confirmed the model + acceptance.
+
+**What this DOES protect against:**
+- Operator audit + accountability: who (claimed) caller per invocation in `invocations` table, including telemetry `[:ezagent, :authz, :unknown_principal]` for catalog misses (§5.3 step 5.0a).
+- Cap-shape validation: caller can't dispatch an action without the matching cap (§5.5).
+- Workspace iso for non-system callers: regular user URIs are workspace-derived and enforced (§5.5 second arm, §9.4).
+
+**What this DOES NOT protect against:**
+- **Principal forgery (codex r3 HIGH-1):** in-VM code can call `dispatch(%{caller_uri: "system://anything-in-catalog"})`; the system principal catalog (§4.2) only verifies that the URI is in the allowlist, not that the caller actually IS that principal. Mitigation: external code injection is prevented at the OS/deployment layer (vetted Elixir releases, no third-party RCE surface, plugin code review at deploy time). The only way to forge a principal is to run unauthorized code in the VM, which is the same threat that lets you read the DB encryption key directly — out of scope for cap-level enforcement.
+- **System caller workspace iso (codex r3 HIGH-2):** `system://` principals are configured with `workspace_uri: :any` by default, intentionally bypassing workspace iso so cross-workspace operations (BootReconciler, AdapterInstall, migration scripts, etc.) work. This is not a bug — it's the documented contract for system principals. Non-system callers (every `user://`, `agent://`, `session://` URI) are workspace-iso-enforced as normal per §5.5.
+
+**v2 requirement** (post-multi-tenant / plugin-marketplace introduction):
+- Principal authentication via server-stamped context (Plug.Conn-style `assigns`); `caller_uri` moves from dispatch parameter to derived-from-context value, computed by an authentication layer that cannot be forged by the dispatch caller.
+- New SPEC `caps-cleanup-v2` will redesign dispatch context. Reference: this section + the codex r3 HIGH-1 + HIGH-2 findings are the v2 input set.
+
+Documented in `feedback_let_it_crash_no_workarounds` style: we choose explicit acceptance + a documented future plan over silent partial mitigation that gives a false sense of security.
+
 ---
 
 ## 11. Out-of-scope (futures)
@@ -1535,8 +1576,8 @@ Each sub-PR is rebase-and-revert-clean. The migration script is one-way (no undo
 ## 12. Sequencing for codex review history
 
 - **r1 codex:** `needs-attention` — 4 HIGH + 1 MEDIUM. Closed in r2 per §0a.
-- **r2 codex:** `needs-attention` — 3 HIGH + 1 MEDIUM. Closed in r3 (this revision) per §0b.
-- **r3 codex:** pending. r3 is the **FINAL** round per dispatch prompt; if r3 still returns HIGH/CRIT, escalate to Allen with the new finding list — likely indicates a deeper architectural disagreement that needs a brainstorm reset. Per memory `feedback_spec_codex_adversarial_review`.
+- **r2 codex:** `needs-attention` — 3 HIGH + 1 MEDIUM. Closed in r3 per §0b.
+- **r3 codex:** `needs-attention` — 2 HIGH + 1 MEDIUM. Closed in r3-FINAL per §0c: HIGH-1 + HIGH-2 ACCEPTED as documented v1 trust-model limits (§10.5); MED-1 dedupe key FIXED structurally (§6.1). No r4 round per Allen 2026-05-25 manual ruling.
 
 If r3 codex still HIGH/CRIT, focus review on:
 - **Target CAS atomicity** (§5.3 step 8.5, §9.6 invariant) — review whether `Ezagent.Identity.cas_update_caps/2` via `:ets.select_replace/2` is truly atomic under concurrent-grant load (or if it needs a serialized `GenServer.call` instead).
