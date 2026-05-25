@@ -82,11 +82,15 @@ defmodule EzagentCore.Invariants.Phase5NoRegressionTest do
   end
 
   describe "Phase 5: routing tables declared" do
-    test "MentionRouting + SessionRouting tables exist" do
+    # 2026-05-25 — SessionRouting deleted (PR-EM-3 #317 moved its
+    # bridge responsibility to ExternalMirror). MentionRouting is now
+    # the only chat-plugin-owned routing table. The same invariant
+    # also actively guards against a re-introduction of SessionRouting.
+    test "MentionRouting table exists; SessionRouting is NOT (re-)declared" do
       assert :ets.whereis(:"ezagent_routing_Elixir.EzagentDomainChat.Routing.MentionRouting") !=
                :undefined
 
-      assert :ets.whereis(:"ezagent_routing_Elixir.EzagentDomainChat.Routing.SessionRouting") !=
+      assert :ets.whereis(:"ezagent_routing_Elixir.EzagentDomainChat.Routing.SessionRouting") ==
                :undefined
     end
 

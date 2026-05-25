@@ -66,9 +66,11 @@ defmodule Ezagent.Routing.Resolver do
   alias Ezagent.{Message, RoutingRegistry}
   alias Ezagent.Routing.Matcher
 
+  # NOTE (2026-05-25): SessionRouting was removed from this list; the
+  # Feishu chat ↔ session bridge it once held now lives in the
+  # ExternalMirror domain (`external_mirror_bindings`, PR-EM-3 #317).
   @default_routing_tables [
-    EzagentDomainChat.Routing.MentionRouting,
-    EzagentDomainChat.Routing.SessionRouting
+    EzagentDomainChat.Routing.MentionRouting
   ]
 
   @session_members_token "$session_members"
@@ -159,9 +161,7 @@ defmodule Ezagent.Routing.Resolver do
 
     Application.get_env(:ezagent_core, :routing_tables, @default_routing_tables)
     |> Enum.flat_map(&query_table(&1, message, workspace_uri))
-    |> Enum.flat_map(
-      &expand_receiver(&1, message, current_session_uri, members, workspace_uri)
-    )
+    |> Enum.flat_map(&expand_receiver(&1, message, current_session_uri, members, workspace_uri))
     |> Enum.uniq_by(&URI.to_string/1)
     |> Enum.reject(&(URI.to_string(&1) == URI.to_string(current_session_uri)))
   end

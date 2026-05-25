@@ -84,7 +84,7 @@ defmodule EzagentDomainChat.DefaultRules do
 
   alias Ezagent.Routing.{Matcher, Resolver, RuleStore}
   alias EzagentCore.Repo
-  alias EzagentDomainChat.Routing.{MentionRouting, SessionRouting}
+  alias EzagentDomainChat.Routing.MentionRouting
 
   # The migrated default rule's receivers (SPEC §3).
   defp default_receivers,
@@ -105,7 +105,6 @@ defmodule EzagentDomainChat.DefaultRules do
     case migrate_system_default_rule() do
       :ok ->
         :ok = RuleStore.load_into_registry(MentionRouting)
-        :ok = RuleStore.load_into_registry(SessionRouting)
         :ok
 
       {:error, reason} ->

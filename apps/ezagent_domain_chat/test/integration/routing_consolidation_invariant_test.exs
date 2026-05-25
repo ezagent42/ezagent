@@ -50,10 +50,12 @@ defmodule EzagentDomainChat.Integration.RoutingConsolidationInvariantTest do
     test "no rules + no members → no recipients (the gate)" do
       # Setup: temporarily replace the global RoutingRegistry with an
       # empty test table. Application.put_env scoped to this test only.
+      # 2026-05-25 — SessionRouting deleted (PR-EM-3 #317 moved its
+      # responsibility to ExternalMirror). MentionRouting is the sole
+      # default routing table now.
       original_tables =
         Application.get_env(:ezagent_core, :routing_tables, [
-          EzagentDomainChat.Routing.MentionRouting,
-          EzagentDomainChat.Routing.SessionRouting
+          EzagentDomainChat.Routing.MentionRouting
         ])
 
       empty_table = :"empty_table_#{System.unique_integer([:positive])}"
@@ -61,7 +63,8 @@ defmodule EzagentDomainChat.Integration.RoutingConsolidationInvariantTest do
       Application.put_env(:ezagent_core, :routing_tables, [empty_table])
 
       try do
-        recipients = Resolver.resolve(build_msg(), URI.parse("session://default/default/test"), [])
+        recipients =
+          Resolver.resolve(build_msg(), URI.parse("session://default/default/test"), [])
 
         assert recipients == [],
                "no rules + no members must produce zero recipients — " <>
@@ -101,7 +104,11 @@ defmodule EzagentDomainChat.Integration.RoutingConsolidationInvariantTest do
         assert length(recipients) == 2
 
         recipient_strs = Enum.map(recipients, &URI.to_string/1) |> Enum.sort()
-        assert recipient_strs == ["entity://agent/default/test_x", "entity://agent/default/test_y"]
+
+        assert recipient_strs == [
+                 "entity://agent/default/test_x",
+                 "entity://agent/default/test_y"
+               ]
       after
         Application.put_env(:ezagent_core, :routing_tables, original_tables)
       end
@@ -124,7 +131,9 @@ defmodule EzagentDomainChat.Integration.RoutingConsolidationInvariantTest do
 
         recipients = Resolver.resolve(build_msg(), current, [])
 
-        refute Enum.any?(recipients, fn r -> URI.to_string(r) == "session://default/default/main" end),
+        refute Enum.any?(recipients, fn r ->
+                 URI.to_string(r) == "session://default/default/main"
+               end),
                "Resolver must exclude current session URI to prevent dispatch loop"
       after
         Application.put_env(:ezagent_core, :routing_tables, original_tables)

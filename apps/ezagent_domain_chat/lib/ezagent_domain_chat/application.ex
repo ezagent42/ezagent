@@ -55,7 +55,7 @@ defmodule EzagentDomainChat.Application do
   alias Ezagent.{CapabilityRegistry, RoutingRegistry}
   alias Ezagent.Entity.{Agent, AgentTemplate, Session, SessionTemplate, User}
   alias Ezagent.Behavior.Chat
-  alias EzagentDomainChat.Routing.{MentionRouting, SessionRouting}
+  alias EzagentDomainChat.Routing.MentionRouting
 
   @impl true
   def start(_type, _args) do
@@ -562,14 +562,18 @@ defmodule EzagentDomainChat.Application do
     :ok
   end
 
-  # Phase 3a-step 4: declare 2 RoutingRegistry tables that this plugin
-  # owns. MentionRouting is :duplicate (one matcher can fire on many
+  # Declare the chat plugin's RoutingRegistry table.
+  #
+  # MentionRouting is :duplicate (one matcher can fire on many
   # messages; one matcher → list of receivers; one rule per row).
-  # SessionRouting is :unique (bridge_id → session_uri). Both declared
-  # in this Application process — it owns writes.
+  # Declared in this Application process — it owns writes.
+  #
+  # NOTE (2026-05-25): the sibling SessionRouting table was deleted
+  # in this PR — its Feishu chat ↔ session bridge responsibility now
+  # lives in the ExternalMirror domain's `external_mirror_bindings`
+  # table (PR-EM-3 #317). See `Ezagent.ExternalMirror` facade.
   defp declare_routing_tables do
     :ok = RoutingRegistry.declare_table(MentionRouting, key_uniqueness: :duplicate)
-    :ok = RoutingRegistry.declare_table(SessionRouting, key_uniqueness: :unique)
     :ok
   end
 

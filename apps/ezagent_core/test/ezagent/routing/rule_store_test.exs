@@ -39,6 +39,13 @@ defmodule Ezagent.Routing.RuleStoreTest do
   end
 
   test "list scoped by table name — other tables don't leak" do
+    # 2026-05-25 — was MentionRouting + SessionRouting; SessionRouting
+    # was retired (PR-EM-3 #317 moved its bridge to ExternalMirror).
+    # The RuleStore is a generic per-table store keyed by string, so
+    # the "no leak" property is exercised with a synthetic second
+    # table atom — equivalent test surface, no defunct module.
+    other_table = :"rule_store_test_other_#{System.unique_integer([:positive])}"
+
     {:ok, _} =
       RuleStore.add(
         EzagentDomainChat.Routing.MentionRouting,
@@ -49,14 +56,14 @@ defmodule Ezagent.Routing.RuleStoreTest do
 
     {:ok, _} =
       RuleStore.add(
-        EzagentDomainChat.Routing.SessionRouting,
+        other_table,
         Matcher.from("entity://agent/default/test_x"),
         ["session://default/default/b"],
         nil
       )
 
     assert length(admin_rules(EzagentDomainChat.Routing.MentionRouting)) == 1
-    assert length(admin_rules(EzagentDomainChat.Routing.SessionRouting)) == 1
+    assert length(admin_rules(other_table)) == 1
   end
 
   test "delete removes by id" do
