@@ -293,44 +293,28 @@ defmodule EzagentPluginLiveview.AdminLive do
     {:noreply, put_flash(socket, :info, format_notification(payload))}
   end
 
-  # PR-N2 (SPEC v2 notification architecture, Allen 2026-05-24,
-  # §3 lines 200-202) — new `:slice_changed` envelope coming off
-  # `Ezagent.SliceChange.topic/1`. Subscribed in `mount/3`
-  # alongside the legacy `Notifications.topic/1`. Today the auto-
-  # hook is DISABLED (`SliceChange.enabled?/0` defaults false) so
-  # in production this clause is unreachable; in tests that drive
-  # `SliceChange.emit/1` directly it fires and no-ops cleanly.
-  # Keeping the handler present means PR-N3 can flip the flag
-  # without crashing AdminLive on FunctionClauseError.
+  # PR-N3 (SPEC v2 notification architecture, Allen 2026-05-25) —
+  # the `:slice_changed` envelope is now produced by the Chat User-
+  # branch (chat.ex `:receive` User clause + PR-N1's auto-hook
+  # post-commit in `Kind.Server.commit_and_notify/3`). PR-N2 shipped
+  # this clause as a logging no-op (deferred-by-design — no producers
+  # existed yet); PR-N3 wires the flash bridge so users actually SEE
+  # the notification — codex r1 HIGH-1 (correctly) flagged the no-op
+  # as a user-visible regression if shipped without this hookup.
   #
-  # ## Why no flash bridge yet — deliberate SPEC scoping
+  # ## Routing
   #
-  # SPEC §3 PR-N2 lines 200-202 (verbatim): "`handle_info({:slice_changed,
-  # ...}, socket)` clause added alongside the existing
-  # `{:notification, ...}` clause. For PR-N2: just log/no-op the
-  # event content. The flash bridge + UI render comes in PR-N3
-  # when producers flip."
-  #
-  # Rationale: in PR-N2 there are ZERO producers on the new
-  # topic. A flash bridge here would never fire in production —
-  # only in test fixtures. Worse, locking in a flash mapping
-  # before the first real producer ships (PR-N3 migrates Chat's
-  # `:receive` User-branch) risks a mapping that doesn't fit the
-  # real event shape and gets rewritten in PR-N3 anyway.
-  #
-  # PR-N3 adds the flash bridge atomically with the producer
-  # flip, so subscribers and producers ship in the same PR and
-  # the first real event hits a working bridge. Codex r1 HIGH-1
-  # flagged this no-op as a regression risk; the SPEC scoping
-  # makes the deferral explicit and PR-N3 closes the gap.
+  # The slice-change event carries (`self_uri`, `kind_module`,
+  # `action`, `slice_key`, `old_slice`, `new_slice`, `result`,
+  # `caller`, `at`). We pattern-match `:receive` on the User Kind to
+  # synthesize a chat-style flash: "<sender>: <preview>". Other
+  # slice-change shapes (workspace.add_member, identity.grant_cap —
+  # PR-N4 producers) get a generic fallback via
+  # `format_slice_change/1`. The previous legacy
+  # `{:notification, _, _}` handler stays in place (PR-N2 / N5 sweep)
+  # for any unmigrated producer.
   def handle_info({:slice_changed, %{} = event}, socket) do
-    Logger.debug(fn ->
-      "AdminLive: received :slice_changed for " <>
-        "#{inspect(Map.get(event, :self_uri))} action=#{inspect(Map.get(event, :action))}" <>
-        " (PR-N2 no-op; PR-N3 wires the flash bridge)"
-    end)
-
-    {:noreply, socket}
+    {:noreply, put_flash(socket, :info, format_slice_change(event))}
   end
 
   @doc false
@@ -371,6 +355,60 @@ defmodule EzagentPluginLiveview.AdminLive do
   end
 
   defp format_notification_legacy(other), do: "Notification: #{inspect(other)}"
+
+  @doc false
+  # Public for unit testing (otherwise `defp`). Formats a SliceChange
+  # event (PR-N1 envelope shape — see
+  # `apps/ezagent_core/lib/ezagent/slice_change.ex` moduledoc) into a
+  # human-readable flash string. Pattern-matches the migrated
+  # producer site (Chat User-branch :receive) to produce a chat-style
+  # preview; falls back to a generic "<scheme>: <action>" line for
+  # PR-N4 producer shapes (workspace member add, identity cap grant)
+  # so flashes still surface usefully during the transition.
+  #
+  # Chat preview lookup goes through `Ezagent.MessageStore.by_id/1` —
+  # the message was persisted by `Behavior.Chat.invoke(:send, ...)`
+  # before the receive fan-out, so the row is already durable by the
+  # time the slice-change event lands. A miss (deleted message,
+  # store down) degrades to the generic format.
+  def format_slice_change(
+        %{
+          kind_module: Ezagent.Entity.User,
+          action: :receive,
+          new_slice: %{last_received: %{message_id: msg_id}}
+        } = _event
+      )
+      when is_binary(msg_id) do
+    case Ezagent.MessageStore.by_id(msg_id) do
+      {:ok, %Ezagent.Message{sender: sender, body: body}} ->
+        "New message from #{URI.to_string(sender)}: #{message_preview(body)}"
+
+      _ ->
+        "New chat message (id #{msg_id})"
+    end
+  end
+
+  def format_slice_change(%{kind_module: kind_module, action: action} = _event) do
+    "Update on #{inspect(kind_module)} — #{inspect(action)}"
+  end
+
+  def format_slice_change(other), do: "Slice changed: #{inspect(other)}"
+
+  # Best-effort preview from a Message body. Body may be either an
+  # atom-keyed map (newly-built) or string-keyed (post-DB roundtrip —
+  # the MessageStore ↔ Ecto pair JSON-encodes on write and decodes
+  # with string keys on read). Mirrors the dual-shape tolerance in
+  # `Behavior.Chat.body_text/1` / `body_attachments/1`.
+  defp message_preview(%{text: t}) when is_binary(t), do: truncate_preview(t)
+  defp message_preview(%{"text" => t}) when is_binary(t), do: truncate_preview(t)
+  defp message_preview(_), do: "(attachment-only message)"
+
+  defp truncate_preview(text) when is_binary(text) do
+    case String.length(text) do
+      n when n <= 80 -> text
+      _ -> String.slice(text, 0, 77) <> "..."
+    end
+  end
 
   # --- User actions -----------------------------------------------------
 
