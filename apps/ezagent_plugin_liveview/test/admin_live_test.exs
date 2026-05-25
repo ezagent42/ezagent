@@ -1027,6 +1027,53 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
       assert flash == "New chat update on #{URI.to_string(receiver)}"
     end
 
+    test "slice_change handler rejects foreign event.uri (codex r4 MEDIUM URI allowlist)",
+         %{conn: conn} do
+      # PR-N3 r4 codex r4 MEDIUM (Allen 2026-05-25) — the handler
+      # MUST verify event.uri matches the LV's subscribed caller
+      # before doing any slice re-fetch. A wrong-topic broadcast
+      # carrying a foreign URI on the caller's topic (producer
+      # bug, in-VM plugin misdirection) would otherwise leak that
+      # other entity's chat preview to this admin.
+      {:ok, lv, _html} = live(conn, "/sessions")
+      caller_uri = Ezagent.Entity.User.admin_uri()
+      lv_pid = lv.pid
+
+      # Foreign URI in the event — NOT the admin's URI.
+      foreign_uri =
+        URI.new!("entity://user/default/some-other-#{System.unique_integer([:positive])}")
+
+      :ok =
+        Phoenix.PubSub.broadcast(
+          EzagentCore.PubSub,
+          Ezagent.SliceChange.topic(caller_uri),
+          {:slice_changed,
+           %{
+             uri: foreign_uri,
+             slice_key: :chat,
+             cursor: 1,
+             event_at: DateTime.utc_now(),
+             result_summary: :ok
+           }}
+        )
+
+      _ = render(lv)
+
+      assert Process.alive?(lv_pid)
+
+      flash =
+        :sys.get_state(lv_pid)
+        |> Map.get(:socket)
+        |> Map.get(:assigns)
+        |> Map.get(:flash, %{})
+
+      # Foreign URI rejected → no flash, no slice re-fetch on the
+      # foreign URI. The LV keeps running; absence of a flash is
+      # the correct default-secure behavior.
+      refute flash["info"],
+             "expected NO flash for foreign-URI event; got: #{inspect(flash)}"
+    end
+
     test "cap-grant notification reaches AdminLive handler without crashing", %{conn: conn} do
       {:ok, lv, _html} = live(conn, "/sessions")
 

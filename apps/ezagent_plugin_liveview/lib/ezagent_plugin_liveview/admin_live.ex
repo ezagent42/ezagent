@@ -325,7 +325,84 @@ defmodule EzagentPluginLiveview.AdminLive do
   # same default-secure shape — the event doesn't leak, the re-fetch
   # is the subscriber's own cap concern.
   def handle_info({:slice_changed, %{} = event}, socket) do
-    {:noreply, put_flash(socket, :info, format_slice_change(event))}
+    # PR-N3 r4 codex r4 MEDIUM (Allen 2026-05-25) — verify the
+    # event's `:uri` matches a URI this LV legitimately subscribes
+    # to before doing any slice re-fetch. The LV subscribes the
+    # caller's own topic ONLY (`mount/3` line ~124); a wrong-topic
+    # broadcast or buggy producer that sent a foreign URI on this
+    # topic would otherwise cause us to read the OTHER entity's
+    # chat slice and render its preview. Default-deny: anything
+    # not on the allowlist degrades to a no-op (telemetry only).
+    if event_uri_authorized?(event, socket) do
+      # PR-N3 r4 codex r4 HIGH-1 (Allen 2026-05-25) — bounded-
+      # blocking format. `format_slice_change/1`'s chat branch
+      # calls `Kind.get_slice/2` (a synchronous `GenServer.call`
+      # with default 5s timeout) followed by a `MessageStore`
+      # lookup. Under burst (busy Kind, wedged Repo) this would
+      # block the LV mailbox for up to 5s × N events, stalling
+      # renders/clicks/uploads. The fix: cap the resolution time
+      # at 250ms via `Task.async` + `Task.yield`. If resolution
+      # doesn't return in time, shut the task down and degrade
+      # to the generic flash — the flash ALWAYS fires; what
+      # degrades under load is the preview fidelity, never the
+      # responsiveness.
+      flash = format_slice_change_bounded(event, 250)
+      {:noreply, put_flash(socket, :info, flash)}
+    else
+      :telemetry.execute(
+        [:ezagent, :liveview, :slice_changed, :uri_rejected],
+        %{count: 1},
+        %{event_uri: Map.get(event, :uri), caller_uri: socket.assigns[:caller_uri]}
+      )
+
+      {:noreply, socket}
+    end
+  end
+
+  # PR-N3 r4 codex r4 MEDIUM — the allowlist. Today AdminLive
+  # subscribes exactly one topic (the caller's own); future
+  # multi-subscription (per-session inbox, plugin-owned entities)
+  # extends this to `socket.assigns[:subscribed_uris]` MapSet.
+  # Until then, the caller URI IS the allowlist.
+  defp event_uri_authorized?(%{uri: %URI{} = event_uri}, %{assigns: assigns}) do
+    case assigns[:caller_uri] do
+      %URI{} = caller_uri -> URI.to_string(event_uri) == URI.to_string(caller_uri)
+      _ -> false
+    end
+  end
+
+  defp event_uri_authorized?(_, _), do: false
+
+  # PR-N3 r4 codex r4 HIGH-1 — bounded-blocking wrapper around
+  # `format_slice_change/1`. Spawn a short-lived Task to do the
+  # actual `Kind.get_slice` + `MessageStore` lookup; yield up to
+  # `timeout_ms`; on timeout, shut the task down and return the
+  # generic fallback. The LV mailbox never blocks longer than
+  # `timeout_ms` regardless of producer/Repo health.
+  #
+  # Why not `Task.Supervisor.async_nolink`: AdminLive doesn't own
+  # a TaskSupervisor (would require app-level wiring + per-plugin
+  # boilerplate). `Task.async` + `Task.shutdown` is sufficient
+  # for a fire-and-forget format with no parent-trapping semantics
+  # — the task is linked but if it crashes inside the format
+  # function (e.g. malformed slice), we want the LV to know via
+  # the `{ref, result}` message OR the `:DOWN` after shutdown.
+  # `Task.shutdown(task, :brutal_kill)` cleans up cleanly.
+  defp format_slice_change_bounded(event, timeout_ms) do
+    task = Task.async(fn -> format_slice_change(event) end)
+
+    case Task.yield(task, timeout_ms) || Task.shutdown(task, :brutal_kill) do
+      {:ok, flash} when is_binary(flash) ->
+        flash
+
+      _ ->
+        # Timeout or crash. Generic fallback — the flash still
+        # fires, just without the message preview.
+        case Map.get(event, :uri) do
+          %URI{} = uri -> "Update on #{URI.to_string(uri)}"
+          _ -> "Update received"
+        end
+    end
   end
 
   @doc false
