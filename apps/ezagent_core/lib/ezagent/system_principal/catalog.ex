@@ -74,10 +74,12 @@ defmodule Ezagent.SystemPrincipal.Catalog do
   # for readability; lazy-loaded at compile time so behavior modules
   # from non-loaded apps (e.g. plugin Behaviors during a core-only
   # build) don't break.
+  alias Ezagent.Behavior.ApiKeys
   alias Ezagent.Behavior.Chat
   alias Ezagent.Behavior.ExternalMirror
   alias Ezagent.Behavior.ExternalMirrorWorker
   alias Ezagent.Behavior.IdentityAdmin
+  alias Ezagent.Behavior.Sandbox
   alias Ezagent.Behavior.Template
   alias Ezagent.Behavior.Workspace
 
@@ -201,7 +203,17 @@ defmodule Ezagent.SystemPrincipal.Catalog do
       {"system://agent-internal",
        [
          # `user.identity.grant_cap` → IdentityAdmin Behavior on User Kind.
-         Capability.cap(:user, IdentityAdmin, :grant_cap)
+         Capability.cap(:user, IdentityAdmin, :grant_cap),
+         # Agent.do_record_sandbox_state/3 dispatches sandbox.write_path
+         # under this principal (pathology-B follow-up: PR-CC-2-v2's
+         # bootstrap-wildcard bridge masked this dependency). The cap
+         # is narrowed to the exact Behavior + action; the runtime
+         # dispatch path substitutes the per-agent instance + workspace.
+         Capability.cap(:agent, Sandbox, :write_path),
+         # CurlAgent.fetch_owner_api_key/2 dispatches identity.get_api_key
+         # on the owner User under this principal (same masking).
+         # ApiKeys is on User Kind; cap is read-only get_api_key.
+         Capability.cap(:user, ApiKeys, :get_api_key)
        ]},
       {"system://workspace-loader",
        [

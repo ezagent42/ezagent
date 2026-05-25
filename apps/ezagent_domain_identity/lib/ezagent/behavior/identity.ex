@@ -431,17 +431,30 @@ defmodule Ezagent.Behavior.IdentityAdmin do
 
   defp require_workspace_admin(_ctx, _, _), do: {:error, :grant_workspace_uri_invalid}
 
-  # Cross-workspace operator authority — `Behavior.Workspace` cap with
-  # `workspace_uri: :any`. Held by `system://template-materialize`,
-  # `system://workspace-loader`, and any operator who can mint
-  # workspace-`:any` caps (the admin LV's grant form defaults to
-  # `:any` workspace per `entity_caps_live.ex`).
+  # Cross-workspace operator authority — the EXACT operator shape:
+  # `Behavior.Workspace` on `:workspace` Kind, `instance: :any`,
+  # `workspace_uri: :any`. This is the shape held by
+  # `system://template-materialize` + `system://workspace-loader` (both
+  # declared as `Capability.cap(:workspace, Workspace, :any)` in
+  # `Ezagent.SystemPrincipal.Catalog`, which builds the operator shape
+  # via `Capability.cap/3`).
+  #
+  # Pathology-B narrowing (codex round-1 MED-1): the predicate
+  # demands EXACTLY this shape so a narrowly-scoped Workspace cap
+  # (e.g. `kind: :session, behavior: Workspace, instance: <uri>,
+  # workspace_uri: :any`) does NOT confer cross-workspace grant
+  # authority. The four-axis pattern matches the cap_for_action shape
+  # the dispatch chokepoint builds against `Behavior.Workspace`, so
+  # only a cap that genuinely authorizes any-workspace Workspace
+  # actions passes here.
   defp holds_cross_workspace_admin_cap?(%{caps: caps}) do
     caps_list = if is_struct(caps, MapSet), do: MapSet.to_list(caps), else: List.wrap(caps)
 
     Enum.any?(caps_list, fn
       %Ezagent.Capability{
+        kind: :workspace,
         behavior: Ezagent.Behavior.Workspace,
+        instance: :any,
         workspace_uri: :any
       } ->
         true
