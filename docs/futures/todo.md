@@ -26,6 +26,30 @@
 - **Priority:** post-Stream-2 (PR-EM-FINAL or first follow-up). Each
   individual PR-EM-3 finding is fixed; the META-finding is the
   pattern of finding-them.
+- **Concrete r5 starting points** (2026-05-25 codex r5 — `needs-attention`,
+  2 HIGH on PRE-EXISTING code, NOT in r4 scope; both architectural per
+  ship discipline so escalated rather than in-place-fixed):
+  1. **AdapterInstall ordering vs BindingRegistry atomicity**
+     (`apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/adapter_registry.ex:92-101`):
+     `AdapterRegistry.register/1` triggers `AdapterInstall.install/1`
+     (worker reconciliation) before the matching
+     `BindingRegistry.register_module/2` runs in the normal plugin boot
+     path. If the binding-registry insert later fails and rollback
+     deletes the adapter row, already-spawned workers stay alive against
+     a missing binding module → supervisor churn. Recommendation: split
+     cap-subject registration from worker reconciliation; gate worker
+     spawn on BOTH registries succeeding.
+  2. **bind spawn-before-persist split-brain**
+     (`apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror.ex:333-340`):
+     `:bind` action body spawns the worker FIRST, then
+     `persist_binding_row/2`. If `Repo.insert/1` raises (DB outage,
+     schema drift), the worker is alive but no row + no slice mutation.
+     Also: changeset errors are mapped to `:ok` blanket — non-unique
+     validation failures would silently drop the row while leaving
+     slice + worker. Recommendation: make bind atomic — either persist
+     first + terminate worker on failure, OR only treat
+     verified-unique-constraint collisions as idempotent (return/raise
+     all other Repo failures).
 
 ### `Ezagent.Invocation.dispatch/1` ReadyGate ↔ PendingDelivery TOCTOU
 - **Where:** `apps/ezagent_core/lib/ezagent/invocation.ex` `dispatch/1`
