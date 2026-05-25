@@ -176,6 +176,49 @@ defmodule Ezagent.Behavior do
   @callback dispatchable?() :: boolean()
 
   @doc """
+  Map from action atom to the required cap STRING for that action.
+
+  Read by `Ezagent.Invocation.dispatch/1` step 5.5 (post-PR-CC-2b) to
+  derive the cap the caller must hold. The cap string follows the
+  grammar in `Ezagent.Cap` (SPEC caps-cleanup-v1 §5.4):
+
+      %{
+        send:    "session.chat.send",
+        receive: "session.chat.receive",
+        join:    "session.chat.join"
+      }
+
+  Every action returned from `actions/0` MUST have an entry here.
+  Compile-time enforced by `:ezagent_plugin_check` (PR-CC-3).
+
+  ## Coexistence with `cap_subjects/0` (PR-CC-2a transitional)
+
+  PR-CC-2a adds this callback as OPTIONAL so all Behaviors can declare
+  it without breaking the existing `CapabilityRegistry`-driven path.
+  PR-CC-2b switches dispatch step 5.5 to read this map and call
+  `Ezagent.Kind.holds_cap?/2`; PR-CC-2d deletes `cap_subjects/0` and
+  promotes `required_caps/0` to MANDATORY.
+
+  Optional callback (`function_exported?/3` probed; absent → empty
+  map → all actions deny by default).
+  """
+  @callback required_caps() :: %{required(action()) => String.t()}
+
+  @doc """
+  Should dispatch enforce workspace isolation for actions on this
+  Behavior? Default `true`.
+
+  SPEC caps-cleanup-v1 §5.5. Behaviors operating on cross-cutting
+  data (system://, template://, resource://) override to `false` —
+  examples: `Behavior.Routing` on System Kind, `Behavior.Template`
+  on cross-workspace template lookup.
+
+  Optional callback (`function_exported?/3` probed). When absent,
+  `Ezagent.Kind.workspace_scoped?/1` returns `true`.
+  """
+  @callback workspace_scoped?() :: boolean()
+
+  @doc """
   Return the URI that legitimately grants caps for this Behavior's data
   on the given `instance`. The SPEC at
   `docs/superpowers/specs/2026-05-24-caps-data-ownership-v2.md` §3
@@ -324,6 +367,47 @@ defmodule Ezagent.Behavior do
     data_owner: 1,
     post_init: 2,
     handle_continue: 3,
-    terminate: 3
+    terminate: 3,
+    required_caps: 0,
+    workspace_scoped?: 0
   ]
+
+  # ----- Helpers (PR-CC-2a) -----
+
+  @doc """
+  Read `behavior.required_caps()[action]` — returns the cap string
+  needed to dispatch this action, or `nil` if the Behavior hasn't
+  migrated yet (PR-CC-2a transitional). Per memory
+  `feedback_let_it_crash_no_workarounds`, callers reading nil should
+  treat it as deny (no fallback to legacy struct path) once dispatch
+  has switched in PR-CC-2b.
+
+  ## PR-CC-2a phase
+
+  During PR-CC-2a, every Behavior implements `required_caps/0` (the
+  callback is optional so plugins can roll forward without coordinated
+  release). Returns `nil` only for Behaviors that haven't migrated.
+  """
+  @spec required_cap_for(module(), atom()) :: String.t() | nil
+  def required_cap_for(behavior_module, action) when is_atom(behavior_module) and is_atom(action) do
+    if function_exported?(behavior_module, :required_caps, 0) do
+      Map.get(behavior_module.required_caps(), action)
+    else
+      nil
+    end
+  end
+
+  @doc """
+  Read `behavior.workspace_scoped?()`. Defaults to `true` when the
+  callback is absent — most Behaviors operate on workspace-scoped
+  data and need isolation enforced at dispatch step 5.6.
+  """
+  @spec workspace_scoped?(module()) :: boolean()
+  def workspace_scoped?(behavior_module) when is_atom(behavior_module) do
+    if function_exported?(behavior_module, :workspace_scoped?, 0) do
+      behavior_module.workspace_scoped?()
+    else
+      true
+    end
+  end
 end

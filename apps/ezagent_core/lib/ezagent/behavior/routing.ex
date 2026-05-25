@@ -68,6 +68,26 @@ defmodule Ezagent.Behavior.Routing do
     ]
   end
 
+  # PR-CC-2a (SPEC caps-cleanup-v1 §5.1) — per-action cap STRING.
+  # Routing registers on three Kinds (Workspace / Session / System);
+  # the cap-string kind segment is `*` so a single declaration covers
+  # all three. Holders matching `workspace.routing.add_rule` (concrete
+  # kind) authorize too; admin's `*` authorizes by definition.
+  @impl Ezagent.Behavior
+  def required_caps,
+    do: %{
+      add_rule: "*.routing.add_rule",
+      delete_rule: "*.routing.delete_rule",
+      disable_rule: "*.routing.disable_rule",
+      enable_rule: "*.routing.enable_rule"
+    }
+
+  # Routing rules live on scope-owning Kinds (Workspace / Session /
+  # System). System routing rules are global — workspace iso doesn't
+  # apply to System Kind targets.
+  @impl Ezagent.Behavior
+  def workspace_scoped?, do: false
+
   @impl Ezagent.Behavior
   def state_slice, do: :routing
 

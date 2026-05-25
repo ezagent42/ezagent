@@ -30,6 +30,15 @@ defmodule Ezagent.Behavior.Notifications do
     ]
   end
 
+  # PR-CC-2a (SPEC caps-cleanup-v1 §5.1) — per-action cap STRING.
+  # Registered on User Kind.
+  @impl Ezagent.Behavior
+  def required_caps,
+    do: %{
+      notify: "user.notifications.notify",
+      subscribe: "user.notifications.subscribe"
+    }
+
   @impl Ezagent.Behavior
   def dispatchable?, do: false
 

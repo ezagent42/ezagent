@@ -110,6 +110,16 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
     ]
   end
 
+  # PR-CC-2a (SPEC caps-cleanup-v1 §5.1) — per-action cap STRING.
+  # Publisher (session impl) registers on Session Kind.
+  @impl Ezagent.Behavior
+  def required_caps,
+    do: %{
+      subscribe_from: "session.publisher.subscribe_from",
+      snapshot: "session.publisher.snapshot",
+      history: "session.publisher.history"
+    }
+
   @doc """
   Per SPEC §2.1: the Publisher cap is gated on the publishing Kind
   (the Session). Session caps' data_owner is the user/agent that

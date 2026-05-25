@@ -51,6 +51,15 @@ defmodule Ezagent.Behavior.Echo do
     ]
   end
 
+  # PR-CC-2a (SPEC caps-cleanup-v1 §5.1) — per-action cap STRING.
+  # Echo registers on Agent Kind.
+  @impl Ezagent.Behavior
+  def required_caps,
+    do: %{
+      say: "agent.echo.say",
+      receive: "agent.echo.receive"
+    }
+
   @impl Ezagent.Behavior
   def state_slice, do: :echo
 

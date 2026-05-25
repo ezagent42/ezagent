@@ -58,6 +58,17 @@ defmodule Ezagent.Behavior.ApiKeys do
     ]
   end
 
+  # PR-CC-2a (SPEC caps-cleanup-v1 §5.1) — per-action cap STRING.
+  # ApiKeys registers on User Kind.
+  @impl Ezagent.Behavior
+  def required_caps,
+    do: %{
+      list_api_keys: "user.api_keys.list_api_keys",
+      put_api_key: "user.api_keys.put_api_key",
+      delete_api_key: "user.api_keys.delete_api_key",
+      get_api_key: "user.api_keys.get_api_key"
+    }
+
   @impl Ezagent.Behavior
   def state_slice, do: :api_keys
 

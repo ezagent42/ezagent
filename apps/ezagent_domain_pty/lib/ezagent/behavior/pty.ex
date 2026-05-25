@@ -58,6 +58,11 @@ defmodule Ezagent.Behavior.Pty do
     ]
   end
 
+  # PR-CC-2a (SPEC caps-cleanup-v1 §5.1) — per-action cap STRING.
+  # Pty registers on Agent Kind.
+  @impl Ezagent.Behavior
+  def required_caps, do: %{write: "agent.pty.write"}
+
   @impl Ezagent.Behavior
   def state_slice, do: :pty
 
