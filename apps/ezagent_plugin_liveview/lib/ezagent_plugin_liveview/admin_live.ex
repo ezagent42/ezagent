@@ -126,15 +126,25 @@ defmodule EzagentPluginLiveview.AdminLive do
 
       for session_uri <- EzagentDomainChat.list_sessions() do
         Phoenix.PubSub.subscribe(EzagentCore.PubSub, session_events_topic(session_uri))
-        # PR-N2 codex r1 MEDIUM fix — mirror the legacy session
-        # event subscription with a slice-change subscription on
-        # the SAME session URI. After PR-N3 the auto-hook fires
-        # under the mutated Kind's instance URI (the session URI
-        # for session-scoped Behaviors), not the caller's URI; if
-        # we only subscribed `caller_uri` to slice_change, session-
-        # scoped UI updates would silently stop after PR-N5 deletes
-        # the legacy session-events fan-out.
-        :ok = Ezagent.Notifications.subscribe_slice_change(session_uri)
+        # PR-N2 codex r2 HIGH-1 revert (was r1 MEDIUM-2 add) —
+        # this loop briefly also called
+        # `Notifications.subscribe_slice_change(session_uri)` so
+        # the LV would catch session-scoped slice-change events
+        # after PR-N3. Codex r2 correctly observed:
+        # `subscribe_slice_change/1` performs NO cap check, so
+        # subscribing every logged-in caller to every session's
+        # slice stream would leak `old_slice`/`new_slice`/`result`/
+        # `caller` content for sessions in workspaces the caller
+        # cannot observe (the same /sessions page is mounted for
+        # non-admin callers under `:require_entity`, not the admin
+        # live_session).
+        #
+        # The session-URI dual-subscribe genuinely needs cap-gated
+        # routing via `Ezagent.NotificationSubscriptions.subscribe/3`
+        # (caller + caps + workspace-aware filtering). That's PR-N3/
+        # N4 work — see the futures note in the PR-N2 body. Until
+        # then, session-scoped UI updates continue to ride the
+        # legacy `session_events_topic/1` fan-out unchanged.
       end
     end
 
@@ -426,13 +436,12 @@ defmodule EzagentPluginLiveview.AdminLive do
       {:ok, session_uri} ->
         if connected?(socket) do
           Phoenix.PubSub.subscribe(EzagentCore.PubSub, session_events_topic(session_uri))
-          # PR-N2 codex r1 MEDIUM fix — mirror in lockstep with the
-          # mount/3 boot loop so newly-created sessions get the
-          # slice-change subscription too. Without this, sessions
-          # created during the LV's lifetime would silently lose
-          # slice-change visibility after PR-N5 deletes the legacy
-          # session-events fan-out.
-          :ok = Ezagent.Notifications.subscribe_slice_change(session_uri)
+          # PR-N2 codex r2 HIGH-1 revert — see the matching comment
+          # in `mount/3` for why the per-session slice_change
+          # subscription was removed (info-leak via uncap'd
+          # `subscribe_slice_change/1`). PR-N3/N4 reintroduces it
+          # via `NotificationSubscriptions.subscribe/3` with the
+          # caller's caps.
         end
 
         {:noreply,

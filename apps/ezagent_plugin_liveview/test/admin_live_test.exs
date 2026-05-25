@@ -526,15 +526,15 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
              "expected AdminLive pid in subscribers of #{new_topic} (subs=#{inspect(new_subs)})"
     end
 
-    # PR-N2 codex r1 MEDIUM-2 fix — `mount/3` mirrors EVERY session
-    # the legacy `session_events_topic/1` loop subscribes to with a
-    # parallel slice-change subscription on the SAME session URI.
-    # Without this, after PR-N5 deletes the legacy fan-out, session-
-    # scoped Behavior mutations (chat / member / read marker) that
-    # emit slice-change events on the SESSION URI would be invisible
-    # to AdminLive — only the caller's USER URI slice-change is
-    # subscribed in PR-N2's first cut.
-    test "mount also subscribes to slice_change for every legacy session topic",
+    # PR-N2 codex r2 HIGH-1 — verifies the security-scoped revert.
+    # The mount/3 boot loop subscribes to `session_events_topic/1`
+    # (legacy fan-out) but does NOT subscribe to
+    # `Ezagent.SliceChange.topic(session_uri)`. The uncap'd helper
+    # would leak `old_slice`/`new_slice`/`result`/`caller` for
+    # sessions in workspaces the caller can't observe. PR-N3/N4
+    # reintroduces session-URI dual-subscribe via the cap-gated
+    # `Ezagent.NotificationSubscriptions.subscribe/3`.
+    test "mount does NOT subscribe to per-session slice_change topics (security scoping)",
          %{conn: conn} do
       {:ok, lv, _html} = live(conn, "/sessions")
 
@@ -547,43 +547,12 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
         slice_topic = Ezagent.SliceChange.topic(session_uri)
         subs = subscribers_for(slice_topic)
 
-        assert lv.pid in subs,
-               "expected AdminLive pid in subscribers of session slice_change topic " <>
-                 "#{slice_topic} (got subs=#{inspect(subs)})"
+        refute lv.pid in subs,
+               "AdminLive must NOT subscribe to uncap'd session slice_change topic " <>
+                 "#{slice_topic} — use cap-gated " <>
+                 "Ezagent.NotificationSubscriptions.subscribe/3 in PR-N3/N4. " <>
+                 "(subs=#{inspect(subs)})"
       end
-    end
-
-    test "session-scoped {:slice_changed, _} delivers cleanly (no handler crash)",
-         %{conn: conn} do
-      {:ok, lv, _html} = live(conn, "/sessions")
-      lv_pid = lv.pid
-
-      session_uri = URI.new!("session://default/default/main")
-
-      Application.put_env(:ezagent_core, :slice_change_hook, true)
-
-      try do
-        event = %{
-          self_uri: session_uri,
-          kind_module: :session_kind_stub,
-          action: :pr_n2_session_scoped,
-          slice_key: :chat,
-          old_slice: %{messages: 0},
-          new_slice: %{messages: 1},
-          result: nil,
-          caller: Ezagent.Entity.User.admin_uri(),
-          at: DateTime.utc_now()
-        }
-
-        :ok = Ezagent.SliceChange.emit(event)
-      after
-        Application.delete_env(:ezagent_core, :slice_change_hook)
-      end
-
-      _ = render(lv)
-
-      assert Process.alive?(lv_pid),
-             "AdminLive crashed after receiving session-scoped {:slice_changed, _}"
     end
 
     test "both topics deliver cleanly to AdminLive (no handler crash)", %{conn: conn} do
