@@ -126,9 +126,21 @@ defmodule Ezagent.Kind.Server do
     case Ezagent.KindRegistry.put_new(uri_str, self()) do
       :ok ->
         :ok = Ezagent.ReadyGate.put(uri_str, :not_ready)
-        persist_initial_snapshot(uri, kind_module, slice_state)
-        schedule_periodic_snapshot(kind_module)
-        {:ok, state, {:continue, :announce_ready}}
+
+        case persist_initial_snapshot(uri, kind_module, slice_state) do
+          :ok ->
+            schedule_periodic_snapshot(kind_module)
+            {:ok, state, {:continue, :announce_ready}}
+
+          {:error, reason} ->
+            # Issue #342 (Allen 2026-05-25 — let-it-crash). Initial
+            # persistence is a durability promise: a Kind whose row
+            # never landed must NOT report ":ok" to its spawner. The
+            # earlier `Ezagent.KindRegistry.put_new/1` registration is
+            # auto-cleaned by `Registry` on process exit, so returning
+            # `{:stop, ...}` is enough — no manual deletion needed.
+            {:stop, {:persistence_failed, reason}}
+        end
 
       {:error, {:already_registered, _other_pid}} ->
         # Let-it-crash — duplicate spawn is a bug at the caller layer.
@@ -161,10 +173,15 @@ defmodule Ezagent.Kind.Server do
   # `:external` we skip: those strategies are documented "no DB
   # touch."
   #
-  # `save_now/3` swallows DB failures (logs + telemetry) per its
-  # moduledoc contract; an unwritable initial snapshot does not
-  # prevent the Kind from booting (the in-memory slice is still the
-  # truth until the next write attempt). Lesson 2026-05-25.
+  # Issue #342 r1 (Allen 2026-05-25 — let-it-crash). Previously this
+  # function discarded the result of `save_now/3` because save_now
+  # itself silently returned `:ok` on DB error. With save_now now
+  # strict (rescue removed in #342), an initial-snapshot failure
+  # propagates here, which propagates to `init/1`, which returns
+  # `{:stop, {:persistence_failed, reason}}` — so a spawn that can't
+  # durably persist reports the failure to its caller (mix task /
+  # Workspace.create_agent / LV) instead of leaving a Kind in
+  # memory-only mode that disappears on restart.
   defp persist_initial_snapshot(uri, kind_module, slice_state) do
     case kind_module.persistence() do
       :ephemeral ->
@@ -174,8 +191,19 @@ defmodule Ezagent.Kind.Server do
         :ok
 
       _ ->
-        _ = Ezagent.Kind.Snapshot.save_now(uri, kind_module, slice_state)
-        :ok
+        # save_now/3 may raise (infra exceptions) OR exit (linked DB
+        # connection process death — observed in the ExUnit sandbox
+        # when the test owner has exited before the Kind init runs).
+        # Catch BOTH at this boundary so init/1 can return
+        # `{:stop, ...}` cleanly rather than have the failure abort
+        # the GenServer with an opaque `:EXIT` tuple.
+        try do
+          Ezagent.Kind.Snapshot.save_now(uri, kind_module, slice_state)
+        rescue
+          e -> {:error, e}
+        catch
+          :exit, reason -> {:error, {:exit, reason}}
+        end
     end
   end
 
@@ -338,7 +366,36 @@ defmodule Ezagent.Kind.Server do
   end
 
   defp commit_post_init(%{uri: uri, kind: kind_module, state: old_slice_state}, new_slice_state) do
-    _ = Ezagent.Kind.Snapshot.commit(uri, kind_module, old_slice_state, new_slice_state)
+    # Issue #342 (Allen 2026-05-25): post-init is best-effort by
+    # design — propagating a transient DB error here would restart
+    # the Kind in its pre-mutation state, only to fail post-init
+    # again on restart (boot-loop on persistent DB failure). The
+    # dispatch path enforces durability strictly; post-init's slice
+    # mutation will be re-asserted by the next user-initiated
+    # dispatch that touches it. Wrap save_now's strict raise at this
+    # boundary so the handle_continue continues cleanly.
+    try do
+      _ = Ezagent.Kind.Snapshot.commit(uri, kind_module, old_slice_state, new_slice_state)
+    rescue
+      e ->
+        require Logger
+
+        Logger.warning(
+          "Ezagent.Kind.Server.commit_post_init: snapshot commit raised for " <>
+            "#{inspect(uri)}: #{inspect(e)} — post-init mutation kept " <>
+            "in-memory; will re-assert on next dispatch"
+        )
+    catch
+      :exit, reason ->
+        require Logger
+
+        Logger.warning(
+          "Ezagent.Kind.Server.commit_post_init: snapshot commit exited for " <>
+            "#{inspect(uri)}: #{inspect(reason)} — post-init mutation kept " <>
+            "in-memory; will re-assert on next dispatch"
+        )
+    end
+
     :ok
   end
 
@@ -406,10 +463,23 @@ defmodule Ezagent.Kind.Server do
   def handle_call({:ezagent_dispatch, %Ezagent.Invocation{} = inv}, _from, state) do
     case Ezagent.Kind.Runtime.handle_dispatch(inv, state.state, state.kind, state.uri) do
       {:ok, new_slice_state, result, slice_change_event} ->
-        commit_and_notify(state, new_slice_state, slice_change_event)
+        case commit_and_notify(state, new_slice_state, slice_change_event) do
+          commit_ok when commit_ok in [:ok, :not_durable] ->
+            reply = if is_nil(result), do: :ok, else: {:ok, result}
+            {:reply, reply, %{state | state: new_slice_state}}
 
-        reply = if is_nil(result), do: :ok, else: {:ok, result}
-        {:reply, reply, %{state | state: new_slice_state}}
+          {:error, reason} ->
+            # Issue #342 (Allen 2026-05-25 — let-it-crash). The action
+            # body produced a new slice but the durable write failed
+            # (`commit_and_notify/3` already suppressed the
+            # `SliceChange` emit + logged + emitted `:failed`
+            # telemetry). Returning `{:ok, result}` here would lie to
+            # the dispatch caller (LV / mix task / cross-Kind dispatcher)
+            # — they would broadcast a "succeeded" state that won't
+            # survive restart. Keep the in-memory slice un-advanced
+            # and propagate the persistence error.
+            {:reply, {:error, {:persistence_failed, reason}}, state}
+        end
 
       {:error, _} = err ->
         {:reply, err, state}
@@ -420,11 +490,19 @@ defmodule Ezagent.Kind.Server do
   def handle_cast({:ezagent_dispatch, %Ezagent.Invocation{} = inv}, state) do
     case Ezagent.Kind.Runtime.handle_dispatch(inv, state.state, state.kind, state.uri) do
       {:ok, new_slice_state, result, slice_change_event} ->
-        commit_and_notify(state, new_slice_state, slice_change_event)
+        case commit_and_notify(state, new_slice_state, slice_change_event) do
+          commit_ok when commit_ok in [:ok, :not_durable] ->
+            # cast still replies via ctx.reply if set (e.g. caller_inbox).
+            Ezagent.Invocation.reply(inv.ctx, {:ok, result})
+            {:noreply, %{state | state: new_slice_state}}
 
-        # cast still replies via ctx.reply if set (e.g. caller_inbox).
-        Ezagent.Invocation.reply(inv.ctx, {:ok, result})
-        {:noreply, %{state | state: new_slice_state}}
+          {:error, reason} ->
+            # Issue #342 — durable write failed. Mirror the handle_call
+            # branch: propagate the error to the caller, leave the
+            # in-memory slice un-advanced.
+            Ezagent.Invocation.reply(inv.ctx, {:error, {:persistence_failed, reason}})
+            {:noreply, state}
+        end
 
       {:error, reason} ->
         Ezagent.Invocation.reply(inv.ctx, {:error, reason})
@@ -433,7 +511,7 @@ defmodule Ezagent.Kind.Server do
   end
 
   # Commit-then-notify ordering (codex PR-N1 round-2 MEDIUM +
-  # round-3 HIGH-1 fix):
+  # round-3 HIGH-1 fix + issue #342 propagation, Allen 2026-05-25):
   # 1. `Snapshot.commit/4` returns the STRICT outcome:
   #    `:ok` = durably persisted; `:not_durable` = policy doesn't
   #    require a durable write here (ephemeral / unchanged / periodic);
@@ -447,6 +525,11 @@ defmodule Ezagent.Kind.Server do
   #      crash. Ghost-notify would tell LV "Alice → Bob" but a
   #      restart re-loads "Alice → Carol". Suppress emit. `commit/4`
   #      has already logged + emitted `:failed` telemetry.
+  # 3. Return the strict outcome (issue #342) so the dispatch
+  #    reply path can propagate `{:error, {:persistence_failed, _}}`
+  #    instead of falsely reporting success to the caller.
+  @spec commit_and_notify(map(), %{atom() => map()}, any()) ::
+          :ok | :not_durable | {:error, term()}
   defp commit_and_notify(state, new_slice_state, slice_change_event) do
     commit_result =
       Ezagent.Kind.Snapshot.commit(state.uri, state.kind, state.state, new_slice_state)
@@ -455,7 +538,7 @@ defmodule Ezagent.Kind.Server do
       Ezagent.SliceChange.emit(slice_change_event)
     end
 
-    :ok
+    commit_result
   end
 
   # Unified forwarder: any GenServer message a Kind's Behaviors might want
@@ -483,7 +566,18 @@ defmodule Ezagent.Kind.Server do
         if Process.whereis(Ezagent.Snapshot.Writer) do
           Ezagent.Snapshot.Writer.async_save(uri, kind_module, slice_state)
         else
-          _ = Ezagent.Kind.Snapshot.save_now(uri, kind_module, slice_state)
+          # Issue #342 — `save_now/3` is now strict (raises / returns
+          # `{:error, _}`). This periodic-tick fallback is by-design
+          # best-effort (it fires every N ms; one DB failure must not
+          # crash the live Kind). Catch BOTH exceptions and linked
+          # connection process exits at this boundary.
+          try do
+            _ = Ezagent.Kind.Snapshot.save_now(uri, kind_module, slice_state)
+          rescue
+            _ -> :ok
+          catch
+            :exit, _ -> :ok
+          end
         end
 
         Process.send_after(self(), :snapshot_tick, ms)
@@ -562,7 +656,44 @@ defmodule Ezagent.Kind.Server do
     do: :not_durable
 
   defp persist_handle_info_mutation(uri, kind_module, old_slice_state, new_slice_state) do
-    Ezagent.Kind.Snapshot.commit(uri, kind_module, old_slice_state, new_slice_state)
+    # Issue #342 (Allen 2026-05-25): handle_info mutations are
+    # by-design downstream effects of upstream actions (see the
+    # caller's comment at line ~526). Following the same posture as
+    # commit_post_init/2 above: a transient DB error here should NOT
+    # crash the Kind on every fired :DOWN or :slice_changed message
+    # — that would amplify a DB hiccup into a Kind boot-loop. Wrap
+    # save_now's strict failures at this boundary; the next dispatch
+    # path enforces durability strictly so the mutation gets a fair
+    # chance to land.
+    #
+    # Catches BOTH `rescue` (exceptions) and `catch :exit` (linked
+    # process exits, e.g. sandbox connection owner death in tests, or
+    # genuine DBConnection process death in prod).
+    try do
+      Ezagent.Kind.Snapshot.commit(uri, kind_module, old_slice_state, new_slice_state)
+    rescue
+      e ->
+        require Logger
+
+        Logger.warning(
+          "Ezagent.Kind.Server.persist_handle_info_mutation: snapshot commit " <>
+            "raised for #{inspect(uri)}: #{inspect(e)} — handle_info mutation " <>
+            "kept in-memory only"
+        )
+
+        {:error, e}
+    catch
+      :exit, reason ->
+        require Logger
+
+        Logger.warning(
+          "Ezagent.Kind.Server.persist_handle_info_mutation: snapshot commit " <>
+            "exited for #{inspect(uri)}: #{inspect(reason)} — handle_info " <>
+            "mutation kept in-memory only"
+        )
+
+        {:error, {:exit, reason}}
+    end
   end
 
   @impl true
@@ -576,6 +707,11 @@ defmodule Ezagent.Kind.Server do
           _ = Ezagent.Kind.Snapshot.save_now(uri, kind_module, slice_state)
         rescue
           _ -> :ok
+        catch
+          # Issue #342 — also catch :exit so a linked DB connection
+          # death (sandbox owner exit / DBConnection crash) doesn't
+          # prevent the Kind from going down cleanly.
+          :exit, _ -> :ok
         end
 
       _ ->
