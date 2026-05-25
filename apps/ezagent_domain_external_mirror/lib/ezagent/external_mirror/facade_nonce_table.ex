@@ -162,16 +162,6 @@ defmodule Ezagent.ExternalMirror.FacadeNonceTable do
              | {:target_check_crashed, term()}}
   def claim_nonce(%URI{} = session_uri, ctx, adapter_id, target_id)
       when is_map(ctx) and is_binary(adapter_id) do
-    claim_nonce(session_uri, ctx, adapter_id, target_id, @default_ttl_ms)
-  end
-
-  @doc false
-  # Test-only 5-arity form — see audit SPEC §3.3 note. Production
-  # callers MUST use the 4-arity `claim_nonce/4` above.
-  @spec claim_nonce(URI.t(), Gates.caller_ctx(), String.t(), term(), pos_integer()) ::
-          {:ok, binary()} | {:error, term()}
-  def claim_nonce(%URI{} = session_uri, ctx, adapter_id, target_id, ttl_ms)
-      when is_map(ctx) and is_binary(adapter_id) and is_integer(ttl_ms) and ttl_ms > 0 do
     # codex PR-AUDIT r1 CRIT fix (2026-05-25): resolve adapter_module
     # via AdapterRegistry — never trust the caller. A spoof module
     # whose `adapter_id/0` lies about its identity cannot pass through
@@ -183,6 +173,37 @@ defmodule Ezagent.ExternalMirror.FacadeNonceTable do
     # caller bypassing the facade by calling claim_nonce/4 directly
     # still cannot get a nonce without passing all 4 gates against
     # the real registry-resolved module.
+    do_claim_nonce(session_uri, ctx, adapter_id, target_id, @default_ttl_ms)
+  end
+
+  # codex PR-AUDIT r2 HIGH fix (2026-05-25): the TTL-override form
+  # is no longer a callable production API. Pre-fix, `claim_nonce/5`
+  # was `@doc false` but still publicly callable; a caller currently
+  # passing all gates could mint a nonce with arbitrarily long TTL
+  # and direct-dispatch later AFTER target membership had been revoked
+  # — defeating the SPEC-pinned 5-second stale-authorization bound.
+  #
+  # Post-fix, the 5-arity form is compile-gated to `Mix.env() == :test`
+  # via the conditional `def`/no-op approach below. In production
+  # builds (`prod` / `dev`) the 5-arity function clause is NOT defined
+  # at all — the BEAM raises `UndefinedFunctionError` on the call.
+  # The test suite still has the 5-arity form for the nonce-expiry
+  # scenarios that need millisecond TTLs.
+  if Mix.env() == :test do
+    @doc false
+    # Test-only 5-arity form — see audit SPEC §3.3 note + codex r2
+    # HIGH. Production callers (`Mix.env() != :test`) cannot invoke
+    # this function — it does NOT exist in production binaries.
+    @spec claim_nonce(URI.t(), Gates.caller_ctx(), String.t(), term(), pos_integer()) ::
+            {:ok, binary()} | {:error, term()}
+    def claim_nonce(%URI{} = session_uri, ctx, adapter_id, target_id, ttl_ms)
+        when is_map(ctx) and is_binary(adapter_id) and is_integer(ttl_ms) and ttl_ms > 0 do
+      do_claim_nonce(session_uri, ctx, adapter_id, target_id, ttl_ms)
+    end
+  end
+
+  defp do_claim_nonce(%URI{} = session_uri, ctx, adapter_id, target_id, ttl_ms)
+       when is_binary(adapter_id) and is_integer(ttl_ms) and ttl_ms > 0 do
     caller_uri = Map.fetch!(ctx, :caller)
 
     with {:ok, _adapter_module} <-

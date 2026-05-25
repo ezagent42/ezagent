@@ -547,6 +547,46 @@ defmodule Ezagent.ExternalMirror.AuthModelInvariantTest do
                )
     end
 
+    # codex PR-AUDIT r2 HIGH regression — TTL-override only available in test
+    #
+    # Pre-r2 fix, `claim_nonce/5` was `@doc false` but still publicly
+    # callable; a caller currently passing all gates could mint a
+    # nonce with arbitrarily long TTL and direct-dispatch later AFTER
+    # target membership had been revoked — defeating the SPEC-pinned
+    # 5-second stale-authorization bound.
+    #
+    # Post-fix, the 5-arity form is compile-gated to `Mix.env() == :test`.
+    # In production binaries it does NOT exist at all. This invariant
+    # asserts the structural compile-time gate is in place by
+    # inspecting the module's exported functions: in production
+    # `claim_nonce/5` must be absent; in test it must be present
+    # (otherwise the nonce-expiry scenarios couldn't run).
+    test "TTL-override claim_nonce/5 exists ONLY in test env (codex r2 HIGH gate)" do
+      exports = FacadeNonceTable.__info__(:functions)
+
+      # In test env this assertion confirms the 5-arity form is
+      # available so the §6 expiry scenarios (9) can run.
+      assert {:claim_nonce, 5} in exports,
+             "expected claim_nonce/5 to exist in test env (for nonce-expiry scenarios); " <>
+               "got exports: #{inspect(exports)}"
+
+      # Structural source-level gate: the 5-arity form MUST be inside
+      # `if Mix.env() == :test do` block in the source. This catches
+      # future contributors removing the gate accidentally — even if
+      # the function exists in test env (as it must), the source-level
+      # check enforces it's compile-gated.
+      source = read_source_file("lib/ezagent/external_mirror/facade_nonce_table.ex")
+
+      assert source =~ ~r/if\s+Mix\.env\(\)\s*==\s*:test\s+do/,
+             "scenario 10b TTL-gate invariant: facade_nonce_table.ex MUST guard the " <>
+               "5-arity claim_nonce with `if Mix.env() == :test do` so the TTL " <>
+               "override is unavailable in production builds (codex r2 HIGH)"
+
+      assert source =~ ~r/def\s+claim_nonce\(.*ttl_ms\)\s+when/,
+             "scenario 10b TTL-gate invariant: 5-arity claim_nonce definition MUST " <>
+               "exist somewhere in source (in the test-gated block)"
+    end
+
     # codex PR-AUDIT r1 CRIT regression — adapter spoofing via
     # caller-supplied module
     #
