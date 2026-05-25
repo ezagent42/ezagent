@@ -6,7 +6,8 @@ defmodule EzagentDomainUi.IdeShellOuterTest do
   `:command_palette` slot + `:body` slot. The `perspective` attr
   (SPEC §2) governs the header's left context affordance:
 
-  - `:workspace` → workspace dropdown (or plain `ezagent / <ws>` text)
+  - `:workspace` → workspace dropdown (always, including empty list
+    — the dropdown is the sole entry to `/workspaces`)
   - `:admin`     → plain `ezagent · System` system-context label
 
   These tests also confirm the existing `ide_shell/1` monolith is
@@ -57,10 +58,17 @@ defmodule EzagentDomainUi.IdeShellOuterTest do
       refute html =~ "ezagent</span>\n          <span class=\"text-zinc-400 dark:text-zinc-600 select-none\">·"
     end
 
-    test "plain `ezagent / <ws>` text when workspaces list is empty" do
+    test "dropdown still rendered when workspaces list is empty — with placeholder + Manage workspaces link" do
+      # Regression test for workspace-rename (#335) follow-up: when
+      # the DB has no visible workspaces (only the hidden `system`
+      # seed), the dropdown trigger MUST stay visible. Otherwise
+      # first-time operators have NO way to reach `/workspaces` to
+      # create the first one — Activity Bar dropped its Workspaces
+      # tile in PR-L. Allen reported this regression in Feishu on
+      # 2026-05-25.
       assigns = %{
         current_entity_uri: "entity://user/system/admin",
-        workspace_name: "default"
+        workspace_name: nil
       }
 
       html =
@@ -74,9 +82,15 @@ defmodule EzagentDomainUi.IdeShellOuterTest do
         </IdeShell.ide_shell_outer>
         """)
 
-      assert html =~ "ezagent"
-      assert html =~ "default"
-      refute html =~ ~s(aria-label="Switch workspace")
+      # Dropdown trigger is ALWAYS present in :workspace perspective.
+      assert html =~ ~s(id="workspace-menu")
+      assert html =~ ~s(aria-label="Switch workspace")
+      # Empty-state placeholder body so the menu doesn't look broken.
+      assert html =~ "No workspaces yet"
+      # The footer link is reachable — this is the invariant that
+      # broke before this fix (regression test).
+      assert html =~ ~s(href="/workspaces")
+      assert html =~ "Manage workspaces"
     end
   end
 
