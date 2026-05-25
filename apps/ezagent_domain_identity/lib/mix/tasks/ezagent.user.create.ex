@@ -1,27 +1,28 @@
 defmodule Mix.Tasks.Ezagent.User.Create do
-  @shortdoc "Create a new ESR User with password + caps"
+  @shortdoc "DEPRECATED — use `mix esr workspace create_user` (HIGH-2 completion)"
   @moduledoc """
-  > **CLI/GUI parity audit 2026-05-24 — Category C (deferred).**
-  > Bypasses dispatch: calls `Ezagent.Users.create/3` directly, so no
-  > CapBAC, no audit row, no cross-workspace check. The `mix esr user
-  > create` equivalent does NOT exist yet — deleting this task today
-  > would lose operator capability. Tracked in
-  > `docs/futures/todo.md` § "CLI ↔ GUI parity (audit findings #137
-  > still partial)".
+  > **DEPRECATED 2026-05-26 (HIGH-2 completion — todo.md "CLI ↔ GUI parity").**
   >
-  > TODO (per codex PR #304 round-3 fix): add the
-  > `Ezagent.Entity.User` Behavior `:create` action + cap subject;
-  > `mix esr` will auto-derive `mix esr user create --uri … --password
-  > … --caps …` from the Behavior's `interface/0` via the standard
-  > `Ezagent.Invocation.dispatch/1` pipeline. Then deprecate this
-  > task using the PR #302 stub pattern.
+  > The dispatch-backed equivalent now exists. New callers should use
+  > the auto-derived `mix esr` command, which goes through
+  > `Ezagent.Invocation.dispatch/1` → step 5.5 CapBAC → audit
+  > telemetry → cross-workspace iso. The structural cross-workspace
+  > check now ENFORCES that the new user URI belongs to the target
+  > workspace (the legacy direct-call had no such gate).
   >
-  > **DO NOT** add a `FacadeRegistry` op for this — codex PR #304
-  > round-2 HIGH established that `EzagentCli.FacadeRegistry` +
-  > `Dispatch.run_facade/3` skips Invocation/caller/caps/audit, so
-  > using it as the wire-through would close HIGH-2 by reproducing
-  > the bypass. See `docs/futures/todo.md` HIGH-2 deferred table for
-  > the canonical wire-through pattern.
+  >     # NEW — preferred path:
+  >     mix esr workspace create_user \\
+  >         --workspace team-alpha \\
+  >         --user-uri entity://user/team-alpha/allen \\
+  >         --password 'temp-pw-rotate-me' \\
+  >         --caps 'workspace.read,chat.send'
+  >
+  > This legacy task is retained for muscle memory pending operator
+  > migration (the PR #355 "Feishu UserBinding" pattern). The
+  > internals still call `Ezagent.Users.create/3` directly — same
+  > business logic, but bypasses CapBAC + audit. New scripts should
+  > switch to `mix esr workspace create_user`; this task will be
+  > removed in a future release.
 
   Phase 4-completion Spec 05 §A.2.1 — provision a non-admin User.
 
@@ -59,6 +60,20 @@ defmodule Mix.Tasks.Ezagent.User.Create do
 
   @impl Mix.Task
   def run(args) do
+    Mix.shell().info("""
+    NOTE: `mix ezagent.user.create` is deprecated as of 2026-05-26.
+    Use the dispatch-backed equivalent (CapBAC + audit + cross-workspace iso):
+
+        mix esr workspace create_user \\
+            --workspace <name> \\
+            --user-uri entity://user/<name>/<handle> \\
+            --password '<pw>' \\
+            --caps '<cap1,cap2,...>'
+
+    This task still works but bypasses dispatch. Will be removed in a
+    future release.
+    """)
+
     {:ok, _} = Application.ensure_all_started(:ezagent_core)
     {:ok, _} = Application.ensure_all_started(:ezagent_domain_chat)
 

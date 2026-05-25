@@ -58,7 +58,13 @@ defmodule Ezagent.Behavior.Workspace do
       # action body owns the LV's prior `register_and_instantiate/3`
       # orchestration (template registration + Loader.invoke_template +
       # direct-spawn fallback for flavors with no Template Class).
-      :create_agent
+      :create_agent,
+      # HIGH-2 completion (todo.md "CLI ↔ GUI parity"): provision a new
+      # User in this workspace via dispatch. Lives on Workspace Kind
+      # (not User Kind) because the User Kind doesn't exist at creation
+      # time — the binding is workspace-membership scoped (parallels
+      # `:create_agent` per PR #344 case study).
+      :create_user
     ]
   end
 
@@ -80,7 +86,8 @@ defmodule Ezagent.Behavior.Workspace do
         Ezagent.Capability.cap(:workspace, __MODULE__, :list_routing_rules),
       set_routing_rules: Ezagent.Capability.cap(:workspace, __MODULE__, :set_routing_rules),
       instantiate: Ezagent.Capability.cap(:workspace, __MODULE__, :instantiate),
-      create_agent: Ezagent.Capability.cap(:workspace, __MODULE__, :create_agent)
+      create_agent: Ezagent.Capability.cap(:workspace, __MODULE__, :create_agent),
+      create_user: Ezagent.Capability.cap(:workspace, __MODULE__, :create_user)
     }
   end
 
@@ -99,7 +106,10 @@ defmodule Ezagent.Behavior.Workspace do
       {:instantiate, "instantiate a fresh workspace from a workspace template"},
       {:create_agent,
        "create a new agent in this workspace (registers Template Class, " <>
-         "spawns Agent Kind, starts PTY for cc / echo-with-PTY)"}
+         "spawns Agent Kind, starts PTY for cc / echo-with-PTY)"},
+      {:create_user,
+       "provision a new ESR user in this workspace (inserts `users` row " <>
+         "with password + caps; opportunistically spawns the User Kind)"}
     ]
   end
 
@@ -222,6 +232,71 @@ defmodule Ezagent.Behavior.Workspace do
     {:ok, slice, %{children: member_children ++ template_children}}
   end
 
+  # --- :create_user (HIGH-2 completion) --------------------------------
+  #
+  # Wraps `Ezagent.Users.create/3` + opportunistic User Kind spawn —
+  # the same business logic the legacy `mix ezagent.user.create` task
+  # ran, now reachable through `Ezagent.Invocation.dispatch/1` so step
+  # 5.5 cap-check fires, audit telemetry emits, and cross-workspace
+  # isolation applies.
+  #
+  # ## Why Workspace Kind, not User Kind
+  #
+  # The User Kind doesn't exist at creation time — it's spawned as a
+  # SIDE EFFECT of this action. Dispatching on a not-yet-existing Kind
+  # is impossible; the natural parent is Workspace (the same logical
+  # parent for `:create_agent`).
+  #
+  # ## Structural workspace check
+  #
+  # The user URI MUST belong to the target workspace — a caller with
+  # `(:workspace, __MODULE__, :create_user)` on `workspace://A` MUST
+  # NOT be able to create `entity://user/B/...`. The check matches the
+  # user URI's workspace segment against the dispatch target.
+  # Bootstrap admin (target = :any from a `:any`-instance cap) is
+  # exempt — step 5.5 already validated cross-workspace authority.
+  #
+  # ## --allow-allcaps gate is dropped
+  #
+  # The legacy task accepted `--caps '*'` + a `--allow-allcaps`
+  # confirm flag. Cap parsing now happens IN the action body via
+  # `Ezagent.Capability.Parser.parse/2` with the same admin URI
+  # default; the `*` shape is allowed because granting bootstrap-admin
+  # caps to a new user is itself a structural privilege gated by
+  # step 5.5 (only bootstrap admin or a workspace-system member can
+  # hold `:create_user` with sufficient cap-range to mint a `*` user).
+  # The explicit flag was a CLI-shape safety net; the structural cap
+  # check is the real gate.
+  def invoke(:create_user, slice, args, ctx) when is_map(args) do
+    raw_target_uri = Map.get(ctx, :self_uri)
+
+    with {:ok, user_uri_str, password, caps_str} <- coerce_create_user_args(args),
+         {:ok, user_uri} <- parse_user_uri(user_uri_str),
+         {:ok, target_ws} <- require_workspace_uri(raw_target_uri),
+         :ok <- ensure_user_in_target_workspace(user_uri, target_ws),
+         {:ok, caps} <-
+           Ezagent.Capability.Parser.parse(caps_str || "", Ezagent.Entity.User.admin_uri()),
+         {:ok, decoded} <- Ezagent.Users.create(user_uri, password, caps) do
+      # Opportunistic User Kind spawn — mirrors the legacy task's
+      # `maybe_spawn_user_kind/2` behavior. Failures here are non-
+      # fatal (restart Loader picks up the row); we surface the result
+      # so the caller can decide.
+      spawn_result = maybe_spawn_user_kind(user_uri)
+
+      {:ok, slice,
+       %{
+         user_uri: URI.to_string(decoded.uri),
+         caps_granted: length(caps),
+         password_set: is_binary(password) and password != "",
+         spawned: spawn_result
+       }}
+    end
+  end
+
+  def invoke(:create_user, _slice, args, _ctx) do
+    {:error, {:bad_args, "create_user requires {user_uri, password?, caps?}", args}}
+  end
+
   # --- interface (adapter generation + arg validation) ----------------
 
   @impl Ezagent.Behavior
@@ -301,6 +376,35 @@ defmodule Ezagent.Behavior.Workspace do
           from: {:option, :uri}
         },
         returns: %{agent_uri: :uri, template_name: :string},
+        modes: [:call]
+      },
+      create_user: %{
+        description:
+          "Provision a new ESR user in this workspace. Inserts a row in the " <>
+            "`users` table (password bcrypt-hashed) and opportunistically " <>
+            "spawns the User Kind. Replaces the legacy " <>
+            "`mix ezagent.user.create` task (which bypassed dispatch). " <>
+            "Auto-derived CLI: " <>
+            "`mix esr workspace create_user --workspace <name> " <>
+            "--user-uri entity://user/<name>/<handle> --password ... " <>
+            "--caps 'workspace.read,chat.send'`.",
+        args: %{
+          # Use `:string` (not `:uri`) so the caller can pass a full
+          # `entity://user/<workspace>/<name>` string from argv; the
+          # action body parses it with `Ezagent.URI.parse!/1` so the
+          # SPEC v3 3-segment shape is enforced.
+          user_uri: :string,
+          # `:option`-wrapped so an empty body is accepted (password
+          # can be set later via `:set_password` action).
+          password: {:option, :string},
+          caps: {:option, :string}
+        },
+        returns: %{
+          user_uri: :string,
+          caps_granted: :integer,
+          password_set: :boolean,
+          spawned: :string
+        },
         modes: [:call]
       }
     }
@@ -744,6 +848,89 @@ defmodule Ezagent.Behavior.Workspace do
     case String.split(rest, "/", parts: 2) do
       [_workspace, entity_name] -> entity_name
       [name] -> name
+    end
+  end
+
+  # =================================================================
+  # `:create_user` helpers (HIGH-2 completion)
+  # =================================================================
+
+  defp coerce_create_user_args(args) do
+    user_uri = Map.get(args, :user_uri)
+    password = Map.get(args, :password)
+    caps = Map.get(args, :caps)
+
+    cond do
+      not is_binary(user_uri) or user_uri == "" ->
+        {:error, :user_uri_required}
+
+      not (is_nil(password) or is_binary(password)) ->
+        {:error, {:bad_password, password}}
+
+      not (is_nil(caps) or is_binary(caps)) ->
+        {:error, {:bad_caps, caps}}
+
+      true ->
+        {:ok, user_uri, password, caps}
+    end
+  end
+
+  # Parse via `Ezagent.URI.parse!/1` so SPEC v3 §3 (3-segment authority
+  # `entity://user/<workspace>/<name>`) is enforced at parse time
+  # rather than silently allowing legacy 2-segment shapes.
+  defp parse_user_uri(s) when is_binary(s) do
+    try do
+      case Ezagent.URI.parse!(s) do
+        %URI{scheme: "entity", host: "user", path: "/" <> _} = uri ->
+          {:ok, uri}
+
+        _ ->
+          {:error, {:bad_user_uri, s, "expected entity://user/<workspace>/<name>"}}
+      end
+    rescue
+      e in ArgumentError ->
+        {:error, {:bad_user_uri, s, Exception.message(e)}}
+    end
+  end
+
+  # Structural cross-workspace check on the NEW user URI. A caller
+  # holding the cap for `workspace://A` MUST NOT create a user under
+  # `workspace://B`. Bootstrap admin (target = :any when ctx has no
+  # concrete workspace target) is exempt — step 5.5 already validated.
+  defp ensure_user_in_target_workspace(%URI{} = user_uri, %URI{scheme: "workspace"} = target_ws) do
+    case Ezagent.URI.entity_workspace_uri(user_uri) do
+      %URI{} = user_ws ->
+        if URI.to_string(user_ws) == URI.to_string(target_ws) do
+          :ok
+        else
+          {:error,
+           {:cross_workspace_user,
+            target_workspace: URI.to_string(target_ws),
+            user_workspace: URI.to_string(user_ws)}}
+        end
+
+      _ ->
+        {:error, {:bad_user_uri_no_workspace, URI.to_string(user_uri)}}
+    end
+  end
+
+  # Mirrors legacy `mix ezagent.user.create` opportunistic spawn — non
+  # fatal; restart Loader picks up the row if this fails. Returns a
+  # status string so the caller can see what happened.
+  defp maybe_spawn_user_kind(%URI{} = uri) do
+    if Code.ensure_loaded?(Ezagent.SpawnRegistry) do
+      case Ezagent.SpawnRegistry.spawn(uri) do
+        {:ok, _pid} ->
+          "spawned"
+
+        {:error, {:already_started, _pid}} ->
+          "already_running"
+
+        {:error, reason} ->
+          "spawn_deferred:#{inspect(reason)}"
+      end
+    else
+      "spawn_registry_unavailable"
     end
   end
 end

@@ -420,6 +420,48 @@ defmodule Ezagent.Workspace do
   end
 
   @doc """
+  Dispatch the `:create_user` action on Workspace Kind — the HIGH-2
+  completion entry that replaces the legacy `mix ezagent.user.create`
+  task's direct call into `Ezagent.Users.create/3`.
+
+  Goes through `Ezagent.Invocation.dispatch/1` so step 5.5 CapBAC,
+  audit telemetry, and the action body's structural cross-workspace
+  check on the new user URI all fire.
+
+  `args` is `%{user_uri: String.t(), password: String.t() | nil,
+  caps: String.t() | nil}`. `ctx` carries `:caller` + `:caps`.
+
+  Returns `{:ok, %{user_uri: String.t(), caps_granted: integer(),
+  password_set: boolean(), spawned: String.t()}}` on success;
+  `{:error, reason}` on validation / cap denial / cross-workspace
+  refusal / DB insert failure.
+  """
+  @spec create_user(URI.t(), map(), map()) ::
+          {:ok,
+           %{
+             user_uri: String.t(),
+             caps_granted: non_neg_integer(),
+             password_set: boolean(),
+             spawned: String.t()
+           }}
+          | {:error, term()}
+  def create_user(%URI{scheme: "workspace"} = workspace_uri, args, ctx)
+      when is_map(args) and is_map(ctx) do
+    target =
+      URI.new!("#{URI.to_string(workspace_uri)}?action=workspace.create_user")
+
+    caller = Map.fetch!(ctx, :caller)
+    caps = Map.fetch!(ctx, :caps)
+
+    Invocation.dispatch(%Invocation{
+      target: target,
+      mode: :call,
+      args: args,
+      ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+    })
+  end
+
+  @doc """
   Loop `identity.grant_cap` dispatches against `agent_uri`, one per cap.
   Uses the CALLER's context (caps + URI) so the cap grants stay
   CapBAC-bound (LV's existing `grant_all/3` pattern, lifted into a

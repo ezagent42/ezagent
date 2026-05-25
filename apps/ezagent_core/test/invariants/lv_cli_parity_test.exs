@@ -120,9 +120,13 @@ defmodule EzagentCore.Invariants.LvCliParityTest do
       {:cli, "mix esr workspace disable_rule / enable_rule (depending on toggle target)"},
 
     # --- Identity ops ---
+    # HIGH-2 completion (2026-05-26): `:create_user` action landed on
+    # Behavior.Workspace; `mix esr workspace create_user` auto-derives
+    # from interface/0. Legacy `mix ezagent.user.create` retained for
+    # muscle memory but now prints a deprecation notice.
     "create_user" =>
-      {:deferred,
-       "docs/futures/todo.md HIGH-2 — needs Behavior.Workspace :create_user (parallels :create_agent); `mix ezagent.user.create` exists but bypasses dispatch (Category C)"},
+      {:cli,
+       "mix esr workspace create_user --workspace <name> --user-uri <uri> --password <pw> --caps <list>"},
     "set_password" =>
       {:deferred,
        "docs/futures/todo.md HIGH-2 — needs Behavior.Identity :set_password OR a new Behavior.UserCredentials action; `mix ezagent.user.set_password` exists but bypasses dispatch"},
