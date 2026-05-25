@@ -18,21 +18,31 @@ defmodule EzagentPluginLiveview.ObservabilityLiveTest do
 
   ## Test design
 
-  Two complementary layers:
+  Three complementary layers:
 
-  1. **Unit-level** — `workspace_filter_for/1` is a pure function over
-     the LV assigns shape. Exercise it with the three socket-assign
-     shapes (`is_system_member?: true`, `current_workspace_uri: %URI{}`,
-     `current_workspace_uri: <bare string>`) and one degenerate empty
-     shape, asserting the right filter tuple comes out. This locks
-     the function contract independently of the LV mount path.
+  1. **Unit-level contract** — `filter_contract/1` replicates
+     `workspace_filter_for/1`'s case analysis in the test file (the
+     function is `defp`). Exercise four socket-assign shapes
+     (`is_system_member?: true`, `current_workspace_uri: %URI{}`,
+     `current_workspace_uri: "<string>"`, empty) asserting the right
+     filter tuple. This locks the contract shape — useful for
+     "did we accidentally drop a clause?" detection.
 
-  2. **Integration-level via SQL** — insert two hand-crafted
-     `invocations` rows in different workspaces, then run the LV's
-     `list_recent_audit/2` query through `:rpc` and assert the
-     workspace-scoped variant excludes the other tenant. This proves
-     the SQL WHERE clause is wired correctly, not just the predicate
-     above it.
+  2. **SQL contract** — insert two hand-crafted `invocations` rows in
+     different workspaces, run a query identical to
+     `list_recent_audit/2`, assert the workspace-scoped variant
+     excludes the other tenant. Proves the WHERE-clause filter
+     SHAPE works.
+
+  3. **Production source grep** (`describe "PRODUCTION SOURCE GATE"`)
+     — read `observability_live.ex` SOURCE and grep for the
+     `WHERE workspace_uri = ?` clause + the `workspace_filter_for/1`
+     case heads. **This is what actually catches production deletion**
+     (codex r1 P1: layers 1+2 alone duplicate the contract, so
+     deleting the production filter wouldn't fail those tests).
+     If a future refactor removes the WHERE clause from
+     `list_recent_audit/2` or loses the `is_system_member?` head from
+     `workspace_filter_for/1`, layer 3 fails.
 
   Production also has `live(conn, "/admin/logs")` — a system admin
   reaches the LV and exercises the `:all` branch. That path is
@@ -229,6 +239,67 @@ defmodule EzagentPluginLiveview.ObservabilityLiveTest do
       assert Code.ensure_loaded?(ObservabilityLive)
       assert function_exported?(ObservabilityLive, :mount, 3)
       assert function_exported?(ObservabilityLive, :render, 1)
+    end
+  end
+
+  # PRODUCTION SOURCE GATE — closes the codex r1 P1 finding that the
+  # SQL/contract assertions above duplicate the production logic, so
+  # deleting the production filter wouldn't fail those tests. This
+  # grep gate reads observability_live.ex SOURCE and fails if either
+  # workspace-scoped query is missing the `WHERE workspace_uri = ?`
+  # clause, OR if `workspace_filter_for/1` loses its `is_system_member?`
+  # / `current_workspace_uri` heads. Removing the production filter
+  # therefore trips THIS test — the regression gate the LOW-11 brief
+  # asked for.
+  describe "PRODUCTION SOURCE GATE — source must reference workspace_uri WHERE clauses" do
+    @observability_path Path.join([
+                          File.cwd!(),
+                          "..",
+                          "ezagent_plugin_liveview",
+                          "lib",
+                          "ezagent_plugin_liveview",
+                          "observability_live.ex"
+                        ])
+
+    setup do
+      source = File.read!(@observability_path)
+      {:ok, source: source}
+    end
+
+    test "invocations scoped query carries `WHERE workspace_uri = ?` clause", %{source: src} do
+      assert src =~ ~r/FROM\s+invocations\s+.*?WHERE\s+workspace_uri\s*=\s*\?/s,
+             "ObservabilityLive.list_recent_audit/2 scoped clause MUST filter " <>
+               "on workspace_uri — removing it would leak cross-tenant audit rows " <>
+               "(LOW-11 closes this gap, codex r1 P1)"
+    end
+
+    test "kind_snapshots scoped query carries `WHERE workspace_uri = ?` clause", %{source: src} do
+      assert src =~ ~r/FROM\s+kind_snapshots\s+.*?WHERE\s+workspace_uri\s*=\s*\?/s,
+             "ObservabilityLive.list_snapshots/1 scoped clause MUST filter on workspace_uri"
+    end
+
+    test "workspace_filter_for/1 retains `is_system_member?` and `current_workspace_uri` heads",
+         %{source: src} do
+      assert src =~ ~r/defp\s+workspace_filter_for\(%\{is_system_member\?:\s*true\}\)/,
+             "workspace_filter_for/1 must dispatch the system-member branch to `:all`"
+
+      assert src =~ ~r/defp\s+workspace_filter_for\(%\{current_workspace_uri:/,
+             "workspace_filter_for/1 must dispatch non-system callers via current_workspace_uri"
+
+      assert src =~ ~r/workspace:\/\/__none__/,
+             "workspace_filter_for/1 must fail-closed to workspace://__none__ on degenerate assigns"
+    end
+
+    test "module documents the LOW-11 filter as workspace-scoped tenant isolation", %{
+      source: src
+    } do
+      # Moduledoc comment explains WHY the filter exists — losing this
+      # comment is a yellow flag that the next refactor might delete
+      # the filter as "unused". Pin the rationale.
+      assert src =~ "workspace_uri" and src =~ "tenant",
+             "observability_live.ex must keep the tenant-isolation rationale comment " <>
+               "near workspace_filter_for/1 — removing the comment is a signal the next " <>
+               "refactor may delete the filter without realising its purpose"
     end
   end
 end

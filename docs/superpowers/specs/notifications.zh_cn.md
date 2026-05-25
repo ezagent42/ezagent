@@ -30,17 +30,25 @@ Identity.grant_cap / Chat.join / Lifecycle.terminate / Template.fork ...)
 - **P22 (可靠性原语在 core 里)** —— 每个 producer 各自手写
   retention / cursor / fan-out 语义
 
-### PR-N1 之后 (slice-change 唯一入口)
+### PR-N1 之后 (slice-change 引入 chokepoint —— 与 legacy 共存)
 
-producer 不再直接调用 `Notifications.notify/3`。slice 变更本身就是
-trigger: 每个 Behavior 的 `:invoke` 返回 `{:ok, new_slice, result}`
+PR-N1/N2/N3 引入了 SliceChange 模型: slice 变更本身就是 trigger,
+每个 Behavior 的 `:invoke` 返回 `{:ok, new_slice, result}`
 (或 `{:error, _}`); `Kind.Server.commit_and_notify/3` 是唯一观察到
 `new_slice != old_slice` 并发出 slice-change 事件的点。消费者用
 `Ezagent.SliceChange.subscribe(entity_uri)` 订阅该实体的 stream。
 
-唯一入口从 N 个 producer 调用点收敛到 ONE 个调用点
-(`commit_and_notify/3`) —— 这是 N1 之后模型变得可审计 / 可测试 /
-不被 consumer 缺席阻断的根本原因。
+**当前状态 (2026-05-26): 与 legacy `Notifications.notify/3` 共存**。
+若干 producer 仍直接调用 legacy 路径 —— Workspace.add_member /
+remove_member (`apps/ezagent_domain_workspace/lib/ezagent/workspace.ex:94,124`),
+Identity.grant_cap (`apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex:301`),
+Template.fork (`apps/ezagent_domain_chat/lib/ezagent/behavior/template.ex:543`)。
+PR-N5 是计划中的清扫 sweep,把剩余调用方迁到 SliceChange chokepoint
+并删除 `Notifications.notify/3`。在 PR-N5 落地之前,两条路径都会发出
+通知 —— consumer 可能从任一渠道收到逻辑事件。
+
+PR-N5 之后的终态是 `commit_and_notify/3` 一个 chokepoint ——
+可审计 / 可测试 / 不被 consumer 缺席阻断。
 
 ## §2 目标
 
@@ -231,34 +239,41 @@ invariant test `slice_change_cursor_monotonic_test.exs` 在并发 emit
 
 ## §8 invariant 测试
 
-PR-N5 sweep 在 `apps/ezagent_core/test/invariants/` 落下了五道 grep
-+ behavior 闸门:
+### 已落地 (2026-05-26 核实)
 
-1. **`slice_change_event_carries_no_slice_content_test.exs`** —— broadcast
-   envelope 只允许 5 个键 (URI / slice_key / cursor / event_at /
-   result_summary)。断言 `old_slice` / `new_slice` / `result` / `caller` /
-   `kind_module` 都不泄漏 (PR-N3 codex r2 HIGH-1 修复)。
+1. **`slice_change_event_carries_no_slice_content_test.exs`**
+   (`apps/ezagent_core/test/invariants/`) —— broadcast envelope 只允许
+   5 个键 (URI / slice_key / cursor / event_at / result_summary)。
+   断言 `old_slice` / `new_slice` / `result` / `caller` / `kind_module`
+   都不泄漏 (PR-N3 codex r2 HIGH-1 修复)。这是本文撰写时唯一已落地的
+   PR-N invariant 闸门。
 
-2. **`no_direct_notifications_notify_test.exs`** —— grep 闸门:
+### 计划中 (PR-N5 sweep, 未落地)
+
+v2 SPEC 原本规划 PR-N5 sweep 包含 5 道闸门。2026-05-26 时点中 4 道
+仍是 TBD —— 因为 `Ezagent.Notifications.notify/3` **仍在使用**(数个
+producer 没迁移)。slice-change chokepoint 跟 legacy `Notifications.
+notify/3` 共存; PR-N5 会把两者合一。计划中的 invariant:
+
+2. **`no_direct_notifications_notify_test.exs`**(计划)—— grep 闸门:
    `Ezagent.SliceChange` 内部以外没有调用 `Ezagent.Notifications.
-   notify/3` (PR-N5 sweep 目标)。
+   notify/3`。跟随 PR-N5 删除 sweep 同时落地。
 
-3. **`no_pubsub_broadcast_to_slice_change_topics_test.exs`** —— grep
-   闸门: `Ezagent.SliceChange` 模块以外没有向 `esr:entity:*:
-   slice_changed` 形态的 topic 做 `Phoenix.PubSub.broadcast`。
+3. **`no_pubsub_broadcast_to_slice_change_topics_test.exs`**(计划)
+   —— grep 闸门: `Ezagent.SliceChange` 模块以外没有向
+   `esr:entity:*:slice_changed` topic 做 `Phoenix.PubSub.broadcast`。
 
-4. **`no_pubsub_subscribe_to_slice_change_topics_test.exs`** —— grep
-   闸门: `Ezagent.SliceChange` 和 `Ezagent.NotificationSubscriptions`
+4. **`no_pubsub_subscribe_to_slice_change_topics_test.exs`**(计划)
+   —— grep 闸门: `Ezagent.SliceChange` 和 `Ezagent.NotificationSubscriptions`
    以外没有 `Phoenix.PubSub.subscribe` 到 slice-change topic。
 
-5. **`every_behavior_mutating_slice_is_producer_test.exs`** —— 每个
-   `Behavior` 的 `invoke/4` 在 slice 变更时, 在
+5. **`every_behavior_mutating_slice_is_producer_test.exs`**(计划)
+   —— 每个 `Behavior` 的 `invoke/4` 在 slice 变更时,在
    `apps/ezagent_*/test/integration/` 下都有断言 slice-change 发出
    (`assert_receive {:slice_changed, _}`) 的集成测试。这是
-   `feedback_completion_requires_invariant_test` 的架构-目标 invariant。
+   `feedback_completion_requires_invariant_test` 的架构目标 invariant。
 
-外加 `slice_change_cursor_monotonic_test.exs` (§7 F4) 在并发 emit
-下验证 cursor 单调性。
+PR-N5 单独跟踪;sweep 落地时本 SPEC 会更新("计划中"段并入"已落地")。
 
 ## §9 超出范围
 
@@ -301,7 +316,6 @@ PR-N5 sweep 在 `apps/ezagent_core/test/invariants/` 落下了五道 grep
 - `apps/ezagent_core/lib/ezagent/kind/server.ex` `commit_and_notify/3`
   —— 唯一 emit chokepoint
 - `docs/superpowers/specs/2026-05-24-notification-architecture-v2.md`
-  —— 规范的 v2 SPEC (决策 / OQ / 迁移)
-- `docs/notes/2026-05-24-notification-architecture-amendment.md` ——
-  Allen 的 mental-model 修正 (chat ≠ notification; notification =
-  跨 surface 同一 entity 的状态同步; 临时 notify 被禁)
+  —— 规范的 v2 SPEC (决策 / OQ / 迁移)。Allen 的 mental-model 修正
+  (chat ≠ notification; notification = 跨 surface 同一 entity 的状态
+  同步; 临时 notify 被禁) 在该 SPEC 的 §2 中。

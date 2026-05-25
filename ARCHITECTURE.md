@@ -1040,40 +1040,42 @@ Phase 2 加 `:uri` primitive(Decision #92):匹配 `%URI{}` struct,**拒绝裸字
 
 #### Domain Behaviors (load-bearing — 不能卸载)
 
-| Domain | Behavior 模块 | 注册到的 Kind | 用途 |
-|---|---|---|---|
-| `ezagent_domain_chat` | `Ezagent.Behavior.Chat` | Session | Entity-Entity Message 接收 + 路由(session 内消息流的主 Behavior) |
-| `ezagent_domain_chat` | `Ezagent.Behavior.SessionRouting` | Session | 编辑 session 的 routing rules(set-default / add-rule / invite 等) |
-| `ezagent_domain_chat` | `Ezagent.Behavior.Lifecycle` | Session / Agent | terminate / spawn 状态机 |
-| `ezagent_domain_identity` | `Ezagent.Behavior.Identity` | User / Agent | principal_id、display_name、cap 管理(grant/revoke) |
-| `ezagent_domain_identity` | `Ezagent.Behavior.ApiKeys` | User / Agent | API key issuance + revocation |
-| `ezagent_domain_identity` | `Ezagent.Behavior.UserCredentials` | User | `:set_password` — 专用 Behavior,carve 自 Identity (PR #356) |
-| `ezagent_domain_identity` | `Ezagent.Behavior.UserTokens` | User | `:mint` / `:list` / `:revoke` — token lifecycle (PR #356) |
-| `ezagent_domain_workspace` | `Ezagent.Behavior.Workspace` | Workspace | `:add_member` / `:remove_member` / `:list_members` |
-| `ezagent_domain_workspace` | `Ezagent.Behavior.WorkspaceUserAdmin` | Workspace | `:create_user` — 特权 action carve (PR #356 codex r1 CRIT) |
-| `ezagent_domain_external_mirror` | `Ezagent.Behavior.Publisher` | Session / Agent | slice-change 流的下行订阅入口 (binding 通过 `subscribe_from/3` 订阅) |
+下表为 2026-05-26 时点 `find apps/ezagent_domain_*/ -name '*.ex' -exec grep -l '@behaviour Ezagent.Behavior'` 的实际产出 — 运行时 SoT 仍是 `Ezagent.BehaviorRegistry.list_all/0`,本表只作 orientation。
+
+| Domain | Behavior 模块 | 用途 |
+|---|---|---|
+| `ezagent_domain_chat` | `Ezagent.Behavior.Chat` | Entity-Entity Message 接收 + 路由(session 内消息流的主 Behavior;`apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex`) |
+| `ezagent_domain_chat` | `Ezagent.Behavior.Template` | Template lifecycle(`:fork` / 材料化) |
+| `ezagent_domain_chat` | `Ezagent.Behavior.Publisher.SessionImpl` | Publisher 的 Session-specific 实现(slice-change 流的下行 sink) |
+| `ezagent_domain_identity` | `Ezagent.Behavior.Identity` | principal_id、display_name、cap 管理(grant/revoke) |
+| `ezagent_domain_identity` | `Ezagent.Behavior.ApiKeys` | API key issuance + revocation |
+| `ezagent_domain_identity` | `Ezagent.Behavior.UserCredentials` | `:set_password`(PR #356 拆分) |
+| `ezagent_domain_identity` | `Ezagent.Behavior.UserTokens` | `:mint` / `:list` / `:revoke` token lifecycle(PR #356 拆分) |
+| `ezagent_domain_identity` | `Ezagent.Behavior.WorkspaceUserAdmin` | `:create_user` 特权 action carve(PR #356 codex r1 CRIT 修复)— 注意 carve 后落在 `domain_identity` 不是 `domain_workspace` |
+| `ezagent_domain_workspace` | `Ezagent.Behavior.Workspace` | `:add_member` / `:remove_member` / `:list_members` |
+| `ezagent_domain_pty` | `Ezagent.Behavior.Pty` | PTY 子进程驱动(底层 `:ex_pty`) |
+| `ezagent_domain_external_mirror` | `Ezagent.Behavior.ExternalMirror` | bind/unbind 外部目标的 facade Behavior |
+| `ezagent_domain_external_mirror` | `Ezagent.Behavior.ExternalMirrorWorker` | per-binding Worker Kind 的 `:publish` Behavior |
+| `ezagent_domain_external_mirror` | `Ezagent.Behavior.Publisher` | slice-change 流订阅入口(binding 通过 `subscribe_from/3` 订阅) |
+| `ezagent_core` | `Ezagent.Behavior.Lifecycle` | 注册到 Session / Agent — terminate / spawn 状态机 |
+| `ezagent_core` | `Ezagent.Behavior.Routing` | 注册到 routing 作用域的 Kind — routing rules 编辑 |
+| `ezagent_core` | `Ezagent.Behavior.Presence` | LV 在线状态 |
+| `ezagent_core` | `Ezagent.Behavior.Sandbox` | 受控 sandbox 操作 |
+| `ezagent_core` | `Ezagent.Behavior.Notifications` | cap-only(`dispatchable?/0 → false`)— `:subscribe` cap subject;Boot 时为每个新建 User 默认授予自己 URI 上的 cap |
 
 #### Plugin Behaviors (可选)
 
-| Plugin | Behavior | 注册到的 Kind | 用途 |
-|---|---|---|---|
-| `ezagent_plugin_feishu` | `Ezagent.Behavior.FeishuReceive` | User | Lark 入站消息接收(取代已删的 `feishu://` scheme — SPEC v2 §5.8) |
-| `ezagent_plugin_feishu` | `Ezagent.Behavior.FeishuUserBinding` | User | feishu_open_id ↔ user URI 绑定(PR #355 case study — per-Kind chokepoint) |
-| `ezagent_plugin_feishu` | `Ezagent.Behavior.FeishuSessionBinding` | Session | feishu_chat_id ↔ session URI 绑定 |
-| `ezagent_plugin_feishu` | `Ezagent.Behavior.ExternalAdapter.Feishu.Allow` | Session | cap-only — 授权一个 session 被 Feishu adapter bind |
-| `ezagent_plugin_cc` | `Ezagent.Behavior.CcPty` | Agent | PTY 子进程驱动 (底层 `:ex_pty`) |
-| `ezagent_plugin_cc` | `Ezagent.Behavior.CcChannel` | Agent | CC `notifications/claude/channel` stdio 协议 |
+| Plugin | Behavior | 用途 |
+|---|---|---|
+| `ezagent_plugin_feishu` | `EzagentPluginFeishu.Behavior.UserBinding` | feishu_open_id ↔ user URI 绑定(PR #355 case study — per-Kind chokepoint;模块位于 `apps/ezagent_plugin_feishu/lib/ezagent/plugin_feishu/behavior/user_binding.ex`) |
+| `ezagent_plugin_feishu` | `EzagentPluginFeishu.Behavior.FeishuAllow` | cap-only — 授权 session 被 Feishu adapter bind |
+| `ezagent_plugin_echo` | `Ezagent.Behavior.Echo` | 注册到 echo-flavor Agent — 测试 / 参考 stub |
+| `ezagent_plugin_curl_agent` | `Ezagent.Behavior.CurlAgent` | 注册到 curl-flavor Agent — HTTP API agent |
+| `ezagent_plugin_np` | `Ezagent.Behavior.NpAgent` | 注册到 NpAgent 测试 agent flavor |
 
-#### Cap-only Behaviors (`dispatchable?/0 → false`)
+**`ezagent_plugin_cc` 不导出 Behavior**:CC 集成走 Template Class(`Ezagent.Template.CcAgent`)+ `Ezagent.PluginCc.Channel` 通道,**不通过 Behavior 模块**。cc-flavored agent 在 `entity://agent/<workspace>/cc_<name>` 形态下注册,但其 chat-routing 落在共享的 `Ezagent.Behavior.Chat`(在 Agent Kind 上注册的 `:receive` action)。
 
-某些 Behavior 只作为 cap 主体存在,不实际 dispatch(只在 step 5.5 chokepoint 被 consult):
-
-- `Ezagent.Behavior.Notifications` (User Kind) — `:subscribe` cap subject;Boot 时为每个新建 User 默认授予自己 URI 上的 `Notifications.:subscribe` cap (notifications.md §4)
-- `Ezagent.Behavior.ExternalAdapter.<Name>.Allow` (Session Kind, 每个 ExternalMirror adapter 一个) — 授权 binding 该 adapter 接管 session
-
-完整 Behavior list 维护在 `Ezagent.BehaviorRegistry.list_all/0` 运行时 ETS — 是 SoT;此文档表只作 orientation 用。
-
-**OSProcess 的例子**(原 v0.2 `os-process` Process impl 的归位):
+完整 Behavior list 维护在 `Ezagent.BehaviorRegistry.list_all/0` 运行时 ETS — 是 SoT。
 
 **OSProcess 的例子**(原 v0.2 `os-process` Process impl 的归位):
 
@@ -1135,31 +1137,31 @@ end
 
 - **粒度**:Behavior × action 级。持有 `cap(Kind, Behavior, action)` 即可在该 Kind 上调用该 Behavior 的某 action。多 action 的 Behavior 当前(2026-05-26)在 `Capability` 上仅匹配 kind+behavior+instance+workspace,**没有 action 轴** — 多 action Behavior 用"特权 action 单拆 Behavior"模式 (e.g. `Ezagent.Behavior.WorkspaceUserAdmin.:create_user` 从 `Workspace` 拆出 — PR #356 codex r1 CRIT 修复)
 - **携带方式**:Push。Caller 在 `ctx.caps` 装 `MapSet<Capability>`
-- **校验点**:Kind instance,Invocation flow **step 5.5** — `Kind.holds_cap?/2` chokepoint 回调 (PR-CC-2-v2, 2026-05-25)
-- **校验函数**:`Kind.holds_cap?(caller_caps, Behavior.required_caps()[action])` — Behavior 上每个 action 通过 `required_caps/0` 声明所需 cap 模板;Kind 上的 `holds_cap?/2` 是单一 chokepoint,把"Behavior 需要什么"和"caller 持有什么"两边对上 (Behavior × Entity 边界关切)
+- **校验点**:Kind instance,Invocation flow **step 5.5** — `Ezagent.Kind.holds_cap?/3` chokepoint(三参数 dispatcher,内部走 Kind 的可选回调 `holds_cap?/2` 或 `Ezagent.Kind.default_holds_cap?/2`)(PR-CC-2-v2, 2026-05-25)
+- **校验函数**:dispatcher 对 `Behavior.required_caps()[action]` 中每个 cap 模板调一次 `Ezagent.Kind.holds_cap?(entity_uri, kind_module, needed_cap) :: boolean()`;Behavior 通过 `required_caps/0` 声明所需 cap 模板,Kind 通过(可选)`holds_cap?/2` 回调或缺省的 `Ezagent.Identity.list_caps_for/1` + `Capability.matches?/2` 决定 caller 是否持有该 cap (Behavior × Entity 边界关切)
 
 > **Implementation**:`MapSet` + struct,~30 LOC。**不用第三方 ACL 库**。
 
 #### Chokepoint 边界关切 (PR-CC-2-v2, 2026-05-25)
 
-cap 检查是 **Behavior × Entity 边界关切**,**严格只在 dispatch step 5.5 发生一次**。LV `handle_event` / controller / Behavior body 内的 `Capability.matches?/2` 调用全部被 `cap_check_only_at_chokepoint_test.exs` invariant 禁止(生产代码,定义 chokepoint 自身除外)。LV 的"前置 cap 检查"(用来藏按钮)只允许作为防御性 hint,**不能**是权威源 — 权威源永远是 dispatch step 5.5 跑过的 `Kind.holds_cap?/2` 返回。
+cap 检查是 **Behavior × Entity 边界关切**,**严格只在 dispatch step 5.5 发生一次**。LV `handle_event` / controller / Behavior body 内的 `Capability.matches?/2` 调用全部被 `cap_check_only_at_chokepoint_test.exs` invariant 禁止(生产代码,定义 chokepoint 自身除外)。LV 的"前置 cap 检查"(用来藏按钮)只允许作为防御性 hint,**不能**是权威源 — 权威源永远是 dispatch step 5.5 跑过的 `Ezagent.Kind.holds_cap?/3` 返回。
 
-#### Behavior `required_caps/0`
+#### Behavior `required_caps/0` + `cap_exempt_actions/0`
 
-每个 Behavior 实现 `required_caps/0 :: %{action_atom => [cap_template, ...]}`:
+每个 Behavior 实现 `required_caps/0 :: %{required(action :: atom()) => Ezagent.Capability.t()}` — 每个 action 对应**单个** cap 模板(不是 list):
 
 ```elixir
 @impl Ezagent.Behavior
 def required_caps do
   %{
-    send:        [Ezagent.Capability.cap(kind: :session, behavior: __MODULE__, action: :send)],
-    join:        [Ezagent.Capability.cap(kind: :session, behavior: __MODULE__, action: :join)],
-    leave:       [Ezagent.Capability.cap(kind: :session, behavior: __MODULE__, action: :leave)]
+    send:  Ezagent.Capability.cap(:session, __MODULE__, :send),
+    join:  Ezagent.Capability.cap(:session, __MODULE__, :join),
+    leave: Ezagent.Capability.cap(:session, __MODULE__, :leave)
   }
 end
 ```
 
-返回 `%{}` 表示"无需 cap"(对所有人 dispatchable;仅限只读公共 action)。`dispatch_uses_required_caps_test.exs` invariant 验证每个 Behavior 的 `interface/0` 列出的 action 都在 `required_caps/0` 里有条目(或显式 `:no_cap_required` 标记)。
+若某 action 不需 cap-gate(只读 inspection / `:status` probe 等),Behavior 通过可选 `cap_exempt_actions/0 :: [atom()]` 显式声明 — 编译时 `:ezagent_plugin_check` 验证 `keys(required_caps) ∪ cap_exempt_actions == actions`。`dispatch_uses_required_caps_struct_test.exs` invariant 验证 `Ezagent.Kind.Runtime` 实际 consult `behavior_module.required_caps()` + `Ezagent.Kind.holds_cap?` + `Ezagent.Behavior.workspace_scoped?` 在 step 5.5 / 5.6,并要求生产 Behavior 都实现 `required_caps/0`。
 
 #### 构造帮手:`Capability.cap/3` 和 `cap/5`
 
@@ -1214,42 +1216,50 @@ ctx.token :: %Ezagent.Token{}
 - ❌ Attenuation(部分授权)
 - ❌ Revocation graph
 
-### 7.6 System principals — bootstrap + closed allowlist (PR-CC-1, 2026-05-25)
+### 7.6 System principals — bootstrap admin + closed dispatch-principal allowlist (PR-CC-1, 2026-05-25)
 
-Ezagent 的 cap 系统需要"种子 principal" — 系统首次启动时由谁创建其他 user / agent / 授 cap。**SPEC v3 之后 (URI 3-segment) 这个种子是 `entity://user/system/admin`**;此外还有 13 个系统内部 principal(boot reconciler / async replay / sidecar coordinator / 等),每个都有专属 cap 声明。
+Ezagent 的 cap 系统有**两类**系统 principal,概念上分开但都不可 revoke:
 
-**PR-CC-1 (2026-05-25) 移除了 ambient authority pattern** — 之前 Behavior body 里散布的 `URI.parse("entity://system/...")` 内联合成 + 用合成 URI 做"我以系统身份在调用"的隐式提权,已统一通过 `Ezagent.SystemPrincipal.Catalog` 替代。
+1. **User Kind admin singleton** = `Ezagent.Entity.User.admin_uri()` = `entity://user/system/admin`(SPEC v3 3-segment)。系统首次启动时 `Ezagent.Bootstrap` 创建,持 all-caps(`%Capability{kind: :any, behavior: :any, instance: :any, workspace_uri: :any, granted_by: "system://bootstrap"}`)。`Identity.admin?/1` 唯一对这个 URI 返 true。这是**用户身份层**的 admin。
+2. **System dispatch principals** = `Ezagent.SystemPrincipal.Catalog` 内 14 个 `system://<name>` URI(`system://bootstrap`、`system://boot-reconciler`、`system://chat-router` 等)。每个配套专属 cap 声明,用于系统内部 dispatch 流(boot 期 reconciler / chat fan-out router / template materialize / 等),**不是用户身份**。这是**dispatch principal 层**的 admin,由 PR-CC-1 引入封闭化散见的 ambient authority 模式(Behavior body 里假装是 user admin 的隐式提权)。
 
-#### `Ezagent.SystemPrincipal.Catalog` — 封闭 allowlist
+**PR-CC-1 (2026-05-25) 的核心变更**:把以前 Behavior body 里散布的"以 admin 身份做事"模式(`URI.parse("system://bootstrap")` 内联合成 + 用合成 URI 拿 `admin_caps()`),收敛到 `Ezagent.SystemPrincipal.Catalog` 封闭 allowlist。每个 system dispatch principal 拿到**结构性收窄的 cap**,而不是全 wildcard。
 
-Catalog 是 `ezagent_core` 内 14 个系统内部 principal URI 的封闭枚举,每个 URI 配套其 cap 声明:
+#### `Ezagent.SystemPrincipal.Catalog` — 14 个 system principal 的封闭 allowlist
+
+Catalog 是 `ezagent_core` 内 14 个 `system://<name>` URI 的封闭枚举(`apps/ezagent_core/lib/ezagent/system_principal/catalog.ex`),每个 URI 配套该 principal 持有的 cap 集 + 用途描述:
 
 ```elixir
 defmodule Ezagent.SystemPrincipal.Catalog do
-  @moduledoc "Closed allowlist of system-internal principals (PR-CC-1)."
+  def entries do
+    [
+      {"system://bootstrap", [bootstrap_wildcard()]},
+      {"system://boot-reconciler", [Capability.cap(:session, ExternalMirror, :any)]},
+      {"system://chat-router", [bootstrap_wildcard()]},      # 开放 plugin 集 :receive fan-out
+      {"system://chat-reply",  [bootstrap_wildcard()]},      # 同上
+      {"system://worker-publish", [Capability.cap(:external_mirror_worker, ExternalMirrorWorker, :publish)]},
+      # ... 9 more — system://template-materialize, system://orchestrator-tools,
+      # system://session-internal, system://agent-internal, system://workspace-loader,
+      # system://lv-anon-mount, system://lv-loader, system://test-bootstrap, system://mix-task
+    ]
+  end
 
-  @entries [
-    {URI.parse("entity://user/system/admin"),
-     [cap(kind: :all, behavior: :all, instance: :any, workspace_uri: :any)],
-     "Bootstrap admin — sole singleton matching Identity.admin?/1"},
-    {URI.parse("entity://system/boot_reconciler/default"),
-     [cap(kind: :workspace, behavior: Ezagent.Behavior.Workspace, action: :spawn_default_session, ...)],
-     "Boot-time session reconciler"},
-    # ... 13 more
-  ]
-
-  def admin_uri, do: URI.parse("entity://user/system/admin")
-  def caller?(uri), do: Enum.any?(@entries, fn {u, _, _} -> URI.to_string(u) == URI.to_string(uri) end)
-  def caps_for(uri), do: # ...
+  def member?(uri), do: ...
+  def caps_for!(uri), do: ...  # 不在 catalog 抛
+  def uris, do: ...
 end
 ```
 
+`Ezagent.SystemPrincipal`(`system_principal.ex`)是 Catalog 的 runtime 封装,暴露 `ensure/1`(幂等 spawn principal 为 User-shape Entity 让 dispatch 看到正确 cap 集)+ `caps/1`(legacy 兼容入口,PR-CC-2b 之后替代为 cap-snapshot 契约)。
+
 **结构性不变式**:
 
-- `no_wildcard_system_principals_test.exs` invariant — 生产代码内 grep 禁止 `URI.parse("entity://system/...")` 这种内联合成 (Catalog 模块自身除外)。所有系统内部调用必须通过 `Catalog.<accessor>` 获取。
-- `Identity.admin?/1` 仍只对 `Catalog.admin_uri()` 返回 true — `entity://user/system/admin` 是唯一的 bootstrap admin singleton。
+- `no_wildcard_system_principals_test.exs`(`apps/ezagent_core/test/invariants/`) — 验证 Catalog 内**非 bootstrap、非 mix-task、非 chat-router/chat-reply 的 system principal 不得持有 full-wildcard cap**。仅这 4 个 URI 由部署契约 / 开放 plugin fan-out 结构性需求允许 wildcard;其他 10 个必须是窄 cap。这是数据层 invariant — 它**不是** grep 内联 URI 合成的 gate(那是另一回事,由 SystemPrincipal 模块边界 + code review 把关)。
+- `Identity.admin?/1` 仍只对 `Ezagent.Entity.User.admin_uri()`(即 `entity://user/system/admin`)返 true — 这是用户身份层的 admin singleton,与 Catalog 中的 dispatch principal **完全两回事**。
 
-**`entity://user/system/admin` 的 all-cap 不可 revoke**。`Ezagent.Capability.revoke/2` 在 step 1 检查 caller 是不是 Catalog admin_uri + cap_is_all — 若是,拒绝。**集中在 `revoke/2` 路径里检查,不允许调用方加 if 绕过**。理由:bootstrap principal revoke 会让系统永远无法授权——自锁死。这个检查是**架构 invariant**,不是 policy(policy 可以变,invariant 不能)。
+#### Bootstrap admin 的 all-cap 不可 revoke
+
+**`entity://user/system/admin` 的 all-cap 不可 revoke**。`Ezagent.Capability.revoke/2` 在 step 1 检查 subject 是不是 `Ezagent.Entity.User.admin_uri()` + cap_is_all — 若是,拒绝。**集中在 `revoke/2` 路径里检查,不允许调用方加 if 绕过**。理由:bootstrap principal revoke 会让系统永远无法授权——自锁死。这个检查是**架构 invariant**,不是 policy(policy 可以变,invariant 不能)。
 
 未来多 user 场景:管理员通过 `entity://user/system/admin` 创建普通 user,授予部分 cap;`entity://user/system/admin` 自身不能被普通 user 影响(普通 user 没有该 URI 上的 `Identity.:grant_cap` cap)。
 

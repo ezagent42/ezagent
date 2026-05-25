@@ -207,11 +207,11 @@ end
 
 ### `Behavior.required_caps/0`(PR-CC-2-v2, 2026-05-25)
 
-每个 Behavior 的 per-action cap 声明回调,签名 `required_caps() :: %{action_atom => [cap_template, ...]}`。Dispatch **step 5.5** 通过 `Kind.holds_cap?/2` 把 Behavior 这边的 `required_caps()[action]` 跟 caller 持有的 caps 对上 — 这是 cap 检查的唯一 chokepoint(`cap_check_only_at_chokepoint` invariant 禁止生产代码内别处的 `Capability.matches?/2` 调用)。
+每个 Behavior 的 per-action cap 声明回调,签名 `required_caps() :: %{required(action :: atom()) => Ezagent.Capability.t()}` — **每个 action 对应单个 cap 模板(不是 list)**。Dispatch **step 5.5** 通过 `Ezagent.Kind.holds_cap?/3` 把 Behavior 这边的 `required_caps()[action]` 跟 caller 持有的 caps 对上 — 这是 cap 检查的唯一 chokepoint(`cap_check_only_at_chokepoint` invariant 禁止生产代码内别处的 `Capability.matches?/2` 调用)。
 
-返 `%{}` 表示该 Behavior 所有 action 都不需要 cap(对所有人 dispatchable;仅限只读公共 action)。`dispatch_uses_required_caps_test.exs` invariant 验证 `interface/0` 列出的每个 action 都在 `required_caps/0` 里有条目。
+不需 cap-gate 的 action(只读 inspection / `:status` probe 等)通过可选回调 `cap_exempt_actions/0 :: [atom()]` 显式声明 — 编译时 `:ezagent_plugin_check` 验证 `keys(required_caps) ∪ cap_exempt_actions == actions`。runtime invariant `dispatch_uses_required_caps_struct_test.exs` 验证 `Ezagent.Kind.Runtime` 在 step 5.5 实际 consult `behavior_module.required_caps()` 和 `Ezagent.Kind.holds_cap?`。
 
-参考: ARCHITECTURE.md §7.1; references/architecture-invariants.md invariant 5; PR-CC-2-v2 SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1.md`
+参考: ARCHITECTURE.md §7.1; references/architecture-invariants.md invariant 5; PR-CC-2-v2 SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1.md`; `apps/ezagent_core/lib/ezagent/behavior.ex:323` (required_caps 回调), `behavior.ex:340` (cap_exempt_actions 可选回调)
 
 ### `Behavior.workspace_scoped?/0`(PR-CC-2-v2, 2026-05-25)
 
@@ -245,33 +245,36 @@ Capability-based access control。Ezagent 的权限模型——每个 Invocation
 
 ### Capability(`%Ezagent.Capability{}`)
 
-权限 token,struct(不是字符串)。字段(SPEC v3 + 2026-05-25 caps-cleanup batch):
+权限 token,struct(不是字符串)。当前(2026-05-26)的实际字段(`apps/ezagent_core/lib/ezagent/capability.ex:28`):
 
 ```elixir
+@enforce_keys [:kind, :behavior, :instance, :workspace_uri, :granted_by, :granted_at]
+defstruct [:kind, :behavior, :instance, :workspace_uri, :granted_by, :granted_at]
+
 %Ezagent.Capability{
-  kind: module() | :all,                    # 哪种 Kind 类型
-  behavior: module() | :all,                # 哪个 Behavior (模块引用,NOT atom — 见 invariant 2)
-  instance: URI.t() | module() | tuple() | :all,  # 哪个 instance (或 scope-bounded tuple)
-  workspace_uri: URI.t() | :any,            # workspace scope (Phase 9 §13)
-  action: atom() | :any,                    # 当前在 matches?/2 中不参与比较 — 见 todo.md
-  granted_by: URI.t() | atom()              # 授权链
+  kind:          atom() | :any,                              # 哪种 Kind 类型
+  behavior:      module() | :any,                            # 哪个 Behavior (模块引用,NOT atom — 见 invariant 2)
+  instance:      URI.t() | :any | scope_tuple(),             # 具体实例 / 通配 / 范围 tuple (within_session / within_workspace / spawned_by)
+  workspace_uri: URI.t() | :any,                             # workspace scope (Phase 9 §13)
+  granted_by:    URI.t(),                                    # 授权链(谁授的)
+  granted_at:    DateTime.t()                                # 何时授的
 }
 ```
 
-⚠️ **`action` 字段当前不在 `matches?/2` 比较内** — 多 action Behavior 的特权 action 必须 carve 出独立 Behavior(PR #356 模式 — `WorkspaceUserAdmin.:create_user` 从 `Workspace` 拆出),否则任何持有 cap-on-Behavior 的 principal 可以调用所有 action。SPEC 级 action 轴变更跟踪在 `docs/futures/todo.md` "Capability struct lacks an action axis"。
+⚠️ **没有 `action` 字段**:`matches?/2` 比较 kind+behavior+instance+workspace_uri 四个轴,跟 action **完全无关**。多 action 的 Behavior 当前(2026-05-26)无法在 cap 层面区分 action — `cap/3` 接受 action 参数但**直接丢弃**(`capability.ex:90` 形如 `def cap(kind, behavior, _action, ...)`),只是为了模板与 `required_caps/0` 形态一致。多 action Behavior 的特权 action 必须 carve 出独立 Behavior(PR #356 模式 — `WorkspaceUserAdmin.:create_user` 从 `Workspace` 拆出),否则任何持有 cap-on-Behavior 的 principal 能调用所有 action。SPEC 级 action 轴变更跟踪在 `docs/futures/todo.md` "Capability struct lacks an action axis"。
 
-参考: ARCHITECTURE.md §7,Decision #38, #133, #137; PR-CC-2-v2 (2026-05-25)
+参考: ARCHITECTURE.md §7,Decision #38, #133, #137; PR-CC-2-v2 (2026-05-25);`apps/ezagent_core/lib/ezagent/capability.ex:28`(struct decl)
 
 ### `Capability.cap/3` / `Capability.cap/5`(构造帮手,PR-CC-2-v2 2026-05-25)
 
-`Ezagent.Capability` 暴露两个构造帮手,简化新 cap 构造:
+`Ezagent.Capability` 暴露两个构造帮手,简化 `required_caps/0` 模板 + 具体 grant 构造:
 
-- **`cap(kind, behavior, action)`** — 通用模板;`instance`/`workspace_uri` 留 `:any`;用于 `Behavior.required_caps/0` 这种 "我需要这种 cap" 模板
-- **`cap(kind, behavior, action, instance, workspace_uri)`** — 具体 cap;用于 grant 给具体 principal 的实际 cap 实例
+- **`cap(kind, behavior, _action)`** — 通用模板,`instance`/`workspace_uri` 留 `:any`;用于 `Behavior.required_caps/0` 这种 "我需要这种 cap" 模板。**`action` 参数虽签名要求,但被直接丢弃**(`capability.ex:90`)— 仅为可读性 + 模板对齐。
+- **`cap(kind, behavior, _action, instance, workspace_uri)`** — 具体 cap;用于 grant 给具体 principal 的实际 cap 实例,可指定 `instance`(URI 或 scope tuple)+ `workspace_uri`。
 
-两者都返 `%Ezagent.Capability{}` struct。`Capability.cap_for_action/3` 是更早的反查 helper(给定 target_uri + action → 需要的 cap 模板)。
+两者都返 `%Ezagent.Capability{}` struct(`granted_by` / `granted_at` 由构造逻辑填)。`Capability.cap_for_action/3` 是更早的反查 helper(给定 target_uri + action → 需要的 cap 模板)。
 
-参考: ARCHITECTURE.md §7.1; PR-CC-2-v2 (2026-05-25)
+参考: ARCHITECTURE.md §7.1; PR-CC-2-v2 (2026-05-25); `apps/ezagent_core/lib/ezagent/capability.ex:90-130`(`cap/3` + `cap/5` 实现)
 
 ### Channel(Claude Code Channel)
 
@@ -436,25 +439,26 @@ Ezagent 所有可寻址实体的"class"。每个 Kind 在 `Ezagent.<Category>.<K
 
 三子类:**Session** / **Entity** / **Resource**(Decision #7)。
 
-每个 Kind 实现 `type_name/0`、`behaviors/0`、`persistence/0`,以及 (PR-CC-2-v2, 2026-05-25 起强制) `holds_cap?/2`。
+每个 Kind 实现 `type_name/0`、`behaviors/0`、`persistence/0`;`holds_cap?/2` 是**可选 callback**(PR-CC-2-v2, 2026-05-25 — 未导出时 dispatcher 用 `Ezagent.Kind.default_holds_cap?/2`)。
 
 参考: ARCHITECTURE.md §3,Decision #1,PR-CC-2-v2
 
-### `Kind.holds_cap?/2`(PR-CC-2-v2 chokepoint 回调, 2026-05-25)
+### `Kind.holds_cap?/2`(PR-CC-2-v2 chokepoint 可选回调, 2026-05-25)
 
-dispatch **step 5.5** 单一 cap 检查 chokepoint 回调。签名:
+Kind-level **可选 callback**(`@optional_callbacks holds_cap?: 2`),dispatch step 5.5 cap 检查路径。签名:
 
 ```elixir
-@callback holds_cap?(caller_caps :: [Ezagent.Capability.t()],
-                     needed :: [Ezagent.Capability.t()]) ::
-            :ok | {:error, :unauthorized}
+@callback holds_cap?(entity_uri :: URI.t() | String.t(),
+                     needed :: Ezagent.Capability.t()) :: boolean()
 ```
 
-实现典型形如 `Enum.any?(needed, fn n -> Enum.any?(caller_caps, &Capability.matches?(&1, n)) end)`。Kind 必须实现这个回调(invariant `dispatch_uses_required_caps_test.exs` 同时验证 Kind 的 holds_cap?/2 跟 Behavior 的 required_caps/0 在 dispatch 流里被实际 consult)。
+Kind 未导出该回调时,dispatcher 用 `Ezagent.Kind.default_holds_cap?/2` — 通过 `Ezagent.Identity.list_caps_for(entity_uri)` 读 entity 持有的 cap MapSet,然后 `Enum.any?(caps, &Capability.matches?(&1, needed))`。Kind 重写回调可加 Kind 特定 bypass(e.g. `:system` 调用方直接返 `true`)。
+
+调度入口是 `Ezagent.Kind.holds_cap?/3`(三参数:entity_uri + kind_module + needed_cap),内部 dispatch 到 Kind 的 callback 或 `default_holds_cap?/2`。invariant `dispatch_uses_required_caps_struct_test.exs` 验证 `Ezagent.Kind.Runtime` 在 step 5.5 实际调用 `Ezagent.Kind.holds_cap?` 和 `behavior_module.required_caps()`。
 
 这是 cap 检查的**唯一**生产入口 — `cap_check_only_at_chokepoint_test.exs` invariant 禁止 LV / controller / Behavior body 等别处调用 `Capability.matches?/2` (chokepoint 定义自身除外)。LV 的 "前置 cap 检查"(为了藏按钮)只允许作为 hint,**不能**是权威源。
 
-参考: ARCHITECTURE.md §7.1 chokepoint 边界关切; references/architecture-invariants.md invariant 2/5; PR-CC-2-v2 SPEC
+参考: ARCHITECTURE.md §7.1 chokepoint 边界关切; references/architecture-invariants.md invariant 2/5; PR-CC-2-v2 SPEC; `apps/ezagent_core/lib/ezagent/kind.ex:172` (callback decl), `kind.ex:197` (default impl)
 
 ### KindRegistry
 
@@ -684,39 +688,45 @@ PR-CC-1 (2026-05-25) 之后该 URI 注册在 `Ezagent.SystemPrincipal.Catalog`(�
 
 ### `Ezagent.SystemPrincipal.Catalog`(PR-CC-1, 2026-05-25)
 
-`ezagent_core` 内 14 个系统内部 principal URI 的封闭 allowlist 模块,每个 URI 配套 cap 声明 + 用途描述。取代 PR-CC-1 之前散布在 Behavior body 里的 `URI.parse("entity://system/...")` 内联合成 + 隐式提权 (ambient authority) 模式。
+`ezagent_core` 内 **14 个 `system://` dispatch principal URI** 的封闭 allowlist 模块(`apps/ezagent_core/lib/ezagent/system_principal/catalog.ex`),每个 URI 配套该 principal 持有的 cap 集 + 用途描述。取代 PR-CC-1 之前散布在 Behavior body 里的 ambient authority 模式(系统内部 dispatch 通过假装是 `User.admin_uri()` 拿到通配 cap)。
+
+当前 14 个 system principal 包括:`system://bootstrap`、`system://boot-reconciler`、`system://adapter-install`、`system://chat-router`、`system://chat-reply`、`system://worker-publish`、`system://template-materialize`、`system://orchestrator-tools`、`system://session-internal`、`system://agent-internal`、`system://workspace-loader`、`system://lv-anon-mount`、`system://lv-loader`、`system://test-bootstrap`(参见 `catalog.ex:116` entries/0)。
 
 ```elixir
 defmodule Ezagent.SystemPrincipal.Catalog do
-  @entries [
-    {URI.parse("entity://user/system/admin"),
-     [cap(kind: :all, behavior: :all, instance: :any, workspace_uri: :any)],
-     "Bootstrap admin singleton (Identity.admin?/1 唯一返 true 的 URI)"},
-    {URI.parse("entity://system/boot_reconciler/default"),
-     [cap(kind: :workspace, behavior: Behavior.Workspace, action: :spawn_default_session, ...)],
-     "Boot-time session reconciler"},
+  def entries, do: [
+    {"system://bootstrap", [bootstrap_wildcard()]},
+    {"system://boot-reconciler", [Capability.cap(:session, ExternalMirror, :any)]},
     # ... 12 more
   ]
-
-  def admin_uri, do: URI.parse("entity://user/system/admin")
-  def caller?(uri), do: # is uri in @entries?
-  def caps_for(uri), do: # cap list for uri
+  def member?(uri), do: # is uri in entries?
+  def caps_for!(uri), do: # cap list, raises if not in catalog
+  def uris, do: # list of all catalog URIs
 end
 ```
 
-**结构性不变式**:`no_wildcard_system_principals_test.exs` invariant — 生产代码内 grep 禁止 `URI.parse("entity://system/...")` 这种内联合成 (Catalog 模块自身除外)。所有需要系统身份的内部调用必须通过 `Catalog.<accessor>` 获取。
+`Ezagent.SystemPrincipal` 模块(catalog 的 runtime 封装,`apps/ezagent_core/lib/ezagent/system_principal.ex`)暴露 `ensure/1`(幂等 spawn principal Entity 让 dispatch 看到正确 cap 集)和 `caps/1`(legacy 兼容入口,PR-CC-2b 之后会被 cap-snapshot 契约替代)。
 
-跟 `admin_caps()` 区分:`admin_caps()` 是某个 URI(`Catalog.admin_uri()`)持有的 cap **内容**;Catalog 是 system principal 的**身份集**(URI + 它持有的 cap)。
+**结构性不变式**:`no_wildcard_system_principals_test.exs` invariant — 生产代码内 grep 禁止 `URI.parse("system://...")` 这种内联合成(Catalog / SystemPrincipal 模块自身除外)。所有需要系统身份的内部调用必须通过 `SystemPrincipal.ensure/1` + `Catalog.caps_for!/1` 获取。
 
-参考: ARCHITECTURE.md §7.6;PR-CC-1 SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1.md`
+跟 `entity://user/system/admin` 的关系:User Kind admin singleton(`Identity.admin?/1` 唯一返 true 的 URI)是**用户身份**;Catalog 中的 `system://<name>` 是**系统 dispatch principal 身份** — 同一系统两种 principal,前者由 bootstrap 创建,后者由 PR-CC-1 引入封闭化散见的"假装管理员"模式。两者都不可 revoke,但路径不同。
+
+参考: ARCHITECTURE.md §7.6;PR-CC-1 SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1.md`;`apps/ezagent_core/lib/ezagent/system_principal/catalog.ex` + `system_principal.ex`
 
 ### `lv_cli_parity` invariant(PR-CC-2-v2, 2026-05-25)
 
-每个 LV `handle_event` 都有对应的 `mix esr` CLI invocation,这样 headless ops(脚本 / CI / Feishu / e2e 测试)可以在不打开 LV 的情况下驱动系统。invariant 测试 `lv_cli_parity_test.exs` 扫描所有 LV 模块的 `handle_event/3` clauses,对每个找到的 event,检查 `apps/ezagent_cli/lib/mix/tasks/` 下有没有对应的 `mix esr.<scope>.<action>` 任务。
+`apps/ezagent_core/test/invariants/lv_cli_parity_test.exs` 扫描所有 LV 模块的 `handle_event/3` clauses,对每个 event 通过显式映射表 `@event_to_cli` 归类到 4 个分类之一:
 
-为什么:Allen 的 production-usability 选择标准 (P4) — LV 是给人用的,CLI 是给运维 / 脚本用的;新功能加 LV 的时候,**必须**同时加 CLI 入口,否则 e2e 测试只能开浏览器,这违反 Allen 2026-05-04 设的 ESR e2e 标准。
+- **`:cli`** — 有对应 `mix esr <kind> <action>` 或 legacy `mix ezagent.*` 任务(operator-facing 命令);
+- **`:ui_only`** — 纯 UI state(filter / toggle / switch view / pagination)—— 设计上免除 CLI parity;
+- **`:pty_stream`** — terminal byte 输入 / resize(`Behavior.Pty`)—— LV 走 keystroke 流式,CLI parity 是单向 (`mix esr agent write` 可种 PTY 输入,但用 one-shot mix task 操作 TUI 不实际);
+- **`:deferred`** — 已知 gap,该行携带 `docs/futures/todo.md` bullet 路径,后续 PR 可定位关闭(`feedback_dont_defer_what_is_solvable_now` 要求 deferred entry 解释为什么不能 in-PR 关闭)。
 
-参考: P4; PR-CC-2-v2 SPEC; `apps/ezagent_core/test/invariants/lv_cli_parity_test.exs`
+新加 LV `handle_event("foo", ...)` clause 不加 `@event_to_cli` 行 → test 失败列出 `"foo"` 未映射。这是 architectural goal 的 invariant 守门 — 而**不是**"每个 event 必须有 mix esr 命令"的强约束;UI-only 操作 / PTY 流式 / 已记录 deferred 都允许通过。
+
+为什么:Allen 的 production-usability 选择标准 (P4) — LV 是给人用的,CLI 是给运维 / 脚本用的;LV 加 event 时必须明确 CLI parity 状态 — 实现 / 豁免 / deferred 三选一,不能默认遗忘。
+
+参考: P4; PR-CC-2-v2 SPEC; `apps/ezagent_core/test/invariants/lv_cli_parity_test.exs:29-90`(分类 + 映射表)
 
 ### View
 

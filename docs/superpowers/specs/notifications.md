@@ -33,18 +33,29 @@ This fan-out pattern violated:
 - **P22 (Reliability primitives in core)** — each producer hand-rolled
   its own retention / cursor / fan-out semantics.
 
-### Post-PR-N1 (slice-change chokepoint)
+### Post-PR-N1 (slice-change chokepoint introduced — coexisting with legacy)
 
-Producers DON'T call `Notifications.notify/3` anymore. Slice mutation
-itself is the trigger: every Behavior's `:invoke` returns
+PR-N1/N2/N3 introduced the SliceChange model: slice mutation itself
+is the trigger. Every Behavior's `:invoke` returns
 `{:ok, new_slice, result}` (or `{:error, _}`). `Kind.Server.
 commit_and_notify/3` is the sole site that observes `new_slice !=
 old_slice` and emits a slice-change event. Consumers
 `Ezagent.SliceChange.subscribe(entity_uri)` to the entity's stream.
 
-The chokepoint moved from N producer call-sites into ONE call-site
-(`commit_and_notify/3`) — which is what makes the post-N1 model
-auditable, testable, and ungated by consumer presence.
+**Current state (2026-05-26): coexists with legacy `Notifications.notify/3`.**
+Several producers (Workspace.add_member / remove_member at
+`apps/ezagent_domain_workspace/lib/ezagent/workspace.ex:94,124`,
+Identity.grant_cap at
+`apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex:301`,
+Template.fork at `apps/ezagent_domain_chat/lib/ezagent/behavior/template.ex:543`)
+still call the legacy `Notifications.notify/3` directly. PR-N5 is the
+planned sweep that migrates all remaining callers onto the SliceChange
+chokepoint and deletes `Notifications.notify/3` entirely. Until PR-N5
+lands, both paths emit notifications — consumers may receive a logical
+event via either channel.
+
+The post-N5 endgame is the single chokepoint at `commit_and_notify/3`
+— auditable, testable, ungated by consumer presence.
 
 ## §2 Goals
 
@@ -252,37 +263,49 @@ the GenServer with concurrent emits to verify monotonicity under load.
 
 ## §8 Invariant tests
 
-The PR-N5 sweep landed five grep + behavior gates in
-`apps/ezagent_core/test/invariants/`:
+### Landed (verified 2026-05-26)
 
-1. **`slice_change_event_carries_no_slice_content_test.exs`** — the
-   broadcast envelope has ONLY the 5 allowed keys (URI / slice_key /
-   cursor / event_at / result_summary). Asserts no `old_slice` /
-   `new_slice` / `result` / `caller` / `kind_module` leak (PR-N3
-   codex r2 HIGH-1 fix).
+1. **`slice_change_event_carries_no_slice_content_test.exs`**
+   (`apps/ezagent_core/test/invariants/`) — the broadcast envelope
+   has ONLY the 5 allowed keys (URI / slice_key / cursor / event_at /
+   result_summary). Asserts no `old_slice` / `new_slice` / `result` /
+   `caller` / `kind_module` leak (PR-N3 codex r2 HIGH-1 fix). This is
+   the single landed PR-N invariant gate at the time of writing.
 
-2. **`no_direct_notifications_notify_test.exs`** — grep gate: no
-   call to `Ezagent.Notifications.notify/3` outside
-   `Ezagent.SliceChange` internals (PR-N5 sweep target).
+### Planned (PR-N5 sweep targets, not yet landed)
 
-3. **`no_pubsub_broadcast_to_slice_change_topics_test.exs`** — grep
-   gate: no `Phoenix.PubSub.broadcast` to
+The original v2 SPEC sketched the PR-N5 sweep as 5 grep + behavior
+gates. As of 2026-05-26 four of them are still TBD because
+`Ezagent.Notifications.notify/3` is **still in use** by several
+producers (`apps/ezagent_domain_workspace/lib/ezagent/workspace.ex`,
+`apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex` and
+others). The slice-change chokepoint coexists with the legacy
+`Notifications.notify/3` path — PR-N5 will collapse them. The
+planned invariants are:
+
+2. **`no_direct_notifications_notify_test.exs`** (planned) — grep
+   gate: no call to `Ezagent.Notifications.notify/3` outside
+   `Ezagent.SliceChange` internals. Will land alongside the PR-N5
+   notify/3 deletion sweep.
+
+3. **`no_pubsub_broadcast_to_slice_change_topics_test.exs`** (planned)
+   — grep gate: no `Phoenix.PubSub.broadcast` to
    `esr:entity:*:slice_changed` topics outside the
    `Ezagent.SliceChange` module.
 
-4. **`no_pubsub_subscribe_to_slice_change_topics_test.exs`** — grep
-   gate: no `Phoenix.PubSub.subscribe` to slice-change topics
+4. **`no_pubsub_subscribe_to_slice_change_topics_test.exs`** (planned)
+   — grep gate: no `Phoenix.PubSub.subscribe` to slice-change topics
    outside `Ezagent.SliceChange` and `Ezagent.NotificationSubscriptions`.
 
-5. **`every_behavior_mutating_slice_is_producer_test.exs`** — every
-   `Behavior` whose `invoke/4` returns a mutated slice has an
+5. **`every_behavior_mutating_slice_is_producer_test.exs`** (planned)
+   — every `Behavior` whose `invoke/4` returns a mutated slice has an
    integration test under `apps/ezagent_*/test/integration/` that
    asserts the slice-change emit (`assert_receive {:slice_changed, _}`).
    This is the architectural-goal invariant per `feedback_completion_
    requires_invariant_test`.
 
-Additionally `slice_change_cursor_monotonic_test.exs` (§7 F4)
-verifies cursor monotonicity under concurrent emits.
+PR-N5 is tracked separately; this SPEC will be updated when the sweep
+lands (and the "planned" subsection collapses into the landed list).
 
 ## §9 Out-of-scope
 
@@ -330,7 +353,7 @@ verifies cursor monotonicity under concurrent emits.
 - `apps/ezagent_core/lib/ezagent/kind/server.ex` `commit_and_notify/3` —
   the single emit chokepoint
 - `docs/superpowers/specs/2026-05-24-notification-architecture-v2.md` —
-  canonical v2 SPEC (decisions / OQs / migration)
-- `docs/notes/2026-05-24-notification-architecture-amendment.md` —
-  Allen's mental-model amendment (chat ≠ notification; notification =
-  same-entity state sync across surfaces; ad-hoc notify forbidden)
+  canonical v2 SPEC (decisions / OQs / migration). The Allen mental-
+  model amendment (chat ≠ notification; notification = same-entity state
+  sync across surfaces; ad-hoc notify forbidden) is captured in §2 of
+  that doc.

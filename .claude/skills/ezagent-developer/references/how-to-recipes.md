@@ -25,7 +25,7 @@ Pre-built examples:
    - `behaviors/0 → [Ezagent.Behavior.X, ...]` (what `init_slice` runs at boot; per-Kind `BehaviorRegistry.register` decides what actions dispatch)
    - `persistence/0 → :ephemeral | :on_terminate | {:snapshot, :on_change}`
 3. The URI shape is fixed by SPEC v3 §5.15: `<scheme>://<type>/<workspace>/<name>` for per-tenant schemes. If your Kind is a new entity sub-kind, that's a parser allowlist change (rare — `entity://`'s axis is the closed set `{user, agent}`). More commonly: your Kind extends an existing scheme's type axis via free-form name prefix (agent flavor) or is a Behavior on an existing Kind (plugin side-channel).
-4. **Implement `holds_cap?/2`** (PR-CC-2-v2 chokepoint callback — 2026-05-25): given the caller URI + the action's `required_caps/0` list, return `:ok` or `{:error, :unauthorized}`. The dispatch step 5.5 calls this; do NOT cap-check elsewhere.
+4. **`holds_cap?/2` is OPTIONAL** (PR-CC-2-v2 chokepoint callback — 2026-05-25). Signature: `holds_cap?(entity_uri, needed :: Capability.t()) :: boolean()`. Override only for Kind-specific bypass (e.g. `:system` caller). Otherwise leave it out — `Ezagent.Kind.default_holds_cap?/2` reads caps via `Ezagent.Identity.list_caps_for/1` and tests with `Capability.matches?/2`. The dispatch step 5.5 calls `Ezagent.Kind.holds_cap?/3` (the dispatcher) — do NOT cap-check elsewhere.
 5. If your Kind carries an Identity slice for caps, document the `init_slice/1` args shape (typically `%{initial_caps: MapSet.t()}`).
 
 Reference Kinds:
