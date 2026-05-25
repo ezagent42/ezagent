@@ -138,6 +138,39 @@ defmodule Ezagent.Notifications do
     Phoenix.PubSub.unsubscribe(EzagentCore.PubSub, topic(user_uri))
   end
 
+  @doc """
+  Subscribe the calling process to the new SPEC v2 PR-N1
+  `:slice_changed` stream for `target_uri`.
+
+  Companion to the legacy `subscribe/2` above — both helpers are
+  valid + working during the PR-N2..PR-N5 transition window. The
+  new topic is `Ezagent.SliceChange.topic(target_uri)` =
+  `esr:entity:<uri>:slice_changed`. PR-N3 flips the auto-hook on
+  so producers start firing into this topic; PR-N5 deletes the
+  legacy `subscribe/2` once all producers migrate.
+
+  Unlike `subscribe/2`, this helper performs **no cap check**.
+  Per the SPEC §2.3 "subscribers self-serve" model, slice-change
+  topic names are derivable from public URIs and same-VM trust is
+  assumed (`notification_subscriptions.ex` §"Threat model"). For
+  audit-trail-friendly cap-gated subscription (LV reconnect /
+  plugin reboot re-subscription registry), call
+  `Ezagent.NotificationSubscriptions.subscribe/3` instead.
+
+  Receives `{:slice_changed, event_map}` on the calling process.
+  Returns `:ok` (Phoenix.PubSub contract).
+  """
+  @spec subscribe_slice_change(URI.t() | String.t()) :: :ok
+  def subscribe_slice_change(target_uri) do
+    Phoenix.PubSub.subscribe(EzagentCore.PubSub, Ezagent.SliceChange.topic(target_uri))
+  end
+
+  @doc "Inverse of `subscribe_slice_change/1`."
+  @spec unsubscribe_slice_change(URI.t() | String.t()) :: :ok
+  def unsubscribe_slice_change(target_uri) do
+    Phoenix.PubSub.unsubscribe(EzagentCore.PubSub, Ezagent.SliceChange.topic(target_uri))
+  end
+
   # ----- Private -------------------------------------------------------------
 
   defp parse_uri!(%URI{} = u), do: u

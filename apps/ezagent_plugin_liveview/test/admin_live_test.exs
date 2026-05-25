@@ -489,4 +489,100 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
       refute html =~ "— room (no mention) —"
     end
   end
+
+  # PR-N2 (SPEC v2 notification architecture, Allen 2026-05-24) —
+  # AdminLive's mount/3 now subscribes to BOTH the legacy
+  # `Ezagent.Notifications.topic/1` AND the new
+  # `Ezagent.SliceChange.topic/1`. Both topics must keep working
+  # during the transition window (PR-N3 flips the auto-hook on;
+  # PR-N5 deletes the legacy path).
+  #
+  # We assert "subscribed + handler runs cleanly" via:
+  #   1. The LV process appears in `Phoenix.PubSub`'s subscriber
+  #      list for BOTH topics (proves `mount/3` ran both subscribes).
+  #   2. After broadcasting to each topic, the LV is still alive
+  #      and `render/1` still works (proves the corresponding
+  #      `handle_info/2` clauses exist and didn't crash). A missing
+  #      clause would surface as a `FunctionClauseError` and tear
+  #      down the LV pid.
+  describe "PR-N2 — subscriber-side dual-topic migration" do
+    test "mount subscribes to both legacy AND new slice_change topic", %{conn: conn} do
+      {:ok, lv, _html} = live(conn, "/sessions")
+
+      caller_uri = Ezagent.Entity.User.admin_uri()
+      legacy_topic = Ezagent.Notifications.topic(caller_uri)
+      new_topic = Ezagent.SliceChange.topic(caller_uri)
+
+      # Phoenix.PubSub.node_name + subscribers lookup gives the pids
+      # listening on each topic in the local node. The LV pid must
+      # appear under BOTH topics.
+      legacy_subs = subscribers_for(legacy_topic)
+      new_subs = subscribers_for(new_topic)
+
+      assert lv.pid in legacy_subs,
+             "expected AdminLive pid in subscribers of #{legacy_topic} (subs=#{inspect(legacy_subs)})"
+
+      assert lv.pid in new_subs,
+             "expected AdminLive pid in subscribers of #{new_topic} (subs=#{inspect(new_subs)})"
+    end
+
+    test "both topics deliver cleanly to AdminLive (no handler crash)", %{conn: conn} do
+      {:ok, lv, _html} = live(conn, "/sessions")
+      lv_pid = lv.pid
+
+      caller_uri = Ezagent.Entity.User.admin_uri()
+
+      # 1. Legacy `{:notification, _, _}` envelope (PR-N1 shape).
+      :ok =
+        Phoenix.PubSub.broadcast(
+          EzagentCore.PubSub,
+          Ezagent.Notifications.topic(caller_uri),
+          {:notification, caller_uri,
+           %{type: :pr_n2_legacy, body: %{}, source: __MODULE__, summary: "legacy bridge"}}
+        )
+
+      # 2. New `{:slice_changed, _}` envelope (PR-N1 shape via
+      # `SliceChange.emit/1`). Enable the feature flag so the emit
+      # actually broadcasts; the AdminLive subscription side does
+      # not gate on the flag (it just subscribes).
+      Application.put_env(:ezagent_core, :slice_change_hook, true)
+
+      try do
+        event = %{
+          self_uri: caller_uri,
+          kind_module: Ezagent.Entity.User,
+          action: :pr_n2_integration,
+          slice_key: :test_slice,
+          old_slice: %{n: 1},
+          new_slice: %{n: 2},
+          result: nil,
+          caller: caller_uri,
+          at: DateTime.utc_now()
+        }
+
+        :ok = Ezagent.SliceChange.emit(event)
+      after
+        Application.delete_env(:ezagent_core, :slice_change_hook)
+      end
+
+      # Round-trip a benign event to flush the message queue — once
+      # `render/2` returns from the test we know all queued
+      # handle_info clauses have run (LiveView serialises handle_info
+      # + render through its GenServer mailbox).
+      _ = render(lv)
+
+      assert Process.alive?(lv_pid),
+             "AdminLive crashed after receiving legacy and/or :slice_changed envelopes"
+    end
+  end
+
+  # Inspect a Phoenix.PubSub topic's local subscriber pids. Walks
+  # the underlying Registry of `Phoenix.PubSub.PG2` (the default
+  # adapter shipped with Phoenix.PubSub) via its registry table.
+  defp subscribers_for(topic) do
+    # Phoenix.PubSub.subscribers/2 was removed; use the public
+    # Phoenix.PubSub.node_name + Phoenix.PubSub.local_broadcast trick
+    # via the Phoenix.PubSub.PG2 adapter's named Registry.
+    Registry.lookup(EzagentCore.PubSub, topic) |> Enum.map(&elem(&1, 0))
+  end
 end

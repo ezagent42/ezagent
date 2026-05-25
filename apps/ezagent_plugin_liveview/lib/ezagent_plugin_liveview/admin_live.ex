@@ -104,8 +104,20 @@ defmodule EzagentPluginLiveview.AdminLive do
       # `Notifications.notify/3` broadcast to a topic NO LV subscribed
       # to → dead feature. Post-fix: the active operator's LV
       # subscribes; messages bridge to flash via handle_info below.
+      #
+      # PR-N2 (SPEC v2 notification architecture, Allen 2026-05-24) —
+      # ALSO subscribe to the NEW `:slice_changed` stream
+      # (`esr:entity:<uri>:slice_changed`). Both topics carry traffic
+      # during the transition window:
+      #   • PR-N3 flips the SliceChange auto-hook on so producers
+      #     start firing into the new topic
+      #   • PR-N4 migrates remaining producer sites
+      #   • PR-N5 deletes the legacy subscription + handler clause
+      # The `handle_info({:slice_changed, _}, _)` clause below logs
+      # the event today; the flash bridge + UI render lands in PR-N3.
       if caller_uri do
         Phoenix.PubSub.subscribe(EzagentCore.PubSub, Ezagent.Notifications.topic(caller_uri))
+        :ok = Ezagent.Notifications.subscribe_slice_change(caller_uri)
       end
 
       for session_uri <- EzagentDomainChat.list_sessions() do
@@ -256,6 +268,30 @@ defmodule EzagentPluginLiveview.AdminLive do
   # using common keys + fall back to inspecting the map.
   def handle_info({:notification, _user_uri, payload}, socket) do
     {:noreply, put_flash(socket, :info, format_notification(payload))}
+  end
+
+  # PR-N2 (SPEC v2 notification architecture, Allen 2026-05-24) —
+  # new `:slice_changed` envelope coming off
+  # `Ezagent.SliceChange.topic/1`. Subscribed in `mount/3`
+  # alongside the legacy `Notifications.topic/1`. Today the auto-
+  # hook is DISABLED (`SliceChange.enabled?/0` defaults false) so
+  # this clause only fires in tests that drive `SliceChange.emit/1`
+  # directly — but keeping the handler present means PR-N3 can
+  # flip the flag without crashing AdminLive.
+  #
+  # The flash bridge + per-slice UI render lands in PR-N3 once the
+  # first producer is migrated and we know the real event shape.
+  # For PR-N2 we just acknowledge + log at :debug so the LV stays
+  # crash-free under the new topic.
+  def handle_info({:slice_changed, %{} = event}, socket) do
+    require Logger
+
+    Logger.debug(fn ->
+      "AdminLive: received :slice_changed for " <>
+        "#{inspect(Map.get(event, :self_uri))} action=#{inspect(Map.get(event, :action))}"
+    end)
+
+    {:noreply, socket}
   end
 
   defp format_notification(%{} = payload) do
