@@ -90,39 +90,16 @@ defmodule Ezagent.SystemPrincipal do
 
     # Catalog.caps_for!/1 raises if uri is not registered — defense
     # in depth so a caller cannot mint an ad-hoc system principal.
-    #
-    # PR-CC-2b (codex round-1 HIGH-2 fix): pass the STRING list directly
-    # as `initial_caps` rather than the legacy wildcard struct MapSet.
-    # `Ezagent.Behavior.Identity.init_slice/1` accepts a list (and wraps
-    # with MapSet.new/1), so the slice now carries `MapSet.t(String.t())`
-    # — exactly the shape `Ezagent.Kind.holds_cap?/2` reads via
-    # `filter_string_caps/1`. The legacy `caps_from_strings/1` path is
-    # still used by `caps/1` (the legacy bridge for ctx.caps).
-    initial_caps = Catalog.caps_for!(parsed)
+    cap_strings = Catalog.caps_for!(parsed)
+    initial_caps = caps_from_strings(cap_strings)
 
     case Ezagent.Kind.spawn(Ezagent.Entity.User, %{
            uri: parsed,
            initial_caps: initial_caps
          }) do
-      {:ok, _pid} ->
-        :ok
-
-      {:error, {:already_started, _pid}} ->
-        :ok
-
-      # PR-CC-2b (codex round-1 MEDIUM-1 fix): `Kind.Server.init/1`
-      # stops with `{:already_registered, uri}` on a KindRegistry
-      # collision (server.ex line 145). DynamicSupervisor surfaces that
-      # as `{:error, {{:already_registered, _}, _}}`. Treat as success
-      # — the principal is already alive and idempotency holds.
-      {:error, {{:already_registered, _uri_str}, _spec}} ->
-        :ok
-
-      {:error, {:already_registered, _uri_str}} ->
-        :ok
-
-      {:error, reason} ->
-        {:error, reason}
+      {:ok, _pid} -> :ok
+      {:error, {:already_started, _pid}} -> :ok
+      {:error, reason} -> {:error, reason}
     end
   end
 

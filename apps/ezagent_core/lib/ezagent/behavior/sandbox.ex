@@ -76,16 +76,6 @@ defmodule Ezagent.Behavior.Sandbox do
   @impl Ezagent.Behavior
   def actions, do: [:read, :write_path, :destroy]
 
-  # PR-CC-2a (SPEC caps-cleanup-v1 §5.1) — per-action cap STRING.
-  # Sandbox registers on Agent Kind.
-  @impl Ezagent.Behavior
-  def required_caps,
-    do: %{
-      read: "agent.sandbox.read",
-      write_path: "agent.sandbox.write_path",
-      destroy: "agent.sandbox.destroy"
-    }
-
   @impl Ezagent.Behavior
   def cap_subjects do
     [

@@ -113,16 +113,6 @@ defmodule Ezagent.Behavior.ExternalMirror do
     ]
   end
 
-  # PR-CC-2a (SPEC caps-cleanup-v1 §5.1) — per-action cap STRING.
-  # ExternalMirror registers on Session Kind.
-  @impl Ezagent.Behavior
-  def required_caps,
-    do: %{
-      bind: "session.external_mirror.bind",
-      unbind: "session.external_mirror.unbind",
-      list_bindings: "session.external_mirror.list_bindings"
-    }
-
   @impl Ezagent.Behavior
   def init_slice(args) do
     # Per §3.1 r4 HIGH-3 fix: rehydrate the binding LIST on init. The

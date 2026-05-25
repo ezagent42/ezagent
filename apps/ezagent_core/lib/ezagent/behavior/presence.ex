@@ -29,14 +29,6 @@ defmodule Ezagent.Behavior.Presence do
     [{:online, "observe an entity's online/offline status across all transports"}]
   end
 
-  # PR-CC-2a (SPEC caps-cleanup-v1 §5.1) — per-action cap STRING.
-  # Presence registers against multiple Kinds (User + Agent); the cap
-  # uses behavior+action only (`*.presence.online` would also work).
-  # PR-CC-2b will refine the per-kind shape when dispatch step 5.5
-  # consults this map.
-  @impl Ezagent.Behavior
-  def required_caps, do: %{online: "user.presence.online"}
-
   @impl Ezagent.Behavior
   def dispatchable?, do: false
 

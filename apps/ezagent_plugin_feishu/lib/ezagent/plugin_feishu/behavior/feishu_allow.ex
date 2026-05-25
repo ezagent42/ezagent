@@ -50,11 +50,6 @@ defmodule EzagentPluginFeishu.Behavior.ExternalAdapter.Feishu.Allow do
       {:allow_feishu, "Authorize binding the `feishu` external-mirror adapter on this session."}
     ]
 
-  # PR-CC-2a (SPEC caps-cleanup-v1 §5.1) — per-action cap STRING.
-  # FeishuAllow is cap-only (dispatchable? false) on Session Kind.
-  @impl Ezagent.Behavior
-  def required_caps, do: %{allow_feishu: "session.external_adapter_feishu.allow_feishu"}
-
   @impl Ezagent.Behavior
   def dispatchable?, do: false
 

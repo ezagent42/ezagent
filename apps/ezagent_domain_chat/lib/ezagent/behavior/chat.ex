@@ -87,21 +87,6 @@ defmodule Ezagent.Behavior.Chat do
   @impl Ezagent.Behavior
   def actions, do: [:send, :receive, :join, :leave, :set_working_copy]
 
-  # PR-CC-2a (SPEC caps-cleanup-v1 §5.1) — per-action cap STRING.
-  # Chat registers `:send / :join / :leave / :set_working_copy` on
-  # Session Kind, AND `:receive` on User + Agent Kinds (entity inbox).
-  # The `:receive` cap uses `*` for the kind segment so a single
-  # declaration covers both User and Agent recipients.
-  @impl Ezagent.Behavior
-  def required_caps,
-    do: %{
-      send: "session.chat.send",
-      receive: "*.chat.receive",
-      join: "session.chat.join",
-      leave: "session.chat.leave",
-      set_working_copy: "session.chat.set_working_copy"
-    }
-
   @impl Ezagent.Behavior
   def cap_subjects do
     [
