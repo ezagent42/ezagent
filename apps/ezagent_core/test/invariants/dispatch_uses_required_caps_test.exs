@@ -71,10 +71,23 @@ defmodule Ezagent.Invariants.DispatchUsesRequiredCapsTest do
 
       # Ordering check — the substitution call must precede the holds_cap? call
       # inside the same function. We look at the lexical position of the FIRST
-      # `substitute_wildcard_kind(` CALL (not the def) and the FIRST
+      # `substitute_wildcard_kind` IDENTIFIER REFERENCE (call OR pipe target)
+      # within the `string_cap_check/5` function and the FIRST
       # `Ezagent.Kind.holds_cap?(` call.
-      sub_call_pos = string_pos(src, "substitute_wildcard_kind(raw_needed")
-      holds_call_pos = string_pos(src, "Ezagent.Kind.holds_cap?(%{identity:")
+      #
+      # We anchor on the docstring (`# String-cap path (PR-CC-2b new arm).`)
+      # to ensure both positions are within the same function — otherwise
+      # the `def substitute_wildcard_kind/2` declaration further down the
+      # file would race ahead of holds_cap?, creating a false-positive pass.
+      anchor_pos = string_pos(src, "# String-cap path (PR-CC-2b new arm).")
+
+      assert anchor_pos != nil,
+             "Could not find the string_cap_check/5 docstring anchor. The " <>
+               "wildcard ordering check requires this anchor to scope both " <>
+               "subsequent searches to the same function."
+
+      sub_call_pos = string_pos_from(src, "|> substitute_wildcard_kind", anchor_pos)
+      holds_call_pos = string_pos_from(src, "Ezagent.Kind.holds_cap?(%{identity:", anchor_pos)
 
       assert sub_call_pos != nil,
              "Could not find the substitute_wildcard_kind/2 call site in " <>
@@ -134,6 +147,19 @@ defmodule Ezagent.Invariants.DispatchUsesRequiredCapsTest do
     end
   end
 
+  # Find the first occurrence of `needle` at or after `from_pos`. Used to
+  # scope ordering checks to a specific function body — the caller picks
+  # an anchor string near the function head and both sub-searches start
+  # there.
+  defp string_pos_from(source, needle, from_pos) when is_integer(from_pos) do
+    tail = binary_part(source, from_pos, byte_size(source) - from_pos)
+
+    case :binary.match(tail, needle) do
+      {pos, _len} -> from_pos + pos
+      :nomatch -> nil
+    end
+  end
+
   # Walk apps/*/lib for any file declaring `defmodule .*Application` AND read
   # its body. Returns `[{path, body}, ...]`.
   defp collect_application_sources(excluded) do
@@ -149,7 +175,53 @@ defmodule Ezagent.Invariants.DispatchUsesRequiredCapsTest do
   # this URI? We accept either a literal string (`"system://foo"`) inline in
   # the call OR a list-of-strings pattern where the URI appears in a literal
   # inside a `seed_*_system_principals/0` helper.
+  #
+  # PR-CC-2b codex round-1 MEDIUM-2 fix: strip comment lines BEFORE the
+  # contains check. A `# uses system://foo` line was previously enough to
+  # satisfy P3 — that's a false positive. Comment stripping is conservative
+  # (only single-line `#` comments — `@moduledoc` and other heredoc forms
+  # are untouched because they live inside string literals that may
+  # legitimately mention catalog URIs in docs, but the check requires
+  # ALSO seeing `SystemPrincipal.ensure` in the SAME source which itself
+  # would only happen at a real call site).
   defp ensure_pattern_present?(body, uri) do
-    String.contains?(body, "SystemPrincipal.ensure") and String.contains?(body, uri)
+    stripped = strip_comments(body)
+    String.contains?(stripped, "SystemPrincipal.ensure") and String.contains?(stripped, uri)
+  end
+
+  # Remove single-line `#` comments — preserves string literals + heredocs
+  # which may contain `#` characters but aren't comments.
+  defp strip_comments(body) do
+    body
+    |> String.split("\n")
+    |> Enum.map(&strip_line_comment/1)
+    |> Enum.join("\n")
+  end
+
+  defp strip_line_comment(line) do
+    # Conservative line-by-line `#`-comment stripper. Walks the line one
+    # codepoint at a time tracking whether we're inside a string literal
+    # so that a `#` inside `"..."` isn't treated as a comment. This is
+    # not a full Elixir lexer (heredocs, sigils, interpolations are not
+    # handled exhaustively) but it's accurate enough for the catalog
+    # URI literals we care about — they only ever appear as bare strings
+    # in the seeding helpers, never inside a complex literal.
+    {result, _in_string} =
+      line
+      |> String.to_charlist()
+      |> Enum.reduce_while({"", false}, fn ch, {acc, in_string?} ->
+        cond do
+          ch == ?# and not in_string? ->
+            {:halt, {acc, in_string?}}
+
+          ch == ?" ->
+            {:cont, {acc <> <<ch>>, not in_string?}}
+
+          true ->
+            {:cont, {acc <> <<ch>>, in_string?}}
+        end
+      end)
+
+    result
   end
 end

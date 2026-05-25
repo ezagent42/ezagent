@@ -58,21 +58,33 @@ defmodule EzagentDomainWorkspace.Application do
     end
   end
 
+  # PR-CC-2b (codex round-1 HIGH-1 fix) — wrap ensure/1 in try/catch
+  # so EXITs from absent supervisors don't kill workspace boot.
   defp ensure_principal_logged(uri_str) do
-    case Ezagent.SystemPrincipal.ensure(URI.parse(uri_str)) do
-      :ok ->
-        :ok
+    try do
+      case Ezagent.SystemPrincipal.ensure(URI.parse(uri_str)) do
+        :ok ->
+          :ok
 
-      {:error, reason} ->
-        require Logger
-
-        Logger.warning(
-          "EzagentDomainWorkspace seed: ensure(#{uri_str}) failed " <>
-            "(#{inspect(reason)}); idempotent retry on next boot."
-        )
-
-        :ok
+        {:error, reason} ->
+          log_seed_failure(uri_str, reason)
+      end
+    rescue
+      e -> log_seed_failure(uri_str, e)
+    catch
+      kind, reason -> log_seed_failure(uri_str, {kind, reason})
     end
+  end
+
+  defp log_seed_failure(uri_str, reason) do
+    require Logger
+
+    Logger.warning(
+      "EzagentDomainWorkspace seed: ensure(#{uri_str}) failed " <>
+        "(#{inspect(reason)}); idempotent retry on next boot."
+    )
+
+    :ok
   end
 
   defp test_env? do

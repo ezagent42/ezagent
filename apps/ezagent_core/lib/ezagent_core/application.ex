@@ -224,21 +224,47 @@ defmodule EzagentCore.Application do
     end
   end
 
+  # PR-CC-2b (codex round-1 HIGH-1 fix) — `SystemPrincipal.ensure/1`
+  # calls `Ezagent.Kind.spawn(Entity.User, ...)`, which reads
+  # `EzagentDomainIdentity.Application.UserSupervisor` via `User.supervisor/0`.
+  # That supervisor is started by identity's `Application.start/2` —
+  # `ezagent_domain_identity` depends on `ezagent_core`, so identity boots
+  # AFTER core. At core's seed point, `UserSupervisor` does NOT yet exist;
+  # `DynamicSupervisor.start_child/2` against an absent named supervisor
+  # EXITS with `:noproc`. The `case do {:ok, _} / {:error, _}` clause
+  # below cannot catch an exit — without the try/catch, this kills core
+  # boot. Wrap the whole call.
+  #
+  # The lazy callers (`mix ezagent.*` tasks) re-invoke `ensure/1` once
+  # identity is up; the idempotency arm (`{:already_started, _}` /
+  # `{:already_registered, _}`) makes the second call cheap.
   defp ensure_principal_logged(uri_str) do
-    case Ezagent.SystemPrincipal.ensure(URI.parse(uri_str)) do
-      :ok ->
-        :ok
+    try do
+      case Ezagent.SystemPrincipal.ensure(URI.parse(uri_str)) do
+        :ok ->
+          :ok
 
-      {:error, reason} ->
-        require Logger
-
-        Logger.warning(
-          "seed_core_system_principals: ensure(#{uri_str}) failed " <>
-            "(#{inspect(reason)}); lazy caller will retry — idempotent."
-        )
-
-        :ok
+        {:error, reason} ->
+          log_seed_failure(uri_str, reason)
+      end
+    rescue
+      e ->
+        log_seed_failure(uri_str, e)
+    catch
+      kind, reason ->
+        log_seed_failure(uri_str, {kind, reason})
     end
+  end
+
+  defp log_seed_failure(uri_str, reason) do
+    require Logger
+
+    Logger.warning(
+      "seed_core_system_principals: ensure(#{uri_str}) failed " <>
+        "(#{inspect(reason)}); lazy caller will retry — idempotent."
+    )
+
+    :ok
   end
 
   defp register_presence_behavior do

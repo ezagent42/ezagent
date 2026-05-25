@@ -80,20 +80,36 @@ defmodule EzagentPluginLiveview.Application do
     if Mix.env() == :test do
       :ok
     else
+      ensure_lv_anon_mount()
+    end
+  end
+
+  # PR-CC-2b (codex round-1 HIGH-1 fix) — wrap ensure/1 in try/catch
+  # so EXITs from absent supervisors don't kill liveview plugin boot.
+  defp ensure_lv_anon_mount do
+    try do
       case Ezagent.SystemPrincipal.ensure(URI.parse("system://lv-anon-mount")) do
         :ok ->
           :ok
 
         {:error, reason} ->
-          require Logger
-
-          Logger.warning(
-            "EzagentPluginLiveview seed: ensure(system://lv-anon-mount) failed " <>
-              "(#{inspect(reason)}); idempotent retry on next boot."
-          )
-
-          :ok
+          log_seed_failure(reason)
       end
+    rescue
+      e -> log_seed_failure(e)
+    catch
+      kind, reason -> log_seed_failure({kind, reason})
     end
+  end
+
+  defp log_seed_failure(reason) do
+    require Logger
+
+    Logger.warning(
+      "EzagentPluginLiveview seed: ensure(system://lv-anon-mount) failed " <>
+        "(#{inspect(reason)}); idempotent retry on next boot."
+    )
+
+    :ok
   end
 end

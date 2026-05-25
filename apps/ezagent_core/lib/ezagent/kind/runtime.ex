@@ -329,11 +329,37 @@ defmodule Ezagent.Kind.Runtime do
 
       raw_needed when is_binary(raw_needed) ->
         target_kind = target_kind_module(target, kind_module)
-        needed = substitute_wildcard_kind(raw_needed, target_kind)
+
+        needed =
+          raw_needed
+          |> substitute_wildcard_kind(target_kind)
+          |> append_target_instance(target)
+
         granted? = caller_holds_string_cap?(Map.get(ctx, :caller), needed)
         {needed, granted?}
     end
   end
+
+  # PR-CC-2b (codex round-1 HIGH-4 fix) — append `@<target_instance_uri>`
+  # to the needed cap so that an instance-scoped held cap (e.g.
+  # `session.chat.send@session://default/team/main`) authorizes a needed
+  # cap that came from `required_caps/0` (e.g. `session.chat.send`).
+  #
+  # The matcher's instance semantics are asymmetric (`Ezagent.Cap.instance_match?/2`):
+  # - Held instance `:absent` matches any needed instance — broad cap
+  #   authorizes specific instance.
+  # - Needed instance `:absent` does NOT match a held instance — narrow
+  #   cap CANNOT authorize an unscoped needed cap (false in the catch-all
+  #   `instance_match?(_, _)` clause).
+  #
+  # Without this append, holders with instance-scoped caps would be
+  # denied — the inverse of the intent. SPEC `2026-05-25-caps-cleanup-v1.md`
+  # §5.3 sketches `needed_with_instance = "#{needed_cap}@#{URI.to_string(Ezagent.URI.instance(target))}"`.
+  defp append_target_instance(needed_cap_string, %URI{} = target) do
+    needed_cap_string <> "@" <> URI.to_string(Ezagent.URI.instance(target))
+  end
+
+  defp append_target_instance(needed_cap_string, _), do: needed_cap_string
 
   # Substitute `*` in the kind segment of a cap string with the target Kind's
   # actual `type_name()`. Behaviors registered against multiple Kinds (Routing
