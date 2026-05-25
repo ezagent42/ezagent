@@ -168,31 +168,26 @@ open after HIGH-1 (admin fallback hole) closed in PR #298:
   add an enumerating invariant that fails when an LV event has no
   CLI counterpart.
 
-### `/admin/uploads/:filename` controller route — scope mismatch
+### ~~`/admin/uploads/:filename` controller route — scope mismatch~~ — RESOLVED 2026-05-25
 Codex PR #305 round-4 HIGH (2026-05-24): the chat-compose-upload
-download endpoint sits under the `/admin/*` URL prefix but is a
+download endpoint sat under the `/admin/*` URL prefix but was a
 plain controller route, so the centralized `live_session
-:require_admin` (PR #305) does NOT gate it. The controller is
+:require_admin` (PR #305) did NOT gate it. The controller was
 misnamed — chat uploads are user-scope, not admin-scope.
 
-**Fix sequence:**
-1. Move route from `get "/admin/uploads/:filename", UploadsController, :show`
-   to `get "/files/:filename", UploadsController, :show` (or
-   similar non-admin prefix)
-2. In `UploadsController.show/2`, verify the caller is either
-   (a) the uploading user, OR (b) a member of any session the
-   file is attached to with read-cap. Reject otherwise.
-3. Add regression test: non-admin caller cannot fetch files
-   uploaded by another user/workspace via `/files/:filename`
-   guessing.
-4. After the move, ALL remaining routes under `/admin/*` are
-   pure LiveView, so the `live_session :require_admin` gate is
-   complete by inspection.
-
-PR #305 cannot land this fix (out of scope for the audit-LOW
-batch + would touch the chat upload pipeline which has its own
-LV tests to update). Tracked here as the gating follow-up
-before the admin-gate invariant can be claimed complete.
+**Fix landed (2026-05-25, PR fix/uploads-route-per-user-authz):**
+1. ~~Move route from `/admin/uploads/:filename` →
+   `/files/:filename`~~ — done in `router.ex`.
+2. ~~`UploadsController.show/2` verifies caller is admin OR
+   uploading-user OR session-participant; otherwise 403.~~ — done
+   in `uploads_controller.ex`.
+3. ~~Regression test pinning cross-user isolation.~~ — done in
+   `apps/ezagent_web/test/ezagent_web/controllers/uploads_controller_test.exs`
+   (9 tests, including the cross-user-guessing-yields-403 case).
+4. ~~All remaining `/admin/*` routes are pure LiveView, gated by
+   `live_session :require_admin` by inspection.~~ — comment added
+   in `router.ex` near the admin scope documenting the
+   invariant + an explicit anti-regression note.
 
 ### `Workspace.Registry.default_workspace_uri/0` legacy fallback
 Still returns `"workspace://default"` for the NOT NULL `workspace_uri`
