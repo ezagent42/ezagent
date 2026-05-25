@@ -9,9 +9,10 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
     2. If pending → log + react `THUMBSDOWN` so the human sees ESR
        got the message but ops needs to bind their identity.
     3. If bound → look up session_uri for chat_id via
-       `EzagentPluginFeishu.SessionBinding.resolve/1` (PR #144 SPEC v2
-       §5.8 — replaces the prior routing-rule reverse-lookup that
-       depended on the deleted `feishu://oc_xxx` Kind).
+       `EzagentPluginFeishu.InboundChatLookup.resolve/1` (PR-EM-6 —
+       replaces the retired `SessionBinding.resolve/1` reverse-lookup
+       and reads from the generic `external_mirror_bindings` table
+       maintained by `Ezagent.Behavior.ExternalMirror`).
     4. On bound + session-bound → dispatch
        `<session_uri>?action=chat.send`. On success, react `OK`
        emoji (Allen 2026-05-17 "受到了信息" 反馈).
@@ -41,7 +42,7 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
 
   require Logger
 
-  alias EzagentPluginFeishu.{Client, SenderResolver, SessionBinding}
+  alias EzagentPluginFeishu.{Client, InboundChatLookup, SenderResolver}
 
   @type opts :: [
           chat_id: String.t(),
@@ -77,7 +78,7 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
         # (this process is short-lived per inbound request).
         EzagentPluginFeishu.PresenceMirror.touch(caller_uri)
 
-        case SessionBinding.resolve(chat_id) do
+        case InboundChatLookup.resolve(chat_id) do
           {:ok, session_uri} ->
             case do_dispatch(session_uri, caller_uri, caps, body) do
               :ok ->

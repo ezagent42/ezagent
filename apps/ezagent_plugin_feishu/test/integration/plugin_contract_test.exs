@@ -21,14 +21,32 @@ defmodule EzagentPluginFeishu.Integration.PluginContractTest do
     assert is_binary(info.version) and info.version != ""
   end
 
-  test "feishu's behaviors/0 published FeishuOutbound on the Session core Kind" do
-    # SPEC v2 §5.8 — feishu registers a Behavior on the EXISTING
-    # Ezagent.Entity.Session core Kind, NOT a plugin-owned scheme.
-    for action <- EzagentPluginFeishu.Behavior.FeishuOutbound.actions() do
-      assert {:ok, EzagentPluginFeishu.Behavior.FeishuOutbound} =
-               Ezagent.BehaviorRegistry.lookup(Ezagent.Entity.Session, action),
-             "expected (Session, #{inspect(action)}) → FeishuOutbound"
+  test "feishu's behaviors/0 published the per-adapter Allow cap Behavior on Session" do
+    # PR-EM-6 reshape (SPEC `docs/superpowers/specs/2026-05-24-external-mirror-domain.md`
+    # §9) — feishu's Session-Kind Behavior registration shrinks to the
+    # per-adapter Allow cap marker (`:allow_feishu`). The old
+    # `FeishuOutbound` `:notify_external` registration was retired —
+    # outbound chat fan-out flows generically via the ExternalMirror
+    # Domain (Session Publisher → Worker → Adapter+Binding).
+    alias EzagentPluginFeishu.Behavior.ExternalAdapter.Feishu.Allow, as: FeishuAllow
+
+    for action <- FeishuAllow.actions() do
+      assert {:ok, %{behavior: FeishuAllow, kind: Ezagent.Entity.Session}} =
+               Ezagent.CapabilityRegistry.lookup_subject(Ezagent.Entity.Session, action),
+             "expected (Session, #{inspect(action)}) → FeishuAllow registered as a cap subject"
     end
+  end
+
+  test "feishu's adapters/0 declares the FeishuAdapter + FeishuChatBinding pair" do
+    # PR-EM-6 (SPEC §5.1 + §9 PR-EM-6) — the new declarative
+    # adapter+binding contract. Grill-5 enforces the bidirectional
+    # match at `mix compile` time; this test verifies the runtime
+    # registration succeeded by querying both registries.
+    assert {:ok, EzagentPluginFeishu.FeishuAdapter} =
+             Ezagent.ExternalMirror.AdapterRegistry.lookup("feishu")
+
+    assert {:ok, EzagentPluginFeishu.FeishuChatBinding} =
+             Ezagent.ExternalMirror.BindingRegistry.lookup("feishu")
   end
 
   test "feishu declares NO spawns/0 — it owns no top-level scheme (SPEC v2 §5.8)" do

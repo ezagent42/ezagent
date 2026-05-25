@@ -72,13 +72,16 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
       "Join table; inherits scope via FK to messages (which has workspace_uri NOT NULL).",
     "dlq" =>
       "Pre-tenant boundary — failure can precede workspace determination; operator triages from system scope.",
-    "app_settings" => "Global system config (SMTP, registration domains) — system scope by design.",
+    "app_settings" =>
+      "Global system config (SMTP, registration domains) — system scope by design.",
     "magic_link_tokens" =>
       "Cross-workspace by design — email-based pre-login, no workspace context at mint time.",
     "feishu_user_bindings" =>
       "Plugin-owned mapping; workspace inherent in bound user_uri downstream.",
-    "feishu_session_bindings" =>
-      "Plugin-owned mapping; workspace inherent in bound session_uri downstream.",
+    # PR-EM-6 (SPEC `docs/superpowers/specs/2026-05-24-external-mirror-domain.md` §9):
+    # `feishu_session_bindings` was retired in favor of the generic
+    # `external_mirror_bindings` projection table (workspace_uri NOT
+    # NULL — see PR-EM-3 migration).
     "schema_migrations" => "Ecto-internal migration tracking — not tenant data."
   }
 

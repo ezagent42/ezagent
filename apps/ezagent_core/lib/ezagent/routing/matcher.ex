@@ -96,9 +96,11 @@ defmodule Ezagent.Routing.Matcher do
 
   (Pre-PR-144 this was also how the Feishu plugin bound a chat to
   a session — `in_session(session) → [feishu://oc_X]`. The
-  `feishu://` Receiver Kind is now deleted (SPEC §5.8); the binding
-  lives in `feishu_session_bindings` join table and the outbound
-  mirror is a Behavior on Session Kind, not a routing rule.)
+  `feishu://` Receiver Kind was deleted (SPEC §5.8). Post-PR-EM-6
+  the binding lives in the generic `external_mirror_bindings`
+  projection table maintained by `Ezagent.Behavior.ExternalMirror`;
+  the outbound mirror is a per-binding Worker Kind (one per
+  session × adapter × target) — not a routing rule.)
   """
   @spec in_session(URI.t() | String.t()) :: matcher()
   def in_session(%URI{} = uri), do: {:in_session, URI.to_string(uri)}

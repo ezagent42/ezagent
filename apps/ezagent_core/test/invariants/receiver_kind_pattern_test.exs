@@ -34,9 +34,13 @@ defmodule EzagentCore.Invariants.ReceiverKindPatternTest do
   3. Delete the PubSub subscriber
 
   Reference impl: `apps/ezagent_plugin_feishu/` —
-  `EzagentPluginFeishu.Behavior.FeishuOutbound` registered against
-  `Ezagent.Entity.Session` for the `:notify_external` action, with
-  `EzagentPluginFeishu.SessionBinding` as the side-table.
+  PR-EM-6 (SPEC `docs/superpowers/specs/2026-05-24-external-mirror-domain.md` §9)
+  reshaped this into the generic ExternalMirror Adapter+Binding pair
+  (`EzagentPluginFeishu.FeishuAdapter` + `FeishuChatBinding`); the
+  per-binding Worker Kind is dispatched-to via
+  `Ezagent.Invocation.dispatch/1` per P14, so the receiver-kind
+  invariant is preserved structurally without an explicit plugin
+  Receiver Kind.
   """
   use ExUnit.Case, async: true
 

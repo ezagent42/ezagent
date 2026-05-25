@@ -274,15 +274,16 @@ defmodule Ezagent.Behavior.Chat do
           end
         end
 
-        # PR #144 (SPEC v2 §5.8) — opportunistic external-mirror hook.
-        # If a plugin has registered a Behavior on Session Kind for
-        # `:notify_external`, dispatch it now so plugin-owned external
-        # channels (Feishu mirror, future Slack/Discord/email/webhook)
-        # see every chat send. This is the generic side-channel
-        # extension point; the Behavior itself decides whether the
-        # current session has a binding it cares about. Chat stays
-        # plugin-agnostic — no `feishu_*` references here.
-        maybe_notify_external(Map.get(ctx, :kind_module), session_uri, msg)
+        # PR-EM-6 (SPEC `docs/superpowers/specs/2026-05-24-external-mirror-domain.md`
+        # §9) — `maybe_notify_external/3` retired. External-mirror
+        # fan-out is now the generic ExternalMirror Domain's
+        # responsibility: the chat slice update emits a SliceChange,
+        # the Session Kind's Publisher records it, every subscribed
+        # per-binding Worker receives `{:publisher_event, _}` and
+        # self-dispatches `:publish` to its Behavior. Chat no longer
+        # touches the BehaviorRegistry-lookup-then-dispatch path —
+        # the publish flow is structural (no opportunistic call from
+        # here).
 
         # PR-EM-6-PRE (Allen 2026-05-25) — mutate the slice so the
         # SliceChange hook in `Kind.Runtime` fires for every send. See
@@ -758,51 +759,11 @@ defmodule Ezagent.Behavior.Chat do
     result
   end
 
-  # PR #144 SPEC v2 §5.8 — opportunistic external-mirror hook.
-  #
-  # Look up `BehaviorRegistry.lookup(kind_module, :notify_external)`. If
-  # a plugin has registered a Behavior for that action on the Session
-  # Kind, dispatch `<session_uri>?action=notify_external.notify_external`.
-  # If nothing is registered, this is a cheap ETS lookup + no-op.
-  #
-  # The behavior path segment is `notify_external` (matches the action
-  # name) — `Ezagent.URI.behavior_action/1` derives `{behavior_atom,
-  # action_atom}` from the path, but `BehaviorRegistry.lookup/2` keys
-  # only on `{kind_module, action}`. The behavior name in the URL is
-  # informational; the action atom drives resolution.
-  #
-  # Plugin contract: a plugin wanting to mirror chat sends to an
-  # external system registers:
-  #
-  #     BehaviorRegistry.register(Ezagent.Entity.Session, :notify_external,
-  #                              MyPlugin.Behavior.ExternalMirror)
-  #
-  # The behavior reads `self_uri` from ctx + its own side-table to
-  # decide whether to forward. See
-  # `EzagentPluginFeishu.Behavior.FeishuOutbound` for the reference
-  # implementation.
-  defp maybe_notify_external(nil, _session_uri, _msg), do: :ok
-
-  defp maybe_notify_external(kind_module, session_uri, %Message{} = msg) do
-    case Ezagent.BehaviorRegistry.lookup(kind_module, :notify_external) do
-      {:ok, _behavior_module} ->
-        target = URI.new!("#{URI.to_string(session_uri)}?action=notify_external.notify_external")
-
-        Invocation.dispatch(%Invocation{
-          target: target,
-          mode: :cast,
-          args: %{message: msg},
-          ctx: %{
-            caller: session_uri,
-            caps: Ezagent.Entity.User.admin_caps(),
-            reply: :ignore
-          }
-        })
-
-      :error ->
-        :ok
-    end
-  end
+  # PR-EM-6 (SPEC `docs/superpowers/specs/2026-05-24-external-mirror-domain.md`
+  # §9) — `maybe_notify_external/3` retired. External-mirror fan-out
+  # moved to the generic ExternalMirror Domain (Session Publisher →
+  # per-binding Worker → Adapter+Binding). Chat no longer needs an
+  # opportunistic `BehaviorRegistry.lookup` hook here.
 
   defp replay_messages_since(_session_uri, _member_uri, last_seen) when last_seen == %{}, do: :ok
 
