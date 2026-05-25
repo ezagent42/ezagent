@@ -136,14 +136,13 @@ defmodule Ezagent.Behavior.Echo do
           args: %{message: reply_msg},
           ctx: %{
             caller: ctx.self_uri,
-            # Reuse admin caps for the echo reply — Echo is a system
-            # demo agent without its own dedicated cap grants; the
-            # alternative (granting :chat send caps to every echo
-            # agent at spawn) would be more correct but is a Phase 9
-            # concern (granular agent caps). The risk is bounded —
-            # echo only replies to messages it receives, and only
-            # within the originating session.
-            caps: Ezagent.Entity.User.admin_caps(),
+            # SPEC caps-cleanup-v1 §4.4 — agent reply path runs under
+            # the `system://chat-reply` principal (the bridge cap shape
+            # of PR-CC-1). Caller URI stays as the agent (provenance);
+            # the cap handle comes from the closed Catalog. PR-CC-2b
+            # will derive caps from the principal slice + the new
+            # `required_caps/0` callback, removing `ctx.caps` entirely.
+            caps: Ezagent.SystemPrincipal.caps("system://chat-reply"),
             reply: :ignore
           }
         })

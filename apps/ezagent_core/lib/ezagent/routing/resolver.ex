@@ -41,9 +41,10 @@ defmodule Ezagent.Routing.Resolver do
 
   `slice.members` is NOT a trust boundary: `chat.join` accepts any
   live `member_uri` and template instantiation joins configured URIs
-  with `admin_caps`, so a cross-workspace entity can sit in
-  `slice.members`. Since `chat.receive` dispatches with
-  `User.admin_caps()`, an unvalidated receiver is a privilege hole.
+  under the `system://template-materialize` principal, so a
+  cross-workspace entity can sit in `slice.members`. Since
+  `chat.receive` dispatches under `system://chat-router`, an
+  unvalidated receiver is a privilege hole.
 
   `valid_member?/2` is the shared predicate guarding BOTH
   `$session_users` and `$mentions`: a candidate URI is a valid
@@ -258,8 +259,9 @@ defmodule Ezagent.Routing.Resolver do
   # "$mentions" — message.mentions, each through the valid_member?/2
   # trust boundary, excluding the sender. The mention-gated routing
   # primitive. message.mentions is user-controlled (raw compose text /
-  # global registry scan) and chat.receive dispatches with admin_caps,
-  # so unvalidated mentions would be a privilege hole.
+  # global registry scan) and chat.receive dispatches under
+  # `system://chat-router`, so unvalidated mentions would be a
+  # privilege hole.
   defp expand_receiver(@mentions_token, message, current_session_uri, members, _ws) do
     sender_str = sender_string(message)
 
@@ -306,10 +308,10 @@ defmodule Ezagent.Routing.Resolver do
   Anything failing — cross-workspace, cross-session, non-member,
   malformed, non-canonical, wrong shape — returns `false` and is
   dropped. This is the security boundary: `chat.receive` dispatches
-  with `User.admin_caps()`, so an unvalidated receiver would be a
-  privilege hole (a cross-workspace entity placed in `slice.members`
-  via programmatic `chat.join` / template instantiation must receive
-  NOTHING).
+  under `system://chat-router`, so an unvalidated receiver would be
+  a privilege hole (a cross-workspace entity placed in
+  `slice.members` via programmatic `chat.join` / template
+  instantiation must receive NOTHING).
 
   Never raises — `Ezagent.URI.parse!/1` raises on bad input, so the
   canonicalization is wrapped; a malformed candidate is a `false`,
@@ -340,7 +342,7 @@ defmodule Ezagent.Routing.Resolver do
   # struct path that skipped strict validation let a crafted member
   # with an extra path segment (`entity://user/team-alpha/bob/extra`)
   # bypass the SPEC-v3 3-segment / reserved-sub-resource rule and
-  # become a `chat.receive` target under `admin_caps`. Routing the
+  # become a `chat.receive` target under the system principal. Routing the
   # struct through `URI.to_string/1` then `parse!/1` applies IDENTICAL
   # strict validation to both inputs. `parse!/1` raises on malformed /
   # non-canonical / wrong-shape input — wrapped so this stays total

@@ -393,9 +393,11 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
       target: target,
       mode: :call,
       args: %{subscriber_pid: self(), cursor: :latest},
+      # SPEC caps-cleanup-v1 §4.4 — Worker's internal dispatches run
+      # under `system://worker-publish` per the closed Catalog.
       ctx: %{
         caller: self_uri,
-        caps: admin_caps(),
+        caps: Ezagent.SystemPrincipal.caps("system://worker-publish"),
         reply: :ignore
       }
     }
@@ -414,31 +416,14 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
       target: target,
       mode: :cast,
       args: %{event: event},
+      # SPEC caps-cleanup-v1 §4.4 — Worker outbound publish runs
+      # under `system://worker-publish` (closed Catalog).
       ctx: %{
         caller: self_uri,
-        caps: admin_caps(),
+        caps: Ezagent.SystemPrincipal.caps("system://worker-publish"),
         reply: :ignore,
         idempotency_key: "external_mirror_worker.publish/#{event.cursor}"
       }
     })
-  end
-
-  # Inline admin cap construction so external_mirror doesn't
-  # need to depend on `:ezagent_domain_identity`. Identical shape
-  # to `Ezagent.Entity.User.admin_caps/0` (the bootstrap
-  # all-caps cap). Used ONLY for the Worker's two internal
-  # dispatches (subscribe-self + publish-self); the Worker
-  # never accepts admin caps from external callers.
-  defp admin_caps do
-    MapSet.new([
-      %Ezagent.Capability{
-        kind: :any,
-        behavior: :any,
-        instance: :any,
-        workspace_uri: :any,
-        granted_by: URI.parse("system://bootstrap/default"),
-        granted_at: ~U[2026-01-01 00:00:00Z]
-      }
-    ])
   end
 end

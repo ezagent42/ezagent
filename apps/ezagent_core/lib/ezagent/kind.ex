@@ -172,7 +172,7 @@ defmodule Ezagent.Kind do
 
       Ezagent.Kind.spawn(Ezagent.Entity.User, %{
         uri: Ezagent.Entity.User.admin_uri(),
-        initial_caps: Ezagent.Entity.User.admin_caps()
+        initial_caps: Ezagent.SystemPrincipal.caps("system://bootstrap")
       })
 
       Ezagent.Kind.spawn(Ezagent.Entity.Session, %{uri: session_uri})

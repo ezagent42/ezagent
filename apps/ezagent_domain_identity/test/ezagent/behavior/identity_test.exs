@@ -26,13 +26,13 @@ defmodule Ezagent.Behavior.IdentityTest do
     end
 
     test "accepts initial_caps as MapSet (admin path)" do
-      admin_caps = User.admin_caps()
+      admin_caps = Ezagent.SystemPrincipal.caps("system://bootstrap")
       assert %{caps: caps} = Identity.init_slice(%{initial_caps: admin_caps})
       assert caps == admin_caps
     end
 
     test "accepts initial_caps as list" do
-      [cap] = MapSet.to_list(User.admin_caps())
+      [cap] = MapSet.to_list(Ezagent.SystemPrincipal.caps("system://bootstrap"))
       assert %{caps: caps} = Identity.init_slice(%{initial_caps: [cap]})
       assert MapSet.size(caps) == 1
     end
@@ -40,7 +40,7 @@ defmodule Ezagent.Behavior.IdentityTest do
 
   describe "invoke(:list_caps, ...)" do
     test "returns list of all caps in slice" do
-      slice = Identity.init_slice(%{initial_caps: User.admin_caps()})
+      slice = Identity.init_slice(%{initial_caps: Ezagent.SystemPrincipal.caps("system://bootstrap")})
 
       assert {:ok, ^slice, %{caps: list}} = Identity.invoke(:list_caps, slice, %{}, %{})
       assert length(list) == MapSet.size(slice.caps)
@@ -49,7 +49,7 @@ defmodule Ezagent.Behavior.IdentityTest do
 
   describe "invoke(:has_cap?, ...)" do
     test "returns true for admin all-cap match" do
-      slice = Identity.init_slice(%{initial_caps: User.admin_caps()})
+      slice = Identity.init_slice(%{initial_caps: Ezagent.SystemPrincipal.caps("system://bootstrap")})
 
       needed = %{
         kind: :session,
@@ -98,7 +98,7 @@ defmodule Ezagent.Behavior.IdentityTest do
 
   describe "Capability.matches? integration sanity" do
     test "admin all-cap matches arbitrary needed cap (the gate Phase 3d uses)" do
-      slice = Identity.init_slice(%{initial_caps: User.admin_caps()})
+      slice = Identity.init_slice(%{initial_caps: Ezagent.SystemPrincipal.caps("system://bootstrap")})
 
       [admin_cap] = MapSet.to_list(slice.caps)
 

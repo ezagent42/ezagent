@@ -44,12 +44,8 @@ defmodule EzagentPluginLiveview.UserApiKeysLive do
     user_uri = encoded |> URI.decode_www_form() |> URI.new!()
     caller_uri = socket.assigns.current_entity_uri
 
-    caller_caps =
-      if URI.to_string(caller_uri) == URI.to_string(Ezagent.Entity.User.admin_uri()) do
-        Ezagent.Entity.User.admin_caps()
-      else
-        Ezagent.Identity.list_caps_for(caller_uri)
-      end
+    # SPEC caps-cleanup-v1 §4.4 — admin caps now live in slice.
+    caller_caps = Ezagent.Identity.list_caps_for(caller_uri)
 
     {:ok,
      socket

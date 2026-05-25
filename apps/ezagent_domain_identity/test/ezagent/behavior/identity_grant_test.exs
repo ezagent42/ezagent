@@ -34,7 +34,7 @@ defmodule Ezagent.Behavior.IdentityGrantTest do
     # caller to hold the bootstrap admin marker. Provide admin caps
     # in ctx — test direct invoke bypasses dispatch's CapBAC gate
     # which would have set this in production.
-    ctx = %{caps: Ezagent.Entity.User.admin_caps()}
+    ctx = %{caps: Ezagent.SystemPrincipal.caps("system://bootstrap")}
 
     {:ok, new_slice, %{caps: caps}} =
       IdentityAdmin.invoke(:grant_cap, slice, %{cap: new_cap}, ctx)
@@ -62,7 +62,7 @@ defmodule Ezagent.Behavior.IdentityGrantTest do
 
     # See sibling test — admin caps required for wildcard grants
     # under PR-OWN-2 §5.2.
-    ctx = %{caps: Ezagent.Entity.User.admin_caps()}
+    ctx = %{caps: Ezagent.SystemPrincipal.caps("system://bootstrap")}
 
     {:ok, new_slice, _} = IdentityAdmin.invoke(:grant_cap, slice, %{cap: cap}, ctx)
     assert MapSet.size(new_slice.caps) == 1
@@ -92,7 +92,7 @@ defmodule Ezagent.Behavior.IdentityGrantTest do
       :ok = Ezagent.Notifications.subscribe(user_uri, %{caps: :system})
 
       ctx = %{
-        caps: Ezagent.Entity.User.admin_caps(),
+        caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
         self_uri: user_uri
       }
 
@@ -171,7 +171,7 @@ defmodule Ezagent.Behavior.IdentityGrantTest do
       # with the negative above).
       slice = %{caps: MapSet.new()}
       cap_to_grant = echo_cap()
-      ctx = %{caps: Ezagent.Entity.User.admin_caps()}
+      ctx = %{caps: Ezagent.SystemPrincipal.caps("system://bootstrap")}
 
       assert {:ok, _new_slice, _result} =
                IdentityAdmin.invoke(:grant_cap, slice, %{cap: cap_to_grant}, ctx)

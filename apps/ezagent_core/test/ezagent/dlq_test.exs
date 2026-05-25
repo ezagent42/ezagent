@@ -32,7 +32,7 @@ defmodule Ezagent.DLQTest do
       args: %{msg: "lost"},
       ctx: %{
         caller: URI.parse("entity://user/system/admin"),
-        caps: Ezagent.Entity.User.admin_caps(),
+        caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
         reply: :ignore
       }
     }

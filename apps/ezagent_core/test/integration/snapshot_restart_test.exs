@@ -24,7 +24,7 @@ defmodule Ezagent.Integration.SnapshotRestartTest do
       uri =
         URI.parse("entity://user/team-alpha/snap-restart-#{System.unique_integer([:positive])}")
 
-      caps = Ezagent.Entity.User.admin_caps()
+      caps = Ezagent.SystemPrincipal.caps("system://bootstrap")
 
       # 1. Spawn fresh User Kind with initial admin_caps
       {:ok, pid1} =
@@ -69,7 +69,7 @@ defmodule Ezagent.Integration.SnapshotRestartTest do
                  args: %{},
                  ctx: %{
                    caller: Ezagent.Entity.User.admin_uri(),
-                   caps: Ezagent.Entity.User.admin_caps(),
+                   caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
                    reply: {:caller_inbox, self()}
                  }
                })

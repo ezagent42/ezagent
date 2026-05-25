@@ -117,9 +117,12 @@ defmodule EzagentWeb.HomeLive do
         target: target,
         mode: :cast,
         args: %{member: echo_uri},
+        # SPEC caps-cleanup-v1 §4.4 — wizard echo-join is Session
+        # slice-internal (member sync); runs under
+        # `system://session-internal` (closed Catalog).
         ctx: %{
           caller: caller_uri,
-          caps: Ezagent.Entity.User.admin_caps(),
+          caps: Ezagent.SystemPrincipal.caps("system://session-internal"),
           reply: :ignore
         }
       })

@@ -147,18 +147,27 @@ defmodule EzagentPluginLiveview.TerminalLive do
   # Matches the admin_live convention.
   def handle_event("pty_resize", _params, socket), do: {:noreply, socket}
 
-  # Caller context for dispatch — pulls caps from the live session.
+  # Caller context for dispatch — SPEC caps-cleanup-v1 §4.4:
+  # admin caps now live in the User Kind's slice (seeded by
+  # SystemPrincipal at boot). Missing caller falls back to the
+  # `system://lv-anon-mount` principal (empty caps — surfaces auth
+  # bugs the previous admin-caps fallback was hiding).
   defp ctx(socket) do
-    caller = socket.assigns[:current_entity_uri] || Ezagent.Entity.User.admin_uri()
+    case socket.assigns[:current_entity_uri] do
+      nil ->
+        %{
+          caller: Ezagent.SystemPrincipal.uri("lv-anon-mount"),
+          caps: Ezagent.SystemPrincipal.caps("system://lv-anon-mount"),
+          reply: :ignore
+        }
 
-    caps =
-      if URI.to_string(caller) == URI.to_string(Ezagent.Entity.User.admin_uri()) do
-        Ezagent.Entity.User.admin_caps()
-      else
-        Ezagent.Identity.list_caps_for(caller)
-      end
-
-    %{caller: caller, caps: caps, reply: :ignore}
+      caller ->
+        %{
+          caller: caller,
+          caps: Ezagent.Identity.list_caps_for(caller),
+          reply: :ignore
+        }
+    end
   end
 
   @impl true

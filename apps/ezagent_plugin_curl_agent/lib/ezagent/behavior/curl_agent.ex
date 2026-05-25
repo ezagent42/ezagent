@@ -43,7 +43,7 @@ defmodule Ezagent.Behavior.CurlAgent do
 
   ## Caller cap reuse
 
-  The reply dispatch runs under `Ezagent.Entity.User.admin_caps/0`
+  The reply dispatch runs under `Ezagent.SystemPrincipal` (`system://chat-reply`)
   (matches the Chat `:reply_received` pattern pre-PR #118). v1
   scope: trust system-routed replies. Phase 7+ may give CurlAgent
   its own caps via Generator scope-bounded delegation.
@@ -232,7 +232,10 @@ defmodule Ezagent.Behavior.CurlAgent do
       args: %{provider: provider},
       ctx: %{
         caller: owner_uri,
-        caps: Ezagent.Entity.User.admin_caps(),
+        # SPEC caps-cleanup-v1 §4.4 — agent-internal data access
+        # (reading owner's API key on behalf of the agent) runs
+        # under `system://agent-internal` per the closed Catalog.
+        caps: Ezagent.SystemPrincipal.caps("system://agent-internal"),
         reply: :ignore
       }
     }
@@ -268,7 +271,9 @@ defmodule Ezagent.Behavior.CurlAgent do
         args: %{message: msg},
         ctx: %{
           caller: agent_uri,
-          caps: Ezagent.Entity.User.admin_caps(),
+          # SPEC caps-cleanup-v1 §4.4 — agent reply path uses
+          # `system://chat-reply` per Catalog.
+          caps: Ezagent.SystemPrincipal.caps("system://chat-reply"),
           reply: :ignore
         }
       })

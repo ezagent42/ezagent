@@ -14,7 +14,7 @@ defmodule Ezagent.Entity.UserTest do
   end
 
   test "admin_caps/0 returns a MapSet containing exactly the structural all-caps cap" do
-    caps = User.admin_caps()
+    caps = Ezagent.SystemPrincipal.caps("system://bootstrap")
     assert %MapSet{} = caps
     assert MapSet.size(caps) == 1
 
@@ -32,7 +32,7 @@ defmodule Ezagent.Entity.UserTest do
   end
 
   test "admin_caps cap matches any invocation" do
-    [cap] = MapSet.to_list(User.admin_caps())
+    [cap] = MapSet.to_list(Ezagent.SystemPrincipal.caps("system://bootstrap"))
 
     assert Capability.matches?(cap, %{
              kind: :random,
@@ -43,8 +43,8 @@ defmodule Ezagent.Entity.UserTest do
   end
 
   test "admin_caps cap is refused by revoke/2" do
-    [admin_cap] = MapSet.to_list(User.admin_caps())
-    caps = User.admin_caps()
+    [admin_cap] = MapSet.to_list(Ezagent.SystemPrincipal.caps("system://bootstrap"))
+    caps = Ezagent.SystemPrincipal.caps("system://bootstrap")
     assert {:error, :cannot_revoke_admin} = Capability.revoke(caps, admin_cap)
   end
 

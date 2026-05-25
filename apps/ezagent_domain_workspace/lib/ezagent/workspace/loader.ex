@@ -324,9 +324,11 @@ defmodule Ezagent.Workspace.Loader do
            target: target,
            mode: :call,
            args: %{},
+           # SPEC caps-cleanup-v1 §4.4 — Workspace Loader re-spawn at
+           # boot runs under `system://workspace-loader` (closed Catalog).
            ctx: %{
-             caller: Ezagent.Entity.User.admin_uri(),
-             caps: Ezagent.Entity.User.admin_caps(),
+             caller: Ezagent.SystemPrincipal.uri("workspace-loader"),
+             caps: Ezagent.SystemPrincipal.caps("system://workspace-loader"),
              reply: {:caller_inbox, self()}
            }
          }) do

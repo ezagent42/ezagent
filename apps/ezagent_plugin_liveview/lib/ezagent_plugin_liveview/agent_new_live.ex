@@ -262,20 +262,20 @@ defmodule EzagentPluginLiveview.AgentNewLive do
     end
   end
 
+  # SPEC caps-cleanup-v1 §4.4 — `EzagentWeb.LiveAuth.on_mount(:require_entity)`
+  # plumbs `:current_entity_uri`; missing means upstream auth broke and
+  # the LV falls back to the `system://lv-anon-mount` principal (closed
+  # Catalog, empty caps — surfaces the auth bug rather than hiding it
+  # behind an admin-caps fallback like pre-PR-CC-1 did).
   defp caller_uri(socket) do
-    # Plumbed by EzagentWeb.LiveAuth.on_mount(:require_entity); falls
-    # back to admin only if upstream auth broke (which would already
-    # have redirected pre-mount, so this is belt-and-suspenders).
-    Map.get(socket.assigns, :current_entity_uri) || Ezagent.Entity.User.admin_uri()
+    Map.get(socket.assigns, :current_entity_uri) ||
+      Ezagent.SystemPrincipal.uri("lv-anon-mount")
   end
 
   defp caller_caps(socket) do
-    caller = caller_uri(socket)
-
-    if URI.to_string(caller) == URI.to_string(Ezagent.Entity.User.admin_uri()) do
-      Ezagent.Entity.User.admin_caps()
-    else
-      Ezagent.Identity.list_caps_for(caller)
+    case Map.get(socket.assigns, :current_entity_uri) do
+      nil -> Ezagent.SystemPrincipal.caps("system://lv-anon-mount")
+      caller -> Ezagent.Identity.list_caps_for(caller)
     end
   end
 

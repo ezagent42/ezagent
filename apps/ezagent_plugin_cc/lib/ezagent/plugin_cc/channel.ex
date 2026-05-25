@@ -112,9 +112,11 @@ defmodule EzagentPluginCc.Channel do
         target: target,
         mode: :cast,
         args: %{message: msg},
+        # SPEC caps-cleanup-v1 §4.4 — CC agent reply runs under
+        # `system://chat-reply` (closed Catalog).
         ctx: %{
           caller: agent_uri,
-          caps: Ezagent.Entity.User.admin_caps(),
+          caps: Ezagent.SystemPrincipal.caps("system://chat-reply"),
           reply: :ignore
         }
       })

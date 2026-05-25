@@ -90,16 +90,21 @@ defmodule EzagentPluginFeishu.BindingPolicy do
     end)
   end
 
-  defp grant_cap(user_uri, admin_uri, %Capability{} = cap) do
+  defp grant_cap(user_uri, _admin_uri, %Capability{} = cap) do
     target = URI.new!("#{to_str(user_uri)}?action=identity.grant_cap")
 
     inv = %Invocation{
       target: target,
       mode: :call,
       args: %{cap: cap},
+      # SPEC caps-cleanup-v1 §4.4 — re-grant of default caps on
+      # Feishu bind is a policy action, not operator-driven; runs
+      # under `system://feishu-binding-policy` per the closed Catalog.
+      # The operator-supplied `admin_uri` was the previous
+      # ambient-authority caller and is no longer load-bearing.
       ctx: %{
-        caller: to_uri(admin_uri),
-        caps: Ezagent.Entity.User.admin_caps(),
+        caller: Ezagent.SystemPrincipal.uri("feishu-binding-policy"),
+        caps: Ezagent.SystemPrincipal.caps("system://feishu-binding-policy"),
         reply: :sync
       }
     }

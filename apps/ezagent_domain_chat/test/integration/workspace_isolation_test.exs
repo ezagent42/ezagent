@@ -86,7 +86,7 @@ defmodule EzagentDomainChat.Integration.WorkspaceIsolationTest do
       target: URI.new!("#{URI.to_string(session_uri)}?action=chat.send"),
       mode: :cast,
       args: %{message: msg},
-      ctx: %{caller: sender, caps: User.admin_caps(), reply: :ignore}
+      ctx: %{caller: sender, caps: Ezagent.SystemPrincipal.caps("system://bootstrap"), reply: :ignore}
     }
 
     Invocation.dispatch(inv)

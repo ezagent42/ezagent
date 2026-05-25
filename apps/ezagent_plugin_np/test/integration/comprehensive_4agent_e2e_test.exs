@@ -142,7 +142,7 @@ defmodule EzagentPluginNp.Integration.Comprehensive4AgentE2eTest do
         target: URI.new!("#{URI.to_string(session)}?action=chat.join"),
         mode: :cast,
         args: %{member: member},
-        ctx: %{caller: member, caps: User.admin_caps(), reply: :ignore}
+        ctx: %{caller: member, caps: Ezagent.SystemPrincipal.caps("system://bootstrap"), reply: :ignore}
       })
 
     Process.sleep(50)
@@ -236,7 +236,7 @@ defmodule EzagentPluginNp.Integration.Comprehensive4AgentE2eTest do
                  args: %{provider: "deepseek", key: "sk-fake-test-key-1234567890"},
                  ctx: %{
                    caller: admin_uri,
-                   caps: User.admin_caps(),
+                   caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
                    reply: {:caller_inbox, self()}
                  }
                })
@@ -298,7 +298,7 @@ defmodule EzagentPluginNp.Integration.Comprehensive4AgentE2eTest do
           args: %{message: inbound_msg},
           ctx: %{
             caller: admin_uri,
-            caps: User.admin_caps(),
+            caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
             reply: :ignore
           }
         })

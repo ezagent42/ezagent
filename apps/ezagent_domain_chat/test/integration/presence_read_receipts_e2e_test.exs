@@ -104,7 +104,7 @@ defmodule EzagentDomainChat.Integration.PresenceReadReceiptsE2ETest do
       args: %{member: member_uri},
       ctx: %{
         caller: Ezagent.Entity.User.admin_uri(),
-        caps: Ezagent.Entity.User.admin_caps(),
+        caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
         reply: :inline
       }
     })
@@ -130,7 +130,7 @@ defmodule EzagentDomainChat.Integration.PresenceReadReceiptsE2ETest do
       args: %{message: msg},
       ctx: %{
         caller: admin_uri,
-        caps: Ezagent.Entity.User.admin_caps(),
+        caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
         reply: :inline
       }
     })

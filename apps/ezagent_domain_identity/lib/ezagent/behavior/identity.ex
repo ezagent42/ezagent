@@ -13,8 +13,9 @@ defmodule Ezagent.Behavior.Identity do
 
   ## Why caps live in slice (not module-level constant)
 
-  Phase 1-2 admin caps came from `Ezagent.Entity.User.admin_caps/0` —
-  hardcoded module function. Phase 3d puts them in **runtime slice**
+  Phase 1-2 admin caps came from `Ezagent.Entity.User.admin_caps/0`
+  (deleted in PR-CC-1 — replaced by `Ezagent.SystemPrincipal.caps/1`
+  reading the closed Catalog). Phase 3d puts them in **runtime slice**
   so:
   - `:sys.get_state(admin_user_pid)` exposes the live caps (debuggable)
   - Phase 4+ admin grants new cap → mutate slice, not redeploy code
@@ -25,8 +26,9 @@ defmodule Ezagent.Behavior.Identity do
       %{caps: MapSet.t(Ezagent.Capability.t())}
 
   `init_slice(args)` reads `args[:initial_caps]` (default `MapSet.new()`).
-  Chat plugin Application passes `initial_caps: User.admin_caps()` when
-  spawning admin User.
+  Chat plugin Application passes
+  `initial_caps: Ezagent.SystemPrincipal.caps("system://bootstrap")` when
+  spawning admin User (PR-CC-1; replaces the previous deleted helper).
 
   ## Actions
 
@@ -372,8 +374,9 @@ defmodule Ezagent.Behavior.IdentityAdmin do
 
   # Bootstrap admin holds at least one cap with `behavior: :any` AND
   # `workspace_uri: :any`. This is the only legitimate granter for
-  # wildcard or ownerless caps. Existing `User.admin_caps/1` mints
-  # exactly this shape.
+  # wildcard or ownerless caps.
+  # `Ezagent.SystemPrincipal.caps("system://bootstrap")` mints exactly
+  # this shape (PR-CC-1 replacement for `User.admin_caps/0`).
   defp require_bootstrap_admin(ctx, error_tag) do
     if holds_admin_caps?(ctx) do
       :ok
@@ -388,7 +391,7 @@ defmodule Ezagent.Behavior.IdentityAdmin do
   # narrow-instance delegated wildcard cap (e.g.
   # `kind:any/behavior:any/instance:<target>/workspace:any`) satisfy
   # the predicate — privilege escalation for that specific target.
-  # The bootstrap admin's `User.admin_caps()` mints exactly the
+  # `SystemPrincipal.caps("system://bootstrap")` mints exactly the
   # all-four-wildcards shape; no legitimate delegated cap should
   # have that exact shape.
   defp holds_admin_caps?(%{caps: caps}) do

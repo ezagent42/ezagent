@@ -617,9 +617,12 @@ defmodule Ezagent.Behavior.Template do
            target: target,
            mode: :call,
            args: %{cap: cap},
+           # SPEC caps-cleanup-v1 §4.4 — Template fork side-effect
+           # grants owner cap on the fork; runs under
+           # `system://template-materialize` (closed Catalog).
            ctx: %{
-             caller: Ezagent.Entity.User.admin_uri(),
-             caps: Ezagent.Entity.User.admin_caps(),
+             caller: Ezagent.SystemPrincipal.uri("template-materialize"),
+             caps: Ezagent.SystemPrincipal.caps("system://template-materialize"),
              reply: {:caller_inbox, self()}
            }
          }) do

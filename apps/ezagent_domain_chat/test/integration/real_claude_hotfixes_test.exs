@@ -67,7 +67,7 @@ defmodule EzagentDomainChat.Integration.RealClaudeHotfixesTest do
 
       ctx = %{
         caller: session_uri,
-        caps: User.admin_caps(),
+        caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
         reply: :ignore,
         kind_module: Ezagent.Entity.Agent,
         self_uri: agent_uri

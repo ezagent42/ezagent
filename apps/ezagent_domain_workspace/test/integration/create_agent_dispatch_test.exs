@@ -30,7 +30,7 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
     {:ok, _ws_pid} = Workspace.create(ws_name, %{})
 
     workspace_uri = URI.new!("workspace://#{ws_name}")
-    admin_ctx = %{caller: User.admin_uri(), caps: User.admin_caps()}
+    admin_ctx = %{caller: User.admin_uri(), caps: Ezagent.SystemPrincipal.caps("system://bootstrap")}
 
     {:ok, ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx}
   end

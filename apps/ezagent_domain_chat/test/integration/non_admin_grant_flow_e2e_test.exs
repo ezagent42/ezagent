@@ -73,7 +73,7 @@ defmodule EzagentDomainChat.Integration.NonAdminGrantFlowE2ETest do
       args: %{cap: cap},
       ctx: %{
         caller: Ezagent.Entity.User.admin_uri(),
-        caps: Ezagent.Entity.User.admin_caps(),
+        caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
         reply: :inline
       }
     })

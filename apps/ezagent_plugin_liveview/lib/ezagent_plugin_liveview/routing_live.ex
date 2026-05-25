@@ -85,12 +85,8 @@ defmodule EzagentPluginLiveview.RoutingLive do
     # current_entity_uri before mount/3 runs; admin fallback deleted.
     caller_uri = socket.assigns.current_entity_uri
 
-    caller_caps =
-      if URI.to_string(caller_uri) == URI.to_string(Ezagent.Entity.User.admin_uri()) do
-        Ezagent.Entity.User.admin_caps()
-      else
-        Ezagent.Identity.list_caps_for(caller_uri)
-      end
+    # SPEC caps-cleanup-v1 §4.4 — admin caps now live in slice.
+    caller_caps = Ezagent.Identity.list_caps_for(caller_uri)
 
     # V1 UI PR-1 (SPEC §1.2 / §1.5) — options for the uri_picker
     # components. Caller-authorized: UriOptions resolves workspace

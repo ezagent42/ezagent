@@ -65,7 +65,7 @@ defmodule EzagentDomainIdentity.Application do
         # PR-M (Allen 2026-05-20) — DB write skipped in :test env to
         # avoid Sandbox checkout contention. Tests that need the admin
         # row can call `Ezagent.Users.create(admin_uri, nil,
-        # MapSet.to_list(User.admin_caps()))` in setup. Dev/prod see
+        # MapSet.to_list(SystemPrincipal.caps("system://bootstrap")))` in setup. Dev/prod see
         # the seed on every boot (idempotent).
         :ok = maybe_ensure_admin_user()
 
@@ -121,7 +121,13 @@ defmodule EzagentDomainIdentity.Application do
       # V1 prevention (Allen 2026-05-21): route via Ezagent.Kind.spawn/2.
       # User Kind declares `EzagentDomainIdentity.Application.UserSupervisor`
       # via supervisor/0 — destination preserved.
-      case Ezagent.Kind.spawn(User, %{uri: admin_uri, initial_caps: User.admin_caps()}) do
+      # SPEC caps-cleanup-v1 §4.4 — admin's bootstrap caps now come
+      # from `Ezagent.SystemPrincipal.caps/1` (closed Catalog, granted
+      # by `system://bootstrap`), not the deleted `User.admin_caps/0`.
+      case Ezagent.Kind.spawn(User, %{
+             uri: admin_uri,
+             initial_caps: Ezagent.SystemPrincipal.caps("system://bootstrap")
+           }) do
         {:ok, _pid} ->
           :ok
 
@@ -171,7 +177,12 @@ defmodule EzagentDomainIdentity.Application do
       try do
         case Ezagent.Users.get_by_uri(admin_uri) do
           nil ->
-            admin_cap_list = User.admin_caps() |> MapSet.to_list()
+            # SPEC caps-cleanup-v1 §4.4 — bootstrap caps come from the
+            # closed Catalog via `Ezagent.SystemPrincipal`.
+            admin_cap_list =
+              "system://bootstrap"
+              |> Ezagent.SystemPrincipal.caps()
+              |> MapSet.to_list()
 
             case Ezagent.Users.create(admin_uri, nil, admin_cap_list) do
               {:ok, _decoded} ->
@@ -182,7 +193,7 @@ defmodule EzagentDomainIdentity.Application do
 
                 Logger.warning(
                   "ensure_admin_user: create failed (#{inspect(reason)}); " <>
-                    "admin URI bootstrap still usable via User.admin_caps but " <>
+                    "admin URI bootstrap still usable via SystemPrincipal but " <>
                     "mix ezagent.user.set_password will fail until row exists"
                 )
 
@@ -213,9 +224,11 @@ defmodule EzagentDomainIdentity.Application do
       SpawnRegistry.register("entity", fn uri ->
         case uri.host do
           "user" ->
+            # SPEC caps-cleanup-v1 §4.4 — admin's bootstrap caps come
+            # from `Ezagent.SystemPrincipal` (closed Catalog).
             initial_caps =
               if uri == User.admin_uri() do
-                User.admin_caps()
+                Ezagent.SystemPrincipal.caps("system://bootstrap")
               else
                 MapSet.new()
               end

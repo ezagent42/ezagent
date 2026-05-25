@@ -149,12 +149,9 @@ defmodule EzagentPluginLiveview.AdminLive do
       end
     end
 
-    caller_caps =
-      if URI.to_string(caller_uri) == URI.to_string(Ezagent.Entity.User.admin_uri()) do
-        Ezagent.Entity.User.admin_caps()
-      else
-        Ezagent.Identity.list_caps_for(caller_uri)
-      end
+    # SPEC caps-cleanup-v1 §4.4 — admin's caps live in slice (seeded
+    # via `Ezagent.SystemPrincipal` at boot); no special branch needed.
+    caller_caps = Ezagent.Identity.list_caps_for(caller_uri)
 
     initial_messages = load_session_messages(current_session_uri)
 

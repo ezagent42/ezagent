@@ -144,9 +144,17 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
     with_pty? = Keyword.get(opts, :with_pty, false)
     from_str = Keyword.get(opts, :from)
 
+    # SPEC caps-cleanup-v1 §4.4 — operator mix task runs under
+    # `system://mix-task` (closed Catalog; operator already has shell
+    # access — principal exists for audit traceability). The granter
+    # for parsed caps stays `User.admin_uri()` (real admin entity, the
+    # legitimate granted_by for operator-minted caps).
     admin_uri = Ezagent.Entity.User.admin_uri()
-    admin_caps = Ezagent.Entity.User.admin_caps()
-    admin_ctx = %{caller: admin_uri, caps: admin_caps}
+
+    admin_ctx = %{
+      caller: Ezagent.SystemPrincipal.uri("mix-task"),
+      caps: Ezagent.SystemPrincipal.caps("system://mix-task")
+    }
 
     with {:ok, agent_uri} <- parse_uri(agent_uri_str),
          {:ok, workspace_uri, flavor, name} <- decompose(agent_uri),

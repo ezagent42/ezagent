@@ -9,7 +9,9 @@ defmodule EzagentWeb.LiveAuth do
   on_mount hook protects the LV — without it, an LV's `mount/3`
   would receive `session = %{}` and would historically fall back to
   `Ezagent.Entity.User.admin_uri()` / `admin_caps()` (security bug
-  pre-PR #123).
+  pre-PR #123; `admin_caps/0` deleted in PR-CC-1 — anonymous mounts
+  now fall back to `system://lv-anon-mount` with EMPTY caps per
+  SPEC caps-cleanup-v1 §4.4).
 
   ## Wiring
 
