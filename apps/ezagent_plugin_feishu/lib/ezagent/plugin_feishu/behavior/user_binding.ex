@@ -114,12 +114,25 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
   @impl Ezagent.Behavior
   def init_slice(_args), do: %{bind_count: 0}
 
-  # Workspace Behavior is workspace-scoped by default; bindings
-  # operations should follow the workspace iso boundary so a tenant
-  # admin can bind only within their workspace unless they hold a
-  # cross-workspace cap.
+  # Codex r1 P1: `workspace_scoped? = true` would only check that the
+  # CALLER and TARGET share a workspace; the action body operates on
+  # the GLOBAL `feishu_user_bindings` table (no workspace column).
+  # That combination is unsound — a caller with the cap for
+  # workspace://A could bind/unbind a workspace://B user.
+  #
+  # The correct shape until the table grows a workspace column: this
+  # is a CROSS-WORKSPACE Behavior. The action body's per-call
+  # `workspace_check/2` (below) enforces that the bound user URI
+  # lives in the SAME workspace as the dispatch target (extracted
+  # structurally from the URI), and the read-side `:list_feishu_bindings`
+  # filters rows by the target workspace. A bootstrap-admin holder
+  # passes the structural check via `:any`-instance caps.
+  #
+  # This matches the pattern `Behavior.Routing.workspace_scoped? =
+  # false` uses for the global `system://routing/default` shape —
+  # cross-workspace by Kind, structurally-enforced inside the action.
   @impl Ezagent.Behavior
-  def workspace_scoped?, do: true
+  def workspace_scoped?, do: false
 
   # PR-OWN-4 data_owner pattern (matching Behavior.Workspace): the
   # workspace itself owns its bindings. `:any` means workspace-admin
@@ -141,13 +154,27 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
     # legacy task accepted such a flag; the dispatched action body
     # uses the authenticated caller).
     bound_by = Map.get(ctx, :caller) || default_admin_uri()
-
     user_uri_str = uri_to_str(user_uri)
 
-    with {:ok, _row} <- UserBinding.bind(open_id, user_uri_str, bound_by),
+    # Codex r1 P1.2: enforce workspace scope on the user URI BEFORE
+    # any side-effect. The table is global (no workspace column) so
+    # we structurally derive the user's workspace from their URI and
+    # require it to match the dispatch target's workspace — unless
+    # the caller holds a bootstrap-admin cap (defence in depth for
+    # cross-tenant migrations).
+    with :ok <- ensure_same_workspace(user_uri_str, ctx),
+         {:ok, _row} <- UserBinding.bind(open_id, user_uri_str, bound_by),
          :ok <- BindingPolicy.apply(user_uri_str, bound_by) do
-      {:ok, %{slice | bind_count: slice.bind_count + 1},
-       %{open_id: open_id, user_uri: user_uri_str}}
+      # Codex r1 P1.1: the Workspace Kind only initializes the
+      # `:workspace` slice in its init_slice/1 — plugin-registered
+      # Behavior slices arrive as `%{}` from `Map.get(state, slice_key,
+      # %{})` in `Kind.Runtime.handle_dispatch/4`. Lazy-seed
+      # `bind_count` so `slice + 1` doesn't crash AFTER side-effects.
+      # Same pattern as `Behavior.Routing.bump/1` (its lib/.../routing.ex
+      # comments cite the same reason).
+      new_slice = Map.update(slice, :bind_count, 1, &(&1 + 1))
+
+      {:ok, new_slice, %{open_id: open_id, user_uri: user_uri_str}}
     else
       {:error, _} = err ->
         err
@@ -161,16 +188,24 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
     {:error, {:bad_args, "bind requires {open_id: String, user_uri: URI|String}", args}}
   end
 
-  def invoke(:unbind, slice, %{open_id: open_id}, _ctx)
+  def invoke(:unbind, slice, %{open_id: open_id}, ctx)
       when is_binary(open_id) and open_id != "" do
-    case UserBinding.unbind(open_id) do
-      :ok ->
-        # Slice's bind_count is incidental — don't decrement (could go
-        # negative on a multi-Kind restart race). The DB is the source
-        # of truth.
-        {:ok, slice, %{unbound: open_id}}
-
+    # Codex r1 P1.2: before unbinding, check that the existing binding
+    # row belongs to the dispatch target's workspace. Without this, a
+    # caller with cap on workspace://A could unbind any open_id
+    # globally. Reads happen pre-mutation; the only side-effect is
+    # gated by `ensure_existing_binding_in_workspace/2`.
+    with {:ok, _row} <- ensure_existing_binding_in_workspace(open_id, ctx),
+         :ok <- UserBinding.unbind(open_id) do
+      # Slice's bind_count is incidental — don't decrement (could go
+      # negative on a multi-Kind restart race). The DB is the source
+      # of truth.
+      {:ok, slice, %{unbound: open_id}}
+    else
       {:error, :not_found} = err ->
+        err
+
+      {:error, _} = err ->
         err
 
       other ->
@@ -182,9 +217,17 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
     {:error, {:bad_args, "unbind requires {open_id: String}", args}}
   end
 
-  def invoke(:list_feishu_bindings, slice, _args, _ctx) do
+  def invoke(:list_feishu_bindings, slice, _args, ctx) do
+    # Codex r1 P1.2: filter rows by the dispatch target's workspace
+    # so a tenant operator only sees bindings for their workspace's
+    # users. Bootstrap admin sees all rows (the :any-instance cap
+    # carrier; structurally enforced by `workspace_match?/2` short
+    # circuiting on :any).
+    target_workspace = target_workspace_uri(ctx)
+
     bindings =
       UserBinding.list_all()
+      |> Enum.filter(fn b -> workspace_match?(b.user_uri, target_workspace) end)
       |> Enum.map(fn b ->
         %{
           open_id: b.open_id,
@@ -247,4 +290,81 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
       "entity://user/system/admin"
     end
   end
+
+  # Codex r1 P1.2: structural workspace-match between a bound user
+  # URI and the dispatch target's workspace.
+  #
+  # Bootstrap-admin caps surface as `:any`-instance + `:any`-workspace
+  # in their match shape; we treat the absence of a concrete target
+  # workspace as "admin bypass" (the cap-check at step 5.5 already
+  # validated the caller can dispatch — by this point a non-admin
+  # must have had a concrete workspace target). For concrete targets
+  # we require the user URI's workspace segment to match.
+  defp ensure_same_workspace(user_uri_str, ctx) do
+    target_ws = target_workspace_uri(ctx)
+
+    cond do
+      # `:any` target = bootstrap admin or test fixture with no
+      # self_uri — let step 5.5 cap check stay the gate.
+      target_ws == :any ->
+        :ok
+
+      workspace_match?(user_uri_str, target_ws) ->
+        :ok
+
+      true ->
+        {:error,
+         {:cross_workspace_user, target_workspace: URI.to_string(target_ws), user: user_uri_str}}
+    end
+  end
+
+  # For :unbind — the existing row's user_uri tells us whose binding
+  # this is. We refuse unless the row's user belongs to the target
+  # workspace (or the caller holds an :any target via bootstrap admin).
+  defp ensure_existing_binding_in_workspace(open_id, ctx) do
+    case UserBinding.resolve(open_id) do
+      {:ok, %URI{} = user_uri} ->
+        case ensure_same_workspace(URI.to_string(user_uri), ctx) do
+          :ok -> {:ok, user_uri}
+          err -> err
+        end
+
+      :error ->
+        {:error, :not_found}
+    end
+  end
+
+  # Pull the target Workspace URI out of dispatch ctx. `self_uri` is
+  # injected by Kind.Runtime step 5 — for `workspace://X?action=...`
+  # it is `workspace://X`. Test scenarios that build ctx manually may
+  # pass it directly.
+  defp target_workspace_uri(ctx) do
+    case Map.get(ctx, :self_uri) do
+      %URI{scheme: "workspace"} = uri -> uri
+      _ -> :any
+    end
+  end
+
+  # Does the user URI's workspace segment match the target workspace?
+  # Entity URIs are `entity://<type>/<workspace>/<name>` per SPEC v3
+  # §3 — extract the workspace via Ezagent.URI.entity_workspace_uri/1
+  # and compare.
+  defp workspace_match?(_user_uri_str, :any), do: true
+
+  defp workspace_match?(user_uri_str, %URI{} = target_ws) when is_binary(user_uri_str) do
+    case URI.new(user_uri_str) do
+      {:ok, %URI{scheme: "entity"} = user_uri} ->
+        case Ezagent.URI.entity_workspace_uri(user_uri) do
+          %URI{} = user_ws -> URI.to_string(user_ws) == URI.to_string(target_ws)
+          _ -> false
+        end
+
+      _ ->
+        false
+    end
+  rescue
+    _ -> false
+  end
+
+  defp workspace_match?(_, _), do: false
 end

@@ -68,8 +68,13 @@ defmodule EzagentPluginFeishu.Behavior.UserBindingTest do
       assert BV.init_slice(%{}) == %{bind_count: 0}
     end
 
-    test "workspace_scoped? is true (intra-workspace admin grants)" do
-      assert BV.workspace_scoped?() == true
+    test "workspace_scoped? is false (cross-workspace by design; structural check in body)" do
+      # Codex r1 P1.2: the global feishu_user_bindings table has no
+      # workspace column, so a workspace_scoped? = true declaration
+      # would only enforce the CALLER/TARGET match while the action
+      # body still operated on a global table — unsound. We declare
+      # the Behavior cross-workspace and enforce per-call structurally.
+      assert BV.workspace_scoped?() == false
     end
 
     test "data_owner is :any (workspace-admin grantable)" do
@@ -138,6 +143,48 @@ defmodule EzagentPluginFeishu.Behavior.UserBindingTest do
 
       assert row.bound_by == URI.to_string(caller)
     end
+
+    # Codex r1 P1.2 — workspace enforcement regression tests.
+
+    test "refuses to bind a user from a different workspace" do
+      # Target = workspace://team-alpha, user is in workspace://team-beta.
+      open_id = "ou_bv_cross_ws_#{System.unique_integer([:positive])}"
+      foreign_user = URI.parse("entity://user/team-beta/eve")
+
+      args = %{open_id: open_id, user_uri: foreign_user}
+
+      assert {:error, {:cross_workspace_user, _}} =
+               BV.invoke(:bind, empty_slice(), args, ctx())
+
+      # No row was inserted (the with-chain short-circuits BEFORE
+      # UserBinding.bind/3 fires).
+      assert :error = UB.resolve(open_id)
+    end
+
+    test "bootstrap admin bypass: self_uri = :any allows cross-workspace bind" do
+      # When ctx.self_uri is not a concrete workspace URI (admin path
+      # at step 5.5 already validated the cap), the structural check
+      # treats target as `:any` and lets the bind proceed.
+      open_id = "ou_bv_admin_bypass_#{System.unique_integer([:positive])}"
+      admin_ctx = Map.delete(ctx(), :self_uri)
+
+      args = %{open_id: open_id, user_uri: URI.parse("entity://user/team-beta/eve")}
+
+      assert {:ok, _slice, _} = BV.invoke(:bind, empty_slice(), args, admin_ctx)
+    end
+
+    test "lazy-seeds bind_count when slice starts as %{} (codex r1 P1.1)" do
+      # Workspace Kind only initializes its `:workspace` slice; the
+      # plugin-registered `:feishu_user_bindings` slice arrives empty.
+      # The action must not crash with KeyError on bind_count.
+      open_id = "ou_bv_lazy_seed_#{System.unique_integer([:positive])}"
+      args = %{open_id: open_id, user_uri: @user_uri}
+
+      empty_map_slice = %{}
+
+      assert {:ok, new_slice, _} = BV.invoke(:bind, empty_map_slice, args, ctx())
+      assert new_slice.bind_count == 1
+    end
   end
 
   describe "invoke(:unbind, ...)" do
@@ -172,10 +219,34 @@ defmodule EzagentPluginFeishu.Behavior.UserBindingTest do
       assert {:error, {:bad_args, _, _}} =
                BV.invoke(:unbind, empty_slice(), %{wrong: "shape"}, ctx())
     end
+
+    # Codex r1 P1.2 — workspace enforcement on unbind.
+
+    test "refuses to unbind a row owned by a different workspace's user" do
+      # Seed a binding for a user in team-beta via admin bypass.
+      open_id = "ou_bv_unbind_cross_#{System.unique_integer([:positive])}"
+      admin_ctx = Map.delete(ctx(), :self_uri)
+
+      {:ok, _, _} =
+        BV.invoke(
+          :bind,
+          empty_slice(),
+          %{open_id: open_id, user_uri: URI.parse("entity://user/team-beta/eve")},
+          admin_ctx
+        )
+
+      # A team-alpha caller (ctx() self_uri = workspace://team-alpha)
+      # MUST NOT unbind team-beta's binding.
+      assert {:error, {:cross_workspace_user, _}} =
+               BV.invoke(:unbind, empty_slice(), %{open_id: open_id}, ctx())
+
+      # Row survived.
+      assert {:ok, _} = UB.resolve(open_id)
+    end
   end
 
   describe "invoke(:list_feishu_bindings, ...)" do
-    test "returns all bindings in the system" do
+    test "returns bindings for the target workspace only" do
       open_id_a = "ou_bv_list_a_#{System.unique_integer([:positive])}"
       open_id_b = "ou_bv_list_b_#{System.unique_integer([:positive])}"
 
@@ -197,6 +268,47 @@ defmodule EzagentPluginFeishu.Behavior.UserBindingTest do
       assert is_binary(a_row.user_uri)
       assert is_binary(a_row.bound_by)
       assert %DateTime{} = a_row.bound_at
+    end
+
+    test "filters out bindings from other workspaces (codex r1 P1.2)" do
+      # Seed bindings: one in team-alpha (target), one in team-beta.
+      open_id_alpha = "ou_bv_filter_alpha_#{System.unique_integer([:positive])}"
+      open_id_beta = "ou_bv_filter_beta_#{System.unique_integer([:positive])}"
+
+      admin_ctx = Map.delete(ctx(), :self_uri)
+
+      # Admin seeds both.
+      {:ok, _, _} =
+        BV.invoke(
+          :bind,
+          empty_slice(),
+          %{open_id: open_id_alpha, user_uri: URI.parse("entity://user/team-alpha/alice")},
+          admin_ctx
+        )
+
+      {:ok, _, _} =
+        BV.invoke(
+          :bind,
+          empty_slice(),
+          %{open_id: open_id_beta, user_uri: URI.parse("entity://user/team-beta/eve")},
+          admin_ctx
+        )
+
+      # Listing as team-alpha caller sees ONLY the alpha row.
+      {:ok, _, %{bindings: alpha_bindings}} =
+        BV.invoke(:list_feishu_bindings, empty_slice(), %{}, ctx())
+
+      alpha_open_ids = Enum.map(alpha_bindings, & &1.open_id)
+      assert open_id_alpha in alpha_open_ids
+      refute open_id_beta in alpha_open_ids
+
+      # Listing as admin (no self_uri) sees both.
+      {:ok, _, %{bindings: all_bindings}} =
+        BV.invoke(:list_feishu_bindings, empty_slice(), %{}, admin_ctx)
+
+      all_open_ids = Enum.map(all_bindings, & &1.open_id)
+      assert open_id_alpha in all_open_ids
+      assert open_id_beta in all_open_ids
     end
 
     test "returns empty list when no bindings exist (after sandbox reset)" do
