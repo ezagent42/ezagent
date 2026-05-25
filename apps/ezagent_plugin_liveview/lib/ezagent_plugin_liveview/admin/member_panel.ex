@@ -189,9 +189,22 @@ defmodule EzagentPluginLiveview.Admin.MemberPanel do
     end
   end
 
-  # Phase 8b — `entity://agent/default/cc_<name>` is the cc-managed agent
-  # convention (PR #149 flavor-prefix scheme).
-  defp cc_agent_uri?("entity://agent/default/cc_" <> _), do: true
+  # Phase 8b — cc-managed agents have the `cc_` flavor-prefix in their
+  # name segment (PR #149 flavor-prefix scheme). Workspace-agnostic check:
+  # match `entity://agent/<any-workspace>/cc_<name>`.
+  #
+  # Lesson 2026-05-25: the prior hard-coded `entity://agent/default/cc_`
+  # prefix made cc agents in non-default workspaces (e.g. `system`)
+  # silently invisible to the per-row PTY button (🖥️). Surfaced by the
+  # workspace-rename impl subagent (PR #335). Cherry-picked here as a
+  # standalone fix.
+  defp cc_agent_uri?("entity://agent/" <> rest) do
+    case String.split(rest, "/", parts: 2) do
+      [_workspace, "cc_" <> _] -> true
+      _ -> false
+    end
+  end
+
   defp cc_agent_uri?(_), do: false
 
   defp member_status_class(true),
