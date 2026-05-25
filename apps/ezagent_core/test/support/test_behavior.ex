@@ -76,3 +76,43 @@ defmodule Ezagent.Test.TestKind do
   @impl Ezagent.Kind
   def persistence, do: :ephemeral
 end
+
+defmodule Ezagent.Test.OnChangeTestKind do
+  @moduledoc """
+  Allen 2026-05-25 — minimal `{:snapshot, :on_change}` Kind used by the
+  CLI-persistence invariant test
+  (`kind_init_persists_initial_snapshot_test.exs`).
+  """
+
+  @behaviour Ezagent.Kind
+
+  @impl Ezagent.Kind
+  def type_name, do: :test
+
+  @impl Ezagent.Kind
+  def behaviors, do: [Ezagent.Test.TestBehavior]
+
+  @impl Ezagent.Kind
+  def persistence, do: {:snapshot, :on_change}
+end
+
+defmodule Ezagent.Test.OnTerminateTestKind do
+  @moduledoc """
+  Allen 2026-05-25 — minimal `:on_terminate` Kind used by the
+  CLI-persistence invariant test. `:on_terminate` is the policy
+  `Ezagent.Entity.Agent` uses, and the one the CLI bug
+  (`mix ezagent.agent.create` → BEAM exit before terminate completes
+  in some races) primarily affects.
+  """
+
+  @behaviour Ezagent.Kind
+
+  @impl Ezagent.Kind
+  def type_name, do: :test
+
+  @impl Ezagent.Kind
+  def behaviors, do: [Ezagent.Test.TestBehavior]
+
+  @impl Ezagent.Kind
+  def persistence, do: :on_terminate
+end

@@ -96,9 +96,15 @@ defmodule Ezagent.Integration.SnapshotRestartTest do
     end
   end
 
-  describe ":on_terminate writes on graceful shutdown" do
-    test "Agent flips to :on_terminate (Spec 04 §2.I) — graceful kill writes row" do
-      # Use a unique URI; spawn under the chat plugin's agent supervisor
+  describe "Agent (:on_change) writes at init and survives shutdown" do
+    test "Agent init writes row immediately; graceful kill keeps it" do
+      # Allen 2026-05-25 — CLI persistence fix: `Ezagent.Entity.Agent`
+      # bumped from `:on_terminate` to `{:snapshot, :on_change}` so
+      # post-spawn cap grants (`grant_initial_caps` dispatch) land
+      # durably before mix BEAM exit. This test validates the
+      # combined behaviour: init writes the row, and a subsequent
+      # graceful terminate leaves it intact (no regression in the
+      # restart roundtrip).
       uri =
         URI.parse(
           "entity://agent/team-alpha/test_snap-term-#{System.unique_integer([:positive])}"
@@ -112,13 +118,13 @@ defmodule Ezagent.Integration.SnapshotRestartTest do
 
       uri_str = URI.to_string(uri)
 
-      # Before terminate: no row
-      assert nil == KindSnapshot.get(uri_str)
+      # Row exists immediately after init (CLI persistence fix).
+      assert %KindSnapshot{kind_type: "agent"} = KindSnapshot.get(uri_str)
 
-      # Graceful terminate via supervisor — triggers terminate/2 hook
+      # Graceful terminate via supervisor
       :ok = DynamicSupervisor.terminate_child(EzagentDomainChat.AgentSupervisor, pid)
 
-      # Row should now exist
+      # Row should still exist
       wait_until(fn -> not is_nil(KindSnapshot.get(uri_str)) end, 100)
       assert %KindSnapshot{kind_type: "agent"} = KindSnapshot.get(uri_str)
     end

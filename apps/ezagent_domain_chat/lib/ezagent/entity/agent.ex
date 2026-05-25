@@ -67,12 +67,30 @@ defmodule Ezagent.Entity.Agent do
   def behaviors,
     do: [Ezagent.Behavior.Chat, Ezagent.Behavior.Identity, Ezagent.Behavior.Sandbox]
 
-  # Phase 4-completion Spec 04: `:on_terminate` so granted Identity
-  # caps survive graceful shutdown. Abrupt crash still loses them
-  # (bridge re-announce re-creates Agent fresh; acceptable). Bump to
-  # `:on_change` in Phase 5 once Agent caps see real promotion volume.
+  # Allen 2026-05-25 — bumped from `:on_terminate` to `{:snapshot, :on_change}`
+  # as part of the CLI persistence fix (PR codex r1 HIGH).
+  #
+  # Original Phase 4-completion Spec 04 choice was `:on_terminate` with
+  # the note "Bump to `:on_change` in Phase 5 once Agent caps see real
+  # promotion volume." That bump is now required because the CLI flow
+  # `mix ezagent.agent.create … --caps …`:
+  #
+  #   1. spawns the Agent (Kind init writes initial empty-identity slice)
+  #   2. dispatches `grant_initial_caps` (mutates identity slice)
+  #   3. mix BEAM exits before `terminate/2` reliably drains
+  #
+  # Under `:on_terminate`, step 2's mutation is `:not_durable` in
+  # `Snapshot.commit/4` and step 3 races terminate against halt. Result:
+  # the DB row holds the pre-grant slice and the caps appear to vanish
+  # on next BEAM. Under `:on_change`, step 2 writes synchronously; the
+  # caps are durable before `mix` returns.
+  #
+  # Trade-off: one extra ~1ms SQLite write per dispatch that mutates
+  # Agent's slice. Identity mutations are operator-initiated cap
+  # grants (rare), and Chat slice mutations were already the dominant
+  # write volume on the same DB.
   @impl Ezagent.Kind
-  def persistence, do: :on_terminate
+  def persistence, do: {:snapshot, :on_change}
 
   # V1 prevention (Allen 2026-05-21): Agent Kinds (including Echo —
   # chat's `spawn_agent/1` flavor-resolver routes echo here too) live
