@@ -257,11 +257,17 @@ defmodule Ezagent.Behavior.IdentityAdmin do
     target_uri = Map.get(ctx, :self_uri)
 
     if match?(%URI{scheme: "entity", host: "user"}, target_uri) do
+      # Notification contract (`Ezagent.Notifications.notify/2`) requires
+      # `%{type: atom, body: map, source: module}`. Pre-fix this call
+      # used the legacy `%{kind:, text:, cap_summary:}` shape and crashed
+      # the grant_cap dispatch with ArgumentError (E2E 2026-05-25:
+      # `mix ezagent.feishu.bind` saved the binding but BindingPolicy
+      # cap-grant blew up for non-admin users).
       _ =
         Ezagent.Notifications.notify(target_uri, %{
-          kind: kind,
-          text: text,
-          cap_summary: inspect(cap)
+          type: kind,
+          body: %{text: text, cap_summary: inspect(cap)},
+          source: __MODULE__
         })
     end
 

@@ -101,7 +101,10 @@ defmodule Ezagent.Notifications do
       %{count: 1},
       %{
         user_uri: parsed_uri,
-        kind: Map.get(notification, :kind),
+        # Contract field is `:type` (not `:kind`); pre-fix telemetry
+        # always emitted `kind: nil` for shape-conformant callers.
+        type: Map.fetch!(notification, :type),
+        source: Map.fetch!(notification, :source),
         caller: Map.get(ctx, :caller)
       }
     )
