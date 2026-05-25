@@ -451,6 +451,26 @@ Every per-tenant table has a `workspace_uri TEXT NOT NULL` column (with index). 
 
 CI gates: `per_tenant_tables_have_workspace_column_test.exs` + `no_nil_workspace_writes_test.exs` + `no_nil_workspace_writes_identity_test.exs`.
 
+### 15. **ExternalMirror Domain: outbound mirrors go through the 3-layer model** (SPEC `docs/superpowers/specs/2026-05-24-external-mirror-domain.md`, Decision #122)
+
+Any "Session slice → external system" path (Feishu chat / Slack / game room / …) MUST use the ExternalMirror Domain — never a plugin-owned one-off. The plugin author ships **two modules + one declaration**: an Adapter (`@behaviour Ezagent.ExternalMirror.Adapter`, stateless), a Binding (`@behaviour Ezagent.ExternalMirror.Binding`, stateful per-target GenServer), and `adapters/0` returning `[{Adapter, Binding}]` in the plugin module. The Grill-5 compile-time check enforces 1:1 adapter↔binding pairing; runtime registry verification (`AdapterRegistry.register/1` + `BindingRegistry.register_module/2`) backstops against hot-install bypasses.
+
+Per-binding crash isolation, FacadeNonceTable forgery-proof handoff between facade and `:bind` action body, two-tier supervision (`RootSupervisor` 100/60s budget → `PerBindingSupervisor` 3/30s budget → `Kind.Server`), eager spawn + restart adoption via deterministic Worker URI, and rehydration on Session restart — ALL provided by the Domain.
+
+CI gates: `apps/ezagent_domain_external_mirror/test/invariants/` (8 invariants — see SPEC §10).
+
+### 16. **No Phoenix.PubSub.subscribe in ExternalMirror Domain or any Binding module** (SPEC §10 (f), PR-EM-FINAL invariant 4)
+
+Bindings receive slice changes via `Ezagent.Behavior.Publisher.subscribe_from/3` ONLY. Direct `Phoenix.PubSub.subscribe` from a Binding module (or anywhere under `apps/ezagent_domain_external_mirror/`) bypasses the per-binding crash boundary AND the Worker `:publish` CapBAC gate — the P11 escape PR-EM was designed to close.
+
+CI gates: `apps/ezagent_domain_external_mirror/test/invariants/no_pubsub_bypass_in_external_mirror_test.exs` (grep gate on Domain lib + every loaded module declaring `@behaviour Ezagent.ExternalMirror.Binding`).
+
+### 17. **No re-entry to Ezagent dispatch from `target_ownership_check/2` or `event_to_payload/1`** (SPEC §10 (g), PR-EM-FINAL invariant from r4 round-3 MEDIUM)
+
+Adapter modules are stateless pure-function modules per SPEC §2.2. The ONE allowed I/O callback is `target_ownership_check/2` — and even that callback MUST NOT call `Ezagent.Invocation.dispatch/1`, `Ezagent.Kind.spawn/2`, or `Behavior.invoke/4` directly: re-entering ezagent from inside a Task spawned by the facade's bind action creates a dispatch-during-dispatch deadlock (`:bind` is itself a dispatched action). External API calls (Lark / Slack / game protocol) ARE allowed from `target_ownership_check`; ezagent re-entry IS NOT.
+
+CI gates: `apps/ezagent_domain_external_mirror/test/invariants/no_dispatch_in_target_ownership_check_test.exs` (grep gate on every loaded module declaring `@behaviour Ezagent.ExternalMirror.Adapter`).
+
 ---
 
 ## Three-tier project structure
@@ -585,6 +605,18 @@ Refuse. SPEC v2 §5.11 + memory `feedback_let_it_crash_no_workarounds`: no back-
 
 Refuse. V1 structural prevention (Phase 9 follow-up, Allen 2026-05-21): all Kind processes go through `Ezagent.Kind.spawn(kind_module, params)` — the SOLE programmatic entry. Each Kind declares its target supervisor via the `supervisor/0` callback; `Ezagent.Kind.spawn/2` resolves it and calls `DynamicSupervisor.start_child` exactly once (inside `Ezagent.Kind`). Direct `DynamicSupervisor.start_child` calls for Kind modules are caught by CI gate `apps/ezagent_core/test/invariants/single_spawn_entry_test.exs` + runtime invariant `apps/ezagent_core/test/invariants/kind_provenance_test.exs`. Sidecars (PtyServer etc.) are exempt but explicitly listed in `allowed_sidecar_paths/0` — adding a new sidecar requires editing both the spawn-entry test's exemption list AND the moduledoc explanation. This is V1 (Layers 2+4+5 of `docs/futures/v2-feedback-log.md`); V2 `spawn_pipeline` macro will wrap `Ezagent.Kind.spawn` as its underlying primitive.
 
+### Anti-pattern: "I'll duplicate the Feishu one-off outbound shape for my new integration"
+
+Refuse. As of Stream 2 PR-EM-0..FINAL (SPEC `docs/superpowers/specs/2026-05-24-external-mirror-domain.md`, Decision #122), **every** outbound mirror — Session slice → external system — goes through the **ExternalMirror Domain**. The plugin author writes **two modules + one declaration**: an Adapter (`@behaviour Ezagent.ExternalMirror.Adapter` — `event_to_payload/1` pure + `target_ownership_check/2` + `cap_subject/0`), a Binding (`@behaviour Ezagent.ExternalMirror.Binding` — `init/1` + `publish/2` + optional `terminate/2`), and `adapters/0` returning `[{Adapter, Binding}]` in the plugin module. Per-binding crash isolation, FacadeNonceTable forgery-proof handoff, two-tier supervision, eager spawn + restart adoption, rehydration on restart — ALL provided by the Domain. Re-implementing any of this in a plugin one-off is a P1 violation (plugin isolation north star) AND a P11 violation (PubSub-bypass — bindings MUST subscribe via `Publisher.subscribe_from/3`, never `Phoenix.PubSub.subscribe` directly).
+
+### Anti-pattern: "I'll `Phoenix.PubSub.subscribe` from inside my Binding's `init/1` to get slice changes"
+
+Refuse. SPEC §10 (f) + invariant `no_pubsub_bypass_in_external_mirror_test.exs` (grep gate). Bindings subscribe to slice changes via `Ezagent.Behavior.Publisher.subscribe_from/3` ONLY — which the Worker Kind invokes from its own `handle_continue`. Direct `Phoenix.PubSub.subscribe` from a Binding bypasses (a) per-binding crash boundary (the Worker's PerBindingSupervisor catches the publish failure; a raw PubSub consumer in some other process does not), (b) the Worker `:publish` CapBAC gate (step 5.5 enforces against the Worker Kind, not against the Binding GenServer), and (c) Publisher retention + cursor semantics. The structural enforcement is the grep gate — any binding module whose source carries `Phoenix.PubSub.subscribe` fails CI.
+
+### Anti-pattern: "I'll call `Ezagent.Invocation.dispatch` from inside `target_ownership_check/2` to look up the session's chat slice"
+
+Refuse. SPEC §10 (g) + invariant `no_dispatch_in_target_ownership_check_test.exs`. `target_ownership_check/2` runs inside the bind facade's `Task.Supervisor.async_nolink/3` — but `:bind` is itself a dispatched action; re-entering dispatch creates a dispatch-during-dispatch deadlock. The callback is ALLOWED to make external API calls (Lark/Slack/etc — that's its whole purpose) but MUST NOT re-enter ezagent. If you need session state inside this check, take it as an arg from the facade call site, or read via `Ezagent.Kind.get_slice/2` (NOT dispatch).
+
 ---
 
 ## How-to recipes
@@ -653,6 +685,102 @@ Two paths:
 - **LV / CLI (admin)**: `/admin/routing` form (unified per Allen's S-9 — Scope picker for global/workspace/session), or `mix ezagent.routing.add_rule`.
 
 Always pass `workspace_uri:` opt unless the rule is intentionally global (matches messages from any workspace). Per SPEC v2 §5.4: scope hierarchy is `global ⊂ workspace ⊂ session`. Rules compose additively at dispatch time.
+
+### How-to: write an ExternalMirror adapter + binding
+
+Three modules + one declaration. The Domain owns everything else.
+
+1. **Allow Behavior** (per-adapter cap subject) — `apps/ezagent_plugin_<name>/lib/ezagent/behavior/external_adapter/<name>/allow.ex`:
+   ```elixir
+   defmodule Ezagent.Behavior.ExternalAdapter.MyName.Allow do
+     @behaviour Ezagent.Behavior
+     @impl true; def actions, do: [:allow_myname]
+     @impl true; def cap_subjects, do: [{:allow_myname, "Authorize binding myname adapter."}]
+     @impl true; def dispatchable?, do: false       # cap-only — never dispatched
+     @impl true; def state_slice, do: :external_adapter_myname
+     @impl true; def init_slice(_), do: %{}
+     @impl true; def invoke(_, _, _, _), do: raise("cap-only — Check 2 only consumer")
+     @impl true; def interface, do: %{}
+     @impl true; def data_owner(_), do: :any
+   end
+   ```
+
+2. **Adapter** (stateless module) — `apps/ezagent_plugin_<name>/lib/ezagent/external_mirror/<name>_adapter.ex`:
+   ```elixir
+   defmodule Ezagent.Plugin.MyName.Adapter do
+     @behaviour Ezagent.ExternalMirror.Adapter
+     @impl true; def adapter_id, do: "myname"
+     @impl true; def display_name, do: "My Name"
+     @impl true; def description, do: "Mirror sessions to My Name."
+     @impl true; def binding_module, do: Ezagent.Plugin.MyName.Binding
+     @impl true; def cap_subject,
+       do: %{behavior_module: Ezagent.Behavior.ExternalAdapter.MyName.Allow, description: "…"}
+     @impl true
+     def target_ownership_check(%URI{} = caller, target_id) do
+       # External API call ALLOWED here. Re-entry to Ezagent.Invocation.dispatch
+       # is FORBIDDEN — runs inside a Task with bounded timeout (default 5s).
+       case MyName.API.is_member?(caller, target_id) do
+         true -> :ok
+         false -> {:error, :not_a_member}
+       end
+     end
+     @impl true
+     def event_to_payload(%Ezagent.Publisher.Event{} = event) do
+       # PURE function — runs inside the Worker Kind quantum.
+       # Returning :skip drops this event without publishing.
+       {:publish, %{text: serialize(event)}}
+     end
+   end
+   ```
+
+3. **Binding** (stateful per-target GenServer-callbacks) — `apps/ezagent_plugin_<name>/lib/ezagent/external_mirror/<name>_binding.ex`:
+   ```elixir
+   defmodule Ezagent.Plugin.MyName.Binding do
+     @behaviour Ezagent.ExternalMirror.Binding
+     @impl true; def adapter_module, do: Ezagent.Plugin.MyName.Adapter
+     @impl true
+     def init({target_id, _adapter, opts}) do
+       # External setup (open WS, fetch token). Synchronous IS OK here —
+       # it runs in the Worker Kind's post_init handle_continue.
+       state = %{target_id: target_id, token: MyName.API.token(opts)}
+       {:ok, state}
+     end
+     @impl true
+     def publish(payload, state) do
+       # All transport I/O goes here. Return shapes (SPEC §2.3 +
+       # `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/binding.ex`):
+       #   {:ok, new_state}                — success
+       #   {:error, reason, new_state}     — RECOVERABLE failure
+       #     (4xx/5xx, transient network blip). Worker LOGS + emits
+       #     telemetry but does NOT crash; state carries forward
+       #     (retry counter, backoff deadline, etc).
+       #   raise/throw                     — UNrecoverable invariant
+       #     violation; let-it-crash → PerBindingSupervisor 3/30s
+       #     budget catches it.
+       # NEVER call Phoenix.PubSub.subscribe from this module —
+       # invariant 16 grep gate.
+       case MyName.API.send(state.token, state.target_id, payload) do
+         :ok -> {:ok, state}
+         {:error, reason} -> {:error, reason, state}
+       end
+     end
+     @impl true
+     def terminate(_reason, _state), do: :ok
+   end
+   ```
+
+4. **Declare in plugin** — `apps/ezagent_plugin_<name>/lib/ezagent_plugin_<name>.ex`:
+   ```elixir
+   defmodule EzagentPluginMyName do
+     use Ezagent.Plugin
+     @impl true; def plugin_info, do: %{slug: "my_name", …}
+     @impl true; def adapters, do: [{Ezagent.Plugin.MyName.Adapter, Ezagent.Plugin.MyName.Binding}]
+   end
+   ```
+
+5. **Verify** — `mix ezagent.external_mirror.list_adapters --as user://your_admin` should list "myname"; `mix ezagent.external_mirror.bind --as <user> --session <session_uri> --adapter myname --target <id>` should succeed against a real target the caller is a member of.
+
+Reference: `apps/ezagent_plugin_feishu/lib/ezagent_plugin_feishu/external_mirror/feishu_chat_adapter.ex` + `feishu_chat_binding.ex` (PR-EM-6 — production reference) + SPEC §2.2 / §2.3 / §5.
 
 ### How-to: write an invariant test
 

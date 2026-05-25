@@ -148,6 +148,7 @@ Ezagent 项目的**单一真相源**(single source of truth)for:
 | 119 | **CC PTY plugin(简化版 wrap shell script)+ 3 关键 fix**(Phase 4-completion PR 8/8a/8b/8c)— **第一个非-chat plugin** 验证 plugin isolation 端到端。`PtyServer` erlexec `:pty` 包 `bash cc-bridge-attach.sh`;`Ezagent.PluginCc.Template` 实现 Template Class(`"cc.pty"`)。3 fix:(a)`:stdin` 选项必须 — 否则 child stdin EOF;(b)auto-confirm dev-channels dialog — detect ANSI-stripped buffer + `:exec.send "1\r"`;(c)`:exec.winsz(os_pid, rows=40, cols=120)` — claude TUI 阻塞等 TIOCGWINSZ;(d)cc_pty Application.start tail re-run `Workspace.Loader.load_all` — chat plugin 早跑时 cc.pty Class 未注册 boot-ordering 修复模式 | impl |
 | 120 | **Routing consolidation: 4 leaks fixed + CI invariant gate**(Phase 4-completion PR 9,Allen 2026-05-16 反馈落地)— (a) `$session_members` magic 受体 token + Resolver 第三参 members,DefaultRules seed `always() → ["$session_members"]` system_default 规则,**Chat.invoke 移除硬编码 fan-out — Resolver 是 SOLE 决策源**;LV `/admin/routing` 渲染 "(dynamic: members of current session)" 让 hidden fan-out 可见。(c) migration 加 `source` + `enabled` 列,`RuleStore.delete/1` 拒绝 system_default,`disable/1` 是 admin opt-out 路径,`bootstrap` 检查 `has_system_default?`(不再 "table empty")— admin 删除后 restart 不被覆盖。(d) boot-ordering pattern documented(模式来自 PR 8c)。(b) per-rule cap 推 Phase 5。**Invariant**:`routing_consolidation_invariant_test.exs` "no rules + no members → no recipients" gate,任何未来 reintroduce hidden fan-out 立 fail | impl |
 | 121 | **LV `ScrollOnUpdate` JS hook + auto-scroll**(Phase 4-completion PR 9 §UI)— Phoenix.LiveView.stream 默认不 auto-scroll。新 `ScrollOnUpdate` hook in `app.js` — stream update 后**仅当用户近底部 120px 内**才 scroll(读历史不被打断)。`admin/chat_window.ex` 的 `#messages` div 加 `phx-hook="ScrollOnUpdate"` | impl |
+| 122 | **ExternalMirror Domain — Publisher + Adapter + Binding 三层模型**(Stream 2 PR-EM-0..FINAL 落地,SPEC `docs/superpowers/specs/2026-05-24-external-mirror-domain.md`)— 任何把 Session slice 变化镜像到外部系统(Feishu chat / Slack / 游戏房间 / …)的需求都走这个 Domain,**不再每个 plugin 各做一套**。三层:**Publisher**(Session Kind 实现的 `@behaviour Ezagent.Behavior.Publisher`,`subscribe_from/3` + `snapshot/1` + `history/3` + 100 events 环形保留)→ **Adapter**(stateless 模块,`event_to_payload/1` 纯函数 + `target_ownership_check/2` bind-time 唯一允许 I/O 的 callback + `cap_subject/0` 声明 per-adapter cap 形状)→ **Binding**(stateful per-target supervised GenServer,`init/1` + `publish/2` + `terminate/2`;Grill-5 一对一绑 Adapter)。**Worker Kind** `Ezagent.Entity.ExternalMirrorWorker` 在 `RootSupervisor → PerBindingSupervisor → Kind.Server` 两层 supervision 下;`WorkerSpawn.worker_uri_for/3` 是 deterministic + session-scoped(`entity://worker/<workspace>/em_<hash12>`)。`Ezagent.Behavior.ExternalMirror` 在 Session 上挂 `:bind` / `:unbind` / `:list_bindings` 三个 action;**`Ezagent.ExternalMirror.bind/4` 是 facade**(Check 1 session bind cap + Check 2 per-adapter cap + Check 3 `target_ownership_check` 在 `Task.Supervisor.async_nolink` 内有时限,通过 **`FacadeNonceTable`**(`:protected` ETS,32 字节 crypto.strong_rand_bytes,5s TTL,绑定到精确 `(session, adapter, target, caller)` tuple)单次原子 handoff 到 dispatch action body — pre-fix 用 `args[:_facade_checks_ok]` 布尔 flag 被 caller 控制 args 转发可绕过 Check 2/3,nonce 修复该 forgery)。Per-binding 崩溃隔离 ↓ inner `PerBindingSupervisor` 3/30s budget + outer `RootSupervisor` 100/60s budget(r4 round-3 HIGH-2 fix);Worker 幂等性 via `WorkerRegistry` `:via, Registry` 在 binding_uri 上(r5 HIGH-3 fix)。**P11 escape closed**:bindings 永远走 `Publisher.subscribe_from/3` → Worker Kind 的 `:publish` dispatch → Adapter `event_to_payload` → Binding `publish/2`,**严禁 `Phoenix.PubSub.subscribe` 直连**(invariant test gate)| impl |
 
 实施期决策(impl)将持续从 #114 起 append →
 
@@ -162,6 +163,8 @@ Ezagent domain 词汇,按字母顺序。
 外部 transport 接入点。**Adapter 不允许有业务语义**——它只做两件事:解析外部输入 → 构造 `%Invocation{}`;渲染结果回外部协议。
 
 例:`ezagent_plugin_feishu` 是 Feishu adapter;`esr_adapter_cli` 是 CLI adapter;`ezagent_plugin_cc` 是 CC channel adapter(双侧组件)。
+
+> 与 **ExternalMirror Adapter**(`Ezagent.ExternalMirror.Adapter` behaviour)区分:那是 Stream 2 PR-EM 引入的 narrower 概念 — stateless 模块 + `event_to_payload/1` + `target_ownership_check/2`,专门把 Session slice 镜像到外部系统(不是处理 inbound)。参见 GLOSSARY 后文 "ExternalMirror Adapter / Binding / Worker / FacadeNonceTable" 条目和 Decision #122。
 
 参考: ARCHITECTURE.md §12
 
@@ -297,6 +300,52 @@ Phase 6 PR 27 引入。User Kind 的**结构性基线 cap 集**——返回 `[%C
 Kind 三子类之一。**Principal**——发起 Invocation,持有 caps。例:`agent://...` / `user://...`。
 
 参考: ARCHITECTURE.md §3.1,Decision #7
+
+### ExternalMirror Adapter(`Ezagent.ExternalMirror.Adapter` behaviour)
+
+ExternalMirror Domain 三层模型的中间层 — **stateless 模块**(类比 protocol implementation,无 GenServer 状态)。Plugin author 实现 7 个 callback:`adapter_id/0` + `display_name/0` + `description/0` + `binding_module/0`(Grill-5 bidirectional 声明)+ `cap_subject/0`(per-adapter cap 形状,Allow Behavior 模块名)+ `target_ownership_check/2`(**唯一允许 I/O 的 callback** — bind-time 检查 caller 是不是 target 的成员,Feishu = Lark API 调用)+ `event_to_payload/1`(**pure** — Publisher.Event → wire payload,在 Worker Kind quantum 内跑,任何 I/O 都会阻塞 per-binding scheduler)。
+
+⚠️ 与 Decision #13 的"transport adapter"(Feishu/Slack/CC channel inbound)不同 — 那是 inbound 接入点;ExternalMirror Adapter 是 outbound 镜像点(Session slice → external system)。
+
+参考: SPEC `docs/superpowers/specs/2026-05-24-external-mirror-domain.md` §2.2 / §5;Decision #122
+
+### ExternalMirror Binding(`Ezagent.ExternalMirror.Binding` behaviour)
+
+ExternalMirror Domain 三层模型的底层 — **stateful per-target supervised GenServer**。Plugin author 实现:`adapter_module/0`(Grill-5 反向 declaration)+ `init/1`(setup transport state — open WS,fetch token,etc)+ `publish/2`(payload → external system 字节;**所有 external I/O 在这里**)+ `terminate/2`(graceful cleanup,optional)。
+
+Worker Kind(`Ezagent.Entity.ExternalMirrorWorker`)hosts 一个 Binding per `(session, adapter, target)` triple,在 `PerBindingSupervisor`(`:permanent` restart strategy,3/30s budget)下运行。Per-binding crash 隔离:一个 binding 反复崩不影响其他 binding 或 Session Kind 本身。
+
+参考: SPEC §2.3 / §6;Decision #122
+
+### ExternalMirror Worker / WorkerSpawn
+
+`Ezagent.Entity.ExternalMirrorWorker` 是 ExternalMirror Domain 的 per-binding Kind 实例。**URI shape**:`entity://worker/<workspace>/em_<hash12>`(`hash12` = sha256("<session>/<adapter>/<target>") 头 12 位,session-scoped 防 cross-workspace 碰撞)。Worker 通过 `Kind.spawn_strategy/0` callback 委托到 `Ezagent.ExternalMirror.WorkerSpawn.spawn_kind_server/1`,把 Kind.Server 包在两层 supervisor topology(`RootSupervisor` DynamicSupervisor 100/60s budget → `PerBindingSupervisor` Supervisor 3/30s budget → `Kind.Server`)。`WorkerSpawn.worker_uri_for/3` 是 **deterministic** + **session-scoped**(同 triple 永远算出同 URI,restart adoption + 幂等性 spawn 都依赖此性质)。`WorkerRegistry`(`:via, Registry` keyed by binding_uri)保证并发 spawn 同 triple 只一个赢家。
+
+参考: SPEC §6.3 / §7.2;Decision #122
+
+### FacadeNonceTable(`Ezagent.ExternalMirror.FacadeNonceTable`)
+
+**`:protected, :named_table` ETS** + 拥有方 GenServer,用 32 字节 `:crypto.strong_rand_bytes` nonce 实现 `Ezagent.ExternalMirror.bind/4` facade → `Behavior.ExternalMirror.invoke(:bind, _, _, _)` action body 的 **forgery-proof handoff**。Nonce 绑定到精确 `(session_uri, adapter_id, target_id, caller_uri)` tuple,5s TTL(`@default_ttl_ms`),consume 原子单次(replay-protected via `:ets.delete` before verify)。
+
+**Why this exists**(PR-EM-3 codex r3 CRIT 修):pre-fix 用 `args[:_facade_checks_ok] = true` 标 facade Checks 2+3 已过 — 但 `args` 是 caller 控的 `Invocation.dispatch/1` 输入,任何 in-VM caller 持 session `:bind` cap 都能直接 dispatch 带 flag 绕过 Checks。nonce 是结构性修复:`:protected` ETS 只 GenServer owner 能写;32 字节 RNG 不可猜;tuple-绑定 + 单次 consume 防 replay/swap。
+
+参考: SPEC §4.1 r3 CRIT;PR-EM-3 round-3;Decision #122
+
+### ExternalMirror AdapterRegistry / BindingRegistry
+
+两张 ETS 表 — `:set` keyed by `adapter_id`(string)— 分别记录 adapter_id → adapter_module 和 adapter_id → binding_module。`:ets.insert_new/2` 原子 + 显式 `assert_behaviour!` + `assert_required_callbacks!` 双层防御(compile-time `:ezagent_plugin_check` Grill-5 gate 是主防,运行时校验是 backstop 防 hot install / 直 call 绕过)。
+
+**两 registry 协同**:`AdapterInstall.maybe_install/1`(从 AdapterRegistry 触发)+ `AdapterInstall.maybe_install_by_adapter_id/1`(从 BindingRegistry 触发)对称 pair,确保 `install/1`(per-adapter cap subject 注册 + 持久 binding row 的 Worker reconcile)**只在两个 registry 都有该 adapter_id 时 fire 一次**(r5 HIGH-A fix)— 防 install 在 BindingRegistry 空时跑导致 spawned Worker 的 `:publish` dispatch KeyError on binding lookup。
+
+参考: SPEC §5.2;Decision #122
+
+### Publisher behaviour(`Ezagent.Behavior.Publisher`)
+
+ExternalMirror Domain 三层模型顶层 — Session Kind 实现的 4-callback contract(`subscribe_from/3` + `snapshot/1` + `history/3` + 100-event 环形保留)。Subscriber(Worker Kind 是唯一 production consumer)拿到一个 ordered stream of slice changes,可以 from `:latest`(restart 默认)/ from cursor / from snapshot。**比 Phoenix.PubSub 直接 broadcast 更强**:retention 让 restart 期间漏过的 events 可补;subscriber 知道自己 lag 多远;Session GenServer 本身控制 retention policy。
+
+**P11 escape closed**:bindings 永远不能 `Phoenix.PubSub.subscribe` 直连 — 必须走 `Publisher.subscribe_from/3` → Worker Kind 的 `:publish` dispatch path,这样 CapBAC step 5.5 enforce per-Worker cap + per-binding PerBindingSupervisor 隔离 + Adapter `event_to_payload` 在 Worker quantum 内 pure。Invariant test (PR-EM-FINAL `no_pubsub_bypass_in_external_mirror_test`) grep gate 锁死。
+
+参考: SPEC §2.1 / §10 (f);Decision #122
 
 ### EZAGENT_HOME
 
