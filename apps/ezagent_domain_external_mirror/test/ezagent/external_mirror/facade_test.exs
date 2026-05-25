@@ -9,21 +9,47 @@ defmodule Ezagent.ExternalMirrorTest do
   Pins:
   - `list_adapters/0` returns the SPEC §4.4 shape
     (`%{id, display_name, description}`) for every registered adapter.
-  - `list_bindings/1` returns `{:ok, []}` (PR-EM-1 stub — slice lands
-    in PR-EM-3).
-  - `sessions_for_adapter/1` returns `{:ok, []}` (PR-EM-1 stub —
-    same reason).
+  - `list_bindings/2` returns `{:error, :no_such_actor}` for a session
+    that isn't running (PR-EM-3 r3 — dispatch path).
+  - `sessions_for_adapter/2` returns `{:ok, []}` when there are no
+    bindings.
+
+  ## codex r3 — facade signature change
+
+  `list_bindings/1` → `list_bindings/2` (caller ctx required so
+  dispatch CapBAC step 5.5 runs). `sessions_for_adapter/1` →
+  `sessions_for_adapter/2` (caller ctx required so workspace filter
+  runs). See `Ezagent.ExternalMirror` moduledoc r2 HIGH-2 fix.
   """
 
   use ExUnit.Case, async: false
 
-  alias Ezagent.ExternalMirror
+  alias Ezagent.{Capability, ExternalMirror}
   alias Ezagent.ExternalMirror.AdapterRegistry
   alias Ezagent.ExternalMirror.TestSupport.MockAdapter
 
   setup do
     :ets.delete_all_objects(AdapterRegistry.table())
     :ok
+  end
+
+  # Admin-shape ctx for "bare unit tests don't care about caps" cases.
+  defp admin_ctx do
+    %{
+      caller: URI.parse("system://bootstrap/default"),
+      caps:
+        MapSet.new([
+          %Capability{
+            kind: :any,
+            behavior: :any,
+            instance: :any,
+            workspace_uri: :any,
+            granted_by: URI.parse("system://bootstrap/default"),
+            granted_at: ~U[2026-01-01 00:00:00Z]
+          }
+        ]),
+      reply: :ignore
+    }
   end
 
   describe "list_adapters/0" do
@@ -51,17 +77,17 @@ defmodule Ezagent.ExternalMirrorTest do
     end
   end
 
-  describe "list_bindings/1 (PR-EM-1 stub)" do
-    test "returns {:ok, []} for any session URI — slice lands in PR-EM-3" do
+  describe "list_bindings/2 (PR-EM-3 r3 — dispatch-gated lookup)" do
+    test "returns {:error, _} for a session URI that isn't live" do
       uri = URI.parse("session://workspace/test/session_123")
-      assert {:ok, []} = ExternalMirror.list_bindings(uri)
+      assert {:error, _} = ExternalMirror.list_bindings(uri, admin_ctx())
     end
   end
 
-  describe "sessions_for_adapter/1 (PR-EM-1 stub)" do
-    test "returns {:ok, []} for any adapter_id — projection lands in PR-EM-3" do
-      assert {:ok, []} = ExternalMirror.sessions_for_adapter("feishu")
-      assert {:ok, []} = ExternalMirror.sessions_for_adapter("anything")
+  describe "sessions_for_adapter/2 (PR-EM-3 r3 — workspace-filtered)" do
+    test "returns {:ok, []} for an adapter with no rows" do
+      assert {:ok, []} = ExternalMirror.sessions_for_adapter("feishu", admin_ctx())
+      assert {:ok, []} = ExternalMirror.sessions_for_adapter("anything", admin_ctx())
     end
   end
 end

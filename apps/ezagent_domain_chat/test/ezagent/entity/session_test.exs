@@ -7,18 +7,22 @@ defmodule Ezagent.Entity.SessionTest do
       assert Session.type_name() == :session
     end
 
-    test "behaviors/0 returns [Chat, Publisher.SessionImpl] — ExternalMirror PR-EM-0 added SessionImpl" do
+    test "behaviors/0 returns [Chat, Publisher.SessionImpl, ExternalMirror] — PR-EM-0 added SessionImpl; PR-EM-3 added ExternalMirror" do
       # SPEC `docs/superpowers/specs/2026-05-24-external-mirror-domain.md`
       # §8.1: Session implements `@behaviour Ezagent.Behavior.Publisher`
       # via the `Publisher.SessionImpl` Kind-Behavior, which owns the
-      # `:publisher` slice + serves the 3 publisher actions. Added
-      # alongside Chat (not nested into Chat's slice) so the Publisher
-      # contract is orthogonal to chat semantics — future publisher
-      # Kinds add their own SessionImpl-equivalent without touching
-      # Chat.
+      # `:publisher` slice + serves the 3 publisher actions.
+      #
+      # SPEC §4.1 (PR-EM-3): Session ALSO hosts
+      # `Ezagent.Behavior.ExternalMirror` which owns the
+      # `:external_mirror` slice + the bind / unbind / list_bindings
+      # actions. Declared here so `init_slice/1` rehydrates the
+      # binding list from the projection table on Session boot
+      # AND `post_init/2` schedules the worker reconciliation.
       assert Session.behaviors() == [
                Ezagent.Behavior.Chat,
-               Ezagent.Behavior.Publisher.SessionImpl
+               Ezagent.Behavior.Publisher.SessionImpl,
+               Ezagent.Behavior.ExternalMirror
              ]
     end
 

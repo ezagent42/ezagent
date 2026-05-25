@@ -45,7 +45,13 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
     # Phase 7 completion PR-3 (SPEC §1.7 (c)) — the SessionTemplate
     # tag registry. Per-tenant: a `(workspace, name, tag)` row is
     # scoped to its workspace (`stable` in ws A ≠ `stable` in ws B).
-    {Ezagent.TemplateTags, "template_tags"}
+    {Ezagent.TemplateTags, "template_tags"},
+    # PR-EM-3 (ExternalMirror SPEC §7.1) — the `:external_mirror`
+    # Session-slice projection. Per-tenant: a `(session_uri,
+    # adapter_id, target_id)` binding row is scoped to the session's
+    # workspace (a Lark chat bound in ws A must not be readable from
+    # ws B).
+    {Ezagent.ExternalMirror.BindingRow, "external_mirror_bindings"}
   ]
 
   # Per-tenant tables that have NO schema module (raw `Repo.insert_all`

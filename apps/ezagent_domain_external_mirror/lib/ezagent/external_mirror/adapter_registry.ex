@@ -90,6 +90,25 @@ defmodule Ezagent.ExternalMirror.AdapterRegistry do
     adapter_id = adapter_module.adapter_id()
 
     if :ets.insert_new(@table, {adapter_id, adapter_module}) do
+      # codex r2 HIGH-1 + HIGH-3 unified fix (2026-05-25): the moment
+      # an adapter becomes observable in the registry, install its
+      # cap subject + reconcile its persisted bindings.
+      #
+      # codex r5 HIGH-A fix (2026-05-25): the install REQUIRES the
+      # paired BindingRegistry entry to exist too — `AdapterInstall`
+      # uses `BindingRegistry.lookup!/1` indirectly via the Worker's
+      # dispatch path, AND production `Plugin.publish_adapters!`
+      # registers the binding AFTER the adapter. Pre-fix, firing
+      # install/1 here unconditionally meant install ran with the
+      # BindingRegistry empty for THIS adapter_id → workers couldn't
+      # bind their publish target.
+      #
+      # The new contract: fire install ONLY when the BindingRegistry
+      # also has an entry. If we're the first registry to land,
+      # `BindingRegistry.register_module/2` will fire install when it
+      # lands second. If we're second (binding registered first
+      # somehow), we fire install now.
+      :ok = Ezagent.ExternalMirror.AdapterInstall.maybe_install(adapter_module)
       :ok
     else
       # Race-safe second read — the entry exists (insert_new returned
@@ -102,6 +121,12 @@ defmodule Ezagent.ExternalMirror.AdapterRegistry do
       # rollback path delete pre-existing rows (the previous reduce
       # accumulator was lost on rescue). Returning a distinguishable
       # value forces the caller to track receipts properly.
+      #
+      # The `:already_present` branch does NOT re-run install/1 —
+      # the prior `:ok` insert already triggered it. install/1 IS
+      # idempotent (cap registration is idempotent; spawn is
+      # idempotent) but skipping the redundant call keeps registry
+      # re-registration cheap.
       case :ets.lookup(@table, adapter_id) do
         [{^adapter_id, ^adapter_module}] ->
           {:ok, :already_present}
