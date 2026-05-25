@@ -583,12 +583,36 @@ defmodule Ezagent.Behavior.Chat do
 
         broadcast_membership(session_uri, {:member_joined, member_uri})
 
+        # Notifier/flash audit 2026-05-24 — todo.md "Notifications consumer
+        # coverage" — surface the join to the joinee's notification stream
+        # so a freshly-added member sees they were added to a session.
+        # Gated by `user_uri?/1`: agents don't have inboxes (per the same
+        # convention `Workspace.add_member` uses).
+        if user_uri?(member_uri) do
+          _ =
+            Ezagent.Notifications.notify(member_uri, %{
+              type: :session_member_joined,
+              body: %{
+                text: "You joined session #{URI.to_string(session_uri)}.",
+                session_uri: session_uri
+              },
+              source: __MODULE__
+            })
+        end
+
         {:ok, new_slice, %{members: Map.keys(new_members)}}
 
       :error ->
         {:error, {:member_not_registered, member_uri}}
     end
   end
+
+  # Notifier/flash audit 2026-05-24 — same predicate
+  # `Ezagent.Domain.Workspace.user_uri?/1` uses. Keeps the agent-target
+  # silence guarantee local to Chat without crossing the
+  # workspace-domain boundary.
+  defp user_uri?(%URI{scheme: "entity", host: "user"}), do: true
+  defp user_uri?(_), do: false
 
   # --- :leave ------------------------------------------------------------
 

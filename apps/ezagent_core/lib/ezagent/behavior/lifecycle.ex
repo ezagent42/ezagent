@@ -92,6 +92,7 @@ defmodule Ezagent.Behavior.Lifecycle do
     kind_module = Map.get(ctx, :kind_module)
 
     schedule_termination(self_uri, kind_module)
+    notify_spawning_principal(self_uri)
 
     {:ok, bump(slice), {:ok, :terminated}}
   end
@@ -116,6 +117,43 @@ defmodule Ezagent.Behavior.Lifecycle do
   # Lazy-seed the counter — the Behavior is registered after-the-fact on
   # the Agent Kind, so the runtime may hand us an empty `%{}` slice.
   defp bump(slice), do: Map.update(slice, :terminations, 1, &(&1 + 1))
+
+  # Notifier/flash audit 2026-05-24 — todo.md "Notifications consumer
+  # coverage" — surface termination to the spawning principal so the
+  # orchestrator (or whoever invoked the spawn) learns the worker is
+  # going away. Lineage parent comes from `Ezagent.AgentLineage` (the
+  # same SoT the `{:spawned_by, _}` cap shape uses). Gated by
+  # `user_uri?/1`: agents don't have inboxes, so a non-user spawning
+  # principal (orchestrator agent) generates no notification. Wrapped
+  # in `try` so a notify failure (e.g. test sandbox without PubSub)
+  # never blocks termination — the dispatch reply must still go out.
+  defp notify_spawning_principal(%URI{} = agent_uri) do
+    with {:ok, %URI{} = parent_uri} <- Ezagent.AgentLineage.lookup(agent_uri),
+         true <- user_uri?(parent_uri) do
+      try do
+        _ =
+          Ezagent.Notifications.notify(parent_uri, %{
+            type: :agent_terminated,
+            body: %{
+              text: "Agent #{URI.to_string(agent_uri)} terminated.",
+              agent_uri: agent_uri
+            },
+            source: __MODULE__
+          })
+      rescue
+        _ -> :ok
+      catch
+        _, _ -> :ok
+      end
+    else
+      _ -> :ok
+    end
+  end
+
+  defp notify_spawning_principal(_), do: :ok
+
+  defp user_uri?(%URI{scheme: "entity", host: "user"}), do: true
+  defp user_uri?(_), do: false
 
   # Schedule the supervised-child termination AFTER the dispatch reply
   # has been delivered. Running it inline would kill this GenServer

@@ -115,4 +115,53 @@ defmodule EzagentDomainChat.Integration.LifecycleTerminateTest do
     # itself surfaces the absent actor cleanly (not a crash).
     assert {:error, :no_such_actor} = terminate(worker_uri, orchestrator, caps)
   end
+
+  describe "notification of spawning principal (med-batch MED-3)" do
+    # `Behavior.Lifecycle.:terminate` must surface termination to the
+    # spawning principal so the orchestrator / user who originated the
+    # spawn learns the worker is going away. Gated by user_uri?/1:
+    # only USER URIs get notifications (agents have no inbox).
+
+    test "notifies a user-URI spawning principal on terminate" do
+      user_uri = URI.parse("entity://user/team-alpha/spawner-#{uniq()}")
+      :ok = Ezagent.Notifications.subscribe(user_uri, %{caps: :system})
+
+      worker_uri = spawn_worker(user_uri)
+
+      # Bootstrap-admin caps — the user-URI lineage parent is a
+      # spawning principal, not the dispatch caller; the orch.cap
+      # gate is bypassed by using bootstrap-admin caps for the test
+      # dispatch (lineage notification is independent of cap surface).
+      admin_caps = Ezagent.SystemPrincipal.caps("system://bootstrap")
+
+      assert {:ok, {:ok, :terminated}} = terminate(worker_uri, User.admin_uri(), admin_caps)
+
+      assert_receive {:notification, ^user_uri,
+                      %{
+                        type: :agent_terminated,
+                        body: %{text: _, agent_uri: ^worker_uri},
+                        source: Ezagent.Behavior.Lifecycle
+                      }},
+                     1_000
+    end
+
+    test "does NOT notify when spawning principal is an agent URI" do
+      orchestrator = URI.parse("entity://agent/team-alpha/cc_orch-noinbox-#{uniq()}")
+      worker_uri = spawn_worker(orchestrator)
+      caps = MapSet.new([spawned_by_cap(orchestrator)])
+
+      # Subscribe to the agent URI's topic raw — Notifications.subscribe
+      # would reject (agents not user-Kind); raw PubSub detects any
+      # stray broadcast.
+      :ok =
+        Phoenix.PubSub.subscribe(
+          EzagentCore.PubSub,
+          Ezagent.Notifications.topic(orchestrator)
+        )
+
+      assert {:ok, {:ok, :terminated}} = terminate(worker_uri, orchestrator, caps)
+
+      refute_receive {:notification, ^orchestrator, _}, 300
+    end
+  end
 end

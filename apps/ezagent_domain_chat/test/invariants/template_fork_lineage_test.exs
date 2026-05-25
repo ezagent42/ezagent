@@ -209,6 +209,40 @@ defmodule EzagentDomainChat.Invariants.TemplateForkLineageTest do
       # Refreshed fields
       assert DateTime.compare(fork_content.created_at, before) in [:gt, :eq]
     end
+
+    test "fork notifies the fork-owner when owner is a user URI (med-batch MED-3)" do
+      # `Behavior.Template.fork_agent_template/3` MUST surface a
+      # `:agent_template_forked` notification to the fork-owner so the
+      # user who initiated the fork learns about the new template's URI.
+      # Gated by user_uri?/1 — agent-owned forks generate no
+      # notification (consistent with Workspace.add_member precedent).
+      {parent_uri, _content} = persist_agent_template("at-fl-notify-parent-#{uniq()}")
+      owner_uri = spawn_owner([agent_template_cap()])
+
+      :ok = Ezagent.Notifications.subscribe(owner_uri, %{caps: :system})
+
+      new_name = "at-fl-notify-fork-#{uniq()}"
+
+      assert {:ok, fork_uri} =
+               AgentTemplate.fork(parent_uri, new_name,
+                 caps: [agent_template_cap()],
+                 caller: owner_uri
+               )
+
+      track(fork_uri)
+
+      assert_receive {:notification, ^owner_uri,
+                      %{
+                        type: :agent_template_forked,
+                        body: %{
+                          text: _,
+                          parent_template_uri: ^parent_uri,
+                          new_template_uri: ^fork_uri
+                        },
+                        source: Ezagent.Behavior.Template
+                      }},
+                     1_000
+    end
   end
 
   describe "SessionTemplate fork lineage (PR1 regression — shim through Behavior)" do
