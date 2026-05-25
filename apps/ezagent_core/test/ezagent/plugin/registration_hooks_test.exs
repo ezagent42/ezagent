@@ -185,4 +185,89 @@ defmodule Ezagent.Plugin.RegistrationHooksTest do
     assert_receive {:fired, ^ref}, 100
     assert Process.whereis(RegistrationHooks) == pid_before
   end
+
+  # codex PR-AUDIT r3 HIGH regression — exit/throw isolation
+  #
+  # Pre-fix, `safe_fire/1` only used `rescue`, catching raised
+  # exceptions but NOT `exit/1`. A hook that calls `exit(:boom)` OR
+  # a hook performing a `GenServer.call/2` where the callee dies
+  # (which propagates as `:exit` to the caller) would bypass
+  # `rescue`, exit the GenServer, and destroy EVERY queued hook.
+  # Post-fix `catch :exit, _` + `catch :throw, _` are also caught.
+  test "hook exit does not crash the GenServer (codex r3 HIGH gate)" do
+    StubRegistryA.set("exit-ada")
+    StubRegistryB.set("exit-ada")
+
+    pid_before = Process.whereis(RegistrationHooks)
+    assert is_pid(pid_before)
+
+    # Also pre-queue a deferred hook so the assertion that it
+    # later fires proves the GenServer survived the exit AND the
+    # ETS pending-table is intact.
+    me = self()
+    pending_ref = make_ref()
+
+    :ok =
+      RegistrationHooks.publish_after_all_registered(
+        [{StubRegistryA, "exit-survives"}, {StubRegistryB, "exit-survives"}],
+        fn ->
+          send(me, {:pending_fired, pending_ref})
+          :ok
+        end
+      )
+
+    # Hook exits — the GenServer must survive AND the pending hook
+    # above must remain in the table.
+    :ok =
+      RegistrationHooks.publish_after_all_registered(
+        [{StubRegistryA, "exit-ada"}, {StubRegistryB, "exit-ada"}],
+        fn -> exit(:boom) end
+      )
+
+    # Sanity: GenServer still alive (same pid).
+    assert Process.whereis(RegistrationHooks) == pid_before
+
+    # Pending hook still fires when its registries complete.
+    StubRegistryA.set("exit-survives")
+    StubRegistryB.set("exit-survives")
+    :ok = RegistrationHooks.notify_subscribers(StubRegistryB, "exit-survives")
+
+    assert_receive {:pending_fired, ^pending_ref}, 100
+    assert Process.whereis(RegistrationHooks) == pid_before
+  end
+
+  test "hook throw does not crash the GenServer" do
+    StubRegistryA.set("throw-ada")
+    StubRegistryB.set("throw-ada")
+
+    pid_before = Process.whereis(RegistrationHooks)
+    assert is_pid(pid_before)
+
+    :ok =
+      RegistrationHooks.publish_after_all_registered(
+        [{StubRegistryA, "throw-ada"}, {StubRegistryB, "throw-ada"}],
+        fn -> throw(:boom) end
+      )
+
+    # GenServer survives.
+    assert Process.whereis(RegistrationHooks) == pid_before
+
+    # Sanity: a normal call after the throw still works.
+    me = self()
+    ref = make_ref()
+    StubRegistryA.set("throw-bob")
+    StubRegistryB.set("throw-bob")
+
+    :ok =
+      RegistrationHooks.publish_after_all_registered(
+        [{StubRegistryA, "throw-bob"}, {StubRegistryB, "throw-bob"}],
+        fn ->
+          send(me, {:fired, ref})
+          :ok
+        end
+      )
+
+    assert_receive {:fired, ^ref}, 100
+    assert Process.whereis(RegistrationHooks) == pid_before
+  end
 end

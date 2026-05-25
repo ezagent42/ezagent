@@ -162,20 +162,39 @@ defmodule Ezagent.Plugin.RegistrationHooks do
 
   # Hook fns are user-supplied; we don't want a buggy hook to bring down
   # the GenServer (which would lose ALL pending hooks). Wrap each fire in
-  # try/rescue + log; the SPEC §5.3 contract requires idempotent hooks
-  # but enforces nothing — a misbehaving hook is observable via log,
+  # try/rescue/catch + log; the SPEC §5.3 contract requires idempotent
+  # hooks but enforces nothing — a misbehaving hook is observable via log,
   # not via crash propagation.
+  #
+  # ## codex PR-AUDIT r3 HIGH fix (2026-05-25)
+  #
+  # Pre-fix this only caught `rescue` (raised exceptions). A hook that
+  # calls `exit(:boom)` OR a hook that performs a `GenServer.call/2`
+  # where the callee dies (which propagates as `:exit` to the caller)
+  # would bypass `rescue`, exit `safe_fire/1`, and kill the
+  # RegistrationHooks GenServer. Because pending hooks live in ETS
+  # owned by this GenServer, killing it destroys EVERY queued hook —
+  # an in-flight install for an unrelated adapter would silently never
+  # fire. Post-fix `catch :exit, _` + `catch :throw, _` are also caught;
+  # the GenServer is invariantly preserved across hook misbehavior.
   defp safe_fire(hook_fn) do
     hook_fn.()
   rescue
     err ->
-      require Logger
-
-      Logger.error(
-        "Ezagent.Plugin.RegistrationHooks: hook fn raised — " <>
-          "#{inspect(err)}; stacktrace: #{inspect(__STACKTRACE__)}"
-      )
-
+      log_hook_failure(:rescue, err, __STACKTRACE__)
       :error
+  catch
+    kind, reason ->
+      log_hook_failure(kind, reason, __STACKTRACE__)
+      :error
+  end
+
+  defp log_hook_failure(kind, reason, stacktrace) do
+    require Logger
+
+    Logger.error(
+      "Ezagent.Plugin.RegistrationHooks: hook fn failed (#{inspect(kind)}) — " <>
+        "#{inspect(reason)}; stacktrace: #{inspect(stacktrace)}"
+    )
   end
 end
