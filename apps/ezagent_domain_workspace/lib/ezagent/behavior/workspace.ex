@@ -158,19 +158,22 @@ defmodule Ezagent.Behavior.Workspace do
   def invoke(:create_agent, slice, args, ctx) when is_map(args) do
     raw_workspace_uri = Map.get(ctx, :self_uri)
 
-    with {:ok, flavor, name, cwd, with_pty?} <- coerce_create_args(args),
+    with {:ok, flavor, name, cwd, with_pty?, from_uri} <- coerce_create_args(args),
          :ok <- validate_flavor(flavor),
          :ok <- validate_name(name),
          :ok <- validate_cwd_for_flavor(flavor, with_pty?, cwd),
+         :ok <- validate_from_for_flavor(flavor, from_uri),
          {:ok, workspace_uri} <- require_workspace_uri(raw_workspace_uri),
          workspace_name = workspace_uri.host,
          {:ok, agent_uri} <- compose_agent_uri(flavor, name, workspace_name),
-         :ok <- refuse_if_exists(agent_uri) do
+         :ok <- refuse_if_exists(agent_uri),
+         {:ok, source_config_dir} <- resolve_source_config_dir(from_uri, ctx) do
       do_create_agent(flavor, agent_uri, slice, %{
         cwd: cwd,
         with_pty?: with_pty?,
         workspace_name: workspace_name,
-        workspace_uri: workspace_uri
+        workspace_uri: workspace_uri,
+        source_config_dir: source_config_dir
       })
     end
   end
@@ -260,12 +263,20 @@ defmodule Ezagent.Behavior.Workspace do
         description:
           "Provision a new agent (Template Class + spawn) in this workspace. " <>
             "Unified entry — CLI + LV both dispatch this. See SPEC " <>
-            "2026-05-25-agent-create-cli-gui-parity.",
+            "2026-05-25-agent-create-cli-gui-parity. Optional `from` " <>
+            "(source agent URI) clones the source's per-agent config_dir " <>
+            "via the cc Template Class's existing claude_config_dir " <>
+            "reference-copy path; requires `sandbox.read` on source.",
         args: %{
           flavor: :string,
           name: :string,
           cwd: :string,
-          with_pty: :boolean
+          with_pty: :boolean,
+          # Optional source agent URI for `--from` cloning. Absent or
+          # nil ⇒ no clone. Validated structurally by
+          # `coerce_create_args/1`; cap-check + slice resolution by
+          # `resolve_source_config_dir/2`.
+          from: {:option, :uri}
         },
         returns: %{agent_uri: :uri, template_name: :string},
         modes: [:call]
@@ -305,6 +316,11 @@ defmodule Ezagent.Behavior.Workspace do
     name = Map.get(args, :name)
     cwd = Map.get(args, :cwd, "")
     with_pty = Map.get(args, :with_pty, false)
+    # `--from <source-uri>` — optional. nil ⇒ no clone (legacy path).
+    # When set, must be a `%URI{scheme: "entity", host: "agent"}`.
+    # Coerce-stage rejects bad shapes early; cap-check + source slice
+    # resolution happen later via `resolve_source_config_dir/2`.
+    from = Map.get(args, :from)
 
     cond do
       not is_binary(flavor) ->
@@ -319,10 +335,19 @@ defmodule Ezagent.Behavior.Workspace do
       not is_boolean(with_pty) ->
         {:error, {:bad_with_pty, with_pty}}
 
+      not valid_from?(from) ->
+        {:error, {:bad_from, from}}
+
       true ->
-        {:ok, String.trim(flavor), String.trim(name), String.trim(cwd), with_pty}
+        {:ok, String.trim(flavor), String.trim(name), String.trim(cwd), with_pty, from}
     end
   end
+
+  defp valid_from?(nil), do: true
+
+  defp valid_from?(%URI{scheme: "entity", host: "agent", path: "/" <> _}), do: true
+
+  defp valid_from?(_), do: false
 
   defp require_workspace_uri(%URI{scheme: "workspace", host: host} = uri)
        when is_binary(host) and host != "",
@@ -385,6 +410,77 @@ defmodule Ezagent.Behavior.Workspace do
     end
   end
 
+  # `--from` only meaningful for flavors that have a per-agent
+  # config_dir to clone. Today that's `cc` only — echo/curl/np have no
+  # CLAUDE_CONFIG_DIR concept. Rejecting up front keeps the error
+  # close to the operator's mistake (vs surfacing later as a Template
+  # Class refusal).
+  defp validate_from_for_flavor(_flavor, nil), do: :ok
+  defp validate_from_for_flavor("cc", %URI{}), do: :ok
+
+  defp validate_from_for_flavor(other_flavor, %URI{}),
+    do: {:error, {:from_unsupported_for_flavor, other_flavor}}
+
+  # Resolve the source agent's per-agent config_dir by dispatching
+  # `sandbox.read` on the source URI WITH THE CALLER'S CAPS. This:
+  #
+  #  - Enforces `sandbox.read` on source via standard CapBAC (no new
+  #    cap subject, no parallel auth path). Caller without it →
+  #    dispatch returns `{:error, :unauthorized}` → we map to
+  #    `:source_not_readable` so the operator sees the actual
+  #    permission shape.
+  #  - Returns `{:error, :source_not_found}` when the source Agent
+  #    Kind isn't alive (ReadyGate :no_such_actor) — distinguishes a
+  #    typo from a permission denial.
+  #  - On success returns the source's `config_dir_path` (or nil if
+  #    the source has no per-agent dir — e.g. an echo agent. We treat
+  #    nil as `:source_has_no_config_dir`; cloning would be a no-op
+  #    and silently degrade to a fresh agent, which masks operator
+  #    error).
+  #
+  # ORDER MATTERS — this step is in the main `with` chain BEFORE
+  # `do_create_agent`. A `{:error, _}` here short-circuits BEFORE any
+  # template registration, Store write, or filesystem op. The "no fs
+  # operations on cap-deny" guarantee from the spec's test #3.
+  defp resolve_source_config_dir(nil, _ctx), do: {:ok, nil}
+
+  defp resolve_source_config_dir(%URI{} = source_uri, ctx) do
+    target = URI.new!("#{URI.to_string(source_uri)}?action=sandbox.read")
+
+    caller = Map.fetch!(ctx, :caller)
+    caps = Map.fetch!(ctx, :caps)
+
+    case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+           target: target,
+           mode: :call,
+           args: %{},
+           ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+         }) do
+      {:ok, %{config_dir_path: path}} when is_binary(path) and path != "" ->
+        {:ok, path}
+
+      {:ok, %{config_dir_path: nil}} ->
+        # Source has no per-agent config_dir — nothing to clone.
+        # Surfacing as an error (vs silently spawning a fresh agent)
+        # tells the operator their `--from` was meaningless: probably
+        # they pointed at the wrong agent.
+        {:error, :source_has_no_config_dir}
+
+      {:ok, other} ->
+        # Sandbox.read returned an unexpected shape — fail loudly.
+        {:error, {:source_read_unexpected_shape, other}}
+
+      {:error, :unauthorized} ->
+        {:error, :source_not_readable}
+
+      {:error, :no_such_actor} ->
+        {:error, :source_not_found}
+
+      {:error, reason} ->
+        {:error, {:source_read_failed, reason}}
+    end
+  end
+
   # Per SPEC v3 §3 / Phase 9 PR-2 — entity URI is
   # `entity://agent/<workspace>/<flavor>_<name>`.
   defp compose_agent_uri(flavor, name, workspace_name)
@@ -406,14 +502,22 @@ defmodule Ezagent.Behavior.Workspace do
 
   # cc / echo → register a Workspace-scoped template + persist + invoke.
   defp do_create_agent("cc", agent_uri, slice, params) do
-    %{cwd: cwd, workspace_name: workspace_name, workspace_uri: workspace_uri} = params
+    %{
+      cwd: cwd,
+      workspace_name: workspace_name,
+      workspace_uri: workspace_uri,
+      source_config_dir: source_config_dir
+    } = params
+
     tmpl_name = "cc.agent." <> agent_name(agent_uri)
 
-    tmpl = %{
-      "class" => "cc.agent",
-      "agent_uri" => URI.to_string(agent_uri),
-      "cwd" => Path.expand(cwd)
-    }
+    tmpl =
+      %{
+        "class" => "cc.agent",
+        "agent_uri" => URI.to_string(agent_uri),
+        "cwd" => Path.expand(cwd)
+      }
+      |> maybe_put_clone_source(source_config_dir)
 
     register_and_invoke_template(
       slice,
@@ -482,6 +586,26 @@ defmodule Ezagent.Behavior.Workspace do
       {:error, reason} ->
         {:error, {:spawn_failed, reason}}
     end
+  end
+
+  # `--from` cloning works by overriding the cc Template Class's
+  # `claude_config_dir` field with the SOURCE agent's per-agent dir.
+  # The Template Class already supports `claude_config_dir` as the
+  # "reference dir copied into the per-agent location at spawn"
+  # (Allen 2026-05-24 PR3 — `create_agent_config_dir/2` does the
+  # `File.cp_r/2`). Passing the source's per-agent dir as that
+  # reference makes the new agent's per-agent dir a deep copy of
+  # the source's — exactly the clone semantics requested.
+  #
+  # IMPORTANT: this is per-agent → per-agent copy. The two dirs are
+  # then independent (post-copy mutations on either don't affect the
+  # other) — verified by the deep-copy-independence test in
+  # `cc_agent_clone_from_test.exs`.
+  defp maybe_put_clone_source(tmpl, nil), do: tmpl
+
+  defp maybe_put_clone_source(tmpl, source_config_dir)
+       when is_binary(source_config_dir) do
+    Map.put(tmpl, "claude_config_dir", source_config_dir)
   end
 
   # Register the template in the Workspace's session_templates slice +
