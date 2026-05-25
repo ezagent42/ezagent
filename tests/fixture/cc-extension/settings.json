@@ -1,0 +1,41 @@
+{
+  "enableAllProjectMcpServers": true,
+  "channelsEnabled": true,
+  "enabledPlugins": {
+    "agent-setup@agent-setup": true,
+    "dev-loop-skills@ezagent42": true,
+    "claude-md-management@claude-plugins-official": true
+  },
+  "extraKnownMarketplaces": {
+    "ezagent42": {
+      "source": {
+        "source": "github",
+        "repo": "ezagent42/ezagent42"
+      }
+    }
+  },
+  "permissions": {
+    "allow": [
+      "Edit(/Users/h2oslabs/Workspace/esr-ng/.claude/*)",
+      "Bash(lsof:*)",
+      "Bash(ps:*)",
+      "Bash(pkill -f mix phx.server)",
+      "Bash(pkill -9 -f mix phx.server)",
+      "Bash(mix phx.server)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PROJECT_DIR}/scripts/hooks/sub-step-gate.sh",
+            "timeout": 180
+          }
+        ]
+      }
+    ]
+  }
+}

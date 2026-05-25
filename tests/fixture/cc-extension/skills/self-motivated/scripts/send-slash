@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# send-slash — send a slash-command keystroke to (or capture) the CURRENT tmux pane.
+#
+# "Current pane" = the pane this script's process lives in. tmux exports
+# $TMUX_PANE into every child process, so we don't have to guess.
+#
+# Restriction: `send` and `submit` only accept content whose first argument
+# starts with "/" — this script is intentionally limited to driving slash
+# commands.
+#
+# usage:
+#   send-slash submit /<cmd>          # vim-mode submit (RECOMMENDED).
+#                                     #   sequence: Escape, i, <text>, Escape, Enter.
+#                                     #   Works whether the TUI is currently in
+#                                     #   INSERT or NORMAL — the leading Escape
+#                                     #   normalises the state. Use this when the
+#                                     #   receiving TUI is vim-mode (Claude Code
+#                                     #   with vim keybinds — INSERT Enter inserts
+#                                     #   a newline, only NORMAL Enter submits).
+#   send-slash send /<cmd> [keys...]  # low-level passthrough to `tmux send-keys`.
+#                                     #   first arg MUST start with "/"; later bare
+#                                     #   words are tmux key names (Enter, Escape).
+#                                     #   Reliable only for short single-line text
+#                                     #   in non-vim TUIs; prefer `submit` otherwise.
+#   send-slash capture                # dump visible pane contents to stdout
+#   send-slash pane                   # print the resolved pane id
+set -euo pipefail
+
+if [[ -z "${TMUX:-}" ]]; then
+  echo "error: not running inside tmux" >&2
+  exit 1
+fi
+
+# Prefer the inherited $TMUX_PANE; fall back to asking tmux for the active pane.
+pane="${TMUX_PANE:-$(tmux display-message -p '#{pane_id}')}"
+
+usage() {
+  sed -n '2,25p' "$0" >&2
+  exit 2
+}
+
+cmd="${1:-}"
+[[ -n "$cmd" ]] || usage
+shift
+
+case "$cmd" in
+  submit)
+    [[ $# -eq 1 ]] || usage
+    if [[ "$1" != /* ]]; then
+      echo "error: submit content must start with '/' (got: '$1')" >&2
+      exit 3
+    fi
+    # vim-mode submission sequence — see top-of-file rationale.
+    # Each step is a separate send-keys with a sleep so the TUI processes the
+    # leading Escape as a real mode-change keypress (not part of a paste stream),
+    # 'i' as "enter INSERT", the text as content, the trailing Escape as
+    # "exit INSERT to NORMAL", and the final Enter as "submit in NORMAL".
+    tmux send-keys -t "$pane" Escape; sleep 0.3
+    tmux send-keys -t "$pane" i;      sleep 0.3
+    tmux send-keys -t "$pane" -l "$1"
+    sleep 0.6
+    tmux send-keys -t "$pane" Escape; sleep 0.3
+    tmux send-keys -t "$pane" Enter
+    ;;
+  send)
+    [[ $# -gt 0 ]] || usage
+    if [[ "$1" != /* ]]; then
+      echo "error: send content must start with '/' (got: '$1')" >&2
+      exit 3
+    fi
+    tmux send-keys -t "$pane" "$@"
+    ;;
+  capture)
+    tmux capture-pane -p -t "$pane"
+    ;;
+  pane)
+    echo "$pane"
+    ;;
+  *)
+    usage
+    ;;
+esac
