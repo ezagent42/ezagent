@@ -29,7 +29,7 @@ defmodule Ezagent.ExternalMirror do
   - `list_adapters/0` — reads AdapterRegistry (PR-EM-1).
   """
 
-  alias Ezagent.ExternalMirror.{AdapterRegistry, BindingRow}
+  alias Ezagent.ExternalMirror.{AdapterRegistry, BindingRow, FacadeNonceTable}
 
   require Logger
 
@@ -89,10 +89,34 @@ defmodule Ezagent.ExternalMirror do
      - timeout → `{:error, :target_check_timeout}`
      - crash → `{:error, {:target_check_crashed, reason}}`
 
-  3. **Dispatch** `:bind` on the Session Kind with `args[:_facade_checks_ok] = true`.
+  3. **Dispatch** `:bind` on the Session Kind with
+     `args[:_facade_nonce] = <32 bytes of crypto rand>`. The nonce is
+     claimed AFTER Checks 2 + 3 pass via
+     `Ezagent.ExternalMirror.FacadeNonceTable.claim_nonce/4` (5-second
+     TTL) and atomically consumed by the action body via
+     `consume_nonce/2`. The nonce table is `:protected` ETS owned by
+     the FacadeNonceTable GenServer — only the facade (through the
+     GenServer's `:claim` handle_call) can insert nonces, so an
+     in-VM caller cannot forge one.
+
      Dispatch CapBAC step 5.5 enforces Check 1 (session bind cap);
      step 5.6 enforces cross-workspace isolation; the Behavior's
      `:bind` invoke mutates slice + idempotently spawns the Worker.
+
+  ## codex r3 CRIT fix (2026-05-25) — forgery-proof handoff
+
+  Pre-fix, the facade set `args[:_facade_checks_ok] = true` after
+  Check 3. The action body trusted that boolean — but `args` is
+  caller-controlled at `Invocation.dispatch/1` time, so any in-VM
+  caller holding the session `:bind` cap could dispatch directly with
+  the flag set and skip Checks 2 + 3. Real authorization bypass.
+
+  The nonce replaces the flag: 32 random bytes signed for the exact
+  `(session, adapter, target, caller)` tuple, single-use, 5-second
+  expiry, atomically consumed. Forgery requires guessing 256 bits of
+  RNG output (infeasible) or writing to a `:protected` ETS table the
+  caller doesn't own (impossible without elevation past the BEAM's
+  ETS access model).
 
   Returns the dispatch result map (`%{ok: true, binding_id: _,
   worker_uri: _}`) on success, or any of the above errors.
@@ -215,23 +239,34 @@ defmodule Ezagent.ExternalMirror do
   List sessions with at least one binding for `adapter_id`. Reads
   the `external_mirror_bindings` projection table (the slice can't
   answer cross-session queries without scanning every Session
-  Kind), then FILTERS by the caller's workspace.
+  Kind), then APPLIES TWO FILTERS:
 
-  Returns `{:ok, [URI.t()]}` where every returned session URI is in
-  the caller's workspace (per `Ezagent.Capability.workspace_of/1`).
-  Callers holding a workspace-wildcard cap (i.e. an admin cap with
-  `workspace_uri: :any` for the matching `kind/behavior`) see every
-  session.
+  1. **Workspace match** — caller's workspace must equal the
+     session's workspace (or caller holds an admin wildcard, which
+     bypasses both filters).
+  2. **Per-session `:list_bindings` cap** — the caller must hold a
+     cap that authorizes `:list_bindings` on that specific session.
+     Same-workspace alone is NOT enough; a caller with no
+     `Behavior.ExternalMirror` cap on any session sees `[]` even if
+     they're in the right workspace.
 
-  ## codex r2 HIGH-2 fix (2026-05-25)
+  Returns `{:ok, [URI.t()]}` where every returned session URI is
+  both in the caller's workspace AND covered by a held
+  `:list_bindings` cap. Callers holding an admin wildcard cap (with
+  `workspace_uri: :any` for the matching `kind/behavior`) bypass
+  both filters and see every session.
 
-  Pre-fix, `sessions_for_adapter/1` returned every matching session
-  across all workspaces with no caller context — a workspace-A user
-  could enumerate workspace-B's bound sessions. The fix derives the
-  caller's workspace from `ctx.caller` and filters the result set.
-  An admin cap (`workspace_uri: :any` against
-  `Ezagent.Behavior.ExternalMirror :list_bindings` on `:any`) skips
-  the filter.
+  ## codex r2 HIGH-2 fix (2026-05-25) — workspace filter
+  ## codex r3 HIGH-1 fix (2026-05-25) — per-session cap filter
+
+  Pre-r2, `sessions_for_adapter/1` returned every matching session
+  across all workspaces. Pre-r3, the workspace filter alone let a
+  same-workspace caller with NO `Behavior.ExternalMirror` caps still
+  enumerate every bound session URI in their workspace (an
+  information-disclosure side-channel). The r3 fix adds a second
+  intersection against caller caps so the read surface matches the
+  CapBAC protection on `list_bindings/2` (which already gates by the
+  per-session cap via the dispatch path).
   """
   @spec sessions_for_adapter(adapter_id :: String.t(), caller_ctx()) :: {:ok, [URI.t()]}
   def sessions_for_adapter(adapter_id, ctx) when is_binary(adapter_id) and is_map(ctx) do
@@ -242,10 +277,38 @@ defmodule Ezagent.ExternalMirror do
         all_sessions
       else
         caller_workspace = caller_workspace(ctx)
-        Enum.filter(all_sessions, &session_in_workspace?(&1, caller_workspace))
+
+        all_sessions
+        |> Enum.filter(&session_in_workspace?(&1, caller_workspace))
+        |> Enum.filter(&caller_can_list_bindings?(ctx, &1))
       end
 
     {:ok, filtered}
+  end
+
+  # codex r3 HIGH-1 (2026-05-25): does the caller hold a cap that
+  # authorizes `:list_bindings` on `session_uri`? Uses the same
+  # `Ezagent.Capability.matches?/2` shape `Ezagent.Capability.cap_for_action/3`
+  # builds for dispatch step 5.5 — so the answer here matches what
+  # the dispatch-gated `list_bindings/2` would allow.
+  defp caller_can_list_bindings?(ctx, %URI{} = session_uri) do
+    caps = Map.get(ctx, :caps, MapSet.new())
+
+    needed = %{
+      kind: :session,
+      behavior: Ezagent.Behavior.ExternalMirror,
+      instance: session_uri,
+      workspace_uri: workspace_of_or_any(session_uri)
+    }
+
+    Enum.any?(caps, &Ezagent.Capability.matches?(&1, needed))
+  end
+
+  defp workspace_of_or_any(%URI{} = uri) do
+    case Ezagent.Capability.workspace_of(uri) do
+      %URI{} = ws -> ws
+      :any -> :any
+    end
   end
 
   defp safe_sessions_for_adapter(adapter_id) do
@@ -382,6 +445,17 @@ defmodule Ezagent.ExternalMirror do
   end
 
   defp do_dispatch_bind(%URI{} = session_uri, adapter_id, target_id, opts, ctx) do
+    # codex r3 CRIT fix (2026-05-25): claim a single-use nonce from
+    # the `:protected`-ETS FacadeNonceTable. The action body MUST
+    # call `FacadeNonceTable.consume_nonce/2` with the EXACT same
+    # (session, adapter, target, caller) tuple — any mismatch (or
+    # missing nonce, or expired nonce, or replayed nonce) is rejected
+    # with `:bind_must_go_through_facade`.
+    caller_uri = Map.fetch!(ctx, :caller)
+
+    {:ok, nonce} =
+      FacadeNonceTable.claim_nonce(session_uri, adapter_id, target_id, caller_uri)
+
     target =
       URI.parse("#{URI.to_string(session_uri)}?action=external_mirror.bind")
 
@@ -392,7 +466,7 @@ defmodule Ezagent.ExternalMirror do
         adapter_id: adapter_id,
         target_id: target_id,
         opts: opts,
-        _facade_checks_ok: true
+        _facade_nonce: nonce
       },
       ctx: ensure_reply(ctx)
     }

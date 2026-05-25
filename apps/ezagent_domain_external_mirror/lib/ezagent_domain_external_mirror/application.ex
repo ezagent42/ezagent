@@ -70,7 +70,7 @@ defmodule EzagentDomainExternalMirror.Application do
   require Logger
 
   alias Ezagent.CapabilityRegistry
-  alias Ezagent.ExternalMirror.{BootReconciler, RootSupervisor, WorkerRegistry}
+  alias Ezagent.ExternalMirror.{BootReconciler, FacadeNonceTable, RootSupervisor, WorkerRegistry}
 
   @impl true
   def start(_type, _args) do
@@ -80,6 +80,13 @@ defmodule EzagentDomainExternalMirror.Application do
       # registrations succeed.
       WorkerRegistry,
       RootSupervisor,
+      # PR-EM-3 codex r3 CRIT fix (2026-05-25): protected-ETS nonce
+      # table that hands a single-use unforgeable token from the
+      # facade's `bind/4` (after Checks 2 + 3) to the action body's
+      # `invoke(:bind, ...)`. Replaces the forgeable
+      # `args[:_facade_checks_ok]` flag. Owned by the Domain
+      # Application so it starts before the facade is callable.
+      FacadeNonceTable,
       # PR-EM-3: Task.Supervisor for the bind-facade's
       # target_ownership_check/2 Task. Must be alive before the
       # first `Ezagent.ExternalMirror.bind/4` call.

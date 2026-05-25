@@ -14,15 +14,31 @@ defmodule Ezagent.Behavior.ExternalMirror do
   | `:unbind`       | `:call` | Remove a binding + tear down its Worker process             |
   | `:list_bindings`| `:call` | Read all bindings on this session                            |
 
-  ## Two-step bind flow (r6 HIGH-2 fix)
+  ## Two-step bind flow (r6 HIGH-2 fix + r3 CRIT fix)
 
   `:bind` is dispatched ONLY AFTER `Ezagent.ExternalMirror.bind/4`
   (the facade in `Ezagent.ExternalMirror`) has run Check 2 (per-adapter
   allow cap) + Check 3 (`target_ownership_check/2` in a supervised
-  Task with bounded timeout). The facade injects
-  `args[:_facade_checks_ok] = true` into the dispatched Invocation;
-  this Behavior REFUSES to mutate the slice without that flag (the
-  facade is the only legitimate entry).
+  Task with bounded timeout). The facade then claims a single-use
+  nonce from `Ezagent.ExternalMirror.FacadeNonceTable` (32 random
+  bytes, 5-second TTL, bound to the exact
+  `(session_uri, adapter_id, target_id, caller_uri)` tuple) and
+  injects it as `args[:_facade_nonce]`. This Behavior atomically
+  consumes the nonce; ANY of {missing, expired, tuple-mismatch,
+  replay} → `{:error, :bind_must_go_through_facade}`.
+
+  ### codex r3 CRIT fix (2026-05-25) — why a nonce, not a flag
+
+  Pre-fix, the facade used `args[:_facade_checks_ok] = true`. But
+  `args` is caller-controlled at `Invocation.dispatch/1` time — any
+  caller holding the session `:bind` cap could dispatch directly with
+  the flag set and SKIP Checks 2 and 3. Real auth bypass.
+
+  The nonce is forgery-proof: the FacadeNonceTable's ETS is
+  `:protected` (only the FacadeNonceTable GenServer can insert), the
+  nonce is 32 bytes of `:crypto.strong_rand_bytes`, and it's bound to
+  the exact tuple the facade validated — so an attacker can't reuse
+  one nonce for a different (target_id, adapter_id) pair.
 
   Standard CapBAC step 5.5 (`Kind.Runtime.authz_check/4`) enforces
   Check 1 (session-level `Behavior.ExternalMirror` bind cap) BEFORE
@@ -78,7 +94,7 @@ defmodule Ezagent.Behavior.ExternalMirror do
 
   require Logger
 
-  alias Ezagent.ExternalMirror.{AdapterRegistry, BindingRow, WorkerSpawn}
+  alias Ezagent.ExternalMirror.{AdapterRegistry, BindingRow, FacadeNonceTable, WorkerSpawn}
 
   # ----- Ezagent.Behavior contract ----------------------------------------
 
@@ -198,11 +214,26 @@ defmodule Ezagent.Behavior.ExternalMirror do
 
   @impl Ezagent.Behavior
   def invoke(:bind, slice, args, ctx) do
-    case Map.get(args, :_facade_checks_ok) do
-      true ->
+    # codex r3 CRIT fix (2026-05-25): atomic single-use nonce check
+    # replaces the forgeable `_facade_checks_ok` flag. The facade
+    # (Ezagent.ExternalMirror.bind/4) is the ONLY legitimate
+    # claim_nonce caller; we verify the nonce matches the EXACT tuple
+    # (session_uri, adapter_id, target_id, caller_uri) the facade
+    # validated. Any divergence (forgery / expiry / replay / tuple
+    # mismatch) → refuse.
+    aid = Map.get(args, :adapter_id)
+    tid = Map.get(args, :target_id)
+    caller_uri = Map.get(ctx, :caller)
+    session_uri = Map.get(ctx, :self_uri) || Map.get(ctx, :target_uri)
+    nonce = Map.get(args, :_facade_nonce)
+
+    expected = {session_uri, aid, tid, caller_uri}
+
+    case nonce_consume(nonce, expected) do
+      :ok ->
         do_bind(slice, args, ctx)
 
-      _ ->
+      :error ->
         # Let-it-crash-style refusal: bind MUST go through the
         # `Ezagent.ExternalMirror.bind/4` facade so Checks 2 + 3
         # (per-adapter cap + target ownership) are enforced. A
@@ -219,6 +250,13 @@ defmodule Ezagent.Behavior.ExternalMirror do
   def invoke(:list_bindings, slice, _args, _ctx) do
     {:ok, slice, %{bindings: slice.bindings}}
   end
+
+  defp nonce_consume(nonce, {%URI{}, aid, _tid, %URI{}} = expected)
+       when is_binary(nonce) and is_binary(aid) do
+    FacadeNonceTable.consume_nonce(nonce, expected)
+  end
+
+  defp nonce_consume(_, _), do: :error
 
   defp do_bind(slice, args, ctx) do
     aid = Map.fetch!(args, :adapter_id)

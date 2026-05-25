@@ -33,6 +33,7 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
     AdapterRegistry,
     BindingRegistry,
     BindingRow,
+    FacadeNonceTable,
     RootSupervisor,
     WorkerRegistry,
     WorkerSpawn
@@ -808,6 +809,310 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
       }
 
       assert {:ok, []} = Facade.sessions_for_adapter("mock_publish", foreign_ctx)
+    end
+  end
+
+  # =========================================================================
+  # PR-EM-3 r4 (codex r3 → r4) regressions — CRIT + HIGH-1 + HIGH-2
+  # =========================================================================
+
+  describe "PR-EM-3 r4 CRIT — forgery-proof :bind handoff (nonce replaces _facade_checks_ok flag)" do
+    test "caller with session :bind cap CANNOT bypass Checks 2+3 by forging args" do
+      owner_uri = unique_user_uri("crit-forge-owner")
+      session_uri = unique_session_uri("em3-crit-forge")
+      :ok = spawn_owner_and_session(owner_uri, session_uri)
+
+      on_exit(fn -> cleanup_session(session_uri) end)
+
+      # Caller holds ONLY the session `:bind` cap on Behavior.ExternalMirror,
+      # NOT the per-adapter allow cap. Pre-r4-fix, they could dispatch
+      # :bind directly with `_facade_checks_ok: true` and bypass Check
+      # 2 (adapter allow) + Check 3 (target_ownership_check).
+      caller_caps =
+        MapSet.new([
+          %Capability{
+            kind: :session,
+            behavior: Ezagent.Behavior.ExternalMirror,
+            instance: session_uri,
+            workspace_uri: @workspace_uri,
+            granted_by: User.admin_uri(),
+            granted_at: DateTime.utc_now()
+          }
+        ])
+
+      ctx = %{caller: owner_uri, caps: caller_caps, reply: :ignore}
+
+      target =
+        URI.parse("#{URI.to_string(session_uri)}?action=external_mirror.bind")
+
+      # Forge attempt 1: random binary as nonce.
+      inv_a = %Invocation{
+        target: target,
+        mode: :call,
+        args: %{
+          adapter_id: "mock_publish",
+          target_id: "tgt-crit-forge-a",
+          opts: %{},
+          _facade_nonce: :crypto.strong_rand_bytes(32)
+        },
+        ctx: ctx
+      }
+
+      assert {:error, :bind_must_go_through_facade} = Invocation.dispatch(inv_a)
+
+      # Forge attempt 2: caller also sets the OLD :_facade_checks_ok
+      # flag (verifying the pre-fix bypass is gone — the flag should
+      # be ignored entirely now).
+      inv_b = %Invocation{
+        target: target,
+        mode: :call,
+        args: %{
+          adapter_id: "mock_publish",
+          target_id: "tgt-crit-forge-b",
+          opts: %{},
+          _facade_checks_ok: true,
+          _facade_nonce: :crypto.strong_rand_bytes(32)
+        },
+        ctx: ctx
+      }
+
+      assert {:error, :bind_must_go_through_facade} = Invocation.dispatch(inv_b)
+
+      # Forge attempt 3: no nonce at all, only the old flag.
+      inv_c = %Invocation{
+        target: target,
+        mode: :call,
+        args: %{
+          adapter_id: "mock_publish",
+          target_id: "tgt-crit-forge-c",
+          opts: %{},
+          _facade_checks_ok: true
+        },
+        ctx: ctx
+      }
+
+      assert {:error, :bind_must_go_through_facade} = Invocation.dispatch(inv_c)
+
+      # No slice mutation, no row.
+      assert {:ok, []} = Facade.list_bindings(session_uri, owner_ctx(owner_uri))
+      assert [] = BindingRow.list_for_session(session_uri)
+    end
+
+    test "FacadeNonceTable.consume_nonce/2 is single-use (replay protection)" do
+      session_uri = unique_session_uri("nonce-replay")
+      caller_uri = unique_user_uri("nonce-replay")
+
+      {:ok, nonce} =
+        FacadeNonceTable.claim_nonce(
+          session_uri,
+          "mock_publish",
+          "tgt-replay",
+          caller_uri
+        )
+
+      assert :ok =
+               FacadeNonceTable.consume_nonce(
+                 nonce,
+                 {session_uri, "mock_publish", "tgt-replay", caller_uri}
+               )
+
+      # Second consume → :error (consumed-once)
+      assert :error =
+               FacadeNonceTable.consume_nonce(
+                 nonce,
+                 {session_uri, "mock_publish", "tgt-replay", caller_uri}
+               )
+    end
+
+    test "FacadeNonceTable.consume_nonce/2 rejects tuple mismatch (session/adapter/target/caller)" do
+      session_a = unique_session_uri("nonce-tup-a")
+      session_b = unique_session_uri("nonce-tup-b")
+      caller_uri = unique_user_uri("nonce-tup")
+
+      {:ok, nonce} =
+        FacadeNonceTable.claim_nonce(
+          session_a,
+          "mock_publish",
+          "tgt-A",
+          caller_uri
+        )
+
+      # Different session → reject (also consumes the nonce — single-use even on mismatch)
+      assert :error =
+               FacadeNonceTable.consume_nonce(
+                 nonce,
+                 {session_b, "mock_publish", "tgt-A", caller_uri}
+               )
+
+      # Correct tuple AFTER mismatch consume → still :error (gone)
+      assert :error =
+               FacadeNonceTable.consume_nonce(
+                 nonce,
+                 {session_a, "mock_publish", "tgt-A", caller_uri}
+               )
+    end
+
+    test "FacadeNonceTable.consume_nonce/2 rejects expired nonces (TTL)" do
+      session_uri = unique_session_uri("nonce-ttl")
+      caller_uri = unique_user_uri("nonce-ttl")
+
+      # 50ms TTL so the test doesn't have to wait 5 seconds.
+      {:ok, nonce} =
+        FacadeNonceTable.claim_nonce(
+          session_uri,
+          "mock_publish",
+          "tgt-ttl",
+          caller_uri,
+          50
+        )
+
+      Process.sleep(100)
+
+      assert :error =
+               FacadeNonceTable.consume_nonce(
+                 nonce,
+                 {session_uri, "mock_publish", "tgt-ttl", caller_uri}
+               )
+    end
+  end
+
+  describe "PR-EM-3 r4 HIGH-1 — sessions_for_adapter/2 requires per-session :list_bindings cap" do
+    test "same-workspace caller with NO caps → []",
+         %{owner_uri: owner_uri, session_uri: session_uri} do
+      :ok = spawn_owner_and_session(owner_uri, session_uri)
+
+      target_id = "tgt-r4-h1-empty-caps"
+      MockPublishBinding.register_observer(target_id, self())
+
+      assert {:ok, _} =
+               Facade.bind(session_uri, "mock_publish", target_id, %{}, owner_ctx(owner_uri))
+
+      # Same-workspace caller with EMPTY caps. Pre-r4-fix would return
+      # [session_uri] (workspace match passed, no further cap check).
+      # Post-fix must return [] because the caller holds no
+      # `:list_bindings` cap on the session.
+      same_ws_caller =
+        URI.parse("entity://user/default/h1-empty-#{System.unique_integer([:positive])}")
+
+      empty_ctx = %{
+        caller: same_ws_caller,
+        caps: MapSet.new(),
+        reply: :ignore
+      }
+
+      assert {:ok, []} = Facade.sessions_for_adapter("mock_publish", empty_ctx)
+    end
+
+    test "same-workspace caller with :list_bindings cap on ONE of N sessions sees only that one" do
+      owner_a = unique_user_uri("h1-multi-a")
+      owner_b = unique_user_uri("h1-multi-b")
+      owner_c = unique_user_uri("h1-multi-c")
+      session_a = unique_session_uri("h1-a")
+      session_b = unique_session_uri("h1-b")
+      session_c = unique_session_uri("h1-c")
+
+      :ok = spawn_owner_and_session(owner_a, session_a)
+      :ok = spawn_owner_and_session(owner_b, session_b)
+      :ok = spawn_owner_and_session(owner_c, session_c)
+
+      on_exit(fn ->
+        cleanup_session(session_a)
+        cleanup_session(session_b)
+        cleanup_session(session_c)
+      end)
+
+      # Bind all three with each session's own owner ctx.
+      [{session_a, owner_a}, {session_b, owner_b}, {session_c, owner_c}]
+      |> Enum.each(fn {s, o} ->
+        tid = "tgt-h1-multi-#{:erlang.phash2(s)}"
+        MockPublishBinding.register_observer(tid, self())
+        assert {:ok, _} = Facade.bind(s, "mock_publish", tid, %{}, owner_ctx(o))
+      end)
+
+      # Caller holds :list_bindings cap on session_b only.
+      caller_uri =
+        URI.parse("entity://user/default/h1-caller-#{System.unique_integer([:positive])}")
+
+      caller_caps =
+        MapSet.new([
+          %Capability{
+            kind: :session,
+            behavior: Ezagent.Behavior.ExternalMirror,
+            instance: session_b,
+            workspace_uri: @workspace_uri,
+            granted_by: User.admin_uri(),
+            granted_at: DateTime.utc_now()
+          }
+        ])
+
+      ctx = %{caller: caller_uri, caps: caller_caps, reply: :ignore}
+
+      assert {:ok, visible} = Facade.sessions_for_adapter("mock_publish", ctx)
+      visible_strs = Enum.map(visible, &URI.to_string/1)
+
+      assert URI.to_string(session_b) in visible_strs
+      refute URI.to_string(session_a) in visible_strs
+      refute URI.to_string(session_c) in visible_strs
+    end
+  end
+
+  describe "PR-EM-3 r4 HIGH-2 — BindingRow.insert/1 unique_constraint maps DB error to changeset" do
+    test "duplicate-insert for same natural-key triple returns {:error, %Changeset{}} (NOT raise)" do
+      session_uri = unique_session_uri("h2-dup")
+      adapter_id = "mock_publish"
+      target_id = "tgt-h2-dup"
+
+      base_attrs = %{
+        id: BindingRow.row_id(session_uri, adapter_id, target_id),
+        session_uri: URI.to_string(session_uri),
+        adapter_id: adapter_id,
+        target_id: target_id,
+        opts_json: "{}",
+        bound_by: "entity://user/default/h2",
+        bound_at: DateTime.utc_now(),
+        workspace_uri: URI.to_string(@workspace_uri)
+      }
+
+      # First insert succeeds.
+      assert {:ok, %BindingRow{}} = BindingRow.insert(base_attrs)
+
+      # Second insert MUST return {:error, %Ecto.Changeset{}} — pre-r4
+      # this raised Ecto.ConstraintError because no unique_constraint
+      # was declared on the changeset, even though the DB index existed.
+      assert {:error, %Ecto.Changeset{} = cs} = BindingRow.insert(base_attrs)
+
+      # Changeset carries a unique-constraint error.
+      has_unique_err? =
+        Enum.any?(cs.errors, fn {_field, {_msg, opts}} ->
+          Keyword.get(opts, :constraint) == :unique
+        end)
+
+      assert has_unique_err?,
+             "expected unique-constraint error in changeset; got #{inspect(cs.errors)}"
+
+      # Exactly one row landed.
+      assert [%BindingRow{}] = BindingRow.list_for_session(session_uri)
+    end
+
+    test "Behavior :bind action body treats {:error, changeset} as idempotent success",
+         %{owner_uri: owner_uri, session_uri: session_uri} do
+      :ok = spawn_owner_and_session(owner_uri, session_uri)
+
+      target_id = "tgt-r4-h2-idemp"
+      MockPublishBinding.register_observer(target_id, self())
+
+      ctx = owner_ctx(owner_uri)
+
+      assert {:ok, %{ok: true}} =
+               Facade.bind(session_uri, "mock_publish", target_id, %{}, ctx)
+
+      # Second bind — the slice path already short-circuits to the
+      # "existing" branch. This pins that the idempotency contract
+      # holds end-to-end after the changeset-error mapping.
+      assert {:ok, %{ok: true}} =
+               Facade.bind(session_uri, "mock_publish", target_id, %{}, ctx)
+
+      assert [%BindingRow{}] = BindingRow.list_for_session(session_uri)
     end
   end
 

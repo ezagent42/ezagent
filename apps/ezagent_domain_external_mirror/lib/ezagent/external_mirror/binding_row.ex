@@ -72,6 +72,17 @@ defmodule Ezagent.ExternalMirror.BindingRow do
   Returns `{:ok, row}` on fresh insert, `{:error, changeset}` on
   natural-key collision (the action body MAPS that to `:ok` per the
   idempotency contract).
+
+  ## codex r3 HIGH-3 fix (2026-05-25) — unique_constraint declared
+
+  The changeset now declares `unique_constraint/3` against the
+  migration's
+  `external_mirror_bindings_natural_key_index` so that concurrent
+  `:bind` for the same `(session_uri, adapter_id, target_id)` triple
+  returns `{:error, %Changeset{}}` instead of raising
+  `Ecto.ConstraintError` (which prior to this fix turned a routine
+  idempotency case into a process crash). The Behavior's `:bind`
+  action body already handles the changeset error as success.
   """
   @spec insert(map()) :: {:ok, t()} | {:error, term()}
   def insert(attrs) when is_map(attrs) do
@@ -95,6 +106,42 @@ defmodule Ezagent.ExternalMirror.BindingRow do
       :bound_at,
       :workspace_uri
     ])
+    # Declare the natural-key unique_constraint. Without this, Ecto
+    # raises Ecto.ConstraintError on collision (the underlying SQLite
+    # constraint fires, but Ecto can't map it back to a changeset
+    # error without a registered constraint declaration). With this,
+    # concurrent :bind for the same triple gets back
+    # {:error, %Changeset{}} — which the action body treats as the
+    # idempotent "already exists" success path.
+    #
+    # ## Subtle: TWO constraint names for the same unique index
+    #
+    # The migration creates the index with a custom name
+    # (`external_mirror_bindings_natural_key_index`). On Postgres,
+    # `Repo.insert/2` would surface that exact name in the constraint
+    # error. SQLite, however, doesn't expose the index name in its
+    # error string; the Ecto SQLite adapter (`ecto_sqlite3`) reconstructs
+    # a DEFAULT name from the column list:
+    # `external_mirror_bindings_session_uri_adapter_id_target_id_index`.
+    # We register BOTH so the changeset-error path works on either
+    # adapter (V1 = SQLite; production paths may evolve to Postgres).
+    #
+    # The :id PK collision is similarly mapped — same triple → same
+    # synthetic row_id (per row_id/3 hash) — so EITHER constraint
+    # fires depending on race timing. Both produce the same shape of
+    # changeset error for the caller.
+    |> Ecto.Changeset.unique_constraint(:adapter_id,
+      name: :external_mirror_bindings_natural_key_index,
+      message: "binding already exists"
+    )
+    |> Ecto.Changeset.unique_constraint(:adapter_id,
+      name: :external_mirror_bindings_session_uri_adapter_id_target_id_index,
+      message: "binding already exists"
+    )
+    |> Ecto.Changeset.unique_constraint(:id,
+      name: :external_mirror_bindings_pkey,
+      message: "binding already exists"
+    )
     |> Repo.insert()
   end
 
