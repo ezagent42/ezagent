@@ -86,7 +86,7 @@ defmodule EzagentDomainChat.Integration.PresenceReadReceiptsE2ETest do
     # Create the session — uses the canonical chat-domain create_session
     # facade so PresenceFanout sees member_joined events
     admin_uri = ensure_admin_spawned()
-    {:ok, session_uri} =
+    {:ok, session_uri, _meta} =
       EzagentDomainChat.create_session(short_name, admin_uri, template_name: "default")
 
     # Join the cc_demo agent so the session has two members; admin was

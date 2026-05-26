@@ -25,6 +25,8 @@ defmodule EzagentDomainChat do
   alias Ezagent.{Invocation, KindRegistry}
   alias Ezagent.Entity.{Session, User}
 
+  require Logger
+
   @doc """
   Spawn a new Session Kind under `EzagentDomainChat.SessionSupervisor`,
   bind it to the creator's workspace, and join `creator_uri` to it.
@@ -51,19 +53,39 @@ defmodule EzagentDomainChat do
 
   Missing key raises `ArgumentError`.
 
-  Returns `{:ok, session_uri}` on success, `{:error, reason}` on:
-  - `{:already_registered, _}` — session URI already in KindRegistry
-  - other DynamicSupervisor errors propagated as-is
+  Returns `{:ok, session_uri, meta}` on success where `meta` is
+  `%{orchestrator_uri: URI.t() | nil, orchestrator_status: :ready |
+  :pending | :failed, orchestrator_error: term() | nil}` — SPEC
+  `2026-05-26-session-create-orchestrator-unified` Gap A. The
+  `orchestrator_status` field surfaces the result of the auto-spawned
+  orchestrator Agent Kind:
+
+    * `:ready` — orchestrator agent is alive (was `:created` or
+      `:already_present` per `Session.ensure_orchestrator/3`)
+    * `:pending` — orchestrator URI reserved but ownership not yet
+      classified; LV should render "pending — refresh in a moment"
+    * `:failed` — orchestrator spawn failed; the session itself is
+      alive and usable, but `orchestrator_error` carries the reason
+      and the LV restart button is the recovery path
+
+  Returns `{:error, reason}` on session-create failure (the orchestrator
+  step is only attempted if session creation + cap grant succeed).
 
   Raises `ArgumentError` if neither `creator_uri` nor
   `opts[:workspace_uri]` is supplied (a `nil` creator with no explicit
   workspace cannot be assigned a workspace structurally).
 
-  Idempotent re-spawn of same short_name returns `{:ok, existing_uri}`
+  Idempotent re-spawn of same short_name returns `{:ok, existing_uri, meta}`
   (via `{:already_started, pid}` → reuse pid).
   """
+  @type create_session_meta :: %{
+          orchestrator_uri: URI.t() | nil,
+          orchestrator_status: :ready | :pending | :failed,
+          orchestrator_error: term() | nil
+        }
+
   @spec create_session(String.t(), URI.t() | nil, keyword()) ::
-          {:ok, URI.t()} | {:error, term()}
+          {:ok, URI.t(), create_session_meta()} | {:error, term()}
   def create_session(short_name, creator_uri \\ nil, opts \\ [])
 
   def create_session(short_name, creator_uri, opts)
@@ -110,10 +132,7 @@ defmodule EzagentDomainChat do
 
     case result do
       {:ok, _pid} ->
-        :ok = Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)
-        :ok = join_creator(session_uri, effective_owner)
-        :ok = grant_owner_orchestrator_admin_cap(session_uri, effective_owner, workspace_uri)
-        {:ok, session_uri}
+        finalize_session_create(session_uri, workspace_uri, effective_owner)
 
       # `:already_started` = same child spec already in supervisor's children
       # `:already_registered` = Kind.Server.init crashed on KindRegistry.put_new
@@ -122,16 +141,10 @@ defmodule EzagentDomainChat do
       # (idempotent ETS overwrite) + re-attempt join (cast is idempotent on
       # members map).
       {:error, {:already_started, _pid}} ->
-        :ok = Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)
-        :ok = join_creator(session_uri, effective_owner)
-        :ok = grant_owner_orchestrator_admin_cap(session_uri, effective_owner, workspace_uri)
-        {:ok, session_uri}
+        finalize_session_create(session_uri, workspace_uri, effective_owner)
 
       {:error, {:already_registered, _}} ->
-        :ok = Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)
-        :ok = join_creator(session_uri, effective_owner)
-        :ok = grant_owner_orchestrator_admin_cap(session_uri, effective_owner, workspace_uri)
-        {:ok, session_uri}
+        finalize_session_create(session_uri, workspace_uri, effective_owner)
 
       {:error, reason} ->
         {:error, reason}
@@ -139,6 +152,68 @@ defmodule EzagentDomainChat do
   end
 
   def create_session(_short_name, _creator, _opts), do: {:error, :short_name_required}
+
+  # Shared finalization for the three success branches of the Session
+  # spawn step. Binds workspace, joins creator, grants the
+  # OrchestratorAdmin :restart cap, then auto-spawns the orchestrator
+  # Agent Kind (SPEC `2026-05-26-session-create-orchestrator-unified`
+  # Gap A).
+  #
+  # Returns `{:ok, session_uri, meta}` where `meta` carries the
+  # orchestrator status. `:ok` from the spawn step (any of `:created`,
+  # `:already_present`) yields `:ready`; `:partial` yields `:pending`;
+  # `:error` yields `:failed` WITH the session still alive — the cap is
+  # already granted, so the operator can click Restart in LV. This is
+  # NOT a silent fallback per `feedback_let_it_crash_no_workarounds`:
+  # the meta map structurally surfaces the failure so callers MUST
+  # render it (Invariant #9 — no silent drops at user-facing surfaces).
+  defp finalize_session_create(session_uri, workspace_uri, effective_owner) do
+    :ok = Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)
+    :ok = join_creator(session_uri, effective_owner)
+    :ok = grant_owner_orchestrator_admin_cap(session_uri, effective_owner, workspace_uri)
+
+    meta = ensure_orchestrator_meta(session_uri, workspace_uri, effective_owner)
+    {:ok, session_uri, meta}
+  end
+
+  # Translate `Session.ensure_orchestrator/3`'s 3-way return shape to
+  # the public meta map. The 3 return shapes (per the @spec on
+  # `Session.ensure_orchestrator/3`):
+  #
+  #   {:ok, orch_uri, :created | :already_present} → :ready
+  #   {:partial, %{orchestrator_pending: uri}}     → :pending
+  #   {:error, reason}                              → :failed (logged)
+  defp ensure_orchestrator_meta(session_uri, workspace_uri, owner_uri) do
+    case Session.ensure_orchestrator(session_uri, workspace_uri, owner_uri) do
+      {:ok, %URI{} = orch_uri, _outcome} ->
+        %{
+          orchestrator_uri: orch_uri,
+          orchestrator_status: :ready,
+          orchestrator_error: nil
+        }
+
+      {:partial, %{orchestrator_pending: %URI{} = pending_uri}} ->
+        %{
+          orchestrator_uri: pending_uri,
+          orchestrator_status: :pending,
+          orchestrator_error: nil
+        }
+
+      {:error, reason} ->
+        Logger.warning(
+          "EzagentDomainChat.create_session: orchestrator spawn failed for " <>
+            "session=#{URI.to_string(session_uri)}: #{inspect(reason)} — " <>
+            "session is alive, operator may click Restart in LV to retry " <>
+            "(SPEC 2026-05-26-session-create-orchestrator-unified Gap A)"
+        )
+
+        %{
+          orchestrator_uri: nil,
+          orchestrator_status: :failed,
+          orchestrator_error: reason
+        }
+    end
+  end
 
   # workspace://<name> → "<name>". Raises ArgumentError if the URI
   # isn't a bare workspace URI (helps catch passing entity / session

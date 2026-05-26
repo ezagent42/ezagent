@@ -161,11 +161,17 @@ defmodule Ezagent.Entity.AgentTemplate do
         "cwd" => cwd
       }
 
+      # SPEC `2026-05-26-session-create-orchestrator-unified` Gap B —
+      # propagate the orchestrator `role` from the AgentTemplate content
+      # to the Template Class data. The cc-orchestrator AgentTemplate
+      # seed sets `role: "orchestrator"`; default cc AgentTemplates omit
+      # the field (resolves to `:default` downstream).
       optional = %{
         "operator_settings_path" => content_get(content, :settings_path),
         "operator_mcp_config_path" => content_get(content, :mcp_config_path),
         "claude_config_dir" => content_get(content, :claude_config_dir),
-        "api_key_helper" => content_get(content, :api_key_helper)
+        "api_key_helper" => content_get(content, :api_key_helper),
+        "role" => content_get(content, :role)
       }
 
       data =

@@ -173,7 +173,7 @@ defmodule EzagentDomainChat.Integration.SessionAutoJoinTest do
       short = "ajs-creator-#{uniq()}"
       admin = User.admin_uri()
 
-      {:ok, session_uri} =
+      {:ok, session_uri, _meta} =
         EzagentDomainChat.create_session(short, admin, template_name: "default")
 
       assert wait_until(fn ->
@@ -334,7 +334,7 @@ defmodule EzagentDomainChat.Integration.SessionAutoJoinTest do
       short = "ajs-pid-#{uniq()}"
       admin = User.admin_uri()
 
-      {:ok, session_uri} =
+      {:ok, session_uri, _meta} =
         EzagentDomainChat.create_session(short, admin, template_name: "default")
 
       # Wait for the creator-auto-join cast to land.
@@ -389,7 +389,7 @@ defmodule EzagentDomainChat.Integration.SessionAutoJoinTest do
       short = "ajs-idem-#{uniq()}"
       admin = User.admin_uri()
 
-      {:ok, session_uri} =
+      {:ok, session_uri, _meta} =
         EzagentDomainChat.create_session(short, admin, template_name: "default")
 
       # Wait for the creator-auto-join cast to land.

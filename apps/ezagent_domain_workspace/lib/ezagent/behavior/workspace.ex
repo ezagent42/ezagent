@@ -58,7 +58,14 @@ defmodule Ezagent.Behavior.Workspace do
       # action body owns the LV's prior `register_and_instantiate/3`
       # orchestration (template registration + Loader.invoke_template +
       # direct-spawn fallback for flavors with no Template Class).
-      :create_agent
+      :create_agent,
+      # SPEC `docs/superpowers/specs/2026-05-26-session-create-orchestrator-unified.md`
+      # Gap C: unified session-create entry. CLI + LV both reach
+      # `EzagentDomainChat.create_session/3` through this action so a
+      # `mix ezagent workspace create_session ...` invocation produces
+      # the same session URI shape (and same auto-spawned orchestrator)
+      # as the LV "New session" form.
+      :create_session
     ]
   end
 
@@ -80,7 +87,12 @@ defmodule Ezagent.Behavior.Workspace do
         Ezagent.Capability.cap(:workspace, __MODULE__, :list_routing_rules),
       set_routing_rules: Ezagent.Capability.cap(:workspace, __MODULE__, :set_routing_rules),
       instantiate: Ezagent.Capability.cap(:workspace, __MODULE__, :instantiate),
-      create_agent: Ezagent.Capability.cap(:workspace, __MODULE__, :create_agent)
+      create_agent: Ezagent.Capability.cap(:workspace, __MODULE__, :create_agent),
+      # SPEC `docs/superpowers/specs/2026-05-26-session-create-orchestrator-unified.md`
+      # Gap C — workspace-scoped session creation. Invariant #2: cap
+      # subject uses MODULE reference (`__MODULE__`), not atom shorthand.
+      create_session:
+        Ezagent.Capability.cap(:workspace, __MODULE__, :create_session)
     }
   end
 
@@ -99,7 +111,11 @@ defmodule Ezagent.Behavior.Workspace do
       {:instantiate, "instantiate a fresh workspace from a workspace template"},
       {:create_agent,
        "create a new agent in this workspace (registers Template Class, " <>
-         "spawns Agent Kind, starts PTY for cc / echo-with-PTY)"}
+         "spawns Agent Kind, starts PTY for cc / echo-with-PTY)"},
+      {:create_session,
+       "create a new session in this workspace + auto-spawn the " <>
+         "orchestrator agent owned by the caller (SPEC " <>
+         "2026-05-26-session-create-orchestrator-unified Gap C)"}
     ]
   end
 
@@ -209,6 +225,97 @@ defmodule Ezagent.Behavior.Workspace do
     end
   end
 
+  # --- create_session (unified CLI/LV session provisioning) -----------
+  #
+  # SPEC `docs/superpowers/specs/2026-05-26-session-create-orchestrator-unified.md`
+  # Gap C. Wraps `EzagentDomainChat.create_session/3` so the CLI and LV
+  # share one entry. Translates the facade's 3-tuple meta map into a
+  # Workspace.invoke return shape with the orchestrator URI/status
+  # surfaced for the caller (CLI human-readable formatter; LV flash).
+  #
+  # Workspace authority: the action runs in the Workspace Kind, so
+  # `ctx.self_uri` is the workspace URI — passed as `:workspace_uri` to
+  # the facade. The caller URI is the session creator (becomes the
+  # session owner_uri + receives the OrchestratorAdmin :restart cap).
+  def invoke(:create_session, slice, args, ctx) when is_map(args) do
+    workspace_uri = Map.get(ctx, :self_uri)
+    caller = Map.get(ctx, :caller)
+
+    with {:ok, short_name, template_name} <- coerce_create_session_args(args),
+         {:ok, %URI{} = workspace_uri} <- require_session_workspace_uri(workspace_uri),
+         {:ok, %URI{} = caller} <- require_caller(caller),
+         {:ok, facade} <- resolve_session_facade() do
+      case facade.create_session(short_name, caller,
+             workspace_uri: workspace_uri,
+             template_name: template_name
+           ) do
+        {:ok, %URI{} = session_uri, meta} when is_map(meta) ->
+          {:ok, slice,
+           %{
+             session_uri: session_uri,
+             orchestrator_uri: Map.get(meta, :orchestrator_uri),
+             orchestrator_status: Map.get(meta, :orchestrator_status),
+             orchestrator_error: format_orchestrator_error(Map.get(meta, :orchestrator_error))
+           }}
+
+        {:error, reason} ->
+          {:error, reason}
+      end
+    end
+  end
+
+  # SPEC `2026-05-26-session-create-orchestrator-unified` Gap C — DI
+  # provider lookup for the session-creation facade. `ezagent_domain_chat`
+  # depends on `ezagent_domain_workspace` (workspace boots first), so a
+  # compile-time alias would invert the dep graph and create a cycle.
+  # Instead the facade module is looked up at runtime via the
+  # application env key (default: `EzagentDomainChat`). Tests can
+  # override via `Application.put_env(:ezagent_domain_workspace,
+  # :session_facade, FakeFacade)` to drive `:create_session` without
+  # the full chat domain.
+  defp resolve_session_facade do
+    facade =
+      Application.get_env(:ezagent_domain_workspace, :session_facade, EzagentDomainChat)
+
+    if Code.ensure_loaded?(facade) and function_exported?(facade, :create_session, 3) do
+      {:ok, facade}
+    else
+      {:error, {:session_facade_unavailable, facade}}
+    end
+  end
+
+  defp coerce_create_session_args(args) do
+    short_name = Map.get(args, :short_name) || Map.get(args, :name)
+    template_name = Map.get(args, :template_name) || Map.get(args, :template)
+
+    cond do
+      not is_binary(short_name) or short_name == "" ->
+        {:error, :short_name_required}
+
+      not is_binary(template_name) or template_name == "" ->
+        {:error, :template_name_required}
+
+      true ->
+        {:ok, String.trim(short_name), String.trim(template_name)}
+    end
+  end
+
+  defp require_session_workspace_uri(%URI{scheme: "workspace", host: host} = uri)
+       when is_binary(host) and host != "",
+       do: {:ok, uri}
+
+  defp require_session_workspace_uri(other),
+    do: {:error, {:bad_workspace_uri, other}}
+
+  defp require_caller(%URI{} = caller), do: {:ok, caller}
+  defp require_caller(other), do: {:error, {:bad_caller, other}}
+
+  # Format the orchestrator_error term for the CLI/LV consumers.
+  # `nil` (happy path) stays `nil`; non-nil gets stringified so the
+  # auto-derived CLI formatter doesn't trip on opaque tuples.
+  defp format_orchestrator_error(nil), do: nil
+  defp format_orchestrator_error(err), do: inspect(err)
+
   # --- instantiate (the north-star action) -----------------------------
 
   def invoke(:instantiate, slice, _args, _ctx) do
@@ -310,6 +417,28 @@ defmodule Ezagent.Behavior.Workspace do
           from: {:option, :uri}
         },
         returns: %{agent_uri: :uri, template_name: :string},
+        modes: [:call]
+      },
+      # SPEC 2026-05-26-session-create-orchestrator-unified Gap C.
+      create_session: %{
+        description:
+          "Create a new session in this workspace + auto-spawn the " <>
+            "orchestrator agent owned by the caller. Unified entry — CLI " <>
+            "`mix ezagent workspace create_session --workspace ... " <>
+            "--short-name <name> --template-name <class>` and the LV " <>
+            "form both reach `EzagentDomainChat.create_session/3` through " <>
+            "this action. SPEC " <>
+            "2026-05-26-session-create-orchestrator-unified Gap C.",
+        args: %{
+          short_name: :string,
+          template_name: :string
+        },
+        returns: %{
+          session_uri: :uri,
+          orchestrator_uri: {:option, :uri},
+          orchestrator_status: :atom,
+          orchestrator_error: {:option, :string}
+        },
         modes: [:call]
       }
     }

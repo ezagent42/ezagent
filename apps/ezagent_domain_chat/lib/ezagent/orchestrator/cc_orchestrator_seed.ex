@@ -372,6 +372,14 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
       settings_path: sandbox.settings_path,
       mcp_config_path: sandbox.mcp_config_path,
       api_key_helper: nil,
+      # SPEC `2026-05-26-session-create-orchestrator-unified` Gap B —
+      # carrying `role: "orchestrator"` on the AgentTemplate content
+      # threads through `AgentTemplate.to_template_data/2` into the cc
+      # Template Class data, which triggers `apply_orchestrator_role_bootstrap`:
+      # copy the `ezagent-session-orchestrator` skill into the spawned
+      # agent's per-agent config_dir + append the CLAUDE.md hint +
+      # set `EZAGENT_AGENT_ROLE=orchestrator` in the claude process env.
+      role: "orchestrator",
       default_caps: [],
       created_by: nil,
       created_at: DateTime.utc_now()

@@ -688,7 +688,48 @@ defmodule Ezagent.Entity.Session do
   # Step 2 — ensure_orchestrator  (SPEC §2 step 2, codex rev-4 HIGH-1/3)
   # ─────────────────────────────────────────────────────────────────────
 
-  defp ensure_orchestrator(%URI{} = session_uri, %URI{} = workspace_uri, %URI{} = owner_uri) do
+  @doc """
+  Ensure an orchestrator agent exists for `session_uri` in `workspace_uri`
+  owned by `owner_uri`. Returns one of three shapes:
+
+    * `{:ok, orchestrator_uri, :created | :already_present}` — orchestrator
+      is alive in `KindRegistry`, owned by `owner_uri`, bound to
+      `workspace_uri`. `:created` ⇔ this call started the worker;
+      `:already_present` ⇔ the worker pre-existed.
+    * `{:partial, %{orchestrator_pending: candidate_uri}}` — the URI is
+      reserved but ownership classification is incomplete (lineage and/or
+      workspace registries haven't caught up). LV / CLI should render
+      "pending" + invite a retry.
+    * `{:error, reason}` — orchestrator spawn failed OR positive foreign
+      evidence (lineage/workspace POSITIVELY mismatch) was detected.
+
+  Made public 2026-05-26 (SPEC `2026-05-26-session-create-orchestrator-unified`
+  Gap A) so `EzagentDomainChat.create_session/3` can wire it in directly,
+  giving the LV/CLI/bootstrap entry the same auto-spawn semantics the
+  SessionTemplate.instantiate path always had. The internal logic is
+  unchanged from when this was `defp` — only the visibility flipped.
+
+  This call spawns the orchestrator's **Agent Kind GenServer** (the
+  chat-domain identity for the orchestrator). The cc PTY + `claude`
+  subprocess for the orchestrator come up separately via
+  `template.instantiate` on the cc-orchestrator template URI (the
+  OrchestratorAdmin Restart button + the SessionTemplate Generator path
+  both follow that dispatch). The orchestrator's "orchestrator" role —
+  which causes the cc Template Class to load the
+  `ezagent-session-orchestrator` skill into the per-agent config dir —
+  is carried on the cc-orchestrator AgentTemplate's content slice
+  (seeded by `Ezagent.Orchestrator.CcOrchestratorSeed.seed/0`),
+  threaded through `Ezagent.Entity.AgentTemplate.to_template_data/2`.
+  """
+  @spec ensure_orchestrator(URI.t(), URI.t(), URI.t()) ::
+          {:ok, URI.t(), :created | :already_present}
+          | {:partial, %{orchestrator_pending: URI.t()}}
+          | {:error, term()}
+  def ensure_orchestrator(
+        %URI{} = session_uri,
+        %URI{} = workspace_uri,
+        %URI{} = owner_uri
+      ) do
     candidate_uri = derive_orchestrator_uri(session_uri, workspace_uri)
     orch_template_uri = URI.parse("template://agent/system/cc-orchestrator")
     instance_name = derive_orchestrator_instance_name(session_uri)

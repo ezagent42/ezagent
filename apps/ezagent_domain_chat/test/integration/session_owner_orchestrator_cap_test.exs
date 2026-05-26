@@ -41,7 +41,7 @@ defmodule EzagentDomainChat.Integration.SessionOwnerOrchestratorCapTest do
       short_name = "rfc402-owner-test-#{System.unique_integer([:positive])}"
       creator = User.admin_uri()
 
-      {:ok, session_uri} =
+      {:ok, session_uri, _meta} =
         EzagentDomainChat.create_session(short_name, creator, template_name: "default")
 
       assert {:ok, ^creator} = Session.owner(session_uri)
@@ -52,7 +52,7 @@ defmodule EzagentDomainChat.Integration.SessionOwnerOrchestratorCapTest do
       creator = User.admin_uri()
       workspace_uri = Ezagent.URI.entity_workspace_uri(creator)
 
-      {:ok, session_uri} =
+      {:ok, session_uri, _meta} =
         EzagentDomainChat.create_session(short_name, creator, template_name: "default")
 
       caps = Ezagent.Identity.list_caps_for(creator)
@@ -76,10 +76,10 @@ defmodule EzagentDomainChat.Integration.SessionOwnerOrchestratorCapTest do
       short_name = "rfc402-idem-test-#{System.unique_integer([:positive])}"
       creator = User.admin_uri()
 
-      {:ok, session_uri_1} =
+      {:ok, session_uri_1, _meta_1} =
         EzagentDomainChat.create_session(short_name, creator, template_name: "default")
 
-      {:ok, session_uri_2} =
+      {:ok, session_uri_2, _meta_2} =
         EzagentDomainChat.create_session(short_name, creator, template_name: "default")
 
       assert session_uri_1 == session_uri_2

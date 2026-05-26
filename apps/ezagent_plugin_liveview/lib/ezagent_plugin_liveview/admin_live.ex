@@ -712,7 +712,12 @@ defmodule EzagentPluginLiveview.AdminLive do
            template_name: class,
            workspace_uri: socket.assigns.current_workspace_uri
          ) do
-      {:ok, session_uri} ->
+      {:ok, session_uri, meta} ->
+        # SPEC `2026-05-26-session-create-orchestrator-unified` Gap A +
+        # Invariant #9 — render the orchestrator status from the meta
+        # map. Silently discarding the meta would be an Invariant #9
+        # violation: a `:pending` / `:failed` orchestrator would be
+        # invisible to the operator at the moment of creation.
         if connected?(socket) do
           Phoenix.PubSub.subscribe(EzagentCore.PubSub, session_events_topic(session_uri))
           # PR-N2 codex r2 HIGH-1 revert — see the matching comment
@@ -730,7 +735,7 @@ defmodule EzagentPluginLiveview.AdminLive do
            :new_session_form,
            to_form(%{"short_name" => "", "template_class" => ""}, as: "new_session")
          )
-         |> assign(:flash_error, nil)}
+         |> assign(:flash_error, orchestrator_flash_text(meta))}
 
       {:error, reason} ->
         {:noreply,
@@ -741,6 +746,56 @@ defmodule EzagentPluginLiveview.AdminLive do
          )}
     end
   end
+
+  # SPEC `2026-05-26-session-create-orchestrator-unified` Gap A — produce
+  # a `flash_error` text for the orchestrator-status field of
+  # `EzagentDomainChat.create_session/3`'s meta map. `:ready` → nil
+  # (suppress the existing error banner — happy path); `:pending` /
+  # `:failed` → human-readable text that surfaces the partial-success
+  # to the operator. The `flash_error` assign re-uses the LV's existing
+  # admin-error banner; a future PR can split this into its own slot.
+  defp orchestrator_flash_text(meta) when is_map(meta) do
+    case Map.get(meta, :orchestrator_status) do
+      :ready ->
+        nil
+
+      :pending ->
+        gettext("Orchestrator pending — refresh in a moment.")
+
+      :failed ->
+        reason = Map.get(meta, :orchestrator_error)
+
+        gettext("Orchestrator failed: %{reason}; click Restart to retry.",
+          reason: inspect(reason)
+        )
+
+      _ ->
+        nil
+    end
+  end
+
+  defp orchestrator_flash_text(_), do: nil
+
+  # SPEC `2026-05-26-session-create-orchestrator-unified` Gap A —
+  # rehydrate path's status is debug-level (operator's on admin page
+  # already; OrchestratorHealthCard surfaces it visually).
+  defp log_orchestrator_status_on_rehydrate(session_uri, meta) when is_map(meta) do
+    case Map.get(meta, :orchestrator_status) do
+      :ready ->
+        :ok
+
+      status ->
+        require Logger
+
+        Logger.info(
+          "AdminLive.ensure_main_session rehydrate: orchestrator " <>
+            "status=#{inspect(status)} for #{URI.to_string(session_uri)} " <>
+            "(error=#{inspect(Map.get(meta, :orchestrator_error))})"
+        )
+    end
+  end
+
+  defp log_orchestrator_status_on_rehydrate(_, _), do: :ok
 
   def handle_event(
         "create_session",
@@ -2508,8 +2563,16 @@ defmodule EzagentPluginLiveview.AdminLive do
         # URI shape that tests + persisted state assume; literal
         # `"default"` is the bootstrap namespace segment, NOT a
         # TemplateRegistry-registered class.
+        #
+        # SPEC `2026-05-26-session-create-orchestrator-unified` Gap A —
+        # `create_session/3` now returns a 3-tuple. This rehydrate path
+        # only cares that the session is alive; the orchestrator status
+        # is logged but does not surface here (the operator's already
+        # on the admin page; the OrchestratorHealthCard re-renders on
+        # the next assign cycle).
         case EzagentDomainChat.create_session("main", creator, template_name: "default") do
-          {:ok, _spawned_uri} ->
+          {:ok, _spawned_uri, meta} ->
+            log_orchestrator_status_on_rehydrate(uri, meta)
             uri
 
           {:error, reason} ->

@@ -420,6 +420,54 @@ defmodule Ezagent.Workspace do
   end
 
   @doc """
+  Dispatch the `:create_session` action on Workspace Kind — the
+  unified CLI/LV session-creation entry from SPEC
+  `docs/superpowers/specs/2026-05-26-session-create-orchestrator-unified.md`
+  Gap C.
+
+  Wraps `EzagentDomainChat.create_session/3` via the
+  `Behavior.Workspace.:create_session` action so the CLI
+  (`mix ezagent workspace create_session ...`) and the LV "New session"
+  form both reach the same code path. The auto-spawned orchestrator
+  agent is surfaced in the return map.
+
+  Goes through `Ezagent.Invocation.dispatch/1` so step 5.5 CapBAC,
+  audit telemetry, and the action body's workspace check all fire.
+
+  `args` is `%{short_name: String.t(), template_name: String.t()}`.
+  `ctx` carries `:caller` + `:caps`.
+
+  Returns `{:ok, %{session_uri: URI.t(), orchestrator_uri: URI.t() | nil,
+  orchestrator_status: :ready | :pending | :failed, orchestrator_error:
+  String.t() | nil}}` on success; `{:error, reason}` on validation /
+  cap denial / facade failure.
+  """
+  @spec create_session(URI.t(), map(), map()) ::
+          {:ok,
+           %{
+             session_uri: URI.t(),
+             orchestrator_uri: URI.t() | nil,
+             orchestrator_status: :ready | :pending | :failed,
+             orchestrator_error: String.t() | nil
+           }}
+          | {:error, term()}
+  def create_session(%URI{scheme: "workspace"} = workspace_uri, args, ctx)
+      when is_map(args) and is_map(ctx) do
+    target =
+      URI.new!("#{URI.to_string(workspace_uri)}?action=workspace.create_session")
+
+    caller = Map.fetch!(ctx, :caller)
+    caps = Map.fetch!(ctx, :caps)
+
+    Invocation.dispatch(%Invocation{
+      target: target,
+      mode: :call,
+      args: args,
+      ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+    })
+  end
+
+  @doc """
   Dispatch the `:create_user` action on Workspace Kind — the HIGH-2
   completion entry that replaces the legacy `mix ezagent.user.create`
   task's direct call into `Ezagent.Users.create/3`.
