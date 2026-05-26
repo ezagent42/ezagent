@@ -539,13 +539,35 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
       # join. Minting is idempotent per agent URI, so this is the SAME
       # token baked into the esr-bridge config: one credential, no
       # spoofing surface (Phase 7 completion PR-5).
-      {:ok, mcp_path, agent_token} =
+      {:ok, _global_mcp_path, agent_token} =
         EzagentPluginCc.McpConfigWriter.write_with_token!(
           agent_uri: URI.to_string(agent_uri),
           agent_cwd: agent_cwd
         )
 
-      settings_mcp_args = assemble_settings_mcp_args(mandatory_settings_path(), mcp_path, tmpl)
+      # 2026-05-26 (Allen e2e Bug 4): the writer writes THREE copies of
+      # the bridge mcp.json:
+      #   (a) `~/.ezagent/bridge.mcp.json` — shared/global, LATEST-WRITE-WINS
+      #   (b) `<git toplevel>/.mcp.json`  — shared/global, LATEST-WRITE-WINS
+      #   (c) `<agent_cwd>/.mcp.json`     — per-agent, isolated
+      #
+      # Pre-fix, `--mcp-config` pointed at (a). When two cc agents were
+      # spawned in succession, agent N's TUI would read (a) which had
+      # been clobbered by agent M's later spawn — claude's python bridge
+      # subprocess would authenticate as M, never connect for N. The
+      # observable symptom: only ONE cc agent ever has an active
+      # `cc:bridge:<URI>` channel (the last one spawned), and every
+      # other agent's inbound `chat.receive` audits as `:no_bridge`
+      # → silent drop.
+      #
+      # Per-agent isolation: claude's `--mcp-config` now points at the
+      # per-agent `<cwd>/.mcp.json` (write site (c)). That file's lifetime
+      # is bound to the agent's cwd; no other agent overwrites it.
+      # Files (a) + (b) are now diagnostic surfaces only (operator can
+      # eyeball the last-spawned agent's creds; they no longer gate
+      # the runtime claude → bridge handshake).
+      per_agent_mcp_path = Path.join(agent_cwd, ".mcp.json")
+      settings_mcp_args = assemble_settings_mcp_args(mandatory_settings_path(), per_agent_mcp_path, tmpl)
 
       # argv element 0 is the resolved ABSOLUTE path (not bare
       # "claude"); the rest is the hardening's safe arg assembly,

@@ -144,6 +144,38 @@ defmodule Ezagent.PluginCc.Template.CcAgentSpawnInvariantTest do
              )
     end
 
+    test "argv `--mcp-config` is the PER-AGENT cwd path, NOT the shared global (Allen 2026-05-26 e2e Bug 4)" do
+      # Pre-fix, --mcp-config pointed at ~/.ezagent/bridge.mcp.json
+      # (shared/global). With two cc agents alive, the second spawn
+      # OVERWROTE that file with its own URI+token. Agent N's claude
+      # TUI then read the file at MCP-server-start time, saw agent M's
+      # URI, and authenticated the WS bridge as M. Symptom: only the
+      # last-spawned agent ever has an active `cc:bridge:<URI>`
+      # channel; every other agent's inbound chat.receive is audited
+      # as :no_bridge → silent drop. Pin the per-agent cwd path here
+      # so this never regresses.
+      tmpl = base_tmpl()
+
+      assert {:ok, {argv, _env}} = CcAgent.build_claude_cmd(@agent_uri, @cwd, tmpl)
+
+      idx = Enum.find_index(argv, &(&1 == "--mcp-config"))
+      mcp_path = Enum.at(argv, idx + 1)
+      expected = Path.join(@cwd, ".mcp.json")
+
+      assert mcp_path == expected,
+             """
+             --mcp-config must point at the per-agent cwd's .mcp.json
+             (`<agent_cwd>/.mcp.json`), NOT the shared global. The shared
+             global file gets LATEST-WRITER-WINS-overwritten by every
+             other cc agent's spawn — agent N's claude TUI then reads
+             the file at MCP-server-start and authenticates the WS
+             bridge as the LATEST-SPAWNED agent (likely not N).
+
+             Expected: #{expected}
+             Got:      #{mcp_path}
+             """
+    end
+
     test "argv carries the trusted bridge --mcp-config (the WS-bridge enable)" do
       # Without `--mcp-config <bridge.mcp.json>`, the Python MCP bridge
       # NEVER starts, so the JOIN to `cc:bridge:<uri>` never happens
