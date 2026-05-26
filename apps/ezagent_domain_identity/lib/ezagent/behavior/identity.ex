@@ -365,12 +365,39 @@ defmodule Ezagent.Behavior.IdentityAdmin do
     Ezagent.Behavior.Identity.init_slice(args)
   end
 
+  # Bug 2 fix (Allen 2026-05-26) — `cap` arrives as one of three
+  # shapes depending on caller path:
+  #
+  #   - `%Ezagent.Capability{}` when an Elixir caller built the struct
+  #     directly (e.g. `Ezagent.Identity.grant_cap/3`'s struct branch),
+  #   - an ATOM-keyed map when an Elixir caller passed params
+  #     (Identity.grant_cap/3's map branch),
+  #   - a STRING-keyed map when the CLI's Optimus `:map` arg type
+  #     produced it via `Jason.decode/1` (the
+  #     `mix ezagent user grant_cap --cap '{...}'` path).
+  #
+  # The previous code blindly `MapSet.put`'d whatever shape arrived.
+  # String-keyed maps then sat in the MapSet bypassing
+  # `Capability.matches?/2`'s `%__MODULE__{}` head, silently denying
+  # every dispatch the cap was meant to authorize.
+  # `Capability.normalize!/2` coerces all three shapes to the canonical
+  # struct (or raises on anything else — per
+  # `feedback_let_it_crash_no_workarounds`).
   @impl Ezagent.Behavior
   def invoke(:grant_cap, slice, %{cap: cap}, ctx) do
-    case check_grant_authorized(cap, ctx) do
+    cap_struct = Ezagent.Capability.normalize!(cap, granter_from_ctx(ctx))
+
+    case check_grant_authorized(cap_struct, ctx) do
       :ok ->
-        new_slice = %{slice | caps: MapSet.put(slice.caps, cap)}
-        notify_cap_change(ctx, :cap_granted, "A new capability was granted to you.", cap)
+        new_slice = %{slice | caps: MapSet.put(slice.caps, cap_struct)}
+
+        notify_cap_change(
+          ctx,
+          :cap_granted,
+          "A new capability was granted to you.",
+          cap_struct
+        )
+
         {:ok, new_slice, %{caps: MapSet.to_list(new_slice.caps)}}
 
       {:error, _} = err ->
@@ -378,10 +405,50 @@ defmodule Ezagent.Behavior.IdentityAdmin do
     end
   end
 
+  # Revoke takes the same normalization step so a CLI revoke matches
+  # the canonical struct shape sitting in the slice (a bare string-keyed
+  # map and a struct with identical fields are not MapSet-equal).
   def invoke(:revoke_cap, slice, %{cap: cap}, ctx) do
-    new_slice = %{slice | caps: MapSet.delete(slice.caps, cap)}
-    notify_cap_change(ctx, :cap_revoked, "A capability was revoked from you.", cap)
+    cap_struct = Ezagent.Capability.normalize!(cap, granter_from_ctx(ctx))
+    new_slice = %{slice | caps: MapSet.delete(slice.caps, cap_struct)}
+
+    notify_cap_change(
+      ctx,
+      :cap_revoked,
+      "A capability was revoked from you.",
+      cap_struct
+    )
+
     {:ok, new_slice, %{caps: MapSet.to_list(new_slice.caps)}}
+  end
+
+  # The `caller` axis of dispatch ctx is one of:
+  #
+  #   - `%URI{}` for normal dispatch (CLI / LV / API paths)
+  #   - `:system` atom for cross-cutting system-internal grants
+  #     (bootstrap seed, snapshot-replay, ...)
+  #   - missing / nil for malformed ctx (boot-order edge cases)
+  #
+  # For the `granted_by` stamp on a normalized cap we want a URI in
+  # all three cases — the bootstrap URI is the structural fallback
+  # for non-URI callers per Decision #81 + SPEC v3 §4.4. `URI` callers
+  # pass through; non-URI callers collapse to the same bootstrap URI
+  # `Behavior.Identity.bootstrap_granter/0` returns. We re-derive it
+  # locally rather than calling the private helper in the sibling
+  # module.
+  defp granter_from_ctx(ctx) do
+    case Map.get(ctx, :caller) do
+      %URI{} = uri -> uri
+      _ -> bootstrap_granter_uri()
+    end
+  end
+
+  defp bootstrap_granter_uri do
+    if function_exported?(Ezagent.Entity.User, :admin_uri, 0) do
+      Ezagent.Entity.User.admin_uri()
+    else
+      URI.parse("system://bootstrap/grant_cap")
+    end
   end
 
   @impl Ezagent.Behavior

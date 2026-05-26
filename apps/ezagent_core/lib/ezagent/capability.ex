@@ -531,6 +531,108 @@ defmodule Ezagent.Capability do
     }
   end
 
+  @doc """
+  Coerce any of the three accepted grant-cap input shapes to a
+  `%Capability{}` struct, stamping `granted_by` with the granter URI
+  and `granted_at` with the current time when those fields aren't
+  present on the input.
+
+  Accepted shapes (Bug 2 fix, Allen 2026-05-26):
+
+  - `%Ezagent.Capability{}` — passed through unchanged (already canonical).
+  - **Atom-keyed** map (`%{kind: _, behavior: _, instance: _,
+    workspace_uri: _}` — produced by Elixir callers like
+    `Ezagent.Identity.grant_cap/3`) — built into a struct with
+    `Map.get` defaults of `:any` for missing field axes plus
+    granter-stamped metadata.
+  - **String-keyed** map (`%{"kind" => _, "behavior" => _, ...}` —
+    produced by the CLI's `Optimus :map` arg type, which is
+    `Jason.decode/1` output) — routed through `from_map/1` then
+    `granted_by` overridden with the supplied granter URI (since
+    CLI input never carries a `"granted_by"` field — the caller's
+    identity comes from the dispatch ctx, not the JSON payload).
+
+  Anything else raises `ArgumentError` per
+  `feedback_let_it_crash_no_workarounds` — no silent fallback,
+  no defensive shims.
+
+  This is the SINGLE chokepoint for cap-shape normalization on the
+  grant path; `IdentityAdmin.invoke(:grant_cap, ...)` calls it
+  before mutating the slice so a CLI-supplied JSON map and an
+  Elixir-supplied struct produce the exact same in-slice
+  representation. Without this, JSON input lands in the MapSet as
+  a bare string-keyed map, and downstream `Capability.matches?/2`
+  (which pattern-matches `%__MODULE__{}`) silently denies every
+  invocation the cap was supposed to authorize.
+  """
+  @spec normalize!(t() | map(), URI.t() | String.t()) :: t()
+  def normalize!(%__MODULE__{} = cap, _granter), do: cap
+
+  def normalize!(%{} = m, granter) when is_map_key(m, "kind") or is_map_key(m, "behavior") do
+    # String-keyed (JSON) shape. Pre-populate the granter-stamp keys
+    # before handing to from_map/1, which currently raises on `nil` in
+    # those slots (CLI payloads never carry `"granted_by"` /
+    # `"granted_at"` — they're metadata supplied by the dispatch
+    # context, not part of the cap-shape JSON the operator types).
+    granter_uri = parse_granter(granter)
+
+    m
+    |> Map.put_new("granted_by", URI.to_string(granter_uri))
+    |> Map.put_new("granted_at", DateTime.utc_now() |> DateTime.to_iso8601())
+    |> from_map()
+    # Always override granted_by — even if the JSON payload tried to
+    # supply one, the dispatch-ctx caller is the source of truth.
+    |> Map.put(:granted_by, granter_uri)
+  end
+
+  def normalize!(%{} = m, granter) when is_map_key(m, :kind) or is_map_key(m, :behavior) do
+    # Atom-keyed shape (Elixir caller). Per `feedback_let_it_crash_no_workarounds`:
+    # `workspace_uri` is REQUIRED — there is no silent default. Other
+    # field axes (kind/behavior/instance) default to `:any` matching
+    # the `cap/3` constructor's declarative shape; the granter-stamping
+    # metadata is filled in here.
+    workspace_uri =
+      case Map.fetch(m, :workspace_uri) do
+        {:ok, ws} ->
+          ws
+
+        :error ->
+          raise ArgumentError,
+                "Ezagent.Capability.normalize!/2: atom-keyed input map is missing " <>
+                  "required `:workspace_uri` field — per SPEC v3 §4 + " <>
+                  "`feedback_let_it_crash_no_workarounds`, workspace_uri has no " <>
+                  "silent default. Pass either `:any` (cross-workspace) or a " <>
+                  "concrete `%URI{}` workspace URI. Got: #{inspect(m)}"
+      end
+
+    %__MODULE__{
+      kind: Map.get(m, :kind, :any),
+      behavior: Map.get(m, :behavior, :any),
+      instance: Map.get(m, :instance, :any),
+      workspace_uri: workspace_uri,
+      granted_by: Map.get_lazy(m, :granted_by, fn -> parse_granter(granter) end),
+      granted_at: Map.get(m, :granted_at, DateTime.utc_now())
+    }
+  end
+
+  def normalize!(other, _granter) do
+    raise ArgumentError,
+          "Ezagent.Capability.normalize!/2: unrecognized cap shape — expected " <>
+            "a `%Ezagent.Capability{}` struct, a string-keyed JSON-decoded map " <>
+            "(e.g. `%{\"kind\" => \"session\", \"behavior\" => \"...\"}`), or an " <>
+            "atom-keyed Elixir map (e.g. `%{kind: :session, behavior: ..., " <>
+            "workspace_uri: ...}`). Got: #{inspect(other)}"
+  end
+
+  defp parse_granter(%URI{} = uri), do: uri
+  defp parse_granter(s) when is_binary(s), do: URI.parse(s)
+
+  defp parse_granter(other) do
+    raise ArgumentError,
+          "Ezagent.Capability.normalize!/2: granter must be a `%URI{}` or " <>
+            "URI string. Got: #{inspect(other)}"
+  end
+
   defp atom_or_module_to_string(:any), do: "any"
   defp atom_or_module_to_string(value) when is_atom(value), do: Atom.to_string(value)
 
