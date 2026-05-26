@@ -156,7 +156,7 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
               register at least one template first. --%>
         <div :if={@template_class_options == []} class="text-xs text-zinc-600 dark:text-zinc-400">
           <p class="mb-2">
-            {gettext("No template classes registered in this workspace.")}
+            {gettext("No templates registered in this workspace.")}
           </p>
           <p class="text-zinc-500">
             {gettext("Add one via the")}
