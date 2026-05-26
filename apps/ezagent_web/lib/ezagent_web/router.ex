@@ -225,6 +225,10 @@ defmodule EzagentWeb.Router do
     # No auth — see CcEventsController moduledoc for trust-boundary
     # rationale (the agent the hook reports about may be down).
     post "/cc-events", CcEventsController, :report
+
+    # EXP-C3 (PoC) — web customer chat via HTTP + SSE. See
+    # CustomerChatController moduledoc.
+    post "/customer/:workspace/chat", CustomerChatController, :chat
   end
 
   # Phase 5 PR 6: Feishu webhook receiver. The ONLY touch
