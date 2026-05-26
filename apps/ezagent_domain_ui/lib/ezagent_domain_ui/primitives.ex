@@ -567,11 +567,20 @@ defmodule EzagentDomainUi.Primitives do
     if File.exists?(candidate1) do
       candidate1
     else
-      # Fallback: walk from any app's :code.lib_dir to umbrella deps
+      # Fallback: walk from any app's :code.lib_dir to umbrella deps.
+      # 2026-05-26 fix: the prior shape was
+      #   `:code.lib_dir(...) |> to_string() |> Path.join([...])`
+      # which is `Path.join/2` (string, list). Elixir's Path.join/2
+      # coerces the list to a binary via iolist concatenation —
+      # NOT segment-joining — producing
+      #   `<lib_dir>/......depsheroicons...folder.svg`
+      # (all the `..` and segment names glued together). Use the
+      # single-list form so each segment becomes a proper path piece.
+      lib_dir = :code.lib_dir(:ezagent_domain_ui) |> to_string()
+
       candidate2 =
-        :code.lib_dir(:ezagent_domain_ui)
-        |> to_string()
-        |> Path.join([
+        Path.join([
+          lib_dir,
           "..",
           "..",
           "..",
