@@ -563,6 +563,7 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLive do
       current_entity_uri={@current_entity_uri_str}
       current_workspace_uri={Map.get(assigns, :current_workspace_uri)}
       workspaces={Map.get(assigns, :workspaces, [])}
+      workspace_name={Map.get(assigns, :workspace_name)}
       is_admin?={Map.get(assigns, :is_admin?, false)}
       is_system_member?={Map.get(assigns, :is_system_member?, false)}
       cmdk_nav_routes={Map.get(assigns, :cmdk_nav_routes, [])}
