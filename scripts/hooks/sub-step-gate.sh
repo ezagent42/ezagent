@@ -29,6 +29,23 @@ cd "${CLAUDE_PROJECT_DIR:-$(dirname "$0")/../..}" || {
   exit 2
 }
 
+# Short-circuit: the three gate checks (mix format / mix test /
+# mix ezagent.check_invariants) only act on Elixir code. If the
+# staged change touches no .ex/.exs/.heex files (pure docs / sh /
+# config / excalidraw / etc.), the gate has nothing meaningful to
+# verify — skip it. This also unblocks commits on dev machines
+# that lack a C toolchain for NIF compilation (mix format triggers
+# bcrypt_elixir's NIF build before it can check formatting).
+# Tag commits aren't filtered (they're release events, run the gate).
+if printf '%s' "$input" | grep -qE 'git[[:space:]]+commit'; then
+  staged_elixir=$(git diff --cached --name-only --diff-filter=ACMR \
+    2>/dev/null | grep -E '\.(ex|exs|heex)$' || true)
+  if [ -z "$staged_elixir" ]; then
+    echo "[sub-step-gate] no Elixir files staged — gate skipped" >&2
+    exit 0
+  fi
+fi
+
 echo "[sub-step-gate] git commit/tag detected — running Phase 1 gate" >&2
 
 echo "[sub-step-gate] → mix format --check-formatted" >&2
