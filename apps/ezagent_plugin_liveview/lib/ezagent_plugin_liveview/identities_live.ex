@@ -238,10 +238,6 @@ defmodule EzagentPluginLiveview.IdentitiesLive do
                 href={"/identities/users/" <> URI.encode_www_form(@entity.uri_str) <> "/caps"}
                 class="text-zinc-700 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-zinc-100 underline"
               >{gettext("Caps")}</a>
-              <a
-                href={"/identities/users/" <> URI.encode_www_form(@entity.uri_str) <> "/api-keys"}
-                class="text-zinc-700 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-zinc-100 underline"
-              >{gettext("API Keys")}</a>
             <% else %>
               <a
                 href={"/identities/agents/" <> URI.encode_www_form(@entity.uri_str)}
@@ -251,6 +247,10 @@ defmodule EzagentPluginLiveview.IdentitiesLive do
                 href={"/identities/agents/" <> URI.encode_www_form(@entity.uri_str) <> "/caps"}
                 class="text-zinc-700 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-zinc-100 underline"
               >{gettext("Caps")}</a>
+              <a
+                href={"/identities/agents/" <> URI.encode_www_form(@entity.uri_str) <> "/api-keys"}
+                class="text-zinc-700 dark:text-zinc-300 hover:text-zinc-900 dark:hover:text-zinc-100 underline"
+              >{gettext("API Keys")}</a>
             <% end %>
           </div>
         </div>

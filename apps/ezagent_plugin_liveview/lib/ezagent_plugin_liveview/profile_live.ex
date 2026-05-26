@@ -30,8 +30,7 @@ defmodule EzagentPluginLiveview.ProfileLive do
      |> assign(:editing_display_name?, false)
      |> assign(:flash_error, nil)
      |> assign(:flash_info, nil)
-     |> assign(:caps_count, count_caps(entity_uri))
-     |> assign(:api_keys_count, count_api_keys(entity_uri))}
+     |> assign(:caps_count, count_caps(entity_uri))}
   end
 
   @impl true
@@ -80,12 +79,6 @@ defmodule EzagentPluginLiveview.ProfileLive do
     catch
       _, _ -> 0
     end
-  end
-
-  defp count_api_keys(_uri) do
-    # Best-effort; ApiKeys API hasn't been finalized for read-only count.
-    # TODO Phase 9 — wire through Ezagent.ApiKeys.list_for/1.
-    0
   end
 
   @impl true
@@ -159,22 +152,24 @@ defmodule EzagentPluginLiveview.ProfileLive do
             </div>
           </.card>
 
-          <div class="grid grid-cols-2 gap-3 mt-4">
-            <a href={"/identities/users/" <> URI.encode_www_form(@entity_uri_str) <> "/caps"} class="block">
+          <div class="grid grid-cols-1 gap-3 mt-4">
+            <a
+              href={"/identities/users/" <> URI.encode_www_form(@entity_uri_str) <> "/caps"}
+              class="block"
+            >
               <.card>
                 <div class="font-medium text-sm">{gettext("Capabilities")}</div>
                 <div class="text-2xl font-mono mt-1">{@caps_count}</div>
                 <div class="text-xs text-zinc-500 mt-1">→ {gettext("Manage")}</div>
               </.card>
             </a>
-            <a href={"/identities/users/" <> URI.encode_www_form(@entity_uri_str) <> "/api-keys"} class="block">
-              <.card>
-                <div class="font-medium text-sm">{gettext("API Keys")}</div>
-                <div class="text-2xl font-mono mt-1">{@api_keys_count}</div>
-                <div class="text-xs text-zinc-500 mt-1">→ {gettext("Manage")}</div>
-              </.card>
-            </a>
           </div>
+          <%!--
+            Allen 2026-05-26 — the "API Keys" card was removed from the
+            profile page along with the ApiKeys-to-Agent flip. Users no
+            longer hold api_keys; each agent does. See
+            /identities/agents/<uri>/api-keys for the per-agent UI.
+          --%>
 
           <div class="mt-6 text-right">
             <form action="/logout" method="post">

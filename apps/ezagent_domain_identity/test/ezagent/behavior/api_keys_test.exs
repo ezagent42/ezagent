@@ -4,8 +4,13 @@ defmodule Ezagent.Behavior.ApiKeysTest do
   alias Ezagent.Behavior.ApiKeys
 
   describe "init_slice/1" do
-    test "starts with empty keys map" do
-      assert ApiKeys.init_slice(%{}) == %{keys: %{}}
+    test "starts with empty keys and nil creator_uri" do
+      assert ApiKeys.init_slice(%{}) == %{keys: %{}, creator_uri: nil}
+    end
+
+    test "captures creator_uri when provided" do
+      creator = URI.parse("entity://user/system/admin")
+      assert ApiKeys.init_slice(%{creator_uri: creator}) == %{keys: %{}, creator_uri: creator}
     end
   end
 
@@ -21,11 +26,21 @@ defmodule Ezagent.Behavior.ApiKeysTest do
     end
 
     test "overwrites existing key for the same provider (rotation)" do
-      slice = %{keys: %{"deepseek" => "sk-old-key-xxxx"}}
+      slice = %{keys: %{"deepseek" => "sk-old-key-xxxx"}, creator_uri: nil}
       args = %{provider: "deepseek", key: "sk-new-key-yyyy"}
 
       assert {:ok, new_slice, _} = ApiKeys.invoke(:put_api_key, slice, args, %{})
       assert new_slice.keys["deepseek"] == "sk-new-key-yyyy"
+    end
+
+    test "preserves creator_uri on put" do
+      creator = URI.parse("entity://user/team-alpha/alice")
+      slice = %{keys: %{}, creator_uri: creator}
+
+      assert {:ok, new_slice, _} =
+               ApiKeys.invoke(:put_api_key, slice, %{provider: "deepseek", key: "sk-aaaabbbbccccdddd"}, %{})
+
+      assert new_slice.creator_uri == creator
     end
   end
 
@@ -35,7 +50,8 @@ defmodule Ezagent.Behavior.ApiKeysTest do
         keys: %{
           "openai" => "sk-aaaabbbbccccdddd",
           "deepseek" => "sk-1234567890abcdef"
-        }
+        },
+        creator_uri: nil
       }
 
       assert {:ok, _slice, %{api_keys: listing}} = ApiKeys.invoke(:list_api_keys, slice, %{}, %{})
@@ -56,7 +72,7 @@ defmodule Ezagent.Behavior.ApiKeysTest do
 
   describe "invoke(:delete_api_key, ...)" do
     test "removes the provider entry" do
-      slice = %{keys: %{"deepseek" => "sk-x"}}
+      slice = %{keys: %{"deepseek" => "sk-x"}, creator_uri: nil}
 
       assert {:ok, new_slice, %{ok: true}} =
                ApiKeys.invoke(:delete_api_key, slice, %{provider: "deepseek"}, %{})
@@ -65,7 +81,7 @@ defmodule Ezagent.Behavior.ApiKeysTest do
     end
 
     test "deleting a non-existent provider is a no-op" do
-      slice = %{keys: %{}}
+      slice = %{keys: %{}, creator_uri: nil}
 
       assert {:ok, ^slice, %{ok: true}} =
                ApiKeys.invoke(:delete_api_key, slice, %{provider: "ghost"}, %{})
@@ -74,7 +90,7 @@ defmodule Ezagent.Behavior.ApiKeysTest do
 
   describe "invoke(:get_api_key, ...)" do
     test "returns the plaintext for a registered provider" do
-      slice = %{keys: %{"deepseek" => "sk-1234567890abcdef"}}
+      slice = %{keys: %{"deepseek" => "sk-1234567890abcdef"}, creator_uri: nil}
 
       assert {:ok, _slice, %{key: "sk-1234567890abcdef", provider: "deepseek"}} =
                ApiKeys.invoke(:get_api_key, slice, %{provider: "deepseek"}, %{})
@@ -99,6 +115,38 @@ defmodule Ezagent.Behavior.ApiKeysTest do
 
     test "short keys collapse to ***" do
       assert ApiKeys.mask("short") == "***"
+    end
+  end
+
+  describe "required_caps/0 (Allen 2026-05-26 — kind axis is :any post Agent-flip)" do
+    test "every action's cap uses :any kind axis" do
+      for {_action, %Ezagent.Capability{} = cap} <- ApiKeys.required_caps() do
+        assert cap.kind == :any,
+               "ApiKeys is registered against multiple agent-flavor Kinds " <>
+                 "(Agent / CurlAgent / Echo) — required_caps/0 MUST use :any " <>
+                 "so a granted cap on any flavor matches. Got: #{inspect(cap)}"
+
+        assert cap.behavior == Ezagent.Behavior.ApiKeys
+      end
+    end
+  end
+
+  describe "data_owner/1 (Allen 2026-05-26)" do
+    test "non-agent URI → :no_owner" do
+      assert ApiKeys.data_owner(URI.parse("entity://user/system/admin")) == :no_owner
+    end
+
+    test ":any sentinel passes through" do
+      assert ApiKeys.data_owner(:any) == :any
+    end
+
+    test "agent URI whose Kind isn't live → :no_owner" do
+      # No KindRegistry entry for this URI → get_slice returns :error.
+      assert ApiKeys.data_owner(
+               URI.parse(
+                 "entity://agent/team-alpha/curl_no-such-#{System.unique_integer([:positive])}"
+               )
+             ) == :no_owner
     end
   end
 end

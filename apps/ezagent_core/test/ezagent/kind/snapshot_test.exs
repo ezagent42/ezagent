@@ -18,13 +18,16 @@ defmodule Ezagent.Kind.SnapshotTest do
     uri = URI.parse("entity://user/team-alpha/snap-noprior-#{System.unique_integer([:positive])}")
     state = Snapshot.load_or_init(uri, Ezagent.Entity.User, %{uri: uri})
 
-    # PR #126 added ApiKeys behavior to User → :api_keys slice
-    # coexists with :identity. ApiKeys default empty.
+    # Allen 2026-05-26 — PR #126 originally added ApiKeys to User; the
+    # 2026-05-26 flip moved it to Agent Kind. User now has Identity +
+    # UserCredentials + UserTokens slices ONLY.
     #
     # PR-OWN-3 (caps-data-ownership-v2 SPEC #306) added self-Identity
     # cap provisioning at init — the entity gets a `Behavior.Identity`
     # cap on its own URI so dispatch-path list_caps/has_cap? authorize.
-    assert %{api_keys: %{keys: %{}}, identity: %{caps: caps}} = state
+    assert %{identity: %{caps: caps}} = state
+    refute Map.has_key?(state, :api_keys),
+           "User Kind no longer holds :api_keys post Allen 2026-05-26 flip"
 
     assert MapSet.size(caps) == 1
     [self_cap] = MapSet.to_list(caps)
@@ -89,12 +92,13 @@ defmodule Ezagent.Kind.SnapshotTest do
     # other Behavior contributes its `init_slice` default.
     #
     # 2026-05-26: PR #356 (HIGH-2) added `Ezagent.Behavior.UserCredentials`
-    # + `Ezagent.Behavior.UserTokens`, so the merged shape grew. Asserting
-    # the full structure here keeps the invariant tight — adding a new
-    # User-Behavior should force this assertion to be updated alongside.
+    # + `Ezagent.Behavior.UserTokens`, so the merged shape grew. Allen
+    # 2026-05-26 ApiKeys-to-Agent flip then REMOVED `:api_keys` from User.
+    # Asserting the full structure here keeps the invariant tight —
+    # adding a new User-Behavior should force this assertion to be
+    # updated alongside.
     assert loaded == %{
              identity: %{caps: caps},
-             api_keys: %{keys: %{}},
              user_credentials: %{set_password_count: 0},
              user_tokens: %{mint_count: 0, revoke_count: 0}
            }

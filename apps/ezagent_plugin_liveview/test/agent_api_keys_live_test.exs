@@ -1,0 +1,90 @@
+defmodule EzagentPluginLiveview.AgentApiKeysLiveTest do
+  @moduledoc """
+  Allen 2026-05-26 — ApiKeys-to-Agent flip.
+
+  Invariants tested:
+
+  - `/identities/agents/:uri/api-keys` mounts against a live Agent Kind
+    and exposes the masked-list / add-form surface.
+  - The legacy `/identities/users/:uri/api-keys` route is GONE (no
+    Phoenix route matches).
+  - Admin caller sees the edit form regardless of `creator_uri`.
+  - Add → list round-trip works against a freshly-spawned curl agent.
+  """
+
+  use ExUnit.Case
+  import Phoenix.ConnTest
+  import Phoenix.LiveViewTest
+
+  @endpoint EzagentWeb.Endpoint
+
+  setup do
+    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
+    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
+
+    conn =
+      Phoenix.ConnTest.build_conn()
+      |> Plug.Test.init_test_session(%{
+        "current_entity_uri" => URI.to_string(Ezagent.Entity.User.admin_uri())
+      })
+
+    {:ok, conn: conn}
+  end
+
+  defp spawn_curl_agent do
+    agent_uri =
+      URI.parse(
+        "entity://agent/team-alpha/curl_apikeys-#{System.unique_integer([:positive])}"
+      )
+
+    {:ok, _pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
+    agent_uri
+  end
+
+  test "GET /identities/agents/:uri/api-keys renders for an admin caller", %{conn: conn} do
+    agent_uri = spawn_curl_agent()
+    encoded = URI.encode_www_form(URI.to_string(agent_uri))
+
+    {:ok, _lv, html} = live(conn, "/identities/agents/#{encoded}/api-keys")
+
+    assert html =~ "API Keys"
+    assert html =~ URI.to_string(agent_uri)
+    # Fresh agent has no stored keys.
+    assert html =~ "No API keys yet" or html =~ "Stored keys (0)"
+    # Add form is rendered (admin is implicitly authorized).
+    assert html =~ "Add / rotate key"
+  end
+
+  test "put -> list round-trip persists the key on the agent slice", %{conn: conn} do
+    agent_uri = spawn_curl_agent()
+    encoded = URI.encode_www_form(URI.to_string(agent_uri))
+
+    {:ok, lv, _html} = live(conn, "/identities/agents/#{encoded}/api-keys")
+
+    lv
+    |> form("#add-key-form form", %{
+      "api_key" => %{"provider" => "deepseek", "key" => "sk-abcd1234efgh5678"}
+    })
+    |> render_submit()
+
+    html = render(lv)
+    assert html =~ "Saved key for"
+    assert html =~ "deepseek"
+    # Masked form shows; plaintext does NOT leak back.
+    assert html =~ "sk-abcd...5678"
+    refute html =~ "sk-abcd1234efgh5678"
+  end
+
+  test "legacy /identities/users/:uri/api-keys route is GONE (falls through to fallback)",
+       %{conn: conn} do
+    admin_uri_str = URI.to_string(Ezagent.Entity.User.admin_uri())
+    encoded = URI.encode_www_form(admin_uri_str)
+
+    # The router has a catch-all `get "/*path", FallbackController` that
+    # swallows otherwise-unmatched paths; the legacy route is gone iff
+    # the request lands on that fallback (not the AgentApiKeysLive
+    # mount). The fallback returns 404.
+    conn = get(conn, "/identities/users/#{encoded}/api-keys")
+    assert conn.status == 404
+  end
+end

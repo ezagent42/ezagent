@@ -115,6 +115,18 @@ defmodule Ezagent.Kind.Runtime do
       |> Map.put(:self_uri, self_uri)
       |> Map.put(:session_uri, derive_session_uri(target))
       |> Map.put(:slice_change_cursor, slice_change_cursor)
+      # Allen 2026-05-26 — `:all_slices` injection: the full multi-Behavior
+      # slice state for this Kind instance, so a Behavior whose invoke
+      # legitimately needs to read a SIBLING slice can do so in-process
+      # without a self-dispatch deadlock (`GenServer.call(self)`).
+      # Example: `Behavior.CurlAgent.invoke(:receive, ...)` needs the
+      # `:api_keys` slice on the same Agent to fetch the outbound LLM
+      # credential; dispatching `?action=identity.get_api_key` back to
+      # ctx.self_uri would hit the same Kind.Server and deadlock.
+      # Read-only by contract — the Behavior MUST mutate ONLY its own
+      # `slice` (the third arg to invoke); the Runtime ignores any
+      # changes to ctx[:all_slices].
+      |> Map.put(:all_slices, state)
 
     with {:ok, {behavior_name_atom, action}} <- Ezagent.URI.behavior_action(target),
          {:ok, behavior_module} <- lookup_behavior(kind_module, action),

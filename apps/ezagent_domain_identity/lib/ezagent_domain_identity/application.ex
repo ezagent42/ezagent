@@ -283,11 +283,15 @@ defmodule EzagentDomainIdentity.Application do
         )
     end
 
-    # PR #126: per-user API key storage (DeepSeek/OpenAI/etc.). Only
-    # on User Kind — Agents don't own their own keys, they look up
-    # the caller User's key via dispatch.
+    # Allen 2026-05-26 — ApiKeys flipped from User Kind to Agent Kind.
+    # Agents hold their OWN outbound credentials (the credential funds
+    # the agent's outbound HTTP call, not the user's). Cross-domain
+    # registration like Identity above: the Behavior module lives in
+    # identity domain; the Agent Kind lives in chat domain. Both apps
+    # load before plugins start dispatching, so registering against
+    # `Ezagent.Entity.Agent` here is safe.
     for action <- ApiKeys.actions() do
-      :ok = CapabilityRegistry.register(User, action, ApiKeys)
+      :ok = CapabilityRegistry.register(Ezagent.Entity.Agent, action, ApiKeys)
     end
 
     # HIGH-2 completion (2026-05-26): UserCredentials Behavior — the

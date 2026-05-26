@@ -55,6 +55,7 @@ defmodule EzagentPluginCurlAgent.Application do
   use Application
   use Ezagent.Plugin
 
+  alias Ezagent.Behavior.ApiKeys
   alias Ezagent.Behavior.CurlAgent, as: CurlAgentBehavior
   alias Ezagent.Entity.CurlAgent, as: CurlAgentKind
   alias Ezagent.PluginCurlAgent.Template, as: CurlAgentTemplate
@@ -78,9 +79,15 @@ defmodule EzagentPluginCurlAgent.Application do
 
   @impl Ezagent.Plugin
   def behaviors do
-    for action <- CurlAgentBehavior.actions() do
-      {CurlAgentKind, action, CurlAgentBehavior}
-    end
+    # Allen 2026-05-26 — register ApiKeys against CurlAgent Kind so the
+    # `:api_keys` slice is dispatchable on `entity://agent/<ws>/curl_*`
+    # URIs. ApiKeys Behavior module ships from `:ezagent_domain_identity`;
+    # the plugin owns the Kind, so the binding lives here per
+    # `feedback_register_lookup_key_parity`.
+    curl_actions = for action <- CurlAgentBehavior.actions(), do: {CurlAgentKind, action, CurlAgentBehavior}
+    api_keys_actions = for action <- ApiKeys.actions(), do: {CurlAgentKind, action, ApiKeys}
+
+    curl_actions ++ api_keys_actions
   end
 
   @impl Ezagent.Plugin

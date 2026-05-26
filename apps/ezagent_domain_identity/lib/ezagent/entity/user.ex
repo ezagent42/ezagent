@@ -192,10 +192,16 @@ defmodule Ezagent.Entity.User do
   # bootstrap value — chat plugin passes it as initial_caps when
   # spawning admin User.
   #
-  # PR #126 (2026-05-19): User Kinds also carry the ApiKeys Behavior
-  # so per-user secret storage (DeepSeek, OpenAI, etc.) coexists with
-  # cap state on the same Kind. Both slices serialize through the
-  # existing `{:snapshot, :on_change}` persistence.
+  # PR #126 (2026-05-19): User Kinds ALSO carried the ApiKeys Behavior
+  # so per-user secret storage (DeepSeek, OpenAI, etc.) coexisted with
+  # cap state on the same Kind. Allen 2026-05-26: that's wrong — agents
+  # hold their own keys (the credential funds the agent's outbound
+  # request, not the user's). ApiKeys is now on `Ezagent.Entity.Agent`.
+  # User Kind no longer carries `:api_keys` slice. Existing user-side
+  # `:api_keys` data in `kind_snapshots.state_binary` is orphaned (no
+  # Behavior reads it) — operators re-PUT their keys onto the relevant
+  # agent. Per `feedback_let_it_crash_no_workarounds`, no destructive
+  # migration runs against live DBs.
   #
   # HIGH-2 completion (2026-05-26): UserCredentials Behavior carries
   # password mutation via dispatch (closes the legacy
@@ -209,7 +215,6 @@ defmodule Ezagent.Entity.User do
   def behaviors,
     do: [
       Ezagent.Behavior.Identity,
-      Ezagent.Behavior.ApiKeys,
       Ezagent.Behavior.UserCredentials,
       Ezagent.Behavior.UserTokens
     ]

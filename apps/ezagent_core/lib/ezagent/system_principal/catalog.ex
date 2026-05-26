@@ -226,10 +226,12 @@ defmodule Ezagent.SystemPrincipal.Catalog do
          # is narrowed to the exact Behavior + action; the runtime
          # dispatch path substitutes the per-agent instance + workspace.
          Capability.cap(:agent, Sandbox, :write_path),
-         # CurlAgent.fetch_owner_api_key/2 dispatches identity.get_api_key
-         # on the owner User under this principal (same masking).
-         # ApiKeys is on User Kind; cap is read-only get_api_key.
-         Capability.cap(:user, ApiKeys, :get_api_key)
+         # Allen 2026-05-26 — `cap(:user, ApiKeys, :get_api_key)` was
+         # part of `system://agent-internal` pre ApiKeys-to-Agent flip.
+         # Post-flip, ApiKeys lives on the agent's own Kind and the
+         # CurlAgent reads its OWN slice via `ctx[:all_slices][:api_keys]`
+         # IN-PROCESS (the deadlock-free path) — no dispatch, hence no
+         # cap required. The entry is dropped from this principal.
        ]},
       {"system://workspace-loader",
        [

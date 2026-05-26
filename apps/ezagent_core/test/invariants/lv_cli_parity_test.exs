@@ -145,10 +145,11 @@ defmodule EzagentCore.Invariants.LvCliParityTest do
     # used by entity_caps_live via dispatch. mix ezagent auto-derives.
     "grant" => {:cli, "mix ezagent user grant_cap --user <uri> --cap <json>"},
     "revoke" => {:cli, "mix ezagent user revoke_cap --user <uri> --cap <json>"},
-    # user_api_keys_live dispatches via Behavior.ApiKeys which is on
-    # User Kind. mix ezagent auto-derives `put_api_key` / `delete_api_key`.
-    "put" => {:cli, "mix ezagent user put_api_key --user <uri> --provider <p> --key <k>"},
-    "delete" => {:cli, "mix ezagent user delete_api_key --user <uri> --provider <p>"},
+    # agent_api_keys_live dispatches via Behavior.ApiKeys which Allen
+    # 2026-05-26 FLIPPED from User Kind to Agent Kind. mix ezagent
+    # auto-derives `put_api_key` / `delete_api_key` against `agent`.
+    "put" => {:cli, "mix ezagent agent put_api_key --agent <uri> --provider <p> --key <k>"},
+    "delete" => {:cli, "mix ezagent agent delete_api_key --agent <uri> --provider <p>"},
 
     # --- Feishu plugin ---
     "bind" => {:cli, "mix ezagent.feishu.bind <open-id> <user-uri>"},

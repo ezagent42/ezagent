@@ -48,18 +48,24 @@ defmodule Ezagent.Entity.UserTest do
     assert {:error, :cannot_revoke_admin} = Capability.revoke(caps, admin_cap)
   end
 
-  test "Kind callbacks return all four User-Kind Behaviors" do
-    # Phase 3d added Identity; PR #126 added ApiKeys; HIGH-2 completion
-    # (2026-05-26) added UserCredentials + UserTokens for dispatch-backed
-    # password + token CRUD.
+  test "Kind callbacks return the User-Kind Behaviors (post ApiKeys-to-Agent flip)" do
+    # Phase 3d added Identity; PR #126 added ApiKeys but Allen 2026-05-26
+    # FLIPPED ApiKeys to the Agent Kind (agents hold their own keys); User
+    # no longer carries it. HIGH-2 completion (2026-05-26) added
+    # UserCredentials + UserTokens for dispatch-backed password + token
+    # CRUD.
     assert User.type_name() == :user
 
     assert User.behaviors() == [
              Ezagent.Behavior.Identity,
-             Ezagent.Behavior.ApiKeys,
              Ezagent.Behavior.UserCredentials,
              Ezagent.Behavior.UserTokens
            ]
+
+    refute Ezagent.Behavior.ApiKeys in User.behaviors(),
+           "ApiKeys MUST live on Agent Kind only (Allen 2026-05-26 flip); " <>
+             "re-introducing it on User Kind would resurrect the per-user " <>
+             "credential bag the flip dismantled."
 
     assert User.persistence() == {:snapshot, :on_change}
   end

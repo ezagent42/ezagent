@@ -7,14 +7,18 @@ defmodule Ezagent.PluginCurlAgent.Template do
 
   - `agent_uri` — `entity://agent/team-alpha/curl_<name>` (PR #141 SPEC v2)
   - `provider` — `"deepseek"` / `"openai"` / ... (matches the key
-    provider stored on the owner User's `api_keys` slice)
+    provider stored on THIS agent's own `api_keys` slice)
   - `api_url` — full URL of the OpenAI-compatible
     `/chat/completions` endpoint
   - `model` — provider-specific model id
   - `system_prompt` — optional textarea
   - `max_history` — int, default 20
-  - `owner_uri` — `entity://user/<name>` whose api_key the agent uses
-    (admin can set; LV pre-fills to caller_uri)
+
+  Allen 2026-05-26 — the `owner_uri` form field is gone (post
+  ApiKeys-to-Agent flip). Keys live on the agent itself. The
+  `creator_uri` arg passed to `instantiate/3` (the caller URI from
+  the LV) populates the `:api_keys` slice `:creator_uri` so the
+  creator + admin can rotate keys; no foreign user binding.
 
   ## On instantiate
 
@@ -124,8 +128,13 @@ defmodule Ezagent.PluginCurlAgent.Template do
       api_url: tmpl["api_url"],
       model: tmpl["model"],
       system_prompt: nil_if_empty(tmpl["system_prompt"]),
-      max_history: parse_int(tmpl["max_history"], 20),
-      owner_uri: parse_owner_uri(tmpl["owner_uri"])
+      max_history: parse_int(tmpl["max_history"], 20)
+      # Allen 2026-05-26 — `owner_uri` removed; keys live on this agent's
+      # own `:api_keys` slice. `creator_uri` for the slice is left nil
+      # in this template path (the LV/CLI direct-spawn path doesn't
+      # thread caller_uri through SpawnRegistry today — admin retains
+      # wildcard cap regardless; non-admin creator-grant wiring is
+      # future work tracked in docs/futures/todo.md).
     }
 
     # V1 prevention (Allen 2026-05-21): route via Ezagent.Kind.spawn/2.
@@ -173,16 +182,6 @@ defmodule Ezagent.PluginCurlAgent.Template do
 
   defp parse_int(_, default), do: default
 
-  defp parse_owner_uri(nil), do: URI.parse("entity://user/system/admin")
-  defp parse_owner_uri(""), do: URI.parse("entity://user/system/admin")
-
-  defp parse_owner_uri(s) when is_binary(s) do
-    case URI.new(s) do
-      {:ok, %URI{scheme: "entity", host: "user"} = u} -> u
-      _ -> URI.parse("entity://user/system/admin")
-    end
-  end
-
   # --- Ezagent.UI.Form ---------------------------------------------------
 
   @impl Ezagent.UI.Form
@@ -229,14 +228,10 @@ defmodule Ezagent.PluginCurlAgent.Template do
         label: "Max history turns",
         required: false,
         placeholder: "20"
-      },
-      %{
-        name: "owner_uri",
-        type: :uri,
-        label: "Owner user URI (whose api_key gets used)",
-        required: false,
-        placeholder: "entity://user/system/admin"
       }
+      # Allen 2026-05-26 — the `owner_uri` form field is gone. Keys
+      # live on the agent itself (Behavior.ApiKeys moved to Agent
+      # Kind); there's no foreign user to bind to.
     ]
   end
 end

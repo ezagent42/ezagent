@@ -83,6 +83,8 @@ defmodule Ezagent.PluginCurlAgent.TemplateTest do
 
   describe "form_fields/0 — auto-derived UI surface" do
     test "all required fields present + ordered for sensible left-to-right reading" do
+      # Allen 2026-05-26 — `owner_uri` removed post ApiKeys-to-Agent flip.
+      # Keys live on the agent itself.
       names = Template.form_fields() |> Enum.map(& &1.name)
 
       assert names == [
@@ -91,9 +93,11 @@ defmodule Ezagent.PluginCurlAgent.TemplateTest do
                "api_url",
                "model",
                "system_prompt",
-               "max_history",
-               "owner_uri"
+               "max_history"
              ]
+
+      refute "owner_uri" in names,
+             "owner_uri form field was removed by the ApiKeys-to-Agent flip"
     end
 
     test "required fields marked correctly" do

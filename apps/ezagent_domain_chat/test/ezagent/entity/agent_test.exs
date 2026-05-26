@@ -7,13 +7,19 @@ defmodule Ezagent.Entity.AgentTest do
       assert Agent.type_name() == :agent
     end
 
-    test "behaviors/0 returns [Chat, Identity, Sandbox] (PR2 2026-05-24: Sandbox added)" do
+    test "behaviors/0 returns [Chat, Identity, Sandbox, ApiKeys] (Allen 2026-05-26: ApiKeys moved from User)" do
       # PR2 2026-05-24 (Allen): Sandbox Behavior added — per-agent
       # config_dir_path + Kind.Template plugin extension callbacks.
+      #
+      # Allen 2026-05-26 — ApiKeys flipped from User Kind to Agent Kind:
+      # agents hold their own outbound credentials. `:api_keys` slice
+      # now coexists with `:identity` / `:chat` / `:sandbox` on the
+      # Agent Kind's snapshot.
       assert Agent.behaviors() == [
                Ezagent.Behavior.Chat,
                Ezagent.Behavior.Identity,
-               Ezagent.Behavior.Sandbox
+               Ezagent.Behavior.Sandbox,
+               Ezagent.Behavior.ApiKeys
              ]
     end
 
