@@ -561,50 +561,145 @@ defmodule Ezagent.Behavior.Chat do
   # --- :join -------------------------------------------------------------
 
   def invoke(:join, slice, %{member: %URI{} = member_uri}, ctx) do
-    session_uri = ctx.self_uri
-
     case KindRegistry.lookup(member_uri) do
       {:ok, member_pid} ->
-        ref = Process.monitor(member_pid)
+        # Session auto-join (Allen 2026-05-26) — idempotency: when a
+        # member rejoins (LV remount after warm restart, ensure_orchestrator
+        # post-spawn hook re-run, etc.) we MUST NOT stack a fresh
+        # `Process.monitor` on top of the live one. Pre-fix, every rejoin
+        # leaked a monitor ref in `slice.monitors` (cleaned only on
+        # `:DOWN`, which never fired for the live member).
+        #
+        # Codex r1 HIGH-1 (2026-05-26): the short-circuit MUST verify
+        # the monitor we hold points at the SAME PID `KindRegistry`
+        # currently resolves the URI to. Otherwise, in the
+        # member-died + new-PID-registered + stale-:DOWN-pending
+        # window, we'd no-op the rejoin while the queued :DOWN later
+        # marks the live member offline (and worse, no monitor exists
+        # for the new PID). Short-circuit is correct ONLY when
+        # `monitors` contains a ref AND `Process.info(member_pid,
+        # :monitored_by)` includes self() — but the cheaper structural
+        # check is "the ref we hold for this URI is for THIS PID",
+        # which we approximate by asserting both the URI mapping and
+        # PID identity via `monitor_ref_for_current_pid/3`.
+        case Map.get(slice.members, member_uri) do
+          %{online: true} ->
+            if monitor_ref_for_current_pid?(slice.monitors, member_uri, member_pid) do
+              # Already a live, monitored, online member with the
+              # SAME PID we're being asked to (re)join. True no-op.
+              {:ok, slice, %{members: Map.keys(slice.members), already_member: true}}
+            else
+              # Stale ref (different/dead PID) or no ref — drop any
+              # stale entries + install a fresh monitor.
+              do_join(slice, member_uri, member_pid, ctx)
+            end
 
-        new_members = Map.put(slice.members, member_uri, %{online: true})
-        new_monitors = Map.put(slice.monitors, ref, member_uri)
-
-        # If this member has prior last_seen, replay missed messages.
-        replay_messages_since(session_uri, member_uri, slice.last_seen)
-        new_last_seen = Map.delete(slice.last_seen, member_uri)
-
-        new_slice = %{
-          slice
-          | members: new_members,
-            monitors: new_monitors,
-            last_seen: new_last_seen
-        }
-
-        broadcast_membership(session_uri, {:member_joined, member_uri})
-
-        # Notifier/flash audit 2026-05-24 — todo.md "Notifications consumer
-        # coverage" — surface the join to the joinee's notification stream
-        # so a freshly-added member sees they were added to a session.
-        # Gated by `user_uri?/1`: agents don't have inboxes (per the same
-        # convention `Workspace.add_member` uses).
-        if user_uri?(member_uri) do
-          _ =
-            Ezagent.Notifications.notify(member_uri, %{
-              type: :session_member_joined,
-              body: %{
-                text: "You joined session #{URI.to_string(session_uri)}.",
-                session_uri: session_uri
-              },
-              source: __MODULE__
-            })
+          _ ->
+            do_join(slice, member_uri, member_pid, ctx)
         end
-
-        {:ok, new_slice, %{members: Map.keys(new_members)}}
 
       :error ->
         {:error, {:member_not_registered, member_uri}}
     end
+  end
+
+  # Codex r1 HIGH-1 (2026-05-26) — strict version of
+  # `monitor_ref_alive?/2`: True iff `monitors` contains AT LEAST ONE
+  # ref for `member_uri` AND that ref was installed against
+  # `current_pid`. We can't introspect the ref's underlying pid
+  # directly from the ref, but we can ask the VM: `Process.info(
+  # current_pid, :monitored_by)` returns the list of pids monitoring
+  # `current_pid`. If self() (the Session process running this
+  # invoke) is in that list, and we have a {ref => member_uri} entry,
+  # the ref-and-pid invariant holds.
+  #
+  # Falls back to `false` (forcing a fresh monitor install via the
+  # `do_join` path) if the member pid is dead — KindRegistry returned
+  # the pid moments ago but a death between `lookup` and `Process.info`
+  # is benign: we'll install a monitor on the (now-dead) pid, which
+  # immediately fires :DOWN, which `handle_kind_message` then handles
+  # cleanly (offline + last_seen).
+  defp monitor_ref_for_current_pid?(monitors, %URI{} = member_uri, current_pid)
+       when is_pid(current_pid) do
+    has_uri_entry? =
+      Enum.any?(monitors, fn {_ref, uri} ->
+        URI.to_string(uri) == URI.to_string(member_uri)
+      end)
+
+    has_uri_entry? and self_monitors?(current_pid)
+  end
+
+  defp self_monitors?(pid) when is_pid(pid) do
+    case Process.info(pid, :monitored_by) do
+      {:monitored_by, monitors_list} when is_list(monitors_list) ->
+        self() in monitors_list
+
+      _ ->
+        # Process died between KindRegistry.lookup and here — fall
+        # through to do_join (will install a fresh monitor that
+        # immediately fires :DOWN; handled by `handle_kind_message`).
+        false
+    end
+  end
+
+  defp do_join(slice, %URI{} = member_uri, member_pid, ctx) do
+    session_uri = ctx.self_uri
+
+    # Drop ALL stale monitor entries for this member URI and DEMONITOR
+    # each ref (Codex r1 MEDIUM-3, 2026-05-26). Pre-fix the refs were
+    # removed from the map but the VM monitor stayed armed — when the
+    # old PID later died, the resulting :DOWN landed in the Session
+    # mailbox with a ref that wasn't in `slice.monitors` (handled by
+    # the catch-all `:ignore` branch of `handle_kind_message/3`).
+    # Cheap structurally (we're already iterating monitors here),
+    # avoids slow leaks of stale VM monitor entries.
+    {old_refs_for_member, monitors_without_member} =
+      Enum.split_with(slice.monitors, fn {_ref, uri} ->
+        URI.to_string(uri) == URI.to_string(member_uri)
+      end)
+
+    for {ref, _uri} <- old_refs_for_member do
+      _ = Process.demonitor(ref, [:flush])
+    end
+
+    monitors_without_member = Map.new(monitors_without_member)
+
+    ref = Process.monitor(member_pid)
+
+    new_members = Map.put(slice.members, member_uri, %{online: true})
+    new_monitors = Map.put(monitors_without_member, ref, member_uri)
+
+    # If this member has prior last_seen, replay missed messages.
+    replay_messages_since(session_uri, member_uri, slice.last_seen)
+    new_last_seen = Map.delete(slice.last_seen, member_uri)
+
+    new_slice = %{
+      slice
+      | members: new_members,
+        monitors: new_monitors,
+        last_seen: new_last_seen
+    }
+
+    broadcast_membership(session_uri, {:member_joined, member_uri})
+
+    # Notifier/flash audit 2026-05-24 — todo.md "Notifications consumer
+    # coverage" — surface the join to the joinee's notification stream
+    # so a freshly-added member sees they were added to a session.
+    # Gated by `user_uri?/1`: agents don't have inboxes (per the same
+    # convention `Workspace.add_member` uses).
+    if user_uri?(member_uri) do
+      _ =
+        Ezagent.Notifications.notify(member_uri, %{
+          type: :session_member_joined,
+          body: %{
+            text: "You joined session #{URI.to_string(session_uri)}.",
+            session_uri: session_uri
+          },
+          source: __MODULE__
+        })
+    end
+
+    {:ok, new_slice, %{members: Map.keys(new_members)}}
   end
 
   # Notifier/flash audit 2026-05-24 — same predicate

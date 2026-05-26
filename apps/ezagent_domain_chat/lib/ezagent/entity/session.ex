@@ -396,6 +396,31 @@ defmodule Ezagent.Entity.Session do
                 session_template_uri
               )
 
+            # Step 8 (Allen 2026-05-26 — session member auto-join):
+            # the orchestrator + every spawned worker must appear in
+            # the Session's chat.members slice WITHOUT requiring the
+            # operator to click Invite. Pre-fix the reconciler bound
+            # workspace + lineage but never dispatched `chat.join`, so
+            # the MemberPanel rendered "empty session" while agents
+            # were silently routing on the side. The join uses the
+            # `system://session-internal` principal — same one
+            # `EzagentDomainChat.join_creator/2` uses for the
+            # creator's self-join — so step 5.5 finds the `:any` Chat
+            # cap and lets the slice-mutate through.
+            #
+            # Cast (not call): the reconciler's outcome assembly is
+            # not blocked on these joins, and `:DOWN` / `:already_member`
+            # idempotency makes a missed cast self-healing on next
+            # reconcile. Idempotent re-entry: PR `chat.ex`'s
+            # `online + monitor alive` short-circuit drops the redundant
+            # work — see `Behavior.Chat.invoke(:join)`.
+            _ =
+              auto_join_session_members(
+                session_uri,
+                orchestrator_uri,
+                slot_results
+              )
+
             assemble_outcome(
               session_uri,
               orchestrator_uri,
@@ -407,6 +432,101 @@ defmodule Ezagent.Entity.Session do
             )
         end
     end
+  end
+
+  # Step 8 — dispatch `chat.join` for the orchestrator and every
+  # successfully-reconciled worker URI.
+  #
+  # Codex r1 HIGH-2 (2026-05-26): uses `:call` (NOT `:cast`) so
+  # failures are observable. Pre-fix the `:cast` + `reply: :ignore`
+  # path silently swallowed CapBAC denials, missing-member errors,
+  # and target-not-alive transients — `spawn_from_template/2`
+  # returned `:ok` while the MemberPanel remained empty. Per
+  # `feedback_let_it_crash_no_workarounds`, errors here are
+  # surfaced via Logger.warning + telemetry; they do NOT downgrade
+  # the reconciler outcome to `:partial` (the auto-join is best-
+  # effort recovery on top of the spawn — the next reconciler run
+  # retries via the `:join` idempotency short-circuit).
+  #
+  # Idempotency: `Behavior.Chat.invoke(:join)`'s online+pid-match
+  # short-circuit drops the redundant work cheaply on re-entry.
+  defp auto_join_session_members(
+         %URI{} = session_uri,
+         %URI{} = orchestrator_uri,
+         slot_results
+       ) do
+    member_uris =
+      [orchestrator_uri | extract_slot_worker_uris(slot_results)]
+      |> Enum.uniq_by(&URI.to_string/1)
+
+    target = URI.new!("#{URI.to_string(session_uri)}?action=chat.join")
+
+    Enum.each(member_uris, fn %URI{} = member_uri ->
+      result =
+        Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+          target: target,
+          mode: :call,
+          args: %{member: member_uri},
+          # SPEC caps-cleanup-v1 §4.4 — Session slice-internal member
+          # bookkeeping. Same principal `join_creator/2` uses, so
+          # step 5.5 finds the `cap(:any, Chat, :any)` cap on the
+          # `system://session-internal` Catalog row and lets the
+          # `chat.join` dispatch through.
+          ctx: %{
+            caller: Ezagent.SystemPrincipal.uri("session-internal"),
+            caps: Ezagent.SystemPrincipal.caps("system://session-internal"),
+            reply: :ignore
+          }
+        })
+
+      case result do
+        :ok ->
+          :ok
+
+        {:ok, _} ->
+          :ok
+
+        {:error, reason} ->
+          require Logger
+
+          Logger.warning(
+            "Session.auto_join_session_members: chat.join failed for " <>
+              "member=#{URI.to_string(member_uri)} on session=" <>
+              "#{URI.to_string(session_uri)}: #{inspect(reason)}. " <>
+              "MemberPanel will show the gap until the next reconcile " <>
+              "(idempotent retry)."
+          )
+
+          :telemetry.execute(
+            [:ezagent, :session, :auto_join, :failed],
+            %{count: 1},
+            %{
+              session_uri: session_uri,
+              member_uri: member_uri,
+              reason: reason
+            }
+          )
+
+        other ->
+          require Logger
+
+          Logger.warning(
+            "Session.auto_join_session_members: unexpected dispatch result for " <>
+              "member=#{URI.to_string(member_uri)} on session=" <>
+              "#{URI.to_string(session_uri)}: #{inspect(other)}"
+          )
+      end
+    end)
+
+    :ok
+  end
+
+  defp extract_slot_worker_uris(slot_results) do
+    Enum.flat_map(slot_results, fn
+      {_slot, {:ok, _src, %URI{} = worker_uri}} -> [worker_uri]
+      {_slot, {:already_converged, _src, %URI{} = worker_uri}} -> [worker_uri]
+      _ -> []
+    end)
   end
 
   # ─────────────────────────────────────────────────────────────────────
