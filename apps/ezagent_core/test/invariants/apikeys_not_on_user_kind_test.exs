@@ -67,4 +67,60 @@ defmodule EzagentCore.Invariants.ApiKeysNotOnUserKindTest do
       end
     end
   end
+
+  # Codex MED closure (2026-05-26): the negative tests above prove
+  # ApiKeys is NOT on User. The positive assertions below prove the
+  # flip's destination — without them, an accidental "delete the
+  # registration entirely" regression would still pass the negative
+  # tests but disable ApiKeys system-wide.
+
+  test "Behavior.ApiKeys IS registered on every supported agent-flavor Kind" do
+    # The list mirrors the post-flip registration sites:
+    # - identity domain Application registers against Ezagent.Entity.Agent
+    # - curl_agent plugin's behaviors/0 publishes against Ezagent.Entity.CurlAgent
+    #
+    # Test-mode safety: the chat/curl plugins may not be loaded in a
+    # bare core-only test run; we skip an agent flavor whose Kind
+    # module isn't compiled (no plugin → no Kind → no registration
+    # to assert). The assertion still locks the post-flip wiring
+    # for any Kind that IS present.
+    expected_kinds =
+      [Ezagent.Entity.Agent, Ezagent.Entity.CurlAgent]
+      |> Enum.filter(&Code.ensure_loaded?/1)
+
+    assert expected_kinds != [],
+           "no agent-flavor Kinds compiled — this test asserts post-flip " <>
+             "registration but found no Kind to assert against. If running " <>
+             "core-only, this test belongs in an umbrella-mode test run."
+
+    for kind <- expected_kinds, action <- ApiKeys.actions() do
+      assert {:ok, ApiKeys} = BehaviorRegistry.lookup(kind, action),
+             "Post-flip wiring missing: " <>
+               "`BehaviorRegistry.lookup(#{inspect(kind)}, #{inspect(action)})` " <>
+               "must return `{:ok, Ezagent.Behavior.ApiKeys}`. Allen 2026-05-26 — " <>
+               "ApiKeys moved from User Kind to every agent-flavor Kind. Check " <>
+               "EzagentDomainIdentity.Application.register_identity_behaviors/0 " <>
+               "(Agent) and EzagentPluginCurlAgent.Application.behaviors/0 (CurlAgent)."
+    end
+  end
+
+  test "every agent-flavor Kind lists Behavior.ApiKeys in its behaviors/0" do
+    # Slice init at spawn-time goes through `Kind.behaviors/0`; if a
+    # flavor doesn't list ApiKeys here, the `:api_keys` slice is never
+    # initialised on that Kind's instance, and `data_owner/1` lookups
+    # against `Kind.get_slice/2` return `:error`. Registration alone
+    # (above) is insufficient — both axes must line up.
+    expected_kinds =
+      [Ezagent.Entity.Agent, Ezagent.Entity.CurlAgent]
+      |> Enum.filter(&Code.ensure_loaded?/1)
+
+    for kind <- expected_kinds do
+      assert ApiKeys in kind.behaviors(),
+             "Post-flip slice-init missing: `#{inspect(kind)}.behaviors/0` must " <>
+               "include `Ezagent.Behavior.ApiKeys` so the `:api_keys` slice is " <>
+               "initialised at spawn. Without this, `data_owner/1` resolves to " <>
+               ":no_owner for every instance of this Kind and the non-admin " <>
+               "creator-grant path silently fails."
+    end
+  end
 end

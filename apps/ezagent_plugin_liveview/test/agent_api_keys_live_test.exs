@@ -87,4 +87,41 @@ defmodule EzagentPluginLiveview.AgentApiKeysLiveTest do
     conn = get(conn, "/identities/users/#{encoded}/api-keys")
     assert conn.status == 404
   end
+
+  test "non-admin creator (via AgentLineage) is recognized by lookup_creator_uri",
+       %{conn: _admin_conn} do
+    # Allen 2026-05-26 (codex LOW closure) — exercise the non-admin
+    # creator-resolution path. `Behavior.Workspace.do_create_agent`
+    # records the spawn caller in `Ezagent.AgentLineage`; both the LV
+    # mount and `Behavior.ApiKeys.data_owner/1` consult lineage as
+    # tier-2 fallback when the slice's `:creator_uri` is nil. The
+    # full mount-against-conn coverage stays in the admin test; this
+    # asserts the resolution layer itself (no LV-conn dependency).
+    creator_uri =
+      URI.parse("entity://user/team-alpha/creator-#{System.unique_integer([:positive])}")
+
+    agent_uri = spawn_curl_agent()
+    :ok = Ezagent.AgentLineage.record(agent_uri, creator_uri)
+
+    # `Behavior.ApiKeys.data_owner/1` resolves the creator via lineage.
+    assert ^creator_uri = Ezagent.Behavior.ApiKeys.data_owner(agent_uri)
+  end
+
+  test "stranger (no lineage, no slice creator) gets :no_owner from data_owner",
+       %{conn: _admin_conn} do
+    # Codex LOW closure (2026-05-26) — assert the negative posture:
+    # a non-creator non-admin has no resolution path, so
+    # `data_owner/1` returns `:no_owner`. Combined with the LV
+    # mount's `is_admin? or @creator?` gate, this is what collapses
+    # the edit affordance to admin-only for unrelated callers — the
+    # FOOTGUN is closed because the gate is structurally correct,
+    # not because we're trying to render a friendly error for the
+    # stranger (the dispatch they trigger fails earlier with
+    # `:unauthorized`, which the LV renders as an "Error loading
+    # keys" card — that's the actual production UX).
+    agent_uri = spawn_curl_agent()
+    # No AgentLineage.record / no slice creator_uri.
+
+    assert :no_owner = Ezagent.Behavior.ApiKeys.data_owner(agent_uri)
+  end
 end

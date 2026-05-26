@@ -390,6 +390,42 @@ defmodule Ezagent.Behavior do
   """
   @callback terminate(reason :: term(), slice :: slice(), ctx :: ctx()) :: :ok
 
+  @doc """
+  Declare the SIBLING slices this Behavior needs to read in-process
+  during `invoke/4`. Returned list members are atoms naming OTHER
+  Behaviors' `state_slice()` keys on the SAME Kind instance.
+
+  Default `[]` — most Behaviors only touch their own slice (the
+  third arg to `invoke/4`). When this callback returns a non-empty
+  list, `Ezagent.Kind.Runtime.handle_dispatch/4` injects a
+  read-only `ctx[:sibling_slices]` map containing JUST those keys,
+  letting the Behavior do an O(1) lookup instead of a self-dispatch
+  that would deadlock (a `GenServer.call(self)` on the same
+  `Kind.Server`).
+
+  Example — `Behavior.CurlAgent` reads its agent's API key:
+
+      def reads_sibling_slices, do: [:api_keys]
+
+  ## Security note
+
+  The injected `ctx[:sibling_slices]` is NOT cap-gated — by
+  declaring a sibling slice you're promising the runtime that
+  reading it from your Behavior's process is intentional and safe.
+  Any Behavior running INSIDE the Kind.Server has BEAM-level
+  access to all sibling slices regardless (the process holds them
+  in state); this callback is the audit seam — declaring the list
+  makes the read explicit and grep-able. **Do NOT add slices you
+  don't need.** The CapabilityRegistry cap gate at dispatch step
+  5.5 still gates CROSS-PROCESS reads.
+
+  Optional callback — defaults to `[]` if not exported.
+
+  Added 2026-05-26 as part of the ApiKeys-to-Agent flip (Allen
+  directive); codex review CRIT-1 closure.
+  """
+  @callback reads_sibling_slices() :: [atom()]
+
   @optional_callbacks [
     dispatchable?: 0,
     data_owner: 1,
@@ -397,8 +433,25 @@ defmodule Ezagent.Behavior do
     handle_continue: 3,
     terminate: 3,
     cap_exempt_actions: 0,
-    workspace_scoped?: 0
+    workspace_scoped?: 0,
+    reads_sibling_slices: 0
   ]
+
+  @doc """
+  Read `reads_sibling_slices/0` from `behavior_module`, defaulting
+  to `[]` when the optional callback is not exported.
+
+  Used by `Ezagent.Kind.Runtime.handle_dispatch/4` to decide which
+  sibling slices to expose via `ctx[:sibling_slices]`.
+  """
+  @spec reads_sibling_slices_of(module()) :: [atom()]
+  def reads_sibling_slices_of(behavior_module) when is_atom(behavior_module) do
+    if function_exported?(behavior_module, :reads_sibling_slices, 0) do
+      behavior_module.reads_sibling_slices()
+    else
+      []
+    end
+  end
 
   @doc """
   Read `cap_exempt_actions/0` from `behavior_module`, defaulting to `[]`

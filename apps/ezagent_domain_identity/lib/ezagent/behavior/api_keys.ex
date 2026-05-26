@@ -186,30 +186,54 @@ defmodule Ezagent.Behavior.ApiKeys do
     end
   end
 
-  # Allen 2026-05-26 — agent-Kind ApiKeys data_owner reads
-  # `:creator_uri` from the live `:api_keys` slice (durable via
-  # `{:snapshot, :on_change}` on Agent Kind). Mirrors the
-  # `Behavior.Chat.data_owner/1` pattern (PR-OWN-2 §6) which reads
-  # session's `:owner_uri` from the `:chat` slice.
+  # Allen 2026-05-26 — agent-Kind ApiKeys data_owner. Three resolution
+  # tiers (in order):
   #
-  # Three resolution outcomes:
+  #  1. `:api_keys` slice's `:creator_uri` — durable via the Agent
+  #     Kind's `{:snapshot, :on_change}` persistence. Set when an
+  #     instantiate path threads `creator_uri` into init args.
   #
-  #  - `%URI{}` — the agent has a recorded creator; THAT URI is the
-  #    data owner and receives `default_grants_from_data_owner/2`'s
-  #    grant when the agent spawns.
-  #  - `:no_owner` — agent spawned without `:creator_uri` (system /
-  #    test paths) OR the Kind isn't live yet (pre-spawn lookup); only
-  #    bootstrap admin can grant.
-  #  - `:any` — sentinel used by `default_grants_from_data_owner/2`
-  #    for catalog-wide enumeration.
+  #  2. `Ezagent.AgentLineage.lookup/1` fallback (codex HIGH-1 closure)
+  #     — `Workspace.create_agent`'s SpawnRegistry catch-all records
+  #     `agent_uri → caller` in this ETS, so a non-admin who created
+  #     a curl/np agent via the LV resolves to themselves here even
+  #     when the spawn-time `creator_uri` arg threading isn't wired.
+  #
+  #  3. `:no_owner` — neither source has a record (system / test paths
+  #     spawning ad-hoc); only bootstrap admin can grant.
+  #
+  # Mirrors `Behavior.Chat.data_owner/1`'s pattern (PR-OWN-2 §6) of
+  # reading the entity's own durable state for ownership.
   @impl Ezagent.Behavior
   def data_owner(%URI{scheme: "entity", host: "agent"} = agent_uri) do
     case Ezagent.Kind.get_slice(agent_uri, :api_keys) do
-      {:ok, %{creator_uri: %URI{} = creator}} -> creator
-      _ -> :no_owner
+      {:ok, %{creator_uri: %URI{} = creator}} ->
+        creator
+
+      _ ->
+        # Tier 2: lineage ETS fallback (codex HIGH-1).
+        case lineage_lookup(agent_uri) do
+          {:ok, %URI{} = creator} -> creator
+          _ -> :no_owner
+        end
     end
   end
 
   def data_owner(:any), do: :any
   def data_owner(_), do: :no_owner
+
+  # Wrap `Ezagent.AgentLineage.lookup/1` so a missing/un-booted
+  # registry degrades gracefully (no crash, just `:no_owner`). Lineage
+  # ETS is in-memory; cleared on BEAM restart, so the slice's
+  # `creator_uri` is the durable source-of-truth when populated.
+  defp lineage_lookup(agent_uri) do
+    if Code.ensure_loaded?(Ezagent.AgentLineage) and
+         function_exported?(Ezagent.AgentLineage, :lookup, 1) do
+      Ezagent.AgentLineage.lookup(agent_uri)
+    else
+      :error
+    end
+  rescue
+    _ -> :error
+  end
 end

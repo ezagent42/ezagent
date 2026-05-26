@@ -88,6 +88,19 @@ defmodule Ezagent.Behavior.CurlAgent do
   @impl Ezagent.Behavior
   def state_slice, do: :curl_agent
 
+  # Allen 2026-05-26 — declare the sibling slice this Behavior reads
+  # in-process (post ApiKeys-to-Agent flip). `:api_keys` lives on the
+  # SAME Agent Kind; reading it via dispatch back to `ctx.self_uri`
+  # would be a `GenServer.call(self)` deadlock. The Runtime injects
+  # the declared slice into `ctx[:sibling_slices][:api_keys]` as a
+  # read-only O(1) lookup.
+  #
+  # Codex CRIT-1 closure — the prior wide `ctx[:all_slices]` injection
+  # was scope-narrowed to the declared list to prevent unrelated
+  # Behaviors from reading sensitive sibling slices implicitly.
+  @impl Ezagent.Behavior
+  def reads_sibling_slices, do: [:api_keys]
+
   @impl Ezagent.Behavior
   def init_slice(args) do
     %{
@@ -246,13 +259,13 @@ defmodule Ezagent.Behavior.CurlAgent do
   # `:receive` invoke is running inside the same Kind.Server holding
   # the api_keys slice.
   #
-  # `ctx[:all_slices]` is the in-process read view of every Behavior
-  # slice on this Kind (injected by `Ezagent.Kind.Runtime.handle_dispatch/4`
-  # — the same enriched_ctx that already carries `:self_uri` /
-  # `:kind_module` / etc.). Reading from there is O(1) hash lookup,
-  # not a process call, so no deadlock.
+  # `ctx[:sibling_slices]` is the OPT-IN scoped read view — opted in
+  # via `reads_sibling_slices/0` returning `[:api_keys]`. The Runtime
+  # injects ONLY the declared slices, so this read seam is explicit +
+  # grep-able. Reading from `ctx[:sibling_slices][:api_keys]` is O(1)
+  # hash lookup, not a process call, so no deadlock.
   defp fetch_self_api_key(ctx, provider) when is_binary(provider) do
-    api_keys_slice = ctx |> Map.get(:all_slices, %{}) |> Map.get(:api_keys, %{})
+    api_keys_slice = ctx |> Map.get(:sibling_slices, %{}) |> Map.get(:api_keys, %{})
     keys = Map.get(api_keys_slice, :keys, %{})
 
     case Map.fetch(keys, provider) do

@@ -74,7 +74,12 @@ defmodule Ezagent.SystemPrincipal.Catalog do
   # for readability; lazy-loaded at compile time so behavior modules
   # from non-loaded apps (e.g. plugin Behaviors during a core-only
   # build) don't break.
-  alias Ezagent.Behavior.ApiKeys
+  #
+  # Allen 2026-05-26 — `alias Ezagent.Behavior.ApiKeys` removed (and
+  # the `cap(:user, ApiKeys, :get_api_key)` Catalog entry it served):
+  # post ApiKeys-to-Agent flip CurlAgent reads its own `:api_keys`
+  # slice in-process via `ctx[:sibling_slices]`, so no system principal
+  # dispatches `identity.get_api_key` anymore.
   alias Ezagent.Behavior.Chat
   alias Ezagent.Behavior.ExternalMirror
   alias Ezagent.Behavior.ExternalMirrorWorker

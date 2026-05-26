@@ -78,10 +78,24 @@ defmodule EzagentPluginLiveview.AgentApiKeysLive do
      |> load_keys()}
   end
 
+  # Allen 2026-05-26 — resolve creator via the same two-tier lookup
+  # `Behavior.ApiKeys.data_owner/1` uses: slice `:creator_uri` first
+  # (durable, set when instantiate threads it), then `AgentLineage`
+  # ETS (post-spawn-recorded in `Behavior.Workspace.do_create_agent`).
+  # This is what unsticks the codex HIGH-1 footgun where curl/np
+  # creators couldn't see the edit form because the SpawnRegistry
+  # path never threaded `creator_uri` into init args — the lineage
+  # row is the in-VM fallback.
   defp lookup_creator_uri(%URI{} = agent_uri) do
     case Ezagent.Kind.get_slice(agent_uri, :api_keys) do
-      {:ok, %{creator_uri: %URI{} = creator}} -> creator
-      _ -> nil
+      {:ok, %{creator_uri: %URI{} = creator}} ->
+        creator
+
+      _ ->
+        case Ezagent.AgentLineage.lookup(agent_uri) do
+          {:ok, %URI{} = creator} -> creator
+          _ -> nil
+        end
     end
   end
 
