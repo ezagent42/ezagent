@@ -33,6 +33,26 @@
 - **Until then:** new privileged actions get their own Behavior
   module per the PR #356 carve-out pattern. Document this in
   ezagent-developer skill as a current-state pattern.
+- **PR #408 surface (2026-05-27):** `Behavior.Workspace :create_session`
+  was added in PR #408 (SPEC `2026-05-26-session-create-orchestrator-unified`
+  Gap C) and grants the cap to workspace members on `add_member`
+  (codex round-2 MED-2 fix). Because the cap shape is identical to
+  every other Workspace cap, a member granted this cap also satisfies
+  the cap-check for `add_member`, `remove_member`, `set_routing_rules`,
+  `create_agent`, etc. **Not a regression** — the same over-grant
+  exists for every multi-action Behavior cap in the umbrella; codex
+  round-1 of PR #408 didn't flag it, codex round-3 caught it after
+  the round-2 fix moved the helper into the Behavior layer (visibility
+  not severity changed). **Mitigation in this PR:** documentation only;
+  the proper fix is either (a) add `action` to the Capability struct
+  (the SPEC change at top of this entry) OR (b) carve `:create_session`
+  into its own Behavior module (e.g. `Behavior.WorkspaceSessions`)
+  per the PR #356 carve-out pattern. Allen's call which lands first.
+  Inline comments at the grant sites cross-reference this note:
+  `apps/ezagent_domain_workspace/lib/ezagent/workspace.ex` (facade
+  `grant_member_create_session_cap/2`); same name in
+  `apps/ezagent_domain_workspace/lib/ezagent/behavior/workspace.ex`
+  (Behavior helper, lifted from the facade in PR #408 round-2 fix).
 
 ### Codex PR #356 r1 HIGH/MED deferred
 

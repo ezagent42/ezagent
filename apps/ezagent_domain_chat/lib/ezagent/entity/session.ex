@@ -688,7 +688,111 @@ defmodule Ezagent.Entity.Session do
   # Step 2 — ensure_orchestrator  (SPEC §2 step 2, codex rev-4 HIGH-1/3)
   # ─────────────────────────────────────────────────────────────────────
 
-  defp ensure_orchestrator(%URI{} = session_uri, %URI{} = workspace_uri, %URI{} = owner_uri) do
+  @doc """
+  Ensure an orchestrator agent exists for `session_uri` in `workspace_uri`
+  owned by `owner_uri`. Returns one of three shapes:
+
+    * `{:ok, orchestrator_uri, :created | :already_present}` — orchestrator
+      is alive in `KindRegistry`, owned by `owner_uri`, bound to
+      `workspace_uri`. `:created` ⇔ this call started the worker;
+      `:already_present` ⇔ the worker pre-existed.
+    * `{:partial, %{orchestrator_pending: candidate_uri}}` — the URI is
+      reserved but ownership classification is incomplete (lineage and/or
+      workspace registries haven't caught up). LV / CLI should render
+      "pending" + invite a retry.
+    * `{:error, reason}` — orchestrator spawn failed OR positive foreign
+      evidence (lineage/workspace POSITIVELY mismatch) was detected.
+
+  Made public 2026-05-26 (SPEC `2026-05-26-session-create-orchestrator-unified`
+  Gap A) so `EzagentDomainChat.create_session/3` can wire it in directly,
+  giving the LV/CLI/bootstrap entry the same auto-spawn semantics the
+  SessionTemplate.instantiate path always had. The internal logic is
+  unchanged from when this was `defp` — only the visibility flipped.
+
+  This call brings up the orchestrator's **Agent Kind GenServer** (the
+  chat-domain identity for the orchestrator) AND its cc PTY +
+  `claude` subprocess by calling `Agent.spawn_from_template_content/4`
+  directly with the cc-orchestrator AgentTemplate's content slice. The
+  orchestrator's "orchestrator" role — which causes the cc Template
+  Class to load the `ezagent-session-orchestrator` skill into the
+  per-agent config dir + append the CLAUDE.md hint + set
+  `EZAGENT_AGENT_ROLE=orchestrator` in `cmd_env` — is carried on the
+  cc-orchestrator AgentTemplate's content slice (seeded by
+  `Ezagent.Orchestrator.CcOrchestratorSeed.seed/0`), threaded through
+  `Ezagent.Entity.AgentTemplate.to_template_data/2`.
+
+  ## codex PR #408 review CRIT — call spawn_from_template_content directly
+
+  Pre-fix this branch called `Agent.spawn_fresh/4` directly, which goes
+  through `SpawnRegistry.spawn_detailed(agent_uri)` → `Kind.spawn(Agent,
+  ...)` and NEVER reaches `Template.instantiate`. The cc Template Class's
+  `apply_orchestrator_role_bootstrap/2` therefore never ran on the
+  auto-spawn path. Result: orchestrator agents created via
+  `ensure_orchestrator` got no skill copy, no CLAUDE.md hint, and no
+  `EZAGENT_AGENT_ROLE` env var — entire SPEC Gap B was dead.
+
+  Post-fix this branch reads the cc-orchestrator AgentTemplate's content
+  slice via `:sys.get_state` (the AgentTemplate Kind is the SOLE source
+  of truth) and calls `Agent.spawn_from_template_content/4` — the same
+  helper the `Behavior.Template :instantiate` action body calls, minus
+  the dispatch-level CapBAC + the action-body's anti-cross-workspace
+  workspace_uri check (`apps/ezagent_domain_chat/.../behavior/template.ex`
+  line 435 `resolve_workspace_uri/3` — "cross-workspace instantiation is
+  not a V1 feature"). The cc-orchestrator AgentTemplate is system-scoped
+  (`template://agent/system/cc-orchestrator`) but each tenant workspace's
+  orchestrator agent must land in THEIR OWN workspace. This is a
+  legitimate cross-workspace spawn the dispatch path was never designed
+  for — going around the action body but still through the in-process
+  helper gives us the cc Template Class's role-bootstrap while
+  preserving structural ownership semantics (lineage + workspace bind
+  happen inside `spawn_from_template_content/4`).
+
+  The `role_degraded` info that `cc_agent` surfaces in its meta map
+  when skill-copy fails (codex PR #408 review HIGH-3) is propagated
+  through to `EzagentDomainChat.create_session/3`'s meta so the caller
+  can notify the owner per Invariant #9.
+  """
+  @spec ensure_orchestrator(URI.t(), URI.t(), URI.t()) ::
+          {:ok, URI.t(), :created | :already_present}
+          | {:partial, %{orchestrator_pending: URI.t()}}
+          | {:error, term()}
+  def ensure_orchestrator(
+        %URI{} = session_uri,
+        %URI{} = workspace_uri,
+        %URI{} = owner_uri
+      ) do
+    # 3-tuple wrapper around `ensure_orchestrator_with_meta/3`. Callers
+    # who don't care about role-bootstrap degradation (the Generator
+    # path) use this; the EzagentDomainChat.create_session/3 facade —
+    # which renders meta to LV / CLI — uses the 4-tuple version directly
+    # to surface degraded status via the meta map.
+    case ensure_orchestrator_with_meta(session_uri, workspace_uri, owner_uri) do
+      {:ok, orch_uri, outcome, _meta} -> {:ok, orch_uri, outcome}
+      {:ok, orch_uri, outcome} -> {:ok, orch_uri, outcome}
+      other -> other
+    end
+  end
+
+  @doc """
+  4-tuple variant of `ensure_orchestrator/3` (codex PR #408 review HIGH-3).
+
+  Same semantics + the same 3 return shapes for non-degraded paths;
+  additionally returns `{:ok, orch_uri, :created | :already_present,
+  %{role_degraded: true, role_degraded_reason: term()}}` when the
+  underlying cc Template Class flagged a degraded skill-bootstrap.
+  The session itself is alive — the meta map surfaces the failure
+  per Invariant #9 (no silent drops at user-facing surfaces).
+  """
+  @spec ensure_orchestrator_with_meta(URI.t(), URI.t(), URI.t()) ::
+          {:ok, URI.t(), :created | :already_present}
+          | {:ok, URI.t(), :created | :already_present, map()}
+          | {:partial, %{orchestrator_pending: URI.t()}}
+          | {:error, term()}
+  def ensure_orchestrator_with_meta(
+        %URI{} = session_uri,
+        %URI{} = workspace_uri,
+        %URI{} = owner_uri
+      ) do
     candidate_uri = derive_orchestrator_uri(session_uri, workspace_uri)
     orch_template_uri = URI.parse("template://agent/system/cc-orchestrator")
     instance_name = derive_orchestrator_instance_name(session_uri)
@@ -698,27 +802,20 @@ defmodule Ezagent.Entity.Session do
         {:ok, candidate_uri, :already_present}
 
       :not_live ->
-        # codex rev-4 HIGH-1: NEVER call the side-effecting `Agent.spawn/4`
-        # in the reconciler — that would silently re-parent any foreign
-        # process that claimed the URI in the TOCTOU window. Use the
-        # fresh-only `Agent.spawn_fresh/4` primitive; on `:already_started`
-        # re-enter the ownership gate.
-        case Ezagent.Entity.Agent.spawn_fresh(
-               orch_template_uri,
-               instance_name,
-               workspace_uri,
-               owner_uri
-             ) do
-          {:ok, %{fresh?: true, agent_uri: orch_uri}} ->
-            {:ok, orch_uri, :created}
-
-          {:ok, %{fresh?: false}} ->
-            # Lost the race; re-classify ownership.
-            retry_after_race(candidate_uri, owner_uri, workspace_uri)
-
-          {:error, _} = err ->
-            err
-        end
+        # codex PR #408 review CRIT — instantiate via the cc Template
+        # Class (`spawn_from_template_content/4`) so the role-bootstrap
+        # runs, instead of bypass-spawning via `Agent.spawn_fresh/4`.
+        # The race-protection invariants from codex rev-4 HIGH-1 (no
+        # side-effects on adopt) are preserved: `spawn_from_template_content/4`'s
+        # `fresh?: false` path is explicit + side-effect-free, same
+        # semantics `spawn_fresh/4` had on the `:already_started` branch.
+        spawn_orchestrator_via_template_content(
+          candidate_uri,
+          orch_template_uri,
+          instance_name,
+          workspace_uri,
+          owner_uri
+        )
 
       {:ownership_pending, _} ->
         # codex rev-4 MEDIUM-3: bounded re-read (NOT auto-classified as
@@ -731,6 +828,90 @@ defmodule Ezagent.Entity.Session do
         # mismatches). Real corruption / cross-tenant collision.
         {:error, {:orchestrator_foreign, candidate_uri, evidence}}
     end
+  end
+
+  # codex PR #408 review CRIT — call `Agent.spawn_from_template_content/4`
+  # directly after reading the cc-orchestrator AgentTemplate's content
+  # slice. This routes the spawn through the cc Template Class's
+  # `instantiate/3` (so role-bootstrap runs) but skips the dispatch's
+  # action-body anti-cross-workspace check (`Behavior.Template.resolve_workspace_uri/3`)
+  # — the cc-orchestrator template is `template://agent/system/...` but
+  # each tenant workspace's orchestrator agent must land in THEIR OWN
+  # workspace, which is a legitimate cross-workspace spawn the action
+  # body intentionally refuses for V1.
+  #
+  # `instance_name` is the bare segment (e.g. `cc_orchestrator-<disc>`)
+  # — `spawn_from_template_content/4`'s URI builder is given a fully-
+  # formed `instance_uri` by us (the action body's flavor-prepending
+  # is bypassed; we feed the URI verbatim).
+  defp spawn_orchestrator_via_template_content(
+         %URI{} = candidate_uri,
+         %URI{} = orch_template_uri,
+         instance_name,
+         %URI{} = workspace_uri,
+         %URI{} = owner_uri
+       )
+       when is_binary(instance_name) do
+    with {:ok, content} <- read_orchestrator_template_content(orch_template_uri),
+         {:ok, result} <-
+           Ezagent.Entity.Agent.spawn_from_template_content(
+             content,
+             candidate_uri,
+             owner_uri,
+             workspace_uri
+           ) do
+      # codex PR #408 review CRIT — return `candidate_uri` (URI.new!'d
+      # form) as the canonical orchestrator URI, NOT `result.workers`'s
+      # element (which is URI.parse'd by the cc Template Class — the
+      # two are STRUCTURALLY different per `URI.parse` adding an
+      # `authority` field that `URI.new!` omits, and downstream
+      # callers/tests pinned against the URI.new! shape `spawn_fresh/4`
+      # used pre-fix).
+      outcome = if Map.get(result, :fresh?, false), do: :created, else: :already_present
+
+      case Map.take(result, [:role_degraded, :role_degraded_reason]) do
+        map when map_size(map) == 0 ->
+          {:ok, candidate_uri, outcome}
+
+        degraded_meta ->
+          {:ok, candidate_uri, outcome, degraded_meta}
+      end
+    end
+  end
+
+  # Read the cc-orchestrator AgentTemplate's `:template` slice content
+  # via `:sys.get_state` — same pattern `CcOrchestratorSeed.seed_status/0`
+  # uses. The AgentTemplate Kind must be alive (the boot seed runs
+  # before any `ensure_orchestrator` call); a missing Kind returns
+  # `{:error, :orchestrator_template_not_alive}` so the operator can see
+  # the boot-order issue rather than a downstream confusing error.
+  defp read_orchestrator_template_content(%URI{} = orch_template_uri) do
+    case Ezagent.KindRegistry.lookup(orch_template_uri) do
+      :error ->
+        {:error, {:orchestrator_template_not_alive, orch_template_uri}}
+
+      {:ok, pid} ->
+        case safe_get_template_content(pid) do
+          %{} = content when map_size(content) > 0 ->
+            {:ok, content}
+
+          _ ->
+            {:error, {:orchestrator_template_not_populated, orch_template_uri}}
+        end
+    end
+  end
+
+  # `:sys.get_state` on a Kind.Server returns `%{state: %{template: %{content: ...}}}`.
+  # Wrapped to swallow timeouts / restarts (the AgentTemplate Kind is
+  # snapshot-persisted, so a brief restart races are normal) — returns
+  # `nil` on any failure so the caller surfaces `:orchestrator_template_not_populated`.
+  defp safe_get_template_content(pid) do
+    case :sys.get_state(pid, 500) do
+      %{state: %{template: %{content: content}}} when is_map(content) -> content
+      _ -> %{}
+    end
+  catch
+    :exit, _ -> %{}
   end
 
   # codex rev-4 HIGH-1 fix as REAL implementation (per the user's PR-A

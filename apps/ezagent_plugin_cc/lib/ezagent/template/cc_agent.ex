@@ -193,7 +193,8 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
     with :ok <- check_class(tmpl),
          :ok <- check_agent_uri(tmpl),
          :ok <- check_cwd(tmpl),
-         :ok <- check_optional_sandbox_keys(tmpl) do
+         :ok <- check_optional_sandbox_keys(tmpl),
+         :ok <- check_role(tmpl) do
       :ok
     end
   end
@@ -214,6 +215,35 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
         {:ok, bad} -> {:halt, {:error, {:invalid_sandbox_key, key, bad}}}
       end
     end)
+  end
+
+  # SPEC `2026-05-26-session-create-orchestrator-unified` Gap B — `role`
+  # is optional. Absent ⇒ default role (legacy cc agents). When
+  # orchestrator, `instantiate/3` additionally copies the
+  # `ezagent-session-orchestrator` skill into the per-agent config dir
+  # and appends a CLAUDE.md hint pointing at it, plus sets
+  # `EZAGENT_AGENT_ROLE=orchestrator` in `cmd_env`.
+  #
+  # codex PR #408 review LOW — accept BOTH string and atom forms on
+  # ingress. The SPEC type reads `:default | :orchestrator` (atoms); the
+  # implementer chose strings because JSON round-trips don't preserve
+  # atoms (snapshot reload). We normalise on read here (validator) AND on
+  # read in `orchestrator_role?/1` so callers can pass either form. The
+  # CANONICAL on-disk form (seed + AgentTemplate slice) stays the string
+  # `"orchestrator"` so snapshot round-trips don't generate atoms (no
+  # atom-table-exhaustion exposure); the validator only accepts both
+  # shapes so atom-literal call sites compile cleanly.
+  defp check_role(tmpl) do
+    case Map.fetch(tmpl, "role") do
+      :error ->
+        :ok
+
+      {:ok, r} when r in ["default", "orchestrator", :default, :orchestrator] ->
+        :ok
+
+      {:ok, bad} ->
+        {:error, {:invalid_role, bad}}
+    end
   end
 
   defp check_class(%{"class" => "cc.agent"}), do: :ok
@@ -366,15 +396,36 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
           #    respawn data lets Sandbox.post_init/2 call back into
           #    `ensure_subprocess_alive/2` on a phx restart
           #    (PTY-orphan-restart 2026-05-26).
+          #
+          # SPEC `2026-05-26-session-create-orchestrator-unified` Gap B —
+          # for role=orchestrator, ALSO load the
+          # `ezagent-session-orchestrator` skill into the per-agent
+          # config dir (`apply_orchestrator_role_bootstrap/2`) BEFORE
+          # PTY launch so claude reads it from `CLAUDE_CONFIG_DIR` on
+          # its first start. Idempotent (re-copies / re-appends only if
+          # absent).
+          #
+          # codex PR #408 review HIGH-3 — role-bootstrap is BEST-EFFORT UX:
+          # a skill-copy / CLAUDE.md-append failure DOES NOT tear down the
+          # agent. The agent still spawns as a plain cc agent; the
+          # degraded status surfaces structurally in meta (`role_degraded`)
+          # so the caller (Session.ensure_orchestrator) can notify the
+          # session owner per Invariant #9 (no silent drops at user-facing
+          # surfaces). A telemetry event also fires so monitoring picks up
+          # the failure independent of caller wiring. The PTY itself MUST
+          # still come up — only role-bootstrap is best-effort, the rest
+          # (config_dir, PTY) stays load-bearing.
           with {:ok, config_dir} <- create_agent_config_dir(agent_uri, tmpl),
                tmpl_with_dir = put_agent_config_dir(tmpl, config_dir),
+               {:ok, role_meta} <- try_role_bootstrap(tmpl_with_dir, config_dir, agent_uri),
                :ok <- ensure_pty_server(agent_uri, cwd, tmpl_with_dir) do
-            {:ok, [agent_uri],
-             %{
-               fresh?: true,
-               config_dir_path: config_dir,
-               respawn_template_data: tmpl_with_dir
-             }}
+            base_meta = %{
+              fresh?: true,
+              config_dir_path: config_dir,
+              respawn_template_data: tmpl_with_dir
+            }
+
+            {:ok, [agent_uri], Map.merge(base_meta, role_meta)}
           else
             {:error, reason} ->
               _ = Ezagent.Kind.terminate(agent_uri)
@@ -387,6 +438,261 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
 
   defp put_agent_config_dir(tmpl, nil), do: tmpl
   defp put_agent_config_dir(tmpl, dir), do: Map.put(tmpl, "agent_config_dir", dir)
+
+  # ────────────────────────────────────────────────────────────────────────
+  # SPEC `2026-05-26-session-create-orchestrator-unified` Gap B —
+  # orchestrator-role bootstrap (skill copy + CLAUDE.md hint).
+  # ────────────────────────────────────────────────────────────────────────
+  #
+  # When the cc template carries `"role" => "orchestrator"`, this helper:
+  #
+  #   1. Copies the `ezagent-session-orchestrator` skill tree from the
+  #      umbrella root into `<config_dir>/skills/ezagent-session-orchestrator/`
+  #      via `File.cp_r/2`. Skipped when the destination already exists
+  #      (idempotent re-instantiate).
+  #   2. Appends `## Use the ezagent-session-orchestrator skill for all
+  #      session coordination work.` to `<config_dir>/CLAUDE.md`,
+  #      creating the file if missing. Gated on grep-for-marker so a
+  #      re-instantiate does NOT duplicate the line.
+  #
+  # `EZAGENT_AGENT_ROLE=orchestrator` is added to `cmd_env` separately
+  # by `build_claude_config_env/2` (so it lands on the claude process
+  # even on demand-restart paths that bypass this helper).
+  #
+  # Failure modes (codex PR #408 review HIGH-3 — degraded-mode return,
+  # not teardown — see `spawn_for_local_pty/2` for the post-fix handler):
+  #
+  #   * Skill source missing (override) — `{:error, {:skill_source_missing, _}}`.
+  #   * Skill source missing (auto-walk) — `{:error, {:skill_source_not_found,
+  #     attempted_paths}}`.
+  #   * `File.cp_r/2` failure — `{:error, {:skill_copy_failed, _}}`.
+  #   * CLAUDE.md write failure — `{:error, {:claude_md_hint_failed, _}}`.
+  #
+  # Skipped when role is `:default` / `"default"` / absent — no-op.
+  # Skipped when `config_dir` is `nil` (template has no
+  # `claude_config_dir` reference; nowhere to copy the skill).
+  @doc false
+  @spec apply_orchestrator_role_bootstrap(map(), String.t() | nil) ::
+          :ok | {:error, term()}
+  def apply_orchestrator_role_bootstrap(_tmpl, nil), do: :ok
+
+  def apply_orchestrator_role_bootstrap(tmpl, config_dir)
+      when is_map(tmpl) and is_binary(config_dir) do
+    if orchestrator_role?(tmpl) do
+      with {:ok, source} <- resolve_orchestrator_skill_source(),
+           :ok <- copy_orchestrator_skill(source, config_dir),
+           :ok <- append_orchestrator_claude_md_hint(config_dir) do
+        :ok
+      end
+    else
+      :ok
+    end
+  end
+
+  # codex PR #408 review HIGH-3 — wrap `apply_orchestrator_role_bootstrap/2`
+  # so a role-bootstrap failure DOES NOT tear down the agent. The agent
+  # is allowed to spawn as a plain cc agent (the SKILL is UX, not
+  # load-bearing for claude itself).
+  #
+  # Returns `{:ok, meta}` always when role is non-orchestrator (empty
+  # meta) OR role is orchestrator and bootstrap succeeded (empty meta).
+  # On bootstrap failure returns `{:ok, %{role_degraded: %{...}}}` — the
+  # `:ok` lets the `with` chain in `spawn_for_local_pty/2` continue to
+  # `ensure_pty_server/3`. The degraded info propagates up so the caller
+  # can notify the session owner (Invariant #9).
+  #
+  # Emits a `[:ezagent, :cc, :role_bootstrap, :failed]` telemetry event
+  # so monitoring observes the failure independent of caller wiring.
+  @doc false
+  @spec try_role_bootstrap(map(), String.t() | nil, URI.t()) :: {:ok, map()}
+  def try_role_bootstrap(tmpl, config_dir, %URI{} = agent_uri) do
+    case apply_orchestrator_role_bootstrap(tmpl, config_dir) do
+      :ok ->
+        {:ok, %{}}
+
+      {:error, reason} ->
+        Logger.warning(
+          "cc.agent: orchestrator role-bootstrap failed for " <>
+            "#{URI.to_string(agent_uri)}: #{inspect(reason)} — " <>
+            "the agent will spawn as a plain cc agent (best-effort UX, " <>
+            "SPEC 2026-05-26-session-create-orchestrator-unified Gap B); " <>
+            "caller MUST surface the degraded status to the owner."
+        )
+
+        :telemetry.execute(
+          [:ezagent, :cc, :role_bootstrap, :failed],
+          %{count: 1},
+          %{agent_uri: agent_uri, reason: reason, config_dir: config_dir}
+        )
+
+        {:ok,
+         %{
+           role_degraded: true,
+           role_degraded_reason: reason
+         }}
+    end
+  end
+
+  @doc false
+  @spec orchestrator_role?(map()) :: boolean()
+  def orchestrator_role?(tmpl) when is_map(tmpl) do
+    # codex PR #408 review LOW — accept both string and atom forms so
+    # an atom-literal call site (`%{"role" => :orchestrator}`) reads the
+    # same as the canonical string form (`%{"role" => "orchestrator"}`).
+    # On-disk / snapshot-roundtripped templates carry the string; this
+    # check is generous on ingress.
+    case Map.get(tmpl, "role") do
+      "orchestrator" -> true
+      :orchestrator -> true
+      _ -> false
+    end
+  end
+
+  def orchestrator_role?(_), do: false
+
+  # Resolve the on-disk source of the `ezagent-session-orchestrator`
+  # skill. Defaults to walking upward from this plugin's priv_dir looking
+  # for the first ancestor that contains
+  # `.claude/skills/ezagent-session-orchestrator/SKILL.md`. Override via
+  # `config :ezagent_plugin_cc, :orchestrator_skill_source, "/abs/path"`
+  # — used by tests to point at a temp fixture without touching the real
+  # umbrella file.
+  #
+  # codex PR #408 review HIGH-2 — pre-fix used `Path.expand("../../../..", priv)`
+  # which is 4 segments and lands at `<repo>/_build/.claude/...` (off by
+  # one — the test env masked it via the app-env override). A hardcoded
+  # `..` count is brittle and silently breaks when the priv-path depth
+  # changes (e.g. release builds nest differently). The walk searches for
+  # the actual `.claude/skills/...` marker so it is robust to depth
+  # changes, and explicitly returns the list of attempted paths on
+  # failure so operators can diagnose a missing-skill deployment.
+  @doc false
+  @spec resolve_orchestrator_skill_source() :: {:ok, String.t()} | {:error, term()}
+  def resolve_orchestrator_skill_source do
+    override = Application.get_env(:ezagent_plugin_cc, :orchestrator_skill_source)
+
+    cond do
+      is_binary(override) and override != "" ->
+        if File.dir?(override) do
+          {:ok, override}
+        else
+          {:error, {:skill_source_missing, override}}
+        end
+
+      true ->
+        search_orchestrator_skill_source()
+    end
+  end
+
+  @orchestrator_skill_relpath ".claude/skills/ezagent-session-orchestrator"
+  @orchestrator_skill_marker_relpath "SKILL.md"
+
+  # Walk upward from this plugin's priv_dir, searching for the first
+  # ancestor that holds `.claude/skills/ezagent-session-orchestrator/SKILL.md`.
+  # Returns `{:ok, abs_skill_dir}` or `{:error, {:skill_source_not_found,
+  # attempted_paths}}` so the operator can see which dirs were probed.
+  defp search_orchestrator_skill_source do
+    case :code.priv_dir(:ezagent_plugin_cc) do
+      priv when is_list(priv) ->
+        start = Path.expand(to_string(priv))
+        walk_for_skill(start, [])
+
+      _ ->
+        # Plugin not loaded — should be unreachable from a running
+        # template, but guard anyway.
+        {:error, {:skill_source_not_found, []}}
+    end
+  end
+
+  # Bound the walk at the filesystem root. `Path.dirname/1` of `/` is `/`
+  # on POSIX, so a parent-equals-self check is the loop termination.
+  defp walk_for_skill(dir, attempted) do
+    candidate = Path.join(dir, @orchestrator_skill_relpath)
+    marker = Path.join(candidate, @orchestrator_skill_marker_relpath)
+    attempted = [candidate | attempted]
+
+    cond do
+      File.regular?(marker) ->
+        {:ok, candidate}
+
+      true ->
+        parent = Path.dirname(dir)
+
+        if parent == dir do
+          {:error, {:skill_source_not_found, Enum.reverse(attempted)}}
+        else
+          walk_for_skill(parent, attempted)
+        end
+    end
+  end
+
+  # Copy the skill tree into `<config_dir>/skills/ezagent-session-orchestrator/`.
+  # Idempotent: when the destination dir already exists, return `:ok`
+  # without re-copying. Per the SPEC's "Idempotence" rule, a re-spawn
+  # MUST NOT re-copy the skill.
+  defp copy_orchestrator_skill(source_dir, config_dir) do
+    skills_root = Path.join(config_dir, "skills")
+    dest_dir = Path.join(skills_root, "ezagent-session-orchestrator")
+
+    cond do
+      File.dir?(dest_dir) ->
+        :ok
+
+      true ->
+        with :ok <- File.mkdir_p(skills_root),
+             {:ok, _} <- File.cp_r(source_dir, dest_dir) do
+          :ok
+        else
+          {:error, reason} -> {:error, {:skill_copy_failed, reason}}
+          err -> {:error, {:skill_copy_failed, err}}
+        end
+    end
+  end
+
+  @orchestrator_hint_line "## Use the ezagent-session-orchestrator skill for all session coordination work."
+
+  # Append the orchestrator-skill hint to `<config_dir>/CLAUDE.md`,
+  # creating the file if missing. Idempotent: greps for the marker
+  # line first; only appends when absent.
+  defp append_orchestrator_claude_md_hint(config_dir) do
+    claude_md = Path.join(config_dir, "CLAUDE.md")
+
+    existing =
+      case File.read(claude_md) do
+        {:ok, content} -> content
+        {:error, :enoent} -> ""
+        {:error, reason} -> {:error, reason}
+      end
+
+    case existing do
+      {:error, reason} ->
+        {:error, {:claude_md_hint_failed, reason}}
+
+      content when is_binary(content) ->
+        if String.contains?(content, @orchestrator_hint_line) do
+          :ok
+        else
+          new_content =
+            if content == "" or String.ends_with?(content, "\n") do
+              content <> @orchestrator_hint_line <> "\n"
+            else
+              content <> "\n" <> @orchestrator_hint_line <> "\n"
+            end
+
+          case File.write(claude_md, new_content) do
+            :ok -> :ok
+            {:error, reason} -> {:error, {:claude_md_hint_failed, reason}}
+          end
+        end
+    end
+  end
+
+  @doc """
+  The CLAUDE.md hint line appended for orchestrator-role cc agents.
+  Public so tests can assert exact content (SPEC Gap B B2 / B4).
+  """
+  @spec orchestrator_hint_line() :: String.t()
+  def orchestrator_hint_line, do: @orchestrator_hint_line
 
   # Roll back a partially-created config dir on PTY-startup failure.
   # Best-effort — failure to remove is logged but does NOT block the
@@ -625,9 +931,25 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
       # we raise rather than fall back — a freshly-spawned agent
       # whose per-agent dir was misset would otherwise silently use
       # the SHARED template ref dir (cross-agent credential leak).
-      cmd_env = build_claude_config_env(base_env, tmpl)
+      cmd_env =
+        base_env
+        |> build_claude_config_env(tmpl)
+        |> maybe_put_orchestrator_role_env(tmpl)
 
       {:ok, {argv, cmd_env}}
+    end
+  end
+
+  # SPEC `2026-05-26-session-create-orchestrator-unified` Gap B —
+  # when role is `"orchestrator"`, surface it to the claude process
+  # via `EZAGENT_AGENT_ROLE`. The MCP bridge subprocesses claude
+  # spawns inherit env from claude, so the orchestrator-MCP server
+  # gets the same signal.
+  defp maybe_put_orchestrator_role_env(env, tmpl) when is_map(env) do
+    if orchestrator_role?(tmpl) do
+      Map.put(env, "EZAGENT_AGENT_ROLE", "orchestrator")
+    else
+      env
     end
   end
 

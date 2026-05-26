@@ -91,9 +91,19 @@ defmodule EzagentWeb.HomeLive do
       case EzagentDomainChat.create_session(short_name, creator_uri,
              template_name: "default"
            ) do
-        {:ok, session_uri} ->
+        {:ok, session_uri, meta} ->
+          # SPEC `2026-05-26-session-create-orchestrator-unified` Gap A
+          # + Invariant #9 (no silent drops at user-facing surfaces) —
+          # surface the orchestrator status from `create_session`'s
+          # new 3-tuple meta map. Silently discarding the meta would be
+          # an Invariant #9 violation (the e2e flow's "did the
+          # orchestrator come up?" question would be invisible).
           if with_echo?, do: join_echo_agent(session_uri, creator_uri)
-          {:noreply, push_navigate(socket, to: "/sessions")}
+
+          {:noreply,
+           socket
+           |> put_orchestrator_flash(meta)
+           |> push_navigate(to: "/sessions")}
 
         {:error, reason} ->
           {:noreply,
@@ -105,6 +115,40 @@ defmodule EzagentWeb.HomeLive do
       end
     end
   end
+
+  # SPEC `2026-05-26-session-create-orchestrator-unified` Gap A — render
+  # the orchestrator status from `create_session`'s meta map so the
+  # operator sees `:pending` / `:failed` BEFORE they land in /sessions
+  # and wonder why their orchestrator card is empty.
+  defp put_orchestrator_flash(socket, meta) when is_map(meta) do
+    case Map.get(meta, :orchestrator_status) do
+      :ready ->
+        socket
+
+      :pending ->
+        Phoenix.LiveView.put_flash(
+          socket,
+          :info,
+          gettext("Orchestrator pending — refresh in a moment.")
+        )
+
+      :failed ->
+        reason = Map.get(meta, :orchestrator_error)
+
+        Phoenix.LiveView.put_flash(
+          socket,
+          :error,
+          gettext("Orchestrator failed: %{reason}; click Restart to retry.",
+            reason: inspect(reason)
+          )
+        )
+
+      _ ->
+        socket
+    end
+  end
+
+  defp put_orchestrator_flash(socket, _meta), do: socket
 
   defp truthy?("true"), do: true
   defp truthy?("on"), do: true

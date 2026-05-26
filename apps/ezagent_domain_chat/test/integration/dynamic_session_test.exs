@@ -18,7 +18,7 @@ defmodule EzagentDomainChat.Integration.DynamicSessionTest do
     # SPEC #324: workspace is derived structurally from the creator URI.
     # Admin's URI is `entity://user/system/admin` → workspace `system`.
     # SPEC #366 (Allen 2026-05-26) — `:template_name` is now required.
-    assert {:ok, session_uri} =
+    assert {:ok, session_uri, _meta} =
              EzagentDomainChat.create_session(short, admin_uri, template_name: "default")
 
     assert URI.to_string(session_uri) == "session://default/system/#{short}"
@@ -38,10 +38,10 @@ defmodule EzagentDomainChat.Integration.DynamicSessionTest do
   test "create_session is idempotent — re-call returns same URI" do
     short = "idemp-#{System.unique_integer([:positive])}"
     admin_uri = User.admin_uri()
-    assert {:ok, uri1} =
+    assert {:ok, uri1, _meta1} =
              EzagentDomainChat.create_session(short, admin_uri, template_name: "default")
 
-    assert {:ok, uri2} =
+    assert {:ok, uri2, _meta2} =
              EzagentDomainChat.create_session(short, admin_uri, template_name: "default")
 
     assert uri1 == uri2
@@ -57,7 +57,8 @@ defmodule EzagentDomainChat.Integration.DynamicSessionTest do
 
   test "list_sessions includes main + any dynamic sessions" do
     short = "listed-#{System.unique_integer([:positive])}"
-    {:ok, _} = EzagentDomainChat.create_session(short, User.admin_uri(), template_name: "default")
+    {:ok, _, _meta} =
+      EzagentDomainChat.create_session(short, User.admin_uri(), template_name: "default")
 
     uris = EzagentDomainChat.list_sessions() |> Enum.map(&URI.to_string/1)
     assert "session://default/system/main" in uris

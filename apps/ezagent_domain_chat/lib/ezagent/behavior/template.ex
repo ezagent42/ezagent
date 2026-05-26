@@ -366,14 +366,21 @@ defmodule Ezagent.Behavior.Template do
         with {:ok, instance_uri} <- resolve_instance_uri(content, args, self_uri, ctx),
              {:ok, workspace_uri} <- resolve_workspace_uri(content, args, self_uri),
              spawned_by <- resolve_spawned_by(args, ctx),
-             {:ok, %{workers: workers, fresh?: fresh?}} <-
+             {:ok, spawn_result} when is_map(spawn_result) <-
                Ezagent.Entity.Agent.spawn_from_template_content(
                  content,
                  instance_uri,
                  spawned_by,
                  workspace_uri
                ) do
-          {:ok, slice, %{workers: workers, fresh?: fresh?}}
+          # codex PR #408 review HIGH-3 — pass through role_degraded
+          # keys (if any) so callers (Session.ensure_orchestrator) can
+          # surface the failure to the session owner per Invariant #9.
+          result =
+            spawn_result
+            |> Map.take([:workers, :fresh?, :role_degraded, :role_degraded_reason])
+
+          {:ok, slice, result}
         end
 
       _ ->

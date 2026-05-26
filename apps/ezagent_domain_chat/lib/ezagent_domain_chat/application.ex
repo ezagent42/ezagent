@@ -203,7 +203,13 @@ defmodule EzagentDomainChat.Application do
       # registered template class — the bootstrap seed predates the
       # Template Registry by design.
       case EzagentDomainChat.create_session("main", User.admin_uri(), template_name: "default") do
-        {:ok, _uri} ->
+        # SPEC `2026-05-26-session-create-orchestrator-unified` Gap A —
+        # `create_session/3` now returns a 3-tuple including
+        # orchestrator status. Bootstrap seed only needs the session
+        # itself; orchestrator failure here is non-fatal (test env
+        # rarely exercises the orchestrator anyway — its e2e tests
+        # spawn explicitly).
+        {:ok, _uri, _meta} ->
           :ok
 
         # Identity domain may not have spawned admin User yet on first

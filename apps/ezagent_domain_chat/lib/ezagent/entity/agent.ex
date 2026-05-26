@@ -478,7 +478,14 @@ defmodule Ezagent.Entity.Agent do
   correct — a failed slot has already self-cleaned.
   """
   @spec spawn_from_template_content(map(), URI.t(), URI.t(), URI.t()) ::
-          {:ok, %{workers: [URI.t()], fresh?: boolean()}} | {:error, term()}
+          {:ok,
+           %{
+             :workers => [URI.t()],
+             :fresh? => boolean(),
+             optional(:role_degraded) => boolean(),
+             optional(:role_degraded_reason) => term()
+           }}
+          | {:error, term()}
   def spawn_from_template_content(
         template_content_map,
         %URI{} = instance_uri,
@@ -491,6 +498,20 @@ defmodule Ezagent.Entity.Agent do
            Ezagent.Entity.AgentTemplate.to_template_data(template_content_map, instance_uri),
          {:ok, workers, fresh?, instantiate_meta} <-
            instantiate_workers(template_class, data, workspace_uri) do
+      # codex PR #408 review HIGH-3 — surface role-bootstrap degradation
+      # from the plugin Template Class's instantiate meta. The plugin
+      # (cc) attaches `:role_degraded` + `:role_degraded_reason` keys to
+      # its meta when an orchestrator skill-bootstrap step failed but
+      # the agent itself was still spawned successfully. We propagate
+      # them so the orchestrator-aware caller (Session.ensure_orchestrator)
+      # can notify the session owner per Invariant #9.
+      role_degraded_passthrough =
+        instantiate_meta
+        |> Map.take([:role_degraded, :role_degraded_reason])
+        |> case do
+          map when map_size(map) == 0 -> %{}
+          map -> map
+        end
       # codex round-7 HIGH-1 — the post-spawn obligations (lineage +
       # workspace binding) are side effects that OVERWRITE existing rows:
       # `AgentLineage.record/2` is an ETS set insert (re-parents the
@@ -541,7 +562,7 @@ defmodule Ezagent.Entity.Agent do
         # (the agent never even came up).
         with :ok <- establish_post_spawn_obligations(workers, spawned_by_uri, workspace_uri),
              :ok <- record_sandbox_state(workers, instantiate_meta, template_class) do
-          {:ok, %{workers: workers, fresh?: fresh?}}
+          {:ok, Map.merge(%{workers: workers, fresh?: fresh?}, role_degraded_passthrough)}
         else
           {:error, reason} ->
             undo_fresh_workers(workers)
@@ -554,7 +575,7 @@ defmodule Ezagent.Entity.Agent do
         # config_dir, but don't roll back on failure (we didn't create
         # the worker).
         _ = record_sandbox_state(workers, instantiate_meta, template_class)
-        {:ok, %{workers: workers, fresh?: fresh?}}
+        {:ok, Map.merge(%{workers: workers, fresh?: fresh?}, role_degraded_passthrough)}
       end
     end
   end
