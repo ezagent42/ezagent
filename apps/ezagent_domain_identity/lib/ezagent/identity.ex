@@ -30,6 +30,18 @@ defmodule Ezagent.Identity do
         MapSet.new()
 
       {:ok, _pid} ->
+        # wildcard-cap-fix 2026-05-26: `Behavior.Identity.post_init/2`
+        # now queues a caps_json reconciliation continuation for every
+        # user URI, so the rehydrated Kind is `:not_ready` until the
+        # continue completes. A `:call`-mode dispatch against a
+        # `:not_ready` Kind fails fast per hard-invariant #3, which
+        # would return `MapSet.new()` to the caller — masking the
+        # post_init repair entirely (the exact bug the fix is trying
+        # to cure). Wait for readiness before dispatching; this is the
+        # canonical pattern operator-CLI uses (see
+        # `mix ezagent.stress.await_ready!/1`).
+        await_ready(user_uri)
+
         target = URI.parse("#{URI.to_string(user_uri)}?action=identity.list_caps")
 
         case Invocation.dispatch(%Invocation{
@@ -45,6 +57,26 @@ defmodule Ezagent.Identity do
           {:ok, %{caps: caps}} when is_list(caps) -> MapSet.new(caps)
           _ -> MapSet.new()
         end
+    end
+  end
+
+  # Bounded wait — up to ~500ms total (50 × 10ms). post_init's
+  # `handle_continue/3` does a single SQLite PK lookup + MapSet
+  # operation; the bound is generous to tolerate Sandbox / contention.
+  # On timeout, fall through to dispatch (which will :not_ready fail
+  # fast and return empty MapSet — same posture as the pre-fix code).
+  defp await_ready(user_uri, attempts \\ 50)
+
+  defp await_ready(_user_uri, 0), do: :timeout
+
+  defp await_ready(user_uri, attempts) do
+    case Ezagent.ReadyGate.status(user_uri) do
+      :ready ->
+        :ok
+
+      _ ->
+        Process.sleep(10)
+        await_ready(user_uri, attempts - 1)
     end
   end
 

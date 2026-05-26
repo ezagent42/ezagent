@@ -193,44 +193,36 @@ defmodule Ezagent.Behavior.Identity do
   # but DO NOT have a `users.caps_json` row. `post_init/2` returns
   # `:ok` for those (no caps_json source to merge) and the slice is
   # left exactly as loaded.
-  # post_init returns `{:continue, ...}` ONLY when there's actually
-  # caps_json content to merge AND that content has at least one cap
-  # the slice doesn't already hold. This matters for ReadyGate
-  # behavior: `Ezagent.Kind.Server` keeps the Kind `:not_ready`
-  # through the entire post-init phase (Kind.Server moduledoc round-2
-  # HIGH-1 fix), so a `{:continue, ...}` that does nothing meaningful
-  # would needlessly delay readiness AND incur a snapshot write per
-  # spawn. Pre-deciding here keeps the steady-state Kind fast.
+  # `post_init/2` per Behavior contract MUST be cheap + side-effect
+  # free (Behavior moduledoc: "side-effecting work goes in
+  # handle_continue/3"). We therefore do NO DB work here — only queue
+  # a continuation for user URIs. The actual `users.caps_json` read +
+  # slice merge happens in `handle_continue/3` below.
+  #
+  # Trade-off this introduces (codex review MED, accepted):
+  # `Ezagent.Kind.Server` keeps the Kind `:not_ready` through the
+  # entire post-init phase, including the continue round. Every user
+  # spawn now stays `:not_ready` for one additional `handle_continue`
+  # step (a single SQLite primary-key lookup + MapSet union, typically
+  # <1ms). Callers that synchronously dispatch immediately after
+  # `Kind.spawn/2` MUST await readiness via `Ezagent.ReadyGate.status/1`
+  # — the existing pattern in `mix ezagent.stress` (`await_ready!/1`)
+  # and the standard production demand-spawn path (which already
+  # buffers casts via `PendingDelivery` when not_ready). The earlier
+  # pre-decide variant pushed the DB read into post_init/2 (lifecycle
+  # contract violation) to keep the Kind ready-fast; the contract win
+  # outweighs the readiness latency.
   @impl Ezagent.Behavior
-  def post_init(%{uri: %URI{scheme: "entity", host: "user"} = uri}, slice) do
-    case reconcile_needed_caps(uri, slice) do
-      {:merge, _merged_caps} = decision ->
-        {:continue, {:reconcile_caps_json, decision}}
-
-      :no_op ->
-        :ok
-    end
-  end
+  def post_init(%{uri: %URI{scheme: "entity", host: "user"} = uri}, _slice),
+    do: {:continue, {:reconcile_caps_json, uri}}
 
   def post_init(_args, _slice), do: :ok
 
   @impl Ezagent.Behavior
-  def handle_continue({:reconcile_caps_json, {:merge, merged_caps}}, slice, _ctx) do
-    {:ok, %{slice | caps: merged_caps}}
-  end
-
-  # Decide whether `slice.caps` needs to be merged with the user's
-  # `users.caps_json` contents. Returns:
-  #
-  #   - `{:merge, merged_caps}` — the slice is missing at least one
-  #     caps_json cap; the merged MapSet is precomputed so
-  #     handle_continue does NO DB work.
-  #   - `:no_op` — slice already reflects caps_json (or caps_json is
-  #     empty / unavailable). Skip the continue entirely.
-  defp reconcile_needed_caps(%URI{} = uri, slice) do
+  def handle_continue({:reconcile_caps_json, %URI{} = uri}, slice, _ctx) do
     case caps_from_caps_json(uri) do
       [] ->
-        :no_op
+        :ignore
 
       caps_list when is_list(caps_list) ->
         caps_from_json = MapSet.new(caps_list)
@@ -238,9 +230,12 @@ defmodule Ezagent.Behavior.Identity do
         merged = MapSet.union(existing_caps, caps_from_json)
 
         if MapSet.size(merged) == MapSet.size(existing_caps) do
-          :no_op
+          # No new caps to add — slice already reflects caps_json.
+          # Skip the slice-write to avoid an unnecessary snapshot
+          # commit on every spawn.
+          :ignore
         else
-          {:merge, merged}
+          {:ok, %{slice | caps: merged}}
         end
     end
   end

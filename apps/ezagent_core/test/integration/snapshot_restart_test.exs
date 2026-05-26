@@ -58,6 +58,21 @@ defmodule Ezagent.Integration.SnapshotRestartTest do
 
       refute pid1 == pid2
 
+      # 5b. Wait for the rehydrated User Kind to finish post_init
+      # reconciliation (wildcard-cap-fix 2026-05-26 —
+      # `Ezagent.Behavior.Identity.post_init/2` queues a
+      # caps_json-merge continuation for every user URI, and
+      # `Ezagent.Kind.Server` keeps the Kind `:not_ready` through
+      # post-init). Without this wait the synchronous `:call` dispatch
+      # below races the continuation and fails fast with
+      # `{:error, :not_ready}` per hard-invariant #3.
+      #
+      # For the test fixture URI (`entity://user/team-alpha/snap-restart-N`)
+      # the `users` table has no row, so `handle_continue/3` returns
+      # `:ignore` and the Kind reaches `:ready` after one continue
+      # round — typically <1ms wall-clock.
+      wait_until(fn -> Ezagent.ReadyGate.status(uri) == :ready end)
+
       # 6. Dispatch list_caps — should return the SAVED caps (admin_caps),
       #    not the fresh init's empty MapSet
       target = URI.new!("#{uri_str}?action=identity.list_caps")
