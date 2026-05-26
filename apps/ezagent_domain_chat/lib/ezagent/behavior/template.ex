@@ -387,7 +387,14 @@ defmodule Ezagent.Behavior.Template do
   defp resolve_instance_uri(content, args, self_uri, ctx) do
     with {:ok, workspace_uri} <- resolve_workspace_uri(content, args, self_uri) do
       flavor = Map.get(content, :flavor) || Map.get(content, "flavor")
-      workspace_name = workspace_uri.host || "default"
+
+      workspace_name =
+        workspace_uri.host ||
+          raise ArgumentError,
+                "workspace_uri has no host (`workspace://<NAME>`) — got " <>
+                  inspect(workspace_uri) <>
+                  ". Per SPEC #324 rev 3 / PR #335, there is NO silent default workspace " <>
+                  "fallback; callers must pass a workspace URI with an explicit name."
 
       case Map.get(args, :instance_name) do
         name when is_binary(name) and name != "" and is_binary(flavor) and flavor != "" ->
@@ -510,7 +517,15 @@ defmodule Ezagent.Behavior.Template do
          {:ok, %URI{} = workspace_uri} <- workspace_uri_of(parent_uri) do
       caller_uri = Map.get(ctx, :caller)
       owner_uri = Map.get(args, :owner, caller_uri)
-      workspace_name = workspace_uri.host || "default"
+
+      workspace_name =
+        workspace_uri.host ||
+          raise ArgumentError,
+                "workspace_uri has no host (`workspace://<NAME>`) — got " <>
+                  inspect(workspace_uri) <>
+                  ". Per SPEC #324 rev 3 / PR #335, there is NO silent default workspace " <>
+                  "fallback; callers must pass a workspace URI with an explicit name."
+
       new_uri = URI.new!("template://agent/#{workspace_name}/#{new_name}")
 
       content =

@@ -496,7 +496,14 @@ defmodule Ezagent.Entity.Session do
         Map.get(template_content, "class") ||
         "generic"
 
-    workspace_name = workspace_uri.host || "default"
+    workspace_name =
+      workspace_uri.host ||
+        raise ArgumentError,
+              "workspace_uri has no host (`workspace://<NAME>`) — got " <>
+                inspect(workspace_uri) <>
+                ". Per SPEC #324 rev 3 / PR #335, there is NO silent default workspace " <>
+                "fallback; callers must pass a workspace URI with an explicit name."
+
     owner_name = derive_session_owner_segment(owner_uri)
     template_name = derive_session_template_segment(template_content)
 
@@ -660,7 +667,15 @@ defmodule Ezagent.Entity.Session do
 
   defp derive_orchestrator_uri(%URI{} = session_uri, %URI{} = workspace_uri) do
     instance_name = derive_orchestrator_instance_name(session_uri)
-    workspace_name = workspace_uri.host || "default"
+
+    workspace_name =
+      workspace_uri.host ||
+        raise ArgumentError,
+              "workspace_uri has no host (`workspace://<NAME>`) — got " <>
+                inspect(workspace_uri) <>
+                ". Per SPEC #324 rev 3 / PR #335, there is NO silent default workspace " <>
+                "fallback; callers must pass a workspace URI with an explicit name."
+
     URI.new!("entity://agent/#{workspace_name}/#{instance_name}")
   end
 
@@ -811,7 +826,14 @@ defmodule Ezagent.Entity.Session do
        ) do
     case agent_template_flavor(agent_template_uri) do
       {:ok, flavor} ->
-        workspace_name = workspace_uri.host || "default"
+        workspace_name =
+          workspace_uri.host ||
+            raise ArgumentError,
+                  "workspace_uri has no host (`workspace://<NAME>`) — got " <>
+                    inspect(workspace_uri) <>
+                    ". Per SPEC #324 rev 3 / PR #335, there is NO silent default workspace " <>
+                    "fallback; callers must pass a workspace URI with an explicit name."
+
         {:ok, URI.new!("entity://agent/#{workspace_name}/#{flavor}_#{instance_name}")}
 
       :no_flavor ->
@@ -1664,7 +1686,14 @@ defmodule Ezagent.Entity.Session do
 
   defp delegable_template_caps(%URI{} = owner_uri, %URI{} = session_workspace) do
     owner_caps = Ezagent.Identity.list_caps_for(owner_uri)
-    workspace_name = session_workspace.host || "default"
+
+    workspace_name =
+      session_workspace.host ||
+        raise ArgumentError,
+              "session_workspace has no host (`workspace://<NAME>`) — got " <>
+                inspect(session_workspace) <>
+                ". Per SPEC #324 rev 3 / PR #335, there is NO silent default workspace " <>
+                "fallback; callers must pass a workspace URI with an explicit name."
 
     candidates = [
       {:session_template, URI.new!("template://session/#{workspace_name}/_preflight@_")},

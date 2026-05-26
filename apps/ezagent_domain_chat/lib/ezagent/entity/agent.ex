@@ -208,7 +208,14 @@ defmodule Ezagent.Entity.Agent do
           {:ok, %{pid: pid(), fresh?: boolean(), agent_uri: URI.t()}} | {:error, term()}
   def spawn_fresh(%URI{} = _template_uri, instance_name, %URI{} = workspace_uri, %URI{} = granted_by)
       when is_binary(instance_name) do
-    workspace_name = workspace_uri.host || "default"
+    workspace_name =
+      workspace_uri.host ||
+        raise ArgumentError,
+              "workspace_uri has no host (`workspace://<NAME>`) — got " <>
+                inspect(workspace_uri) <>
+                ". Per SPEC #324 rev 3 / PR #335, there is NO silent default workspace " <>
+                "fallback; callers must pass a workspace URI with an explicit name."
+
     agent_uri = URI.new!("entity://agent/#{workspace_name}/#{instance_name}")
 
     case Ezagent.SpawnRegistry.spawn_detailed(agent_uri) do
