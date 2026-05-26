@@ -115,6 +115,32 @@ defmodule EzagentDomainChat do
     session_uri =
       URI.new!("session://#{template_name}/#{workspace_name}/#{short_name}")
 
+    # codex PR #409 r1 review HIGH-2 — serialize concurrent create_session
+    # calls per session_uri. Two callers racing on the same URI used to
+    # observe a destructive interleave: A (`:fresh`) hits cap-grant
+    # failure mid-finalize, B (`:adopted`) finishes finalize successfully
+    # and returns `{:ok, _, _}` to its caller; A's rollback then tears
+    # down the Session B's caller observed as live. Wrapping the
+    # spawn+finalize+rollback body in a per-URI `:global.set_lock/3`
+    # forces adopters to wait until the fresh path commits or rolls
+    # back. By the time the second caller takes the lock, the Session
+    # is either alive (B sees `:already_started` → `:adopted` finalize,
+    # idempotent) or fully gone (B sees `{:ok, pid}` → `:fresh`, gets
+    # its own chance to commit). Single-machine BEAM per the project's
+    # standing constraint, so `:global` within one node suffices; the
+    # `[node()]` scope is explicit so a future clustering change does
+    # not silently broaden the lock.
+    lock_id = {{:ezagent_domain_chat, :create_session, URI.to_string(session_uri)}, self()}
+
+    try do
+      true = :global.set_lock(lock_id, [node()])
+      do_create_session(session_uri, workspace_uri, creator_uri)
+    after
+      _ = :global.del_lock(lock_id, [node()])
+    end
+  end
+
+  defp do_create_session(%URI{} = session_uri, %URI{} = workspace_uri, creator_uri) do
     # V1 prevention (Allen 2026-05-21): route via Ezagent.Kind.spawn/2.
     # Session Kind declares EzagentDomainChat.SessionSupervisor via
     # supervisor/0 — destination preserved.
@@ -130,25 +156,117 @@ defmodule EzagentDomainChat do
     effective_owner = creator_uri || User.admin_uri()
     result = Ezagent.Kind.spawn(Session, %{uri: session_uri, owner_uri: effective_owner})
 
-    case result do
-      {:ok, _pid} ->
-        finalize_session_create(session_uri, workspace_uri, effective_owner)
+    # codex PR #408 r2 review HIGH-1 — track whether THIS call freshly
+    # created the Session Kind so finalize-step failures can roll the
+    # session back. Round-1 only fixed the swallow + short-circuit; the
+    # residual leak (live Session + workspace bind + creator-join left
+    # behind on cap-grant failure) needed the freshness signal too.
+    {session_outcome, finalize_result} =
+      case result do
+        {:ok, _pid} ->
+          {:fresh, finalize_session_create(session_uri, workspace_uri, effective_owner)}
 
-      # `:already_started` = same child spec already in supervisor's children
-      # `:already_registered` = Kind.Server.init crashed on KindRegistry.put_new
-      # conflict (URI claimed by another pid, possibly outside this supervisor).
-      # Both indicate "session exists" — return success + re-bind workspace
-      # (idempotent ETS overwrite) + re-attempt join (cast is idempotent on
-      # members map).
-      {:error, {:already_started, _pid}} ->
-        finalize_session_create(session_uri, workspace_uri, effective_owner)
+        # `:already_started` = same child spec already in supervisor's children
+        # `:already_registered` = Kind.Server.init crashed on KindRegistry.put_new
+        # conflict (URI claimed by another pid, possibly outside this supervisor).
+        # Both indicate "session exists" — return success + re-bind workspace
+        # (idempotent ETS overwrite) + re-attempt join (cast is idempotent on
+        # members map).
+        {:error, {:already_started, _pid}} ->
+          {:adopted, finalize_session_create(session_uri, workspace_uri, effective_owner)}
 
-      {:error, {:already_registered, _}} ->
-        finalize_session_create(session_uri, workspace_uri, effective_owner)
+        {:error, {:already_registered, _}} ->
+          {:adopted, finalize_session_create(session_uri, workspace_uri, effective_owner)}
+
+        {:error, reason} ->
+          {:spawn_failed, {:error, reason}}
+      end
+
+    case finalize_result do
+      {:ok, _, _} = ok ->
+        ok
 
       {:error, reason} ->
+        # codex PR #408 r2 review HIGH-1 — if THIS call freshly created
+        # the Session Kind and finalize_session_create failed (e.g.
+        # cap-grant denial), tear it down so the caller observes a
+        # CLEAN `{:error, _}` rather than a residue (live Session with
+        # workspace binding + creator-join, no orchestrator, no
+        # restart-cap on the owner). An adopted session is left alone
+        # — finalize is idempotent on the adoption path, and tearing
+        # down a session WE didn't create would punish a different
+        # caller's setup.
+        if session_outcome == :fresh do
+          rollback_fresh_session(session_uri, effective_owner)
+        end
+
         {:error, reason}
     end
+  end
+
+  # codex PR #408 r2 review HIGH-1 — tear down the partial state
+  # `finalize_session_create/3` built before failing. Best-effort: each
+  # step swallows its own errors so the original failure reason from
+  # the caller still surfaces. Operator-visible audit lives in the
+  # Logger.warning the caller's `{:error, _}` produced upstream.
+  #
+  # codex PR #409 r1 review LOW — exposed as `@doc false` (instead of
+  # `defp`) so the rollback invariants (Kind terminated + workspace
+  # unbound + kind_snapshots row deleted) can be exercised directly as
+  # a deterministic unit test. The integration path through
+  # `create_session/3` cannot trigger this rollback for the
+  # bare-user-creates-own-session case because `OrchestratorAdmin`'s
+  # `data_owner/1` resolves to the session owner (the bare user
+  # themselves), so the `IdentityAdmin.check_grant_authorized` cond
+  # `caller == owner` short-circuits to `:ok`. Direct unit invocation
+  # bypasses that architectural quirk and asserts rollback's own
+  # contract (codex r1 LOW).
+  @doc false
+  @spec rollback_fresh_session(URI.t(), URI.t()) :: :ok
+  def rollback_fresh_session(%URI{} = session_uri, %URI{} = creator_uri) do
+    require Logger
+
+    Logger.warning(
+      "EzagentDomainChat.create_session: rolling back freshly-created " <>
+        "session=#{URI.to_string(session_uri)} after finalize failure — " <>
+        "tearing down Kind + workspace binding so the caller does not " <>
+        "leak partial state (codex PR #408 r2 HIGH-1)."
+    )
+
+    # Terminate the Session Kind (no other process owns its lifecycle —
+    # we just created it).
+    _ = Ezagent.Kind.terminate(session_uri)
+
+    # Unbind workspace (idempotent ETS delete).
+    safe(fn -> Ezagent.WorkspaceRegistry.unbind(session_uri) end)
+
+    # codex PR #409 r1 review HIGH-1 — delete the kind_snapshots row
+    # `Kind.Server.init/1` wrote synchronously at spawn time
+    # (Session.persistence/0 = {:snapshot, :on_change}, so the initial
+    # slice landed in DB the moment the GenServer reached
+    # `KindRegistry.put_new` — well before this rollback path). Without
+    # this delete, the row outlives the dead Kind: next boot's
+    # `ReadyGate` replays every snapshot via `KindSnapshot.list_all/0`,
+    # which would resurrect a session whose `create_session/3` failed
+    # cap-grant — defeating the whole rollback. Wrapped in `safe/1` per
+    # the existing best-effort teardown contract: the Kind is already
+    # terminated, an orphan row is the worst-case fallback and the
+    # original `{:error, _}` reason still surfaces to the caller.
+    safe(fn -> Ezagent.Ecto.KindSnapshot.delete(URI.to_string(session_uri)) end)
+
+    # Creator join — we don't have an `unjoin` primitive and the Session
+    # is being torn down anyway, so the slice goes away with the Kind.
+    # No additional cleanup needed for chat.join's cast side effects.
+    _ = creator_uri
+    :ok
+  end
+
+  defp safe(fun) do
+    fun.()
+  rescue
+    _ -> :error
+  catch
+    _, _ -> :error
   end
 
   def create_session(_short_name, _creator, _opts), do: {:error, :short_name_required}

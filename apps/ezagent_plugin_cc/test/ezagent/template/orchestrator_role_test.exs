@@ -242,20 +242,77 @@ defmodule Ezagent.PluginCc.Template.OrchestratorRoleTest do
       end
     end
 
-    test "auto-walk path: search exhausts and returns attempted paths" do
+    test "auto-walk path: production tree resolves to the real skill dir" do
       # Drop the override so resolve_orchestrator_skill_source/0 hits
       # the walk-upward branch. The CI / dev priv-dir chain in this
       # umbrella DOES contain `.claude/skills/ezagent-session-orchestrator/SKILL.md`
-      # at the repo root — so the walk SUCCEEDS in tree. We assert
-      # success here as the production-path coverage; the
-      # exhausted-walk error tag is covered structurally by a unit on
-      # the resolver returning `{:error, {:skill_source_not_found, _}}`
-      # when a binary override is empty / nil (which falls to the
-      # walk branch).
+      # at the repo root — so the walk SUCCEEDS in tree.
       Application.delete_env(:ezagent_plugin_cc, :orchestrator_skill_source)
 
       assert {:ok, source_dir} = CcAgent.resolve_orchestrator_skill_source()
       assert File.regular?(Path.join(source_dir, "SKILL.md"))
+    end
+
+    # codex PR #408 r2 WARN HIGH-2 — exercise the exhausted-walk branch
+    # directly via the public-for-test `search_orchestrator_skill_source_from/1`.
+    # Pre-r2 the `:skill_source_not_found` tag was only structurally
+    # reachable (via `:code.priv_dir` returning a non-list, unreachable
+    # from a loaded plugin); now we have a deterministic test.
+    test "search_orchestrator_skill_source_from/1 — exhausted walk returns attempted paths" do
+      tmp_root =
+        Path.join(System.tmp_dir!(), "no-skill-walk-#{System.unique_integer([:positive])}")
+
+      nested = Path.join([tmp_root, "a", "b", "c"])
+      File.mkdir_p!(nested)
+
+      try do
+        # `tmp_root` is under `System.tmp_dir!()` which on macOS is
+        # `/var/folders/.../T/`. Neither `/`, `/var`, `/var/folders`
+        # carry `.claude/skills/ezagent-session-orchestrator/SKILL.md`,
+        # so the walk reaches `/` without finding the marker.
+        assert {:error, {:skill_source_not_found, attempted}} =
+                 CcAgent.search_orchestrator_skill_source_from(nested)
+
+        # The attempted-paths list includes the start-dir's candidate
+        # AND the parent's candidate (proving the walk actually ascended).
+        nested_candidate =
+          Path.join(nested, ".claude/skills/ezagent-session-orchestrator")
+
+        parent_candidate =
+          Path.join(Path.dirname(nested), ".claude/skills/ezagent-session-orchestrator")
+
+        assert is_list(attempted)
+        assert nested_candidate in attempted
+        assert parent_candidate in attempted
+
+        # The walk terminates at root, so the LAST attempted path must
+        # be root's candidate.
+        assert List.last(attempted) ==
+                 Path.join("/", ".claude/skills/ezagent-session-orchestrator")
+      after
+        _ = File.rm_rf(tmp_root)
+      end
+    end
+
+    test "search_orchestrator_skill_source_from/1 — hit returns the matching dir" do
+      # Plant the marker in the tmp tree, then search from a descendant.
+      tmp_root =
+        Path.join(System.tmp_dir!(), "skill-walk-hit-#{System.unique_integer([:positive])}")
+
+      skill_dir = Path.join(tmp_root, ".claude/skills/ezagent-session-orchestrator")
+      File.mkdir_p!(skill_dir)
+      File.write!(Path.join(skill_dir, "SKILL.md"), "fixture\n")
+
+      descendant = Path.join([tmp_root, "sub", "deep"])
+      File.mkdir_p!(descendant)
+
+      try do
+        assert {:ok, found} = CcAgent.search_orchestrator_skill_source_from(descendant)
+        assert found == skill_dir
+        assert File.regular?(Path.join(found, "SKILL.md"))
+      after
+        _ = File.rm_rf(tmp_root)
+      end
     end
   end
 

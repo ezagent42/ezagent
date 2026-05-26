@@ -335,7 +335,21 @@ defmodule Ezagent.Entity.Session do
 
       {:ok, session_uri, _session_outcome} ->
         # Step 2: ensure orchestrator (ownership-gated adoption)
-        case ensure_orchestrator(session_uri, workspace_uri, owner_uri) do
+        #
+        # codex PR #408 r2 review HIGH-3 — call the 4-tuple-capable
+        # variant so the cc Template Class's role_degraded flag (per
+        # Invariant #9 "no silent drops at user-facing surfaces")
+        # threads through to the outcome map. Pre-r2 the 3-tuple
+        # wrapper `ensure_orchestrator/3` collapsed any
+        # `{:ok, _, _, %{role_degraded: true, ...}}` to the bare
+        # `{:ok, _, _}` form — the Generator path then returned a
+        # clean `:ok` outcome from `spawn_from_template/2` while the
+        # orchestrator was silently degraded. Now `:role_degraded`
+        # info is surfaced via the `assemble_outcome/7`'s `warnings`
+        # field (new) so the caller (LV / CLI / future API) sees the
+        # same degraded-state signal `EzagentDomainChat.create_session/3`
+        # surfaces via its meta map.
+        case ensure_orchestrator_with_meta(session_uri, workspace_uri, owner_uri) do
           {:error, reason} ->
             partial_report(
               session_uri: session_uri,
@@ -354,90 +368,131 @@ defmodule Ezagent.Entity.Session do
               errors: [{:orchestrator, {:orchestrator_ownership_pending, candidate_uri, ev}}]
             )
 
-          {:ok, orchestrator_uri, _orch_outcome} ->
-            # Step 3: reconcile each agent slot independently
-            slot_results =
-              reconcile_each_slot(
-                template_content,
-                session_uri,
-                workspace_uri,
-                orchestrator_uri
-              )
-
-            # Step 4: reconcile routing rules
-            routing_outcome =
-              reconcile_routing_rules(
-                template_content,
-                slot_results,
-                workspace_uri,
-                owner_uri
-              )
-
-            # Step 5: merge working copy (with this-pass revalidation —
-            # codex rev-4 HIGH-2)
-            wc_outcome =
-              merge_working_copy(
-                session_uri,
-                template_content,
-                slot_results,
-                workspace_uri,
-                orchestrator_uri
-              )
-
-            # Step 6: grant scoped caps (idempotent, logical-equality)
-            caps_outcome =
-              grant_scoped_caps_idempotent(
-                orchestrator_uri,
-                session_uri,
-                owner_uri
-              )
-
-            # Step 7: register MCP context (ETS put; always idempotent)
-            mcp_outcome =
-              register_orchestrator_mcp_context(
-                orchestrator_uri,
-                session_uri,
-                workspace_uri,
-                owner_uri,
-                session_template_uri
-              )
-
-            # Step 8 (Allen 2026-05-26 — session member auto-join):
-            # the orchestrator + every spawned worker must appear in
-            # the Session's chat.members slice WITHOUT requiring the
-            # operator to click Invite. Pre-fix the reconciler bound
-            # workspace + lineage but never dispatched `chat.join`, so
-            # the MemberPanel rendered "empty session" while agents
-            # were silently routing on the side. The join uses the
-            # `system://session-internal` principal — same one
-            # `EzagentDomainChat.join_creator/2` uses for the
-            # creator's self-join — so step 5.5 finds the `:any` Chat
-            # cap and lets the slice-mutate through.
-            #
-            # Cast (not call): the reconciler's outcome assembly is
-            # not blocked on these joins, and `:DOWN` / `:already_member`
-            # idempotency makes a missed cast self-healing on next
-            # reconcile. Idempotent re-entry: PR `chat.ex`'s
-            # `online + monitor alive` short-circuit drops the redundant
-            # work — see `Behavior.Chat.invoke(:join)`.
-            _ =
-              auto_join_session_members(
-                session_uri,
-                orchestrator_uri,
-                slot_results
-              )
-
-            assemble_outcome(
+          {:ok, orchestrator_uri, _orch_outcome, degraded_meta} when is_map(degraded_meta) ->
+            run_reconcile_steps_3_through_8(
+              template_content,
               session_uri,
+              workspace_uri,
+              owner_uri,
+              session_template_uri,
               orchestrator_uri,
-              slot_results,
-              routing_outcome,
-              wc_outcome,
-              caps_outcome,
-              mcp_outcome
+              degraded_meta
+            )
+
+          {:ok, orchestrator_uri, _orch_outcome} ->
+            run_reconcile_steps_3_through_8(
+              template_content,
+              session_uri,
+              workspace_uri,
+              owner_uri,
+              session_template_uri,
+              orchestrator_uri,
+              %{}
             )
         end
     end
+  end
+
+  # codex PR #408 r2 review HIGH-3 — extracted from `reconcile_loop/4`
+  # so the same body runs whether `ensure_orchestrator_with_meta/3`
+  # returned the 3-tuple (no role-degradation) or the 4-tuple (degraded
+  # meta). `warnings_meta` is the cc Template Class's
+  # `:role_degraded` / `:role_degraded_reason` map (empty when not
+  # degraded); it threads through to `assemble_outcome/8`'s new
+  # `:warnings` field so the Generator outcome surfaces the same
+  # degraded-state signal `EzagentDomainChat.create_session/3` exposes
+  # via its meta map.
+  defp run_reconcile_steps_3_through_8(
+         template_content,
+         session_uri,
+         workspace_uri,
+         owner_uri,
+         session_template_uri,
+         orchestrator_uri,
+         warnings_meta
+       ) do
+    # Step 3: reconcile each agent slot independently
+    slot_results =
+      reconcile_each_slot(
+        template_content,
+        session_uri,
+        workspace_uri,
+        orchestrator_uri
+      )
+
+    # Step 4: reconcile routing rules
+    routing_outcome =
+      reconcile_routing_rules(
+        template_content,
+        slot_results,
+        workspace_uri,
+        owner_uri
+      )
+
+    # Step 5: merge working copy (with this-pass revalidation —
+    # codex rev-4 HIGH-2)
+    wc_outcome =
+      merge_working_copy(
+        session_uri,
+        template_content,
+        slot_results,
+        workspace_uri,
+        orchestrator_uri
+      )
+
+    # Step 6: grant scoped caps (idempotent, logical-equality)
+    caps_outcome =
+      grant_scoped_caps_idempotent(
+        orchestrator_uri,
+        session_uri,
+        owner_uri
+      )
+
+    # Step 7: register MCP context (ETS put; always idempotent)
+    mcp_outcome =
+      register_orchestrator_mcp_context(
+        orchestrator_uri,
+        session_uri,
+        workspace_uri,
+        owner_uri,
+        session_template_uri
+      )
+
+    # Step 8 (Allen 2026-05-26 — session member auto-join):
+    # the orchestrator + every spawned worker must appear in
+    # the Session's chat.members slice WITHOUT requiring the
+    # operator to click Invite. Pre-fix the reconciler bound
+    # workspace + lineage but never dispatched `chat.join`, so
+    # the MemberPanel rendered "empty session" while agents
+    # were silently routing on the side. The join uses the
+    # `system://session-internal` principal — same one
+    # `EzagentDomainChat.join_creator/2` uses for the
+    # creator's self-join — so step 5.5 finds the `:any` Chat
+    # cap and lets the slice-mutate through.
+    #
+    # Cast (not call): the reconciler's outcome assembly is
+    # not blocked on these joins, and `:DOWN` / `:already_member`
+    # idempotency makes a missed cast self-healing on next
+    # reconcile. Idempotent re-entry: PR `chat.ex`'s
+    # `online + monitor alive` short-circuit drops the redundant
+    # work — see `Behavior.Chat.invoke(:join)`.
+    _ =
+      auto_join_session_members(
+        session_uri,
+        orchestrator_uri,
+        slot_results
+      )
+
+    assemble_outcome(
+      session_uri,
+      orchestrator_uri,
+      slot_results,
+      routing_outcome,
+      wc_outcome,
+      caps_outcome,
+      mcp_outcome,
+      warnings_meta
+    )
   end
 
   # Step 8 — dispatch `chat.join` for the orchestrator and every
@@ -1739,7 +1794,8 @@ defmodule Ezagent.Entity.Session do
          routing_outcome,
          wc_outcome,
          caps_outcome,
-         mcp_outcome
+         mcp_outcome,
+         warnings_meta
        ) do
     completed = [:session, :orchestrator]
     pending = []
@@ -1801,22 +1857,49 @@ defmodule Ezagent.Entity.Session do
           {completed, [:mcp_context | pending], [{:mcp_context, reason} | errors]}
       end
 
+    # codex PR #408 r2 review HIGH-3 — surface role-bootstrap warnings
+    # (cc Template Class's `:role_degraded` flag) in the Generator
+    # outcome map so the caller (LV / CLI / future API) observes the
+    # same degraded-state signal `EzagentDomainChat.create_session/3`
+    # exposes via its meta map. Pre-r2 fix the wrapper-collapse to a
+    # 3-tuple dropped this — the Generator path returned a clean `:ok`
+    # while the orchestrator's skill failed to load. Empty
+    # `warnings_meta` → no `:warnings` key (preserves the legacy
+    # outcome-map shape callers pattern-match against).
+    warnings_kvs =
+      case warnings_meta do
+        %{role_degraded: true} = m ->
+          [
+            warnings: %{
+              role_degraded: true,
+              role_degraded_reason: Map.get(m, :role_degraded_reason)
+            }
+          ]
+
+        _ ->
+          []
+      end
+
     if pending == [] and errors == [] do
       {:ok,
-       %{
-         session_uri: session_uri,
-         orchestrator_uri: orchestrator_uri,
-         slots: slot_pairs
-       }}
+       Map.new(
+         [
+           {:session_uri, session_uri},
+           {:orchestrator_uri, orchestrator_uri},
+           {:slots, slot_pairs}
+         ] ++ warnings_kvs
+       )}
     else
       {:partial,
-       %{
-         session_uri: session_uri,
-         orchestrator_uri: orchestrator_uri,
-         completed: Enum.reverse(completed),
-         pending: Enum.reverse(pending),
-         errors: Enum.reverse(errors)
-       }}
+       Map.new(
+         [
+           {:session_uri, session_uri},
+           {:orchestrator_uri, orchestrator_uri},
+           {:completed, Enum.reverse(completed)},
+           {:pending, Enum.reverse(pending)},
+           {:errors, Enum.reverse(errors)}
+         ] ++ warnings_kvs
+       )}
     end
   end
 
