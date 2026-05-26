@@ -686,12 +686,55 @@ defmodule Ezagent.Behavior.Chat do
     replay_messages_since(session_uri, member_uri, slice.last_seen)
     new_last_seen = Map.delete(slice.last_seen, member_uri)
 
+    # RFC #402 (Allen 2026-05-26) — "first user to join is owner"
+    # fallback. The session creator is normally set at session-create
+    # time (`create_session/3` + `Session.spawn_from_template/2` both
+    # pass `owner_uri` into `init_slice/1`). For sessions that
+    # PRE-DATE that wiring (legacy snapshots restored with
+    # `owner_uri: nil`) OR were created via a system-internal path
+    # without a user creator, the FIRST user member to join takes
+    # ownership.
+    #
+    # Discipline: only USER URIs (`entity://user/...`) can claim
+    # ownership. Agents joined via `auto_join_session_members`
+    # (orchestrator + workers) MUST NEVER become owner — they have
+    # no inbox + no UI surface to exercise the restart authority.
+    # `user_uri?/1` (same predicate used for join-notify gating) is
+    # the structural check.
+    prior_owner = Map.get(slice, :owner_uri)
+
+    new_owner_uri =
+      if is_nil(prior_owner) and user_uri?(member_uri) do
+        member_uri
+      else
+        prior_owner
+      end
+
     new_slice = %{
       slice
       | members: new_members,
         monitors: new_monitors,
         last_seen: new_last_seen
     }
+
+    new_slice = Map.put(new_slice, :owner_uri, new_owner_uri)
+
+    # RFC #402 (codex r1 HIGH 2026-05-26) — when this join transitions
+    # `owner_uri` from `nil` to a real user, ALSO grant that user the
+    # `OrchestratorAdmin :restart` cap on this session. Without this
+    # the LV's restart gate (`caller_can_restart_orchestrator?/2`)
+    # checks actual held caps — and the first-USER-join fallback
+    # without a paired grant means the legacy/system-created path
+    # never lets the owner exercise their authority.
+    #
+    # The two non-fallback paths (`create_session/3` and
+    # `Session.spawn_from_template/2`) already grant this cap at
+    # session-create time; this branch covers ONLY the
+    # legacy-snapshot / system-created path where `owner_uri` was
+    # `nil` at init.
+    if is_nil(prior_owner) and user_uri?(member_uri) do
+      grant_first_join_owner_cap(session_uri, member_uri)
+    end
 
     broadcast_membership(session_uri, {:member_joined, member_uri})
 
@@ -721,6 +764,113 @@ defmodule Ezagent.Behavior.Chat do
   # workspace-domain boundary.
   defp user_uri?(%URI{scheme: "entity", host: "user"}), do: true
   defp user_uri?(_), do: false
+
+  # RFC #402 (codex r1 HIGH 2026-05-26) — companion to the
+  # first-USER-join owner claim. Dispatches `identity.grant_cap` on
+  # the new owner so they hold the specific
+  # `cap(:session, OrchestratorAdmin, :restart, session_uri, ws)`
+  # cap the LV's restart gate consults.
+  #
+  # System-principal dispatch (`system://template-materialize`) for
+  # the same reason `EzagentDomainChat.grant_owner_orchestrator_admin_cap/3`
+  # does: no human caller is on stack here — Chat.do_join runs under
+  # whatever ctx invoked `chat.join`, which for `auto_join_session_members`
+  # and the LV remount path is `system://session-internal`. We
+  # escalate to template-materialize for the cap grant itself
+  # (same closed Catalog principal the create-path uses).
+  #
+  # Workspace_uri resolution: look up the session's binding via
+  # `WorkspaceRegistry`. If the session isn't workspace-bound yet
+  # (boot-order edge), the grant is skipped — the next time the
+  # owner navigates to /sessions, AdminLive's session-context
+  # assigns re-trigger and the next join-or-create touch will
+  # observe the binding. `feedback_let_it_crash_no_workarounds`:
+  # we don't silently grant under a `:any` workspace — that would
+  # be the cross-workspace escape hatch the cap struct forbids.
+  defp grant_first_join_owner_cap(%URI{} = session_uri, %URI{} = owner_uri) do
+    case Ezagent.WorkspaceRegistry.lookup(session_uri) do
+      {:ok, %URI{} = workspace_uri} ->
+        want = %Ezagent.Capability{
+          kind: :session,
+          behavior: Ezagent.Behavior.OrchestratorAdmin,
+          instance: session_uri,
+          workspace_uri: workspace_uri,
+          granted_by: owner_uri,
+          granted_at: DateTime.utc_now()
+        }
+
+        target = URI.new!("#{URI.to_string(owner_uri)}?action=identity.grant_cap")
+
+        # `mode: :cast` is REQUIRED here (NOT :call). We're currently
+        # executing inside the Session Kind's `GenServer.call` (the
+        # `chat.join` invocation), and `identity.grant_cap` dispatches
+        # to the IdentityAdmin Behavior which runs
+        # `check_grant_authorized` → `data_owner_of(OrchestratorAdmin,
+        # session_uri)` → `OrchestratorAdmin.data_owner` →
+        # `Chat.data_owner` → `Session.owner(session_uri)` →
+        # `Ezagent.Kind.get_slice(session_uri, :chat)` which is itself
+        # a `GenServer.call` to this very Session. A `:call`-mode
+        # grant_cap dispatch therefore deadlocks (5-sec timeout, then
+        # `:join` crashes with `:exit`).
+        #
+        # `:cast` enqueues the grant_cap dispatch to the User Kind's
+        # mailbox and returns immediately; by the time IdentityAdmin
+        # gets around to calling `Session.owner`, this Session has
+        # already returned from `chat.join` and is ready for the next
+        # message. Eventually-consistent: a tight LV remount + restart
+        # within the cast latency window MIGHT see the cap not yet
+        # granted; the gap is bounded by the User Kind mailbox queue
+        # depth + one `get_slice` round-trip (sub-ms in practice).
+        # Acceptable per RFC #402 — the legacy fallback path is rare.
+        #
+        # Best-effort: if the user Kind isn't currently alive (e.g.
+        # unit tests calling `Chat.invoke(:join, ...)` directly
+        # without spawning the member Kind first), `dispatch` returns
+        # `{:error, :no_such_actor}`. We log + telemeter; the next
+        # navigation/reconcile pass re-attempts (`do_join` re-enters
+        # with `prior_owner` still nil if the slice mutation also
+        # rolled back, OR with the owner already set and this branch
+        # short-circuits — either way no permanent corruption).
+        case Invocation.dispatch(%Invocation{
+               target: target,
+               mode: :cast,
+               args: %{cap: want},
+               ctx: %{
+                 caller: owner_uri,
+                 caps: Ezagent.SystemPrincipal.caps("system://template-materialize"),
+                 reply: :ignore
+               }
+             }) do
+          :ok ->
+            :ok
+
+          {:ok, _} ->
+            :ok
+
+          {:error, reason} ->
+            require Logger
+
+            Logger.warning(
+              "Chat.grant_first_join_owner_cap: cast dispatch failed for " <>
+                "owner=#{URI.to_string(owner_uri)} on session=" <>
+                "#{URI.to_string(session_uri)}: #{inspect(reason)}. " <>
+                "Restart UX will be re-attempted on the next navigation."
+            )
+
+            :telemetry.execute(
+              [:ezagent, :chat, :first_join_owner_cap, :failed],
+              %{count: 1},
+              %{session_uri: session_uri, owner_uri: owner_uri, reason: reason}
+            )
+
+            :ok
+        end
+
+      :error ->
+        # Session not workspace-bound — see helper doc above.
+        :ok
+    end
+  end
 
   # --- :leave ------------------------------------------------------------
 

@@ -1357,6 +1357,31 @@ defmodule Ezagent.Entity.Session do
                   "— cannot derive workspace_uri for orchestrator scope caps"
       end
 
+    with :ok <-
+           grant_orchestrator_scoped_caps(
+             orchestrator_uri,
+             session_uri,
+             owner_uri,
+             session_workspace
+           ),
+         :ok <-
+           grant_owner_orchestrator_admin_cap(
+             session_uri,
+             owner_uri,
+             session_workspace
+           ) do
+      :ok
+    end
+  end
+
+  # RFC #402 (Allen 2026-05-26) — original grant flow: caps #1–#4 go
+  # TO the orchestrator (scope-bounded delegation + Template caps).
+  defp grant_orchestrator_scoped_caps(
+         %URI{} = orchestrator_uri,
+         %URI{} = session_uri,
+         %URI{} = owner_uri,
+         %URI{} = session_workspace
+       ) do
     desired = build_desired_caps(orchestrator_uri, session_uri, owner_uri, session_workspace)
     current = Ezagent.Identity.list_caps_for(orchestrator_uri)
 
@@ -1392,6 +1417,61 @@ defmodule Ezagent.Entity.Session do
     case Enum.reject(results, &match?({:ok, _}, &1)) do
       [] -> :ok
       [err | _] -> {:error, {:scoped_cap_grant_failed, err}}
+    end
+  end
+
+  # RFC #402 (Allen 2026-05-26) — grant the SESSION OWNER the
+  # `Ezagent.Behavior.OrchestratorAdmin :restart` cap on THIS session.
+  # The cap is what the LV's `OrchestratorHealthCard` consults to gate
+  # the Restart button (so a non-owner sees it hidden / disabled), and
+  # what the future dispatch-side enforcement (`Behavior.OrchestratorAdmin`
+  # registered against Session) checks if/when restart moves to a real
+  # dispatch.
+  #
+  # Idempotent: a re-run of `spawn_from_template/2` (e.g. the
+  # reconciler re-entering after `:partial`) re-checks the owner's
+  # cap MapSet and skips if a logically-equal grant is already
+  # present. `cap_equal_ignoring_metadata?/2` ignores `granted_at` so
+  # re-grants don't grow the cap MapSet on every reconcile pass.
+  defp grant_owner_orchestrator_admin_cap(
+         %URI{} = session_uri,
+         %URI{} = owner_uri,
+         %URI{} = session_workspace
+       ) do
+    want = %Ezagent.Capability{
+      kind: :session,
+      behavior: Ezagent.Behavior.OrchestratorAdmin,
+      instance: session_uri,
+      workspace_uri: session_workspace,
+      granted_by: owner_uri,
+      granted_at: nil
+    }
+
+    current = Ezagent.Identity.list_caps_for(owner_uri)
+
+    if Enum.any?(current, &cap_equal_ignoring_metadata?(&1, want)) do
+      :ok
+    else
+      target = URI.new!("#{URI.to_string(owner_uri)}?action=identity.grant_cap")
+      cap = %{want | granted_at: DateTime.utc_now()}
+
+      result =
+        Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+          target: target,
+          mode: :call,
+          args: %{cap: cap},
+          ctx: %{
+            caller: owner_uri,
+            caps: Ezagent.SystemPrincipal.caps("system://template-materialize"),
+            reply: :ignore
+          }
+        })
+
+      case result do
+        {:ok, _} -> :ok
+        :ok -> :ok
+        {:error, reason} -> {:error, {:owner_orchestrator_admin_cap_grant_failed, reason}}
+      end
     end
   end
 
