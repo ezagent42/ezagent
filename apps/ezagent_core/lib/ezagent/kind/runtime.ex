@@ -253,14 +253,31 @@ defmodule Ezagent.Kind.Runtime do
           :telemetry.execute([:ezagent, :authz, :denied], %{}, meta)
           {:error, :unauthorized}
 
-        granted_via_holds_cap?(ctx, needed) ->
+        # 2026-05-26 (Allen perf bug): reorder ctx.caps check BEFORE the
+        # holds_cap? slice lookup. The slice path issues a
+        # `GenServer.call(caller_kind_pid, ...)` to read the caller's
+        # `:identity` slice. For non-user/non-agent callers (e.g.
+        # `entity://worker/system/em_*`, system workers, plugin pseudo-
+        # entities) `resolve_caller_kind/1` returns nil so the call
+        # falls through to `default_holds_cap?/2` which STILL calls
+        # `Kind.get_slice(caller_uri, :identity)` — and when the caller
+        # IS the dispatching process (worker dispatching its own
+        # subscribe_from), that GenServer.call deadlocks against
+        # itself until the 5s default timeout fires.
+        #
+        # Workers carry their compile-time caps via `ctx.caps` (the
+        # `system://worker-publish` system principal — see Catalog).
+        # Checking ctx.caps first means workers (and any other
+        # ctx.caps-bearing caller) never trigger the self-call deadlock,
+        # AND the cheap path runs first for everyone. Slice-resolved
+        # caps still work — they're just the second-line check, used
+        # by ordinary user/agent dispatches whose identity slice IS
+        # the source of truth.
+        granted_via_ctx_caps?(ctx, needed) ->
           :telemetry.execute([:ezagent, :authz, :granted], %{}, meta)
           :ok
 
-        granted_via_ctx_caps?(ctx, needed) ->
-          # PR-CC-2-v2 bridge (deleted by PR-CC-2c): ctx.caps populated
-          # by the caller. Same authorization semantic, different cap
-          # source — tests + bootstrap paths still pass caps directly.
+        granted_via_holds_cap?(ctx, needed) ->
           :telemetry.execute([:ezagent, :authz, :granted], %{}, meta)
           :ok
 
