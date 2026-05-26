@@ -17,19 +17,20 @@ defmodule Ezagent.Invariants.NoSilentTemplateClassTest do
   :template_name, "default")` shims, no "if missing, pick something
   sensible" branches. Missing class = `ArgumentError`.
 
-  ## What is banned (2 sub-patterns)
+  ## What is banned (3 sub-patterns)
 
-  1. `Keyword.get(opts, :template_name, "<literal>")` — the canonical
-     shim that lets every caller skip the choice. Catches the
-     production lib site this PR (#366) fixed in
-     `apps/ezagent_domain_chat/lib/ezagent_domain_chat.ex` and any
-     future drift on similar surfaces (e.g. `:template_class`,
-     `:class`).
-  2. `defp <name-containing-template>(_), do: "<literal>"` — single-
-     clause catch-all returning a string-literal class. Mirrors P4 in
-     `no_silent_default_workspace_test.exs`; covers the
-     `promote_to_3seg` fallback shape eliminated in
-     `apps/ezagent_cli/lib/ezagent_cli/dispatch.ex`.
+  1. `Keyword.get(opts, :template_name | :template_class | :class,
+     "<literal>")` — the canonical shim that lets every caller skip
+     the choice. Catches the production lib site this PR (#366) fixed
+     in `apps/ezagent_domain_chat/lib/ezagent_domain_chat.ex`.
+  2. `defp <name-containing-template>(_), do: "default"` — single-
+     clause catch-all returning the banned literal. Mirrors P4 in
+     `no_silent_default_workspace_test.exs`.
+  3. `Map.get(_, :class | "class" | :template_name | :template_class,
+     "<literal>")` AND `Map.get(_, …) || Map.get(_, …) || "default" |
+     "generic"` chains. Codex r1 (PR #369 review) caught
+     `derive_session_uri/3`'s `|| "generic"` silent fallback that P1
+     missed; this pattern covers both forms.
 
   ## What is OK
 
@@ -77,16 +78,43 @@ defmodule Ezagent.Invariants.NoSilentTemplateClassTest do
   # Both conditions are necessary together; either alone false-positives.
   @defp_template_literal_pattern ~r/(?i)defp\s+[a-z_]*template[a-z_]*\([^)]*\)[^,]*,\s*do:\s*"default"/
 
+  # P3a: `Map.get(_, :class | "class" | :template_name | :template_class,
+  # "<literal>")` — covers SessionTemplate / instance-content shapes
+  # (atom or string keys) that silently default the class.
+  @map_get_default_pattern ~r/Map\.get\(\s*[a-z_.]+\s*,\s*(?::class|"class"|:template_name|:template_class)\s*,\s*"[^"]+"\s*\)/
+
+  # P3b: `Map.get(…) || Map.get(…) || "default" | "generic"` — the
+  # fallback-chain shape codex r1 caught in `derive_session_uri/3`.
+  # `(?s)` makes `.` cross newlines so multiline `|| "generic"` (on
+  # its own line) is still matched. The leading `Map\.get` anchors the
+  # chain to a class lookup; the `"default"|"generic"` literal narrows
+  # to the banned values (mirrors `no_silent_default_workspace_test`
+  # P3/P4 narrow-literal rationale — UI display strings like `"—"`
+  # are excluded).
+  @or_literal_chain_pattern ~r/(?s)Map\.get\([^)]*\)(?:\s*\|\|\s*Map\.get\([^)]*\))*\s*\|\|\s*"(?:default|generic)"/
+
   @forbidden_patterns [
     {@keyword_get_default_pattern,
      "Keyword.get(opts, :template_name|:template_class|:class, \"<literal>\") — must Keyword.fetch! or raise instead"},
     {@defp_template_literal_pattern,
-     "defp <template>(_), do: \"<literal>\" — single-clause catch-all returning string default; must raise instead"}
+     "defp <template>(_), do: \"default\" — single-clause catch-all returning string default; must raise instead"},
+    {@map_get_default_pattern,
+     "Map.get(_, :class|\"class\"|:template_name|:template_class, \"<literal>\") — silent template-class default; must raise instead"},
+    {@or_literal_chain_pattern,
+     "Map.get(...) || Map.get(...) || \"default\"|\"generic\" — silent class fallback chain; must raise on the final branch"}
   ]
 
   @whitelist [
     "apps/ezagent_core/test/invariants/no_silent_template_class_test.exs",
-    "test/invariants/no_silent_template_class_test.exs"
+    "test/invariants/no_silent_template_class_test.exs",
+    # `derive_session_uri/3`'s `|| "generic"` mirrors
+    # `Ezagent.Template.GenericSession.instantiate/3`'s hard-coded
+    # `session://generic/...`. SessionTemplate state slices have a
+    # fixed class by construction (all are GenericSession instances),
+    # so this is NOT an operator-choice silent fallback — see the
+    # SPEC #366 NOTE in the function for the codex r1 rationale.
+    "apps/ezagent_domain_chat/lib/ezagent/entity/session.ex",
+    "lib/ezagent/entity/session.ex"
   ]
 
   test "no production lib has any silent template-class fallback (2 sub-patterns)" do
@@ -126,7 +154,7 @@ defmodule Ezagent.Invariants.NoSilentTemplateClassTest do
              "  * `apps/ezagent_domain_chat/lib/ezagent_domain_chat.ex` " <>
              "(`require_template_name!/1`)\n" <>
              "  * `apps/ezagent_cli/lib/ezagent_cli/dispatch.ex` " <>
-             "(`require_template_class!/3` raises with `--template-class <class>` hint)"
+             "(`require_template_class!/3` raises with `--instance-class <class>` hint)"
   end
 
   defp lib_files do

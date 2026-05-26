@@ -182,8 +182,19 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
             class="w-full text-xs px-2 py-1 border border-zinc-300 dark:border-zinc-700 rounded"
           />
 
+          <%!-- Codex PR #369 r1 MED — the option values are the
+                workspace's `session_templates` keys (template instance
+                names like "architect-review"), NOT registered template-
+                class names (`Ezagent.Kind.Template.template_name/0`
+                values like "session.generic"). Each key becomes the
+                URI's class segment (`session://<key>/<workspace>/<name>`);
+                downstream code treats that segment as informational,
+                not as a `TemplateRegistry.lookup/1` key (verified —
+                see `rg TemplateRegistry.lookup apps/*/lib`). Label
+                reflects what the operator actually sees in
+                `/admin/templates`. --%>
           <label for="new_session_template_class" class="block text-[10px] text-zinc-500 mb-1 mt-2">
-            {gettext("Template class")}
+            {gettext("Template")}
           </label>
           <select
             name="new_session[template_class]"
@@ -193,7 +204,7 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
           >
             <%!-- Placeholder forces an explicit pick; LV handler refuses
                   empty-string submissions. --%>
-            <option value="" disabled selected>{gettext("— pick a class —")}</option>
+            <option value="" disabled selected>{gettext("— pick a template —")}</option>
             <option :for={class <- @template_class_options} value={class}>{class}</option>
           </select>
 

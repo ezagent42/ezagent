@@ -670,6 +670,14 @@ defmodule EzagentPluginLiveview.AdminLive do
   # `"default"` fallback in `EzagentDomainChat.create_session/3` was
   # removed; this LV handler refuses the submit when the operator
   # didn't pick a class.
+  #
+  # Codex PR #369 r1 HIGH — pass `socket.assigns.caller_uri` (the
+  # authenticated entity URI from LiveAuth) AND an explicit
+  # `:workspace_uri` so the session is created in the operator's
+  # current workspace, not whatever workspace admin happens to belong
+  # to. The previous `User.admin_uri()` argument silently dropped the
+  # tenant operator into `workspace://system` and joined `admin`
+  # instead of the actual caller.
   def handle_event(
         "create_session",
         %{"new_session" => %{"short_name" => name, "template_class" => class}},
@@ -678,8 +686,9 @@ defmodule EzagentPluginLiveview.AdminLive do
       when is_binary(name) and name != "" and is_binary(class) and class != "" do
     case EzagentDomainChat.create_session(
            String.trim(name),
-           Ezagent.Entity.User.admin_uri(),
-           template_name: class
+           socket.assigns.caller_uri,
+           template_name: class,
+           workspace_uri: socket.assigns.current_workspace_uri
          ) do
       {:ok, session_uri} ->
         if connected?(socket) do
@@ -718,13 +727,13 @@ defmodule EzagentPluginLiveview.AdminLive do
       )
       when is_binary(name) and name != "" do
     # SPEC #366 — explicit failure when the operator left the
-    # template-class dropdown empty. We deliberately do NOT pick a
-    # default here.
+    # template dropdown empty. We deliberately do NOT pick a default
+    # here.
     {:noreply,
      assign(
        socket,
        :flash_error,
-       gettext("Pick a template class before creating the session.")
+       gettext("Pick a template before creating the session.")
      )}
   end
 
@@ -2281,9 +2290,18 @@ defmodule EzagentPluginLiveview.AdminLive do
   # `session_templates` map and project to the new-session form's
   # `<select>` options.
   #
-  # Returns `[String.t()]` — the template-class keys sorted lexically.
+  # Returns `[String.t()]` — the workspace's session-template instance
+  # names sorted lexically (NOT registered template-class names from
+  # `Ezagent.TemplateRegistry`; see the codex r1 note in the
+  # `session_editor.ex` template-class dropdown for the semantic
+  # split). Each key becomes the URI's class segment via
+  # `create_session/3`'s `:template_name` option.
+  #
   # Empty list = workspace has zero declared templates → the dropdown
   # renders an empty-state with a deep-link to /admin/templates.
+  # (LOW limitation: `/admin/templates` is `:require_admin`; non-admin
+  # operators see the link but can't follow it. Tracked for a later
+  # PR that exposes a tenant-scoped templates UI.)
   #
   # Defensive against early-mount paths where `:current_workspace_uri`
   # hasn't been assigned yet (test fixtures, error paths) — returns

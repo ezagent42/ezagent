@@ -190,7 +190,7 @@ defmodule EzagentCli.Dispatch do
 
   defp promote_to_3seg(_scheme, instance, _workspace, _template_class), do: instance
 
-  # SPEC #366: bare-name needs `--template-class <class>`; missing =
+  # SPEC #366: bare-name needs `--instance-class <class>`; missing =
   # raise. Two-segment (`<class>/<name>`) and three-segment forms
   # already carry the class inline and are accepted as-is.
   defp fill_caller_workspace_strict(scheme, workspace, instance, template_class) do

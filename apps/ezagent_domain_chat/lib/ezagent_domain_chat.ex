@@ -39,11 +39,17 @@ defmodule EzagentDomainChat do
 
   `opts[:template_name]` is **required** per SPEC #366 (Allen
   2026-05-26, `feedback_let_it_crash_no_workarounds`) — the previous
-  silent `"default"` fallback was eliminated. Operators must choose a
-  template class explicitly. Pass the literal class string (e.g.
-  `"default"` for the bootstrap path, or any key from the workspace's
-  `session_templates` map for tenant flows). Missing key raises
-  `ArgumentError`.
+  silent `"default"` fallback was eliminated. The value becomes the
+  session URI's class segment (`session://<template_name>/<workspace>/<short_name>`)
+  literally — there is NO `Ezagent.TemplateRegistry.lookup/1` resolution
+  here; downstream code treats segment 1 as informational. Operators
+  pass:
+    * `"default"` for the bootstrap session-naming convention (the
+      legacy URI shape ~10 test suites assert against), OR
+    * Any key from the current workspace's `session_templates` map
+      for tenant flows (LV form sources this directly).
+
+  Missing key raises `ArgumentError`.
 
   Returns `{:ok, session_uri}` on success, `{:error, reason}` on:
   - `{:already_registered, _}` — session URI already in KindRegistry
