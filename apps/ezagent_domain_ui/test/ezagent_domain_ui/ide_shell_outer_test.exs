@@ -215,6 +215,40 @@ defmodule EzagentDomainUi.IdeShellOuterTest do
       # dispatch action present (HTML-entity-encoded in attribute).
       assert html =~ "dispatch"
     end
+
+    test "zh_CN renders the System-theme button as the disambiguated label, not bare '系统'" do
+      # The original bug was zh_CN-specific: bare `gettext("System")`
+      # rendered as "系统" — which Allen read as a navigation entry to
+      # an "admin / system area" rather than a theme picker. The .po
+      # entry for the new msgid `"System theme"` MUST resolve to a
+      # phrase that scopes to "theme" so the three buttons read as a
+      # parallel group. CI catches a translation regression even if
+      # the source `gettext("System theme")` stays correct.
+      previous = Gettext.get_locale(EzagentDomainUi.Gettext)
+      Gettext.put_locale(EzagentDomainUi.Gettext, "zh_CN")
+
+      try do
+        assigns = %{current_entity_uri: "entity://user/system/admin", is_admin?: true}
+
+        html =
+          rendered_to_string(~H"""
+          <IdeShell.avatar_menu
+            current_entity_uri={@current_entity_uri}
+            is_admin?={@is_admin?}
+          />
+          """)
+
+        # zh_CN parallel labels: 浅色主题 / 深色主题 / 跟随系统主题.
+        # The "主题" suffix on the system button is what scopes the
+        # control to "theme" and removes the navigation-entry reading.
+        assert html =~ "浅色主题"
+        assert html =~ "深色主题"
+        assert html =~ "跟随系统主题",
+               "expected zh_CN avatar menu to render '跟随系统主题' (disambiguated from bare '系统')"
+      after
+        Gettext.put_locale(EzagentDomainUi.Gettext, previous)
+      end
+    end
   end
 
   describe "old monolith deleted (SPEC §6 row 3 — nested-shell PR-3)" do
