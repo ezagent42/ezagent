@@ -30,7 +30,7 @@ defmodule EzagentPluginLiveview.FeishuBindingsLiveTest do
       Phoenix.ConnTest.build_conn()
       |> Plug.Test.init_test_session(%{
         "current_entity_uri" => URI.to_string(Ezagent.Entity.User.admin_uri()),
-        "current_workspace_uri" => "workspace://default"
+        "current_workspace_uri" => "workspace://system"
       })
 
     {:ok, conn: conn}
@@ -49,14 +49,14 @@ defmodule EzagentPluginLiveview.FeishuBindingsLiveTest do
       {:ok, _row} =
         UserBinding.bind(
           "ou_existing",
-          "entity://user/default/alice",
+          "entity://user/system/alice",
           "entity://user/system/admin"
         )
 
       {:ok, _lv, html} = live(conn, "/plugins/feishu/bindings")
 
       assert html =~ "ou_existing"
-      assert html =~ "entity://user/default/alice"
+      assert html =~ "entity://user/system/alice"
       refute html =~ "No bindings yet"
     end
   end

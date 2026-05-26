@@ -175,7 +175,7 @@ defmodule Ezagent.URITest do
     end
 
     test "resource:// strips query and keeps full 3-segment path" do
-      uri = Ezagent.URI.parse!("resource://uploads/default/file-abc")
+      uri = Ezagent.URI.parse!("resource://uploads/system/file-abc")
       assert Ezagent.URI.instance(uri) == uri
     end
 

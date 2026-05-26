@@ -59,7 +59,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentCloneFromTest do
       # The cc workspace action threads source's per-agent dir as
       # `claude_config_dir` — that's the existing "reference dir to copy
       # at spawn" key the cc Template Class already understands.
-      target_uri = URI.new!("entity://agent/default/cc_clone-target-#{uniq()}")
+      target_uri = URI.new!("entity://agent/system/cc_clone-target-#{uniq()}")
       cleanup_target(target_uri)
       tmpl = %{"claude_config_dir" => source}
 
@@ -90,7 +90,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentCloneFromTest do
       source = make_source_dir()
       File.write!(Path.join(source, "user-data.txt"), "before-clone")
 
-      target_uri = URI.new!("entity://agent/default/cc_indep-target-#{uniq()}")
+      target_uri = URI.new!("entity://agent/system/cc_indep-target-#{uniq()}")
       cleanup_target(target_uri)
       tmpl = %{"claude_config_dir" => source}
 

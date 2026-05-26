@@ -702,14 +702,14 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
       # envelope. The flash bridge re-fetches the receiver's `:chat`
       # slice via `Kind.get_slice/2`; assertions drive a real spawned
       # User so the lookup hits the production path.
-      sender = URI.new!("entity://user/default/n3-fmt-#{System.unique_integer([:positive])}")
-      receiver = URI.new!("entity://user/default/n3-rcv-#{System.unique_integer([:positive])}")
+      sender = URI.new!("entity://user/system/n3-fmt-#{System.unique_integer([:positive])}")
+      receiver = URI.new!("entity://user/system/n3-rcv-#{System.unique_integer([:positive])}")
 
       {:ok, _} = Ezagent.SpawnRegistry.spawn(sender)
       {:ok, _} = Ezagent.SpawnRegistry.spawn(receiver)
 
       session_uri =
-        URI.new!("session://default/default/n3-fmt-#{System.unique_integer([:positive])}")
+        URI.new!("session://default/system/n3-fmt-#{System.unique_integer([:positive])}")
 
       msg = Ezagent.Message.new(sender, %{text: "n3 preview text", attachments: []})
       {:ok, stored} = Ezagent.MessageStore.write(msg, session_uri)
@@ -748,7 +748,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
       # message_id that MessageStore won't find. Production path:
       # message was deleted between :receive and the flash bridge
       # waking up.
-      receiver = URI.new!("entity://user/default/n3-miss-#{System.unique_integer([:positive])}")
+      receiver = URI.new!("entity://user/system/n3-miss-#{System.unique_integer([:positive])}")
       {:ok, _} = Ezagent.SpawnRegistry.spawn(receiver)
 
       # Drive a synthetic chat.receive with a sender + a fake
@@ -760,7 +760,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
       # by overwriting the slice via a synthetic chat.receive whose
       # message-id we don't persist.
       sender =
-        URI.new!("entity://user/default/n3-miss-snd-#{System.unique_integer([:positive])}")
+        URI.new!("entity://user/system/n3-miss-snd-#{System.unique_integer([:positive])}")
 
       {:ok, _} = Ezagent.SpawnRegistry.spawn(sender)
 
@@ -818,7 +818,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
       # The Kind isn't alive — `Kind.get_slice/2` returns
       # `{:error, :not_found}`. The bridge MUST still surface a flash.
       missing_uri =
-        URI.new!("entity://user/default/n3-none-#{System.unique_integer([:positive])}")
+        URI.new!("entity://user/system/n3-none-#{System.unique_integer([:positive])}")
 
       event = %{
         uri: missing_uri,
@@ -898,16 +898,16 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
       # (race on `:last_received`); post-r4 each ring lookup by
       # cursor returns the correct msg_id.
       receiver =
-        URI.new!("entity://user/default/n3-race-#{System.unique_integer([:positive])}")
+        URI.new!("entity://user/system/n3-race-#{System.unique_integer([:positive])}")
 
       sender =
-        URI.new!("entity://user/default/n3-race-snd-#{System.unique_integer([:positive])}")
+        URI.new!("entity://user/system/n3-race-snd-#{System.unique_integer([:positive])}")
 
       {:ok, _} = Ezagent.SpawnRegistry.spawn(receiver)
       {:ok, _} = Ezagent.SpawnRegistry.spawn(sender)
 
       session_uri =
-        URI.new!("session://default/default/n3-race-#{System.unique_integer([:positive])}")
+        URI.new!("session://default/system/n3-race-#{System.unique_integer([:positive])}")
 
       # Send 3 distinct messages in succession through the real
       # dispatch path. Each :receive bumps the cursor + pushes the
@@ -1002,12 +1002,12 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
       # Older-than-ring-depth cursor: ring trimmed it out. Bridge
       # MUST still render a flash (generic line).
       receiver =
-        URI.new!("entity://user/default/n3-stale-#{System.unique_integer([:positive])}")
+        URI.new!("entity://user/system/n3-stale-#{System.unique_integer([:positive])}")
 
       {:ok, _} = Ezagent.SpawnRegistry.spawn(receiver)
 
       sender =
-        URI.new!("entity://user/default/n3-stale-snd-#{System.unique_integer([:positive])}")
+        URI.new!("entity://user/system/n3-stale-snd-#{System.unique_integer([:positive])}")
 
       {:ok, _} = Ezagent.SpawnRegistry.spawn(sender)
 
@@ -1056,7 +1056,7 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
 
       # Foreign URI in the event — NOT the admin's URI.
       foreign_uri =
-        URI.new!("entity://user/default/some-other-#{System.unique_integer([:positive])}")
+        URI.new!("entity://user/system/some-other-#{System.unique_integer([:positive])}")
 
       :ok =
         Phoenix.PubSub.broadcast(

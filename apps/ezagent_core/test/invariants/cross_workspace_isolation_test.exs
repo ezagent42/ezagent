@@ -20,7 +20,7 @@ defmodule EzagentCore.Invariants.CrossWorkspaceIsolationTest do
 
   ## Setup
 
-  Two workspaces (`default` + `team-alpha`), one user per workspace.
+  Two workspaces (`tenant-beta-*` + `team-alpha-*`), one user per workspace.
   Default user gets the standard `User.default_caps/1` (session.* in
   its own workspace). Both spawned via `SpawnRegistry.spawn/1` so
   they're alive in `KindRegistry`. A session is spawned in each
@@ -107,17 +107,18 @@ defmodule EzagentCore.Invariants.CrossWorkspaceIsolationTest do
   defp setup_scenario do
     suffix = unique("xws")
 
-    # Two workspaces. SPEC v2 PR-C (#295): `workspace://default` is no
-    # longer boot-seeded — this test continues to use `default` as a
-    # test-fixture workspace name (the spawn below treats it as the
-    # second workspace's parent context, but no row is created here
-    # because the existing assertions only check `team-alpha-*`
-    # isolation). The session URI string below uses `default` as the
-    # workspace segment for the legacy session shape; PR-F's 1st-pass
-    # leaves test fixtures alone.
+    # Two non-system tenant workspaces. The test deliberately avoids
+    # `workspace://system` because system-workspace members hold
+    # cross-workspace authority by membership (SPEC v3 §13.1 + invariant
+    # 13) — the very property under test here would short-circuit.
+    # Both `tenant-beta` and `team-alpha` are plain tenant names.
+    tenant_beta_name = "tenant-beta-#{suffix}"
+    tenant_beta_uri = URI.new!("workspace://#{tenant_beta_name}")
+
     team_alpha_name = "team-alpha-#{suffix}"
     team_alpha_uri = URI.new!("workspace://#{team_alpha_name}")
 
+    {:ok, _} = Ezagent.Workspace.spawn_workspace(tenant_beta_name)
     {:ok, _} = Ezagent.Workspace.spawn_workspace(team_alpha_name)
 
     # Two sessions, one per workspace. Use SpawnRegistry to follow the
@@ -127,7 +128,7 @@ defmodule EzagentCore.Invariants.CrossWorkspaceIsolationTest do
     # workspace as the second path segment. The first segment is the
     # template; we use `default` here since these test sessions don't
     # spawn from a template class.
-    default_session_uri = URI.new!("session://default/default/#{suffix}-main")
+    default_session_uri = URI.new!("session://default/#{tenant_beta_name}/#{suffix}-main")
 
     team_alpha_session_uri =
       URI.new!("session://default/#{team_alpha_name}/#{suffix}-main")
@@ -135,16 +136,16 @@ defmodule EzagentCore.Invariants.CrossWorkspaceIsolationTest do
     {:ok, _} = SpawnRegistry.spawn(default_session_uri)
     {:ok, _} = SpawnRegistry.spawn(team_alpha_session_uri)
 
-    default_workspace_uri = URI.new!("workspace://default")
+    default_workspace_uri = tenant_beta_uri
     :ok = WorkspaceRegistry.bind(default_session_uri, default_workspace_uri)
     :ok = WorkspaceRegistry.bind(team_alpha_session_uri, team_alpha_uri)
 
-    # Default-workspace user. We don't actually need to spawn the User
+    # tenant-beta user. We don't actually need to spawn the User
     # Kind for this test — dispatch reads caller URI as identity and
     # caps from ctx — but spawning so the URI is a "real" entity in
     # case future invariants assert principal existence.
     default_user_name = unique("user-default")
-    default_user_uri = URI.new!("entity://user/default/#{default_user_name}")
+    default_user_uri = URI.new!("entity://user/#{tenant_beta_name}/#{default_user_name}")
     {:ok, _} = SpawnRegistry.spawn(default_user_uri)
 
     # team-alpha user — spawn after the workspace exists so its
