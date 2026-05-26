@@ -168,24 +168,61 @@ defmodule EzagentDomainChat do
   # the meta map structurally surfaces the failure so callers MUST
   # render it (Invariant #9 — no silent drops at user-facing surfaces).
   defp finalize_session_create(session_uri, workspace_uri, effective_owner) do
-    :ok = Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)
-    :ok = join_creator(session_uri, effective_owner)
-    :ok = grant_owner_orchestrator_admin_cap(session_uri, effective_owner, workspace_uri)
-
-    meta = ensure_orchestrator_meta(session_uri, workspace_uri, effective_owner)
-    {:ok, session_uri, meta}
+    # codex PR #408 review HIGH-1 — convert the linear `:ok = ...` chain
+    # to a `with` so cap-grant failure short-circuits BEFORE the
+    # orchestrator-ensure step. Pre-fix the cap grant's dispatch result
+    # was discarded via `_ = Invocation.dispatch(...)` and the helper
+    # unconditionally returned `:ok`; a denied grant therefore allowed
+    # `ensure_orchestrator_meta/3` to fire anyway, producing an
+    # orchestrator under a Session whose owner could not actually drive
+    # Restart. SPEC requires a failed grant to surface as
+    # `{:error, reason}` and skip orchestrator spawn.
+    with :ok <- Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri),
+         :ok <- join_creator(session_uri, effective_owner),
+         :ok <- grant_owner_orchestrator_admin_cap(session_uri, effective_owner, workspace_uri) do
+      meta = ensure_orchestrator_meta(session_uri, workspace_uri, effective_owner)
+      {:ok, session_uri, meta}
+    end
   end
 
-  # Translate `Session.ensure_orchestrator/3`'s 3-way return shape to
-  # the public meta map. The 3 return shapes (per the @spec on
+  # Translate `Session.ensure_orchestrator/3`'s return shapes to the
+  # public meta map. The shapes (per the @spec on
   # `Session.ensure_orchestrator/3`):
   #
-  #   {:ok, orch_uri, :created | :already_present} → :ready
-  #   {:partial, %{orchestrator_pending: uri}}     → :pending
-  #   {:error, reason}                              → :failed (logged)
+  #   {:ok, orch_uri, :created | :already_present}        → :ready
+  #   {:ok, orch_uri, _outcome, %{role_degraded: true,..}}→ :ready (degraded)
+  #   {:partial, %{orchestrator_pending: uri}}            → :pending
+  #   {:error, reason}                                    → :failed (logged)
+  #
+  # codex PR #408 review HIGH-3 — a `:role_degraded` flag from the cc
+  # Template Class (orchestrator-skill-copy failure) keeps the status at
+  # `:ready` (the agent IS alive) but populates `orchestrator_error`
+  # with the degraded reason AND emits a notification to the owner so
+  # Invariant #9 (no silent drops at user-facing surfaces) is honored.
   defp ensure_orchestrator_meta(session_uri, workspace_uri, owner_uri) do
-    case Session.ensure_orchestrator(session_uri, workspace_uri, owner_uri) do
+    # codex PR #408 review HIGH-3 — call the 4-tuple-capable variant so
+    # the role-bootstrap degradation surfaces in the meta map per
+    # Invariant #9.
+    case Session.ensure_orchestrator_with_meta(session_uri, workspace_uri, owner_uri) do
+      {:ok, %URI{} = orch_uri, _outcome, %{role_degraded: true} = degraded_meta} ->
+        notify_orchestrator_role_degraded(owner_uri, session_uri, orch_uri, degraded_meta)
+
+        %{
+          orchestrator_uri: orch_uri,
+          orchestrator_status: :ready,
+          orchestrator_error: {:role_degraded, Map.get(degraded_meta, :role_degraded_reason)}
+        }
+
       {:ok, %URI{} = orch_uri, _outcome} ->
+        %{
+          orchestrator_uri: orch_uri,
+          orchestrator_status: :ready,
+          orchestrator_error: nil
+        }
+
+      {:ok, %URI{} = orch_uri, _outcome, _meta} ->
+        # Forward-compat: an `{:ok, _, _, _}` shape without role_degraded
+        # is still `:ready` with no error.
         %{
           orchestrator_uri: orch_uri,
           orchestrator_status: :ready,
@@ -213,6 +250,69 @@ defmodule EzagentDomainChat do
           orchestrator_error: reason
         }
     end
+  end
+
+  # codex PR #408 review HIGH-3 — notify the session owner that the
+  # orchestrator's role-bootstrap (skill copy / CLAUDE.md hint) failed.
+  # The agent itself is alive; the orchestrator-specific UX is
+  # degraded. Best-effort: a notify failure logs but never bubbles up
+  # past the meta map (the orchestrator IS up — the notification is the
+  # UX surfacing, not the source of truth).
+  defp notify_orchestrator_role_degraded(
+         %URI{scheme: "entity", host: "user"} = owner_uri,
+         %URI{} = session_uri,
+         %URI{} = orch_uri,
+         degraded_meta
+       ) do
+    reason = Map.get(degraded_meta, :role_degraded_reason)
+
+    Logger.warning(
+      "EzagentDomainChat.create_session: orchestrator role-bootstrap DEGRADED for " <>
+        "session=#{URI.to_string(session_uri)} orchestrator=#{URI.to_string(orch_uri)} " <>
+        "reason=#{inspect(reason)} — the agent is alive but the " <>
+        "ezagent-session-orchestrator skill / CLAUDE.md hint did not load. " <>
+        "The session owner has been notified (Invariant #9)."
+    )
+
+    try do
+      _ =
+        Ezagent.Notifications.notify(owner_uri, %{
+          type: :orchestrator_role_degraded,
+          body: %{
+            text:
+              "Orchestrator agent started but the orchestrator skill failed to load. " <>
+                "It will behave as a plain claude session. " <>
+                "Reason: #{inspect(reason)}",
+            session_uri: session_uri,
+            orchestrator_uri: orch_uri,
+            reason: inspect(reason)
+          },
+          source: __MODULE__
+        })
+    rescue
+      error ->
+        Logger.warning(
+          "EzagentDomainChat.create_session: notify(:orchestrator_role_degraded) to " <>
+            "#{URI.to_string(owner_uri)} raised #{inspect(error)} — the orchestrator " <>
+            "is still alive; this is the notification path failing, not the spawn."
+        )
+    end
+
+    :ok
+  end
+
+  # Non-user owner (e.g. system principal or agent) — no inbox to notify;
+  # the Logger warning above is the audit trail.
+  defp notify_orchestrator_role_degraded(_owner, %URI{} = session_uri, %URI{} = orch_uri, meta) do
+    reason = Map.get(meta, :role_degraded_reason)
+
+    Logger.warning(
+      "EzagentDomainChat.create_session: orchestrator role-bootstrap DEGRADED for " <>
+        "session=#{URI.to_string(session_uri)} orchestrator=#{URI.to_string(orch_uri)} " <>
+        "reason=#{inspect(reason)} — owner is not a user URI; no inbox notification sent."
+    )
+
+    :ok
   end
 
   # workspace://<name> → "<name>". Raises ArgumentError if the URI
@@ -313,7 +413,13 @@ defmodule EzagentDomainChat do
       target = URI.new!("#{URI.to_string(owner_uri)}?action=identity.grant_cap")
       cap = %{want | granted_at: DateTime.utc_now()}
 
-      _ =
+      # codex PR #408 review HIGH-1 — dispatch result MUST be checked.
+      # Pre-fix `_ = Invocation.dispatch(...); :ok` silently swallowed
+      # a denied grant, letting `finalize_session_create/3` proceed to
+      # spawn the orchestrator even though the owner could not actually
+      # restart it. Use `:cast`-style reply but :call mode so we observe
+      # the result; `reply: :ignore` was the silent-swallow vector.
+      result =
         Invocation.dispatch(%Invocation{
           target: target,
           mode: :call,
@@ -325,11 +431,23 @@ defmodule EzagentDomainChat do
           ctx: %{
             caller: owner_uri,
             caps: Ezagent.SystemPrincipal.caps("system://template-materialize"),
-            reply: :ignore
+            reply: {:caller_inbox, self()}
           }
         })
 
-      :ok
+      case result do
+        {:ok, _} ->
+          :ok
+
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          {:error, {:orchestrator_admin_cap_grant_failed, reason}}
+
+        other ->
+          {:error, {:orchestrator_admin_cap_grant_unexpected, other}}
+      end
     end
   end
 
