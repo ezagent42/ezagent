@@ -86,6 +86,9 @@ The references are organized so you only load the file relevant to your current 
 15. **ExternalMirror Domain owns every outbound mirror** — no plugin-owned one-offs.
 16. **No `Phoenix.PubSub.subscribe` in Bindings** — use `Publisher.subscribe_from/3`.
 17. **No re-entry to dispatch from `target_ownership_check/2` or `event_to_payload/1`.**
+18. **Sibling slice reads are opt-in via `reads_sibling_slices/0`** (2026-05-26) — declare keys; default `[]`; no `:all_slices` escape hatch.
+19. **Capability inputs flow through `Ezagent.Capability.normalize!/2`** (2026-05-26) — single chokepoint converting struct/atom-keyed/string-keyed → canonical `%Capability{}`. Revoke matches by 4-tuple identity_key, NOT full struct.
+20. **Behaviors with DB projections implement `reconcile_after_load/2`** (2026-05-26) — snapshot merge would otherwise overwrite fresh DB reads; reconcile runs AFTER merge to union/dedupe DB rows added between snapshot and restore.
 
 Plus the 2026-05-25 caps-cleanup additions (see references/pointer-index.md §"Current state"): `lv_cli_parity`, `workspace_sot`, `no_admin_caps_fallback`, `cap_check_only_at_chokepoint`, `no_wildcard_system_principals`, `dispatch_uses_required_caps`.
 

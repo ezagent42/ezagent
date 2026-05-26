@@ -195,3 +195,40 @@ CI gates: `apps/ezagent_domain_external_mirror/test/invariants/no_pubsub_bypass_
 Adapter modules are stateless pure-function modules per SPEC §2.2. The ONE allowed I/O callback is `target_ownership_check/2` — and even that callback MUST NOT call `Ezagent.Invocation.dispatch/1`, `Ezagent.Kind.spawn/2`, or `Behavior.invoke/4` directly: re-entering ezagent from inside a Task spawned by the facade's bind action creates a dispatch-during-dispatch deadlock (`:bind` is itself a dispatched action). External API calls (Lark / Slack / game protocol) ARE allowed from `target_ownership_check`; ezagent re-entry IS NOT.
 
 CI gates: `apps/ezagent_domain_external_mirror/test/invariants/no_dispatch_in_target_ownership_check_test.exs` (grep gate on every loaded module declaring `@behaviour Ezagent.ExternalMirror.Adapter`).
+
+## 18. **Sibling slice reads are opt-in via `reads_sibling_slices/0`** (Decision #124, PR #389)
+
+A Behavior on Kind K can read OTHER Behaviors' slices on the same Kind instance **only** if it declares the keys it wants:
+
+```elixir
+@impl Ezagent.Behavior
+def reads_sibling_slices, do: [:api_keys]
+```
+
+`Ezagent.Kind.Runtime.handle_dispatch/4` then injects `ctx[:sibling_slices]` containing **only the declared keys** — not the whole state map. The default (callback not exported) is `[]` — no sibling reads.
+
+**Why**: closes the slice isolation gap that the ApiKeys flip surfaced. Pre-fix, CurlAgent dispatched `identity.get_api_key` back to `ctx.self_uri` to read its own ApiKeys (foreign to CurlAgent's slice); after the flip, both slices live on the same Kind instance and the dispatch becomes `GenServer.call(self)` — `:calling_self` exit. The structural fix is in-process sibling read, but with explicit declaration so cross-slice reads are visible at code review (not a generic `:all_slices` escape hatch — that was the original codex CRIT finding).
+
+**Rule of thumb**: if your Behavior's `invoke/4` reads a slice it doesn't own, declare it. If you find yourself wanting all slices, you probably want to refactor the slice boundaries instead.
+
+## 19. **Capability inputs flow through `Ezagent.Capability.normalize!/2`** (Decision #125, PR #400)
+
+Any cap that lands in a slice MUST be a `%Ezagent.Capability{}` struct with atom keys. Bare maps (JSON-parsed with string keys) cause `BadMap` / `Protocol.UndefinedError` downstream in `Capability.matches?/2`. The normalizer is the single chokepoint that converts struct / atom-keyed / string-keyed inputs into the canonical struct.
+
+`Ezagent.Behavior.Identity.invoke(:grant_cap, ...)` calls `normalize!/2`. New non-LV cap-granting paths MUST also pipe through `normalize!/2` before writing to `slice.caps`. Direct `MapSet.put(slice.caps, raw_map)` is the anti-pattern.
+
+Revoke matching uses `Capability.identity_key/1` (4-tuple `{kind, behavior, instance, workspace_uri}` ignoring `granted_by`/`granted_at` provenance) — `Capability.revoke/2` is the canonical revoke. Symmetric to grant: bypassing it (manual `MapSet.delete`) is the anti-pattern that causes the "revoke silently no-ops because `granted_at` differs" bug class.
+
+CI gates: `apps/ezagent_domain_identity/test/ezagent/behavior/identity_grant_cap_shape_test.exs` (verifies all three input shapes produce the same in-slice representation + downstream `matches?` agreement).
+
+## 20. **Behaviors with DB projections implement `reconcile_after_load/2`** (Decision #129 / task #34, PR #403)
+
+`Ezagent.Kind.Snapshot.load_or_init/3` merges snapshot state OVER `init_slice/1` fresh state — so any Behavior whose slice is backed by a DB projection table (e.g. `Ezagent.Behavior.ExternalMirror.bindings` ← `external_mirror_bindings`) loses DB rows inserted between the last snapshot and the next Kind restart.
+
+The fix: implement the optional `Ezagent.Behavior.reconcile_after_load/2` callback. Snapshot calls it after `Map.merge(fresh, loaded)`; the Behavior re-reads its DB projection and unions/dedupes into the merged slice.
+
+**Required for**: any Behavior where a DB row outside the dispatch path can legitimately exist (SQL fix-ups, race recovery, plugin authors bypassing the canonical bind/insert API). **NOT required for**: Behaviors whose slice is purely in-memory or fully owned by the dispatch path (the default identity is correct for them).
+
+**Idempotence required**: union-by-natural-key, not list-append. Calling reconcile twice must equal once.
+
+CI gates: `apps/ezagent_domain_external_mirror/test/ezagent/behavior/external_mirror_reconcile_test.exs` (4 tests covering empty-slice + idempotence + union + non-URI safety).
