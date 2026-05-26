@@ -124,16 +124,26 @@ defmodule EzagentCli.Dispatch do
   # consistently. Phase 5+ can add scheme/0 callback on Kind if needed.
   defp scheme_for(type_name), do: to_string(type_name)
 
-  # SPEC #324: extract workspace name from caller URI structurally.
-  # Falls back to `"system"` only for non-entity callers (test fixtures
-  # / unknown schemes). The fallback is safe because production callers
-  # always have an entity:// URI from the CLI bearer-token auth path.
+  # SPEC #324 rev 3 (Allen 2026-05-26): extract workspace name from
+  # caller URI structurally. Per Allen's directive — "如果没有提供 workspace
+  # name，应该直接 crash. 现在已经没有了默认 workspace 这个概念" — any
+  # non-entity caller raises rather than silently falling through to a
+  # "system" workspace. Production callers always carry an `entity://`
+  # URI from the CLI bearer-token auth path; non-entity callers are
+  # operator-error and must be visible.
   defp workspace_name_from_caller(%URI{scheme: "entity"} = uri) do
     %URI{host: name} = Ezagent.URI.entity_workspace_uri(uri)
     name
   end
 
-  defp workspace_name_from_caller(_), do: "system"
+  defp workspace_name_from_caller(other) do
+    raise ArgumentError,
+          "caller URI is not an `entity://...` URI — got #{inspect(other)}. " <>
+            "Per SPEC #324 rev 3 / PR #335, there is NO silent default workspace " <>
+            "fallback; the caller must carry a structural workspace. Production " <>
+            "callers always have an entity:// URI from CLI bearer-token auth — a " <>
+            "non-entity caller indicates a misconfigured token / --as flag."
+  end
 
   # SPEC v3 §3.6 (Phase 9 PR-7) + SPEC #324 — fill in missing
   # template/workspace segments for the unified per-tenant schemes when

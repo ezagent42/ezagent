@@ -583,10 +583,23 @@ defmodule EzagentPluginLiveview.AdminLive do
     # `resource://<type>/<workspace>/<name>`. Use the caller's
     # workspace so the resource belongs to the same tenant as the
     # session that owns it.
+    #
+    # SPEC #324 rev 3 / PR #362 (Allen 2026-05-26): NO silent default
+    # workspace fallback. If the authenticated caller has no derivable
+    # workspace, raise — uploading to a phantom `resource://uploads/
+    # default/...` would silently orphan the file from any real tenant.
     workspace_name =
       case Ezagent.Capability.workspace_of(socket.assigns.current_entity_uri) do
-        %URI{host: ws_name} when is_binary(ws_name) -> ws_name
-        _ -> "default"
+        %URI{host: ws_name} when is_binary(ws_name) ->
+          ws_name
+
+        other ->
+          raise ArgumentError,
+                "current_entity_uri does not yield a workspace URI with a binary host " <>
+                  "— got #{inspect(other)} for current_entity_uri=" <>
+                  "#{inspect(socket.assigns.current_entity_uri)}. Per SPEC #324 rev 3 / " <>
+                  "PR #362, there is NO silent default workspace fallback; the " <>
+                  "authenticated caller must carry a workspace structurally."
       end
 
     attachments =

@@ -1043,7 +1043,14 @@ defmodule Ezagent.Orchestrator.Tools do
   defp candidate_worker_uri(content, instance_name, %URI{} = workspace_uri)
        when is_binary(instance_name) do
     flavor = Map.get(content, :flavor) || Map.get(content, "flavor")
-    workspace_name = workspace_uri.host || "default"
+
+    workspace_name =
+      workspace_uri.host ||
+        raise ArgumentError,
+              "workspace_uri has no host (`workspace://<NAME>`) — got " <>
+                inspect(workspace_uri) <>
+                ". Per SPEC #324 rev 3 / PR #335, there is NO silent default workspace " <>
+                "fallback; callers must pass a workspace URI with an explicit name."
 
     if is_binary(flavor) and flavor != "" do
       {:ok, URI.new!("entity://agent/#{workspace_name}/#{flavor}_#{instance_name}")}
@@ -1559,7 +1566,13 @@ defmodule Ezagent.Orchestrator.Tools do
   end
 
   defp has_template_cap?(caps, kind, %URI{} = workspace_uri) do
-    workspace_name = workspace_uri.host || "default"
+    workspace_name =
+      workspace_uri.host ||
+        raise ArgumentError,
+              "workspace_uri has no host (`workspace://<NAME>`) — got " <>
+                inspect(workspace_uri) <>
+                ". Per SPEC #324 rev 3 / PR #335, there is NO silent default workspace " <>
+                "fallback; callers must pass a workspace URI with an explicit name."
 
     representative =
       case kind do

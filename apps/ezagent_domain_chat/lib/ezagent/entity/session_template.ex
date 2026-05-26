@@ -565,7 +565,13 @@ defmodule Ezagent.Entity.SessionTemplate do
   defp require_session_template_cap(caps, workspace) do
     case workspace_uri(workspace) do
       {:ok, %URI{} = workspace_uri} ->
-        workspace_name = workspace_uri.host || "default"
+        workspace_name =
+          workspace_uri.host ||
+            raise ArgumentError,
+                  "workspace_uri has no host (`workspace://<NAME>`) — got " <>
+                    inspect(workspace_uri) <>
+                    ". Per SPEC #324 rev 3 / PR #335, there is NO silent default workspace " <>
+                    "fallback; callers must pass a workspace URI with an explicit name."
 
         needed = %{
           kind: :session_template,

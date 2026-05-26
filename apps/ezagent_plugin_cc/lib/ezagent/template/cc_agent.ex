@@ -762,14 +762,27 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
     Path.join([Ezagent.Home.path("cc-agents"), workspace, name])
   end
 
-  defp agent_workspace_segment(%URI{host: "agent", path: "/" <> rest}) do
+  defp agent_workspace_segment(%URI{host: "agent", path: "/" <> rest} = agent_uri) do
     case String.split(rest, "/", parts: 2) do
-      [workspace, _name] when workspace != "" -> workspace
-      _ -> "default"
+      [workspace, _name] when workspace != "" ->
+        workspace
+
+      _ ->
+        raise ArgumentError,
+              "agent URI is not canonical 3-segment `entity://agent/<workspace>/<name>` " <>
+                "— got #{inspect(agent_uri)}. Per SPEC #324 rev 3 / PR #335, there is NO " <>
+                "silent default workspace fallback; callers must pass a fully-formed URI."
     end
   end
 
-  defp agent_workspace_segment(_), do: "default"
+  defp agent_workspace_segment(other),
+    do:
+      raise(
+        ArgumentError,
+        "agent URI is not an `entity://agent/...` URI — got #{inspect(other)}. " <>
+          "Per SPEC #324 rev 3 / PR #335, there is NO silent default workspace fallback; " <>
+          "callers must pass a fully-formed URI."
+      )
 
   defp agent_name_segment(%URI{host: "agent", path: "/" <> rest}) do
     case String.split(rest, "/", parts: 2) do
