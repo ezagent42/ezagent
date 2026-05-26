@@ -289,44 +289,136 @@ defmodule EzagentDomainChat.Integration.SessionCreateOrchestratorUnifiedTest do
     # freshly-spawned Session Kind + workspace binding + creator-join
     # behind. Post-r2 `create_session/3` rolls those back on
     # `finalize_session_create/3` failure.
-    test "rollback: freshly-spawned Session Kind is terminated on cap-grant failure" do
-      bare_uri =
-        URI.new!("entity://user/system/hi1-rollback-#{System.unique_integer([:positive])}")
-
-      {:ok, _pid} = Ezagent.Kind.spawn(User, %{uri: bare_uri, initial_caps: MapSet.new()})
-
-      short = "hi1-rollback-#{System.unique_integer([:positive])}"
-
+    #
+    # codex PR #409 r1 review HIGH-1 + LOW — the original test set up a
+    # bare-user create flow expecting cap-grant denial, then silently
+    # treated the `{:ok, _, _}` happy path as "rollback not exercised,
+    # but that's fine." That silent pass was the LOW: it never actually
+    # asserted the rollback invariant. The architecture makes
+    # bare-user-creates-own-session ALWAYS succeed on cap grant (the
+    # session owner IS the bare user, so
+    # `IdentityAdmin.check_grant_authorized`'s `caller == owner` cond
+    # short-circuits to `:ok` before any cap-deny path can fire).
+    #
+    # To exercise the rollback contract deterministically we drop the
+    # public-API integration path and unit-test `rollback_fresh_session/2`
+    # directly (made `@doc false` for this purpose, see lib comment).
+    # This asserts the three invariants — Kind terminated, workspace
+    # binding removed, kind_snapshots row deleted (HIGH-1) — without
+    # relying on the unreachable cap-grant failure injection path.
+    test "rollback_fresh_session/2 tears down Kind + workspace bind + snapshot row" do
+      # Spawn a real Session so rollback has something to tear down.
+      short = "hi1-rollback-unit-#{System.unique_integer([:positive])}"
       session_uri = URI.new!("session://default/system/#{short}")
+      uri_str = URI.to_string(session_uri)
+      workspace_uri = URI.new!("workspace://system")
 
-      # Pre-call: session URI not in KindRegistry (we haven't created it).
-      assert Ezagent.KindRegistry.lookup(session_uri) == :error
+      {:ok, _pid} =
+        Ezagent.Kind.spawn(Session, %{uri: session_uri, owner_uri: User.admin_uri()})
 
-      result = EzagentDomainChat.create_session(short, bare_uri, template_name: "default")
+      # Bind workspace to match what `finalize_session_create/3` would
+      # have done before failing — this is the state rollback must
+      # undo.
+      :ok = Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)
 
-      case result do
-        {:error, {:orchestrator_admin_cap_grant_failed, _}} ->
-          # The residue invariant: the Session Kind must be gone, the
-          # workspace binding unbound. Give the supervisor a moment to
-          # actually terminate the child.
-          Process.sleep(50)
+      # Pre-rollback invariants — the state IS present.
+      assert {:ok, _pid} = Ezagent.KindRegistry.lookup(session_uri)
+      assert {:ok, _ws} = Ezagent.WorkspaceRegistry.lookup(session_uri)
 
-          assert Ezagent.KindRegistry.lookup(session_uri) == :error,
-                 "Session Kind should be torn down on cap-grant failure (no residue)"
+      assert %Ezagent.Ecto.KindSnapshot{} = Ezagent.Ecto.KindSnapshot.get(uri_str),
+             "Session.persistence/0 = {:snapshot, :on_change} writes initial row at spawn"
 
-          assert Ezagent.WorkspaceRegistry.lookup(session_uri) == :error,
-                 "Session→workspace binding should be removed on rollback"
+      # Execute rollback.
+      assert :ok = EzagentDomainChat.rollback_fresh_session(session_uri, User.admin_uri())
 
-        {:ok, _, _} ->
-          # If the bare user happens to have grant authority (CapBAC
-          # bootstrap variation), this rollback path isn't exercised.
-          # The structural rollback code still exists; this test
-          # exercises the invariant when it IS triggered.
-          :ok
+      # Give supervisor a moment to actually terminate the child.
+      Process.sleep(50)
 
-        other ->
-          flunk("unexpected create_session result: #{inspect(other)}")
-      end
+      # Post-rollback invariants — all three teardown steps fired.
+      assert Ezagent.KindRegistry.lookup(session_uri) == :error,
+             "rollback must terminate the Session Kind"
+
+      assert Ezagent.WorkspaceRegistry.lookup(session_uri) == :error,
+             "rollback must remove the workspace binding"
+
+      # codex PR #409 r1 review HIGH-1 — the kind_snapshots row
+      # `Kind.Server.init/1` wrote synchronously must also be
+      # deleted; without it, next boot's `ReadyGate` resurrects the
+      # rolled-back session via `KindSnapshot.list_all/0`.
+      assert Ezagent.Ecto.KindSnapshot.get(uri_str) == nil,
+             "rollback must delete the kind_snapshots row " <>
+               "(otherwise next-boot ReadyGate resurrects the session)"
+    end
+
+    # codex PR #409 r1 review HIGH-2 — concurrent adopter race used to
+    # destroy a committed session. Two callers racing on the same URI:
+    # A hits `{:ok, :started}` → `:fresh` → cap-grant fails mid-finalize
+    # → rollback tears down the Session; B simultaneously hits
+    # `{:ok, :already_started}` → `:adopted` → finalize succeeds and
+    # returns `{:ok, _, _}` to its caller; A's rollback then kills the
+    # Session B's caller observed as live. Post-fix
+    # `:global.set_lock/3` serializes create_session per session_uri:
+    # adopters wait until the fresh path either commits or rolls back,
+    # so the "B succeeds AND A tears it down" interleave is impossible.
+    #
+    # Direct race test against the public API (admin × admin both
+    # succeeding) doesn't observe the lock — both paths happily commit
+    # whether serialized or not. We assert the lock's structural
+    # contract via `:global.set_lock/3` directly: pre-hold the same
+    # per-URI key the implementation uses, then verify a parallel
+    # `create_session/3` call BLOCKS while the lock is held and
+    # COMPLETES after release. The lock id structure
+    # `{{:ezagent_domain_chat, :create_session, <uri_str>}, lock_requester_id}`
+    # is the same shape `create_session/3` constructs internally; if a
+    # future refactor changes the id shape without updating this test,
+    # the test will return immediately (no blocking) and fail loudly —
+    # which is the regression signal we want.
+    test "create_session/3 serializes via :global.set_lock per session_uri" do
+      short = "hi2-lock-#{System.unique_integer([:positive])}"
+      session_uri = URI.new!("session://default/system/#{short}")
+      uri_str = URI.to_string(session_uri)
+
+      lock_resource = {:ezagent_domain_chat, :create_session, uri_str}
+      external_holder_id = {lock_resource, make_ref()}
+
+      # Acquire the lock from the test process — `create_session/3`
+      # from another task must now block on it.
+      assert true = :global.set_lock(external_holder_id, [node()])
+
+      parent = self()
+
+      task =
+        Task.async(fn ->
+          Ecto.Adapters.SQL.Sandbox.allow(EzagentCore.Repo, parent, self())
+          EzagentDomainChat.create_session(short, User.admin_uri(), template_name: "default")
+        end)
+
+      # The task should still be running — the lock blocks its
+      # `:global.set_lock(_, [node()])` call. Wait 300ms; if the task
+      # has somehow returned, the lock isn't held → regression.
+      Process.sleep(300)
+
+      assert Process.alive?(task.pid),
+             "create_session/3 task must still be blocked on the per-URI lock " <>
+               "(if it has completed, the implementation no longer takes the lock)"
+
+      assert Ezagent.KindRegistry.lookup(session_uri) == :error,
+             "no Session should be spawned while the lock blocks create_session/3"
+
+      # Release the lock — the task should now proceed and complete.
+      # `:global.del_lock/2` returns `true` per OTP docs.
+      true = :global.del_lock(external_holder_id, [node()])
+
+      result = Task.await(task, 15_000)
+
+      assert match?({:ok, ^session_uri, _meta}, result),
+             "create_session/3 must succeed after lock release, got: #{inspect(result)}"
+
+      # Final invariant — the now-committed session is alive + has a
+      # snapshot row (and no rollback fired during the lock-blocked
+      # interval).
+      assert {:ok, _pid} = Ezagent.KindRegistry.lookup(session_uri)
+      assert Ezagent.Ecto.KindSnapshot.get(uri_str) != nil
     end
   end
 

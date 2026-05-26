@@ -115,6 +115,32 @@ defmodule EzagentDomainChat do
     session_uri =
       URI.new!("session://#{template_name}/#{workspace_name}/#{short_name}")
 
+    # codex PR #409 r1 review HIGH-2 — serialize concurrent create_session
+    # calls per session_uri. Two callers racing on the same URI used to
+    # observe a destructive interleave: A (`:fresh`) hits cap-grant
+    # failure mid-finalize, B (`:adopted`) finishes finalize successfully
+    # and returns `{:ok, _, _}` to its caller; A's rollback then tears
+    # down the Session B's caller observed as live. Wrapping the
+    # spawn+finalize+rollback body in a per-URI `:global.set_lock/3`
+    # forces adopters to wait until the fresh path commits or rolls
+    # back. By the time the second caller takes the lock, the Session
+    # is either alive (B sees `:already_started` → `:adopted` finalize,
+    # idempotent) or fully gone (B sees `{:ok, pid}` → `:fresh`, gets
+    # its own chance to commit). Single-machine BEAM per the project's
+    # standing constraint, so `:global` within one node suffices; the
+    # `[node()]` scope is explicit so a future clustering change does
+    # not silently broaden the lock.
+    lock_id = {{:ezagent_domain_chat, :create_session, URI.to_string(session_uri)}, self()}
+
+    try do
+      true = :global.set_lock(lock_id, [node()])
+      do_create_session(session_uri, workspace_uri, creator_uri)
+    after
+      _ = :global.del_lock(lock_id, [node()])
+    end
+  end
+
+  defp do_create_session(%URI{} = session_uri, %URI{} = workspace_uri, creator_uri) do
     # V1 prevention (Allen 2026-05-21): route via Ezagent.Kind.spawn/2.
     # Session Kind declares EzagentDomainChat.SessionSupervisor via
     # supervisor/0 — destination preserved.
@@ -183,7 +209,21 @@ defmodule EzagentDomainChat do
   # step swallows its own errors so the original failure reason from
   # the caller still surfaces. Operator-visible audit lives in the
   # Logger.warning the caller's `{:error, _}` produced upstream.
-  defp rollback_fresh_session(%URI{} = session_uri, %URI{} = creator_uri) do
+  #
+  # codex PR #409 r1 review LOW — exposed as `@doc false` (instead of
+  # `defp`) so the rollback invariants (Kind terminated + workspace
+  # unbound + kind_snapshots row deleted) can be exercised directly as
+  # a deterministic unit test. The integration path through
+  # `create_session/3` cannot trigger this rollback for the
+  # bare-user-creates-own-session case because `OrchestratorAdmin`'s
+  # `data_owner/1` resolves to the session owner (the bare user
+  # themselves), so the `IdentityAdmin.check_grant_authorized` cond
+  # `caller == owner` short-circuits to `:ok`. Direct unit invocation
+  # bypasses that architectural quirk and asserts rollback's own
+  # contract (codex r1 LOW).
+  @doc false
+  @spec rollback_fresh_session(URI.t(), URI.t()) :: :ok
+  def rollback_fresh_session(%URI{} = session_uri, %URI{} = creator_uri) do
     require Logger
 
     Logger.warning(
@@ -199,6 +239,20 @@ defmodule EzagentDomainChat do
 
     # Unbind workspace (idempotent ETS delete).
     safe(fn -> Ezagent.WorkspaceRegistry.unbind(session_uri) end)
+
+    # codex PR #409 r1 review HIGH-1 — delete the kind_snapshots row
+    # `Kind.Server.init/1` wrote synchronously at spawn time
+    # (Session.persistence/0 = {:snapshot, :on_change}, so the initial
+    # slice landed in DB the moment the GenServer reached
+    # `KindRegistry.put_new` — well before this rollback path). Without
+    # this delete, the row outlives the dead Kind: next boot's
+    # `ReadyGate` replays every snapshot via `KindSnapshot.list_all/0`,
+    # which would resurrect a session whose `create_session/3` failed
+    # cap-grant — defeating the whole rollback. Wrapped in `safe/1` per
+    # the existing best-effort teardown contract: the Kind is already
+    # terminated, an orphan row is the worst-case fallback and the
+    # original `{:error, _}` reason still surfaces to the caller.
+    safe(fn -> Ezagent.Ecto.KindSnapshot.delete(URI.to_string(session_uri)) end)
 
     # Creator join — we don't have an `unjoin` primitive and the Session
     # is being torn down anyway, so the slice goes away with the Kind.
