@@ -87,6 +87,15 @@ defmodule Ezagent.Behavior.NpAgent do
       # uses the agent URI itself — one Server per NpAgent Kind.
       python_handle: Map.get(args, :python_handle) || Map.get(args, :uri),
       timeout_ms: Map.get(args, :timeout_ms, @default_timeout_ms),
+      # PTY-orphan-restart 2026-05-26: cwd for the Python subprocess.
+      # Captured in slice so post_init/2's `handle_continue/3` can
+      # respawn the subprocess on phx boot — without re-walking the
+      # workspace template store (cross-tier coupling). NpAgent's Kind
+      # persistence is `:ephemeral`, so the slice does NOT survive a
+      # restart via snapshot; instead the Template Class re-runs
+      # `instantiate/3` which threads `:cwd` through here on every
+      # respawn.
+      cwd: Map.get(args, :cwd),
       last_input: nil,
       last_result: nil,
       last_error: nil
@@ -294,4 +303,69 @@ defmodule Ezagent.Behavior.NpAgent do
   @impl Ezagent.Behavior
   def data_owner(_), do: :no_owner
 
+  # --- PTY-orphan-restart 2026-05-26 — Python subprocess re-spawn -----------
+  #
+  # Mirrors the cc-Sandbox post_init pattern. The Python subprocess
+  # (uv-launched per agent) is NOT OTP-supervised across BEAM restarts.
+  # An NpAgent Kind that gets demand-spawned by the chat router (e.g.
+  # a chat message arriving before Workspace.Loader runs the template)
+  # comes up WITHOUT a Python subprocess — `handle_continue/3` brings
+  # it up via the Template Class's `ensure_subprocess_alive/2` callback.
+  #
+  # The Template Class's normal `instantiate/3` also covers this via
+  # the `ensure_python_alive/2` branch on `:already_started`, but
+  # there's a window between demand-spawn and Loader where the agent
+  # is alive without a subprocess. post_init/2 closes it: the
+  # subprocess is up by the time ReadyGate flips the Kind to `:ready`.
+  @impl Ezagent.Behavior
+  def post_init(_args, slice) do
+    cwd = Map.get(slice, :cwd)
+
+    cond do
+      is_nil(cwd) ->
+        # No cwd in slice — happens for demand-spawned NpAgents that
+        # arrived via the chat router (no init args from a Template
+        # Class). The Template Class's eventual Loader pass will
+        # rebuild the slice + start Python; nothing to do here.
+        :ok
+
+      true ->
+        {:continue, :ensure_python_alive}
+    end
+  end
+
+  @impl Ezagent.Behavior
+  def handle_continue(:ensure_python_alive, slice, ctx) do
+    self_uri = Map.get(ctx, :self_uri)
+    cwd = Map.get(slice, :cwd)
+
+    cond do
+      not is_struct(self_uri, URI) ->
+        Logger.warning(
+          "Ezagent.Behavior.NpAgent.post_init: non-URI self_uri " <>
+            "#{inspect(self_uri)} — skipping subprocess re-spawn"
+        )
+
+        :ignore
+
+      not is_binary(cwd) or cwd == "" ->
+        :ignore
+
+      true ->
+        case Ezagent.PluginNp.Template.NpAgent.ensure_subprocess_alive(self_uri, %{
+               "cwd" => cwd
+             }) do
+          :ok ->
+            :ignore
+
+          {:error, reason} ->
+            # Let-it-crash. Sandbox follows the same pattern: the
+            # Kind.Server's handle_continue wrapper turns the raise
+            # into a supervisor restart with backoff.
+            raise "Ezagent.Behavior.NpAgent.post_init: " <>
+                    "Template.NpAgent.ensure_subprocess_alive/2 failed for " <>
+                    "#{URI.to_string(self_uri)}: #{inspect(reason)}"
+        end
+    end
+  end
 end

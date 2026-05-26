@@ -341,12 +341,21 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
           #    dir).
           # 4. If `ensure_pty_server/3` fails → terminate the Kind AND
           #    remove the just-created config_dir (full rollback).
-          # 5. On full success: return `config_dir_path: dir` in meta
-          #    so caller dispatches `sandbox.write_path`.
+          # 5. On full success: return `config_dir_path: dir` AND
+          #    `respawn_template_data: tmpl_with_dir` in meta so caller
+          #    dispatches `sandbox.write_path` with both. The persisted
+          #    respawn data lets Sandbox.post_init/2 call back into
+          #    `ensure_subprocess_alive/2` on a phx restart
+          #    (PTY-orphan-restart 2026-05-26).
           with {:ok, config_dir} <- create_agent_config_dir(agent_uri, tmpl),
                tmpl_with_dir = put_agent_config_dir(tmpl, config_dir),
                :ok <- ensure_pty_server(agent_uri, cwd, tmpl_with_dir) do
-            {:ok, [agent_uri], %{fresh?: true, config_dir_path: config_dir}}
+            {:ok, [agent_uri],
+             %{
+               fresh?: true,
+               config_dir_path: config_dir,
+               respawn_template_data: tmpl_with_dir
+             }}
           else
             {:error, reason} ->
               _ = Ezagent.Kind.terminate(agent_uri)
@@ -964,6 +973,83 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   end
 
   def destroy_config_dir(_, _), do: {:error, :invalid_args}
+
+  # --- PTY-orphan-restart 2026-05-26 — re-spawn the claude PTY on boot ------
+  #
+  # Invoked by `Ezagent.Behavior.Sandbox`'s post_init/2 continuation
+  # after the Agent Kind has been rehydrated from snapshot on a phx
+  # restart. We check whether the PtyServer (which OWNS the claude TUI
+  # subprocess) is alive for this agent_uri; if absent, we re-run the
+  # same `ensure_pty_server/3` path `instantiate/3` uses for fresh
+  # spawns.
+  #
+  # ## Why this is needed
+  #
+  # The two-layer process model:
+  #   1. Agent Kind (Elixir GenServer) — OTP-supervised, recovers from
+  #      snapshot.
+  #   2. PtyServer + claude TUI subprocess — NOT OTP-supervised across
+  #      BEAM restarts. Dies with the BEAM (or worse, survives as an
+  #      OS orphan on brutal kill).
+  #
+  # On a normal `instantiate/3` boot path the codex round-8 fix
+  # IMMEDIATELY returns when the Agent Kind is `:already_started` —
+  # without starting the PTY. That's correct for the "foreign Kind
+  # adoption" case but it CAN'T be the boot-restore path. The
+  # boot-restore path goes through this callback instead, which knows
+  # the agent is OURS (it was OURS at original-spawn time; the
+  # respawn_template_data was persisted into our sandbox slice then).
+  #
+  # ## Idempotency
+  #
+  # `Ezagent.Domain.Pty.alive?/1` is the single source of truth. If
+  # YES, return :ok (subprocess survived the restart somehow — would
+  # only happen in a hot-code-update scenario; under normal
+  # SIGTERM/SIGKILL → BEAM restart, the PtyServer dies + the OS
+  # claude is reaped by erlexec OR by our OrphanReaper).
+  #
+  # On failure we return `{:error, reason}` — Sandbox.post_init/2
+  # re-raises and the Kind.Server supervisor restarts with backoff
+  # (`feedback_let_it_crash_no_workarounds`).
+  @impl Ezagent.Kind.Template
+  def ensure_subprocess_alive(%URI{} = agent_uri, respawn_data) when is_map(respawn_data) do
+    cond do
+      pty_server_alive?(agent_uri) ->
+        :ok
+
+      true ->
+        # PtyServer absent — rebuild it from the persisted respawn data.
+        # `cwd` is required in respawn_data per `check_cwd/1`; the rest
+        # of the keys are optional and may carry the agent_config_dir
+        # added at spawn-time (so we don't recreate the config dir
+        # here — the snapshot is the source of truth for it).
+        case Map.fetch(respawn_data, "cwd") do
+          {:ok, cwd} when is_binary(cwd) and cwd != "" ->
+            case ensure_pty_server(agent_uri, cwd, respawn_data) do
+              :ok ->
+                Logger.info(
+                  "cc.agent.ensure_subprocess_alive: respawned PtyServer for " <>
+                    URI.to_string(agent_uri)
+                )
+
+                :ok
+
+              {:error, reason} = err ->
+                Logger.error(
+                  "cc.agent.ensure_subprocess_alive: failed to respawn PtyServer for " <>
+                    "#{URI.to_string(agent_uri)}: #{inspect(reason)}"
+                )
+
+                err
+            end
+
+          _ ->
+            {:error, {:missing_cwd_in_respawn_data, agent_uri}}
+        end
+    end
+  end
+
+  def ensure_subprocess_alive(_, _), do: {:error, :invalid_args}
 
   # Create a fresh per-agent config dir by copying the template's
   # reference dir into the agent-private location.

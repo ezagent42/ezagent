@@ -428,4 +428,61 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
     |> Enum.filter(fn a -> URI.to_string(a.agent_uri) == agent_uri_str end)
     |> Enum.map(& &1.pid)
   end
+
+  # PTY-orphan-restart 2026-05-26 — `ensure_subprocess_alive/2` is the
+  # respawn hook `Ezagent.Behavior.Sandbox.post_init/2` calls after a
+  # phx restart when the Agent Kind has been rehydrated but the
+  # claude PtyServer has not been re-spawned.
+  describe "ensure_subprocess_alive/2 — PTY-orphan-restart 2026-05-26" do
+    setup do
+      Application.put_env(:ezagent_core, :sqlite_path, "/tmp/ezagent_test_pty_orphan.db")
+
+      ws_uri =
+        URI.new!(
+          "workspace://" <>
+            "ws_pty_orphan_#{:erlang.unique_integer([:positive, :monotonic])}"
+        )
+
+      {:ok, _pid} = Ezagent.Workspace.spawn_workspace(ws_uri.host)
+      cwd = System.tmp_dir!()
+      :ok = File.mkdir_p(cwd)
+
+      uri =
+        URI.new!(
+          "entity://agent/#{ws_uri.host}/cc_eternal_#{:erlang.unique_integer([:positive, :monotonic])}"
+        )
+
+      %{uri: uri, workspace_uri: ws_uri, cwd: cwd}
+    end
+
+    test "returns :ok immediately when PtyServer is already alive", %{uri: uri, cwd: cwd, workspace_uri: ws} do
+      tmpl = %{
+        "class" => "cc.agent",
+        "agent_uri" => URI.to_string(uri),
+        "cwd" => cwd
+      }
+
+      assert {:ok, [_returned_uri], %{fresh?: true}} = CcAgent.instantiate("t", tmpl, ws)
+      assert Ezagent.Domain.Pty.alive?(uri)
+
+      # Live PtyServer → respawn callback is a no-op.
+      assert :ok = CcAgent.ensure_subprocess_alive(uri, tmpl)
+
+      # Cleanup: terminate the Agent Kind + the PtyServer.
+      _ = Ezagent.Kind.terminate(uri)
+    end
+
+    test "returns {:error, :missing_cwd_in_respawn_data} when respawn_data has no cwd", %{uri: uri} do
+      # The cwd-less path is the structural failure case; an agent
+      # whose sandbox slice was corrupted should NOT silently use a
+      # default cwd.
+      assert {:error, {:missing_cwd_in_respawn_data, ^uri}} =
+               CcAgent.ensure_subprocess_alive(uri, %{})
+    end
+
+    test "rejects invalid args" do
+      assert {:error, :invalid_args} = CcAgent.ensure_subprocess_alive("not a URI", %{})
+      assert {:error, :invalid_args} = CcAgent.ensure_subprocess_alive(URI.new!("entity://agent/x/cc_y"), "not a map")
+    end
+  end
 end
