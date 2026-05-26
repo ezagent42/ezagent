@@ -105,7 +105,12 @@ defmodule EzagentPluginLiveview.AdminLive do
     #
     # Idempotent: ensure_main_session/2 is a no-op when the kind is
     # already alive; only spawns on the cold-start path.
-    current_session_uri = ensure_main_session(@main_session_uri, socket)
+    #
+    # codex PR #408 review MED-1 — ensure_main_session/2 now returns
+    # `{uri, socket}` so the orchestrator-status meta (pending/failed)
+    # can surface through the admin error banner. The unchanged path
+    # (kind alive) returns the unchanged socket.
+    {current_session_uri, socket} = ensure_main_session(@main_session_uri, socket)
 
     caller_uri = socket.assigns.current_entity_uri
 
@@ -2552,7 +2557,7 @@ defmodule EzagentPluginLiveview.AdminLive do
   defp ensure_main_session(%URI{} = uri, socket) do
     case Ezagent.KindRegistry.lookup(uri) do
       {:ok, _pid} ->
-        uri
+        {uri, socket}
 
       :error ->
         creator =
@@ -2565,23 +2570,76 @@ defmodule EzagentPluginLiveview.AdminLive do
         # TemplateRegistry-registered class.
         #
         # SPEC `2026-05-26-session-create-orchestrator-unified` Gap A —
-        # `create_session/3` now returns a 3-tuple. This rehydrate path
-        # only cares that the session is alive; the orchestrator status
-        # is logged but does not surface here (the operator's already
-        # on the admin page; the OrchestratorHealthCard re-renders on
-        # the next assign cycle).
+        # `create_session/3` now returns a 3-tuple.
+        #
+        # codex PR #408 review MED-1 — surface :pending / :failed meta
+        # through the admin error banner (mirrors the create_session
+        # handler at line ~709 + restart handler at line ~2511). Pre-fix
+        # the meta was log-only; an operator who landed on the admin
+        # page right after a failed orchestrator-spawn rehydrate had
+        # zero visibility into the failure.
         case EzagentDomainChat.create_session("main", creator, template_name: "default") do
           {:ok, _spawned_uri, meta} ->
             log_orchestrator_status_on_rehydrate(uri, meta)
-            uri
+            {uri, assign_rehydrate_flash(socket, meta)}
 
           {:error, reason} ->
             require Logger
             Logger.warning("AdminLive.ensure_main_session failed: #{inspect(reason)}")
-            uri
+
+            {uri,
+             assign(
+               socket,
+               :flash_error,
+               gettext("Main session rehydrate failed: %{reason}",
+                 reason: inspect(reason)
+               )
+             )}
         end
     end
   end
+
+  # codex PR #408 review MED-1 — translate the orchestrator-status meta
+  # into a LV flash assign. `:ready` → no change; `:pending` → info-style
+  # text; `:failed` → error-style text. Both render through the admin
+  # error-banner slot (we re-use `:flash_error` like the
+  # `create_session` event handler at line ~738; a future PR can split
+  # info vs error into separate slots).
+  #
+  # Public-for-test via `@doc false` so unit tests can exercise the 3
+  # branches without booting the full LV (the rehydrate path's first-mount
+  # window is a flaky setup to drive otherwise).
+  @doc false
+  def assign_rehydrate_flash(socket, meta) when is_map(meta) do
+    case Map.get(meta, :orchestrator_status) do
+      :ready ->
+        socket
+
+      :pending ->
+        assign(
+          socket,
+          :flash_error,
+          gettext("Orchestrator pending after main-session rehydrate — refresh in a moment.")
+        )
+
+      :failed ->
+        reason = Map.get(meta, :orchestrator_error)
+
+        assign(
+          socket,
+          :flash_error,
+          gettext(
+            "Orchestrator failed during main-session rehydrate: %{reason}; click Restart to retry.",
+            reason: inspect(reason)
+          )
+        )
+
+      _ ->
+        socket
+    end
+  end
+
+  def assign_rehydrate_flash(socket, _), do: socket
 
   defp read_session_members(%URI{} = session_uri) do
     case Ezagent.KindRegistry.lookup(session_uri) do
