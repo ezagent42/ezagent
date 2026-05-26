@@ -152,10 +152,14 @@ defmodule Mix.Tasks.Ezagent.User.Create do
       case Ezagent.SpawnRegistry.spawn(uri) do
         {:ok, _pid} ->
           Mix.shell().info("  spawned live User Kind at #{URI.to_string(uri)}")
-          # caps are set via initial_caps; for live spawn we'd need to
-          # dispatch grant_cap on Identity (Phase 5+ — Phase 4 v1 just
-          # spawns; restart will re-init with stored caps from `users`).
-          :ok = maybe_log_caps_not_live(caps)
+          # Post wildcard-cap-fix (2026-05-26): the entity SpawnRegistry
+          # fn now delegates to `Ezagent.Entity.User.initial_caps_for_spawn/1`,
+          # which hydrates the User Kind's `:identity` slice from
+          # `users.caps_json`. The previous "caps in DB but not in live
+          # Identity slice — restart picks them up via Loader" message
+          # was stale (and Loader never existed for this); caps ARE in
+          # the live slice now.
+          :ok = log_live_caps_count(caps)
           :ok
 
         {:error, reason} ->
@@ -167,13 +171,10 @@ defmodule Mix.Tasks.Ezagent.User.Create do
     end
   end
 
-  defp maybe_log_caps_not_live([]), do: :ok
+  defp log_live_caps_count([]), do: :ok
 
-  defp maybe_log_caps_not_live(_caps) do
-    Mix.shell().info(
-      "  note: caps in DB but not in live Identity slice — restart picks them up via Loader"
-    )
-
+  defp log_live_caps_count(caps) when is_list(caps) do
+    Mix.shell().info("  live Identity slice hydrated with #{length(caps)} cap(s) from caps_json")
     :ok
   end
 end

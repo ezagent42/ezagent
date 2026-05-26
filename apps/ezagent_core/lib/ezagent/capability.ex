@@ -241,6 +241,36 @@ defmodule Ezagent.Capability do
     Ezagent.AgentLineage.spawned_in_lineage?(needed_instance, principal_uri)
   end
 
+  # Two concrete `%URI{}` instances — compare by canonical string form
+  # rather than struct equality.
+  #
+  # WHY this is the correct equality:
+  #
+  #   URI.parse/1 (deprecated since Elixir 1.13) sets the legacy
+  #   `authority` field; URI.new/1 (which `Ezagent.URI.parse!/1` uses)
+  #   leaves `authority: nil`. Both yield identical canonical strings
+  #   for the same URI, but as structs they differ. Held caps are
+  #   deserialized from `users.caps_json` / `kind_snapshots` via
+  #   `Capability.from_map/1` which currently routes through
+  #   `URI.parse/1`; needed-cap instances at dispatch time come from
+  #   `Ezagent.URI.instance/1` operating on `URI.new!/1`-produced
+  #   structs. The two halves disagree on the `authority` field, so
+  #   the prior `defp instance_match?(same, same)` clause silently
+  #   denied every narrow cap with a concrete URI instance — the
+  #   precise regression unmasked by PR-CC-2-v2 (#354) + #358 (the
+  #   transitional wildcard bridge that previously masked all narrow
+  #   denials was removed; see SPEC
+  #   `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md`
+  #   §3 + the wildcard-cap-fix forensic note).
+  #
+  # By comparing `URI.to_string/1` outputs we match the
+  # `workspace_match?/2` clause directly above — same canonical-string
+  # semantic across both axes — and we accept whichever parser the
+  # producer happened to use without introducing a back-compat shim
+  # for `authority: "x"` ↔ `authority: nil` on the struct level.
+  defp instance_match?(%URI{} = held, %URI{} = needed),
+    do: URI.to_string(held) == URI.to_string(needed)
+
   defp instance_match?(same, same), do: true
   defp instance_match?(_, _), do: false
 

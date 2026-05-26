@@ -147,6 +147,121 @@ defmodule Ezagent.Behavior.Identity do
     end
   end
 
+  # Post-init reconciliation: re-merge caps from `users.caps_json` into
+  # the just-loaded `:identity` slice. Why this is necessary:
+  #
+  #   `init_slice/1` runs FRESH (and reads `args[:initial_caps]`) only
+  #   when `Kind.Snapshot.load_or_init/3` finds no snapshot. With a
+  #   snapshot present, the slice is restored from `kind_snapshots` and
+  #   `init_slice/1` is bypassed entirely — `Map.merge(fresh,
+  #   loaded_state)` then has `loaded_state[:identity]` override
+  #   `fresh[:identity]` wholesale. Result: any cap added to
+  #   `users.caps_json` AFTER the first spawn (or during a botched
+  #   first spawn that wrote a partial snapshot — see the
+  #   wildcard-cap-fix regression of 2026-05-26 where
+  #   `mix ezagent.user.create --caps '*'` wrote the wildcard to
+  #   caps_json but the empty `MapSet.new()` default in the entity
+  #   spawn fn produced a snapshot lacking it) is INVISIBLE to
+  #   dispatch step 5.5's `Kind.holds_cap?/2` slice lookup.
+  #
+  # This post_init re-reads caps_json on EVERY spawn and merges its
+  # contents into `slice.caps` as a UNION. Slice-added caps from
+  # `:grant_cap` survive (they remain in the loaded slice); caps_json
+  # caps re-appear regardless of whether they made it into the
+  # snapshot the first time. Caps_json is the durable bootstrap
+  # manifest (immutable post-create) so the union semantic is
+  # idempotent for the steady state.
+  #
+  # ## V1 limitation: revoke vs caps_json
+  #
+  # `:revoke_cap` mutates the slice only — it does NOT update
+  # `users.caps_json`. So a revoked caps_json cap re-appears on next
+  # spawn. This is documented as a V1 limitation. In practice the
+  # caps_json baseline is `User.default_caps(workspace) ++
+  # <caller-supplied caps at creation>` (e.g. `mix ezagent.user.create
+  # --caps '*'` for admin-delegate accounts), and revoking those
+  # bootstrap caps is not a V1 use case — admin revocations target
+  # post-create `:grant_cap` additions which live in the slice
+  # alone. A future SPEC ("caps SoT consolidation") will sync
+  # `:grant_cap` / `:revoke_cap` writes back to caps_json, at which
+  # point this post_init becomes either redundant or hardened with
+  # a "deleted-since" set on the user row.
+  #
+  # ## Non-user URIs
+  #
+  # Agents and other entity Kinds carry the same `:identity` slice
+  # but DO NOT have a `users.caps_json` row. `post_init/2` returns
+  # `:ok` for those (no caps_json source to merge) and the slice is
+  # left exactly as loaded.
+  # `post_init/2` per Behavior contract MUST be cheap + side-effect
+  # free (Behavior moduledoc: "side-effecting work goes in
+  # handle_continue/3"). We therefore do NO DB work here — only queue
+  # a continuation for user URIs. The actual `users.caps_json` read +
+  # slice merge happens in `handle_continue/3` below.
+  #
+  # Trade-off this introduces (codex review MED, accepted):
+  # `Ezagent.Kind.Server` keeps the Kind `:not_ready` through the
+  # entire post-init phase, including the continue round. Every user
+  # spawn now stays `:not_ready` for one additional `handle_continue`
+  # step (a single SQLite primary-key lookup + MapSet union, typically
+  # <1ms). Callers that synchronously dispatch immediately after
+  # `Kind.spawn/2` MUST await readiness via `Ezagent.ReadyGate.status/1`
+  # — the existing pattern in `mix ezagent.stress` (`await_ready!/1`)
+  # and the standard production demand-spawn path (which already
+  # buffers casts via `PendingDelivery` when not_ready). The earlier
+  # pre-decide variant pushed the DB read into post_init/2 (lifecycle
+  # contract violation) to keep the Kind ready-fast; the contract win
+  # outweighs the readiness latency.
+  @impl Ezagent.Behavior
+  def post_init(%{uri: %URI{scheme: "entity", host: "user"} = uri}, _slice),
+    do: {:continue, {:reconcile_caps_json, uri}}
+
+  def post_init(_args, _slice), do: :ok
+
+  @impl Ezagent.Behavior
+  def handle_continue({:reconcile_caps_json, %URI{} = uri}, slice, _ctx) do
+    case caps_from_caps_json(uri) do
+      [] ->
+        :ignore
+
+      caps_list when is_list(caps_list) ->
+        caps_from_json = MapSet.new(caps_list)
+        existing_caps = Map.get(slice, :caps, MapSet.new())
+        merged = MapSet.union(existing_caps, caps_from_json)
+
+        if MapSet.size(merged) == MapSet.size(existing_caps) do
+          # No new caps to add — slice already reflects caps_json.
+          # Skip the slice-write to avoid an unnecessary snapshot
+          # commit on every spawn.
+          :ignore
+        else
+          {:ok, %{slice | caps: merged}}
+        end
+    end
+  end
+
+  # Read caps_json caps for a user URI. Returns `[]` for unknown URIs,
+  # missing `Ezagent.Users` module (boot-order tolerance), or any
+  # error path — the post_init reconcile then returns `:ignore` and
+  # the slice is left intact.
+  defp caps_from_caps_json(%URI{} = uri) do
+    if Code.ensure_loaded?(Ezagent.Users) and
+         function_exported?(Ezagent.Users, :get_by_uri, 1) do
+      try do
+        case Ezagent.Users.get_by_uri(uri) do
+          %{caps: caps} when is_list(caps) -> caps
+          _ -> []
+        end
+      rescue
+        _ -> []
+      catch
+        _, _ -> []
+      end
+    else
+      []
+    end
+  end
+
   @impl Ezagent.Behavior
   def invoke(:list_caps, slice, _args, _ctx) do
     {:ok, slice, %{caps: MapSet.to_list(slice.caps)}}

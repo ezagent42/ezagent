@@ -225,13 +225,26 @@ defmodule EzagentDomainIdentity.Application do
         case uri.host do
           "user" ->
             # SPEC caps-cleanup-v1 §4.4 — admin's bootstrap caps come
-            # from `Ezagent.SystemPrincipal` (closed Catalog).
-            initial_caps =
-              if uri == User.admin_uri() do
-                Ezagent.SystemPrincipal.caps("system://bootstrap")
-              else
-                MapSet.new()
-              end
+            # from `Ezagent.SystemPrincipal` (closed Catalog). Non-admin
+            # users have their caps hydrated from `users.caps_json` (the
+            # durable bootstrap record written by `Ezagent.Users.create/3`)
+            # so EVERY demand-spawn path (mix tasks, LV admin
+            # `Behavior.WorkspaceUserAdmin.create_user`, login-mediated
+            # `Entity.ensure_spawned/1`) lands the same cap set into the
+            # User Kind's `:identity` slice — independent of which spawn
+            # entry point ran first.
+            #
+            # Pre-fix (wildcard-cap-fix regression, 2026-05-26): non-admin
+            # users defaulted to `MapSet.new()`, so a `mix ezagent.user.create`
+            # that wrote a wildcard cap to `caps_json` produced a slice
+            # WITHOUT that wildcard — the slice was snapshotted in the
+            # default-only state, and `Kind.Snapshot.load_or_init/3`
+            # then preferred snapshot over `args[:initial_caps]` on every
+            # subsequent boot. The wildcard never reached dispatch step
+            # 5.5's `holds_cap?` lookup. PR-CC-2-v2 (#354) + #358
+            # unmasked this by removing the transitional bridge that
+            # was masking the divergence for `system://` principals.
+            initial_caps = User.initial_caps_for_spawn(uri)
 
             # V1 prevention (Allen 2026-05-21): route via Ezagent.Kind.spawn/2.
             Ezagent.Kind.spawn(User, %{uri: uri, initial_caps: initial_caps})
