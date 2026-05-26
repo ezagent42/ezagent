@@ -289,6 +289,25 @@ defmodule Ezagent.PluginEcho.Template.EchoAgent do
 
   # --- Ezagent.UI.Form ------------------------------------------------
 
+  # Phase 5 PR 2 SPEC_REVIEW R6 froze the form field types at the four
+  # values declared in `Ezagent.UI.Form` (`:text | :path | :uri |
+  # :select`). The PR-191 "with_pty" field originally introduced
+  # `:boolean`, which:
+  #
+  #   - violated the frozen v1 callback type (`Ezagent.UI.FormTest`
+  #     asserts every form field's type is in the 4-value allowlist), and
+  #   - rendered as a plain text input in the LV form (the
+  #     `workspace_detail_live` switch had no `:boolean` arm), and
+  #   - submitted `"true"` / `"false"` strings that
+  #     `Ezagent.Kind.Template.validate/1` could not destructure against
+  #     its `with_pty: true` literal pattern — silently downgrading
+  #     `with_pty: true` requests to a no-PTY spawn.
+  #
+  # Modeling the field as `:select` of `["false", "true"]` keeps us
+  # inside the frozen contract AND gives the operator a real
+  # discoverable affordance; `form_to_args/1` then coerces the
+  # submitted string to the atom-boolean the validate/instantiate
+  # paths pattern-match on.
   @impl Ezagent.UI.Form
   def form_fields do
     [
@@ -301,9 +320,10 @@ defmodule Ezagent.PluginEcho.Template.EchoAgent do
       },
       %{
         name: "with_pty",
-        type: :boolean,
+        type: :select,
         label: "With local PTY (runs /bin/bash -i)",
         required: false,
+        options: ["false", "true"],
         default: "false"
       },
       %{
@@ -314,5 +334,37 @@ defmodule Ezagent.PluginEcho.Template.EchoAgent do
         placeholder: "/tmp/echo-sandbox"
       }
     ]
+  end
+
+  # Coerce the `:select` field back to an atom-boolean before handing
+  # the template map to `Workspace.add_template` → `validate/1` (which
+  # pattern-matches `with_pty: true`).
+  #
+  # codex r1 MEDIUM (2026-05-26) — fail fast on drift. `validate/1` only
+  # special-cases the literal atom `true` and treats everything else as
+  # PTY-off; without an explicit fail on unrecognized strings, a
+  # malformed submission ("tru", "yes", etc.) silently downgrades the
+  # operator's PTY request to no-PTY — the canonical
+  # `feedback_let_it_crash_no_workarounds` anti-pattern. We raise here
+  # at the form→template translation boundary so the UI surfaces the
+  # error instead of silently dropping intent.
+  #
+  # Also drops `"tmpl_name"` (the LV form's workspace-key field) so the
+  # override path produces the same template-data shape as the default
+  # path in `workspace_detail_live` (which calls `Map.drop(params,
+  # ["tmpl_name"])` before `default_form_to_args/2`). Without this drop
+  # we'd persist `"tmpl_name"` redundantly inside template_data — two
+  # sources of truth for the template identity.
+  @impl Ezagent.UI.Form
+  def form_to_args(params) when is_map(params) do
+    params
+    |> Map.drop(["tmpl_name"])
+    |> Map.new(fn
+      {"with_pty", "true"} -> {"with_pty", true}
+      {"with_pty", "false"} -> {"with_pty", false}
+      {"with_pty", other} -> raise ArgumentError, "echo.agent: with_pty must be \"true\" or \"false\", got: #{inspect(other)}"
+      kv -> kv
+    end)
+    |> Map.put("class", template_name())
   end
 end
