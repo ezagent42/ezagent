@@ -43,7 +43,7 @@ defmodule Ezagent.URI do
       entity://user/system/admin                             # PR-2 entity
       entity://agent/team-alpha/cc_demo?action=chat.receive      # entity + action
       entity://agent/team-alpha/curl_my-deepseek              # cross-workspace entity
-      session://default/team-alpha/main?action=chat.send         # PR-7 session
+      session://demo-class/demo-workspace/main?action=chat.send         # PR-7 session
       template://agent/system/cc-orchestrator                # PR-7 agent template
       template://session/team-alpha/code-review@abc123        # PR-7 session template
       resource://uploads/team-alpha/file-abc                  # PR-7 resource
@@ -113,9 +113,9 @@ defmodule Ezagent.URI do
   `template://` / `resource://` PR-7), the path MUST be
   `/<workspace>/<name>`:
 
-  - 2-segment paths (`session://default/team-alpha/main`) raise with
+  - 2-segment paths (`session://demo-class/demo-workspace/main`) raise with
     `ArgumentError: <scheme> URI must include workspace segment`.
-  - 4+ segments (`session://default/team-alpha/main/extra`) raise with
+  - 4+ segments (`session://demo-class/demo-workspace/main/extra`) raise with
     `ArgumentError: <scheme> URI sub-resource positions are reserved`.
 
   Cross-cutting schemes (`workspace://`, `system://`) are unchanged
@@ -207,7 +207,7 @@ defmodule Ezagent.URI do
   - `entity://user/system/admin` → unchanged
   - `entity://agent/team-alpha/cc_demo?action=chat.receive`
     → `%URI{scheme: "entity", host: "agent", path: "/default/cc_demo"}`
-  - `session://default/team-alpha/main?action=chat.send`
+  - `session://demo-class/demo-workspace/main?action=chat.send`
     → `%URI{scheme: "session", host: "default", path: "/default/main"}`
   - `template://agent/system/cc-orchestrator`
     → unchanged (already in instance form)
@@ -349,7 +349,7 @@ defmodule Ezagent.URI do
   Examples:
   - `entity://agent/system/echo_default?action=echo.say` → `{:ok, {:echo, :say}}`
   - `entity://agent/team-alpha/cc_demo-builder?action=chat.receive` → `{:ok, {:chat, :receive}}`
-  - `session://default/team-alpha/main?action=chat.send` → `{:ok, {:chat, :send}}`
+  - `session://demo-class/demo-workspace/main?action=chat.send` → `{:ok, {:chat, :send}}`
   - `entity://agent/team-alpha/cc_demo-builder` → `{:error, :missing_action}`
   - `entity://agent/team-alpha/cc_demo-builder?action=` → `{:error, :missing_action}`
   - `entity://agent/team-alpha/cc_demo-builder?action=justone` → `{:error, :malformed_action}`
@@ -391,7 +391,7 @@ defmodule Ezagent.URI do
   - `entity://user/system/admin` → `""`
   - `entity://agent/team-alpha/cc_demo-builder?action=chat.receive` → `"behavior/chat/receive"`
   - `entity://agent/cc_demo-builder/auth/login` → `"auth/login"`
-  - `session://default/team-alpha/main?action=chat.send` → `"behavior/chat/send"`
+  - `session://demo-class/demo-workspace/main?action=chat.send` → `"behavior/chat/send"`
   """
   @spec subresource(URI.t()) :: String.t()
   def subresource(%URI{path: nil}), do: ""

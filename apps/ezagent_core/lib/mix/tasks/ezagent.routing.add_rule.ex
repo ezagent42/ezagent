@@ -12,7 +12,7 @@ defmodule Mix.Tasks.Ezagent.Routing.AddRule do
 
       mix esr routing add_rule --uri system://routing/default \\
           --matcher mention:entity://agent/team-alpha/cc_builder \\
-          --receivers session://default/team-alpha/architect
+          --receivers session://demo-class/demo-workspace/architect
 
   `mix esr` runs in the same BEAM as the GUI (via distributed-Erlang
   RPC) — same dispatch path, same CapBAC gate, same audit row.
@@ -40,11 +40,11 @@ defmodule Mix.Tasks.Ezagent.Routing.AddRule do
 
       # text_contains rule: any urgent message → oncall session
       mix ezagent.routing.add_rule EzagentDomainChat.Routing.MentionRouting \\
-          text_contains:urgent receivers:session://default/team-alpha/oncall
+          text_contains:urgent receivers:session://demo-class/demo-workspace/oncall
 
       # mention rule: @cc_builder → architect session
       mix ezagent.routing.add_rule EzagentDomainChat.Routing.MentionRouting \\
-          mention:entity://agent/team-alpha/cc_builder receivers:session://default/team-alpha/architect
+          mention:entity://agent/team-alpha/cc_builder receivers:session://demo-class/demo-workspace/architect
 
   ## Behavior
 
@@ -77,7 +77,7 @@ defmodule Mix.Tasks.Ezagent.Routing.AddRule do
         mix esr routing add_rule \\
             --uri system://routing/default \\
             --matcher mention:entity://agent/team-alpha/cc_builder \\
-            --receivers session://default/team-alpha/architect
+            --receivers session://demo-class/demo-workspace/architect
 
     See `Ezagent.Behavior.Routing.interface/0` for the full action
     schema. The GUI's /routing page uses the SAME dispatch path.
