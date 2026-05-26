@@ -89,13 +89,36 @@ defmodule Ezagent.Runtime do
         :ok
 
       err ->
-        require Logger
+        # Allen 2026-05-26: the canonical runtime node name is in
+        # use by another OS process (typically: yao.shengyue's
+        # 12-day-old phx, or a parallel local dev BEAM, or any
+        # bootstrap mix task firing alongside a running phx). For
+        # phx.server itself this would be fatal — but for bootstrap
+        # mix tasks (e.g. `mix ezagent.user.token --mint` writing
+        # directly to the DB) distribution is incidental.
+        #
+        # Fall back to a unique distinguishing name so the BEAM has
+        # SOME node identity (Phoenix.PubSub etc. care that the
+        # node is alive even when not federated). The fallback name
+        # is per-OS-process so concurrent bootstrap invocations
+        # don't trample each other.
+        fallback =
+          :"ezagent_bootstrap_#{System.system_time(:nanosecond)}@#{@default_runtime_host}"
 
-        Logger.warning(
-          "Ezagent.Runtime: net_kernel start failed (#{inspect(err)}); CLI will fall back to error path"
-        )
+        case :net_kernel.start([fallback, :longnames]) do
+          {:ok, _} ->
+            Node.set_cookie(cookie)
+            :ok
 
-        :ok
+          _ ->
+            require Logger
+
+            Logger.warning(
+              "Ezagent.Runtime: net_kernel start failed (#{inspect(err)}); CLI will fall back to error path"
+            )
+
+            :ok
+        end
     end
   end
 

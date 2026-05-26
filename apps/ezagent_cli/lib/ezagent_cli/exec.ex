@@ -118,7 +118,18 @@ defmodule EzagentCli.Exec do
 
       {:help, subcommand_path} ->
         sub_spec = Optimus.fetch_subcommand(spec, subcommand_path)
-        %{output: Optimus.help(sub_spec), exit_code: 0}
+        # Single-segment path (e.g. `mix ezagent help agent`) lands
+        # on a subcommand with further subcommand children — use our
+        # custom formatter to dodge the Optimus `:badmap` crash (see
+        # `format_subcommand_help/1`). Deeper paths (action-level)
+        # have no children and Optimus.help/1 works.
+        output =
+          case subcommand_path do
+            [_kind] -> format_subcommand_help(sub_spec)
+            _ -> Optimus.help(sub_spec)
+          end
+
+        %{output: output, exit_code: 0}
 
       :version ->
         %{output: "esr 0.1.0", exit_code: 0}
@@ -147,7 +158,7 @@ defmodule EzagentCli.Exec do
 
   defp handle_subcommand([kind_atom], _parsed, spec) do
     sub = Optimus.fetch_subcommand(spec, [kind_atom])
-    %{output: Optimus.help(sub), exit_code: 0}
+    %{output: format_subcommand_help(sub), exit_code: 0}
   end
 
   defp handle_subcommand([kind_atom, action_atom], parsed, _spec) do
@@ -167,6 +178,54 @@ defmodule EzagentCli.Exec do
 
   defp handle_subcommand(other, _parsed, _spec) do
     %{output: "error: unknown subcommand path: #{inspect(other)}", exit_code: 2}
+  end
+
+  # Allen 2026-05-26: `Optimus.help/1` on a fetched subcommand whose
+  # children are themselves Optimus structs (`mix ezagent agent` →
+  # children are `put_api_key`, `get_api_key`, ...) raises a
+  # `:badmap` in Optimus's internal help formatter. The formatter
+  # expects `subcommands` to be a keyword list `[{name, t()}, ...]`
+  # but `Optimus.new!/1` normalizes them to bare structs at the
+  # outer level — fetch_subcommand preserves the bare-struct shape
+  # and the formatter explodes on the first pattern-match.
+  #
+  # Rather than patching the upstream library, we render a minimal
+  # but operator-useful help block ourselves: USAGE + the list of
+  # available actions with their `about` line. Detail per action
+  # (flags / options) is available via `mix ezagent <kind> <action>
+  # --help` — Optimus.help/1 works fine when the spec has no
+  # further subcommand children.
+  defp format_subcommand_help(%Optimus{name: name, about: about, subcommands: subs}) do
+    actions =
+      subs
+      |> Enum.sort_by(& &1.name)
+      |> Enum.map(fn s ->
+        "    #{String.pad_trailing(s.name, 22)} #{s.about || ""}"
+      end)
+      |> Enum.join("\n")
+
+    """
+
+                                      mix ezagent #{name}
+
+    #{about || ""}
+
+    USAGE:
+
+        mix ezagent #{name} <action> [--<option>=<value> ...]
+        mix ezagent #{name} <action> --help
+
+    ACTIONS:
+
+    #{actions}
+
+    """
+  end
+
+  defp format_subcommand_help(other) do
+    # Defensive — should never hit; if it does, fall back to the
+    # raw struct so the operator at least sees something.
+    inspect(other, pretty: true)
   end
 
   defp find_behavior_for(kind_atom, action_atom) do

@@ -174,6 +174,15 @@ defmodule EzagentCore.Invariants.LvCliParityTest do
     "dump" => {:cli, "mix ezagent.snapshot.dump <uri>"},
     "clear" => {:cli, "mix ezagent.snapshot.clear <uri>"},
 
+    # --- Orchestrator restart (admin LV / OrchestratorHealthCard) ---
+    # Restart dispatches `template.instantiate` on the orchestrator
+    # template URI (admin_live.ex:929 — strips the leading `cc_` so
+    # flavor-prepend produces the same final URI). The CLI equivalent
+    # is `mix ezagent agent_template instantiate` on the same template.
+    "restart_orchestrator" =>
+      {:cli,
+       "mix ezagent agent_template instantiate --agent-template <orchestrator-tmpl-uri> --instance-name <bare-name>"},
+
     # --- Settings (admin SMTP + email test) ---
     "save_smtp" =>
       {:deferred,
