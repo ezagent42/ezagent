@@ -29,8 +29,11 @@ defmodule EzagentCli.Dispatch do
         {:error, {:missing_instance_arg, type_name}}
 
       instance ->
-        # Extract action args (everything except --<type_name>, --as, --deadline-ms)
-        reserved = MapSet.new([type_name, :as, :deadline_ms])
+        # Extract action args (everything except --<type_name>, --as,
+        # --deadline-ms, --instance-class). `:instance_class` is consumed
+        # by `build_target_uri/6` for bare-name promotion (SPEC #366);
+        # it is NOT an action arg.
+        reserved = MapSet.new([type_name, :as, :deadline_ms, :instance_class])
         action_args = Map.drop(options, MapSet.to_list(reserved))
 
         # Determine mode
@@ -58,8 +61,21 @@ defmodule EzagentCli.Dispatch do
             # SPEC #324: bare-name `--session foo` promotion derives
             # workspace structurally from caller_uri instead of the
             # legacy silent `"default"` default.
+            #
+            # SPEC #366 (Allen 2026-05-26): the template-class slot of
+            # `session://<class>/<workspace>/<name>` (and `template://`
+            # / `resource://`) must also be explicit — `options` flows
+            # through to `promote_to_3seg/4` which reads `:instance_class`
+            # and raises if absent for bare-name promotions.
             target_uri =
-              build_target_uri(type_name, instance, behavior_module, action, caller_uri)
+              build_target_uri(
+                type_name,
+                instance,
+                behavior_module,
+                action,
+                caller_uri,
+                options
+              )
 
             deadline_ms = Map.get(options, :deadline_ms) || @default_deadline_ms
 
@@ -94,7 +110,8 @@ defmodule EzagentCli.Dispatch do
     end
   end
 
-  defp build_target_uri(type_name, instance, behavior_module, action, %URI{} = caller_uri) do
+  defp build_target_uri(type_name, instance, behavior_module, action, %URI{} = caller_uri, options)
+       when is_map(options) do
     behavior_seg = behavior_module.state_slice() |> to_string()
     action_qs = "?action=#{behavior_seg}.#{to_string(action)}"
 
@@ -114,7 +131,8 @@ defmodule EzagentCli.Dispatch do
         # Bare name — fall back to legacy scheme = type_name + promote.
         scheme = scheme_for(type_name)
         caller_workspace = workspace_name_from_caller(caller_uri)
-        promoted_instance = promote_to_3seg(scheme, instance, caller_workspace)
+        instance_class = Map.get(options, :instance_class)
+        promoted_instance = promote_to_3seg(scheme, instance, caller_workspace, instance_class)
         URI.parse("#{scheme}://#{promoted_instance}#{action_qs}")
     end
   end
@@ -150,24 +168,61 @@ defmodule EzagentCli.Dispatch do
   # the operator passed a bare name on the CLI. Workspace is taken from
   # the caller URI structurally rather than the silent `"default"`
   # legacy default.
-  defp promote_to_3seg("session", instance, workspace),
-    do: fill_caller_workspace("default", workspace, instance)
+  #
+  # SPEC #366 (Allen 2026-05-26 02:43Z, `feedback_let_it_crash_no_workarounds`):
+  # the template/type slot ALSO no longer silent-defaults to `"default"`.
+  # Operators must pass `--instance-class <class>` on bare-name CLI
+  # invocations for the three per-tenant schemes (`session`, `template`,
+  # `resource`). Missing class on a bare name = `ArgumentError` with a
+  # message that names the missing flag.
+  #
+  # Fully-typed instances (e.g. `--session generic/team-alpha/foo` or
+  # `--session generic/foo`) skip the class fill and the explicit-class
+  # check — the operator supplied the class inline.
+  defp promote_to_3seg("session", instance, workspace, template_class),
+    do: fill_caller_workspace_strict("session", workspace, instance, template_class)
 
-  defp promote_to_3seg("template", instance, workspace),
-    do: fill_caller_workspace("default", workspace, instance)
+  defp promote_to_3seg("template", instance, workspace, template_class),
+    do: fill_caller_workspace_strict("template", workspace, instance, template_class)
 
-  defp promote_to_3seg("resource", instance, workspace),
-    do: fill_caller_workspace("default", workspace, instance)
+  defp promote_to_3seg("resource", instance, workspace, template_class),
+    do: fill_caller_workspace_strict("resource", workspace, instance, template_class)
 
-  defp promote_to_3seg(_scheme, instance, _workspace), do: instance
+  defp promote_to_3seg(_scheme, instance, _workspace, _template_class), do: instance
 
-  defp fill_caller_workspace(type_default, workspace, instance) do
+  # SPEC #366: bare-name needs `--instance-class <class>`; missing =
+  # raise. Two-segment (`<class>/<name>`) and three-segment forms
+  # already carry the class inline and are accepted as-is.
+  defp fill_caller_workspace_strict(scheme, workspace, instance, template_class) do
     case String.split(instance, "/") do
-      [bare] -> "#{type_default}/#{workspace}/#{bare}"
-      [type, bare] -> "#{type}/#{workspace}/#{bare}"
-      [_type, _ws, _name | _rest] -> instance
-      _ -> instance
+      [bare] ->
+        class = require_template_class!(scheme, bare, template_class)
+        "#{class}/#{workspace}/#{bare}"
+
+      [type, bare] ->
+        "#{type}/#{workspace}/#{bare}"
+
+      [_type, _ws, _name | _rest] ->
+        instance
+
+      _ ->
+        instance
     end
+  end
+
+  defp require_template_class!(_scheme, _bare, class)
+       when is_binary(class) and class != "",
+       do: class
+
+  defp require_template_class!(scheme, bare, _missing) do
+    raise ArgumentError,
+          "missing required `--instance-class <class>` for `#{scheme}://` bare-name " <>
+            "promotion. Got bare instance #{inspect(bare)}; promotion to the 3-segment " <>
+            "`#{scheme}://<class>/<workspace>/<name>` URI requires an explicit class. " <>
+            "Add `--instance-class <class>` to your CLI invocation, or pass the " <>
+            "fully-qualified instance (e.g. `--#{scheme} <class>/<name>`). Per SPEC " <>
+            "#366 / `feedback_let_it_crash_no_workarounds` — there is no silent " <>
+            "`\"default\"` class fallback."
   end
 
   defp derive_caller(options) do

@@ -181,7 +181,10 @@ defmodule EzagentPluginLiveview.AdminLive do
       # V1 UI SPEC §2C.3 — MemberPanel's Invite modal visibility.
       |> assign(:invite_open, false)
       |> assign(:compose_form, to_form(%{"text" => ""}, as: "chat"))
-      |> assign(:new_session_form, to_form(%{"short_name" => ""}, as: "new_session"))
+      |> assign(
+        :new_session_form,
+        to_form(%{"short_name" => "", "template_class" => ""}, as: "new_session")
+      )
       |> allow_upload(:attachments,
         accept: :any,
         max_entries: 5,
@@ -662,9 +665,31 @@ defmodule EzagentPluginLiveview.AdminLive do
     end
   end
 
-  def handle_event("create_session", %{"new_session" => %{"short_name" => name}}, socket)
-      when is_binary(name) and name != "" do
-    case EzagentDomainChat.create_session(String.trim(name), Ezagent.Entity.User.admin_uri()) do
+  # SPEC #366 (Allen 2026-05-26) — `template_class` is now a required
+  # form field (rendered as a dropdown). The previous silent
+  # `"default"` fallback in `EzagentDomainChat.create_session/3` was
+  # removed; this LV handler refuses the submit when the operator
+  # didn't pick a class.
+  #
+  # Codex PR #369 r1 HIGH — pass `socket.assigns.caller_uri` (the
+  # authenticated entity URI from LiveAuth) AND an explicit
+  # `:workspace_uri` so the session is created in the operator's
+  # current workspace, not whatever workspace admin happens to belong
+  # to. The previous `User.admin_uri()` argument silently dropped the
+  # tenant operator into `workspace://system` and joined `admin`
+  # instead of the actual caller.
+  def handle_event(
+        "create_session",
+        %{"new_session" => %{"short_name" => name, "template_class" => class}},
+        socket
+      )
+      when is_binary(name) and name != "" and is_binary(class) and class != "" do
+    case EzagentDomainChat.create_session(
+           String.trim(name),
+           socket.assigns.caller_uri,
+           template_name: class,
+           workspace_uri: socket.assigns.current_workspace_uri
+         ) do
       {:ok, session_uri} ->
         if connected?(socket) do
           Phoenix.PubSub.subscribe(EzagentCore.PubSub, session_events_topic(session_uri))
@@ -679,7 +704,10 @@ defmodule EzagentPluginLiveview.AdminLive do
         {:noreply,
          socket
          |> assign(:sessions, EzagentDomainChat.list_sessions())
-         |> assign(:new_session_form, to_form(%{"short_name" => ""}, as: "new_session"))
+         |> assign(
+           :new_session_form,
+           to_form(%{"short_name" => "", "template_class" => ""}, as: "new_session")
+         )
          |> assign(:flash_error, nil)}
 
       {:error, reason} ->
@@ -690,6 +718,23 @@ defmodule EzagentPluginLiveview.AdminLive do
            gettext("Create failed: %{reason}", reason: inspect(reason))
          )}
     end
+  end
+
+  def handle_event(
+        "create_session",
+        %{"new_session" => %{"short_name" => name}},
+        socket
+      )
+      when is_binary(name) and name != "" do
+    # SPEC #366 — explicit failure when the operator left the
+    # template dropdown empty. We deliberately do NOT pick a default
+    # here.
+    {:noreply,
+     assign(
+       socket,
+       :flash_error,
+       gettext("Pick a template before creating the session.")
+     )}
   end
 
   def handle_event("create_session", _params, socket) do
@@ -1254,6 +1299,13 @@ defmodule EzagentPluginLiveview.AdminLive do
       # empty default for test paths that mount this LV outside the
       # `:require_entity` live_session.
       |> assign_new(:cmdk_nav_routes, fn -> [] end)
+      # SPEC #366 (Allen 2026-05-26) — eliminate silent `"default"`
+      # template-class fallback in session creation. The new-session
+      # form needs an explicit dropdown sourced from the current
+      # workspace's `session_templates` map. Recomputed on every
+      # render (cheap — one Store.get_by_name) so newly-added
+      # templates are immediately pickable without an LV remount.
+      |> assign(:template_class_options, template_class_options_for(assigns))
 
     ~H"""
     <AppShell.app_shell
@@ -1279,6 +1331,7 @@ defmodule EzagentPluginLiveview.AdminLive do
               applicable_views={@applicable_views}
               current_view={@current_view}
               new_session_form={@new_session_form}
+              template_class_options={@template_class_options}
               compose_form={@compose_form}
               member_options={@member_options}
               session_info={@session_info}
@@ -2011,7 +2064,12 @@ defmodule EzagentPluginLiveview.AdminLive do
         creator =
           Map.get(socket.assigns, :current_entity_uri) || Ezagent.Entity.User.admin_uri()
 
-        case EzagentDomainChat.create_session("main", creator) do
+        # SPEC #366 (Allen 2026-05-26) — explicit template_name. This
+        # rehydrate path preserves the legacy `session://default/<ws>/main`
+        # URI shape that tests + persisted state assume; literal
+        # `"default"` is the bootstrap namespace segment, NOT a
+        # TemplateRegistry-registered class.
+        case EzagentDomainChat.create_session("main", creator, template_name: "default") do
           {:ok, _spawned_uri} ->
             uri
 
@@ -2225,6 +2283,42 @@ defmodule EzagentPluginLiveview.AdminLive do
     case Ezagent.WorkspaceRegistry.lookup(session_uri) do
       {:ok, %URI{host: name}} when is_binary(name) and name != "" -> name
       _ -> nil
+    end
+  end
+
+  # SPEC #366 (Allen 2026-05-26) — read the current workspace's
+  # `session_templates` map and project to the new-session form's
+  # `<select>` options.
+  #
+  # Returns `[String.t()]` — the workspace's session-template instance
+  # names sorted lexically (NOT registered template-class names from
+  # `Ezagent.TemplateRegistry`; see the codex r1 note in the
+  # `session_editor.ex` template-class dropdown for the semantic
+  # split). Each key becomes the URI's class segment via
+  # `create_session/3`'s `:template_name` option.
+  #
+  # Empty list = workspace has zero declared templates → the dropdown
+  # renders an empty-state with a deep-link to /admin/templates.
+  # (LOW limitation: `/admin/templates` is `:require_admin`; non-admin
+  # operators see the link but can't follow it. Tracked for a later
+  # PR that exposes a tenant-scoped templates UI.)
+  #
+  # Defensive against early-mount paths where `:current_workspace_uri`
+  # hasn't been assigned yet (test fixtures, error paths) — returns
+  # `[]` rather than crashing.
+  defp template_class_options_for(assigns) do
+    case Map.get(assigns, :current_workspace_uri) do
+      %URI{scheme: "workspace", host: ws_name} when is_binary(ws_name) and ws_name != "" ->
+        case Ezagent.Workspace.Store.get_by_name(ws_name) do
+          %{session_templates: tmpls} when is_map(tmpls) ->
+            tmpls |> Map.keys() |> Enum.sort()
+
+          _ ->
+            []
+        end
+
+      _ ->
+        []
     end
   end
 

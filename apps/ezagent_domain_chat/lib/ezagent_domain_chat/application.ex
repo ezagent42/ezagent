@@ -196,7 +196,13 @@ defmodule EzagentDomainChat.Application do
       # `join_creator/2`). Admin User Kind is no longer a static child;
       # the demand-spawn covers the gap so admin appears in
       # session://default/system/main's members map post-seed.
-      case EzagentDomainChat.create_session("main", User.admin_uri()) do
+      # SPEC #366 (Allen 2026-05-26): `:template_name` is now required.
+      # Pass `"default"` explicitly to preserve the existing
+      # `session://default/system/main` URI shape that ~10 test suites
+      # assert against. This is a literal namespace segment, not a
+      # registered template class — the bootstrap seed predates the
+      # Template Registry by design.
+      case EzagentDomainChat.create_session("main", User.admin_uri(), template_name: "default") do
         {:ok, _uri} ->
           :ok
 

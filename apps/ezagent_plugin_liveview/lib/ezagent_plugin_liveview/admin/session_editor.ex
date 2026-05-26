@@ -28,6 +28,11 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
   attr :applicable_views, :list, required: true
   attr :current_view, :atom, required: true
   attr :new_session_form, :map, required: true
+  # SPEC #366 (Allen 2026-05-26) — template-class dropdown options.
+  # `[String.t()]` of class keys from the current workspace's
+  # `session_templates` map; empty list triggers the "no templates"
+  # empty-state inside `create_session_button/1`.
+  attr :template_class_options, :list, default: []
   attr :compose_form, :map, required: true
   attr :member_options, :list, required: true
   attr :session_info, :map, required: true
@@ -46,6 +51,7 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
         applicable_views={@applicable_views}
         current_view={@current_view}
         new_session_form={@new_session_form}
+        template_class_options={@template_class_options}
         session_info={@session_info}
         feishu_chat_ids={@feishu_chat_ids}
         debug_open={@debug_open}
@@ -72,6 +78,7 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
   attr :applicable_views, :list, required: true
   attr :current_view, :atom, required: true
   attr :new_session_form, :map, required: true
+  attr :template_class_options, :list, default: []
   attr :session_info, :map, required: true
   attr :feishu_chat_ids, :list, default: []
   attr :debug_open, :boolean, default: false
@@ -80,7 +87,10 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
     ~H"""
     <header class="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shrink-0">
       <.session_selector current_session_uri={@current_session_uri} sessions={@sessions} />
-      <.create_session_button new_session_form={@new_session_form} />
+      <.create_session_button
+        new_session_form={@new_session_form}
+        template_class_options={@template_class_options}
+      />
 
       <div class="flex-1" />
 
@@ -126,6 +136,12 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
   # --- create_session_button ------------------------------------------------
 
   attr :new_session_form, :map, required: true
+  # SPEC #366 (Allen 2026-05-26) — `[String.t()]` from
+  # `Workspace.Store.get_by_name(ws).session_templates |> Map.keys()`.
+  # Empty list → render the empty-state pointing to /admin/templates;
+  # non-empty → render a `<select>` with each key as an explicit option
+  # plus a placeholder `""` (refused by the LV handler).
+  attr :template_class_options, :list, default: []
 
   defp create_session_button(assigns) do
     ~H"""
@@ -133,8 +149,28 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
       <summary class="cursor-pointer text-xs text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 select-none">
         {gettext("+ New")}
       </summary>
-      <div class="absolute left-0 top-full mt-1 w-64 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-md shadow-lg z-30 p-2">
-        <.form for={@new_session_form} phx-submit="create_session">
+      <div class="absolute left-0 top-full mt-1 w-72 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-md shadow-lg z-30 p-2">
+        <%!-- SPEC #366 — empty-state when the workspace has zero
+              `session_templates`. We deliberately do NOT silently
+              fall back to a `"default"` class; the operator must
+              register at least one template first. --%>
+        <div :if={@template_class_options == []} class="text-xs text-zinc-600 dark:text-zinc-400">
+          <p class="mb-2">
+            {gettext("No template classes registered in this workspace.")}
+          </p>
+          <p class="text-zinc-500">
+            {gettext("Add one via the")}
+            <.link
+              navigate="/admin/templates"
+              class="text-blue-600 dark:text-blue-400 hover:underline"
+            >
+              {gettext("template admin")}
+            </.link>
+            {gettext("first, then come back here to create a session.")}
+          </p>
+        </div>
+
+        <.form :if={@template_class_options != []} for={@new_session_form} phx-submit="create_session">
           <label for="new_session_short_name" class="block text-[10px] text-zinc-500 mb-1">
             {gettext("New session name")}
           </label>
@@ -145,6 +181,33 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
             placeholder="architect-review"
             class="w-full text-xs px-2 py-1 border border-zinc-300 dark:border-zinc-700 rounded"
           />
+
+          <%!-- Codex PR #369 r1 MED — the option values are the
+                workspace's `session_templates` keys (template instance
+                names like "architect-review"), NOT registered template-
+                class names (`Ezagent.Kind.Template.template_name/0`
+                values like "session.generic"). Each key becomes the
+                URI's class segment (`session://<key>/<workspace>/<name>`);
+                downstream code treats that segment as informational,
+                not as a `TemplateRegistry.lookup/1` key (verified —
+                see `rg TemplateRegistry.lookup apps/*/lib`). Label
+                reflects what the operator actually sees in
+                `/admin/templates`. --%>
+          <label for="new_session_template_class" class="block text-[10px] text-zinc-500 mb-1 mt-2">
+            {gettext("Template")}
+          </label>
+          <select
+            name="new_session[template_class]"
+            id="new_session_template_class"
+            required
+            class="w-full text-xs px-2 py-1 border border-zinc-300 dark:border-zinc-700 rounded bg-white dark:bg-zinc-900"
+          >
+            <%!-- Placeholder forces an explicit pick; LV handler refuses
+                  empty-string submissions. --%>
+            <option value="" disabled selected>{gettext("— pick a template —")}</option>
+            <option :for={class <- @template_class_options} value={class}>{class}</option>
+          </select>
+
           <button
             type="submit"
             class="mt-2 w-full px-2 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 dark:hover:bg-blue-500"

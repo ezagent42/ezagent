@@ -130,10 +130,30 @@ defmodule EzagentCli.TreeBuilder do
     # --deadline-ms
     deadline_opt = {:deadline_ms, [long: "deadline-ms", value_name: "MS", parser: :integer]}
 
+    # SPEC #366 (Allen 2026-05-26): explicit template-class for bare-name
+    # promotion on per-tenant schemes (`session://`, `template://`,
+    # `resource://`). Consumed by `EzagentCli.Dispatch.build_target_uri/6`
+    # when the instance arg is a bare name; ignored for full URIs and
+    # for non-per-tenant schemes. Required (and enforced by raise) only
+    # when promotion actually needs it — Optimus can't express "required
+    # conditional on scheme", so the runtime check in
+    # `Dispatch.promote_to_3seg/4` carries the load.
+    #
+    # Option key is `:instance_class` (long flag `--instance-class`) to
+    # avoid colliding with existing action args named `:template_class`
+    # (e.g. `Ezagent.Behavior.Sandbox.write_path` carries
+    # `template_class:` in its `args` map). The flag is added to every
+    # action subcommand uniformly — Optimus rejects conditional-by-
+    # scheme options at the spec level.
+    instance_class_opt =
+      {:instance_class,
+       [long: "instance-class", value_name: "CLASS", parser: :string]}
+
     [
       name: to_string(action),
       about: action_about(behavior_module, action),
-      options: [instance_opt | arg_options] ++ [as_opt, deadline_opt],
+      options:
+        [instance_opt | arg_options] ++ [as_opt, deadline_opt, instance_class_opt],
       flags: cast_flag ++ json_flag
     ]
   end

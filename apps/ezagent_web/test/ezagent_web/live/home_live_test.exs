@@ -36,7 +36,9 @@ defmodule EzagentWeb.HomeLiveTest do
         # doesn't poison subsequent test files (most of which assume
         # `session://default/system/main` alive at boot).
         for short <- torn_down do
-          EzagentDomainChat.create_session(short, Ezagent.Entity.User.admin_uri())
+          EzagentDomainChat.create_session(short, Ezagent.Entity.User.admin_uri(),
+            template_name: "default"
+          )
         end
       end)
 

@@ -31,12 +31,25 @@ defmodule EzagentDomainChat do
 
   SPEC v3 §3.6 (Phase 9 PR-7) — sessions are
   `session://<template>/<workspace>/<name>`. `short_name` becomes the
-  `<name>` segment. The default template is `default`. The workspace
-  is **derived structurally** from `creator_uri`
-  (`Ezagent.URI.entity_workspace_uri/1`) — no silent global fallback
-  per SPEC #324. Callers needing a different workspace can pass
-  `opts[:workspace_uri]` explicitly (e.g. cross-workspace admin
-  flows). `opts[:template_name]` overrides the default template.
+  `<name>` segment. The workspace is **derived structurally** from
+  `creator_uri` (`Ezagent.URI.entity_workspace_uri/1`) — no silent
+  global fallback per SPEC #324. Callers needing a different workspace
+  can pass `opts[:workspace_uri]` explicitly (e.g. cross-workspace
+  admin flows).
+
+  `opts[:template_name]` is **required** per SPEC #366 (Allen
+  2026-05-26, `feedback_let_it_crash_no_workarounds`) — the previous
+  silent `"default"` fallback was eliminated. The value becomes the
+  session URI's class segment (`session://<template_name>/<workspace>/<short_name>`)
+  literally — there is NO `Ezagent.TemplateRegistry.lookup/1` resolution
+  here; downstream code treats segment 1 as informational. Operators
+  pass:
+    * `"default"` for the bootstrap session-naming convention (the
+      legacy URI shape ~10 test suites assert against), OR
+    * Any key from the current workspace's `session_templates` map
+      for tenant flows (LV form sources this directly).
+
+  Missing key raises `ArgumentError`.
 
   Returns `{:ok, session_uri}` on success, `{:error, reason}` on:
   - `{:already_registered, _}` — session URI already in KindRegistry
@@ -74,7 +87,7 @@ defmodule EzagentDomainChat do
           end
       end
 
-    template_name = Keyword.get(opts, :template_name, "default")
+    template_name = require_template_name!(opts)
     workspace_name = workspace_name_of!(workspace_uri)
 
     session_uri =
@@ -122,6 +135,38 @@ defmodule EzagentDomainChat do
 
   defp workspace_name_of!(other),
     do: raise(ArgumentError, "expected %URI{scheme: \"workspace\"}, got: #{inspect(other)}")
+
+  # SPEC #366 (Allen 2026-05-26) — eliminate the silent `"default"`
+  # template-class fallback. Callers MUST pass `:template_name` in opts.
+  # The previous code (`Keyword.get(opts, :template_name, "default")`)
+  # let LV/CLI/test sites omit the choice and silently land in the
+  # `session://default/…` namespace — operationally invisible, blocks
+  # tenant-customized session templates per the same reasoning as
+  # `feedback_let_it_crash_no_workarounds`.
+  defp require_template_name!(opts) do
+    case Keyword.fetch(opts, :template_name) do
+      {:ok, name} when is_binary(name) and name != "" ->
+        name
+
+      {:ok, other} ->
+        raise ArgumentError,
+              "EzagentDomainChat.create_session/3 requires opts[:template_name] to be " <>
+                "a non-empty String, got: #{inspect(other)}. Per SPEC #366 the silent " <>
+                "`\"default\"` fallback was removed; pick a class explicitly from the " <>
+                "workspace's `session_templates` map (or use `\"default\"` literally " <>
+                "for the bootstrap session-naming convention)."
+
+      :error ->
+        raise ArgumentError,
+              "EzagentDomainChat.create_session/3 requires opts[:template_name] " <>
+                "(SPEC #366, Allen 2026-05-26). The previous silent `\"default\"` " <>
+                "fallback was removed. Callers — LV forms, CLI tasks, test seeds, " <>
+                "bootstrap — must choose a template class explicitly. Examples:\n" <>
+                "  * Bootstrap / preserve existing URI shape: `template_name: \"default\"`\n" <>
+                "  * Tenant flows: `template_name: <key from workspace.session_templates>`\n" <>
+                "Got: opts=#{inspect(opts)}."
+    end
+  end
 
   @doc """
   Return all known Session URIs (KindRegistry session:// entries),

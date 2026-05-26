@@ -491,6 +491,20 @@ defmodule Ezagent.Entity.Session do
   """
   @spec derive_session_uri(map(), URI.t(), URI.t()) :: URI.t()
   def derive_session_uri(template_content, %URI{} = workspace_uri, %URI{} = owner_uri) do
+    # SPEC #366 NOTE (codex PR #369 r1, Allen 2026-05-26): this `||
+    # "generic"` is NOT a SPEC #366 violation. It mirrors
+    # `Ezagent.Template.GenericSession.instantiate/3` which hard-codes
+    # `session://generic/...` — every SessionTemplate is an instance
+    # of the GenericSession Template Class, and its produced Session
+    # URI's class segment is therefore always `"generic"` by
+    # construction. A SessionTemplate state slice (the typical
+    # `template_content` shape — `%{name:, agent_slots:,
+    # orchestrator_template_uri:, ...}`) does NOT carry a `:class`
+    # field; the SPEC #366 ban targets silent fallback in the
+    # LV/CLI/create_session callsites where the operator CAN choose,
+    # not at this SessionTemplate-internal helper where the class is
+    # fixed by the Template Class itself. The whitelist below in the
+    # invariant test reflects this.
     template_class =
       Map.get(template_content, :class) ||
         Map.get(template_content, "class") ||

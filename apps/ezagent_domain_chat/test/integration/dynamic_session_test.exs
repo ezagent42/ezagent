@@ -17,7 +17,10 @@ defmodule EzagentDomainChat.Integration.DynamicSessionTest do
     admin_uri = User.admin_uri()
     # SPEC #324: workspace is derived structurally from the creator URI.
     # Admin's URI is `entity://user/system/admin` → workspace `system`.
-    assert {:ok, session_uri} = EzagentDomainChat.create_session(short, admin_uri)
+    # SPEC #366 (Allen 2026-05-26) — `:template_name` is now required.
+    assert {:ok, session_uri} =
+             EzagentDomainChat.create_session(short, admin_uri, template_name: "default")
+
     assert URI.to_string(session_uri) == "session://default/system/#{short}"
 
     # KindRegistry has it
@@ -35,8 +38,12 @@ defmodule EzagentDomainChat.Integration.DynamicSessionTest do
   test "create_session is idempotent — re-call returns same URI" do
     short = "idemp-#{System.unique_integer([:positive])}"
     admin_uri = User.admin_uri()
-    assert {:ok, uri1} = EzagentDomainChat.create_session(short, admin_uri)
-    assert {:ok, uri2} = EzagentDomainChat.create_session(short, admin_uri)
+    assert {:ok, uri1} =
+             EzagentDomainChat.create_session(short, admin_uri, template_name: "default")
+
+    assert {:ok, uri2} =
+             EzagentDomainChat.create_session(short, admin_uri, template_name: "default")
+
     assert uri1 == uri2
   end
 
@@ -45,12 +52,12 @@ defmodule EzagentDomainChat.Integration.DynamicSessionTest do
     # now created via this same facade by the first-login wizard).
     # An empty string still doesn't make sense as a session name.
     assert {:error, :short_name_required} =
-             EzagentDomainChat.create_session("", User.admin_uri())
+             EzagentDomainChat.create_session("", User.admin_uri(), template_name: "default")
   end
 
   test "list_sessions includes main + any dynamic sessions" do
     short = "listed-#{System.unique_integer([:positive])}"
-    {:ok, _} = EzagentDomainChat.create_session(short, User.admin_uri())
+    {:ok, _} = EzagentDomainChat.create_session(short, User.admin_uri(), template_name: "default")
 
     uris = EzagentDomainChat.list_sessions() |> Enum.map(&URI.to_string/1)
     assert "session://default/system/main" in uris
