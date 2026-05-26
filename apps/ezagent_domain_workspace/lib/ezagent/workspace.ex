@@ -129,6 +129,13 @@ defmodule Ezagent.Workspace do
   # write). Skipped for agent members (agents don't drive
   # create_session). Best-effort: failure is logged + telemetry'd,
   # never bubbled up.
+  #
+  # KNOWN OVER-GRANT — see `docs/futures/todo.md` §"Capability struct
+  # lacks an action axis"; the cap granted here also satisfies every
+  # other `Behavior.Workspace` action's cap-check (pre-existing model
+  # limitation, not a regression). Round-2 codex moved the dispatch-
+  # path grant into the Behavior; this facade grant remains for
+  # facade-path sync semantics (cap-equality dedup absorbs the dup).
   defp grant_member_create_session_cap(name, %URI{scheme: "entity", host: "user"} = member_uri) do
     workspace_uri = URI.parse("workspace://#{name}")
 

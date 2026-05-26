@@ -922,6 +922,18 @@ defmodule Ezagent.Behavior.Workspace do
   # cap-equality dedup all fire. Skipped for agent members (agents
   # don't drive create_session). Best-effort: failure logs +
   # telemetry, never bubbled up — membership has its own value.
+  #
+  # KNOWN OVER-GRANT (codex PR #408 round-3 HIGH; see
+  # `docs/futures/todo.md` §"Capability struct lacks an action axis"
+  # for the full discussion + planned fix). Because the Capability
+  # struct has no `action` field, the cap granted here also satisfies
+  # the cap-check for every OTHER `Behavior.Workspace` action on the
+  # same workspace (`add_member`, `remove_member`, `set_routing_rules`,
+  # `create_agent`, …). This is a pre-existing limitation in the cap
+  # model affecting every multi-action Behavior; the proper fix is
+  # either (a) add `action` to the Capability struct and matches?/2,
+  # or (b) carve `:create_session` into its own Behavior per the PR
+  # #356 carve-out pattern. Tracked in futures/todo.md.
   defp grant_member_create_session_cap(
          %URI{scheme: "workspace"} = workspace_uri,
          %URI{scheme: "entity", host: "user"} = member_uri
