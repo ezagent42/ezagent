@@ -45,7 +45,7 @@ defmodule EzagentPluginLiveview.AdminLive do
   # than an in-function require.
   require Logger
 
-  alias EzagentPluginLiveview.Admin.{SessionEditor, MemberPanel}
+  alias EzagentPluginLiveview.Admin.{SessionEditor, MemberPanel, OrchestratorHealthCard}
   alias EzagentPluginLiveview.Views.ConversationView
   alias EzagentDomainUi.WorkspaceShell
   alias EzagentDomainUi.Pty.TerminalSeam
@@ -173,15 +173,22 @@ defmodule EzagentPluginLiveview.AdminLive do
       |> assign(:flash_error, nil)
       |> assign(:current_session_uri, current_session_uri)
       |> assign(:sessions, EzagentDomainChat.list_sessions())
-      # Session auto-join (Allen 2026-05-26) — every navigation to a
-      # session auto-dispatches `chat.join` for the caller, so the
-      # MemberPanel renders the user WITHOUT requiring a manual Invite.
-      # `maybe_self_join/2` is idempotent (chat.join short-circuits on
-      # already-member); failures (no caps / cross-workspace / target
-      # missing) surface as a flash via the same decomposition the
-      # Invite handler uses — `feedback_let_it_crash_no_workarounds`
-      # forbids silent default-join.
+      # Session auto-join (Allen 2026-05-26 — PR #374) — every
+      # navigation to a session auto-dispatches `chat.join` for the
+      # caller, so the MemberPanel renders the user WITHOUT requiring
+      # a manual Invite. `maybe_self_join/2` is idempotent (chat.join
+      # short-circuits on already-member); failures (no caps /
+      # cross-workspace / target missing) surface as a flash via the
+      # same decomposition the Invite handler uses —
+      # `feedback_let_it_crash_no_workarounds` forbids silent default-join.
       |> maybe_self_join(current_session_uri)
+      # Per-session orchestrator INSTANCE health (2026-05-26 — PR #376).
+      # Defaults to nil/false; `assign_session_context/2` overwrites
+      # with the real classification + cap-gate result. Set BEFORE
+      # `assign_session_context/2` so that helper's assigns win.
+      |> assign(:orchestrator_health, nil)
+      |> assign(:orchestrator_can_restart?, false)
+      |> assign(:orchestrator_flash_error, nil)
       |> assign_session_context(current_session_uri)
       |> assign(:current_view, :conversation)
       |> assign(:active_pty_agent_uri, nil)
@@ -905,6 +912,148 @@ defmodule EzagentPluginLiveview.AdminLive do
     {:noreply, assign(socket, :flash_error, gettext("Pick an entity to invite."))}
   end
 
+  # 2026-05-26 — Restart orchestrator from the per-session health card.
+  #
+  # Dispatches `template://agent/<ws>/cc-orchestrator?action=template.instantiate`
+  # with `instance_name: <derived>`. CapBAC step 5.5 enforces the
+  # caller's `Behavior.Template :instantiate` cap on the orchestrator
+  # template URI; on denial we surface a distinct flash through
+  # `orchestrator_flash_error` (the card has its own slot, separate
+  # from MemberPanel's flash_error).
+  #
+  # The submitted `uri` parameter (the orchestrator URI) is revalidated
+  # against the freshly-computed `orchestrator_health` to defeat any
+  # tampered DOM that would dispatch against a different agent — we
+  # only ever instantiate the orchestrator template for the current
+  # session.
+  def handle_event("restart_orchestrator", %{"uri" => submitted_uri_str}, socket)
+      when is_binary(submitted_uri_str) do
+    health = socket.assigns.orchestrator_health
+    session_uri = socket.assigns.current_session_uri
+
+    cond do
+      is_nil(health) ->
+        {:noreply,
+         assign(
+           socket,
+           :orchestrator_flash_error,
+           gettext("No orchestrator for this session (workspace binding missing).")
+         )}
+
+      URI.to_string(health.uri) != String.trim(submitted_uri_str) ->
+        # DOM tamper or stale submission. Refuse — the only URI the
+        # operator should ever submit is the current session's
+        # orchestrator URI.
+        {:noreply,
+         assign(
+           socket,
+           :orchestrator_flash_error,
+           gettext("Refused — submitted URI does not match this session's orchestrator.")
+         )}
+
+      true ->
+        target =
+          URI.new!("#{URI.to_string(health.template_uri)}?action=template.instantiate")
+
+        # The orchestrator's instance NAME-segment is `cc_orchestrator-<disc>`
+        # (history: `Session.ensure_orchestrator` builds it directly via
+        # `Agent.spawn_fresh` which does NOT prepend flavor). The
+        # `template.instantiate` dispatch path, by contrast, ALWAYS
+        # flavor-prepends (`<flavor>_<instance_name>`). The cc-orchestrator
+        # template's flavor IS `cc`, so to land on the same final URI shape
+        # we strip the leading `cc_` before handing the name to dispatch.
+        # Without this we'd get `cc_cc_orchestrator-<disc>` — a new
+        # double-prefixed agent, distinct from the one the health card was
+        # restarting (the original would stay :crashed, and a phantom
+        # `cc_cc_orchestrator-<disc>` would appear).
+        dispatch_instance_name =
+          case health.instance_name do
+            "cc_" <> rest -> rest
+            other -> other
+          end
+
+        # Codex review PR #376 P2 — `spawned_by` must equal the SESSION
+        # OWNER, not the LV operator. `Session.ensure_orchestrator/3`
+        # (apps/ezagent_domain_chat/lib/ezagent/entity/session.ex:565)
+        # later requires `AgentLineage.lookup(orch_uri)` to equal the
+        # session's owner_uri; if a non-owner operator triggers Restart
+        # and `spawned_by` is the operator, the next reconcile reads
+        # the lineage as a mismatch and classifies the fresh
+        # orchestrator as `{:foreign, _}` — the very state Restart was
+        # supposed to clear. Resolve the owner from the Session Kind;
+        # fall back to the caller (covers system sessions with
+        # `owner_uri: nil`).
+        spawned_by =
+          case Ezagent.Entity.Session.owner(session_uri) do
+            {:ok, %URI{} = owner} -> owner
+            _ -> socket.assigns.caller_uri
+          end
+
+        result =
+          Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+            target: target,
+            mode: :call,
+            args: %{
+              instance_name: dispatch_instance_name,
+              workspace_uri: health.workspace_uri,
+              spawned_by: spawned_by
+            },
+            ctx: %{
+              caller: socket.assigns.caller_uri,
+              caps: socket.assigns.caller_caps,
+              reply: :ignore
+            }
+          })
+
+        case result do
+          {:ok, %{workers: _workers}} ->
+            # Re-classify; success path lands `:alive` (or a new
+            # `:crashed` if the fresh worker died immediately, which is
+            # itself a useful signal).
+            {:noreply,
+             socket
+             |> assign_session_context(session_uri)
+             |> assign(:orchestrator_flash_error, nil)}
+
+          {:error, :unauthorized} ->
+            {:noreply,
+             assign(
+               socket,
+               :orchestrator_flash_error,
+               gettext("Unauthorized — you may not restart this orchestrator.")
+             )}
+
+          {:error, :cross_workspace_denied} ->
+            {:noreply,
+             assign(
+               socket,
+               :orchestrator_flash_error,
+               gettext(
+                 "Cross-workspace denied — orchestrator lives in workspace %{workspace}.",
+                 workspace: URI.to_string(health.workspace_uri)
+               )
+             )}
+
+          {:error, reason} ->
+            {:noreply,
+             assign(
+               socket,
+               :orchestrator_flash_error,
+               gettext("Restart failed: %{reason}", reason: inspect(reason))
+             )}
+        end
+    end
+  end
+
+  def handle_event("restart_orchestrator", _params, socket) do
+    {:noreply,
+     assign(
+       socket,
+       :orchestrator_flash_error,
+       gettext("Restart refused — missing orchestrator URI.")
+     )}
+  end
+
   # Phase 8b §1.6 — Debug events toggle in setting dropdown.
   def handle_event("toggle_debug_panel", _params, socket) do
     {:noreply, assign(socket, :debug_open, not socket.assigns.debug_open)}
@@ -1405,6 +1554,16 @@ defmodule EzagentPluginLiveview.AdminLive do
           </:main_window>
 
           <:right_sidebar>
+            <%!-- Per-session orchestrator INSTANCE health (2026-05-26).
+                  Renders only when the session is workspace-bound — pre-
+                  bind sessions (e.g. ad-hoc test fixtures) hide the card
+                  rather than show a misleading state. --%>
+            <OrchestratorHealthCard.orchestrator_health_card
+              :if={@orchestrator_health}
+              health={@orchestrator_health}
+              can_restart?={@orchestrator_can_restart?}
+              flash_error={@orchestrator_flash_error}
+            />
             <MemberPanel.member_panel
               members={@session_members}
               display_map={@display_map}
@@ -1643,6 +1802,8 @@ defmodule EzagentPluginLiveview.AdminLive do
         %{"uri" => uri, "display_name" => Map.get(display_map, uri, uri)}
       end)
 
+    {orchestrator_health, can_restart?} = compute_orchestrator_health(socket, session_uri)
+
     socket
     |> assign(:session_members, members)
     |> assign(:member_options, member_options)
@@ -1654,8 +1815,65 @@ defmodule EzagentPluginLiveview.AdminLive do
     |> assign(:feishu_chat_ids, feishu_chat_ids_for(session_uri))
     |> assign(:session_routing_rules, session_routing_rules)
     |> assign(:session_bindings, session_bindings)
+    |> assign(:orchestrator_health, orchestrator_health)
+    |> assign(:orchestrator_can_restart?, can_restart?)
+    |> assign(:orchestrator_flash_error, nil)
     |> assign_routing_uri_options()
   end
+
+  # Compute orchestrator-instance health for the current session +
+  # whether the caller holds a cap that would let the Restart action
+  # through. Returns `{nil, false}` for sessions with no workspace
+  # binding (the card hides itself in that case — see render/1).
+  #
+  # The can_restart? guard is purely a UI affordance — CapBAC step 5.5
+  # still gates the dispatch. We don't want operators to see a Restart
+  # button that always returns :unauthorized.
+  defp compute_orchestrator_health(socket, %URI{} = session_uri) do
+    case Ezagent.Orchestrator.Health.classify(session_uri) do
+      {:ok, health} ->
+        can_restart? =
+          health.status == :crashed and
+            caller_can_instantiate_orchestrator?(socket, health.template_uri)
+
+        {health, can_restart?}
+
+      {:error, :session_not_workspace_bound} ->
+        # Session not bound to a workspace yet — the orchestrator URI is
+        # not derivable. Hide the card.
+        {nil, false}
+    end
+  end
+
+  defp compute_orchestrator_health(_socket, _), do: {nil, false}
+
+  # Does the caller hold a cap that would let `template.instantiate`
+  # through CapBAC step 5.5 on the orchestrator template URI?
+  #
+  # `Behavior.Template.required_caps[:instantiate]` is
+  # `cap(:any, Ezagent.Behavior.Template, :instantiate)` with kind axis
+  # `:any` and workspace_uri scoping enforced by step 5.6 (cross-
+  # workspace). A held cap matches if it covers
+  # `{kind: :any, behavior: Ezagent.Behavior.Template, instance: <orch_template_uri>,
+  #   workspace_uri: <ws>}`.
+  defp caller_can_instantiate_orchestrator?(socket, %URI{} = template_uri) do
+    caps = Map.get(socket.assigns, :caller_caps, MapSet.new())
+
+    needed = %{
+      kind: :any,
+      behavior: Ezagent.Behavior.Template,
+      instance: template_uri,
+      workspace_uri:
+        case Ezagent.Capability.workspace_of(template_uri) do
+          %URI{} = ws -> ws
+          :any -> :any
+        end
+    }
+
+    Enum.any?(caps, &Ezagent.Capability.matches?(&1, needed))
+  end
+
+  defp caller_can_instantiate_orchestrator?(_socket, _), do: false
 
   # ExternalMirror bindings for a session, via the dispatched
   # `list_bindings` facade so the CapBAC gate runs. Read failures (no
