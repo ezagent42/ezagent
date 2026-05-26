@@ -79,6 +79,11 @@ defmodule Ezagent.SystemPrincipal.Catalog do
   alias Ezagent.Behavior.ExternalMirror
   alias Ezagent.Behavior.ExternalMirrorWorker
   alias Ezagent.Behavior.IdentityAdmin
+  # 2026-05-26 — Publisher.SessionImpl lives in `ezagent_domain_chat`.
+  # Like the other Behavior aliases in this block, the module is
+  # resolved at runtime (catalog evaluation), not compile time, so
+  # core's no-umbrella-dep rule is preserved.
+  alias Ezagent.Behavior.Publisher.SessionImpl, as: PublisherSI
   alias Ezagent.Behavior.Sandbox
   alias Ezagent.Behavior.Template
   alias Ezagent.Behavior.Workspace
@@ -158,7 +163,18 @@ defmodule Ezagent.SystemPrincipal.Catalog do
        ]},
       {"system://worker-publish",
        [
-         Capability.cap(:external_mirror_worker, ExternalMirrorWorker, :publish)
+         Capability.cap(:external_mirror_worker, ExternalMirrorWorker, :publish),
+         # 2026-05-26 (Allen e2e blocker): Worker.subscribe_to_session_publisher/2
+         # dispatches `session://...?action=publisher.subscribe_from` to
+         # subscribe to its bound session's Publisher (SPEC §8.1).
+         # CapBAC step 5.5 needs the cap shape registered against the
+         # Session Kind by `EzagentDomainChat.Application` — see
+         # `CapabilityRegistry.register(Session, action, PublisherSI)`
+         # over `PublisherSI.actions()` = `[:subscribe_from, :snapshot,
+         # :history]`. Without this cap the worker is stuck in a
+         # `:unauthorized` retry loop the moment a binding is created;
+         # outbound external_mirror never delivers a single event.
+         Capability.cap(:session, PublisherSI, :subscribe_from)
        ]},
       {"system://template-materialize",
        [
