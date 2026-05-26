@@ -381,8 +381,11 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
     # dispatches `chat.join` as `:call`; on `:ok` the member appears in
     # the unified list and the modal closes.
     test "invite_member with a valid entity → member added + modal closes", %{conn: conn} do
+      # 2026-05-26 (post default→system sweep) — the default session
+      # lives in workspace `system`. The agent URI must therefore also
+      # be in `system` for the `valid_for?/4` workspace check to pass.
       name = "cc_demo-invite-#{System.unique_integer([:positive])}"
-      agent_uri = URI.parse("entity://agent/team-alpha/#{name}")
+      agent_uri = URI.parse("entity://agent/system/#{name}")
       {:ok, _kind_pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
 
       {:ok, lv, _html} = live(conn, "/sessions")
@@ -435,14 +438,22 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
     # never spawned → `Identity.list_caps_for/1` returns an empty
     # MapSet) is denied by CapBAC.
     test "invite_member surfacing :unauthorized → distinct flash, no silent drop", %{conn: _conn} do
+      # 2026-05-26 (post default→system sweep PR #335 / #362) — the
+      # default session lives in workspace `system`, so caller AND
+      # agent must also be in `system` for the dispatch to reach
+      # `Behavior.Chat.join` and surface `:unauthorized` (rather than
+      # being short-circuited by the `valid_for?/4` cross-workspace
+      # check in `handle_event("invite_member", ...)`).
       name = "cc_demo-unauth-#{System.unique_integer([:positive])}"
-      agent_uri = URI.parse("entity://agent/team-alpha/#{name}")
+      agent_uri = URI.parse("entity://agent/system/#{name}")
       {:ok, _kind_pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
 
-      # A non-admin caller in workspace `default` (same workspace as
+      # A non-admin caller in workspace `system` (same workspace as
       # session://default/system/main, so the denial is :unauthorized,
-      # not :cross_workspace_denied) with NO caps.
-      non_admin = "entity://user/team-alpha/tester-#{System.unique_integer([:positive])}"
+      # not :cross_workspace_denied) with NO caps — `non_admin`'s
+      # User Kind is never spawned, so `Identity.list_caps_for/1`
+      # returns an empty MapSet at dispatch step 5.5.
+      non_admin = "entity://user/system/tester-#{System.unique_integer([:positive])}"
 
       conn =
         Phoenix.ConnTest.build_conn()
@@ -455,7 +466,11 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
         render_hook(lv, "invite_member", %{"member_uri" => URI.to_string(agent_uri)})
 
       # Distinct :unauthorized flash — NOT a generic "failed" and NOT
-      # silently swallowed.
+      # silently swallowed. The flash text is rendered by
+      # `MemberPanel.member_panel/1`'s `:if={@flash_error}` block
+      # (id="member-panel-flash-error") wired through from
+      # `AdminLive.handle_event("invite_member", ...)`'s
+      # `{:error, :unauthorized}` arm.
       assert html =~ "Unauthorized"
       # The invite did not go through → the agent is not a member.
       refute member_row?(html, URI.to_string(agent_uri))

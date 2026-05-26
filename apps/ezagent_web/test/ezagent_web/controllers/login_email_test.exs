@@ -43,4 +43,34 @@ defmodule EzagentWeb.LoginEmailTest do
     post(conn, "/login", %{"email" => "fresh@bad.com"})
     assert EzagentCore.Repo.aggregate(Ezagent.Entity.MagicLinkToken, :count) == before
   end
+
+  # 2026-05-26 (Allen — magic-link login failure): a User provisioned
+  # via `mix ezagent.user.create` + `mix ezagent.user.set_password` has
+  # NO email on file (`entity_profiles` is empty for that URI). When
+  # the operator binds an email via `Ezagent.Entity.Profile.upsert/1`
+  # (or the new `mix ezagent.user.set_email` task), magic-link login
+  # MUST route via the "existing principal" branch regardless of any
+  # workspace's `magic_link_rule` — the user is already authenticated
+  # as a member of the system, so the rule allowlist (which gates new
+  # registrations) does not apply.
+  test "POST /login mints a token for an existing principal whose email is bound, even when no workspace rule covers the domain",
+       %{conn: conn} do
+    # The email's domain is `bad.com` — NOT in the seeded `good-test`
+    # workspace's domain rule. If the registration `email_allowed?/1`
+    # gate were the only path, this would silently drop. The existing-
+    # principal short-circuit in `send_allowed?/1` is what saves it.
+    {:ok, _} = Ezagent.Users.create("entity://user/system/bound-user", nil, [])
+
+    {:ok, _} =
+      Ezagent.Entity.Profile.upsert(%{
+        entity_uri: "entity://user/system/bound-user",
+        display_name: "Bound User",
+        email: "bound@bad.com"
+      })
+
+    before = EzagentCore.Repo.aggregate(Ezagent.Entity.MagicLinkToken, :count)
+    post(conn, "/login", %{"email" => "bound@bad.com"})
+
+    assert EzagentCore.Repo.aggregate(Ezagent.Entity.MagicLinkToken, :count) == before + 1
+  end
 end

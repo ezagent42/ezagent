@@ -49,6 +49,13 @@ defmodule EzagentCore.Application do
       {Ezagent.Presence.Tracker, [pool_size: 1, permdown_on_shutdown: true]},
 
       # ⑥ Audit batch writer — must come after Repo + PubSub.
+      # **Skipped in :test env** (2026-05-26): the 100ms timer-driven
+      # `Repo.insert_all("invocations", _)` flush is the singleton
+      # GenServer that triggers SQLite "Database busy" + DBConnection
+      # owner-exit interleaving against `Ecto.Adapters.SQL.Sandbox`'s
+      # per-test ownership lifecycle. Test code that exercises audit
+      # writes opts in via `use Ezagent.Test.AuditCase` (calls
+      # `start_supervised!/1` and `Sandbox.allow/3` per-test).
       Ezagent.Audit.Writer,
 
       # ⑥·5 Notification subscription registry (SPEC v2 PR-N1,
@@ -65,6 +72,11 @@ defmodule EzagentCore.Application do
       # ⑦ Snapshot async writer (Phase 4-completion Spec 04) — handles
       # `:periodic` strategy; `:on_change` / `:on_terminate` go through
       # `Ezagent.Kind.Snapshot.save_now/3` synchronously.
+      # **Skipped in :test env** for the same Sandbox-ownership reason
+      # as ⑥; see `Ezagent.Test.AuditCase` for opt-in pattern. Most
+      # tests use `:on_change` strategy so this writer is dormant; the
+      # 100ms timer firing in a sandbox-rolled-back state was leaving
+      # SQLite WAL locks contended for the next test's snapshot writes.
       Ezagent.Snapshot.Writer,
 
       # ⑧ Foundation singleton supervisor — Phase 6 PR 2. Hosts core
@@ -80,6 +92,7 @@ defmodule EzagentCore.Application do
       # have a destination.
       Ezagent.KindSupervisor
     ]
+    |> Enum.reject(&skip_in_test_env?/1)
 
     result = Supervisor.start_link(children, strategy: :one_for_one, name: EzagentCore.Supervisor)
 
@@ -130,6 +143,26 @@ defmodule EzagentCore.Application do
   rescue
     _ -> false
   end
+
+  # 2026-05-26 C-snapshot fix — `Ezagent.Audit.Writer` and
+  # `Ezagent.Snapshot.Writer` are global singleton GenServers that
+  # batch-flush to `Repo` on a 100ms timer. Against
+  # `Ecto.Adapters.SQL.Sandbox`'s per-test ownership model their
+  # async flush stamps over connections owned by tests that have
+  # already exited, causing `Database busy` to bleed into subsequent
+  # tests (seen as ~22 "baseline flakes" in `ezagent_plugin_liveview`
+  # and the 4 `SnapshotTest` failures at seed 0). Test code that needs
+  # to verify audit writes / periodic-snapshot writes opts in via
+  # `Ezagent.Test.AuditCase`, which `start_supervised!`s the writer
+  # AND `Sandbox.allow`s it onto the per-test connection.
+  #
+  # An invariant test (`audit_writer_test_env_isolation_test.exs`)
+  # pins **both** halves: prod env children list MUST include the
+  # writers, test env children list MUST NOT.
+  @writers_skipped_in_test [Ezagent.Audit.Writer, Ezagent.Snapshot.Writer]
+
+  defp skip_in_test_env?(child),
+    do: is_test?() and child in @writers_skipped_in_test
 
   # PR #145 — seed the 6 SPEC §5.6 schemes into SchemeRegistry. Idempotent
   # (`:ets.insert/2` overwrites the same key), safe on supervisor restart.

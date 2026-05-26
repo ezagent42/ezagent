@@ -51,7 +51,15 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
     # adapter_id, target_id)` binding row is scoped to the session's
     # workspace (a Lark chat bound in ws A must not be readable from
     # ws B).
-    {Ezagent.ExternalMirror.BindingRow, "external_mirror_bindings"}
+    {Ezagent.ExternalMirror.BindingRow, "external_mirror_bindings"},
+    # SPEC 2026-05-23-read-receipts — read-confidence marker per
+    # `(session, user, source)`. Per-tenant: a marker's
+    # `last_read_message_uri` is meaningless across workspaces.
+    {Ezagent.Chat.ReadMarker, "read_markers"},
+    # SPEC 2026-05-24-magic-link-rules-v2 PR-A — per-workspace
+    # magic-link acceptance rules. Per-tenant by definition (a
+    # `domain` rule for ws A must never authorise a login into ws B).
+    {Ezagent.Workspace.MagicLinkRule, "workspace_magic_link_rules"}
   ]
 
   # Per-tenant tables that have NO schema module (raw `Repo.insert_all`
