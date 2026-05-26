@@ -595,13 +595,39 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
     case :code.priv_dir(:ezagent_plugin_cc) do
       priv when is_list(priv) ->
         start = Path.expand(to_string(priv))
-        walk_for_skill(start, [])
+        search_orchestrator_skill_source_from(start)
 
       _ ->
         # Plugin not loaded — should be unreachable from a running
         # template, but guard anyway.
         {:error, {:skill_source_not_found, []}}
     end
+  end
+
+  @doc """
+  Walk upward from `start_dir`, searching for the first ancestor that
+  holds `.claude/skills/ezagent-session-orchestrator/SKILL.md`.
+
+  Public (`@doc false`) so tests can force the exhausted-walk branch
+  without monkey-patching `:code.priv_dir/1`. Production callers use
+  `resolve_orchestrator_skill_source/0` which threads in the plugin's
+  real priv-dir.
+
+  Returns `{:ok, abs_skill_dir}` when found, or
+  `{:error, {:skill_source_not_found, attempted_paths}}` on exhaust
+  (parent == self at filesystem root).
+
+  codex PR #408 r2 WARN HIGH-2 — the post-r1 walk-fallback's
+  `:skill_source_not_found` tag was structurally reachable only via
+  `:code.priv_dir` returning a non-list (unreachable from a loaded
+  plugin). Extracting this public-for-test helper lets the
+  exhausted-walk path be exercised directly.
+  """
+  @doc false
+  @spec search_orchestrator_skill_source_from(String.t()) ::
+          {:ok, String.t()} | {:error, {:skill_source_not_found, [String.t()]}}
+  def search_orchestrator_skill_source_from(start_dir) when is_binary(start_dir) do
+    walk_for_skill(start_dir, [])
   end
 
   # Bound the walk at the filesystem root. `Path.dirname/1` of `/` is `/`

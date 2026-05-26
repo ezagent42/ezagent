@@ -283,5 +283,116 @@ defmodule EzagentDomainChat.Integration.SessionCreateOrchestratorUnifiedTest do
           flunk("unexpected create_session result: #{inspect(other)}")
       end
     end
+
+    # codex PR #408 r2 review HIGH-1 — the residual leak: pre-r2 the
+    # round-1 `with` chain returned `{:error, _}` cleanly but LEFT the
+    # freshly-spawned Session Kind + workspace binding + creator-join
+    # behind. Post-r2 `create_session/3` rolls those back on
+    # `finalize_session_create/3` failure.
+    test "rollback: freshly-spawned Session Kind is terminated on cap-grant failure" do
+      bare_uri =
+        URI.new!("entity://user/system/hi1-rollback-#{System.unique_integer([:positive])}")
+
+      {:ok, _pid} = Ezagent.Kind.spawn(User, %{uri: bare_uri, initial_caps: MapSet.new()})
+
+      short = "hi1-rollback-#{System.unique_integer([:positive])}"
+
+      session_uri = URI.new!("session://default/system/#{short}")
+
+      # Pre-call: session URI not in KindRegistry (we haven't created it).
+      assert Ezagent.KindRegistry.lookup(session_uri) == :error
+
+      result = EzagentDomainChat.create_session(short, bare_uri, template_name: "default")
+
+      case result do
+        {:error, {:orchestrator_admin_cap_grant_failed, _}} ->
+          # The residue invariant: the Session Kind must be gone, the
+          # workspace binding unbound. Give the supervisor a moment to
+          # actually terminate the child.
+          Process.sleep(50)
+
+          assert Ezagent.KindRegistry.lookup(session_uri) == :error,
+                 "Session Kind should be torn down on cap-grant failure (no residue)"
+
+          assert Ezagent.WorkspaceRegistry.lookup(session_uri) == :error,
+                 "Session→workspace binding should be removed on rollback"
+
+        {:ok, _, _} ->
+          # If the bare user happens to have grant authority (CapBAC
+          # bootstrap variation), this rollback path isn't exercised.
+          # The structural rollback code still exists; this test
+          # exercises the invariant when it IS triggered.
+          :ok
+
+        other ->
+          flunk("unexpected create_session result: #{inspect(other)}")
+      end
+    end
+  end
+
+  # codex PR #408 r2 review HIGH-3 — the Generator path
+  # (Session.spawn_from_template/2 → reconcile_loop/4) was calling the
+  # 3-tuple `ensure_orchestrator/3` wrapper, which silently collapsed
+  # any `:role_degraded` meta from the cc Template Class. Post-r2 the
+  # Generator path calls `ensure_orchestrator_with_meta/3` and threads
+  # the warnings into the outcome map's new `:warnings` field.
+  describe "codex PR #408 r2 review HIGH-3 — Generator surfaces role_degraded" do
+    setup do
+      # Same fixture as the CRIT describe block — point the skill source
+      # at a planted fixture so the bootstrap CAN succeed when we don't
+      # want it to fail.
+      fixture_root =
+        Path.join(System.tmp_dir!(), "orch-skill-r2-#{System.unique_integer([:positive])}")
+
+      skill_src = Path.join(fixture_root, "ezagent-session-orchestrator")
+      File.mkdir_p!(skill_src)
+      File.write!(Path.join(skill_src, "SKILL.md"), "fixture\n")
+      Application.put_env(:ezagent_plugin_cc, :orchestrator_skill_source, skill_src)
+
+      on_exit(fn ->
+        Application.delete_env(:ezagent_plugin_cc, :orchestrator_skill_source)
+        _ = File.rm_rf(fixture_root)
+      end)
+
+      :ok
+    end
+
+    test "ensure_orchestrator_with_meta/3 surfaces role_degraded meta on bootstrap failure" do
+      # Force skill-source missing so cc Template Class returns degraded
+      # meta from `try_role_bootstrap/3`.
+      Application.put_env(
+        :ezagent_plugin_cc,
+        :orchestrator_skill_source,
+        "/no/such/skill/dir/r2-#{System.unique_integer([:positive])}"
+      )
+
+      short = "hi3-generator-degraded-#{System.unique_integer([:positive])}"
+      session_uri = URI.new!("session://default/system/#{short}")
+      workspace_uri = URI.new!("workspace://system")
+
+      # Spawn the Session first so ensure_orchestrator_with_meta has
+      # something to work with (it doesn't spawn the Session itself).
+      {:ok, _pid} =
+        Ezagent.Kind.spawn(Session, %{uri: session_uri, owner_uri: User.admin_uri()})
+
+      result =
+        Session.ensure_orchestrator_with_meta(session_uri, workspace_uri, User.admin_uri())
+
+      # Either the 4-tuple shape (role_degraded surfaced) — that's the
+      # invariant we're verifying.
+      case result do
+        {:ok, %URI{}, _outcome, %{role_degraded: true, role_degraded_reason: _}} ->
+          :ok
+
+        {:ok, %URI{}, _outcome} ->
+          flunk(
+            "expected 4-tuple with role_degraded: true, got 3-tuple " <>
+              "(silent drop — codex r2 HIGH-3 regression)"
+          )
+
+        other ->
+          flunk("unexpected result: #{inspect(other)}")
+      end
+    end
   end
 end

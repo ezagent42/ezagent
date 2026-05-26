@@ -130,25 +130,89 @@ defmodule EzagentDomainChat do
     effective_owner = creator_uri || User.admin_uri()
     result = Ezagent.Kind.spawn(Session, %{uri: session_uri, owner_uri: effective_owner})
 
-    case result do
-      {:ok, _pid} ->
-        finalize_session_create(session_uri, workspace_uri, effective_owner)
+    # codex PR #408 r2 review HIGH-1 — track whether THIS call freshly
+    # created the Session Kind so finalize-step failures can roll the
+    # session back. Round-1 only fixed the swallow + short-circuit; the
+    # residual leak (live Session + workspace bind + creator-join left
+    # behind on cap-grant failure) needed the freshness signal too.
+    {session_outcome, finalize_result} =
+      case result do
+        {:ok, _pid} ->
+          {:fresh, finalize_session_create(session_uri, workspace_uri, effective_owner)}
 
-      # `:already_started` = same child spec already in supervisor's children
-      # `:already_registered` = Kind.Server.init crashed on KindRegistry.put_new
-      # conflict (URI claimed by another pid, possibly outside this supervisor).
-      # Both indicate "session exists" — return success + re-bind workspace
-      # (idempotent ETS overwrite) + re-attempt join (cast is idempotent on
-      # members map).
-      {:error, {:already_started, _pid}} ->
-        finalize_session_create(session_uri, workspace_uri, effective_owner)
+        # `:already_started` = same child spec already in supervisor's children
+        # `:already_registered` = Kind.Server.init crashed on KindRegistry.put_new
+        # conflict (URI claimed by another pid, possibly outside this supervisor).
+        # Both indicate "session exists" — return success + re-bind workspace
+        # (idempotent ETS overwrite) + re-attempt join (cast is idempotent on
+        # members map).
+        {:error, {:already_started, _pid}} ->
+          {:adopted, finalize_session_create(session_uri, workspace_uri, effective_owner)}
 
-      {:error, {:already_registered, _}} ->
-        finalize_session_create(session_uri, workspace_uri, effective_owner)
+        {:error, {:already_registered, _}} ->
+          {:adopted, finalize_session_create(session_uri, workspace_uri, effective_owner)}
+
+        {:error, reason} ->
+          {:spawn_failed, {:error, reason}}
+      end
+
+    case finalize_result do
+      {:ok, _, _} = ok ->
+        ok
 
       {:error, reason} ->
+        # codex PR #408 r2 review HIGH-1 — if THIS call freshly created
+        # the Session Kind and finalize_session_create failed (e.g.
+        # cap-grant denial), tear it down so the caller observes a
+        # CLEAN `{:error, _}` rather than a residue (live Session with
+        # workspace binding + creator-join, no orchestrator, no
+        # restart-cap on the owner). An adopted session is left alone
+        # — finalize is idempotent on the adoption path, and tearing
+        # down a session WE didn't create would punish a different
+        # caller's setup.
+        if session_outcome == :fresh do
+          rollback_fresh_session(session_uri, effective_owner)
+        end
+
         {:error, reason}
     end
+  end
+
+  # codex PR #408 r2 review HIGH-1 — tear down the partial state
+  # `finalize_session_create/3` built before failing. Best-effort: each
+  # step swallows its own errors so the original failure reason from
+  # the caller still surfaces. Operator-visible audit lives in the
+  # Logger.warning the caller's `{:error, _}` produced upstream.
+  defp rollback_fresh_session(%URI{} = session_uri, %URI{} = creator_uri) do
+    require Logger
+
+    Logger.warning(
+      "EzagentDomainChat.create_session: rolling back freshly-created " <>
+        "session=#{URI.to_string(session_uri)} after finalize failure — " <>
+        "tearing down Kind + workspace binding so the caller does not " <>
+        "leak partial state (codex PR #408 r2 HIGH-1)."
+    )
+
+    # Terminate the Session Kind (no other process owns its lifecycle —
+    # we just created it).
+    _ = Ezagent.Kind.terminate(session_uri)
+
+    # Unbind workspace (idempotent ETS delete).
+    safe(fn -> Ezagent.WorkspaceRegistry.unbind(session_uri) end)
+
+    # Creator join — we don't have an `unjoin` primitive and the Session
+    # is being torn down anyway, so the slice goes away with the Kind.
+    # No additional cleanup needed for chat.join's cast side effects.
+    _ = creator_uri
+    :ok
+  end
+
+  defp safe(fun) do
+    fun.()
+  rescue
+    _ -> :error
+  catch
+    _, _ -> :error
   end
 
   def create_session(_short_name, _creator, _opts), do: {:error, :short_name_required}
