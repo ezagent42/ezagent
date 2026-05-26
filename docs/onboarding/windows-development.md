@@ -28,21 +28,102 @@ After installing the toolchain below:
 
 ### Option 1 — WSL2 (recommended)
 
-The smoothest path. Real Linux kernel, real `fork`, full ezagent functionality.
+The smoothest path. Real Linux kernel, real `fork`, full ezagent functionality. Verified working 2026-05-26 end-to-end (Erlang/OTP 27 + Elixir 1.18.4 + erlexec compiled + `mix test` runs).
+
+#### One-time install (10–25 min)
 
 ```powershell
-# In an elevated PowerShell, one-time:
+# 1. In an elevated PowerShell:
 wsl --install -d Ubuntu
-
-# Inside Ubuntu:
-sudo apt update && sudo apt install -y build-essential erlang elixir git
-git clone <ezagent-repo-url>
-cd ezagent
-mix deps.get
-mix test    # should pass
+# (reboot if Windows asks; then in the Ubuntu window that pops up,
+#  set your Linux username + password)
 ```
 
-VS Code's **WSL extension** gives you a native-feeling editor against the Linux filesystem. Keep the repo inside the WSL filesystem (e.g. `/home/<you>/ezagent`), not under `/mnt/c/...` — Linux NTFS performance is terrible for `mix deps.get`.
+```bash
+# 2. Inside Ubuntu — switch apt to a China mirror if the default
+#    archive.ubuntu.com is slow or unreachable. Check first:
+timeout 5 curl -sI http://archive.ubuntu.com/ubuntu/ | head -1
+# If it returns 200 OK in <2s you can skip this; otherwise:
+sudo cp /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources.bak
+sudo tee /etc/apt/sources.list.d/ubuntu.sources > /dev/null <<'EOF'
+Types: deb
+URIs: http://mirrors.aliyun.com/ubuntu/
+Suites: noble noble-updates noble-backports
+Components: main restricted universe multiverse
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+
+Types: deb
+URIs: http://mirrors.aliyun.com/ubuntu/
+Suites: noble-security
+Components: main restricted universe multiverse
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+EOF
+sudo apt update
+
+# 3. Build deps for Erlang (kerl) — NOT the apt-shipped elixir,
+#    Ubuntu 24.04 packages Elixir 1.14 which is too old for ezagent
+#    (requires ≥ 1.18 / OTP 27).
+sudo apt install -y build-essential autoconf m4 libncurses-dev libssh-dev \
+  unixodbc-dev libssl-dev libxml2-utils xsltproc unzip git curl
+
+# 4. asdf v0.14 + Erlang/Elixir at the right versions:
+git clone --depth=1 -b v0.14.0 https://github.com/asdf-vm/asdf.git ~/.asdf
+echo '. $HOME/.asdf/asdf.sh' >> ~/.bashrc
+source ~/.asdf/asdf.sh
+asdf plugin add erlang
+asdf plugin add elixir
+
+# 5. Build Erlang (10–15 min compile from source; configure flags
+#    drop GUI/Java/observer to speed it up — ezagent doesn't use them):
+KERL_CONFIGURE_OPTIONS="--without-javac --without-wx --without-debugger --without-observer --without-jinterface" \
+  asdf install erlang 27.3.4.11
+asdf global erlang 27.3.4.11
+asdf reshim erlang   # makes `erl` available; first install sometimes misses this
+
+# 6. Elixir (precompiled, ~30s):
+asdf install elixir 1.18.4-otp-27
+asdf global elixir 1.18.4-otp-27
+
+# 7. Verify:
+erl -version 2>&1 | head -1                # Erlang/OTP 27 …
+elixir --version | tail -2                 # Elixir 1.18.4 (compiled with OTP 27)
+```
+
+#### Project setup
+
+```bash
+# Keep the repo inside the WSL filesystem (~/), NOT under /mnt/c/...
+# — Linux NTFS interop is terrible for mix deps.get (10x slower).
+cd ~
+git clone git@github.com:ezagent42/ezagent.git    # or your fork
+cd ezagent
+mix local.hex --force
+mix local.rebar --force
+mix deps.get
+mix test                                          # should run end-to-end
+```
+
+#### VS Code
+
+Install the **WSL extension** on Windows (`code --install-extension ms-vscode-remote.remote-wsl`). Then open the project from the WSL terminal:
+
+```bash
+cd ~/ezagent
+code .
+```
+
+VS Code spawns its server inside Ubuntu; your editor sees Linux paths, the language server (ElixirLS) runs against the WSL-side Elixir, file watchers work natively. Recommended extra extensions (Windows-side, the WSL host auto-installs them into the WSL profile on first open):
+
+- `jakebecker.elixir-ls` — Elixir LSP
+- `phoenixframework.phoenix` — Phoenix templates + routes
+
+#### Networking caveats
+
+- **WSL2 + Windows-side proxy**: if you run a proxy on Windows (Clash, V2Ray, …) bound to `127.0.0.1:7890`, WSL2's default **NAT** mode cannot reach it. Options:
+  - Switch the proxy to bind on `0.0.0.0` (Clash UI: "Allow LAN"), then in WSL `export http_proxy=http://$(ip route | awk '/default/ {print $3}'):7890` (the Windows host IP)
+  - Or use `networkingMode=mirrored` in `%USERPROFILE%\.wslconfig` (Windows 11 22H2+) so WSL shares Windows network stack. Requires `wsl.exe --install --no-distribution` first to install the network platform component, otherwise WSL falls back to "None" mode (no network at all).
+  - Or just use a China apt mirror (step 2 above) — most ezagent build steps reach hex.pm / GitHub / aliyun directly without a proxy.
+- **First-boot WSL warning** ("localhost proxy detected but not applied to WSL"): cosmetic, doesn't block anything. Reflects the above.
 
 ### Option 2 — Dev Container
 
