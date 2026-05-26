@@ -75,9 +75,9 @@ defmodule EzagentDomainChat.Integration.ChatReceiveUserSliceChangeTest do
   end
 
   defp spawn_session do
-    session = URI.new!("session://default/default/#{u("n3-sess")}")
+    session = URI.new!("session://default/system/#{u("n3-sess")}")
     {:ok, _} = Ezagent.SpawnRegistry.spawn(session)
-    :ok = Ezagent.WorkspaceRegistry.bind(session, URI.new!("workspace://default"))
+    :ok = Ezagent.WorkspaceRegistry.bind(session, URI.new!("workspace://system"))
     on_exit(fn -> Ezagent.WorkspaceRegistry.unbind(session) end)
     session
   end
@@ -113,8 +113,8 @@ defmodule EzagentDomainChat.Integration.ChatReceiveUserSliceChangeTest do
       install_default_rule_table()
       session = spawn_session()
 
-      sender = URI.new!("entity://user/default/#{u("sender")}")
-      receiver = URI.new!("entity://user/default/#{u("receiver")}")
+      sender = URI.new!("entity://user/system/#{u("sender")}")
+      receiver = URI.new!("entity://user/system/#{u("receiver")}")
 
       {:ok, _} = Ezagent.SpawnRegistry.spawn(sender)
       {:ok, _} = Ezagent.SpawnRegistry.spawn(receiver)
@@ -158,8 +158,8 @@ defmodule EzagentDomainChat.Integration.ChatReceiveUserSliceChangeTest do
       install_default_rule_table()
       session = spawn_session()
 
-      sender = URI.new!("entity://user/default/#{u("sender")}")
-      receiver = URI.new!("entity://user/default/#{u("receiver")}")
+      sender = URI.new!("entity://user/system/#{u("sender")}")
+      receiver = URI.new!("entity://user/system/#{u("receiver")}")
 
       {:ok, _} = Ezagent.SpawnRegistry.spawn(sender)
       {:ok, _} = Ezagent.SpawnRegistry.spawn(receiver)

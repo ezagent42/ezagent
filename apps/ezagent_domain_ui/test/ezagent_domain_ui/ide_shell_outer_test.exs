@@ -146,7 +146,7 @@ defmodule EzagentDomainUi.IdeShellOuterTest do
       assigns = %{
         current_entity_uri: "entity://user/system/admin",
         workspace_name: "default",
-        workspaces: [%{name: "default", uri: "workspace://default"}]
+        workspaces: [%{name: "default", uri: "workspace://system"}]
       }
 
       html =

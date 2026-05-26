@@ -37,7 +37,7 @@ defmodule EzagentPluginFeishu.InboundChatLookupTest do
 
     test "returns {:ok, session_uri} for a feishu-adapter row" do
       chat_id = "oc_lookup_test_" <> uniq()
-      session_uri = "session://default/default/main"
+      session_uri = "session://default/system/main"
 
       insert_row(session_uri, "feishu", chat_id)
 
@@ -49,7 +49,7 @@ defmodule EzagentPluginFeishu.InboundChatLookupTest do
       # A hypothetical Slack adapter binding the same string as target_id.
       # The Feishu inbound lookup must filter on adapter_id="feishu".
       chat_id = "oc_disambiguation_" <> uniq()
-      session_uri = "session://default/default/main"
+      session_uri = "session://default/system/main"
 
       insert_row(session_uri, "slack_hypothetical", chat_id)
 
@@ -64,8 +64,8 @@ defmodule EzagentPluginFeishu.InboundChatLookupTest do
     # + the correct rebind could never win. Post-fix: hard error.
     test "returns {:error, :ambiguous_chat_binding} when 2+ sessions are bound to the same chat_id" do
       chat_id = "oc_dup_" <> uniq()
-      insert_row("session://default/default/team_a_" <> uniq(), "feishu", chat_id)
-      insert_row("session://default/default/team_b_" <> uniq(), "feishu", chat_id)
+      insert_row("session://default/system/team_a_" <> uniq(), "feishu", chat_id)
+      insert_row("session://default/system/team_b_" <> uniq(), "feishu", chat_id)
 
       assert {:error, :ambiguous_chat_binding} = InboundChatLookup.resolve(chat_id)
     end
@@ -73,12 +73,12 @@ defmodule EzagentPluginFeishu.InboundChatLookupTest do
 
   describe "chat_ids_for/1" do
     test "returns [] for a session with no feishu bindings" do
-      uri = URI.parse("session://default/default/nobindings_" <> uniq())
+      uri = URI.parse("session://default/system/nobindings_" <> uniq())
       assert [] = InboundChatLookup.chat_ids_for(uri)
     end
 
     test "returns all feishu chat_ids bound to the session" do
-      session_uri = "session://default/default/multi_" <> uniq()
+      session_uri = "session://default/system/multi_" <> uniq()
       insert_row(session_uri, "feishu", "oc_a_" <> uniq())
       insert_row(session_uri, "feishu", "oc_b_" <> uniq())
       insert_row(session_uri, "feishu", "oc_c_" <> uniq())
@@ -89,7 +89,7 @@ defmodule EzagentPluginFeishu.InboundChatLookupTest do
     end
 
     test "filters out non-feishu adapter rows on the same session" do
-      session_uri = "session://default/default/mixed_" <> uniq()
+      session_uri = "session://default/system/mixed_" <> uniq()
       insert_row(session_uri, "feishu", "oc_keep_" <> uniq())
       insert_row(session_uri, "slack_hypothetical", "C_drop_" <> uniq())
 
