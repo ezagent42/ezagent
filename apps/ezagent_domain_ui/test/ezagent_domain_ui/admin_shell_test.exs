@@ -82,6 +82,31 @@ defmodule EzagentDomainUi.AdminShellTest do
       refute html =~ ~s(id="workspace-shell")
       refute html =~ ~s(aria-label="Sessions")
     end
+
+    # Bug 4 (Allen 2026-05-26) — the sidebar carried
+    # `phx-click-away={JS.hide(to: "#admin-shell-sidebar")}` which
+    # wrote `style="display: none"` on ANY outside click (e.g. on a
+    # /workspaces table cell). Inline `display:none` beats the
+    # `lg:flex` class on `lg+` screens, so the sidebar disappeared
+    # permanently with no toggle to bring it back — making
+    # /workspaces + /admin/* effectively un-navigable except via the
+    # avatar menu. The handler was added in anticipation of a mobile
+    # overlay toggle that was never wired.
+    test "sidebar has NO phx-click-away handler (Bug 4 regression)" do
+      assigns = %{current_path: "/admin"}
+
+      html =
+        rendered_to_string(~H"""
+        <AdminShell.admin_shell current_path={@current_path}>
+          <:main>x</:main>
+        </AdminShell.admin_shell>
+        """)
+
+      refute html =~ "phx-click-away",
+             "admin sidebar must NOT carry a phx-click-away handler — its JS.hide " <>
+               "writes inline display:none which beats lg:flex, hiding the sidebar " <>
+               "permanently on desktop with no toggle to restore it (Bug 4)"
+    end
   end
 
   describe "section helpers" do

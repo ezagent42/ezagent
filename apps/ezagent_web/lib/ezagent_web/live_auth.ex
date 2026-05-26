@@ -197,6 +197,7 @@ defmodule EzagentWeb.LiveAuth do
              socket
              |> assign(:current_entity_uri, uri)
              |> assign(:current_workspace_uri, workspace_uri)
+             |> assign(:workspace_name, workspace_name_from_uri(workspace_uri))
              |> assign(:is_admin?, admin?(uri))
              |> assign(:is_system_member?, is_system_member)
              |> assign(:workspaces, list_known_workspaces())}
@@ -239,6 +240,16 @@ defmodule EzagentWeb.LiveAuth do
   defp parse_workspace_uri(nil, entity_uri), do: Ezagent.URI.entity_workspace_uri(entity_uri)
 
   defp parse_workspace_uri(ws_str, _entity_uri) when is_binary(ws_str), do: URI.parse(ws_str)
+
+  # Bug 3 (Allen 2026-05-26) — derive the display name from the
+  # canonical `:current_workspace_uri` so every LV in the
+  # `:require_entity` live_session inherits it. Previously only
+  # `admin_live` computed `workspace_name` (and it pulled from the
+  # session URI's bound workspace, which ignores the cookie's
+  # workspace slot — so the IdeShell `ezagent / <name>` trigger
+  # didn't update after a successful workspace switch).
+  defp workspace_name_from_uri(%URI{host: name}) when is_binary(name) and name != "", do: name
+  defp workspace_name_from_uri(_), do: nil
 
   # Phase 8c follow-up (Allen 2026-05-20) — `is_admin?` was set in
   # admin_live's mount but not propagated to the other 12 LVs that

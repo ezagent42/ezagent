@@ -91,6 +91,7 @@ defmodule EzagentPluginLiveview.EntitiesLive do
       current_entity_uri={@current_entity_uri_str}
       current_workspace_uri={@current_workspace_uri}
       workspaces={@workspaces}
+      workspace_name={@workspace_name}
       is_admin?={@is_admin?}
       is_system_member?={@is_system_member?}
       cmdk_nav_routes={@cmdk_nav_routes}

@@ -254,6 +254,7 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
       perspective={:workspace}
       current_entity_uri={@current_entity_uri_str}
       current_workspace_uri={@current_workspace_uri}
+      workspace_name={@workspace_name}
       is_admin?={@is_admin?}
       is_system_member?={@is_system_member?}
       workspaces={@workspaces}
@@ -296,6 +297,7 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
       perspective={:workspace}
       current_entity_uri={@current_entity_uri_str}
       current_workspace_uri={@current_workspace_uri}
+      workspace_name={@workspace_name}
       is_admin?={@is_admin?}
       is_system_member?={@is_system_member?}
       workspaces={@workspaces}
