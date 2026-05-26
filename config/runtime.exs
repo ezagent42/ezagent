@@ -111,13 +111,31 @@ end
 # --- Public URL (all envs) -------------------------------------------------
 # `EzagentWeb.Endpoint.url/0` must return the PUBLIC host, not localhost —
 # magic-link emails embed an absolute URL the recipient opens in a browser.
-# The app is fronted by the app.ezagent.chat Cloudflare tunnel in BOTH the
-# dev-mode and prod-mode deployments, so this is set unconditionally (the
-# endpoint `:url` only affects URL generation, not the bind address — that
-# stays the `http:` port). Override per-deployment with EZAGENT_PUBLIC_HOST.
+# The app is fronted by the app.ezagent.chat Cloudflare tunnel in
+# prod/staging deployments; dev-mode deployments accessed over Tailscale
+# can override host + scheme + port so the magic-link URL points at the
+# tailnet IP (e.g. `http://100.64.0.27:10042/auth/magic/...`) when the
+# tunnel is intentionally not running.
+#
+# Three env vars, all optional:
+#   - EZAGENT_PUBLIC_HOST   (default "app.ezagent.chat")
+#   - EZAGENT_PUBLIC_SCHEME (default "https")
+#   - EZAGENT_PUBLIC_PORT   (default depends on scheme: 443 for https, 80 for http)
+#
+# Endpoint `:url` only affects URL generation, not the bind address — the
+# server still binds to the `:http` port configured above. (2026-05-26
+# Allen: dev workflow needs Tailscale fallback when cloudflared is down.)
+public_scheme = System.get_env("EZAGENT_PUBLIC_SCHEME", "https")
+
+public_port =
+  case System.get_env("EZAGENT_PUBLIC_PORT") do
+    nil -> if public_scheme == "https", do: 443, else: 80
+    port_str -> String.to_integer(port_str)
+  end
+
 config :ezagent_web, EzagentWeb.Endpoint,
   url: [
     host: System.get_env("EZAGENT_PUBLIC_HOST", "app.ezagent.chat"),
-    scheme: "https",
-    port: 443
+    scheme: public_scheme,
+    port: public_port
   ]
