@@ -37,6 +37,14 @@ defmodule Mix.Tasks.Ezagent.User.Create do
     rows; SessionController refuses login for password-less rows)
   - `--caps <str>` — comma-separated cap specs (see
     `Ezagent.Capability.Parser` for grammar). Default empty.
+  - `--email <addr>` — bind email to the new user's `entity_profiles`
+    row in the same task. Without this flag, magic-link login is
+    impossible for the new user until `mix ezagent.user.set_email`
+    is run separately (the 2026-05-26 v1 gap that surfaced after the
+    `set_email` PR — see commit message for context).
+  - `--display-name <name>` — sets the user's `display_name` in
+    `entity_profiles`. Defaults to the URI path's last segment when
+    `--email` is set without an explicit display name.
   - `--allow-allcaps` — required if `--caps '*'`. Prevents accidental
     admin-clones.
 
@@ -82,6 +90,8 @@ defmodule Mix.Tasks.Ezagent.User.Create do
         strict: [
           password: :string,
           caps: :string,
+          email: :string,
+          display_name: :string,
           allow_allcaps: :boolean
         ],
         aliases: []
@@ -104,19 +114,51 @@ defmodule Mix.Tasks.Ezagent.User.Create do
   defp do_create(user_uri_str, opts) do
     password = Keyword.get(opts, :password)
     caps_str = Keyword.get(opts, :caps, "")
+    email = Keyword.get(opts, :email)
+    display_name_opt = Keyword.get(opts, :display_name)
     allow_allcaps = Keyword.get(opts, :allow_allcaps, false)
 
     with {:ok, user_uri} <- parse_uri(user_uri_str),
          :ok <- check_allcaps_flag(caps_str, allow_allcaps),
          {:ok, caps} <- Ezagent.Capability.Parser.parse(caps_str, Ezagent.Entity.User.admin_uri()),
-         {:ok, decoded} <- Ezagent.Users.create(user_uri, password, caps) do
+         {:ok, decoded} <- Ezagent.Users.create(user_uri, password, caps),
+         :ok <- maybe_set_email(user_uri, email, display_name_opt) do
       Mix.shell().info("✓ created #{user_uri_str}")
       Mix.shell().info("  caps: #{length(caps)}")
       Mix.shell().info("  password: #{if password, do: "set", else: "NOT SET (use mix ezagent.user.set_password)"}")
+      Mix.shell().info("  email: #{email || "NOT SET (magic-link login unavailable until mix ezagent.user.set_email)"}")
       _ = maybe_spawn_user_kind(user_uri, caps)
       Mix.shell().info("  uri: #{URI.to_string(decoded.uri)}")
     else
       {:error, reason} -> Mix.raise("create failed: #{inspect(reason)}")
+    end
+  end
+
+  # 2026-05-26 — Allen surfaced the gap: `set_email` exists as a
+  # bootstrap remediation task but `user.create` didn't accept email,
+  # so every new user repeated the magic-link silent_drop bug at the
+  # next login attempt. Setting email at create-time closes the loop.
+  #
+  # Email binding is done via the same `Ezagent.Entity.Profile.upsert/1`
+  # path that `set_email` uses — keeping a single code path for the
+  # email-bind operation.
+  defp maybe_set_email(_user_uri, nil, _display_name_opt), do: :ok
+
+  defp maybe_set_email(user_uri, email, display_name_opt) when is_binary(email) do
+    %URI{path: "/" <> path_rest} = user_uri
+    [_workspace_segment, name_segment] = String.split(path_rest, "/", parts: 2)
+    display_name = display_name_opt || name_segment
+
+    profile_attrs = %{
+      entity_uri: URI.to_string(user_uri),
+      display_name: display_name,
+      email: email,
+      workspace_uri: URI.to_string(Ezagent.URI.entity_workspace_uri(user_uri))
+    }
+
+    case Ezagent.Entity.Profile.upsert(profile_attrs) do
+      {:ok, _row} -> :ok
+      {:error, reason} -> {:error, {:profile_upsert_failed, reason}}
     end
   end
 
