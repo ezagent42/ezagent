@@ -370,6 +370,53 @@ defmodule Ezagent.PluginEcho.Template.EchoAgentTest do
 
       assert :ok = EchoAgent.validate(out)
     end
+
+    # codex r1 MEDIUM (2026-05-26) — fail fast on with_pty drift.
+    # Anything other than "true"/"false" used to silently fall through
+    # to validate/1's catch-all and downgrade to no-PTY, dropping the
+    # operator's intent on the floor.
+    test "raises on with_pty value other than \"true\"/\"false\"" do
+      assert_raise ArgumentError, ~r/with_pty must be/, fn ->
+        EchoAgent.form_to_args(%{
+          "agent_uri" => "entity://agent/team-alpha/echo_drift",
+          "with_pty" => "yes"
+        })
+      end
+
+      assert_raise ArgumentError, ~r/with_pty must be/, fn ->
+        EchoAgent.form_to_args(%{
+          "agent_uri" => "entity://agent/team-alpha/echo_drift",
+          "with_pty" => "tru"
+        })
+      end
+    end
+
+    # codex r1 LOW (2026-05-26) — the default form_to_args path in
+    # workspace_detail_live drops "tmpl_name" before constructing
+    # template_data; the override path must match (same shape, no
+    # redundant identity field stored inside the template map).
+    test "drops tmpl_name from output (matches default-path Map.drop in workspace_detail_live)" do
+      out =
+        EchoAgent.form_to_args(%{
+          "tmpl_name" => "echo-test",
+          "agent_uri" => "entity://agent/team-alpha/echo_xyz",
+          "with_pty" => "false"
+        })
+
+      refute Map.has_key?(out, "tmpl_name")
+      assert out["agent_uri"] == "entity://agent/team-alpha/echo_xyz"
+      assert out["class"] == "echo.agent"
+    end
+
+    test "with_pty absent → output omits with_pty (validate defaults to no-PTY)" do
+      out =
+        EchoAgent.form_to_args(%{
+          "agent_uri" => "entity://agent/team-alpha/echo_no-field"
+        })
+
+      refute Map.has_key?(out, "with_pty")
+      assert :ok = EchoAgent.validate(out)
+    end
   end
 
   defp list_pty_pids_for(agent_uri_str) do
