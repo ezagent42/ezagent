@@ -58,9 +58,29 @@ defmodule EzagentPluginLiveview.Admin.MemberPanel do
   attr :invite_open, :boolean, default: false
   attr :invite_options, :list, default: []
 
+  # V1 UI SPEC §2C.4 — surfaced cap denial. `AdminLive` sets
+  # `socket.assigns.flash_error` when an `invite_member` /
+  # `create_session_with_user` / `delete_session` event hits
+  # `{:error, :unauthorized}` or `:cross_workspace_denied`. The
+  # member panel renders it inline (next to the Invite button) so
+  # the caller sees WHY their click silently failed — per the
+  # spec, no silent drop.
+  attr :flash_error, :string, default: nil
+
   def member_panel(assigns) do
     ~H"""
     <aside id="session-members" class="p-3 text-zinc-800 dark:text-zinc-200">
+      <%!-- V1 UI SPEC §2C.4 — cap-denial flash surfacing.
+            Tested in admin_live_test.exs "invite_member surfacing
+            :unauthorized → distinct flash, no silent drop". --%>
+      <p
+        :if={@flash_error}
+        id="member-panel-flash-error"
+        role="alert"
+        class="mb-2 text-xs text-rose-600 dark:text-rose-400"
+      >
+        {@flash_error}
+      </p>
       <div class="flex items-center justify-between mb-2">
         <h3 class="text-[10px] uppercase tracking-wide text-zinc-500">{gettext("Members")}</h3>
         <.button

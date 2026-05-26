@@ -1342,6 +1342,7 @@ defmodule EzagentPluginLiveview.AdminLive do
               display_map={@display_map}
               invite_open={@invite_open}
               invite_options={@invite_options}
+              flash_error={@flash_error}
             />
           </:right_sidebar>
         </WorkspaceShell.workspace_shell>

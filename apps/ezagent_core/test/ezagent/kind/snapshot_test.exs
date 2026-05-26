@@ -85,10 +85,19 @@ defmodule Ezagent.Kind.SnapshotTest do
 
     loaded = Snapshot.load_or_init(uri, Ezagent.Entity.User, %{uri: uri})
     # PR #126: load_or_init merges any fresh-init slices from new Behaviors
-    # (here :api_keys was added after the saved snapshot) onto the loaded
-    # state. The saved :identity slice survives; :api_keys gets its
-    # init_slice default.
-    assert loaded == %{identity: %{caps: caps}, api_keys: %{keys: %{}}}
+    # onto the loaded state. The saved :identity slice survives; every
+    # other Behavior contributes its `init_slice` default.
+    #
+    # 2026-05-26: PR #356 (HIGH-2) added `Ezagent.Behavior.UserCredentials`
+    # + `Ezagent.Behavior.UserTokens`, so the merged shape grew. Asserting
+    # the full structure here keeps the invariant tight — adding a new
+    # User-Behavior should force this assertion to be updated alongside.
+    assert loaded == %{
+             identity: %{caps: caps},
+             api_keys: %{keys: %{}},
+             user_credentials: %{set_password_count: 0},
+             user_tokens: %{mint_count: 0, revoke_count: 0}
+           }
   end
 
   test "term_to_binary survives MapSet round-trip (Q1: lossless encoding)" do
