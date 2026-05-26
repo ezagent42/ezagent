@@ -110,6 +110,13 @@ defmodule Ezagent.Domain.Python.Server do
   defp do_spawn_and_ping(state) do
     with {:ok, argv} <- Python.Spec.to_argv(state.spec),
          {:ok, exec_pid, os_pid, ref} <- spawn_subprocess(argv, state.spec) do
+      # PTY-pid-files 2026-05-26 follow-up (a): persist os_pid so the
+      # np plugin's OrphanReaper can discover prior-incarnation children
+      # at next-BEAM boot without `ps` scanning. Only when handle is a
+      # URI (the plugin path); domain-level tests may use binary handles
+      # and don't need pid-file tracking.
+      _ = maybe_write_pid_file(state.spec.handle, os_pid)
+
       state =
         %{state | exec_pid: exec_pid, os_pid: os_pid, monitor_ref: ref}
         |> open_stderr_log()
@@ -550,8 +557,24 @@ defmodule Ezagent.Domain.Python.Server do
     state = reply_ready_waiters(state, {:error, :subprocess_unhealthy})
     force_stop_exec(state.exec_pid)
     close_stderr_log(state)
+
+    # PTY-pid-files 2026-05-26 follow-up (a): graceful-shutdown
+    # cleanup of the pid file. Brutal BEAM kill skips this entirely —
+    # the pid file remains on disk for the next BEAM's OrphanReaper.
+    _ = maybe_remove_pid_file(state.spec.handle)
+
     :ok
   end
+
+  defp maybe_write_pid_file(%URI{} = uri, os_pid),
+    do: Ezagent.Runtime.PidFile.write("np", uri, os_pid)
+
+  defp maybe_write_pid_file(_handle, _os_pid), do: :ok
+
+  defp maybe_remove_pid_file(%URI{} = uri),
+    do: Ezagent.Runtime.PidFile.remove("np", uri)
+
+  defp maybe_remove_pid_file(_handle), do: :ok
 
   defp force_stop_exec(nil), do: :ok
 

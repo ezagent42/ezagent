@@ -10,10 +10,10 @@ defmodule EzagentPluginCc.OrphanReaper do
 
     1. Agent Kind (Elixir GenServer) — OTP-supervised, recovers from
        snapshot.
-    2. PtyServer + claude TUI subprocess — `:exec.run/2` (erlexec) port
-       runs the OS-level `claude` process. erlexec normally reaps the
-       child on BEAM exit (`SIGTERM` propagation), but a **brutal
-       BEAM kill** (`SIGKILL`, panic, SEGV) skips the cleanup and the
+    2. PtyServer + claude TUI subprocess — `:exec.run/2` (erlexec)
+       port runs the OS-level `claude` process. erlexec normally reaps
+       the child on BEAM exit (`SIGTERM` propagation), but a brutal
+       BEAM kill (`SIGKILL`, panic, SEGV) skips that cleanup and the
        OS `claude` lives on as an orphan attached to the old PTY.
 
   Without reaping, the orphan reconnects to ESR via the cc bridge
@@ -21,28 +21,49 @@ defmodule EzagentPluginCc.OrphanReaper do
   Kind via the chat router. By the time `Workspace.Loader` later runs
   `cc.agent.instantiate/3`, the Agent Kind is already alive (codex
   round-8 returns immediately) and the NEW PtyServer is never started.
-  Operators then see a "dead terminal" in the LV (no PtyServer to
-  write to) while the orphan OS claude still chats over its old
-  channel.
 
-  ## Identification
+  ## Discovery: pid files, NOT `ps`
 
-  A cc-managed claude process carries a distinctive argv signature:
+  PTY-pid-files 2026-05-26 follow-up (a) replaced the original
+  `ps -axEo pid,command` scan with explicit pid files that
+  `Ezagent.Domain.Pty.Server` writes at spawn and removes at graceful
+  shutdown. The reaper now enumerates
+  `Ezagent.Runtime.PidFile.enumerate("cc")` — files we wrote ourselves
+  — and checks each os_pid for liveness + start-time match (PID-recycle
+  protection).
 
-      <abs path>/claude --permission-mode bypassPermissions \\
-        --dangerously-load-development-channels server:esr-bridge \\
-        [--settings ...] --settings <plugin priv> --mcp-config <path> \\
-        [--mcp-config ...]
+  This eliminates three sharp edges of the v1 reaper:
 
-  AND carries `EZAGENT_AGENT_URI=<uri>` in its env. The env tells us
-  WHICH agent URI the orphan belongs to — we don't blindly kill every
-  `claude` on the box, only ones whose URI is OURS.
+    1. macOS / Linux `ps -E` flag differences.
+    2. Argv-signature fragility (every cc Template change had to
+       preserve the signature substring).
+    3. Cross-BEAM friendly-fire safety via env-tag comparison.
 
-  We compare each candidate's URI against the live PtyServer registry
-  (`Ezagent.Domain.Pty.alive?/1`). Any orphan with NO matching alive
-  PtyServer gets `SIGTERM` (graceful — claude has a few seconds to
-  cleanup its own per-instance `.mcp.json` files; if the next
-  Workspace.Loader pass re-spawns the agent, it overwrites them).
+  Per-deployment subdirectory in `PidFile.dir/1` (keyed off
+  `Ezagent.DeploymentId.deployment_id/0`) structurally segregates
+  parallel BEAMs: one deployment cannot see another's pid files at
+  all, so friendly-fire is impossible by construction.
+
+  ## Reaping rules
+
+  For each pid-file entry `%{agent_uri, os_pid, start_seconds, path}`:
+
+    * If `Ezagent.Domain.Pty.alive?(agent_uri)` returns true — the
+      current PtyServer wrote this file as part of normal operation;
+      leave it alone. (This case shouldn't happen during `after_boot/0`
+      since Workspace.Loader hasn't run yet, but the check is cheap
+      defense.)
+    * Else read the current start-time of `os_pid` via
+      `PidFile.process_start_seconds/1`.
+        - `nil` (process dead): just `File.rm/1` the stale pid file.
+        - Mismatch with `start_seconds`: PID has been recycled for an
+          unrelated process — `File.rm/1` and skip kill.
+        - Match: the OS process is our prior-incarnation orphan —
+          `kill -TERM <pid>` + `File.rm/1`.
+
+  Memory `feedback_no_pkill_tmux_default_socket`: same principle — we
+  send TARGETED signals to specific PIDs we own (via pid files we
+  wrote), never broad `pkill`.
 
   ## When this runs
 
@@ -52,305 +73,97 @@ defmodule EzagentPluginCc.OrphanReaper do
     1. Reap orphans → no leftover OS claudes own a bridge channel.
     2. `load_all/0` → cc.agent.instantiate/3 spawns Agent Kinds AND
        fresh PtyServers. No race against an orphan claude reconnecting.
-
-  ## Why a function, not a GenServer
-
-  Reaping is a one-shot at boot. A GenServer would add lifecycle surface
-  (supervised child, restart strategy) for no benefit. The function is
-  called from `after_boot/0`, lives 1-2 seconds, exits. If reap itself
-  fails (`ps` not on PATH, permission denied), we log + continue — the
-  reaper is best-effort defense, not a correctness gate (an orphan that
-  survives reaping would just produce the same "operator clicks
-  Restart in LV" flow operators already use today).
-
-  ## Safety bound
-
-  We NEVER `pkill -9` broadly. Each candidate must:
-
-    1. Have the FULL cc-specific argv signature (claude binary +
-       `--dangerously-load-development-channels server:esr-bridge`).
-    2. Carry `EZAGENT_AGENT_URI` in its env (PtyServer always sets this
-       — `Ezagent.Domain.Pty.Server.build_env/1`).
-    3. Have a URI that LOOKS LIKE a cc agent (`entity://agent/.../cc_*`).
-    4. NOT have a corresponding live PtyServer in the registry.
-
-  Misses are far safer than false positives — a missed orphan
-  re-surfaces on next phx restart; a wrong kill takes down an
-  operator's other claude session.
-
-  Memory `feedback_no_pkill_tmux_default_socket`: same principle —
-  targeted kills only, never broad `pkill`.
   """
 
   require Logger
 
   alias Ezagent.Domain.Pty
+  alias Ezagent.Runtime.PidFile
 
-  # Distinctive substring guaranteed in the cc-managed claude argv.
-  # Built by `Ezagent.PluginCc.Template.CcAgent.build_claude_cmd/3`.
-  @argv_signature "--dangerously-load-development-channels server:esr-bridge"
-
-  # Env var the cc PtyServer ALWAYS sets to the agent's URI string.
-  # `Ezagent.Domain.Pty.Server.build_env/1`.
-  @agent_uri_env_key "EZAGENT_AGENT_URI"
-
-  # PTY-orphan-restart round-2 (codex finding #2) — multi-BEAM safety.
-  # The PtyServer tags every spawned claude with the BEAM's
-  # `Ezagent.DeploymentId.deployment_id/0`. Reaper refuses to kill any
-  # process whose EZAGENT_DEPLOYMENT_ID differs from the CURRENT BEAM's
-  # deployment_id — that process belongs to a parallel deployment under
-  # the same OS user and is NOT ours to reap.
-  @deployment_id_env_key "EZAGENT_DEPLOYMENT_ID"
-
-  # cc agent URI scheme + prefix gate. Per SPEC v2 §5.14 every cc agent
-  # is `entity://agent/<workspace>/cc_<name>`. A URI not matching this
-  # shape is rejected (don't accidentally kill another plugin's agent
-  # if env reuse ever happens).
-  @cc_uri_scheme "entity://agent/"
+  @plugin "cc"
 
   @doc """
-  Walk the OS process list, identify cc-orphans, and SIGTERM each.
+  Walk this deployment's cc pid files, identify orphans, SIGTERM each.
 
-  Best-effort: returns the count of orphans terminated (for log /
-  test introspection). Errors during `ps` execution are logged and
-  the function returns `{:error, reason}` — the caller continues.
+  Best-effort: returns the count of orphans terminated. Errors during
+  enumeration are logged and the function returns `{:error, reason}`;
+  the caller continues.
   """
   @spec reap() :: {:ok, killed :: non_neg_integer()} | {:error, term()}
   def reap do
-    case enumerate_candidates() do
-      {:ok, []} ->
-        Logger.debug("EzagentPluginCc.OrphanReaper: no cc-claude candidates found")
-        {:ok, 0}
-
-      {:ok, candidates} ->
-        killed =
-          candidates
-          |> Enum.filter(&orphan?/1)
-          |> Enum.map(&kill_orphan/1)
-          |> Enum.count(&(&1 == :ok))
-
-        if killed > 0 do
-          Logger.warning(
-            "EzagentPluginCc.OrphanReaper: reaped #{killed} orphan claude " <>
-              "process(es) from a previous BEAM run"
-          )
-        end
-
-        {:ok, killed}
-
-      {:error, reason} = err ->
-        Logger.warning(
-          "EzagentPluginCc.OrphanReaper: enumerate failed (#{inspect(reason)}); " <>
-            "continuing without reaping"
-        )
-
-        err
-    end
-  end
-
-  @typedoc """
-  A candidate identified by enumerate_candidates/0:
-    * `:pid` — OS pid (integer)
-    * `:cmd` — argv joined as string
-    * `:agent_uri` — value of EZAGENT_AGENT_URI env var, or nil if absent
-    * `:deployment_id` — value of EZAGENT_DEPLOYMENT_ID env var, or nil
-      if absent. Codex round-2 finding #2: distinguishes our prior-BEAM
-      orphans from a parallel deployment's live children.
-  """
-  @type candidate :: %{
-          pid: pos_integer(),
-          cmd: String.t(),
-          agent_uri: String.t() | nil,
-          deployment_id: String.t() | nil
-        }
-
-  # ---------------------------------------------------------------------------
-  # Enumeration via `ps`
-  # ---------------------------------------------------------------------------
-
-  # We use `ps -axo pid,command -E` on macOS to include env vars in the
-  # command output. Linux: `ps -axEo pid,command` (capital E flag). The
-  # function tries both flag orders so this works on Darwin + Linux.
-  defp enumerate_candidates do
-    case run_ps() do
-      {:ok, output} ->
-        candidates =
-          output
-          |> String.split("\n", trim: true)
-          |> Enum.flat_map(&parse_ps_line/1)
-          |> Enum.filter(&cc_candidate?/1)
-
-        {:ok, candidates}
-
-      err ->
-        err
-    end
-  end
-
-  # macOS: `ps -E` includes env after the argv. Linux ps doesn't accept
-  # `-E` the same way; we use `ps -axe -o pid,command` which on Linux
-  # has slightly different semantics but still includes the env. We
-  # only need to read EZAGENT_AGENT_URI from the resulting line, so
-  # the exact format doesn't matter — `parse_env_var/2` does the
-  # parsing.
-  defp run_ps do
-    cmd =
-      case :os.type() do
-        {:unix, :darwin} -> ["ps", "-axww", "-Eo", "pid,command"]
-        {:unix, _other} -> ["ps", "-axwwe", "-o", "pid,command"]
-        _ -> ["ps", "-axww", "-o", "pid,command"]
-      end
-
-    try do
-      {output, exit_code} = System.cmd(hd(cmd), tl(cmd), stderr_to_stdout: true)
-
-      if exit_code == 0 do
-        {:ok, output}
-      else
-        {:error, {:ps_exit, exit_code, output}}
-      end
-    rescue
-      e -> {:error, {:ps_raised, Exception.message(e)}}
-    catch
-      kind, reason -> {:error, {kind, reason}}
-    end
-  end
-
-  # `ps -axo pid,command` output format:
-  #   <pid>  <command>
-  # We split on the first run of spaces (pid is leading) and keep the
-  # whole rest as the cmd line.
-  defp parse_ps_line(line) do
-    case String.split(String.trim_leading(line), " ", parts: 2) do
-      [pid_str, cmd] ->
-        case Integer.parse(pid_str) do
-          {pid, ""} when pid > 0 ->
-            [
-              %{
-                pid: pid,
-                cmd: cmd,
-                agent_uri: parse_env_var(cmd, @agent_uri_env_key),
-                deployment_id: parse_env_var(cmd, @deployment_id_env_key)
-              }
-            ]
-
-          _ ->
-            []
-        end
-
-      _ ->
-        []
-    end
-  end
-
-  # Hunts for `EZAGENT_AGENT_URI=<value>` in the cmd string (macos
-  # `ps -E` interleaves env vars with argv). Returns the value or nil.
-  defp parse_env_var(cmd, key) do
-    pattern = key <> "="
-
-    case String.split(cmd, pattern, parts: 2) do
-      [_, after_eq] ->
-        # Env value runs until the next space (argv elements are
-        # space-separated). Conservative: env values in cc never
-        # contain spaces (the URI is a single token).
-        case String.split(after_eq, " ", parts: 2) do
-          [value | _] -> value
-          [] -> nil
-        end
-
-      _ ->
-        nil
-    end
-  end
-
-  # ---------------------------------------------------------------------------
-  # Filtering
-  # ---------------------------------------------------------------------------
-
-  # The argv signature MUST be present (gates "is this a cc-managed
-  # claude" vs operator's own ad-hoc `claude` invocations).
-  defp cc_candidate?(%{cmd: cmd}) when is_binary(cmd) do
-    String.contains?(cmd, @argv_signature)
-  end
-
-  defp cc_candidate?(_), do: false
-
-  # Orphan = cc-candidate WITH a valid cc-shaped URI WITH no live
-  # PtyServer in the registry AND owned by THIS DEPLOYMENT (codex
-  # round-2 finding #2). Any failure in URI parsing / Registry lookup
-  # means "don't kill" (fail closed).
-  defp orphan?(%{agent_uri: uri_str, deployment_id: dep_id}) when is_binary(uri_str) do
-    our_id = Ezagent.DeploymentId.deployment_id()
+    entries = PidFile.enumerate(@plugin)
+    {killed, stale} = Enum.reduce(entries, {0, 0}, &process_entry/2)
 
     cond do
-      # Codex round-2 finding #2: a process WITHOUT
-      # EZAGENT_DEPLOYMENT_ID env predates this PR — older releases
-      # didn't tag the deployment. We refuse to reap those: a missing
-      # env var means "we have no way to prove ownership". The
-      # operator who deploys both old + new in parallel must roll
-      # forward; the post-fix reaper won't blanket-kill the old. A
-      # one-time manual cleanup is acceptable for the upgrade window.
-      not is_binary(dep_id) or dep_id == "" ->
-        false
+      killed > 0 ->
+        Logger.warning(
+          "EzagentPluginCc.OrphanReaper: SIGTERM'd #{killed} orphan claude " <>
+            "process(es) from a previous BEAM run (#{stale} stale pid-files " <>
+            "cleaned up alongside)"
+        )
 
-      # Multi-BEAM safety: same OS user can host multiple BEAMs (a
-      # dev session + a staging release + a co-tenant). A process
-      # whose EZAGENT_DEPLOYMENT_ID differs from THIS BEAM's id
-      # belongs to a DIFFERENT deployment — not ours to reap,
-      # regardless of registry absence (it WILL be absent — we can
-      # only see our own registry).
-      dep_id != our_id ->
-        false
-
-      not String.starts_with?(uri_str, @cc_uri_scheme) ->
-        false
-
-      not cc_flavor_uri?(uri_str) ->
-        false
+      stale > 0 ->
+        Logger.info(
+          "EzagentPluginCc.OrphanReaper: no live orphans, cleaned #{stale} " <>
+            "stale pid-file(s)"
+        )
 
       true ->
-        # This deployment tagged the process but the URI is NOT in
-        # our live registry → it's a prior-incarnation orphan of THIS
-        # deployment.
-        case URI.new(uri_str) do
-          {:ok, %URI{} = uri} -> not Pty.alive?(uri)
-          _ -> false
+        Logger.debug("EzagentPluginCc.OrphanReaper: no cc pid-files to inspect")
+    end
+
+    {:ok, killed}
+  end
+
+  defp process_entry(
+         %{agent_uri: %URI{} = uri, os_pid: pid, start_seconds: written_start, path: path},
+         {killed, stale}
+       ) do
+    cond do
+      Pty.alive?(uri) ->
+        # A current PtyServer claims this URI — leave the file alone.
+        # This branch is defensive; in `after_boot/0` before
+        # Workspace.Loader, no PtyServers should be alive yet.
+        {killed, stale}
+
+      true ->
+        case PidFile.process_start_seconds(pid) do
+          nil ->
+            # OS process dead — just remove the stale file.
+            _ = File.rm(path)
+            {killed, stale + 1}
+
+          current_start when current_start != written_start ->
+            # PID recycled by the OS for an unrelated process.
+            # Remove our file, do NOT kill.
+            Logger.info(
+              "EzagentPluginCc.OrphanReaper: pid=#{pid} recycled " <>
+                "(start_seconds=#{current_start} != written #{written_start}); " <>
+                "removing stale pid-file without signalling"
+            )
+
+            _ = File.rm(path)
+            {killed, stale + 1}
+
+          _match ->
+            # The OS process IS our prior-incarnation orphan.
+            case sigterm(pid, uri) do
+              :ok ->
+                _ = File.rm(path)
+                {killed + 1, stale}
+
+              {:error, _reason} ->
+                # Leave the pid file in place — next boot will retry.
+                {killed, stale}
+            end
         end
     end
   end
 
-  defp orphan?(_), do: false
-
-  # URI must have `cc_` prefix on the entity name segment.
-  defp cc_flavor_uri?(uri_str) do
-    case URI.new(uri_str) do
-      {:ok, %URI{scheme: "entity", host: "agent", path: "/" <> rest}} ->
-        case String.split(rest, "/", parts: 2) do
-          [_workspace, entity_name] when is_binary(entity_name) ->
-            String.starts_with?(entity_name, "cc_")
-
-          _ ->
-            false
-        end
-
-      _ ->
-        false
-    end
-  end
-
-  # ---------------------------------------------------------------------------
-  # Killing
-  # ---------------------------------------------------------------------------
-
-  # SIGTERM (15) — graceful. claude has a chance to flush its own
-  # `.credentials.json` / `.mcp.json` state. If the orphan ignores it
-  # (claude is a Node.js process; should respect SIGTERM normally),
-  # next phx restart's reaper sees it again — bounded retry without
-  # the operator noticing.
-  defp kill_orphan(%{pid: pid, agent_uri: uri_str}) do
+  defp sigterm(pid, %URI{} = uri) do
     Logger.warning(
-      "EzagentPluginCc.OrphanReaper: sending SIGTERM to orphan claude " <>
-        "pid=#{pid} agent_uri=#{inspect(uri_str)}"
+      "EzagentPluginCc.OrphanReaper: SIGTERM orphan claude pid=#{pid} " <>
+        "agent_uri=#{inspect(URI.to_string(uri))}"
     )
 
     case System.cmd("kill", ["-TERM", Integer.to_string(pid)], stderr_to_stdout: true) do
@@ -359,18 +172,15 @@ defmodule EzagentPluginCc.OrphanReaper do
 
       {output, exit_code} ->
         Logger.warning(
-          "EzagentPluginCc.OrphanReaper: kill -TERM #{pid} failed " <>
-            "(exit=#{exit_code}, output=#{String.trim(output)})"
+          "EzagentPluginCc.OrphanReaper: kill -TERM pid=#{pid} failed " <>
+            "(exit=#{exit_code}, out=#{inspect(output)})"
         )
 
-        {:error, {:kill_failed, exit_code}}
+        {:error, {:kill_exit, exit_code}}
     end
   rescue
-    e ->
-      Logger.warning(
-        "EzagentPluginCc.OrphanReaper: kill raised for pid=#{pid}: #{Exception.message(e)}"
-      )
-
-      {:error, {:kill_raised, Exception.message(e)}}
+    e -> {:error, {:kill_raised, Exception.message(e)}}
+  catch
+    kind, reason -> {:error, {kind, reason}}
   end
 end
