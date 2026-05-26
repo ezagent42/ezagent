@@ -226,4 +226,76 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
                )
     end
   end
+
+  # codex PR #408 review MED-2 — when a non-admin user is added to a
+  # workspace via `Workspace.add_member/2`, they receive the
+  # `Behavior.Workspace :create_session` cap automatically so they can
+  # dispatch `workspace.create_session`. Per Allen's standing position
+  # (`feedback_uuid_is_canonical_identifier` referenced indirectly via
+  # "大部分用户不是 admin"), Gap C was meant to be available to members
+  # — pre-fix the User Kind's `default_caps/1` only had a session-axis
+  # wildcard, NOT a workspace-axis `:create_session` cap, so step 5.5
+  # denied every non-admin caller.
+  describe "codex PR #408 review MED-2 — add_member auto-grants :create_session cap" do
+    test "a non-admin user added to a workspace can dispatch :create_session", %{
+      workspace_uri: workspace_uri,
+      ws_name: ws_name
+    } do
+      # Set up a non-admin user with NO caps initially.
+      member_uri =
+        URI.new!("entity://user/#{ws_name}/med2-#{System.unique_integer([:positive])}")
+
+      {:ok, _pid} = Ezagent.Kind.spawn(User, %{uri: member_uri, initial_caps: MapSet.new()})
+
+      # Pre-add: dispatch denies (no :create_session cap)
+      pre_ctx = %{caller: member_uri, caps: MapSet.new()}
+
+      assert {:error, :unauthorized} =
+               Workspace.create_session(
+                 workspace_uri,
+                 %{short_name: "pre-add-#{System.unique_integer([:positive])}", template_name: "default"},
+                 pre_ctx
+               )
+
+      # Add as workspace member — the auto-grant fires.
+      :ok = Workspace.add_member(ws_name, member_uri)
+
+      # Read back the member's caps from the live User Kind (the grant
+      # was dispatched via Invocation.dispatch → identity.grant_cap
+      # which mutates the user's identity slice).
+      Process.sleep(50)
+      post_caps = Ezagent.Identity.list_caps_for(member_uri)
+
+      # The :create_session cap on this workspace must be present.
+      assert Enum.any?(post_caps, fn cap ->
+               match?(%Ezagent.Capability{}, cap) and
+                 cap.kind == :workspace and
+                 cap.behavior == Ezagent.Behavior.Workspace and
+                 URI.to_string(cap.instance) == URI.to_string(workspace_uri)
+             end),
+             "expected :create_session cap, got #{inspect(post_caps)}"
+    end
+
+    test "an agent member added to a workspace does NOT receive the cap (user-only grant)", %{
+      ws_name: ws_name
+    } do
+      # Agents don't drive create_session — the grant is gated on
+      # `entity://user/...` URI shape.
+      agent_uri = URI.new!("entity://agent/#{ws_name}/cc_test-#{System.unique_integer([:positive])}")
+
+      # Spawn the agent first so the lookup doesn't fail.
+      _ = Ezagent.SpawnRegistry.spawn(agent_uri)
+
+      :ok = Workspace.add_member(ws_name, agent_uri)
+
+      Process.sleep(50)
+      caps = Ezagent.Identity.list_caps_for(agent_uri)
+
+      refute Enum.any?(caps, fn cap ->
+               match?(%Ezagent.Capability{}, cap) and
+                 cap.behavior == Ezagent.Behavior.Workspace
+             end),
+             "agent member must NOT receive :create_session cap; got #{inspect(caps)}"
+    end
+  end
 end

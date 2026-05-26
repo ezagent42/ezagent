@@ -84,6 +84,20 @@ defmodule Ezagent.Workspace do
 
         with {:ok, _} <- Store.update_members(name, new_members),
              :ok <- dispatch_mutation(name, "add_member", %{member: member_uri}) do
+          # codex PR #408 review MED-2 — grant the new member the
+          # `Behavior.Workspace :create_session` cap automatically. SPEC
+          # 2026-05-26-session-create-orchestrator-unified Gap C was
+          # meant to make workspace members able to create sessions
+          # (per Allen's standing position "大部分用户不是 admin");
+          # without this grant the action body's CapBAC step 5.5
+          # denies every non-admin caller. User default_caps/1 is a
+          # session-axis wildcard (kind: :session, behavior: :any),
+          # which does NOT cover workspace-axis :create_session.
+          # Best-effort: a grant failure logs but does not block the
+          # add_member (membership has its own value; the user can
+          # still receive messages even without :create_session).
+          grant_member_create_session_cap(name, member_uri)
+
           # Notifier/flash audit 2026-05-24 — surface to the affected
           # user's notification stream. Pre-fix only `Chat.receive`
           # called notify/3; cap/membership actions were silent.
@@ -105,6 +119,82 @@ defmodule Ezagent.Workspace do
         end
     end
   end
+
+  # codex PR #408 review MED-2 — grant the workspace `:create_session`
+  # cap to a newly-added member. Uses dispatch so step 5.5 CapBAC, audit
+  # telemetry, and the cap-equality dedup all fire. Runs under
+  # `system://template-materialize` (the same SystemPrincipal used by
+  # other admin-mediated grants — `feedback_let_it_crash_no_workarounds`
+  # admits the system-principal grant pattern as the canonical mediated
+  # write). Skipped for agent members (agents don't drive
+  # create_session). Best-effort: failure is logged + telemetry'd,
+  # never bubbled up.
+  defp grant_member_create_session_cap(name, %URI{scheme: "entity", host: "user"} = member_uri) do
+    workspace_uri = URI.parse("workspace://#{name}")
+
+    cap = %Ezagent.Capability{
+      # Invariant #2 — cap subject uses MODULE reference, not atom
+      # shorthand. The cap matches `Behavior.Workspace.required_caps/0`'s
+      # `:create_session` entry verbatim.
+      kind: :workspace,
+      behavior: Ezagent.Behavior.Workspace,
+      instance: workspace_uri,
+      workspace_uri: workspace_uri,
+      granted_by: Ezagent.SystemPrincipal.uri("template-materialize"),
+      granted_at: DateTime.utc_now()
+    }
+
+    target = URI.new!("#{URI.to_string(member_uri)}?action=identity.grant_cap")
+
+    case Invocation.dispatch(%Invocation{
+           target: target,
+           mode: :call,
+           args: %{cap: cap},
+           ctx: %{
+             caller: Ezagent.SystemPrincipal.uri("template-materialize"),
+             caps: Ezagent.SystemPrincipal.caps("system://template-materialize"),
+             reply: {:caller_inbox, self()}
+           }
+         }) do
+      {:ok, _} ->
+        :ok
+
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        require Logger
+
+        Logger.warning(
+          "Ezagent.Workspace.add_member: granting :create_session cap to " <>
+            "#{URI.to_string(member_uri)} on workspace=#{name} failed: " <>
+            "#{inspect(reason)} — member is added but they cannot dispatch " <>
+            "`workspace.create_session` (admin grant required as workaround). " <>
+            "SPEC 2026-05-26-session-create-orchestrator-unified MED-2."
+        )
+
+        :telemetry.execute(
+          [:ezagent, :workspace, :member_create_session_grant_failed],
+          %{count: 1},
+          %{member_uri: member_uri, workspace_name: name, reason: reason}
+        )
+
+        :ok
+    end
+  rescue
+    error ->
+      require Logger
+
+      Logger.warning(
+        "Ezagent.Workspace.add_member: grant_member_create_session_cap raised " <>
+          "#{inspect(error)} for member=#{URI.to_string(member_uri)} workspace=#{name}"
+      )
+
+      :ok
+  end
+
+  # Non-user member (agent) — no grant.
+  defp grant_member_create_session_cap(_name, _member_uri), do: :ok
 
   @spec remove_member(String.t(), URI.t()) :: :ok | {:error, term()}
   def remove_member(name, %URI{} = member_uri) do
