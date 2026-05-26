@@ -50,7 +50,10 @@ defmodule Ezagent.Integration.CapsDenialE2ETest do
   defp default_session do
     # Use a fresh session per test to avoid cross-test pollution
     short = "caps_demo_#{System.unique_integer([:positive])}"
-    {:ok, uri} = EzagentDomainChat.create_session(short, Ezagent.Entity.User.admin_uri())
+    {:ok, uri} =
+      EzagentDomainChat.create_session(short, Ezagent.Entity.User.admin_uri(),
+        template_name: "default"
+      )
     uri
   end
 

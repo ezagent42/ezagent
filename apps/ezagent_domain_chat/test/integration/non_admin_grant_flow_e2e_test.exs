@@ -45,7 +45,10 @@ defmodule EzagentDomainChat.Integration.NonAdminGrantFlowE2ETest do
 
   defp default_session do
     short = "non_admin_e2e_#{System.unique_integer([:positive])}"
-    {:ok, uri} = EzagentDomainChat.create_session(short, Ezagent.Entity.User.admin_uri())
+    {:ok, uri} =
+      EzagentDomainChat.create_session(short, Ezagent.Entity.User.admin_uri(),
+        template_name: "default"
+      )
     uri
   end
 

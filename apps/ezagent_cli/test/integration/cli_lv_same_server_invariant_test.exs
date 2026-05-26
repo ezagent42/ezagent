@@ -88,6 +88,12 @@ defmodule EzagentCli.Integration.CliLvSameServerInvariantTest do
           "join",
           "--session",
           session_name,
+          # SPEC #366 (Allen 2026-05-26) — `--instance-class` is required
+          # for bare-name `--session <name>` promotion. The test spawned
+          # `session://default/team-alpha/<name>` above, so the class slot
+          # is the literal `"default"` here.
+          "--instance-class",
+          "default",
           "--member",
           URI.to_string(member_uri),
           "--cast"

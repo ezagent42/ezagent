@@ -154,7 +154,8 @@ defmodule EzagentDomainChat.PresenceFanoutTest do
       {:ok, _} = Ezagent.SpawnRegistry.spawn(admin_uri)
 
       short = "bootstrap_test_#{System.unique_integer([:positive])}"
-      {:ok, session_uri} = EzagentDomainChat.create_session(short, admin_uri)
+      {:ok, session_uri} =
+        EzagentDomainChat.create_session(short, admin_uri, template_name: "default")
 
       # chat.join member
       :ok =

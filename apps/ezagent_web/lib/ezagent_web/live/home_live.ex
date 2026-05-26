@@ -77,7 +77,20 @@ defmodule EzagentWeb.HomeLive do
     else
       creator_uri = parse_entity_uri(socket.assigns.current_entity_uri_str)
 
-      case EzagentDomainChat.create_session(short_name, creator_uri) do
+      # SPEC #366 (Allen 2026-05-26) — `EzagentDomainChat.create_session/3`
+      # now requires an explicit `:template_name`. The first-login
+      # wizard's job is to create the bootstrap session with the
+      # canonical `session://default/<workspace>/main` URI shape, so
+      # we pass `template_name: "default"` literally. This preserves
+      # the one-button flow Allen specified in 2026-05-20 ("99% of
+      # users just press one button") — the wizard isn't a
+      # template-selection surface; it's the platform's own boot
+      # ceremony. Tenant-customized session creation happens in
+      # AdminLive (`/sessions` → "+ New"), where the dropdown is
+      # mandatory.
+      case EzagentDomainChat.create_session(short_name, creator_uri,
+             template_name: "default"
+           ) do
         {:ok, session_uri} ->
           if with_echo?, do: join_echo_agent(session_uri, creator_uri)
           {:noreply, push_navigate(socket, to: "/sessions")}
