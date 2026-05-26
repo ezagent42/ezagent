@@ -575,7 +575,7 @@ defmodule EzagentPluginLiveview.AdminLive do
 
   def handle_event("chat_compose", %{"chat" => %{"text" => text}}, socket)
       when is_binary(text) do
-    mentions = parse_mentions(text)
+    mentions = parse_mentions(text, socket.assigns[:member_options] || [])
 
     File.mkdir_p!(Ezagent.Home.path("uploads"))
 
@@ -1774,7 +1774,42 @@ defmodule EzagentPluginLiveview.AdminLive do
 
   # `@<entity://...>` extraction. The autocomplete inserts a trailing
   # space, so `@uri ` is the canonical shape; permissive on EOL.
-  defp parse_mentions(text) when is_binary(text) do
+  #
+  # Bare-name fallback (Allen 2026-05-26 regression fix) — also scan
+  # `@<word>` and resolve against the in-session `member_options` (the
+  # autocomplete data source). Resolves by `display_name` first, then
+  # by URI path segment (the EntityPresenter fallback). This makes a
+  # typed `@cc_e2e_final` (no autocomplete expansion) actually mention
+  # the cc agent. Without this, the Phase 8b mention-parser
+  # (URI-only) interacted with the 2026-05-22 mention-gated dispatch
+  # (`$mentions` token in the system_default rule) such that a
+  # non-expanded `@name` silently sent a message that NEVER reached
+  # the named agent — Allen perceived this as the cc-agent auto-spawn
+  # regression, but the spawn path is healthy: PtyServer spawns
+  # claude, claude opens the WS bridge, the bridge just never receives
+  # a `to_claude` push because the agent isn't in the recipient set.
+  #
+  # `members` is a list of `%{"uri" => uri_str, "display_name" =>
+  # name}` maps (from `member_options` in socket assigns). An empty
+  # list disables the bare-name fallback — URI form still works.
+  # Exposed (`@doc false`) for regression-test coverage of the bare-name
+  # fallback. Test:
+  # `apps/ezagent_plugin_liveview/test/admin_live_mention_parse_test.exs`.
+  @doc false
+  @spec parse_mentions(String.t(), [map()]) :: [URI.t()]
+  def parse_mentions(text, members \\ [])
+
+  def parse_mentions(text, members) when is_binary(text) and is_list(members) do
+    uri_form = parse_uri_mentions(text)
+    bare_form = parse_bare_mentions(text, members)
+
+    (uri_form ++ bare_form)
+    |> Enum.uniq_by(&URI.to_string/1)
+  end
+
+  def parse_mentions(_, _), do: []
+
+  defp parse_uri_mentions(text) do
     ~r/@(entity:\/\/[^\s]+)/
     |> Regex.scan(text, capture: :all_but_first)
     |> List.flatten()
@@ -1787,7 +1822,102 @@ defmodule EzagentPluginLiveview.AdminLive do
     end)
   end
 
-  defp parse_mentions(_), do: []
+  # Match `@<word>` where <word> is NOT a URI (URI form is `@entity://...`
+  # which contains `:` — exclude those tokens). Resolve <word> against
+  # session members by URI path segment first (immutable), then by
+  # `display_name` (mutable — operators can rename profiles).
+  # Unresolvable bare names are silently dropped (parser tolerance —
+  # the user might just be using `@` for emphasis on a non-member name).
+  #
+  # Unicode-aware boundary (codex 2026-05-26 MEDIUM): the previous
+  # `(?<![\w])` blocked Latin email-like `foo@x` but did NOT block
+  # CJK / Hangul like `中文@x` or `한글@x` because PCRE `\w` is ASCII
+  # by default. The `\p{L}\p{N}_` class covers every Unicode letter +
+  # digit + underscore, so a CJK character immediately before `@`
+  # correctly blocks the mention match. The `u` regex modifier puts
+  # the regex into Unicode mode end-to-end.
+  defp parse_bare_mentions(text, members) when members != [] do
+    ~r/(?<![\p{L}\p{N}_])@([A-Za-z0-9][A-Za-z0-9._-]*)/u
+    |> Regex.scan(text, capture: :all_but_first)
+    |> List.flatten()
+    |> Enum.uniq()
+    |> Enum.flat_map(fn name -> resolve_member_name(name, members) end)
+  end
+
+  defp parse_bare_mentions(_, _), do: []
+
+  # Resolve a bare `@name` against the in-session member list. Two
+  # match axes:
+  #
+  # 1. URI path segment (immutable, derived from the entity URI).
+  # 2. `display_name` (mutable — operators rename profiles).
+  #
+  # Codex 2026-05-26 MEDIUM — display_name COLLISIONS could let an
+  # in-session entity capture a mention intended for another member
+  # (e.g. an agent and a user both named "admin"). Strategy:
+  #
+  #   a. Prefer URI-segment matches over display-name matches (the
+  #      URI segment is the autocomplete-canonical name; display
+  #      names are the changeable layer above it).
+  #   b. If MULTIPLE distinct URIs match on the chosen axis → drop
+  #      the mention entirely (ambiguous; force the operator to use
+  #      autocomplete URI form for disambiguation). Silent drop is
+  #      consistent with the unresolvable-name behavior — better to
+  #      surface NO mention than the wrong one.
+  defp resolve_member_name(name, members) do
+    by_segment = match_members(members, &(uri_path_segment(Map.get(&1, "uri")) == name))
+
+    candidates =
+      if by_segment != [] do
+        by_segment
+      else
+        match_members(members, &(Map.get(&1, "display_name") == name))
+      end
+
+    case unique_uris(candidates) do
+      [uri_str] ->
+        case URI.new(uri_str) do
+          {:ok, uri} -> [uri]
+          _ -> []
+        end
+
+      _ ->
+        # Either no match (unresolvable) OR ambiguous (>1 distinct
+        # URI). Both are silent drops — the operator can use
+        # autocomplete to insert the unambiguous `@entity://...` form.
+        []
+    end
+  end
+
+  defp match_members(members, pred) do
+    Enum.filter(members, fn
+      m when is_map(m) -> pred.(m)
+      _ -> false
+    end)
+  end
+
+  defp unique_uris(members) do
+    members
+    |> Enum.map(&Map.get(&1, "uri"))
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+  end
+
+  defp uri_path_segment(uri_str) when is_binary(uri_str) do
+    case URI.new(uri_str) do
+      {:ok, %URI{path: "/" <> rest}} when rest != "" ->
+        # entity URIs are `/<workspace>/<name>`; bare display is last segment.
+        case String.split(rest, "/", parts: 2) do
+          [_ws, name] -> name
+          [name] -> name
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp uri_path_segment(_), do: nil
 
   defp safe_view_id(s) when is_binary(s) do
     {:ok, String.to_existing_atom(s)}
