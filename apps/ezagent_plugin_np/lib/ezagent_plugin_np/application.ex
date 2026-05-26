@@ -129,12 +129,13 @@ defmodule EzagentPluginNp.Application do
     :ok
   end
 
+  # Mix.env() resolved at compile time — works in stripped OTP releases.
+  @compile_env Mix.env()
+  @default_reap_enabled? @compile_env != :test
+
   defp maybe_reap_orphans do
     enabled? =
-      case Mix.env() do
-        :test -> Application.get_env(:ezagent_plugin_np, :reap_orphans_on_boot, false)
-        _ -> Application.get_env(:ezagent_plugin_np, :reap_orphans_on_boot, true)
-      end
+      Application.get_env(:ezagent_plugin_np, :reap_orphans_on_boot, @default_reap_enabled?)
 
     if enabled? do
       EzagentPluginNp.OrphanReaper.reap()

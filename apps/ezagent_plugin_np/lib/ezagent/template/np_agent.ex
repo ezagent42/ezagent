@@ -156,8 +156,28 @@ defmodule Ezagent.PluginNp.Template.NpAgent do
         # Adopted — only ensure the Python subprocess is alive, but do
         # NOT undo this branch's work if Python is already running
         # (idempotent re-instantiate).
-        :ok = ensure_python_alive(agent_uri, cwd)
-        {:ok, [agent_uri], %{fresh?: false}}
+        #
+        # PTY-orphan-restart round-2 (codex finding #4) —
+        # `ensure_python_alive/2` now propagates start failures
+        # instead of swallowing them. We log + return the error
+        # SO the caller (chat domain) gets a real signal. But we do
+        # NOT terminate the adopted Kind (it was started by someone
+        # else; we don't own its lifecycle on the adopted branch).
+        # Returning fresh?:false lets `record_sandbox_state` skip the
+        # slice write, preserving the original spawn's state.
+        case ensure_python_alive(agent_uri, cwd) do
+          :ok ->
+            {:ok, [agent_uri], %{fresh?: false}}
+
+          {:error, reason} = err ->
+            Logger.error(
+              "np.agent: ensure_python_alive failed for adopted Kind " <>
+                "#{URI.to_string(agent_uri)}: #{inspect(reason)}. " <>
+                "Kind remains alive without Python subprocess."
+            )
+
+            err
+        end
 
       {:error, reason} ->
         Logger.warning(
@@ -230,7 +250,13 @@ defmodule Ezagent.PluginNp.Template.NpAgent do
         # owning agent URI so `EzagentPluginNp.OrphanReaper` can
         # identify cross-BEAM orphans by env (mirrors cc PtyServer's
         # `EZAGENT_AGENT_URI` convention).
-        "EZAGENT_AGENT_URI" => URI.to_string(agent_uri)
+        "EZAGENT_AGENT_URI" => URI.to_string(agent_uri),
+        # PTY-orphan-restart 2026-05-26 round-2 (codex finding #2) —
+        # tag with this deployment's identity so the reaper can
+        # distinguish "orphan from our prior BEAM run" from "live
+        # child of a parallel BEAM" sharing the same OS user. See
+        # `Ezagent.DeploymentId`.
+        "EZAGENT_DEPLOYMENT_ID" => Ezagent.DeploymentId.deployment_id()
       },
       # uv may need to download numpy + sympy on first run — generous
       # ping timeout for cold cache. Subsequent runs are fast.
@@ -272,12 +298,16 @@ defmodule Ezagent.PluginNp.Template.NpAgent do
     end
   end
 
+  # PTY-orphan-restart round-2 (codex finding #4) — propagate
+  # start_python errors. Previously this discarded the result and
+  # returned :ok unconditionally, so a failed-Python adopt path
+  # produced an agent that LOOKED alive but had no working subprocess
+  # (failures only surfaced on the first user-traffic dispatch).
   defp ensure_python_alive(agent_uri, cwd) do
     if Python.alive?(agent_uri) do
       :ok
     else
-      _ = start_python(agent_uri, cwd)
-      :ok
+      start_python(agent_uri, cwd)
     end
   end
 

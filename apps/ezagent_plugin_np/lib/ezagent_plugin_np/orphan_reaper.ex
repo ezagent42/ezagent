@@ -40,6 +40,12 @@ defmodule EzagentPluginNp.OrphanReaper do
   # Same env-var convention as cc.
   @agent_uri_env_key "EZAGENT_AGENT_URI"
 
+  # Same multi-BEAM safety convention as cc — see
+  # `EzagentPluginCc.OrphanReaper` for the rationale (codex round-2
+  # finding #2). The np Template Class now also tags Python
+  # subprocesses via Domain.Python.Spec `env`.
+  @deployment_id_env_key "EZAGENT_DEPLOYMENT_ID"
+
   # np agent URI shape gate — SPEC v2 §5.14 `entity://agent/<ws>/np_<name>`.
   @np_uri_scheme "entity://agent/"
 
@@ -82,7 +88,12 @@ defmodule EzagentPluginNp.OrphanReaper do
     end
   end
 
-  @type candidate :: %{pid: pos_integer(), cmd: String.t(), agent_uri: String.t() | nil}
+  @type candidate :: %{
+          pid: pos_integer(),
+          cmd: String.t(),
+          agent_uri: String.t() | nil,
+          deployment_id: String.t() | nil
+        }
 
   defp enumerate_candidates do
     case run_ps() do
@@ -132,7 +143,8 @@ defmodule EzagentPluginNp.OrphanReaper do
               %{
                 pid: pid,
                 cmd: cmd,
-                agent_uri: parse_env_var(cmd, @agent_uri_env_key)
+                agent_uri: parse_env_var(cmd, @agent_uri_env_key),
+                deployment_id: parse_env_var(cmd, @deployment_id_env_key)
               }
             ]
 
@@ -169,14 +181,15 @@ defmodule EzagentPluginNp.OrphanReaper do
 
   defp np_candidate?(_), do: false
 
-  defp orphan?(%{agent_uri: uri_str}) when is_binary(uri_str) do
+  defp orphan?(%{agent_uri: uri_str, deployment_id: dep_id}) when is_binary(uri_str) do
+    our_id = Ezagent.DeploymentId.deployment_id()
+
     cond do
-      not String.starts_with?(uri_str, @np_uri_scheme) ->
-        false
-
-      not np_flavor_uri?(uri_str) ->
-        false
-
+      # Codex round-2 finding #2 — same gating as cc reaper.
+      not is_binary(dep_id) or dep_id == "" -> false
+      dep_id != our_id -> false
+      not String.starts_with?(uri_str, @np_uri_scheme) -> false
+      not np_flavor_uri?(uri_str) -> false
       true ->
         case URI.new(uri_str) do
           {:ok, %URI{} = uri} -> not Python.alive?(uri)

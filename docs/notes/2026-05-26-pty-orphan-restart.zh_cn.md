@@ -106,14 +106,84 @@ reap_orphans_on_boot: true` 开启。
 ## let-it-crash 纪律
 
 遵循 `feedback_let_it_crash_no_workarounds`：
-- `ensure_subprocess_alive/2` 返回 `{:error, _}` 会通过
-  `Sandbox.handle_continue/3` 中的 RAISE 传播 → `Kind.Server` 监督树
-  以退避策略重启 Kind。
-- 暂态竞态（孤儿收割器仍在跑、与老 PtyServer 终止的 FS 竞态）通过监督
-  重试 intensity 自恢复。
-- 持续失败（claude 不在 PATH 上、脚本丢失）最终超出监督 intensity，
-  Kind 保持 down 状态 — 这就是一个子进程合法地无法启动的 agent
-  应该有的状态。
 - 收割器本身是 best-effort：`ps` 失败或 `kill` 失败会记录日志但
   **不会** 让 plugin Application 启动崩溃。漏杀的孤儿会在下次 phx
   重启的收割中再被处理。
+- Round-2（codex finding #3）：post_init 失败路径改用 log + telemetry +
+  `:ignore`（DEGRADED 状态）替代 raise。详见下面"Round-2 修复"。
+
+## Round-2 修复（codex adversarial-review）
+
+Codex 审核了 PR #385（round 1）给出 4 个 finding（3 HIGH + 1 MEDIUM）。
+全部修复：
+
+### Finding #1（HIGH）— cc demand-spawn 竞态窗口
+
+**问题**：chat router 通过 `SpawnRegistry.spawn` 按需启动 cc Agent Kind
+时，Sandbox slice 没有 `template_class` / `respawn_template_data`，
+`post_init/2` 返回 `:ok`（不排队重启）。之后 `Workspace.Loader.load_all/0`
+跑 `cc.agent.instantiate/3` 时，codex round-8 的"拒绝接管外来 Kind"
+短路触发，新的 PtyServer 永远不被启动。
+
+**修复**：`instantiate/3` 的 `:already_started` 分支现在加了
+**workspace-segment ownership gate**（`owns_this_agent?/2`）：如果
+agent URI 的 workspace 段匹配 `workspace_uri`，这就是我们模板的 agent
+（Workspace.Loader 路径）→ 通过新的 `ensure_subprocess_alive/2` callback
+启动 PTY。如果段不匹配，codex round-8 不变量保持 — 拒绝 PTY 启动
+（跨 workspace 接管被拒绝，和以前一样）。
+
+### Finding #2（HIGH）— 多 BEAM 安全（误伤友军）
+
+**问题**：孤儿收割器通过"URI 不在本 BEAM `Pty.alive?/1` registry"识别
+孤儿。同一 OS user 下的并行 BEAM 可能有合法的活 claude，其 URI 自然
+不在本 BEAM 的 registry → 收割器会 SIGTERM B 的活进程。
+
+**修复**：每个 spawn 出来的子进程现在带 `EZAGENT_DEPLOYMENT_ID` 环境
+变量 = `Ezagent.DeploymentId.deployment_id/0`（组成 `node()|cwd_at_load`）。
+收割器拒绝杀任何 deployment_id 与当前 BEAM 不匹配的进程。同源码树启动
+的两个 `iex -S mix phx.server` 得到同一个 deployment_id（合法的同部署
+互相收割）。两个并行 worktree 得到不同的 deployment_id（防止跨部署误伤）。
+
+### Finding #3（HIGH）— 持续失败导致紧密重启循环
+
+**问题**：我 round-1 用 `raise` 在 `Sandbox.handle_continue/3` 处理
+callback 的 `{:error, _}`。这触发 `Kind.Server` GenServer 崩溃 →
+`EzagentDomainChat.AgentSupervisor` 用 DynamicSupervisor 默认
+intensity 重启（`max_restarts: 3, max_seconds: 5`）。持续失败（claude
+被从 PATH 移除）在毫秒内耗尽 3 次重启 → AgentSupervisor 自己崩溃 →
+**连带杀掉其他正常 agent**。
+
+**修复**：把 `raise` 换成 `Logger.error + :telemetry.execute(
+[:ezagent, :sandbox, :subprocess_unhealthy], ...) + :ignore`。Kind
+进入 `:ready` 的 DEGRADED 状态 — 活着但没子进程。这**不是**静默
+降级：telemetry event 会浮到 admin LV health panel + 日志大声报错。
+operator 通过现有 UI 手动点 Restart。
+
+正确的结构性修复（per-agent supervisor + 隔离 intensity）**不在本
+PR 范围**内 — 跟进单独处理。
+
+### Finding #4（MEDIUM）— np `ensure_python_alive` 吞错
+
+**问题**：`ensure_python_alive/2` 通过 `_ = start_python(...)` 丢弃
+结果，无条件返回 `:ok`。被接管 Kind 分支上 Python spawn 失败会让 agent
+看起来活但没工作子进程（失败只在第一次用户流量 dispatch 时才暴露）。
+
+**修复**：`ensure_python_alive/2` 现在传递 `start_python/2` 的结果。
+调用方（`instantiate/3` 被接管 Kind 分支）记日志 + 返回错误给 chat
+domain（chat domain 会把错误浮上来）。
+
+### Round-2 新增文件
+
+- `apps/ezagent_core/lib/ezagent/deployment_id.ex` — **新增**：部署身份
+  helper。
+
+## 已知限制 + 后续工作
+
+- **持续 post_init 失败 → DEGRADED 状态**（codex finding #3）：Kind
+  保持活着但没子进程，直到 operator 手动 Restart。未来 PR 应该引入
+  per-agent 监督 + 隔离 intensity，让暂态失败用退避自动重试而不级联。
+- **EZAGENT_DEPLOYMENT_ID 升级窗口**（codex finding #2）：本 PR 之前
+  的 BEAM 启动的进程**没有** deployment_id env 变量 — 收割器拒绝杀
+  这些（fail closed）。从老版本升级的 operator 必须在第一次 post-PR
+  启动前手动 `pkill claude`，或者接受"第一次启动收割器什么都不做；
+  孤儿靠手动清理"的过渡。

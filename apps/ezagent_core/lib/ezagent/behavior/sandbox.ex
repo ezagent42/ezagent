@@ -594,15 +594,25 @@ defmodule Ezagent.Behavior.Sandbox do
   end
 
   defp do_ensure_subprocess_alive(template_class, self_uri, respawn_data) do
-    # No try/rescue: per `feedback_let_it_crash_no_workarounds`,
-    # both an `{:error, _}` return AND a callback raise propagate
-    # to Kind.Server.handle_continue/2 which the supervisor catches
-    # → restart with backoff. Backoff covers transient races
-    # (orphan-reaper still finishing, FS race against an old PtyServer
-    # terminating). A persistent failure (script missing, claude not
-    # on PATH) eventually exceeds the supervisor's intensity and the
-    # Kind stays down — which is the correct state for an agent
-    # whose subprocess legitimately cannot be brought up.
+    # PTY-orphan-restart 2026-05-26 round-2 (codex finding #3) —
+    # rather than RAISE on {:error, _} (which would exhaust the shared
+    # AgentSupervisor's restart intensity on a persistent failure
+    # like "claude not on PATH" and cascade-kill sibling agents), log
+    # loudly + emit telemetry + leave the Kind alive in DEGRADED state.
+    #
+    # This is NOT a "silent fallback to offline" (the directive from
+    # Allen forbids that): the `:pty_subprocess_unhealthy` telemetry
+    # event is the loud, observable signal — health panels render it,
+    # log lines surface it, operator manually clicks Restart in the LV
+    # admin page. The Kind is ALIVE so existing routing / lookups
+    # don't crash; what's missing is the subprocess (which the
+    # operator already had to handle out-of-band today).
+    #
+    # The supervisor-intensity option (raise to trigger restart-with-
+    # backoff) was rejected per codex finding #3: it cascades to
+    # sibling agents on persistent failure. The correct structural
+    # fix (per-agent supervisor with isolated intensity) is out of
+    # scope for this PR — tracked as a follow-up in the notes doc.
     case template_class.ensure_subprocess_alive(self_uri, respawn_data) do
       :ok ->
         # Subprocess is alive (either it was already, or we just
@@ -611,9 +621,25 @@ defmodule Ezagent.Behavior.Sandbox do
         :ignore
 
       {:error, reason} ->
-        raise "Ezagent.Behavior.Sandbox.post_init: " <>
-                "#{inspect(template_class)}.ensure_subprocess_alive/2 failed " <>
-                "for #{inspect(self_uri)}: #{inspect(reason)}"
+        Logger.error(
+          "Ezagent.Behavior.Sandbox.post_init: " <>
+            "#{inspect(template_class)}.ensure_subprocess_alive/2 failed " <>
+            "for #{inspect(self_uri)}: #{inspect(reason)}. " <>
+            "Kind stays alive in DEGRADED state (no subprocess); " <>
+            "operator must Restart via /admin/agents/:uri."
+        )
+
+        :telemetry.execute(
+          [:ezagent, :sandbox, :subprocess_unhealthy],
+          %{},
+          %{
+            agent_uri: URI.to_string(self_uri),
+            template_class: template_class,
+            reason: inspect(reason)
+          }
+        )
+
+        :ignore
     end
   end
 end

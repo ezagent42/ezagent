@@ -359,12 +359,31 @@ defmodule Ezagent.Behavior.NpAgent do
             :ignore
 
           {:error, reason} ->
-            # Let-it-crash. Sandbox follows the same pattern: the
-            # Kind.Server's handle_continue wrapper turns the raise
-            # into a supervisor restart with backoff.
-            raise "Ezagent.Behavior.NpAgent.post_init: " <>
-                    "Template.NpAgent.ensure_subprocess_alive/2 failed for " <>
-                    "#{URI.to_string(self_uri)}: #{inspect(reason)}"
+            # PTY-orphan-restart round-2 (codex finding #3) — same
+            # degraded-state pattern as `Ezagent.Behavior.Sandbox`:
+            # log + telemetry + :ignore. A raise here would exhaust
+            # the EzagentPluginNp.InstanceSupervisor's intensity on
+            # a persistent failure (uv missing, FS read-only) and
+            # cascade to sibling np agents.
+            Logger.error(
+              "Ezagent.Behavior.NpAgent.post_init: " <>
+                "Template.NpAgent.ensure_subprocess_alive/2 failed for " <>
+                "#{URI.to_string(self_uri)}: #{inspect(reason)}. " <>
+                "NpAgent Kind stays alive in DEGRADED state (no Python " <>
+                "subprocess); next dispatched compute call surfaces " <>
+                ":not_alive."
+            )
+
+            :telemetry.execute(
+              [:ezagent, :np_agent, :subprocess_unhealthy],
+              %{},
+              %{
+                agent_uri: URI.to_string(self_uri),
+                reason: inspect(reason)
+              }
+            )
+
+            :ignore
         end
     end
   end

@@ -136,12 +136,17 @@ defmodule EzagentPluginCc.Application do
   # `Ezagent.Domain.Pty` registry, so EVERY orphan looks reapable).
   # Operators can flip the config in test-env CI / dedicated e2e
   # tests via `config :ezagent_plugin_cc, reap_orphans_on_boot: true`.
+  #
+  # `Mix.env()` resolution at compile time (the module attribute
+  # bakes in the env at compile, not at runtime) — same pattern as
+  # `Ezagent.PluginFeishu.Application` so this works in stripped
+  # releases too.
+  @compile_env Mix.env()
+  @default_reap_enabled? @compile_env != :test
+
   defp maybe_reap_orphans do
     enabled? =
-      case Mix.env() do
-        :test -> Application.get_env(:ezagent_plugin_cc, :reap_orphans_on_boot, false)
-        _ -> Application.get_env(:ezagent_plugin_cc, :reap_orphans_on_boot, true)
-      end
+      Application.get_env(:ezagent_plugin_cc, :reap_orphans_on_boot, @default_reap_enabled?)
 
     if enabled? do
       EzagentPluginCc.OrphanReaper.reap()

@@ -259,7 +259,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   defp check_cwd(_), do: {:error, :missing_cwd}
 
   @impl Ezagent.Kind.Template
-  def instantiate(_tmpl_name, %{"agent_uri" => uri_str} = tmpl, _workspace_uri) do
+  def instantiate(_tmpl_name, %{"agent_uri" => uri_str} = tmpl, workspace_uri) do
     agent_uri = URI.parse(uri_str)
 
     # PR-D2 idempotency short-circuit: if BOTH the Agent Kind and the
@@ -275,7 +275,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
         {:ok, [agent_uri], %{fresh?: false}}
 
       true ->
-        spawn_for_local_pty(agent_uri, tmpl)
+        spawn_for_local_pty(agent_uri, tmpl, workspace_uri)
     end
   end
 
@@ -293,7 +293,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   # Both steps are idempotent: SpawnRegistry returns
   # `{:error, {:already_started, _}}` for an existing Agent Kind, and
   # the PtyServer's :via Registry collapses concurrent starts.
-  defp spawn_for_local_pty(agent_uri, tmpl) do
+  defp spawn_for_local_pty(agent_uri, tmpl, workspace_uri) do
     cwd = Map.fetch!(tmpl, "cwd")
 
     # codex round-6 HIGH-1 — `ensure_agent_kind/1` reports whether THIS
@@ -326,6 +326,25 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
           # record_sandbox_state skips slice-dispatch when meta lacks
           # :config_dir_path (codex round-2 HIGH-1 fix in Agent module),
           # so the existing slice is preserved verbatim.
+          #
+          # PTY-orphan-restart 2026-05-26 round-2 (codex finding #1):
+          # the :already_started branch USED to return immediately,
+          # which leaves a Kind alive without a PtyServer in the
+          # demand-spawn case (chat router spawned the Kind first;
+          # then Workspace.Loader hits this branch and short-circuits).
+          # Round-8's "refuse to adopt foreign Kind" stays correct AS
+          # AN INVARIANT — we only bring up the PTY when we can prove
+          # the agent belongs to THIS workspace by URI-segment match.
+          # When the agent's workspace segment matches `workspace_uri`,
+          # the operator's workspace template legitimately owns this
+          # URI (this is the boot/demand-restore case Workspace.Loader
+          # hits). When it does NOT match, this is a cross-workspace
+          # adoption attempt (codex round-8's test case) — we MUST
+          # refuse the PTY spawn.
+          if owns_this_agent?(agent_uri, workspace_uri) do
+            _ = ensure_subprocess_alive_best_effort(agent_uri, tmpl)
+          end
+
           {:ok, [agent_uri], %{fresh?: false}}
 
         :started ->
@@ -1050,6 +1069,53 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   end
 
   def ensure_subprocess_alive(_, _), do: {:error, :invalid_args}
+
+  # Cross-workspace adoption gate (codex round-2 finding #1). We only
+  # bring up a PTY for an already-started Kind when the agent URI's
+  # workspace segment matches the workspace we're being instantiated
+  # into. A mismatch means "another workspace's template is referencing
+  # our URI" — we must refuse (preserves codex round-8 invariant).
+  defp owns_this_agent?(%URI{} = agent_uri, %URI{} = workspace_uri) do
+    case agent_uri do
+      %URI{scheme: "entity", host: "agent", path: "/" <> rest} ->
+        case String.split(rest, "/", parts: 2) do
+          [ws_segment, _name] when is_binary(ws_segment) -> ws_segment == workspace_uri.host
+          _ -> false
+        end
+
+      _ ->
+        false
+    end
+  end
+
+  # When workspace_uri is nil (legacy callers that don't thread it),
+  # default to false — preserves the codex round-8 invariant for
+  # callers that don't know about the round-2 fix.
+  defp owns_this_agent?(_agent_uri, nil), do: false
+  defp owns_this_agent?(_, _), do: false
+
+  # Wrapper for `instantiate/3`'s `:already_started` branch (codex
+  # round-2 finding #1). Calls `ensure_subprocess_alive/2` but never
+  # propagates its error — the adopted-Kind path's invariant is "this
+  # call did not create the Kind, so we don't tear it down on
+  # subprocess failure either". A failed PTY respawn leaves the Kind
+  # alive but degraded; operator sees the failure via logs/health
+  # panel and clicks Restart manually.
+  defp ensure_subprocess_alive_best_effort(%URI{} = agent_uri, tmpl) when is_map(tmpl) do
+    case ensure_subprocess_alive(agent_uri, tmpl) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "cc.agent.instantiate(:already_started): ensure_subprocess_alive failed for " <>
+            "#{URI.to_string(agent_uri)} (#{inspect(reason)}); Kind remains alive in " <>
+            "degraded state (no PTY) — operator may need to Restart manually"
+        )
+
+        {:error, reason}
+    end
+  end
 
   # Create a fresh per-agent config dir by copying the template's
   # reference dir into the agent-private location.

@@ -94,6 +94,14 @@ defmodule EzagentPluginCc.OrphanReaper do
   # `Ezagent.Domain.Pty.Server.build_env/1`.
   @agent_uri_env_key "EZAGENT_AGENT_URI"
 
+  # PTY-orphan-restart round-2 (codex finding #2) — multi-BEAM safety.
+  # The PtyServer tags every spawned claude with the BEAM's
+  # `Ezagent.DeploymentId.deployment_id/0`. Reaper refuses to kill any
+  # process whose EZAGENT_DEPLOYMENT_ID differs from the CURRENT BEAM's
+  # deployment_id — that process belongs to a parallel deployment under
+  # the same OS user and is NOT ours to reap.
+  @deployment_id_env_key "EZAGENT_DEPLOYMENT_ID"
+
   # cc agent URI scheme + prefix gate. Per SPEC v2 §5.14 every cc agent
   # is `entity://agent/<workspace>/cc_<name>`. A URI not matching this
   # shape is rejected (don't accidentally kill another plugin's agent
@@ -145,8 +153,16 @@ defmodule EzagentPluginCc.OrphanReaper do
     * `:pid` — OS pid (integer)
     * `:cmd` — argv joined as string
     * `:agent_uri` — value of EZAGENT_AGENT_URI env var, or nil if absent
+    * `:deployment_id` — value of EZAGENT_DEPLOYMENT_ID env var, or nil
+      if absent. Codex round-2 finding #2: distinguishes our prior-BEAM
+      orphans from a parallel deployment's live children.
   """
-  @type candidate :: %{pid: pos_integer(), cmd: String.t(), agent_uri: String.t() | nil}
+  @type candidate :: %{
+          pid: pos_integer(),
+          cmd: String.t(),
+          agent_uri: String.t() | nil,
+          deployment_id: String.t() | nil
+        }
 
   # ---------------------------------------------------------------------------
   # Enumeration via `ps`
@@ -213,7 +229,8 @@ defmodule EzagentPluginCc.OrphanReaper do
               %{
                 pid: pid,
                 cmd: cmd,
-                agent_uri: parse_env_var(cmd, @agent_uri_env_key)
+                agent_uri: parse_env_var(cmd, @agent_uri_env_key),
+                deployment_id: parse_env_var(cmd, @deployment_id_env_key)
               }
             ]
 
@@ -259,10 +276,32 @@ defmodule EzagentPluginCc.OrphanReaper do
   defp cc_candidate?(_), do: false
 
   # Orphan = cc-candidate WITH a valid cc-shaped URI WITH no live
-  # PtyServer in the registry. Any failure in URI parsing / Registry
-  # lookup means "don't kill" (fail closed).
-  defp orphan?(%{agent_uri: uri_str}) when is_binary(uri_str) do
+  # PtyServer in the registry AND owned by THIS DEPLOYMENT (codex
+  # round-2 finding #2). Any failure in URI parsing / Registry lookup
+  # means "don't kill" (fail closed).
+  defp orphan?(%{agent_uri: uri_str, deployment_id: dep_id}) when is_binary(uri_str) do
+    our_id = Ezagent.DeploymentId.deployment_id()
+
     cond do
+      # Codex round-2 finding #2: a process WITHOUT
+      # EZAGENT_DEPLOYMENT_ID env predates this PR — older releases
+      # didn't tag the deployment. We refuse to reap those: a missing
+      # env var means "we have no way to prove ownership". The
+      # operator who deploys both old + new in parallel must roll
+      # forward; the post-fix reaper won't blanket-kill the old. A
+      # one-time manual cleanup is acceptable for the upgrade window.
+      not is_binary(dep_id) or dep_id == "" ->
+        false
+
+      # Multi-BEAM safety: same OS user can host multiple BEAMs (a
+      # dev session + a staging release + a co-tenant). A process
+      # whose EZAGENT_DEPLOYMENT_ID differs from THIS BEAM's id
+      # belongs to a DIFFERENT deployment — not ours to reap,
+      # regardless of registry absence (it WILL be absent — we can
+      # only see our own registry).
+      dep_id != our_id ->
+        false
+
       not String.starts_with?(uri_str, @cc_uri_scheme) ->
         false
 
@@ -270,6 +309,9 @@ defmodule EzagentPluginCc.OrphanReaper do
         false
 
       true ->
+        # This deployment tagged the process but the URI is NOT in
+        # our live registry → it's a prior-incarnation orphan of THIS
+        # deployment.
         case URI.new(uri_str) do
           {:ok, %URI{} = uri} -> not Pty.alive?(uri)
           _ -> false
