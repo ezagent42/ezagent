@@ -1,4 +1,4 @@
-defmodule EzagentPluginLiveview.Admin.OrchestratorHealthCard do
+defmodule EzagentPluginLiveview.Session.OrchestratorHealthCard do
   @moduledoc """
   Right pane: compact per-session orchestrator-instance health card.
 
@@ -7,13 +7,20 @@ defmodule EzagentPluginLiveview.Admin.OrchestratorHealthCard do
   `/plugins` (system-level boot health) with the *per-session instance*
   health operators actually need when triaging.
 
+  Lives under `EzagentPluginLiveview.Session.*` per RFC #402 (Allen
+  2026-05-26) — the orchestrator is 1:1 bound to its session, so the
+  card is a session-scoped UI component, NOT an admin-only one. The
+  Restart button's authority is the **session owner**
+  (`session.chat.owner_uri`), not generic admin caps.
+
   Stateless. Parent (`AdminLive`) computes the health value via
   `Ezagent.Orchestrator.Health.classify/1` and passes it in. The
   Restart button is gated on (a) status == `:crashed` AND (b) the
-  caller holding an instantiate cap on the orchestrator template — the
-  actual cap check happens at dispatch step 5.5, but we ALSO hide the
-  button when no cap is held so the operator doesn't see a control
-  they cannot use.
+  caller being the session owner (or holding the explicit
+  `Ezagent.Behavior.OrchestratorAdmin :restart` cap as an admin
+  override). The actual cap check happens at dispatch step 5.5; we
+  ALSO hide the button when no cap is held so the operator doesn't
+  see a control they cannot use.
 
   ## Three status states
 

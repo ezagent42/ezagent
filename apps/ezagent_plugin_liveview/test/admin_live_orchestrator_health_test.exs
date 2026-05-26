@@ -144,6 +144,61 @@ defmodule EzagentPluginLiveview.AdminLiveOrchestratorHealthTest do
         KindSnapshot.delete(URI.to_string(orch_uri))
       end
     end
+
+    test "RFC #402 — non-owner sees crashed status but NO Restart button", %{
+      orch_uri: orch_uri
+    } do
+      # Build a conn for a NON-admin user (no OrchestratorAdmin cap,
+      # no all-caps admin grant). `caller_can_restart_orchestrator?/2`
+      # consults `caller_caps` directly, so the simplest way to
+      # exercise the gate is to mount as a fresh entity with no caps.
+      non_owner_uri = URI.new!("entity://user/system/non-owner-#{System.unique_integer([:positive])}")
+
+      # Spawn the User Kind so AdminLive's `assign_session_context`
+      # can resolve `caller_caps` from its Identity slice. Without a
+      # live Kind, the LV may fall back to admin caps in test env —
+      # we want the explicit "no-cap" pathway exercised.
+      _ = Ezagent.SpawnRegistry.spawn(non_owner_uri)
+
+      non_owner_conn =
+        Phoenix.ConnTest.build_conn()
+        |> Plug.Test.init_test_session(%{
+          "current_entity_uri" => URI.to_string(non_owner_uri)
+        })
+
+      :ok = ensure_no_orchestrator(orch_uri)
+
+      {:ok, _row} =
+        KindSnapshot.upsert(
+          URI.to_string(orch_uri),
+          "Elixir.Ezagent.Entity.Agent",
+          :erlang.term_to_binary(%{}),
+          0,
+          URI.to_string(@main_workspace_uri)
+        )
+
+      try do
+        case live(non_owner_conn, "/sessions") do
+          {:ok, _lv, html} ->
+            # The non-owner can SEE the orchestrator status (visibility
+            # is read-only) but CANNOT see the Restart button (RFC #402
+            # — restart authority is session-owner-bound).
+            assert html =~ ~s(id="orchestrator-health-card")
+            assert html =~ "crashed"
+            refute html =~ ~s(id="restart-orchestrator-button"),
+                   "RFC #402: non-owner must not see the Restart button"
+
+          {:error, {:redirect, _}} ->
+            # Some auth paths in the LV redirect non-admin users away
+            # from /sessions; that's a stricter form of the same gate
+            # (RFC #402 holds — they certainly can't restart from a
+            # page they can't reach).
+            :ok
+        end
+      after
+        KindSnapshot.delete(URI.to_string(orch_uri))
+      end
+    end
   end
 
   # Tear down any prior orchestrator state from another test in the

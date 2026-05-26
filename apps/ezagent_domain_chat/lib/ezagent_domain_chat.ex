@@ -96,12 +96,23 @@ defmodule EzagentDomainChat do
     # V1 prevention (Allen 2026-05-21): route via Ezagent.Kind.spawn/2.
     # Session Kind declares EzagentDomainChat.SessionSupervisor via
     # supervisor/0 — destination preserved.
-    result = Ezagent.Kind.spawn(Session, %{uri: session_uri})
+    #
+    # RFC #402 (Allen 2026-05-26) — thread the creator URI as
+    # `owner_uri` so `Behavior.Chat.init_slice/1` records it on the
+    # session's `:chat` slice. The Generator path
+    # (`Session.spawn_from_template/2`) does the same; this brings the
+    # direct-create path to parity. Falls back to the bootstrap admin
+    # for system-internal session creates (`creator_uri == nil`);
+    # `data_owner/1` then routes through `Session.owner/1` so the
+    # restart-cap grant flows correctly.
+    effective_owner = creator_uri || User.admin_uri()
+    result = Ezagent.Kind.spawn(Session, %{uri: session_uri, owner_uri: effective_owner})
 
     case result do
       {:ok, _pid} ->
         :ok = Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)
-        :ok = join_creator(session_uri, creator_uri || User.admin_uri())
+        :ok = join_creator(session_uri, effective_owner)
+        :ok = grant_owner_orchestrator_admin_cap(session_uri, effective_owner, workspace_uri)
         {:ok, session_uri}
 
       # `:already_started` = same child spec already in supervisor's children
@@ -112,12 +123,14 @@ defmodule EzagentDomainChat do
       # members map).
       {:error, {:already_started, _pid}} ->
         :ok = Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)
-        :ok = join_creator(session_uri, creator_uri || User.admin_uri())
+        :ok = join_creator(session_uri, effective_owner)
+        :ok = grant_owner_orchestrator_admin_cap(session_uri, effective_owner, workspace_uri)
         {:ok, session_uri}
 
       {:error, {:already_registered, _}} ->
         :ok = Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)
-        :ok = join_creator(session_uri, creator_uri || User.admin_uri())
+        :ok = join_creator(session_uri, effective_owner)
+        :ok = grant_owner_orchestrator_admin_cap(session_uri, effective_owner, workspace_uri)
         {:ok, session_uri}
 
       {:error, reason} ->
@@ -179,6 +192,70 @@ defmodule EzagentDomainChat do
     |> Enum.filter(fn {uri_str, _pid} -> String.starts_with?(uri_str, "session://") end)
     |> Enum.map(fn {uri_str, _pid} -> URI.new!(uri_str) end)
     |> Enum.sort_by(&URI.to_string/1)
+  end
+
+  # RFC #402 (Allen 2026-05-26) — grant the session creator the
+  # `Behavior.OrchestratorAdmin :restart` cap on this session so the
+  # `OrchestratorHealthCard` LV renders the Restart button for them
+  # (and a non-creator gets nothing). Idempotent: re-calling
+  # `create_session/3` for the same session re-enters this path; the
+  # cap-equality check inside the helper skips a re-grant when a
+  # logically-equal cap row is already on the owner.
+  #
+  # Mirrors the same grant `Session.spawn_from_template/2` does for
+  # the orchestrator-template path; here it covers the direct-create
+  # path (`create_session/3` without going through SessionTemplate
+  # materialization).
+  defp grant_owner_orchestrator_admin_cap(
+         %URI{} = session_uri,
+         %URI{} = owner_uri,
+         %URI{} = workspace_uri
+       ) do
+    want = %Ezagent.Capability{
+      kind: :session,
+      behavior: Ezagent.Behavior.OrchestratorAdmin,
+      instance: session_uri,
+      workspace_uri: workspace_uri,
+      granted_by: owner_uri,
+      granted_at: nil
+    }
+
+    current = Ezagent.Identity.list_caps_for(owner_uri)
+
+    has_equiv? =
+      Enum.any?(current, fn cap ->
+        match?(%Ezagent.Capability{}, cap) and
+          cap.kind == want.kind and
+          cap.behavior == want.behavior and
+          cap.instance == want.instance and
+          cap.workspace_uri == want.workspace_uri and
+          cap.granted_by == want.granted_by
+      end)
+
+    if has_equiv? do
+      :ok
+    else
+      target = URI.new!("#{URI.to_string(owner_uri)}?action=identity.grant_cap")
+      cap = %{want | granted_at: DateTime.utc_now()}
+
+      _ =
+        Invocation.dispatch(%Invocation{
+          target: target,
+          mode: :call,
+          args: %{cap: cap},
+          # SPEC caps-cleanup-v1 §4.4 — granting an ownership cap at
+          # session-create time is template-materialization-equivalent;
+          # runs under `system://template-materialize` (closed
+          # Catalog). Owner stays as caller for provenance.
+          ctx: %{
+            caller: owner_uri,
+            caps: Ezagent.SystemPrincipal.caps("system://template-materialize"),
+            reply: :ignore
+          }
+        })
+
+      :ok
+    end
   end
 
   defp join_creator(session_uri, creator_uri) do

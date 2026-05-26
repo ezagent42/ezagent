@@ -572,6 +572,21 @@ defmodule EzagentDomainChat.Application do
       :ok = CapabilityRegistry.register(Agent, action, SandboxB)
     end)
 
+    # RFC #402 (Allen 2026-05-26) — `OrchestratorAdmin` is a cap-only
+    # Behavior anchoring the session-owner authority over this
+    # session's orchestrator agent. `:restart` is the single cap
+    # subject; held by the session owner (`slice.chat.owner_uri`) +
+    # the bootstrap admin via `:any`. `OrchestratorHealthCard` in
+    # `ezagent_plugin_liveview` consults this cap to gate the Restart
+    # button. `dispatchable?: false` means the registration writes
+    # ONLY the subject row; no dispatch path can accidentally invoke
+    # `:restart` (same pattern as `Behavior.Presence`).
+    alias Ezagent.Behavior.OrchestratorAdmin, as: OrchAdminB
+
+    Enum.each(OrchAdminB.actions(), fn action ->
+      :ok = CapabilityRegistry.register(Session, action, OrchAdminB)
+    end)
+
     :ok
   end
 

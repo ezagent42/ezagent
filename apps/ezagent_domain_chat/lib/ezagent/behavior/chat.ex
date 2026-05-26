@@ -686,12 +686,38 @@ defmodule Ezagent.Behavior.Chat do
     replay_messages_since(session_uri, member_uri, slice.last_seen)
     new_last_seen = Map.delete(slice.last_seen, member_uri)
 
+    # RFC #402 (Allen 2026-05-26) — "first user to join is owner"
+    # fallback. The session creator is normally set at session-create
+    # time (`create_session/3` + `Session.spawn_from_template/2` both
+    # pass `owner_uri` into `init_slice/1`). For sessions that
+    # PRE-DATE that wiring (legacy snapshots restored with
+    # `owner_uri: nil`) OR were created via a system-internal path
+    # without a user creator, the FIRST user member to join takes
+    # ownership.
+    #
+    # Discipline: only USER URIs (`entity://user/...`) can claim
+    # ownership. Agents joined via `auto_join_session_members`
+    # (orchestrator + workers) MUST NEVER become owner — they have
+    # no inbox + no UI surface to exercise the restart authority.
+    # `user_uri?/1` (same predicate used for join-notify gating) is
+    # the structural check.
+    prior_owner = Map.get(slice, :owner_uri)
+
+    new_owner_uri =
+      if is_nil(prior_owner) and user_uri?(member_uri) do
+        member_uri
+      else
+        prior_owner
+      end
+
     new_slice = %{
       slice
       | members: new_members,
         monitors: new_monitors,
         last_seen: new_last_seen
     }
+
+    new_slice = Map.put(new_slice, :owner_uri, new_owner_uri)
 
     broadcast_membership(session_uri, {:member_joined, member_uri})
 

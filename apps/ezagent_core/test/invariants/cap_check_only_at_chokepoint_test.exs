@@ -102,7 +102,14 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
         "apps/ezagent_plugin_feishu/lib/ezagent/plugin_feishu/sender_resolver.ex",
         # Session entity — chat send recipient-resolution reads
         # member caps to filter mention-gated routing.
-        "apps/ezagent_domain_chat/lib/ezagent/entity/session.ex"
+        "apps/ezagent_domain_chat/lib/ezagent/entity/session.ex",
+        # RFC #402 (Allen 2026-05-26) — `create_session/3` reads the
+        # creator's caps to skip a duplicate OrchestratorAdmin
+        # :restart cap grant when an equivalent one already exists.
+        # This is an idempotency-check on the create path (read-only
+        # against the granter's own caps), NOT a cap-gate decision
+        # outside the dispatch chokepoint.
+        "apps/ezagent_domain_chat/lib/ezagent_domain_chat.ex"
       ]
     },
     %{
