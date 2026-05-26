@@ -195,7 +195,38 @@ defmodule EzagentCli.Exec do
   # (flags / options) is available via `mix ezagent <kind> <action>
   # --help` — Optimus.help/1 works fine when the spec has no
   # further subcommand children.
-  defp format_subcommand_help(%Optimus{name: name, about: about, subcommands: subs}) do
+  # `Optimus.fetch_subcommand/2` returns a 2-tuple `{%Optimus{},
+  # name_path_reversed}` — NOT a bare struct. Unwrap before
+  # formatting. (This shape was the root of the `Optimus.help/1`
+  # `:badmap` crash: the help formatter pattern-matched on the
+  # struct fields and got the tuple instead.)
+  defp format_subcommand_help({%Optimus{} = sub, name_path})
+       when is_list(name_path) do
+    # `Optimus.fetch_subcommand/2` returns `name_path` already
+    # in top-to-bottom order (root first). Drop the top-level
+    # name (legacy `esr` — the CLI is invoked as `mix ezagent`,
+    # PR #386 renamed the Mix task but the Optimus root name was
+    # not updated; fix that separately).
+    full_name =
+      case name_path do
+        [_root | rest] -> Enum.join(["mix ezagent" | rest], " ")
+        [] -> "mix ezagent #{sub.name}"
+      end
+
+    do_format_subcommand_help(sub, full_name)
+  end
+
+  defp format_subcommand_help(%Optimus{} = sub) do
+    do_format_subcommand_help(sub, sub.name)
+  end
+
+  defp format_subcommand_help(other) do
+    # Defensive — should never hit; if it does, fall back to the
+    # raw struct so the operator at least sees something.
+    inspect(other, pretty: true)
+  end
+
+  defp do_format_subcommand_help(%Optimus{about: about, subcommands: subs}, full_name) do
     actions =
       subs
       |> Enum.sort_by(& &1.name)
@@ -206,26 +237,20 @@ defmodule EzagentCli.Exec do
 
     """
 
-                                      mix ezagent #{name}
+                                      #{full_name}
 
     #{about || ""}
 
     USAGE:
 
-        mix ezagent #{name} <action> [--<option>=<value> ...]
-        mix ezagent #{name} <action> --help
+        #{full_name} <action> [--<option>=<value> ...]
+        #{full_name} <action> --help
 
     ACTIONS:
 
     #{actions}
 
     """
-  end
-
-  defp format_subcommand_help(other) do
-    # Defensive — should never hit; if it does, fall back to the
-    # raw struct so the operator at least sees something.
-    inspect(other, pretty: true)
   end
 
   defp find_behavior_for(kind_atom, action_atom) do
