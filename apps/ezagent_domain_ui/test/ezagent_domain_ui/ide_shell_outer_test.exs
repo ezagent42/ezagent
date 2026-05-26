@@ -126,6 +126,131 @@ defmodule EzagentDomainUi.IdeShellOuterTest do
     end
   end
 
+  describe "workspace dropdown z-index — paints above the left resource panel" do
+    # Regression test for Allen 2026-05-26 — the workspace switcher
+    # dropdown ("ezagent / <ws>" button → menu) opened BEHIND the left
+    # resource panel on pages like /identities, /plugins, /sessions
+    # because both used `z-40`. Same z-index + later-in-DOM sibling →
+    # later wins, so the resource panel painted on top of the dropdown.
+    #
+    # The avatar menu (right side) already had z-50 from the 2026-05-22
+    # avatar dropdown fix (see `avatar_menu/1` comment). This test pins
+    # the symmetric fix on the workspace dropdown so a future edit
+    # downgrading the class is caught by CI.
+    test "workspace-menu element carries z-50 (above z-40 chrome)" do
+      assigns = %{
+        current_entity_uri: "entity://user/system/admin",
+        workspace_name: "default",
+        workspaces: [%{name: "default", uri: "workspace://default"}]
+      }
+
+      html =
+        rendered_to_string(~H"""
+        <IdeShell.ide_shell_outer
+          perspective={:workspace}
+          current_entity_uri={@current_entity_uri}
+          workspace_name={@workspace_name}
+          workspaces={@workspaces}
+        >
+          <:body>body</:body>
+        </IdeShell.ide_shell_outer>
+        """)
+
+      # Extract the workspace-menu element's class attribute.
+      assert [_, menu_class] =
+               Regex.run(
+                 ~r/id="workspace-menu"[^>]*class="([^"]+)"/,
+                 html
+               )
+
+      # The dropdown body sits above the z-40 left resource panel /
+      # right sidebar / activity bar items. Without z-50, the menu
+      # paints behind them on lg+ screens.
+      assert menu_class =~ "z-50",
+             "expected workspace-menu to carry z-50 (above z-40 chrome); got class=#{menu_class}"
+
+      refute menu_class =~ "z-40",
+             "workspace-menu must not have z-40 — same-z + later-in-DOM sibling (resource panel) wins"
+    end
+  end
+
+  describe "avatar menu — System theme button" do
+    # Regression test for Allen 2026-05-26 — the avatar-menu theme
+    # picker had three buttons labeled "Light theme" / "Dark theme" /
+    # "System". The bare "System" label was ambiguous (in zh_CN it
+    # rendered as just "系统" — Allen read it as a navigation entry to
+    # an "admin / system area" rather than a theme picker). Fix:
+    # rename to "System theme" so the three labels are parallel.
+    #
+    # The phx-click handler was always wired (JS.dispatch("phx:set-
+    # theme") + data-phx-theme="system" → root.html.heex window
+    # listener writes localStorage and sets data-theme to the OS
+    # preferred value). The bug was purely the label.
+    test "avatar menu has 3 parallel theme buttons (Light / Dark / System) — all click-wired" do
+      assigns = %{current_entity_uri: "entity://user/system/admin", is_admin?: true}
+
+      html =
+        rendered_to_string(~H"""
+        <IdeShell.avatar_menu
+          current_entity_uri={@current_entity_uri}
+          is_admin?={@is_admin?}
+        />
+        """)
+
+      # All three theme buttons present + click-wired via phx:set-theme
+      # dispatch + their data-phx-theme payload.
+      assert html =~ ~s(data-phx-theme="light")
+      assert html =~ ~s(data-phx-theme="dark")
+      assert html =~ ~s(data-phx-theme="system")
+
+      # Parallel labels — "System theme" not bare "System". Catches
+      # accidental revert to the ambiguous label.
+      assert html =~ "Light theme"
+      assert html =~ "Dark theme"
+      assert html =~ "System theme"
+
+      # Each button carries phx-click dispatching phx:set-theme.
+      # Count occurrences — must be exactly 3 (Light + Dark + System).
+      assert length(Regex.scan(~r/phx:set-theme/, html)) == 3
+      # dispatch action present (HTML-entity-encoded in attribute).
+      assert html =~ "dispatch"
+    end
+
+    test "zh_CN renders the System-theme button as the disambiguated label, not bare '系统'" do
+      # The original bug was zh_CN-specific: bare `gettext("System")`
+      # rendered as "系统" — which Allen read as a navigation entry to
+      # an "admin / system area" rather than a theme picker. The .po
+      # entry for the new msgid `"System theme"` MUST resolve to a
+      # phrase that scopes to "theme" so the three buttons read as a
+      # parallel group. CI catches a translation regression even if
+      # the source `gettext("System theme")` stays correct.
+      previous = Gettext.get_locale(EzagentDomainUi.Gettext)
+      Gettext.put_locale(EzagentDomainUi.Gettext, "zh_CN")
+
+      try do
+        assigns = %{current_entity_uri: "entity://user/system/admin", is_admin?: true}
+
+        html =
+          rendered_to_string(~H"""
+          <IdeShell.avatar_menu
+            current_entity_uri={@current_entity_uri}
+            is_admin?={@is_admin?}
+          />
+          """)
+
+        # zh_CN parallel labels: 浅色主题 / 深色主题 / 跟随系统主题.
+        # The "主题" suffix on the system button is what scopes the
+        # control to "theme" and removes the navigation-entry reading.
+        assert html =~ "浅色主题"
+        assert html =~ "深色主题"
+        assert html =~ "跟随系统主题",
+               "expected zh_CN avatar menu to render '跟随系统主题' (disambiguated from bare '系统')"
+      after
+        Gettext.put_locale(EzagentDomainUi.Gettext, previous)
+      end
+    end
+  end
+
   describe "old monolith deleted (SPEC §6 row 3 — nested-shell PR-3)" do
     test "the old monolithic ide_shell/1 is gone — only ide_shell_outer/1 remains" do
       # PR-1 added `ide_shell_outer/1` next to the old `ide_shell/1`

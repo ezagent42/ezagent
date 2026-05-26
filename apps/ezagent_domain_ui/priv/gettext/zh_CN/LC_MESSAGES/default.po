@@ -243,11 +243,15 @@ msgstr "召唤实体"
 msgid "Switch workspace"
 msgstr "切换工作区"
 
-#: lib/ezagent_domain_ui/ide_shell.ex:165
-#: lib/ezagent_domain_ui/ide_shell.ex:536
+#: lib/ezagent_domain_ui/ide_shell.ex:172
 #, elixir-autogen, elixir-format
 msgid "System"
 msgstr "系统"
+
+#: lib/ezagent_domain_ui/ide_shell.ex:553
+#, elixir-autogen, elixir-format
+msgid "System theme"
+msgstr "跟随系统主题"
 
 #: lib/ezagent_domain_ui/pty/terminal_view.ex:39
 #, elixir-autogen, elixir-format
