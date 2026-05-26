@@ -95,7 +95,30 @@ defmodule Ezagent.Domain.Pty.Server do
     # match: string = substring; list of strings = ALL must match
     # (AND); Regex = pattern match. send: bytes to write to PTY stdin.
     # fired? = true after one match → never re-fires (idempotent).
-    auto_prompts: []
+    auto_prompts: [],
+    # PTY-phase-state-machine 2026-05-26 follow-up (b). Three canonical
+    # phases on the OS subprocess (per Allen's directive — exactly
+    # three, no `:initializing` / `:ready` / `:respawning` middle states):
+    #
+    #   :starting — after init/1 accepted args but before :exec.run
+    #               returned an os_pid (or after respawn invoked but
+    #               PTY not yet up)
+    #   :running  — :exec.run returned {:ok, _, os_pid} and the
+    #               link/monitor is intact
+    #   :dead     — :exec.run failed, OR {:DOWN, ...} arrived from
+    #               erlexec, OR terminate/2 ran
+    #
+    # Broadcasts on every transition via Phoenix.PubSub on topic
+    # `"pty:phase:" <> URI.to_string(agent_uri)`. Best-effort: a
+    # broadcast failure (PubSub down) logs + degrades; it does NOT
+    # block the primary spawn / write / shutdown path. Phase tracking
+    # exists for OPERATOR VISIBILITY (Sandbox slice + LV badge) — its
+    # failure must never wedge the PTY itself.
+    phase: :starting,
+    # Tracks whether `:dead` has been broadcast already so the
+    # terminate/2 path doesn't double-emit after a {:DOWN, ...} or
+    # :exec.run failure has already published the terminal phase.
+    dead_broadcast?: false
   ]
 
   def start_link(%{agent_uri: %URI{} = agent_uri} = args) do
@@ -135,6 +158,10 @@ defmodule Ezagent.Domain.Pty.Server do
       exec_pid: state.exec_pid,
       test_mode: state.test_mode,
       running: state.exec_pid != nil or state.test_mode,
+      # PTY-phase-state-machine follow-up (b): expose the canonical
+      # three-phase state so operator LV and integration tests can
+      # observe the SAME field they would receive via PubSub.
+      phase: state.phase || :starting,
       # Phase 6 PR 19: expose the auto-prompt state so operator LV
       # can see which prompts fired vs which are still waiting.
       auto_prompts:
@@ -190,6 +217,47 @@ defmodule Ezagent.Domain.Pty.Server do
   @doc "PubSub topic for an agent's PTY stdout/stderr stream (Phase 5 PR 4)."
   def output_topic(%URI{} = agent_uri),
     do: "pty:output:" <> URI.to_string(agent_uri)
+
+  @doc """
+  PubSub topic for an agent's PTY phase transitions (PTY-phase-state-machine
+  2026-05-26 follow-up b).
+
+  Subscribers (Sandbox slice updater + TerminalLive badge) receive
+  messages of shape `{:pty_phase, agent_uri, phase, meta}` where:
+
+    * `phase` is one of `:starting | :running | :dead`
+    * `meta` carries `%{os_pid: integer() | nil, reason: term() | nil,
+      at: System.os_time(:millisecond)}`
+
+  Best-effort: a broadcast failure (PubSub down) is logged but never
+  raises into the calling GenServer's primary path.
+  """
+  def phase_topic(%URI{} = agent_uri),
+    do: "pty:phase:" <> URI.to_string(agent_uri)
+
+  @doc """
+  Public accessor for the current phase of a live PtyServer.
+
+  Returns `:starting | :running | :dead` for a live server, or
+  `:dead` when no server exists (consistent with "no process → not
+  running"). Callers that need to distinguish "no server" from
+  "server in :dead" should use `Ezagent.Domain.Pty.alive?/1` first.
+  """
+  @spec phase(URI.t()) :: :starting | :running | :dead
+  def phase(%URI{} = agent_uri) do
+    case find_by_agent_uri(agent_uri) do
+      {:ok, pid} ->
+        try do
+          state = :sys.get_state(pid, 500)
+          state.phase || :dead
+        catch
+          _, _ -> :dead
+        end
+
+      :error ->
+        :dead
+    end
+  end
 
   @doc """
   PR #128 — return the current accumulated stdout buffer for replay
@@ -308,8 +376,15 @@ defmodule Ezagent.Domain.Pty.Server do
       test_mode: test_mode,
       cmd_override: cmd_override,
       cmd_env: cmd_env,
-      auto_prompts: default_auto_prompts() ++ Map.get(args, :auto_prompts, [])
+      auto_prompts: default_auto_prompts() ++ Map.get(args, :auto_prompts, []),
+      phase: :starting
     }
+
+    # PTY-phase-state-machine follow-up (b): broadcast :starting as
+    # soon as init/1 has built the struct. Subscribers (Sandbox slice
+    # + LV badge) see the agent moving through `:starting → :running`
+    # / `:starting → :dead` even when :exec.run/2 fails fast.
+    broadcast_phase(state, :starting, %{})
 
     {:ok, state, {:continue, :spawn_pty}}
   end
@@ -334,6 +409,14 @@ defmodule Ezagent.Domain.Pty.Server do
       "PtyServer test_mode: would spawn claude for " <>
         "agent=#{URI.to_string(state.agent_uri)} cwd=#{state.cwd}"
     )
+
+    # PTY-phase-state-machine follow-up (b): test_mode short-circuits
+    # the real spawn but STILL needs to flip :starting → :running so
+    # subscribers (Sandbox + LV badge) see the canonical transition
+    # sequence. Unit tests subscribing to phase_topic/1 assert on
+    # both :starting AND :running arriving in test mode.
+    state = %{state | phase: :running}
+    broadcast_phase(state, :running, %{os_pid: nil})
 
     {:noreply, state}
   end
@@ -362,11 +445,16 @@ defmodule Ezagent.Domain.Pty.Server do
         # cols second.
         Process.send_after(self(), :send_default_winsize, 500)
 
-        {:noreply, %{state | exec_pid: exec_pid, os_pid: os_pid}}
+        new_state = %{state | exec_pid: exec_pid, os_pid: os_pid, phase: :running}
+        broadcast_phase(new_state, :running, %{os_pid: os_pid})
+
+        {:noreply, new_state}
 
       {:error, reason} ->
         Logger.error("PtyServer: spawn failed: #{inspect(reason)}")
-        {:stop, {:spawn_failed, reason}, state}
+        new_state = %{state | phase: :dead, dead_broadcast?: true}
+        broadcast_phase(new_state, :dead, %{reason: reason, os_pid: nil})
+        {:stop, {:spawn_failed, reason}, new_state}
     end
   end
 
@@ -521,7 +609,15 @@ defmodule Ezagent.Domain.Pty.Server do
       "PtyServer: child process exited for #{URI.to_string(state.agent_uri)}: #{inspect(reason)}"
     )
 
-    {:stop, {:child_exited, reason}, state}
+    # PTY-phase-state-machine follow-up (b): the OS subprocess just
+    # died — publish the terminal :dead phase BEFORE returning {:stop,
+    # ...} so subscribers see the transition while this GenServer is
+    # still alive enough to broadcast (terminate/2 would also fire,
+    # but `dead_broadcast?: true` short-circuits the duplicate emit).
+    new_state = %{state | phase: :dead, dead_broadcast?: true}
+    broadcast_phase(new_state, :dead, %{reason: reason, os_pid: state.os_pid})
+
+    {:stop, {:child_exited, reason}, new_state}
   end
 
   # stdout / stderr chunks from erlexec
@@ -644,9 +740,16 @@ defmodule Ezagent.Domain.Pty.Server do
   end
 
   @impl true
-  def terminate(_reason, %__MODULE__{exec_pid: nil}), do: :ok
+  def terminate(reason, %__MODULE__{exec_pid: nil} = state) do
+    # PTY-phase-state-machine follow-up (b): even when there's no
+    # exec_pid (spawn never succeeded, or test_mode never ran a real
+    # process), terminate/2 still fires on graceful shutdown — emit
+    # the terminal :dead phase exactly once across the lifetime.
+    maybe_broadcast_dead_on_terminate(state, reason)
+    :ok
+  end
 
-  def terminate(_reason, %__MODULE__{exec_pid: pid, agent_uri: agent_uri}) do
+  def terminate(reason, %__MODULE__{exec_pid: pid, agent_uri: agent_uri} = state) do
     try do
       :exec.stop(pid)
     catch
@@ -661,6 +764,60 @@ defmodule Ezagent.Domain.Pty.Server do
     # ownership receipt.
     _ = Ezagent.Runtime.PidFile.remove("cc", agent_uri)
 
+    # PTY-phase-state-machine follow-up (b): graceful termination
+    # path — emit :dead if no upstream signal (e.g. :exec.run failure,
+    # erlexec :DOWN) already published it.
+    maybe_broadcast_dead_on_terminate(state, reason)
+
     :ok
+  end
+
+  # --- phase broadcast helpers (PTY-phase-state-machine follow-up b) -------
+
+  # Best-effort broadcast of a phase transition. The contract per
+  # Allen's directive: phase tracking is OPERATOR VISIBILITY plumbing
+  # and its failure MUST NOT block the primary PTY path (spawn /
+  # write / shutdown). Wrap the Phoenix.PubSub.broadcast/3 call in
+  # try/catch — if PubSub is down or the process tree is being torn
+  # down, log + continue. Subscribers losing one transition is
+  # acceptable; the periodic LV poll picks the next phase up.
+  defp broadcast_phase(%__MODULE__{agent_uri: %URI{} = agent_uri} = state, phase, extra_meta)
+       when phase in [:starting, :running, :dead] do
+    meta =
+      Map.merge(
+        %{
+          os_pid: state.os_pid,
+          reason: nil,
+          at: System.os_time(:millisecond)
+        },
+        extra_meta || %{}
+      )
+
+    try do
+      Phoenix.PubSub.broadcast(
+        EzagentCore.PubSub,
+        phase_topic(agent_uri),
+        {:pty_phase, agent_uri, phase, meta}
+      )
+    catch
+      kind, reason ->
+        Logger.warning(
+          "PtyServer: phase broadcast failed (#{inspect(kind)}, #{inspect(reason)}) " <>
+            "for #{URI.to_string(agent_uri)} phase=#{inspect(phase)}; continuing"
+        )
+
+        :ok
+    end
+  end
+
+  # Idempotency guard for the terminate/2 path. `dead_broadcast?` is
+  # set to true the FIRST time `:dead` is emitted (from :exec.run
+  # failure OR {:DOWN, ...}). The graceful terminate/2 path consults
+  # the flag and only broadcasts when no upstream signal has already
+  # published the terminal transition.
+  defp maybe_broadcast_dead_on_terminate(%__MODULE__{dead_broadcast?: true}, _reason), do: :ok
+
+  defp maybe_broadcast_dead_on_terminate(%__MODULE__{} = state, reason) do
+    broadcast_phase(state, :dead, %{reason: reason, os_pid: state.os_pid})
   end
 end

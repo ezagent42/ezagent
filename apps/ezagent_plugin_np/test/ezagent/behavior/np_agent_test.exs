@@ -88,4 +88,99 @@ defmodule Ezagent.Behavior.NpAgentTest do
       assert {:ok, ^slice} = NpAgent.invoke(:receive, slice, %{message: msg}, ctx)
     end
   end
+
+  describe "post_init/2 + handle_continue/3 (PTY-phase-state-machine 2026-05-26 follow-up b)" do
+    test "post_init/2 ALWAYS returns {:continue, :setup_phase_tracking_and_ensure_python}" do
+      # PTY-phase-state-machine follow-up (b): subscribe to the phase
+      # topic unconditionally so the LV badge stays in sync even for
+      # demand-spawned NpAgents (cwd absent). The Python ensure path
+      # is conditional on cwd inside handle_continue/3, but the
+      # subscribe happens regardless.
+      slice = NpAgent.init_slice(%{uri: URI.parse("entity://agent/team-alpha/np_x")})
+
+      assert {:continue, :setup_phase_tracking_and_ensure_python} =
+               NpAgent.post_init(%{}, slice)
+    end
+
+    test "handle_continue/3 :ignores when cwd is missing (demand-spawn path)" do
+      uri = URI.parse("entity://agent/team-alpha/np_demand")
+      slice = NpAgent.init_slice(%{uri: uri})
+      # No cwd in slice — Loader will rebuild
+      assert slice.cwd == nil
+
+      ctx = %{self_uri: uri, kind_module: SomeKind}
+
+      assert :ignore =
+               NpAgent.handle_continue(:setup_phase_tracking_and_ensure_python, slice, ctx)
+    end
+  end
+
+  describe "init_slice/1 / handle_kind_message/3 — python_phase (PTY-phase-state-machine follow-up b)" do
+    test "init_slice/1 defaults python_phase to nil" do
+      slice = NpAgent.init_slice(%{uri: URI.parse("entity://agent/team-alpha/np_x")})
+      assert slice.python_phase == nil
+    end
+
+    test "init_slice/1 accepts python_phase from rehydrated args" do
+      slice =
+        NpAgent.init_slice(%{
+          uri: URI.parse("entity://agent/team-alpha/np_x"),
+          python_phase: :running
+        })
+
+      assert slice.python_phase == :running
+    end
+
+    test "init_slice/1 normalizes invalid python_phase values to nil" do
+      slice =
+        NpAgent.init_slice(%{
+          uri: URI.parse("entity://agent/team-alpha/np_x"),
+          python_phase: :bogus_atom
+        })
+
+      assert slice.python_phase == nil
+    end
+
+    test "handle_kind_message/3 writes :pty_phase events into :python_phase" do
+      uri = URI.parse("entity://agent/team-alpha/np_x")
+      slice = NpAgent.init_slice(%{uri: uri})
+      ctx = %{self_uri: uri}
+
+      meta = %{os_pid: 999, reason: nil, at: System.os_time(:millisecond)}
+
+      assert {:ok, new_slice} =
+               NpAgent.handle_kind_message(
+                 {:pty_phase, uri, :running, meta},
+                 slice,
+                 ctx
+               )
+
+      assert new_slice.python_phase == :running
+      # Other fields preserved
+      assert new_slice.python_handle == uri
+      assert new_slice.timeout_ms == 10_000
+    end
+
+    test "handle_kind_message/3 ignores non-phase messages" do
+      uri = URI.parse("entity://agent/team-alpha/np_x")
+      slice = NpAgent.init_slice(%{uri: uri})
+      ctx = %{self_uri: uri}
+
+      assert :ignore = NpAgent.handle_kind_message(:other, slice, ctx)
+      assert :ignore = NpAgent.handle_kind_message({:foo, :bar}, slice, ctx)
+    end
+
+    test "handle_kind_message/3 ignores invalid phase atoms (defensive)" do
+      uri = URI.parse("entity://agent/team-alpha/np_x")
+      slice = NpAgent.init_slice(%{uri: uri})
+      ctx = %{self_uri: uri}
+
+      assert :ignore =
+               NpAgent.handle_kind_message(
+                 {:pty_phase, uri, :totally_bogus, %{}},
+                 slice,
+                 ctx
+               )
+    end
+  end
 end

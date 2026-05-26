@@ -66,6 +66,18 @@ defmodule EzagentPluginLiveview.TerminalLive do
           # copy-pasted.
           TerminalSeam.subscribe(agent_uri)
 
+          # PTY-phase-state-machine 2026-05-26 follow-up (b):
+          # subscribe to the PTY phase topic so the badge updates in
+          # real time as the subprocess transitions through
+          # `:starting → :running → :dead`. The shape mirrors the
+          # PtyServer / Python Server broadcast (intentionally one
+          # topic for both flavors — the LV badge doesn't care
+          # whether cc or np produced the event).
+          Phoenix.PubSub.subscribe(
+            EzagentCore.PubSub,
+            "pty:phase:" <> URI.to_string(agent_uri)
+          )
+
           # 2s polling matches AgentDetailLive — gives the operator
           # immediate feedback when the PTY phase changes (e.g. they
           # just clicked "instantiate" elsewhere).
@@ -77,6 +89,11 @@ defmodule EzagentPluginLiveview.TerminalLive do
           |> assign(:agent_uri, agent_uri)
           |> assign(:status, load_status(agent_uri))
           |> assign(:pty_alive?, Ezagent.Domain.Pty.alive?(agent_uri))
+          # PTY-phase-state-machine follow-up (b): read the CURRENT
+          # phase from the live PtyServer at mount so the badge has
+          # a value to render BEFORE the first PubSub event arrives.
+          # The PubSub subscribe above keeps it updated thereafter.
+          |> assign(:pty_phase, Ezagent.Domain.Pty.Server.phase(agent_uri))
           |> assign(:refresh_seconds, div(@refresh_ms, 1000))
 
         # ttyd-style initial buffer replay — only meaningful when the
@@ -123,13 +140,28 @@ defmodule EzagentPluginLiveview.TerminalLive do
     {:noreply,
      socket
      |> assign(:status, load_status(agent_uri))
-     |> assign(:pty_alive?, Ezagent.Domain.Pty.alive?(agent_uri))}
+     |> assign(:pty_alive?, Ezagent.Domain.Pty.alive?(agent_uri))
+     # PTY-phase-state-machine follow-up (b): also re-sync the phase
+     # from the live PtyServer in case a broadcast was missed (e.g.
+     # subscriber transient disconnect, PubSub down, BEAM re-link).
+     # The 2s poll is the belt-and-suspenders companion to the
+     # PubSub event subscription set up in mount/3.
+     |> assign(:pty_phase, Ezagent.Domain.Pty.Server.phase(agent_uri))}
   end
 
   # PTY chunk fan-out from the Server's PubSub broadcast — via the
   # shared TerminalSeam.
   def handle_info({:pty_output, _agent_uri, chunk}, socket) when is_binary(chunk) do
     {:noreply, TerminalSeam.push_chunk(socket, chunk)}
+  end
+
+  # PTY-phase-state-machine 2026-05-26 follow-up (b): consume the
+  # phase broadcast from `Ezagent.Domain.Pty.Server` /
+  # `Ezagent.Domain.Python.Server`. Update the badge assign — render/1
+  # picks the variant + label from `phase_badge/1`.
+  def handle_info({:pty_phase, _agent_uri, phase, _meta}, socket)
+      when phase in [:starting, :running, :dead] do
+    {:noreply, assign(socket, :pty_phase, phase)}
   end
 
   @impl true
@@ -146,6 +178,45 @@ defmodule EzagentPluginLiveview.TerminalLive do
   # No-op — TUI handles its own resize on the server side via :exec.winsz/3.
   # Matches the admin_live convention.
   def handle_event("pty_resize", _params, socket), do: {:noreply, socket}
+
+  # PTY-phase-state-machine 2026-05-26 follow-up (b): operator clicks
+  # the "Dead — Restart" badge to bring the agent back. Reuses the
+  # same dispatch shape as `AgentDetailLive` "restart" (V-2 audit fix
+  # 2026-05-23): route through `?action=lifecycle.terminate` so cap
+  # check + audit + telemetry fire; the supervisor's `:permanent`
+  # restart spec brings the Kind back, and Sandbox/NpAgent
+  # post_init re-spawns the subprocess.
+  def handle_event("restart_pty", _params, socket) do
+    target =
+      URI.new!(URI.to_string(socket.assigns.agent_uri) <> "?action=lifecycle.terminate")
+
+    case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+           target: target,
+           mode: :call,
+           args: %{},
+           ctx: ctx(socket)
+         }) do
+      {:ok, _} ->
+        # Optimistic UI: flip to :starting so the badge changes
+        # immediately. The PubSub broadcasts from the new
+        # PtyServer/Python Server incarnation will land in the
+        # `handle_info({:pty_phase, _, _, _}, ...)` clause above
+        # within ~500ms.
+        {:noreply, assign(socket, :pty_phase, :starting)}
+
+      {:error, :unauthorized} ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           gettext("Restart denied — your account lacks the lifecycle.terminate cap.")
+         )}
+
+      {:error, reason} ->
+        {:noreply,
+         put_flash(socket, :error, gettext("Restart failed: %{reason}", reason: inspect(reason)))}
+    end
+  end
 
   # Caller context for dispatch — SPEC caps-cleanup-v1 §4.4:
   # admin caps now live in the User Kind's slice (seeded by
@@ -210,11 +281,47 @@ defmodule EzagentPluginLiveview.TerminalLive do
                 {URI.to_string(@agent_uri)}
               </span>
             </div>
-            <div class="text-xs text-zinc-500 dark:text-zinc-400 shrink-0">
-              {gettext("Phase:")}
-              <span class={phase_class(@status.phase)}>
-                <span class="font-mono">{@status.phase}</span>
-              </span>
+            <div class="flex items-center gap-3 shrink-0">
+              <%!-- PTY-phase-state-machine 2026-05-26 follow-up (b):
+                   subprocess phase badge (separate from the agent
+                   Kind's `@status.phase` which describes the Kind's
+                   lifecycle, not the PTY/Python subprocess). The
+                   badge reads `@pty_phase` which is kept in sync via
+                   the PubSub subscription set up in mount/3. When
+                   the phase is `:dead`, the badge becomes a Restart
+                   button. --%>
+              <%= case @pty_phase do %>
+                <% :starting -> %>
+                  <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300 border border-amber-200 dark:border-amber-900">
+                    <span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+                    {gettext("Starting…")}
+                  </span>
+                <% :running -> %>
+                  <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-900">
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                    {gettext("Ready")}
+                  </span>
+                <% :dead -> %>
+                  <button
+                    phx-click="restart_pty"
+                    id="restart-pty-btn"
+                    class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-rose-50 text-rose-700 dark:bg-rose-950 dark:text-rose-300 border border-rose-200 dark:border-rose-900 hover:bg-rose-100 dark:hover:bg-rose-900 cursor-pointer"
+                  >
+                    <span class="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
+                    {gettext("Dead — Restart")}
+                  </button>
+                <% _ -> %>
+                  <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400 border border-zinc-200 dark:border-zinc-700">
+                    <span class="w-1.5 h-1.5 rounded-full bg-zinc-400"></span>
+                    {gettext("Unknown")}
+                  </span>
+              <% end %>
+              <div class="text-xs text-zinc-500 dark:text-zinc-400">
+                {gettext("Phase:")}
+                <span class={phase_class(@status.phase)}>
+                  <span class="font-mono">{@status.phase}</span>
+                </span>
+              </div>
             </div>
           </div>
 

@@ -24,7 +24,13 @@ defmodule Ezagent.Behavior.SandboxTest do
 
     test "init_slice/1 defaults all fields to nil for an unconfigured agent" do
       assert Sandbox.init_slice(%{uri: URI.new!("entity://agent/team-alpha/x")}) ==
-               %{config_dir_path: nil, template_class: nil, respawn_template_data: nil}
+               %{
+                 config_dir_path: nil,
+                 template_class: nil,
+                 respawn_template_data: nil,
+                 # PTY-phase-state-machine 2026-05-26 follow-up (b)
+                 pty_phase: nil
+               }
     end
 
     test "init_slice/1 reads config_dir_path + template_class + respawn_template_data from args" do
@@ -38,7 +44,8 @@ defmodule Ezagent.Behavior.SandboxTest do
                %{
                  config_dir_path: "/tmp/agent-x",
                  template_class: SomeMod,
-                 respawn_template_data: %{"cwd" => "/tmp/agent-x"}
+                 respawn_template_data: %{"cwd" => "/tmp/agent-x"},
+                 pty_phase: nil
                }
     end
 
@@ -52,8 +59,28 @@ defmodule Ezagent.Behavior.SandboxTest do
                %{
                  config_dir_path: "/tmp/agent-x",
                  template_class: SomeMod,
-                 respawn_template_data: nil
+                 respawn_template_data: nil,
+                 pty_phase: nil
                }
+    end
+
+    test "init_slice/1 accepts pty_phase from rehydrated snapshot" do
+      # PTY-phase-state-machine 2026-05-26 follow-up (b): when the
+      # Kind.Server loads from snapshot, the slice arrives carrying
+      # the persisted phase. init_slice/1 passes it through.
+      args = %{pty_phase: :running}
+
+      slice = Sandbox.init_slice(args)
+      assert slice.pty_phase == :running
+    end
+
+    test "init_slice/1 normalizes invalid pty_phase values to nil" do
+      # Defensive: a corrupt snapshot or buggy caller supplies a
+      # non-atom or unknown atom — reset to nil so the next live
+      # broadcast (or post_init re-spawn) writes the correct value.
+      assert Sandbox.init_slice(%{pty_phase: :totally_bogus}).pty_phase == nil
+      assert Sandbox.init_slice(%{pty_phase: "starting"}).pty_phase == nil
+      assert Sandbox.init_slice(%{pty_phase: 42}).pty_phase == nil
     end
 
     test "init_slice/1 RESETS the process-dict destroyed gate (codex PR2 round-2 HIGH-2)" do
@@ -92,23 +119,35 @@ defmodule Ezagent.Behavior.SandboxTest do
       slice = %{
         config_dir_path: "/tmp/cd",
         template_class: SomeMod,
-        respawn_template_data: %{"cwd" => "/tmp/cd"}
+        respawn_template_data: %{"cwd" => "/tmp/cd"},
+        pty_phase: :running
       }
 
       assert {:ok, ^slice,
               %{
                 config_dir_path: "/tmp/cd",
                 template_class: SomeMod,
-                respawn_template_data: %{"cwd" => "/tmp/cd"}
+                respawn_template_data: %{"cwd" => "/tmp/cd"},
+                pty_phase: :running
               }} =
                Sandbox.invoke(:read, slice, %{}, %{})
     end
 
     test "returns nils for an unpopulated slice" do
-      slice = %{config_dir_path: nil, template_class: nil, respawn_template_data: nil}
+      slice = %{
+        config_dir_path: nil,
+        template_class: nil,
+        respawn_template_data: nil,
+        pty_phase: nil
+      }
 
       assert {:ok, ^slice,
-              %{config_dir_path: nil, template_class: nil, respawn_template_data: nil}} =
+              %{
+                config_dir_path: nil,
+                template_class: nil,
+                respawn_template_data: nil,
+                pty_phase: nil
+              }} =
                Sandbox.invoke(:read, slice, %{}, %{})
     end
 
@@ -279,36 +318,43 @@ defmodule Ezagent.Behavior.SandboxTest do
     end
   end
 
-  describe "post_init/2 + handle_continue/3 (PTY-orphan-restart 2026-05-26)" do
+  describe "post_init/2 + handle_continue/3 (PTY-orphan-restart 2026-05-26 + phase-state-machine follow-up b)" do
     setup do
       Process.delete({Sandbox, :destroyed?})
       :ok
     end
 
-    test "post_init/2 returns :ok when slice has no template_class" do
+    test "post_init/2 ALWAYS returns {:continue, :setup_phase_tracking, ...} (follow-up b)" do
+      # PTY-phase-state-machine follow-up (b): post_init now
+      # unconditionally schedules the subscribe+ensure continuation
+      # so the Kind.Server subscribes to `pty:phase:<self_uri>` for
+      # every Sandbox-bearing agent (fresh-spawn, restart, demand-spawn).
       slice = %{config_dir_path: nil, template_class: nil, respawn_template_data: nil}
-      assert Sandbox.post_init(%{}, slice) == :ok
+
+      assert {:continue, {:setup_phase_tracking, nil, nil}} =
+               Sandbox.post_init(%{}, slice)
     end
 
-    test "post_init/2 returns :ok when slice has template_class but no respawn_template_data" do
-      slice = %{
-        config_dir_path: "/tmp/x",
-        template_class: SomeMod,
-        respawn_template_data: nil
-      }
-
-      assert Sandbox.post_init(%{}, slice) == :ok
-    end
-
-    test "post_init/2 returns {:continue, ...} when both template_class + respawn_template_data are present" do
+    test "post_init/2 carries template_class + respawn_data into the continuation" do
       slice = %{
         config_dir_path: "/tmp/x",
         template_class: SomeMod,
         respawn_template_data: %{"cwd" => "/tmp/x"}
       }
 
-      assert {:continue, {:ensure_subprocess, SomeMod, %{"cwd" => "/tmp/x"}}} =
+      assert {:continue, {:setup_phase_tracking, SomeMod, %{"cwd" => "/tmp/x"}}} =
                Sandbox.post_init(%{}, slice)
+    end
+
+    test "handle_continue/3 :ignores when template_class is nil (subscribe-only path)" do
+      # PTY-phase-state-machine follow-up (b): nil template_class
+      # means "subscribe-only" — phase tracking is set up but no
+      # subprocess re-spawn is attempted.
+      slice = %{config_dir_path: nil, template_class: nil, respawn_template_data: nil}
+      ctx = %{self_uri: URI.new!("entity://agent/system/cc_x"), kind_module: SomeKind}
+
+      assert :ignore =
+               Sandbox.handle_continue({:setup_phase_tracking, nil, nil}, slice, ctx)
     end
 
     test "handle_continue/3 :ignores when template_class does not export ensure_subprocess_alive/2" do
@@ -318,7 +364,7 @@ defmodule Ezagent.Behavior.SandboxTest do
       ctx = %{self_uri: URI.new!("entity://agent/system/cc_x"), kind_module: SomeKind}
 
       assert :ignore =
-               Sandbox.handle_continue({:ensure_subprocess, Enum, %{}}, slice, ctx)
+               Sandbox.handle_continue({:setup_phase_tracking, Enum, %{}}, slice, ctx)
     end
 
     test "handle_continue/3 :ignores when template_class is not an atom" do
@@ -326,7 +372,56 @@ defmodule Ezagent.Behavior.SandboxTest do
       ctx = %{self_uri: URI.new!("entity://agent/system/cc_x"), kind_module: SomeKind}
 
       assert :ignore =
-               Sandbox.handle_continue({:ensure_subprocess, "not-atom", %{}}, slice, ctx)
+               Sandbox.handle_continue({:setup_phase_tracking, "not-atom", %{}}, slice, ctx)
+    end
+  end
+
+  describe "handle_kind_message/3 (PTY-phase-state-machine 2026-05-26 follow-up b)" do
+    test "writes a :pty_phase event into the slice" do
+      slice = %{
+        config_dir_path: "/tmp/x",
+        template_class: SomeMod,
+        respawn_template_data: nil,
+        pty_phase: :starting
+      }
+
+      agent_uri = URI.new!("entity://agent/system/cc_x")
+      ctx = %{self_uri: agent_uri, kind_module: SomeKind}
+
+      meta = %{os_pid: 12_345, reason: nil, at: 1_700_000_000_000}
+
+      assert {:ok, new_slice} =
+               Sandbox.handle_kind_message(
+                 {:pty_phase, agent_uri, :running, meta},
+                 slice,
+                 ctx
+               )
+
+      assert new_slice.pty_phase == :running
+      # Other fields preserved
+      assert new_slice.config_dir_path == "/tmp/x"
+      assert new_slice.template_class == SomeMod
+    end
+
+    test "ignores non-phase messages" do
+      slice = %{pty_phase: :running}
+      ctx = %{self_uri: URI.new!("entity://agent/system/cc_x")}
+
+      assert :ignore = Sandbox.handle_kind_message(:something_else, slice, ctx)
+      assert :ignore = Sandbox.handle_kind_message({:not_a_phase, :foo}, slice, ctx)
+    end
+
+    test "ignores phase events with invalid phase atoms (defensive)" do
+      slice = %{pty_phase: :running}
+      agent_uri = URI.new!("entity://agent/system/cc_x")
+      ctx = %{self_uri: agent_uri}
+
+      assert :ignore =
+               Sandbox.handle_kind_message(
+                 {:pty_phase, agent_uri, :bogus, %{}},
+                 slice,
+                 ctx
+               )
     end
   end
 end
