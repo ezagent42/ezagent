@@ -43,6 +43,27 @@ defmodule EzagentPluginFeishu.MentionParserTest do
     assert length(uris) == 1
   end
 
+  test "@<full-entity-name> with flavor prefix also resolves (2026-05-26 Allen UX fix)" do
+    # Allen's Feishu UX: operator sees `cc_<name>` in the LV MemberPanel
+    # and types that full handle in Feishu. The parser must match BOTH
+    # the suffix-after-flavor `<name>` (original SPEC §5.14 design) AND
+    # the full entity_name `cc_<name>` (the MemberPanel-visible handle).
+    # Pre-fix, only the suffix matched — Feishu @-mention silently
+    # failed to populate `messages.mentions`, breaking cc routing
+    # for every @-mention typed from Feishu side.
+    name = unique_agent_name("full")
+    spawn_agent!(name)
+
+    # The agent's URI is `entity://agent/team-alpha/cc_<name>`.
+    # Match A: typing the suffix-after-flavor (`@<name>`).
+    assert [%URI{} = uri_suffix] = MentionParser.extract_agent_mentions("@#{name} hi")
+    assert URI.to_string(uri_suffix) == "entity://agent/team-alpha/cc_#{name}"
+
+    # Match B: typing the full entity_name including flavor (`@cc_<name>`).
+    assert [%URI{} = uri_full] = MentionParser.extract_agent_mentions("@cc_#{name} hi")
+    assert URI.to_string(uri_full) == "entity://agent/team-alpha/cc_#{name}"
+  end
+
   test "non-binary input returns []" do
     assert [] = MentionParser.extract_agent_mentions(nil)
     assert [] = MentionParser.extract_agent_mentions(123)

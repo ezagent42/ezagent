@@ -81,19 +81,40 @@ defmodule EzagentPluginFeishu.MentionParser do
     end)
   end
 
-  # True if the URI's name-suffix (text after the first `_`) matches
-  # one of the typed `@<name>` tokens.
+  # True if the URI's display name matches one of the typed `@<name>`
+  # tokens. The URI has the shape `entity://agent/<workspace>/<flavor>_<suffix>`.
+  # We accept TWO match shapes — both real UX surfaces in Feishu:
+  #
+  #   - Typed `@cc_e2e_final` matches the FULL entity_name `cc_e2e_final`
+  #     (what the operator sees in the LV MemberPanel).
+  #   - Typed `@e2e_final` matches the suffix-after-flavor `e2e_final`
+  #     (the natural-language handle that drops the `cc_` prefix).
+  #
   # Phase 9 PR-2 (SPEC v3 §3): entity URIs are 3-segment
-  # /<workspace>/<entity_name>; extract entity_name first, then split
-  # on flavor `_` separator.
+  # /<workspace>/<entity_name>; extract entity_name then optionally
+  # split on flavor `_` separator.
+  #
+  # 2026-05-26 (Allen e2e): the suffix-only form was the original
+  # SPEC §5.14 design, but operators copy-paste the full agent name
+  # from MemberPanel into Feishu @ — that lookup must succeed too,
+  # or every Feishu-side @-mention silently fails to route (mentions
+  # = []) and the cc agent never receives the message.
   defp matches_any_typed_name?(%URI{path: "/" <> rest}, typed_names) when rest != "" do
-    with [_workspace, entity_name] when entity_name != "" <-
-           String.split(rest, "/", parts: 2),
-         [_flavor, suffix] when suffix != "" <-
-           String.split(entity_name, "_", parts: 2) do
-      suffix in typed_names
-    else
-      _ -> false
+    case String.split(rest, "/", parts: 2) do
+      [_workspace, entity_name] when entity_name != "" ->
+        # Match A: full entity_name (operator copies from MemberPanel).
+        if entity_name in typed_names do
+          true
+        else
+          # Match B: suffix after flavor (natural-language handle).
+          case String.split(entity_name, "_", parts: 2) do
+            [_flavor, suffix] when suffix != "" -> suffix in typed_names
+            _ -> false
+          end
+        end
+
+      _ ->
+        false
     end
   end
 
