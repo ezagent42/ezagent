@@ -98,6 +98,45 @@ defmodule Ezagent.Ecto.KindSnapshot do
       updated_at: now
     }
 
+    do_upsert_with_retry(uri_str, attrs, now, _attempt = 0)
+  end
+
+  # SQLite is single-writer. When multiple Kinds spawn concurrently
+  # (e.g. test setup spawning 3+ Sessions / Users in parallel, or
+  # production phx accepting two `Kind.spawn` calls within the same
+  # millisecond), the second writer's `INSERT` raises
+  # `%Exqlite.Error{message: "Database busy"}` via
+  # `Ecto.Adapters.SQL.raise_sql_call_error/1`. This is a transient
+  # contention error — retrying after a short backoff succeeds.
+  #
+  # 2026-05-26 (Allen — "请重试"): bounded retry on `Database busy`
+  # only. Other errors (constraint violations, schema drift) propagate
+  # immediately. Caps at 5 attempts ≈ 310ms worst-case wall clock —
+  # past that the SQLite writer is genuinely wedged and let-it-crash
+  # is the right call.
+  @retry_max_attempts 5
+  @retry_base_ms 10
+
+  defp do_upsert_with_retry(uri_str, attrs, now, attempt) do
+    try do
+      do_upsert_once(uri_str, attrs, now)
+    rescue
+      e in Exqlite.Error ->
+        if String.contains?(e.message || "", "Database busy") and
+             attempt + 1 < @retry_max_attempts do
+          backoff_ms = @retry_base_ms * Bitwise.bsl(1, attempt)
+          Process.sleep(backoff_ms)
+          do_upsert_with_retry(uri_str, attrs, now, attempt + 1)
+        else
+          # Other Exqlite errors (constraint violations, schema drift)
+          # OR exhausted retries → propagate. Caller's `Kind.Server.init/1`
+          # wraps in `{:stop, {:persistence_failed, _}}` per its design.
+          reraise e, __STACKTRACE__
+        end
+    end
+  end
+
+  defp do_upsert_once(uri_str, attrs, now) do
     case Repo.get(__MODULE__, uri_str) do
       nil ->
         %__MODULE__{}
