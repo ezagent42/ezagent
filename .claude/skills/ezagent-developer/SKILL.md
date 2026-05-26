@@ -43,12 +43,13 @@ ezagent-developer/
 ├── SKILL.md                          ← you are here (navigation + project conventions)
 └── references/
     ├── design-principles.md          ← P1-P27 (Groups A-E)
-    ├── architecture-invariants.md    ← 17 numbered invariants + CI gates
+    ├── architecture-invariants.md    ← 20 numbered invariants + CI gates
     ├── three-tier-structure.md       ← core / domain / plugin boundary rules
     ├── anti-patterns.md              ← what the skill refuses
     ├── how-to-recipes.md             ← contributor recipes (add plugin / Kind / Behavior / …)
     ├── debug-recipes.md              ← symptom-first debug
     ├── ui-contract.md                ← 3-layer UI + nested shell + DO/DON'T
+    ├── slice-and-snapshot.md         ← Behavior slice + Kind snapshot model + recurring bug class
     └── pointer-index.md              ← durable record + current state
 ```
 
@@ -65,6 +66,7 @@ The references are organized so you only load the file relevant to your current 
 | "How do I add X?" | `references/how-to-recipes.md` |
 | "Why isn't my thing working?" | `references/debug-recipes.md` |
 | "How do I render this LV/component?" | `references/ui-contract.md` |
+| "What's a slice / why is the snapshot doing weird things?" | `references/slice-and-snapshot.md` |
 | "Where's the spec for X?" | `references/pointer-index.md` |
 
 ## Key invariants at a glance (full list in references/architecture-invariants.md)
