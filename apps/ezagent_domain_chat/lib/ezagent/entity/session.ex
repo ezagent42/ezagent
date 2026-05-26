@@ -62,7 +62,7 @@ defmodule Ezagent.Entity.Session do
   # bind flow / mix task that called default_uri/0 wrote the OLD
   # workspace name into the DB, leaving orphan binding rows the
   # boot reconciler couldn't resolve.
-  def default_uri, do: URI.new!("session://system/system/main")
+  def default_uri, do: URI.new!("session://default/system/main")
 
   # ─────────────────────────────────────────────────────────────────────
   # Ezagent.Behavior.Publisher implementation (ExternalMirror PR-EM-0)

@@ -191,7 +191,7 @@ defmodule Mix.Tasks.Ezagent.Stress do
     # Scenario A — one session, N agent members. Re-create the session
     # fresh each step so membership is exactly N.
     workspace = "system"
-    session_uri = uri!("session://system/#{workspace}/stress_a_#{n}")
+    session_uri = uri!("session://default/#{workspace}/stress_a_#{n}")
 
     {spawn_us, :ok} =
       timed(fn ->
@@ -275,7 +275,7 @@ defmodule Mix.Tasks.Ezagent.Stress do
     {spawn_us, :ok} =
       timed(fn ->
         for s <- (prev + 1)..n do
-          session_uri = uri!("session://system/#{workspace}/stress_b_#{s}")
+          session_uri = uri!("session://default/#{workspace}/stress_b_#{s}")
           spawn_kind!(session_mod(), session_uri)
           :ok = WorkspaceRegistry.bind(session_uri, uri!("workspace://#{workspace}"))
           await_ready!(session_uri)
