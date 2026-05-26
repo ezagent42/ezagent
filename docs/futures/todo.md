@@ -276,6 +276,23 @@ misnamed — chat uploads are user-scope, not admin-scope.
    in `router.ex` near the admin scope documenting the
    invariant + an explicit anti-regression note.
 
+### ~~Silent default workspace fallbacks (runtime form)~~ — RESOLVED 2026-05-26 (PR #362)
+
+Allen 2026-05-26 09:31: "如果没有提供 workspace name，应该直接 crash. 现在
+已经没有了默认 workspace 这个概念". PR #335 deleted the literal/static
+default workspace; PR #362 closed the remaining 14 runtime-fallback
+sites of shape `workspace_uri.host || "default"` + the residual
+`workspace_name_from_caller(_), do: "system"` in `dispatch.ex`.
+
+Sites fixed: `session.ex × 4`, `agent.ex × 1`, `behavior/template.ex × 2`,
+`session_template.ex × 1`, `orchestrator/tools.ex × 2`, `cc_agent.ex × 2`,
+`dispatch.ex × 1`. New invariant test
+`no_silent_default_workspace_test.exs` locks the bug class out.
+
+NB: `dispatch.ex` 144/147/150 `fill_caller_workspace("default", ...)`
+intentionally NOT touched — `"default"` is the template-class segment
+of `session://<class>/<workspace>/<name>`, not a workspace fallback.
+
 ### ~~Notifications consumer coverage~~ — RESOLVED 2026-05-26 (med-batch)
 PR #300 wired AdminLive as the operator subscriber + added notify
 calls to `Workspace.add/remove_member` and `Identity.grant/revoke_cap`.
