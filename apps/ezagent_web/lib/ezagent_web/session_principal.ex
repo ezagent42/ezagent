@@ -51,12 +51,16 @@ defmodule EzagentWeb.SessionPrincipal do
 
   - a full URI string (`"entity://user/system/admin"`) — passes through
   - a bare handle (`"admin"`, `"allen"`) — normalized to
-    `"entity://user/<workspace>/<handle>"` (lowercased). Workspace
-    defaults to `"default"`; override via `put/3` `:workspace` opt.
+    `"entity://user/<workspace>/<handle>"` (lowercased). For bare
+    handles, `put/3` REQUIRES the `:workspace` opt — there is no
+    silent default (SPEC #324 rev 3 / `feedback_let_it_crash_no_workarounds`).
+    `put/2` is therefore only valid for full URI inputs; bare handles
+    via `put/2` raise `ArgumentError`.
 
   Raises `ArgumentError` if the result is not a parseable
-  `entity://user/...` or `entity://agent/...` URI. The session is
-  also rotated via `configure_session(renew: true)` so a stolen
+  `entity://user/...` or `entity://agent/...` URI, OR if a bare
+  handle is passed without an explicit `:workspace` opt. The session
+  is also rotated via `configure_session(renew: true)` so a stolen
   pre-auth session ID cannot be reused.
   """
   @spec put(Plug.Conn.t(), String.t()) :: Plug.Conn.t()
@@ -164,12 +168,13 @@ defmodule EzagentWeb.SessionPrincipal do
           "EzagentWeb.SessionPrincipal.canonicalize/1 expects a String, got: #{inspect(other)}"
   end
 
-  # Phase 9 PR-2 (SPEC v3 §6.2 option A): bare-handle login defaults to
-  # the `default` workspace.
   # Phase 9 PR-5 (SPEC v3 §6.4 amended): bare-handle workspace is
-  # overridable via opts[:workspace] so /login?workspace=<name> can
-  # pre-fill the target workspace when the user arrives via the
-  # workspace-switcher logout flow.
+  # required via opts[:workspace] (SPEC #324 rev 3 — no silent
+  # default; the historical Phase 9 PR-2 default-`default` fallback
+  # was removed in #335 + #386 audits per
+  # `feedback_let_it_crash_no_workarounds`). `/login?workspace=<name>`
+  # supplies the target workspace when the user arrives via the
+  # workspace-switcher logout flow. Admin login passes `"system"`.
   defp normalize(input, workspace) do
     trimmed = String.trim(input)
 
