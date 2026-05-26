@@ -90,18 +90,43 @@ defmodule Ezagent.Runtime do
 
       err ->
         # Allen 2026-05-26: the canonical runtime node name is in
-        # use by another OS process (typically: yao.shengyue's
-        # 12-day-old phx, or a parallel local dev BEAM, or any
-        # bootstrap mix task firing alongside a running phx). For
-        # phx.server itself this would be fatal — but for bootstrap
-        # mix tasks (e.g. `mix ezagent.user.token --mint` writing
-        # directly to the DB) distribution is incidental.
+        # use by another OS process. Two contexts hit this:
         #
-        # Fall back to a unique distinguishing name so the BEAM has
-        # SOME node identity (Phoenix.PubSub etc. care that the
-        # node is alive even when not federated). The fallback name
-        # is per-OS-process so concurrent bootstrap invocations
-        # don't trample each other.
+        # 1. `mix phx.server`: needs the canonical name so CLI
+        #    `:rpc.call` can reach in. Failure should be loud — the
+        #    operator must resolve (kill the squatter or set a
+        #    different EZAGENT_RUNTIME_NODE).
+        #
+        # 2. Bootstrap mix tasks (e.g. `mix ezagent.user.token
+        #    --mint`): don't need distribution at all, just DB.
+        #    Falling back to a unique node name is silent + safe.
+        #
+        # We distinguish via System.argv()[0]: `phx.server` claims
+        # canonical or raises; everything else falls back.
+        handle_runtime_node_collision(err, cookie)
+    end
+  end
+
+  # See configure_for_runtime!/0 for the two-context rationale.
+  defp handle_runtime_node_collision(err, cookie) do
+    case System.argv() do
+      ["phx.server" | _] ->
+        require Logger
+
+        Logger.error(
+          "Ezagent.Runtime: cannot claim #{runtime_node()} — already used by " <>
+            "another Erlang node (#{inspect(err)}). phx.server REQUIRES this " <>
+            "name for CLI/RPC. Resolve by killing the squatter or setting " <>
+            "EZAGENT_RUNTIME_NODE to a different value."
+        )
+
+        :ok
+
+      _ ->
+        # Bootstrap context: fall back to a unique name silently.
+        # The lower-level erlang VM still prints a `[notice]` about
+        # the name being in use — that's an erts-level emission we
+        # can't suppress without monkey-patching :error_logger.
         fallback =
           :"ezagent_bootstrap_#{System.system_time(:nanosecond)}@#{@default_runtime_host}"
 
@@ -111,10 +136,15 @@ defmodule Ezagent.Runtime do
             :ok
 
           _ ->
+            # Even the fallback failed — surface as a warning but
+            # do not crash; bootstrap tasks that don't actually
+            # touch distribution will still complete.
             require Logger
 
             Logger.warning(
-              "Ezagent.Runtime: net_kernel start failed (#{inspect(err)}); CLI will fall back to error path"
+              "Ezagent.Runtime: net_kernel start failed for both canonical and " <>
+                "fallback names; distribution unavailable. Original error: " <>
+                "#{inspect(err)}"
             )
 
             :ok
