@@ -276,6 +276,61 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
              "expected :create_session cap, got #{inspect(post_caps)}"
     end
 
+    test "codex round-2 MED-2 — dispatch-level :add_member also grants the cap (not just facade)",
+         %{
+           workspace_uri: workspace_uri,
+           ws_name: ws_name
+         } do
+      # Round-1 fix only grafted the grant into the facade. Round-2 codex
+      # observed: the production path is dispatch (`Invocation.dispatch`
+      # → `Behavior.Workspace.invoke(:add_member, ...)`), and that path
+      # was still missing the grant. This test exercises ONLY the
+      # dispatch path (no facade call) and asserts the new member has
+      # the cap afterwards.
+      member_uri =
+        URI.new!(
+          "entity://user/#{ws_name}/med2-disp-#{System.unique_integer([:positive])}"
+        )
+
+      {:ok, _pid} =
+        Ezagent.Kind.spawn(User, %{uri: member_uri, initial_caps: MapSet.new()})
+
+      # Dispatch :add_member as the SystemPrincipal (skips CapBAC
+      # since it's the mediator used by the Workspace facade itself).
+      target =
+        URI.new!("#{URI.to_string(workspace_uri)}?action=workspace.add_member")
+
+      result =
+        Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+          target: target,
+          mode: :call,
+          args: %{member: member_uri},
+          ctx: %{
+            caller: Ezagent.SystemPrincipal.uri("workspace-loader"),
+            caps: Ezagent.SystemPrincipal.caps("system://workspace-loader"),
+            reply: {:caller_inbox, self()}
+          }
+        })
+
+      assert match?(:ok, result) or match?({:ok, _}, result),
+             "dispatch :add_member failed: #{inspect(result)}"
+
+      # The grant fires inside invoke(:add_member, ...); the cap write
+      # is itself a dispatched hop, so we allow a small inbox-delivery
+      # window before reading caps back.
+      Process.sleep(75)
+
+      post_caps = Ezagent.Identity.list_caps_for(member_uri)
+
+      assert Enum.any?(post_caps, fn cap ->
+               match?(%Ezagent.Capability{}, cap) and
+                 cap.kind == :workspace and
+                 cap.behavior == Ezagent.Behavior.Workspace and
+                 URI.to_string(cap.instance) == URI.to_string(workspace_uri)
+             end),
+             "dispatch-level add_member must also auto-grant :create_session — got #{inspect(post_caps)}"
+    end
+
     test "an agent member added to a workspace does NOT receive the cap (user-only grant)", %{
       ws_name: ws_name
     } do

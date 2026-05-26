@@ -146,7 +146,17 @@ defmodule Ezagent.Behavior.Workspace do
     {:ok, slice, %{members: MapSet.to_list(slice.members)}}
   end
 
-  def invoke(:add_member, slice, %{member: %URI{} = uri}, _ctx) do
+  def invoke(:add_member, slice, %{member: %URI{} = uri}, ctx) do
+    # codex PR #408 review round-2 MED-2 — fire the `:create_session`
+    # cap grant from the Behavior action so EVERY dispatch-level caller
+    # (not only the `Ezagent.Workspace.add_member/2` facade) covers
+    # workspace members. Best-effort: the helper logs + telemetry's
+    # failures but does NOT bubble — membership has its own value
+    # (messaging, presence) even if cap-grant raced or the user is
+    # already in caps.
+    workspace_uri = Map.get(ctx, :self_uri)
+    grant_member_create_session_cap(workspace_uri, uri)
+
     {:ok, %{slice | members: MapSet.put(slice.members, uri)}}
   end
 
@@ -903,5 +913,81 @@ defmodule Ezagent.Behavior.Workspace do
       [name] -> name
     end
   end
+
+  # codex PR #408 review round-2 MED-2 — grant the workspace
+  # `:create_session` cap to a newly-added user member. Lives on the
+  # Behavior (not just the facade) so dispatch-level `add_member`
+  # callers receive the cap too. Uses dispatch + SystemPrincipal
+  # mediation so step 5.5 CapBAC, audit telemetry, and the
+  # cap-equality dedup all fire. Skipped for agent members (agents
+  # don't drive create_session). Best-effort: failure logs +
+  # telemetry, never bubbled up — membership has its own value.
+  defp grant_member_create_session_cap(
+         %URI{scheme: "workspace"} = workspace_uri,
+         %URI{scheme: "entity", host: "user"} = member_uri
+       ) do
+    cap = %Ezagent.Capability{
+      # Invariant #2 — cap subject uses MODULE reference, not atom
+      # shorthand. Matches `required_caps/0`'s `:create_session` entry.
+      kind: :workspace,
+      behavior: __MODULE__,
+      instance: workspace_uri,
+      workspace_uri: workspace_uri,
+      granted_by: Ezagent.SystemPrincipal.uri("template-materialize"),
+      granted_at: DateTime.utc_now()
+    }
+
+    target = URI.new!("#{URI.to_string(member_uri)}?action=identity.grant_cap")
+
+    case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+           target: target,
+           mode: :call,
+           args: %{cap: cap},
+           ctx: %{
+             caller: Ezagent.SystemPrincipal.uri("template-materialize"),
+             caps: Ezagent.SystemPrincipal.caps("system://template-materialize"),
+             reply: {:caller_inbox, self()}
+           }
+         }) do
+      {:ok, _} ->
+        :ok
+
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        require Logger
+
+        Logger.warning(
+          "Behavior.Workspace.add_member: granting :create_session cap to " <>
+            "#{URI.to_string(member_uri)} on #{URI.to_string(workspace_uri)} failed: " <>
+            "#{inspect(reason)} — member is added but they cannot dispatch " <>
+            "`workspace.create_session` (admin grant required as workaround). " <>
+            "SPEC 2026-05-26-session-create-orchestrator-unified MED-2 round-2."
+        )
+
+        :telemetry.execute(
+          [:ezagent, :workspace, :member_create_session_grant_failed],
+          %{count: 1},
+          %{member_uri: member_uri, workspace_uri: workspace_uri, reason: reason}
+        )
+
+        :ok
+    end
+  rescue
+    error ->
+      require Logger
+
+      Logger.warning(
+        "Behavior.Workspace.add_member: grant_member_create_session_cap raised " <>
+          "#{inspect(error)} for member=#{URI.to_string(member_uri)} " <>
+          "workspace=#{inspect(workspace_uri)}"
+      )
+
+      :ok
+  end
+
+  # Non-user member (agent) or missing workspace URI — no grant.
+  defp grant_member_create_session_cap(_workspace_uri, _member_uri), do: :ok
 
 end

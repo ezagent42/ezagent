@@ -181,7 +181,13 @@ defmodule EzagentPluginLiveview.AdminLive do
       |> assign(:caller_uri, caller_uri)
       |> assign(:caller_caps, caller_caps)
       |> assign(:caller_uri_str, URI.to_string(caller_uri))
-      |> assign(:flash_error, nil)
+      # codex PR #408 review round-2 MED-1 — use `assign_new/3` so the
+      # rehydrate-orchestrator-status flash that `ensure_main_session/2`
+      # may have set BEFORE we reach this line (line ~114) is preserved
+      # rather than wiped to nil. Fresh mounts (no rehydrate flash) get
+      # the default nil via the lazy fn; rehydrate paths keep their
+      # `:pending` / `:failed` text for the operator to see.
+      |> assign_new(:flash_error, fn -> nil end)
       |> assign(:current_session_uri, current_session_uri)
       |> assign(:sessions, EzagentDomainChat.list_sessions())
       # Session auto-join (Allen 2026-05-26 — PR #374) — every
