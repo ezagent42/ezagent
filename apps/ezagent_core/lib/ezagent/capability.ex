@@ -292,7 +292,25 @@ defmodule Ezagent.Capability do
   is structural per Decision #81 + SPEC v3 §4.4 and would break the
   bootstrap principal.
 
-  Returns `{:ok, new_caps}` on success, `{:error, :cannot_revoke_admin}`
+  ## Identity-tuple match (codex review HIGH-1, 2026-05-26)
+
+  The previous implementation used `MapSet.delete/2` directly, which
+  is FULL-STRUCT equality. Provenance metadata (`granted_by`,
+  `granted_at`) differs between the held cap (timestamped at original
+  grant time) and a freshly-normalized revoke argument (timestamped
+  at revoke-call time): the cap-to-delete and the cap-in-slice are
+  structurally distinct, MapSet.delete silently no-ops, and the
+  function returns `{:ok, caps}` while the cap remains in force.
+
+  Fix: match on the IDENTITY tuple (kind + behavior + instance +
+  workspace_uri) via `identity_key/1`, ignoring provenance
+  metadata. The revoke removes every cap that matches the identity
+  tuple (in practice exactly one — `:grant_cap` only adds one row
+  per identity tuple; a duplicate-with-different-timestamp is a
+  test-only edge case).
+
+  Returns `{:ok, new_caps}` on success (whether or not a row was
+  actually removed — idempotent), `{:error, :cannot_revoke_admin}`
   if the input cap is the admin all-caps invariant.
   """
   @spec revoke(MapSet.t(t()), t()) :: {:ok, MapSet.t(t())} | {:error, :cannot_revoke_admin}
@@ -300,7 +318,14 @@ defmodule Ezagent.Capability do
     if admin_invariant?(cap) do
       {:error, :cannot_revoke_admin}
     else
-      {:ok, MapSet.delete(caps, cap)}
+      target_key = identity_key(cap)
+
+      new_caps =
+        caps
+        |> Enum.reject(fn held -> identity_key(held) == target_key end)
+        |> MapSet.new()
+
+      {:ok, new_caps}
     end
   end
 
@@ -569,20 +594,58 @@ defmodule Ezagent.Capability do
   def normalize!(%__MODULE__{} = cap, _granter), do: cap
 
   def normalize!(%{} = m, granter) when is_map_key(m, "kind") or is_map_key(m, "behavior") do
-    # String-keyed (JSON) shape. Pre-populate the granter-stamp keys
-    # before handing to from_map/1, which currently raises on `nil` in
-    # those slots (CLI payloads never carry `"granted_by"` /
-    # `"granted_at"` — they're metadata supplied by the dispatch
-    # context, not part of the cap-shape JSON the operator types).
+    # String-keyed (JSON) shape — CLI / API surface. Strict per
+    # `feedback_let_it_crash_no_workarounds`: each field is decoded
+    # in-line WITHOUT routing through `from_map/1` (which retains
+    # silent-fallback semantics for the existing `caps_json` /
+    # snapshot round-trip path — those defaults are explicitly
+    # NOT what we want on the grant chokepoint, see codex review
+    # HIGH-2). Unknown atom strings / missing `"workspace_uri"` /
+    # missing required axes raise; the operator gets a clear error
+    # at the CLI boundary instead of a quietly-widened cap.
     granter_uri = parse_granter(granter)
 
-    m
-    |> Map.put_new("granted_by", URI.to_string(granter_uri))
-    |> Map.put_new("granted_at", DateTime.utc_now() |> DateTime.to_iso8601())
-    |> from_map()
-    # Always override granted_by — even if the JSON payload tried to
-    # supply one, the dispatch-ctx caller is the source of truth.
-    |> Map.put(:granted_by, granter_uri)
+    kind = decode_atom_or_module_strict!(m, "kind")
+    behavior = decode_atom_or_module_strict!(m, "behavior")
+
+    workspace_uri =
+      case Map.fetch(m, "workspace_uri") do
+        {:ok, ws} ->
+          decode_uri_or_any_strict!(ws, "workspace_uri")
+
+        :error ->
+          raise ArgumentError,
+                "Ezagent.Capability.normalize!/2: string-keyed input map is missing " <>
+                  "required `\"workspace_uri\"` field — per SPEC v3 §4 + " <>
+                  "`feedback_let_it_crash_no_workarounds`, workspace_uri has no " <>
+                  "silent default at the grant chokepoint. Pass either `\"any\"` " <>
+                  "(cross-workspace) or a concrete `\"workspace://<name>\"` URI. " <>
+                  "Got: #{inspect(m)}"
+      end
+
+    instance =
+      case Map.fetch(m, "instance") do
+        {:ok, i} -> decode_uri_or_any_strict!(i, "instance")
+        # `instance` is optional in declarative caps (defaults to
+        # `:any`), but if the caller did NOT pass it explicitly we
+        # require they understand the shape — for the CLI grant
+        # surface, raising on missing-instance is the let-it-crash
+        # path (operators must say what they're granting on).
+        :error ->
+          raise ArgumentError,
+                "Ezagent.Capability.normalize!/2: string-keyed input map is missing " <>
+                  "required `\"instance\"` field. Pass `\"any\"` for a wildcard " <>
+                  "instance or a concrete target URI. Got: #{inspect(m)}"
+      end
+
+    %__MODULE__{
+      kind: kind,
+      behavior: behavior,
+      instance: instance,
+      workspace_uri: workspace_uri,
+      granted_by: granter_uri,
+      granted_at: DateTime.utc_now()
+    }
   end
 
   def normalize!(%{} = m, granter) when is_map_key(m, :kind) or is_map_key(m, :behavior) do
@@ -632,6 +695,110 @@ defmodule Ezagent.Capability do
           "Ezagent.Capability.normalize!/2: granter must be a `%URI{}` or " <>
             "URI string. Got: #{inspect(other)}"
   end
+
+  # Strict variant of `string_to_atom_or_module/1` — used by
+  # `normalize!/2` for the JSON grant chokepoint. Unknown atom /
+  # unknown module strings RAISE rather than rescue to `:any`, so a
+  # typo in a CLI payload doesn't silently broaden the cap.
+  # Missing field raises. `"any"` round-trips to `:any`.
+  defp decode_atom_or_module_strict!(m, key) do
+    case Map.fetch(m, key) do
+      {:ok, "any"} ->
+        :any
+
+      {:ok, s} when is_binary(s) ->
+        cond do
+          String.starts_with?(s, "Elixir.") ->
+            String.to_existing_atom(s)
+
+          Regex.match?(~r/^[a-z_][a-z0-9_]*$/, s) ->
+            String.to_existing_atom(s)
+
+          true ->
+            String.to_existing_atom("Elixir." <> s)
+        end
+
+      {:ok, other} ->
+        raise ArgumentError,
+              "Ezagent.Capability.normalize!/2: `\"#{key}\"` field must be a " <>
+                "string (atom name like `\"session\"` or module name like " <>
+                "`\"Ezagent.Behavior.Chat\"`) or `\"any\"`. Got: #{inspect(other)}"
+
+      :error ->
+        raise ArgumentError,
+              "Ezagent.Capability.normalize!/2: string-keyed input map is missing " <>
+                "required `\"#{key}\"` field — per `feedback_let_it_crash_no_workarounds`, " <>
+                "the grant chokepoint has no silent default. Got map: #{inspect(m)}"
+    end
+  rescue
+    e in ArgumentError ->
+      # `String.to_existing_atom/1` raises ArgumentError on unknown
+      # atoms — re-raise with operator-friendly context. We do NOT
+      # rescue to `:any` (that's the codex HIGH-2 silent-widening bug).
+      case e do
+        %ArgumentError{message: "Ezagent.Capability.normalize!/2:" <> _} ->
+          # Already our own raise — re-raise without wrapping.
+          reraise e, __STACKTRACE__
+
+        _ ->
+          raise ArgumentError,
+                "Ezagent.Capability.normalize!/2: `\"#{key}\"` field references an " <>
+                  "unknown atom or module — `#{inspect(Map.get(m, key))}` did not " <>
+                  "resolve. Check the module is loaded / the atom is spelled " <>
+                  "correctly. Per `feedback_let_it_crash_no_workarounds`, unknown " <>
+                  "names are NOT silently widened to `:any`."
+      end
+  end
+
+  # Strict variant of `string_to_uri_or_any/1`. `"any"` → `:any`,
+  # binary URI string → `%URI{}` via `URI.parse/1`. Non-binaries
+  # raise (no nil tolerance — `from_map/1`'s pattern misses on nil
+  # and crashes anyway; we raise with context).
+  defp decode_uri_or_any_strict!("any", _field), do: :any
+
+  defp decode_uri_or_any_strict!(s, _field) when is_binary(s), do: URI.parse(s)
+
+  defp decode_uri_or_any_strict!(other, field) do
+    raise ArgumentError,
+          "Ezagent.Capability.normalize!/2: `\"#{field}\"` field must be a URI " <>
+            "string or `\"any\"`. Got: #{inspect(other)}"
+  end
+
+  @doc """
+  Identity-tuple key of a capability — `{kind, behavior, instance, workspace_uri}`.
+
+  Two caps with the same identity tuple are LOGICALLY the same cap,
+  even if their `granted_by` / `granted_at` provenance metadata
+  differ. Used by `IdentityAdmin.invoke(:revoke_cap, ...)` to match
+  a CLI-supplied revoke target against the slice cap (which carries
+  the original grant timestamp) — without this, `MapSet.delete/2`'s
+  full-struct equality silently fails the revoke (codex review HIGH-1,
+  2026-05-26).
+
+  Note: `instance` and `workspace_uri` are `%URI{}` structs whose
+  raw struct comparison can be brittle (`authority` field divergence
+  between `URI.parse/1` and `URI.new!/1`). For canonical equality
+  we'd compare `URI.to_string/1`; the tuple here is a CHEAP first-cut
+  used as a MapSet/group key — callers performing the actual logical
+  match should use `Capability.matches?/2` (which handles the URI
+  canonicalization). For revoke-via-MapSet.delete the producer of
+  both halves (`normalize!/2` plus `from_map/1` on snapshot reload)
+  routes URIs through the same `URI.parse/1`, so tuple equality
+  holds in practice; pinned by `identity_grant_cap_shape_test.exs`.
+  """
+  @spec identity_key(t()) ::
+          {atom() | :any, module() | :any, URI.t() | :any | scope_tuple(),
+           URI.t() | :any}
+  def identity_key(%__MODULE__{
+        kind: k,
+        behavior: b,
+        instance: i,
+        workspace_uri: w
+      }),
+      do: {k, b, normalize_uri_for_key(i), normalize_uri_for_key(w)}
+
+  defp normalize_uri_for_key(%URI{} = u), do: URI.to_string(u)
+  defp normalize_uri_for_key(other), do: other
 
   defp atom_or_module_to_string(:any), do: "any"
   defp atom_or_module_to_string(value) when is_atom(value), do: Atom.to_string(value)

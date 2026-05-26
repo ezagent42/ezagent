@@ -128,11 +128,13 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
       assert URI.to_string(stored.workspace_uri) == "workspace://system"
     end
 
-    test "all three shapes hash-equal in MapSet (idempotent across input forms)" do
-      # If a user grants the same logical cap once via struct path and
-      # then via CLI/JSON, MapSet must collapse them — same logical
-      # cap means same in-slice cap. Pre-fix this trivially failed
-      # because string-keyed map and struct are not MapSet-equal.
+    test "all three shapes collapse to ONE row in the slice (identity-tuple dedup)" do
+      # Codex review HIGH-1 follow-on: granting the same logical cap
+      # via three different input shapes must result in EXACTLY ONE
+      # row in the slice — `granted_at` differs across normalizations
+      # but the identity tuple (kind+behavior+instance+workspace_uri)
+      # is the same. Pre-fix, the slice kept three distinct rows
+      # because plain `MapSet.put` distinguishes them by `granted_at`.
       ctx = admin_ctx()
 
       {:ok, slice_1, _} =
@@ -149,20 +151,100 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
       {:ok, slice_3, %{caps: caps}} =
         IdentityAdmin.invoke(:grant_cap, slice_2, %{cap: shape_string_keyed_map()}, ctx)
 
-      # The three calls add ONE distinct cap shape — `granted_at` will
-      # differ across the three normalized structs (`utc_now/0` on each
-      # normalization) so MapSet may keep up to three entries. The
-      # invariant we pin: every stored entry is the canonical struct.
-      assert MapSet.size(slice_3.caps) >= 1
-      assert MapSet.size(slice_3.caps) <= 3
+      assert MapSet.size(slice_3.caps) == 1,
+             "three grants of the same identity tuple must collapse to ONE row in " <>
+               "the slice — pre-fix, distinct `granted_at` stamps caused MapSet to " <>
+               "keep duplicates. Got: #{inspect(slice_3.caps)}"
 
-      Enum.each(caps, fn cap ->
-        assert is_struct(cap, Capability),
-               "all stored caps must be %Capability{} structs, got: #{inspect(cap)}"
+      [stored] = caps
+      assert is_struct(stored, Capability)
+      assert stored.kind == :session
+      assert stored.behavior == Ezagent.Behavior.ExternalMirror
+    end
+  end
 
-        assert cap.kind == :session
-        assert cap.behavior == Ezagent.Behavior.ExternalMirror
-      end)
+  describe "revoke_cap correctly removes a cap supplied as CLI / JSON (codex HIGH-1)" do
+    test "string-keyed revoke removes the original-timestamp cap" do
+      # The HIGH-1 regression: cap granted at T1, revoked from JSON at
+      # T2. Pre-fix, `MapSet.delete/2` saw two structurally-distinct
+      # caps (different `granted_at`) and silently no-op'd — the cap
+      # stayed in force. Post-fix, identity-tuple match removes the
+      # original entry.
+      ctx = admin_ctx()
+
+      {:ok, slice_after_grant, _} =
+        IdentityAdmin.invoke(
+          :grant_cap,
+          %{caps: MapSet.new()},
+          %{cap: shape_struct()},
+          ctx
+        )
+
+      assert MapSet.size(slice_after_grant.caps) == 1
+
+      # Wait one ms so revoke's normalize! stamps a definitely-different
+      # granted_at than the original grant.
+      Process.sleep(1)
+
+      {:ok, slice_after_revoke, %{caps: caps}} =
+        IdentityAdmin.invoke(
+          :revoke_cap,
+          slice_after_grant,
+          %{cap: shape_string_keyed_map()},
+          ctx
+        )
+
+      assert MapSet.size(slice_after_revoke.caps) == 0,
+             "CLI-shaped revoke must remove the original-timestamp cap (codex " <>
+               "review HIGH-1). Got: #{inspect(slice_after_revoke.caps)}"
+
+      assert caps == []
+    end
+
+    test "atom-keyed revoke removes the original-timestamp cap" do
+      ctx = admin_ctx()
+
+      {:ok, slice_after_grant, _} =
+        IdentityAdmin.invoke(
+          :grant_cap,
+          %{caps: MapSet.new()},
+          %{cap: shape_struct()},
+          ctx
+        )
+
+      Process.sleep(1)
+
+      {:ok, slice_after_revoke, _} =
+        IdentityAdmin.invoke(
+          :revoke_cap,
+          slice_after_grant,
+          %{cap: shape_atom_keyed_map()},
+          ctx
+        )
+
+      assert MapSet.size(slice_after_revoke.caps) == 0
+    end
+  end
+
+  describe "revoke_cap refuses the bootstrap-admin invariant cap (codex HIGH-3)" do
+    test "direct revoke of the all-axes-:any bootstrap cap is refused" do
+      # Codex review HIGH-3: previously `MapSet.delete/2` ran
+      # unconditionally; bootstrap admin's structural cap could be
+      # removed. Post-fix, `Capability.revoke/2` guards via
+      # `admin_invariant?/1`.
+      bootstrap_cap = %Capability{
+        kind: :any,
+        behavior: :any,
+        instance: :any,
+        workspace_uri: :any,
+        granted_by: URI.parse("system://bootstrap/default"),
+        granted_at: DateTime.utc_now()
+      }
+
+      slice = %{caps: MapSet.new([bootstrap_cap])}
+
+      assert {:error, :cannot_revoke_admin} =
+               IdentityAdmin.invoke(:revoke_cap, slice, %{cap: bootstrap_cap}, admin_ctx())
     end
   end
 
@@ -241,6 +323,141 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
       assert is_struct(cap, Capability)
       assert URI.to_string(cap.granted_by) == URI.to_string(@granter)
       assert match?(%DateTime{}, cap.granted_at)
+    end
+
+    test "string-keyed map missing \"workspace_uri\" raises (codex HIGH-2)" do
+      # Pre-fix, missing `"workspace_uri"` flowed through `from_map/1`
+      # which silently defaulted to `:any` — a CLI typo would have
+      # silently widened the cap to cross-workspace authority. Post-fix,
+      # the grant chokepoint raises.
+      bad = %{
+        "kind" => "session",
+        "behavior" => "Ezagent.Behavior.ExternalMirror",
+        "instance" => "session://default/system/main"
+      }
+
+      assert_raise ArgumentError, ~r/missing required `"workspace_uri"`/, fn ->
+        Capability.normalize!(bad, @granter)
+      end
+    end
+
+    test "string-keyed map missing \"instance\" raises (codex HIGH-2)" do
+      bad = %{
+        "kind" => "session",
+        "behavior" => "Ezagent.Behavior.ExternalMirror",
+        "workspace_uri" => "workspace://system"
+      }
+
+      assert_raise ArgumentError, ~r/missing required `"instance"`/, fn ->
+        Capability.normalize!(bad, @granter)
+      end
+    end
+
+    test "string-keyed map with unknown atom \"kind\" raises — no silent rescue to :any (codex HIGH-2)" do
+      # Pre-fix, `string_to_atom_or_module/1` rescued `String.to_existing_atom/1`
+      # failures to `:any` — a typoed kind silently became a wildcard cap.
+      bad = %{
+        "kind" => "totally_made_up_kind_that_no_module_uses_99999",
+        "behavior" => "Ezagent.Behavior.ExternalMirror",
+        "instance" => "session://default/system/main",
+        "workspace_uri" => "workspace://system"
+      }
+
+      assert_raise ArgumentError, ~r/unknown atom or module/, fn ->
+        Capability.normalize!(bad, @granter)
+      end
+    end
+
+    test "string-keyed map with unknown module \"behavior\" raises (codex HIGH-2)" do
+      bad = %{
+        "kind" => "session",
+        "behavior" => "Ezagent.Behavior.TotallyMadeUpBehavior999",
+        "instance" => "session://default/system/main",
+        "workspace_uri" => "workspace://system"
+      }
+
+      assert_raise ArgumentError, ~r/unknown atom or module/, fn ->
+        Capability.normalize!(bad, @granter)
+      end
+    end
+
+    test "\"any\" string round-trips to :any atom on every axis" do
+      # Sanity check — `"any"` is the explicit wildcard, NOT a silent
+      # default. Operators who actually want cross-workspace authority
+      # must type `"any"` (not omit the field).
+      input = %{
+        "kind" => "any",
+        "behavior" => "any",
+        "instance" => "any",
+        "workspace_uri" => "any"
+      }
+
+      cap = Capability.normalize!(input, @granter)
+      assert cap.kind == :any
+      assert cap.behavior == :any
+      assert cap.instance == :any
+      assert cap.workspace_uri == :any
+    end
+  end
+
+  describe "Capability.identity_key/1 + Capability.revoke/2 — provenance-stripped match" do
+    test "identity_key/1 ignores granted_by + granted_at" do
+      now = DateTime.utc_now()
+      later = DateTime.add(now, 100, :second)
+
+      cap_at_t1 = %Capability{
+        kind: :session,
+        behavior: Ezagent.Behavior.ExternalMirror,
+        instance: @session_uri,
+        workspace_uri: @workspace_uri,
+        granted_by: @granter,
+        granted_at: now
+      }
+
+      cap_at_t2 = %{
+        cap_at_t1
+        | granted_by: URI.parse("entity://user/system/other-admin"),
+          granted_at: later
+      }
+
+      assert Capability.identity_key(cap_at_t1) == Capability.identity_key(cap_at_t2),
+             "identity_key/1 MUST ignore provenance metadata (granted_by / granted_at) — " <>
+               "otherwise grant-then-revoke via different code paths silently drops " <>
+               "the revoke (codex HIGH-1)."
+    end
+
+    test "revoke/2 removes a cap with matching identity-tuple but different timestamp" do
+      now = DateTime.utc_now()
+      later = DateTime.add(now, 100, :second)
+
+      held_cap = %Capability{
+        kind: :session,
+        behavior: Ezagent.Behavior.ExternalMirror,
+        instance: @session_uri,
+        workspace_uri: @workspace_uri,
+        granted_by: @granter,
+        granted_at: now
+      }
+
+      revoke_target = %{held_cap | granted_at: later}
+
+      caps = MapSet.new([held_cap])
+      assert {:ok, new_caps} = Capability.revoke(caps, revoke_target)
+      assert MapSet.size(new_caps) == 0
+    end
+
+    test "revoke/2 refuses the bootstrap-admin invariant cap (codex HIGH-3)" do
+      bootstrap_cap = %Capability{
+        kind: :any,
+        behavior: :any,
+        instance: :any,
+        workspace_uri: :any,
+        granted_by: URI.parse("system://bootstrap/default"),
+        granted_at: DateTime.utc_now()
+      }
+
+      caps = MapSet.new([bootstrap_cap])
+      assert {:error, :cannot_revoke_admin} = Capability.revoke(caps, bootstrap_cap)
     end
   end
 end

@@ -389,7 +389,22 @@ defmodule Ezagent.Behavior.IdentityAdmin do
 
     case check_grant_authorized(cap_struct, ctx) do
       :ok ->
-        new_slice = %{slice | caps: MapSet.put(slice.caps, cap_struct)}
+        # Drop any pre-existing cap with the same identity-tuple
+        # (kind+behavior+instance+workspace_uri) BEFORE adding the
+        # newly-stamped struct. Two grants of the "same logical cap"
+        # always collapse to one row — without the dedup, the second
+        # grant would add a duplicate-modulo-`granted_at` entry
+        # (codex review HIGH-1 follow-on for the grant path; the
+        # symmetric `revoke` fix lives in `Capability.revoke/2`).
+        deduped =
+          slice.caps
+          |> Enum.reject(fn held ->
+            Ezagent.Capability.identity_key(held) ==
+              Ezagent.Capability.identity_key(cap_struct)
+          end)
+          |> MapSet.new()
+
+        new_slice = %{slice | caps: MapSet.put(deduped, cap_struct)}
 
         notify_cap_change(
           ctx,
@@ -407,19 +422,36 @@ defmodule Ezagent.Behavior.IdentityAdmin do
 
   # Revoke takes the same normalization step so a CLI revoke matches
   # the canonical struct shape sitting in the slice (a bare string-keyed
-  # map and a struct with identical fields are not MapSet-equal).
+  # map would never match), then delegates to `Capability.revoke/2`
+  # which:
+  #
+  #   1. Refuses to remove the bootstrap-admin invariant cap
+  #      (codex review HIGH-3 — direct `MapSet.delete/2` bypassed
+  #      `Capability.admin_invariant?/1`'s structural guard).
+  #
+  #   2. Matches by identity-tuple instead of full-struct equality,
+  #      so a freshly-normalized revoke argument (with current-time
+  #      `granted_at`) actually finds the original-grant-time cap
+  #      sitting in the slice (codex review HIGH-1).
   def invoke(:revoke_cap, slice, %{cap: cap}, ctx) do
     cap_struct = Ezagent.Capability.normalize!(cap, granter_from_ctx(ctx))
-    new_slice = %{slice | caps: MapSet.delete(slice.caps, cap_struct)}
 
-    notify_cap_change(
-      ctx,
-      :cap_revoked,
-      "A capability was revoked from you.",
-      cap_struct
-    )
+    case Ezagent.Capability.revoke(slice.caps, cap_struct) do
+      {:ok, new_caps} ->
+        new_slice = %{slice | caps: new_caps}
 
-    {:ok, new_slice, %{caps: MapSet.to_list(new_slice.caps)}}
+        notify_cap_change(
+          ctx,
+          :cap_revoked,
+          "A capability was revoked from you.",
+          cap_struct
+        )
+
+        {:ok, new_slice, %{caps: MapSet.to_list(new_slice.caps)}}
+
+      {:error, :cannot_revoke_admin} = err ->
+        err
+    end
   end
 
   # The `caller` axis of dispatch ctx is one of:
