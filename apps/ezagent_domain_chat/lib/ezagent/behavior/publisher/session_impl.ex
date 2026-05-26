@@ -271,7 +271,20 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
           send(subscriber_pid, {:publisher_event, ev})
         end)
 
-        {_ref, new_slice} = ensure_monitored(slice, subscriber_pid)
+        # 2026-05-26 (Allen e2e perf fix): proactively flush dead-pid
+        # entries before adding the new subscriber. Without this, a
+        # worker restart storm (where each restarted worker re-subscribes
+        # with a NEW pid before the DOWN for the previous pid is
+        # processed) ratchets `subscribers` size every cycle. Every
+        # write to `subscribers` triggers an `:on_change` snapshot.write
+        # of the full Session state binary (~30KB); compounded across
+        # 100s of restarts the Session's mailbox queues up enough work
+        # that subsequent subscribe_from calls hit their 5s deadline
+        # before they're even dequeued. Filter is O(N) over a bounded
+        # subscribers map — cheap when small, surfaces the leak
+        # immediately when large.
+        flushed_slice = prune_dead_subscribers(slice)
+        {_ref, new_slice} = ensure_monitored(flushed_slice, subscriber_pid)
 
         {:ok, new_slice, %{cursor: slice.cursor}}
     end
@@ -414,6 +427,30 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
         # Already monitored — return existing ref, slice unchanged.
         {ref, slice}
     end
+  end
+
+  # 2026-05-26 (perf fix paired with the prune in `invoke(:subscribe_from)`):
+  # walks `slice.subscribers` and removes any pid whose process is no
+  # longer alive locally. Demonitors the matching ref with
+  # `:flush` so the inevitable `:DOWN` (already queued for these dead
+  # pids) is swallowed rather than racing the next `handle_kind_message`.
+  # If two nodes ever publish into one Session this needs to grow a
+  # remote-node liveness check; today's single-node invariant lets us
+  # use `Process.alive?/1`.
+  defp prune_dead_subscribers(slice) do
+    Enum.reduce(slice.subscribers, slice, fn {pid, ref}, acc ->
+      if Process.alive?(pid) do
+        acc
+      else
+        Process.demonitor(ref, [:flush])
+
+        %{
+          acc
+          | subscribers: Map.delete(acc.subscribers, pid),
+            monitors: Map.delete(acc.monitors, ref)
+        }
+      end
+    end)
   end
 
   # Build the message list a subscriber receives based on `cursor`.

@@ -299,6 +299,71 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
     end
   end
 
+  describe "invoke(:subscribe_from, ...) — dead-subscriber pruning (2026-05-26)" do
+    test "removes pids that died before a new subscribe arrives (worker restart-storm guard)" do
+      self_uri = URI.parse("session://default/team-alpha/sub-dead-prune")
+
+      # Simulate the worker-restart-storm: spawn 3 short-lived processes,
+      # subscribe each, let them die, then subscribe a fresh long-lived one.
+      # Without the prune the subscribers map would carry all 4 entries
+      # (the 3 dead ones DOWNed after each call rather than during),
+      # and every subscribe would mutate the slice — triggering an
+      # on_change snapshot.write of the full ~30KB state binary per
+      # call. Pre-fix this drove the outbound feishu e2e into a 5s+
+      # subscribe_from deadline_ms timeout loop.
+      slice = fresh_slice()
+
+      slice =
+        Enum.reduce(1..3, slice, fn _n, acc ->
+          dead_pid = spawn(fn -> :ok end)
+          # Let the spawn exit so the pid is genuinely dead by subscribe.
+          ref = Process.monitor(dead_pid)
+          assert_receive {:DOWN, ^ref, :process, ^dead_pid, _}, 200
+
+          {:ok, new, _} =
+            SessionImpl.invoke(
+              :subscribe_from,
+              acc,
+              %{subscriber_pid: dead_pid, cursor: :latest},
+              ctx(self_uri)
+            )
+
+          new
+        end)
+
+      # Now subscribe a fresh live subscriber. The 3 dead pids should be
+      # pruned by the time invoke returns.
+      live_task =
+        Task.async(fn ->
+          receive do
+            _ -> :got
+          after
+            100 -> :nope
+          end
+        end)
+
+      {:ok, final_slice, _} =
+        SessionImpl.invoke(
+          :subscribe_from,
+          slice,
+          %{subscriber_pid: live_task.pid, cursor: :latest},
+          ctx(self_uri)
+        )
+
+      # Slice should only contain the live subscriber after prune.
+      assert map_size(final_slice.subscribers) == 1,
+             """
+             Expected subscribers map to be pruned of dead pids; got
+             #{map_size(final_slice.subscribers)} entries:
+             #{inspect(final_slice.subscribers, limit: :infinity)}
+             """
+
+      assert Map.has_key?(final_slice.subscribers, live_task.pid)
+      # Cleanup test pid.
+      Task.shutdown(live_task, :brutal_kill)
+    end
+  end
+
   describe "invoke(:subscribe_from, _, %{cursor: <integer>}, _)" do
     test "replays only events with cursor > N (window: exclusive lower bound)" do
       self_uri = URI.parse("session://default/team-alpha/sub-cursor")

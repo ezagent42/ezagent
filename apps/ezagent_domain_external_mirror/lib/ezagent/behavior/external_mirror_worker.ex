@@ -408,7 +408,20 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
       ctx: %{
         caller: self_uri,
         caps: Ezagent.SystemPrincipal.caps("system://worker-publish"),
-        reply: :ignore
+        reply: :ignore,
+        # 2026-05-26 (Allen e2e blocker): Session.handle_call queues
+        # subscribe_from behind concurrent list_bindings polls, chat
+        # mutations, and snapshot.commit cycles (each writing ~30KB
+        # state binary to SQLite). Under steady-state polling the
+        # default 5s `deadline_ms` is too tight — the call times out
+        # and the worker exits, supervisor restarts it, and the cycle
+        # accumulates dead subscriber pids in the Publisher slice
+        # (each fresh worker subscribes with a NEW pid that gets
+        # monitored; DOWN fires only after replacement). Bumping
+        # subscribe_from's deadline to 30s lets the call complete
+        # under realistic load. Bind/publish flows have their own
+        # deadlines; this only widens the SETUP path.
+        deadline_ms: 30_000
       }
     }
 
