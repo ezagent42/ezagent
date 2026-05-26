@@ -464,7 +464,16 @@ defmodule Ezagent.Domain.Pty.Server do
 
     overrides =
       [
-        {~c"EZAGENT_AGENT_URI", String.to_charlist(URI.to_string(state.agent_uri))}
+        {~c"EZAGENT_AGENT_URI", String.to_charlist(URI.to_string(state.agent_uri))},
+        # PTY-orphan-restart 2026-05-26 round-2 (codex finding #2) —
+        # tag the subprocess with THIS DEPLOYMENT's identity. The
+        # plugin's OrphanReaper compares against the same identity at
+        # boot: a subprocess whose tag differs belongs to a DIFFERENT
+        # deployment (parallel dev tree, another release path,
+        # different OS user's instance) and is NOT ours to reap, even
+        # though its URI is absent from this BEAM's local Pty registry.
+        # See `Ezagent.DeploymentId` for identity composition.
+        {~c"EZAGENT_DEPLOYMENT_ID", String.to_charlist(Ezagent.DeploymentId.deployment_id())}
       ] ++ cmd_env
 
     overrides ++ base

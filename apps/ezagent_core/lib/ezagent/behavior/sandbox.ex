@@ -20,8 +20,17 @@ defmodule Ezagent.Behavior.Sandbox do
   ## State slice — `:sandbox`
 
       %{
-        config_dir_path: nil | String.t(),  # absolute path; nil until spawn-side write_path
-        template_class:  nil | module()     # Kind.Template Class that owns the dir
+        config_dir_path:       nil | String.t(),  # absolute path; nil until spawn-side write_path
+        template_class:        nil | module(),    # Kind.Template Class that owns the dir
+        respawn_template_data: nil | map()        # the plugin's instantiate/3 tmpl arg; the
+                                                  # opaque map carries cwd + plugin-specific
+                                                  # respawn knobs. Persisted in snapshot so
+                                                  # post_init/2 (PTY-orphan-restart 2026-05-26)
+                                                  # can hand it back to the Template Class's
+                                                  # `ensure_subprocess_alive/2` callback after
+                                                  # a phx restart, without re-walking
+                                                  # Workspace.Store (which would couple core
+                                                  # to ezagent_domain_workspace).
       }
 
   ## Destroy gate — PROCESS DICTIONARY, not slice (codex PR2 round-2 HIGH-2)
@@ -118,7 +127,12 @@ defmodule Ezagent.Behavior.Sandbox do
 
     %{
       config_dir_path: Map.get(args, :config_dir_path),
-      template_class: Map.get(args, :template_class)
+      template_class: Map.get(args, :template_class),
+      # PTY-orphan-restart 2026-05-26: nil at fresh spawn; populated by
+      # `:write_path` (along with config_dir_path + template_class) so
+      # the snapshot carries enough state for `post_init/2` to call
+      # `Kind.Template.ensure_subprocess_alive/2` on a phx restart.
+      respawn_template_data: Map.get(args, :respawn_template_data)
     }
   end
 
@@ -135,7 +149,8 @@ defmodule Ezagent.Behavior.Sandbox do
       {:ok, slice,
        %{
          config_dir_path: Map.get(slice, :config_dir_path),
-         template_class: Map.get(slice, :template_class)
+         template_class: Map.get(slice, :template_class),
+         respawn_template_data: Map.get(slice, :respawn_template_data)
        }}
     end
   end
@@ -211,7 +226,7 @@ defmodule Ezagent.Behavior.Sandbox do
     #      recoverable pointer (cc sandboxes hold credentials).
     next_slice =
       case cleanup_result do
-        :ok -> %{config_dir_path: nil, template_class: nil}
+        :ok -> %{config_dir_path: nil, template_class: nil, respawn_template_data: nil}
         {:error, _reason} -> slice
       end
 
@@ -228,6 +243,16 @@ defmodule Ezagent.Behavior.Sandbox do
   defp do_write_path(slice, args) do
     path = Map.get(args, :config_dir_path)
     tc = Map.get(args, :template_class)
+    # PTY-orphan-restart 2026-05-26: optional respawn-template-data
+    # arg. When the caller (Agent.spawn_from_template_content/4)
+    # supplies it, the data is persisted into the slice alongside
+    # path + tc and used by post_init/2 on the next phx boot to
+    # re-spawn the plugin-owned subprocess via the Template Class's
+    # `ensure_subprocess_alive/2` callback. Absent → slice keeps the
+    # current value (nil at first write; the caller may omit it to
+    # write only the config_dir_path on a re-bind).
+    rtd_present? = Map.has_key?(args, :respawn_template_data)
+    rtd = Map.get(args, :respawn_template_data)
 
     cond do
       not (is_binary(path) or is_nil(path)) ->
@@ -236,15 +261,25 @@ defmodule Ezagent.Behavior.Sandbox do
       not (is_atom(tc) or is_nil(tc)) ->
         {:error, {:invalid_template_class, tc}}
 
+      rtd_present? and not (is_map(rtd) or is_nil(rtd)) ->
+        {:error, {:invalid_respawn_template_data, rtd}}
+
       true ->
         new_slice =
           slice
           |> Map.put(:config_dir_path, path)
           |> Map.put(:template_class, tc)
+          |> maybe_put_respawn_template_data(rtd_present?, rtd)
 
-        {:ok, new_slice, %{config_dir_path: path, template_class: tc}}
+        {:ok, new_slice,
+         %{config_dir_path: path, template_class: tc, respawn_template_data: rtd}}
     end
   end
+
+  defp maybe_put_respawn_template_data(slice, true, rtd),
+    do: Map.put(slice, :respawn_template_data, rtd)
+
+  defp maybe_put_respawn_template_data(slice, false, _rtd), do: slice
 
   # --- interface ------------------------------------------------------------
 
@@ -252,18 +287,26 @@ defmodule Ezagent.Behavior.Sandbox do
   def interface do
     %{
       read: %{
-        description: "Read the sandbox slice (config_dir_path, template_class)",
+        description:
+          "Read the sandbox slice (config_dir_path, template_class, " <>
+            "respawn_template_data)",
         args: %{},
-        returns: %{config_dir_path: {:option, :string}, template_class: {:option, :atom}},
+        returns: %{
+          config_dir_path: {:option, :string},
+          template_class: {:option, :atom},
+          respawn_template_data: {:option, :map}
+        },
         modes: [:call]
       },
       write_path: %{
         description:
-          "Set the agent's config_dir_path + template_class (one-time, " <>
-            "dispatched by spawn caller after create_config_dir/2 succeeded)",
+          "Set the agent's config_dir_path + template_class (+ optional " <>
+            "respawn_template_data) — dispatched by spawn caller after " <>
+            "create_config_dir/2 succeeded",
         args: %{
           config_dir_path: {:option, :string},
-          template_class: {:option, :atom}
+          template_class: {:option, :atom},
+          respawn_template_data: {:option, :map}
         },
         returns: %{config_dir_path: {:option, :string}},
         modes: [:call]
@@ -416,4 +459,187 @@ defmodule Ezagent.Behavior.Sandbox do
   def data_owner(%URI{} = entity_uri), do: Ezagent.URI.instance(entity_uri)
   def data_owner(:any), do: :any
   def data_owner(_), do: :no_owner
+
+  # --- post_init: PTY/Python subprocess re-spawn on boot ---------------------
+  #
+  # PTY-orphan-restart 2026-05-26 (Allen directive). The bug:
+  #
+  # Agent Kind (Elixir GenServer, OTP-supervised) recovers from snapshot
+  # on phx restart. The plugin-owned subprocess (cc plugin's claude TUI
+  # under PtyServer; np plugin's Python interpreter under
+  # Domain.Python.Server) is NOT OTP-supervised across BEAM restarts —
+  # it dies with the BEAM (or worse, survives as an OS-level orphan
+  # when the BEAM is brutal-killed). After phx restart, the Agent Kind
+  # gets re-spawned, but its template_class.instantiate/3 may
+  # short-circuit on "Kind already alive" and never re-start the
+  # subprocess. Result: Agent Kind alive, subprocess missing, operator
+  # sees a dead terminal in the LV.
+  #
+  # The fix (Option A per Allen): hook into the Kind boot path via the
+  # post_init/2 continuation. Sandbox Behavior carries enough state in
+  # its slice (template_class + respawn_template_data) to dispatch back
+  # to the plugin's Template Class — which knows how to check + re-spawn.
+  #
+  # ## Why this Behavior is the right place
+  #
+  # 1. Sandbox runs on every cc/np agent Kind (declared in
+  #    `Ezagent.Entity.Agent.behaviors/0`). The plugin Behavior
+  #    contract has no PTY/Python knowledge — Sandbox is the
+  #    plugin-agnostic seam.
+  # 2. Sandbox already owns the template_class atom in its slice (for
+  #    destroy_config_dir routing). Adding ensure_subprocess_alive is
+  #    a parallel callback on the same Kind.Template behaviour — same
+  #    routing pattern, same opt-in shape (function_exported?/3
+  #    probe).
+  # 3. post_init/2 is the documented hook for "run something between
+  #    register-in-KindRegistry and announce-ready". Subscribers
+  #    waiting on ReadyGate see a fully-rehydrated Kind — including
+  #    its subprocess — without race windows.
+  #
+  # ## What runs when
+  #
+  # - post_init/2 is invoked from Kind.Server.init/1 AFTER init_slice/1
+  #   has populated the sandbox slice. The slice was JUST loaded from
+  #   snapshot (Kind.Snapshot.load_or_init/3), so template_class +
+  #   respawn_template_data carry the values the spawn-time
+  #   :write_path dispatch wrote.
+  # - We queue a {:continue, :ensure_subprocess} ONLY when both
+  #   template_class AND respawn_template_data are present (post-spawn
+  #   state). A fresh-spawn slice has them nil — that path is the
+  #   plugin's instantiate/3 doing the initial start, no continuation
+  #   needed.
+  # - handle_continue/3 calls `template_class.ensure_subprocess_alive/2`
+  #   with the agent URI + the slice's respawn_template_data. The
+  #   plugin checks whether its subprocess is alive (Domain.Pty.alive?
+  #   / Domain.Python.alive?) and starts it if not.
+  #
+  # ## Let-it-crash discipline
+  #
+  # When the callback returns `{:error, reason}` we LOG + RAISE. Per
+  # `feedback_let_it_crash_no_workarounds` an Agent that can't bring
+  # its subprocess up is dead to the operator; silently swallowing the
+  # error would leave a "half-alive" Kind that ReadyGate publishes as
+  # ready while the LV terminal stays black. Raising propagates to
+  # Kind.Server.handle_continue/2; the supervisor restarts with backoff
+  # (so an orphan-reap race or transient FS error self-recovers); the
+  # operator sees the failure in logs + LV admin health panel.
+  #
+  # ## What's NOT done here
+  #
+  # - We do NOT walk Workspace.Store to refresh the template data
+  #   (would couple ezagent_core ← ezagent_domain_workspace, violating
+  #   the three-tier rule). The snapshot is the source of truth; if
+  #   the operator changed the workspace template, the next
+  #   instantiate/3 (or admin Restart click) picks up the new data.
+  # - We do NOT do orphan-process reaping here. That's a plugin-tier
+  #   concern (each plugin knows its own subprocess argv signature)
+  #   and runs at plugin Application start, BEFORE this post_init
+  #   fires. See Ezagent.PluginCc.OrphanReaper / PluginNp.OrphanReaper.
+
+  @impl Ezagent.Behavior
+  def post_init(_args, slice) do
+    template_class = Map.get(slice, :template_class)
+    respawn_data = Map.get(slice, :respawn_template_data)
+
+    cond do
+      is_nil(template_class) ->
+        # No plugin Template Class owns this agent — Sandbox has nothing
+        # to re-spawn. This is the structural baseline for non-sandbox
+        # agents (echo, curl, generic User Kinds) and the fresh-spawn
+        # path on a brand-new agent.
+        :ok
+
+      is_nil(respawn_data) ->
+        # Template class present but no respawn data persisted — the
+        # plugin opted out of the post_init respawn flow (this is OK;
+        # e.g. an echo agent that uses sandbox for config_dir but has
+        # no subprocess to re-spawn).
+        :ok
+
+      not is_atom(template_class) ->
+        # Defensive: a slice carrying a non-atom template_class is
+        # corrupted state. Let init_slice catch the error in
+        # handle_continue — the `function_exported?` probe is what
+        # gates the actual call.
+        :ok
+
+      true ->
+        {:continue, {:ensure_subprocess, template_class, respawn_data}}
+    end
+  end
+
+  @impl Ezagent.Behavior
+  def handle_continue({:ensure_subprocess, template_class, respawn_data}, _slice, ctx) do
+    self_uri = Map.get(ctx, :self_uri)
+
+    cond do
+      not is_atom(template_class) ->
+        Logger.warning(
+          "Ezagent.Behavior.Sandbox.post_init: non-atom template_class " <>
+            "#{inspect(template_class)} on #{inspect(self_uri)} — skipping " <>
+            "subprocess re-spawn"
+        )
+
+        :ignore
+
+      not function_exported?(template_class, :ensure_subprocess_alive, 2) ->
+        # Plugin Template Class did not opt into the respawn callback.
+        # OK — the cc/np plugins implement it; others (echo) don't
+        # need to.
+        :ignore
+
+      true ->
+        do_ensure_subprocess_alive(template_class, self_uri, respawn_data)
+    end
+  end
+
+  defp do_ensure_subprocess_alive(template_class, self_uri, respawn_data) do
+    # PTY-orphan-restart 2026-05-26 round-2 (codex finding #3) —
+    # rather than RAISE on {:error, _} (which would exhaust the shared
+    # AgentSupervisor's restart intensity on a persistent failure
+    # like "claude not on PATH" and cascade-kill sibling agents), log
+    # loudly + emit telemetry + leave the Kind alive in DEGRADED state.
+    #
+    # This is NOT a "silent fallback to offline" (the directive from
+    # Allen forbids that): the `:pty_subprocess_unhealthy` telemetry
+    # event is the loud, observable signal — health panels render it,
+    # log lines surface it, operator manually clicks Restart in the LV
+    # admin page. The Kind is ALIVE so existing routing / lookups
+    # don't crash; what's missing is the subprocess (which the
+    # operator already had to handle out-of-band today).
+    #
+    # The supervisor-intensity option (raise to trigger restart-with-
+    # backoff) was rejected per codex finding #3: it cascades to
+    # sibling agents on persistent failure. The correct structural
+    # fix (per-agent supervisor with isolated intensity) is out of
+    # scope for this PR — tracked as a follow-up in the notes doc.
+    case template_class.ensure_subprocess_alive(self_uri, respawn_data) do
+      :ok ->
+        # Subprocess is alive (either it was already, or we just
+        # started it). Slice doesn't need changing — the spawn-time
+        # write_path already populated it.
+        :ignore
+
+      {:error, reason} ->
+        Logger.error(
+          "Ezagent.Behavior.Sandbox.post_init: " <>
+            "#{inspect(template_class)}.ensure_subprocess_alive/2 failed " <>
+            "for #{inspect(self_uri)}: #{inspect(reason)}. " <>
+            "Kind stays alive in DEGRADED state (no subprocess); " <>
+            "operator must Restart via /admin/agents/:uri."
+        )
+
+        :telemetry.execute(
+          [:ezagent, :sandbox, :subprocess_unhealthy],
+          %{},
+          %{
+            agent_uri: URI.to_string(self_uri),
+            template_class: template_class,
+            reason: inspect(reason)
+          }
+        )
+
+        :ignore
+    end
+  end
 end

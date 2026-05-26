@@ -428,4 +428,123 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
     |> Enum.filter(fn a -> URI.to_string(a.agent_uri) == agent_uri_str end)
     |> Enum.map(& &1.pid)
   end
+
+  # PTY-orphan-restart 2026-05-26 — `ensure_subprocess_alive/2` is the
+  # respawn hook `Ezagent.Behavior.Sandbox.post_init/2` calls after a
+  # phx restart when the Agent Kind has been rehydrated but the
+  # claude PtyServer has not been re-spawned.
+  describe "ensure_subprocess_alive/2 — PTY-orphan-restart 2026-05-26" do
+    setup do
+      Application.put_env(:ezagent_core, :sqlite_path, "/tmp/ezagent_test_pty_orphan.db")
+
+      ws_uri =
+        URI.new!(
+          "workspace://" <>
+            "ws_pty_orphan_#{:erlang.unique_integer([:positive, :monotonic])}"
+        )
+
+      {:ok, _pid} = Ezagent.Workspace.spawn_workspace(ws_uri.host)
+      cwd = System.tmp_dir!()
+      :ok = File.mkdir_p(cwd)
+
+      uri =
+        URI.new!(
+          "entity://agent/#{ws_uri.host}/cc_eternal_#{:erlang.unique_integer([:positive, :monotonic])}"
+        )
+
+      %{uri: uri, workspace_uri: ws_uri, cwd: cwd}
+    end
+
+    test "returns :ok immediately when PtyServer is already alive", %{uri: uri, cwd: cwd, workspace_uri: ws} do
+      tmpl = %{
+        "class" => "cc.agent",
+        "agent_uri" => URI.to_string(uri),
+        "cwd" => cwd
+      }
+
+      assert {:ok, [_returned_uri], %{fresh?: true}} = CcAgent.instantiate("t", tmpl, ws)
+      assert Ezagent.Domain.Pty.alive?(uri)
+
+      # Live PtyServer → respawn callback is a no-op.
+      assert :ok = CcAgent.ensure_subprocess_alive(uri, tmpl)
+
+      # Cleanup: terminate the Agent Kind + the PtyServer.
+      _ = Ezagent.Kind.terminate(uri)
+    end
+
+    test "returns {:error, :missing_cwd_in_respawn_data} when respawn_data has no cwd", %{uri: uri} do
+      # The cwd-less path is the structural failure case; an agent
+      # whose sandbox slice was corrupted should NOT silently use a
+      # default cwd.
+      assert {:error, {:missing_cwd_in_respawn_data, ^uri}} =
+               CcAgent.ensure_subprocess_alive(uri, %{})
+    end
+
+    test "rejects invalid args" do
+      assert {:error, :invalid_args} = CcAgent.ensure_subprocess_alive("not a URI", %{})
+      assert {:error, :invalid_args} = CcAgent.ensure_subprocess_alive(URI.new!("entity://agent/x/cc_y"), "not a map")
+    end
+  end
+
+  # PTY-orphan-restart 2026-05-26 round-2 (codex finding #1) — the
+  # demand-spawn race window. If a chat-router demand-spawn brings up
+  # the Agent Kind WITHOUT a PtyServer (the chat router doesn't know
+  # about PTY), the subsequent Workspace.Loader instantiate must
+  # bring the PTY up. The pre-round-2 codex round-8 fix short-
+  # circuited too early. Round-2 closes the gap WHILE preserving
+  # round-8's foreign-Kind-adoption refusal via a workspace-segment
+  # ownership gate.
+  describe "instantiate :already_started branch — codex round-2 demand-spawn fix" do
+    setup do
+      Application.put_env(:ezagent_core, :sqlite_path, "/tmp/ezagent_test_pty_orphan_demand.db")
+
+      ws_uri =
+        URI.new!(
+          "workspace://" <>
+            "ws_demand_#{:erlang.unique_integer([:positive, :monotonic])}"
+        )
+
+      {:ok, _pid} = Ezagent.Workspace.spawn_workspace(ws_uri.host)
+      cwd = System.tmp_dir!()
+      :ok = File.mkdir_p(cwd)
+
+      # IMPORTANT: agent_uri's workspace segment MUST match ws_uri.host
+      # for the ownership gate to allow PTY spawn (this is the "we
+      # own this agent" case — Workspace.Loader path).
+      uri =
+        URI.new!(
+          "entity://agent/#{ws_uri.host}/cc_demand_#{:erlang.unique_integer([:positive, :monotonic])}"
+        )
+
+      %{uri: uri, workspace_uri: ws_uri, cwd: cwd}
+    end
+
+    test "Kind-alive-without-PTY in OWNING workspace → PTY gets spawned", %{
+      uri: agent_uri,
+      workspace_uri: ws_uri,
+      cwd: cwd
+    } do
+      # Simulate the demand-spawn: bring up only the Agent Kind, no PTY.
+      assert {:ok, _pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
+      assert {:ok, _} = Ezagent.KindRegistry.lookup(agent_uri)
+      refute Ezagent.Domain.Pty.alive?(agent_uri), "precondition: no PtyServer"
+
+      tmpl = %{
+        "class" => "cc.agent",
+        "agent_uri" => URI.to_string(agent_uri),
+        "cwd" => cwd
+      }
+
+      # workspace_uri MATCHES the agent's workspace segment → ownership
+      # gate allows the PTY spawn.
+      assert {:ok, [_], %{fresh?: false}} = CcAgent.instantiate("t", tmpl, ws_uri)
+
+      assert Ezagent.Domain.Pty.alive?(agent_uri),
+             "PTY must be spawned for an owned-workspace adopted Kind " <>
+               "(codex round-2 finding #1)"
+
+      # Cleanup
+      _ = Ezagent.Kind.terminate(agent_uri)
+    end
+  end
 end

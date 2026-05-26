@@ -150,10 +150,61 @@ defmodule Ezagent.Kind.Template do
   """
   @callback destroy_config_dir(agent_uri(), config_dir_path()) :: :ok | {:error, term()}
 
+  @doc """
+  PTY-orphan-restart 2026-05-26 — re-spawn the plugin-owned subprocess
+  for `agent_uri` if it's not already alive, using `respawn_data` (the
+  same opaque map the plugin's `instantiate/3` consumed at original
+  spawn).
+
+  Invoked by `Ezagent.Behavior.Sandbox`'s `post_init/2` continuation
+  AFTER the Agent Kind has been rehydrated from snapshot on phx
+  restart. The hook closes the gap where the Elixir Kind survives a
+  restart (OTP-supervised) but the OS-level subprocess does NOT
+  (claude / Python is a port-managed child that dies with the BEAM,
+  or worse survives as an orphan on brutal kill).
+
+  ## Contract
+
+  - **Idempotent**: a call when the subprocess is already alive
+    returns `:ok` immediately (no double-start).
+  - **Self-contained**: do NOT re-walk Workspace.Store or any other
+    domain registry — `respawn_data` is the persisted, snapshot-
+    backed copy of `instantiate/3`'s tmpl arg. If the operator
+    changed the workspace template between the original spawn and
+    this restart, the snapshot reflects the OLD config; next
+    operator-initiated re-instantiate picks up the new one.
+  - **Let-it-crash on `{:error, _}`**: Sandbox.handle_continue/3
+    re-raises so Kind.Server's supervisor restarts the Kind with
+    backoff. Don't try to recover internally — the supervisor's
+    retry handles transient races (e.g. orphan-reaper still
+    running).
+  - **Optional**: plugins whose Template Class manages a per-agent
+    subprocess (cc, np) MUST implement; plugins that don't (echo,
+    curl) skip — the callback isn't called when not exported.
+
+  ## Args
+
+  - `agent_uri` — the Agent Kind's URI (canonical
+    `entity://agent/<workspace>/<flavor>_<name>`).
+  - `respawn_data` — the opaque map the plugin's `instantiate/3`
+    consumed at original spawn (cc carries cwd + the sandbox keys;
+    np carries cwd + timeout_ms). Persisted in
+    `:sandbox.respawn_template_data`.
+
+  ## Return
+
+  `:ok` on success (subprocess alive, either pre-existing or newly
+  started). `{:error, reason}` to trigger a supervisor restart of
+  the Agent Kind.
+  """
+  @callback ensure_subprocess_alive(agent_uri(), respawn_data :: map()) ::
+              :ok | {:error, term()}
+
   @optional_callbacks [
     validate: 1,
     list_extensions: 1,
     toggle_extension: 3,
-    destroy_config_dir: 2
+    destroy_config_dir: 2,
+    ensure_subprocess_alive: 2
   ]
 end

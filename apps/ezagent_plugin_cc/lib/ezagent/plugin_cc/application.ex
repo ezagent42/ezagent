@@ -112,10 +112,46 @@ defmodule EzagentPluginCc.Application do
   # Phase 3 post-register hook. `BridgeRegistry.init/0` is idempotent
   # (creates the ETS table if absent). The `load_all/0` re-run is the
   # Decision #112 boot-ordering fix — see moduledoc.
+  #
+  # PTY-orphan-restart 2026-05-26: reap stale `claude` OS processes
+  # BEFORE running load_all. An orphan claude (from a brutal-killed
+  # previous BEAM) would otherwise reconnect via the cc bridge channel
+  # AND demand-spawn the Agent Kind, making `load_all`'s instantiate
+  # short-circuit on "Kind already alive" and skip the PtyServer.
+  # See `EzagentPluginCc.OrphanReaper` moduledoc.
   @impl Ezagent.Plugin
   def after_boot do
     :ok = BridgeRegistry.init()
+    _ = maybe_reap_orphans()
     _ = Ezagent.Workspace.Loader.load_all()
     :ok
+  end
+
+  # PTY-orphan-restart 2026-05-26 — orphan reaping is a real-world
+  # operational concern (brutal-killed BEAM leaves OS claudes alive).
+  # In `:test` env we SKIP the reap by default: test runs may legitimately
+  # have orphan claudes from prior e2e runs that the next test
+  # consciously wants to inspect / reuse, and the reaper would kill
+  # them indiscriminately (every test starts a fresh BEAM with empty
+  # `Ezagent.Domain.Pty` registry, so EVERY orphan looks reapable).
+  # Operators can flip the config in test-env CI / dedicated e2e
+  # tests via `config :ezagent_plugin_cc, reap_orphans_on_boot: true`.
+  #
+  # `Mix.env()` resolution at compile time (the module attribute
+  # bakes in the env at compile, not at runtime) — same pattern as
+  # `Ezagent.PluginFeishu.Application` so this works in stripped
+  # releases too.
+  @compile_env Mix.env()
+  @default_reap_enabled? @compile_env != :test
+
+  defp maybe_reap_orphans do
+    enabled? =
+      Application.get_env(:ezagent_plugin_cc, :reap_orphans_on_boot, @default_reap_enabled?)
+
+    if enabled? do
+      EzagentPluginCc.OrphanReaper.reap()
+    else
+      {:ok, 0}
+    end
   end
 end

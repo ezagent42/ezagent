@@ -132,7 +132,11 @@ defmodule Ezagent.PluginNp.Template.NpAgent do
     init_args = %{
       uri: agent_uri,
       python_handle: agent_uri,
-      timeout_ms: timeout_ms
+      timeout_ms: timeout_ms,
+      # PTY-orphan-restart 2026-05-26 — captured in NpAgent slice so
+      # post_init/2 can re-spawn the Python subprocess on demand-spawn
+      # / boot races. Same value passed to start_python/2 below.
+      cwd: cwd
     }
 
     case Ezagent.Kind.spawn(Ezagent.Entity.NpAgent, init_args) do
@@ -152,8 +156,28 @@ defmodule Ezagent.PluginNp.Template.NpAgent do
         # Adopted — only ensure the Python subprocess is alive, but do
         # NOT undo this branch's work if Python is already running
         # (idempotent re-instantiate).
-        :ok = ensure_python_alive(agent_uri, cwd)
-        {:ok, [agent_uri], %{fresh?: false}}
+        #
+        # PTY-orphan-restart round-2 (codex finding #4) —
+        # `ensure_python_alive/2` now propagates start failures
+        # instead of swallowing them. We log + return the error
+        # SO the caller (chat domain) gets a real signal. But we do
+        # NOT terminate the adopted Kind (it was started by someone
+        # else; we don't own its lifecycle on the adopted branch).
+        # Returning fresh?:false lets `record_sandbox_state` skip the
+        # slice write, preserving the original spawn's state.
+        case ensure_python_alive(agent_uri, cwd) do
+          :ok ->
+            {:ok, [agent_uri], %{fresh?: false}}
+
+          {:error, reason} = err ->
+            Logger.error(
+              "np.agent: ensure_python_alive failed for adopted Kind " <>
+                "#{URI.to_string(agent_uri)}: #{inspect(reason)}. " <>
+                "Kind remains alive without Python subprocess."
+            )
+
+            err
+        end
 
       {:error, reason} ->
         Logger.warning(
@@ -167,6 +191,53 @@ defmodule Ezagent.PluginNp.Template.NpAgent do
 
   def instantiate(_tmpl_name, tmpl, _workspace_uri), do: {:error, {:invalid_template, tmpl}}
 
+  # --- PTY-orphan-restart 2026-05-26 — Python subprocess respawn callback ---
+  #
+  # Invoked by `Ezagent.Behavior.NpAgent`'s post_init/2 continuation
+  # after the NpAgent Kind has been re-created (fresh OR demand-spawned)
+  # in a phx-boot / chat-router scenario where the OS-level Python
+  # subprocess is missing. Idempotent: if `Domain.Python.alive?` is
+  # true, returns `:ok` without re-spawning.
+  #
+  # `respawn_data` MUST carry `"cwd"` (binary). Other keys are ignored
+  # (np doesn't carry sandbox keys today). The np plugin has no
+  # `claude_config_dir` analog — `start_python/2` reads only `cwd` and
+  # the pre-bundled `np_compute_server.py` script path.
+  @impl Ezagent.Kind.Template
+  def ensure_subprocess_alive(%URI{} = agent_uri, respawn_data) when is_map(respawn_data) do
+    cond do
+      Python.alive?(agent_uri) ->
+        :ok
+
+      true ->
+        case Map.fetch(respawn_data, "cwd") do
+          {:ok, cwd} when is_binary(cwd) and cwd != "" ->
+            case start_python(agent_uri, cwd) do
+              :ok ->
+                Logger.info(
+                  "np.agent.ensure_subprocess_alive: respawned Python subprocess for " <>
+                    URI.to_string(agent_uri)
+                )
+
+                :ok
+
+              {:error, reason} = err ->
+                Logger.error(
+                  "np.agent.ensure_subprocess_alive: failed to respawn Python for " <>
+                    "#{URI.to_string(agent_uri)}: #{inspect(reason)}"
+                )
+
+                err
+            end
+
+          _ ->
+            {:error, {:missing_cwd_in_respawn_data, agent_uri}}
+        end
+    end
+  end
+
+  def ensure_subprocess_alive(_, _), do: {:error, :invalid_args}
+
   defp start_python(agent_uri, cwd) do
     spec = %Spec{
       handle: agent_uri,
@@ -174,7 +245,18 @@ defmodule Ezagent.PluginNp.Template.NpAgent do
       script_path: script_path(),
       cwd: cwd,
       env: %{
-        "EZAGENT_PYTHON_LIB_DIR" => python_lib_dir()
+        "EZAGENT_PYTHON_LIB_DIR" => python_lib_dir(),
+        # PTY-orphan-restart 2026-05-26: tag the subprocess with its
+        # owning agent URI so `EzagentPluginNp.OrphanReaper` can
+        # identify cross-BEAM orphans by env (mirrors cc PtyServer's
+        # `EZAGENT_AGENT_URI` convention).
+        "EZAGENT_AGENT_URI" => URI.to_string(agent_uri),
+        # PTY-orphan-restart 2026-05-26 round-2 (codex finding #2) —
+        # tag with this deployment's identity so the reaper can
+        # distinguish "orphan from our prior BEAM run" from "live
+        # child of a parallel BEAM" sharing the same OS user. See
+        # `Ezagent.DeploymentId`.
+        "EZAGENT_DEPLOYMENT_ID" => Ezagent.DeploymentId.deployment_id()
       },
       # uv may need to download numpy + sympy on first run — generous
       # ping timeout for cold cache. Subsequent runs are fast.
@@ -216,12 +298,16 @@ defmodule Ezagent.PluginNp.Template.NpAgent do
     end
   end
 
+  # PTY-orphan-restart round-2 (codex finding #4) — propagate
+  # start_python errors. Previously this discarded the result and
+  # returned :ok unconditionally, so a failed-Python adopt path
+  # produced an agent that LOOKED alive but had no working subprocess
+  # (failures only surfaced on the first user-traffic dispatch).
   defp ensure_python_alive(agent_uri, cwd) do
     if Python.alive?(agent_uri) do
       :ok
     else
-      _ = start_python(agent_uri, cwd)
-      :ok
+      start_python(agent_uri, cwd)
     end
   end
 

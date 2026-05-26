@@ -594,7 +594,18 @@ defmodule Ezagent.Entity.Agent do
   # key" vs "explicit nil" distinction is the gate.
   defp record_sandbox_state(workers, meta, template_class) do
     if Map.has_key?(meta, :config_dir_path) do
-      do_record_sandbox_state(workers, Map.get(meta, :config_dir_path), template_class)
+      do_record_sandbox_state(
+        workers,
+        Map.get(meta, :config_dir_path),
+        template_class,
+        # PTY-orphan-restart 2026-05-26 — the plugin Template Class
+        # may also emit `:respawn_template_data` in meta (cc does;
+        # echo doesn't). Passed through to `sandbox.write_path` so
+        # the slice carries enough state for `Sandbox.post_init/2` to
+        # respawn the subprocess on a phx restart. Absent in meta →
+        # `nil` here → not written into the slice.
+        Map.get(meta, :respawn_template_data)
+      )
     else
       # Loser/short-circuit path: meta has no :config_dir_path → don't
       # touch the slice (it was populated by the winner OR was already
@@ -603,7 +614,7 @@ defmodule Ezagent.Entity.Agent do
     end
   end
 
-  defp do_record_sandbox_state(workers, config_dir, template_class) do
+  defp do_record_sandbox_state(workers, config_dir, template_class, respawn_data) do
     Enum.reduce_while(workers, :ok, fn worker_uri, :ok ->
       target = URI.parse("#{URI.to_string(worker_uri)}?action=sandbox.write_path")
 
@@ -612,7 +623,8 @@ defmodule Ezagent.Entity.Agent do
              mode: :call,
              args: %{
                config_dir_path: config_dir,
-               template_class: template_class
+               template_class: template_class,
+               respawn_template_data: respawn_data
              },
              # SPEC caps-cleanup-v1 §4.4 — Agent sandbox-state record
              # is an agent-internal action; runs under

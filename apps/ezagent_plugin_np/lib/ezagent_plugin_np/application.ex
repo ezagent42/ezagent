@@ -113,4 +113,34 @@ defmodule EzagentPluginNp.Application do
       {DynamicSupervisor, name: EzagentPluginNp.InstanceSupervisor, strategy: :one_for_one}
     ]
   end
+
+  # PTY-orphan-restart 2026-05-26 — reap stale Python OS processes left
+  # behind by a previous BEAM instance (brutal kill / SIGKILL skipped
+  # erlexec's cleanup). Runs BEFORE the chat plugin's load_all/0 fires
+  # the np Template Class — so an orphan Python subprocess can't claim
+  # the agent URI's :via Registry name and lock out the fresh spawn.
+  #
+  # Skip in `:test` env by default — see EzagentPluginCc.Application for
+  # the same rationale (tests start a fresh BEAM with empty Python
+  # registry, so every orphan looks reapable).
+  @impl Ezagent.Plugin
+  def after_boot do
+    _ = maybe_reap_orphans()
+    :ok
+  end
+
+  # Mix.env() resolved at compile time — works in stripped OTP releases.
+  @compile_env Mix.env()
+  @default_reap_enabled? @compile_env != :test
+
+  defp maybe_reap_orphans do
+    enabled? =
+      Application.get_env(:ezagent_plugin_np, :reap_orphans_on_boot, @default_reap_enabled?)
+
+    if enabled? do
+      EzagentPluginNp.OrphanReaper.reap()
+    else
+      {:ok, 0}
+    end
+  end
 end
