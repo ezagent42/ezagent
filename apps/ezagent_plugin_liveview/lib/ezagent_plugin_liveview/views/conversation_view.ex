@@ -118,9 +118,17 @@ defmodule EzagentPluginLiveview.Views.ConversationView do
           <div class="font-mono text-[10px] text-zinc-400 dark:text-zinc-600 break-all">
             {row.sender}
           </div>
-          <div :if={row.text != ""} class="mt-1 text-sm whitespace-pre-wrap break-words">
-            {row.text}
-          </div>
+          <%!-- Phase 5 PR 5 invariant: the AdminLiveTest "Load older"
+                regression uses the `<text></div>` boundary to disambiguate
+                `histmsg-1` from `histmsg-10` etc. HEEx must emit
+                `{row.text}` immediately adjacent to `</div>` — any
+                whitespace between them (introduced by a multi-line
+                rewrite of this element) breaks the pagination invariant
+                test. Keep the row.text + `</div>` on the same line. --%>
+          <div
+            :if={row.text != ""}
+            class="mt-1 text-sm whitespace-pre-wrap break-words"
+          >{row.text}</div>
           <div :if={attachments_of(row) != []} class="mt-2 flex gap-1 flex-wrap">
             <a
               :for={{name, href} <- attachments_of(row)}

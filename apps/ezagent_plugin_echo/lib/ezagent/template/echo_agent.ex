@@ -289,6 +289,25 @@ defmodule Ezagent.PluginEcho.Template.EchoAgent do
 
   # --- Ezagent.UI.Form ------------------------------------------------
 
+  # Phase 5 PR 2 SPEC_REVIEW R6 froze the form field types at the four
+  # values declared in `Ezagent.UI.Form` (`:text | :path | :uri |
+  # :select`). The PR-191 "with_pty" field originally introduced
+  # `:boolean`, which:
+  #
+  #   - violated the frozen v1 callback type (`Ezagent.UI.FormTest`
+  #     asserts every form field's type is in the 4-value allowlist), and
+  #   - rendered as a plain text input in the LV form (the
+  #     `workspace_detail_live` switch had no `:boolean` arm), and
+  #   - submitted `"true"` / `"false"` strings that
+  #     `Ezagent.Kind.Template.validate/1` could not destructure against
+  #     its `with_pty: true` literal pattern — silently downgrading
+  #     `with_pty: true` requests to a no-PTY spawn.
+  #
+  # Modeling the field as `:select` of `["false", "true"]` keeps us
+  # inside the frozen contract AND gives the operator a real
+  # discoverable affordance; `form_to_args/1` then coerces the
+  # submitted string to the atom-boolean the validate/instantiate
+  # paths pattern-match on.
   @impl Ezagent.UI.Form
   def form_fields do
     [
@@ -301,9 +320,10 @@ defmodule Ezagent.PluginEcho.Template.EchoAgent do
       },
       %{
         name: "with_pty",
-        type: :boolean,
+        type: :select,
         label: "With local PTY (runs /bin/bash -i)",
         required: false,
+        options: ["false", "true"],
         default: "false"
       },
       %{
@@ -314,5 +334,21 @@ defmodule Ezagent.PluginEcho.Template.EchoAgent do
         placeholder: "/tmp/echo-sandbox"
       }
     ]
+  end
+
+  # Coerce the `:select` field back to an atom-boolean before handing
+  # the template map to `Workspace.add_template` → `validate/1` (which
+  # pattern-matches `with_pty: true`). All other fields are passed
+  # through unchanged; the implementing module's template_name is
+  # added under `"class"` to match `Ezagent.UI.Form.default_form_to_args/2`.
+  @impl Ezagent.UI.Form
+  def form_to_args(params) when is_map(params) do
+    params
+    |> Map.new(fn
+      {"with_pty", "true"} -> {"with_pty", true}
+      {"with_pty", "false"} -> {"with_pty", false}
+      kv -> kv
+    end)
+    |> Map.put("class", template_name())
   end
 end

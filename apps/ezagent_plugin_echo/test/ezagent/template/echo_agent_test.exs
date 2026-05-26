@@ -287,14 +287,88 @@ defmodule Ezagent.PluginEcho.Template.EchoAgentTest do
   end
 
   describe "form_fields/0" do
-    test "declares agent_uri (uri, required), with_pty (boolean), cwd (path)" do
+    # Phase 5 PR 2 SPEC_REVIEW R6 froze the form field type allowlist
+    # at `:text | :path | :uri | :select`. Echo's PR-191 `:boolean`
+    # field violated that allowlist (caught by Ezagent.UI.FormTest) AND
+    # rendered as a plain text input (the LV switch had no `:boolean`
+    # arm) AND submitted "true" strings the validate path silently
+    # downgraded to no-PTY. The `:select` rewrite stays inside the
+    # frozen contract.
+    test "every field type stays inside the Form-callback frozen allowlist" do
+      allowed = [:text, :path, :uri, :select]
+
+      for field <- EchoAgent.form_fields() do
+        assert field.type in allowed,
+               "echo.agent field #{inspect(field.name)} has out-of-allowlist type #{inspect(field.type)}"
+      end
+    end
+
+    test "declares agent_uri (uri, required), with_pty (select), cwd (path)" do
       fields = EchoAgent.form_fields()
 
-      assert Enum.find(fields, fn f -> f.name == "agent_uri" end).type == :uri
-      assert Enum.find(fields, fn f -> f.name == "agent_uri" end).required == true
+      agent_uri_field = Enum.find(fields, fn f -> f.name == "agent_uri" end)
+      assert agent_uri_field.type == :uri
+      assert agent_uri_field.required == true
 
-      assert Enum.find(fields, fn f -> f.name == "with_pty" end).type == :boolean
+      with_pty_field = Enum.find(fields, fn f -> f.name == "with_pty" end)
+      assert with_pty_field.type == :select
+      assert with_pty_field.options == ["false", "true"]
+
       assert Enum.find(fields, fn f -> f.name == "cwd" end).type == :path
+    end
+  end
+
+  describe "form_to_args/1" do
+    # Production path: the LV add-template form submits `with_pty` as
+    # a `"true"` / `"false"` STRING (HTML <select> values are
+    # strings). `validate/1` pattern-matches the atom-boolean
+    # `with_pty: true`, so without an explicit coercion the operator's
+    # "with PTY" choice was silently dropped pre-fix — the agent
+    # would spawn without a PTY sidecar with NO error surfaced.
+    test "coerces with_pty=\"true\" string to atom true" do
+      out =
+        EchoAgent.form_to_args(%{
+          "agent_uri" => "entity://agent/team-alpha/echo_my-bot",
+          "with_pty" => "true",
+          "cwd" => "/tmp/echo-sandbox"
+        })
+
+      assert out["with_pty"] == true
+      assert out["class"] == "echo.agent"
+      assert out["agent_uri"] == "entity://agent/team-alpha/echo_my-bot"
+      assert out["cwd"] == "/tmp/echo-sandbox"
+    end
+
+    test "coerces with_pty=\"false\" string to atom false" do
+      out =
+        EchoAgent.form_to_args(%{
+          "agent_uri" => "entity://agent/team-alpha/echo_no-pty",
+          "with_pty" => "false"
+        })
+
+      assert out["with_pty"] == false
+      assert out["class"] == "echo.agent"
+    end
+
+    test "output passes validate/1 round-trip (with_pty true + cwd)" do
+      out =
+        EchoAgent.form_to_args(%{
+          "agent_uri" => "entity://agent/team-alpha/echo_roundtrip",
+          "with_pty" => "true",
+          "cwd" => "/tmp"
+        })
+
+      assert :ok = EchoAgent.validate(out)
+    end
+
+    test "output passes validate/1 round-trip (with_pty false, no cwd)" do
+      out =
+        EchoAgent.form_to_args(%{
+          "agent_uri" => "entity://agent/team-alpha/echo_roundtrip-off",
+          "with_pty" => "false"
+        })
+
+      assert :ok = EchoAgent.validate(out)
     end
   end
 
