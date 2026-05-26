@@ -51,7 +51,7 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcAgent do
   use Mix.Task
 
   @agent_uri_str "entity://agent/system/cc_demo"
-  @session_uri_str "session://default/system/main"
+  @session_uri_str "session://system/system/main"
 
   @impl Mix.Task
   def run(_args) do
