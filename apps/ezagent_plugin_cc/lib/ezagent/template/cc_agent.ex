@@ -433,7 +433,13 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
     end
   end
 
-  defp build_pty_params(agent_uri, cwd, tmpl) do
+  # Exposed (`@doc false`) so the spawn-path invariant test (added
+  # 2026-05-26 alongside the mention-parser regression fix) can
+  # exercise the production param-building path without spawning a
+  # real PTY. Test:
+  # `apps/ezagent_plugin_cc/test/ezagent/template/cc_agent_spawn_invariant_test.exs`.
+  @doc false
+  def build_pty_params(agent_uri, cwd, tmpl) do
     case Mix.env() do
       :test ->
         {:ok, %{cwd: cwd, test_mode: true}}
@@ -500,7 +506,18 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   # whose child can never start.
   #
   # Returns `{:ok, {argv_list, env_map}}` or `{:error, :claude_not_found}`.
-  defp build_claude_cmd(agent_uri, agent_cwd, tmpl) do
+  #
+  # Exposed (`@doc false`) so the spawn-path invariant test
+  # (`cc_agent_spawn_invariant_test.exs`, 2026-05-26) can assert the
+  # full production argv shape — `claude` (resolved abs path) as
+  # element 0, the safety `--settings` LAST, the bridge `--mcp-config`
+  # present, `CLAUDE_CONFIG_DIR` in cmd_env when configured — without
+  # rebuilding the assembly in the test (the rebuild-in-test pattern
+  # used by `cc_agent_sandbox_credentials_test.exs` line 521 is fragile
+  # — a divergence between the test's rebuild and the production
+  # builder passes the test while production breaks).
+  @doc false
+  def build_claude_cmd(agent_uri, agent_cwd, tmpl) do
     with {:ok, claude_path} <- resolve_claude_executable(agent_uri) do
       # `write_with_token!/1` returns the per-instance connect token in
       # addition to the esr-bridge mcp.json path. Exporting the agent

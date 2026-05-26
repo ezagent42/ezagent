@@ -575,7 +575,7 @@ defmodule EzagentPluginLiveview.AdminLive do
 
   def handle_event("chat_compose", %{"chat" => %{"text" => text}}, socket)
       when is_binary(text) do
-    mentions = parse_mentions(text)
+    mentions = parse_mentions(text, socket.assigns[:member_options] || [])
 
     File.mkdir_p!(Ezagent.Home.path("uploads"))
 
@@ -1774,7 +1774,42 @@ defmodule EzagentPluginLiveview.AdminLive do
 
   # `@<entity://...>` extraction. The autocomplete inserts a trailing
   # space, so `@uri ` is the canonical shape; permissive on EOL.
-  defp parse_mentions(text) when is_binary(text) do
+  #
+  # Bare-name fallback (Allen 2026-05-26 regression fix) — also scan
+  # `@<word>` and resolve against the in-session `member_options` (the
+  # autocomplete data source). Resolves by `display_name` first, then
+  # by URI path segment (the EntityPresenter fallback). This makes a
+  # typed `@cc_e2e_final` (no autocomplete expansion) actually mention
+  # the cc agent. Without this, the Phase 8b mention-parser
+  # (URI-only) interacted with the 2026-05-22 mention-gated dispatch
+  # (`$mentions` token in the system_default rule) such that a
+  # non-expanded `@name` silently sent a message that NEVER reached
+  # the named agent — Allen perceived this as the cc-agent auto-spawn
+  # regression, but the spawn path is healthy: PtyServer spawns
+  # claude, claude opens the WS bridge, the bridge just never receives
+  # a `to_claude` push because the agent isn't in the recipient set.
+  #
+  # `members` is a list of `%{"uri" => uri_str, "display_name" =>
+  # name}` maps (from `member_options` in socket assigns). An empty
+  # list disables the bare-name fallback — URI form still works.
+  # Exposed (`@doc false`) for regression-test coverage of the bare-name
+  # fallback. Test:
+  # `apps/ezagent_plugin_liveview/test/admin_live_mention_parse_test.exs`.
+  @doc false
+  @spec parse_mentions(String.t(), [map()]) :: [URI.t()]
+  def parse_mentions(text, members \\ [])
+
+  def parse_mentions(text, members) when is_binary(text) and is_list(members) do
+    uri_form = parse_uri_mentions(text)
+    bare_form = parse_bare_mentions(text, members)
+
+    (uri_form ++ bare_form)
+    |> Enum.uniq_by(&URI.to_string/1)
+  end
+
+  def parse_mentions(_, _), do: []
+
+  defp parse_uri_mentions(text) do
     ~r/@(entity:\/\/[^\s]+)/
     |> Regex.scan(text, capture: :all_but_first)
     |> List.flatten()
@@ -1787,7 +1822,55 @@ defmodule EzagentPluginLiveview.AdminLive do
     end)
   end
 
-  defp parse_mentions(_), do: []
+  # Match `@<word>` where <word> is NOT a URI (URI form is `@entity://...`
+  # which contains `:` — exclude those tokens). Resolve <word> against
+  # session members by `display_name`, then by URI path segment.
+  # Unresolvable bare names are silently dropped (parser tolerance —
+  # the user might just be using `@` for emphasis on a non-member name).
+  defp parse_bare_mentions(text, members) when members != [] do
+    ~r/(?<![\w])@([A-Za-z0-9][A-Za-z0-9._-]*)/
+    |> Regex.scan(text, capture: :all_but_first)
+    |> List.flatten()
+    |> Enum.uniq()
+    |> Enum.flat_map(fn name -> resolve_member_name(name, members) end)
+  end
+
+  defp parse_bare_mentions(_, _), do: []
+
+  defp resolve_member_name(name, members) do
+    found =
+      Enum.find(members, fn m ->
+        Map.get(m, "display_name") == name or
+          uri_path_segment(Map.get(m, "uri")) == name
+      end)
+
+    case found do
+      %{"uri" => uri_str} when is_binary(uri_str) ->
+        case URI.new(uri_str) do
+          {:ok, uri} -> [uri]
+          _ -> []
+        end
+
+      _ ->
+        []
+    end
+  end
+
+  defp uri_path_segment(uri_str) when is_binary(uri_str) do
+    case URI.new(uri_str) do
+      {:ok, %URI{path: "/" <> rest}} when rest != "" ->
+        # entity URIs are `/<workspace>/<name>`; bare display is last segment.
+        case String.split(rest, "/", parts: 2) do
+          [_ws, name] -> name
+          [name] -> name
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp uri_path_segment(_), do: nil
 
   defp safe_view_id(s) when is_binary(s) do
     {:ok, String.to_existing_atom(s)}
