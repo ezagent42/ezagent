@@ -56,7 +56,13 @@ defmodule Ezagent.Entity.Session do
   SPEC v3 §3.6 — sessions are 3-segment: `session://<template>/<workspace>/<name>`.
   """
   @spec default_uri() :: URI.t()
-  def default_uri, do: URI.new!("session://default/system/main")
+  # PR #335 workspace rename (default → system) + Allen 2026-05-26
+  # follow-up: this hardcoded literal was the writer behind the
+  # ExternalMirrorWorker restart loop observed today. Every LV
+  # bind flow / mix task that called default_uri/0 wrote the OLD
+  # workspace name into the DB, leaving orphan binding rows the
+  # boot reconciler couldn't resolve.
+  def default_uri, do: URI.new!("session://system/system/main")
 
   # ─────────────────────────────────────────────────────────────────────
   # Ezagent.Behavior.Publisher implementation (ExternalMirror PR-EM-0)

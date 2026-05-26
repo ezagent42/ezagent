@@ -52,7 +52,7 @@ defmodule EzagentPluginLiveview.AdminLive do
   alias EzagentPluginLiveview.AppShell
   alias Ezagent.UI.SessionViewRegistry
 
-  @main_session_uri URI.new!("session://default/system/main")
+  @main_session_uri URI.new!("session://system/system/main")
   @message_limit 50
 
   @impl true
