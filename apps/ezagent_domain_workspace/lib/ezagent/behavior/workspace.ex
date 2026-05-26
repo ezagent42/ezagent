@@ -465,7 +465,7 @@ defmodule Ezagent.Behavior.Workspace do
   def invoke(:create_agent, slice, args, ctx) when is_map(args) do
     raw_workspace_uri = Map.get(ctx, :self_uri)
 
-    with {:ok, flavor, name, cwd, with_pty?, from_uri} <- coerce_create_args(args),
+    with {:ok, flavor, name, cwd, with_pty?, from_uri, soul_path} <- coerce_create_args(args),
          :ok <- validate_flavor(flavor),
          :ok <- validate_name(name),
          :ok <- validate_cwd_for_flavor(flavor, with_pty?, cwd),
@@ -481,6 +481,8 @@ defmodule Ezagent.Behavior.Workspace do
         workspace_name: workspace_name,
         workspace_uri: workspace_uri,
         source_config_dir: source_config_dir,
+        # POC EXP-A1 — pass through to the cc Template Class.
+        soul_path: soul_path,
         # Allen 2026-05-26 (codex HIGH-1 closure) — thread the caller
         # URI through so the SpawnRegistry direct-spawn catch-all can
         # record lineage (`Ezagent.AgentLineage.record/2`) for the
@@ -683,7 +685,12 @@ defmodule Ezagent.Behavior.Workspace do
           # nil ⇒ no clone. Validated structurally by
           # `coerce_create_args/1`; cap-check + slice resolution by
           # `resolve_source_config_dir/2`.
-          from: {:option, :uri}
+          from: {:option, :uri},
+          # POC EXP-A1: optional path to a markdown file whose contents
+          # are passed to claude via `--append-system-prompt` at spawn.
+          # Only meaningful for `flavor: "cc"`; ignored otherwise.
+          # See `apps/ezagent_plugin_cc/lib/ezagent/template/cc_agent.ex`.
+          soul_path: {:option, :string}
         },
         returns: %{agent_uri: :uri, template_name: :string},
         modes: [:call]
@@ -761,6 +768,12 @@ defmodule Ezagent.Behavior.Workspace do
     # Coerce-stage rejects bad shapes early; cap-check + source slice
     # resolution happen later via `resolve_source_config_dir/2`.
     from = Map.get(args, :from)
+    # POC EXP-A1: optional `soul_path` — path to a markdown file whose
+    # contents become `--append-system-prompt` at claude spawn. Only
+    # meaningful for `flavor: "cc"`; threaded into the cc template as
+    # the `"soul_path"` key in `do_create_agent("cc", ...)`. nil ⇒ no
+    # custom soul (claude runs with its default system prompt only).
+    soul_path = Map.get(args, :soul_path)
 
     cond do
       not is_binary(flavor) ->
@@ -778,10 +791,22 @@ defmodule Ezagent.Behavior.Workspace do
       not valid_from?(from) ->
         {:error, {:bad_from, from}}
 
+      not valid_soul_path?(soul_path) ->
+        {:error, {:bad_soul_path, soul_path}}
+
       true ->
-        {:ok, String.trim(flavor), String.trim(name), String.trim(cwd), with_pty, from}
+        {:ok, String.trim(flavor), String.trim(name), String.trim(cwd), with_pty, from, soul_path}
     end
   end
+
+  # POC EXP-A1 — `soul_path` is optional. nil ⇒ no custom soul; any
+  # non-empty binary is accepted at coerce stage (existence is verified
+  # lazily at PtyServer spawn — a missing file degrades to "no soul"
+  # rather than failing create_agent, matching the cc Template Class's
+  # already-permissive posture for `soul_path` reads).
+  defp valid_soul_path?(nil), do: true
+  defp valid_soul_path?(p) when is_binary(p) and p != "", do: true
+  defp valid_soul_path?(_), do: false
 
   defp valid_from?(nil), do: true
 
@@ -949,6 +974,8 @@ defmodule Ezagent.Behavior.Workspace do
       source_config_dir: source_config_dir
     } = params
 
+    soul_path = Map.get(params, :soul_path)
+
     tmpl_name = "cc.agent." <> agent_name(agent_uri)
 
     tmpl =
@@ -958,6 +985,7 @@ defmodule Ezagent.Behavior.Workspace do
         "cwd" => Path.expand(cwd)
       }
       |> maybe_put_clone_source(source_config_dir)
+      |> maybe_put_soul_path(soul_path)
 
     register_and_invoke_template(
       slice,
@@ -1065,6 +1093,17 @@ defmodule Ezagent.Behavior.Workspace do
   defp maybe_put_clone_source(tmpl, source_config_dir)
        when is_binary(source_config_dir) do
     Map.put(tmpl, "claude_config_dir", source_config_dir)
+  end
+
+  # POC EXP-A1 — thread `soul_path` from create_agent args into the
+  # cc.agent template's `"soul_path"` string field. The Template Class
+  # reads the file at PtyServer spawn time and inlines its contents
+  # into `--append-system-prompt`. Absent ⇒ no custom soul.
+  defp maybe_put_soul_path(tmpl, nil), do: tmpl
+
+  defp maybe_put_soul_path(tmpl, soul_path)
+       when is_binary(soul_path) and soul_path != "" do
+    Map.put(tmpl, "soul_path", soul_path)
   end
 
   # Register the template in the Workspace's session_templates slice +

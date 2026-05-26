@@ -204,8 +204,12 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   # Phase 7 completion PR-1 (SPEC §1.5 (c)) — the four sandbox keys are
   # OPTIONAL. Absent ⇒ legacy behavior (the 3-key form still validates).
   # When present, each must be a non-empty string.
+  # POC EXP-A1 (2026-05-26): `soul_path` is the path to a markdown file
+  # whose contents are passed to claude via `--append-system-prompt` at
+  # spawn time. Static — read once when the PtyServer launches; soul
+  # edits require an agent restart. See `poc/exp-A1/FINDINGS.md`.
   @optional_sandbox_keys ~w(operator_settings_path operator_mcp_config_path
-                            claude_config_dir api_key_helper)
+                            claude_config_dir api_key_helper soul_path)
 
   defp check_optional_sandbox_keys(tmpl) do
     Enum.reduce_while(@optional_sandbox_keys, :ok, fn key, :ok ->
@@ -932,6 +936,23 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
       # argv element 0 is the resolved ABSOLUTE path (not bare
       # "claude"); the rest is the hardening's safe arg assembly,
       # unchanged.
+      #
+      # POC EXP-A1 (2026-05-26): replaced Phase 0 Hack 1 (hardcoded
+      # Acme soul string) with a read of the optional `soul_path`
+      # template field. When present + file exists, the file contents
+      # are inlined as ONE argv element after `--append-system-prompt`
+      # (argv-safe — no shell, so newlines / quotes / `$()` are inert).
+      # When absent or file missing, NO `--append-system-prompt` flag
+      # is emitted (claude runs with no extra system prompt).
+      #
+      # Static-soul model: the file is read ONCE here at PtyServer
+      # spawn. A subsequent edit to the file has NO effect on the live
+      # agent — the operator must restart the agent (terminate Kind +
+      # re-instantiate template) to pick it up. This matches the
+      # EXP-A1 hypothesis: soul is a per-agent static Template
+      # parameter, hot-reload requires agent restart.
+      soul_args = build_soul_args(agent_uri, tmpl)
+
       argv =
         [
           claude_path,
@@ -939,7 +960,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
           "bypassPermissions",
           "--dangerously-load-development-channels",
           "server:esr-bridge"
-        ] ++ settings_mcp_args
+        ] ++ soul_args ++ settings_mcp_args
 
       base_env = %{
         # Inherited by every MCP-server subprocess `claude` spawns.
@@ -1011,6 +1032,36 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
 
   defp valid_dir?(d) when is_binary(d) and d != "", do: true
   defp valid_dir?(_), do: false
+
+  # POC EXP-A1 — read `tmpl["soul_path"]` at spawn-time and turn it
+  # into a `["--append-system-prompt", <file contents>]` argv pair.
+  # Returns `[]` when the field is absent or the file is unreadable
+  # (logged at warning) — claude then runs with no extra system prompt.
+  # Errors are non-fatal: a typo in `soul_path` degrades the agent to
+  # "no Acme soul" rather than killing the spawn, which matches Phase
+  # 0's already-permissive posture (the bridge handshake is a bigger
+  # cliff than a missing soul).
+  defp build_soul_args(%URI{} = agent_uri, tmpl) do
+    case Map.get(tmpl, "soul_path") do
+      path when is_binary(path) and path != "" ->
+        case File.read(path) do
+          {:ok, contents} ->
+            ["--append-system-prompt", contents]
+
+          {:error, reason} ->
+            Logger.warning(
+              "cc.agent: soul_path #{inspect(path)} unreadable " <>
+                "(#{inspect(reason)}) for #{URI.to_string(agent_uri)}; " <>
+                "spawning claude with no --append-system-prompt"
+            )
+
+            []
+        end
+
+      _ ->
+        []
+    end
+  end
 
   @doc false
   # codex review of the PR-1 hardening (#233) — resolve the `claude`
