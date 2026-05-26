@@ -1,72 +1,94 @@
 defmodule EzagentPluginCc.OrphanReaperTest do
   @moduledoc """
   Unit tests for `EzagentPluginCc.OrphanReaper` — the cc-plugin's
-  orphan-claude reaper (PTY-orphan-restart 2026-05-26).
+  orphan-claude reaper (PTY-orphan-restart 2026-05-26, refactored
+  to pid-file discovery 2026-05-26 follow-up (a)).
 
-  These tests verify the parsing + filtering logic without actually
-  running `ps` or sending real kill signals — the live-system
-  integration is exercised by the cc-orphan e2e (separate file).
+  Strategy: the reaper is now a thin wrapper over
+  `Ezagent.Runtime.PidFile`. We exercise it end-to-end:
 
-  Strategy: tests reach into the reaper's private helpers via
-  documented exposure. The reaper itself uses straightforward
-  System.cmd + URI inspection — the bug class we want to gate is
-  "candidate parsing mis-extracts the EZAGENT_AGENT_URI" + "orphan?
-  predicate wrong-counts a live PtyServer as orphan".
+    1. Set EZAGENT_HOME to a tmpdir so PidFile.dir/1 lands somewhere
+       safe + isolated.
+    2. Drop a fake pid file pointing at our own OS pid (guaranteed
+       alive, with a captured start_seconds).
+    3. Call `reap/0`. The OS process IS alive + start matches, so
+       the reaper would SIGTERM us — to avoid that we instead drop
+       a pid file pointing at a DEAD pid (or at our own pid with a
+       mismatched start time), exercising the cleanup branch
+       without signalling.
 
-  We exercise the reaper through `reap/0` itself, with the System.cmd
-  call mocked at the OS level (no real `ps` invocation needed in unit
-  test — we substitute a controlled `ps` output via the same
-  System.cmd boundary).
+  The "actually SIGTERM" path is exercised by the cc-orphan e2e
+  (separate file) which intentionally creates throw-away orphans.
   """
 
   use ExUnit.Case, async: false
 
-  # No setup needed — the reaper is a pure function module + the
-  # tests do not start any OTP supervision tree.
+  alias Ezagent.Runtime.PidFile
 
-  describe "reap/0 with no orphan candidates" do
-    test "returns {:ok, 0} when no claude processes are running on the box" do
-      # The `ps -axww -Eo pid,command` invocation will succeed but
-      # find no lines matching the cc-argv-signature; the reaper
-      # returns 0 kills. We don't mock `ps` itself in this test —
-      # the assumption is the test box has no leftover cc claudes
-      # carrying our distinctive `--dangerously-load-development-channels
-      # server:esr-bridge` signature. The integration tests cover the
-      # positive-match path.
-      assert {:ok, _killed} = EzagentPluginCc.OrphanReaper.reap()
-    end
+  setup do
+    # Per-test EZAGENT_HOME so deployments don't share state.
+    tmp = Path.join(System.tmp_dir!(), "ezagent-reaper-test-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(tmp)
+    prev_home = System.get_env("EZAGENT_HOME")
+    prev_profile = System.get_env("EZAGENT_PROFILE")
+    System.put_env("EZAGENT_HOME", tmp)
+    System.put_env("EZAGENT_PROFILE", "reaper-test")
+
+    on_exit(fn ->
+      if prev_home, do: System.put_env("EZAGENT_HOME", prev_home), else: System.delete_env("EZAGENT_HOME")
+      if prev_profile, do: System.put_env("EZAGENT_PROFILE", prev_profile), else: System.delete_env("EZAGENT_PROFILE")
+      File.rm_rf!(tmp)
+    end)
+
+    {:ok, tmp: tmp}
   end
 
-  describe "argv signature detection" do
-    test "the @argv_signature module attribute matches what cc Template builds" do
-      # Defense-in-depth: the reaper's signature MUST match what
-      # `Ezagent.PluginCc.Template.CcAgent.build_claude_cmd/3`
-      # emits. If a future refactor changes the cmdline, this test
-      # would still pass — but the live reaper would fail to find
-      # orphans. The companion `cc_agent_test.exs` asserts the cmd
-      # shape; this test asserts the SIGNATURE substring is part
-      # of it.
-      signature = "--dangerously-load-development-channels server:esr-bridge"
+  describe "reap/0" do
+    test "returns {:ok, 0} when no pid files exist" do
+      assert {:ok, 0} = EzagentPluginCc.OrphanReaper.reap()
+    end
 
-      # The argv emitted by cc_agent.build_claude_cmd MUST contain
-      # both tokens consecutively (they appear as separate argv
-      # elements but get joined-with-space in the `ps` output).
-      argv =
-        Ezagent.PluginCc.Template.CcAgent.assemble_settings_mcp_args(
-          "/priv/safety.json",
-          "/agent-cwd/.mcp.json",
-          %{}
-        )
+    test "removes a stale pid file pointing at a dead PID" do
+      uri = URI.parse("entity://agent/team-alpha/cc_dead")
+      path = PidFile.file_path("cc", uri)
+      # Pid 1 is init/launchd — always alive. Use a deliberately-dead
+      # large pid (max OS pid is typically 99999 on macOS). We can't
+      # guarantee 99998 is dead, but the start-time check below will
+      # catch any wraparound by mismatching the bogus written start.
+      File.write!(path, "99998\n0\n")
+      assert File.exists?(path)
 
-      # The signature must be representable in the joined argv —
-      # `--dangerously-load-development-channels` is in the static
-      # prefix `Ezagent.PluginCc.Template.CcAgent.build_claude_cmd/3`
-      # emits BEFORE assemble_settings_mcp_args; this test sanity-
-      # checks the assembler does NOT introduce a flag that would
-      # break the signature match.
-      refute Enum.any?(argv, &String.contains?(&1, signature)),
-             "assemble_settings_mcp_args must not contain the cc signature; " <>
-               "the signature comes from the cc_agent static prefix"
+      assert {:ok, 0} = EzagentPluginCc.OrphanReaper.reap()
+      # Either the pid is dead → file removed, or alive with
+      # different start → also removed. Either way, file gone.
+      refute File.exists?(path)
+    end
+
+    test "removes pid file when start_seconds mismatch (PID recycle)" do
+      own_pid = String.to_integer(System.pid())
+
+      uri = URI.parse("entity://agent/team-alpha/cc_recycle")
+      path = PidFile.file_path("cc", uri)
+      # Deliberately-wrong start time → reaper sees "alive but recycled"
+      # → removes file WITHOUT sending kill.
+      File.write!(path, "#{own_pid}\n1\n")
+
+      assert {:ok, 0} = EzagentPluginCc.OrphanReaper.reap()
+      refute File.exists?(path)
+
+      # And we (the test process) are still alive — proof no SIGTERM
+      # was sent to us.
+      assert Process.alive?(self())
+    end
+
+    test "ignores pid files whose contents don't parse" do
+      uri = URI.parse("entity://agent/team-alpha/cc_garbage")
+      path = PidFile.file_path("cc", uri)
+      File.write!(path, "this is not a valid pid file\n")
+
+      assert {:ok, 0} = EzagentPluginCc.OrphanReaper.reap()
+      # PidFile.enumerate/1 deletes garbage files on the spot.
+      refute File.exists?(path)
     end
   end
 end

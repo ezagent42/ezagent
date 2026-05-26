@@ -345,6 +345,14 @@ defmodule Ezagent.Domain.Pty.Server do
           "PtyServer spawned claude os_pid=#{os_pid} for agent=#{URI.to_string(state.agent_uri)}"
         )
 
+        # PTY-pid-files 2026-05-26 follow-up (a): persist os_pid so the
+        # orphan reaper at next-BEAM boot can discover prior-incarnation
+        # children without `ps` scanning. Best-effort: write failure is
+        # logged inside PidFile but does not block the spawn — a missing
+        # pid file just degrades reaper coverage on the NEXT brutal-kill
+        # cycle (same as today's behavior for pre-fix orphans).
+        _ = Ezagent.Runtime.PidFile.write("cc", state.agent_uri, os_pid)
+
         # Per old esr's PR-24 lesson: claude's TUI queries TIOCGWINSZ
         # to learn terminal size and BLOCKS rendering past initial
         # control sequences until it gets a non-zero size. Send a
@@ -638,12 +646,20 @@ defmodule Ezagent.Domain.Pty.Server do
   @impl true
   def terminate(_reason, %__MODULE__{exec_pid: nil}), do: :ok
 
-  def terminate(_reason, %__MODULE__{exec_pid: pid}) do
+  def terminate(_reason, %__MODULE__{exec_pid: pid, agent_uri: agent_uri}) do
     try do
       :exec.stop(pid)
     catch
       _, _ -> :ok
     end
+
+    # PTY-pid-files 2026-05-26 follow-up (a): clean the pid file on
+    # graceful shutdown. A brutal BEAM kill skips this terminate/2
+    # call entirely — the pid file stays around for the next BEAM's
+    # OrphanReaper to find. That's the WHOLE POINT of the pid file
+    # being on disk: it survives BEAM death and is the cross-restart
+    # ownership receipt.
+    _ = Ezagent.Runtime.PidFile.remove("cc", agent_uri)
 
     :ok
   end
