@@ -32,15 +32,31 @@ defmodule EzagentCli.Integration.CliLvSameServerInvariantTest do
     # CLI/GUI audit HIGH-1 — Dispatch no longer silent-fallbacks to
     # admin. Tests set the per-process override that
     # `EzagentCli.Exec.exec/2` would set in production after token auth.
+    #
+    # 2026-05-26 (Allen): caller is a `team-alpha` workspace user so the
+    # CLI's `promote_to_3seg/4` fills the workspace slot with
+    # `team-alpha` — matching the session spawned below at
+    # `session://default/team-alpha/...`. Previously the override
+    # carried `admin_uri()` (workspace `system`), which made the CLI
+    # promote `--session <bare>` to `session://default/system/<bare>`
+    # while the test had spawned in `team-alpha` → "no such actor"
+    # mismatch surfaced once PR #362 tightened structural workspace
+    # derivation. Holding `*` caps so caps step 5.5 isn't the gate
+    # under test here (this test pins the BEAM-isomorphism invariant).
+    test_user_uri =
+      URI.parse(
+        "entity://user/team-alpha/cli-lv-isomorphism-tester-#{System.unique_integer([:positive])}"
+      )
+
     Process.put(
       :ezagent_cli_caller_override,
-      {Ezagent.Entity.User.admin_uri(), Ezagent.SystemPrincipal.caps("system://bootstrap")}
+      {test_user_uri, Ezagent.SystemPrincipal.caps("system://bootstrap")}
     )
 
-    :ok
+    {:ok, caller_uri: test_user_uri}
   end
 
-  test "CLI server-side exec changes Session.chat.members IN THIS BEAM" do
+  test "CLI server-side exec changes Session.chat.members IN THIS BEAM", ctx do
     session_name = "cli-same-server-test-#{System.unique_integer([:positive])}"
     # SPEC v3 §3.6 (Phase 9 PR-7) — sessions are 3-segment.
     session_uri = URI.parse("session://default/team-alpha/" <> session_name)
@@ -65,20 +81,26 @@ defmodule EzagentCli.Integration.CliLvSameServerInvariantTest do
              URI.to_string(k) == member_uri_str
            end)
 
-    # Mint an admin CLI token for the Exec path — codex CLI/GUI audit
+    # Mint a CLI token for a `team-alpha` workspace user — codex CLI/GUI audit
     # HIGH-1 closed the silent admin fallback, so Exec now requires
     # explicit token + entity_uri opts (mirroring how the real
     # /api/cli/exec route works after operator authenticates).
-    admin_uri = Ezagent.Entity.User.admin_uri()
+    #
+    # 2026-05-26 (Allen): the caller's workspace must MATCH the session's
+    # workspace because CLI's `promote_to_3seg/4` fills the workspace
+    # slot of the bare `--session <name>` from the caller URI. The
+    # session was spawned in `team-alpha` above, so the caller is in
+    # `team-alpha` too. Caps include `*` so step 5.5 isn't the test gate.
+    caller_uri = ctx.caller_uri
 
-    # Idempotent — admin may already exist from boot.
-    _ =
-      case Ezagent.Users.get_by_uri(admin_uri) do
-        nil -> Ezagent.Users.create(admin_uri, nil, MapSet.to_list(Ezagent.SystemPrincipal.caps("system://bootstrap")))
-        _ -> :ok
-      end
+    {:ok, _decoded} =
+      Ezagent.Users.create(
+        caller_uri,
+        nil,
+        MapSet.to_list(Ezagent.SystemPrincipal.caps("system://bootstrap"))
+      )
 
-    {plain_token, _row} = Ezagent.Entity.Token.mint(admin_uri, label: "test-cli-token")
+    {plain_token, _row} = Ezagent.Entity.Token.mint(caller_uri, label: "test-cli-token")
 
     # Call CLI server-side path (what /api/cli/exec does)
     result =
@@ -99,7 +121,7 @@ defmodule EzagentCli.Integration.CliLvSameServerInvariantTest do
           "--cast"
         ],
         token: plain_token,
-        entity_uri: URI.to_string(admin_uri)
+        entity_uri: URI.to_string(caller_uri)
       )
 
     assert result.exit_code == 0,
