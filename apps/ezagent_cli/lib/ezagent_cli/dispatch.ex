@@ -246,9 +246,9 @@ defmodule EzagentCli.Dispatch do
             # No token + no --as = no identity. REFUSE rather than
             # silently elevate. Caller must either:
             # (a) set EZAGENT_USER_TOKEN + EZAGENT_ENTITY_URI (the
-            #     normal auth path used by `mix esr`), OR
+            #     normal auth path used by `mix ezagent`), OR
             # (b) opt into dev-only impersonation via
-            #     EZAGENT_CLI_ALLOW_AS=1 mix esr --as <uri> ...
+            #     EZAGENT_CLI_ALLOW_AS=1 mix ezagent --as <uri> ...
             {:error, :no_identity}
 
           as_str ->

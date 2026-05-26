@@ -31,7 +31,7 @@
 - 任何 runtime 行为变化（Routing 决策、dispatch 流程、Behavior 注册等）
 - 新增任何 Kind 或 Behavior 模块
 - 数据库 schema 变化
-- API (`/api/v1`) 或 CLI (`mix esr`) surface 变化
+- API (`/api/v1`) 或 CLI (`mix ezagent`) surface 变化
 - 移动端 / 触控适配（v1 仍是桌面浏览器优先）
 - 主题切换（先固定浅色主题，per ide-shell prompt §0）
 

@@ -6,7 +6,7 @@ defmodule Mix.Tasks.Ezagent.Plugin.Install do
   > Intentionally NOT a dispatched op. Mutates the runtime BEAM's
   > code path + application supervision tree; cannot itself be
   > dispatched (it adds the Kinds that would receive dispatch).
-  > Stays as `mix ezagent.*`; do NOT migrate to `mix esr`. See
+  > Stays as `mix ezagent.*`; do NOT migrate to `mix ezagent`. See
   > `docs/notes/2026-05-24-cli-gui-parity-audit.md` Section 1
   > (Bootstrap row) + Finding 2 carve-out.
 

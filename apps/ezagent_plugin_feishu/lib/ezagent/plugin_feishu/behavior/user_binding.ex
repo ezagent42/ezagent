@@ -67,9 +67,9 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
 
   ## Auto-derived CLI
 
-  `mix esr workspace bind --workspace <name> --open-id <oid> --user-uri <uri>`
-  `mix esr workspace unbind --workspace <name> --open-id <oid>`
-  `mix esr workspace list_feishu_bindings --workspace <name>`
+  `mix ezagent workspace bind --workspace <name> --open-id <oid> --user-uri <uri>`
+  `mix ezagent workspace unbind --workspace <name> --open-id <oid>`
+  `mix ezagent workspace list_feishu_bindings --workspace <name>`
 
   The legacy `mix ezagent.feishu.bind` / `unbind` / `list` tasks are
   retained pending operator migration (PR-CC-2-v2 ending-state
@@ -256,7 +256,7 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
   end
 
   # ===================================================================
-  # Interface — drives `mix esr` auto-derivation + CmdK help.
+  # Interface — drives `mix ezagent` auto-derivation + CmdK help.
   # ===================================================================
 
   @impl Ezagent.Behavior

@@ -7,7 +7,7 @@ defmodule EzagentCli.Exec do
   Runs in the SAME BEAM as LV — same KindRegistry, same ETS tables,
   same Repo connections. No HTTP indirection, no separate VM.
 
-      mix esr --(argv)→  :rpc.call → EzagentCli.Exec.exec/1
+      mix ezagent --(argv)→  :rpc.call → EzagentCli.Exec.exec/1
                                        ↓
                                 [parse + Coerce + Invocation +
                                  dispatch — all in running BEAM]

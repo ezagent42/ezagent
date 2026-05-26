@@ -1,8 +1,8 @@
-defmodule Mix.Tasks.Esr do
-  @shortdoc "CLI shell — connects via distributed Erlang to the running ESR runtime"
+defmodule Mix.Tasks.Ezagent do
+  @shortdoc "CLI shell — connects via distributed Erlang to the running ezagent runtime"
   @moduledoc """
-  Post-Phase-5 second pivot (Allen 2026-05-17): `mix esr` is a thin
-  shell that connects to the running ESR runtime via distributed
+  Post-Phase-5 second pivot (Allen 2026-05-17): `mix ezagent` is a thin
+  shell that connects to the running ezagent runtime via distributed
   Erlang RPC. The actual `EzagentCli.Exec.exec/1` runs INSIDE the
   runtime BEAM — same process tree as LV, same KindRegistry,
   same Repo, same audit telemetry. Restores CLI ↔ LV runtime
@@ -10,9 +10,15 @@ defmodule Mix.Tasks.Esr do
 
   ## Usage
 
-      mix esr <kind> <action> [--<arg>=<val> ...]
-      mix esr --help
-      mix esr help <subcommand>
+      mix ezagent <kind> <action> [--<arg>=<val> ...]
+      mix ezagent --help
+      mix ezagent help <subcommand>
+
+  Renamed from `mix esr` 2026-05-26 (Allen) — the PR #114 mega-rename
+  ESR→Ezagent missed the CLI module name. `Mix.Tasks.Esr` still
+  resolves as a thin backwards-compat alias that delegates here +
+  prints a one-line deprecation notice; it will be removed when
+  operator muscle memory has had time to migrate.
 
   ## Environment
 
@@ -64,7 +70,7 @@ defmodule Mix.Tasks.Esr do
       {:error, :runtime_not_reachable} ->
         IO.puts(
           :stderr,
-          "error: ESR runtime not reachable at #{Ezagent.Runtime.runtime_node()}\n" <>
+          "error: ezagent runtime not reachable at #{Ezagent.Runtime.runtime_node()}\n" <>
             "       start it with `mix phx.server` (single-machine assumption)\n" <>
             "       or set EZAGENT_RUNTIME_NODE to point at a running instance"
         )
@@ -116,5 +122,37 @@ defmodule Mix.Tasks.Esr do
     else
       System.halt(code)
     end
+  end
+end
+
+defmodule Mix.Tasks.Esr do
+  @shortdoc "DEPRECATED — use `mix ezagent` (renamed 2026-05-26)"
+  @moduledoc """
+  Backwards-compat alias for the renamed `mix ezagent` CLI shell.
+
+  Allen 2026-05-26: the project was rebranded ESR → Ezagent in PR #114,
+  but the CLI module name (`Mix.Tasks.Esr` → command `mix esr`) was
+  missed. Renamed canonically to `Mix.Tasks.Ezagent` (command
+  `mix ezagent`). This module remains as a thin delegate so operator
+  muscle memory + existing scripts that type `mix esr ...` continue
+  to work; it prints a one-line deprecation hint to stderr so the
+  rename surfaces.
+
+  This module will be removed in a future release once operator
+  muscle memory has had time to migrate. Update any scripts /
+  documentation that reference `mix esr` to `mix ezagent`.
+  """
+
+  use Mix.Task
+
+  @impl Mix.Task
+  def run(argv) do
+    IO.puts(
+      :stderr,
+      "NOTE: `mix esr` is renamed to `mix ezagent` (2026-05-26). " <>
+        "This alias still works but will be removed in a future release."
+    )
+
+    Mix.Tasks.Ezagent.run(argv)
   end
 end

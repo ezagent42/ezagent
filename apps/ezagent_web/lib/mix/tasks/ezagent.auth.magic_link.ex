@@ -7,7 +7,7 @@ defmodule Mix.Tasks.Ezagent.Auth.MagicLink do
   > so the operator can diagnose silent-drop reasons (SMTP / rate /
   > whitelist). The HTTP surface stays anti-enumeration-uniform; this
   > CLI is the diagnostic counterpart. Stays as `mix ezagent.*`; do NOT
-  > migrate to `mix esr`. See
+  > migrate to `mix ezagent`. See
   > `docs/notes/2026-05-24-cli-gui-parity-audit.md` Section 1 (Settings
   > row "send_test_email" + Auth row "magic-link request").
 

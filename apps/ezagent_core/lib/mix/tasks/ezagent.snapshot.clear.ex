@@ -15,7 +15,7 @@ defmodule Mix.Tasks.Ezagent.Snapshot.Clear do
   > Correct classification: BYPASS DEBT — temporary CLI-only
   > until a `system://snapshots` Kind + `Behavior.Snapshots` with
   > `:clear` action + cap subject lands. Then this task should
-  > be deprecated using the PR #302 stub pattern, and `mix esr
+  > be deprecated using the PR #302 stub pattern, and `mix ezagent
   > snapshots clear --uri …` will auto-derive from the Behavior's
   > `interface/0`.
   >

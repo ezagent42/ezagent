@@ -90,7 +90,7 @@ defmodule EzagentPluginFeishu.Application do
   # PR cli-lv-parity (HIGH-2): also register
   # `EzagentPluginFeishu.Behavior.UserBinding` on Workspace Kind so
   # the legacy `mix ezagent.feishu.bind/unbind/list` triplet has a
-  # dispatch-backed `mix esr workspace bind/unbind/list_feishu_bindings`
+  # dispatch-backed `mix ezagent workspace bind/unbind/list_feishu_bindings`
   # equivalent. Each action goes through `Ezagent.Invocation.dispatch/1`
   # → step 5.5 cap check via `required_caps/0` (PR-CC-2-v2). No
   # FacadeRegistry shortcut per codex PR #304 r1 HIGH.

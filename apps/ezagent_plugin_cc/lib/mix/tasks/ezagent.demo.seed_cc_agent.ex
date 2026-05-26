@@ -7,7 +7,7 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcAgent do
   > The `chat.join` step DOES dispatch (with admin caps); the spawn
   > step is a direct `SpawnRegistry.spawn` since there is no live
   > Kind to invoke on yet. Stays as `mix ezagent.*`; do NOT migrate
-  > to `mix esr`. See
+  > to `mix ezagent`. See
   > `docs/notes/2026-05-24-cli-gui-parity-audit.md` Section 1 (this
   > task is not in the audit matrix — it's a demo-fixtures helper).
 

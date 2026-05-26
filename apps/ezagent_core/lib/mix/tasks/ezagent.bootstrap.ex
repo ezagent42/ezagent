@@ -5,7 +5,7 @@ defmodule Mix.Tasks.Ezagent.Bootstrap do
   > **CLI/GUI parity audit 2026-05-24 — Category A (bootstrap).**
   > Intentionally NOT a dispatched op. Runs BEFORE the runtime BEAM is
   > available (installs/repairs it). Stays as `mix ezagent.*`; do NOT
-  > migrate to `mix esr`. See
+  > migrate to `mix ezagent`. See
   > `docs/notes/2026-05-24-cli-gui-parity-audit.md` Section 1
   > (Bootstrap row) + Finding 2 carve-out.
 

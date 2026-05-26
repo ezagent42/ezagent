@@ -26,9 +26,9 @@ defmodule Mix.Tasks.Ezagent.ExternalMirror.CLI do
      tables (AdapterRegistry, BindingRegistry, KindRegistry) + Repo
      started. `Mix.Task.run("app.start")` is the standard way.
 
-  ## Why standalone Mix tasks, not `mix esr` auto-derived
+  ## Why standalone Mix tasks, not `mix ezagent` auto-derived
 
-  The project's `mix esr <kind> <op>` auto-derive (FacadeRegistry +
+  The project's `mix ezagent <kind> <op>` auto-derive (FacadeRegistry +
   BehaviorRegistry tree-build) is the preferred path for new
   operations, but the SPEC §9 PR-EM-5 brief names these commands
   explicitly as `mix ezagent.external_mirror.*` — operators can

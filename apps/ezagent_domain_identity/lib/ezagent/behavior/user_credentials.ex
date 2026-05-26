@@ -50,7 +50,7 @@ defmodule Ezagent.Behavior.UserCredentials do
 
   ## Auto-derived CLI
 
-      mix esr user set_password \\
+      mix ezagent user set_password \\
           --user entity://user/<workspace>/<name> \\
           --password <new-pw>
 
@@ -141,7 +141,7 @@ defmodule Ezagent.Behavior.UserCredentials do
   end
 
   # =================================================================
-  # Interface — drives `mix esr` auto-derivation.
+  # Interface — drives `mix ezagent` auto-derivation.
   # =================================================================
 
   @impl Ezagent.Behavior

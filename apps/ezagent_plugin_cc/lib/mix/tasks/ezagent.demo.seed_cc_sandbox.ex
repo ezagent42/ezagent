@@ -6,7 +6,7 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcSandbox do
   > filesystem prep (mkdir / chmod / copy of `~/.claude/.credentials.json`
   > with 700/600 modes). The optional `--seed-template` step DOES go
   > through `Ezagent.Invocation.dispatch` for the `template.write`
-  > action. Stays as `mix ezagent.*`; do NOT migrate to `mix esr`. See
+  > action. Stays as `mix ezagent.*`; do NOT migrate to `mix ezagent`. See
   > `docs/notes/2026-05-24-cli-gui-parity-audit.md` Section 1 (this
   > task is not in the audit matrix — it's a credential-bootstrap helper).
 

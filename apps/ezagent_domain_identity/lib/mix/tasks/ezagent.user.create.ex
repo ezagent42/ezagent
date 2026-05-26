@@ -1,17 +1,17 @@
 defmodule Mix.Tasks.Ezagent.User.Create do
-  @shortdoc "DEPRECATED — use `mix esr workspace create_user` (HIGH-2 completion)"
+  @shortdoc "DEPRECATED — use `mix ezagent workspace create_user` (HIGH-2 completion)"
   @moduledoc """
   > **DEPRECATED 2026-05-26 (HIGH-2 completion — todo.md "CLI ↔ GUI parity").**
   >
   > The dispatch-backed equivalent now exists. New callers should use
-  > the auto-derived `mix esr` command, which goes through
+  > the auto-derived `mix ezagent` command, which goes through
   > `Ezagent.Invocation.dispatch/1` → step 5.5 CapBAC → audit
   > telemetry → cross-workspace iso. The structural cross-workspace
   > check now ENFORCES that the new user URI belongs to the target
   > workspace (the legacy direct-call had no such gate).
   >
   >     # NEW — preferred path:
-  >     mix esr workspace create_user \\
+  >     mix ezagent workspace create_user \\
   >         --workspace team-alpha \\
   >         --user-uri entity://user/team-alpha/allen \\
   >         --password 'temp-pw-rotate-me' \\
@@ -21,7 +21,7 @@ defmodule Mix.Tasks.Ezagent.User.Create do
   > migration (the PR #355 "Feishu UserBinding" pattern). The
   > internals still call `Ezagent.Users.create/3` directly — same
   > business logic, but bypasses CapBAC + audit. New scripts should
-  > switch to `mix esr workspace create_user`; this task will be
+  > switch to `mix ezagent workspace create_user`; this task will be
   > removed in a future release.
 
   Phase 4-completion Spec 05 §A.2.1 — provision a non-admin User.
@@ -72,7 +72,7 @@ defmodule Mix.Tasks.Ezagent.User.Create do
     NOTE: `mix ezagent.user.create` is deprecated as of 2026-05-26.
     Use the dispatch-backed equivalent (CapBAC + audit + cross-workspace iso):
 
-        mix esr workspace create_user \\
+        mix ezagent workspace create_user \\
             --workspace <name> \\
             --user-uri entity://user/<name>/<handle> \\
             --password '<pw>' \\

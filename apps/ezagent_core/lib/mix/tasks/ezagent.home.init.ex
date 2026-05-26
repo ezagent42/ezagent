@@ -4,7 +4,7 @@ defmodule Mix.Tasks.Ezagent.Home.Init do
   > **CLI/GUI parity audit 2026-05-24 — Category A (bootstrap).**
   > Intentionally NOT a dispatched op. Creates the filesystem
   > skeleton the runtime BEAM needs to even start. Stays as
-  > `mix ezagent.*`; do NOT migrate to `mix esr`. See
+  > `mix ezagent.*`; do NOT migrate to `mix ezagent`. See
   > `docs/notes/2026-05-24-cli-gui-parity-audit.md` Section 1
   > (Bootstrap row) + Finding 2 carve-out.
 
