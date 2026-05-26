@@ -50,8 +50,16 @@ defmodule Ezagent.Entity.NpAgent do
   @impl Ezagent.Kind
   def type_name, do: :np_agent
 
+  # PTY-phase-state-machine 2026-05-26 follow-up (b) codex HIGH-1
+  # fix: include `Ezagent.Behavior.Lifecycle` so the LV
+  # `restart_pty` event (TerminalLive — Dead-Restart badge button)
+  # can dispatch `?action=lifecycle.terminate` against an np-agent
+  # URI. Without this, np agents would surface `{:unknown_action,
+  # :terminate}` because the cc Agent Kind registers Lifecycle but
+  # the np plugin's NpAgent Kind did not. Same per-Kind registration
+  # pattern as cc Agent (`Ezagent.Entity.Agent.behaviors/0`).
   @impl Ezagent.Kind
-  def behaviors, do: [Ezagent.Behavior.NpAgent]
+  def behaviors, do: [Ezagent.Behavior.NpAgent, Ezagent.Behavior.Lifecycle]
 
   @impl Ezagent.Kind
   def persistence, do: :ephemeral

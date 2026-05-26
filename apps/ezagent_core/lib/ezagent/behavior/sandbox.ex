@@ -132,9 +132,26 @@ defmodule Ezagent.Behavior.Sandbox do
       # `:write_path` (along with config_dir_path + template_class) so
       # the snapshot carries enough state for `post_init/2` to call
       # `Kind.Template.ensure_subprocess_alive/2` on a phx restart.
-      respawn_template_data: Map.get(args, :respawn_template_data)
+      respawn_template_data: Map.get(args, :respawn_template_data),
+      # PTY-phase-state-machine 2026-05-26 follow-up (b): mirror of the
+      # PtyServer's `phase` field, updated via the PubSub broadcasts on
+      # `pty:phase:<agent_uri>`. Nil by default (no subprocess yet);
+      # transitions to `:starting | :running | :dead` as events arrive.
+      # Snapshot-persisted alongside the other fields — when the slice
+      # rehydrates after a phx restart, the previous `:dead` shows up
+      # in the LV badge until the post_init `:ensure_subprocess` flow
+      # re-spawns the PtyServer (which then re-emits `:starting →
+      # :running`).
+      pty_phase: validate_phase(Map.get(args, :pty_phase))
     }
   end
+
+  # `init_slice/1` may receive a rehydrated snapshot in `args`; reject
+  # corrupt values (anything that isn't nil-or-one-of-the-three-atoms)
+  # by resetting to nil. The next live phase broadcast (or the
+  # post_init re-spawn flow) will write the correct value.
+  defp validate_phase(p) when p in [:starting, :running, :dead, nil], do: p
+  defp validate_phase(_), do: nil
 
   # --- :read ----------------------------------------------------------------
 
@@ -150,7 +167,11 @@ defmodule Ezagent.Behavior.Sandbox do
        %{
          config_dir_path: Map.get(slice, :config_dir_path),
          template_class: Map.get(slice, :template_class),
-         respawn_template_data: Map.get(slice, :respawn_template_data)
+         respawn_template_data: Map.get(slice, :respawn_template_data),
+         # PTY-phase-state-machine 2026-05-26 follow-up (b): expose the
+         # mirrored phase so LV / admin callers can read it without
+         # subscribing to the phase topic themselves.
+         pty_phase: Map.get(slice, :pty_phase)
        }}
     end
   end
@@ -226,8 +247,20 @@ defmodule Ezagent.Behavior.Sandbox do
     #      recoverable pointer (cc sandboxes hold credentials).
     next_slice =
       case cleanup_result do
-        :ok -> %{config_dir_path: nil, template_class: nil, respawn_template_data: nil}
-        {:error, _reason} -> slice
+        :ok ->
+          %{
+            config_dir_path: nil,
+            template_class: nil,
+            respawn_template_data: nil,
+            # PTY-phase-state-machine follow-up (b): destroy clears the
+            # mirrored phase too — the agent is going away, the next
+            # incarnation rehydrates with nil and observes its own
+            # broadcasts fresh.
+            pty_phase: nil
+          }
+
+        {:error, _reason} ->
+          slice
       end
 
     # 4. Schedule process termination.
@@ -289,12 +322,13 @@ defmodule Ezagent.Behavior.Sandbox do
       read: %{
         description:
           "Read the sandbox slice (config_dir_path, template_class, " <>
-            "respawn_template_data)",
+            "respawn_template_data, pty_phase)",
         args: %{},
         returns: %{
           config_dir_path: {:option, :string},
           template_class: {:option, :atom},
-          respawn_template_data: {:option, :map}
+          respawn_template_data: {:option, :map},
+          pty_phase: {:option, :atom}
         },
         modes: [:call]
       },
@@ -541,57 +575,124 @@ defmodule Ezagent.Behavior.Sandbox do
     template_class = Map.get(slice, :template_class)
     respawn_data = Map.get(slice, :respawn_template_data)
 
-    cond do
-      is_nil(template_class) ->
-        # No plugin Template Class owns this agent — Sandbox has nothing
-        # to re-spawn. This is the structural baseline for non-sandbox
-        # agents (echo, curl, generic User Kinds) and the fresh-spawn
-        # path on a brand-new agent.
-        :ok
-
-      is_nil(respawn_data) ->
-        # Template class present but no respawn data persisted — the
-        # plugin opted out of the post_init respawn flow (this is OK;
-        # e.g. an echo agent that uses sandbox for config_dir but has
-        # no subprocess to re-spawn).
-        :ok
-
-      not is_atom(template_class) ->
-        # Defensive: a slice carrying a non-atom template_class is
-        # corrupted state. Let init_slice catch the error in
-        # handle_continue — the `function_exported?` probe is what
-        # gates the actual call.
-        :ok
-
-      true ->
-        {:continue, {:ensure_subprocess, template_class, respawn_data}}
-    end
+    # PTY-phase-state-machine 2026-05-26 follow-up (b): ALWAYS schedule
+    # the post_init continuation so the Kind.Server subscribes to
+    # `pty:phase:<self_uri>` regardless of whether there's a subprocess
+    # to (re-)spawn right now. A fresh-spawn cc agent (template_class
+    # + respawn_data both populated post-:write_path) AND a brand-new
+    # agent (both nil) both need the subscription so subsequent
+    # PtyServer broadcasts (whether from this incarnation's eventual
+    # :write_path or from a future :ensure_subprocess) flow through.
+    #
+    # The continuation term encodes BOTH intents in a 2-tuple shape.
+    # `handle_continue/3` branches on the present-vs-absent template
+    # class — same logic as before, just under a unified entry point.
+    {:continue, {:setup_phase_tracking, template_class, respawn_data}}
   end
 
   @impl Ezagent.Behavior
-  def handle_continue({:ensure_subprocess, template_class, respawn_data}, _slice, ctx) do
+  def handle_continue({:setup_phase_tracking, template_class, respawn_data}, slice, ctx) do
     self_uri = Map.get(ctx, :self_uri)
 
-    cond do
-      not is_atom(template_class) ->
+    # 1. Subscribe to the PTY phase topic for this agent. The
+    #    Kind.Server process is `self()` here — Phoenix.PubSub
+    #    registers it as the recipient, and incoming
+    #    `{:pty_phase, ...}` tuples land in
+    #    `handle_kind_message/3` below.
+    #
+    #    Best-effort: subscribe failure (PubSub down) is logged and
+    #    swallowed. The post_init flow MUST NOT crash on
+    #    operator-visibility plumbing failure.
+    subscribe_to_phase_topic(self_uri)
+
+    # 2. Maybe ensure the plugin subprocess is alive (the legacy
+    #    PR #385 path). Skipped when the agent has no Template Class
+    #    or no respawn data to feed back to the plugin.
+    if should_ensure_subprocess?(template_class, respawn_data) do
+      _ = do_ensure_subprocess_alive(template_class, self_uri, respawn_data)
+    end
+
+    # Slice unchanged — the subscription side effect doesn't modify
+    # the slice (the snapshot doesn't carry "we subscribed" state;
+    # the subscription is implicit in the live process).
+    _ = slice
+    :ignore
+  end
+
+  defp subscribe_to_phase_topic(%URI{} = self_uri) do
+    topic = "pty:phase:" <> URI.to_string(self_uri)
+
+    try do
+      Phoenix.PubSub.subscribe(EzagentCore.PubSub, topic)
+    catch
+      kind, reason ->
         Logger.warning(
-          "Ezagent.Behavior.Sandbox.post_init: non-atom template_class " <>
-            "#{inspect(template_class)} on #{inspect(self_uri)} — skipping " <>
-            "subprocess re-spawn"
+          "Ezagent.Behavior.Sandbox.post_init: PubSub.subscribe failed " <>
+            "(#{inspect(kind)}, #{inspect(reason)}) for #{URI.to_string(self_uri)}; " <>
+            "phase tracking disabled for this incarnation"
         )
 
-        :ignore
-
-      not function_exported?(template_class, :ensure_subprocess_alive, 2) ->
-        # Plugin Template Class did not opt into the respawn callback.
-        # OK — the cc/np plugins implement it; others (echo) don't
-        # need to.
-        :ignore
-
-      true ->
-        do_ensure_subprocess_alive(template_class, self_uri, respawn_data)
+        :ok
     end
   end
+
+  defp subscribe_to_phase_topic(_), do: :ok
+
+  defp should_ensure_subprocess?(template_class, respawn_data) do
+    is_atom(template_class) and not is_nil(template_class) and not is_nil(respawn_data) and
+      function_exported?(template_class, :ensure_subprocess_alive, 2)
+  end
+
+  # PTY-phase-state-machine 2026-05-26 follow-up (b): consume the
+  # phase broadcasts that PtyServer (or Python Server) emit on every
+  # `:starting | :running | :dead` transition. Update the slice so
+  # snapshot persistence carries the latest known phase across phx
+  # restarts.
+  #
+  # The Kind.Server forwards `handle_info/2` messages through this
+  # callback (optional hook — probed via `function_exported?/3`, NOT
+  # part of the `@behaviour Ezagent.Behavior` contract). We return
+  # `{:ok, new_slice}` to commit the update via the same snapshot
+  # path as dispatch (PR-EM-0 codex r1 HIGH fix); `:ignore` for
+  # messages we don't care about (so the Kind.Server skips the
+  # snapshot write).
+  def handle_kind_message({:pty_phase, %URI{} = agent_uri, phase, meta}, slice, ctx)
+      when phase in [:starting, :running, :dead] do
+    self_uri = Map.get(ctx, :self_uri)
+
+    # codex round-1 MED-2: PubSub topics are not an authentication
+    # boundary. A bad internal publisher or a topic collision could
+    # in principle deliver a `{:pty_phase, _, _, _}` tuple whose
+    # `agent_uri` ≠ this Kind's `self_uri`. Verify identity BEFORE
+    # mutating the slice — drop mismatches with a warning log.
+    if uris_equal?(agent_uri, self_uri) do
+      :telemetry.execute(
+        [:ezagent, :sandbox, :pty_phase],
+        %{at: Map.get(meta, :at, System.os_time(:millisecond))},
+        %{
+          agent_uri: URI.to_string(agent_uri),
+          phase: phase,
+          os_pid: Map.get(meta, :os_pid),
+          reason: Map.get(meta, :reason)
+        }
+      )
+
+      {:ok, Map.put(slice, :pty_phase, phase)}
+    else
+      Logger.warning(
+        "Ezagent.Behavior.Sandbox.handle_kind_message: pty_phase " <>
+          "agent_uri=#{URI.to_string(agent_uri)} != self_uri=" <>
+          "#{inspect(self_uri)}; dropping (topic-collision defense)"
+      )
+
+      :ignore
+    end
+  end
+
+  def handle_kind_message(_other, _slice, _ctx), do: :ignore
+
+  defp uris_equal?(%URI{} = a, %URI{} = b), do: URI.to_string(a) == URI.to_string(b)
+  defp uris_equal?(_, _), do: false
 
   defp do_ensure_subprocess_alive(template_class, self_uri, respawn_data) do
     # PTY-orphan-restart 2026-05-26 round-2 (codex finding #3) —

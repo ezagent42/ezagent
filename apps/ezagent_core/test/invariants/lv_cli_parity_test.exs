@@ -87,6 +87,12 @@ defmodule EzagentCore.Invariants.LvCliParityTest do
     # restart is auto-derived from Behavior.Lifecycle :terminate +
     # supervisor restart policy.
     "restart" => {:cli, "mix ezagent agent terminate --agent <uri>"},
+    # restart_pty (PTY-phase-state-machine 2026-05-26 follow-up b) —
+    # operator clicks the "Dead — Restart" phase badge in TerminalLive.
+    # Dispatches `?action=lifecycle.terminate` on the agent URI, same
+    # CLI counterpart as the `restart` button above (single CLI path
+    # per the auto-derived rule; the LV surfaces it twice for UX).
+    "restart_pty" => {:cli, "mix ezagent agent terminate --agent <uri>"},
 
     # --- Session / chat ops ---
     "invite_member" =>

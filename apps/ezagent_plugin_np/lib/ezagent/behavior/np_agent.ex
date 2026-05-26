@@ -96,11 +96,22 @@ defmodule Ezagent.Behavior.NpAgent do
       # `instantiate/3` which threads `:cwd` through here on every
       # respawn.
       cwd: Map.get(args, :cwd),
+      # PTY-phase-state-machine 2026-05-26 follow-up (b): mirror of
+      # Python Server's `phase` field, updated via PubSub broadcasts
+      # on `pty:phase:<agent_uri>`. Same shape as Sandbox's
+      # `:pty_phase`; the LV badge reads whichever slice the agent's
+      # Kind carries (Sandbox for cc, NpAgent for np).
+      python_phase: validate_phase(Map.get(args, :python_phase)),
       last_input: nil,
       last_result: nil,
       last_error: nil
     }
   end
+
+  # Reject corrupt rehydrated values. NpAgent's persistence is
+  # `:ephemeral` so this is more defensive than load-bearing.
+  defp validate_phase(p) when p in [:starting, :running, :dead, nil], do: p
+  defp validate_phase(_), do: nil
 
   @impl Ezagent.Behavior
   def invoke(:receive, slice, %{message: %Message{} = msg}, ctx) do
@@ -318,27 +329,30 @@ defmodule Ezagent.Behavior.NpAgent do
   # is alive without a subprocess. post_init/2 closes it: the
   # subprocess is up by the time ReadyGate flips the Kind to `:ready`.
   @impl Ezagent.Behavior
-  def post_init(_args, slice) do
-    cwd = Map.get(slice, :cwd)
-
-    cond do
-      is_nil(cwd) ->
-        # No cwd in slice — happens for demand-spawned NpAgents that
-        # arrived via the chat router (no init args from a Template
-        # Class). The Template Class's eventual Loader pass will
-        # rebuild the slice + start Python; nothing to do here.
-        :ok
-
-      true ->
-        {:continue, :ensure_python_alive}
-    end
+  def post_init(_args, _slice) do
+    # PTY-phase-state-machine 2026-05-26 follow-up (b): ALWAYS schedule
+    # the post_init continuation so the Kind.Server subscribes to
+    # `pty:phase:<self_uri>` regardless of whether `cwd` is populated
+    # (i.e. whether we have respawn ammo). Same shape as
+    # `Ezagent.Behavior.Sandbox` — the subscribe is unconditional;
+    # the Python subprocess ensure is conditional on `cwd`.
+    {:continue, :setup_phase_tracking_and_ensure_python}
   end
 
   @impl Ezagent.Behavior
-  def handle_continue(:ensure_python_alive, slice, ctx) do
+  def handle_continue(:setup_phase_tracking_and_ensure_python, slice, ctx) do
     self_uri = Map.get(ctx, :self_uri)
     cwd = Map.get(slice, :cwd)
 
+    # 1. Subscribe to the phase topic — same topic shape as Sandbox.
+    #    Subscribers for cc-flavor and np-flavor agents both consume
+    #    `pty:phase:<agent_uri>`; the LV doesn't need to know which
+    #    flavor produced the broadcast.
+    subscribe_to_phase_topic(self_uri)
+
+    # 2. Maybe ensure the Python subprocess is alive (the legacy
+    #    PR #385 path). Skipped when slice has no cwd (demand-spawned
+    #    NpAgent — Template Class Loader will rebuild the slice).
     cond do
       not is_struct(self_uri, URI) ->
         Logger.warning(
@@ -349,42 +363,111 @@ defmodule Ezagent.Behavior.NpAgent do
         :ignore
 
       not is_binary(cwd) or cwd == "" ->
+        # No cwd → demand-spawn path. Phase subscription still in
+        # place; eventual Loader pass triggers a fresh
+        # `ensure_subprocess_alive` via its own dispatch.
         :ignore
 
       true ->
-        case Ezagent.PluginNp.Template.NpAgent.ensure_subprocess_alive(self_uri, %{
-               "cwd" => cwd
-             }) do
-          :ok ->
-            :ignore
-
-          {:error, reason} ->
-            # PTY-orphan-restart round-2 (codex finding #3) — same
-            # degraded-state pattern as `Ezagent.Behavior.Sandbox`:
-            # log + telemetry + :ignore. A raise here would exhaust
-            # the EzagentPluginNp.InstanceSupervisor's intensity on
-            # a persistent failure (uv missing, FS read-only) and
-            # cascade to sibling np agents.
-            Logger.error(
-              "Ezagent.Behavior.NpAgent.post_init: " <>
-                "Template.NpAgent.ensure_subprocess_alive/2 failed for " <>
-                "#{URI.to_string(self_uri)}: #{inspect(reason)}. " <>
-                "NpAgent Kind stays alive in DEGRADED state (no Python " <>
-                "subprocess); next dispatched compute call surfaces " <>
-                ":not_alive."
-            )
-
-            :telemetry.execute(
-              [:ezagent, :np_agent, :subprocess_unhealthy],
-              %{},
-              %{
-                agent_uri: URI.to_string(self_uri),
-                reason: inspect(reason)
-              }
-            )
-
-            :ignore
-        end
+        do_ensure_python_alive(self_uri, cwd)
     end
   end
+
+  defp subscribe_to_phase_topic(%URI{} = self_uri) do
+    topic = "pty:phase:" <> URI.to_string(self_uri)
+
+    try do
+      Phoenix.PubSub.subscribe(EzagentCore.PubSub, topic)
+    catch
+      kind, reason ->
+        Logger.warning(
+          "Ezagent.Behavior.NpAgent.post_init: PubSub.subscribe failed " <>
+            "(#{inspect(kind)}, #{inspect(reason)}) for #{URI.to_string(self_uri)}; " <>
+            "phase tracking disabled for this incarnation"
+        )
+
+        :ok
+    end
+  end
+
+  defp subscribe_to_phase_topic(_), do: :ok
+
+  defp do_ensure_python_alive(self_uri, cwd) do
+    case Ezagent.PluginNp.Template.NpAgent.ensure_subprocess_alive(self_uri, %{
+           "cwd" => cwd
+         }) do
+      :ok ->
+        :ignore
+
+      {:error, reason} ->
+        # PTY-orphan-restart round-2 (codex finding #3) — same
+        # degraded-state pattern as `Ezagent.Behavior.Sandbox`:
+        # log + telemetry + :ignore. A raise here would exhaust
+        # the EzagentPluginNp.InstanceSupervisor's intensity on
+        # a persistent failure (uv missing, FS read-only) and
+        # cascade to sibling np agents.
+        Logger.error(
+          "Ezagent.Behavior.NpAgent.post_init: " <>
+            "Template.NpAgent.ensure_subprocess_alive/2 failed for " <>
+            "#{URI.to_string(self_uri)}: #{inspect(reason)}. " <>
+            "NpAgent Kind stays alive in DEGRADED state (no Python " <>
+            "subprocess); next dispatched compute call surfaces " <>
+            ":not_alive."
+        )
+
+        :telemetry.execute(
+          [:ezagent, :np_agent, :subprocess_unhealthy],
+          %{},
+          %{
+            agent_uri: URI.to_string(self_uri),
+            reason: inspect(reason)
+          }
+        )
+
+        :ignore
+    end
+  end
+
+  # PTY-phase-state-machine 2026-05-26 follow-up (b): consume Python
+  # Server's phase broadcasts. Symmetric to Sandbox's
+  # `handle_kind_message/3`; writes to `:python_phase` instead of
+  # `:pty_phase` so the slice carries the np-flavor variant. Optional
+  # hook — probed via `function_exported?/3`, NOT a declared
+  # `@behaviour` callback.
+  def handle_kind_message({:pty_phase, %URI{} = agent_uri, phase, meta}, slice, ctx)
+      when phase in [:starting, :running, :dead] do
+    self_uri = Map.get(ctx, :self_uri)
+
+    # codex round-1 MED-2: PubSub topics are not an authentication
+    # boundary. Verify identity BEFORE mutating the slice — drop
+    # mismatches with a warning log. Symmetric to
+    # `Ezagent.Behavior.Sandbox.handle_kind_message/3`.
+    if uris_equal?(agent_uri, self_uri) do
+      :telemetry.execute(
+        [:ezagent, :np_agent, :python_phase],
+        %{at: Map.get(meta, :at, System.os_time(:millisecond))},
+        %{
+          agent_uri: URI.to_string(agent_uri),
+          phase: phase,
+          os_pid: Map.get(meta, :os_pid),
+          reason: Map.get(meta, :reason)
+        }
+      )
+
+      {:ok, Map.put(slice, :python_phase, phase)}
+    else
+      Logger.warning(
+        "Ezagent.Behavior.NpAgent.handle_kind_message: pty_phase " <>
+          "agent_uri=#{URI.to_string(agent_uri)} != self_uri=" <>
+          "#{inspect(self_uri)}; dropping (topic-collision defense)"
+      )
+
+      :ignore
+    end
+  end
+
+  def handle_kind_message(_other, _slice, _ctx), do: :ignore
+
+  defp uris_equal?(%URI{} = a, %URI{} = b), do: URI.to_string(a) == URI.to_string(b)
+  defp uris_equal?(_, _), do: false
 end

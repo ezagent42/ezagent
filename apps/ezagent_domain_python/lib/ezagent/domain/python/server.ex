@@ -52,7 +52,23 @@ defmodule Ezagent.Domain.Python.Server do
     ready?: false,
     ready_waiters: [],
     tearing_down?: false,
-    test_mode: false
+    test_mode: false,
+    # PTY-phase-state-machine 2026-05-26 follow-up (b). Symmetric
+    # tracking of the three canonical subprocess phases — same shape
+    # as `Ezagent.Domain.Pty.Server`. Transition points:
+    #
+    #   :starting → :running  on python.ping pong success (we broadcast
+    #                          :running AFTER the ping handshake so
+    #                          operator-visible "ready" only flips when
+    #                          the subprocess is actually accepting work)
+    #   :starting → :dead     on :uv_not_found / :spawn_failed / ping
+    #                          timeout / spawn-died-at-init
+    #   :running  → :dead     on {:DOWN, ...} or :rpc_timeout tear-down
+    #
+    # `dead_broadcast?` prevents terminate/2 from double-emitting the
+    # terminal phase when an upstream signal already published.
+    phase: :starting,
+    dead_broadcast?: false
   ]
 
   @type state :: %__MODULE__{}
@@ -80,6 +96,54 @@ defmodule Ezagent.Domain.Python.Server do
     {:via, Registry, {EzagentDomainPython.Registry, key}}
   end
 
+  @doc """
+  PubSub topic for a Python subprocess's phase transitions
+  (PTY-phase-state-machine 2026-05-26 follow-up b).
+
+  Subscribers receive messages of shape
+  `{:pty_phase, agent_uri, phase, meta}` where:
+
+    * `phase` is `:starting | :running | :dead`
+    * `meta` carries `%{os_pid: integer() | nil, reason: term() | nil,
+      at: System.os_time(:millisecond)}`
+
+  The topic name mirrors `Ezagent.Domain.Pty.Server.phase_topic/1`
+  intentionally — the np plugin subscribes via the agent URI's
+  topic; whether the agent is a cc-flavor PTY or an np-flavor Python
+  subprocess is opaque to the LV badge.
+
+  Best-effort: PubSub broadcast failures are logged but never raise
+  into the Server's primary path.
+  """
+  def phase_topic(%URI{} = agent_uri),
+    do: "pty:phase:" <> URI.to_string(agent_uri)
+
+  @doc """
+  Public accessor for the current phase of a live Python Server.
+
+  Returns `:starting | :running | :dead` for a live server, or
+  `:dead` when no server exists. Callers that need to distinguish
+  "no server" from "server in :dead" should use
+  `Ezagent.Domain.Python.alive?/1` first.
+  """
+  @spec phase(URI.t() | binary()) :: :starting | :running | :dead
+  def phase(handle) do
+    key = Python.handle_key(handle)
+
+    case Registry.lookup(EzagentDomainPython.Registry, key) do
+      [{pid, _}] ->
+        try do
+          state = :sys.get_state(pid, 500)
+          state.phase || :dead
+        catch
+          _, _ -> :dead
+        end
+
+      [] ->
+        :dead
+    end
+  end
+
   # --- init: SYNCHRONOUS spawn + ping (SPEC §3.2) ----------------------
 
   @impl true
@@ -94,11 +158,23 @@ defmodule Ezagent.Domain.Python.Server do
       spec: spec,
       test_mode: test_mode,
       stderr_log_path: stderr_log_path(key),
-      stderr_log_bytes: 0
+      stderr_log_bytes: 0,
+      phase: :starting
     }
 
+    # PTY-phase-state-machine follow-up (b): emit :starting before any
+    # spawn / ping work. Subscribers (NpAgent slice + LV) see the
+    # canonical opening transition even on a fast-fail
+    # (uv_not_found / bad cwd / etc).
+    broadcast_phase(state, :starting, %{})
+
     if test_mode do
-      {:ok, %{state | ready?: true}}
+      # Test mode short-circuits the real spawn. Per Allen's directive
+      # the test-mode path STILL emits :starting → :running so unit
+      # tests subscribing to phase_topic/1 see the canonical sequence.
+      new_state = %{state | ready?: true, phase: :running}
+      broadcast_phase(new_state, :running, %{os_pid: nil})
+      {:ok, new_state}
     else
       do_spawn_and_ping(state)
     end
@@ -125,24 +201,39 @@ defmodule Ezagent.Domain.Python.Server do
 
       case await_ping(state, state.spec.ping_timeout_ms) do
         {:ok, new_state} ->
-          {:ok, %{new_state | ready?: true}}
+          # PTY-phase-state-machine follow-up (b): subprocess is alive
+          # AND the python.ping handshake completed — flip to :running
+          # so subscribers see "ready to accept work" only when truly
+          # ready. The pre-ping window stays in :starting (already
+          # emitted in init/1).
+          ready_state = %{new_state | ready?: true, phase: :running}
+          broadcast_phase(ready_state, :running, %{os_pid: os_pid})
+          {:ok, ready_state}
 
         {:stop, reason, _new_state} ->
           # init/1 returning {:stop, reason} propagates back as
           # {:error, reason} from start_link. Make sure the subprocess
           # doesn't leak.
+          dead_state = %{state | phase: :dead, dead_broadcast?: true}
+          broadcast_phase(dead_state, :dead, %{reason: reason, os_pid: os_pid})
           force_stop_exec(state.exec_pid)
           close_stderr_log(state)
           {:stop, reason}
       end
     else
       {:error, :uv_not_found} ->
+        dead_state = %{state | phase: :dead, dead_broadcast?: true}
+        broadcast_phase(dead_state, :dead, %{reason: :uv_not_found, os_pid: nil})
         {:stop, :uv_not_found}
 
       {:error, {:spawn_failed, _} = reason} ->
+        dead_state = %{state | phase: :dead, dead_broadcast?: true}
+        broadcast_phase(dead_state, :dead, %{reason: reason, os_pid: nil})
         {:stop, reason}
 
       {:error, reason} ->
+        dead_state = %{state | phase: :dead, dead_broadcast?: true}
+        broadcast_phase(dead_state, :dead, %{reason: reason, os_pid: nil})
         {:stop, {:spawn_failed, reason}}
     end
   end
@@ -413,7 +504,15 @@ defmodule Ezagent.Domain.Python.Server do
       "Domain.Python: subprocess exited handle=#{state.handle_key} reason=#{inspect(reason)}"
     )
 
-    state = reply_all_pending(state, {:error, {:subprocess_died, reason}})
+    # PTY-phase-state-machine follow-up (b): the subprocess died —
+    # publish :dead BEFORE returning {:stop, ...} so subscribers see
+    # the terminal phase while this GenServer is still alive enough
+    # to broadcast (terminate/2 would also fire, but `dead_broadcast?:
+    # true` short-circuits the duplicate emit).
+    new_state = %{state | phase: :dead, dead_broadcast?: true}
+    broadcast_phase(new_state, :dead, %{reason: {:subprocess_died, reason}, os_pid: state.os_pid})
+
+    state = reply_all_pending(new_state, {:error, {:subprocess_died, reason}})
     state = reply_ready_waiters(state, {:error, {:subprocess_died, reason}})
     close_stderr_log(state)
     {:stop, {:subprocess_died, reason}, state}
@@ -439,9 +538,15 @@ defmodule Ezagent.Domain.Python.Server do
           |> Map.put(:tearing_down?, true)
           |> reply_all_pending({:error, :subprocess_unhealthy})
 
+        # PTY-phase-state-machine follow-up (b): RPC-timeout tear-down
+        # publishes :dead so subscribers stop polling and re-render
+        # the "Dead — Restart" badge before DynSup's restart kicks in.
+        dead_state = %{state | phase: :dead, dead_broadcast?: true}
+        broadcast_phase(dead_state, :dead, %{reason: :subprocess_unhealthy, os_pid: state.os_pid})
+
         force_stop_exec(state.exec_pid)
         close_stderr_log(state)
-        {:stop, :subprocess_unhealthy, state}
+        {:stop, :subprocess_unhealthy, dead_state}
     end
   end
 
@@ -552,7 +657,7 @@ defmodule Ezagent.Domain.Python.Server do
   # --- terminate -------------------------------------------------------
 
   @impl true
-  def terminate(_reason, state) do
+  def terminate(reason, state) do
     state = reply_all_pending(state, {:error, :subprocess_unhealthy})
     state = reply_ready_waiters(state, {:error, :subprocess_unhealthy})
     force_stop_exec(state.exec_pid)
@@ -562,6 +667,11 @@ defmodule Ezagent.Domain.Python.Server do
     # cleanup of the pid file. Brutal BEAM kill skips this entirely —
     # the pid file remains on disk for the next BEAM's OrphanReaper.
     _ = maybe_remove_pid_file(state.spec.handle)
+
+    # PTY-phase-state-machine follow-up (b): graceful termination
+    # path — emit :dead if no upstream signal (e.g. spawn failure,
+    # erlexec :DOWN, :rpc_timeout tear-down) already published it.
+    maybe_broadcast_dead_on_terminate(state, reason)
 
     :ok
   end
@@ -718,5 +828,58 @@ defmodule Ezagent.Domain.Python.Server do
       domain: [:python_subprocess],
       meta: meta
     )
+  end
+
+  # --- phase broadcast helpers (PTY-phase-state-machine follow-up b) ---
+
+  # Best-effort broadcast of a phase transition. Same contract as
+  # `Ezagent.Domain.Pty.Server.broadcast_phase/3` — phase tracking is
+  # operator-visibility plumbing and its failure MUST NOT block the
+  # primary subprocess path. PubSub broadcast errors are logged and
+  # swallowed.
+  #
+  # The handle may be a `%URI{}` (the plugin path — np spawns one
+  # Python Server per Agent URI) OR an arbitrary binary key (used by
+  # facade-level tests with `test://server-test/N` handles). For the
+  # binary case we skip the broadcast entirely — there's no LV /
+  # Sandbox slice that would consume it, and unit tests assert on the
+  # struct field `state.phase` directly.
+  defp broadcast_phase(%__MODULE__{handle: %URI{} = agent_uri} = state, phase, extra_meta)
+       when phase in [:starting, :running, :dead] do
+    meta =
+      Map.merge(
+        %{
+          os_pid: state.os_pid,
+          reason: nil,
+          at: System.os_time(:millisecond)
+        },
+        extra_meta || %{}
+      )
+
+    try do
+      Phoenix.PubSub.broadcast(
+        EzagentCore.PubSub,
+        phase_topic(agent_uri),
+        {:pty_phase, agent_uri, phase, meta}
+      )
+    catch
+      kind, reason ->
+        Logger.warning(
+          "Domain.Python: phase broadcast failed (#{inspect(kind)}, #{inspect(reason)}) " <>
+            "for #{URI.to_string(agent_uri)} phase=#{inspect(phase)}; continuing"
+        )
+
+        :ok
+    end
+  end
+
+  defp broadcast_phase(%__MODULE__{} = _state, _phase, _meta), do: :ok
+
+  # Idempotency guard for the terminate/2 path. Mirrors PtyServer's
+  # `dead_broadcast?` flag.
+  defp maybe_broadcast_dead_on_terminate(%__MODULE__{dead_broadcast?: true}, _reason), do: :ok
+
+  defp maybe_broadcast_dead_on_terminate(%__MODULE__{} = state, reason) do
+    broadcast_phase(state, :dead, %{reason: reason, os_pid: state.os_pid})
   end
 end
