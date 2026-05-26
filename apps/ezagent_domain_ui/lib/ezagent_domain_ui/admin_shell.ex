@@ -107,9 +107,21 @@ defmodule EzagentDomainUi.AdminShell do
     assigns = assign(assigns, :items, sections())
 
     ~H"""
+    <%!-- Bug 4 (Allen 2026-05-26) — REMOVED `phx-click-away={JS.hide(...)}`.
+          That handler wrote inline `display:none`, which (per CSS
+          specificity) beats the `lg:flex` class. On `lg+` screens the
+          sidebar is supposed to be permanent (`lg:flex lg:static`),
+          but ANY click anywhere outside the nav (e.g. a workspace
+          table cell on `/workspaces`) hid it forever — there was NO
+          open toggle to bring it back, so the user could not navigate
+          out of `/workspaces` / `/admin/*` except via the avatar
+          menu. The handler was added in anticipation of a mobile
+          overlay open toggle that was never wired; until that exists,
+          the sidebar is left permanent on desktop and the mobile
+          drawer treatment is a separate follow-up. Same bug class as
+          PR #371's avatar `JS.hide` inline-style overshoot. --%>
     <nav
       id="admin-shell-sidebar"
-      phx-click-away={Phoenix.LiveView.JS.hide(to: "#admin-shell-sidebar")}
       class="hidden lg:flex lg:static fixed top-10 bottom-0 left-0 z-40 w-56 max-w-[80vw] border-r border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 flex-col py-2 px-2 gap-px shrink-0 shadow-xl lg:shadow-none"
     >
       <div class="text-[10px] uppercase tracking-wide text-zinc-500 px-2 mb-1">

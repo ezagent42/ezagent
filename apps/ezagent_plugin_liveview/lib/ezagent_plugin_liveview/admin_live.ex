@@ -1263,12 +1263,26 @@ defmodule EzagentPluginLiveview.AdminLive do
         }
       end)
       |> assign_new(:view_render_fn, fn -> resolve_view_render(assigns) end)
-      # Phase 8c PR-F: top-left `ezagent / <workspace>` label +
-      # avatar dropdown "Admin" link gate. workspace_name reads the
-      # current session's bound workspace (PR-E #2 binds session://default/system/main
-      # to workspace://system, so this typically resolves to "system").
+      # Phase 8c PR-F + Bug 3 (Allen 2026-05-26): top-left
+      # `ezagent / <workspace>` label.
+      #
+      # `workspace_name` is set centrally by
+      # `EzagentWeb.LiveAuth.on_mount(:require_entity)` from the
+      # session-cookie-bound `:current_workspace_uri` slot — the SoT
+      # for "which workspace is the user operating in" (written by
+      # `WorkspaceSwitchController` + login). The
+      # `assign_new` is a belt-and-suspenders fallback for test
+      # paths that mount this LV outside the `:require_entity`
+      # live_session.
+      #
+      # Previous bug: this assign called `workspace_name_for(current_session_uri)`
+      # which reads the workspace bound to the in-view session
+      # (always `session://default/system/main` → "system"), so a
+      # successful `POST /workspaces/switch` (which updates the
+      # session cookie) did not update the label — the switch
+      # LOOKED broken even when it succeeded.
       |> assign_new(:workspace_name, fn ->
-        workspace_name_for(assigns.current_session_uri)
+        workspace_name_from_uri(assigns[:current_workspace_uri])
       end)
       # PR-M (Allen 2026-05-20): `workspaces` + `is_admin?` are now
       # set centrally by `EzagentWeb.LiveAuth.on_mount(:require_entity)`,
@@ -2273,18 +2287,32 @@ defmodule EzagentPluginLiveview.AdminLive do
   defp friendly_error(action, reason),
     do: gettext("%{action} failed: %{reason}", action: action, reason: inspect(reason))
 
-  # Phase 8c PR-F: look up the workspace name bound to the current
-  # session. Returns the URI host (e.g. "system" for workspace://system)
-  # or nil if the session isn't bound to any workspace. Used for the
-  # top-left `ezagent / <name>` label.
-  defp workspace_name_for(nil), do: nil
+  # Bug 3 (Allen 2026-05-26) — top-left `ezagent / <name>` label
+  # data source. Reads the host of the user's session-cookie-bound
+  # `:current_workspace_uri` (written by `WorkspaceSwitchController`
+  # for system-member context swaps + by `SessionPrincipal.put/3`
+  # at login). This is the SoT for "which workspace is the user
+  # operating in" and is the assign IdeShell ultimately wants to
+  # render in the dropdown trigger.
+  #
+  # Replaces the previous `workspace_name_for/1` helper that looked
+  # up the workspace bound to `current_session_uri` (which is
+  # hardcoded to `session://default/system/main` and thus did not
+  # follow workspace switches). `EzagentWeb.LiveAuth` sets this
+  # assign centrally for every `:require_entity` LV; this local
+  # helper is the belt-and-suspenders fallback for test paths that
+  # mount the LV outside that live_session.
+  defp workspace_name_from_uri(nil), do: nil
+  defp workspace_name_from_uri(%URI{host: name}) when is_binary(name) and name != "", do: name
 
-  defp workspace_name_for(session_uri) do
-    case Ezagent.WorkspaceRegistry.lookup(session_uri) do
-      {:ok, %URI{host: name}} when is_binary(name) and name != "" -> name
+  defp workspace_name_from_uri(uri_str) when is_binary(uri_str) do
+    case URI.parse(uri_str) do
+      %URI{host: name} when is_binary(name) and name != "" -> name
       _ -> nil
     end
   end
+
+  defp workspace_name_from_uri(_), do: nil
 
   # SPEC #366 (Allen 2026-05-26) — read the current workspace's
   # `session_templates` map and project to the new-session form's

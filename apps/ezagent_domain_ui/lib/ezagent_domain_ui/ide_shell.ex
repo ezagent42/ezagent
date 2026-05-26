@@ -61,15 +61,19 @@ defmodule EzagentDomainUi.IdeShell do
 
   ## The `perspective` context contract (SPEC §2)
 
-  `perspective :: :workspace | :admin` governs the header's left
-  affordance — it is NOT cosmetic:
+  `perspective :: :workspace | :admin` is threaded through to the
+  `CommandPaletteComponent` so an admin page surfaces system-scoped
+  CmdK results only.
 
-  - `:workspace` — left affordance is the `workspace_dropdown`
-    (`ezagent / <workspace>`); switching workspace is meaningful.
-  - `:admin` — admin pages are `workspace://system` global config.
-    Left affordance is a plain system-context label (`ezagent ·
-    System`), NOT the tenant workspace dropdown — you do not "switch
-    workspace" while editing global runtime config.
+  The header's left affordance is now the `workspace_dropdown` on
+  BOTH perspectives (Bug 5 unify, Allen 2026-05-26). Previously the
+  `:admin` branch rendered a static `ezagent · System` label,
+  rationalised as "you do not switch workspace while editing global
+  runtime config". In practice the user wants a one-click escape
+  from `/workspaces` / `/admin/*` back to a tenant workspace's
+  `/sessions` — the dropdown is the only first-class affordance
+  that provides this. The "no two header types" rule (PR-M) is
+  satisfied uniformly.
 
   ## Usage
 
@@ -91,9 +95,10 @@ defmodule EzagentDomainUi.IdeShell do
     required: true,
     values: [:workspace, :admin],
     doc: """
-    SPEC §2 context contract. `:workspace` → header shows the
-    `workspace_dropdown`. `:admin` → header shows the plain
-    `ezagent · System` label (no tenant workspace switcher).
+    SPEC §2 context contract — threaded through to
+    `CommandPaletteComponent` so admin pages surface system-scoped
+    CmdK results only. The header itself renders the same
+    `workspace_dropdown` regardless (Bug 5 unify, Allen 2026-05-26).
     """
   )
 
@@ -134,13 +139,10 @@ defmodule EzagentDomainUi.IdeShell do
   Nested-shell PR-1 — the universal header for `ide_shell_outer/1`.
 
   Context affordance + search/⌘K trigger + bell + help + avatar menu.
-  Differs from `top_command_bar/1` in that the left context affordance
-  is driven by the `perspective` attr (SPEC §2):
-
-  - `:workspace` → `workspace_dropdown` (always — empty-list state
-    shows a placeholder row + the "Manage workspaces..." footer
-    link, since the dropdown is the sole entry to `/workspaces`).
-  - `:admin` → plain `ezagent · System` system-context label.
+  The left affordance is the `workspace_dropdown` on BOTH perspectives
+  (Bug 5 unify, Allen 2026-05-26). Empty-list state shows a
+  placeholder row + the "Manage workspaces..." footer link, since
+  the dropdown is the sole entry to `/workspaces` from any chrome.
 
   It carries no resource-panel toggle — panel toggles belong to the
   inner `workspace_shell` body / status bar.
@@ -155,29 +157,23 @@ defmodule EzagentDomainUi.IdeShell do
   def outer_command_bar(assigns) do
     ~H"""
     <header class="h-10 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-3 flex items-center gap-3 shrink-0">
-      <%!-- SPEC §2 — context affordance. `:admin` shows a plain
-            system-context label (you do not switch tenant workspace
-            while editing global config); `:workspace` always shows
-            the `workspace_dropdown` — even with an empty workspaces
-            list, the dropdown is the only entry point to
-            `/workspaces` (Activity Bar dropped its Workspaces tile
+      <%!-- Bug 5 unify (Allen 2026-05-26) — workspace dropdown on
+            EVERY perspective. The previous `:admin` static
+            `ezagent · System` label trapped users on /workspaces +
+            /admin/* without a one-click escape back to a tenant
+            workspace's /sessions (the only way out was the avatar
+            menu → /profile). The dropdown is the canonical
+            cross-perspective workspace switcher AND the sole entry
+            to /workspaces (Activity Bar dropped its Workspaces tile
             in PR-L). Workspace-rename (#335) removed the seeded
             `default` workspace; first-time operators land here with
             `@workspaces == []` and MUST be able to reach
             "Manage workspaces..." to create the first one. --%>
-      <%= if @perspective == :admin do %>
-        <div class="flex items-center gap-2 shrink-0">
-          <span class="font-semibold text-xs tracking-tight">ezagent</span>
-          <span class="text-zinc-400 dark:text-zinc-600 select-none">·</span>
-          <span class="text-xs text-zinc-600 dark:text-zinc-400">{gettext("System")}</span>
-        </div>
-      <% else %>
-        <.workspace_dropdown
-          workspace_name={@workspace_name}
-          workspaces={@workspaces}
-          is_system_member?={@is_system_member?}
-        />
-      <% end %>
+      <.workspace_dropdown
+        workspace_name={@workspace_name}
+        workspaces={@workspaces}
+        is_system_member?={@is_system_member?}
+      />
 
       <%!-- search / ⌘K trigger — universal, present on every page. --%>
       <div class="flex-1 max-w-md mx-auto">
@@ -214,6 +210,7 @@ defmodule EzagentDomainUi.IdeShell do
         <.avatar_menu
           current_entity_uri={@current_entity_uri}
           is_admin?={@is_admin?}
+          is_system_member?={@is_system_member?}
         />
       </div>
     </header>
@@ -440,6 +437,19 @@ defmodule EzagentDomainUi.IdeShell do
   attr(:current_entity_uri, :any, required: true)
   attr(:is_admin?, :boolean, default: false)
 
+  attr(:is_system_member?, :boolean,
+    default: false,
+    doc: """
+    Bug 6 (Allen 2026-05-26) — the Admin link visibility is gated on
+    `is_admin? OR is_system_member?` to match the `:require_admin`
+    `live_session` policy in `EzagentWeb.LiveAuth`. Previously the
+    gate matched ONLY the literal seeded admin URI
+    (`entity://user/system/admin`), so other system members (e.g.
+    `entity://user/system/linyilun`) — who CAN access /admin/* via
+    the live_session gate — saw no Admin link in the avatar menu.
+    """
+  )
+
   def avatar_menu(assigns) do
     assigns =
       assigns
@@ -510,12 +520,18 @@ defmodule EzagentDomainUi.IdeShell do
                 (display name + avatar) stay on /profile. --%>
           <%!-- Phase 8c PR-F (Allen 2026-05-20) — Admin link opens the
                 admin drawer (system layer of the 3-layer
-                architecture). Gated on `Ezagent.Identity.admin?/1`;
-                hidden for non-admin entities for UX clarity.
-                TODO Phase 8d: replace with proper cap:admin check
-                once /admin enforces admin caps at the route gate. --%>
+                architecture).
+                Bug 6 (Allen 2026-05-26) — widened gate from
+                `is_admin?` alone (which only matched the literal
+                seeded `entity://user/system/admin` URI per
+                `Ezagent.Identity.admin?/1`) to
+                `is_admin? OR is_system_member?`. The router's
+                `:require_admin` live_session lets system members
+                through; the avatar link visibility must match the
+                actual route gate so members can reach what they
+                are allowed to see. --%>
           <a
-            :if={@is_admin?}
+            :if={@is_admin? or @is_system_member?}
             href="/admin"
             class="block px-3 py-1.5 text-xs text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center gap-2"
           >

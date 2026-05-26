@@ -95,12 +95,17 @@ defmodule EzagentDomainUi.IdeShellOuterTest do
   end
 
   describe "ide_shell_outer/1 — :admin perspective" do
-    test "shows the plain `ezagent · System` label, NOT the workspace dropdown" do
+    # Bug 5 (Allen 2026-05-26) — unified header. Both `:workspace`
+    # and `:admin` perspectives now render the workspace_dropdown so
+    # users always have a one-click escape from /workspaces +
+    # /admin/* back to a tenant workspace's /sessions. The previous
+    # `:admin` static `ezagent · System` label trapped users without
+    # a workspace switcher (the only way out was the avatar menu).
+    test "shows the workspace dropdown (same as :workspace perspective)" do
       assigns = %{
         current_entity_uri: "entity://user/system/admin",
-        # An :admin page must NOT show the tenant switcher even if a
-        # workspaces list is somehow passed.
-        workspaces: [%{name: "default", uri: "workspace://team-alpha"}]
+        workspace_name: "system",
+        workspaces: [%{name: "team-alpha", uri: "workspace://team-alpha"}]
       }
 
       html =
@@ -108,18 +113,18 @@ defmodule EzagentDomainUi.IdeShellOuterTest do
         <IdeShell.ide_shell_outer
           perspective={:admin}
           current_entity_uri={@current_entity_uri}
+          workspace_name={@workspace_name}
           workspaces={@workspaces}
         >
           <:body>ADMIN_BODY</:body>
         </IdeShell.ide_shell_outer>
         """)
 
-      # System-context label present.
-      assert html =~ "System"
-      # Workspace dropdown ABSENT — you do not switch tenant workspace
-      # while editing global config (SPEC §2).
-      refute html =~ ~s(id="workspace-menu")
-      refute html =~ ~s(aria-label="Switch workspace")
+      # Dropdown trigger present on :admin too (Bug 5 unify).
+      assert html =~ ~s(id="workspace-menu")
+      assert html =~ ~s(aria-label="Switch workspace")
+      # Workspace switcher footer link still reachable.
+      assert html =~ ~s(href="/workspaces")
       # Universal chrome still present + body rendered.
       assert html =~ "⌘K"
       assert html =~ "ADMIN_BODY"
@@ -248,6 +253,76 @@ defmodule EzagentDomainUi.IdeShellOuterTest do
       after
         Gettext.put_locale(EzagentDomainUi.Gettext, previous)
       end
+    end
+  end
+
+  describe "avatar menu — Admin link visibility (Bug 6)" do
+    # Allen 2026-05-26 — the Admin link in the avatar dropdown was
+    # gated on `is_admin?` alone, which matches ONLY the literal
+    # seeded admin URI per `Ezagent.Identity.admin?/1`. Other system
+    # members (e.g. `entity://user/system/linyilun`) — who CAN
+    # access `/admin/*` via the `:require_admin` `live_session` —
+    # saw no Admin link. The gate is widened to
+    # `is_admin? OR is_system_member?` to match the route gate.
+    test "Admin link visible when is_admin? is true (literal admin URI)" do
+      assigns = %{
+        current_entity_uri: "entity://user/system/admin",
+        is_admin?: true,
+        is_system_member?: true
+      }
+
+      html =
+        rendered_to_string(~H"""
+        <IdeShell.avatar_menu
+          current_entity_uri={@current_entity_uri}
+          is_admin?={@is_admin?}
+          is_system_member?={@is_system_member?}
+        />
+        """)
+
+      assert html =~ ~s(href="/admin")
+    end
+
+    test "Admin link visible when only is_system_member? is true (non-literal admin)" do
+      # Bug 6 regression — without the widened gate this case would
+      # hide the Admin link even though the user can reach /admin/*.
+      assigns = %{
+        current_entity_uri: "entity://user/system/linyilun",
+        is_admin?: false,
+        is_system_member?: true
+      }
+
+      html =
+        rendered_to_string(~H"""
+        <IdeShell.avatar_menu
+          current_entity_uri={@current_entity_uri}
+          is_admin?={@is_admin?}
+          is_system_member?={@is_system_member?}
+        />
+        """)
+
+      assert html =~ ~s(href="/admin"),
+             "Admin link must be visible for system members (matches `:require_admin` live_session gate)"
+    end
+
+    test "Admin link HIDDEN for regular users (neither admin nor system member)" do
+      assigns = %{
+        current_entity_uri: "entity://user/h2oslabs/alice",
+        is_admin?: false,
+        is_system_member?: false
+      }
+
+      html =
+        rendered_to_string(~H"""
+        <IdeShell.avatar_menu
+          current_entity_uri={@current_entity_uri}
+          is_admin?={@is_admin?}
+          is_system_member?={@is_system_member?}
+        />
+        """)
+
+      refute html =~ ~s(href="/admin"),
+             "Admin link must NOT be visible for non-admin non-system-member users"
     end
   end
 

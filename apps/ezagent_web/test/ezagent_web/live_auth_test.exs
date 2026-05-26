@@ -208,6 +208,87 @@ defmodule EzagentWeb.LiveAuthTest do
     end
   end
 
+  describe "on_mount(:require_entity, ...) — workspace_name assign (Bug 3)" do
+    # Allen 2026-05-26 — the IdeShell top-left `ezagent / <name>`
+    # dropdown trigger reads `@workspace_name`. Before this fix it
+    # was only computed by `admin_live`, and from the wrong source
+    # (the session URI's bound workspace, NOT the user's
+    # current_workspace_uri slot). After a successful
+    # `POST /workspaces/switch` the cookie's workspace slot
+    # updated but the label still showed the old value, so the
+    # switch LOOKED broken. Now LiveAuth sets `:workspace_name`
+    # centrally from `:current_workspace_uri`, which is the SoT.
+    test "assigns :workspace_name from :current_workspace_uri (explicit slot)" do
+      socket = build_socket()
+
+      assert {:cont, socket} =
+               LiveAuth.on_mount(
+                 :require_entity,
+                 %{},
+                 %{
+                   "current_entity_uri" => "entity://user/team-alpha/alice",
+                   "current_workspace_uri" => "workspace://team-alpha"
+                 },
+                 socket
+               )
+
+      assert socket.assigns.workspace_name == "team-alpha"
+    end
+
+    test "assigns :workspace_name from derived workspace (no explicit slot)" do
+      socket = build_socket()
+
+      assert {:cont, socket} =
+               LiveAuth.on_mount(
+                 :require_entity,
+                 %{},
+                 %{"current_entity_uri" => "entity://user/team-alpha/alice"},
+                 socket
+               )
+
+      # Defensive fallback: derive from entity URI when the cookie
+      # slot is missing (pre-PR-5 sessions).
+      assert socket.assigns.workspace_name == "team-alpha"
+    end
+
+    test ":workspace_name follows a workspace switch (regression)" do
+      # Simulates what `WorkspaceSwitchController.do_switch/3` does
+      # for a system-member context swap: rewrites
+      # `:current_workspace_uri` while keeping `:current_entity_uri`.
+      # The LV's IdeShell trigger MUST reflect the new workspace.
+      socket = build_socket()
+
+      assert {:cont, socket_before} =
+               LiveAuth.on_mount(
+                 :require_entity,
+                 %{},
+                 %{
+                   "current_entity_uri" => "entity://user/system/linyilun",
+                   "current_workspace_uri" => "workspace://system"
+                 },
+                 socket
+               )
+
+      assert socket_before.assigns.workspace_name == "system"
+
+      # Now the controller rewrote the workspace slot. The next LV
+      # mount sees the new value.
+      assert {:cont, socket_after} =
+               LiveAuth.on_mount(
+                 :require_entity,
+                 %{},
+                 %{
+                   "current_entity_uri" => "entity://user/system/linyilun",
+                   "current_workspace_uri" => "workspace://h2oslabs"
+                 },
+                 socket
+               )
+
+      assert socket_after.assigns.workspace_name == "h2oslabs",
+             "label MUST follow the cookie's current_workspace_uri after a switch"
+    end
+  end
+
   # Build a minimal `%Phoenix.LiveView.Socket{}` suitable for direct
   # `on_mount/4` invocation. The hook only reads/writes assigns +
   # `:redirected`, so we don't need a real LV transport.
