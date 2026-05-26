@@ -803,7 +803,21 @@ defmodule Ezagent.Entity.Session do
     end
   end
 
-  defp derive_orchestrator_uri(%URI{} = session_uri, %URI{} = workspace_uri) do
+  @doc """
+  Derive the orchestrator agent URI for a session in a workspace.
+
+  Returns an `entity://agent/<workspace>/cc_orchestrator-<session_disc>`
+  URI per SPEC v3 §5 — the deterministic, structural shape every
+  cc-orchestrated session uses. Raises `ArgumentError` when the
+  `workspace_uri` carries no `host` segment (per SPEC #324 rev 3 / PR
+  #335 — there is no silent default-workspace fallback).
+
+  Made public 2026-05-26 so the orchestrator-instance health panel
+  (`/sessions` UI) can derive the URI from the session + workspace
+  without re-implementing the cc-orchestrator naming convention.
+  """
+  @spec derive_orchestrator_uri(URI.t(), URI.t()) :: URI.t()
+  def derive_orchestrator_uri(%URI{} = session_uri, %URI{} = workspace_uri) do
     instance_name = derive_orchestrator_instance_name(session_uri)
 
     workspace_name =
@@ -817,7 +831,16 @@ defmodule Ezagent.Entity.Session do
     URI.new!("entity://agent/#{workspace_name}/#{instance_name}")
   end
 
-  defp derive_orchestrator_instance_name(%URI{} = session_uri) do
+  @doc """
+  Derive the orchestrator agent's instance-name segment for a session.
+
+  Returns `cc_orchestrator-<session_discriminator>` — the historical
+  shape used by every cc-orchestrated session. Preserved so the
+  `/sessions` UI health panel can look up the orchestrator without
+  re-reading the session's slice.
+  """
+  @spec derive_orchestrator_instance_name(URI.t()) :: String.t()
+  def derive_orchestrator_instance_name(%URI{} = session_uri) do
     # Preserve the historical "cc_orchestrator-<session_name>" shape.
     "cc_orchestrator-#{session_discriminator(session_uri)}"
   end

@@ -532,6 +532,9 @@ defmodule EzagentDomainUi.Primitives do
   defp heroicon_for("check"), do: "check"
   defp heroicon_for("envelope"), do: "envelope"
   defp heroicon_for("paper-airplane"), do: "paper-airplane"
+  # 2026-05-26 — orchestrator health card's Restart button uses a
+  # rotating arrow icon. Maps to Heroicons `arrow-path` (24/outline).
+  defp heroicon_for("refresh"), do: "arrow-path"
   defp heroicon_for(_), do: nil
 
   defp text_fallback("dot"), do: "•"
