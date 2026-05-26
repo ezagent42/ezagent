@@ -58,35 +58,50 @@ defmodule EzagentPluginLiveview.AdminDashboardLive do
     _ -> :unavailable
   end
 
+  # Bug 1 fix (Allen 2026-05-26) — count-vs-list collision.
+  #
+  # `:workspaces` is assigned by `EzagentWeb.LiveAuth.require_entity_mount/2`
+  # as the LIST of visible workspaces (`[%{id, name, uri, ...}]`) for the
+  # `AppShell` workspace-dropdown component. Previously this overview
+  # rebound `:workspaces` to the per-perspective COUNT (an integer), which
+  # then propagated to `AppShell.app_shell` → `outer_command_bar` →
+  # `workspace_dropdown`'s `<%= for ws <- @workspaces do %>` and crashed
+  # with `Protocol.UndefinedError: protocol Enumerable not implemented
+  # for Integer.`
+  #
+  # KPI count assigns are renamed `_count` to avoid shadowing the list
+  # assigns that the universal chrome reads. `:identities` likewise
+  # could collide with future identity-list assigns — same suffix
+  # treatment.
   defp assign_overview(socket) do
     kinds = Ezagent.KindRegistry.list_all()
 
-    sessions =
+    sessions_count =
       Enum.count(kinds, fn {uri_str, _pid} ->
         String.starts_with?(uri_str, "session://")
       end)
 
-    workspaces =
+    workspaces_count =
       Enum.count(kinds, fn {uri_str, _pid} ->
         String.starts_with?(uri_str, "workspace://")
       end)
 
-    identities =
+    identities_count =
       Enum.count(kinds, fn {uri_str, _pid} ->
         String.starts_with?(uri_str, "entity://")
       end)
 
-    agents =
+    agents_count =
       Enum.count(kinds, fn {uri_str, _pid} ->
         String.starts_with?(uri_str, "entity://agent/")
       end)
 
     socket
     |> assign(:kinds_total, length(kinds))
-    |> assign(:sessions, sessions)
-    |> assign(:workspaces, workspaces)
-    |> assign(:identities, identities)
-    |> assign(:agents, agents)
+    |> assign(:sessions_count, sessions_count)
+    |> assign(:workspaces_count, workspaces_count)
+    |> assign(:identities_count, identities_count)
+    |> assign(:agents_count, agents_count)
   end
 
   @impl true
@@ -136,9 +151,9 @@ defmodule EzagentPluginLiveview.AdminDashboardLive do
                 ease-out curve. Falls back gracefully to the static
                 number if JS doesn't run. --%>
           <div class="grid grid-cols-4 gap-3 mb-6 mt-4">
-            <.card><.kpi label={gettext("Sessions")} value={@sessions} id="kpi-sessions" /></.card>
-            <.card><.kpi label={gettext("Workspaces")} value={@workspaces} id="kpi-workspaces" /></.card>
-            <.card><.kpi label={gettext("Identities")} value={@identities} id="kpi-identities" /></.card>
+            <.card><.kpi label={gettext("Sessions")} value={@sessions_count} id="kpi-sessions" /></.card>
+            <.card><.kpi label={gettext("Workspaces")} value={@workspaces_count} id="kpi-workspaces" /></.card>
+            <.card><.kpi label={gettext("Identities")} value={@identities_count} id="kpi-identities" /></.card>
             <.card><.kpi label={gettext("Kinds alive")} value={@kinds_total} id="kpi-kinds" /></.card>
           </div>
 
