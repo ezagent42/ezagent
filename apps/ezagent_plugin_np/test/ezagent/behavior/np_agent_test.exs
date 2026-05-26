@@ -182,5 +182,21 @@ defmodule Ezagent.Behavior.NpAgentTest do
                  ctx
                )
     end
+
+    test "handle_kind_message/3 ignores phase events whose agent_uri ≠ ctx.self_uri (codex MED-2)" do
+      # Topic-collision defense: a stray publisher delivering to
+      # this Kind's mailbox must not mutate its slice.
+      self_uri = URI.parse("entity://agent/team-alpha/np_self")
+      foreign_uri = URI.parse("entity://agent/team-alpha/np_other")
+      slice = NpAgent.init_slice(%{uri: self_uri})
+      ctx = %{self_uri: self_uri}
+
+      assert :ignore =
+               NpAgent.handle_kind_message(
+                 {:pty_phase, foreign_uri, :dead, %{}},
+                 slice,
+                 ctx
+               )
+    end
   end
 end

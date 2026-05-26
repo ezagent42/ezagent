@@ -93,7 +93,7 @@ defmodule EzagentPluginLiveview.TerminalLive do
           # phase from the live PtyServer at mount so the badge has
           # a value to render BEFORE the first PubSub event arrives.
           # The PubSub subscribe above keeps it updated thereafter.
-          |> assign(:pty_phase, Ezagent.Domain.Pty.Server.phase(agent_uri))
+          |> assign(:pty_phase, Ezagent.Domain.Agent.subprocess_phase(agent_uri))
           |> assign(:refresh_seconds, div(@refresh_ms, 1000))
 
         # ttyd-style initial buffer replay — only meaningful when the
@@ -146,7 +146,7 @@ defmodule EzagentPluginLiveview.TerminalLive do
      # subscriber transient disconnect, PubSub down, BEAM re-link).
      # The 2s poll is the belt-and-suspenders companion to the
      # PubSub event subscription set up in mount/3.
-     |> assign(:pty_phase, Ezagent.Domain.Pty.Server.phase(agent_uri))}
+     |> assign(:pty_phase, Ezagent.Domain.Agent.subprocess_phase(agent_uri))}
   end
 
   # PTY chunk fan-out from the Server's PubSub broadcast — via the

@@ -434,23 +434,40 @@ defmodule Ezagent.Behavior.NpAgent do
   # `:pty_phase` so the slice carries the np-flavor variant. Optional
   # hook — probed via `function_exported?/3`, NOT a declared
   # `@behaviour` callback.
-  def handle_kind_message({:pty_phase, _agent_uri, phase, meta}, slice, ctx)
+  def handle_kind_message({:pty_phase, %URI{} = agent_uri, phase, meta}, slice, ctx)
       when phase in [:starting, :running, :dead] do
     self_uri = Map.get(ctx, :self_uri)
 
-    :telemetry.execute(
-      [:ezagent, :np_agent, :python_phase],
-      %{at: Map.get(meta, :at, System.os_time(:millisecond))},
-      %{
-        agent_uri: self_uri && URI.to_string(self_uri),
-        phase: phase,
-        os_pid: Map.get(meta, :os_pid),
-        reason: Map.get(meta, :reason)
-      }
-    )
+    # codex round-1 MED-2: PubSub topics are not an authentication
+    # boundary. Verify identity BEFORE mutating the slice — drop
+    # mismatches with a warning log. Symmetric to
+    # `Ezagent.Behavior.Sandbox.handle_kind_message/3`.
+    if uris_equal?(agent_uri, self_uri) do
+      :telemetry.execute(
+        [:ezagent, :np_agent, :python_phase],
+        %{at: Map.get(meta, :at, System.os_time(:millisecond))},
+        %{
+          agent_uri: URI.to_string(agent_uri),
+          phase: phase,
+          os_pid: Map.get(meta, :os_pid),
+          reason: Map.get(meta, :reason)
+        }
+      )
 
-    {:ok, Map.put(slice, :python_phase, phase)}
+      {:ok, Map.put(slice, :python_phase, phase)}
+    else
+      Logger.warning(
+        "Ezagent.Behavior.NpAgent.handle_kind_message: pty_phase " <>
+          "agent_uri=#{URI.to_string(agent_uri)} != self_uri=" <>
+          "#{inspect(self_uri)}; dropping (topic-collision defense)"
+      )
+
+      :ignore
+    end
   end
 
   def handle_kind_message(_other, _slice, _ctx), do: :ignore
+
+  defp uris_equal?(%URI{} = a, %URI{} = b), do: URI.to_string(a) == URI.to_string(b)
+  defp uris_equal?(_, _), do: false
 end

@@ -423,5 +423,23 @@ defmodule Ezagent.Behavior.SandboxTest do
                  ctx
                )
     end
+
+    test "ignores phase events whose agent_uri ≠ ctx.self_uri (codex MED-2 topic-collision defense)" do
+      # PubSub topics are not an authentication boundary; a stray
+      # publisher or topic collision could deliver a `{:pty_phase, X, ...}`
+      # to a Kind whose self_uri is Y. Verify identity BEFORE
+      # mutating the slice.
+      slice = %{pty_phase: :running}
+      self_uri = URI.new!("entity://agent/system/cc_self")
+      foreign_uri = URI.new!("entity://agent/system/cc_other")
+      ctx = %{self_uri: self_uri}
+
+      assert :ignore =
+               Sandbox.handle_kind_message(
+                 {:pty_phase, foreign_uri, :dead, %{}},
+                 slice,
+                 ctx
+               )
+    end
   end
 end

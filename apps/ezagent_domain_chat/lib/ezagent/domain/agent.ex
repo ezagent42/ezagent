@@ -130,6 +130,55 @@ defmodule Ezagent.Domain.Agent do
     %{phase: :alive, flavor: other_flavor, detail: %{}}
   end
 
+  # ── subprocess phase facade (PTY-phase-state-machine 2026-05-26
+  #    follow-up b codex MED-1 fix) ─────────────────────────────────
+
+  @doc """
+  Flavor-aware accessor for the subprocess `:starting | :running |
+  :dead` phase introduced in PR-b.
+
+  Routes to:
+
+    * cc → `Ezagent.Domain.Pty.Server.phase/1`
+    * np → `Ezagent.Domain.Python.Server.phase/1`
+    * other → `:dead` (no subprocess concept)
+
+  Used by `EzagentPluginLiveview.TerminalLive` mount + refresh poll so
+  the badge stays consistent across flavors. Without this facade the
+  LV's 2s refresh would clobber the np `:python_phase` broadcast with
+  a stale cc-only `Pty.Server.phase/1` lookup (codex round-1 MED-1).
+
+  This is the operator-visibility companion to `lifecycle_status/1`:
+  the latter is the Kind's lifecycle (`:not_found | :registered |
+  :alive`), the former is the subprocess's three-state runtime phase.
+  """
+  @spec subprocess_phase(URI.t()) :: :starting | :running | :dead
+  def subprocess_phase(%URI{} = agent_uri) do
+    case derive_flavor(agent_uri) do
+      "cc" ->
+        if Code.ensure_loaded?(Ezagent.Domain.Pty.Server) do
+          Ezagent.Domain.Pty.Server.phase(agent_uri)
+        else
+          :dead
+        end
+
+      "np" ->
+        if Code.ensure_loaded?(Ezagent.Domain.Python.Server) do
+          Ezagent.Domain.Python.Server.phase(agent_uri)
+        else
+          :dead
+        end
+
+      _other ->
+        # Echo / curl / unknown flavor — no subprocess concept; the
+        # LV badge falls through to "Unknown" (test handle / non-pty
+        # agent). The PubSub subscription is harmless — the topic
+        # never receives a broadcast because no Server publishes
+        # on a non-cc/non-np agent URI.
+        :dead
+    end
+  end
+
   # ── flavor derivation ────────────────────────────────────────────
 
   # Agent URIs are `entity://agent/<workspace>/<flavor>_<name>` per
