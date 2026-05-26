@@ -151,6 +151,74 @@ defmodule EzagentPluginLiveview.AdminLiveMentionParseTest do
     end
   end
 
+  describe "parse_mentions/2 — collision + unicode boundary (codex 2026-05-26 MEDIUMs)" do
+    test "URI-segment match wins over display_name collision" do
+      # Two members share display_name "admin"; the agent's URI segment
+      # is `evil`, the user's URI segment is `admin`. Typing `@admin`
+      # MUST resolve to the user (URI segment), not the agent.
+      members = [
+        %{"uri" => "entity://agent/system/evil", "display_name" => "admin"},
+        %{"uri" => "entity://user/system/admin", "display_name" => "admin"}
+      ]
+
+      assert [uri] = AdminLive.parse_mentions("@admin please check", members)
+      assert URI.to_string(uri) == "entity://user/system/admin"
+    end
+
+    test "ambiguous bare-name with multiple URI-segment matches drops silently" do
+      # Two distinct URIs share the same path segment `admin`. The
+      # parser cannot disambiguate; drop rather than guess.
+      members = [
+        %{"uri" => "entity://user/system/admin", "display_name" => "Alice"},
+        %{"uri" => "entity://user/team-alpha/admin", "display_name" => "Bob"}
+      ]
+
+      assert [] = AdminLive.parse_mentions("@admin", members)
+    end
+
+    test "ambiguous display_name with no URI-segment match drops silently" do
+      # No URI-segment matches `admin`; both members carry it as
+      # display_name. Same drop rule.
+      members = [
+        %{"uri" => "entity://user/system/u1", "display_name" => "admin"},
+        %{"uri" => "entity://user/system/u2", "display_name" => "admin"}
+      ]
+
+      assert [] = AdminLive.parse_mentions("@admin", members)
+    end
+
+    test "duplicate member rows with SAME URI are not ambiguous (uniq)" do
+      # A legitimate duplicate (e.g. join races / list re-fetches)
+      # collapses to one URI — NOT counted as ambiguous.
+      members = [
+        %{"uri" => @cc_agent_uri, "display_name" => "cc_e2e_final"},
+        %{"uri" => @cc_agent_uri, "display_name" => "cc_e2e_final"}
+      ]
+
+      assert [uri] = AdminLive.parse_mentions("@cc_e2e_final", members)
+      assert URI.to_string(uri) == @cc_agent_uri
+    end
+
+    test "CJK character before @ does NOT count as start-of-mention boundary" do
+      # Codex MEDIUM — the previous `(?<![\w])` lookbehind was ASCII;
+      # `中文@cc_e2e_final` slipped through. The Unicode-aware
+      # `(?<![\p{L}\p{N}_])` blocks it (parity with Latin
+      # `foo@cc_e2e_final` which has always been blocked).
+      assert [] = AdminLive.parse_mentions("中文@cc_e2e_final", members())
+    end
+
+    test "Hangul character before @ does NOT count as start-of-mention boundary" do
+      assert [] = AdminLive.parse_mentions("한글@cc_e2e_final", members())
+    end
+
+    test "punctuation / space before @ still counts as mention boundary" do
+      assert [_] = AdminLive.parse_mentions("hello @cc_e2e_final", members())
+      assert [_] = AdminLive.parse_mentions("(@cc_e2e_final)", members())
+      assert [_] = AdminLive.parse_mentions("。@cc_e2e_final", members())
+      assert [_] = AdminLive.parse_mentions("，@cc_e2e_final", members())
+    end
+  end
+
   describe "parse_mentions/2 — defensive shapes" do
     test "non-binary text returns empty" do
       assert [] = AdminLive.parse_mentions(nil, members())

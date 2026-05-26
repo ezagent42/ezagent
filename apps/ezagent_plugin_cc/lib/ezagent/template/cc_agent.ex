@@ -440,7 +440,17 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   # `apps/ezagent_plugin_cc/test/ezagent/template/cc_agent_spawn_invariant_test.exs`.
   @doc false
   def build_pty_params(agent_uri, cwd, tmpl) do
-    case Mix.env() do
+    build_pty_params_for_env(agent_uri, cwd, tmpl, Mix.env())
+  end
+
+  # Codex 2026-05-26 MEDIUM — splitting the env axis out lets the
+  # invariant test pass `:dev` directly to assert the production Map
+  # shape (key name `:cmd_override` is the Domain.Pty.Server boundary
+  # contract — a future refactor that renames it would silently leave
+  # the Server without a child program → no claude → no bridge).
+  @doc false
+  def build_pty_params_for_env(agent_uri, cwd, tmpl, env) do
+    case env do
       :test ->
         {:ok, %{cwd: cwd, test_mode: true}}
 

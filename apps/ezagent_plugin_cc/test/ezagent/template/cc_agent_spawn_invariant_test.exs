@@ -219,38 +219,44 @@ defmodule Ezagent.PluginCc.Template.CcAgentSpawnInvariantTest do
     end
   end
 
-  describe "build_pty_params/3 — Domain.Pty Server boundary invariants" do
-    test "non-test env params carry :cmd_override (the load-bearing field)" do
-      # Force a non-test branch by calling build_claude_cmd directly
-      # via the non-:test path. build_pty_params/3 in :test env
-      # short-circuits — we exercise the dispatch shape that production
-      # actually uses: when the test harness lifts the short-circuit,
-      # :cmd_override MUST appear.
-      #
-      # We use `build_claude_cmd/3` to bypass the Mix.env() guard and
-      # assert the same params shape `build_pty_params/3` would produce
-      # in `:dev` / `:prod`: a Map with both `:cmd_override` (argv) and
-      # `:cmd_env` (token+config).
-      tmpl = base_tmpl()
-
-      assert {:ok, {argv, env}} = CcAgent.build_claude_cmd(@agent_uri, @cwd, tmpl)
-
-      # The Domain.Pty.start/2 contract requires this exact key
-      # (`:cmd_override`) — see `Ezagent.Domain.Pty.start/2` docstring.
-      # A future refactor that renames it (e.g. to `:argv`) would
-      # silently leave `cmd_override = nil` in the Server, raising
+  describe "build_pty_params_for_env/4 — Domain.Pty Server boundary invariants" do
+    test ":dev env params carry :cmd_override + :cmd_env (production shape)" do
+      # Codex 2026-05-26 MEDIUM — exercise the NON-TEST branch directly
+      # via the env-injected helper. The Domain.Pty.start/2 contract
+      # requires the exact `:cmd_override` key — see
+      # `Ezagent.Domain.Pty.start/2` docstring. A future refactor
+      # that renames it (e.g. to `:argv`) would silently leave
+      # `cmd_override = nil` in the Server, raising
       # `build_exec_cmd(nil, _)` at runtime → no claude → no bridge.
       # The Server's `init/1` reads `Map.get(args, :cmd_override)`;
-      # this test pins the key.
-      params_shape = %{cwd: @cwd, cmd_override: argv, cmd_env: env}
+      # this test pins the key against the REAL production code path.
+      tmpl = base_tmpl()
 
-      assert Map.has_key?(params_shape, :cmd_override)
-      assert Map.has_key?(params_shape, :cmd_env)
-      assert Map.has_key?(params_shape, :cwd)
+      assert {:ok, params} = CcAgent.build_pty_params_for_env(@agent_uri, @cwd, tmpl, :dev)
 
-      assert is_list(params_shape.cmd_override),
+      assert Map.has_key?(params, :cmd_override),
+             "Domain.Pty.start/2 contract requires :cmd_override — got keys: #{inspect(Map.keys(params))}"
+
+      assert Map.has_key?(params, :cmd_env)
+      assert Map.has_key?(params, :cwd)
+      refute Map.has_key?(params, :test_mode), ":dev branch must NOT return test_mode: true"
+
+      assert is_list(params.cmd_override),
              "Domain.Pty.Server expects cmd_override as an argv LIST (not a shell string) — " <>
                "the cc plugin must always use list form (codex HIGH-2)"
+
+      [cmd | _] = params.cmd_override
+      assert Path.type(cmd) == :absolute
+    end
+
+    test ":prod env params carry :cmd_override (same shape as :dev)" do
+      tmpl = base_tmpl()
+
+      assert {:ok, params} = CcAgent.build_pty_params_for_env(@agent_uri, @cwd, tmpl, :prod)
+
+      assert Map.has_key?(params, :cmd_override)
+      assert is_list(params.cmd_override)
+      refute Map.has_key?(params, :test_mode)
     end
 
     test ":test env returns test_mode params (regression guard for prod leakage)" do
@@ -258,15 +264,63 @@ defmodule Ezagent.PluginCc.Template.CcAgentSpawnInvariantTest do
       # "test_mode short-circuit vs. real claude argv". A bug that
       # accidentally returned `test_mode: true` in `:dev` / `:prod`
       # would mean PtyServer NEVER spawns claude, exactly the symptom
-      # Allen worried about. Pin the test-env behavior so the inverse
-      # is what we expect in prod (the test harness's own
-      # `Mix.env() == :test` check is what we're validating).
+      # Allen worried about. Pin both directions: :test short-circuits;
+      # :dev / :prod must NOT (above).
       tmpl = base_tmpl()
 
-      assert Mix.env() == :test, "this test must run under :test env"
-
       assert {:ok, %{test_mode: true, cwd: @cwd}} =
-               CcAgent.build_pty_params(@agent_uri, @cwd, tmpl)
+               CcAgent.build_pty_params_for_env(@agent_uri, @cwd, tmpl, :test)
+    end
+
+    test "build_pty_params/3 delegates to build_pty_params_for_env/4 with Mix.env()" do
+      # Sanity that the 3-arg public alias matches the 4-arg form for
+      # the current env. Under :test that means both return test_mode
+      # params; under :dev / :prod they'd return the cmd_override shape.
+      tmpl = base_tmpl()
+
+      assert CcAgent.build_pty_params(@agent_uri, @cwd, tmpl) ==
+               CcAgent.build_pty_params_for_env(@agent_uri, @cwd, tmpl, Mix.env())
+    end
+  end
+
+  describe "build_claude_cmd/3 — last-wins --settings invariant with operator override" do
+    test "mandatory plugin --settings is the LAST --settings VALUE (not just last argv)", %{
+      mock_claude_path: _mock_path
+    } do
+      # Codex 2026-05-26 LOW — the base test only checks "exactly one
+      # --settings" in argv. The real invariant is "the LAST --settings
+      # value is the mandatory plugin path" (claude's --settings is
+      # last-wins; an operator override appears EARLIER in argv, the
+      # plugin's safety override appears LATER, so the safety wins).
+      # With operator_settings_path set we should see TWO --settings
+      # flags; assert the LAST value is the mandatory plugin path.
+      operator_settings = Path.join(System.tmp_dir!(), "operator-settings-#{System.unique_integer([:positive])}.json")
+      File.write!(operator_settings, "{}\n")
+      on_exit(fn -> File.rm(operator_settings) end)
+
+      tmpl =
+        base_tmpl()
+        |> Map.put("operator_settings_path", operator_settings)
+
+      assert {:ok, {argv, _env}} = CcAgent.build_claude_cmd(@agent_uri, @cwd, tmpl)
+
+      # Two --settings flags in this case.
+      assert Enum.count(argv, &(&1 == "--settings")) == 2
+
+      # Collect values immediately following each --settings flag,
+      # then take the LAST. That MUST be the mandatory plugin path
+      # (claude-pty-settings.json under :code.priv_dir(:ezagent_plugin_cc)).
+      values = settings_values(argv)
+      assert length(values) == 2
+
+      last_value = List.last(values)
+
+      assert String.ends_with?(last_value, "claude-pty-settings.json"),
+             "the LAST --settings value must be the mandatory plugin path (last-wins safety) — " <>
+               "got #{inspect(values)}"
+
+      # The operator value appears first (gets overridden).
+      assert List.first(values) == operator_settings
     end
   end
 
@@ -285,5 +339,16 @@ defmodule Ezagent.PluginCc.Template.CcAgentSpawnInvariantTest do
       nil -> false
       i -> Enum.at(list, i + 1) == b
     end
+  end
+
+  # Collect every value that follows a `--settings` flag in argv.
+  # Used by the last-wins invariant test.
+  defp settings_values(argv) do
+    argv
+    |> Enum.with_index()
+    |> Enum.flat_map(fn
+      {"--settings", i} -> [Enum.at(argv, i + 1)]
+      _ -> []
+    end)
   end
 end
