@@ -34,7 +34,7 @@ defmodule EzagentCore.Invariants.NoDefaultWorkspaceRefsTest do
   """
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Repo
+  alias EzagentCore.Repo
 
   # `{table, [columns]}` — every URI-shaped column. Add new entries
   # here when a future migration introduces additional URI columns.
