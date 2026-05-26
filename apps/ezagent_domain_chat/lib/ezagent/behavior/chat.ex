@@ -348,6 +348,19 @@ defmodule Ezagent.Behavior.Chat do
             workspace_uri: workspace_uri
           )
 
+        # Allen 2026-05-26: surface "mention dropped — target not in
+        # session" as a notification to the sender. Without this, the
+        # operator types `@curl_test_alpha hello` and gets no feedback
+        # if curl_test_alpha is not a session member — silent drop.
+        #
+        # Discriminator: `msg.mentions` is already filtered by the
+        # mention parser to URIs that resolve to real entities. The
+        # rejected-from-recipients set tells us which resolved entities
+        # the Resolver dropped (via `valid_member?` membership filter).
+        # Random `@text` (no URI match) never enters `msg.mentions`
+        # and is silent — exactly what users want for casual @ usage.
+        notify_dropped_mentions(msg, recipients, session_uri, ctx)
+
         for recipient <- recipients do
           if recipient.scheme == "session" do
             dispatch_cross_session(recipient, msg)
@@ -936,6 +949,83 @@ defmodule Ezagent.Behavior.Chat do
   def user_events_topic(uri_str) when is_binary(uri_str), do: "esr:user:#{uri_str}:events"
 
   # --- Internals ---------------------------------------------------------
+
+  # Allen 2026-05-26: detect mentions that didn't make it to recipients
+  # (because the mentioned URI isn't a session member) and emit a
+  # `:mention_failed` notification to the sender. This closes the
+  # silent-drop UX gap where `@curl_test_alpha hello` produced no
+  # response and no error when curl_test_alpha was not a session
+  # member.
+  #
+  # The discriminator is "the mention parser resolved it to a real
+  # entity but the Resolver's `valid_member?` filter dropped it" — i.e.
+  # `msg.mentions ∖ recipients`. Casual `@text` (no Kind URI match)
+  # never enters `msg.mentions` and is silent. Cross-workspace and
+  # cross-session targets also surface here (`valid_member?` rejects).
+  defp notify_dropped_mentions(%Message{} = msg, recipients, session_uri, ctx) do
+    mention_uris = msg.mentions || []
+
+    if mention_uris == [] do
+      :ok
+    else
+      recipient_strs = MapSet.new(recipients, &URI.to_string/1)
+
+      dropped =
+        mention_uris
+        |> Enum.map(&to_uri_struct/1)
+        |> Enum.reject(&is_nil/1)
+        |> Enum.reject(fn uri -> MapSet.member?(recipient_strs, URI.to_string(uri)) end)
+
+      sender_uri = msg.sender
+
+      _ = ctx
+
+      Enum.each(dropped, fn dropped_uri ->
+        try do
+          # System-level emit — the session Kind is delivering an
+          # advisory UX notification about the sender's own message
+          # processing; no caller-cap gate needed (default ctx
+          # `%{caps: :system}` bypasses `:notify` cap check, which
+          # would otherwise require the sender to hold a self-notify
+          # cap — too punitive for advisory UX).
+          Ezagent.Notifications.notify(
+            sender_uri,
+            %{
+              type: :mention_failed,
+              body: %{
+                message: "Your @-mention was not delivered (target is not a session member).",
+                mentioned_uri: URI.to_string(dropped_uri),
+                session_uri: URI.to_string(session_uri)
+              },
+              source: __MODULE__
+            }
+          )
+        rescue
+          # Notifier failures are non-fatal — they're advisory UX. The
+          # send itself already succeeded for the resolved recipients.
+          e ->
+            require Logger
+
+            Logger.warning(
+              "Ezagent.Behavior.Chat: notify mention_failed raised for " <>
+                "#{URI.to_string(dropped_uri)}: #{Exception.message(e)}"
+            )
+        end
+      end)
+
+      :ok
+    end
+  end
+
+  defp to_uri_struct(%URI{} = uri), do: uri
+
+  defp to_uri_struct(s) when is_binary(s) do
+    URI.parse(s)
+  rescue
+    _ -> nil
+  end
+
+  defp to_uri_struct(_), do: nil
 
   defp dispatch_cross_session(target_session_uri, %Message{} = msg) do
     # Recursively dispatch chat/send on the target session — that

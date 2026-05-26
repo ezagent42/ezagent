@@ -1,0 +1,143 @@
+defmodule Ezagent.Behavior.Chat.MentionFailedTest do
+  @moduledoc """
+  Allen 2026-05-26 directive — `chat.send` MUST surface a
+  `:mention_failed` notification to the sender when an @-mention's
+  resolved URI is not a session member.
+
+  3-tuple classifier:
+
+    - resolved + in session    → normal dispatch (existing path)
+    - resolved + not in session → emit notification.emit:mention_failed
+    - unresolved (casual @text) → silent (existing path; never enters
+      `msg.mentions` because the mention parser filters)
+
+  The discriminator is "did `msg.mentions` contain a URI but `recipients`
+  did not?". The mention parser already filters non-Kind tokens, so the
+  test only exercises the URI side.
+  """
+
+  use EzagentCore.DataCase, async: false
+
+  alias Ezagent.Capability
+  alias Ezagent.Invocation
+  alias Ezagent.Message
+
+  setup do
+    # Subscribe to the sender's notification topic so we can assert.
+    sender_uri = URI.parse("entity://user/system/test-sender")
+    session_uri = URI.parse("session://default/system/test-mention-fail")
+    member_uri = URI.parse("entity://agent/system/echo_member-agent")
+    non_member_uri = URI.parse("entity://agent/system/echo_non-member-agent")
+
+    Phoenix.PubSub.subscribe(
+      EzagentCore.PubSub,
+      Ezagent.Notifications.topic(sender_uri)
+    )
+
+    {:ok, sender: sender_uri, session: session_uri, member: member_uri, non_member: non_member_uri}
+  end
+
+  describe "notify_dropped_mentions/4 via :send" do
+    test "emits :mention_failed when mention resolves but isn't a session member", ctx do
+      # Spawn the sender + non_member so the URIs are known to the system.
+      {:ok, _} = Ezagent.SpawnRegistry.spawn(ctx.sender)
+      {:ok, _} = Ezagent.SpawnRegistry.spawn(ctx.non_member)
+
+      # Spawn session with ONLY the sender as a member (non_member is
+      # the @-target that's NOT a member — that's the case we want).
+      {:ok, _} = Ezagent.SpawnRegistry.spawn(ctx.session)
+      :ok = join_session(ctx.session, ctx.sender, ctx.sender)
+
+      msg = %Message{
+        id: "test-mf-#{System.unique_integer([:positive])}",
+        session_uri: ctx.session,
+        sender: ctx.sender,
+        body: %{"text" => "@echo_non-member-agent hi"},
+        mentions: [ctx.non_member],
+        inserted_at: DateTime.utc_now()
+      }
+
+      send_message(ctx.session, msg, ctx.sender)
+
+      # Wait briefly for async notification.
+      assert_receive {:notification, _target_uri, %{type: :mention_failed} = note}, 2_000
+      assert note.body.mentioned_uri == URI.to_string(ctx.non_member)
+      assert note.body.session_uri == URI.to_string(ctx.session)
+    end
+
+    test "does NOT emit when mention resolves AND is a session member", ctx do
+      {:ok, _} = Ezagent.SpawnRegistry.spawn(ctx.sender)
+      {:ok, _} = Ezagent.SpawnRegistry.spawn(ctx.member)
+      {:ok, _} = Ezagent.SpawnRegistry.spawn(ctx.session)
+      :ok = join_session(ctx.session, ctx.member, ctx.sender)
+      :ok = join_session(ctx.session, ctx.sender, ctx.sender)
+
+      msg = %Message{
+        id: "test-mf-ok-#{System.unique_integer([:positive])}",
+        session_uri: ctx.session,
+        sender: ctx.sender,
+        body: %{"text" => "@echo_member-agent hi"},
+        mentions: [ctx.member],
+        inserted_at: DateTime.utc_now()
+      }
+
+      send_message(ctx.session, msg, ctx.sender)
+      refute_receive {:notification, _, %{type: :mention_failed}}, 500
+    end
+
+    test "empty mentions list is silent (casual @text case)", ctx do
+      {:ok, _} = Ezagent.SpawnRegistry.spawn(ctx.sender)
+      {:ok, _} = Ezagent.SpawnRegistry.spawn(ctx.session)
+      :ok = join_session(ctx.session, ctx.sender, ctx.sender)
+
+      msg = %Message{
+        id: "test-mf-empty-#{System.unique_integer([:positive])}",
+        session_uri: ctx.session,
+        sender: ctx.sender,
+        body: %{"text" => "casual @whatever talk"},
+        mentions: [],
+        inserted_at: DateTime.utc_now()
+      }
+
+      send_message(ctx.session, msg, ctx.sender)
+      refute_receive {:notification, _, %{type: :mention_failed}}, 500
+    end
+  end
+
+  defp join_session(session_uri, member_uri, caller_uri) do
+    caps = [Capability.cap(:any, Ezagent.Behavior.Chat, :join)]
+
+    inv = %Invocation{
+      target: URI.parse("#{URI.to_string(session_uri)}?action=chat.join"),
+      mode: :call,
+      args: %{member: member_uri},
+      ctx: %{caller: caller_uri, caps: caps, deadline_ms: 5_000}
+    }
+
+    case Invocation.dispatch(inv) do
+      :ok -> :ok
+      {:ok, _} -> :ok
+      other -> raise "join_session failed: #{inspect(other)}"
+    end
+  end
+
+  defp send_message(session_uri, msg, caller_uri) do
+    caps = [
+      Capability.cap(:any, Ezagent.Behavior.Chat, :send),
+      Capability.cap(:any, Ezagent.Behavior.Chat, :receive)
+    ]
+
+    inv = %Invocation{
+      target: URI.parse("#{URI.to_string(session_uri)}?action=chat.send"),
+      mode: :call,
+      args: %{message: msg},
+      ctx: %{caller: caller_uri, caps: caps, deadline_ms: 5_000}
+    }
+
+    case Invocation.dispatch(inv) do
+      {:ok, _} -> :ok
+      :ok -> :ok
+      other -> raise "send_message failed: #{inspect(other)}"
+    end
+  end
+end
