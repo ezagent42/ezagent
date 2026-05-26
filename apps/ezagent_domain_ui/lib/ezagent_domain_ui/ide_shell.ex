@@ -292,7 +292,17 @@ defmodule EzagentDomainUi.IdeShell do
       <%!-- Phase 8c follow-up (Allen 2026-05-20) — phx-click-away
             dismisses the menu when the user clicks anywhere outside.
             JS.hide mirrors the open transition reversed; popovers
-            without this stay sticky after losing focus. --%>
+            without this stay sticky after losing focus.
+
+            z-50 (not z-40): `WorkspaceShell.workspace_shell/1` paints
+            the left resource panel and right sidebar at z-40 (and the
+            activity bar at z-auto). Same-z + later-in-DOM siblings
+            paint above the dropdown → the workspace menu opened BEHIND
+            the resource panel on pages like /identities, /plugins,
+            /sessions. Bumping to z-50 (same tier as the avatar dropdown
+            and command palette) clears all z-40 chrome. Symmetric fix
+            to the 2026-05-22 avatar-menu z-50 bump (see `avatar_menu/1`
+            comment). Allen 2026-05-26. --%>
       <div
         id={@menu_id}
         phx-click-away={
@@ -300,7 +310,7 @@ defmodule EzagentDomainUi.IdeShell do
             transition: {"ease-in duration-100", "opacity-100 translate-y-0", "opacity-0 -translate-y-1"}
           )
         }
-        class="hidden absolute left-0 top-full mt-1 w-64 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-md shadow-lg z-40 transition transform"
+        class="hidden absolute left-0 top-full mt-1 w-64 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-md shadow-lg z-50 transition transform"
       >
         <div class="px-3 py-2 border-b border-zinc-200 dark:border-zinc-800">
           <div class="text-[10px] uppercase tracking-wide text-zinc-500">{gettext("Workspaces")}</div>
@@ -533,13 +543,21 @@ defmodule EzagentDomainUi.IdeShell do
           >
             <.icon name="moon" size="xs" /> {gettext("Dark theme")}
           </button>
+          <%!-- "System theme" (not "System"): the prior label was the
+                ambiguous bare word "系统" in zh_CN, which Allen
+                reported (2026-05-26) read as a navigation entry to an
+                "admin/system area" — when in fact it picks the OS-
+                preferred theme. Parallel naming to "Light theme" /
+                "Dark theme" / "浅色主题" / "深色主题" eliminates the
+                ambiguity. The phx-click handler was always wired
+                correctly; the bug was purely the label. --%>
           <button
             type="button"
             data-phx-theme="system"
             phx-click={JS.dispatch("phx:set-theme")}
             class="w-full text-left px-3 py-1.5 text-xs text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center gap-2"
           >
-            <.icon name="settings" size="xs" /> {gettext("System")}
+            <.icon name="settings" size="xs" /> {gettext("System theme")}
           </button>
         </div>
         <div class="border-t border-zinc-200 dark:border-zinc-800 py-1">

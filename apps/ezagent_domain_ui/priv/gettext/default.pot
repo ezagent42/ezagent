@@ -243,10 +243,14 @@ msgstr ""
 msgid "Switch workspace"
 msgstr ""
 
-#: lib/ezagent_domain_ui/ide_shell.ex:165
-#: lib/ezagent_domain_ui/ide_shell.ex:536
+#: lib/ezagent_domain_ui/ide_shell.ex:172
 #, elixir-autogen, elixir-format
 msgid "System"
+msgstr ""
+
+#: lib/ezagent_domain_ui/ide_shell.ex:553
+#, elixir-autogen, elixir-format
+msgid "System theme"
 msgstr ""
 
 #: lib/ezagent_domain_ui/pty/terminal_view.ex:39
