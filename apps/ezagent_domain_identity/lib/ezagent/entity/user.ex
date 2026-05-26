@@ -38,6 +38,80 @@ defmodule Ezagent.Entity.User do
   @spec admin_uri() :: URI.t()
   def admin_uri, do: @admin_uri
 
+  @doc """
+  Bootstrap caps the User Kind for `uri` should be spawned with.
+
+  Single chokepoint for the `entity://user/*` SpawnRegistry handler
+  (registered both in `EzagentDomainIdentity.Application` and — for
+  stacks loading chat — overwritten in
+  `EzagentDomainChat.Application`). Both fns delegate here so the
+  policy stays in ONE place.
+
+  Three cases:
+
+  1. **Admin URI** (`entity://user/system/admin`) — bootstrap caps
+     from the closed catalog at `Ezagent.SystemPrincipal.caps("system://bootstrap")`
+     (the `[:any, :any, :any, :any]` wildcard structural invariant
+     plus catalog rows). Same value across boots; admin has no
+     `users.caps_json` row at the time of the very first boot before
+     `ensure_admin_user/0` provisions it.
+
+  2. **Non-admin user with a `users.caps_json` row** — caps_json
+     contents (which include `User.default_caps(workspace)` ++ any
+     caller-supplied caps from `mix ezagent.user.create --caps ...`
+     or `Behavior.WorkspaceUserAdmin.create_user`). This is the fix
+     for the wildcard-cap-fix regression: pre-fix the spawn fn
+     defaulted to `MapSet.new()` so wildcard caps written to
+     caps_json never reached the slice — snapshot then froze that
+     empty state, denying dispatch step 5.5 forever.
+
+  3. **Non-admin user with NO caps_json row** — empty MapSet. This
+     covers test fixtures that demand-spawn a URI without a backing
+     DB row, and the brief boot-order window before
+     `Ezagent.Users.get_by_uri/1` is callable. The User Kind will
+     have ONLY the structural self-Identity cap (auto-added by
+     `Behavior.Identity.init_slice/1` via `add_owner_identity_cap/2`),
+     which is intentional — a principal with no DB row should not
+     gain dispatch authority via spawn alone.
+
+  Returns `MapSet.t(Ezagent.Capability.t())`.
+
+  ## Boot-order tolerance
+
+  Wrapped in `try/rescue` so an early-boot call (before `Ezagent.Users`
+  is callable) degrades to `MapSet.new()` rather than crashing the
+  spawn — the post_init reconcile path in
+  `Ezagent.Behavior.Identity` repairs the slice on the next spawn
+  once the DB is available (and `mix ezagent.user.create` runs
+  outside boot anyway).
+  """
+  @spec initial_caps_for_spawn(URI.t()) :: MapSet.t(Ezagent.Capability.t())
+  def initial_caps_for_spawn(%URI{} = uri) do
+    if uri == @admin_uri do
+      Ezagent.SystemPrincipal.caps("system://bootstrap")
+    else
+      hydrate_from_caps_json(uri)
+    end
+  end
+
+  defp hydrate_from_caps_json(%URI{} = uri) do
+    if Code.ensure_loaded?(Ezagent.Users) and
+         function_exported?(Ezagent.Users, :get_by_uri, 1) do
+      try do
+        case Ezagent.Users.get_by_uri(uri) do
+          %{caps: caps_list} when is_list(caps_list) -> MapSet.new(caps_list)
+          _ -> MapSet.new()
+        end
+      rescue
+        _ -> MapSet.new()
+      catch
+        _, _ -> MapSet.new()
+      end
+    else
+      MapSet.new()
+    end
+  end
+
   # SPEC caps-cleanup-v1 §4 / §4.6 (PR-CC-1): `admin_caps/0` DELETED.
   # The ambient all-caps escape hatch is replaced by the closed
   # `Ezagent.SystemPrincipal.Catalog` allowlist of 14 system

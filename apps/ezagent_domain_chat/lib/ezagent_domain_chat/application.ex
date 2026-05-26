@@ -351,18 +351,22 @@ defmodule EzagentDomainChat.Application do
             # bootstrap caps. SPEC caps-cleanup-v1 §4.4 (PR-CC-1):
             # admin's caps are conceptually granted by
             # `system://bootstrap` — `SystemPrincipal.caps/1` mints the
-            # equivalent MapSet from the closed Catalog. Non-admin
-            # users have caps_json hydrated via the login path's
-            # `Ezagent.Entity.ensure_spawned/1` (see ezagent/entity.ex);
-            # admin has no login path (password is nil until operator
-            # sets it), so demand-spawn from a `chat.join` dispatch
-            # (caller=admin) needs the bootstrap caps inline.
-            initial_caps =
-              if uri == User.admin_uri() do
-                Ezagent.SystemPrincipal.caps("system://bootstrap")
-              else
-                MapSet.new()
-              end
+            # equivalent MapSet from the closed Catalog.
+            #
+            # Non-admin users: hydrate from `users.caps_json` so the
+            # initial slice carries the same cap set the bootstrap row
+            # was created with (wildcard-cap-fix 2026-05-26). The
+            # earlier `MapSet.new()` default produced a slice without
+            # `mix ezagent.user.create --caps '*'`'s wildcard cap; the
+            # snapshot then froze that empty state forever (see
+            # `Ezagent.Entity.User.initial_caps_for_spawn/1`).
+            #
+            # Login-mediated demand-spawn via
+            # `Ezagent.Entity.ensure_spawned/1` still uses its own
+            # `spawn_with_hydrated_caps/1` path; this fix closes the
+            # OTHER entry points (mix tasks, LV WorkspaceUserAdmin)
+            # that pre-fix routed through the empty default.
+            initial_caps = User.initial_caps_for_spawn(uri)
 
             # V1 prevention (Allen 2026-05-21): route via Ezagent.Kind.spawn/2.
             # User Kind's supervisor/0 callback resolves the destination
