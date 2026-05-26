@@ -132,7 +132,21 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
       count: 0,
       error_count: 0,
       last_published_at: nil,
-      last_publish_result: nil
+      last_publish_result: nil,
+      # 2026-05-26 (Allen e2e Bug 5): every chat-slice mutation
+      # (presence updates, member joins, last_seen ticks, ...) emits
+      # a fresh publisher_event with `new_slice` carrying the CURRENT
+      # `last_message`. The adapter's `event_to_payload/1` sees a
+      # `nil` old_slice (PR-N3 r2 HIGH-1 stripped slice content from
+      # the envelope) and falls into `chat_send_occurred?(new_slice,
+      # nil)` which returns true for any non-nil last_message_id —
+      # re-publishing the SAME message every time the chat slice
+      # mutates for ANY reason. Result: Allen got 4 identical replies
+      # in Feishu. The worker dedupes by tracking the most recently
+      # published message_id; if a publish event's payload carries
+      # the same `last_message_id`, the worker skips before invoking
+      # the adapter — no HTTP call, no Feishu duplicate.
+      last_published_message_id: nil
     }
   end
 
@@ -285,6 +299,55 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
 
   @impl Ezagent.Behavior
   def invoke(:publish, slice, %{event: %Event{} = event}, _ctx) do
+    # 2026-05-26 (Allen e2e Bug 5): dedupe by last_message_id BEFORE
+    # calling the adapter. Every chat-slice mutation (presence,
+    # member join, last_seen) emits a publisher_event with the
+    # current `last_message` in `new_slice`; without this dedupe the
+    # adapter sees `chat_send_occurred?(new_slice, nil) == true` for
+    # ALL of them and re-publishes the SAME message N times to
+    # Feishu (Allen got 4 copies of one cc reply). The cursor field
+    # also advances on every mutation so we can't use it as the
+    # dedupe key — last_message_id is the stable invariant per
+    # actual chat.send.
+    event_msg_id = extract_event_message_id(event)
+
+    cond do
+      not is_nil(event_msg_id) and event_msg_id == slice.last_published_message_id ->
+        new_slice = %{
+          slice
+          | publisher_cursor: event.cursor,
+            count: slice.count + 1,
+            last_publish_result: :duplicate_skip,
+            last_published_at: DateTime.utc_now()
+        }
+
+        {:ok, new_slice, %{ok: true, cursor: event.cursor, skipped: true}}
+
+      true ->
+        do_invoke_publish(slice, event, event_msg_id)
+    end
+  end
+
+  # ----- internals -----
+
+  # Extract the message_id from the publisher event's payload. Only the
+  # :chat slice carries a `:last_message` ezagent.Message struct;
+  # other slices return nil (and we fall through to adapter-side
+  # `:skip`). String and atom keys are both accepted because the
+  # MessageStore JSON roundtrip serialises atom keys as strings.
+  defp extract_event_message_id(%Event{payload: %{} = payload, slice_key: :chat}) do
+    new_slice = Map.get(payload, :new_slice) || Map.get(payload, "new_slice")
+
+    case new_slice do
+      %{last_message: %Ezagent.Message{id: id}} -> id
+      %{"last_message" => %Ezagent.Message{id: id}} -> id
+      _ -> nil
+    end
+  end
+
+  defp extract_event_message_id(_), do: nil
+
+  defp do_invoke_publish(slice, %Event{} = event, event_msg_id) do
     case slice.adapter_module.event_to_payload(event) do
       :skip ->
         new_slice = %{
@@ -306,7 +369,8 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
                 publisher_cursor: event.cursor,
                 count: slice.count + 1,
                 last_publish_result: :ok,
-                last_published_at: DateTime.utc_now()
+                last_published_at: DateTime.utc_now(),
+                last_published_message_id: event_msg_id
             }
 
             {:ok, new_slice, %{ok: true, cursor: event.cursor}}
