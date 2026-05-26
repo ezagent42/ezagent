@@ -73,7 +73,20 @@ defmodule Ezagent.Kind.Snapshot do
       {:ok, loaded_state} ->
         emit_restored(uri_str, loaded_state)
         # Merge so newly-added Behaviors get fresh init values (Q5).
-        Map.merge(fresh, loaded_state)
+        # Allen 2026-05-26 (codex HIGH-2 closure) — also PRUNE slice
+        # keys for Behaviors the Kind no longer declares. A Behavior
+        # that USED to live on this Kind (e.g. `Behavior.ApiKeys` on
+        # `User` pre 2026-05-26 flip) leaves orphan slice content in
+        # `state_binary` that no Behavior reads anymore. Without
+        # pruning, AutoDerive LV would render that data (e.g.
+        # plaintext API keys) verbatim because it walks the raw
+        # slice map. Pruning at load drops the orphan from the live
+        # state immediately; the next `:on_change` persistence then
+        # writes the pruned shape back to disk, so the orphan is
+        # also evicted from the DB on first mutation post-flip.
+        fresh
+        |> Map.merge(loaded_state)
+        |> prune_orphan_slices(kind_module)
 
       :error ->
         fresh
@@ -85,6 +98,23 @@ defmodule Ezagent.Kind.Snapshot do
 
         fresh
     end
+  end
+
+  # Allen 2026-05-26 (codex HIGH-2) — drop any slice keys not declared
+  # by the Kind's current `behaviors/0`. Keys to drop come from snapshot
+  # state that survived a Behavior removal (e.g. ApiKeys-to-Agent flip
+  # left `:api_keys` in old User snapshots). Symmetric with the merge
+  # above: merge gives fresh init for NEW slices, prune drops orphans
+  # for REMOVED slices.
+  defp prune_orphan_slices(state, kind_module) do
+    declared =
+      kind_module.behaviors()
+      |> Enum.map(& &1.state_slice())
+      |> MapSet.new()
+
+    state
+    |> Enum.filter(fn {key, _} -> MapSet.member?(declared, key) end)
+    |> Map.new()
   end
 
   defp fetch_snapshot(uri_str, kind_module) do

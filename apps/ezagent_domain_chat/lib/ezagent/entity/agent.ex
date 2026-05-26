@@ -63,9 +63,22 @@ defmodule Ezagent.Entity.Agent do
   # config_dir_path + Kind.Template plugin extension callbacks. Empty
   # by default (no FS dir until a Template Class's `create_config_dir/2`
   # is called at spawn).
+  #
+  # Allen 2026-05-26: ApiKeys Behavior moved from User Kind to here —
+  # agents hold their OWN outbound credentials (the credential funds
+  # the agent's outbound HTTP call). `:api_keys` slice carries
+  # `:creator_uri` populated at instantiate so `data_owner/1` knows
+  # who can rotate. CapabilityRegistry binding lives in
+  # `EzagentDomainIdentity.Application` against `Ezagent.Entity.Agent`
+  # — same cross-domain pattern as Identity Behavior registration.
   @impl Ezagent.Kind
   def behaviors,
-    do: [Ezagent.Behavior.Chat, Ezagent.Behavior.Identity, Ezagent.Behavior.Sandbox]
+    do: [
+      Ezagent.Behavior.Chat,
+      Ezagent.Behavior.Identity,
+      Ezagent.Behavior.Sandbox,
+      Ezagent.Behavior.ApiKeys
+    ]
 
   # Allen 2026-05-25 — bumped from `:on_terminate` to `{:snapshot, :on_change}`
   # as part of the CLI persistence fix (PR codex r1 HIGH).

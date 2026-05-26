@@ -15,22 +15,23 @@ defmodule Ezagent.Behavior.CurlAgentTest do
       assert slice.last_error == nil
     end
 
-    test "accepts per-instance overrides" do
+    test "accepts per-instance overrides (Allen 2026-05-26 — owner_uri gone)" do
       slice =
         CurlAgent.init_slice(%{
           provider: "openai",
           api_url: "https://api.openai.com/v1/chat/completions",
           model: "gpt-4o-mini",
           system_prompt: "You are pirate.",
-          max_history: 10,
-          owner_uri: URI.parse("entity://user/team-alpha/alice")
+          max_history: 10
         })
 
       assert slice.provider == "openai"
       assert slice.model == "gpt-4o-mini"
       assert slice.system_prompt == "You are pirate."
       assert slice.max_history == 10
-      assert URI.to_string(slice.owner_uri) == "entity://user/team-alpha/alice"
+      # Post ApiKeys-to-Agent flip: owner_uri is gone from the slice. The
+      # agent reads its OWN :api_keys slice via fetch_self_api_key.
+      refute Map.has_key?(slice, :owner_uri)
     end
   end
 
@@ -59,8 +60,8 @@ defmodule Ezagent.Behavior.CurlAgentTest do
   end
 
   describe "invoke(:configure, ...)" do
-    test "mutates provider/model/system_prompt/max_history but never owner_uri" do
-      slice = CurlAgent.init_slice(%{owner_uri: URI.parse("entity://user/system/admin")})
+    test "mutates provider/model/system_prompt/max_history" do
+      slice = CurlAgent.init_slice(%{})
 
       args = %{
         provider: "openai",
@@ -68,7 +69,8 @@ defmodule Ezagent.Behavior.CurlAgentTest do
         model: "gpt-4o",
         system_prompt: "concise",
         max_history: 5,
-        # Deliberately try to change owner via configure — must be ignored.
+        # Allen 2026-05-26 — owner_uri no longer exists; passing it
+        # must be silently ignored (not raise / not leak into slice).
         owner_uri: URI.parse("entity://user/team-alpha/attacker")
       }
 
@@ -77,8 +79,9 @@ defmodule Ezagent.Behavior.CurlAgentTest do
       assert new_slice.model == "gpt-4o"
       assert new_slice.system_prompt == "concise"
       assert new_slice.max_history == 5
-      # owner_uri unchanged — design lock per moduledoc.
-      assert URI.to_string(new_slice.owner_uri) == "entity://user/system/admin"
+      # Stray owner_uri arg must not leak into the slice (the slice
+      # shape doesn't have that field post-flip).
+      refute Map.has_key?(new_slice, :owner_uri)
     end
   end
 end

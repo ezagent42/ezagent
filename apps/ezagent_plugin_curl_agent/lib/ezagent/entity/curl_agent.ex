@@ -14,42 +14,19 @@ defmodule Ezagent.Entity.CurlAgent do
 
   ## Slice shape
 
-      %{
-        # config (set at instantiate time, mutable via tools/UI)
-        provider:        String.t(),   # "deepseek" / "openai" / ...
-        api_url:         String.t(),   # full POST URL
-        model:           String.t(),   # provider-specific model id
-        system_prompt:   String.t() | nil,
-        max_history:     pos_integer(),
-        owner_uri:       URI.t(),      # whose api_key to fetch at dispatch
+  Composes the per-Behavior slices listed in `behaviors/0`:
 
-        # state (mutated on each :receive)
-        conversation:    [%{role: String.t(), content: String.t()}],
-        last_error:      nil | term(),
-        last_tokens:     nil | %{prompt: int, completion: int, total: int}
-      }
+  - `:curl_agent` slice — provider / api_url / model / system_prompt /
+    max_history / conversation / last_error / last_tokens
+  - `:api_keys` slice (Allen 2026-05-26) — agent's own provider keys
+    + `:creator_uri` for the data-owner grant. CurlAgent reads its OWN
+    key (`fetch_self_api_key`) at dispatch time, not a foreign user's.
 
   ## Persistence
 
-  `{:snapshot, :on_change}` — conversation survives phx restart.
-  The owner can `:reset` to clear it.
-
-  ## Owner is per-instance, not per-message
-
-  `owner_uri` is set at instantiate (the user who created the
-  template — typically admin or self-service via LV) and pins which
-  user's api_key the agent uses. This is intentional:
-
-  - If owner_uri == ctx.caller (admin chats with their own agent),
-    behaviour is straightforward.
-  - If a different user mentions this agent in a shared session
-    (e.g. admin creates an agent that other team members use),
-    the agent still uses the owner's key — quota goes to the owner,
-    not the mentioner. This matches the "I'm paying for this
-    bot's usage" model.
-
-  Future: support `owner: :caller` mode that fetches the caller's
-  key instead. Not in v1 — keeps the trust story simple.
+  `{:snapshot, :on_change}` — conversation + keys survive phx restart.
+  The owner can `:reset` to clear the conversation; keys are managed
+  via the `Behavior.ApiKeys` dispatch surface.
   """
 
   @behaviour Ezagent.Kind
@@ -57,8 +34,14 @@ defmodule Ezagent.Entity.CurlAgent do
   @impl Ezagent.Kind
   def type_name, do: :curl_agent
 
+  # Allen 2026-05-26 — `Ezagent.Behavior.ApiKeys` listed here so the
+  # `:api_keys` slice gets `init_slice`'d at spawn alongside the
+  # plugin's own `:curl_agent` slice. `CapabilityRegistry.register/3`
+  # for ApiKeys against CurlAgent Kind lives in
+  # `EzagentPluginCurlAgent.Application` (the same place the plugin's
+  # own Behavior is registered).
   @impl Ezagent.Kind
-  def behaviors, do: [Ezagent.Behavior.CurlAgent]
+  def behaviors, do: [Ezagent.Behavior.CurlAgent, Ezagent.Behavior.ApiKeys]
 
   @impl Ezagent.Kind
   def persistence, do: {:snapshot, :on_change}

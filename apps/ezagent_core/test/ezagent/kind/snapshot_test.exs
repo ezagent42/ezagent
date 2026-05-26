@@ -18,13 +18,16 @@ defmodule Ezagent.Kind.SnapshotTest do
     uri = URI.parse("entity://user/team-alpha/snap-noprior-#{System.unique_integer([:positive])}")
     state = Snapshot.load_or_init(uri, Ezagent.Entity.User, %{uri: uri})
 
-    # PR #126 added ApiKeys behavior to User → :api_keys slice
-    # coexists with :identity. ApiKeys default empty.
+    # Allen 2026-05-26 — PR #126 originally added ApiKeys to User; the
+    # 2026-05-26 flip moved it to Agent Kind. User now has Identity +
+    # UserCredentials + UserTokens slices ONLY.
     #
     # PR-OWN-3 (caps-data-ownership-v2 SPEC #306) added self-Identity
     # cap provisioning at init — the entity gets a `Behavior.Identity`
     # cap on its own URI so dispatch-path list_caps/has_cap? authorize.
-    assert %{api_keys: %{keys: %{}}, identity: %{caps: caps}} = state
+    assert %{identity: %{caps: caps}} = state
+    refute Map.has_key?(state, :api_keys),
+           "User Kind no longer holds :api_keys post Allen 2026-05-26 flip"
 
     assert MapSet.size(caps) == 1
     [self_cap] = MapSet.to_list(caps)
@@ -77,6 +80,49 @@ defmodule Ezagent.Kind.SnapshotTest do
     assert {:ok, %{identity: %{caps: %MapSet{}}}} = KindSnapshot.decode_state(row)
   end
 
+  test "load_or_init PRUNES orphan slice keys not declared by the Kind (codex HIGH-2 closure)" do
+    # Allen 2026-05-26 — when a Behavior is removed from a Kind's
+    # `behaviors/0` (e.g. ApiKeys flipped from User to Agent in this
+    # PR), pre-flip snapshots still carry the removed Behavior's
+    # slice in `state_binary`. Without pruning, the orphan data
+    # survives forever in memory + DB; admin LVs that render raw
+    # slices (e.g. AutoDerive) would leak its content (in ApiKeys'
+    # case: plaintext keys).
+    #
+    # Save a synthetic User snapshot carrying the LEGACY `:api_keys`
+    # slice content (the pre-flip shape) AND the post-flip slices,
+    # then re-load and assert the orphan is gone.
+    uri = URI.parse("entity://user/team-alpha/snap-orphan-#{System.unique_integer([:positive])}")
+
+    pre_flip_state = %{
+      identity: %{caps: MapSet.new()},
+      # LEGACY slice — User no longer declares ApiKeys post Allen
+      # 2026-05-26 flip; this represents what an old snapshot carried.
+      api_keys: %{keys: %{"deepseek" => "sk-LEGACY-LEAKY-KEY"}},
+      user_credentials: %{set_password_count: 0},
+      user_tokens: %{mint_count: 0, revoke_count: 0}
+    }
+
+    :ok = Snapshot.save_now(uri, Ezagent.Entity.User, pre_flip_state)
+
+    loaded = Snapshot.load_or_init(uri, Ezagent.Entity.User, %{uri: uri})
+
+    refute Map.has_key?(loaded, :api_keys),
+           "load_or_init must PRUNE orphan slice keys not declared in " <>
+             "Kind.behaviors/0; the legacy :api_keys slice would leak " <>
+             "plaintext credentials to AutoDerive LV otherwise. Got: #{inspect(loaded)}"
+
+    # The other slices are still present.
+    assert Map.has_key?(loaded, :identity)
+    assert Map.has_key?(loaded, :user_credentials)
+    assert Map.has_key?(loaded, :user_tokens)
+
+    # Sentinel check — the plaintext key MUST NOT round-trip through
+    # the loaded state.
+    refute inspect(loaded) =~ "LEAKY-KEY",
+           "plaintext from the orphan :api_keys slice leaked into loaded state"
+  end
+
   test "load_or_init restores from DB if snapshot present (round-trip)" do
     uri = URI.parse("entity://user/team-alpha/snap-rt-#{System.unique_integer([:positive])}")
     caps = Ezagent.SystemPrincipal.caps("system://bootstrap")
@@ -89,12 +135,13 @@ defmodule Ezagent.Kind.SnapshotTest do
     # other Behavior contributes its `init_slice` default.
     #
     # 2026-05-26: PR #356 (HIGH-2) added `Ezagent.Behavior.UserCredentials`
-    # + `Ezagent.Behavior.UserTokens`, so the merged shape grew. Asserting
-    # the full structure here keeps the invariant tight — adding a new
-    # User-Behavior should force this assertion to be updated alongside.
+    # + `Ezagent.Behavior.UserTokens`, so the merged shape grew. Allen
+    # 2026-05-26 ApiKeys-to-Agent flip then REMOVED `:api_keys` from User.
+    # Asserting the full structure here keeps the invariant tight —
+    # adding a new User-Behavior should force this assertion to be
+    # updated alongside.
     assert loaded == %{
              identity: %{caps: caps},
-             api_keys: %{keys: %{}},
              user_credentials: %{set_password_count: 0},
              user_tokens: %{mint_count: 0, revoke_count: 0}
            }

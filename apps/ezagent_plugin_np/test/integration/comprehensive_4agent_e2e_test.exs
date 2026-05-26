@@ -222,16 +222,18 @@ defmodule EzagentPluginNp.Integration.Comprehensive4AgentE2eTest do
           api_url: mock_deepseek_url,
           model: "deepseek-chat",
           system_prompt: nil,
-          max_history: 20,
-          owner_uri: admin_uri
+          max_history: 20
+          # Allen 2026-05-26 — `owner_uri` removed; ApiKeys lives on
+          # the agent's OWN `:api_keys` slice now.
         })
 
-      # Seed an API key on the admin user so curl-agent's
-      # `identity.get_api_key` call succeeds.
+      # Seed an API key on the curl-agent's OWN `:api_keys` slice
+      # (Allen 2026-05-26 ApiKeys-to-Agent flip — agents hold their
+      # own keys; the old "seed on admin user" path is gone).
       assert {:ok, _} =
                Invocation.dispatch(%Invocation{
                  target:
-                   URI.new!("#{URI.to_string(admin_uri)}?action=identity.put_api_key"),
+                   URI.new!("#{URI.to_string(curl_uri)}?action=identity.put_api_key"),
                  mode: :call,
                  args: %{provider: "deepseek", key: "sk-fake-test-key-1234567890"},
                  ctx: %{

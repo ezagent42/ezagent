@@ -1,32 +1,36 @@
 defmodule Ezagent.Behavior.ApiKeys do
   @moduledoc """
-  ApiKeys Behavior — per-User secret storage for outbound API
+  ApiKeys Behavior — per-Agent secret storage for outbound API
   credentials (DeepSeek, OpenAI, Anthropic, etc.).
 
   Slice shape:
 
-      %{keys: %{provider :: String.t() => key :: String.t()}}
+      %{
+        keys: %{provider :: String.t() => key :: String.t()},
+        creator_uri: %URI{} | nil
+      }
 
-  ## Why on User Kind (not a separate Credentials Kind)
+  ## Why on Agent Kind (Allen 2026-05-26)
 
-  Each user owns their own keys. Persisting on User leverages the
-  existing `{:snapshot, :on_change}` policy — keys survive phx
-  restart automatically, no new persistence machinery needed.
+  Previously per-User. Allen flipped this — **agents hold their own
+  keys**. Reasoning: the credential funds the *agent's* outbound
+  request, not the *user's*. A workspace can host multiple agents
+  that talk to different providers under different keys; binding
+  those keys to a single user (or worse, defaulting to
+  `entity://user/system/admin`) flattens the model. Per-agent keys
+  also make agent cloning / templating sane (clone receives an
+  empty key slot rather than leaking the creator's secret).
 
-  ## Why not in a global keystore
+  ## Permission model
 
-  Allen 2026-05-19: "系统本身不提供 api-key" — every user supplies
-  their own. Putting keys on User makes "whose key?" obvious from
-  dispatch ctx.caller.
-
-  ## Caps
-
-  - `identity:api_keys:write` — required for :put_api_key / :delete_api_key.
-    Granted by default for self-target (caller_uri == target_user_uri);
-    admin always has it.
-  - `identity:api_keys:read` — required for :get_api_key (callers like
-    CurlAgent need this to fetch the user's key at dispatch time).
-    Granted by default for self-target; admin always has it.
+  - The **agent's creator** can view / rotate / delete keys (recorded
+    in slice as `:creator_uri` at instantiate time; durable in
+    `:api_keys` slice — does NOT depend on the ephemeral
+    `Ezagent.AgentLineage` ETS).
+  - Workspace admin holds wildcard caps and can edit any agent's keys.
+  - The agent ITSELF holds the read cap (`get_api_key`) for its own URI
+    via `default_grants_from_data_owner/2` (self-grant — agent reads
+    its own key to make outbound requests).
 
   Cap enforcement happens at dispatch step 5.5 like every other
   Behavior — this module trusts the dispatch-level check and just
@@ -48,25 +52,35 @@ defmodule Ezagent.Behavior.ApiKeys do
   @impl Ezagent.Behavior
   def actions, do: [:list_api_keys, :put_api_key, :delete_api_key, :get_api_key]
 
-  # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
-  # ApiKeys is registered on the User Kind — kind axis is `:user`.
+  # Allen 2026-05-26 flip from User Kind. ApiKeys now lives on every
+  # agent-flavor Kind (`Ezagent.Entity.Agent` / `Ezagent.Entity.CurlAgent`
+  # / `Ezagent.Entity.Echo` — `type_name` varies per flavor:
+  # `:agent` / `:curl_agent` / `:echo`). Per the
+  # `feedback_register_lookup_key_parity` convention the cap shape uses
+  # `:any` for the kind axis so a single cap declaration matches every
+  # flavor (Lifecycle / Routing / Presence follow the same pattern when
+  # cross-Kind). The kind axis is fixed at registration via
+  # `kind_module.type_name()` in `cap_for_action/3`; using `:any` here
+  # widens what a granted cap matches but the registration site still
+  # bounds WHICH Kinds can dispatch this Behavior.
   @impl Ezagent.Behavior
   def required_caps do
     %{
-      list_api_keys: Ezagent.Capability.cap(:user, __MODULE__, :list_api_keys),
-      put_api_key: Ezagent.Capability.cap(:user, __MODULE__, :put_api_key),
-      delete_api_key: Ezagent.Capability.cap(:user, __MODULE__, :delete_api_key),
-      get_api_key: Ezagent.Capability.cap(:user, __MODULE__, :get_api_key)
+      list_api_keys: Ezagent.Capability.cap(:any, __MODULE__, :list_api_keys),
+      put_api_key: Ezagent.Capability.cap(:any, __MODULE__, :put_api_key),
+      delete_api_key: Ezagent.Capability.cap(:any, __MODULE__, :delete_api_key),
+      get_api_key: Ezagent.Capability.cap(:any, __MODULE__, :get_api_key)
     }
   end
 
   @impl Ezagent.Behavior
   def cap_subjects do
     [
-      {:list_api_keys, "list the API-key slot names this Kind owns (values redacted)"},
-      {:put_api_key, "set or rotate an API key value for a named slot"},
-      {:delete_api_key, "remove an API key slot entirely"},
-      {:get_api_key, "fetch an API key value for outbound use (sensitive — caller must hold cap)"}
+      {:list_api_keys, "list the API-key slot names this agent holds (values redacted)"},
+      {:put_api_key, "set or rotate an API key value for a named slot on this agent"},
+      {:delete_api_key, "remove an API key slot from this agent"},
+      {:get_api_key,
+       "fetch the agent's API key for outbound use (sensitive — caller must hold cap)"}
     ]
   end
 
@@ -74,7 +88,20 @@ defmodule Ezagent.Behavior.ApiKeys do
   def state_slice, do: :api_keys
 
   @impl Ezagent.Behavior
-  def init_slice(_args), do: %{keys: %{}}
+  def init_slice(args) do
+    %{
+      keys: %{},
+      # Allen 2026-05-26 — `:creator_uri` carries the entity URI that
+      # created this agent (passed via `instantiate` args). Used by
+      # `data_owner/1` so `default_grants_from_data_owner/2` grants the
+      # creator the right to view / rotate / delete this agent's keys.
+      # Mirrors the `Behavior.Chat.init_slice/1` `:owner_uri` pattern
+      # (PR-OWN-2). `nil` for agents spawned without a creator arg
+      # (system / test paths) — those fall back to `:no_owner` in
+      # `data_owner/1`, so only the bootstrap admin can grant.
+      creator_uri: Map.get(args, :creator_uri)
+    }
+  end
 
   @impl Ezagent.Behavior
   def invoke(:list_api_keys, slice, _args, _ctx) do
@@ -110,25 +137,25 @@ defmodule Ezagent.Behavior.ApiKeys do
   def interface do
     %{
       list_api_keys: %{
-        description: "List the user's stored API keys with masked values",
+        description: "List the agent's stored API keys with masked values",
         args: %{},
         returns: %{api_keys: {:list, :map}},
         modes: [:call]
       },
       put_api_key: %{
-        description: "Store or replace the user's API key for a provider",
+        description: "Store or replace the agent's API key for a provider",
         args: %{provider: :string, key: :string},
         returns: %{ok: :boolean, provider: :string},
         modes: [:call]
       },
       delete_api_key: %{
-        description: "Delete the user's API key for a provider",
+        description: "Delete the agent's API key for a provider",
         args: %{provider: :string},
         returns: %{ok: :boolean, provider: :string},
         modes: [:call]
       },
       get_api_key: %{
-        description: "Fetch the user's plaintext API key for a provider",
+        description: "Fetch the agent's plaintext API key for a provider",
         args: %{provider: :string},
         returns: %{key: :string, provider: :string},
         modes: [:call]
@@ -159,11 +186,54 @@ defmodule Ezagent.Behavior.ApiKeys do
     end
   end
 
-  # PR-OWN-4 (caps-data-ownership SPEC #306 §6): per-entity Behavior
-  # — the entity (user / agent) owns its own state for this Behavior.
+  # Allen 2026-05-26 — agent-Kind ApiKeys data_owner. Three resolution
+  # tiers (in order):
+  #
+  #  1. `:api_keys` slice's `:creator_uri` — durable via the Agent
+  #     Kind's `{:snapshot, :on_change}` persistence. Set when an
+  #     instantiate path threads `creator_uri` into init args.
+  #
+  #  2. `Ezagent.AgentLineage.lookup/1` fallback (codex HIGH-1 closure)
+  #     — `Workspace.create_agent`'s SpawnRegistry catch-all records
+  #     `agent_uri → caller` in this ETS, so a non-admin who created
+  #     a curl/np agent via the LV resolves to themselves here even
+  #     when the spawn-time `creator_uri` arg threading isn't wired.
+  #
+  #  3. `:no_owner` — neither source has a record (system / test paths
+  #     spawning ad-hoc); only bootstrap admin can grant.
+  #
+  # Mirrors `Behavior.Chat.data_owner/1`'s pattern (PR-OWN-2 §6) of
+  # reading the entity's own durable state for ownership.
   @impl Ezagent.Behavior
-  def data_owner(%URI{} = entity_uri), do: Ezagent.URI.instance(entity_uri)
+  def data_owner(%URI{scheme: "entity", host: "agent"} = agent_uri) do
+    case Ezagent.Kind.get_slice(agent_uri, :api_keys) do
+      {:ok, %{creator_uri: %URI{} = creator}} ->
+        creator
+
+      _ ->
+        # Tier 2: lineage ETS fallback (codex HIGH-1).
+        case lineage_lookup(agent_uri) do
+          {:ok, %URI{} = creator} -> creator
+          _ -> :no_owner
+        end
+    end
+  end
+
   def data_owner(:any), do: :any
   def data_owner(_), do: :no_owner
 
+  # Wrap `Ezagent.AgentLineage.lookup/1` so a missing/un-booted
+  # registry degrades gracefully (no crash, just `:no_owner`). Lineage
+  # ETS is in-memory; cleared on BEAM restart, so the slice's
+  # `creator_uri` is the durable source-of-truth when populated.
+  defp lineage_lookup(agent_uri) do
+    if Code.ensure_loaded?(Ezagent.AgentLineage) and
+         function_exported?(Ezagent.AgentLineage, :lookup, 1) do
+      Ezagent.AgentLineage.lookup(agent_uri)
+    else
+      :error
+    end
+  rescue
+    _ -> :error
+  end
 end

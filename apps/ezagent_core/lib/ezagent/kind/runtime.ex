@@ -123,8 +123,17 @@ defmodule Ezagent.Kind.Runtime do
          :ok <- validate_args(behavior_module, action, args),
          slice_key <- behavior_module.state_slice(),
          slice <- Map.get(state, slice_key, %{}),
+         # Allen 2026-05-26 (codex CRIT-1 closure) — scope the sibling
+         # slice exposure to ONLY what the Behavior declared via
+         # `reads_sibling_slices/0`. Default `[]` → no `:sibling_slices`
+         # key in ctx; the wide `:all_slices` injection that codex
+         # flagged as a generic secret-read escape hatch is gone. A
+         # Behavior that legitimately needs to read a sibling slice
+         # (e.g. CurlAgent reading `:api_keys` to fetch its outbound
+         # credential, deadlock-free) declares it explicitly.
+         invoke_ctx <- maybe_inject_sibling_slices(enriched_ctx, behavior_module, state),
          {:ok, new_slice, result_or_nil} <-
-           invoke_behavior(behavior_module, action, slice, args, enriched_ctx) do
+           invoke_behavior(behavior_module, action, slice, args, invoke_ctx) do
       # Step 9 — put_in state. Snapshot wiring is Phase 1 step 3.
       new_state = Map.put(state, slice_key, new_slice)
 
@@ -641,6 +650,30 @@ defmodule Ezagent.Kind.Runtime do
   # isn't even session-scoped, and `Capability.instance_match?/2` is
   # designed to handle nil session_uri (returns false for the tuple
   # case, preserving deny-as-default).
+  # Allen 2026-05-26 (codex CRIT-1 closure) — inject the OPT-IN
+  # `ctx[:sibling_slices]` read view scoped to ONLY the slice keys the
+  # Behavior declared via `Ezagent.Behavior.reads_sibling_slices/0`.
+  # Default (empty list) skips the injection entirely — `ctx` carries
+  # no `:sibling_slices` key for the common case. A declaration like
+  # `def reads_sibling_slices, do: [:api_keys]` exposes exactly that
+  # slice (read-only by Behavior contract; the Runtime ignores any
+  # mutation to ctx[:sibling_slices] — only the third arg to
+  # `invoke/4` is the writable slice).
+  defp maybe_inject_sibling_slices(ctx, behavior_module, state) do
+    case Ezagent.Behavior.reads_sibling_slices_of(behavior_module) do
+      [] ->
+        ctx
+
+      keys when is_list(keys) ->
+        sibling =
+          for key <- keys, into: %{} do
+            {key, Map.get(state, key, %{})}
+          end
+
+        Map.put(ctx, :sibling_slices, sibling)
+    end
+  end
+
   defp derive_session_uri(%URI{scheme: "session"} = target) do
     # PR #141 SPEC v2: session URIs are `session://<type>/<name>`
     # (uniform 2-segment). Use Ezagent.URI.instance/1 to strip any

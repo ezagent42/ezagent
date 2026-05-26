@@ -108,7 +108,10 @@ defmodule EzagentWeb.Router do
       # this exposes the agent surface in the UI.
       live "/identities/users/:uri/caps", EntityCapsLive
       live "/identities/agents/:uri/caps", EntityCapsLive
-      live "/identities/users/:uri/api-keys", UserApiKeysLive
+      # Allen 2026-05-26 — ApiKeys moved from User Kind to Agent Kind.
+      # The legacy `/identities/users/:uri/api-keys` route is removed
+      # (let-it-crash, no shims). Each agent's keys live at:
+      live "/identities/agents/:uri/api-keys", AgentApiKeysLive
       # Phase 8c PR-N: "/new" MUST appear before ":uri" — Phoenix
       # matches routes top-down and would otherwise bind "new" as the
       # `:uri` param for AgentDetailLive.

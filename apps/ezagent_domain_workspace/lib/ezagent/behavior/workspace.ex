@@ -195,7 +195,16 @@ defmodule Ezagent.Behavior.Workspace do
         with_pty?: with_pty?,
         workspace_name: workspace_name,
         workspace_uri: workspace_uri,
-        source_config_dir: source_config_dir
+        source_config_dir: source_config_dir,
+        # Allen 2026-05-26 (codex HIGH-1 closure) — thread the caller
+        # URI through so the SpawnRegistry direct-spawn catch-all can
+        # record lineage (`Ezagent.AgentLineage.record/2`) for the
+        # newly-created agent. Without lineage, `Behavior.ApiKeys`'s
+        # `data_owner/1` collapses to `:no_owner` for curl/np agents
+        # created via this LV path, which forces the API-keys LV
+        # permission gate to admin-only for non-admin creators —
+        # the documented footgun in the codex review.
+        caller: Map.get(ctx, :caller)
       })
     end
   end
@@ -597,16 +606,35 @@ defmodule Ezagent.Behavior.Workspace do
   # FOLLOW-UP: extend args to accept `template_args :: map()` so the
   # action can build a full template for any flavor with a registered
   # Template Class. Tracked in `docs/futures/todo.md`.
-  defp do_create_agent(_other_flavor, agent_uri, slice, _params) do
+  defp do_create_agent(_other_flavor, agent_uri, slice, params) do
     case Ezagent.SpawnRegistry.spawn(agent_uri) do
       {:ok, _pid} ->
+        record_creator_lineage(agent_uri, params)
         {:ok, slice, %{agent_uri: agent_uri, template_name: nil}}
 
       {:error, {:already_started, _pid}} ->
+        # Idempotent re-create — do NOT re-record lineage (we didn't
+        # create this agent; preserving existing lineage is correct).
         {:ok, slice, %{agent_uri: agent_uri, template_name: nil}}
 
       {:error, reason} ->
         {:error, {:spawn_failed, reason}}
+    end
+  end
+
+  # Allen 2026-05-26 (codex HIGH-1 closure) — record `agent_uri → caller`
+  # in `Ezagent.AgentLineage` so `Behavior.ApiKeys.data_owner/1` (and
+  # any future `{:spawned_by, _}` cap-shape resolver) can resolve the
+  # agent's creator. Best-effort: a missing caller (system-internal
+  # spawn) leaves no lineage row, which falls back to admin-only edit
+  # via the LV gate — same conservative posture as before.
+  defp record_creator_lineage(agent_uri, params) do
+    case Map.get(params, :caller) do
+      %URI{} = caller ->
+        Ezagent.AgentLineage.record(agent_uri, caller)
+
+      _ ->
+        :ok
     end
   end
 
