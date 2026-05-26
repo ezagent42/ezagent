@@ -1,10 +1,10 @@
 defmodule Mix.Tasks.Ezagent.User.SetPassword do
-  @shortdoc "DEPRECATED — use `mix esr user set_password` (HIGH-2 completion)"
+  @shortdoc "DEPRECATED — use `mix ezagent user set_password` (HIGH-2 completion)"
   @moduledoc """
   > **DEPRECATED 2026-05-26 (HIGH-2 completion — todo.md "CLI ↔ GUI parity").**
   >
   > The dispatch-backed equivalent now exists. New callers should use
-  > the auto-derived `mix esr` command, which goes through
+  > the auto-derived `mix ezagent` command, which goes through
   > `Ezagent.Invocation.dispatch/1` → step 5.5 CapBAC → step 5.6
   > cross-workspace iso → audit telemetry. The cap shape is
   > `(:user, Ezagent.Behavior.UserCredentials, :set_password)`; a
@@ -12,7 +12,7 @@ defmodule Mix.Tasks.Ezagent.User.SetPassword do
   > admin holds the `:any`-instance form for cross-user reset.
   >
   >     # NEW — preferred path:
-  >     mix esr user set_password \\
+  >     mix ezagent user set_password \\
   >         --user entity://user/<workspace>/<name> \\
   >         --password '<new-pw>'
   >
@@ -21,9 +21,9 @@ defmodule Mix.Tasks.Ezagent.User.SetPassword do
   > `Ezagent.Users.set_password/2` directly — same business logic,
   > but bypasses CapBAC + audit. **NOTE:** the legacy task is the
   > only path that works on a fresh DB BEFORE the admin user has a
-  > token to authenticate `mix esr` calls — that bootstrap mode is
+  > token to authenticate `mix ezagent` calls — that bootstrap mode is
   > a narrow carve-out comparable to `mix ezagent.user.token --mint`
-  > (see its moduledoc). New scripts should switch to `mix esr
+  > (see its moduledoc). New scripts should switch to `mix ezagent
   > user set_password`; this task will be removed in a future release
   > once the admin-bootstrap flow is replaced by the chicken-and-egg
   > `--mint` carve-out.
@@ -45,13 +45,13 @@ defmodule Mix.Tasks.Ezagent.User.SetPassword do
     NOTE: `mix ezagent.user.set_password` is deprecated as of 2026-05-26.
     Use the dispatch-backed equivalent (CapBAC + audit + cross-workspace iso):
 
-        mix esr user set_password \\
+        mix ezagent user set_password \\
             --user entity://user/<workspace>/<name> \\
             --password '<new-pw>'
 
     This task still works (admin-bootstrap carve-out — first password
-    must be set BEFORE the admin has a token for `mix esr`) but
-    bypasses dispatch. New scripts should switch to `mix esr`.
+    must be set BEFORE the admin has a token for `mix ezagent`) but
+    bypasses dispatch. New scripts should switch to `mix ezagent`.
     """)
 
     {:ok, _} = Application.ensure_all_started(:ezagent_core)

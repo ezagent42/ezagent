@@ -158,14 +158,14 @@ open after HIGH-1 (admin fallback hole) closed in PR #298:
   needs a per-task migration sweep. Tasks call domain modules
   directly → no CapBAC, no audit, no cross-workspace check. Worst
   example: `mix ezagent.routing.add_rule`. Approach: write a
-  migration template, hold an invariant test that `mix esr` is the
+  migration template, hold an invariant test that `mix ezagent` is the
   ONLY task allowed to call domain modules outside of bootstrap.
 
   **Sweep progress (this PR — triage commit on
   `cli-sweep/deprecate-bypass-tasks`):**
 
   - ✅ `routing.add_rule` — already deprecated in PR #302 (Behavior
-    `Ezagent.Behavior.Routing` exists; `mix esr routing add_rule`
+    `Ezagent.Behavior.Routing` exists; `mix ezagent routing add_rule`
     dispatches against `system://routing/default`).
   - ⏳ **deferred to follow-up PRs** — each below needs a real
     `Behavior` action reached via `Ezagent.Invocation.dispatch/1`
@@ -176,24 +176,24 @@ open after HIGH-1 (admin fallback hole) closed in PR #298:
     `EzagentCli.Dispatch.run_facade/3` invokes `fun.(parsed)` with
     no Invocation, no caller/caps, no audit. Each row below MUST
     land its corresponding Behavior action + cap subject FIRST;
-    `mix esr` will then auto-derive the CLI from the Behavior's
+    `mix ezagent` will then auto-derive the CLI from the Behavior's
     `interface/0`. Wiring a FacadeRegistry shortcut "to ship it
     faster" is the wrong fix — it would close HIGH-2 by closing
     the wrong problem.
 
-    | Legacy task | Proposed `mix esr` | Status |
+    | Legacy task | Proposed `mix ezagent` | Status |
     |---|---|---|
-    | `mix ezagent.feishu.bind` | `mix esr workspace bind --workspace <name> --open-id … --user-uri …` | ✅ **DONE in cli-lv-parity-high-2-3 branch.** `EzagentPluginFeishu.Behavior.UserBinding` registered on Workspace Kind with `:bind` action + cap. Legacy task kept as-is pending muscle-memory transition. |
-    | `mix ezagent.feishu.unbind` | `mix esr workspace unbind --workspace <name> --open-id …` | ✅ **DONE.** Same Behavior, `:unbind` action. |
-    | `mix ezagent.feishu.list` | `mix esr workspace list_feishu_bindings --workspace <name>` | ✅ **DONE.** Same Behavior, `:list_feishu_bindings` (read-only). |
-    | ~~`mix ezagent.feishu.chat.bind`~~ | ~~`mix esr feishu chat_bind`~~ | **OBSOLETE.** Removed in PR-EM-6; chat→session bindings now go via `mix ezagent.external_mirror.bind <session-uri> feishu <chat_id>` (generic ExternalMirror Domain). |
-    | ~~`mix ezagent.feishu.chat.unbind`~~ | ~~`mix esr feishu chat_unbind`~~ | **OBSOLETE.** Same as above; use `mix ezagent.external_mirror.unbind`. |
-    | `mix ezagent.user.create` | `mix esr workspace create_user --workspace <name> --user-uri … --password … --caps …` | ✅ **DONE (2026-05-26).** `Ezagent.Behavior.WorkspaceUserAdmin :create_user` registered on Workspace Kind. Body wraps `Ezagent.Users.create/3` + opportunistic `SpawnRegistry.spawn`. Adds a structural cross-workspace check on the new user URI that the legacy direct-call had no analog for. Facade `Ezagent.Workspace.create_user/3`. Legacy task retained for muscle memory with deprecation notice. **NOTE:** codex PR #356 r1 CRIT showed that co-locating `:create_user` with `Behavior.Workspace`'s 10 member/template/routing actions would share a cap subject (no action axis in Capability struct), so this carved out into its own Behavior. Underlying cap-action-axis limitation tracked above. |
-    | `mix ezagent.user.set_password` | `mix esr user set_password --user <uri> --password …` | ✅ **DONE (2026-05-26).** New `Ezagent.Behavior.UserCredentials :set_password` registered on User Kind. Separate from Identity per cap-shape carve-out (avoids conflating self-mutation rights with admin reset). Legacy task retained as admin-bootstrap carve-out (chicken-and-egg: first password must be set BEFORE admin has a token to authenticate `mix esr`). |
-    | `mix ezagent.agent.create` | `mix esr workspace create_agent --workspace <name> --flavor … --name …` | ✅ **ACTION EXISTS** (PR #344 / `Behavior.Workspace :create_agent`); legacy task still calls the action body directly (single-path invariant test enforces). Auto-derived `mix esr workspace create_agent` already wired. |
-    | `mix ezagent.user.token mint` | `mix esr user mint_token --user <uri> --label …` | ✅ **DONE (2026-05-26).** New `Ezagent.Behavior.UserTokens :mint_token` registered on User Kind. Body wraps `Ezagent.Entity.Token.mint/2`. **Carve-out preserved:** the first-admin-bootstrap mint stays in the legacy task per codex PR #304 MED — the deprecation notice for `--mint` is gentler than for `--list`/`--revoke` to reflect this. |
-    | `mix ezagent.user.token list` | `mix esr user list_tokens --user <uri>` | ✅ **DONE (2026-05-26).** Same Behavior, `:list_tokens` action. Returns id / label / timestamps only — NEVER plain (regression test asserts the response shape has no `:plain` or `:token_hash` keys). |
-    | `mix ezagent.user.token revoke` | `mix esr user revoke_token --user <uri> --token-id …` | ✅ **DONE (2026-05-26).** Same Behavior, `:revoke_token` action. Idempotent (legacy `Token.revoke/1` returns `:ok` for unknown ids). |
+    | `mix ezagent.feishu.bind` | `mix ezagent workspace bind --workspace <name> --open-id … --user-uri …` | ✅ **DONE in cli-lv-parity-high-2-3 branch.** `EzagentPluginFeishu.Behavior.UserBinding` registered on Workspace Kind with `:bind` action + cap. Legacy task kept as-is pending muscle-memory transition. |
+    | `mix ezagent.feishu.unbind` | `mix ezagent workspace unbind --workspace <name> --open-id …` | ✅ **DONE.** Same Behavior, `:unbind` action. |
+    | `mix ezagent.feishu.list` | `mix ezagent workspace list_feishu_bindings --workspace <name>` | ✅ **DONE.** Same Behavior, `:list_feishu_bindings` (read-only). |
+    | ~~`mix ezagent.feishu.chat.bind`~~ | ~~`mix ezagent feishu chat_bind`~~ | **OBSOLETE.** Removed in PR-EM-6; chat→session bindings now go via `mix ezagent.external_mirror.bind <session-uri> feishu <chat_id>` (generic ExternalMirror Domain). |
+    | ~~`mix ezagent.feishu.chat.unbind`~~ | ~~`mix ezagent feishu chat_unbind`~~ | **OBSOLETE.** Same as above; use `mix ezagent.external_mirror.unbind`. |
+    | `mix ezagent.user.create` | `mix ezagent workspace create_user --workspace <name> --user-uri … --password … --caps …` | ✅ **DONE (2026-05-26).** `Ezagent.Behavior.WorkspaceUserAdmin :create_user` registered on Workspace Kind. Body wraps `Ezagent.Users.create/3` + opportunistic `SpawnRegistry.spawn`. Adds a structural cross-workspace check on the new user URI that the legacy direct-call had no analog for. Facade `Ezagent.Workspace.create_user/3`. Legacy task retained for muscle memory with deprecation notice. **NOTE:** codex PR #356 r1 CRIT showed that co-locating `:create_user` with `Behavior.Workspace`'s 10 member/template/routing actions would share a cap subject (no action axis in Capability struct), so this carved out into its own Behavior. Underlying cap-action-axis limitation tracked above. |
+    | `mix ezagent.user.set_password` | `mix ezagent user set_password --user <uri> --password …` | ✅ **DONE (2026-05-26).** New `Ezagent.Behavior.UserCredentials :set_password` registered on User Kind. Separate from Identity per cap-shape carve-out (avoids conflating self-mutation rights with admin reset). Legacy task retained as admin-bootstrap carve-out (chicken-and-egg: first password must be set BEFORE admin has a token to authenticate `mix ezagent`). |
+    | `mix ezagent.agent.create` | `mix ezagent workspace create_agent --workspace <name> --flavor … --name …` | ✅ **ACTION EXISTS** (PR #344 / `Behavior.Workspace :create_agent`); legacy task still calls the action body directly (single-path invariant test enforces). Auto-derived `mix ezagent workspace create_agent` already wired. |
+    | `mix ezagent.user.token mint` | `mix ezagent user mint_token --user <uri> --label …` | ✅ **DONE (2026-05-26).** New `Ezagent.Behavior.UserTokens :mint_token` registered on User Kind. Body wraps `Ezagent.Entity.Token.mint/2`. **Carve-out preserved:** the first-admin-bootstrap mint stays in the legacy task per codex PR #304 MED — the deprecation notice for `--mint` is gentler than for `--list`/`--revoke` to reflect this. |
+    | `mix ezagent.user.token list` | `mix ezagent user list_tokens --user <uri>` | ✅ **DONE (2026-05-26).** Same Behavior, `:list_tokens` action. Returns id / label / timestamps only — NEVER plain (regression test asserts the response shape has no `:plain` or `:token_hash` keys). |
+    | `mix ezagent.user.token revoke` | `mix ezagent user revoke_token --user <uri> --token-id …` | ✅ **DONE (2026-05-26).** Same Behavior, `:revoke_token` action. Idempotent (legacy `Token.revoke/1` returns `:ok` for unknown ids). |
 
     Rule of thumb for the implementer: if you're about to add a
     `FacadeRegistry.register/3` for one of these without a matching
@@ -227,26 +227,26 @@ open after HIGH-1 (admin fallback hole) closed in PR #298:
 
   | Event | Status |
   |---|---|
-  | `add_member`, `remove_member`, `add_template`, `remove_template`, `create_workspace` | ✅ `mix esr workspace ...` / `mix ezagent.workspace.*` (PR #344) |
+  | `add_member`, `remove_member`, `add_template`, `remove_template`, `create_workspace` | ✅ `mix ezagent workspace ...` / `mix ezagent.workspace.*` (PR #344) |
   | `promote_to_system`, `revoke_system` | ✅ aliased to `workspace.add_member/remove_member system <uri>` |
-  | `grant`, `revoke` (entity_caps) | ✅ auto-derived `mix esr user grant_cap/revoke_cap` via `Behavior.IdentityAdmin` |
-  | `delete_rule`, `disable_rule`, `enable_rule` | ✅ auto-derived `mix esr workspace delete_rule/...` via `Behavior.Routing` |
-  | `add_rule` | ✅ auto-derived `mix esr workspace add_rule` |
-  | `routing_rule_add_session` | ✅ auto-derived `mix esr session add_rule` (Routing registered on Session Kind) |
-  | `routing_rule_toggle` | ✅ aliased to `mix esr workspace enable_rule/disable_rule` per toggle direction |
-  | `restart` (agent) | ✅ auto-derived `mix esr agent terminate` |
-  | `toggle` (agent extensions) | ✅ auto-derived `mix esr template toggle_extension` |
-  | `bind`, `unbind` (feishu) | ✅ auto-derived `mix esr workspace bind/unbind` (this PR — Behavior.UserBinding) |
-  | `put`, `delete` (api_keys) | ✅ auto-derived `mix esr user put_api_key/delete_api_key` |
+  | `grant`, `revoke` (entity_caps) | ✅ auto-derived `mix ezagent user grant_cap/revoke_cap` via `Behavior.IdentityAdmin` |
+  | `delete_rule`, `disable_rule`, `enable_rule` | ✅ auto-derived `mix ezagent workspace delete_rule/...` via `Behavior.Routing` |
+  | `add_rule` | ✅ auto-derived `mix ezagent workspace add_rule` |
+  | `routing_rule_add_session` | ✅ auto-derived `mix ezagent session add_rule` (Routing registered on Session Kind) |
+  | `routing_rule_toggle` | ✅ aliased to `mix ezagent workspace enable_rule/disable_rule` per toggle direction |
+  | `restart` (agent) | ✅ auto-derived `mix ezagent agent terminate` |
+  | `toggle` (agent extensions) | ✅ auto-derived `mix ezagent template toggle_extension` |
+  | `bind`, `unbind` (feishu) | ✅ auto-derived `mix ezagent workspace bind/unbind` (this PR — Behavior.UserBinding) |
+  | `put`, `delete` (api_keys) | ✅ auto-derived `mix ezagent user put_api_key/delete_api_key` |
   | `dump`, `clear` (snapshots) | ✅ `mix ezagent.snapshot.*` |
   | `add_binding`, `unbind` (ext mirror) | ✅ `mix ezagent.external_mirror.*` |
   | `send_test_email` | ⚠️ semi-covered by `mix ezagent.auth.magic_link` (different intent — operator-debug) |
   | **`create_session`** | ⏳ DEFERRED. Needs a `:create_session` action on `Behavior.Workspace` (parallels `:create_agent` from PR #344). LV currently calls `EzagentDomainChat.create_session/3` directly — bypasses dispatch in BOTH surfaces. |
-  | **`create_user`** | ✅ **DONE (2026-05-26).** `Behavior.Workspace :create_user` (see HIGH-2 table). Auto-derived `mix esr workspace create_user`. |
-  | **`set_password`** | ✅ **DONE (2026-05-26).** New `Behavior.UserCredentials :set_password` on User Kind (see HIGH-2 table). Auto-derived `mix esr user set_password`. |
+  | **`create_user`** | ✅ **DONE (2026-05-26).** `Behavior.Workspace :create_user` (see HIGH-2 table). Auto-derived `mix ezagent workspace create_user`. |
+  | **`set_password`** | ✅ **DONE (2026-05-26).** New `Behavior.UserCredentials :set_password` on User Kind (see HIGH-2 table). Auto-derived `mix ezagent user set_password`. |
   | **`save_display_name`** | ⏳ DEFERRED. Needs Behavior on User Kind for `:set_display_name` (Profile slice); LV uses `Ezagent.Entity.Profile.upsert/1` directly. |
   | **`save_smtp`** | ⏳ DEFERRED. Needs Behavior on App/SystemSettings Kind for `:save_smtp_config`; LV uses `Ezagent.AppSettings.put/2` directly. |
-  | **`chat_compose`** | ⏳ DEFERRED. CLI is partial — text-only via `mix esr session send`; file attachments need a `resource://` upload primitive that doesn't exist yet (audit Finding row 1). |
+  | **`chat_compose`** | ⏳ DEFERRED. CLI is partial — text-only via `mix ezagent session send`; file attachments need a `resource://` upload primitive that doesn't exist yet (audit Finding row 1). |
 
   The remaining ⏳ DEFERRED rows are the residual gaps. Each is
   enumerated in the invariant test's `@event_to_cli` table with
@@ -326,7 +326,7 @@ on `Ezagent.Workspace.create_agent/3`. The clone primitive is
   config_dir path (deep-copy independent from source).
 
 - **CLI** — `mix ezagent.agent.create <uri> --from <source-uri>`
-  already wires through the action (no separate `mix esr agent
+  already wires through the action (no separate `mix ezagent agent
   clone` subcommand; the operator surface uses
   `mix ezagent.agent.create` with the source as a flag).
 

@@ -2,7 +2,7 @@ defmodule EzagentCore.Repo.Migrations.Phase6UserCliToken do
   use Ecto.Migration
 
   def change do
-    # Phase 6 PR 7: per-user bearer token for `mix esr` CLI auth.
+    # Phase 6 PR 7: per-user bearer token for `mix ezagent` CLI auth.
     #
     # Without this, CLI uses admin caps unconditionally (distributed
     # Erlang cookie is single-tenant). With a token, the running BEAM

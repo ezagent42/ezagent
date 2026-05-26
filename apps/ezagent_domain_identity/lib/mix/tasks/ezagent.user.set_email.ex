@@ -22,7 +22,7 @@ defmodule Mix.Tasks.Ezagent.User.SetEmail do
   ## Scope
 
   This task is the bootstrap / admin-debug counterpart to a future
-  `mix esr user set_email` (dispatch-backed, CapBAC + audit). It
+  `mix ezagent user set_email` (dispatch-backed, CapBAC + audit). It
   bypasses dispatch — same carve-out as `mix ezagent.user.set_password`,
   appropriate for:
 

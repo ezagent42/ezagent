@@ -31,7 +31,7 @@ apps/
   ezagent_plugin_feishu/                 ← Feishu/Lark adapter
   ezagent_plugin_echo/                   ← demo plugin
   ezagent_web/                           ← Phoenix endpoint / router / controllers
-  ezagent_cli/                           ← `mix esr` CLI (RPC to runtime BEAM)
+  ezagent_cli/                           ← `mix ezagent` CLI (RPC to runtime BEAM)
 ```
 
 ## What changed

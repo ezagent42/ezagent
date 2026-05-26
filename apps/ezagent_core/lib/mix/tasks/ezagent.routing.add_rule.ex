@@ -1,5 +1,5 @@
 defmodule Mix.Tasks.Ezagent.Routing.AddRule do
-  @shortdoc "DEPRECATED — use `mix esr routing add_rule` (CLI/GUI audit HIGH-2)"
+  @shortdoc "DEPRECATED — use `mix ezagent routing add_rule` (CLI/GUI audit HIGH-2)"
   @moduledoc """
   **DEPRECATED 2026-05-24 (CLI/GUI audit HIGH-2).**
 
@@ -8,13 +8,13 @@ defmodule Mix.Tasks.Ezagent.Routing.AddRule do
   GUI-side `routing_live.ex` correctly dispatches
   `system://routing/default?action=routing.add_rule` (`Ezagent.Behavior.Routing`).
 
-  Use the auto-derived `mix esr` command instead:
+  Use the auto-derived `mix ezagent` command instead:
 
-      mix esr routing add_rule --uri system://routing/default \\
+      mix ezagent routing add_rule --uri system://routing/default \\
           --matcher mention:entity://agent/team-alpha/cc_builder \\
           --receivers session://demo-class/demo-workspace/architect
 
-  `mix esr` runs in the same BEAM as the GUI (via distributed-Erlang
+  `mix ezagent` runs in the same BEAM as the GUI (via distributed-Erlang
   RPC) — same dispatch path, same CapBAC gate, same audit row.
 
   This task remains as a no-op stub for the rest of this release
@@ -70,11 +70,11 @@ defmodule Mix.Tasks.Ezagent.Routing.AddRule do
     Mix.raise("""
     DEPRECATED 2026-05-24 — `mix ezagent.routing.add_rule` bypassed
     dispatch (no CapBAC, no audit, no cross-workspace check). Use the
-    auto-derived `mix esr` command instead, which runs in the same
+    auto-derived `mix ezagent` command instead, which runs in the same
     BEAM as the GUI via distributed-Erlang RPC and goes through the
     standard dispatch pipeline:
 
-        mix esr routing add_rule \\
+        mix ezagent routing add_rule \\
             --uri system://routing/default \\
             --matcher mention:entity://agent/team-alpha/cc_builder \\
             --receivers session://demo-class/demo-workspace/architect

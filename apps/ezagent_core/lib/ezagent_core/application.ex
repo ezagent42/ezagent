@@ -128,7 +128,7 @@ defmodule EzagentCore.Application do
     :ok = Ezagent.TemplateTags.load_into_registry()
 
     # Post-Phase-5 (Allen 2026-05-17): start distributed Erlang as the
-    # named runtime node so `mix esr` (CLI) can reach us via :rpc.call.
+    # named runtime node so `mix ezagent` (CLI) can reach us via :rpc.call.
     # Cookie + node name from Ezagent.Runtime. Skip in test env to avoid
     # interfering with ExUnit's own process tree.
     if not is_test?() do

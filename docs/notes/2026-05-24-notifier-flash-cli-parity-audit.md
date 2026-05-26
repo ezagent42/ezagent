@@ -105,7 +105,7 @@ Both LV and CLI dispatch through the same `Ezagent.Invocation.dispatch/1` chokep
 - LV — every `handle_event` mutation calls `Ezagent.Invocation.dispatch(%Ezagent.Invocation{...})`. Confirmed 17 dispatch sites across `admin_live.ex`, `entity_caps_live.ex`, `agent_detail_live.ex`, `user_api_keys_live.ex`, `routing_live.ex`, `agent_new_live.ex`, `agent_extensions_live.ex`. (Some LV-only legacy paths bypass dispatch — see Finding 2 below — but those don't emit notifications either, so they don't break parity.)
 - CLI — `apps/ezagent_cli/lib/ezagent_cli/dispatch.ex:199-214` calls `Invocation.dispatch(inv)` after Identity resolution. The pivot to distributed-Erlang RPC (`Mix.Tasks.Esr`, Decision #130) means `EzagentCli.Exec.exec/1` runs **inside the runtime BEAM** — same process tree, same KindRegistry, same telemetry, same notification helper. Locked by `apps/ezagent_cli/test/integration/cli_lv_same_server_invariant_test.exs`.
 
-**Therefore**: any Behavior whose `invoke/4` calls `Ezagent.Notifications.notify/3` fires the notification regardless of whether the invocation came from LV `handle_event` or `mix esr <kind> <action>`. **Parity is automatic at the producer site.** This is exactly the chokepoint hygiene that `Notifications.notify` was added to enforce (per P3 single-source-of-truth — see prior audit Finding 1).
+**Therefore**: any Behavior whose `invoke/4` calls `Ezagent.Notifications.notify/3` fires the notification regardless of whether the invocation came from LV `handle_event` or `mix ezagent <kind> <action>`. **Parity is automatic at the producer site.** This is exactly the chokepoint hygiene that `Notifications.notify` was added to enforce (per P3 single-source-of-truth — see prior audit Finding 1).
 
 ### Empirical answer — only one producer exists today
 
@@ -118,10 +118,10 @@ The single producer is `Behavior.Chat.invoke(:receive, ...)` when `ctx.kind_modu
 
 Crucially: the **caller** (sender) doesn't trigger the notification directly — `Behavior.Chat.invoke(:send, ...)` at `chat.ex:215-221` calls `Ezagent.Routing.Resolver.resolve/4` and then dispatches `:receive` to each recipient. The recipient's `:receive` handler is what calls `Notifications.notify`. This means:
 
-- `mix esr session send --session ... --message ...` (auto-derived CLI from `Chat.@interface[:send]`) **DOES** fan out into `:receive` for every routed recipient → DOES call `Notifications.notify` for any User recipient. ✅ Parity.
-- `mix esr session join` doesn't notify the added member of being invited — neither does the LV `invite_member` path. ❌ Symmetric absence.
-- `mix esr workspace add_member` doesn't notify the added user — neither does LV `workspace_detail_live.ex:136` `add_member`. ❌ Symmetric absence.
-- `mix esr user grant_cap` (auto-derived from `Identity.@interface[:grant_cap]`) doesn't notify the grantee — neither does any LV cap-grant. ❌ Symmetric absence.
+- `mix ezagent session send --session ... --message ...` (auto-derived CLI from `Chat.@interface[:send]`) **DOES** fan out into `:receive` for every routed recipient → DOES call `Notifications.notify` for any User recipient. ✅ Parity.
+- `mix ezagent session join` doesn't notify the added member of being invited — neither does the LV `invite_member` path. ❌ Symmetric absence.
+- `mix ezagent workspace add_member` doesn't notify the added user — neither does LV `workspace_detail_live.ex:136` `add_member`. ❌ Symmetric absence.
+- `mix ezagent user grant_cap` (auto-derived from `Identity.@interface[:grant_cap]`) doesn't notify the grantee — neither does any LV cap-grant. ❌ Symmetric absence.
 
 ### CLI-reachable actions that arguably SHOULD emit notifications but don't (from any surface)
 
@@ -147,7 +147,7 @@ Audit of all `def invoke(action, slice, args, ctx)` clauses in `apps/*/lib/ezage
 
 **Pattern**: every "X just happened to user U" action that mutates U's state across a session/workspace boundary lacks a notification. The mention-routing path (the one Allen explicitly tested with `mention_gated_routing_test.exs`) is the only one wired.
 
-This is a **policy gap**, not a parity gap. Once you add `Notifications.notify` to (say) `Workspace.add_member`, both `mix esr workspace add_member ...` AND `workspace_detail_live.ex` `add_member` event will fire it — for free, because both go through `Invocation.dispatch`.
+This is a **policy gap**, not a parity gap. Once you add `Notifications.notify` to (say) `Workspace.add_member`, both `mix ezagent workspace add_member ...` AND `workspace_detail_live.ex` `add_member` event will fire it — for free, because both go through `Invocation.dispatch`.
 
 ### One edge case worth flagging — LV-only paths that bypass dispatch entirely
 
@@ -157,7 +157,7 @@ Per prior audit (`docs/notes/2026-05-24-cli-gui-parity-audit.md` §1):
 
 These bypass `Invocation.dispatch` from the LV side, which means:
 
-1. They don't appear in `mix esr <kind> <action>` (the dispatch tree-builder doesn't see them) → CLI cannot perform these mutations.
+1. They don't appear in `mix ezagent <kind> <action>` (the dispatch tree-builder doesn't see them) → CLI cannot perform these mutations.
 2. If a future PR adds `Notifications.notify` to (say) `Behavior.Workspace.invoke(:add_member, ...)`, the LV `workspace_detail_live.ex:136` add_member event **would not trigger it** because LV calls `Ezagent.Workspace.add_member/2` directly — not the Behavior action.
 
 So the parity claim has an asterisk: **for Behaviors that are actually invoked via dispatch from BOTH surfaces, parity is automatic. For Behaviors that LV invokes via private API and CLI cannot invoke at all, no parity exists because there's only one surface (LV) and even that one bypasses the dispatch chokepoint where the notification would fire.** This is the same anti-pattern P14 forbids; it's a known gap (prior audit Finding §3.1).

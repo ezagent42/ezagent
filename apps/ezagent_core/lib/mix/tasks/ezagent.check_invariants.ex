@@ -5,7 +5,7 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants do
   > **CLI/GUI parity audit 2026-05-24 — Category A (dev-loop tool).**
   > Intentionally NOT a dispatched op. Source-tree grep that runs
   > without the runtime BEAM. Stays as `mix ezagent.*`; do NOT
-  > migrate to `mix esr`. See
+  > migrate to `mix ezagent`. See
   > `docs/notes/2026-05-24-cli-gui-parity-audit.md` Section 1
   > (Bootstrap row) + Finding 2 carve-out.
 

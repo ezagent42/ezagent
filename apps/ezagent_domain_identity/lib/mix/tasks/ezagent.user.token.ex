@@ -1,25 +1,25 @@
 defmodule Mix.Tasks.Ezagent.User.Token do
-  @shortdoc "DEPRECATED (mostly) — use `mix esr user mint_token/list_tokens/revoke_token`"
+  @shortdoc "DEPRECATED (mostly) — use `mix ezagent user mint_token/list_tokens/revoke_token`"
   @moduledoc """
   > **DEPRECATED 2026-05-26 (HIGH-2 completion).**
   >
   > The dispatch-backed equivalents now exist via the new
   > `Ezagent.Behavior.UserTokens` registered on User Kind. New
-  > callers should use the auto-derived `mix esr` commands; they go
+  > callers should use the auto-derived `mix ezagent` commands; they go
   > through `Ezagent.Invocation.dispatch/1` → step 5.5 CapBAC →
   > step 5.6 cross-workspace iso → audit telemetry.
   >
   >     # NEW — preferred paths:
-  >     mix esr user mint_token   --user <uri> --label <name>
-  >     mix esr user list_tokens  --user <uri>
-  >     mix esr user revoke_token --user <uri> --token-id <id>
+  >     mix ezagent user mint_token   --user <uri> --label <name>
+  >     mix ezagent user list_tokens  --user <uri>
+  >     mix ezagent user revoke_token --user <uri> --token-id <id>
   >
   > **Carve-out preserved**: the first-admin-bootstrap mint
   > (chicken-and-egg — admin needs a token BEFORE they can dispatch
-  > anything via `mix esr`) stays as `mix ezagent.user.token --mint`
+  > anything via `mix ezagent`) stays as `mix ezagent.user.token --mint`
   > per codex PR #304 MED finding. Operators bootstrapping a fresh
   > DB should use this task ONCE for the admin's first token, then
-  > switch to `mix esr` for everything else (rotation, agent tokens,
+  > switch to `mix ezagent` for everything else (rotation, agent tokens,
   > etc.).
   >
   > Agent token minting (`entity://agent/...`) also stays here for
@@ -52,8 +52,8 @@ defmodule Mix.Tasks.Ezagent.User.Token do
 
   Pass the token to CLI calls:
 
-      EZAGENT_USER_TOKEN=esr_pat_xxx mix esr session create test
-      mix esr session create test --token=esr_pat_xxx
+      EZAGENT_USER_TOKEN=esr_pat_xxx mix ezagent session create test
+      mix ezagent session create test --token=esr_pat_xxx
   """
   use Mix.Task
 
@@ -77,7 +77,7 @@ defmodule Mix.Tasks.Ezagent.User.Token do
     cond do
       opts[:mint] ->
         # Bootstrap-mint carve-out: this is the chicken-and-egg path
-        # — admin needs a token BEFORE they can dispatch via `mix esr`
+        # — admin needs a token BEFORE they can dispatch via `mix ezagent`
         # for any other op. The notice is gentle here (vs --list /
         # --revoke which always have a dispatch alternative).
         if mint_is_user?(uri) do
@@ -86,10 +86,10 @@ defmodule Mix.Tasks.Ezagent.User.Token do
           use as of 2026-05-26. Prefer the dispatch-backed equivalent for
           subsequent mints (CapBAC + audit):
 
-              mix esr user mint_token --user <uri> --label <name>
+              mix ezagent user mint_token --user <uri> --label <name>
 
           This bootstrap-mint mode remains for the very first admin token
-          (chicken-and-egg: needed BEFORE `mix esr` can authenticate).
+          (chicken-and-egg: needed BEFORE `mix ezagent` can authenticate).
           """)
         end
 
@@ -109,7 +109,7 @@ defmodule Mix.Tasks.Ezagent.User.Token do
             Mix.shell().info("  #{plain}")
             Mix.shell().info("")
             Mix.shell().info("Record this token now — it won't be shown again.")
-            Mix.shell().info("Use via: EZAGENT_USER_TOKEN=<token> mix esr ...")
+            Mix.shell().info("Use via: EZAGENT_USER_TOKEN=<token> mix ezagent ...")
         end
 
       opts[:list] ->
@@ -118,7 +118,7 @@ defmodule Mix.Tasks.Ezagent.User.Token do
           NOTE: `mix ezagent.user.token --list` is deprecated as of 2026-05-26.
           Use the dispatch-backed equivalent (CapBAC + audit):
 
-              mix esr user list_tokens --user <uri>
+              mix ezagent user list_tokens --user <uri>
 
           This task still works but bypasses dispatch.
           """)
@@ -145,7 +145,7 @@ defmodule Mix.Tasks.Ezagent.User.Token do
           NOTE: `mix ezagent.user.token --revoke` is deprecated as of 2026-05-26.
           Use the dispatch-backed equivalent (CapBAC + audit):
 
-              mix esr user revoke_token --user <uri> --token-id <id>
+              mix ezagent user revoke_token --user <uri> --token-id <id>
 
           This task still works but bypasses dispatch.
           """)

@@ -84,7 +84,7 @@ defmodule EzagentCli.Integration.PluginIsolationCLITest do
     :ok
   end
 
-  test "PHASE 4 CLI INVARIANT: plugin-defined Behavior action auto-appears in mix esr tree" do
+  test "PHASE 4 CLI INVARIANT: plugin-defined Behavior action auto-appears in mix ezagent tree" do
     # 1. Plugin-author work: register Kind ↔ Behavior at runtime
     :ok = Ezagent.BehaviorRegistry.register(ProbeKind, :do_thing, ProbeBehavior)
 

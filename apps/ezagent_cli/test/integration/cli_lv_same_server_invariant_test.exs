@@ -1,7 +1,7 @@
 defmodule EzagentCli.Integration.CliLvSameServerInvariantTest do
   @moduledoc """
   Post-Phase-5 invariant (Allen 2026-05-17): CLI and LV must reach the
-  SAME BEAM. Previously `mix esr` started its own VM and the dispatch
+  SAME BEAM. Previously `mix ezagent` started its own VM and the dispatch
   hit isolated state — LV couldn't see CLI mutations. That was a real
   drift.
 

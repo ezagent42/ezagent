@@ -63,7 +63,7 @@ defmodule Ezagent.Behavior.WorkspaceUserAdmin do
 
   ## Auto-derived CLI
 
-      mix esr workspace create_user \\
+      mix ezagent workspace create_user \\
           --workspace <name> \\
           --user-uri entity://user/<workspace>/<handle> \\
           --password <pw> \\
@@ -139,7 +139,7 @@ defmodule Ezagent.Behavior.WorkspaceUserAdmin do
   end
 
   # =================================================================
-  # Interface — drives `mix esr` auto-derivation.
+  # Interface — drives `mix ezagent` auto-derivation.
   # =================================================================
 
   @impl Ezagent.Behavior

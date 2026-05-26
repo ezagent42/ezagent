@@ -2,7 +2,7 @@ defmodule EzagentCore.Invariants.LvCliParityTest do
   @moduledoc """
   Cross-domain CLI ↔ LV parity invariant — enumerates **every** mutating
   `handle_event/3` clause across **every** LiveView and asserts each
-  has a corresponding `mix esr <kind> <action>` or `mix ezagent.*`
+  has a corresponding `mix ezagent <kind> <action>` or `mix ezagent.*`
   legacy task counterpart.
 
   Companion to the narrower
@@ -14,7 +14,7 @@ defmodule EzagentCore.Invariants.LvCliParityTest do
 
   ## Why an explicit mapping table
 
-  Greppin' for `mix esr <action>` would over-match (any string can
+  Greppin' for `mix ezagent <action>` would over-match (any string can
   appear in a comment) and miss auto-derived commands (those are only
   defined by `Behavior.interface/0`, not the filesystem). The mapping
   is what an operator should be able to type — verified once at code-
@@ -28,12 +28,12 @@ defmodule EzagentCore.Invariants.LvCliParityTest do
 
   ## Categories
 
-  - `:cli` — has a `mix esr` or `mix ezagent.*` counterpart (mapped
+  - `:cli` — has a `mix ezagent` or `mix ezagent.*` counterpart (mapped
     string is the operator-facing command shape).
   - `:ui_only` — pure UI state (filter / toggle / switch view / pagination)
     — exempt from CLI parity by design.
   - `:pty_stream` — terminal byte input / resize — uses
-    `Behavior.Pty` which is reachable from CLI via `mix esr agent write`
+    `Behavior.Pty` which is reachable from CLI via `mix ezagent agent write`
     but the LV path is real-time keystroke streaming so the CLI parity
     is unidirectional (you can drive a PTY from CLI to seed input but
     operating a TUI from one-shot mix tasks is impractical).
@@ -48,7 +48,7 @@ defmodule EzagentCore.Invariants.LvCliParityTest do
   When you add a new LV `handle_event("foo", ...)` clause:
   1. Run this test — it will fail listing `"foo"` as unmapped.
   2. Add a row to `@event_to_cli`:
-     - If your action goes via dispatch, the CLI is `mix esr <kind>
+     - If your action goes via dispatch, the CLI is `mix ezagent <kind>
        <action>` — auto-derived from `Behavior.interface/0`.
      - If your action is pure UI state, use category `:ui_only`.
      - If you genuinely cannot land a CLI in the same PR (rare —
@@ -68,7 +68,7 @@ defmodule EzagentCore.Invariants.LvCliParityTest do
   # Source-of-truth survey: 2026-05-26, all 22 LV files.
   @event_to_cli %{
     # --- Workspace ops (parity covered by workspace_lv_cli_parity_test too) ---
-    "create_workspace" => {:cli, "mix esr workspace create <name>"},
+    "create_workspace" => {:cli, "mix ezagent workspace create <name>"},
     "add_member" => {:cli, "mix ezagent.workspace.add_member <name> <uri>"},
     "remove_member" => {:cli, "mix ezagent.workspace.remove_member <name> <uri>"},
     "add_template" => {:cli, "mix ezagent.workspace.add_template <name> <tmpl-json>"},
@@ -86,12 +86,12 @@ defmodule EzagentCore.Invariants.LvCliParityTest do
     "create_agent" => {:cli, "mix ezagent.agent.create <agent-uri> --caps ..."},
     # restart is auto-derived from Behavior.Lifecycle :terminate +
     # supervisor restart policy.
-    "restart" => {:cli, "mix esr agent terminate --agent <uri>"},
+    "restart" => {:cli, "mix ezagent agent terminate --agent <uri>"},
 
     # --- Session / chat ops ---
     "invite_member" =>
-      {:cli, "mix esr session join --session <uri> --member <member-uri>"},
-    # chat_compose CLI is partial — text-only via `mix esr session send`.
+      {:cli, "mix ezagent session join --session <uri> --member <member-uri>"},
+    # chat_compose CLI is partial — text-only via `mix ezagent session send`.
     # File attachments + mentions are not yet representable in argv. See
     # `docs/notes/2026-05-24-cli-gui-parity-audit.md` §1 row 1.
     "chat_compose" =>
@@ -99,42 +99,42 @@ defmodule EzagentCore.Invariants.LvCliParityTest do
        "docs/futures/todo.md — chat_compose attachment shapes need a `resource://` upload primitive"},
     # create_session — LV calls EzagentDomainChat.create_session/3
     # directly (bypasses dispatch in BOTH surfaces per audit Finding 1).
-    # CLI gap: no `mix esr session create` yet. Tracked.
+    # CLI gap: no `mix ezagent session create` yet. Tracked.
     "create_session" =>
       {:deferred,
        "docs/futures/todo.md — HIGH-3 admin_live.create_session needs a Behavior + action (likely on Workspace Kind: :create_session, parallels :create_agent)"},
 
     # --- Routing ops (Behavior.Routing covers all 4 actions auto-deriving) ---
-    "add_rule" => {:cli, "mix esr workspace add_rule --workspace <name> ..."},
-    "delete_rule" => {:cli, "mix esr workspace delete_rule --workspace <name> ..."},
-    "disable_rule" => {:cli, "mix esr workspace disable_rule --workspace <name> ..."},
-    "enable_rule" => {:cli, "mix esr workspace enable_rule --workspace <name> ..."},
+    "add_rule" => {:cli, "mix ezagent workspace add_rule --workspace <name> ..."},
+    "delete_rule" => {:cli, "mix ezagent workspace delete_rule --workspace <name> ..."},
+    "disable_rule" => {:cli, "mix ezagent workspace disable_rule --workspace <name> ..."},
+    "enable_rule" => {:cli, "mix ezagent workspace enable_rule --workspace <name> ..."},
     # routing_rule_add_session (admin_live) — session-scoped variant of
-    # add_rule. Maps to `mix esr session add_rule --session <uri> ...`
+    # add_rule. Maps to `mix ezagent session add_rule --session <uri> ...`
     # which auto-derives from Behavior.Routing registered on Session Kind.
     "routing_rule_add_session" =>
-      {:cli, "mix esr session add_rule --session <uri> --table ... --matcher-json ... --receivers ..."},
+      {:cli, "mix ezagent session add_rule --session <uri> --table ... --matcher-json ... --receivers ..."},
     # routing_rule_toggle — admin_live's per-row enable/disable. Maps to
-    # `mix esr workspace disable_rule` / `enable_rule`.
+    # `mix ezagent workspace disable_rule` / `enable_rule`.
     "routing_rule_toggle" =>
-      {:cli, "mix esr workspace disable_rule / enable_rule (depending on toggle target)"},
+      {:cli, "mix ezagent workspace disable_rule / enable_rule (depending on toggle target)"},
 
     # --- Identity ops ---
     # HIGH-2 completion (2026-05-26): `:create_user` action landed on
-    # Behavior.Workspace; `mix esr workspace create_user` auto-derives
+    # Behavior.Workspace; `mix ezagent workspace create_user` auto-derives
     # from interface/0. Legacy `mix ezagent.user.create` retained for
     # muscle memory but now prints a deprecation notice.
     "create_user" =>
       {:cli,
-       "mix esr workspace create_user --workspace <name> --user-uri <uri> --password <pw> --caps <list>"},
+       "mix ezagent workspace create_user --workspace <name> --user-uri <uri> --password <pw> --caps <list>"},
     # HIGH-2 completion (2026-05-26): `:set_password` action landed on
     # the new `Ezagent.Behavior.UserCredentials` registered on User
-    # Kind. Auto-derives `mix esr user set_password`. Legacy
+    # Kind. Auto-derives `mix ezagent user set_password`. Legacy
     # `mix ezagent.user.set_password` retained as the admin-bootstrap
     # carve-out (chicken-and-egg: admin needs a password BEFORE they
-    # can mint a token for `mix esr` calls).
+    # can mint a token for `mix ezagent` calls).
     "set_password" =>
-      {:cli, "mix esr user set_password --user <uri> --password <pw>"},
+      {:cli, "mix ezagent user set_password --user <uri> --password <pw>"},
     # display_name save — LV calls Ezagent.Entity.Profile.upsert/1
     # directly. Needs a Behavior on User Kind: :set_display_name
     # (or extend Behavior.Identity). Profile is its own slice today.
@@ -142,13 +142,13 @@ defmodule EzagentCore.Invariants.LvCliParityTest do
       {:deferred,
        "docs/futures/todo.md HIGH-3 — needs Behavior on User Kind for :set_display_name (Profile slice); LV path uses Ezagent.Entity.Profile.upsert/1 directly"},
     # grant_cap / revoke_cap exist on Behavior.IdentityAdmin AND are
-    # used by entity_caps_live via dispatch. mix esr auto-derives.
-    "grant" => {:cli, "mix esr user grant_cap --user <uri> --cap <json>"},
-    "revoke" => {:cli, "mix esr user revoke_cap --user <uri> --cap <json>"},
+    # used by entity_caps_live via dispatch. mix ezagent auto-derives.
+    "grant" => {:cli, "mix ezagent user grant_cap --user <uri> --cap <json>"},
+    "revoke" => {:cli, "mix ezagent user revoke_cap --user <uri> --cap <json>"},
     # user_api_keys_live dispatches via Behavior.ApiKeys which is on
-    # User Kind. mix esr auto-derives `put_api_key` / `delete_api_key`.
-    "put" => {:cli, "mix esr user put_api_key --user <uri> --provider <p> --key <k>"},
-    "delete" => {:cli, "mix esr user delete_api_key --user <uri> --provider <p>"},
+    # User Kind. mix ezagent auto-derives `put_api_key` / `delete_api_key`.
+    "put" => {:cli, "mix ezagent user put_api_key --user <uri> --provider <p> --key <k>"},
+    "delete" => {:cli, "mix ezagent user delete_api_key --user <uri> --provider <p>"},
 
     # --- Feishu plugin ---
     "bind" => {:cli, "mix ezagent.feishu.bind <open-id> <user-uri>"},
@@ -176,9 +176,9 @@ defmodule EzagentCore.Invariants.LvCliParityTest do
 
     # --- Agent extensions ---
     # The toggle event drives Behavior.Template.toggle_extension dispatch
-    # in the cc plugin. mix esr auto-derives `mix esr template <action>`.
+    # in the cc plugin. mix ezagent auto-derives `mix ezagent template <action>`.
     "toggle" =>
-      {:cli, "mix esr template toggle_extension --template <name> --id <ext-id> --enabled <bool>"},
+      {:cli, "mix ezagent template toggle_extension --template <name> --id <ext-id> --enabled <bool>"},
 
     # --- Pure UI state (no mutation — exempt) ---
     "filter" => {:ui_only, "in-page text filter; no backend mutation"},
@@ -209,7 +209,7 @@ defmodule EzagentCore.Invariants.LvCliParityTest do
     "refresh" => {:ui_only, "force re-mount listings"},
 
     # --- PTY streaming ---
-    "pty_input" => {:pty_stream, "real-time keystroke stream; CLI seeding via `mix esr agent write` exists but interactive use is impractical from one-shot mix tasks"},
+    "pty_input" => {:pty_stream, "real-time keystroke stream; CLI seeding via `mix ezagent agent write` exists but interactive use is impractical from one-shot mix tasks"},
     "pty_resize" => {:pty_stream, "real-time resize notification; ditto"}
   }
 
@@ -234,7 +234,7 @@ defmodule EzagentCore.Invariants.LvCliParityTest do
 
            Each LV `handle_event(<name>, ...)` clause MUST have a row in
            `@event_to_cli` in this test. Add one of:
-             {:cli, "mix esr <kind> <action> ..."}      — has a CLI counterpart
+             {:cli, "mix ezagent <kind> <action> ..."}      — has a CLI counterpart
              {:ui_only, "<why no mutation>"}            — pure UI state
              {:pty_stream, "<why CLI is impractical>"}  — terminal streaming
              {:deferred, "<docs/futures/todo.md path>"} — explicit gap

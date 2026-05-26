@@ -59,9 +59,9 @@ defmodule Ezagent.Behavior.UserTokens do
 
   ## Auto-derived CLI
 
-      mix esr user mint_token --user <uri> --label <name>
-      mix esr user list_tokens --user <uri>
-      mix esr user revoke_token --user <uri> --token-id <id>
+      mix ezagent user mint_token --user <uri> --label <name>
+      mix ezagent user list_tokens --user <uri>
+      mix ezagent user revoke_token --user <uri> --token-id <id>
 
   The legacy `mix ezagent.user.token` task is retained pending
   operator migration with a deprecation notice; its `--mint` mode is
@@ -197,7 +197,7 @@ defmodule Ezagent.Behavior.UserTokens do
   end
 
   # =================================================================
-  # Interface — drives `mix esr` auto-derivation.
+  # Interface — drives `mix ezagent` auto-derivation.
   # =================================================================
 
   @impl Ezagent.Behavior

@@ -6,13 +6,13 @@ defmodule Mix.Tasks.Ezagent.Feishu.Bind do
   > directly, so no CapBAC, no audit row, no cross-workspace check.
   > The LV `feishu_bindings_live.ex:90` uses the SAME functions (same
   > source ✓) but the CLI/LV split means the CLI never goes through
-  > the dispatch step that LV could grow tomorrow. The `mix esr feishu
+  > the dispatch step that LV could grow tomorrow. The `mix ezagent feishu
   > bind` equivalent does NOT exist yet — deleting this task today
   > would lose operator capability. Tracked in
   > `docs/futures/todo.md` § "CLI ↔ GUI parity (audit findings #137
-  > still partial)". TODO: add the matching Behavior action + cap subject (NOT a bare FacadeRegistry op — codex PR #304 round-2 HIGH: that path bypasses Invocation.dispatch + caps + audit). mix esr auto-derives the CLI from interface/0. See the deferred-table guidance in docs/futures/todo.md HIGH-2
+  > still partial)". TODO: add the matching Behavior action + cap subject (NOT a bare FacadeRegistry op — codex PR #304 round-2 HIGH: that path bypasses Invocation.dispatch + caps + audit). mix ezagent auto-derives the CLI from interface/0. See the deferred-table guidance in docs/futures/todo.md HIGH-2
   > `(:feishu, :bind)` in `EzagentPluginFeishu.Application.start/2`
-  > so `mix esr feishu bind --open-id … --user-uri … [--admin …]`
+  > so `mix ezagent feishu bind --open-id … --user-uri … [--admin …]`
   > becomes available, then deprecate this task using the PR #302
   > stub pattern.
 

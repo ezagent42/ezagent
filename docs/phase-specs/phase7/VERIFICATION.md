@@ -34,7 +34,7 @@ Each must be observably true with **no Allen involvement**.
    (toy plugin that registers a Kind named "hello" with one action)
 5. From ezagent/: mix ezagent.plugin.install ../esr_plugin_hello
    → "✓ Registered: Kind=:hello, Behaviors=[..]"
-6. mix esr hello greet --name world
+6. mix ezagent hello greet --name world
    → "hello, world" (dispatch reaches new Kind, no restart needed)
 ```
 
@@ -101,7 +101,7 @@ Each must be observably true with **no Allen involvement**.
 1. **Scope-bounded cap denies out-of-scope grants.** Orchestrator in session A holds `{kind: :session, behavior: :any, instance: {:within_session, A}}`. Its `grant_cap` call targeting a URI in session B (e.g. spawning an agent there, granting cap on an agent in session B) returns `:unauthorized` at CapBAC step 5.5.
 2. **Workspace isolation enforced at CapBAC.** Orchestrator's `write_matcher` targeting a different workspace from its own returns `:unauthorized`.
 3. **Lineage-bounded cap denies cross-lineage grants.** Orchestrator holds `{kind: :agent, behavior: :any, instance: {:spawned_by, orchestrator_uri}}`. `grant_cap` on an agent NOT in its spawn lineage (e.g. another orchestrator's spawned agent) returns `:unauthorized`.
-4. **CLI ↔ LV cap parity.** A non-admin user invoking an action via `mix esr` (token-bound) and the same action via admin LV produces identical authz decisions (granted ↔ granted; denied ↔ denied) for at least 5 sampled action paths.
+4. **CLI ↔ LV cap parity.** A non-admin user invoking an action via `mix ezagent` (token-bound) and the same action via admin LV produces identical authz decisions (granted ↔ granted; denied ↔ denied) for at least 5 sampled action paths.
 5. **Feishu inbound preserves error feedback under new cap shapes.** Allen's PR 27 silent-drop fix continues to work — a Feishu user without scope cap for the target session still receives the error text in their Feishu chat + THUMBSDOWN react.
 6. **Delegation Decision Log entry.** ARCHITECTURE.md §17.6 contains an entry retiring "v0 不支持 delegation" baseline and documenting the v1 scope-bounded model.
 
@@ -138,7 +138,7 @@ Each must be observably true with **no Allen involvement**.
 4. **Workspace isolation in routing.** A routing rule scoped to `workspace://A` is never invoked for messages in `workspace://B`. CI test asserts.
 5. **`mix ezagent.bootstrap` one-command setup.** Fresh clone + 1 command → ready-to-serve Ezagent. CI gate runs the bootstrap on a clean checkout.
 6. **CC channel v2 is the only path.** All currently-bound agents use `EzagentPluginCc.BridgeRegistry`; the v1 `Ezagent.Bridge.V1Prototype.Server` lookup is unreachable (returns `:error` always — module deleted).
-7. **CLI uses per-user token auth.** `mix esr <cmd>` requires `~/.ezagent/<profile>/credentials/cli-token`; admin shortcut only for admin-owned tokens.
+7. **CLI uses per-user token auth.** `mix ezagent <cmd>` requires `~/.ezagent/<profile>/credentials/cli-token`; admin shortcut only for admin-owned tokens.
 8. **Session persistence flip.** `Ezagent.Entity.Session.persistence/0 == {:snapshot, :on_change}`. Pre-Phase-7 ephemeral sessions migrate cleanly (existing snapshot tests pass).
 
 ### e2e flow — "fresh laptop production deploy"
@@ -154,7 +154,7 @@ Each must be observably true with **no Allen involvement**.
    → phx.server starts; admin LV reachable
 5. find . -name "*.db" -not -path "./_build/*"
    → (empty — no repo pollution)
-6. mix esr session list (using the minted CLI token automatically)
+6. mix ezagent session list (using the minted CLI token automatically)
    → ✓
 ```
 
