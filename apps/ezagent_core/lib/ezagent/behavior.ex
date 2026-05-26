@@ -426,6 +426,44 @@ defmodule Ezagent.Behavior do
   """
   @callback reads_sibling_slices() :: [atom()]
 
+  @doc """
+  Reconcile this Behavior's slice with an external source of truth
+  (e.g. a projection table in the DB) after the Kind has loaded
+  state from a snapshot.
+
+  ## Why this exists
+
+  `Ezagent.Kind.Snapshot.load_or_init/3` merges the snapshot's
+  loaded state OVER the `init_slice/1` fresh state. For Behaviors
+  whose slice is backed by a DB projection table (e.g.
+  `Ezagent.Behavior.ExternalMirror.bindings` reads from
+  `external_mirror_bindings`), this means: rows inserted AFTER
+  the last snapshot write but BEFORE the next Kind restart are
+  silently lost from the live slice. The Kind's
+  `handle_continue/3` reconcile loop then walks an out-of-date
+  slice, and downstream consumers (worker spawn, etc.) never see
+  the new rows.
+
+  `reconcile_after_load/2` runs once after merge: the Behavior
+  re-reads its DB-backed fields, unions them with the merged
+  slice, and returns the corrected slice. The default
+  implementation is identity (`slice -> slice`).
+
+  Behaviors with no DB projection don't need to implement this.
+
+  ## Idempotence
+
+  Must be idempotent: calling `reconcile_after_load(uri,
+  reconcile_after_load(uri, slice))` must equal
+  `reconcile_after_load(uri, slice)`. The expected pattern is
+  set-union with a key (e.g. binding id), not list-append.
+
+  Added 2026-05-26 as part of task #34 (worker spawn design fix —
+  Allen directive after observing ExternalMirrorWorker not
+  spawning for SQL-inserted binding rows post-restart).
+  """
+  @callback reconcile_after_load(uri :: URI.t(), slice :: slice()) :: slice()
+
   @optional_callbacks [
     dispatchable?: 0,
     data_owner: 1,
@@ -434,7 +472,8 @@ defmodule Ezagent.Behavior do
     terminate: 3,
     cap_exempt_actions: 0,
     workspace_scoped?: 0,
-    reads_sibling_slices: 0
+    reads_sibling_slices: 0,
+    reconcile_after_load: 2
   ]
 
   @doc """

@@ -84,9 +84,18 @@ defmodule Ezagent.Kind.Snapshot do
         # state immediately; the next `:on_change` persistence then
         # writes the pruned shape back to disk, so the orphan is
         # also evicted from the DB on first mutation post-flip.
+        #
+        # Allen 2026-05-26 task #34 — also RECONCILE each Behavior
+        # with its DB projection (if it declares
+        # `reconcile_after_load/2`). This catches DB rows inserted
+        # AFTER the last snapshot but BEFORE the next Kind restart
+        # — e.g. ExternalMirror bindings written outside dispatch
+        # OR a snapshot/DB write race. Idempotent for normal-path
+        # callers.
         fresh
         |> Map.merge(loaded_state)
         |> prune_orphan_slices(kind_module)
+        |> reconcile_after_load_behaviors(uri, kind_module)
 
       :error ->
         fresh
@@ -115,6 +124,43 @@ defmodule Ezagent.Kind.Snapshot do
     state
     |> Enum.filter(fn {key, _} -> MapSet.member?(declared, key) end)
     |> Map.new()
+  end
+
+  # Allen 2026-05-26 task #34 — for each Behavior on the Kind that
+  # implements `reconcile_after_load/2`, hand it the current slice
+  # value and let it sync with a DB projection (or any external
+  # source of truth). Idempotent — the Behavior is expected to
+  # union/dedupe so calling it on already-reconciled state is a
+  # no-op.
+  #
+  # Why here, not in init_slice: init_slice runs BEFORE the merge,
+  # so its DB-read result gets shadowed by `loaded_state`. The
+  # reconcile step runs AFTER merge so it can amend the merged
+  # output.
+  #
+  # Per `feedback_let_it_crash_no_workarounds`: a Behavior whose
+  # reconcile raises propagates the crash — Kind.Server's
+  # supervisor restarts the Kind. Persistent reconcile failure =
+  # Kind stays down = correct (operator must fix the DB).
+  defp reconcile_after_load_behaviors(state, %URI{} = uri, kind_module) do
+    Enum.reduce(kind_module.behaviors(), state, fn behavior, acc ->
+      slice_key = behavior.state_slice()
+      slice_value = Map.get(acc, slice_key)
+
+      if function_exported?(behavior, :reconcile_after_load, 2) and not is_nil(slice_value) do
+        reconciled = behavior.reconcile_after_load(uri, slice_value)
+        Map.put(acc, slice_key, reconciled)
+      else
+        acc
+      end
+    end)
+  end
+
+  defp reconcile_after_load_behaviors(state, uri_str, kind_module) when is_binary(uri_str) do
+    case URI.new(uri_str) do
+      {:ok, uri} -> reconcile_after_load_behaviors(state, uri, kind_module)
+      _ -> state
+    end
   end
 
   defp fetch_snapshot(uri_str, kind_module) do

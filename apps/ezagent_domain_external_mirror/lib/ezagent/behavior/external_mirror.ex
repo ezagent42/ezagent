@@ -158,6 +158,41 @@ defmodule Ezagent.Behavior.ExternalMirror do
 
   def post_init(_args, _slice), do: :ok
 
+  # Allen 2026-05-26 task #34 — `init_slice/1` reads the DB
+  # projection at fresh-init time, but `Ezagent.Kind.Snapshot.
+  # load_or_init/3` MERGES the snapshot over the fresh state, so
+  # the DB-read result is shadowed. Rows inserted AFTER the last
+  # snapshot but BEFORE the next Kind restart are silently lost
+  # from the live slice.
+  #
+  # `reconcile_after_load/2` runs AFTER the snapshot merge.
+  # We re-read the projection rows for this session and union
+  # them with the loaded slice's bindings, dedupe by binding id.
+  # The normal-path bind (where the snapshot already captured
+  # the binding) is a no-op union; the bypass paths (SQL insert,
+  # snapshot/DB write race) get the new binding pulled into
+  # slice for `handle_continue/3` to spawn the worker.
+  @impl Ezagent.Behavior
+  def reconcile_after_load(%URI{} = session_uri, %{bindings: existing} = slice) do
+    db_bindings =
+      session_uri
+      |> BindingRow.list_for_session()
+      |> Enum.map(&row_to_slice_binding/1)
+
+    existing_ids = MapSet.new(existing, & &1.binding_id)
+
+    additions =
+      Enum.reject(db_bindings, fn b -> MapSet.member?(existing_ids, b.binding_id) end)
+
+    %{slice | bindings: existing ++ additions}
+  rescue
+    # DB unavailable — keep snapshot's bindings. Matches init_slice's
+    # rescue branch; same tolerance pattern.
+    _ -> slice
+  end
+
+  def reconcile_after_load(_uri, slice), do: slice
+
   @doc """
   §3.1 reconciliation — runs AFTER `:announce_ready` for Sessions
   whose `init_slice/1` rebuilt non-empty `bindings`.
