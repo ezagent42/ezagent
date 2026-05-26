@@ -1488,11 +1488,32 @@ defmodule EzagentPluginLiveview.AdminLive do
   # idempotency comment). LV remounts + repeated `select_session`
   # calls don't stack monitors or notifications.
   #
+  # Codex r1 MEDIUM-4 (2026-05-26): MUST gate on `connected?(socket)`.
+  # Phoenix LiveView mounts twice — once for the disconnected dead-
+  # render (synchronous HTTP), once for the live socket post-handshake.
+  # Pre-fix this dispatched `chat.join` TWICE per page load AND ran a
+  # session mutation during the HTTP render path. Post-fix the join
+  # happens only on the live socket — the dead render still gets the
+  # accurate MemberPanel via `assign_session_context/2`'s
+  # `read_session_members/1` (which reads the live slice the previous
+  # mount populated). `select_session/2` (the phx-click + handle_params
+  # paths) always runs in the live socket so the guard is a no-op there.
+  #
   # Not-signed-in / no-creds: skip the dispatch entirely. The session
   # may legitimately be one the visitor only has read authority on
   # (admin observing); the Invite path remains available for the
   # creator to add them later.
   defp maybe_self_join(socket, %URI{} = session_uri) do
+    if not connected?(socket) do
+      # Dead-render pass — skip. The live mount runs `maybe_self_join`
+      # again right after the socket connects.
+      socket
+    else
+      do_maybe_self_join(socket, session_uri)
+    end
+  end
+
+  defp do_maybe_self_join(socket, %URI{} = session_uri) do
     caller_uri = Map.get(socket.assigns, :caller_uri) || socket.assigns[:current_entity_uri]
     caller_caps = Map.get(socket.assigns, :caller_caps)
 

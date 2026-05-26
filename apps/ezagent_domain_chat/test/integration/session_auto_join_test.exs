@@ -325,6 +325,66 @@ defmodule EzagentDomainChat.Integration.SessionAutoJoinTest do
   # ----------------------------------------------------------------------
 
   describe ":join idempotency (Behavior.Chat)" do
+    # Codex r1 HIGH-1 (2026-05-26) — strict pid-match short-circuit
+    # regression test. The short-circuit MUST verify the held monitor
+    # ref is for the SAME pid KindRegistry currently resolves the URI
+    # to; otherwise the dead-old-pid + fresh-new-pid + stale-:DOWN
+    # window causes the live member to be marked offline.
+    test "short-circuit fires only when the held monitor ref is for the CURRENT pid" do
+      short = "ajs-pid-#{uniq()}"
+      admin = User.admin_uri()
+
+      {:ok, session_uri} =
+        EzagentDomainChat.create_session(short, admin, template_name: "default")
+
+      # Wait for the creator-auto-join cast to land.
+      assert wait_until(fn ->
+               {members, _monitors, _slice} = session_members(session_uri)
+               Enum.any?(members, &(URI.to_string(&1) == URI.to_string(admin)))
+             end)
+
+      # The admin Kind's current pid + the session's current monitor
+      # ref for admin.
+      {:ok, admin_pid_before} = KindRegistry.lookup(admin)
+
+      {_members, monitors_before, _slice} = session_members(session_uri)
+
+      # Check that `:monitored_by` on admin includes the session pid.
+      {:ok, session_pid} = KindRegistry.lookup(session_uri)
+
+      {:monitored_by, monitored_by} = Process.info(admin_pid_before, :monitored_by)
+
+      assert session_pid in monitored_by,
+             "Session must hold a monitor on the admin pid (the structural " <>
+               "anchor for the chat.join idempotency short-circuit)"
+
+      # Repeated chat.join with the SAME admin pid — must NOT stack
+      # monitors AND must NOT install a fresh ref (the existing one
+      # is for the current pid).
+      target = URI.new!("#{URI.to_string(session_uri)}?action=chat.join")
+
+      :ok =
+        Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+          target: target,
+          mode: :cast,
+          args: %{member: admin},
+          ctx: %{
+            caller: Ezagent.SystemPrincipal.uri("session-internal"),
+            caps: Ezagent.SystemPrincipal.caps("system://session-internal"),
+            reply: :ignore
+          }
+        })
+
+      Process.sleep(100)
+
+      {_members_after, monitors_after, _slice} = session_members(session_uri)
+
+      # Same ref + same count — full short-circuit fired.
+      assert monitors_after == monitors_before,
+             "short-circuit must leave slice.monitors UNCHANGED for same-pid rejoin " <>
+               "(pre #{inspect(monitors_before)}, post #{inspect(monitors_after)})"
+    end
+
     test "re-dispatching chat.join for the same member does NOT stack monitors" do
       short = "ajs-idem-#{uniq()}"
       admin = User.admin_uri()

@@ -435,14 +435,21 @@ defmodule Ezagent.Entity.Session do
   end
 
   # Step 8 — dispatch `chat.join` for the orchestrator and every
-  # successfully-reconciled worker URI. Idempotent (re-running the
-  # reconciler is the SPEC's recovery story; the `:join` invoke's
-  # `online + monitor alive` short-circuit keeps the slice clean).
+  # successfully-reconciled worker URI.
   #
-  # Errors are absorbed (Logger.warning) — the reconciler's outcome
-  # is already returning :ok / :partial without this step; we don't
-  # downgrade a successful spawn to :partial because the chat join
-  # call failed (the next reconciler invocation will retry it).
+  # Codex r1 HIGH-2 (2026-05-26): uses `:call` (NOT `:cast`) so
+  # failures are observable. Pre-fix the `:cast` + `reply: :ignore`
+  # path silently swallowed CapBAC denials, missing-member errors,
+  # and target-not-alive transients — `spawn_from_template/2`
+  # returned `:ok` while the MemberPanel remained empty. Per
+  # `feedback_let_it_crash_no_workarounds`, errors here are
+  # surfaced via Logger.warning + telemetry; they do NOT downgrade
+  # the reconciler outcome to `:partial` (the auto-join is best-
+  # effort recovery on top of the spawn — the next reconciler run
+  # retries via the `:join` idempotency short-circuit).
+  #
+  # Idempotency: `Behavior.Chat.invoke(:join)`'s online+pid-match
+  # short-circuit drops the redundant work cheaply on re-entry.
   defp auto_join_session_members(
          %URI{} = session_uri,
          %URI{} = orchestrator_uri,
@@ -455,10 +462,10 @@ defmodule Ezagent.Entity.Session do
     target = URI.new!("#{URI.to_string(session_uri)}?action=chat.join")
 
     Enum.each(member_uris, fn %URI{} = member_uri ->
-      _ =
+      result =
         Ezagent.Invocation.dispatch(%Ezagent.Invocation{
           target: target,
-          mode: :cast,
+          mode: :call,
           args: %{member: member_uri},
           # SPEC caps-cleanup-v1 §4.4 — Session slice-internal member
           # bookkeeping. Same principal `join_creator/2` uses, so
@@ -471,6 +478,44 @@ defmodule Ezagent.Entity.Session do
             reply: :ignore
           }
         })
+
+      case result do
+        :ok ->
+          :ok
+
+        {:ok, _} ->
+          :ok
+
+        {:error, reason} ->
+          require Logger
+
+          Logger.warning(
+            "Session.auto_join_session_members: chat.join failed for " <>
+              "member=#{URI.to_string(member_uri)} on session=" <>
+              "#{URI.to_string(session_uri)}: #{inspect(reason)}. " <>
+              "MemberPanel will show the gap until the next reconcile " <>
+              "(idempotent retry)."
+          )
+
+          :telemetry.execute(
+            [:ezagent, :session, :auto_join, :failed],
+            %{count: 1},
+            %{
+              session_uri: session_uri,
+              member_uri: member_uri,
+              reason: reason
+            }
+          )
+
+        other ->
+          require Logger
+
+          Logger.warning(
+            "Session.auto_join_session_members: unexpected dispatch result for " <>
+              "member=#{URI.to_string(member_uri)} on session=" <>
+              "#{URI.to_string(session_uri)}: #{inspect(other)}"
+          )
+      end
     end)
 
     :ok
