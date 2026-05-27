@@ -58,8 +58,24 @@ defmodule EzagentPluginLiveview.AdminLive do
   alias EzagentPluginLiveview.AppShell
   alias Ezagent.UI.SessionViewRegistry
 
-  @main_session_uri URI.new!("session://default/system/main")
+  # Task #55 round-2 codex CRIT-2 (2026-05-27) — main session URI is
+  # NOT a module constant anymore; it's derived from the operator's
+  # `current_workspace_uri` at mount time. Pre-fix the LV hardcoded
+  # `session://default/system/main` for every tenant, so a non-admin
+  # operator's main session view defaulted to the system workspace.
+  # `default_main_session_uri/1` is the inverse — given the operator's
+  # workspace, return the canonical main session URI for it.
   @message_limit 50
+
+  defp default_main_session_uri(%URI{scheme: "workspace", host: ws}) when is_binary(ws) and ws != "",
+    do: URI.new!("session://default/#{ws}/main")
+
+  defp default_main_session_uri(_),
+    # Early-mount / test paths with no workspace assigned — fall back
+    # to the system workspace's main. LiveAuth populates the assign
+    # for every `:require_entity` mount in production, so this branch
+    # fires only when the LV is mounted outside that live_session.
+    do: URI.new!("session://default/system/main")
 
   @impl true
   def mount(_params, _session, socket) do
@@ -110,7 +126,14 @@ defmodule EzagentPluginLiveview.AdminLive do
     # `{uri, socket}` so the orchestrator-status meta (pending/failed)
     # can surface through the admin error banner. The unchanged path
     # (kind alive) returns the unchanged socket.
-    {current_session_uri, socket} = ensure_main_session(@main_session_uri, socket)
+    #
+    # Task #55 codex r2 CRIT-2 — derive main session URI from the
+    # operator's `current_workspace_uri`. Pre-fix every tenant landed
+    # on `session://default/system/main` (the admin's workspace's
+    # session). Post-fix a `team-alpha` operator lands on
+    # `session://default/team-alpha/main`.
+    main_session_uri = default_main_session_uri(socket.assigns[:current_workspace_uri])
+    {current_session_uri, socket} = ensure_main_session(main_session_uri, socket)
 
     caller_uri = socket.assigns.current_entity_uri
 
@@ -140,7 +163,15 @@ defmodule EzagentPluginLiveview.AdminLive do
         :ok = Ezagent.Notifications.subscribe_slice_change(caller_uri)
       end
 
-      for session_uri <- EzagentDomainChat.list_sessions() do
+      # Task #55 round-2 codex MEDIUM (2026-05-27) — subscribe ONLY to
+      # sessions in the caller's current workspace. Pre-fix the LV
+      # subscribed to every session's event topic regardless of tenant,
+      # so foreign-workspace session events were delivered into this
+      # process (rendered-list filter caught most leaks, but membership
+      # events flowing through `refresh_views_and_members/1` and the
+      # `{:chat_message, source_session_uri, msg}` path still touched
+      # the LV inbox).
+      for session_uri <- list_sessions_for(socket.assigns[:current_workspace_uri]) do
         Phoenix.PubSub.subscribe(EzagentCore.PubSub, session_events_topic(session_uri))
         # PR-N2 codex r2 HIGH-1 revert (was r1 MEDIUM-2 add) —
         # this loop briefly also called
@@ -289,22 +320,51 @@ defmodule EzagentPluginLiveview.AdminLive do
     do: {:noreply, assign_session_context(socket, socket.assigns.current_session_uri)}
 
   def handle_info({:chat_message, source_session_uri, %Ezagent.Message{} = msg}, socket) do
-    if URI.to_string(source_session_uri) == URI.to_string(socket.assigns.current_session_uri) do
-      {:noreply,
-       socket
-       |> assign(:messages_empty?, false)
-       |> stream_insert(:messages, message_to_row(msg), at: -1)}
-    else
-      {:noreply, socket}
+    cond do
+      # Task #55 round-2 codex MEDIUM (2026-05-27) — workspace guard.
+      # Reject any foreign-workspace event that slips through (e.g. from
+      # an old subscription on a session that's since been moved, or a
+      # transitional period where mount-time list_sessions_for/1 hasn't
+      # caught up to the latest workspace switch). Belt-and-suspenders
+      # over the mount-time subscription filter.
+      not session_in_caller_workspace?(source_session_uri, socket) ->
+        {:noreply, socket}
+
+      URI.to_string(source_session_uri) == URI.to_string(socket.assigns.current_session_uri) ->
+        {:noreply,
+         socket
+         |> assign(:messages_empty?, false)
+         |> stream_insert(:messages, message_to_row(msg), at: -1)}
+
+      true ->
+        {:noreply, socket}
     end
   end
 
   def handle_info({:chat_message, %Ezagent.Message{} = msg}, socket) do
+    # Task #55 round-2 codex MEDIUM (2026-05-27) — legacy 2-tuple chat
+    # message lacks a source-session URI, so we cannot apply the
+    # workspace guard structurally. Conservative: render into the
+    # current session only (operator already chose to view it via
+    # `select_session/2`'s gate). This branch is dead in workspace-
+    # filtered subscriptions but kept for transitional traffic until
+    # all producers emit the 3-tuple.
     {:noreply,
      socket
      |> assign(:messages_empty?, false)
      |> stream_insert(:messages, message_to_row(msg), at: -1)}
   end
+
+  # Task #55 round-2 codex MEDIUM — workspace guard for inbound session
+  # events. Returns true when the caller's `current_workspace_uri`
+  # equals the target session's workspace OR the caller holds
+  # cross-workspace authority (same predicate `select_session/2`'s
+  # gate uses, kept in sync).
+  defp session_in_caller_workspace?(%URI{} = session_uri, socket) do
+    authorize_session_view(socket, session_uri) == :ok
+  end
+
+  defp session_in_caller_workspace?(_, _), do: false
 
   # PR-4 of Read Receipts rollout — `EzagentDomainChat.PresenceFanout`
   # broadcasts when a session member's Presence changes. Refresh the
@@ -1391,38 +1451,115 @@ defmodule EzagentPluginLiveview.AdminLive do
   # `switch_session` phx-click handler AND the `?session=` query-param
   # `handle_params/3` clause (V1 UI PR-2, SPEC §2.2) so the two entry
   # points stay in lockstep.
+  #
+  # Task #55 round-2 codex CRIT-2 (2026-05-27) — workspace gate. Pre-fix
+  # any caller could deep-link `?session=<foreign-workspace-session>`
+  # and the LV called `load_session_messages/1` before any cap check,
+  # exposing messages from sessions in workspaces the caller doesn't
+  # belong to. Post-fix `select_session/2` refuses any session whose
+  # workspace differs from the caller's current workspace UNLESS the
+  # caller holds structural cross-workspace authority (system workspace
+  # member or `workspace_uri: :any` cap).
   defp select_session(socket, %URI{} = session_uri) do
-    new_messages = load_session_messages(session_uri)
-    applicable = SessionViewRegistry.applicable_views(session_uri)
+    case authorize_session_view(socket, session_uri) do
+      :ok ->
+        new_messages = load_session_messages(session_uri)
+        applicable = SessionViewRegistry.applicable_views(session_uri)
 
-    new_view =
+        new_view =
+          cond do
+            Enum.any?(applicable, &(&1.id == socket.assigns.current_view)) ->
+              socket.assigns.current_view
+
+            applicable != [] ->
+              hd(applicable).id
+
+            true ->
+              :conversation
+          end
+
+        socket
+        |> assign(:current_session_uri, session_uri)
+        # Session auto-join (Allen 2026-05-26) — every session switch is a
+        # navigation event for membership purposes (the new session may be
+        # a freshly-spawned one we've never joined). `maybe_self_join/2`
+        # is idempotent so re-selecting a session we're already in is a
+        # no-op.
+        |> maybe_self_join(session_uri)
+        |> assign_session_context(session_uri)
+        |> assign(:current_view, new_view)
+        # Reset PTY agent binding — the new session may not have that
+        # agent as a member.
+        |> assign(:active_pty_agent_uri, nil)
+        |> assign(:oldest_cursor, oldest_cursor(new_messages))
+        |> assign(:messages_empty?, new_messages == [])
+        |> stream(:messages, new_messages, reset: true)
+
+      {:error, :cross_workspace_denied} ->
+        # Refuse the session-switch + surface a flash. Caller's
+        # `current_session_uri` is unchanged — the LV stays on whatever
+        # session it was already viewing (typically the workspace's
+        # main session from mount).
+        assign(
+          socket,
+          :flash_error,
+          gettext(
+            "Cross-workspace denied — that session belongs to a different workspace."
+          )
+        )
+    end
+  end
+
+  # Task #55 round-2 codex CRIT-2 — workspace gate. Allowed when ANY of:
+  #
+  #   1. Target session's workspace == caller's current workspace.
+  #   2. Caller's current workspace is `workspace://system` (system
+  #      members hold structural cross-workspace authority per SPEC v3
+  #      §13.1).
+  #   3. Caller holds a `workspace_uri: :any` cap (cross-workspace cap
+  #      via `Ezagent.Capability.cross_workspace?/2`) — the same
+  #      predicate dispatch step 5.6 uses to override workspace
+  #      isolation.
+  #
+  # `:cross_workspace_denied` is the same error atom dispatch returns
+  # so observability (telemetry / log surface) stays uniform.
+  defp authorize_session_view(socket, %URI{} = session_uri) do
+    caller_workspace = socket.assigns[:current_workspace_uri]
+    target_workspace = Ezagent.Capability.workspace_of(session_uri)
+    caller_uri = socket.assigns[:caller_uri]
+    caller_caps = socket.assigns[:caller_caps] || []
+
+    cond do
+      # `:any` (system targets, e.g. cross-cutting sessions) — never
+      # workspace-bound. Allowed.
+      target_workspace == :any ->
+        :ok
+
+      # Same workspace — happy path.
+      match?(%URI{}, caller_workspace) and match?(%URI{}, target_workspace) and
+          URI.to_string(caller_workspace) == URI.to_string(target_workspace) ->
+        :ok
+
+      # System workspace member OR explicit cross-workspace cap.
+      caller_holds_cross_workspace_authority?(caller_uri, caller_caps) ->
+        :ok
+
+      true ->
+        {:error, :cross_workspace_denied}
+    end
+  end
+
+  defp caller_holds_cross_workspace_authority?(nil, _caps), do: false
+
+  defp caller_holds_cross_workspace_authority?(%URI{} = caller_uri, caps) do
+    caps_list =
       cond do
-        Enum.any?(applicable, &(&1.id == socket.assigns.current_view)) ->
-          socket.assigns.current_view
-
-        applicable != [] ->
-          hd(applicable).id
-
-        true ->
-          :conversation
+        is_list(caps) -> caps
+        is_struct(caps, MapSet) -> MapSet.to_list(caps)
+        true -> List.wrap(caps)
       end
 
-    socket
-    |> assign(:current_session_uri, session_uri)
-    # Session auto-join (Allen 2026-05-26) — every session switch is a
-    # navigation event for membership purposes (the new session may be
-    # a freshly-spawned one we've never joined). `maybe_self_join/2`
-    # is idempotent so re-selecting a session we're already in is a
-    # no-op.
-    |> maybe_self_join(session_uri)
-    |> assign_session_context(session_uri)
-    |> assign(:current_view, new_view)
-    # Reset PTY agent binding — the new session may not have that
-    # agent as a member.
-    |> assign(:active_pty_agent_uri, nil)
-    |> assign(:oldest_cursor, oldest_cursor(new_messages))
-    |> assign(:messages_empty?, new_messages == [])
-    |> stream(:messages, new_messages, reset: true)
+    Enum.any?(caps_list, &Ezagent.Capability.cross_workspace?(&1, caller_uri))
   end
 
   defp build_session_form_matcher(%{"matcher_type" => "mention", "matcher_arg" => arg})
