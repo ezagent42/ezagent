@@ -1,6 +1,6 @@
-defmodule EzagentPluginCc.BridgeAdapter do
+defmodule EzagentPluginCodex.BridgeAdapter do
   @moduledoc """
-  AgentBridge adapter for Claude Code bridge sidecars.
+  AgentBridge adapter for Codex app-server bridge sidecars.
   """
 
   @behaviour Ezagent.AgentBridge.Adapter
@@ -12,6 +12,7 @@ defmodule EzagentPluginCc.BridgeAdapter do
     "local_path" => :local_path,
     "name" => :name
   }
+
   @attachment_type_atoms %{
     "image" => :image,
     "file" => :file,
@@ -21,18 +22,23 @@ defmodule EzagentPluginCc.BridgeAdapter do
   }
 
   @impl Ezagent.AgentBridge.Adapter
-  def flavor, do: "cc"
+  def flavor, do: "codex"
 
   @impl Ezagent.AgentBridge.Adapter
-  def agent_uri_prefix, do: "cc_"
+  def agent_uri_prefix, do: "codex_"
 
   @impl Ezagent.AgentBridge.Adapter
   def deliver(%Payload{} = payload, channel_pid) when is_pid(channel_pid) do
-    send(
-      channel_pid,
-      {:agent_bridge_push, "to_claude", %{"content" => payload.text, "meta" => payload.meta}}
-    )
+    message = %{
+      "content" => payload.text,
+      "meta" => payload.meta,
+      "message_id" => payload.message_id,
+      "session_uri" => uri_string(payload.session_uri),
+      "sender_uri" => uri_string(payload.sender_uri),
+      "event_type" => Atom.to_string(payload.event_type)
+    }
 
+    send(channel_pid, {:agent_bridge_push, "codex_turn", message})
     :ok
   end
 
@@ -60,13 +66,13 @@ defmodule EzagentPluginCc.BridgeAdapter do
   def socket_path, do: "/agent_bridge"
 
   @impl Ezagent.AgentBridge.Adapter
-  def channel_topic_prefix, do: "agent_bridge:cc:"
+  def channel_topic_prefix, do: "agent_bridge:codex:"
 
   @impl Ezagent.AgentBridge.Adapter
   def join_info(params, _socket) do
     %{
-      claude_info: Map.get(params, "claude_info", %{}),
-      tools: Map.get(params, "tools", [])
+      codex_info: Map.get(params, "codex_info", %{}),
+      tools: Map.get(params, "tools", ["reply"])
     }
   end
 
@@ -121,4 +127,7 @@ defmodule EzagentPluginCc.BridgeAdapter do
     do: Map.get(@attachment_type_atoms, v, v)
 
   defp normalize_attachment_value(_, v), do: v
+
+  defp uri_string(%URI{} = uri), do: URI.to_string(uri)
+  defp uri_string(nil), do: nil
 end
