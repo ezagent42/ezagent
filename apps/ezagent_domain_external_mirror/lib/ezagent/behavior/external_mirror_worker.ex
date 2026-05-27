@@ -321,10 +321,73 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
   @max_resubscribe_attempts 5
   @resubscribe_backoff_ms 200
 
+  # Task #49 codex round-3 NEW CHECK C — cursor-based catchup on
+  # re-subscribe.
+  #
+  # Pre-r3, the lifecycle re-subscribe passed `cursor: :latest` →
+  # zero replay. Between `on_ready/2` firing and the Worker's
+  # `:publisher_alive` handler dispatching its subscribe `:call`,
+  # any slice mutation lands in the Publisher's `:ring` with a fresh
+  # cursor BUT fans out to `subscribers = %{}` — silent drop. This
+  # is the same class of bug PR #420 was meant to fix; the first
+  # message in the cold-spawn window could still drop.
+  #
+  # Fix: re-subscribe with the WORKER's persisted `publisher_cursor`
+  # so the Publisher replays every event with `cursor > persisted`.
+  # The publisher slice's `:ring` + `:cursor` survive snapshot load
+  # (only `:subscribers` + `:monitors` are cleared by
+  # `Behavior.Publisher.SessionImpl.reconcile_after_load/2`), so the
+  # ring carries events emitted during the window.
+  #
+  # Idempotency: the worker dedupes by `last_published_message_id`
+  # in `invoke(:publish, ...)`. Replayed events for messages the
+  # worker already published get `:duplicate_skip` — no second
+  # outbound transport call.
+  #
+  # Bounded: the publisher ring is bounded by `:retention` (default
+  # 100 events); even if the persisted cursor is way behind, replay
+  # is capped at retention. Cursors older than the ring's oldest
+  # entry return `{:error, :cursor_out_of_window}` — we fall back to
+  # `:latest` (restoring subscription is more important than
+  # replaying unrecoverable events).
+  #
+  # First-subscribe (`publisher_cursor == :latest`) keeps the
+  # original behaviour — there's no prior cursor to replay from,
+  # the first subscribe in `handle_continue/3` IS the first
+  # subscribe.
+
   defp attempt_resubscribe(slice, self_uri, attempt) do
-    case subscribe_to_session_publisher(slice.session_uri, self_uri) do
+    case subscribe_to_session_publisher_from(
+           slice.session_uri,
+           self_uri,
+           slice.publisher_cursor
+         ) do
       {:ok, current_cursor} ->
         {:ok, %{slice | publisher_cursor: current_cursor}}
+
+      {:error, :cursor_out_of_window} ->
+        # Persisted cursor is older than the publisher's retention
+        # ring; the missed events are gone. Re-subscribe at :latest
+        # to restore the live wire. Operator-visible via the
+        # cursor-out-of-window log.
+        Logger.warning(
+          "ExternalMirrorWorker re-subscribe: persisted cursor " <>
+            "#{inspect(slice.publisher_cursor)} older than publisher retention; " <>
+            "falling back to :latest. session=#{URI.to_string(slice.session_uri)}"
+        )
+
+        case subscribe_to_session_publisher_from(slice.session_uri, self_uri, :latest) do
+          {:ok, current_cursor} ->
+            {:ok, %{slice | publisher_cursor: current_cursor}}
+
+          {:error, reason} ->
+            Logger.warning(
+              "ExternalMirrorWorker re-subscribe (fallback :latest) failed; " <>
+                "session=#{URI.to_string(slice.session_uri)} reason=#{inspect(reason)}"
+            )
+
+            :ignore
+        end
 
       {:error, :not_ready} when attempt < @max_resubscribe_attempts ->
         Process.send_after(
@@ -555,12 +618,31 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
   # — identical wire-shape to what `Session.subscribe_from/4`
   # constructs (SPEC §8.1).
   defp subscribe_to_session_publisher(%URI{} = session_uri, %URI{} = self_uri) do
+    # First subscribe (from `handle_continue/3`) — no prior cursor,
+    # `:latest` is correct (V1 fire-and-forget per OQ-EM-10).
+    subscribe_to_session_publisher_from(session_uri, self_uri, :latest)
+  end
+
+  # Task #49 codex r3 NEW CHECK C — catchup-on-resubscribe.
+  #
+  # `cursor` is either:
+  #   - `:latest` (no replay; same as the original `subscribe_to_session_publisher/2`)
+  #   - non-negative integer (Publisher replays events with cursor > given)
+  #
+  # The Publisher's `prepare_replay/2` returns the events; `subscribe_from`
+  # `send/2`s each one to `subscriber_pid` BEFORE returning. By the time
+  # this call returns `{:ok, current_cursor}` the replay messages are
+  # already in our mailbox (or will be — same process can't out-pace its
+  # own GenServer reply). They land in `handle_kind_message/3` as
+  # `{:publisher_event, %Event{}}` and self-dispatch through the regular
+  # `:publish` path — same dedupe, same telemetry.
+  defp subscribe_to_session_publisher_from(%URI{} = session_uri, %URI{} = self_uri, cursor) do
     target = URI.parse("#{URI.to_string(session_uri)}?action=publisher.subscribe_from")
 
     inv = %Ezagent.Invocation{
       target: target,
       mode: :call,
-      args: %{subscriber_pid: self(), cursor: :latest},
+      args: %{subscriber_pid: self(), cursor: cursor},
       # SPEC caps-cleanup-v1 §4.4 — Worker's internal dispatches run
       # under `system://worker-publish` per the closed Catalog.
       ctx: %{
@@ -584,7 +666,7 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
     }
 
     case Ezagent.Invocation.dispatch(inv) do
-      {:ok, %{cursor: cursor}} -> {:ok, cursor}
+      {:ok, %{cursor: new_cursor}} -> {:ok, new_cursor}
       {:error, _} = err -> err
       :ok -> {:ok, :latest}
     end
