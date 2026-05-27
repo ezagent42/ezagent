@@ -45,8 +45,16 @@ defmodule EzagentCli.Integration.CLIDispatchTest do
       name = "cli-add-#{System.unique_integer([:positive])}"
       {:ok, _pid} = Ezagent.Workspace.create(name)
 
+      # Task #55 (PR #417) — add_member now enforces a workspace-prefix
+      # invariant: the member URI MUST live in the same workspace as
+      # the target workspace Kind. Earlier this test used a fixed
+      # `entity://agent/team-alpha/...` URI which would now be rejected
+      # (`team-alpha` != the random `cli-add-N` workspace). Build the
+      # member URI in `name` so add_member's validator passes.
+      member_uri = URI.parse("entity://agent/#{name}/test_cli-new-member")
+
       parsed = %{
-        options: %{workspace: name, member: URI.parse("entity://agent/team-alpha/test_cli-new-member")},
+        options: %{workspace: name, member: member_uri},
         flags: %{cast: true, json: false}
       }
 
@@ -76,9 +84,7 @@ defmodule EzagentCli.Integration.CLIDispatchTest do
                  }
                })
 
-      assert Enum.any?(members, fn u ->
-               URI.to_string(u) == "entity://agent/team-alpha/test_cli-new-member"
-             end)
+      assert Enum.any?(members, fn u -> URI.to_string(u) == URI.to_string(member_uri) end)
     end
   end
 

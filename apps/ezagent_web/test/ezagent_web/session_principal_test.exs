@@ -21,13 +21,21 @@ defmodule EzagentWeb.SessionPrincipalTest do
     end
 
     test "bare handle is normalized to entity://user/<workspace>/<handle> (lowercased)" do
-      # Phase 9 PR-8: bare handle still defaults to workspace "default"
-      # (no automatic admin → system mapping). To log in as admin, the
-      # user must POST the full URI or use /login?workspace=system.
-      assert SessionPrincipal.canonicalize("admin") == "entity://user/team-alpha/admin"
-      assert SessionPrincipal.canonicalize("ADMIN") == "entity://user/team-alpha/admin"
-      assert SessionPrincipal.canonicalize("  allen  ") == "entity://user/team-alpha/allen"
-      assert SessionPrincipal.canonicalize("user_123") == "entity://user/team-alpha/user_123"
+      # SPEC #324 (PR #335 + later): bare-handle canonicalize requires
+      # an explicit `workspace:` opt — there is NO silent "default"
+      # fallback. The tenant login form supplies the tenant's workspace
+      # name; admin login passes `workspace: "system"`.
+      assert SessionPrincipal.canonicalize("admin", workspace: "team-alpha") ==
+               "entity://user/team-alpha/admin"
+
+      assert SessionPrincipal.canonicalize("ADMIN", workspace: "team-alpha") ==
+               "entity://user/team-alpha/admin"
+
+      assert SessionPrincipal.canonicalize("  allen  ", workspace: "team-alpha") ==
+               "entity://user/team-alpha/allen"
+
+      assert SessionPrincipal.canonicalize("user_123", workspace: "team-alpha") ==
+               "entity://user/team-alpha/user_123"
     end
 
     test "bare handle with workspace: \"system\" canonicalizes to system workspace" do
@@ -38,21 +46,25 @@ defmodule EzagentWeb.SessionPrincipalTest do
     end
 
     test "raises ArgumentError on inputs that don't yield a valid entity URI" do
+      # All bare-handle inputs supply `workspace:` so the
+      # missing-workspace ArgumentError doesn't mask the
+      # not-a-valid-entity-URI ArgumentError we're actually testing.
       assert_raise ArgumentError, ~r/not a valid entity URI/, fn ->
-        SessionPrincipal.canonicalize("foo@bar.com")
+        SessionPrincipal.canonicalize("foo@bar.com", workspace: "team-alpha")
       end
 
       assert_raise ArgumentError, ~r/not a valid entity URI/, fn ->
-        SessionPrincipal.canonicalize("https://example.com/admin")
+        SessionPrincipal.canonicalize("https://example.com/admin", workspace: "team-alpha")
       end
 
       assert_raise ArgumentError, ~r/not a valid entity URI/, fn ->
         # Non-user/agent host — workspace URIs are NOT principals.
+        # Full entity:// URIs ignore the workspace opt.
         SessionPrincipal.canonicalize("entity://workspace/default")
       end
 
       assert_raise ArgumentError, ~r/not a valid entity URI/, fn ->
-        SessionPrincipal.canonicalize("   ")
+        SessionPrincipal.canonicalize("   ", workspace: "team-alpha")
       end
     end
 
@@ -85,7 +97,9 @@ defmodule EzagentWeb.SessionPrincipalTest do
         Plug.Test.conn(:get, "/")
         |> Plug.Test.init_test_session(%{some_pre_auth_key: "value"})
 
-      conn_after = SessionPrincipal.put(conn, "admin")
+      # SPEC #324 — bare-handle input requires explicit `workspace:`
+      # opt to `put/3`. No silent "default" fallback.
+      conn_after = SessionPrincipal.put(conn, "admin", workspace: "team-alpha")
 
       # `configure_session(renew: true)` flag is set on the conn's
       # private session options — we can't fully observe ID rotation

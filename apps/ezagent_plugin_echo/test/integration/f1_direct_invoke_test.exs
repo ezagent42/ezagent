@@ -22,22 +22,28 @@ defmodule EzagentPluginEcho.Integration.F1DirectInvokeTest do
   the dispatch backbone isn't working.
   """
 
-  use ExUnit.Case
+  # AuditCase starts + allow-lists `Ezagent.Audit.Writer` on the
+  # per-test sandbox connection so its 100ms batch flush hits the
+  # invocations table during this test. Without it, the F1 row-query
+  # step (read-back via Repo) sees `[]` because the writer's INSERT ran
+  # under a different (or torn-down) ownership.
+  use Ezagent.Test.AuditCase, writers: [:audit]
 
   alias Ezagent.Invocation
   alias EzagentPluginEcho.Application, as: EchoApp
 
   setup do
     # Subscribe to the audit stream before invocation so we see the
-    # event the dispatch will emit.
+    # event the dispatch will emit. (Sandbox checkout + shared mode is
+    # handled by Ezagent.Test.AuditCase's `using` block above.)
     :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, Ezagent.Audit.stream_topic())
 
-    # Sandbox checkout — Audit.Writer is a long-lived GenServer that
-    # needs to be allowed on this connection for SQLite writes to
-    # succeed during the test. Wait for ready before we proceed.
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
-
+    # Echo agent (boot-spawned at `EzagentPluginEcho.Application` start)
+    # can be missing if a prior test rolled back the sandbox or its
+    # Kind.Server crashed. Re-spawn idempotently so each test starts
+    # with a live `entity://agent/system/echo_default`. SpawnRegistry
+    # tolerates an already-running instance (returns the existing pid).
+    _ = Ezagent.SpawnRegistry.spawn(EchoApp.default_uri())
     :ok
   end
 
@@ -61,9 +67,12 @@ defmodule EzagentPluginEcho.Integration.F1DirectInvokeTest do
     # Step 2: audit handler broadcasts to esr:audit:stream.
     # Phase 3d: dispatch emits two audit events — :authz :granted first
     # (when cap check passes) then :invoke :stop (when invoke succeeds).
-    # Both arrive; we care about the :stop event's metadata.
+    # Both arrive; we care about the :stop event whose target is
+    # echo.say specifically (the echo agent's broadcast path also
+    # fires a chat.receive :stop event — drain until we get the
+    # one we asked for).
     assert_receive {:audit_event, %{event: [:ezagent, :authz, :granted]}}, 500
-    assert_receive {:audit_event, %{event: [:ezagent, :invoke, :stop]} = stop_event}, 500
+    stop_event = drain_stop_event_for_target!("entity://agent/system/echo_default?action=echo.say")
     assert stop_event.metadata.target == "entity://agent/system/echo_default?action=echo.say"
     assert stop_event.metadata.action == :say
 
@@ -160,9 +169,13 @@ defmodule EzagentPluginEcho.Integration.F1DirectInvokeTest do
         }
       })
 
-    # First broadcast: the original message.
+    # First broadcast: the original message. Body may carry atom OR
+    # string `:text` key depending on whether it round-tripped through
+    # the message store's `Jason` encode/decode — the assertion tolerates
+    # both. (Switched from `Access.key!` to `Access.key` so the missing
+    # atom key returns `nil` instead of raising.)
     assert_receive {:chat_message, ^session_uri, %Ezagent.Message{} = first}, 1000
-    assert get_in(first.body, [Access.key!(:text)]) == text or
+    assert get_in(first.body, [Access.key(:text)]) == text or
              get_in(first.body, ["text"]) == text
 
     # Second broadcast: echo's reply ("echo: ping-XXX") from the echo
@@ -178,7 +191,13 @@ defmodule EzagentPluginEcho.Integration.F1DirectInvokeTest do
     assert reply_text == "echo: #{text}",
            "expected echo reply 'echo: #{text}', got #{inspect(reply_text)}"
 
-    assert reply.sender == echo_agent_uri,
+    # Compare via to_string/1 — the message round-trips through
+    # `Ezagent.Message.normalize_sender/1` which uses `URI.new!/1` whose
+    # output URI struct lacks the `:authority` field set by
+    # `URI.parse/1` (the constructor used for `EchoApp.default_uri/0`).
+    # The two structs are byte-different but URI-string-equal, which is
+    # the canonical equality we care about.
+    assert URI.to_string(reply.sender) == URI.to_string(echo_agent_uri),
            "expected reply.sender == echo agent URI, got #{inspect(reply.sender)}"
   end
 
@@ -199,5 +218,22 @@ defmodule EzagentPluginEcho.Integration.F1DirectInvokeTest do
 
     assert {:error, {:invalid_args, violations}} = Invocation.dispatch(inv)
     assert [{[:msg], {:type_mismatch, _}}] = violations
+  end
+
+  # Drain :invoke :stop events from the mailbox until one with the
+  # matching target arrives, then return it. The echo agent's broadcast
+  # path now fires its own `chat.receive` :stop event, which can land in
+  # the mailbox before the echo.say one; ignore them.
+  defp drain_stop_event_for_target!(target_str) do
+    receive do
+      {:audit_event, %{event: [:ezagent, :invoke, :stop], metadata: %{target: ^target_str}} = ev} ->
+        ev
+
+      {:audit_event, %{event: [:ezagent, :invoke, :stop]}} ->
+        drain_stop_event_for_target!(target_str)
+    after
+      500 ->
+        flunk("no :invoke :stop audit event for target=#{target_str} within 500ms")
+    end
   end
 end

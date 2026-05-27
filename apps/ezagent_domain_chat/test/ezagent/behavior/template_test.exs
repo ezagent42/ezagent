@@ -170,9 +170,9 @@ defmodule Ezagent.Behavior.TemplateTest do
     end
 
     test "a workspace_uri arg pointing at ANOTHER workspace → {:error, :cross_workspace_denied}" do
-      # AgentTemplate cap-checked for `default`; caller tries to escape
-      # into `team-alpha` via the workspace_uri arg.
-      self_uri = URI.new!("template://agent/team-alpha/cc-orch")
+      # AgentTemplate cap-checked for workspace `alpha`; caller tries
+      # to escape into `team-bravo` via the workspace_uri arg.
+      self_uri = URI.new!("template://agent/alpha/cc-orch")
       ctx = %{kind_module: AgentTemplate, self_uri: self_uri}
       slice = %{content: agent_template_content()}
 
@@ -180,21 +180,22 @@ defmodule Ezagent.Behavior.TemplateTest do
                Template.invoke(
                  :instantiate,
                  slice,
-                 %{instance_name: "demo", workspace_uri: URI.new!("workspace://team-alpha")},
+                 %{instance_name: "demo", workspace_uri: URI.new!("workspace://team-bravo")},
                  ctx
                )
 
       # The reject happens BEFORE any spawn — `resolve_instance_uri`
       # short-circuits the `with` chain so `spawn_from_template_content`
-      # is never reached and NO worker is spawned/bound in `team-alpha`.
+      # is never reached and NO worker is spawned/bound in `team-bravo`.
       # (Proven structurally: the guard is the first step of the chain;
       #  an integration spawn-count assertion lives in PR-4/PR-5.)
     end
 
     test "a workspace_uri arg pointing at a per-tenant URI in another workspace is also denied" do
       # The guard normalizes through `workspace_of/1`, so passing an
-      # entity:// URI carrying `team-alpha` is rejected just the same.
-      self_uri = URI.new!("template://agent/team-alpha/cc-orch")
+      # entity:// URI carrying `team-bravo` is rejected just the same
+      # when the self_uri is in `alpha`.
+      self_uri = URI.new!("template://agent/alpha/cc-orch")
       ctx = %{kind_module: AgentTemplate, self_uri: self_uri}
       slice = %{content: agent_template_content()}
 
@@ -204,7 +205,7 @@ defmodule Ezagent.Behavior.TemplateTest do
                  slice,
                  %{
                    instance_name: "demo",
-                   workspace_uri: URI.new!("entity://agent/team-alpha/cc_other")
+                   workspace_uri: URI.new!("entity://agent/team-bravo/cc_other")
                  },
                  ctx
                )

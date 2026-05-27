@@ -88,13 +88,19 @@ defmodule EzagentPluginLiveview.AppShellTest do
   end
 
   describe "app_shell/1 — :admin perspective" do
-    test "header shows the system label, NOT the workspace dropdown", %{conn: conn} do
+    test "header shows the workspace dropdown (Bug 5 unify — same affordance on both perspectives)",
+         %{conn: conn} do
       {:ok, _lv, html} =
         live_isolated(conn, AppShellHarnessLive, session: %{"perspective" => "admin"})
 
-      # System-context label present; workspace dropdown ABSENT.
-      assert html =~ "System"
-      refute html =~ ~s(aria-label="Switch workspace")
+      # Bug 5 unify (Allen 2026-05-26 — see IdeShell moduledoc): the
+      # header's left affordance is the workspace dropdown on BOTH
+      # perspectives. Previously :admin rendered a static
+      # `ezagent · System` label; in practice the user wants a
+      # one-click escape from /workspaces / /admin/* back to a tenant
+      # workspace's /sessions, and the dropdown is the only
+      # first-class affordance that provides it.
+      assert html =~ ~s(aria-label="Switch workspace")
       # Body still passed through + CmdK still wired once.
       assert html =~ "APP_BODY_CONTENT"
       assert html =~ ~s(id="cmdk")

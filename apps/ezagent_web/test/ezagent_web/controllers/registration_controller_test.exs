@@ -8,7 +8,11 @@ defmodule EzagentWeb.RegistrationControllerTest do
   # Codex round-1 HIGH-2: /register/complete revalidates that the
   # workspace still accepts the email; helper ensures a matching rule
   # exists so the test's irreversible write isn't blocked.
-  defp pending_conn(conn, email, workspace \\ "default") do
+  defp pending_conn(conn, email, workspace \\ "team-alpha") do
+    # SPEC #335 (PR #335) renamed the seed workspace `default → system`
+    # AND deleted all silent "default" fallbacks. Tests now use
+    # `team-alpha` as the generic non-system test workspace — matches
+    # the assertion shape `entity://user/team-alpha/<handle>`.
     ensure_rule(workspace, email)
 
     Plug.Test.init_test_session(conn, %{

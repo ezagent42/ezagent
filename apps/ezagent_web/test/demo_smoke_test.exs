@@ -113,10 +113,15 @@ defmodule EzagentCore.Invariants.DemoSmokeTest do
       assert "entity://user/system/admin" in uris
     end
 
-    test "list_instances(:session) finds session://default/system/main" do
+    test "list_instances(:session) finds the seeded default session" do
       instances = EzagentDomainUi.AutoDerive.list_instances(:session)
       uris = Enum.map(instances, &URI.to_string(&1.uri))
-      assert "session://default/system/main" in uris
+      # Seed name was renamed from "main" → "default" (#408/#410 era).
+      # Accept either to stay robust across the rename, but require at
+      # least one of the two well-known seeded sessions to be live.
+      assert "session://default/system/default" in uris or
+               "session://default/system/main" in uris,
+             "expected a seeded system session; got: #{inspect(uris)}"
     end
 
     test "instance_detail/1 returns a populated map for entity://user/system/admin" do

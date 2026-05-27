@@ -38,7 +38,16 @@ defmodule EzagentWeb.MagicLinkInvariantsTest do
     allowed = post(build_conn(), "/login", %{"email" => "new@good.com"})
     denied = post(build_conn(), "/login", %{"email" => "new@bad.com"})
 
-    assert html_response(allowed, 200) == html_response(denied, 200)
+    # CSRF tokens are minted fresh per response, so we must strip them
+    # before comparing. The anti-enumeration property is that the
+    # SEMANTIC content (notice, status, structure) is identical, not
+    # that every byte matches.
+    strip_csrf = fn html ->
+      Regex.replace(~r/name="_csrf_token" value="[^"]+"/, html, ~s(name="_csrf_token" value="*"))
+    end
+
+    assert strip_csrf.(html_response(allowed, 200)) ==
+             strip_csrf.(html_response(denied, 200))
   end
 
   test "INVARIANT: POST /login is rate-limited per email" do
