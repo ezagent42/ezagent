@@ -41,7 +41,12 @@ defmodule Ezagent.Entity.Session do
     do: [
       Ezagent.Behavior.Chat,
       Ezagent.Behavior.Publisher.SessionImpl,
-      Ezagent.Behavior.ExternalMirror
+      Ezagent.Behavior.ExternalMirror,
+      # Phase 2.6 (AutoService → ezagent migration) — session-level
+      # operator/agent control mode (`:auto` / `:takeover`). Owns the
+      # `:mode` slice; Chat reads it as a sibling slice to gate agent
+      # fan-out when the session is in takeover.
+      Ezagent.Behavior.Mode
     ]
 
   @impl Ezagent.Kind

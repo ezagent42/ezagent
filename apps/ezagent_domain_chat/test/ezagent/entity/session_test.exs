@@ -19,10 +19,15 @@ defmodule Ezagent.Entity.SessionTest do
       # actions. Declared here so `init_slice/1` rehydrates the
       # binding list from the projection table on Session boot
       # AND `post_init/2` schedules the worker reconciliation.
+      # Phase 2.6 (AutoService → ezagent migration) — `Ezagent.Behavior.Mode`
+      # joined the list to own the per-session `:mode` slice
+      # (`:auto` / `:takeover`), which `Chat.invoke(:send)` reads as
+      # a sibling to gate agent fan-out under takeover.
       assert Session.behaviors() == [
                Ezagent.Behavior.Chat,
                Ezagent.Behavior.Publisher.SessionImpl,
-               Ezagent.Behavior.ExternalMirror
+               Ezagent.Behavior.ExternalMirror,
+               Ezagent.Behavior.Mode
              ]
     end
 

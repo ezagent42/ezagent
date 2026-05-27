@@ -119,6 +119,18 @@ defmodule Ezagent.Behavior.Chat do
   @impl Ezagent.Behavior
   def state_slice, do: :chat
 
+  # Phase 2.6 (AutoService → ezagent migration) — Chat reads the
+  # `:mode` sibling slice owned by `Ezagent.Behavior.Mode` so the
+  # `:send` fan-out can suppress agent-sender messages when the
+  # session is in `:takeover` mode. Read-only by Behavior contract;
+  # mutated only through `mode.set` dispatches against `Mode`.
+  #
+  # Defaults: a pre-Phase-2.6 Session snapshot has no `:mode` slice
+  # populated; sibling-slice injection defaults missing slices to
+  # `%{}`, so readers fall back to `:auto` via `Map.get/3`.
+  @impl Ezagent.Behavior
+  def reads_sibling_slices, do: [:mode]
+
   @impl Ezagent.Behavior
   def init_slice(args) do
     # Slice shape is the union across Kinds — Session uses all three
@@ -310,14 +322,37 @@ defmodule Ezagent.Behavior.Chat do
         # routing rules never fire even when the binding is correct.
         msg = stored_msg
 
+        # Phase 2.6 takeover gate (AutoService → ezagent migration):
+        # when the session is in `:takeover` mode AND the sender is
+        # an Agent Kind URI, suppress customer-visible fan-out (the
+        # session-events PubSub broadcast + the `chat.receive`
+        # dispatch to user recipients). The message is STILL
+        # persisted (already happened above) and STILL emits a
+        # SliceChange via the regular slice mutation path below, so
+        # operator-side surfaces (admin LV / external mirrors /
+        # publisher subscribers) see it as before.
+        #
+        # The check uses the `:mode` sibling slice owned by
+        # `Ezagent.Behavior.Mode`; a missing slice defaults to
+        # `:auto` (pre-Phase-2.6 snapshot compat).
+        session_mode =
+          ctx
+          |> Map.get(:sibling_slices, %{})
+          |> Map.get(:mode, %{})
+          |> Map.get(:mode, :auto)
+
+        suppress_customer_visible? = session_mode == :takeover and agent_sender?(msg.sender)
+
         # 2. Broadcast for in-session subscribers (LV chat stream).
         # Phase 3: include session_uri in payload so multi-session LV
         # subscribers can filter by current session.
-        Phoenix.PubSub.broadcast(
-          EzagentCore.PubSub,
-          session_events_topic(session_uri),
-          {:chat_message, session_uri, msg}
-        )
+        unless suppress_customer_visible? do
+          Phoenix.PubSub.broadcast(
+            EzagentCore.PubSub,
+            session_events_topic(session_uri),
+            {:chat_message, session_uri, msg}
+          )
+        end
 
         # Phase 4-completion PR 9: Resolver is the SINGLE source of
         # truth for routing decisions. No hardcoded fan-out here — the
@@ -361,11 +396,30 @@ defmodule Ezagent.Behavior.Chat do
         # and is silent — exactly what users want for casual @ usage.
         notify_dropped_mentions(msg, recipients, session_uri, ctx)
 
+        # Phase 2.6 takeover gate (cont'd): when suppressing
+        # customer-visible fan-out, drop recipients whose Kind URI is
+        # a User (`entity://user/...`). Operators in the session
+        # remain User Kinds too — operator dashboard subscribes to
+        # SliceChange / external mirror events, NOT to chat.receive
+        # — so withholding the User-direct fan-out only affects
+        # customer-side surfaces (admin LV / general-bot SSE
+        # subscribers to `session_events_topic`). Agent recipients
+        # (chained AI workers) still receive — agent-to-agent
+        # routing is unaffected by takeover.
+        #
+        # Cross-session targets always forward — the target session
+        # has its own mode + its own gate.
         for recipient <- recipients do
-          if recipient.scheme == "session" do
-            dispatch_cross_session(recipient, msg)
-          else
-            dispatch_receive(recipient, msg, session_uri)
+          cond do
+            recipient.scheme == "session" ->
+              dispatch_cross_session(recipient, msg)
+
+            suppress_customer_visible? and user_uri?(recipient) ->
+              # Suppressed — customer-facing User recipient.
+              :ok
+
+            true ->
+              dispatch_receive(recipient, msg, session_uri)
           end
         end
 
@@ -747,6 +801,13 @@ defmodule Ezagent.Behavior.Chat do
   # workspace-domain boundary.
   defp user_uri?(%URI{scheme: "entity", host: "user"}), do: true
   defp user_uri?(_), do: false
+
+  # Phase 2.6 takeover gate — predicate for "is this an Agent Kind
+  # URI?". Used by `:send` to decide whether the sender is an AI
+  # agent (and therefore subject to the takeover suppression).
+  # Mirrors `user_uri?/1` shape on the Agent host.
+  defp agent_sender?(%URI{scheme: "entity", host: "agent"}), do: true
+  defp agent_sender?(_), do: false
 
   # RFC #402 (codex r1 HIGH 2026-05-26) — companion to the
   # first-USER-join owner claim. Dispatches `identity.grant_cap` on
