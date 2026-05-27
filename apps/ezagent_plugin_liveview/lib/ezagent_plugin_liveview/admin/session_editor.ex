@@ -256,14 +256,21 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
   attr :debug_open, :boolean, default: false
 
   defp setting_dropdown(assigns) do
-    # 2026-05-25 — /routing relocated to /admin/routing (admin scope).
-    # The setting dropdown's "Routing rules for this session" link
-    # still ships the session URI as a `session=` query arg so the
-    # admin LV can pre-scope its rule list when this hand-off is wired
-    # (today the admin LV doesn't read the arg yet; the link target
-    # update is the half that lands here).
-    routing_href = "/admin/routing?session=" <> URI.encode_www_form(URI.to_string(assigns.current_session_uri))
-    assigns = assign(assigns, :routing_href, routing_href)
+    # Task #52 (2026-05-27, Allen 02:09) — fix session routing nav
+    # misroute. The "Routing rules for this session" link USED to
+    # send operators to `/admin/routing?session=<encoded>` (the
+    # GLOBAL routing LV with a query arg the global LV never read);
+    # what they actually want is the session-scoped routing rule
+    # editor — already implemented as the in-session `:routing`
+    # SessionView (`EzagentDomainUi.Routing.RoutingView`) and
+    # accessible via the view switcher.
+    #
+    # Switching to a `phx-click="switch_view"` with `view=routing`
+    # flips the current view in place rather than navigating away
+    # (parity with the view-switcher buttons above). The global
+    # `/admin/routing` LV remains the canonical cross-session
+    # editor — reachable from the admin shell.
+    assigns = assign(assigns, :routing_view_id, "routing")
 
     ~H"""
     <div class="relative">
@@ -345,13 +352,24 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
         </div>
 
         <div class="px-3 py-2 border-b border-zinc-200 dark:border-zinc-800">
-          <a
-            href={@routing_href}
-            class="flex items-center gap-2 text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300"
+          <%!--
+            Task #52 (2026-05-27) — switches to the session-scoped
+            routing SessionView in place (not navigation). Uses the
+            same `switch_view` event the view_switcher above raises.
+            Also closes the dropdown so the rule list is visible.
+          --%>
+          <button
+            type="button"
+            phx-click={
+              JS.dispatch("phx:close-setting-menu", to: "#session-setting-menu")
+              |> JS.hide(to: "#session-setting-menu")
+              |> JS.push("switch_view", value: %{"view" => @routing_view_id})
+            }
+            class="w-full text-left flex items-center gap-2 text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300"
           >
             <.icon name="route" size="xs" />
             <span>{gettext("Routing rules for this session")}</span>
-          </a>
+          </button>
         </div>
 
         <div class="px-3 py-2">
