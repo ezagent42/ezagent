@@ -1,12 +1,20 @@
 # SPEC — Reconciler `:partial` vs `:ok` 返回形态漂移（Bug 3）
 
-**状态：** r1 — 草稿，待 codex 对抗性评审。2026-05-27。
+**状态：** r2 — 草稿，已应用 codex 评审后的订正。2026-05-27。
+
+**r2 改动**（基于 codex NEEDS-ATTENTION 评审 r1 的反馈）：
+- §1.3 新增 — 真正根因是**测试 helper URI 派生 bug**，不是生产代码 regression。PR #422 观察到的 `{:ok, _}` 是真实的，但是经 `:not_live → spawn_orchestrator_via_template_content → {:ok, _, _}` 路径产生，不是 `:partial → :ok` collapse。
+- §4.2 重写 — 测试改动不是 "none"；impl PR 必须修 `derive_orch_uri_for_test/1` 中硬编码的 `ws_name = "default"`，让它用 `@workspace_uri.host`。
+- §5 invariant 重写 — 用对 `Session.ensure_orchestrator_with_meta/3` 的行为测试替换脆弱的 `Code.Typespec` 反射测试。
+- §9 补充 — `docs/notes/evidence/pr49-demo-rpc-script.sh` 44+69 行也 pattern-match `{:ok, _}`（pinned artifact 提示）。
+- §10 OQ-1 由 codex 调查解决。
 
 **关联：** PR #422 batch 修复了 umbrella 范围内的过时断言，但标记了 3
 个需要 **单独 SPEC** 的 bug。本文档是其中 **Bug 3**。
 
 **范围：** 窄。一个集成测试中的一条断言；SPEC 主要在 **重新确认** 现
-有的、已 ratified 的三臂返回形态，并定位生产代码是否漂移。
+有的、已 ratified 的三臂返回形态，并定位失败的根因是**测试 fixture**
+中的 URI 派生 mismatch，不是生产代码 regression。
 
 ---
 
@@ -49,6 +57,53 @@ SPEC §1.2 ratify，并经 codex 对抗性评审后由 §7-2 再次确认。每�
 "session 活着但 orchestrator 还在 pending" 和 "session 已完全就绪"。
 而这两者今天就被 LiveView 的 session 面板和
 `EzagentDomainChat.create_session/3` 门面 **分别 pattern-match**。
+
+### 1.3 实际根因 — 测试 helper URI 派生 mismatch（codex r1 发现）
+
+PR #422 作者的经验观察（"production returns `{:ok, _}`"）**是真的，但
+根因是测试 bug，不是生产 regression**。逐步追踪当前代码：
+
+1. **测试 fixture 设置**：
+   - `reconciler_test.exs:119` — SessionTemplate 的
+     `default_workspace_uri: URI.parse("workspace://team-alpha")`
+   - `reconciler_test.exs:146` —
+     `@workspace_uri URI.new!("workspace://team-alpha")`（模块级常量）
+
+2. **生产代码的 URI 派生**：
+   - `spawn_from_template/2` 用
+     `entity://agent/<workspace_uri.host>/cc_orchestrator-<session_name>`
+   - 对这个测试的 workspace 来说：
+     **`entity://agent/team-alpha/cc_orchestrator-...`**
+
+3. **测试 helper bug**：
+   - `reconciler_test.exs:595-611` —
+     `defp derive_orch_uri_for_test(%URI{} = session_uri)` 硬编码
+     `ws_name = "default"`（第 597 行）—— 在 `default_workspace_uri`
+     从 `"default"` 迁移到 `"team-alpha"`（PR #399 / PR #408 时代）
+     之前留下来的。
+   - 测试预先在 **`entity://agent/default/cc_orchestrator-...`**
+     创建 "limbo" 进程。
+
+4. **运行时实际发生**：
+   - `check_orchestrator/3` 查找
+     `entity://agent/team-alpha/cc_orchestrator-...`（生产派生）
+   - 找不到对应 Kind（limbo 在 `default/` 下，不是 `team-alpha/`）
+   - `check_orchestrator` 返回 `:not_live`，不是预期的
+     `:ownership_pending`
+   - `spawn_from_template/2` 走 `spawn_orchestrator_via_template_content/5`
+     新生路径（PR #408 加的）
+   - 该路径完成成功，返回
+     `{:ok, %{session_uri: _, orchestrator_uri: _}}` ——
+     **不是** `{:partial, _}`
+
+所以生产代码里 `:partial` 通过 `retry_after_race/3` 耗尽路径**仍然
+可达**；只是测试因为预 spawn 的 limbo 在错的 URI 前缀下，没有真正
+exercise 这条路径。
+
+**对 §4.2 的含义**：测试改动不是 "none"。impl PR 必须修
+`derive_orch_uri_for_test/1`（或接受 workspace 参数，或调公开的
+`Session.derive_orchestrator_uri/2` 如果有），让测试 helper 的 URI
+前缀对齐测试 SessionTemplate 的 `default_workspace_uri`。
 
 ---
 
@@ -259,8 +314,42 @@ breaking change。SPEC 确认保留。
 
 ### 4.2 测试
 
-**不改**。523 行的测试正确地断言了 SPEC。如果实现阶段发现无关 bug
-（例如 helper flaky），那个修复在它自己的 PR 范围里。
+**一处必修的测试 helper 修复**（基于 §1.3 根因分析）：
+
+`apps/ezagent_domain_chat/test/integration/reconciler_test.exs:595-611` —
+`derive_orch_uri_for_test/1` 硬编码 `ws_name = "default"`，跟测试
+SessionTemplate 的 `default_workspace_uri: "workspace://team-alpha"`
+mismatch。预 spawn 的 limbo 进程落在错的 URI 前缀，生产
+`check_orchestrator` 因此走新生路径返回 `{:ok, _}`，而不是测试设计
+要 exercise 的 `:ownership_pending → retry_after_race → :partial` 路径。
+
+**修法选项**（impl PR 选一）：
+
+(a) **对齐 `@workspace_uri.host`**（最小 diff）：
+```elixir
+defp derive_orch_uri_for_test(%URI{} = session_uri) do
+  ws_name = @workspace_uri.host  # 原本: "default"
+  session_name = ...              # 不变
+  URI.new!("entity://agent/#{ws_name}/cc_orchestrator-#{session_name}")
+end
+```
+
+(b) **接受 workspace 作参数**（更可复用，方便未来跨 workspace 测试）。
+
+(c) **把 `Session.derive_orchestrator_uri/2` 提为 public**，让测试直接
+调，避免两套派生逻辑再次漂移。代价是 Session 模块 API 面多一个公开函数。
+
+**推荐：(a)** 给 impl PR。同时记一个 follow-up TODO 关于 (c)，下次有
+新测试要派生 orch URI 时就不会重复实现。
+
+修完之后，523 行的测试就能按原设计 exercise
+`:ownership_pending → retry → :partial` 路径，应该不需要生产代码改动
+即可通过。
+
+**测试隔离备注**：模块是 `async: false`，chat domain
+`test_helper.exs` 无条件启动 `:ezagent_plugin_echo`；没有
+`@tag`/`@moduletag` mask（codex r1 已 audit 确认）。任何 chat 集成
+umbrella run 都会触达这条断言。
 
 ### 4.3 调用方
 
@@ -291,28 +380,53 @@ PR 改动都需要一个 **不变量测试**，能在架构目标失败时挂掉
 
 ```elixir
 describe "return-shape invariant (SPEC 2026-05-27-reconciler-return-shape)" do
-  test "the @spec declares all three arms" do
-    # 反射 @spec 元数据，断言声明的 spec 包含 :partial 臂。
-    # 抓住未来某次重构悄悄从 type union 移除 :partial。
-    specs = Code.Typespec.fetch_specs(Ezagent.Entity.Session)
-    {:ok, [{{:spawn_from_template, 2}, spec_asts}]} = filter_for(specs, :spawn_from_template, 2)
+  test "ensure_orchestrator_with_meta 对不可转的 limbo orch 表面化 :partial" do
+    # 行为不变量：直接 exercise ensure_orchestrator_with_meta/3 路径，
+    # 用一个 check_orchestrator 能分类为 :ownership_pending 的 limbo
+    # orch URI。retry-exhaustion 路径必须返回
+    # {:partial, %{orchestrator_pending: _}}，
+    # 不是 {:ok, _} 也不是 {:error, _}。
+    #
+    # 比反射 @spec 强，因为能抓：
+    #   - 未来重构在 retry 耗尽前加个 :ok 短路
+    #   - 未来重构在 ensure_orchestrator_with_meta/3 边界把
+    #     :partial 映射成 :ok（:partial 本来就是为了防这一类 bug）
+    #   - 未来重构把 :partial 变成异常
 
-    assert Enum.any?(spec_asts, fn ast -> contains_tag?(ast, :partial) end),
-           "spawn_from_template/2 的 @spec 必须声明 {:partial, _} 返回；" <>
-             "移除会破坏 EzagentDomainChat、Orchestrator.MCPServer、" <>
-             "AdminDashboardLive 的调用方。"
+    workspace_uri = URI.new!("workspace://team-alpha")
+    owner = URI.new!("entity://user/team-alpha/alice")
+    session_uri = URI.new!("session://default/team-alpha/test-#{System.unique_integer([:positive])}")
+    orch_uri = Session.derive_orchestrator_uri(session_uri, workspace_uri)
+
+    # 预 spawn limbo（workspace 和 lineage 都 :absent，
+    # check_orchestrator 返回 {:ownership_pending, _}）。
+    {:ok, _pid} = Ezagent.SpawnRegistry.spawn(orch_uri)
+
+    # 用 retries: 0 强制 retry 耗尽。
+    result = Session.ensure_orchestrator_with_meta(session_uri, owner, retries: 0)
+
+    assert match?({:partial, %{orchestrator_pending: ^orch_uri}}, result),
+           "ensure_orchestrator_with_meta 必须在 ownership-pending exhaustion " <>
+           "时返回 :partial；折成 :ok 会破坏 EzagentDomainChat.create_session/3 + " <>
+           "LV 'Retry instantiation' 的分支。实得：#{inspect(result)}"
   end
 
-  test "retry_after_race exhaustion 抵达 :partial，不是 :ok" do
-    # 如果 helper 通过 @doc false 公开，可以直接单测；否则用
-    # reconciler_test.exs:523 的 exhaustion 模式。这个测试作为快速
-    # 回归守卫（<100ms）替代集成测试。
+  test "retry-exhaustion :partial 通过 spawn_from_template/2 表面化" do
+    # 经过公共 Session.spawn_from_template/2 门面的端到端测试。
+    # 镜像 line 523 的集成测试，但用正确的 workspace URI 前缀
+    # （见 §4.2 — 历史 bug 是与 SessionTemplate 的 default_workspace_uri
+    # 不匹配）。
+    #
+    # 作为快速回归守卫；集成测试保留更广覆盖。
   end
 end
 ```
 
-基于反射的测试小、快，能抓任何未来 SPEC 漂移漏掉 `:partial` 的情况。
-exhaustion 测试用 SessionTemplate setup 之外的方式镜像集成测试场景。
+**这个不变量为什么比反射 @spec 强**（r1 设计）：
+
+- `Code.Typespec.fetch_specs/1` 在测试环境下并不可靠地走通 `mix compile` 的 erlang 查找——反射测试在 Elixir 版本/beam-state 温度间脆弱
+- 未来重构可能保留 `@spec` 声明（声明 `:partial`）却悄悄删除产 `:partial` 的生产路径——反射抓不到，行为测试能抓
+- 按 `feedback_completion_requires_invariant_test`，gate 必须在 **架构目标** 不达时挂掉。这里的架构目标是"调用方能区分 pending 和 ready"，行为测试直接 exercise 这个边界
 
 ---
 
@@ -410,6 +524,20 @@ LV 的 "Retry instantiation" 按钮（按
 `2026-05-23-generator-reconciler.md` §1.4）在最近一次结果是
 `{:partial, _}` 时渲染 —— 那条分支在 Elixir 代码里，没外部表面。
 
+**Pinned-artifact 备注**（codex r1 发现）：
+`docs/notes/evidence/pr49-demo-rpc-script.sh` 44 + 69 行包含
+pattern-match 断言：
+
+```bash
+{:ok, %{session_uri: s1, orchestrator_uri: orch1}} =
+  Ezagent.Entity.Session.spawn_from_template(...)
+```
+
+这是 PR #49 验证用的一次性 demo 脚本，不是回归 gate。脚本的 `{:ok, _}`
+match 是故意的——它记录的是"happy path" demo，不是 retry-exhaustion
+case。**Action: 不需要改**——但在这里记下，让未来把脚本扩成回归 gate
+的作者知道要加 `:partial` 臂。
+
 ### 9.3 Snapshot
 
 这里没有 `%Capability{}` 类型的 snapshot 关切。reconciler outcome
@@ -419,21 +547,13 @@ LV 的 "Retry instantiation" 按钮（按
 
 ## §10 留给 Allen 的开放问题
 
-### OQ-1 — 核实 PR #422 的实证主张
+### OQ-1 — 核实 PR #422 的实证主张 ✅ 已解决（r2）
 
-PR #422 body 说测试失败因为 "生产返回 `{:ok, ...}`"。从静态阅读生
-产代码路径是 `check_orchestrator → :ownership_pending →
-retry_after_race → :partial`。
-
-**问题：** 你（或跑测试的人）是 **观察到** 真实返回值，还是 **从失
-败测试日志推断** 出 "返回 `:ok`"？如果是后者，测试可能在另一条
-断言上失败（例如 567-570 行的 `partial.pending` 内容检查），而
-"返回 `:ok`" 是近似描述。
-
-**为什么重要：** 这决定了实现 PR 的修复位置 —— 是
-`:partial`-vs-`:ok` 的决策站点（batch 作者看到的那种），还是
-`partial.pending`/`partial.errors` 的内容装配站点（`partial_report/1`
-里的更窄修复）。
+**解决（codex 调查，折进 §1.3）**：
+PR #422 的 "返回 `{:ok, _}`" 观察是 **真的**。原因不是生产里 `:partial → :ok`
+collapse，而是 **测试 helper URI 派生 mismatch**，把测试场景路由到
+新生路径（`{:ok, _, _}`）而不是 retry-exhaustion 路径（`:partial`）。
+impl fix 在 test helper，不在生产。详见 §1.3 + §4.2。
 
 ### OQ-2 — 确认决策 A
 

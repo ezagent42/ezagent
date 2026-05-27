@@ -1,13 +1,21 @@
 # SPEC — Reconciler `:partial` vs `:ok` return shape drift (Bug 3)
 
-**Status:** r1 — DRAFT pending codex adversarial review. 2026-05-27.
+**Status:** r2 — DRAFT, post-codex-review revisions applied. 2026-05-27.
+
+**r2 changes** (post codex NEEDS-ATTENTION verdict on r1):
+- §1.3 added — actual root cause is a **test-helper URI-derivation bug**, not a production regression. The `{:ok, _}` PR #422 observed is real but produced via `:not_live → spawn_orchestrator_via_template_content → {:ok, _, _}`, NOT a `:partial → :ok` collapse.
+- §4.2 rewritten — test changes are NOT "none"; the impl PR must fix `derive_orch_uri_for_test/1`'s hardcoded `ws_name = "default"` to use `@workspace_uri.host`.
+- §5 invariant rewritten — replace fragile `Code.Typespec` reflection test with a behavioral test on `Session.ensure_orchestrator_with_meta/3` exhaustion path.
+- §9 supplemented — `docs/notes/evidence/pr49-demo-rpc-script.sh` lines 44+69 also pattern-match `{:ok, _}` (pinned artifact, would need an update if `:partial` ever did surface in that scenario).
+- §10 OQ-1 marked resolved by codex investigation.
 
 **Companion:** PR #422 batch repaired umbrella-wide stale assertions but
 flagged 3 bugs needing SEPARATE SPECs. This is **Bug 3** of that set.
 
 **Scope:** Narrow. One assertion in one integration test; SPEC mostly
 re-affirms the existing ratified three-arm return shape and identifies
-whether production has drifted.
+that the failure is a **test fixture** URI-derivation mismatch, not a
+production code regression.
 
 ---
 
@@ -53,6 +61,60 @@ distinguish "session is alive but the orchestrator is still pending"
 from "session is fully ready" — a distinction the LiveView session
 panel and the `EzagentDomainChat.create_session/3` facade BOTH branch
 on today.
+
+### 1.3 Actual root cause — test-helper URI-derivation mismatch (codex r1 finding)
+
+The PR #422 author's empirical claim ("production returns `{:ok, _}`")
+is **real but the root cause is a test bug, not a production
+regression**. Tracing the failing path against current code:
+
+1. **Test fixture setup**:
+   - `apps/ezagent_domain_chat/test/integration/reconciler_test.exs:119` —
+     SessionTemplate is created with
+     `default_workspace_uri: URI.parse("workspace://team-alpha")`.
+   - `reconciler_test.exs:146` —
+     `@workspace_uri URI.new!("workspace://team-alpha")` (module-level
+     constant used in every `template_cap`).
+
+2. **Production URI derivation**:
+   - `Ezagent.Entity.Session.spawn_from_template/2` derives the
+     orchestrator URI as
+     `entity://agent/<workspace_uri.host>/cc_orchestrator-<session_name>`.
+     For this test's workspace, that's
+     **`entity://agent/team-alpha/cc_orchestrator-...`**.
+
+3. **Test helper bug**:
+   - `reconciler_test.exs:595-611` —
+     `defp derive_orch_uri_for_test(%URI{} = session_uri)` hardcodes
+     `ws_name = "default"` (line 597) — pre-dates the
+     `default_workspace_uri` move from `"default"` to `"team-alpha"`
+     (PR #399 / PR #408 era rename).
+   - Test pre-spawns the "limbo" process at
+     **`entity://agent/default/cc_orchestrator-...`**.
+
+4. **What happens at run-time**:
+   - `check_orchestrator/3` looks up
+     `entity://agent/team-alpha/cc_orchestrator-...` (production
+     derivation).
+   - No such Kind is registered (the limbo is under `default/`, not
+     `team-alpha/`).
+   - `check_orchestrator` returns `:not_live`, not the expected
+     `:ownership_pending`.
+   - `spawn_from_template/2` routes to `spawn_orchestrator_via_template_content/5`
+     (the fresh-spawn path added in PR #408).
+   - That path completes successfully and returns
+     `{:ok, %{session_uri: _, orchestrator_uri: _}}` — NOT
+     `{:partial, _}`.
+
+So `:partial` IS still reachable in production via the
+`retry_after_race/3` exhaustion path; the test just doesn't exercise
+it because its pre-spawned limbo lives at the wrong URI prefix.
+
+**Implication for §4.2:** The test changes are NOT "none". The impl
+PR must update `derive_orch_uri_for_test/1` (or accept a workspace
+parameter, or call the public `Session.derive_orchestrator_uri/2` if
+it exists) so the test helper's URI prefix matches the test
+template's `default_workspace_uri`.
 
 ---
 
@@ -289,9 +351,54 @@ keeping it.
 
 ### 4.2 Test changes
 
-**None.** The test at line 523 is correctly asserting the SPEC. If
-implementation phase finds an unrelated bug (e.g. a flaky helper),
-that fix lives in its own PR scope.
+**One required test-helper fix** (per §1.3 root-cause analysis):
+
+`apps/ezagent_domain_chat/test/integration/reconciler_test.exs:595-611` —
+`derive_orch_uri_for_test/1` hardcodes `ws_name = "default"`, which
+mismatches the test SessionTemplate's `default_workspace_uri:
+"workspace://team-alpha"`. The limbo process pre-spawn lands at the
+wrong URI prefix; production's `check_orchestrator` then routes to the
+fresh-spawn path (returning `{:ok, _}`) instead of the
+`:ownership_pending → retry_after_race → :partial` path the test is
+designed to exercise.
+
+**Fix options** (impl PR picks one):
+
+(a) **Match `@workspace_uri.host`** (smallest diff):
+```elixir
+defp derive_orch_uri_for_test(%URI{} = session_uri) do
+  ws_name = @workspace_uri.host  # was: "default"
+  session_name = ...              # unchanged
+  URI.new!("entity://agent/#{ws_name}/cc_orchestrator-#{session_name}")
+end
+```
+
+(b) **Accept workspace as parameter** (more reusable, lets future
+tests exercise multiple workspaces):
+```elixir
+defp derive_orch_uri_for_test(%URI{} = session_uri, %URI{} = workspace_uri) do
+  ws_name = workspace_uri.host
+  ...
+end
+```
+
+(c) **Promote `Session.derive_orchestrator_uri/2` to public** and have
+the test call it directly. Avoids two derivation implementations from
+drifting again. Costs one extra public function in the Session
+module's API surface.
+
+**Recommendation: (a)** for the impl PR. Document a follow-up TODO
+for (c) so the next test that needs orch-URI derivation doesn't
+re-copy the logic.
+
+After the fix lands, the test at line 523 exercises the
+`:ownership_pending → retry → :partial` path as originally designed
+and should pass without any production code change.
+
+**Test isolation note:** the module is `async: false` and the chat
+domain `test_helper.exs` boots `:ezagent_plugin_echo` unconditionally;
+no `@tag`/`@moduletag` masking is in play (codex r1 audit
+confirmed). Any chat-integration umbrella run hits this assertion.
 
 ### 4.3 Caller changes
 
@@ -324,32 +431,67 @@ sibling `reconciler_shape_invariant_test.exs`):**
 
 ```elixir
 describe "return-shape invariant (SPEC 2026-05-27-reconciler-return-shape)" do
-  test "the @spec declares all three arms" do
-    # Reflect on the @spec metadata at compile time. Asserts the
-    # declared spec includes a :partial arm. Catches a future refactor
-    # that silently removes :partial from the type union.
-    specs = Code.Typespec.fetch_specs(Ezagent.Entity.Session)
-    {:ok, [{{:spawn_from_template, 2}, spec_asts}]} = filter_for(specs, :spawn_from_template, 2)
+  test "ensure_orchestrator_with_meta surfaces :partial for an unconvertible-limbo orch" do
+    # BEHAVIORAL invariant: directly exercise the
+    # ensure_orchestrator_with_meta/3 path with a limbo orch URI that
+    # check_orchestrator can classify as :ownership_pending. The
+    # retry-exhaustion path MUST return {:partial, %{orchestrator_pending: _}},
+    # NOT {:ok, _} and NOT {:error, _}.
+    #
+    # This invariant is stronger than reflection-on-@spec because it
+    # catches:
+    #   - A future refactor that adds an early `:ok` short-circuit
+    #     before the retry exhaustion fires.
+    #   - A future refactor that maps :partial → :ok at the
+    #     ensure_orchestrator_with_meta/3 boundary (the historical
+    #     bug class :partial was designed to prevent).
+    #   - A future refactor that turns :partial into an exception.
 
-    assert Enum.any?(spec_asts, fn ast -> contains_tag?(ast, :partial) end),
-           "spawn_from_template/2's @spec must declare a {:partial, _} return; " <>
-             "removing it would break callers in EzagentDomainChat, " <>
-             "Orchestrator.MCPServer, and AdminDashboardLive."
+    workspace_uri = URI.new!("workspace://team-alpha")
+    owner = URI.new!("entity://user/team-alpha/alice")
+    session_uri = URI.new!("session://default/team-alpha/test-#{System.unique_integer([:positive])}")
+    orch_uri = Session.derive_orchestrator_uri(session_uri, workspace_uri)
+
+    # Pre-spawn limbo (workspace and lineage both :absent so
+    # check_orchestrator returns {:ownership_pending, _}).
+    {:ok, _pid} = Ezagent.SpawnRegistry.spawn(orch_uri)
+
+    # Force retry exhaustion by passing retries: 0.
+    result = Session.ensure_orchestrator_with_meta(session_uri, owner, retries: 0)
+
+    assert match?({:partial, %{orchestrator_pending: ^orch_uri}}, result),
+           "ensure_orchestrator_with_meta MUST return :partial on " <>
+           "ownership-pending exhaustion; collapsing to :ok would break " <>
+           "EzagentDomainChat.create_session/3 + LV 'Retry instantiation' branching. " <>
+           "Got: #{inspect(result)}"
   end
 
-  test "retry_after_race exhaustion reaches :partial, not :ok" do
-    # Direct unit-test on the helper if it's made public via @doc false,
-    # or via the exhaustion-test pattern from reconciler_test.exs:523.
-    # This test replaces the integration test as the FAST regression
-    # guard — runs in <100ms.
+  test "retry-exhaustion :partial surfaces through spawn_from_template/2" do
+    # End-to-end through the public Session.spawn_from_template/2 facade.
+    # Mirrors the integration test at line 523 BUT uses the correct
+    # workspace URI prefix (see §4.2 — historical test bug was a
+    # mismatch with the SessionTemplate's default_workspace_uri).
+    #
+    # Runs as the fast regression guard; integration test stays as
+    # broader coverage.
   end
 end
 ```
 
-The reflection-based test is small, fast, and would catch any future
-SPEC drift that omits `:partial` from the @spec. The exhaustion test
-mirrors the integration test scenario without the SessionTemplate
-setup overhead.
+**Why this invariant beats reflection-on-@spec** (the r1 design):
+
+- `Code.Typespec.fetch_specs/1` doesn't reliably round-trip through
+  `mix compile`'s erlang lookup in test environments — the
+  reflection test is fragile across Elixir versions and beam-state
+  warmth.
+- A future refactor could leave the `@spec` declaration intact
+  (declaring `:partial`) while silently removing the production code
+  path that produces it — reflection wouldn't catch this; the
+  behavioral test would.
+- Per `feedback_completion_requires_invariant_test`, the gate must
+  fail when the **architectural goal** is unmet. The architectural
+  goal here is "callers can distinguish pending-from-ready"; the
+  behavioral test directly exercises that boundary.
 
 ---
 
@@ -456,6 +598,21 @@ The LV "Retry instantiation" button (per
 result was `{:partial, _}` — that branch lives inside Elixir code,
 no external surface.
 
+**Pinned-artifact note (codex r1 finding):**
+`docs/notes/evidence/pr49-demo-rpc-script.sh` lines 44 + 69 contain
+pattern-match assertions:
+
+```bash
+{:ok, %{session_uri: s1, orchestrator_uri: orch1}} =
+  Ezagent.Entity.Session.spawn_from_template(...)
+```
+
+This is a one-off demo script for PR #49 verification, not a regression
+gate. The script's `{:ok, _}` match is intentional — it documents the
+"happy path" demo, NOT the retry-exhaustion case. **Action: no change
+needed** — but flagged here so future authors who broaden the script
+into a regression-gate know to add `:partial` arms.
+
 ### 9.3 Snapshots
 
 No `%Capability{}`-style snapshot concern here. Reconciler outcomes
@@ -466,22 +623,15 @@ invocation.
 
 ## §10 Open questions for Allen
 
-### OQ-1 — Verify the PR #422 empirical claim
+### OQ-1 — Verify the PR #422 empirical claim ✅ RESOLVED (r2)
 
-PR #422's body says the test fails because "production returns
-`{:ok, ...}`". From static reading the production code path is
-`check_orchestrator → :ownership_pending → retry_after_race → :partial`.
-
-**Question:** Did you (or whoever ran the test) observe the actual
-return value, or was "returns `:ok`" inferred from the failing-test
-log? If the latter, the test might be failing on a different assertion
-(e.g. line 567-570's `partial.pending` content check) and the
-"returns `:ok`" framing was approximate.
-
-**Why it matters:** This determines whether the implementation PR's
-fix is at the `:partial`-vs-`:ok` decision site (the case the
-batch-author saw) or at the `partial.pending`/`partial.errors`
-content assembly (a narrower fix in `partial_report/1`).
+**Resolution (codex investigation, folded into §1.3):**
+PR #422's "returns `{:ok, _}`" observation is REAL. The cause is not
+a `:partial → :ok` collapse in production, but a **test-helper
+URI-derivation mismatch** that routes the test scenario into the
+fresh-spawn path (`{:ok, _, _}`) instead of the retry-exhaustion
+path (`:partial`). The impl fix is in the test helper, not
+production. See §1.3 + §4.2.
 
 ### OQ-2 — Confirm decision A
 
