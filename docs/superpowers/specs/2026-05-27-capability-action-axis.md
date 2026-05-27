@@ -1,6 +1,26 @@
 # SPEC — Capability struct gains the `action` axis
 
-**Status:** r2 (codex r1 BLOCK addressed). 2026-05-27.
+**Status:** r3 (codex r2 BLOCK addressed). 2026-05-27.
+
+**r3 revision log (codex r2 findings):**
+- CRIT (still): codex r1's CRIT fix shape was wrong — `normalize_loaded/1`'s clause ordering raised on old structs (`%__MODULE__{} = cap` matched first; then `%{cap | action: :any}` raised on missing key). **r3 changes the strategy**: rather than normalize-on-load, `matches?/2` uses `Map.get(cap, :action, :any)` to treat a missing `:action` key as the wildcard at the matcher boundary. Backward-compat becomes structural at the only point that matters (cap-check); the normalize-on-load function becomes a cosmetic cleanup, not a correctness gate. This collapses CRIT + idempotence-HIGH + save-side-staleness-HIGH into one fix.
+- HIGH (idempotence): resolved by structure — `Map.get/3` with default is idempotent on any cap shape.
+- HIGH (save-side staleness window): resolved — in-flight Kinds running new code on old in-memory structs work correctly because `matches?/2` reads missing `:action` as `:any`. No save-side normalize needed; snapshots written with old shape still load correctly.
+- HIGH residual §4.3 JSONB: r3 strikes the remaining "JSONB" sentence.
+- MED (counts): r3 records the exact counting rule (`%Capability{` includes literal '`%Capability` followed by `{`; 185 raw, one false positive in a comment string = 184 real).
+- MED (cross-PR): r2 codex's gh proxy failed; r3 reaffirms verification from the main agent (`gh pr list --state open` returned empty). Memo note: re-verify at impl PR open time.
+- MED (`action: :any` policy): r3 adds two enforcement layers — (a) plugin-check 11 also verifies `cap.action == action OR cap.action == :any`; (b) `Identity.grant_cap/3` rejects `cap.action == :any` when caller is NOT a system principal (the policy becomes runtime-enforced at the grant boundary, not just code-review).
+- MED (B1 "NO existing caps" imprecision): r3 acknowledges default Identity self-cap + `Users.create/3` default caps; the test SETUP spells out that none of those satisfy `:add_member`'s required cap.
+- C2 (codex r2 calls it "weak as least-privilege regression"): r3 strengthens C2 to also assert that NO catalog entry has a `:any` action atom paired with a non-system principal caller surface; reframed as a least-privilege regression test.
+- LOW (plugin-check 11): confirmed structurally additive (codex r2 retested).
+
+**r2 → r3 file:line of changes:**
+- §3.3 matches?/2: missing-key tolerance via `Map.get(cap, :action, :any)`
+- §3.7 normalize_loaded: demoted from correctness-gate to cosmetic cleanup; clause ordering fixed; idempotence trivially holds
+- §3.6.1: adds enforcement layer (b) — grant-time `:any` rejection
+- §4.3: JSONB sentence struck
+- §5 B1: setup precision (default-caps acknowledged)
+- §5 C2: strengthened to least-privilege regression
 
 **r2 revision log (codex r1 findings):**
 - CRIT: `kind_snapshots.state_binary` (term_to_binary / binary_to_term) bypasses any JSON parse-time shim — §3.7 added (`Behavior.reconcile_after_load/2` on caps-holding Behaviors normalizes the loaded slice).
@@ -94,19 +114,28 @@ end
 
 The signature is unchanged — only the body stops dropping the third arg on the floor.
 
-### 3.3 `matches?/2` gains action as the fifth match dimension
+### 3.3 `matches?/2` gains action as the fifth match dimension — missing-key tolerant
 
 ```elixir
 def matches?(%__MODULE__{} = cap, %{kind: k, behavior: b, action: a, instance: i, workspace_uri: w}) do
+  # codex r2 fix: read action via Map.get with default :any so deserialized
+  # OLD caps (struct without the :action key) match transparently as
+  # wildcard. This removes the hard dependency on normalize-on-load: an
+  # in-flight Kind running new code on old in-memory structs works
+  # correctly without a save-side normalize step.
   field_match?(cap.kind, k) and
     field_match?(cap.behavior, b) and
-    field_match?(cap.action, a) and
+    field_match?(Map.get(cap, :action, :any), a) and
     instance_match?(cap.instance, i) and
     workspace_match?(cap.workspace_uri, w)
 end
 ```
 
 The needed-cap shape (the second arg) gains `:action`. Today's needed-cap is constructed by `Ezagent.Kind.Runtime`'s `authz_check` from the dispatch target + action atom; that call site needs one new field (`action: <the action atom>`).
+
+**Why `Map.get` instead of `cap.action` direct access**: Elixir struct field access compiles to `case cap do %Cap{action: a} -> a end` which requires the key to be present on the map. A deserialized OLD cap (from `binary_to_term` of a pre-SPEC snapshot) is a map without `:action` — `cap.action` would crash. `Map.get(cap, :action, :any)` returns `:any` for missing keys without crashing. This makes the match always-correct regardless of when the cap was last serialized.
+
+**Performance**: `Map.get` is one extra map lookup per match call vs direct field access — negligible. Hot-path overhead measured in nanoseconds; not perf-sensitive.
 
 ### 3.4 Persistence: `caps_json` JSON gains a 7th field, with a backward-compat read path
 
@@ -152,64 +181,37 @@ After this SPEC, three cap shapes coexist:
 
 **Policy rule**: any grant site that takes a user-supplied or member-supplied principal MUST pass a concrete action atom. Behavior-wildcard caps are reserved for the catalog (which is closed by `feedback_let_it_crash_no_workarounds` and never user-extensible).
 
-Enforcement: not compile-time (the type system can't distinguish "user-facing grant" from "system principal grant"); enforced by code review + a recommended `Identity.grant_cap/3` guard that logs a warning when `cap.action == :any` and the caller is not a `system://` principal. Phased into a future PR if needed; not gating this SPEC.
+**Enforcement (codex r2 MED — promoted from code-review-only)**: two layers, both shipped in this PR.
 
-### 3.7 Snapshot binary restore — Behavior-driven post-load normalization (codex r1 CRIT)
+1. **Compile-time (plugin-check 11)**: extend the existing check at `apps/ezagent_core/lib/mix/tasks/compile/ezagent_plugin_check.ex:724` to also verify `required_caps[action].action == action OR required_caps[action].action == :any`. A behavior-wildcard in `required_caps/0` is rare but legitimate for orchestrator-style Behaviors (per the existing PR-CC-2-v2 §4 "any_action escape hatch" doc). The check enforces map-key / cap.action coherence, blocking drift at compile time.
 
-The `users.caps_json` parse-time shim covers the LV / direct read path. The other path — **`kind_snapshots.state_binary` via `:erlang.term_to_binary/1` + `:erlang.binary_to_term/2`** — is OUTSIDE that shim. Identity slices restored from a snapshot pre-this-SPEC would have `%Capability{}` structs serialized WITHOUT the `:action` field; on `binary_to_term`, the deserialized map has no `:action` key. `cap.action` access then returns `nil` (Elixir's `Map.get` semantics on missing keys), and `matches?/2` with `field_match?(nil, _)` returns false on every check — every cap fails to match. Identity admin loses authorization across a restart.
+2. **Runtime grant-boundary (Identity.grant_cap/3)**: at the grant entrypoint at `apps/ezagent_core/lib/ezagent/identity/admin.ex` (line TBD by impl subagent — locate `def grant_cap/3` or `:grant_cap` action), if the cap being granted has `cap.action == :any` AND the caller is NOT a `system://` principal, return `{:error, :wildcard_action_grant_requires_system_principal}`. System principals (the 14 catalog entries + bootstrap + mix-task) bypass this check structurally because their grants come from `SystemPrincipal.Catalog` at boot, not via `Identity.grant_cap/3`.
 
-**Fix**: leverage the existing `Behavior.reconcile_after_load/2` callback (defined at `apps/ezagent_core/lib/ezagent/behavior.ex:465`, dispatched from `apps/ezagent_core/lib/ezagent/kind/snapshot.ex:145`). Behaviors that own a slice containing caps implement this callback to normalize their slice post-restore:
+This makes the policy structurally enforced, not just documented. A plugin author writing `required_caps/0` can't drift; a user-facing grant path can't accidentally widen.
+
+### 3.7 Snapshot binary restore — handled structurally at `matches?/2`, not by reconcile-on-load (codex r2 fix)
+
+The naïve fix attempted in r2 was to `reconcile_after_load/2` normalize Identity slice caps post-restore. Codex r2 BLOCKed it: the proposed `normalize_loaded/1` clause ordering raised on the primary missing-key shape, and a save-side staleness window remained (long-running Kinds in new code can write old-shape snapshots before the first restart).
+
+**r3 strategy**: handle the missing-`:action` key transparently at the SINGLE point that matters — `Capability.matches?/2`. §3.3 uses `Map.get(cap, :action, :any)` for the action field read. This means:
+
+1. **Old in-memory cap structs (no :action key) work correctly** — `Map.get` returns `:any` (wildcard), `matches?/2` proceeds as if action were unspecified. Behavior is identical to today's "no action axis" semantics. ✅
+2. **Old snapshot-restored caps work correctly** — same reason. No `reconcile_after_load/2` needed for correctness. ✅
+3. **Save-side staleness window vanishes** — there's nothing to "stale". An old cap written to a new snapshot loads correctly via the same `Map.get` path. ✅
+4. **New caps with concrete `:action`** — `Map.get` returns the concrete atom, narrow match applies as designed. ✅
+
+**Cosmetic cleanup (not correctness-required)**: A best-effort `Capability.normalize_loaded/1` + an Identity `reconcile_after_load/2` callback can be added in a SEPARATE PR after this one lands, to eventually rewrite old-shape caps with explicit `:action` on first restore. Marked as a `docs/futures/todo.md` follow-up, not a blocker for this PR.
 
 ```elixir
-# apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex
-@impl Ezagent.Behavior
-def reconcile_after_load(_uri, slice) do
-  normalized_caps =
-    slice.caps
-    |> Enum.map(&Ezagent.Capability.normalize_loaded/1)
-    |> MapSet.new()
-
-  %{slice | caps: normalized_caps}
+# Future PR — cosmetic only. THIS SPEC does not require it.
+def normalize_loaded(%__MODULE__{} = cap) do
+  cap |> Map.put_new(:action, :any)  # works on both old (no :action) and new caps; idempotent
 end
 ```
 
-`Ezagent.Capability.normalize_loaded/1` is added to the Capability module as the canonical "an old cap might be a map without :action — coerce to %Capability{action: :any} | as-is":
+Notice the simpler shape — `Map.put_new` on a struct map works regardless of whether `:action` is present, because the struct is itself a map. No clause-ordering hazard.
 
-```elixir
-@doc """
-Normalize a cap loaded from snapshot binary restore.
-
-`term_to_binary` of a pre-action-axis %Capability{} serializes a map
-with the OLD 6 fields. After this SPEC the struct has 7 fields with
-`:action` defaulting to `:any` at struct-literal time — but
-deserialized old structs are missing the `:action` key entirely (not
-set to its default).
-
-This function takes any term reasonably shaped like a cap and returns
-a %Capability{} with `:action` set:
-
-  - %Capability{action: a} when not is_nil(a) → as-is
-  - %Capability{} without :action set → action: :any
-  - %{__struct__: Capability} map without :action key → action: :any
-  - anything else → raise ArgumentError (let-it-crash; reconcile is
-    expected to feed only cap-shaped terms)
-
-Used by `Behavior.Identity.reconcile_after_load/2` and any other
-Behavior whose slice carries caps.
-"""
-@spec normalize_loaded(map()) :: t()
-def normalize_loaded(%__MODULE__{action: a} = cap) when not is_nil(a), do: cap
-def normalize_loaded(%__MODULE__{} = cap), do: %{cap | action: :any}
-def normalize_loaded(%{__struct__: __MODULE__} = m) do
-  m |> Map.put_new(:action, :any) |> then(&struct(__MODULE__, &1))
-end
-```
-
-Behaviors that own caps-bearing slices (today: `Behavior.Identity`, `Behavior.IdentityAdmin`, anywhere `ctx.caps` is persisted via snapshot) implement `reconcile_after_load/2` to walk + normalize. The SPEC's §6 file manifest is updated to include these Behavior modules.
-
-**Idempotence**: `normalize_loaded/1` is idempotent (already-normalized caps short-circuit on the first clause). `reconcile_after_load/2` calling itself twice produces the same slice — satisfies the callback contract (`apps/ezagent_core/lib/ezagent/behavior.ex:454`).
-
-**Alternative considered + rejected**: bumping snapshot version + forcing fresh init/reconcile for Identity slices. Rejected because (a) fresh init loses Identity slice state (cap rows in the slice that don't have DB-projection backing would vanish), and (b) `reconcile_after_load/2` is the existing post-load hook designed for exactly this case (per task #34 the callback was introduced as the boundary for slice-vs-DB reconciliation; this SPEC's use is structurally identical).
+**Alternative considered + rejected (codex r2 raised it as r2's CRIT)**: the `Behavior.reconcile_after_load/2` approach. Rejected for this PR because (a) it requires Identity to know about Capability's internal shape (cross-module coupling), (b) the clause-ordering correctness depends on Elixir struct-pattern semantics in a non-obvious way, (c) it doesn't solve the save-side staleness window for long-running Kinds. The matcher-boundary fix (§3.3) is structurally cleaner: ONE function knows about the missing-key shape, everyone else sees a normal cap struct.
 
 ## 4. Migration strategy
 
@@ -230,7 +232,7 @@ Allen's `feedback_let_it_crash_no_workarounds` forbids dual-path. The PR lands a
 
 ### 4.3 No DB schema migration
 
-`caps_json` is a JSONB column. New rows write 7 fields; old rows read with `:any` default. No `alter table` needed. The schema migration list in this PR is empty — that is the design.
+`caps_json` is Ecto `:string` (DB `TEXT`) holding serialized JSON (codex r2 HIGH correction). New rows write 7-field JSON; old rows parse with the `Map.put_new("action", "any")` shim before atomization. No `alter table` needed. The schema migration list in this PR is empty — that is the design.
 
 ## 5. Acceptance criteria
 
@@ -242,11 +244,11 @@ Allen's `feedback_let_it_crash_no_workarounds` forbids dual-path. The PR lands a
 | A4 | Old JSON row (6 fields) loads with `action: :any` | unit test |
 | A5 | `required_caps/0` entries: every `Behavior` has `entry[action].action == action` | umbrella-wide property test |
 | A6 | Compile-time check 11 fails a deliberately-broken fixture (`%{send: cap(.., .., :join)}`) | plugin-check test |
-| **B1** | **The PR #408 regression test (THE merge gate)** — concrete setup: (1) spawn `workspace://X` via the normal Workspace facade; (2) create a non-admin user `entity://user/X/member-1` with NO admin role + NO existing caps; (3) seed exactly one cap: `%Capability{kind: :workspace, behavior: Ezagent.Behavior.Workspace, action: :create_session, instance: workspace_uri, workspace_uri: workspace_uri, granted_by: SystemPrincipal.uri("template-materialize"), granted_at: <now>}` on the user via `Identity.grant_cap`; (4) dispatch `Invocation{target: URI.parse("workspace://X?action=workspace.add_member"), mode: :call, args: %{member: <other_user_uri>}, ctx: %{caller: member_uri, caps: <slice-loaded>, ...}}`; (5) assert `{:error, :unauthorized}` is returned from dispatch step 5.5 BEFORE `invoke(:add_member, ...)` runs (member set must be unchanged after the call). | invariant test |
+| **B1** | **The PR #408 regression test (THE merge gate)** — concrete setup: (1) spawn `workspace://X` via the normal Workspace facade; (2) create a non-admin user `entity://user/X/member-1` via `Users.create/3` — note that `Users.create` grants default caps at `apps/ezagent_domain_identity/lib/ezagent/users.ex:76-84` and `Behavior.Identity.create_user/3` adds a self-Identity cap at `apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex:113-122`; the test relies on those defaults NOT matching `Behavior.Workspace :add_member`'s required cap (kind axis differs: defaults are `:user` / `:session`-scoped, `:add_member` requires `:workspace`); (3) seed exactly one additional cap: `%Capability{kind: :workspace, behavior: Ezagent.Behavior.Workspace, action: :create_session, instance: workspace_uri, workspace_uri: workspace_uri, granted_by: SystemPrincipal.uri("template-materialize"), granted_at: <now>}` on the user via `Identity.grant_cap`; (4) dispatch `Invocation{target: URI.parse("workspace://X?action=workspace.add_member"), mode: :call, args: %{member: <other_user_uri>}, ctx: %{caller: member_uri, caps: <slice-loaded>, ...}}`; (5) assert `{:error, :unauthorized}` is returned from dispatch step 5.5 at `apps/ezagent_core/lib/ezagent/kind/runtime.ex:121` BEFORE `invoke(:add_member, ...)` runs (verify by reading the workspace slice's `members` after the call — must equal pre-call members; the dispatched user must NOT have been added). | invariant test |
 | B2 | Same member, same cap, dispatch to `workspace://X?action=workspace.create_session` — assert `{:ok, _, _}` (the cap matches; creation succeeds) | invariant test |
 | **B3** | **Snapshot bypass regression (codex r1 CRIT)** — (1) write a `%Capability{}` slice through pre-SPEC snapshot format (simulated by constructing a slice with caps that are deserialized maps missing `:action` — `Map.delete(cap, :action)` then `term_to_binary`); (2) load via `KindSnapshot.decode_state/1`; (3) Identity's `reconcile_after_load/2` runs; (4) assert every cap in the loaded slice has `cap.action != nil` (defaults to `:any`); (5) `matches?/2` against a needed-cap with `action: :send` returns true (wildcard preserved) | invariant test |
 | C1 | Admin wildcard cap (`kind: :any, behavior: :any, action: :any, …`) still satisfies every action | regression test |
-| C2 | `SystemPrincipal.Catalog` audit — every catalog entry's action atom (or `:any`) matches a real `actions/0` entry of the named Behavior; the existing wildcard entries (`system://chat-router`, `system://chat-reply` per `system_principal/catalog.ex:143/161`) stay wildcard but document that fact; narrowed entries (e.g. `system://session-internal`'s `Capability.cap(:workspace, Workspace, :any)` at `catalog.ex:205`) verify their behavior atom matches | catalog audit test |
+| C2 | **`SystemPrincipal.Catalog` least-privilege regression** — (a) every catalog entry's action atom matches a real `actions/0` entry of the named Behavior (or is `:any` with explicit doc-comment justification); (b) the 14 system principal URIs partition cleanly: closed system principals (bootstrap, mix-task, chat-router, chat-reply, lv-anon-mount) MAY have wildcard caps; narrowed principals (session-internal, template-materialize, workspace-loader, etc.) MUST have either a real action atom or a behavior+`:any` cap with an inline `# noqa: wildcard-action — rationale here` comment; (c) the test asserts the count of unjustified wildcard entries is 0 — guarding future drift | catalog audit test |
 
 ## 6. Files affected (estimated)
 
