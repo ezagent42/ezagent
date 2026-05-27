@@ -56,14 +56,7 @@ defmodule EzagentWeb.CustomerChatController do
 
   require Logger
 
-  @reply_timeout_ms 30_000
-
-  # PHASE_2.4_TODO — Agent URI used by the synthetic-reply path. In
-  # Phase 2.4 this becomes the real cc agent URI resolved from session
-  # membership (cs_main per workspace). Until then, the fixture lets
-  # the SSE loop recognize "terminal" without depending on session
-  # member state.
-  @agent_uri_str "entity://user/__synthetic__/echo_agent"
+  @reply_timeout_ms 45_000
 
   def chat(conn, %{"customer_id" => cust_id, "text" => text} = params)
       when is_binary(cust_id) and is_binary(text) do
@@ -102,8 +95,6 @@ defmodule EzagentWeb.CustomerChatController do
     :ok = ensure_session(workspace, conv_id)
     :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, topic)
 
-    customer_msg = Ezagent.Message.new(customer_uri, %{text: text, attachments: []})
-
     conn =
       conn
       |> put_resp_header("cache-control", "no-cache")
@@ -111,33 +102,64 @@ defmodule EzagentWeb.CustomerChatController do
       |> put_resp_content_type("text/event-stream")
       |> send_chunked(200)
 
-    {:ok, conn} =
-      sse_chunk(conn, "open", %{
-        workspace: workspace,
-        conv_id: conv_id,
-        session_uri: session_uri_str,
-        customer_uri: URI.to_string(customer_uri),
-        sent_msg_id: customer_msg.id
-      })
+    # Phase 2.4: ensure a cc agent exists for this conv, the bridge is
+    # bound, and the agent is joined to the session — all before
+    # dispatching the customer message. The first request for a conv_id
+    # pays the spawn + bridge cost (~5-10s); subsequent requests for
+    # the same conv_id reuse the same agent (sub-second).
+    case ensure_cc_for_conv(workspace, conv_id, session_uri) do
+      {:ok, cc_agent_uri} ->
+        cc_agent_uri_str = URI.to_string(cc_agent_uri)
 
-    dispatch_chat_send(session_uri, customer_msg)
+        # IMPORTANT: ezagent's default routing rule is
+        # `[session_users, mentions]` — agents only receive messages
+        # they're @-mentioned in (per `EzagentDomainChat.DefaultRules`
+        # / `Resolver.session_users_token + mentions_token`). The
+        # customer's natural-language message has no @-syntax, so we
+        # synthesize a server-side mention of the cc agent to make
+        # the resolver fan out chat.receive to it. This is a
+        # customer-channel-specific routing concern; the alternative
+        # would be to install a per-session routing rule
+        # "fan out to all members regardless of mentions" — same
+        # effect, more surgery. Server-side mention is the cleanest.
+        customer_msg =
+          Ezagent.Message.new(customer_uri, %{text: text, attachments: []},
+            mentions: [cc_agent_uri]
+          )
 
-    # PHASE_2.4_TODO — replace this synthetic-reply spawn with real cc
-    # bridge dispatch (EagerBridge.ensure_bound!/2 + chat.receive to
-    # the cc agent URI). Until then, the synthetic echo proves the SSE
-    # plumbing end-to-end without requiring the bridge handshake to
-    # have completed. See poc/phase-2/3-C3-channel-rebase.md.
-    spawn_synthetic_reply(session_uri, text)
+        {:ok, conn} =
+          sse_chunk(conn, "open", %{
+            workspace: workspace,
+            conv_id: conv_id,
+            session_uri: session_uri_str,
+            customer_uri: URI.to_string(customer_uri),
+            agent_uri: cc_agent_uri_str,
+            sent_msg_id: customer_msg.id
+          })
 
-    conn =
-      stream_loop(conn,
-        agent_uri_str: @agent_uri_str,
-        customer_uri_str: URI.to_string(customer_uri),
-        deadline: System.monotonic_time(:millisecond) + @reply_timeout_ms
-      )
+        dispatch_chat_send(session_uri, customer_msg)
 
-    Phoenix.PubSub.unsubscribe(EzagentCore.PubSub, topic)
-    conn
+        conn =
+          stream_loop(conn,
+            agent_uri_str: cc_agent_uri_str,
+            customer_uri_str: URI.to_string(customer_uri),
+            deadline: System.monotonic_time(:millisecond) + @reply_timeout_ms
+          )
+
+        Phoenix.PubSub.unsubscribe(EzagentCore.PubSub, topic)
+        conn
+
+      {:error, reason} ->
+        {:ok, conn} =
+          sse_chunk(conn, "error", %{
+            reason: "agent_setup_failed",
+            detail: inspect(reason)
+          })
+
+        {:ok, conn} = sse_chunk(conn, "close", %{reason: "error"})
+        Phoenix.PubSub.unsubscribe(EzagentCore.PubSub, topic)
+        conn
+    end
   end
 
   # ──────────────────────────────────────────────────────────────────
@@ -229,45 +251,109 @@ defmodule EzagentWeb.CustomerChatController do
   end
 
   # ──────────────────────────────────────────────────────────────────
-  # PHASE_2.4_TODO — synthetic reply (to be replaced with cc bridge).
+  # Phase 2.4 — real cc agent lifecycle (replaced synthetic reply)
   #
-  # Current behavior: 500ms after the customer sends, broadcast a fake
-  # "Echo: ..." reply directly onto the session PubSub topic. This
-  # bypasses MessageStore.write (acceptable for the PoC; documented in
-  # poc/exp-C3/FINDINGS.md).
+  # ensure_cc_for_conv/3:
+  #   1. Derive a deterministic agent name from conv_id (so same conv
+  #      reuses the same cc agent across HTTP requests)
+  #   2. Create the cc agent (idempotent — `:already_exists` is success)
+  #   3. EagerBridge.ensure_bound! — gates the trigger on PtyServer
+  #      auto_prompts having all fired; then kicks `\r` so claude
+  #      initializes its esr-bridge MCP and joins the agent_bridge
+  #      registry
+  #   4. Join the cc agent to the session (idempotent — `:cast` mode,
+  #      PendingDelivery handles transient :not_ready)
   #
-  # Phase 2.4 replacement (planned):
-  #   1. `EzagentPluginCc.EagerBridge.ensure_bound!(cc_agent_uri, _opts)`
-  #      to guarantee the bridge is alive before dispatching.
-  #   2. `Invocation.dispatch(chat.receive)` against `cc_agent_uri` with
-  #      the customer message in args.
-  #   3. cc replies normally via the bridge; its reply message lands on
-  #      the same `esr:session:.../events` topic this controller is
-  #      already subscribed to, so the SSE loop relays it unchanged.
+  # On first conv-message, total cost: ~5-10s (claude cold spawn +
+  # bridge handshake). Subsequent messages for same conv: ~10ms (all
+  # idempotent fast paths).
   #
-  # The SWAP-OUT POINT is this entire function. The stream_loop's
-  # "terminal == sender_str == agent_uri_str" check stays — it just
-  # starts seeing real cc URIs instead of `@agent_uri_str`.
+  # Sandbox cwd: read from app config; tenant-parameterized via
+  # `{cwd_root}/<workspace>`. Constraint #1 — no hardcoded tenant
+  # name. Default cwd_root is `~/poc-sandbox-phase2` (PoC sandbox);
+  # production deploys override via config.
 
-  defp spawn_synthetic_reply(session_uri, customer_text) do
-    topic = "esr:session:#{URI.to_string(session_uri)}:events"
-    agent_uri = URI.parse(@agent_uri_str)
+  defp ensure_cc_for_conv(workspace, conv_id, session_uri) do
+    cwd = cc_cwd_for_workspace(workspace)
+    agent_name = "cust_" <> sanitize_for_uri(conv_id)
+    admin_uri = Ezagent.Entity.User.admin_uri()
+    admin_caps = Ezagent.SystemPrincipal.caps("system://bootstrap")
+    ctx = %{caller: admin_uri, caps: admin_caps, reply: {:caller_inbox, self()}}
 
-    Task.start(fn ->
-      Process.sleep(500)
+    with {:ok, agent_uri} <-
+           ensure_cc_agent(workspace, agent_name, cwd, ctx),
+         :ok <-
+           EzagentPluginCc.EagerBridge.ensure_bound!(agent_uri),
+         :ok <-
+           ensure_agent_in_session(session_uri, agent_uri, ctx) do
+      {:ok, agent_uri}
+    end
+  end
 
-      reply =
-        Ezagent.Message.new(agent_uri, %{
-          text: "Echo: " <> customer_text,
-          attachments: []
-        })
+  defp ensure_cc_agent(workspace, agent_name, cwd, ctx) do
+    ws_uri = URI.parse("workspace://#{workspace}")
+    args = %{flavor: "cc", name: agent_name, cwd: cwd, with_pty: true}
 
-      Phoenix.PubSub.broadcast(
-        EzagentCore.PubSub,
-        topic,
-        {:chat_message, session_uri, reply}
+    case Ezagent.Workspace.create_agent(ws_uri, args, ctx) do
+      {:ok, %{agent_uri: u}} ->
+        {:ok, u}
+
+      {:error, {:already_exists, u_str}} when is_binary(u_str) ->
+        {:ok, URI.parse(u_str)}
+
+      {:error, {:already_exists, %URI{} = u}} ->
+        {:ok, u}
+
+      {:error, reason} ->
+        Logger.warning(
+          "Phase 2.4 ensure_cc_agent(#{workspace}, #{agent_name}) failed: " <>
+            inspect(reason)
+        )
+
+        {:error, reason}
+    end
+  end
+
+  defp ensure_agent_in_session(session_uri, agent_uri, ctx) do
+    target = URI.new!(URI.to_string(session_uri) <> "?action=chat.join")
+
+    inv = %Ezagent.Invocation{
+      target: target,
+      mode: :cast,
+      args: %{member: agent_uri},
+      ctx: %{ctx | reply: :ignore}
+    }
+
+    case Ezagent.Invocation.dispatch(inv) do
+      :ok -> :ok
+      {:ok, _} -> :ok
+      {:error, reason} ->
+        Logger.warning(
+          "Phase 2.4 join agent #{URI.to_string(agent_uri)} to session " <>
+            URI.to_string(session_uri) <> " failed: " <> inspect(reason)
+        )
+
+        :ok
+    end
+  end
+
+  defp cc_cwd_for_workspace(workspace) do
+    root =
+      Application.get_env(
+        :ezagent_web,
+        :customer_chat_sandbox_root,
+        "~/poc-sandbox-phase2"
       )
-    end)
+
+    Path.join(Path.expand(root), workspace)
+  end
+
+  # conv_id from request payload is base64-url ([A-Za-z0-9_-]). Agent
+  # name segment is more conservative — preserve only safe chars.
+  defp sanitize_for_uri(conv_id) when is_binary(conv_id) do
+    conv_id
+    |> String.replace(~r/[^A-Za-z0-9]/, "_")
+    |> String.slice(0, 32)
   end
 
   # ──────────────────────────────────────────────────────────────────
