@@ -147,18 +147,70 @@ defmodule Ezagent.Behavior.Workspace do
   end
 
   def invoke(:add_member, slice, %{member: %URI{} = uri}, ctx) do
-    # codex PR #408 review round-2 MED-2 — fire the `:create_session`
-    # cap grant from the Behavior action so EVERY dispatch-level caller
-    # (not only the `Ezagent.Workspace.add_member/2` facade) covers
-    # workspace members. Best-effort: the helper logs + telemetry's
-    # failures but does NOT bubble — membership has its own value
-    # (messaging, presence) even if cap-grant raced or the user is
-    # already in caps.
     workspace_uri = Map.get(ctx, :self_uri)
-    grant_member_create_session_cap(workspace_uri, uri)
 
-    {:ok, %{slice | members: MapSet.put(slice.members, uri)}}
+    # Task #46 (Allen 2026-05-27) — `grant_member_create_session_cap`
+    # USED to silently fail with `:no_such_actor` when the member's
+    # User Kind wasn't spawned in `KindRegistry` yet (the common
+    # case for "add a user who has never logged in" — LV workspace
+    # settings, `mix ezagent workspace add_member` for a freshly
+    # provisioned user). The `add_member` returned `:ok` but the user
+    # landed in the members set WITHOUT the `:create_session` cap;
+    # the action body's CapBAC then denied every attempt, surfacing
+    # only as "admin grant required as workaround" in the log.
+    # PR #408's UX promise (workspace members can create sessions)
+    # required a manual admin step to actually take effect.
+    #
+    # Fix: pre-spawn the user Kind via `SpawnRegistry.spawn/1`
+    # (idempotent — already-alive returns `{:ok, _pid}`) BEFORE the
+    # grant dispatch. Spawn failures bubble out — the member cannot
+    # be added without their Kind alive to receive the cap. (Order:
+    # ensure spawn → grant → mutate slice.)
+    with :ok <- ensure_member_kind_spawned(uri) do
+      # codex PR #408 review round-2 MED-2 — fire the `:create_session`
+      # cap grant from the Behavior action so EVERY dispatch-level
+      # caller (not only the `Ezagent.Workspace.add_member/2` facade)
+      # covers workspace members. Best-effort: the helper logs +
+      # telemetry's failures but does NOT bubble — membership has its
+      # own value (messaging, presence) even if cap-grant raced or the
+      # user is already in caps.
+      grant_member_create_session_cap(workspace_uri, uri)
+
+      {:ok, %{slice | members: MapSet.put(slice.members, uri)}}
+    end
   end
+
+  # Task #46 (Allen 2026-05-27) — pre-spawn the member's User Kind so
+  # the `identity.grant_cap` dispatch in `grant_member_create_session_cap/2`
+  # doesn't race the `KindRegistry` registration. Idempotent: an
+  # already-alive Kind returns `{:ok, _pid}` (no-op).
+  #
+  # Only user URIs are pre-spawned — agents don't drive `:create_session`
+  # so the grant skips them, and agent lifecycle is owned elsewhere
+  # (Template Class spawn, LV agent creation). The spawn fn for
+  # `entity://` is registered by the chat plugin's boot, so this
+  # resolves even when invoked from the workspace domain process.
+  #
+  # `:no_spawn_fn` tolerance — unit tests that drive `invoke/4` directly
+  # (without booting the chat plugin) have no `entity://` spawn fn
+  # registered. Treating that as `:ok` keeps the unit-test surface
+  # working; production never reaches this branch because
+  # `EzagentDomainChat.Application.start/2` registers the `entity://`
+  # spawn fn before any workspace dispatch can fire.
+  defp ensure_member_kind_spawned(%URI{scheme: "entity", host: "user"} = uri) do
+    case Ezagent.SpawnRegistry.spawn(uri) do
+      {:ok, _pid} ->
+        :ok
+
+      {:error, {:no_spawn_fn, _scheme}} ->
+        :ok
+
+      {:error, reason} ->
+        {:error, {:member_user_spawn_failed, uri, reason}}
+    end
+  end
+
+  defp ensure_member_kind_spawned(_other), do: :ok
 
   def invoke(:remove_member, slice, %{member: %URI{} = uri}, _ctx) do
     {:ok, %{slice | members: MapSet.delete(slice.members, uri)}}
@@ -954,19 +1006,39 @@ defmodule Ezagent.Behavior.Workspace do
 
     target = URI.new!("#{URI.to_string(member_uri)}?action=identity.grant_cap")
 
+    # Task #46 (Allen 2026-05-27) — `:cast` mode, not `:call`. The
+    # `ensure_member_kind_spawned/1` step above ensures the User Kind
+    # is REGISTERED in `KindRegistry`, but its `ReadyGate` may still
+    # be `:not_ready` (User has a `post_init/2` reconcile that runs
+    # AFTER `KindRegistry.put_new`). A `:call`-mode dispatch in that
+    # window fail-fasts with `:not_ready`, silently dropping the
+    # grant for every fresh user (the empirical Allen-observed bug
+    # — task #46's actual cause). `:cast` buffers via
+    # `Ezagent.PendingDelivery`, which `Ezagent.Kind.Server` flushes
+    # the moment ReadyGate transitions to `:ready` — the grant lands
+    # automatically. Result observation is sacrificed; that's fine
+    # because the helper is already documented as best-effort (a
+    # failed grant on a non-existent user — say, a typo — still has
+    # nowhere to report to).
+    # Codex review #419 round-1 MEDIUM-2 — `:cast` mode buffers when the
+    # User Kind is `:not_ready` (the common race this fix targets), but
+    # `Invocation.dispatch/1` can still synchronously return
+    # `{:error, _}` BEFORE anything is delivered or buffered (e.g.
+    # `:no_such_actor` if `ReadyGate.status/1` is `:unknown`, or a
+    # `:buffer_full` if PendingDelivery is at cap). We restore the
+    # original error path's log + telemetry so those genuine grant
+    # failures stay observable; the `:cast`-mode `:ok` path proceeds
+    # silently (the cap lands via PendingDelivery flush on ready).
     case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
            target: target,
-           mode: :call,
+           mode: :cast,
            args: %{cap: cap},
            ctx: %{
              caller: Ezagent.SystemPrincipal.uri("template-materialize"),
              caps: Ezagent.SystemPrincipal.caps("system://template-materialize"),
-             reply: {:caller_inbox, self()}
+             reply: :ignore
            }
          }) do
-      {:ok, _} ->
-        :ok
-
       :ok ->
         :ok
 
@@ -975,10 +1047,10 @@ defmodule Ezagent.Behavior.Workspace do
 
         Logger.warning(
           "Behavior.Workspace.add_member: granting :create_session cap to " <>
-            "#{URI.to_string(member_uri)} on #{URI.to_string(workspace_uri)} failed: " <>
-            "#{inspect(reason)} — member is added but they cannot dispatch " <>
-            "`workspace.create_session` (admin grant required as workaround). " <>
-            "SPEC 2026-05-26-session-create-orchestrator-unified MED-2 round-2."
+            "#{URI.to_string(member_uri)} on #{URI.to_string(workspace_uri)} " <>
+            "failed (cast-mode synchronous error): #{inspect(reason)} — member " <>
+            "is added but they cannot dispatch `workspace.create_session` " <>
+            "(admin grant required as workaround). Task #46."
         )
 
         :telemetry.execute(
