@@ -83,21 +83,37 @@ defmodule EzagentPluginCc.BridgeAdapter do
     msg = Ezagent.Message.new(agent_uri, body, ref: ref_uri)
 
     for session_uri_str <- sessions do
-      target = URI.new!("#{session_uri_str}?action=chat.send")
+      # SPEC 2026-05-27-uri-canonicalization §3.3 — `session_uri_str` is
+      # client-supplied via the cc bridge WebSocket; canonicalize via
+      # the chokepoint FIRST, then construct the action-bearing target
+      # via `URI.to_string/1` of the canonical form. This is the §3.4
+      # query-target idiom — input to URI.new!/1 is canonical-by-
+      # construction. Malformed session URIs from the client get a
+      # graceful skip (Invariant #9 — no silent crash from boundary
+      # input).
+      with {:ok, session_uri} <- safe_parse_session(session_uri_str) do
+        target = URI.new!("#{URI.to_string(session_uri)}?action=chat.send")
 
-      Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-        target: target,
-        mode: :cast,
-        args: %{message: msg},
-        ctx: %{
-          caller: agent_uri,
-          caps: Ezagent.SystemPrincipal.caps("system://chat-reply"),
-          reply: :ignore
-        }
-      })
+        Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+          target: target,
+          mode: :cast,
+          args: %{message: msg},
+          ctx: %{
+            caller: agent_uri,
+            caps: Ezagent.SystemPrincipal.caps("system://chat-reply"),
+            reply: :ignore
+          }
+        })
+      end
     end
 
     :ok
+  end
+
+  defp safe_parse_session(s) when is_binary(s) do
+    {:ok, Ezagent.URI.parse!(s)}
+  rescue
+    ArgumentError -> :error
   end
 
   defp normalize_attachments(list) when is_list(list) do

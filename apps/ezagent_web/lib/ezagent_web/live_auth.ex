@@ -241,7 +241,19 @@ defmodule EzagentWeb.LiveAuth do
   # is preserved either way.
   defp parse_workspace_uri(nil, entity_uri), do: Ezagent.URI.entity_workspace_uri(entity_uri)
 
-  defp parse_workspace_uri(ws_str, _entity_uri) when is_binary(ws_str), do: Ezagent.URI.parse!(ws_str)
+  defp parse_workspace_uri(ws_str, entity_uri) when is_binary(ws_str) do
+    # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+    # with try/rescue. Pre-SPEC code used stdlib `URI.parse/1` which
+    # silently produced `%URI{scheme: nil}` for a malformed/stale
+    # cookie; downstream `workspace_name_from_uri/1` then degraded to
+    # nil. The canonical chokepoint raises ArgumentError on malformed
+    # input, so we preserve the original degraded path by falling back
+    # to the entity-derived workspace URI (which is always canonical
+    # because LiveAuth already validated `current_entity_uri`).
+    Ezagent.URI.parse!(ws_str)
+  rescue
+    ArgumentError -> Ezagent.URI.entity_workspace_uri(entity_uri)
+  end
 
   # Bug 3 (Allen 2026-05-26) — derive the display name from the
   # canonical `:current_workspace_uri` so every LV in the

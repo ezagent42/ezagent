@@ -135,6 +135,51 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
   end
 
   # ---------------------------------------------------------------------
+  # §5.2.2 (codex r1 CRIT closure) — capture / apply / alias bypasses
+
+  test "no stdlib URI parser bypasses via &URI.parse/1, apply(URI, ...), or alias URI" do
+    # Codex r1 CRIT: pre-fix the codebase had `Enum.map(&URI.parse/1)` in
+    # `external_mirror/binding_row.ex:236` + `boot_reconciler.ex:131`,
+    # both bypassing the regexes in §5.1 / §5.2 / §5.2.1. This
+    # invariant catches every documented bypass shape:
+    #
+    #   - Capture syntax:  `&URI.parse/1`, `&URI.new/1`, `&URI.new!/1`
+    #   - Erlang-style apply: `apply(URI, :parse, [_])`, `Kernel.apply(URI, ...)`
+    #   - Module alias: `alias URI, as: Foo`
+    #
+    # Suppression via `# uri-canonical-allow` still applies.
+
+    capture_re = ~r/&URI\.(parse|new!?)\//
+    apply_re = ~r/(?:Kernel\.)?apply\(\s*URI\s*,\s*:(parse|new!?)\s*,/
+    alias_re = ~r/^\s*alias\s+URI\b/
+
+    violations =
+      for path <- lib_files(),
+          relative(path) not in @uri_parse_allowlist,
+          relative(path) not in @uri_new_allowlist,
+          {line, lineno} <- Enum.with_index(File.stream!(path), 1),
+          Regex.match?(capture_re, line) or
+            Regex.match?(apply_re, line) or
+            Regex.match?(alias_re, line),
+          not String.contains?(line, "# uri-canonical-allow"),
+          not in_comment?(line) do
+        {relative(path), lineno, String.trim(line)}
+      end
+
+    assert violations == [],
+           """
+           Found #{length(violations)} bypass(es) of the URI canonical chokepoint.
+           Stdlib URI cannot be referenced via capture syntax (`&URI.parse/1`),
+           Erlang-style apply (`apply(URI, :parse, [_])`), or module alias
+           (`alias URI, as: Foo`). Use `Ezagent.URI.parse!/1` (or the
+           `&Ezagent.URI.parse!/1` capture). If this is a legitimate
+           structural derivation, append `# uri-canonical-allow: <reason>`
+           on the same line. Violations:
+           #{format(violations)}
+           """
+  end
+
+  # ---------------------------------------------------------------------
   # §5.3 — canonical round-trip property
 
   test "canonical URI round-trips through to_string/parse! unchanged" do
