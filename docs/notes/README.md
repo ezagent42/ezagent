@@ -29,6 +29,7 @@ Six notes have bilingual `.zh_cn.md` companions (marked **[zh]** below).
 - [Workspace = Deployment Unit](workspace-as-deployment-unit.md) — **[zh]** workspace as the unit of deployment.
 - [URI Design — current state + open questions](uri-design.md) — **[zh]** URI SPEC design state and the URI normative spec (§5).
 - [Plugin Receiver Kind contract](plugin-receiver-kind-contract.md) — the contract for plugins that receive messages from outside ESR.
+- [AutoService → ezagent migration eval (2026-05-26)](2026-05-26-autoservice-migration-eval/README.zh_cn.md) — **[zh]** 8-document evaluation set: 4-perspective subagent analysis (infra / business / perf-UX / AutoService-critical) + cinnox-as-test-vehicle implementation plan (M0-M4) + 3-plan review + convention-feasibility check. Cross-validates with [AutoService PR #297](https://github.com/ezagent42/AutoService/pull/297) PoC verdicts. Key decisions: hybrid (not full) migration; B1 bridge-handshake = Path B EagerBridge plugin primitive; per-conv `session://` URI convention; A1 soul-as-Template-arg.
 
 ## Walkthroughs / demos
 
