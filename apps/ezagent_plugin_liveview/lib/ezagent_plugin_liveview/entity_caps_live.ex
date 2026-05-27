@@ -183,6 +183,13 @@ defmodule EzagentPluginLiveview.EntityCapsLive do
     %Capability{
       kind: to_atom_or_any(Map.get(params, "kind", "any")),
       behavior: to_atom_or_any(Map.get(params, "behavior", "any")),
+      # SPEC 2026-05-27 capability-action-axis §3.1 — the admin LV form
+      # does NOT yet expose an action selector; admins implicitly mint
+      # behavior-wildcard caps. The grant-boundary runtime check
+      # (`Identity.invoke(:grant_cap)`) admits this because the logged-
+      # in admin's caps satisfy `holds_admin_caps?/1`. A future PR adds
+      # an action dropdown so admins can mint narrow caps via the UI.
+      action: to_atom_or_any(Map.get(params, "action", "any")),
       instance: to_uri_or_any(Map.get(params, "instance", "any")),
       workspace_uri: workspace_uri,
       granted_by: granted_by,

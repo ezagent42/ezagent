@@ -418,6 +418,9 @@ defmodule Ezagent.ExternalMirror do
     needed = %{
       kind: :session,
       behavior: Ezagent.Behavior.ExternalMirror,
+      # SPEC 2026-05-27 capability-action-axis — the gated action is
+      # `:list_bindings` (matches `ExternalMirror.required_caps[:list_bindings]`).
+      action: :list_bindings,
       instance: session_uri,
       workspace_uri: workspace_of_or_any(session_uri)
     }
@@ -472,11 +475,34 @@ defmodule Ezagent.ExternalMirror do
     end)
   end
 
-  defp cap_admin_shape?(%{kind: :any, behavior: :any, instance: :any}), do: true
+  # SPEC 2026-05-27 capability-action-axis (codex impl PR review MED):
+  # admin-shape caps for the list-all bypass must ALSO match on action
+  # axis. Pre-fix, a cross-workspace `:bind` or `:unbind` cap could
+  # satisfy this predicate and bypass per-session filtering meant for
+  # `:list_bindings` only. Accept either full bootstrap admin
+  # (5-axis `:any`) OR the ExternalMirror-specific `:list_bindings`
+  # cross-workspace cap, OR the behavior-wildcard variant
+  # (`action: :any`). Legacy snapshot-restored caps without an
+  # `:action` key fall through to the second clause via
+  # `Capability.action_of/1`.
+  # codex r4 SPEC option-B: legacy fallback REMOVED. Pre-SPEC caps
+  # missing `:action` no longer satisfy admin shape — explicit
+  # `action: :any` required. See SPEC §3.7 r4 rationale.
+  defp cap_admin_shape?(%{kind: :any, behavior: :any, action: :any, instance: :any}),
+    do: true
 
   defp cap_admin_shape?(%{
          kind: :session,
          behavior: Ezagent.Behavior.ExternalMirror,
+         action: :any,
+         instance: :any
+       }),
+       do: true
+
+  defp cap_admin_shape?(%{
+         kind: :session,
+         behavior: Ezagent.Behavior.ExternalMirror,
+         action: :list_bindings,
          instance: :any
        }),
        do: true

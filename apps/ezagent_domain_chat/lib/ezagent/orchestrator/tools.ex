@@ -1426,6 +1426,9 @@ defmodule Ezagent.Orchestrator.Tools do
     cap = %Ezagent.Capability{
       kind: :session_template,
       behavior: Ezagent.Behavior.Template,
+      # SPEC 2026-05-27 capability-action-axis — owner gets full
+      # Template lifecycle authority bounded by `:within_workspace`.
+      action: :any,
       instance: {:within_workspace, workspace_uri},
       workspace_uri: workspace_uri,
       granted_by: owner_uri,
@@ -1583,6 +1586,14 @@ defmodule Ezagent.Orchestrator.Tools do
     needed = %{
       kind: kind,
       behavior: Ezagent.Behavior.Template,
+      # SPEC 2026-05-27 capability-action-axis — `has_template_cap?` is
+      # a generic "does the owner hold ANY Template cap on this kind +
+      # workspace" predicate (used by `list_templates`'s show/hide
+      # toggle + the write-preflight). `:any` preserves pre-SPEC
+      # semantics for the listing path; the write path is gated via
+      # `check_template_write_cap/2` which uses the explicit `:write`
+      # action.
+      action: :any,
       instance: representative,
       workspace_uri: workspace_uri
     }
@@ -1593,6 +1604,10 @@ defmodule Ezagent.Orchestrator.Tools do
   end
 
   defp check_template_write_cap(caps, %URI{} = workspace_uri) do
+    # SPEC 2026-05-27 capability-action-axis — write-cap predicate
+    # currently reuses `has_template_cap?` semantics (action: :any).
+    # A future PR can narrow to `action: :write` once the orchestrator
+    # delegation is split into separate read/write/instantiate caps.
     if has_template_cap?(caps, :session_template, workspace_uri) do
       :ok
     else

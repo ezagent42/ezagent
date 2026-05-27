@@ -138,6 +138,10 @@ defmodule Ezagent.ExternalMirror.Gates do
     needed = %{
       kind: :session,
       behavior: Ezagent.Behavior.ExternalMirror,
+      # SPEC 2026-05-27 capability-action-axis — Gate 1 enforces the
+      # `:bind` action on Behavior.ExternalMirror. Narrow held caps
+      # (e.g. `:unbind` or `:list_bindings`) must NOT satisfy this gate.
+      action: :bind,
       instance: instance,
       workspace_uri: workspace_uri
     }
@@ -164,9 +168,21 @@ defmodule Ezagent.ExternalMirror.Gates do
     instance = Ezagent.URI.instance(session_uri)
     workspace_uri = workspace_or_any(session_uri)
 
+    # SPEC 2026-05-27 capability-action-axis — per-adapter Allow
+    # Behaviors are convention cap-only with a single action (e.g.
+    # `:allow_feishu`). Derive the action from `actions/0`; fall back
+    # to `:any` for adapters whose marker Behavior lacks the callback
+    # (defensive — should not happen for compliant adapters).
+    allow_action =
+      case adapter_allow_action(behavior_module) do
+        nil -> :any
+        atom -> atom
+      end
+
     needed = %{
       kind: :session,
       behavior: behavior_module,
+      action: allow_action,
       instance: instance,
       workspace_uri: workspace_uri
     }
@@ -306,11 +322,21 @@ defmodule Ezagent.ExternalMirror.Gates do
     end)
   end
 
-  defp cap_admin_shape?(%{kind: :any, behavior: :any, instance: :any}), do: true
+  # SPEC 2026-05-27 capability-action-axis (codex impl PR review MED):
+  # the admin-wildcard bypass must require `action: :any` so narrow
+  # action caps (e.g. cross-workspace `:bind` cap) don't masquerade as
+  # admin authority that bypasses workspace-iso. The narrow cap is
+  # still authoritative for its specific action via dispatch step 5.5;
+  # the workspace-iso bypass is a STRICTLY-BROADER admin tier.
+  # codex r4 SPEC option-B: legacy fallback REMOVED. Explicit
+  # `action: :any` required for admin recognition.
+  defp cap_admin_shape?(%{kind: :any, behavior: :any, action: :any, instance: :any}),
+    do: true
 
   defp cap_admin_shape?(%{
          kind: :session,
          behavior: Ezagent.Behavior.ExternalMirror,
+         action: :any,
          instance: :any
        }),
        do: true
@@ -321,6 +347,22 @@ defmodule Ezagent.ExternalMirror.Gates do
     case Ezagent.Capability.workspace_of(uri) do
       %URI{} = ws -> ws
       :any -> :any
+    end
+  end
+
+  # SPEC 2026-05-27 capability-action-axis — derive the single action
+  # of a per-adapter Allow Behavior (convention: cap-only with one
+  # action like `:allow_feishu`). Returns the action atom when exactly
+  # one is declared; otherwise nil (caller falls back to `:any`).
+  defp adapter_allow_action(behavior_module) when is_atom(behavior_module) do
+    if Code.ensure_loaded?(behavior_module) and
+         function_exported?(behavior_module, :actions, 0) do
+      case behavior_module.actions() do
+        [action] when is_atom(action) -> action
+        _ -> nil
+      end
+    else
+      nil
     end
   end
 end

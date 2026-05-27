@@ -180,6 +180,7 @@ defmodule Ezagent.CapabilityRegistry do
   @spec needed_for(module(), atom(), URI.t()) :: %{
           kind: atom(),
           behavior: module(),
+          action: atom(),
           instance: URI.t(),
           workspace_uri: URI.t() | :any
         }
@@ -190,6 +191,10 @@ defmodule Ezagent.CapabilityRegistry do
         %{
           kind: kind_module.type_name(),
           behavior: behavior,
+          # SPEC 2026-05-27 capability-action-axis — propagate the
+          # concrete action into the needed-cap shape (matches the
+          # dispatch chokepoint's `cap_for_action/3` post-SPEC).
+          action: action,
           instance: Ezagent.URI.instance(target_uri),
           workspace_uri: Capability.workspace_of(target_uri)
         }
@@ -362,6 +367,14 @@ defmodule Ezagent.CapabilityRegistry do
           cap = %Ezagent.Capability{
             kind: kind_type_name(kind),
             behavior: behavior,
+            # SPEC 2026-05-27 capability-action-axis — owner default
+            # grants are behavior-wildcard (any action on the owned
+            # Behavior). The granter is the bootstrap principal so
+            # this is a legitimate admin-granted broad cap. Narrowing
+            # to specific actions is a future PR — see §11 + the
+            # PR #356 carve-out commentary at the migration block
+            # below.
+            action: :any,
             instance: instance_uri,
             workspace_uri: workspace_uri,
             granted_by: granter_uri,

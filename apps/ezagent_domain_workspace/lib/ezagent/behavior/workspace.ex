@@ -941,8 +941,11 @@ defmodule Ezagent.Behavior.Workspace do
     cap = %Ezagent.Capability{
       # Invariant #2 — cap subject uses MODULE reference, not atom
       # shorthand. Matches `required_caps/0`'s `:create_session` entry.
+      # SPEC 2026-05-27 capability-action-axis — explicit action axis
+      # closes the over-grant gap noted in the comment above this fn.
       kind: :workspace,
       behavior: __MODULE__,
+      action: :create_session,
       instance: workspace_uri,
       workspace_uri: workspace_uri,
       granted_by: Ezagent.SystemPrincipal.uri("template-materialize"),

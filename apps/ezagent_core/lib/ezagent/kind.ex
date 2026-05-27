@@ -204,6 +204,9 @@ defmodule Ezagent.Kind do
     needed_map = %{
       kind: needed.kind,
       behavior: needed.behavior,
+      # SPEC 2026-05-27 capability-action-axis — propagate action axis
+      # into the needed-map shape `Capability.matches?/2` consumes.
+      action: Ezagent.Capability.action_of(needed),
       instance: needed.instance,
       workspace_uri: needed.workspace_uri
     }

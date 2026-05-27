@@ -196,6 +196,9 @@ defmodule Ezagent.CapabilityRegistry.DataOwnerTest do
       needed = %{
         kind: :owned_test_kind,
         behavior: OwnedBehavior,
+        # SPEC 2026-05-27 capability-action-axis — the target URI's
+        # query is `action=read`; mirror it in the needed shape.
+        action: :read,
         instance: Ezagent.URI.instance(target),
         workspace_uri: Ezagent.Capability.workspace_of(target)
       }

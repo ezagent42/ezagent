@@ -72,6 +72,7 @@ defmodule EzagentCore.Invariants.WildcardCapAuthorizesConcreteNeededTest do
       needed = %{
         kind: :user,
         behavior: Ezagent.Behavior.Identity,
+        action: :any,
         instance: modern,
         workspace_uri: URI.new!("workspace://system")
       }
@@ -92,6 +93,7 @@ defmodule EzagentCore.Invariants.WildcardCapAuthorizesConcreteNeededTest do
       needed = %{
         kind: :session,
         behavior: Ezagent.Behavior.Identity,
+        action: :any,
         # Different instance — different name part.
         instance: URI.new!("session://default/system/other"),
         workspace_uri: URI.new!("workspace://system")
@@ -117,6 +119,7 @@ defmodule EzagentCore.Invariants.WildcardCapAuthorizesConcreteNeededTest do
         # Use a real Behavior module so the kind/behavior axes carry
         # production-shape values; the wildcard cap must match regardless.
         behavior: Ezagent.Behavior.Identity,
+        action: :create_agent,
         instance: URI.new!("workspace://system"),
         workspace_uri: URI.new!("workspace://system")
       }
@@ -138,6 +141,7 @@ defmodule EzagentCore.Invariants.WildcardCapAuthorizesConcreteNeededTest do
       needed = %{
         kind: :user,
         behavior: Ezagent.Behavior.Identity,
+        action: :list_caps,
         instance: user_uri,
         workspace_uri: URI.new!("workspace://system")
       }
@@ -166,6 +170,7 @@ defmodule EzagentCore.Invariants.WildcardCapAuthorizesConcreteNeededTest do
       needed = %{
         kind: :workspace,
         behavior: Ezagent.Behavior.Identity,
+        action: :list_caps,
         instance: URI.new!("workspace://system"),
         workspace_uri: URI.new!("workspace://system")
       }
@@ -215,6 +220,7 @@ defmodule EzagentCore.Invariants.WildcardCapAuthorizesConcreteNeededTest do
       needed = %{
         kind: :user,
         behavior: Ezagent.Behavior.Identity,
+        action: :list_caps,
         instance: Ezagent.URI.instance(target),
         workspace_uri: Ezagent.Capability.workspace_of(target)
       }

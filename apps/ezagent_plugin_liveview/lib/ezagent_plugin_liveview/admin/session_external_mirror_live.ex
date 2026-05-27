@@ -483,9 +483,25 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLive do
   defp caller_holds_adapter_cap?(caps, adapter_module, session_instance, session_workspace) do
     case safe_cap_subject(adapter_module) do
       {:ok, %{behavior_module: behavior_module}} ->
+        # SPEC 2026-05-27 capability-action-axis — per-adapter Allow
+        # Behaviors are convention cap-only with a single action
+        # (e.g. `:allow_feishu`). Derive it from `actions/0`; fall
+        # back to `:any` when unavailable.
+        action =
+          if Code.ensure_loaded?(behavior_module) and
+               function_exported?(behavior_module, :actions, 0) do
+            case behavior_module.actions() do
+              [a] when is_atom(a) -> a
+              _ -> :any
+            end
+          else
+            :any
+          end
+
         needed = %{
           kind: :session,
           behavior: behavior_module,
+          action: action,
           instance: session_instance,
           workspace_uri: session_workspace
         }

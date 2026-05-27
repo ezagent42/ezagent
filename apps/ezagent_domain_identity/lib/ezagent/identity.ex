@@ -96,6 +96,10 @@ defmodule Ezagent.Identity do
       %Ezagent.Capability{
         kind: :user,
         behavior: Ezagent.Behavior.Identity,
+        # SPEC 2026-05-27 capability-action-axis — self-cap is for
+        # `:list_caps` (Identity.actions/0 == [:list_caps, :has_cap?,
+        # :grant_cap, :revoke_cap]; the user-facing baseline is read).
+        action: :list_caps,
         instance: user_uri,
         workspace_uri: workspace_uri,
         granted_by: URI.parse("system://bootstrap"),
@@ -252,6 +256,10 @@ defmodule Ezagent.Identity do
     %Ezagent.Capability{
       kind: Map.get(p, :kind, :any),
       behavior: Map.get(p, :behavior, :any),
+      # SPEC 2026-05-27 capability-action-axis — propagate the action
+      # axis from params; default `:any` (wildcard). Callers that
+      # need narrow caps pass an explicit action.
+      action: Map.get(p, :action, :any),
       instance: Map.get(p, :instance, :any),
       workspace_uri: Map.fetch!(p, :workspace_uri),
       granted_by: parse_uri(granter_uri),

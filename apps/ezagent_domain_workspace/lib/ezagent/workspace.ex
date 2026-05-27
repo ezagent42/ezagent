@@ -143,8 +143,13 @@ defmodule Ezagent.Workspace do
       # Invariant #2 — cap subject uses MODULE reference, not atom
       # shorthand. The cap matches `Behavior.Workspace.required_caps/0`'s
       # `:create_session` entry verbatim.
+      # SPEC 2026-05-27 capability-action-axis (THE BUG THIS SPEC FIXES):
+      # this cap now narrows to `action: :create_session` — previously
+      # the cap struct discarded the action axis so a workspace member
+      # holding this cap also satisfied `:add_member`'s cap-check.
       kind: :workspace,
       behavior: Ezagent.Behavior.Workspace,
+      action: :create_session,
       instance: workspace_uri,
       workspace_uri: workspace_uri,
       granted_by: Ezagent.SystemPrincipal.uri("template-materialize"),

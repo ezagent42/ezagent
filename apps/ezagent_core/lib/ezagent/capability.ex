@@ -2,13 +2,21 @@ defmodule Ezagent.Capability do
   @moduledoc """
   Capability — a Push-based authorization grant carried in `ctx.caps`.
 
-  A capability matches an `Ezagent.Invocation` when all FOUR fields
+  A capability matches an `Ezagent.Invocation` when all FIVE fields
   match (with `:any` acting as wildcard for `kind` / `behavior` /
-  `instance` / `workspace_uri`):
+  `action` / `instance` / `workspace_uri`):
 
   - `kind` — Kind type atom (e.g. `:echo`); `:any` matches all
   - `behavior` — Behavior module ref (e.g. `Ezagent.Behavior.Echo`);
     `:any` matches all
+  - `action` — the action atom (e.g. `:send`, `:add_member`); `:any`
+    matches all. NEW per SPEC 2026-05-27 (capability-action-axis).
+    Default `:any` (defstruct). NOT in `@enforce_keys` — existing
+    admin grant form (`entity_caps_live.ex` `build_cap/2`)
+    constructs caps without passing `:action`; the runtime grant-
+    boundary check (`Identity.holds_admin_caps?/1`) is the structural
+    enforcement that rejects `:any`-action grants from non-privileged
+    callers.
   - `instance` — target URI, scope tuple, or `:any`
   - `workspace_uri` — Phase 9 PR-3 (SPEC v3 §4): the
     `workspace://<workspace>` URI the cap is scoped to. `:any` is
@@ -19,14 +27,23 @@ defmodule Ezagent.Capability do
 
   `revoke/2` is admin-protected per Decision #81: `entity://user/system/admin`'s
   all-caps capability (`%Ezagent.Capability{kind: :any, behavior: :any,
-  instance: :any, workspace_uri: :any, ...}` granted_by
+  action: :any, instance: :any, workspace_uri: :any, ...}` granted_by
   `system://bootstrap/default`) is a structural invariant and cannot
   be removed. The check lives here at the data-layer boundary so any
   caller path is forced through one chokepoint.
   """
 
   @enforce_keys [:kind, :behavior, :instance, :workspace_uri, :granted_by, :granted_at]
-  defstruct [:kind, :behavior, :instance, :workspace_uri, :granted_by, :granted_at]
+  # SPEC 2026-05-27 (capability-action-axis) §3.1: `:action` is NEW with
+  # defstruct default `:any` (wildcard). NOT in @enforce_keys — see
+  # moduledoc.
+  defstruct kind: nil,
+            behavior: nil,
+            action: :any,
+            instance: nil,
+            workspace_uri: nil,
+            granted_by: nil,
+            granted_at: nil
 
   @type scope_tuple ::
           {:within_session, URI.t()}
@@ -36,6 +53,7 @@ defmodule Ezagent.Capability do
   @type t :: %__MODULE__{
           kind: atom() | :any,
           behavior: module() | :any,
+          action: atom() | :any,
           instance: URI.t() | :any | scope_tuple(),
           workspace_uri: URI.t() | :any,
           granted_by: URI.t() | :plugin_declared,
@@ -87,22 +105,22 @@ defmodule Ezagent.Capability do
 
   ## Action axis
 
-  The `action` argument is currently NOT stored in the struct (the
-  struct has 6 fields; action is encoded inside the `behavior` axis +
-  the action atom keyed in `Behavior.required_caps/0`). The helper
-  accepts `action` for forward-compatible UX symmetry with PR-CC-2-v2's
-  Behavior author API (`Capability.cap(:chat, Chat, :send)` is the
-  recommended call shape per SPEC §2) and to make the call site readable
-  — the action atom is the key in the `required_caps/0` map, so
-  duplication here is intentional documentation. Future SPECs may grow
-  the struct to record action; for now it's a documented no-op argument
-  on the constructor.
+  Per SPEC 2026-05-27 (capability-action-axis), the `action` argument
+  is now STORED in the struct's `:action` field (`atom() | :any`).
+  The 3-arity form passes `instance: :any` + `workspace_uri: :any`
+  (the common shape for `required_caps/0`); the 5-arity form takes
+  explicit instance and workspace_uri for grant sites that need
+  narrowing. The action atom equals the key in the `required_caps/0`
+  map by convention — plugin-check 11 enforces parity at compile
+  time.
   """
   @spec cap(atom() | :any, module() | :any, atom() | :any) :: t()
-  def cap(kind, behavior, _action) when is_atom(kind) and is_atom(behavior) do
+  def cap(kind, behavior, action)
+      when is_atom(kind) and is_atom(behavior) and is_atom(action) do
     %__MODULE__{
       kind: kind,
       behavior: behavior,
+      action: action,
       instance: :any,
       workspace_uri: :any,
       granted_by: @plugin_declared_granter,
@@ -117,11 +135,12 @@ defmodule Ezagent.Capability do
           URI.t() | :any | scope_tuple(),
           URI.t() | :any
         ) :: t()
-  def cap(kind, behavior, _action, instance, workspace_uri)
-      when is_atom(kind) and is_atom(behavior) do
+  def cap(kind, behavior, action, instance, workspace_uri)
+      when is_atom(kind) and is_atom(behavior) and is_atom(action) do
     %__MODULE__{
       kind: kind,
       behavior: behavior,
+      action: action,
       instance: instance,
       workspace_uri: workspace_uri,
       granted_by: @plugin_declared_granter,
@@ -186,15 +205,72 @@ defmodule Ezagent.Capability do
   @spec matches?(t(), %{
           required(:kind) => atom(),
           required(:behavior) => module(),
+          required(:action) => atom(),
           required(:instance) => URI.t(),
           required(:workspace_uri) => URI.t() | :any
         }) :: boolean()
-  def matches?(%__MODULE__{} = cap, %{kind: k, behavior: b, instance: i, workspace_uri: w}) do
+  def matches?(%__MODULE__{} = cap, %{
+        kind: k,
+        behavior: b,
+        action: a,
+        instance: i,
+        workspace_uri: w
+      }) do
+    # SPEC 2026-05-27 capability-action-axis §3.3 — action becomes the
+    # fifth match dimension. Read via `action_of/1` so deserialized
+    # OLD caps (struct without the `:action` key) match transparently
+    # as wildcard. This removes the hard dependency on normalize-on-load:
+    # an in-flight Kind running new code on old in-memory structs works
+    # correctly without a save-side normalize step.
     field_match?(cap.kind, k) and
       field_match?(cap.behavior, b) and
+      field_match?(action_of(cap), a) and
       instance_match?(cap.instance, i) and
       workspace_match?(cap.workspace_uri, w)
   end
+
+  # SPEC 2026-05-27 capability-action-axis — TRANSITIONAL TOLERANCE
+  # CLAUSE for needed maps that pre-date the action axis (e.g. test
+  # fixtures, plugin code that hasn't been swept yet, snapshot-restored
+  # callers that still build 4-field needed shapes). A missing `:action`
+  # key in the needed map is treated as `:any` (wildcard), preserving
+  # pre-SPEC matcher semantics for unmigrated call sites. Symmetric
+  # to the held-cap missing-key tolerance via `action_of/1`.
+  #
+  # This is NOT an escape hatch — code that GENUINELY needs to narrow
+  # by action must pass `:action` explicitly. The clause exists so a
+  # phased migration (this PR sweeps core + obvious call sites; test
+  # fixtures and downstream plugin code can migrate in follow-up PRs)
+  # doesn't break unrelated callers. After all call sites converge,
+  # this clause can be REMOVED (and the matcher will require `:action`
+  # at the type-spec level, enforcing structural narrowing across the
+  # umbrella).
+  def matches?(%__MODULE__{} = cap, %{
+        kind: _,
+        behavior: _,
+        instance: _,
+        workspace_uri: _
+      } = needed)
+      when not is_map_key(needed, :action) do
+    matches?(cap, Map.put(needed, :action, :any))
+  end
+
+  @doc """
+  Read the action axis of a cap, defaulting to `:any` for caps loaded
+  from pre-action-axis snapshots (missing `:action` key).
+
+  SPEC 2026-05-27 capability-action-axis §3.3.1 — single chokepoint for
+  missing-key tolerance. All cap readers (matcher, serializer, LV
+  display) route through this helper so the rule is encoded ONCE.
+
+  Returns `:any` for raw maps without `:action`, the field value
+  otherwise. `Map.get/3` on a struct map is equivalent to direct field
+  access when the key is present, and returns the default when it's
+  not — covering both fresh structs and pre-SPEC binary_to_term'd
+  snapshots in one expression.
+  """
+  @spec action_of(t() | map()) :: atom()
+  def action_of(cap), do: Map.get(cap, :action, :any)
 
   # Kind + behavior fields use plain `:any` or exact equality.
   defp field_match?(:any, _), do: true
@@ -332,15 +408,29 @@ defmodule Ezagent.Capability do
   @doc false
   # SPEC v3 §4.4 — admin's structural invariant gains `workspace_uri:
   # :any` so the cap is cross-workspace by structural design.
+  # SPEC 2026-05-27 capability-action-axis — admin invariant gains
+  # `action: :any` axis. Two clauses for old-shape (pre-action-axis)
+  # snapshot tolerance: legacy structs missing `:action` match the
+  # second clause if all four prior axes are `:any` AND `action_of/1`
+  # returns `:any` (which it does for missing-key structs).
   def admin_invariant?(%__MODULE__{
         kind: :any,
         behavior: :any,
+        action: :any,
         instance: :any,
         workspace_uri: :any,
         granted_by: %URI{scheme: "system", host: "bootstrap"}
       }),
       do: true
 
+  # codex r4 SPEC option-B: legacy fallback REMOVED. Pre-SPEC admin caps
+  # missing `:action` no longer recognized — operators MUST re-grant
+  # admin authority via `Identity.grant_cap` (which goes through
+  # `normalize!/2` and writes `action: :any` explicitly).
+  # Rationale: `Map.delete(cap, :action)` produces a shape structurally
+  # indistinguishable from a real legacy snapshot, so the legacy
+  # fallback was redundant defense at this layer (matcher-boundary
+  # tolerance per SPEC §3.3 still handles legacy at dispatch step 5.5).
   def admin_invariant?(%__MODULE__{}), do: false
 
   @doc """
@@ -526,6 +616,10 @@ defmodule Ezagent.Capability do
     %{
       "kind" => atom_or_module_to_string(cap.kind),
       "behavior" => atom_or_module_to_string(cap.behavior),
+      # SPEC 2026-05-27 capability-action-axis §3.3.1 — route through
+      # `action_of/1` so older caps without `:action` serialize as
+      # `"any"` instead of crashing.
+      "action" => atom_or_module_to_string(action_of(cap)),
       "instance" => uri_or_any_to_string(cap.instance),
       "workspace_uri" => uri_or_any_to_string(cap.workspace_uri),
       "granted_by" => uri_or_any_to_string(cap.granted_by),
@@ -546,9 +640,18 @@ defmodule Ezagent.Capability do
   """
   @spec from_map(map()) :: t()
   def from_map(%{} = m) do
+    # SPEC 2026-05-27 capability-action-axis §3.4 — old `caps_json` rows
+    # (pre-action-axis) lack the `"action"` field; per the SPEC's
+    # canonical-interpretation rule, a 6-field cap was always
+    # semantically "any action on this Behavior", and `:any` is
+    # precisely how the new shape spells that. `Map.put_new` injects
+    # the default before atomization.
+    m = Map.put_new(m, "action", "any")
+
     %__MODULE__{
       kind: string_to_atom_or_module(Map.get(m, "kind")),
       behavior: string_to_atom_or_module(Map.get(m, "behavior")),
+      action: string_to_atom_or_module(Map.get(m, "action")),
       instance: string_to_uri_or_any(Map.get(m, "instance")),
       workspace_uri: string_to_uri_or_any(Map.get(m, "workspace_uri", "any")),
       granted_by: string_to_uri_or_any(Map.get(m, "granted_by")),
@@ -608,6 +711,16 @@ defmodule Ezagent.Capability do
     kind = decode_atom_or_module_strict!(m, "kind")
     behavior = decode_atom_or_module_strict!(m, "behavior")
 
+    # SPEC 2026-05-27 capability-action-axis §3.4 — action axis on the
+    # JSON grant chokepoint. Missing `"action"` defaults to `"any"` for
+    # back-compat with pre-SPEC CLI payloads; strict atom decoding
+    # otherwise (typos raise rather than silently widen).
+    action =
+      case Map.fetch(m, "action") do
+        {:ok, _} -> decode_atom_or_module_strict!(m, "action")
+        :error -> :any
+      end
+
     workspace_uri =
       case Map.fetch(m, "workspace_uri") do
         {:ok, ws} ->
@@ -641,6 +754,7 @@ defmodule Ezagent.Capability do
     %__MODULE__{
       kind: kind,
       behavior: behavior,
+      action: action,
       instance: instance,
       workspace_uri: workspace_uri,
       granted_by: granter_uri,
@@ -671,6 +785,10 @@ defmodule Ezagent.Capability do
     %__MODULE__{
       kind: Map.get(m, :kind, :any),
       behavior: Map.get(m, :behavior, :any),
+      # SPEC 2026-05-27 capability-action-axis — propagate atom-keyed
+      # `:action` (default `:any` for declarative caps where omission
+      # means wildcard).
+      action: Map.get(m, :action, :any),
       instance: Map.get(m, :instance, :any),
       workspace_uri: workspace_uri,
       granted_by: Map.get_lazy(m, :granted_by, fn -> parse_granter(granter) end),
@@ -765,7 +883,8 @@ defmodule Ezagent.Capability do
   end
 
   @doc """
-  Identity-tuple key of a capability — `{kind, behavior, instance, workspace_uri}`.
+  Identity-tuple key of a capability — `{kind, behavior, action, instance,
+  workspace_uri}`.
 
   Two caps with the same identity tuple are LOGICALLY the same cap,
   even if their `granted_by` / `granted_at` provenance metadata
@@ -774,6 +893,14 @@ defmodule Ezagent.Capability do
   the original grant timestamp) — without this, `MapSet.delete/2`'s
   full-struct equality silently fails the revoke (codex review HIGH-1,
   2026-05-26).
+
+  SPEC 2026-05-27 capability-action-axis (codex impl PR review HIGH-1
+  follow-up): the identity tuple now INCLUDES action via
+  `action_of/1`. Pre-SPEC the tuple was 4-axis; collapsing per-action
+  grants/revokes onto the same key silently merged authorities on
+  the same Behavior. Post-SPEC, `:read` and `:write` on the same
+  Behavior+instance+workspace are DISTINCT identities — grant/revoke
+  must treat them as such.
 
   Note: `instance` and `workspace_uri` are `%URI{}` structs whose
   raw struct comparison can be brittle (`authority` field divergence
@@ -787,15 +914,16 @@ defmodule Ezagent.Capability do
   holds in practice; pinned by `identity_grant_cap_shape_test.exs`.
   """
   @spec identity_key(t()) ::
-          {atom() | :any, module() | :any, URI.t() | :any | scope_tuple(),
-           URI.t() | :any}
+          {atom() | :any, module() | :any, atom() | :any,
+           URI.t() | :any | scope_tuple(), URI.t() | :any}
   def identity_key(%__MODULE__{
         kind: k,
         behavior: b,
         instance: i,
         workspace_uri: w
-      }),
-      do: {k, b, normalize_uri_for_key(i), normalize_uri_for_key(w)}
+      } = cap),
+      do:
+        {k, b, action_of(cap), normalize_uri_for_key(i), normalize_uri_for_key(w)}
 
   defp normalize_uri_for_key(%URI{} = u), do: URI.to_string(u)
   defp normalize_uri_for_key(other), do: other
@@ -862,6 +990,7 @@ defmodule Ezagent.Capability do
   @spec cap_for_action(module(), atom(), URI.t()) :: %{
           kind: atom(),
           behavior: module(),
+          action: atom(),
           instance: URI.t(),
           workspace_uri: URI.t() | :any
         }
@@ -876,6 +1005,10 @@ defmodule Ezagent.Capability do
     %{
       kind: kind_module.type_name(),
       behavior: behavior,
+      # SPEC 2026-05-27 capability-action-axis — the needed-cap shape
+      # carries the concrete action; matcher checks `action_of(cap) ==
+      # a OR :any`.
+      action: action,
       instance: Ezagent.URI.instance(target_uri),
       workspace_uri: workspace_of(target_uri)
     }

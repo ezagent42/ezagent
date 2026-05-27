@@ -54,6 +54,38 @@
   `apps/ezagent_domain_workspace/lib/ezagent/behavior/workspace.ex`
   (Behavior helper, lifted from the facade in PR #408 round-2 fix).
 
+### Entity-caps LV grant form needs action-selector dropdown (post action-axis PR)
+
+- **Trigger:** SPEC `2026-05-27-capability-action-axis.md` §3.6.1(b)
+  runtime-check; r4 codex review HIGH-2; admin-role exemption is the
+  bridge so the existing form (which silently defaults `action: :any`
+  via `build_cap/2`) keeps working.
+- **What's needed:** add an `<select>` populated from the target
+  Behavior's `actions/0` (plus an `:any` option for admin-issued
+  wildcard grants), wire it through `build_cap/2` so the grant
+  carries the chosen action atom. Removes the admin-role exemption's
+  necessity for narrow grants.
+- **Where:** `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/entity_caps_live.ex:169-200`
+- **Priority:** MED — admin-role exemption is fine in the short term;
+  the proper fix is structural narrowing of admin-issued grants.
+
+### Admin promotion cap-lifecycle cleanup (pre-existing, codex PR #408 review surface)
+
+- **Trigger:** SPEC `2026-05-27-capability-action-axis.md` §7;
+  PR #408 codex r3 HIGH-C.
+- **What:** `users_live.ex "Promote to system"` adds workspace membership
+  (`:224-229`); demotion (`:248-250`) removes membership but does NOT
+  sweep caps that were granted DURING the promotion window. Wildcard
+  caps survive demotion → durable authority leak.
+- **Fix shape:** record granted_at timestamp + promotion-window marker
+  on caps issued during promotion; on demotion, revoke any cap with
+  granted_by indicating promotion + granted_at within the window.
+  Alternative: scope all promotion-window grants to a
+  `{:within_promotion, principal_uri, until: <demote_time>}` scope-
+  tuple shape (extends existing scope-bounded delegation patterns).
+- **Priority:** HIGH for production; LOW today (only Allen + seeded admin
+  are persistently admin; no real temp-promotions yet).
+
 ### Codex PR #356 r1 HIGH/MED deferred
 
 - **HIGH-1 (CLI scheme mismatch for non-bare URIs):** PR #356 fix

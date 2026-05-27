@@ -398,6 +398,90 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
       assert cap.instance == :any
       assert cap.workspace_uri == :any
     end
+
+    # SPEC 2026-05-27 capability-action-axis (codex impl PR review CRIT):
+    # `normalize!/2` previously DROPPED the input `:action`/`"action"`
+    # key, silently defaulting every grant to `action: :any` (behavior-
+    # wildcard). The fix below ensures the action axis flows through
+    # both grant input shapes.
+    test "atom-keyed map propagates :action into the canonical struct" do
+      input = %{
+        kind: :session,
+        behavior: Ezagent.Behavior.ExternalMirror,
+        action: :bind,
+        instance: @session_uri,
+        workspace_uri: @workspace_uri
+      }
+
+      cap = Capability.normalize!(input, @granter)
+      assert Capability.action_of(cap) == :bind,
+             "atom-keyed grant input MUST propagate `:action` into the canonical struct"
+    end
+
+    test "atom-keyed map without :action defaults to :any (declarative wildcard)" do
+      cap = Capability.normalize!(shape_atom_keyed_map(), @granter)
+
+      assert Capability.action_of(cap) == :any,
+             "atom-keyed shape without `:action` defaults to `:any` (matches `cap/3` constructor's declarative shape; the runtime grant-boundary at `Identity.invoke(:grant_cap)` is the enforcement layer for wildcard grants from non-admin)"
+    end
+
+    test "string-keyed map propagates \"action\" into the canonical struct" do
+      input = %{
+        "kind" => "session",
+        "behavior" => "Ezagent.Behavior.ExternalMirror",
+        "action" => "bind",
+        "instance" => "session://default/system/main",
+        "workspace_uri" => "workspace://system"
+      }
+
+      cap = Capability.normalize!(input, @granter)
+      assert Capability.action_of(cap) == :bind,
+             "string-keyed (CLI) grant input MUST propagate `\"action\"` into the canonical struct — pre-fix, the CLI's narrow `:bind` grant became a silent behavior-wildcard"
+    end
+
+    test "string-keyed map with \"action\" => \"any\" stays as :any wildcard" do
+      input = %{
+        "kind" => "session",
+        "behavior" => "Ezagent.Behavior.ExternalMirror",
+        "action" => "any",
+        "instance" => "session://default/system/main",
+        "workspace_uri" => "workspace://system"
+      }
+
+      cap = Capability.normalize!(input, @granter)
+      assert Capability.action_of(cap) == :any
+    end
+
+    test "string-keyed map without \"action\" defaults to :any (back-compat with pre-SPEC CLI)" do
+      cap = Capability.normalize!(shape_string_keyed_map(), @granter)
+      assert Capability.action_of(cap) == :any,
+             "pre-SPEC CLI payloads lacked `\"action\"`; the default is `:any` so old CLI grants behave like the pre-SPEC behavior-wildcard. New CLI grants narrow by passing an explicit `\"action\"` field."
+    end
+
+    test "narrow-action grant produces a cap that does NOT match a different action" do
+      # End-to-end version of the CRIT — the matched cap shape MUST
+      # reflect the input action.
+      input = %{
+        "kind" => "session",
+        "behavior" => "Ezagent.Behavior.ExternalMirror",
+        "action" => "bind",
+        "instance" => "session://default/system/main",
+        "workspace_uri" => "workspace://system"
+      }
+
+      cap = Capability.normalize!(input, @granter)
+
+      needed_unbind = %{
+        kind: :session,
+        behavior: Ezagent.Behavior.ExternalMirror,
+        action: :unbind,
+        instance: @session_uri,
+        workspace_uri: @workspace_uri
+      }
+
+      refute Capability.matches?(cap, needed_unbind),
+             "a `\"action\" => \"bind\"` grant MUST NOT authorize `:unbind` dispatch — the action axis must be load-bearing through the CLI normalize path"
+    end
   end
 
   describe "Capability.identity_key/1 + Capability.revoke/2 — provenance-stripped match" do
@@ -458,6 +542,140 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
 
       caps = MapSet.new([bootstrap_cap])
       assert {:error, :cannot_revoke_admin} = Capability.revoke(caps, bootstrap_cap)
+    end
+
+    # SPEC 2026-05-27 capability-action-axis (codex impl PR review HIGH-1):
+    # `identity_key/1` now includes the action axis. Two caps with the
+    # same kind/behavior/instance/workspace but different actions are
+    # DISTINCT logical identities — granting one MUST NOT dedupe the
+    # other, and revoking one MUST NOT remove the other.
+    test "identity_key/1 distinguishes per-action grants on the same target" do
+      now = DateTime.utc_now()
+
+      cap_bind = %Capability{
+        kind: :session,
+        behavior: Ezagent.Behavior.ExternalMirror,
+        action: :bind,
+        instance: @session_uri,
+        workspace_uri: @workspace_uri,
+        granted_by: @granter,
+        granted_at: now
+      }
+
+      cap_unbind = %{cap_bind | action: :unbind}
+
+      refute Capability.identity_key(cap_bind) == Capability.identity_key(cap_unbind),
+             "identity_key/1 MUST distinguish caps that differ only in action axis — pre-fix the key was 4-axis (action ignored), so a `:bind` grant and a `:unbind` grant collapsed onto the same MapSet identity. SPEC 2026-05-27 HIGH-1."
+    end
+
+    test "revoke/2 with a :bind-action target leaves a :unbind-action cap intact" do
+      cap_bind = %Capability{
+        kind: :session,
+        behavior: Ezagent.Behavior.ExternalMirror,
+        action: :bind,
+        instance: @session_uri,
+        workspace_uri: @workspace_uri,
+        granted_by: @granter,
+        granted_at: DateTime.utc_now()
+      }
+
+      cap_unbind = %{cap_bind | action: :unbind, granted_at: DateTime.utc_now()}
+
+      caps = MapSet.new([cap_bind, cap_unbind])
+
+      # Revoke just the :bind cap. The :unbind cap MUST survive.
+      assert {:ok, new_caps} = Capability.revoke(caps, cap_bind)
+      assert MapSet.size(new_caps) == 1
+
+      [survivor] = MapSet.to_list(new_caps)
+      assert Capability.action_of(survivor) == :unbind,
+             "revoking the `:bind` cap MUST leave the `:unbind` cap untouched — pre-fix, identity_key/1 ignored action axis so both caps had the same key and both got removed. SPEC 2026-05-27 HIGH-1."
+    end
+  end
+
+  describe "codex r4 SPEC option-B — admin_invariant? requires explicit action: :any (no legacy fallback)" do
+    # codex r4 outcome: empirical verification showed `Map.delete(cap, :action)`
+    # and genuine pre-SPEC snapshot caps produce indistinguishable shapes
+    # (both have :action key absent, both return :any via Map.get default).
+    # No code-level fix can distinguish them at the cap-shape layer.
+    #
+    # Allen's choice (option B): remove the legacy fallback entirely.
+    # Pre-SPEC admin caps lacking :action are rejected — operators must
+    # re-grant via Identity.grant_cap (which now writes action: :any
+    # explicitly via normalize!/2). Trade-off:
+    #
+    #   PRO: Map.delete forgery can't impersonate admin authority
+    #   PRO: cap shape is unambiguous post-SPEC (always has :action)
+    #   CON: pre-SPEC admin caps in snapshots need re-grant on upgrade
+    #
+    # These tests pin the new strict semantic — post-SPEC admin caps
+    # accepted; legacy missing-key caps rejected.
+
+    test "admin_invariant?: explicit action: :any post-SPEC admin cap is accepted" do
+      post_spec = %Ezagent.Capability{
+        kind: :any,
+        behavior: :any,
+        action: :any,
+        instance: :any,
+        workspace_uri: :any,
+        granted_by: URI.parse("system://bootstrap"),
+        granted_at: DateTime.utc_now()
+      }
+
+      assert Capability.admin_invariant?(post_spec),
+             "post-SPEC explicit-wildcard admin cap MUST be recognized"
+    end
+
+    test "admin_invariant?: pre-SPEC legacy cap (Map.delete on :action key) is REJECTED" do
+      # The legacy fallback is removed (option B). Pre-SPEC admin caps
+      # serialized without :action field cannot impersonate admin
+      # authority. Same shape as Map.delete forgery — neither succeeds.
+      full_legacy = %Ezagent.Capability{
+        kind: :any,
+        behavior: :any,
+        action: :any,
+        instance: :any,
+        workspace_uri: :any,
+        granted_by: URI.parse("system://bootstrap"),
+        granted_at: DateTime.utc_now()
+      }
+
+      legacy_or_forged = Map.delete(full_legacy, :action)
+      assert not Map.has_key?(legacy_or_forged, :action),
+             "pre-condition: :action key absent (legacy OR forged shape)"
+
+      refute Capability.admin_invariant?(legacy_or_forged),
+             "post-option-B: legacy/forged missing-:action admin shape MUST be rejected — operator re-grant required"
+    end
+
+    test "admin_invariant?: narrow action does NOT pass admin recognition" do
+      narrow = %Ezagent.Capability{
+        kind: :any,
+        behavior: :any,
+        action: :create_session,
+        instance: :any,
+        workspace_uri: :any,
+        granted_by: URI.parse("system://bootstrap"),
+        granted_at: DateTime.utc_now()
+      }
+
+      refute Capability.admin_invariant?(narrow),
+             "narrow-action admin-shaped cap MUST NOT confer admin authority"
+    end
+
+    test "admin_invariant?: non-bootstrap granted_by rejected regardless of cap shape" do
+      fake_admin = %Ezagent.Capability{
+        kind: :any,
+        behavior: :any,
+        action: :any,
+        instance: :any,
+        workspace_uri: :any,
+        granted_by: URI.parse("entity://user/system/some-attacker"),
+        granted_at: DateTime.utc_now()
+      }
+
+      refute Capability.admin_invariant?(fake_admin),
+             "granted_by MUST be system://bootstrap — admin-shape with non-bootstrap granter is not admin"
     end
   end
 end
