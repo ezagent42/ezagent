@@ -24,7 +24,7 @@ defmodule EzagentPluginCc.McpConfigWriter do
 
   v1 had no auth — any process that could reach the HTTP port could
   announce as any agent_uri. v2 gates the WS join via
-  `EzagentPluginCc.TokenStore`. `write!/1` mints (idempotent) a
+  `Ezagent.AgentBridge.TokenStore`. `write!/1` mints (idempotent) a
   token for `agent_uri` and bakes it into the mcp.json env block so
   the Python bridge can present it on join.
 
@@ -36,7 +36,7 @@ defmodule EzagentPluginCc.McpConfigWriter do
   deterministically instead of leaking via the operator's shell env.
   """
 
-  alias EzagentPluginCc.TokenStore
+  alias Ezagent.AgentBridge.TokenStore
 
   @default_dir Path.expand("~/.ezagent")
   @config_filename "bridge.mcp.json"
