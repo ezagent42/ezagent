@@ -148,7 +148,7 @@ defmodule EzagentCli.Exec do
 
   defp resolve_caller(token, entity_uri_str)
        when is_binary(token) and is_binary(entity_uri_str) do
-    uri = URI.parse(entity_uri_str)
+    uri = Ezagent.URI.parse!(entity_uri_str)
 
     case Ezagent.Entity.authenticate(uri, token) do
       {:ok, %{caps: caps}} -> {:ok, uri, caps}

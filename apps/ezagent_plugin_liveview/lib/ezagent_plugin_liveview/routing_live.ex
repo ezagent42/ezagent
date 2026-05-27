@@ -364,7 +364,7 @@ defmodule EzagentPluginLiveview.RoutingLive do
     scope_uri = @global_routing_uri
 
     target =
-      URI.parse("#{URI.to_string(scope_uri)}?action=routing.#{Atom.to_string(action)}")
+      Ezagent.URI.parse!("#{URI.to_string(scope_uri)}?action=routing.#{Atom.to_string(action)}")
 
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
       target: target,
@@ -535,7 +535,7 @@ defmodule EzagentPluginLiveview.RoutingLive do
     # ExternalMirror Bindings.
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
-        URI.to_string(assigns.current_entity_uri || URI.parse("entity://user/system/admin"))
+        URI.to_string(assigns.current_entity_uri || Ezagent.URI.parse!("entity://user/system/admin"))
       end)
 
     ~H"""

@@ -122,18 +122,20 @@ defmodule EzagentCli.Dispatch do
     # `user://entity://user/...` which is malformed — the User Kind's
     # actual URIs are `entity://user/...` (3-segment per SPEC v3 §3),
     # not `user://...`.
-    case URI.new(instance) do
-      {:ok, %URI{scheme: scheme} = parsed_uri} when is_binary(scheme) and scheme != "" ->
-        # Full URI passed — use it as-is + append action.
-        URI.parse(URI.to_string(parsed_uri) <> action_qs)
-
-      _ ->
+    # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+    # with try/rescue: a full Ezagent URI is parsed canonical + action
+    # appended; bare instance falls back to scheme-prefix legacy form.
+    try do
+      parsed_uri = Ezagent.URI.parse!(instance)
+      Ezagent.URI.parse!(URI.to_string(parsed_uri) <> action_qs)
+    rescue
+      ArgumentError ->
         # Bare name — fall back to legacy scheme = type_name + promote.
         scheme = scheme_for(type_name)
         caller_workspace = workspace_name_from_caller(caller_uri)
         instance_class = Map.get(options, :instance_class)
         promoted_instance = promote_to_3seg(scheme, instance, caller_workspace, instance_class)
-        URI.parse("#{scheme}://#{promoted_instance}#{action_qs}")
+        Ezagent.URI.parse!("#{scheme}://#{promoted_instance}#{action_qs}")
     end
   end
 
@@ -261,12 +263,14 @@ defmodule EzagentCli.Dispatch do
   end
 
   defp derive_other_user(as_str) do
-    case URI.new(as_str) do
-      {:ok, uri} ->
-        caps = lookup_identity_caps(uri)
-        {uri, caps}
-
-      _ ->
+    # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+    # with try/rescue preserving the `:bad_as_uri` error contract.
+    try do
+      uri = Ezagent.URI.parse!(as_str)
+      caps = lookup_identity_caps(uri)
+      {uri, caps}
+    rescue
+      ArgumentError ->
         {:error, {:bad_as_uri, as_str}}
     end
   end

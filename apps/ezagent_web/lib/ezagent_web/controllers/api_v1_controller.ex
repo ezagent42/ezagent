@@ -114,9 +114,13 @@ defmodule EzagentWeb.ApiV1Controller do
   end
 
   defp resolve_target(%{"target" => target_str}, _km) when is_binary(target_str) do
-    case URI.new(target_str) do
-      {:ok, uri} -> {:ok, uri}
-      _ -> {:error, 400, "bad_target_uri", target_str}
+    # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+    # for inbound HTTP target URI; try/rescue keeps the structured 400
+    # error path for malformed input (Invariant #9 — graceful surface).
+    try do
+      {:ok, Ezagent.URI.parse!(target_str)}
+    rescue
+      ArgumentError -> {:error, 400, "bad_target_uri", target_str}
     end
   end
 
@@ -135,7 +139,7 @@ defmodule EzagentWeb.ApiV1Controller do
         # bcrypt scan of the whole table.)
         case Plug.Conn.get_req_header(conn, "x-ezagent-entity-uri") do
           [uri_str | _] ->
-            uri = URI.parse(uri_str)
+            uri = Ezagent.URI.parse!(uri_str)
 
             case Ezagent.Entity.authenticate(uri, token) do
               {:ok, %{caps: caps}} ->

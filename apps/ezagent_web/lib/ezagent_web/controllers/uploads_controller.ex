@@ -233,9 +233,13 @@ defmodule EzagentWeb.UploadsController do
   end
 
   defp attachment_matches?(s, filename) when is_binary(s) do
-    case URI.new(s) do
-      {:ok, uri} -> attachment_matches?(uri, filename)
-      _ -> false
+    # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+    # with try/rescue keeping the boolean-return contract; malformed
+    # mention URIs simply don't match.
+    try do
+      attachment_matches?(Ezagent.URI.parse!(s), filename)
+    rescue
+      ArgumentError -> false
     end
   end
 

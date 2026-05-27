@@ -68,7 +68,10 @@ defmodule EzagentPluginLiveview.IdentitiesLive do
     rows =
       Ezagent.KindRegistry.list_all()
       |> Enum.flat_map(fn {uri_str, pid} ->
-        case URI.new(uri_str) do
+        # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+        # with try/rescue keeping the empty-list fallback for malformed
+        # registry entries.
+        case safe_parse_entity(uri_str) do
           {:ok, %URI{scheme: "entity", host: host, path: "/" <> rest} = uri}
           when host in ["user", "agent"] ->
             # Phase 9 PR-2 (SPEC v3 §3): entity URIs are 3-segment;
@@ -152,11 +155,17 @@ defmodule EzagentPluginLiveview.IdentitiesLive do
   defp matches_filter?(%{host: "agent", flavor: flavor}, "agent:" <> flavor), do: true
   defp matches_filter?(_, _), do: false
 
+  defp safe_parse_entity(s) when is_binary(s) do
+    {:ok, Ezagent.URI.parse!(s)}
+  rescue
+    ArgumentError -> :error
+  end
+
   @impl true
   def render(assigns) do
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
-        URI.to_string(Map.get(assigns, :current_entity_uri) || URI.parse("entity://user/system/admin"))
+        URI.to_string(Map.get(assigns, :current_entity_uri) || Ezagent.URI.parse!("entity://user/system/admin"))
       end)
 
     ~H"""

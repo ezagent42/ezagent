@@ -132,7 +132,7 @@ defmodule Ezagent.Presence do
   defp to_uri_string(s) when is_binary(s), do: s
 
   defp parse_uri!(%URI{} = uri), do: uri
-  defp parse_uri!(s) when is_binary(s), do: URI.parse(s)
+  defp parse_uri!(s) when is_binary(s), do: Ezagent.URI.parse!(s)
 
   defp kind_module_of!(%URI{scheme: "entity", host: "user"}), do: Ezagent.Entity.User
   defp kind_module_of!(%URI{scheme: "entity", host: "agent"}), do: Ezagent.Entity.Agent

@@ -251,35 +251,42 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   defp check_class(_), do: {:error, :missing_class_field}
 
   defp check_agent_uri(%{"agent_uri" => uri_str}) when is_binary(uri_str) and uri_str != "" do
-    case URI.new(uri_str) do
-      {:ok, %URI{scheme: "entity", host: "agent", path: "/" <> rest}} when rest != "" ->
-        # Phase 9 PR-2 (SPEC v3 §3): entity URIs are 3-segment:
-        # /<workspace>/<entity_name>. Flavor lives in the entity_name
-        # prefix as `<flavor>_<rest>` (SPEC v2 §5.14). cc.agent
-        # template requires flavor=cc.
-        with [_workspace, entity_name] when entity_name != "" <-
-               String.split(rest, "/", parts: 2),
-             [flavor, suffix] when flavor != "" and suffix != "" <-
-               String.split(entity_name, "_", parts: 2) do
-          if flavor == "cc" do
-            :ok
+    # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+    # with try/rescue keeping the structured `{:error, _}` contract for
+    # each validator branch.
+    try do
+      case Ezagent.URI.parse!(uri_str) do
+        %URI{scheme: "entity", host: "agent", path: "/" <> rest} when rest != "" ->
+          # Phase 9 PR-2 (SPEC v3 §3): entity URIs are 3-segment:
+          # /<workspace>/<entity_name>. Flavor lives in the entity_name
+          # prefix as `<flavor>_<rest>` (SPEC v2 §5.14). cc.agent
+          # template requires flavor=cc.
+          with [_workspace, entity_name] when entity_name != "" <-
+                 String.split(rest, "/", parts: 2),
+               [flavor, suffix] when flavor != "" and suffix != "" <-
+                 String.split(entity_name, "_", parts: 2) do
+            if flavor == "cc" do
+              :ok
+            else
+              {:error, {:wrong_agent_flavor, flavor, expected: "cc"}}
+            end
           else
-            {:error, {:wrong_agent_flavor, flavor, expected: "cc"}}
+            _ ->
+              {:error,
+               {:missing_flavor_prefix, uri_str,
+                "agent URIs must be `entity://agent/<workspace>/cc_<name>` (Phase 9 PR-2)"}}
           end
-        else
-          _ ->
-            {:error,
-             {:missing_flavor_prefix, uri_str,
-              "agent URIs must be `entity://agent/<workspace>/cc_<name>` (Phase 9 PR-2)"}}
-        end
 
-      {:ok, %URI{scheme: "entity"}} ->
-        {:error,
-         {:invalid_agent_uri, uri_str,
-          "agent URIs must be `entity://agent/<workspace>/cc_<name>` (Phase 9 PR-2)"}}
+        %URI{scheme: "entity"} ->
+          {:error,
+           {:invalid_agent_uri, uri_str,
+            "agent URIs must be `entity://agent/<workspace>/cc_<name>` (Phase 9 PR-2)"}}
 
-      _ ->
-        {:error, {:bad_agent_uri, uri_str}}
+        _ ->
+          {:error, {:bad_agent_uri, uri_str}}
+      end
+    rescue
+      ArgumentError -> {:error, {:bad_agent_uri, uri_str}}
     end
   end
 
@@ -290,7 +297,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
 
   @impl Ezagent.Kind.Template
   def instantiate(_tmpl_name, %{"agent_uri" => uri_str} = tmpl, workspace_uri) do
-    agent_uri = URI.parse(uri_str)
+    agent_uri = Ezagent.URI.parse!(uri_str)
 
     # PR-D2 idempotency short-circuit: if BOTH the Agent Kind and the
     # PtyServer are already alive we have nothing to do. Each plugin

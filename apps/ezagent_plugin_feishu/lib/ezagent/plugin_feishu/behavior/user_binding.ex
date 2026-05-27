@@ -479,8 +479,10 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
   defp workspace_match?(_user_uri_str, :any), do: true
 
   defp workspace_match?(user_uri_str, %URI{} = target_ws) when is_binary(user_uri_str) do
-    case URI.new(user_uri_str) do
-      {:ok, %URI{scheme: "entity"} = user_uri} ->
+    # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint;
+    # outer rescue already collapses every failure path to `false`.
+    case Ezagent.URI.parse!(user_uri_str) do
+      %URI{scheme: "entity"} = user_uri ->
         case Ezagent.URI.entity_workspace_uri(user_uri) do
           %URI{} = user_ws -> URI.to_string(user_ws) == URI.to_string(target_ws)
           _ -> false

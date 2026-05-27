@@ -160,7 +160,7 @@ defmodule EzagentWeb.HomeLive do
   # Echo's :receive action emits a chat reply (PR-J), so the user
   # gets a working ping-pong loop out of the box.
   defp join_echo_agent(session_uri, caller_uri) do
-    echo_uri = URI.parse("entity://agent/system/echo_default")
+    echo_uri = Ezagent.URI.parse!("entity://agent/system/echo_default")
     # Make sure the echo Kind is live (spawn is idempotent — returns
     # `{:error, {:already_started, _}}` if already up). Spawn happens
     # in the echo plugin's Application.start; this is a defensive
@@ -194,9 +194,17 @@ defmodule EzagentWeb.HomeLive do
   # we let the wizard proceed under admin caps so the operator isn't
   # locked out of their own setup).
   defp parse_entity_uri(uri_str) when is_binary(uri_str) do
-    case URI.new(uri_str) do
-      {:ok, %URI{scheme: "entity"} = uri} -> uri
-      _ -> Ezagent.Entity.User.admin_uri()
+    # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+    # with try/rescue keeping the admin-fallback semantics for stale
+    # cookies (LiveAuth catches these on protected routes; wizard runs
+    # outside that live_session and tolerates them).
+    try do
+      case Ezagent.URI.parse!(uri_str) do
+        %URI{scheme: "entity"} = uri -> uri
+        _ -> Ezagent.Entity.User.admin_uri()
+      end
+    rescue
+      ArgumentError -> Ezagent.Entity.User.admin_uri()
     end
   end
 

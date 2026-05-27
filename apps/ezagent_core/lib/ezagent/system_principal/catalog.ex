@@ -95,7 +95,10 @@ defmodule Ezagent.SystemPrincipal.Catalog do
 
   # The bootstrap structural sentinel — granted_by/granted_at on the
   # generated wildcard cap so `admin_invariant?/1` recognises it.
-  @bootstrap_granted_by URI.parse("system://bootstrap/default")
+  # SPEC 2026-05-27-uri-canonicalization §3.5: compile-time constant
+  # — ETS-backed SchemeRegistry not available at compile time, so
+  # `URI.new!/1` is the canonical form for hard-coded constants.
+  @bootstrap_granted_by URI.new!("system://bootstrap/default")
   @bootstrap_granted_at ~U[2026-01-01 00:00:00Z]
 
   defp bootstrap_wildcard do

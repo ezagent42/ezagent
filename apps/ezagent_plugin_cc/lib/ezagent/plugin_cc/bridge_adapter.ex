@@ -76,7 +76,7 @@ defmodule EzagentPluginCc.BridgeAdapter do
       case ref do
         nil -> nil
         "" -> nil
-        s when is_binary(s) -> URI.new!(s)
+        s when is_binary(s) -> Ezagent.URI.parse!(s)
       end
 
     body = %{text: text, attachments: normalize_attachments(attachments)}

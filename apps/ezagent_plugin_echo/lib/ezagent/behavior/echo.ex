@@ -210,9 +210,12 @@ defmodule Ezagent.Behavior.Echo do
   defp session_uri_from_caller(%{caller: %URI{} = u}), do: u
 
   defp session_uri_from_caller(%{caller: s}) when is_binary(s) do
-    case URI.new(s) do
-      {:ok, u} -> u
-      _ -> nil
+    # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+    # with try/rescue keeping the nil fallback for malformed caller URI.
+    try do
+      Ezagent.URI.parse!(s)
+    rescue
+      ArgumentError -> nil
     end
   end
 

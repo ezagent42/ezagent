@@ -63,9 +63,9 @@ defmodule EzagentWeb.WorkspaceSwitchController do
 
   defp do_switch(conn, workspace, current_entity_uri)
        when is_binary(current_entity_uri) do
-    caller_uri = URI.parse(current_entity_uri)
+    caller_uri = Ezagent.URI.parse!(current_entity_uri)
     caller_workspace = Ezagent.URI.entity_workspace_uri(caller_uri)
-    target_uri = URI.new!("workspace://" <> workspace.name)
+    target_uri = Ezagent.URI.parse!("workspace://" <> workspace.name)
 
     cond do
       URI.to_string(caller_workspace) == "workspace://system" ->

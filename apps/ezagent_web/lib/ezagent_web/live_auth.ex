@@ -241,7 +241,7 @@ defmodule EzagentWeb.LiveAuth do
   # is preserved either way.
   defp parse_workspace_uri(nil, entity_uri), do: Ezagent.URI.entity_workspace_uri(entity_uri)
 
-  defp parse_workspace_uri(ws_str, _entity_uri) when is_binary(ws_str), do: URI.parse(ws_str)
+  defp parse_workspace_uri(ws_str, _entity_uri) when is_binary(ws_str), do: Ezagent.URI.parse!(ws_str)
 
   # Bug 3 (Allen 2026-05-26) — derive the display name from the
   # canonical `:current_workspace_uri` so every LV in the

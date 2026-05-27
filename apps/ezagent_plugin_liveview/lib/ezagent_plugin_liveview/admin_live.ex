@@ -68,14 +68,14 @@ defmodule EzagentPluginLiveview.AdminLive do
   @message_limit 50
 
   defp default_main_session_uri(%URI{scheme: "workspace", host: ws}) when is_binary(ws) and ws != "",
-    do: URI.new!("session://default/#{ws}/main")
+    do: Ezagent.URI.parse!("session://default/#{ws}/main")
 
   defp default_main_session_uri(_),
     # Early-mount / test paths with no workspace assigned — fall back
     # to the system workspace's main. LiveAuth populates the assign
     # for every `:require_entity` mount in production, so this branch
     # fires only when the LV is mounted outside that live_session.
-    do: URI.new!("session://default/system/main")
+    do: Ezagent.URI.parse!("session://default/system/main")
 
   @impl true
   def mount(_params, _session, socket) do
@@ -280,11 +280,19 @@ defmodule EzagentPluginLiveview.AdminLive do
   # session.
   @impl true
   def handle_params(%{"session" => encoded}, _uri, socket) when is_binary(encoded) do
-    case URI.new(URI.decode_www_form(encoded)) do
-      {:ok, %URI{scheme: "session"} = session_uri} ->
-        {:noreply, select_session(socket, session_uri)}
+    # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+    # with try/rescue keeping the "Bad session URI" flash for malformed
+    # query params.
+    try do
+      case Ezagent.URI.parse!(URI.decode_www_form(encoded)) do
+        %URI{scheme: "session"} = session_uri ->
+          {:noreply, select_session(socket, session_uri)}
 
-      _ ->
+        _ ->
+          {:noreply, assign(socket, :flash_error, gettext("Bad session URI: %{uri}", uri: encoded))}
+      end
+    rescue
+      ArgumentError ->
         {:noreply, assign(socket, :flash_error, gettext("Bad session URI: %{uri}", uri: encoded))}
     end
   end
@@ -715,7 +723,7 @@ defmodule EzagentPluginLiveview.AdminLive do
         stored_name = "#{uuid}-#{safe_name}"
         dest = Path.join(Ezagent.Home.path("uploads"), stored_name)
         File.cp!(tmp_path, dest)
-        {:ok, URI.parse("resource://uploads/#{workspace_name}/#{stored_name}")}
+        {:ok, Ezagent.URI.parse!("resource://uploads/#{workspace_name}/#{stored_name}")}
       end)
 
     if String.trim(text) == "" and attachments == [] do
@@ -758,7 +766,13 @@ defmodule EzagentPluginLiveview.AdminLive do
   def handle_event("mark_displayed", _params, socket), do: {:noreply, socket}
 
   def handle_event("switch_session", %{"session_uri" => session_uri_str}, socket) do
-    case URI.new(session_uri_str) do
+    # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+    # with try/rescue keeping the malformed-URI error flash.
+    case (try do
+            {:ok, Ezagent.URI.parse!(session_uri_str)}
+          rescue
+            ArgumentError -> :error
+          end) do
       {:ok, new_uri} ->
         {:noreply, select_session(socket, new_uri)}
 
@@ -1265,7 +1279,14 @@ defmodule EzagentPluginLiveview.AdminLive do
         {:noreply, socket}
 
       agent_uri_str ->
-        case URI.new(agent_uri_str) do
+        # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+        # with try/rescue (malformed agent URI silently noop, preserves
+        # original case-fallthrough semantics).
+        case (try do
+                {:ok, Ezagent.URI.parse!(agent_uri_str)}
+              rescue
+                ArgumentError -> :error
+              end) do
           {:ok, agent_uri} ->
             case TerminalSeam.dispatch_input(agent_uri, bytes, ctx(socket)) do
               :ok ->
@@ -1438,7 +1459,7 @@ defmodule EzagentPluginLiveview.AdminLive do
     session_uri = socket.assigns.current_session_uri
 
     target =
-      URI.parse(URI.to_string(session_uri) <> "?action=routing." <> Atom.to_string(action))
+      Ezagent.URI.parse!(URI.to_string(session_uri) <> "?action=routing." <> Atom.to_string(action))
 
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
       target: target,
@@ -1728,7 +1749,7 @@ defmodule EzagentPluginLiveview.AdminLive do
         try do
           caller_workspace =
             assigns.caller_uri_str
-            |> URI.parse()
+            |> Ezagent.URI.parse!()
             |> Ezagent.URI.entity_workspace_uri()
 
           URI.to_string(caller_workspace) == "workspace://system"
@@ -2538,9 +2559,13 @@ defmodule EzagentPluginLiveview.AdminLive do
     |> List.flatten()
     |> Enum.uniq()
     |> Enum.flat_map(fn uri_str ->
-      case URI.new(uri_str) do
-        {:ok, uri} -> [uri]
-        _ -> []
+      # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+      # with try/rescue keeping the silent-drop semantics for malformed
+      # @-mentions in user-typed chat text.
+      try do
+        [Ezagent.URI.parse!(uri_str)]
+      rescue
+        ArgumentError -> []
       end
     end)
   end
@@ -2599,9 +2624,13 @@ defmodule EzagentPluginLiveview.AdminLive do
 
     case unique_uris(candidates) do
       [uri_str] ->
-        case URI.new(uri_str) do
-          {:ok, uri} -> [uri]
-          _ -> []
+        # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+        # with try/rescue keeping the silent-drop fallback for malformed
+        # member URIs (corrupted Workspace.Store row, etc.).
+        try do
+          [Ezagent.URI.parse!(uri_str)]
+        rescue
+          ArgumentError -> []
         end
 
       _ ->
@@ -2627,16 +2656,22 @@ defmodule EzagentPluginLiveview.AdminLive do
   end
 
   defp uri_path_segment(uri_str) when is_binary(uri_str) do
-    case URI.new(uri_str) do
-      {:ok, %URI{path: "/" <> rest}} when rest != "" ->
-        # entity URIs are `/<workspace>/<name>`; bare display is last segment.
-        case String.split(rest, "/", parts: 2) do
-          [_ws, name] -> name
-          [name] -> name
-        end
+    # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+    # with try/rescue (display fallback to nil for malformed input).
+    try do
+      case Ezagent.URI.parse!(uri_str) do
+        %URI{path: "/" <> rest} when rest != "" ->
+          # entity URIs are `/<workspace>/<name>`; bare display is last segment.
+          case String.split(rest, "/", parts: 2) do
+            [_ws, name] -> name
+            [name] -> name
+          end
 
-      _ ->
-        nil
+        _ ->
+          nil
+      end
+    rescue
+      ArgumentError -> nil
     end
   end
 
@@ -2919,9 +2954,12 @@ defmodule EzagentPluginLiveview.AdminLive do
     do: {URI.to_string(uri), URI.to_string(uri)}
 
   defp att_to_link(s) when is_binary(s) do
-    case URI.parse(s) do
-      %URI{} = uri -> att_to_link(uri)
-      _ -> {s, s}
+    # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+    # with try/rescue keeping the `{s, s}` display-string fallback.
+    try do
+      att_to_link(Ezagent.URI.parse!(s))
+    rescue
+      ArgumentError -> {s, s}
     end
   end
 
@@ -3025,9 +3063,15 @@ defmodule EzagentPluginLiveview.AdminLive do
   defp workspace_name_from_uri(%URI{host: name}) when is_binary(name) and name != "", do: name
 
   defp workspace_name_from_uri(uri_str) when is_binary(uri_str) do
-    case URI.parse(uri_str) do
-      %URI{host: name} when is_binary(name) and name != "" -> name
-      _ -> nil
+    # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+    # with try/rescue (display fallback to nil for malformed input).
+    try do
+      case Ezagent.URI.parse!(uri_str) do
+        %URI{host: name} when is_binary(name) and name != "" -> name
+        _ -> nil
+      end
+    rescue
+      ArgumentError -> nil
     end
   end
 

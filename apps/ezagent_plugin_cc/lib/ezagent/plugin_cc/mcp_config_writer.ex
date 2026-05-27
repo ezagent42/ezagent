@@ -198,7 +198,7 @@ defmodule EzagentPluginCc.McpConfigWriter do
   end
 
   defp mint_token!(agent_uri_str) when is_binary(agent_uri_str) do
-    agent_uri = URI.parse(agent_uri_str)
+    agent_uri = Ezagent.URI.parse!(agent_uri_str)
 
     case TokenStore.mint(agent_uri) do
       {:ok, token} -> {:ok, token}

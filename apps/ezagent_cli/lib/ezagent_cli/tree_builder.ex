@@ -213,9 +213,12 @@ defmodule EzagentCli.TreeBuilder do
 
   defp parser_for(:uri),
     do: fn s ->
-      case URI.new(s) do
-        {:ok, %URI{scheme: scheme} = u} when is_binary(scheme) -> {:ok, u}
-        _ -> {:error, "malformed URI: #{inspect(s)}"}
+      # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+      # with try/rescue keeping the parser's `{:error, msg}` contract.
+      try do
+        {:ok, Ezagent.URI.parse!(s)}
+      rescue
+        ArgumentError -> {:error, "malformed URI: #{inspect(s)}"}
       end
     end
 
