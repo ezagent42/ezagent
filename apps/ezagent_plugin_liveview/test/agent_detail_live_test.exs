@@ -69,6 +69,27 @@ defmodule EzagentPluginLiveview.AgentDetailLiveTest do
       end
     end
 
+    test "PTY-alive non-cc agent renders the inline Terminal details panel", %{conn: conn} do
+      agent_uri =
+        URI.parse(
+          "entity://agent/team-alpha/codex_inline-#{System.unique_integer([:positive])}"
+        )
+
+      {:ok, _pid} = Ezagent.SpawnRegistry.spawn(agent_uri)
+      {:ok, _pty_pid} = Ezagent.Domain.Pty.start(agent_uri, %{cwd: "/tmp", test_mode: true})
+
+      try do
+        encoded = URI.encode_www_form(URI.to_string(agent_uri))
+        {:ok, _lv, html} = live(conn, "/identities/agents/#{encoded}")
+
+        assert html =~ "id=\"agent-inline-terminal\""
+        assert html =~ "Running (codex)"
+        assert html =~ ~s(phx-hook="PtyTerminal")
+      after
+        :ok = Ezagent.Domain.Pty.stop(agent_uri)
+      end
+    end
+
     test "agent WITHOUT PTY has no Terminal panel at all", %{conn: conn} do
       # Echo agent — no PTY behind it. Per SPEC §5.3 + feedback_ui_no_misleading_buttons,
       # we don't surface a terminal UI when there's nothing to render.
