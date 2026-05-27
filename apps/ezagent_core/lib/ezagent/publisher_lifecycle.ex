@@ -26,7 +26,7 @@ defmodule Ezagent.PublisherLifecycle do
 
   The Lifecycle primitive closes that gap. Every time a Publisher
   Kind reaches its `:ready` state (boot OR cold-spawn rehydrate), it
-  broadcasts `{:session_alive, self_uri}` on a per-URI lifecycle
+  broadcasts `{:publisher_alive, self_uri}` on a per-URI lifecycle
   topic. Workers subscribe to the topic at their own init and
   re-run their publisher subscribe on receipt.
 
