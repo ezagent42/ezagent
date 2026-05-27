@@ -72,9 +72,13 @@ defmodule Ezagent.Test.CapHelper do
   """
   @spec cap(keyword() | map()) :: Capability.t()
   def cap(opts) when is_list(opts) or is_map(opts) do
+    # SPEC 2026-05-27 capability-action-axis — `:action` defaults to
+    # `:any` (wildcard). Tests asserting concrete-action gating pass
+    # `action:` explicitly.
     defaults = %{
       kind: :any,
       behavior: :any,
+      action: :any,
       instance: :any,
       workspace_uri: @system_workspace,
       granted_by: @default_granter,
@@ -102,13 +106,19 @@ defmodule Ezagent.Test.CapHelper do
   @spec needed(keyword() | map()) :: %{
           kind: atom(),
           behavior: module() | atom(),
+          action: atom(),
           instance: URI.t(),
           workspace_uri: URI.t() | :any
         }
   def needed(opts) when is_list(opts) or is_map(opts) do
+    # SPEC 2026-05-27 capability-action-axis — `:action` defaults to
+    # `:any` so existing tests that don't care about action axis
+    # continue to pass; tests asserting concrete-action behavior pass
+    # `action:` explicitly.
     defaults = %{
       kind: :any,
       behavior: :any,
+      action: :any,
       instance: :any,
       workspace_uri: @system_workspace
     }

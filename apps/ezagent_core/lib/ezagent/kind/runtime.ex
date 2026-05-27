@@ -348,6 +348,12 @@ defmodule Ezagent.Kind.Runtime do
               %{
                 kind: kind_axis,
                 behavior: declared.behavior,
+                # SPEC 2026-05-27 capability-action-axis — the needed-cap
+                # carries the concrete action being dispatched, not the
+                # declared cap's action axis (which may be `:any` for
+                # orchestrator-style Behaviors). The matcher applies
+                # `action_of(held_cap) == action OR :any` per §3.3.
+                action: action,
                 instance: instance,
                 workspace_uri: workspace_uri
               }
@@ -449,10 +455,14 @@ defmodule Ezagent.Kind.Runtime do
          behavior: b,
          instance: i,
          workspace_uri: w
-       }) do
+       } = m) do
     %Ezagent.Capability{
       kind: k,
       behavior: b,
+      # SPEC 2026-05-27 capability-action-axis — propagate the concrete
+      # action when present (post-SPEC needed-cap shape); fall back to
+      # `:any` for any legacy caller still constructing the 4-field map.
+      action: Map.get(m, :action, :any),
       instance: i,
       workspace_uri: w,
       granted_by: :plugin_declared,

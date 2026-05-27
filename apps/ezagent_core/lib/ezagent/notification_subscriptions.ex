@@ -498,6 +498,9 @@ defmodule Ezagent.NotificationSubscriptions do
     needed = %{
       kind: :user,
       behavior: Ezagent.Behavior.Notifications,
+      # SPEC 2026-05-27 capability-action-axis — the action this site
+      # gates is `:subscribe` (matches `Notifications.required_caps[:subscribe]`).
+      action: :subscribe,
       instance: stream_uri,
       workspace_uri: Capability.workspace_of(stream_uri)
     }
