@@ -4,32 +4,24 @@ defmodule EzagentCore.Invariants.SystemWorkspaceMembershipTest do
   membership-based cross-workspace authority (Keycloak realm-admin
   model).
 
-  This is the gate test per memory
-  `feedback_completion_requires_invariant_test`: PR-8 is "done" iff
-  this test passes AND would fail if any of:
+  Updated per SPEC 2026-05-27-workspace-cap-based-visibility §4.2:
+  the `:visible` field is GONE. Tests that asserted `visible: false`
+  / `list_visible/0` excludes-system are removed. The cap-based
+  visibility invariant lives in
+  `cap_based_workspace_visibility_invariant_test.exs`.
 
-  - `workspace://system` is not created at boot (or is created
-    with `visible: true`).
-  - Admin's URI is not `entity://user/system/admin`.
-  - `Capability.cross_workspace?/2` no longer recognizes
-    `workspace://system` membership as a bypass.
-  - `Ezagent.Workspace.list_visible/0` includes the system workspace.
+  This module's surviving invariants (per
+  `feedback_completion_requires_invariant_test`):
 
-  ## Coverage
-
-  1. `workspace://system` exists at boot (chat plugin's
-     `ensure_system_workspace/0` creates it — SPEC v2 PR-C #295
-     deleted the previously-seeded `default` workspace, so `system`
-     is now the only boot-seeded workspace).
-  2. The system workspace row has `visible: false`.
-  3. `Ezagent.Workspace.list_visible/0` excludes it; `list_all/0`
-     includes it.
-  4. `Ezagent.Entity.User.admin_uri/0` returns
-     `entity://user/system/admin`.
-  5. `Capability.cross_workspace?(cap, system_member_uri)` returns
-     true for ANY cap (membership-based authority).
-  6. `Capability.cross_workspace?(cap, regular_user_uri)` returns
-     true ONLY when `cap.workspace_uri == :any` (structural).
+  - `workspace://system` exists at boot.
+  - `Ezagent.Entity.User.admin_uri/0` returns
+    `entity://user/system/admin` (admin's URI structurally lives in
+    workspace://system).
+  - `Capability.cross_workspace?(cap, system_member_uri)` returns
+    true for ANY cap (membership-based authority — the Keycloak
+    realm-admin bypass for runtime dispatch).
+  - `Capability.cross_workspace?(cap, regular_user_uri)` returns
+    true ONLY when `cap.workspace_uri == :any` (structural).
   """
   use EzagentCore.DataCase, async: false
 
@@ -42,14 +34,14 @@ defmodule EzagentCore.Invariants.SystemWorkspaceMembershipTest do
     # `default` row is no longer boot-seeded in production — we
     # provision it here as a TEST FIXTURE so the cross-workspace
     # assertions below have two workspaces to compare across.
+    #
+    # SPEC 2026-05-27-workspace-cap-based-visibility: `:visible`
+    # field is gone; both fixtures use empty attrs.
     Enum.each(
-      [
-        {"system", %{visible: false}},
-        {"default", %{visible: true}}
-      ],
-      fn {name, attrs} ->
+      ["system", "default"],
+      fn name ->
         case Ezagent.Workspace.Store.get_by_name(name) do
-          nil -> {:ok, _} = Ezagent.Workspace.Store.create(name, attrs)
+          nil -> {:ok, _} = Ezagent.Workspace.Store.create(name, %{})
           _ -> :ok
         end
       end
@@ -78,8 +70,8 @@ defmodule EzagentCore.Invariants.SystemWorkspaceMembershipTest do
     }
   end
 
-  describe "workspace://system exists with visible: false" do
-    test "Store.get_by_name(\"system\") returns a row with visible: false" do
+  describe "workspace://system exists" do
+    test "Store.get_by_name(\"system\") returns a row" do
       setup_workspaces()
 
       row = Ezagent.Workspace.Store.get_by_name("system")
@@ -90,29 +82,30 @@ defmodule EzagentCore.Invariants.SystemWorkspaceMembershipTest do
                "boot seed order regressed and admin's URI workspace doesn't " <>
                "resolve."
 
-      assert row.visible == false,
-             "workspace://system MUST have visible: false so it stays out " <>
-               "of the operator workspace dropdown (SPEC §13.1). Got " <>
-               "visible: #{inspect(row.visible)}."
+      # SPEC 2026-05-27-workspace-cap-based-visibility — `:visible`
+      # field is GONE. The system row no longer carries a per-row
+      # flag; visibility is cap-derived via
+      # `list_workspaces_for/2`. See
+      # `cap_based_workspace_visibility_invariant_test.exs` for the
+      # visibility invariants.
+      refute Map.has_key?(row, :visible),
+             "Workspace.Store.decoded() must NOT include `:visible` — the " <>
+               "field was deleted per SPEC 2026-05-27. If present, the " <>
+               "schema/decode regressed."
     end
 
-    test "list_visible/0 excludes system workspace; list_all/0 includes it" do
+    test "list_all/0 includes system" do
       setup_workspaces()
 
-      visible_names = Ezagent.Workspace.list_visible() |> Enum.map(& &1.name)
       all_names = Ezagent.Workspace.list_all() |> Enum.map(& &1.name)
 
-      refute "system" in visible_names,
-             "workspace://system leaked into list_visible/0 — the dropdown " <>
-               "would show it. Check Store.list_visible's WHERE clause."
-
       assert "system" in all_names,
-             "list_all/0 must still return system workspace — admin tooling " <>
+             "list_all/0 must return system workspace — admin tooling " <>
                "and the Loader rehydrate from this full list."
 
-      assert "default" in visible_names,
-             "workspace://default missing from list_visible/0 — operator " <>
-               "users would see an empty dropdown."
+      assert "default" in all_names,
+             "workspace://default missing from list_all/0 — the operator " <>
+               "fixture setup regressed."
     end
   end
 
