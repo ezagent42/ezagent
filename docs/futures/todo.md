@@ -476,3 +476,48 @@ From `docs/notes/2026-05-24-architecture-audit-v1.md` (5 LOW):
    fails with zero allowlist entries.
 5. **DONE** (PR-F #297) — `Registration.create_principal/3` "default"
    default arg removed.
+
+### ExternalMirrorWorker dedupe drops retry-send with reused msg.id (PR #420 codex r4 MED)
+
+- **Where:** `apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror_worker.ex:469-486`
+  (`invoke(:publish)` dedupes by `event_msg_id == slice.last_published_message_id`).
+- **Surfaced by:** PR #420 (task #49) codex r4 review of the r3 catchup
+  fix. Adversarial check #2 ("can a replayed event share msg id with
+  a fresh event?") uncovered a pre-existing dedupe bug ORTHOGONAL to
+  CHECK C catchup.
+- **Bug shape:** `Chat.invoke(:send)` deliberately bumps `:send_cursor`
+  even when `msg.id` is reused (see `chat.ex:394` + `chat.ex:406-412`
+  — MessageStore is idempotent on `(id, session_uri)`; the cursor
+  delta is what makes `new_slice != slice` for retried sends). The
+  Feishu adapter treats every send_cursor delta as a real publish
+  (`feishu_adapter.ex:304,321`). But the worker's `event_msg_id ==
+  last_published_message_id` short-circuit silently skips the retry
+  send as a "duplicate" — even though the adapter contract says it
+  should publish. End result: a legitimate retry-send to Feishu is
+  dropped.
+- **Why NOT fixed in PR #420:** out-of-scope for CHECK C (an
+  empty-fanout WINDOW bug). The fix changes dedupe semantics from
+  `msg.id` to composite key `(msg.id, send_cursor)` — touches the
+  `last_published_message_id` slice field shape + every test that
+  asserts on `:duplicate_skip` (currently `worker_publish_test.exs`
+  exercises this code path with msg.id-only equality). Deserves its
+  own PR with explicit dedupe-contract regression tests.
+- **Fix shape (TBD):** rename `last_published_message_id` →
+  `last_published_send_key` storing `{msg.id, send_cursor}` (or a
+  hashed pair); update the cond at line 472 to compare composites.
+  Reachable through replay too — same dedupe path. Need to confirm
+  no chat-side flow re-emits the SAME `(msg.id, send_cursor)` pair
+  legitimately (it shouldn't — send_cursor is monotonic per
+  `Chat.invoke(:send)` invocation, and replay re-delivers the SAME
+  event so the pair matches the prior publish exactly).
+- **Priority:** MED — limited to chat-send retry path; default Feishu
+  send is not retried at the chat layer in V1. Surfaces if/when a
+  user clicks "resend" in LV chat UI or an upstream binding/adapter
+  call retries on a transient failure.
+- **Bonus follow-up (codex r4 LOW):** the regression test in
+  `worker_resubscribe_catchup_test.exs` uses `chat.join` (slice-level
+  mutation, no `msg.id` in payload), so `extract_event_message_id/1`
+  returns nil and the dedupe never fires. Once dedupe is fixed,
+  augment the catchup test (or write a sibling) to drive an actual
+  `chat.send` through the window so the catchup + dedupe interact
+  end-to-end.
