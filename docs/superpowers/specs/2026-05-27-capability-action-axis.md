@@ -1,6 +1,11 @@
 # SPEC — Capability struct gains the `action` axis
 
-**Status:** r7 (codex r6 internal-consistency fixes — APPROVE expected). 2026-05-27.
+**Status:** r8 (codex r7 final-cleanup pass — APPROVE expected). 2026-05-27.
+
+**r8 revision log (codex r7 findings):**
+- MED RESIDUAL (cap/3 default contradicts §3.2): §8 failure-modes table wrongly said "cap/3 defaults the action via :any". Fixed — `cap/3` REQUIRES the third arg per §3.2; only direct `%Capability{...}` struct construction without `:action` key falls back to defstruct default `:any`.
+- MED RESIDUAL (raw-map vs old-struct terminology conflation in §3.7 scope note): r8 distinguishes (i) truly raw map (no `__struct__` key — doesn't reach `ctx.caps` via any path) from (ii) old struct missing `:action` key (reaches `ctx.caps` via snapshot restore, handled by matcher-boundary `action_of/1` transparently). The `holds_admin_caps?/1` pattern works on shape (ii) without modification because Elixir struct pattern matching is non-exhaustive.
+- HIGH NEW (§6 file manifest contradicted §3.7 strategy by listing `normalize_loaded/1` + `reconcile_after_load/2` as deliverables): r8 strikes those entries with explicit "REJECTED per §3.7 r3 strategy — do NOT implement" markers, replacing them with the actual file manifest (struct + helpers + matches?/2 via `action_of/1` + `to_map/from_map/1` updates).
 
 **r7 revision log (codex r6 findings):**
 - HIGH-1a (single-chokepoint inconsistency): §3.3 matcher snippet at line 152 + §5 A5 test description at line 304 still used direct field access while §3.3.1 claimed all readers route through `action_of/1`. r7 fixes both to use `Capability.action_of(cap)` form.
@@ -247,7 +252,13 @@ After this SPEC, three cap shapes coexist:
 
 This is NOT a role-field check. The codebase has no `role` field; the URI-based `Identity.admin?/1` predicate is explicitly documented as NON-security (`apps/ezagent_domain_identity/lib/ezagent/identity.ex:266-269`). Privilege is based on the caller's actual cap holdings — the only structural marker that survives spoofing attempts.
 
-**Scope note on raw-map caps in `ctx.caps`** (codex r5 NEW-C, narrowed per codex r6 MED): `holds_admin_caps?/1` at `apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex:742` pattern-matches on `%Ezagent.Capability{}` structs. A raw-map cap (no `__struct__` key) hits the `_ -> false` fallback and silently fails to authorize admin authority.
+**Scope note on cap shape in `ctx.caps`** (codex r5 NEW-C, narrowed per codex r6 MED, terminology corrected per codex r7 MED): TWO distinct shapes need to be distinguished:
+
+(i) **Truly raw map** (no `__struct__` key, e.g. `%{kind: ..., behavior: ..., ...}`): would fail BOTH `matches?/2`'s struct pattern AND `holds_admin_caps?/1`'s pattern. The `%__MODULE__{} = cap` pattern at §3.3 line 149 doesn't match. There's no path that puts truly-raw maps into `ctx.caps` in this codebase — `from_map/1` always reconstructs to a struct.
+
+(ii) **Old struct missing the `:action` key** (post-deserialization from a pre-SPEC snapshot — `%{__struct__: Ezagent.Capability, kind: ..., behavior: ..., instance: ..., workspace_uri: ..., granted_by: ..., granted_at: ...}` with no `:action` field): Elixir struct pattern matching is NON-exhaustive, so `%__MODULE__{} = cap` DOES match. `action_of/1` (`Map.get(cap, :action, :any)`) returns `:any` as designed. The matcher boundary handles this transparently.
+
+`holds_admin_caps?/1`'s pattern at `apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex:745` is `%Ezagent.Capability{kind: :any, behavior: :any, instance: :any, workspace_uri: :any}` — matches an old struct that has those 4 fields set to `:any` regardless of whether `:action` is present (struct pattern is non-exhaustive). So admin-cap detection works on shape (ii) without modification.
 
 This is NOT a correctness gap for the **production caps_json path**: `Users.decode_caps/1` at `apps/ezagent_domain_identity/lib/ezagent/users.ex:209-212` calls `Capability.from_map/1` which returns `%Capability{}`; `SystemPrincipal.caps/1` at `apps/ezagent_core/lib/ezagent/system_principal.ex:156-163` also produces structs via Catalog at `catalog.ex:125-128, 285-293`.
 
@@ -327,12 +338,12 @@ Allen's `feedback_let_it_crash_no_workarounds` forbids dual-path. The PR lands a
 ## 6. Files affected (estimated)
 
 **Core changes (small):**
-- `apps/ezagent_core/lib/ezagent/capability.ex` — struct + helpers + matches?/2 + `normalize_loaded/1` (new)
+- `apps/ezagent_core/lib/ezagent/capability.ex` — struct (+`:action` defstruct, NOT in @enforce_keys) + helpers (`cap/3`, `cap/5` stop discarding third arg) + `matches?/2` (uses `action_of/1` for missing-key tolerance) + new `action_of/1` helper + `to_map/1` adds the field via `action_of/1` + `from_map/1` reads `"action"` with `Map.put_new("action", "any")` shim. Stale references to `normalize_loaded/1` / `reconcile_after_load/2` from earlier SPEC revisions are REJECTED per §3.7 r3 strategy change — do NOT implement them.
 - `apps/ezagent_core/lib/ezagent/kind/runtime.ex` — authz_check needed-cap construction (one field added)
 - `apps/ezagent_core/lib/ezagent/identity/admin.ex` — grant_cap / revoke_cap may need to normalize action on input
 - `apps/ezagent_domain_identity/lib/ezagent/users.ex:212` — `Capability.from_map/1` adds `Map.put_new("action", "any")` before atomization
-- `apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex` — implement `reconcile_after_load/2` to walk + `Capability.normalize_loaded/1` over slice.caps
-- Any other Behavior whose slice carries caps via snapshot — audit + implement `reconcile_after_load/2` (codex r1 CRIT — must enumerate before merge)
+- ~~`apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex` — implement `reconcile_after_load/2` to walk + `Capability.normalize_loaded/1` over slice.caps~~ — **REJECTED per §3.7 r3 strategy** (matcher-boundary fix at §3.3 supersedes; no Identity change required for correctness)
+- ~~Any other Behavior whose slice carries caps via snapshot — audit + implement `reconcile_after_load/2`~~ — **REJECTED per §3.7 r3 strategy**. The matcher-boundary tolerance (§3.3 + §3.3.1's `action_of/1`) handles old-shape caps transparently in every reader.
 
 **Sweep (mechanical, real counts from codex r1 grep):**
 - **184** direct `%Capability{}` struct literals (production + test) — codex r3 LOW-2 fix: 185 raw `rg %Capability{` minus 1 false-positive at `apps/ezagent_core/lib/ezagent/capability.ex:80` (doc-comment string referencing the struct, not a real construction)
@@ -364,7 +375,7 @@ The plugin-author API (`Capability.cap(:chat, Chat, :send)`) needs zero changes 
 
 | Failure | Behavior |
 |---|---|
-| A grant site forgets to specify action and passes nothing | `cap/3` defaults the action via `:any` (third arg now load-bearing). Direct `%Capability{...}` struct construction without `:action` ALSO defaults to `:any` via defstruct (§3.1 — `:action` is NOT in `@enforce_keys`). The runtime grant-boundary check at §3.6.1(b) is the structural enforcement: non-privileged callers granting `cap.action == :any` are rejected. The plugin-check 11 catches `required_caps/0` drift at compile time. |
+| A grant site forgets to specify action and passes nothing | `cap/3` REQUIRES the third arg (per §3.2 signature) and stores it as `action: action` — no Elixir-level default. Only direct `%Capability{...}` struct construction without an `:action` key falls back to the defstruct default `:any` (per §3.1 — `:action` is NOT in `@enforce_keys`). The runtime grant-boundary check at §3.6.1(b) is the structural enforcement: non-privileged callers granting `action_of(cap) == :any` are rejected. The plugin-check 11 catches `required_caps/0` drift at compile time. |
 | Two callers race writing caps_json with overlapping cap shapes | Existing Ecto optimistic concurrency / slice revision-CAS unchanged. |
 | Old row reads as `:any` but the user's intent was a narrow cap | Impossible by construction — old code never wrote a narrow cap (the field didn't exist). `:any` is the only correct interpretation. |
 | Plugin author's required_caps map key differs from the third arg | Compile-time check 11 fails the build. |
