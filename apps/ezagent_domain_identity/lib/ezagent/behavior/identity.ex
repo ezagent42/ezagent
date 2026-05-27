@@ -776,18 +776,46 @@ defmodule Ezagent.Behavior.IdentityAdmin do
   defp holds_workspace_admin_cap?(%{caps: caps}, %URI{} = ws_uri) do
     caps_list = if is_struct(caps, MapSet), do: MapSet.to_list(caps), else: List.wrap(caps)
 
+    # SPEC 2026-05-27 capability-action-axis (codex impl PR review HIGH-2):
+    # narrow workspace-admin recognition to caps that ACTUALLY confer
+    # admin authority — `action: :any` (behavior-wildcard) only. A
+    # narrow `Workspace :create_session` cap is the structural shape
+    # of a non-admin member auto-grant (per PR #408); accepting it
+    # here would re-introduce the over-grant the SPEC closes (a
+    # principal with `:create_session` + delegated `IdentityAdmin
+    # :grant_cap` could mint broader workspace caps via the workspace-
+    # admin path). Pre-SPEC snapshot-restored caps (missing :action
+    # key) are honored via `action_of/1`.
     Enum.any?(caps_list, fn
       %Ezagent.Capability{
         behavior: Ezagent.Behavior.Workspace,
+        action: :any,
         workspace_uri: ^ws_uri
       } ->
         true
 
       %Ezagent.Capability{
         behavior: Ezagent.Behavior.Workspace,
+        action: :any,
         workspace_uri: :any
       } ->
         true
+
+      # Legacy snapshot-restored caps (no `:action` key) — defer to
+      # action_of/1 which returns `:any` for missing-key shapes; that
+      # preserves the pre-SPEC "any Workspace cap = admin" semantic
+      # for caps minted before the action axis existed.
+      %Ezagent.Capability{
+        behavior: Ezagent.Behavior.Workspace,
+        workspace_uri: ^ws_uri
+      } = cap ->
+        Ezagent.Capability.action_of(cap) == :any
+
+      %Ezagent.Capability{
+        behavior: Ezagent.Behavior.Workspace,
+        workspace_uri: :any
+      } = cap ->
+        Ezagent.Capability.action_of(cap) == :any
 
       _ ->
         false

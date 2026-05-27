@@ -398,6 +398,90 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
       assert cap.instance == :any
       assert cap.workspace_uri == :any
     end
+
+    # SPEC 2026-05-27 capability-action-axis (codex impl PR review CRIT):
+    # `normalize!/2` previously DROPPED the input `:action`/`"action"`
+    # key, silently defaulting every grant to `action: :any` (behavior-
+    # wildcard). The fix below ensures the action axis flows through
+    # both grant input shapes.
+    test "atom-keyed map propagates :action into the canonical struct" do
+      input = %{
+        kind: :session,
+        behavior: Ezagent.Behavior.ExternalMirror,
+        action: :bind,
+        instance: @session_uri,
+        workspace_uri: @workspace_uri
+      }
+
+      cap = Capability.normalize!(input, @granter)
+      assert Capability.action_of(cap) == :bind,
+             "atom-keyed grant input MUST propagate `:action` into the canonical struct"
+    end
+
+    test "atom-keyed map without :action defaults to :any (declarative wildcard)" do
+      cap = Capability.normalize!(shape_atom_keyed_map(), @granter)
+
+      assert Capability.action_of(cap) == :any,
+             "atom-keyed shape without `:action` defaults to `:any` (matches `cap/3` constructor's declarative shape; the runtime grant-boundary at `Identity.invoke(:grant_cap)` is the enforcement layer for wildcard grants from non-admin)"
+    end
+
+    test "string-keyed map propagates \"action\" into the canonical struct" do
+      input = %{
+        "kind" => "session",
+        "behavior" => "Ezagent.Behavior.ExternalMirror",
+        "action" => "bind",
+        "instance" => "session://default/system/main",
+        "workspace_uri" => "workspace://system"
+      }
+
+      cap = Capability.normalize!(input, @granter)
+      assert Capability.action_of(cap) == :bind,
+             "string-keyed (CLI) grant input MUST propagate `\"action\"` into the canonical struct — pre-fix, the CLI's narrow `:bind` grant became a silent behavior-wildcard"
+    end
+
+    test "string-keyed map with \"action\" => \"any\" stays as :any wildcard" do
+      input = %{
+        "kind" => "session",
+        "behavior" => "Ezagent.Behavior.ExternalMirror",
+        "action" => "any",
+        "instance" => "session://default/system/main",
+        "workspace_uri" => "workspace://system"
+      }
+
+      cap = Capability.normalize!(input, @granter)
+      assert Capability.action_of(cap) == :any
+    end
+
+    test "string-keyed map without \"action\" defaults to :any (back-compat with pre-SPEC CLI)" do
+      cap = Capability.normalize!(shape_string_keyed_map(), @granter)
+      assert Capability.action_of(cap) == :any,
+             "pre-SPEC CLI payloads lacked `\"action\"`; the default is `:any` so old CLI grants behave like the pre-SPEC behavior-wildcard. New CLI grants narrow by passing an explicit `\"action\"` field."
+    end
+
+    test "narrow-action grant produces a cap that does NOT match a different action" do
+      # End-to-end version of the CRIT — the matched cap shape MUST
+      # reflect the input action.
+      input = %{
+        "kind" => "session",
+        "behavior" => "Ezagent.Behavior.ExternalMirror",
+        "action" => "bind",
+        "instance" => "session://default/system/main",
+        "workspace_uri" => "workspace://system"
+      }
+
+      cap = Capability.normalize!(input, @granter)
+
+      needed_unbind = %{
+        kind: :session,
+        behavior: Ezagent.Behavior.ExternalMirror,
+        action: :unbind,
+        instance: @session_uri,
+        workspace_uri: @workspace_uri
+      }
+
+      refute Capability.matches?(cap, needed_unbind),
+             "a `\"action\" => \"bind\"` grant MUST NOT authorize `:unbind` dispatch — the action axis must be load-bearing through the CLI normalize path"
+    end
   end
 
   describe "Capability.identity_key/1 + Capability.revoke/2 — provenance-stripped match" do
@@ -458,6 +542,54 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
 
       caps = MapSet.new([bootstrap_cap])
       assert {:error, :cannot_revoke_admin} = Capability.revoke(caps, bootstrap_cap)
+    end
+
+    # SPEC 2026-05-27 capability-action-axis (codex impl PR review HIGH-1):
+    # `identity_key/1` now includes the action axis. Two caps with the
+    # same kind/behavior/instance/workspace but different actions are
+    # DISTINCT logical identities — granting one MUST NOT dedupe the
+    # other, and revoking one MUST NOT remove the other.
+    test "identity_key/1 distinguishes per-action grants on the same target" do
+      now = DateTime.utc_now()
+
+      cap_bind = %Capability{
+        kind: :session,
+        behavior: Ezagent.Behavior.ExternalMirror,
+        action: :bind,
+        instance: @session_uri,
+        workspace_uri: @workspace_uri,
+        granted_by: @granter,
+        granted_at: now
+      }
+
+      cap_unbind = %{cap_bind | action: :unbind}
+
+      refute Capability.identity_key(cap_bind) == Capability.identity_key(cap_unbind),
+             "identity_key/1 MUST distinguish caps that differ only in action axis — pre-fix the key was 4-axis (action ignored), so a `:bind` grant and a `:unbind` grant collapsed onto the same MapSet identity. SPEC 2026-05-27 HIGH-1."
+    end
+
+    test "revoke/2 with a :bind-action target leaves a :unbind-action cap intact" do
+      cap_bind = %Capability{
+        kind: :session,
+        behavior: Ezagent.Behavior.ExternalMirror,
+        action: :bind,
+        instance: @session_uri,
+        workspace_uri: @workspace_uri,
+        granted_by: @granter,
+        granted_at: DateTime.utc_now()
+      }
+
+      cap_unbind = %{cap_bind | action: :unbind, granted_at: DateTime.utc_now()}
+
+      caps = MapSet.new([cap_bind, cap_unbind])
+
+      # Revoke just the :bind cap. The :unbind cap MUST survive.
+      assert {:ok, new_caps} = Capability.revoke(caps, cap_bind)
+      assert MapSet.size(new_caps) == 1
+
+      [survivor] = MapSet.to_list(new_caps)
+      assert Capability.action_of(survivor) == :unbind,
+             "revoking the `:bind` cap MUST leave the `:unbind` cap untouched — pre-fix, identity_key/1 ignored action axis so both caps had the same key and both got removed. SPEC 2026-05-27 HIGH-1."
     end
   end
 end

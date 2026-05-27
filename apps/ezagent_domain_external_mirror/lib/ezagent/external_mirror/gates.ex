@@ -322,14 +322,21 @@ defmodule Ezagent.ExternalMirror.Gates do
     end)
   end
 
-  defp cap_admin_shape?(%{kind: :any, behavior: :any, instance: :any}), do: true
+  # SPEC 2026-05-27 capability-action-axis (codex impl PR review MED):
+  # the admin-wildcard bypass must require `action: :any` so narrow
+  # action caps (e.g. cross-workspace `:bind` cap) don't masquerade as
+  # admin authority that bypasses workspace-iso. The narrow cap is
+  # still authoritative for its specific action via dispatch step 5.5;
+  # the workspace-iso bypass is a STRICTLY-BROADER admin tier.
+  defp cap_admin_shape?(%{kind: :any, behavior: :any, instance: :any} = cap),
+    do: Ezagent.Capability.action_of(cap) == :any
 
   defp cap_admin_shape?(%{
          kind: :session,
          behavior: Ezagent.Behavior.ExternalMirror,
          instance: :any
-       }),
-       do: true
+       } = cap),
+       do: Ezagent.Capability.action_of(cap) == :any
 
   defp cap_admin_shape?(_), do: false
 

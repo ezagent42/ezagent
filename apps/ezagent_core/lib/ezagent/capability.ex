@@ -714,6 +714,16 @@ defmodule Ezagent.Capability do
     kind = decode_atom_or_module_strict!(m, "kind")
     behavior = decode_atom_or_module_strict!(m, "behavior")
 
+    # SPEC 2026-05-27 capability-action-axis §3.4 — action axis on the
+    # JSON grant chokepoint. Missing `"action"` defaults to `"any"` for
+    # back-compat with pre-SPEC CLI payloads; strict atom decoding
+    # otherwise (typos raise rather than silently widen).
+    action =
+      case Map.fetch(m, "action") do
+        {:ok, _} -> decode_atom_or_module_strict!(m, "action")
+        :error -> :any
+      end
+
     workspace_uri =
       case Map.fetch(m, "workspace_uri") do
         {:ok, ws} ->
@@ -747,6 +757,7 @@ defmodule Ezagent.Capability do
     %__MODULE__{
       kind: kind,
       behavior: behavior,
+      action: action,
       instance: instance,
       workspace_uri: workspace_uri,
       granted_by: granter_uri,
@@ -777,6 +788,10 @@ defmodule Ezagent.Capability do
     %__MODULE__{
       kind: Map.get(m, :kind, :any),
       behavior: Map.get(m, :behavior, :any),
+      # SPEC 2026-05-27 capability-action-axis — propagate atom-keyed
+      # `:action` (default `:any` for declarative caps where omission
+      # means wildcard).
+      action: Map.get(m, :action, :any),
       instance: Map.get(m, :instance, :any),
       workspace_uri: workspace_uri,
       granted_by: Map.get_lazy(m, :granted_by, fn -> parse_granter(granter) end),
@@ -871,7 +886,8 @@ defmodule Ezagent.Capability do
   end
 
   @doc """
-  Identity-tuple key of a capability — `{kind, behavior, instance, workspace_uri}`.
+  Identity-tuple key of a capability — `{kind, behavior, action, instance,
+  workspace_uri}`.
 
   Two caps with the same identity tuple are LOGICALLY the same cap,
   even if their `granted_by` / `granted_at` provenance metadata
@@ -880,6 +896,14 @@ defmodule Ezagent.Capability do
   the original grant timestamp) — without this, `MapSet.delete/2`'s
   full-struct equality silently fails the revoke (codex review HIGH-1,
   2026-05-26).
+
+  SPEC 2026-05-27 capability-action-axis (codex impl PR review HIGH-1
+  follow-up): the identity tuple now INCLUDES action via
+  `action_of/1`. Pre-SPEC the tuple was 4-axis; collapsing per-action
+  grants/revokes onto the same key silently merged authorities on
+  the same Behavior. Post-SPEC, `:read` and `:write` on the same
+  Behavior+instance+workspace are DISTINCT identities — grant/revoke
+  must treat them as such.
 
   Note: `instance` and `workspace_uri` are `%URI{}` structs whose
   raw struct comparison can be brittle (`authority` field divergence
@@ -893,15 +917,16 @@ defmodule Ezagent.Capability do
   holds in practice; pinned by `identity_grant_cap_shape_test.exs`.
   """
   @spec identity_key(t()) ::
-          {atom() | :any, module() | :any, URI.t() | :any | scope_tuple(),
-           URI.t() | :any}
+          {atom() | :any, module() | :any, atom() | :any,
+           URI.t() | :any | scope_tuple(), URI.t() | :any}
   def identity_key(%__MODULE__{
         kind: k,
         behavior: b,
         instance: i,
         workspace_uri: w
-      }),
-      do: {k, b, normalize_uri_for_key(i), normalize_uri_for_key(w)}
+      } = cap),
+      do:
+        {k, b, action_of(cap), normalize_uri_for_key(i), normalize_uri_for_key(w)}
 
   defp normalize_uri_for_key(%URI{} = u), do: URI.to_string(u)
   defp normalize_uri_for_key(other), do: other
