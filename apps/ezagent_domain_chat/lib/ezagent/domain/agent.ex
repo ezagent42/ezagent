@@ -14,18 +14,17 @@ defmodule Ezagent.Domain.Agent do
   Domain.Agent is the unifying domain model over the various agent
   flavors (cc, echo, curl, future). The Agent Kind itself lives in
   `Ezagent.Entity.Agent` here in `ezagent_domain_chat`, so the facade
-  belongs in the same app. Plugin-specific knowledge (echo → just
-  Kind alive-or-not; cc → query the Domain.Pty facade) stays here as
-  a thin per-flavor dispatch; Domain.Agent's job is to know WHICH
-  domain primitive to ask and unify the response format.
+  belongs in the same app. Domain.Agent asks domain primitives, not
+  plugin modules. A live `Ezagent.Domain.Pty` sidecar means the agent
+  is PTY-backed, regardless of whether the flavor is cc, codex,
+  echo-with-pty, or a future plugin.
 
   ## Domain.Pty PR-A (2026-05-21 SPEC v1)
 
-  cc-flavor lifecycle now queries `Ezagent.Domain.Pty.{lookup,status}`
-  instead of the old `Ezagent.PluginCc.PtyServer.{find_by_agent_uri,status}`.
-  Code.ensure_loaded? still guards in case ezagent_domain_pty isn't
-  loaded (test isolation contexts); the dep graph makes it always
-  loaded in production builds.
+  Lifecycle now queries `Ezagent.Domain.Pty.alive?/1` instead of
+  hardcoding cc as the only PTY-backed flavor. Code.ensure_loaded?
+  still guards in case ezagent_domain_pty isn't loaded (test isolation
+  contexts); the dep graph makes it always loaded in production builds.
 
   ## V2 (deferred)
 
@@ -33,8 +32,9 @@ defmodule Ezagent.Domain.Agent do
   auto-trigger from URI registration to associated template
   instantiate): the V2 path is a generic `Ezagent.Behavior.Lifecycle`
   contract carried by every "running" Kind, dispatched via
-  `?action=lifecycle.phase`. For V1 the facade pattern-matches the
-  flavor prefix; the response shape is forward-compatible.
+  `?action=lifecycle.phase`. For V1 the facade derives flavor only for
+  display and detects PTY-backed runtime by behavior. The response
+  shape is forward-compatible.
   """
 
   @type phase :: :registered | :instantiated | :alive | :error | :not_found
@@ -46,20 +46,16 @@ defmodule Ezagent.Domain.Agent do
         }
 
   @doc """
-  Return the unified lifecycle status of `agent_uri`. Delegates to
-  the plugin that owns the flavor (cc / curl / echo / future).
+  Return the unified lifecycle status of `agent_uri`.
 
   Returns `%{phase: :not_found, flavor: <derived>, detail: nil}` if
   no Kind is registered at the URI.
 
   ## Phases
 
-  - `:alive`        — Kind is registered AND (for flavors with deeper
-                      lifecycle) the supporting process (PtyServer,
-                      bridge, etc.) is running.
-  - `:registered`   — Kind is registered in supervision but the deeper
-                      lifecycle phase is not yet reached (e.g. cc
-                      agent Kind alive but PtyServer down).
+  - `:alive`        — Kind is registered. If a domain sidecar such as
+                      PtyServer is running, `detail` carries its status.
+  - `:registered`   — reserved for future deeper lifecycle states.
   - `:not_found`    — No KindRegistry entry for the URI.
   - `:instantiated` — (reserved for future use; not emitted by V1
                       pattern-match path).
@@ -79,55 +75,19 @@ defmodule Ezagent.Domain.Agent do
     end
   end
 
-  # ── flavor → plugin lifecycle helper dispatch ────────────────────
+  # ── domain primitive lifecycle detection ─────────────────────────
 
-  defp delegate_alive_status("cc", agent_uri) do
-    # cc-flavor deeper lifecycle = Domain.Pty's PtyServer.
-    # Domain.Pty.lookup + Server.status returns the operator-facing
-    # snapshot. Post-V1-fix (Allen 2026-05-21) cc agents are always
-    # local-pty — a missing PtyServer when the Kind is alive is now
-    # always a transient state (between Kind spawn and PtyServer
-    # start, or a crash that left the Kind up).
-    if Code.ensure_loaded?(Ezagent.Domain.Pty) do
-      case Ezagent.Domain.Pty.lookup(agent_uri) do
-        {:ok, pid} ->
-          try do
-            %{phase: :alive, flavor: "cc", detail: Ezagent.Domain.Pty.Server.status(pid)}
-          catch
-            _, reason ->
-              %{phase: :error, flavor: "cc", detail: %{error: inspect(reason)}}
-          end
-
-        :error ->
-          # Kind is alive but PtyServer isn't — transient state
-          # (between Kind spawn and PtyServer start) or a crash that
-          # left the Kind up.
-          %{phase: :registered, flavor: "cc", detail: %{note: "no PtyServer"}}
+  defp delegate_alive_status(flavor, agent_uri) do
+    try do
+      if Code.ensure_loaded?(Ezagent.Domain.Pty) and Ezagent.Domain.Pty.alive?(agent_uri) do
+        %{phase: :alive, flavor: flavor, detail: Ezagent.Domain.Pty.status(agent_uri) || %{}}
+      else
+        %{phase: :alive, flavor: flavor, detail: %{}}
       end
-    else
-      %{phase: :registered, flavor: "cc", detail: %{note: "Domain.Pty not loaded"}}
+    catch
+      _, reason ->
+        %{phase: :error, flavor: flavor, detail: %{error: inspect(reason)}}
     end
-  end
-
-  defp delegate_alive_status("echo", _agent_uri) do
-    # Echo flavor has no deeper lifecycle layer — Kind alive ==
-    # ready to receive. Empty detail map (Domain.Agent's
-    # response shape stays uniform).
-    %{phase: :alive, flavor: "echo", detail: %{}}
-  end
-
-  defp delegate_alive_status("curl", _agent_uri) do
-    # Curl flavor (HTTP-API agent) also has no PTY layer; if the
-    # Kind is alive, the agent is ready. Future: query upstream
-    # HTTP endpoint reachability.
-    %{phase: :alive, flavor: "curl", detail: %{}}
-  end
-
-  defp delegate_alive_status(other_flavor, _agent_uri) do
-    # Unknown flavor — Kind is alive but Domain.Agent has no
-    # flavor-specific introspection. Return registered phase + the
-    # flavor for the UI to display "lifecycle unknown".
-    %{phase: :alive, flavor: other_flavor, detail: %{}}
   end
 
   # ── subprocess phase facade (PTY-phase-state-machine 2026-05-26

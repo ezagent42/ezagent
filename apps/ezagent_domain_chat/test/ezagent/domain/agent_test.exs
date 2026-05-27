@@ -13,9 +13,9 @@ defmodule Ezagent.Domain.AgentTest do
   invariant 8 (plugin authoring contract), Domain UI MUST NOT
   import Plugin module functions. `Ezagent.Domain.Agent
   .lifecycle_status/1` is the sanctioned boundary: it
-  pattern-matches the agent flavor prefix and delegates to the
-  owning plugin's lifecycle helper, unifying the response shape
-  across flavors.
+  derives the agent flavor prefix for display and detects PTY-backed
+  runtime by asking `Ezagent.Domain.Pty.alive?/1`, unifying the
+  response shape across flavors.
 
   ## Contract
 
@@ -27,10 +27,10 @@ defmodule Ezagent.Domain.AgentTest do
 
   ## What's verified
 
-  - `cc` flavor + alive Kind + PtyServer running → `:alive` with
-    cc-specific detail (os_pid, cwd, etc.)
-  - `echo` flavor + alive Kind → `:alive` with empty detail map
-    (echo has no deeper lifecycle layer)
+  - any flavor + alive Kind + PtyServer running → `:alive` with
+    PTY detail (os_pid, cwd, etc.)
+  - any flavor + alive Kind without PtyServer → `:alive` with empty
+    detail map
   - Unregistered URI → `:not_found` with flavor still derived
     from the URI name prefix (so UI can render "echo agent does
     not exist" vs just "agent does not exist")
@@ -85,22 +85,56 @@ defmodule Ezagent.Domain.AgentTest do
     end
   end
 
-  describe "lifecycle_status/1 — cc flavor (Kind alive but PtyServer optional)" do
-    test "alive cc Kind without PtyServer → :registered phase (kind alive, deeper layer down)" do
-      # Spawn the cc Agent Kind directly via SpawnRegistry — this
-      # mimics the pre-PtyServer state (e.g. between Kind spawn and
-      # PtyServer instantiate). The Domain.Agent facade should
-      # report :registered, not :not_found, so the UI can
-      # distinguish "agent never existed" from "agent exists but
-      # PTY isn't up yet".
+  describe "lifecycle_status/1 — PTY detection is flavor-agnostic" do
+    test "alive cc Kind without PtyServer returns :alive with empty detail" do
       cc_uri = URI.parse("entity://agent/team-alpha/cc_lifecycle-#{u()}")
       {:ok, pid} = SpawnRegistry.spawn(cc_uri)
       assert is_pid(pid) and Process.alive?(pid)
 
-      result = Agent.lifecycle_status(cc_uri)
+      assert %{phase: :alive, flavor: "cc", detail: %{}} =
+               Agent.lifecycle_status(cc_uri)
+    end
 
-      assert %{phase: :registered, flavor: "cc"} = result
+    test "alive curl and future-flavor Kinds without PtyServer return :alive with empty detail" do
+      curl_uri = URI.parse("entity://agent/team-alpha/curl_lifecycle-#{u()}")
+      future_uri = URI.parse("entity://agent/team-alpha/future_lifecycle-#{u()}")
+
+      {:ok, curl_pid} = Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: curl_uri})
+      {:ok, future_pid} = Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: future_uri})
+
+      assert is_pid(curl_pid) and Process.alive?(curl_pid)
+      assert is_pid(future_pid) and Process.alive?(future_pid)
+
+      assert %{phase: :alive, flavor: "curl", detail: %{}} =
+               Agent.lifecycle_status(curl_uri)
+
+      assert %{phase: :alive, flavor: "future", detail: %{}} =
+               Agent.lifecycle_status(future_uri)
+    end
+
+    test "codex-flavored Kind with live PtyServer returns PTY detail without a codex clause" do
+      codex_uri = URI.parse("entity://agent/team-alpha/codex_lifecycle-#{u()}")
+
+      {:ok, agent_pid} = Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: codex_uri})
+      {:ok, pty_pid} = Ezagent.Domain.Pty.start(codex_uri, %{cwd: "/tmp", test_mode: true})
+
+      on_exit(fn ->
+        if Process.alive?(pty_pid), do: Ezagent.Domain.Pty.stop(codex_uri)
+      end)
+
+      assert is_pid(agent_pid) and Process.alive?(agent_pid)
+      assert is_pid(pty_pid) and Process.alive?(pty_pid)
+
+      Process.sleep(50)
+
+      result = Agent.lifecycle_status(codex_uri)
+
+      assert %{phase: :alive, flavor: "codex"} = result
       assert is_map(result.detail)
+      assert result.detail.agent_uri == codex_uri
+      assert result.detail.cwd == "/tmp"
+      assert result.detail.test_mode == true
+      assert result.detail.running == true
     end
   end
 

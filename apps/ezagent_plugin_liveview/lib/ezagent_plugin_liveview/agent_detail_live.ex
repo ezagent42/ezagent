@@ -92,6 +92,15 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
     Ezagent.Domain.Agent.lifecycle_status(agent_uri)
   end
 
+  # PTY-backed agent flavors expose non-empty detail through the
+  # Domain.Agent lifecycle facade. Keep the UI behavior-driven so new
+  # PTY-backed flavors inherit the terminal surface without another
+  # flavor string gate here.
+  defp status_has_pty_detail?(%{phase: :alive, detail: detail}) when is_map(detail),
+    do: map_size(detail) > 0
+
+  defp status_has_pty_detail?(_status), do: false
+
   # Phase 8b §1.10 — CC Bridges (v2) panel moved here from admin_live.
   # Per-agent so the operator can see "is this agent's WS bridge live?"
   # while looking at the agent's other status data. Returns `nil` if
@@ -338,11 +347,11 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
                   {phase_help_text(@status, @agent_uri)}
                 </p>
               </.card>
-            <% @status.phase == :alive and @status.flavor == "cc" -> %>
+            <% status_has_pty_detail?(@status) -> %>
               <% s = @status.detail %>
               <.card class="mt-6">
                 <h2 class="text-sm font-medium mb-3 text-zinc-900 dark:text-zinc-100">
-                  {gettext("Running (cc)")}
+                  {gettext("Running (%{flavor})", flavor: @status.flavor || gettext("unknown flavor"))}
                 </h2>
                 <table class="w-full text-xs">
                   <tbody>
