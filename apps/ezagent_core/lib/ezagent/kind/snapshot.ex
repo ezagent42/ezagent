@@ -72,6 +72,14 @@ defmodule Ezagent.Kind.Snapshot do
     case fetch_snapshot(uri_str, kind_module) do
       {:ok, loaded_state} ->
         emit_restored(uri_str, loaded_state)
+        # SPEC 2026-05-27-uri-canonicalization §9.2.1 (OQ-4 option b)
+        # — canonicalize every `%URI{}` embedded in the decoded state
+        # BEFORE the merge. Pre-migration snapshots may contain
+        # `URI.parse`-built structs (authority:"user") that would
+        # silently fail struct-equality comparisons against canonical
+        # peers. The walker rewrites them in-place via the canonical
+        # chokepoint.
+        #
         # Merge so newly-added Behaviors get fresh init values (Q5).
         # Allen 2026-05-26 (codex HIGH-2 closure) — also PRUNE slice
         # keys for Behaviors the Kind no longer declares. A Behavior
@@ -92,8 +100,10 @@ defmodule Ezagent.Kind.Snapshot do
         # — e.g. ExternalMirror bindings written outside dispatch
         # OR a snapshot/DB write race. Idempotent for normal-path
         # callers.
+        canonicalized = canonicalize_uris(loaded_state)
+
         fresh
-        |> Map.merge(loaded_state)
+        |> Map.merge(canonicalized)
         |> prune_orphan_slices(kind_module)
         |> reconcile_after_load_behaviors(uri, kind_module)
 
@@ -157,10 +167,11 @@ defmodule Ezagent.Kind.Snapshot do
   end
 
   defp reconcile_after_load_behaviors(state, uri_str, kind_module) when is_binary(uri_str) do
-    case URI.new(uri_str) do
-      {:ok, uri} -> reconcile_after_load_behaviors(state, uri, kind_module)
-      _ -> state
-    end
+    # SPEC 2026-05-27-uri-canonicalization §B4 — snapshot reload routes
+    # URI strings through the canonical chokepoint; let-it-crash on
+    # malformed (supervisor restarts the Kind, operator sees the error).
+    uri = Ezagent.URI.parse!(uri_str)
+    reconcile_after_load_behaviors(state, uri, kind_module)
   end
 
   defp fetch_snapshot(uri_str, kind_module) do
@@ -358,7 +369,7 @@ defmodule Ezagent.Kind.Snapshot do
     parsed =
       case uri do
         %URI{} = u -> u
-        s when is_binary(s) -> URI.parse(s)
+        s when is_binary(s) -> Ezagent.URI.parse!(s)
       end
 
     case Ezagent.Persistence.workspace_uri_for(parsed) do
@@ -400,6 +411,84 @@ defmodule Ezagent.Kind.Snapshot do
     end)
     |> Map.new()
   end
+
+  @doc """
+  SPEC 2026-05-27-uri-canonicalization §9.2.1 (OQ-4 option b) — recursive
+  walker that re-canonicalizes every `%URI{}` embedded in a decoded
+  snapshot state.
+
+  Pre-migration snapshots written via `:erlang.term_to_binary/1` may
+  contain `URI.parse`-built structs (`:authority` populated). Replaying
+  such a snapshot would surface URIs that fail struct-equality with
+  their canonical peers (the bug class described in SPEC §1.1).
+
+  ## Clause order is load-bearing
+
+  1. `%URI{}` first — `%URI{}` IS a struct; without this clause, the
+     `%_{} = struct_` generic-struct clause would catch it first and
+     destructure to a plain map.
+  2. Custom struct (`%_{} = struct_`) — destructure via
+     `Map.from_struct/1`, walk the map, re-struct via `struct/2` so
+     the original struct shape is preserved.
+  3. Map (`is_map/1`) — walk BOTH keys and values; URIs can appear as
+     map keys (rare but valid).
+  4. List (`is_list/1`) — walk elementwise.
+  5. Tuple (`is_tuple/1`) — convert to list, walk, convert back.
+  6. Fallthrough — atoms, numbers, binaries, pids — unchanged.
+
+  The `%URI{}` clause routes through `Ezagent.URI.parse!/1` (the
+  canonical chokepoint). Non-Ezagent schemes (e.g. external `http://`
+  URLs that snuck into a slice via legacy code) fall back to strict
+  stdlib `URI.new/1` per the §3.7 dual-fallback contract. Outright
+  failure leaves the original struct unchanged (let-it-crash applies
+  to dispatch, not to passive walk-and-rewrite).
+  """
+  @spec canonicalize_uris(term()) :: term()
+  def canonicalize_uris(%URI{} = uri) do
+    s = URI.to_string(uri)
+
+    try do
+      Ezagent.URI.parse!(s)
+    rescue
+      # External (non-Ezagent) scheme — §3.7 fallback. Re-parse via
+      # strict URI.new/1 so authority is RFC-3986-normalized; leave
+      # the original on outright parse failure (passive walker —
+      # downstream let-it-crash governs the dispatch path, not this).
+      ArgumentError ->
+        case URI.new(s) do # uri-canonical-allow: §3.7 external-URI fallback (non-Ezagent scheme — SchemeRegistry rejects, this re-canonicalizes via strict RFC 3986)
+          {:ok, canonical} -> canonical
+          _ -> uri
+        end
+    end
+  end
+
+  def canonicalize_uris(%_{} = struct_) do
+    # Custom struct — destructure to map (drop :__struct__), walk,
+    # re-struct. Preserves the original struct module identity.
+    mod = struct_.__struct__
+
+    struct_
+    |> Map.from_struct()
+    |> canonicalize_uris()
+    |> then(&struct(mod, &1))
+  end
+
+  def canonicalize_uris(state) when is_map(state) do
+    Map.new(state, fn {k, v} -> {canonicalize_uris(k), canonicalize_uris(v)} end)
+  end
+
+  def canonicalize_uris(state) when is_list(state) do
+    Enum.map(state, &canonicalize_uris/1)
+  end
+
+  def canonicalize_uris(state) when is_tuple(state) do
+    state
+    |> Tuple.to_list()
+    |> Enum.map(&canonicalize_uris/1)
+    |> List.to_tuple()
+  end
+
+  def canonicalize_uris(other), do: other
 
   defp emit_restored(uri_str, state) do
     :telemetry.execute(
