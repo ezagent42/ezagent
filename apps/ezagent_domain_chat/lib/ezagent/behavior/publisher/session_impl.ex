@@ -164,12 +164,15 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
 
   @doc """
   Schedules a post-init continuation to subscribe this Kind's pid to
-  its OWN SliceChange topic (PR-EM-CORE hook + r4 split-init pattern).
+  its OWN SliceChange topic (PR-EM-CORE hook + r4 split-init pattern)
+  AND broadcast a `:publisher_alive` lifecycle event for any
+  subscriber (e.g. ExternalMirrorWorkers) that needs to re-attach
+  on cold-spawn rehydration.
 
   Returns `{:continue, :subscribe_to_self_slice_change}` so the
-  subscribe runs AFTER `:announce_ready` — by the time SliceChange
-  events flow, the Kind is `:ready` and dispatch can route inbound
-  publisher actions.
+  subscribe + lifecycle broadcast run AFTER `:announce_ready` — by
+  the time SliceChange events flow, the Kind is `:ready` and dispatch
+  can route inbound publisher actions.
   """
   @impl Ezagent.Behavior
   def post_init(_args, _slice) do
@@ -179,6 +182,19 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
   @impl Ezagent.Behavior
   def handle_continue(:subscribe_to_self_slice_change, _slice, %{self_uri: self_uri}) do
     :ok = Ezagent.SliceChange.subscribe_unverified(self_uri)
+
+    # Task #49 (2026-05-27) — every Session reaching `:ready` (boot OR
+    # cold-spawn rehydrate via `SpawnRegistry.spawn/1`) emits a single
+    # `{:publisher_alive, self_uri}` lifecycle event. The
+    # `:publisher.subscribers` slice rehydrates with stale pids from
+    # the snapshot; the still-alive ExternalMirrorWorker Kinds that
+    # subscribed pre-vanish need a kick to re-subscribe with their
+    # current pid. The lifecycle event IS that kick. See
+    # `Ezagent.PublisherLifecycle` moduledoc + the
+    # `Ezagent.Behavior.ExternalMirrorWorker.handle_kind_message/3`
+    # `:publisher_alive` clause.
+    :ok = Ezagent.PublisherLifecycle.broadcast_alive(self_uri)
+
     # Slice unchanged — return `:ignore` so the Server skips the
     # snapshot commit path (we just opened a PubSub subscription;
     # no slice mutation).

@@ -194,6 +194,15 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
     # delegation per SPEC §7.3 Cap 3.
     {:ok, current_cursor} = subscribe_to_session_publisher(slice.session_uri, self_uri)
 
+    # Task #49 (2026-05-27) — subscribe to the Session's lifecycle
+    # topic so we get a kick if the Session is cold-spawned later.
+    # On `:publisher_alive` we re-run `subscribe_to_session_publisher/2`
+    # to re-attach our (still-live) pid to the new (empty)
+    # `:publisher.subscribers` map. See `Ezagent.PublisherLifecycle`
+    # moduledoc + `handle_kind_message/3` `:publisher_alive` clause
+    # below.
+    :ok = Ezagent.PublisherLifecycle.subscribe(slice.session_uri)
+
     case binding_module.init({slice.target_id, adapter_module, slice.opts}) do
       {:ok, binding_state} ->
         new_slice = %{
@@ -247,6 +256,62 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
     end
 
     :ignore
+  end
+
+  @doc """
+  Task #49 (2026-05-27) — Session lifecycle event hook.
+
+  The Worker is subscribed to the Session's lifecycle topic (see
+  `handle_continue/3` above). When the Session Kind reaches `:ready`
+  AFTER a cold-spawn rehydrate (its `:publisher.subscribers` map
+  restored from snapshot is empty), the Session broadcasts a
+  `{:publisher_alive, session_uri}` event on the lifecycle topic.
+
+  Workers receive that event here and re-run
+  `subscribe_to_session_publisher/2` to re-attach their (still-live)
+  pid to the publisher's `:subscribers` map. Idempotent — the
+  publisher's `ensure_monitored/2` dedupes by pid, so a
+  `:publisher_alive` arriving when we're already subscribed is a
+  no-op at the publisher side. We update `publisher_cursor` to
+  the current cursor returned by the Publisher (the cursor MAY
+  have advanced past our last seen value during the gap; per
+  OQ-EM-10 V1 is `:latest`-equivalent — no replay of missed events).
+
+  Slice mutation is allowed: we update `publisher_cursor`. The
+  Server takes the `{:ok, new_slice}` and runs the standard
+  on-change persistence path.
+
+  Filtered: messages whose URI does not match `slice.session_uri`
+  (defence-in-depth — the topic shape is per-URI but a stray
+  broadcast to the wrong topic shouldn't poison our subscription).
+  """
+  def handle_kind_message({:publisher_alive, %URI{} = pub_uri}, slice, %{self_uri: self_uri}) do
+    cond do
+      URI.to_string(pub_uri) != URI.to_string(slice.session_uri) ->
+        # Lifecycle event for a different Session. Topic shape is
+        # per-URI so this shouldn't happen, but be paranoid.
+        :ignore
+
+      slice.subscription_state != :active ->
+        # Our own handle_continue hasn't completed yet — the
+        # subscribe_to_session_publisher inside it will pick up the
+        # current cursor. Skip the re-subscribe.
+        :ignore
+
+      true ->
+        case subscribe_to_session_publisher(slice.session_uri, self_uri) do
+          {:ok, current_cursor} ->
+            {:ok, %{slice | publisher_cursor: current_cursor}}
+
+          {:error, reason} ->
+            Logger.warning(
+              "ExternalMirrorWorker re-subscribe on :publisher_alive failed; " <>
+                "session=#{URI.to_string(slice.session_uri)} reason=#{inspect(reason)}"
+            )
+
+            :ignore
+        end
+    end
   end
 
   def handle_kind_message(_other, _slice, _ctx), do: :ignore

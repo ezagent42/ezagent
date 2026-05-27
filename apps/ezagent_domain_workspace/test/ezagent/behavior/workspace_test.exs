@@ -1,5 +1,10 @@
 defmodule Ezagent.Behavior.WorkspaceTest do
-  use ExUnit.Case, async: true
+  # Task #55 round-2 codex (2026-05-27) — `async: false` + `DataCase`
+  # because the post-task-#46 `add_member` action now pre-spawns the
+  # member's User Kind via `SpawnRegistry.spawn/1`, which expects the
+  # user row in the DB. Tests that drive `:add_member` with a
+  # non-admin URI must seed the user.
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.Behavior.Workspace, as: WB
 
@@ -61,6 +66,312 @@ defmodule Ezagent.Behavior.WorkspaceTest do
     end
   end
 
+  describe "add_member workspace-prefix invariant (task #55)" do
+    # SPEC v3 §3 — entity URIs are `entity://<type>/<workspace>/<name>`.
+    # Workspace's member set MAY ONLY contain entities whose URI prefix
+    # matches the workspace (Allen 2026-05-27 directive).
+    #
+    # The structural check lives in `:add_member` so dispatch-level
+    # callers (LV forms, mix tasks, CLI, RPC) all get the same gate.
+
+    test "accepts same-prefix user member" do
+      workspace_uri = URI.parse("workspace://h2oslabs")
+      member_uri = URI.parse("entity://user/h2oslabs/alice")
+      # Task #46 (main) — `:add_member` pre-spawns the user Kind via
+      # `SpawnRegistry.spawn/1`, which requires the row in DB. Seed
+      # the user before driving the action.
+      {:ok, _} = Ezagent.Users.create(member_uri, nil, [])
+      slice = WB.init_slice(%{})
+
+      ctx = %{self_uri: workspace_uri}
+
+      assert {:ok, new_slice} = WB.invoke(:add_member, slice, %{member: member_uri}, ctx)
+      assert MapSet.member?(new_slice.members, member_uri)
+    end
+
+    test "accepts same-prefix agent member" do
+      workspace_uri = URI.parse("workspace://h2oslabs")
+      member_uri = URI.parse("entity://agent/h2oslabs/cc_main")
+      slice = WB.init_slice(%{})
+
+      ctx = %{self_uri: workspace_uri}
+
+      assert {:ok, new_slice} = WB.invoke(:add_member, slice, %{member: member_uri}, ctx)
+      assert MapSet.member?(new_slice.members, member_uri)
+    end
+
+    test "rejects cross-prefix user member" do
+      workspace_uri = URI.parse("workspace://h2oslabs")
+      # The exact violator empirically observed in the h2oslabs row
+      # 2026-05-27 02:47 — `entity://user/system/linyilun` inside
+      # `workspace://h2oslabs` is a cross-prefix leak.
+      member_uri = URI.parse("entity://user/system/linyilun")
+      slice = WB.init_slice(%{})
+
+      ctx = %{self_uri: workspace_uri}
+
+      assert {:error, {:cross_workspace_member_not_permitted, ^member_uri, ^workspace_uri}} =
+               WB.invoke(:add_member, slice, %{member: member_uri}, ctx)
+
+      # Slice must be untouched on rejection — no half-applied state.
+      assert MapSet.size(slice.members) == 0
+    end
+
+    test "rejects cross-prefix agent member" do
+      workspace_uri = URI.parse("workspace://team-alpha")
+      member_uri = URI.parse("entity://agent/system/cc_main")
+      slice = WB.init_slice(%{})
+
+      ctx = %{self_uri: workspace_uri}
+
+      assert {:error, {:cross_workspace_member_not_permitted, ^member_uri, ^workspace_uri}} =
+               WB.invoke(:add_member, slice, %{member: member_uri}, ctx)
+    end
+
+    test "rejects non-entity member (system://)" do
+      workspace_uri = URI.parse("workspace://system")
+      member_uri = URI.parse("system://workspace-loader")
+      slice = WB.init_slice(%{})
+
+      ctx = %{self_uri: workspace_uri}
+
+      assert {:error, {:non_entity_member, ^member_uri, ^workspace_uri}} =
+               WB.invoke(:add_member, slice, %{member: member_uri}, ctx)
+    end
+
+    test "accepts when ctx.self_uri is missing (unit test surface)" do
+      # Preserves the legacy test surface in this file's earlier
+      # describe block — `invoke/4` with empty ctx still works for
+      # unit tests that drive the action directly. The structural
+      # production gate runs through `Kind.Server` which always
+      # populates `self_uri`.
+      member_uri = URI.parse("entity://user/system/admin")
+      slice = WB.init_slice(%{})
+
+      assert {:ok, new_slice} = WB.invoke(:add_member, slice, %{member: member_uri}, %{})
+      assert MapSet.member?(new_slice.members, member_uri)
+    end
+  end
+
+  describe "add_member URI canonicalization (task #55 codex r2 HIGH-1)" do
+    # Pre-fix: `String.split(rest, "/", parts: 2)` accepted 3+ segment
+    # entity URIs, trailing slashes, and query strings — the latter
+    # two slipping through because `parts: 2` globbed everything past
+    # the workspace segment into `entity_name` regardless of shape.
+    # Plus the validator only checked `scheme: "entity"`, never that
+    # `host in ["user", "agent"]`. Post-fix: canonicalize via
+    # `Ezagent.URI.parse!/1` + `Ezagent.URI.instance/1` + host
+    # allowlist.
+
+    test "rejects 4-segment entity URI (extra path segment)" do
+      workspace_uri = URI.parse("workspace://h2oslabs")
+      # 4-segment: entity://user/h2oslabs/alice/extra. Hand-construct
+      # via URI struct so the test isn't masked by `URI.parse/1`'s own
+      # tolerance (production paths typically arrive from RPC / form
+      # submit as user-controlled strings).
+      member_uri = %URI{
+        scheme: "entity",
+        host: "user",
+        authority: "user",
+        path: "/h2oslabs/alice/extra"
+      }
+
+      slice = WB.init_slice(%{})
+      ctx = %{self_uri: workspace_uri}
+
+      assert {:error, {:bad_member_uri, ^member_uri}} =
+               WB.invoke(:add_member, slice, %{member: member_uri}, ctx)
+    end
+
+    test "rejects entity URI with trailing slash" do
+      workspace_uri = URI.parse("workspace://h2oslabs")
+      member_uri = %URI{
+        scheme: "entity",
+        host: "user",
+        authority: "user",
+        path: "/h2oslabs/alice/"
+      }
+
+      slice = WB.init_slice(%{})
+      ctx = %{self_uri: workspace_uri}
+
+      assert {:error, {:bad_member_uri, ^member_uri}} =
+               WB.invoke(:add_member, slice, %{member: member_uri}, ctx)
+    end
+
+    test "rejects entity URI with query string (action=) that masks the prefix check" do
+      workspace_uri = URI.parse("workspace://h2oslabs")
+      # `entity://user/system/alice?action=identity.grant_cap` —
+      # cross-prefix with the query string. Pre-fix the validator
+      # didn't strip the query → false-negative on the prefix check.
+      # Post-fix: the round-2 codex r2 follow-up rejects ANY member
+      # URI carrying a query (regardless of prefix match) as
+      # `:bad_member_uri`. Membership identity must be in instance
+      # form (no query, no fragment).
+      member_uri = URI.parse("entity://user/system/alice?action=identity.grant_cap")
+
+      slice = WB.init_slice(%{})
+      ctx = %{self_uri: workspace_uri}
+
+      assert {:error, {:bad_member_uri, ^member_uri}} =
+               WB.invoke(:add_member, slice, %{member: member_uri}, ctx)
+    end
+
+    test "rejects SAME-workspace entity URI with query (instance-form required) — codex r2 HIGH-1 follow-up" do
+      workspace_uri = URI.parse("workspace://h2oslabs")
+      # Same workspace, but with ?action= — pre-codex-r2 this fell
+      # through the prefix check (after instance/1 stripped ?action,
+      # the workspace segment matched), so the URI landed durable in
+      # the slice + Store. Post-fix: rejected as bad_member_uri so the
+      # original member_uri (still carrying the query) never reaches
+      # persistence.
+      member_uri = URI.parse("entity://user/h2oslabs/alice?action=anything")
+
+      slice = WB.init_slice(%{})
+      ctx = %{self_uri: workspace_uri}
+
+      assert {:error, {:bad_member_uri, ^member_uri}} =
+               WB.invoke(:add_member, slice, %{member: member_uri}, ctx)
+    end
+
+    test "rejects entity URI with #fragment (instance-form required)" do
+      workspace_uri = URI.parse("workspace://h2oslabs")
+      member_uri = URI.parse("entity://user/h2oslabs/alice#somewhere")
+
+      slice = WB.init_slice(%{})
+      ctx = %{self_uri: workspace_uri}
+
+      assert {:error, {:bad_member_uri, ^member_uri}} =
+               WB.invoke(:add_member, slice, %{member: member_uri}, ctx)
+    end
+
+    test "rejects entity URI with non-user, non-agent host segment" do
+      workspace_uri = URI.parse("workspace://h2oslabs")
+      # `entity://something_weird/h2oslabs/alice` — SPEC v3 §3.3 says
+      # the type axis is `user | agent`; pre-fix the validator only
+      # matched `scheme: "entity"`, never the host. Post-fix the host
+      # allowlist rejects.
+      member_uri = %URI{
+        scheme: "entity",
+        host: "something_weird",
+        authority: "something_weird",
+        path: "/h2oslabs/alice"
+      }
+
+      slice = WB.init_slice(%{})
+      ctx = %{self_uri: workspace_uri}
+
+      assert {:error, {:bad_member_uri, ^member_uri}} =
+               WB.invoke(:add_member, slice, %{member: member_uri}, ctx)
+    end
+
+    test "rejects 2-segment entity URI (missing workspace segment)" do
+      # `entity://user/alice` — pre-SPEC-v3 shape that should not be
+      # admitted. parse!/1 rejects (workspace segment required).
+      workspace_uri = URI.parse("workspace://h2oslabs")
+      member_uri = %URI{scheme: "entity", host: "user", authority: "user", path: "/alice"}
+
+      slice = WB.init_slice(%{})
+      ctx = %{self_uri: workspace_uri}
+
+      assert {:error, {:bad_member_uri, ^member_uri}} =
+               WB.invoke(:add_member, slice, %{member: member_uri}, ctx)
+    end
+  end
+
+  describe "remove_cross_prefix_members (task #55 codex r2 HIGH-2)" do
+    # Dispatch-owned cleanup action. Replaces the mix task's direct
+    # `Store.update_members/2` write — that pattern raced concurrent
+    # adds + left the slice stale until restart. New action body
+    # runs under the Workspace Kind GenServer's serialized message
+    # queue so classify-then-mutate is atomic.
+
+    test "atomically removes cross-prefix entity members" do
+      workspace_uri = URI.parse("workspace://h2oslabs")
+      violator_user = URI.parse("entity://user/system/linyilun")
+      violator_agent = URI.parse("entity://agent/other-ws/cc_main")
+      legit_user = URI.parse("entity://user/h2oslabs/alice")
+      legit_agent = URI.parse("entity://agent/h2oslabs/cc_demo")
+
+      slice =
+        WB.init_slice(%{
+          members: [violator_user, violator_agent, legit_user, legit_agent]
+        })
+
+      ctx = %{self_uri: workspace_uri}
+
+      assert {:ok, new_slice, %{removed: removed, kept_count: 2}} =
+               WB.invoke(:remove_cross_prefix_members, slice, %{}, ctx)
+
+      removed_strs = removed |> Enum.map(&URI.to_string/1) |> Enum.sort()
+
+      assert removed_strs ==
+               [URI.to_string(violator_agent), URI.to_string(violator_user)] |> Enum.sort()
+
+      assert MapSet.size(new_slice.members) == 2
+      assert MapSet.member?(new_slice.members, legit_user)
+      assert MapSet.member?(new_slice.members, legit_agent)
+      refute MapSet.member?(new_slice.members, violator_user)
+      refute MapSet.member?(new_slice.members, violator_agent)
+    end
+
+    test "removes non-entity members (system://, workspace://) too" do
+      workspace_uri = URI.parse("workspace://h2oslabs")
+      bad_system = URI.parse("system://workspace-loader")
+      legit = URI.parse("entity://user/h2oslabs/alice")
+
+      slice = WB.init_slice(%{members: [bad_system, legit]})
+      ctx = %{self_uri: workspace_uri}
+
+      assert {:ok, new_slice, %{removed: [^bad_system], kept_count: 1}} =
+               WB.invoke(:remove_cross_prefix_members, slice, %{}, ctx)
+
+      assert MapSet.size(new_slice.members) == 1
+      assert MapSet.member?(new_slice.members, legit)
+    end
+
+    test "clean workspace returns empty removed list + unchanged slice" do
+      workspace_uri = URI.parse("workspace://h2oslabs")
+      legit_a = URI.parse("entity://user/h2oslabs/alice")
+      legit_b = URI.parse("entity://agent/h2oslabs/cc_demo")
+
+      slice = WB.init_slice(%{members: [legit_a, legit_b]})
+      ctx = %{self_uri: workspace_uri}
+
+      assert {:ok, ^slice, %{removed: [], kept_count: 2}} =
+               WB.invoke(:remove_cross_prefix_members, slice, %{}, ctx)
+    end
+
+    test "errors when ctx.self_uri is missing (production safety net)" do
+      slice = WB.init_slice(%{members: [URI.parse("entity://user/system/admin")]})
+
+      assert {:error, {:missing_self_uri, nil}} =
+               WB.invoke(:remove_cross_prefix_members, slice, %{}, %{})
+    end
+
+    test "classifies SAME-workspace URI with ?query as violator — codex r2 HIGH-2 follow-up" do
+      # Pre-codex-r2 the cleanup classifier used raw String.split that
+      # IGNORED query strings, so a same-workspace URI carrying a
+      # query (which the HIGH-1 add_member validator now rejects)
+      # would be reported clean by the cleanup pass. Post-fix the
+      # cleanup classifier shares the validator's logic — any URI the
+      # validator would reject is also classified as a violator here.
+      workspace_uri = URI.parse("workspace://h2oslabs")
+      non_canonical = URI.parse("entity://user/h2oslabs/alice?action=foo")
+      canonical_same = URI.parse("entity://user/h2oslabs/bob")
+
+      slice = WB.init_slice(%{members: [non_canonical, canonical_same]})
+      ctx = %{self_uri: workspace_uri}
+
+      assert {:ok, new_slice, %{removed: removed, kept_count: 1}} =
+               WB.invoke(:remove_cross_prefix_members, slice, %{}, ctx)
+
+      assert removed == [non_canonical]
+      assert MapSet.member?(new_slice.members, canonical_same)
+      refute MapSet.member?(new_slice.members, non_canonical)
+    end
+  end
+
   describe "session_template actions" do
     test "add_template + list_templates round-trip" do
       slice = WB.init_slice(%{})
@@ -115,17 +426,18 @@ defmodule Ezagent.Behavior.WorkspaceTest do
   end
 
   describe "Behavior contract" do
-    test "actions/0 lists all 11 actions" do
+    test "actions/0 lists all 12 actions" do
       # SPEC 2026-05-25-agent-create-cli-gui-parity added `:create_agent`
       # as the 10th action — unified entry for CLI + LV agent creation.
       # SPEC 2026-05-26-session-create-orchestrator-unified Gap C added
-      # `:create_session` as the 11th action — unified CLI + LV session
-      # creation (PR #408). Drive-by test fix in task #46 (Allen 2026-05-27)
-      # to bring the assertion in line with the live actions list. Codex
-      # PR #356 r1 CRIT fix: `:create_user` was briefly added here and
-      # then moved out to `Ezagent.Behavior.WorkspaceUserAdmin` to give
-      # it a distinct cap subject (now via PR #410 the Capability
-      # struct's `action` field disambiguates these).
+      # `:create_session` as the 11th (PR #408 unified CLI + LV).
+      # Codex PR #356 r1 CRIT fix: `:create_user` was briefly added here
+      # and then moved out to `Ezagent.Behavior.WorkspaceUserAdmin` to
+      # give it a distinct cap subject (the Capability struct has no
+      # action axis, so co-locating privileged actions with
+      # member-management ones is an escalation surface).
+      # Task #55 round-2 codex HIGH-2 added `:remove_cross_prefix_members`
+      # as the 12th — dispatch-owned cleanup of legacy violators.
       assert WB.actions() == [
                :list_members,
                :add_member,
@@ -137,7 +449,8 @@ defmodule Ezagent.Behavior.WorkspaceTest do
                :set_routing_rules,
                :instantiate,
                :create_agent,
-               :create_session
+               :create_session,
+               :remove_cross_prefix_members
              ]
     end
 

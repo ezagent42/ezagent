@@ -65,7 +65,16 @@ defmodule Ezagent.Behavior.Workspace do
       # `mix ezagent workspace create_session ...` invocation produces
       # the same session URI shape (and same auto-spawned orchestrator)
       # as the LV "New session" form.
-      :create_session
+      :create_session,
+      # Task #55 round-2 codex HIGH-2 (2026-05-27) — dispatch-owned
+      # cleanup of legacy cross-prefix members. The mix task
+      # `ezagent.workspace.cleanup_cross_prefix_members` used to write
+      # directly to `Store.update_members/2` (concurrent add/remove
+      # race; stale slice until restart). This action now classifies
+      # members AGAINST the live slice + mutates atomically. The mix
+      # task dispatches it (the facade picks up the new member list +
+      # persists).
+      :remove_cross_prefix_members
     ]
   end
 
@@ -92,7 +101,13 @@ defmodule Ezagent.Behavior.Workspace do
       # Gap C — workspace-scoped session creation. Invariant #2: cap
       # subject uses MODULE reference (`__MODULE__`), not atom shorthand.
       create_session:
-        Ezagent.Capability.cap(:workspace, __MODULE__, :create_session)
+        Ezagent.Capability.cap(:workspace, __MODULE__, :create_session),
+      # Task #55 round-2 codex HIGH-2 — admin-only cleanup. The mix
+      # task dispatches under `system://workspace-loader` so the system
+      # principal's caps satisfy this; no operator-facing entry point
+      # holds it.
+      remove_cross_prefix_members:
+        Ezagent.Capability.cap(:workspace, __MODULE__, :remove_cross_prefix_members)
     }
   end
 
@@ -115,7 +130,10 @@ defmodule Ezagent.Behavior.Workspace do
       {:create_session,
        "create a new session in this workspace + auto-spawn the " <>
          "orchestrator agent owned by the caller (SPEC " <>
-         "2026-05-26-session-create-orchestrator-unified Gap C)"}
+         "2026-05-26-session-create-orchestrator-unified Gap C)"},
+      {:remove_cross_prefix_members,
+       "atomically strip members whose URI workspace segment doesn't " <>
+         "match this workspace (task #55 codex r2 HIGH-2 cleanup)"}
     ]
   end
 
@@ -147,26 +165,29 @@ defmodule Ezagent.Behavior.Workspace do
   end
 
   def invoke(:add_member, slice, %{member: %URI{} = uri}, ctx) do
+    # Task #55 (Allen 2026-05-27) — workspace prefix invariant. The
+    # workspace's member set MAY ONLY contain entities whose URI prefix
+    # matches the workspace. `entity://user/<workspace>/...` OR
+    # `entity://agent/<workspace>/...`. A member URI like
+    # `entity://user/system/linyilun` is REJECTED inside `h2oslabs`
+    # because the URI's workspace segment (`system`) doesn't match the
+    # workspace name (`h2oslabs`).
+    #
+    # Empirically observed violation (Allen 2026-05-27 02:47 via RPC):
+    # the h2oslabs workspace row carried `entity://user/system/linyilun`
+    # as a member — a cross-prefix leak. The structural fix lives here
+    # so EVERY dispatch path is covered, not just the facade.
+    #
+    # Order (composed across PR #419 task #46 + PR #417 task #55):
+    #   1. validate prefix invariant (rejected URI never persists, ever)
+    #   2. ensure member's Kind is spawned (so grant_cap doesn't race
+    #      KindRegistry registration — PR #419 task #46 fix)
+    #   3. grant `:create_session` cap to the new member
+    #   4. mutate slice (only if all prior steps succeeded)
     workspace_uri = Map.get(ctx, :self_uri)
 
-    # Task #46 (Allen 2026-05-27) — `grant_member_create_session_cap`
-    # USED to silently fail with `:no_such_actor` when the member's
-    # User Kind wasn't spawned in `KindRegistry` yet (the common
-    # case for "add a user who has never logged in" — LV workspace
-    # settings, `mix ezagent workspace add_member` for a freshly
-    # provisioned user). The `add_member` returned `:ok` but the user
-    # landed in the members set WITHOUT the `:create_session` cap;
-    # the action body's CapBAC then denied every attempt, surfacing
-    # only as "admin grant required as workaround" in the log.
-    # PR #408's UX promise (workspace members can create sessions)
-    # required a manual admin step to actually take effect.
-    #
-    # Fix: pre-spawn the user Kind via `SpawnRegistry.spawn/1`
-    # (idempotent — already-alive returns `{:ok, _pid}`) BEFORE the
-    # grant dispatch. Spawn failures bubble out — the member cannot
-    # be added without their Kind alive to receive the cap. (Order:
-    # ensure spawn → grant → mutate slice.)
-    with :ok <- ensure_member_kind_spawned(uri) do
+    with :ok <- validate_member_prefix(uri, workspace_uri),
+         :ok <- ensure_member_kind_spawned(uri) do
       # codex PR #408 review round-2 MED-2 — fire the `:create_session`
       # cap grant from the Behavior action so EVERY dispatch-level
       # caller (not only the `Ezagent.Workspace.add_member/2` facade)
@@ -178,6 +199,119 @@ defmodule Ezagent.Behavior.Workspace do
 
       {:ok, %{slice | members: MapSet.put(slice.members, uri)}}
     end
+  end
+
+  # Task #55 — workspace prefix validator. Confirms the member URI's
+  # workspace segment matches the workspace URI's host. Non-entity
+  # members are rejected outright — `system://`/`workspace://`/
+  # `session://` URIs have no business in a workspace's member set
+  # (membership models "who lives in this workspace", and only
+  # entities live).
+  #
+  # When `workspace_uri` is missing (`ctx.self_uri == nil`), we let it
+  # through to preserve the existing test surface for unit tests that
+  # drive `invoke/4` directly with an empty ctx. The structural call
+  # site (`Ezagent.Kind.Server`) always populates `self_uri`, so
+  # production paths get the check; tests that intentionally want to
+  # bypass it can keep ctx empty.
+  #
+  # Task #55 round-2 codex HIGH-1 (2026-05-27) — canonicalize via
+  # `Ezagent.URI.parse!/1` + `Ezagent.URI.instance/1` to reject ALL
+  # non-canonical shapes that the pre-fix `String.split(rest, "/",
+  # parts: 2)` accepted as a side-effect of the `parts: 2` limit:
+  #
+  #   - `entity://user/ws/name/extra` (4-segment — parts=2 globbed
+  #     "name/extra" into entity_name)
+  #   - `entity://user/ws/name/` (trailing slash — same glob)
+  #   - `entity://user/ws/alice?action=x` (query string — not stripped)
+  #   - `entity://something/ws/name` (no host allowlist on user|agent)
+  #
+  # `Ezagent.URI.parse!/1` enforces the 3-segment shape + scheme
+  # registry; `Ezagent.URI.instance/1` strips query + fragment.
+  # Together they fully canonicalize before the prefix comparison.
+  defp validate_member_prefix(_member_uri, nil), do: :ok
+
+  defp validate_member_prefix(
+         %URI{scheme: "entity"} = member_uri,
+         %URI{scheme: "workspace", host: workspace_name} = workspace_uri
+       )
+       when is_binary(workspace_name) and workspace_name != "" do
+    # Task #55 round-2 codex r2 review HIGH-1 follow-up — explicitly
+    # reject query + fragment on the ORIGINAL member URI. Pre-fix
+    # `Ezagent.URI.parse!/1` accepts URIs with query strings (they're
+    # not malformed per the parser); `instance/1` strips them for the
+    # workspace-prefix check, so a same-workspace URI with a query
+    # passed the prefix gate AND landed durable in the slice/Store
+    # with its query attached. Member URIs are identities — they must
+    # be in instance form (no query, no fragment) to participate in
+    # the structural invariants.
+    cond do
+      member_uri.query != nil ->
+        {:error, {:bad_member_uri, member_uri}}
+
+      member_uri.fragment != nil ->
+        {:error, {:bad_member_uri, member_uri}}
+
+      true ->
+        validate_member_prefix_canonical(member_uri, workspace_uri, workspace_name)
+    end
+  end
+
+  defp validate_member_prefix_canonical(member_uri, workspace_uri, workspace_name) do
+    with {:ok, canonical} <- canonicalize_entity_uri(member_uri),
+         %URI{host: host, path: "/" <> rest} = canonical,
+         true <- host in ["user", "agent"] or {:bad_host, host} do
+      # parse!/instance guarantees rest splits cleanly into [ws, name].
+      case String.split(rest, "/") do
+        [^workspace_name, entity_name] when entity_name != "" ->
+          :ok
+
+        [_other_workspace, _entity_name] ->
+          {:error, {:cross_workspace_member_not_permitted, member_uri, workspace_uri}}
+
+        _ ->
+          # Defense in depth — `Ezagent.URI.parse!/1` already rejects
+          # non-3-segment forms, so this branch is structurally
+          # unreachable in production. Kept so a future change to
+          # `parse!/1` can't silently widen acceptance.
+          {:error, {:bad_member_uri, member_uri}}
+      end
+    else
+      {:bad_host, _host} ->
+        # `entity://something_weird/ws/name` — host axis must be
+        # exactly `user` or `agent` (the two allowed entity types
+        # per SPEC v3 §3). Anything else is malformed.
+        {:error, {:bad_member_uri, member_uri}}
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  defp validate_member_prefix(%URI{} = member_uri, %URI{} = workspace_uri) do
+    # Non-entity member (system://, workspace://, …) — refuse. Only
+    # `entity://user/...` / `entity://agent/...` are valid workspace
+    # members per the prefix invariant.
+    {:error, {:non_entity_member, member_uri, workspace_uri}}
+  end
+
+  # Canonicalize via `Ezagent.URI.parse!/1` (3-segment shape gate +
+  # scheme registry) and `Ezagent.URI.instance/1` (strip query +
+  # fragment). A `parse!`-rejecting URI (4-segment, trailing slash,
+  # missing workspace) raises ArgumentError → we catch and return
+  # `{:bad_member_uri, ...}` so the caller gets a structured error
+  # instead of a crash.
+  defp canonicalize_entity_uri(%URI{} = member_uri) do
+    canonical =
+      member_uri
+      |> URI.to_string()
+      |> Ezagent.URI.parse!()
+      |> Ezagent.URI.instance()
+
+    {:ok, canonical}
+  rescue
+    ArgumentError ->
+      {:error, {:bad_member_uri, member_uri}}
   end
 
   # Task #46 (Allen 2026-05-27) — pre-spawn the member's User Kind so
@@ -215,6 +349,79 @@ defmodule Ezagent.Behavior.Workspace do
   def invoke(:remove_member, slice, %{member: %URI{} = uri}, _ctx) do
     {:ok, %{slice | members: MapSet.delete(slice.members, uri)}}
   end
+
+  # Task #55 round-2 codex HIGH-2 (2026-05-27) — dispatch-owned cleanup
+  # of legacy cross-prefix members. Replaces the mix task's prior
+  # direct-Store mutation pattern (which had race + stale-slice
+  # issues; see `Mix.Tasks.Ezagent.Workspace.CleanupCrossPrefixMembers`
+  # moduledoc).
+  #
+  # Acts ATOMICALLY against the live slice — classifies via the same
+  # canonicalization rules the `:add_member` validator uses, returns
+  # the kept set + list of removed URIs. The facade then persists the
+  # kept set via the standard `Store.update_members/2` write so DB +
+  # slice stay aligned.
+  #
+  # Why one action (not per-violator `:remove_member` dispatches)?
+  #
+  #   Per-violator dispatch would NOT be atomic w.r.t. concurrent
+  #   `:add_member` calls: a legitimate add interleaved between
+  #   violator dispatches would either be silently dropped (if it
+  #   targeted a violator we're about to remove — unlikely but
+  #   possible) or persisted out of order. One action body that runs
+  #   under the Kind GenServer's serialized message queue makes the
+  #   classify-then-mutate sequence single-threaded.
+  def invoke(:remove_cross_prefix_members, slice, _args, ctx) do
+    workspace_uri = Map.get(ctx, :self_uri)
+
+    case workspace_uri do
+      %URI{scheme: "workspace", host: workspace_name}
+      when is_binary(workspace_name) and workspace_name != "" ->
+        {violators, kept} =
+          slice.members
+          |> MapSet.to_list()
+          |> Enum.split_with(&cross_prefix_violator?(&1, workspace_name))
+
+        {:ok, %{slice | members: MapSet.new(kept)},
+         %{removed: violators, kept_count: length(kept)}}
+
+      _ ->
+        # Production dispatch through `Kind.Server` always populates
+        # `self_uri`; test harnesses that drive `invoke/4` directly
+        # without a self_uri get a structured error rather than a
+        # crash.
+        {:error, {:missing_self_uri, workspace_uri}}
+    end
+  end
+
+  # Task #55 round-2 codex r2 review HIGH-2 follow-up — cleanup
+  # classification MUST share the validator's canonicalization. A
+  # member URI counts as a violator under any of:
+  #
+  #   - non-entity scheme (`system://`, `workspace://`, …);
+  #   - entity URI with `?query` or `#fragment` set (those URIs would
+  #     be rejected by `:add_member` per the HIGH-1 follow-up;
+  #     classifying them as violators is the natural cleanup);
+  #   - entity URI whose canonicalized workspace segment doesn't match
+  #     `workspace_name`;
+  #   - entity URI whose host axis isn't `user`/`agent`;
+  #   - entity URI that `Ezagent.URI.parse!/1` raises on (4-segment,
+  #     trailing slash, missing workspace).
+  #
+  # Implemented by reusing `validate_member_prefix/2` with a
+  # synthesized `workspace_uri` — `:ok` means clean, any `{:error, _}`
+  # means violator.
+  defp cross_prefix_violator?(%URI{} = member_uri, workspace_name) do
+    case validate_member_prefix(
+           member_uri,
+           %URI{scheme: "workspace", host: workspace_name, path: nil}
+         ) do
+      :ok -> false
+      {:error, _} -> true
+    end
+  end
+
+  defp cross_prefix_violator?(_, _), do: true
 
   # --- session templates ----------------------------------------------
 
@@ -501,6 +708,17 @@ defmodule Ezagent.Behavior.Workspace do
           orchestrator_status: :atom,
           orchestrator_error: {:option, :string}
         },
+        modes: [:call]
+      },
+      # Task #55 round-2 codex HIGH-2 — dispatch-owned cleanup.
+      remove_cross_prefix_members: %{
+        description:
+          "Atomically remove members whose URI workspace segment doesn't match " <>
+            "this workspace. Operator-driven cleanup for legacy rows that landed " <>
+            "before the `:add_member` prefix validator was in place. Returns the " <>
+            "list of removed URIs so the operator (or mix task) can audit.",
+        args: %{},
+        returns: %{removed: {:list, :uri}, kept_count: :integer},
         modes: [:call]
       }
     }

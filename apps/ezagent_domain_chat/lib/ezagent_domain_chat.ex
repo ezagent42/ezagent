@@ -478,6 +478,14 @@ defmodule EzagentDomainChat do
   Return all known Session URIs (KindRegistry session:// entries),
   including main + all dynamically-created sessions. Used by LV
   sidebar render.
+
+  Task #55 (Allen 2026-05-27) — the unfiltered list is a
+  cross-workspace leak surface: every LV mounted in workspace X
+  was rendering sessions from workspace Y. Prefer the
+  workspace-scoped `list_sessions/1` overload below for any
+  operator-facing listing. Callers needing an admin-wide view (CI
+  invariant tests, batch utilities) keep this arity for
+  enumeration across tenants.
   """
   @spec list_sessions :: [URI.t()]
   def list_sessions do
@@ -486,6 +494,36 @@ defmodule EzagentDomainChat do
     |> Enum.map(fn {uri_str, _pid} -> URI.new!(uri_str) end)
     |> Enum.sort_by(&URI.to_string/1)
   end
+
+  @doc """
+  Return Session URIs whose workspace segment matches
+  `workspace_uri`. SPEC v3 §5.15 — `session://<template>/<workspace>/<name>`
+  carries workspace as the second path segment; this helper extracts
+  it structurally (no `WorkspaceRegistry` lookup).
+
+  Task #55 (Allen 2026-05-27). The LV session sidebar / `/admin/sessions`
+  list MUST filter by the operator's current workspace; rendering
+  sessions across tenants is a cross-workspace display leak.
+  """
+  @spec list_sessions(URI.t()) :: [URI.t()]
+  def list_sessions(%URI{scheme: "workspace", host: workspace_name})
+      when is_binary(workspace_name) and workspace_name != "" do
+    list_sessions()
+    |> Enum.filter(fn %URI{path: path} -> session_in_workspace?(path, workspace_name) end)
+  end
+
+  # `session://` URI shape per SPEC v3 §5.15:
+  #   `session://<template>/<workspace>/<name>` → URI parsed as
+  #   `%URI{scheme: "session", host: <template>, path: "/<workspace>/<name>"}`.
+  # The workspace segment is the FIRST path segment (post-leading-slash).
+  defp session_in_workspace?("/" <> rest, workspace_name) do
+    case String.split(rest, "/", parts: 2) do
+      [^workspace_name, _name] -> true
+      _ -> false
+    end
+  end
+
+  defp session_in_workspace?(_, _), do: false
 
   # RFC #402 (Allen 2026-05-26) — grant the session creator the
   # `Behavior.OrchestratorAdmin :restart` cap on this session so the

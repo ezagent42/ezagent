@@ -69,9 +69,35 @@ defmodule Ezagent.Workspace do
   # --- durable mutations --------------------------------------------
 
   @doc """
-  Add `member_uri` to Workspace `name`. Writes to DB then dispatches
-  `:add_member` on the live Workspace Kind so subsequent `list_members`
-  returns the new member.
+  Add `member_uri` to Workspace `name`.
+
+  ## Order (Task #55 round-2 codex CRIT-1 fix, 2026-05-27)
+
+  Dispatch FIRST, persist on success. The Behavior validator
+  (`:add_member` action body) is the SOLE gate for the workspace
+  prefix invariant — facade is a thin pass-through. Before this
+  fix the facade persisted to `Store.update_members/2` BEFORE
+  dispatching, so a cross-prefix member URI hit the DB even when
+  the validator rejected it (`workspaces.member_uris` carried a
+  permanent stale violator until operator restart + cleanup task).
+
+  Sequence:
+  1. `dispatch_mutation(:call)` → Workspace Kind runs validator +
+     mutates slice. Returns `{:error, ...}` on validator failure
+     WITHOUT touching slice. `:call` mode (not `:cast`) so the
+     facade can see the error.
+  2. Persist via `Store.update_members/2` with the new full member
+     list — only after dispatch succeeded.
+  3. Side-effects (cap grant + notification).
+
+  Drift property: a crash between (1) and (2) leaves the live
+  Workspace Kind's slice with the new member but the DB without
+  it. On next boot, `Loader` rehydrates the slice from the DB,
+  dropping the orphan member. The drift window is one process
+  lifetime, same magnitude as the pre-fix order's one-boot drift
+  (inverse direction). This is the closest single-call-site fix
+  to a transactional `dispatch ∧ persist` (Phase 5 may add a
+  two-phase commit / transaction).
   """
   @spec add_member(String.t(), URI.t()) :: :ok | {:error, term()}
   def add_member(name, %URI{} = member_uri) do
@@ -82,30 +108,43 @@ defmodule Ezagent.Workspace do
       %{members: existing} ->
         new_members = Enum.uniq([member_uri | existing])
 
-        # Codex review #419 round-1 MEDIUM-3 — pre-spawn the user Kind
-        # at the facade BEFORE Store.update_members + dispatch_mutation,
-        # so a spawn failure (e.g. cross-workspace per task #55) bubbles
-        # out cleanly without leaving (a) a Store row, (b) the
-        # `:workspace_member_added` notification, or (c) the live
-        # Workspace slice diverged. The Behavior path also pre-spawns
-        # (idempotent — already-alive returns `{:ok, _pid}`); the
-        # facade pre-spawn just narrows the divergence window since
-        # `dispatch_mutation` is `:cast` (the Behavior can't bubble
-        # back to the facade).
+        # Composed PR #419 task #46 (facade pre-spawn) + PR #417 task #55
+        # CRIT-1 (dispatch-first persistence):
+        #
+        #   1. Pre-spawn the user Kind at the facade so the Behavior's
+        #      cap-grant doesn't race `KindRegistry`. Idempotent.
+        #   2. Dispatch :add_member through `:call` so the Behavior
+        #      validator can REJECT cross-prefix URIs synchronously.
+        #      On rejection the facade exits WITHOUT touching the
+        #      Store (the CRIT-1 invariant: the Behavior is sole gate
+        #      for the workspace prefix invariant).
+        #   3. Persist via `Store.update_members/2` ONLY after dispatch
+        #      succeeded. A crash here leaves the slice mutated but
+        #      the DB stale; Loader rehydrates from DB on next boot
+        #      and drops the orphan member (same one-process-lifetime
+        #      drift magnitude as the pre-CRIT-1 order, inverse
+        #      direction).
+        #
+        # The Behavior action body itself does the cap-grant + ALSO
+        # pre-spawns (idempotent — already-alive returns
+        # `{:ok, _pid}`); the facade pre-spawn just narrows the
+        # divergence window for paths where the Behavior would
+        # otherwise be the only pre-spawner.
         with :ok <- ensure_member_kind_spawned_at_facade(member_uri),
-             {:ok, _} <- Store.update_members(name, new_members),
-             :ok <- dispatch_mutation(name, "add_member", %{member: member_uri}) do
+             :ok <- dispatch_mutation(name, "add_member", %{member: member_uri}, :call),
+             {:ok, _} <- Store.update_members(name, new_members) do
           # Task #46 (Allen 2026-05-27) — the facade-local
           # `grant_member_create_session_cap/2` call was REMOVED. The
-          # Behavior path (reached via the `dispatch_mutation` cast on
-          # the line above) now pre-spawns the user Kind + grants the
-          # cap via a buffered `:cast`-mode `identity.grant_cap` so it
-          # lands on the ready transition. The facade-side duplicate
-          # was a synchronous `:call` that fail-fasted with
+          # Behavior path (reached via the `dispatch_mutation` above)
+          # now pre-spawns the user Kind + grants the cap via a
+          # buffered `:cast`-mode `identity.grant_cap` so it lands on
+          # the ready transition. The facade-side duplicate was a
+          # synchronous `:call` that fail-fasted with
           # `:no_such_actor` or `:not_ready` for any user not yet in
-          # `KindRegistry` — the empirical Allen-observed bug, defeating
-          # PR #408's UX promise that workspace members can dispatch
-          # `workspace.create_session` without admin intervention.
+          # `KindRegistry` — the empirical Allen-observed bug,
+          # defeating PR #408's UX promise that workspace members can
+          # dispatch `workspace.create_session` without admin
+          # intervention.
 
           # Notifier/flash audit 2026-05-24 — surface to the affected
           # user's notification stream. Pre-fix only `Chat.receive`
@@ -186,6 +225,92 @@ defmodule Ezagent.Workspace do
 
           :ok
         end
+    end
+  end
+
+  @doc """
+  Atomically remove cross-prefix members from workspace `name`.
+
+  Task #55 round-2 codex HIGH-2 (2026-05-27). Replaces the direct-store
+  cleanup the mix task `ezagent.workspace.cleanup_cross_prefix_members`
+  used to do — that pattern was race-prone (concurrent `add_member`
+  between the scan + update would be lost) AND left the live Workspace
+  Kind's slice stale until restart.
+
+  Dispatches `Behavior.Workspace.:remove_cross_prefix_members` against
+  the workspace's Kind. The action body classifies the slice's members
+  against the same canonicalization rules `:add_member` uses, returns
+  `{:ok, slice', %{removed: [URI], kept_count: integer}}` atomically.
+  The facade then persists the kept set via `Store.update_members/2`
+  so DB + slice stay aligned.
+
+  Returns `{:ok, %{removed: [URI], kept_count: integer}}` on success;
+  `{:error, reason}` on dispatch / persistence failure. An empty
+  `removed` list means the workspace had no violators.
+
+  Mirrors `add_member/2`'s dispatch-first persistence pattern (CRIT-1).
+  """
+  @spec remove_cross_prefix_members(String.t()) ::
+          {:ok, %{removed: [URI.t()], kept_count: non_neg_integer()}} | {:error, term()}
+  def remove_cross_prefix_members(name) when is_binary(name) and name != "" do
+    case Store.get_by_name(name) do
+      nil ->
+        {:error, :not_found}
+
+      _persisted ->
+        target = URI.parse("workspace://#{name}?action=workspace.remove_cross_prefix_members")
+
+        case Invocation.dispatch(%Invocation{
+               target: target,
+               mode: :call,
+               args: %{},
+               ctx: %{
+                 caller: Ezagent.SystemPrincipal.uri("workspace-loader"),
+                 caps: Ezagent.SystemPrincipal.caps("system://workspace-loader"),
+                 reply: {:caller_inbox, self()}
+               }
+             }) do
+          {:ok, %{removed: removed, kept_count: kept_count}} when is_list(removed) ->
+            # Mutation already committed in slice. Persist the kept
+            # set so the DB matches. Read current members from the
+            # live Kind via `:list_members` dispatch to get the
+            # post-mutation set (the action body returns the removed
+            # list separately for audit, not the kept URIs).
+            with {:ok, kept_uris} <- list_current_members_for_persist(name) do
+              case Store.update_members(name, kept_uris) do
+                {:ok, _} ->
+                  {:ok, %{removed: removed, kept_count: kept_count}}
+
+                {:error, reason} ->
+                  {:error, {:persist_failed, reason}}
+              end
+            end
+
+          {:error, _reason} = err ->
+            err
+
+          other ->
+            {:error, {:unexpected_dispatch_return, other}}
+        end
+    end
+  end
+
+  defp list_current_members_for_persist(name) do
+    target = URI.parse("workspace://#{name}?action=workspace.list_members")
+
+    case Invocation.dispatch(%Invocation{
+           target: target,
+           mode: :call,
+           args: %{},
+           ctx: %{
+             caller: Ezagent.SystemPrincipal.uri("workspace-loader"),
+             caps: Ezagent.SystemPrincipal.caps("system://workspace-loader"),
+             reply: {:caller_inbox, self()}
+           }
+         }) do
+      {:ok, %{members: members}} when is_list(members) -> {:ok, members}
+      {:error, _} = err -> err
+      other -> {:error, {:unexpected_dispatch_return, other}}
     end
   end
 
@@ -307,19 +432,35 @@ defmodule Ezagent.Workspace do
     end
   end
 
-  defp dispatch_mutation(name, action_str, args) do
+  # Default `:cast` mode preserves existing call sites (add_template,
+  # remove_template, remove_member, set_routing_rules) that are
+  # validator-free and don't need synchronous error propagation.
+  defp dispatch_mutation(name, action_str, args), do: dispatch_mutation(name, action_str, args, :cast)
+
+  # Task #55 round-2 codex CRIT-1 — `:call` mode for add_member so the
+  # facade can see the Behavior validator's rejection (cross-prefix
+  # member) and SKIP the subsequent `Store.update_members/2`. Without
+  # `:call`, a `:cast` dispatch silently drops the error and the facade
+  # persists the bad URI regardless.
+  defp dispatch_mutation(name, action_str, args, mode) when mode in [:cast, :call] do
     target = URI.parse("workspace://#{name}?action=workspace.#{action_str}")
+
+    reply =
+      case mode do
+        :call -> {:caller_inbox, self()}
+        :cast -> :ignore
+      end
 
     case Invocation.dispatch(%Invocation{
            target: target,
-           mode: :cast,
+           mode: mode,
            args: args,
            # SPEC caps-cleanup-v1 §4.4 — Workspace mutation runs under
            # `system://workspace-loader` (closed Catalog).
            ctx: %{
              caller: Ezagent.SystemPrincipal.uri("workspace-loader"),
              caps: Ezagent.SystemPrincipal.caps("system://workspace-loader"),
-             reply: :ignore
+             reply: reply
            }
          }) do
       :ok -> :ok
