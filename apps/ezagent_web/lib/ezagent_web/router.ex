@@ -208,6 +208,17 @@ defmodule EzagentWeb.Router do
       # bind flow this LV drives.
       live "/admin/sessions/:id/external_mirror",
            Admin.SessionExternalMirrorLive
+
+      # Phase 2.7 (AutoService → ezagent migration) — operator
+      # dashboard for live customer sessions. Lives under /admin
+      # to satisfy the router invariant ("every /admin/* route is
+      # in :require_admin"); the in-LV authz currently re-asserts
+      # via the operator-cap check (any cap). A future PR can
+      # split this off into a `:require_operator_cap` live_session
+      # once Behavior.Workspace :customer_session_observer is
+      # registered — see poc/phase-2/7-operator-dashboard.md.
+      live "/admin/customer_sessions", CustomerSessionsDashboardLive
+      live "/admin/customer_sessions/:id", CustomerSessionViewLive
     end
   end
 
