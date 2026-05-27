@@ -84,7 +84,7 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpBridgeTest do
   alias Ezagent.{Behavior, Capability}
   alias Ezagent.Entity.{Agent, Session, User}
   alias Ezagent.Orchestrator.{CcOrchestratorSeed, McpChannel, McpRegistry, McpServer}
-  alias EzagentPluginCc.TokenStore
+  alias Ezagent.AgentBridge.TokenStore
 
   # `uv` presence is resolved ONCE at module eval. The three subprocess
   # tests below tag themselves `skip:` when it is absent — a real

@@ -34,7 +34,7 @@ defmodule Ezagent.Orchestrator.McpRegistry do
 
   ETS-backed, `:set`, `:public`, `:named_table`. Declared by
   `init/0` from `EzagentDomainChat.Application.start/2` — the same
-  lazy `init/0` pattern as `EzagentPluginCc.BridgeRegistry` (the
+  lazy `init/0` pattern as the AgentBridge registry (the
   registry lives in a domain app, so it cannot ride the core
   `EzagentCore.EtsOwner` table list).
 

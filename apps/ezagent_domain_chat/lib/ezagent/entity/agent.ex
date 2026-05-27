@@ -6,7 +6,7 @@ defmodule Ezagent.Entity.Agent do
   Per Decision #61: an Agent is a peer of admin User in the Session —
   it can send messages (when its bridge surfaces a reply) and receive
   messages (forwarded by Session). The bridge wire is provided by
-  `EzagentPluginCc` (Phoenix.Channel WebSocket); the Agent
+  AgentBridge (Phoenix.Channel WebSocket); the Agent
   Kind itself stays transport-agnostic.
 
   ## Spawn lifecycle
@@ -14,12 +14,12 @@ defmodule Ezagent.Entity.Agent do
   Two paths spawn an Agent Kind:
 
   1. **Cold spawn** from a workspace's `cc.pty` Template Class →
-     `EzagentPluginCc.Template.instantiate/3` starts a PtyServer
+     the cc Template Class starts a PtyServer
      which writes the v2 mcp.json; claude reads it and spawns the
      Python WS bridge.
 
   2. **Channel-join spawn** when the WS bridge joins
-     `cc:bridge:<agent_uri>` — `EzagentPluginCc.Channel.join/3`
+     `cc:bridge:<agent_uri>` — the AgentBridge channel
      calls `Ezagent.SpawnRegistry.spawn(agent_uri)` to ensure the
      Agent Kind exists in `KindRegistry` before binding the channel
      pid to it (PR 32a).

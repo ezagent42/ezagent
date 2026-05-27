@@ -53,17 +53,11 @@ defmodule EzagentDomainChat.MixProject do
       # Ezagent.AgentBridge.Payload and dispatches through the
       # plugin-independent bridge facade.
       {:ezagent_domain_agent_bridge, in_umbrella: true},
-      # AgentBridge PR-D keeps this dep temporarily while cc's bridge
-      # adapter module is introduced. PR-E removes the plugin dep once
-      # the domain_chat layer-purity test is strengthened.
-      # layer-violation-exempt: pending PR-E dependency removal
-      {:ezagent_plugin_cc, in_umbrella: true},
       # Phase 7 completion PR-5: the orchestrator MCP transport bridge's
       # BEAM endpoint is a Phoenix.Socket + Phoenix.Channel
-      # (Ezagent.Orchestrator.McpSocket / McpChannel) — the same house
-      # transport the cc channel bridge uses. Declared explicitly even
-      # though Phoenix is transitively present (via ezagent_plugin_cc),
-      # because this app now `use`s Phoenix.Socket / Phoenix.Channel.
+      # (Ezagent.Orchestrator.McpSocket / McpChannel). Declared
+      # explicitly because this app now `use`s Phoenix.Socket /
+      # Phoenix.Channel.
       {:phoenix, "~> 1.8.0"},
       # Phase 7 MCP-bridge hardening (codex MEDIUM-3): the authenticated
       # subprocess test (`orchestrator_mcp_bridge_test.exs`) starts a

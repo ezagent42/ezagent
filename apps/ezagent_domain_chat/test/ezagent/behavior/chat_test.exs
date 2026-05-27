@@ -18,7 +18,7 @@ defmodule Ezagent.Behavior.ChatTest do
   setup do
     :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
     Ecto.Adapters.SQL.Sandbox.mode(Repo, {:shared, self()})
-    :ok = Ezagent.AgentBridge.AdapterRegistry.register("cc", EzagentPluginCc.BridgeAdapter)
+    :ok = EzagentDomainChat.AgentBridgeTestAdapter.ensure_registered()
     :ok
   end
 

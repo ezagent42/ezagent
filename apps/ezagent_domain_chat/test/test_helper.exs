@@ -17,12 +17,14 @@ if File.dir?(umbrella_lib) do
   end
 end
 
-# Echo plugin registers the "echo" flavor + Echo Kind module — chat
-# tests dispatch `entity://agent/<ws>/echo_<name>` URIs whose resolution
-# walks `Ezagent.AgentFlavorRegistry`. Without this start, every echo
-# spawn returns `{:error, {:no_kind_module_for_agent, ...}}`.
-for app <- [:ezagent_plugin_echo] do
+# Echo and cc plugin startup here is test-boundary setup, not a
+# production domain dependency. Echo registers the "echo" flavor + Echo
+# Kind module; cc registers the "cc" Agent flavor and Template Class
+# used by orchestrator integration tests.
+for app <- [:ezagent_plugin_echo, :ezagent_plugin_cc] do
   {:ok, _} = Application.ensure_all_started(app)
 end
+
+Code.require_file("support/agent_bridge_test_adapter.exs", __DIR__)
 
 ExUnit.start()

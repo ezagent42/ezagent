@@ -32,7 +32,7 @@ defmodule Ezagent.Orchestrator.McpServer do
   A `claude` agent talks to MCP servers listed in its `--mcp-config`
   file. The cc Template Class (`Ezagent.PluginCc.Template.CcAgent`)
   already emits a trusted esr-bridge `--mcp-config`
-  (`EzagentPluginCc.McpConfigWriter`) and accepts an ADDITIONAL operator
+  and accepts an ADDITIONAL operator
   `--mcp-config` (`operator_mcp_config_path`, §1.5 (c) — additive, the
   bridge is never removed). The cc-orchestrator AgentTemplate's
   `mcp_config_path` field points at an orchestrator MCP-server config

@@ -20,9 +20,7 @@ defmodule EzagentCore.Invariants.LayerPurityTest do
      pulling a specific plugin).
 
   Exemptions: add `# layer-violation-exempt: <reason>` on the offending
-  line. Example: ezagent_domain_chat depends on
-  ezagent_plugin_cc_bridge_v1_prototype because Chat.invoke(:receive) on
-  Agent pushes to the bridge; the dep disappears in PR 4 (6a).
+  dependency line.
 
   Plugins are unrestricted on purpose — composition between plugins
   (e.g. ezagent imports cc_pty's Template form fields) is fine; the
@@ -69,6 +67,24 @@ defmodule EzagentCore.Invariants.LayerPurityTest do
     end
   end
 
+  test "ezagent_domain_* lib code does not reference EzagentPluginCc modules" do
+    for app <- list_apps(~r/^ezagent_domain_/) do
+      offending =
+        app
+        |> lib_elixir_files()
+        |> Enum.flat_map(&plugin_cc_references_in_file/1)
+
+      assert offending == [],
+             """
+             #{app}/lib has disallowed EzagentPluginCc module references:
+             #{Enum.join(offending, "\n")}
+
+             Domain apps must route through domain abstractions such as
+             Ezagent.AgentBridge, not plugin-specific modules.
+             """
+    end
+  end
+
   defp list_apps(pattern) do
     File.ls!(apps_root())
     |> Enum.filter(&File.dir?(Path.join(apps_root(), &1)))
@@ -94,5 +110,40 @@ defmodule EzagentCore.Invariants.LayerPurityTest do
     above_pattern = ~r/layer-violation-exempt[^\n]*\n\s*\{:#{dep},\s*in_umbrella:\s*true\}/
 
     Regex.match?(line_pattern, source) or Regex.match?(above_pattern, source)
+  end
+
+  defp lib_elixir_files(app) do
+    Path.join([apps_root(), Atom.to_string(app), "lib", "**", "*.ex"])
+    |> Path.wildcard()
+    |> Enum.sort()
+  end
+
+  defp plugin_cc_references_in_file(path) do
+    ast =
+      path
+      |> File.read!()
+      |> Code.string_to_quoted!(file: path)
+
+    {_ast, refs} =
+      Macro.prewalk(ast, [], fn
+        {:__aliases__, meta, [:EzagentPluginCc | rest]} = node, refs ->
+          module = Module.concat([EzagentPluginCc | rest])
+          {node, [{meta[:line] || 1, module} | refs]}
+
+        node, refs ->
+          {node, refs}
+      end)
+
+    refs
+    |> Enum.uniq()
+    |> Enum.sort()
+    |> Enum.map(fn {line, module} ->
+      "#{Path.relative_to(path, repo_root())}:#{line} #{inspect(module)}"
+    end)
+  end
+
+  defp repo_root do
+    {out, 0} = System.cmd("git", ["rev-parse", "--show-toplevel"])
+    String.trim(out)
   end
 end
