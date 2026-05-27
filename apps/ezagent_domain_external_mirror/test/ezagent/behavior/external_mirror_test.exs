@@ -276,6 +276,16 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
       # surfaces the desync as a hard error.
       assert {:error, :projection_desync} =
                Facade.unbind(session_uri, "mock_publish", target_id, ctx)
+
+      # codex PR #418 r1 HIGH ordering invariant (2026-05-27): the
+      # post-r1 ordering is delete-then-terminate, so on a desync
+      # error the slice's binding remains. Pre-r1 ordering would
+      # have terminated the worker before discovering the desync —
+      # observable as "active slice binding with no live worker".
+      # Check the slice didn't lose the binding (a successful unbind
+      # would have).
+      assert {:ok, [%{adapter_id: "mock_publish", target_id: ^target_id}]} =
+               Facade.list_bindings(session_uri, ctx)
     end
   end
 

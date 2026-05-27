@@ -75,6 +75,44 @@ defmodule Ezagent.ExternalMirror.BindingRowTest do
       assert nil == EzagentCore.Repo.get(BindingRow, row_a.id)
       assert %BindingRow{} = EzagentCore.Repo.get(BindingRow, row_b.id)
     end
+
+    # codex PR #418 r1 HIGH regression (2026-05-27): the prior
+    # implementation looked up rows by their hashed `:id` value
+    # (`row_id/3` of the natural key). That fails for any row whose
+    # stored `:id` was derived from a DIFFERENT stringification of
+    # `session_uri` than the current call uses — and the 2026-06-13
+    # `data_migrate_default_to_system_uris` migration is one such
+    # drift source (it rewrites `session_uri` without recomputing
+    # `:id`). Post-fix, `delete_by_natural_key/3` deletes by the
+    # ACTUAL natural-key columns, so it works regardless of
+    # `:id` drift.
+    test "deletes even when stored :id does not match the current row_id/3 hash" do
+      session_uri = URI.parse("session://system/system/em-nk-drift")
+      attrs = fixture_attrs(URI.to_string(session_uri), "feishu", "oc_drift")
+
+      # Manufacture the drift: overwrite the row's `:id` with the
+      # hash of a DIFFERENT URI form (simulating the
+      # default-to-system migration's
+      # `UPDATE … SET session_uri = REPLACE(…)` without recomputing
+      # `:id`).
+      pre_migration_uri = URI.parse("session://default/system/em-nk-drift")
+      drifted_id = BindingRow.row_id(pre_migration_uri, "feishu", "oc_drift")
+      attrs = %{attrs | id: drifted_id}
+
+      {:ok, _row} = BindingRow.insert(attrs)
+
+      # Sanity: looking up by the CURRENT row_id misses (the bug).
+      current_id = BindingRow.row_id(session_uri, "feishu", "oc_drift")
+      assert drifted_id != current_id
+      assert nil == EzagentCore.Repo.get(BindingRow, current_id)
+
+      # But natural-key delete still finds + deletes the row.
+      assert {:ok, :deleted} =
+               BindingRow.delete_by_natural_key(session_uri, "feishu", "oc_drift")
+
+      # Confirm gone.
+      assert nil == EzagentCore.Repo.get(BindingRow, drifted_id)
+    end
   end
 
   # ----- helpers -----------------------------------------------------------
