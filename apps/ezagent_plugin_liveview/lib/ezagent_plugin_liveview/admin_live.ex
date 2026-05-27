@@ -189,7 +189,12 @@ defmodule EzagentPluginLiveview.AdminLive do
       # `:pending` / `:failed` text for the operator to see.
       |> assign_new(:flash_error, fn -> nil end)
       |> assign(:current_session_uri, current_session_uri)
-      |> assign(:sessions, EzagentDomainChat.list_sessions())
+      # Task #55 (Allen 2026-05-27) — filter sessions by the operator's
+      # current workspace. Pre-fix every LV mount displayed sessions
+      # from every workspace (cross-workspace display leak).
+      # `list_sessions_for/1` falls back to the unfiltered list when
+      # `current_workspace_uri` is nil (early-mount defensive path).
+      |> assign(:sessions, list_sessions_for(socket.assigns[:current_workspace_uri]))
       # Session auto-join (Allen 2026-05-26 — PR #374) — every
       # navigation to a session auto-dispatches `chat.join` for the
       # caller, so the MemberPanel renders the user WITHOUT requiring
@@ -741,7 +746,8 @@ defmodule EzagentPluginLiveview.AdminLive do
 
         {:noreply,
          socket
-         |> assign(:sessions, EzagentDomainChat.list_sessions())
+         # Task #55 — workspace-scoped session list (see mount/3).
+         |> assign(:sessions, list_sessions_for(socket.assigns[:current_workspace_uri]))
          |> assign(
            :new_session_form,
            to_form(%{"short_name" => "", "template_class" => ""}, as: "new_session")
@@ -2524,6 +2530,17 @@ defmodule EzagentPluginLiveview.AdminLive do
 
   defp session_events_topic(%URI{} = uri),
     do: Ezagent.Behavior.Chat.session_events_topic(uri)
+
+  # Task #55 (Allen 2026-05-27) — workspace-scoped session list for
+  # the LV sidebar / `/admin/sessions`. Falls back to the unfiltered
+  # list when `current_workspace_uri` is nil (early-mount defensive
+  # path before LiveAuth populates the assign). Wraps
+  # `EzagentDomainChat.list_sessions/1` (workspace-aware) and
+  # `/0` (admin / fallback).
+  defp list_sessions_for(%URI{scheme: "workspace"} = workspace_uri),
+    do: EzagentDomainChat.list_sessions(workspace_uri)
+
+  defp list_sessions_for(_), do: EzagentDomainChat.list_sessions()
 
   defp load_session_messages(%URI{} = session_uri) do
     session_uri

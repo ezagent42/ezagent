@@ -57,6 +57,14 @@ defmodule EzagentPluginLiveview.IdentitiesLive do
   defp default_filter_for_path(_), do: "all"
 
   defp assign_entities(socket) do
+    # Task #55 (Allen 2026-05-27) — filter entities by the operator's
+    # current workspace. Pre-fix this LV displayed user + agent rows
+    # from every workspace, leaking cross-tenant directory data. The
+    # filter is structural (URI workspace segment); a nil
+    # `current_workspace_uri` (early-mount defensive path) falls
+    # through to the unfiltered list.
+    workspace_filter = workspace_name_filter(socket.assigns[:current_workspace_uri])
+
     rows =
       Ezagent.KindRegistry.list_all()
       |> Enum.flat_map(fn {uri_str, pid} ->
@@ -64,24 +72,28 @@ defmodule EzagentPluginLiveview.IdentitiesLive do
           {:ok, %URI{scheme: "entity", host: host, path: "/" <> rest} = uri}
           when host in ["user", "agent"] ->
             # Phase 9 PR-2 (SPEC v3 §3): entity URIs are 3-segment;
-            # extract entity_name (second path segment) for display.
-            entity_name =
+            # extract workspace + entity_name for display + filter.
+            {workspace_name, entity_name} =
               case String.split(rest, "/", parts: 2) do
-                [_workspace, name] -> name
-                [name] -> name
+                [ws, name] -> {ws, name}
+                [name] -> {nil, name}
               end
 
-            [
-              %{
-                uri: uri,
-                uri_str: uri_str,
-                host: host,
-                name: entity_name,
-                flavor: flavor_for(host, entity_name),
-                pid: pid,
-                alive: is_pid(pid) and Process.alive?(pid)
-              }
-            ]
+            if entity_matches_workspace?(workspace_name, workspace_filter) do
+              [
+                %{
+                  uri: uri,
+                  uri_str: uri_str,
+                  host: host,
+                  name: entity_name,
+                  flavor: flavor_for(host, entity_name),
+                  pid: pid,
+                  alive: is_pid(pid) and Process.alive?(pid)
+                }
+              ]
+            else
+              []
+            end
 
           _ ->
             []
@@ -116,6 +128,23 @@ defmodule EzagentPluginLiveview.IdentitiesLive do
   end
 
   defp flavor_for(_, _), do: ""
+
+  # Task #55 — workspace filter helpers.
+  #
+  # `workspace_name_filter/1` reduces the socket's current workspace
+  # URI to a name string (or :all when the assign is missing / nil).
+  # `:all` short-circuits the per-entry check below to keep the
+  # legacy unfiltered render for cold-mount paths where LiveAuth has
+  # not yet populated `current_workspace_uri`.
+  defp workspace_name_filter(%URI{scheme: "workspace", host: name})
+       when is_binary(name) and name != "",
+       do: name
+
+  defp workspace_name_filter(_), do: :all
+
+  defp entity_matches_workspace?(_workspace_name, :all), do: true
+  defp entity_matches_workspace?(workspace_name, workspace_name), do: true
+  defp entity_matches_workspace?(_, _), do: false
 
   defp matches_filter?(_, "all"), do: true
   defp matches_filter?(%{host: "user"}, "users"), do: true

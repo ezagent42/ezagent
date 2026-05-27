@@ -65,6 +65,31 @@ defmodule EzagentDomainChat.Integration.DynamicSessionTest do
     assert "session://default/system/#{short}" in uris
   end
 
+  # Task #55 (Allen 2026-05-27) — workspace-scoped session listing
+  # for the LV sidebar / `/admin/sessions`. The unfiltered `/0`
+  # variant leaked cross-workspace sessions to every LV mount.
+  test "list_sessions/1 filters by workspace_uri" do
+    short = "ws-scoped-#{System.unique_integer([:positive])}"
+
+    {:ok, _, _meta} =
+      EzagentDomainChat.create_session(short, User.admin_uri(), template_name: "default")
+
+    system_uris =
+      "workspace://system"
+      |> URI.parse()
+      |> EzagentDomainChat.list_sessions()
+      |> Enum.map(&URI.to_string/1)
+
+    other_uris =
+      "workspace://team-alpha-#{System.unique_integer([:positive])}"
+      |> URI.parse()
+      |> EzagentDomainChat.list_sessions()
+      |> Enum.map(&URI.to_string/1)
+
+    assert "session://default/system/#{short}" in system_uris
+    refute "session://default/system/#{short}" in other_uris
+  end
+
   defp wait_until(fun, retries \\ 50) do
     case fun.() do
       false when retries > 0 ->
