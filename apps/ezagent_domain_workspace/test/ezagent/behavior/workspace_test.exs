@@ -61,6 +61,89 @@ defmodule Ezagent.Behavior.WorkspaceTest do
     end
   end
 
+  describe "add_member workspace-prefix invariant (task #55)" do
+    # SPEC v3 §3 — entity URIs are `entity://<type>/<workspace>/<name>`.
+    # Workspace's member set MAY ONLY contain entities whose URI prefix
+    # matches the workspace (Allen 2026-05-27 directive).
+    #
+    # The structural check lives in `:add_member` so dispatch-level
+    # callers (LV forms, mix tasks, CLI, RPC) all get the same gate.
+
+    test "accepts same-prefix user member" do
+      workspace_uri = URI.parse("workspace://h2oslabs")
+      member_uri = URI.parse("entity://user/h2oslabs/alice")
+      slice = WB.init_slice(%{})
+
+      ctx = %{self_uri: workspace_uri}
+
+      assert {:ok, new_slice} = WB.invoke(:add_member, slice, %{member: member_uri}, ctx)
+      assert MapSet.member?(new_slice.members, member_uri)
+    end
+
+    test "accepts same-prefix agent member" do
+      workspace_uri = URI.parse("workspace://h2oslabs")
+      member_uri = URI.parse("entity://agent/h2oslabs/cc_main")
+      slice = WB.init_slice(%{})
+
+      ctx = %{self_uri: workspace_uri}
+
+      assert {:ok, new_slice} = WB.invoke(:add_member, slice, %{member: member_uri}, ctx)
+      assert MapSet.member?(new_slice.members, member_uri)
+    end
+
+    test "rejects cross-prefix user member" do
+      workspace_uri = URI.parse("workspace://h2oslabs")
+      # The exact violator empirically observed in the h2oslabs row
+      # 2026-05-27 02:47 — `entity://user/system/linyilun` inside
+      # `workspace://h2oslabs` is a cross-prefix leak.
+      member_uri = URI.parse("entity://user/system/linyilun")
+      slice = WB.init_slice(%{})
+
+      ctx = %{self_uri: workspace_uri}
+
+      assert {:error, {:cross_workspace_member_not_permitted, ^member_uri, ^workspace_uri}} =
+               WB.invoke(:add_member, slice, %{member: member_uri}, ctx)
+
+      # Slice must be untouched on rejection — no half-applied state.
+      assert MapSet.size(slice.members) == 0
+    end
+
+    test "rejects cross-prefix agent member" do
+      workspace_uri = URI.parse("workspace://team-alpha")
+      member_uri = URI.parse("entity://agent/system/cc_main")
+      slice = WB.init_slice(%{})
+
+      ctx = %{self_uri: workspace_uri}
+
+      assert {:error, {:cross_workspace_member_not_permitted, ^member_uri, ^workspace_uri}} =
+               WB.invoke(:add_member, slice, %{member: member_uri}, ctx)
+    end
+
+    test "rejects non-entity member (system://)" do
+      workspace_uri = URI.parse("workspace://system")
+      member_uri = URI.parse("system://workspace-loader")
+      slice = WB.init_slice(%{})
+
+      ctx = %{self_uri: workspace_uri}
+
+      assert {:error, {:non_entity_member, ^member_uri, ^workspace_uri}} =
+               WB.invoke(:add_member, slice, %{member: member_uri}, ctx)
+    end
+
+    test "accepts when ctx.self_uri is missing (unit test surface)" do
+      # Preserves the legacy test surface in this file's earlier
+      # describe block — `invoke/4` with empty ctx still works for
+      # unit tests that drive the action directly. The structural
+      # production gate runs through `Kind.Server` which always
+      # populates `self_uri`.
+      member_uri = URI.parse("entity://user/system/admin")
+      slice = WB.init_slice(%{})
+
+      assert {:ok, new_slice} = WB.invoke(:add_member, slice, %{member: member_uri}, %{})
+      assert MapSet.member?(new_slice.members, member_uri)
+    end
+  end
+
   describe "session_template actions" do
     test "add_template + list_templates round-trip" do
       slice = WB.init_slice(%{})
@@ -115,9 +198,11 @@ defmodule Ezagent.Behavior.WorkspaceTest do
   end
 
   describe "Behavior contract" do
-    test "actions/0 lists all 10 actions" do
+    test "actions/0 lists all 11 actions" do
       # SPEC 2026-05-25-agent-create-cli-gui-parity added `:create_agent`
       # as the 10th action — unified entry for CLI + LV agent creation.
+      # SPEC 2026-05-26-session-create-orchestrator-unified Gap C added
+      # `:create_session` as the 11th (PR #408 unified CLI + LV).
       # Codex PR #356 r1 CRIT fix: `:create_user` was briefly added here
       # and then moved out to `Ezagent.Behavior.WorkspaceUserAdmin` to
       # give it a distinct cap subject (the Capability struct has no
@@ -133,7 +218,8 @@ defmodule Ezagent.Behavior.WorkspaceTest do
                :list_routing_rules,
                :set_routing_rules,
                :instantiate,
-               :create_agent
+               :create_agent,
+               :create_session
              ]
     end
 

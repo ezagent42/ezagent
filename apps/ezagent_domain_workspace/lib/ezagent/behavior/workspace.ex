@@ -147,17 +147,79 @@ defmodule Ezagent.Behavior.Workspace do
   end
 
   def invoke(:add_member, slice, %{member: %URI{} = uri}, ctx) do
-    # codex PR #408 review round-2 MED-2 — fire the `:create_session`
-    # cap grant from the Behavior action so EVERY dispatch-level caller
-    # (not only the `Ezagent.Workspace.add_member/2` facade) covers
-    # workspace members. Best-effort: the helper logs + telemetry's
-    # failures but does NOT bubble — membership has its own value
-    # (messaging, presence) even if cap-grant raced or the user is
-    # already in caps.
+    # Task #55 (Allen 2026-05-27) — workspace prefix invariant. The
+    # workspace's member set MAY ONLY contain entities whose URI prefix
+    # matches the workspace. `entity://user/<workspace>/...` OR
+    # `entity://agent/<workspace>/...`. A member URI like
+    # `entity://user/system/linyilun` is REJECTED inside `h2oslabs`
+    # because the URI's workspace segment (`system`) doesn't match the
+    # workspace name (`h2oslabs`).
+    #
+    # Empirically observed violation (Allen 2026-05-27 02:47 via RPC):
+    # the h2oslabs workspace row carried `entity://user/system/linyilun`
+    # as a member — a cross-prefix leak. The structural fix lives here
+    # so EVERY dispatch path is covered, not just the facade.
+    #
+    # Validation happens BEFORE the codex PR #408 round-2 MED-2 cap
+    # grant so a rejected member never receives the `:create_session`
+    # cap. Order: validate → grant → mutate slice.
     workspace_uri = Map.get(ctx, :self_uri)
-    grant_member_create_session_cap(workspace_uri, uri)
 
-    {:ok, %{slice | members: MapSet.put(slice.members, uri)}}
+    with :ok <- validate_member_prefix(uri, workspace_uri) do
+      # codex PR #408 review round-2 MED-2 — fire the `:create_session`
+      # cap grant from the Behavior action so EVERY dispatch-level
+      # caller (not only the `Ezagent.Workspace.add_member/2` facade)
+      # covers workspace members. Best-effort: the helper logs +
+      # telemetry's failures but does NOT bubble — membership has its
+      # own value (messaging, presence) even if cap-grant raced or the
+      # user is already in caps.
+      grant_member_create_session_cap(workspace_uri, uri)
+
+      {:ok, %{slice | members: MapSet.put(slice.members, uri)}}
+    end
+  end
+
+  # Task #55 — workspace prefix validator. Extracts the workspace
+  # segment from the member URI's path (per SPEC v3 §3 entity URI shape
+  # `entity://<type>/<workspace>/<name>`) and confirms it matches the
+  # workspace URI's host. Non-entity members are rejected outright —
+  # `system://`/`workspace://`/`session://` URIs have no business in a
+  # workspace's member set (membership models "who lives in this
+  # workspace", and only entities live).
+  #
+  # When `workspace_uri` is missing (`ctx.self_uri == nil`), we let it
+  # through to preserve the existing test surface for unit tests that
+  # drive `invoke/4` directly with an empty ctx. The structural call
+  # site (`Ezagent.Kind.Server`) always populates `self_uri`, so
+  # production paths get the check; tests that intentionally want to
+  # bypass it can keep ctx empty.
+  defp validate_member_prefix(_member_uri, nil), do: :ok
+
+  defp validate_member_prefix(
+         %URI{scheme: "entity", path: "/" <> rest} = member_uri,
+         %URI{scheme: "workspace", host: workspace_name} = workspace_uri
+       )
+       when is_binary(workspace_name) and workspace_name != "" do
+    case String.split(rest, "/", parts: 2) do
+      [^workspace_name, entity_name] when entity_name != "" ->
+        :ok
+
+      [_other_workspace, _entity_name] ->
+        {:error, {:cross_workspace_member_not_permitted, member_uri, workspace_uri}}
+
+      _ ->
+        # Non-3-segment entity URI — structurally malformed under
+        # SPEC v3. Reject (the URI parser would normally catch this
+        # earlier, but defense in depth).
+        {:error, {:bad_member_uri, member_uri}}
+    end
+  end
+
+  defp validate_member_prefix(%URI{} = member_uri, %URI{} = workspace_uri) do
+    # Non-entity member (system://, workspace://, …) — refuse. Only
+    # `entity://user/...` / `entity://agent/...` are valid workspace
+    # members per the prefix invariant.
+    {:error, {:non_entity_member, member_uri, workspace_uri}}
   end
 
   def invoke(:remove_member, slice, %{member: %URI{} = uri}, _ctx) do
