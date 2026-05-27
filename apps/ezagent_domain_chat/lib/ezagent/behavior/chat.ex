@@ -25,10 +25,10 @@ defmodule Ezagent.Behavior.Chat do
   `:receive` switches on `ctx.kind_module`:
   - `Ezagent.Entity.User` — broadcast to `esr:user:<self_uri>:events`. LV
     subscribes for admin inbox / mention notifications.
-  - `Ezagent.Entity.Agent` — wires bridge push via
-    `EzagentPluginCc.BridgeRegistry.lookup(agent_uri)` →
-    `send(channel_pid, {:to_claude, payload})`. If no v2 bridge is
-    bound, the call is a silent no-op (telemetry-only).
+  - `Ezagent.Entity.Agent` — delivers a flavor-neutral
+    `Ezagent.AgentBridge.Payload` through `Ezagent.AgentBridge.deliver/2`.
+    If no bridge or adapter is bound, AgentBridge logs and emits
+    telemetry while chat receive itself remains a best-effort cast.
 
   ## Offline state machine (P2-D3 failure modes)
 
@@ -483,10 +483,10 @@ defmodule Ezagent.Behavior.Chat do
         {:ok, new_slice}
 
       Ezagent.Entity.Agent ->
-        # Phase 7 PR 32c: v1 prototype deleted; v2 CC channel
-        # (Phoenix.Channel WS) is the only bridge transport. If
-        # no channel is bound for the Agent, the dispatch is a
-        # silent no-op below.
+        # AgentBridge PR-D: keep chat receive flavor-neutral. The
+        # bridge domain resolves the bound channel and adapter for the
+        # agent URI; missing bridge/adapter remains best-effort for
+        # this cast receive path but is logged by AgentBridge.deliver/2.
         source_session =
           case Map.get(ctx, :caller) do
             %URI{} = u -> URI.to_string(u)
@@ -526,42 +526,25 @@ defmodule Ezagent.Behavior.Chat do
             path -> Map.put(base_meta, "file_path", path)
           end
 
-        payload = %{"content" => text_with_hint, "meta" => meta}
+        session_uri =
+          case msg.session_uri do
+            %URI{} = uri -> uri
+            s when is_binary(s) and s != "" -> URI.new!(s)
+            _ when source_session != "" -> URI.new!(source_session)
+            _ -> nil
+          end
 
-        case EzagentPluginCc.BridgeRegistry.lookup(ctx.self_uri) do
-          {:ok, channel_pid} ->
-            send(channel_pid, {:to_claude, payload})
+        payload = %Ezagent.AgentBridge.Payload{
+          message_id: msg.id,
+          session_uri: session_uri,
+          sender_uri: msg.sender,
+          text: text_with_hint,
+          event_type: :chat_send,
+          attachments: attachments,
+          meta: meta
+        }
 
-          :error ->
-            # No bound bridge. The agent's PtyServer might be alive but
-            # the claude TUI hasn't opened its Phoenix.Channel WS back
-            # to ezagent (via `--dangerously-load-development-channels
-            # server:esr-bridge`). Until that handshake completes,
-            # inbound chat dispatches have nowhere to go.
-            #
-            # Phase 8c follow-up (Allen 2026-05-20): the prior comment
-            # said "Drop silently — telemetry only" but no telemetry
-            # was actually emitted, making this the hardest class of
-            # "why didn't the agent reply?" bug to debug. Now logs at
-            # warning so operators see the drop in /admin/logs +
-            # `phx.log`.
-            require Logger
-
-            Logger.warning(
-              "Chat receive dropped — no BridgeRegistry binding for #{URI.to_string(ctx.self_uri)} " <>
-                "(claude TUI hasn't opened its WS channel yet, or the agent has no PtyServer). " <>
-                "Message from #{URI.to_string(msg.sender)}: " <>
-                String.slice(body_text(msg.body), 0, 80)
-            )
-
-            :telemetry.execute(
-              [:ezagent, :chat, :receive, :dropped],
-              %{count: 1},
-              %{recipient: ctx.self_uri, sender: msg.sender, reason: :no_bridge}
-            )
-
-            :ok
-        end
+        _ = Ezagent.AgentBridge.deliver(ctx.self_uri, payload)
 
         {:ok, slice}
 

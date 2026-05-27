@@ -325,9 +325,15 @@ defmodule Mix.Tasks.Compile.EzagentPluginCheck do
           %{flavor: flavor, kind: kind, template_class: tc} ->
             src = "agent_flavors/0 (flavor #{inspect(flavor)})"
 
-            acc
-            |> check_flavor_module(kind, Ezagent.Kind, src)
-            |> check_flavor_module(tc, Ezagent.Kind.Template, src)
+            acc =
+              acc
+              |> check_flavor_module(kind, Ezagent.Kind, src)
+              |> check_flavor_module(tc, Ezagent.Kind.Template, src)
+
+            case Map.get(decl, :bridge_adapter) do
+              nil -> acc
+              adapter -> check_flavor_module(acc, adapter, Ezagent.AgentBridge.Adapter, src)
+            end
 
           other ->
             [

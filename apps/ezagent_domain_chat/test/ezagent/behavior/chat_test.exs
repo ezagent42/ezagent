@@ -18,6 +18,7 @@ defmodule Ezagent.Behavior.ChatTest do
   setup do
     :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
     Ecto.Adapters.SQL.Sandbox.mode(Repo, {:shared, self()})
+    :ok = Ezagent.AgentBridge.AdapterRegistry.register("cc", EzagentPluginCc.BridgeAdapter)
     :ok
   end
 
@@ -570,7 +571,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
   describe "invoke(:receive, ...) — Agent branch" do
     test "returns {:ok, slice} unchanged (Agent has no chat slice state)" do
-      agent_uri = URI.new!("entity://agent/team-alpha/test_cc-builder-#{System.unique_integer([:positive])}")
+      agent_uri = URI.new!("entity://agent/team-alpha/cc_builder-#{System.unique_integer([:positive])}")
       sender = URI.new!("entity://user/system/admin")
       msg = Message.new(sender, %{text: "hi agent", attachments: []})
 
@@ -587,14 +588,14 @@ defmodule Ezagent.Behavior.ChatTest do
     # which broke the inbound path for ~3 weeks before discovery.
 
     test "to_claude payload meta values are all strings (no list/map smuggling)" do
-      agent_uri = URI.new!("entity://agent/team-alpha/test_cc-meta-string-#{System.unique_integer([:positive])}")
+      agent_uri = URI.new!("entity://agent/team-alpha/cc_meta-string-#{System.unique_integer([:positive])}")
       sender = URI.new!("entity://user/system/admin")
       session_uri = URI.new!("session://default/team-alpha/meta-#{System.unique_integer([:positive])}")
 
       msg = Message.new(sender, %{text: "plain text", attachments: []})
 
-      :ok = EzagentPluginCc.BridgeRegistry.bind(agent_uri, self())
-      on_exit(fn -> EzagentPluginCc.BridgeRegistry.unbind(agent_uri) end)
+      :ok = Ezagent.AgentBridge.Registry.bind(agent_uri, self())
+      on_exit(fn -> Ezagent.AgentBridge.Registry.unbind(agent_uri) end)
 
       ctx = %{self_uri: agent_uri, kind_module: Ezagent.Entity.Agent, caller: session_uri}
 
@@ -618,7 +619,7 @@ defmodule Ezagent.Behavior.ChatTest do
     end
 
     test "attachment → meta.file_path is the first attachment's local_path string" do
-      agent_uri = URI.new!("entity://agent/team-alpha/test_cc-meta-att-#{System.unique_integer([:positive])}")
+      agent_uri = URI.new!("entity://agent/team-alpha/cc_meta-att-#{System.unique_integer([:positive])}")
       sender = URI.new!("entity://user/system/admin")
       session_uri = URI.new!("session://default/team-alpha/meta-att-#{System.unique_integer([:positive])}")
 
@@ -631,8 +632,8 @@ defmodule Ezagent.Behavior.ChatTest do
           ]
         })
 
-      :ok = EzagentPluginCc.BridgeRegistry.bind(agent_uri, self())
-      on_exit(fn -> EzagentPluginCc.BridgeRegistry.unbind(agent_uri) end)
+      :ok = Ezagent.AgentBridge.Registry.bind(agent_uri, self())
+      on_exit(fn -> Ezagent.AgentBridge.Registry.unbind(agent_uri) end)
 
       ctx = %{self_uri: agent_uri, kind_module: Ezagent.Entity.Agent, caller: session_uri}
 
@@ -654,7 +655,7 @@ defmodule Ezagent.Behavior.ChatTest do
     test "attachment with string-keyed body (post-DB roundtrip) still produces file_path" do
       # MessageStore stores body as JSON → Ecto load returns string keys.
       # body_attachments + first_attachment_path must tolerate either shape.
-      agent_uri = URI.new!("entity://agent/team-alpha/test_cc-meta-stringkey-#{System.unique_integer([:positive])}")
+      agent_uri = URI.new!("entity://agent/team-alpha/cc_meta-stringkey-#{System.unique_integer([:positive])}")
       sender = URI.new!("entity://user/system/admin")
       session_uri = URI.new!("session://default/team-alpha/meta-stringkey-#{System.unique_integer([:positive])}")
 
@@ -668,8 +669,8 @@ defmodule Ezagent.Behavior.ChatTest do
         | body: string_keyed_body
       }
 
-      :ok = EzagentPluginCc.BridgeRegistry.bind(agent_uri, self())
-      on_exit(fn -> EzagentPluginCc.BridgeRegistry.unbind(agent_uri) end)
+      :ok = Ezagent.AgentBridge.Registry.bind(agent_uri, self())
+      on_exit(fn -> Ezagent.AgentBridge.Registry.unbind(agent_uri) end)
 
       ctx = %{self_uri: agent_uri, kind_module: Ezagent.Entity.Agent, caller: session_uri}
 
