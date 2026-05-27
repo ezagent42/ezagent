@@ -49,10 +49,14 @@ defmodule EzagentDomainChat.MixProject do
       # the Kind. Behavior module itself lives in ezagent_domain_pty.
       # Tier-2 sibling dep (no cycle: domain_pty → core only).
       {:ezagent_domain_pty, in_umbrella: true},
-      # Chat.invoke(:receive) for Agent dispatches to the v2 CC channel
-      # BridgeRegistry. v1 prototype dep + fallback branch removed in
-      # PR 32c (rebrand-4) after PtyServer cutover landed in PR 32b.
-      # layer-violation-exempt: cc-bridge production wire
+      # AgentBridge PR-D: Agent chat.receive builds
+      # Ezagent.AgentBridge.Payload and dispatches through the
+      # plugin-independent bridge facade.
+      {:ezagent_domain_agent_bridge, in_umbrella: true},
+      # AgentBridge PR-D keeps this dep temporarily while cc's bridge
+      # adapter module is introduced. PR-E removes the plugin dep once
+      # the domain_chat layer-purity test is strengthened.
+      # layer-violation-exempt: pending PR-E dependency removal
       {:ezagent_plugin_cc, in_umbrella: true},
       # Phase 7 completion PR-5: the orchestrator MCP transport bridge's
       # BEAM endpoint is a Phoenix.Socket + Phoenix.Channel

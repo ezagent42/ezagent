@@ -5,6 +5,25 @@ defmodule Ezagent.AgentBridge.SocketChannelTest do
 
   alias Ezagent.AgentBridge.{Channel, Registry, Socket, TokenStore}
 
+  defmodule TestAdapter do
+    @moduledoc false
+    @behaviour Ezagent.AgentBridge.Adapter
+
+    @impl true
+    def flavor, do: "testchan"
+
+    @impl true
+    def agent_uri_prefix, do: "testchan_"
+
+    @impl true
+    def deliver(_payload, _channel_pid), do: :ok
+
+    @impl true
+    def handle_client_event(event, params, socket) do
+      {:reply, {:ok, %{"event" => event, "params" => params}}, socket}
+    end
+  end
+
   defmodule TestEndpoint do
     @moduledoc false
     use Phoenix.Endpoint, otp_app: :ezagent_domain_agent_bridge
@@ -113,6 +132,23 @@ defmodule Ezagent.AgentBridge.SocketChannelTest do
       |> subscribe_and_join(Channel, "cc:bridge:#{URI.to_string(agent_uri)}", %{})
 
     assert {:ok, socket.channel_pid} == Registry.lookup(agent_uri)
+  end
+
+  test "client events delegate to the registered flavor adapter" do
+    agent_uri = uri!("entity://agent/team-alpha/testchan_bridge-#{u()}")
+    :ok = Ezagent.AgentBridge.AdapterRegistry.register("testchan", TestAdapter)
+
+    {:ok, _reply, socket} =
+      @endpoint
+      |> socket("agent_bridge:#{URI.to_string(agent_uri)}", %{agent_uri: agent_uri})
+      |> subscribe_and_join(Channel, "agent_bridge:testchan:#{URI.to_string(agent_uri)}", %{})
+
+    ref = push(socket, "custom_event", %{"value" => "ok"})
+
+    assert_reply ref, :ok, %{
+      "event" => "custom_event",
+      "params" => %{"value" => "ok"}
+    }
   end
 
   test "join rejects a topic URI different from the token-authenticated socket URI" do

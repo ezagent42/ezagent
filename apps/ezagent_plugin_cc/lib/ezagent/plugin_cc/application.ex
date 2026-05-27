@@ -93,7 +93,8 @@ defmodule EzagentPluginCc.Application do
         # flavor lives only in the `entity://agent/<ws>/cc_<name>` name
         # prefix (SPEC v2 §5.14). There is no cc-specific Kind module.
         kind: Ezagent.Entity.Agent,
-        template_class: Ezagent.PluginCc.Template.CcAgent
+        template_class: Ezagent.PluginCc.Template.CcAgent,
+        bridge_adapter: EzagentPluginCc.BridgeAdapter
       }
     ]
   end

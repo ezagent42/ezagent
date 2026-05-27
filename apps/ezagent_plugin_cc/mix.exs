@@ -53,11 +53,9 @@ defmodule EzagentPluginCc.MixProject do
       # cc.agent template now calls Ezagent.Domain.Pty.start/2 with
       # the full claude cmd string built here in the cc plugin.
       {:ezagent_domain_pty, in_umbrella: true},
-      # Deliberately NOT depending on ezagent_domain_chat: chat depends
-      # on us (Chat.invoke(:receive) calls EzagentPluginCc.BridgeRegistry.lookup),
-      # so a reverse dep would cycle. The Channel module references
-      # Ezagent.Message (core, not chat) for the reply envelope; no
-      # other chat-domain calls.
+      # Deliberately NOT depending on ezagent_domain_chat: bridge reply
+      # dispatch uses Ezagent.Invocation + Ezagent.Message from core;
+      # no chat-domain modules are called directly.
       # Absorbed from the deleted ezagent_plugin_cc_channel:
       # Phoenix.Socket/Channel for the v2 WS bridge mounted at
       # /cc_socket in EzagentWeb.Endpoint.

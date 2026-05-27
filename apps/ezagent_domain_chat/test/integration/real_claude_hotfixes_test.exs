@@ -18,8 +18,8 @@ defmodule EzagentDomainChat.Integration.RealClaudeHotfixesTest do
   `the v1 prototype Server` and subscribed to its per-bridge
   PubSub topic. The v2 path bypasses PubSub entirely: the bound
   channel pid receives `{:to_claude, payload}` directly. This test
-  binds the test process pid into `EzagentPluginCc.BridgeRegistry`
-  and uses `assert_receive` to capture the same payload.
+  binds the test process pid into `Ezagent.AgentBridge.Registry` and
+  uses `assert_receive` to capture the same payload.
 
   ## Fix #2 (dropped)
 
@@ -34,19 +34,19 @@ defmodule EzagentDomainChat.Integration.RealClaudeHotfixesTest do
   alias Ezagent.{Message}
   alias Ezagent.Behavior.Chat
   alias Ezagent.Entity.User
-  alias EzagentPluginCc.BridgeRegistry
 
   setup do
     :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
     Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
 
-    BridgeRegistry.init()
+    Ezagent.AgentBridge.Registry.init()
+    :ok = Ezagent.AgentBridge.AdapterRegistry.register("cc", EzagentPluginCc.BridgeAdapter)
     :ok
   end
 
   describe "fix #1: to_claude payload meta includes source session" do
     test "Chat.invoke(:receive) on Agent sends {:to_claude, %{meta}} to bound channel pid with session key" do
-      agent_uri = URI.new!("entity://agent/team-alpha/test_meta-test-#{System.unique_integer([:positive])}")
+      agent_uri = URI.new!("entity://agent/team-alpha/cc_meta-test-#{System.unique_integer([:positive])}")
       session_uri = URI.new!("session://default/team-alpha/meta-source-#{System.unique_integer([:positive])}")
 
       # Spawn the Agent Kind (mirrors what Channel.join/3 does via
@@ -58,9 +58,9 @@ defmodule EzagentDomainChat.Integration.RealClaudeHotfixesTest do
         )
 
       # Bind the *test process* as the "channel pid" for this agent.
-      # BridgeRegistry.lookup will return self() so Chat sends
-      # {:to_claude, payload} here and we can assert_receive on it.
-      :ok = BridgeRegistry.bind(agent_uri, self())
+      # AgentBridge.deliver/2 will resolve the cc adapter and send
+      # {:to_claude, payload} here so we can assert_receive on it.
+      :ok = Ezagent.AgentBridge.Registry.bind(agent_uri, self())
 
       msg =
         Message.new(URI.new!("entity://user/system/admin"), %{text: "hi cc-builder", attachments: []})
@@ -80,7 +80,7 @@ defmodule EzagentDomainChat.Integration.RealClaudeHotfixesTest do
       assert meta["sender"] == "entity://user/system/admin"
       assert meta["message_id"] == msg.id
 
-      BridgeRegistry.unbind(agent_uri)
+      Ezagent.AgentBridge.Registry.unbind(agent_uri)
       DynamicSupervisor.terminate_child(EzagentDomainChat.AgentSupervisor, agent_pid)
     end
   end

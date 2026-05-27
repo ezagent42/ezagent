@@ -7,6 +7,10 @@ defmodule EzagentDomainAgentBridge.Application do
   def start(_type, _args) do
     :ok = Ezagent.AgentBridge.Registry.init()
 
-    Supervisor.start_link([], strategy: :one_for_one, name: EzagentDomainAgentBridge.Supervisor)
+    children = [
+      Ezagent.AgentBridge.AdapterRegistry
+    ]
+
+    Supervisor.start_link(children, strategy: :one_for_one, name: EzagentDomainAgentBridge.Supervisor)
   end
 end

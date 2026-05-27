@@ -7,8 +7,7 @@ defmodule EzagentDomainAgentBridge do
   PR-C promotes the Phoenix Socket and Channel entry points and wires
   the canonical `/agent_bridge` mount plus the legacy `/cc_socket`
   compatibility mount.
-
-  Payload and adapter delivery are introduced by the following PRs in
-  the AgentBridge sequence.
+  PR-D adds the generic payload envelope, adapter behaviour, adapter
+  registry, and `Ezagent.AgentBridge.deliver/2` facade.
   """
 end

@@ -130,6 +130,7 @@ defmodule Ezagent.Plugin do
   hardcoded map (codex MEDIUM-5).
   """
   @type agent_flavor_decl :: %{
+          optional(:bridge_adapter) => module() | nil,
           flavor: String.t(),
           kind: module(),
           template_class: module()
@@ -407,6 +408,7 @@ defmodule Ezagent.Plugin do
 
     Enum.each(plugin_module.agent_flavors(), fn decl ->
       :ok = Ezagent.AgentFlavorRegistry.register(decl)
+      :ok = maybe_register_bridge_adapter(decl)
     end)
 
     Enum.each(plugin_module.routing_tables(), fn {table_name, opts} ->
@@ -457,6 +459,17 @@ defmodule Ezagent.Plugin do
                 "Behavior on a core Kind instead."
     end
   end
+
+  defp maybe_register_bridge_adapter(%{flavor: flavor, bridge_adapter: adapter})
+       when is_binary(flavor) and is_atom(adapter) do
+    if Code.ensure_loaded?(Ezagent.AgentBridge.AdapterRegistry) do
+      :ok = apply(Ezagent.AgentBridge.AdapterRegistry, :register, [flavor, adapter])
+    else
+      :ok
+    end
+  end
+
+  defp maybe_register_bridge_adapter(_decl), do: :ok
 
   # codex PR-5 MEDIUM-4 — every `agent_flavors/0` entry's `kind` must
   # implement `Ezagent.Kind` and `template_class` must implement

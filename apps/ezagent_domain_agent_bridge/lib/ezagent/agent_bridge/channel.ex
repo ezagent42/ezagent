@@ -14,20 +14,8 @@ defmodule Ezagent.AgentBridge.Channel do
 
   require Logger
 
+  alias Ezagent.AgentBridge.AdapterRegistry
   alias Ezagent.AgentBridge.Registry, as: BridgeRegistry
-
-  @attachment_key_atoms %{
-    "type" => :type,
-    "local_path" => :local_path,
-    "name" => :name
-  }
-  @attachment_type_atoms %{
-    "image" => :image,
-    "file" => :file,
-    "audio" => :audio,
-    "video" => :video,
-    "media" => :media
-  }
 
   @impl true
   def join("agent_bridge:" <> rest, params, socket) do
@@ -57,61 +45,24 @@ defmodule Ezagent.AgentBridge.Channel do
   def join(_topic, _params, _socket), do: {:error, %{reason: "unknown_topic"}}
 
   @impl true
-  def handle_in("reply", %{"text" => text, "session_uris" => sessions} = params, socket)
-      when is_binary(text) and is_list(sessions) do
-    ref = Map.get(params, "ref")
-    attachments = Map.get(params, "attachments", [])
+  def handle_in(event, params, socket) when is_binary(event) and is_map(params) do
+    case AdapterRegistry.lookup(socket.assigns.bridge_flavor) do
+      {:ok, adapter} ->
+        adapter.handle_client_event(event, params, socket)
 
-    cond do
-      not is_list(attachments) ->
-        {:reply, {:error, %{reason: "attachments must be a list of maps"}}, socket}
-
-      true ->
-        send(self(), {:dispatch_reply, sessions, text, ref, attachments})
-        {:reply, :ok, socket}
+      :error ->
+        {:reply, {:error, %{reason: "bridge adapter not registered"}}, socket}
     end
   end
 
-  def handle_in("reply", _other, socket) do
-    {:reply, {:error, %{reason: "reply requires text + session_uris"}}, socket}
-  end
-
-  def handle_in(_event, _params, socket), do: {:noreply, socket}
-
   @impl true
-  def handle_info({:to_claude, payload}, socket) do
-    push(socket, "to_claude", payload)
+  def handle_info({:agent_bridge_push, event, payload}, socket) when is_binary(event) do
+    push(socket, event, payload)
     {:noreply, socket}
   end
 
-  def handle_info({:dispatch_reply, sessions, text, ref, attachments}, socket) do
-    agent_uri = socket.assigns.agent_uri
-
-    ref_uri =
-      case ref do
-        nil -> nil
-        "" -> nil
-        s when is_binary(s) -> URI.new!(s)
-      end
-
-    body = %{text: text, attachments: normalize_attachments(attachments)}
-    msg = Ezagent.Message.new(agent_uri, body, ref: ref_uri)
-
-    for session_uri_str <- sessions do
-      target = URI.new!("#{session_uri_str}?action=chat.send")
-
-      Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-        target: target,
-        mode: :cast,
-        args: %{message: msg},
-        ctx: %{
-          caller: agent_uri,
-          caps: Ezagent.SystemPrincipal.caps("system://chat-reply"),
-          reply: :ignore
-        }
-      })
-    end
-
+  def handle_info({:to_claude, payload}, socket) do
+    push(socket, "to_claude", payload)
     {:noreply, socket}
   end
 
@@ -162,7 +113,7 @@ defmodule Ezagent.AgentBridge.Channel do
     case BridgeRegistry.bind(socket.assigns.agent_uri, self(), info) do
       :ok ->
         :ok = ensure_agent_kind(socket.assigns.agent_uri)
-        {:ok, socket}
+        {:ok, Phoenix.Socket.assign(socket, :bridge_flavor, flavor)}
 
       {:error, reason} ->
         {:error, %{reason: inspect(reason)}}
@@ -191,28 +142,6 @@ defmodule Ezagent.AgentBridge.Channel do
         :ok
     end
   end
-
-  defp normalize_attachments(list) when is_list(list) do
-    Enum.map(list, fn
-      %{} = m -> normalize_attachment_keys(m)
-      other -> other
-    end)
-  end
-
-  defp normalize_attachment_keys(m) do
-    Enum.into(m, %{}, fn
-      {k, v} when is_binary(k) ->
-        {Map.get(@attachment_key_atoms, k, k), normalize_attachment_value(k, v)}
-
-      {k, v} ->
-        {k, v}
-    end)
-  end
-
-  defp normalize_attachment_value("type", v) when is_binary(v),
-    do: Map.get(@attachment_type_atoms, v, v)
-
-  defp normalize_attachment_value(_, v), do: v
 
   defp format_remote_ip(socket) do
     case socket.assigns[:remote_ip] do
