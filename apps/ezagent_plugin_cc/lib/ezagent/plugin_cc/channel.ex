@@ -10,7 +10,7 @@ defmodule EzagentPluginCc.Channel do
 
   - `join/3` —
       1. binds socket pid as the bridge for `agent_uri` via
-         `EzagentPluginCc.BridgeRegistry.bind/3` (capturing the
+         `Ezagent.AgentBridge.Registry.bind/3` (capturing the
          claude/tools/remote-ip info the Python bridge passed in join
          params, so admin LV's connected-bridges table has something
          to render);
@@ -44,7 +44,7 @@ defmodule EzagentPluginCc.Channel do
 
   require Logger
 
-  alias EzagentPluginCc.BridgeRegistry
+  alias Ezagent.AgentBridge.Registry, as: BridgeRegistry
 
   @impl true
   def join("cc:bridge:" <> _topic_uri, params, socket) do
