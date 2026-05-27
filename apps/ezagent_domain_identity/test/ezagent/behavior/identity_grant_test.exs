@@ -169,11 +169,18 @@ defmodule Ezagent.Behavior.IdentityGrantTest do
       # `workspace_uri`) is granted via the workspace-admin path —
       # the caller needs a `Behavior.Workspace` cap on the target
       # workspace. The instance-scoped delegated cap above doesn't
-      # confer Workspace authority either, so the grant still rejects
-      # — just with the workspace-admin error code rather than the
-      # bootstrap-admin error code. Either way, the privilege
-      # escalation the test guards against is denied.
-      assert {:error, :grant_workspace_admin_required} =
+      # confer Workspace authority either, so the grant still rejects.
+      #
+      # SPEC 2026-05-27 capability-action-axis §3.6.1(b): the
+      # action-wildcard runtime check fires BEFORE the per-shape
+      # workspace-admin check. `echo_cap()` has `action: :any` (no
+      # explicit action passed; defstruct default). The caller's
+      # delegated wildcard is instance-narrowed → not full-wildcard
+      # admin per `holds_admin_caps?/1` → action-wildcard rejection
+      # fires first. Both error codes mean "rejected"; the test's
+      # invariant is "privilege escalation denied", which holds either
+      # way.
+      assert {:error, :wildcard_action_grant_requires_admin_authority} =
                IdentityAdmin.invoke(:grant_cap, slice, %{cap: cap_to_grant}, ctx)
     end
 

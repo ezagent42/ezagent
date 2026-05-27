@@ -229,6 +229,32 @@ defmodule Ezagent.Capability do
       workspace_match?(cap.workspace_uri, w)
   end
 
+  # SPEC 2026-05-27 capability-action-axis — TRANSITIONAL TOLERANCE
+  # CLAUSE for needed maps that pre-date the action axis (e.g. test
+  # fixtures, plugin code that hasn't been swept yet, snapshot-restored
+  # callers that still build 4-field needed shapes). A missing `:action`
+  # key in the needed map is treated as `:any` (wildcard), preserving
+  # pre-SPEC matcher semantics for unmigrated call sites. Symmetric
+  # to the held-cap missing-key tolerance via `action_of/1`.
+  #
+  # This is NOT an escape hatch — code that GENUINELY needs to narrow
+  # by action must pass `:action` explicitly. The clause exists so a
+  # phased migration (this PR sweeps core + obvious call sites; test
+  # fixtures and downstream plugin code can migrate in follow-up PRs)
+  # doesn't break unrelated callers. After all call sites converge,
+  # this clause can be REMOVED (and the matcher will require `:action`
+  # at the type-spec level, enforcing structural narrowing across the
+  # umbrella).
+  def matches?(%__MODULE__{} = cap, %{
+        kind: _,
+        behavior: _,
+        instance: _,
+        workspace_uri: _
+      } = needed)
+      when not is_map_key(needed, :action) do
+    matches?(cap, Map.put(needed, :action, :any))
+  end
+
   @doc """
   Read the action axis of a cap, defaulting to `:any` for caps loaded
   from pre-action-axis snapshots (missing `:action` key).
