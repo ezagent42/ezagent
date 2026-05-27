@@ -144,6 +144,104 @@ defmodule Ezagent.Behavior.WorkspaceTest do
     end
   end
 
+  describe "add_member URI canonicalization (task #55 codex r2 HIGH-1)" do
+    # Pre-fix: `String.split(rest, "/", parts: 2)` accepted 3+ segment
+    # entity URIs, trailing slashes, and query strings — the latter
+    # two slipping through because `parts: 2` globbed everything past
+    # the workspace segment into `entity_name` regardless of shape.
+    # Plus the validator only checked `scheme: "entity"`, never that
+    # `host in ["user", "agent"]`. Post-fix: canonicalize via
+    # `Ezagent.URI.parse!/1` + `Ezagent.URI.instance/1` + host
+    # allowlist.
+
+    test "rejects 4-segment entity URI (extra path segment)" do
+      workspace_uri = URI.parse("workspace://h2oslabs")
+      # 4-segment: entity://user/h2oslabs/alice/extra. Hand-construct
+      # via URI struct so the test isn't masked by `URI.parse/1`'s own
+      # tolerance (production paths typically arrive from RPC / form
+      # submit as user-controlled strings).
+      member_uri = %URI{
+        scheme: "entity",
+        host: "user",
+        authority: "user",
+        path: "/h2oslabs/alice/extra"
+      }
+
+      slice = WB.init_slice(%{})
+      ctx = %{self_uri: workspace_uri}
+
+      assert {:error, {:bad_member_uri, ^member_uri}} =
+               WB.invoke(:add_member, slice, %{member: member_uri}, ctx)
+    end
+
+    test "rejects entity URI with trailing slash" do
+      workspace_uri = URI.parse("workspace://h2oslabs")
+      member_uri = %URI{
+        scheme: "entity",
+        host: "user",
+        authority: "user",
+        path: "/h2oslabs/alice/"
+      }
+
+      slice = WB.init_slice(%{})
+      ctx = %{self_uri: workspace_uri}
+
+      assert {:error, {:bad_member_uri, ^member_uri}} =
+               WB.invoke(:add_member, slice, %{member: member_uri}, ctx)
+    end
+
+    test "rejects entity URI with query string (action=) that masks the prefix check" do
+      workspace_uri = URI.parse("workspace://h2oslabs")
+      # `entity://user/system/alice?action=identity.grant_cap` —
+      # cross-prefix with the query string. Pre-fix the validator
+      # didn't strip the query → false-negative on the prefix check.
+      # Post-fix `instance/1` strips ?query so the cross-prefix is
+      # caught.
+      member_uri = URI.parse("entity://user/system/alice?action=identity.grant_cap")
+
+      slice = WB.init_slice(%{})
+      ctx = %{self_uri: workspace_uri}
+
+      # After instance/1 strips ?action, the URI's workspace segment is
+      # `system`, the workspace's name is `h2oslabs` → cross-workspace.
+      assert {:error, {:cross_workspace_member_not_permitted, ^member_uri, ^workspace_uri}} =
+               WB.invoke(:add_member, slice, %{member: member_uri}, ctx)
+    end
+
+    test "rejects entity URI with non-user, non-agent host segment" do
+      workspace_uri = URI.parse("workspace://h2oslabs")
+      # `entity://something_weird/h2oslabs/alice` — SPEC v3 §3.3 says
+      # the type axis is `user | agent`; pre-fix the validator only
+      # matched `scheme: "entity"`, never the host. Post-fix the host
+      # allowlist rejects.
+      member_uri = %URI{
+        scheme: "entity",
+        host: "something_weird",
+        authority: "something_weird",
+        path: "/h2oslabs/alice"
+      }
+
+      slice = WB.init_slice(%{})
+      ctx = %{self_uri: workspace_uri}
+
+      assert {:error, {:bad_member_uri, ^member_uri}} =
+               WB.invoke(:add_member, slice, %{member: member_uri}, ctx)
+    end
+
+    test "rejects 2-segment entity URI (missing workspace segment)" do
+      # `entity://user/alice` — pre-SPEC-v3 shape that should not be
+      # admitted. parse!/1 rejects (workspace segment required).
+      workspace_uri = URI.parse("workspace://h2oslabs")
+      member_uri = %URI{scheme: "entity", host: "user", authority: "user", path: "/alice"}
+
+      slice = WB.init_slice(%{})
+      ctx = %{self_uri: workspace_uri}
+
+      assert {:error, {:bad_member_uri, ^member_uri}} =
+               WB.invoke(:add_member, slice, %{member: member_uri}, ctx)
+    end
+  end
+
   describe "session_template actions" do
     test "add_template + list_templates round-trip" do
       slice = WB.init_slice(%{})
