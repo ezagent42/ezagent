@@ -16,7 +16,7 @@ defmodule EzagentPluginCc.BridgeAdapterTest do
 
     assert :ok = BridgeAdapter.deliver(payload, self())
 
-    assert_receive {:to_claude,
+    assert_receive {:agent_bridge_push, "to_claude",
                     %{
                       "content" => "hello cc",
                       "meta" => %{"sender" => "entity://user/system/admin"}

@@ -61,11 +61,6 @@ defmodule Ezagent.AgentBridge.Channel do
     {:noreply, socket}
   end
 
-  def handle_info({:to_claude, payload}, socket) do
-    push(socket, "to_claude", payload)
-    {:noreply, socket}
-  end
-
   def handle_info(_other, socket), do: {:noreply, socket}
 
   @impl true
@@ -103,12 +98,14 @@ defmodule Ezagent.AgentBridge.Channel do
   end
 
   defp join_bridge(flavor, params, socket) do
-    info = %{
-      bridge_flavor: flavor,
-      claude_info: Map.get(params, "claude_info", %{}),
-      tools: Map.get(params, "tools", []),
-      remote_ip: format_remote_ip(socket)
-    }
+    info =
+      Map.merge(
+        %{
+          bridge_flavor: flavor,
+          remote_ip: format_remote_ip(socket)
+        },
+        adapter_join_info(flavor, params, socket)
+      )
 
     case BridgeRegistry.bind(socket.assigns.agent_uri, self(), info) do
       :ok ->
@@ -117,6 +114,19 @@ defmodule Ezagent.AgentBridge.Channel do
 
       {:error, reason} ->
         {:error, %{reason: inspect(reason)}}
+    end
+  end
+
+  defp adapter_join_info(flavor, params, socket) do
+    case AdapterRegistry.lookup(flavor) do
+      {:ok, adapter} when function_exported?(adapter, :join_info, 2) ->
+        case adapter.join_info(params, socket) do
+          info when is_map(info) -> info
+          _other -> %{}
+        end
+
+      _ ->
+        %{}
     end
   end
 

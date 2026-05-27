@@ -14,8 +14,9 @@ defmodule Ezagent.AgentBridge.Adapter do
               {:reply, {:ok | :error, map()}, Phoenix.Socket.t()}
               | {:noreply, Phoenix.Socket.t()}
 
+  @callback join_info(map(), Phoenix.Socket.t()) :: map()
   @callback socket_path() :: String.t()
   @callback channel_topic_prefix() :: String.t()
 
-  @optional_callbacks socket_path: 0, channel_topic_prefix: 0
+  @optional_callbacks join_info: 2, socket_path: 0, channel_topic_prefix: 0
 end
