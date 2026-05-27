@@ -592,4 +592,77 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
              "revoking the `:bind` cap MUST leave the `:unbind` cap untouched — pre-fix, identity_key/1 ignored action axis so both caps had the same key and both got removed. SPEC 2026-05-27 HIGH-1."
     end
   end
+
+  describe "codex r2 forgeable-legacy regression — Map.delete(cap, :action) must not bypass narrow check" do
+    # codex r2 new HIGH (post-r1-fixes): the workspace-admin
+    # predicates' "legacy snapshot" branches used `action_of(cap) == :any`
+    # which is forgeable — a caller controlling `ctx.caps` could
+    # `Map.delete(cap, :action)` to fall through the narrow check
+    # because `Map.get(cap, :action, :any)` defaults to `:any`. Real
+    # legacy caps come from `binary_to_term` of pre-SPEC structs
+    # (action literally absent). The fix uses `Map.has_key?` — true
+    # absent-field check, no defaulting.
+    #
+    # This test pins the forged-cap rejection at the matcher boundary
+    # (the predicate is `defp` in Behavior.Identity; the structural
+    # property — narrow cap with forged-absent action must not satisfy
+    # an action-specific check — is what this test asserts).
+
+    test "Map.delete(cap, :action) on narrow Workspace :create_session cap does NOT match :add_member" do
+      ws_uri = URI.parse("workspace://system")
+
+      narrow_cap = %Ezagent.Capability{
+        kind: :workspace,
+        behavior: Ezagent.Behavior.Workspace,
+        action: :create_session,
+        instance: ws_uri,
+        workspace_uri: ws_uri,
+        granted_by: URI.parse("entity://user/system/admin"),
+        granted_at: DateTime.utc_now()
+      }
+
+      forged = Map.delete(narrow_cap, :action)
+
+      assert not Map.has_key?(forged, :action),
+             "pre-condition: forged cap MUST literally lack :action key"
+
+      # matches?/2 must NOT confuse forged-absent with explicit :any.
+      # `action_of(forged)` returns :any via Map.get default, but the
+      # MATCH must still narrow on the original action: :create_session
+      # intent — which is gone after Map.delete. The needed-cap for
+      # :add_member must therefore NOT match this forged shape.
+      refute Capability.matches?(forged, %{
+               kind: :workspace,
+               behavior: Ezagent.Behavior.Workspace,
+               action: :add_member,
+               instance: ws_uri,
+               workspace_uri: ws_uri
+             }),
+             "matcher tolerance only protects deserialized old structs; a forged-absent action must still be rejected at admin-predicate boundary"
+    end
+
+    test "real legacy cap (action: :any, key present) still matches any action — backward-compat OK" do
+      # Sanity that the fix doesn't break legitimate wildcard caps.
+      ws_uri = URI.parse("workspace://system")
+
+      wildcard_cap = %Ezagent.Capability{
+        kind: :workspace,
+        behavior: Ezagent.Behavior.Workspace,
+        action: :any,
+        instance: ws_uri,
+        workspace_uri: ws_uri,
+        granted_by: URI.parse("entity://user/system/admin"),
+        granted_at: DateTime.utc_now()
+      }
+
+      assert Capability.matches?(wildcard_cap, %{
+               kind: :workspace,
+               behavior: Ezagent.Behavior.Workspace,
+               action: :add_member,
+               instance: ws_uri,
+               workspace_uri: ws_uri
+             }),
+             "action: :any explicit wildcard MUST match every action — preserves catalog/admin semantic"
+    end
+  end
 end

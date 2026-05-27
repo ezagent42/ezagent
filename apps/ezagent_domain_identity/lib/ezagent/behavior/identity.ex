@@ -750,7 +750,15 @@ defmodule Ezagent.Behavior.IdentityAdmin do
         instance: :any,
         workspace_uri: :any
       } = cap ->
-        Ezagent.Capability.action_of(cap) == :any
+        # codex r2 new HIGH (forgeable legacy path): the legacy branch
+        # must ONLY accept caps that were legitimately serialized BEFORE
+        # the `:action` axis existed (i.e. struct literally missing the
+        # key, post-`binary_to_term` from a pre-SPEC snapshot).
+        # `action_of(cap) == :any` was forgeable — a caller controlling
+        # `ctx.caps` could `Map.delete(cap, :action)` to fall through the
+        # narrow check. Tighten to `not Map.has_key?(cap, :action)` —
+        # a real absent-field check, no Map.get default.
+        not Map.has_key?(cap, :action)
 
       _ ->
         false
@@ -801,21 +809,24 @@ defmodule Ezagent.Behavior.IdentityAdmin do
       } ->
         true
 
-      # Legacy snapshot-restored caps (no `:action` key) — defer to
-      # action_of/1 which returns `:any` for missing-key shapes; that
-      # preserves the pre-SPEC "any Workspace cap = admin" semantic
-      # for caps minted before the action axis existed.
+      # Legacy snapshot-restored caps (no `:action` key) — codex r2 fix:
+      # ONLY accept caps that literally lack the `:action` field (real
+      # `binary_to_term` of pre-SPEC %Capability{} produces this exact
+      # shape via non-exhaustive struct restore). A forgeable
+      # `action_of(cap) == :any` check let any controlled-`ctx.caps`
+      # path `Map.delete(cap, :action)` to bypass the narrow guard;
+      # `Map.has_key?` is the real absent-field check, no defaulting.
       %Ezagent.Capability{
         behavior: Ezagent.Behavior.Workspace,
         workspace_uri: ^ws_uri
       } = cap ->
-        Ezagent.Capability.action_of(cap) == :any
+        not Map.has_key?(cap, :action)
 
       %Ezagent.Capability{
         behavior: Ezagent.Behavior.Workspace,
         workspace_uri: :any
       } = cap ->
-        Ezagent.Capability.action_of(cap) == :any
+        not Map.has_key?(cap, :action)
 
       _ ->
         false
