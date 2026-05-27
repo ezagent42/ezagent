@@ -726,14 +726,43 @@ defmodule Mix.Tasks.Compile.EzagentPluginCheck do
               not match?(%Ezagent.Capability{}, cap),
               do: {action, cap}
 
-        if bad == [] do
+        diagnostics =
+          if bad == [] do
+            diagnostics
+          else
+            [
+              diagnostic(
+                "#{inspect(behavior_module)}.required_caps/0 values MUST be " <>
+                  "%Ezagent.Capability{} structs (use Capability.cap/3 / cap/5). " <>
+                  "Bad entries: #{inspect(bad)}"
+              )
+              | diagnostics
+            ]
+          end
+
+        # SPEC 2026-05-27 capability-action-axis §4.2 — extended check 11:
+        # verify that each entry's `action_of(cap) == action OR :any`.
+        # Catches plugin authors who construct required_caps with the
+        # wrong third arg (e.g. `:send` action key but `:receive` action
+        # field on the cap struct). The `:any` escape hatch covers
+        # orchestrator-style Behaviors that declaratively hold a
+        # behavior-wildcard cap.
+        action_mismatch =
+          for {action, %Ezagent.Capability{} = cap} <- behavior_module.required_caps(),
+              cap_action = Ezagent.Capability.action_of(cap),
+              cap_action != action and cap_action != :any do
+            {action, cap_action}
+          end
+
+        if action_mismatch == [] do
           diagnostics
         else
           [
             diagnostic(
-              "#{inspect(behavior_module)}.required_caps/0 values MUST be " <>
-                "%Ezagent.Capability{} structs (use Capability.cap/3 / cap/5). " <>
-                "Bad entries: #{inspect(bad)}"
+              "#{inspect(behavior_module)}.required_caps/0 action-axis mismatch " <>
+                "(SPEC 2026-05-27 capability-action-axis §4.2 check 11 extension). " <>
+                "Each entry MUST have `Capability.action_of(cap) == map_key OR :any`. " <>
+                "Mismatches (map_key → cap_action): #{inspect(action_mismatch)}"
             )
             | diagnostics
           ]
