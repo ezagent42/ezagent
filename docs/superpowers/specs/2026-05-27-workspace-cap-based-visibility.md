@@ -1,8 +1,13 @@
 # SPEC — Cap-based workspace visibility replaces `workspaces.visible` boolean
 
-**Status:** r2 — CRIT-A1 + MED-C1 addressed. 2026-05-27.
+**Status:** r3 — CRIT-A1 + MED-C1 (r2) + HIGH-B1 + MED-D1 (r3) addressed. 2026-05-27.
 
-**r2 changes:** §3.3 admin shortcut extended to include `holds_admin_caps?/1` (CRIT-A1 from r1 static review — the bootstrap admin's `kind: :any` wildcard cap does NOT match `holds_cross_workspace_admin_cap?/1`'s literal `kind: :workspace`, AND at boot `workspace://system.members` is empty per `ensure_system_workspace/0`, so without the new predicate the bootstrap admin would see `[]`). INV-8 added to §5 (MED-C1 — INV-7 alone passes against a boolean-restored-as-code-literal impl; INV-8 is a code-shape meta-test that fails when source files contain the `"system"` workspace-name literal outside of moduledoc/comment scope).
+**r3 changes (codex r2 review verdict REJECT — three findings addressed):**
+- HIGH-B1: §3.3 admin shortcut omitted `home_is_system?(caller_uri)` (matches callers with URI host `system`, used by `Capability.cross_workspace?/2` at `capability.ex:468-470`). A user explicitly created in `workspace://system` (admin-created via `users_live.ex:35`) but NOT in `workspace://system.members` is admin-equivalent per `cross_workspace?/2` but r2 would have falsely treated as non-admin. **Fix:** added (iii) `home_is_system?(caller_uri)` predicate; admin shortcut now four-predicate UNION. New §3.3 "Equivalence" note locks the admin-shortcut shape to `cross_workspace?/2`'s authority shape to prevent future drift. INV-3a + INV-3b added to §5 to test the (iii) and (i) paths in isolation from (iv) and each other.
+- MED-D1: §10 OQ-4 in r2 only addressed `member_of_system?/1` visibility; the other three predicates (`holds_admin_caps?/1`, `holds_cross_workspace_admin_cap?/1`, `home_is_system?/1`) are also `defp` and SPEC §3.3 named them as if reusable. **Fix:** OQ-4 extended to cover all four predicates with three implementation options (a) promote-to-public / (b) shared `Capability.admin_authority?/2` helper / (c) re-implement-in-workspace; default (b). Option (c) is structurally rejected by INV-8 (would force `"system"` literal into `workspace.ex`). New OQ-7 confirms `cross_workspace?/2` refactor to delegate to the shared helper is in-scope.
+- LOW/NIT: typo `list_workspaces_for/1` → `/2` fixed in pre-context block.
+
+**r2 changes (preserved):** §3.3 admin shortcut extended to include `holds_admin_caps?/1` (CRIT-A1 from r1 static review). INV-8 added to §5 (MED-C1 — code-shape meta-test against boolean-restoration-as-code literal).
 
 **Tier:** `apps/ezagent_domain_workspace/` data model + `Ezagent.Workspace` facade. Sweep across LV (`apps/ezagent_plugin_liveview/`), `live_auth` (`apps/ezagent_web/`), invariant tests, mix tasks, and the Phase 9 PR-8 SPEC's §13.1/§13.2.
 
@@ -13,7 +18,7 @@
 **Predecessor memories (load-bearing):**
 - `feedback_let_it_crash_no_workarounds` — no shim, no dual-path. The `visible` column is DELETED (DROP COLUMN), not deprecated. No "v2 toggle".
 - `feedback_completion_requires_invariant_test` — the PR's merge gate is an invariant test that (i) the system workspace is NOT in `list_workspaces_for(non-admin, no caps, no system membership)` AND (ii) the same workspace IS in `list_workspaces_for(workspace://system member)`.
-- `feedback_north_star_plugin_isolation` — plugin authors call `list_workspaces_for/1` and DO NOT know about visibility. The workspace domain owns the cap-based query; the LV plugin never references `visible` or membership/caps logic directly.
+- `feedback_north_star_plugin_isolation` — plugin authors call `list_workspaces_for/2` and DO NOT know about visibility. The workspace domain owns the cap-based query; the LV plugin never references `visible` or membership/caps logic directly.
 - `feedback_destructive_migration_anti_pattern` — `ALTER TABLE … DROP COLUMN visible` is a destructive migration. THIS SPEC EXPLICITLY MARKS THE MIGRATION AS A HUMAN-REQUIRED STEP (operator stops phx, runs `mix ecto.migrate`, restarts). NO subagent autoruns it.
 - `feedback_subagent_must_load_project_skills` — the impl subagent dispatch MUST load `Skill: ezagent-developer` + `Skill: elixir-phoenix-helper`.
 - `feedback_codex_review_every_pr` — codex review of this SPEC + the impl PR carries the verbatim "no mix" clause.
@@ -71,7 +76,8 @@ A list of `Workspace.Store.decoded()` rows the caller can act on. Each entry inc
 list_workspaces_for(caller_uri, caps) =
   if   holds_admin_caps?(caps)                        -- (i) bootstrap wildcard
        or  holds_cross_workspace_admin_cap?(caps)     -- (ii) structural workspace-only admin
-       or  member_of_system?(caller_uri)              -- (iii) system-member admin
+       or  home_is_system?(caller_uri)                -- (iii) caller's home workspace IS system
+       or  member_of_system?(caller_uri)              -- (iv) explicit system-member promotion
   then list_all()                                     -- admin shortcut
   else union(
          member_of_workspaces(caller_uri),            -- (a) membership
@@ -85,19 +91,28 @@ The three contributing sources:
 
 **(b) `workspaces_for_caps(caps)`** — every persisted workspace whose `uri` matches the `workspace_uri` field of any cap in `caps`. Caps with `workspace_uri: :any` contribute NOTHING to this branch (they would otherwise return all workspaces — but the admin shortcut already does that, and `:any` from a non-admin caller is a structural cross-workspace marker, not a "all workspaces" enumeration). Caps with `workspace_uri: %URI{}` contribute the matching workspace if one exists in `Store.list_all/0`. Implementation: collect `cap.workspace_uri` values, filter to `%URI{}` (drop `:any`), look up each in `Store.list_all/0` (or `Store.get_by_uri/1` if added — see §10 OQ-3). The lookup tolerates caps that reference deleted workspaces by simply skipping them.
 
-**Admin shortcut** — the union of THREE predicates returns ALL workspaces:
+**Admin shortcut** — the union of FOUR predicates returns ALL workspaces:
 
 - (i) `holds_admin_caps?(caps)` (`apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex:835-868`) — matches the full-wildcard bootstrap shape `kind: :any, behavior: :any, action: :any, instance: :any, workspace_uri: :any`. The bootstrap admin (`entity://user/system/admin`) holds EXACTLY this cap shape (minted by `Ezagent.SystemPrincipal.caps("system://bootstrap")`).
 - (ii) `holds_cross_workspace_admin_cap?(caps)` (`apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex:728-755`) — matches the narrower workspace-only admin shape `kind: :workspace, behavior: Workspace, action: :any, instance: :any, workspace_uri: :any` (delegated cross-workspace admin via a workspace-Behavior cap, NOT a kind:any wildcard).
-- (iii) `member_of_system?(caller_uri)` (`apps/ezagent_core/lib/ezagent/capability.ex:493-507`) — matches a caller whose URI is listed in `workspace://system`'s `members`. This is the "Promote to system" path (LV `users_live.ex:232`).
+- (iii) `home_is_system?(caller_uri)` (`apps/ezagent_core/lib/ezagent/capability.ex:480-485`) — matches a caller whose **home workspace** is `workspace://system` (i.e. `entity://user/system/<name>`). This is the pre-existing structural admin path used by `Capability.cross_workspace?/2` at `capability.ex:468-470`. A user explicitly created in workspace `system` (e.g. by the admin via `users_live.ex:35` "Create user in system workspace" UI) is admin-equivalent by URI structure — independent of explicit membership.
+- (iv) `member_of_system?(caller_uri)` (`apps/ezagent_core/lib/ezagent/capability.ex:493-507`) — matches a caller whose URI is listed in `workspace://system`'s `members`. This is the "Promote to system" path (LV `users_live.ex:232`) — a user created in `workspace://X` later promoted to system gains cross-workspace authority by membership, not by URI host.
 
-The three are NOT subsumed by each other. The bootstrap admin satisfies (i); a delegated cross-workspace operator (e.g. a future "tenant-admin" role) satisfies (ii); a system-promoted regular user satisfies (iii). A SPEC r1 design that omitted (i) would regress the bootstrap admin to `[]` because (a) the bootstrap admin's `members` row in `workspace://system` is created only by the LV promote path (NOT by `ensure_system_workspace/0` at `apps/ezagent_domain_chat/lib/ezagent_domain_chat/application.ex:269-275`, which seeds an EMPTY system workspace), and (b) the bootstrap wildcard cap's `kind: :any` does NOT match the literal `kind: :workspace` in (ii). r2 includes (i) explicitly to close this gap.
+The four are NOT subsumed by each other:
+- The bootstrap admin satisfies (i) — and likely (iii)/(iv) post-promote-flow, but (i) is the structural floor at boot.
+- A delegated cross-workspace operator (e.g. a future "tenant-admin" role) satisfies (ii) without (i)/(iii)/(iv).
+- A user created directly in `workspace://system` (admin-created, never promoted) satisfies (iii) — their `members` row in `workspace://system` may or may not be set; the URI-host check is structural.
+- A user created in `workspace://team-alpha` later promoted to system satisfies (iv); their home is NOT system, so (iii) fails for them.
+
+**Equivalence with `Capability.cross_workspace?/2`:** the admin shortcut's predicates (i)–(iv) are deliberately the SAME shape as `cross_workspace?/2` (`capability.ex:466-470`): `workspace_uri == :any` (subsumed by (i) and (ii)) `OR home_is_system?(caller_uri) OR member_of_system?(caller_uri)`. Workspace visibility and per-action cross-workspace bypass are the SAME authority axis; aligning the predicates by construction prevents drift. If `cross_workspace?/2` adds a fifth predicate in the future, `list_workspaces_for/2` MUST add it too — see §10 OQ-7 (r3) for the proposed shared-helper extraction.
+
+A SPEC r1 design that omitted (i) would regress the bootstrap admin to `[]` because (a) the bootstrap admin's `members` row in `workspace://system` is created only by the LV promote path (NOT by `ensure_system_workspace/0` at `apps/ezagent_domain_chat/lib/ezagent_domain_chat/application.ex:269-275`, which seeds an EMPTY system workspace), and (b) the bootstrap wildcard cap's `kind: :any` does NOT match the literal `kind: :workspace` in (ii). r2 added (i). r3 added (iii) after codex r2 review found that admin-created-in-system users (admin-equivalent per `cross_workspace?/2`'s `home_is_system?` path) were ALSO omitted.
 
 The order `admin shortcut → union` is deliberate: the union is more expensive (it walks two sources); admin callers skip it. The shortcut is functionally equivalent to the union for an admin (a system member is a member of `workspace://system` AND holds wildcard caps, so the union would also return everything) — but cheaper, AND it surfaces the structural intent: an admin's view is unconditional, not derived from per-cap arithmetic.
 
 ### 3.4 What about `workspace://system` specifically?
 
-`workspace://system` appears in the output iff the admin shortcut fires — i.e. the caller is a system member, OR holds a bootstrap-wildcard cap (kind:any/behavior:any/action:any/instance:any/workspace_uri:any), OR holds a structural cross-workspace admin cap (kind:workspace/behavior:Workspace/action:any/instance:any/workspace_uri:any). A regular member of `workspace://X` who satisfies none of the three predicates will NOT see it — same effective behavior as today's `list_visible/0`. The difference: it's no longer because the row has `visible: false`; it's because the caller's caps + membership don't include `workspace://system`.
+`workspace://system` appears in the output iff the admin shortcut fires — i.e. any of the FOUR predicates holds: bootstrap-wildcard cap (kind:any/behavior:any/action:any/instance:any/workspace_uri:any), structural cross-workspace admin cap (kind:workspace/behavior:Workspace/action:any/instance:any/workspace_uri:any), home-is-system URI (`entity://user/system/<name>`), or system-member promotion. A regular member of `workspace://X` who satisfies none of the four will NOT see it — same effective behavior as today's `list_visible/0`. The difference: it's no longer because the row has `visible: false`; it's because the caller's caps + URI host + membership don't include `workspace://system`.
 
 ### 3.5 Edge case — `system://bootstrap` / `system://*` callers
 
@@ -225,9 +240,13 @@ Per `feedback_completion_requires_invariant_test`, this PR is "done" iff the inv
 2. Define three callers:
    - `regular_user_no_caps` = `URI.parse("entity://user/team-alpha/regular")`, caps = `MapSet.new()`
    - `team_alpha_member_no_caps` = `URI.parse("entity://user/team-alpha/member")`, caps = `MapSet.new()` — but ALSO add the URI to `workspace://team-alpha`'s `members` via `Ezagent.Workspace.add_member("team-alpha", caller_uri)`
-   - `system_member` = `URI.parse("entity://user/system/admin")`, caps = `MapSet.new()` — added to `workspace://system`'s members (the bootstrap admin pattern)
+   - `system_member` = `URI.parse("entity://user/team-alpha/promoted")`, caps = `MapSet.new()` — home is `team-alpha` (NOT system) but explicitly added to `workspace://system`'s members via `Ezagent.Workspace.add_member("system", caller_uri)`. This isolates the (iv) `member_of_system?` path from the (iii) `home_is_system?` path; the caller's URI host is NOT "system", so only the membership predicate fires.
 3. Define a "delegated admin" caller:
    - `delegated_workspace_admin` = `URI.parse("entity://user/team-alpha/admin")`, caps = `MapSet.new([%Capability{kind: :workspace, behavior: Ezagent.Behavior.Workspace, action: :add_member, instance: URI.parse("workspace://team-alpha"), workspace_uri: URI.parse("workspace://team-alpha"), granted_by: User.admin_uri(), granted_at: DateTime.utc_now()}])` — NOT a system member; holds a single workspace-scoped cap.
+4. Define a "home-is-system" caller (r3 — codex r2 review HIGH):
+   - `home_is_system_user` = `URI.parse("entity://user/system/admin-created")`, caps = `MapSet.new()` — URI host IS `system` (admin-created via the `users_live.ex:35` "create user in system workspace" UI), but NOT added to `workspace://system.members`. Tests the (iii) `home_is_system?` predicate in isolation from (iv).
+5. Define a "bootstrap-wildcard" caller (r3 — codex r2 review HIGH):
+   - `bootstrap_admin` = `URI.parse("entity://user/team-alpha/wildcard")`, caps = `MapSet.new([%Capability{kind: :any, behavior: :any, action: :any, instance: :any, workspace_uri: :any, granted_by: URI.parse("system://bootstrap"), granted_at: DateTime.utc_now()}])` — home is `team-alpha` (NOT system), NOT in `workspace://system.members`, but holds the full 5-axis wildcard cap that `SystemPrincipal.caps("system://bootstrap")` mints. Tests the (i) `holds_admin_caps?` predicate in isolation from (ii)/(iii)/(iv).
 
 **Assertions:**
 
@@ -235,8 +254,10 @@ Per `feedback_completion_requires_invariant_test`, this PR is "done" iff the inv
 |---|---|---|
 | INV-1 | `regular_user_no_caps` | `[]` — NO system, NO team-alpha (not a member), NO team-beta. Lookups by URI return EMPTY. |
 | INV-2 | `team_alpha_member_no_caps` | `[team-alpha]` — exactly one row, name `"team-alpha"`. Does NOT include system. Does NOT include team-beta. |
-| INV-3 | `system_member` | `[system, team-alpha, team-beta]` — all three (admin shortcut). |
-| INV-4 | `delegated_workspace_admin` | `[team-alpha]` — exactly one row via cap-scope branch. Does NOT include system (no system membership, cap doesn't reference system). Does NOT include team-beta. |
+| INV-3 | `system_member` (home=team-alpha, in system.members) | `[system, team-alpha, team-beta]` — all three (admin shortcut via predicate (iv) `member_of_system?`). |
+| INV-3a [r3] | `home_is_system_user` (home=system, NOT in members) | `[system, team-alpha, team-beta]` — all three (admin shortcut via predicate (iii) `home_is_system?`). Tests the URI-host structural admin path independently of membership. |
+| INV-3b [r3] | `bootstrap_admin` (home=team-alpha, NOT in members, wildcard caps) | `[system, team-alpha, team-beta]` — all three (admin shortcut via predicate (i) `holds_admin_caps?`). Tests the cap-based admin path independently of URI host and membership. |
+| INV-4 | `delegated_workspace_admin` | `[team-alpha]` — exactly one row via cap-scope branch. Does NOT include system (no system membership, no home-is-system, cap doesn't reference system, cap is `kind: :workspace, action: :add_member` — narrow, NOT full wildcard so does NOT pass `holds_admin_caps?` or `holds_cross_workspace_admin_cap?`). Does NOT include team-beta. |
 
 **Mutation regression assertions (the structural gate):**
 
@@ -386,11 +407,31 @@ The concurrent SPEC `2026-05-27-capability-action-axis.md` §3.6.1(b) introduces
 
 3. **OQ-3: `Store.get_by_uri/1` accessor.** The cap-scope branch (§3.3.b) needs to look up workspaces by URI. Today `Store.get_by_name/1` exists but no `get_by_uri/1`. Add a thin wrapper, or filter in-memory from `list_all/0`? In-memory is simpler (one DB query for all workspaces, then filter) and aligns with the loader pattern; a `get_by_uri/1` could be added later if performance demands. Default: in-memory filter.
 
-4. **OQ-4: `member_of_system?` reuse.** `Capability.member_of_system?/1` (`capability.ex:493-507`) is currently a private function used only by `cross_workspace?/2`. Promoting it to a public `Workspace.member_of_system?/1` to share with `list_workspaces_for/2`'s admin shortcut creates a domain-level helper for system-membership checks. Acceptable, OR should `list_workspaces_for/2` re-implement the lookup against `Store.get_by_name("system")`?
+4. **OQ-4 [r3 — extended]: shared admin-shortcut predicate visibility.** The §3.3 admin shortcut names FOUR predicates that are all currently `defp` (private) in the source:
+   - `holds_admin_caps?/1` — `defp` in `apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex:835`
+   - `holds_cross_workspace_admin_cap?/1` — `defp` in `apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex:728`
+   - `home_is_system?/1` — `defp` in `apps/ezagent_core/lib/ezagent/capability.ex:480`
+   - `member_of_system?/1` — `defp` in `apps/ezagent_core/lib/ezagent/capability.ex:493`
+
+   Three implementation options:
+
+   **(a) Promote all four to public.** Add `Identity.holds_admin_caps?/1` + `Identity.holds_cross_workspace_admin_cap?/1` + `Capability.home_is_system?/1` + `Capability.member_of_system?/1` as public functions. `Ezagent.Workspace.list_workspaces_for/2` calls them directly. Surface area grows by 4 functions but each has a single, clear semantic.
+
+   **(b) Extract a shared `Capability.admin_authority?(caller_uri, caps)` helper.** A single new public function in `Capability` that returns true iff ANY of the four predicates holds. Both `list_workspaces_for/2` AND `Capability.cross_workspace?/2` call it (`cross_workspace?/2` would need refactoring to take the caps arg — currently it only takes one cap). Surface area grows by 1 function; drift between visibility and `cross_workspace?` becomes structurally impossible.
+
+   **(c) Re-implement all four in `Ezagent.Workspace`.** `list_workspaces_for/2` duplicates the four predicate patterns inline. Surface area unchanged but DRIFT risk — if `identity.ex` updates `holds_admin_caps?/1` (e.g. adds a new wildcard variant for a future SPEC), `Workspace` must echo the change.
+
+   **Default (r3): (b) — extract shared helper.** Rationale: the admin shortcut and `cross_workspace?/2` are the same authority axis (per §3.3 "Equivalence" note); making them call one helper enforces the equivalence by construction. This addresses codex r2's MED-1 (visibility) AND a forward-looking drift concern.
+
+   **INV-8 interaction:** option (b) places the predicate work in `Capability` (`ezagent_core`), NOT in `Ezagent.Workspace`. INV-8's forbidden-literal grep targets `workspace.ex` and `store.ex` only; option (b) does not contradict INV-8 because the `"system"` literal still appears (legitimately) inside `Capability.member_of_system?/1` which is in `capability.ex` (not on INV-8's target list). The `Store.get_by_name("system")` call required by `member_of_system?` runs from `capability.ex` via `apply/3` — same indirect pattern as today — so `workspace.ex` and `store.ex` remain literal-free. Option (a) has the same property (member_of_system stays in capability.ex). Option (c) would force `workspace.ex` to contain the lookup, INTRODUCING the `"system"` literal there and tripping INV-8 — option (c) is structurally rejected by INV-8.
 
 5. **OQ-5: Caps with `:any` action axis from non-admin callers.** Per the concurrent SPEC `2026-05-27-capability-action-axis.md` §3.6.1, runtime grant-boundary rejects non-admin `:any` grants. Should `list_workspaces_for/2` also skip wildcards from non-admin callers in the cap-scope branch — i.e. if `cap.workspace_uri == :any` AND caller is NOT admin, treat the cap as not contributing to the listing? Current §3.3 says: caps with `:any` workspace_uri contribute NOTHING. The admin shortcut handles the legitimate `:any` case. This is a defensive design — flag for explicit confirmation.
 
 6. **OQ-6: Drift / forensic recovery.** If a future op accidentally re-introduces `visible` (e.g. a migration revert), the schema-load mismatch will crash at boot. Is that the desired forensic signal, or should we add a startup check that asserts the column does NOT exist?
+
+7. **OQ-7 [r3 — added]: shared admin-authority helper.** Per OQ-4 default (option b), the admin shortcut and `Capability.cross_workspace?/2` share four predicates. The current `cross_workspace?/2` signature takes ONE cap + caller URI (`@spec cross_workspace?(t(), URI.t() | :system | nil) :: boolean()`); the proposed shared helper takes `caller_uri + caps :: MapSet | [Capability.t()]`. Refactoring `cross_workspace?/2` to delegate to `Capability.admin_authority?/2` is a small surface change but touches the dispatch path (`Ezagent.Kind.Runtime` step 5.6). Confirm the refactor is in-scope for this PR, or defer the shared-helper extraction to a follow-up and use option (a) (promote four functions) for this PR's impl?
+
+   **Default:** in-scope. The drift-prevention rationale (admin shortcut and cross_workspace bypass are the same axis) is structural enough to warrant the extraction now.
 
 ## 11. Codex adversarial review questions (for the round-1 review)
 
@@ -404,7 +445,7 @@ The concurrent SPEC `2026-05-27-capability-action-axis.md` §3.6.1(b) introduces
 
 5. **Does dropping the boolean break any operator-facing pinned artifact?** Per §9.1, mix tasks do not reference visible. Per §9.4, no public API. The grep audit is complete. Are there pinned snapshot files / fixtures in `apps/*/test/support/fixtures/` that would deserialize an old `Workspace.Store.decoded()` map with `visible: ...` and break? (Likely NOT — fixtures don't typically serialize internal maps; they create rows via `Store.create/2`. Verify by grep.)
 
-6. **The cross-workspace cap path. [CONFIRMED in r1 — fix folded into §3.3 in r2.]** `holds_cross_workspace_admin_cap?/1` matches `kind: :workspace, behavior: Workspace, action: :any, instance: :any, workspace_uri: :any` (`identity.ex:738-744`). The admin caller's primary cap (bootstrap shape) has `kind: :any, behavior: :any, action: :any, ...` — NOT `kind: :workspace`, so it does NOT pass `holds_cross_workspace_admin_cap?/1`. It DOES pass `holds_admin_caps?/1` (`identity.ex:835-868`). Furthermore: at boot, `workspace://system`'s `members` is EMPTY (`apps/ezagent_domain_chat/lib/ezagent_domain_chat/application.ex:269-275` seeds an empty members list; the admin is added only by the LV "Promote to system" path at `users_live.ex:232`). So `member_of_system?/1` ALSO returns false for the bootstrap admin at boot. Without `holds_admin_caps?/1` in the shortcut, the bootstrap admin falls through to the cap-scope branch, which drops `workspace_uri: :any` per §3.3.b, returning `[]` — a regression vs today's `list_visible/0` (which used `list_all/0` for admins). **r2 resolution:** §3.3 admin shortcut is the three-predicate UNION `holds_admin_caps?(caps) or holds_cross_workspace_admin_cap?(caps) or member_of_system?(caller_uri)`. Appendix A diagram updated. The r1 static review identified this as CRIT-A1.
+6. **The cross-workspace cap path. [CONFIRMED in r1 — fix folded into §3.3 in r2; r3 added home_is_system? after codex r2 review.]** `holds_cross_workspace_admin_cap?/1` matches `kind: :workspace, behavior: Workspace, action: :any, instance: :any, workspace_uri: :any` (`identity.ex:738-744`). The admin caller's primary cap (bootstrap shape) has `kind: :any, behavior: :any, action: :any, ...` — NOT `kind: :workspace`, so it does NOT pass `holds_cross_workspace_admin_cap?/1`. It DOES pass `holds_admin_caps?/1` (`identity.ex:835-868`). Furthermore: at boot, `workspace://system`'s `members` is EMPTY (`apps/ezagent_domain_chat/lib/ezagent_domain_chat/application.ex:269-275` seeds an empty members list; the admin is added only by the LV "Promote to system" path at `users_live.ex:232`). So `member_of_system?/1` ALSO returns false for the bootstrap admin at boot. Without `holds_admin_caps?/1` in the shortcut, the bootstrap admin falls through to the cap-scope branch, which drops `workspace_uri: :any` per §3.3.b, returning `[]` — a regression vs today's `list_visible/0` (which used `list_all/0` for admins). **r2 resolution:** added `holds_admin_caps?(caps)` to the shortcut. **r3 resolution (codex r2 review HIGH):** codex flagged a separate admin path missed by r2 — `Capability.cross_workspace?/2` at `capability.ex:466-470` treats callers via `home_is_system?(caller_uri) or member_of_system?(caller_uri)`, where `home_is_system?` matches `entity://user/system/<name>` (URI host = "system"). A user explicitly created in workspace `system` (admin-created via `users_live.ex:35`) is admin-equivalent by URI structure WITHOUT necessarily being in `workspace://system.members`. r3 added `home_is_system?(caller_uri)` as the third predicate, making the admin shortcut the four-predicate UNION matching `Capability.cross_workspace?/2`'s authority logic exactly. Appendix A diagram updated. OQ-4 + OQ-7 (both r3) propose extracting these into a single `Capability.admin_authority?/2` helper to enforce the equivalence by construction.
 
 ## 12. Rollback plan
 
@@ -433,6 +474,7 @@ Ezagent.Workspace.list_workspaces_for(caller_uri, caps)
   │  cond:
   │    holds_admin_caps?(caps)                    → list_all()    -- bootstrap wildcard
   │    holds_cross_workspace_admin_cap?(caps)     → list_all()    -- structural workspace admin
+  │    home_is_system?(caller_uri)                → list_all()    -- caller URI host = "system"
   │    member_of_system?(caller_uri)              → list_all()    -- system-member promotion
   │    otherwise:                                 → union(
   │                                                   member_of_workspaces(caller_uri),
