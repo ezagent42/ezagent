@@ -4,7 +4,7 @@ defmodule EzagentPluginCc.Socket do
 
   Each CC instance (one bridge per claude process) opens a WebSocket
   to `/cc_socket` and joins topic `cc:bridge:<agent_uri>`. Connect
-  params must include `token` (minted via PR 5's TokenStore.mint/1)
+  params must include `token` (minted via AgentBridge TokenStore.mint/1)
   AND `agent_uri` matching the token's owner. Mismatch → :error.
 
   Replaces the v1_prototype's HTTP /api/cc-bridge/announce + SSE
@@ -13,7 +13,7 @@ defmodule EzagentPluginCc.Socket do
   """
   use Phoenix.Socket
 
-  alias EzagentPluginCc.TokenStore
+  alias Ezagent.AgentBridge.TokenStore
 
   channel "cc:bridge:*", EzagentPluginCc.Channel
 

@@ -1,0 +1,152 @@
+defmodule Ezagent.AgentBridge.Registry do
+  @moduledoc """
+  `agent_uri -> channel_pid` lookup table for bridge-backed agents.
+
+  This module is the promoted home of the historical
+  `EzagentPluginCc.BridgeRegistry`. PR-B intentionally keeps the
+  underlying ETS table name so live cc bridge bindings survive the
+  module move during the deprecation window.
+  """
+
+  @table :ezagent_plugin_cc_bridges
+  @pubsub EzagentCore.PubSub
+  @topic "esr:agent_bridge:bridges"
+  @legacy_topic "esr:cc_channel:bridges"
+
+  @doc "ETS table init. Idempotent."
+  @spec init() :: :ok
+  def init do
+    if :ets.whereis(@table) == :undefined do
+      try do
+        :ets.new(@table, [:set, :public, :named_table, read_concurrency: true])
+      rescue
+        ArgumentError ->
+          # Another caller won the first-init race after our whereis/1
+          # check. The table is named and process-independent, so this
+          # is still a successful idempotent init.
+          :ok
+      end
+    end
+
+    :ok
+  end
+
+  @doc "Generic PubSub topic for AgentBridge connect/disconnect events."
+  @spec topic() :: String.t()
+  def topic, do: @topic
+
+  @doc "Legacy cc PubSub topic kept for the deprecation window."
+  @spec legacy_topic() :: String.t()
+  def legacy_topic, do: @legacy_topic
+
+  @doc """
+  Bind `agent_uri` to the Channel pid with optional metadata.
+
+  Idempotent for the same pid. Returns `{:error, :already_bound}` when
+  a different live pid already owns the URI.
+  """
+  @spec bind(URI.t(), pid(), map()) :: :ok | {:error, term()}
+  def bind(%URI{} = agent_uri, channel_pid, info \\ %{})
+      when is_pid(channel_pid) and is_map(info) do
+    init()
+
+    key = URI.to_string(agent_uri)
+    row = %{pid: channel_pid, connected_at: DateTime.utc_now(), info: info}
+
+    case :ets.lookup(@table, key) do
+      [{^key, %{pid: existing_pid}}] when existing_pid == channel_pid ->
+        :ok
+
+      [{^key, %{pid: existing_pid}}] ->
+        if Process.alive?(existing_pid) do
+          {:error, :already_bound}
+        else
+          true = :ets.insert(@table, {key, row})
+          broadcast_connected(agent_uri, info)
+          :ok
+        end
+
+      [] ->
+        true = :ets.insert(@table, {key, row})
+        broadcast_connected(agent_uri, info)
+        :ok
+    end
+  end
+
+  @doc "Unbind `agent_uri`."
+  @spec unbind(URI.t()) :: :ok
+  def unbind(%URI{} = agent_uri) do
+    init()
+
+    key = URI.to_string(agent_uri)
+    existed? = :ets.member(@table, key)
+    :ets.delete(@table, key)
+    if existed?, do: broadcast_disconnected(agent_uri)
+    :ok
+  end
+
+  @doc "Look up the live Channel pid bound to `agent_uri`."
+  @spec lookup(URI.t()) :: {:ok, pid()} | :error
+  def lookup(%URI{} = agent_uri) do
+    init()
+
+    case :ets.lookup(@table, URI.to_string(agent_uri)) do
+      [{_, %{pid: pid}}] -> {:ok, pid}
+      [] -> :error
+    end
+  end
+
+  @doc "Back-compat list shape: `[{agent_uri, pid}]`."
+  @spec list_all() :: [{URI.t(), pid()}]
+  def list_all do
+    init()
+
+    @table
+    |> :ets.tab2list()
+    |> Enum.map(fn {key, %{pid: pid}} -> {URI.parse(key), pid} end)
+  end
+
+  @doc """
+  List bound bridges with metadata:
+  `[{agent_uri, %{pid: pid, connected_at: DateTime.t(), info: map()}}]`.
+  """
+  @spec list_connected() :: [{URI.t(), map()}]
+  def list_connected do
+    init()
+
+    @table
+    |> :ets.tab2list()
+    |> Enum.map(fn {key, row} -> {URI.parse(key), row} end)
+  end
+
+  @doc "Number of currently bound bridges."
+  @spec count() :: non_neg_integer()
+  def count do
+    init()
+    :ets.info(@table, :size) || 0
+  end
+
+  @doc """
+  High-level status atom for admin summary panels.
+
+    * `:no_bridges` when the registry is empty
+    * `{:connected, n}` when n bridges are bound
+  """
+  @spec status() :: :no_bridges | {:connected, pos_integer()}
+  def status do
+    case count() do
+      0 -> :no_bridges
+      n -> {:connected, n}
+    end
+  end
+
+  defp broadcast_connected(agent_uri, info) do
+    Phoenix.PubSub.broadcast(@pubsub, @topic, {:agent_bridge_connected, agent_uri, info})
+    Phoenix.PubSub.broadcast(@pubsub, @legacy_topic, {:cc_connected, agent_uri, info})
+  end
+
+  defp broadcast_disconnected(agent_uri) do
+    Phoenix.PubSub.broadcast(@pubsub, @topic, {:agent_bridge_disconnected, agent_uri})
+    Phoenix.PubSub.broadcast(@pubsub, @legacy_topic, {:cc_disconnected, agent_uri})
+  end
+end

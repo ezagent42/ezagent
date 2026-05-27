@@ -65,7 +65,7 @@ defmodule EzagentPluginCc.Application do
   use Application
   use Ezagent.Plugin
 
-  alias EzagentPluginCc.BridgeRegistry
+  alias Ezagent.AgentBridge.Registry, as: BridgeRegistry
 
   # --- OTP Application -------------------------------------------------
 
