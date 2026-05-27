@@ -397,9 +397,18 @@ defmodule EzagentDomainChat.Application do
   preceding line does boot-time Repo writes too, and that precedent
   has been stable across the suite).
   """
-  @spec seed_default_session_template_now() :: :ok
+  @spec seed_default_session_template_now() :: :ok | {:error, :test_only}
   def seed_default_session_template_now do
-    do_seed_default_session_template()
+    # codex review #419 r2 HIGH-1: this entry is test-only. Prod callers
+    # must use the boot path (Application.start/2 invokes
+    # do_seed_default_session_template/0 once at startup). Reject calls
+    # outside test env so a stale operator script can't accidentally
+    # double-seed prod.
+    if test_env?() do
+      do_seed_default_session_template()
+    else
+      {:error, :test_only}
+    end
   end
 
   defp do_seed_default_session_template do
