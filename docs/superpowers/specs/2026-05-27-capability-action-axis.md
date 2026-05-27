@@ -1,6 +1,15 @@
 # SPEC — Capability struct gains the `action` axis
 
-**Status:** r3 (codex r2 BLOCK addressed). 2026-05-27.
+**Status:** r4 (codex r3 REQUEST_CHANGES addressed). 2026-05-27.
+
+**r4 revision log (codex r3 findings):**
+- HIGH-1 (Map.get not only in matches?/2 — `to_map/1` and admin/entity LV display also crash on missing `:action`): §3.3.1 added enumerating the full reader set. Pattern: every direct `cap.action` field read becomes `Map.get(cap, :action, :any)` — applies to `to_map/1` at `apps/ezagent_core/lib/ezagent/capability.ex:525`, admin/entity caps LV display at `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/admin_caps_live.ex:151` + `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/entity_caps_live.ex:183-273`, and any audit/telemetry emit.
+- HIGH-2 (admin LV grant form regression — `build_cap/2` doesn't pass action, runtime check would reject admin): §3.6.1(b) clarified — "non-privileged principal" means NEITHER `system://` URI NOR a user with the admin role. Admin role is structurally privileged (configured at user creation via `Users.create/3`, persisted as `:admin` role atom in the User Kind slice) and matches the existing "admin wildcard cap" semantics in the Catalog. Future-PR note added: extend the entity-caps LV form with an action selector so admins don't NEED wildcard grants for narrow surfaces.
+- HIGH (struct enforce_keys): `:action` is NOT in `@enforce_keys` — only defstruct default of `:any`. Construction sites that don't pass action (existing `build_cap/2` in LV at `entity_caps_live.ex:182-191`) silently default to `:any`. r4 §3.1 updated to make this explicit; the runtime grant-boundary check is the enforcement, not enforce_keys.
+- MED-1 (B3 test text stale — assumed normalization happens; r3 strategy doesn't normalize on load): B3 reworded to "matcher tolerance" — simulate an old-format cap (Map.delete the `:action` key), dispatch through `matches?/2` against a concrete-action needed-cap, assert wildcard semantics + no raise.
+- MED-2 (C2 catalog allowlist — 6+ legitimate `:any` entries exist today: boot-reconciler, template-materialize, orchestrator-tools, session-internal, workspace-loader, feishu-binding-policy, plus chat-router/chat-reply/bootstrap/mix-task/lv-anon-mount wildcards): replace "0 unjustified wildcards" with `@wildcard_allowlist` MapSet enumerating exactly those principal URIs. Any new wildcard entry NOT in the allowlist fails the test — guards future drift, allows current legitimate state.
+- MED-3 (plugin-check 11 scope — gates only plugin Behaviors, not umbrella core/domain): r4 §3.6.1(a) acknowledges the scope gap. The umbrella-wide A5 test (`apps/ezagent_core/test/ezagent/behavior_required_caps_action_invariant_test.exs`) iterates ALL Behaviors (core + domain + plugin) and asserts `entry_key == cap.action OR cap.action == :any` — this is the structural gate; plugin-check 11 is defense-in-depth at plugin compile time.
+- LOW-2 (sweep count 184 vs 185): §6 corrected to 184; the false-positive was a doc-comment string in `capability.ex:80`.
 
 **r3 revision log (codex r2 findings):**
 - CRIT (still): codex r1's CRIT fix shape was wrong — `normalize_loaded/1`'s clause ordering raised on old structs (`%__MODULE__{} = cap` matched first; then `%{cap | action: :any}` raised on missing key). **r3 changes the strategy**: rather than normalize-on-load, `matches?/2` uses `Map.get(cap, :action, :any)` to treat a missing `:action` key as the wildcard at the matcher boundary. Backward-compat becomes structural at the only point that matters (cap-check); the normalize-on-load function becomes a cosmetic cleanup, not a correctness gate. This collapses CRIT + idempotence-HIGH + save-side-staleness-HIGH into one fix.
@@ -68,20 +77,22 @@ The PR #356 carve-out workaround (split each privileged action into its own Beha
 
 ## 3. Design — one field, real comparison
 
-### 3.1 Struct grows to 7 enforce_keys
+### 3.1 Struct grows by one field — `:action` defstruct default `:any`, NOT in enforce_keys (r4 fix)
 
 ```elixir
-@enforce_keys [:kind, :behavior, :action, :instance, :workspace_uri, :granted_by, :granted_at]
+@enforce_keys [:kind, :behavior, :instance, :workspace_uri, :granted_by, :granted_at]
 defstruct kind: nil,
           behavior: nil,
-          action: :any,
-          instance: nil,
-          workspace_uri: nil,
-          granted_by: nil,
-          granted_at: nil
+          action: :any,             # ← NEW field. Default :any (wildcard).
+          instance: nil,            #    NOT in enforce_keys — old construction
+          workspace_uri: nil,       #    sites that don't pass action silently
+          granted_by: nil,          #    get :any. The runtime grant-boundary
+          granted_at: nil           #    check (§3.6.1.b) is the enforcement.
 ```
 
-Default `:any` matches the wildcard convention already used for `kind` / `behavior` / `instance` / `workspace_uri`. Old grant sites that pass no action become `action: :any` — the wildcard — preserving current admin / system-principal semantics.
+**Why `:action` is NOT in `@enforce_keys`** (codex r3 HIGH): the existing `entity_caps_live.ex` admin grant form constructs caps via `build_cap/2` at `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/entity_caps_live.ex:182-191` WITHOUT passing an action field. Adding `:action` to enforce_keys would raise on every admin grant attempt — instant regression. Default `:any` + runtime check at the grant boundary is the structural fix: the form keeps working (silently produces a wildcard cap), the grant boundary rejects wildcards from non-privileged principals (§3.6.1.b).
+
+Old grant sites that pass no action become `action: :any` — the wildcard — preserving current admin / system-principal semantics. Going forward, every new grant-site author writes the action explicitly per the §3.6.1 policy.
 
 ### 3.2 Constructor stops discarding the action arg
 
@@ -137,6 +148,24 @@ The needed-cap shape (the second arg) gains `:action`. Today's needed-cap is con
 
 **Performance**: `Map.get` is one extra map lookup per match call vs direct field access — negligible. Hot-path overhead measured in nanoseconds; not perf-sensitive.
 
+### 3.3.1 The full set of cap readers — every direct `cap.action` access must use `Map.get`
+
+codex r3 HIGH-1: `matches?/2` is not the only cap reader. After this SPEC adds the field, every direct `cap.action` field access becomes a missing-key crash hazard for deserialized old caps. The implementer MUST audit + convert every such access. The known reader set today:
+
+| Site | File:line | Today | After SPEC |
+|---|---|---|---|
+| Matcher | `apps/ezagent_core/lib/ezagent/capability.ex:192` (`matches?/2`) | No `cap.action` access | `Map.get(cap, :action, :any)` per §3.3 |
+| Serializer | `apps/ezagent_core/lib/ezagent/capability.ex:525` (`to_map/1`) | No action field in output map | `"action" => Map.get(cap, :action, :any) \|> atom_or_module_to_string()` |
+| Deserializer | `apps/ezagent_core/lib/ezagent/capability.ex:from_map/1` | No `:action` parse | `Map.put_new(parsed, "action", "any")` before atomization |
+| Admin LV cap display | `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/admin_caps_live.ex:151` | Pretty-prints via `to_map` | Inherits `to_map` fix automatically |
+| Entity LV cap display | `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/entity_caps_live.ex:183-273` | Direct field access in render | Switch to `Map.get(cap, :action, :any)` for any `<%= cap.action %>` |
+| Audit emit | `apps/ezagent_core/lib/ezagent/audit.ex` (if it logs caps) | Verify whether it reads `.action` | If yes, `Map.get` shim |
+| Identity grant_cap entry | `apps/ezagent_core/lib/ezagent/identity/admin.ex` (TBD line) | Receives external cap struct | Normalize action via `Map.get` before storing in slice |
+
+**Sweep instruction for impl subagent**: `rg -n "\.action\b" apps/` after the SPEC's struct change lands. Every hit on a `Capability` field-access becomes `Map.get(cap, :action, :any)`. Each conversion is mechanical; expect 5–15 sites total (the struct-field-access pattern is rare outside the matcher).
+
+**Defense-in-depth alternative considered + accepted**: a `Capability.action_of/1` helper function. `Capability.action_of(%Capability{} = cap), do: Map.get(cap, :action, :any)`. Every site uses this instead of `Map.get` literally — single chokepoint, one place to change if the rule evolves. r4 recommends this helper as the canonical reader; matches?/2 and to_map/1 both delegate to it.
+
 ### 3.4 Persistence: `caps_json` JSON gains a 7th field, with a backward-compat read path
 
 **Storage shape** (codex r1 HIGH correction): `users.caps_json` is Ecto `:string` (DB `TEXT`) containing serialized JSON (`apps/ezagent_domain_identity/lib/ezagent/users.ex:27`, `apps/ezagent_core/priv/repo/migrations/20260520000000_phase4_users.exs:8`). Not JSONB. The shim works regardless of column type — atomization happens in `Capability.from_map/1` at `apps/ezagent_domain_identity/lib/ezagent/users.ex:212`.
@@ -185,9 +214,15 @@ After this SPEC, three cap shapes coexist:
 
 1. **Compile-time (plugin-check 11)**: extend the existing check at `apps/ezagent_core/lib/mix/tasks/compile/ezagent_plugin_check.ex:724` to also verify `required_caps[action].action == action OR required_caps[action].action == :any`. A behavior-wildcard in `required_caps/0` is rare but legitimate for orchestrator-style Behaviors (per the existing PR-CC-2-v2 §4 "any_action escape hatch" doc). The check enforces map-key / cap.action coherence, blocking drift at compile time.
 
-2. **Runtime grant-boundary (Identity.grant_cap/3)**: at the grant entrypoint at `apps/ezagent_core/lib/ezagent/identity/admin.ex` (line TBD by impl subagent — locate `def grant_cap/3` or `:grant_cap` action), if the cap being granted has `cap.action == :any` AND the caller is NOT a `system://` principal, return `{:error, :wildcard_action_grant_requires_system_principal}`. System principals (the 14 catalog entries + bootstrap + mix-task) bypass this check structurally because their grants come from `SystemPrincipal.Catalog` at boot, not via `Identity.grant_cap/3`.
+2. **Runtime grant-boundary (Identity.grant_cap/3)**: at the grant entrypoint (locate `def grant_cap/3` or `:grant_cap` action handler), if the cap being granted has `cap.action == :any` AND the caller is "non-privileged", return `{:error, :wildcard_action_grant_requires_privileged_principal}`.
 
-This makes the policy structurally enforced, not just documented. A plugin author writing `required_caps/0` can't drift; a user-facing grant path can't accidentally widen.
+**Privileged principal** = ANY of:
+- `system://...` URI (the 14 catalog entries + bootstrap + mix-task — their grants come from `SystemPrincipal.Catalog` at boot, not via this code path, but the check is there as defense-in-depth)
+- A user with the admin role (codex r3 HIGH-2 fix). The admin role is configured at user creation (`Users.create/3` with admin flag, persisted in the User Kind slice as the canonical role marker). This matches the existing "admin wildcard cap" semantics — admins ARE structurally privileged and can issue wildcard grants. Without this exemption, the entity-caps LV admin grant form at `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/entity_caps_live.ex` regresses (it doesn't pass action → defaults to `:any` → would be rejected).
+
+**Future-PR note** (`docs/futures/todo.md`): extend the entity-caps LV grant form with an action selector dropdown (populated from the target Behavior's `actions/0`), so admins can grant narrow caps via the UI without falling back to wildcard. This SPEC's runtime check + admin exemption is the bridge; the action selector is the long-term fix.
+
+This makes the policy structurally enforced for non-admin paths, not just documented. A plugin author writing `required_caps/0` can't drift (compile check 11); a user-facing grant path can't accidentally widen (runtime check rejects); admin LV form continues working today via the role exemption.
 
 ### 3.7 Snapshot binary restore — handled structurally at `matches?/2`, not by reconcile-on-load (codex r2 fix)
 
@@ -246,9 +281,9 @@ Allen's `feedback_let_it_crash_no_workarounds` forbids dual-path. The PR lands a
 | A6 | Compile-time check 11 fails a deliberately-broken fixture (`%{send: cap(.., .., :join)}`) | plugin-check test |
 | **B1** | **The PR #408 regression test (THE merge gate)** — concrete setup: (1) spawn `workspace://X` via the normal Workspace facade; (2) create a non-admin user `entity://user/X/member-1` via `Users.create/3` — note that `Users.create` grants default caps at `apps/ezagent_domain_identity/lib/ezagent/users.ex:76-84` and `Behavior.Identity.create_user/3` adds a self-Identity cap at `apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex:113-122`; the test relies on those defaults NOT matching `Behavior.Workspace :add_member`'s required cap (kind axis differs: defaults are `:user` / `:session`-scoped, `:add_member` requires `:workspace`); (3) seed exactly one additional cap: `%Capability{kind: :workspace, behavior: Ezagent.Behavior.Workspace, action: :create_session, instance: workspace_uri, workspace_uri: workspace_uri, granted_by: SystemPrincipal.uri("template-materialize"), granted_at: <now>}` on the user via `Identity.grant_cap`; (4) dispatch `Invocation{target: URI.parse("workspace://X?action=workspace.add_member"), mode: :call, args: %{member: <other_user_uri>}, ctx: %{caller: member_uri, caps: <slice-loaded>, ...}}`; (5) assert `{:error, :unauthorized}` is returned from dispatch step 5.5 at `apps/ezagent_core/lib/ezagent/kind/runtime.ex:121` BEFORE `invoke(:add_member, ...)` runs (verify by reading the workspace slice's `members` after the call — must equal pre-call members; the dispatched user must NOT have been added). | invariant test |
 | B2 | Same member, same cap, dispatch to `workspace://X?action=workspace.create_session` — assert `{:ok, _, _}` (the cap matches; creation succeeds) | invariant test |
-| **B3** | **Snapshot bypass regression (codex r1 CRIT)** — (1) write a `%Capability{}` slice through pre-SPEC snapshot format (simulated by constructing a slice with caps that are deserialized maps missing `:action` — `Map.delete(cap, :action)` then `term_to_binary`); (2) load via `KindSnapshot.decode_state/1`; (3) Identity's `reconcile_after_load/2` runs; (4) assert every cap in the loaded slice has `cap.action != nil` (defaults to `:any`); (5) `matches?/2` against a needed-cap with `action: :send` returns true (wildcard preserved) | invariant test |
+| **B3** | **Matcher tolerance for missing :action (codex r3 r4 reframe)** — (1) construct a cap as `Map.delete(%Capability{kind: :chat, behavior: Chat, instance: :any, workspace_uri: :any, granted_by: <some>, granted_at: <now>}, :action)` — simulates the post-`binary_to_term` shape of an OLD snapshot; (2) `term_to_binary` and `binary_to_term` round-trip to confirm the deserialized map is still missing `:action`; (3) call `Capability.matches?(deserialized_cap, %{kind: :chat, behavior: Chat, action: :send, instance: <uri>, workspace_uri: <uri>})`; (4) assert returns `true` (Map.get default `:any` matches concrete `:send`); (5) assert no `KeyError` or other crash. Does NOT assert post-load normalization — that's a future-PR cosmetic cleanup, not gating this PR. | invariant test |
 | C1 | Admin wildcard cap (`kind: :any, behavior: :any, action: :any, …`) still satisfies every action | regression test |
-| C2 | **`SystemPrincipal.Catalog` least-privilege regression** — (a) every catalog entry's action atom matches a real `actions/0` entry of the named Behavior (or is `:any` with explicit doc-comment justification); (b) the 14 system principal URIs partition cleanly: closed system principals (bootstrap, mix-task, chat-router, chat-reply, lv-anon-mount) MAY have wildcard caps; narrowed principals (session-internal, template-materialize, workspace-loader, etc.) MUST have either a real action atom or a behavior+`:any` cap with an inline `# noqa: wildcard-action — rationale here` comment; (c) the test asserts the count of unjustified wildcard entries is 0 — guarding future drift | catalog audit test |
+| C2 | **`SystemPrincipal.Catalog` wildcard allowlist regression** — (a) every catalog entry's concrete action atom (when not `:any`) matches a real `actions/0` entry of the named Behavior; (b) the test module defines `@wildcard_allowlist` as a MapSet of principal URIs CURRENTLY known to legitimately carry wildcard caps: `system://bootstrap`, `system://mix-task`, `system://chat-router`, `system://chat-reply`, `system://lv-anon-mount`, `system://boot-reconciler`, `system://template-materialize`, `system://orchestrator-tools`, `system://session-internal`, `system://workspace-loader`, `system://feishu-binding-policy`; (c) every catalog entry with a `:any`-action cap MUST have its principal URI in `@wildcard_allowlist` — any NEW catalog wildcard entry added without an allowlist update fails this test, preventing drift | catalog audit test |
 
 ## 6. Files affected (estimated)
 
@@ -261,7 +296,7 @@ Allen's `feedback_let_it_crash_no_workarounds` forbids dual-path. The PR lands a
 - Any other Behavior whose slice carries caps via snapshot — audit + implement `reconcile_after_load/2` (codex r1 CRIT — must enumerate before merge)
 
 **Sweep (mechanical, real counts from codex r1 grep):**
-- **184** direct `%Capability{}` struct literals (production + test)
+- **184** direct `%Capability{}` struct literals (production + test) — codex r3 LOW-2 fix: 185 raw `rg %Capability{` minus 1 false-positive at `apps/ezagent_core/lib/ezagent/capability.ex:80` (doc-comment string referencing the struct, not a real construction)
 - **98** `Capability.cap(` calls (3-arity + 5-arity)
 - **24** `def required_caps do` Behavior implementations
 - **65** entries inside those required_caps maps
