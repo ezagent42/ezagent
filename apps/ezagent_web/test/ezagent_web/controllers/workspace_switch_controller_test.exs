@@ -8,8 +8,11 @@ defmodule EzagentWeb.WorkspaceSwitchControllerTest do
     `:current_entity_uri` preserved, `:current_workspace_uri`
     updated to target.
   - Regular user → denial page rendered (HTML 200 with "Sign in
-    to" prompt). Session UNCHANGED.
-  - Hidden workspace (`visible: false`) → flash error redirect.
+    to" prompt). Session UNCHANGED. This covers BOTH switching to a
+    sibling tenant workspace AND attempting to switch to
+    `workspace://system` (SPEC 2026-05-27-workspace-cap-based-visibility
+    folded the former "hidden workspace" early-exit into the regular
+    denial branch since the `:visible` field is gone).
   - Unknown workspace → flash error redirect.
   - No-op when already in target.
   """
@@ -25,7 +28,7 @@ defmodule EzagentWeb.WorkspaceSwitchControllerTest do
 
     # System workspace must exist for system-member tests.
     case Ezagent.Workspace.Store.get_by_name("system") do
-      nil -> {:ok, _} = Ezagent.Workspace.Store.create("system", %{visible: false})
+      nil -> {:ok, _} = Ezagent.Workspace.Store.create("system", %{})
       _ -> :ok
     end
 
@@ -111,8 +114,15 @@ defmodule EzagentWeb.WorkspaceSwitchControllerTest do
       assert Phoenix.Flash.get(conn.assigns.flash, :error) =~ "Unknown workspace"
     end
 
-    test "hidden workspace (system) → flash error, session UNCHANGED",
+    test "regular user → system workspace renders denial page (post-SPEC 2026-05-27 — no `visible` field)",
          %{regular_uri: uri} do
+      # SPEC 2026-05-27-workspace-cap-based-visibility folded the
+      # former "hidden workspace (visible: false)" early-exit into
+      # the regular denial branch. Regular users attempting to
+      # switch to `workspace://system` now get the same denial page
+      # they'd get switching to any other tenant's workspace —
+      # consistent with cap-based visibility: if you can't see it,
+      # you can't switch to it; the switcher denies you uniformly.
       conn =
         build_conn()
         |> Plug.Test.init_test_session(%{
@@ -121,9 +131,16 @@ defmodule EzagentWeb.WorkspaceSwitchControllerTest do
         })
         |> post("/workspaces/switch", %{"workspace" => "system"})
 
-      assert redirected_to(conn) == "/sessions"
+      # Denial page is a 200 HTML response (NOT a redirect).
+      assert conn.status == 200
+      body = response(conn, 200)
+      assert body =~ "Sign in to workspace"
+      assert body =~ "system"
+
+      # Session preserved — user can keep using their current
+      # workspace if they cancel.
       assert Plug.Conn.get_session(conn, :current_entity_uri) == uri
-      assert Phoenix.Flash.get(conn.assigns.flash, :error) =~ "not available"
+      assert Plug.Conn.get_session(conn, :current_workspace_uri) == "workspace://team-alpha"
     end
 
     test "no-op when already in target workspace → just redirect to /sessions",

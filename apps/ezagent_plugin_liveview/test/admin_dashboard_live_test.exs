@@ -54,8 +54,10 @@ defmodule EzagentPluginLiveview.AdminDashboardLiveTest do
 
     # Workspace-dropdown list-iteration ran without crashing. Either
     # the placeholder ("No workspaces yet") or at least one workspace
-    # row is rendered — `live_auth` lists `Ezagent.Workspace.list_visible/0`
-    # which always includes the seeded workspaces post-boot.
+    # row is rendered — `live_auth` lists
+    # `Ezagent.Workspace.list_workspaces_for/2` (SPEC
+    # 2026-05-27-workspace-cap-based-visibility) which returns the
+    # caller-scoped view of seeded workspaces post-boot.
     assert html =~ "Workspaces" or html =~ "Manage workspaces"
   end
 end

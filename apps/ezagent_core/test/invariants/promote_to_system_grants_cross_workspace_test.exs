@@ -23,7 +23,9 @@ defmodule Ezagent.Invariants.PromoteToSystemGrantsCrossWorkspaceTest do
     # Workspace Kind process may already be alive from boot; we only
     # care about the DB row for membership writes.
     case Ezagent.Workspace.Store.get_by_name("system") do
-      nil -> {:ok, _} = Ezagent.Workspace.Store.create("system", %{visible: false})
+      # SPEC 2026-05-27-workspace-cap-based-visibility — `:visible`
+      # field deleted; system workspace is created with empty attrs.
+      nil -> {:ok, _} = Ezagent.Workspace.Store.create("system", %{})
       _ -> :ok
     end
 

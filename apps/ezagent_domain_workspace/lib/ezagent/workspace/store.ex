@@ -59,11 +59,11 @@ defmodule Ezagent.Workspace.Store do
     field :session_templates, :string
     field :routing_rules, :string
     field :created_by, :string
-    # Phase 9 PR-8 (SPEC v3 §13.1) — `workspace://system` is hidden
-    # from the regular workspace selector dropdown. Default `true`
-    # for every operator-facing workspace; only the boot-time system
-    # workspace is created with `visible: false`.
-    field :visible, :boolean, default: true
+    # SPEC 2026-05-27-workspace-cap-based-visibility — the `:visible`
+    # boolean was DELETED here. Visibility is now cap-derived via
+    # `Ezagent.Workspace.list_workspaces_for/2`. Operator stops phx +
+    # runs `mix ecto.migrate` (HUMAN-REQUIRED) after merge; the
+    # schema/column mismatch is the structural reminder.
     timestamps(type: :utc_datetime_usec)
   end
 
@@ -74,8 +74,7 @@ defmodule Ezagent.Workspace.Store do
           members: [URI.t()],
           session_templates: map(),
           routing_rules: [map()],
-          created_by: URI.t() | nil,
-          visible: boolean()
+          created_by: URI.t() | nil
         }
 
   # --- write paths ----------------------------------------------------
@@ -100,10 +99,7 @@ defmodule Ezagent.Workspace.Store do
         member_uris: encode_uris(Map.get(attrs, :members, [])),
         session_templates: Jason.encode!(Map.get(attrs, :session_templates, %{})),
         routing_rules: Jason.encode!(Map.get(attrs, :routing_rules, [])),
-        created_by: uri_to_string_or_nil(Map.get(attrs, :created_by)),
-        # Phase 9 PR-8 (SPEC v3 §13.1) — visibility defaults true;
-        # only the boot-time system workspace sets `visible: false`.
-        visible: Map.get(attrs, :visible, true)
+        created_by: uri_to_string_or_nil(Map.get(attrs, :created_by))
       })
       |> Ecto.Changeset.unique_constraint(:name, name: :workspaces_name_index)
       |> Ecto.Changeset.unique_constraint(:uri, name: :workspaces_uri_index)
@@ -170,23 +166,19 @@ defmodule Ezagent.Workspace.Store do
     end
   end
 
+  @doc """
+  List every persisted workspace, sorted by name. System-internal
+  callers only (Loader rehydration, agent-flavor resolution, mix
+  audit tasks, invariant tests).
+
+  Operator-facing surfaces MUST use `Ezagent.Workspace.list_workspaces_for/2`
+  (SPEC 2026-05-27-workspace-cap-based-visibility). The former
+  `list_visible/0` field-based filter is deleted; visibility is now
+  cap-derived.
+  """
   @spec list_all() :: [decoded()]
   def list_all do
     Repo.all(from w in __MODULE__, order_by: w.name)
-    |> Enum.map(&decode/1)
-  end
-
-  @doc """
-  List only workspaces with `visible: true`. Used by the regular
-  workspace-selector UI per SPEC v3 §13.1 — `workspace://system` is
-  created with `visible: false` and must not appear here.
-
-  `list_all/0` remains for admin internal use (Loader rehydration,
-  invariant tests, `mix ezagent.workspace.*` tooling).
-  """
-  @spec list_visible() :: [decoded()]
-  def list_visible do
-    Repo.all(from w in __MODULE__, where: w.visible == true, order_by: w.name)
     |> Enum.map(&decode/1)
   end
 
@@ -212,8 +204,7 @@ defmodule Ezagent.Workspace.Store do
       members: row.member_uris |> Jason.decode!() |> Enum.map(&URI.parse/1),
       session_templates: Jason.decode!(row.session_templates),
       routing_rules: Jason.decode!(row.routing_rules),
-      created_by: parse_uri_or_nil(row.created_by),
-      visible: row.visible
+      created_by: parse_uri_or_nil(row.created_by)
     }
   end
 

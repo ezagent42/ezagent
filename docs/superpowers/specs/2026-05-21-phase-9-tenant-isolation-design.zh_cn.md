@@ -622,8 +622,12 @@ Bootstrap admin (`entity://user/system/admin`，**不是** PR-2 seed 的
 
 - `workspace://system` 成员**因成员身份**而持有 bootstrap admin cap
   (`workspace_uri: :any`)，不是逐 cap 显式 grant。
-- `workspace://system` 在非系统成员的 workspace 选择器里**不可见**
-  （它不是"你可以加入的 workspace"）。
+- `workspace://system` 在缺少 `workspace://system` 成员身份或跨
+  workspace admin cap 的 caller 的 per-caller workspace 列表里
+  **不出现**。机制：`Ezagent.Workspace.list_workspaces_for/2`
+  （SPEC `2026-05-27-workspace-cap-based-visibility.md`）。
+  可见性由 cap 派生，不再依赖字段 — 原 `:visible` 布尔字段已
+  **删除**。**2026-05-27 由 SPEC #423 §4.3 修订。**
 - 迁移: PR-2 已 seed 的 `entity://user/default/admin` 变为
   `entity://user/system/admin`。Bootstrap seed 更新。
 
@@ -652,7 +656,8 @@ Bootstrap admin (`entity://user/system/admin`，**不是** PR-2 seed 的
   锁视觉标记。点击锁定 workspace → "登录到 `<workspace>`" 提示
   （按 §6.4 Amendment 3）。
 - 自己的 workspace 高亮为"当前"。
-- 永远看不到 `workspace://system`（§13.1 隐藏）。
+- 永远看不到 `workspace://system`（他们不是成员；caps 也不引用它
+  — 由 cap 派生，按 §13.1 2026-05-27 修订 / SPEC #423）。
 
 这就是 Keycloak master-realm admin 模型 — 系统管理员保持自己身份
 + 上下文切换；普通用户固定在自己的 workspace，除非显式重新认证。
@@ -680,7 +685,7 @@ boot-time seeding):
 
 ```elixir
 # system workspace 先建
-{:ok, _} = Ezagent.Workspace.create("system", %{visible: false})
+{:ok, _} = Ezagent.Workspace.create("system", %{})
 
 # default workspace
 {:ok, _} = Ezagent.Workspace.create("default", %{})
@@ -689,8 +694,14 @@ boot-time seeding):
 {:ok, _} = Ezagent.Users.create("entity://user/system/admin", "<password>", [])
 ```
 
-workspace 上的 `visible: false` 字段是新增 — 默认 true；
-`workspace://system` 设为 false，不出现在普通 workspace 下拉。
+**2026-05-27 由 SPEC #423 §4.3 修订。** workspaces schema 上的
+`:visible` 布尔字段已删除；`workspace://system` 不再需要逐行
+隐藏标志。可见性由 cap 派生，通过
+`Ezagent.Workspace.list_workspaces_for/2` 计算 —
+`workspace://system` 出现在 caller 的列表里当且仅当 4 谓词
+admin shortcut 触发（bootstrap-wildcard cap、结构性跨 workspace
+admin cap、URI host = `system`、或 `workspace://system` 显式
+成员身份）。
 
 ### 13.5 与已合并 PR-2 的迁移影响
 

@@ -85,8 +85,13 @@ defmodule EzagentWeb.OnboardingControllerTest do
       assert redirected_to(conn) == "/register/complete"
       assert get_session(conn, :pending_workspace) == ws_name
 
-      # Workspace + rule landed
-      assert Ezagent.Workspace.list_visible() |> Enum.any?(&(&1.name == ws_name))
+      # Workspace + rule landed. SPEC 2026-05-27-workspace-cap-based-visibility:
+      # use `Store.list_all/0` here — this is a TEST-ONLY assertion
+      # that the workspace persisted at all (not an operator-facing
+      # visibility check). The caller-scoped
+      # `list_workspaces_for/2` would require synthesizing a caller
+      # + caps; the bare existence check is what the test wants.
+      assert Ezagent.Workspace.Store.list_all() |> Enum.any?(&(&1.name == ws_name))
 
       assert Ezagent.Workspace.accepts_email?("workspace://" <> ws_name, "admin@newco.test")
     end
