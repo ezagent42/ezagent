@@ -146,19 +146,48 @@ defmodule Ezagent.ExternalMirror.BindingRow do
   end
 
   @doc """
-  Delete a binding row by its synthetic id (`"<adapter_id>/<target_id>"`).
-  Returns `:ok` whether the row existed or not (idempotent — matches
-  the in-memory `:unbind` semantics).
+  Delete a binding row by its row id (the session-scoped SHA hash —
+  see `row_id/3`). Returns a structured outcome so callers can
+  distinguish a real deletion from a no-op:
+
+  - `{:ok, :deleted}` — row existed and was deleted.
+  - `{:ok, :not_found}` — no row matched `id` (row was already gone,
+    or `id` doesn't correspond to any persisted binding).
+  - `{:error, %Ecto.Changeset{}}` — `Repo.delete/1` failed
+    (stale entry, FK violation, etc.).
+
+  ## Task #53 (2026-05-27) — silent-success removal
+
+  Pre-fix, this returned bare `:ok` for ALL three cases AND discarded
+  the `Repo.delete/1` return value. That meant:
+
+  - A row id that didn't match (e.g. session_uri normalization drift
+    between bind and unbind, or another caller's racing delete)
+    silently looked like a successful deletion. The slice claimed
+    the binding was unbound (`unbound: true`) but the projection
+    row stayed — next inbound dispatch found 2+ rows for the
+    same chat_id and bounced with `:ambiguous_chat_binding`
+    (Allen 2026-05-27 02:53 repro).
+  - A real `Repo.delete` failure (stale entry, constraint violation,
+    pool checkout error) was swallowed as success.
+
+  The new contract surfaces both cases. Action bodies that expect
+  the row to exist (because they just saw it in slice) MUST treat
+  `{:ok, :not_found}` as a desync — see
+  `Ezagent.Behavior.ExternalMirror.do_unbind/4`.
   """
-  @spec delete_by_id(String.t()) :: :ok
+  @spec delete_by_id(String.t()) ::
+          {:ok, :deleted | :not_found} | {:error, Ecto.Changeset.t()}
   def delete_by_id(id) when is_binary(id) do
     case Repo.get(__MODULE__, id) do
       nil ->
-        :ok
+        {:ok, :not_found}
 
       %__MODULE__{} = row ->
-        _ = Repo.delete(row)
-        :ok
+        case Repo.delete(row) do
+          {:ok, _row} -> {:ok, :deleted}
+          {:error, %Ecto.Changeset{}} = err -> err
+        end
     end
   end
 
@@ -287,13 +316,54 @@ defmodule Ezagent.ExternalMirror.BindingRow do
   slice's `binding_id` which is NOT session-scoped, so unbinding
   one session's binding could delete another session's row.
 
-  Idempotent: returns `:ok` whether the row existed or not.
+  Task #53 (2026-05-27) — returns a structured outcome instead of
+  bare `:ok` (see `delete_by_id/1`). Action bodies that just saw
+  the binding in slice should assert `{:ok, :deleted}` and treat
+  `{:ok, :not_found}` as a desync (slice ≠ projection).
+
+  ## codex PR #418 r1 HIGH (2026-05-27) — delete by natural-key columns
+
+  Pre-fix, this delegated to `delete_by_id/1` after computing the
+  CURRENT `row_id/3` hash. That fails for any row whose stored
+  `:id` was derived from a DIFFERENT stringification of
+  `session_uri` — and there is at least one such drift source in
+  the codebase: the 2026-06-13 `data_migrate_default_to_system_uris`
+  migration rewrites `external_mirror_bindings.session_uri` without
+  recomputing `:id`. Pre-migration rows hashed against
+  `session://default/...` end up with a `session_uri` column of
+  `session://system/...` — `row_id` of the current URI looks up by
+  a hash that does not match the stored row's `:id`, returns nil,
+  and the unbind silently no-ops at the DB level.
+
+  Post-fix: delete by `(session_uri, adapter_id, target_id)`
+  matched against the actual COLUMNS. The natural-key unique
+  index on these columns guarantees there is at most one row to
+  delete; `delete_all` returns the affected-row count which we
+  map to the `:deleted` / `:not_found` outcomes. Independent of
+  the stored `:id` value, so it survives any row_id-derivation
+  drift.
   """
-  @spec delete_by_natural_key(URI.t(), String.t(), term()) :: :ok
+  @spec delete_by_natural_key(URI.t(), String.t(), term()) ::
+          {:ok, :deleted | :not_found} | {:error, term()}
   def delete_by_natural_key(%URI{} = session_uri, adapter_id, target_id)
       when is_binary(adapter_id) do
-    id = row_id(session_uri, adapter_id, target_id)
-    delete_by_id(id)
+    session_uri_str = URI.to_string(session_uri)
+    target_id_str = stringify_target(target_id)
+
+    query =
+      from(r in __MODULE__,
+        where:
+          r.session_uri == ^session_uri_str and
+            r.adapter_id == ^adapter_id and
+            r.target_id == ^target_id_str
+      )
+
+    case Repo.delete_all(query) do
+      {0, _} -> {:ok, :not_found}
+      {n, _} when n >= 1 -> {:ok, :deleted}
+    end
+  rescue
+    e -> {:error, e}
   end
 
   defp stringify_target(t) when is_binary(t), do: t
