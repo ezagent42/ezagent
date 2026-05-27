@@ -212,6 +212,74 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
   end
 
   # =========================================================================
+  # Task #53 regression — slice/projection desync on unbind
+  # =========================================================================
+  #
+  # 2026-05-27 02:53 repro (Allen): facade returned
+  # `{:ok, %{ok: true, unbound: true}}` but the `external_mirror_bindings`
+  # row was NOT deleted. The previous `BindingRow.delete_by_id/1`
+  # returned bare `:ok` when `Repo.get` found nothing, so a row_id
+  # mismatch (or any other not-found scenario) silently produced
+  # "successful" slice mutations alongside an undeleted projection
+  # row — surfacing later as `:ambiguous_chat_binding` on the inbound
+  # dispatch.
+  #
+  # Post-fix: when the slice claims the binding exists but the
+  # projection delete reports `:not_found`, the action body returns
+  # `{:error, :projection_desync}` instead of `{:ok, ...}`. The
+  # corresponding `delete_by_id/1` / `delete_by_natural_key/3` return
+  # shape is pinned by `Ezagent.ExternalMirror.BindingRowTest`.
+  describe "Task #53 — unbind projection sync" do
+    test "deletes the projection row on the happy path",
+         %{owner_uri: owner_uri, session_uri: session_uri} do
+      :ok = spawn_owner_and_session(owner_uri, session_uri)
+      ctx = owner_ctx(owner_uri)
+
+      target_id = "tgt-task-53-happy"
+      MockPublishBinding.register_observer(target_id, self())
+
+      assert {:ok, %{ok: true}} =
+               Facade.bind(session_uri, "mock_publish", target_id, %{}, ctx)
+
+      assert [%BindingRow{}] = BindingRow.list_for_session(session_uri)
+
+      assert {:ok, %{ok: true, unbound: true}} =
+               Facade.unbind(session_uri, "mock_publish", target_id, ctx)
+
+      # The actual bug — projection row MUST be gone after unbind.
+      assert [] = BindingRow.list_for_session(session_uri)
+    end
+
+    test "returns {:error, :projection_desync} when slice claims binding but DB row is missing",
+         %{owner_uri: owner_uri, session_uri: session_uri} do
+      :ok = spawn_owner_and_session(owner_uri, session_uri)
+      ctx = owner_ctx(owner_uri)
+
+      target_id = "tgt-task-53-desync"
+      MockPublishBinding.register_observer(target_id, self())
+
+      assert {:ok, %{ok: true}} =
+               Facade.bind(session_uri, "mock_publish", target_id, %{}, ctx)
+
+      # Simulate the desync: nuke the projection row out from under
+      # the slice via direct SQL (the same kind of operator hand-fix
+      # / parallel-process race that produces the symptom in prod).
+      row_id = BindingRow.row_id(session_uri, "mock_publish", target_id)
+      assert %BindingRow{} = EzagentCore.Repo.get(BindingRow, row_id)
+      _ = EzagentCore.Repo.delete!(EzagentCore.Repo.get!(BindingRow, row_id))
+      assert nil == EzagentCore.Repo.get(BindingRow, row_id)
+
+      # Slice still has the binding (we bypassed the action path
+      # when we hand-deleted the row). Pre-task-53 the facade would
+      # have returned `{:ok, %{ok: true, unbound: true}}` and we
+      # would have falsely advertised durability. Post-fix it
+      # surfaces the desync as a hard error.
+      assert {:error, :projection_desync} =
+               Facade.unbind(session_uri, "mock_publish", target_id, ctx)
+    end
+  end
+
+  # =========================================================================
   # (b) cap-1 denial — non-owner caller
   # =========================================================================
 

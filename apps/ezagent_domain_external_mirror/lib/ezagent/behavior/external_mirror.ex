@@ -450,7 +450,32 @@ defmodule Ezagent.Behavior.ExternalMirror do
             "running compensating delete"
         )
 
-        :ok = BindingRow.delete_by_natural_key(session_uri, aid, tid)
+        # Task #53 (2026-05-27) — `delete_by_natural_key/3` now returns
+        # `{:ok, :deleted | :not_found} | {:error, _}` (silent-success
+        # removal). For the compensating-delete path both `:deleted`
+        # (we cleaned up the row we inserted) and `:not_found` (the
+        # racing winner's compensating delete beat us) are correct;
+        # a changeset error is suspicious but we still surface the
+        # ORIGINAL spawn-failure to the caller — log + continue.
+        case BindingRow.delete_by_natural_key(session_uri, aid, tid) do
+          {:ok, :deleted} ->
+            :ok
+
+          {:ok, :not_found} ->
+            Logger.debug(
+              "Behavior.ExternalMirror.do_bind: compensating delete found " <>
+                "no row for #{URI.to_string(session_uri)}/#{aid}/#{inspect(tid)} " <>
+                "— racing caller already cleaned up"
+            )
+
+          {:error, %Ecto.Changeset{} = cs} ->
+            Logger.error(
+              "Behavior.ExternalMirror.do_bind: compensating delete FAILED " <>
+                "for #{URI.to_string(session_uri)}/#{aid}/#{inspect(tid)}: " <>
+                "#{inspect(cs.errors)} — row will remain until manual cleanup"
+            )
+        end
+
         err
     end
   end
@@ -473,13 +498,59 @@ defmodule Ezagent.Behavior.ExternalMirror do
 
         # codex r1 CRIT fix (2026-05-25): delete by the FULL natural
         # key (session_uri + adapter_id + target_id) — NOT the
-        # session-unscoped `binding_id`. Pre-fix, a row deletion
-        # could clobber another session's row when two sessions
-        # bound to the same target.
-        :ok = BindingRow.delete_by_natural_key(session_uri, aid, tid)
+        # session-unscoped `binding_id`.
+        #
+        # Task #53 (2026-05-27): assert the projection deletion
+        # SUCCEEDED rather than silently accepting `:ok` for the
+        # not-found case. Allen 2026-05-27 02:53 repro — facade
+        # returned `unbound: true` but the row stayed in DB,
+        # producing `:ambiguous_chat_binding` on next inbound. The
+        # slice JUST said the binding exists, so a not-found row
+        # means the slice and projection are out of sync. Refuse
+        # rather than papering over.
+        case BindingRow.delete_by_natural_key(session_uri, aid, tid) do
+          {:ok, :deleted} ->
+            new_slice = %{slice | bindings: keep}
+            {:ok, new_slice, %{ok: true, unbound: true}}
 
-        new_slice = %{slice | bindings: keep}
-        {:ok, new_slice, %{ok: true, unbound: true}}
+          {:ok, :not_found} ->
+            # Slice had the binding but projection didn't. Either:
+            # (a) row_id derivation drift (session_uri stringified
+            #     differently at bind vs unbind), or
+            # (b) external SQL delete bypassing the action path.
+            # Either way the slice mutation would lie if we proceeded.
+            :telemetry.execute(
+              [:ezagent, :external_mirror, :unbind, :projection_desync],
+              %{},
+              %{
+                session_uri: URI.to_string(session_uri),
+                adapter_id: aid,
+                target_id: tid,
+                row_id: BindingRow.row_id(session_uri, aid, tid),
+                slice_binding_count: length(slice.bindings)
+              }
+            )
+
+            Logger.error(
+              "Behavior.ExternalMirror.do_unbind: slice had binding " <>
+                "#{aid}/#{inspect(tid)} on #{URI.to_string(session_uri)} " <>
+                "but projection row was not found — slice/projection desync"
+            )
+
+            {:error, :projection_desync}
+
+          {:error, %Ecto.Changeset{} = cs} ->
+            # `Repo.delete/1` failed (stale entry / constraint /
+            # connection error). Slice mutation would lie about
+            # durability. Surface the failure.
+            Logger.error(
+              "Behavior.ExternalMirror.do_unbind: BindingRow.delete failed " <>
+                "for #{URI.to_string(session_uri)}/#{aid}/#{inspect(tid)}: " <>
+                "#{inspect(cs.errors)}"
+            )
+
+            {:error, {:projection_delete_failed, cs}}
+        end
     end
   end
 
