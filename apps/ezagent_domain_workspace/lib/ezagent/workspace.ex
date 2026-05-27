@@ -69,9 +69,35 @@ defmodule Ezagent.Workspace do
   # --- durable mutations --------------------------------------------
 
   @doc """
-  Add `member_uri` to Workspace `name`. Writes to DB then dispatches
-  `:add_member` on the live Workspace Kind so subsequent `list_members`
-  returns the new member.
+  Add `member_uri` to Workspace `name`.
+
+  ## Order (Task #55 round-2 codex CRIT-1 fix, 2026-05-27)
+
+  Dispatch FIRST, persist on success. The Behavior validator
+  (`:add_member` action body) is the SOLE gate for the workspace
+  prefix invariant — facade is a thin pass-through. Before this
+  fix the facade persisted to `Store.update_members/2` BEFORE
+  dispatching, so a cross-prefix member URI hit the DB even when
+  the validator rejected it (`workspaces.member_uris` carried a
+  permanent stale violator until operator restart + cleanup task).
+
+  Sequence:
+  1. `dispatch_mutation(:call)` → Workspace Kind runs validator +
+     mutates slice. Returns `{:error, ...}` on validator failure
+     WITHOUT touching slice. `:call` mode (not `:cast`) so the
+     facade can see the error.
+  2. Persist via `Store.update_members/2` with the new full member
+     list — only after dispatch succeeded.
+  3. Side-effects (cap grant + notification).
+
+  Drift property: a crash between (1) and (2) leaves the live
+  Workspace Kind's slice with the new member but the DB without
+  it. On next boot, `Loader` rehydrates the slice from the DB,
+  dropping the orphan member. The drift window is one process
+  lifetime, same magnitude as the pre-fix order's one-boot drift
+  (inverse direction). This is the closest single-call-site fix
+  to a transactional `dispatch ∧ persist` (Phase 5 may add a
+  two-phase commit / transaction).
   """
   @spec add_member(String.t(), URI.t()) :: :ok | {:error, term()}
   def add_member(name, %URI{} = member_uri) do
@@ -82,8 +108,8 @@ defmodule Ezagent.Workspace do
       %{members: existing} ->
         new_members = Enum.uniq([member_uri | existing])
 
-        with {:ok, _} <- Store.update_members(name, new_members),
-             :ok <- dispatch_mutation(name, "add_member", %{member: member_uri}) do
+        with :ok <- dispatch_mutation(name, "add_member", %{member: member_uri}, :call),
+             {:ok, _} <- Store.update_members(name, new_members) do
           # codex PR #408 review MED-2 — grant the new member the
           # `Behavior.Workspace :create_session` cap automatically. SPEC
           # 2026-05-26-session-create-orchestrator-unified Gap C was
@@ -356,19 +382,35 @@ defmodule Ezagent.Workspace do
     end
   end
 
-  defp dispatch_mutation(name, action_str, args) do
+  # Default `:cast` mode preserves existing call sites (add_template,
+  # remove_template, remove_member, set_routing_rules) that are
+  # validator-free and don't need synchronous error propagation.
+  defp dispatch_mutation(name, action_str, args), do: dispatch_mutation(name, action_str, args, :cast)
+
+  # Task #55 round-2 codex CRIT-1 — `:call` mode for add_member so the
+  # facade can see the Behavior validator's rejection (cross-prefix
+  # member) and SKIP the subsequent `Store.update_members/2`. Without
+  # `:call`, a `:cast` dispatch silently drops the error and the facade
+  # persists the bad URI regardless.
+  defp dispatch_mutation(name, action_str, args, mode) when mode in [:cast, :call] do
     target = URI.parse("workspace://#{name}?action=workspace.#{action_str}")
+
+    reply =
+      case mode do
+        :call -> {:caller_inbox, self()}
+        :cast -> :ignore
+      end
 
     case Invocation.dispatch(%Invocation{
            target: target,
-           mode: :cast,
+           mode: mode,
            args: args,
            # SPEC caps-cleanup-v1 §4.4 — Workspace mutation runs under
            # `system://workspace-loader` (closed Catalog).
            ctx: %{
              caller: Ezagent.SystemPrincipal.uri("workspace-loader"),
              caps: Ezagent.SystemPrincipal.caps("system://workspace-loader"),
-             reply: :ignore
+             reply: reply
            }
          }) do
       :ok -> :ok
