@@ -1,6 +1,11 @@
 # SPEC — Capability struct gains the `action` axis
 
-**Status:** r5 (codex r4 REQUEST_CHANGES addressed). 2026-05-27.
+**Status:** r6 (codex r5 REQUEST_CHANGES addressed — narrow scope). 2026-05-27.
+
+**r6 revision log (codex r5 findings):**
+- HIGH-1a (§3.6.1 still used direct `cap.action` reads): r6 routes both layers through `Capability.action_of/1` per the single-chokepoint contract from §3.3.1. Lines 232/234/283 updated.
+- NEW-C (`holds_admin_caps?/1` only matches `%Capability{}` structs, not raw maps): scope clarified in §3.6.1 — the hot path (`Users.decode_caps/1` → `from_map/1` → struct) ALWAYS produces structs before `ctx.caps` is populated. Raw maps never reach `ctx.caps`. No change to `holds_admin_caps?/1` needed for correctness. r6 §3.6.1(b) adds an explicit scope note. (If a future code path inserts raw maps into `ctx.caps` bypassing `from_map/1`, that's its own bug — not introduced by this SPEC.)
+- LOW-D (todo.md entry not yet added): r6 will commit it directly to `docs/futures/todo.md` in this commit (small addition; no need for a separate impl-PR touch).
 
 **r5 revision log (codex r4 findings):**
 - HIGH-1 (§3.3.1 inventory inaccurate — listed sites that don't read `.action`): r5 trims §3.3.1 to the actual real future reader sites confirmed by grep — `matches?/2` (`apps/ezagent_core/lib/ezagent/capability.ex:192`), `to_map/1` (`:525`), `from_map/1`. Stale paths dropped.
@@ -229,13 +234,15 @@ After this SPEC, three cap shapes coexist:
 
 **Enforcement (codex r2 MED — promoted from code-review-only)**: two layers, both shipped in this PR.
 
-1. **Compile-time (plugin-check 11)**: extend the existing check at `apps/ezagent_core/lib/mix/tasks/compile/ezagent_plugin_check.ex:724` to also verify `required_caps[action].action == action OR required_caps[action].action == :any`. A behavior-wildcard in `required_caps/0` is rare but legitimate for orchestrator-style Behaviors (per the existing PR-CC-2-v2 §4 "any_action escape hatch" doc). The check enforces map-key / cap.action coherence, blocking drift at compile time.
+1. **Compile-time (plugin-check 11)**: extend the existing check at `apps/ezagent_core/lib/mix/tasks/compile/ezagent_plugin_check.ex:724` to also verify `Capability.action_of(required_caps[action]) == action OR Capability.action_of(required_caps[action]) == :any`. A behavior-wildcard in `required_caps/0` is rare but legitimate for orchestrator-style Behaviors (per the existing PR-CC-2-v2 §4 "any_action escape hatch" doc). The check enforces map-key / cap-action-axis coherence, blocking drift at compile time. (Uses `action_of/1` per §3.3.1 — required-caps maps are populated at compile time so the cap always has the field, but routing through the helper keeps the SPEC's "single chokepoint" invariant.)
 
-2. **Runtime grant-boundary (Identity.grant_cap/3)**: at the grant entrypoint inside the `IdentityAdmin :grant_cap` action body (`apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex` — locate the `invoke(:grant_cap, ...)` clause), if the cap being granted has `cap.action == :any` AND the caller does NOT pass `holds_admin_caps?/1`, return `{:error, :wildcard_action_grant_requires_admin_authority}`.
+2. **Runtime grant-boundary (Identity.grant_cap/3)**: at the grant entrypoint inside the `IdentityAdmin :grant_cap` action body (`apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex` — locate the `invoke(:grant_cap, ...)` clause), if `Capability.action_of(cap_to_grant) == :any` AND the caller does NOT pass `holds_admin_caps?/1`, return `{:error, :wildcard_action_grant_requires_admin_authority}`. (Uses `action_of/1` since `cap_to_grant` could arrive from any caller — defensive against arbitrary-shape input.)
 
 **The privileged check** uses the EXISTING `holds_admin_caps?/1` predicate at `apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex:742` (codex r4 HIGH-2 fix). This function inspects the caller's actual caps for the full-wildcard shape `%Capability{kind: :any, behavior: :any, instance: :any, workspace_uri: :any}` — it is THE canonical "is caller admin" check, already used for the same gating purpose at lines 591, 631, 639. After this SPEC adds `action: :any` to the struct, that field becomes part of the wildcard shape; the Map.get-tolerant `matches?/2` (§3.3) means existing wildcard caps loaded from old snapshots still satisfy the check (missing `:action` reads as `:any`).
 
 This is NOT a role-field check. The codebase has no `role` field; the URI-based `Identity.admin?/1` predicate is explicitly documented as NON-security (`apps/ezagent_domain_identity/lib/ezagent/identity.ex:266-269`). Privilege is based on the caller's actual cap holdings — the only structural marker that survives spoofing attempts.
+
+**Scope note on raw-map caps in `ctx.caps`** (codex r5 NEW-C): `holds_admin_caps?/1` at `apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex:742` pattern-matches on `%Ezagent.Capability{}` structs. A raw-map cap (no `__struct__` key) hits the `_ -> false` fallback and silently fails to authorize admin authority. This is NOT a correctness gap for this SPEC because the hot path is structurally enforced: `Users.decode_caps/1` calls `from_map/1` which converts every loaded cap to a struct BEFORE the slice reaches `ctx.caps`. Raw maps cannot reach the admin check in any documented path. If a future code path bypasses `from_map/1` and pushes raw maps into `ctx.caps`, that's an independent bug. This SPEC's `Map.get(cap, :action, :any)` tolerance lives at the matcher boundary (§3.3); admin-cap detection lives upstream of the slice → ctx pipeline.
 
 **Future-PR note** (`docs/futures/todo.md`): extend the entity-caps LV grant form with an action selector dropdown (populated from the target Behavior's `actions/0`), so admins can grant narrow caps via the UI without falling back to wildcard. This SPEC's runtime check + admin exemption is the bridge; the action selector is the long-term fix.
 
@@ -280,7 +287,7 @@ Allen's `feedback_let_it_crash_no_workarounds` forbids dual-path. The PR lands a
 
 ### 4.2 Compile-time check 10
 
-`:ezagent_plugin_check`'s existing check 10 ("every action has a required_caps entry") gains a sibling check 11: `required_caps[action].action == action` — guarantees the map key and struct field don't drift.
+`:ezagent_plugin_check`'s existing check 10 ("every action has a required_caps entry") gains a sibling check 11: `Capability.action_of(required_caps[action]) == action OR :any` — guarantees the map key and cap-action-axis don't drift.
 
 ### 4.3 No DB schema migration
 
