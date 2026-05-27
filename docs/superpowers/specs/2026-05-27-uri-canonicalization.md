@@ -1,6 +1,6 @@
 # SPEC — URI canonicalization across boundaries (Bug 2)
 
-**Status:** r2 — DRAFT for codex adversarial-review (round 2). 2026-05-27.
+**Status:** r3 — DRAFT for codex adversarial-review (round 3). 2026-05-27.
 
 **Tier:** `apps/ezagent_core/` (`Ezagent.URI` parser/canonicalizer) + sweep across every Domain + Plugin that constructs `%URI{}` (`apps/ezagent_domain_*/`, `apps/ezagent_plugin_*/`, `apps/ezagent_web/`, `apps/ezagent_cli/`) + operator-facing mix tasks under `apps/*/lib/mix/tasks/` (r2 expansion). Touches the test base too (helpers + fixtures) but production sites are the load-bearing scope.
 
@@ -8,7 +8,17 @@
 
 **Companion:** `2026-05-27-uri-canonicalization.zh_cn.md` (per `feedback_bilingual_docs_convention`).
 
-## r2 changelog (delta from r1)
+## r3 changelog (delta from r2)
+
+Addresses 2 HIGH + 1 MED from codex r2 REJECT:
+
+- **HIGH-1 (§9.2 snapshot canonicalize_uris/1 design)** — r2 pseudo-code was internally inconsistent: matched `is_map(state)` BEFORE the `%URI{}` clause (so structs short-circuit and never reach the URI canonicalization branch); called bare `URI.new/1` instead of the mandated `Ezagent.URI.parse!/1`; had no tuple clause despite the text claiming tuple support; the map-key handling text contradicted the implementation. **r3 fix:** rewrote the pseudo-code with strict clause order (`%URI{}` → custom-struct → map → list → tuple → fallthrough), `Ezagent.URI.parse!/1` as the canonicalizer (with `URI.new/1` only as the §3.7 external-fallback rescue), explicit tuple clause via `Tuple.to_list → walk → List.to_tuple`, and aligned key+value walk in the map clause. Added an explicit "clause order is load-bearing" note. §5.5 invariant test extended to cover every required shape (map value, list element, deep nesting, map key, tuple element, custom struct).
+- **HIGH-2 (§5.2.1 `URI.new/1` invariant false-negative)** — r2 implementation was binary: "line contains `URI.new(`" AND "line does NOT contain `URI.new!(`". A line like `foo = URI.new(s); bar = URI.new!(t)` slipped through. **r3 fix:** switched to a count-based check: `length(Regex.scan(~r/\bURI\.new\(/, line)) - length(Regex.scan(~r/\bURI\.new!\(/, line)) > 0`. The bare-count includes both forms (regex `\bURI.new\(` also matches the prefix of `URI.new!(`); subtracting the bang-count isolates the bare-only contribution. Added an adversarial regression unit test in §5.5 / Appendix B.
+- **MED (§9.3 operator artifacts — `docs/notes/evidence/` not actually clean)** — r2 claimed "scripts/docs all reference URI strings, not struct form, so no additional grep target". Codex r2 found `docs/notes/evidence/pr49-demo-rpc-script.sh` embeds live `elixir -e` blocks that construct `%URI{}` via `URI.parse/1` at lines 33, 43, 53. **r3 fix:** §4.2 and §9.3 now explicitly include `docs/notes/evidence/*.sh` and `scripts/*.sh` where the body embeds `elixir -e` / `iex --eval`. New sweep grep: `rg -n "URI\.(parse|new!?)\(" scripts docs/notes/evidence -g '*.sh' -g '*.exs'`.
+
+---
+
+## r2 changelog (delta from r1, retained for trail)
 
 Addresses 4 codex r1 REJECT blockers + LOW + NIT:
 
@@ -244,8 +254,8 @@ Per `feedback_let_it_crash_no_workarounds`: every `URI.parse/1`, `URI.new!/1` (o
 
 - `apps/*/lib/` — every production `.ex` file (the original r1 scope).
 - **`apps/*/lib/mix/tasks/` — every mix task (r2 addition).** Operator-driven seed/migration/repair flows that write non-canonical structs back to the system would recreate the original bug from a maintenance path. Enumerated sites: `apps/ezagent_domain_external_mirror/lib/mix/tasks/ezagent_external_mirror_cli.ex:161,220`; `apps/ezagent_plugin_feishu/lib/mix/tasks/ezagent_external_mirror_migrate_feishu_bindings.ex:153`; `apps/ezagent_plugin_cc/lib/mix/tasks/ezagent.demo.seed_cc_sandbox.ex:201,243`; `apps/ezagent_plugin_cc/lib/mix/tasks/ezagent.demo.seed_cc_agent.ex:62,63,142`; `apps/ezagent_domain_workspace/lib/mix/tasks/ezagent.agent.create.ex:231`; `apps/ezagent_domain_identity/lib/mix/tasks/ezagent.user.token.ex:75`; `apps/ezagent_core/lib/mix/tasks/ezagent.stress.ex:504` (test harness — keep as `URI.new!/1` test fixture or migrate to `Ezagent.URI.parse!/1`, impl PR decides).
-- **`scripts/` — operator shell scripts (r2 addition).** Shell scripts pipe strings to mix tasks / iex; the URI struct is only ever constructed inside the mix task or iex eval, so the sweep scope already covers them. Documented for clarity; no additional grep target.
-- **`docs/notes/evidence/` — pinned demo/repro scripts (r2 addition).** Same as `scripts/` — they invoke mix tasks. No additional grep target.
+- **`scripts/` — operator shell scripts (r2 addition).** Shell scripts that pipe strings to mix tasks need no separate sweep target. **r3 EXCEPTION:** any `*.sh` that embeds an `elixir -e '...'` or `iex --eval '...'` body which constructs `%URI{}` is in scope — the body is live Elixir running against the production BEAM. Sweep grep: `rg -n "URI\.(parse|new!?)\(" scripts -g '*.sh'`.
+- **`docs/notes/evidence/` — pinned demo/repro scripts (r2 addition).** Same as `scripts/`. **r3 EXCEPTION:** codex r2 found `docs/notes/evidence/pr49-demo-rpc-script.sh` embeds live `elixir -e` blocks with `URI.parse/1` (lines 33, 43, 53). Sweep grep: `rg -n "URI\.(parse|new!?)\(" docs/notes/evidence -g '*.sh' -g '*.exs'`.
 
 ### 4.3 Compile-time constant migration
 
@@ -344,7 +354,30 @@ test "no stdlib URI.new/1 in apps outside the external-URI fallback allowlist" d
 end
 ```
 
-**`matches_uri_new_no_bang?/1`** uses `~r/\bURI\.new\((?!.*!)/` (regex matches `URI.new(` NOT followed by `!`) — distinguishes from `URI.new!(`. Implementation note: Elixir regex doesn't support negative lookahead identically; the impl PR uses a two-step check (line contains `URI.new(` AND `Regex.run(~r/URI\.new!\(/, line) == nil`).
+**`matches_uri_new_no_bang?/1`** must distinguish `URI.new(` from `URI.new!(` even when **both occur on the same line** (codex r2 HIGH fix). The earlier binary "line contains `URI.new!(`" check was a false-negative: a line like `foo = URI.new(s); bar = URI.new!(t)` would silently pass.
+
+The fix is **count-based**, not contains-based. The invariant test counts `URI.new(` occurrences and `URI.new!(` occurrences on each line; a violation exists if `URI.new(` total > `URI.new!(` total (i.e. there is at least one bare `URI.new/1` not paired with a `!`):
+
+```elixir
+defp matches_uri_new_no_bang?(line) do
+  # Per-line count of bare URI.new( vs URI.new!(
+  # A bare hit exists iff the bare-count exceeds the bang-count.
+  bare = length(Regex.scan(~r/\bURI\.new\(/, line))
+  bang = length(Regex.scan(~r/\bURI\.new!\(/, line))
+  # \bURI.new\( ALSO matches the leading portion of `URI.new!(`, so
+  # `bare` includes both forms. Bare-only-count = bare - bang.
+  bare - bang > 0
+end
+```
+
+Adversarial verification (the codex r2 HIGH case): for `foo = URI.new(s); bar = URI.new!(t)` we have `bare = 2` (one matches `URI.new(`, one matches the leading portion of `URI.new!(`), `bang = 1`, so `bare - bang = 1 > 0` → caught.
+
+The impl PR adds a unit test in the invariant test module exercising:
+1. `URI.new(s)` alone → caught.
+2. `URI.new!(s)` alone → NOT caught (correctly — that's §5.2's domain).
+3. `foo = URI.new(s); bar = URI.new!(t)` → caught (the adversarial case).
+4. `foo = URI.new!(s); bar = URI.new!(t)` → NOT caught.
+5. `# URI.new(s)` (comment) → NOT caught (`in_comment?/1` strips first).
 
 **Allowlist** — files that legitimately call bare `URI.new/1`:
 
@@ -560,24 +593,64 @@ The SPEC mandates **load-path canonicalization** as the structural fix:
 
 ```elixir
 # Pseudocode — in Ezagent.Kind.Snapshot
+#
+# CLAUSE ORDER IS LOAD-BEARING (codex r2 HIGH fix):
+#   1. %URI{} clause MUST come before the generic struct/map clauses, or
+#      `%URI{}` itself is a struct and would hit the wrong clause first.
+#   2. Custom structs are destructured to map, walked, then re-structed
+#      (struct/2) so the struct shape is preserved.
+#   3. Both map keys AND values are walked (rare but valid: %{%URI{} => v}).
+#   4. Tuples are walked element-wise (Tuple → list → walk → Tuple).
+#   5. The %URI{} clause calls Ezagent.URI.parse!/1 — the canonical
+#      chokepoint — NOT bare URI.new/1. Non-Ezagent schemes (the §3.7
+#      external-URI fallback) are caught and passed through unchanged.
+
+def canonicalize_uris(%URI{} = uri) do
+  s = URI.to_string(uri)
+
+  try do
+    Ezagent.URI.parse!(s)
+  rescue
+    # External (non-Ezagent) scheme — §3.7 fallback. Re-parse via strict
+    # URI.new/1 so authority is at least RFC-3986-normalized; leave the
+    # original on outright failure (downstream let-it-crash).
+    ArgumentError ->
+      case URI.new(s) do
+        {:ok, canonical} -> canonical
+        _ -> uri
+      end
+  end
+end
+
+def canonicalize_uris(%_{} = struct_) do
+  # Custom struct — destructure to map (drop :__struct__), walk, re-struct.
+  mod = struct_.__struct__
+
+  struct_
+  |> Map.from_struct()
+  |> canonicalize_uris()
+  |> then(&struct(mod, &1))
+end
+
 def canonicalize_uris(state) when is_map(state) do
-  Map.new(state, fn {k, v} -> {k, canonicalize_uris(v)} end)
+  Map.new(state, fn {k, v} -> {canonicalize_uris(k), canonicalize_uris(v)} end)
 end
 
 def canonicalize_uris(state) when is_list(state) do
   Enum.map(state, &canonicalize_uris/1)
 end
 
-def canonicalize_uris(%URI{} = uri) do
-  s = URI.to_string(uri)
-  case URI.new(s) do
-    {:ok, canonical} -> canonical
-    _ -> uri  # malformed — leave as-is; will fail downstream visibly
-  end
+def canonicalize_uris(state) when is_tuple(state) do
+  state
+  |> Tuple.to_list()
+  |> Enum.map(&canonicalize_uris/1)
+  |> List.to_tuple()
 end
 
 def canonicalize_uris(other), do: other
 ```
+
+The clause-order rule above is itself an invariant the impl PR must preserve. §5.5 invariant test exercises each shape (URI / custom-struct / nested map / map-as-key / list / tuple) to lock the contract.
 
 **Why option (b) over option (a) operator deletion:**
 
@@ -586,18 +659,32 @@ def canonicalize_uris(other), do: other
 
 Option (a) is documented as the FALLBACK if (b) proves untenable during impl (e.g. if `canonicalize_uris/1` introduces a hot-path regression). The impl PR's first commit MUST land (b); only if codex impl-review identifies a blocker may the impl PR pivot to (a).
 
-#### 9.2.2 Edge cases (codex r2 will challenge — pre-emptive enumeration)
+#### 9.2.2 Edge cases (r3 — addressed by the §9.2.1 pseudo-code clauses)
 
-- **Nested `%URI{}` inside nested map/list fields.** The recursive walker handles arbitrary depth (Map → Map, Map → List → URI, List → Tuple → URI). Verified by §5.5 invariant test (impl PR adds cases for depth 1, 2, 3).
-- **`%URI{}` inside a custom struct.** Most Ezagent state lives in plain maps. If a Behavior stores a URI inside a custom struct (e.g. `%MyBinding{uri: %URI{}}`), the walker needs to recognize that struct type and walk its fields. r2 SPEC mandates: the walker MUST handle `is_struct(state)` by destructuring to map, walking, and re-structing. Impl PR adds a test case for this.
-- **`%URI{}` as map key.** Rare but possible (`%{%URI{} => value}`). The walker's `Map.new(state, fn {k, v} -> {canonicalize_uris(k), canonicalize_uris(v)} end)` handles this. r2 impl PR adds a test case.
+- **Nested `%URI{}` inside nested map/list fields.** The recursive walker handles arbitrary depth (Map → Map → URI, Map → List → URI, List → Tuple → URI). Locked by §5.5 invariant test case `deep: %{nested: %{list: [...]}}`.
+- **`%URI{}` inside a custom struct (`%MyBinding{uri: %URI{}}`).** The `%_{} = struct_` clause (placed BEFORE the `is_map(state)` clause for clause-order reasons) destructures via `Map.from_struct/1`, walks the map, and re-structs via `struct(mod, ...)`. The `%URI{}` clause must come BEFORE `%_{} = struct_` so URI structs themselves (which ARE structs) are caught by the URI clause first. Locked by §5.5 test case `binding: %MyBinding{uri: ...}`.
+- **`%URI{}` as map key.** Rare but possible (`%{%URI{} => value}`). The map clause's `Map.new(state, fn {k, v} -> {canonicalize_uris(k), canonicalize_uris(v)} end)` walks BOTH key and value (codex r2 HIGH found a mismatch between the prior pseudo-code and this claim; r3 fixed). Locked by §5.5 test case `per_member: %{... => :online}`.
+- **`%URI{}` as tuple element.** The `is_tuple(state)` clause converts to list, walks, converts back. Locked by §5.5 test case `last_event: {:joined, %URI{}, ts}`.
 - **Cross-OTP `binary_to_term` compatibility.** `:erlang.binary_to_term` preserves the encoded struct shape. If a snapshot was written under Elixir 1.14 with `:authority == "user"`, decoding under Elixir 1.18 yields the same field value. The canonicalize pass corrects it regardless of OTP version.
+- **Non-Ezagent-scheme URI inside snapshot state.** External URIs (e.g. a Feishu `chat_id` stored as a `URI.parse("https://...")`) flow through the §3.7 fallback rescue clause in the `%URI{}` branch: `Ezagent.URI.parse!/1` raises on non-allowlist scheme, the rescue catches and re-canonicalizes via strict `URI.new/1`. The URI ends up with `:authority == nil` (RFC 3986) even though it bypasses the SchemeRegistry check.
 
-### 9.3 Operator-facing URIs (r2 — expanded scope)
+### 9.3 Operator-facing URIs (r2 — expanded scope; r3 — pinned scripts also in scope)
 
-Scripts (`scripts/*.sh`), docs (`docs/**/*.md`), scenarios (`scenarios/*.yaml`), mix-task help text — all reference URI STRINGS, not struct form. **No change** to these artifacts directly.
+Scripts (`scripts/*.sh`), docs (`docs/**/*.md`), scenarios (`scenarios/*.yaml`), mix-task help text — **mostly** reference URI STRINGS, not struct form. **No change** to those artifacts.
 
-**BUT** — operator-facing mix tasks under `apps/*/lib/mix/tasks/` CONSTRUCT URI STRUCTS that get persisted or dispatched. r2 ADDS these to the sweep targets (per §4.2 expanded enumeration). Enumerated hits:
+**EXCEPTION — pinned evidence/repro scripts that embed live Elixir (r3 addition).** Codex r2 found `docs/notes/evidence/pr49-demo-rpc-script.sh` contains `elixir -e '...'` blocks that build live `%URI{}` via `URI.parse/1` and RPC into the running BEAM (e.g. lines 33, 43, 53). Any pinned repro script that embeds live Elixir is treated as production code for this SPEC's purposes — the URI structs it constructs flow through the same dispatch/comparison paths.
+
+r3 expands the sweep grep to include `docs/notes/evidence/*.sh` and any other `*.sh` that ships an `elixir -e` / `iex --eval` body:
+
+```bash
+rg -n "URI\.(parse|new!?)\(" docs/notes/evidence scripts -g '*.sh' -g '*.exs'
+```
+
+Impl PR addresses each hit by:
+- Rewriting the embedded Elixir to use `Ezagent.URI.parse!/1`, OR
+- Deleting the pinned script if it is a one-time forensic artifact (verify via `git log` that the script was never re-run after its capture date).
+
+**Operator-facing mix tasks** under `apps/*/lib/mix/tasks/` CONSTRUCT URI STRUCTS that get persisted or dispatched. r2 ADDS these to the sweep targets (per §4.2 expanded enumeration). Enumerated hits:
 
 - `apps/ezagent_domain_external_mirror/lib/mix/tasks/ezagent_external_mirror_cli.ex:161, 220`
 - `apps/ezagent_plugin_feishu/lib/mix/tasks/ezagent_external_mirror_migrate_feishu_bindings.ex:153`
@@ -922,21 +1009,65 @@ defmodule Ezagent.URICanonicalizationTest do
     assert from_const.authority == nil
   end
 
-  # r2 NEW
-  test "snapshot decode_state canonicalizes embedded %URI{} structs" do
+  # r2 NEW (extended in r3 per codex r2 HIGH-snapshot finding —
+  # exercises every shape canonicalize_uris/1 is contractually required
+  # to walk: map value, list element, deep nesting, map key, tuple
+  # element, custom struct.)
+  test "snapshot canonicalize_uris/1 covers every required shape" do
+    parse = &URI.parse/1  # pre-migration form
+
+    # Custom struct embedded in slice state.
+    defmodule MyBinding do
+      defstruct [:uri, :meta]
+    end
+
     pre_migration_state = %{
       chat: %{
-        owner: URI.parse("entity://user/system/admin"),
-        members: [URI.parse("entity://user/team-alpha/alice")]
+        owner: parse.("entity://user/system/admin"),
+        members: [parse.("entity://user/team-alpha/alice")],
+        deep: %{nested: %{list: [parse.("entity://user/team-alpha/bob")]}},
+        # URI as map KEY.
+        per_member: %{parse.("entity://user/team-alpha/carol") => :online},
+        # Tuple element.
+        last_event: {:joined, parse.("entity://user/team-alpha/dave"), 1700000000},
+        # Custom struct holding URI.
+        binding: %MyBinding{uri: parse.("entity://user/team-alpha/eve"), meta: %{}}
       }
     }
+
     binary = :erlang.term_to_binary(pre_migration_state)
     decoded = :erlang.binary_to_term(binary, [:safe])
     canonicalized = Ezagent.Kind.Snapshot.canonicalize_uris(decoded)
 
+    # Every URI shape is canonical (authority == nil).
     assert canonicalized.chat.owner.authority == nil
-    assert Enum.all?(canonicalized.chat.members, &(&1.authority == nil))
+    assert hd(canonicalized.chat.members).authority == nil
+    assert hd(canonicalized.chat.deep.nested.list).authority == nil
+    {tag, dave_uri, ts} = canonicalized.chat.last_event
+    assert tag == :joined and ts == 1700000000
+    assert dave_uri.authority == nil
+
+    # Map KEY was walked.
+    [{carol_uri, status}] = Enum.to_list(canonicalized.chat.per_member)
+    assert carol_uri.authority == nil and status == :online
+
+    # Custom struct shape preserved AND URI canonical.
+    assert canonicalized.chat.binding.__struct__ == MyBinding
+    assert canonicalized.chat.binding.uri.authority == nil
+
+    # Equality against parse!/1 result holds.
     assert canonicalized.chat.owner == Ezagent.URI.parse!("entity://user/system/admin")
+  end
+
+  # r3 NEW — codex r2 HIGH-2 adversarial regression for §5.2.1
+  # invariant: a single line carrying BOTH URI.new(...) and URI.new!(...)
+  # must NOT slip through. The earlier binary "line contains URI.new!("
+  # check was the false-negative.
+  test "URI.new/1 invariant catches same-line URI.new + URI.new! mix" do
+    assert matches_uri_new_no_bang?("foo = URI.new(s)")
+    refute matches_uri_new_no_bang?("foo = URI.new!(s)")
+    assert matches_uri_new_no_bang?("foo = URI.new(s); bar = URI.new!(t)")
+    refute matches_uri_new_no_bang?("foo = URI.new!(s); bar = URI.new!(t)")
   end
 
   defp scan_for(regex, exclude?, allowlist) do
@@ -952,8 +1083,15 @@ defmodule Ezagent.URICanonicalizationTest do
   end
 
   defp matches_uri_new_no_bang?(line) do
-    # Line contains URI.new( AND does NOT contain URI.new!(
-    String.contains?(line, "URI.new(") and not Regex.match?(~r/URI\.new!\(/, line)
+    # Count-based, not contains-based. Codex r2 HIGH fix:
+    # a line like `foo = URI.new(s); bar = URI.new!(t)` would slip
+    # through a "contains URI.new(" + "not contains URI.new!(" check.
+    # `\bURI.new\(` ALSO matches the leading portion of `URI.new!(`,
+    # so `bare` counts both forms and `bare - bang` isolates the
+    # bare-only count.
+    bare = length(Regex.scan(~r/\bURI\.new\(/, line))
+    bang = length(Regex.scan(~r/\bURI\.new!\(/, line))
+    bare - bang > 0
   end
 
   defp is_query_target_idiom?(line),

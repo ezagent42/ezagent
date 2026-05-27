@@ -1,6 +1,6 @@
 # SPEC — URI 跨边界规范化 (Bug 2)
 
-**状态:** r2 — DRAFT,等待 codex adversarial-review (第 2 轮)。2026-05-27。
+**状态:** r3 — DRAFT,等待 codex adversarial-review (第 3 轮)。2026-05-27。
 
 **层级:** `apps/ezagent_core/` (`Ezagent.URI` 解析器 / 规范化器) + 扫除所有构造 `%URI{}` 的 Domain + Plugin (`apps/ezagent_domain_*/`、`apps/ezagent_plugin_*/`、`apps/ezagent_web/`、`apps/ezagent_cli/`) + `apps/*/lib/mix/tasks/` 下的操作员面对 mix tasks (r2 扩展)。
 
@@ -8,7 +8,17 @@
 
 **英文版:** `2026-05-27-uri-canonicalization.md` (按 `feedback_bilingual_docs_convention`)。
 
-## r2 changelog (相对 r1 的差异)
+## r3 changelog (相对 r2 的差异)
+
+处理 codex r2 REJECT 的 2 个 HIGH + 1 个 MED:
+
+- **HIGH-1 (§9.2 snapshot canonicalize_uris/1 设计)** — r2 伪代码内部不一致:在 `%URI{}` 子句**之前**匹配 `is_map(state)` (所以 struct 短路,永远不到达 URI 规范化分支);调用裸 `URI.new/1` 而非强制的 `Ezagent.URI.parse!/1`;没有 tuple 子句但文本声称支持 tuple;map-key 处理文本与实现矛盾。**r3 修复:** 重写伪代码,严格子句顺序 (`%URI{}` → 自定义 struct → map → list → tuple → 回退),`Ezagent.URI.parse!/1` 作为规范化器 (`URI.new/1` 仅作 §3.7 外部回退 rescue),通过 `Tuple.to_list → walk → List.to_tuple` 显式 tuple 子句,map 子句中 key+value 对齐遍历。新增明确"子句顺序是承载性"备注。§5.5 不变量测试扩展为覆盖每个必需形态 (map value、list element、深度嵌套、map key、tuple element、自定义 struct)。
+- **HIGH-2 (§5.2.1 `URI.new/1` 不变量假阴性)** — r2 实现是二元的:"行包含 `URI.new(`" AND "行**不**包含 `URI.new!(`"。像 `foo = URI.new(s); bar = URI.new!(t)` 这样的行漏过。**r3 修复:** 切换到基于计数的检查:`length(Regex.scan(~r/\bURI\.new\(/, line)) - length(Regex.scan(~r/\bURI\.new!\(/, line)) > 0`。bare 计数包括两种形式 (正则 `\bURI.new\(` 也匹配 `URI.new!(` 的前缀);减去 bang 计数隔离 bare-only 贡献。在 §5.5 / Appendix B 添加对抗性回归单元测试。
+- **MED (§9.3 操作员产物 — `docs/notes/evidence/` 实际不干净)** — r2 声称"scripts/docs 全部引用 URI 字符串,不引用 struct 形式,所以无额外 grep 目标"。Codex r2 发现 `docs/notes/evidence/pr49-demo-rpc-script.sh` 在第 33、43、53 行嵌入活的 `elixir -e` 块通过 `URI.parse/1` 构造 `%URI{}`。**r3 修复:** §4.2 和 §9.3 现在明确包括 `docs/notes/evidence/*.sh` 和 `scripts/*.sh` 中嵌入 `elixir -e` / `iex --eval` 的 body。新的扫除 grep:`rg -n "URI\.(parse|new!?)\(" scripts docs/notes/evidence -g '*.sh' -g '*.exs'`。
+
+---
+
+## r2 changelog (相对 r1 的差异,保留用于追踪)
 
 处理 codex r1 REJECT 的 4 个 blocker + LOW + NIT:
 
@@ -211,8 +221,8 @@ PR-4: 追加 `docs/notes/uri-design.md` §5.15。
   - `apps/ezagent_domain_workspace/lib/mix/tasks/ezagent.agent.create.ex:231`
   - `apps/ezagent_domain_identity/lib/mix/tasks/ezagent.user.token.ex:75`
   - `apps/ezagent_core/lib/mix/tasks/ezagent.stress.ex:504` (测试 harness — 实现 PR 决定)。
-- **`scripts/` — 操作员 shell 脚本 (r2 新增)。** Shell 脚本将字符串管道到 mix tasks / iex;URI 结构体仅在 mix task 或 iex eval 中构造,所以扫除范围已涵盖。文档化为清晰;无额外 grep 目标。
-- **`docs/notes/evidence/` — 固定的 demo/repro 脚本 (r2 新增)。** 同 `scripts/` — 它们调用 mix tasks。无额外 grep 目标。
+- **`scripts/` — 操作员 shell 脚本 (r2 新增)。** 将字符串管道到 mix tasks 的 shell 脚本无需单独扫除目标。**r3 例外:** 任何嵌入 `elixir -e '...'` 或 `iex --eval '...'` body 构造 `%URI{}` 的 `*.sh` 在范围内 — body 是对生产 BEAM 运行的活 Elixir。扫除 grep:`rg -n "URI\.(parse|new!?)\(" scripts -g '*.sh'`。
+- **`docs/notes/evidence/` — 固定的 demo/repro 脚本 (r2 新增)。** 同 `scripts/`。**r3 例外:** codex r2 发现 `docs/notes/evidence/pr49-demo-rpc-script.sh` 在第 33、43、53 行嵌入活的 `elixir -e` 块构造 `URI.parse/1`。扫除 grep:`rg -n "URI\.(parse|new!?)\(" docs/notes/evidence -g '*.sh' -g '*.exs'`。
 
 ### 4.3 编译时常量迁移
 
@@ -275,7 +285,30 @@ test "no stdlib URI.new/1 in apps outside the external-URI fallback allowlist" d
 end
 ```
 
-**`matches_uri_new_no_bang?/1`** 使用两步检查 (行包含 `URI.new(` **且** `Regex.run(~r/URI\.new!\(/, line) == nil`) — 区别于 `URI.new!(`。
+**`matches_uri_new_no_bang?/1`** 必须区分 `URI.new(` 和 `URI.new!(` 即使**两者出现在同一行** (codex r2 HIGH 修复)。早期的二元"行包含 `URI.new!(`"检查是假阴性:像 `foo = URI.new(s); bar = URI.new!(t)` 这样的行会静默通过。
+
+修复是**基于计数**,不是基于包含。不变量测试在每行计数 `URI.new(` 出现次数和 `URI.new!(` 出现次数;违规存在当且仅当 `URI.new(` 总数 > `URI.new!(` 总数 (即至少有一个裸 `URI.new/1` 未配对 `!`):
+
+```elixir
+defp matches_uri_new_no_bang?(line) do
+  # 每行裸 URI.new( vs URI.new!( 计数
+  # 裸命中存在 iff bare-count 超过 bang-count。
+  bare = length(Regex.scan(~r/\bURI\.new\(/, line))
+  bang = length(Regex.scan(~r/\bURI\.new!\(/, line))
+  # \bURI.new\( 也匹配 `URI.new!(` 的前导部分,所以 bare 同时
+  # 包括两种形式。bare-only-count = bare - bang。
+  bare - bang > 0
+end
+```
+
+对抗性验证 (codex r2 HIGH 案例):对 `foo = URI.new(s); bar = URI.new!(t)` 我们有 `bare = 2` (一个匹配 `URI.new(`,一个匹配 `URI.new!(` 的前导部分)、`bang = 1`,所以 `bare - bang = 1 > 0` → 捕获。
+
+impl PR 在不变量测试模块中添加单元测试演练:
+1. 仅 `URI.new(s)` → 捕获。
+2. 仅 `URI.new!(s)` → **不**捕获 (正确 — 那是 §5.2 的领域)。
+3. `foo = URI.new(s); bar = URI.new!(t)` → 捕获 (对抗性案例)。
+4. `foo = URI.new!(s); bar = URI.new!(t)` → **不**捕获。
+5. `# URI.new(s)` (注释) → **不**捕获 (`in_comment?/1` 先剥离)。
 
 **允许列表** — 合法调用裸 `URI.new/1` 的文件:
 
@@ -457,24 +490,62 @@ SPEC 强制 **load-path 规范化** 作为结构化修复:
 
 ```elixir
 # 伪代码 — 在 Ezagent.Kind.Snapshot
+#
+# 子句顺序是承载性的 (codex r2 HIGH 修复):
+#   1. %URI{} 子句必须在通用 struct/map 子句之前,否则 %URI{} 本身
+#      是 struct 会先命中错误子句。
+#   2. 自定义 struct 解构到 map、遍历、然后重新 struct (struct/2)
+#      以保留 struct 形状。
+#   3. map key AND value 都被遍历 (罕见但有效:%{%URI{} => v})。
+#   4. tuple 按元素遍历 (Tuple → list → walk → Tuple)。
+#   5. %URI{} 子句调用 Ezagent.URI.parse!/1 — 规范 chokepoint
+#      — 不是裸 URI.new/1。非 Ezagent scheme (§3.7 外部 URI fallback)
+#      被捕获并不变通过。
+
+def canonicalize_uris(%URI{} = uri) do
+  s = URI.to_string(uri)
+
+  try do
+    Ezagent.URI.parse!(s)
+  rescue
+    # 外部 (非 Ezagent) scheme — §3.7 fallback。
+    ArgumentError ->
+      case URI.new(s) do
+        {:ok, canonical} -> canonical
+        _ -> uri
+      end
+  end
+end
+
+def canonicalize_uris(%_{} = struct_) do
+  # 自定义 struct — 解构到 map (丢弃 :__struct__)、遍历、重新 struct。
+  mod = struct_.__struct__
+
+  struct_
+  |> Map.from_struct()
+  |> canonicalize_uris()
+  |> then(&struct(mod, &1))
+end
+
 def canonicalize_uris(state) when is_map(state) do
-  Map.new(state, fn {k, v} -> {k, canonicalize_uris(v)} end)
+  Map.new(state, fn {k, v} -> {canonicalize_uris(k), canonicalize_uris(v)} end)
 end
 
 def canonicalize_uris(state) when is_list(state) do
   Enum.map(state, &canonicalize_uris/1)
 end
 
-def canonicalize_uris(%URI{} = uri) do
-  s = URI.to_string(uri)
-  case URI.new(s) do
-    {:ok, canonical} -> canonical
-    _ -> uri  # 畸形 — 保留;下游会可见地失败
-  end
+def canonicalize_uris(state) when is_tuple(state) do
+  state
+  |> Tuple.to_list()
+  |> Enum.map(&canonicalize_uris/1)
+  |> List.to_tuple()
 end
 
 def canonicalize_uris(other), do: other
 ```
+
+上面的子句顺序规则本身是 impl PR 必须保留的不变量。§5.5 不变量测试演练每种形态 (URI / 自定义 struct / 嵌套 map / map-as-key / list / tuple) 以锁定契约。
 
 **为什么选项 (b) 而非 (a) 操作员删除:**
 
@@ -483,18 +554,32 @@ def canonicalize_uris(other), do: other
 
 选项 (a) 文档化为 (b) 在实现期不可行时的**后备**。impl PR 的第一个 commit **必须**落地 (b);仅当 codex impl-review 识别 blocker 时 impl PR 才可枢转到 (a)。
 
-#### 9.2.2 边缘情况 (codex r2 会挑战 — 预先枚举)
+#### 9.2.2 边缘情况 (r3 — 由 §9.2.1 伪代码子句处理)
 
-- **嵌套 map/list 字段内的嵌套 `%URI{}`。** 递归 walker 处理任意深度 (Map → Map、Map → List → URI、List → Tuple → URI)。由 §5.5 不变量测试验证 (impl PR 添加深度 1、2、3 的案例)。
-- **自定义 struct 内的 `%URI{}`。** 大部分 Ezagent state 存在普通 map 中。如果 Behavior 在自定义 struct 中存储 URI (如 `%MyBinding{uri: %URI{}}`),walker 需要识别该 struct 类型并遍历其字段。r2 SPEC 强制:walker **必须**通过解构到 map、遍历、重新 struct 处理 `is_struct(state)`。impl PR 为此添加测试案例。
-- **`%URI{}` 作为 map key。** 罕见但可能 (`%{%URI{} => value}`)。Walker 的 `Map.new(state, fn {k, v} -> {canonicalize_uris(k), canonicalize_uris(v)} end)` 处理此。r2 impl PR 添加测试案例。
-- **跨 OTP `binary_to_term` 兼容。** `:erlang.binary_to_term` 保留编码的 struct 形状。如果 snapshot 在 Elixir 1.14 下以 `:authority == "user"` 写入,在 Elixir 1.18 下解码产生相同字段值。规范化 pass 无论 OTP 版本都修正它。
+- **嵌套 map/list 字段内的嵌套 `%URI{}`。** 递归 walker 处理任意深度 (Map → Map → URI、Map → List → URI、List → Tuple → URI)。由 §5.5 不变量测试案例 `deep: %{nested: %{list: [...]}}` 锁定。
+- **自定义 struct (`%MyBinding{uri: %URI{}}`) 内的 `%URI{}`。** `%_{} = struct_` 子句 (因子句顺序原因放在 `is_map(state)` 子句**之前**) 通过 `Map.from_struct/1` 解构、遍历 map、通过 `struct(mod, ...)` 重新 struct。`%URI{}` 子句必须在 `%_{} = struct_` **之前**,使 URI 结构体本身 (它**是** struct) 先被 URI 子句捕获。由 §5.5 测试案例 `binding: %MyBinding{uri: ...}` 锁定。
+- **`%URI{}` 作为 map key。** 罕见但可能 (`%{%URI{} => value}`)。Map 子句的 `Map.new(state, fn {k, v} -> {canonicalize_uris(k), canonicalize_uris(v)} end)` 遍历**两者** key 和 value (codex r2 HIGH 发现先前伪代码与此声明不匹配;r3 修复)。由 §5.5 测试案例 `per_member: %{... => :online}` 锁定。
+- **`%URI{}` 作为 tuple 元素。** `is_tuple(state)` 子句转为 list、遍历、转回。由 §5.5 测试案例 `last_event: {:joined, %URI{}, ts}` 锁定。
+- **跨 OTP `binary_to_term` 兼容。** `:erlang.binary_to_term` 保留编码的 struct 形状。无论 OTP 版本都修正。
+- **snapshot state 内的非 Ezagent-scheme URI。** 外部 URI (如 Feishu `chat_id` 作为 `URI.parse("https://...")` 存储) 流经 `%URI{}` 分支中的 §3.7 fallback rescue 子句:`Ezagent.URI.parse!/1` 在非允许列表 scheme 上 raise,rescue 捕获并通过 strict `URI.new/1` 重新规范化。即使绕过 SchemeRegistry 检查,URI 最终也有 `:authority == nil` (RFC 3986)。
 
-### 9.3 操作员面对的 URI (r2 — 扩展范围)
+### 9.3 操作员面对的 URI (r2 — 扩展范围;r3 — 固定脚本也在范围内)
 
-脚本 (`scripts/*.sh`)、文档 (`docs/**/*.md`)、scenario (`scenarios/*.yaml`)、mix-task 帮助文本 — 全部引用 URI **字符串**,不引用 struct 形式。这些产物本身**无更改**。
+脚本 (`scripts/*.sh`)、文档 (`docs/**/*.md`)、scenario (`scenarios/*.yaml`)、mix-task 帮助文本 — **大部分**引用 URI **字符串**,不引用 struct 形式。这些产物**无更改**。
 
-**但** — `apps/*/lib/mix/tasks/` 下的操作员面对 mix tasks **构造** URI **结构体**,后被持久化或 dispatch。r2 将这些添加到扫除目标 (按 §4.2 扩展枚举)。枚举命中:
+**例外 — 嵌入活 Elixir 的固定 evidence/repro 脚本 (r3 新增)。** Codex r2 发现 `docs/notes/evidence/pr49-demo-rpc-script.sh` 在第 33、43、53 行包含 `elixir -e '...'` 块通过 `URI.parse/1` 构建活的 `%URI{}` 并 RPC 到运行中的 BEAM。任何嵌入活 Elixir 的固定 repro 脚本本 SPEC 视为生产代码 — 它构造的 URI 结构体流经相同的 dispatch/比较路径。
+
+r3 扩展扫除 grep 包括 `docs/notes/evidence/*.sh` 和任何承载 `elixir -e` / `iex --eval` body 的其他 `*.sh`:
+
+```bash
+rg -n "URI\.(parse|new!?)\(" docs/notes/evidence scripts -g '*.sh' -g '*.exs'
+```
+
+impl PR 处理每个命中通过:
+- 重写嵌入的 Elixir 使用 `Ezagent.URI.parse!/1`,或
+- 删除固定脚本如果它是一次性取证产物 (通过 `git log` 验证脚本捕获日期后从未再次运行)。
+
+**操作员面对的 mix tasks** 在 `apps/*/lib/mix/tasks/` 下**构造** URI **结构体**,后被持久化或 dispatch。r2 将这些添加到扫除目标 (按 §4.2 扩展枚举)。枚举命中:
 
 - `apps/ezagent_domain_external_mirror/lib/mix/tasks/ezagent_external_mirror_cli.ex:161, 220`
 - `apps/ezagent_plugin_feishu/lib/mix/tasks/ezagent_external_mirror_migrate_feishu_bindings.ex:153`
@@ -771,21 +856,54 @@ defmodule Ezagent.URICanonicalizationTest do
     assert from_const.authority == nil
   end
 
-  # r2 NEW
-  test "snapshot decode_state canonicalizes embedded %URI{} structs" do
+  # r2 NEW (r3 扩展 per codex r2 HIGH-snapshot 发现 — 演练
+  # canonicalize_uris/1 契约性要求遍历的每个形态:map value、
+  # list element、深度嵌套、map key、tuple element、自定义 struct。)
+  test "snapshot canonicalize_uris/1 covers every required shape" do
+    parse = &URI.parse/1  # 迁移前形式
+
+    defmodule MyBinding do
+      defstruct [:uri, :meta]
+    end
+
     pre_migration_state = %{
       chat: %{
-        owner: URI.parse("entity://user/system/admin"),
-        members: [URI.parse("entity://user/team-alpha/alice")]
+        owner: parse.("entity://user/system/admin"),
+        members: [parse.("entity://user/team-alpha/alice")],
+        deep: %{nested: %{list: [parse.("entity://user/team-alpha/bob")]}},
+        per_member: %{parse.("entity://user/team-alpha/carol") => :online},
+        last_event: {:joined, parse.("entity://user/team-alpha/dave"), 1700000000},
+        binding: %MyBinding{uri: parse.("entity://user/team-alpha/eve"), meta: %{}}
       }
     }
+
     binary = :erlang.term_to_binary(pre_migration_state)
     decoded = :erlang.binary_to_term(binary, [:safe])
     canonicalized = Ezagent.Kind.Snapshot.canonicalize_uris(decoded)
 
     assert canonicalized.chat.owner.authority == nil
-    assert Enum.all?(canonicalized.chat.members, &(&1.authority == nil))
+    assert hd(canonicalized.chat.members).authority == nil
+    assert hd(canonicalized.chat.deep.nested.list).authority == nil
+    {tag, dave_uri, ts} = canonicalized.chat.last_event
+    assert tag == :joined and ts == 1700000000
+    assert dave_uri.authority == nil
+
+    [{carol_uri, status}] = Enum.to_list(canonicalized.chat.per_member)
+    assert carol_uri.authority == nil and status == :online
+
+    assert canonicalized.chat.binding.__struct__ == MyBinding
+    assert canonicalized.chat.binding.uri.authority == nil
+
     assert canonicalized.chat.owner == Ezagent.URI.parse!("entity://user/system/admin")
+  end
+
+  # r3 NEW — codex r2 HIGH-2 对抗性回归:单行同时携带
+  # URI.new(...) 和 URI.new!(...) 不得漏过。
+  test "URI.new/1 invariant catches same-line URI.new + URI.new! mix" do
+    assert matches_uri_new_no_bang?("foo = URI.new(s)")
+    refute matches_uri_new_no_bang?("foo = URI.new!(s)")
+    assert matches_uri_new_no_bang?("foo = URI.new(s); bar = URI.new!(t)")
+    refute matches_uri_new_no_bang?("foo = URI.new!(s); bar = URI.new!(t)")
   end
 
   defp scan_for(regex, exclude?, allowlist) do
@@ -801,7 +919,14 @@ defmodule Ezagent.URICanonicalizationTest do
   end
 
   defp matches_uri_new_no_bang?(line) do
-    String.contains?(line, "URI.new(") and not Regex.match?(~r/URI\.new!\(/, line)
+    # 基于计数,不是基于包含。codex r2 HIGH 修复:
+    # 像 `foo = URI.new(s); bar = URI.new!(t)` 这样的行会通过
+    # "包含 URI.new(" + "不包含 URI.new!(" 检查。
+    # \bURI.new\( 也匹配 `URI.new!(` 的前导部分,所以 bare 计数
+    # 两种形式,bare - bang 隔离 bare-only 计数。
+    bare = length(Regex.scan(~r/\bURI\.new\(/, line))
+    bang = length(Regex.scan(~r/\bURI\.new!\(/, line))
+    bare - bang > 0
   end
 
   defp is_query_target_idiom?(line),
