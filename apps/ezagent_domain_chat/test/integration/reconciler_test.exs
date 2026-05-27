@@ -570,6 +570,50 @@ defmodule EzagentDomainChat.Integration.ReconcilerTest do
                "Got partial: #{inspect(partial)}"
     end
 
+    # ─────────────────────────────────────────────────────────────────
+    # SPEC 2026-05-27-reconciler-return-shape (#430) §5 invariant test.
+    #
+    # BEHAVIORAL invariant: the retry-exhaustion path on
+    # `Session.ensure_orchestrator_with_meta/3` MUST return
+    # `{:partial, %{orchestrator_pending: _}}`, never collapse to
+    # `{:ok, _}` and never raise.
+    #
+    # This is the drift guard the SPEC §5 mandated. It catches:
+    #   - A future refactor that adds an early `:ok` short-circuit
+    #     before the retry exhaustion fires.
+    #   - A future refactor that maps :partial → :ok at the
+    #     ensure_orchestrator_with_meta/3 boundary (the historical
+    #     bug class :partial was designed to prevent).
+    #   - A future refactor that turns :partial into an exception.
+    #
+    # We exercise `ensure_orchestrator_with_meta/3` directly (NOT via
+    # the full Session.spawn_from_template/2 facade) so the invariant
+    # is local to the function whose @spec carries the `:partial`
+    # contract. The full-facade case is already covered by the
+    # line-523 integration test in the same describe block.
+    # ─────────────────────────────────────────────────────────────────
+    test "ensure_orchestrator_with_meta surfaces :partial for unconvertible-limbo orch" do
+      workspace_uri = @workspace_uri
+      owner = URI.parse("entity://user/team-alpha/inv-#{uniq()}")
+      session_uri = URI.new!("session://default/team-alpha/inv-test-#{uniq()}")
+      orch_uri = Session.derive_orchestrator_uri(session_uri, workspace_uri)
+
+      # Pre-spawn limbo: workspace and lineage both :absent so
+      # check_orchestrator returns {:ownership_pending, _}, then
+      # retry_after_race exhausts its bounded retries (3 × 50ms ≤ 150ms)
+      # and returns {:partial, %{orchestrator_pending: ^orch_uri}}.
+      register_inert_flavor("cc")
+      {:ok, _limbo_pid} = Ezagent.SpawnRegistry.spawn(orch_uri)
+
+      result = Session.ensure_orchestrator_with_meta(session_uri, workspace_uri, owner)
+
+      assert match?({:partial, %{orchestrator_pending: ^orch_uri}}, result),
+             "ensure_orchestrator_with_meta MUST return :partial on " <>
+               "ownership-pending exhaustion; collapsing to :ok would break " <>
+               "EzagentDomainChat.create_session/3 + LV 'Retry instantiation' branching. " <>
+               "Got: #{inspect(result)}"
+    end
+
     defp extract_orchestrator({:ok, %{orchestrator_uri: o}}), do: o
     defp extract_orchestrator({:partial, %{orchestrator_uri: o}}), do: o
     defp extract_orchestrator(_), do: nil
@@ -593,8 +637,14 @@ defmodule EzagentDomainChat.Integration.ReconcilerTest do
     end
 
     defp derive_orch_uri_for_test(%URI{} = session_uri) do
-      # Same logic as Session.derive_orchestrator_uri (private).
-      ws_name = "default"
+      # Same logic as Session.derive_orchestrator_uri.
+      # SPEC 2026-05-27-reconciler-return-shape (#430) §4.2 option (a):
+      # ws_name must come from the test's @workspace_uri host (which
+      # matches the SessionTemplate's default_workspace_uri), NOT the
+      # hardcoded "default" — otherwise the limbo pre-spawn lands at the
+      # wrong URI prefix and check_orchestrator routes to :not_live →
+      # fresh-spawn path, never exercising :ownership_pending → :partial.
+      ws_name = @workspace_uri.host
 
       session_name =
         case session_uri.path do
