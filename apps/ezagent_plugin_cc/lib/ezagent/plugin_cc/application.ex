@@ -37,14 +37,13 @@ defmodule EzagentPluginCc.Application do
     SPEC v2 §5.14 — there is no cc-specific Kind module).
   - `config_surface/0` — `:flavor` surface. The `/plugins` config icon
     routes to this flavor's agent surface (SPEC §6.1).
-  - `children/0` — an empty supervisor. cc's stateful surfaces are all
-    either ETS-backed (`BridgeRegistry` — initialized in `after_boot/0`)
-    or pulled in via the umbrella's lifecycle (`Socket` via
-    `EzagentWeb.Endpoint`). The empty supervisor makes
-    `Application.stop` work as the umbrella expects.
-  - `after_boot/0` — Phase 3 hook: (a) initialize `BridgeRegistry`'s
-    ETS table; (b) re-run `Ezagent.Workspace.Loader.load_all/0`. The
-    `load_all/0` re-run is the Decision #112 boot-ordering fix —
+  - `children/0` — an empty supervisor. cc's bridge state lives in the
+    AgentBridge domain app, and socket mounting is pulled in via the
+    umbrella's lifecycle (`EzagentWeb.Endpoint`). The empty supervisor
+    makes `Application.stop` work as the umbrella expects.
+  - `after_boot/0` — Phase 3 hook: re-run
+    `Ezagent.Workspace.Loader.load_all/0`. The `load_all/0` re-run is
+    the Decision #112 boot-ordering fix —
     chat plugin's `Application.start` calls `load_all/0` BEFORE this
     plugin's Template Class is published, so workspaces declaring
     `cc.agent` templates were skipped; the post-publish re-run
@@ -64,8 +63,6 @@ defmodule EzagentPluginCc.Application do
 
   use Application
   use Ezagent.Plugin
-
-  alias Ezagent.AgentBridge.Registry, as: BridgeRegistry
 
   # --- OTP Application -------------------------------------------------
 
@@ -109,9 +106,8 @@ defmodule EzagentPluginCc.Application do
   @impl Ezagent.Plugin
   def children, do: []
 
-  # Phase 3 post-register hook. `BridgeRegistry.init/0` is idempotent
-  # (creates the ETS table if absent). The `load_all/0` re-run is the
-  # Decision #112 boot-ordering fix — see moduledoc.
+  # Phase 3 post-register hook. The `load_all/0` re-run is the Decision
+  # #112 boot-ordering fix — see moduledoc.
   #
   # PTY-orphan-restart 2026-05-26: reap stale `claude` OS processes
   # BEFORE running load_all. An orphan claude (from a brutal-killed
@@ -121,7 +117,6 @@ defmodule EzagentPluginCc.Application do
   # See `EzagentPluginCc.OrphanReaper` moduledoc.
   @impl Ezagent.Plugin
   def after_boot do
-    :ok = BridgeRegistry.init()
     _ = maybe_reap_orphans()
     _ = Ezagent.Workspace.Loader.load_all()
     :ok

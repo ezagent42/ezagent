@@ -68,6 +68,7 @@ defmodule EzagentWeb.MixProject do
       # the shared atom palette (button / card / page_header) for the
       # wizard layout.
       {:ezagent_domain_chat, in_umbrella: true},
+      {:ezagent_domain_agent_bridge, in_umbrella: true},
       {:ezagent_domain_ui, in_umbrella: true},
       # Plugin registration: ezagent_web's router references plugin LiveViews
       # by module atom. Adding the plugin as a build-time dep ensures

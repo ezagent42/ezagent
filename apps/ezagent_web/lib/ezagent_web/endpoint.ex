@@ -15,10 +15,14 @@ defmodule EzagentWeb.Endpoint do
     websocket: [connect_info: [session: @session_options]],
     longpoll: [connect_info: [session: @session_options]]
 
-  # Phase 6 PR 4: production CC channel WS. Replaces v1_prototype's
-  # HTTP /api/cc-bridge/announce + SSE /api/cc-bridge/events with one
-  # full-duplex WS. Token auth via TokenStore at connect.
-  socket "/cc_socket", EzagentPluginCc.Socket,
+  # AgentBridge PR-C: canonical bridge socket plus legacy cc alias.
+  # `/cc_socket` remains for the two-release deprecation window so
+  # already-running cc Python sidecars keep their persistent WS path.
+  socket "/agent_bridge", Ezagent.AgentBridge.Socket,
+    websocket: [check_origin: false],
+    longpoll: false
+
+  socket "/cc_socket", Ezagent.AgentBridge.Socket,
     websocket: [check_origin: false],
     longpoll: false
 

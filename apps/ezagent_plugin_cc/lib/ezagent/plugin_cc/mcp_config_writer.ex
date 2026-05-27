@@ -59,7 +59,7 @@ defmodule EzagentPluginCc.McpConfigWriter do
   - `:script_path` — override Python WS-client script path (for tests).
   - `:ws_url` — override the WebSocket endpoint URL (defaults to
     `EZAGENT_BRIDGE_WS_URL` env / `:ws_url` app config /
-    `ws://127.0.0.1:10042/cc_socket/websocket`).
+    `ws://127.0.0.1:10042/agent_bridge/websocket`).
   - `:agent_cwd` — agent's working directory. When provided, ALSO
     writes `.mcp.json` to that directory. Without this, Claude
     launched with cwd=<agent_cwd> can't find the project-level
@@ -76,8 +76,9 @@ defmodule EzagentPluginCc.McpConfigWriter do
   Like `write!/1`, but ALSO returns the per-instance connect token:
   `{:ok, abs_path, token}`.
 
-  The token is what gates the WS bridge join (`EzagentPluginCc.Socket`
-  / `Ezagent.Orchestrator.McpSocket`). A caller that wants `claude`'s
+  The token is what gates the WS bridge join
+  (`Ezagent.AgentBridge.Socket` / `Ezagent.Orchestrator.McpSocket`).
+  A caller that wants `claude`'s
   OTHER MCP servers to authenticate as the same agent (the
   orchestrator MCP transport bridge does — it joins
   `orch:bridge:<orchestrator_uri>` with this exact token) exports the
@@ -187,13 +188,13 @@ defmodule EzagentPluginCc.McpConfigWriter do
   Lookup order:
   1. `EZAGENT_BRIDGE_WS_URL` environment variable
   2. `Application.get_env(:ezagent_plugin_cc, :ws_url)`
-  3. `ws://127.0.0.1:10042/cc_socket/websocket` (matches Endpoint mount)
+  3. `ws://127.0.0.1:10042/agent_bridge/websocket` (canonical PR-C mount)
   """
   @spec resolve_ws_url() :: String.t()
   def resolve_ws_url do
     System.get_env("EZAGENT_BRIDGE_WS_URL") ||
       Application.get_env(:ezagent_plugin_cc, :ws_url) ||
-      "ws://127.0.0.1:10042/cc_socket/websocket"
+      "ws://127.0.0.1:10042/agent_bridge/websocket"
   end
 
   defp mint_token!(agent_uri_str) when is_binary(agent_uri_str) do
