@@ -164,15 +164,16 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
 
   @doc """
   Schedules a post-init continuation to subscribe this Kind's pid to
-  its OWN SliceChange topic (PR-EM-CORE hook + r4 split-init pattern)
-  AND broadcast a `:publisher_alive` lifecycle event for any
-  subscriber (e.g. ExternalMirrorWorkers) that needs to re-attach
-  on cold-spawn rehydration.
+  its OWN SliceChange topic (PR-EM-CORE hook + r4 split-init pattern).
 
   Returns `{:continue, :subscribe_to_self_slice_change}` so the
-  subscribe + lifecycle broadcast run AFTER `:announce_ready` — by
-  the time SliceChange events flow, the Kind is `:ready` and dispatch
-  can route inbound publisher actions.
+  subscribe runs AFTER `:announce_ready` — by the time SliceChange
+  events flow, the Kind is reachable for dispatch.
+
+  NOTE: the `:publisher_alive` lifecycle broadcast does NOT happen
+  here — it lives in `on_ready/2` so it fires AFTER
+  `Ezagent.ReadyGate.mark_ready/1` flips. See `on_ready/2` doc +
+  task #49 codex round-1 FAIL #6.
   """
   @impl Ezagent.Behavior
   def post_init(_args, _slice) do
@@ -183,22 +184,80 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
   def handle_continue(:subscribe_to_self_slice_change, _slice, %{self_uri: self_uri}) do
     :ok = Ezagent.SliceChange.subscribe_unverified(self_uri)
 
-    # Task #49 (2026-05-27) — every Session reaching `:ready` (boot OR
-    # cold-spawn rehydrate via `SpawnRegistry.spawn/1`) emits a single
-    # `{:publisher_alive, self_uri}` lifecycle event. The
-    # `:publisher.subscribers` slice rehydrates with stale pids from
-    # the snapshot; the still-alive ExternalMirrorWorker Kinds that
-    # subscribed pre-vanish need a kick to re-subscribe with their
-    # current pid. The lifecycle event IS that kick. See
-    # `Ezagent.PublisherLifecycle` moduledoc + the
-    # `Ezagent.Behavior.ExternalMirrorWorker.handle_kind_message/3`
-    # `:publisher_alive` clause.
-    :ok = Ezagent.PublisherLifecycle.broadcast_alive(self_uri)
-
     # Slice unchanged — return `:ignore` so the Server skips the
     # snapshot commit path (we just opened a PubSub subscription;
     # no slice mutation).
     :ignore
+  end
+
+  @doc """
+  Task #49 codex round-1 FAIL #6 (2026-05-27) — broadcast the
+  `:publisher_alive` lifecycle event AFTER
+  `Ezagent.ReadyGate.mark_ready/1` has flipped this Session to
+  `:ready` and the PendingDelivery buffer has drained.
+
+  Previously this broadcast lived in `handle_continue/3`, which
+  runs BEFORE ReadyGate flips. Cold-spawn flow:
+
+      Session.handle_continue → broadcast :publisher_alive
+                              → Worker receives event
+                              → Worker calls subscribe_to_session_publisher (mode :call)
+                              → Invocation.dispatch sees Session ReadyGate :not_ready
+                              → returns {:error, :not_ready}
+                              → Worker logs + discards (no retry)
+                              → SILENT FAIL on cold-spawn — the exact case this
+                                mechanism was meant to fix.
+
+  Moving the broadcast to `on_ready/2` ensures the Worker's
+  re-subscribe `:call` finds the Session `:ready`. The Worker also
+  carries a defence-in-depth retry on `{:error, :not_ready}` (see
+  `Ezagent.Behavior.ExternalMirrorWorker.handle_kind_message/3`
+  `:publisher_alive` clause) — primary fix is the on_ready ordering;
+  the retry is the belt-and-braces backup.
+  """
+  @impl Ezagent.Behavior
+  def on_ready(_slice, %{self_uri: self_uri}) do
+    :ok = Ezagent.PublisherLifecycle.broadcast_alive(self_uri)
+  end
+
+  @doc """
+  Task #49 codex round-1 CONCERN #3 (2026-05-27) — clear transient
+  `:subscribers` + `:monitors` maps on snapshot load.
+
+  Why transient: the Publisher slice's `:subscribers` map keys are
+  `pid()` values + the `:monitors` map values are monitor `reference()`
+  values. Both are BEAM-local handles to live processes — a snapshot
+  binary written by ONE BEAM that's then loaded by a DIFFERENT BEAM
+  (cold-spawn, BEAM restart) holds non-routable / stale handles.
+  `Process.alive?/1` on a stale pid from another BEAM returns `false`
+  (or worse, the local BEAM has reassigned that pid number to a new
+  process); a stale monitor reference cannot be demonitored on a
+  remote BEAM.
+
+  Worse: the pre-task-#49 lifecycle-broadcast handshake relies on
+  `ensure_monitored/2` to dedupe by pid (the publisher's "already
+  subscribed" fast path). If the snapshot persisted a `subscribers`
+  entry like `%{<stale_pid> => <stale_ref>}`, a fresh worker
+  attempting to subscribe (which has the SAME pid number by sheer
+  bad luck — pid reuse IS a thing in long-running BEAMs) would be
+  recognised as "already subscribed", `ensure_monitored/2` skips
+  the monitor install, the worker pid is recorded but no monitor
+  exists, AND the Publisher fans out events to a non-routable
+  handle (the stale ref).
+
+  Clearing both maps on every snapshot load makes the transient
+  membership EXPLICIT: every restart starts with an empty subscribers
+  map; live workers re-subscribe via the lifecycle handshake. The
+  `:ring`, `:cursor`, and `:retention` fields are durable and
+  preserved.
+
+  Idempotent: re-running on an already-cleared slice is a no-op
+  (already `%{}`). Matches the task #34 `reconcile_after_load/2`
+  contract for DB-projection slices.
+  """
+  @impl Ezagent.Behavior
+  def reconcile_after_load(_uri, slice) do
+    %{slice | subscribers: %{}, monitors: %{}}
   end
 
   # ----- Kind-message hook ----------------------------------------------

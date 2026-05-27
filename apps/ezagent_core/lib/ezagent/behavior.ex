@@ -464,6 +464,65 @@ defmodule Ezagent.Behavior do
   """
   @callback reconcile_after_load(uri :: URI.t(), slice :: slice()) :: slice()
 
+  @doc """
+  Post-ready hook — invoked once by `Ezagent.Kind.Server` AFTER
+  `Ezagent.ReadyGate.mark_ready/1` has flipped this Kind to
+  `:ready` and the `PendingDelivery` buffer has been drained.
+
+  ## Why a separate hook from `handle_continue/3`
+
+  `handle_continue/3` runs BEFORE `mark_ready` (codex round-2 HIGH-1
+  + round-3 HIGH-1 invariant — see `Ezagent.Kind.Server` moduledoc).
+  A Behavior that broadcasts a `"the Kind is ready"` signal from
+  `handle_continue/3` will fire that signal while ReadyGate is
+  still `:not_ready`. Any subscriber that handles the signal with
+  a `:call`-mode dispatch back to this Kind will fail-fast with
+  `{:error, :not_ready}` — silently dropping the signal's intent.
+
+  `on_ready/2` exists for exactly that pattern: fire a
+  `"hey, I'm now reachable"` broadcast AFTER ReadyGate flips, so
+  subscribers' `:call`-mode round-trips can complete.
+
+  ## When to use which
+
+  - `handle_continue/3` — slice-affecting boot work
+    (subscribe-to-PubSub-with-immediate-effect, open transport,
+    read DB projection). Slice mutations from `handle_continue/3`
+    persist via the standard snapshot commit path.
+  - `on_ready/2` — side-effecting boot work that requires
+    `ReadyGate` to already say `:ready` (lifecycle broadcasts that
+    invite peer-side `:call` round-trips).
+
+  ## Arguments + return
+
+  - `slice` — this Behavior's slice as it stands AFTER all
+    `handle_continue/3` callbacks have completed.
+  - `ctx` — `%{kind_module: module(), self_uri: URI.t()}`.
+  - Returns `:ok`. The slice is NOT mutated — `on_ready/2` runs
+    after the snapshot has already been committed at the end of
+    post-init, so a slice-mutating hook here would race the next
+    dispatched action. Use `handle_continue/3` for slice changes.
+
+  ## Error semantics
+
+  A raise / throw / exit inside `on_ready/2` is logged + isolated
+  by `Kind.Server` — the Kind STAYS `:ready` (ReadyGate already
+  flipped before the hook ran; we can't un-flip it without
+  contradicting an external observer who already saw `:ready`).
+  This matches the `terminate/3` boundary — best-effort callback,
+  per-Behavior isolation, structural ready-state invariant unchanged.
+
+  Optional callback — `function_exported?/3` probed per call;
+  Behaviors that don't export it contribute zero overhead to the
+  Kind's boot path.
+
+  Added 2026-05-27 as part of task #49 codex round-1 FAIL #6 fix —
+  the publisher-lifecycle broadcast was previously emitted from
+  `handle_continue/3`, racing peer-side `:call` dispatches against
+  the unflipped ReadyGate.
+  """
+  @callback on_ready(slice :: slice(), ctx :: ctx()) :: :ok
+
   @optional_callbacks [
     dispatchable?: 0,
     data_owner: 1,
@@ -473,7 +532,8 @@ defmodule Ezagent.Behavior do
     cap_exempt_actions: 0,
     workspace_scoped?: 0,
     reads_sibling_slices: 0,
-    reconcile_after_load: 2
+    reconcile_after_load: 2,
+    on_ready: 2
   ]
 
   @doc """

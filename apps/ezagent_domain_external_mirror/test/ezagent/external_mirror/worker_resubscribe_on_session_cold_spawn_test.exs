@@ -14,9 +14,10 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeOnSessionColdSpawnTest do
     independent lifecycles).
   - Session is cold-spawned via `SpawnRegistry.spawn/1` (the on-
     demand path — NOT a fresh boot).
-  - The new Session's `:publisher.subscribers` rehydrates from
-    snapshot as `%{}` (stale persisted pids dropped by the
-    `init_slice/1` → snapshot-merge codepath).
+  - The new Session's `:publisher.subscribers` is cleared by
+    `Behavior.Publisher.SessionImpl.reconcile_after_load/2` (task #49
+    codex round-1 CONCERN #3 fix — transient subscriber/monitor
+    handles do not survive snapshot/restart).
 
   ## Pre-fix bug
 
@@ -30,26 +31,64 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeOnSessionColdSpawnTest do
 
   - `Ezagent.PublisherLifecycle` (in `:ezagent_core`) provides a
     per-publisher-URI lifecycle topic.
-  - `Ezagent.Behavior.Publisher.SessionImpl.handle_continue/3`
-    broadcasts `{:publisher_alive, self_uri}` AFTER `:announce_ready`.
+  - `Ezagent.Behavior.Publisher.SessionImpl.on_ready/2` broadcasts
+    `{:publisher_alive, self_uri}` AFTER `Ezagent.ReadyGate.mark_ready/1`
+    has flipped (codex round-1 FAIL #6 — pre-fix this lived in
+    `handle_continue/3` and raced peer `:call` re-subscribes against
+    the not-yet-flipped ReadyGate).
+  - `Ezagent.Behavior.Publisher.SessionImpl.reconcile_after_load/2`
+    clears the transient `:subscribers` + `:monitors` maps on
+    snapshot load (codex round-1 CONCERN #3 — stale pids/refs from
+    a previous BEAM cannot be routable / demonitorable; clearing
+    them on load makes the transient nature of subscribership
+    explicit and forces the lifecycle handshake on every cold spawn).
   - `Ezagent.Behavior.ExternalMirrorWorker.handle_continue/3`
-    subscribes to that topic.
+    subscribes to the lifecycle topic.
   - `Ezagent.Behavior.ExternalMirrorWorker.handle_kind_message/3`
     `{:publisher_alive, _}` clause re-runs
-    `subscribe_to_session_publisher/2`.
+    `subscribe_to_session_publisher/2`; on `{:error, :not_ready}`
+    it schedules a bounded retry (defence-in-depth — the on_ready
+    primary fix means the retry path should be cold in normal
+    operation).
 
   Idempotent at every layer:
   - Publisher `ensure_monitored/2` dedupes by pid.
   - Worker's re-subscribe just refreshes `publisher_cursor`.
 
-  ## Test shape
+  ## Test shape (codex round-1 CONCERN #5)
 
-  Spawn the worker via the direct `WorkerSpawn.spawn` path (matches
-  `worker_publish_test.exs` — bypasses the bind facade so caps don't
-  enter the picture). Drive a baseline publish to confirm the wire
-  is alive. Terminate the default Session via its supervisor,
-  re-spawn via `SpawnRegistry.spawn/1`, and confirm the FIRST slice
-  change after cold-spawn reaches the Worker.
+  This test exercises the REAL production load path:
+  1. Spawn the Worker (subscribes to the live Session, which adds
+     the Worker's pid to `:publisher.subscribers` via the normal
+     `:subscribe_from` dispatch).
+  2. Drive a baseline publish to confirm the wire is alive.
+  3. Force a snapshot write of the Session in its CURRENT state
+     (live worker pid in the subscribers map). This is what the
+     `:on_change` strategy already does on every mutation; we just
+     force one synchronously so the assertion isn't time-dependent.
+  4. Terminate the Session via its supervisor.
+  5. Cold-spawn the Session via `SpawnRegistry.spawn/1`. The new
+     Session's `:publisher` slice loads from snapshot — and the
+     `reconcile_after_load/2` callback clears `:subscribers` +
+     `:monitors`. (Pre-CONCERN-#3 fix the loaded slice would have
+     re-installed the stale-pid map; the test had to fabricate the
+     empty state via `:sys.replace_state` because same-VM
+     `term_to_binary` round-trip preserves pid routability that
+     doesn't survive an actual BEAM restart.)
+  6. Trigger a slice change; assert the still-alive Worker receives
+     the publish event via the lifecycle handshake.
+
+  ## Test isolation (codex round-1 CONCERN #7)
+
+  `EzagentDomainChat` is NOT a runtime dep of
+  `ezagent_domain_external_mirror` (cycle break). When this file is
+  the only test file that triggers (e.g. `mix test path/to/this`),
+  `:ezagent_domain_chat` is not auto-started — its
+  `SessionSupervisor`, scheme registration, etc. are absent and
+  `SpawnRegistry.spawn(session_uri)` would fail with
+  `{:error, :no_spawn_fn}`. We explicitly `Application.ensure_all_started/1`
+  the chat app in setup; the umbrella-wide test run is a no-op
+  (app already started).
   """
 
   use ExUnit.Case, async: false
@@ -65,6 +104,12 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeOnSessionColdSpawnTest do
   alias Ezagent.ExternalMirror.TestSupport.{MockPublishAdapter, MockPublishBinding}
 
   setup do
+    # codex round-1 CONCERN #7 — see moduledoc. Chat is a compile-
+    # but-not-runtime dep here (the cycle break). Force-start so
+    # `EzagentDomainChat.SessionSupervisor` + the `"session"` scheme
+    # spawn fn exist when we resolve / cold-spawn the default Session.
+    {:ok, _} = Application.ensure_all_started(:ezagent_domain_chat)
+
     :ok = ensure_adapter_registered(MockPublishAdapter, MockPublishBinding)
     cleanup_workers()
 
@@ -125,32 +170,40 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeOnSessionColdSpawnTest do
 
       {:ok, session_pid_1} = Ezagent.KindRegistry.lookup(session_uri)
 
-      # Production-faithful scenario: force the persisted snapshot
-      # to carry an EMPTY `:publisher.subscribers` map. In a real
-      # BEAM restart the pids in the snapshot are non-routable
-      # (PIDs are local to a BEAM node and a fresh BEAM reissues
-      # them); same-VM `term_to_binary`/`binary_to_term` preserves
-      # them as still-routable values, so a vanilla test cannot
-      # reproduce the prod silent-drop without simulating the
-      # stale-pid map. We do it via `:sys.replace_state` on the
-      # SessionImpl `:publisher` slice — clearing `subscribers` +
-      # `monitors` so the snapshot persisted via the standard
-      # `:on_change` codepath captures the empty shape.
-      :sys.replace_state(session_pid_1, fn state ->
-        new_publisher = %{
-          state.state.publisher
-          | subscribers: %{},
-            monitors: %{}
-        }
-
-        put_in(state.state.publisher, new_publisher)
-      end)
-
-      # Force a snapshot write so the empty subscribers shape lands
-      # on disk before we terminate + cold-spawn. Use `Snapshot.save_now/3`
-      # against the current state.
+      # Production-faithful path (codex round-1 CONCERN #5 fix):
+      # snapshot the LIVE state — the live worker pid IS in
+      # `:publisher.subscribers`. `:on_change` would write the same
+      # snapshot on any future slice mutation; forcing it
+      # synchronously here makes the assertion time-independent.
+      #
+      # Crucially, this snapshot carries the worker's STILL-ALIVE
+      # pid + monitor ref. The cold-spawn load path's
+      # `Behavior.Publisher.SessionImpl.reconcile_after_load/2`
+      # (CONCERN #3 fix) clears both maps on load — that's the
+      # production behaviour we're testing. Pre-CONCERN-#3-fix the
+      # test had to fabricate empty subscribers via
+      # `:sys.replace_state`; post-fix we just save the natural
+      # state and let `reconcile_after_load/2` do its job.
       kind_state = :sys.get_state(session_pid_1)
       :ok = Ezagent.Kind.Snapshot.save_now(session_uri, kind_state.kind, kind_state.state)
+
+      # Sanity: the snapshot we just wrote includes the worker's
+      # live pid. (If `reconcile_after_load/2` is missing the cold
+      # spawn would re-install this pid, and the test would PASS
+      # against a buggy build — that's exactly what CONCERN #5
+      # called out. The first slice change after cold-spawn would
+      # still publish to the pre-vanish pid, which happens to be
+      # the same live pid in a same-VM test, masking the prod
+      # silent-drop. Asserting the snapshot carries the pid +
+      # then asserting `reconcile_after_load/2` clears it is what
+      # makes this test a true regression for the prod path.)
+      persisted_subscribers =
+        kind_state.state.publisher.subscribers
+
+      assert is_map(persisted_subscribers) and map_size(persisted_subscribers) >= 1,
+             "test pre-condition broken — the Worker did not subscribe to the Session " <>
+               "Publisher pre-vanish; cold-spawn scenario does not apply. " <>
+               "subscribers=#{inspect(persisted_subscribers)}"
 
       # Terminate the Session via its supervisor (boot-seed path uses
       # EzagentDomainChat.SessionSupervisor; lazy-demand spawn path
@@ -169,11 +222,33 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeOnSessionColdSpawnTest do
 
       # Cold-spawn the Session via the production lazy-demand path.
       # The new Session rehydrates from snapshot; `:publisher.subscribers`
-      # comes back as `%{}` (the persisted shape is reset via the
-      # init_slice → merge codepath).
+      # comes back as `%{}` via `Behavior.Publisher.SessionImpl.reconcile_after_load/2`
+      # (codex round-1 CONCERN #3 fix). The Worker has no entry in the
+      # new map; the lifecycle handshake (`on_ready/2` broadcast +
+      # `handle_kind_message({:publisher_alive, _}, ...)`) is the ONLY
+      # mechanism that re-attaches it.
       {:ok, session_pid_2} = Ezagent.SpawnRegistry.spawn(session_uri)
       refute session_pid_1 == session_pid_2
       :ok = await_session_ready(session_uri, 100)
+
+      # Validate CONCERN #3 fix: the cold-spawned Session's publisher
+      # slice came back with subscribers cleared. If a future change
+      # accidentally removes `reconcile_after_load/2` the loaded map
+      # would re-install the pre-vanish pid and this assertion fails
+      # — independent of whether the lifecycle handshake works.
+      cold_spawn_state = :sys.get_state(session_pid_2)
+
+      assert cold_spawn_state.state.publisher.subscribers == %{},
+             "Behavior.Publisher.SessionImpl.reconcile_after_load/2 did NOT clear " <>
+               "`:publisher.subscribers` on snapshot load. Cold-spawned Session " <>
+               "subscribers=#{inspect(cold_spawn_state.state.publisher.subscribers)}. " <>
+               "Stale subscriber pids from the snapshot must be cleared because they " <>
+               "are BEAM-local handles that don't survive restart in production."
+
+      assert cold_spawn_state.state.publisher.monitors == %{},
+             "Behavior.Publisher.SessionImpl.reconcile_after_load/2 did NOT clear " <>
+               "`:publisher.monitors` on snapshot load. monitors=" <>
+               "#{inspect(cold_spawn_state.state.publisher.monitors)}."
 
       # The Worker is STILL the same pid (post-cold-spawn invariant).
       binding_uri =

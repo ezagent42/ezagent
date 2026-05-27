@@ -268,6 +268,8 @@ defmodule Ezagent.Kind.Server do
     case queue do
       [] ->
         drain_then_mark_ready(uri_str)
+        # Task #49 — invoke on_ready hooks AFTER ReadyGate flip.
+        run_on_ready_hooks(state.kind, uri, state.state)
         {:noreply, state}
 
       _ ->
@@ -312,6 +314,9 @@ defmodule Ezagent.Kind.Server do
         # overtake older buffered entries in the GenServer mailbox,
         # breaking per-target FIFO).
         drain_then_mark_ready(URI.to_string(self_uri))
+        # Task #49 — invoke on_ready hooks AFTER ReadyGate flip.
+        # Uses the post-init mutated slice state.
+        run_on_ready_hooks(new_state.kind, self_uri, new_state.state)
         {:noreply, new_state}
 
       _ ->
@@ -438,6 +443,54 @@ defmodule Ezagent.Kind.Server do
         # self-casting (they still saw :not_ready).
         drain_then_mark_ready(uri_str)
     end
+  end
+
+  # Task #49 (2026-05-27) — codex round-1 FAIL #6 fix.
+  #
+  # Run each Behavior's optional `on_ready/2` callback AFTER ReadyGate
+  # has flipped to `:ready` and the PendingDelivery buffer has been
+  # drained. Used by Behaviors that need to fire a lifecycle broadcast
+  # whose subscribers may dispatch BACK into this Kind synchronously
+  # (e.g. `Behavior.Publisher.SessionImpl.on_ready/2` broadcasts
+  # `:publisher_alive`; subscribed ExternalMirrorWorkers re-run
+  # `subscribe_to_session_publisher/2` which is a `:call` mode
+  # dispatch that would otherwise hit `{:error, :not_ready}` if the
+  # broadcast had fired from `handle_continue/3` BEFORE mark_ready).
+  #
+  # Best-effort: a raise/throw/exit inside any one Behavior's
+  # `on_ready/2` is logged + isolated; we do NOT un-flip ReadyGate
+  # (an external observer may have already seen `:ready` and routed
+  # through). The Kind stays `:ready`; siblings still run.
+  defp run_on_ready_hooks(kind_module, self_uri, slice_state) do
+    ctx = %{kind_module: kind_module, self_uri: self_uri}
+
+    Enum.each(kind_module.behaviors(), fn behavior ->
+      if function_exported?(behavior, :on_ready, 2) do
+        slice = Map.get(slice_state, behavior.state_slice(), %{})
+
+        try do
+          _ = behavior.on_ready(slice, ctx)
+        rescue
+          err ->
+            require Logger
+
+            Logger.warning(
+              "Ezagent.Kind.Server: Behavior #{inspect(behavior)}.on_ready/2 raised " <>
+                "(#{inspect(err)}). Kind remains `:ready`; continuing on_ready of " <>
+                "remaining behaviors. URI=#{URI.to_string(self_uri)}"
+            )
+        catch
+          kind, value ->
+            require Logger
+
+            Logger.warning(
+              "Ezagent.Kind.Server: Behavior #{inspect(behavior)}.on_ready/2 threw " <>
+                "#{inspect({kind, value})}. Kind remains `:ready`; continuing " <>
+                "on_ready of remaining behaviors. URI=#{URI.to_string(self_uri)}"
+            )
+        end
+      end
+    end)
   end
 
   # codex round-10 HIGH — `Ezagent.Kind.terminate/1` needs the Kind
