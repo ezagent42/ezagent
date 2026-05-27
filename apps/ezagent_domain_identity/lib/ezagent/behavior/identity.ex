@@ -126,6 +126,12 @@ defmodule Ezagent.Behavior.Identity do
     self_identity_cap = %Ezagent.Capability{
       kind: kind_for_uri(uri),
       behavior: __MODULE__,
+      # SPEC 2026-05-27 capability-action-axis — the self-identity cap
+      # authorizes the entity to dispatch `:list_caps` on its own URI
+      # (used by every read of caller_caps via `Identity.list_caps_for`).
+      # Narrowing to `:list_caps` reflects intent; future actions (e.g.
+      # `:has_cap?`) require their own grants.
+      action: :list_caps,
       instance: Ezagent.URI.instance(uri),
       workspace_uri: Ezagent.Capability.workspace_of(uri),
       granted_by: bootstrap_granter(),

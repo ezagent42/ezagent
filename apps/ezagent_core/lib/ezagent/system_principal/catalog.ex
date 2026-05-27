@@ -102,6 +102,10 @@ defmodule Ezagent.SystemPrincipal.Catalog do
     %Capability{
       kind: :any,
       behavior: :any,
+      # SPEC 2026-05-27 capability-action-axis — bootstrap admin
+      # invariant is FIVE-axis wildcard. The admin_invariant?/1
+      # predicate matches this exact shape.
+      action: :any,
       instance: :any,
       workspace_uri: :any,
       granted_by: @bootstrap_granted_by,

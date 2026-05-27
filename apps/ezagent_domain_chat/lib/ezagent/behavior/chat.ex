@@ -793,6 +793,9 @@ defmodule Ezagent.Behavior.Chat do
         want = %Ezagent.Capability{
           kind: :session,
           behavior: Ezagent.Behavior.OrchestratorAdmin,
+          # SPEC 2026-05-27 capability-action-axis — OrchestratorAdmin
+          # actions/0 == [:restart].
+          action: :restart,
           instance: session_uri,
           workspace_uri: workspace_uri,
           granted_by: owner_uri,

@@ -173,6 +173,13 @@ defmodule Ezagent.Entity.User do
       %Ezagent.Capability{
         kind: :session,
         behavior: :any,
+        # SPEC 2026-05-27 capability-action-axis — default user baseline
+        # cap is intentionally broad (any session-behavior any-action in
+        # the user's own workspace). The `behavior: :any` axis already
+        # makes this a workspace-wildcard; `action: :any` is symmetric.
+        # Granted by `system://bootstrap` so the grant-boundary check
+        # (§3.6.1.b) doesn't reject it during user creation.
+        action: :any,
         instance: :any,
         workspace_uri: workspace_uri,
         granted_by: @system_bootstrap_uri,

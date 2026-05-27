@@ -611,6 +611,9 @@ defmodule Ezagent.Entity.SessionTemplate do
       cap = %Ezagent.Capability{
         kind: :session_template,
         behavior: Ezagent.Behavior.Template,
+        # SPEC 2026-05-27 capability-action-axis — owner needs to
+        # instantiate the template they just created (§1.7(e) intent).
+        action: :instantiate,
         instance: {:within_workspace, workspace_uri},
         workspace_uri: workspace_uri,
         granted_by: owner_uri,

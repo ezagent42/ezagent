@@ -382,14 +382,31 @@ defmodule Ezagent.Capability do
   @doc false
   # SPEC v3 §4.4 — admin's structural invariant gains `workspace_uri:
   # :any` so the cap is cross-workspace by structural design.
+  # SPEC 2026-05-27 capability-action-axis — admin invariant gains
+  # `action: :any` axis. Two clauses for old-shape (pre-action-axis)
+  # snapshot tolerance: legacy structs missing `:action` match the
+  # second clause if all four prior axes are `:any` AND `action_of/1`
+  # returns `:any` (which it does for missing-key structs).
   def admin_invariant?(%__MODULE__{
         kind: :any,
         behavior: :any,
+        action: :any,
         instance: :any,
         workspace_uri: :any,
         granted_by: %URI{scheme: "system", host: "bootstrap"}
       }),
       do: true
+
+  def admin_invariant?(
+        %__MODULE__{
+          kind: :any,
+          behavior: :any,
+          instance: :any,
+          workspace_uri: :any,
+          granted_by: %URI{scheme: "system", host: "bootstrap"}
+        } = cap
+      ),
+      do: action_of(cap) == :any
 
   def admin_invariant?(%__MODULE__{}), do: false
 

@@ -1677,6 +1677,10 @@ defmodule Ezagent.Entity.Session do
     want = %Ezagent.Capability{
       kind: :session,
       behavior: Ezagent.Behavior.OrchestratorAdmin,
+      # SPEC 2026-05-27 capability-action-axis — OrchestratorAdmin has
+      # one action `:restart`; admin_live.caller_can_restart_orchestrator?
+      # narrows the dispatch-time needed cap to this action.
+      action: :restart,
       instance: session_uri,
       workspace_uri: session_workspace,
       granted_by: owner_uri,
@@ -1718,10 +1722,16 @@ defmodule Ezagent.Entity.Session do
          %URI{} = session_workspace
        ) do
     # Cap #1 + #2 — unconditional scope-bounded delegation.
+    # SPEC 2026-05-27 capability-action-axis — orchestrator delegation
+    # is intentionally broad within the bounded scope (within-session
+    # for Cap #1, spawned-by for Cap #2). `action: :any` matches the
+    # `behavior: :any` axis — symmetric wildcard. The bound is the
+    # instance scope tuple, not the action narrowing.
     unconditional = [
       %Ezagent.Capability{
         kind: :session,
         behavior: :any,
+        action: :any,
         instance: {:within_session, session_uri},
         workspace_uri: session_workspace,
         granted_by: owner_uri,
@@ -1730,6 +1740,7 @@ defmodule Ezagent.Entity.Session do
       %Ezagent.Capability{
         kind: :agent,
         behavior: :any,
+        action: :any,
         instance: {:spawned_by, orchestrator_uri},
         workspace_uri: session_workspace,
         granted_by: owner_uri,
@@ -1759,6 +1770,10 @@ defmodule Ezagent.Entity.Session do
   def cap_equal_ignoring_metadata?(%Ezagent.Capability{} = a, %Ezagent.Capability{} = b) do
     a.kind == b.kind and
       a.behavior == b.behavior and
+      # SPEC 2026-05-27 capability-action-axis — include action axis in
+      # logical equality via `action_of/1` for snapshot-restored
+      # old-shape tolerance.
+      Ezagent.Capability.action_of(a) == Ezagent.Capability.action_of(b) and
       a.instance == b.instance and
       a.workspace_uri == b.workspace_uri and
       a.granted_by == b.granted_by

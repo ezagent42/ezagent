@@ -60,6 +60,10 @@ defmodule Ezagent.Capability.Parser do
      %Ezagent.Capability{
        kind: :any,
        behavior: :any,
+       # SPEC 2026-05-27 capability-action-axis — `*` is the operator
+       # full-wildcard shorthand; action axis matches the other four
+       # for admin-equivalent semantics.
+       action: :any,
        instance: :any,
        # `*` is the operator shorthand for "admin-equivalent" — cross-
        # workspace by intent. SPEC v3 §4 still allows operators to
@@ -82,6 +86,11 @@ defmodule Ezagent.Capability.Parser do
            %Ezagent.Capability{
              kind: kind_atom,
              behavior: behavior,
+             # SPEC 2026-05-27 capability-action-axis — current parser
+             # grammar `<kind>.<behavior>[/<instance>]` doesn't carry an
+             # action; default `:any` until a future PR adds the
+             # `.<action>` suffix per SPEC §11.
+             action: :any,
              instance: instance_uri,
              # Parsed caps default to cross-workspace (`:any`) so the
              # CLI grammar stays backward-compatible for now. Phase 9
