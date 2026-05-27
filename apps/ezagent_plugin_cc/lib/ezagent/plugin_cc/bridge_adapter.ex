@@ -5,6 +5,8 @@ defmodule EzagentPluginCc.BridgeAdapter do
 
   @behaviour Ezagent.AgentBridge.Adapter
 
+  require Logger
+
   alias Ezagent.AgentBridge.Payload
 
   @attachment_key_atoms %{
@@ -43,8 +45,17 @@ defmodule EzagentPluginCc.BridgeAdapter do
     attachments = Map.get(params, "attachments", [])
 
     if is_list(attachments) do
-      :ok = dispatch_reply(socket.assigns.agent_uri, sessions, text, ref, attachments)
-      {:reply, {:ok, %{}}, socket}
+      case dispatch_reply(socket.assigns.agent_uri, sessions, text, ref, attachments) do
+        {:ok, %{dispatched: dispatched, skipped: []}} ->
+          {:reply, {:ok, %{dispatched: dispatched}}, socket}
+
+        {:ok, %{dispatched: dispatched, skipped: skipped}} ->
+          # Invariant #9 — malformed session URIs from the client surface
+          # back to the boundary so claude knows not all sessions
+          # received the reply. Telemetry + Logger.warning also fires
+          # inside dispatch_reply/5 for ops visibility.
+          {:reply, {:ok, %{dispatched: dispatched, skipped: skipped}}, socket}
+      end
     else
       {:reply, {:error, %{reason: "attachments must be a list of maps"}}, socket}
     end
@@ -70,7 +81,18 @@ defmodule EzagentPluginCc.BridgeAdapter do
     }
   end
 
-  @doc false
+  @doc """
+  Dispatch the bridge reply to every supplied session URI.
+
+  Returns `{:ok, %{dispatched: [valid_uri_str], skipped: [bad_uri_str]}}`.
+  Malformed URIs are skipped (Invariant #9 — graceful surface from a
+  user-facing transport, not a silent process crash) AND logged at
+  warning level AND emitted as telemetry so ops sees the drop. The
+  caller (`handle_client_event/3`) propagates the `skipped` list back
+  to the client so claude can decide whether to retry.
+  """
+  @spec dispatch_reply(URI.t(), [String.t()], String.t(), term(), [map()]) ::
+          {:ok, %{dispatched: [String.t()], skipped: [String.t()]}}
   def dispatch_reply(agent_uri, sessions, text, ref, attachments) do
     ref_uri =
       case ref do
@@ -82,32 +104,54 @@ defmodule EzagentPluginCc.BridgeAdapter do
     body = %{text: text, attachments: normalize_attachments(attachments)}
     msg = Ezagent.Message.new(agent_uri, body, ref: ref_uri)
 
-    for session_uri_str <- sessions do
-      # SPEC 2026-05-27-uri-canonicalization §3.3 — `session_uri_str` is
-      # client-supplied via the cc bridge WebSocket; canonicalize via
-      # the chokepoint FIRST, then construct the action-bearing target
-      # via `URI.to_string/1` of the canonical form. This is the §3.4
-      # query-target idiom — input to URI.new!/1 is canonical-by-
-      # construction. Malformed session URIs from the client get a
-      # graceful skip (Invariant #9 — no silent crash from boundary
-      # input).
-      with {:ok, session_uri} <- safe_parse_session(session_uri_str) do
-        target = URI.new!("#{URI.to_string(session_uri)}?action=chat.send")
+    {dispatched, skipped} =
+      Enum.split_with(sessions, fn session_uri_str ->
+        case safe_parse_session(session_uri_str) do
+          {:ok, session_uri} ->
+            # SPEC 2026-05-27-uri-canonicalization §3.3 + §3.4 —
+            # session_uri_str came from the cc bridge WebSocket and was
+            # canonicalized via the chokepoint above; URI.new!/1 here
+            # consumes the canonical-by-construction string per the
+            # §3.4 query-target idiom.
+            target = URI.new!("#{URI.to_string(session_uri)}?action=chat.send")
 
-        Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-          target: target,
-          mode: :cast,
-          args: %{message: msg},
-          ctx: %{
-            caller: agent_uri,
-            caps: Ezagent.SystemPrincipal.caps("system://chat-reply"),
-            reply: :ignore
-          }
-        })
-      end
+            Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+              target: target,
+              mode: :cast,
+              args: %{message: msg},
+              ctx: %{
+                caller: agent_uri,
+                caps: Ezagent.SystemPrincipal.caps("system://chat-reply"),
+                reply: :ignore
+              }
+            })
+
+            true
+
+          :error ->
+            false
+        end
+      end)
+
+    if skipped != [] do
+      # Invariant #9 — malformed boundary input MUST surface via at
+      # least one observable channel. We hit three: Logger (operator
+      # tail), telemetry (metrics), and the channel ACK shape (claude
+      # bridge sees the partial result).
+      Logger.warning(
+        "EzagentPluginCc.BridgeAdapter: dropped #{length(skipped)} malformed " <>
+          "session URI(s) from cc bridge reply (agent=#{URI.to_string(agent_uri)}): " <>
+          "#{inspect(skipped)}"
+      )
+
+      :telemetry.execute(
+        [:ezagent, :plugin_cc, :bridge_adapter, :reply_skipped],
+        %{count: length(skipped)},
+        %{agent_uri: URI.to_string(agent_uri), skipped: skipped}
+      )
     end
 
-    :ok
+    {:ok, %{dispatched: dispatched, skipped: skipped}}
   end
 
   defp safe_parse_session(s) when is_binary(s) do
@@ -115,6 +159,8 @@ defmodule EzagentPluginCc.BridgeAdapter do
   rescue
     ArgumentError -> :error
   end
+
+  defp safe_parse_session(_), do: :error
 
   defp normalize_attachments(list) when is_list(list) do
     Enum.map(list, fn

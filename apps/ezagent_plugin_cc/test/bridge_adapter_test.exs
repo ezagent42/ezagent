@@ -29,4 +29,33 @@ defmodule EzagentPluginCc.BridgeAdapterTest do
     assert {:reply, {:error, %{reason: "reply requires text + session_uris"}}, ^socket} =
              BridgeAdapter.handle_client_event("reply", %{"text" => "missing sessions"}, socket)
   end
+
+  test "dispatch_reply/5 returns dispatched + skipped breakdown for malformed session URIs (SPEC 2026-05-27 §3.3 + Invariant #9)" do
+    # Codex r2 HIGH closure — malformed session URIs from the cc bridge
+    # MUST NOT be silently dropped. dispatch_reply/5 returns the split
+    # so the channel ACK can carry the `skipped` list back to claude
+    # AND Logger/telemetry emit observable signals for operators.
+    agent_uri = Ezagent.URI.parse!("entity://agent/team-alpha/cc_test")
+
+    # No real Kind alive at the target session URIs — dispatch will
+    # produce errors / :not_ready, but the SHAPE of dispatch_reply/5's
+    # return is what we're locking here.
+    sessions = [
+      "session://default/system/main",
+      "garbage://not-a-real-scheme",
+      "",
+      "session://default/team-alpha/real"
+    ]
+
+    assert {:ok, %{dispatched: dispatched, skipped: skipped}} =
+             BridgeAdapter.dispatch_reply(agent_uri, sessions, "hi", nil, [])
+
+    # Canonical Ezagent-scheme strings dispatched; malformed strings
+    # got the skipped path with their original input preserved.
+    assert "session://default/system/main" in dispatched
+    assert "session://default/team-alpha/real" in dispatched
+    assert "garbage://not-a-real-scheme" in skipped
+    assert "" in skipped
+    assert length(dispatched) + length(skipped) == length(sessions)
+  end
 end
