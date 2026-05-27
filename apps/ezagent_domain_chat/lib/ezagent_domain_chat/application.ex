@@ -381,6 +381,28 @@ defmodule EzagentDomainChat.Application do
   # pattern as `ensure_system_workspace/0` and the cc-orchestrator
   # seed.
   defp seed_default_session_template do
+    do_seed_default_session_template()
+  end
+
+  @doc """
+  Public test-only entry point — invoke the default SessionTemplate
+  seed deterministically (e.g. from inside an active Ecto Sandbox
+  checkout). Production code should NEVER call this directly; the
+  boot path already runs the seed via `seed_default_session_template/0`
+  above. Exposed for invariant tests that want to drive the seed
+  without depending on boot-order side effects.
+
+  Codex review #419 round-1 HIGH-1 — test-side escape hatch (the
+  boot-time path was kept because the cc-orchestrator seed at the
+  preceding line does boot-time Repo writes too, and that precedent
+  has been stable across the suite).
+  """
+  @spec seed_default_session_template_now() :: :ok
+  def seed_default_session_template_now do
+    do_seed_default_session_template()
+  end
+
+  defp do_seed_default_session_template do
     workspace_uri = URI.new!("workspace://system")
     orchestrator_uri = URI.new!(Ezagent.Orchestrator.CcOrchestratorSeed.template_uri())
 

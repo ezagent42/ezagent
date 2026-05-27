@@ -82,7 +82,18 @@ defmodule Ezagent.Workspace do
       %{members: existing} ->
         new_members = Enum.uniq([member_uri | existing])
 
-        with {:ok, _} <- Store.update_members(name, new_members),
+        # Codex review #419 round-1 MEDIUM-3 — pre-spawn the user Kind
+        # at the facade BEFORE Store.update_members + dispatch_mutation,
+        # so a spawn failure (e.g. cross-workspace per task #55) bubbles
+        # out cleanly without leaving (a) a Store row, (b) the
+        # `:workspace_member_added` notification, or (c) the live
+        # Workspace slice diverged. The Behavior path also pre-spawns
+        # (idempotent — already-alive returns `{:ok, _pid}`); the
+        # facade pre-spawn just narrows the divergence window since
+        # `dispatch_mutation` is `:cast` (the Behavior can't bubble
+        # back to the facade).
+        with :ok <- ensure_member_kind_spawned_at_facade(member_uri),
+             {:ok, _} <- Store.update_members(name, new_members),
              :ok <- dispatch_mutation(name, "add_member", %{member: member_uri}) do
           # Task #46 (Allen 2026-05-27) — the facade-local
           # `grant_member_create_session_cap/2` call was REMOVED. The
@@ -125,6 +136,28 @@ defmodule Ezagent.Workspace do
   # `:cast` so the cap lands on the User Kind's ready transition. The
   # facade's `dispatch_mutation` reaches that single chokepoint, so
   # the facade path is covered by construction (single-path invariant).
+
+  # Codex review #419 round-1 MEDIUM-3 — facade-level pre-spawn so a
+  # user-Kind spawn failure bubbles out BEFORE Store.update_members /
+  # Notifications.notify fire. Mirrors the Behavior's
+  # `ensure_member_kind_spawned/1` (idempotent on already-alive,
+  # tolerant of `:no_spawn_fn` for unit tests) — they converge on
+  # the same `SpawnRegistry.spawn/1` chokepoint so a fresh-user
+  # add lands the Kind exactly once.
+  defp ensure_member_kind_spawned_at_facade(%URI{scheme: "entity", host: "user"} = uri) do
+    case Ezagent.SpawnRegistry.spawn(uri) do
+      {:ok, _pid} ->
+        :ok
+
+      {:error, {:no_spawn_fn, _scheme}} ->
+        :ok
+
+      {:error, reason} ->
+        {:error, {:member_user_spawn_failed, uri, reason}}
+    end
+  end
+
+  defp ensure_member_kind_spawned_at_facade(_other), do: :ok
 
   @spec remove_member(String.t(), URI.t()) :: :ok | {:error, term()}
   def remove_member(name, %URI{} = member_uri) do

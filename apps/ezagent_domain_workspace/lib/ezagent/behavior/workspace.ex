@@ -1020,18 +1020,47 @@ defmodule Ezagent.Behavior.Workspace do
     # because the helper is already documented as best-effort (a
     # failed grant on a non-existent user — say, a typo — still has
     # nowhere to report to).
-    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-      target: target,
-      mode: :cast,
-      args: %{cap: cap},
-      ctx: %{
-        caller: Ezagent.SystemPrincipal.uri("template-materialize"),
-        caps: Ezagent.SystemPrincipal.caps("system://template-materialize"),
-        reply: :ignore
-      }
-    })
+    # Codex review #419 round-1 MEDIUM-2 — `:cast` mode buffers when the
+    # User Kind is `:not_ready` (the common race this fix targets), but
+    # `Invocation.dispatch/1` can still synchronously return
+    # `{:error, _}` BEFORE anything is delivered or buffered (e.g.
+    # `:no_such_actor` if `ReadyGate.status/1` is `:unknown`, or a
+    # `:buffer_full` if PendingDelivery is at cap). We restore the
+    # original error path's log + telemetry so those genuine grant
+    # failures stay observable; the `:cast`-mode `:ok` path proceeds
+    # silently (the cap lands via PendingDelivery flush on ready).
+    case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+           target: target,
+           mode: :cast,
+           args: %{cap: cap},
+           ctx: %{
+             caller: Ezagent.SystemPrincipal.uri("template-materialize"),
+             caps: Ezagent.SystemPrincipal.caps("system://template-materialize"),
+             reply: :ignore
+           }
+         }) do
+      :ok ->
+        :ok
 
-    :ok
+      {:error, reason} ->
+        require Logger
+
+        Logger.warning(
+          "Behavior.Workspace.add_member: granting :create_session cap to " <>
+            "#{URI.to_string(member_uri)} on #{URI.to_string(workspace_uri)} " <>
+            "failed (cast-mode synchronous error): #{inspect(reason)} — member " <>
+            "is added but they cannot dispatch `workspace.create_session` " <>
+            "(admin grant required as workaround). Task #46."
+        )
+
+        :telemetry.execute(
+          [:ezagent, :workspace, :member_create_session_grant_failed],
+          %{count: 1},
+          %{member_uri: member_uri, workspace_uri: workspace_uri, reason: reason}
+        )
+
+        :ok
+    end
   rescue
     error ->
       require Logger

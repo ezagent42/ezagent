@@ -19,10 +19,15 @@ defmodule EzagentDomainChat.Integration.DefaultSessionTemplateSeedTest do
      `orchestrator_template_uri` pointing at the cc-orchestrator
      AgentTemplate seed URI).
 
-  Boot runs in `test_helper.exs` (via `Application.ensure_all_started`);
-  this test asserts the boot-time side effect. The seed is idempotent
-  (content-addressable URI) so re-running the test suite doesn't
-  duplicate rows.
+  Boot runs in `test_helper.exs` (via `Application.ensure_all_started`)
+  and writes the seeded row outside any per-test sandbox. To keep the
+  test deterministic regardless of boot-time row state, `setup` calls
+  the public test-only entry point
+  `EzagentDomainChat.Application.seed_default_session_template_now/0`
+  inside the sandbox checkout — this exercises the same code path the
+  boot uses (idempotent, content-addressable) and guarantees the
+  assertion runs against a freshly-written snapshot. Codex review
+  #419 round-1 HIGH-1.
   """
 
   use EzagentCore.DataCase, async: false
@@ -31,6 +36,15 @@ defmodule EzagentDomainChat.Integration.DefaultSessionTemplateSeedTest do
   alias Ezagent.Orchestrator.CcOrchestratorSeed
 
   @workspace_uri_str "workspace://system"
+
+  setup do
+    # Drive the seed deterministically inside the sandbox checkout so
+    # the assertion doesn't depend on whether the boot-time write
+    # landed before the test owner took over the connection. Idempotent
+    # (content-addressable) — no-op when the row already exists.
+    :ok = EzagentDomainChat.Application.seed_default_session_template_now()
+    :ok
+  end
 
   test "workspace://system has a `default` session template at boot" do
     snapshots = KindSnapshot.list_in_workspace(@workspace_uri_str)
