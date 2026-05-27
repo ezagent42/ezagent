@@ -23,6 +23,17 @@ defmodule EzagentPluginCc.BridgeRegistryTest do
     assert :error = BridgeRegistry.lookup(uri)
   end
 
+  test "deprecated shim bind/3 result matches promoted registry bind/3" do
+    uri = URI.new!("entity://agent/team-alpha/test_shim-bind-#{System.unique_integer([:positive])}")
+    pid = spawn(fn -> Process.sleep(:infinity) end)
+    info = %{bridge_flavor: "cc", tools: ["reply"]}
+
+    promoted_result = Ezagent.AgentBridge.Registry.bind(uri, pid, info)
+    shim_result = BridgeRegistry.bind(uri, pid, info)
+
+    assert shim_result == promoted_result
+  end
+
   test "double-bind same pid is idempotent" do
     uri = URI.new!("entity://agent/team-alpha/test_test-bridge-double")
     pid = spawn(fn -> Process.sleep(:infinity) end)

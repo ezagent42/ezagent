@@ -15,7 +15,7 @@ preserved across the cutover.
 ## Env
 
 * ``EZAGENT_BRIDGE_WS_URL`` — WebSocket endpoint URL.
-  Default ``ws://127.0.0.1:10042/cc_socket/websocket``.
+  Default ``ws://127.0.0.1:10042/agent_bridge/websocket``.
 * ``EZAGENT_AGENT_URI`` — agent the bridge represents (``agent://cc-demo``).
 * ``EZAGENT_AGENT_TOKEN`` — token minted by ``EzagentPluginCc.TokenStore``;
   the Socket auth handler rejects connections without a matching token.
@@ -30,8 +30,9 @@ All three env vars are written by ``EzagentPluginCc.McpConfigWriter``
 
 Frame envelope: ``[join_ref, ref, topic, event, payload]``.
 
-* Join topic ``cc:bridge:<agent_uri>`` with empty payload (Channel
-  uses ``socket.assigns.agent_uri`` from Socket connect params).
+* Join topic ``agent_bridge:cc:<agent_uri>`` with empty payload. If
+  ``EZAGENT_BRIDGE_WS_URL`` points at the legacy ``/cc_socket`` mount,
+  the bridge joins legacy topic ``cc:bridge:<agent_uri>`` instead.
 * Inbound event ``"to_claude"`` payload ``{content, meta}`` →
   ``notifications/claude/channel`` JSON-RPC notification on stdout.
 * Outbound event ``"reply"`` payload ``{text, session_uris, ref?,
@@ -57,7 +58,7 @@ from urllib.parse import urlencode, urlparse, urlunparse
 
 LOG = logging.getLogger("esr_mcp_bridge")
 
-WS_URL = os.environ.get("EZAGENT_BRIDGE_WS_URL", "ws://127.0.0.1:10042/cc_socket/websocket")
+WS_URL = os.environ.get("EZAGENT_BRIDGE_WS_URL", "ws://127.0.0.1:10042/agent_bridge/websocket")
 AGENT_URI = os.environ.get("EZAGENT_AGENT_URI", "")
 AGENT_TOKEN = os.environ.get("EZAGENT_AGENT_TOKEN", "")
 
@@ -131,6 +132,19 @@ def ws_url_with_params() -> str:
     return urlunparse(parsed._replace(query=query))
 
 
+def bridge_topic() -> str:
+    """Return the Phoenix topic matching the selected bridge mount."""
+    explicit = os.environ.get("EZAGENT_BRIDGE_TOPIC", "")
+    if explicit:
+        return explicit
+
+    path = urlparse(WS_URL).path
+    if "/cc_socket" in path:
+        return f"cc:bridge:{AGENT_URI}"
+
+    return f"agent_bridge:cc:{AGENT_URI}"
+
+
 async def heartbeat_loop(ws, ref_counter) -> None:
     """Phoenix expects a heartbeat on topic 'phoenix' every 30s."""
     while True:
@@ -148,7 +162,7 @@ async def outbound_loop(ws, join_ref, ref_counter) -> None:
         frame = [
             join_ref,
             str(ref_counter[0]),
-            f"cc:bridge:{AGENT_URI}",
+            bridge_topic(),
             "reply",
             payload,
         ]
@@ -189,7 +203,8 @@ async def connect_loop() -> None:
         try:
             LOG.info("connecting %s", url)
             async with websockets.connect(url, max_size=None) as ws:
-                LOG.info("ws connected; joining cc:bridge:%s", AGENT_URI)
+                topic = bridge_topic()
+                LOG.info("ws connected; joining %s", topic)
 
                 ref_counter = [0]
                 join_ref = "1"
@@ -198,13 +213,13 @@ async def connect_loop() -> None:
                 join_frame = [
                     join_ref,
                     "1",
-                    f"cc:bridge:{AGENT_URI}",
+                    topic,
                     "phx_join",
                     {},
                 ]
                 await ws.send(json.dumps(join_frame))
 
-                # Phoenix replies with ["1","1","cc:bridge:...","phx_reply",
+                # Phoenix replies with ["1","1",topic,"phx_reply",
                 # {"response":{}, "status":"ok"}] — consume + verify before
                 # starting the inbound loop so a join failure surfaces cleanly.
                 reply_raw = await asyncio.wait_for(ws.recv(), timeout=10)

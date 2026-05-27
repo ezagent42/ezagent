@@ -37,9 +37,9 @@ defmodule EzagentPluginCc.Integration.PluginContractTest do
              Ezagent.TemplateRegistry.lookup("cc.agent")
   end
 
-  test "cc's after_boot/0 initialized the BridgeRegistry ETS table" do
-    # `after_boot/0` is the Phase 3 hook — it runs `BridgeRegistry.init/0`.
-    # The table existing proves the hook fired post-publish.
+  test "AgentBridge domain owns the bridge registry ETS table" do
+    # PR-B promoted registry lifecycle out of cc. The table existing
+    # proves the domain app started its registry before cc relies on it.
     refute :ets.whereis(:ezagent_plugin_cc_bridges) == :undefined
   end
 
