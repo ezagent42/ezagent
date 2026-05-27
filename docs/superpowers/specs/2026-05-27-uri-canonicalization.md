@@ -1,28 +1,41 @@
 # SPEC — URI canonicalization across boundaries (Bug 2)
 
-**Status:** r1 — DRAFT for codex adversarial-review. 2026-05-27.
+**Status:** r2 — DRAFT for codex adversarial-review (round 2). 2026-05-27.
 
-**Tier:** `apps/ezagent_core/` (`Ezagent.URI` parser/canonicalizer) + sweep across every Domain + Plugin that constructs `%URI{}` (`apps/ezagent_domain_*/`, `apps/ezagent_plugin_*/`, `apps/ezagent_web/`, `apps/ezagent_cli/`). Touches the test base too (helpers + fixtures) but production sites are the load-bearing scope.
+**Tier:** `apps/ezagent_core/` (`Ezagent.URI` parser/canonicalizer) + sweep across every Domain + Plugin that constructs `%URI{}` (`apps/ezagent_domain_*/`, `apps/ezagent_plugin_*/`, `apps/ezagent_web/`, `apps/ezagent_cli/`) + operator-facing mix tasks under `apps/*/lib/mix/tasks/` (r2 expansion). Touches the test base too (helpers + fixtures) but production sites are the load-bearing scope.
 
 **Trigger:** test failure `apps/ezagent_web/test/ezagent_web/live/home_live_test.exs:66` — wizard `create_session` flow returns `:grant_owner_orchestrator_admin_cap_failed` because `caller == owner` strict-equality fails between an `URI.parse`-built `@admin_uri` (authority:"user") and an `URI.new!`-built `owner_uri` (authority:nil) for the SAME canonical URI string `entity://user/system/admin`.
 
 **Companion:** `2026-05-27-uri-canonicalization.zh_cn.md` (per `feedback_bilingual_docs_convention`).
 
+## r2 changelog (delta from r1)
+
+Addresses 4 codex r1 REJECT blockers + LOW + NIT:
+
+- **Gate 1 (§4 audit exhaustiveness)** — §4.1 phase list is now driven from an `rg -n "URI\.(parse|new!?)\(" apps/*/lib` inventory (284 total hits — 165 `URI.parse`, 72 `URI.new!`, 47 `URI.new`). External-mirror prod hits (`adapter_install.ex:197`, `worker_spawn.ex:230`, `external_mirror.ex:209,250,391,550`, `behavior/external_mirror.ex:821`, `behavior/external_mirror_worker.ex:640,676`) explicitly enumerated. Workspace `store.ex:203,212` added. Per-app counts in §4.1.
+- **Gate 5 (§5 invariant covers `URI.new/1`)** — §5 now forbids the non-bang `URI.new/1` outside `apps/ezagent_core/lib/ezagent/uri.ex` and an explicit external-URI fallback allowlist documented inline in §5.2. The grep scan catches ALL THREE constructors (`URI.parse`, `URI.new!`, `URI.new`).
+- **Gate 4 (§9 sweep includes operator artifacts)** — §4.2 sweep targets EXPANDED to include `apps/*/lib/mix/tasks/`, `scripts/`, `docs/notes/evidence/`. Enumerated mix-task hits: `apps/ezagent_domain_external_mirror/lib/mix/tasks/ezagent_external_mirror_cli.ex:161,220`; `apps/ezagent_plugin_feishu/lib/mix/tasks/ezagent_external_mirror_migrate_feishu_bindings.ex:153`; `apps/ezagent_plugin_cc/lib/mix/tasks/ezagent.demo.seed_cc_sandbox.ex:201,243`; `apps/ezagent_plugin_cc/lib/mix/tasks/ezagent.demo.seed_cc_agent.ex:62,63,142`; `apps/ezagent_core/lib/mix/tasks/ezagent.stress.ex:504`; `apps/ezagent_domain_workspace/lib/mix/tasks/ezagent.agent.create.ex:231`; `apps/ezagent_domain_identity/lib/mix/tasks/ezagent.user.token.ex:75`.
+- **Gate 3 (OQ-4 snapshot canonicalization promoted to MANDATORY)** — §9.2 promotes the snapshot load-path canonicalization from optional to mandatory. Chooses **option (b) — load-path canonicalization pass in `Kind.Snapshot` decode path**: recursively walk decoded `state` map and re-parse every `%URI{}` field through `Ezagent.URI.parse!/1`. Implementation lives in a new `Ezagent.Kind.Snapshot.canonicalize_uris/1` recursive helper invoked from `decode_state/1` before merge. Option (a) — operator-driven `mix ezagent.snapshot.purge_pre_canonical` deletion — documented as the FALLBACK if (b) proves untenable during impl.
+- **LOW (cap:// references)** — r1 SPEC did not actually reference `cap://` (verified by `grep -n "cap://"`). Codex r1 flag was a false positive; r2 explicitly enumerates the 6-scheme allowlist (`entity, workspace, session, template, resource, system`) in §3.7 and notes this for the codex r2 reviewer to cross-check.
+- **NIT (zh_cn content-aligned)** — r2 zh_cn translates all r2 EN content (full sections, full §Appendix A enumeration, full §Appendix B test pseudo-code) per `feedback_bilingual_docs_convention`. Same section count, same invariant numbering, same table rows.
+
 **Predecessor memories (load-bearing):**
 - `feedback_let_it_crash_no_workarounds` — NO dual-path. The canonical helper exists; producers route through it; non-canonical constructors at boundary sites are DELETED (not deprecated, not aliased, not feature-flagged). No "v2 toggle".
-- `feedback_completion_requires_invariant_test` — merge gate is an invariant test that FAILS when a future contributor reintroduces a boundary call to stdlib `URI.parse/1` or `URI.new!/1` for an Ezagent-scheme URI (Section 5). Tests-pass + manual code review is not the gate; a structural test that catches the violation IS.
+- `feedback_completion_requires_invariant_test` — merge gate is an invariant test that FAILS when a future contributor reintroduces a boundary call to stdlib `URI.parse/1`, `URI.new!/1`, or `URI.new/1` for an Ezagent-scheme URI (Section 5). Tests-pass + manual code review is not the gate; a structural test that catches the violation IS.
 - `feedback_register_lookup_key_parity` — this bug IS the register/lookup-key-parity lesson playing out for URI struct representation. The canonical helper enforces parity on BOTH sides; partial migration of producers without the matching change at consumer comparison surfaces would reproduce the bug class.
-- `feedback_north_star_plugin_isolation` — plugin authors writing a new Behavior must NOT know about `URI.parse` vs `URI.new!`. The canonical helper is the one boundary chokepoint; plugin code calls it, gets a canonical `%URI{}`, and never touches stdlib URI constructors for Ezagent-scheme URIs.
+- `feedback_north_star_plugin_isolation` — plugin authors writing a new Behavior must NOT know about `URI.parse` vs `URI.new!` vs `URI.new`. The canonical helper is the one boundary chokepoint; plugin code calls it, gets a canonical `%URI{}`, and never touches stdlib URI constructors for Ezagent-scheme URIs.
 - `feedback_uuid_is_canonical_identifier` — the canonical form must NOT depend on display-mutable fields. The URI's identity is its string canonicalization; the `%URI{}` struct's `:authority` field is a parser quirk masquerading as identity. The canonical helper strips this asymmetry.
 - `feedback_subagent_must_load_project_skills` — the impl subagent dispatch MUST load `Skill: ezagent-developer` + `Skill: elixir-phoenix-helper`.
 - `feedback_codex_review_every_pr` — codex review of this SPEC + the impl PR carries the verbatim "no mix" clause.
-- `feedback_destructive_migration_anti_pattern` — see §4.1 / §9: persisted URI strings already round-trip via `URI.new/1` (strict, RFC 3986) through `Ezagent.Ecto.URI.load/1`, so DB serialization stays byte-identical. NO destructive DB migration is required by this SPEC.
+- `feedback_destructive_migration_anti_pattern` — see §4.1 / §9: persisted URI strings already round-trip via `URI.new/1` (strict, RFC 3986) through `Ezagent.Ecto.URI.load/1`, so DB serialization stays byte-identical. NO destructive DB migration is required by this SPEC. (r2 mandatory snapshot load-path canonicalization is in-memory only — no DB write/delete.)
 
 **Parent / historical context:**
 - `docs/notes/uri-design.md` §5 — the SPEC v3 URI shape rules. This SPEC adds a STRUCTURAL canonicalization rule to that file (§5.15 — to be appended in the impl PR).
 - `apps/ezagent_core/lib/ezagent/uri.ex:124-143` — `Ezagent.URI.parse!/1` ALREADY exists and ALREADY uses strict `URI.new/1` under the hood. The remediation lifts this existing function from "the scheme-allowlist validator for strings entering the system" to "the only canonical `%URI{}` constructor for Ezagent-scheme URIs anywhere in the codebase". No new module is introduced.
+- `apps/ezagent_core/lib/ezagent/uri/scheme_registry.ex:16-18` — the 6-scheme allowlist (`entity, workspace, session, template, resource, system`). r2 confirms: NO `cap://` scheme exists.
 - `apps/ezagent_core/lib/ezagent/capability.ex:320-348` — `Capability.instance_match?/2` for two concrete URIs ALREADY compares via `URI.to_string/1`. The matcher path is immune. The bug surfaces are call sites that do raw struct `==` BEFORE reaching the matcher (e.g. `EzagentDomainChat.grant_owner_orchestrator_admin_cap/3` `has_equiv?` check; `Behavior.Identity.check_grant_authorized` `caller == owner` short-circuit).
 - `apps/ezagent_domain_chat/lib/ezagent/entity/session.ex:303-307` — the existing hand-rolled `URI.parse(URI.to_string(uri))` round-trip is a localized, undocumented version of the canonical-form rule THIS SPEC formalizes. The impl PR deletes the round-trip in favor of `Ezagent.URI.parse!/1`.
+- `apps/ezagent_core/lib/ezagent/kind/snapshot.ex:312` — `:erlang.term_to_binary(state)` writes `%URI{}` fields verbatim. r2 §9.2 mandates load-path canonicalization to handle pre-migration snapshots.
 - `2026-05-27-capability-action-axis.md` — concurrent SPEC adding the `:action` field. Independent: `:action` is an atom axis, not a URI axis. The two interact only in `Capability.identity_key/1` (which already routes through `normalize_uri_for_key/1` = `URI.to_string`); §8 enumerates.
 - `2026-05-27-workspace-cap-based-visibility.md` — concurrent SPEC on cap-based visibility. Independent on the URI axis: workspace visibility consumes `caller_uri` + caps, both of which become canonical after this SPEC lands. §8 enumerates.
 
@@ -74,7 +87,7 @@ The hand-rolled `URI.parse(URI.to_string(uri))` round-trip at `apps/ezagent_doma
 
 Raw `==` of `%URI{}` structs anywhere in the codebase where producers may use different constructors is silently denial-of-authority. The matcher (`Capability.instance_match?/2`) was hardened (line 347: `URI.to_string(held) == URI.to_string(needed)`). The non-matcher comparison surfaces — equivalence checks, owner-shortcut comparisons, MapSet keys built from raw structs, `List.member?/2` membership checks — are not.
 
-The codebase is 226 production `URI.parse/1` sites + 79 `URI.new!/1` sites. Without a structural rule, every future PR that adds a new URI-producing site is a potential reintroduction of this bug class.
+The codebase (per r2 `rg -n "URI\.(parse|new!?)\(" apps/*/lib`) has 284 production constructor sites across `apps/*/lib/`: 165 `URI.parse/1`, 72 `URI.new!/1`, 47 `URI.new/1`. Without a structural rule, every future PR that adds a new URI-producing site is a potential reintroduction of this bug class.
 
 ---
 
@@ -82,7 +95,7 @@ The codebase is 226 production `URI.parse/1` sites + 79 `URI.new!/1` sites. With
 
 **Option D — single canonical constructor at the boundary.** Adopted.
 
-`Ezagent.URI.parse!/1` (already in `apps/ezagent_core/lib/ezagent/uri.ex:124-143`, already wraps strict `URI.new/1`) becomes THE constructor for any `%URI{}` whose scheme is in the SchemeRegistry allowlist. All production code routes URI-from-string through `Ezagent.URI.parse!/1`. Direct stdlib `URI.parse/1` is deleted from production code. Direct stdlib `URI.new!/1` is deleted from production code EXCEPT for constructing the `?action=...` query-bearing form (a stylistic carve-out, see §3.4).
+`Ezagent.URI.parse!/1` (already in `apps/ezagent_core/lib/ezagent/uri.ex:124-143`, already wraps strict `URI.new/1`) becomes THE constructor for any `%URI{}` whose scheme is in the SchemeRegistry allowlist. All production code routes URI-from-string through `Ezagent.URI.parse!/1`. Direct stdlib `URI.parse/1` is deleted from production code. Direct stdlib `URI.new!/1` is deleted from production code EXCEPT for constructing the `?action=...` query-bearing form (a stylistic carve-out, see §3.4). Direct stdlib `URI.new/1` (non-bang) is deleted from production code EXCEPT for the documented external-URI fallback allowlist (§3.7, see also §5.2's allowlist enumeration).
 
 Why D over A/B/C:
 
@@ -123,7 +136,7 @@ THE boundary surfaces — these are the FIVE input boundaries where strings ente
 
 **B3. DB load.** `Ezagent.Ecto.URI.load/1` (`apps/ezagent_core/lib/ezagent/ecto/uri_type.ex:43-48`) uses `URI.new/1` today. Migrated to `Ezagent.URI.parse!/1` for Ezagent-scheme strings; non-Ezagent schemes (e.g. external `http://feishu.cn`) fall through to plain `URI.new/1` (since SchemeRegistry rejects them and `parse!/1` would raise). See §3.7 for the dual-fallback contract.
 
-**B4. Snapshot reload.** `apps/ezagent_core/lib/ezagent/kind/snapshot.ex:160` (`URI.new`), `:361` (`URI.parse`), `:159-164` (`URI.new` in `reconcile_after_load_behaviors`). All migrate to `Ezagent.URI.parse!/1`. Failure (raise) bubbles to the supervisor; let-it-crash per `feedback_let_it_crash_no_workarounds`.
+**B4. Snapshot reload.** `apps/ezagent_core/lib/ezagent/kind/snapshot.ex:160` (`URI.new`), `:361` (`URI.parse`), `:159-164` (`URI.new` in `reconcile_after_load_behaviors`). All migrate to `Ezagent.URI.parse!/1`. Failure (raise) bubbles to the supervisor; let-it-crash per `feedback_let_it_crash_no_workarounds`. r2 §9.2 ADDS a mandatory `canonicalize_uris/1` pass on the decoded state map to handle pre-migration snapshots embedded with `URI.parse`-built `%URI{}` structs.
 
 **B5. External plugin payloads.** Feishu mention parser, MCP socket auth payload, etc. — `apps/ezagent_plugin_feishu/lib/ezagent/plugin_feishu/mention_parser.ex:77`, `apps/ezagent_plugin_cc/lib/ezagent/plugin_cc/socket.ex:24`, `apps/ezagent_domain_chat/lib/ezagent/orchestrator/mcp_socket.ex:51`. These do `URI.new/1` today (with case-pattern error handling). Migrate to `Ezagent.URI.parse!/1` wrapped in try/rescue at the boundary (so a malformed inbound payload produces a graceful `{:error, _}` to the external surface, NOT a process crash — Invariant #9 "no silent drops at user-facing surfaces").
 
@@ -134,7 +147,7 @@ The codebase pattern `URI.new!("#{URI.to_string(uri)}?action=behavior.action")` 
 - **A:** `URI.new!("#{URI.to_string(uri)}?action=#{behavior}.#{action}")`
 - **B:** `Ezagent.URI.parse!("#{URI.to_string(uri)}?action=#{behavior}.#{action}")`
 
-Both yield `:authority == nil`. B additionally re-validates the scheme via SchemeRegistry. The SPEC mandates B at production sites (89 sweep targets). Test fixtures and mix tasks may use either. The carve-out for `URI.new!/1` is style: this is the ONLY case where stdlib `URI.new!/1` is permitted in production, and only because `URI.to_string(uri)` is by construction a canonical-form string (the input `uri` came from `parse!/1`).
+Both yield `:authority == nil`. B additionally re-validates the scheme via SchemeRegistry. The SPEC mandates B at production sites (89 sweep targets). Test fixtures and mix tasks may use either — BUT operator-facing mix tasks under `apps/*/lib/mix/tasks/` are now treated as production per r2 §4.2 expansion. The carve-out for `URI.new!/1` is style: this is the ONLY case where stdlib `URI.new!/1` is permitted in production, and only because `URI.to_string(uri)` is by construction a canonical-form string (the input `uri` came from `parse!/1`).
 
 To eliminate the carve-out entirely and re-route through `parse!/1` everywhere: a future PR can introduce `Ezagent.URI.with_action(uri, behavior, action)` helper that performs the concatenation + parse in one call. Out of scope here; flagged §10 OQ-2.
 
@@ -157,11 +170,19 @@ Affected constants enumerated in §4.
 
 `Ezagent.URI.entity_workspace_uri/1` (line 305) uses `URI.new!/1`. Canonical-by-construction. No change.
 
-### 3.7 Non-Ezagent-scheme URIs
+### 3.7 Non-Ezagent-scheme URIs (the 6-scheme allowlist)
+
+The SchemeRegistry allowlist is fixed at 6 schemes (`apps/ezagent_core/lib/ezagent/uri/scheme_registry.ex:16-18`):
+
+```
+entity, workspace, session, template, resource, system
+```
+
+**There is NO `cap://` scheme.** (r1 codex flagged this as a LOW — verified false positive in r2; the r1 SPEC text never referenced `cap://`. r2 leaves this explicit note for the r2 codex reviewer.)
 
 External URIs (Feishu webhook, http URLs) are NOT Ezagent-scheme. They route through plain stdlib `URI.new/1` (or `URI.parse/1` in legacy plugin code). `Ezagent.URI.parse!/1` would raise on them (SchemeRegistry rejection).
 
-The SPEC scope is Ezagent-scheme URIs (6 schemes: `entity, workspace, session, template, resource, system` — `Ezagent.URI.SchemeRegistry` allowlist). For non-Ezagent URIs, `URI.new/1` strict is the default; the helper carve-out at `Ezagent.Ecto.URI.load/1` (§3.3 B3) makes the dual-fallback explicit:
+The SPEC scope is Ezagent-scheme URIs (the 6 schemes above). For non-Ezagent URIs, `URI.new/1` strict is the default; the helper carve-out at `Ezagent.Ecto.URI.load/1` (§3.3 B3) makes the dual-fallback explicit:
 
 ```elixir
 # in Ezagent.Ecto.URI.load/1
@@ -184,33 +205,47 @@ ONLY documentation / comments / inspect / module-level docstrings illustrating t
 
 ## 4. Migration plan
 
-### 4.1 Phase order
+### 4.1 Phase order (r2 exhaustive call-site inventory)
 
 PR-1 (this SPEC): no code. SPEC merged for codex adversarial-review.
 
-PR-2: deletion-and-sweep, one production app at a time. Order:
+PR-2: deletion-and-sweep, one production app at a time. r2 inventory from `rg -n "URI\.(parse|new!?)\(" apps/*/lib`:
 
-1. `apps/ezagent_core/` — base. Fixes `Ezagent.Ecto.URI.load/1`, `Kind.Snapshot.*`, `Capability.parse_granter/1`, `Capability.string_to_uri_or_any/1`, `Capability.decode_uri_or_any_strict!/2`, `WorkspaceRegistry.lookup/1`, `Persistence.workspace_uri_for/1`, `Audit.*`, `NotificationSubscriptions.*`, `AgentLineage.*`, `Notifications.*`, `Presence.*`, `Routing.Resolver.*` (already partially uses `parse!/1`), `SystemPrincipal.parse!/1`, `CapabilityRegistry.bootstrap`. 33 production call sites.
-2. `apps/ezagent_domain_identity/` — fixes `@admin_uri`, `@system_bootstrap_uri` constants (§3.5 Route 1: `URI.new!`), `Identity.parse_uri/1`, `Entity_presenter.*`. 8 call sites.
-3. `apps/ezagent_domain_chat/` — fixes `Session.spawn_from_template/2` round-trip at 303-307 (DELETE the hand-roll; rely on caller-side canonicality from `parse!/1`), all 89 query-target sites, `read_marker`, `mcp_registry`, `mcp_socket`, `orchestrator/tools`, `template/generic_session`, `entity/agent_template`, `entity/session_template`, `entity/agent`, `entity/session`, `behavior/chat`, `behavior/template`. 89 call sites total (most are §3.4 query-target form — keep `URI.new!/1` or move to `parse!/1` per the helper choice).
-4. `apps/ezagent_domain_workspace/` — fixes `behavior/workspace`. 6 call sites.
-5. `apps/ezagent_domain_agent_bridge/` — fixes `registry`, `token_store`. 4 call sites.
-6. `apps/ezagent_domain_python/` — already uses `Ezagent.URI.parse!/1`. 0 changes.
-7. `apps/ezagent_domain_external_mirror/` — already uses canonical patterns. 0 prod changes.
-8. `apps/ezagent_domain_ui/` — fixes `primitives.ex`. 1 call site.
-9. `apps/ezagent_web/` — fixes `home_live`, `api_v1_controller`, `workspace_switch_controller`. 3 call sites (mostly already `URI.new!/1` query-target form).
-10. `apps/ezagent_cli/` — fixes `exec`, `dispatch`, `tree_builder`, `coercion`. 7 call sites.
-11. `apps/ezagent_plugin_*/` — sweep all plugins. ~30 call sites across cc / curl_agent / echo / feishu / liveview / np.
+| App | Count | Notes |
+|---|---|---|
+| `apps/ezagent_core/` | 28 | Includes `uri.ex` (allowlisted), `ecto/uri_type.ex` (dual-fallback §3.7), `kind/snapshot.ex` (§9.2), `system_principal/*`, `capability.ex`, `capability_registry.ex`, `presence.ex`, `audit.ex`, `notifications.ex`, `notification_subscriptions.ex`, `persistence.ex`, `agent_lineage.ex`, `entity/system.ex`, `capability/parser.ex`, `runtime/pid_file.ex`, `routing/resolver.ex`, `workspace_registry.ex`. |
+| `apps/ezagent_domain_identity/` | 15 | `entity/user.ex:29,30` (§3.5 constants), `identity.ex:45,105,152,161,188,265`, `entity_presenter.ex:61`. |
+| `apps/ezagent_domain_chat/` | 78 | Heavy site. `entity/session.ex` (delete 303-307 hand-roll), `behavior/chat.ex`, `behavior/template.ex`, `orchestrator/{tools,mcp_registry,mcp_socket,health}.ex`, `chat/read_marker.ex`, `template/generic_session.ex`, `entity/{agent,agent_template,session_template}.ex`. Most are §3.4 query-target form. |
+| `apps/ezagent_domain_workspace/` | 18 | `workspace.ex:261,299,358,446,482,696,744,789,820`, `workspace/loader.ex:262,321`, **`workspace/store.ex:203,212`** (r2 additions), `entity/workspace.ex:83`, `behavior/workspace.ex:888,930,1225`, plus mix task `agent.create.ex:231` (r2: operator-facing prod). |
+| `apps/ezagent_domain_external_mirror/` | 11 | **r2: REJECTS r1 "0 prod changes"**. Hits: `adapter_install.ex:197`, `worker_spawn.ex:230`, `external_mirror.ex:209,250,391,550`, `behavior/external_mirror.ex:821`, `behavior/external_mirror_worker.ex:640,676`, plus mix task `ezagent_external_mirror_cli.ex:161,220`. |
+| `apps/ezagent_domain_agent_bridge/` | 7 | `registry.ex:98,111`, `token_store.ex:55,69`, `socket.ex:21`, `channel.ex:34,80`. |
+| `apps/ezagent_domain_ui/` | 5 | `primitives.ex:103` + 4 others. |
+| `apps/ezagent_web/` | 14 | `live_auth.ex:341` (already parse!), `home_live.ex:170,197`, `api_v1_controller.ex:117,201`, `workspace_switch_controller.ex:65`, `uploads_controller.ex:236`. |
+| `apps/ezagent_cli/` | 7 | `dispatch.ex:125,128,136,264`, `exec.ex:151`, `tree_builder.ex:216`, `coercion.ex:53`. |
+| `apps/ezagent_plugin_liveview/` | 70 | Heavy site. 16 LV files; all `case URI.new(uri_str)` patterns route through `parse!/1` rescue. |
+| `apps/ezagent_plugin_cc/` | 10 | `channel.ex:102,109`, `socket.ex:24`, `template/cc_agent.ex:254`, plus mix tasks `seed_cc_agent.ex:62,63,142` + `seed_cc_sandbox.ex:201,243` (r2: operator-facing prod). |
+| `apps/ezagent_plugin_feishu/` | 8 | `binding_policy.ex:241,267`, `mention_parser.ex:77`, `behavior/user_binding.ex:482`, plus mix task `ezagent_external_mirror_migrate_feishu_bindings.ex:153` (r2: operator-facing prod). |
+| `apps/ezagent_plugin_curl_agent/` | 4 | `behavior/curl_agent.ex:293,315`, `template/curl_agent.ex:73`. |
+| `apps/ezagent_plugin_echo/` | 5 | `behavior/echo.ex:142,213`, `template/echo_agent.ex:117,159`. |
+| `apps/ezagent_plugin_np/` | 4 | `behavior/np_agent.ex:277,299`, `template/np_agent.ex:79,128`. |
+| **Total** | **284** | r2 exhaustive (165 `URI.parse`, 72 `URI.new!`, 47 `URI.new`). |
 
 PR-3: invariant test (§5). Lands in the same PR as the final sweep OR a follow-up.
 
 PR-4: append `docs/notes/uri-design.md` §5.15 (canonical-form rule formalization).
 
-**No DB migration.** Persisted strings round-trip byte-identically through `URI.to_string/1` regardless of constructor. The bug is in-memory only.
+**No DB migration.** Persisted strings round-trip byte-identically through `URI.to_string/1` regardless of constructor. The bug is in-memory only. (r2 §9.2 adds in-memory snapshot canonicalization on load — still no on-disk migration.)
 
-### 4.2 The DELETE-don't-keep contract
+### 4.2 The DELETE-don't-keep contract (r2 expanded targets)
 
-Per `feedback_let_it_crash_no_workarounds`: every `URI.parse/1` and `URI.new!/1` call site in production lib/ is REPLACED, not kept-alongside. No `if Application.get_env(:legacy_uri_parse, false), do: ...`. No transitional shim. The sweep is the entirety of the change.
+Per `feedback_let_it_crash_no_workarounds`: every `URI.parse/1`, `URI.new!/1` (outside carve-outs), and `URI.new/1` (outside allowlist) call site in production is REPLACED, not kept-alongside. No `if Application.get_env(:legacy_uri_parse, false), do: ...`. No transitional shim. The sweep is the entirety of the change.
+
+**r2 sweep targets (expanded from r1)** — operator-facing artifacts are production for this SPEC because they construct URI STRUCTS that get persisted or dispatched:
+
+- `apps/*/lib/` — every production `.ex` file (the original r1 scope).
+- **`apps/*/lib/mix/tasks/` — every mix task (r2 addition).** Operator-driven seed/migration/repair flows that write non-canonical structs back to the system would recreate the original bug from a maintenance path. Enumerated sites: `apps/ezagent_domain_external_mirror/lib/mix/tasks/ezagent_external_mirror_cli.ex:161,220`; `apps/ezagent_plugin_feishu/lib/mix/tasks/ezagent_external_mirror_migrate_feishu_bindings.ex:153`; `apps/ezagent_plugin_cc/lib/mix/tasks/ezagent.demo.seed_cc_sandbox.ex:201,243`; `apps/ezagent_plugin_cc/lib/mix/tasks/ezagent.demo.seed_cc_agent.ex:62,63,142`; `apps/ezagent_domain_workspace/lib/mix/tasks/ezagent.agent.create.ex:231`; `apps/ezagent_domain_identity/lib/mix/tasks/ezagent.user.token.ex:75`; `apps/ezagent_core/lib/mix/tasks/ezagent.stress.ex:504` (test harness — keep as `URI.new!/1` test fixture or migrate to `Ezagent.URI.parse!/1`, impl PR decides).
+- **`scripts/` — operator shell scripts (r2 addition).** Shell scripts pipe strings to mix tasks / iex; the URI struct is only ever constructed inside the mix task or iex eval, so the sweep scope already covers them. Documented for clarity; no additional grep target.
+- **`docs/notes/evidence/` — pinned demo/repro scripts (r2 addition).** Same as `scripts/` — they invoke mix tasks. No additional grep target.
 
 ### 4.3 Compile-time constant migration
 
@@ -223,7 +258,7 @@ Specific changes to compile-time module attributes:
 
 ### 4.4 Test fixture migration
 
-Test files (`test/**/*.exs`) MAY use `URI.parse/1` or `URI.new!/1` freely — the bug class is in PRODUCTION code where producer and consumer disagree. Tests construct both halves themselves and may use either as long as they're consistent within a test. The invariant test (§5) ONLY scans `apps/*/lib/`, not `test/`.
+Test files (`test/**/*.exs`) MAY use `URI.parse/1` or `URI.new!/1` or `URI.new/1` freely — the bug class is in PRODUCTION code where producer and consumer disagree. Tests construct both halves themselves and may use either as long as they're consistent within a test. The invariant test (§5) ONLY scans `apps/*/lib/`, not `test/`.
 
 OPTIONAL follow-up sweep: standardize tests on `URI.new!/1`. Out of scope for this SPEC.
 
@@ -239,18 +274,18 @@ OPTIONAL follow-up sweep: standardize tests on `URI.new!/1`. Out of scope for th
 
 ---
 
-## 5. Invariant test
+## 5. Invariant test (r2 — covers `URI.new/1` too)
 
 **File:** `apps/ezagent_core/test/invariants/uri_canonicalization_test.exs` (new).
 
-**Purpose:** Catch a future contributor who introduces `URI.parse/1` or stdlib `URI.new!/1` at an Ezagent-scheme boundary in production code.
+**Purpose:** Catch a future contributor who introduces `URI.parse/1`, stdlib `URI.new!/1`, or stdlib `URI.new/1` at an Ezagent-scheme boundary in production code. The invariant test is the SchemeRegistry chokepoint enforcer; any bare stdlib URI constructor outside the canonical module is a regression.
 
-**Structure** — three orthogonal assertions:
+**Structure** — FIVE orthogonal assertions (r2 adds §5.2.1 for `URI.new/1`):
 
-### 5.1 No `URI.parse/1` in production lib/
+### 5.1 No `URI.parse/1` in production lib/ (incl. mix tasks)
 
 ```elixir
-test "no stdlib URI.parse/1 calls in apps/*/lib (excluding comments)" do
+test "no stdlib URI.parse/1 calls in apps (excluding comments)" do
   lib_files = Path.wildcard("apps/*/lib/**/*.ex")
 
   violations =
@@ -268,12 +303,14 @@ end
 
 The helper `line_is_call_to_uri_parse?/1` matches `~r/\bURI\.parse\(/` (word boundary, no leading `Ezagent.`, no leading `String.` etc). `in_comment_or_docstring?/1` is a heuristic on `~r/^\s*#/` plus `~S(""")` triple-quote stripping.
 
+The glob `apps/*/lib/**/*.ex` covers both `apps/*/lib/ezagent/**` (the original r1 scope) AND `apps/*/lib/mix/tasks/**` (r2 added scope, per §4.2).
+
 Sole allowlisted file: `apps/ezagent_core/lib/ezagent/uri.ex` (itself, since `parse!/1` internally calls `URI.new/1`; no `URI.parse/1`).
 
-### 5.2 No bare stdlib `URI.new!/1` in production lib/ EXCEPT the §3.4 carve-out
+### 5.2 No bare stdlib `URI.new!/1` in production lib/ EXCEPT the §3.4 / §3.5 carve-outs
 
 ```elixir
-test "no stdlib URI.new!/1 in apps/*/lib outside query-target idiom + compile-time constants" do
+test "no stdlib URI.new!/1 in apps outside query-target idiom + compile-time constants" do
   violations =
     for path <- lib_files,
         {line, lineno} <- Enum.with_index(File.stream!(path), 1),
@@ -288,6 +325,43 @@ end
 ```
 
 `is_query_target_idiom?/1` matches `~r/URI\.new!\(.*\?action=/` (line includes both `URI.new!(` and `?action=`). `is_module_attribute?/1` matches `~r/^\s*@\w+\s+URI\.new!\(/`. These are the two carve-outs from §3.4 + §3.5.
+
+### 5.2.1 (r2 — NEW) No bare stdlib `URI.new/1` in production lib/ EXCEPT external-URI fallback allowlist
+
+The non-bang `URI.new/1` returns `{:ok, uri} | {:error, _}` and is used in `case URI.new(s) do` patterns throughout the codebase. It bypasses SchemeRegistry validation just like the bang variant. r2 adds this check.
+
+```elixir
+test "no stdlib URI.new/1 in apps outside the external-URI fallback allowlist" do
+  violations =
+    for path <- lib_files,
+        {line, lineno} <- Enum.with_index(File.stream!(path), 1),
+        matches_uri_new_no_bang?(line),
+        path not in @uri_new_allowlist,
+        not in_comment_or_docstring?(line) do
+      {path, lineno, String.trim(line)}
+    end
+  assert violations == [], ...
+end
+```
+
+**`matches_uri_new_no_bang?/1`** uses `~r/\bURI\.new\((?!.*!)/` (regex matches `URI.new(` NOT followed by `!`) — distinguishes from `URI.new!(`. Implementation note: Elixir regex doesn't support negative lookahead identically; the impl PR uses a two-step check (line contains `URI.new(` AND `Regex.run(~r/URI\.new!\(/, line) == nil`).
+
+**Allowlist** — files that legitimately call bare `URI.new/1`:
+
+| File | Rationale |
+|---|---|
+| `apps/ezagent_core/lib/ezagent/uri.ex` | The canonical module itself — `parse!/1` internally wraps `URI.new/1`. This is the ONLY place stdlib `URI.new/1` may live. |
+| `apps/ezagent_core/lib/ezagent/ecto/uri_type.ex` | External-URI fallback per §3.7 dual-fallback contract — `Ezagent.URI.parse!/1` rescue clause falls through to `URI.new/1` for non-Ezagent schemes. |
+
+All OTHER `URI.new/1` sites (45 production hits across the codebase per r2 grep) MUST migrate to `Ezagent.URI.parse!/1` wrapped in try/rescue at the appropriate boundary. Examples:
+
+- `apps/ezagent_core/lib/ezagent/kind/snapshot.ex:160` — currently `case URI.new(uri_str)` → migrate to `Ezagent.URI.parse!/1` (raise on malformed; supervisor catches).
+- `apps/ezagent_core/lib/ezagent/runtime/pid_file.ex:274` — currently `URI.new("entity://...")` → migrate to `parse!/1`.
+- `apps/ezagent_plugin_feishu/lib/ezagent/plugin_feishu/mention_parser.ex:77` — currently `case URI.new(uri_str) do` → migrate to `parse!/1` rescue (Invariant #9 — graceful error to inbound surface).
+- `apps/ezagent_core/lib/ezagent/capability/parser.ex:117` — currently `case URI.new(instance_str) do` → migrate to `parse!/1`.
+- `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/*.ex` (multiple sites) — currently `case URI.new(decoded) do` → migrate to `parse!/1` rescue.
+
+The allowlist is **small + each entry justified**. Any future contributor needing a new entry must update this SPEC + the invariant test allowlist constant simultaneously.
 
 ### 5.3 Round-trip property
 
@@ -335,16 +409,40 @@ end
 
 This is the test that would have CAUGHT Bug 2 before the wizard test reproduced it. Pinning it as an invariant prevents reintroduction.
 
-### 5.5 Why these four together pass the `feedback_completion_requires_invariant_test` gate
+### 5.5 (r2 — NEW) Snapshot load-path canonicalization round-trip
 
-§5.1 + §5.2 + §5.3 + §5.4 each catch a different reintroduction shape:
+```elixir
+test "snapshot decode_state canonicalizes embedded %URI{} structs" do
+  # Construct a pre-migration shape: state map containing a URI.parse-built struct.
+  pre_migration_state = %{
+    chat: %{owner: URI.parse("entity://user/system/admin"), members: [URI.parse("entity://user/team-alpha/alice")]}
+  }
+  binary = :erlang.term_to_binary(pre_migration_state)
+
+  # Simulate the load path's canonicalize_uris/1 pass.
+  decoded = :erlang.binary_to_term(binary, [:safe])
+  canonicalized = Ezagent.Kind.Snapshot.canonicalize_uris(decoded)
+
+  assert canonicalized.chat.owner.authority == nil
+  assert Enum.all?(canonicalized.chat.members, &(&1.authority == nil))
+  assert canonicalized.chat.owner == Ezagent.URI.parse!("entity://user/system/admin")
+end
+```
+
+This is the test that locks the r2 §9.2 mandatory snapshot canonicalization in place.
+
+### 5.6 Why these five together pass the `feedback_completion_requires_invariant_test` gate
+
+§5.1 + §5.2 + §5.2.1 + §5.3 + §5.4 + §5.5 each catch a different reintroduction shape:
 
 - §5.1 catches a contributor copy-pasting `URI.parse(...)` from old code or stdlib docs.
 - §5.2 catches a contributor using `URI.new!/1` outside the carve-out (e.g. `URI.new!("entity://user/system/admin")` at a runtime call site in lib/).
+- **§5.2.1 (r2 NEW) catches a contributor using bare `URI.new/1` outside the small allowlist (the previously-uncaught case in r1).**
 - §5.3 catches a contributor breaking `parse!/1`'s round-trip invariant (e.g. by adding a transformation that changes the struct shape).
 - §5.4 catches the SPECIFIC Bug-2 admin_uri parity surface, the regression case for THIS bug.
+- **§5.5 (r2 NEW) catches a contributor removing the load-path canonicalization helper, which would silently regress cross-version snapshots.**
 
-A partial migration where 95% of sites use canonical but 1 boundary skipped is caught by §5.1 OR §5.2 (whichever construction shape the skipped site used). The invariant test is grep-based and exhaustive over `apps/*/lib/**/*.ex`.
+A partial migration where 95% of sites use canonical but 1 boundary skipped is caught by §5.1 OR §5.2 OR §5.2.1 (whichever construction shape the skipped site used). The invariant test is grep-based and exhaustive over `apps/*/lib/**/*.ex` (incl. mix tasks per r2 §4.2).
 
 ---
 
@@ -363,9 +461,10 @@ The two URI surfaces a plugin author has to know about are: (a) the `?action=` q
 The plugin author does NOT need to know:
 - That `URI.parse/1` exists (it's deleted from production code).
 - That `URI.parse/1` and `URI.new!/1` produce structurally different structs.
+- That `URI.new/1` is also forbidden outside the allowlist (the invariant test enforces; the author just doesn't use it).
 - That `:authority` is a field.
 
-The skill `ezagent-developer/anti-patterns.md` gains a new entry: "Do not use stdlib `URI.parse/1` in lib/. Use `Ezagent.URI.parse!/1` for all Ezagent-scheme URIs. The invariant test in `apps/ezagent_core/test/invariants/uri_canonicalization_test.exs` enforces this."
+The skill `ezagent-developer/anti-patterns.md` gains a new entry: "Do not use stdlib `URI.parse/1`, `URI.new!/1`, or `URI.new/1` in lib/. Use `Ezagent.URI.parse!/1` for all Ezagent-scheme URIs. The invariant test in `apps/ezagent_core/test/invariants/uri_canonicalization_test.exs` enforces this."
 
 ### 6.2 The chokepoint stays in core
 
@@ -400,17 +499,14 @@ When a plugin registers a new scheme via `Ezagent.SpawnRegistry.register/2` (whi
 ### 7.4 Option D — canonical helper (CHOSEN)
 
 **Pro:** Single chokepoint. Plugin-isolated. Backwards-compatible with existing matcher fix (the matcher remains correct; raw struct `==` ALSO becomes correct because both sides are canonical). Aligns with RFC 3986. Test-enforced via §5.
-**Con:** Migration touches ~226 production sites. The §3.4 / §3.5 carve-outs for `URI.new!/1` introduce two "ok" forms in production (the helper and the carve-outs). Reading the invariant test requires understanding why `URI.new!/1` is sometimes allowed.
-**Net:** Pros outweigh cons. The carve-outs are precisely formalized in the invariant test (§5.2), so the contributor decision tree stays mechanical.
+**Con:** Migration touches ~284 production sites (r2 corrected count). The §3.4 / §3.5 carve-outs for `URI.new!/1` introduce two "ok" forms in production (the helper and the carve-outs). Reading the invariant test requires understanding why `URI.new!/1` is sometimes allowed.
+**Net:** Pros outweigh cons. The carve-outs are precisely formalized in the invariant test (§5.2 + §5.2.1), so the contributor decision tree stays mechanical.
 
 ### 7.5 Sub-option D' — introduce `Ezagent.URI.canonical/1` for `%URI{}` → `%URI{}`
 
 A normalize-from-struct variant: takes ANY `%URI{}` (parse-built or new-built) and returns the canonical form via `URI.to_string/1` round-trip. Useful at INTERNAL boundaries where the producer is uncontrolled (e.g. third-party library returns a URI; we want to canonicalize before storing).
 
-The SPEC chooses NOT to introduce this, because:
-1. No production site currently has this need — every site that handles a `%URI{}` either constructed it locally (and can be made to use `parse!/1`) or received it from upstream Ezagent code (which is itself canonical post-SPEC).
-2. Adding `canonical/1` creates a second helper that does almost the same thing as `parse!/1`. Two helpers invite drift.
-3. If the need emerges (e.g. a new external library returns URIs), the helper can be added in a follow-up. Out of scope. Flagged §10 OQ-1.
+r2 NOTE: `Ezagent.Kind.Snapshot.canonicalize_uris/1` (the recursive walker in §9.2 (b)) is effectively a struct-walking version of this — but scoped to a single hot path (snapshot decode) rather than a general API. If general need emerges later, lift the recursive helper to `Ezagent.URI.canonical/1`. Flagged §10 OQ-1.
 
 ---
 
@@ -426,7 +522,7 @@ The action axis itself is an atom — no URI canonicalization concern. No intera
 
 That SPEC introduces `list_workspaces_for(caller_uri, caps)`. The two arguments are URIs. Under THIS SPEC's canonicalization rule, both arguments are canonical (caller_uri came from `live_auth.ex` → `parse!/1`; caps' `workspace_uri` came from `Capability.from_map/1` → post-SPEC routes through `parse!/1`). String-equality comparison (the workspace SPEC §3.3 (a) clause) holds correctly because both halves are canonical.
 
-The workspace SPEC's `member_of_workspaces/1` compares `members` list URIs to `caller_uri` via string-equality. The `members` list strings come from `Workspace.Store.list_all/0` which returns the persisted JSON column. Under `feedback_register_lookup_key_parity`, both halves must canonicalize through the same parser — under THIS SPEC, they do (both go through `parse!/1` at their respective boundaries).
+The workspace SPEC's `member_of_workspaces/1` compares `members` list URIs to `caller_uri` via string-equality. The `members` list strings come from `Workspace.Store.list_all/0` which returns the persisted JSON column. Under `feedback_register_lookup_key_parity`, both halves must canonicalize through the same parser — under THIS SPEC, they do (both go through `parse!/1` at their respective boundaries; `Workspace.Store.list_all/0` itself uses `URI.parse(row.uri)` at `store.ex:203,212` — r2 inventory adds these to the sweep targets).
 
 No code-level conflict. The two SPECs are orthogonal layers.
 
@@ -442,23 +538,76 @@ Any future SPEC introducing a new URI-shape constraint (e.g. URN sub-resources, 
 
 DB rows in `kind_snapshots`, `users.caps_json`, `messages.sender`, `routing_rules`, `template_tags`, `workspaces.member_uris` — all store URI strings (via `Ezagent.Ecto.URI.dump/1` = `URI.to_string/1`). The string form is byte-identical whether the in-memory struct was `URI.parse`-built or `URI.new!`-built. **No DB migration required.**
 
-The on-disk format does NOT change. The in-memory `%URI{}` shape DOES change (`:authority` always nil for Ezagent-scheme URIs post-SPEC). Snapshot reload paths (which `binary_to_term` a struct from disk) produce canonical structs because the encode side wrote canonical structs.
+The on-disk format does NOT change. The in-memory `%URI{}` shape DOES change (`:authority` always nil for Ezagent-scheme URIs post-SPEC). Snapshot reload paths (which `binary_to_term` a struct from disk) produce canonical structs because the encode side wrote canonical structs — POST-MIGRATION. r2 §9.2 handles the pre-migration case.
 
-### 9.2 `:erlang.binary_to_term/2` on old serialized %URI{}
+### 9.2 `:erlang.binary_to_term/2` on old serialized %URI{} — r2 MANDATORY load-path canonicalization
 
-If a `kind_snapshots` row was written BEFORE this SPEC's migration with a `URI.parse`-built `%URI{}` baked into the snapshot binary, replaying that row post-SPEC reproduces the OLD struct (with `:authority == "user"`). This is the cross-version snapshot risk.
+**r2 promotes this from optional (OQ-4) to MANDATORY.**
 
-`apps/ezagent_core/lib/ezagent/kind/snapshot.ex:36` uses `:erlang.binary_to_term(binary, [:safe])`. The `:safe` flag rejects unknown atoms but does NOT canonicalize URI structs.
+If a `kind_snapshots` row was written BEFORE this SPEC's migration with a `URI.parse`-built `%URI{}` baked into the snapshot binary (via `:erlang.term_to_binary(state)` at `apps/ezagent_core/lib/ezagent/kind/snapshot.ex:312`), replaying that row post-SPEC reproduces the OLD struct (with `:authority == "user"`). This is the cross-version snapshot risk.
 
-**Mitigation:** `Kind.Snapshot.reconcile_after_load_behaviors/3` (line 159) is the post-load reconcile hook. The impl PR adds a SLICE-level canonicalization pass: walk the decoded state, replace any `%URI{authority: a}` with `a != nil` AND `scheme ∈ SchemeRegistry` by `Ezagent.URI.parse!(URI.to_string(uri))`. The hook fires AFTER decode but BEFORE the matcher / dispatch sees the state, so old snapshots become canonical on load.
+`apps/ezagent_core/lib/ezagent/ecto/kind_snapshot.ex:168-170` uses `:erlang.binary_to_term(binary, [:safe])`. The `:safe` flag rejects unknown atoms but does NOT canonicalize URI structs.
 
-This is a one-time-per-process cost on first reload. No on-disk migration; the snapshot is rewritten on next slice-change anyway (snapshots use `{:snapshot, :on_change}` cadence, so a few minutes of operation re-writes all hot Kinds).
+**This means: even after the code migration, running Kinds rehydrated from pre-migration snapshots will have non-canonical URIs in memory until the next reload. Strict `==` comparisons in dispatch boundaries will silently fail.**
 
-**Codex question for review (§11):** is this reconcile-on-load step sufficient, or do we need a forced "rewrite all snapshots" mix task at deploy time? §11 Q4.
+#### 9.2.1 Mitigation choice — option (b) load-path canonicalization (CHOSEN)
 
-### 9.3 Operator-facing URIs
+The SPEC mandates **load-path canonicalization** as the structural fix:
 
-Scripts (`scripts/*.sh`), docs (`docs/**/*.md`), scenarios (`scenarios/*.yaml`), mix-task help text — all reference URI STRINGS, not struct form. No change.
+1. Add `Ezagent.Kind.Snapshot.canonicalize_uris/1` — a recursive walker over the decoded `state` map.
+2. For every `%URI{}` field discovered (at any nesting depth — map values, list elements, tuple elements, nested struct fields), re-parse via `Ezagent.URI.parse!/1` (which routes via `URI.new/1` strict) to produce a canonical form. For non-Ezagent schemes (`:authority` already nil from `URI.parse` if no `//host` was present), the URI passes through unchanged via the §3.7 fallback.
+3. Invoke `canonicalize_uris/1` in the snapshot decode path BEFORE the `Map.merge` step at `kind/snapshot.ex:96`.
+
+```elixir
+# Pseudocode — in Ezagent.Kind.Snapshot
+def canonicalize_uris(state) when is_map(state) do
+  Map.new(state, fn {k, v} -> {k, canonicalize_uris(v)} end)
+end
+
+def canonicalize_uris(state) when is_list(state) do
+  Enum.map(state, &canonicalize_uris/1)
+end
+
+def canonicalize_uris(%URI{} = uri) do
+  s = URI.to_string(uri)
+  case URI.new(s) do
+    {:ok, canonical} -> canonical
+    _ -> uri  # malformed — leave as-is; will fail downstream visibly
+  end
+end
+
+def canonicalize_uris(other), do: other
+```
+
+**Why option (b) over option (a) operator deletion:**
+
+- (a) `mix ezagent.snapshot.purge_pre_canonical` deletes all `kind_snapshots` rows + requires operator restart of `phx.server`. Cost: every Kind's in-flight state is lost on deploy. Operational burden. Easy to forget.
+- (b) Load-path canonicalization handles all snapshots automatically with zero operator burden. The cost is a single-pass recursive walk on load, amortized over Kind lifetime. Per `feedback_let_it_crash_no_workarounds`, this is the structural fix.
+
+Option (a) is documented as the FALLBACK if (b) proves untenable during impl (e.g. if `canonicalize_uris/1` introduces a hot-path regression). The impl PR's first commit MUST land (b); only if codex impl-review identifies a blocker may the impl PR pivot to (a).
+
+#### 9.2.2 Edge cases (codex r2 will challenge — pre-emptive enumeration)
+
+- **Nested `%URI{}` inside nested map/list fields.** The recursive walker handles arbitrary depth (Map → Map, Map → List → URI, List → Tuple → URI). Verified by §5.5 invariant test (impl PR adds cases for depth 1, 2, 3).
+- **`%URI{}` inside a custom struct.** Most Ezagent state lives in plain maps. If a Behavior stores a URI inside a custom struct (e.g. `%MyBinding{uri: %URI{}}`), the walker needs to recognize that struct type and walk its fields. r2 SPEC mandates: the walker MUST handle `is_struct(state)` by destructuring to map, walking, and re-structing. Impl PR adds a test case for this.
+- **`%URI{}` as map key.** Rare but possible (`%{%URI{} => value}`). The walker's `Map.new(state, fn {k, v} -> {canonicalize_uris(k), canonicalize_uris(v)} end)` handles this. r2 impl PR adds a test case.
+- **Cross-OTP `binary_to_term` compatibility.** `:erlang.binary_to_term` preserves the encoded struct shape. If a snapshot was written under Elixir 1.14 with `:authority == "user"`, decoding under Elixir 1.18 yields the same field value. The canonicalize pass corrects it regardless of OTP version.
+
+### 9.3 Operator-facing URIs (r2 — expanded scope)
+
+Scripts (`scripts/*.sh`), docs (`docs/**/*.md`), scenarios (`scenarios/*.yaml`), mix-task help text — all reference URI STRINGS, not struct form. **No change** to these artifacts directly.
+
+**BUT** — operator-facing mix tasks under `apps/*/lib/mix/tasks/` CONSTRUCT URI STRUCTS that get persisted or dispatched. r2 ADDS these to the sweep targets (per §4.2 expanded enumeration). Enumerated hits:
+
+- `apps/ezagent_domain_external_mirror/lib/mix/tasks/ezagent_external_mirror_cli.ex:161, 220`
+- `apps/ezagent_plugin_feishu/lib/mix/tasks/ezagent_external_mirror_migrate_feishu_bindings.ex:153`
+- `apps/ezagent_plugin_cc/lib/mix/tasks/ezagent.demo.seed_cc_sandbox.ex:201, 243`
+- `apps/ezagent_plugin_cc/lib/mix/tasks/ezagent.demo.seed_cc_agent.ex:62, 63, 142`
+- `apps/ezagent_domain_workspace/lib/mix/tasks/ezagent.agent.create.ex:231`
+- `apps/ezagent_domain_identity/lib/mix/tasks/ezagent.user.token.ex:75`
+- `apps/ezagent_core/lib/mix/tasks/ezagent.stress.ex:504` (test harness — impl PR decides)
+
+Operator-driven seed/migration/repair flows that write non-canonical structs back to the system would recreate the original bug from a maintenance path.
 
 CLI commands accept URI strings — `Ezagent.URI.parse!/1` is the boundary. Already aligned.
 
@@ -474,7 +623,7 @@ Feishu webhook events deliver bare strings (chat_id, user_id) which are translat
 
 ## 10. Open questions for Allen
 
-**OQ-1.** §7.5 — should we introduce `Ezagent.URI.canonical/1` (struct → canonical-struct normalizer) NOW or defer? Current call: defer until a concrete need surfaces. Reconsider in 1-2 release cycles.
+**OQ-1.** §7.5 — should we lift `Ezagent.Kind.Snapshot.canonicalize_uris/1` (the §9.2 recursive walker) to a general `Ezagent.URI.canonical/1` helper? Current call: NO (defer until a second use site emerges). The walker is private to snapshot for r2.
 
 **OQ-2.** §3.4 — should we introduce `Ezagent.URI.with_action(uri, behavior, action)` to eliminate the `URI.new!/1` carve-out entirely? Current call: defer. The 89 query-target sites are mechanical to migrate; introducing a helper now adds API surface for marginal benefit.
 
@@ -485,40 +634,51 @@ Feishu webhook events deliver bare strings (chat_id, user_id) which are translat
 
   Current call: (c) with an `# uri-canonical-allow` suppression comment. Robust enough; matches the codebase style for other invariant tests (e.g. `dispatch_uses_required_caps` uses a similar grep).
 
-**OQ-4.** §9.2 — reconcile-on-load OR forced snapshot rewrite? Current call: reconcile-on-load is sufficient. Snapshots naturally rewrite on slice-change; cold Kinds with no traffic carry old shape briefly but are canonicalized as soon as reloaded. Codex will likely challenge this; flagged §11 Q4.
+**OQ-4.** ~~§9.2 — reconcile-on-load OR forced snapshot rewrite?~~ **r2: RESOLVED — option (b) load-path canonicalization MANDATORY. See §9.2.1.**
 
 **OQ-5.** §4.4 — should the test fixture sweep be in-scope? Current call: NO (separate follow-up). The bug is production-only; tests construct both halves.
 
 ---
 
-## 11. Codex adversarial review questions
+## 11. Codex adversarial review questions (r2)
 
-When dispatching `codex:codex-rescue` for adversarial review, ask explicitly:
+When dispatching `codex:codex-rescue` for adversarial review of r2, ask explicitly:
 
-**Q1 (root cause).** Is Option D actually solving the root cause, or shifting it? Specifically: by making `URI.new!/1` permitted in two carve-outs (§3.4 query-target, §3.5 compile-time constants), do we preserve a smaller-but-similar bug class where a contributor uses `URI.new!/1` outside the carve-out and we don't catch it? (Expected answer: §5.2 catches it via regex; manually verify the regex with three adversarial examples.)
+**Q1 (root cause).** Is Option D actually solving the root cause, or shifting it? Specifically: by making `URI.new!/1` permitted in two carve-outs (§3.4 query-target, §3.5 compile-time constants) AND `URI.new/1` permitted in a 2-file allowlist (§5.2.1), do we preserve a smaller-but-similar bug class? (Expected answer: §5.2 + §5.2.1 catch any violation via regex; manually verify the regex with adversarial examples.)
 
-**Q2 (enumeration completeness).** Has the SPEC enumerated ALL `URI.parse/1` and `URI.new!/1` production call sites? Codex should grep the repo against the SPEC's §4.1 phase-order list and find any missed sites. Specifically check `apps/ezagent_domain_external_mirror/` and `apps/ezagent_plugin_*/` which the SPEC sketches with "~30 sites" rather than enumerating.
+**Q2 (enumeration completeness — r2 focus).** Is the §4.1 inventory truly exhaustive now? Codex should:
+  1. Run `rg -n "URI\.(parse|new!?)\(" apps/*/lib --type elixir` independently.
+  2. Cross-check the output line-by-line against §4.1's per-app counts (28+15+78+18+11+7+5+14+7+70+10+8+4+5+4 = 284).
+  3. Flag any hit not categorized as "migrate" or "allowlisted".
 
-**Q3 (invariant test).** Does the §5 invariant test catch a partial migration where 95% of sites use canonical but 1 boundary skipped? Specifically:
-  - If a contributor adds `URI.parse("entity://...")` to `apps/ezagent_plugin_feishu/lib/foo.ex`, does §5.1 catch it? (Expected yes.)
-  - If a contributor adds `URI.new!("entity://user/system/admin")` to `apps/ezagent_domain_chat/lib/bar.ex` (NOT in `?action=` form, NOT a module attribute), does §5.2 catch it? (Expected yes.)
-  - If a contributor adds `URI.new("entity://...")` (NOTE: non-bang variant, returns `{:ok, _}`), does any §5 test catch it? (Expected NO — this is a gap. Codex should flag.)
+**Q3 (URI.new/1 invariant — r2 focus).** Does the §5.2.1 invariant correctly distinguish "external-URI fallback allowlist" from "internal-URI must-canonicalize"? Specifically:
+  - If a contributor adds `URI.new("entity://...")` to `apps/ezagent_plugin_feishu/lib/foo.ex`, does §5.2.1 catch it? (Expected yes — `foo.ex` is not in the allowlist.)
+  - If a contributor adds `case URI.new(decoded) do` to `apps/ezagent_plugin_liveview/lib/bar_live.ex`, does §5.2.1 catch it? (Expected yes.)
+  - Is `apps/ezagent_core/lib/ezagent/ecto/uri_type.ex` legitimately in the allowlist? (Expected yes — §3.7 dual-fallback.)
 
-**Q4 (snapshot cross-version).** §9.2 describes a reconcile-on-load step in `Kind.Snapshot.reconcile_after_load_behaviors/3` that canonicalizes any pre-SPEC `%URI{}` in slice state. Is this sufficient? Specifically:
-  - If a Kind has been live for weeks without slice-change (cold-but-alive), its in-process state still has pre-SPEC URIs. Does this matter? (The Kind constructs needed-caps via `Ezagent.URI.instance/1` whose output is canonical — so it only matters for state-state comparisons within the slice. Enumerate which Behaviors do state-state URI `==` comparisons.)
-  - Does `:erlang.binary_to_term` on a serialized `%URI{}` from a different Elixir version preserve the `:authority` field? (Cross-OTP risk. Codex should verify.)
+**Q4 (snapshot canonicalization — r2 focus).** §9.2 promotes OQ-4 to mandatory and chooses option (b). Verify:
+  1. Does the recursive walker handle nested URIs (Map → List → Map → URI)?
+  2. Does the walker handle URIs as map keys?
+  3. Does the walker handle URIs inside custom structs (`is_struct/1`)?
+  4. Is the load-path placement (BEFORE the `Map.merge` at `kind/snapshot.ex:96`) correct? (The merge of fresh-init + loaded-state shouldn't matter if both sides have canonical URIs; the canonicalize pass on `loaded_state` ensures the loaded side is canonical.)
+  5. Cross-OTP risk: does `:erlang.binary_to_term` on a pre-Elixir-1.13 `%URI{}` preserve the `:authority` field correctly? (Expected yes — struct shape is encoded with field names + values.)
 
 **Q5 (`URI.to_string` byte parity).** §9.1 asserts that `URI.to_string/1` produces byte-identical output for `URI.parse`-built and `URI.new!`-built structs of the same canonical string. Verify:
-  - For `entity://user/system/admin`: both forms `to_string` to `"entity://user/system/admin"`. (Spot-checked manually — confirm.)
+  - For `entity://user/system/admin`: both forms `to_string` to `"entity://user/system/admin"`.
   - Edge case: URIs with embedded `?action=...` query — `URI.to_string` may sort or re-encode the query. Verify byte-identical for our action-bearing URIs.
   - Edge case: URIs with `%`-encoded path segments (e.g. `template://session/team-alpha/code%20review`). Confirm byte-identical.
-  - **If any URI form serializes to a DIFFERENT string between the two constructors, this SPEC's "no DB migration" assertion fails, and the impl PR needs a forced snapshot/DB rewrite step.**
 
 **Q6 (concurrent SPECs).** §8 asserts independence from cap-action-axis (#410) and workspace-cap-visibility (#423). Verify: are there shared code paths where the three SPECs' changes overlap and the merge order matters?
 
 **Q7 (plugin contract).** §6 claims plugin authors don't need to know about the URI quirk. Verify by reading `references/how-to-recipes.md` in the `ezagent-developer` skill: would a contributor following the "add a new Behavior" recipe naturally write canonical code, or do they need an explicit instruction in the recipe? If the latter, the SPEC should update the skill in the impl PR.
 
 **Q8 (let-it-crash compliance).** §3.3 B5 has the external-payload parse wrap `Ezagent.URI.parse!/1` in try/rescue → `{:error, _}`. Is this a let-it-crash violation? (Defense: per Invariant #9 "no silent drops at user-facing surfaces", inbound transports MUST translate malformed input to a user-visible error reaction. The rescue is the structural translation, not a workaround.)
+
+**Q9 (mix-task expansion — r2 focus).** §4.2 expands sweep targets to include `apps/*/lib/mix/tasks/`. Are any operator-facing artifacts missed? Specifically check `scripts/` for raw `URI.parse` shell invocations (unlikely but worth verification).
+
+**Q10 (zh_cn content alignment — r2 focus).** Is the zh_cn companion now content-aligned (same section count, same table rows, same invariant numbering)? Specifically: §Appendix A enumeration + §Appendix B test pseudo-code — does the zh_cn carry these in full or still defer to the EN version?
+
+**Q11 (cap:// scheme — r2 verification).** Codex r1 LOW flagged `cap://` references. r2 grep finds none. Confirm the LOW was a false positive (no SPEC text references `cap://`; SchemeRegistry has 6 schemes: entity, workspace, session, template, resource, system).
 
 Verbatim subagent constraint: **"Do NOT run mix test, mix compile, mix deps.get, or any mix command. Static analysis only."**
 
@@ -534,7 +694,9 @@ If the impl PR lands and causes production regression:
 
 **Step 3.** Delete the invariant test temporarily. The codebase regresses to its pre-SPEC state.
 
-**Step 4.** File a follow-up issue with the regression reproduction. Re-spec.
+**Step 4.** Re-load any in-process snapshots — the load-path canonicalization helper (§9.2) is reverted along with the impl PR; subsequent Kind reloads will produce non-canonical structs again. This is the pre-SPEC behavior (which the rollback explicitly restores).
+
+**Step 5.** File a follow-up issue with the regression reproduction. Re-spec.
 
 **Acceptance:** The revert is mechanical (single git revert + delete invariant test file). No data migration to undo. No external API change to coordinate with operators.
 
@@ -542,13 +704,13 @@ If the impl PR lands and causes production regression:
 
 ---
 
-## Appendix A — call site enumeration (production lib/, total ~226)
+## Appendix A — call site enumeration (production lib/, r2 exhaustive total 284)
 
-(Codex Q2 challenge target — verify exhaustiveness.)
+(Codex Q2 challenge target — verify exhaustiveness against `rg -n "URI\.(parse|new!?)\(" apps/*/lib`.)
 
-### `apps/ezagent_core/lib/`
+### `apps/ezagent_core/lib/` (28 sites)
 
-- `ezagent/uri.ex:305` — `URI.new!` inside `entity_workspace_uri` (canonical-by-construction, OK).
+- `ezagent/uri.ex:126,134,305` — `URI.new/1` inside `parse!/1` (allowlisted), `URI.new!/1` inside `entity_workspace_uri` (canonical-by-construction, OK).
 - `ezagent/system_principal.ex:110, 169` — `URI.parse("system://..." <> _)` → migrate to `parse!/1`.
 - `ezagent/workspace_registry.ex:108` — `URI.parse(w)` lookup result → migrate to `parse!/1`.
 - `ezagent/capability_registry.ex:429` — `URI.parse("system://bootstrap/pr-own-1")` → migrate to `parse!/1` (or `URI.new!/1` per §3.5 if compile-time-constant).
@@ -560,21 +722,22 @@ If the impl PR lands and causes production regression:
 - `ezagent/agent_lineage.ex:77` — `URI.parse(s)` → migrate to `parse!/1`.
 - `ezagent/notifications.ex:180` — `URI.parse(s)` → migrate to `parse!/1`.
 - `ezagent/entity/system.ex:47` — `URI.parse("system://routing/default")` → `URI.new!` (§3.5).
-- `ezagent/kind/snapshot.ex:160, 361` — `URI.new`, `URI.parse(s)` → migrate to `parse!/1`.
+- `ezagent/kind/snapshot.ex:160, 361` — `URI.new`, `URI.parse(s)` → migrate to `parse!/1`. r2: snapshot.ex also gains `canonicalize_uris/1` helper (§9.2).
 - `ezagent/system_principal/catalog.ex:98` — `@bootstrap_granted_by URI.parse(...)` → `URI.new!` (§3.5).
-- `ezagent/ecto/uri_type.ex:33, 44` — `URI.new(s)` in `cast`/`load` → dual-fallback per §3.7.
+- `ezagent/ecto/uri_type.ex:33, 44` — `URI.new(s)` in `cast`/`load` → dual-fallback per §3.7 (allowlisted in §5.2.1).
 - `ezagent/capability/parser.ex:117` — `URI.new(instance_str)` → migrate to `parse!/1`.
 - `ezagent/runtime/pid_file.ex:274` — `URI.new("entity://...")` → migrate to `parse!/1`.
 - `ezagent/routing/resolver.ex` — already uses `parse!/1` at 353, 388. Line 277 uses `URI.new!(receiver)` — query-target adjacent, verify.
-- `mix/tasks/ezagent.stress.ex:504` — `URI.new!(s)` test/mix helper — out of scope (tests).
+- `mix/tasks/ezagent.stress.ex:504` — `URI.new!(s)` test/mix helper — r2 §4.2: operator-facing prod (impl PR decides).
 
-### `apps/ezagent_domain_identity/lib/`
+### `apps/ezagent_domain_identity/lib/` (15 sites)
 
 - `ezagent/entity/user.ex:29, 30` — `@admin_uri`, `@system_bootstrap_uri` → `URI.new!` (§3.5).
-- `ezagent/identity.ex:105, 152, 188, 265` — mix of `URI.parse` and `URI.new` → migrate to `parse!/1`.
+- `ezagent/identity.ex:45, 105, 152, 161, 188, 265` — mix of `URI.parse`, `URI.new`, `URI.new!` → migrate to `parse!/1`.
 - `ezagent/entity_presenter.ex:61` — `case URI.new(uri_str)` → migrate to `parse!/1` rescue.
+- `mix/tasks/ezagent.user.token.ex:75` — `URI.parse(uri_str)` → migrate to `parse!/1` (r2 §4.2 operator-facing prod).
 
-### `apps/ezagent_domain_chat/lib/`
+### `apps/ezagent_domain_chat/lib/` (78 sites)
 
 - `ezagent_domain_chat.ex:116, 156, 494, 578, 631` — mix of `URI.new!` and `User.admin_uri()` (which becomes canonical post-§3.5 fix) → migrate runtime URI constructions to `parse!/1` where not §3.4.
 - `ezagent/entity/session.ex:65, 304-307, 523, 709, 852, 918-923, 1073, 1175, 1215, 1240, 1541, 1629, 1672, 1695, 2018, 2055, 2107, 2136, 2227, 2228` — heavy URI surface, mix of forms. The 303-307 hand-roll DELETED; other sites migrated per §3.4 / §3.5 rules.
@@ -586,41 +749,54 @@ If the impl PR lands and causes production regression:
 - `ezagent/chat/read_marker.ex:327, 339` — `URI.parse(session_str)` etc → migrate.
 - `ezagent/orchestrator/tools.ex:57, 323, 532, 1004, 1056, 1258, 1438, 1516, 1582, 1583, 1699, 1739` — heavy site; sweep.
 - `ezagent/orchestrator/mcp_registry.ex:149, 157` — `URI.parse` → migrate to `parse!/1`.
-- `ezagent/orchestrator/mcp_socket.ex:51` — `URI.new(agent_uri_str)` in `with` chain → migrate to `parse!/1` rescue.
+- `ezagent/orchestrator/mcp_socket.ex:50, 51` — `URI.new(agent_uri_str)` in `with` chain → migrate to `parse!/1` rescue.
 - `ezagent/orchestrator/health.ex:144` — `URI.new!(...)` constant-style → OK or move to module attr.
 - `ezagent/template/generic_session.ex:97, 118, 121, 161` — mix; sweep.
 - `ezagent_domain_chat/application.ex:415-416` — `URI.new!` for seed, OK.
 
-### `apps/ezagent_domain_workspace/lib/`
+### `apps/ezagent_domain_workspace/lib/` (18 sites — r2 expanded)
 
-- `ezagent/workspace.ex:603, 651, 696, 727` — `URI.new!` query-target form, OK.
+- `ezagent/workspace.ex:261, 299, 358, 446, 482, 696, 744, 789, 820` — mix of `URI.parse` and `URI.new!` → migrate.
+- `ezagent/workspace/loader.ex:262, 321` — `URI.parse` → migrate.
+- **`ezagent/workspace/store.ex:203, 212` — r2 ADDITION**: `URI.parse(row.uri)` and `parse_uri_or_nil` → migrate to `parse!/1`.
+- `ezagent/entity/workspace.ex:83` — `URI.parse("workspace://...")` → migrate to `parse!/1` or `URI.new!` (§3.5 if at module-load time).
 - `ezagent/behavior/workspace.ex:888, 930, 1225` — mix; sweep.
+- `mix/tasks/ezagent.agent.create.ex:231` — `URI.new!("workspace://...")` → already canonical-by-construction, but r2 §4.2 expands sweep into mix tasks.
 
-### `apps/ezagent_domain_agent_bridge/lib/`
+### `apps/ezagent_domain_external_mirror/lib/` (11 sites — r2 REJECTS r1 "0 prod changes")
+
+- **`ezagent/external_mirror/adapter_install.ex:197`** — `session_uri = URI.parse(row.session_uri)` → migrate to `parse!/1`.
+- **`ezagent/external_mirror/worker_spawn.ex:230`** — `URI.parse("entity://worker/#{workspace}/em_#{hash}")` → migrate.
+- **`ezagent/external_mirror.ex:209, 250, 391, 550`** — multiple `URI.parse("#{...}?action=...")` query-target forms → migrate.
+- **`ezagent/behavior/external_mirror.ex:821`** — `bound_by: URI.parse(row.bound_by)` → migrate.
+- **`ezagent/behavior/external_mirror_worker.ex:640, 676`** — `URI.parse("#{...}?action=...")` → migrate.
+- `mix/tasks/ezagent_external_mirror_cli.ex:161, 220` — `URI.parse(as_uri)` + `case URI.parse(s) do` → migrate (r2 §4.2).
+
+### `apps/ezagent_domain_agent_bridge/lib/` (7 sites)
 
 - `ezagent/agent_bridge/registry.ex:98, 111` — `URI.parse(key)` lookup → migrate to `parse!/1`.
 - `ezagent/agent_bridge/token_store.ex:55, 69` — `URI.parse(agent_str)` → migrate to `parse!/1`.
+- `ezagent/agent_bridge/socket.ex:21` — `URI.new(agent_uri_str)` → migrate.
+- `ezagent/agent_bridge/channel.ex:34, 80` — `URI.new` → migrate.
 
 ### `apps/ezagent_domain_python/lib/`
 
 - Already uses `Ezagent.URI.parse!/1`. No changes.
 
-### `apps/ezagent_domain_external_mirror/lib/`
-
-- Mostly clean. Spot-check `ezagent/external_mirror.ex:474` and `gates.ex:321` — these are `==` comparisons, not constructions. No change.
-
-### `apps/ezagent_domain_ui/lib/`
+### `apps/ezagent_domain_ui/lib/` (5 sites)
 
 - `ezagent_domain_ui/primitives.ex:103` — `URI.new(str)` → migrate to `parse!/1`.
+- 4 other sites — sweep.
 
-### `apps/ezagent_web/lib/`
+### `apps/ezagent_web/lib/` (14 sites)
 
 - `live_auth.ex:341` — already canonical via `parse!/1`. OK.
-- `live/home_live.ex:170` — `URI.new!` query-target. OK.
+- `live/home_live.ex:170, 197` — `URI.new!` query-target. OK; `URI.new(uri_str)` → migrate.
 - `controllers/workspace_switch_controller.ex:65` — `URI.new!("workspace://" <> _)` — canonical-by-construction. OK or rewrite to `parse!/1`.
-- `controllers/api_v1_controller.ex:201` — `URI.new!` query-target. OK.
+- `controllers/api_v1_controller.ex:117, 201` — `URI.new!` query-target + `case URI.new(target_str) do` → first OK, second migrate.
+- `controllers/uploads_controller.ex:236` — `URI.new(s)` → migrate.
 
-### `apps/ezagent_cli/lib/`
+### `apps/ezagent_cli/lib/` (7 sites)
 
 - `dispatch.ex:125, 128, 136, 264` — mix of `URI.new` and `URI.parse` → migrate to `parse!/1`.
 - `exec.ex:151` — `URI.parse(entity_uri_str)` → migrate to `parse!/1`.
@@ -632,35 +808,60 @@ If the impl PR lands and causes production regression:
 - `cc/lib/ezagent/plugin_cc/channel.ex:102, 109` — `URI.new!` query-target + constructor. Sweep.
 - `cc/lib/ezagent/plugin_cc/socket.ex:24` — `URI.new(agent_uri_str)` → migrate.
 - `cc/lib/ezagent/template/cc_agent.ex:254` — `URI.new(uri_str)` → migrate.
-- `cc/lib/mix/tasks/ezagent.demo.seed_cc_agent.ex:62, 63, 142` — mix; sweep (mix task is operator-facing, treat as production).
+- `cc/lib/mix/tasks/ezagent.demo.seed_cc_agent.ex:62, 63, 142` — mix task (r2 §4.2); sweep.
+- `cc/lib/mix/tasks/ezagent.demo.seed_cc_sandbox.ex:201, 243` — mix task (r2 §4.2); sweep.
 - `curl_agent/lib/ezagent/behavior/curl_agent.ex:293, 315` — sweep.
 - `curl_agent/lib/ezagent/template/curl_agent.ex:73` — sweep.
 - `echo/lib/ezagent/behavior/echo.ex:142, 213` — sweep.
-- `echo/lib/ezagent/template/echo_agent.ex:117` — sweep.
-- `feishu/lib/ezagent/plugin_feishu/binding_policy.ex:241` — sweep.
+- `echo/lib/ezagent/template/echo_agent.ex:117, 159` — sweep.
+- `feishu/lib/ezagent/plugin_feishu/binding_policy.ex:241, 267` — sweep.
 - `feishu/lib/ezagent/plugin_feishu/mention_parser.ex:77` — sweep.
 - `feishu/lib/ezagent/plugin_feishu/behavior/user_binding.ex:482` — sweep.
+- `feishu/lib/mix/tasks/ezagent_external_mirror_migrate_feishu_bindings.ex:153` — mix task (r2 §4.2); sweep.
 - `liveview/lib/ezagent_plugin_liveview/*.ex` — 16 files; sweep.
-- `np/lib/ezagent/behavior/np_agent.ex:277` — sweep.
+- `np/lib/ezagent/behavior/np_agent.ex:277, 299` — sweep.
+- `np/lib/ezagent/template/np_agent.ex:79, 128` — sweep.
 
-**Total ~226 production sites by SPEC enumeration.** Codex Q2 challenge target.
+**Total 284 production sites by r2 SPEC enumeration.** Codex Q2 challenge target.
+
+### Appendix A.1 — r2 allowlist (URIs that LEGITIMATELY remain stdlib)
+
+The §5.2.1 `URI.new/1` allowlist (the ONLY files allowed to call bare `URI.new/1`):
+
+| File | Rationale |
+|---|---|
+| `apps/ezagent_core/lib/ezagent/uri.ex` | The canonical module itself — `parse!/1` internally wraps `URI.new/1` for the actual stdlib call. This is the chokepoint. |
+| `apps/ezagent_core/lib/ezagent/ecto/uri_type.ex` | External-URI fallback per §3.7 dual-fallback contract. When `Ezagent.URI.parse!/1` raises (non-Ezagent scheme), the load path falls through to plain `URI.new/1`. |
+
+The §3.4 `URI.new!/1` carve-out (production lines that legitimately call `URI.new!/1`):
+
+| Pattern | Rationale |
+|---|---|
+| `URI.new!("...?action=...")` | Query-target idiom (§3.4) — input is canonical-by-construction (`URI.to_string(uri)` of a canonical uri). |
+| `@constant URI.new!(...)` | Compile-time module-attribute initialization (§3.5) — ETS not available at compile time. |
+| `URI.new!("workspace://" <> name)` | Structural URI derivation (§3.6 `Capability.workspace_of/1`, `Ezagent.URI.entity_workspace_uri/1`). |
 
 ---
 
-## Appendix B — invariant test pseudo-code (full draft of §5)
+## Appendix B — invariant test pseudo-code (full draft of §5, r2)
 
 ```elixir
 defmodule Ezagent.URICanonicalizationTest do
   use ExUnit.Case, async: true
 
-  @allowlisted_files [
+  @uri_new_allowlist [
+    "apps/ezagent_core/lib/ezagent/uri.ex",
+    "apps/ezagent_core/lib/ezagent/ecto/uri_type.ex"
+  ]
+
+  @uri_parse_allowlist [
     "apps/ezagent_core/lib/ezagent/uri.ex"
   ]
 
   @lib_glob "apps/*/lib/**/*.ex"
 
   test "no stdlib URI.parse/1 in production lib/" do
-    violations = scan_for(~r/\bURI\.parse\(/, fn _line -> false end)
+    violations = scan_for(~r/\bURI\.parse\(/, fn _line -> false end, @uri_parse_allowlist)
 
     assert violations == [],
            """
@@ -675,7 +876,22 @@ defmodule Ezagent.URICanonicalizationTest do
     violations =
       scan_for(~r/\bURI\.new!\(/, fn line ->
         is_query_target_idiom?(line) or is_module_attribute?(line)
-      end)
+      end, [])
+
+    assert violations == [], format(violations)
+  end
+
+  # r2 NEW
+  test "no stdlib URI.new/1 in production lib/ outside the external-URI fallback allowlist" do
+    violations =
+      for path <- Path.wildcard(@lib_glob),
+          path not in @uri_new_allowlist,
+          {line, lineno} <- Enum.with_index(File.stream!(path), 1),
+          matches_uri_new_no_bang?(line),
+          not String.contains?(line, "# uri-canonical-allow"),
+          not in_comment?(line) do
+        {path, lineno, String.trim(line)}
+      end
 
     assert violations == [], format(violations)
   end
@@ -706,9 +922,26 @@ defmodule Ezagent.URICanonicalizationTest do
     assert from_const.authority == nil
   end
 
-  defp scan_for(regex, exclude?) do
+  # r2 NEW
+  test "snapshot decode_state canonicalizes embedded %URI{} structs" do
+    pre_migration_state = %{
+      chat: %{
+        owner: URI.parse("entity://user/system/admin"),
+        members: [URI.parse("entity://user/team-alpha/alice")]
+      }
+    }
+    binary = :erlang.term_to_binary(pre_migration_state)
+    decoded = :erlang.binary_to_term(binary, [:safe])
+    canonicalized = Ezagent.Kind.Snapshot.canonicalize_uris(decoded)
+
+    assert canonicalized.chat.owner.authority == nil
+    assert Enum.all?(canonicalized.chat.members, &(&1.authority == nil))
+    assert canonicalized.chat.owner == Ezagent.URI.parse!("entity://user/system/admin")
+  end
+
+  defp scan_for(regex, exclude?, allowlist) do
     for path <- Path.wildcard(@lib_glob),
-        path not in @allowlisted_files,
+        path not in allowlist,
         {line, lineno} <- Enum.with_index(File.stream!(path), 1),
         Regex.match?(regex, line),
         not String.contains?(line, "# uri-canonical-allow"),
@@ -716,6 +949,11 @@ defmodule Ezagent.URICanonicalizationTest do
         not exclude?.(line) do
       {path, lineno, String.trim(line)}
     end
+  end
+
+  defp matches_uri_new_no_bang?(line) do
+    # Line contains URI.new( AND does NOT contain URI.new!(
+    String.contains?(line, "URI.new(") and not Regex.match?(~r/URI\.new!\(/, line)
   end
 
   defp is_query_target_idiom?(line),
