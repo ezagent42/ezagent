@@ -37,6 +37,13 @@ defmodule EzagentPluginEcho.Integration.F1DirectInvokeTest do
     # event the dispatch will emit. (Sandbox checkout + shared mode is
     # handled by Ezagent.Test.AuditCase's `using` block above.)
     :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, Ezagent.Audit.stream_topic())
+
+    # Echo agent (boot-spawned at `EzagentPluginEcho.Application` start)
+    # can be missing if a prior test rolled back the sandbox or its
+    # Kind.Server crashed. Re-spawn idempotently so each test starts
+    # with a live `entity://agent/system/echo_default`. SpawnRegistry
+    # tolerates an already-running instance (returns the existing pid).
+    _ = Ezagent.SpawnRegistry.spawn(EchoApp.default_uri())
     :ok
   end
 
