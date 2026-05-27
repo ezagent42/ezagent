@@ -228,7 +228,7 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
   defp decompose(%URI{scheme: "entity", host: "agent", path: "/" <> rest} = _agent_uri) do
     with [workspace_name, entity_name] <- String.split(rest, "/", parts: 2),
          [flavor, name] <- String.split(entity_name, "_", parts: 2) do
-      workspace_uri = URI.new!("workspace://#{workspace_name}")
+      workspace_uri = URI.new!("workspace://#{workspace_name}") # uri-canonical-allow: §3.6 structural derivation from validated entity path
       {:ok, workspace_uri, flavor, name}
     else
       _ -> {:error, {:bad_agent_uri_shape, rest}}

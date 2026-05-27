@@ -80,6 +80,6 @@ defmodule Ezagent.Entity.Workspace do
   """
   @spec uri_for(String.t()) :: URI.t()
   def uri_for(name) when is_binary(name) and name != "" do
-    URI.parse("workspace://#{name}")
+    Ezagent.URI.parse!("workspace://#{name}")
   end
 end

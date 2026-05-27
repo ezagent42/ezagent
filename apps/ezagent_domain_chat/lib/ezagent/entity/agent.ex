@@ -229,7 +229,7 @@ defmodule Ezagent.Entity.Agent do
                 ". Per SPEC #324 rev 3 / PR #335, there is NO silent default workspace " <>
                 "fallback; callers must pass a workspace URI with an explicit name."
 
-    agent_uri = URI.new!("entity://agent/#{workspace_name}/#{instance_name}")
+    agent_uri = Ezagent.URI.parse!("entity://agent/#{workspace_name}/#{instance_name}")
 
     case Ezagent.SpawnRegistry.spawn_detailed(agent_uri) do
       {:ok, :started, pid} ->
@@ -650,7 +650,7 @@ defmodule Ezagent.Entity.Agent do
 
   defp do_record_sandbox_state(workers, config_dir, template_class, respawn_data) do
     Enum.reduce_while(workers, :ok, fn worker_uri, :ok ->
-      target = URI.parse("#{URI.to_string(worker_uri)}?action=sandbox.write_path")
+      target = Ezagent.URI.parse!("#{URI.to_string(worker_uri)}?action=sandbox.write_path")
 
       case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
              target: target,

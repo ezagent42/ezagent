@@ -107,7 +107,7 @@ defmodule EzagentDomainUi.Pty.TerminalSeam do
   """
   @spec dispatch_input(URI.t(), binary(), map()) :: :ok | {:error, term()}
   def dispatch_input(%URI{} = agent_uri, bytes, ctx) when is_binary(bytes) do
-    target = URI.parse(URI.to_string(agent_uri) <> "?action=pty.write")
+    target = Ezagent.URI.parse!(URI.to_string(agent_uri) <> "?action=pty.write")
 
     inv = %Ezagent.Invocation{
       target: target,

@@ -31,7 +31,10 @@ defmodule Ezagent.AgentBridge.Channel do
   end
 
   def join("cc:bridge:" <> uri_str, params, socket) do
-    with {:ok, topic_uri} <- URI.new(uri_str),
+    # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+    # at inbound channel-join boundary; try/rescue preserves the
+    # `:error` failure path for malformed topic URIs.
+    with {:ok, topic_uri} <- safe_parse_uri(uri_str),
          :ok <- verify_topic_uri(topic_uri, socket),
          :ok <- verify_topic_flavor("cc", socket.assigns.agent_uri) do
       join_bridge("cc", params, socket)
@@ -72,14 +75,20 @@ defmodule Ezagent.AgentBridge.Channel do
   defp parse_agent_bridge_topic(rest) do
     case String.split(rest, ":", parts: 2) do
       [flavor, uri_str] when flavor != "" and uri_str != "" ->
-        case URI.new(uri_str) do
+        case safe_parse_uri(uri_str) do
           {:ok, %URI{} = uri} -> {:ok, flavor, uri}
-          {:error, reason} -> {:error, {:invalid_topic_uri, reason}}
+          :error -> {:error, {:invalid_topic_uri, uri_str}}
         end
 
       _ ->
         {:error, :invalid_agent_bridge_topic}
     end
+  end
+
+  defp safe_parse_uri(s) when is_binary(s) do
+    {:ok, Ezagent.URI.parse!(s)}
+  rescue
+    ArgumentError -> :error
   end
 
   defp verify_topic_uri(%URI{} = topic_uri, socket) do

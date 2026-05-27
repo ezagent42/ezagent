@@ -324,7 +324,7 @@ defmodule Ezagent.Chat.ReadMarker do
     Phoenix.PubSub.broadcast(
       EzagentCore.PubSub,
       Ezagent.Behavior.Chat.session_events_topic(session_str),
-      {:read_marker_updated, URI.parse(session_str), URI.parse(user_str),
+      {:read_marker_updated, Ezagent.URI.parse!(session_str), Ezagent.URI.parse!(user_str),
        %{
          source: String.to_existing_atom(src_str),
          last_read_message_uri: msg_str,
@@ -336,7 +336,7 @@ defmodule Ezagent.Chat.ReadMarker do
   # ----- Workspace derivation ------------------------------------------------
 
   defp derive_workspace(uri) do
-    parsed = if is_binary(uri), do: URI.parse(uri), else: uri
+    parsed = if is_binary(uri), do: Ezagent.URI.parse!(uri), else: uri
 
     try do
       {:ok, URI.to_string(Ezagent.Capability.workspace_of(parsed))}

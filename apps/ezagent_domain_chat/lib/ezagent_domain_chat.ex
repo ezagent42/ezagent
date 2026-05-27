@@ -113,7 +113,7 @@ defmodule EzagentDomainChat do
     workspace_name = workspace_name_of!(workspace_uri)
 
     session_uri =
-      URI.new!("session://#{template_name}/#{workspace_name}/#{short_name}")
+      Ezagent.URI.parse!("session://#{template_name}/#{workspace_name}/#{short_name}")
 
     # codex PR #409 r1 review HIGH-2 — serialize concurrent create_session
     # calls per session_uri. Two callers racing on the same URI used to
@@ -491,7 +491,7 @@ defmodule EzagentDomainChat do
   def list_sessions do
     KindRegistry.list_all()
     |> Enum.filter(fn {uri_str, _pid} -> String.starts_with?(uri_str, "session://") end)
-    |> Enum.map(fn {uri_str, _pid} -> URI.new!(uri_str) end)
+    |> Enum.map(fn {uri_str, _pid} -> Ezagent.URI.parse!(uri_str) end)
     |> Enum.sort_by(&URI.to_string/1)
   end
 

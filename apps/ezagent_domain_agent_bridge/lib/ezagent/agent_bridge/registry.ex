@@ -95,7 +95,7 @@ defmodule Ezagent.AgentBridge.Registry do
 
     @table
     |> :ets.tab2list()
-    |> Enum.map(fn {key, %{pid: pid}} -> {URI.parse(key), pid} end)
+    |> Enum.map(fn {key, %{pid: pid}} -> {Ezagent.URI.parse!(key), pid} end)
   end
 
   @doc """
@@ -108,7 +108,7 @@ defmodule Ezagent.AgentBridge.Registry do
 
     @table
     |> :ets.tab2list()
-    |> Enum.map(fn {key, row} -> {URI.parse(key), row} end)
+    |> Enum.map(fn {key, row} -> {Ezagent.URI.parse!(key), row} end)
   end
 
   @doc "Number of currently bound bridges."

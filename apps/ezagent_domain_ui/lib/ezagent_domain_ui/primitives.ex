@@ -100,23 +100,30 @@ defmodule EzagentDomainUi.Primitives do
     str = uri_to_string(uri)
 
     {label, hue_seed} =
-      case URI.new(str) do
-        # Phase 9 PR-2 (SPEC v3 §3): entity URIs are 3-segment;
-        # extract entity_name (second path segment) for label/hue.
-        {:ok, %URI{scheme: "entity", host: "user", path: "/" <> rest}} ->
-          name = entity_name_from_path(rest)
-          {String.upcase(String.first(name) || "?"), name}
+      # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+      # with try/rescue for display-fallback ("?", "fallback") on parse
+      # failure (avatar must always render).
+      try do
+        case Ezagent.URI.parse!(str) do
+          # Phase 9 PR-2 (SPEC v3 §3): entity URIs are 3-segment;
+          # extract entity_name (second path segment) for label/hue.
+          %URI{scheme: "entity", host: "user", path: "/" <> rest} ->
+            name = entity_name_from_path(rest)
+            {String.upcase(String.first(name) || "?"), name}
 
-        {:ok, %URI{scheme: "entity", host: "agent", path: "/" <> rest}} ->
-          name = entity_name_from_path(rest)
-          flavor = name |> String.split("_", parts: 2) |> List.first()
-          {flavor |> String.first() |> String.upcase(), flavor}
+          %URI{scheme: "entity", host: "agent", path: "/" <> rest} ->
+            name = entity_name_from_path(rest)
+            flavor = name |> String.split("_", parts: 2) |> List.first()
+            {flavor |> String.first() |> String.upcase(), flavor}
 
-        {:ok, %URI{host: host}} when is_binary(host) ->
-          {String.upcase(String.first(host) || "?"), host}
+          %URI{host: host} when is_binary(host) ->
+            {String.upcase(String.first(host) || "?"), host}
 
-        _ ->
-          {"?", "fallback"}
+          _ ->
+            {"?", "fallback"}
+        end
+      rescue
+        ArgumentError -> {"?", "fallback"}
       end
 
     hue1 = :erlang.phash2({hue_seed, :h1}, 360)

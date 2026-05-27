@@ -45,9 +45,13 @@ defmodule Ezagent.Orchestrator.McpSocket do
 
   @impl true
   def connect(params, socket, _connect_info) do
+    # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+    # for inbound socket payload; try/rescue keeps the `with`-clause's
+    # `{:error, _} | :error` failure path so a malformed agent_uri
+    # surfaces as a clean socket-reject (Invariant #9 — no silent drop).
     with {:ok, agent_uri_str} <- Map.fetch(params, "agent_uri"),
          {:ok, token} <- Map.fetch(params, "token"),
-         {:ok, agent_uri} <- URI.new(agent_uri_str),
+         {:ok, agent_uri} <- safe_parse_uri(agent_uri_str),
          :ok <- verify_token(agent_uri, token) do
       socket =
         socket
@@ -62,6 +66,14 @@ defmodule Ezagent.Orchestrator.McpSocket do
 
   @impl true
   def id(socket), do: "orchestrator_socket:" <> URI.to_string(socket.assigns.agent_uri)
+
+  defp safe_parse_uri(s) when is_binary(s) do
+    {:ok, Ezagent.URI.parse!(s)}
+  rescue
+    ArgumentError -> :error
+  end
+
+  defp safe_parse_uri(_), do: :error
 
   # Same token check as AgentBridge.Socket. The resolved URI MUST equal
   # the claimed agent_uri, so the wire cannot claim an identity it has
