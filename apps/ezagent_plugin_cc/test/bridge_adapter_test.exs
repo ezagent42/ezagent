@@ -50,16 +50,21 @@ defmodule EzagentPluginCc.BridgeAdapterTest do
              )
   end
 
-  test "dispatch_reply/5 returns dispatched + skipped breakdown for malformed session URIs (SPEC 2026-05-27 §3.3 + Invariant #9)" do
-    # Codex r2 HIGH closure — malformed session URIs from the cc bridge
-    # MUST NOT be silently dropped. dispatch_reply/5 returns the split
-    # so the channel ACK can carry the `skipped` list back to claude
-    # AND Logger/telemetry emit observable signals for operators.
+  test "dispatch_reply/5 returns dispatched + failed + skipped buckets (SPEC 2026-05-27 §3.3 + Invariant #9 r4 closure)" do
+    # Codex r2/r3/r4 HIGH closure — boundary input MUST surface across
+    # three distinct buckets so a canonical-but-stale URI does not
+    # masquerade as successfully dispatched.
+    #
+    # - `dispatched`: Invocation.dispatch returned :ok / {:ok, _}.
+    # - `failed`:     Invocation.dispatch returned {:error, reason}
+    #                 (e.g. :no_such_actor for a stale-but-canonical URI).
+    # - `skipped`:    safe_parse_session failed (malformed string).
     agent_uri = Ezagent.URI.parse!("entity://agent/team-alpha/cc_test")
 
-    # No real Kind alive at the target session URIs — dispatch will
-    # produce errors / :not_ready, but the SHAPE of dispatch_reply/5's
-    # return is what we're locking here.
+    # All test URIs are syntactically canonical but no Kinds are alive,
+    # so dispatch will return {:error, :no_such_actor} for the
+    # well-formed ones. The malformed ones go to skipped without
+    # reaching dispatch.
     sessions = [
       "session://default/system/main",
       "garbage://not-a-real-scheme",
@@ -67,15 +72,29 @@ defmodule EzagentPluginCc.BridgeAdapterTest do
       "session://default/team-alpha/real"
     ]
 
-    assert {:ok, %{dispatched: dispatched, skipped: skipped}} =
+    assert {:ok, %{dispatched: dispatched, failed: failed, skipped: skipped}} =
              BridgeAdapter.dispatch_reply(agent_uri, sessions, "hi", nil, [])
 
-    # Canonical Ezagent-scheme strings dispatched; malformed strings
-    # got the skipped path with their original input preserved.
-    assert "session://default/system/main" in dispatched
-    assert "session://default/team-alpha/real" in dispatched
+    # Malformed inputs land in skipped, with original string preserved.
     assert "garbage://not-a-real-scheme" in skipped
     assert "" in skipped
-    assert length(dispatched) + length(skipped) == length(sessions)
+
+    # Canonical inputs reached dispatch. Since no Kind is alive at
+    # either target, both should land in `failed` (the codex r4
+    # finding — pre-fix they would have wrongly counted as dispatched).
+    canonical_inputs = [
+      "session://default/system/main",
+      "session://default/team-alpha/real"
+    ]
+
+    canonical_outcomes = dispatched ++ Enum.map(failed, fn {s, _reason} -> s end)
+
+    for input <- canonical_inputs do
+      assert input in canonical_outcomes,
+             "canonical input #{inspect(input)} must appear in dispatched or failed"
+    end
+
+    # Total accounting: every input lands in exactly one bucket.
+    assert length(dispatched) + length(failed) + length(skipped) == length(sessions)
   end
 end

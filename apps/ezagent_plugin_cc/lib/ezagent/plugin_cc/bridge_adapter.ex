@@ -71,19 +71,26 @@ defmodule EzagentPluginCc.BridgeAdapter do
         {:reply, {:error, %{reason: "session_uris must be a non-empty list"}}, socket}
 
       true ->
-        case dispatch_reply(socket.assigns.agent_uri, sessions, text, ref, attachments) do
-          {:ok, %{dispatched: dispatched, skipped: []}} ->
-            {:reply, {:ok, %{dispatched: dispatched}}, socket}
+        # Invariant #9 — the three-bucket result (dispatched / failed /
+        # skipped) is propagated back to the client UNCONDITIONALLY so
+        # claude (the cc bridge sidecar) sees per-URI outcome. Empty
+        # failed/skipped lists are omitted to keep the ACK compact in
+        # the happy path. Logger.warning + telemetry fire from
+        # dispatch_reply/5 for ops visibility.
+        {:ok, %{dispatched: dispatched, failed: failed, skipped: skipped}} =
+          dispatch_reply(socket.assigns.agent_uri, sessions, text, ref, attachments)
 
-          {:ok, %{dispatched: dispatched, skipped: skipped}} ->
-            # Invariant #9 — malformed session URIs from the client surface
-            # back to the boundary so claude knows not all sessions
-            # received the reply. Telemetry + Logger.warning also fires
-            # inside dispatch_reply/5 for ops visibility.
-            {:reply, {:ok, %{dispatched: dispatched, skipped: skipped}}, socket}
-        end
+        ack =
+          %{dispatched: dispatched}
+          |> maybe_put(:failed, failed)
+          |> maybe_put(:skipped, skipped)
+
+        {:reply, {:ok, ack}, socket}
     end
   end
+
+  defp maybe_put(map, _key, []), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
   def handle_client_event("reply", _other, socket) do
     {:reply, {:error, %{reason: "reply requires text + session_uris"}}, socket}
@@ -108,15 +115,31 @@ defmodule EzagentPluginCc.BridgeAdapter do
   @doc """
   Dispatch the bridge reply to every supplied session URI.
 
-  Returns `{:ok, %{dispatched: [valid_uri_str], skipped: [bad_uri_str]}}`.
-  Malformed URIs are skipped (Invariant #9 — graceful surface from a
-  user-facing transport, not a silent process crash) AND logged at
-  warning level AND emitted as telemetry so ops sees the drop. The
-  caller (`handle_client_event/3`) propagates the `skipped` list back
-  to the client so claude can decide whether to retry.
+  Returns `{:ok, %{dispatched: [_], failed: [{uri, reason}], skipped: [_]}}`.
+
+  Three buckets per SPEC Invariant #9 / codex r4 closure:
+
+  - `dispatched` — `Ezagent.Invocation.dispatch/1` returned `:ok` or
+    `{:ok, _}` (the target Kind was alive and accepted the message).
+  - `failed` — dispatch returned `{:error, reason}` (e.g.
+    `:no_such_actor` for a stale-but-canonical URI, `:not_ready`,
+    `:unauthorized`, `:cross_workspace_denied`). The reason is
+    preserved alongside the URI so claude can distinguish "no
+    session exists" from "auth denied".
+  - `skipped` — `safe_parse_session/1` failed (malformed URI string
+    from the client). These never reached dispatch.
+
+  All three buckets are surfaced via Logger.warning + telemetry +
+  the channel ACK shape. Silent ACK of a never-delivered reply is
+  the Invariant #9 violation this fix eliminates.
   """
   @spec dispatch_reply(URI.t(), [String.t()], String.t(), term(), [map()]) ::
-          {:ok, %{dispatched: [String.t()], skipped: [String.t()]}}
+          {:ok,
+           %{
+             dispatched: [String.t()],
+             failed: [{String.t(), term()}],
+             skipped: [String.t()]
+           }}
   def dispatch_reply(agent_uri, sessions, text, ref, attachments) do
     ref_uri =
       case ref do
@@ -128,8 +151,8 @@ defmodule EzagentPluginCc.BridgeAdapter do
     body = %{text: text, attachments: normalize_attachments(attachments)}
     msg = Ezagent.Message.new(agent_uri, body, ref: ref_uri)
 
-    {dispatched, skipped} =
-      Enum.split_with(sessions, fn session_uri_str ->
+    classified =
+      Enum.map(sessions, fn session_uri_str ->
         case safe_parse_session(session_uri_str) do
           {:ok, session_uri} ->
             # SPEC 2026-05-27-uri-canonicalization §3.3 + §3.4 —
@@ -139,29 +162,41 @@ defmodule EzagentPluginCc.BridgeAdapter do
             # §3.4 query-target idiom.
             target = URI.new!("#{URI.to_string(session_uri)}?action=chat.send")
 
-            Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-              target: target,
-              mode: :cast,
-              args: %{message: msg},
-              ctx: %{
-                caller: agent_uri,
-                caps: Ezagent.SystemPrincipal.caps("system://chat-reply"),
-                reply: :ignore
-              }
-            })
+            result =
+              Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+                target: target,
+                mode: :cast,
+                args: %{message: msg},
+                ctx: %{
+                  caller: agent_uri,
+                  caps: Ezagent.SystemPrincipal.caps("system://chat-reply"),
+                  reply: :ignore
+                }
+              })
 
-            true
+            case result do
+              :ok -> {:dispatched, session_uri_str}
+              {:ok, _} -> {:dispatched, session_uri_str}
+              {:error, reason} -> {:failed, session_uri_str, reason}
+            end
 
           :error ->
-            false
+            {:skipped, session_uri_str}
         end
       end)
 
+    dispatched = for {:dispatched, s} <- classified, do: s
+    failed = for {:failed, s, reason} <- classified, do: {s, reason}
+    skipped = for {:skipped, s} <- classified, do: s
+
+    # Invariant #9 — boundary input MUST surface via at least one
+    # observable channel. We hit three: Logger (operator tail),
+    # telemetry (metrics), and the channel ACK shape (claude bridge
+    # sees the partial result). Codex r4 caught that {:error, _} from
+    # `Invocation.dispatch/1` (e.g. `:no_such_actor` for a stale URI)
+    # was previously classified as dispatched; the three-bucket
+    # split fixes that silent class.
     if skipped != [] do
-      # Invariant #9 — malformed boundary input MUST surface via at
-      # least one observable channel. We hit three: Logger (operator
-      # tail), telemetry (metrics), and the channel ACK shape (claude
-      # bridge sees the partial result).
       Logger.warning(
         "EzagentPluginCc.BridgeAdapter: dropped #{length(skipped)} malformed " <>
           "session URI(s) from cc bridge reply (agent=#{URI.to_string(agent_uri)}): " <>
@@ -175,7 +210,21 @@ defmodule EzagentPluginCc.BridgeAdapter do
       )
     end
 
-    {:ok, %{dispatched: dispatched, skipped: skipped}}
+    if failed != [] do
+      Logger.warning(
+        "EzagentPluginCc.BridgeAdapter: dispatch failed for #{length(failed)} " <>
+          "session URI(s) from cc bridge reply (agent=#{URI.to_string(agent_uri)}): " <>
+          "#{inspect(failed)}"
+      )
+
+      :telemetry.execute(
+        [:ezagent, :plugin_cc, :bridge_adapter, :reply_failed],
+        %{count: length(failed)},
+        %{agent_uri: URI.to_string(agent_uri), failed: failed}
+      )
+    end
+
+    {:ok, %{dispatched: dispatched, failed: failed, skipped: skipped}}
   end
 
   defp safe_parse_session(s) when is_binary(s) do
