@@ -223,8 +223,10 @@ defmodule EzagentPluginLiveview.AdminLive do
       # Task #55 (Allen 2026-05-27) — filter sessions by the operator's
       # current workspace. Pre-fix every LV mount displayed sessions
       # from every workspace (cross-workspace display leak).
-      # `list_sessions_for/1` falls back to the unfiltered list when
-      # `current_workspace_uri` is nil (early-mount defensive path).
+      # Round-2 codex r2 MED follow-up: `list_sessions_for/1` now
+      # falls back to `[]` when `current_workspace_uri` is nil (LV
+      # mounted outside `:require_entity` LiveAuth path) — deny by
+      # absence rather than show-everything default.
       |> assign(:sessions, list_sessions_for(socket.assigns[:current_workspace_uri]))
       # Session auto-join (Allen 2026-05-26 — PR #374) — every
       # navigation to a session auto-dispatches `chat.join` for the
@@ -2671,16 +2673,21 @@ defmodule EzagentPluginLiveview.AdminLive do
   defp session_events_topic(%URI{} = uri),
     do: Ezagent.Behavior.Chat.session_events_topic(uri)
 
-  # Task #55 (Allen 2026-05-27) — workspace-scoped session list for
-  # the LV sidebar / `/admin/sessions`. Falls back to the unfiltered
-  # list when `current_workspace_uri` is nil (early-mount defensive
-  # path before LiveAuth populates the assign). Wraps
-  # `EzagentDomainChat.list_sessions/1` (workspace-aware) and
-  # `/0` (admin / fallback).
+  # Task #55 round-2 codex r2 review MED follow-up — workspace-scoped
+  # session list for the LV sidebar / `/admin/sessions` / mount
+  # subscription loop. When `current_workspace_uri` is missing
+  # (mount outside the `:require_entity` live_session), return
+  # an EMPTY list rather than every workspace's sessions. Pre-fix
+  # the fallback returned `EzagentDomainChat.list_sessions/0` (all
+  # workspaces), so an LV mounted outside LiveAuth would subscribe
+  # to every session's event topic. The structural default must
+  # be "deny by absence" — if we don't know the operator's
+  # workspace, we cannot scope a subscription, so we subscribe to
+  # nothing.
   defp list_sessions_for(%URI{scheme: "workspace"} = workspace_uri),
     do: EzagentDomainChat.list_sessions(workspace_uri)
 
-  defp list_sessions_for(_), do: EzagentDomainChat.list_sessions()
+  defp list_sessions_for(_), do: []
 
   defp load_session_messages(%URI{} = session_uri) do
     session_uri
