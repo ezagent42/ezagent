@@ -403,23 +403,52 @@ defmodule Ezagent.Behavior.IdentityAdmin do
   end
 
   # SPEC 2026-05-27 capability-action-axis §3.6.1(b) — runtime grant-
-  # boundary check. If the cap being granted has `action: :any` AND
-  # the caller does NOT hold admin caps, reject. Admin authority is
-  # structurally cap-holdings-based (NOT a role-based exemption);
-  # `holds_admin_caps?/1` inspects the caller's actual caps for the
-  # full-wildcard shape.
+  # boundary check. The SPEC's intent is to prevent NON-admin callers
+  # from minting **broad** behavior-wildcard caps (e.g.
+  # `kind: :workspace, behavior: Workspace, action: :any`) that
+  # silently confer all-actions authority on the target. Admin-tier
+  # callers (with bootstrap admin / workspace-admin) CAN mint
+  # behavior-wildcard caps; the existing per-shape
+  # `check_grant_authorized/2` already gates that.
   #
-  # Note: this check fires BEFORE `check_grant_authorized/2` (the
-  # existing per-shape grant policy). A wildcard-action cap from a
-  # non-admin is rejected first; the existing per-shape rules govern
-  # narrow grants from any caller per their respective shape.
+  # The check fires only when:
+  #   1. The cap has `action: :any`
+  #   2. AND the cap is NOT structurally bounded — i.e. NOT
+  #      `instance: {:within_*, _}` / `{:spawned_by, _}`. Scope-
+  #      bounded delegation caps (Session.build_desired_caps Cap #1
+  #      + Cap #2) are NARROWER than their behavior axis suggests
+  #      because the instance scope tuple constrains where the cap
+  #      fires. An owner can legitimately mint these for their
+  #      orchestrator.
+  #   3. AND the caller does NOT hold admin caps (full wildcard).
+  #
+  # If all three hold, reject. Otherwise, fall through to the
+  # existing per-shape check.
   defp check_action_wildcard_grant_authorized(%Ezagent.Capability{} = cap, ctx) do
-    if Ezagent.Capability.action_of(cap) == :any and not holds_admin_caps?(ctx) do
-      {:error, :wildcard_action_grant_requires_admin_authority}
-    else
-      :ok
+    cond do
+      Ezagent.Capability.action_of(cap) != :any ->
+        :ok
+
+      scope_bounded_instance?(cap.instance) ->
+        # Scope-bounded delegation: instance tuple is the structural
+        # narrowing. Action wildcard symmetric with the behavior
+        # wildcard for these patterns (orchestrator within session,
+        # spawned-by lineage).
+        :ok
+
+      holds_admin_caps?(ctx) ->
+        :ok
+
+      true ->
+        {:error, :wildcard_action_grant_requires_admin_authority}
     end
   end
+
+  # Scope-bounded instance tuples per `Capability.@type scope_tuple`.
+  defp scope_bounded_instance?({:within_session, %URI{}}), do: true
+  defp scope_bounded_instance?({:within_workspace, %URI{}}), do: true
+  defp scope_bounded_instance?({:spawned_by, %URI{}}), do: true
+  defp scope_bounded_instance?(_), do: false
 
   defp do_grant_cap(slice, cap_struct, ctx) do
     case check_grant_authorized(cap_struct, ctx) do

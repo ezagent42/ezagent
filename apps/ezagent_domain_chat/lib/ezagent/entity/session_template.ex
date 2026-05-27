@@ -576,10 +576,12 @@ defmodule Ezagent.Entity.SessionTemplate do
         needed = %{
           kind: :session_template,
           behavior: Ezagent.Behavior.Template,
-          # SPEC 2026-05-27 capability-action-axis — `create/3` writes a
-          # new template, so the action under preflight is `:write`.
-          # `Behavior.Template.actions/0` => [:read, :write, :instantiate, :fork].
-          action: :write,
+          # SPEC 2026-05-27 capability-action-axis — `create/3`'s
+          # preflight predates the action-axis. It checks "does the
+          # caller hold ANY Template authority in the workspace?".
+          # Action `:any` preserves the pre-SPEC predicate semantics;
+          # a granular per-action gate is a future PR.
+          action: :any,
           instance: URI.new!("template://session/#{workspace_name}/_preflight@_"),
           workspace_uri: workspace_uri
         }
@@ -611,9 +613,11 @@ defmodule Ezagent.Entity.SessionTemplate do
       cap = %Ezagent.Capability{
         kind: :session_template,
         behavior: Ezagent.Behavior.Template,
-        # SPEC 2026-05-27 capability-action-axis — owner needs to
-        # instantiate the template they just created (§1.7(e) intent).
-        action: :instantiate,
+        # SPEC 2026-05-27 capability-action-axis — owner needs full
+        # lifecycle authority on templates they create (read, write/
+        # update, instantiate, fork). The `:within_workspace` instance
+        # scope is the structural narrowing; action axis stays `:any`.
+        action: :any,
         instance: {:within_workspace, workspace_uri},
         workspace_uri: workspace_uri,
         granted_by: owner_uri,

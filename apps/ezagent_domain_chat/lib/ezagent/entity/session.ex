@@ -2233,10 +2233,13 @@ defmodule Ezagent.Entity.Session do
       needed = %{
         kind: kind,
         behavior: Ezagent.Behavior.Template,
-        # SPEC 2026-05-27 capability-action-axis — delegation is for
-        # orchestrator to `:instantiate` templates in the session's
-        # workspace. The minted delegated cap below uses `:instantiate`.
-        action: :instantiate,
+        # SPEC 2026-05-27 capability-action-axis — orchestrator
+        # template delegation spans `:read`, `:write`, `:instantiate`,
+        # `:fork` (Tools.update_agent_template + save_template_as +
+        # fork + Generator instantiate). Bound by instance scope
+        # `:within_workspace`; action axis stays `:any` so orchestrator
+        # tooling works without one cap per action.
+        action: :any,
         instance: representative_uri,
         workspace_uri: session_workspace
       }
@@ -2247,7 +2250,7 @@ defmodule Ezagent.Entity.Session do
       %Ezagent.Capability{
         kind: kind,
         behavior: Ezagent.Behavior.Template,
-        action: :instantiate,
+        action: :any,
         instance: {:within_workspace, session_workspace},
         workspace_uri: session_workspace,
         granted_by: owner_uri,

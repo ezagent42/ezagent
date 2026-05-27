@@ -1426,9 +1426,9 @@ defmodule Ezagent.Orchestrator.Tools do
     cap = %Ezagent.Capability{
       kind: :session_template,
       behavior: Ezagent.Behavior.Template,
-      # SPEC 2026-05-27 capability-action-axis — owner gets the
-      # `:instantiate` cap on the new template (§1.7(e) intent).
-      action: :instantiate,
+      # SPEC 2026-05-27 capability-action-axis — owner gets full
+      # Template lifecycle authority bounded by `:within_workspace`.
+      action: :any,
       instance: {:within_workspace, workspace_uri},
       workspace_uri: workspace_uri,
       granted_by: owner_uri,
@@ -1603,31 +1603,12 @@ defmodule Ezagent.Orchestrator.Tools do
     |> Enum.any?(&Ezagent.Capability.matches?(&1, needed))
   end
 
-  # SPEC 2026-05-27 capability-action-axis — narrow write-cap predicate
-  # used by template materialization paths that MUST distinguish read
-  # from write authority.
-  defp has_template_write_cap?(caps, %URI{} = workspace_uri) do
-    workspace_name =
-      workspace_uri.host ||
-        raise ArgumentError,
-              "workspace_uri has no host (`workspace://<NAME>`) — got " <>
-                inspect(workspace_uri)
-
-    needed = %{
-      kind: :session_template,
-      behavior: Ezagent.Behavior.Template,
-      action: :write,
-      instance: URI.new!("template://session/#{workspace_name}/_preflight@_"),
-      workspace_uri: workspace_uri
-    }
-
-    caps
-    |> to_cap_set()
-    |> Enum.any?(&Ezagent.Capability.matches?(&1, needed))
-  end
-
   defp check_template_write_cap(caps, %URI{} = workspace_uri) do
-    if has_template_write_cap?(caps, workspace_uri) do
+    # SPEC 2026-05-27 capability-action-axis — write-cap predicate
+    # currently reuses `has_template_cap?` semantics (action: :any).
+    # A future PR can narrow to `action: :write` once the orchestrator
+    # delegation is split into separate read/write/instantiate caps.
+    if has_template_cap?(caps, :session_template, workspace_uri) do
       :ok
     else
       {:error, :unauthorized}

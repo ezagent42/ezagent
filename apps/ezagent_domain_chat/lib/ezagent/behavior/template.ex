@@ -676,9 +676,10 @@ defmodule Ezagent.Behavior.Template do
     cap = %Ezagent.Capability{
       kind: :session_template,
       behavior: __MODULE__,
-      # SPEC 2026-05-27 capability-action-axis — owner of the fork
-      # needs to instantiate.
-      action: :instantiate,
+      # SPEC 2026-05-27 capability-action-axis — fork owner gets full
+      # lifecycle authority (read/write/instantiate/fork). The
+      # `:within_workspace` instance scope is the structural narrow.
+      action: :any,
       instance: {:within_workspace, workspace_uri},
       workspace_uri: workspace_uri,
       granted_by: owner_uri,
@@ -696,9 +697,9 @@ defmodule Ezagent.Behavior.Template do
     cap = %Ezagent.Capability{
       kind: :agent_template,
       behavior: __MODULE__,
-      # SPEC 2026-05-27 capability-action-axis — owner of an
-      # AgentTemplate fork needs to instantiate.
-      action: :instantiate,
+      # SPEC 2026-05-27 capability-action-axis — AgentTemplate fork
+      # owner gets full lifecycle authority within the workspace.
+      action: :any,
       instance: {:within_workspace, workspace_uri},
       workspace_uri: workspace_uri,
       granted_by: owner_uri,
