@@ -115,14 +115,17 @@ defmodule Ezagent.Behavior.WorkspaceTest do
   end
 
   describe "Behavior contract" do
-    test "actions/0 lists all 10 actions" do
+    test "actions/0 lists all 11 actions" do
       # SPEC 2026-05-25-agent-create-cli-gui-parity added `:create_agent`
       # as the 10th action — unified entry for CLI + LV agent creation.
-      # Codex PR #356 r1 CRIT fix: `:create_user` was briefly added here
-      # and then moved out to `Ezagent.Behavior.WorkspaceUserAdmin` to
-      # give it a distinct cap subject (the Capability struct has no
-      # action axis, so co-locating privileged actions with
-      # member-management ones is an escalation surface).
+      # SPEC 2026-05-26-session-create-orchestrator-unified Gap C added
+      # `:create_session` as the 11th action — unified CLI + LV session
+      # creation (PR #408). Drive-by test fix in task #46 (Allen 2026-05-27)
+      # to bring the assertion in line with the live actions list. Codex
+      # PR #356 r1 CRIT fix: `:create_user` was briefly added here and
+      # then moved out to `Ezagent.Behavior.WorkspaceUserAdmin` to give
+      # it a distinct cap subject (now via PR #410 the Capability
+      # struct's `action` field disambiguates these).
       assert WB.actions() == [
                :list_members,
                :add_member,
@@ -133,7 +136,8 @@ defmodule Ezagent.Behavior.WorkspaceTest do
                :list_routing_rules,
                :set_routing_rules,
                :instantiate,
-               :create_agent
+               :create_agent,
+               :create_session
              ]
     end
 
