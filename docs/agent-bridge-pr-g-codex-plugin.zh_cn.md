@@ -10,8 +10,11 @@
 - 新增 `codex.agent` Template Class。
 - 每个 agent 启动三类运行时：
   - Codex app-server sidecar（`codex app-server --listen unix://...`）；
-  - 通过 `Ezagent.Domain.Pty` 暴露给用户交互的 Codex TUI；
-  - 连接 AgentBridge 与 app-server 的 Python bridge sidecar。
+  - Python bridge sidecar，创建/恢复 per-agent Codex thread 并持久化
+    thread id；
+  - 通过 `Ezagent.Domain.Pty` 暴露给用户交互的 Codex TUI，并使用
+    `codex resume <thread_id> --remote unix://...`，确保 operator 输入和
+    ezagent bridge turn 进入同一个 Codex thread。
 - 将 `ezagent_plugin_codex` 接入 `ezagent_web`，确保 web release
   启动时 plugin 会 boot。
 - 重构 `Ezagent.AgentBridge.Channel`，让 cc-specific join metadata
@@ -23,7 +26,7 @@ Bridge 流程：
   `Ezagent.AgentBridge.Payload` 交给 codex adapter。
 - `EzagentPluginCodex.BridgeAdapter.deliver/2` 向已连接 sidecar
   推送 `codex_turn` event。
-- `priv/python/ezagent_codex_bridge.py` 通过 `thread/start` 和
+- `priv/python/ezagent_codex_bridge.py` 通过持久化的 `thread_id` 和
   `turn/start` 把内容发送给 Codex。
 - bridge 收集 `item/agentMessage/delta` notification，并在 turn
   完成后通过 AgentBridge 的 `reply` event 回传最终回复。
