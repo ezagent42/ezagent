@@ -1,6 +1,9 @@
 # SPEC — Capability struct gains the `action` axis
 
-**Status:** r8 (codex r7 final-cleanup pass — APPROVE expected). 2026-05-27.
+**Status:** r9 (codex r8 single-word terminology fix). 2026-05-27.
+
+**r9 revision log:**
+- codex r8 MED: line 275 still said "role exemption" while line 253 had just established there's no role field. Single-line fix: replaced "via the role exemption" with explicit cap-holdings rationale (the admin caller's wildcard caps satisfy `holds_admin_caps?/1`; that's the structural mechanism, NOT a role-based exemption).
 
 **r8 revision log (codex r7 findings):**
 - MED RESIDUAL (cap/3 default contradicts §3.2): §8 failure-modes table wrongly said "cap/3 defaults the action via :any". Fixed — `cap/3` REQUIRES the third arg per §3.2; only direct `%Capability{...}` struct construction without `:action` key falls back to defstruct default `:any`.
@@ -272,7 +275,7 @@ This SPEC's `Map.get`/`action_of/1` tolerance at the matcher boundary handles pa
 
 **Future-PR note** (`docs/futures/todo.md`): extend the entity-caps LV grant form with an action selector dropdown (populated from the target Behavior's `actions/0`), so admins can grant narrow caps via the UI without falling back to wildcard. This SPEC's runtime check + admin exemption is the bridge; the action selector is the long-term fix.
 
-This makes the policy structurally enforced for non-admin paths, not just documented. A plugin author writing `required_caps/0` can't drift (compile check 11); a user-facing grant path can't accidentally widen (runtime check rejects); admin LV form continues working today via the role exemption.
+This makes the policy structurally enforced for non-admin paths, not just documented. A plugin author writing `required_caps/0` can't drift (compile check 11); a user-facing grant path can't accidentally widen (runtime check rejects); the admin LV form continues working today because the logged-in admin caller's wildcard caps satisfy `holds_admin_caps?/1` and the runtime check passes (NOT a "role exemption" — admin authority IS the caller's cap-holdings).
 
 ### 3.7 Snapshot binary restore — handled structurally at `matches?/2`, not by reconcile-on-load (codex r2 fix)
 
