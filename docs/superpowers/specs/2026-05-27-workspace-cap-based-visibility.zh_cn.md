@@ -1,8 +1,15 @@
 # SPEC — 基于 cap 的 workspace 可见性，替代 `workspaces.visible` 布尔字段
 
-**状态：** r4 — codex r3 HIGH（等价声称过强）+ MED（层违例）+ LOW（附录 C 过时）已修复。2026-05-27。
+**状态：** r5 — codex r4 HIGH（§11 q#6 残留 r3 风格语言）+ MED（OQ-4 模块放置）已修复。2026-05-27。
 
-**r4 变更（codex r3 评审 verdict REJECT —— 三项发现已处理）：**
+**r5 变更（codex r4 评审 verdict REJECT —— 两项发现已处理）：**
+- HIGH（codex r4）：§11 问题 #6 仍带 r3 风格语言（"与 cross_workspace?/2 的权威逻辑完全一致"）以及被 r4 拒绝的 helper 名 `Capability.admin_authority?/2`，与 r4 §3.3（有意更窄）+ §10 OQ-7（两个 helper 保持独立）矛盾。**修：** §11 q#6 重写以匹配 r4 语义；两个 helper 共享**三**条 clause 但**不**共享 wildcard-cap 路径；共享 admin helper 只覆盖 admin 捷径。EN + ZH 同步。
+- MED（codex r4）：r4 OQ-4 选项 (b) 把 `admin_authority?/2` 放在 `Ezagent.Behavior.Identity`，但四个 admin 谓词实际住在 `Ezagent.Behavior.IdentityAdmin` 内（728、835 行 —— `identity.ex` 在一个文件里有**两个** behavior 模块，在 305-307 行处分界）。r4 也把策略与 Behavior 动作的关注混淆了。**修：** OQ-4 选项 (b) 修订为新建**非 Behavior** 专用策略模块 `Ezagent.Identity.AdminAuthority.admin?/2`（在 `Behavior.*` 命名空间之外）。OQ-4 加入模块结构说明记录源拆分。OQ-7 + 附录 C + §3.3 "对 OQ-7 共享 helper 的含义" 都用 r5 helper 名更新。
+- 附加（codex r4 NIT）：OQ-7 加入前瞻可维护性契约 —— 未来加入新 admin-cap 变体的 SPEC 必须回答"该变体是否也产生运行时跨 workspace 旁路？"是则两个 helper 都要更新；否则只更新 admin 捷径。
+
+**r4 变更（保留）：** §3.3 "等价" 改写为 "关系 —— 有意更窄"（codex r3 HIGH 关于 wildcard cap 路径）；OQ-7 默认改为两个 helper 独立；附录 C 改写列全部 7 OQ 默认。
+
+**r4 详细变更（codex r3 评审 verdict REJECT —— 三项发现已处理）：**
 - HIGH（codex r3）：r3 §3.3 "与 `Capability.cross_workspace?/2` 等价" 声称过强。`cross_workspace?/2` 的**第一条** clause（`capability.ex:466`）匹配**任何** `%Capability{workspace_uri: :any}`，不限 `kind`/`behavior`/`action`。runtime step 5.6 路径（`runtime.ex:521,609`）与 cross-workspace 隔离 invariant fixture（`cross_workspace_isolation_test.exs:96`）正是利用这点 —— 非 admin 形状的 wildcard cap（例如 `%Capability{kind: :session, workspace_uri: :any}`）产生 per-action 运行时旁路。r3 声称这"被 (i)/(ii) 蕴含" —— **错**，因为 (i)/(ii) 要求严格 admin 形状。**修：** §3.3 "等价" 子节改写为 "**关系 —— 在 wildcard cap 路径上有意更窄**"，记录权威轴不对称：运行时旁路是 per-cap per-action，可见性是 per-caller aggregate。admin 捷径**有意**收窄 wildcard cap 路径（依 §3.3.b + OQ-5）。§3.4 也加了显式的非 admin wildcard 案例。
 - MED（codex r3）：r3 OQ-4 选项 (b) 把 `admin_authority?/2` 放在 `Capability`（`ezagent_core`），但四个谓词中**两个**住在 `Identity`（`ezagent_domain_identity` —— **依赖** `ezagent_core`）。`Capability` 调 `Identity.holds_*` 是 umbrella 反向依赖，结构上拒绝。**修：** OQ-4 选项 (b) 已修订 —— helper 迁到 `Ezagent.Behavior.Identity.admin_authority?(caller_uri, caps)`（在 `ezagent_domain_identity`，两个源模块**之上**一层）。每个调用都沿 umbrella 图向下。r3 默认 (b) 已显式标注 "已拒绝 —— 层违例"。
 - LOW（codex r3）：附录 C 仍写 "6 个 OQ" + 过时默认（"OQ-4：提升为公开"），尽管 r3 已有 7 OQ。**修：** 附录 C 改写，列出全部 7 OQ 的 r4 默认。EN + ZH 同步。
@@ -113,7 +120,7 @@ list_workspaces_for(caller_uri, caps) =
 
 **权威形状不对称，是有意的：** 运行时旁路（`cross_workspace?/2`）是 per-action per-cap —— 它问"这**一个** cap，既然已经通过了 cap_for_action 过滤，是否也旁路 workspace 隔离？"。对任何 `workspace_uri: :any` 的 cap 答案是"是"，因为 dispatch chokepoint 已经授权该 action。可见性（`list_workspaces_for/2`）是 per-caller 且**聚合**所有 caps —— 它问"该 caller 应在列表里看到哪些 workspace（每个 workspace 是 UI 入口）"。一个持 session-wildcard cap 的非 admin 只应看到他能操作的 workspace，不是系统中每一个。不同抽象层 → 不同谓词形状；这是正确的，**不是**漂移。
 
-**对 OQ-7（r3）共享 helper 的含义：** 提议的 `Identity.admin_authority?(caller_uri, caps)` **不是** `cross_workspace?/2` 的替代品。两者覆盖**重叠但不同**的权威轴。OQ-7 默认（在范围内重构）在 r4 已修订 —— 见 §10 OQ-7。共享 helper 若抽取，只编码 admin 捷径的四谓词；`cross_workspace?/2` 的第一条 wildcard clause 保留原处。
+**对 OQ-7（r3）共享 helper 的含义：** 提议的 `Ezagent.Identity.AdminAuthority.admin?(caller_uri, caps)`（r5 名 —— 见 §10 OQ-4）**不是** `cross_workspace?/2` 的替代品。两者覆盖**重叠但不同**的权威轴。OQ-7 默认（原"在范围内重构"）在 r4/r5 已修订 —— 见 §10 OQ-7。共享 helper 若抽取，只编码 admin 捷径的四谓词；`cross_workspace?/2` 的第一条 wildcard clause 保留原处。
 
 r1 草稿漏掉 (i)：bootstrap admin 启动时 `workspace://system.members` 为空（`ensure_system_workspace/0` 种空成员），`member_of_system?/1` 返回 false；bootstrap wildcard 的 `kind: :any` 不匹配 (ii) 字面 `kind: :workspace`。两个谓词都假，bootstrap admin 落到 cap-scope 分支（丢 `workspace_uri: :any`）—— 结果 `[]`，相对今天 `list_visible/0` 是回归。r2 加 (i) 关闭此漏洞。r3 在 codex r2 评审 HIGH 之后加 (iii) —— admin 创建于 system 的用户（按 `cross_workspace?/2` 的 `home_is_system?` 路径是 admin-equivalent）也被 r2 漏掉了。
 
@@ -428,15 +435,19 @@ PR 描述与 SPEC 实现计划都把这一步标为 `human-required:db-migration
 
    r4 修订后的三个选项：
 
-   **(a) 四个全部在原地提升为公开。** 加 `Identity.holds_admin_caps?/1` + `Identity.holds_cross_workspace_admin_cap?/1` + `Capability.home_is_system?/1` + `Capability.member_of_system?/1` 为公开函数。`Ezagent.Workspace.list_workspaces_for/2` 直接调这四个（用 `Capability.*` 和 `Identity.*` 限定 —— `ezagent_domain_workspace` 已经同时依赖 `ezagent_core` 和 `ezagent_domain_identity`，调用点合法）。surface 增 4 个函数，每个语义清晰单一。**无层违例。**
+   **(a) 四个全部在原地提升为公开。** 加 `IdentityAdmin.holds_admin_caps?/1` + `IdentityAdmin.holds_cross_workspace_admin_cap?/1`（目前是 `Ezagent.Behavior.IdentityAdmin`（`identity.ex:307`）里的 `defp` —— 见下方模块结构说明）+ `Capability.home_is_system?/1` + `Capability.member_of_system?/1` 为公开函数。`Ezagent.Workspace.list_workspaces_for/2` 直接调这四个（用 `Capability.*` 和 `Ezagent.Behavior.IdentityAdmin.*` 限定 —— `ezagent_domain_workspace` 已经同时依赖 `ezagent_core` 和 `ezagent_domain_identity`，调用点合法）。surface 增 4 个函数，每个语义清晰单一。**无层违例。**
 
-   **(b —— r4 修订) 在 `ezagent_domain_identity` 抽出 `Ezagent.Behavior.Identity.admin_authority?(caller_uri, caps)`。** Helper 住在两个源模块**之上一层**：调 `Identity.holds_admin_caps?/1` + `Identity.holds_cross_workspace_admin_cap?/1`（同模块 —— 提升为公开）+ `Capability.home_is_system?/1` + `Capability.member_of_system?/1`（capability.ex —— 提升为公开）。`Ezagent.Workspace.list_workspaces_for/2`（在 `ezagent_domain_workspace`，依赖 `ezagent_domain_identity`）调 `Identity.admin_authority?/2`。surface 增 5 个函数，但仅 `admin_authority?` 是 operator 复用面；其他 4 个是可单元测的原语。**无反向依赖** —— 每个调用都沿 umbrella 图向下。
+   **(b —— r5 修订 —— codex r4 MED) 在 `ezagent_domain_identity` 新建 `Ezagent.Identity.AdminAuthority` 策略模块。** Helper 住在**专用的非 Behavior 策略模块**：`Ezagent.Identity.AdminAuthority.admin?(caller_uri, caps) :: boolean()`。内部调 `IdentityAdmin.holds_admin_caps?/1` + `IdentityAdmin.holds_cross_workspace_admin_cap?/1`（在其原模块提升为公开）+ `Capability.home_is_system?/1` + `Capability.member_of_system?/1`（capability.ex —— 提升为公开）。`Ezagent.Workspace.list_workspaces_for/2`（在 `ezagent_domain_workspace`，依赖 `ezagent_domain_identity`）调 `Ezagent.Identity.AdminAuthority.admin?/2`。surface 增 5 个函数，但仅 `AdminAuthority.admin?/2` 是 operator 复用面；其他 4 个是可单元测的原语。**无反向依赖** —— 每个调用都沿 umbrella 图向下。
 
-   **(b —— r3 原版，r4 已拒绝)：** r3 默认把 `admin_authority?/2` 放在 `Capability`（`ezagent_core`）。codex r3 评审把此标为 MED 层违例 —— `Capability` 调 `Identity.holds_*` 是 umbrella 反向依赖。r4 把 helper 迁到 `Identity`。
+   **模块结构说明：** 本 SPEC 起初引用这些谓词为 `Ezagent.Behavior.Identity` 上的，但实际源码在同一文件里有**两个** behavior 模块：`Ezagent.Behavior.Identity`（1-305 行）与 `Ezagent.Behavior.IdentityAdmin`（307 行起）。四个 admin-shape 谓词（`holds_admin_caps?/1` 在 835、`holds_cross_workspace_admin_cap?/1` 在 728）住在 `IdentityAdmin`**内部**，不在 `Identity`。codex r4 评审（MED）指出这点 —— 把 `admin_authority?` 挂在 `Behavior.Identity` 错在 (a) 谓词不在那个模块、(b) 把策略 helper 挂在 Behavior 动作模块混淆了策略与 Behavior。因此 r5 新建专用 `Ezagent.Identity.AdminAuthority` 策略模块 —— **在 `Behavior.*` 命名空间之外** —— 来承载该 helper。
+
+   **(b —— r3 原版，r4 已拒绝)：** r3 默认把 `admin_authority?/2` 放在 `Capability`（`ezagent_core`）。codex r3 评审把此标为 MED 层违例 —— `Capability` 调 `Identity.holds_*` 是 umbrella 反向依赖。r4 迁了 helper；r5 终确定模块名。
+
+   **(b —— r4 原版，r5 已被取代)：** r4 把 helper 放为 `Ezagent.Behavior.Identity.admin_authority?(caller_uri, caps)` 挂在 `Behavior.Identity` 模块。codex r4 评审（MED）指出此错：谓词住在 `IdentityAdmin`，不是 `Identity`；且把策略挂在 Behavior 模块混淆关注。r5 把放置最终确定为新的 `Ezagent.Identity.AdminAuthority` 策略模块。
 
    **(c) 在 `Ezagent.Workspace` 里重新实现四个谓词。** `list_workspaces_for/2` 把四个模式 inline。surface 不变但**有漂移风险** —— 如果 `identity.ex` 更新 `holds_admin_caps?/1`（例如未来 SPEC 加入新 wildcard 变体），`Workspace` 必须呼应该改动。此外：(c) 会强制 `workspace.ex` 含 `member_of_system?` 查询，引用 `"system"` 字面 —— 被 INV-8 结构性否决。
 
-   **默认（r4）：(b —— 已修订) —— 抽 `Identity.admin_authority?/2`。** 理由：四个谓词功能上是同一个决定（"该 caller 是不是 admin？"）；单个 helper 把它们绑为一个原子检查；放在 `Identity` 尊重 umbrella 依赖方向。(a) 也是可接受备选，若 Allen 偏好减少新 helper —— 见 OQ-7 的权衡。
+   **默认（r5）：(b —— 已修订) —— 新建 `Ezagent.Identity.AdminAuthority.admin?/2`。** 理由：四个谓词功能上是同一个决定（"该 caller 在 operator 列表意义上是不是 admin？"）；单个 helper 把它们绑为一个原子检查；放在专用策略模块（**不**在 `Behavior.*` 下）让 helper 在语义上与 Behavior 动作分开；在 `ezagent_domain_identity` 尊重 umbrella 依赖方向。(a) 也是可接受备选，若 Allen 偏好减少新模块 —— 见 OQ-7 的权衡。
 
    **与 INV-8 的交互：** 选项 (a) 和 (b-r4) 让 `"system"` 字面留在 `Capability.member_of_system?/1`（在 `capability.ex`）。`Store.get_by_name("system")` 调用通过 `apply/3` 从 `capability.ex` 间接发起（与今天同款）。`workspace.ex` 与 `store.ex` 仍无字面。选项 (c) 触发 INV-8 —— 多重否决。
 
@@ -446,13 +457,15 @@ PR 描述与 SPEC 实现计划都把这一步标为 `human-required:db-migration
 
 7. **OQ-7 [r3 —— 新增；r4 —— codex r3 HIGH 发现后已修订]：`Identity.admin_authority?/2` 与 `Capability.cross_workspace?/2` 的关系？** codex r3 评审确认（HIGH）r3 的"等价"声称被夸大了 —— `cross_workspace?/2` 的**第一条** clause 匹配**任何** `%Capability{workspace_uri: :any}`（不限 `kind`/`behavior`/`action`）。runtime step 5.6 路径（`runtime.ex:521,609`）与 cross-workspace 隔离 invariant fixture（`cross_workspace_isolation_test.exs:96`）正是有意利用 —— 非 admin 形状的 wildcard cap（例如 `%Capability{kind: :session, behavior: :any, workspace_uri: :any}`）触发 per-action 运行时旁路。可见性的 admin 捷径**有意**不覆盖这条路径（依 §3.3.b + OQ-5 —— 非 admin wildcards 不进列表）。
 
-   **结论：** `Identity.admin_authority?(caller_uri, caps)` 与 `Capability.cross_workspace?(cap, caller_uri)` 是**两根**权威轴：
+   **结论：** `Ezagent.Identity.AdminAuthority.admin?(caller_uri, caps)`（r5 名 —— 见 OQ-4）与 `Capability.cross_workspace?(cap, caller_uri)` 是**两根**权威轴：
    - `cross_workspace?/2` 是 per-cap, per-action："此**一个** cap 已经授权了**此**action，是否也旁路 workspace 隔离？"
-   - `admin_authority?/2` 是 per-caller, **aggregate**："此 caller 在 operator 列表意义上是不是 admin？"
+   - `AdminAuthority.admin?/2` 是 per-caller, **aggregate**："此 caller 在 operator 列表意义上是不是 admin？"
 
-   `admin_authority?/2` **不应**委托给 `cross_workspace?/2`（会把可见性放太宽）。`cross_workspace?/2` **不应**委托给 `admin_authority?/2`（会把 per-action 旁路放太窄）。二者作为独立公开 helper 并存。§3.3 admin 捷径与 `cross_workspace?/2` 共享**三**条 clause（home_is_system?、member_of_system?、(i)/(ii) 形状下的 `workspace_uri: :any`），**但不**共享不受限的 wildcard 路径。
+   `AdminAuthority.admin?/2` **不应**委托给 `cross_workspace?/2`（会把可见性放太宽）。`cross_workspace?/2` **不应**委托给 `AdminAuthority.admin?/2`（会把 per-action 旁路放太窄）。二者作为独立公开 helper 并存。§3.3 admin 捷径与 `cross_workspace?/2` 共享**三**条 clause（home_is_system?、member_of_system?、(i)/(ii) 形状下的 `workspace_uri: :any`），**但不**共享不受限的 wildcard 路径。
 
-   **默认（r4）：** 本 PR**不**重构 `cross_workspace?/2`。admin 捷径 helper（`Identity.admin_authority?/2`，依 OQ-4 选项 (b — 已修订)）与 `cross_workspace?/2` 保持独立。前瞻：若未来 SPEC 需要合并，由更高层 helper 同时调两者 —— **不**靠把一个塞进另一个。
+   **前瞻可维护性契约（codex r4 NIT）：** 若未来 `holds_admin_caps?/1` 变体仍带 `workspace_uri: :any`，`cross_workspace?/2` 通过其第一条 clause 自动接住 —— 无需额外工作。若未来 admin 变体**不**带 `workspace_uri: :any` 但**应**也旁路运行时隔离，则 `cross_workspace?/2` 需要显式更新。每个加入新 admin-cap 变体的 SPEC 必须回答："该变体是否也产生运行时跨 workspace 旁路？" —— 是则两个 helper 都要更新；否则只更新 admin 捷径。
+
+   **默认（r5）：** 本 PR**不**重构 `cross_workspace?/2`。admin 捷径 helper（`Ezagent.Identity.AdminAuthority.admin?/2`，依 OQ-4 选项 (b — r5)）与 `cross_workspace?/2` 保持独立。前瞻：若未来 SPEC 需要合并，由更高层 helper 同时调两者 —— **不**靠把一个塞进另一个。
 
 ## 11. Codex 对抗式评审问题（供 r1 评审用）
 
@@ -466,7 +479,7 @@ PR 描述与 SPEC 实现计划都把这一步标为 `human-required:db-migration
 
 5. **删除布尔是否破坏任何 operator pinned artifact？** 依 §9.1，mix 任务不引用 visible。依 §9.4，无公开 API。grep 审计已完成。`apps/*/test/support/fixtures/` 里有没有 pinned snapshot 文件 / fixture 会反序列化老的带 `visible: ...` 的 `Workspace.Store.decoded()` map 然后崩？（可能没有 —— fixture 通常不序列化内部 map；它们通过 `Store.create/2` 建行。用 grep 验。）
 
-6. **cross-workspace cap 路径。[r1 已确认 —— r2 已折入 §3.3；r3 在 codex r2 评审后加 home_is_system?；r4 在 codex r3 找到 wildcard-cap 路径未被蕴含后把"等价"改写为"有意更窄"。]** `holds_cross_workspace_admin_cap?/1` 匹配 `kind: :workspace, behavior: Workspace, action: :any, instance: :any, workspace_uri: :any`（`identity.ex:738-744`）。admin caller 的主 cap（bootstrap 形状）是 `kind: :any, behavior: :any, action: :any, ...` —— **不是** `kind: :workspace`，所以**不**通过 `holds_cross_workspace_admin_cap?/1`。它**通过** `holds_admin_caps?/1`（`identity.ex:835-868`）。此外：启动时 `workspace://system` 的 `members` **是空的**（`apps/ezagent_domain_chat/lib/ezagent_domain_chat/application.ex:269-275` 的 `ensure_system_workspace/0` 种空 members；admin 只在 LV "Promote to system" 路径 `users_live.ex:232` 被加入）。所以 `member_of_system?/1` 对启动时的 bootstrap admin **也**返回 false。**r2 解决方式：** 加 `holds_admin_caps?(caps)`。**r3 解决方式（codex r2 评审 HIGH）：** codex 指出 r2 漏了另一条 admin 路径 —— `Capability.cross_workspace?/2`（`capability.ex:466-470`）通过 `home_is_system?(caller_uri) or member_of_system?(caller_uri)` 处理 caller，其中 `home_is_system?` 匹配 `entity://user/system/<name>`（URI host = "system"）。在 workspace `system` 创建（admin 通过 `users_live.ex:35` UI 创建）但**不**在 `workspace://system.members` 的用户，按 `cross_workspace?/2` 是 admin-equivalent，但 r2 会错把他们当非 admin。r3 加 (iii) `home_is_system?(caller_uri)`，admin 捷径成为**四谓词并集**，与 `Capability.cross_workspace?/2` 的权威逻辑**完全一致**。附录 A 序列图已同步。OQ-4 + OQ-7（都是 r3）提议把它们抽进一个 `Capability.admin_authority?/2` helper，按构造执行等价性。
+6. **cross-workspace cap 路径。[r1 已确认 —— r2 已折入 §3.3；r3 在 codex r2 评审后加 home_is_system?；r4 在 codex r3 找到 wildcard-cap 路径未被蕴含后把"等价"改写为"有意更窄"；r5 在 codex r4 评审后修复本段残留的 r3 风格语言。]** `holds_cross_workspace_admin_cap?/1` 匹配 `kind: :workspace, behavior: Workspace, action: :any, instance: :any, workspace_uri: :any`（`identity.ex:738-744`）。admin caller 的主 cap（bootstrap 形状）是 `kind: :any, behavior: :any, action: :any, ...` —— **不是** `kind: :workspace`，所以**不**通过 `holds_cross_workspace_admin_cap?/1`。它**通过** `holds_admin_caps?/1`（`identity.ex:835-868`）。此外：启动时 `workspace://system` 的 `members` **是空的**（`apps/ezagent_domain_chat/lib/ezagent_domain_chat/application.ex:269-275` 的 `ensure_system_workspace/0` 种空 members；admin 只在 LV "Promote to system" 路径 `users_live.ex:232` 被加入）。所以 `member_of_system?/1` 对启动时的 bootstrap admin **也**返回 false。**r2 解决方式：** 加 `holds_admin_caps?(caps)`。**r3 解决方式（codex r2 评审 HIGH）：** codex 指出 r2 漏了另一条 admin 路径 —— `Capability.cross_workspace?/2`（`capability.ex:466-470`）通过 `home_is_system?(caller_uri) or member_of_system?(caller_uri)` 处理 caller，其中 `home_is_system?` 匹配 `entity://user/system/<name>`（URI host = "system"）。在 workspace `system` 创建（admin 通过 `users_live.ex:35` UI 创建）但**不**在 `workspace://system.members` 的用户，按 `cross_workspace?/2` 是 admin-equivalent，但 r2 会错把他们当非 admin。r3 加 (iii) `home_is_system?(caller_uri)`，admin 捷径成为四谓词并集，与 `cross_workspace?/2` 共享**三**条 clause（home_is_system?、member_of_system?、收窄的 (i)/(ii) 形状下的 workspace_uri:any）。**r4 解决方式（codex r3 评审 HIGH）：** codex 指出 r3 "与 cross_workspace?/2 完全一致" 声称过强 —— `cross_workspace?/2` 第一条 clause 匹配**任何** `%Capability{workspace_uri: :any}`，不限 kind/behavior/action；admin 捷径**有意不**镜像（依 §3.3.b + OQ-5）。r4 把 §3.3 改写为 "关系 —— 有意更窄"，OQ-7 改为两个 helper 保持独立。**r5 解决方式（codex r4 评审 HIGH）：** 本段先前措辞仍写 "与 cross_workspace?/2 的权威逻辑完全一致" 并提议 `Capability.admin_authority?/2` —— 都与 r4 修订矛盾。r5 重写本段以匹配 r4 §3.3 与 §10 OQ-7：两个 helper 保持独立；提议的共享 admin helper（按 OQ-4 选项 (b-r4) 放在 `ezagent_domain_identity`）只覆盖 admin 捷径，**不**覆盖 `cross_workspace?/2`。附录 A 序列图仍正确显示四谓词。
 
 ## 12. 回滚方案
 
@@ -519,9 +532,9 @@ LV 赋值 :workspaces           — 给 AppShell.app_shell perspective 渲染用
 - OQ-1：`MapSet | List` 两种 cap 形状都收
 - OQ-2：caller 传 caps（不重抓）
 - OQ-3：cap-scope 查询用内存过滤
-- OQ-4（r4 —— 已修订）：在 `ezagent_domain_identity` 抽 `Identity.admin_authority?/2`（选项 b-r4），同时把 4 个源谓词在原地提升为公开
+- OQ-4（r5 —— 已修订）：在 `ezagent_domain_identity` 新建 `Ezagent.Identity.AdminAuthority.admin?/2` 策略模块（选项 b-r5），同时把 4 个源谓词在原地（`IdentityAdmin` + `Capability`）提升为公开
 - OQ-5：cap-scope 分支跳过非 admin caller 的 `workspace_uri: :any`
 - OQ-6：不加启动检查；schema 不匹配崩本身是取证信号
-- OQ-7（r4 —— 已修订）：**不**重构 `cross_workspace?/2`；两个 helper（`admin_authority?/2` 与 `cross_workspace?/2`）保持独立，因为它们编码**不同**的权威轴（见 §3.3 "关系" 子节）
+- OQ-7（r5 —— 已修订）：**不**重构 `cross_workspace?/2`；两个 helper（`AdminAuthority.admin?/2` 与 `cross_workspace?/2`）保持独立，因为它们编码**不同**的权威轴（见 §3.3 "关系" 子节）；前瞻可维护性契约规定未来加入新 admin-cap 变体的 SPEC 何时必须更新两个 helper
 
 Allen 可对任意一个确认或推翻。Allen 不推翻则子代理按默认继续。
