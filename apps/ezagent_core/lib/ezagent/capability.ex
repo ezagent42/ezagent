@@ -423,21 +423,14 @@ defmodule Ezagent.Capability do
       }),
       do: true
 
-  def admin_invariant?(
-        %__MODULE__{
-          kind: :any,
-          behavior: :any,
-          instance: :any,
-          workspace_uri: :any,
-          granted_by: %URI{scheme: "system", host: "bootstrap"}
-        } = cap
-      ),
-      # codex r3 fix: pre-SPEC admin caps had no `:action` key at all
-      # (real legacy snapshot shape). `action_of(cap) == :any` was
-      # forgeable post-SPEC via `Map.delete(cap, :action)`. Use the
-      # real absent-field check — `Map.has_key?` does not default.
-      do: not Map.has_key?(cap, :action)
-
+  # codex r4 SPEC option-B: legacy fallback REMOVED. Pre-SPEC admin caps
+  # missing `:action` no longer recognized — operators MUST re-grant
+  # admin authority via `Identity.grant_cap` (which goes through
+  # `normalize!/2` and writes `action: :any` explicitly).
+  # Rationale: `Map.delete(cap, :action)` produces a shape structurally
+  # indistinguishable from a real legacy snapshot, so the legacy
+  # fallback was redundant defense at this layer (matcher-boundary
+  # tolerance per SPEC §3.3 still handles legacy at dispatch step 5.5).
   def admin_invariant?(%__MODULE__{}), do: false
 
   @doc """

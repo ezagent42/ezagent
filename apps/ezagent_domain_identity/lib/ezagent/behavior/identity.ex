@@ -744,22 +744,11 @@ defmodule Ezagent.Behavior.IdentityAdmin do
       } ->
         true
 
-      %Ezagent.Capability{
-        kind: :workspace,
-        behavior: Ezagent.Behavior.Workspace,
-        instance: :any,
-        workspace_uri: :any
-      } = cap ->
-        # codex r2 new HIGH (forgeable legacy path): the legacy branch
-        # must ONLY accept caps that were legitimately serialized BEFORE
-        # the `:action` axis existed (i.e. struct literally missing the
-        # key, post-`binary_to_term` from a pre-SPEC snapshot).
-        # `action_of(cap) == :any` was forgeable — a caller controlling
-        # `ctx.caps` could `Map.delete(cap, :action)` to fall through the
-        # narrow check. Tighten to `not Map.has_key?(cap, :action)` —
-        # a real absent-field check, no Map.get default.
-        not Map.has_key?(cap, :action)
-
+      # codex r4 SPEC option-B: legacy fallback REMOVED. Only explicit
+      # `action: :any` (post-SPEC wildcard) confers cross-workspace
+      # admin authority. Pre-SPEC snapshot caps without `:action` are
+      # rejected here — operator MUST re-grant via Identity.grant_cap
+      # (which now writes action: :any via normalize!/2).
       _ ->
         false
     end)
@@ -809,24 +798,10 @@ defmodule Ezagent.Behavior.IdentityAdmin do
       } ->
         true
 
-      # Legacy snapshot-restored caps (no `:action` key) — codex r2 fix:
-      # ONLY accept caps that literally lack the `:action` field (real
-      # `binary_to_term` of pre-SPEC %Capability{} produces this exact
-      # shape via non-exhaustive struct restore). A forgeable
-      # `action_of(cap) == :any` check let any controlled-`ctx.caps`
-      # path `Map.delete(cap, :action)` to bypass the narrow guard;
-      # `Map.has_key?` is the real absent-field check, no defaulting.
-      %Ezagent.Capability{
-        behavior: Ezagent.Behavior.Workspace,
-        workspace_uri: ^ws_uri
-      } = cap ->
-        not Map.has_key?(cap, :action)
-
-      %Ezagent.Capability{
-        behavior: Ezagent.Behavior.Workspace,
-        workspace_uri: :any
-      } = cap ->
-        not Map.has_key?(cap, :action)
+      # codex r4 SPEC option-B: legacy fallback REMOVED. Only explicit
+      # `action: :any` caps (post-SPEC wildcards) confer workspace-
+      # admin authority. Pre-SPEC snapshot caps lacking `:action` no
+      # longer accepted — re-grant required via Identity.grant_cap.
 
       _ ->
         false
@@ -881,18 +856,9 @@ defmodule Ezagent.Behavior.IdentityAdmin do
       } ->
         true
 
-      # Legacy pre-action-axis structs (snapshot restored before this
-      # SPEC landed) — the `:action` key is absent from the map.
-      # codex r3 fix: forge-proofed via `not Map.has_key?/2` (was
-      # `action_of(cap) == :any` which defaults to :any via Map.get
-      # and let `Map.delete(cap, :action)` forge admin authority).
-      %Ezagent.Capability{
-        kind: :any,
-        behavior: :any,
-        instance: :any,
-        workspace_uri: :any
-      } = cap ->
-        not Map.has_key?(cap, :action)
+      # codex r4 SPEC option-B: legacy fallback REMOVED. Bootstrap
+      # admin must hold explicit `action: :any` cap. Pre-SPEC
+      # full-wildcard caps lacking `:action` no longer recognized.
 
       _ ->
         false

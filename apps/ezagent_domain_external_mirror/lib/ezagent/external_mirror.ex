@@ -485,16 +485,11 @@ defmodule Ezagent.ExternalMirror do
   # (`action: :any`). Legacy snapshot-restored caps without an
   # `:action` key fall through to the second clause via
   # `Capability.action_of/1`.
-  # codex r3 forgeable-legacy fix: same as external_mirror/gates.ex —
-  # split into explicit-action-any post-SPEC + true-absent-action
-  # legacy clauses (`is_map_key/2` guard) so `Map.delete(cap, :action)`
-  # forgery cannot bypass admin recognition.
+  # codex r4 SPEC option-B: legacy fallback REMOVED. Pre-SPEC caps
+  # missing `:action` no longer satisfy admin shape — explicit
+  # `action: :any` required. See SPEC §3.7 r4 rationale.
   defp cap_admin_shape?(%{kind: :any, behavior: :any, action: :any, instance: :any}),
     do: true
-
-  defp cap_admin_shape?(%{kind: :any, behavior: :any, instance: :any} = cap)
-       when not is_map_key(cap, :action),
-       do: true
 
   defp cap_admin_shape?(%{
          kind: :session,
@@ -510,14 +505,6 @@ defmodule Ezagent.ExternalMirror do
          action: :list_bindings,
          instance: :any
        }),
-       do: true
-
-  defp cap_admin_shape?(%{
-         kind: :session,
-         behavior: Ezagent.Behavior.ExternalMirror,
-         instance: :any
-       } = cap)
-       when not is_map_key(cap, :action),
        do: true
 
   defp cap_admin_shape?(_), do: false

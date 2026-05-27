@@ -593,47 +593,23 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
     end
   end
 
-  describe "codex r3 forgeable-legacy regression — admin_invariant? must reject Map.delete(cap, :action)" do
-    # codex r3 HIGH (after r2 fix landed): six executable sites used
-    # `action_of(cap) == :any` as the legacy-shape guard. `action_of/1`
-    # is `Map.get(cap, :action, :any)` — defaults to :any for both
-    # truly absent (legacy snapshot) AND forged-absent (Map.delete on
-    # narrow cap). Six sites swept to `not Map.has_key?(cap, :action)`
-    # OR `is_map_key/2` guard:
+  describe "codex r4 SPEC option-B — admin_invariant? requires explicit action: :any (no legacy fallback)" do
+    # codex r4 outcome: empirical verification showed `Map.delete(cap, :action)`
+    # and genuine pre-SPEC snapshot caps produce indistinguishable shapes
+    # (both have :action key absent, both return :any via Map.get default).
+    # No code-level fix can distinguish them at the cap-shape layer.
     #
-    #   apps/ezagent_core/lib/ezagent/capability.ex (admin_invariant?)
-    #   apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror.ex (cap_admin_shape?)
-    #   apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/gates.ex (cap_admin_shape?)
-    #   apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex (holds_admin_caps?/1, holds_cross_workspace_admin_cap?/1, holds_workspace_admin_cap?/2)
+    # Allen's choice (option B): remove the legacy fallback entirely.
+    # Pre-SPEC admin caps lacking :action are rejected — operators must
+    # re-grant via Identity.grant_cap (which now writes action: :any
+    # explicitly via normalize!/2). Trade-off:
     #
-    # codex r3 also flagged the original r2 regression test as vacuous
-    # — it tested `Capability.matches?/2` (which deliberately tolerates
-    # missing action). This test instead exercises the public
-    # `Capability.admin_invariant?/1` predicate that the patched code
-    # uses for admin recognition. The predicate is the public-API
-    # surface for "is this a real admin cap" across the codebase.
-
-    test "admin_invariant?: real legacy cap (no :action key) is accepted" do
-      # Legitimate pre-SPEC admin cap (would come from binary_to_term
-      # of a struct serialized before the :action field existed).
-      full_legacy = %Ezagent.Capability{
-        kind: :any,
-        behavior: :any,
-        action: :any,
-        instance: :any,
-        workspace_uri: :any,
-        granted_by: URI.parse("system://bootstrap"),
-        granted_at: DateTime.utc_now()
-      }
-
-      # Simulate "field literally absent" by `Map.delete` — that's the
-      # post-`binary_to_term` shape of pre-SPEC %Capability{} structs.
-      legacy = Map.delete(full_legacy, :action)
-      assert not Map.has_key?(legacy, :action), "pre-condition: :action key absent"
-
-      assert Capability.admin_invariant?(legacy),
-             "pre-SPEC admin cap (genuine missing-key shape) MUST still be recognized as admin"
-    end
+    #   PRO: Map.delete forgery can't impersonate admin authority
+    #   PRO: cap shape is unambiguous post-SPEC (always has :action)
+    #   CON: pre-SPEC admin caps in snapshots need re-grant on upgrade
+    #
+    # These tests pin the new strict semantic — post-SPEC admin caps
+    # accepted; legacy missing-key caps rejected.
 
     test "admin_invariant?: explicit action: :any post-SPEC admin cap is accepted" do
       post_spec = %Ezagent.Capability{
@@ -647,11 +623,32 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
       }
 
       assert Capability.admin_invariant?(post_spec),
-             "post-SPEC explicit-wildcard admin cap MUST be recognized — sanity for back-compat"
+             "post-SPEC explicit-wildcard admin cap MUST be recognized"
     end
 
-    test "admin_invariant?: action: :create_session does NOT pass admin recognition" do
-      # Narrow cap should obviously not be admin.
+    test "admin_invariant?: pre-SPEC legacy cap (Map.delete on :action key) is REJECTED" do
+      # The legacy fallback is removed (option B). Pre-SPEC admin caps
+      # serialized without :action field cannot impersonate admin
+      # authority. Same shape as Map.delete forgery — neither succeeds.
+      full_legacy = %Ezagent.Capability{
+        kind: :any,
+        behavior: :any,
+        action: :any,
+        instance: :any,
+        workspace_uri: :any,
+        granted_by: URI.parse("system://bootstrap"),
+        granted_at: DateTime.utc_now()
+      }
+
+      legacy_or_forged = Map.delete(full_legacy, :action)
+      assert not Map.has_key?(legacy_or_forged, :action),
+             "pre-condition: :action key absent (legacy OR forged shape)"
+
+      refute Capability.admin_invariant?(legacy_or_forged),
+             "post-option-B: legacy/forged missing-:action admin shape MUST be rejected — operator re-grant required"
+    end
+
+    test "admin_invariant?: narrow action does NOT pass admin recognition" do
       narrow = %Ezagent.Capability{
         kind: :any,
         behavior: :any,
@@ -666,40 +663,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
              "narrow-action admin-shaped cap MUST NOT confer admin authority"
     end
 
-    test "codex r2 attack: Map.delete on a narrow :create_session cap does NOT pass admin_invariant?" do
-      # The exact forge codex r2 + r3 warned about: take a narrow cap,
-      # delete the :action field, hope the legacy branch's
-      # `action_of(cap) == :any` default lets it through. Post-fix the
-      # branch uses `not Map.has_key?(cap, :action)` for the absent
-      # check — but the action: :create_session cap with key DELETED
-      # is structurally indistinguishable from a real legacy cap
-      # ONLY IF the original was a wildcard. For a narrow cap, the
-      # OTHER fields (kind/behavior/instance) don't match the admin
-      # pattern, so admin_invariant? rejects on shape grounds.
-      narrow = %Ezagent.Capability{
-        kind: :workspace,
-        behavior: Ezagent.Behavior.Workspace,
-        action: :create_session,
-        instance: URI.parse("workspace://system"),
-        workspace_uri: URI.parse("workspace://system"),
-        granted_by: URI.parse("entity://user/system/admin"),
-        granted_at: DateTime.utc_now()
-      }
-
-      forged = Map.delete(narrow, :action)
-      refute Capability.admin_invariant?(forged),
-             "Map.delete forge MUST NOT confer admin authority — narrow cap shape (kind/behavior/instance/workspace not :any) fails outer pattern match"
-    end
-
-    test "codex r2 attack (more subtle): even a full-wildcard SHAPE cap forged-absent action with non-bootstrap granted_by is rejected" do
-      # If the attacker can also forge the kind/behavior/instance/
-      # workspace_uri to :any (full wildcard SHAPE) but :action is
-      # forged-absent, the admin_invariant? legacy branch IS the
-      # gate. The new check `not Map.has_key?(cap, :action)` MUST
-      # accept this (it matches the legitimate legacy shape), BUT
-      # admin_invariant? ALSO requires `granted_by: %URI{scheme:
-      # "system", host: "bootstrap"}` — so a non-system granted_by
-      # caller still can't forge admin.
+    test "admin_invariant?: non-bootstrap granted_by rejected regardless of cap shape" do
       fake_admin = %Ezagent.Capability{
         kind: :any,
         behavior: :any,
@@ -710,9 +674,8 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
         granted_at: DateTime.utc_now()
       }
 
-      forged = Map.delete(fake_admin, :action)
-      refute Capability.admin_invariant?(forged),
-             "even with the legacy-shape allowance, granted_by must be system://bootstrap — non-bootstrap forgery fails outer pattern match"
+      refute Capability.admin_invariant?(fake_admin),
+             "granted_by MUST be system://bootstrap — admin-shape with non-bootstrap granter is not admin"
     end
   end
 end
