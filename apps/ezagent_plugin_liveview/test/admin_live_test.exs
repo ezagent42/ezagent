@@ -327,6 +327,34 @@ defmodule EzagentPluginLiveview.AdminLiveTest do
       assert html =~ "Feishu binding"
     end
 
+    # Task #52 (2026-05-27, Allen 02:09) — the "Routing rules for this
+    # session" link USED to navigate to `/admin/routing?session=…` (the
+    # global routing LV which discarded the query arg). The fix
+    # switches it to a `phx-click="switch_view"` button that flips
+    # to the in-session `:routing` SessionView in place. Two assertions:
+    #
+    #   1. The element no longer carries the stale global URL — so a
+    #      regression that copy-pastes the old `<a href>` would fail.
+    #   2. Triggering the event flips `current_view` to `:routing` and
+    #      the rendered HTML shows the Routing SessionView heading.
+    test "Routing-rules link switches to the session-scoped :routing view (task #52)",
+         %{conn: conn} do
+      {:ok, lv, html} = live(conn, "/sessions")
+
+      # Regression guard: the old global-routing URL must NOT be in the
+      # link target (it bypassed session scope and confused operators).
+      refute html =~ "/admin/routing?session="
+
+      # The new button raises `switch_view` with view="routing" —
+      # render_hook drives the same code path the JS.push() chain
+      # produces on click.
+      html_after = render_hook(lv, "switch_view", %{"view" => "routing"})
+
+      # Session-scoped Routing view's heading appears (it's the
+      # `EzagentDomainUi.Routing.RoutingView` h2 — see its render/1).
+      assert html_after =~ "Session Routing Rules"
+    end
+
     test "toggle_debug_panel flips :debug_open", %{conn: conn} do
       {:ok, lv, _html} = live(conn, "/sessions")
 

@@ -450,7 +450,32 @@ defmodule Ezagent.Behavior.ExternalMirror do
             "running compensating delete"
         )
 
-        :ok = BindingRow.delete_by_natural_key(session_uri, aid, tid)
+        # Task #53 (2026-05-27) — `delete_by_natural_key/3` now returns
+        # `{:ok, :deleted | :not_found} | {:error, _}` (silent-success
+        # removal). For the compensating-delete path both `:deleted`
+        # (we cleaned up the row we inserted) and `:not_found` (the
+        # racing winner's compensating delete beat us) are correct;
+        # an error here is suspicious but we still surface the
+        # ORIGINAL spawn-failure to the caller — log + continue.
+        case BindingRow.delete_by_natural_key(session_uri, aid, tid) do
+          {:ok, :deleted} ->
+            :ok
+
+          {:ok, :not_found} ->
+            Logger.debug(
+              "Behavior.ExternalMirror.do_bind: compensating delete found " <>
+                "no row for #{URI.to_string(session_uri)}/#{aid}/#{inspect(tid)} " <>
+                "— racing caller already cleaned up"
+            )
+
+          {:error, reason} ->
+            Logger.error(
+              "Behavior.ExternalMirror.do_bind: compensating delete FAILED " <>
+                "for #{URI.to_string(session_uri)}/#{aid}/#{inspect(tid)}: " <>
+                "#{inspect(reason)} — row will remain until manual cleanup"
+            )
+        end
+
         err
     end
   end
@@ -465,21 +490,84 @@ defmodule Ezagent.Behavior.ExternalMirror do
         {:ok, slice, %{ok: true, unbound: false}}
 
       {_removed, keep} ->
-        # Graceful worker shutdown — `WorkerSpawn.terminate/3` calls
-        # `DynamicSupervisor.terminate_child(RootSupervisor, _)`
-        # which bypasses the `:permanent` restart strategy per
-        # PR-EM-2 codex round-1 CRIT moduledoc.
-        :ok = WorkerSpawn.terminate(session_uri, aid, tid)
-
+        # codex PR #418 r1 HIGH (2026-05-27) — order is delete-then-
+        # terminate. Pre-r1 ordering was terminate-then-delete, which
+        # left the worker dead and the slice mutation rolled back if
+        # the projection delete returned `:not_found` or `{:error, _}`
+        # — observable as "active binding with no live worker". The
+        # delete is the only operation that can return a non-:ok
+        # outcome under normal load (terminate is idempotent + bypasses
+        # the :permanent restart strategy), so do that first and only
+        # commit the destructive worker-shutdown + slice mutation AFTER
+        # the projection row is confirmed gone.
+        #
         # codex r1 CRIT fix (2026-05-25): delete by the FULL natural
         # key (session_uri + adapter_id + target_id) — NOT the
-        # session-unscoped `binding_id`. Pre-fix, a row deletion
-        # could clobber another session's row when two sessions
-        # bound to the same target.
-        :ok = BindingRow.delete_by_natural_key(session_uri, aid, tid)
+        # session-unscoped `binding_id`.
+        #
+        # Task #53 (2026-05-27): assert the projection deletion
+        # SUCCEEDED rather than silently accepting `:ok` for the
+        # not-found case. Allen 2026-05-27 02:53 repro — facade
+        # returned `unbound: true` but the row stayed in DB,
+        # producing `:ambiguous_chat_binding` on next inbound.
+        case BindingRow.delete_by_natural_key(session_uri, aid, tid) do
+          {:ok, :deleted} ->
+            # Projection row gone. Now safe to terminate the worker
+            # (idempotent — `DynamicSupervisor.terminate_child` calls
+            # bypass :permanent per PR-EM-2 codex round-1 CRIT
+            # moduledoc) and commit the slice mutation.
+            :ok = WorkerSpawn.terminate(session_uri, aid, tid)
+            new_slice = %{slice | bindings: keep}
+            {:ok, new_slice, %{ok: true, unbound: true}}
 
-        new_slice = %{slice | bindings: keep}
-        {:ok, new_slice, %{ok: true, unbound: true}}
+          {:ok, :not_found} ->
+            # Slice had the binding but projection didn't. Either:
+            # (a) row_id derivation drift (session_uri stringified
+            #     differently at bind vs unbind — historically the
+            #     dominant failure mode; codex PR #418 r1 HIGH moved
+            #     the delete to natural-key columns so this case is
+            #     now narrow), or
+            # (b) external SQL delete bypassing the action path, or
+            # (c) the projection row was hand-deleted to test recovery.
+            #
+            # Worker NOT terminated (post-r1 ordering) — the binding
+            # remains usable; slice mutation is refused so the
+            # operator sees an honest error instead of a lying
+            # success.
+            :telemetry.execute(
+              [:ezagent, :external_mirror, :unbind, :projection_desync],
+              %{},
+              %{
+                session_uri: URI.to_string(session_uri),
+                adapter_id: aid,
+                target_id: tid,
+                row_id: BindingRow.row_id(session_uri, aid, tid),
+                slice_binding_count: length(slice.bindings)
+              }
+            )
+
+            Logger.error(
+              "Behavior.ExternalMirror.do_unbind: slice had binding " <>
+                "#{aid}/#{inspect(tid)} on #{URI.to_string(session_uri)} " <>
+                "but projection row was not found — slice/projection desync " <>
+                "(worker NOT terminated, binding remains usable)"
+            )
+
+            {:error, :projection_desync}
+
+          {:error, reason} ->
+            # `Repo.delete_all/2` raised or returned an error
+            # (connection error, DB offline, etc.). Worker NOT
+            # terminated — bind state is fully preserved so the
+            # operator can retry once the DB is back.
+            Logger.error(
+              "Behavior.ExternalMirror.do_unbind: BindingRow.delete failed " <>
+                "for #{URI.to_string(session_uri)}/#{aid}/#{inspect(tid)}: " <>
+                "#{inspect(reason)} (worker NOT terminated)"
+            )
+
+            {:error, {:projection_delete_failed, reason}}
+        end
     end
   end
 

@@ -108,21 +108,43 @@ defmodule Ezagent.Workspace do
       %{members: existing} ->
         new_members = Enum.uniq([member_uri | existing])
 
-        with :ok <- dispatch_mutation(name, "add_member", %{member: member_uri}, :call),
+        # Composed PR #419 task #46 (facade pre-spawn) + PR #417 task #55
+        # CRIT-1 (dispatch-first persistence):
+        #
+        #   1. Pre-spawn the user Kind at the facade so the Behavior's
+        #      cap-grant doesn't race `KindRegistry`. Idempotent.
+        #   2. Dispatch :add_member through `:call` so the Behavior
+        #      validator can REJECT cross-prefix URIs synchronously.
+        #      On rejection the facade exits WITHOUT touching the
+        #      Store (the CRIT-1 invariant: the Behavior is sole gate
+        #      for the workspace prefix invariant).
+        #   3. Persist via `Store.update_members/2` ONLY after dispatch
+        #      succeeded. A crash here leaves the slice mutated but
+        #      the DB stale; Loader rehydrates from DB on next boot
+        #      and drops the orphan member (same one-process-lifetime
+        #      drift magnitude as the pre-CRIT-1 order, inverse
+        #      direction).
+        #
+        # The Behavior action body itself does the cap-grant + ALSO
+        # pre-spawns (idempotent — already-alive returns
+        # `{:ok, _pid}`); the facade pre-spawn just narrows the
+        # divergence window for paths where the Behavior would
+        # otherwise be the only pre-spawner.
+        with :ok <- ensure_member_kind_spawned_at_facade(member_uri),
+             :ok <- dispatch_mutation(name, "add_member", %{member: member_uri}, :call),
              {:ok, _} <- Store.update_members(name, new_members) do
-          # codex PR #408 review MED-2 — grant the new member the
-          # `Behavior.Workspace :create_session` cap automatically. SPEC
-          # 2026-05-26-session-create-orchestrator-unified Gap C was
-          # meant to make workspace members able to create sessions
-          # (per Allen's standing position "大部分用户不是 admin");
-          # without this grant the action body's CapBAC step 5.5
-          # denies every non-admin caller. User default_caps/1 is a
-          # session-axis wildcard (kind: :session, behavior: :any),
-          # which does NOT cover workspace-axis :create_session.
-          # Best-effort: a grant failure logs but does not block the
-          # add_member (membership has its own value; the user can
-          # still receive messages even without :create_session).
-          grant_member_create_session_cap(name, member_uri)
+          # Task #46 (Allen 2026-05-27) — the facade-local
+          # `grant_member_create_session_cap/2` call was REMOVED. The
+          # Behavior path (reached via the `dispatch_mutation` above)
+          # now pre-spawns the user Kind + grants the cap via a
+          # buffered `:cast`-mode `identity.grant_cap` so it lands on
+          # the ready transition. The facade-side duplicate was a
+          # synchronous `:call` that fail-fasted with
+          # `:no_such_actor` or `:not_ready` for any user not yet in
+          # `KindRegistry` — the empirical Allen-observed bug,
+          # defeating PR #408's UX promise that workspace members can
+          # dispatch `workspace.create_session` without admin
+          # intervention.
 
           # Notifier/flash audit 2026-05-24 — surface to the affected
           # user's notification stream. Pre-fix only `Chat.receive`
@@ -146,93 +168,35 @@ defmodule Ezagent.Workspace do
     end
   end
 
-  # codex PR #408 review MED-2 — grant the workspace `:create_session`
-  # cap to a newly-added member. Uses dispatch so step 5.5 CapBAC, audit
-  # telemetry, and the cap-equality dedup all fire. Runs under
-  # `system://template-materialize` (the same SystemPrincipal used by
-  # other admin-mediated grants — `feedback_let_it_crash_no_workarounds`
-  # admits the system-principal grant pattern as the canonical mediated
-  # write). Skipped for agent members (agents don't drive
-  # create_session). Best-effort: failure is logged + telemetry'd,
-  # never bubbled up.
-  #
-  # KNOWN OVER-GRANT — see `docs/futures/todo.md` §"Capability struct
-  # lacks an action axis"; the cap granted here also satisfies every
-  # other `Behavior.Workspace` action's cap-check (pre-existing model
-  # limitation, not a regression). Round-2 codex moved the dispatch-
-  # path grant into the Behavior; this facade grant remains for
-  # facade-path sync semantics (cap-equality dedup absorbs the dup).
-  defp grant_member_create_session_cap(name, %URI{scheme: "entity", host: "user"} = member_uri) do
-    workspace_uri = URI.parse("workspace://#{name}")
+  # Task #46 (Allen 2026-05-27) — the facade-local
+  # `grant_member_create_session_cap/2` helpers were deleted. The
+  # grant now lives exclusively on the `Behavior.Workspace.:add_member`
+  # action body, where it can pre-spawn the user Kind + use a buffered
+  # `:cast` so the cap lands on the User Kind's ready transition. The
+  # facade's `dispatch_mutation` reaches that single chokepoint, so
+  # the facade path is covered by construction (single-path invariant).
 
-    cap = %Ezagent.Capability{
-      # Invariant #2 — cap subject uses MODULE reference, not atom
-      # shorthand. The cap matches `Behavior.Workspace.required_caps/0`'s
-      # `:create_session` entry verbatim.
-      # SPEC 2026-05-27 capability-action-axis (THE BUG THIS SPEC FIXES):
-      # this cap now narrows to `action: :create_session` — previously
-      # the cap struct discarded the action axis so a workspace member
-      # holding this cap also satisfied `:add_member`'s cap-check.
-      kind: :workspace,
-      behavior: Ezagent.Behavior.Workspace,
-      action: :create_session,
-      instance: workspace_uri,
-      workspace_uri: workspace_uri,
-      granted_by: Ezagent.SystemPrincipal.uri("template-materialize"),
-      granted_at: DateTime.utc_now()
-    }
-
-    target = URI.new!("#{URI.to_string(member_uri)}?action=identity.grant_cap")
-
-    case Invocation.dispatch(%Invocation{
-           target: target,
-           mode: :call,
-           args: %{cap: cap},
-           ctx: %{
-             caller: Ezagent.SystemPrincipal.uri("template-materialize"),
-             caps: Ezagent.SystemPrincipal.caps("system://template-materialize"),
-             reply: {:caller_inbox, self()}
-           }
-         }) do
-      {:ok, _} ->
+  # Codex review #419 round-1 MEDIUM-3 — facade-level pre-spawn so a
+  # user-Kind spawn failure bubbles out BEFORE Store.update_members /
+  # Notifications.notify fire. Mirrors the Behavior's
+  # `ensure_member_kind_spawned/1` (idempotent on already-alive,
+  # tolerant of `:no_spawn_fn` for unit tests) — they converge on
+  # the same `SpawnRegistry.spawn/1` chokepoint so a fresh-user
+  # add lands the Kind exactly once.
+  defp ensure_member_kind_spawned_at_facade(%URI{scheme: "entity", host: "user"} = uri) do
+    case Ezagent.SpawnRegistry.spawn(uri) do
+      {:ok, _pid} ->
         :ok
 
-      :ok ->
+      {:error, {:no_spawn_fn, _scheme}} ->
         :ok
 
       {:error, reason} ->
-        require Logger
-
-        Logger.warning(
-          "Ezagent.Workspace.add_member: granting :create_session cap to " <>
-            "#{URI.to_string(member_uri)} on workspace=#{name} failed: " <>
-            "#{inspect(reason)} — member is added but they cannot dispatch " <>
-            "`workspace.create_session` (admin grant required as workaround). " <>
-            "SPEC 2026-05-26-session-create-orchestrator-unified MED-2."
-        )
-
-        :telemetry.execute(
-          [:ezagent, :workspace, :member_create_session_grant_failed],
-          %{count: 1},
-          %{member_uri: member_uri, workspace_name: name, reason: reason}
-        )
-
-        :ok
+        {:error, {:member_user_spawn_failed, uri, reason}}
     end
-  rescue
-    error ->
-      require Logger
-
-      Logger.warning(
-        "Ezagent.Workspace.add_member: grant_member_create_session_cap raised " <>
-          "#{inspect(error)} for member=#{URI.to_string(member_uri)} workspace=#{name}"
-      )
-
-      :ok
   end
 
-  # Non-user member (agent) — no grant.
-  defp grant_member_create_session_cap(_name, _member_uri), do: :ok
+  defp ensure_member_kind_spawned_at_facade(_other), do: :ok
 
   @spec remove_member(String.t(), URI.t()) :: :ok | {:error, term()}
   def remove_member(name, %URI{} = member_uri) do

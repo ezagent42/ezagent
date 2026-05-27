@@ -1,5 +1,10 @@
 defmodule Ezagent.Behavior.WorkspaceTest do
-  use ExUnit.Case, async: true
+  # Task #55 round-2 codex (2026-05-27) — `async: false` + `DataCase`
+  # because the post-task-#46 `add_member` action now pre-spawns the
+  # member's User Kind via `SpawnRegistry.spawn/1`, which expects the
+  # user row in the DB. Tests that drive `:add_member` with a
+  # non-admin URI must seed the user.
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.Behavior.Workspace, as: WB
 
@@ -72,6 +77,10 @@ defmodule Ezagent.Behavior.WorkspaceTest do
     test "accepts same-prefix user member" do
       workspace_uri = URI.parse("workspace://h2oslabs")
       member_uri = URI.parse("entity://user/h2oslabs/alice")
+      # Task #46 (main) — `:add_member` pre-spawns the user Kind via
+      # `SpawnRegistry.spawn/1`, which requires the row in DB. Seed
+      # the user before driving the action.
+      {:ok, _} = Ezagent.Users.create(member_uri, nil, [])
       slice = WB.init_slice(%{})
 
       ctx = %{self_uri: workspace_uri}
