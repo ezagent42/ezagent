@@ -882,15 +882,17 @@ defmodule Ezagent.Behavior.IdentityAdmin do
         true
 
       # Legacy pre-action-axis structs (snapshot restored before this
-      # SPEC landed) — the `:action` key is absent from the map. Match
-      # the other four axes; treat missing `:action` as `:any`.
+      # SPEC landed) — the `:action` key is absent from the map.
+      # codex r3 fix: forge-proofed via `not Map.has_key?/2` (was
+      # `action_of(cap) == :any` which defaults to :any via Map.get
+      # and let `Map.delete(cap, :action)` forge admin authority).
       %Ezagent.Capability{
         kind: :any,
         behavior: :any,
         instance: :any,
         workspace_uri: :any
       } = cap ->
-        Ezagent.Capability.action_of(cap) == :any
+        not Map.has_key?(cap, :action)
 
       _ ->
         false

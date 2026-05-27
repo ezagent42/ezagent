@@ -432,7 +432,11 @@ defmodule Ezagent.Capability do
           granted_by: %URI{scheme: "system", host: "bootstrap"}
         } = cap
       ),
-      do: action_of(cap) == :any
+      # codex r3 fix: pre-SPEC admin caps had no `:action` key at all
+      # (real legacy snapshot shape). `action_of(cap) == :any` was
+      # forgeable post-SPEC via `Map.delete(cap, :action)`. Use the
+      # real absent-field check — `Map.has_key?` does not default.
+      do: not Map.has_key?(cap, :action)
 
   def admin_invariant?(%__MODULE__{}), do: false
 

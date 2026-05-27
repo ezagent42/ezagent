@@ -328,15 +328,32 @@ defmodule Ezagent.ExternalMirror.Gates do
   # admin authority that bypasses workspace-iso. The narrow cap is
   # still authoritative for its specific action via dispatch step 5.5;
   # the workspace-iso bypass is a STRICTLY-BROADER admin tier.
-  defp cap_admin_shape?(%{kind: :any, behavior: :any, instance: :any} = cap),
-    do: Ezagent.Capability.action_of(cap) == :any
+  # codex r3 forgeable-legacy fix: split into explicit-action-any post-
+  # SPEC + true-absent-action legacy clauses. `action_of(cap) == :any`
+  # was forgeable via `Map.delete(cap, :action)` (defaults to :any).
+  # The absent-key clause uses `is_map_key/2` guard for a real check.
+  defp cap_admin_shape?(%{kind: :any, behavior: :any, action: :any, instance: :any}),
+    do: true
+
+  defp cap_admin_shape?(%{kind: :any, behavior: :any, instance: :any} = cap)
+       when not is_map_key(cap, :action),
+       do: true
+
+  defp cap_admin_shape?(%{
+         kind: :session,
+         behavior: Ezagent.Behavior.ExternalMirror,
+         action: :any,
+         instance: :any
+       }),
+       do: true
 
   defp cap_admin_shape?(%{
          kind: :session,
          behavior: Ezagent.Behavior.ExternalMirror,
          instance: :any
-       } = cap),
-       do: Ezagent.Capability.action_of(cap) == :any
+       } = cap)
+       when not is_map_key(cap, :action),
+       do: true
 
   defp cap_admin_shape?(_), do: false
 
