@@ -1,6 +1,11 @@
 # SPEC — Capability struct gains the `action` axis
 
-**Status:** r6 (codex r5 REQUEST_CHANGES addressed — narrow scope). 2026-05-27.
+**Status:** r7 (codex r6 internal-consistency fixes — APPROVE expected). 2026-05-27.
+
+**r7 revision log (codex r6 findings):**
+- HIGH-1a (single-chokepoint inconsistency): §3.3 matcher snippet at line 152 + §5 A5 test description at line 304 still used direct field access while §3.3.1 claimed all readers route through `action_of/1`. r7 fixes both to use `Capability.action_of(cap)` form.
+- Gap-C (line 352 `enforce_keys` contradiction): §3.1 says `:action` is NOT in `@enforce_keys` (defstruct default `:any` covers omission); the failure-modes table at line 352 wrongly said "must specify it (enforce_keys)". r7 fixes the table entry to match §3.1: defstruct default handles omission; runtime grant-boundary catches wildcards from non-privileged callers.
+- MED (scope note overstated safety): codex r6 found 2 paths can insert raw maps without `from_map/1` (Identity.init_slice/1 ingestion + snapshot binary restore). r7 narrows the scope note to "production caps_json path is safe; the two narrower paths are pre-existing and independent of this SPEC". The matcher-boundary tolerance covers snapshot restore (path #2) structurally. The init_slice/1 case (path #1) is documented as a follow-up if the impl subagent audit surfaces real production risk.
 
 **r6 revision log (codex r5 findings):**
 - HIGH-1a (§3.6.1 still used direct `cap.action` reads): r6 routes both layers through `Capability.action_of/1` per the single-chokepoint contract from §3.3.1. Lines 232/234/283 updated.
@@ -149,7 +154,7 @@ def matches?(%__MODULE__{} = cap, %{kind: k, behavior: b, action: a, instance: i
   # correctly without a save-side normalize step.
   field_match?(cap.kind, k) and
     field_match?(cap.behavior, b) and
-    field_match?(Map.get(cap, :action, :any), a) and
+    field_match?(action_of(cap), a) and
     instance_match?(cap.instance, i) and
     workspace_match?(cap.workspace_uri, w)
 end
@@ -242,7 +247,17 @@ After this SPEC, three cap shapes coexist:
 
 This is NOT a role-field check. The codebase has no `role` field; the URI-based `Identity.admin?/1` predicate is explicitly documented as NON-security (`apps/ezagent_domain_identity/lib/ezagent/identity.ex:266-269`). Privilege is based on the caller's actual cap holdings — the only structural marker that survives spoofing attempts.
 
-**Scope note on raw-map caps in `ctx.caps`** (codex r5 NEW-C): `holds_admin_caps?/1` at `apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex:742` pattern-matches on `%Ezagent.Capability{}` structs. A raw-map cap (no `__struct__` key) hits the `_ -> false` fallback and silently fails to authorize admin authority. This is NOT a correctness gap for this SPEC because the hot path is structurally enforced: `Users.decode_caps/1` calls `from_map/1` which converts every loaded cap to a struct BEFORE the slice reaches `ctx.caps`. Raw maps cannot reach the admin check in any documented path. If a future code path bypasses `from_map/1` and pushes raw maps into `ctx.caps`, that's an independent bug. This SPEC's `Map.get(cap, :action, :any)` tolerance lives at the matcher boundary (§3.3); admin-cap detection lives upstream of the slice → ctx pipeline.
+**Scope note on raw-map caps in `ctx.caps`** (codex r5 NEW-C, narrowed per codex r6 MED): `holds_admin_caps?/1` at `apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex:742` pattern-matches on `%Ezagent.Capability{}` structs. A raw-map cap (no `__struct__` key) hits the `_ -> false` fallback and silently fails to authorize admin authority.
+
+This is NOT a correctness gap for the **production caps_json path**: `Users.decode_caps/1` at `apps/ezagent_domain_identity/lib/ezagent/users.ex:209-212` calls `Capability.from_map/1` which returns `%Capability{}`; `SystemPrincipal.caps/1` at `apps/ezagent_core/lib/ezagent/system_principal.ex:156-163` also produces structs via Catalog at `catalog.ex:125-128, 285-293`.
+
+**Acknowledged narrower-scope concern** (codex r6 MED): two paths CAN insert raw maps into a slice without re-validating through `from_map/1`:
+1. `Behavior.Identity.init_slice/1` at `apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex:92-98` accepts `%MapSet{}` or list-from-init-args as-is. Practical risk: zero in production (args come from `Users.create/3` which has already gone through `from_map`), but a test fixture or future caller could push raw maps here.
+2. Snapshot restore path `apps/ezagent_core/lib/ezagent/kind/snapshot.ex:72-98` decodes the slice via `binary_to_term` and merges without normalization — raw maps stored pre-SPEC would still be raw maps post-restore.
+
+This SPEC's `Map.get`/`action_of/1` tolerance at the matcher boundary handles path #2 transparently (missing `:action` → `:any` → wildcard preserved). Path #1's failure mode (raw map in `init_slice/1`) is independent of this SPEC and predates it. The admin-cap predicate `holds_admin_caps?/1` is upstream of dispatch and structurally fed by `Users.decode_caps/1` for every real cap-load — raw-map insertion would have been broken before this SPEC.
+
+**No SPEC change to `holds_admin_caps?/1` proposed**; if the impl subagent's audit surfaces a real production path where raw maps reach `ctx.caps`, that's a follow-up PR.
 
 **Future-PR note** (`docs/futures/todo.md`): extend the entity-caps LV grant form with an action selector dropdown (populated from the target Behavior's `actions/0`), so admins can grant narrow caps via the UI without falling back to wildcard. This SPEC's runtime check + admin exemption is the bridge; the action selector is the long-term fix.
 
@@ -301,7 +316,7 @@ Allen's `feedback_let_it_crash_no_workarounds` forbids dual-path. The PR lands a
 | A2 | `Capability.matches?/2` with held `action: :send` and needed `action: :join` → false | unit test |
 | A3 | `Capability.matches?/2` with held `action: :any` and needed `action: :send` → true (wildcard preserved) | unit test |
 | A4 | Old JSON row (6 fields) loads with `action: :any` | unit test |
-| A5 | `required_caps/0` entries: every `Behavior` has `entry[action].action == action` | umbrella-wide property test |
+| A5 | `required_caps/0` entries: every `Behavior` has `Capability.action_of(entry[action]) == action OR :any` | umbrella-wide property test |
 | A6 | Compile-time check 11 fails a deliberately-broken fixture (`%{send: cap(.., .., :join)}`) | plugin-check test |
 | **B1** | **The PR #408 regression test (THE merge gate)** — concrete setup: (1) spawn `workspace://X` via the normal Workspace facade; (2) create a non-admin user `entity://user/X/member-1` via `Users.create/3` — note that `Users.create` grants default caps at `apps/ezagent_domain_identity/lib/ezagent/users.ex:76-84` and `Behavior.Identity.create_user/3` adds a self-Identity cap at `apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex:113-122`; the test relies on those defaults NOT matching `Behavior.Workspace :add_member`'s required cap (kind axis differs: defaults are `:user` / `:session`-scoped, `:add_member` requires `:workspace`); (3) seed exactly one additional cap: `%Capability{kind: :workspace, behavior: Ezagent.Behavior.Workspace, action: :create_session, instance: workspace_uri, workspace_uri: workspace_uri, granted_by: SystemPrincipal.uri("template-materialize"), granted_at: <now>}` on the user via `Identity.grant_cap`; (4) dispatch `Invocation{target: URI.parse("workspace://X?action=workspace.add_member"), mode: :call, args: %{member: <other_user_uri>}, ctx: %{caller: member_uri, caps: <slice-loaded>, ...}}`; (5) assert `{:error, :unauthorized}` is returned from dispatch step 5.5 at `apps/ezagent_core/lib/ezagent/kind/runtime.ex:121` BEFORE `invoke(:add_member, ...)` runs (verify by reading the workspace slice's `members` after the call — must equal pre-call members; the dispatched user must NOT have been added). | invariant test |
 | B2 | Same member, same cap, dispatch to `workspace://X?action=workspace.create_session` — assert `{:ok, _, _}` (the cap matches; creation succeeds) | invariant test |
@@ -349,7 +364,7 @@ The plugin-author API (`Capability.cap(:chat, Chat, :send)`) needs zero changes 
 
 | Failure | Behavior |
 |---|---|
-| A grant site forgets to specify action and passes nothing | `cap/3` defaults the action via `:any` ONLY at the public constructor; direct struct construction must specify it (enforce_keys). The plugin-check 11 catches `required_caps/0` drift. |
+| A grant site forgets to specify action and passes nothing | `cap/3` defaults the action via `:any` (third arg now load-bearing). Direct `%Capability{...}` struct construction without `:action` ALSO defaults to `:any` via defstruct (§3.1 — `:action` is NOT in `@enforce_keys`). The runtime grant-boundary check at §3.6.1(b) is the structural enforcement: non-privileged callers granting `cap.action == :any` are rejected. The plugin-check 11 catches `required_caps/0` drift at compile time. |
 | Two callers race writing caps_json with overlapping cap shapes | Existing Ecto optimistic concurrency / slice revision-CAS unchanged. |
 | Old row reads as `:any` but the user's intent was a narrow cap | Impossible by construction — old code never wrote a narrow cap (the field didn't exist). `:any` is the only correct interpretation. |
 | Plugin author's required_caps map key differs from the third arg | Compile-time check 11 fails the build. |
