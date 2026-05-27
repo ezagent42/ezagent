@@ -78,12 +78,19 @@ defmodule Mix.Tasks.Ezagent.Workspace.CleanupCrossPrefixMembersTest do
   end
 
   describe "run/1 --apply" do
-    test "strips cross-prefix violator from DB" do
+    # Task #55 round-2 codex HIGH-2 (2026-05-27) — `--apply` now
+    # dispatches `Behavior.Workspace.:remove_cross_prefix_members`
+    # via `Ezagent.Workspace.remove_cross_prefix_members/1`. The
+    # Workspace Kind GenServer must be alive for the dispatch to
+    # reach the action body — `Ezagent.Workspace.create/2`
+    # both persists the row AND spawns the Kind.
+
+    test "strips cross-prefix violator from DB via dispatch + slice atomic update" do
       workspace_name = "task55-apply-#{System.unique_integer([:positive])}"
       violator = URI.parse("entity://user/system/linyilun")
       legit = URI.parse("entity://user/#{workspace_name}/alice")
 
-      {:ok, _} = Store.create(workspace_name, %{members: [violator, legit]})
+      {:ok, _pid} = Ezagent.Workspace.create(workspace_name, %{members: [violator, legit]})
 
       output =
         capture_io(fn ->
@@ -92,9 +99,32 @@ defmodule Mix.Tasks.Ezagent.Workspace.CleanupCrossPrefixMembersTest do
 
       assert output =~ "stripped"
 
+      # DB is the source of recovery — must reflect the strip.
       %{members: members_after} = Store.get_by_name(workspace_name)
       refute violator in members_after
       assert legit in members_after
+
+      # Slice is the live read source — must ALSO reflect the strip
+      # (NO restart needed). This is the round-2 invariant: pre-fix the
+      # direct-Store path left the slice stale until SIGHUP/restart.
+      ws_uri = URI.parse("workspace://#{workspace_name}")
+
+      {:ok, %{members: live_members}} =
+        Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+          target: URI.parse("workspace://#{workspace_name}?action=workspace.list_members"),
+          mode: :call,
+          args: %{},
+          ctx: %{
+            caller: Ezagent.SystemPrincipal.uri("workspace-loader"),
+            caps: Ezagent.SystemPrincipal.caps("system://workspace-loader"),
+            reply: {:caller_inbox, self()}
+          }
+        })
+
+      _ = ws_uri
+      live_strs = Enum.map(live_members, &URI.to_string/1)
+      refute URI.to_string(violator) in live_strs
+      assert URI.to_string(legit) in live_strs
     end
 
     test "strips multiple violators + keeps multiple legits" do
@@ -104,8 +134,8 @@ defmodule Mix.Tasks.Ezagent.Workspace.CleanupCrossPrefixMembersTest do
       legit_a = URI.parse("entity://user/#{workspace_name}/legit_a")
       legit_b = URI.parse("entity://agent/#{workspace_name}/cc_legit_b")
 
-      {:ok, _} =
-        Store.create(workspace_name, %{
+      {:ok, _pid} =
+        Ezagent.Workspace.create(workspace_name, %{
           members: [violator_a, violator_b, legit_a, legit_b]
         })
 

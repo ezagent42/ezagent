@@ -65,7 +65,16 @@ defmodule Ezagent.Behavior.Workspace do
       # `mix ezagent workspace create_session ...` invocation produces
       # the same session URI shape (and same auto-spawned orchestrator)
       # as the LV "New session" form.
-      :create_session
+      :create_session,
+      # Task #55 round-2 codex HIGH-2 (2026-05-27) — dispatch-owned
+      # cleanup of legacy cross-prefix members. The mix task
+      # `ezagent.workspace.cleanup_cross_prefix_members` used to write
+      # directly to `Store.update_members/2` (concurrent add/remove
+      # race; stale slice until restart). This action now classifies
+      # members AGAINST the live slice + mutates atomically. The mix
+      # task dispatches it (the facade picks up the new member list +
+      # persists).
+      :remove_cross_prefix_members
     ]
   end
 
@@ -92,7 +101,13 @@ defmodule Ezagent.Behavior.Workspace do
       # Gap C — workspace-scoped session creation. Invariant #2: cap
       # subject uses MODULE reference (`__MODULE__`), not atom shorthand.
       create_session:
-        Ezagent.Capability.cap(:workspace, __MODULE__, :create_session)
+        Ezagent.Capability.cap(:workspace, __MODULE__, :create_session),
+      # Task #55 round-2 codex HIGH-2 — admin-only cleanup. The mix
+      # task dispatches under `system://workspace-loader` so the system
+      # principal's caps satisfy this; no operator-facing entry point
+      # holds it.
+      remove_cross_prefix_members:
+        Ezagent.Capability.cap(:workspace, __MODULE__, :remove_cross_prefix_members)
     }
   end
 
@@ -115,7 +130,10 @@ defmodule Ezagent.Behavior.Workspace do
       {:create_session,
        "create a new session in this workspace + auto-spawn the " <>
          "orchestrator agent owned by the caller (SPEC " <>
-         "2026-05-26-session-create-orchestrator-unified Gap C)"}
+         "2026-05-26-session-create-orchestrator-unified Gap C)"},
+      {:remove_cross_prefix_members,
+       "atomically strip members whose URI workspace segment doesn't " <>
+         "match this workspace (task #55 codex r2 HIGH-2 cleanup)"}
     ]
   end
 
@@ -273,6 +291,71 @@ defmodule Ezagent.Behavior.Workspace do
   def invoke(:remove_member, slice, %{member: %URI{} = uri}, _ctx) do
     {:ok, %{slice | members: MapSet.delete(slice.members, uri)}}
   end
+
+  # Task #55 round-2 codex HIGH-2 (2026-05-27) — dispatch-owned cleanup
+  # of legacy cross-prefix members. Replaces the mix task's prior
+  # direct-Store mutation pattern (which had race + stale-slice
+  # issues; see `Mix.Tasks.Ezagent.Workspace.CleanupCrossPrefixMembers`
+  # moduledoc).
+  #
+  # Acts ATOMICALLY against the live slice — classifies via the same
+  # canonicalization rules the `:add_member` validator uses, returns
+  # the kept set + list of removed URIs. The facade then persists the
+  # kept set via the standard `Store.update_members/2` write so DB +
+  # slice stay aligned.
+  #
+  # Why one action (not per-violator `:remove_member` dispatches)?
+  #
+  #   Per-violator dispatch would NOT be atomic w.r.t. concurrent
+  #   `:add_member` calls: a legitimate add interleaved between
+  #   violator dispatches would either be silently dropped (if it
+  #   targeted a violator we're about to remove — unlikely but
+  #   possible) or persisted out of order. One action body that runs
+  #   under the Kind GenServer's serialized message queue makes the
+  #   classify-then-mutate sequence single-threaded.
+  def invoke(:remove_cross_prefix_members, slice, _args, ctx) do
+    workspace_uri = Map.get(ctx, :self_uri)
+
+    case workspace_uri do
+      %URI{scheme: "workspace", host: workspace_name}
+      when is_binary(workspace_name) and workspace_name != "" ->
+        {violators, kept} =
+          slice.members
+          |> MapSet.to_list()
+          |> Enum.split_with(&cross_prefix_violator?(&1, workspace_name))
+
+        {:ok, %{slice | members: MapSet.new(kept)},
+         %{removed: violators, kept_count: length(kept)}}
+
+      _ ->
+        # Production dispatch through `Kind.Server` always populates
+        # `self_uri`; test harnesses that drive `invoke/4` directly
+        # without a self_uri get a structured error rather than a
+        # crash.
+        {:error, {:missing_self_uri, workspace_uri}}
+    end
+  end
+
+  # A member URI is a cross-prefix violator when:
+  #   - it's an entity URI whose workspace segment != the workspace
+  #     name, OR
+  #   - it's a non-entity URI (system://, workspace://, ...) — these
+  #     have no business in a workspace's member set per the
+  #     `:non_entity_member` rule, OR
+  #   - it's a malformed URI shape (4-segment, trailing slash, bad
+  #     host) — these were admitted before the HIGH-1 canonicalization
+  #     fix.
+  defp cross_prefix_violator?(%URI{scheme: "entity", host: host, path: "/" <> rest}, workspace_name)
+       when host in ["user", "agent"] do
+    case String.split(rest, "/") do
+      [^workspace_name, name] when name != "" -> false
+      _ -> true
+    end
+  end
+
+  defp cross_prefix_violator?(%URI{}, _workspace_name), do: true
+
+  defp cross_prefix_violator?(_, _), do: true
 
   # --- session templates ----------------------------------------------
 
@@ -559,6 +642,17 @@ defmodule Ezagent.Behavior.Workspace do
           orchestrator_status: :atom,
           orchestrator_error: {:option, :string}
         },
+        modes: [:call]
+      },
+      # Task #55 round-2 codex HIGH-2 — dispatch-owned cleanup.
+      remove_cross_prefix_members: %{
+        description:
+          "Atomically remove members whose URI workspace segment doesn't match " <>
+            "this workspace. Operator-driven cleanup for legacy rows that landed " <>
+            "before the `:add_member` prefix validator was in place. Returns the " <>
+            "list of removed URIs so the operator (or mix task) can audit.",
+        args: %{},
+        returns: %{removed: {:list, :uri}, kept_count: :integer},
         modes: [:call]
       }
     }

@@ -265,6 +265,92 @@ defmodule Ezagent.Workspace do
   end
 
   @doc """
+  Atomically remove cross-prefix members from workspace `name`.
+
+  Task #55 round-2 codex HIGH-2 (2026-05-27). Replaces the direct-store
+  cleanup the mix task `ezagent.workspace.cleanup_cross_prefix_members`
+  used to do — that pattern was race-prone (concurrent `add_member`
+  between the scan + update would be lost) AND left the live Workspace
+  Kind's slice stale until restart.
+
+  Dispatches `Behavior.Workspace.:remove_cross_prefix_members` against
+  the workspace's Kind. The action body classifies the slice's members
+  against the same canonicalization rules `:add_member` uses, returns
+  `{:ok, slice', %{removed: [URI], kept_count: integer}}` atomically.
+  The facade then persists the kept set via `Store.update_members/2`
+  so DB + slice stay aligned.
+
+  Returns `{:ok, %{removed: [URI], kept_count: integer}}` on success;
+  `{:error, reason}` on dispatch / persistence failure. An empty
+  `removed` list means the workspace had no violators.
+
+  Mirrors `add_member/2`'s dispatch-first persistence pattern (CRIT-1).
+  """
+  @spec remove_cross_prefix_members(String.t()) ::
+          {:ok, %{removed: [URI.t()], kept_count: non_neg_integer()}} | {:error, term()}
+  def remove_cross_prefix_members(name) when is_binary(name) and name != "" do
+    case Store.get_by_name(name) do
+      nil ->
+        {:error, :not_found}
+
+      _persisted ->
+        target = URI.parse("workspace://#{name}?action=workspace.remove_cross_prefix_members")
+
+        case Invocation.dispatch(%Invocation{
+               target: target,
+               mode: :call,
+               args: %{},
+               ctx: %{
+                 caller: Ezagent.SystemPrincipal.uri("workspace-loader"),
+                 caps: Ezagent.SystemPrincipal.caps("system://workspace-loader"),
+                 reply: {:caller_inbox, self()}
+               }
+             }) do
+          {:ok, %{removed: removed, kept_count: kept_count}} when is_list(removed) ->
+            # Mutation already committed in slice. Persist the kept
+            # set so the DB matches. Read current members from the
+            # live Kind via `:list_members` dispatch to get the
+            # post-mutation set (the action body returns the removed
+            # list separately for audit, not the kept URIs).
+            with {:ok, kept_uris} <- list_current_members_for_persist(name) do
+              case Store.update_members(name, kept_uris) do
+                {:ok, _} ->
+                  {:ok, %{removed: removed, kept_count: kept_count}}
+
+                {:error, reason} ->
+                  {:error, {:persist_failed, reason}}
+              end
+            end
+
+          {:error, _reason} = err ->
+            err
+
+          other ->
+            {:error, {:unexpected_dispatch_return, other}}
+        end
+    end
+  end
+
+  defp list_current_members_for_persist(name) do
+    target = URI.parse("workspace://#{name}?action=workspace.list_members")
+
+    case Invocation.dispatch(%Invocation{
+           target: target,
+           mode: :call,
+           args: %{},
+           ctx: %{
+             caller: Ezagent.SystemPrincipal.uri("workspace-loader"),
+             caps: Ezagent.SystemPrincipal.caps("system://workspace-loader"),
+             reply: {:caller_inbox, self()}
+           }
+         }) do
+      {:ok, %{members: members}} when is_list(members) -> {:ok, members}
+      {:error, _} = err -> err
+      other -> {:error, {:unexpected_dispatch_return, other}}
+    end
+  end
+
+  @doc """
   Add a template to a Workspace. Fail-fast structural validation:
   - template map must carry a `"class"` field referencing a registered
     `Ezagent.Kind.Template` Class

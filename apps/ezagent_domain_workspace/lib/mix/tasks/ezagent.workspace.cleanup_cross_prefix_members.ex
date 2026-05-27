@@ -33,10 +33,24 @@ defmodule Mix.Tasks.Ezagent.Workspace.CleanupCrossPrefixMembers do
       # Strip violators from each workspace's member set.
       mix ezagent.workspace.cleanup_cross_prefix_members --apply
 
-  `--apply` writes via `Ezagent.Workspace.Store.update_members/2`;
-  the operator must SIGHUP or restart the running Workspace Kind for
-  the slice to refresh from DB (slices are in-memory caches of the
-  persisted member list).
+  `--apply` dispatches `Behavior.Workspace.:remove_cross_prefix_members`
+  via `Ezagent.Workspace.remove_cross_prefix_members/1` — the action
+  body classifies + mutates the live slice atomically under the
+  Workspace Kind GenServer, and the facade persists the kept set in
+  the same call so the DB + slice stay aligned. NO restart needed
+  post-`--apply`.
+
+  Task #55 round-2 codex HIGH-2 (2026-05-27): the previous version
+  wrote directly to `Ezagent.Workspace.Store.update_members/2` after
+  computing `kept` from the DB row. Two problems:
+    1. Race: a legitimate concurrent `add_member` between the scan
+       (line 79 read) + write (line 169 update) would be lost — the
+       facade's `Store.update_members/2` overwrites the full member
+       list with the stale kept set.
+    2. Stale slice: the live Workspace Kind's `:workspace` slice cache
+       isn't refreshed from DB; operator had to SIGHUP / restart for
+       subsequent `:list_members` dispatches to see the cleanup.
+  The new dispatch-owned action closes both gaps.
 
   Exit code 0 even when violators are present — this is an audit
   tool, not a CI gate. The CI gate is the Behavior validator.
@@ -102,11 +116,11 @@ defmodule Mix.Tasks.Ezagent.Workspace.CleanupCrossPrefixMembers do
 
           {viol_count, ws_count}
 
-        {violators, kept} ->
+        {violators, _kept} ->
           report_violators(workspace.name, violators)
 
           if apply? do
-            apply_strip(workspace.name, kept)
+            apply_strip(workspace.name)
           end
 
           {viol_count + length(violators), ws_count + 1}
@@ -166,17 +180,25 @@ defmodule Mix.Tasks.Ezagent.Workspace.CleanupCrossPrefixMembers do
 
   defp violation_reason(_, _), do: "unrecognized URI shape"
 
-  defp apply_strip(workspace_name, kept_members) do
-    case Ezagent.Workspace.Store.update_members(workspace_name, kept_members) do
-      {:ok, _decoded} ->
+  # Task #55 round-2 codex HIGH-2 (2026-05-27) — dispatch-owned strip.
+  # `Ezagent.Workspace.remove_cross_prefix_members/1` classifies +
+  # mutates the slice + persists the kept set in one dispatch round,
+  # atomic under the Workspace Kind GenServer's serialized message
+  # queue. Replaces the previous direct `Store.update_members/2`
+  # write that raced concurrent `add_member` calls and left the slice
+  # stale until restart.
+  defp apply_strip(workspace_name) do
+    case Ezagent.Workspace.remove_cross_prefix_members(workspace_name) do
+      {:ok, %{removed: removed, kept_count: kept_count}} ->
         Mix.shell().info(
-          "  → stripped. workspace://#{workspace_name} now has #{length(kept_members)} member(s)."
+          "  → stripped #{length(removed)} member(s) via dispatch. " <>
+            "workspace://#{workspace_name} now has #{kept_count} member(s)."
         )
 
       {:error, reason} ->
         Mix.shell().error(
-          "  ! Store.update_members/2 failed for workspace://#{workspace_name}: " <>
-            "#{inspect(reason)}"
+          "  ! remove_cross_prefix_members dispatch failed for workspace://" <>
+            "#{workspace_name}: #{inspect(reason)}"
         )
     end
   end

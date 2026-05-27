@@ -242,6 +242,77 @@ defmodule Ezagent.Behavior.WorkspaceTest do
     end
   end
 
+  describe "remove_cross_prefix_members (task #55 codex r2 HIGH-2)" do
+    # Dispatch-owned cleanup action. Replaces the mix task's direct
+    # `Store.update_members/2` write — that pattern raced concurrent
+    # adds + left the slice stale until restart. New action body
+    # runs under the Workspace Kind GenServer's serialized message
+    # queue so classify-then-mutate is atomic.
+
+    test "atomically removes cross-prefix entity members" do
+      workspace_uri = URI.parse("workspace://h2oslabs")
+      violator_user = URI.parse("entity://user/system/linyilun")
+      violator_agent = URI.parse("entity://agent/other-ws/cc_main")
+      legit_user = URI.parse("entity://user/h2oslabs/alice")
+      legit_agent = URI.parse("entity://agent/h2oslabs/cc_demo")
+
+      slice =
+        WB.init_slice(%{
+          members: [violator_user, violator_agent, legit_user, legit_agent]
+        })
+
+      ctx = %{self_uri: workspace_uri}
+
+      assert {:ok, new_slice, %{removed: removed, kept_count: 2}} =
+               WB.invoke(:remove_cross_prefix_members, slice, %{}, ctx)
+
+      removed_strs = removed |> Enum.map(&URI.to_string/1) |> Enum.sort()
+
+      assert removed_strs ==
+               [URI.to_string(violator_agent), URI.to_string(violator_user)] |> Enum.sort()
+
+      assert MapSet.size(new_slice.members) == 2
+      assert MapSet.member?(new_slice.members, legit_user)
+      assert MapSet.member?(new_slice.members, legit_agent)
+      refute MapSet.member?(new_slice.members, violator_user)
+      refute MapSet.member?(new_slice.members, violator_agent)
+    end
+
+    test "removes non-entity members (system://, workspace://) too" do
+      workspace_uri = URI.parse("workspace://h2oslabs")
+      bad_system = URI.parse("system://workspace-loader")
+      legit = URI.parse("entity://user/h2oslabs/alice")
+
+      slice = WB.init_slice(%{members: [bad_system, legit]})
+      ctx = %{self_uri: workspace_uri}
+
+      assert {:ok, new_slice, %{removed: [^bad_system], kept_count: 1}} =
+               WB.invoke(:remove_cross_prefix_members, slice, %{}, ctx)
+
+      assert MapSet.size(new_slice.members) == 1
+      assert MapSet.member?(new_slice.members, legit)
+    end
+
+    test "clean workspace returns empty removed list + unchanged slice" do
+      workspace_uri = URI.parse("workspace://h2oslabs")
+      legit_a = URI.parse("entity://user/h2oslabs/alice")
+      legit_b = URI.parse("entity://agent/h2oslabs/cc_demo")
+
+      slice = WB.init_slice(%{members: [legit_a, legit_b]})
+      ctx = %{self_uri: workspace_uri}
+
+      assert {:ok, ^slice, %{removed: [], kept_count: 2}} =
+               WB.invoke(:remove_cross_prefix_members, slice, %{}, ctx)
+    end
+
+    test "errors when ctx.self_uri is missing (production safety net)" do
+      slice = WB.init_slice(%{members: [URI.parse("entity://user/system/admin")]})
+
+      assert {:error, {:missing_self_uri, nil}} =
+               WB.invoke(:remove_cross_prefix_members, slice, %{}, %{})
+    end
+  end
+
   describe "session_template actions" do
     test "add_template + list_templates round-trip" do
       slice = WB.init_slice(%{})
@@ -296,7 +367,7 @@ defmodule Ezagent.Behavior.WorkspaceTest do
   end
 
   describe "Behavior contract" do
-    test "actions/0 lists all 11 actions" do
+    test "actions/0 lists all 12 actions" do
       # SPEC 2026-05-25-agent-create-cli-gui-parity added `:create_agent`
       # as the 10th action — unified entry for CLI + LV agent creation.
       # SPEC 2026-05-26-session-create-orchestrator-unified Gap C added
@@ -306,6 +377,8 @@ defmodule Ezagent.Behavior.WorkspaceTest do
       # give it a distinct cap subject (the Capability struct has no
       # action axis, so co-locating privileged actions with
       # member-management ones is an escalation surface).
+      # Task #55 round-2 codex HIGH-2 added `:remove_cross_prefix_members`
+      # as the 12th — dispatch-owned cleanup of legacy violators.
       assert WB.actions() == [
                :list_members,
                :add_member,
@@ -317,7 +390,8 @@ defmodule Ezagent.Behavior.WorkspaceTest do
                :set_routing_rules,
                :instantiate,
                :create_agent,
-               :create_session
+               :create_session,
+               :remove_cross_prefix_members
              ]
     end
 
