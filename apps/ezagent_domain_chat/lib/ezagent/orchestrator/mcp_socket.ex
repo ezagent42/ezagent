@@ -10,11 +10,10 @@ defmodule Ezagent.Orchestrator.McpSocket do
   `claude` orchestrator reaches it through the MCP stdio bridge
   (`priv/orchestrator_bridge.py`). That bridge speaks the MCP protocol
   to `claude` over stdio and forwards `tools/call` to the BEAM over a
-  WebSocket Phoenix Channel — the SAME house transport the cc channel
-  bridge (`EzagentPluginCc.Socket` + `ezagent_mcp_bridge.py`) uses for
-  the `reply` tool.
+  WebSocket Phoenix Channel — the same house transport the AgentBridge
+  channel uses for plugin sidecars.
 
-  This Socket mirrors `EzagentPluginCc.Socket`:
+  This Socket mirrors the AgentBridge socket identity discipline:
 
   - one WS connection per orchestrator `claude` process;
   - the connection joins topic `orch:bridge:<orchestrator_uri>`
@@ -23,11 +22,11 @@ defmodule Ezagent.Orchestrator.McpSocket do
 
   ## Identity is server-derived — no spoofing
 
-  Token auth reuses `EzagentPluginCc.TokenStore`: the cc-orchestrator
-  is a cc-flavored agent, so the cc Template Class already minted a
-  per-instance connect token for its URI (`McpConfigWriter.write!/1`).
+  Token auth reuses `Ezagent.AgentBridge.TokenStore`: the orchestrator
+  is an Agent entity with a per-instance connect token minted for its
+  URI.
   `connect/3` verifies the presented `token` resolves to the SAME
-  `agent_uri` the caller claims — exactly `EzagentPluginCc.Socket`'s
+  `agent_uri` the caller claims — exactly AgentBridge.Socket's
   check. The verified URI is stamped into `socket.assigns.agent_uri`.
 
   Every downstream decision (which `McpServer` context, which caps,
@@ -40,7 +39,7 @@ defmodule Ezagent.Orchestrator.McpSocket do
   """
   use Phoenix.Socket
 
-  alias EzagentPluginCc.TokenStore
+  alias Ezagent.AgentBridge.TokenStore
 
   channel "orch:bridge:*", Ezagent.Orchestrator.McpChannel
 
@@ -64,10 +63,9 @@ defmodule Ezagent.Orchestrator.McpSocket do
   @impl true
   def id(socket), do: "orchestrator_socket:" <> URI.to_string(socket.assigns.agent_uri)
 
-  # Same token check as EzagentPluginCc.Socket — the orchestrator is a
-  # cc-flavored agent and its connect token is minted by the cc
-  # Template Class. The resolved URI MUST equal the claimed agent_uri,
-  # so the wire cannot claim an identity it has no token for.
+  # Same token check as AgentBridge.Socket. The resolved URI MUST equal
+  # the claimed agent_uri, so the wire cannot claim an identity it has
+  # no token for.
   defp verify_token(agent_uri, token) do
     case TokenStore.lookup_by_token(token) do
       {:ok, %URI{} = resolved} ->

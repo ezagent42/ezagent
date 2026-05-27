@@ -22,7 +22,7 @@ defmodule Ezagent.Orchestrator.McpChannel do
 
   Topic shape `orch:bridge:<orchestrator_uri>` — the URI MUST equal the
   token-authenticated `socket.assigns.agent_uri` (`join/3` asserts it).
-  This mirrors `EzagentPluginCc.Channel`'s topic discipline.
+  This mirrors AgentBridge.Channel's topic discipline.
 
   ## Identity / caps / session are server-derived — no spoofing
 
@@ -45,7 +45,7 @@ defmodule Ezagent.Orchestrator.McpChannel do
 
   ## Why a separate Channel module (not the cc Channel)
 
-  `EzagentPluginCc.Channel` carries the inbound/outbound CHAT bridge
+  AgentBridge.Channel carries the inbound/outbound CHAT bridge
   (the `reply` tool, `to_claude` notifications). The orchestrator MCP
   surface is a different concern (7 privileged orchestration tools)
   and a different message set — keeping it a separate Channel keeps

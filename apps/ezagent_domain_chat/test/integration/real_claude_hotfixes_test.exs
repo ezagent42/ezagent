@@ -40,7 +40,7 @@ defmodule EzagentDomainChat.Integration.RealClaudeHotfixesTest do
     Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
 
     Ezagent.AgentBridge.Registry.init()
-    :ok = Ezagent.AgentBridge.AdapterRegistry.register("cc", EzagentPluginCc.BridgeAdapter)
+    :ok = EzagentDomainChat.AgentBridgeTestAdapter.ensure_registered()
     :ok
   end
 

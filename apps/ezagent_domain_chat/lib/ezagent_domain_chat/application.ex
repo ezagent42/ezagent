@@ -66,7 +66,7 @@ defmodule EzagentDomainChat.Application do
     # McpServer context` ETS table. The Generator registers a row when
     # it spawns an orchestrator; `Ezagent.Orchestrator.McpChannel`
     # (the MCP transport bridge's BEAM endpoint) looks it up. Same
-    # lazy-`init/0` pattern as `EzagentPluginCc.BridgeRegistry`.
+    # lazy-`init/0` pattern as the AgentBridge registry.
     :ok = Ezagent.Orchestrator.McpRegistry.init()
 
     # Phase 8c PR-J (Allen 2026-05-20) — `session://default/system/main` is no longer
@@ -626,7 +626,7 @@ defmodule EzagentDomainChat.Application do
     # on the Agent Kind. Behavior module lives in ezagent_domain_pty;
     # the Kind ↔ Behavior binding happens here because this is where
     # `Ezagent.Entity.Agent` is defined. Previously registered from
-    # `EzagentPluginCc.Application.start/2` (PR #146); moved here so
+    # the cc plugin application (PR #146); moved here so
     # the PTY runtime is no longer plugin-cc-specific (any flavor whose
     # template `spawns_with: [Ezagent.Domain.Pty.Server]` reuses the
     # same dispatch path).
@@ -865,7 +865,7 @@ defmodule EzagentDomainChat.Application do
   defp kind_module_from_kind_type("echo"), do: Ezagent.Entity.Echo
   defp kind_module_from_kind_type(_), do: nil
 
-  # Template Class names (e.g. "cc.agent" registered by ezagent_plugin_cc;
+  # Template Class names (e.g. "cc.agent" registered by the cc plugin;
   # "curl.agent" by ezagent_plugin_curl_agent; "echo.agent" by
   # ezagent_plugin_echo) map to Kind modules.
   #
