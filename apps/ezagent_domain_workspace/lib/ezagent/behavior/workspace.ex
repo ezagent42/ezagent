@@ -236,6 +236,28 @@ defmodule Ezagent.Behavior.Workspace do
          %URI{scheme: "workspace", host: workspace_name} = workspace_uri
        )
        when is_binary(workspace_name) and workspace_name != "" do
+    # Task #55 round-2 codex r2 review HIGH-1 follow-up — explicitly
+    # reject query + fragment on the ORIGINAL member URI. Pre-fix
+    # `Ezagent.URI.parse!/1` accepts URIs with query strings (they're
+    # not malformed per the parser); `instance/1` strips them for the
+    # workspace-prefix check, so a same-workspace URI with a query
+    # passed the prefix gate AND landed durable in the slice/Store
+    # with its query attached. Member URIs are identities — they must
+    # be in instance form (no query, no fragment) to participate in
+    # the structural invariants.
+    cond do
+      member_uri.query != nil ->
+        {:error, {:bad_member_uri, member_uri}}
+
+      member_uri.fragment != nil ->
+        {:error, {:bad_member_uri, member_uri}}
+
+      true ->
+        validate_member_prefix_canonical(member_uri, workspace_uri, workspace_name)
+    end
+  end
+
+  defp validate_member_prefix_canonical(member_uri, workspace_uri, workspace_name) do
     with {:ok, canonical} <- canonicalize_entity_uri(member_uri),
          %URI{host: host, path: "/" <> rest} = canonical,
          true <- host in ["user", "agent"] or {:bad_host, host} do
@@ -372,24 +394,32 @@ defmodule Ezagent.Behavior.Workspace do
     end
   end
 
-  # A member URI is a cross-prefix violator when:
-  #   - it's an entity URI whose workspace segment != the workspace
-  #     name, OR
-  #   - it's a non-entity URI (system://, workspace://, ...) — these
-  #     have no business in a workspace's member set per the
-  #     `:non_entity_member` rule, OR
-  #   - it's a malformed URI shape (4-segment, trailing slash, bad
-  #     host) — these were admitted before the HIGH-1 canonicalization
-  #     fix.
-  defp cross_prefix_violator?(%URI{scheme: "entity", host: host, path: "/" <> rest}, workspace_name)
-       when host in ["user", "agent"] do
-    case String.split(rest, "/") do
-      [^workspace_name, name] when name != "" -> false
-      _ -> true
+  # Task #55 round-2 codex r2 review HIGH-2 follow-up — cleanup
+  # classification MUST share the validator's canonicalization. A
+  # member URI counts as a violator under any of:
+  #
+  #   - non-entity scheme (`system://`, `workspace://`, …);
+  #   - entity URI with `?query` or `#fragment` set (those URIs would
+  #     be rejected by `:add_member` per the HIGH-1 follow-up;
+  #     classifying them as violators is the natural cleanup);
+  #   - entity URI whose canonicalized workspace segment doesn't match
+  #     `workspace_name`;
+  #   - entity URI whose host axis isn't `user`/`agent`;
+  #   - entity URI that `Ezagent.URI.parse!/1` raises on (4-segment,
+  #     trailing slash, missing workspace).
+  #
+  # Implemented by reusing `validate_member_prefix/2` with a
+  # synthesized `workspace_uri` — `:ok` means clean, any `{:error, _}`
+  # means violator.
+  defp cross_prefix_violator?(%URI{} = member_uri, workspace_name) do
+    case validate_member_prefix(
+           member_uri,
+           %URI{scheme: "workspace", host: workspace_name, path: nil}
+         ) do
+      :ok -> false
+      {:error, _} -> true
     end
   end
-
-  defp cross_prefix_violator?(%URI{}, _workspace_name), do: true
 
   defp cross_prefix_violator?(_, _), do: true
 

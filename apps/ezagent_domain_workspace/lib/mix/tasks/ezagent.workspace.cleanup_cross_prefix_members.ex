@@ -137,23 +137,45 @@ defmodule Mix.Tasks.Ezagent.Workspace.CleanupCrossPrefixMembers do
 
   defp classify_members(_), do: {[], []}
 
-  # A member is a cross-prefix violator when:
-  #   - it's an `entity://` URI AND
-  #   - its workspace segment != the containing workspace name
-  # `system://` / `workspace://` members are flagged as non-entity
-  # violators (a workspace member should always be an entity per the
-  # `:non_entity_member` rule the Behavior validator returns).
-  defp cross_prefix?(%URI{scheme: "entity", path: "/" <> rest}, workspace_name) do
-    case String.split(rest, "/", parts: 2) do
-      [^workspace_name, _name] -> false
-      [_other_ws, _name] -> true
-      _ -> true
+  # A member is a violator under any of:
+  #   - not an `entity://` URI (`system://`, `workspace://`, …) —
+  #     non-entity members are flagged outright per the
+  #     `:non_entity_member` rule the Behavior validator returns.
+  #   - `entity://` URI carrying `?query` or `#fragment` — instance
+  #     form is required for membership identity (task #55 round-2
+  #     codex r2 HIGH-1 follow-up).
+  #   - `entity://` URI whose workspace segment doesn't match
+  #     `workspace_name`, including 4+ segment / trailing slash / non
+  #     `user|agent` host shapes that pre-canonicalize parsing
+  #     admitted (HIGH-1 fix).
+  #
+  # Task #55 round-2 codex r2 review HIGH-2 follow-up — keeps the
+  # mix task's pre-scan in lockstep with the Behavior's classifier so
+  # an `--apply` invocation that the pre-scan reports as clean cannot
+  # silently skip URIs the dispatched `:remove_cross_prefix_members`
+  # would have stripped.
+  defp cross_prefix?(%URI{scheme: "entity"} = member, workspace_name) do
+    cond do
+      member.query != nil -> true
+      member.fragment != nil -> true
+      not (is_binary(member.host) and member.host in ["user", "agent"]) -> true
+      not is_binary(member.path) -> true
+      true -> entity_path_cross_prefix?(member.path, workspace_name)
     end
   end
 
   defp cross_prefix?(%URI{}, _workspace_name), do: true
 
   defp cross_prefix?(_other, _workspace_name), do: true
+
+  defp entity_path_cross_prefix?("/" <> rest, workspace_name) do
+    case String.split(rest, "/") do
+      [^workspace_name, name] when name != "" -> false
+      _ -> true
+    end
+  end
+
+  defp entity_path_cross_prefix?(_, _), do: true
 
   defp report_violators(workspace_name, violators) do
     Mix.shell().info(
@@ -167,6 +189,18 @@ defmodule Mix.Tasks.Ezagent.Workspace.CleanupCrossPrefixMembers do
       )
     end)
   end
+
+  defp violation_reason(%URI{scheme: "entity", query: q}, _workspace_name)
+       when is_binary(q) and q != "",
+       do: "non-canonical URI (query string present)"
+
+  defp violation_reason(%URI{scheme: "entity", fragment: f}, _workspace_name)
+       when is_binary(f) and f != "",
+       do: "non-canonical URI (fragment present)"
+
+  defp violation_reason(%URI{scheme: "entity", host: host}, _workspace_name)
+       when is_binary(host) and host not in ["user", "agent"],
+       do: "bad entity type '#{host}' (must be 'user' or 'agent')"
 
   defp violation_reason(%URI{scheme: "entity", path: "/" <> rest}, workspace_name) do
     case String.split(rest, "/", parts: 2) do

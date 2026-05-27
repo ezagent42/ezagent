@@ -341,18 +341,21 @@ defmodule EzagentPluginLiveview.AdminLive do
     end
   end
 
-  def handle_info({:chat_message, %Ezagent.Message{} = msg}, socket) do
-    # Task #55 round-2 codex MEDIUM (2026-05-27) — legacy 2-tuple chat
-    # message lacks a source-session URI, so we cannot apply the
-    # workspace guard structurally. Conservative: render into the
-    # current session only (operator already chose to view it via
-    # `select_session/2`'s gate). This branch is dead in workspace-
-    # filtered subscriptions but kept for transitional traffic until
-    # all producers emit the 3-tuple.
-    {:noreply,
-     socket
-     |> assign(:messages_empty?, false)
-     |> stream_insert(:messages, message_to_row(msg), at: -1)}
+  def handle_info({:chat_message, %Ezagent.Message{} = _msg}, socket) do
+    # Task #55 round-2 codex r2 review MEDIUM follow-up — the legacy
+    # 2-tuple lacks a source-session URI, so we cannot route it to the
+    # right operator. Pre-fix this clause blindly inserted into the
+    # current stream, leaking any foreign-session message that
+    # happened to ride the 2-tuple shape. Post-fix: drop silently.
+    #
+    # Producers emitting `{:chat_message, msg}` are transitional and
+    # will be migrated to `{:chat_message, source_session_uri, msg}`
+    # (see PR-N3/N4 plan). Until then, the safe default is "no insert"
+    # — workspace-filtered subscriptions (mount loop) already mean
+    # this clause should never fire for sessions the operator is
+    # entitled to see; the legacy producer call sites that still emit
+    # the 2-tuple are the ones we can't structurally trust.
+    {:noreply, socket}
   end
 
   # Task #55 round-2 codex MEDIUM — workspace guard for inbound session

@@ -204,16 +204,44 @@ defmodule Ezagent.Behavior.WorkspaceTest do
       # `entity://user/system/alice?action=identity.grant_cap` —
       # cross-prefix with the query string. Pre-fix the validator
       # didn't strip the query → false-negative on the prefix check.
-      # Post-fix `instance/1` strips ?query so the cross-prefix is
-      # caught.
+      # Post-fix: the round-2 codex r2 follow-up rejects ANY member
+      # URI carrying a query (regardless of prefix match) as
+      # `:bad_member_uri`. Membership identity must be in instance
+      # form (no query, no fragment).
       member_uri = URI.parse("entity://user/system/alice?action=identity.grant_cap")
 
       slice = WB.init_slice(%{})
       ctx = %{self_uri: workspace_uri}
 
-      # After instance/1 strips ?action, the URI's workspace segment is
-      # `system`, the workspace's name is `h2oslabs` → cross-workspace.
-      assert {:error, {:cross_workspace_member_not_permitted, ^member_uri, ^workspace_uri}} =
+      assert {:error, {:bad_member_uri, ^member_uri}} =
+               WB.invoke(:add_member, slice, %{member: member_uri}, ctx)
+    end
+
+    test "rejects SAME-workspace entity URI with query (instance-form required) — codex r2 HIGH-1 follow-up" do
+      workspace_uri = URI.parse("workspace://h2oslabs")
+      # Same workspace, but with ?action= — pre-codex-r2 this fell
+      # through the prefix check (after instance/1 stripped ?action,
+      # the workspace segment matched), so the URI landed durable in
+      # the slice + Store. Post-fix: rejected as bad_member_uri so the
+      # original member_uri (still carrying the query) never reaches
+      # persistence.
+      member_uri = URI.parse("entity://user/h2oslabs/alice?action=anything")
+
+      slice = WB.init_slice(%{})
+      ctx = %{self_uri: workspace_uri}
+
+      assert {:error, {:bad_member_uri, ^member_uri}} =
+               WB.invoke(:add_member, slice, %{member: member_uri}, ctx)
+    end
+
+    test "rejects entity URI with #fragment (instance-form required)" do
+      workspace_uri = URI.parse("workspace://h2oslabs")
+      member_uri = URI.parse("entity://user/h2oslabs/alice#somewhere")
+
+      slice = WB.init_slice(%{})
+      ctx = %{self_uri: workspace_uri}
+
+      assert {:error, {:bad_member_uri, ^member_uri}} =
                WB.invoke(:add_member, slice, %{member: member_uri}, ctx)
     end
 
@@ -319,6 +347,28 @@ defmodule Ezagent.Behavior.WorkspaceTest do
 
       assert {:error, {:missing_self_uri, nil}} =
                WB.invoke(:remove_cross_prefix_members, slice, %{}, %{})
+    end
+
+    test "classifies SAME-workspace URI with ?query as violator — codex r2 HIGH-2 follow-up" do
+      # Pre-codex-r2 the cleanup classifier used raw String.split that
+      # IGNORED query strings, so a same-workspace URI carrying a
+      # query (which the HIGH-1 add_member validator now rejects)
+      # would be reported clean by the cleanup pass. Post-fix the
+      # cleanup classifier shares the validator's logic — any URI the
+      # validator would reject is also classified as a violator here.
+      workspace_uri = URI.parse("workspace://h2oslabs")
+      non_canonical = URI.parse("entity://user/h2oslabs/alice?action=foo")
+      canonical_same = URI.parse("entity://user/h2oslabs/bob")
+
+      slice = WB.init_slice(%{members: [non_canonical, canonical_same]})
+      ctx = %{self_uri: workspace_uri}
+
+      assert {:ok, new_slice, %{removed: removed, kept_count: 1}} =
+               WB.invoke(:remove_cross_prefix_members, slice, %{}, ctx)
+
+      assert removed == [non_canonical]
+      assert MapSet.member?(new_slice.members, canonical_same)
+      refute MapSet.member?(new_slice.members, non_canonical)
     end
   end
 
