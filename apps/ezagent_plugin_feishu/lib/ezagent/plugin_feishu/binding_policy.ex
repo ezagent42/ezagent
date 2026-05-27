@@ -68,12 +68,20 @@ defmodule EzagentPluginFeishu.BindingPolicy do
 
   ### What a bound Feishu user actually invokes
 
-  A Feishu-bound user dispatches `chat.send` (and chat.receive for
-  inbound fan-out), joins/leaves sessions, and subscribes to session
-  history via `Publisher.SessionImpl`. They do NOT invoke
-  `ExternalMirror` (admin-only bind/unbind) nor Chat
-  `:set_working_copy` (orchestrator-only, gated separately in
-  Chat.invoke).
+  A Feishu-bound user dispatches `chat.send` on a Session, joins/leaves
+  sessions, and subscribes to session history via `Publisher.SessionImpl`.
+
+  They do NOT invoke `Chat :receive` directly — fan-out dispatches
+  `chat.receive` to recipient User/Agent Kinds under
+  `system://chat-router` caps (not the bound user's caps), and
+  `:receive` is registered against User+Agent Kinds, not Session
+  (see `ezagent_domain_chat/application.ex:609-610`).
+
+  They do NOT invoke `Chat :set_working_copy` (orchestrator-only,
+  gated separately in `Chat.invoke(:set_working_copy)`).
+
+  They do NOT invoke `ExternalMirror :bind / :unbind / :list_bindings`
+  (admin-only adapter wiring, system-principal-routed at boot).
   """
   @spec apply(URI.t() | String.t(), URI.t() | String.t()) :: :ok | {:error, term()}
   def apply(user_uri, admin_uri) do
@@ -91,7 +99,18 @@ defmodule EzagentPluginFeishu.BindingPolicy do
   # `behavior: :any, action: :any` cap would expose. Multiple caps
   # per Behavior (one per action) replace the wildcard cap.
   #
-  # Behaviors INTENTIONALLY OMITTED:
+  # Action INTENTIONALLY OMITTED:
+  #
+  #   * `Ezagent.Behavior.Chat :receive` — `:receive` is registered
+  #     against the USER + AGENT Kinds (Chat fan-out delivers
+  #     `chat.receive` to recipient `entity://` Kinds), NOT against
+  #     the Session Kind: see
+  #     `apps/ezagent_domain_chat/lib/ezagent_domain_chat/application.ex:609-610`.
+  #     The fan-out dispatch runs under `system://chat-router` caps
+  #     (`apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:1215`),
+  #     NOT the bound user's own caps. A `kind: :session, behavior: Chat,
+  #     action: :receive` cap therefore never matches a real dispatch
+  #     and would be dead weight.
   #
   #   * `Ezagent.Behavior.Chat :set_working_copy` — orchestrator-only
   #     action; gated separately inside `Chat.invoke(:set_working_copy)`
@@ -104,8 +123,26 @@ defmodule EzagentPluginFeishu.BindingPolicy do
   #     — adapter wiring is workspace-admin territory; routed via
   #     `system://adapter-install` / `system://boot-reconciler` (closed
   #     Catalog) at boot, never user-driven.
-  @session_chat_actions [:send, :receive, :join, :leave]
+  @session_chat_actions [:send, :join, :leave]
   @session_publisher_actions [:subscribe_from, :snapshot, :history]
+
+  @doc """
+  Returns the per-action cap list `apply/2` will grant for a user
+  scoped to `workspace_uri`.
+
+  **`@doc false` — exposed for the regression test in
+  `apps/ezagent_plugin_feishu/test/binding_policy_test.exs` so a
+  contributor reverting the grant list directly drives a test
+  failure (codex r1 HIGH-1: parallel fixture vs production drift).**
+
+  Do not call from production code — `apply/2` is the public
+  side-effecting surface.
+  """
+  @doc false
+  @spec caps_for_apply(URI.t()) :: [Capability.t()]
+  def caps_for_apply(%URI{scheme: "workspace"} = workspace_uri) do
+    session_participation_caps(workspace_uri)
+  end
 
   # Bound user might not be live yet (admin types
   # `mix ezagent.feishu.bind ou_xxx entity://user/team-alpha/newcomer` for a
