@@ -227,28 +227,20 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeOnSessionColdSpawnTest do
       # new map; the lifecycle handshake (`on_ready/2` broadcast +
       # `handle_kind_message({:publisher_alive, _}, ...)`) is the ONLY
       # mechanism that re-attaches it.
+      #
+      # NOTE (codex r2 MEDIUM): we do NOT assert
+      # `subscribers == %{}` here. By the time the Session reaches
+      # `:ready` and `:sys.get_state/1` returns, the lifecycle
+      # handshake may have already re-attached the Worker — the very
+      # behaviour this test exercises. Direct `reconcile_after_load/2`
+      # unit coverage lives in
+      # `apps/ezagent_domain_chat/test/ezagent/behavior/publisher/session_impl_reconcile_after_load_test.exs`
+      # (race-free, pure-function test). This integration test
+      # exercises only the END-TO-END invariant: the first slice
+      # change after cold-spawn must reach the still-alive Worker.
       {:ok, session_pid_2} = Ezagent.SpawnRegistry.spawn(session_uri)
       refute session_pid_1 == session_pid_2
       :ok = await_session_ready(session_uri, 100)
-
-      # Validate CONCERN #3 fix: the cold-spawned Session's publisher
-      # slice came back with subscribers cleared. If a future change
-      # accidentally removes `reconcile_after_load/2` the loaded map
-      # would re-install the pre-vanish pid and this assertion fails
-      # — independent of whether the lifecycle handshake works.
-      cold_spawn_state = :sys.get_state(session_pid_2)
-
-      assert cold_spawn_state.state.publisher.subscribers == %{},
-             "Behavior.Publisher.SessionImpl.reconcile_after_load/2 did NOT clear " <>
-               "`:publisher.subscribers` on snapshot load. Cold-spawned Session " <>
-               "subscribers=#{inspect(cold_spawn_state.state.publisher.subscribers)}. " <>
-               "Stale subscriber pids from the snapshot must be cleared because they " <>
-               "are BEAM-local handles that don't survive restart in production."
-
-      assert cold_spawn_state.state.publisher.monitors == %{},
-             "Behavior.Publisher.SessionImpl.reconcile_after_load/2 did NOT clear " <>
-               "`:publisher.monitors` on snapshot load. monitors=" <>
-               "#{inspect(cold_spawn_state.state.publisher.monitors)}."
 
       # The Worker is STILL the same pid (post-cold-spawn invariant).
       binding_uri =
@@ -267,9 +259,11 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeOnSessionColdSpawnTest do
       # Re-register the observer (test infra may have flushed) + give
       # the PublisherLifecycle broadcast + Worker re-subscribe time to
       # propagate. The lifecycle broadcast fires in SessionImpl's
-      # `handle_continue/3` immediately after `:announce_ready`; the
-      # Worker receives it as a `Kind.Server` mailbox message and
-      # re-runs `subscribe_to_session_publisher/2` synchronously.
+      # `on_ready/2` AFTER `Ezagent.ReadyGate.mark_ready/1` flips (codex
+      # r1 FAIL #6 fix — previously this lived in `handle_continue/3`
+      # and raced peer `:call` re-subscribes against the unflipped
+      # ReadyGate); the Worker receives the event as a `Kind.Server`
+      # mailbox message and re-runs `subscribe_to_session_publisher/2`.
       MockPublishBinding.register_observer(target_id, self())
       Process.sleep(100)
 
@@ -285,8 +279,9 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeOnSessionColdSpawnTest do
                        "did NOT reach the Worker. The Worker subscribed pre-vanish, the " <>
                        "Session vanished + cold-spawned, and no event flowed. The expected " <>
                        "fix is `Ezagent.PublisherLifecycle.broadcast_alive/1` in " <>
-                       "`Ezagent.Behavior.Publisher.SessionImpl.handle_continue/3` + the " <>
-                       "matching `:publisher_alive` clause in " <>
+                       "`Ezagent.Behavior.Publisher.SessionImpl.on_ready/2` (fires AFTER " <>
+                       "ReadyGate flip per codex r1 FAIL #6) + the matching " <>
+                       "`:publisher_alive` clause in " <>
                        "`Ezagent.Behavior.ExternalMirrorWorker.handle_kind_message/3`."
     end
   end

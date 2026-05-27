@@ -585,6 +585,89 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
     end
   end
 
+  describe "reconcile_after_load/2 — task #49 codex r1 CONCERN #3 (2026-05-27)" do
+    # Pure-function unit coverage for the snapshot-load reconciliation
+    # hook. The cold-spawn integration scenario lives in
+    # `apps/ezagent_domain_external_mirror/test/.../worker_resubscribe_on_session_cold_spawn_test.exs`
+    # (end-to-end); this set asserts the reconcile contract directly so
+    # the assertion is race-free (no live KindRegistry / ReadyGate /
+    # lifecycle handshake involved).
+
+    test "clears `:subscribers` map populated with stale pid->ref entries" do
+      uri = URI.parse("session://default/team-alpha/reconcile-after-load-1")
+      stale_pid = spawn(fn -> :ok end)
+      stale_ref = make_ref()
+
+      slice = %{
+        ring: [],
+        cursor: 0,
+        retention: 100,
+        subscribers: %{stale_pid => stale_ref},
+        monitors: %{stale_ref => stale_pid}
+      }
+
+      reconciled = SessionImpl.reconcile_after_load(uri, slice)
+
+      assert reconciled.subscribers == %{}
+      assert reconciled.monitors == %{}
+    end
+
+    test "preserves durable fields (`:ring`, `:cursor`, `:retention`) on reconcile" do
+      uri = URI.parse("session://default/team-alpha/reconcile-after-load-2")
+      stale_event_cursor = 7
+
+      stale_event = %Event{
+        cursor: stale_event_cursor,
+        publisher_uri: uri,
+        slice_key: :chat,
+        event_at: DateTime.utc_now(),
+        payload: %{new_slice: %{}}
+      }
+
+      slice = %{
+        ring: [stale_event],
+        cursor: stale_event_cursor,
+        retention: 42,
+        subscribers: %{self() => make_ref()},
+        monitors: %{make_ref() => self()}
+      }
+
+      reconciled = SessionImpl.reconcile_after_load(uri, slice)
+
+      assert reconciled.ring == [stale_event]
+      assert reconciled.cursor == stale_event_cursor
+      assert reconciled.retention == 42
+      assert reconciled.subscribers == %{}
+      assert reconciled.monitors == %{}
+    end
+
+    test "is idempotent — re-running on already-cleared slice is identity" do
+      uri = URI.parse("session://default/team-alpha/reconcile-after-load-3")
+
+      cleared = %{
+        ring: [],
+        cursor: 0,
+        retention: 100,
+        subscribers: %{},
+        monitors: %{}
+      }
+
+      once = SessionImpl.reconcile_after_load(uri, cleared)
+      twice = SessionImpl.reconcile_after_load(uri, once)
+
+      assert once == twice
+      assert twice == cleared
+    end
+
+    test "is callable via the `Snapshot.reconcile_after_load_behaviors/3` walker contract" do
+      # Confirms `function_exported?/3` finds `reconcile_after_load/2` on
+      # the behavior module (the snapshot.ex walker probes via this exact
+      # mechanism). If a future refactor accidentally removed the export
+      # this guard fails before the integration test would.
+      assert function_exported?(SessionImpl, :reconcile_after_load, 2)
+    end
+  end
+
   # -- helpers --------------------------------------------------------------
 
   defp collect_events(0, acc), do: Enum.reverse(acc)

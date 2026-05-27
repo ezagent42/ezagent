@@ -69,12 +69,22 @@ defmodule Ezagent.PublisherLifecycle do
 
   ## Producer wiring
 
-  `Ezagent.Behavior.Publisher.SessionImpl.handle_continue/3` calls
-  `broadcast_alive/1` AFTER its own `subscribe_unverified/1` — every
-  Session reaching `:ready` (boot OR snapshot-restore cold-spawn)
-  emits one event. Idempotent: re-emitting on already-subscribed
-  workers is a no-op (worker re-subscribe is idempotent at the
-  publisher side because `ensure_monitored/2` deduplicates by pid).
+  `Ezagent.Behavior.Publisher.SessionImpl.on_ready/2` calls
+  `broadcast_alive/1` AFTER `Ezagent.ReadyGate.mark_ready/1` has
+  flipped this Session to `:ready` and the `PendingDelivery` buffer
+  has been drained — every Session reaching `:ready` (boot OR
+  snapshot-restore cold-spawn) emits one event. Idempotent:
+  re-emitting on already-subscribed workers is a no-op (worker
+  re-subscribe is idempotent at the publisher side because
+  `ensure_monitored/2` deduplicates by pid).
+
+  Task #49 codex r1 FAIL #6 (2026-05-27) moved this broadcast out
+  of `handle_continue/3` and into the new `Behavior.on_ready/2`
+  callback. The previous timing fired the broadcast BEFORE
+  `ReadyGate.mark_ready/1`; peer-side `:call`-mode dispatches that
+  reacted to the broadcast hit `{:error, :not_ready}` and silently
+  dropped — exactly the cold-spawn case this primitive was built
+  to fix.
 
   ## Consumer wiring
 
@@ -84,7 +94,9 @@ defmodule Ezagent.PublisherLifecycle do
   `subscribe_to_session_publisher/2` — re-attaching the (still-live)
   Worker pid as a subscriber in the (newly-restored, empty) Session
   publisher slice. Idempotent: the Session's `ensure_monitored/2`
-  pid-dedup makes a duplicate subscribe a no-op.
+  pid-dedup makes a duplicate subscribe a no-op. The Worker also
+  carries a bounded defence-in-depth retry on `{:error, :not_ready}`
+  (5 × 200ms).
   """
 
   require Logger
@@ -119,8 +131,9 @@ defmodule Ezagent.PublisherLifecycle do
   Broadcast a `{:publisher_alive, publisher_uri}` event on the lifecycle
   topic for `publisher_uri`.
 
-  Called by a Publisher Kind's `handle_continue/3` after the Kind
-  reaches `:ready` (post-init continuation). Failure is observable
+  Called by a Publisher Kind's `on_ready/2` callback AFTER
+  `Ezagent.ReadyGate.mark_ready/1` has flipped the Kind to `:ready`
+  (task #49 codex r1 FAIL #6 — see moduledoc). Failure is observable
   via Logger but non-fatal — the Kind has already booted; a PubSub
   outage shouldn't crash it.
 
