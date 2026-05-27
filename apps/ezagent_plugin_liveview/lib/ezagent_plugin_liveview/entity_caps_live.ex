@@ -49,7 +49,16 @@ defmodule EzagentPluginLiveview.EntityCapsLive do
   use EzagentDomainUi.Components
   import Phoenix.Component
 
-  alias Ezagent.{Capability, Invocation, KindRegistry}
+  alias Ezagent.{Capability, Invocation, KindRegistry, ReadyGate, SpawnRegistry}
+
+  # Strategy (a) for issue #395 (cf. PR #419 `add_member` fix): the
+  # grant dispatch races the target Kind's lazy spawn + ReadyGate
+  # transition. We pre-spawn idempotently and briefly poll ReadyGate
+  # so we can keep `:call` mode (and surface a real success/error
+  # flash to the operator). Buffered `:cast` would also work but
+  # would force an async UX (no per-grant confirmation in this LV).
+  @ready_poll_attempts 20
+  @ready_poll_interval_ms 25
 
   @impl true
   def mount(%{"uri" => encoded}, _session, socket) do
@@ -78,6 +87,11 @@ defmodule EzagentPluginLiveview.EntityCapsLive do
   defp entity_kind(_), do: "entity"
 
   defp load_caps(socket) do
+    # Issue #395 — also pre-spawn here so the initial "Current caps"
+    # render doesn't show `:entity_not_live` for an admin/user that
+    # hasn't been lazy-spawned yet. Mirrors the grant/revoke path.
+    _ = ensure_entity_ready(socket.assigns.entity_uri)
+
     case KindRegistry.lookup(socket.assigns.entity_uri) do
       :error ->
         assign(socket, :caps, :entity_not_live)
@@ -136,9 +150,71 @@ defmodule EzagentPluginLiveview.EntityCapsLive do
   end
 
   defp do_grant_or_revoke(socket, action, cap, msg) do
-    target =
-      URI.new!("#{URI.to_string(socket.assigns.entity_uri)}?action=identity.#{action}")
+    entity_uri = socket.assigns.entity_uri
 
+    target =
+      URI.new!("#{URI.to_string(entity_uri)}?action=identity.#{action}")
+
+    # Issue #395 — `Invocation.dispatch/1` returns `:no_such_actor` for
+    # `entity://` URIs that haven't been lazy-spawned yet (the admin
+    # User Kind is the canonical victim — PR-M 2026-05-20 made it
+    # lazy-spawn). We mirror PR #419's `Behavior.Workspace.:add_member`
+    # fix here: pre-spawn idempotently before the dispatch.
+    #
+    # Unlike #419 we keep `:call` mode (not `:cast`) — the operator
+    # expects a real grant/revoke flash, not "queued". A short
+    # ReadyGate poll covers the gap between `SpawnRegistry.spawn`
+    # registering the Kind and the Kind's `post_init/2` flipping
+    # ReadyGate to `:ready`.
+    case ensure_entity_ready(entity_uri) do
+      :ok ->
+        dispatch_grant_or_revoke(socket, target, cap, action, msg)
+
+      {:error, reason} ->
+        {:noreply,
+         assign(
+           socket,
+           :flash_error,
+           gettext("%{action} failed: %{reason}", action: action, reason: inspect(reason))
+         )}
+    end
+  end
+
+  # Idempotent pre-spawn + bounded ReadyGate poll. Returns `:ok` if the
+  # entity is `:ready` (so a subsequent `:call` dispatch won't fail-fast),
+  # `{:error, reason}` if the spawn fn rejected or the poll timed out.
+  #
+  # `:no_spawn_fn` is tolerated (matches #419's shape) — unit-test contexts
+  # and entity schemes that aren't registered with `SpawnRegistry` fall
+  # through to the existing dispatch path, where the original error
+  # surfaces unchanged.
+  defp ensure_entity_ready(%URI{} = uri) do
+    case SpawnRegistry.spawn(uri) do
+      {:ok, _pid} ->
+        wait_until_ready(uri, @ready_poll_attempts)
+
+      {:error, {:no_spawn_fn, _scheme}} ->
+        :ok
+
+      {:error, reason} ->
+        {:error, {:entity_spawn_failed, uri, reason}}
+    end
+  end
+
+  defp wait_until_ready(_uri, 0), do: {:error, :not_ready}
+
+  defp wait_until_ready(uri, attempts) do
+    case ReadyGate.status(uri) do
+      :ready ->
+        :ok
+
+      _ ->
+        Process.sleep(@ready_poll_interval_ms)
+        wait_until_ready(uri, attempts - 1)
+    end
+  end
+
+  defp dispatch_grant_or_revoke(socket, target, cap, action, msg) do
     case Invocation.dispatch(%Invocation{
            target: target,
            mode: :call,

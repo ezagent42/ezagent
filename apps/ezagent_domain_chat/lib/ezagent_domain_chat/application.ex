@@ -723,6 +723,17 @@ defmodule EzagentDomainChat.Application do
       :ok = CapabilityRegistry.register(Session, action, OrchAdminB)
     end)
 
+    # Phase 2.6 (AutoService → ezagent migration) — `Ezagent.Behavior.Mode`
+    # owns the per-session `:mode` slice (`:auto` / `:takeover`).
+    # Registered on Session Kind because mode is a session-level
+    # primitive; Chat reads the slice as a sibling to gate agent
+    # fan-out when the session is in takeover mode.
+    alias Ezagent.Behavior.Mode, as: ModeB
+
+    Enum.each(ModeB.actions(), fn action ->
+      :ok = CapabilityRegistry.register(Session, action, ModeB)
+    end)
+
     :ok
   end
 
