@@ -1,6 +1,10 @@
 # SPEC — Capability struct gains the `action` axis
 
-**Status:** r9 (codex r8 single-word terminology fix). 2026-05-27.
+**Status:** r9.1 — IMPLEMENTATION-READY (after 9 codex adversarial-review rounds). 2026-05-27.
+
+**r9.1 revision log:**
+- codex r9 (low-effort confirm pass) flagged 2 more "admin role" residues at lines 33 + 242 — historical revision-log carryover from earlier revisions. r9.1 cleans both: line 33 revision-log entry now explicitly notes the cleanup; line 242 policy-table entry replaced with cap-holdings phrasing ("seeded admin user inherits this via SystemPrincipal.Catalog (cap-holdings, not a role)"). Lines 25 + 33's remaining "admin-role" mentions are DESCRIPTIVE of the rejected approach inside the revision-log block — preserved as historical context, not active prescription.
+- After 9 rounds, the active SPEC sections (§3.x, §5, §6, §7, §8) are internally consistent. Implementation dispatch proceeds. PR-time codex review will catch any implementation defects per `feedback_codex_review_every_pr`.
 
 **r9 revision log:**
 - codex r8 MED: line 275 still said "role exemption" while line 253 had just established there's no role field. Single-line fix: replaced "via the role exemption" with explicit cap-holdings rationale (the admin caller's wildcard caps satisfy `holds_admin_caps?/1`; that's the structural mechanism, NOT a role-based exemption).
@@ -30,7 +34,7 @@
 
 **r4 revision log (codex r3 findings):**
 - HIGH-1 (Map.get not only in matches?/2 — `to_map/1` and admin/entity LV display also crash on missing `:action`): §3.3.1 added enumerating the full reader set. Pattern: every direct `cap.action` field read becomes `Map.get(cap, :action, :any)` — applies to `to_map/1` at `apps/ezagent_core/lib/ezagent/capability.ex:525`, admin/entity caps LV display at `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/admin_caps_live.ex:151` + `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/entity_caps_live.ex:183-273`, and any audit/telemetry emit.
-- HIGH-2 (admin LV grant form regression — `build_cap/2` doesn't pass action, runtime check would reject admin): §3.6.1(b) clarified — "non-privileged principal" means NEITHER `system://` URI NOR a user with the admin role. Admin role is structurally privileged (configured at user creation via `Users.create/3`, persisted as `:admin` role atom in the User Kind slice) and matches the existing "admin wildcard cap" semantics in the Catalog. Future-PR note added: extend the entity-caps LV form with an action selector so admins don't NEED wildcard grants for narrow surfaces.
+- HIGH-2 (admin LV grant form regression — `build_cap/2` doesn't pass action, runtime check would reject admin): §3.6.1(b) clarified — "non-privileged caller" means a caller whose `ctx.caps` does NOT satisfy `holds_admin_caps?/1` (i.e. holds no full-wildcard cap). Admin authority is structurally cap-holdings-based: the seeded admin user gets a wildcard cap from `SystemPrincipal.Catalog` at boot; that cap satisfies the predicate; the admin LV form's grant dispatches pass through. (r5 originally used "admin role" terminology — r9 cleaned that up because no role field exists in the codebase; r9.1 also strips it from this revision-log entry and the §3.6.1 policy table at line 242 for full consistency.) Future-PR note: extend the entity-caps LV form with an action selector so admins don't NEED wildcard grants for narrow surfaces.
 - HIGH (struct enforce_keys): `:action` is NOT in `@enforce_keys` — only defstruct default of `:any`. Construction sites that don't pass action (existing `build_cap/2` in LV at `entity_caps_live.ex:182-191`) silently default to `:any`. r4 §3.1 updated to make this explicit; the runtime grant-boundary check is the enforcement, not enforce_keys.
 - MED-1 (B3 test text stale — assumed normalization happens; r3 strategy doesn't normalize on load): B3 reworded to "matcher tolerance" — simulate an old-format cap (Map.delete the `:action` key), dispatch through `matches?/2` against a concrete-action needed-cap, assert wildcard semantics + no raise.
 - MED-2 (C2 catalog allowlist — 6+ legitimate `:any` entries exist today: boot-reconciler, template-materialize, orchestrator-tools, session-internal, workspace-loader, feishu-binding-policy, plus chat-router/chat-reply/bootstrap/mix-task/lv-anon-mount wildcards): replace "0 unjustified wildcards" with `@wildcard_allowlist` MapSet enumerating exactly those principal URIs. Any new wildcard entry NOT in the allowlist fails the test — guards future drift, allows current legitimate state.
@@ -239,7 +243,7 @@ After this SPEC, three cap shapes coexist:
 
 | Shape | Example | Allowed grant surface |
 |---|---|---|
-| Full wildcard | `%Capability{kind: :any, behavior: :any, action: :any, instance: :any, workspace_uri: :any}` | `system://bootstrap` only; admin role. NOT exposed to plugin grant paths. |
+| Full wildcard | `%Capability{kind: :any, behavior: :any, action: :any, instance: :any, workspace_uri: :any}` | `system://bootstrap` only; the seeded admin user inherits this via `SystemPrincipal.Catalog` (cap-holdings, not a role). NOT exposed to plugin grant paths. |
 | Behavior-wildcard | `%Capability{kind: :workspace, behavior: Workspace, action: :any, instance: :any, workspace_uri: :any}` | Closed system principals only (existing catalog pattern, e.g. `Capability.cap(:workspace, Workspace, :any)` at `apps/ezagent_core/lib/ezagent/system_principal/catalog.ex:205`). NOT a default grant for users. |
 | Narrow | `%Capability{kind: :workspace, behavior: Workspace, action: :create_session, instance: <uri>, workspace_uri: <uri>}` | The default grant shape for all user-facing flows (the auto-grant on `add_member` in PR #408 is one example). |
 
