@@ -2002,6 +2002,9 @@ defmodule EzagentPluginLiveview.AdminLive do
     needed = %{
       kind: :session,
       behavior: Ezagent.Behavior.OrchestratorAdmin,
+      # SPEC 2026-05-27 capability-action-axis — OrchestratorAdmin
+      # actions/0 == [:restart].
+      action: :restart,
       instance: session_uri,
       workspace_uri:
         case Ezagent.Capability.workspace_of(session_uri) do

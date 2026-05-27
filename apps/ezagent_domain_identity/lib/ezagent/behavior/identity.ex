@@ -387,6 +387,35 @@ defmodule Ezagent.Behavior.IdentityAdmin do
   def invoke(:grant_cap, slice, %{cap: cap}, ctx) do
     cap_struct = Ezagent.Capability.normalize!(cap, granter_from_ctx(ctx))
 
+    case check_action_wildcard_grant_authorized(cap_struct, ctx) do
+      :ok ->
+        do_grant_cap(slice, cap_struct, ctx)
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  # SPEC 2026-05-27 capability-action-axis §3.6.1(b) — runtime grant-
+  # boundary check. If the cap being granted has `action: :any` AND
+  # the caller does NOT hold admin caps, reject. Admin authority is
+  # structurally cap-holdings-based (NOT a role-based exemption);
+  # `holds_admin_caps?/1` inspects the caller's actual caps for the
+  # full-wildcard shape.
+  #
+  # Note: this check fires BEFORE `check_grant_authorized/2` (the
+  # existing per-shape grant policy). A wildcard-action cap from a
+  # non-admin is rejected first; the existing per-shape rules govern
+  # narrow grants from any caller per their respective shape.
+  defp check_action_wildcard_grant_authorized(%Ezagent.Capability{} = cap, ctx) do
+    if Ezagent.Capability.action_of(cap) == :any and not holds_admin_caps?(ctx) do
+      {:error, :wildcard_action_grant_requires_admin_authority}
+    else
+      :ok
+    end
+  end
+
+  defp do_grant_cap(slice, cap_struct, ctx) do
     case check_grant_authorized(cap_struct, ctx) do
       :ok ->
         # Drop any pre-existing cap with the same identity-tuple
@@ -664,14 +693,29 @@ defmodule Ezagent.Behavior.IdentityAdmin do
   defp holds_cross_workspace_admin_cap?(%{caps: caps}) do
     caps_list = if is_struct(caps, MapSet), do: MapSet.to_list(caps), else: List.wrap(caps)
 
+    # SPEC 2026-05-27 capability-action-axis — cross-workspace admin
+    # operator shape gains `:action`. The legitimate operator caps
+    # (system principals: `template-materialize`, `workspace-loader`,
+    # etc.) hold `action: :any`. We match either an explicit
+    # `action: :any` (post-SPEC) or a pre-SPEC legacy struct missing
+    # the key (validated via `action_of/1`).
     Enum.any?(caps_list, fn
+      %Ezagent.Capability{
+        kind: :workspace,
+        behavior: Ezagent.Behavior.Workspace,
+        action: :any,
+        instance: :any,
+        workspace_uri: :any
+      } ->
+        true
+
       %Ezagent.Capability{
         kind: :workspace,
         behavior: Ezagent.Behavior.Workspace,
         instance: :any,
         workspace_uri: :any
-      } ->
-        true
+      } = cap ->
+        Ezagent.Capability.action_of(cap) == :any
 
       _ ->
         false
@@ -742,14 +786,37 @@ defmodule Ezagent.Behavior.IdentityAdmin do
   defp holds_admin_caps?(%{caps: caps}) do
     caps_list = if is_struct(caps, MapSet), do: MapSet.to_list(caps), else: List.wrap(caps)
 
+    # SPEC 2026-05-27 capability-action-axis §3.6.1 — admin invariant
+    # gains a fifth axis `:action`. Struct pattern matching is
+    # non-exhaustive, so a pre-action-axis cap (missing the `:action`
+    # key) ALSO matches `%Capability{action: :any, ...}` IF the value
+    # at the key is `:any` — but absence of the key would not match
+    # the literal. We use `action: :any` in the pattern AND a
+    # `is_map_key`-guarded clause for legacy old-struct snapshots so
+    # both shapes are recognized: (1) fresh post-SPEC caps with
+    # `action: :any` set explicitly, (2) old struct restored from
+    # snapshot where the `:action` key is absent — handled via
+    # `Capability.action_of/1`.
     Enum.any?(caps_list, fn
+      %Ezagent.Capability{
+        kind: :any,
+        behavior: :any,
+        action: :any,
+        instance: :any,
+        workspace_uri: :any
+      } ->
+        true
+
+      # Legacy pre-action-axis structs (snapshot restored before this
+      # SPEC landed) — the `:action` key is absent from the map. Match
+      # the other four axes; treat missing `:action` as `:any`.
       %Ezagent.Capability{
         kind: :any,
         behavior: :any,
         instance: :any,
         workspace_uri: :any
-      } ->
-        true
+      } = cap ->
+        Ezagent.Capability.action_of(cap) == :any
 
       _ ->
         false

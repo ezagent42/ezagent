@@ -507,6 +507,11 @@ defmodule EzagentDomainChat do
     want = %Ezagent.Capability{
       kind: :session,
       behavior: Ezagent.Behavior.OrchestratorAdmin,
+      # SPEC 2026-05-27 capability-action-axis — OrchestratorAdmin
+      # has a single action `:restart` (per `actions/0`); make it
+      # explicit so the cap matches the narrow needed-cap shape
+      # admin_live's `caller_can_restart_orchestrator?` constructs.
+      action: :restart,
       instance: session_uri,
       workspace_uri: workspace_uri,
       granted_by: owner_uri,
@@ -520,6 +525,10 @@ defmodule EzagentDomainChat do
         match?(%Ezagent.Capability{}, cap) and
           cap.kind == want.kind and
           cap.behavior == want.behavior and
+          # SPEC 2026-05-27 capability-action-axis — include action
+          # in the equivalence check via `action_of/1` for snapshot-
+          # restored old-shape tolerance.
+          Ezagent.Capability.action_of(cap) == Ezagent.Capability.action_of(want) and
           cap.instance == want.instance and
           cap.workspace_uri == want.workspace_uri and
           cap.granted_by == want.granted_by

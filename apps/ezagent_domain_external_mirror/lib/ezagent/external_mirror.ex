@@ -418,6 +418,9 @@ defmodule Ezagent.ExternalMirror do
     needed = %{
       kind: :session,
       behavior: Ezagent.Behavior.ExternalMirror,
+      # SPEC 2026-05-27 capability-action-axis — the gated action is
+      # `:list_bindings` (matches `ExternalMirror.required_caps[:list_bindings]`).
+      action: :list_bindings,
       instance: session_uri,
       workspace_uri: workspace_of_or_any(session_uri)
     }

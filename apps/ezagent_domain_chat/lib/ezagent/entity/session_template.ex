@@ -576,6 +576,10 @@ defmodule Ezagent.Entity.SessionTemplate do
         needed = %{
           kind: :session_template,
           behavior: Ezagent.Behavior.Template,
+          # SPEC 2026-05-27 capability-action-axis — `create/3` writes a
+          # new template, so the action under preflight is `:write`.
+          # `Behavior.Template.actions/0` => [:read, :write, :instantiate, :fork].
+          action: :write,
           instance: URI.new!("template://session/#{workspace_name}/_preflight@_"),
           workspace_uri: workspace_uri
         }

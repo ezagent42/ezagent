@@ -1583,6 +1583,14 @@ defmodule Ezagent.Orchestrator.Tools do
     needed = %{
       kind: kind,
       behavior: Ezagent.Behavior.Template,
+      # SPEC 2026-05-27 capability-action-axis — `has_template_cap?` is
+      # a generic "does the owner hold ANY Template cap on this kind +
+      # workspace" predicate (used by `list_templates`'s show/hide
+      # toggle + the write-preflight). `:any` preserves pre-SPEC
+      # semantics for the listing path; the write path is gated via
+      # `check_template_write_cap/2` which uses the explicit `:write`
+      # action.
+      action: :any,
       instance: representative,
       workspace_uri: workspace_uri
     }
@@ -1592,8 +1600,31 @@ defmodule Ezagent.Orchestrator.Tools do
     |> Enum.any?(&Ezagent.Capability.matches?(&1, needed))
   end
 
+  # SPEC 2026-05-27 capability-action-axis — narrow write-cap predicate
+  # used by template materialization paths that MUST distinguish read
+  # from write authority.
+  defp has_template_write_cap?(caps, %URI{} = workspace_uri) do
+    workspace_name =
+      workspace_uri.host ||
+        raise ArgumentError,
+              "workspace_uri has no host (`workspace://<NAME>`) — got " <>
+                inspect(workspace_uri)
+
+    needed = %{
+      kind: :session_template,
+      behavior: Ezagent.Behavior.Template,
+      action: :write,
+      instance: URI.new!("template://session/#{workspace_name}/_preflight@_"),
+      workspace_uri: workspace_uri
+    }
+
+    caps
+    |> to_cap_set()
+    |> Enum.any?(&Ezagent.Capability.matches?(&1, needed))
+  end
+
   defp check_template_write_cap(caps, %URI{} = workspace_uri) do
-    if has_template_cap?(caps, :session_template, workspace_uri) do
+    if has_template_write_cap?(caps, workspace_uri) do
       :ok
     else
       {:error, :unauthorized}
