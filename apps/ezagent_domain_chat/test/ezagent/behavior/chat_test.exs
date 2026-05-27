@@ -67,6 +67,9 @@ defmodule Ezagent.Behavior.ChatTest do
                last_message_id: nil,
                last_message: nil,
                send_cursor: 0,
+               # PR-N3 r4 — cursor-indexed bounded ring of recent
+               # message ids; starts empty on fresh sessions.
+               recent_messages: [],
                template_working_copy: Chat.default_template_working_copy()
              }
     end

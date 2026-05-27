@@ -58,9 +58,14 @@ defmodule Ezagent.ExternalMirror.Invariants.AdapterInstallOrderingTest do
 
   The PR-EM-3 r5 HIGH-A regression class wasn't a logic error in any
   single function — it was an EDGE CASE in the ordering between two
-  cooperating registers. A future refactor that "simplifies" the
-  symmetric `maybe_install` pair into a single one-shot would silently
-  break this contract. The runtime invariant guards against it.
+  cooperating registers. PR #334 (facade auth-model audit) replaced
+  the symmetric `maybe_install` pair with the
+  `Ezagent.Plugin.publish_after_all_registered/2` primitive, which
+  enforces the SAME contract structurally (install fires only when
+  BOTH registries have populated the same adapter_id). This
+  invariant guards the OBSERVABLE contract — install runs exactly
+  once regardless of registration order — independently of the
+  implementation mechanism.
   """
   use ExUnit.Case, async: false
 
@@ -80,8 +85,6 @@ defmodule Ezagent.ExternalMirror.Invariants.AdapterInstallOrderingTest do
   # with a synthetic adapter_id that's only ever in one registry, and
   # observable via return value.
 
-  alias Ezagent.ExternalMirror.AdapterInstall
-
   setup do
     # Use a fresh adapter_id per test so the test is hermetic. The actual
     # MockAdapter/MockBinding modules implement the contract; we just
@@ -89,59 +92,17 @@ defmodule Ezagent.ExternalMirror.Invariants.AdapterInstallOrderingTest do
     {:ok, fresh_id: "ordering_test_em_#{System.unique_integer([:positive])}"}
   end
 
-  test "AdapterInstall.maybe_install/1 defers when paired BindingRegistry entry is missing",
-       %{fresh_id: _fresh_id} do
-    # Build a one-off adapter module whose adapter_id is NOT yet in
-    # BindingRegistry. We DON'T register it in AdapterRegistry — we just
-    # call maybe_install directly with the module to observe the deferral.
-    fresh_id = "ordering_test_em_a_#{System.unique_integer([:positive])}"
-    adapter_module = build_synthetic_adapter(fresh_id)
-
-    # Pre-condition: BindingRegistry has nothing for this adapter_id.
-    assert :error = BindingRegistry.lookup(fresh_id)
-
-    # maybe_install/1 should observe the missing paired entry and return
-    # `:ok` WITHOUT performing the install (no cap subject registered,
-    # no rows reconciled).
-    assert :ok = AdapterInstall.maybe_install(adapter_module)
-
-    # CapBilityRegistry should NOT carry the synthetic cap subject because
-    # install was deferred. We use lookup_subject — direct kind/action probe.
-    expected_action = String.to_atom("allow_" <> fresh_id)
-
-    assert :error = CapabilityRegistry.lookup_subject(Ezagent.Entity.Session, expected_action),
-           """
-           CapabilityRegistry contains a per-adapter cap subject for
-           adapter_id=#{inspect(fresh_id)} but BindingRegistry has NO
-           paired binding — violates SPEC §5.1 r5 HIGH-A.
-           AdapterInstall.maybe_install/1 MUST defer install when the
-           paired BindingRegistry entry is absent.
-           """
-  end
-
-  test "AdapterInstall.maybe_install_by_adapter_id/1 defers when AdapterRegistry entry is missing",
-       %{fresh_id: _fresh_id} do
-    # Symmetric scenario — AdapterRegistry empty for this id.
-    fresh_id = "ordering_test_em_b_#{System.unique_integer([:positive])}"
-
-    # Pre-condition: AdapterRegistry has nothing for this adapter_id.
-    assert :error = AdapterRegistry.lookup(fresh_id)
-
-    # maybe_install_by_adapter_id/1 should observe the missing paired entry
-    # and return `:ok` without doing install (no cap subject registration).
-    assert :ok = AdapterInstall.maybe_install_by_adapter_id(fresh_id)
-
-    expected_action = String.to_atom("allow_" <> fresh_id)
-
-    assert :error = CapabilityRegistry.lookup_subject(Ezagent.Entity.Session, expected_action),
-           """
-           CapabilityRegistry contains a per-adapter cap subject for
-           adapter_id=#{inspect(fresh_id)} but AdapterRegistry has NO
-           paired adapter — violates SPEC §5.1 r5 HIGH-A.
-           AdapterInstall.maybe_install_by_adapter_id/1 MUST defer install
-           when the paired AdapterRegistry entry is absent.
-           """
-  end
+  # The two `maybe_install/1` + `maybe_install_by_adapter_id/1` deferral
+  # tests that used to live here were removed when those functions were
+  # replaced by the `Ezagent.Plugin.publish_after_all_registered/2`
+  # primitive (PR #334, "facade auth-model audit"). The deferral
+  # invariant is now structural — install fires ONLY when both registries
+  # have populated the same adapter_id, enforced by the hook primitive
+  # itself, not by per-side polling. The two end-state tests below
+  # (Adapter-first / Binding-first) verify the OUTCOME of that
+  # contract — install runs exactly once regardless of registration
+  # order — which is the SPEC §5.1 r5 HIGH-A invariant the deleted
+  # tests were intended to cover.
 
   test "after BOTH registries populate the SAME fresh adapter_id (Adapter first, Binding second), cap subject IS registered" do
     # Codex r1 P2 fix: hermetic end-state assertion using a fresh
@@ -312,10 +273,4 @@ defmodule Ezagent.ExternalMirror.Invariants.AdapterInstallOrderingTest do
     {adapter_module_name, binding_module_name}
   end
 
-  # Back-compat for deferral-only tests that don't register the binding
-  # side. Drops the binding module.
-  defp build_synthetic_adapter(adapter_id) do
-    {adapter_module, _binding_module} = build_synthetic_pair(adapter_id)
-    adapter_module
-  end
 end

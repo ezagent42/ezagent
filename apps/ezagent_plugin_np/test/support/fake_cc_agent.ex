@@ -36,9 +36,9 @@ defmodule Ezagent.PluginNp.Test.FakeCcAgent do
 
   Registered against the EXISTING `Ezagent.Entity.Agent` Kind (the
   generic Agent Kind from `ezagent_domain_chat`). The test fixture
-  registers it transiently for the test session via
-  `Ezagent.BehaviorRegistry.register/3` so the orchestration e2e
-  doesn't touch global state permanently.
+  registers it transiently for the test session via the runtime
+  registry API (see the integration test's setup block) so the
+  orchestration e2e doesn't touch global state permanently.
 
   This Behavior lives in `test/support/` and is only compiled in
   `:test` env per `mix.exs` `elixirc_paths(:test)`.
@@ -54,6 +54,11 @@ defmodule Ezagent.PluginNp.Test.FakeCcAgent do
   @impl Ezagent.Behavior
   def cap_subjects do
     [{:receive, "test fixture — fake CC agent's :receive action"}]
+  end
+
+  @impl Ezagent.Behavior
+  def required_caps do
+    %{receive: Ezagent.Capability.cap(:agent, __MODULE__, :receive)}
   end
 
   @impl Ezagent.Behavior

@@ -88,24 +88,43 @@ defmodule EzagentCore.Invariants.NoDefaultWorkspaceRefsTest do
   end
 
   defp count_default_refs(tbl, col) do
-    # Match ONLY the stale-workspace URI positions, NOT every
-    # occurrence of the word "default". Legitimate non-workspace
-    # uses of "default" exist:
-    #   - `session://system/default/ezagent-test` — `default` is a
-    #     session NAMESPACE (second segment), workspace is `system`
-    #   - `entity://agent/system/echo_default` — agent NAME contains
-    #     "default" as a substring
-    #   - `template://agent/default/cc-orchestrator` — template path
-    #     segment, not a workspace reference
-    # Only the first path segment (workspace position) needs guarding.
+    # Match ONLY the stale-WORKSPACE URI positions, NOT every
+    # occurrence of the word "default". Per SPEC v2/v3 URI shape:
+    #
+    #   * `workspace://default`                     ← workspace authority, ILLEGAL post-#335
+    #   * `entity://<type>/default/<name>`          ← workspace = 2nd path seg, ILLEGAL
+    #   * `template://<type>/default/<name>`        ← workspace = 2nd path seg, ILLEGAL
+    #   * `session://<authority>/<workspace>/<name>` ← workspace = 2nd path seg
+    #
+    # Legitimate non-workspace uses of "default" that must NOT trip:
+    #
+    #   * `session://default/system/main`           ← `default` is the
+    #     session AUTHORITY (1st segment); workspace is `system`. This
+    #     is the CANONICAL main session URI, restored by PR #399 after
+    #     #397 over-corrected. Allowed.
+    #   * `session://default/<ws>/<name>` for any non-default ws       ← same shape, allowed.
+    #   * `entity://agent/system/echo_default`      ← `default` as agent NAME suffix.
+    #   * `template://agent/<ws>/cc-orchestrator`   ← unrelated.
+    #
+    # So the only stale shapes to flag are:
+    #
+    #   * `workspace://default` (whole field OR JSON substring)
+    #   * `<scheme>://<type>/default/...` for entity / template / resource
+    #   * `session://<auth>/default/...` (workspace IS the 2nd path seg)
     sql = """
     SELECT COUNT(*)
       FROM #{tbl}
      WHERE #{col} = 'workspace://default'
+        OR #{col} LIKE '%"workspace://default"%'
         OR #{col} LIKE '%entity://user/default/%'
         OR #{col} LIKE '%entity://agent/default/%'
-        OR #{col} LIKE '%session://default/%'
-        OR #{col} LIKE '%workspace://default%'
+        OR #{col} LIKE '%entity://worker/default/%'
+        OR #{col} LIKE '%template://user/default/%'
+        OR #{col} LIKE '%template://agent/default/%'
+        OR #{col} LIKE '%template://session/default/%'
+        OR #{col} LIKE '%resource://%/default/%'
+        OR #{col} LIKE '%session://default/default/%'
+        OR #{col} LIKE '%session://system/default/%'
     """
 
     case Repo.query(sql) do

@@ -158,7 +158,17 @@ defmodule Ezagent.CapabilityActionTest do
              "admin_invariant?/1 must accept the new 5-axis wildcard shape"
     end
 
-    test "Capability.admin_invariant?/1 recognises legacy 4-axis wildcard (snapshot-restored)" do
+    test "Capability.admin_invariant?/1 does NOT match legacy 4-axis wildcard (snapshot-restored)" do
+      # SPEC 2026-05-27 capability-action-axis r4 option-B:
+      # the legacy fallback was deliberately REMOVED from
+      # `admin_invariant?/1`. Pre-SPEC admin caps missing `:action`
+      # are no longer recognised at this layer — operators must
+      # re-grant admin authority via `Identity.grant_cap` (which
+      # goes through `normalize!/2` and writes `action: :any`
+      # explicitly). Matcher-boundary tolerance for legacy snapshot
+      # caps is still in place at dispatch step 5.5 (SPEC §3.3) —
+      # so dispatch keeps working — but the admin-cap recogniser
+      # is intentionally strict.
       legacy =
         Map.delete(
           %Capability{
@@ -176,8 +186,8 @@ defmodule Ezagent.CapabilityActionTest do
       refute Map.has_key?(legacy, :action),
              "test fixture invariant: the legacy cap genuinely lacks :action"
 
-      assert Capability.admin_invariant?(legacy),
-             "admin_invariant?/1 must recognise pre-SPEC snapshot-restored caps via the legacy clause"
+      refute Capability.admin_invariant?(legacy),
+             "admin_invariant?/1 must REJECT pre-SPEC caps missing :action (codex r4 SPEC option-B — legacy fallback removed)"
     end
   end
 
