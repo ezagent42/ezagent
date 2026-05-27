@@ -31,6 +31,7 @@ WS_URL = os.environ.get("EZAGENT_BRIDGE_WS_URL", "ws://127.0.0.1:10042/agent_bri
 AGENT_URI = os.environ.get("EZAGENT_AGENT_URI", "")
 AGENT_TOKEN = os.environ.get("EZAGENT_AGENT_TOKEN", "")
 CODEX_SOCK = os.environ.get("EZAGENT_CODEX_APP_SERVER_SOCK", "")
+THREAD_ID_FILE = os.environ.get("EZAGENT_CODEX_THREAD_ID_FILE", "")
 CWD = os.environ.get("EZAGENT_CODEX_CWD", os.getcwd())
 CODEX_BIN = os.environ.get("EZAGENT_CODEX_BIN", "codex")
 MODEL = os.environ.get("EZAGENT_CODEX_MODEL", "")
@@ -73,6 +74,30 @@ def bridge_topic() -> str:
     if explicit:
         return explicit
     return f"agent_bridge:codex:{AGENT_URI}"
+
+
+def read_thread_id_file() -> str | None:
+    if not THREAD_ID_FILE:
+        return None
+    try:
+        with open(THREAD_ID_FILE, "r", encoding="utf-8") as f:
+            thread_id = f.read().strip()
+            return thread_id or None
+    except FileNotFoundError:
+        return None
+
+
+def write_thread_id_file(thread_id: str) -> None:
+    if not THREAD_ID_FILE:
+        return
+    dir_name = os.path.dirname(THREAD_ID_FILE)
+    if dir_name:
+        os.makedirs(dir_name, exist_ok=True)
+    tmp_path = f"{THREAD_ID_FILE}.tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        f.write(thread_id)
+        f.write("\n")
+    os.replace(tmp_path, THREAD_ID_FILE)
 
 
 class CodexClient:
@@ -120,18 +145,22 @@ class CodexClient:
         if self.thread_id:
             return self.thread_id
 
-        params: dict[str, Any] = {
-            "cwd": CWD,
-            "sessionStartSource": "startup",
-            "ephemeral": False,
-        }
-        if MODEL:
-            params["model"] = MODEL
-        if APPROVAL_POLICY:
-            params["approvalPolicy"] = APPROVAL_POLICY
-        if SANDBOX:
-            params["sandbox"] = SANDBOX
+        persisted_thread_id = read_thread_id_file()
+        if persisted_thread_id:
+            try:
+                params = self.thread_options()
+                params["threadId"] = persisted_thread_id
+                result = await self.call("thread/resume", params)
+                thread = result.get("thread") or {}
+                self.thread_id = thread.get("id") or persisted_thread_id
+                write_thread_id_file(self.thread_id)
+                return self.thread_id
+            except Exception:
+                LOG.exception("failed to resume persisted codex thread %s", persisted_thread_id)
 
+        params = self.thread_options()
+        params["sessionStartSource"] = "startup"
+        params["ephemeral"] = False
         result = await self.call("thread/start", params)
         thread = result.get("thread") or {}
         thread_id = thread.get("id")
@@ -139,7 +168,20 @@ class CodexClient:
             raise RuntimeError(f"thread/start did not return thread.id: {result!r}")
 
         self.thread_id = thread_id
+        write_thread_id_file(thread_id)
         return thread_id
+
+    def thread_options(self) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "cwd": CWD,
+        }
+        if MODEL:
+            params["model"] = MODEL
+        if APPROVAL_POLICY:
+            params["approvalPolicy"] = APPROVAL_POLICY
+        if SANDBOX:
+            params["sandbox"] = SANDBOX
+        return params
 
     async def submit_turn(self, payload: dict[str, Any]) -> dict[str, Any]:
         async with self.turn_lock:
@@ -344,6 +386,7 @@ async def connect_loop() -> None:
 
     while True:
         try:
+            await client.ensure_thread()
             LOG.info("connecting %s", url)
             async with websockets.connect(url, max_size=None) as ws:
                 topic = bridge_topic()
@@ -374,6 +417,10 @@ async def connect_loop() -> None:
                 )
         except (OSError, websockets.exceptions.WebSocketException, asyncio.TimeoutError):
             LOG.exception("bridge connection failed; retry in %ds", backoff)
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 30)
+        except Exception:
+            LOG.exception("codex bridge failed; retry in %ds", backoff)
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 30)
 

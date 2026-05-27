@@ -14,6 +14,7 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
   require Logger
 
   @compile_env Mix.env()
+  @thread_id_wait_ms 15_000
 
   @impl Ezagent.Kind.Template
   def template_name, do: "codex.agent"
@@ -126,17 +127,33 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
   defp ensure_sidecars(agent_uri, tmpl) do
     cwd = Map.fetch!(tmpl, "cwd")
     socket_path = app_server_socket_path(agent_uri, tmpl)
+    thread_id_path = thread_id_path(agent_uri, tmpl)
     test_mode = Application.get_env(:ezagent_plugin_codex, :test_mode, @compile_env == :test)
     bridge_ws_url = Map.get(tmpl, "bridge_ws_url", default_bridge_ws_url())
     codex_path = Map.get(tmpl, "codex_path")
 
+    # Bridge creates the Codex thread first; the PTY TUI resumes that
+    # thread so operator input and AgentBridge turns share one context.
     with :ok <- ensure_app_server(agent_uri, cwd, socket_path, codex_path, test_mode),
-         :ok <- ensure_pty(agent_uri, cwd, socket_path, tmpl, codex_path, test_mode),
+         :ok <- reset_thread_id_file_for_new_bridge(agent_uri, thread_id_path, test_mode),
          :ok <-
-           ensure_bridge_sidecar(agent_uri, cwd, socket_path, bridge_ws_url, tmpl, codex_path, test_mode) do
+           ensure_bridge_sidecar(
+             agent_uri,
+             cwd,
+             socket_path,
+             thread_id_path,
+             bridge_ws_url,
+             tmpl,
+             codex_path,
+             test_mode
+           ),
+         {:ok, thread_id} <- ensure_bridge_thread_id(thread_id_path, test_mode),
+         :ok <- ensure_pty(agent_uri, cwd, socket_path, thread_id, tmpl, codex_path, test_mode) do
       {:ok,
        %{
          app_server_socket: socket_path,
+         codex_thread_id: thread_id,
+         codex_thread_id_file: thread_id_path,
          bridge_ws_url: bridge_ws_url
        }}
     end
@@ -159,18 +176,11 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
     end
   end
 
-  defp ensure_pty(agent_uri, cwd, socket_path, tmpl, codex_path, test_mode) do
+  defp ensure_pty(agent_uri, cwd, socket_path, thread_id, tmpl, codex_path, test_mode) do
     if Ezagent.Domain.Pty.alive?(agent_uri) do
       :ok
     else
-      with {:ok, cmd} <- codex_tui_cmd(socket_path, cwd, tmpl, codex_path) do
-        params =
-          if test_mode do
-            %{cwd: cwd, test_mode: true}
-          else
-            %{cwd: cwd, cmd_override: cmd}
-          end
-
+      with {:ok, params} <- pty_params(cwd, socket_path, thread_id, tmpl, codex_path, test_mode) do
         case Ezagent.Domain.Pty.start(agent_uri, params) do
           {:ok, _pid} -> :ok
           {:error, {:already_started, _pid}} -> :ok
@@ -180,13 +190,25 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
     end
   end
 
-  defp ensure_bridge_sidecar(agent_uri, cwd, socket_path, bridge_ws_url, tmpl, codex_path, test_mode) do
+  defp ensure_bridge_sidecar(
+         agent_uri,
+         cwd,
+         socket_path,
+         thread_id_path,
+         bridge_ws_url,
+         tmpl,
+         codex_path,
+         test_mode
+       ) do
+    restart_bridge_without_thread_file(agent_uri, thread_id_path, test_mode)
+
     if EzagentPluginCodex.BridgeSidecar.alive?(agent_uri) do
       :ok
     else
       case EzagentPluginCodex.BridgeSidecar.start(agent_uri, %{
              cwd: cwd,
              app_server_socket: socket_path,
+             thread_id_file: thread_id_path,
              bridge_ws_url: bridge_ws_url,
              codex_path: codex_path,
              model: Map.get(tmpl, "model"),
@@ -201,6 +223,16 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
     end
   end
 
+  defp restart_bridge_without_thread_file(_agent_uri, _thread_id_path, true), do: :ok
+
+  defp restart_bridge_without_thread_file(agent_uri, thread_id_path, false) do
+    if EzagentPluginCodex.BridgeSidecar.alive?(agent_uri) and not File.exists?(thread_id_path) do
+      _ = EzagentPluginCodex.BridgeSidecar.stop(agent_uri)
+    end
+
+    :ok
+  end
+
   defp rollback_sidecars(agent_uri) do
     _ = EzagentPluginCodex.BridgeSidecar.stop(agent_uri)
     _ = Ezagent.Domain.Pty.stop(agent_uri)
@@ -208,9 +240,19 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
     :ok
   end
 
-  defp codex_tui_cmd(socket_path, cwd, tmpl, codex_path) do
+  defp pty_params(cwd, _socket_path, _thread_id, _tmpl, _codex_path, true) do
+    {:ok, %{cwd: cwd, test_mode: true}}
+  end
+
+  defp pty_params(cwd, socket_path, thread_id, tmpl, codex_path, false) do
+    with {:ok, cmd} <- codex_tui_cmd(socket_path, cwd, thread_id, tmpl, codex_path) do
+      {:ok, %{cwd: cwd, cmd_override: cmd}}
+    end
+  end
+
+  defp codex_tui_cmd(socket_path, cwd, thread_id, tmpl, codex_path) do
     with {:ok, codex} <- codex_executable(codex_path) do
-      base = [codex, "--remote", "unix://#{socket_path}", "--cd", cwd]
+      base = [codex, "resume", "--remote", "unix://#{socket_path}", "--cd", cwd]
 
       cmd =
         base
@@ -218,7 +260,7 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
         |> maybe_append("--ask-for-approval", Map.get(tmpl, "approval_policy"))
         |> maybe_append("--sandbox", Map.get(tmpl, "sandbox"))
 
-      {:ok, cmd}
+      {:ok, cmd ++ [thread_id]}
     end
   end
 
@@ -269,6 +311,11 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
     Map.get(tmpl, "app_server_socket") || default_app_server_socket_path(agent_uri)
   end
 
+  defp thread_id_path(agent_uri, tmpl) do
+    Map.get(tmpl, "thread_id_file") ||
+      Path.join(Path.dirname(app_server_socket_path(agent_uri, tmpl)), "bridge-thread-id")
+  end
+
   defp default_app_server_socket_path(agent_uri) do
     slug =
       agent_uri
@@ -284,6 +331,47 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
       :bridge_ws_url,
       "ws://127.0.0.1:10042/agent_bridge/websocket"
     )
+  end
+
+  defp reset_thread_id_file_for_new_bridge(_agent_uri, _thread_id_path, true), do: :ok
+
+  defp reset_thread_id_file_for_new_bridge(agent_uri, thread_id_path, false) do
+    unless EzagentPluginCodex.BridgeSidecar.alive?(agent_uri) do
+      _ = File.rm(thread_id_path)
+    end
+
+    :ok
+  end
+
+  defp ensure_bridge_thread_id(_thread_id_path, true), do: {:ok, nil}
+
+  defp ensure_bridge_thread_id(thread_id_path, false) do
+    wait_for_thread_id(thread_id_path, System.monotonic_time(:millisecond) + @thread_id_wait_ms)
+  end
+
+  defp wait_for_thread_id(thread_id_path, deadline_ms) do
+    case File.read(thread_id_path) do
+      {:ok, body} ->
+        case String.trim(body) do
+          "" -> retry_thread_id(thread_id_path, deadline_ms)
+          thread_id -> {:ok, thread_id}
+        end
+
+      {:error, :enoent} ->
+        retry_thread_id(thread_id_path, deadline_ms)
+
+      {:error, reason} ->
+        {:error, {:codex_thread_id_file_read_failed, thread_id_path, reason}}
+    end
+  end
+
+  defp retry_thread_id(thread_id_path, deadline_ms) do
+    if System.monotonic_time(:millisecond) >= deadline_ms do
+      {:error, {:codex_thread_id_file_timeout, thread_id_path}}
+    else
+      Process.sleep(100)
+      wait_for_thread_id(thread_id_path, deadline_ms)
+    end
   end
 
   defp check_class(%{"class" => "codex.agent"}), do: :ok

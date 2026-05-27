@@ -103,6 +103,7 @@ defmodule EzagentPluginCodex.BridgeSidecar do
         {~c"EZAGENT_AGENT_TOKEN", String.to_charlist(token)},
         {~c"EZAGENT_BRIDGE_WS_URL", String.to_charlist(Map.fetch!(args, :bridge_ws_url))},
         {~c"EZAGENT_CODEX_APP_SERVER_SOCK", String.to_charlist(Map.fetch!(args, :app_server_socket))},
+        {~c"EZAGENT_CODEX_THREAD_ID_FILE", String.to_charlist(Map.fetch!(args, :thread_id_file))},
         {~c"EZAGENT_CODEX_CWD", String.to_charlist(Map.fetch!(args, :cwd))}
       ]
       |> maybe_env(~c"EZAGENT_CODEX_BIN", Map.get(args, :codex_path))
