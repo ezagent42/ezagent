@@ -1,6 +1,6 @@
 # SPEC — URI canonicalization across boundaries (Bug 2)
 
-**Status:** r3 — DRAFT for codex adversarial-review (round 3). 2026-05-27.
+**Status:** r4 — DRAFT for codex adversarial-review (round 4). 2026-05-27.
 
 **Tier:** `apps/ezagent_core/` (`Ezagent.URI` parser/canonicalizer) + sweep across every Domain + Plugin that constructs `%URI{}` (`apps/ezagent_domain_*/`, `apps/ezagent_plugin_*/`, `apps/ezagent_web/`, `apps/ezagent_cli/`) + operator-facing mix tasks under `apps/*/lib/mix/tasks/` (r2 expansion). Touches the test base too (helpers + fixtures) but production sites are the load-bearing scope.
 
@@ -8,7 +8,15 @@
 
 **Companion:** `2026-05-27-uri-canonicalization.zh_cn.md` (per `feedback_bilingual_docs_convention`).
 
-## r3 changelog (delta from r2)
+## r4 changelog (delta from r3)
+
+Addresses 1 HIGH from codex r3 REJECT:
+
+- **HIGH (§5.2.1 count-based `URI.new/1` regex still false-negative)** — r3 claimed `~r/\bURI\.new\(/` also matches the leading portion of `URI.new!(`. Codex r3 verified statically that it does NOT (the pattern requires `(` immediately after `new`, but `URI.new!(` has `!` between them), so the formula gives `bare=1, bang=1, diff=0` for the adversarial line `foo = URI.new(s); bar = URI.new!(t)` and misses the violation. **r4 fix:** switch to a single negative-lookahead regex `~r/\bURI\.new(?!!)\(/` (Elixir's PCRE regex supports this). The lookahead `(?!!)` rejects matches where `new` is immediately followed by `!`. Verified live with `elixir` REPL: the adversarial line yields `bare=1` (the bare URI.new), other-direction cases (`foo = URI.new!(s); bar = URI.new(t)`) also yield `bare=1`, all-bang lines yield `bare=0`. The two-stage count formula is dropped entirely — a single regex is correct and clearer. §5.5 / Appendix B adversarial regression test retained, now passing.
+
+---
+
+## r3 changelog (delta from r2, retained for trail)
 
 Addresses 2 HIGH + 1 MED from codex r2 REJECT:
 
@@ -354,30 +362,30 @@ test "no stdlib URI.new/1 in apps outside the external-URI fallback allowlist" d
 end
 ```
 
-**`matches_uri_new_no_bang?/1`** must distinguish `URI.new(` from `URI.new!(` even when **both occur on the same line** (codex r2 HIGH fix). The earlier binary "line contains `URI.new!(`" check was a false-negative: a line like `foo = URI.new(s); bar = URI.new!(t)` would silently pass.
+**`matches_uri_new_no_bang?/1`** must distinguish `URI.new(` from `URI.new!(` even when **both occur on the same line** (codex r2 HIGH; codex r3 caught r3's count formula was wrong too).
 
-The fix is **count-based**, not contains-based. The invariant test counts `URI.new(` occurrences and `URI.new!(` occurrences on each line; a violation exists if `URI.new(` total > `URI.new!(` total (i.e. there is at least one bare `URI.new/1` not paired with a `!`):
+The fix is a **single regex with PCRE negative lookahead**: `~r/\bURI\.new(?!!)\(/`. The lookahead `(?!!)` rejects matches where `new` is immediately followed by `!`. Elixir's regex IS PCRE, so this works directly.
 
 ```elixir
 defp matches_uri_new_no_bang?(line) do
-  # Per-line count of bare URI.new( vs URI.new!(
-  # A bare hit exists iff the bare-count exceeds the bang-count.
-  bare = length(Regex.scan(~r/\bURI\.new\(/, line))
-  bang = length(Regex.scan(~r/\bURI\.new!\(/, line))
-  # \bURI.new\( ALSO matches the leading portion of `URI.new!(`, so
-  # `bare` includes both forms. Bare-only-count = bare - bang.
-  bare - bang > 0
+  # Negative lookahead: match URI.new( where `new` is NOT followed by `!`.
+  # Catches `URI.new(s)` and `URI.new(s); URI.new!(t)` and similar mixes.
+  Regex.match?(~r/\bURI\.new(?!!)\(/, line)
 end
 ```
 
-Adversarial verification (the codex r2 HIGH case): for `foo = URI.new(s); bar = URI.new!(t)` we have `bare = 2` (one matches `URI.new(`, one matches the leading portion of `URI.new!(`), `bang = 1`, so `bare - bang = 1 > 0` → caught.
+Live-verified (via `elixir /tmp/test.exs`) on these inputs:
 
-The impl PR adds a unit test in the invariant test module exercising:
-1. `URI.new(s)` alone → caught.
-2. `URI.new!(s)` alone → NOT caught (correctly — that's §5.2's domain).
-3. `foo = URI.new(s); bar = URI.new!(t)` → caught (the adversarial case).
-4. `foo = URI.new!(s); bar = URI.new!(t)` → NOT caught.
-5. `# URI.new(s)` (comment) → NOT caught (`in_comment?/1` strips first).
+| Line | `matches_uri_new_no_bang?/1` |
+|---|---|
+| `foo = URI.new(s)` | `true` (caught) |
+| `foo = URI.new!(s)` | `false` (correctly — §5.2's domain) |
+| `foo = URI.new(s); bar = URI.new!(t)` | `true` (caught — the codex r2 HIGH adversarial case) |
+| `foo = URI.new!(s); bar = URI.new(t)` | `true` (caught — opposite order) |
+| `foo = URI.new!(s); bar = URI.new!(t)` | `false` |
+| `# URI.new(s)` | `true` raw, but `in_comment?/1` strips it before this check |
+
+The impl PR adds a unit test in the invariant test module exercising each row above (see §5.5 / Appendix B).
 
 **Allowlist** — files that legitimately call bare `URI.new/1`:
 
@@ -1059,14 +1067,16 @@ defmodule Ezagent.URICanonicalizationTest do
     assert canonicalized.chat.owner == Ezagent.URI.parse!("entity://user/system/admin")
   end
 
-  # r3 NEW — codex r2 HIGH-2 adversarial regression for §5.2.1
-  # invariant: a single line carrying BOTH URI.new(...) and URI.new!(...)
-  # must NOT slip through. The earlier binary "line contains URI.new!("
-  # check was the false-negative.
+  # r3 NEW (regex fixed in r4) — codex r2 HIGH-2 adversarial
+  # regression for §5.2.1 invariant: a single line carrying BOTH
+  # URI.new(...) and URI.new!(...) must NOT slip through, regardless
+  # of order on the line. Verified live with elixir REPL — see §5.2.1
+  # table for full input matrix.
   test "URI.new/1 invariant catches same-line URI.new + URI.new! mix" do
     assert matches_uri_new_no_bang?("foo = URI.new(s)")
     refute matches_uri_new_no_bang?("foo = URI.new!(s)")
     assert matches_uri_new_no_bang?("foo = URI.new(s); bar = URI.new!(t)")
+    assert matches_uri_new_no_bang?("foo = URI.new!(s); bar = URI.new(t)")
     refute matches_uri_new_no_bang?("foo = URI.new!(s); bar = URI.new!(t)")
   end
 
@@ -1083,15 +1093,12 @@ defmodule Ezagent.URICanonicalizationTest do
   end
 
   defp matches_uri_new_no_bang?(line) do
-    # Count-based, not contains-based. Codex r2 HIGH fix:
-    # a line like `foo = URI.new(s); bar = URI.new!(t)` would slip
-    # through a "contains URI.new(" + "not contains URI.new!(" check.
-    # `\bURI.new\(` ALSO matches the leading portion of `URI.new!(`,
-    # so `bare` counts both forms and `bare - bang` isolates the
-    # bare-only count.
-    bare = length(Regex.scan(~r/\bURI\.new\(/, line))
-    bang = length(Regex.scan(~r/\bURI\.new!\(/, line))
-    bare - bang > 0
+    # PCRE negative lookahead: match URI.new( where `new` is NOT
+    # immediately followed by `!`. Codex r4 fix — the r3 count-based
+    # formula assumed `\bURI.new\(` matched the leading portion of
+    # `URI.new!(`, but it does not (the `(` must come right after
+    # `new`, and `URI.new!(` has `!` in between).
+    Regex.match?(~r/\bURI\.new(?!!)\(/, line)
   end
 
   defp is_query_target_idiom?(line),

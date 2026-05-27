@@ -1,6 +1,6 @@
 # SPEC — URI 跨边界规范化 (Bug 2)
 
-**状态:** r3 — DRAFT,等待 codex adversarial-review (第 3 轮)。2026-05-27。
+**状态:** r4 — DRAFT,等待 codex adversarial-review (第 4 轮)。2026-05-27。
 
 **层级:** `apps/ezagent_core/` (`Ezagent.URI` 解析器 / 规范化器) + 扫除所有构造 `%URI{}` 的 Domain + Plugin (`apps/ezagent_domain_*/`、`apps/ezagent_plugin_*/`、`apps/ezagent_web/`、`apps/ezagent_cli/`) + `apps/*/lib/mix/tasks/` 下的操作员面对 mix tasks (r2 扩展)。
 
@@ -8,7 +8,15 @@
 
 **英文版:** `2026-05-27-uri-canonicalization.md` (按 `feedback_bilingual_docs_convention`)。
 
-## r3 changelog (相对 r2 的差异)
+## r4 changelog (相对 r3 的差异)
+
+处理 codex r3 REJECT 的 1 个 HIGH:
+
+- **HIGH (§5.2.1 基于计数的 `URI.new/1` 正则仍假阴性)** — r3 声称 `~r/\bURI\.new\(/` 也匹配 `URI.new!(` 的前导部分。Codex r3 静态验证它**不**匹配 (模式要求 `(` 紧跟 `new`,但 `URI.new!(` 在两者之间有 `!`),所以对抗性行 `foo = URI.new(s); bar = URI.new!(t)` 公式给出 `bare=1, bang=1, diff=0`,漏掉违规。**r4 修复:** 切换到单个 PCRE 负向前瞻正则 `~r/\bURI\.new(?!!)\(/` (Elixir 的 PCRE 正则支持此)。前瞻 `(?!!)` 拒绝 `new` 紧跟 `!` 的匹配。通过 `elixir` REPL 实际验证:对抗性行产生 `bare=1` (裸 URI.new),反向 (`foo = URI.new!(s); bar = URI.new(t)`) 也产生 `bare=1`,全 bang 行产生 `bare=0`。完全放弃两阶段计数公式 — 单个正则正确且清晰。§5.5 / Appendix B 对抗性回归测试保留,现在通过。
+
+---
+
+## r3 changelog (相对 r2 的差异,保留用于追踪)
 
 处理 codex r2 REJECT 的 2 个 HIGH + 1 个 MED:
 
@@ -285,30 +293,30 @@ test "no stdlib URI.new/1 in apps outside the external-URI fallback allowlist" d
 end
 ```
 
-**`matches_uri_new_no_bang?/1`** 必须区分 `URI.new(` 和 `URI.new!(` 即使**两者出现在同一行** (codex r2 HIGH 修复)。早期的二元"行包含 `URI.new!(`"检查是假阴性:像 `foo = URI.new(s); bar = URI.new!(t)` 这样的行会静默通过。
+**`matches_uri_new_no_bang?/1`** 必须区分 `URI.new(` 和 `URI.new!(` 即使**两者出现在同一行** (codex r2 HIGH;codex r3 发现 r3 的计数公式也是错的)。
 
-修复是**基于计数**,不是基于包含。不变量测试在每行计数 `URI.new(` 出现次数和 `URI.new!(` 出现次数;违规存在当且仅当 `URI.new(` 总数 > `URI.new!(` 总数 (即至少有一个裸 `URI.new/1` 未配对 `!`):
+修复是**单个 PCRE 负向前瞻正则**:`~r/\bURI\.new(?!!)\(/`。前瞻 `(?!!)` 拒绝 `new` 紧跟 `!` 的匹配。Elixir 的正则**是** PCRE,所以这直接工作。
 
 ```elixir
 defp matches_uri_new_no_bang?(line) do
-  # 每行裸 URI.new( vs URI.new!( 计数
-  # 裸命中存在 iff bare-count 超过 bang-count。
-  bare = length(Regex.scan(~r/\bURI\.new\(/, line))
-  bang = length(Regex.scan(~r/\bURI\.new!\(/, line))
-  # \bURI.new\( 也匹配 `URI.new!(` 的前导部分,所以 bare 同时
-  # 包括两种形式。bare-only-count = bare - bang。
-  bare - bang > 0
+  # 负向前瞻:匹配 URI.new( 其中 `new` **不**紧跟 `!`。
+  # 捕获 `URI.new(s)` 和 `URI.new(s); URI.new!(t)` 等混合。
+  Regex.match?(~r/\bURI\.new(?!!)\(/, line)
 end
 ```
 
-对抗性验证 (codex r2 HIGH 案例):对 `foo = URI.new(s); bar = URI.new!(t)` 我们有 `bare = 2` (一个匹配 `URI.new(`,一个匹配 `URI.new!(` 的前导部分)、`bang = 1`,所以 `bare - bang = 1 > 0` → 捕获。
+通过 `elixir /tmp/test.exs` 实际验证以下输入:
 
-impl PR 在不变量测试模块中添加单元测试演练:
-1. 仅 `URI.new(s)` → 捕获。
-2. 仅 `URI.new!(s)` → **不**捕获 (正确 — 那是 §5.2 的领域)。
-3. `foo = URI.new(s); bar = URI.new!(t)` → 捕获 (对抗性案例)。
-4. `foo = URI.new!(s); bar = URI.new!(t)` → **不**捕获。
-5. `# URI.new(s)` (注释) → **不**捕获 (`in_comment?/1` 先剥离)。
+| 行 | `matches_uri_new_no_bang?/1` |
+|---|---|
+| `foo = URI.new(s)` | `true` (捕获) |
+| `foo = URI.new!(s)` | `false` (正确 — §5.2 领域) |
+| `foo = URI.new(s); bar = URI.new!(t)` | `true` (捕获 — codex r2 HIGH 对抗性案例) |
+| `foo = URI.new!(s); bar = URI.new(t)` | `true` (捕获 — 反向顺序) |
+| `foo = URI.new!(s); bar = URI.new!(t)` | `false` |
+| `# URI.new(s)` | 原始 `true`,但 `in_comment?/1` 先剥离 |
+
+impl PR 在不变量测试模块中为上面每一行添加单元测试 (见 §5.5 / Appendix B)。
 
 **允许列表** — 合法调用裸 `URI.new/1` 的文件:
 
@@ -897,12 +905,14 @@ defmodule Ezagent.URICanonicalizationTest do
     assert canonicalized.chat.owner == Ezagent.URI.parse!("entity://user/system/admin")
   end
 
-  # r3 NEW — codex r2 HIGH-2 对抗性回归:单行同时携带
-  # URI.new(...) 和 URI.new!(...) 不得漏过。
+  # r3 NEW (regex 在 r4 修复) — codex r2 HIGH-2 对抗性回归:
+  # 单行同时携带 URI.new(...) 和 URI.new!(...) 不得漏过,
+  # 不论顺序。通过 elixir REPL 实际验证 — 见 §5.2.1 表格完整输入矩阵。
   test "URI.new/1 invariant catches same-line URI.new + URI.new! mix" do
     assert matches_uri_new_no_bang?("foo = URI.new(s)")
     refute matches_uri_new_no_bang?("foo = URI.new!(s)")
     assert matches_uri_new_no_bang?("foo = URI.new(s); bar = URI.new!(t)")
+    assert matches_uri_new_no_bang?("foo = URI.new!(s); bar = URI.new(t)")
     refute matches_uri_new_no_bang?("foo = URI.new!(s); bar = URI.new!(t)")
   end
 
@@ -919,14 +929,11 @@ defmodule Ezagent.URICanonicalizationTest do
   end
 
   defp matches_uri_new_no_bang?(line) do
-    # 基于计数,不是基于包含。codex r2 HIGH 修复:
-    # 像 `foo = URI.new(s); bar = URI.new!(t)` 这样的行会通过
-    # "包含 URI.new(" + "不包含 URI.new!(" 检查。
-    # \bURI.new\( 也匹配 `URI.new!(` 的前导部分,所以 bare 计数
-    # 两种形式,bare - bang 隔离 bare-only 计数。
-    bare = length(Regex.scan(~r/\bURI\.new\(/, line))
-    bang = length(Regex.scan(~r/\bURI\.new!\(/, line))
-    bare - bang > 0
+    # PCRE 负向前瞻:匹配 URI.new( 其中 `new` **不**紧跟 `!`。
+    # Codex r4 修复 — r3 基于计数的公式假设 `\bURI.new\(` 匹配
+    # `URI.new!(` 的前导部分,但它不匹配 (`(` 必须紧跟 `new`,而
+    # `URI.new!(` 在两者之间有 `!`)。
+    Regex.match?(~r/\bURI\.new(?!!)\(/, line)
   end
 
   defp is_query_target_idiom?(line),
