@@ -30,6 +30,26 @@ defmodule EzagentPluginCc.BridgeAdapterTest do
              BridgeAdapter.handle_client_event("reply", %{"text" => "missing sessions"}, socket)
   end
 
+  test "handle_client_event/3 rejects empty session_uris with structured error (Invariant #9 r3 closure)" do
+    # Codex r3 HIGH closure — an empty `session_uris` list previously
+    # produced `{:ok, %{dispatched: []}}` with no Logger / telemetry,
+    # silently ACKing a delivery to zero targets. The boundary now
+    # rejects the case with a structured `:error` ACK + Logger
+    # warning + telemetry.
+    socket = %Phoenix.Socket{
+      assigns: %{agent_uri: Ezagent.URI.parse!("entity://agent/team-alpha/cc_test")}
+    }
+
+    assert {:reply,
+            {:error, %{reason: "session_uris must be a non-empty list"}},
+            ^socket} =
+             BridgeAdapter.handle_client_event(
+               "reply",
+               %{"text" => "hi", "session_uris" => []},
+               socket
+             )
+  end
+
   test "dispatch_reply/5 returns dispatched + skipped breakdown for malformed session URIs (SPEC 2026-05-27 §3.3 + Invariant #9)" do
     # Codex r2 HIGH closure — malformed session URIs from the cc bridge
     # MUST NOT be silently dropped. dispatch_reply/5 returns the split

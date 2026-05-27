@@ -44,20 +44,44 @@ defmodule EzagentPluginCc.BridgeAdapter do
     ref = Map.get(params, "ref")
     attachments = Map.get(params, "attachments", [])
 
-    if is_list(attachments) do
-      case dispatch_reply(socket.assigns.agent_uri, sessions, text, ref, attachments) do
-        {:ok, %{dispatched: dispatched, skipped: []}} ->
-          {:reply, {:ok, %{dispatched: dispatched}}, socket}
+    cond do
+      not is_list(attachments) ->
+        {:reply, {:error, %{reason: "attachments must be a list of maps"}}, socket}
 
-        {:ok, %{dispatched: dispatched, skipped: skipped}} ->
-          # Invariant #9 — malformed session URIs from the client surface
-          # back to the boundary so claude knows not all sessions
-          # received the reply. Telemetry + Logger.warning also fires
-          # inside dispatch_reply/5 for ops visibility.
-          {:reply, {:ok, %{dispatched: dispatched, skipped: skipped}}, socket}
-      end
-    else
-      {:reply, {:error, %{reason: "attachments must be a list of maps"}}, socket}
+      # Invariant #9 closure r3 — codex caught that an empty `session_uris`
+      # list silently succeeded (Enum.split_with returned {[], []}; no
+      # Logger / telemetry / skipped surface). Treat zero-target as a
+      # boundary error: claude gets a structured error, ops sees the
+      # telemetry, and the malformed/zero case is never a silent ACK.
+      sessions == [] ->
+        Logger.warning(
+          "EzagentPluginCc.BridgeAdapter: rejected cc bridge reply with empty " <>
+            "session_uris (agent=#{URI.to_string(socket.assigns.agent_uri)})"
+        )
+
+        :telemetry.execute(
+          [:ezagent, :plugin_cc, :bridge_adapter, :reply_rejected],
+          %{count: 1},
+          %{
+            agent_uri: URI.to_string(socket.assigns.agent_uri),
+            reason: :empty_session_uris
+          }
+        )
+
+        {:reply, {:error, %{reason: "session_uris must be a non-empty list"}}, socket}
+
+      true ->
+        case dispatch_reply(socket.assigns.agent_uri, sessions, text, ref, attachments) do
+          {:ok, %{dispatched: dispatched, skipped: []}} ->
+            {:reply, {:ok, %{dispatched: dispatched}}, socket}
+
+          {:ok, %{dispatched: dispatched, skipped: skipped}} ->
+            # Invariant #9 — malformed session URIs from the client surface
+            # back to the boundary so claude knows not all sessions
+            # received the reply. Telemetry + Logger.warning also fires
+            # inside dispatch_reply/5 for ops visibility.
+            {:reply, {:ok, %{dispatched: dispatched, skipped: skipped}}, socket}
+        end
     end
   end
 
