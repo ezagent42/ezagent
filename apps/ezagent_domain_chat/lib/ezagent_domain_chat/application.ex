@@ -162,6 +162,17 @@ defmodule EzagentDomainChat.Application do
         # setup. Idempotent: re-install on existing template is a no-op.
         :ok = seed_cc_orchestrator_template()
 
+        # Task #50 (Allen 2026-05-27) — seed a `default` SessionTemplate
+        # under `workspace://system` so `/admin/templates` is non-empty
+        # on a fresh install AND so `mix ezagent workspace create_session
+        # --template-name default` resolves to a known team config
+        # without operator setup. Idempotent (content-addressable: same
+        # config → same hash URI → already-alive). Depends on
+        # `seed_cc_orchestrator_template/0` because the default template's
+        # `orchestrator_template_uri` points at the cc-orchestrator
+        # AgentTemplate URI.
+        :ok = seed_default_session_template()
+
         # Phase 8c PR-J — test-only main session seed. See moduledoc.
         :ok = maybe_seed_main_session_for_tests()
 
@@ -334,6 +345,94 @@ defmodule EzagentDomainChat.Application do
   # best-effort (logs + `:ok` on failure so boot never aborts).
   defp seed_cc_orchestrator_template do
     Ezagent.Orchestrator.CcOrchestratorSeed.seed()
+  end
+
+  # Task #50 (Allen 2026-05-27) — seed a `default` SessionTemplate Kind
+  # under `workspace://system` so admin can immediately use
+  # `mix ezagent workspace create_session --template-name default`
+  # without operator setup, and `/admin/templates` is non-empty on a
+  # fresh install.
+  #
+  # Minimal-viable config (per task spec): empty `agent_slots` (no
+  # worker agents — just the orchestrator), empty `routing_rules`
+  # (no auto-routing), `orchestrator_template_uri` pointing at the
+  # cc-orchestrator AgentTemplate seeded in
+  # `seed_cc_orchestrator_template/0` above. A session instantiated
+  # from this template spawns only the orchestrator — the orchestrator
+  # then composes its team via `add_agent_slot` / `write_matcher`
+  # tools.
+  #
+  # ## Idempotency (content-addressable)
+  #
+  # `SessionTemplate.persist_version_as_system/2` hashes the content,
+  # builds `template://session/system/default@<hash>`, and spawns the
+  # Kind. Re-running this seed with identical content resolves to the
+  # SAME URI and `SpawnRegistry.spawn/1` returns `{:ok, _existing_pid}`
+  # — no duplicate row in `kind_snapshots`. Hash inputs include
+  # `agent_slots`, `routing_rules`, `orchestrator_template_uri`, and
+  # `default_workspace_uri`; `created_at`/`created_by` are explicitly
+  # excluded (see `SessionTemplate.compute_version_hash/1`) so wall-
+  # clock skew across reboots doesn't churn the hash.
+  #
+  # ## Best-effort (won't abort boot)
+  #
+  # A persist failure (DB unavailable, AgentTemplate seed errored)
+  # logs a warning and returns `:ok`. The next boot retries — same
+  # pattern as `ensure_system_workspace/0` and the cc-orchestrator
+  # seed.
+  defp seed_default_session_template do
+    workspace_uri = URI.new!("workspace://system")
+    orchestrator_uri = URI.new!(Ezagent.Orchestrator.CcOrchestratorSeed.template_uri())
+
+    content = %{
+      name: "default",
+      description:
+        "Default session template — orchestrator-only team. Compose " <>
+          "workers via the orchestrator's `add_agent_slot` tool. " <>
+          "Seeded at boot under `workspace://system` so " <>
+          "`mix ezagent workspace create_session --template-name default` " <>
+          "and the LV New-session form resolve without operator setup.",
+      agent_slots: [],
+      orchestrator_template_uri: orchestrator_uri,
+      routing_rules: [],
+      default_workspace_uri: workspace_uri,
+      parent_template_uri: nil,
+      version_tag: nil,
+      created_by: nil,
+      # `nil` instead of `DateTime.utc_now()` so a re-run of the seed
+      # writes the SAME content (no per-boot snapshot churn). The
+      # version hash already excludes `created_at` but the snapshot
+      # row stores the full content; using `nil` keeps that row stable.
+      created_at: nil
+    }
+
+    case Ezagent.Entity.SessionTemplate.persist_version_as_system(content, workspace_uri) do
+      {:ok, _uri} ->
+        :ok
+
+      {:error, reason} ->
+        require Logger
+
+        Logger.warning(
+          "seed_default_session_template: persist failed: #{inspect(reason)} — " <>
+            "/admin/templates will be empty until the next boot retries; " <>
+            "`mix ezagent workspace create_session --template-name default` " <>
+            "will resolve to a not-yet-instantiated template URI (the " <>
+            "Generator gates on a populated `:template` slice). Task #50."
+        )
+
+        :ok
+    end
+  rescue
+    e ->
+      require Logger
+
+      Logger.warning(
+        "seed_default_session_template raised #{inspect(e)} — best-effort, " <>
+          "skipping. Task #50."
+      )
+
+      :ok
   end
 
   defp register_spawn_fns do
