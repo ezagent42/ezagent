@@ -56,7 +56,7 @@ defmodule EzagentWeb.CustomerChatController do
 
   require Logger
 
-  @reply_timeout_ms 45_000
+  @reply_timeout_ms 120_000
 
   def chat(conn, %{"customer_id" => cust_id, "text" => text} = params)
       when is_binary(cust_id) and is_binary(text) do
@@ -275,13 +275,14 @@ defmodule EzagentWeb.CustomerChatController do
 
   defp ensure_cc_for_conv(workspace, conv_id, session_uri) do
     cwd = cc_cwd_for_workspace(workspace)
+    soul_path = cc_soul_path_for_workspace(workspace, "customer")
     agent_name = "cust_" <> sanitize_for_uri(conv_id)
     admin_uri = Ezagent.Entity.User.admin_uri()
     admin_caps = Ezagent.SystemPrincipal.caps("system://bootstrap")
     ctx = %{caller: admin_uri, caps: admin_caps, reply: {:caller_inbox, self()}}
 
     with {:ok, agent_uri} <-
-           ensure_cc_agent(workspace, agent_name, cwd, ctx),
+           ensure_cc_agent(workspace, agent_name, cwd, soul_path, ctx),
          :ok <-
            EzagentPluginCc.EagerBridge.ensure_bound!(agent_uri),
          :ok <-
@@ -290,9 +291,11 @@ defmodule EzagentWeb.CustomerChatController do
     end
   end
 
-  defp ensure_cc_agent(workspace, agent_name, cwd, ctx) do
+  defp ensure_cc_agent(workspace, agent_name, cwd, soul_path, ctx) do
     ws_uri = URI.parse("workspace://#{workspace}")
+
     args = %{flavor: "cc", name: agent_name, cwd: cwd, with_pty: true}
+    args = if soul_path, do: Map.put(args, :soul_path, soul_path), else: args
 
     case Ezagent.Workspace.create_agent(ws_uri, args, ctx) do
       {:ok, %{agent_uri: u}} ->
@@ -346,6 +349,22 @@ defmodule EzagentWeb.CustomerChatController do
       )
 
     Path.join(Path.expand(root), workspace)
+  end
+
+  # Per Phase 2.2 / EXP-A1: soul lives at a tenant-parameterized
+  # path. PoC default mirrors AutoService convention (per-tenant
+  # plugins/ tree), located at `<repo>/poc/fixtures/plugins/<tenant>/
+  # souls/<role>.md`. Production deploys override with
+  # `Application.put_env(:ezagent_web, :customer_chat_soul_root,
+  # "/etc/ezagent/souls")`. Returns nil if the file doesn't exist —
+  # cc agent then spawns with no `--append-system-prompt`.
+  defp cc_soul_path_for_workspace(workspace, role) do
+    root_default =
+      Path.expand("../../../../../../poc/fixtures/plugins", __ENV__.file)
+
+    root = Application.get_env(:ezagent_web, :customer_chat_soul_root, root_default)
+    path = Path.join([root, workspace, "souls", "#{role}.md"])
+    if File.exists?(path), do: path, else: nil
   end
 
   # conv_id from request payload is base64-url ([A-Za-z0-9_-]). Agent
