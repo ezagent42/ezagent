@@ -26,10 +26,19 @@ input = input_raw
 
 wait_s = String.to_integer(wait_str)
 
-runtime = :"ezagent_runtime_phase2@127.0.0.1"
+runtime =
+  case System.get_env("EZAGENT_RUNTIME_NODE") do
+    nil -> :"ezagent_runtime_phase2@127.0.0.1"
+    s -> String.to_atom(s)
+  end
+
 true = Node.connect(runtime)
 
-agent_uri = URI.parse("entity://agent/acme/cc_cs_main")
+# Phase 2.2 — tenant + agent name parameterized via env (default acme/cs_main
+# matches the local-dev fixture in poc/fixtures/plugins/acme/souls/).
+tenant = System.get_env("TENANT") || "acme"
+agent_name = System.get_env("AGENT_NAME") || "cs_main"
+agent_uri = URI.parse("entity://agent/#{tenant}/cc_#{agent_name}")
 
 # 1. Lookup PtyServer pid
 {:ok, pty_pid} = :rpc.call(runtime, Ezagent.Domain.Pty, :lookup, [agent_uri])
