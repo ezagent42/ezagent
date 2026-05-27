@@ -1,6 +1,8 @@
 # SPEC — Cap-based workspace visibility replaces `workspaces.visible` boolean
 
-**Status:** r1 — DRAFT for codex adversarial-review. 2026-05-27.
+**Status:** r2 — CRIT-A1 + MED-C1 addressed. 2026-05-27.
+
+**r2 changes:** §3.3 admin shortcut extended to include `holds_admin_caps?/1` (CRIT-A1 from r1 static review — the bootstrap admin's `kind: :any` wildcard cap does NOT match `holds_cross_workspace_admin_cap?/1`'s literal `kind: :workspace`, AND at boot `workspace://system.members` is empty per `ensure_system_workspace/0`, so without the new predicate the bootstrap admin would see `[]`). INV-8 added to §5 (MED-C1 — INV-7 alone passes against a boolean-restored-as-code-literal impl; INV-8 is a code-shape meta-test that fails when source files contain the `"system"` workspace-name literal outside of moduledoc/comment scope).
 
 **Tier:** `apps/ezagent_domain_workspace/` data model + `Ezagent.Workspace` facade. Sweep across LV (`apps/ezagent_plugin_liveview/`), `live_auth` (`apps/ezagent_web/`), invariant tests, mix tasks, and the Phase 9 PR-8 SPEC's §13.1/§13.2.
 
@@ -67,8 +69,9 @@ A list of `Workspace.Store.decoded()` rows the caller can act on. Each entry inc
 
 ```
 list_workspaces_for(caller_uri, caps) =
-  if   holds_cross_workspace_admin_cap?(caps)
-       or  member_of_system?(caller_uri)
+  if   holds_admin_caps?(caps)                        -- (i) bootstrap wildcard
+       or  holds_cross_workspace_admin_cap?(caps)     -- (ii) structural workspace-only admin
+       or  member_of_system?(caller_uri)              -- (iii) system-member admin
   then list_all()                                     -- admin shortcut
   else union(
          member_of_workspaces(caller_uri),            -- (a) membership
@@ -82,13 +85,19 @@ The three contributing sources:
 
 **(b) `workspaces_for_caps(caps)`** — every persisted workspace whose `uri` matches the `workspace_uri` field of any cap in `caps`. Caps with `workspace_uri: :any` contribute NOTHING to this branch (they would otherwise return all workspaces — but the admin shortcut already does that, and `:any` from a non-admin caller is a structural cross-workspace marker, not a "all workspaces" enumeration). Caps with `workspace_uri: %URI{}` contribute the matching workspace if one exists in `Store.list_all/0`. Implementation: collect `cap.workspace_uri` values, filter to `%URI{}` (drop `:any`), look up each in `Store.list_all/0` (or `Store.get_by_uri/1` if added — see §10 OQ-3). The lookup tolerates caps that reference deleted workspaces by simply skipping them.
 
-**Admin shortcut** — `holds_cross_workspace_admin_cap?(caps)` (`apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex:728-755`) OR `member_of_system?(caller_uri)` (`apps/ezagent_core/lib/ezagent/capability.ex:493-507`) returns ALL workspaces. This is the structural admin path — a bootstrap admin (`entity://user/system/admin`) has BOTH (the home-is-system path AND a wildcard cap), so the shortcut fires whichever comes first.
+**Admin shortcut** — the union of THREE predicates returns ALL workspaces:
+
+- (i) `holds_admin_caps?(caps)` (`apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex:835-868`) — matches the full-wildcard bootstrap shape `kind: :any, behavior: :any, action: :any, instance: :any, workspace_uri: :any`. The bootstrap admin (`entity://user/system/admin`) holds EXACTLY this cap shape (minted by `Ezagent.SystemPrincipal.caps("system://bootstrap")`).
+- (ii) `holds_cross_workspace_admin_cap?(caps)` (`apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex:728-755`) — matches the narrower workspace-only admin shape `kind: :workspace, behavior: Workspace, action: :any, instance: :any, workspace_uri: :any` (delegated cross-workspace admin via a workspace-Behavior cap, NOT a kind:any wildcard).
+- (iii) `member_of_system?(caller_uri)` (`apps/ezagent_core/lib/ezagent/capability.ex:493-507`) — matches a caller whose URI is listed in `workspace://system`'s `members`. This is the "Promote to system" path (LV `users_live.ex:232`).
+
+The three are NOT subsumed by each other. The bootstrap admin satisfies (i); a delegated cross-workspace operator (e.g. a future "tenant-admin" role) satisfies (ii); a system-promoted regular user satisfies (iii). A SPEC r1 design that omitted (i) would regress the bootstrap admin to `[]` because (a) the bootstrap admin's `members` row in `workspace://system` is created only by the LV promote path (NOT by `ensure_system_workspace/0` at `apps/ezagent_domain_chat/lib/ezagent_domain_chat/application.ex:269-275`, which seeds an EMPTY system workspace), and (b) the bootstrap wildcard cap's `kind: :any` does NOT match the literal `kind: :workspace` in (ii). r2 includes (i) explicitly to close this gap.
 
 The order `admin shortcut → union` is deliberate: the union is more expensive (it walks two sources); admin callers skip it. The shortcut is functionally equivalent to the union for an admin (a system member is a member of `workspace://system` AND holds wildcard caps, so the union would also return everything) — but cheaper, AND it surfaces the structural intent: an admin's view is unconditional, not derived from per-cap arithmetic.
 
 ### 3.4 What about `workspace://system` specifically?
 
-`workspace://system` appears in the output iff the caller is a system member OR holds a cross-workspace admin cap (admin shortcut fires). A regular member of `workspace://X` who is NOT in `workspace://system` and has no caps scoped to `workspace://system` will NOT see it — same effective behavior as today's `list_visible/0`. The difference: it's no longer because the row has `visible: false`; it's because the caller's caps + membership don't include `workspace://system`.
+`workspace://system` appears in the output iff the admin shortcut fires — i.e. the caller is a system member, OR holds a bootstrap-wildcard cap (kind:any/behavior:any/action:any/instance:any/workspace_uri:any), OR holds a structural cross-workspace admin cap (kind:workspace/behavior:Workspace/action:any/instance:any/workspace_uri:any). A regular member of `workspace://X` who satisfies none of the three predicates will NOT see it — same effective behavior as today's `list_visible/0`. The difference: it's no longer because the row has `visible: false`; it's because the caller's caps + membership don't include `workspace://system`.
 
 ### 3.5 Edge case — `system://bootstrap` / `system://*` callers
 
@@ -235,13 +244,49 @@ Per `feedback_completion_requires_invariant_test`, this PR is "done" iff the inv
 - INV-6: After granting `regular_user_no_caps_uri` a `Behavior.Workspace.list_members` cap scoped to `workspace://team-alpha` (via `Ezagent.Workspace.grant_initial_caps/3` or direct `Identity.grant_cap`), re-running `list_workspaces_for(regular_user_no_caps, [the_new_cap])` returns `[team-alpha]`. (Cap-scope branch fires.)
 - INV-7: The system workspace assertion specifically: `regular_user_no_caps` NEVER sees `workspace://system` regardless of which non-admin caps are added. Test asserts this by granting a `Behavior.Workspace.list_members` cap scoped to `workspace://team-alpha` AND a `Behavior.Workspace.add_member` cap scoped to `workspace://team-beta`, then asserting the result list does not contain `"system"`.
 
+- INV-8 [r2 — addresses MED-C1 from r1 static review]: **Code-shape meta-test** asserting the implementation source files do NOT contain the workspace-name literal `"system"` outside of moduledoc / `@moduledoc` / line-comment scope. Targets:
+  - `apps/ezagent_domain_workspace/lib/ezagent/workspace.ex`
+  - `apps/ezagent_domain_workspace/lib/ezagent/workspace/store.ex`
+
+  Test mechanism:
+  ```elixir
+  for path <- [
+    "apps/ezagent_domain_workspace/lib/ezagent/workspace.ex",
+    "apps/ezagent_domain_workspace/lib/ezagent/workspace/store.ex"
+  ] do
+    src = File.read!(path)
+    # strip moduledocs (heredoc) and line comments before searching
+    sanitized =
+      src
+      |> String.replace(~r/@moduledoc\s+"""[\s\S]*?"""/, "")
+      |> String.replace(~r/@doc\s+"""[\s\S]*?"""/, "")
+      |> String.split("\n")
+      |> Enum.reject(&Regex.match?(~r/^\s*#/, &1))
+      |> Enum.join("\n")
+
+    refute sanitized =~ ~r/"system"/,
+      """
+      INV-8 violation: #{path} contains the literal string "system" in code
+      (not in moduledoc/comments). This catches the boolean-restoration
+      anti-pattern — `if workspace.name == "system"` is forbidden because
+      it re-introduces the field-shaped special-case in code form. The
+      system workspace's hiding from non-members is structural (cap +
+      membership absence), NOT a literal-match filter.
+      """
+  end
+  ```
+
+  **Why INV-8 is a code-shape meta-test, intentionally:** INV-7 tests the negative direction only (non-admin doesn't see system). A partial impl that hardcodes `if ws.name == "system" and !system_member, exclude` would pass INV-7 — the test fixture's regular user gets `team-alpha` + `team-beta` caps, so the system literal-string filter would correctly exclude system for the non-member. INV-8 catches this anti-pattern at the source level rather than the behavior level. It is a deliberate exception to the "test behavior not implementation" principle: the specific behavior (the boolean-restoration shape) is structurally indistinguishable from the correct impl at the test fixture's chosen cap shapes, so a behavior test cannot discriminate. The fix is to test the code shape directly.
+
+  Trade-off acknowledged: INV-8 would fail if a future refactor legitimately needs the string `"system"` in workspace.ex (e.g. a doc-string code example, a log message). The sanitizer strips moduledocs/comments; if a non-doc legitimate use arises (e.g. error message format), INV-8's regex needs updating with a justified exception list. The exception list IS the audit trail — adding to it requires explaining why this isn't a boolean restoration.
+
 **Why this gates the architectural goal:**
 
 - A partial impl that returns `list_all()` for everyone fails INV-1 and INV-4 and INV-7 (visibility too broad).
 - A partial impl that returns `[]` for everyone fails INV-2, INV-3, INV-4, INV-5, INV-6.
 - A partial impl that gets membership right but drops cap-scope fails INV-4 and INV-6.
 - A partial impl that gets cap-scope right but drops membership fails INV-2 and INV-5.
-- A partial impl that recovers the boolean (`workspace://system` is special-cased back to `visible: false`-style filtering) fails INV-7 only IF the special-case is the system row literal — the test asserts on a non-admin caller's view of system, the only structural assertion that cannot pass with the boolean restored.
+- A partial impl that recovers the boolean as a code literal (`if ws.name == "system" and !system_member, exclude`) PASSES INV-7 — the test fixture's caps don't reference system, so the literal filter excludes system for non-members and the assertion holds. INV-7 alone cannot catch this. **INV-8 catches it** by grep-asserting the source files do not contain the `"system"` literal in code scope.
 - A partial impl that gets the admin shortcut wrong (e.g. accidentally includes system for `team_alpha_member_no_caps`) fails INV-2.
 
 **Cannot pass with a partial impl** — codex r1 review question #3 (§9) explicitly attacks this; if codex finds a partial impl that passes, the test is strengthened in the next round.
@@ -349,7 +394,7 @@ The concurrent SPEC `2026-05-27-capability-action-axis.md` §3.6.1(b) introduces
 
 ## 11. Codex adversarial review questions (for the round-1 review)
 
-1. **System member with no `members` row in the system workspace.** What if `workspace://system` exists but its `members` list does not include `entity://user/system/admin` (boot order race, snapshot misload)? `list_workspaces_for/2`'s admin shortcut path would not fire for the admin — they'd see only workspaces from the cap-scope branch (which, for a bootstrap admin holding `kind: :any, behavior: :any, instance: :any, workspace_uri: :any, ...`, contributes NOTHING — because `:any` is filtered out in the cap-scope branch). Does this leave the admin seeing `[]`? Is the safety net `holds_cross_workspace_admin_cap?` (which DOES fire on the wildcard cap)? Verify the boot order: when is admin added to system's `members`?
+1. **System member with no `members` row in the system workspace. [RESOLVED in r2 — see #6.]** What if `workspace://system` exists but its `members` list does not include `entity://user/system/admin` (boot order race, snapshot misload, OR — as r1 confirmed — at boot in general, since `ensure_system_workspace/0` seeds an empty members list)? `list_workspaces_for/2`'s admin shortcut path would not fire on `member_of_system?/1` for the admin — they'd see only workspaces from the cap-scope branch (which, for a bootstrap admin holding `kind: :any, behavior: :any, instance: :any, workspace_uri: :any, ...`, contributes NOTHING — because `:any` is filtered out in the cap-scope branch). r2 closes this: the admin shortcut also fires on `holds_admin_caps?(caps)`, which matches the bootstrap wildcard shape directly. The boot-order question is now moot — the bootstrap admin's authority is cap-derived (via `SystemPrincipal.caps("system://bootstrap")`), not membership-derived.
 
 2. **Caps minted by `system://workspace-loader` (closed catalog principal).** The cleanup mix task dispatches as `system://workspace-loader`. Does `list_workspaces_for/2` ever receive caps held by `system://workspace-loader`? If yes, does the cap-scope branch produce the right answer? (Likely NO — operator-facing surfaces don't load workspace-loader caps; but verify.)
 
@@ -359,7 +404,7 @@ The concurrent SPEC `2026-05-27-capability-action-axis.md` §3.6.1(b) introduces
 
 5. **Does dropping the boolean break any operator-facing pinned artifact?** Per §9.1, mix tasks do not reference visible. Per §9.4, no public API. The grep audit is complete. Are there pinned snapshot files / fixtures in `apps/*/test/support/fixtures/` that would deserialize an old `Workspace.Store.decoded()` map with `visible: ...` and break? (Likely NOT — fixtures don't typically serialize internal maps; they create rows via `Store.create/2`. Verify by grep.)
 
-6. **The cross-workspace cap path.** `holds_cross_workspace_admin_cap?/1` matches `kind: :workspace, behavior: Workspace, action: :any, instance: :any, workspace_uri: :any` (`identity.ex:738-744`). What if the admin caller's primary cap has `kind: :any, behavior: :any, action: :any, ...` (full wildcard, the bootstrap shape)? Does it pass `holds_cross_workspace_admin_cap?/1`? — Looking at the pattern at line 738, NO (kind is `:workspace` literally, not a wildcard match for `:any`). Does it pass `holds_admin_caps?/1` (`identity.ex:835-868`)? — Per the concurrent SPEC's option-B, yes (line 745-749 of the parent SPEC). So the admin shortcut needs to check `holds_admin_caps?/1` OR `holds_cross_workspace_admin_cap?/1` OR `member_of_system?/1`. Confirm the admin-shortcut predicate is the union of all three — otherwise a bootstrap admin with only the kind:any wildcard would NOT pass cross-workspace-admin-cap?, and would fall to the cap-scope branch which drops `workspace_uri: :any`, returning `[]`.
+6. **The cross-workspace cap path. [CONFIRMED in r1 — fix folded into §3.3 in r2.]** `holds_cross_workspace_admin_cap?/1` matches `kind: :workspace, behavior: Workspace, action: :any, instance: :any, workspace_uri: :any` (`identity.ex:738-744`). The admin caller's primary cap (bootstrap shape) has `kind: :any, behavior: :any, action: :any, ...` — NOT `kind: :workspace`, so it does NOT pass `holds_cross_workspace_admin_cap?/1`. It DOES pass `holds_admin_caps?/1` (`identity.ex:835-868`). Furthermore: at boot, `workspace://system`'s `members` is EMPTY (`apps/ezagent_domain_chat/lib/ezagent_domain_chat/application.ex:269-275` seeds an empty members list; the admin is added only by the LV "Promote to system" path at `users_live.ex:232`). So `member_of_system?/1` ALSO returns false for the bootstrap admin at boot. Without `holds_admin_caps?/1` in the shortcut, the bootstrap admin falls through to the cap-scope branch, which drops `workspace_uri: :any` per §3.3.b, returning `[]` — a regression vs today's `list_visible/0` (which used `list_all/0` for admins). **r2 resolution:** §3.3 admin shortcut is the three-predicate UNION `holds_admin_caps?(caps) or holds_cross_workspace_admin_cap?(caps) or member_of_system?(caller_uri)`. Appendix A diagram updated. The r1 static review identified this as CRIT-A1.
 
 ## 12. Rollback plan
 
@@ -386,8 +431,9 @@ LiveAuth.on_mount/4         (apps/ezagent_web/lib/ezagent_web/live_auth.ex)
 Ezagent.Workspace.list_workspaces_for(caller_uri, caps)
   │
   │  cond:
-  │    holds_admin_caps?(caps)                    → list_all()
-  │    member_of_system?(caller_uri)              → list_all()
+  │    holds_admin_caps?(caps)                    → list_all()    -- bootstrap wildcard
+  │    holds_cross_workspace_admin_cap?(caps)     → list_all()    -- structural workspace admin
+  │    member_of_system?(caller_uri)              → list_all()    -- system-member promotion
   │    otherwise:                                 → union(
   │                                                   member_of_workspaces(caller_uri),
   │                                                   workspaces_for_caps(caps)
