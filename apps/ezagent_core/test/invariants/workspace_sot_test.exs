@@ -46,14 +46,22 @@ defmodule EzagentCore.Invariants.WorkspaceSotTest do
   # `list_workspaces_for/2` and NEVER any of the unscoped readers
   # (which would re-introduce the hidden-workspace leak the SPEC
   # was designed to make structurally impossible).
+  #
+  # Codex r1 review MED (2026-05-27): the regex must match BOTH the
+  # alias form (`Workspace.list_all(`) AND the fully-qualified form
+  # (`Ezagent.Workspace.list_all(`). The previous negative lookbehind
+  # `(?<![\w\.])Workspace\.` rejected a preceding `.`, so
+  # `Ezagent.Workspace.list_all(` escaped the gate. Capture the
+  # `Ezagent.` prefix as optional + use a word-boundary-style
+  # lookbehind that allows `.` only when it follows `Ezagent`.
   @forbidden_patterns [
-    {~r/(?<![\w\.])Workspace\.list_persisted\s*\(/,
+    {~r/(?:^|[^\w.])(?:Ezagent\.)?Workspace\.list_persisted\s*\(/,
      "Workspace.list_persisted/0 was deleted — use list_workspaces_for/2"},
-    {~r/(?<![\w\.])Workspace\.list_visible\s*\(/,
+    {~r/(?:^|[^\w.])(?:Ezagent\.)?Workspace\.list_visible\s*\(/,
      "Workspace.list_visible/0 was deleted — use list_workspaces_for/2"},
-    {~r/(?<![\w\.])Workspace\.list_all\s*\(/,
+    {~r/(?:^|[^\w.])(?:Ezagent\.)?Workspace\.list_all\s*\(/,
      "Workspace.list_all/0 is system-internal — operator surfaces must use list_workspaces_for/2"},
-    {~r/(?<![\w\.])Workspace\.Store\.list_all\s*\(/,
+    {~r/(?:^|[^\w.])(?:Ezagent\.)?Workspace\.Store\.list_all\s*\(/,
      "Workspace.Store.list_all/0 is system-internal — operator surfaces must use list_workspaces_for/2"}
   ]
 
@@ -135,6 +143,39 @@ defmodule EzagentCore.Invariants.WorkspaceSotTest do
            "Ezagent.Workspace.list_workspaces_for/2 must be exported — the " <>
              "SoT for operator-facing workspace listing per SPEC " <>
              "2026-05-27-workspace-cap-based-visibility"
+  end
+
+  # Codex r1 review MED (2026-05-27) — the previous lookbehind regex
+  # rejected a preceding `.`, so `Ezagent.Workspace.list_all(` escaped
+  # the gate. This meta-test asserts both alias and fully-qualified
+  # forms ARE caught, AND legitimate non-matches (e.g. `MyWorkspace`
+  # prefix or a comment scope reference) are NOT.
+  test "@forbidden_patterns catch both alias and fully-qualified forms" do
+    positives = [
+      "Workspace.list_all(",
+      "Ezagent.Workspace.list_all(",
+      " Ezagent.Workspace.Store.list_all(",
+      "  Workspace.list_visible(",
+      "Ezagent.Workspace.list_persisted("
+    ]
+
+    negatives = [
+      "MyWorkspace.list_all(",
+      "Foo.Workspace.list_all(",
+      "Other.Module.list_all(",
+      "Workspace.list_workspaces_for(",
+      "Ezagent.Workspace.list_workspaces_for("
+    ]
+
+    for line <- positives do
+      assert Enum.any?(@forbidden_patterns, fn {regex, _} -> Regex.match?(regex, line) end),
+             "Regex must catch: #{inspect(line)} — at least one forbidden pattern should match"
+    end
+
+    for line <- negatives do
+      refute Enum.any?(@forbidden_patterns, fn {regex, _} -> Regex.match?(regex, line) end),
+             "Regex must NOT match: #{inspect(line)} — false-positive in @forbidden_patterns"
+    end
   end
 
   # --- helpers -------------------------------------------------------------

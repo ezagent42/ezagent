@@ -19,10 +19,22 @@ defmodule EzagentCore.Repo.Migrations.DropWorkspacesVisible do
       # 2. mix ecto.migrate  (or MIX_ENV=dev mix ecto.migrate)
       # 3. Restart phx.server
 
-  Without this step, the post-merge boot crashes on the first
-  `Workspace.Store.list_all/0` call (the schema declares no
-  `:visible` field but the DB column persists, causing an Ecto
-  changeset/select mismatch). The crash IS the structural reminder.
+  ## Important: NO automatic boot-time crash
+
+  Codex r1 review (2026-05-27) corrected the SPEC's OQ-6 premise:
+  the post-merge boot DOES NOT crash automatically if the operator
+  forgets to migrate. Ecto's `Repo.all(from w in __MODULE__)`
+  selects schema fields explicitly (`SELECT w0.id, w0.name, ...`),
+  so the EXTRA `visible` column in the DB is silently ignored.
+  Inserts also continue to work because the old column has
+  `NOT NULL DEFAULT true`.
+
+  This means the operator MUST remember to run the migration —
+  the "structural reminder via boot crash" promised in the SPEC's
+  §4.1 + OQ-6 does not materialize. Follow-up SPEC amendment
+  needed to reflect this. Today the safety net is: this commit's
+  body + the PR description flagging `human-required:db-migration`
+  + this moduledoc.
 
   ## Rollback
 
