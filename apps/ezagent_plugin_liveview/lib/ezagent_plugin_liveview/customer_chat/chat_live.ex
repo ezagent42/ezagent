@@ -28,12 +28,13 @@ defmodule EzagentPluginLiveview.CustomerChat.ChatLive do
     session_uri = Bootstrap.session_uri_for(tenant, conv_id)
     session_uri_str = URI.to_string(session_uri)
     customer_uri = Bootstrap.customer_uri_for(tenant, customer_id)
+    theme = Theme.for_tenant(tenant)
 
     socket =
       socket
       |> assign(:tenant, tenant)
       |> assign(:embed?, embed?)
-      |> assign(:theme, Theme.for_tenant(tenant))
+      |> assign(:theme, theme)
       |> assign(:customer_id, customer_id)
       |> assign(:conv_id, conv_id)
       |> assign(:session_uri, session_uri)
@@ -43,7 +44,7 @@ defmodule EzagentPluginLiveview.CustomerChat.ChatLive do
       |> assign(:status, :connecting)
       |> assign(:error, nil)
       |> assign(:compose_form, to_form(%{"text" => ""}, as: "chat"))
-      |> assign(:page_title, Theme.for_tenant(tenant).title)
+      |> assign(:page_title, theme.title)
 
     if connected?(socket) do
       topic = Ezagent.Behavior.Chat.session_events_topic(session_uri)
@@ -51,11 +52,9 @@ defmodule EzagentPluginLiveview.CustomerChat.ChatLive do
       send(self(), :bootstrap)
 
       history = load_history(session_uri, URI.to_string(customer_uri))
-      mode = lookup_mode(session_uri)
 
       {:ok,
        socket
-       |> assign(:mode, mode)
        |> stream(:messages, history)
        |> assign(:messages_empty?, history == [])}
     else
@@ -73,9 +72,14 @@ defmodule EzagentPluginLiveview.CustomerChat.ChatLive do
 
     case Bootstrap.ensure_cc_for_conv(tenant, conv_id, session_uri) do
       {:ok, agent_uri} ->
+        # Read the current mode now that the session is ensured. Done
+        # here (async) rather than in mount so a slow/blocking dispatch
+        # never stalls the first render. Resumed sessions mid-takeover
+        # surface their real mode; fresh sessions read :auto.
         {:noreply,
          socket
          |> assign(:status, :ready)
+         |> assign(:mode, lookup_mode(session_uri))
          |> assign(:cc_agent_uri, agent_uri)}
 
       {:error, reason} ->
@@ -174,7 +178,7 @@ defmodule EzagentPluginLiveview.CustomerChat.ChatLive do
       target: target,
       mode: :call,
       args: %{},
-      ctx: %{caller: admin_uri, caps: admin_caps, reply: {:caller_inbox, self()}}
+      ctx: %{caller: admin_uri, caps: admin_caps, reply: :ignore}
     }
 
     case Ezagent.Invocation.dispatch(inv) do
