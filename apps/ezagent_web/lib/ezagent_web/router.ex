@@ -30,6 +30,23 @@ defmodule EzagentWeb.Router do
     plug :accepts, ["js"]
   end
 
+  # Like :browser, but relaxes the Content-Security-Policy frame-ancestors
+  # directive so the customer chat page can be embedded as a widget iframe
+  # on ANY business's site (the default :browser CSP is
+  # `frame-ancestors 'self'`, which blocks cross-origin embedding — the
+  # whole point of the widget). Session + CSRF are kept: the LiveView
+  # socket inside the iframe is same-origin (localhost → localhost), so it
+  # still works; only the OUTER framing needs to be allowed.
+  pipeline :customer_chat_browser do
+    plug :accepts, ["html"]
+    plug :fetch_session
+    plug EzagentWeb.Plugs.Locale
+    plug :fetch_live_flash
+    plug :put_root_layout, html: {EzagentWeb.Layouts, :root}
+    plug :protect_from_forgery
+    plug :put_secure_browser_headers, %{"content-security-policy" => "base-uri 'self'"}
+  end
+
   scope "/", EzagentWeb do
     pipe_through :browser
 
@@ -76,7 +93,7 @@ defmodule EzagentWeb.Router do
   # on_mount (locale only, no auth). Same LV serves the hosted page and
   # the iframe widget (?embed=1).
   scope "/", EzagentPluginLiveview do
-    pipe_through :browser
+    pipe_through :customer_chat_browser
 
     live_session :customer_chat_public, on_mount: {EzagentWeb.LiveAuth, :put_locale} do
       live "/chat/:tenant", CustomerChat.ChatLive
