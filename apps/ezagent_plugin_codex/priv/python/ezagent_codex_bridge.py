@@ -10,8 +10,8 @@ The sidecar has two long-lived links:
 
 * Phoenix Channel: receives ``codex_turn`` pushes from ezagent and
   sends ``reply`` events back through AgentBridge.
-* Codex app-server proxy: submits those pushes as ``turn/start`` JSON-RPC
-  requests to the per-agent ``codex app-server`` shared with the TUI.
+* Codex app-server UDS websocket: submits those pushes as ``turn/start``
+  JSON-RPC requests to the per-agent ``codex app-server`` shared with the TUI.
 """
 
 from __future__ import annotations
@@ -44,7 +44,6 @@ AGENT_TOKEN = os.environ.get("EZAGENT_AGENT_TOKEN", "")
 CODEX_SOCK = os.environ.get("EZAGENT_CODEX_APP_SERVER_SOCK", "")
 THREAD_ID_FILE = os.environ.get("EZAGENT_CODEX_THREAD_ID_FILE", "")
 CWD = os.environ.get("EZAGENT_CODEX_CWD", os.getcwd())
-CODEX_BIN = os.environ.get("EZAGENT_CODEX_BIN", "codex")
 MODEL = os.environ.get("EZAGENT_CODEX_MODEL", "")
 APPROVAL_POLICY = os.environ.get("EZAGENT_CODEX_APPROVAL_POLICY", "")
 SANDBOX = os.environ.get("EZAGENT_CODEX_SANDBOX", "")
@@ -115,9 +114,32 @@ def write_thread_id_file(thread_id: str) -> None:
     LOG.info("wrote codex thread id file: %s", THREAD_ID_FILE)
 
 
+def frame_summary(frame: dict[str, Any]) -> str:
+    method = frame.get("method")
+    req_id = frame.get("id")
+    if method:
+        return f"id={req_id!r} method={method}"
+    if "result" in frame:
+        return f"id={req_id!r} result"
+    if "error" in frame:
+        return f"id={req_id!r} error={frame.get('error')!r}"
+    return repr(frame)[:200]
+
+
+def raw_summary(raw: str | bytes) -> str:
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8", errors="replace")
+    try:
+        msg = json.loads(raw)
+    except json.JSONDecodeError:
+        return repr(raw[:200])
+    return frame_summary(msg)
+
+
 class CodexClient:
     def __init__(self) -> None:
-        self.proc: asyncio.subprocess.Process | None = None
+        self.ws = None
+        self.reader_task: asyncio.Task | None = None
         self.next_id = 0
         self.pending: dict[int, asyncio.Future] = {}
         self.thread_id: str | None = None
@@ -129,32 +151,42 @@ class CodexClient:
         if not CODEX_SOCK:
             raise RuntimeError("EZAGENT_CODEX_APP_SERVER_SOCK is required")
 
-        LOG.info("starting codex app-server proxy; sock=%s cwd=%s", CODEX_SOCK, CWD)
-        self.proc = await asyncio.create_subprocess_exec(
-            CODEX_BIN,
-            "app-server",
-            "proxy",
-            "--sock",
+        LOG.info("connecting codex app-server websocket; sock=%s cwd=%s", CODEX_SOCK, CWD)
+        # `unix://` app-server sockets speak WebSocket-over-UDS. The
+        # `codex app-server proxy` command only forwards raw websocket bytes;
+        # it does not convert stdio JSONL into websocket frames.
+        self.ws = await websockets.unix_connect(
             CODEX_SOCK,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=CWD,
+            uri="ws://localhost/",
+            compression=None,
+            max_size=None,
         )
-        asyncio.create_task(self._read_stdout())
-        asyncio.create_task(self._read_stderr())
+        self.reader_task = asyncio.create_task(self._read_app_server())
         await self.call(
             "initialize",
             {
-                "clientInfo": {"name": "ezagent-codex-bridge", "version": "0.1.0"},
-                "capabilities": {},
+                "clientInfo": {
+                    "name": "ezagent-codex-bridge",
+                    "title": "Ezagent Codex Bridge",
+                    "version": "0.1.0",
+                },
+                "capabilities": {"experimentalApi": True},
             },
         )
         await self.notify("initialized", {})
 
     async def ensure_started(self) -> None:
-        if self.proc is None or self.proc.returncode is not None:
+        if self.ws is None:
             await self.start()
+
+    async def close(self) -> None:
+        if self.reader_task is not None:
+            self.reader_task.cancel()
+            self.reader_task = None
+        if self.ws is not None:
+            await self.ws.close()
+            self.ws = None
+        self.thread_id = None
 
     async def ensure_thread(self) -> str:
         await self.ensure_started()
@@ -274,56 +306,58 @@ class CodexClient:
         await self._write({"jsonrpc": "2.0", "method": method, "params": params})
 
     async def _write(self, frame: dict[str, Any]) -> None:
-        if self.proc is None or self.proc.stdin is None:
-            raise RuntimeError("codex proxy stdin is not available")
-        self.proc.stdin.write(json.dumps(frame).encode("utf-8") + b"\n")
-        await self.proc.stdin.drain()
+        if self.ws is None:
+            raise RuntimeError("codex app-server websocket is not connected")
+        LOG.info("codex app-server send: %s", frame_summary(frame))
+        wire_frame = {k: v for k, v in frame.items() if k != "jsonrpc"}
+        await self.ws.send(json.dumps(wire_frame, separators=(",", ":")))
 
-    async def _read_stdout(self) -> None:
-        assert self.proc is not None and self.proc.stdout is not None
-        while True:
-            raw = await self.proc.stdout.readline()
-            if not raw:
-                self._fail_pending(RuntimeError("codex proxy stdout closed"))
+    async def _read_app_server(self) -> None:
+        assert self.ws is not None
+        try:
+            async for raw in self.ws:
+                LOG.info("codex app-server recv: %s", raw_summary(raw))
+                try:
+                    msg = json.loads(raw)
+                except json.JSONDecodeError:
+                    LOG.warning("non-JSON codex app-server frame: %r", str(raw)[:200])
+                    continue
+
+                await self._handle_app_server_message(msg)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._fail_pending(exc)
+            LOG.exception("codex app-server websocket reader failed")
+        finally:
+            self.ws = None
+            self._fail_pending(RuntimeError("codex app-server websocket closed"))
+
+    async def _handle_app_server_message(self, msg: dict[str, Any]) -> None:
+        if "id" in msg and ("result" in msg or "error" in msg):
+            fut = self.pending.pop(msg["id"], None)
+            if fut is None:
                 return
-            try:
-                msg = json.loads(raw.decode("utf-8"))
-            except json.JSONDecodeError:
-                LOG.warning("non-JSON codex proxy stdout: %r", raw[:200])
-                continue
+            if fut.done():
+                return
+            if "error" in msg:
+                fut.set_exception(RuntimeError(msg["error"]))
+            else:
+                fut.set_result(msg.get("result") or {})
+            return
 
-            if "id" in msg and ("result" in msg or "error" in msg):
-                fut = self.pending.pop(msg["id"], None)
-                if fut is None:
-                    continue
-                if fut.done():
-                    continue
-                if "error" in msg:
-                    fut.set_exception(RuntimeError(msg["error"]))
-                else:
-                    fut.set_result(msg.get("result") or {})
-                continue
+        if "id" in msg and "method" in msg:
+            await self._handle_server_request(msg)
+            return
 
-            if "id" in msg and "method" in msg:
-                await self._handle_server_request(msg)
-                continue
-
-            if "method" in msg:
-                await self.notifications.put(msg)
+        if "method" in msg:
+            await self.notifications.put(msg)
 
     def _fail_pending(self, exc: Exception) -> None:
         for fut in self.pending.values():
             if not fut.done():
                 fut.set_exception(exc)
         self.pending.clear()
-
-    async def _read_stderr(self) -> None:
-        assert self.proc is not None and self.proc.stderr is not None
-        while True:
-            raw = await self.proc.stderr.readline()
-            if not raw:
-                return
-            LOG.info("codex proxy stderr: %s", raw.decode("utf-8", errors="replace").rstrip())
 
     async def _handle_server_request(self, msg: dict[str, Any]) -> None:
         req_id = msg.get("id")
