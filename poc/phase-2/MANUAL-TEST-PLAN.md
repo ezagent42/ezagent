@@ -1,134 +1,145 @@
-# Phase 2 手动测试计划
+# Phase 3 手动测试计划（网页版 UI）
 
-> 服务已启动（端口 10142，profile poc-phase2）。逐个执行下面的测试，把结果记在每个 "📝 结果" 行。撞到问题就把现象贴回来，我据此改代码。
+> Phase 3 客户聊天页 + operator 控制台已做好，服务在跑（端口 10142，profile
+> poc-phase2）。这份计划全程**用浏览器点**，不再用 curl。逐个执行，把结果记在
+> 每个 "📝 结果" 行。撞到问题就把现象（最好带截图）贴回来，我据此改代码。
+>
+> 建议用两个浏览器窗口（或一个普通窗 + 一个无痕窗）：
+> - **窗口 A = 客户**（不登录）
+> - **窗口 B = operator**（登录 admin）
+> 这样接管测试时能同时看到两边。
 
 ## 前置（已就绪，无需操作）
 
 - 服务: `http://localhost:10142`，已起
-- 租户: `acme`（已创建，soul fixture 在 `poc/fixtures/plugins/acme/souls/customer.md`）
+- 租户: `acme`（soul fixture 在 `poc/fixtures/plugins/acme/souls/customer.md`）
+- acme 主题: `apps/ezagent_plugin_liveview/priv/customer_chat_themes/acme.json`
+  （标题 "Acme Support"、玫红主色 `#e11d48`）
 - admin 登录: 用户名 `entity://user/system/admin`，密码 `ezagent-dev`
-- 如果服务挂了，重启命令见本文件最后「附录：重启服务」
+- 后端已验通：cc 客服 agent 能拉起并带 acme soul 回复（12 个月 / Pro 24 个月）
+- 服务挂了的话，重启命令见文末「附录」
 
 ---
 
-## Test 1 — 基本客户对话（无个性化验证，先看通不通）
+## Test 1 — 打开客户聊天页（看渲染 + 主题）
 
-```bash
-curl -N -X POST http://localhost:10142/api/customer/acme/chat \
-  -H 'Content-Type: application/json' \
-  -d '{"customer_id":"alice","text":"你好","conv_id":"t1-'$(date +%s)'"}' \
-  --max-time 90
+**窗口 A（客户）**：浏览器打开 👉 **http://localhost:10142/chat/acme**
+
+**预期**：
+- 一个聊天页，顶部标题 **"Acme Support"**，发送按钮是**玫红色**（acme 主题）。
+- 中间有一条欢迎气泡（"Hi! I'm the Acme assistant…"）。
+- 刚打开时底部输入框是**禁用**的、上方显示 **"connecting…"**——这是后台在拉起
+  cc 客服 agent（首次冷启 ~10 秒）。等它就绪后输入框变可用、"connecting…" 消失。
+
+📝 结果 1（页面/主题/connecting→ready）:
+
+---
+
+## Test 2 — 客户和 AI 对话 + soul 个性化（核心）
+
+**窗口 A**，等输入框可用后，输入：
+
+```
+How long is the warranty on my Acme laptop?
 ```
 
-**预期**: 看到 3 个 SSE 事件 —— `event: open`（含 session_uri + agent_uri）→ `event: message`（AI 的问候回复）→ `event: close {reason: terminal}`。首次 ~10s（cc 冷启 + bridge）。
+按回车 / 点发送。
 
-📝 结果:
+**预期**：
+- 你的消息立刻以**玫红气泡**靠右出现。
+- 几秒后 AI 的回复以**灰色气泡**靠左出现，内容带 soul 事实：
+  **"12-month warranty"**（普通）+ **"24 months" / "Pro"**（Pro 系列），语气友好。
 
----
+**加分**：再问一个 soul 没写的（如 "Do you sell monitors?"），看 AI 是否按 soul
+指示说"要问团队"而不是瞎编。
 
-## Test 2 — Soul 个性化（核心：AI 回复要带 acme soul 的事实 + 语气）
-
-```bash
-curl -N -X POST http://localhost:10142/api/customer/acme/chat \
-  -H 'Content-Type: application/json' \
-  -d '{"customer_id":"bob","text":"How long is the warranty on my Acme laptop?","conv_id":"t2-'$(date +%s)'"}' \
-  --max-time 90
-```
-
-**预期**: AI 回复里出现 soul 写的事实 —— "12-month warranty"（普通）和 "24 months" / "Pro line"（Pro 系列）。语气友好。这证明租户 soul 真的注入到了 AI。
-
-对照 soul 内容（`poc/fixtures/plugins/acme/souls/customer.md`）:
-- Laptops: 12-month warranty, 24-month for Pro line
-- Phones: 6-month warranty, no extension
-- 不在清单内的产品 → AI 应说 "I'll need to check with my team"
-
-加分测试: 问一个 soul 没写的（如 "do you sell monitors?"），看 AI 是否按 soul 指示说"要问团队"而不是瞎编。
-
-📝 结果:
+📝 结果 2（AI 回复 + soul 事实）:
 
 ---
 
-## Test 3 — 并发隔离（两个客户不串消息）
+## Test 3 — 刷新续接（验证对话不丢）
 
-```bash
-# 同时发两个不同 conv_id 的请求
-curl -sN -X POST http://localhost:10142/api/customer/acme/chat \
-  -H 'Content-Type: application/json' \
-  -d '{"customer_id":"alice","text":"My name is ALICE-SECRET","conv_id":"t3-alice"}' \
-  --max-time 90 > /tmp/t3-alice.txt &
-curl -sN -X POST http://localhost:10142/api/customer/acme/chat \
-  -H 'Content-Type: application/json' \
-  -d '{"customer_id":"bob","text":"My name is BOB-SECRET","conv_id":"t3-bob"}' \
-  --max-time 90 > /tmp/t3-bob.txt &
-wait
-echo "=== alice stream ===" ; grep -c "BOB-SECRET" /tmp/t3-alice.txt
-echo "=== bob stream ===" ; grep -c "ALICE-SECRET" /tmp/t3-bob.txt
-```
+**窗口 A**，在 Test 2 聊完之后，**刷新页面（F5）**。
 
-**预期**: 两个 `grep -c` 都返回 `0`（alice 的流里没有 bob 的秘密，反之亦然）。证明 per-conv session 隔离有效。
+**预期**：刷新后看到的还是**同一段对话**（你的问题 + AI 的回复都在），不是一个空白
+新会话。（实现：conv_id / customer_id 存在 localStorage，刷新时自动续接。）
 
-📝 结果:
+> 原理：第一次打开是 `/chat/acme`，hook 把 conv 存进 localStorage；刷新时若 URL
+> 没有 `?conv=` 就从 localStorage 恢复并跳到 `/chat/acme?conv=…&cid=…`。
+
+📝 结果 3（刷新后对话还在）:
 
 ---
 
-## Test 4 — Operator dashboard 看活跃对话
+## Test 4 — 可嵌入 widget（模拟商家网站）
 
-1. 浏览器打开 `http://localhost:10142/login`
-2. 登录: `entity://user/system/admin` / `ezagent-dev`
-3. 访问 `http://localhost:10142/admin/customer_sessions`
+**窗口 A**，浏览器打开本地文件 👉 **file:///tmp/widget-test.html**
+（我已建好；它模拟"Acme 自己的网站"，只贴了一行
+`<script src=".../widget.js" data-tenant="acme">`）
 
-**预期**: 看到前面测试产生的活跃 customer session 列表（conv_id / workspace / 最近消息 / mode badge）。点进任意一个 → 看到该 session 的实时对话记录。
+**预期**：
+- 页面右下角出现一个**聊天气泡按钮**（💬）。
+- 点一下 → 弹出一个聊天面板（其实是个 iframe，指向 `/chat/acme?embed=1`，没有
+  顶部 header、背景透明贴合气泡）。
+- 在里面发一句消息 → AI 正常回复（和 Test 2 一样）。
+- 再点气泡按钮 → 面板收起。
 
-📝 结果:
+> 如果面板空白：可能是 iframe 被某些浏览器的第三方内容拦截；把现象贴回来。
 
----
-
-## Test 5 — Operator 接手（takeover）
-
-**先开一个"挂着"的客户对话**（在 takeover 模式下 AI 被 gate，SSE 流会挂住等 operator）:
-
-终端 A（保持运行，模拟在线客户）:
-```bash
-curl -N -X POST http://localhost:10142/api/customer/acme/chat \
-  -H 'Content-Type: application/json' \
-  -d '{"customer_id":"carol","text":"I want a refund please","conv_id":"t5-takeover"}' \
-  --max-time 180
-```
-
-浏览器（operator）:
-1. `/admin/customer_sessions` → 找到 `t5-takeover` → 点进去
-2. 看到 carol 说 "I want a refund please" + AI 的回复
-3. 点 **"Take over"** 按钮
-
-**预期 A（客户侧，终端 A）**: 看到一条 `event: message` 内容是 `(客服已接管对话)`。
-
-4. 在 operator 输入框打字: "Hi Carol, this is a human agent. I can help with your refund." → 发送
-
-**预期 B（客户侧，终端 A）**: 收到 operator 的这条消息（在 120s 窗口内）。
-
-**预期 C（dashboard）**: mode badge 变成 "Takeover"；AI 不再自动回复。
-
-📝 结果 A（接管通知）:
-📝 结果 B（operator 消息到客户）:
-📝 结果 C（mode badge + AI 静默）:
-
-> ⚠️ 已知张力（见 ARCHITECTURE-zh.md）：C3 是请求/响应式 SSE。如果 operator 超过 120s 才回复，客户的 SSE 流会超时关闭。这是 Phase 3 要不要升级到持久 WS 连接的决策点 —— 本测试只要在 120s 窗口内操作即可验证核心。
+📝 结果 4（气泡 + iframe 聊天）:
 
 ---
 
-## Test 6 — 同对话第二轮（验证 cc agent 复用，第二条应该快）
+## Test 5 — Operator 控制台：监听活跃会话
 
-```bash
-# 用 Test 2 已经建过的 conv_id（替换成你 Test 2 实际用的那个 t2-XXXX）
-curl -N -X POST http://localhost:10142/api/customer/acme/chat \
-  -H 'Content-Type: application/json' \
-  -d '{"customer_id":"bob","text":"What about phones?","conv_id":"<填Test2的conv_id>"}' \
-  --max-time 60
-```
+**窗口 B（operator）**：
+1. 打开 **http://localhost:10142/login**
+2. 用 `entity://user/system/admin` / `ezagent-dev` 登录
+3. 访问 **http://localhost:10142/admin/customer_sessions**
 
-**预期**: 第二条消息明显比第一条快（cc agent 已经活着、bridge 已 bound，无冷启）。AI 回复手机保修信息（6-month, no extension）。
+**预期**：看到前面测试产生的活跃 customer session 列表（conv_id / workspace /
+最近消息 / mode badge，mode 应是 **Auto**）。点进任意一个 → 看到该会话的
+**实时对话记录**（窗口 A 里发生的 customer ↔ AI 对话）。
 
-📝 结果:
+**联动验证**：保持窗口 B 停在某个会话详情页，回到**窗口 A** 在该会话里再发一句；
+窗口 B 的对话记录应**实时**多出这句（operator 是订阅者，无需刷新）。
+
+📝 结果 5（会话列表 + 实时记录 + 联动）:
+
+---
+
+## Test 6 — Operator 接手（takeover，最核心）
+
+准备：**窗口 A** 开一个新的客户对话（可直接刷新 /chat/acme 或开新会话），发一句
+比如 "I want a refund please"。然后 **窗口 B** 进入这个会话的详情页。
+
+在**窗口 B**：
+1. 点 **"Take over"** 按钮。
+2. mode badge 变成 **"Takeover"**，出现 operator 输入框。
+3. 在输入框打字："Hi, this is a human agent. I can help with your refund." → 发送。
+
+**预期 A（窗口 A 客户侧，实时、无需刷新）**：
+- 出现一条居中的系统提示气泡 **"(客服已接管对话)"**，顶部出现 **"客服已接管"** 角标。
+- 紧接着收到 operator 发的那句消息（绿色气泡，标着"客服"）。
+- **关键**：这一切在客户的持久连接上实时到达，**没有 120 秒 SSE 超时问题**——这正是
+  换成 LiveView 顺手解决的那个架构债。
+
+**预期 B（窗口 A 客户再发消息时）**：takeover 模式下 AI 不再自动回复；客户发的消息
+窗口 B 能看到，由 operator 人工回复。
+
+📝 结果 6A（接管通知 + 角标）:
+📝 结果 6B（operator 消息实时到客户）:
+📝 结果 6C（AI 静默、operator 人工回）:
+
+---
+
+## 测试完怎么办
+
+把每个 📝 结果填好（通过 / 失败 + 现象，失败最好带截图）贴回来。我会：
+- 全绿 → 把活体结果补进 `ACCEPTANCE.md`，然后按 HANDOFF 推进：rebase 到 ezagent
+  最新 main（#439 / #438 / #434）→ 重新验证 → 开 PR。
+- 有红 → 按现象改代码（代码在 `ezagent_plugin_liveview` 的 `CustomerChat` 命名
+  空间 + `ezagent_web` 路由），重新编译、重测。
 
 ---
 
@@ -145,8 +156,5 @@ EZAGENT_PROFILE=poc-phase2 PORT=10142 \
   mix phx.server
 ```
 
-## 测试完怎么办
-
-把每个 📝 结果填好（通过 / 失败 + 现象）贴回来。我会:
-- 全绿 → 着手 rebase 到 ezagent 最新 main（#439 create_agent / #438 URI canon / #434 workspace visibility）+ 重新验证 → 开 PR
-- 有红 → 按现象改代码，重测
+> 注：客户聊天页是 LiveView，需要浏览器加载 JS/CSS（esbuild + tailwind 在
+> dev 下随服务启动构建）。如果页面没样式，等几秒让 watcher 编译完再刷新。
