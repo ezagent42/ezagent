@@ -251,6 +251,20 @@ browser (the customer-facing payoff the whole task targets).
 
 **Full E2E (Test 1–6) PASS, driven in Chrome 2026-05-28.**
 
+### Re-verified after merging latest ezagent main (2026-05-28)
+
+Merged `origin/main` (incl. #439 create_agent-through-template, #438 URI
+canonicalization, #434 workspace cap-visibility, + codex agent_bridge work)
+into the branch — clean auto-merge (6 overlapping files, no conflicts).
+Applied the new `DropWorkspacesVisible` migration, recompiled, restarted, and
+re-ran the full flow in Chrome on the merged tree: customer LiveView live AI
+reply + soul facts ✅, operator dashboard + takeover (notice + operator
+message reach the customer live) ✅, SSE round-trip ✅, 13 unit tests ✅.
+The merge broke nothing. Known minor (pre-existing, not a regression): the
+very first send right after a fresh mount can occasionally land in the
+`:connecting` race and be dropped — retry works; follow-up is to gate the
+first send until `status == :ready` is confirmed client-side.
+
 ### Findings during the live run (non-blocking)
 
 - **Operator workspace scoping** — the dashboard lists sessions for the
