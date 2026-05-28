@@ -24,7 +24,7 @@ defmodule Ezagent.Behavior.UserCredentials do
   ## Actions
 
   - `:set_password` — args `%{password: String.t()}` →
-    `{:ok, slice, %{user_uri: String.t(), password_set: true}}`.
+    `%{user_uri: String.t(), password_set: true}`.
     Body wraps `Ezagent.Users.set_password/2` — the same call the
     legacy `mix ezagent.user.set_password` task makes — but routes
     through dispatch so step 5.5 cap-check, step 5.6 cross-workspace
@@ -41,12 +41,12 @@ defmodule Ezagent.Behavior.UserCredentials do
 
   ## Cap shape (PR-CC-2-v2 contract)
 
-  One `required_caps/0` entry:
-  `Capability.cap(:user, __MODULE__, :set_password)`. Kind axis is
-  `:user` because the Behavior is registered on the User Kind. The
-  default `workspace_scoped? = true` is correct here — a user URI
-  carries its workspace structurally, and admin's bootstrap cap is
-  `:any`-workspace which bypasses iso at step 5.6.
+  One per-action cap entry — `Capability.cap(:user, __MODULE__,
+  :set_password)`. Kind axis is `:user` because the Behavior is
+  registered on the User Kind. The default `workspace_scoped? = true`
+  is correct here — a user URI carries its workspace structurally,
+  and admin's bootstrap cap is `:any`-workspace which bypasses iso
+  at step 5.6.
 
   ## Auto-derived CLI
 
@@ -57,106 +57,91 @@ defmodule Ezagent.Behavior.UserCredentials do
   The legacy `mix ezagent.user.set_password` task is retained pending
   operator migration with a deprecation notice (PR #355 muscle-memory
   pattern).
+
+  ## P2-b migration (2026-05-28)
+
+  Migrated to the new `use Ezagent.Behavior` action/handler contract
+  per SPEC `docs/superpowers/specs/2026-05-28-router-behavior-kind-architecture.md`
+  §4 + §6.2. The legacy `invoke/4` shim is replaced by
+  `handle_set_password/2` returning effects. Slice machinery
+  (`state_slice/0`, `init_slice/1`, `data_owner/1`) is preserved
+  per §6.2 step 9 — the Kind.Server still calls these directly.
+  Dispatch goes through `Ezagent.Kind.Runtime` post-#453+#454
+  (Phase 1.5+1.5b — new-contract detection via `__behavior__?/0`).
   """
 
-  @behaviour Ezagent.Behavior
+  use Ezagent.Behavior
 
-  @impl Ezagent.Behavior
-  def actions, do: [:set_password]
+  action :set_password,
+    args: %{password: :string},
+    returns: %{user_uri: :string, password_set: :boolean},
+    caps: [{:set_password, kind: :user}],
+    description:
+      "Set or rotate the User's password. Hashed via bcrypt before " <>
+        "insert. The target user is the dispatch target's URI " <>
+        "(`ctx.self_uri`); CLI passes it via `--user <entity-uri>`.",
+    data_owner: :self,
+    modes: [:call]
 
-  @impl Ezagent.Behavior
+  # =================================================================
+  # Explicit `required_caps/0` — the new `caps:` macro grammar
+  # accepts `kind: :user` per SPEC §4.3 form 2, but the Phase 1.5
+  # macro's auto-derived `required_caps/0` hardcodes the kind axis to
+  # `:any` (see `Ezagent.Behavior.build_required_cap_ast/3`). Keeping
+  # an explicit `def required_caps` overrides the macro derivation
+  # (see `maybe_inject_legacy_callbacks` — it skips injection when
+  # the callback is already defined) and preserves the historical
+  # `kind: :user` cap shape until the macro grows full SPEC §4.3
+  # form-2 support.
+  # =================================================================
   def required_caps do
     %{
       set_password: Ezagent.Capability.cap(:user, __MODULE__, :set_password)
     }
   end
 
-  @impl Ezagent.Behavior
-  def cap_subjects do
-    [
-      {:set_password,
-       "set or rotate the User's password (bcrypt-hashed). Holders " <>
-         "with an instance-scoped cap on their own URI can self-rotate; " <>
-         "admin holds the `:any`-instance form for cross-user reset."}
-    ]
-  end
+  # =================================================================
+  # Slice machinery (legacy callbacks; §6.2 step 9 preserves these —
+  # the Kind.Server calls them directly via behavior.state_slice/0 /
+  # behavior.init_slice/1).
+  # =================================================================
 
-  @impl Ezagent.Behavior
   def state_slice, do: :user_credentials
 
-  @impl Ezagent.Behavior
   def init_slice(_args), do: %{set_password_count: 0}
 
-  # PR-OWN-4 data_owner pattern: mirrors `Behavior.Identity` /
-  # `Behavior.ApiKeys` — the user (the Kind instance) owns its
+  # PR-OWN-4 data_owner pattern: the user (the Kind instance) owns its
   # credentials. Concrete user URIs map to themselves (self-owned;
   # the user holds the instance-scoped cap on their own URI for
   # self-rotation); `:any` matches `:any`; everything else has no
   # owner (no default grant). Admin's cross-user reset is via the
   # bootstrap `:any`-instance cap which short-circuits at step 5.5.
-  #
-  # Codex PR #356 r1 MED fix (2026-05-26): `:self` was NOT a valid
-  # `data_owner/1` return shape per `Ezagent.Behavior` callback spec
-  # (URI.t() | :any | :no_owner | {:scope, atom(), URI.t()}). The
-  # original intent ("self-owned") IS expressed by returning the
-  # entity URI itself — that's exactly what Identity does.
-  @impl Ezagent.Behavior
   def data_owner(%URI{} = entity_uri), do: entity_uri
   def data_owner(:any), do: :any
   def data_owner(_), do: :no_owner
 
   # =================================================================
-  # Action body
+  # New-contract action handler (§6.2 — replaces invoke/4)
   # =================================================================
 
-  @impl Ezagent.Behavior
-  def invoke(:set_password, slice, %{password: password}, ctx)
+  def handle_set_password(%{password: password}, ctx)
       when is_binary(password) and password != "" do
-    case target_user_uri(ctx) do
-      {:ok, user_uri} ->
-        case Ezagent.Users.set_password(user_uri, password) do
-          {:ok, _decoded} ->
-            new_slice = Map.update(slice, :set_password_count, 1, &(&1 + 1))
+    with {:ok, user_uri} <- target_user_uri(ctx),
+         {:ok, _decoded} <- Ezagent.Users.set_password(user_uri, password) do
+      cur = ctx[:read].(:set_password_count, 0)
 
-            {:ok, new_slice,
-             %{user_uri: URI.to_string(user_uri), password_set: true}}
-
-          {:error, :not_found} = err ->
-            err
-
-          {:error, _} = err ->
-            err
-
-          other ->
-            {:error, {:set_password_failed, other}}
-        end
-
-      {:error, _} = err ->
-        err
+      {:ok,
+       %{user_uri: URI.to_string(user_uri), password_set: true},
+       [
+         {:set, :set_password_count, cur + 1},
+         {:emit, :password_set,
+          %{user_uri: URI.to_string(user_uri), at: DateTime.utc_now()}}
+       ]}
     end
   end
 
-  def invoke(:set_password, _slice, args, _ctx) do
+  def handle_set_password(args, _ctx) do
     {:error, {:bad_args, "set_password requires {password: non-empty String}", args}}
-  end
-
-  # =================================================================
-  # Interface — drives `mix ezagent` auto-derivation.
-  # =================================================================
-
-  @impl Ezagent.Behavior
-  def interface do
-    %{
-      set_password: %{
-        description:
-          "Set or rotate the User's password. Hashed via bcrypt before " <>
-            "insert. The target user is the dispatch target's URI " <>
-            "(`ctx.self_uri`); CLI passes it via `--user <entity-uri>`.",
-        args: %{password: :string},
-        returns: %{user_uri: :string, password_set: :boolean},
-        modes: [:call]
-      }
-    }
   end
 
   # =================================================================
