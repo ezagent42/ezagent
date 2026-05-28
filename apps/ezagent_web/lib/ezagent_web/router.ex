@@ -48,6 +48,13 @@ defmodule EzagentWeb.Router do
     post "/onboarding/workspace", OnboardingController, :submit
     get "/register/complete", RegistrationController, :complete_new
     post "/register/complete", RegistrationController, :complete_create
+
+    # Task 7 (Phase 2.7): embeddable customer-chat widget loader.
+    # Served as plain JS — no auth, no CSRF. A business drops one
+    # <script src="/customer-chat/widget.js" data-tenant="acme"></script>
+    # on their page; the loader injects a floating chat bubble that
+    # toggles an <iframe> pointing at /chat/<tenant>?embed=1.
+    get "/customer-chat/widget.js", CustomerChatWidgetController, :widget
   end
 
   # Public customer chat page (Phase 3). No login — the customer is a
