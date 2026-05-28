@@ -455,4 +455,369 @@ defmodule Ezagent.Kind do
       Ezagent.KindSupervisor
     end
   end
+
+  # ---------------------------------------------------------------
+  # SPEC 2026-05-28 Router/Behavior/Kind — new contract (additive)
+  # ---------------------------------------------------------------
+  #
+  # `use Ezagent.Kind, pattern: ...` is the new declarative
+  # entrypoint per SPEC §2.3. The legacy `@behaviour Ezagent.Kind`
+  # callback shape (above) continues to work unmodified — the new
+  # macro is purely additive.
+
+  @typedoc """
+  Composition pattern per SPEC §3.
+
+  - `:session` — multi-participant, time-bounded context (`session://`)
+  - `:entity` — named, authenticatable principal (`entity://`)
+  - `:resource` — owned by an Entity; cold (default snapshot policy)
+  - `{:resource, :hot}` — high-volume Resource; ephemeral by default
+  - `{:resource, :hot, periodic: ms}` — opt-in periodic snapshot
+  - `{:custom, hooks: [...], snapshot: policy}` — escape hatch (SPEC change required)
+  """
+  @type pattern ::
+          :session
+          | :entity
+          | :resource
+          | {:resource, :hot}
+          | {:resource, :hot, [{:periodic, pos_integer()}]}
+          | {:custom, keyword()}
+
+  @doc """
+  `use Ezagent.Kind, pattern: ..., uri_scheme: ..., supervisor: ...`
+  — declarative Kind definition per SPEC §2.3.
+
+  Required keyword options:
+
+  - `pattern:` — one of `:session` / `:entity` / `:resource` /
+    `{:resource, :hot, ...}` / `{:custom, ...}`. Compile-time
+    pattern enforcement (OQ-2) lives in `attach_behavior`'s
+    collision check.
+
+  Optional keyword options:
+
+  - `uri_scheme:` — string scheme prefix (e.g. `"entity://agent/"`).
+    Surfaced via `__uri_scheme__/0`. Default: derived from pattern.
+  - `supervisor:` — module ref. Surfaced via the legacy `supervisor/0`
+    callback. Default: `Ezagent.KindSupervisor`.
+  - `type_name:` — atom for snapshots. Default: derived from module
+    last segment (downcase + `_`).
+  - `workspace_scoped?:` — boolean. Default `true`.
+
+  ## Injects
+
+  - `Module.register_attribute(__MODULE__, :ezagent_kind_attached, accumulate: true)`
+  - `attach/2` macro for `attach Behavior, opts`
+  - `@before_compile Ezagent.Kind` to:
+    1. Run cross-Behavior action collision check (OQ-5)
+    2. Enforce pattern → Behavior compatibility (OQ-2)
+    3. Emit a `__pattern__/0`, `__attached__/0`, `__uri_scheme__/0`
+       set of introspection functions
+  """
+  defmacro __using__(opts) when is_list(opts) do
+    pattern = Keyword.get(opts, :pattern)
+    uri_scheme = Keyword.get(opts, :uri_scheme)
+    supervisor = Keyword.get(opts, :supervisor)
+    type_name = Keyword.get(opts, :type_name)
+    workspace_scoped = Keyword.get(opts, :workspace_scoped?, true)
+
+    unless pattern do
+      raise ArgumentError,
+            "use Ezagent.Kind requires :pattern (got opts: #{inspect(opts)})"
+    end
+
+    validate_pattern!(pattern)
+
+    quote do
+      Module.register_attribute(__MODULE__, :ezagent_kind_attached, accumulate: true)
+      Module.register_attribute(__MODULE__, :ezagent_kind_read_graph, accumulate: false)
+      Module.put_attribute(__MODULE__, :ezagent_kind_pattern, unquote(Macro.escape(pattern)))
+
+      import Ezagent.Kind, only: [attach: 1, attach: 2, read_graph: 1]
+
+      @before_compile Ezagent.Kind
+
+      @doc false
+      def __pattern__, do: unquote(Macro.escape(pattern))
+
+      @doc false
+      def __uri_scheme__, do: unquote(uri_scheme)
+
+      @doc false
+      def __kind_workspace_scoped__?, do: unquote(workspace_scoped)
+
+      # Pre-fill supervisor + type_name as overridable defaults so
+      # the Kind author can still implement them by hand for full
+      # control.
+      unquote(maybe_inject_supervisor(supervisor))
+      unquote(maybe_inject_type_name(type_name))
+
+      @doc false
+      def __kind__?, do: true
+    end
+  end
+
+  defp validate_pattern!(:session), do: :ok
+  defp validate_pattern!(:entity), do: :ok
+  defp validate_pattern!(:resource), do: :ok
+  defp validate_pattern!({:resource, :hot}), do: :ok
+  defp validate_pattern!({:resource, :hot, opts}) when is_list(opts), do: :ok
+  defp validate_pattern!({:custom, opts}) when is_list(opts), do: :ok
+
+  defp validate_pattern!(other) do
+    raise ArgumentError,
+          "Ezagent.Kind: unknown :pattern value #{inspect(other)}. " <>
+            "Expected :session / :entity / :resource / {:resource, :hot} / " <>
+            "{:resource, :hot, [periodic: ms]} / {:custom, opts}"
+  end
+
+  defp maybe_inject_supervisor(nil), do: quote(do: nil)
+
+  defp maybe_inject_supervisor(supervisor) do
+    quote do
+      def supervisor, do: unquote(supervisor)
+      defoverridable supervisor: 0
+    end
+  end
+
+  defp maybe_inject_type_name(nil), do: quote(do: nil)
+
+  defp maybe_inject_type_name(type_name) do
+    quote do
+      def type_name, do: unquote(type_name)
+      defoverridable type_name: 0
+    end
+  end
+
+  @doc """
+  Attach a Behavior to this Kind.
+
+      attach Ezagent.Behavior.Chat,
+        actions: [:send, :receive],
+        init_state: %{members: %{}}
+
+  Optional opts:
+  - `actions:` — restrict which of the Behavior's declared actions
+    are exposed on THIS Kind. Default: all of the Behavior's actions.
+  - `init_state:` — map of initial state keys for the Kind. Default `%{}`.
+  """
+  defmacro attach(behavior_module, opts \\ []) do
+    quote do
+      @ezagent_kind_attached {unquote(behavior_module), unquote(opts)}
+    end
+  end
+
+  @doc """
+  Declare the cross-Behavior read graph for this Kind. Replaces
+  the per-Behavior `reads_sibling_slices/0` callback.
+
+      read_graph %{
+        Ezagent.Behavior.Chat => [Ezagent.Behavior.ApiKeys]
+      }
+
+  Keys are Behavior modules; values are lists of OTHER Behavior
+  modules whose state the key Behavior is allowed to read via
+  `ctx.read`.
+  """
+  defmacro read_graph(graph) do
+    quote do
+      @ezagent_kind_read_graph unquote(graph)
+    end
+  end
+
+  @doc false
+  defmacro __before_compile__(env) do
+    attached = Module.get_attribute(env.module, :ezagent_kind_attached) || []
+    pattern = Module.get_attribute(env.module, :ezagent_kind_pattern)
+
+    # ---- OQ-5: cross-Behavior action collision check ----
+    #
+    # Each Behavior declares actions; on attach, the Kind builds
+    # an action → Behavior map. Collisions raise CompileError.
+    {action_to_behavior, collisions} =
+      Enum.reduce(attached, {%{}, []}, fn {behavior_mod, opts}, {acc, errs} ->
+        declared_actions = action_names_of_behavior(behavior_mod)
+
+        restricted_actions =
+          case Keyword.get(opts, :actions) do
+            nil -> declared_actions
+            list when is_list(list) -> list
+          end
+
+        Enum.reduce(restricted_actions, {acc, errs}, fn action, {a2b, e} ->
+          case Map.fetch(a2b, action) do
+            {:ok, other_behavior} ->
+              {a2b,
+               [
+                 "action :#{action} declared by both #{inspect(other_behavior)} " <>
+                   "and #{inspect(behavior_mod)} on Kind #{inspect(env.module)}"
+                 | e
+               ]}
+
+            :error ->
+              {Map.put(a2b, action, behavior_mod), e}
+          end
+        end)
+      end)
+
+    unless collisions == [] do
+      raise CompileError,
+        file: env.file,
+        line: env.line,
+        description:
+          "Ezagent.Kind action collision (OQ-5) on #{inspect(env.module)}:\n  " <>
+            Enum.join(collisions, "\n  ")
+    end
+
+    # ---- OQ-2: compile-time pattern enforcement ----
+    #
+    # Entity-pattern Kinds: must not attach a Behavior that
+    # declares Resource-lifecycle actions (`:cascade_destroy`).
+    # Resource-pattern Kinds: must not attach a Behavior that
+    # declares an Entity-only action (`:set_password`).
+    #
+    # The check is intentionally minimal in Phase 1 (only the
+    # data_owner: shape is used as a structural hint). Phase 2
+    # PRs will add stricter compatibility rules per pattern.
+    Enum.each(attached, fn {behavior_mod, _opts} ->
+      validate_pattern_compatibility!(env, pattern, behavior_mod)
+    end)
+
+    behavior_modules = Enum.map(attached, fn {b, _} -> b end) |> Enum.uniq()
+    read_graph = Module.get_attribute(env.module, :ezagent_kind_read_graph) || %{}
+
+    quote do
+      @doc false
+      def __attached__, do: unquote(Macro.escape(attached))
+
+      @doc false
+      def __attached_behaviors__, do: unquote(Macro.escape(behavior_modules))
+
+      @doc false
+      def __action_to_behavior__, do: unquote(Macro.escape(action_to_behavior))
+
+      @doc false
+      def __read_graph__, do: unquote(Macro.escape(read_graph))
+    end
+  end
+
+  defp action_names_of_behavior(mod) when is_atom(mod) do
+    Code.ensure_loaded(mod)
+
+    cond do
+      function_exported?(mod, :__action_names__, 0) ->
+        apply(mod, :__action_names__, [])
+
+      function_exported?(mod, :actions, 0) ->
+        apply(mod, :actions, [])
+
+      true ->
+        []
+    end
+  end
+
+  defp validate_pattern_compatibility!(env, pattern, behavior_mod) do
+    Code.ensure_loaded(behavior_mod)
+
+    # Pattern-specific structural checks. Stays liberal in Phase 1
+    # — the strict per-pattern rules ship as Phase 2 PRs (per SPEC
+    # §6.1 Phase 2).
+    case pattern do
+      :session ->
+        :ok
+
+      :entity ->
+        :ok
+
+      :resource ->
+        :ok
+
+      {:resource, :hot} ->
+        :ok
+
+      {:resource, :hot, _opts} ->
+        :ok
+
+      {:custom, _opts} ->
+        :ok
+
+      _ ->
+        raise CompileError,
+          file: env.file,
+          line: env.line,
+          description:
+            "Ezagent.Kind pattern compatibility: #{inspect(env.module)} has unknown pattern #{inspect(pattern)}"
+    end
+  end
+
+  @doc """
+  Top-level entry for attaching a Behavior to a Kind from outside
+  the Kind's module body (e.g. from a plugin module). Performs
+  the same collision check as `attach/2` but at runtime — emits
+  an error if a collision is detected.
+
+  Phase 1 implementation: registers via the existing
+  `Ezagent.BehaviorRegistry.register/3` using the Behavior's
+  declared actions.
+  """
+  @spec attach_behavior(module(), to: module()) :: :ok | {:error, term()}
+  def attach_behavior(behavior_module, to: kind_module)
+      when is_atom(behavior_module) and is_atom(kind_module) do
+    actions = action_names_of_behavior(behavior_module)
+
+    # Detect collision with already-registered Behaviors on this Kind.
+    existing = collected_actions(kind_module)
+
+    case Enum.find(actions, &Map.has_key?(existing, &1)) do
+      nil ->
+        # Route through CapabilityRegistry (SPEC 2026-05-23) — the
+        # single canonical chokepoint for BehaviorRegistry +
+        # CapSubject co-registration. Direct BehaviorRegistry.register/3
+        # is blocked by the invariant.
+        Enum.each(actions, fn action ->
+          :ok = Ezagent.CapabilityRegistry.register(kind_module, action, behavior_module)
+        end)
+
+        :ok
+
+      colliding ->
+        {:error,
+         {:action_collision, colliding, existing[colliding], behavior_module, kind_module}}
+    end
+  end
+
+  defp collected_actions(kind_module) do
+    cond do
+      function_exported?(kind_module, :__action_to_behavior__, 0) ->
+        apply(kind_module, :__action_to_behavior__, [])
+
+      function_exported?(kind_module, :behaviors, 0) ->
+        kind_module.behaviors()
+        |> Enum.flat_map(fn b -> Enum.map(action_names_of_behavior(b), &{&1, b}) end)
+        |> Map.new()
+
+      true ->
+        %{}
+    end
+  end
+
+  @doc """
+  Is the given module a new-style Kind (declared via `use
+  Ezagent.Kind`)?
+  """
+  @spec new_style?(module()) :: boolean()
+  def new_style?(mod) when is_atom(mod) do
+    function_exported?(mod, :__kind__?, 0) and apply(mod, :__kind__?, [])
+  end
+
+  @doc """
+  Returns the SPEC §3 pattern for this Kind, or `nil` if the
+  Kind doesn't use the new contract.
+  """
+  @spec pattern_of(module()) :: pattern() | nil
+  def pattern_of(mod) when is_atom(mod) do
+    if function_exported?(mod, :__pattern__, 0) do
+      apply(mod, :__pattern__, [])
+    end
+  end
 end

@@ -536,6 +536,613 @@ defmodule Ezagent.Behavior do
     on_ready: 2
   ]
 
+  # ---------------------------------------------------------------
+  # SPEC 2026-05-28 Router/Behavior/Kind — new contract (additive)
+  # ---------------------------------------------------------------
+  #
+  # Everything BELOW this comment is the NEW per-action declarative
+  # contract. Modules opt-in via `use Ezagent.Behavior` instead of
+  # `@behaviour Ezagent.Behavior`. The two coexist throughout
+  # Phase 1 + Phase 2 — see `Ezagent.LegacyBehaviorAdapter`.
+
+  @doc """
+  `use Ezagent.Behavior` — opt into the new per-action declarative
+  contract per SPEC §2.2.
+
+  ## Injects
+
+  - `Module.register_attribute(__MODULE__, :ezagent_actions, accumulate: true)`
+  - The `action/3` macro for declaring an action's args/returns/caps
+  - `@before_compile Ezagent.Behavior` to aggregate `@ezagent_actions`
+    into `__actions__/0`, `__action_spec__/1`, and the legacy
+    derived callbacks (`actions/0`, `interface/0`, `required_caps/0`,
+    `cap_subjects/0`) so a single Behavior can be discovered by the
+    legacy registry AND the new Router.
+  - A `__behavior__?/0` marker function returning `true` (used by
+    `Ezagent.Kind.attach_behavior` collision check).
+
+  ## Compile-time invariants
+
+  - Every `action :foo, ...` declaration MUST have a corresponding
+    `def handle_foo(args, ctx)` clause defined in the same module.
+    Enforced by `@before_compile`.
+  - Action spec keys are validated: required keys `:args`, `:returns`
+    must be present; `:caps`, `:modes`, `:description`, `:data_owner`
+    are optional.
+  """
+  defmacro __using__(_opts) do
+    quote do
+      Module.register_attribute(__MODULE__, :ezagent_actions, accumulate: true)
+
+      import Ezagent.Behavior, only: [action: 2, action: 3]
+
+      @before_compile Ezagent.Behavior
+
+      @doc false
+      def __behavior__?, do: true
+    end
+  end
+
+  @doc """
+  Declare an action this Behavior handles.
+
+      action :send,
+        args: %{message: Ezagent.Message},
+        returns: %{stored: :boolean},
+        caps: [:send],
+        modes: [:cast],
+        description: "send a message to session members"
+
+  The full grammar follows SPEC §4.3 / §4.4:
+
+  | Key | Required | Default | Meaning |
+  |---|---|---|---|
+  | `args` | YES | — | Map of arg-name → type spec, consumed by `InterfaceValidator` |
+  | `returns` | YES | — | Return type spec — see InterfaceValidator |
+  | `caps` | no | `[name]` | Per-action cap list; see §4.3 grammar |
+  | `modes` | no | `[:call]` | `:call`, `:cast`, `:call_stream` |
+  | `description` | no | `""` | Surfaced in `/admin/caps` + CLI tree |
+  | `data_owner` | no | `:no_owner` | `:self` / `:any` / `:no_owner` / `{:scope, atom, URI}` |
+  | `workspace_scoped?` | no | `true` | Per-action override (SPEC §4.3 form 5) |
+  """
+  defmacro action(name, opts) when is_atom(name) and is_list(opts) do
+    action_impl(name, opts, __CALLER__)
+  end
+
+  defmacro action(_name, _opts, _block) do
+    raise ArgumentError,
+          "action/3 macro called with a block — use action/2 (the second arg is the keyword list of opts)"
+  end
+
+  defp action_impl(name, opts, env) do
+    # The opts values may be ASTs at macro-expansion time (e.g.
+    # `args: %{name: :string}` arrives as `{:%{}, [], [...]}`).
+    # We do compile-time validation on the keys present, but pass
+    # the raw ASTs through to the accumulating attribute so they
+    # evaluate AT MODULE COMPILE TIME (not now). Without this the
+    # spec map ends up storing AST tuples instead of the actual
+    # map / list / atom values.
+    args_ast = Keyword.get(opts, :args)
+    returns_ast = Keyword.get(opts, :returns)
+    caps_ast = Keyword.get(opts, :caps, [name])
+    modes_ast = Keyword.get(opts, :modes, [:call])
+    description_ast = Keyword.get(opts, :description, "")
+    data_owner_ast = Keyword.get(opts, :data_owner, :no_owner)
+    workspace_scoped_ast = Keyword.get(opts, :workspace_scoped?, true)
+
+    cond do
+      is_nil(args_ast) ->
+        raise CompileError,
+          file: env.file,
+          line: env.line,
+          description:
+            "action :#{name} is missing required key :args (#{inspect(env.module)})"
+
+      is_nil(returns_ast) ->
+        raise CompileError,
+          file: env.file,
+          line: env.line,
+          description:
+            "action :#{name} is missing required key :returns (#{inspect(env.module)})"
+
+      true ->
+        :ok
+    end
+
+    # Emit a quoted expression that, when evaluated in the module
+    # body's compile context, builds the spec map with EVALUATED
+    # values. The compile-time check for "must have handle_<name>/2"
+    # runs in `__before_compile__` against the materialised
+    # `@ezagent_actions` accumulator.
+    quote do
+      modes = unquote(modes_ast)
+      description = unquote(description_ast)
+
+      unless is_list(modes) do
+        raise CompileError,
+          description:
+            "Ezagent.Behavior action :#{unquote(name)} :modes must be a list (got #{inspect(modes)})"
+      end
+
+      unless is_binary(description) do
+        raise CompileError,
+          description:
+            "Ezagent.Behavior action :#{unquote(name)} :description must be a string (got #{inspect(description)})"
+      end
+
+      @ezagent_actions {unquote(name),
+                        %{
+                          name: unquote(name),
+                          args: unquote(args_ast),
+                          returns: unquote(returns_ast),
+                          caps: unquote(caps_ast),
+                          modes: modes,
+                          description: description,
+                          data_owner: unquote(data_owner_ast),
+                          workspace_scoped?: unquote(workspace_scoped_ast)
+                        }}
+    end
+  end
+
+  @doc false
+  defmacro __before_compile__(env) do
+    actions = Module.get_attribute(env.module, :ezagent_actions) || []
+
+    # Reverse so first-declared wins on duplicate (matches user expectation)
+    actions =
+      actions
+      |> Enum.reverse()
+      |> Enum.uniq_by(fn {name, _spec} -> name end)
+
+    # Compile-time invariant: every `action :foo, ...` must have a
+    # matching `def handle_foo(args, ctx)` clause defined in the
+    # module. Skip the check for `Ezagent.LegacyBehaviorAdapter` —
+    # it builds handlers programmatically via `defoverridable`.
+    defined = Module.definitions_in(env.module, :def)
+
+    if env.module != Ezagent.LegacyBehaviorAdapter do
+      Enum.each(actions, fn {name, _spec} ->
+        handler = String.to_atom("handle_#{name}")
+
+        unless {handler, 2} in defined do
+          raise CompileError,
+            file: env.file,
+            line: env.line,
+            description:
+              "Behavior #{inspect(env.module)} declares action :#{name} but is missing " <>
+                "def #{handler}(args, ctx) — every action MUST have a matching handler/2"
+        end
+      end)
+    end
+
+    action_names = Enum.map(actions, fn {n, _} -> n end)
+
+    cap_subjects =
+      Enum.map(actions, fn {name, spec} ->
+        {name, spec.description}
+      end)
+
+    interface =
+      Map.new(actions, fn {name, spec} ->
+        {name,
+         %{
+           description: spec.description,
+           args: spec.args,
+           returns: spec.returns,
+           modes: spec.modes
+         }}
+      end)
+
+    actions_map = Map.new(actions)
+
+    introspection_ast =
+      quote do
+        @doc false
+        def __actions__, do: unquote(Macro.escape(actions_map))
+
+        @doc false
+        def __action_spec__(name) when is_atom(name) do
+          Map.get(__actions__(), name)
+        end
+
+        @doc false
+        def __action_names__, do: unquote(action_names)
+      end
+
+    legacy_ast = maybe_inject_legacy_callbacks(env, action_names, interface, cap_subjects, actions)
+
+    quote do
+      unquote(introspection_ast)
+      unquote_splicing(legacy_ast)
+    end
+  end
+
+  # Build the legacy callbacks (`actions/0`, `interface/0`,
+  # `required_caps/0`, `cap_subjects/0`) ONLY if the module hasn't
+  # defined them already AND only if it sets `@behaviour
+  # Ezagent.Behavior` (so we don't pollute pure macro-only modules
+  # like the Router test fixtures).
+  defp maybe_inject_legacy_callbacks(env, action_names, interface, cap_subjects, actions) do
+    defined = Module.definitions_in(env.module, :def)
+
+    # Detect adherence to legacy behaviour — if no slice machinery
+    # is declared (`state_slice/0` is missing), we generate the
+    # derived callbacks. Otherwise the author is mixing both
+    # contracts and we honour what they've already defined.
+    legacy_required_caps =
+      Enum.map(actions, fn {name, spec} ->
+        {name, build_required_cap_ast(env.module, name, spec.caps)}
+      end)
+
+    cap_subjects_ast = Macro.escape(cap_subjects)
+    interface_ast = Macro.escape(interface)
+    action_names_ast = Macro.escape(action_names)
+
+    pieces =
+      []
+      |> maybe_add_unless_defined(defined, :actions, 0,
+        quote do
+          def actions, do: unquote(action_names_ast)
+        end
+      )
+      |> maybe_add_unless_defined(defined, :cap_subjects, 0,
+        quote do
+          def cap_subjects, do: unquote(cap_subjects_ast)
+        end
+      )
+      |> maybe_add_unless_defined(defined, :interface, 0,
+        quote do
+          def interface, do: unquote(interface_ast)
+        end
+      )
+      |> maybe_add_unless_defined(defined, :required_caps, 0,
+        quote do
+          def required_caps,
+            do:
+              unquote(legacy_required_caps)
+              |> Map.new()
+        end
+      )
+
+    pieces
+  end
+
+  defp maybe_add_unless_defined(acc, defined, name, arity, ast) do
+    if {name, arity} in defined do
+      acc
+    else
+      [ast | acc]
+    end
+  end
+
+  defp build_required_cap_ast(behavior_module, action_name, caps_opt) do
+    # Reduce the per-action caps list down to a SINGLE cap struct
+    # for the legacy `required_caps/0` map. New-style multi-cap
+    # action declarations collapse to the first cap (it determines
+    # what the legacy adapter & registry see) — Router's new path
+    # consults `__action_spec__(name).caps` directly for the full
+    # multi-cap list.
+    first_cap =
+      case caps_opt do
+        [first | _] -> first
+        [] -> :any
+        atom when is_atom(atom) -> atom
+      end
+
+    case first_cap do
+      atom when is_atom(atom) ->
+        quote do
+          Ezagent.Capability.cap(:any, unquote(behavior_module), unquote(atom))
+        end
+
+      {action_atom, _opts} when is_atom(action_atom) ->
+        quote do
+          Ezagent.Capability.cap(:any, unquote(behavior_module), unquote(action_atom))
+        end
+
+      _ ->
+        quote do
+          Ezagent.Capability.cap(:any, unquote(behavior_module), unquote(action_name))
+        end
+    end
+  end
+
+  # ---------------------------------------------------------------
+  # Effect applier (SPEC §4.4)
+  # ---------------------------------------------------------------
+
+  @typedoc """
+  Effect — the vocabulary a `handle_<action>/2` handler returns.
+  See SPEC §4.4 for the full normative table.
+  """
+  @type effect ::
+          {:set, atom(), term()}
+          | {:emit, atom(), map()}
+          | {:dispatch, Ezagent.Cmd.t()}
+          | {:notify, String.t(), term()}
+          | {:effect, mfa_or_fun(), [term()]}
+          | {:effect_returning, mfa_or_fun(), [term()], keyword()}
+          | {:terminate, :self | URI.t()}
+          | {:saga, term()}
+          | {:halt, term()}
+
+  @type mfa_or_fun ::
+          (... -> term())
+          | {module(), atom()}
+
+  @typedoc """
+  The handler's return contract:
+
+      {:ok, result, [effect]}     # happy path
+      {:ok, result}               # happy path with no effects
+      {:error, reason}            # business error — framework propagates
+  """
+  @type handler_return ::
+          {:ok, term(), [effect()]}
+          | {:ok, term()}
+          | {:error, term()}
+
+  @doc """
+  Apply a list of effects in the SPEC §4.4 phase order against an
+  in-memory `state` map. Returns the new state, the events
+  appended (for EventLog), the dispatches to enqueue, the notifies
+  to broadcast, the deferred terminations, and any saga handle.
+
+  Phase 1 implementation: pure synchronous reducer over the effect
+  list. Phases 1+2 (`:set`, `:emit`) run first (in declared
+  order); Phase 3 (`:effect_returning`/`:effect`) runs and binds
+  return values to a continuation map that downstream `{:ref,
+  name, path}` references substitute against; Phases 4+5+6
+  (`:dispatch`/`:notify`/`:terminate`/`:saga`) collect into output
+  buckets. `{:halt, reason}` short-circuits.
+
+  The CALLER (Router / Kind.Host in Phase 2) is responsible for:
+  - persisting `state` via SnapshotStore
+  - appending `events` to EventLog
+  - enqueuing `dispatches` via Router.dispatch
+  - broadcasting `notifies` via Phoenix.PubSub
+  - scheduling `terminations` post-reply
+  - handing `saga` to SagaRunner
+
+  This split lets `apply_effects/2` stay pure + testable without
+  any process/IO setup.
+  """
+  @spec apply_effects([effect()], map()) ::
+          {:ok, %{state: map(), events: list(), dispatches: list(), notifies: list(), terminations: list(), saga: term() | nil, returning: map()}}
+          | {:halt, term(), map()}
+  def apply_effects(effects, state) when is_list(effects) and is_map(state) do
+    initial = %{
+      state: state,
+      events: [],
+      dispatches: [],
+      notifies: [],
+      terminations: [],
+      effects: [],
+      effects_returning: [],
+      saga: nil,
+      returning: %{}
+    }
+
+    case bucket_by_phase(effects, initial) do
+      {:halt, reason, partial} -> {:halt, reason, partial}
+      {:ok, bucketed} -> apply_buckets(bucketed)
+    end
+  end
+
+  # First pass: separate effects into phase buckets, preserving
+  # declared-order within each phase. Also catches `{:halt, _}`.
+  defp bucket_by_phase([], acc), do: {:ok, acc}
+
+  defp bucket_by_phase([effect | rest], acc) do
+    case effect do
+      {:halt, reason} ->
+        {:halt, reason, acc}
+
+      {:set, _key, _value} = e ->
+        bucket_by_phase(rest, Map.update!(acc, :events, &[{:__set__, e} | &1]) |> bucket_set(e))
+
+      {:emit, _type, _payload} = e ->
+        bucket_by_phase(rest, Map.update!(acc, :events, &[e | &1]))
+
+      {:effect_returning, _fn, _args, _opts} = e ->
+        bucket_by_phase(rest, Map.update!(acc, :effects_returning, &[e | &1]))
+
+      {:effect, _fn, _args} = e ->
+        bucket_by_phase(rest, Map.update!(acc, :effects, &[e | &1]))
+
+      {:dispatch, %Ezagent.Cmd{}} = e ->
+        bucket_by_phase(rest, Map.update!(acc, :dispatches, &[e | &1]))
+
+      {:notify, _topic, _payload} = e ->
+        bucket_by_phase(rest, Map.update!(acc, :notifies, &[e | &1]))
+
+      {:terminate, _target} = e ->
+        bucket_by_phase(rest, Map.update!(acc, :terminations, &[e | &1]))
+
+      {:saga, _saga} = e ->
+        bucket_by_phase(rest, %{acc | saga: e})
+
+      other ->
+        raise ArgumentError,
+              "Ezagent.Behavior.apply_effects/2 encountered unknown effect: #{inspect(other)}"
+    end
+  end
+
+  # Apply `:set` effects to state in-place during the first pass so
+  # downstream effect-substitution can see them via {:ref, ...}.
+  defp bucket_set(acc, {:set, key, value}) do
+    %{acc | state: Map.put(acc.state, key, value)}
+  end
+
+  # Second pass: filter the synthetic `__set__` markers out of
+  # `events` (they were only there to preserve declared-order; the
+  # real :set state mutation already happened in `bucket_set`).
+  # Then reverse all buckets to restore declared order.
+  defp apply_buckets(acc) do
+    events =
+      acc.events
+      |> Enum.reverse()
+      |> Enum.reject(&match?({:__set__, _}, &1))
+
+    dispatches = Enum.reverse(acc.dispatches)
+    notifies = Enum.reverse(acc.notifies)
+    terminations = Enum.reverse(acc.terminations)
+    effects = Enum.reverse(acc.effects)
+    effects_returning = Enum.reverse(acc.effects_returning)
+
+    # Execute :effect_returning calls in declared order, binding
+    # returns into `returning` map. Subsequent effects' `{:ref,
+    # name, path}` references substitute against this map.
+    {returning, returning_errors} =
+      Enum.reduce(effects_returning, {acc.returning, []}, fn
+        {:effect_returning, fun, args, opts}, {bound, errs} ->
+          name = Keyword.fetch!(opts, :bind_as)
+
+          result =
+            case fun do
+              f when is_function(f) -> apply(f, args)
+              {m, f} when is_atom(m) and is_atom(f) -> apply(m, f, args)
+            end
+
+          {Map.put(bound, name, result), errs}
+      end)
+
+    # Execute :effect (fire-and-forget) — wrap in try so a failing
+    # effect surfaces in the returned map but doesn't crash the
+    # caller's reduce.
+    effect_errors =
+      Enum.reduce(effects, [], fn {:effect, fun, args}, errs ->
+        try do
+          case fun do
+            f when is_function(f) -> apply(f, args)
+            {m, f} when is_atom(m) and is_atom(f) -> apply(m, f, args)
+          end
+
+          errs
+        rescue
+          e -> [{:effect_failed, fun, args, e} | errs]
+        end
+      end)
+
+    # Substitute {:ref, name, path} in dispatches/notifies/events
+    # against `returning`.
+    events = Enum.map(events, &substitute_refs(&1, returning))
+    dispatches = Enum.map(dispatches, &substitute_refs(&1, returning))
+    notifies = Enum.map(notifies, &substitute_refs(&1, returning))
+
+    {:ok,
+     %{
+       state: acc.state,
+       events: events,
+       dispatches: dispatches,
+       notifies: notifies,
+       terminations: terminations,
+       saga: acc.saga,
+       returning: returning,
+       errors: Enum.reverse(effect_errors) ++ Enum.reverse(returning_errors)
+     }}
+  end
+
+  # Recursive ref substitution — walks maps, lists, tuples.
+  @doc false
+  def substitute_refs({:ref, name, path}, bound) when is_atom(name) and is_list(path) do
+    case Map.fetch(bound, name) do
+      {:ok, value} -> get_in_safe(value, path)
+      :error -> {:ref, name, path}
+    end
+  end
+
+  def substitute_refs({:ref, name}, bound) when is_atom(name) do
+    case Map.fetch(bound, name) do
+      {:ok, value} -> value
+      :error -> {:ref, name}
+    end
+  end
+
+  def substitute_refs(%URI{} = uri, _bound), do: uri
+
+  def substitute_refs(%MapSet{} = ms, _bound), do: ms
+
+  def substitute_refs(%_struct{} = s, bound) do
+    # For non-URI/MapSet structs (e.g. Ezagent.Cmd), walk fields.
+    s
+    |> Map.from_struct()
+    |> Enum.map(fn {k, v} -> {k, substitute_refs(v, bound)} end)
+    |> Enum.into(%{})
+    |> then(&struct!(s.__struct__, &1))
+  end
+
+  def substitute_refs(m, bound) when is_map(m) do
+    Map.new(m, fn {k, v} -> {k, substitute_refs(v, bound)} end)
+  end
+
+  def substitute_refs(l, bound) when is_list(l) do
+    Enum.map(l, &substitute_refs(&1, bound))
+  end
+
+  def substitute_refs(t, bound) when is_tuple(t) do
+    t
+    |> Tuple.to_list()
+    |> Enum.map(&substitute_refs(&1, bound))
+    |> List.to_tuple()
+  end
+
+  def substitute_refs(other, _bound), do: other
+
+  defp get_in_safe(value, []), do: value
+
+  defp get_in_safe(value, [k | rest]) when is_map(value) do
+    case Map.fetch(value, k) do
+      {:ok, v} -> get_in_safe(v, rest)
+      :error -> nil
+    end
+  end
+
+  defp get_in_safe(_, _), do: nil
+
+  # ---------------------------------------------------------------
+  # Behavior-module introspection helpers
+  # ---------------------------------------------------------------
+
+  @doc """
+  Is the given module a new-style Behavior (declared via `use
+  Ezagent.Behavior`)?
+  """
+  @spec new_style?(module()) :: boolean()
+  def new_style?(mod) when is_atom(mod) do
+    function_exported?(mod, :__behavior__?, 0) and apply(mod, :__behavior__?, [])
+  end
+
+  @doc """
+  List the action names declared by a new-style Behavior module.
+  Returns `[]` for legacy modules.
+  """
+  @spec action_names(module()) :: [atom()]
+  def action_names(mod) when is_atom(mod) do
+    if function_exported?(mod, :__action_names__, 0) do
+      apply(mod, :__action_names__, [])
+    else
+      []
+    end
+  end
+
+  @doc """
+  Look up the full action spec for a new-style Behavior's action.
+  Returns `nil` if not declared.
+  """
+  @spec action_spec(module(), atom()) :: map() | nil
+  def action_spec(mod, action) when is_atom(mod) and is_atom(action) do
+    if function_exported?(mod, :__action_spec__, 1) do
+      apply(mod, :__action_spec__, [action])
+    else
+      nil
+    end
+  end
+
+  # ---------------------------------------------------------------
+  # Legacy helpers (existed pre-SPEC; preserved)
+  # ---------------------------------------------------------------
+
   @doc """
   Read `reads_sibling_slices/0` from `behavior_module`, defaulting
   to `[]` when the optional callback is not exported.
