@@ -14,7 +14,7 @@ defmodule Ezagent.Behavior.Workspace do
     - `actions/0`, `interface/0`, `cap_subjects/0`, `required_caps/0`
       are derived by `@before_compile` from per-action `action :name`
       declarations.
-    - Each `def invoke(:action, slice, args, ctx)` is replaced by
+    - Each legacy per-action `invoke` clause was replaced by
       `def handle_action(args, ctx)`. The slice is read via
       `ctx[:read].(:key, default)` and mutated via `{:set, :key, value}`
       effects (the runtime's `apply_effects/2` applies them BEFORE any

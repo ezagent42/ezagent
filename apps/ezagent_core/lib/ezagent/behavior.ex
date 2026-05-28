@@ -2,11 +2,20 @@ defmodule Ezagent.Behavior do
   @moduledoc """
   Behavior — contract for a piece of action-handling logic.
 
+  > **Phase 3 deletion (2026-05-28).** The legacy
+  > `Behavior.invoke/4` dispatch entry point has been retired. New
+  > Behaviors opt into the per-action declarative contract via
+  > `use Ezagent.Behavior` and implement one `handle_<action>(args,
+  > ctx)` clause per declared action. `invoke/4` is preserved only
+  > as an `@optional_callback` (no runtime path consults it) so
+  > legacy callers see a precise CompileError rather than a silent
+  > dispatch.
+
   A Behavior is a small module that:
   - declares what actions it implements (`actions/0`)
   - declares the slice of Kind state it owns (`state_slice/0`)
   - initialises that slice (`init_slice/1`)
-  - executes an action against the slice (`invoke/4`)
+  - implements one `handle_<action>(args, ctx)` clause per action
   - exposes its `@interface` for adapter generation and arg validation
     (`interface/0`)
 
@@ -95,7 +104,15 @@ defmodule Ezagent.Behavior do
   @callback init_slice(args :: args()) :: slice()
 
   @doc """
-  Execute an action against the slice.
+  Execute an action against the slice. (DEPRECATED — Phase 3
+  deletion 2026-05-28.)
+
+  This callback was the original dispatch entry point in Phase 1.
+  It is now an `@optional_callback` retained only to keep the
+  callback declaration grep-able. New-style Behaviors (`use
+  Ezagent.Behavior`) MUST instead define `handle_<action>(args,
+  ctx)` per action and let `Ezagent.Kind.Runtime` route through
+  the new contract.
 
   Returns one of:
   - `{:ok, new_slice}` — silent success (cast)
@@ -524,6 +541,7 @@ defmodule Ezagent.Behavior do
   @callback on_ready(slice :: slice(), ctx :: ctx()) :: :ok
 
   @optional_callbacks [
+    invoke: 4,
     dispatchable?: 0,
     data_owner: 1,
     post_init: 2,
@@ -537,13 +555,14 @@ defmodule Ezagent.Behavior do
   ]
 
   # ---------------------------------------------------------------
-  # SPEC 2026-05-28 Router/Behavior/Kind — new contract (additive)
+  # SPEC 2026-05-28 Router/Behavior/Kind — new contract
   # ---------------------------------------------------------------
   #
-  # Everything BELOW this comment is the NEW per-action declarative
+  # Everything BELOW this comment is the per-action declarative
   # contract. Modules opt-in via `use Ezagent.Behavior` instead of
-  # `@behaviour Ezagent.Behavior`. The two coexist throughout
-  # Phase 1 + Phase 2 — see `Ezagent.LegacyBehaviorAdapter`.
+  # `@behaviour Ezagent.Behavior`. (Phase 3 deletion 2026-05-28
+  # removed the legacy adapter module that bridged the two contracts
+  # during Phase 1 + Phase 2 migration.)
 
   @doc """
   `use Ezagent.Behavior` — opt into the new per-action declarative
@@ -696,24 +715,23 @@ defmodule Ezagent.Behavior do
 
     # Compile-time invariant: every `action :foo, ...` must have a
     # matching `def handle_foo(args, ctx)` clause defined in the
-    # module. Skip the check for `Ezagent.LegacyBehaviorAdapter` —
-    # it builds handlers programmatically via `defoverridable`.
+    # module. (Phase 3 deletion 2026-05-28 removed the legacy
+    # adapter carve-out — every new-style Behavior must now declare
+    # its handlers explicitly.)
     defined = Module.definitions_in(env.module, :def)
 
-    if env.module != Ezagent.LegacyBehaviorAdapter do
-      Enum.each(actions, fn {name, _spec} ->
-        handler = String.to_atom("handle_#{name}")
+    Enum.each(actions, fn {name, _spec} ->
+      handler = String.to_atom("handle_#{name}")
 
-        unless {handler, 2} in defined do
-          raise CompileError,
-            file: env.file,
-            line: env.line,
-            description:
-              "Behavior #{inspect(env.module)} declares action :#{name} but is missing " <>
-                "def #{handler}(args, ctx) — every action MUST have a matching handler/2"
-        end
-      end)
-    end
+      unless {handler, 2} in defined do
+        raise CompileError,
+          file: env.file,
+          line: env.line,
+          description:
+            "Behavior #{inspect(env.module)} declares action :#{name} but is missing " <>
+              "def #{handler}(args, ctx) — every action MUST have a matching handler/2"
+      end
+    end)
 
     action_names = Enum.map(actions, fn {n, _} -> n end)
 

@@ -107,16 +107,6 @@ defmodule Ezagent.Behavior.NpAgent do
     }
   end
 
-  # Legacy-contract shim — required to satisfy `@behaviour
-  # Ezagent.Behavior` until `invoke/4` is added to `@optional_callbacks`
-  # in core. `Ezagent.Kind.Runtime` detects new-style via
-  # `Behavior.new_style?/1` (the macro injects `__behavior__?/0`) and
-  # dispatches through `handle_<action>/2`, so this clause is never
-  # called in production. Phase 2-g r3 migration.
-  def invoke(action, _slice, _args, _ctx) do
-    {:error, {:legacy_invoke_deprecated_use_handle_action, __MODULE__, action}}
-  end
-
   # Reject corrupt rehydrated values. NpAgent's persistence is
   # `:ephemeral` so this is more defensive than load-bearing.
   defp validate_phase(p) when p in [:starting, :running, :dead, nil], do: p

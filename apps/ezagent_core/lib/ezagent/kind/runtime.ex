@@ -677,41 +677,30 @@ defmodule Ezagent.Kind.Runtime do
   # contract (`handle_<action>/2` + `apply_effects/2`).
   #
   # New-contract Behaviors carry a `__behavior__?/0` marker injected by
-  # `use Ezagent.Behavior`. When present, the runtime resolves the
-  # action's handler atom (`:handle_<action>`), invokes it with
-  # `(args, ctx)` (slice exposed to the handler via `ctx[:read]/1-2`),
-  # applies the returned effects against the slice, and lifts the
-  # result back into the legacy `{:ok, new_slice, result}` shape so
-  # the rest of the dispatch pipeline (snapshot commit, slice-change
-  # emit, telemetry) is unchanged.
+  # `use Ezagent.Behavior`. The runtime resolves the action's handler
+  # atom (`:handle_<action>`), invokes it with `(args, ctx)` (slice
+  # exposed to the handler via `ctx[:read]/1-2`), applies the returned
+  # effects against the slice, and lifts the result back into the
+  # `{:ok, new_slice, result}` shape so the rest of the dispatch
+  # pipeline (snapshot commit, slice-change emit, telemetry) is
+  # unchanged.
   #
-  # Legacy Behaviors (no marker) keep the existing `invoke/4` call
-  # path verbatim — Phase 2 migrates each Behavior individually, and
-  # this branch is the single switch point.
+  # Phase 3 deletion (2026-05-28) removed the legacy `invoke/4`
+  # fallback — every Behavior the runtime sees MUST be new-style
+  # (`__behavior__?/0` returns true). A non-conforming module raises
+  # at dispatch time via the `{:error, {:not_a_behavior, ...}}` guard
+  # in `invoke_behavior/5`.
   defp invoke_behavior(behavior_module, action, slice, args, ctx) do
     if Ezagent.Behavior.new_style?(behavior_module) do
       invoke_new_contract(behavior_module, action, slice, args, ctx)
     else
-      invoke_legacy(behavior_module, action, slice, args, ctx)
-    end
-  end
-
-  defp invoke_legacy(behavior_module, action, slice, args, ctx) do
-    case behavior_module.invoke(action, slice, args, ctx) do
-      {:ok, new_slice} -> {:ok, new_slice, nil}
-      {:ok, new_slice, result} -> {:ok, new_slice, result}
-      {:error, _reason} = err -> err
-    end
-  catch
-    kind, reason ->
-      # Per Appendix A step 7 failure: caught; state untouched; DLQ
-      # wiring lands in Phase 1 step 3. For now propagate the error.
       Logger.error(
-        "Behavior #{inspect(behavior_module)}.invoke/#{action} crashed: " <>
-          "#{inspect(kind)} #{inspect(reason)}"
+        "Behavior #{inspect(behavior_module)} is not a new-style Behavior " <>
+          "(missing `use Ezagent.Behavior` / `__behavior__?/0`). Dispatch refused."
       )
 
-      {:error, {:behavior_exception, kind, reason}}
+      {:error, {:not_a_behavior, behavior_module}}
+    end
   end
 
   # New-contract dispatch (SPEC §4.3 / §4.4).

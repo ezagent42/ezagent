@@ -25,18 +25,18 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
   @session_uri URI.new!("session://default/system/main")
   @granter URI.parse("entity://user/system/admin")
 
-  # P2-b migration test helper — bridges the legacy
-  # `invoke(action, slice, args, ctx)` 4-tuple call shape used by this
-  # test file's pre-migration assertions onto the new-contract
-  # `handle_<action>(args, ctx)` shape. The helper:
+  # Local test helper that calls the new-contract handler directly
+  # (`IdentityAdmin.handle_grant_cap/2`, `handle_revoke_cap/2`) and
+  # repackages the result into the 3-tuple shape this test file's
+  # pre-migration assertions consume. The helper:
   #
   #   1. Injects `ctx[:read]` that exposes `slice[:caps]` so the
   #      handler's `ctx[:read].(:caps, ...)` lookup returns the same
-  #      MapSet the legacy `slice` arg carried.
+  #      MapSet the slice carries.
   #   2. Runs the new-contract handler.
-  #   3. Reconstructs a legacy-shaped `{:ok, new_slice, result}` by
-  #      finding the `:set` effect for `:caps` in the returned effects
-  #      list and lifting it into `new_slice.caps`.
+  #   3. Reconstructs `{:ok, new_slice, result}` by finding the
+  #      `:set` effect for `:caps` in the returned effects list and
+  #      lifting it into `new_slice.caps`.
   #
   # The handler's other effects (`:emit` audit events) are discarded —
   # the test file's assertions are slice-based and don't inspect

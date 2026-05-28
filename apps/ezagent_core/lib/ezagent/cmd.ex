@@ -40,9 +40,10 @@ defmodule Ezagent.Cmd do
   identity (the URI) with intent (the action). `Cmd` separates them,
   enabling cleaner saga step descriptions and replay envelopes.
 
-  Phase 1 keeps `Invocation` alive — `LegacyBehaviorAdapter` and
-  existing adapters still construct `Invocation`. Phase 3 deletion
-  removes `Invocation.dispatch/1` and migrates all callers to `Cmd`.
+  Phase 3 deletion (2026-05-28) removed the legacy behavior-adapter
+  module along with the legacy `Behavior.invoke/4` contract. The
+  remaining `Invocation` struct is still emitted by some adapters; a
+  future pass will migrate those callers to `Cmd` directly.
   """
 
   @enforce_keys [:target, :action, :args, :ctx]
