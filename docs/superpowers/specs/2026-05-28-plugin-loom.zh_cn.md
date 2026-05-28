@@ -4,8 +4,6 @@
 > 日期：2026-05-28
 > 作者：Allen / Claude
 > 关联：
-> - 上游能力来源：`studio-mobile`（Vite + React 19，已含 22 atom / 9 molecule / 10 organism + `registry.js`）
-> - 关联 spec：`PRD-core.md` (studio-mobile) / `PRD-xiaoyan.md` (studio-mobile)
 > - 契约：`apps/ezagent_core/lib/ezagent/plugin.ex`、`docs/superpowers/specs/2026-05-22-plugin-authoring-contract.md`
 > - 必读：`ARCHITECTURE.md` §1.2（router vs req/resp）、`GLOSSARY.md`（template / kind / behavior 三义消歧）
 
@@ -13,7 +11,7 @@
 
 ## 1. 一句话
 
-把 studio-mobile 的「卡片视图」从**单卡渲染**升级为 **schema.json 树渲染**：plugin 安装 → 在 ezagent 里物化一套 template/agent/workspace + 初始 `schema.json` → 浏览器拿到 schema → 引擎按 schema 引用 studio-mobile 既有的 41 个预制组件渲染整页 → 用户跟 AI 聊天 → AI 修改 schema → 页面差量重渲染。
+**Loom 是一个 schema-driven page builder plugin**：plugin 安装 → 在 ezagent 里物化一套 template/agent/workspace + 初始 `schema.json` → 浏览器拿到 schema → 引擎按 schema 引用本 plugin 自带的 41 个预制组件（22 atom + 9 molecule + 10 organism）渲染整页 → 用户跟 AI 聊天 → AI 输出 JSON Patch 改 schema → 所有打开的渲染 tab 差量重渲染。
 
 ## 2. 这是什么 / 不是什么
 
@@ -25,17 +23,20 @@
 **不是**：
 - 不是无代码低代码平台（schema 的能力上限由 plugin 内置的组件 + 方法 + sandbox 决定，不允许任意运行时 npm install）
 - 不是 React Server Components / Next.js SSR——前端是纯 SPA，schema 在客户端解释
-- 不是 studio-mobile 的替代——studio-mobile 仍可独立作为 demo；本 plugin 是它的 **runtime 化、可编辑化、ezagent 一等公民化**
 
-## 3. 跟现有东西的关系
+## 3. 预制组件库（41 个，三层）
 
-| 现状 | 本 plugin |
-|---|---|
-| studio-mobile 是**外部仓**的 Vite app | 仓内 `apps/ezagent_plugin_loom/`，build 产物落 `priv/static/` |
-| span 协议：1 条 assistant 消息 = 1 个 `<span type="X">{json}</span>` | 1 个 session 持有 1 个 `schema.json` 根；assistant 消息变成 schema mutation 指令（patch） |
-| 41 个组件在 React app 内部 hardcoded import | 通过 `registry.js` 暴露 → schema 的 `{type: "services"}` 直接寻址 |
-| 用户改不了页面（只能让 agent 输出别的卡） | 用户可通过 ① chat 让 AI 改 ② 直接打开 `/plugins/loom/edit` LiveView 编辑器手改 |
-| 业务皮 = 改 PERSONAS / prompt | 业务皮 = 改 schema 模板 + 改 agent prompt |
+Loom 自带一套 React 组件库，**全部 plugin 拥有，schema 只引用不定义**（详见 §6.4.1）。三层：
+
+| 层 | 数量 | 例子 | 渲染策略 |
+|---|---|---|---|
+| **Atom** | 22 | `button` / `pill` / `badge` / `avatar` / `spinner` / `tag` / `progress` / `input` / `textarea` / `toggle` / `checkbox` / `radio` / `select` ... | 裸渲染（仅入场动画，无卡片外框） |
+| **Molecule** | 9 | `alert` / `panel` / `readout` / `field` / `segmented` / `tabs` / `menu` / `search-results` / `codeblock` | 卡片外框 + 旁白 + actions |
+| **Organism** | 10 | `text` / `notice` / `services` / `detail` / `companies` / `steps` / `form` / `choices` / `application` / `intent` | 同 molecule |
+
+组件源码落 `priv/frontend/src/{atoms,molecules,organisms}/*.jsx`，运行时通过 `priv/frontend/src/registry.js` 暴露名字 → 组件映射；schema 节点的 `type` 字段按字符串寻址（如 `{"type": "services", "props": {...}}`）。
+
+加新组件 = 写一个 React 组件 + 在 `registry.js` register 一行 + 重 build。**业务皮 = 改 schema + 改 agent prompt**，不改组件库。
 
 ## 4. End-to-end 用户流程
 
@@ -441,7 +442,7 @@ end
 
 #### 5.6.5 Bootstrap 流程（浏览器 → session）
 
-复用 studio-mobile §4.1 的 bootstrap 契约，loom 化适配。
+两条路径（`/edit` LiveView 和 `/p` SPA），形态不同但终点同一个 session。
 
 **`/edit` LiveView mount**（chat 主路径）：
 
@@ -462,7 +463,7 @@ end
 8. render: chat dock（绑到 session_uri）+ Monaco（绑到 loom_state）
 ```
 
-**`/p` 或自定义 path 渲染页 bootstrap**（render 路径，沿用 studio-mobile §4.1 形态）：
+**`/p` 或自定义 path 渲染页 bootstrap**（render 路径，HTTP POST + WS 二段式）：
 
 ```
 浏览器 GET /<custom-path>     ← 例：/about
@@ -856,21 +857,22 @@ apps/ezagent_plugin_loom/priv/agent_skill/
 
 ## 7. 渲染引擎（前端）
 
-复用 studio-mobile 95% 既有代码，新增/改动：
+Vite + React 19 + Tailwind v4 SPA，落 `priv/frontend/`。核心模块：
 
-| 文件 | 改动 |
+| 文件 | 职责 |
 |---|---|
-| `src/registry.js` | 不变；新增 `Layout.*` / `Raw.*` 注册 |
-| `src/engine/walker.jsx` | **新增**：递归 walk schema tree，遇 node → `resolve(type)` → 渲染 |
-| `src/engine/bindings.js` | **新增**：JSONPath 求值 + state 变化 reactive |
-| `src/engine/methods.js` | **新增**：方法 invoker（dispatch / setState / navigate / 内置 noop） |
-| `src/engine/schemaStore.js` | **新增**：本地持有 schema + version；接 WS `schema_patched` 帧 apply |
-| `src/session.js` | 复用；新增 schema 频道帧处理 |
-| `src/App.jsx` | **重写**：从「chat shell」改成「schema renderer + 底部 chat dock」 |
-| `src/sandbox/RawHtml.jsx` | **新增**：`<iframe sandbox srcdoc>` + CSP（见 §9） |
-| `index.css` | 新增 Tailwind preset 暴露给 sandbox 子集 |
+| `src/registry.js` | §3 组件名 → React 组件映射，包含 41 预制件 + 新增 `Layout.*` / `Raw.*` |
+| `src/engine/walker.jsx` | 递归 walk schema tree，遇 node → `resolve(type)` → 渲染 |
+| `src/engine/bindings.js` | JSONPath 求值 + state 变化 reactive |
+| `src/engine/methods.js` | 方法 invoker（dispatch / setState / navigate / 内置 noop） |
+| `src/engine/schemaStore.js` | 本地持有 schema + version；接 WS `loom_patched` 帧 apply |
+| `src/session.js` | bootstrap + WS 连接 + 重连指数退避 |
+| `src/App.jsx` | 应用骨架：schema renderer + 顶栏 "↗ 打开渲染页" |
+| `src/sandbox/RawHtml.jsx` | `<iframe sandbox srcdoc>` + CSP（见 §9） |
+| `index.css` | Tailwind v4 入口 + UnoCSS runtime preset（§9.1） |
+| `src/atoms/*.jsx`、`src/molecules/*.jsx`、`src/organisms/*.jsx` | §3 列出的 41 预制组件 |
 
-build 入口仍是 `vite build`，产物 `dist/` → CI 拷贝到 `apps/ezagent_plugin_loom/priv/static/`。
+build 入口 `vite build`，产物 `dist/` → CI 拷贝到 `apps/ezagent_plugin_loom/priv/static/`。
 
 ## 8. 编辑路径（对称设计）
 
@@ -1338,16 +1340,25 @@ apps/ezagent_plugin_loom/
 │   │   ├── error_recipes.md                    # 常见失败的修复 patch
 │   │   └── glossary.md
 │   └── frontend/                               # 源码（git 跟踪；CI 在这里 build）
-│       ├── package.json
+│       ├── package.json                        # Vite + React 19 + Tailwind v4
 │       ├── vite.config.js
-│       ├── src/                                # 从 studio-mobile/src/ 迁入 + 引擎改动
+│       ├── src/                                # 41 预制组件 + 引擎模块（§7）
+│       │   ├── atoms/*.jsx                     # §3 22 个 atom
+│       │   ├── molecules/*.jsx                 # §3 9 个 molecule
+│       │   ├── organisms/*.jsx                 # §3 10 个 organism
+│       │   ├── engine/*                        # walker / bindings / methods / schemaStore
+│       │   ├── sandbox/RawHtml.jsx
+│       │   ├── registry.js / session.js / App.jsx / main.jsx / index.css
 │       └── ...
 └── test/
-    ├── kind/schema_test.exs                    # P22 reliability + 文件读写
+    ├── kind/loom_test.exs                      # P22 reliability + 文件读写
     ├── storage/file_store_test.exs             # 原子写、CAS、并发写
     ├── storage/file_watcher_test.exs           # 外部改动触发 reload
-    ├── behavior/schema_patch_test.exs          # patch CAS / size / depth
+    ├── behavior/loom_patch_test.exs            # patch CAS / size / depth
+    ├── routing/path_registry_test.exs          # 注册 / 冲突 / 禁用前缀
+    ├── session/session_resolver_test.exs       # lazy spawn + 1:1 URI
     ├── live/editor_live_test.exs
+    ├── live/page_list_live_test.exs
     └── e2e/install_then_render_test.exs        # 全链路：install → /p/ 渲染 → chat 改 → 重渲染
 ```
 
@@ -1357,13 +1368,13 @@ apps/ezagent_plugin_loom/
 
 ### M0 — 骨架 + 静态产物（≈ 2 天）
 
-- [ ] 起 `apps/ezagent_plugin_loom/`，最小 plugin（仅 plugin_info）
-- [ ] `priv/frontend/` 从 studio-mobile 完整迁入
+- [ ] 起 `apps/ezagent_plugin_loom/`，最小 plugin（仅 `plugin_info`）
+- [ ] `priv/frontend/` 初始化（Vite + React 19 + Tailwind v4 + 41 个预制组件 + registry.js + 一个 hello-world App.jsx）
 - [ ] CI: `cd priv/frontend && pnpm i && pnpm build && cp -r dist/* ../static/`
-- [ ] Plug.Static + router forward；浏览器开 `/plugins/loom` 看到现状 studio-mobile
-- [ ] `ezagent_web/mix.exs` 加 dep + `all_plugin_apps_wired_to_web_test` 通过
+- [ ] `Plug.Static` + 内部 router forward；浏览器开 `/plugins/loom` 看到 hello-world 页面
+- [ ] `ezagent_web/mix.exs` 加 `{:ezagent_plugin_loom, in_umbrella: true}` + `all_plugin_apps_wired_to_web_test` 通过
 
-**Gate**：浏览器看到现 studio-mobile UI，跟外部仓视觉 1:1。
+**Gate**：浏览器开 `/plugins/loom` 看到 hello-world 页面（41 个组件 stub 全部加载，但还不连 schema 引擎）。
 
 ### M1 — Loom Kind + read/patch Behavior（≈ 3 天）
 
@@ -1467,11 +1478,10 @@ apps/ezagent_plugin_loom/
 | Q5 | schema 编辑历史（undo）？ | **✅ 已定（2026-05-28）**：靠 `<name>.history/v00xx.json` 目录里的版本历史；引擎侧加"回到 version N"按钮 |
 | Q6 | i18n？ | v1 中文 hardcode；schema 内文本走 `{{i18n.greeting}}` 绑定预留位 |
 | Q7 | 引擎要不要支持 React component lazy load？ | 41 个组件全打进 bundle ~ 200KB，不需要 lazy |
-| Q8 | 是否同时支持 `studio-mobile` 当前 span 协议作为兼容？ | **✅ 已定（2026-05-28）**：(a) 隔离——本 plugin 是 page-as-product 模型，老 studio-mobile / xiaoyan 留在原仓继续跑 chat-as-content 模型；两个产品并存不互嵌不桥接 |
 
-### 13.1 Q4 讨论框 — editor agent 底模（已决：B 方案）
+### 13.1 Q4 关键落地 — editor agent 底模
 
-**决策**：plugin **不绑模型**，install 时 admin 选 flavor，default 是 `cc`。落到 plugin 实现：
+**决策**：plugin **不绑模型**，install 时 admin 选 flavor，default 是 `cc`：
 
 ```bash
 mix loom.install --ws default --name demo --agent cc       # 默认
@@ -1479,90 +1489,24 @@ mix loom.install --ws default --name demo --agent codex
 mix loom.install --ws default --name demo --agent curl_agent
 ```
 
-但只挑 flavor 不够——**每个 flavor 跟我们的 schema 协议是陌生的**。所以 plugin 必须 ship 一份"operating manual"（§6.6），install 时注入 editor agent 的 system prompt。任何符合 cc/codex/curl_agent 接口的 flavor 拿到这份 manual 就能上岗。
+但**只挑 flavor 不够**——每个 flavor 跟 loom 的 schema 协议是陌生的。所以 plugin 必须 ship 一份"operating manual"（§6.6），install 时注入 editor agent 的 system prompt。任何符合 cc/codex/curl_agent 接口的 flavor 拿到这份 manual 就能上岗。
 
-#### Q4 历史讨论留档（原候选权衡）
-
-**需求侧（editor agent 必须能做什么）**：
+**editor agent 必须能做的事**：
 
 1. 读当前 schema（结构化 JSON，可能几 KB～几十 KB）
 2. 理解 41 个组件签名 + 4 种 method 类型 + JSON Patch
 3. 输出**合法的** JSON Patch 数组（语法 + 语义双正确）
 4. 多轮对话（"换个色" → "再加个 button" → "撤销"）
-5. tool calling（必须能 call `schema.patch` Behavior，不能只输出文本让人手抄）
+5. tool calling（必须能 call `loom.patch` Behavior，不能只输出文本让人手抄）
 
-**候选与权衡**：
+**flavor 适配度**：
 
-| 候选 | tool calling | JSON 输出质量 | 集成成本 | 适用度 |
-|---|---|---|---|---|
-| **cc**（Claude Code） | ⭐⭐⭐⭐⭐ 顶级 | ⭐⭐⭐⭐⭐ | 已存在（`ezagent_plugin_cc`） | default ✅ |
-| **codex** | ⭐⭐⭐⭐ 强 | ⭐⭐⭐⭐ | 已存在（`ezagent_plugin_codex`） | 可选 |
-| **curl_agent** | ⭐⭐ 看 backend | 看 backend | 已存在 | 适合接 OpenAI / DeepSeek 等自有 key 用户 |
-| **np**（Python NPC） | ⭐ 弱 | ⭐⭐ | 已存在 | 不推荐用于 schema 编辑 |
-
-**需求侧（editor agent 必须能做什么）**：
-
-1. 读当前 schema（结构化 JSON，可能几 KB～几十 KB）
-2. 理解 41 个组件签名 + 4 种 method 类型 + JSON Patch
-3. 输出**合法的** JSON Patch 数组（语法 + 语义双正确）
-4. 多轮对话（"换个色" → "再加个 button" → "撤销"）
-5. tool calling（必须能 call `schema.patch` Behavior，不能只输出文本让人手抄）
-
-**候选与权衡**：
-
-| 候选 | tool calling | JSON 输出质量 | 集成成本 | 适用度 |
-|---|---|---|---|---|
-| **cc**（Claude Code） | ⭐⭐⭐⭐⭐ 顶级 | ⭐⭐⭐⭐⭐ | 已存在（`ezagent_plugin_cc`） | 强烈推荐 default |
-| **codex** | ⭐⭐⭐⭐ 强 | ⭐⭐⭐⭐ | 已存在（`ezagent_plugin_codex`） | 可选 |
-| **curl_agent** | ⭐⭐ 看 backend | 看 backend | 已存在 | 适合接 OpenAI / DeepSeek 等自有 key 用户 |
-| **np**（Python NPC） | ⭐ 弱 | ⭐⭐ | 已存在 | 不推荐用于 schema 编辑 |
-
-**三个层级的备选**（保留作历史决策痕迹）：
-
-- (A) plugin 硬绑 cc：依赖 `ezagent_plugin_cc` 已安装；最简单；但用户没装 cc 就装不了本 plugin → **拒绝**（跟 plugin 自治矛盾）
-- **(B) plugin 不绑**：`mix loom.install --agent cc|codex|curl_agent` 由 admin 选；plugin 调用方走 AgentFlavorRegistry；灵活 → **采纳**
-- (C) 抽 `EditorAgent` Behavior 抽象：plugin 定义"什么样的 agent 能当 editor"的契约（如必须实现 `apply_schema_patch/2` tool），任何 flavor 实现都能挂；最干净但工作量大 → **v1 不做，v2 看复杂度**
-
-### 13.2 Q8 讨论框 — 跟老 span 协议的兼容（已决：(a) 隔离）
-
-**决策**：(a) 隔离。新 plugin 是 page-as-product 模型，老 studio-mobile / xiaoyan 留在原仓继续跑 chat-as-content 模型，两个产品并存、不互嵌、不桥接、不强迁。
-
-落地影响：
-- 老 `studio-mobile` 仓继续存在，可独立 build/deploy；
-- 新 plugin 不暴露 `Span.Card` 兼容组件（避免心智污染）；
-- xiaoyan 业务皮如果将来要换形态，独立做 schema 化迁移，跟本 plugin 无关；
-- ezagent_core 的 span 协议不动，本 plugin 不依赖也不破坏它。
-
-#### Q8 历史讨论留档（候选权衡）
-
-**两个产品的本质区别**：
-
-| 维度 | 老 studio-mobile / xiaoyan | 新 plugin |
-|---|---|---|
-| **页面 = 什么** | 一连串 agent 推过来的卡（chat-as-content） | 一棵 schema 树（page-as-product） |
-| **chat 在哪** | chat = 页面本身（消息即卡片） | chat = 编辑工具（消息触发 schema patch） |
-| **页面如何变化** | agent 推一条新 `<span>` → 末尾追加一张卡 | agent 输出 patch → 任意位置修改 |
-| **页面是否可被用户编辑** | 不能 | 能 |
-| **典型场景** | 客服 / 咨询 / 教学（对话即业务） | 营销页 / 落地页 / 仪表盘（页面是产物） |
-
-**三个选项**：
-
-- **(a) 纯隔离**：新 plugin 是新产品，老 studio-mobile / xiaoyan 留在原仓继续跑老协议。两个前端、两个心智模型、不打架
-- **(b) 桥接**：新引擎里保留一个"chat_stream" subtree，老 span 进来时自动转成"append node to chat_stream"的 patch。一个引擎吃两种协议
-- **(c) 强迁**：xiaoyan 切到 schema 模型；deprecated span 协议
-
-**权衡**：
-
-|  | 复杂度 | 兼容性 | 心智一致 |
+| 候选 | tool calling | JSON 输出质量 | 适用度 |
 |---|---|---|---|
-| (a) 隔离 | 低 | xiaoyan 不动 | 两个模型并存（明确分工） |
-| (b) 桥接 | 高（引擎多一套消息适配层 + 双源 mutation 顺序问题） | 高 | 一个模型吃两种 |
-| (c) 强迁 | 高（重写所有 xiaoyan worker 输出） | 破坏式 | 一个模型 |
-
-**采纳 (a) 隔离**：
-- 这俩**就不是同一个产品**，硬拼到一个引擎里反而把两个心智都污染
-- 新 plugin 专注"页面构建器"，xiaoyan 专注"对话即业务"，各自演化
-- 老 studio-mobile 那个仓继续作为 ezagent session chat-view 的参考实现 + 演示场
+| **cc**（Claude Code） | ⭐⭐⭐⭐⭐ 顶级 | ⭐⭐⭐⭐⭐ | default ✅ |
+| **codex** | ⭐⭐⭐⭐ 强 | ⭐⭐⭐⭐ | 可选 |
+| **curl_agent** | ⭐⭐ 看 backend | 看 backend | 适合接 OpenAI / DeepSeek 等自有 key 用户 |
+| **np**（Python NPC） | ⭐ 弱 | ⭐⭐ | 不推荐用于 schema 编辑 |
 
 ---
 
@@ -1593,4 +1537,9 @@ mix loom.install --ws default --name demo --agent curl_agent
 
 ## 15. End
 
-本 plugin 把 studio-mobile 从「ezagent session 的卡片视图」升级为「ezagent session 的可编辑页面」，**沿用 41 个预制组件**，**复用 ezagent 既有 chat/dispatch 通路**，**遵守 ezagent plugin 契约 + 8 条硬不变式**。schema = 数据、组件 = 预制、方法 = 预制、Raw.* = 受限逃生舱——四档能力可控可扩。
+Loom 是一个 schema-driven page builder plugin：**用户跟 AI 聊天就能搭出一个可对外发布的页面**。
+- **41 个预制组件**（22 atom + 9 molecule + 10 organism）覆盖典型 UI 需求
+- **复用 ezagent 既有 chat/dispatch 通路**——loom 跟 session 1:1 绑定，editor agent 走 SessionTemplate 装配
+- **遵守 ezagent plugin 契约 + 8 条硬不变式**——P14 dispatch-only / P22 reliability / 文件原子写 / lazy spawn / SSOT 路径
+- **四档能力可控可扩**：组件（预制）+ 方法（预制 dispatch/setState/navigate/openExternal）+ Tailwind utility（UnoCSS runtime）+ Raw.Html（沙箱逃生舱）
+- **chat 主、Monaco 副、vim 兜底**：三种编辑入口同终点 (`LoomPatch` Behavior)，多 tab 实时同步
