@@ -80,40 +80,48 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
   enforce the per-session delegation — that's PR-EM-3's scope.
   """
 
-  @behaviour Ezagent.Behavior
+  use Ezagent.Behavior
 
   require Logger
 
   alias Ezagent.ExternalMirror.{AdapterRegistry, BindingRegistry}
   alias Ezagent.Publisher.Event
 
-  # ----- Ezagent.Behavior contract ----------------------------------------
+  # ----- Ezagent.Behavior contract (Phase 2-d r3 migration) ---------------
+  #
+  # SPEC §6.2 retrofit: `use Ezagent.Behavior` + `action :publish, ...`
+  # macro declaration auto-derives `actions/0` / `interface/0` /
+  # `cap_subjects/0`. `state_slice/0` + lifecycle hooks
+  # (`init_slice/1`, `post_init/2`, `handle_continue/3`, `terminate/3`,
+  # `data_owner/1`, `handle_kind_message/3`) stay as plain function
+  # defs invoked directly by `Ezagent.Kind.Server`.
+  #
+  # `:publish` was `invoke(:publish, slice, args, ctx)`; the new
+  # handler `handle_publish/2` reads slice keys via
+  # `ctx[:read].(:key, default)` and returns `{:ok, result, [effect]}`
+  # with `{:set, key, value}` for the multi-key slice mutation.
 
-  @impl Ezagent.Behavior
-  def actions, do: [:publish]
+  # `caps: [:publish]` ⇒ atom; the macro's auto-derived `required_caps/0`
+  # would produce `cap(:any, _, :publish)`. We override below to pin
+  # the `:external_mirror_worker` kind axis Step 5.5 expects.
+  action :publish,
+    args: %{},
+    returns: %{ok: :boolean, cursor: :integer},
+    caps: [:publish],
+    modes: [:cast],
+    description:
+      "publish a Publisher event to an external system via the bound adapter+binding pair"
 
   # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
-  # ExternalMirrorWorker is registered on the ExternalMirrorWorker Kind
-  # only — kind axis is `:external_mirror_worker`.
-  @impl Ezagent.Behavior
+  # Explicit override — pin kind axis `:external_mirror_worker`.
   def required_caps do
     %{
       publish: Ezagent.Capability.cap(:external_mirror_worker, __MODULE__, :publish)
     }
   end
 
-  @impl Ezagent.Behavior
   def state_slice, do: :external_mirror_worker
 
-  @impl Ezagent.Behavior
-  def cap_subjects do
-    [
-      {:publish,
-       "publish a Publisher event to an external system via the bound adapter+binding pair"}
-    ]
-  end
-
-  @impl Ezagent.Behavior
   def init_slice(args) do
     # SPEC §8.3 r4 HIGH-1 fix: minimal slice. NO Publisher.subscribe_from
     # here (would deadlock — see Behavior.post_init/2 + handle_continue/3
@@ -159,7 +167,6 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
   `Kind.Server`'s `post_init_queue`; the queue drains via
   `handle_continue/3` below.
   """
-  @impl Ezagent.Behavior
   def post_init(_args, _slice), do: {:continue, :subscribe_and_init}
 
   @doc """
@@ -179,7 +186,6 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
   5. On binding init failure → raise (let-it-crash; PerBindingSupervisor
      restarts per `:permanent` budget per SPEC §6.2).
   """
-  @impl Ezagent.Behavior
   def handle_continue(:subscribe_and_init, slice, %{self_uri: self_uri}) do
     adapter_module = AdapterRegistry.lookup!(slice.adapter_id)
     binding_module = BindingRegistry.lookup!(slice.adapter_id)
@@ -454,8 +460,16 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
 
   # ----- The :publish action ------------------------------------------------
 
-  @impl Ezagent.Behavior
-  def invoke(:publish, slice, %{event: %Event{} = event}, _ctx) do
+  # Phase 2-d r3: `handle_publish/2` replaces `invoke(:publish, ...)`.
+  # The slice (all keys initialised by `init_slice/1`) is reconstructed
+  # from `ctx[:read]` so `do_invoke_publish/3` (kept verbatim from the
+  # pre-migration body) operates on the same in-memory shape.
+  # `translate_publish_return/2` emits one `:set` effect per slice
+  # field the handler actually mutates — preserving the dispatch
+  # pipeline's slice_change_event diff semantics.
+  def handle_publish(%{event: %Event{} = event}, ctx) do
+    slice = read_full_slice(ctx)
+
     # 2026-05-26 (Allen e2e Bug 5): dedupe by last_message_id BEFORE
     # calling the adapter. Every chat-slice mutation (presence,
     # member join, last_seen) emits a publisher_event with the
@@ -468,21 +482,82 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
     # actual chat.send.
     event_msg_id = extract_event_message_id(event)
 
-    cond do
-      not is_nil(event_msg_id) and event_msg_id == slice.last_published_message_id ->
-        new_slice = %{
-          slice
-          | publisher_cursor: event.cursor,
-            count: slice.count + 1,
-            last_publish_result: :duplicate_skip,
-            last_published_at: DateTime.utc_now()
-        }
+    legacy_result =
+      cond do
+        not is_nil(event_msg_id) and event_msg_id == slice.last_published_message_id ->
+          new_slice = %{
+            slice
+            | publisher_cursor: event.cursor,
+              count: slice.count + 1,
+              last_publish_result: :duplicate_skip,
+              last_published_at: DateTime.utc_now()
+          }
 
-        {:ok, new_slice, %{ok: true, cursor: event.cursor, skipped: true}}
+          {:ok, new_slice, %{ok: true, cursor: event.cursor, skipped: true}}
 
-      true ->
-        do_invoke_publish(slice, event, event_msg_id)
-    end
+        true ->
+          do_invoke_publish(slice, event, event_msg_id)
+      end
+
+    translate_publish_return(slice, legacy_result)
+  end
+
+  # Reconstruct the in-memory slice shape `do_invoke_publish/3` expects.
+  # The `:default` map mirrors `init_slice/1`'s shape so a slice that
+  # hasn't been fully written (e.g. a Worker still in `:pending`) reads
+  # back as documented.
+  defp read_full_slice(ctx) do
+    %{
+      session_uri: ctx[:read].(:session_uri, nil),
+      adapter_id: ctx[:read].(:adapter_id, nil),
+      target_id: ctx[:read].(:target_id, nil),
+      opts: ctx[:read].(:opts, %{}),
+      adapter_module: ctx[:read].(:adapter_module, nil),
+      binding_module: ctx[:read].(:binding_module, nil),
+      binding_state: ctx[:read].(:binding_state, nil),
+      subscription_state: ctx[:read].(:subscription_state, :pending),
+      publisher_cursor: ctx[:read].(:publisher_cursor, :latest),
+      count: ctx[:read].(:count, 0),
+      error_count: ctx[:read].(:error_count, 0),
+      last_published_at: ctx[:read].(:last_published_at, nil),
+      last_publish_result: ctx[:read].(:last_publish_result, nil),
+      last_published_message_id: ctx[:read].(:last_published_message_id, nil)
+    }
+  end
+
+  # Translate `{:ok, new_slice, result}` from legacy `do_invoke_publish/3`
+  # into `{:ok, result, [{:set, key, value}, ...]}`. We emit one `:set`
+  # per CHANGED slice key (skip unchanged) so the slice_change_event
+  # diff (`new_slice != slice` in `Kind.Runtime.handle_dispatch/4`)
+  # fires identically to the pre-migration path.
+  @publish_slice_keys [
+    :binding_state,
+    :publisher_cursor,
+    :count,
+    :error_count,
+    :last_publish_result,
+    :last_published_at,
+    :last_published_message_id
+  ]
+
+  defp translate_publish_return(old_slice, {:ok, new_slice, result}) do
+    # `:publish` only ever returns `{:ok, _, _}` (recoverable transport
+    # failures are folded into the success path with bumped
+    # `error_count`); the legacy `{:error, _}` branch from the
+    # `Ezagent.Behavior.invoke_return/0` typespec is unreachable here.
+    effects =
+      Enum.flat_map(@publish_slice_keys, fn key ->
+        old_val = Map.get(old_slice, key)
+        new_val = Map.get(new_slice, key)
+
+        if old_val == new_val do
+          []
+        else
+          [{:set, key, new_val}]
+        end
+      end)
+
+    {:ok, result, effects}
   end
 
   # ----- internals -----
@@ -558,18 +633,10 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
     end
   end
 
-  @impl Ezagent.Behavior
-  def interface do
-    %{
-      publish: %{
-        description:
-          "Translate a Publisher event via the bound adapter, then transport via the bound binding",
-        args: %{},
-        returns: %{ok: :boolean, cursor: :integer},
-        modes: [:cast]
-      }
-    }
-  end
+  # `interface/0`, `actions/0`, `cap_subjects/0` are auto-derived by
+  # `use Ezagent.Behavior` from the `action :publish, ...` declaration
+  # at the top of this module. The legacy explicit `interface/0` was
+  # removed as part of the Phase 2-d r3 migration.
 
   @doc """
   SPEC §4.3: Worker Kinds are framework-internal; only bootstrap
@@ -577,7 +644,6 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
   URIs directly — the Session Kind holds a scope-bounded delegation
   cap (PR-EM-3 will wire this) per SPEC §7.3 Cap 3.
   """
-  @impl Ezagent.Behavior
   def data_owner(%URI{scheme: "entity", host: "worker"} = _worker_uri), do: :no_owner
   def data_owner(:any), do: :no_owner
   def data_owner({:scope, :within_session, %URI{}}), do: :no_owner
