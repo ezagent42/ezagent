@@ -37,8 +37,7 @@ defmodule EzagentPluginLiveview.CustomerChat.Theme do
   defp file_theme(tenant) do
     path = Path.join(:code.priv_dir(:ezagent_plugin_liveview), "customer_chat_themes/#{tenant}.json")
 
-    with true <- File.exists?(path),
-         {:ok, body} <- File.read(path),
+    with {:ok, body} <- File.read(path),
          {:ok, map} <- Jason.decode(body) do
       map
     else

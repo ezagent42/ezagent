@@ -1,5 +1,7 @@
 defmodule EzagentPluginLiveview.CustomerChat.ThemeTest do
-  use ExUnit.Case, async: true
+  # async: false — test 3 mutates global Application env (:customer_chat_themes);
+  # process-global put/delete must not race with concurrent cases.
+  use ExUnit.Case, async: false
   alias EzagentPluginLiveview.CustomerChat.Theme
 
   test "unknown tenant returns defaults with the tenant title interpolated" do
