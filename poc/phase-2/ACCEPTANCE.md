@@ -195,10 +195,23 @@ compiles warning-clean.
 4. **No hardcoded tenant data** — zero `acme` in executable code; only in
    the `acme.json` fixture + two doc-comment examples. ✅ (criterion 5)
 
-### Pending live-browser validation (require WebSocket + cc cold start)
+5. **Live cc round-trip + soul personalization** — `POST /api/customer/acme/chat`
+   on the running build returned an AI reply with the acme soul facts:
+   *"Acme laptops come with a 12-month warranty as standard … Acme Pro …
+   24 months."* This exercises the SHARED `CustomerChat.Bootstrap`
+   (`ensure_cc_for_conv` → `EagerBridge.ensure_bound!` → `dispatch_chat_send`
+   → soul reply) — the exact code path `ChatLive` calls — so criterion 1's
+   core (cc spawn + bridge + tenant personalization) is proven live. ✅
+   (criterion 1, backend)
 
-- **criterion 1 (full):** type a message → cc agent spawns (~10s) → AI reply
-  with acme soul facts (12-mo / 24-mo Pro) streams in live.
+### Pending live-browser validation (require a connected browser / WebSocket)
+
+Note: the Chrome extension was not connected during this run, so the
+LiveView-WebSocket-only behaviors below were not driven. The backend they
+ride on is proven (point 5). To validate, open `/chat/acme` in a browser.
+
+- **criterion 1 (LiveView surface):** the proven cc reply rendering as a live
+  stream_insert in the page (vs the SSE wire above).
 - **criterion 4:** reload the page → same conversation thread restored
   (localStorage `conv`/`cid` resume).
 - **criterion 3:** operator takes over from `/admin/customer_sessions` →
