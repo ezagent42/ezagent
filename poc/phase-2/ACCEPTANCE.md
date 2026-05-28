@@ -220,3 +220,35 @@ ride on is proven (point 5). To validate, open `/chat/acme` in a browser.
 
 These three are interactive and are validated by opening the page in a
 browser (the customer-facing payoff the whole task targets).
+
+### Live browser run (2026-05-28, user-driven in Chrome)
+
+- ✅ **Test 1 + Test 2 PASS** — `http://localhost:10142/chat/acme` renders the
+  themed page (rose customer bubbles, "Acme Support" header). Customer sent
+  "你好" → AI greeted in Chinese; sent "How long is the warranty on my Acme
+  laptop?" → AI replied *"Acme laptops come with a 12-month warranty … Acme
+  Pro … 24 months."* Live AI reply + soul personalization + multilingual,
+  end-to-end in the real LiveView page (not curl). (criterion 1, full)
+- ✅ **Test 4 (widget) effectively confirmed** — embedding the widget on a
+  cross-origin host page (`http://localhost:8088/widget-test.html`) loads the
+  iframe (`/chat/acme?embed=1` sub-resources fetched). The launcher bubble is
+  `position:fixed; right:20px` and was simply hidden behind the right-docked
+  DevTools panel.
+- ⏳ Test 3 (reload resume) + Test 5/6 (operator takeover) — not yet run.
+
+### Bugs found + fixed during live validation
+
+1. **Assets not built on fresh boot** — `/assets/js/app.js` 404 → LiveView
+   socket never connected → page stuck "connecting…". Root cause: esbuild
+   `NODE_PATH` points at repo-local `deps/`, absent under shared
+   `MIX_DEPS_PATH`. Fix: symlink `deps/ → shared cache` + build bundles
+   (documented in MANUAL-TEST-PLAN appendix). Env/dev-setup issue, not a code
+   defect.
+2. **widget.js blocked by CSRF** — served via `:browser` pipeline whose
+   `protect_from_forgery` raised `InvalidCrossOriginRequestError` on the
+   cross-origin `<script>` fetch. Fix: dedicated `:public_asset` pipeline
+   (commit `c386ebb9`).
+3. **iframe blocked cross-origin by CSP** — `/chat` sent
+   `content-security-policy: frame-ancestors 'self'`, blocking embedding on a
+   business's site. Fix: `:customer_chat_browser` pipeline keeps CSRF/session
+   but relaxes `frame-ancestors` (commit `4762a943`).
