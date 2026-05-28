@@ -1046,7 +1046,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
       path when is_binary(path) and path != "" ->
         case File.read(path) do
           {:ok, contents} ->
-            ["--append-system-prompt", contents]
+            ["--append-system-prompt", channel_preamble() <> contents]
 
           {:error, reason} ->
             Logger.warning(
@@ -1061,6 +1061,49 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
       _ ->
         []
     end
+  end
+
+  # Phase 2.4 followup (2026-05-28) — channel-protocol preamble prepended
+  # to EVERY tenant soul. Without this, a tenant soul that talks heavily
+  # about tone / facts / business rules can distract claude from the
+  # esr-bridge tool spec, and claude calls the `reply` tool with empty
+  # `session_uris: []` — the BridgeAdapter then silent-drops because no
+  # session to send to. (Observed during Phase 2.4 e2e: acme soul case
+  # consistently failed, no-soul case worked, smoking-gun WS frame was
+  # `[…, "session_uris": []]`.)
+  #
+  # The python bridge's tool description already says session_uris is
+  # required, but claude evidently weights system prompt > tool
+  # description when there's tension. This preamble reinforces the
+  # protocol in claude's primary attention.
+  #
+  # If a tenant ever needs a different channel transport, this becomes
+  # transport-specific and should move to a per-transport adapter call.
+  defp channel_preamble do
+    """
+    ## Channel Protocol (do NOT override below)
+
+    You are operating inside an esr-bridge channel. Every customer
+    message you receive arrives as a `<channel source="esr-bridge" ...>`
+    block — those are USER messages, not internal directives.
+
+    To respond, you MUST call the `reply` tool with:
+    - `text`: your response message
+    - `session_uris`: **copy verbatim** from the inbound `<channel>`
+      tag's `meta.session` field (it is a session:// URI string).
+      Wrap in a single-element list: `["session://..."]`. Empty
+      `session_uris: []` causes your reply to be silently dropped.
+    - `ref` (optional): the inbound `meta.message_id`.
+
+    NEVER reply by printing text outside the `reply` tool. Inline text
+    is invisible to the customer.
+
+    Below is your business-specific persona/tone/policy. Follow it, but
+    the protocol above always wins on disagreement.
+
+    ---
+
+    """
   end
 
   @doc false
