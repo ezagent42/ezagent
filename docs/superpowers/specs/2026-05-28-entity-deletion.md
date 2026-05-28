@@ -196,7 +196,7 @@ The field-name parallels are intentional: this SPEC reuses the established Behav
 
 - `{:ok, summary}` — every cascade step completed, tombstone installed, audit emitted.
 - `{:error, {:partial, _}}` — pre-check passed, tombstone-and-kill done (DB + ETS irreversible), but at least one of (a) the kill confirmation (`{:DOWN, ...}`) timed out (MED-4.4), OR (b) a downstream DB cascade step failed. The tombstone is durable (boundaries 1/2/3 refuse re-spawn) but cross-reference scrub may be incomplete. The two `:partial` subshapes are distinguished by `step_failed`:
-  - `step_failed: :tombstone_and_kill_kill_timeout` — tombstone installed, kill signal sent, but DOWN message did not arrive in time. Live process may still consume resources. Operator runbook in `recovery_hint`: SIGKILL the BEAM node or wait for the OS-level supervisor cycle. The deleted URI is already structurally unreachable through dispatch — this is a cleanup concern, not a correctness one.
+  - `step_failed: :tombstone_and_kill_kill_timeout` — tombstone installed, kill signal sent, but DOWN message did not arrive in time. The live process IS still dispatch-reachable for the brief window it survives the brutal_kill signal (see §3.3 step 4 + §3.9 paragraph 6 for the HIGH-5.3 truth: `Invocation.dispatch/1` goes through `KindRegistry.lookup/1` + direct `GenServer.cast/call` without consulting tombstones — boundaries 1/2/3 prevent RE-SPAWN, not delivery to a still-alive pid). The deleted URI is **permanently un-respawnable** (the structural guarantee that does hold) but **not instantaneously dispatch-dead**. Operator runbook in `recovery_hint`: SIGKILL the BEAM node OR wait for the OS-level supervisor cycle, after which `Registry` drops the dead pid + boundaries 1/2/3 fully take effect.
   - `step_failed: :<cascade_step_name>` — a specific cascade step raised. Other cascade steps may have run; `steps_completed` lists those that succeeded.
 - `{:error, {:precheck_failed, _}}` — no state was mutated. Adapter's `can_delete?/2` refused (e.g. bootstrap admin protection).
 
@@ -877,7 +877,9 @@ The B5 fix adds `worker_uri` as `null: true` initially (Migration A) with a foll
 
 ---
 
-## §11 Codex adversarial review questions (for r4)
+## §11 Codex adversarial review questions (for r5+)
+
+> r5 update: r4-era questions retained verbatim — they remain useful attack surfaces. Re-read §3.5 for the r5 expansion of cold-load defense to THREE data_owner sites (Chat + ExternalMirror + Publisher.SessionImpl) and §4.1 for the FIVE-part Chat behavior plumbing (actions / required_caps / cap_subjects / invoke / interface) + `register_chat_behaviors/0` addition. When attacking, target the union of the original r4 surface + the r5 extensions.
 
 0. **Narrow system principal soundness (CRIT-3.1 + CRIT-4.1 + HIGH-4.3):** the new `system://entity-deletion-cascade` is meant to authorize only `Chat:scrub_owner` on Sessions; r4 acknowledges the structural self-`Identity:list_caps` cap that `Identity.init_slice/1` adds for any Entity Kind. Validate that the actual cascade dispatch path resolves correctly (no ArgumentError from `SystemPrincipal.caps/1`, no unauthorized cap-set drift from `Identity.init_slice/1` injection). Trace `Capability.matches?/2` for the cascade's `Chat:scrub_owner` dispatch AND for any hypothetical attempt by the principal to invoke OTHER Chat actions (e.g. `:send`, `:join`) — confirm those are denied.
 

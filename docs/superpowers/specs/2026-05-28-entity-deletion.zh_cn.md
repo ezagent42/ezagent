@@ -196,7 +196,7 @@ Behavior own **结构序列**：
 
 - `{:ok, summary}` —— 每个 cascade step 完成，tombstone 已立，audit 已发。
 - `{:error, {:partial, _}}` —— pre-check 通过、tombstone-and-kill 完成（DB + ETS 不可逆），但至少 (a) kill 确认（`{:DOWN, ...}`）超时（MED-4.4），**或** (b) 下游 DB cascade step 失败。Tombstone 持久（边界 1/2/3 拒绝 re-spawn）但 cross-reference scrub 可能不完整。两种 `:partial` 子 shape 由 `step_failed` 区分：
-  - `step_failed: :tombstone_and_kill_kill_timeout` —— tombstone 已立，kill 信号已发，但 DOWN 消息没及时到。Live process 可能还占资源。Operator runbook 在 `recovery_hint`：SIGKILL BEAM 节点或等 OS supervisor cycle。已删 URI 通过 dispatch 已结构性不可达 —— 这是清理问题，不是正确性问题。
+  - `step_failed: :tombstone_and_kill_kill_timeout` —— tombstone 已立，kill 信号已发，但 DOWN 消息没及时到。Live process **仍** 在挺过 brutal_kill 信号的短暂窗口内 dispatch-可达（见 §3.3 step 4 + §3.9 段 6 的 HIGH-5.3 真相：`Invocation.dispatch/1` 走 `KindRegistry.lookup/1` + 直 `GenServer.cast/call` 不查 tombstone —— 边界 1/2/3 阻止 RE-SPAWN，不阻止投递给仍活的 pid）。已删 URI **永久不能 respawn**（这是确实 hold 的结构性保证）但 **非瞬时 dispatch-dead**。Operator runbook 在 `recovery_hint`：SIGKILL BEAM 节点 OR 等 OS supervisor cycle，之后 `Registry` drop 死 pid + 边界 1/2/3 完全生效。
   - `step_failed: :<cascade_step_name>` —— 某 cascade step raise。其它 cascade step 可能已跑；`steps_completed` 列已成功的。
 - `{:error, {:precheck_failed, _}}` —— 没改任何 state。Adapter 的 `can_delete?/2` 拒绝（如 bootstrap admin 保护）。
 
@@ -867,7 +867,9 @@ B5 修复加 `worker_uri` 初始 `null: true`（Migration A），follow-up Migra
 
 ---
 
-## §11 Codex 对抗性 review 问题 (for r4)
+## §11 Codex 对抗性 review 问题 (for r5+)
+
+> r5 更新：r4 时代问题逐字保留 —— 它们仍是有用的攻击面。重读 §3.5 cold-load 防御 r5 扩展到 **三个** data_owner 站点（Chat + ExternalMirror + Publisher.SessionImpl）以及 §4.1 的 **五处** Chat behavior 接线（actions / required_caps / cap_subjects / invoke / interface）+ `register_chat_behaviors/0` 添加。攻击时，瞄准原 r4 表面 ∪ r5 扩展。
 
 0. **窄 system principal 健全性（CRIT-3.1 + CRIT-4.1 + HIGH-4.3）：** 新 `system://entity-deletion-cascade` 设计是仅授权 Session 上的 `Chat:scrub_owner`；r4 承认 `Identity.init_slice/1` 给每个 Entity Kind 加的结构性自-`Identity:list_caps` cap。验证实际 cascade dispatch 路径正确解析（`SystemPrincipal.caps/1` 不 ArgumentError，`Identity.init_slice/1` 注入不导致未授权 cap-set 漂移）。trace cascade 的 `Chat:scrub_owner` dispatch 的 `Capability.matches?/2`，以及该 principal 假设的 invoke 其它 Chat action（如 `:send`、`:join`）尝试 —— 确认那些被拒绝。
 
