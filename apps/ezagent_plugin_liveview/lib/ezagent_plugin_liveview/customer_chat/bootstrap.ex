@@ -86,6 +86,11 @@ defmodule EzagentPluginLiveview.CustomerChat.Bootstrap do
 
   # ---- cc agent lifecycle ----------------------------------------------
 
+  # NOTE on caps: the customer is anonymous, so all bootstrap actions
+  # (agent create, join, dispatch) run as the admin principal with
+  # `system://bootstrap` caps. Phase 2.x does NOT attempt to model
+  # "what caps does a third-party-IM-relayed end user hold" — that is a
+  # separate, still-open design question (phase-1-2-verdict.md §6).
   @spec ensure_cc_for_conv(String.t(), String.t(), URI.t()) ::
           {:ok, URI.t()} | {:error, term()}
   def ensure_cc_for_conv(workspace, conv_id, session_uri) do

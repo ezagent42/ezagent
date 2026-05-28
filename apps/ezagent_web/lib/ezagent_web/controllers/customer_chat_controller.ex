@@ -23,32 +23,34 @@ defmodule EzagentWeb.CustomerChatController do
     are auto-created on first sight via `EzagentDomainChat.create_session/3`
     (which returns the 3-tuple `{:ok, uri, meta}` post-ezagent#408).
 
+  All session/cc/dispatch logic is delegated to the shared
+  `EzagentPluginLiveview.CustomerChat.Bootstrap` module (the customer
+  LiveView shares the same code path). This controller owns only the
+  HTTP+SSE transport.
+
   Lifecycle per request:
-    1. Validate `:workspace` exists; mint customer entity URI
-       `entity://user/<workspace>/customer_<customer_id>`.
-    2. Compute / generate `conv_id`, derive session URI, ensure
-       session exists (idempotent create).
+    1. Validate `:workspace` exists (`Bootstrap.validate_workspace/1`);
+       mint customer entity URI `entity://user/<workspace>/customer_<id>`.
+    2. Compute / generate `conv_id`, derive session URI, ensure session
+       exists (`Bootstrap.ensure_session/2`, idempotent).
     3. Subscribe to the session events topic
        `esr:session:<session_uri>:events`.
-    4. Open the SSE stream and dispatch `chat.send` with the customer
-       message as the bootstrap-cap'd caller.
-    5. **PHASE_2.4_TODO** — fire a synthetic-reply Task (500ms) that
-       broadcasts a `{:chat_message, session_uri, %Ezagent.Message{}}`
-       tuple back into the session topic. Phase 2.4 will replace this
-       with real cc bridge dispatch (EagerBridge ensures the bridge
-       is bound before customer traffic arrives) and the SSE loop will
-       just relay whatever cc emits. See `spawn_synthetic_reply/2`.
-    6. Loop forever (until timeout / terminal reply / connection
-       close): receive `{:chat_message, _, msg}` and `chunk` it back
-       to the client as an SSE event. Skip the customer's own echo
+    4. Open the SSE stream. Call `Bootstrap.ensure_cc_for_conv/3` to
+       guarantee the cc agent exists and its EagerBridge is bound
+       (idempotent; first request for a conv_id pays the ~5-10s
+       spawn+handshake), then dispatch `chat.send` via
+       `Bootstrap.dispatch_chat_send/2` (admin bootstrap caps).
+    5. Loop (until timeout / terminal reply / connection close):
+       receive `{:chat_message, _, msg}` and `chunk` it back to the
+       client as an SSE event. Skip the customer's own echo
        (sender == customer_uri) so the client only sees agent traffic.
 
   Stateless on the server: no per-request GenServer, no socket
   persistence — just a process inbox tied to the connection.
 
   Terminates on:
-    - Synthetic agent reply observed (marker: `sender == agent_uri`).
-    - Hard timeout (`@reply_timeout_ms`, default 30s).
+    - cc agent reply observed (marker: `sender == agent_uri`).
+    - Hard timeout (`@reply_timeout_ms`).
     - Client disconnect (`chunk/2` returns `{:error, :closed}`).
 
   Session/cc/builder logic is delegated to
