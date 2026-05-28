@@ -149,7 +149,7 @@ defmodule Ezagent.Behavior.Identity do
     if function_exported?(Ezagent.Entity.User, :admin_uri, 0) do
       Ezagent.Entity.User.admin_uri()
     else
-      URI.parse("system://bootstrap/pr-own-3")
+      Ezagent.URI.parse!("system://bootstrap/pr-own-3")
     end
   end
 
@@ -543,7 +543,7 @@ defmodule Ezagent.Behavior.IdentityAdmin do
     if function_exported?(Ezagent.Entity.User, :admin_uri, 0) do
       Ezagent.Entity.User.admin_uri()
     else
-      URI.parse("system://bootstrap/grant_cap")
+      Ezagent.URI.parse!("system://bootstrap/grant_cap")
     end
   end
 
@@ -725,15 +725,44 @@ defmodule Ezagent.Behavior.IdentityAdmin do
   # the dispatch chokepoint builds against `Behavior.Workspace`, so
   # only a cap that genuinely authorizes any-workspace Workspace
   # actions passes here.
-  defp holds_cross_workspace_admin_cap?(%{caps: caps}) do
-    caps_list = if is_struct(caps, MapSet), do: MapSet.to_list(caps), else: List.wrap(caps)
+  # SPEC 2026-05-27-workspace-cap-based-visibility OQ-4 (r5 — option b):
+  # promoted to PUBLIC so `Ezagent.Identity.AdminAuthority.admin?/2`
+  # can compose the 4-predicate admin shortcut. Existing ctx-shaped
+  # callers continue to work via the `%{caps: caps}` clause.
+  @doc """
+  Does the cap list hold a structural cross-workspace admin cap
+  (`kind: :workspace, behavior: Workspace, action: :any,
+  instance: :any, workspace_uri: :any`)?
 
-    # SPEC 2026-05-27 capability-action-axis — cross-workspace admin
-    # operator shape gains `:action`. The legitimate operator caps
-    # (system principals: `template-materialize`, `workspace-loader`,
-    # etc.) hold `action: :any`. We match either an explicit
-    # `action: :any` (post-SPEC) or a pre-SPEC legacy struct missing
-    # the key (validated via `action_of/1`).
+  This is the DELEGATED workspace-admin shape — narrower than the
+  bootstrap wildcard. SPEC 2026-05-27 capability-action-axis: only
+  explicit `action: :any` caps qualify; pre-SPEC legacy caps lacking
+  the `:action` key are rejected (operator must re-grant via
+  `Identity.grant_cap`).
+
+  Used by:
+  - `Identity` action dispatch (this module's private helpers).
+  - `Ezagent.Identity.AdminAuthority.admin?/2` — the operator-listing
+    admin shortcut composer.
+  """
+  @spec holds_cross_workspace_admin_cap?(MapSet.t() | [Ezagent.Capability.t()] | map()) ::
+          boolean()
+  def holds_cross_workspace_admin_cap?(caps) when is_struct(caps, MapSet) do
+    caps |> MapSet.to_list() |> holds_cross_workspace_admin_cap_list?()
+  end
+
+  def holds_cross_workspace_admin_cap?(caps) when is_list(caps) do
+    holds_cross_workspace_admin_cap_list?(caps)
+  end
+
+  def holds_cross_workspace_admin_cap?(%{caps: caps})
+      when is_list(caps) or is_struct(caps, MapSet) do
+    holds_cross_workspace_admin_cap?(caps)
+  end
+
+  def holds_cross_workspace_admin_cap?(_), do: false
+
+  defp holds_cross_workspace_admin_cap_list?(caps_list) when is_list(caps_list) do
     Enum.any?(caps_list, fn
       %Ezagent.Capability{
         kind: :workspace,
@@ -744,17 +773,10 @@ defmodule Ezagent.Behavior.IdentityAdmin do
       } ->
         true
 
-      # codex r4 SPEC option-B: legacy fallback REMOVED. Only explicit
-      # `action: :any` (post-SPEC wildcard) confers cross-workspace
-      # admin authority. Pre-SPEC snapshot caps without `:action` are
-      # rejected here — operator MUST re-grant via Identity.grant_cap
-      # (which now writes action: :any via normalize!/2).
       _ ->
         false
     end)
   end
-
-  defp holds_cross_workspace_admin_cap?(_), do: false
 
   # Holder of a workspace-admin cap on `workspace_uri`. The
   # canonical shape: any `Behavior.Workspace` cap on this workspace.
@@ -832,20 +854,47 @@ defmodule Ezagent.Behavior.IdentityAdmin do
   # `SystemPrincipal.caps("system://bootstrap")` mints exactly the
   # all-four-wildcards shape; no legitimate delegated cap should
   # have that exact shape.
-  defp holds_admin_caps?(%{caps: caps}) do
-    caps_list = if is_struct(caps, MapSet), do: MapSet.to_list(caps), else: List.wrap(caps)
+  #
+  # SPEC 2026-05-27-workspace-cap-based-visibility OQ-4 (r5 — option b):
+  # promoted to PUBLIC so `Ezagent.Identity.AdminAuthority.admin?/2`
+  # can compose the 4-predicate admin shortcut. The internal
+  # ctx-shaped callers (`require_bootstrap_admin/2`) route via
+  # `holds_admin_caps_in_ctx?/1` to preserve the dispatch-time API.
+  @doc """
+  Does the cap list hold a bootstrap-wildcard cap (all five axes
+  `:any`)?
 
-    # SPEC 2026-05-27 capability-action-axis §3.6.1 — admin invariant
-    # gains a fifth axis `:action`. Struct pattern matching is
-    # non-exhaustive, so a pre-action-axis cap (missing the `:action`
-    # key) ALSO matches `%Capability{action: :any, ...}` IF the value
-    # at the key is `:any` — but absence of the key would not match
-    # the literal. We use `action: :any` in the pattern AND a
-    # `is_map_key`-guarded clause for legacy old-struct snapshots so
-    # both shapes are recognized: (1) fresh post-SPEC caps with
-    # `action: :any` set explicitly, (2) old struct restored from
-    # snapshot where the `:action` key is absent — handled via
-    # `Capability.action_of/1`.
+  Used by:
+  - `IdentityAdmin` action dispatch (this module's private helpers).
+  - `Ezagent.Identity.AdminAuthority.admin?/2` — the operator-listing
+    admin shortcut composer.
+
+  ONLY the all-five-`:any` shape minted by
+  `Ezagent.SystemPrincipal.caps("system://bootstrap")` returns true.
+  No delegated narrow-instance variant satisfies this predicate
+  (codex PR-OWN-2 round-2 HIGH-1).
+  """
+  @spec holds_admin_caps?(MapSet.t() | [Ezagent.Capability.t()] | map()) :: boolean()
+  def holds_admin_caps?(caps) when is_struct(caps, MapSet) do
+    caps |> MapSet.to_list() |> holds_admin_caps_list?()
+  end
+
+  def holds_admin_caps?(caps) when is_list(caps) do
+    holds_admin_caps_list?(caps)
+  end
+
+  def holds_admin_caps?(%{caps: caps}) when is_list(caps) or is_struct(caps, MapSet) do
+    holds_admin_caps?(caps)
+  end
+
+  def holds_admin_caps?(_), do: false
+
+  # SPEC 2026-05-27 capability-action-axis §3.6.1 — admin invariant
+  # gains a fifth axis `:action`. ONLY explicit `action: :any` caps
+  # (post-SPEC wildcards) confer bootstrap-admin authority. Pre-SPEC
+  # full-wildcard caps lacking `:action` are no longer recognized —
+  # operator must re-grant via Identity.grant_cap.
+  defp holds_admin_caps_list?(caps_list) when is_list(caps_list) do
     Enum.any?(caps_list, fn
       %Ezagent.Capability{
         kind: :any,
@@ -856,14 +905,8 @@ defmodule Ezagent.Behavior.IdentityAdmin do
       } ->
         true
 
-      # codex r4 SPEC option-B: legacy fallback REMOVED. Bootstrap
-      # admin must hold explicit `action: :any` cap. Pre-SPEC
-      # full-wildcard caps lacking `:action` no longer recognized.
-
       _ ->
         false
     end)
   end
-
-  defp holds_admin_caps?(_), do: false
 end

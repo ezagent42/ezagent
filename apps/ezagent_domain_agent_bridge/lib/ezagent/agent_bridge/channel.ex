@@ -31,7 +31,10 @@ defmodule Ezagent.AgentBridge.Channel do
   end
 
   def join("cc:bridge:" <> uri_str, params, socket) do
-    with {:ok, topic_uri} <- URI.new(uri_str),
+    # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+    # at inbound channel-join boundary; try/rescue preserves the
+    # `:error` failure path for malformed topic URIs.
+    with {:ok, topic_uri} <- safe_parse_uri(uri_str),
          :ok <- verify_topic_uri(topic_uri, socket),
          :ok <- verify_topic_flavor("cc", socket.assigns.agent_uri) do
       join_bridge("cc", params, socket)
@@ -61,11 +64,6 @@ defmodule Ezagent.AgentBridge.Channel do
     {:noreply, socket}
   end
 
-  def handle_info({:to_claude, payload}, socket) do
-    push(socket, "to_claude", payload)
-    {:noreply, socket}
-  end
-
   def handle_info(_other, socket), do: {:noreply, socket}
 
   @impl true
@@ -77,14 +75,20 @@ defmodule Ezagent.AgentBridge.Channel do
   defp parse_agent_bridge_topic(rest) do
     case String.split(rest, ":", parts: 2) do
       [flavor, uri_str] when flavor != "" and uri_str != "" ->
-        case URI.new(uri_str) do
+        case safe_parse_uri(uri_str) do
           {:ok, %URI{} = uri} -> {:ok, flavor, uri}
-          {:error, reason} -> {:error, {:invalid_topic_uri, reason}}
+          :error -> {:error, {:invalid_topic_uri, uri_str}}
         end
 
       _ ->
         {:error, :invalid_agent_bridge_topic}
     end
+  end
+
+  defp safe_parse_uri(s) when is_binary(s) do
+    {:ok, Ezagent.URI.parse!(s)}
+  rescue
+    ArgumentError -> :error
   end
 
   defp verify_topic_uri(%URI{} = topic_uri, socket) do
@@ -103,12 +107,14 @@ defmodule Ezagent.AgentBridge.Channel do
   end
 
   defp join_bridge(flavor, params, socket) do
-    info = %{
-      bridge_flavor: flavor,
-      claude_info: Map.get(params, "claude_info", %{}),
-      tools: Map.get(params, "tools", []),
-      remote_ip: format_remote_ip(socket)
-    }
+    info =
+      Map.merge(
+        %{
+          bridge_flavor: flavor,
+          remote_ip: format_remote_ip(socket)
+        },
+        adapter_join_info(flavor, params, socket)
+      )
 
     case BridgeRegistry.bind(socket.assigns.agent_uri, self(), info) do
       :ok ->
@@ -117,6 +123,22 @@ defmodule Ezagent.AgentBridge.Channel do
 
       {:error, reason} ->
         {:error, %{reason: inspect(reason)}}
+    end
+  end
+
+  defp adapter_join_info(flavor, params, socket) do
+    # `join_info/2` is an `@optional_callbacks` on `Ezagent.AgentBridge.Adapter`;
+    # `function_exported?/3` is NOT guard-allowed in Elixir 1.19 (CompileError
+    # since 1.18+), so the check is hoisted into the case body. `Code.ensure_loaded?`
+    # forces module load before introspection — adapter modules from other apps
+    # may not be auto-loaded at the boundary.
+    with {:ok, adapter} <- AdapterRegistry.lookup(flavor),
+         true <- Code.ensure_loaded?(adapter),
+         true <- function_exported?(adapter, :join_info, 2),
+         info when is_map(info) <- adapter.join_info(params, socket) do
+      info
+    else
+      _ -> %{}
     end
   end
 

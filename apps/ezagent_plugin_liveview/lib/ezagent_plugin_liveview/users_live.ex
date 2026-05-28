@@ -268,18 +268,24 @@ defmodule EzagentPluginLiveview.UsersLive do
   # entity://user/<workspace>/<name>. Accepts both shapes — 2-segment
   # is auto-upgraded by normalize_handle_to_uri/1 above.
   defp parse_user_uri(s) do
-    case URI.new(s) do
-      {:ok, %URI{scheme: "entity", host: "user", path: "/" <> rest}}
-      when is_binary(rest) and rest != "" ->
-        {:ok, URI.parse(s)}
+    # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+    # with try/rescue keeping the `{:error, {:bad_user_uri, _}}` contract.
+    try do
+      case Ezagent.URI.parse!(s) do
+        %URI{scheme: "entity", host: "user", path: "/" <> rest} = uri
+        when is_binary(rest) and rest != "" ->
+          {:ok, uri}
 
-      _ ->
-        {:error, {:bad_user_uri, s}}
+        _ ->
+          {:error, {:bad_user_uri, s}}
+      end
+    rescue
+      ArgumentError -> {:error, {:bad_user_uri, s}}
     end
   end
 
   defp maybe_spawn_kind(uri_str) do
-    uri = URI.parse(uri_str)
+    uri = Ezagent.URI.parse!(uri_str)
 
     if Code.ensure_loaded?(Ezagent.SpawnRegistry) do
       _ = Ezagent.SpawnRegistry.spawn(uri)
@@ -319,19 +325,19 @@ defmodule EzagentPluginLiveview.UsersLive do
     "entity://user/#{workspace}/" <> handle
   end
 
-  # SPEC #324: admin needs `system` AND every tenant workspace in the
-  # create-user picker. `@workspaces` from LiveAuth uses
-  # `Ezagent.Workspace.list_visible/0`, which excludes `system` (it's
-  # `visible: false` per Phase 9 PR-8). Prepend `system` here so admin
-  # can create the typical "another admin" user without leaving the
-  # form.
-  defp workspace_options(workspaces) when is_list(workspaces) do
-    system = %{name: "system", uri: URI.parse("workspace://system")}
-    visible = Enum.reject(workspaces, &(&1.name == "system"))
-    [system | visible]
-  end
-
-  defp workspace_options(_), do: [%{name: "system", uri: URI.parse("workspace://system")}]
+  # SPEC 2026-05-27-workspace-cap-based-visibility — `@workspaces`
+  # from LiveAuth uses `Ezagent.Workspace.list_workspaces_for/2`. For
+  # an admin caller (one of the 4-predicate admin-shortcut UNION),
+  # the result already INCLUDES `workspace://system` (admins see all).
+  # No manual prepend or de-duplication needed; the picker shows
+  # what the admin can see, structurally.
+  #
+  # The picker is rendered only for admin-shortcut callers (route is
+  # gated via RequireUser at the admin-perspective layer); if a
+  # non-admin somehow reaches this LV, they'd see only their own
+  # workspace listing — which is the correct cap-derived view.
+  defp workspace_options(workspaces) when is_list(workspaces), do: workspaces
+  defp workspace_options(_), do: []
 
   # Task 1 + Task 2 — when create form supplies a display_name, persist
   # it. Best-effort: a failure here doesn't block user creation (the
@@ -353,7 +359,7 @@ defmodule EzagentPluginLiveview.UsersLive do
   def render(assigns) do
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
-        URI.to_string(assigns.current_entity_uri || URI.parse("entity://user/system/admin"))
+        URI.to_string(assigns.current_entity_uri || Ezagent.URI.parse!("entity://user/system/admin"))
       end)
 
     ~H"""

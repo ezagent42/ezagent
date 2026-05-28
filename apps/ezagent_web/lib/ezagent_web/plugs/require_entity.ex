@@ -23,12 +23,19 @@ defmodule EzagentWeb.Plugs.RequireEntity do
         bounce(conn)
 
       uri_str when is_binary(uri_str) ->
-        case URI.parse(uri_str) do
-          %URI{scheme: "entity", host: host} = uri when host in ["user", "agent"] ->
-            assign(conn, :current_entity_uri, uri)
+        # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+        # with try/rescue; stale or malformed cookie URIs bounce to login
+        # (Invariant #9 — graceful surface, not silent crash).
+        try do
+          case Ezagent.URI.parse!(uri_str) do
+            %URI{scheme: "entity", host: host} = uri when host in ["user", "agent"] ->
+              assign(conn, :current_entity_uri, uri)
 
-          _ ->
-            bounce(conn)
+            _ ->
+              bounce(conn)
+          end
+        rescue
+          ArgumentError -> bounce(conn)
         end
     end
   end

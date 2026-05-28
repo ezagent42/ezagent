@@ -101,13 +101,13 @@ defmodule Ezagent.SystemPrincipal do
   Convenience helper: parse a `system://<service>` URI from a string.
 
   Provided so call sites read `SystemPrincipal.uri("boot-reconciler")`
-  instead of `URI.parse("system://boot-reconciler")` — minor
+  instead of `Ezagent.URI.parse!("system://boot-reconciler")` — minor
   readability win, no semantic difference. Raises if the resulting
   URI is not in the Catalog.
   """
   @spec uri(String.t()) :: URI.t()
   def uri(service) when is_binary(service) do
-    parsed = URI.parse("system://" <> service)
+    parsed = Ezagent.URI.parse!("system://" <> service)
 
     unless Catalog.member?(parsed) do
       raise ArgumentError,
@@ -166,7 +166,7 @@ defmodule Ezagent.SystemPrincipal do
   # --- internals ---------------------------------------------------------
 
   defp parse!(%URI{} = u), do: u
-  defp parse!(s) when is_binary(s), do: URI.parse(s)
+  defp parse!(s) when is_binary(s), do: Ezagent.URI.parse!(s)
 
   defp enforce_system_scheme!(%URI{scheme: "system"}), do: :ok
 

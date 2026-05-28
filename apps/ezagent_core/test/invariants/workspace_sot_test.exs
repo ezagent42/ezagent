@@ -1,106 +1,82 @@
 defmodule EzagentCore.Invariants.WorkspaceSotTest do
   @moduledoc """
-  Workspace single-source-of-truth (SoT) invariant — operator-facing
-  LV / web code must use `Ezagent.Workspace.list_visible/0`, never
-  `list_persisted/0` / `Workspace.Store.list_all/0`.
+  Operator-facing workspace listing invariant (SPEC
+  2026-05-27-workspace-cap-based-visibility §4.2).
 
   ## Why
 
-  Phase 9 PR-8 (SPEC v3 §13.1) introduced `workspace://system` with
-  `visible: false`. The system workspace stays out of the regular
-  operator-facing dropdown (and any other workspace lister) because
-  membership in it carries cross-workspace authority — leaking it
-  to a non-admin user via a `list_persisted/0` call would be a
-  privilege-disclosure surface (the user sees they could be added
-  to it, even if they can't add themselves).
+  Pre-SPEC (Phase 9 PR-8) `workspace://system` had `visible: false`
+  and operator-facing code was required to call `list_visible/0`
+  rather than `list_persisted/0` / `Store.list_all/0`. This was a
+  CONVENTION-only discipline — one LV missed the rule and leaked
+  the system workspace (PR #290 fix).
 
-  Per `docs/notes/2026-05-24-architecture-audit-v1.md` Finding 4:
-  the discipline ("use `list_visible/0`, never `list_persisted/0`")
-  was enforced by convention only. PR #290 fixed `workspaces_live.ex`
-  after one regression; without an invariant test, the next LV that
-  lists workspaces re-lands the same bug silently.
+  Post-SPEC the `:visible` field is GONE. Visibility is cap-derived:
+  `Ezagent.Workspace.list_workspaces_for(caller_uri, caps)` is the
+  SINGLE operator-facing query. It is structurally caller-scoped,
+  so an operator-facing surface cannot accidentally leak hidden
+  workspaces.
 
-  This test fails when any production file under
-  `apps/ezagent_plugin_liveview/lib` or `apps/ezagent_web/lib` (the
-  operator-facing scope) references `list_persisted/0` or
-  `Workspace.Store.list_all/0` without explicit exemption.
+  This invariant gates the new discipline:
 
-  Per memory `feedback_completion_requires_invariant_test`:
-  "completion claim requires invariant test" — the architectural
-  goal is "operator-facing surfaces use only the visible-workspaces
-  view". This test is the gate; "PR-merges + tests-pass" alone
-  doesn't catch the next regression.
+  - Operator-facing files (LV, web, mix tasks) MUST use
+    `Ezagent.Workspace.list_workspaces_for(`. They MUST NOT use the
+    unscoped `Workspace.list_all(`, `Workspace.list_persisted(`, or
+    `Workspace.Store.list_all(`.
+  - System-internal callers (Loader, agent-flavor resolution,
+    `mix ezagent.workspace.*` audit tasks) can use the unscoped
+    APIs — see `@allowlist` justifications.
 
-  ## Allowlist
-
-  Empty by default — `workspace_sot_test.exs` should reject every
-  operator-scope `list_persisted/0` / `Workspace.Store.list_all/0`
-  reference outright. Admin-only files live in admin sub-paths
-  (`.../admin/`) but currently NONE of them call these functions:
-  admin LVs that need cross-visibility use `Ezagent.Workspace.list_all/0`
-  on the underlying domain module, which is a DIFFERENT function
-  (the public list-everything API).
-
-  If a future admin-only file genuinely needs `list_persisted/0`
-  (e.g. a system-workspace diagnostic LV), add it to `@allowlist`
-  with a one-line justification — and verify it lives under a
-  `live_session :require_admin` route in
-  `apps/ezagent_web/lib/ezagent_web/router.ex`.
+  Per `feedback_completion_requires_invariant_test`: this is the
+  gate that fails if a future LV reaches for the unscoped lister.
   """
 
   use ExUnit.Case, async: true
 
-  # Operator-facing scope: every production file under these
-  # `lib/` trees is checked.
-  #
-  # - `apps/ezagent_plugin_liveview/lib` — admin / operator LVs.
-  # - `apps/ezagent_web/lib` — controllers, plugs, live_auth helpers.
-  # - `apps/*/lib/mix/tasks` — operator CLI surface. Codex r1 MED
-  #   (med-batch 2026-05-26) flagged the original scope-as-only-LV/web
-  #   as missing this. Mix tasks are operator-facing too: any operator
-  #   who can run `mix ezagent.*` can also see the operator-facing
-  #   dropdown via LV, so they fall under the same "no `visible: false`
-  #   leak" discipline.
-  #
-  # Admin scope is identified by `live_session :require_admin` in
-  # `router.ex`; files mounted under that scope ARE included here
-  # (they should still use `list_visible/0` — admins seeing the
-  # system workspace via a different code path is fine).
+  # Operator-facing scope.
   @scoped_roots [
     "apps/ezagent_plugin_liveview/lib",
     "apps/ezagent_web/lib"
   ]
 
-  # Additional scope: operator mix tasks. Discovered via wildcard
-  # because they live in many apps (`ezagent_core/lib/mix/tasks/…`,
-  # `ezagent_domain_workspace/lib/mix/tasks/…`, etc.).
+  # Operator-tier mix tasks under any app.
   @mix_task_wildcard "apps/*/lib/mix/tasks/**/*.ex"
 
-  # Forbidden patterns — both must be absent from every operator-
-  # facing file unless explicitly allowlisted below.
+  # Forbidden — every operator-facing file must use
+  # `list_workspaces_for/2` and NEVER any of the unscoped readers
+  # (which would re-introduce the hidden-workspace leak the SPEC
+  # was designed to make structurally impossible).
   #
-  # `Workspace.list_persisted/0` returns ALL workspace rows including
-  # `visible: false` ones; `Workspace.Store.list_all/0` is the
-  # underlying Store-level call (skipping the domain function gate).
+  # Codex r1 review MED (2026-05-27): the regex must match BOTH the
+  # alias form (`Workspace.list_all(`) AND the fully-qualified form
+  # (`Ezagent.Workspace.list_all(`). The previous negative lookbehind
+  # `(?<![\w\.])Workspace\.` rejected a preceding `.`, so
+  # `Ezagent.Workspace.list_all(` escaped the gate. Capture the
+  # `Ezagent.` prefix as optional + use a word-boundary-style
+  # lookbehind that allows `.` only when it follows `Ezagent`.
   @forbidden_patterns [
-    {~r/(?<![\w\.])Workspace\.list_persisted\s*\(/,
-     "Workspace.list_persisted/0 leaks visible:false workspaces"},
-    {~r/(?<![\w\.])Workspace\.Store\.list_all\s*\(/,
-     "Workspace.Store.list_all/0 bypasses the visible-workspaces filter"}
+    {~r/(?:^|[^\w.])(?:Ezagent\.)?Workspace\.list_persisted\s*\(/,
+     "Workspace.list_persisted/0 was deleted — use list_workspaces_for/2"},
+    {~r/(?:^|[^\w.])(?:Ezagent\.)?Workspace\.list_visible\s*\(/,
+     "Workspace.list_visible/0 was deleted — use list_workspaces_for/2"},
+    {~r/(?:^|[^\w.])(?:Ezagent\.)?Workspace\.list_all\s*\(/,
+     "Workspace.list_all/0 is system-internal — operator surfaces must use list_workspaces_for/2"},
+    {~r/(?:^|[^\w.])(?:Ezagent\.)?Workspace\.Store\.list_all\s*\(/,
+     "Workspace.Store.list_all/0 is system-internal — operator surfaces must use list_workspaces_for/2"}
   ]
 
-  # Files exempted from the forbidden patterns. Each entry MUST
-  # be justified in a one-line comment and the file MUST be under
-  # an admin-only `live_session :require_admin` route.
+  # Files exempted. Each exemption MUST justify the bypass.
   #
-  # The list is currently empty by design — NO operator-facing file
-  # genuinely needs `list_persisted/0` or `Workspace.Store.list_all/0`.
-  # The sentinel string never matches a real file path; it exists so
-  # the `in @allowlist` check stays typed as `[binary()]` (Elixir's
-  # type system narrows `[]` to "never matches", emitting a warning).
-  @allowlist ["__sentinel_never_matches__"]
+  # The audit mix task `cleanup_cross_prefix_members` reads
+  # `Store.list_all/0` because its job is to walk EVERY persisted
+  # workspace at operator-shell-tier (not user-facing). The "audit
+  # the universe" semantic is structurally distinct from operator-
+  # listing.
+  @allowlist [
+    "apps/ezagent_domain_workspace/lib/mix/tasks/ezagent.workspace.cleanup_cross_prefix_members.ex"
+  ]
 
-  test "no operator-facing LV/web/mix-task file references list_persisted/0 or Store.list_all/0" do
+  test "no operator-facing LV/web/mix-task file references unscoped workspace listers" do
     apps_root = Path.expand("../../../..", __DIR__)
 
     scoped_paths =
@@ -146,33 +122,60 @@ defmodule EzagentCore.Invariants.WorkspaceSotTest do
 
              #{format_violations(violations)}
 
-           Use `Ezagent.Workspace.list_visible/0` instead. `list_persisted/0`
-           and `Workspace.Store.list_all/0` return `visible: false` workspaces
-           (the system workspace) and leak them to non-admin operators.
+           Use `Ezagent.Workspace.list_workspaces_for(caller_uri, caps)`
+           instead. The unscoped functions (`list_all/0`, `Store.list_all/0`)
+           are system-internal (Loader, audit mix tasks) — they bypass the
+           per-caller filter and surface workspaces the caller cannot reach.
 
-           Per docs/notes/2026-05-24-architecture-audit-v1.md Finding 4 + memory
-           `feedback_completion_requires_invariant_test`.
+           Per SPEC 2026-05-27-workspace-cap-based-visibility §4.2 +
+           memory `feedback_completion_requires_invariant_test`.
 
-           If your file is genuinely admin-only (mounted under
-           `live_session :require_admin` in router.ex, OR a bootstrap-only
-           mix task) AND needs the unfiltered list, add it to `@allowlist`
-           here with a justification.
+           If your file is genuinely an audit/loader/system-internal
+           surface, add it to `@allowlist` with justification.
            """
   end
 
-  test "Ezagent.Workspace.list_visible/0 is exported (no fallback path needed)" do
-    # The dead-fallback cleanup in `live_auth.ex` assumes
-    # `list_visible/0` is always available. If a future refactor
-    # removes the export, this test fails loudly — preventing a
-    # silent regression where the operator-facing dropdown returns
-    # `[]` and forces operators into the admin drawer to see
-    # any workspace at all.
+  test "Ezagent.Workspace.list_workspaces_for/2 is exported" do
     assert Code.ensure_loaded?(Ezagent.Workspace),
-           "Ezagent.Workspace must be loadable for the operator-facing dropdown"
+           "Ezagent.Workspace must be loadable for the operator-facing listing"
 
-    assert function_exported?(Ezagent.Workspace, :list_visible, 0),
-           "Ezagent.Workspace.list_visible/0 must be exported — the SoT for " <>
-             "operator-facing workspace listing"
+    assert function_exported?(Ezagent.Workspace, :list_workspaces_for, 2),
+           "Ezagent.Workspace.list_workspaces_for/2 must be exported — the " <>
+             "SoT for operator-facing workspace listing per SPEC " <>
+             "2026-05-27-workspace-cap-based-visibility"
+  end
+
+  # Codex r1 review MED (2026-05-27) — the previous lookbehind regex
+  # rejected a preceding `.`, so `Ezagent.Workspace.list_all(` escaped
+  # the gate. This meta-test asserts both alias and fully-qualified
+  # forms ARE caught, AND legitimate non-matches (e.g. `MyWorkspace`
+  # prefix or a comment scope reference) are NOT.
+  test "@forbidden_patterns catch both alias and fully-qualified forms" do
+    positives = [
+      "Workspace.list_all(",
+      "Ezagent.Workspace.list_all(",
+      " Ezagent.Workspace.Store.list_all(",
+      "  Workspace.list_visible(",
+      "Ezagent.Workspace.list_persisted("
+    ]
+
+    negatives = [
+      "MyWorkspace.list_all(",
+      "Foo.Workspace.list_all(",
+      "Other.Module.list_all(",
+      "Workspace.list_workspaces_for(",
+      "Ezagent.Workspace.list_workspaces_for("
+    ]
+
+    for line <- positives do
+      assert Enum.any?(@forbidden_patterns, fn {regex, _} -> Regex.match?(regex, line) end),
+             "Regex must catch: #{inspect(line)} — at least one forbidden pattern should match"
+    end
+
+    for line <- negatives do
+      refute Enum.any?(@forbidden_patterns, fn {regex, _} -> Regex.match?(regex, line) end),
+             "Regex must NOT match: #{inspect(line)} — false-positive in @forbidden_patterns"
+    end
   end
 
   # --- helpers -------------------------------------------------------------

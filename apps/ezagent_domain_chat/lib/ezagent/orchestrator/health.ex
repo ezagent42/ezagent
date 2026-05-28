@@ -141,7 +141,7 @@ defmodule Ezagent.Orchestrator.Health do
   # Restart for any session outside `workspace://system` dispatched at
   # a non-existent template Kind. Aligned with the seed location now.
   defp orchestrator_template_uri(%URI{} = _workspace_uri) do
-    URI.new!("template://agent/system/cc-orchestrator")
+    Ezagent.URI.parse!("template://agent/system/cc-orchestrator")
   end
 
   # KindRegistry.lookup returns `{:ok, pid}` for a registered URI. We

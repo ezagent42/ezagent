@@ -16,9 +16,12 @@ defmodule Ezagent.AgentBridge.Socket do
 
   @impl true
   def connect(params, socket, _connect_info) do
+    # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+    # at inbound socket boundary; try/rescue preserves the `with`'s
+    # `:error` failure path (Invariant #9 — graceful socket reject).
     with {:ok, agent_uri_str} <- Map.fetch(params, "agent_uri"),
          {:ok, token} <- Map.fetch(params, "token"),
-         {:ok, agent_uri} <- URI.new(agent_uri_str),
+         {:ok, agent_uri} <- safe_parse_uri(agent_uri_str),
          :ok <- verify_token(agent_uri, token) do
       socket =
         socket
@@ -33,6 +36,14 @@ defmodule Ezagent.AgentBridge.Socket do
 
   @impl true
   def id(socket), do: "agent_bridge:" <> URI.to_string(socket.assigns.agent_uri)
+
+  defp safe_parse_uri(s) when is_binary(s) do
+    {:ok, Ezagent.URI.parse!(s)}
+  rescue
+    ArgumentError -> :error
+  end
+
+  defp safe_parse_uri(_), do: :error
 
   defp verify_token(agent_uri, token) do
     case TokenStore.lookup_by_token(token) do

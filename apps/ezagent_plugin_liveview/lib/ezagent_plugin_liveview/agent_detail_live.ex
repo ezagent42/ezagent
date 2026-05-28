@@ -72,13 +72,19 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
   defp parse_agent_uri(encoded) do
     decoded = URI.decode_www_form(encoded)
 
-    case URI.new(decoded) do
-      {:ok, %URI{scheme: "entity", host: "agent", path: "/" <> name} = uri}
-      when is_binary(name) and name != "" ->
-        {:ok, uri}
+    # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+    # with try/rescue keeping the `:error` failure contract.
+    try do
+      case Ezagent.URI.parse!(decoded) do
+        %URI{scheme: "entity", host: "agent", path: "/" <> name} = uri
+        when is_binary(name) and name != "" ->
+          {:ok, uri}
 
-      _ ->
-        :error
+        _ ->
+          :error
+      end
+    rescue
+      ArgumentError -> :error
     end
   end
 
@@ -255,7 +261,7 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
   def render(%{not_found: true} = assigns) do
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
-        URI.to_string(Map.get(assigns, :current_entity_uri) || URI.parse("entity://user/system/admin"))
+        URI.to_string(Map.get(assigns, :current_entity_uri) || Ezagent.URI.parse!("entity://user/system/admin"))
       end)
 
     ~H"""
@@ -298,7 +304,7 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
   def render(assigns) do
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
-        URI.to_string(Map.get(assigns, :current_entity_uri) || URI.parse("entity://user/system/admin"))
+        URI.to_string(Map.get(assigns, :current_entity_uri) || Ezagent.URI.parse!("entity://user/system/admin"))
       end)
 
     ~H"""

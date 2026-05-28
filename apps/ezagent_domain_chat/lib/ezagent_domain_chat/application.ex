@@ -270,7 +270,11 @@ defmodule EzagentDomainChat.Application do
     if test_env?() do
       :ok
     else
-      :ok = ensure_workspace("system", %{visible: false})
+      # SPEC 2026-05-27-workspace-cap-based-visibility §4.2 — the
+      # `:visible` field is gone. Visibility is cap-derived via
+      # `Ezagent.Workspace.list_workspaces_for/2`; the system workspace
+      # is hidden from non-members structurally, no per-row flag.
+      :ok = ensure_workspace("system", %{})
     end
   end
 
@@ -412,8 +416,8 @@ defmodule EzagentDomainChat.Application do
   end
 
   defp do_seed_default_session_template do
-    workspace_uri = URI.new!("workspace://system")
-    orchestrator_uri = URI.new!(Ezagent.Orchestrator.CcOrchestratorSeed.template_uri())
+    workspace_uri = Ezagent.URI.parse!("workspace://system")
+    orchestrator_uri = Ezagent.URI.parse!(Ezagent.Orchestrator.CcOrchestratorSeed.template_uri())
 
     content = %{
       name: "default",

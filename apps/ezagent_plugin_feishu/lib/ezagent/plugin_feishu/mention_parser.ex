@@ -74,9 +74,15 @@ defmodule EzagentPluginFeishu.MentionParser do
   defp live_agent_uris do
     KindRegistry.list_all()
     |> Enum.flat_map(fn {uri_str, _pid} ->
-      case URI.new(uri_str) do
-        {:ok, %URI{scheme: "entity", host: "agent"} = uri} -> [uri]
-        _ -> []
+      # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+      # with try/rescue (silent-drop fallback for corrupted registry rows).
+      try do
+        case Ezagent.URI.parse!(uri_str) do
+          %URI{scheme: "entity", host: "agent"} = uri -> [uri]
+          _ -> []
+        end
+      rescue
+        ArgumentError -> []
       end
     end)
   end

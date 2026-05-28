@@ -119,7 +119,7 @@ defmodule Ezagent.AgentBridge.SocketChannelTest do
     assert channel_pid == socket.channel_pid
 
     payload = %{"content" => "hello", "meta" => %{}}
-    send(socket.channel_pid, {:to_claude, payload})
+    send(socket.channel_pid, {:agent_bridge_push, "to_claude", payload})
     assert_push "to_claude", ^payload
   end
 

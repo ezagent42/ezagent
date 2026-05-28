@@ -59,8 +59,8 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcAgent do
     {:ok, _} = Application.ensure_all_started(:ezagent_domain_chat)
     {:ok, _} = Application.ensure_all_started(:ezagent_plugin_cc)
 
-    agent_uri = URI.new!(@agent_uri_str)
-    session_uri = URI.new!(@session_uri_str)
+    agent_uri = Ezagent.URI.parse!(@agent_uri_str)
+    session_uri = Ezagent.URI.parse!(@session_uri_str)
 
     with :ok <- spawn_agent_if_absent(agent_uri),
          :ok <- ensure_session_alive(session_uri),

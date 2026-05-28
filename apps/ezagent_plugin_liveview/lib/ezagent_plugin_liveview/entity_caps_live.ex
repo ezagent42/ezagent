@@ -62,7 +62,7 @@ defmodule EzagentPluginLiveview.EntityCapsLive do
 
   @impl true
   def mount(%{"uri" => encoded}, _session, socket) do
-    entity_uri = encoded |> URI.decode_www_form() |> URI.new!()
+    entity_uri = encoded |> URI.decode_www_form() |> Ezagent.URI.parse!()
     # PR #123 hardening: on_mount sets current_entity_uri; caller is
     # the logged-in user, not a hardcoded admin fallback.
     caller_uri = socket.assigns.current_entity_uri
@@ -253,7 +253,7 @@ defmodule EzagentPluginLiveview.EntityCapsLive do
       case Map.get(params, "workspace_uri", "") do
         "any" -> :any
         "" -> default_workspace_for_entity(params)
-        s when is_binary(s) -> URI.parse(s)
+        s when is_binary(s) -> Ezagent.URI.parse!(s)
       end
 
     %Capability{
@@ -289,7 +289,7 @@ defmodule EzagentPluginLiveview.EntityCapsLive do
 
   defp to_uri_or_any("any"), do: :any
   defp to_uri_or_any(""), do: :any
-  defp to_uri_or_any(s) when is_binary(s), do: URI.parse(s)
+  defp to_uri_or_any(s) when is_binary(s), do: Ezagent.URI.parse!(s)
 
   # Breadcrumb back-link target — `/identities` for agents (no
   # dedicated agents-list page), `/identities/users` for users
@@ -304,7 +304,7 @@ defmodule EzagentPluginLiveview.EntityCapsLive do
   def render(assigns) do
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
-        URI.to_string(Map.get(assigns, :current_entity_uri) || URI.parse("entity://user/system/admin"))
+        URI.to_string(Map.get(assigns, :current_entity_uri) || Ezagent.URI.parse!("entity://user/system/admin"))
       end)
 
     ~H"""

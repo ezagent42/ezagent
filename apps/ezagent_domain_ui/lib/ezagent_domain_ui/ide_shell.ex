@@ -407,16 +407,27 @@ defmodule EzagentDomainUi.IdeShell do
   defp workspace_item_name(%{name: name}) when is_binary(name) and name != "", do: name
   defp workspace_item_name(%{uri: %URI{host: host}}) when is_binary(host), do: host
   defp workspace_item_name(%{uri: uri_str}) when is_binary(uri_str) do
-    case URI.parse(uri_str) do
-      %URI{host: host} when is_binary(host) -> host
-      _ -> uri_str
+    # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+    # with try/rescue keeping the display-fallback behaviour (return
+    # raw string on parse failure).
+    try do
+      case Ezagent.URI.parse!(uri_str) do
+        %URI{host: host} when is_binary(host) -> host
+        _ -> uri_str
+      end
+    rescue
+      ArgumentError -> uri_str
     end
   end
   defp workspace_item_name(%URI{host: host}) when is_binary(host), do: host
   defp workspace_item_name(s) when is_binary(s) do
-    case URI.parse(s) do
-      %URI{host: host} when is_binary(host) and host != "" -> host
-      _ -> s
+    try do
+      case Ezagent.URI.parse!(s) do
+        %URI{host: host} when is_binary(host) and host != "" -> host
+        _ -> s
+      end
+    rescue
+      ArgumentError -> s
     end
   end
   defp workspace_item_name(_), do: "—"

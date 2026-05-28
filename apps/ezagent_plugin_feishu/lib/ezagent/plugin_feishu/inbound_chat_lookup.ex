@@ -78,7 +78,7 @@ defmodule EzagentPluginFeishu.InboundChatLookup do
         :error
 
       [session_uri_str] ->
-        {:ok, URI.parse(session_uri_str)}
+        {:ok, Ezagent.URI.parse!(session_uri_str)}
 
       multiple ->
         # codex r1 HIGH fix (2026-05-25): fail closed on duplicate

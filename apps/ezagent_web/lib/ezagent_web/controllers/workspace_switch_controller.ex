@@ -16,8 +16,12 @@ defmodule EzagentWeb.WorkspaceSwitchController do
     decision to lose the current session is conscious.
   - **No-op when already in target workspace** → just redirect back
     to /sessions.
-  - **Hidden target** (`visible: false`) → flash error. System
-    workspace is not directly switchable from this endpoint.
+  - **Regular user → any other workspace** → denial page (see
+    `do_switch/3` cond). This subsumes the former
+    "hidden target" branch: post-SPEC 2026-05-27-workspace-cap-based-visibility,
+    `workspace://system` is no longer flagged by a field; a regular
+    user attempting to switch to it lands on the denial page like
+    any other cross-workspace attempt.
 
   Note: the system-member branch is the SECOND sanctioned writer of
   `:current_workspace_uri` outside `SessionPrincipal.put/3` (the
@@ -39,15 +43,14 @@ defmodule EzagentWeb.WorkspaceSwitchController do
         )
         |> redirect(to: ~p"/sessions")
 
-      %{visible: false} ->
-        # System workspace (or any future hidden workspace) is not
-        # directly switchable; the system-member context-swap still
-        # operates on visible targets only.
-        conn
-        |> put_flash(:error, gettext("Workspace not available"))
-        |> redirect(to: ~p"/sessions")
-
       workspace ->
+        # SPEC 2026-05-27-workspace-cap-based-visibility — the former
+        # `%{visible: false}` early-exit clause is GONE (field
+        # deleted). Regular users attempting to switch to
+        # `workspace://system` (or any workspace they don't belong
+        # to) hit the denial branch in `do_switch/3`'s `cond`. System
+        # members context-swap into `workspace://system` via the
+        # first branch.
         do_switch(conn, workspace, current_entity_uri)
     end
   end
@@ -60,9 +63,9 @@ defmodule EzagentWeb.WorkspaceSwitchController do
 
   defp do_switch(conn, workspace, current_entity_uri)
        when is_binary(current_entity_uri) do
-    caller_uri = URI.parse(current_entity_uri)
+    caller_uri = Ezagent.URI.parse!(current_entity_uri)
     caller_workspace = Ezagent.URI.entity_workspace_uri(caller_uri)
-    target_uri = URI.new!("workspace://" <> workspace.name)
+    target_uri = Ezagent.URI.parse!("workspace://" <> workspace.name)
 
     cond do
       URI.to_string(caller_workspace) == "workspace://system" ->

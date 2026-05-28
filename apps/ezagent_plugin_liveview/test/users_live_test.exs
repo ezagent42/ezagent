@@ -9,6 +9,22 @@ defmodule EzagentPluginLiveview.UsersLiveTest do
     :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
     Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
 
+    # SPEC 2026-05-27-workspace-cap-based-visibility — the previous
+    # `users_live.ex` `workspace_options/1` helper synthetically
+    # prepended a `system` row regardless of DB state. Post-SPEC the
+    # picker reflects `list_workspaces_for(admin_uri, _)` which
+    # returns `Store.list_all/0` for admin (the admin URI host is
+    # `system`). Seed the workspace so the picker has options.
+    case Ezagent.Workspace.Store.get_by_name("system") do
+      nil -> {:ok, _} = Ezagent.Workspace.Store.create("system", %{})
+      _ -> :ok
+    end
+
+    case Ezagent.Workspace.Store.get_by_name("team-alpha") do
+      nil -> {:ok, _} = Ezagent.Workspace.Store.create("team-alpha", %{})
+      _ -> :ok
+    end
+
     conn =
       Phoenix.ConnTest.build_conn()
       |> Plug.Test.init_test_session(%{

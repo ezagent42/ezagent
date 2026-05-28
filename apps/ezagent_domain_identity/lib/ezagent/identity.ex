@@ -42,7 +42,7 @@ defmodule Ezagent.Identity do
         # `mix ezagent.stress.await_ready!/1`).
         await_ready(user_uri)
 
-        target = URI.parse("#{URI.to_string(user_uri)}?action=identity.list_caps")
+        target = Ezagent.URI.parse!("#{URI.to_string(user_uri)}?action=identity.list_caps")
 
         case Invocation.dispatch(%Invocation{
                target: target,
@@ -102,7 +102,7 @@ defmodule Ezagent.Identity do
         action: :list_caps,
         instance: user_uri,
         workspace_uri: workspace_uri,
-        granted_by: URI.parse("system://bootstrap"),
+        granted_by: Ezagent.URI.parse!("system://bootstrap"),
         granted_at: ~U[2026-01-01 00:00:00Z]
       }
     ])
@@ -149,16 +149,20 @@ defmodule Ezagent.Identity do
   defp parse_uri_safe(%URI{} = u), do: u
 
   defp parse_uri_safe(s) when is_binary(s) do
-    case URI.new(s) do
-      {:ok, uri} -> uri
-      _ -> :error
+    # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+    # with try/rescue keeping the `:error` atom-shape contract for
+    # this private helper (caller pattern-matches on it).
+    try do
+      Ezagent.URI.parse!(s)
+    rescue
+      ArgumentError -> :error
     end
   end
 
   defp parse_uri_safe(_), do: :error
 
   defp parse_uri(%URI{} = u), do: u
-  defp parse_uri(s) when is_binary(s), do: URI.parse(s)
+  defp parse_uri(s) when is_binary(s), do: Ezagent.URI.parse!(s)
 
   @doc """
   Grant a capability to `entity_uri`. Dispatches `identity.grant_cap`

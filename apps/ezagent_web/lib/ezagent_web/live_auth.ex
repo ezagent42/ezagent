@@ -192,6 +192,7 @@ defmodule EzagentWeb.LiveAuth do
           {:ok, uri} ->
             workspace_uri = parse_workspace_uri(session["current_workspace_uri"], uri)
             is_system_member = system_member?(uri)
+            caps = load_caps(uri)
 
             {:cont,
              socket
@@ -200,7 +201,8 @@ defmodule EzagentWeb.LiveAuth do
              |> assign(:workspace_name, workspace_name_from_uri(workspace_uri))
              |> assign(:is_admin?, admin?(uri))
              |> assign(:is_system_member?, is_system_member)
-             |> assign(:workspaces, list_known_workspaces())}
+             |> assign(:current_caps, caps)
+             |> assign(:workspaces, list_known_workspaces(uri, caps))}
 
           :error ->
             # Malformed / non-entity / stale pre-Phase-9 2-segment URI
@@ -239,7 +241,19 @@ defmodule EzagentWeb.LiveAuth do
   # is preserved either way.
   defp parse_workspace_uri(nil, entity_uri), do: Ezagent.URI.entity_workspace_uri(entity_uri)
 
-  defp parse_workspace_uri(ws_str, _entity_uri) when is_binary(ws_str), do: URI.parse(ws_str)
+  defp parse_workspace_uri(ws_str, entity_uri) when is_binary(ws_str) do
+    # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+    # with try/rescue. Pre-SPEC code used stdlib `URI.parse/1` which
+    # silently produced `%URI{scheme: nil}` for a malformed/stale
+    # cookie; downstream `workspace_name_from_uri/1` then degraded to
+    # nil. The canonical chokepoint raises ArgumentError on malformed
+    # input, so we preserve the original degraded path by falling back
+    # to the entity-derived workspace URI (which is always canonical
+    # because LiveAuth already validated `current_entity_uri`).
+    Ezagent.URI.parse!(ws_str)
+  rescue
+    ArgumentError -> Ezagent.URI.entity_workspace_uri(entity_uri)
+  end
 
   # Bug 3 (Allen 2026-05-26) — derive the display name from the
   # canonical `:current_workspace_uri` so every LV in the
@@ -289,25 +303,21 @@ defmodule EzagentWeb.LiveAuth do
   # silent defaults). Operators land in their email-domain
   # workspace via the onboarding flow (PR-B) and create
   # additional workspaces via the admin drawer.
-  defp list_known_workspaces do
-    # Phase 9 PR-8 (SPEC v3 §13.1) — use `list_visible/0` so the
-    # `workspace://system` workspace stays out of the regular
-    # operator-facing dropdown. System members still see it from the
-    # admin tooling, but it is never a click-to-switch target.
+  defp list_known_workspaces(caller_uri, caps) do
+    # SPEC 2026-05-27-workspace-cap-based-visibility — cap-derived
+    # per-caller listing. Admin-shortcut callers see all workspaces;
+    # other callers see workspaces their caps reach + their
+    # memberships. `workspace://system`'s appearance is no longer
+    # field-gated — it appears iff the 4-predicate admin shortcut
+    # fires (per SPEC §3.4).
     #
-    # med-batch MED-2 (2026-05-25): the previous defensive fallback to
-    # `list_persisted/0` was dead — `Ezagent.Workspace` always exports
-    # `list_visible/0` (verified by `workspace_sot_test.exs`). Removed
-    # so the SoT invariant test can grep for `list_persisted/0` in
-    # operator scope and assert zero occurrences. If `Ezagent.Workspace`
-    # is unavailable at runtime (test boot, partial app start), return
-    # `[]` — the operator-facing dropdown degrades to "no workspaces"
-    # rather than leaking hidden ones.
+    # Defensive fallback returns `[]` if `Ezagent.Workspace` is
+    # unavailable at runtime (test boot, partial app start).
     persisted =
       try do
         if Code.ensure_loaded?(Ezagent.Workspace) and
-             function_exported?(Ezagent.Workspace, :list_visible, 0) do
-          Ezagent.Workspace.list_visible()
+             function_exported?(Ezagent.Workspace, :list_workspaces_for, 2) do
+          Ezagent.Workspace.list_workspaces_for(caller_uri, caps)
           |> Enum.map(fn ws -> %{name: ws.name, uri: ws.uri} end)
         else
           []
@@ -318,6 +328,28 @@ defmodule EzagentWeb.LiveAuth do
 
     Enum.sort_by(persisted, & &1.name)
   end
+
+  # Load the caller's caps from the Users slice. Returns `[]` on any
+  # failure (unparseable URI, Users unavailable, DB unavailable). The
+  # cap-scope branch of `list_workspaces_for/2` degrades gracefully —
+  # the caller sees only their membership workspaces in that case.
+  defp load_caps(%URI{} = caller_uri) do
+    try do
+      if Code.ensure_loaded?(Ezagent.Users) and
+           function_exported?(Ezagent.Users, :get_by_uri, 1) do
+        case apply(Ezagent.Users, :get_by_uri, [caller_uri]) do
+          %{caps: caps} when is_list(caps) -> caps
+          _ -> []
+        end
+      else
+        []
+      end
+    rescue
+      _ -> []
+    end
+  end
+
+  defp load_caps(_), do: []
 
   # PR #149 (S-8): accept entity://user/* and entity://agent/* uniformly.
   #

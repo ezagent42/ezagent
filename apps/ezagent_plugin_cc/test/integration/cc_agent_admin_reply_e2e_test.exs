@@ -29,8 +29,9 @@ defmodule Ezagent.PluginCc.Integration.CcAgentAdminReplyE2eTest do
       → admin sends `chat.send` to the session (mentioning the agent —
         mention-gated routing per PR #226)
       → Session fans out to the agent → `chat.receive` →
-        `BridgeRegistry.lookup` → `{:to_claude, payload}` → channel
-        pushes `to_claude` to the bridge → bridge emits
+        `BridgeRegistry.lookup` → cc BridgeAdapter →
+        `{:agent_bridge_push, "to_claude", payload}` → channel pushes
+        `to_claude` to the bridge → bridge emits
         `notifications/claude/channel` on its stdout
       → fake claude sees the notification, calls
         `tools/call name="reply"` → bridge sends a WS `"reply"` event

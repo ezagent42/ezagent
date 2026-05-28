@@ -169,7 +169,16 @@ defmodule Ezagent.Invariants.SingleSpawnEntryTest do
       # the PerBindingSupervisor's init/1 starts the Kind.Server child
       # through `Supervisor.init/1` (not start_child). Two-tier
       # topology preserved.
-      "apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/worker_spawn.ex"
+      "apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/worker_spawn.ex",
+      # EzagentPluginCodex.BridgeSidecar + EzagentPluginCodex.AppServer
+      # (2026-05-27, PR #436 codex agent plugin). Mirrors the cc
+      # PtyServer / Domain.Python exemption — these spawn the Python
+      # bridge subprocess wrapper and the per-agent Codex app-server
+      # supervisor child via plugin-owned DynamicSupervisors. NOT Kinds.
+      # Allowlist landed in PR #438 rebase (the bridge_sidecar/app_server
+      # call-sites came in with PR #436 but the allowlist entry was missed).
+      "apps/ezagent_plugin_codex/lib/ezagent/plugin_codex/bridge_sidecar.ex",
+      "apps/ezagent_plugin_codex/lib/ezagent/plugin_codex/app_server.ex"
     ]
   end
 end

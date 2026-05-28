@@ -485,7 +485,7 @@ defmodule Ezagent.NotificationSubscriptions do
   defp stream_to_string(s) when is_binary(s), do: s
 
   defp parse_stream_uri(%URI{} = u), do: u
-  defp parse_stream_uri(s) when is_binary(s), do: URI.parse(s)
+  defp parse_stream_uri(s) when is_binary(s), do: Ezagent.URI.parse!(s)
 
   # Codex round-3 CRITICAL fix: REMOVED the `%{caps: :system} -> :ok`
   # clause entirely. System callers no longer go through this

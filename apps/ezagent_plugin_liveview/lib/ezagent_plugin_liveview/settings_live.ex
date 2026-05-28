@@ -202,7 +202,7 @@ defmodule EzagentPluginLiveview.SettingsLive do
   def render(assigns) do
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
-        URI.to_string(assigns.current_entity_uri || URI.parse("entity://user/system/admin"))
+        URI.to_string(assigns.current_entity_uri || Ezagent.URI.parse!("entity://user/system/admin"))
       end)
 
     ~H"""

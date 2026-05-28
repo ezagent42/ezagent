@@ -27,10 +27,10 @@ defmodule EzagentCore.Invariants.WorkspaceLvCliParityTest do
 
   ## Exemptions
 
-  - LV-internal helpers (`Ezagent.Workspace.list_visible/0` etc.)
-    that are pure reads with no side-effects do NOT require a CLI
-    task — read-only listing is well-served by `iex -S mix` and a
-    one-line `mix run -e`. The exemption list below should stay
+  - LV-internal helpers (`Ezagent.Workspace.list_workspaces_for/2`
+    etc.) that are pure reads with no side-effects do NOT require a
+    CLI task — read-only listing is well-served by `iex -S mix` and
+    a one-line `mix run -e`. The exemption list below should stay
     short; if it grows, consider whether the read deserves a CLI
     after all.
   """
@@ -48,7 +48,12 @@ defmodule EzagentCore.Invariants.WorkspaceLvCliParityTest do
 
   # Read-only operations that are LV-only by design. Keep this list
   # short and justified.
-  @read_only_exemptions ~w(list_visible list_persisted list_all)
+  #
+  # SPEC 2026-05-27-workspace-cap-based-visibility: `list_visible`
+  # and `list_persisted` were DELETED; the operator-facing reader
+  # is `list_workspaces_for/2`. `list_all` remains for system-internal
+  # callers (Loader, audit tooling).
+  @read_only_exemptions ~w(list_workspaces_for list_all list_workspaces)
 
   # Operations that have a CLI counterpart under a DIFFERENT mix-task
   # namespace, OR that are not operator-facing in their own right

@@ -103,13 +103,19 @@ defmodule EzagentPluginLiveview.AgentExtensionsLive do
   defp parse_agent_uri(encoded) do
     decoded = URI.decode_www_form(encoded)
 
-    case URI.new(decoded) do
-      {:ok, %URI{scheme: "entity", host: "agent", path: "/" <> rest} = uri}
-      when is_binary(rest) and rest != "" ->
-        {:ok, uri}
+    # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+    # with try/rescue keeping the `:error` failure contract.
+    try do
+      case Ezagent.URI.parse!(decoded) do
+        %URI{scheme: "entity", host: "agent", path: "/" <> rest} = uri
+        when is_binary(rest) and rest != "" ->
+          {:ok, uri}
 
-      _ ->
-        :error
+        _ ->
+          :error
+      end
+    rescue
+      ArgumentError -> :error
     end
   end
 
@@ -180,7 +186,7 @@ defmodule EzagentPluginLiveview.AgentExtensionsLive do
     caller_uri = socket.assigns.caller_uri
     caller_caps = socket.assigns.caller_caps
 
-    target = URI.parse("#{URI.to_string(agent_uri)}?action=sandbox.read")
+    target = Ezagent.URI.parse!("#{URI.to_string(agent_uri)}?action=sandbox.read")
 
     case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
            target: target,

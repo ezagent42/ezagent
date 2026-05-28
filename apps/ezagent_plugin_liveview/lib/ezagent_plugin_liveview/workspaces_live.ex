@@ -1,13 +1,17 @@
 defmodule EzagentPluginLiveview.WorkspacesLive do
   @moduledoc """
-  /workspaces — list every VISIBLE persisted Workspace + form to create.
+  /workspaces — list every workspace the operator can SEE + form to create.
 
-  Reads `Ezagent.Workspace.list_visible/0` (which filters out
-  `visible: false` rows like `system` — Phase 9 PR-8). SPEC 2026-05-24
-  PR-1 / Allen Q3 fix: previously used `list_persisted/0` which leaked
-  the system workspace to all logged-in users (only admins should see
-  it; admin-promote happens via membership in `system`, not via the
-  /workspaces page).
+  Reads `Ezagent.Workspace.list_workspaces_for/2` (SPEC
+  2026-05-27-workspace-cap-based-visibility) — visibility is
+  cap-derived: callers see workspaces their caps reach and their
+  membership grants. Admin-shortcut callers see all.
+
+  Pre-SPEC (Phase 9 PR-8) used `list_visible/0` against a `:visible`
+  boolean. The field is gone; the cap-derived listing is structurally
+  caller-scoped, so the previous discipline ("use list_visible, not
+  list_persisted") no longer applies — there is one operator-facing
+  listing function, and it cannot leak hidden workspaces.
 
   Phase 4d separates "what's declared to exist" (Store) from "what's
   currently spawned" (KindRegistry); a healthy system has them equal,
@@ -45,20 +49,20 @@ defmodule EzagentPluginLiveview.WorkspacesLive do
   def mount(_params, _session, socket) do
     {:ok,
      socket
-     |> assign(:workspaces, list_workspaces())
+     |> assign(:workspaces, list_workspaces(socket))
      |> assign(:flash_error, nil)
      |> assign(:new_form, to_form(%{"name" => ""}, as: "new_workspace"))}
   end
 
-  # Codex PR3-companion / SPEC 2026-05-24 PR-1 (Allen Q3 bug fix):
-  # `list_persisted/0` returns ALL workspace rows including
-  # `visible: false` ones (e.g. `system`). Non-admin users would see
-  # the system workspace in the /workspaces page — a confusion +
-  # privilege-misperception bug. The dropdown (live_auth.ex) already
-  # uses `list_visible/0`; this LV was missed when Phase 9 PR-8
-  # added the visible flag.
-  defp list_workspaces do
-    Ezagent.Workspace.list_visible()
+  # SPEC 2026-05-27-workspace-cap-based-visibility — cap-derived
+  # per-caller listing. `live_auth.ex` already populates
+  # `:current_entity_uri` + caps; this LV passes them through. No
+  # field-based filter; no leak risk by construction.
+  defp list_workspaces(socket) do
+    caller_uri = Map.get(socket.assigns, :current_entity_uri)
+    caps = Map.get(socket.assigns, :current_caps, [])
+
+    Ezagent.Workspace.list_workspaces_for(caller_uri, caps)
     |> Enum.map(fn ws ->
       live_pid =
         case Ezagent.KindRegistry.lookup(ws.uri) do
@@ -77,7 +81,7 @@ defmodule EzagentPluginLiveview.WorkspacesLive do
       {:ok, _pid} ->
         {:noreply,
          socket
-         |> assign(:workspaces, list_workspaces())
+         |> assign(:workspaces, list_workspaces(socket))
          |> assign(:new_form, to_form(%{"name" => ""}, as: "new_workspace"))
          |> assign(:flash_error, nil)}
 
@@ -99,7 +103,7 @@ defmodule EzagentPluginLiveview.WorkspacesLive do
     # universal chrome (avatar / notifications / search / ⌘K).
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
-        URI.to_string(assigns.current_entity_uri || URI.parse("entity://user/system/admin"))
+        URI.to_string(assigns.current_entity_uri || Ezagent.URI.parse!("entity://user/system/admin"))
       end)
 
     ~H"""

@@ -43,7 +43,7 @@ defmodule EzagentDomainUi.AutoDerive do
   end
 
   defp parse_uri(%URI{} = u), do: u
-  defp parse_uri(s) when is_binary(s), do: URI.parse(s)
+  defp parse_uri(s) when is_binary(s), do: Ezagent.URI.parse!(s)
 
   @doc """
   Fetch detail for a single live instance.

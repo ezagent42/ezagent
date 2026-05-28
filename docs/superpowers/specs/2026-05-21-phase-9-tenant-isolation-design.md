@@ -760,9 +760,13 @@ alongside `workspace://default` and is structurally privileged:
 - `workspace://system` members hold the bootstrap admin cap
   (`workspace_uri: :any`) by virtue of membership, not by explicit
   per-cap grant.
-- `workspace://system` is NOT visible in the regular workspace
-  selector UI for non-system members (it's not "a workspace you
-  could be in").
+- `workspace://system` does not appear in the per-caller workspace
+  listing for callers who lack `workspace://system` membership or
+  cross-workspace admin caps. Mechanism:
+  `Ezagent.Workspace.list_workspaces_for/2` (SPEC
+  `2026-05-27-workspace-cap-based-visibility.md`). Visibility is
+  cap-derived, not field-based — the prior `:visible` boolean is
+  GONE. **Amended 2026-05-27 by SPEC #423 §4.3.**
 - Migration: existing `entity://user/default/admin` (from PR-2)
   becomes `entity://user/system/admin`. Bootstrap seed updated.
 
@@ -792,8 +796,9 @@ For regular workspace members (NOT in `workspace://system`):
   (visual indicator). Clicking a locked workspace → "Sign in to
   `<workspace>`" prompt (per §6.4 Amendment 3).
 - Their own workspace is highlighted as "current".
-- They never see `workspace://system` in the selector (it's
-  hidden per §13.1).
+- They never see `workspace://system` in the selector (they are
+  not members; their caps don't reference it — cap-derived per
+  §13.1 amendment 2026-05-27 / SPEC #423).
 
 This matches Keycloak's master-realm admin model — system admins
 stay authenticated as themselves with context-switching; regular
@@ -824,7 +829,7 @@ arity overload.
 
 ```elixir
 # Create system workspace first
-{:ok, _} = Ezagent.Workspace.create("system", %{visible: false})
+{:ok, _} = Ezagent.Workspace.create("system", %{})
 
 # Create default workspace
 {:ok, _} = Ezagent.Workspace.create("default", %{})
@@ -833,9 +838,14 @@ arity overload.
 {:ok, _} = Ezagent.Users.create("entity://user/system/admin", "<password>", [])
 ```
 
-The `visible: false` field on workspaces is NEW — defaults to true;
-set to false for `workspace://system` so it doesn't appear in regular
-workspace dropdowns.
+**Amended 2026-05-27 by SPEC #423 §4.3.** The `:visible` boolean
+was removed from the workspaces schema; `workspace://system` no
+longer needs a per-row hide flag. Visibility is cap-derived via
+`Ezagent.Workspace.list_workspaces_for/2` — `workspace://system`
+appears in a caller's listing iff the 4-predicate admin shortcut
+fires (bootstrap-wildcard cap, structural cross-workspace admin
+cap, URI host = `system`, or explicit `workspace://system`
+membership).
 
 ### 13.5 Migration impact (relative to PR-2 already merged)
 

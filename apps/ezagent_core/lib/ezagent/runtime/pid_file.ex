@@ -271,7 +271,14 @@ defmodule Ezagent.Runtime.PidFile do
 
     case String.split(base, "_", parts: 4) do
       ["entity", "agent", workspace, entity_name] ->
-        URI.new("entity://agent/#{workspace}/#{entity_name}")
+        # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+        # for any URI string entering the system. Try/rescue keeps the
+        # `{:ok, _} | {:error, _}` contract of this private helper.
+        try do
+          {:ok, Ezagent.URI.parse!("entity://agent/#{workspace}/#{entity_name}")}
+        rescue
+          ArgumentError -> {:error, :bad_filename}
+        end
 
       _ ->
         {:error, :bad_filename}

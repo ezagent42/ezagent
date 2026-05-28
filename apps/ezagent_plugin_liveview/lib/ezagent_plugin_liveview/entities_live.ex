@@ -63,9 +63,12 @@ defmodule EzagentPluginLiveview.EntitiesLive do
   end
 
   defp parse_or_nil(uri_str) do
-    case URI.new(uri_str) do
-      {:ok, u} -> u
-      _ -> nil
+    # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+    # with try/rescue keeping the nil-fallback display semantics.
+    try do
+      Ezagent.URI.parse!(uri_str)
+    rescue
+      ArgumentError -> nil
     end
   end
 
@@ -82,7 +85,7 @@ defmodule EzagentPluginLiveview.EntitiesLive do
     # over AdminShell.admin_shell.
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
-        URI.to_string(assigns.current_entity_uri || URI.parse("entity://user/system/admin"))
+        URI.to_string(assigns.current_entity_uri || Ezagent.URI.parse!("entity://user/system/admin"))
       end)
 
     ~H"""

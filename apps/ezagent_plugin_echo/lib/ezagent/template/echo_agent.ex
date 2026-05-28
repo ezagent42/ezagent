@@ -114,31 +114,37 @@ defmodule Ezagent.PluginEcho.Template.EchoAgent do
   # prefix as `<flavor>_<rest>` (SPEC v2 §5.14). echo.agent requires
   # flavor=echo.
   defp check_agent_uri(%{"agent_uri" => uri_str}) when is_binary(uri_str) and uri_str != "" do
-    case URI.new(uri_str) do
-      {:ok, %URI{scheme: "entity", host: "agent", path: "/" <> rest}} when rest != "" ->
-        with [_workspace, entity_name] when entity_name != "" <-
-               String.split(rest, "/", parts: 2),
-             [flavor, suffix] when flavor != "" and suffix != "" <-
-               String.split(entity_name, "_", parts: 2) do
-          if flavor == "echo" do
-            :ok
+    # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+    # with try/rescue keeping the structured `{:error, _}` contract.
+    try do
+      case Ezagent.URI.parse!(uri_str) do
+        %URI{scheme: "entity", host: "agent", path: "/" <> rest} when rest != "" ->
+          with [_workspace, entity_name] when entity_name != "" <-
+                 String.split(rest, "/", parts: 2),
+               [flavor, suffix] when flavor != "" and suffix != "" <-
+                 String.split(entity_name, "_", parts: 2) do
+            if flavor == "echo" do
+              :ok
+            else
+              {:error, {:wrong_agent_flavor, flavor, expected: "echo"}}
+            end
           else
-            {:error, {:wrong_agent_flavor, flavor, expected: "echo"}}
+            _ ->
+              {:error,
+               {:missing_flavor_prefix, uri_str,
+                "agent URIs must be `entity://agent/<workspace>/echo_<name>` (Phase 9 PR-2)"}}
           end
-        else
-          _ ->
-            {:error,
-             {:missing_flavor_prefix, uri_str,
-              "agent URIs must be `entity://agent/<workspace>/echo_<name>` (Phase 9 PR-2)"}}
-        end
 
-      {:ok, %URI{scheme: "entity"}} ->
-        {:error,
-         {:invalid_agent_uri, uri_str,
-          "agent URIs must be `entity://agent/<workspace>/echo_<name>` (Phase 9 PR-2)"}}
+        %URI{scheme: "entity"} ->
+          {:error,
+           {:invalid_agent_uri, uri_str,
+            "agent URIs must be `entity://agent/<workspace>/echo_<name>` (Phase 9 PR-2)"}}
 
-      _ ->
-        {:error, {:bad_agent_uri, uri_str}}
+        _ ->
+          {:error, {:bad_agent_uri, uri_str}}
+      end
+    rescue
+      ArgumentError -> {:error, {:bad_agent_uri, uri_str}}
     end
   end
 
@@ -156,7 +162,7 @@ defmodule Ezagent.PluginEcho.Template.EchoAgent do
 
   @impl Ezagent.Kind.Template
   def instantiate(_tmpl_name, %{"agent_uri" => uri_str} = tmpl, _workspace_uri) do
-    agent_uri = URI.parse(uri_str)
+    agent_uri = Ezagent.URI.parse!(uri_str)
 
     # codex round-6 HIGH-1 — the 3-element `{:ok, uris, %{fresh?: _}}`
     # return carries whether THIS call STARTED the Agent Kind worker.

@@ -72,7 +72,7 @@ defmodule Mix.Tasks.Ezagent.User.Token do
 
     Mix.Task.run("app.start")
 
-    uri = URI.parse(uri_str)
+    uri = Ezagent.URI.parse!(uri_str)
 
     cond do
       opts[:mint] ->

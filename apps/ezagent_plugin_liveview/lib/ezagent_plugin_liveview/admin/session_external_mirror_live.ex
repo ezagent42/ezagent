@@ -315,18 +315,13 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLive do
   defp caller_caps(nil), do: MapSet.new()
 
   defp caller_caps(%URI{} = uri) do
-    # Normalize via stock `URI.parse` so the URI's `:authority` field
-    # is populated. `EzagentWeb.LiveAuth.parse_entity_uri/1` uses
-    # `Ezagent.URI.parse!/1` which does NOT set `:authority`; the
-    # downstream `Ezagent.Identity.bootstrap_self_cap/1` stores that
-    # un-authority'd URI in `instance:` but `Ezagent.Capability.
-    # cap_for_action/3` derives the needed instance from a
-    # `URI.parse(...?action=...)` target whose `:authority` IS set.
-    # `Capability.matches?/2`'s `instance_match?(same, same)` requires
-    # struct equality — the `:authority` mismatch silently denies, and
-    # `list_caps_for/1` returns `MapSet.new()` instead of the real
-    # cap set. Re-parsing here closes the round-trip.
-    normalized_uri = uri |> URI.to_string() |> URI.parse()
+    # SPEC 2026-05-27-uri-canonicalization §1.2 — DELETED the hand-rolled
+    # `URI.parse(URI.to_string(uri))` round-trip. Post-SPEC, all URIs
+    # everywhere are canonical (`authority == nil`) because they flow
+    # through `Ezagent.URI.parse!/1`; the matcher does to_string-based
+    # comparison anyway. Re-canonicalize defensively in case a caller
+    # constructed the URI outside the chokepoint.
+    normalized_uri = uri |> URI.to_string() |> Ezagent.URI.parse!()
     Ezagent.Identity.list_caps_for(normalized_uri)
   end
 
@@ -334,7 +329,7 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLive do
 
   defp build_ctx(caller_uri, caller_caps) do
     %{
-      caller: caller_uri || URI.parse("entity://user/system/admin"),
+      caller: caller_uri || Ezagent.URI.parse!("entity://user/system/admin"),
       caps: caller_caps || MapSet.new(),
       reply: :ignore
     }
@@ -569,7 +564,7 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLive do
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
         URI.to_string(
-          Map.get(assigns, :current_entity_uri) || URI.parse("entity://user/system/admin")
+          Map.get(assigns, :current_entity_uri) || Ezagent.URI.parse!("entity://user/system/admin")
         )
       end)
 

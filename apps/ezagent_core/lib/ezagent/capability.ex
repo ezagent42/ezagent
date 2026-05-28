@@ -475,22 +475,42 @@ defmodule Ezagent.Capability do
   # so this branch fires only for unusual callers (test fixtures).
   def cross_workspace?(%__MODULE__{}, _), do: false
 
-  # Caller's HOME workspace IS system (admin's structural URI:
-  # `entity://user/system/admin`). Pre-existing structural path.
-  defp home_is_system?(caller_uri) do
+  @doc """
+  Caller's HOME workspace IS `workspace://system` (admin's
+  structural URI shape: `entity://user/system/<name>`). Pre-existing
+  structural admin path used by `cross_workspace?/2` and (SPEC
+  2026-05-27-workspace-cap-based-visibility OQ-4 r5) by
+  `Ezagent.Identity.AdminAuthority.admin?/2`.
+
+  Returns `false` for non-entity callers or malformed URIs (the
+  inner `workspace_of_caller_safe/1` catches the
+  `Ezagent.URI.entity_workspace_uri/1` raise).
+  """
+  @spec home_is_system?(URI.t()) :: boolean()
+  def home_is_system?(%URI{} = caller_uri) do
     case workspace_of_caller_safe(caller_uri) do
       %URI{} = workspace -> URI.to_string(workspace) == "workspace://system"
       _ -> false
     end
   end
 
-  # SPEC v2 PR-D (Allen 2026-05-24): caller is a MEMBER of
-  # workspace://system. The "Promote to system" admin action uses
-  # this path — a regular user (`entity://user/<their-ws>/<name>`)
-  # gains cross-workspace authority by membership, not by a special
-  # URI host. Lazy lookup via apply/3 to avoid compile-time core →
-  # workspace circular dep.
-  defp member_of_system?(%URI{} = caller_uri) do
+  def home_is_system?(_), do: false
+
+  @doc """
+  Caller is listed in `workspace://system`'s `members`. SPEC v2 PR-D
+  (Allen 2026-05-24): the "Promote to system" admin action grants
+  cross-workspace authority by MEMBERSHIP — a regular user
+  (`entity://user/<their-ws>/<name>`) becomes admin-equivalent
+  without needing a special URI host.
+
+  SPEC 2026-05-27-workspace-cap-based-visibility OQ-4 (r5 — option b):
+  promoted to public so `Ezagent.Identity.AdminAuthority.admin?/2`
+  can compose the 4-predicate admin shortcut. Lazy lookup via
+  `apply/3` to avoid a compile-time `ezagent_core` →
+  `ezagent_domain_workspace` circular dep.
+  """
+  @spec member_of_system?(URI.t()) :: boolean()
+  def member_of_system?(%URI{} = caller_uri) do
     if Code.ensure_loaded?(Ezagent.Workspace.Store) and
          function_exported?(Ezagent.Workspace.Store, :get_by_name, 1) do
       case apply(Ezagent.Workspace.Store, :get_by_name, ["system"]) do
@@ -505,6 +525,8 @@ defmodule Ezagent.Capability do
       false
     end
   end
+
+  def member_of_system?(_), do: false
 
   defp workspace_of_caller_safe(%URI{} = uri) do
     try do
@@ -589,7 +611,7 @@ defmodule Ezagent.Capability do
   defp workspace_from_3seg_path(%URI{path: "/" <> rest}) do
     case String.split(rest, "/", parts: 2) do
       [workspace_name, _name] when workspace_name != "" ->
-        URI.new!("workspace://" <> workspace_name)
+        URI.new!("workspace://" <> workspace_name) # uri-canonical-allow: §3.6 structural derivation from validated path segment
 
       _ ->
         raise ArgumentError,
@@ -806,7 +828,7 @@ defmodule Ezagent.Capability do
   end
 
   defp parse_granter(%URI{} = uri), do: uri
-  defp parse_granter(s) when is_binary(s), do: URI.parse(s)
+  defp parse_granter(s) when is_binary(s), do: Ezagent.URI.parse!(s)
 
   defp parse_granter(other) do
     raise ArgumentError,
@@ -874,7 +896,7 @@ defmodule Ezagent.Capability do
   # and crashes anyway; we raise with context).
   defp decode_uri_or_any_strict!("any", _field), do: :any
 
-  defp decode_uri_or_any_strict!(s, _field) when is_binary(s), do: URI.parse(s)
+  defp decode_uri_or_any_strict!(s, _field) when is_binary(s), do: Ezagent.URI.parse!(s)
 
   defp decode_uri_or_any_strict!(other, field) do
     raise ArgumentError,
@@ -952,7 +974,7 @@ defmodule Ezagent.Capability do
   defp uri_or_any_to_string(%URI{} = u), do: URI.to_string(u)
 
   defp string_to_uri_or_any("any"), do: :any
-  defp string_to_uri_or_any(s) when is_binary(s), do: URI.parse(s)
+  defp string_to_uri_or_any(s) when is_binary(s), do: Ezagent.URI.parse!(s)
 
   defp parse_datetime(nil), do: DateTime.utc_now()
 

@@ -194,7 +194,7 @@ defmodule Ezagent.ExternalMirror.AdapterInstall do
     rows = safe_list_for_adapter(adapter_id)
 
     Enum.each(rows, fn %BindingRow{} = row ->
-      session_uri = URI.parse(row.session_uri)
+      session_uri = Ezagent.URI.parse!(row.session_uri)
 
       case WorkerSpawn.spawn(
              session_uri,

@@ -26,8 +26,12 @@ defmodule Ezagent.Entity.User do
   # members hold cross-workspace authority by membership (see
   # `Ezagent.Capability.cross_workspace?/2`); the structural admin cap
   # keeps `workspace_uri: :any` for defence in depth.
-  @admin_uri URI.parse("entity://user/system/admin")
-  @system_bootstrap_uri URI.parse("system://bootstrap/default")
+  # SPEC 2026-05-27-uri-canonicalization §3.5: compile-time constants
+  # — ETS-backed SchemeRegistry not available at compile time, so
+  # `URI.new!/1` (RFC 3986 strict) is the canonical form. Module
+  # attributes are the §3.5 carve-out from the URI.new! ban.
+  @admin_uri URI.new!("entity://user/system/admin")
+  @system_bootstrap_uri URI.new!("system://bootstrap/default")
 
   # Static granted_at — admin capability is a structural bootstrap, not
   # a time-varying grant. Same value across boots so tests/fixtures stay

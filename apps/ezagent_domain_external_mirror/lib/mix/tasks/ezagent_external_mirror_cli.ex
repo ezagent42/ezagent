@@ -158,7 +158,7 @@ defmodule Mix.Tasks.Ezagent.ExternalMirror.CLI do
           reply: :ignore
         }
   def build_ctx(as_uri) when is_binary(as_uri) do
-    caller_uri = URI.parse(as_uri)
+    caller_uri = Ezagent.URI.parse!(as_uri)
     caps = load_caps(caller_uri)
 
     %{caller: caller_uri, caps: caps, reply: :ignore}
@@ -212,19 +212,29 @@ defmodule Mix.Tasks.Ezagent.ExternalMirror.CLI do
   end
 
   @doc """
-  Parse a session URI string into a `%URI{}`. Uses stock `URI.parse/1`
-  (authority populated) so downstream cap matching works.
+  Parse a session URI string into a canonical `%URI{}`.
+
+  SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+  (`Ezagent.URI.parse!/1`). Downstream cap matching is to_string-based
+  (`Ezagent.Capability.instance_match?/2`) so the canonical authority:nil
+  form is correct.
   """
   @spec parse_session_uri(String.t()) :: URI.t()
   def parse_session_uri(s) when is_binary(s) do
-    case URI.parse(s) do
-      %URI{scheme: "session"} = uri ->
+    case safe_parse(s) do
+      {:ok, %URI{scheme: "session"} = uri} ->
         uri
 
       _ ->
         Mix.shell().error("error: #{inspect(s)} is not a session:// URI")
         Mix.raise("bad session URI")
     end
+  end
+
+  defp safe_parse(s) when is_binary(s) do
+    {:ok, Ezagent.URI.parse!(s)}
+  rescue
+    ArgumentError -> :error
   end
 
   @doc """

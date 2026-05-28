@@ -193,7 +193,7 @@ defmodule Ezagent.Orchestrator.McpServer do
   # yields an empty set, and every tool then DENIES (no `admin_caps`
   # fallback — SPEC §2 PR-5 HIGH-1).
   defp load_orchestrator_caps(%URI{} = orchestrator_uri) do
-    target = URI.parse("#{URI.to_string(orchestrator_uri)}?action=identity.list_caps")
+    target = Ezagent.URI.parse!("#{URI.to_string(orchestrator_uri)}?action=identity.list_caps")
 
     case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
            target: target,
@@ -228,10 +228,24 @@ defmodule Ezagent.Orchestrator.McpServer do
 
   defp fetch_uri(opts, key) do
     case Keyword.get(opts, key) do
-      %URI{} = uri -> {:ok, uri}
-      s when is_binary(s) -> {:ok, URI.parse(s)}
-      nil -> {:error, {:missing_opt, key}}
-      other -> {:error, {:invalid_uri_opt, key, other}}
+      %URI{} = uri ->
+        {:ok, uri}
+
+      s when is_binary(s) ->
+        # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+        # with try/rescue to preserve the `{:error, _}` contract for
+        # malformed opts.
+        try do
+          {:ok, Ezagent.URI.parse!(s)}
+        rescue
+          ArgumentError -> {:error, {:invalid_uri_opt, key, s}}
+        end
+
+      nil ->
+        {:error, {:missing_opt, key}}
+
+      other ->
+        {:error, {:invalid_uri_opt, key, other}}
     end
   end
 
@@ -503,9 +517,21 @@ defmodule Ezagent.Orchestrator.McpServer do
 
   defp arg_uri(args, key) do
     case Map.get(args, key) do
-      s when is_binary(s) and s != "" -> {:ok, URI.parse(s)}
-      %URI{} = uri -> {:ok, uri}
-      _ -> {:error, {:missing_arg, key}}
+      s when is_binary(s) and s != "" ->
+        # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+        # with try/rescue to preserve the `{:error, _}` contract for
+        # malformed MCP args.
+        try do
+          {:ok, Ezagent.URI.parse!(s)}
+        rescue
+          ArgumentError -> {:error, {:invalid_arg, key}}
+        end
+
+      %URI{} = uri ->
+        {:ok, uri}
+
+      _ ->
+        {:error, {:missing_arg, key}}
     end
   end
 

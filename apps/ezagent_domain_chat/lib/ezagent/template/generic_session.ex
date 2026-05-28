@@ -94,7 +94,7 @@ defmodule Ezagent.Template.GenericSession do
     # `session://<template>/<workspace>/<name>`. GenericSession is
     # itself the template (template name `generic`).
     workspace_name = workspace_uri.host
-    session_uri = URI.parse("session://generic/#{workspace_name}/#{session_name}")
+    session_uri = Ezagent.URI.parse!("session://generic/#{workspace_name}/#{session_name}")
 
     with {:ok, _session_pid} <- spawn_session(session_uri),
          :ok <- join_members(session_uri, Map.get(tmpl, "members", [])),
@@ -115,10 +115,13 @@ defmodule Ezagent.Template.GenericSession do
 
   defp join_members(session_uri, members) do
     target =
-      URI.parse("#{URI.to_string(session_uri)}?action=chat.join")
+      Ezagent.URI.parse!("#{URI.to_string(session_uri)}?action=chat.join")
 
     Enum.each(members, fn member_uri_str ->
-      case URI.new(member_uri_str) do
+      # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+      # with try/rescue so the per-member error path stays intact (skip
+      # bad member, warn, continue — Invariant #9 graceful surface).
+      case safe_parse_member_uri(member_uri_str) do
         {:ok, member_uri} ->
           _ =
             Ezagent.Invocation.dispatch(%Ezagent.Invocation{
@@ -158,13 +161,26 @@ defmodule Ezagent.Template.GenericSession do
   defp warn_if_routing_rules_present(_), do: :ok
 
   defp parse_uri(s) when is_binary(s) do
-    case URI.new(s) do
-      {:ok, %URI{scheme: scheme}} when is_binary(scheme) -> {:ok, scheme}
-      _ -> {:error, :bad_uri}
+    # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+    # with try/rescue keeping the `{:error, :bad_uri}` shape; returns
+    # the scheme of a valid Ezagent URI.
+    try do
+      %URI{scheme: scheme} = Ezagent.URI.parse!(s)
+      {:ok, scheme}
+    rescue
+      ArgumentError -> {:error, :bad_uri}
     end
   end
 
   defp parse_uri(_), do: {:error, :not_a_string}
+
+  defp safe_parse_member_uri(s) when is_binary(s) do
+    {:ok, Ezagent.URI.parse!(s)}
+  rescue
+    ArgumentError -> :error
+  end
+
+  defp safe_parse_member_uri(_), do: :error
 
   # --- Ezagent.UI.Form ---------------------------------------------------------
 

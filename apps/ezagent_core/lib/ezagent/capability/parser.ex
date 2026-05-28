@@ -114,12 +114,13 @@ defmodule Ezagent.Capability.Parser do
   defp split_instance(spec) do
     case String.split(spec, "@", parts: 2) do
       [body, instance_str] ->
-        case URI.new(instance_str) do
-          {:ok, %URI{scheme: scheme} = uri} when is_binary(scheme) ->
-            {body, uri}
-
-          _ ->
-            {body, :any}
+        # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+        # for any URI string entering the system. Try/rescue keeps the
+        # `{body, :any}` fall-through for malformed CLI specs.
+        try do
+          {body, Ezagent.URI.parse!(instance_str)}
+        rescue
+          ArgumentError -> {body, :any}
         end
 
       [body] ->
