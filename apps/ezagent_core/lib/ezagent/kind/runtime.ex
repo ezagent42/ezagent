@@ -2,6 +2,50 @@ defmodule Ezagent.Kind.Runtime do
   @moduledoc """
   In-process dispatch flow inside a Kind GenServer.
 
+  ## New-contract effect execution order (Phase 1.5b)
+
+  When the dispatched Behavior is new-style (`use Ezagent.Behavior`),
+  the handler's `{:ok, result, effects}` return runs through
+  `Ezagent.Behavior.apply_effects/2` and then THIS module executes
+  each effect bucket against the rest of the system in the following
+  fixed order:
+
+      State → Halt-check → Saga → Dispatches → Notifies → Events → Terminations
+
+  Rationale (per SPEC `2026-05-28-router-behavior-kind-architecture.md`
+  §4.4 + Phase 1.5b directive):
+
+  - **State** — `:set` effects are eagerly applied to `slice` inside
+    `apply_effects/2` so subsequent in-handler `{:ref, ...}` substitutions
+    see the new values. The framework writes the new slice via the
+    standard snapshot path (commit-then-notify in `Kind.Server`).
+  - **Halt-check** — `apply_effects/2` short-circuits on `{:halt, _}`
+    and returns `{:halt, reason, partial}`. Remaining effects are
+    NOT executed; we map the halt to `{:error, {:halt, reason}}` so
+    the caller sees the dispatch as a failure and SnapshotStore never
+    sees the would-be new slice.
+  - **Saga** — runs BEFORE cross-Kind dispatches because the saga
+    IS the orchestration boundary; its own compensation must not
+    race with sibling dispatches.
+  - **Dispatches** — sequential, in declared order. Each is a
+    `%Ezagent.Cmd{}` re-entered via `Ezagent.Router.dispatch/1`. If
+    any dispatch returns `{:error, _}`, remaining dispatches/notifies/
+    events/terminations are skipped and the error propagates up.
+  - **Notifies** — `Phoenix.PubSub.broadcast(EzagentCore.PubSub, …)`.
+    Fire-and-forget; never blocks. Declared order preserved but no
+    happens-before guarantee w.r.t. subscribers.
+  - **Events** — `Ezagent.EventLog.append/4`. Audit failures DO
+    NOT halt the dispatch (audit is observational); a warning is
+    logged and the pipeline continues.
+  - **Terminations** — last so audit + notify have already happened
+    against the still-live Kind. Idempotent via
+    `Ezagent.Kind.terminate/1` (no-op when the URI is already gone).
+
+  The handler return + effect grammar live in `Ezagent.Behavior` —
+  this module is the EXECUTOR; the SCHEMA is over there.
+
+  ## Original dispatch flow
+
   Runs Appendix A steps 5-10 once the invocation has been routed to a
   specific pid by `Ezagent.Invocation.dispatch/1`:
 
@@ -718,7 +762,7 @@ defmodule Ezagent.Kind.Runtime do
 
     case apply(behavior_module, handler_name, [args, handler_ctx]) do
       {:ok, result, effects} when is_list(effects) ->
-        apply_new_contract_effects(slice, result, effects)
+        apply_new_contract_effects(slice, result, effects, ctx)
 
       {:ok, result} ->
         # No effects → slice unchanged, propagate the result.
@@ -745,18 +789,314 @@ defmodule Ezagent.Kind.Runtime do
       {:error, {:behavior_exception, kind, reason}}
   end
 
-  defp apply_new_contract_effects(slice, result, effects) do
+  # Phase 1.5b — execute the full effect grammar produced by
+  # `Ezagent.Behavior.apply_effects/2`.
+  #
+  # Execution order: State → Halt-check → Saga → Dispatches → Notifies
+  # → Events → Terminations. See the moduledoc + SPEC §4.4 for the
+  # rationale.
+  #
+  # `apply_effects/2` already mutated the slice (`:set` effects ran
+  # eagerly into its accumulator); the buckets we execute here are
+  # the OUT-OF-SLICE side effects.
+  #
+  # `ctx` carries `:caller`, `:self_uri`, `:slice_change_cursor`, etc.
+  # We use it to derive `workspace_uri` (for EventLog), `caller` (for
+  # both EventLog and re-dispatched Cmds), and the aggregate URI for
+  # events (the dispatching Kind's `:self_uri`).
+  defp apply_new_contract_effects(slice, result, effects, ctx) do
     case Ezagent.Behavior.apply_effects(effects, slice) do
-      {:ok, %{state: new_slice}} ->
-        {:ok, new_slice, result}
+      {:ok, buckets} ->
+        case execute_buckets(buckets, ctx) do
+          :ok ->
+            {:ok, buckets.state, result}
+
+          {:error, _} = err ->
+            err
+        end
 
       {:halt, reason, _partial} ->
         # `apply_effects/2` is the single point that knows whether to
         # commit partial effects — its `:halt` return is the signal
         # to roll back. Propagate as a typed error so the caller sees
-        # the dispatch failed without persisting anything.
+        # the dispatch failed without persisting anything. Side-effect
+        # buckets collected prior to the halt are DROPPED — the Kind
+        # has already not-yet-committed the slice and the dispatch is
+        # an atomic unit; partial side effects would leak observability
+        # about a failed transaction.
         {:error, {:halt, reason}}
     end
+  end
+
+  # Bucket execution — runs Saga → Dispatches → Notifies → Events →
+  # Terminations in that order. First failing dispatch / saga short-
+  # circuits with `{:error, _}`. Notifies / events / terminations
+  # NEVER abort the dispatch (broadcasts/audit/termination are
+  # observational + idempotent; their failure is logged but the
+  # dispatch still completes from the caller's POV — the slice WILL
+  # be committed and the slice_change event WILL fire).
+  defp execute_buckets(buckets, ctx) do
+    with :ok <- execute_saga(buckets.saga, ctx),
+         :ok <- execute_dispatches(buckets.dispatches, ctx) do
+      execute_notifies(buckets.notifies)
+      execute_events(buckets.events, ctx)
+      execute_terminations(buckets.terminations, ctx)
+      :ok
+    end
+  end
+
+  # `:saga` effect — `apply_effects/2` packages the saga as either
+  # `nil` (no saga in this handler return) or `{:saga, %Saga{}}`.
+  # We delegate to `Ezagent.SagaRunner.execute/2`; its return
+  # `{:ok, _}` is success; `{:error, _}` halts subsequent effects.
+  defp execute_saga(nil, _ctx), do: :ok
+
+  defp execute_saga({:saga, saga}, ctx) do
+    case Ezagent.SagaRunner.execute(saga, ctx) do
+      {:ok, _saga_result} ->
+        :ok
+
+      {:error, _} = err ->
+        Logger.warning(
+          "Ezagent.Kind.Runtime: saga effect failed; remaining effect " <>
+            "buckets aborted: #{inspect(err)}"
+        )
+
+        err
+    end
+  rescue
+    e ->
+      reason = {:saga_raised, Exception.message(e)}
+
+      Logger.warning(
+        "Ezagent.Kind.Runtime: saga effect raised; remaining effect " <>
+          "buckets aborted: #{inspect(reason)}"
+      )
+
+      {:error, reason}
+  catch
+    kind, payload ->
+      reason = {:saga_threw, kind, payload}
+
+      Logger.warning(
+        "Ezagent.Kind.Runtime: saga effect threw; remaining effect " <>
+          "buckets aborted: #{inspect(reason)}"
+      )
+
+      {:error, reason}
+  end
+
+  # `:dispatch` effects — re-enter `Ezagent.Router.dispatch/1` for
+  # each `%Cmd{}`. Sequential, in declared order. The Router does
+  # NOT call back into THIS module's execute_buckets in Phase 1.5b
+  # (it goes through `Ezagent.Invocation.dispatch/1` → another
+  # Kind's `Kind.Server` → its own `handle_dispatch/4` → its own
+  # `apply_new_contract_effects/4` if that target is new-style). No
+  # re-entrancy concern at the executor level.
+  #
+  # First failing dispatch aborts the rest. The dispatch error is
+  # propagated as `{:error, {:effect_dispatch_failed, reason}}` so
+  # the caller can distinguish "my handler failed" vs "an effect
+  # dispatch failed".
+  defp execute_dispatches([], _ctx), do: :ok
+
+  defp execute_dispatches([{:dispatch, %Ezagent.Cmd{} = cmd} | rest], ctx) do
+    enriched_cmd = enrich_dispatch_cmd(cmd, ctx)
+
+    case Ezagent.Router.dispatch(enriched_cmd) do
+      :ok ->
+        execute_dispatches(rest, ctx)
+
+      {:ok, _result} ->
+        execute_dispatches(rest, ctx)
+
+      {:error, reason} ->
+        Logger.warning(
+          "Ezagent.Kind.Runtime: :dispatch effect failed; aborting remaining " <>
+            "effects: target=#{inspect(cmd.target)} action=#{inspect(cmd.action)} " <>
+            "reason=#{inspect(reason)}"
+        )
+
+        {:error, {:effect_dispatch_failed, reason}}
+    end
+  end
+
+  # Propagate the dispatching Kind's identity into the Cmd's ctx
+  # when the handler-supplied Cmd left them blank. The handler is
+  # NOT required to set `caller` (most won't — the Cmd is a
+  # downstream effect, so "caller = self_uri" is the natural
+  # default). `trace_id` propagation likewise lets correlated
+  # traces span effect-chain dispatches.
+  defp enrich_dispatch_cmd(%Ezagent.Cmd{ctx: cmd_ctx} = cmd, ctx) do
+    self_uri = Map.get(ctx, :self_uri)
+    trace_id = Map.get(ctx, :trace_id)
+
+    new_ctx =
+      cmd_ctx
+      |> maybe_put_default(:caller, self_uri)
+      |> maybe_put_default(:trace_id, trace_id)
+
+    %{cmd | ctx: new_ctx}
+  end
+
+  defp maybe_put_default(map, _key, nil), do: map
+
+  defp maybe_put_default(map, key, default) do
+    case Map.get(map, key) do
+      :system -> Map.put(map, key, default)
+      nil -> Map.put(map, key, default)
+      _ -> map
+    end
+  end
+
+  # `:notify` effects — `Phoenix.PubSub.broadcast/3`. Fire-and-
+  # forget; broadcasts are observational and their failure NEVER
+  # halts the dispatch. We log a warning on broadcast failure
+  # (return value `{:error, _}`) but continue.
+  defp execute_notifies([]), do: :ok
+
+  defp execute_notifies([{:notify, topic, payload} | rest]) do
+    case Phoenix.PubSub.broadcast(EzagentCore.PubSub, topic, payload) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "Ezagent.Kind.Runtime: :notify broadcast failed (continuing): " <>
+            "topic=#{inspect(topic)} reason=#{inspect(reason)}"
+        )
+    end
+
+    execute_notifies(rest)
+  end
+
+  # `:emit` effects → `Ezagent.EventLog.append/4`. Each event
+  # becomes a row in the audit log. Audit failures NEVER halt the
+  # dispatch (audit is observational) but ARE logged.
+  #
+  # The aggregate URI for the events is `ctx[:self_uri]` (the Kind
+  # whose handler ran). `workspace_uri` is derived via
+  # `Ezagent.Capability.workspace_of/1` on `self_uri`.
+  defp execute_events([], _ctx), do: :ok
+
+  defp execute_events(events, ctx) do
+    self_uri = Map.get(ctx, :self_uri)
+
+    if is_nil(self_uri) do
+      # No aggregate URI available — Kind.Runtime was invoked
+      # without a self_uri (test-time or pathological). Skip
+      # audit; log once at debug level so the conditional silence
+      # is grep-able.
+      Logger.debug(
+        "Ezagent.Kind.Runtime: :emit effects produced but ctx[:self_uri] " <>
+          "is nil; skipping EventLog append for #{length(events)} event(s)"
+      )
+
+      :ok
+    else
+      workspace_uri = derive_workspace_uri(self_uri)
+      caller = normalize_caller_for_audit(Map.get(ctx, :caller))
+      trace_id = Map.get(ctx, :trace_id)
+
+      event_ctx = %{
+        caller: caller,
+        workspace_uri: workspace_uri,
+        trace_id: trace_id
+      }
+
+      Enum.each(events, fn {:emit, event_name, payload} ->
+        try do
+          case Ezagent.EventLog.append(self_uri, event_name, payload, event_ctx) do
+            {:ok, _event_id} ->
+              :ok
+
+            {:error, reason} ->
+              Logger.warning(
+                "Ezagent.Kind.Runtime: :emit EventLog.append failed (continuing): " <>
+                  "event=#{inspect(event_name)} reason=#{inspect(reason)}"
+              )
+          end
+        rescue
+          e ->
+            Logger.warning(
+              "Ezagent.Kind.Runtime: :emit EventLog.append raised (continuing): " <>
+                "event=#{inspect(event_name)} #{Exception.message(e)}"
+            )
+        catch
+          # Repo unavailable / DBConnection checkout exits / etc.
+          # Audit is observational — never halt the dispatch on it.
+          kind, payload_caught ->
+            Logger.warning(
+              "Ezagent.Kind.Runtime: :emit EventLog.append threw (continuing): " <>
+                "event=#{inspect(event_name)} kind=#{inspect(kind)} payload=#{inspect(payload_caught)}"
+            )
+        end
+      end)
+
+      :ok
+    end
+  end
+
+  # `Ezagent.EventLog.append/4`'s `:caller` accepts only nil / URI /
+  # binary. The dispatch ctx may carry `:system` (atom) for internal
+  # callers — translate to nil so the audit row records "system" as
+  # "no entity caller" instead of FunctionClauseError'ing inside
+  # EventLog's URI helper.
+  defp normalize_caller_for_audit(:system), do: nil
+  defp normalize_caller_for_audit(nil), do: nil
+  defp normalize_caller_for_audit(%URI{} = u), do: u
+  defp normalize_caller_for_audit(s) when is_binary(s), do: s
+  defp normalize_caller_for_audit(_), do: nil
+
+  # Best-effort workspace derivation — `Capability.workspace_of/1`
+  # returns `:any` for cross-cutting schemes. EventLog requires a
+  # binary / URI; fall back to a `workspace://system` placeholder
+  # when the URI doesn't have a real workspace (rare; mostly
+  # `system://` principals + cross-cutting templates).
+  defp derive_workspace_uri(%URI{} = self_uri) do
+    case Ezagent.Capability.workspace_of(self_uri) do
+      :any -> "workspace://system"
+      %URI{} = ws -> ws
+      bin when is_binary(bin) -> bin
+      _ -> "workspace://system"
+    end
+  rescue
+    _ -> "workspace://system"
+  end
+
+  defp derive_workspace_uri(_), do: "workspace://system"
+
+  # `:terminate` effects → `Ezagent.Kind.terminate/1`. Each entry
+  # is `{:terminate, :self | URI.t()}`. `:self` resolves to
+  # `ctx[:self_uri]`. Idempotent (already-absent → :ok); failures
+  # are swallowed by `Kind.terminate/1` per its contract.
+  defp execute_terminations([], _ctx), do: :ok
+
+  defp execute_terminations(terminations, ctx) do
+    self_uri = Map.get(ctx, :self_uri)
+
+    Enum.each(terminations, fn
+      {:terminate, :self} ->
+        if is_nil(self_uri) do
+          Logger.debug(
+            "Ezagent.Kind.Runtime: :terminate :self requested but ctx[:self_uri] " <>
+              "is nil; skipping"
+          )
+        else
+          _ = Ezagent.Kind.terminate(self_uri)
+        end
+
+      {:terminate, %URI{} = target_uri} ->
+        _ = Ezagent.Kind.terminate(target_uri)
+
+      {:terminate, other} ->
+        Logger.warning(
+          "Ezagent.Kind.Runtime: :terminate effect target not a URI (skipping): " <>
+            inspect(other)
+        )
+    end)
+
+    :ok
   end
 
   defp handler_atom_for(action) when is_atom(action) do

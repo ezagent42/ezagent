@@ -896,6 +896,17 @@ defmodule Ezagent.Behavior do
   (`:dispatch`/`:notify`/`:terminate`/`:saga`) collect into output
   buckets. `{:halt, reason}` short-circuits.
 
+  ## Bucket-execution order (Phase 1.5b — `Ezagent.Kind.Runtime`)
+
+  `apply_effects/2` is PURE: it bucketises effects + applies `:set`
+  into state, but does NOT execute the buckets' side effects. The
+  caller (`Ezagent.Kind.Runtime.apply_new_contract_effects/4` in
+  Phase 1.5b) executes the buckets in this fixed order:
+
+      State → Halt-check → Saga → Dispatches → Notifies → Events → Terminations
+
+  See `Ezagent.Kind.Runtime`'s moduledoc for the per-bucket rationale.
+
   The CALLER (Router / Kind.Host in Phase 2) is responsible for:
   - persisting `state` via SnapshotStore
   - appending `events` to EventLog
