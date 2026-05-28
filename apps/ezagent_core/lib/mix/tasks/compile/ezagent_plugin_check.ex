@@ -293,7 +293,30 @@ defmodule Mix.Tasks.Compile.EzagentPluginCheck do
       |> Keyword.get_values(:behaviour)
       |> List.flatten()
 
-    behaviour in behaviours
+    cond do
+      behaviour in behaviours ->
+        true
+
+      # SPEC 2026-05-28 §6.2 — new-style Behaviors opt in via `use
+      # Ezagent.Behavior` instead of `@behaviour Ezagent.Behavior`.
+      # The macro emits a `__behavior__?/0` marker. The plugin
+      # contract is satisfied via the macro's @before_compile
+      # injection of the legacy callbacks (actions/0, interface/0,
+      # required_caps/0, cap_subjects/0) plus per-action handlers.
+      behaviour == Ezagent.Behavior and new_style_behavior?(module) ->
+        true
+
+      true ->
+        false
+    end
+  rescue
+    _ -> false
+  end
+
+  defp new_style_behavior?(module) do
+    Code.ensure_loaded?(module) and
+      function_exported?(module, :__behavior__?, 0) and
+      apply(module, :__behavior__?, [])
   rescue
     _ -> false
   end
