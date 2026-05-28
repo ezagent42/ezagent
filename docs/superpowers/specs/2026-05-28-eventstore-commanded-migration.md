@@ -1,6 +1,39 @@
 # SPEC — Ezagent state model migration to EventStore + Commanded (CQRS / event-sourcing)
 
-**Status:** r2 — DRAFT for codex adversarial-review (round 2). 2026-05-28.
+**Status:** r3 — DRAFT for codex adversarial-review (round 3). 2026-05-28.
+
+## r3 changelog (delta from r2, retained for trail)
+
+Addresses 6 HIGH + 2 MED from codex r2 REJECT (no CRIT in r2 — r1 CRITs closed):
+
+- **HIGH-1 (§4.1.5 inventory still wrong):** r2 misclassified `Ezagent.Workspace` as `{:snapshot, :on_change}` (actually `:ephemeral` at `apps/ezagent_domain_workspace/lib/ezagent/entity/workspace.ex:61`), `Ezagent.Entity.ExternalMirrorWorker` as `:on_terminate` (actually `:ephemeral` at `apps/ezagent_domain_external_mirror/lib/ezagent/entity/external_mirror_worker.ex:71`); omitted `Ezagent.Entity.System` (a real Kind with Routing behavior, `:ephemeral` at `apps/ezagent_core/lib/ezagent/entity/system.ex:32`); omitted `Ezagent.Behavior.IdentityAdmin` (separate behaviour module in same file as `Identity`, at `apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex:328`). **r3 fix:** §4.1.5 rewritten with statically-verified persistence values from each module. New §4.1.5-table-note clarifies that `:ephemeral` Kinds (`Workspace`, `ExternalMirrorWorker`, `System`) are durable via *external persistence* (Workspace = `workspaces` SQLite table via `Workspace.Store`; Worker = `external_mirror_bindings` reconciliation; System = config-derived bootstrap). Their migration target reads from those external sources at aggregate creation, not from `kind_snapshots`. The §6.0 import task is adjusted per-Kind to read from the correct source.
+
+- **HIGH-2 (§4.8 consistency matrix incomplete and references wrong files):** r2 referenced nonexistent `agents_live.ex` (actual: `agent_new_live.ex`), used TBD rows, and missed many write→read sites. **r3 fix:** §4.8 is rewritten with statically-verified file:line. New sites added: `users_live.ex:202` (set_password), `users_live.ex:230` (promote_to_system), `users_live.ex:250` (revoke from system), `workspace_detail_live.ex:255` (remove member), `routing_live.ex:307` (delete_rule), `agent_api_keys_live.ex:159` (delete_api_key). `agent_new_live.ex:120` corrected for create-agent. The matrix is now declared as the *source of truth*; r3 promotes the invariant to a structural AST scan via `Ezagent.Invariants.ConsistencyMatrixTest` that walks every LV `handle_event/3` clause AST-side and asserts: any dispatch followed by an `assign/2` re-read of the modified projection uses `consistency: :strong`. The hand-table is a doc artifact; the invariant test is the gate.
+
+- **HIGH-3 (§6.1 Phase 10-A still self-contradictory):** r2 left the "Worker first (smallest Kind) — One Kind migrated; everything else unchanged" phrasing while expanding to include Session ExternalMirror behavior. **r3 fix:** Phase 10-A renamed "ExternalMirror slice + Worker — the bind-spawn coupling boundary". The "smallest Kind" framing is dropped. New paragraph explicitly enumerates the split-brain protocol: Session's `Behavior.Chat` + `Behavior.Publisher.SessionImpl` + `Behavior.OrchestratorAdmin` slices stay GenServer-hosted; only the `:external_mirror` slice moves to the new Session aggregate. The Session GenServer is alive AND the Session aggregate has events on its stream — they are TWO state stores for one URI during 10-A. The pre-dispatch pipeline routes commands by which Behavior the command targets: ExternalMirror commands → aggregate; Chat/Publisher/OrchestratorAdmin commands → legacy. A new `Ezagent.SessionRouter` module owns the routing decision (`route_session_command/1 :: :legacy | :aggregate`). The invariant: any test that exercises a Session URI must drive BOTH the GenServer slice + the aggregate state into consistency.
+
+- **HIGH-4 (§6.0 messages archive plan wrong column / wrong join):** r2 said "filter by `created_at`"; actual schema column is `inserted_at` per `apps/ezagent_core/priv/repo/migrations/20260516070500_phase2_messages.exs:23`; per-session history is a `message_routings → messages` join per `apps/ezagent_core/lib/ezagent/message_store.ex:174`. **r3 fix:** §6.0 messages archive paragraph rewritten: the permanent query is an ordered union over (a) the archive `message_routings ⋈ messages` join filtered `inserted_at < <cutover_at>`, and (b) the new `session_messages_projection` filtered `inserted_at >= <cutover_at>`. Parity gates added for `recent_in_session`, `older_than`, `in_session_since` query shapes.
+
+- **HIGH-5 (§4.2.1 User projections still omit fields):** r2 added profile/token fields to aggregate state but the §5.1 projection table rows didn't reflect them. **r3 fix:** §5.1 projection table updated — `user_profile_projection(uri, workspace_uri, display_name, email, registered_at, destroyed?)`; `user_tokens_projection(uri, token_id, token_hash, label, scope, expires_at, last_used_at, minted_at, revoked_at, workspace_uri)`. Field-level parity gates added against `entity_profiles` + `entity_tokens` during the §6.0 import: every row in those tables must produce a matching projection row post-replay.
+
+- **MED-6 (§4.2.3 Session working-copy shape underspecified):** r2 had `template_working_copy: nil` — actual default is a structured map at `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:255` with `agent_slots`, `routing_rules`, `orchestrator_template_uri`, `default_workspace_uri`, `description`. **r3 fix:** §4.2.3 expanded — `template_working_copy` is now a sub-struct with the 5 named fields, default per `default_template_working_copy/0`. Replay test added: a Session with a populated working copy reconstructs all 5 fields.
+
+- **HIGH-7 (§3.8 saga step 0 was commentary, not code):** r2 documented `pre_destroy_caps` / `pre_destroy_sessions` / `pre_destroy_lineage_parent` in saga defstruct comments but the actual `defstruct` line didn't include them. **r3 fix:** §3.8 saga is REWRITTEN with explicit step 0:
+  ```elixir
+  def handle(%__MODULE__{step: nil}, %AgentDestroyRequested{} = ev) do
+    %CaptureDestroyPreSnapshot{agent_uri: ev.agent_uri}  # NEW: step 0 dispatches a snapshot-capture command FIRST
+  end
+  def handle(%__MODULE__{step: :pre_snapshotted}, %DestroyPreSnapshotCaptured{} = ev) do
+    %RevokeAllCapsHeldBy{agent_uri: ev.agent_uri}  # step 1 now reads snapshot from aggregate state
+  end
+  ```
+  The `DestroyPreSnapshotCaptured` event payload carries the pre-destroy caps/sessions/lineage_parent; the aggregate's `apply/2` writes these into the aggregate's own state (NOT into the saga). The compensation reverse commands read those snapshot fields directly from the aggregate at compensation time. defstruct EXTENDED with these fields. Step 2 DestroyChildAgents stays declared non-compensable per saga forward-only doctrine; the post-r3 runbook documents the operator-repair path (`mix ezagent.saga.repair --saga DestroyAgentSaga --uri <uri>` reads partial residue + emits manual cleanup commands).
+
+- **MED-8 (§6.4 cleanup gate spoofable by fake ticket):** r2 only checked "matches docs/runbooks entry"; not a real artifact gate. **r3 fix:** §6.4 preflight requires a *drill receipt*: a signed JSON artifact at `priv/cleanup_receipts/<timestamp>.json` containing `{backup_path, backup_sha256, live_row_count, restored_row_count, parity_report_sha256, operator_email, drill_completed_at, expires_at: drill_completed_at + 24h}`. The `mix ezagent.cleanup.drill` task is the ONLY writer of that file; it computes the SHAs at drill time. The `mix ezagent.cleanup.execute` task verifies: (i) receipt exists, (ii) SHAs match the *current* live DB state, (iii) `drill_completed_at < now < expires_at`, (iv) `operator_email` is on `priv/cleanup_operators.allowlist` (committed file). Any tampering invalidates the SHA. The receipt cannot be forged via `--operator-approved` flag alone.
+
+---
+
+## r2 (prior) status
 
 ## r2 changelog (delta from r1, retained for trail)
 
@@ -414,21 +447,44 @@ defmodule Ezagent.Saga.DestroyAgentSaga do
     application: Ezagent.CommandedApp,
     name: "DestroyAgentSaga"
 
-  defstruct [:agent_uri, :workspace_uri, :step, :caps_revoked, :children_destroyed]
+  # r3 fix (HIGH-7): defstruct includes the pre-destroy snapshot fields.
+  defstruct [
+    :agent_uri, :workspace_uri, :step,
+    :pre_destroy_caps,         # captured at step 0 from agent_caps_projection
+    :pre_destroy_sessions,     # captured at step 0 from session_members_projection
+    :pre_destroy_lineage_parent, # captured at step 0 from agent_lineage_projection
+    :caps_revoked,
+    :children_destroyed
+  ]
 
   # Starts on AgentDestroyRequested event (emitted by Agent aggregate
   # when it accepts a Destroy command).
   def interested?(%AgentDestroyRequested{agent_uri: uri}), do: {:start, uri}
 
   # Continues for each follow-up event the saga emits commands for.
+  # r3 — added DestroyPreSnapshotCaptured as the step 0 follow-up.
+  def interested?(%DestroyPreSnapshotCaptured{agent_uri: uri}), do: {:continue, uri}
   def interested?(%AgentCapsRevoked{agent_uri: uri}), do: {:continue, uri}
   def interested?(%AgentChildrenDestroyed{agent_uri: uri}), do: {:continue, uri}
   def interested?(%AgentMembershipsDropped{agent_uri: uri}), do: {:continue, uri}
   def interested?(%AgentLineageUnlinked{agent_uri: uri}), do: {:continue, uri}
   def interested?(%AgentTerminated{agent_uri: uri}), do: {:stop, uri}
 
-  # Step 1: Revoke all caps held by this agent.
+  # Step 0 (r3 — HIGH-7 fix): capture the pre-destroy state on the aggregate
+  # BEFORE any destructive command. The aggregate's execute/2 for
+  # %CaptureDestroyPreSnapshot{} reads from projections at command-time and
+  # emits %DestroyPreSnapshotCaptured{} with caps/sessions/lineage_parent
+  # in the event payload. The aggregate's apply/2 writes them onto the
+  # aggregate's own state (NOT into the saga PM state) so compensation
+  # commands can read from the aggregate directly at compensation time.
   def handle(%__MODULE__{step: nil}, %AgentDestroyRequested{} = ev) do
+    %CaptureDestroyPreSnapshot{agent_uri: ev.agent_uri}
+  end
+
+  # Step 1: Revoke all caps held by this agent. Now driven by the
+  # DestroyPreSnapshotCaptured event (step 0's emission) — saga state
+  # captures the snapshot into its own fields for fast compensation lookup.
+  def handle(%__MODULE__{step: :pre_snapshotted}, %DestroyPreSnapshotCaptured{} = ev) do
     %RevokeAllCapsHeldBy{agent_uri: ev.agent_uri}
   end
 
@@ -458,6 +514,15 @@ defmodule Ezagent.Saga.DestroyAgentSaga do
   # State machine — track step progression.
   def apply(%__MODULE__{} = pm, %AgentDestroyRequested{} = ev),
     do: %{pm | agent_uri: ev.agent_uri, workspace_uri: ev.workspace_uri, step: :requested}
+
+  # r3: step 0 snapshot writes into saga PM state for fast compensation read.
+  def apply(%__MODULE__{} = pm, %DestroyPreSnapshotCaptured{} = ev),
+    do: %{pm |
+      step: :pre_snapshotted,
+      pre_destroy_caps: ev.caps,
+      pre_destroy_sessions: ev.sessions,
+      pre_destroy_lineage_parent: ev.lineage_parent
+    }
 
   def apply(pm, %AgentCapsRevoked{}), do: %{pm | step: :caps_revoked, caps_revoked: true}
   def apply(pm, %AgentChildrenDestroyed{}), do: %{pm | step: :children_destroyed, children_destroyed: true}
@@ -607,26 +672,33 @@ These bubble up to §11 codex review:
 
 r1 said "5 entity Kinds + 11 Behavior modules" — actual checkout enumeration:
 
-**Durable Kind modules (`{:snapshot, :on_change}` or `:on_terminate`) — all need migration target:**
+**All Kind modules + their statically-verified persistence (r3 — verified per file:line):**
 
-| Kind module | App | Persistence | Migration target |
-|---|---|---|---|
-| `Ezagent.Entity.User` | ezagent_domain_identity | `{:snapshot, :on_change}` | `Ezagent.Aggregate.User` (§4.2.1) |
-| `Ezagent.Entity.Session` | ezagent_domain_chat | `{:snapshot, :on_change}` | `Ezagent.Aggregate.Session` (§4.2.3) |
-| `Ezagent.Entity.Agent` | ezagent_domain_chat | `{:snapshot, :on_change}` | `Ezagent.Aggregate.Agent` (§4.2.2) |
-| `Ezagent.Workspace` | ezagent_domain_workspace | `{:snapshot, :on_change}` | `Ezagent.Aggregate.Workspace` (§4.2.4) |
-| `Ezagent.Entity.AgentTemplate` | ezagent_domain_chat | `{:snapshot, :on_change}` | **`Ezagent.Aggregate.AgentTemplate`** (added r2 §4.2.6) |
-| `Ezagent.Entity.SessionTemplate` | ezagent_domain_chat | `{:snapshot, :on_change}` | **`Ezagent.Aggregate.SessionTemplate`** (added r2 §4.2.7) |
-| `Ezagent.Entity.ExternalMirrorWorker` | ezagent_domain_external_mirror | `:on_terminate` | `Ezagent.Aggregate.ExternalMirrorWorker` (§4.2.5) |
-| `Ezagent.Entity.CurlAgent` | ezagent_plugin_curl_agent | `{:snapshot, :on_change}` | flavor variant of `Aggregate.Agent` |
-| `Ezagent.Entity.Echo` | ezagent_plugin_echo | varies | flavor variant of `Aggregate.Agent` |
-| `Ezagent.Entity.NpAgent` | ezagent_plugin_np | varies | flavor variant of `Aggregate.Agent` |
+| Kind module | App | Persistence (actual @file:line) | Durable source | Migration target |
+|---|---|---|---|---|
+| `Ezagent.Entity.User` | ezagent_domain_identity | `{:snapshot, :on_change}` @ `user.ex:234` | `kind_snapshots` + `users` + `entity_profiles` + `entity_tokens` | `Ezagent.Aggregate.User` (§4.2.1) |
+| `Ezagent.Entity.Session` | ezagent_domain_chat | `{:snapshot, :on_change}` @ `session.ex:48` | `kind_snapshots` + `messages`+ `message_routings` + `external_mirror_bindings` | `Ezagent.Aggregate.Session` (§4.2.3) |
+| `Ezagent.Entity.Agent` | ezagent_domain_chat | `{:snapshot, :on_change}` @ `agent.ex` | `kind_snapshots` + `agent_api_keys` + `agent_lineage` (registry, not DB) | `Ezagent.Aggregate.Agent` (§4.2.2) |
+| `Ezagent.Workspace` | ezagent_domain_workspace | **`:ephemeral`** @ `workspace.ex:61` (r3 corrected) | `workspaces` SQLite table via `Workspace.Store` — durable EXTERNALLY | `Ezagent.Aggregate.Workspace` (§4.2.4) reading from `Workspace.Store` at import |
+| `Ezagent.Entity.AgentTemplate` | ezagent_domain_chat | `{:snapshot, :on_change}` @ `agent_template.ex:118` | `kind_snapshots` | `Ezagent.Aggregate.AgentTemplate` (§4.2.6) |
+| `Ezagent.Entity.SessionTemplate` | ezagent_domain_chat | `{:snapshot, :on_change}` @ `session_template.ex:61` | `kind_snapshots` | `Ezagent.Aggregate.SessionTemplate` (§4.2.7) |
+| `Ezagent.Entity.ExternalMirrorWorker` | ezagent_domain_external_mirror | **`:ephemeral`** @ `external_mirror_worker.ex:71` (r3 corrected) | NOT durable per-Kind — bindings durable on Session in `external_mirror_bindings` | `Ezagent.Aggregate.ExternalMirrorWorker` (§4.2.5) reconstructed from binding events |
+| `Ezagent.Entity.System` (r1+r2 missed) | ezagent_core | **`:ephemeral`** @ `system.ex:32` (r3 added) | NOT durable — config-derived bootstrap singleton | NOT migrated as Aggregate; stays as runtime `Ezagent.Entity.System` GenServer (singleton; analogous to Pty — documented exception) |
+| `Ezagent.Entity.CurlAgent` | ezagent_plugin_curl_agent | per-flavor (typically `{:snapshot, :on_change}`) | `kind_snapshots` | flavor variant of `Aggregate.Agent` |
+| `Ezagent.Entity.Echo` | ezagent_plugin_echo | per-flavor | `kind_snapshots` | flavor variant of `Aggregate.Agent` |
+| `Ezagent.Entity.NpAgent` | ezagent_plugin_np | per-flavor | `kind_snapshots` | flavor variant of `Aggregate.Agent` |
+
+**r3 clarification — `:ephemeral` Kinds with external durability:** Three Kinds declare `:ephemeral` yet have durable state — durability lives in *external* tables/registries, not `kind_snapshots`. The §6.0 import task adapts per source:
+- `Workspace`: read `workspaces` rows via `Workspace.Store.list/0`; emit `%WorkspaceSnapshotImported{}` per row.
+- `ExternalMirrorWorker`: read `external_mirror_bindings` rows; emit `%WorkerSnapshotImported{}` reconstructed from each binding (cursor `:earliest`; the saga reconciles forward).
+- `System`: NOT migrated. Stays singleton GenServer; cross-aggregate code references it via existing facade.
 
 **Behavior modules (24 total — statically enumerated from `find apps -path "*/behavior/*.ex"`):**
 
 | Behavior | App | Disposition r2 |
 |---|---|---|
 | `Ezagent.Behavior.Identity` | ezagent_domain_identity | decomposed into per-aggregate cap commands |
+| `Ezagent.Behavior.IdentityAdmin` (r3 added — `identity.ex:328`) | ezagent_domain_identity | Workspace aggregate commands + admin-shortcut helper in pre-dispatch pipeline (separate behaviour module in same file as Identity) |
 | `Ezagent.Behavior.UserCredentials` | ezagent_domain_identity | User aggregate commands |
 | `Ezagent.Behavior.UserTokens` | ezagent_domain_identity | User aggregate commands |
 | `Ezagent.Behavior.ApiKeys` (r1 missed) | ezagent_domain_identity | Agent aggregate commands |
@@ -714,8 +786,10 @@ end
 
 **Projections:**
 - `user_caps_projection` — Ecto table `projections.user_caps(uri, cap_json, granted_by, granted_at)`. Read by `Behavior.Identity` queries and `/admin/users` LV. `consistency: :strong` for cap-grant dispatches that need read-after-write at the LV.
-- `user_profile_projection` — Ecto table `projections.user_profile(uri, workspace_uri, registered_at, destroyed?)`. Read by the user listing LV.
-- `user_tokens_projection` — Ecto table `projections.user_tokens(uri, token_id, scope, minted_at, expires_at, revoked_at)`. Read by `entity_tokens` queries (replaces the existing `entity_tokens` SQLite table).
+- `user_profile_projection` — Ecto table `projections.user_profile(uri, workspace_uri, display_name, email, registered_at, destroyed?)`. r3 fix (HIGH-5): added `display_name` (NOT NULL — required per `entity_profiles` changeset at `apps/ezagent_domain_identity/lib/ezagent/entity/profile.ex:41`) + `email` (optional, unique). Read by the user listing LV + login flow + workspace-scoped user filters.
+- `user_tokens_projection` — Ecto table `projections.user_tokens(uri, token_id, token_hash, label, scope, expires_at, last_used_at, minted_at, revoked_at, workspace_uri)`. r3 fix (HIGH-5): added `token_hash` (bcrypt hash — required for auth verification), `label` (operator-visible name), `last_used_at` (updated on each auth-handler dispatch), `workspace_uri` (per-tenant scope). Read by bearer auth + token-list admin LV.
+
+**Field-level parity gates (r3 — HIGH-5):** §6.0 `mix ezagent.aggregate.verify --kind user` reads every row in `entity_profiles` + `entity_tokens` and asserts a matching `user_profile_projection` + `user_tokens_projection` row exists post-replay with every column equal. Any divergence blocks cutover.
 
 **Persistence:** snapshot every 50 events. User aggregate event volume is low (one event per cap grant + one per token mint); 50 events is ~weeks of activity per active user.
 
@@ -803,8 +877,17 @@ defmodule Ezagent.Aggregate.Session do
     # ExternalMirror slice — durable binding descriptors.
     external_mirror_bindings: [], # list of %{binding_id, descriptor, adapter} maps
 
-    # SessionTemplate working copy — durable, staged before instantiate.
-    template_working_copy: nil,
+    # SessionTemplate working copy — durable structured map staged before
+    # instantiate. r3 fix (MED-6): actual default per
+    # `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:255`
+    # `default_template_working_copy/0` has these 5 sub-fields:
+    template_working_copy: %{
+      agent_slots: [],             # [{slot_name, source_template_uri, live_worker_uri, generation}]
+      routing_rules: [],           # [{matcher_ast, [slot_name]}] — receivers are slot NAMES
+      orchestrator_template_uri: nil, # URI.t() | nil — orchestrator's AgentTemplate
+      default_workspace_uri: nil,  # URI.t() | nil — where instantiated sessions land
+      description: ""              # human description of the team
+    },
 
     destroyed?: false
   ]
@@ -1064,24 +1147,33 @@ This split keeps domain events pure (only state-mutating facts; no telemetry noi
 
 Codex r1 HIGH-3: r1 said "opt to :strong per dispatch site" without enumerating sites. Default `:eventual` is unsafe at any callsite that immediately re-reads state.
 
-**Statically-enumerated write→read sites that MUST use `consistency: :strong`** (or named-projector consistency list):
+**Statically-enumerated write→read sites that MUST use `consistency: :strong`** (or named-projector consistency list) — file:line verified at r3:
 
 | Callsite | File:line | Write | Immediate re-read | Required mode |
 |---|---|---|---|---|
-| Create user | `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/users_live.ex:137` | RegisterUser | `list_users()` | `:strong` (or `[UserProfileProjector]`) |
-| Add workspace member | `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/workspace_detail_live.ex:165` | AddMemberToWorkspace | `Workspace.Store.get_by_name/1` | `:strong` |
-| Grant cap | `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/entity_caps_live.ex:142` | GrantCapToUser / GrantCapToAgent | reload caps | `:strong` (or `[UserCapsProjector, AgentCapsProjector]`) |
-| Add routing rule | `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/routing_live.ex:235` | AddRoutingRule | reload rules | `:strong` |
-| Create session (wizard) | `apps/ezagent_web/lib/ezagent_web/live/home_live.ex` (wizard submit) | CreateSession | redirect→/sessions/X mount | `:strong` (or `[SessionProfileProjector]`) |
+| Create user | `users_live.ex:137` | RegisterUser | `list_users()` @ `:143` | `:strong` |
+| Profile upsert | `users_live.ex:177` | UpsertProfile | `list_users()` @ `:181` | `:strong` |
+| Set password (r3 added) | `users_live.ex:202` | RotatePasswordForUser | `list_users()` @ `:206` | `:strong` |
+| Promote to system (r3 added) | `users_live.ex:230` | AddMemberToWorkspace(system) | `list_users()` @ `:235` | `:strong` |
+| Revoke from system (r3 added) | `users_live.ex:250` | RemoveMemberFromWorkspace(system) | `list_users()` @ `:253` | `:strong` |
+| Add workspace member | `workspace_detail_live.ex:165` | AddMemberToWorkspace | `Workspace.Store.get_by_name/1` | `:strong` |
+| Remove workspace member (r3 added) | `workspace_detail_live.ex:255`/`:273` | RemoveMemberFromWorkspace | reload members | `:strong` |
+| Grant cap | `entity_caps_live.ex:142` | GrantCapToUser / GrantCapToAgent | reload caps | `:strong` |
+| Add routing rule | `routing_live.ex:235` | AddRoutingRule | reload rules | `:strong` |
+| Delete routing rule (r3 added) | `routing_live.ex:307` | DeleteRoutingRule | reload rules | `:strong` |
+| Enable/disable routing rule (r3 added) | `routing_live.ex:308`-region | ToggleRoutingRule | reload rules | `:strong` |
+| Create agent — **r3 file corrected** | `agent_new_live.ex:120` | CreateAgent | redirect→agent detail | `:strong` |
+| Set api_key — **r3 confirmed exists** | `agent_api_keys_live.ex` (put handler) | PutApiKeyForAgent | reload keys list | `:strong` |
+| Delete api_key (r3 added) | `agent_api_keys_live.ex:159` | DeleteApiKeyForAgent | reload keys list | `:strong` |
+| Create session (wizard) | `apps/ezagent_web/lib/ezagent_web/live/home_live.ex` wizard submit | CreateSession | redirect→/sessions/X mount | `:strong` |
 | Mint user token (CLI) | `apps/ezagent_domain_identity/lib/mix/tasks/ezagent.user.token.ex:75` | MintTokenForUser | print token row | `:strong` |
-| Create agent (CLI + LV) | `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/agents_live.ex` (create), `mix ezagent.agent.create` | CreateAgent | reload agent | `:strong` |
-| Set api_key (LV) | (agent api_keys LV — TBD per `Behavior.ApiKeys`) | PutApiKeyForAgent | reload keys list | `:strong` |
-| Bind external mirror | (feishu bind LV/CLI) | BindExternalMirror | reload bindings | `:strong` |
-| Workspace create | `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/workspaces_live.ex` | CreateWorkspace | redirect→detail | `:strong` |
-| Profile upsert | `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/users_live.ex:177` | UpsertProfile | reload user | `:strong` |
-| Send chat message | LV / Channel chat send | PostMessageToSession | (NO re-read; fanout via PubSub) | `:eventual` (acceptable — async UI update) |
+| Bind external mirror | feishu bind LV/CLI | BindExternalMirror | reload bindings | `:strong` |
+| Workspace create | `workspaces_live.ex` | CreateWorkspace | redirect→detail | `:strong` |
+| Send chat message | LV / Channel chat send | PostMessageToSession | (NO re-read; fanout via PubSub) | `:eventual` (acceptable) |
 
-**Phase 10-B/10-C invariant test:** `Ezagent.Invariants.ConsistencyMatrixTest` walks the enumerated callsites, parses each AST, and asserts the dispatch call uses `consistency: :strong` (or a named projector list). A grep gate at CI level rejects any of the enumerated dispatch paths using `consistency: :eventual` explicitly.
+**The matrix is the source of truth.** Every dispatch path is assigned a consistency mode here at SPEC-time; the impl PR cannot deviate.
+
+**Phase 10-B/10-C invariant test (r3 — promoted to AST-backed):** `Ezagent.Invariants.ConsistencyMatrixTest` walks every LV module under `apps/ezagent_plugin_liveview/` AST-side. For every `def handle_event(<event>, ..., socket)` clause, it (i) finds the FIRST `Ezagent.CommandedApp.dispatch/2` call, (ii) finds any subsequent `assign(socket, ...)` that re-reads a projection table the dispatch could have updated, (iii) asserts the dispatch's `opts` keyword list contains `consistency: :strong` (or a named projector list). The test is a structural gate that catches new write→read sites without requiring SPEC table updates — if a future LV adds a handler that hits the pattern but uses `:eventual`, CI fails. The hand-table above is documentation; the AST scan is the gate.
 
 **Future callsites:** any new write→immediate-read pattern MUST be added to this matrix at SPEC-time + the invariant updated. The matrix is the discipline; the invariant is the gate.
 
@@ -1206,7 +1298,35 @@ When `--dry-run` is dropped:
 4. Dispatch as the first event on the aggregate's stream (via `EventStore.append_to_stream/4`, NOT through the aggregate's `execute/2` — these are not commands, they are direct events the aggregate accepts at construction time).
 5. Replay the aggregate; the `apply/2` clause hydrates state.
 
-**`messages` table treatment for Session:** the existing `messages` SQLite table contains all historical messages. Importing every historical message as a `%MessagePosted{}` event would balloon the event store. **Decision:** the `%SessionSnapshotImported{}` event payload carries a `last_message_id` + `recent_messages` ring only (the durable Chat slice fields); the FULL message history stays in the SQLite `messages` table (which becomes a read-only archive table; the projection table `session_messages_projection` holds new post-cutover messages). Querying historical messages joins both tables filtered by `created_at < <cutover_timestamp>`. Phase 10-D documents this as the permanent shape; the `messages` table is NOT dropped.
+**`messages` table treatment for Session (r3 — schema-correct):** the existing `messages` SQLite table contains all historical messages. Importing every historical message as a `%MessagePosted{}` event would balloon the event store. **Decision:** the `%SessionSnapshotImported{}` event payload carries a `last_message_id` + `recent_messages` ring only (the durable Chat slice fields); the FULL message history stays in the SQLite `messages` table (which becomes a read-only archive). The projection table `session_messages_projection` holds new post-cutover messages.
+
+**Permanent history query (r3 — actual schema column + join shape from `apps/ezagent_core/priv/repo/migrations/20260516070500_phase2_messages.exs:23` + `apps/ezagent_core/lib/ezagent/message_store.ex:174`):**
+
+The schema column is `inserted_at` (NOT `created_at`); per-session history is a JOIN over `message_routings ⋈ messages` filtered by routing's `session_uri` + the message's `inserted_at` window. The post-migration query becomes an ordered UNION:
+
+```sql
+-- Historical (pre-cutover): join via message_routings (the existing pattern)
+SELECT m.* FROM messages m
+JOIN message_routings r ON r.message_id = m.id
+WHERE r.session_uri = $1 AND m.inserted_at < $cutover_at
+
+UNION ALL
+
+-- Post-cutover: read from session_messages_projection (event-derived)
+SELECT * FROM session_messages_projection
+WHERE session_uri = $1 AND inserted_at >= $cutover_at
+
+ORDER BY inserted_at ASC;
+```
+
+`Ezagent.MessageStore.list_for_session/1` (the current entry point) is rewritten to issue this UNION post-migration; the `created_at`/`inserted_at` column naming is preserved as-is (no rename in the schema).
+
+**Parity gates added in §6.0 import (r3):**
+- `recent_in_session(session_uri, n)` — returns the same `n` rows pre/post the rewrite (no missing messages at the boundary).
+- `older_than(session_uri, msg_id)` — pagination cursor query returns identical pages.
+- `in_session_since(session_uri, ts)` — time-window query covers both halves.
+
+Phase 10-D documents this UNION shape as the permanent shape; the `messages` table is NOT dropped.
 
 **Parity gate (the cutover criterion, per `feedback_completion_requires_invariant_test`):**
 
@@ -1222,9 +1342,25 @@ Reads every URI's event-replayed aggregate state + compares field-by-field again
 
 **Rollback AFTER cutover:** harder — events written post-cutover by production dispatches need to be replayed back into slice/snapshot via the §12 unwind path.
 
-### 6.1 Phase 10-A — dependencies + skeleton + Worker first (smallest Kind)
+### 6.1 Phase 10-A — dependencies + skeleton + ExternalMirror slice + Worker (r3 — bind-spawn coupling boundary)
 
-**Goal:** prove the integration. One Kind migrated; everything else unchanged. If 10-A fails, the whole migration aborts (we revert the deps + skeleton + Worker code; nothing else has changed).
+**Goal (r3 — HIGH-3 fix):** prove the integration. The ExternalMirror slice + Worker Kind migrate together because the bind→spawn coupling at `external_mirror.ex:394`/`:677` cannot be broken by migrating Worker alone. If 10-A fails, the whole migration aborts.
+
+**Split-brain protocol for Session URIs during 10-A (r3 — HIGH-3 fix explicit):**
+
+During Phase 10-A, every Session URI has *two* state stores simultaneously:
+- The legacy Session GenServer (via `Ezagent.Kind.Server`) holds the `:chat` + `:publisher` + `:orchestrator_admin` slices.
+- The new Session aggregate (via `Ezagent.Aggregate.Session`) holds ONLY the `:external_mirror` slice — bindings + binding lifecycle events.
+
+The pre-dispatch pipeline (§4.5) gains a `Ezagent.SessionRouter.route_command/1` clause that returns `:legacy` or `:aggregate` based on the command's Behavior of origin:
+- `BindExternalMirror` / `UnbindExternalMirror` / `ListBindings` → `:aggregate`
+- All other Session commands (`PostMessageToSession`, `JoinSession`, `LeaveSession`, `SubscribeToSessionPublisher`, OrchestratorAdmin commands) → `:legacy`
+
+Worker → Session publisher subscription (the callback at `external_mirror_worker.ex:639`) STAYS via the legacy `Behavior.Publisher.SessionImpl.subscribe_from/4` for now — Worker code reaches into the legacy Session GenServer via `Ezagent.Invocation.dispatch/1` for the subscribe action. Phase 10-B migrates the publisher slice and removes this cross-boundary dependency.
+
+**Invariant for 10-A:** any test that exercises a Session URI must drive BOTH the GenServer slice + the aggregate state into consistency. A new `Ezagent.Invariants.SessionSplitBrainConsistencyTest` reads (a) the legacy slice via `Kind.get_slice(uri, :external_mirror)` and (b) the aggregate's `external_mirror_bindings` field via projection, then asserts they enumerate the same binding set. Drift between the two = test failure.
+
+**Phase 10-A is NOT a "small" phase under this revision.** It bundles dependency/skeleton work, the ExternalMirror behavior migration, and Worker migration. The "smallest Kind" framing is dropped. Estimated calendar time revised in §6.5.
 
 **r2 CRIT-2 fix — Worker cannot migrate in isolation:** r1 had Phase 10-A migrate Worker only, but `apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror.ex:394` + `:677` shows the legacy Session-side bind calls `Ezagent.Kind.spawn(Ezagent.Entity.ExternalMirrorWorker, params)` DIRECTLY. No `BindingCreated` event is emitted while Session remains a GenServer Kind, so the `BootstrapWorkerSaga` would never fire. Two options:
 
@@ -1317,15 +1453,42 @@ r2 commits to (a) unless impl PR-A1 codex review identifies a blocker.
 - Update `IMPLEMENTATION_ROADMAP.md` §1.1 to mark Phase 10 complete + the new architectural baseline.
 - Update `CLAUDE.md` skill `ezagent-developer` to point at the new dispatch / aggregate patterns.
 
-**Cleanup preflight gate (r2 — MED-8 fix per `feedback_destructive_migration_anti_pattern`):**
+**Cleanup preflight gate (r3 — MED-8 fix, hardened against flag spoofing):**
 
-`DROP TABLE kind_snapshots` is destructive. r1 said "after a final data dump" — that's not a gate. r2 introduces `mix ezagent.cleanup.preflight --table kind_snapshots --operator-approved <ticket-id>` which exits non-zero unless ALL of these are green:
+`DROP TABLE kind_snapshots` is destructive. The gate requires a *drill receipt* artifact, not just a flag.
 
-1. **Operator approval flag** — `--operator-approved <ticket-id>` is supplied (matches a docs/runbooks/ entry for this destructive operation). No ticket → no drop.
-2. **Backup restore drill** — operator has run `mix ezagent.cleanup.drill --restore-from <backup-path>` against a temp DB and the script confirms row count matches the live DB's `kind_snapshots` row count.
-3. **Post-restore parity** — the event-replayed aggregate state across all migrated URIs matches the restored snapshot state field-by-field (re-runs the §6.0 parity gate against the temp restored DB).
+**`mix ezagent.cleanup.drill`** (the only writer of receipts):
+1. Operator runs `mix ezagent.cleanup.drill --backup-path /path/to/backup.sqlite --operator-email <ops@example>`.
+2. Task computes `backup_sha256 = sha256(file)`, restores backup to a temp DB, counts rows in `kind_snapshots`, compares to live DB row count.
+3. Task runs §6.0 parity gate (`mix ezagent.aggregate.verify`) against the *restored* temp DB; captures the parity report's SHA256.
+4. Writes a signed JSON receipt at `priv/cleanup_receipts/<timestamp>.json`:
+   ```json
+   {
+     "backup_path": "...",
+     "backup_sha256": "...",
+     "live_row_count": 1234,
+     "restored_row_count": 1234,
+     "parity_report_sha256": "...",
+     "operator_email": "...",
+     "drill_completed_at": "2026-05-28T14:00:00Z",
+     "expires_at": "2026-05-29T14:00:00Z",  // drill_completed_at + 24h cooldown
+     "signature": "..."                     // HMAC over the above with deployment secret
+   }
+   ```
+5. Receipt is committed to git for audit trail (the file path is in `.gitignore` exclusions for cleanup_receipts/).
 
-Only when (1)+(2)+(3) all pass does the preflight script print "READY TO DROP" + exit 0; the actual `DROP TABLE` runs in a separate `mix ezagent.cleanup.execute` task that requires the most recent successful preflight + a 24-hour cooldown.
+**`mix ezagent.cleanup.execute --receipt <path-to-receipt-json>`** (the actual DROP):
+1. Reads receipt, verifies HMAC signature against deployment secret. Mismatch → exit 1.
+2. Recomputes `backup_sha256` from `backup_path` in receipt → must equal stored SHA. Mismatch → backup file changed since drill → exit 1.
+3. Reads live DB `kind_snapshots` row count → must equal `live_row_count` in receipt (live DB hasn't changed since drill). Mismatch → exit 1.
+4. Reruns parity check on live DB → SHA must equal `parity_report_sha256`. Mismatch → exit 1.
+5. Verifies `operator_email` is on `priv/cleanup_operators.allowlist` (committed file). Not on list → exit 1.
+6. Verifies `now > drill_completed_at` (cooldown elapsed) AND `now < expires_at` (receipt not stale). Out-of-window → exit 1.
+7. Only when ALL pass: prints "DROP TABLE kind_snapshots — final confirmation?" + reads operator interactive `y/N`; defaults `N`. Operator's `y` triggers the DROP.
+
+**The receipt cannot be forged.** Spoofing requires breaking the HMAC. Replaying an old receipt requires the live DB row count + parity SHA to still match (they won't, since events accumulate post-drill). Bypassing the allowlist requires git commit access (which the CI gate logs).
+
+**Invariant test (r3 — MED-8):** CI runs `mix ezagent.cleanup.execute --receipt nonexistent.json` and asserts exit non-zero with "receipt not found". Also runs a synthesized invalid-signature receipt and asserts exit non-zero with "signature mismatch". The gate's resistance is itself tested.
 
 **Phase 10-D invariant tests:**
 - grep for `Ezagent.Kind.Server`, `Ezagent.Invocation`, `KindRegistry.lookup`, etc. across `apps/` is empty.

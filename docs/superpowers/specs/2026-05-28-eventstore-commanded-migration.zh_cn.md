@@ -1,6 +1,23 @@
 # SPEC — Ezagent 状态模型迁移到 EventStore + Commanded (CQRS / 事件溯源)
 
-**状态：** r2 — codex 对抗审查 r2 草稿。2026-05-28。
+**状态：** r3 — codex 对抗审查 r3 草稿。2026-05-28。
+
+## r3 changelog（相对 r2 的 delta，保留作 trail）
+
+回应 codex r2 REJECT 的 6 HIGH + 2 MED（r2 无 CRIT — r1 CRIT 已闭合）：
+
+- **HIGH-1（§4.1.5 清单仍错）：** r2 误把 `Ezagent.Workspace` 标为 `{:snapshot, :on_change}`（实际 `:ephemeral` @ `workspace.ex:61`），`ExternalMirrorWorker` 标为 `:on_terminate`（实际 `:ephemeral` @ `external_mirror_worker.ex:71`）；漏 `Ezagent.Entity.System`（真实 Kind，`:ephemeral` @ `system.ex:32`，带 Routing behavior）；漏 `Ezagent.Behavior.IdentityAdmin`（与 Identity 同文件，@ `identity.ex:328`）。**r3 fix：** §4.1.5 用静态校验的 persistence 值重写。新加 §4.1.5-table-note 澄清 `:ephemeral` Kind（Workspace、Worker、System）通过**外部表/registry**持久（Workspace → `workspaces` SQLite + `Workspace.Store`；Worker → `external_mirror_bindings` 重建；System → config-derived bootstrap singleton，不迁，作为 Pty 那样的文档化例外）。§6.0 import 任务按来源逐 Kind 调整。
+- **HIGH-2（§4.8 一致性矩阵不全且文件名错）：** r2 引用了不存在的 `agents_live.ex`（实际：`agent_new_live.ex`），用了 TBD 行，漏了诸多 write→read site。**r3 fix：** §4.8 重写为静态校验的 file:line。新增：`users_live.ex:202`（set_password）、`:230`（promote_to_system）、`:250`（revoke from system）、`workspace_detail_live.ex:255`（remove member）、`routing_live.ex:307`（delete_rule）、`agent_api_keys_live.ex:159`（delete_api_key）。`agent_new_live.ex:120` 修正 create-agent。矩阵宣布为**真值**；r3 把不变式升级为 AST 扫描 `Ezagent.Invariants.ConsistencyMatrixTest`：遍历每个 LV 的 `handle_event/3` AST，找到 dispatch + 之后的 `assign/2` 重读，断言用 `:strong`。手表是文档；AST 扫描是门。
+- **HIGH-3（§6.1 Phase 10-A 仍自相矛盾）：** r2 留着「Worker first（最小 Kind）— 一个 Kind 迁，其余不变」措辞，同时把 Session ExternalMirror 也拉进来。**r3 fix：** Phase 10-A 重命名为「ExternalMirror slice + Worker — bind-spawn 耦合边界」。「最小 Kind」框架放弃。新段落显式枚举 split-brain 协议：Session 的 `Behavior.Chat` + `Behavior.Publisher.SessionImpl` + `Behavior.OrchestratorAdmin` slice 留 GenServer；只有 `:external_mirror` slice 进 Session aggregate。Session GenServer 活着 AND Session aggregate 有事件流 — 同一 URI 在 10-A 期间**两个**状态存储。派发前流水线按命令来源 Behavior 路由：ExternalMirror 命令 → aggregate；其余 → legacy。新 `Ezagent.SessionRouter` 模块拥有路由决策。不变式：任何触及 Session URI 的测试必须把 GenServer slice 和 aggregate 状态都驱到一致。
+- **HIGH-4（§6.0 messages archive 列名/JOIN 错）：** r2 说 "按 `created_at` 过滤"；实际 schema 列是 `inserted_at`（per `20260516070500_phase2_messages.exs:23`）；按 session 历史是 `message_routings ⋈ messages` JOIN（per `message_store.ex:174`）。**r3 fix：** §6.0 messages archive 段落重写：永久查询是有序 UNION，前半 `message_routings ⋈ messages` 过滤 `inserted_at < <cutover_at>`，后半 `session_messages_projection` 过滤 `inserted_at >= <cutover_at>`，按 `inserted_at ASC` 序。`recent_in_session` / `older_than` / `in_session_since` 三个查询形状的 parity 门。
+- **HIGH-5（§4.2.1 User 投影仍漏字段）：** r2 把 profile/token 字段加到 aggregate state，但 §5.1 投影表行没反映。**r3 fix：** §5.1 投影表更新 — `user_profile_projection(uri, workspace_uri, display_name, email, registered_at, destroyed?)`；`user_tokens_projection(uri, token_id, token_hash, label, scope, expires_at, last_used_at, minted_at, revoked_at, workspace_uri)`。§6.0 import 加字段级 parity 门：`entity_profiles` + `entity_tokens` 每行回放后必须产生对应投影行。
+- **MED-6（§4.2.3 Session working-copy 形状欠定）：** r2 写 `template_working_copy: nil` — 实际默认是结构 map @ `chat.ex:255` 有 `agent_slots`、`routing_rules`、`orchestrator_template_uri`、`default_workspace_uri`、`description`。**r3 fix：** §4.2.3 扩展 — `template_working_copy` 是含 5 个具名子字段的子 struct，默认 per `default_template_working_copy/0`。加 replay 测试：populated working copy Session 重建所有 5 字段。
+- **HIGH-7（§3.8 saga step 0 是注释、不是代码）：** r2 文档化 `pre_destroy_caps` / `pre_destroy_sessions` / `pre_destroy_lineage_parent` 在 saga defstruct 注释，实际 `defstruct` 行没有。**r3 fix：** §3.8 saga 重写显式 step 0：`%CaptureDestroyPreSnapshot{}` 命令在 `%AgentDestroyRequested{}` 之后立即 dispatch，aggregate 的 `execute/2` 在命令时读投影、发 `%DestroyPreSnapshotCaptured{}` 事件（payload 含 caps/sessions/lineage_parent），aggregate 的 `apply/2` 写到 aggregate 自身状态。补偿命令在补偿时直接从 aggregate 读 snapshot 字段。defstruct **扩展**这些字段。Step 2 DestroyChildAgents 仍宣布 non-compensable 按 saga forward-only 教条；post-r3 runbook 文档化 operator 修复路径（`mix ezagent.saga.repair --saga DestroyAgentSaga --uri <uri>` 读部分残留 + 发手工清理命令）。
+- **MED-8（§6.4 cleanup gate 可被假 ticket 欺骗）：** r2 只验「匹配 docs/runbooks 条目」；不是真 artifact 门。**r3 fix：** §6.4 preflight 要求**drill receipt**：签名 JSON artifact `priv/cleanup_receipts/<timestamp>.json` 含 `{backup_path, backup_sha256, live_row_count, restored_row_count, parity_report_sha256, operator_email, drill_completed_at, expires_at: +24h, signature}`。`mix ezagent.cleanup.drill` 是唯一 writer；drill 时计算 SHA。`mix ezagent.cleanup.execute` 验证：(i) HMAC 签名；(ii) backup SHA 仍匹配；(iii) live DB 行数与 receipt 匹配（自 drill 起未变）；(iv) 重跑 parity；(v) `operator_email` 在 `priv/cleanup_operators.allowlist`；(vi) `drill_completed_at < now < expires_at`。任何篡改使 SHA 失效。receipt 不可凭 `--operator-approved` flag 单独伪造。CI 跑非存在 receipt + 假签名 receipt，断言两者退出非 0。
+
+---
+
+## r2 之前的状态
 
 ## r2 changelog（相对 r1 的 delta，保留作 trail）
 
