@@ -29,4 +29,72 @@ defmodule EzagentPluginCc.BridgeAdapterTest do
     assert {:reply, {:error, %{reason: "reply requires text + session_uris"}}, ^socket} =
              BridgeAdapter.handle_client_event("reply", %{"text" => "missing sessions"}, socket)
   end
+
+  test "handle_client_event/3 rejects empty session_uris with structured error (Invariant #9 r3 closure)" do
+    # Codex r3 HIGH closure — an empty `session_uris` list previously
+    # produced `{:ok, %{dispatched: []}}` with no Logger / telemetry,
+    # silently ACKing a delivery to zero targets. The boundary now
+    # rejects the case with a structured `:error` ACK + Logger
+    # warning + telemetry.
+    socket = %Phoenix.Socket{
+      assigns: %{agent_uri: Ezagent.URI.parse!("entity://agent/team-alpha/cc_test")}
+    }
+
+    assert {:reply,
+            {:error, %{reason: "session_uris must be a non-empty list"}},
+            ^socket} =
+             BridgeAdapter.handle_client_event(
+               "reply",
+               %{"text" => "hi", "session_uris" => []},
+               socket
+             )
+  end
+
+  test "dispatch_reply/5 returns dispatched + failed + skipped buckets (SPEC 2026-05-27 §3.3 + Invariant #9 r4 closure)" do
+    # Codex r2/r3/r4 HIGH closure — boundary input MUST surface across
+    # three distinct buckets so a canonical-but-stale URI does not
+    # masquerade as successfully dispatched.
+    #
+    # - `dispatched`: Invocation.dispatch returned :ok / {:ok, _}.
+    # - `failed`:     Invocation.dispatch returned {:error, reason}
+    #                 (e.g. :no_such_actor for a stale-but-canonical URI).
+    # - `skipped`:    safe_parse_session failed (malformed string).
+    agent_uri = Ezagent.URI.parse!("entity://agent/team-alpha/cc_test")
+
+    # All test URIs are syntactically canonical but no Kinds are alive,
+    # so dispatch will return {:error, :no_such_actor} for the
+    # well-formed ones. The malformed ones go to skipped without
+    # reaching dispatch.
+    sessions = [
+      "session://default/system/main",
+      "garbage://not-a-real-scheme",
+      "",
+      "session://default/team-alpha/real"
+    ]
+
+    assert {:ok, %{dispatched: dispatched, failed: failed, skipped: skipped}} =
+             BridgeAdapter.dispatch_reply(agent_uri, sessions, "hi", nil, [])
+
+    # Malformed inputs land in skipped, with original string preserved.
+    assert "garbage://not-a-real-scheme" in skipped
+    assert "" in skipped
+
+    # Canonical inputs reached dispatch. Since no Kind is alive at
+    # either target, both should land in `failed` (the codex r4
+    # finding — pre-fix they would have wrongly counted as dispatched).
+    canonical_inputs = [
+      "session://default/system/main",
+      "session://default/team-alpha/real"
+    ]
+
+    canonical_outcomes = dispatched ++ Enum.map(failed, fn {s, _reason} -> s end)
+
+    for input <- canonical_inputs do
+      assert input in canonical_outcomes,
+             "canonical input #{inspect(input)} must appear in dispatched or failed"
+    end
+
+    # Total accounting: every input lands in exactly one bucket.
+    assert length(dispatched) + length(failed) + length(skipped) == length(sessions)
+  end
 end

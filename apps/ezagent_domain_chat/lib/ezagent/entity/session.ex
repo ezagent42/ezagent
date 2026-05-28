@@ -62,7 +62,7 @@ defmodule Ezagent.Entity.Session do
   # bind flow / mix task that called default_uri/0 wrote the OLD
   # workspace name into the DB, leaving orphan binding rows the
   # boot reconciler couldn't resolve.
-  def default_uri, do: URI.new!("session://default/system/main")
+  def default_uri, do: Ezagent.URI.parse!("session://default/system/main")
 
   # ─────────────────────────────────────────────────────────────────────
   # Ezagent.Behavior.Publisher implementation (ExternalMirror PR-EM-0)
@@ -190,7 +190,7 @@ defmodule Ezagent.Entity.Session do
   # `{:error, :unauthorized}` (the let-it-crash posture — no default
   # caps, no implicit admin elevation).
   defp dispatch_publisher_action(%URI{} = publisher_uri, action, args, ctx) do
-    target = URI.parse("#{URI.to_string(publisher_uri)}?action=publisher.#{action}")
+    target = Ezagent.URI.parse!("#{URI.to_string(publisher_uri)}?action=publisher.#{action}")
 
     # Normalise the reply field: callers that didn't supply it get
     # `:ignore` (we still return the result via the synchronous dispatch
@@ -300,11 +300,15 @@ defmodule Ezagent.Entity.Session do
              }}
           | {:error, term()}
   def spawn_from_template(%URI{} = session_template_uri_in, %URI{} = owner_uri_in) do
-    # Canonicalize both URIs through a parse round-trip (cap-key parity
-    # — `URI.new!/1` and `URI.parse/1` produce structurally-different
-    # %URI{} structs; CapBAC matching is exact struct equality).
-    session_template_uri = URI.parse(URI.to_string(session_template_uri_in))
-    owner_uri = URI.parse(URI.to_string(owner_uri_in))
+    # SPEC 2026-05-27-uri-canonicalization §1.2 — DELETED the hand-rolled
+    # `URI.parse(URI.to_string(uri))` round-trip in favor of the
+    # canonical chokepoint. The chokepoint enforces canonical form
+    # everywhere, so the inputs are guaranteed-canonical post-SPEC and
+    # this pass is structurally redundant. We keep the explicit
+    # canonicalize call as defence-in-depth for any caller still
+    # constructing via stdlib URI.new!/1 outside the §3.4 carve-out.
+    session_template_uri = Ezagent.URI.parse!(URI.to_string(session_template_uri_in))
+    owner_uri = Ezagent.URI.parse!(URI.to_string(owner_uri_in))
 
     # ── Preflights (SPEC §2 step 0) — un-completable failures up front ──
     with {:ok, _template_pid} <- ensure_template_alive(session_template_uri),
@@ -706,7 +710,7 @@ defmodule Ezagent.Entity.Session do
     owner_name = derive_session_owner_segment(owner_uri)
     template_name = derive_session_template_segment(template_content)
 
-    URI.new!("session://#{template_class}/#{workspace_name}/#{owner_name}-#{template_name}")
+    Ezagent.URI.parse!("session://#{template_class}/#{workspace_name}/#{owner_name}-#{template_name}")
   end
 
   defp derive_session_owner_segment(%URI{path: "/" <> rest}) do
@@ -849,7 +853,7 @@ defmodule Ezagent.Entity.Session do
         %URI{} = owner_uri
       ) do
     candidate_uri = derive_orchestrator_uri(session_uri, workspace_uri)
-    orch_template_uri = URI.parse("template://agent/system/cc-orchestrator")
+    orch_template_uri = Ezagent.URI.parse!("template://agent/system/cc-orchestrator")
     instance_name = derive_orchestrator_instance_name(session_uri)
 
     case check_orchestrator(candidate_uri, owner_uri, workspace_uri) do
@@ -1070,7 +1074,7 @@ defmodule Ezagent.Entity.Session do
                 ". Per SPEC #324 rev 3 / PR #335, there is NO silent default workspace " <>
                 "fallback; callers must pass a workspace URI with an explicit name."
 
-    URI.new!("entity://agent/#{workspace_name}/#{instance_name}")
+    Ezagent.URI.parse!("entity://agent/#{workspace_name}/#{instance_name}")
   end
 
   @doc """
@@ -1172,7 +1176,7 @@ defmodule Ezagent.Entity.Session do
     # `:partial`, not abort.
     with {:ok, _pid} <- ensure_template_alive(agent_template_uri),
          target <-
-           URI.parse("#{URI.to_string(agent_template_uri)}?action=template.instantiate"),
+           Ezagent.URI.parse!("#{URI.to_string(agent_template_uri)}?action=template.instantiate"),
          {:ok, %{workers: workers, fresh?: fresh?}} <-
            Ezagent.Invocation.dispatch(%Ezagent.Invocation{
              target: target,
@@ -1212,7 +1216,7 @@ defmodule Ezagent.Entity.Session do
   end
 
   defp first_worker([%URI{} = worker_uri | _]), do: {:ok, worker_uri}
-  defp first_worker([uri | _]) when is_binary(uri), do: {:ok, URI.parse(uri)}
+  defp first_worker([uri | _]) when is_binary(uri), do: {:ok, Ezagent.URI.parse!(uri)}
   defp first_worker([]), do: {:error, :instantiate_returned_no_worker}
 
   # Try to compute the worker URI ahead of dispatch so we can fast-path
@@ -1237,7 +1241,7 @@ defmodule Ezagent.Entity.Session do
                     ". Per SPEC #324 rev 3 / PR #335, there is NO silent default workspace " <>
                     "fallback; callers must pass a workspace URI with an explicit name."
 
-        {:ok, URI.new!("entity://agent/#{workspace_name}/#{flavor}_#{instance_name}")}
+        {:ok, Ezagent.URI.parse!("entity://agent/#{workspace_name}/#{flavor}_#{instance_name}")}
 
       :no_flavor ->
         :unknown
@@ -1538,7 +1542,7 @@ defmodule Ezagent.Entity.Session do
       routing_rules: normalize_routing_rules(Map.get(template_content, :routing_rules, [])),
       orchestrator_template_uri:
         Map.get(template_content, :orchestrator_template_uri) ||
-          URI.parse("template://agent/system/cc-orchestrator"),
+          Ezagent.URI.parse!("template://agent/system/cc-orchestrator"),
       default_workspace_uri: Map.get(template_content, :default_workspace_uri) || workspace_uri,
       description: Map.get(template_content, :description, "")
     }
@@ -2015,7 +2019,7 @@ defmodule Ezagent.Entity.Session do
   end
 
   defp read_template_content(%URI{} = session_template_uri) do
-    target = URI.parse("#{URI.to_string(session_template_uri)}?action=template.read")
+    target = Ezagent.URI.parse!("#{URI.to_string(session_template_uri)}?action=template.read")
 
     case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
            target: target,
@@ -2052,12 +2056,19 @@ defmodule Ezagent.Entity.Session do
         validate_workspace_name(host, uri)
 
       uri_str when is_binary(uri_str) ->
-        case URI.parse(uri_str) do
-          %URI{scheme: "workspace", host: host} = uri when is_binary(host) ->
-            validate_workspace_name(host, uri)
+        # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+        # with try/rescue to preserve the `{:error, _}` contract for
+        # malformed template-content URIs.
+        try do
+          case Ezagent.URI.parse!(uri_str) do
+            %URI{scheme: "workspace", host: host} = uri when is_binary(host) ->
+              validate_workspace_name(host, uri)
 
-          _ ->
-            {:error, {:invalid_default_workspace_uri, uri_str}}
+            _ ->
+              {:error, {:invalid_default_workspace_uri, uri_str}}
+          end
+        rescue
+          ArgumentError -> {:error, {:invalid_default_workspace_uri, uri_str}}
         end
 
       other ->
@@ -2104,7 +2115,7 @@ defmodule Ezagent.Entity.Session do
   # `template.read` dispatch. Returns `:no_flavor` when the read fails
   # or the content has no flavor — caller falls back to dispatch path.
   defp agent_template_flavor(%URI{} = agent_template_uri) do
-    target = URI.parse("#{URI.to_string(agent_template_uri)}?action=template.read")
+    target = Ezagent.URI.parse!("#{URI.to_string(agent_template_uri)}?action=template.read")
 
     case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
            target: target,
@@ -2133,9 +2144,9 @@ defmodule Ezagent.Entity.Session do
   defp normalize_agent_slots(slots) when is_list(slots) do
     Enum.map(slots, fn
       {slot_name, %URI{} = uri} -> {to_string(slot_name), uri}
-      {slot_name, uri} when is_binary(uri) -> {to_string(slot_name), URI.parse(uri)}
+      {slot_name, uri} when is_binary(uri) -> {to_string(slot_name), Ezagent.URI.parse!(uri)}
       [slot_name, %URI{} = uri] -> {to_string(slot_name), uri}
-      [slot_name, uri] when is_binary(uri) -> {to_string(slot_name), URI.parse(uri)}
+      [slot_name, uri] when is_binary(uri) -> {to_string(slot_name), Ezagent.URI.parse!(uri)}
     end)
   end
 
@@ -2224,8 +2235,8 @@ defmodule Ezagent.Entity.Session do
                 "fallback; callers must pass a workspace URI with an explicit name."
 
     candidates = [
-      {:session_template, URI.new!("template://session/#{workspace_name}/_preflight@_")},
-      {:agent_template, URI.new!("template://agent/#{workspace_name}/_preflight")}
+      {:session_template, Ezagent.URI.parse!("template://session/#{workspace_name}/_preflight@_")},
+      {:agent_template, Ezagent.URI.parse!("template://agent/#{workspace_name}/_preflight")}
     ]
 
     candidates

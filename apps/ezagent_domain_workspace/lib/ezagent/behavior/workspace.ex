@@ -927,9 +927,13 @@ defmodule Ezagent.Behavior.Workspace do
        when is_binary(flavor) and is_binary(name) and is_binary(workspace_name) do
     full = "entity://agent/#{workspace_name}/#{flavor}_#{name}"
 
-    case URI.new(full) do
-      {:ok, %URI{scheme: "entity", host: "agent", path: "/" <> _} = u} -> {:ok, u}
-      _ -> {:error, {:bad_uri, full}}
+    # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+    # with try/rescue keeping the `{:ok, _} | {:error, _}` contract of
+    # this private helper.
+    try do
+      {:ok, Ezagent.URI.parse!(full)}
+    rescue
+      ArgumentError -> {:error, {:bad_uri, full}}
     end
   end
 

@@ -79,7 +79,7 @@ defmodule EzagentWeb.SessionPrincipal do
   @spec put(Plug.Conn.t(), String.t(), keyword()) :: Plug.Conn.t()
   def put(conn, raw, opts) when is_binary(raw) and is_list(opts) do
     canonical = canonicalize(raw, opts)
-    entity_uri = URI.parse(canonical)
+    entity_uri = Ezagent.URI.parse!(canonical)
     workspace_uri = Ezagent.URI.entity_workspace_uri(entity_uri)
 
     conn
@@ -152,7 +152,14 @@ defmodule EzagentWeb.SessionPrincipal do
 
     candidate = normalize(raw, workspace)
 
-    case URI.parse(candidate) do
+    # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+    # with try/rescue keeping the ArgumentError contract; malformed
+    # input is rejected with an actionable message either way.
+    case (try do
+            Ezagent.URI.parse!(candidate)
+          rescue
+            ArgumentError -> :error
+          end) do
       %URI{scheme: "entity", host: host} when host in @valid_hosts ->
         candidate
 

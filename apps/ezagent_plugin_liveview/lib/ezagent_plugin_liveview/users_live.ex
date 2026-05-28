@@ -268,18 +268,24 @@ defmodule EzagentPluginLiveview.UsersLive do
   # entity://user/<workspace>/<name>. Accepts both shapes — 2-segment
   # is auto-upgraded by normalize_handle_to_uri/1 above.
   defp parse_user_uri(s) do
-    case URI.new(s) do
-      {:ok, %URI{scheme: "entity", host: "user", path: "/" <> rest}}
-      when is_binary(rest) and rest != "" ->
-        {:ok, URI.parse(s)}
+    # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+    # with try/rescue keeping the `{:error, {:bad_user_uri, _}}` contract.
+    try do
+      case Ezagent.URI.parse!(s) do
+        %URI{scheme: "entity", host: "user", path: "/" <> rest} = uri
+        when is_binary(rest) and rest != "" ->
+          {:ok, uri}
 
-      _ ->
-        {:error, {:bad_user_uri, s}}
+        _ ->
+          {:error, {:bad_user_uri, s}}
+      end
+    rescue
+      ArgumentError -> {:error, {:bad_user_uri, s}}
     end
   end
 
   defp maybe_spawn_kind(uri_str) do
-    uri = URI.parse(uri_str)
+    uri = Ezagent.URI.parse!(uri_str)
 
     if Code.ensure_loaded?(Ezagent.SpawnRegistry) do
       _ = Ezagent.SpawnRegistry.spawn(uri)
@@ -353,7 +359,7 @@ defmodule EzagentPluginLiveview.UsersLive do
   def render(assigns) do
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
-        URI.to_string(assigns.current_entity_uri || URI.parse("entity://user/system/admin"))
+        URI.to_string(assigns.current_entity_uri || Ezagent.URI.parse!("entity://user/system/admin"))
       end)
 
     ~H"""

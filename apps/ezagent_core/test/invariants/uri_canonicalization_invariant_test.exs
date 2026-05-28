@@ -1,0 +1,321 @@
+defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
+  @moduledoc """
+  SPEC 2026-05-27-uri-canonicalization §5 — merge gate per
+  `feedback_completion_requires_invariant_test`. Catches a future
+  contributor reintroducing a boundary call to stdlib
+  `URI.parse/1`, `URI.new!/1`, or `URI.new/1` for an Ezagent-scheme
+  URI.
+
+  ## What the invariants enforce
+
+  1. §5.1 — no stdlib `URI.parse/1` in `apps/*/lib/**/*.ex` (outside the
+     canonical-module allowlist).
+  2. §5.2 — no stdlib `URI.new!/1` outside the §3.4 query-target idiom
+     + §3.5 compile-time module-attribute carve-outs.
+  3. §5.2.1 — no stdlib `URI.new/1` (non-bang) outside the §3.7 dual-
+     fallback allowlist (`Ezagent.URI`, `Ezagent.Ecto.URI`).
+  4. §5.3 — canonical URI round-trip property.
+  5. §5.4 — admin URI parity (the Bug-2 regression surface).
+  6. §5.5 — snapshot `canonicalize_uris/1` covers every required shape.
+  7. §5.5 r3 adversarial — the same-line `URI.new(s); URI.new!(t)` mix
+     is not a false negative under the §5.2.1 regex.
+
+  Suppression: any line ending with `# uri-canonical-allow: <reason>`
+  is exempt. This is the escape hatch for genuine structural
+  derivations (e.g. `URI.new!("workspace://" <> validated_name)` in
+  `Ezagent.Capability.workspace_of/1` — see SPEC §3.6).
+  """
+  use ExUnit.Case, async: true
+
+  @uri_new_allowlist [
+    "apps/ezagent_core/lib/ezagent/uri.ex",
+    "apps/ezagent_core/lib/ezagent/ecto/uri_type.ex"
+  ]
+
+  @uri_parse_allowlist [
+    "apps/ezagent_core/lib/ezagent/uri.ex"
+  ]
+
+  @lib_glob "apps/*/lib/**/*.ex"
+
+  defp apps_root do
+    {out, 0} = System.cmd("git", ["rev-parse", "--show-toplevel"])
+    String.trim(out)
+  end
+
+  defp lib_files do
+    apps_root()
+    |> Path.join(@lib_glob)
+    |> Path.wildcard()
+  end
+
+  defp relative(path) do
+    Path.relative_to(path, apps_root())
+  end
+
+  # ---------------------------------------------------------------------
+  # §5.1 — no stdlib URI.parse/1 in production lib/
+
+  test "no stdlib URI.parse/1 in apps/*/lib/**/*.ex (outside the canonical-module allowlist)" do
+    violations =
+      for path <- lib_files(),
+          relative(path) not in @uri_parse_allowlist,
+          {line, lineno} <- Enum.with_index(File.stream!(path), 1),
+          Regex.match?(~r/\bURI\.parse\(/, line),
+          not String.contains?(line, "# uri-canonical-allow"),
+          not in_comment?(line) do
+        {relative(path), lineno, String.trim(line)}
+      end
+
+    assert violations == [],
+           """
+           Found #{length(violations)} use(s) of stdlib URI.parse/1 in production lib/.
+           Use `Ezagent.URI.parse!/1` instead for Ezagent-scheme URIs
+           (SPEC 2026-05-27-uri-canonicalization §3). If this is a
+           legitimate structural derivation, append a comment:
+               # uri-canonical-allow: <reason>
+           on the same line. Violations:
+           #{format(violations)}
+           """
+  end
+
+  # ---------------------------------------------------------------------
+  # §5.2 — no stdlib URI.new!/1 outside §3.4/§3.5 carve-outs
+
+  test "no stdlib URI.new!/1 in apps outside §3.4 query-target + §3.5 module-attr carve-outs" do
+    violations =
+      for path <- lib_files(),
+          relative(path) not in @uri_parse_allowlist,
+          {line, lineno} <- Enum.with_index(File.stream!(path), 1),
+          Regex.match?(~r/\bURI\.new!\(/, line),
+          not is_query_target_idiom?(line),
+          not is_module_attribute?(line),
+          not String.contains?(line, "# uri-canonical-allow"),
+          not in_comment?(line) do
+        {relative(path), lineno, String.trim(line)}
+      end
+
+    assert violations == [],
+           """
+           Found #{length(violations)} use(s) of stdlib URI.new!/1 outside the
+           §3.4 query-target idiom (`URI.new!("...?action=...")`) and §3.5
+           compile-time module-attribute carve-outs. Use
+           `Ezagent.URI.parse!/1` at runtime; if this is a legitimate
+           structural derivation (§3.6), append:
+               # uri-canonical-allow: <reason>
+           Violations:
+           #{format(violations)}
+           """
+  end
+
+  # ---------------------------------------------------------------------
+  # §5.2.1 — no stdlib URI.new/1 (non-bang) outside the external-fallback
+  # allowlist. PCRE negative lookahead `(?!!)` rejects `URI.new!(`.
+
+  test "no stdlib URI.new/1 in apps outside the external-URI fallback allowlist" do
+    violations =
+      for path <- lib_files(),
+          relative(path) not in @uri_new_allowlist,
+          {line, lineno} <- Enum.with_index(File.stream!(path), 1),
+          matches_uri_new_no_bang?(line),
+          not String.contains?(line, "# uri-canonical-allow"),
+          not in_comment?(line) do
+        {relative(path), lineno, String.trim(line)}
+      end
+
+    assert violations == [],
+           """
+           Found #{length(violations)} use(s) of stdlib URI.new/1 outside
+           the SPEC §3.7 dual-fallback allowlist (Ezagent.URI,
+           Ezagent.Ecto.URI). Use `Ezagent.URI.parse!/1` (wrapped in
+           try/rescue if you need to keep a `{:error, _}` contract for
+           the boundary). Violations:
+           #{format(violations)}
+           """
+  end
+
+  # ---------------------------------------------------------------------
+  # §5.2.2 (codex r1 CRIT closure) — capture / apply / alias bypasses
+
+  test "no stdlib URI parser bypasses via &URI.parse/1, apply(URI, ...), or alias URI" do
+    # Codex r1 CRIT: pre-fix the codebase had `Enum.map(&URI.parse/1)` in
+    # `external_mirror/binding_row.ex:236` + `boot_reconciler.ex:131`,
+    # both bypassing the regexes in §5.1 / §5.2 / §5.2.1. This
+    # invariant catches every documented bypass shape:
+    #
+    #   - Capture syntax:  `&URI.parse/1`, `&URI.new/1`, `&URI.new!/1`
+    #   - Erlang-style apply: `apply(URI, :parse, [_])`, `Kernel.apply(URI, ...)`
+    #   - Module alias: `alias URI, as: Foo`
+    #
+    # Suppression via `# uri-canonical-allow` still applies.
+
+    capture_re = ~r/&URI\.(parse|new!?)\//
+    apply_re = ~r/(?:Kernel\.)?apply\(\s*URI\s*,\s*:(parse|new!?)\s*,/
+    alias_re = ~r/^\s*alias\s+URI\b/
+
+    violations =
+      for path <- lib_files(),
+          relative(path) not in @uri_parse_allowlist,
+          relative(path) not in @uri_new_allowlist,
+          {line, lineno} <- Enum.with_index(File.stream!(path), 1),
+          Regex.match?(capture_re, line) or
+            Regex.match?(apply_re, line) or
+            Regex.match?(alias_re, line),
+          not String.contains?(line, "# uri-canonical-allow"),
+          not in_comment?(line) do
+        {relative(path), lineno, String.trim(line)}
+      end
+
+    assert violations == [],
+           """
+           Found #{length(violations)} bypass(es) of the URI canonical chokepoint.
+           Stdlib URI cannot be referenced via capture syntax (`&URI.parse/1`),
+           Erlang-style apply (`apply(URI, :parse, [_])`), or module alias
+           (`alias URI, as: Foo`). Use `Ezagent.URI.parse!/1` (or the
+           `&Ezagent.URI.parse!/1` capture). If this is a legitimate
+           structural derivation, append `# uri-canonical-allow: <reason>`
+           on the same line. Violations:
+           #{format(violations)}
+           """
+  end
+
+  # ---------------------------------------------------------------------
+  # §5.3 — canonical round-trip property
+
+  test "canonical URI round-trips through to_string/parse! unchanged" do
+    cases = [
+      "entity://user/system/admin",
+      "entity://agent/team-alpha/cc_demo",
+      "session://default/system/main",
+      "session://template-x/team-alpha/main?action=chat.send",
+      "template://agent/system/cc-orchestrator",
+      "template://session/team-alpha/code@abc123",
+      "resource://uploads/team-alpha/file-abc",
+      "workspace://team-alpha",
+      "workspace://system",
+      "system://bootstrap/default",
+      "system://routing/default"
+    ]
+
+    for s <- cases do
+      a = Ezagent.URI.parse!(s)
+      b = Ezagent.URI.parse!(URI.to_string(a))
+      assert a == b, "round-trip diverged for #{s}"
+      assert a.authority == nil, "expected authority:nil for #{s}, got #{inspect(a.authority)}"
+      assert URI.to_string(a) == s, "to_string non-idempotent for #{s}"
+    end
+  end
+
+  # ---------------------------------------------------------------------
+  # §5.4 — Bug-2 parity (admin URI any-which-way)
+
+  test "admin_uri produced any-which-way is canonical-equal" do
+    from_constant = Ezagent.Entity.User.admin_uri()
+    from_parse = Ezagent.URI.parse!("entity://user/system/admin")
+    {:ok, from_string_via_ecto} = Ezagent.Ecto.URI.load("entity://user/system/admin")
+
+    assert from_constant == from_parse,
+           "admin_uri constant != parse!/1 — would resurrect Bug 2"
+
+    assert from_constant == from_string_via_ecto,
+           "admin_uri constant != Ecto load result — would resurrect Bug 2"
+
+    assert from_constant.authority == nil,
+           "admin_uri authority is not nil (canonical-form requirement, RFC 3986)"
+  end
+
+  # ---------------------------------------------------------------------
+  # §5.5 — snapshot canonicalize_uris/1 covers every required shape
+
+  defmodule MyBinding do
+    @moduledoc false
+    defstruct [:uri, :meta]
+  end
+
+  test "snapshot canonicalize_uris/1 covers every required shape" do
+    # parse_legacy/1 mimics the pre-migration `URI.parse/1` shape so we
+    # can prove the walker rewrites all of them. We have to BYPASS the
+    # invariant grep here — the test must construct non-canonical
+    # forms to verify they are rewritten. This is the ONLY production
+    # site where the legacy form is allowed to appear, and the
+    # `# uri-canonical-allow` suppression marks the intent.
+    parse_legacy = fn s ->
+      apply(URI, :parse, [s]) # uri-canonical-allow: SPEC §5.5 adversarial fixture
+    end
+
+    pre_migration_state = %{
+      chat: %{
+        owner: parse_legacy.("entity://user/system/admin"),
+        members: [parse_legacy.("entity://user/team-alpha/alice")],
+        deep: %{nested: %{list: [parse_legacy.("entity://user/team-alpha/bob")]}},
+        # URI as map KEY.
+        per_member: %{parse_legacy.("entity://user/team-alpha/carol") => :online},
+        # Tuple element.
+        last_event: {:joined, parse_legacy.("entity://user/team-alpha/dave"), 1_700_000_000},
+        # Custom struct holding URI.
+        binding: %MyBinding{uri: parse_legacy.("entity://user/team-alpha/eve"), meta: %{}}
+      }
+    }
+
+    binary = :erlang.term_to_binary(pre_migration_state)
+    decoded = :erlang.binary_to_term(binary, [:safe])
+    canonicalized = Ezagent.Kind.Snapshot.canonicalize_uris(decoded)
+
+    # Map value at top level
+    assert canonicalized.chat.owner.authority == nil
+    # List element
+    assert hd(canonicalized.chat.members).authority == nil
+    # Deep nesting (Map → Map → List → URI)
+    assert hd(canonicalized.chat.deep.nested.list).authority == nil
+    # Tuple element
+    {tag, dave_uri, ts} = canonicalized.chat.last_event
+    assert tag == :joined and ts == 1_700_000_000
+    assert dave_uri.authority == nil
+
+    # Map KEY was walked
+    [{carol_uri, status}] = Enum.to_list(canonicalized.chat.per_member)
+    assert carol_uri.authority == nil and status == :online
+
+    # Custom struct shape preserved AND URI canonical
+    assert canonicalized.chat.binding.__struct__ == MyBinding
+    assert canonicalized.chat.binding.uri.authority == nil
+
+    # Equality against parse!/1 result holds
+    assert canonicalized.chat.owner == Ezagent.URI.parse!("entity://user/system/admin")
+  end
+
+  # ---------------------------------------------------------------------
+  # §5.5 r3 adversarial — the same-line URI.new + URI.new! mix must be
+  # caught by §5.2.1's regex. r4 fix uses PCRE negative lookahead.
+
+  test "URI.new/1 invariant catches same-line URI.new + URI.new! mix" do
+    assert matches_uri_new_no_bang?("foo = URI.new(s)")
+    refute matches_uri_new_no_bang?("foo = URI.new!(s)")
+    assert matches_uri_new_no_bang?("foo = URI.new(s); bar = URI.new!(t)")
+    assert matches_uri_new_no_bang?("foo = URI.new!(s); bar = URI.new(t)")
+    refute matches_uri_new_no_bang?("foo = URI.new!(s); bar = URI.new!(t)")
+  end
+
+  # ---------------------------------------------------------------------
+  # helpers (kept private to the test module)
+
+  defp matches_uri_new_no_bang?(line) do
+    # PCRE negative lookahead — match `URI.new(` where `new` is NOT
+    # immediately followed by `!`. SPEC §5.2.1 r4 fix.
+    Regex.match?(~r/\bURI\.new(?!!)\(/, line)
+  end
+
+  defp is_query_target_idiom?(line),
+    do: String.contains?(line, "URI.new!(") and String.contains?(line, "?action=")
+
+  defp is_module_attribute?(line),
+    do: Regex.match?(~r/^\s*@\w+\s+URI\.new!\(/, line)
+
+  defp in_comment?(line), do: Regex.match?(~r/^\s*#/, line)
+
+  defp format(violations) do
+    violations
+    |> Enum.map(fn {path, lineno, line} -> "  #{path}:#{lineno}: #{line}" end)
+    |> Enum.join("\n")
+  end
+end

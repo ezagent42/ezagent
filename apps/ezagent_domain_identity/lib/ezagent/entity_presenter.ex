@@ -58,21 +58,28 @@ defmodule Ezagent.EntityPresenter do
   end
 
   defp fallback(uri_str) do
-    case URI.new(uri_str) do
-      {:ok, %URI{scheme: "entity", path: "/" <> rest}} when rest != "" ->
-        # Phase 9 PR-2 (SPEC v3 §3): entity URIs are 3-segment —
-        # `/<workspace>/<entity_name>`. Display only the entity name;
-        # workspace is shown elsewhere.
-        case String.split(rest, "/", parts: 2) do
-          [_workspace, name] when name != "" -> name
-          _ -> rest
-        end
+    # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint.
+    # Display fallback: parse errors (malformed cookie) fall back to the
+    # raw string per the original semantics.
+    try do
+      case Ezagent.URI.parse!(uri_str) do
+        %URI{scheme: "entity", path: "/" <> rest} when rest != "" ->
+          # Phase 9 PR-2 (SPEC v3 §3): entity URIs are 3-segment —
+          # `/<workspace>/<entity_name>`. Display only the entity name;
+          # workspace is shown elsewhere.
+          case String.split(rest, "/", parts: 2) do
+            [_workspace, name] when name != "" -> name
+            _ -> rest
+          end
 
-      {:ok, %URI{path: "/" <> name}} when name != "" ->
-        name
+        %URI{path: "/" <> name} when name != "" ->
+          name
 
-      _ ->
-        uri_str
+        _ ->
+          uri_str
+      end
+    rescue
+      ArgumentError -> uri_str
     end
   end
 

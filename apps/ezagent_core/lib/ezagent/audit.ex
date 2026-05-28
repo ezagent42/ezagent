@@ -389,9 +389,22 @@ defmodule Ezagent.Audit do
   defp system_scoped_uri?(uri) do
     parsed =
       case uri do
-        %URI{} = u -> u
-        s when is_binary(s) -> URI.parse(s)
-        _ -> nil
+        %URI{} = u ->
+          u
+
+        s when is_binary(s) ->
+          # SPEC 2026-05-27-uri-canonicalization §3.7 — Ezagent schemes via
+          # canonical chokepoint; non-Ezagent strings produce `nil` so the
+          # system-scoped predicate returns false (correct: unknown scheme
+          # is not system-scoped).
+          try do
+            Ezagent.URI.parse!(s)
+          rescue
+            ArgumentError -> nil
+          end
+
+        _ ->
+          nil
       end
 
     case parsed do

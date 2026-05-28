@@ -211,7 +211,7 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
 
     msg = Ezagent.Message.new(caller_uri, body, mentions: mentions)
 
-    target = URI.parse("#{URI.to_string(session_uri)}?action=chat.send")
+    target = Ezagent.URI.parse!("#{URI.to_string(session_uri)}?action=chat.send")
 
     # Allen 2026-05-18: mode :call so cap-denial bubbles back
     # synchronously; the caller (dispatch/1) sends a text message to

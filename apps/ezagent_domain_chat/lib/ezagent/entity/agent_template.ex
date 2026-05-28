@@ -272,7 +272,7 @@ defmodule Ezagent.Entity.AgentTemplate do
         reply: {:caller_inbox, self()}
       }
 
-      target = URI.parse("#{URI.to_string(parent_uri)}?action=template.fork")
+      target = Ezagent.URI.parse!("#{URI.to_string(parent_uri)}?action=template.fork")
 
       case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
              target: target,

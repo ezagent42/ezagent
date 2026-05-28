@@ -26,13 +26,25 @@ defmodule Ezagent.Ecto.URI do
   def type, do: :string
 
   # Cast: input → in-memory %URI{} (used by Ecto.Changeset.cast/3).
+  #
+  # SPEC 2026-05-27-uri-canonicalization §3.7 — Ezagent-scheme strings
+  # route through `Ezagent.URI.parse!/1` (the canonical chokepoint).
+  # Non-Ezagent strings fall back to strict `URI.new/1` so external
+  # URLs (e.g. http feishu webhook addresses) still load. The bare
+  # `URI.new/1` calls below are the §5.2.1 allowlisted external-URI
+  # fallback — see Appendix A.1 of the SPEC.
   @impl true
   def cast(%URI{} = uri), do: {:ok, uri}
 
   def cast(s) when is_binary(s) do
-    case URI.new(s) do
-      {:ok, uri} -> {:ok, uri}
-      {:error, _} -> :error
+    try do
+      {:ok, Ezagent.URI.parse!(s)}
+    rescue
+      ArgumentError ->
+        case URI.new(s) do
+          {:ok, uri} -> {:ok, uri}
+          {:error, _} -> :error
+        end
     end
   end
 
@@ -41,9 +53,14 @@ defmodule Ezagent.Ecto.URI do
   # Load: DB string → %URI{} (used when reading rows back).
   @impl true
   def load(s) when is_binary(s) do
-    case URI.new(s) do
-      {:ok, uri} -> {:ok, uri}
-      {:error, _} -> :error
+    try do
+      {:ok, Ezagent.URI.parse!(s)}
+    rescue
+      ArgumentError ->
+        case URI.new(s) do
+          {:ok, uri} -> {:ok, uri}
+          {:error, _} -> :error
+        end
     end
   end
 

@@ -426,7 +426,7 @@ defmodule Ezagent.CapabilityRegistry do
          function_exported?(Ezagent.Entity.User, :admin_uri, 0) do
       apply(Ezagent.Entity.User, :admin_uri, [])
     else
-      URI.parse("system://bootstrap/pr-own-1")
+      Ezagent.URI.parse!("system://bootstrap/pr-own-1")
     end
   end
 

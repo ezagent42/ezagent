@@ -146,7 +146,7 @@ defmodule Ezagent.Orchestrator.McpRegistry do
   defp fetch_uri(opts, key) do
     case Keyword.get(opts, key) do
       %URI{} = uri -> {:ok, uri}
-      s when is_binary(s) and s != "" -> {:ok, URI.parse(s)}
+      s when is_binary(s) and s != "" -> {:ok, Ezagent.URI.parse!(s)}
       _ -> {:error, {:missing_opt, key}}
     end
   end
@@ -154,7 +154,7 @@ defmodule Ezagent.Orchestrator.McpRegistry do
   defp opt_uri(opts, key) do
     case Keyword.get(opts, key) do
       %URI{} = uri -> uri
-      s when is_binary(s) and s != "" -> URI.parse(s)
+      s when is_binary(s) and s != "" -> Ezagent.URI.parse!(s)
       _ -> nil
     end
   end

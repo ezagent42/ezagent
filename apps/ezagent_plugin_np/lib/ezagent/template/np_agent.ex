@@ -76,31 +76,37 @@ defmodule Ezagent.PluginNp.Template.NpAgent do
   # flavor lives in the entity_name prefix as `<flavor>_<rest>` per
   # SPEC v2 §5.14. np.agent requires flavor=np.
   defp check_agent_uri(%{"agent_uri" => uri_str}) when is_binary(uri_str) and uri_str != "" do
-    case URI.new(uri_str) do
-      {:ok, %URI{scheme: "entity", host: "agent", path: "/" <> rest}} when rest != "" ->
-        with [_workspace, entity_name] when entity_name != "" <-
-               String.split(rest, "/", parts: 2),
-             [flavor, suffix] when flavor != "" and suffix != "" <-
-               String.split(entity_name, "_", parts: 2) do
-          if flavor == "np" do
-            :ok
+    # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+    # with try/rescue keeping the structured `{:error, _}` contract.
+    try do
+      case Ezagent.URI.parse!(uri_str) do
+        %URI{scheme: "entity", host: "agent", path: "/" <> rest} when rest != "" ->
+          with [_workspace, entity_name] when entity_name != "" <-
+                 String.split(rest, "/", parts: 2),
+               [flavor, suffix] when flavor != "" and suffix != "" <-
+                 String.split(entity_name, "_", parts: 2) do
+            if flavor == "np" do
+              :ok
+            else
+              {:error, {:wrong_agent_flavor, flavor, expected: "np"}}
+            end
           else
-            {:error, {:wrong_agent_flavor, flavor, expected: "np"}}
+            _ ->
+              {:error,
+               {:missing_flavor_prefix, uri_str,
+                "agent URIs must be `entity://agent/<workspace>/np_<name>` (SPEC v3 §3)"}}
           end
-        else
-          _ ->
-            {:error,
-             {:missing_flavor_prefix, uri_str,
-              "agent URIs must be `entity://agent/<workspace>/np_<name>` (SPEC v3 §3)"}}
-        end
 
-      {:ok, %URI{scheme: "entity"}} ->
-        {:error,
-         {:invalid_agent_uri, uri_str,
-          "agent URIs must be `entity://agent/<workspace>/np_<name>` (SPEC v3 §3)"}}
+        %URI{scheme: "entity"} ->
+          {:error,
+           {:invalid_agent_uri, uri_str,
+            "agent URIs must be `entity://agent/<workspace>/np_<name>` (SPEC v3 §3)"}}
 
-      _ ->
-        {:error, {:bad_agent_uri, uri_str}}
+        _ ->
+          {:error, {:bad_agent_uri, uri_str}}
+      end
+    rescue
+      ArgumentError -> {:error, {:bad_agent_uri, uri_str}}
     end
   end
 
@@ -125,7 +131,7 @@ defmodule Ezagent.PluginNp.Template.NpAgent do
 
   @impl Ezagent.Kind.Template
   def instantiate(_tmpl_name, %{"agent_uri" => agent_uri_str} = tmpl, _workspace_uri) do
-    agent_uri = URI.parse(agent_uri_str)
+    agent_uri = Ezagent.URI.parse!(agent_uri_str)
     cwd = Map.get(tmpl, "cwd") || System.tmp_dir!()
     timeout_ms = parse_int(tmpl["timeout_ms"], 10_000)
 

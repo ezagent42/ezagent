@@ -101,7 +101,7 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
   """
   @spec seed() :: :ok
   def seed do
-    uri = URI.parse(@template_uri)
+    uri = Ezagent.URI.parse!(@template_uri)
 
     # `ensure_sandbox_files/0` raises `InstallError` on a bridge/schema
     # install failure — deliberately NOT caught here.
@@ -145,7 +145,7 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
   """
   @spec seed_status() :: {:ok | :partial | :missing, map()}
   def seed_status do
-    uri = URI.parse(@template_uri)
+    uri = Ezagent.URI.parse!(@template_uri)
 
     case Ezagent.KindRegistry.lookup(uri) do
       :error ->
@@ -385,7 +385,7 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
       created_at: DateTime.utc_now()
     }
 
-    target = URI.parse("#{URI.to_string(uri)}?action=template.write")
+    target = Ezagent.URI.parse!("#{URI.to_string(uri)}?action=template.write")
 
     case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
            target: target,

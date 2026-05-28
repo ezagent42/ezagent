@@ -274,7 +274,7 @@ defmodule Ezagent.Routing.Resolver do
 
   defp expand_receiver(receiver, _message, _current, _members, _ws)
        when is_binary(receiver),
-       do: [URI.new!(receiver)]
+       do: [Ezagent.URI.parse!(receiver)]
 
   defp expand_receiver(%URI{} = receiver, _message, _current, _members, _ws),
     do: [receiver]

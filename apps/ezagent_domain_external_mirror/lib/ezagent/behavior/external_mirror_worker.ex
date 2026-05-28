@@ -637,7 +637,7 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
   # `{:publisher_event, %Event{}}` and self-dispatch through the regular
   # `:publish` path — same dedupe, same telemetry.
   defp subscribe_to_session_publisher_from(%URI{} = session_uri, %URI{} = self_uri, cursor) do
-    target = URI.parse("#{URI.to_string(session_uri)}?action=publisher.subscribe_from")
+    target = Ezagent.URI.parse!("#{URI.to_string(session_uri)}?action=publisher.subscribe_from")
 
     inv = %Ezagent.Invocation{
       target: target,
@@ -673,7 +673,7 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
   end
 
   defp dispatch_publish_to_self(%URI{} = self_uri, %Event{} = event) do
-    target = URI.parse("#{URI.to_string(self_uri)}?action=external_mirror_worker.publish")
+    target = Ezagent.URI.parse!("#{URI.to_string(self_uri)}?action=external_mirror_worker.publish")
 
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
       target: target,

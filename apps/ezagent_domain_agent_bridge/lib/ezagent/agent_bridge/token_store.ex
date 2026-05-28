@@ -52,7 +52,7 @@ defmodule Ezagent.AgentBridge.TokenStore do
     case load_all() do
       {:ok, instances} ->
         Enum.find_value(instances, :error, fn
-          {agent_str, %{"token" => ^token}} -> {:ok, URI.parse(agent_str)}
+          {agent_str, %{"token" => ^token}} -> {:ok, Ezagent.URI.parse!(agent_str)}
           _ -> nil
         end)
 
@@ -66,7 +66,7 @@ defmodule Ezagent.AgentBridge.TokenStore do
   def list_all do
     case load_all() do
       {:ok, instances} ->
-        Enum.map(instances, fn {agent_str, meta} -> {URI.parse(agent_str), meta} end)
+        Enum.map(instances, fn {agent_str, meta} -> {Ezagent.URI.parse!(agent_str), meta} end)
 
       _ ->
         []

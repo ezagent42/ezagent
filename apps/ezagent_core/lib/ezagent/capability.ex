@@ -611,7 +611,7 @@ defmodule Ezagent.Capability do
   defp workspace_from_3seg_path(%URI{path: "/" <> rest}) do
     case String.split(rest, "/", parts: 2) do
       [workspace_name, _name] when workspace_name != "" ->
-        URI.new!("workspace://" <> workspace_name)
+        URI.new!("workspace://" <> workspace_name) # uri-canonical-allow: §3.6 structural derivation from validated path segment
 
       _ ->
         raise ArgumentError,
@@ -828,7 +828,7 @@ defmodule Ezagent.Capability do
   end
 
   defp parse_granter(%URI{} = uri), do: uri
-  defp parse_granter(s) when is_binary(s), do: URI.parse(s)
+  defp parse_granter(s) when is_binary(s), do: Ezagent.URI.parse!(s)
 
   defp parse_granter(other) do
     raise ArgumentError,
@@ -896,7 +896,7 @@ defmodule Ezagent.Capability do
   # and crashes anyway; we raise with context).
   defp decode_uri_or_any_strict!("any", _field), do: :any
 
-  defp decode_uri_or_any_strict!(s, _field) when is_binary(s), do: URI.parse(s)
+  defp decode_uri_or_any_strict!(s, _field) when is_binary(s), do: Ezagent.URI.parse!(s)
 
   defp decode_uri_or_any_strict!(other, field) do
     raise ArgumentError,
@@ -974,7 +974,7 @@ defmodule Ezagent.Capability do
   defp uri_or_any_to_string(%URI{} = u), do: URI.to_string(u)
 
   defp string_to_uri_or_any("any"), do: :any
-  defp string_to_uri_or_any(s) when is_binary(s), do: URI.parse(s)
+  defp string_to_uri_or_any(s) when is_binary(s), do: Ezagent.URI.parse!(s)
 
   defp parse_datetime(nil), do: DateTime.utc_now()
 

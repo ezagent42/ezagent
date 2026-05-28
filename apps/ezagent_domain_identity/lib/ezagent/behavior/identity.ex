@@ -149,7 +149,7 @@ defmodule Ezagent.Behavior.Identity do
     if function_exported?(Ezagent.Entity.User, :admin_uri, 0) do
       Ezagent.Entity.User.admin_uri()
     else
-      URI.parse("system://bootstrap/pr-own-3")
+      Ezagent.URI.parse!("system://bootstrap/pr-own-3")
     end
   end
 
@@ -543,7 +543,7 @@ defmodule Ezagent.Behavior.IdentityAdmin do
     if function_exported?(Ezagent.Entity.User, :admin_uri, 0) do
       Ezagent.Entity.User.admin_uri()
     else
-      URI.parse("system://bootstrap/grant_cap")
+      Ezagent.URI.parse!("system://bootstrap/grant_cap")
     end
   end
 

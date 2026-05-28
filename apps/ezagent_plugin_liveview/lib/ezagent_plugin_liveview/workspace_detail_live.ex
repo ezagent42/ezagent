@@ -271,7 +271,13 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
   end
 
   def handle_event("remove_member", %{"member_uri" => uri_str}, socket) do
-    case URI.new(uri_str) do
+    # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+    # with try/rescue keeping the "Bad URI" flash for malformed input.
+    case (try do
+            {:ok, Ezagent.URI.parse!(uri_str)}
+          rescue
+            ArgumentError -> :error
+          end) do
       {:ok, uri} ->
         case Ezagent.Workspace.remove_member(socket.assigns.name, uri) do
           :ok ->
@@ -345,7 +351,7 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
     # AdminShell.admin_shell so it carries the universal chrome.
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
-        URI.to_string(assigns.current_entity_uri || URI.parse("entity://user/system/admin"))
+        URI.to_string(assigns.current_entity_uri || Ezagent.URI.parse!("entity://user/system/admin"))
       end)
 
     ~H"""
@@ -388,7 +394,7 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
     # workflow surface; it now gains the universal chrome.
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
-        URI.to_string(assigns.current_entity_uri || URI.parse("entity://user/system/admin"))
+        URI.to_string(assigns.current_entity_uri || Ezagent.URI.parse!("entity://user/system/admin"))
       end)
 
     ~H"""

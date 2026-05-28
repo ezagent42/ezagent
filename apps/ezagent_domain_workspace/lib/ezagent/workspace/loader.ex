@@ -259,7 +259,7 @@ defmodule Ezagent.Workspace.Loader do
   end
 
   defp instantiate_idempotent_uris(%{"agent_uri" => uri_str}) when is_binary(uri_str),
-    do: [URI.parse(uri_str)]
+    do: [Ezagent.URI.parse!(uri_str)]
 
   defp instantiate_idempotent_uris(_), do: []
 
@@ -318,7 +318,7 @@ defmodule Ezagent.Workspace.Loader do
   end
 
   defp instantiate_via_dispatch(workspace_uri) do
-    target = URI.parse("#{URI.to_string(workspace_uri)}?action=workspace.instantiate")
+    target = Ezagent.URI.parse!("#{URI.to_string(workspace_uri)}?action=workspace.instantiate")
 
     case Invocation.dispatch(%Invocation{
            target: target,

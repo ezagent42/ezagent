@@ -529,8 +529,8 @@ defmodule Ezagent.Behavior.Chat do
         session_uri =
           case msg.session_uri do
             %URI{} = uri -> uri
-            s when is_binary(s) and s != "" -> URI.new!(s)
-            _ when source_session != "" -> URI.new!(source_session)
+            s when is_binary(s) and s != "" -> Ezagent.URI.parse!(s)
+            _ when source_session != "" -> Ezagent.URI.parse!(source_session)
             _ -> nil
           end
 
@@ -966,7 +966,7 @@ defmodule Ezagent.Behavior.Chat do
   """
   @spec system_set_working_copy(URI.t(), map()) :: {:ok, map()} | {:error, term()}
   def system_set_working_copy(%URI{} = session_uri, working_copy) when is_map(working_copy) do
-    target = URI.parse("#{URI.to_string(session_uri)}?action=chat.set_working_copy")
+    target = Ezagent.URI.parse!("#{URI.to_string(session_uri)}?action=chat.set_working_copy")
 
     case Invocation.dispatch(%Invocation{
            target: target,
@@ -1156,7 +1156,7 @@ defmodule Ezagent.Behavior.Chat do
   defp to_uri_struct(%URI{} = uri), do: uri
 
   defp to_uri_struct(s) when is_binary(s) do
-    URI.parse(s)
+    Ezagent.URI.parse!(s)
   rescue
     _ -> nil
   end

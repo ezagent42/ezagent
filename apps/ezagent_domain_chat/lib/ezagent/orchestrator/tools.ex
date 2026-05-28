@@ -54,7 +54,7 @@ defmodule Ezagent.Orchestrator.Tools do
   orchestrator's caller context:
 
       Tools.add_agent_slot("backend-dev",
-        URI.parse("template://agent/system/cc-backend"),
+        Ezagent.URI.parse!("template://agent/system/cc-backend"),
         nil,
         caller: %URI{} = orchestrator_uri,
         caps: caps,
@@ -320,7 +320,7 @@ defmodule Ezagent.Orchestrator.Tools do
        )
        when is_binary(instance_name) do
     with {:ok, _pid} <- ensure_template_alive(agent_template_uri) do
-      target = URI.parse("#{URI.to_string(agent_template_uri)}?action=template.instantiate")
+      target = Ezagent.URI.parse!("#{URI.to_string(agent_template_uri)}?action=template.instantiate")
 
       case Invocation.dispatch(%Invocation{
              target: target,
@@ -529,7 +529,7 @@ defmodule Ezagent.Orchestrator.Tools do
   # curl, np that never populated), Sandbox short-circuits the cleanup
   # and just schedules termination — safe drop-in for all flavors.
   defp terminate_worker(%URI{} = worker_uri, %URI{} = caller, caps) do
-    target = URI.parse("#{URI.to_string(worker_uri)}?action=sandbox.destroy")
+    target = Ezagent.URI.parse!("#{URI.to_string(worker_uri)}?action=sandbox.destroy")
 
     case Invocation.dispatch(%Invocation{
            target: target,
@@ -1001,7 +1001,7 @@ defmodule Ezagent.Orchestrator.Tools do
   # BEFORE any destructive step.
   defp preflight_template_read(%URI{} = agent_template_uri, %URI{} = caller, caps) do
     with {:ok, _pid} <- ensure_template_alive(agent_template_uri),
-         target <- URI.parse("#{URI.to_string(agent_template_uri)}?action=template.read"),
+         target <- Ezagent.URI.parse!("#{URI.to_string(agent_template_uri)}?action=template.read"),
          {:ok, result} <-
            Invocation.dispatch(%Invocation{
              target: target,
@@ -1053,7 +1053,7 @@ defmodule Ezagent.Orchestrator.Tools do
                 "fallback; callers must pass a workspace URI with an explicit name."
 
     if is_binary(flavor) and flavor != "" do
-      {:ok, URI.new!("entity://agent/#{workspace_name}/#{flavor}_#{instance_name}")}
+      {:ok, Ezagent.URI.parse!("entity://agent/#{workspace_name}/#{flavor}_#{instance_name}")}
     else
       :no_flavor
     end
@@ -1255,7 +1255,7 @@ defmodule Ezagent.Orchestrator.Tools do
          {:ok, matcher_json} <- normalize_matcher(matcher_ast),
          {:ok, receiver_uris} <-
            resolve_receiver_uris(session_uri, receiver_slot_names, workspace_uri) do
-      target = URI.parse("#{URI.to_string(session_uri)}?action=routing.add_rule")
+      target = Ezagent.URI.parse!("#{URI.to_string(session_uri)}?action=routing.add_rule")
 
       case Invocation.dispatch(%Invocation{
              target: target,
@@ -1435,7 +1435,7 @@ defmodule Ezagent.Orchestrator.Tools do
       granted_at: DateTime.utc_now()
     }
 
-    target = URI.parse("#{URI.to_string(owner_uri)}?action=identity.grant_cap")
+    target = Ezagent.URI.parse!("#{URI.to_string(owner_uri)}?action=identity.grant_cap")
 
     case Invocation.dispatch(%Invocation{
            target: target,
@@ -1513,7 +1513,7 @@ defmodule Ezagent.Orchestrator.Tools do
   defp filter_rows(rows, kind_type, expected_host, name_filter) do
     rows
     |> Enum.filter(fn row -> row.kind_type == kind_type end)
-    |> Enum.map(fn row -> URI.parse(row.uri) end)
+    |> Enum.map(fn row -> Ezagent.URI.parse!(row.uri) end)
     |> Enum.filter(&template_match?(&1, expected_host, name_filter))
     |> Enum.sort_by(&URI.to_string/1)
   end
@@ -1579,8 +1579,8 @@ defmodule Ezagent.Orchestrator.Tools do
 
     representative =
       case kind do
-        :agent_template -> URI.new!("template://agent/#{workspace_name}/_catalog")
-        :session_template -> URI.new!("template://session/#{workspace_name}/_catalog@_")
+        :agent_template -> Ezagent.URI.parse!("template://agent/#{workspace_name}/_catalog")
+        :session_template -> Ezagent.URI.parse!("template://session/#{workspace_name}/_catalog@_")
       end
 
     needed = %{
@@ -1696,7 +1696,7 @@ defmodule Ezagent.Orchestrator.Tools do
   defp slot_tuple_name(_), do: nil
 
   defp write_working_copy(%URI{} = session_uri, working_copy, %URI{} = caller, caps) do
-    target = URI.parse("#{URI.to_string(session_uri)}?action=chat.set_working_copy")
+    target = Ezagent.URI.parse!("#{URI.to_string(session_uri)}?action=chat.set_working_copy")
 
     case Invocation.dispatch(%Invocation{
            target: target,
@@ -1736,7 +1736,7 @@ defmodule Ezagent.Orchestrator.Tools do
   defp normalize_slot(other), do: other
 
   defp as_uri(%URI{} = u), do: u
-  defp as_uri(s) when is_binary(s), do: URI.parse(s)
+  defp as_uri(s) when is_binary(s), do: Ezagent.URI.parse!(s)
   defp as_uri(other), do: other
 
   defp resolve_slot_worker_uri(%URI{} = session_uri, slot_name, %URI{} = _workspace_uri) do
@@ -1777,7 +1777,7 @@ defmodule Ezagent.Orchestrator.Tools do
 
     orchestrator_template_uri =
       Map.get(wc, :orchestrator_template_uri) ||
-        URI.parse("template://agent/system/cc-orchestrator")
+        Ezagent.URI.parse!("template://agent/system/cc-orchestrator")
 
     default_workspace_uri = Map.get(wc, :default_workspace_uri) || workspace_uri
 

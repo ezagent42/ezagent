@@ -407,7 +407,7 @@ defmodule EzagentWeb.SessionController do
   # (`entity://user/...` or `entity://agent/...`) — `SessionPrincipal`
   # validated it before we got here.
   defp authenticate(uri_str, secret) when is_binary(uri_str) and is_binary(secret) do
-    case Entity.authenticate(URI.parse(uri_str), secret) do
+    case Entity.authenticate(Ezagent.URI.parse!(uri_str), secret) do
       {:ok, _} -> :ok
       {:error, _} -> :error
     end

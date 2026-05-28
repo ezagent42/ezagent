@@ -128,7 +128,7 @@ defmodule Ezagent.ExternalMirror.BootReconciler do
           rows
           |> Enum.map(& &1.session_uri)
           |> Enum.uniq()
-          |> Enum.map(&URI.parse/1)
+          |> Enum.map(&Ezagent.URI.parse!/1)
           |> MapSet.new()
 
         if MapSet.size(session_uris) == 0 do

@@ -818,7 +818,7 @@ defmodule Ezagent.Behavior.ExternalMirror do
       adapter_id: row.adapter_id,
       target_id: row.target_id,
       opts: decode_opts(row.opts_json),
-      bound_by: URI.parse(row.bound_by),
+      bound_by: Ezagent.URI.parse!(row.bound_by),
       bound_at: row.bound_at
     }
   end

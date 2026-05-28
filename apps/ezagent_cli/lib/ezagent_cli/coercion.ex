@@ -50,9 +50,12 @@ defmodule EzagentCli.Coercion do
       value_name: opt_value_name(name, "URI"),
       long: long(name),
       parser: fn s ->
-        case URI.new(s) do
-          {:ok, %URI{scheme: scheme} = uri} when is_binary(scheme) -> {:ok, uri}
-          _ -> {:error, "malformed URI: #{inspect(s)}"}
+        # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+        # with try/rescue keeping the parser's `{:error, msg}` contract.
+        try do
+          {:ok, Ezagent.URI.parse!(s)}
+        rescue
+          ArgumentError -> {:error, "malformed URI: #{inspect(s)}"}
         end
       end
     ]
