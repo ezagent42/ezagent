@@ -1,14 +1,26 @@
 # SPEC — Ezagent state model migration to EventStore + Commanded (CQRS / event-sourcing)
 
-**Status:** r5 — **§1.5 added (Alternatives Considered); verdict = Option B (lighter path preferred)**. The Commanded migration described in §2-§12 is NOT recommended as-is; the §1.5 honest-comparison concludes that Sage + ex_audit + tighter `Ecto.Multi` covers §1's pain points P1-P4, and only P5 (time-travel replay) is Commanded-exclusive — and P5 is not on the roadmap. PR #442 should be paused pending a companion "Path B SPEC" (`2026-05-28-destroy-cascade-sage-ex_audit.md`) per §1.5.5. The prior r4-FINAL status (4-round codex budget exhaustion, 7 carry-over limitations) still applies to §2-§12 if Option A is ever revisited. 2026-05-28.
+**Status:** r6 — **§1.5 codex-reviewed; verdict = CONDITIONAL Option B**. Codex round on §1.5 returned REJECT with 3 HIGH + 2 MED; all addressed inline. The lighter path (Sage + ex_audit + Ecto.Multi) remains recommended over Commanded migration, **conditionally** on three predicates holding at Path B SPEC drafting time: (a) library-risk audit on Sage/ex_audit fork ownership + Elixir/Ecto compatibility passes (see new §1.5.4), (b) Path B's saga design includes a durable saga log / outbox (Oban candidate) to close the Sage in-memory state gap, (c) replay (P5) confirmed not a roadmap item for next 12 months. If any of (a)(b)(c) fails, revisit the Option A Commanded migration described in §2-§12. The prior r4-FINAL status (4-round codex budget exhaustion, 7 carry-over limitations) still applies to §2-§12 if Option A is ever revisited. 2026-05-28.
 
-## r5 changelog (delta from r4)
+## r6 changelog (delta from r5)
+
+Codex round on §1.5 (the r5 insert) returned **REJECT — 3 HIGH + 2 MED**. r6 addresses all 5 findings inline within §1.5; §2-§12 untouched.
+
+- **HIGH-1 — P5 roadmap claim unsupported inline (§1.5.3 P5)**. r5 cited "nothing in incident retros or future-work cites replay" without inline evidence. r6 downgrades to "not currently evidenced HERE in §1.5; verdict assumes Allen confirms during grill-with-doc" + adds 4 plausible future replay drivers (regulatory compliance, AI training data, post-incident debug, schema migration backfill) + estimates Path B→Option A migration cost (~3-4 months wall-time, comparable to a fresh Option A done today).
+- **HIGH-2 — Sage durability gap underweighted (§1.5.2 matrix + §1.5.3 P1/P3)**. r5 said Sage covers P1/P3 fully and dismissed Commanded's durable PM state as "pure overhead." r6 downgrades Sage P1/P3 ✅ → ⚠️ in matrix; rewrites P1 verdict to require Path B to include a durable saga log / outbox (Oban candidate) for cross-restart resilience; acknowledges destroy hasn't shipped, so "no observed mid-cascade incidents" is not evidence.
+- **HIGH-3 — Library-staleness risk not priced (§1.5.4 NEW)**. r5 dismissed Sage 2022-09 + ex_audit 2023-02 staleness as a one-liner. r6 adds entire §1.5.4 "Library risk + dependency posture" subsection: fork-and-maintain costs, Ecto coupling per-lib, 5-year scenarios (Sage abandoned, ex_audit abandoned, both abandoned), mitigation cost (~2-4 weeks worst-case DIY pivot). Even worst-case Option B → DIY pivot is cheaper than Option A's day-one cost; staleness doesn't flip the verdict but requires pin discipline + annual audit.
+- **MED-1 — Sage overclaimed for P4 (§1.5.2 matrix)**. r5 gave Sage P4 ✅ because "Sage runs inside a transaction." r6 changes Sage P4 to "—" (orchestration lib, not race-fix); L1 (Ecto.Multi + DB constraints) is the explicit P4 owner.
+- **MED-2 — Companion Path B scope (§1.5.6)**. r5 named `2026-05-28-destroy-cascade-sage-ex_audit.md` but Option B covers P1+P2+P3+P4. r6 §1.5.6 offers Allen two options during grill-with-doc: (2a) one broader SPEC `2026-05-28-native-workflow-audit-race-hardening.md`, or (2b — recommended) split into three independent companion SPECs (race-hardening first, audit second, workflow+outbox third) matching cap-vis / URI-canonical's small-fast-converging precedent.
+
+**Renumber**: r5 §1.5.4 "Verdict" → r6 §1.5.5; r5 §1.5.5 "What changes downstream" → r6 §1.5.6. r6 adds §1.5.4 "Library risk + dependency posture" between r5 §1.5.3 and r5 §1.5.4.
+
+## r5 changelog (delta from r4, retained for trail)
 
 Added per Allen's 2026-05-28 08:15 directive — SPEC must self-justify why Commanded specifically vs lighter native-Phoenix paths. Previously the SPEC jumped from §1 Problem to §2 Decision with zero alternatives analysis (0 mentions of Sage, ex_audit, "alternatives considered").
 
 - **§1.5 inserted** between §1 (Problem) and §2 (Decision) — "Alternatives considered — native-Phoenix lighter paths". Structure: 5 candidate paths (L1 Ecto.Multi, L2 Sage, L3 ex_audit, L4 Oban Workflow, L5 DIY) × 5 pain points (P1 destroy cascade, P2 audit, P3 cross-Kind workflow, P4 races, P5 replay) honesty matrix + 5 per-scenario paragraphs.
-- **§1.5 verdict = Option B** — Ecto.Multi + Sage + ex_audit covers P1-P4; P5 is the only Commanded-exclusive and not on the roadmap.
-- **⚠️ Pre-§2 note added** at the top of §2 — flags that §2-§12 reflects the **rejected** Commanded path and should not be merged as-is. §1.5.5 lists concrete next steps (pause #442, draft Path B SPEC).
+- **§1.5 verdict = Option B** (r5 framing; r6 codex review downgraded to CONDITIONAL Option B — see r6 changelog above).
+- **⚠️ Pre-§2 note added** at the top of §2 — flags that §2-§12 reflects the **rejected** Commanded path and should not be merged as-is. §1.5.6 (was §1.5.5 in r5) lists concrete next steps (pause #442, draft Path B SPEC).
 - §2-§12 themselves are UNCHANGED — kept verbatim for context / future revisit if P5 enters the roadmap.
 
 ## Known Limitations after r4 (carried into grill-with-doc)
@@ -257,13 +269,15 @@ This section steel-mans the lighter path. Allen's directive (2026-05-28 08:15): 
 
 | # | Pain point (from §1) | L1 Ecto.Multi | L2 Sage | L3 ex_audit | L4 Oban Workflow | L5 DIY event log | Commanded |
 |---|---|---|---|---|---|---|---|
-| **P1** | Cross-Kind destroy cascade — 7 steps, compensation on partial failure | ❌ same-DB-transaction only; cross-Kind = cross-process | ✅ canonical pattern — transaction/compensation pairs per step | — (not a workflow lib) | ✅ async-only — caller doesn't see result synchronously | ✅ feasible — but you're hand-rolling Sage | ✅ Process Manager — same shape as Sage + durable state |
+| **P1** | Cross-Kind destroy cascade — 7 steps, compensation on partial failure | ❌ same-DB-transaction only; cross-Kind = cross-process | ⚠️ canonical compensation pattern, BUT state is in-memory across `execute/1` — mid-cascade crash leaves orphan; needs **durable saga log / outbox (e.g. Oban) bolted on** for cross-restart resilience | — (not a workflow lib) | ✅ async-only — caller doesn't see result synchronously | ✅ feasible — but you're hand-rolling Sage | ✅ Process Manager — durable state across crash/restart natively |
 | **P2** | Audit log queryable by ad-hoc SQL ("what caps did user X hold yesterday at 14:00?") | ⚠️ partial — needs side `audit_log` table maintained by hand | — (not an audit lib) | ✅ canonical — `Ecto.Changeset` → `version_table` row, SQL-queryable | — (not an audit lib) | ✅ DIY — same data shape as ex_audit, but you maintain the trigger | ⚠️ event stream is the audit, but **NOT directly SQL-queryable** — needs an `audit_projection` table populated by an event handler (an extra hop ex_audit doesn't need) |
-| **P3** | Cross-Kind workflow orchestration (session create cascade, worker bootstrap, cap-grant verify) | ❌ same as P1 — DB-transaction scope only | ✅ same mechanism as P1 — modules-as-orchestrator | — | ✅ async, with retries | ✅ DIY | ✅ Process Manager with persistent state |
-| **P4** | Race conditions (read-then-lock, grant-time cap check, register/lookup parity) | ✅ — tighter Ecto.Multi + DB constraints (unique index, exclusion constraint, FK cascade) is the canonical answer | ✅ — Sage runs inside a transaction or chain of transactions | — | — | ✅ — DIY w/ DB constraints | ⚠️ — **same problem, different location** — aggregate-process serialization is identical to current `Kind.Server.handle_call` serialization; the actual race fix is DB constraints regardless of model |
+| **P3** | Cross-Kind workflow orchestration (session create cascade, worker bootstrap, cap-grant verify) | ❌ same as P1 — DB-transaction scope only | ⚠️ same single-call constraint as P1; multi-invocation flows (e.g. async worker bootstrap on `BindingCreated`) need PubSub + supervised GenServer + outbox instead | — | ✅ async, with retries | ✅ DIY | ✅ Process Manager with persistent state across invocations |
+| **P4** | Race conditions (read-then-lock, grant-time cap check, register/lookup parity) | ✅ — tighter Ecto.Multi + DB constraints (unique index, exclusion constraint, FK cascade) is the canonical answer | — (Sage is an orchestration lib; races are not in its scope — L1 owns this row) | — | — | ✅ — DIY w/ DB constraints | ⚠️ — **same problem, different location** — aggregate-process serialization is identical to current `Kind.Server.handle_call` serialization; the actual race fix is DB constraints regardless of model |
 | **P5** | Time-travel replay / "rebuild state at timestamp T from history" | ❌ | ❌ | ⚠️ — data is there (audit table), but no replay-into-state machinery | ❌ | ⚠️ — DIY (you have events, write a replay fn) | ✅ — aggregate state IS derived from event replay; this is the native primitive |
 
-**Honest cell semantics**: ✅ = the path solves this pain point with the named mechanism. ⚠️ = partial / needs an extra hop. ❌ = the path doesn't address this dimension. "—" = not in scope for this lib (don't penalize a lib for being focused).
+**Honest cell semantics**: ✅ = the path solves this pain point with the named mechanism. ⚠️ = partial / needs an extra hop or carries a documented caveat (see §1.5.3 per-scenario). ❌ = the path doesn't address this dimension. "—" = not in scope for this lib (don't penalize a lib for being focused).
+
+**r6 codex-fix note**: r5 marked Sage ✅ for P1/P3 and P4. r6 codex review (HIGH-2 + MED-1) downgraded Sage P1/P3 to ⚠️ because Sage state is in-memory across `execute/1` — durable cross-restart resilience requires Path B to bolt on an outbox (e.g. Oban) or accept the gap. Sage P4 dropped to "—" because Sage is an orchestration lib, not a race-fix; L1 (Ecto.Multi + DB constraints) is the explicit P4 owner.
 
 ### 1.5.3 Per-scenario deep dive
 
@@ -298,9 +312,11 @@ This is the **canonical** Sage pattern. Sage's contract is exactly what §3.8's 
 
 **Concrete failure modes**:
 - Sage compensations MUST NOT raise (semantically — if a compensate fails, the saga aborts in an undefined state). This is the same constraint Commanded Process Managers have (a `handle/2` clause that raises during compensation is equally fatal). Not a Sage-specific weakness.
-- Sage state is in-memory across the `execute/1` call. If the orchestrator process crashes mid-execute, the saga loses its progress. **Question**: is mid-call crash a recurring incident class in ezagent? Reading Phase 2-3 retros: no. Dispatches are <100ms typical; the BEAM is stable; we have not observed a "destroy mid-cascade left orphan" incident in 6 months of dogfood. Commanded's durable PM state matters if you DO crash mid-cascade — but if you don't, the durability is pure overhead.
+- **Sage state is in-memory across the `execute/1` call (r6 codex HIGH-2)**. If the orchestrator process crashes mid-execute — BEAM node restart, `kill -9`, OS reboot, supervisor restart — the saga loses progress and we're left with partial state. Commanded Process Managers persist their state in the event store, so cross-restart resume is native.
+  - The r5 draft argued "we haven't observed a mid-cascade crash in 6 months of dogfood." Codex correctly flagged that **destroy hasn't shipped yet** — "no observed incidents" is not evidence for a feature that has not been exercised at scale. The honest position: we don't know how frequent mid-cascade crash will be.
+  - **Path B mitigation requirement**: companion Path B SPEC MUST include a durable saga log (Oban as outbox candidate, or a hand-rolled `saga_executions` table) so a partial cascade can be resumed or compensated after BEAM restart. Without this, Path B has a real correctness gap vs Commanded.
 
-**Honest verdict for P1**: Sage solves the destroy cascade fully. Commanded Process Manager is overkill **if destroy cascade is the only motivator** — and per §1.1, it IS the trigger for this SPEC.
+**Honest verdict for P1**: Sage solves the destroy cascade IF the Path B SPEC includes a durable saga log / outbox. Without that, Commanded Process Manager has a genuine resilience advantage. Verdict assumes the mitigation lands in Path B.
 
 #### P2 — audit log queryable by ad-hoc SQL
 
@@ -343,7 +359,7 @@ Same shape as P1. Sage handles `CreateSessionSaga`, `CreateUserInWorkspaceSaga`,
 - `RevokeCapCascadeSaga`: triggered by membership revoked. Same as bootstrap — PubSub handler suffices.
 - `CapGrantOwnershipVerifySaga`: this is a SINGLE-COMMAND check (verify granter has cap, then either grant or reject). It's not a saga at all — it's a guard clause. The "saga" framing is over-modeling.
 
-**Honest verdict for P3**: 5 of the 9 sagas in §4.4 are single-call cascades → Sage handles. 2 are event-triggered cross-call → PubSub handler in a GenServer. 2 are not sagas at all. Commanded's framing inflates the count.
+**Honest verdict for P3**: 5 of the 9 sagas in §4.4 are single-call cascades → Sage handles (with the P1 durability caveat). 2 are event-triggered cross-call → PubSub handler in a supervised GenServer; **these need an outbox to survive worker restart between event arrival and effect application** (an Oban job per event-trigger is the canonical solution). 2 are not sagas at all. Commanded's framing inflates the count, but Commanded does carry the cross-restart durability natively where Sage requires bolt-on.
 
 #### P4 — race conditions (read-then-lock, grant-time check, register/lookup parity)
 
@@ -372,36 +388,83 @@ This is the ONE pain point where Commanded has a structural advantage no lighter
 Searching the docs/ futures, IMPLEMENTATION_ROADMAP, and codex-rejection trail for "replay", "time-travel", "rebuild state at T":
 - §3.7 mentions replay as a Commanded capability (positive framing).
 - §1.4 lists "no replay" as a current-model gap.
-- **Nothing in the actual incident retros or future-work list cites replay as a need.** No GitHub issue asks for it. No customer (Allen) has flagged "I need to debug a 2-week-old incident by rewinding state."
-- The destroy-cascade resume-after-crash story is the closest analog, and that's solved by Sage compensation + persistent saga state (sub-question: do we need cross-process-restart saga persistence? Per §4.4 saga inventory analysis above: no, current sagas are single-call).
+- **Within §1.5's review scope** the cited search of docs/issues cannot be verified by a reviewer reading §1.5 in isolation (r6 codex HIGH-1). The r5 draft asserted "nothing on the roadmap" without inline evidence; this r6 downgrades the claim to **"replay is not currently evidenced as a roadmap item HERE in §1.5; the verdict assumes Allen confirms during grill-with-doc."**
+- The destroy-cascade resume-after-crash story is the closest analog, and that's solved by Sage compensation + **durable saga log mitigation** (see P1).
 
-**Honest verdict for P5**: Replay is the ONLY structural Commanded-exclusive advantage in the matrix, and it is not on the roadmap. It's a capability we'd gain but have no near-term plan to use.
+**Plausible future drivers for replay** (so reviewers can sanity-check whether they're imminent):
+- **Regulatory compliance** — e.g. SOC 2 / GDPR "show the state of user X's caps at 2025-09-12 14:00 UTC" demands reconstructable historical state. ezagent doesn't currently serve regulated workloads but may. If we ship to enterprise B2B, this becomes table stakes.
+- **AI training data reconstruction** — replaying historical agent conversation + tool-call state for offline RLHF datasets. Not on the roadmap but plausible 12-month horizon.
+- **Post-incident debugging** — rewinding system state to reproduce a bug that depended on specific historical config. Currently we patch forward; replay would make root-cause faster.
+- **Schema migration backfill** — if we add a new derived field, replay events to compute the value for all historical instances. Current model needs per-Kind backfill scripts.
 
-### 1.5.4 Verdict
+**Migration cost back to Commanded if Option B ships first and replay becomes needed later**:
+- Add event-log infra (Postgres + `eventstore` lib): 1-2 weeks
+- Per-Kind: dual-write to event log alongside current writes for cutover window: 2-3 weeks
+- Per-Kind: write `apply/2` event-fold + state-from-events handler: 1-2 weeks per Kind × 5 Kinds = ~7 weeks
+- Saga rewrite from Sage → Commanded PM: 1-2 weeks
+- Production cutover + tail-event-drain: 1 week
+- **Total: ~3-4 months wall-time**, comparable to a fresh Option A migration today. **The migration cost is NOT free if we defer.**
 
-**Option B**: **L1 (tighter Ecto.Multi + DB constraints) + L2 (Sage) + L3 (ex_audit)** covers all §1 pain points P1, P2, P3, P4 — with **P2 (audit) and P4 (races) actually solved BETTER** by the lighter path than by Commanded. The single dimension Commanded wins on uncontested is **P5 (replay)**, and P5 is not on the roadmap.
+**Honest verdict for P5**: Replay is the ONE structural Commanded-exclusive advantage. The r5 claim "not on the roadmap" survives if Allen confirms it during grill-with-doc. If replay becomes a roadmap item in 12-24 months, the Option B → Option A migration cost is ~3-4 months — comparable to doing Option A today, so **the verdict is "defer migration cost unless replay enters the requirement set this calendar year."**
 
-Aggregate cost comparison:
+### 1.5.4 Library risk + dependency posture (r6 — codex HIGH-3 fix)
+
+The r5 verdict didn't price ongoing dependency risk for Sage + ex_audit. Codex flagged this as a HIGH gap. Here's the honest posture:
+
+| Lib | Last release | LOC | Ecto coupling | Fork-and-maintain cost if abandoned | Recommended posture |
+|---|---|---|---|---|---|
+| **Sage** | 2022-09 | ~400 (pure Elixir, dep-free) | none — operates on plain maps | Low — single-file core, ezagent could vendor + maintain in-tree if needed | Pin minor version; CI fixture; annual health audit |
+| **ex_audit** | 2023-02 | ~1500 | tight — wraps `Ecto.Changeset` lifecycle | Medium — Ecto API drift could break it; fork+maintain would cost 1-2 dev-weeks per major Ecto bump | Pin minor; vendor-as-needed; if 12-month no-release, switch to DIY `Ecto.Multi` + audit_log table (P2 cell L5 is the fallback) |
+
+**Five-year scenarios + mitigations**:
+1. **Sage abandoned, BEAM/Elixir 27+ breaks something** → vendor Sage core in `apps/ezagent_common/lib/ezagent/sage_local.ex` (single file, ~400 LOC). Low-risk fork.
+2. **Ex_audit abandoned, Ecto 4.x renames `Ecto.Changeset` internals** → swap to L5 DIY pattern: `audit_log` table populated by `Ecto.Multi` callbacks. ~2-week migration. The data format is identical (changeset diff per row), only the writer changes.
+3. **Both abandoned simultaneously + Elixir community drift** → unlikely correlated risk, but the L1+L5 DIY fallback still works on stock Ecto. Worst case: Path B's "Sage + ex_audit" surface becomes "thin DIY orchestration + thin DIY audit," still no Commanded migration needed.
+
+**The mitigation cost is bounded** (~2-4 weeks if both libs go cold). Compare that against Option A's 3-month upfront migration: **even worst-case Option B → DIY pivot is cheaper than Option A's day-one cost.** Library staleness alone doesn't flip the verdict to Option A; it does require pin discipline + annual audit.
+
+### 1.5.5 Verdict (r6 — codex HIGH-3 fix: conditional)
+
+**Option B — conditionally recommended**, dependent on these three conditions holding at the time the Path B SPEC is written:
+
+- **(a)** Library-risk audit (§1.5.4) confirms Sage + ex_audit fork-and-maintain costs are acceptable for ezagent's 5-year posture. Vendoring/pin discipline must be documented in Path B SPEC.
+- **(b)** Path B SPEC's saga design includes a **durable saga log / outbox** (Oban as outbox candidate) for cross-restart resilience — closing the gap codex HIGH-2 identified in Sage's in-memory state model.
+- **(c)** Replay (§1.5.3 P5) confirmed by Allen as NOT a roadmap item for the next 12 months. (Detail: even if replay enters the 12-36 month window, the Option B → Option A migration cost is ~3-4 months wall-time — comparable to Option A done today. Delaying is OK as long as the team can absorb that cost when it lands.)
+
+**If (a)(b)(c) hold**: Path B is the recommended path. P2 (audit) and P4 (races) are solved BETTER by the lighter path than by Commanded; P1 and P3 are solved at parity once (b)'s outbox lands; P5 is the only Commanded-exclusive and is deferred per (c).
+
+**If any of (a)(b)(c) fails**: revisit Option A. Commanded's durable-state primitives and event-log replay become differentiators worth the migration cost.
+
+Aggregate cost comparison (lighter path with (b)'s outbox included):
 - **Option A (Commanded)**: 3-month migration, retire 7 internal modules, introduce Postgres to dev loop, +5x dispatch latency hot-path (per §7.1), 1500-2000 LOC saga code (per §4.4), every aggregate's snapshot tuning is a new ops knob.
-- **Option B (lighter)**: ~2 weeks to add Sage + ex_audit deps, write 9 Sage modules (~50-150 LOC each, parallel to the §4.4 saga inventory), tighten Ecto.Multi scopes in existing domain modules, retire 0 internal modules, no dev-loop change, no latency hit.
+- **Option B (lighter + outbox)**: ~3-4 weeks to add Sage + ex_audit + Oban (outbox), write 9 Sage modules (~50-150 LOC each), build saga-execution outbox table + worker, tighten Ecto.Multi scopes in existing domain modules, retire 0 internal modules, no dev-loop change, no latency hit. (r5 estimated 2 weeks — r6 adds the outbox cost.)
 
-**The data forces Option B.** P5 alone does not justify Option A's cost when P5 is not a roadmap item.
+**Conditional verdict, not deterministic.** If grill-with-doc confirms (a)(b)(c), proceed with Path B. If not, the SPEC's §2-§12 Commanded path becomes the recommendation again.
 
-### 1.5.5 What changes downstream of this verdict
+### 1.5.6 What changes downstream of this verdict
 
-This SPEC was drafted with the implicit assumption that the destroy-cascade 4-round codex failure (§1.1) required CQRS to resolve. **That assumption is now contradicted by §1.5.3 P1**: Sage's compensation pattern resolves the destroy cascade with the same primitives Commanded's Process Manager would use, at a tiny fraction of the migration cost.
+This SPEC was drafted with the implicit assumption that the destroy-cascade 4-round codex failure (§1.1) required CQRS to resolve. **That assumption is contested by §1.5.3 P1 + the conditional verdict in §1.5.5**: Sage's compensation pattern resolves the destroy cascade with the same primitives Commanded's Process Manager would use, at a tiny fraction of the migration cost — **provided** Path B includes a durable saga log / outbox for cross-restart resilience.
 
 Concrete next steps (NOT committed by this SPEC — these are recommendations for Allen):
+
 1. **Pause PR #442** (do not merge §2-§12 as-is; the Decision is now contested by §1.5).
-2. **Draft a companion "Path B SPEC"**: title `2026-05-28-destroy-cascade-sage-ex_audit.md` — adopt Sage for destroy cascades + cross-Kind orchestration, adopt ex_audit for audit log, tighten Ecto.Multi for grant-time checks + workspace isolation race fixes. ~2-week impl. No CQRS migration.
-3. **If Path B SPEC ships and lands**: this SPEC (#442) can be closed `wontfix-superseded-by-#NNN` with §1.5 preserved as the rationale.
-4. **If replay becomes a roadmap item later**: revisit this SPEC. CQRS/Commanded remains the right answer once P5 enters the requirement set. §1.5 isn't saying "never Commanded" — it's saying "not now, the current need is met by lighter paths."
+
+2. **Draft a companion "Path B SPEC"** with scope broader than just the destroy cascade (r6 codex MED-2 fix). The r5 draft proposed `2026-05-28-destroy-cascade-sage-ex_audit.md`, but the §1.5 verdict's "Option B covers P1+P2+P3+P4" claim requires the companion SPEC to cover the same surface. **Two options for Allen** (choose during grill-with-doc):
+   - **Option 2a — One broader companion SPEC**: rename to `2026-05-28-native-workflow-audit-race-hardening.md`. Single SPEC covers Sage + outbox for destroy + cross-Kind workflow (P1+P3), ex_audit for audit (P2), Ecto.Multi + DB constraints tightening for races (P4). Larger SPEC, larger codex review surface, but one decision package.
+   - **Option 2b — Split into three companion SPECs**: (i) `sage-outbox-for-cascades.md` (P1+P3), (ii) `ex_audit-adoption.md` (P2), (iii) `race-hardening-db-constraints.md` (P4). Smaller per-SPEC review surface, can land independently, but Allen ships 3 PRs not 1.
+   - **Recommendation**: Option 2b. Each SPEC is independently verifiable + revertable. P4 (race hardening) can land first as it's the lowest-risk, lowest-blast-radius. Then P2 (audit) is additive. Then P1+P3 (workflow + outbox) is the largest piece. This matches cap-vis / URI-canonical's "small SPEC, fast convergence" precedent vs the 4-round REJECT pattern §2-§12 hit.
+
+3. **If the Path B SPEC(s) ship and land**: this SPEC (#442) can be closed `wontfix-superseded-by-#NNN` with §1.5 preserved as the rationale. The §2-§12 Commanded material stays in git history for the future-replay-need scenario.
+
+4. **If §1.5.5 conditions (a) library-risk audit or (b) durable outbox design fail in Path B SPEC drafting**: revisit Option A. The Path B → Option A migration cost is ~3-4 months wall-time per §1.5.3 P5; it's not free, but it's not catastrophic either.
+
+5. **If replay becomes a roadmap item within 12 months**: revisit this SPEC immediately. CQRS/Commanded remains the right answer once P5 enters the requirement set. §1.5 isn't saying "never Commanded" — it's saying "not now, the current need is met by lighter paths, **and** the deferral cost is bounded."
 
 ---
 
 ## 2. Decision — adopt Commanded + EventStore as primary state model
 
-> ⚠️ **Pre-§2 note (r5)**: §1.5 verdict is **Option B** (Ecto.Multi + Sage + ex_audit covers §1 pain points except P5 replay; P5 is not on the current roadmap). §2 below reflects the **rejected** Commanded path and is retained for context — §2-§12 describe what a Commanded migration WOULD look like if Option A were chosen. See §1.5.5 for recommended next steps (pause PR #442; draft companion Path B SPEC). Do not merge §2-§12 as-is.
+> ⚠️ **Pre-§2 note (r6)**: §1.5 verdict is **CONDITIONAL Option B** (r6 update — r5 said "definitively Option B", codex review downgraded to conditional). The lighter path (Sage + ex_audit + Ecto.Multi) is preferred IF: (a) library-risk audit on Sage/ex_audit passes (§1.5.4), (b) Path B's saga design includes a durable saga log / outbox (§1.5.3 P1 + §1.5.5), (c) replay (P5) confirmed not a roadmap item for next 12 months (§1.5.3 P5). §2 below reflects the Commanded path retained for context — describes what a Commanded migration WOULD look like if Option A were chosen, OR if any of (a)(b)(c) fails in Path B SPEC drafting. See §1.5.6 for recommended next steps (pause PR #442; draft 1 or 3 companion Path B SPECs depending on Allen's scope choice during grill-with-doc). Do not merge §2-§12 as-is.
 
 ### 2.1 What we adopt
 

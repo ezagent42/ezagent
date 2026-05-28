@@ -1,14 +1,26 @@
 # SPEC — Ezagent 状态模型迁移到 EventStore + Commanded (CQRS / 事件溯源)
 
-**状态：** r5 — **§1.5 已添加（备选方案审视）；结论 = Option B（轻路径更优）**。§2-§12 描述的 Commanded 迁移**不**建议照样实施；§1.5 的诚实对比结论是 Sage + ex_audit + 收紧 `Ecto.Multi` 覆盖 §1 痛点 P1-P4，仅 P5（时间旅行回放）是 Commanded 独占 — 而 P5 不在 roadmap 上。PR #442 应暂停，等待配套「Path B SPEC」(`2026-05-28-destroy-cascade-sage-ex_audit.md`)，按 §1.5.5。之前的 r4-FINAL 状态（4 轮 codex 预算耗尽，7 条 carry-over limitations）若日后重审 Option A 仍适用于 §2-§12。2026-05-28。
+**状态：** r6 — **§1.5 已 codex review；结论 = 条件性 Option B**。§1.5 的 codex 评审返回 REJECT（3 HIGH + 2 MED）；全部在内联里修复。轻路径（Sage + ex_audit + Ecto.Multi）仍建议优于 Commanded 迁移，**前提**是三个 predicate 在 Path B SPEC 起草时成立：(a) Sage/ex_audit 的 fork 所有权 + Elixir/Ecto 兼容性的库依赖风险审计通过（见新增 §1.5.4），(b) Path B 的 saga 设计包含持久 saga 日志 / outbox（Oban 候选）以填上 Sage 内存状态差距，(c) 回放（P5）确认未来 12 个月不进 roadmap。若 (a)(b)(c) 任意失败，重审 §2-§12 的 Option A Commanded 迁移。之前的 r4-FINAL 状态（4 轮 codex 预算耗尽，7 条 carry-over limitations）若日后重审 Option A 仍适用于 §2-§12。2026-05-28。
 
-## r5 changelog（相对 r4 的 delta）
+## r6 changelog（相对 r5 的 delta）
+
+对 §1.5（r5 新增段落）的 codex 评审返回 **REJECT — 3 HIGH + 2 MED**。r6 内联修复全部 5 条；§2-§12 未改。
+
+- **HIGH-1 — P5 roadmap 主张没有内联证据（§1.5.3 P5）**。r5 引「事故复盘 / 未来工作里没有」但无内联证据。r6 降级到「§1.5 里没有当前证据；结论假设 Allen 在 grill-with-doc 时确认」+ 加 4 条未来回放驱动（合规、AI 训练数据、事故后调试、schema 迁移回填）+ 估算 Path B → Option A 的迁移成本（~3-4 个月 wall-time，与今天直接做 Option A 可比）。
+- **HIGH-2 — Sage 持久性差距被低估（§1.5.2 矩阵 + §1.5.3 P1/P3）**。r5 说 Sage 完整覆盖 P1/P3 并把 Commanded 的持久 PM 状态贬为「纯粹开销」。r6 矩阵里把 Sage P1/P3 ✅ → ⚠️；P1 结论重写为要求 Path B 包含持久 saga 日志 / outbox（Oban 候选）做跨重启韧性；承认销毁还没上线，所以「没观察到中途崩」不是证据。
+- **HIGH-3 — 库陈旧风险没定价（§1.5.4 新增）**。r5 把 Sage 2022-09 + ex_audit 2023-02 陈旧风险一笔带过。r6 加整段 §1.5.4「库依赖风险与依赖姿态」：fork-and-maintain 成本、各库 Ecto 耦合度、5 年情景（Sage 弃用、ex_audit 弃用、两个都弃用）、缓解成本（最差 ~2-4 周 DIY 转向）。即便最差情况 Option B → DIY 转向也比 Option A 第一天的成本低；陈旧本身不翻转结论，但要求锁版本纪律 + 年度审查。
+- **MED-1 — Sage 在 P4 上过度声明（§1.5.2 矩阵）**。r5 给 Sage P4 ✅ 理由「Sage 跑在事务里」。r6 把 Sage P4 改为「—」（编排库，不是竞态修复）；L1（Ecto.Multi + DB 约束）是 P4 的明确归属。
+- **MED-2 — 配套 Path B 范围（§1.5.6）**。r5 起名 `2026-05-28-destroy-cascade-sage-ex_audit.md` 但 Option B 覆盖 P1+P2+P3+P4。r6 §1.5.6 给 Allen 在 grill-with-doc 里两个选项：(2a) 单个更大 SPEC `2026-05-28-native-workflow-audit-race-hardening.md`，或 (2b — 推荐) 拆三个独立配套 SPEC（竞态强化第一，审计第二，工作流+outbox 第三），符合 cap-vis / URI-canonical 的「小 SPEC 快收敛」先例。
+
+**重编号**：r5 §1.5.4「结论」→ r6 §1.5.5；r5 §1.5.5「下游影响」→ r6 §1.5.6。r6 在原 §1.5.3 和原 §1.5.4 之间插入 §1.5.4「库依赖风险与依赖姿态」。
+
+## r5 changelog（相对 r4 的 delta，保留作 trail）
 
 按 Allen 2026-05-28 08:15 指令添加 — SPEC 必须自我证立**为什么是 Commanded 具体**而非更轻的原生 Phoenix 路径。之前 SPEC 从 §1 问题直接跳到 §2 决策、零备选分析（0 处提到 Sage、ex_audit、"alternatives considered"）。
 
 - **§1.5 插入**在 §1（问题）和 §2（决策）之间 — 「备选方案审视 — 原生 Phoenix 轻路径」。结构：5 条候选路径（L1 Ecto.Multi、L2 Sage、L3 ex_audit、L4 Oban Workflow、L5 DIY）× 5 个痛点（P1 销毁级联、P2 审计、P3 跨-Kind 工作流、P4 竞态、P5 回放）的诚实矩阵 + 5 段逐场景深挖。
-- **§1.5 结论 = Option B** — Ecto.Multi + Sage + ex_audit 覆盖 P1-P4；P5 是唯一 Commanded 独占且不在 roadmap 上。
-- **⚠️ §2 前置说明添加**在 §2 顶部 — 标记 §2-§12 反映**被否决的** Commanded 路径，不应按现状合并。§1.5.5 列出具体下一步（暂停 #442，起草 Path B SPEC）。
+- **§1.5 结论 = Option B**（r5 表述；r6 codex 评审降级到**条件性** Option B — 见上方 r6 changelog）。
+- **⚠️ §2 前置说明添加**在 §2 顶部 — 标记 §2-§12 反映**被否决的** Commanded 路径，不应按现状合并。§1.5.6（r5 里是 §1.5.5）列出具体下一步（暂停 #442，起草 Path B SPEC）。
 - §2-§12 本身**未改** — 逐字保留作上下文 / 若日后 P5 进入 roadmap 时重审。
 
 ## r4 后已知限制（带入 grill-with-doc）
@@ -229,13 +241,15 @@ Commanded + EventStore 提供：
 
 | # | 痛点（来自 §1） | L1 Ecto.Multi | L2 Sage | L3 ex_audit | L4 Oban Workflow | L5 DIY 事件日志 | Commanded |
 |---|---|---|---|---|---|---|---|
-| **P1** | 跨-Kind 销毁级联 — 7 步，部分失败需补偿 | ❌ 仅同库事务；跨-Kind = 跨进程 | ✅ 经典模式 — 每步 transaction/compensation 对 | —（不是工作流库） | ✅ 仅异步 — 调用者拿不到同步结果 | ✅ 可行 — 但你在手卷 Sage | ✅ Process Manager — 与 Sage 同形 + 状态持久 |
+| **P1** | 跨-Kind 销毁级联 — 7 步，部分失败需补偿 | ❌ 仅同库事务；跨-Kind = 跨进程 | ⚠️ 经典补偿模式，但状态仅在 `execute/1` 内存中 — 中途崩留孤儿；需**外挂持久 saga 日志 / outbox（Oban 候选）**以做跨重启韧性 | —（不是工作流库） | ✅ 仅异步 — 调用者拿不到同步结果 | ✅ 可行 — 但你在手卷 Sage | ✅ Process Manager — 跨崩溃/重启的持久状态原生支持 |
 | **P2** | 审计日志支持任意 SQL 查询（"用户 X 昨天 14:00 持有哪些 cap？"） | ⚠️ 部分 — 需要手维护旁路 `audit_log` 表 | —（不是审计库） | ✅ 经典 — `Ecto.Changeset` → `version_table` 行，SQL 可查 | —（不是审计库） | ✅ DIY — 和 ex_audit 同形，但触发由你维护 | ⚠️ 事件流就是审计，但**不能直接 SQL 查** — 需要由事件 handler 维护的 `audit_projection` 表（多一跳，ex_audit 不需要） |
-| **P3** | 跨-Kind 工作流编排（session 创建级联、worker 引导、cap-grant 验证） | ❌ 同 P1 — 事务范围内 | ✅ 与 P1 同机制 — 模块即编排者 | — | ✅ 异步，带重试 | ✅ DIY | ✅ 带持久状态的 Process Manager |
-| **P4** | 竞态（read-then-lock、授予时 cap 检查、注册/查找 key 一致性） | ✅ — 收紧 Ecto.Multi + DB 约束（唯一索引、exclusion constraint、FK cascade）是经典答案 | ✅ — Sage 跑在事务或事务链里 | — | — | ✅ — DIY + DB 约束 | ⚠️ — **同样的问题、不同的位置** — aggregate-process 串行化和当前 `Kind.Server.handle_call` 串行化等价；真正的竞态修复是 DB 约束，与模型无关 |
+| **P3** | 跨-Kind 工作流编排（session 创建级联、worker 引导、cap-grant 验证） | ❌ 同 P1 — 事务范围内 | ⚠️ 与 P1 同样的单调用限制；跨多调用流（如 binding 事件触发的异步 worker 引导）需要 PubSub + 受监督 GenServer + outbox | — | ✅ 异步，带重试 | ✅ DIY | ✅ 带跨调用持久状态的 Process Manager |
+| **P4** | 竞态（read-then-lock、授予时 cap 检查、注册/查找 key 一致性） | ✅ — 收紧 Ecto.Multi + DB 约束（唯一索引、exclusion constraint、FK cascade）是经典答案 | —（Sage 是编排库；竞态不在其范围 — L1 拥有此行） | — | — | ✅ — DIY + DB 约束 | ⚠️ — **同样的问题、不同的位置** — aggregate-process 串行化和当前 `Kind.Server.handle_call` 串行化等价；真正的竞态修复是 DB 约束，与模型无关 |
 | **P5** | 时间旅行回放 / "重建 T 时刻状态" | ❌ | ❌ | ⚠️ — 数据在（审计表），但没有回放到状态的机制 | ❌ | ⚠️ — DIY（你有事件，自己写 fold 函数） | ✅ — aggregate 状态**派生**自事件回放；原生原语 |
 
-**单元语义**：✅ = 该路径用所述机制解决该痛点。⚠️ = 部分 / 需多一跳。❌ = 该路径不覆盖此维度。"—" = 不在该库范围（不要因为库聚焦而扣分）。
+**单元语义**：✅ = 该路径用所述机制解决该痛点。⚠️ = 部分 / 需多一跳，或有 §1.5.3 列出的注意事项。❌ = 该路径不覆盖此维度。"—" = 不在该库范围（不要因为库聚焦而扣分）。
+
+**r6 codex 修正说明**：r5 给 Sage 的 P1/P3 和 P4 都打 ✅。r6 codex review（HIGH-2 + MED-1）把 Sage P1/P3 降级到 ⚠️ — Sage 状态在 `execute/1` 内存里，跨重启韧性要求 Path B 外挂 outbox（如 Oban）或接受这个缺口。Sage P4 降到 "—" — Sage 是编排库，不是竞态修复；L1（Ecto.Multi + DB 约束）才是 P4 的明确归属。
 
 ### 1.5.3 逐场景深挖
 
@@ -270,9 +284,11 @@ end
 
 **具体失败模式**：
 - Sage 补偿**不能** raise（语义上 — 若 compensate 失败，saga 处于未定义状态而中止）。这与 Commanded Process Manager 的约束相同（compensation 中的 `handle/2` raise 同样致命）。不是 Sage 独有弱点。
-- Sage 的状态是 `execute/1` 调用期间的内存状态。若编排进程在 execute 中途崩，saga 失去进度。**问题**：ezagent 是否经常出现中途崩？读 Phase 2-3 复盘：没有。派发通常 <100ms；BEAM 稳定；6 个月 dogfood 中**没有**观察到「销毁中途留下孤儿」的事故。Commanded 的 PM 持久状态在你**确实**中途崩时有意义 — 不崩时，持久性纯粹是开销。
+- **Sage 的状态是 `execute/1` 调用期间的内存状态（r6 codex HIGH-2）**。若编排进程在 execute 中途崩 — BEAM 节点重启、`kill -9`、OS 重启、supervisor 重启 — saga 失去进度，留下部分状态。Commanded Process Manager 把状态持久化在事件存储里，跨重启 resume 是原生能力。
+  - r5 草稿说「6 个月 dogfood 没观察到中途崩」。codex 正确指出**销毁还没上线** — 「没观察到事故」对一个未在规模上行使过的特性不是证据。诚实立场：我们不知道中途崩的频率。
+  - **Path B 缓解要求**：配套 Path B SPEC 必须包含**持久 saga 日志**（Oban 作 outbox 候选，或手卷 `saga_executions` 表），以便部分级联可以在 BEAM 重启后 resume 或补偿。没有这个，Path B 相对 Commanded 有真实的正确性差距。
 
-**P1 诚实结论**：Sage 完整解决销毁级联。**如果销毁级联是唯一动机**（按 §1.1，它就是这个 SPEC 的触发器），Commanded Process Manager 是过度工程。
+**P1 诚实结论**：Sage 解决销毁级联，**前提是** Path B SPEC 包含持久 saga 日志 / outbox。没有这个的话，Commanded Process Manager 在韧性上有真实优势。结论假设这个缓解会在 Path B 里落地。
 
 #### P2 — 审计日志支持 ad-hoc SQL 查询
 
@@ -315,7 +331,7 @@ end
 - `RevokeCapCascadeSaga`：由 membership 撤销触发。同 bootstrap — PubSub handler 即可。
 - `CapGrantOwnershipVerifySaga`：这是一个**单命令**检查（验证授予者有 cap，然后授予或拒绝）。根本不是 saga — 是 guard 子句。「saga」的框架是过度建模。
 
-**P3 诚实结论**：§4.4 的 9 个 saga 中 5 个是单调用级联 → Sage 处理。2 个是事件触发的跨调用 → GenServer 里的 PubSub handler。2 个根本不是 saga。Commanded 的框架把数字虚高了。
+**P3 诚实结论**：§4.4 的 9 个 saga 中 5 个是单调用级联 → Sage 处理（带 P1 持久性注意事项）。2 个是事件触发的跨调用 → 受监督 GenServer 里的 PubSub handler；**这些需要 outbox 跨过事件到达和效果应用之间的 worker 重启**（每事件触发一个 Oban job 是经典解法）。2 个根本不是 saga。Commanded 的框架把数字虚高了，但 Commanded 在 Sage 需要外挂的位置原生承担了跨重启持久性。
 
 #### P4 — 竞态（read-then-lock、授予时检查、注册/查找一致性）
 
@@ -344,36 +360,83 @@ end
 搜 docs/ futures、IMPLEMENTATION_ROADMAP、codex 拒收 trail 里的 "replay"、"time-travel"、"重建 T 时刻状态"：
 - §3.7 把回放列为 Commanded 能力（正面）。
 - §1.4 把「无回放」列为当前模型缺口。
-- **实际事故复盘和未来工作列表中没有任何条目把回放列为需求。** 没有 GitHub issue 要它。没有客户（Allen）说过「我需要倒回 2 周前的状态来调试事故」。
-- 销毁级联崩溃后续跑是最接近的类比，且 Sage 补偿 + 持久 saga 状态就能解（子问题：我们是否需要跨进程重启的 saga 持久？按上面 §4.4 saga 分析：不需要，当前 saga 是单调用）。
+- **§1.5 审视范围内**对 docs/issues 的搜索无法被仅读 §1.5 的审查者验证（r6 codex HIGH-1）。r5 草稿断言「roadmap 上没有」没有内联证据；r6 把这个降级为「**§1.5 里没有当前证据；结论假设 Allen 在 grill-with-doc 时确认**」。
+- 销毁级联崩溃后续跑是最接近的类比，且 Sage 补偿 + **持久 saga 日志缓解**就能解（见 P1）。
 
-**P5 诚实结论**：回放是矩阵里**唯一**Commanded 独占的结构优势，而它**不在 roadmap 上**。我们会获得一项能力，但近期没有使用它的计划。
+**回放未来可能的驱动**（让审查者验证是否临近）：
+- **合规** — 如 SOC 2 / GDPR「展示 2025-09-12 14:00 UTC 用户 X 的 cap 状态」需要可重建的历史状态。ezagent 当前不承担受监管业务，但可能。如果走 enterprise B2B，这就是入场费。
+- **AI 训练数据重建** — 离线 RLHF 数据集需要回放历史 agent 对话 + tool-call 状态。不在 roadmap 上，但 12 个月内合理。
+- **事故后调试** — 倒回系统状态以重现一个依赖特定历史配置的 bug。当前是 patch-forward；回放会让根因分析更快。
+- **schema 迁移回填** — 若加一个新派生字段，回放事件为所有历史实例计算值。当前模型需要 per-Kind 回填脚本。
 
-### 1.5.4 结论
+**若先走 Option B 之后才需要回放的迁移成本**：
+- 加事件日志基础设施（Postgres + `eventstore` 库）：1-2 周
+- per-Kind：在切换窗口里双写事件日志和当前写：2-3 周
+- per-Kind：写 `apply/2` 事件 fold + 从事件构建状态的 handler：每 Kind 1-2 周 × 5 Kind = ~7 周
+- saga 从 Sage 改 Commanded PM：1-2 周
+- 生产切换 + 尾事件排空：1 周
+- **总计：~3-4 个月 wall-time**，与今天直接做 Option A 迁移可比。**若延后，迁移成本并不为零。**
 
-**Option B**：**L1（更紧 Ecto.Multi + DB 约束）+ L2（Sage）+ L3（ex_audit）** 覆盖 §1 痛点 P1、P2、P3、P4 — 而且 **P2（审计）和 P4（竞态）实际上轻路径解得比 Commanded 好**。Commanded 不被挑战的唯一维度是 **P5（回放）**，P5 不在 roadmap 上。
+**P5 诚实结论**：回放是**唯一**结构上 Commanded 独占的优势。r5 「不在 roadmap 上」的说法若 Allen 在 grill-with-doc 时确认，则成立。若回放在 12-24 个月内进入 roadmap，Option B → Option A 的迁移成本 ~3-4 个月 — 与今天直接做 Option A 可比，所以**结论是「除非回放在今年进入需求集，否则延后迁移成本」**。
 
-总成本对比：
+### 1.5.4 库依赖风险与依赖姿态（r6 — codex HIGH-3 修复）
+
+r5 的结论没有给 Sage + ex_audit 长期依赖风险定价。codex 把这个标记为 HIGH 缺口。诚实姿态：
+
+| 库 | 最后发布 | LOC | Ecto 耦合 | 若被弃用 fork-and-maintain 成本 | 推荐姿态 |
+|---|---|---|---|---|---|
+| **Sage** | 2022-09 | ~400（纯 Elixir、无依赖） | 无 — 操作普通 map | 低 — 单文件核心，ezagent 可在 repo 内 vendor 维护 | 锁 minor 版本；CI fixture；年度健康审查 |
+| **ex_audit** | 2023-02 | ~1500 | 紧 — 包裹 `Ecto.Changeset` 生命周期 | 中 — Ecto API 漂移会破，fork+维护成本每次 Ecto 大版本升级 1-2 dev-week | 锁 minor；按需 vendor；若 12 个月无发布，切到 DIY `Ecto.Multi` + audit_log 表（P2 单元格 L5 即此 fallback） |
+
+**5 年情景 + 缓解**：
+1. **Sage 被弃用，BEAM/Elixir 27+ 破坏某个接口** → vendor Sage 核心到 `apps/ezagent_common/lib/ezagent/sage_local.ex`（单文件 ~400 LOC）。低风险 fork。
+2. **ex_audit 被弃用，Ecto 4.x 重命名 `Ecto.Changeset` 内部** → 切到 L5 DIY 模式：`Ecto.Multi` callbacks 写 `audit_log` 表。~2 周迁移。数据格式相同（per row changeset diff），只是 writer 换了。
+3. **两个库同时被弃用 + Elixir 社区漂移** → 关联风险低，但 L1+L5 DIY fallback 仍在原版 Ecto 上工作。最差情况：Path B 的 "Sage + ex_audit" 面变成「薄 DIY 编排 + 薄 DIY 审计」，仍不需要 Commanded 迁移。
+
+**缓解成本有界**（若两个库都冷掉 ~2-4 周）。对比 Option A 的 3 个月前置迁移：**即使最差情况 Option B → DIY 转向也比 Option A 第一天的成本低。**库的陈旧本身不翻转结论到 Option A；但要求锁版本纪律 + 年度审查。
+
+### 1.5.5 结论（r6 — codex HIGH-3 修复：条件性）
+
+**Option B — 条件性推荐**，依赖以下三个 predicate 在写 Path B SPEC 时成立：
+
+- **(a)** 库依赖风险审计（§1.5.4）确认 Sage + ex_audit 在 ezagent 5 年姿态下 fork-and-maintain 成本可接受。vendoring/锁版本纪律必须写在 Path B SPEC 里。
+- **(b)** Path B SPEC 的 saga 设计包含**持久 saga 日志 / outbox**（Oban 作 outbox 候选），以填上 codex HIGH-2 标记的 Sage 内存状态模型的差距。
+- **(c)** 回放（§1.5.3 P5）由 Allen 确认未来 12 个月不进 roadmap。（细节：即便回放在 12-36 月窗口进 roadmap，Option B → Option A 的迁移成本 ~3-4 个月 wall-time — 与今天直接做 Option A 可比。延后没问题，只要团队在那时能吸收这个成本。）
+
+**若 (a)(b)(c) 都成立**：Path B 是推荐路径。P2（审计）和 P4（竞态）轻路径解得**比** Commanded 好；P1 和 P3 在 (b) 的 outbox 落地后与 Commanded 等价；P5 是唯一 Commanded 独占，按 (c) 延后。
+
+**若 (a)(b)(c) 任意失败**：重审 Option A。Commanded 的持久状态原语和事件日志回放成为值得付迁移成本的差异化。
+
+总成本对比（含 (b) outbox 的轻路径）：
 - **Option A（Commanded）**：3 个月迁移，退役 7 个内部模块，把 Postgres 引进 dev loop，热路径派发延迟 +5x（按 §7.1），1500-2000 LOC saga 代码（按 §4.4），每个 aggregate 的 snapshot 调参是新的 ops 旋钮。
-- **Option B（轻路径）**：约 2 周加 Sage + ex_audit 依赖，写 9 个 Sage 模块（每个 ~50-150 LOC，对应 §4.4 saga 清单），在现有领域模块里收紧 Ecto.Multi 范围，退役 0 个内部模块，dev loop 不变，无延迟开销。
+- **Option B（轻路径 + outbox）**：约 3-4 周加 Sage + ex_audit + Oban（outbox）依赖，写 9 个 Sage 模块（每个 ~50-150 LOC），建 saga-execution outbox 表 + worker，在现有领域模块里收紧 Ecto.Multi 范围，退役 0 个内部模块，dev loop 不变，无延迟开销。（r5 估 2 周 — r6 加上 outbox 成本。）
 
-**数据强迫 Option B**。P5 单独不足以在 P5 不在 roadmap 上时证立 Option A 的成本。
+**条件性结论，非确定性。** 若 grill-with-doc 确认 (a)(b)(c)，按 Path B 推进。若不确认，SPEC §2-§12 的 Commanded 路径再次成为推荐。
 
-### 1.5.5 这个结论的下游影响
+### 1.5.6 这个结论的下游影响
 
-本 SPEC 起草时隐含假设销毁级联 4 轮 codex 失败（§1.1）需要 CQRS 才能解决。**这个假设现在被 §1.5.3 P1 反驳**：Sage 的补偿模式用与 Commanded Process Manager 相同的原语解决销毁级联，迁移成本只是零头。
+本 SPEC 起草时隐含假设销毁级联 4 轮 codex 失败（§1.1）需要 CQRS 才能解决。**这个假设被 §1.5.3 P1 + §1.5.5 条件性结论挑战**：Sage 的补偿模式用与 Commanded Process Manager 相同的原语解决销毁级联，迁移成本只是零头 — **前提是** Path B 包含持久 saga 日志 / outbox 做跨重启韧性。
 
 具体下一步（**本 SPEC 不承诺** — 这是给 Allen 的建议）：
+
 1. **暂停 PR #442**（不要按现状合并 §2-§12；Decision 现在被 §1.5 挑战）。
-2. **起草配套「Path B SPEC」**：标题 `2026-05-28-destroy-cascade-sage-ex_audit.md` — 用 Sage 做销毁级联 + 跨-Kind 编排，用 ex_audit 做审计日志，收紧 Ecto.Multi 做授予时检查 + workspace 隔离的竞态修复。~2 周实施。无 CQRS 迁移。
-3. **若 Path B SPEC 落地**：本 SPEC（#442）可以 `wontfix-superseded-by-#NNN` 关闭，保留 §1.5 作为理由。
-4. **若日后回放成为 roadmap 项**：重审本 SPEC。一旦 P5 进入需求集，CQRS/Commanded 仍是正确答案。§1.5 不是在说「永远别 Commanded」 — 是在说「现在不需要，当前需求被轻路径满足」。
+
+2. **起草配套「Path B SPEC」**，范围要比仅销毁级联更广（r6 codex MED-2 修复）。r5 草稿提议 `2026-05-28-destroy-cascade-sage-ex_audit.md`，但 §1.5 结论的「Option B 覆盖 P1+P2+P3+P4」要求配套 SPEC 覆盖同样的面。**Allen 在 grill-with-doc 里两个选项**：
+   - **选项 2a — 单个更大配套 SPEC**：改名 `2026-05-28-native-workflow-audit-race-hardening.md`。单个 SPEC 覆盖 Sage + outbox 做销毁 + 跨-Kind 工作流（P1+P3）、ex_audit 做审计（P2）、Ecto.Multi + DB 约束收紧做竞态（P4）。SPEC 更大、codex review 面更大，但一个决策包。
+   - **选项 2b — 拆三个配套 SPEC**：(i) `sage-outbox-for-cascades.md`（P1+P3），(ii) `ex_audit-adoption.md`（P2），(iii) `race-hardening-db-constraints.md`（P4）。每个 SPEC 审视面小、可独立落地，但 Allen 出 3 个 PR 而非 1 个。
+   - **推荐**：选项 2b。每个 SPEC 独立可验证 + 可回滚。P4（竞态强化）可以先落地 — 风险最低、波及最小。然后 P2（审计）是增量。然后 P1+P3（工作流 + outbox）是最大的一块。这符合 cap-vis / URI-canonical 的「小 SPEC、快速收敛」先例，与 §2-§12 撞上的 4 轮 REJECT 模式相反。
+
+3. **若 Path B SPEC 落地**：本 SPEC（#442）可以 `wontfix-superseded-by-#NNN` 关闭，保留 §1.5 作为理由。§2-§12 Commanded 材料留在 git 历史里，给未来回放需求场景。
+
+4. **若 §1.5.5 条件 (a) 库风险审计或 (b) 持久 outbox 设计在 Path B SPEC 起草时失败**：重审 Option A。Path B → Option A 的迁移成本 ~3-4 个月 wall-time（按 §1.5.3 P5）；不便宜，但也不灾难。
+
+5. **若回放在 12 个月内成为 roadmap 项**：立即重审本 SPEC。一旦 P5 进入需求集，CQRS/Commanded 仍是正确答案。§1.5 不是在说「永远别 Commanded」 — 是在说「现在不需要，当前需求被轻路径满足，**且**延后成本有界」。
 
 ---
 
 ## 2. 决策 — 采用 Commanded + EventStore 作为主状态模型
 
-> ⚠️ **§2 前置说明（r5）**：§1.5 结论是 **Option B**（Ecto.Multi + Sage + ex_audit 覆盖 §1 痛点，P5 回放除外；P5 不在当前 roadmap 上）。下方 §2 反映的是**被否决的** Commanded 路径，保留作上下文 — §2-§12 描述的是「若选 Option A 则 Commanded 迁移会是什么样」。见 §1.5.5 的建议下一步（暂停 PR #442；起草配套 Path B SPEC）。**不要按现状合并 §2-§12**。
+> ⚠️ **§2 前置说明（r6）**：§1.5 结论是**条件性 Option B**（r6 更新 — r5 说「确定 Option B」，codex review 把它降级到条件性）。轻路径（Sage + ex_audit + Ecto.Multi）相对 Commanded 迁移仍被推荐，**前提**是三个 predicate 成立：(a) Sage/ex_audit 库依赖风险审计通过（§1.5.4），(b) Path B 的 saga 设计包含持久 saga 日志 / outbox（§1.5.3 P1 + §1.5.5），(c) 回放（P5）由 Allen 确认未来 12 个月不进 roadmap（§1.5.3 P5）。下方 §2 反映的是 Commanded 路径，保留作上下文 — 描述「若选 Option A 则 Commanded 迁移会是什么样，或若 (a)(b)(c) 任意在 Path B SPEC 起草时失败也走这个」。见 §1.5.6 的建议下一步（暂停 PR #442；按 Allen 在 grill-with-doc 里的范围选择起草 1 个或 3 个配套 Path B SPEC）。**不要按现状合并 §2-§12**。
 
 ### 2.1 采纳的组件
 
