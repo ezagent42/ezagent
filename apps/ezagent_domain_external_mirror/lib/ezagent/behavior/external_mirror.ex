@@ -90,21 +90,63 @@ defmodule Ezagent.Behavior.ExternalMirror do
   `apps/ezagent_domain_external_mirror/mix.exs` moduledoc).
   """
 
-  @behaviour Ezagent.Behavior
+  use Ezagent.Behavior
 
   require Logger
 
   alias Ezagent.ExternalMirror.{AdapterRegistry, BindingRow, FacadeNonceTable, WorkerSpawn}
 
-  # ----- Ezagent.Behavior contract ----------------------------------------
-
-  @impl Ezagent.Behavior
-  def actions, do: [:bind, :unbind, :list_bindings]
+  # ----- Ezagent.Behavior contract (new — Phase 2-d r3 migration) ---------
+  #
+  # SPEC `docs/superpowers/specs/2026-05-28-router-behavior-kind-architecture.md`
+  # §6.2 retrofit: replace `@behaviour Ezagent.Behavior` + manual
+  # `actions/0` / `interface/0` / `required_caps/0` / `cap_subjects/0`
+  # with `use Ezagent.Behavior` + per-action `action :name, ...` macro
+  # declarations that auto-derive every legacy callback at compile time.
+  #
+  # `state_slice/0` + `init_slice/1` + `post_init/2` + `handle_continue/3`
+  # + `reconcile_after_load/2` + `data_owner/1` + `handle_kind_message/3`
+  # are slice-machinery / lifecycle hooks (NOT action handlers) — they
+  # stay as plain function defs invoked directly by `Ezagent.Kind.Server`.
+  #
+  # `invoke/4` is REPLACED by per-action `handle_<action>(args, ctx)` —
+  # the runtime (`Kind.Runtime.invoke_new_contract_handler/6`) injects
+  # `ctx[:read].(:key, default)` for slice reads and consumes the
+  # returned `{:ok, result, [effect]}` shape. SPEC §4.4 effect grammar
+  # for slice mutation (`{:set, :bindings, _}`).
 
   # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
   # ExternalMirror is registered on Session Kind only — kind axis is
-  # `:session`.
-  @impl Ezagent.Behavior
+  # `:session`. We use atom `:caps` here so the macro generates a clean
+  # `actions/0` + `interface/0` + `cap_subjects/0`; the kind axis lives
+  # in our explicit `required_caps/0` override below (the macro's
+  # auto-derived version defaults to `kind: :any` and would lose the
+  # `:session` scoping the dispatcher enforces at step 5.5).
+  action :bind,
+    args: %{adapter_id: :string, target_id: :string, opts: :map},
+    returns: %{ok: :boolean, binding_id: :string, worker_uri: :uri},
+    caps: [:bind],
+    modes: [:call],
+    description: "Bind this session's slice changes to an external adapter target."
+
+  action :unbind,
+    args: %{adapter_id: :string, target_id: :string},
+    returns: %{ok: :boolean, unbound: :boolean},
+    caps: [:unbind],
+    modes: [:call],
+    description: "Remove an (adapter_id, target_id) binding from this session."
+
+  action :list_bindings,
+    args: %{},
+    returns: %{bindings: {:list, :map}},
+    caps: [:list_bindings],
+    modes: [:call],
+    description: "List all external-mirror bindings on this session."
+
+  # Explicit override — the macro's auto-derived `required_caps/0` would
+  # use `kind: :any` per `build_required_cap_ast/3`. ExternalMirror is
+  # registered on Session Kind only; pin `:session` so step 5.5's
+  # axis-derivation matches the dispatch shape.
   def required_caps do
     %{
       bind: Ezagent.Capability.cap(:session, __MODULE__, :bind),
@@ -113,19 +155,8 @@ defmodule Ezagent.Behavior.ExternalMirror do
     }
   end
 
-  @impl Ezagent.Behavior
   def state_slice, do: :external_mirror
 
-  @impl Ezagent.Behavior
-  def cap_subjects do
-    [
-      {:bind, "Bind this session's slice changes to an external adapter target."},
-      {:unbind, "Remove an (adapter_id, target_id) binding from this session."},
-      {:list_bindings, "List all external-mirror bindings on this session."}
-    ]
-  end
-
-  @impl Ezagent.Behavior
   def init_slice(args) do
     # Per §3.1 r4 HIGH-3 fix: rehydrate the binding LIST on init. The
     # WORKER spawn loop is deferred to handle_continue/3 below
@@ -150,7 +181,6 @@ defmodule Ezagent.Behavior.ExternalMirror do
       %{bindings: []}
   end
 
-  @impl Ezagent.Behavior
   def post_init(_args, %{bindings: []}), do: :ok
 
   def post_init(_args, %{bindings: _bindings}),
@@ -172,7 +202,6 @@ defmodule Ezagent.Behavior.ExternalMirror do
   # the binding) is a no-op union; the bypass paths (SQL insert,
   # snapshot/DB write race) get the new binding pulled into
   # slice for `handle_continue/3` to spawn the worker.
-  @impl Ezagent.Behavior
   def reconcile_after_load(%URI{} = session_uri, %{bindings: existing} = slice) do
     db_bindings =
       session_uri
@@ -215,7 +244,6 @@ defmodule Ezagent.Behavior.ExternalMirror do
   Slice itself is unchanged — return `:ignore` so `Kind.Server` skips
   the snapshot-commit path.
   """
-  @impl Ezagent.Behavior
   def handle_continue(:reconcile_external_mirror_workers, slice, _ctx) do
     # `self()` is the Kind.Server pid — the same process that will
     # be `:ready` by the time the mailbox drains.
@@ -274,8 +302,19 @@ defmodule Ezagent.Behavior.ExternalMirror do
 
   # ----- The :bind action ---------------------------------------------------
 
-  @impl Ezagent.Behavior
-  def invoke(:bind, slice, args, ctx) do
+  # Phase 2-d r3: `invoke/4` replaced by per-action `handle_<action>/2`
+  # handlers per SPEC §6.2 retrofit. Each handler reads the slice via
+  # `ctx[:read].(:key, default)` (injected by
+  # `Kind.Runtime.invoke_new_contract_handler/6`) and returns
+  # `{:ok, result, [effect]}` where slice mutations are encoded as
+  # `{:set, key, value}` effects per the SPEC §4.4 grammar.
+  #
+  # The pre-migration body shape (slice in, new_slice out) is preserved
+  # internally by `do_bind` / `do_unbind` for diff-minimisation; the
+  # action handlers reconstruct the slice from `ctx[:read]` and
+  # translate the new_slice return into `{:set, :bindings, _}` effects.
+
+  def handle_bind(args, ctx) do
     # codex r3 CRIT fix (2026-05-25): atomic single-use nonce check
     # replaces the forgeable `_facade_checks_ok` flag. The facade
     # (Ezagent.ExternalMirror.bind/4) is the ONLY legitimate
@@ -293,7 +332,8 @@ defmodule Ezagent.Behavior.ExternalMirror do
 
     case nonce_consume(nonce, expected) do
       :ok ->
-        do_bind(slice, args, ctx)
+        slice = read_slice(ctx)
+        translate_invoke_return(do_bind(slice, args, ctx))
 
       :error ->
         # Let-it-crash-style refusal: bind MUST go through the
@@ -304,14 +344,35 @@ defmodule Ezagent.Behavior.ExternalMirror do
     end
   end
 
-  def invoke(:unbind, slice, %{adapter_id: aid, target_id: tid}, ctx) do
+  def handle_unbind(%{adapter_id: aid, target_id: tid}, ctx) do
     session_uri = Map.get(ctx, :self_uri) || Map.fetch!(ctx, :target_uri)
-    do_unbind(slice, aid, tid, session_uri)
+    slice = read_slice(ctx)
+    translate_invoke_return(do_unbind(slice, aid, tid, session_uri))
   end
 
-  def invoke(:list_bindings, slice, _args, _ctx) do
-    {:ok, slice, %{bindings: slice.bindings}}
+  def handle_list_bindings(_args, ctx) do
+    bindings = ctx[:read].(:bindings, [])
+    {:ok, %{bindings: bindings}, []}
   end
+
+  # Reconstruct the in-memory slice shape `do_bind` / `do_unbind`
+  # expect (a map with `:bindings`). The runtime's `ctx[:read]` is a
+  # `(key, default) -> value` accessor over the slice; only `:bindings`
+  # is in this Behavior's slice.
+  defp read_slice(ctx) do
+    %{bindings: ctx[:read].(:bindings, [])}
+  end
+
+  # Translate the legacy `{:ok, new_slice, result} | {:error, _}` shape
+  # `do_bind` + `do_unbind` return into the new-contract
+  # `{:ok, result, [effect]} | {:error, _}` shape. The single slice
+  # mutation is encoded as `{:set, :bindings, new_slice.bindings}` —
+  # the only slice field this Behavior owns.
+  defp translate_invoke_return({:ok, new_slice, result}) when is_map(new_slice) do
+    {:ok, result, [{:set, :bindings, Map.get(new_slice, :bindings, [])}]}
+  end
+
+  defp translate_invoke_return({:error, _reason} = err), do: err
 
   defp nonce_consume(nonce, {%URI{}, aid, _tid, %URI{}} = expected)
        when is_binary(nonce) and is_binary(aid) do
@@ -589,7 +650,6 @@ defmodule Ezagent.Behavior.ExternalMirror do
   `:any` (class-wide caps) → workspace admin grants (per §5.2
   three-branch enforcement).
   """
-  @impl Ezagent.Behavior
   def data_owner(%URI{scheme: "session"} = session_uri) do
     case Ezagent.Kind.get_slice(session_uri, :chat) do
       {:ok, %{owner_uri: %URI{} = owner_uri}} -> Ezagent.URI.instance(owner_uri)
@@ -602,29 +662,12 @@ defmodule Ezagent.Behavior.ExternalMirror do
   def data_owner({:within_session, %URI{} = s}), do: {:scope, :within_session, s}
   def data_owner(_), do: :no_owner
 
-  @impl Ezagent.Behavior
-  def interface do
-    %{
-      bind: %{
-        description: "Add an external-mirror binding to this session.",
-        args: %{adapter_id: :string, target_id: :string, opts: :map},
-        returns: %{ok: :boolean, binding_id: :string, worker_uri: :uri},
-        modes: [:call]
-      },
-      unbind: %{
-        description: "Remove an external-mirror binding from this session.",
-        args: %{adapter_id: :string, target_id: :string},
-        returns: %{ok: :boolean, unbound: :boolean},
-        modes: [:call]
-      },
-      list_bindings: %{
-        description: "Read every binding on this session.",
-        args: %{},
-        returns: %{bindings: {:list, :map}},
-        modes: [:call]
-      }
-    }
-  end
+  # `interface/0`, `actions/0`, `cap_subjects/0` are auto-derived by
+  # `use Ezagent.Behavior` from the `action :name, ...` declarations at
+  # the top of this module. The legacy explicit versions were removed
+  # as part of the Phase 2-d r3 migration. The macro's
+  # `@before_compile` runs `maybe_inject_legacy_callbacks/5` which
+  # synthesises identical-shape returns from the action specs.
 
   # ----- internals ----------------------------------------------------------
 
