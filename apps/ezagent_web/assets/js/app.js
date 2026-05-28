@@ -82,11 +82,38 @@ const ScrollOnUpdate = {
 // to apps/ezagent_web/assets/js/hooks/pty_terminal.js. Import is at
 // the top of this file alongside the other hooks.
 
+// Customer chat: persist conv_id + customer_id across page reloads via
+// localStorage. On first mount with no ?conv= param, restore saved ids by
+// redirecting to the canonical URL. On every mount, persist whatever the
+// server resolved (pushed via data attrs on the root div).
+const CustomerChatPersist = {
+  mounted() {
+    const tenant = this.el.dataset.tenant;
+    const key = "ezagent_cc_conv_" + tenant;
+    const url = new URL(window.location.href);
+
+    if (!url.searchParams.get("conv")) {
+      const saved = localStorage.getItem(key);
+      if (saved) {
+        const [conv, cid] = saved.split("|");
+        url.searchParams.set("conv", conv);
+        if (cid) url.searchParams.set("cid", cid);
+        window.location.replace(url.toString()); // reload with restored ids
+        return;
+      }
+    }
+    // persist whatever the server resolved (pushed via data attrs)
+    const conv = this.el.dataset.conv;
+    const cid = this.el.dataset.cid;
+    if (conv) localStorage.setItem(key, conv + "|" + (cid || ""));
+  }
+};
+
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, ScrollOnUpdate, PtyTerminal, MentionAutocomplete, CountUp, UriPicker, ViewportMarkRead},
+  hooks: {...colocatedHooks, ScrollOnUpdate, PtyTerminal, MentionAutocomplete, CountUp, UriPicker, ViewportMarkRead, CustomerChatPersist},
 })
 
 // Show progress bar on live navigation and form submits

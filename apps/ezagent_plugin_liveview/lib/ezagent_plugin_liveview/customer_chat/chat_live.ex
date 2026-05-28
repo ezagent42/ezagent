@@ -138,6 +138,11 @@ defmodule EzagentPluginLiveview.CustomerChat.ChatLive do
   def render(assigns) do
     ~H"""
     <div
+      id="cc-root"
+      phx-hook="CustomerChatPersist"
+      data-tenant={@tenant}
+      data-conv={@conv_id}
+      data-cid={@customer_id}
       class={["flex flex-col", @embed? && "h-screen bg-transparent" || "h-screen max-w-lg mx-auto border-x border-zinc-200"]}
       style={"--cc-primary: #{@theme.primary_color};"}
     >
