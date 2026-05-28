@@ -150,7 +150,7 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
              codex_path,
              test_mode
            ),
-         {:ok, thread_id} <- ensure_bridge_thread_id(thread_id_path, test_mode),
+         {:ok, thread_id} <- ensure_bridge_thread_id(agent_uri, thread_id_path, test_mode),
          :ok <- ensure_pty(agent_uri, cwd, socket_path, thread_id, tmpl, codex_path, test_mode) do
       {:ok,
        %{
@@ -346,34 +346,40 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
     :ok
   end
 
-  defp ensure_bridge_thread_id(_thread_id_path, true), do: {:ok, nil}
+  defp ensure_bridge_thread_id(_agent_uri, _thread_id_path, true), do: {:ok, nil}
 
-  defp ensure_bridge_thread_id(thread_id_path, false) do
-    wait_for_thread_id(thread_id_path, System.monotonic_time(:millisecond) + @thread_id_wait_ms)
+  defp ensure_bridge_thread_id(agent_uri, thread_id_path, false) do
+    wait_for_thread_id(
+      agent_uri,
+      thread_id_path,
+      System.monotonic_time(:millisecond) + @thread_id_wait_ms
+    )
   end
 
-  defp wait_for_thread_id(thread_id_path, deadline_ms) do
+  defp wait_for_thread_id(agent_uri, thread_id_path, deadline_ms) do
     case File.read(thread_id_path) do
       {:ok, body} ->
         case String.trim(body) do
-          "" -> retry_thread_id(thread_id_path, deadline_ms)
+          "" -> retry_thread_id(agent_uri, thread_id_path, deadline_ms)
           thread_id -> {:ok, thread_id}
         end
 
       {:error, :enoent} ->
-        retry_thread_id(thread_id_path, deadline_ms)
+        retry_thread_id(agent_uri, thread_id_path, deadline_ms)
 
       {:error, reason} ->
         {:error, {:codex_thread_id_file_read_failed, thread_id_path, reason}}
     end
   end
 
-  defp retry_thread_id(thread_id_path, deadline_ms) do
+  defp retry_thread_id(agent_uri, thread_id_path, deadline_ms) do
     if System.monotonic_time(:millisecond) >= deadline_ms do
-      {:error, {:codex_thread_id_file_timeout, thread_id_path}}
+      {:error,
+       {:codex_thread_id_file_timeout, thread_id_path,
+        EzagentPluginCodex.BridgeSidecar.recent_output(agent_uri)}}
     else
       Process.sleep(100)
-      wait_for_thread_id(thread_id_path, deadline_ms)
+      wait_for_thread_id(agent_uri, thread_id_path, deadline_ms)
     end
   end
 
