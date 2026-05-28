@@ -249,7 +249,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
         end)
 
       assert {:ok, new_slice, %{cursor: 3}} =
-               SessionImpl.invoke(
+               EzagentDomainChat.Test.BehaviorLegacyInvoke.invoke(Ezagent.Behavior.Publisher.SessionImpl, 
                  :subscribe_from,
                  slice,
                  %{subscriber_pid: task.pid, cursor: :latest},
@@ -287,7 +287,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
         end)
 
       assert {:ok, _new_slice, %{cursor: 3}} =
-               SessionImpl.invoke(
+               EzagentDomainChat.Test.BehaviorLegacyInvoke.invoke(Ezagent.Behavior.Publisher.SessionImpl, 
                  :subscribe_from,
                  slice,
                  %{subscriber_pid: pid, cursor: :earliest},
@@ -321,7 +321,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
           assert_receive {:DOWN, ^ref, :process, ^dead_pid, _}, 200
 
           {:ok, new, _} =
-            SessionImpl.invoke(
+            EzagentDomainChat.Test.BehaviorLegacyInvoke.invoke(Ezagent.Behavior.Publisher.SessionImpl, 
               :subscribe_from,
               acc,
               %{subscriber_pid: dead_pid, cursor: :latest},
@@ -343,7 +343,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
         end)
 
       {:ok, final_slice, _} =
-        SessionImpl.invoke(
+        EzagentDomainChat.Test.BehaviorLegacyInvoke.invoke(Ezagent.Behavior.Publisher.SessionImpl, 
           :subscribe_from,
           slice,
           %{subscriber_pid: live_task.pid, cursor: :latest},
@@ -388,7 +388,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
 
       # cursor=2 → replay 3, 4, 5
       assert {:ok, _new_slice, %{cursor: 5}} =
-               SessionImpl.invoke(
+               EzagentDomainChat.Test.BehaviorLegacyInvoke.invoke(Ezagent.Behavior.Publisher.SessionImpl, 
                  :subscribe_from,
                  slice,
                  %{subscriber_pid: pid, cursor: 2},
@@ -415,7 +415,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
 
       # Asking from cursor=1 — older than oldest (4) by far.
       assert {:error, :cursor_out_of_window} =
-               SessionImpl.invoke(
+               EzagentDomainChat.Test.BehaviorLegacyInvoke.invoke(Ezagent.Behavior.Publisher.SessionImpl, 
                  :subscribe_from,
                  slice,
                  %{subscriber_pid: self(), cursor: 1},
@@ -438,7 +438,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
         end
 
       assert {:ok, ^slice, %{cursor: 1, state: state}} =
-               SessionImpl.invoke(:snapshot, slice, %{}, ctx(self_uri))
+               EzagentDomainChat.Test.BehaviorLegacyInvoke.invoke(Ezagent.Behavior.Publisher.SessionImpl, :snapshot, slice, %{}, ctx(self_uri))
 
       # PR-N3 codex r2 HIGH-1 (Allen 2026-05-25) — `build_payload/2`
       # re-fetches the slice via `Kind.get_slice/2`. In this unit
@@ -455,7 +455,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
       slice = fresh_slice()
 
       assert {:ok, ^slice, %{cursor: 0, state: nil}} =
-               SessionImpl.invoke(:snapshot, slice, %{}, ctx())
+               EzagentDomainChat.Test.BehaviorLegacyInvoke.invoke(Ezagent.Behavior.Publisher.SessionImpl, :snapshot, slice, %{}, ctx())
     end
   end
 
@@ -475,7 +475,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
 
       # history(1, 3) — from exclusive, to inclusive → cursors 2, 3
       assert {:ok, _slice, %{events: events}} =
-               SessionImpl.invoke(:history, slice, %{from: 1, to: 3}, ctx(self_uri))
+               EzagentDomainChat.Test.BehaviorLegacyInvoke.invoke(Ezagent.Behavior.Publisher.SessionImpl, :history, slice, %{from: 1, to: 3}, ctx(self_uri))
 
       assert Enum.map(events, & &1.cursor) == [2, 3]
     end
@@ -494,7 +494,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
         end)
 
       assert {:ok, _slice, %{events: events}} =
-               SessionImpl.invoke(:history, slice, %{}, ctx(self_uri))
+               EzagentDomainChat.Test.BehaviorLegacyInvoke.invoke(Ezagent.Behavior.Publisher.SessionImpl, :history, slice, %{}, ctx(self_uri))
 
       assert Enum.map(events, & &1.cursor) == [1, 2, 3]
     end
@@ -513,7 +513,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
         end)
 
       assert {:error, :cursor_out_of_window} =
-               SessionImpl.invoke(:history, slice, %{from: 1, to: :latest}, ctx(self_uri))
+               EzagentDomainChat.Test.BehaviorLegacyInvoke.invoke(Ezagent.Behavior.Publisher.SessionImpl, :history, slice, %{from: 1, to: :latest}, ctx(self_uri))
     end
   end
 
