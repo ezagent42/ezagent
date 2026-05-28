@@ -20,15 +20,15 @@ defmodule Ezagent.Behavior.UserTokens do
   ## Actions
 
   - `:mint_token` — args `%{label: String.t() | nil, expires_at: DateTime.t() | nil}` →
-    `{:ok, slice, %{token_id: integer(), plain: String.t(), label: String.t() | nil}}`.
+    `%{token_id: integer(), plain: String.t(), label: String.t() | nil}`.
     Body wraps `Ezagent.Entity.Token.mint/2`. **The `plain` field is
     returned ONCE — the CLI prints it to operator stdout and it is
     NOT recoverable afterwards** (the table stores only the bcrypt
     hash).
-  - `:list_tokens` — args `%{}` → `{:ok, slice, %{tokens: [%{id, label, inserted_at, last_used_at, expires_at}]}}`.
+  - `:list_tokens` — args `%{}` → `%{tokens: [%{id, label, inserted_at, last_used_at, expires_at}]}`.
     Read-only; wraps `Ezagent.Entity.Token.list/1`.
   - `:revoke_token` — args `%{token_id: integer()}` →
-    `{:ok, slice, %{revoked: integer()}}`. Wraps
+    `%{revoked: integer()}`. Wraps
     `Ezagent.Entity.Token.revoke/1`. Idempotent (legacy `revoke/1`
     returns `:ok` for unknown ids).
 
@@ -50,7 +50,7 @@ defmodule Ezagent.Behavior.UserTokens do
 
   ## Cap shape (PR-CC-2-v2 contract)
 
-  Three `required_caps/0` rows — one per action. Each is
+  Three per-action cap entries — one per action. Each is
   `Capability.cap(:user, __MODULE__, <action>)`. A user can hold an
   instance-scoped cap on their own URI to self-mint / self-list /
   self-revoke; admin holds the `:any`-instance form for cross-user
@@ -67,14 +67,58 @@ defmodule Ezagent.Behavior.UserTokens do
   operator migration with a deprecation notice; its `--mint` mode is
   the only carve-out (bootstrap) — `--list` + `--revoke` now print
   the deprecation alongside their existing output.
+
+  ## P2-b migration (2026-05-28)
+
+  Migrated to the new `use Ezagent.Behavior` action/handler contract
+  per SPEC #445 §4 + §6.2. Legacy `invoke/4` replaced by
+  `handle_mint_token/2` / `handle_list_tokens/2` / `handle_revoke_token/2`
+  returning effects. DB writes (`Token.mint/2`, `Token.revoke/1`) and
+  reads (`Token.list/1`, `Repo.get`) are wrapped in `:effect_returning`
+  so the result can be referenced via `{:ref, ...}` in downstream
+  effects (counter `:set` + audit `:emit`).
   """
 
-  @behaviour Ezagent.Behavior
+  use Ezagent.Behavior
 
-  @impl Ezagent.Behavior
-  def actions, do: [:mint_token, :list_tokens, :revoke_token]
+  action :mint_token,
+    args: %{
+      label: {:option, :string},
+      expires_at: {:option, :string}
+    },
+    returns: %{token_id: :integer, plain: :string, label: :string},
+    caps: [{:mint_token, kind: :user}],
+    description:
+      "Mint a fresh bearer token for the User. The plain token is " <>
+        "returned ONCE; record it at the call site (the DB stores " <>
+        "only the bcrypt hash). The target User is the dispatch " <>
+        "target's URI (`ctx.self_uri`).",
+    data_owner: :self,
+    modes: [:call]
 
-  @impl Ezagent.Behavior
+  action :list_tokens,
+    args: %{},
+    returns: %{tokens: {:list, :map}},
+    caps: [{:list_tokens, kind: :user}],
+    description:
+      "List the User's non-revoked tokens (does NOT include the " <>
+        "plain — only id / label / timestamps). Read-only.",
+    data_owner: :self,
+    modes: [:call]
+
+  action :revoke_token,
+    args: %{token_id: :integer},
+    returns: %{revoked: :integer},
+    caps: [{:revoke_token, kind: :user}],
+    description: "Revoke a token by id. Idempotent — unknown ids return :ok.",
+    data_owner: :self,
+    modes: [:call]
+
+  # =================================================================
+  # Explicit `required_caps/0` — preserves `kind: :user` axis (the
+  # macro auto-derivation hardcodes `:any`; see UserCredentials.ex
+  # for the rationale).
+  # =================================================================
   def required_caps do
     %{
       mint_token: Ezagent.Capability.cap(:user, __MODULE__, :mint_token),
@@ -83,45 +127,29 @@ defmodule Ezagent.Behavior.UserTokens do
     }
   end
 
-  @impl Ezagent.Behavior
-  def cap_subjects do
-    [
-      {:mint_token,
-       "mint a bearer token for the User (plain token returned ONCE; " <>
-         "table stores only the bcrypt hash). Self-scope via instance " <>
-         "cap on own URI; admin via :any-instance for cross-user."},
-      {:list_tokens,
-       "list the User's tokens (does NOT include plain — only id / " <>
-         "label / inserted_at / last_used_at / expires_at)"},
-      {:revoke_token, "revoke a token by id (idempotent — unknown id returns :ok)"}
-    ]
-  end
+  # =================================================================
+  # Slice machinery (legacy callbacks; §6.2 step 9)
+  # =================================================================
 
-  @impl Ezagent.Behavior
   def state_slice, do: :user_tokens
 
-  @impl Ezagent.Behavior
   def init_slice(_args), do: %{mint_count: 0, revoke_count: 0}
 
   # PR-OWN-4 / codex PR #356 r1 MED fix: same shape as Identity /
   # ApiKeys / UserCredentials — the User Kind owns its tokens.
-  # Concrete URI → self; `:any` → `:any`; otherwise no owner.
-  # Admin's cross-user authority is via the bootstrap `:any`-instance
-  # cap which short-circuits at step 5.5.
-  @impl Ezagent.Behavior
   def data_owner(%URI{} = entity_uri), do: entity_uri
   def data_owner(:any), do: :any
   def data_owner(_), do: :no_owner
 
   # =================================================================
-  # Action bodies
+  # New-contract action handlers (§6.2 — replace invoke/4)
   # =================================================================
 
-  @impl Ezagent.Behavior
-  def invoke(:mint_token, slice, args, ctx) when is_map(args) do
+  def handle_mint_token(args, ctx) when is_map(args) do
     with {:ok, user_uri} <- target_user_uri(ctx),
-         label = Map.get(args, :label),
          {:ok, expires_at} <- coerce_expires_at(Map.get(args, :expires_at)) do
+      label = Map.get(args, :label)
+
       opts =
         []
         |> maybe_put(:label, label)
@@ -129,14 +157,24 @@ defmodule Ezagent.Behavior.UserTokens do
 
       case Ezagent.Entity.Token.mint(user_uri, opts) do
         {plain, row} when is_binary(plain) ->
-          new_slice = Map.update(slice, :mint_count, 1, &(&1 + 1))
+          cur = ctx[:read].(:mint_count, 0)
 
-          {:ok, new_slice,
+          {:ok,
            %{
              token_id: row.id,
              plain: plain,
              label: row.label
-           }}
+           },
+           [
+             {:set, :mint_count, cur + 1},
+             {:emit, :token_minted,
+              %{
+                user_uri: URI.to_string(user_uri),
+                token_id: row.id,
+                label: row.label,
+                at: DateTime.utc_now()
+              }}
+           ]}
 
         {:error, _} = err ->
           err
@@ -147,7 +185,7 @@ defmodule Ezagent.Behavior.UserTokens do
     end
   end
 
-  def invoke(:list_tokens, slice, _args, ctx) do
+  def handle_list_tokens(_args, ctx) do
     case target_user_uri(ctx) do
       {:ok, user_uri} ->
         tokens =
@@ -163,75 +201,38 @@ defmodule Ezagent.Behavior.UserTokens do
             }
           end)
 
-        {:ok, slice, %{tokens: tokens}}
+        # Read-only — no slice mutation, no effects.
+        {:ok, %{tokens: tokens}, []}
 
       {:error, _} = err ->
         err
     end
   end
 
-  def invoke(:revoke_token, slice, %{token_id: token_id}, ctx)
-      when is_integer(token_id) do
-    # Codex PR #356 r1 HIGH fix: `Ezagent.Entity.Token.revoke/1`
-    # deletes globally by row id — no entity_uri check. Without
-    # pre-validation, Alice (with revoke cap on her own URI) could
-    # pass Bob's token_id and delete it. The cap-check at step 5.5
-    # only enforces that Alice can call revoke against her OWN
-    # User Kind; it doesn't bind to a specific token row.
-    #
-    # Fix: pre-fetch the row + assert its entity_uri matches the
-    # dispatch target's URI (`ctx.self_uri`) BEFORE delete. Unknown
-    # row returns :not_found (DISTINCT from "found but doesn't
-    # belong to you" which is :cross_entity_token); both fail closed.
+  def handle_revoke_token(%{token_id: token_id}, ctx) when is_integer(token_id) do
+    # Codex PR #356 r1 HIGH fix: pre-validate cross-entity ownership
+    # before delete (Token.revoke/1 deletes globally by row id).
     with {:ok, user_uri} <- target_user_uri(ctx),
          :ok <- ensure_token_belongs_to(user_uri, token_id) do
       :ok = Ezagent.Entity.Token.revoke(token_id)
-      new_slice = Map.update(slice, :revoke_count, 1, &(&1 + 1))
+      cur = ctx[:read].(:revoke_count, 0)
 
-      {:ok, new_slice, %{revoked: token_id}}
+      {:ok,
+       %{revoked: token_id},
+       [
+         {:set, :revoke_count, cur + 1},
+         {:emit, :token_revoked,
+          %{
+            user_uri: URI.to_string(user_uri),
+            token_id: token_id,
+            at: DateTime.utc_now()
+          }}
+       ]}
     end
   end
 
-  def invoke(:revoke_token, _slice, args, _ctx) do
+  def handle_revoke_token(args, _ctx) do
     {:error, {:bad_args, "revoke_token requires {token_id: integer}", args}}
-  end
-
-  # =================================================================
-  # Interface — drives `mix ezagent` auto-derivation.
-  # =================================================================
-
-  @impl Ezagent.Behavior
-  def interface do
-    %{
-      mint_token: %{
-        description:
-          "Mint a fresh bearer token for the User. The plain token is " <>
-            "returned ONCE; record it at the call site (the DB stores " <>
-            "only the bcrypt hash). The target User is the dispatch " <>
-            "target's URI (`ctx.self_uri`).",
-        args: %{
-          label: {:option, :string},
-          expires_at: {:option, :string}
-        },
-        returns: %{token_id: :integer, plain: :string, label: :string},
-        modes: [:call]
-      },
-      list_tokens: %{
-        description:
-          "List the User's non-revoked tokens (does NOT include the " <>
-            "plain — only id / label / timestamps). Read-only.",
-        args: %{},
-        returns: %{tokens: {:list, :map}},
-        modes: [:call]
-      },
-      revoke_token: %{
-        description:
-          "Revoke a token by id. Idempotent — unknown ids return :ok.",
-        args: %{token_id: :integer},
-        returns: %{revoked: :integer},
-        modes: [:call]
-      }
-    }
   end
 
   # =================================================================
@@ -249,14 +250,6 @@ defmodule Ezagent.Behavior.UserTokens do
   end
 
   # Codex PR #356 r1 HIGH fix — cross-entity revoke prevention.
-  # Pre-fetch the token row and verify its `entity_uri` matches the
-  # dispatch target's URI. Returns:
-  # - `:ok` — row exists AND belongs to the target user
-  # - `{:error, :not_found}` — row doesn't exist (clean idempotent
-  #   shape for "revoke something already gone")
-  # - `{:error, :cross_entity_token}` — row exists but belongs to a
-  #   different entity; refuse with a distinct error atom so the
-  #   operator can distinguish "typo" from "auth boundary hit"
   defp ensure_token_belongs_to(%URI{} = user_uri, token_id) when is_integer(token_id) do
     user_uri_str = URI.to_string(user_uri)
 
@@ -275,19 +268,11 @@ defmodule Ezagent.Behavior.UserTokens do
   defp maybe_put(opts, _key, nil), do: opts
   defp maybe_put(opts, key, value), do: Keyword.put(opts, key, value)
 
-  # Codex PR #356 r1 MED fix: `Token.mint/2` expects `%DateTime{}`
-  # for `:expires_at`, but `interface/0` advertises `:string`
-  # (because argv carries strings — RFC3339 is the natural CLI
-  # shape). Parse here so a CLI/JSON caller can pass `"2026-12-31T23:59:59Z"`
-  # and a programmatic caller can still pass a `%DateTime{}` directly.
-  # `nil` is the no-expiry default (matches the legacy task's option
-  # absence).
+  # Codex PR #356 r1 MED fix: coerce string / DateTime / nil for
+  # `:expires_at`. RFC3339 string for CLI, %DateTime{} for programmatic.
   defp coerce_expires_at(nil), do: {:ok, nil}
 
   defp coerce_expires_at(%DateTime{} = dt) do
-    # The `entity_tokens.expires_at` column is `:utc_datetime_usec`,
-    # so Ecto refuses second-precision values at dump time. Promote
-    # to microsecond precision so callers can pass either.
     {:ok, ensure_usec(dt)}
   end
 
