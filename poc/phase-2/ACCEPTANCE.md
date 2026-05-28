@@ -84,34 +84,40 @@ Dispatch shape for the dashboard to flip mode:
 `EntityCapsLive` now pre-spawns the target Kind via `SpawnRegistry.spawn/1`
 and polls `ReadyGate.status` (~500ms ceiling) before dispatching grant.
 
-## Known limitation (not blocking the architecture proof)
+## ✅ Soul-augmented customer reply (RESOLVED 2026-05-28)
 
-### ⚠️ Soul-augmented customer reply doesn't reach SSE
+Original gap: with a tenant soul attached, claude called the `reply`
+tool with `session_uris: []` (empty list) — confirmed via WS frame in
+the bridge log: `[..., "session_uris": []]`. `BridgeAdapter` then
+silent-dropped because there was no session to send to. The Acme soul
+(facts + tone) dominated claude's attention over the python bridge's
+tool description, even though the description marked `session_uris`
+required.
 
-When the cc agent spawns with `--append-system-prompt <Acme soul>` (EXP-A1
-soul_path Template arg active), the bridge log confirms `HANDLED reply
-INCOMING ON agent_bridge:cc:...` — i.e., claude DID generate a reply and
-the python bridge forwarded it to ezagent. But the reply doesn't land in
-`messages` table or get broadcast on the session topic, so SSE never sees
-it. Customer's stream times out after 120s.
+**Fix**: `cc_agent.ex::build_soul_args/2` now prepends a fixed
+~20-line **channel-protocol preamble** to every tenant soul before
+inlining as `--append-system-prompt`. The preamble explicitly tells
+claude that (a) every `<channel source="esr-bridge">` is a USER
+message, (b) reply via the `reply` tool ONLY (inline text invisible),
+(c) `session_uris` MUST be `[meta.session]` from the inbound tag.
+Tenant soul follows below the preamble with a guard "the protocol
+above always wins on disagreement".
 
-**Hypothesis**: `EzagentPluginCc.BridgeAdapter.handle_client_event("reply",
-%{"text" => _, "session_uris" => sessions}, ...)` requires `session_uris`
-to be in claude's reply tool call. Without a soul, claude's default channel
-prompt instructs it to include `session_uris` in the reply. The Acme soul
-fixture (cinnox-borrowed) describes tone + facts but doesn't reinforce the
-channel-protocol hint, so claude may call the reply tool without
-`session_uris` and the adapter discards it.
+**Validated 2026-05-28** end-to-end:
 
-**Why this isn't blocking**: the wire is proven — without soul, the round
-trip completes. The fix is downstream of Phase 2.4's integration work:
-either (a) include the channel-protocol prefix in the soul preamble (a
-trivial soul-file edit), or (b) augment the meta payload so the adapter
-can derive `session_uris` from `meta.session` when claude omits it.
+```
+curl POST /api/customer/acme/chat → SSE message event:
+"Great question! Acme laptops come with a 12-month warranty
+standard. If you have a Pro line laptop, you're covered for
+24 months. Is there anything else I can help you with?"
+```
 
-**Carry forward to Phase 3**: write a "soul preamble" that all tenant souls
-get prepended with — contains channel-protocol instructions claude needs
-regardless of business tone. Documented in `TEAM-REVIEW.md` §"Carry-forward".
+Reply correctly surfaces soul-specific facts (12-month / 24-month
+Pro line) AND friendly tone — full E2E with tenant personalization
+working.
+
+Implementation: `apps/ezagent_plugin_cc/lib/ezagent/template/cc_agent.ex`
+`channel_preamble/0` + integration in `build_soul_args/2`.
 
 ## What's in this Phase 2 branch (summary)
 
