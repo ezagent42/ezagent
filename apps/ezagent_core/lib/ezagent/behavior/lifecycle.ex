@@ -49,14 +49,53 @@ defmodule Ezagent.Behavior.Lifecycle do
   a detached task; by the time the supervisor acts, the dispatch reply
   has already been delivered. The detached task is unlinked so a
   termination race never crashes the dispatch path.
+
+  ## Migration to §2.2 declarative contract (Phase 2.5 — 2026-05-28)
+
+  Per SPEC `2026-05-28-router-behavior-kind-architecture.md` §6.2,
+  migrated from `@behaviour Ezagent.Behavior` + `invoke/4` to
+  `use Ezagent.Behavior` + `action/3` + `handle_terminate/2`.
+
+  The deferred-termination pattern is preserved as a `{:effect, mfa,
+  args}` side effect — `apply_effects/2` runs `:effect` entries
+  fire-and-forget AFTER the slice mutation lands. `Task.start/1` is
+  what spawns the unlinked task; the 20ms sleep window inside the
+  task is what lets `GenServer.call`'s reply win the race. Using a
+  `{:terminate, :self}` effect was rejected — the runtime executes
+  `:terminate` effects via `Ezagent.Kind.terminate/1` SYNCHRONOUSLY
+  before the dispatch reply returns, which is exactly the race the
+  detached-Task pattern works around. The Lifecycle Behavior is NOT
+  the framework's terminate mechanism; it is one client of it.
+
+  The spawning-principal notification is also a `{:effect, mfa, args}`
+  side effect — it's best-effort, observational, and must not block
+  the dispatch reply. Errors inside `Ezagent.Notifications.notify/2`
+  are still rescued/caught inside `notify_spawning_principal/1` so a
+  PubSub-down test fixture doesn't fail the action.
   """
 
-  @behaviour Ezagent.Behavior
+  use Ezagent.Behavior
 
   require Logger
 
-  @impl Ezagent.Behavior
-  def actions, do: [:terminate]
+  # NOTE: the action `:returns` declares the conceptual response shape
+  # for InterfaceValidator / docs surfaces. The wire-level result the
+  # legacy `invoke/4` clause returned was the literal 2-tuple
+  # `{:ok, :terminated}` — callers (`Orchestrator.Tools`, the LV
+  # `TerminalLive.handle_event/3` terminate flow) pattern-match on
+  # `{:ok, {:ok, :terminated}}` (outer `{:ok, _}` is the dispatch
+  # wrapper; inner `{:ok, :terminated}` is the action result). The
+  # new-contract handler returns the exact same inner tuple to keep
+  # those call sites unchanged. The `:returns` schema is the
+  # human-readable contract; the runtime does NOT enforce it on the
+  # result shape today.
+  action :terminate,
+    args: %{},
+    returns: %{terminated: :boolean},
+    caps: [:terminate],
+    modes: [:call],
+    description:
+      "terminate the target Kind's supervised process (idempotent — already-gone is :ok)"
 
   # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
   # Lifecycle is registered on the Agent Kind (per
@@ -64,59 +103,51 @@ defmodule Ezagent.Behavior.Lifecycle do
   # kind axis is `:agent`. workspace_scoped? = true (default): an
   # orchestrator's `{:spawned_by, principal_uri}` cap is workspace-
   # scoped via the underlying URI, so cross-workspace termination is
-  # blocked structurally.
-  @impl Ezagent.Behavior
+  # blocked structurally. The macro-derived default would yield `:any`;
+  # we override to keep the `:agent` axis the CapabilityRegistry expects.
   def required_caps do
     %{
       terminate: Ezagent.Capability.cap(:agent, __MODULE__, :terminate)
     }
   end
 
-  @impl Ezagent.Behavior
-  def cap_subjects do
-    [
-      {:terminate,
-       "terminate the target Kind's supervised process (idempotent — already-gone is :ok)"}
-    ]
-  end
-
-  @impl Ezagent.Behavior
   def state_slice, do: :lifecycle
 
-  @impl Ezagent.Behavior
   def init_slice(_args), do: %{terminations: 0}
 
-  @impl Ezagent.Behavior
-  def invoke(:terminate, slice, _args, ctx) do
+  def handle_terminate(_args, ctx) do
     self_uri = Map.get(ctx, :self_uri)
     kind_module = Map.get(ctx, :kind_module)
+    prev_terminations = ctx[:read].(:terminations, 0)
 
-    schedule_termination(self_uri, kind_module)
-    notify_spawning_principal(self_uri)
-
-    {:ok, bump(slice), {:ok, :terminated}}
-  end
-
-  @impl Ezagent.Behavior
-  def interface do
-    %{
-      terminate: %{
-        description:
-          "Terminate the target Agent Kind's supervised process via its owning " <>
-            "DynamicSupervisor. Idempotent — an already-absent target returns " <>
-            "{:ok, :terminated}",
-        args: %{},
-        returns: %{terminated: :boolean},
-        modes: [:call]
-      }
-    }
+    # The handler returns side-effects via the effect grammar:
+    #
+    #   1. `{:set, :terminations, prev+1}` — counter bump, persisted via
+    #      the standard snapshot path.
+    #   2. `{:effect, {__MODULE__, :notify_spawning_principal}, [self_uri]}`
+    #      — best-effort notify to the spawning principal (orchestrator
+    #      / user); rescues + telemetry are inside the function body.
+    #   3. `{:effect, {__MODULE__, :schedule_termination}, [self_uri, kind_module]}`
+    #      — detached Task that, after 20ms, terminates the Kind's
+    #      supervised pid. The sleep window lets the dispatch reply
+    #      win the race so the caller sees `{:ok, :terminated}`.
+    #
+    # The `result` value `%{terminated: true}` is what the caller's
+    # dispatch returns; the effect ordering inside `apply_effects/2`
+    # runs `:set` first (slice mutation), then `:effect` (fire-and-
+    # forget side effects in declared order). Both fire BEFORE the
+    # dispatch reply is sent, but `schedule_termination` immediately
+    # spawns an unlinked Task and returns — its actual termination
+    # work happens 20ms later, well after the reply has been sent.
+    {:ok, {:ok, :terminated},
+     [
+       {:set, :terminations, prev_terminations + 1},
+       {:effect, {__MODULE__, :notify_spawning_principal}, [self_uri]},
+       {:effect, {__MODULE__, :schedule_termination}, [self_uri, kind_module]}
+     ]}
   end
 
   # --- internals ---------------------------------------------------------
-
-  # Lazy-seed the counter — the Behavior is registered after-the-fact on
-  # the Agent Kind, so the runtime may hand us an empty `%{}` slice.
-  defp bump(slice), do: Map.update(slice, :terminations, 1, &(&1 + 1))
 
   # Notifier/flash audit 2026-05-24 — todo.md "Notifications consumer
   # coverage" — surface termination to the spawning principal so the
@@ -127,7 +158,13 @@ defmodule Ezagent.Behavior.Lifecycle do
   # principal (orchestrator agent) generates no notification. Wrapped
   # in `try` so a notify failure (e.g. test sandbox without PubSub)
   # never blocks termination — the dispatch reply must still go out.
-  defp notify_spawning_principal(%URI{} = agent_uri) do
+  #
+  # Marked @doc false so the function is invocable by the effect
+  # grammar's `{:effect, {Mod, :fun}, args}` shape but doesn't pollute
+  # the Behavior's public API surface (the legacy contract had this as
+  # `defp`; new-contract effects need `def`).
+  @doc false
+  def notify_spawning_principal(%URI{} = agent_uri) do
     with {:ok, %URI{} = parent_uri} <- Ezagent.AgentLineage.lookup(agent_uri),
          true <- user_uri?(parent_uri) do
       try do
@@ -169,7 +206,7 @@ defmodule Ezagent.Behavior.Lifecycle do
     end
   end
 
-  defp notify_spawning_principal(_), do: :ok
+  def notify_spawning_principal(_), do: :ok
 
   defp user_uri?(%URI{scheme: "entity", host: "user"}), do: true
   defp user_uri?(_), do: false
@@ -179,7 +216,8 @@ defmodule Ezagent.Behavior.Lifecycle do
   # before `GenServer.call/3` could reply. The task is unlinked +
   # short-sleeped so the reply wins the race; an already-gone target is
   # a no-op (idempotent).
-  defp schedule_termination(%URI{} = self_uri, kind_module) when is_atom(kind_module) do
+  @doc false
+  def schedule_termination(%URI{} = self_uri, kind_module) when is_atom(kind_module) do
     supervisor = resolve_supervisor(kind_module)
 
     {:ok, _pid} =
@@ -193,7 +231,7 @@ defmodule Ezagent.Behavior.Lifecycle do
     :ok
   end
 
-  defp schedule_termination(_self_uri, _kind_module), do: :ok
+  def schedule_termination(_self_uri, _kind_module), do: :ok
 
   defp resolve_supervisor(kind_module) do
     if function_exported?(kind_module, :supervisor, 0) do
@@ -238,6 +276,5 @@ defmodule Ezagent.Behavior.Lifecycle do
   # via §5.2 admin branch. Test/demo Behaviors + system control
   # surfaces fall here pending dedicated SPEC for any specific
   # owner model they need.
-  @impl Ezagent.Behavior
   def data_owner(_), do: :no_owner
 end

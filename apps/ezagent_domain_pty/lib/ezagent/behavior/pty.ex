@@ -44,37 +44,50 @@ defmodule Ezagent.Behavior.Pty do
   - `instance: entity://agent/<flavor>_<name>` (per-agent) or `:any`
 
   Admin's triple-`:any` passes. Grant per-agent for non-admin users.
+
+  ## Migration to §2.2 declarative contract (Phase 2.5 — 2026-05-28)
+
+  Per SPEC `2026-05-28-router-behavior-kind-architecture.md` §6.2,
+  migrated from `@behaviour Ezagent.Behavior` + `invoke/4` to
+  `use Ezagent.Behavior` + `action/3` + `handle_write/2`.
+
+  Semantically equivalent — the PtyServer write call stays inline
+  in the handler body because its return value (`:ok` vs error)
+  gates both the slice mutation and the action result. The effect
+  grammar discards `:effect` return values; expressing the write as
+  an effect would require `:effect_returning` which is fine for
+  pure side effects but cannot also abort the action on failure.
+  Inline keeps the failure-propagation contract identical to the
+  legacy contract clause (matches the pattern documented in
+  `Ezagent.Behavior.Chat`'s moduledoc — "result-dependent in-handler
+  dispatches stay as direct calls in the handler body").
   """
 
-  @behaviour Ezagent.Behavior
+  use Ezagent.Behavior
 
-  @impl Ezagent.Behavior
-  def actions, do: [:write]
+  action :write,
+    args: %{bytes: :string},
+    returns: %{bytes_written: :integer},
+    caps: [:write],
+    modes: [:call, :cast],
+    description: "Write raw bytes to the agent's PTY input stream"
 
   # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
-  # Pty is registered on the Agent Kind — kind axis is `:agent`.
-  @impl Ezagent.Behavior
+  # Pty is registered on the Agent Kind — kind axis is `:agent`. The
+  # macro-derived default would be `:any`; we override to preserve
+  # the `:agent` axis the CapabilityRegistry needs to match the
+  # existing grants.
   def required_caps do
     %{
       write: Ezagent.Capability.cap(:agent, __MODULE__, :write)
     }
   end
 
-  @impl Ezagent.Behavior
-  def cap_subjects do
-    [
-      {:write, "write input bytes to the Agent's PTY subprocess stdin"}
-    ]
-  end
-
-  @impl Ezagent.Behavior
   def state_slice, do: :pty
 
-  @impl Ezagent.Behavior
   def init_slice(_args), do: %{write_calls: 0, total_bytes: 0}
 
-  @impl Ezagent.Behavior
-  def invoke(:write, slice, %{bytes: bytes}, ctx) when is_binary(bytes) do
+  def handle_write(%{bytes: bytes}, ctx) when is_binary(bytes) do
     case Map.get(ctx, :self_uri) do
       %URI{} = agent_uri ->
         case Ezagent.Domain.Pty.lookup(agent_uri) do
@@ -89,16 +102,23 @@ defmodule Ezagent.Behavior.Pty do
                 # map so re-writes accumulate normally.
                 base = init_slice(%{})
 
-                new_slice = %{
-                  base
-                  | write_calls: Map.get(slice, :write_calls, base.write_calls) + 1,
-                    total_bytes: Map.get(slice, :total_bytes, base.total_bytes) + byte_size(bytes)
-                }
+                prev_write_calls = ctx[:read].(:write_calls, base.write_calls)
+                prev_total_bytes = ctx[:read].(:total_bytes, base.total_bytes)
 
-                {:ok, new_slice, %{bytes_written: byte_size(bytes)}}
+                new_write_calls = prev_write_calls + 1
+                new_total_bytes = prev_total_bytes + byte_size(bytes)
 
-              err ->
+                {:ok, %{bytes_written: byte_size(bytes)},
+                 [
+                   {:set, :write_calls, new_write_calls},
+                   {:set, :total_bytes, new_total_bytes}
+                 ]}
+
+              {:error, _reason} = err ->
                 err
+
+              other ->
+                {:error, {:pty_write_failed, other}}
             end
 
           :error ->
@@ -110,26 +130,12 @@ defmodule Ezagent.Behavior.Pty do
     end
   end
 
-  def invoke(:write, _slice, _args, _ctx),
+  def handle_write(_args, _ctx),
     do: {:error, {:invalid_args, :bytes_required}}
-
-  @impl Ezagent.Behavior
-  def interface do
-    %{
-      write: %{
-        description: "Write raw bytes to the agent's PTY input stream",
-        args: %{bytes: :string},
-        returns: %{bytes_written: :integer},
-        modes: [:call, :cast]
-      }
-    }
-  end
 
   # PR-OWN-4 (caps-data-ownership SPEC #306 §6): per-entity Behavior
   # — the entity (user / agent) owns its own state for this Behavior.
-  @impl Ezagent.Behavior
   def data_owner(%URI{} = entity_uri), do: Ezagent.URI.instance(entity_uri)
   def data_owner(:any), do: :any
   def data_owner(_), do: :no_owner
-
 end

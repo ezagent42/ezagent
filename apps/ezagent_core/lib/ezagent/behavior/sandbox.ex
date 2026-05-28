@@ -63,7 +63,7 @@ defmodule Ezagent.Behavior.Sandbox do
     FS cleanup wrapped in `try/rescue/catch` (best-effort — raises,
     exits, and throws are caught + logged, do NOT block termination);
     (3) schedules Kind-process termination via the same detached-Task
-    pattern `Ezagent.Behavior.Lifecycle.invoke(:terminate, ...)` uses
+    pattern `Ezagent.Behavior.Lifecycle.handle_terminate/2` uses
     (so the dispatch reply wins the race against process death).
     Codex PR2 round-1 HIGH-2 + round-2 HIGH-1 fixes.
 
@@ -76,18 +76,75 @@ defmodule Ezagent.Behavior.Sandbox do
   curl, np) opt out by omission, and `Sandbox` becomes a no-op for
   agents spawned from them (`config_dir_path` stays `nil`, `:destroy`
   skips the FS callback).
+
+  ## Migration to §2.2 declarative contract (Phase 2.5 — 2026-05-28)
+
+  Per SPEC `2026-05-28-router-behavior-kind-architecture.md` §6.2,
+  migrated from `@behaviour Ezagent.Behavior` + `invoke/4` to
+  `use Ezagent.Behavior` + `action/3` + `handle_<action>/2`.
+
+  - `:read` → `handle_read/2`. Pure read; reads via `ctx[:read].(...)`;
+    no effects (the destroyed?-gate check is identical to the legacy
+    body).
+  - `:write_path` → `handle_write_path/2`. Validates args, returns
+    `{:set, key, value}` effects per slice field. The destroyed? gate
+    + invalid-arg rejections stay identical.
+  - `:destroy` → `handle_destroy/2`. The process-dict gate IS set
+    synchronously inside the handler body BEFORE the slice mutations
+    are decided (per legacy ordering — codex PR2 round-1 HIGH-2). The
+    FS cleanup is inline (its return value gates which slice fields
+    get cleared vs preserved per codex round-4 HIGH-2). Termination
+    scheduling is a `{:effect, ...}` side effect — `Task.start/1`
+    returns immediately so the dispatch reply still wins the race.
+
+  The `post_init/2` + `handle_continue/3` + `handle_kind_message/3`
+  callbacks are NOT part of the action contract (they hook into
+  `Kind.Server` boot + message paths); they remain on the module
+  unchanged.
   """
 
-  @behaviour Ezagent.Behavior
+  use Ezagent.Behavior
 
   require Logger
 
-  @impl Ezagent.Behavior
-  def actions, do: [:read, :write_path, :destroy]
+  action :read,
+    args: %{},
+    returns: %{
+      config_dir_path: {:option, :string},
+      template_class: {:option, :atom},
+      respawn_template_data: {:option, :map},
+      pty_phase: {:option, :atom}
+    },
+    caps: [:read],
+    modes: [:call],
+    description: "read the agent's sandbox slice (config_dir_path, template_class)"
+
+  action :write_path,
+    args: %{
+      config_dir_path: {:option, :string},
+      template_class: {:option, :atom},
+      respawn_template_data: {:option, :map}
+    },
+    returns: %{config_dir_path: {:option, :string}},
+    caps: [:write_path],
+    modes: [:call],
+    description:
+      "set the agent's config_dir_path (one-time, at spawn — caller is the " <>
+        "spawn orchestrator, system caps)"
+
+  action :destroy,
+    args: %{},
+    returns: %{destroyed: :boolean},
+    caps: [:destroy],
+    modes: [:call],
+    description:
+      "destroy the agent — synchronous config-dir cleanup + scheduled " <>
+        "Kind-process termination"
 
   # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
-  # Sandbox is registered on the Agent Kind — kind axis is `:agent`.
-  @impl Ezagent.Behavior
+  # Sandbox is registered on the Agent Kind — kind axis is `:agent`. The
+  # macro-derived default would yield `:any`; we override to preserve the
+  # `:agent` axis the CapabilityRegistry needs to match existing grants.
   def required_caps do
     %{
       read: Ezagent.Capability.cap(:agent, __MODULE__, :read),
@@ -96,20 +153,6 @@ defmodule Ezagent.Behavior.Sandbox do
     }
   end
 
-  @impl Ezagent.Behavior
-  def cap_subjects do
-    [
-      {:read, "read the agent's sandbox slice (config_dir_path, template_class)"},
-      {:write_path,
-       "set the agent's config_dir_path (one-time, at spawn — caller is the " <>
-         "spawn orchestrator, system caps)"},
-      {:destroy,
-       "destroy the agent — synchronous config-dir cleanup + scheduled " <>
-         "Kind-process termination"}
-    ]
-  end
-
-  @impl Ezagent.Behavior
   def state_slice, do: :sandbox
 
   # Codex PR2 round-2 HIGH-2 — destroyed? lives in process dict, NOT
@@ -117,7 +160,6 @@ defmodule Ezagent.Behavior.Sandbox do
   # gate even though the snapshot survives.
   @destroyed_pdict_key {__MODULE__, :destroyed?}
 
-  @impl Ezagent.Behavior
   def init_slice(args) do
     # Reset the process-dict gate at slice-init time too — covers the
     # case where the same OS process happens to host successive Kind
@@ -155,24 +197,23 @@ defmodule Ezagent.Behavior.Sandbox do
 
   # --- :read ----------------------------------------------------------------
 
-  @impl Ezagent.Behavior
-  def invoke(:read, slice, _args, _ctx) do
+  def handle_read(_args, ctx) do
     if destroyed?() do
       # Codex PR2 round-1 HIGH-2 — once :destroy has set the gate, the
       # slice fields refer to ALREADY-CLEANED-UP filesystem state. A
       # concurrent read in the 20ms termination window must not see them.
       {:error, :destroyed}
     else
-      {:ok, slice,
+      {:ok,
        %{
-         config_dir_path: Map.get(slice, :config_dir_path),
-         template_class: Map.get(slice, :template_class),
-         respawn_template_data: Map.get(slice, :respawn_template_data),
+         config_dir_path: ctx[:read].(:config_dir_path, nil),
+         template_class: ctx[:read].(:template_class, nil),
+         respawn_template_data: ctx[:read].(:respawn_template_data, nil),
          # PTY-phase-state-machine 2026-05-26 follow-up (b): expose the
          # mirrored phase so LV / admin callers can read it without
          # subscribing to the phase topic themselves.
-         pty_phase: Map.get(slice, :pty_phase)
-       }}
+         pty_phase: ctx[:read].(:pty_phase, nil)
+       }, []}
     end
   end
 
@@ -184,14 +225,14 @@ defmodule Ezagent.Behavior.Sandbox do
   # before destroy has run — there is no immutability semantics here
   # (cf. SessionTemplate `:write` write-once); the caller (spawn
   # orchestrator) is trusted.
-  def invoke(:write_path, slice, args, _ctx) when is_map(args) do
+  def handle_write_path(args, _ctx) when is_map(args) do
     if destroyed?() do
       # Codex PR2 round-1 HIGH-2 — refusing further writes after destroy
       # closes the race where a concurrent write_path would re-populate
       # the slice after cleanup and persist via :on_terminate snapshot.
       {:error, :destroyed}
     else
-      do_write_path(slice, args)
+      do_write_path(args)
     end
   end
 
@@ -222,58 +263,68 @@ defmodule Ezagent.Behavior.Sandbox do
   # FS cleanup retries (best-effort no-op for an absent dir), the
   # cleared slice clears-again to the same shape, and a second
   # termination schedule is harmless.
-  def invoke(:destroy, slice, _args, ctx) do
+  def handle_destroy(_args, ctx) do
     self_uri = Map.get(ctx, :self_uri)
     kind_module = Map.get(ctx, :kind_module)
-    config_dir = Map.get(slice, :config_dir_path)
-    template_class = Map.get(slice, :template_class)
+    config_dir = ctx[:read].(:config_dir_path, nil)
+    template_class = ctx[:read].(:template_class, nil)
 
     # 1. Gate first — must commit BEFORE cleanup so a racing read
-    #    sees the gate, not stale state.
+    #    sees the gate, not stale state. Inline because the gate is
+    #    a process-dict write; expressing it as a `{:effect, ...}`
+    #    would run AFTER the handler returns (apply_effects bucket
+    #    order), losing the "set-before-cleanup" ordering invariant.
     Process.put(@destroyed_pdict_key, true)
 
     # 2. FS cleanup — passes BOTH agent_uri AND config_dir_path (codex
     #    PR2 round-1 MEDIUM-3); wrapped in try/rescue/catch (codex
-    #    round-2 HIGH-1).
+    #    round-2 HIGH-1). Inline because the return value gates which
+    #    slice fields get cleared vs preserved (codex round-4 HIGH-2).
     cleanup_result = invoke_destroy_config_dir(self_uri, config_dir, template_class)
 
     # 3. Slice update — branches on cleanup result (codex round-4 HIGH-2):
-    #    - SUCCESS: clear the slice. `:on_terminate` snapshot saves the
-    #      cleared state, re-spawn rehydrates as if fresh.
-    #    - FAILURE: PRESERVE the slice (config_dir_path + template_class
-    #      survive into the snapshot) so admin/ops can see "this agent
-    #      destroyed but cleanup failed, stale path is here" and retry
-    #      out-of-band. Losing the path would orphan FS state with no
-    #      recoverable pointer (cc sandboxes hold credentials).
-    next_slice =
+    #    - SUCCESS: clear the slice fields. `:on_terminate` snapshot
+    #      saves the cleared state, re-spawn rehydrates as if fresh.
+    #    - FAILURE: PRESERVE the slice fields (config_dir_path +
+    #      template_class survive into the snapshot) so admin/ops can
+    #      see "this agent destroyed but cleanup failed, stale path is
+    #      here" and retry out-of-band. Losing the path would orphan
+    #      FS state with no recoverable pointer (cc sandboxes hold
+    #      credentials).
+    set_effects =
       case cleanup_result do
         :ok ->
-          %{
-            config_dir_path: nil,
-            template_class: nil,
-            respawn_template_data: nil,
+          [
+            {:set, :config_dir_path, nil},
+            {:set, :template_class, nil},
+            {:set, :respawn_template_data, nil},
             # PTY-phase-state-machine follow-up (b): destroy clears the
             # mirrored phase too — the agent is going away, the next
             # incarnation rehydrates with nil and observes its own
             # broadcasts fresh.
-            pty_phase: nil
-          }
+            {:set, :pty_phase, nil}
+          ]
 
         {:error, _reason} ->
-          slice
+          # No slice changes — preserve every field.
+          []
       end
 
-    # 4. Schedule process termination.
-    schedule_termination(self_uri, kind_module)
-
-    {:ok, next_slice, %{destroyed: true, cleanup: cleanup_result}}
+    # 4. Schedule process termination as a fire-and-forget effect.
+    #    Inside `schedule_termination/2` the Task spawn returns
+    #    immediately; the 20ms Process.sleep happens inside the task,
+    #    well after the dispatch reply has been sent.
+    {:ok, %{destroyed: true, cleanup: cleanup_result},
+     set_effects ++
+       [{:effect, {__MODULE__, :schedule_termination}, [self_uri, kind_module]}]}
   end
 
   defp destroyed?, do: Process.get(@destroyed_pdict_key, false) == true
 
   # Validate the write_path args + apply to slice. Called from
-  # :write_path AFTER the destroyed? gate has been checked.
-  defp do_write_path(slice, args) do
+  # :write_path AFTER the destroyed? gate has been checked. Returns
+  # the new-contract `{:ok, result, effects}` shape (or `{:error, _}`).
+  defp do_write_path(args) do
     path = Map.get(args, :config_dir_path)
     tc = Map.get(args, :template_class)
     # PTY-orphan-restart 2026-05-26: optional respawn-template-data
@@ -298,63 +349,26 @@ defmodule Ezagent.Behavior.Sandbox do
         {:error, {:invalid_respawn_template_data, rtd}}
 
       true ->
-        new_slice =
-          slice
-          |> Map.put(:config_dir_path, path)
-          |> Map.put(:template_class, tc)
-          |> maybe_put_respawn_template_data(rtd_present?, rtd)
+        # Build the :set effects — `:respawn_template_data` only writes
+        # when present in args (legacy semantics: omit means "leave it
+        # alone", supply nil means "clear it"). The result map mirrors
+        # the legacy 3-key return shape.
+        rtd_effects =
+          if rtd_present? do
+            [{:set, :respawn_template_data, rtd}]
+          else
+            []
+          end
 
-        {:ok, new_slice,
-         %{config_dir_path: path, template_class: tc, respawn_template_data: rtd}}
+        effects =
+          [
+            {:set, :config_dir_path, path},
+            {:set, :template_class, tc}
+          ] ++ rtd_effects
+
+        {:ok, %{config_dir_path: path, template_class: tc, respawn_template_data: rtd},
+         effects}
     end
-  end
-
-  defp maybe_put_respawn_template_data(slice, true, rtd),
-    do: Map.put(slice, :respawn_template_data, rtd)
-
-  defp maybe_put_respawn_template_data(slice, false, _rtd), do: slice
-
-  # --- interface ------------------------------------------------------------
-
-  @impl Ezagent.Behavior
-  def interface do
-    %{
-      read: %{
-        description:
-          "Read the sandbox slice (config_dir_path, template_class, " <>
-            "respawn_template_data, pty_phase)",
-        args: %{},
-        returns: %{
-          config_dir_path: {:option, :string},
-          template_class: {:option, :atom},
-          respawn_template_data: {:option, :map},
-          pty_phase: {:option, :atom}
-        },
-        modes: [:call]
-      },
-      write_path: %{
-        description:
-          "Set the agent's config_dir_path + template_class (+ optional " <>
-            "respawn_template_data) — dispatched by spawn caller after " <>
-            "create_config_dir/2 succeeded",
-        args: %{
-          config_dir_path: {:option, :string},
-          template_class: {:option, :atom},
-          respawn_template_data: {:option, :map}
-        },
-        returns: %{config_dir_path: {:option, :string}},
-        modes: [:call]
-      },
-      destroy: %{
-        description:
-          "Destroy the agent: synchronously cleanup config dir via the " <>
-            "template_class's destroy_config_dir/1, then schedule Kind " <>
-            "process termination",
-        args: %{},
-        returns: %{destroyed: :boolean},
-        modes: [:call]
-      }
-    }
   end
 
   # --- internals ------------------------------------------------------------
@@ -440,7 +454,12 @@ defmodule Ezagent.Behavior.Sandbox do
   # Mirrors `Ezagent.Behavior.Lifecycle.schedule_termination/2` — detached
   # Task + 20ms sleep so the dispatch reply wins the race against the
   # supervisor terminating this GenServer.
-  defp schedule_termination(%URI{} = self_uri, kind_module) when is_atom(kind_module) do
+  #
+  # Marked @doc false so the function is invocable by the effect grammar's
+  # `{:effect, {Mod, :fun}, args}` shape (which requires public
+  # functions) but doesn't pollute the Behavior's public API.
+  @doc false
+  def schedule_termination(%URI{} = self_uri, kind_module) when is_atom(kind_module) do
     supervisor = resolve_supervisor(kind_module)
 
     {:ok, _pid} =
@@ -452,7 +471,7 @@ defmodule Ezagent.Behavior.Sandbox do
     :ok
   end
 
-  defp schedule_termination(_self_uri, _kind_module), do: :ok
+  def schedule_termination(_self_uri, _kind_module), do: :ok
 
   defp resolve_supervisor(kind_module) do
     if function_exported?(kind_module, :supervisor, 0) do
@@ -489,7 +508,6 @@ defmodule Ezagent.Behavior.Sandbox do
 
   # PR-OWN-4 (caps-data-ownership SPEC #306 §6): per-entity Behavior
   # — the entity (user / agent) owns its own state for this Behavior.
-  @impl Ezagent.Behavior
   def data_owner(%URI{} = entity_uri), do: Ezagent.URI.instance(entity_uri)
   def data_owner(:any), do: :any
   def data_owner(_), do: :no_owner
@@ -570,7 +588,6 @@ defmodule Ezagent.Behavior.Sandbox do
   #   and runs at plugin Application start, BEFORE this post_init
   #   fires. See Ezagent.PluginCc.OrphanReaper / PluginNp.OrphanReaper.
 
-  @impl Ezagent.Behavior
   def post_init(_args, slice) do
     template_class = Map.get(slice, :template_class)
     respawn_data = Map.get(slice, :respawn_template_data)
@@ -590,7 +607,6 @@ defmodule Ezagent.Behavior.Sandbox do
     {:continue, {:setup_phase_tracking, template_class, respawn_data}}
   end
 
-  @impl Ezagent.Behavior
   def handle_continue({:setup_phase_tracking, template_class, respawn_data}, slice, ctx) do
     self_uri = Map.get(ctx, :self_uri)
 
