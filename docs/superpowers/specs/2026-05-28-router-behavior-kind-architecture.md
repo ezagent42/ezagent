@@ -1215,29 +1215,117 @@ For each current Behavior the migrating plugin author:
 12. **Convert `post_init/2` / `handle_continue/3` / `on_ready/2` / `terminate/3`** → Kind-level lifecycle hooks (if any survive; most don't)
 13. Re-run domain test suite; ensure migration parity test §7.3 passes
 
-### §6.3 — Estimated effort with confidence bounds (codex r1 MED-4 closure — REVISED UPWARD)
+### §6.3 — Estimated effort with confidence bounds (codex r2 r3 — data-driven recalibration from GitHub PR history)
 
-| Phase | Lower bound | **Most likely (REVISED)** | Upper bound |
-|---|---|---|---|
-| Phase 1 (framework primitives + LegacyBehaviorAdapter) | 3 wk | **4–5 wk** | 7 wk |
-| Phase 2 (per-domain migrations, partially parallelizable) | 6 wk | **8–10 wk** | 14 wk |
-| Phase 3 (remove adapter) | 3 days | **1 wk** | 2 wk |
-| Phase 4 (cleanup) | 3 days | **1 wk** | 2 wk |
-| **Total wall-time** | **10 wk** | **14–17 wk** | **25 wk** |
+> **r3 method**: per Allen 2026-05-28 11:44 directive, the r2 estimate (14-17 wk most-likely, 25 wk upper bound) was a *qualitative* projection from two cited precedents (PR-G ~3 wk, PR-EM ~5 wk). r3 mines the actual GitHub PR history for those and 6 other comparable migrations, computes empirical velocity, and projects. The r2 estimate **assumed human-paced cycle time**; ezagent's actual autonomous-loop velocity is materially faster, so the data-driven recalibration **tightens** the band rather than widening it.
 
-**Why the upward revision** (codex r1 MED-4 made the prior 8-10 wk look optimistic):
+#### §6.3.1 — Velocity calibration corpus (mined from `gh pr view`)
 
-- Phase 1's prior 3wk estimate omitted ~300-400 LOC `LegacyBehaviorAdapter` and the design closure work for OQ-1 through OQ-8 (each OQ resolution ripples through the framework primitives — e.g. OQ-5's flat-namespace decision affects Router lookup keys, Behavior macro collision check, and Caps.Engine cap shape simultaneously)
-- Phase 2's prior 4-6 wk assumed 2 PR/wk review cadence. Historical data on ezagent: PR-G AgentBridge alone took 3 weeks for ONE plugin extraction. ExternalMirror domain extraction (3 Behaviors + 1 Kind + 2-tier supervisor) took 5 weeks. Phase 2 PR 4 (`domain_chat` — Chat + Template + OrchestratorAdmin + Publisher.SessionImpl, the largest at ~3,800 LOC of Behavior code) realistically takes 2-3 weeks alone. Phase 2 PR 5 (`domain_external_mirror` — Worker has two-tier supervisor + post_init Resource lifecycle) realistically takes 3-4 weeks alone. Sequential sum is well over 6 weeks; parallelism caps at 2 in-flight PRs due to review bandwidth (codex round 1-2 per PR + Allen's bandwidth + ZH lockstep)
+Each row = one historical migration series; "elapsed hr" = `min(created)` of first PR → `max(merged)` of last PR; LOC + / - / net summed across all PRs in series; "Behaviors" / "Kinds" = count of net-new or contract-migrated.
 
-**Comparison to past migrations** (calibration data, not just floor):
-- PR-G AgentBridge extraction: ~3 weeks for **one** plugin extraction
-- PR-EM external_mirror domain extraction: ~5 weeks for **one** domain (3 Behaviors + 2-tier supervisor + boot reconciler)
-- Phase 8b session-LV redesign: ~4 weeks for **one** subsystem (LV-side only, no Behavior contract change)
+| Series | PRs | Elapsed (hr) | LOC + | LOC − | Net | Files | Behaviors | Kinds | Plugin-contract boundary? | Type |
+|---|---|---:|---:|---:|---:|---:|---:|---:|:---:|---|
+| `plugin-contract` (#217..#223) | 5 | 1.18 | 3,854 | 678 | 3,176 | 46 | 0 | 0 | YES | framework |
+| `phase7-template` (#231..#250, incl. 10 hardening rounds) | 20 | 4.80 | 17,591 | 1,722 | 15,869 | 139 | 1 | 3 | YES | mixed |
+| `external-mirror` (#314..#334) | 9 | 10.37 | 21,388 | 1,807 | 19,581 | 143 | 3 | 1 | YES | behavior-migration |
+| `agent-bridge` (#421..#436) | 7 | 10.53 | 4,492 | 856 | 3,636 | 97 | 0 | 0 | YES | framework |
+| `uri-canonicalization` (#431, #438) | 2 | 15.63 | 3,682 | 578 | 3,104 | 130 | 0 | 0 | no | cross-cutting |
+| `workspace-cap-visibility` (#423, #434) | 2 | 2.70 | 2,154 | 328 | 1,826 | 24 | 0 | 0 | no | cross-cutting |
+| `apikeys-flip` (#389) | 1 | 0.44 | 1,211 | 562 | 649 | 28 | 1 | 2 | no | behavior-migration |
+| `session-unification` (#408) | 1 | 1.79 | 2,768 | 89 | 2,679 | 26 | 0 | 3 | no | mixed |
 
-**The 14-17 wk most-likely band** places "ezagent fully on new contract" at **mid-September to early October 2026** (14-17 weeks from 2026-05-28). The 25-week upper bound (end of November 2026) accounts for: any HIGH finding in a future codex round triggering a structural rework, ExternalMirror Worker migration revealing deeper Resource-pattern issues (HIGH-3 already surfaced one), Allen's bandwidth being limited to 1 PR/wk during certain stretches.
+Derived rates:
 
-**Allen's call on whether to accept this**: the original 8-10wk in r1 was aspirational; the 14-17wk in r2 is calibrated against actual past migration velocity. If 14-17wk is unacceptable, the only honest paths are (a) accept a smaller scope (don't migrate all 22 Behaviors — pick a subset), or (b) bring in additional contributor capacity. The SPEC as designed does NOT compress further without quality compromise.
+| Series | hr / PR | hr / net-LOC | hr / Behavior | hr / Kind |
+|---|---:|---:|---:|---:|
+| `plugin-contract` | 0.24 | 0.00037 | — | — |
+| `phase7-template` | 0.24 | 0.00030 | 4.80 | 1.60 |
+| `external-mirror` | 1.15 | 0.00053 | 3.46 | 10.37 |
+| `agent-bridge` | 1.50 | 0.00290 | — | — |
+| `uri-canonicalization` | 7.81 | 0.00504 | — | — |
+| `workspace-cap-visibility` | 1.35 | 0.00148 | — | — |
+| `apikeys-flip` | 0.44 | 0.00068 | 0.44 | 0.22 |
+| `session-unification` | 1.79 | 0.00067 | — | 0.60 |
+
+**Sample size honesty**: only **3 series** (`phase7-template`, `external-mirror`, `apikeys-flip`) involve actual Behavior migrations. **5 series** cross the plugin-contract boundary (the most relevant comparable). The hr/Behavior statistic is N=3 — a small sample. r3 calls this out explicitly rather than smoothing it.
+
+#### §6.3.2 — Empirical statistics
+
+| Statistic | min | p10 | p50 | avg | p90 | max | N |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| hr per Behavior migrated | 0.44 | 0.44 | 3.46 | 2.90 | 4.80 | 4.80 | 3 |
+| hr per net-LOC changed | 0.00030 | 0.00030 | 0.00067 | 0.00150 | 0.00504 | 0.00504 | 8 |
+| hr per PR | 0.24 | 0.24 | 1.35 | 1.81 | 7.81 | 7.81 | 8 |
+
+**Key observation — "elapsed" reflects ezagent's autonomous-loop cadence, not human dev-time**: nearly every PR in the corpus was opened-and-merged within seconds (`createdAt ≈ mergedAt`), and the *whole multi-PR series* completed in single workdays (Phase 7's 20-PR sequence: 4.8 hr; ExternalMirror's 9 PRs + 3 Behaviors + 1 Kind: 10.4 hr; AgentBridge's 7 PRs: 10.5 hr). The PR-G "3 weeks" and PR-EM "5 weeks" cited in r2 were *calendar* gaps that included unrelated work; the actual *active* time on those migrations was hours. The r2 cycle-time inflation came from treating calendar elapsed = active time, which the underlying data refutes.
+
+#### §6.3.3 — Phase-by-phase data-driven projection
+
+**Conversion assumption**: 30 active hr/wk sustained (= 6 hr/day × 5 day/wk, conservative vs. observed 7-day-burst peak of 50+ hr/wk over 2026-05-22..2026-05-28 with 22-53 commits/day per `git log`). This caps for review bandwidth + ZH lockstep + competing priorities (esr-channel, loom plugin, codex review queue).
+
+**Phase 1 — Framework primitives + LegacyBehaviorAdapter**
+
+- LOC budget (§5.8): ~2,480 framework + ~400 LegacyAdapter = ~2,880 net-new LOC
+- Best framework comparable: `plugin-contract` (0.00037 hr/LOC), `phase7-template` framework portion (0.00030 hr/LOC)
+- Active hr (LOC × 0.0005 — conservative mid-band): ~1.4 hr
+- Design closure overhead for OQ-1..8 (codex r1 MED-4 noted "each OQ ripples through primitives"): ~20 hr
+- **Phase 1 p50: ~22 hr ≈ 0.7 wk**
+- **Phase 1 p90: ~32 hr ≈ 1.1 wk** (50 % padding for design discovery)
+- Floor (raw LOC-rate): ~0.05 wk; ceiling assuming OQ resolution surfaces 2 latent issues: ~2 wk
+
+**Phase 2 — Per-Domain Behavior migrations (22 Behaviors across 8 PRs per §6.1 table)**
+
+- Empirical hr/Behavior (N=3): p10=0.44, p50=3.46, p90=4.80
+- **Phase 2 p50: 22 × 3.46 = 76 hr ≈ 2.5 wk**
+- **Phase 2 p90: 22 × 4.80 = 106 hr ≈ 3.5 wk**
+- Per-PR breakdown sanity check (8 PRs in §6.1 table):
+  - PR 1 (`ezagent_core`, 5 Behaviors): 5 × 3.46 = 17 hr ≈ 3 days
+  - PR 4 (`ezagent_domain_chat`, 4 Behaviors, the biggest): 4 × 4.80 (p90) = 19 hr ≈ 3 days
+  - PR 5 (`ezagent_domain_external_mirror`, 3 Behaviors + Worker Kind): comparable to past EM series = ~10 hr ≈ 2 days
+  - PR 8 (Resource boundary fix, schema migration): no past comparable; budget 1 wk separately
+
+**Phase 3 — Remove LegacyBehaviorAdapter**
+
+- Comparable: `workspace-cap-visibility` (DROP COLUMN refactor) = 2.70 hr
+- **Phase 3 p50: ~6 hr ≈ 1 working day**
+- **Phase 3 p90: ~18 hr ≈ 3 working days**
+
+**Phase 4 — Cleanup (renames + docs + slice_change → StateChange)**
+
+- Comparable: `agent-bridge` PR-F (`refactor(domain_agent): detect PTY lifecycle by behavior`) = ~1 hr; doc PRs like #379 ~1 hr each
+- **Phase 4 p50: ~12 hr ≈ 2 working days**
+- **Phase 4 p90: ~30 hr ≈ 1 wk**
+
+**TOTAL wall-time**
+
+| Phase | Lower (raw empirical) | **p50 (data-driven)** | **p90 (data-driven)** | Upper (2× p90 for unknown-unknowns) |
+|---|---|---|---|---|
+| Phase 1 | 0.05 wk | **0.7 wk** | **1.1 wk** | 2 wk |
+| Phase 2 (22 Behaviors) | 0.3 wk | **2.5 wk** | **3.5 wk** | 7 wk |
+| Phase 3 | 0.04 wk | **0.2 wk** | **0.6 wk** | 1 wk |
+| Phase 4 | 0.07 wk | **0.4 wk** | **1.0 wk** | 2 wk |
+| **Total** | **~0.5 wk** | **~3.8 wk** | **~6.2 wk** | **~12 wk** |
+
+#### §6.3.4 — Confidence statement + delta from r2
+
+**r3 confidence is bounded by**:
+1. **N=3 comparable Behavior-migration series** (`phase7-template`, `external-mirror`, `apikeys-flip`) — small sample; one outlier (e.g. a `domain_chat` migration that surfaces a HIGH-rated structural defect) could double Phase 2.
+2. **LegacyBehaviorAdapter approach is novel** — no past ezagent migration has used a runtime adapter for backward-compat. The ~400 LOC budget is design-derived, not empirically validated.
+3. **22 Behaviors is the SPEC count** — if domain-chat's "Publisher.SessionImpl" or `external_mirror`'s Worker have hidden sub-behaviors that don't fit cleanly into the macro, count rises.
+4. **Allen's bandwidth is the binding constraint**, not autonomous-loop throughput. The 30-hr/wk sustained rate is **above** historical sustained average outside burst weeks; if Allen reviews 1 PR/wk during a stretch, Phase 2 stretches to 8 wk wall-clock.
+
+**Delta from r2 (14-17 wk most-likely, 25 wk upper)**:
+
+- r2 confused calendar gap (3-5 wk between PR series) with active dev-time. The data shows past migrations took **hours of active work**, with calendar gaps representing other priorities, not the migration itself.
+- r3 data-driven p50 (~4 wk) is **~4× tighter** than r2's 14-17 wk. r3 p90 (~6 wk) is **~3× tighter** than r2's 25 wk upper bound.
+- The r3 *upper bound* (12 wk, 2× p90 for unknown-unknown discovery) is **still tighter than r2's most-likely** — the recalibration **tightens** rather than widens.
+
+**Whether r3 tightens or widens the original 14-17 wk range**: **r3 substantially tightens the range**. Empirical data shows past migrations completed in hours, not weeks-of-calendar-time. The r2 calibration mistook calendar elapsed (which is dominated by Allen's multi-project context-switching) for migration active time.
+
+**Allen's call**:
+- If Allen commits Phase 2 as the next *focused burst* (the way Phase 7 and ExternalMirror were), the p50 ~4-wk estimate is realistic.
+- If Phase 2 has to interleave with other priorities (esr-channel, loom, plugin reviews), real wall-time stretches toward the 12-wk upper bound — still under r2's 25-wk upper.
+- The 14-17 wk r2 "most-likely" band is now considered **overestimated by ~3-4×** based on actual GitHub PR-history velocity. The honest single-number answer is **~4-6 weeks for focused execution; ~10-12 weeks if interleaved**.
 
 ---
 

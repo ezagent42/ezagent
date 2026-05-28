@@ -1197,29 +1197,117 @@ host 每个 Kind 实例的 GenServer（替换今天的 `Ezagent.Kind.Server`，8
 12. **转换 `post_init/2` / `handle_continue/3` / `on_ready/2` / `terminate/3`** → Kind 级生命周期钩子（如有；大多没有）
 13. 重跑 domain 测试套件；确保迁移对等测试 §7.3 通过
 
-### §6.3 — 估计工作量（含置信区间）（codex r1 MED-4 closure — 上调修订）
+### §6.3 — 估计工作量（含置信区间）（codex r2 r3 — 从 GitHub PR 历史的数据驱动重新校准）
 
-| Phase | 下限 | **最可能（修订）** | 上限 |
-|---|---|---|---|
-| Phase 1（framework primitives + LegacyBehaviorAdapter） | 3 wk | **4–5 wk** | 7 wk |
-| Phase 2（per-domain 迁移，部分可并行） | 6 wk | **8–10 wk** | 14 wk |
-| Phase 3（删除 adapter） | 3 天 | **1 wk** | 2 wk |
-| Phase 4（清理） | 3 天 | **1 wk** | 2 wk |
-| **总挂钟时间** | **10 wk** | **14–17 wk** | **25 wk** |
+> **r3 方法**：依据 Allen 2026-05-28 11:44 指令，r2 估计（14-17 wk 最可能，25 wk 上限）是从两个引用先例（PR-G ~3 wk、PR-EM ~5 wk）做的*定性*推断。r3 从 GitHub PR 历史挖掘了这两个 + 其他 6 个可比迁移，计算经验速度并据此推断。r2 估计**假设了人类节奏的循环时间**；ezagent 实际的自主循环速度显著更快，所以数据驱动的重新校准**收紧**而不是拓宽区间。
 
-**为什么上调**（codex r1 MED-4 让之前 8-10wk 看起来乐观）：
+#### §6.3.1 — 速度校准语料（从 `gh pr view` 挖掘）
 
-- Phase 1 之前 3wk 估计漏了 ~300-400 LOC `LegacyBehaviorAdapter` 以及 OQ-1 至 OQ-8 的设计收敛工作（每个 OQ 解决都波及 framework primitive — 如 OQ-5 的扁平命名空间决定同时影响 Router lookup key、Behavior 宏冲突检查、Caps.Engine cap shape）
-- Phase 2 之前 4-6 wk 假设 2 PR/wk review 节奏。ezagent 历史数据：PR-G AgentBridge 单独 3 周一个 plugin 抽取。ExternalMirror domain 抽取（3 个 Behavior + 1 个 Kind + 2 层 supervisor）5 周。Phase 2 PR 4（`domain_chat` — Chat + Template + OrchestratorAdmin + Publisher.SessionImpl，最大约 3,800 LOC Behavior 代码）现实地单独需 2-3 周。Phase 2 PR 5（`domain_external_mirror` — Worker 有两层 supervisor + post_init Resource 生命周期）现实地单独需 3-4 周。顺序求和远超 6 周；并行受 review 带宽限制最多 2 个 in-flight PR
+每行 = 一个历史迁移系列；"经过 hr" = 该系列首个 PR `min(created)` → 末个 PR `max(merged)`；LOC + / - / net 跨所有 PR 求和；"Behaviors" / "Kinds" = 新建或契约迁移的数量。
 
-**与过去迁移对比**（calibration 数据，不只是下限）：
-- PR-G AgentBridge 抽取：**一个** plugin 抽取 ~3 周
-- PR-EM external_mirror domain 抽取：**一个** domain（3 个 Behavior + 2 层 supervisor + boot reconciler）~5 周
-- Phase 8b session-LV 重设计：**一个** 子系统（仅 LV 端，无 Behavior 契约变更）~4 周
+| 系列 | PR 数 | 经过 (hr) | LOC + | LOC − | 净 | Files | Behaviors | Kinds | 跨 plugin 契约边界？ | 类型 |
+|---|---|---:|---:|---:|---:|---:|---:|---:|:---:|---|
+| `plugin-contract` (#217..#223) | 5 | 1.18 | 3,854 | 678 | 3,176 | 46 | 0 | 0 | 是 | framework |
+| `phase7-template` (#231..#250，含 10 轮 hardening) | 20 | 4.80 | 17,591 | 1,722 | 15,869 | 139 | 1 | 3 | 是 | mixed |
+| `external-mirror` (#314..#334) | 9 | 10.37 | 21,388 | 1,807 | 19,581 | 143 | 3 | 1 | 是 | behavior-migration |
+| `agent-bridge` (#421..#436) | 7 | 10.53 | 4,492 | 856 | 3,636 | 97 | 0 | 0 | 是 | framework |
+| `uri-canonicalization` (#431, #438) | 2 | 15.63 | 3,682 | 578 | 3,104 | 130 | 0 | 0 | 否 | cross-cutting |
+| `workspace-cap-visibility` (#423, #434) | 2 | 2.70 | 2,154 | 328 | 1,826 | 24 | 0 | 0 | 否 | cross-cutting |
+| `apikeys-flip` (#389) | 1 | 0.44 | 1,211 | 562 | 649 | 28 | 1 | 2 | 否 | behavior-migration |
+| `session-unification` (#408) | 1 | 1.79 | 2,768 | 89 | 2,679 | 26 | 0 | 3 | 否 | mixed |
 
-**14-17 wk 最可能区间** 把"ezagent 完全在新契约上"放到 **2026 年 9 月中-10 月初**（自 2026-05-28 算 14-17 周）。25 周上限（2026 年 11 月底）考虑：未来 codex 轮中任何 HIGH finding 触发结构性重做、ExternalMirror Worker 迁移浮现更深 Resource 模式问题（HIGH-3 已浮出一个）、Allen 带宽在某些时段限制到 1 PR/wk。
+推导速率：
 
-**Allen 决定是否接受这个**：r1 原本 8-10wk 是 aspirational；r2 的 14-17wk 是按实际过去迁移速度校准的。如 14-17wk 不可接受，唯一诚实路径是 (a) 接受更小 scope（不迁移全部 22 个 Behavior — 选子集），或 (b) 引入额外贡献者带宽。SPEC 当前设计不能在不损质量的情况下进一步压缩。
+| 系列 | hr / PR | hr / 净 LOC | hr / Behavior | hr / Kind |
+|---|---:|---:|---:|---:|
+| `plugin-contract` | 0.24 | 0.00037 | — | — |
+| `phase7-template` | 0.24 | 0.00030 | 4.80 | 1.60 |
+| `external-mirror` | 1.15 | 0.00053 | 3.46 | 10.37 |
+| `agent-bridge` | 1.50 | 0.00290 | — | — |
+| `uri-canonicalization` | 7.81 | 0.00504 | — | — |
+| `workspace-cap-visibility` | 1.35 | 0.00148 | — | — |
+| `apikeys-flip` | 0.44 | 0.00068 | 0.44 | 0.22 |
+| `session-unification` | 1.79 | 0.00067 | — | 0.60 |
+
+**样本量诚实**：只有**3 个系列**（`phase7-template`、`external-mirror`、`apikeys-flip`）涉及真正的 Behavior 迁移。**5 个系列**跨越 plugin 契约边界（最相关的可比项）。hr/Behavior 统计 N=3 — 小样本。r3 明确指出这一点而不是抹平掉。
+
+#### §6.3.2 — 经验统计
+
+| 统计量 | min | p10 | p50 | avg | p90 | max | N |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 每 Behavior 迁移 hr | 0.44 | 0.44 | 3.46 | 2.90 | 4.80 | 4.80 | 3 |
+| 每净 LOC 变更 hr | 0.00030 | 0.00030 | 0.00067 | 0.00150 | 0.00504 | 0.00504 | 8 |
+| 每 PR hr | 0.24 | 0.24 | 1.35 | 1.81 | 7.81 | 7.81 | 8 |
+
+**关键观察 ——"经过"反映 ezagent 自主循环节奏，不是人类开发时间**：语料中几乎每个 PR 都是几秒内开-合并（`createdAt ≈ mergedAt`），而*整个多 PR 系列*都在单个工作日完成（Phase 7 的 20-PR 序列：4.8 hr；ExternalMirror 的 9 PR + 3 Behavior + 1 Kind：10.4 hr；AgentBridge 的 7 PR：10.5 hr）。r2 中引用的 PR-G "3 周" 与 PR-EM "5 周" 实为*日历*间隔（包含其他无关工作）；那些迁移的实际*活跃*时间是小时级。r2 循环时间膨胀来自将日历经过 = 活跃时间，底层数据驳斥这一点。
+
+#### §6.3.3 — 阶段级数据驱动推断
+
+**换算假设**：30 活跃 hr/wk 持续（= 6 hr/天 × 5 天/wk，相对于 2026-05-22..2026-05-28 观察到的 7 天爆发峰值 50+ hr/wk 与 22-53 commit/天保守）。封顶考虑：review 带宽 + ZH lockstep + 竞争优先级（esr-channel、loom plugin、codex review queue）。
+
+**Phase 1 — Framework primitives + LegacyBehaviorAdapter**
+
+- LOC 预算（§5.8）：~2,480 framework + ~400 LegacyAdapter = ~2,880 净新 LOC
+- 最佳 framework 可比项：`plugin-contract`（0.00037 hr/LOC）、`phase7-template` framework 部分（0.00030 hr/LOC）
+- 活跃 hr（LOC × 0.0005 — 保守中段）：~1.4 hr
+- OQ-1..8 设计收敛开销（codex r1 MED-4 指出"每 OQ 波及 primitive"）：~20 hr
+- **Phase 1 p50：~22 hr ≈ 0.7 wk**
+- **Phase 1 p90：~32 hr ≈ 1.1 wk**（设计探索 50% 加成）
+- 下限（原始 LOC 速率）：~0.05 wk；上限（OQ 解决浮出 2 个潜在问题）：~2 wk
+
+**Phase 2 — Per-Domain Behavior 迁移（§6.1 表中 8 PR 共 22 个 Behavior）**
+
+- 经验 hr/Behavior（N=3）：p10=0.44、p50=3.46、p90=4.80
+- **Phase 2 p50：22 × 3.46 = 76 hr ≈ 2.5 wk**
+- **Phase 2 p90：22 × 4.80 = 106 hr ≈ 3.5 wk**
+- 逐 PR 校验（§6.1 表中 8 个 PR）：
+  - PR 1（`ezagent_core`，5 个 Behavior）：5 × 3.46 = 17 hr ≈ 3 天
+  - PR 4（`ezagent_domain_chat`，4 个 Behavior，最大）：4 × 4.80（p90）= 19 hr ≈ 3 天
+  - PR 5（`ezagent_domain_external_mirror`，3 个 Behavior + Worker Kind）：可比过往 EM 系列 = ~10 hr ≈ 2 天
+  - PR 8（Resource 边界修复，schema 迁移）：无过往可比项；单独预算 1 wk
+
+**Phase 3 — 删除 LegacyBehaviorAdapter**
+
+- 可比项：`workspace-cap-visibility`（DROP COLUMN 重构）= 2.70 hr
+- **Phase 3 p50：~6 hr ≈ 1 个工作日**
+- **Phase 3 p90：~18 hr ≈ 3 个工作日**
+
+**Phase 4 — 清理（重命名 + 文档 + slice_change → StateChange）**
+
+- 可比项：`agent-bridge` PR-F（`refactor(domain_agent): detect PTY lifecycle by behavior`）= ~1 hr；文档 PR 如 #379 ~1 hr/个
+- **Phase 4 p50：~12 hr ≈ 2 个工作日**
+- **Phase 4 p90：~30 hr ≈ 1 wk**
+
+**总挂钟时间**
+
+| Phase | 下限（原始经验） | **p50（数据驱动）** | **p90（数据驱动）** | 上限（2× p90 应对未知-未知） |
+|---|---|---|---|---|
+| Phase 1 | 0.05 wk | **0.7 wk** | **1.1 wk** | 2 wk |
+| Phase 2（22 个 Behavior） | 0.3 wk | **2.5 wk** | **3.5 wk** | 7 wk |
+| Phase 3 | 0.04 wk | **0.2 wk** | **0.6 wk** | 1 wk |
+| Phase 4 | 0.07 wk | **0.4 wk** | **1.0 wk** | 2 wk |
+| **合计** | **~0.5 wk** | **~3.8 wk** | **~6.2 wk** | **~12 wk** |
+
+#### §6.3.4 — 置信度声明 + 与 r2 的差值
+
+**r3 置信度受限于**：
+1. **N=3 个可比 Behavior 迁移系列**（`phase7-template`、`external-mirror`、`apikeys-flip`）— 小样本；一个 outlier（如 `domain_chat` 迁移浮现一个 HIGH 级结构缺陷）可让 Phase 2 翻倍。
+2. **LegacyBehaviorAdapter 路径是新颖的** — 过往 ezagent 迁移没有用过运行时 adapter 做后向兼容。~400 LOC 预算来自设计推导，未经实证验证。
+3. **22 个 Behavior 是 SPEC 计数** — 如果 domain-chat 的 "Publisher.SessionImpl" 或 `external_mirror` 的 Worker 有隐藏子-behavior 不能干净 fit 进 macro，计数上升。
+4. **Allen 带宽是约束**，不是自主循环吞吐量。30-hr/wk 持续速率**高于**爆发周外历史持续均值；如某段时间 Allen review 1 PR/wk，Phase 2 拉到 8 wk 挂钟。
+
+**与 r2 差值（14-17 wk 最可能，25 wk 上限）**：
+
+- r2 把日历间隔（PR 系列间 3-5 wk）当成活跃开发时间。数据显示过往迁移**活跃工作时间在小时级**，日历间隔代表其他优先级，不是迁移本身。
+- r3 数据驱动 p50（~4 wk）比 r2 的 14-17 wk **紧约 4 倍**。r3 p90（~6 wk）比 r2 的 25 wk 上限**紧约 3 倍**。
+- r3 *上限*（12 wk，2× p90 应对未知-未知探索）**仍紧于 r2 最可能值** — 重新校准是**收紧**而非拓宽。
+
+**r3 是收紧还是拓宽原 14-17 wk 区间**：**r3 大幅收紧区间**。经验数据显示过往迁移在小时级而非日历级完成。r2 校准把日历经过（被 Allen 多项目上下文切换支配）误认为迁移活跃时间。
+
+**Allen 决定**：
+- 若 Allen 把 Phase 2 当作下一个*聚焦爆发*（如 Phase 7、ExternalMirror 那样），p50 ~4-wk 估计是现实的。
+- 若 Phase 2 必须与其他优先级（esr-channel、loom、plugin review）交错，实际挂钟拉向 12-wk 上限 — 仍低于 r2 的 25-wk 上限。
+- 基于实际 GitHub PR 历史速度，14-17 wk r2 "最可能" 区间现被视为**高估 ~3-4 倍**。诚实的单一答案是 **聚焦执行 ~4-6 周；交错执行 ~10-12 周**。
 
 ---
 
