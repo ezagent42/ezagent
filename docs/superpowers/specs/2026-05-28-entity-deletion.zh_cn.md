@@ -1,8 +1,16 @@
 # SPEC — Entity 删除生命周期（User / Agent / Worker）
 
-**状态：** r4 — codex r3 评审（REJECT）已应对：2 CRIT + 1 HIGH + 2 MED + 1 LOW。2026-05-28。
+**状态：** r5 — codex r4 评审（REJECT）已应对：2 CRIT + 1 HIGH + 1 MED + 1 LOW。2026-05-28。
 
-**r4 变更（codex r3 verdict REJECT —— 6 个 finding 解决）：**
+**r5 变更（codex r4 verdict REJECT —— 5 个 finding 解决）：**
+
+- **CRIT-5.1（`:scrub_owner` 注册管道不完整）：** codex r4 发现 r4 的 Chat 变更列表提到 `actions/0`、`required_caps/0`、`invoke/4`、`data_owner/1`，但漏了 Chat behavior 必须接线的 **三处** 额外位置：(a) `register_chat_behaviors/0` 在 `apps/ezagent_domain_chat/lib/ezagent_domain_chat/application.ex:605-614` 把每个 action 注册到 BehaviorRegistry —— 该处无条目，`Kind.Runtime.authorize/4` 在 `apps/ezagent_core/lib/ezagent/kind/runtime.ex:212-216` 返回 `{:unknown_action, :scrub_owner}`；(b) `cap_subjects/0` 在 `chat.ex:108-116` 声明 cap shape 给 `CapabilityRegistry.register/3`（`apps/ezagent_core/lib/ezagent/capability_registry.ex:61-98`）—— 无它注册 raise；(c) `interface/0` 在 `chat.ex:1036-1072` 声明 action 的 args validator —— 无它，`Kind.Runtime` 在 `invoke/4` 之前拒绝 dispatch（`runtime.ex:615-628`）。**修复：** §4.1 PR-B 变更列表扩展枚举 Chat 触及的 **全部五项** 改动：actions、required_caps、invoke、data_owner、**和** `register_chat_behaviors`、`cap_subjects`、`interface`。§3.5 现显式说 `:scrub_owner` 注册是 five-part 改动，不是 four-part。
+- **CRIT-5.2（cold-load 防御不完整 —— 额外的 data_owner 站点）：** codex r4 发现 r4 仅在 `Chat.data_owner/1` 放 tombstone 防御，但生产中还有 **两个** data-owner 解析器读同一 stale slice 不查 tombstone：(a) `Ezagent.Behavior.ExternalMirror.data_owner/1` 在 `apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror.ex:593-600` 直接读 Session 的 `:chat.owner_uri` slice 并为 CapBAC 返回；(b) `Ezagent.Behavior.Publisher.SessionImpl.data_owner/1` 在 `apps/ezagent_domain_chat/lib/ezagent/behavior/publisher/session_impl.ex:136-144` 调 `Session.owner/1` 直接返回 owner。两者都是 CapBAC 路径，不是显示读 —— cold-loaded Session 仍通过这些解析器授权已删用户。**修复：** §3.5 + §4.1 在 **两个** 额外站点要求 **相同** tombstone 防御。防御模式（调 `SpawnRegistry.tombstoned?(owner)`；如 true 返回 `:no_owner`）在三处都相同。INV-13b 扩展为断言 cold-load 时 **三个** data_owner 解析器都返回 `:no_owner`。
+- **HIGH-5.3（kill_timeout 高估结构性不可达）：** codex r4 发现 r4 §3.3 + §3.9 声称 `:kill_timeout` 留 URI "通过 dispatch 结构性不可达"。这对已 ready 的活 pid **错的**：`Invocation.dispatch/1`（`apps/ezagent_core/lib/ezagent/invocation.ex:87-107`）调 `KindRegistry.lookup/1`（`kind_registry.ex:59-64`）返回仍注册的 pid，然后 `GenServer.cast`/`call`（`invocation.ex:111-130`）直送 pid；**不** 查 tombstone 表。边界 1/2/3 阻止 RE-SPAWN，不阻止投递给边界 1 尚未来得及拒绝的活进程。**修复：** §3.9 + §3.3 澄清 —— `:kill_timeout` 时，活 pid 在挺过 kill 信号的短暂窗口内 **仍** 可通过 dispatch 到达。结构性不可达声明窄化为：(a) URI 死后不能 RE-SPAWN（边界 1/2/3 hold）；(b) 进程最终死后 `KindRegistry.lookup/1` 返回 `:error`（Registry drop 死 pid）；(c) 活 pid 在死前可能收到最后一阵 cast/call。Operator runbook 现正确说：SIGKILL BEAM 节点强制活 pid 下来 —— `:partial` 删除结构性有界但非瞬时完成。`Behavior.EntityDeletion` 返回不变（`{:error, {:partial, step_failed: :tombstone_and_kill_kill_timeout, ...}}`）。
+- **MED-5.4（Capability 示例 struct 缺 `granted_at`）：** codex r4 发现 §3.5 `system://entity-deletion-cascade` cap 示例用 raw `%Capability{}` 字面带 `granted_by` 但无 `granted_at`，但 `Ezagent.Capability` 在 `apps/ezagent_core/lib/ezagent/capability.ex:36-46` 有 `@enforce_keys [:kind, :behavior, :instance, :workspace_uri, :granted_by, :granted_at]` —— 字面会 compile/runtime fail。其它 Catalog 条目用 `Capability.cap/3` 助手填必需字段。**修复：** §3.5 cap 示例切到 `Capability.cap(Ezagent.Entity.Session, Ezagent.Behavior.Chat, :scrub_owner, :any, :any)`，附注 `granted_by` + `granted_at` 由 catalog 既有模式填。
+- **LOW-5.5（ZH §11 stale r2 questions 尾巴）：** codex r4 发现 EN §11 在 q9 干净结束，但 ZH 在 q9 后续接被取代的 r2 时代 B1/B2/B3/B5 prompts。**修复：** ZH §11 尾巴裁剪到匹配 EN 的 q0-q9 集。
+
+**r4 变更（保留 —— codex r3 verdict REJECT —— 6 个 finding 解决）：**
 
 - **CRIT-4.1（`SystemPrincipal.caps/1` 参数 shape）：** codex r3 发现 r3 cascade 代码示例调 `Ezagent.SystemPrincipal.caps("entity-deletion-cascade")`，但 `SystemPrincipal.caps/1`（`apps/ezagent_core/lib/ezagent/system_principal.ex:156-163`）通过 `parse!/1` 解析输入并强制 `scheme == "system"`（`:168-176`）—— 裸 service-name 字符串在返回任何 cap 之前 ArgumentError。**修复：** cascade 现在用 `cascade_principal = SystemPrincipal.uri("entity-deletion-cascade")`（返回 `%URI{}`），既作 caller 字段也作 `SystemPrincipal.caps/1` 参数。§3.5 r3 示例代码更新调 `SystemPrincipal.caps(cascade_principal)`。INV-13a 更新断言 cascade dispatch 干净运行（不 raise ArgumentError）。
 - **CRIT-4.2（BindingRow schema 缺 `worker_uri`）：** codex r3 发现 r3 的 `:bind` action body 改在 `apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror.ex:747-758` 不够 —— 生产持久化经 `Ezagent.ExternalMirror.BindingRow.insert/1`（`apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/binding_row.ex:42-50, :87-108`），其 `schema "external_mirror_bindings"` block 不含 `:worker_uri`，`cast`/`validate_required` 列表也排除。不改 BindingRow，Ecto 静默 drop `worker_uri`（cast 忽略未知字段），Migration B（NOT NULL）之后 insert 会失败。**修复：** §4.1 PR-B 变更列表显式加 BindingRow 更新：(1) schema block 加 `field(:worker_uri, :string)`，(2) `@type t` 加 `worker_uri: String.t()`，(3) `:worker_uri` 加进 `cast` **和** `validate_required` 两个列表。`:bind` action body 在 attrs map 中传派生的 `worker_uri` 值。无这些 BindingRow 改动，列从 Elixir 代码不可达。
@@ -230,10 +238,16 @@ defmodule Ezagent.SpawnRegistry do
        - DOWN 已到：返回 :ok。
        - pid 本来就没（从未注册或在 call 中死）：返回 :ok（步骤 1+2 仍 hold）。
        - timeout 没等到 DOWN：返回 {:error, :kill_timeout}。
-         Tombstone（DB + ETS）**仍** 立 + 持久；live process 可能短暂续
-         但边界 1/2/3 已拒绝 re-spawn 所以 URI 结构性不可达。
-         Behavior 在 §3 按 §3.2 把它映射为 {:error, {:partial, step_failed:
-         :tombstone_and_kill_kill_timeout, ...}}。
+         Tombstone（DB + ETS）**仍** 立 + 持久，活 pid 死后边界 1/2/3
+         拒绝 RE-SPAWN。但 —— 见 §3.9 HIGH-5.3 —— 活 pid 挺过 brutal_kill
+         信号的短暂窗口（如陷在 C-NIF），Invocation.dispatch/1
+         （apps/ezagent_core/lib/ezagent/invocation.ex:87-107 +
+         kind_registry.ex:59-64）调 KindRegistry.lookup/1 返回仍注册的
+         pid 直送 cast/call **不** 查 tombstone 表。Behavior 在 §3 按
+         §3.2 映射为 {:error, {:partial, step_failed:
+         :tombstone_and_kill_kill_timeout, ...}} —— 结构性清理有界
+         （URI 永久不能 respawn）但非瞬时完成（活 pid 可能短暂续
+         服消息）。
 
   因为 DB 行在 kill 之前 commit，BEAM 在步骤 1 和 4 之间 crash 也会让
   下次 boot 时 tombstone 权威 —— Kind 不能复活，因为 Kind.Server.init/1
@@ -300,14 +314,19 @@ end
 ```
 system://entity-deletion-cascade
   caps: [
-    %Capability{
-      kind: Ezagent.Entity.Session,
-      behavior: Ezagent.Behavior.Chat,
-      action: :scrub_owner,
-      instance: :any,
-      workspace_uri: :any,
-      granted_by: URI.new!("system://bootstrap/default")
-    }
+    # MED-5.4 (r5) —— 用助手不用 raw struct 字面。
+    # Ezagent.Capability 有 @enforce_keys 含 :granted_at；助手填充。
+    # Catalog 其它条目用同模式
+    # (apps/ezagent_core/lib/ezagent/system_principal/catalog.ex:132-149).
+    Ezagent.Capability.cap(
+      Ezagent.Entity.Session,           # kind
+      Ezagent.Behavior.Chat,            # behavior
+      :scrub_owner,                     # action
+      :any,                             # instance (dispatch 时窄化)
+      :any                              # workspace_uri (dispatch 时窄化)
+    )
+    # `granted_by` 按 catalog 约定（catalog.ex:101）默认到 system://bootstrap/default；
+    # `granted_at` 由助手设。
   ]
 ```
 
@@ -392,6 +411,15 @@ end
 ```
 
 这是读站点的 defense-in-depth（与 INV-14 的 Token.verify check 平行）。主动 in-memory scrub（上面）立即处理 live Session；读站点 check 覆盖 cold load + lookup/dispatch race 窗口。
+
+**CRIT-5.2 —— 还有 **两个** data_owner 站点需要同样防御。** codex r4 发现 `Chat.data_owner/1` 不是生产中唯一读 Session ownership 的 CapBAC data-owner 解析器。还有两处需要 tombstone check：
+
+- `Ezagent.Behavior.ExternalMirror.data_owner/1`（`apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror.ex:593-600`）—— 直接读 Session 的 `:chat.owner_uri` slice 并为 ExternalMirror cap-grant authz 返回。无 tombstone check，cold-loaded 带 stale `owner_uri = target` 的 Session 仍通过 ExternalMirror cap（如 binding 管理）授权已删用户。
+- `Ezagent.Behavior.Publisher.SessionImpl.data_owner/1`（`apps/ezagent_domain_chat/lib/ezagent/behavior/publisher/session_impl.ex:136-144`）—— 调 `Session.owner/1` 直接为 Publisher cap-grant authz 返回 owner URI。
+
+两者都要同一模式：拿到 owner URI 后调 `Ezagent.SpawnRegistry.tombstoned?(owner)`；如 true 返回 `:no_owner`。§4.1 PR-B 变更列表显式加这两个文件改动。
+
+INV-13b 的断言扩展为单一 cold-load 场景测全 **三个** data_owner 解析器。
 
 **Session 在 lookup-到-dispatch 之间被删的 race：** 如 Session Kind 在 `KindRegistry.list_all/0` 和 `Invocation.dispatch/1` 之间死了，dispatch 返回 `{:error, :noproc}`。Cascade 视为成功（session 没了，没什么要 scrub 的）。如 Session tombstoned（被并发 Session 删除），dispatch 从边界 1 返回 `{:error, :tombstoned}` —— 也视为成功。Cascade step 的幂等性契约保持：重跑是 no-op。
 
@@ -525,9 +553,11 @@ end
 
 4. **`tombstone_and_kill` 之后但后续 cascade step 完成之前到达的 dispatch。** Lookup phase（`KindRegistry.lookup/1`）返回 `:error`（pid 在进程死亡时从 Registry drop），或 SpawnRegistry 路径返回 `{:error, :tombstoned}`（边界 3）。两种都给出 clean error。
 
-5. **完整删除序列之后到达的 dispatch。** 全三个边界拒绝 —— caller 取决于走的路径拿到 `:tombstoned` 或 `:noproc`。
+5. **完整删除序列之后到达的 dispatch（正常路径）。** 全三个边界拒绝 —— caller 取决于走的路径拿到 `:tombstoned` 或 `:noproc`。
 
-不需要 "transactional dispatch barrier"。(a) DB-tombstone-before-kill（持久性）+ (b) `:brutal_kill`（立即终止，无 graceful drain）+ (c) 三个强制边界（无 re-spawn）+ (d) 接受 cast-loss 作为已删 entity 的正确语义，组合起来结构性 race-free。
+6. **HIGH-5.3 —— `:kill_timeout` 窗口期内到达的 dispatch。** 如 `tombstone_and_kill/1` 因 brutal_kill 信号未完（陷 C-NIF 等不可杀状态）返回 `{:error, :kill_timeout}`（§3.3 step 4 timeout），活 pid **仍** 在 KindRegistry 注册。`Invocation.dispatch/1`（`apps/ezagent_core/lib/ezagent/invocation.ex:87-107`）调 `KindRegistry.lookup/1` 返回仍注册 pid 并直送 cast/call —— **不** 在 dispatch 热路径查 tombstone 表。所以活 pid 在挺过 kill 信号的短暂窗口内可能续服消息。这作为已知的清理-有界边界 case 文档化：(a) `Behavior.EntityDeletion` 返回 `:partial` 含 `step_failed: :tombstone_and_kill_kill_timeout`，告诉 operator 删除已不可逆 committed（DB + ETS tombstone）但清理不完整；(b) operator runbook 说 SIGKILL BEAM 节点 OR 等 OS supervisor restart，之后 `Registry` drop 死 pid + 边界 1 拒绝 re-spawn。URI 永久不能 respawn（边界 1/2/3 结构性 hold）但非瞬时 dead-on-the-wire。
+
+不需要 "transactional dispatch barrier"。(a) DB-tombstone-before-kill（持久性）+ (b) `:brutal_kill`（立即终止，无 graceful drain）+ (c) 三个强制边界（无 re-spawn）+ (d) 接受 cast-loss 作为已删 entity 的正确语义，组合起来对 **正常** 路径结构性 race-free。`:kill_timeout` 路径把结构性保证从 "瞬时不可达" 窄化为 "永久不能 respawn + 仅活的不可杀 pid 短暂可达"。
 
 ### 3.10 边界情况 —— operator 删除自己
 
@@ -556,7 +586,10 @@ end
 - **改** `apps/ezagent_core/lib/ezagent/system_principal/catalog.ex` —— 加 `{"system://entity-deletion-cascade", [<窄 Chat:scrub_owner cap>]}` 条目（CRIT-3.1）
 - **改** `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/binding_row.ex`（CRIT-4.2）—— schema block 加 `field(:worker_uri, :string)`，更新 `@type t`，把 `:worker_uri` 加进 `insert/1` 的 `cast` **和** `validate_required` 两个列表
 - **改** `apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror.ex`（`:bind` action body）—— 在传给 `BindingRow.insert/1` 的 attrs map 中 populate `worker_uri`（B5）
-- **改** `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex` —— 加 `:scrub_owner` action（B3）；更新 `actions/0` + `required_caps/0` + `invoke/4`；**也** 改 `data_owner/1`（`chat.ex:1333-1342`）加 tombstone 防御 check（CRIT-3.2）
+- **改** `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex` —— 加 `:scrub_owner` action（B3）；按 CRIT-5.1 的 **五处分别更新**：(1) `actions/0`（chat.ex:88）—— `:scrub_owner` 加进列表；(2) `required_caps/0`（chat.ex:~102）—— 加 `:scrub_owner` 的 cap shape；(3) `cap_subjects/0`（chat.ex:108-116）—— 声明 cap subject 让 `CapabilityRegistry.register/3` 注册它；(4) `invoke/4` —— 按 §3.5 实现 slice mutation；(5) `interface/0`（chat.ex:1036-1072）—— 声明 args validator（`{:deleted_uri, :uri}`）；**也** (6) `data_owner/1`（`chat.ex:1333-1342`）—— 加 tombstone 防御 check（CRIT-3.2）
+- **改** `apps/ezagent_domain_chat/lib/ezagent_domain_chat/application.ex`（`:605-614` `register_chat_behaviors/0`）—— 加 `CapabilityRegistry.register(Session, :scrub_owner, Chat)` 调用（CRIT-5.1）
+- **改** `apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror.ex`（`:593-600` `data_owner/1`）—— 加 **同样** tombstone 防御（CRIT-5.2）；从 Session slice 拿到 owner 后调 `SpawnRegistry.tombstoned?(owner)`；如 true 返回 `:no_owner`
+- **改** `apps/ezagent_domain_chat/lib/ezagent/behavior/publisher/session_impl.ex`（`:136-144` `data_owner/1`）—— 加 **同样** tombstone 防御（CRIT-5.2）
 - **改** `apps/ezagent_domain_identity/lib/ezagent/entity/token.ex` —— 在 `verify/2` 入口（bcrypt **之前**），调 `SpawnRegistry.tombstoned?(uri)`；如 true，跑 `Bcrypt.no_user_verify()` 并返回 `{:error, :tombstoned}`（HIGH-3.4 —— INV-14 defense-in-depth）
 - `apps/ezagent_domain_identity/lib/ezagent_domain_identity/user_deletion_adapter.ex`（新）
 - 测试：§5 invariant test + adapter 单测 + boundary-1 单测（Kind.Server 拒绝 tombstoned URI） + boundary-2 + boundary-3 + chat.scrub_owner 单测 + chat.data_owner cold-load 测试（INV-13b） + token.verify tombstone 测试（INV-14）
@@ -629,7 +662,7 @@ Plugin-isolation north-star 保留：PR-B+ 加契约；PR-C/D 插入。未来 en
 | INV-12 | `Behavior.EntityDeletion.invoke(:delete, ..., %{target: Ezagent.Entity.User.admin_uri()})` 返回 `{:error, :bootstrap_admin_undeletable}` | Bootstrap admin 保护缺失 |
 | INV-13 | 对 setup 中创建的 `owner_uri = target` Session S：删除后 dispatch `Behavior.Chat.data_owner(S_uri)` 返回 `:no_owner`（不是已删 target URI），AND 看 S 的 live slice：`slice.owner_uri == nil` | B3 —— Session owner 未通过新 `:scrub_owner` action scrub → 已删用户仍驱动 data_owner authz |
 | INV-13a | `EzagentCore.Application.start/2` 后 `system://entity-deletion-cascade` principal 存在 KindRegistry 中，且其 caps 集是 (1) `SystemPrincipal.Catalog.caps_for!(self_uri)`（含 cascade `Chat:scrub_owner` cap）和 (2) `Identity.init_slice/1` 给每个 Entity Kind 的结构性自-`Identity:list_caps` cap（HIGH-4.3）的 **不相交并集**。**无** 其它 cap。另：实际 cascade dispatch（按 CRIT-4.1 修复调 `SystemPrincipal.caps(cascade_principal)`）完成不 raise ArgumentError。 | CRIT-3.1 + CRIT-4.1 + HIGH-4.3 —— 窄 system principal 未正确安装，或 caps 漂移宽于必要，或 caps/1 调用 crash |
-| INV-13b | 在 User 删除 **之后**（且 restart 后让 principal 不在 KindRegistry 直到 lookup 驱动 respawn）cold-load 一个 snapshot 中 `:chat` slice 含 `owner_uri = target` 的 Session：dispatch `Behavior.Chat.data_owner(S_uri)` **仍** 返回 `:no_owner`，因为 `chat.ex:data_owner/1` 的 SpawnRegistry tombstone 防御拒绝把 tombstoned URI 作 data_owner | CRIT-3.2 —— cold-Session 安全依赖读站点 tombstone check；缺该 check 已删用户仍驱动 authz |
+| INV-13b | **（CRIT-3.2 + CRIT-5.2）** 在 User 删除 **之后**（且 restart 后让 principal 不在 KindRegistry 直到 lookup 驱动 respawn）cold-load 一个 snapshot 中 `:chat` slice 含 `owner_uri = target` 的 Session。然后调 **三个** 生产 data-owner 解析器并断言每个都返回 `:no_owner`（**不是** 已删 target URI）：(1) `Behavior.Chat.data_owner(S_uri)`；(2) `Behavior.ExternalMirror.data_owner(S_uri)`；(3) `Behavior.Publisher.SessionImpl.data_owner(S_uri)`。每处都必须在读站点应用 SpawnRegistry tombstone 防御。 | CRIT-3.2 + CRIT-5.2 —— cold-Session 安全依赖 **所有** data_owner 解析器的读站点 tombstone check；三处任一漏检留下权限暴露面 |
 | INV-14 | 对 setup 中给 target 铸的 token：`Token.verify(plain_token, target)` 返回 `{:error, :tombstoned}`（NOT `{:error, :invalid_credentials}` 且 NOT `{:ok, _}`）。验证：`Token.verify/2` 入口的 tombstone check 在 bcrypt 比较 **之前** 触发，且 `Bcrypt.no_user_verify()` 被调以防 timing leak。 | B6 + HIGH-3.4 —— token 行 escape cascade 或 Token.verify 缺 tombstone defense check 或 check 放在 bcrypt **之后**（timing leak） |
 | INV-15 | PR-B + backfill 任务运行 + Migration B 应用后，`external_mirror_bindings` 中每行：`worker_uri` 非 NULL 且等于 `WorkerSpawn.worker_uri_for(parsed_session_uri, adapter_id, target_id) |> URI.to_string()`。另：cascade 查询里的 `Repo.delete_all(WHERE worker_uri IS NULL)` 过渡分支结构性 dead（返回 0 affected rows）。 | CRIT-3.3 —— backfill 任务未运行，或派生错，或 Migration B 前置检查被绕过 |
 | INV-15a | **（MED-4.5 —— 过渡分支覆盖）** Backfill 之前：直接 INSERT 一个 `worker_uri: nil` 的 `BindingRow`（绕过 `:bind` action body，如通过 raw struct 的 `Repo.insert/1`）。通过 `WorkerSpawn.worker_uri_for(session_uri, adapter_id, target_id)` 结构性派生目标 Worker URI。对该 URI invoke Worker 删除。断言：(a) cascade 查询的过渡第二 clause 匹配 NULL 行并 `Repo.delete/1` 它；(b) 表中删除后无此行。 | MED-4.5 —— 过渡 NULL-safety 分支静默坏；pre-backfill Worker 删除漏行 |
@@ -861,26 +894,7 @@ B5 修复加 `worker_uri` 初始 `null: true`（Migration A），follow-up Migra
 
 8. **Entity_tokens defense-in-depth（B6 + HIGH-3.4）：** 验证 `Token.verify/2` 新 tombstone check（`token.ex:106-118`）结构性放在 bcrypt **之前** 且 tombstone-hit 路径调 `Bcrypt.no_user_verify()` 以打败 timing leak。
 
-9. **LV confirm dialog UX（从 r1 q9 保留）：** PR-C admin LV 加 "Delete" button + confirm dialog 询问 reason。是否还应要求 operator **TYPE 被删的 URI**（与 GitHub 的 "type the repo name to delete" 平价）？提议默认：irreversible 操作 type-the-name confirmation。Allen 确认？ r2 修复在 **三个** 边界装 check（Kind.Server.init/1 权威 + Kind.spawn/2 + SpawnRegistry.spawn/1）。trace apps/ 树里每条以 Kind 活在内存结束的代码路径。`Kind.Server.init/1` 真的是 **唯一的** 每个 Kind 启动必经 chokepoint，还是有路径构造 Kind.Server-like GenServer 不走 `init/1`？（从另一节点 hot-takeover？直接 `:proc_lib.start_link`？某些 plugin 自定 DynamicSupervisor child_spec 不用 `Kind.Server`？）找任何 r2 修复都活下来的 bypass path。
-
-2. **原子性契约 soundness（B2 验证）：** `SpawnRegistry.tombstone_and_kill/1` 做 (1) DB insert, (2) ETS insert, (3) brutal_kill + 等。SPEC 说 "步骤 2 失败 → rollback 步骤 1"。但如步骤 1 成功、步骤 2 成功、步骤 3 失败（如 Kind 的 terminate/2 callback 在外部 IO 上无限阻塞）？Tombstone 已立但 Kind 活着 —— 后续 dispatch 命中边界 1（运行的 Kind 继续到下次 supervisor cycle restart，那时 init/1 拒绝）？走一遍失败模式；找出任何半立 tombstone 的 state。
-
-3. **Session owner scrub well-defined（B3 验证）：** cascade 对每个 `owner_uri == target` 的 live Session dispatch `Behavior.Chat.invoke(:scrub_owner, ...)`。三个 concern：
-   (a) live-session lookup race-free？`KindRegistry.list_matching(scheme: "session")` 和 per-session dispatch 之间，session Kind 可能死/被 tombstone。SPEC 说 dispatch 返回 `{:noproc, :tombstoned}` 视为成功。验证这在所有 session-lifecycle state 下正确。
-   (b) 新 `:scrub_owner` Chat action 有 `required_caps/0` shape。Cascade 从 operator 的 caller_uri（有 `:delete` on EntityDeletion）dispatch。Dispatch 满足 `:scrub_owner` cap 吗？还是需要 system-principal cap injection？trace cap check 路径。
-   (c) 那些 snapshot stale `owner_uri = target` 但不在 KindRegistry（之后 cold-load）的 Session 呢？SPEC 论证它们安全因为 `Session.owner/1` 在 User URI tombstoned 时返回 error path —— 但验证这是 `Session.owner/1` 实际解析方式（或修 SPEC 如果不是）。
-
-4. **Worker cascade race-free（B5 验证）：** 新 `worker_uri` 列由 `Behavior.ExternalMirror.invoke(:bind, ...)` populate。但 backfill 窗口期通过 `AdapterInstall.reconcile_persisted_bindings/1` 从 pre-r2 `worker_uri` NULL 行 spawn 的 Worker 呢？验证 backfill mix 任务幂等且 cascade 的 `WHERE worker_uri = target` 不悄悄跳过未 backfill 的 NULL 行。也验证 `NOT NULL` follow-up migration 的前置条件 check。
-
-5. **r2 引入矛盾文本？**（cap-vis r2 codex 找到 bug —— 小心）—— 重读 r2 SPEC §3、§10 RESOLVED、§11。任何两条关于 ordering、atomicity、scope 的陈述互相矛盾？具体 check：§3.3 atomic claim vs §3.9 concurrent-dispatch 段；§3.5 trace_id 共享 vs §3.2 return-shape 的 `trace_id` 字段；§3.5 B5 段 vs §4.1 migration 列表。
-
-6. **Bilingual lockstep 维持？** 验证 `2026-05-28-entity-deletion.zh_cn.md` r2 对应 section 反映同 B1-B6 + N1-N3 解决。具体 check §3.5 cascade 表逐字节匹配（cascade 表是结构性，不是 narrative）。
-
-7. **Plugin isolation tiebreaker check（post-r2）：** r2 后 §6 表仍声明 plugin adapter 永不直接碰 `SpawnRegistry.tombstone/1`。验证：是否有任何代码路径让 DeletionAdapter（在 domain 或 plugin 层）NOT 通过 `tombstone_and_kill/1` 调进 SpawnRegistry tombstone 机制？如有，修或合理化。
-
-8. **Entity_tokens defense-in-depth（B6 验证）：** INV-14 断言 `Token.verify` 拒绝 tombstoned URI 即使行 escape cascade。验证 verify 侧 check 结构性安放（在 bcrypt 比较之前？之后？在 `apps/ezagent_domain_identity/lib/ezagent/entity/token.ex:159-181` 的哪里 tombstone check 该放？）。
-
-9. **LV confirm dialog UX（从 r1 q9 保留）：** PR-C admin LV 加 "Delete" button。Confirm dialog 询问 reason。是否还应要求 operator **TYPE 被删的 URI**（与 GitHub 的 "type the repo name to delete" 平价）？加 friction 但防误点。提议默认：irreversible 操作 type-the-name confirmation。Allen 确认？
+9. **LV confirm dialog UX（从 r1 q9 保留）：** PR-C admin LV 加 "Delete" button + confirm dialog 询问 reason。是否还应要求 operator **TYPE 被删的 URI**（与 GitHub 的 "type the repo name to delete" 平价）？提议默认：irreversible 操作 type-the-name confirmation。Allen 确认？
 
 ---
 

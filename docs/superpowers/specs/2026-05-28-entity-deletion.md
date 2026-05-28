@@ -1,8 +1,16 @@
 # SPEC — Entity deletion lifecycle (User / Agent / Worker)
 
-**Status:** r4 — codex r3 review (REJECT) addressed: 2 CRIT + 1 HIGH + 2 MED + 1 LOW. 2026-05-28.
+**Status:** r5 — codex r4 review (REJECT) addressed: 2 CRIT + 1 HIGH + 1 MED + 1 LOW. 2026-05-28.
 
-**r4 changes (codex r3 verdict REJECT — 6 findings resolved):**
+**r5 changes (codex r4 verdict REJECT — 5 findings resolved):**
+
+- **CRIT-5.1 (`:scrub_owner` registration plumbing incomplete):** codex r4 found that r4's Chat change list mentioned `actions/0`, `required_caps/0`, `invoke/4`, `data_owner/1` but missed THREE additional places Chat behaviors must be wired: (a) `register_chat_behaviors/0` in `apps/ezagent_domain_chat/lib/ezagent_domain_chat/application.ex:605-614` registers each action with the BehaviorRegistry — without an entry there, `Kind.Runtime.authorize/4` returns `{:unknown_action, :scrub_owner}` at `apps/ezagent_core/lib/ezagent/kind/runtime.ex:212-216`; (b) `cap_subjects/0` in `chat.ex:108-116` declares the cap shape for `CapabilityRegistry.register/3` at `apps/ezagent_core/lib/ezagent/capability_registry.ex:61-98` — without it, the registration raises; (c) `interface/0` in `chat.ex:1036-1072` declares the action's args validator — without it, `Kind.Runtime` rejects the dispatch before `invoke/4` runs (`runtime.ex:615-628`). **Fix:** §4.1 PR-B change list expanded to enumerate ALL FIVE Chat-touching changes: actions, required_caps, invoke, data_owner, AND `register_chat_behaviors`, `cap_subjects`, `interface`. §3.5 now explicitly notes that the `:scrub_owner` registration is a five-part change, not a four-part change.
+- **CRIT-5.2 (cold-load defense incomplete — additional data_owner sites):** codex r4 found that r4 placed the tombstone defense only in `Chat.data_owner/1` but TWO other production data-owner resolvers read the same stale slice without checking tombstones: (a) `Ezagent.Behavior.ExternalMirror.data_owner/1` at `apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror.ex:593-600` reads the Session's `:chat.owner_uri` slice and returns it for CapBAC; (b) `Ezagent.Behavior.Publisher.SessionImpl.data_owner/1` at `apps/ezagent_domain_chat/lib/ezagent/behavior/publisher/session_impl.ex:136-144` calls `Session.owner/1` and returns the owner directly. Both are CapBAC paths, not display reads — a cold-loaded Session would still authorize a deleted user via these resolvers. **Fix:** §3.5 + §4.1 require the SAME tombstone defense at BOTH additional sites. The defense pattern (call `SpawnRegistry.tombstoned?(owner)`; if true return `:no_owner`) is identical at all three sites. INV-13b expanded to assert all three data_owner resolvers return `:no_owner` for a tombstoned URI cold-load.
+- **HIGH-5.3 (kill_timeout overstates structural unreachability):** codex r4 found that r4 §3.3 + §3.9 claim a `:kill_timeout` leaves the URI "structurally unreachable through dispatch." This is FALSE for an already-ready live pid: `Invocation.dispatch/1` (`apps/ezagent_core/lib/ezagent/invocation.ex:87-107`) calls `KindRegistry.lookup/1` (`kind_registry.ex:59-64`) which returns the still-registered pid AND then `GenServer.cast`/`call` (`invocation.ex:111-130`) goes directly to the pid; it does NOT consult the tombstone table. Boundaries 1/2/3 prevent RE-SPAWN, not delivery to a still-alive process that boundary 1 has not yet had a chance to refuse. **Fix:** §3.9 + §3.3 clarified — on `:kill_timeout`, the live pid IS still reachable through dispatch for the brief window it survives the kill signal. The structural unreachability claim is narrowed to: (a) the URI cannot RE-SPAWN after death (boundaries 1/2/3 hold); (b) `KindRegistry.lookup/1` returns `:error` after the process eventually dies (Registry drops dead pids); (c) the live pid may receive a final burst of casts/calls until it dies. The operator runbook now correctly says: SIGKILL the BEAM node to force the live pid down — the `:partial` deletion is structurally bounded but not instantaneously complete. The `Behavior.EntityDeletion` return is unchanged (`{:error, {:partial, step_failed: :tombstone_and_kill_kill_timeout, ...}}`).
+- **MED-5.4 (Capability example struct missing `granted_at`):** codex r4 found that the §3.5 `system://entity-deletion-cascade` cap example uses a raw `%Capability{}` literal with `granted_by` but no `granted_at`, but `Ezagent.Capability` has `@enforce_keys [:kind, :behavior, :instance, :workspace_uri, :granted_by, :granted_at]` at `apps/ezagent_core/lib/ezagent/capability.ex:36-46` — the literal would fail at compile/runtime. Other Catalog entries use `Capability.cap/3` helpers that populate required fields. **Fix:** §3.5 cap example switched to `Capability.cap(Ezagent.Entity.Session, Ezagent.Behavior.Chat, :scrub_owner, :any, :any)` followed by a comment noting `granted_by` + `granted_at` are populated by the catalog's existing pattern.
+- **LOW-5.5 (ZH §11 stale r2 questions tail):** codex r4 found that EN §11 ends cleanly at q9, but ZH continues past q9 into old r2-era B1/B2/B3/B5 prompts that were superseded. **Fix:** ZH §11 tail trimmed to match EN's q0-q9 set.
+
+**r4 changes (preserved — codex r3 verdict REJECT — 6 findings resolved):**
 
 - **CRIT-4.1 (`SystemPrincipal.caps/1` argument shape):** codex r3 found that the r3 cascade code sample calls `Ezagent.SystemPrincipal.caps("entity-deletion-cascade")` but `SystemPrincipal.caps/1` (`apps/ezagent_core/lib/ezagent/system_principal.ex:156-163`) parses its input through `parse!/1` and enforces `scheme == "system"` (`:168-176`) — a bare service-name string crashes before any cap is returned. **Fix:** the cascade now uses `cascade_principal = SystemPrincipal.uri("entity-deletion-cascade")` (returns a `%URI{}`) for both the caller field AND as the argument to `SystemPrincipal.caps/1`. The r3 sample code in §3.5 is updated to call `SystemPrincipal.caps(cascade_principal)`. INV-13a updated to assert the cascade dispatch runs cleanly (no ArgumentError raised).
 - **CRIT-4.2 (BindingRow schema lacks `worker_uri`):** codex r3 found that r3's `:bind` action body change at `apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror.ex:747-758` is insufficient — production persistence flows through `Ezagent.ExternalMirror.BindingRow.insert/1` (`apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/binding_row.ex:42-50, :87-108`) whose `schema "external_mirror_bindings"` block does NOT include `:worker_uri` and whose `cast`/`validate_required` lists also exclude it. Without BindingRow updates, Ecto silently drops `worker_uri` from the attrs map (cast ignores unknown fields) and after Migration B (NOT NULL) inserts would fail. **Fix:** §4.1 PR-B change list explicitly adds BindingRow updates: (1) add `field(:worker_uri, :string)` to the schema block, (2) update `@type t` to include `worker_uri: String.t()`, (3) add `:worker_uri` to BOTH `cast` and `validate_required` lists. The `:bind` action body passes a derived `worker_uri` value via the attrs map. Without these BindingRow changes, the column is unreachable from Elixir code.
@@ -233,11 +241,19 @@ defmodule Ezagent.SpawnRegistry do
        - pid was already absent (never registered or died mid-call):
          return :ok (steps 1+2 still hold).
        - timeout elapsed without DOWN: return {:error, :kill_timeout}.
-         Tombstone (DB + ETS) is STILL installed and durable; the live
-         process may continue briefly but boundaries 1/2/3 already refuse
-         re-spawn so the URI is structurally unreachable. The Behavior
-         at §3 maps this to {:error, {:partial, step_failed:
-         :tombstone_and_kill_kill_timeout, ...}} per §3.2.
+         Tombstone (DB + ETS) is STILL installed and durable, and
+         boundaries 1/2/3 already refuse RE-SPAWN once the live pid
+         dies. HOWEVER — see HIGH-5.3 in §3.9 — for the brief window
+         the live pid survives the brutal_kill signal (e.g. trapping
+         in a C-NIF), Invocation.dispatch/1 calls KindRegistry.lookup/1
+         (apps/ezagent_core/lib/ezagent/invocation.ex:87-107 +
+         kind_registry.ex:59-64) which returns the still-registered pid
+         and delivers casts/calls directly without consulting the
+         tombstone table. The Behavior at §3 maps this to
+         {:error, {:partial, step_failed: :tombstone_and_kill_kill_timeout,
+         ...}} per §3.2 — the structural cleanup is bounded (the URI
+         is permanently un-respawnable) but not instantaneously
+         complete (the live pid may briefly continue serving messages).
 
   Because the DB row is committed BEFORE the kill, a BEAM crash between
   steps 1 and 4 leaves the tombstone authoritative on next boot — the
@@ -305,14 +321,19 @@ The **three enforcement boundaries**:
 ```
 system://entity-deletion-cascade
   caps: [
-    %Capability{
-      kind: Ezagent.Entity.Session,
-      behavior: Ezagent.Behavior.Chat,
-      action: :scrub_owner,
-      instance: :any,
-      workspace_uri: :any,
-      granted_by: URI.new!("system://bootstrap/default")
-    }
+    # MED-5.4 (r5) — use the helper, not a raw struct literal.
+    # Ezagent.Capability has @enforce_keys including :granted_at; the helper
+    # populates it. The Catalog's other entries use the same pattern
+    # (apps/ezagent_core/lib/ezagent/system_principal/catalog.ex:132-149).
+    Ezagent.Capability.cap(
+      Ezagent.Entity.Session,           # kind
+      Ezagent.Behavior.Chat,            # behavior
+      :scrub_owner,                     # action
+      :any,                             # instance (narrowed at dispatch time)
+      :any                              # workspace_uri (narrowed at dispatch time)
+    )
+    # `granted_by` defaults to system://bootstrap/default per the catalog
+    # convention (catalog.ex:101); `granted_at` is set by the helper.
   ]
 ```
 
@@ -398,6 +419,15 @@ end
 ```
 
 This is defense-in-depth at the read site (parallel to INV-14's Token.verify check). The proactive in-memory scrub (above) handles live Sessions immediately; the read-site check covers cold loads + the lookup/dispatch race window.
+
+**CRIT-5.2 — TWO MORE data_owner sites need the same defense.** codex r4 found that `Chat.data_owner/1` is not the only production CapBAC data-owner resolver that reads Session ownership. Two additional sites also need the tombstone check:
+
+- `Ezagent.Behavior.ExternalMirror.data_owner/1` (`apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror.ex:593-600`) — reads the Session's `:chat.owner_uri` slice directly and returns it for ExternalMirror cap-grant authorization. Without the tombstone check, a cold-loaded Session with stale `owner_uri = target` would still authorize the deleted user via ExternalMirror caps (e.g. binding management).
+- `Ezagent.Behavior.Publisher.SessionImpl.data_owner/1` (`apps/ezagent_domain_chat/lib/ezagent/behavior/publisher/session_impl.ex:136-144`) — calls `Session.owner/1` and returns the owner URI directly for Publisher cap-grant authorization.
+
+Both need the identical pattern: after fetching the owner URI, call `Ezagent.SpawnRegistry.tombstoned?(owner)`; if true, return `:no_owner`. The PR-B change list (§4.1) explicitly adds these two file modifications.
+
+INV-13b's assertion is expanded to test all THREE data_owner resolvers in a single cold-load scenario.
 
 **Session-deleted-between-lookup-and-dispatch race:** if a Session Kind dies between `KindRegistry.list_all/0` and `Invocation.dispatch/1`, dispatch returns `{:error, :noproc}`. The cascade treats this as success (the session is gone; there's nothing to scrub). If the Session was tombstoned (by a concurrent Session deletion), dispatch returns `{:error, :tombstoned}` from boundary 1 — also treated as success. The cascade step's idempotency contract holds: re-running is a no-op.
 
@@ -533,9 +563,11 @@ The atomic `tombstone_and_kill/1` (§3.3) closes the original kill-vs-tombstone 
 
 4. **Dispatch arriving AFTER `tombstone_and_kill` but before later cascade steps complete.** The lookup phase (`KindRegistry.lookup/1`) returns `:error` (pid dropped from the Registry on process death), or the SpawnRegistry path returns `{:error, :tombstoned}` (boundary 3). Either way, the dispatch surfaces a clean error.
 
-5. **Dispatch arriving after the FULL deletion sequence.** All three boundaries refuse — caller gets `:tombstoned` or `:noproc` depending on the path it took.
+5. **Dispatch arriving after the FULL deletion sequence (normal path).** All three boundaries refuse — caller gets `:tombstoned` or `:noproc` depending on the path it took.
 
-No "transactional dispatch barrier" is needed. The combination of (a) DB-tombstone-before-kill (durability), (b) `:brutal_kill` (immediate termination, no graceful drain), (c) the three enforcement boundaries (no re-spawn), and (d) accepting cast-loss as correct semantics for deleted entities, is structurally race-free.
+6. **HIGH-5.3 — dispatch arriving DURING a `:kill_timeout` window.** If `tombstone_and_kill/1` returned `{:error, :kill_timeout}` (§3.3 step 4 timeout) because the brutal_kill signal has not yet completed (a stuck C-NIF or other unkillable state), the live pid is STILL registered in `KindRegistry`. `Invocation.dispatch/1` (`apps/ezagent_core/lib/ezagent/invocation.ex:87-107`) calls `KindRegistry.lookup/1` which returns the still-registered pid and forwards the cast/call directly — it does NOT consult the tombstone table on the dispatch hot path. So the live pid may continue serving messages for the brief window it survives the kill signal. This is documented as a known cleanup-bounded edge case: (a) `Behavior.EntityDeletion` returns `:partial` with `step_failed: :tombstone_and_kill_kill_timeout`, telling the operator the deletion is irreversibly committed (DB + ETS tombstone) but cleanup is incomplete; (b) the operator runbook says SIGKILL the BEAM node OR wait for the OS-level supervisor restart, after which `Registry` drops the dead pid + boundary 1 refuses re-spawn. The URI is permanently un-respawnable (boundaries 1/2/3 hold structurally) but not instantaneously dead-on-the-wire.
+
+No "transactional dispatch barrier" is needed. The combination of (a) DB-tombstone-before-kill (durability), (b) `:brutal_kill` (immediate termination, no graceful drain), (c) the three enforcement boundaries (no re-spawn), and (d) accepting cast-loss as correct semantics for deleted entities, is structurally race-free for the NORMAL path. The `:kill_timeout` path narrows the structural guarantee from "instantaneously unreachable" to "permanently un-respawnable + reachable only for the brief window of an unkillable live pid."
 
 ### 3.10 Edge case — operator who deletes themselves
 
@@ -564,7 +596,10 @@ A workspace admin who calls `Behavior.EntityDeletion.invoke(:delete, slice, %{ta
 - **Modify** `apps/ezagent_core/lib/ezagent/system_principal/catalog.ex` — add `{"system://entity-deletion-cascade", [<narrow Chat:scrub_owner cap>]}` entry (CRIT-3.1)
 - **Modify** `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/binding_row.ex` (CRIT-4.2) — add `field(:worker_uri, :string)` to schema block, update `@type t`, add `:worker_uri` to BOTH the `cast` and `validate_required` lists in `insert/1`
 - **Modify** `apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror.ex` (the `:bind` action body) — populate `worker_uri` in attrs map passed to `BindingRow.insert/1` (B5)
-- **Modify** `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex` — add `:scrub_owner` action (B3); update `actions/0` + `required_caps/0` + `invoke/4`; ALSO modify `data_owner/1` (`chat.ex:1333-1342`) to add the tombstone defense check (CRIT-3.2)
+- **Modify** `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex` — add `:scrub_owner` action (B3); **FIVE separate updates** per CRIT-5.1: (1) `actions/0` (chat.ex:88) — add `:scrub_owner` to the list; (2) `required_caps/0` (chat.ex:~102) — add the cap shape for `:scrub_owner`; (3) `cap_subjects/0` (chat.ex:108-116) — declare the cap subject so `CapabilityRegistry.register/3` registers it; (4) `invoke/4` — implement the slice mutation per §3.5; (5) `interface/0` (chat.ex:1036-1072) — declare the args validator (`{:deleted_uri, :uri}`); ALSO (6) `data_owner/1` (`chat.ex:1333-1342`) — add the tombstone defense check (CRIT-3.2)
+- **Modify** `apps/ezagent_domain_chat/lib/ezagent_domain_chat/application.ex` (`:605-614` `register_chat_behaviors/0`) — add `CapabilityRegistry.register(Session, :scrub_owner, Chat)` call (CRIT-5.1)
+- **Modify** `apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror.ex` (`:593-600` `data_owner/1`) — add the SAME tombstone defense (CRIT-5.2); after fetching the owner from the Session's slice, call `SpawnRegistry.tombstoned?(owner)`; if true, return `:no_owner`
+- **Modify** `apps/ezagent_domain_chat/lib/ezagent/behavior/publisher/session_impl.ex` (`:136-144` `data_owner/1`) — add the SAME tombstone defense (CRIT-5.2)
 - **Modify** `apps/ezagent_domain_identity/lib/ezagent/entity/token.ex` — at `verify/2` entry (BEFORE bcrypt), call `SpawnRegistry.tombstoned?(uri)`; if true, run `Bcrypt.no_user_verify()` and return `{:error, :tombstoned}` (HIGH-3.4 — INV-14 defense-in-depth)
 - `apps/ezagent_domain_identity/lib/ezagent_domain_identity/user_deletion_adapter.ex` (new)
 - Tests: §5 invariant test + adapter unit tests + boundary-1 unit test (Kind.Server refuses tombstoned URI) + boundary-2 + boundary-3 + chat.scrub_owner unit test + chat.data_owner cold-load test (INV-13b) + token.verify tombstone test (INV-14)
@@ -637,7 +672,7 @@ Per `feedback_completion_requires_invariant_test`, this SPEC is "done" iff the t
 | INV-12 | `Behavior.EntityDeletion.invoke(:delete, ..., %{target: Ezagent.Entity.User.admin_uri()})` returns `{:error, :bootstrap_admin_undeletable}` | Bootstrap admin protection missing |
 | INV-13 | For the Session S created in setup with `owner_uri = target`: after deletion, dispatch `Behavior.Chat.data_owner(S_uri)` returns `:no_owner` (not the deleted target URI), AND inspect S's live slice: `slice.owner_uri == nil` | B3 — Session owner not scrubbed via the new `:scrub_owner` action → deleted user still drives data_owner authz |
 | INV-13a | The `system://entity-deletion-cascade` principal exists in `KindRegistry` after `EzagentCore.Application.start/2` AND its caps set is the disjoint union of (1) `SystemPrincipal.Catalog.caps_for!(self_uri)` (containing the cascade `Chat:scrub_owner` cap) and (2) the structural self-`Identity:list_caps` cap from `Identity.init_slice/1` (HIGH-4.3). NO other caps. Additionally: the actual cascade dispatch (calling `SystemPrincipal.caps(cascade_principal)` per CRIT-4.1's fix) completes without raising an ArgumentError. | CRIT-3.1 + CRIT-4.1 + HIGH-4.3 — narrow system principal not installed correctly, OR caps drift wider, OR the caps/1 invocation crashes |
-| INV-13b | Cold-load a snapshotted Session whose `:chat` slice has `owner_uri = target` AFTER the User deletion (and AFTER restart so the principal is absent from KindRegistry until lookup-driven respawn): dispatch `Behavior.Chat.data_owner(S_uri)` STILL returns `:no_owner` because the SpawnRegistry tombstone defense at `chat.ex:data_owner/1` refuses to honor the tombstoned URI as data_owner | CRIT-3.2 — cold-Session safety relies on the read-site tombstone check; if that check is missing, the deleted user still drives authz |
+| INV-13b | **(CRIT-3.2 + CRIT-5.2)** Cold-load a snapshotted Session whose `:chat` slice has `owner_uri = target` AFTER the User deletion (and AFTER restart so the principal is absent from KindRegistry until lookup-driven respawn). Then call ALL THREE production data-owner resolvers and assert each returns `:no_owner` (NOT the deleted target URI): (1) `Behavior.Chat.data_owner(S_uri)`; (2) `Behavior.ExternalMirror.data_owner(S_uri)`; (3) `Behavior.Publisher.SessionImpl.data_owner(S_uri)`. Each must apply the SpawnRegistry tombstone defense at the read site. | CRIT-3.2 + CRIT-5.2 — cold-Session safety relies on the read-site tombstone check across ALL data_owner resolvers; missing the check at any of the three sites leaves a privilege-disclosure surface |
 | INV-14 | For a token minted in setup for the target: `Token.verify(plain_token, target)` returns `{:error, :tombstoned}` (NOT `{:error, :invalid_credentials}` and NOT `{:ok, _}`). Validation: the tombstone check at `Token.verify/2` entry fires BEFORE the bcrypt comparison, AND `Bcrypt.no_user_verify()` is invoked to defeat timing leaks. | B6 + HIGH-3.4 — token-row escapes cascade OR Token.verify lacks the tombstone defense check OR the check is placed AFTER bcrypt (timing leak) |
 | INV-15 | After PR-B + backfill task run + Migration B applied, for every row in `external_mirror_bindings`: `worker_uri` is non-NULL AND equals `WorkerSpawn.worker_uri_for(parsed_session_uri, adapter_id, target_id) |> URI.to_string()`. Additionally: the `Repo.delete_all(WHERE worker_uri IS NULL)` transitional branch in the cascade query is structurally dead (returns 0 affected rows). | CRIT-3.3 — backfill task did not run, OR derivation is wrong, OR Migration B's pre-condition check was bypassed |
 | INV-15a | **(MED-4.5 — transitional branch coverage)** Before backfill: directly INSERT a `BindingRow` with `worker_uri: nil` (bypassing the `:bind` action body, e.g. via `Repo.insert/1` with raw struct). Derive the target Worker URI structurally via `WorkerSpawn.worker_uri_for(session_uri, adapter_id, target_id)`. Invoke Worker deletion for that URI. Assert: (a) the cascade query's transitional second clause matches the NULL row and `Repo.delete/1`s it; (b) the row is absent from the table after deletion. | MED-4.5 — transitional NULL-safety branch is silently broken; pre-backfill Worker deletions miss the row |
