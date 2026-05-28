@@ -1,6 +1,26 @@
 # SPEC — Ezagent state model migration to EventStore + Commanded (CQRS / event-sourcing)
 
-**Status:** r6 — **§1.5 codex-reviewed; verdict = CONDITIONAL Option B**. Codex round on §1.5 returned REJECT with 3 HIGH + 2 MED; all addressed inline. The lighter path (Sage + ex_audit + Ecto.Multi) remains recommended over Commanded migration, **conditionally** on three predicates holding at Path B SPEC drafting time: (a) library-risk audit on Sage/ex_audit fork ownership + Elixir/Ecto compatibility passes (see new §1.5.4), (b) Path B's saga design includes a durable saga log / outbox (Oban candidate) to close the Sage in-memory state gap, (c) replay (P5) confirmed not a roadmap item for next 12 months. If any of (a)(b)(c) fails, revisit the Option A Commanded migration described in §2-§12. The prior r4-FINAL status (4-round codex budget exhaustion, 7 carry-over limitations) still applies to §2-§12 if Option A is ever revisited. 2026-05-28.
+**Status:** r7 — **§1.5.7 added; verdict = Option B'' (native consolidation)**. Allen's directive 2026-05-28 09:33: ezagent has been DIY-implementing the event-sourcing primitives organically for 9 months (invocations table = event log; kind_snapshots = aggregate snapshots; Behavior.invoke = combined execute+apply; ExternalMirror.BootReconciler = state recovery; Persistence + slice policy = snapshot policy) — just never **named** them as ES primitives. §1.5.7 formalizes what's there + adds the missing 30%, informed by Commanded's design lessons + CQRS principles. New top recommendation: **Option B'' — native consolidation**, ~880 LOC across 5 internal modules (`EventLog`, `SnapshotStore`, `StateRebuilder`, `SagaRunner`, `EventSubscriber`), ~2-3 weeks. Option B (Sage + ex_audit + Oban) remains as first fallback if B'' design fails; Option A (Commanded full migration) is second fallback if replay (P5) enters the 6-month horizon. B'' is **pro-future-Commanded**: by naming the abstractions correctly now, the eventual migration to Commanded shrinks from ~10-12 weeks (Option B) to ~4-6 weeks (swap 3-4 internal modules). Previous r6 verdict (CONDITIONAL Option B) is downgraded to first-fallback. The prior r4-FINAL status (4-round codex budget exhaustion, 7 carry-over limitations) still applies to §2-§12 if Option A is ever revisited. 2026-05-28.
+
+## r7 changelog (delta from r6)
+
+Allen's directive 2026-05-28 09:33 — "ezagent has been doing event sourcing organically; name it + add the missing 30%, informed by Commanded; B'' becomes the recommended path; B'' is pro-future-Commanded, not anti".
+
+- **§1.5.7 INSERTED** — "Native consolidation path (Option B'') — formalize what ezagent already builds, informed by Commanded". 7 sub-sections, ~600 lines:
+  - §1.5.7.1 — premise: ezagent has been doing ES organically (inventory of existing primitives + correction to §1.3's claim that there is no event log)
+  - §1.5.7.2 — concept-by-concept comparison (ezagent today | Commanded canonical | B'' refined) across 8 ES concepts: event log, command/event split, aggregate identity, snapshot, state recovery, saga, projection, event versioning
+  - §1.5.7.3 — CQRS principles applied (5 principles cited with source URLs + concrete module-signature shape changes): C/Q separation (Greg Young), Event as source of truth (Fowler), Aggregate boundary discipline (Vernon), Eventual consistency for reads (Young), Idempotency
+  - §1.5.7.4 — five concrete new internal modules (`Ezagent.EventLog`, `Ezagent.SnapshotStore`, `Ezagent.Kind.StateRebuilder`, `Ezagent.SagaRunner`, `Ezagent.EventSubscriber`) with signatures + extension points + test strategy + LOC estimate (total ~880 LOC)
+  - §1.5.7.5 — future extension points roadmap (5 scenarios: archive table, per-Kind replay opt-in, saga durability outbox, projection tables, future Commanded migration)
+  - §1.5.7.6 — 4-option comparison table (A vs B vs B' vs B'') across 14 dimensions including the critical "migration cost to Commanded if needed later" row (B'' shortest at ~4-6 weeks)
+  - §1.5.7.7 — recommendation: B'' primary, Option B first fallback, Option A second fallback
+- **§1.5.5 verdict UPDATED** — B'' becomes primary recommendation; the r6 CONDITIONAL Option B becomes first fallback if B'' design has issues; Option A second fallback. Cost comparison updated to include all 4 options.
+- **§1.5.6 downstream impacts UPDATED** — companion SPEC slate changes from "1 broad / 3 small Path B SPECs" to "5 small B'' SPECs (one per new module from §1.5.7.4)". Each lands in ~2-3 weeks independently.
+- **Top-of-file Status banner** rewritten — verdict = Option B''; fallback ordering documented.
+
+§1.5.1-§1.5.4 (alternatives table + library risk + per-scenario deep-dives) UNCHANGED — they describe Option B's evidence, which still stands as the first-fallback rationale.
+
+§2-§12 (Commanded full-migration material) UNCHANGED — retained for the second-fallback scenario.
 
 ## r6 changelog (delta from r5)
 
@@ -423,48 +443,501 @@ The r5 verdict didn't price ongoing dependency risk for Sage + ex_audit. Codex f
 
 **The mitigation cost is bounded** (~2-4 weeks if both libs go cold). Compare that against Option A's 3-month upfront migration: **even worst-case Option B → DIY pivot is cheaper than Option A's day-one cost.** Library staleness alone doesn't flip the verdict to Option A; it does require pin discipline + annual audit.
 
-### 1.5.5 Verdict (r6 — codex HIGH-3 fix: conditional)
+### 1.5.5 Verdict (r7 — Option B'' primary; Option B first fallback; Option A second fallback)
 
-**Option B — conditionally recommended**, dependent on these three conditions holding at the time the Path B SPEC is written:
+**Option B'' (native consolidation) — recommended primary path** (see §1.5.7 for full design). ~880 LOC across 5 new internal modules (`Ezagent.EventLog`, `Ezagent.SnapshotStore`, `Ezagent.Kind.StateRebuilder`, `Ezagent.SagaRunner`, `Ezagent.EventSubscriber`), ~2-3 weeks day-1 cost. Names the ES primitives already in the running codebase and adds the missing 30% (formal command/event split as opt-in, SagaRunner contract, EventSubscriber behaviour, generalized StateRebuilder). **Crucially: B'' shrinks the eventual migration cost to Commanded from Option B's ~10-12 weeks to ~4-6 weeks** (swap 3-4 internal module implementations), so adopting B'' does NOT close the Commanded door — it makes it cheaper to walk through when needed.
 
-- **(a)** Library-risk audit (§1.5.4) confirms Sage + ex_audit fork-and-maintain costs are acceptable for ezagent's 5-year posture. Vendoring/pin discipline must be documented in Path B SPEC.
-- **(b)** Path B SPEC's saga design includes a **durable saga log / outbox** (Oban as outbox candidate) for cross-restart resilience — closing the gap codex HIGH-2 identified in Sage's in-memory state model.
-- **(c)** Replay (§1.5.3 P5) confirmed by Allen as NOT a roadmap item for the next 12 months. (Detail: even if replay enters the 12-36 month window, the Option B → Option A migration cost is ~3-4 months wall-time — comparable to Option A done today. Delaying is OK as long as the team can absorb that cost when it lands.)
+**Option B (Sage + ex_audit + Ecto.Multi + Oban outbox) — first fallback** if B'' design fails codex review or impl drafting hits a structural snag. Conditional on three predicates from r6:
 
-**If (a)(b)(c) hold**: Path B is the recommended path. P2 (audit) and P4 (races) are solved BETTER by the lighter path than by Commanded; P1 and P3 are solved at parity once (b)'s outbox lands; P5 is the only Commanded-exclusive and is deferred per (c).
+- **(a)** Library-risk audit (§1.5.4) confirms Sage + ex_audit fork-and-maintain costs are acceptable for ezagent's 5-year posture.
+- **(b)** Path B SPEC's saga design includes a **durable saga log / outbox** (Oban as outbox candidate) for cross-restart resilience.
+- **(c)** Replay (§1.5.3 P5) confirmed by Allen as NOT a roadmap item for the next 12 months.
 
-**If any of (a)(b)(c) fails**: revisit Option A. Commanded's durable-state primitives and event-log replay become differentiators worth the migration cost.
+**Option A (Commanded full migration per §2-§12) — second fallback** if BOTH B'' and B prove infeasible, OR if replay (P5) becomes a roadmap item within the next 6 months. Commanded's durable-state primitives + event-log replay become differentiators worth the 3-month migration cost.
 
-Aggregate cost comparison (lighter path with (b)'s outbox included):
+Aggregate cost comparison across all four options:
 - **Option A (Commanded)**: 3-month migration, retire 7 internal modules, introduce Postgres to dev loop, +5x dispatch latency hot-path (per §7.1), 1500-2000 LOC saga code (per §4.4), every aggregate's snapshot tuning is a new ops knob.
-- **Option B (lighter + outbox)**: ~3-4 weeks to add Sage + ex_audit + Oban (outbox), write 9 Sage modules (~50-150 LOC each), build saga-execution outbox table + worker, tighten Ecto.Multi scopes in existing domain modules, retire 0 internal modules, no dev-loop change, no latency hit. (r5 estimated 2 weeks — r6 adds the outbox cost.)
+- **Option B (lighter + outbox)**: ~3-4 weeks to add Sage + ex_audit + Oban (outbox), write 9 Sage modules (~50-150 LOC each), build saga-execution outbox table + worker, tighten Ecto.Multi scopes in existing domain modules, retire 0 internal modules, no dev-loop change, no latency hit, BUT inherits Sage 2022-09 + ex_audit 2023-02 staleness risk.
+- **Option B' (DIY Ecto.Multi + DIY event log)**: ~4-5 weeks, ~1200-1800 LOC, no dependency risk, but every team writes its own orchestration / audit / constraints pattern → drift over time.
+- **Option B'' (native consolidation)**: **~2-3 weeks, ~880 LOC, no new umbrella apps, no Postgres in dev loop, no retired modules, no dependency risk.** Names the structural primitives already in the code; preserves the option to migrate to Commanded later at ~4-6 weeks instead of ~10-12.
 
-**Conditional verdict, not deterministic.** If grill-with-doc confirms (a)(b)(c), proceed with Path B. If not, the SPEC's §2-§12 Commanded path becomes the recommendation again.
+**Verdict: B''**. Allen 2026-05-28 09:33 directive. The verdict is no longer "conditional Option B" — B'' replaces Option B as the top recommendation because it dominates on every comparison axis except "long-term replay native today" (which only Option A wins, and is deferred per (c) above for both B and B''). See §1.5.7 for the full design + §1.5.7.6 for the comparison table.
 
 ### 1.5.6 What changes downstream of this verdict
 
-This SPEC was drafted with the implicit assumption that the destroy-cascade 4-round codex failure (§1.1) required CQRS to resolve. **That assumption is contested by §1.5.3 P1 + the conditional verdict in §1.5.5**: Sage's compensation pattern resolves the destroy cascade with the same primitives Commanded's Process Manager would use, at a tiny fraction of the migration cost — **provided** Path B includes a durable saga log / outbox for cross-restart resilience.
+This SPEC was drafted with the implicit assumption that the destroy-cascade 4-round codex failure (§1.1) required CQRS to resolve. **That assumption is now contested by §1.5.7's premise (§1.5.7.1)**: ezagent has been DIY-implementing the ES primitives organically for the last 9 months — the `invocations` table IS an append-only event log; `kind_snapshots` IS aggregate snapshots; `Behavior.invoke/4` IS a combined `execute + apply`; `ExternalMirror.BootReconciler` IS state recovery. The destroy cascade is solvable by naming + connecting what's already there (SagaRunner from §1.5.7.4 module #4) + the missing 30% from §1.5.7.
 
 Concrete next steps (NOT committed by this SPEC — these are recommendations for Allen):
 
-1. **Pause PR #442** (do not merge §2-§12 as-is; the Decision is now contested by §1.5).
+1. **Pause PR #442** (do not merge §2-§12 as-is; the Decision is now superseded by §1.5.7's B'' recommendation).
 
-2. **Draft a companion "Path B SPEC"** with scope broader than just the destroy cascade (r6 codex MED-2 fix). The r5 draft proposed `2026-05-28-destroy-cascade-sage-ex_audit.md`, but the §1.5 verdict's "Option B covers P1+P2+P3+P4" claim requires the companion SPEC to cover the same surface. **Two options for Allen** (choose during grill-with-doc):
-   - **Option 2a — One broader companion SPEC**: rename to `2026-05-28-native-workflow-audit-race-hardening.md`. Single SPEC covers Sage + outbox for destroy + cross-Kind workflow (P1+P3), ex_audit for audit (P2), Ecto.Multi + DB constraints tightening for races (P4). Larger SPEC, larger codex review surface, but one decision package.
-   - **Option 2b — Split into three companion SPECs**: (i) `sage-outbox-for-cascades.md` (P1+P3), (ii) `ex_audit-adoption.md` (P2), (iii) `race-hardening-db-constraints.md` (P4). Smaller per-SPEC review surface, can land independently, but Allen ships 3 PRs not 1.
-   - **Recommendation**: Option 2b. Each SPEC is independently verifiable + revertable. P4 (race hardening) can land first as it's the lowest-risk, lowest-blast-radius. Then P2 (audit) is additive. Then P1+P3 (workflow + outbox) is the largest piece. This matches cap-vis / URI-canonical's "small SPEC, fast convergence" precedent vs the 4-round REJECT pattern §2-§12 hit.
+2. **Draft five companion B'' SPECs**, one per new module from §1.5.7.4. Each is small + independent + landable in 2-3 weeks:
+   - `2026-05-28-ezagent-eventlog-naming.md` — name the existing audit-writer pipeline as `Ezagent.EventLog`; add `stream_by_aggregate/2` query helper; ~150 LOC
+   - `2026-05-28-ezagent-snapshotstore-naming.md` — consolidate `Snapshot.Writer` + `Kind.Snapshot` policy logic under `Ezagent.SnapshotStore`; add `:tolerate_failure` explicit flag; ~200 LOC
+   - `2026-05-28-ezagent-saga-runner.md` — inline ~200 LOC `Ezagent.SagaRunner`; rewrite §4.4's saga inventory (destroy cascade, session-create, etc.) against it; replaces ad-hoc `try/rescue` in current call sites
+   - `2026-05-28-ezagent-event-subscriber.md` — name the `Ezagent.EventSubscriber` behaviour; refactor the 2 existing PubSub-driven cross-call workflows (ExternalMirror worker bootstrap, RevokeCapCascade) onto it; ~250 LOC
+   - `2026-05-28-ezagent-state-rebuilder.md` — lift `Kind.Server.init/1` recovery into the `Ezagent.Kind.StateRebuilder` behaviour; generalize `BootReconciler` from ExternalMirror; ~80 LOC
 
-3. **If the Path B SPEC(s) ship and land**: this SPEC (#442) can be closed `wontfix-superseded-by-#NNN` with §1.5 preserved as the rationale. The §2-§12 Commanded material stays in git history for the future-replay-need scenario.
+   **Land order**: EventLog first (foundational); SnapshotStore next (no deps); SagaRunner third (solves the destroy cascade — the original §1.1 trigger); EventSubscriber fourth (refactors existing PubSub patterns); StateRebuilder fifth (sets up the per-Kind replay opt-in extension point). Each SPEC gets codex adversarial-review per `feedback_codex_review_every_pr`.
 
-4. **If §1.5.5 conditions (a) library-risk audit or (b) durable outbox design fail in Path B SPEC drafting**: revisit Option A. The Path B → Option A migration cost is ~3-4 months wall-time per §1.5.3 P5; it's not free, but it's not catastrophic either.
+3. **If the 5 B'' SPECs ship and land**: this SPEC (#442) can be closed `wontfix-superseded-by-B''` with §1.5 preserved as the rationale. The §2-§12 Commanded material stays in git history for the future-replay-need scenario.
 
-5. **If replay becomes a roadmap item within 12 months**: revisit this SPEC immediately. CQRS/Commanded remains the right answer once P5 enters the requirement set. §1.5 isn't saying "never Commanded" — it's saying "not now, the current need is met by lighter paths, **and** the deferral cost is bounded."
+4. **If B'' design fails review badly** (e.g. one of the 5 module shapes can't be made backward-compatible with existing Behaviors): fall back to **Option B** (Sage + ex_audit + Ecto.Multi + Oban outbox) per §1.5.5 conditions (a)(b)(c). The r6 framing of Option B remains the rigorous fallback contract; the §1.5.6 r6 "1 broad / 3 small SPEC" guidance still applies if Option B activates.
+
+5. **If replay (P5) becomes a roadmap item within 6 months**: trigger the second fallback — Option A (Commanded full migration per §2-§12). B'' makes this migration ~4-6 weeks (swap 3-4 internal module implementations) instead of starting from scratch.
+
+6. **If both B'' and Option B prove infeasible**: revisit Option A as primary. The Path B → Option A migration cost is ~3-4 months wall-time per §1.5.3 P5; the B'' → Option A migration is ~4-6 weeks per §1.5.7.5(e); neither is catastrophic.
+
+### 1.5.7 Native consolidation path (Option B'') — formalize what ezagent already builds, informed by Commanded
+
+Allen's directive 2026-05-28 09:33 — promoting a new top recommendation. Path B (Sage + ex_audit + Ecto.Multi + Oban outbox) treats event sourcing as **a third-party concern we attach selectively**. But on inventory, ezagent has been DIY-implementing the ES primitives **organically for the last 9 months** — just without ever naming them as such. Option B'' is "name what's there + add the missing 30%", informed by what Commanded learned the hard way.
+
+This subsection corrects a structural mis-framing in §1.3 (acknowledged below in §1.5.7.1), surveys ezagent's existing ES primitives concept-by-concept against Commanded's canonical implementation (§1.5.7.2), sharpens the design with CQRS principles (§1.5.7.3), defines five new internal modules with extension points (§1.5.7.4), maps future growth scenarios (§1.5.7.5), and ends with a four-option comparison table (§1.5.7.6) plus the new recommendation (§1.5.7.7).
+
+**B'' is not anti-Commanded; it is pro-future-Commanded.** Naming the abstractions correctly NOW keeps the migration window open and shrinks the eventual cost to "swap implementations of 3-4 internal modules" instead of "rewrite Kind/Behavior across 5 domains".
+
+#### 1.5.7.1 — Premise: ezagent has been doing ES organically
+
+§1.3 of this SPEC asserts:
+
+> "There is no formal event log... [Behavior.invoke/4's] return is a new slice + optional result; the slice mutation is not named, not durable, not subscribable."
+
+**This claim is partially incorrect.** Inventory of the running codebase (`apps/ezagent_core/` + `apps/ezagent_domain_*/`, paths verified against `/Users/h2oslabs/Workspace/esr-ng` checkout):
+
+| ES concept | ezagent primitive | Source of truth |
+|---|---|---|
+| Event log (append-only) | `invocations` table — `(id, trace_id, caller, target, action, args, result, duration_us, authz, exception, inserted_at)` | `apps/ezagent_core/priv/repo/migrations/20260515160000_phase1_audit_dlq_snapshots.exs:6` |
+| Event writer | `Ezagent.Audit.Writer` — telemetry-handler-fed `GenServer`, 100ms-batched `Repo.insert_all/2` flush | `apps/ezagent_core/lib/ezagent/audit/writer.ex:45` |
+| Aggregate snapshot | `kind_snapshots(uri PK, kind_type, state_binary, state, version, workspace_uri, inserted_at, updated_at)` | `apps/ezagent_core/lib/ezagent/ecto/kind_snapshot.ex:25` |
+| Snapshot writer (sync) | `Ezagent.Kind.Snapshot.save_now/3` — strict, raises on infra failure | `apps/ezagent_core/lib/ezagent/kind/snapshot.ex:319` |
+| Snapshot writer (async batched) | `Ezagent.Snapshot.Writer.async_save/3` — 100ms-batched, latest-per-URI wins | `apps/ezagent_core/lib/ezagent/snapshot/writer.ex:45` |
+| Snapshot policy | `:on_change` (sync, post-dispatch) / `:on_terminate` / `{:periodic, ms}` / `:ephemeral` / `:external` | `apps/ezagent_core/lib/ezagent/kind/snapshot.ex:51` |
+| Aggregate process | `Kind.Server` GenServer, one per URI, serialized `handle_call` | `apps/ezagent_core/lib/ezagent/kind/server.ex` |
+| Aggregate identity routing | `Ezagent.KindRegistry` + `Ezagent.SpawnRegistry` (URI → pid) | `apps/ezagent_core/lib/ezagent/kind_registry.ex` |
+| Aggregate command-execution | `Behavior.invoke(action, slice, args, ctx) :: {:ok, new_slice, result} \| {:error, _}` | `apps/ezagent_core/lib/ezagent/behavior.ex:106` |
+| State recovery from snapshot | `Ezagent.Kind.Snapshot.load_or_init/3` — pulls snapshot, canonicalizes URIs, prunes orphan slices, runs `reconcile_after_load/2` per Behavior | `apps/ezagent_core/lib/ezagent/kind/snapshot.ex:51` |
+| Boot reconciliation | `Ezagent.ExternalMirror.BootReconciler` — scans `external_mirror_bindings`, idempotently spawns Sessions; bounded retry loop | `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/boot_reconciler.ex` |
+| Slice-change broadcast cursor | `Ezagent.SliceChange.Cursors.next/1` — pre-allocated per dispatch, used as ring-buffer key | `apps/ezagent_core/lib/ezagent/kind/runtime.ex:110` |
+| Pre-dispatch pipeline | `Ezagent.Kind.Runtime.handle_dispatch/4` — authz (5.5), workspace isolation (5.6), arg validation, then `invoke/4`, then post-commit slice-change emit | `apps/ezagent_core/lib/ezagent/kind/runtime.ex:70` |
+| Idempotency token | `Ezagent.Idempotency` per `Invocation.dispatch/1` step 1 | `apps/ezagent_core/lib/ezagent/idempotency.ex` |
+
+**Correction to §1.3.** The `invocations` table IS an append-only event log; it is **more SQL-queryable than Commanded's `eventstore` schema** because every row carries `(caller, target, action, args, result)` as denormalized columns plus a structured `args` / `result` JSON. The §1.3 framing ("audit table is a side-channel telemetry recording, NOT the source of truth") is half right (the SLICE is currently the source of truth, not the audit row) and half wrong (the audit row IS the event log in shape; it just isn't replayed). The honest gap is "ezagent does not REPLAY events to rebuild aggregate state"; not "ezagent has no event log".
+
+What's NOT yet there (the missing 30%):
+
+- **No formal command struct** — `args` is a `map`, not a `%Command{}`. The catalog of valid commands lives implicitly in each Behavior's `interface/0`.
+- **No formal event struct** — `Behavior.invoke/4` returns a new slice, not a list of events. The slice diff IS the event, but it isn't named or structured.
+- **No replay** — `load_or_init/3` reads the latest snapshot; if you don't have a snapshot you start from `init_slice/1`. The `invocations` history between snapshots is not consulted.
+- **No event-driven cross-Kind orchestration** — multi-Kind workflows are imperative caller code with `try/rescue` cleanup (e.g. `EzagentDomainChat.create_session/3`). The destroy cascade is the most acute example.
+- **No projection / read-model split** — LV reads slice directly via `Kind.get_slice/2`. There is no eventually-consistent read view that subscribes to events.
+- **No idempotency-on-command-id** — dispatch-level `Ezagent.Idempotency` keys on the `%Invocation{}` envelope, not on a `command_uuid` the caller supplies.
+
+#### 1.5.7.2 — Concept-by-concept comparison: ezagent current → Commanded canonical → B'' refined
+
+Each row tracks one ES concept across three columns: what ezagent has today (with file path), how Commanded does it (with code snippet from Commanded docs), and what B'' commits to (the refined design that lands in ezagent informed by Commanded's lesson but using ezagent's existing primitives).
+
+##### a. Event log / EventStore
+
+- **ezagent today** — `invocations` table (`apps/ezagent_core/priv/repo/migrations/20260515160000_phase1_audit_dlq_snapshots.exs:6`), SQLite. `Audit.Writer` flushes 100ms-batched via telemetry on `[:ezagent, :invoke, :stop]`. Append-only (no UPDATE/DELETE in current code). Indexed on `(inserted_at)` and `(target, inserted_at)`. Stream-by-aggregate would be `WHERE target LIKE 'entity://agent/myws/X%' ORDER BY inserted_at` (works today; just hasn't been named as such).
+- **Commanded** — `commanded_eventstore_adapter` writes to PostgreSQL `events` table. Stream identity = `<identity_prefix><aggregate_uuid>`. Append is per-stream with optimistic-concurrency-check (expected_version). Per the docs: "an open-source event store using PostgreSQL for persistence."
+- **B'' design** — `Ezagent.EventLog` module wraps the existing `invocations` table. Public API:
+  ```
+  Ezagent.EventLog.append(envelope :: map) :: :ok | {:error, term}
+  Ezagent.EventLog.stream_by_aggregate(uri :: URI.t, opts) :: [event_row]
+  Ezagent.EventLog.stream_by_workspace(ws :: URI.t, opts) :: [event_row]
+  Ezagent.EventLog.stream_since(cursor :: DateTime, opts) :: [event_row]
+  ```
+  No schema change; the existing telemetry-handler path becomes the `append/1` implementation. **Extension point** `Ezagent.EventLog.replay_aggregate/2` is documented in §1.5.7.4 but NOT included in v1 (no Kind yet declares events-as-truth). Optimistic-concurrency check is also Phase 2 — v1 leans on `Kind.Server` GenServer serialization for the same property.
+
+##### b. Command / Event separation
+
+- **ezagent today** — `Behavior.invoke(action, slice, args, ctx)` is a **combined** primitive: it decides what to do (command), mutates state (apply event), and may return a result. The slice diff is the implicit event payload. Source: `apps/ezagent_core/lib/ezagent/behavior.ex:106`, concrete example `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:297`.
+- **Commanded** — separates `execute(state, %Command{}) :: [%Event{}]` (decide + emit) from `apply(state, %Event{}) :: new_state` (pure fold). Per Commanded docs: "multiple events can be generated from a single command... aggregate apply functions are invoked between execution steps to maintain updated state for subsequent operations." Snippet:
+  ```elixir
+  def execute(%BankAccount{state: :active} = acct, %WithdrawMoney{amount: amt}),
+    do: [%MoneyWithdrawn{account: acct.id, amount: amt, new_balance: acct.balance - amt}]
+
+  def apply(%BankAccount{} = acct, %MoneyWithdrawn{new_balance: nb}),
+    do: %{acct | balance: nb}
+  ```
+- **B'' design** — DON'T require this split for every Behavior on day-1; that's a breaking change to 24 modules. Instead, **make the split the future extension shape**:
+  1. v1 keeps `Behavior.invoke/4` as-is. Internally, `Kind.Runtime.handle_dispatch/4` wraps each successful invoke as a **synthetic event** `%SliceMutated{kind_module, action, args, old_slice, new_slice, caller, at}` and appends to `EventLog`. This is what the slice-change cursor (line 110) already half-implements.
+  2. New optional Behavior callback `events_for/4` — if a Behavior implements it, the synthetic-event fallback is replaced with the Behavior-emitted list. Signature: `events_for(action, slice, args, ctx) :: [%Event{}]`. The Behavior also gains `apply_event/2 :: new_slice`. Both default-implemented in the `@behaviour` for backwards compat (default = wrap-via-synthetic-event).
+  3. Per-Kind opt-in: a Kind that wants events-as-truth declares its Behaviors implement `events_for/4` + `apply_event/2`, gains a `:replay_enabled` flag in `persistence/0`. Replay rebuilds slice via `EventLog.stream_by_aggregate + Enum.reduce(events, init_slice, &apply_event/2)`.
+
+  **Why this matters**: ezagent stays shippable today (no Behavior rewrites). The first Kind that needs replay (P5 from §1.5.3) migrates ONE Kind at a time. Cross-Kind orchestration (B'' §1.5.7.4 module #4 SagaRunner) doesn't need event-split — synthetic events suffice as triggers.
+
+##### c. Aggregate identity
+
+- **ezagent today** — `entity://kind/workspace/name` URI. Canonical via `Ezagent.URI.parse!/1` (the SPEC #324 / URI-canonical chokepoint). Routing via `Ezagent.KindRegistry` (URI → pid). One process per URI; concurrent dispatch serializes through `Kind.Server.handle_call`.
+- **Commanded** — aggregate UUID, optionally with `identity_prefix`. Stream identity = `<prefix><uuid>`. One process per UUID; concurrent dispatch serializes via the aggregate process.
+- **B'' design** — keep ezagent URI as Aggregate identity. Document the equivalence: ezagent URI = Commanded `<identity_prefix><uuid>` with `identity_prefix = ""` and `uuid = URI.to_string(uri)`. **No code change** — the property is already there; B'' just names it. If we ever flip to Commanded, the migration is a no-op for the identity layer (per `feedback_uuid_is_canonical_identifier`: the URI IS the identifier; we don't mint a parallel UUID column).
+
+##### d. Snapshot
+
+- **ezagent today** — `kind_snapshots` table; policy via `Ezagent.Kind.Snapshot` (`:on_change` sync, `:on_terminate` sync, `{:periodic, ms}` async via `Snapshot.Writer`, `:ephemeral`, `:external`). Snapshot stored as `:erlang.term_to_binary(state)` (lossless: MapSet, URI, DateTime, atoms).
+- **Commanded** — opt-in per aggregate via `snapshot_every: N` (after every N events) + `snapshot_version: V` (bump to invalidate stale snapshots). Storage in the event-store schema's snapshot table. Replay reads latest snapshot first then folds events newer than the snapshot.
+- **B'' design** — `Ezagent.SnapshotStore` module wraps `Ezagent.Ecto.KindSnapshot` + `Ezagent.Kind.Snapshot` policy logic. Public API:
+  ```
+  Ezagent.SnapshotStore.latest(uri :: URI.t) :: {:ok, state, version} | :empty
+  Ezagent.SnapshotStore.write(uri, kind_module, state) :: :ok | {:error, term}
+  Ezagent.SnapshotStore.delete(uri) :: :ok
+  Ezagent.SnapshotStore.policy_for(kind_module) :: persistence_policy
+  ```
+  Policy stays at `:on_change` / `:on_terminate` / `{:periodic, ms}` (current ezagent shapes). **Extension point**: `every_n_events/1` policy variant (Commanded-shaped) lands WHEN any Kind opts into events-as-truth (because counting events presupposes events being emitted). Documented as Phase 2.
+
+##### e. State recovery / Replay
+
+- **ezagent today** — `Kind.Server.init/1` calls `Snapshot.load_or_init/3` → returns snapshot OR fresh `init_slice/1` output. No event-replay. Boot reconciler exists in **one** domain (`ExternalMirror.BootReconciler`) and rehydrates from a **projection table** (`external_mirror_bindings`), not from events. Allen 2026-05-26 task #34 added `reconcile_after_load/2` per Behavior (Kind.Snapshot:155) — a hook for amending merged state against a DB projection.
+- **Commanded** — state = snapshot (if present) THEN fold events newer than the snapshot. Replay is automatic on aggregate process restart; the framework doesn't expose the choice.
+- **B'' design** — `Ezagent.Kind.StateRebuilder` behaviour. Required callback `rebuild_from_snapshot(uri, snapshot_state) :: new_state`. Optional callback `rebuild_from_events(uri, snapshot_state, event_stream) :: new_state` — only Kinds that opted into events-as-truth (§1.5.7.2.b) implement this. Default `Kind.Server.init/1` calls `StateRebuilder.rebuild_from_snapshot/2` (current behavior); per-Kind opt-in `:replay_enabled` flag swaps in the events path. **Extension point**: `BootReconciler` becomes a generic `Ezagent.BootReconciler` (move from `apps/ezagent_domain_external_mirror/` to `apps/ezagent_core/`) parameterized by a Kind-supplied "rows-to-rehydrate" query. Today only ExternalMirror needs it; once generic, other Kinds can adopt it without copy-paste.
+
+##### f. Saga / Process Manager
+
+- **ezagent today** — ad-hoc PubSub handlers (e.g. ExternalMirror Worker subscribes to Session's `:slice_change` topic) + ad-hoc cross-Kind imperative code (e.g. `EzagentDomainChat.create_session/3` has 5 dispatches across 4 Kinds with `try/rescue` cleanup at each step). No common abstraction; each saga reinvents the resume + compensate primitives. **This is the strongest motivator for Commanded-shaped thinking** — every multi-Kind workflow is a one-off.
+- **Commanded** — `Commanded.ProcessManagers.ProcessManager`: `interested?/1` selects events, `handle/2` returns commands to dispatch, `apply/2` mutates the PM's own state. PM state is event-store-persisted; cross-restart resume is native. Snippet:
+  ```elixir
+  def interested?(%TransferRequested{id: id}), do: {:start, id}
+  def interested?(%TransferCompleted{id: id}), do: {:stop, id}
+  def handle(state, %TransferRequested{from: from, to: to, amount: amt}),
+    do: [%DebitAccount{account: from, amount: amt}]
+  ```
+  PMs conflate two distinct concerns: **single-call linear sagas** (destroy cascade — N steps in one caller's lifetime) and **event-driven cross-call workflows** (worker bootstrap on `BindingCreated` — fires asynchronously much later).
+- **B'' design** — separate the two:
+  1. **`Ezagent.SagaRunner`** — for single-call linear sagas. Take a list of `{forward_fn, compensate_fn}` pairs, execute in order, on failure reverse-compensate. State is in-memory across the call. (This is what Sage would give us; B'' inlines a ~200-LOC implementation instead of vendoring an unmaintained dep — per `feedback_let_it_crash_no_workarounds` we'd rather own the structural primitive than depend on a 2022-stale library that L2 in §1.5.2 already flagged as risk-bearing.)
+  2. **`Ezagent.EventSubscriber`** — `@behaviour` for PubSub-driven cross-call workflows. Callbacks: `interested?(event) :: boolean | {:partition, key}` + `handle_event(event, state) :: [%Command{}]`. State persistence is Phase 2 extension (see §1.5.7.5(c)); v1 EventSubscriber state is in-memory.
+
+  **Why split**: Commanded's PM tries to be both, and the data shape (PM-state-per-correlation-id) is overkill for a 7-step destroy cascade where the saga state IS the call stack. Conversely, an event subscriber doesn't need the rollback machinery (it didn't initiate the chain, it just reacted to it). Separating them gives each module the smallest possible contract.
+
+##### g. Projection / Read Model
+
+- **ezagent today** — slice IS the read model AND the write model. LV reads via `Kind.get_slice/2` (sync `GenServer.call`); writes via `Invocation.dispatch/1`. There is no eventually-consistent projection table — admin LV reads the live GenServer state, which is **strongly consistent** but couples LV ergonomics tightly to GenServer liveness.
+- **Commanded** — `Commanded.Projections.Ecto` writes to projection tables via `project %Event{}, fn multi -> Ecto.Multi.insert(multi, ...) end`. Read = `Repo.all/get` on the projection table. Consistency mode (strong/eventual) is per-projector; strong-mode dispatch blocks until the projector catches up.
+- **B'' design** — explicit read-model concept WITHOUT immediate cutover to projection tables:
+  1. v1: `Ezagent.ReadModel` is a `@behaviour` with default impl `slice_via_kind_server(uri, slice_key)` (current behavior). LV uses `ReadModel.read(...)` instead of `Kind.get_slice(...)` — same return, named differently.
+  2. Phase 2 extension: a Kind can opt into a backing projection table. The Behavior emits events; a `Commanded.Projections.Ecto`-shaped projector writes the projection; `ReadModel.read/2` flips to `Repo.get/all`. Strong consistency is preserved via Commanded's `consistency: :strong` flag (or B''-equivalent: dispatch blocks until projection catches up).
+
+  **Why deferred**: the cap-vis SPEC (§1.2) is the canonical case for projection tables, and even there the slice-as-read-model has shipped for months without burning the team. B'' commits the contract (`ReadModel` behaviour), not the implementation.
+
+##### h. Event versioning / upcasting
+
+- **ezagent today** — no event versioning (no events as first-class). Snapshot `version` field exists but flips fail-loud on mismatch (`Kind.Snapshot:198`).
+- **Commanded** — `commanded_event_handler` supports event upcasters via `Commanded.Event.Upcaster` protocol — read an old-schema event, return the new-schema event.
+- **B'' design** — NOT in v1. Documented as Phase 2 extension point: once any Behavior implements `events_for/4` (§1.5.7.2.b), the corresponding `apply_event/2` clauses need versioning. The extension point lives in `Ezagent.EventLog.replay_aggregate/2` — it receives raw rows, calls an optional upcaster module to canonicalize old schemas, then feeds to `apply_event/2`. Until any Kind opts in, this is documentation only.
+
+#### 1.5.7.3 — CQRS principles applied to sharpen B''
+
+This is where B'' goes beyond "name what's there" into "design what's there *properly*." Each principle below cites a canonical source and shows the **concrete module-signature change** that lands in ezagent — not a rename, a structural shape change.
+
+##### Command / Query separation (Greg Young, [cqrs.wordpress.com 2010](https://cqrs.wordpress.com/documents/cqrs-introduction/))
+
+The principle: a function either mutates state OR returns data, never both. The same model should not serve writes and reads.
+
+Where ezagent violates this today: `Behavior.invoke(action, slice, args, ctx)` is allowed to return `{:ok, new_slice, result}` — it mutates AND returns. Concrete example: `Behavior.Chat.invoke(:send, slice, %{message: msg}, ctx)` (`chat.ex:297`) writes to `MessageStore`, broadcasts via PubSub, computes recipients via `Routing.Resolver`, and returns the routing decision. Five side effects + a return value in one call.
+
+**B'' refinement** — `Behavior.invoke/4` keeps its current shape (changing it across 24 modules is gold-plating); ADD two explicit hooks for the disciplined Behaviors that want CQRS:
+
+```elixir
+@callback execute_command(action, slice, args, ctx) :: [event] | {:error, term}
+@callback apply_event(event, slice) :: new_slice
+@callback effects(event, ctx) :: [side_effect]   # PubSub broadcasts, external IO, follow-up dispatches
+```
+
+`Kind.Runtime.handle_dispatch/4` gains a branch: if the Behavior implements the new triplet, use it; if it only implements legacy `invoke/4`, fall back to wrap-as-synthetic-event (§1.5.7.2.b). The hot path stays single-allocation; the disciplined path is opt-in.
+
+Crucially: `effects/2` returns DECLARATIONS, not function calls. The Runtime is the only place that converts `%PubSubBroadcast{topic, payload}` into `Phoenix.PubSub.broadcast/3`. Behaviors become **pure** in the CQRS sense; side effects live at the dispatch boundary. This is what makes `apply_event/2` replay-safe (replay must NOT re-broadcast historical messages).
+
+##### Event as the source of truth ([Martin Fowler, "Event Sourcing"](https://martinfowler.com/eaaDev/EventSourcing.html))
+
+The principle: events are the immutable historical record; current state is **derived**; snapshots are a cache. Per Fowler: "Snapshots are purely derivative—the event log remains the system of record."
+
+Where ezagent violates this today: snapshot IS the source of truth (`Kind.Snapshot.load_or_init/3` reads only snapshot; events between snapshots are not consulted). If the snapshot file gets corrupted but the event log is intact, the slice is gone.
+
+**B'' refinement** — even though v1 keeps snapshot-as-truth for hot path performance, design the modules so the inversion is possible later:
+
+1. `apply_event/2` must be **pure + total** for any Behavior that opts in. No DB reads, no time-of-day branches, no random. Replay-safety is a structural property, not a runtime check.
+2. `Ezagent.EventLog.append/1` is the **only** write path that publishes a "state changed" signal externally. Today the `SliceChange` emit is gated on `Snapshot.commit/4` returning `:ok`; B'' tightens this to "gated on `EventLog.append/1` returning `:ok`". Snapshot becomes a downstream cache, written AFTER the event lands.
+3. `Ezagent.SnapshotStore.write/3` must accept a `:tolerate_failure` flag (default true for `:periodic`, false for `:on_change`). A `:on_change` snapshot failure during the post-event window doesn't roll back the event — it merely retries on the next dispatch.
+
+The cost is one extra write per dispatch for opted-in Kinds (event append + snapshot upsert). Per §7.1 the snapshot write is already there; the event append IS the existing audit-writer cast. **No new I/O.** What changes is the **ordering invariant**: event-append-first, snapshot-after.
+
+##### Aggregate boundary discipline ([Vaughn Vernon, _Implementing DDD_](https://www.informit.com/store/implementing-domain-driven-design-9780321834577); [Commanded docs](https://hexdocs.pm/commanded/aggregates.html))
+
+The principle: one command targets one aggregate. Cross-aggregate orchestration goes through a Process Manager / Saga. Two aggregates never mutate each other directly.
+
+Where ezagent violates this today: `Behavior.invoke/4` can synchronously dispatch into any other Kind via `Ezagent.Invocation.dispatch/1`. Example: `Behavior.Chat.invoke(:send, ...)` dispatches `:receive` into every recipient Kind synchronously inside the sender's call stack. If recipient #3's GenServer is dead, the sender's call partial-fails after #1 and #2 already mutated.
+
+**B'' refinement** — `Behavior.invoke/4` MAY dispatch into OTHER Kinds, but cross-Kind effects MUST be wrapped in:
+
+- **`SagaRunner.run(steps, ctx)`** for synchronous linear cascades (destroy, session-create). Each step is `{forward_fn, compensate_fn}`. On step N failure, steps N-1..1 reverse-compensate. The current `try/rescue` cleanup pattern in `EzagentDomainChat.create_session/3` is a hand-rolled version of this.
+- **`EventSubscriber`** for asynchronous cross-call workflows (worker bootstrap on `BindingCreated`).
+- **NEVER from inside `Behavior.invoke/4` directly** for orchestration — `invoke/4` may emit ONE command-equivalent effect (the slice mutation), and may emit declarative `effects/2` (PubSub broadcast etc.), but it does NOT chain dispatches itself.
+
+`Kind.Runtime.handle_dispatch/4` gains a structural check: if a Behavior's `invoke/4` calls `Ezagent.Invocation.dispatch/1` directly (detectable via process dictionary), log a warning telemetry `[:ezagent, :anti_pattern, :cross_kind_from_invoke]`. Phase 2 elevates to a hard fail; the warning lets us audit + refactor existing call sites first.
+
+##### Eventual consistency for reads (Greg Young, [_CQRS Documents_](https://cqrs.files.wordpress.com/2010/11/cqrs_documents.pdf))
+
+The principle: in a CQRS system, the read model lags the write model. Reads MAY be stale. Acceptance of staleness is the cost; horizontal scaling of reads is the benefit.
+
+Where ezagent operates today: reads via `Kind.get_slice/2` are **strongly consistent** (sync GenServer.call returns the latest state). This is GREAT for LV ergonomics and for write-then-immediate-read parity (§4.8 of this SPEC). It's BAD for any read that doesn't need real-time freshness (e.g. admin dashboard listing every workspace's session count) — those reads compete for `Kind.Server` mailbox.
+
+**B'' refinement** — keep slice-as-strong-consistent for the hot path (LV chat stream, dispatch-time authz check, write-then-immediate-read sites). EXPLICITLY model the eventual-consistent read path for FUTURE projection tables:
+
+```elixir
+Ezagent.ReadModel.read(uri, slice_key, consistency: :strong)   # default — current behavior
+Ezagent.ReadModel.read(uri, slice_key, consistency: :eventual) # opts into projection table when one exists
+```
+
+v1 ignores the `consistency:` flag (slice is the only read source). Phase 2: per-projection migration flips specific read sites to `:eventual` against a backing projection table. The §4.8 consistency matrix becomes the LV-write-site source of truth for `:strong` requirements.
+
+##### Idempotency (Greg Young, [_Idempotent commands_](https://buildplease.com/pages/idempotent-commands/))
+
+The principle: a command has a stable identity; replaying the same command MUST be a no-op after the first success.
+
+Where ezagent operates today: `Ezagent.Idempotency` keys on the `%Invocation{}` envelope but the key is the trace_id, not a caller-supplied `command_uuid`. The grant_cap retry-on-network-blip case in §3.7 is not idempotent: if the dispatch times out from caller's POV but succeeded server-side, the caller's retry creates a second grant.
+
+**B'' refinement** — extend `Behavior.invoke/4`'s ctx with an OPTIONAL `:command_uuid` key. When present, `Ezagent.Idempotency.check_or_record/2` is called BEFORE `invoke/4` with the `command_uuid` as the dedup key. SagaRunner sets `command_uuid = "saga:<saga_id>:step:<N>"` automatically. Callers may pass their own (`POST /grants` HTTP handler mints a UUID from the request body hash). Without `command_uuid`, behavior is unchanged.
+
+This closes the retry-storm gap without breaking existing call sites: no caller is forced to mint a UUID, but callers that DO get exactly-once semantics across crashes.
+
+#### 1.5.7.4 — Concrete module hierarchy with extension points
+
+Five new internal modules consolidate the existing primitives. Each lives under `Ezagent.*` (no new umbrella app — the goal is "name what's there", not "add another deployable").
+
+##### 1. `Ezagent.EventLog`
+
+**Signature**:
+```elixir
+@spec append(envelope :: map) :: :ok | {:error, term}
+@spec stream_by_aggregate(uri :: URI.t, opts :: [from: DateTime.t, limit: pos_integer]) :: [event_row]
+@spec stream_by_workspace(ws :: URI.t, opts) :: [event_row]
+@spec stream_since(cursor :: DateTime.t, opts) :: [event_row]
+```
+
+**Design rationale**: thin facade over the existing `invocations` table. The envelope shape standardizes what telemetry handlers already write (`%{trace_id, caller, target, action, args, result, ...}`); `Audit.Writer` becomes one implementation of `append/1` (the batched one); a future Postgres-backed implementation drops in by swapping the module without changing callers. Stream-by-aggregate is the new helper that didn't exist before — it's a one-liner Ecto query (`from i in "invocations", where: i.target == ^uri_str, order_by: i.inserted_at`).
+
+**Extension points**:
+- `replay_aggregate(uri, init_slice, apply_event_fn)` — DISABLED in v1; documented as the Phase 2 entry point when the first Kind opts into events-as-truth.
+- Pluggable storage backend: today SQLite via Ecto; Phase 3+ option to swap to Postgres or `commanded_eventstore_adapter` without caller change.
+- Optimistic-concurrency `expected_version` arg on `append/1` — Phase 2 (today, `Kind.Server` GenServer serialization gives the same property).
+
+**Test strategy**: unit tests for stream-by-aggregate ordering + cursor pagination; integration test that simulates 1000 dispatches and asserts the stream is ordered + complete.
+
+**Estimated LOC**: ~150 (mostly delegations).
+
+##### 2. `Ezagent.SnapshotStore`
+
+**Signature**:
+```elixir
+@spec latest(uri :: URI.t) :: {:ok, state :: map, version :: non_neg_integer} | :empty
+@spec write(uri :: URI.t, kind_module :: module, state :: map, opts :: [tolerate_failure: boolean]) :: :ok | :not_durable | {:error, term}
+@spec delete(uri :: URI.t) :: :ok
+@spec policy_for(kind_module :: module) :: persistence_policy
+```
+
+**Design rationale**: consolidates the three current snapshot entry points (`Snapshot.load_or_init/3`, `Snapshot.save_now/3`, `Snapshot.Writer.async_save/3`) under one named module. `write/4`'s `:tolerate_failure` flag is the explicit knob for "I'm a periodic flush, dropping one snapshot is fine" vs "I'm a post-event commit, snapshot failure must propagate". Current call sites distribute this knowledge across 4 modules; B'' centralizes it.
+
+**Extension points**:
+- `every_n_events/1` policy variant — added WHEN any Kind opts into events-as-truth (events-as-truth presupposes events being counted, which presupposes the event-emission path of §1.5.7.2.b).
+- Pluggable storage: today SQLite via `Ezagent.Ecto.KindSnapshot`; Phase 3+ Postgres if event log moves.
+
+**Test strategy**: invariant test that EVERY Kind's `persistence/0` value resolves to a valid `policy_for/1` shape; round-trip test for write→latest→decode.
+
+**Estimated LOC**: ~200 (the existing logic in `Kind.Snapshot` migrates here mostly unchanged).
+
+##### 3. `Ezagent.Kind.StateRebuilder` (behaviour)
+
+**Signature**:
+```elixir
+@callback rebuild_from_snapshot(uri :: URI.t, snapshot_state :: map) :: new_state :: map
+@callback rebuild_from_events(uri :: URI.t, snapshot_state :: map, event_stream :: Enumerable.t) :: new_state :: map
+```
+
+**Design rationale**: today `Kind.Server.init/1` hardcodes the snapshot-only recovery path. Lifting it to a behaviour gives per-Kind opt-in to events-as-truth without changing the call site. The default implementation (auto-provided by `use Ezagent.Kind`) is `rebuild_from_snapshot/2 = fn _uri, snap -> snap end` and `rebuild_from_events/3 = :not_implemented`. A Kind opting in overrides both.
+
+**Extension points**:
+- `BootReconciler` generalization — today `ExternalMirror.BootReconciler` is hand-rolled per domain. A Kind opting into rebuild-from-events gets boot-time replay for free; no per-domain reconciler needed.
+- Hybrid mode: a Kind can implement `rebuild_from_events/3` that uses snapshot as the starting state then folds events newer than the snapshot timestamp.
+
+**Test strategy**: each opted-in Kind ships a "rebuild parity" test — take a Kind through 100 dispatches, snapshot, kill, rebuild from snapshot only, rebuild from events only, assert all three slices equal.
+
+**Estimated LOC**: ~80 (behaviour definition + the default macro impl).
+
+##### 4. `Ezagent.SagaRunner`
+
+**Signature**:
+```elixir
+defstruct steps: [], compensations: [], ctx: %{}, name: nil, command_uuid: nil
+
+@spec new(name :: String.t, opts :: [command_uuid: String.t]) :: %SagaRunner{}
+@spec run(saga, name :: atom, forward :: (ctx -> {:ok, term} | {:error, term}), compensate :: (ctx, effects -> :ok | {:error, term})) :: %SagaRunner{}
+@spec execute(saga, ctx :: map) :: {:ok, ctx} | {:error, step :: atom, reason :: term, compensated_steps :: [atom]}
+```
+
+Usage example (the destroy cascade):
+
+```elixir
+Ezagent.SagaRunner.new("destroy_agent:#{uri}", command_uuid: trace_id)
+|> SagaRunner.run(:snapshot,    &capture_pre_destroy/1,    &noop/2)
+|> SagaRunner.run(:revoke_caps, &revoke_all_caps/1,        &restore_caps/2)
+|> SagaRunner.run(:terminate,   &terminate_agent/1,        &noop/2)
+|> SagaRunner.run(:audit,       &write_destroy_audit/1,    &noop/2)
+|> SagaRunner.execute(%{agent_uri: uri, workspace_uri: ws_uri})
+```
+
+**Design rationale**: B'' inlines the saga primitive instead of vendoring Sage (§1.5.4 risk: Sage 2022-09, ex_audit 2023-02). Inlining is ~200 LOC; vendoring Sage is the same LOC plus dependency-staleness risk. Per `feedback_let_it_crash_no_workarounds` we own the structural primitive. The contract is intentionally **a subset of Sage's** — we don't need the async/parallel features Sage exposes; ezagent's saga inventory (§4.4) is all linear-step.
+
+**Extension points**:
+- `run_async/4` — Phase 2; today SagaRunner is sync only. Async would require state persistence across the call.
+- `Ezagent.SagaOutbox` — Phase 2 durable-across-restart saga state (a `saga_executions` table + a poll worker). Closes the Sage in-memory-state gap codex HIGH-2 raised in §1.5.3. Until any saga's mid-execution crash becomes observably common, this stays Phase 2.
+- `command_uuid` propagation — each step's invoke is keyed by `"saga:<name>:step:<step_name>"` for natural idempotency on retry.
+
+**Test strategy**: forward-only happy path; forward-fails-at-step-N reverse-compensates 1..N-1 in reverse order; compensate-itself-fails leaves a marker for operator-repair (matches §3.8 r3 saga doctrine).
+
+**Estimated LOC**: ~200.
+
+##### 5. `Ezagent.EventSubscriber` (behaviour)
+
+**Signature**:
+```elixir
+@callback interested?(event :: map) :: boolean | {:partition, key :: term}
+@callback handle_event(event :: map, state :: map) :: {:ok, new_state} | {:dispatch, [%Command{}], new_state} | {:error, term}
+@callback initial_state(opts) :: map  # default %{}
+```
+
+A registry mechanism (`use Ezagent.EventSubscriber, application: :ezagent_core`) supervises one process per registered subscriber, subscribed to `EventLog`'s post-append PubSub topic. Worker bootstrap on `BindingCreated` becomes:
+
+```elixir
+defmodule Ezagent.ExternalMirror.WorkerBootstrapSubscriber do
+  use Ezagent.EventSubscriber, application: :ezagent_domain_external_mirror
+  def interested?(%{action: :bind, kind_module: Ezagent.Entity.Session}), do: true
+  def interested?(_), do: false
+  def handle_event(%{target: session_uri, args: %{adapter: a, params: p}}, state),
+    do: {:dispatch, [%SpawnWorker{session_uri: session_uri, adapter: a, params: p}], state}
+end
+```
+
+**Design rationale**: today the same effect requires writing a custom GenServer that subscribes to PubSub and re-dispatches. EventSubscriber names the pattern + standardizes the contract. Crucially, this is **separate** from SagaRunner — EventSubscriber didn't initiate the chain (no rollback machinery needed); SagaRunner did.
+
+**Extension points**:
+- `Ezagent.EventOutbox` — Phase 2 durable retry on subscriber crash mid-handler. Today subscriber crash + supervisor restart re-subscribes but loses the in-flight event. Outbox writes the dispatch intent to a `event_subscriber_outbox` table before subscriber processes the event; poll worker drains.
+- Partition mode — for high-volume topics, partition by `{:partition, key}` to spawn N parallel subscriber processes.
+
+**Test strategy**: dispatch a triggering event, assert the subscriber's `handle_event/2` ran exactly once; kill subscriber mid-handler, restart, assert handler doesn't double-run (idempotency via `command_uuid` from §1.5.7.3).
+
+**Estimated LOC**: ~250 (behaviour + supervisor + registry).
+
+**Total new code**: ~880 LOC across 5 modules. Compare to Option A's 1500-2000 LOC saga code per §4.4 + the umbrella-app additions.
+
+#### 1.5.7.5 — Future extension points roadmap
+
+Five concrete extension scenarios + the B'' growth path. Each names the trigger + the structural shift, sized in LOC and weeks.
+
+##### a. If `invocations` table grows too large
+
+**Trigger**: SQLite file > 5 GB; full-table scans exceed 1 second.
+
+**B'' growth path**: cold-archive to `invocations_archive` (separate table) with a cutoff date. `EventLog.stream_by_aggregate/2` UNION-queries both tables. Schema mostly identical; the active table stays small + indexed for hot writes. Existing `MessageStore.older_than/3` already uses this pattern (per `feedback_register_lookup_key_parity` precedent in §6.0 r4). **Cost**: ~3-4 days for migration + UNION query + cutover.
+
+**No code change in callers** — `EventLog.stream_by_aggregate/2` is opaque about whether it UNIONs.
+
+##### b. If the first Kind needs replay (P5 enters the roadmap)
+
+**Trigger**: regulatory compliance demands historical-state reconstruction (e.g. SOC 2 audit for "what caps did user X hold at 2025-09-12 14:00 UTC"); OR a specific Kind benefits from event-driven post-incident reproduction.
+
+**B'' growth path**: that Kind implements `events_for/4` + `apply_event/2` on each of its Behaviors. `EventLog.replay_aggregate/2` lights up (gets implemented). The Kind's `persistence/0` returns `{:replay_enabled, snapshot_policy}`. `StateRebuilder.rebuild_from_events/3` is wired up. Other Kinds unaffected. **Cost**: per-Kind ~2-3 weeks. Per `feedback_let_it_crash_no_workarounds`, no shim or dual-mode — once a Kind opts in, it goes through the events path on every restart.
+
+**Key property**: per-Kind migration, not big-bang. Compare with Option A which migrates all 5 entity Kinds in one Phase-10 plan (§6 of this SPEC, ~3 months wall-time).
+
+##### c. If saga durability becomes needed (cross-restart resume)
+
+**Trigger**: observability shows >1% of destroy cascades crash mid-execution (e.g. operator kills the BEAM node during a long-running cascade); operator-repair is too frequent.
+
+**B'' growth path**: add `Ezagent.SagaOutbox` — a `saga_executions` table + a poll worker. SagaRunner's `execute/2` gains a `:durable` opt; when set, each step's start/end writes to the outbox; on BEAM restart, the poll worker resumes incomplete sagas from the last completed step. **Cost**: ~2 weeks (schema + worker + tests). Closes the codex HIGH-2 gap raised in §1.5.3 for Sage.
+
+**Key property**: opt-in per-saga, not blanket. Most sagas (the 5 single-call cascades from §4.4) don't need durability because they complete in <100ms.
+
+##### d. If projection tables become needed (eventual-consistent reads)
+
+**Trigger**: a read site (admin dashboard, CLI listing, HTTP endpoint) suffers measurable contention against `Kind.Server` GenServer mailbox; OR an analytics use case requires reading historical state without restarting the Kind.
+
+**B'' growth path**: `Ezagent.Projection` behaviour + per-projection `init_from_events/1` (initial backfill) + `handle_event/2` (incremental update). The projection table is its own Ecto schema. `ReadModel.read(uri, slice_key, consistency: :eventual)` flips to query the projection table. Slice stays for hot-path strong-consistent reads (LV chat stream, dispatch-time authz check). **Cost**: per-projection ~1-2 weeks.
+
+**Key property**: per-projection migration, not per-Kind. The cap-vis SPEC's `workspace_visibility_per_caller` projection (§1.2 of this SPEC) lands as a standalone projection without touching other reads.
+
+##### e. If we ever DO need Commanded — the migration path is **shortest** of all options
+
+This last point is critical. The four options compared in §1.5.7.6 have different migration costs back to Commanded if Allen later decides ezagent should adopt it:
+
+- **Option A (Commanded directly)** — already there. Cost: 0.
+- **Option B (Sage + ex_audit)** — strangle-pattern migration: events have to be inferred from `Ecto.Changeset` history retroactively; saga modules rewritten from Sage to Commanded PM. Cost: ~10-12 weeks.
+- **Option B' (DIY Ecto.Multi)** — events have to be modeled from scratch; sagas rewritten. Cost: ~14-16 weeks.
+- **Option B'' (native consolidation)** — events already exist (in `EventLog` / `invocations`); aggregates already exist (per Kind); snapshots already exist (`SnapshotStore` / `kind_snapshots`); sagas have a Runner that maps 1:1 to Commanded PM. The migration becomes "swap implementations of 3-4 internal modules": `EventLog` → wraps `commanded_eventstore_adapter`, `SnapshotStore` → wraps Commanded snapshots, `SagaRunner` → wraps `Commanded.ProcessManagers.ProcessManager`, `EventSubscriber` → wraps `Commanded.Event.Handler`. Cost: ~4-6 weeks.
+
+**This is what "pro-future-Commanded" means.** By having the abstractions named correctly NOW, we keep the option open AND we shrink the future cost. B'' isn't a divergent path; it's a converging one.
+
+#### 1.5.7.6 — Comparison summary table
+
+| Dimension | Option A (Commanded) | Option B (Sage + ex_audit + Oban) | Option B' (DIY Ecto.Multi + event log) | Option B'' (Native consolidation) |
+|---|---|---|---|---|
+| **Day-1 LOC delta** | +5000-7000 (3 new umbrella apps + 9 sagas + 5 aggregates + 8 projectors) | +1500-2000 (Sage modules + ex_audit wiring + Oban outbox) | +1200-1800 (DIY orchestration + DIY audit + DIY constraints) | **+880 (5 internal modules)** |
+| **Day-1 wall-time** | ~3 months | ~3-4 weeks | ~4-5 weeks | **~2-3 weeks** |
+| **Day-1 infra change** | Postgres in dev loop; new umbrella apps | Postgres for Oban; no umbrella change | None | **None** |
+| **Day-1 retired modules** | 7 internal (Kind.Server, KindRegistry, Audit.Writer, Persistence, Snapshot.Writer, etc.) | 0 | 0 | **0** |
+| **Long-term replay** | Native | Hand-rolled per-Kind | Hand-rolled per-Kind | **Native per-Kind opt-in (Ext.b)** |
+| **Long-term distributed scaling** | Native (multi-node aggregates) | Possible via Oban distribution | Possible via Postgres | **Possible via SagaOutbox / EventOutbox (Ext.c/Ext.d)** |
+| **Long-term multi-tenant** | Per-aggregate strong isolation | Workspace via DB scoping | Workspace via DB scoping | **Workspace via `Persistence.scope_by_workspace` (already there)** |
+| **Migration cost to Commanded if needed later** | 0 | ~10-12 weeks | ~14-16 weeks | **~4-6 weeks** |
+| **Dependency risk** | Commanded itself (active, well-maintained); EventStore lib | Sage 2022-stale; ex_audit 2023-stale; Oban Pro paid | None (stdlib + Ecto) | **None (uses existing ezagent primitives)** |
+| **Dispatch latency hit** | +5x per §7.1 | 0 | 0 | **0** |
+| **Dev-loop friction** | Postgres required | Postgres required (Oban) | None | **None** |
+| **Alignment with `feedback_let_it_crash_no_workarounds`** | High (CQRS is structural) | Medium (Sage adds workaround for missing structural primitive) | Medium-High (DIY is structural but ad-hoc) | **High (names structural primitives we already have)** |
+| **Alignment with `feedback_north_star_plugin_isolation`** | High (plugin authors stay in `execute/2` / `apply/2`) | Medium (plugin authors learn Sage + ex_audit + Oban) | Low (plugin authors learn N ad-hoc patterns) | **High (plugin authors keep writing `invoke/4`; opt-in to `execute_command/apply_event` per CQRS principle)** |
+| **Per `feedback_completion_requires_invariant_test`** | New invariants per aggregate | New invariants per saga | New invariants per Ecto.Multi | **Existing invariants stay; new invariants only for opted-in Kinds** |
+| **Risk of architectural drift** | Low — Commanded enforces shape | Medium — Sage + ex_audit + Oban interact in subtle ways | High — DIY drifts over time | **Low — abstractions are named + tested** |
+
+##### Honest acknowledgments
+
+- B'' does NOT solve P5 (replay) **today** — it provides the extension point (Ext.b) at no day-1 cost. If replay is needed in <6 months, Option A is still the right call.
+- B'' does NOT solve mid-cascade saga durability **today** — same shape as Option B's gap. SagaOutbox (Ext.c) is the closer when needed.
+- B'' is a refactor on the same architecture, not a replacement. Allen could argue this is the wrong abstraction layer. The counter-argument: every other option ALSO leaves the current architecture in place AND adds new layers; B'' is the only option that adds **less than 1000 LOC of new code** and the only one that names what's already there.
+
+#### 1.5.7.7 — Recommendation
+
+**B'' is the recommended path.** Reasons:
+
+1. **Smallest day-1 footprint** — ~880 LOC, no new umbrella apps, no Postgres in dev loop, no retired modules. Ships in ~2-3 weeks. Option B's ~3-4 weeks + outbox dependency, B''s footprint is lower AND structurally cleaner because it eliminates the Sage/ex_audit/Oban dependency triangle.
+
+2. **No dependency risk** — Option B inherits Sage's 2022-09 + ex_audit's 2023-02 staleness (§1.5.4). B'' uses ezagent's own primitives + standard Ecto + Phoenix.PubSub. The only "library" added is the names of modules already in `ezagent_core`.
+
+3. **Best-positioned for future Commanded migration** — §1.5.7.5(e). The migration from B'' to Commanded is ~4-6 weeks (swap 3-4 internal modules), vs Option B's ~10-12 weeks (events have to be inferred + sagas rewritten). B'' makes the eventual Commanded migration the cheapest of all four paths.
+
+4. **Aligns with `feedback_let_it_crash_no_workarounds`** — every other option adds shims (Sage's saga state, Oban's outbox, ex_audit's changeset interceptor). B'' adds none — every primitive it names is structural truth already in the code. The "missing 30%" is module-naming, not new behavior.
+
+5. **Aligns with `feedback_north_star_plugin_isolation`** — plugin authors keep writing `Behavior.invoke/4`. The CQRS upgrade path (`execute_command/2` + `apply_event/2`) is OPT-IN per Behavior. No plugin author is forced to learn Sage or ex_audit or Oban; the core stays the same.
+
+**Fallback ordering** if B'' design fails codex review or impl-PR drafting:
+
+1. First fallback: **Option B** (Sage + ex_audit + Ecto.Multi + Oban outbox per §1.5.5). This was the prior verdict; still viable if (a)(b)(c) hold and dependency risk is acceptable.
+2. Second fallback: **Option A** (Commanded full migration per §2-§12 of this SPEC). Justified only if replay (P5) becomes a roadmap item OR if both B'' and B prove infeasible.
+
+**Path forward**:
+
+1. This SPEC (#442) updates §1.5.5 verdict and §1.5.6 downstream impacts to reflect B'' as primary.
+2. Five companion SPECs (one per B'' module from §1.5.7.4) get drafted; these are small + independent + landable in 2-3 weeks each:
+   - `2026-05-28-ezagent-eventlog-naming.md` — name the existing audit-writer pipeline as EventLog
+   - `2026-05-28-ezagent-snapshotstore-naming.md` — consolidate Snapshot.Writer + Kind.Snapshot under SnapshotStore
+   - `2026-05-28-ezagent-saga-runner.md` — inline ~200 LOC SagaRunner; rewrite §4.4's saga inventory against it
+   - `2026-05-28-ezagent-event-subscriber.md` — name the EventSubscriber behaviour; refactor the 2 existing PubSub-driven subscribers
+   - `2026-05-28-ezagent-state-rebuilder.md` — lift `Kind.Server.init/1` recovery into the StateRebuilder behaviour
+3. Each companion SPEC gets codex adversarial-review per `feedback_codex_review_every_pr`.
+4. If any companion SPEC fails its review badly enough that the abstraction shape changes, this §1.5.7 gets revisited.
 
 ---
 
 ## 2. Decision — adopt Commanded + EventStore as primary state model
 
-> ⚠️ **Pre-§2 note (r6)**: §1.5 verdict is **CONDITIONAL Option B** (r6 update — r5 said "definitively Option B", codex review downgraded to conditional). The lighter path (Sage + ex_audit + Ecto.Multi) is preferred IF: (a) library-risk audit on Sage/ex_audit passes (§1.5.4), (b) Path B's saga design includes a durable saga log / outbox (§1.5.3 P1 + §1.5.5), (c) replay (P5) confirmed not a roadmap item for next 12 months (§1.5.3 P5). §2 below reflects the Commanded path retained for context — describes what a Commanded migration WOULD look like if Option A were chosen, OR if any of (a)(b)(c) fails in Path B SPEC drafting. See §1.5.6 for recommended next steps (pause PR #442; draft 1 or 3 companion Path B SPECs depending on Allen's scope choice during grill-with-doc). Do not merge §2-§12 as-is.
+> ⚠️ **Pre-§2 note (r7)**: §1.5 verdict is **Option B'' (native consolidation)** (r7 update — supersedes r6's "CONDITIONAL Option B"). §1.5.7 details: ezagent has been DIY-implementing ES primitives organically for 9 months; B'' names them + adds the missing 30% via 5 small internal modules (~880 LOC, ~2-3 weeks). §2-§12 below reflects the Commanded full-migration path (Option A), retained as the **second fallback** behind Option B (first fallback per §1.5.5). Option A is the primary path only if BOTH B'' and Option B prove infeasible OR if replay (P5) becomes a roadmap item within 6 months. See §1.5.6 for the 5 B'' companion SPECs that supersede this SPEC. Do not merge §2-§12 as-is.
 
 ### 2.1 What we adopt
 
