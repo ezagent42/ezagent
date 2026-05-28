@@ -50,6 +50,18 @@ defmodule EzagentWeb.Router do
     post "/register/complete", RegistrationController, :complete_create
   end
 
+  # Public customer chat page (Phase 3). No login — the customer is a
+  # synthetic entity://user/<tenant>/customer_<id>. Reuses the :public
+  # on_mount (locale only, no auth). Same LV serves the hosted page and
+  # the iframe widget (?embed=1).
+  scope "/", EzagentPluginLiveview do
+    pipe_through :browser
+
+    live_session :customer_chat_public, on_mount: {EzagentWeb.LiveAuth, :put_locale} do
+      live "/chat/:tenant", CustomerChat.ChatLive
+    end
+  end
+
   # /admin* requires login (Phase 4-completion Spec 05 §A.2.3 +
   # PR #123 hardening: live_session on_mount gates the WS reconnect
   # path that bypasses the HTTP Plug pipeline).
