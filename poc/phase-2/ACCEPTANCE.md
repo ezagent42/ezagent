@@ -260,14 +260,17 @@ browser (the customer-facing payoff the whole task targets).
   sessions. This is correct (workspace-scoped visibility) but worth a UX note
   for productionization (operators provisioned per-tenant, or a cross-tenant
   super-operator view).
-- **Cosmetic, live-append path only** (both self-correct on reload):
-  1. The welcome bubble (`:if={@empty?}`) is a static child inside the
-     `phx-update="stream"` container, so on the first live message it renders
-     *below* the streamed messages instead of disappearing. Fix: render the
-     welcome OUTSIDE the stream container.
-  2. The composer `<input>` is uncontrolled, so resetting `compose_form` on
-     submit doesn't clear the typed text. Fix: bind the input value to the
-     form field (or clear via a small hook).
+- **Cosmetic, live-append path only — FIXED (commit `fa87dbce`), re-verified
+  in Chrome:**
+  1. Welcome bubble was a static child inside the `phx-update="stream"`
+     container → rendered below messages. Moved OUTSIDE the stream container;
+     now hides correctly once messages exist.
+  2. Composer didn't clear after send (LiveView resets the value *attribute*
+     but preserves the value *property* across patches — confirmed via
+     `attr:"" / prop:"…"`). Fixed by binding the form value + clearing the
+     property on submit in the `CustomerChatPersist` hook.
+  - Bonus during re-verify: confirmed phone soul fact too ("6-month warranty,
+    no extensions").
 
 ### Bugs found + fixed during live validation
 
