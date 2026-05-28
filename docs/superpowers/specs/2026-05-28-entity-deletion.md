@@ -1,8 +1,29 @@
 # SPEC — Kind lifecycle CRUD parity (destroy callback + DB-backing spawn)
 
-**Status:** r10 — Kind.Server-level dispatch fence + direct cross-Kind Repo writes + WorkerSpawn fence + Workspace.add_member lock contract + audit outcome JSON nesting per codex r9 REJECT verdict. Two critical + three high addressed; two new invariants (INV-25/26) added.
+**Status:** r11 — ground all r10 fixes in the actual codebase + suppress terminate-time snapshot + correct lock URIs + complete lock list per codex r10 REJECT verdict. Two critical + two high + one consistency addressed; one new invariant (INV-27) added.
 
-**r10 changes (over r9):**
+**r11 changes (over r10):**
+
+- **B6'' — drop the fictitious SessionRow direct-write; rely on the existing read-site DB-backing defense (codex r10 CRITICAL §3.5/§3.7).** r10 introduced `Repo.update_all(from s in SessionRow, ...)` as a direct cross-Kind write, but codex r10 verified that **no `SessionRow` schema or `sessions` table exists** in the codebase. Session ownership lives in the live `:chat` slice via `Ezagent.Kind.get_slice(uri, :chat)` (apps/ezagent_domain_chat/lib/ezagent/entity/session.ex:649). r10's mechanism was groundless.
+  **r11 fix:** drop the cross-Kind scrub entirely. The read-site DB-backing defense (preserved from r1–r6) is the structural mechanism that handles "owner is now destroyed":
+  - `Chat.data_owner/1` reads `:chat` slice's `owner_uri` AND checks `Users.get_by_uri(owner_uri)` (the r1–r6 design's check). If user is destroyed, returns `:no_owner` even though slice cache is stale.
+  - `Publisher.SessionImpl.data_owner/1` does the same DB-backing check at its read site (preserved from r1–r6).
+  - **`ExternalMirror.data_owner/1` is the GAP** — apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror.ex:593 currently reads `slice.owner_uri` directly without the DB defense. r11 PR-B adds the same `Users.get_by_uri/1` check here, completing the three-site defense.
+  Plugin isolation is preserved by this approach: cleanup is DISTRIBUTED via the read-site defense pattern (every consumer of `owner_uri` reads-through-DB), not centralized via cross-Kind writes. The "Chat.scrub_owner" Behavior action + `system://kind-destroy-cascade` principal are removed entirely (not needed under the read-site defense). The slice's stale `owner_uri` is harmless because no production read path returns it without consulting the DB. User.destroy_db/2 now does NOT touch session rows — there are none to touch. INV-16 already covered the three-site coverage; r11 adds explicit INV-16b assertion that the ExternalMirror site is wired.
+- **B8 — Kind.Server.terminate/2 skips snapshot under destroy-induced shutdown (codex r10 CRITICAL §3.4/q25).** r10 step 3c deletes the kind_snapshots row, but the existing `Kind.Server.terminate/2` (apps/ezagent_core/lib/ezagent/kind/server.ex:753) writes a fresh snapshot for `:on_terminate` Kinds. After step 3 commits + step 6 terminates the GenServer, terminate/2 fires → re-creates the just-deleted snapshot row → ghost state.
+  **r11 fix:** the Kind.Server.destroy orchestrator's step 6 calls `Process.exit(pid, :destroyed)` (or `DynamicSupervisor.terminate_child` with a custom shutdown reason via an explicit GenServer.call to set state.shutdown_reason FIRST, then terminate). The `Kind.Server.terminate/2` callback adds a guard clause:
+  ```elixir
+  def terminate(:destroyed, _state), do: :ok                # NEW r11 — skip snapshot
+  def terminate(reason, state), do: existing_terminate_body(reason, state)
+  ```
+  Similarly when the in-GenServer dispatch fence (B1'') self-shuts via `{:stop, :normal, state}`, r11 changes that to `{:stop, :destroyed, state}` so terminate/2 also skips snapshot. INV-27 NEW.
+- **B7'' — workspace URI is `workspace://name`, not `entity://workspace/...` (codex r10 HIGH §3.5.x/q28).** r10's add_member example used `"entity://workspace/" <> name` but the actual code (apps/ezagent_domain_workspace/lib/ezagent/entity/workspace.ex:81) constructs `"workspace://#{name}"`. r11 corrects the lock key in §3.5.x to use the actual canonical form. The `with_locks/2` helper takes `%URI{}` structs and serializes via `URI.to_string/1`, so the canonical form is automatic — the example pseudocode in §2 was just illustrative and is updated. Also r10's `locks_in_order` snippet computed the sorted list but then ignored it; r11 makes the example use `with_locks/2` instead.
+- **B7''' — User.destroy_db locks every workspace it mutates (codex r10 HIGH §3.4/q28).** r10 said "for a leaf User/Agent/Session destroy: only one lock (the target)" but User.destroy_db calls `Workspaces.remove_member_in_txn/2` for every workspace the user is a member of — which mutates the workspace's `member_uris` column, violating the §3.5.x rule that every operation mutating a Kind DB row must lock that URI.
+  **r11 fix:** `Kind.Server.destroy/2` step 3a's lock list MUST include every URI that step 3b's `destroy_db/2` will mutate. For User: compute `[target_uri | workspaces_containing(user) | sessions_with_member(user)]` (the latter is empty under r11 since there's no session table — see B6''). For Workspace: `[target_uri | member_uris | template_uris | session_uris]` (the recursive cascade). The `with_locks/2` helper sorts + acquires all of them in order. Each per-Kind destroy_db has a sibling callback `destroy_db_locks(uri, ctx)` returning the URI list it will mutate; `Kind.Server.destroy` invokes this BEFORE entering the transaction to compute the lock set.
+- **N4 — §3.12 stale ReadyGate references removed (codex r10 consistency).** §3.12.a and §3.12.b mentioned ReadyGate `:destroying` as still-active state; r9 removed that state but r10's §3.12 update missed those two lines. r11 replaces with the r10 mental model (DB row state is the source of truth; no ETS state needed).
+- **INV-27 NEW** — Kind.Server.terminate/2 skips snapshot under destroy-induced shutdown: the test triggers a destroy on an `:on_terminate` Kind, then asserts (a) `Repo.get(KindSnapshot, target_uri_str)` returns `nil` after step 6 (no resurrection); (b) the in-GenServer fence's self-shutdown also produces no snapshot row.
+
+**r10 changes (preserved for history — over r9):**
 
 - **B1'' — Kind.Server's `handle_call`/`handle_cast` does backing_check (codex r9 CRITICAL §3.6.1).** r9's ReadyGate `:destroying` fence had a rollback race: if destroy A captures `:ready`, sets `:destroying`, then rolls back; concurrent destroy B (on same URI) commits and reaches step 6 terminate_child; A's revert to `:ready` overwrites B's `:destroying`, making the tearing-down pid dispatch-reachable. Or A crashes after setting `:destroying` and before reverting → `:destroying` stuck forever. The blind ETS-based prior-state restore is fundamentally racy.
   **r10 fix:** the dispatch fence moves INSIDE the Kind.Server GenServer itself, where it cannot race. `Kind.Server.handle_call/3` and `Kind.Server.handle_cast/2` now run `kind_module.backing_check(state.uri)` at the TOP of each message — if false, reply `{:error, :no_backing_entity}` AND initiate self-shutdown via `{:stop, :normal, state}` (graceful — flushes any `:on_terminate` snapshot tasks, but since the row is gone, no snapshot is written). This makes the fence:
@@ -176,15 +197,22 @@ defmodule Ezagent.Kind.Server do
     1. `kind.can_destroy?(uri, ctx)` (per-Kind precheck) — abort on refuse
     2. Generate trace_id
     3. Repo.transaction (atomic):
-       3a. Sort and acquire advisory locks for all URIs that will be
-           mutated (workspace + member cascade URIs; per r10 B7'
-           global-ordering rule — see §3.5.x).
+       3a. lock_uris = kind.destroy_db_locks(uri, ctx)   — r11 B7''': the Kind
+                                            declares every URI it will mutate.
+                                            with_locks(sorted lock_uris, fn ->
+                                              acquire each Repo.advisory_xact_lock
+                                              in URI-string sort order
+                                              (§3.5.x global ordering rule)
        3b. kind.destroy_db(uri, ctx)         — caps revoke + memberships drop
-                                              + bindings delete + profile delete
-                                              + DIRECT Repo writes to cross-Kind
-                                              tables (e.g. Sessions row scrub via
-                                              Repo.update_all — NOT cross-process
-                                              dispatch, r10 B6' fix)
+                                              + bindings delete + profile delete.
+                                              All via SAME Repo connection
+                                              (transaction-bound). NO cross-process
+                                              dispatch (r10 B6' / r11 B6'' — for
+                                              ownership scrub the read-site
+                                              DB-backing defense at consumers
+                                              handles staleness; no direct write
+                                              needed because session ownership
+                                              lives in the live slice, not a DB row).
        3c. Repo.delete(KindSnapshot, uri_str)
        3d. kind.delete_db_row(uri)           — Users.delete / Agents.delete / …
                                               — if rows_affected == 0, treat as
@@ -198,7 +226,10 @@ defmodule Ezagent.Kind.Server do
     4. (transaction commits OR rolls back atomically; on rollback, the
         DB row is unchanged — no state mutation occurred)
     5. KindRegistry.lookup(uri) — locate live pid (if any)
-    6. DynamicSupervisor.terminate_child(supervisor, pid) — graceful
+    6. DynamicSupervisor.terminate_child(supervisor, pid) with :destroyed
+       shutdown reason — r11 B8: Kind.Server.terminate(:destroyed, _) skips
+       the :on_terminate snapshot write that would otherwise resurrect
+       the just-deleted snapshot row.
     7. kind.destroy_runtime(uri, ctx) — sidecar teardown, external resource
                                          release; OUTSIDE transaction;
                                          best-effort; errors logged not raised
@@ -334,16 +365,17 @@ end
 ```
 
 ```elixir
-# (r10) Dispatch fence moves INSIDE the Kind.Server GenServer.
-# r9's ReadyGate :destroying state had a rollback race (codex r9 CRITICAL
-# §3.6.1); r10 puts the fence at the single source of truth — the Kind
-# itself, with a synchronous DB read at the top of each message handler.
-# No ETS state to revert, no cross-process race, no orphan-:destroying.
+# (r10/r11) Dispatch fence moves INSIDE the Kind.Server GenServer.
+# Single source of truth — the Kind itself, with a synchronous DB read
+# at the top of each message handler. No ETS state to revert, no
+# cross-process race, no orphan-:destroying state.
 #
 # Ezagent.Invocation.dispatch/1 is UNCHANGED from upstream (no :destroying
 # arm needed). The fence lives one layer deeper.
 #
-# Modify Ezagent.Kind.Server (apps/ezagent_core/lib/ezagent/kind/server.ex):
+# r11 — uses {:stop, :destroyed, state} so terminate/2's :destroyed arm
+# skips the :on_terminate snapshot (B8 fix). Plain :normal would resurrect
+# the just-deleted snapshot row.
 defmodule Ezagent.Kind.Server do
   # ... existing handle_continue/handle_info/etc ...
 
@@ -354,8 +386,9 @@ defmodule Ezagent.Kind.Server do
       do_handle_dispatch_call(inv, state)
     else
       # The row is gone (destroy committed). Reply with the standard
-      # no-backing-entity error and graceful self-shutdown.
-      {:reply, {:error, :no_backing_entity}, state, {:continue, :shutdown_after_reply}}
+      # no-backing-entity error and self-shutdown with :destroyed reason
+      # (B8 — terminate/2 :destroyed arm skips snapshot).
+      {:reply, {:error, :no_backing_entity}, state, {:continue, :shutdown_destroyed}}
     end
   end
 
@@ -364,72 +397,78 @@ defmodule Ezagent.Kind.Server do
     if km.backing_check(uri) do
       do_handle_dispatch_cast(inv, state)
     else
-      # Drop the cast and self-shutdown. The dispatcher already got
-      # :ok from Invocation.dispatch (cast is fire-and-forget); the
-      # message they sent is discarded, which is the correct semantics
-      # for "the target is destroyed".
-      {:stop, :normal, state}
+      # Drop the cast and self-shutdown with :destroyed (skips snapshot).
+      {:stop, :destroyed, state}
     end
   end
 
   @impl true
-  def handle_continue(:shutdown_after_reply, state) do
-    {:stop, :normal, state}
+  def handle_continue(:shutdown_destroyed, state) do
+    {:stop, :destroyed, state}
   end
+
+  # r11 B8 — under destroy-induced shutdown, skip the :on_terminate snapshot
+  # write that would otherwise resurrect the just-deleted snapshot row.
+  @impl true
+  def terminate(:destroyed, _state), do: :ok
+  def terminate(reason, state), do: existing_terminate_body(reason, state)
 end
 ```
 
 ```elixir
-# (r10) Cross-Kind cleanup via DIRECT Repo writes, not Behavior dispatch.
-# r9's User.destroy_db dispatch to Chat.scrub_owner crossed a process
-# boundary (different Repo connection → different transaction). r10
-# scrubs sessions via a direct UPDATE inside the User.destroy_db
-# transaction. Plugin-isolation cost: User domain now references the
-# SessionRow schema (NOT the Session GenServer's slice) — same level of
-# cross-domain coupling as every other DB-level cross-reference in the
-# codebase.
+# (r11) User.destroy_db — cross-Kind state is handled by the read-site
+# DB-backing defense, NOT by direct cross-Kind writes (codex r10
+# CRITICAL §3.5/§3.7: no SessionRow schema exists; r10's mechanism was
+# fictitious). Session ownership lives in the live :chat slice; the
+# slice becomes stale when User is destroyed but reads always go
+# through Users.get_by_uri/1 at the consumer (Chat / Publisher /
+# ExternalMirror data_owner/1), returning :no_owner when the user row
+# is gone.
 defmodule Ezagent.Entity.User do
   @impl Ezagent.Kind
   def destroy_db(%URI{} = user_uri, _ctx) do
+    # All inside the orchestrator-supplied Repo.transaction.
     user_uri_str = URI.to_string(user_uri)
 
-    # All inside the orchestrator-supplied Repo.transaction.
-    Identity.revoke_all_caps(user_uri)
-    Repo.delete_all(from t in EntityToken, where: t.entity_uri == ^user_uri_str)
-    Repo.delete_all(from b in FeishuUserBinding, where: b.user_uri == ^user_uri_str)
-    Repo.delete(EntityProfile, user_uri_str)
+    Identity.revoke_all_caps(user_uri)                                             # [DB write]
+    Repo.delete_all(from t in EntityToken, where: t.entity_uri == ^user_uri_str)   # [DB write]
+    Repo.delete_all(from b in FeishuUserBinding, where: b.user_uri == ^user_uri_str)  # [DB write]
+    Repo.delete(EntityProfile, user_uri_str)                                       # [DB write]
 
-    # NEW r10 — direct Repo write inside this transaction (no cross-process dispatch).
-    {n_scrubbed, _} = Repo.update_all(
-      from s in Ezagent.Ecto.SessionRow, where: s.owner_uri == ^user_uri_str,
-      set: [owner_uri: nil]
-    )
-
-    # Workspaces: each remove_member is a Repo.update_all on workspace.member_uris
-    # (which is a string array column or join table; either way, direct write).
-    Enum.each(Workspaces.list_workspaces_containing(user_uri), fn ws ->
-      Workspaces.remove_member_in_txn(ws.uri, user_uri)
+    # Workspace memberships: each remove_member is a Workspaces.Store.update_members
+    # call against the SAME Repo connection (transaction-bound). r10 B7''' — the
+    # orchestrator's lock set includes EACH of these workspace URIs (see destroy_db_locks/2).
+    workspaces = Workspaces.list_workspaces_containing(user_uri)
+    Enum.each(workspaces, fn ws ->
+      Workspaces.remove_member_in_txn(ws.uri, user_uri)                             # [DB write]
     end)
 
-    # Sessions: same, but for membership.
-    Enum.each(Sessions.list_sessions_with_member(user_uri), fn s ->
-      Sessions.remove_member_in_txn(s.uri, user_uri)
-    end)
+    # NO direct write to "session rows" — there are none. The Session Kind's
+    # :chat slice may still cache user_uri as owner, but every read site does
+    # the Users.get_by_uri/1 DB-backing check (Chat.data_owner, Publisher.SessionImpl.data_owner,
+    # ExternalMirror.data_owner per r11 B6'' new addition) and returns :no_owner.
+    # Slice cache staleness is harmless under this discipline.
 
     {:ok, %{
       caps_revoked: true,
       tokens_revoked: true,
       bindings_dropped: true,
       profile_dropped: true,
-      sessions_scrubbed: n_scrubbed,
-      workspace_memberships_dropped: length(...),
-      session_memberships_dropped: length(...)
+      workspace_memberships_dropped: length(workspaces)
     }}
+  end
+
+  @impl Ezagent.Kind
+  def destroy_db_locks(%URI{} = user_uri, _ctx) do
+    # r11 B7''' — the orchestrator's step 3a acquires locks for ALL URIs this
+    # destroy_db will mutate. Workspace memberships count: each workspace row
+    # mutation needs the workspace's lock.
+    [user_uri | Enum.map(Workspaces.list_workspaces_containing(user_uri), & &1.uri)]
   end
 end
 ```
 
-The field-name parallels are intentional: `destroy_db/2` mirrors `init_slice/1` (Behavior callbacks that create / destroy Kind state in DB); `destroy_runtime/2` mirrors `terminate/2` (the external-resource release pair); `backing_check/1` mirrors `uri_from_args/1` (URI introspection callbacks). Plugin authors writing CRUD have parallel callbacks for each letter — the structure is symmetric. The in-GenServer dispatch fence (Kind.Server's `handle_call`/`handle_cast` running `backing_check` at the top, r10 B1'') is a Behavior-agnostic gate — every Kind benefits without per-Kind code.
+The field-name parallels are intentional: `destroy_db/2` mirrors `init_slice/1` (Behavior callbacks that create / destroy Kind state in DB); `destroy_runtime/2` mirrors `terminate/2` (the external-resource release pair); `backing_check/1` mirrors `uri_from_args/1` (URI introspection callbacks); `destroy_db_locks/2` mirrors `holds_cap?/2` (introspective queries the Kind answers for the orchestrator). Plugin authors writing CRUD have parallel callbacks for each letter — the structure is symmetric. The in-GenServer dispatch fence (Kind.Server's `handle_call`/`handle_cast` running `backing_check` at the top, r10 B1'') is a Behavior-agnostic gate — every Kind benefits without per-Kind code. The `terminate(:destroyed, _)` arm (r11 B8) is also Behavior-agnostic — it sits in `Kind.Server`, not in any Kind.
 
 ---
 
@@ -486,8 +525,8 @@ Per `feedback_let_it_crash_no_workarounds`, every r10 fix is at the single sourc
 1. **Pre-check.** Call `kind_module.can_destroy?(target_uri, ctx)`. On error → return `{:error, {:precheck_failed, reason}}`; no mutation has occurred.
 2. **Generate `trace_id`.** A new UUID; threaded through every audit row.
 3. **Repo.transaction — atomic cleanup + DB delete + audit.** Inside the transaction:
-   - **3a.** **Advisory lock acquisition.** Compute the full set of URIs that will be mutated (the target + any cascade members). Sort lexicographically. Acquire `Repo.advisory_xact_lock("kind:#{uri_str}")` for each, in sorted order. This guarantees deadlock-free cascade per §3.5.x global lock ordering. For a leaf User/Agent/Session destroy: only one lock (the target). For a Workspace destroy with N members: N+1 locks.
-   - **3b.** `kind_module.destroy_db(target_uri, ctx_with_trace)` — the **DB-write phase** of per-Kind cleanup. INSIDE the transaction. For User: revoke caps (`Identity.revoke_all_caps/1`), drop feishu_user_bindings, drop entity_profile, drop workspace memberships (direct `Workspaces.remove_member_in_txn/2` calls), drop session memberships, **scrub session owner_uri via DIRECT `Repo.update_all` on SessionRow (r10 B6' — no cross-process dispatch)**. For Agent: revoke entity_tokens, drop session memberships, scrub mention routing rules. For Workspace: cascade-destroy each member by recursively entering this orchestration (each cascade member's destroy joins the same transaction via Ecto's savepoint nesting). For Worker: drop external_mirror_bindings. For Session: drop session_members. Returns `{:ok, db_summary}` or raises (transaction rollback triggered). Per `feedback_let_it_crash_no_workarounds`, raises are NOT caught here — they propagate to the transaction's rollback path.
+   - **3a.** **Advisory lock acquisition (r11 B7''' grounded).** Compute the full set of URIs that step 3b will mutate by calling `kind_module.destroy_db_locks(target_uri, ctx)` — a new Kind callback (r11) that returns the URI list. For a leaf User: `[user_uri | workspaces_containing(user)]` (the workspace mutations are part of remove_member_in_txn). For Workspace: `[workspace_uri | member_uris | template_uris | session_uris]`. For Session/Agent/Worker: typically `[target_uri]`. Sort lexicographically by `URI.to_string/1`. Acquire `Repo.advisory_xact_lock("kind:#{uri_str}")` for each, in sorted order. This guarantees deadlock-free cascade per §3.5.x global lock ordering — every operation that mutates a Kind DB row pre-declares all locks it needs, and acquisition follows the global order.
+   - **3b.** `kind_module.destroy_db(target_uri, ctx_with_trace)` — the **DB-write phase** of per-Kind cleanup. INSIDE the transaction. All writes use the SAME Repo connection (transaction-bound; NO cross-process dispatch — r11 B6'' grounds this in the codebase: there is no SessionRow / sessions table, so r10's direct-Repo-update fictitious scrub is REMOVED). For User: revoke caps (`Identity.revoke_all_caps/1`), drop feishu_user_bindings, drop entity_profile, drop workspace memberships (direct `Workspaces.remove_member_in_txn/2` calls — each workspace's lock was acquired in 3a). **Session ownership is in the live `:chat` slice, NOT a DB row — User.destroy_db does NOT scrub session ownership; the read-site DB-backing defense at all three `data_owner/1` sites (Chat / Publisher / ExternalMirror — r11 adds the missing ExternalMirror site) returns `:no_owner` when `Users.get_by_uri/1` is nil.** For Agent: revoke entity_tokens, drop session memberships (no session row mutation — see B6''), scrub mention routing rules. For Workspace: cascade-destroy each member by recursively entering this orchestration (each cascade member's destroy joins the same transaction via Ecto's savepoint nesting; the member's locks were already acquired by the parent's 3a). For Worker: drop external_mirror_bindings. For Session: drop session_members (the Session Kind's `:chat` slice member list — this is in-memory, NOT a DB row; Session.destroy_db has no DB writes here, only the snapshot purge in 3c). Returns `{:ok, db_summary}` or raises (transaction rollback triggered). Per `feedback_let_it_crash_no_workarounds`, raises are NOT caught here — they propagate to the transaction's rollback path.
    - **3c.** `Repo.delete(Ezagent.Ecto.KindSnapshot, uri_str)` — idempotent.
    - **3d.** `kind_module.delete_db_row(target_uri)` — Users.delete / Agents.delete / etc. Returns `{rows_affected, _}`. If `rows_affected == 0`, treat as **idempotent loser** (a concurrent destroy committed first under READ COMMITTED row locking): proceed to 3e tagging `outcome: :already_destroyed`. Step 0's backing_check already ruled out "never existed" — so 0 rows here IS necessarily the race-loser case (INV-19 gate + clean distinction from INV-22's `:not_found`).
    - **3e.** `Repo.insert(InvocationsAudit, %{action: "kind.destroyed", target: target_uri_str, caller: caller_uri_str, args: %{"reason" => reason}, result: %{"outcome" => "ok" | "already_destroyed", "kind_summary" => db_summary, "cascade_outcomes" => [...], "trace_id" => trace_id_str}})`. Inside the transaction. r10 N3: `outcome` nests inside the existing `result jsonb` column — NO schema migration needed. If 3b or 3d raised, this insert never runs (rollback).
@@ -497,9 +536,9 @@ Per `feedback_let_it_crash_no_workarounds`, every r10 fix is at the single sourc
 5. **Locate the live pid.** `KindRegistry.lookup(target_uri)`. Two arms:
    - `{:ok, pid}` — proceed to step 6.
    - `:error` — the Kind isn't currently alive (snapshot-only). Skip step 6; proceed to step 7.
-6. **Terminate the GenServer gracefully.** `DynamicSupervisor.terminate_child(kind_module.supervisor(), pid)`. Runs the Kind's `terminate/2` callback (if any). NOT `:brutal_kill`. **No respawn race**: at this point the DB row is already gone (step 3d committed). Two fences hold:
+6. **Terminate the GenServer gracefully (with `:destroyed` shutdown reason).** `DynamicSupervisor.terminate_child(kind_module.supervisor(), pid)` would normally use `:shutdown` as the reason and run `Kind.Server.terminate/2`. For `:on_terminate` persistence Kinds, that terminate/2 callback writes a fresh snapshot row — which would resurrect the snapshot just deleted in step 3c. **r11 B8 fix**: the orchestrator FIRST sends a `GenServer.call(pid, :prepare_for_destroy)` (or similar synchronous signal) that sets `state.shutdown_reason = :destroyed`, THEN calls `DynamicSupervisor.terminate_child`. The Kind.Server's `terminate/2` has a NEW arm clause: `def terminate(:destroyed, _state), do: :ok` — explicitly skips the snapshot write. The in-GenServer dispatch fence (B1'') uses `{:stop, :destroyed, state}` for the same reason. (Alternative implementation: store `:destroyed` flag in process dictionary or state and check inside terminate/2's existing body — either works as long as the `:on_terminate` snapshot is unconditionally skipped under destroy-induced shutdown.) NOT `:brutal_kill`. **No respawn race**: at this point the DB row is already gone (step 3d committed). Two fences hold:
    - Spawn path: `Kind.spawn/2` AND `WorkerSpawn.spawn/4` consult `kind_module.backing_check/1` → row absent → return `{:error, :no_backing_entity}`.
-   - Dispatch path: in the small window between step 4 commit and step 6 completion, a dispatch may still reach the live tearing-down pid via `KindRegistry.lookup`. The `Kind.Server.handle_call`/`handle_cast` at the receiving end runs `kind_module.backing_check(state.uri)` at the top — sees row absent — replies `{:error, :no_backing_entity}` and self-shuts via `{:stop, :normal, state}`. The fence is INSIDE the Kind itself; no race. INV-26 gate. (Note: r10 keeps `Invocation.dispatch/1` unchanged from upstream — no ReadyGate `:destroying` arm — the fence is purely at the message-handler layer.)
+   - Dispatch path: in the small window between step 4 commit and step 6 completion, a dispatch may still reach the live tearing-down pid via `KindRegistry.lookup`. The `Kind.Server.handle_call`/`handle_cast` at the receiving end runs `kind_module.backing_check(state.uri)` at the top — sees row absent — replies `{:error, :no_backing_entity}` and self-shuts via `{:stop, :destroyed, state}` (NOT `:normal`, so terminate/2's `:destroyed` arm fires and skips snapshot). The fence is INSIDE the Kind itself; no race. INV-26 gate. (Note: r11 keeps `Invocation.dispatch/1` unchanged from upstream — no ReadyGate `:destroying` arm — the fence is purely at the message-handler layer.)
    Existing in-flight messages already in the pid's mailbox at terminate_child time drain naturally; their handlers each run the backing_check first and reply / drop / shutdown.
 7. **Runtime cleanup — `kind_module.destroy_runtime(target_uri, ctx)`.** OUTSIDE the transaction. Best-effort. Per-Kind external-resource release: Agent calls `AgentBridge.Adapter.teardown/1` (cc unbinds BridgeRegistry; codex stops sidecar + app_server + PTY + removes per-agent dir; np stops nested-process state); Worker calls `adapter_module.terminate/1`; Session calls `Publisher.unsubscribe_all/1`. Errors LOGGED, not raised; if this step partially fails, the destroy returns `{:error, {:partial, %{runtime_errors: [...], db_outcome: :ok | :already_destroyed}}}` so the operator knows external resources may have leaked. DB state is irreversibly gone; no compensating action is attempted.
 8. **Broadcast.** `Phoenix.PubSub.broadcast({:kind_destroyed, target_uri, reason})` for LV consumers.
@@ -517,7 +556,7 @@ r9 splits per-Kind cleanup into two callbacks per the B6 fix (codex r8 q16):
 
 Each Kind implements both callbacks. The orchestrator (§3.4 step 3b + step 7) is the only place these are invoked.
 
-**User (User.destroy_db/2 — inside transaction; r10 B6' direct Repo writes):**
+**User (User.destroy_db/2 — inside transaction; r11 B6'' read-site-defense):**
 
 ```
 :revoke_all_caps                Identity.revoke_all_caps(user_uri)         [DB write]
@@ -526,20 +565,31 @@ Each Kind implements both callbacks. The orchestrator (§3.4 step 3b + step 7) i
 :drop_entity_profile            Repo.delete(EntityProfile, uri_str)        [DB write]
 :drop_workspace_memberships     Enum.each(workspaces, fn ws ->
                                   Workspaces.remove_member_in_txn(ws, user_uri)
-                                end)                                       [DB write]
-:drop_session_memberships       Enum.each(sessions, fn s ->
-                                  Sessions.remove_member_in_txn(s, user_uri)
-                                end)                                       [DB write]
-:scrub_session_owner_uri        Repo.update_all(
-                                  from s in SessionRow,
-                                  where: s.owner_uri == ^user_uri_str,
-                                  set: [owner_uri: nil]
-                                )                                          [DB write — DIRECT, no dispatch]
+                                end)                                       [DB write; each
+                                                                            workspace's lock
+                                                                            acquired in 3a]
 ```
+
+**Session ownership is NOT scrubbed in destroy_db** (codex r10 CRITICAL §3.5/§3.7 / r11 B6'' grounded): session ownership lives in the Session Kind's live `:chat` slice (via `Ezagent.Kind.get_slice(uri, :chat)`), NOT a DB row. The r1–r6 design's read-site DB-backing defense handles staleness — when User is destroyed, every `data_owner/1` consumer of the slice's `owner_uri` does `Users.get_by_uri(owner_uri)` and returns `:no_owner` if nil. The three consumer sites:
+- `Chat.data_owner/1` — already has the check (preserved from r1–r6).
+- `Publisher.SessionImpl.data_owner/1` — already has the check (preserved from r1–r6).
+- `ExternalMirror.data_owner/1` — **r11 B6'' ADDS the missing check** (apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror.ex:593 currently reads `slice.owner_uri` directly without DB-backing defense). PR-B includes this modification.
+
+No data is lost when User is destroyed: any code that needs to enumerate sessions owned by the destroyed user can do so by iterating live Session Kinds + comparing slice owner_uri + applying the DB-backing check. For operator-runbook awareness, the audit row includes `affected_session_uris` (computed before destroy_db's commit by an opt-in query that the orchestrator's audit step picks up if `:include_affected_sessions` flag in ctx is true).
 
 **User (User.destroy_runtime/2 — outside transaction):** no-op (User has no sidecar / file handle / socket; all User state was DB-resident).
 
-**r10 B6' — direct Repo writes, NOT cross-Kind Behavior dispatch.** r9 said `:scrub_session_owner_uri` dispatched `Behavior.Chat.invoke(:scrub_owner, ...)` "using the same Repo connection". Codex r9 caught the bug: Ecto transactions are PROCESS-BOUND. The dispatch crosses into the Session GenServer (via `GenServer.call`) which uses a SEPARATE Repo connection — the Session's write to `owner_uri` runs in its OWN auto-committed transaction, not the User.destroy_db caller's. If User.destroy_db then rolls back, the Session is left scrubbed but the User is intact: ghost state. r10 fix: replace the dispatch with `Repo.update_all` directly inside `User.destroy_db/2`. The Session GenServer's in-memory `:chat` slice is stale (owner_uri still points to dead User), but Session's existing read-site DB-backing defense (`Users.get_by_uri/1`, preserved from r1–r6) catches this — every `data_owner/1` call reads the DB and returns `:no_owner` when the row is absent. The Behavior.Chat `:scrub_owner` action body + system principal stay defined (kept for non-destroy callers that may want event-driven scrubs), but `User.destroy_db/2` no longer uses them. Plugin isolation cost: User's `destroy_db/2` now references the `SessionRow` Ecto schema. This is the SAME level of cross-domain coupling as every other in-codebase cross-domain DB read (e.g. `Workspace.list_workspaces_for/2` reads cap-membership across schemas) — the domain-stable contract is the schema, not the GenServer slice.
+**User.destroy_db_locks/2 (r11 B7''' new callback):**
+
+```elixir
+def destroy_db_locks(%URI{} = user_uri, _ctx) do
+  # The orchestrator's step 3a acquires these locks (sorted) before step 3b.
+  workspaces = Workspaces.list_workspaces_containing(user_uri)
+  [user_uri | Enum.map(workspaces, & &1.uri)]
+end
+```
+
+**On Behavior.Chat.scrub_owner removal (r11 cleanup):** the Behavior action + `system://kind-destroy-cascade` system principal were introduced in r1–r6 as the cross-Kind cleanup path. Under r11's read-site DB-backing defense, scrub_owner is unused by destroy. PR-B may keep the action defined (for non-destroy callers who want event-driven scrubs — e.g. operator manually triggering an owner-handoff) but the `system://kind-destroy-cascade` principal is no longer mounted at boot. Removed from `Ezagent.SystemPrincipal.Catalog` in PR-B.
 
 **Agent (Agent.destroy_db/2 — inside transaction):**
 
@@ -600,35 +650,29 @@ Step 3a of the orchestrator acquires the workspace advisory lock + cascade membe
 
 **Workspace (Workspace.destroy_runtime/2 — outside transaction):** no-op.
 
-**Workspace.add_member/2 — r10 B7' lock contract (codex r9 HIGH §3.5).** r9 said `Workspace.add_member/2` "MUST also acquire the same advisory lock" but the actual code (`apps/ezagent_domain_workspace/lib/ezagent/workspace.ex:103-135`) has NO transaction, NO advisory lock. r10 PR-B explicitly modifies `Workspace.add_member/2`:
+**Workspace.add_member/2 — r11 B7'' grounded lock contract (codex r10 HIGH §3.5.x).** r9 said `Workspace.add_member/2` "MUST also acquire the same advisory lock" but the actual code (`apps/ezagent_domain_workspace/lib/ezagent/workspace.ex:103-135`) has NO transaction, NO advisory lock. r10's example used the wrong URI form (`entity://workspace/...`); r11 corrects to the actual canonical form (`workspace://name`, per `Ezagent.Entity.Workspace.uri_for/1` at apps/ezagent_domain_workspace/lib/ezagent/entity/workspace.ex:81). PR-B explicitly modifies `Workspace.add_member/2` using the `Kind.Server.with_locks/2` helper for global ordering:
 
 ```elixir
 def add_member(name, %URI{} = member_uri) do
+  workspace_uri = Ezagent.Entity.Workspace.uri_for(name)   # workspace://name
+
   Repo.transaction(fn ->
-    # r10 — acquire same lock that destroy_db acquires (B7').
-    workspace_uri_str = "entity://workspace/" <> name
-    Repo.advisory_xact_lock("kind:#{workspace_uri_str}")
-
-    # r10 also acquires the member's lock — global lock ordering rule (§3.5.x).
-    # If add_member happens to interleave with a destroy of the member
-    # (e.g. concurrent User.destroy on this member_uri), the member lock
-    # disambiguates.
-    member_uri_str = URI.to_string(member_uri)
-    locks_in_order = Enum.sort(["kind:#{workspace_uri_str}", "kind:#{member_uri_str}"])
-    # workspace lock already acquired; acquire member lock.
-    Repo.advisory_xact_lock("kind:#{member_uri_str}")
-
-    case Store.get_by_name(name) do
-      nil ->
-        Repo.rollback({:error, :no_such_workspace})
-      %{members: existing} ->
-        new_members = Enum.uniq([member_uri | existing])
-        with :ok <- ensure_member_kind_spawned_at_facade(member_uri),
-             :ok <- dispatch_mutation(name, "add_member", %{member: member_uri}, :call),
-             {:ok, _} <- Store.update_members(name, new_members) do
-          :ok
-        end
-    end
+    # r11 B7'' — use Kind.Server.with_locks/2 helper which sorts +
+    # acquires per §3.5.x global ordering rule. Pass URI structs;
+    # helper canonicalizes via URI.to_string/1.
+    Ezagent.Kind.Server.with_locks([workspace_uri, member_uri], fn ->
+      case Store.get_by_name(name) do
+        nil ->
+          Repo.rollback({:error, :no_such_workspace})
+        %{members: existing} ->
+          new_members = Enum.uniq([member_uri | existing])
+          with :ok <- ensure_member_kind_spawned_at_facade(member_uri),
+               :ok <- dispatch_mutation(name, "add_member", %{member: member_uri}, :call),
+               {:ok, _} <- Store.update_members(name, new_members) do
+            :ok
+          end
+      end
+    end)
   end)
 end
 ```
@@ -767,9 +811,9 @@ If `KindRegistry.lookup(target_uri)` returns `:error` at step 5 (the Kind has no
 
 r9 splits failure handling into the two phases:
 
-**3.12.a destroy_db/2 (inside transaction) raises or returns error.** The transaction rolls back atomically. ReadyGate `:destroying` is reverted (§3.6.1). The destroy returns `{:error, {:transaction_failed, inner}}`. NO state was mutated — operator may re-run cleanly. This is the path that fixes r8's q16 ghost-user mode: in r8, partial cleanup outside the transaction left the system in "row exists, caps gone" state; in r9, atomicity guarantees all-or-nothing.
+**3.12.a destroy_db/2 (inside transaction) raises or returns error.** The transaction rolls back atomically. The destroy returns `{:error, {:transaction_failed, inner}}`. NO state was mutated — operator may re-run cleanly. This is the path that fixes r8's q16 ghost-user mode: in r8, partial cleanup outside the transaction left the system in "row exists, caps gone" state; in r9+, atomicity guarantees all-or-nothing. r11 has no ETS state to revert (ReadyGate `:destroying` was removed in r10).
 
-**3.12.b destroy_runtime/2 (outside transaction; step 7) raises or returns error.** The DB writes have already committed; ReadyGate is `:destroying`; the GenServer has been terminated (step 6). The runtime error is LOGGED. The destroy returns `{:error, {:partial, %{step_failed: :destroy_runtime, runtime_error: <inner>, db_outcome: :ok}}}`. Operator knows external resources may have leaked (e.g. AgentBridge.Adapter.teardown failed because the sidecar was already dead — usually harmless). The DB row + snapshot + audit are durably gone; the URI is no longer reachable from any production code path. Operator-runbook decision: investigate the inner error (e.g. orphan codex sidecar to manually kill) OR accept the partial. Re-running destroy returns `{:error, :not_found}` (step 0 — the row is gone), so the partial cleanup is NOT auto-retriable from within `Kind.Server.destroy/2` — operator must clean up runtime leftovers manually (per `feedback_let_it_crash_no_workarounds`, no auto-compensation).
+**3.12.b destroy_runtime/2 (outside transaction; step 7) raises or returns error.** The DB writes have already committed; the GenServer has been terminated (step 6 with `:destroyed` reason — no snapshot was written). The runtime error is LOGGED. The destroy returns `{:error, {:partial, %{step_failed: :destroy_runtime, runtime_error: <inner>, db_outcome: :ok}}}`. Operator knows external resources may have leaked (e.g. AgentBridge.Adapter.teardown failed because the sidecar was already dead — usually harmless). The DB row + snapshot + audit are durably gone; the URI is no longer reachable from any production code path. Operator-runbook decision: investigate the inner error (e.g. orphan codex sidecar to manually kill) OR accept the partial. Re-running destroy returns `{:error, :not_found}` (step 0 — the row is gone), so the partial cleanup is NOT auto-retriable from within `Kind.Server.destroy/2` — operator must clean up runtime leftovers manually (per `feedback_let_it_crash_no_workarounds`, no auto-compensation).
 
 **3.12.c terminate_child/2 fails (step 6).** Rare — the supervisor may report a timeout if the Kind's `terminate/2` hangs. Logged. Step 7 still runs (the DynamicSupervisor will eventually force-kill via shutdown timeout). The destroy returns `{:error, {:partial, %{step_failed: :terminate_child}}}`.
 
@@ -783,15 +827,31 @@ r9 splits failure handling into the two phases:
 
 **PR-B core — Kind.destroy callback + Kind.Server.destroy/2 + SpawnRegistry DB-backing check + AgentBridge.Adapter.teardown extension:**
 
-- **Modify** `apps/ezagent_core/lib/ezagent/kind.ex` — add `backing_check/1` + `destroy_db/2` + `destroy_runtime/2` + `can_destroy?/2` + `delete_db_row/1` to `@callback` list. Per OQ-NEW recommendation (a), REQUIRED for all production Kinds; test-support Kinds use `use Ezagent.Kind.TestImpl` which injects default impls (`backing_check/1 → true`, `destroy_db/2 → {:ok, %{}}`, `destroy_runtime/2 → :ok`). r9 split per B6: `destroy/2` from r8 is REMOVED — superseded by the `destroy_db/2` (inside-transaction) + `destroy_runtime/2` (outside-transaction) pair.
+- **Modify** `apps/ezagent_core/lib/ezagent/kind.ex` — add `backing_check/1` + `destroy_db/2` + `destroy_runtime/2` + `destroy_db_locks/2` + `can_destroy?/2` + `delete_db_row/1` to `@callback` list. Per OQ-NEW recommendation (a), REQUIRED for all production Kinds; test-support Kinds use `use Ezagent.Kind.TestImpl` which injects default impls (`backing_check/1 → true`, `destroy_db/2 → {:ok, %{}}`, `destroy_runtime/2 → :ok`, `destroy_db_locks/2 → [uri]`). r9 split per B6: `destroy/2` from r8 is REMOVED — superseded by the `destroy_db/2` (inside-transaction) + `destroy_runtime/2` (outside-transaction) pair. r11 B7''' adds `destroy_db_locks/2` for the orchestrator's pre-transaction lock acquisition.
 - **Modify** `apps/ezagent_core/lib/ezagent/kind.ex:293` — modify `Ezagent.Kind.spawn/2` to call `kind_module.backing_check(uri)` BEFORE `DynamicSupervisor.start_child` (or the custom strategy). Returns `{:error, :no_backing_entity}` on false. This is the **universal fence** — covers SpawnRegistry callers AND direct Kind.spawn callers (chat session creation, workspace spawn, system principal ensure, identity demand-spawn). Closes r8 B2 hole.
-- **Modify** `apps/ezagent_core/lib/ezagent/kind/server.ex` — (a) add public `destroy/2` API per §2 + §3.4 (r10 ordering: step 0 backing check → 1 can_destroy → 2 trace_id → 3 atomic transaction[3a global-order advisory locks + 3b destroy_db + 3c snapshot + 3d DB row + 3e audit] → 5 lookup → 6 terminate_child → 7 destroy_runtime → 8 broadcast). Wrap step 3 in `Repo.transaction/1`. (b) **r10 B1''** — add the in-GenServer dispatch fence: `Kind.Server.handle_call/3` and `handle_cast/2` invoke `kind_module.backing_check(state.uri)` at the top of every message; on false, reply `{:error, :no_backing_entity}` and `{:stop, :normal, state}`. (c) **r10 B7'** — add `Ezagent.Kind.Server.with_locks/2` helper that sorts URIs and acquires `Repo.advisory_xact_lock` in order.
+- **Modify** `apps/ezagent_core/lib/ezagent/kind/server.ex` — (a) add public `destroy/2` API per §2 + §3.4 (r11 ordering: step 0 backing check → 1 can_destroy → 2 trace_id → 3 atomic transaction[3a destroy_db_locks + global-order advisory locks + 3b destroy_db + 3c snapshot + 3d DB row + 3e audit] → 5 lookup → 6 terminate_child with `:destroyed` reason → 7 destroy_runtime → 8 broadcast). Wrap step 3 in `Repo.transaction/1`. (b) **r10 B1''** — add the in-GenServer dispatch fence: `Kind.Server.handle_call/3` and `handle_cast/2` invoke `kind_module.backing_check(state.uri)` at the top of every message; on false, reply `{:error, :no_backing_entity}` and `{:stop, :destroyed, state}` (NOT `:normal` — terminate/2's `:destroyed` arm skips snapshot, r11 B8). (c) **r10 B7'** — add `Ezagent.Kind.Server.with_locks/2` helper that sorts URIs (via `URI.to_string/1`) and acquires `Repo.advisory_xact_lock("kind:#{uri_str}")` in order. (d) **r11 B8** — modify `Kind.Server.terminate/2`: add `def terminate(:destroyed, _state), do: :ok` clause BEFORE the existing body. This skips the `:on_terminate` snapshot persistence that would otherwise resurrect the just-deleted snapshot row. The orchestrator's step 6 signals destroy-induced shutdown by passing `:destroyed` as the GenServer stop reason — modifying `DynamicSupervisor.terminate_child` to use a custom reason is not directly supported (it always uses `:shutdown`); the orchestrator instead does `GenServer.stop(pid, :destroyed)` which triggers terminate/2 with `:destroyed`.
 - **r9 changes REVERTED in r10:**
   - `apps/ezagent_core/lib/ezagent/ready_gate.ex` `:destroying` state — REMOVED. r10 has no dispatch-fence state in ReadyGate; the existing 3 states (`:unknown` / `:not_ready` / `:ready`) are unchanged.
   - `apps/ezagent_core/lib/ezagent/invocation.ex:87` `{:destroying, _}` arm — REMOVED. r10 fences dispatch INSIDE Kind.Server's message handlers, not in `Invocation.dispatch/1`.
+- **Modify** `apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror.ex:593` — **r11 B6'' ADDS** the missing read-site DB-backing defense at `data_owner/1`. Currently reads `slice.owner_uri` directly without the `Users.get_by_uri/1` check. r11 modifies to:
+  ```elixir
+  def data_owner(%URI{scheme: "session"} = session_uri) do
+    case Ezagent.Kind.get_slice(session_uri, :chat) do
+      {:ok, %{owner_uri: %URI{} = owner_uri}} ->
+        # r11 B6'' — DB-backing defense, parity with Chat / Publisher data_owner sites.
+        if Ezagent.Users.get_by_uri(owner_uri) != nil do
+          Ezagent.URI.instance(owner_uri)
+        else
+          :no_owner
+        end
+      _ -> :no_owner
+    end
+  end
+  ```
+  This completes the three-site read-defense pattern (Chat, Publisher, ExternalMirror — all do the DB-backing check before returning the slice's owner_uri).
 - **Modify** `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/worker_spawn.ex:72-85` — **r10 B2''** — add `if Worker.backing_check(worker_uri), do: continue, else: {:error, :no_backing_entity}` at the top of `spawn/4`, BEFORE the `DynamicSupervisor.start_child` call on line 112. Closes the codex r9 bypass.
 - **Modify** `apps/ezagent_domain_workspace/lib/ezagent/workspace.ex:103-135` — **r10 B7'** — wrap `add_member/2` body in `Repo.transaction(fn -> ... end)`; first ops acquire `Repo.advisory_xact_lock("kind:#{workspace_uri_str}")` + `Repo.advisory_xact_lock("kind:#{member_uri_str}")` (per global ordering rule §3.5.x). Also modify `Workspace.remove_member/2` (existing function) similarly.
-- **Add `Sessions.remove_member_in_txn/2` and `Workspaces.remove_member_in_txn/2`** — domain-level helpers that take a URI + member URI and issue the appropriate `Repo.update_all` inside the caller's transaction. Used by `User.destroy_db/2` (and other Kinds' destroy_db) for direct cross-Kind cleanup without GenServer dispatch (r10 B6').
+- **Add `Workspaces.remove_member_in_txn/2`** — a domain-level helper that takes a workspace URI + member URI and issues the appropriate `Workspaces.Store.update_members/2` inside the caller's transaction. Used by `User.destroy_db/2` and `Agent.destroy_db/2` for direct cross-Kind workspace-membership cleanup. **Note:** there is NO equivalent `Sessions.remove_member_in_txn/2` — Session membership lives in the live `:chat` slice (in-memory), not a DB row. Per r11 B6'', stale slice state is handled by the read-site DB-backing defense at all three `data_owner/1` consumers, not by a write.
 - **REMOVE from r8 PR-B plan:**
   - `Ezagent.SpawnRegistry.register/3` with `backing_check_fn` keyword — REMOVED. r9 moves the check to `Kind.spawn/2` (universal). SpawnRegistry keeps its existing 2-arity `register/2`.
   - Per-scheme `backing_check_fn` registration in each domain Application — REMOVED. Each Kind now owns its own `backing_check/1` callback.
@@ -925,6 +985,7 @@ Per `feedback_completion_requires_invariant_test`, this SPEC is "done" iff the t
 | INV-24 | **(NEW r9; r10 RE-ARCHITECTED — in-GenServer dispatch fence)** Spawn target Kind → `{:ok, pid}`. Manually `Users.delete(target)` to delete the DB row WITHOUT calling `Kind.Server.destroy` (simulates the race window where step 4 committed but step 6 terminate_child has not yet run; pid still alive). Then call `GenServer.call(pid, {:dispatch, %Invocation{target: target, mode: :call, ...}})` directly. Assert: (a) the call returns `{:error, :no_backing_entity}` (NOT `:ok`, NOT a normal dispatch result); (b) within 200ms, `Process.alive?(pid)` returns false (the Kind.Server's `handle_call` self-shut via `{:stop, :normal, state}`); (c) `KindRegistry.lookup(target_uri)` returns `:error`. Verifies the in-GenServer backing_check fence at the message-handler entry. | `Kind.Server.handle_call`/`handle_cast` missing the top-of-handler `backing_check` invocation; live tearing-down pid processes the dispatch as normal |
 | INV-25 | **(NEW r10 — B2'' WorkerSpawn fence)** Create an external_mirror binding row in the DB; manually `Repo.delete` the binding row WITHOUT calling `Worker.destroy/2`. Then call `Ezagent.ExternalMirror.WorkerSpawn.spawn(session_uri, adapter_id, target_id, opts)` for the URI that the deleted binding's `worker_uri_for/3` would derive. Assert: (a) result is `{:error, :no_backing_entity}` (NOT `{:ok, _}`, NOT a `DynamicSupervisor` error); (b) `DynamicSupervisor.start_child` was NOT invoked (test-double counter = 0). | WorkerSpawn.spawn/4 missing the entry-level `Worker.backing_check/1` invocation; codex r9 bypass not closed |
 | INV-26 | **(NEW r10 — B7' Workspace.add_member lock contract)** Workspace `W` with no members. In two parallel tasks: Task A calls `Kind.Server.destroy(W, ctx)`; Task B calls `Workspace.add_member(W_name, U_new)`. Run 100 iterations with random small sleeps. Assert across all iterations one of two outcomes: (i) add_member returned `{:error, :no_such_workspace}` AND `Workspaces.get_by_uri(W) == nil` AND `Users.get_by_uri(U_new)` returns the ORIGINAL user (was never cascaded into); OR (ii) add_member returned `:ok` AND `Workspaces.get_by_uri(W) == nil` AND `Users.get_by_uri(U_new) == nil` (cascaded out). The forbidden states: (a) U_new was added AND W destroyed AND U_new still alive; (b) U_new partially added (e.g. in members list but no caps granted) AND W destroyed. | `Workspace.add_member/2` missing `Repo.advisory_xact_lock` acquisition; concurrent add slips past destroy's precheck window |
+| INV-27 | **(NEW r11 — B8 terminate-time snapshot suppression)** Use an `:on_terminate` persistence Kind (e.g. a test fixture Kind that returns `:on_terminate` from `persistence/0`). Spawn it → some slice state. Confirm `Repo.get(KindSnapshot, uri_str) == nil` initially (no snapshot yet). Call `Kind.Server.destroy(uri, ctx)`. Assert: after destroy returns, `Repo.get(KindSnapshot, uri_str)` returns `nil` (NOT a non-nil row). Then separately: spawn the Kind again (re-register a fresh row first), and SEND a dispatch directly via `GenServer.call(pid, {:dispatch, inv})` AFTER manually `Users.delete(row)` — verifies the in-GenServer fence path. Assert: (a) the call returns `:no_backing_entity`; (b) `Repo.get(KindSnapshot, uri_str)` returns `nil` (the self-shutdown via `{:stop, :destroyed, state}` also skipped snapshot — terminate(:destroyed, _) arm). | `Kind.Server.terminate/2` missing the `:destroyed` arm — the existing `:on_terminate` snapshot write would re-create the just-deleted snapshot row, leaving a ghost snapshot AND the live Kind seeing fresh defaults on next re-spawn. |
 
 **Cannot pass with partial impl** — failure mappings:
 
@@ -937,7 +998,9 @@ Per `feedback_completion_requires_invariant_test`, this SPEC is "done" iff the t
 - Skip Workspace.destroy_db/2 advisory_xact_lock acquisition: INV-23 fails
 - Skip Workspace.add_member/2 advisory_xact_lock acquisition: INV-26 fails
 - Skip global URI-string lock ordering (§3.5.x): cascade destroys with overlapping members may deadlock — caught by integration test under load (no specific INV; documented as PR-B Credo lint rule)
-- Use cross-Kind Behavior dispatch (Chat.scrub_owner) instead of direct Repo.update_all in User.destroy_db: not caught by an INV directly, but a destroy_db rollback test would leave Session scrubbed → fails §3.12.a contract review
+- Use cross-Kind Behavior dispatch (Chat.scrub_owner) instead of read-site DB-backing defense (r11 B6''): no INV directly catches this for Chat/Publisher (the existing r1–r6 defense is already wired); for ExternalMirror, INV-16 fails because ExternalMirror.data_owner doesn't apply the defense by default — r11's PR-B fix is required.
+- Skip the `Kind.Server.terminate(:destroyed, _)` arm: INV-27 fails (snapshot row resurrected after destroy)
+- Skip `destroy_db_locks/2` callback: workspace destroys + user destroys that mutate workspaces deadlock under contention — caught by INV-23 + INV-26 under stress runs (no specific INV but the lock-ordering rule is violated)
 - Skip `Kind.Server.destroy/2` orchestrator: INV-1 + INV-10 fail
 - Skip Workspace.destroy_db/2 cascade: INV-14 fails
 - Skip Token.verify DB-backing check: INV-15 fails
@@ -1105,9 +1168,9 @@ Allen confirm.
 
 ---
 
-## §11 Codex adversarial review questions (r7+ history; r8/r9/r10 status noted)
+## §11 Codex adversarial review questions (r7+ history; r8/r9/r10/r11 status noted)
 
-> r10 closes 5 r9-REJECT findings (B1'' in-GenServer fence + B2'' WorkerSpawn entry + B6' direct cross-Kind writes + B7' Workspace.add_member lock + N3 audit result JSON) and the §3.5.x global lock-ordering deadlock concern. New attack surface for codex r10:
+> r11 closes 4 r10-REJECT findings (B6'' read-site defense vs fictitious SessionRow + B8 terminate-time snapshot suppression + B7'' canonical workspace URI + B7''' User locks workspaces) and one consistency issue (§3.12 stale ReadyGate refs). New attack surface for codex r11:
 
 1. **DB-backing check race (§3.6 step 4 race):** the entity callback reads `Users.get_by_uri(uri)` and decides to spawn. Concurrently, `Kind.Server.destroy(uri)` is at step 5 (terminate_child). Between the get_by_uri read and the spawn fn's eventual `Ezagent.Kind.spawn/2` call, the destroy commits step 6 (DB row delete). Does the spawn fn then load a snapshot for a Kind whose DB row is gone? Walk through the Repo transaction boundary in step 5+6+7. **r8 STATUS: addressed by reorder — DB delete (step 4b) is now BEFORE terminate_child (step 6). The "Kind dead + DB row alive" interleaving no longer exists. backing_check_fn at the TOP of SpawnRegistry.spawn/1 short-circuits before KindRegistry.lookup; INV-20 + INV-21 pin this.**
 
@@ -1166,17 +1229,29 @@ Allen confirm.
 
 24. **B1'' in-GenServer fence — `backing_check` runs on EVERY handle_call/handle_cast.** This adds a synchronous DB read to every dispatch (per Kind, per message). Walk performance: under realistic load (many dispatches per second per Kind), is the additional DB read a meaningful regression? Prepared-statement caching makes it fast (~50µs in-process), but if a Kind processes 1000 msg/s the overhead is 50ms/s. Is there a smarter strategy — e.g. cache the "row exists" answer in the Kind's process state, invalidated by a PubSub broadcast from `Kind.Server.destroy/2` step 8? The r10 design accepts the cost as bounded by the slow-path (only fires on the FIRST dispatch after destroy commit) but doesn't make that bound explicit.
 
-25. **In-GenServer fence + `terminate/2` semantics.** When `handle_call` returns `{:reply, _, state, {:continue, :shutdown_after_reply}}`, the GenServer replies, then runs `handle_continue`, then `{:stop, :normal, state}`. But `terminate/2` runs on `:normal` exit — does the Kind's `terminate/2` callback re-trigger `:on_terminate` snapshot writes? The destroy already deleted the snapshot row in step 3c; a `terminate/2` write would re-create it. Walk: is the Kind.Server's `terminate/2` aware of "we're shutting down because we lost our backing row, don't snapshot"? Need a state flag (`:destroyed_self_terminating` or similar) that suppresses snapshot in `terminate/2`.
+25. **In-GenServer fence + `terminate/2` semantics.** When `handle_call` returns `{:reply, _, state, {:continue, :shutdown_after_reply}}`, the GenServer replies, then runs `handle_continue`, then `{:stop, :normal, state}`. But `terminate/2` runs on `:normal` exit — does the Kind's `terminate/2` callback re-trigger `:on_terminate` snapshot writes? The destroy already deleted the snapshot row in step 3c; a `terminate/2` write would re-create it. Walk: is the Kind.Server's `terminate/2` aware of "we're shutting down because we lost our backing row, don't snapshot"? Need a state flag (`:destroyed_self_terminating` or similar) that suppresses snapshot in `terminate/2`. **r11 STATUS: addressed (B8) — Kind.Server.terminate(:destroyed, _) explicitly skips snapshot. In-GenServer fence uses `{:stop, :destroyed, state}` (not `:normal`). Orchestrator's step 6 uses `GenServer.stop(pid, :destroyed)`. INV-27 NEW.**
 
-26. **B6' direct Repo writes — Session in-memory slice cache invalidation.** `User.destroy_db` does `Repo.update_all` to scrub Session.owner_uri in the DB. The Session GenServer's `:chat` slice still has the old owner_uri cached. The codebase's existing read-site DB-backing defense (Users.get_by_uri at the read site) saves correctness, but the slice cache is now stale forever (until Session is restarted). Is the staleness harmless (all reads bypass to DB defense) OR are there code paths that read the slice directly without the DB defense? Grep `:chat slice` consumers.
+26. **B6' direct Repo writes — Session in-memory slice cache invalidation.** `User.destroy_db` does `Repo.update_all` to scrub Session.owner_uri in the DB. The Session GenServer's `:chat` slice still has the old owner_uri cached. The codebase's existing read-site DB-backing defense (Users.get_by_uri at the read site) saves correctness, but the slice cache is now stale forever (until Session is restarted). Is the staleness harmless (all reads bypass to DB defense) OR are there code paths that read the slice directly without the DB defense? Grep `:chat slice` consumers. **r11 STATUS: re-architected (B6'' grounded) — there is no SessionRow / sessions table in the codebase; r10's mechanism was fictitious. r11 drops the direct write entirely and relies on the read-site DB-backing defense at all three `data_owner/1` sites. ExternalMirror.data_owner was missing the defense — r11 PR-B adds it (closes the codex r10 gap).**
 
-27. **B7' Workspace.add_member — composed-operations atomicity.** r10's add_member: `Repo.transaction(fn -> advisory_lock; ensure_member_kind_spawned_at_facade; dispatch_mutation; Store.update_members end)`. The `ensure_member_kind_spawned_at_facade` calls `Kind.spawn/2` which calls `DynamicSupervisor.start_child` — that's a CROSS-PROCESS spawn that does NOT run inside the Repo transaction. If `dispatch_mutation` fails after the spawn, the transaction rolls back but the spawned Kind is left alive (with no caps and no membership recorded). Same class of bug as r8's q16 — cross-process side effects inside a "transactional" wrapper.
+27. **B7' Workspace.add_member — composed-operations atomicity.** r10's add_member: `Repo.transaction(fn -> advisory_lock; ensure_member_kind_spawned_at_facade; dispatch_mutation; Store.update_members end)`. The `ensure_member_kind_spawned_at_facade` calls `Kind.spawn/2` which calls `DynamicSupervisor.start_child` — that's a CROSS-PROCESS spawn that does NOT run inside the Repo transaction. If `dispatch_mutation` fails after the spawn, the transaction rolls back but the spawned Kind is left alive (with no caps and no membership recorded). Same class of bug as r8's q16 — cross-process side effects inside a "transactional" wrapper. **r11 STATUS: not introduced by r10/r11 — this is a pre-existing pattern in `Workspace.add_member`. r11 inherits it. Spawn-without-membership leak is bounded: the next dispatch to that spawned Kind will see no caps (caps come from membership) and reject; the Kind will eventually be terminated by snapshot-strategy + supervisor restart-intensity. Out of scope for SPEC #440 but documented for follow-up.**
 
 28. **Global lock ordering — workspace_uri vs member_uri lexicographic comparison.** §3.5.x sorts URI strings lexicographically. But `entity://user/foo/bar` and `entity://workspace/baz` sort by scheme+host, with `user` < `workspace`. For a workspace destroy of `entity://workspace/team` with members `entity://user/a` and `entity://user/z`, the sort gives `[entity://user/a, entity://user/z, entity://workspace/team]`. Locks acquired in that order. Concurrent destroy of `entity://user/a` (a different operator action) would acquire `[entity://user/a]` only. Workspace destroy waits on the user lock (already held by the concurrent user destroy). Acceptable serialization, no deadlock. But what if the user destroy ALSO cascades to other resources (e.g. revokes a workspace-scoped cap that touches the workspace row's caps_json)? Does the user destroy need the workspace lock too? Trace dependencies.
 
 29. **`Kind.Server.with_locks/2` helper — savepoint semantics.** §3.5.x's helper acquires multiple advisory locks in sorted order then invokes `fun`. If `fun` itself opens a nested `Repo.transaction/1` (savepoint), the advisory locks stay held by the OUTER transaction. Releasing on rollback of an inner savepoint — does Postgres release inner-savepoint-acquired advisory locks? Per Postgres docs: `pg_advisory_xact_lock` is released ONLY on transaction COMMIT or ROLLBACK; savepoint rollback does NOT release them. r10's recursive cascade depends on this — each nested member destroy uses the outer transaction's already-held locks. Verify.
 
-30. **Direct Repo.update_all in destroy_db — Ecto changeset bypass.** `User.destroy_db` does `Repo.update_all(from s in SessionRow, set: [owner_uri: nil])` directly, bypassing the SessionRow changeset (which may have validations or callbacks). Is that safe? `owner_uri = nil` may be a constraint violation (e.g. session_owner NOT NULL). Verify the SessionRow schema's nullability.
+30. **Direct Repo.update_all in destroy_db — Ecto changeset bypass.** `User.destroy_db` does `Repo.update_all(from s in SessionRow, set: [owner_uri: nil])` directly, bypassing the SessionRow changeset (which may have validations or callbacks). Is that safe? `owner_uri = nil` may be a constraint violation (e.g. session_owner NOT NULL). Verify the SessionRow schema's nullability. **r11 STATUS: moot — there is no SessionRow schema. r11 drops the direct write entirely (see q26 r11 status).**
+
+### §11.r11 — new attack surface introduced by r11
+
+31. **B6'' read-site defense — race between slice cache and Users.get_by_uri.** Under READ COMMITTED, a dispatch reads the slice (in-memory, no DB), gets `owner_uri = some_user`, then reads `Users.get_by_uri(owner_uri)` — sees nil (User just destroyed) → returns `:no_owner`. But what if the user was destroyed AFTER the slice was read but BEFORE the DB-backing check? The dispatch returns `:no_owner` correctly. Reverse: user destroyed BEFORE the slice read, slice still cached the old owner_uri — DB check returns nil → `:no_owner`. Either order: correct. Verify there's NO code path that reads the slice's owner_uri WITHOUT the Users.get_by_uri check (grep for `:chat slice` consumers beyond Chat / Publisher / ExternalMirror).
+
+32. **B8 terminate(:destroyed, _) — `GenServer.stop(pid, :destroyed)` vs `DynamicSupervisor.terminate_child`.** `DynamicSupervisor.terminate_child/2` uses `:shutdown` as the reason and does NOT support a custom reason. To pass `:destroyed`, the orchestrator must use `GenServer.stop(pid, :destroyed, timeout)` directly. But `GenServer.stop` doesn't go through the supervisor — does it bypass the supervisor's shutdown order / linking? Walk: when `GenServer.stop` is called on a child of a `DynamicSupervisor`, the supervisor receives the EXIT signal as normal child death; does the supervisor try to restart it? `DynamicSupervisor` with `restart: :transient` does NOT restart on `:normal` or `:shutdown` exits, but `:destroyed` is a custom reason — does transient restart fire? Need to verify the `restart_strategy` semantics for custom reasons.
+
+33. **B7''' destroy_db_locks must enumerate ALL workspaces — list query inside the orchestrator BEFORE the transaction.** `destroy_db_locks(user_uri, _ctx)` returns `[user_uri | workspaces_containing(user_uri)]`. The `workspaces_containing` query reads the DB. Between this read and the transaction's lock acquisition, a concurrent `Workspace.add_member` could add the user to a NEW workspace. The lock list would be stale; the new workspace wouldn't be locked. `User.destroy_db`'s subsequent `Workspaces.list_workspaces_containing(user_uri)` (called inside the transaction) would return the FRESH list, including the new workspace — but the new workspace's lock was never acquired. Repercussion: violates the §3.5.x lock-ordering rule. Mitigation: either acquire a "user lock" first (covers all the user's workspace memberships transitively — but membership is not a 1:1 relationship), OR re-compute the workspace list inside the transaction with a `SELECT FOR UPDATE` semantic (the Postgres row lock on the workspace rows themselves would serialize the add). Walk the consistency story.
+
+34. **B6'' three-site coverage assertion (INV-16b).** The r11 fix adds the DB-backing defense to `ExternalMirror.data_owner/1`. Are there other consumers of the `:chat` slice's `owner_uri` (or any cached User URI from another slice) that haven't been audited? grep for `slice.owner_uri` AND `Map.get(slice, :owner_uri)` AND `%{owner_uri:` consumers.
+
+35. **No SessionRow schema means User.destroy_db doesn't need a Session lock — but does Workspace destroy?** Workspace destroy cascades to its session_uris (workspace.destroy_db's `:cascade_session_destroys` step). Those Session Kinds are spawned/destroyed via Kind.Server.destroy. Each Session destroy adds the session_uri to the parent workspace's lock list (via destroy_db_locks). Verify the lock list includes Session URIs.
 
 ---
 
@@ -1210,18 +1285,20 @@ Kind.Server.destroy(target_uri, %{caller, reason})
   ▼ step 1: kind.can_destroy?(target_uri, ctx) → :ok or :precheck_failed
   ▼ step 2: generate trace_id
   │
-  ▼ step 3 — Repo.transaction (atomic; r10 ordering)
-  │     step 3a: with_locks(sorted [target_uri | cascade_uris], fn ->
-  │               # Repo.advisory_xact_lock("kind:#{uri_str}") per URI
-  │               # in alphabetical order — r10 B7' global ordering rule
+  ▼ step 3 — Repo.transaction (atomic; r11 ordering)
+  │     step 3a: lock_uris = kind.destroy_db_locks(target_uri, ctx)
+  │             with_locks(sorted lock_uris, fn ->
+  │               # Repo.advisory_xact_lock("kind:#{URI.to_string(uri)}") per URI
+  │               # in alphabetical order — r11 B7''' global ordering rule
   │     step 3b: kind.destroy_db(target_uri, ctx_with_trace)
   │             — User: revoke_all_caps / drop bindings / drop memberships
-  │                     / DIRECT Repo.update_all on SessionRow (r10 B6')
+  │                     (no session-row scrub — r11 B6'' grounded: no SessionRow
+  │                      table; read-site defense at consumers handles staleness)
   │             — Agent: revoke tokens / drop memberships / scrub routing rules
   │             — Workspace: re-read members from DB + recurse
   │                          Kind.Server.destroy each (B7)             [INV-23]
   │             — Worker: drop external_mirror_bindings (worker_uri column)
-  │             — Session: drop session_members
+  │             — Session: drop session_members (in-memory only — no DB writes)
   │             RAISES on failure → transaction rolls back atomically
   │     step 3c: Repo.delete(KindSnapshot, target_uri_str)             [idempotent]
   │     step 3d: kind.delete_db_row(target_uri)
@@ -1243,14 +1320,17 @@ Kind.Server.destroy(target_uri, %{caller, reason})
   │     {:ok, pid} → step 6
   │     :error → skip step 6 (Kind wasn't alive)
   │
-  ▼ step 6: DynamicSupervisor.terminate_child(supervisor, pid)
-  │     (graceful — runs Kind's terminate/2 if any)
-  │     NOTE: at this point both fences hold (r10):
+  ▼ step 6: GenServer.stop(pid, :destroyed) — r11 B8
+  │     Kind.Server.terminate(:destroyed, _state) → :ok    [INV-27]
+  │     (skips :on_terminate snapshot persistence that would
+  │      resurrect the just-deleted snapshot row)
+  │     NOTE: at this point both fences hold (r10/r11):
   │       Spawn:    Kind.spawn/2 + WorkerSpawn.spawn/4 → backing_check
   │                 → false → :no_backing_entity
   │       Dispatch: in-flight messages reach Kind.Server.handle_call/cast
   │                 → backing_check(state.uri) → false
-  │                 → reply :no_backing_entity + {:stop, :normal, state}
+  │                 → reply :no_backing_entity + {:stop, :destroyed, state}
+  │                 → terminate(:destroyed, _) → skip snapshot
   │
   ▼ step 7: kind.destroy_runtime(target_uri, ctx)   [outside transaction]
   │     - Agent: AgentBridge.Adapter.teardown / sidecar / per-agent dir
@@ -1317,14 +1397,14 @@ Kind.Server.destroy("entity://user/typo/no_such_user", ctx)
 
 ## Appendix B — Why this SPEC is shorter than r6
 
-r6 was 985 lines. r10 ≈ 120% of r6: each revision added rigor on top of the prior. r7 removed the tombstone artifact entirely; r8 added race/idempotency/inventory rigor; r9 added dispatch fence + universal Kind.spawn check + destroy_db/destroy_runtime split + existence precheck + workspace advisory lock; r10 replaced the ETS-based dispatch fence with an in-GenServer check, replaced cross-Kind Behavior dispatch with direct Repo writes, added the WorkerSpawn bypass fix, added Workspace.add_member lock, and defined global advisory-lock ordering. What remains: the `Kind` callback contract (4 callbacks: backing_check + destroy_db + destroy_runtime + can_destroy?, ~40 lines), the `Kind.Server.destroy/2` orchestration (~150 lines under r10's atomic-transaction + lock-ordering + in-GenServer-fence detail), the per-Kind callback tables (preserved from r6 and split per r9, ~120 lines), the AgentBridge.Adapter.teardown extension (~10 lines), the Kind.spawn/2 + WorkerSpawn.spawn/4 + Kind.Server.handle_call/cast extensions (~40 lines, r10), the **INV table (26 entries — INV-1 through INV-26, ~75 lines)**, the OQ list (6 entries, ~30 lines).
+r6 was 985 lines. r11 ≈ 130% of r6: each revision added rigor on top of the prior. r7 removed the tombstone artifact entirely; r8 added race/idempotency/inventory rigor; r9 added dispatch fence + universal Kind.spawn check + destroy_db/destroy_runtime split + existence precheck + workspace advisory lock; r10 replaced the ETS-based dispatch fence with an in-GenServer check, attempted cross-Kind Behavior dispatch removal via direct Repo writes (later revealed by codex r10 to target a non-existent schema), added the WorkerSpawn bypass fix, added Workspace.add_member lock, and defined global advisory-lock ordering; r11 grounded the cross-Kind cleanup in the actual codebase (read-site DB-backing defense at three consumers instead of direct DB writes to a fictitious SessionRow), added terminate-time snapshot suppression for destroy-induced shutdowns, corrected workspace lock URI to the canonical form, and added the `destroy_db_locks/2` callback for orchestrator pre-transaction lock acquisition. What remains: the `Kind` callback contract (5 callbacks: backing_check + destroy_db + destroy_runtime + destroy_db_locks + can_destroy?, ~50 lines), the `Kind.Server.destroy/2` orchestration (~160 lines under r11's atomic-transaction + lock-ordering + in-GenServer-fence + destroyed-terminate detail), the per-Kind callback tables (preserved from r6 and split per r9, ~120 lines), the AgentBridge.Adapter.teardown extension (~10 lines), the Kind.spawn/2 + WorkerSpawn.spawn/4 + Kind.Server.handle_call/cast + Kind.Server.terminate(:destroyed) extensions (~50 lines, r10/r11), the ExternalMirror.data_owner DB-backing defense addition (~5 lines, r11), the **INV table (27 entries — INV-1 through INV-27, ~80 lines)**, the OQ list (6 entries, ~30 lines).
 
 ## Appendix C — Author's recommendation
 
-Land PR-A (this SPEC) → PR-B (core: Kind contract — backing_check + destroy_db + destroy_runtime + can_destroy? + Kind.Server.destroy + Kind.spawn universal backing check + **WorkerSpawn.spawn entry-level backing check** + **Kind.Server.handle_call/cast in-GenServer dispatch fence** + **Workspace.add_member advisory lock** + **global URI-string lock ordering helper** + AgentBridge.Adapter.teardown). PR-C (per-Kind destroy impls — 11 Kinds + 6 Templates per B5 full inventory) follows immediately because the callback contract is REQUIRED (per OQ-NEW recommendation (a)); PR-D (plugin bridge teardown impls) can land parallel to PR-C; PR-E (LV UI + CLI) lands last.
+Land PR-A (this SPEC) → PR-B (core: Kind contract — backing_check + destroy_db + destroy_runtime + destroy_db_locks + can_destroy? + Kind.Server.destroy + Kind.spawn universal backing check + WorkerSpawn.spawn entry-level backing check + Kind.Server.handle_call/cast in-GenServer dispatch fence + **Kind.Server.terminate(:destroyed) snapshot-skip arm** + Workspace.add_member advisory lock + global URI-string lock ordering helper + **ExternalMirror.data_owner DB-backing defense** + AgentBridge.Adapter.teardown). PR-C (per-Kind destroy impls — 11 Kinds + 6 Templates per B5 full inventory) follows immediately because the callback contract is REQUIRED (per OQ-NEW recommendation (a)); PR-D (plugin bridge teardown impls) can land parallel to PR-C; PR-E (LV UI + CLI) lands last.
 
-The `system/linyilun` ghost — surfaced 2026-05-28 — is the empirical motivation, but the structural fix is broader: every Kind gains a clean lifecycle CRUD parity, re-register at a destroyed URI works naturally because the DB row is the source of truth, concurrent destroy is idempotent (`{:ok, :already_destroyed}` for the loser), typo'd URIs return a clear `{:error, :not_found}`, cross-Kind cleanup is atomic via direct Repo writes inside a single transaction (no cross-process dispatch boundaries that break atomicity), and the dispatch fence lives inside the Kind's own GenServer (single source of truth — no ETS state to revert, no rollback race). The architectural goal Allen articulated (2026-05-28 03:43) is met: "all Kinds should have complete CRUD".
+The `system/linyilun` ghost — surfaced 2026-05-28 — is the empirical motivation, but the structural fix is broader: every Kind gains a clean lifecycle CRUD parity, re-register at a destroyed URI works naturally because the DB row is the source of truth, concurrent destroy is idempotent (`{:ok, :already_destroyed}` for the loser), typo'd URIs return a clear `{:error, :not_found}`, cross-Kind cleanup uses the read-site DB-backing defense (no cross-process dispatch; no fictitious DB schemas), the dispatch fence lives inside the Kind's own GenServer (single source of truth), and the destroy-induced shutdown skips the snapshot persistence that would otherwise resurrect the just-deleted row. The architectural goal Allen articulated (2026-05-28 03:43) is met: "all Kinds should have complete CRUD".
 
-INV-1 through INV-26 (26 invariants total) are the merge gates: a passing test suite proves the design's claims; a partial impl is structurally unable to pass.
+INV-1 through INV-27 (27 invariants total) are the merge gates: a passing test suite proves the design's claims; a partial impl is structurally unable to pass.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
