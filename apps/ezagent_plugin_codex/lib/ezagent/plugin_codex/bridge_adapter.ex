@@ -83,15 +83,21 @@ defmodule EzagentPluginCodex.BridgeAdapter do
     # already applied to `EzagentPluginCc.BridgeAdapter` (cc and codex
     # bridges share a contract: client supplies raw strings, plugin
     # canonicalizes at the boundary).
-    ref_uri =
+    #
+    # `ref` is the opaque 16-hex message id from the codex bridge sidecar
+    # (per SPEC v2 §5.13 — message ids are plain UUIDs, NOT URIs). It
+    # threads through as `:ref_id` (string) on `Message.new/3`; the
+    # `:ref` keyword used by the pre-#438 code was silently dropped
+    # (not a valid opt on `Message.new/3`).
+    ref_id =
       case ref do
         nil -> nil
         "" -> nil
-        s when is_binary(s) -> Ezagent.URI.parse!(s)
+        s when is_binary(s) -> s
       end
 
     body = %{text: text, attachments: normalize_attachments(attachments)}
-    msg = Ezagent.Message.new(agent_uri, body, ref: ref_uri)
+    msg = Ezagent.Message.new(agent_uri, body, ref_id: ref_id)
 
     for session_uri_str <- sessions do
       session_uri = Ezagent.URI.parse!(session_uri_str)

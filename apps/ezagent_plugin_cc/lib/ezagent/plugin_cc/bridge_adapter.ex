@@ -141,15 +141,24 @@ defmodule EzagentPluginCc.BridgeAdapter do
              skipped: [String.t()]
            }}
   def dispatch_reply(agent_uri, sessions, text, ref, attachments) do
-    ref_uri =
+    # `ref` is the opaque 16-hex message id from the cc bridge sidecar
+    # (per SPEC v2 §5.13 — message ids are plain UUIDs, NOT URIs). The
+    # pre-#438 code wrapped it in `URI.new!/1` and passed `ref:` to
+    # `Message.new/3`, but `Message.new/3` only accepts `:ref_id`
+    # (string), not `:ref` — so the URI was silently dropped. The
+    # #438 sweep over-tightened `URI.new!/1` → `Ezagent.URI.parse!/1`
+    # and exposed the dead-end path by crashing on the bare hex id.
+    # Fix: thread the id through as `:ref_id` (string), as the schema
+    # requires. No URI parsing involved.
+    ref_id =
       case ref do
         nil -> nil
         "" -> nil
-        s when is_binary(s) -> Ezagent.URI.parse!(s)
+        s when is_binary(s) -> s
       end
 
     body = %{text: text, attachments: normalize_attachments(attachments)}
-    msg = Ezagent.Message.new(agent_uri, body, ref: ref_uri)
+    msg = Ezagent.Message.new(agent_uri, body, ref_id: ref_id)
 
     classified =
       Enum.map(sessions, fn session_uri_str ->
