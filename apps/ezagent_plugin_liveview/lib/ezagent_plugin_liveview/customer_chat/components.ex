@@ -48,21 +48,25 @@ defmodule EzagentPluginLiveview.CustomerChat.Components do
   attr :row, :map, required: true
 
   def bubble(assigns) do
+    # Single root element (Phoenix function-component idiom). One of the
+    # two inner branches renders depending on @row.notice?.
     ~H"""
-    <div :if={@row.notice?} class="text-center my-3">
-      <span class="inline-block text-xs px-3 py-1 rounded-full bg-amber-100 text-amber-800">
+    <div class="contents">
+      <div :if={@row.notice?} class="text-center my-3">
+        <span class="inline-block text-xs px-3 py-1 rounded-full bg-amber-100 text-amber-800">
+          {@row.text}
+        </span>
+      </div>
+      <div :if={!@row.notice?} class={[
+        "max-w-[80%] px-3 py-2 rounded-2xl text-sm whitespace-pre-wrap break-words mb-2",
+        @row.kind == :customer && "ml-auto bg-[var(--cc-primary)] text-white",
+        @row.kind == :agent && "mr-auto bg-zinc-100 text-zinc-900",
+        @row.kind == :operator && "mr-auto bg-emerald-100 text-emerald-900",
+        @row.kind == :other && "mr-auto bg-zinc-50 text-zinc-600"
+      ]}>
+        <div :if={@row.kind == :operator} class="text-[10px] text-emerald-700 mb-0.5">客服</div>
         {@row.text}
-      </span>
-    </div>
-    <div :if={!@row.notice?} class={[
-      "max-w-[80%] px-3 py-2 rounded-2xl text-sm whitespace-pre-wrap break-words mb-2",
-      @row.kind == :customer && "ml-auto bg-[var(--cc-primary)] text-white",
-      @row.kind == :agent && "mr-auto bg-zinc-100 text-zinc-900",
-      @row.kind == :operator && "mr-auto bg-emerald-100 text-emerald-900",
-      @row.kind == :other && "mr-auto bg-zinc-50 text-zinc-600"
-    ]}>
-      <div :if={@row.kind == :operator} class="text-[10px] text-emerald-700 mb-0.5">客服</div>
-      {@row.text}
+      </div>
     </div>
     """
   end
@@ -86,6 +90,7 @@ defmodule EzagentPluginLiveview.CustomerChat.Components do
 
   attr :form, :any, required: true
   attr :placeholder, :string, required: true
+  attr :disabled, :boolean, default: false
 
   def composer(assigns) do
     ~H"""
@@ -95,10 +100,11 @@ defmodule EzagentPluginLiveview.CustomerChat.Components do
         name="chat[text]"
         id="cc-input"
         autocomplete="off"
+        disabled={@disabled}
         placeholder={@placeholder}
-        class="flex-1 px-3 py-2 text-sm border border-zinc-300 rounded-full focus:outline-none focus:ring-2 focus:ring-[var(--cc-primary)]"
+        class="flex-1 px-3 py-2 text-sm border border-zinc-300 rounded-full focus:outline-none focus:ring-2 focus:ring-[var(--cc-primary)] disabled:bg-zinc-100 disabled:cursor-not-allowed"
       />
-      <button type="submit" class="px-4 py-2 text-sm rounded-full text-white bg-[var(--cc-primary)]">
+      <button type="submit" disabled={@disabled} class="px-4 py-2 text-sm rounded-full text-white bg-[var(--cc-primary)] disabled:opacity-50 disabled:cursor-not-allowed">
         Send
       </button>
     </.form>
