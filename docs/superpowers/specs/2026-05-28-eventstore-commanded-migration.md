@@ -1,6 +1,6 @@
 # SPEC — Ezagent state model migration to EventStore + Commanded (CQRS / event-sourcing)
 
-**Status:** r7 — **§1.5.7 added; verdict = Option B'' (native consolidation)**. Allen's directive 2026-05-28 09:33: ezagent has been DIY-implementing the event-sourcing primitives organically for 9 months (invocations table = event log; kind_snapshots = aggregate snapshots; Behavior.invoke = combined execute+apply; ExternalMirror.BootReconciler = state recovery; Persistence + slice policy = snapshot policy) — just never **named** them as ES primitives. §1.5.7 formalizes what's there + adds the missing 30%, informed by Commanded's design lessons + CQRS principles. New top recommendation: **Option B'' — native consolidation**, ~880 LOC across 5 internal modules (`EventLog`, `SnapshotStore`, `StateRebuilder`, `SagaRunner`, `EventSubscriber`), ~2-3 weeks. Option B (Sage + ex_audit + Oban) remains as first fallback if B'' design fails; Option A (Commanded full migration) is second fallback if replay (P5) enters the 6-month horizon. B'' is **pro-future-Commanded**: by naming the abstractions correctly now, the eventual migration to Commanded shrinks from ~10-12 weeks (Option B) to ~4-6 weeks (swap 3-4 internal modules). Previous r6 verdict (CONDITIONAL Option B) is downgraded to first-fallback. The prior r4-FINAL status (4-round codex budget exhaustion, 7 carry-over limitations) still applies to §2-§12 if Option A is ever revisited. 2026-05-28.
+**Status:** r7 — **§1.5.7 added + codex-r1-reviewed; verdict = Option B'' (native consolidation)**. Allen's directive 2026-05-28 09:33: ezagent has been DIY-implementing the event-sourcing primitives organically for 9 months (invocations table = event log; kind_snapshots = aggregate snapshots; Behavior.invoke = combined execute+apply; ExternalMirror.BootReconciler = state recovery; Persistence + slice policy = snapshot policy) — just never **named** them as ES primitives. §1.5.7 formalizes what's there + adds the missing 30%, informed by Commanded's design lessons + CQRS principles. New top recommendation: **Option B'' — native consolidation**, ~880 LOC across 5 internal modules (`EventLog`, `SnapshotStore`, `StateRebuilder`, `SagaRunner`, `EventSubscriber`), ~2-3 weeks. Option B (Sage + ex_audit + Oban) remains as first fallback if B'' design fails; Option A (Commanded full migration) is second fallback if replay (P5) enters the 6-month horizon. B'' is **pro-future-Commanded**: by naming the abstractions correctly now, the eventual migration to Commanded shrinks from ~10-12 weeks (Option B) to ~6-14 weeks (r7-honest range per §1.5.7.5(e); floor depends on saga inventory + Kinds opted in). Codex r1 review on §1.5.7 returned REJECT with 3 HIGH + 2 MED + 1 LOW; all 6 addressed inline (synthetic-event replay-safety honesty, User Kind replay readiness checklist, SagaRunner-PM 1:1 claim downgraded, EventLog ordering tie-breaker, EventSubscriber partition mode pulled to Phase 2, audit args/result population gap acknowledged). Previous r6 verdict (CONDITIONAL Option B) is downgraded to first-fallback. The prior r4-FINAL status (4-round codex budget exhaustion, 7 carry-over limitations) still applies to §2-§12 if Option A is ever revisited. 2026-05-28.
 
 ## r7 changelog (delta from r6)
 
@@ -21,6 +21,18 @@ Allen's directive 2026-05-28 09:33 — "ezagent has been doing event sourcing or
 §1.5.1-§1.5.4 (alternatives table + library risk + per-scenario deep-dives) UNCHANGED — they describe Option B's evidence, which still stands as the first-fallback rationale.
 
 §2-§12 (Commanded full-migration material) UNCHANGED — retained for the second-fallback scenario.
+
+**r7 codex r1 review (2026-05-28, after initial r7 commit 2816befd)** — adversarial review on §1.5.7 returned **REJECT — 3 HIGH + 2 MED + 1 LOW**. All 6 findings addressed inline; §1.5.7 expanded ~200 lines.
+
+- **HIGH-1 — Legacy `invoke/4` synthetic events not replay-safe (§1.5.7.2.b)**. Initial draft treated `%SliceMutated{}` synthetic events as a viable fallback path including for replay. Codex traced `Behavior.Chat.invoke(:send)` (`chat.ex:297-370, 408-414`) and showed `MessageStore.write` + PubSub broadcast + recipient dispatch happen alongside slice mutation — none reconstructible from slice diff alone. **Fix**: §1.5.7.2.b rewritten — `%SliceMutated{}` is explicitly audit/notification/cross-Kind-trigger only; events-as-truth opt-in requires the atomic triplet (`events_for/4` + `apply_event/2` + `effects/2`) per Behavior; legacy Behaviors are EXCLUDED from replay until the triplet ships.
+- **HIGH-2 — User Kind replay path was theoretical (§1.5.7.5(b))**. Initial draft said "first Kind needs replay → that Kind implements events_for/4 + apply_event/2 on each Behavior, ~2-3 weeks". Codex pulled the actual User Kind inventory (`Identity`, `UserCredentials`, `UserTokens`, `IdentityAdmin` per `user.ex:226-231` + `application.ex:271-284`) and showed `UserCredentials.invoke(:set_password)` does bcrypt + `users.password_hash` DB write, `UserTokens.invoke(:mint_token)` does bcrypt + `entity_tokens` INSERT, `UserTokens.invoke(:revoke_token)` does pre-read + DELETE — these are NOT pure slice folds. **Fix**: §1.5.7.5(b) rewritten with per-Behavior replay-readiness assessment + concrete `effects/2` extraction plan + revised ~3-4 weeks per-Kind cost.
+- **HIGH-3 — SagaRunner ↔ Commanded PM "1:1" overclaim (§1.5.7.5(e))**. Initial draft said B'' → Commanded migration was "~4-6 weeks (swap 3-4 internal modules)" with SagaRunner mapping "1:1 to Commanded PM". Codex correctly flagged: PM is stateful (3 callbacks: `interested?/1` + `handle/2` + `apply/2` + correlation-id PM-state-per-instance); SagaRunner is stateless (2 functions, closures). Not 1:1. **Fix**: §1.5.7.5(e) rewritten with honest per-component breakdown — `EventLog`/`SnapshotStore`/`EventSubscriber` are near-1:1 wraps (~1 week each); `SagaRunner` → PM requires translation (~3-4 weeks per non-trivial saga + extra for cross-call workflows); slice-per-Behavior → single-aggregate-state requires fusion or split decision. Revised total: ~6-14 weeks range. The comparison table row + §1.5.7.7 recommendation #3 updated to match.
+- **MED-4 — EventLog ordering tie-breaker (§1.5.7.4 #1)**. Initial draft ordered `stream_by_aggregate/2` by `inserted_at` only; under same-microsecond collisions order is unstable. **Fix**: ordering contract added — `(inserted_at ASC, id ASC)` using existing `invocations.id` integer primary key as tie-breaker; cursor pagination uses the pair.
+- **MED-5 — EventSubscriber partition mode under-specified (§1.5.7.4 #5)**. Initial draft included `{:partition, key}` return shape from `interested?/1` without lifecycle/GC/ordering/restart contract. **Fix**: partition mode pulled out of v1 callback return type; v1 returns `boolean` only; partition mode lands in Phase 2 with explicit contract for (i) ownership, (ii) per-key ordering, (iii) crash replay, (iv) GC, (v) duplicate-handler protection.
+- **LOW-6 — Audit args/result not populated today (§1.5.7.1, §1.5.7.2.a)**. SPEC implied every `invocations` row has args + result JSON; current `Audit.Writer` (`audit.ex:93-116`) only populates these on failure paths, not on successful dispatches. **Fix**: §1.5.7.1 acknowledges the gap; B'' commits to extending `Audit.Writer` to capture full args + result via the EventLog naming companion SPEC; the "more SQL-queryable than Commanded" comparison narrowed to apply after args/result populated.
+- **Bonus correction — slice-per-Behavior vs single-aggregate-state (§1.5.7.1)**. Codex implicitly flagged that ezagent Kinds host multiple Behaviors per Kind, fundamentally different from Commanded's single-aggregate-state. **Fix**: §1.5.7.1 adds an explicit acknowledged-asymmetry paragraph — slice-per-Behavior is genuinely different; B'' does NOT pretend 1:1; future Commanded migration must decide fuse-vs-split per Kind.
+
+The revised verdict (Option B'' primary, Option B first fallback, Option A second fallback) is **unchanged** after codex r1 — the findings were structural-honesty fixes, not verdict-flips.
 
 ## r6 changelog (delta from r5)
 
@@ -521,7 +533,13 @@ This subsection corrects a structural mis-framing in §1.3 (acknowledged below i
 | Pre-dispatch pipeline | `Ezagent.Kind.Runtime.handle_dispatch/4` — authz (5.5), workspace isolation (5.6), arg validation, then `invoke/4`, then post-commit slice-change emit | `apps/ezagent_core/lib/ezagent/kind/runtime.ex:70` |
 | Idempotency token | `Ezagent.Idempotency` per `Invocation.dispatch/1` step 1 | `apps/ezagent_core/lib/ezagent/idempotency.ex` |
 
-**Correction to §1.3.** The `invocations` table IS an append-only event log; it is **more SQL-queryable than Commanded's `eventstore` schema** because every row carries `(caller, target, action, args, result)` as denormalized columns plus a structured `args` / `result` JSON. The §1.3 framing ("audit table is a side-channel telemetry recording, NOT the source of truth") is half right (the SLICE is currently the source of truth, not the audit row) and half wrong (the audit row IS the event log in shape; it just isn't replayed). The honest gap is "ezagent does not REPLAY events to rebuild aggregate state"; not "ezagent has no event log".
+**Correction to §1.3.** The `invocations` table IS an append-only event log; it has **denormalized dispatch columns `(caller, target, action)` that are more SQL-ergonomic than Commanded's `eventstore` schema** (Commanded's `events` table is keyed `(stream_id, stream_version, event_type, data jsonb, metadata jsonb, created_at)`; caller/target/action would have to be extracted from `data` JSON via `jsonb_path` queries). The §1.3 framing ("audit table is a side-channel telemetry recording, NOT the source of truth") is half right (the SLICE is currently the source of truth, not the audit row) and half wrong (the audit row IS the event log in shape; it just isn't replayed).
+
+**Honest acknowledgment (codex r7 LOW-6 closure, 2026-05-28)**: the `args` and `result` columns exist in the schema (`apps/ezagent_core/priv/repo/migrations/20260515160000_phase1_audit_dlq_snapshots.exs:11,13`) but the **current `Audit.Writer` does NOT populate them on successful invocations** (`apps/ezagent_core/lib/ezagent/audit.ex:93-116` — only failure / error paths populate these). The table TODAY is "structured tuple of dispatch metadata"; calling it a complete domain-event payload overstates current shape. B'' commits to extending `Audit.Writer` / `EventLog.append/1` to capture full args + result for every dispatch as part of the SnapshotStore/EventLog naming SPECs (companion §1.5.6 list). The "more SQL-queryable than Commanded" comparison applies **after** the args/result are populated; today it's a shape advantage on caller/target/action only.
+
+The honest gap is "ezagent does not REPLAY events to rebuild aggregate state" + "ezagent doesn't persist full command/result payloads in its event log YET"; not "ezagent has no event log".
+
+**Acknowledged asymmetry (codex r7 — slice-per-Behavior vs single-aggregate-state)**: Commanded aggregates are SINGLE-MODULE — one struct + one `execute/2` + one `apply/2`. ezagent Kinds host MULTIPLE Behaviors per Kind (User registers Identity + UserCredentials + UserTokens + IdentityAdmin per `apps/ezagent_domain_identity/lib/ezagent/entity/user.ex:226-231` + `application.ex:271-284`). State is a map keyed by `behavior.state_slice()` — each Behavior owns ITS slice; cross-Behavior reads require an explicit `reads_sibling_slices/0` declaration. **The slice-per-Behavior model is a genuinely different aggregation model from Commanded's single-struct aggregate.** B'' does NOT pretend these are 1:1: when a Kind opts into events-as-truth, EVERY Behavior on the Kind must implement the CQRS triplet (§1.5.7.2.b) — i.e. the Kind's aggregate becomes a TUPLE of per-Behavior aggregates, with `apply_event/2` dispatched by event-type to the owning Behavior. A future Commanded migration must fuse these into one aggregate state struct OR split the Kind into multiple Commanded aggregates (one per Behavior); the SPEC does not pre-commit which. The B'' design preserves both options.
 
 What's NOT yet there (the missing 30%):
 
@@ -538,7 +556,7 @@ Each row tracks one ES concept across three columns: what ezagent has today (wit
 
 ##### a. Event log / EventStore
 
-- **ezagent today** — `invocations` table (`apps/ezagent_core/priv/repo/migrations/20260515160000_phase1_audit_dlq_snapshots.exs:6`), SQLite. `Audit.Writer` flushes 100ms-batched via telemetry on `[:ezagent, :invoke, :stop]`. Append-only (no UPDATE/DELETE in current code). Indexed on `(inserted_at)` and `(target, inserted_at)`. Stream-by-aggregate would be `WHERE target LIKE 'entity://agent/myws/X%' ORDER BY inserted_at` (works today; just hasn't been named as such).
+- **ezagent today** — `invocations` table (`apps/ezagent_core/priv/repo/migrations/20260515160000_phase1_audit_dlq_snapshots.exs:6`), SQLite. `Audit.Writer` flushes 100ms-batched via telemetry on `[:ezagent, :invoke, :stop]`. Append-only (no UPDATE/DELETE in current code). Indexed on `(inserted_at)` and `(target, inserted_at)`. Stream-by-aggregate would be `WHERE target = ^uri_str ORDER BY inserted_at, id` (works today; just hasn't been named as such — and `args` + `result` columns exist but are not populated for successful dispatches today; codex r7 LOW-6 correction below).
 - **Commanded** — `commanded_eventstore_adapter` writes to PostgreSQL `events` table. Stream identity = `<identity_prefix><aggregate_uuid>`. Append is per-stream with optimistic-concurrency-check (expected_version). Per the docs: "an open-source event store using PostgreSQL for persistence."
 - **B'' design** — `Ezagent.EventLog` module wraps the existing `invocations` table. Public API:
   ```
@@ -560,12 +578,12 @@ Each row tracks one ES concept across three columns: what ezagent has today (wit
   def apply(%BankAccount{} = acct, %MoneyWithdrawn{new_balance: nb}),
     do: %{acct | balance: nb}
   ```
-- **B'' design** — DON'T require this split for every Behavior on day-1; that's a breaking change to 24 modules. Instead, **make the split the future extension shape**:
-  1. v1 keeps `Behavior.invoke/4` as-is. Internally, `Kind.Runtime.handle_dispatch/4` wraps each successful invoke as a **synthetic event** `%SliceMutated{kind_module, action, args, old_slice, new_slice, caller, at}` and appends to `EventLog`. This is what the slice-change cursor (line 110) already half-implements.
-  2. New optional Behavior callback `events_for/4` — if a Behavior implements it, the synthetic-event fallback is replaced with the Behavior-emitted list. Signature: `events_for(action, slice, args, ctx) :: [%Event{}]`. The Behavior also gains `apply_event/2 :: new_slice`. Both default-implemented in the `@behaviour` for backwards compat (default = wrap-via-synthetic-event).
-  3. Per-Kind opt-in: a Kind that wants events-as-truth declares its Behaviors implement `events_for/4` + `apply_event/2`, gains a `:replay_enabled` flag in `persistence/0`. Replay rebuilds slice via `EventLog.stream_by_aggregate + Enum.reduce(events, init_slice, &apply_event/2)`.
+- **B'' design** — DON'T require this split for every Behavior on day-1; that's a breaking change to 24 modules. Instead, **make the split the future extension shape**, and be **explicit that legacy `invoke/4` Behaviors are excluded from events-as-truth replay**:
+  1. v1 keeps `Behavior.invoke/4` as-is. Internally, `Kind.Runtime.handle_dispatch/4` wraps each successful invoke as a **synthetic event** `%SliceMutated{kind_module, action, args, old_slice, new_slice, caller, at}` and appends to `EventLog`. This is what the slice-change cursor (line 110) already half-implements. **`%SliceMutated{}` is audit / notification / cross-Kind-trigger material ONLY — it is NOT a replay-safe event.** The slice diff cannot reconstruct the side effects `invoke/4` performed (PubSub broadcasts, `MessageStore.write`, cross-Kind `Invocation.dispatch/1`, external IO). Codex r7 review HIGH-1 (2026-05-28) made this explicit after concrete trace through `Behavior.Chat.invoke(:send)` (`chat.ex:297-370, 408-414`) showed `MessageStore.write` + PubSub broadcast + recipient dispatch all happen before the slice mutation returns — none of which `apply_event(%SliceMutated{}, slice) -> new_slice` could replay.
+  2. New optional Behavior callback `events_for/4` — if a Behavior implements it, the synthetic-event fallback is replaced with the Behavior-emitted list. Signature: `events_for(action, slice, args, ctx) :: [%Event{}]`. The Behavior also gains `apply_event/2 :: new_slice` and `effects/2 :: [side_effect]`. **All three are required together for events-as-truth opt-in.** Default in the `@behaviour` is "events_for unimplemented → synthetic-event path → audit-only, no replay".
+  3. Per-Kind opt-in: a Kind that wants events-as-truth declares **every** Behavior on the Kind implements `events_for/4` + `apply_event/2` + `effects/2` (the triplet is atomic per Behavior). The Kind's `persistence/0` returns `:replay_enabled` only when **all** Behaviors are CQRS-split. A `replay_readiness/1` invariant test enumerates every action × every Behavior and fails if any path lacks the triplet. Replay rebuilds slice via `EventLog.stream_by_aggregate + Enum.reduce(events, init_slice, &apply_event/2)`; effects are **NOT** re-executed during replay (they were already executed at original-dispatch time; replay is state reconstruction, not side-effect replay).
 
-  **Why this matters**: ezagent stays shippable today (no Behavior rewrites). The first Kind that needs replay (P5 from §1.5.3) migrates ONE Kind at a time. Cross-Kind orchestration (B'' §1.5.7.4 module #4 SagaRunner) doesn't need event-split — synthetic events suffice as triggers.
+  **Why this matters**: ezagent stays shippable today (no Behavior rewrites). The first Kind that needs replay (P5 from §1.5.3) migrates ONE Kind at a time, **but the per-Kind migration cost is the full CQRS-split of every Behavior on that Kind — NOT just adding a callback to one Behavior.** Cross-Kind orchestration (B'' §1.5.7.4 module #4 SagaRunner) doesn't need event-split — synthetic events suffice as triggers because triggering is audit-shaped (read "what happened" + decide what to do next), not replay-shaped (rebuild state).
 
 ##### c. Aggregate identity
 
@@ -714,14 +732,16 @@ Five new internal modules consolidate the existing primitives. Each lives under 
 @spec stream_since(cursor :: DateTime.t, opts) :: [event_row]
 ```
 
-**Design rationale**: thin facade over the existing `invocations` table. The envelope shape standardizes what telemetry handlers already write (`%{trace_id, caller, target, action, args, result, ...}`); `Audit.Writer` becomes one implementation of `append/1` (the batched one); a future Postgres-backed implementation drops in by swapping the module without changing callers. Stream-by-aggregate is the new helper that didn't exist before — it's a one-liner Ecto query (`from i in "invocations", where: i.target == ^uri_str, order_by: i.inserted_at`).
+**Design rationale**: thin facade over the existing `invocations` table. The envelope shape standardizes what telemetry handlers already write (`%{trace_id, caller, target, action, args, result, ...}`); `Audit.Writer` becomes one implementation of `append/1` (the batched one); a future Postgres-backed implementation drops in by swapping the module without changing callers. Stream-by-aggregate is the new helper that didn't exist before.
+
+**Ordering contract (codex r7 MED-4 closure, 2026-05-28)**: `stream_by_aggregate/2` orders rows by `(inserted_at ASC, id ASC)`. The `id` column is the existing `invocations` primary key (`apps/ezagent_core/priv/repo/migrations/20260515160000_phase1_audit_dlq_snapshots.exs:7`, monotonic integer). `inserted_at` alone is NOT stable under same-microsecond collisions (test batched inserts, high-throughput production) — the `id` tie-breaker makes the order total and stable across query reads. Cursor pagination uses the `(inserted_at, id)` pair as the cursor key: `WHERE (inserted_at, id) > (^cursor_at, ^cursor_id)`. This mirrors Commanded's `RecordedEvent`'s `(stream_version, event_number)` pair, just keyed on `(inserted_at, id)` since ezagent's invocations table predates the per-stream-version-counter design. Phase 2 extension point: if `expected_version` is added, the SPEC migrates to a true per-stream version column — but the (inserted_at, id) ordering remains the wire-format cursor for backwards compat.
 
 **Extension points**:
 - `replay_aggregate(uri, init_slice, apply_event_fn)` — DISABLED in v1; documented as the Phase 2 entry point when the first Kind opts into events-as-truth.
 - Pluggable storage backend: today SQLite via Ecto; Phase 3+ option to swap to Postgres or `commanded_eventstore_adapter` without caller change.
-- Optimistic-concurrency `expected_version` arg on `append/1` — Phase 2 (today, `Kind.Server` GenServer serialization gives the same property).
+- Optimistic-concurrency `expected_version` arg on `append/1` — Phase 2 (today, `Kind.Server` GenServer serialization gives the same property; the `expected_version` add introduces a `stream_version` column on `invocations`).
 
-**Test strategy**: unit tests for stream-by-aggregate ordering + cursor pagination; integration test that simulates 1000 dispatches and asserts the stream is ordered + complete.
+**Test strategy**: unit tests for stream-by-aggregate ordering + cursor pagination (with explicit same-microsecond batched-insert test to verify `id` tie-breaker); integration test that simulates 1000 dispatches and asserts the stream is ordered + complete + reproducible across query repeats.
 
 **Estimated LOC**: ~150 (mostly delegations).
 
@@ -765,14 +785,31 @@ Five new internal modules consolidate the existing primitives. Each lives under 
 
 ##### 4. `Ezagent.SagaRunner`
 
-**Signature**:
+**Signature** (codex r7 MED-4-co contract closure, 2026-05-28):
+
 ```elixir
 defstruct steps: [], compensations: [], ctx: %{}, name: nil, command_uuid: nil
 
+@type effect_map :: %{atom() => term()}   # step_name -> forward_fn's :ok value
+
 @spec new(name :: String.t, opts :: [command_uuid: String.t]) :: %SagaRunner{}
-@spec run(saga, name :: atom, forward :: (ctx -> {:ok, term} | {:error, term}), compensate :: (ctx, effects -> :ok | {:error, term})) :: %SagaRunner{}
-@spec execute(saga, ctx :: map) :: {:ok, ctx} | {:error, step :: atom, reason :: term, compensated_steps :: [atom]}
+@spec run(
+  saga,
+  step_name :: atom,
+  forward :: (effect_map -> {:ok, term} | {:error, term}),
+  compensate :: (effect_map, effects_so_far :: effect_map -> :ok | {:error, term})
+) :: %SagaRunner{}
+@spec execute(saga, initial_ctx :: map) :: {:ok, effect_map} | {:error, step :: atom, reason :: term, compensated_steps :: [atom]}
 ```
+
+**Ctx-threading contract**:
+1. `execute/2` seeds `effect_map = initial_ctx` (the initial_ctx is folded INTO the effect_map; `Map.merge(initial_ctx, %{})`).
+2. Each `forward/1` receives the current `effect_map` (which contains the initial ctx PLUS every prior step's `:ok` result keyed by step_name). On `{:ok, value}`, the runner extends `effect_map = Map.put(effect_map, step_name, value)` and proceeds. On `{:error, reason}`, the runner triggers reverse compensation.
+3. Each `compensate/2` receives `(this_step's_effect_map_entry, effect_map_built_through_prior_steps)`. The first arg is what THIS step's forward returned (`Map.get(effect_map, step_name)`); the second is the full prior-state map for cross-step compensation (e.g. step 3 compensate needs to read step 1's snapshot).
+4. Compensation runs in REVERSE step order (steps N-1 → 1 — the failing step N itself has no `:ok` value to compensate).
+5. Return value on success: full `effect_map` so caller sees every step's result.
+
+**Design rationale**: B'' inlines the saga primitive instead of vendoring Sage (§1.5.4 risk: Sage 2022-09, ex_audit 2023-02). Inlining is ~200 LOC; vendoring Sage is the same LOC plus dependency-staleness risk. Per `feedback_let_it_crash_no_workarounds` we own the structural primitive. The contract is intentionally **a subset of Sage's** — we don't need the async/parallel features Sage exposes; ezagent's saga inventory (§4.4) is all linear-step.
 
 Usage example (the destroy cascade):
 
@@ -785,7 +822,7 @@ Ezagent.SagaRunner.new("destroy_agent:#{uri}", command_uuid: trace_id)
 |> SagaRunner.execute(%{agent_uri: uri, workspace_uri: ws_uri})
 ```
 
-**Design rationale**: B'' inlines the saga primitive instead of vendoring Sage (§1.5.4 risk: Sage 2022-09, ex_audit 2023-02). Inlining is ~200 LOC; vendoring Sage is the same LOC plus dependency-staleness risk. Per `feedback_let_it_crash_no_workarounds` we own the structural primitive. The contract is intentionally **a subset of Sage's** — we don't need the async/parallel features Sage exposes; ezagent's saga inventory (§4.4) is all linear-step.
+In the cascade above, `capture_pre_destroy/1` receives `%{agent_uri: ..., workspace_uri: ...}` (initial ctx), returns `{:ok, %{caps: caps, sessions: sessions, lineage: parent}}`; that snapshot is then available to `restore_caps/2` as `effects_so_far[:snapshot]` if `terminate` fails after caps were revoked.
 
 **Extension points**:
 - `run_async/4` — Phase 2; today SagaRunner is sync only. Async would require state persistence across the call.
@@ -798,12 +835,15 @@ Ezagent.SagaRunner.new("destroy_agent:#{uri}", command_uuid: trace_id)
 
 ##### 5. `Ezagent.EventSubscriber` (behaviour)
 
-**Signature**:
+**Signature** (codex r7 MED-5 closure, 2026-05-28 — partition mode pulled to Phase 2):
+
 ```elixir
-@callback interested?(event :: map) :: boolean | {:partition, key :: term}
+@callback interested?(event :: map) :: boolean
 @callback handle_event(event :: map, state :: map) :: {:ok, new_state} | {:dispatch, [%Command{}], new_state} | {:error, term}
 @callback initial_state(opts) :: map  # default %{}
 ```
+
+The v1 return type of `interested?/1` is `boolean` only. The earlier `{:partition, key}` shape was promoted to a Phase 2 extension point because v1 cannot honestly specify partition lifecycle, per-key ordering, restart behavior, GC policy, or duplicate handling without an outbox (Phase 2 — Ext.c). Subscribers in v1 are single-process, one-at-a-time within a subscriber module; ordering is `EventLog.stream_by_aggregate` order; concurrency is achieved by registering multiple subscriber modules.
 
 A registry mechanism (`use Ezagent.EventSubscriber, application: :ezagent_core`) supervises one process per registered subscriber, subscribed to `EventLog`'s post-append PubSub topic. Worker bootstrap on `BindingCreated` becomes:
 
@@ -821,7 +861,7 @@ end
 
 **Extension points**:
 - `Ezagent.EventOutbox` — Phase 2 durable retry on subscriber crash mid-handler. Today subscriber crash + supervisor restart re-subscribes but loses the in-flight event. Outbox writes the dispatch intent to a `event_subscriber_outbox` table before subscriber processes the event; poll worker drains.
-- Partition mode — for high-volume topics, partition by `{:partition, key}` to spawn N parallel subscriber processes.
+- **Partition mode (Phase 2 — codex r7 MED-5 closure)** — for high-volume topics, partition by a key (e.g. workspace_uri) to spawn N parallel subscriber processes. Phase 2 contract MUST specify: (i) partition ownership (one process per key, or fixed-N pool keyed by hash), (ii) per-partition ordering guarantee, (iii) crash + restart replay behavior, (iv) GC policy (idle timeout per partition, or persistent), (v) duplicate-handler protection via `command_uuid`. The v1 `interested?/1` callback returns `boolean` only — `{:partition, key}` lands when the Phase 2 SPEC defines (i)-(v).
 
 **Test strategy**: dispatch a triggering event, assert the subscriber's `handle_event/2` ran exactly once; kill subscriber mid-handler, restart, assert handler doesn't double-run (idempotency via `command_uuid` from §1.5.7.3).
 
@@ -845,9 +885,18 @@ Five concrete extension scenarios + the B'' growth path. Each names the trigger 
 
 **Trigger**: regulatory compliance demands historical-state reconstruction (e.g. SOC 2 audit for "what caps did user X hold at 2025-09-12 14:00 UTC"); OR a specific Kind benefits from event-driven post-incident reproduction.
 
-**B'' growth path**: that Kind implements `events_for/4` + `apply_event/2` on each of its Behaviors. `EventLog.replay_aggregate/2` lights up (gets implemented). The Kind's `persistence/0` returns `{:replay_enabled, snapshot_policy}`. `StateRebuilder.rebuild_from_events/3` is wired up. Other Kinds unaffected. **Cost**: per-Kind ~2-3 weeks. Per `feedback_let_it_crash_no_workarounds`, no shim or dual-mode — once a Kind opts in, it goes through the events path on every restart.
+**B'' growth path**: that Kind opts every Behavior on it into the CQRS triplet (`events_for/4` + `apply_event/2` + `effects/2`). `EventLog.replay_aggregate/2` lights up (gets implemented). The Kind's `persistence/0` returns `:replay_enabled`. `StateRebuilder.rebuild_from_events/3` is wired up. Other Kinds unaffected. Per `feedback_let_it_crash_no_workarounds`, no shim or dual-mode — once a Kind opts in, it goes through the events path on every restart.
 
-**Key property**: per-Kind migration, not big-bang. Compare with Option A which migrates all 5 entity Kinds in one Phase-10 plan (§6 of this SPEC, ~3 months wall-time).
+**Concrete walk-through — User Kind (codex r7 HIGH-2 closure, 2026-05-28)**. Actual Behaviors registered on `Ezagent.Entity.User` per `apps/ezagent_domain_identity/lib/ezagent/entity/user.ex:226-231` plus the `IdentityAdmin` extension at `application.ex:271-284`: **`Identity`, `UserCredentials`, `UserTokens`, `IdentityAdmin`**. Per-Behavior replay-readiness assessment:
+
+- **`Identity`** — caps slice is `MapSet` in-memory; cap grants/revokes are slice mutations; `reconcile_after_load/2` rehydrates from `users.caps_json` (`identity.ex:156-206, 228-245`). Replay path: `events_for(:grant_cap, ...)` emits `%CapGranted{cap}`, `apply_event(%CapGranted{cap}, slice) = MapSet.put(slice.caps, cap)`. **Replay-eligible** IF the `users.caps_json` projection writer becomes an `effects/2` declaration instead of an inline DB write.
+- **`UserCredentials`** — `invoke(:set_password, ...)` bcrypt-hashes + writes `users.password_hash` via `Ezagent.Entity.User.update_password/2` (`user_credentials.ex:112-122`, `users.ex:100-112`). The DB write is the canonical source — slice carries no password. Replay path: `events_for(:set_password, ...)` emits `%PasswordChanged{hash}`; `apply_event` is a no-op on slice (no in-memory representation); `effects/2` declares `%DbWrite{table: users, set: %{password_hash: hash}}` which the Runtime executes. **Replay-eligible** ONLY IF `effects/2` is NOT re-executed during replay (otherwise replay would mass-rewrite history). The B'' contract per §1.5.7.2.b is that replay re-folds events but does NOT re-execute effects — verified.
+- **`UserTokens`** — `invoke(:mint_token, ...)` generates a token, bcrypt-hashes, inserts into `entity_tokens` (`user_tokens.ex:120-146`, `token.ex:75-91`); `invoke(:revoke_token, ...)` pre-reads + deletes (`user_tokens.ex:173-191, 260-272`). The token table is the source of truth — slice mirrors it for hot-path reads. Replay path: `events_for(:mint_token, ...)` emits `%TokenMinted{token_id, label, hash}`; `apply_event` updates slice MapSet; `effects/2` declares the `entity_tokens` insert. Revoke is symmetric. **Replay-eligible** with the same effects-not-replayed property as `UserCredentials`. The `mix ezagent.user.replay` task would NOT re-mint tokens; it would only rebuild the slice's in-memory token-MapSet from the existing events.
+- **`IdentityAdmin`** — admin-scope grants. Same shape as `Identity`. **Replay-eligible**.
+
+**Total per-Kind cost for User**: ~3-4 weeks (not the original 2-3 estimate — r7 correction). Breakdown: ~1 week each for `UserCredentials` + `UserTokens` (the DB-write Behaviors need careful `effects/2` extraction); ~3 days each for `Identity` + `IdentityAdmin` (slice-only); ~1 week for the `replay_readiness/1` invariant test + integration test that rebuilds a User from 100 events and asserts parity with a snapshot-based User. **First Kind opt-in is the expensive one** because the test scaffolding is greenfield; subsequent Kinds amortize the test cost down to ~2 weeks total.
+
+**Key property**: per-Kind migration, not big-bang. Compare with Option A which migrates all 5 entity Kinds in one Phase-10 plan (§6 of this SPEC, ~3 months wall-time). BUT: B'' replay opt-in is gated on **every** Behavior on the Kind passing `replay_readiness/1`. A Kind with one unported Behavior cannot opt in. This is the structural cost the §1.5.7.2.b atomic-triplet invariant enforces.
 
 ##### c. If saga durability becomes needed (cross-restart resume)
 
@@ -872,9 +921,18 @@ This last point is critical. The four options compared in §1.5.7.6 have differe
 - **Option A (Commanded directly)** — already there. Cost: 0.
 - **Option B (Sage + ex_audit)** — strangle-pattern migration: events have to be inferred from `Ecto.Changeset` history retroactively; saga modules rewritten from Sage to Commanded PM. Cost: ~10-12 weeks.
 - **Option B' (DIY Ecto.Multi)** — events have to be modeled from scratch; sagas rewritten. Cost: ~14-16 weeks.
-- **Option B'' (native consolidation)** — events already exist (in `EventLog` / `invocations`); aggregates already exist (per Kind); snapshots already exist (`SnapshotStore` / `kind_snapshots`); sagas have a Runner that maps 1:1 to Commanded PM. The migration becomes "swap implementations of 3-4 internal modules": `EventLog` → wraps `commanded_eventstore_adapter`, `SnapshotStore` → wraps Commanded snapshots, `SagaRunner` → wraps `Commanded.ProcessManagers.ProcessManager`, `EventSubscriber` → wraps `Commanded.Event.Handler`. Cost: ~4-6 weeks.
+- **Option B'' (native consolidation)** — events already exist (in `EventLog` / `invocations`); aggregates already exist (per Kind); snapshots already exist (`SnapshotStore` / `kind_snapshots`). Sagas exist in a `SagaRunner` shape that is **conceptually adjacent but NOT 1:1 with** Commanded PM (codex r7 HIGH-3 closure, 2026-05-28): `SagaRunner` is a stateless in-call closure list (`run/4` + `execute/2`); Commanded PM is stateful with `interested?/1` + `handle/2` + `apply/2` + correlation-id PM-state-per-instance. The migration is NOT a wrapping swap for sagas — it requires translating each `SagaRunner.execute` call site into a PM with `interested?` clauses + correlation ID + persisted PM state + stop conditions.
 
-**This is what "pro-future-Commanded" means.** By having the abstractions named correctly NOW, we keep the option open AND we shrink the future cost. B'' isn't a divergent path; it's a converging one.
+  Per-component migration cost breakdown:
+  - `EventLog` → `commanded_eventstore_adapter`: ~1 week (mostly schema migration + dual-write cutover; the public API IS already a 1:1 wrap of stream-by-aggregate semantics).
+  - `SnapshotStore` → Commanded snapshots: ~3-4 days (policies differ — `:on_change` / `:on_terminate` are ezagent-shapes vs Commanded's `snapshot_every: N`; the migration converts policy declarations).
+  - `EventSubscriber` → `Commanded.Event.Handler`: ~1 week (subscriber registration semantics match; partition mode (B'' Ext.) maps to Commanded's `subscribe_to: :all` + handler concurrency).
+  - **`SagaRunner` → `Commanded.ProcessManagers.ProcessManager`: ~3-4 weeks per non-trivial saga**, because each step's forward/compensate closure becomes a PM event-handler clause, with correlation id derivation + interested? selectors + apply/2 fold + stop condition. The 5 single-call cascades in §4.4 each cost ~3-5 days; cross-call workflows like the `EzagentDomainChat.create_session/3` flow (lock + spawn + bind + cast `chat.join` async + grant owner cap + `ensure_orchestrator_with_meta` with `:partial` bounded retry — `ezagent_domain_chat.ex:143-200, 540-615, 619-648`; `session.ex:850-889, 984-1003`) cost ~1-2 weeks each because the async legs and the `:partial`-result branch need persisted PM correlation state.
+  - Per-Kind `events_for/4` + `apply_event/2` + `effects/2` triplet → Commanded `execute/2` + `apply/2`: per opted-in Kind ~1-2 weeks (the slice-per-Behavior model has to fuse into a single aggregate state struct — see also the codex r7 HIGH-acknowledgment in §1.5.7.1 below).
+
+  **Honest revised total**: ~6-10 weeks for the simplest mix (1-2 small sagas, no cross-call workflows, no Kinds opted into events-as-truth), ~10-14 weeks if 2+ cross-call workflows + multi-Behavior Kinds need migration. The earlier "~4-6 weeks" figure was the optimistic floor; codex r7 HIGH-3 review correctly flagged it as understated. **Even at the revised range, B'' → Commanded is cheaper than Option B → Commanded (~10-12 weeks for sagas alone, plus events have to be inferred from scratch) and dramatically cheaper than Option B' → Commanded (~14-16 weeks).**
+
+**What "pro-future-Commanded" means after the correction.** By having `EventLog`, `SnapshotStore`, `EventSubscriber` at near-1:1 with Commanded equivalents, and `SagaRunner` providing the saga shape ezagent needs today (linear, sync) PLUS a clear migration path to PM for the harder cases, we keep the option open AND shrink the future cost (at minimum we save the ~6 weeks of "events have to be inferred" that Option B suffers). B'' is not a 1:1 wrapper for Commanded; it is a **convergent design** — most concepts align tightly; sagas require translation but not reinvention.
 
 #### 1.5.7.6 — Comparison summary table
 
@@ -887,7 +945,7 @@ This last point is critical. The four options compared in §1.5.7.6 have differe
 | **Long-term replay** | Native | Hand-rolled per-Kind | Hand-rolled per-Kind | **Native per-Kind opt-in (Ext.b)** |
 | **Long-term distributed scaling** | Native (multi-node aggregates) | Possible via Oban distribution | Possible via Postgres | **Possible via SagaOutbox / EventOutbox (Ext.c/Ext.d)** |
 | **Long-term multi-tenant** | Per-aggregate strong isolation | Workspace via DB scoping | Workspace via DB scoping | **Workspace via `Persistence.scope_by_workspace` (already there)** |
-| **Migration cost to Commanded if needed later** | 0 | ~10-12 weeks | ~14-16 weeks | **~4-6 weeks** |
+| **Migration cost to Commanded if needed later** | 0 | ~10-12 weeks | ~14-16 weeks | **~6-14 weeks (per §1.5.7.5(e) r7 honest range; floor depends on saga inventory + Kinds opted in)** |
 | **Dependency risk** | Commanded itself (active, well-maintained); EventStore lib | Sage 2022-stale; ex_audit 2023-stale; Oban Pro paid | None (stdlib + Ecto) | **None (uses existing ezagent primitives)** |
 | **Dispatch latency hit** | +5x per §7.1 | 0 | 0 | **0** |
 | **Dev-loop friction** | Postgres required | Postgres required (Oban) | None | **None** |
@@ -910,7 +968,7 @@ This last point is critical. The four options compared in §1.5.7.6 have differe
 
 2. **No dependency risk** — Option B inherits Sage's 2022-09 + ex_audit's 2023-02 staleness (§1.5.4). B'' uses ezagent's own primitives + standard Ecto + Phoenix.PubSub. The only "library" added is the names of modules already in `ezagent_core`.
 
-3. **Best-positioned for future Commanded migration** — §1.5.7.5(e). The migration from B'' to Commanded is ~4-6 weeks (swap 3-4 internal modules), vs Option B's ~10-12 weeks (events have to be inferred + sagas rewritten). B'' makes the eventual Commanded migration the cheapest of all four paths.
+3. **Best-positioned for future Commanded migration** — §1.5.7.5(e). The migration from B'' to Commanded is ~6-14 weeks (codex r7 HIGH-3-honest range; floor depends on saga inventory + Kinds opted into events-as-truth). The cheap part (`EventLog`, `SnapshotStore`, `EventSubscriber`) is near-1:1 wrap; the expensive part (sagas → Commanded PM) requires translation, not just renaming. Even at the upper bound this is cheaper than Option B's ~10-12 weeks (events have to be inferred AND sagas rewritten) and dramatically cheaper than Option B's ~14-16 weeks. B'' makes the eventual Commanded migration the cheapest non-trivial path.
 
 4. **Aligns with `feedback_let_it_crash_no_workarounds`** — every other option adds shims (Sage's saga state, Oban's outbox, ex_audit's changeset interceptor). B'' adds none — every primitive it names is structural truth already in the code. The "missing 30%" is module-naming, not new behavior.
 

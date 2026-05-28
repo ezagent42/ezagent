@@ -1,6 +1,6 @@
 # SPEC — Ezagent 状态模型迁移到 EventStore + Commanded (CQRS / 事件溯源)
 
-**状态：** r7 — **§1.5.7 添加；结论 = Option B''（原生整合）**。Allen 2026-05-28 09:33 指令：ezagent 9 个月来一直在**有机地**实现事件溯源的原语（`invocations` 表 = 事件日志；`kind_snapshots` = aggregate snapshot；`Behavior.invoke` = 合并的 execute+apply；`ExternalMirror.BootReconciler` = 状态恢复；Persistence + slice 策略 = snapshot 策略）— 只是从未把它们**命名**为 ES 原语。§1.5.7 把存在的部分形式化 + 加上缺失的 30%，参考 Commanded 的设计教训 + CQRS 原则。新的主推荐：**Option B'' — 原生整合**，5 个内部模块共 ~880 LOC（`EventLog`、`SnapshotStore`、`StateRebuilder`、`SagaRunner`、`EventSubscriber`），约 2-3 周。Option B（Sage + ex_audit + Oban）保留作第一备选若 B'' 设计失败；Option A（Commanded 完整迁移）作第二备选若回放（P5）进入 6 个月窗口。B'' 是**面向未来 Commanded 的**：现在把抽象命名正确，未来迁移到 Commanded 时成本从 ~10-12 周（Option B）压缩到 ~4-6 周（替换 3-4 个内部模块的实现）。之前 r6 结论（条件性 Option B）降级为第一备选。之前的 r4-FINAL 状态（4 轮 codex 预算耗尽，7 条 carry-over limitations）若日后重审 Option A 仍适用于 §2-§12。2026-05-28。
+**状态：** r7 — **§1.5.7 添加 + codex r1 评审；结论 = Option B''（原生整合）**。Allen 2026-05-28 09:33 指令：ezagent 9 个月来一直在**有机地**实现事件溯源的原语 — 只是从未把它们**命名**为 ES 原语。§1.5.7 把存在的部分形式化 + 加上缺失的 30%，参考 Commanded 的设计教训 + CQRS 原则。主推荐：**Option B'' — 原生整合**，5 个内部模块共 ~880 LOC，约 2-3 周。Option B（Sage + ex_audit + Oban）保留作第一备选若 B'' 设计失败；Option A（Commanded 完整迁移）作第二备选若回放（P5）进入 6 个月窗口。B'' 是**面向未来 Commanded 的**：未来迁移到 Commanded 时成本从 ~10-12 周（Option B）压缩到 ~6-14 周（r7 诚实区间见 §1.5.7.5(e)；下限取决于 saga 清单 + 多少 Kind opt-in）。Codex r1 评审 §1.5.7 返回 REJECT 3 HIGH + 2 MED + 1 LOW；全部 6 条 inline 修复（合成事件不可回放须显式承认 / User Kind 实际是 Identity + UserCredentials + UserTokens + IdentityAdmin / SagaRunner-PM 「1:1」改为 convergent 不是 wrapping / EventLog 排序加 `id` tie-breaker / EventSubscriber partition 模式拉到 Phase 2 / audit args+result 当前未填充承认）。之前 r6 结论（条件性 Option B）降级为第一备选。之前的 r4-FINAL 状态若日后重审 Option A 仍适用于 §2-§12。2026-05-28。
 
 ## r7 changelog（相对 r6 的 delta）
 
@@ -21,6 +21,18 @@ Allen 2026-05-28 09:33 指令 — 「ezagent 在有机地做事件溯源；命�
 §1.5.1-§1.5.4（备选表 + 库风险 + 逐场景深挖）**未改** — 它们描述 Option B 的证据，作第一备选理由仍站得住。
 
 §2-§12（Commanded 完整迁移材料）**未改** — 保留作第二备选场景。
+
+**r7 codex r1 评审（2026-05-28，r7 初始提交 2816befd 后）** — §1.5.7 对抗评审返回 **REJECT — 3 HIGH + 2 MED + 1 LOW**。全部 6 条 inline 修复；§1.5.7 扩出 ~200 行。
+
+- **HIGH-1 — Legacy `invoke/4` 合成事件不可回放（§1.5.7.2.b）**。初稿把 `%SliceMutated{}` 合成事件当成包括回放在内的可行 fallback 路径。Codex 追踪 `Behavior.Chat.invoke(:send)`（`chat.ex:297-370, 408-414`）显示 `MessageStore.write` + PubSub 广播 + 接收方派发与 slice 变更同时发生 — 仅从 slice diff 无法重建。**修复**：§1.5.7.2.b 重写 — `%SliceMutated{}` 显式仅作审计/通知/跨 Kind 触发用途；events-as-truth opt-in 要求按 Behavior 的原子三元组（`events_for/4` + `apply_event/2` + `effects/2`）；legacy Behavior 被**排除**在回放外直到三元组落地。
+- **HIGH-2 — User Kind 回放路径是理论的（§1.5.7.5(b)）**。初稿说「第一个 Kind 需要回放 → 该 Kind 在每个 Behavior 上实现 events_for/4 + apply_event/2，~2-3 周」。Codex 拉出 User Kind 实际清单（`Identity`、`UserCredentials`、`UserTokens`、`IdentityAdmin` 按 `user.ex:226-231` + `application.ex:271-284`）并显示 `UserCredentials.invoke(:set_password)` 做 bcrypt + `users.password_hash` DB 写，`UserTokens.invoke(:mint_token)` 做 bcrypt + `entity_tokens` INSERT，`UserTokens.invoke(:revoke_token)` 预读 + DELETE — 这些**不是**纯 slice fold。**修复**：§1.5.7.5(b) 重写，含按 Behavior 的回放就绪评估 + 具体 `effects/2` 抽取计划 + 修正 ~3-4 周每 Kind 成本。
+- **HIGH-3 — SagaRunner ↔ Commanded PM「1:1」夸大（§1.5.7.5(e)）**。初稿说 B'' → Commanded 迁移「~4-6 周（换 3-4 个内部模块）」，SagaRunner「1:1 映射到 Commanded PM」。Codex 正确标记：PM 有状态（3 callback：`interested?/1` + `handle/2` + `apply/2` + 按实例 correlation-id PM 状态）；SagaRunner 无状态（2 函数，闭包）。不是 1:1。**修复**：§1.5.7.5(e) 重写，含按组件诚实分解 — `EventLog`/`SnapshotStore`/`EventSubscriber` 是近 1:1 wrap（各 ~1 周）；`SagaRunner` → PM 要翻译（每个非平凡 saga ~3-4 周，加上跨调用工作流的额外成本）；slice-per-Behavior → single-aggregate-state 要决定融合或拆分。修正总数：~6-14 周区间。对比表行 + §1.5.7.7 推荐 #3 同步更新。
+- **MED-4 — EventLog 排序 tie-breaker（§1.5.7.4 #1）**。初稿只按 `inserted_at` 排序；同微秒 tie 不稳。**修复**：加排序契约 — `(inserted_at ASC, id ASC)` 用现有 `invocations.id` 整数主键作 tie-breaker；cursor 分页用 pair。
+- **MED-5 — EventSubscriber partition 模式欠规约（§1.5.7.4 #5）**。初稿在 `interested?/1` 返回类型里含 `{:partition, key}` 但无生命周期/GC/顺序/重启契约。**修复**：partition 模式从 v1 callback 返回类型移除；v1 仅返回 `boolean`；partition 模式留到 Phase 2 含 (i) 所有权、(ii) 按 key 顺序、(iii) 崩重放、(iv) GC、(v) 防 handler 重复 五项显式契约。
+- **LOW-6 — Audit args/result 今天未填（§1.5.7.1、§1.5.7.2.a）**。SPEC 暗示每个 `invocations` 行都有 args + result JSON；当前 `Audit.Writer`（`audit.ex:93-116`）只在失败路径填，不在成功派发上填。**修复**：§1.5.7.1 承认差距；B'' 承诺通过 EventLog naming 配套 SPEC 扩展 `Audit.Writer` 捕获完整 args + result；「比 Commanded 更 SQL 查询」对比窄化为 args/result 填好后才适用。
+- **附加修正 — slice-per-Behavior vs single-aggregate-state（§1.5.7.1）**。Codex 隐式标记：ezagent Kind 在 Kind 上 host 多个 Behavior，与 Commanded 单 aggregate 状态根本不同。**修复**：§1.5.7.1 加显式承认不对称段落 — slice-per-Behavior 真正不同；B'' **不**装作 1:1；未来 Commanded 迁移必须按 Kind 决定融合 vs 拆分。
+
+修正后结论（Option B'' 主选，Option B 第一备选，Option A 第二备选）codex r1 后**不变** — 发现都是结构诚实修复，不是结论翻转。
 
 ## r6 changelog（相对 r5 的 delta）
 
@@ -493,7 +505,13 @@ Allen 2026-05-28 09:33 指令 — 推一个新的顶级推荐。Path B（Sage + 
 | 派发前管线 | `Ezagent.Kind.Runtime.handle_dispatch/4` — authz（5.5）、workspace 隔离（5.6）、arg 校验，然后 `invoke/4`，然后提交后 slice-change emit | `apps/ezagent_core/lib/ezagent/kind/runtime.ex:70` |
 | 幂等 token | `Ezagent.Idempotency` 在 `Invocation.dispatch/1` 第 1 步 | `apps/ezagent_core/lib/ezagent/idempotency.ex` |
 
-**对 §1.3 的更正。** `invocations` 表**是**追加式事件日志；它比 Commanded `eventstore` 的 schema **更可被 SQL 查询**，因为每一行携带 `(caller, target, action, args, result)` 作为反规范化列，加结构化 `args` / `result` JSON。§1.3 的框架（「审计表是 side-channel telemetry 记录，**不是**真理源」）一半对（**slice 现在是**真理源，不是 audit 行）一半错（audit 行**是**事件日志的形状；只是没被回放）。诚实的差距是「ezagent 不回放事件来重建 aggregate 状态」 — 不是「ezagent 没有事件日志」。
+**对 §1.3 的更正。** `invocations` 表**是**追加式事件日志；它有**反规范化列 `(caller, target, action)` 比 Commanded `eventstore` schema 更 SQL 友好**（Commanded `events` 表 keyed `(stream_id, stream_version, event_type, data jsonb, metadata jsonb, created_at)`；caller/target/action 要从 `data` JSON 用 `jsonb_path` 查出来）。§1.3 框架（「审计表是 side-channel telemetry 记录，**不是**真理源」）一半对（**slice 现在是**真理源，不是 audit 行）一半错（audit 行**是**事件日志的形状；只是没被回放）。
+
+**诚实承认（codex r7 LOW-6 关闭，2026-05-28）**：`args` 和 `result` 列在 schema 里存在（`apps/ezagent_core/priv/repo/migrations/20260515160000_phase1_audit_dlq_snapshots.exs:11,13`）但**当前 `Audit.Writer` 在成功 invocation 上 NOT 填它们**（`apps/ezagent_core/lib/ezagent/audit.ex:93-116` — 只有失败/错误路径填）。表**今天**是「派发元数据的结构化 tuple」；称它是完整领域事件 payload 夸大了当前形状。B'' 承诺通过 §1.5.6 配套 SPEC 扩展 `Audit.Writer` / `EventLog.append/1` 在每次派发上捕获完整 args + result。「比 Commanded 更 SQL 查询」对比**在** args/result 填好之后**才**适用；今天只是 caller/target/action 上的 shape 优势。
+
+诚实的差距是「ezagent 不回放事件来重建 aggregate 状态」+「ezagent 当前事件日志没持久化完整 command/result 载荷」 — 不是「ezagent 没有事件日志」。
+
+**承认的不对称（codex r7 — slice-per-Behavior vs single-aggregate-state）**：Commanded aggregate 是**单模块**：一个 struct + 一个 `execute/2` + 一个 `apply/2`。ezagent Kind 在 Kind 上 host **多个** Behavior（User 注册 Identity + UserCredentials + UserTokens + IdentityAdmin，按 `apps/ezagent_domain_identity/lib/ezagent/entity/user.ex:226-231` + `application.ex:271-284`）。状态是按 `behavior.state_slice()` keyed 的 map — 每个 Behavior 拥有**自己**的 slice；跨 Behavior 读需要显式 `reads_sibling_slices/0` 声明。**slice-per-Behavior 模型与 Commanded 单 struct aggregate 是真正不同的聚合模型。** B'' **不**装作它们 1:1：Kind opt-in 事件作真理源时，Kind 上**每一个** Behavior 必须实现 CQRS triplet（§1.5.7.2.b） — 即 Kind 的 aggregate 变成按 Behavior 的 aggregate **元组**，`apply_event/2` 按事件类型派发给拥有的 Behavior。未来 Commanded 迁移必须把它们融成一个 aggregate 状态 struct，**或者**把 Kind 拆成多个 Commanded aggregate（每个 Behavior 一个）；SPEC 不预先承诺哪个。B'' 设计两个选项都保留。
 
 还**没**有的（缺失的 30%）：
 
@@ -510,7 +528,7 @@ Allen 2026-05-28 09:33 指令 — 推一个新的顶级推荐。Path B（Sage + 
 
 ##### a. 事件日志 / EventStore
 
-- **ezagent 今天** — `invocations` 表（`apps/ezagent_core/priv/repo/migrations/20260515160000_phase1_audit_dlq_snapshots.exs:6`），SQLite。`Audit.Writer` 通过 `[:ezagent, :invoke, :stop]` telemetry 100ms 批 flush。追加式（当前代码无 UPDATE/DELETE）。索引在 `(inserted_at)` 和 `(target, inserted_at)`。按 aggregate 流就是 `WHERE target LIKE 'entity://agent/myws/X%' ORDER BY inserted_at`（今天就能跑；只是没被命名）。
+- **ezagent 今天** — `invocations` 表（`apps/ezagent_core/priv/repo/migrations/20260515160000_phase1_audit_dlq_snapshots.exs:6`），SQLite。`Audit.Writer` 通过 `[:ezagent, :invoke, :stop]` telemetry 100ms 批 flush。追加式（当前代码无 UPDATE/DELETE）。索引在 `(inserted_at)` 和 `(target, inserted_at)`。按 aggregate 流就是 `WHERE target = ^uri_str ORDER BY inserted_at, id`（今天就能跑；只是没被命名 — 且 `args` + `result` 列在 schema 里但当前对成功派发不填，见下方 codex r7 LOW-6 修正）。
 - **Commanded** — `commanded_eventstore_adapter` 写 PostgreSQL `events` 表。流身份 = `<identity_prefix><aggregate_uuid>`。追加是按流的乐观并发检查（expected_version）。文档原话：「使用 PostgreSQL 持久化的开源事件存储。」
 - **B'' 设计** — `Ezagent.EventLog` 模块薄封装现有 `invocations` 表。公开 API：
   ```
@@ -532,12 +550,12 @@ Allen 2026-05-28 09:33 指令 — 推一个新的顶级推荐。Path B（Sage + 
   def apply(%BankAccount{} = acct, %MoneyWithdrawn{new_balance: nb}),
     do: %{acct | balance: nb}
   ```
-- **B'' 设计** — **不要求**每个 Behavior 都在第一天做这个拆分；那是对 24 个模块的破坏性变更。改成**把拆分作为未来扩展形状**：
-  1. v1 保持 `Behavior.invoke/4` 不变。内部，`Kind.Runtime.handle_dispatch/4` 把每次成功的 invoke 包装成**合成事件** `%SliceMutated{kind_module, action, args, old_slice, new_slice, caller, at}` 并 append 到 `EventLog`。这就是 slice-change cursor（line 110）已经半实现的。
-  2. 新的可选 Behavior callback `events_for/4` — 若 Behavior 实现它，合成事件 fallback 被 Behavior 发射的列表替代。签名：`events_for(action, slice, args, ctx) :: [%Event{}]`。Behavior 同时获得 `apply_event/2 :: new_slice`。两个都在 `@behaviour` 里默认实现以保后向兼容（默认 = 合成事件包装）。
-  3. 按 Kind opt-in：想要事件作真理源的 Kind 声明其 Behavior 实现 `events_for/4` + `apply_event/2`，`persistence/0` 加一个 `:replay_enabled` flag。回放通过 `EventLog.stream_by_aggregate + Enum.reduce(events, init_slice, &apply_event/2)` 重建 slice。
+- **B'' 设计** — **不要求**每个 Behavior 都在第一天做这个拆分；那是对 24 个模块的破坏性变更。改成**把拆分作为未来扩展形状**，并**显式声明 legacy `invoke/4` Behavior 被排除在 events-as-truth 回放之外**：
+  1. v1 保持 `Behavior.invoke/4` 不变。内部，`Kind.Runtime.handle_dispatch/4` 把每次成功的 invoke 包装成**合成事件** `%SliceMutated{kind_module, action, args, old_slice, new_slice, caller, at}` 并 append 到 `EventLog`。**`%SliceMutated{}` 只是审计 / 通知 / 跨 Kind 触发材料 — 它不是回放安全的事件。** slice diff 无法重建 `invoke/4` 执行的副作用（PubSub 广播、`MessageStore.write`、跨 Kind `Invocation.dispatch/1`、外部 IO）。Codex r7 评审 HIGH-1（2026-05-28）通过对 `Behavior.Chat.invoke(:send)` 的具体追踪（`chat.ex:297-370, 408-414`）将此点明确化：`MessageStore.write` + PubSub 广播 + 接收方派发都在 slice 变更返回之前发生 — `apply_event(%SliceMutated{}, slice) -> new_slice` 都无法回放。
+  2. 新的可选 Behavior callback `events_for/4` — 若 Behavior 实现它，合成事件 fallback 被 Behavior 发射的列表替代。签名：`events_for(action, slice, args, ctx) :: [%Event{}]`。Behavior 同时获得 `apply_event/2 :: new_slice` 和 `effects/2 :: [side_effect]`。**三个一起是 events-as-truth opt-in 的原子要求。** `@behaviour` 默认是「events_for 未实现 → 合成事件路径 → 仅审计、无回放」。
+  3. 按 Kind opt-in：想要事件作真理源的 Kind 声明其上**每一个** Behavior 都实现 `events_for/4` + `apply_event/2` + `effects/2`（按 Behavior 三元组原子）。Kind 的 `persistence/0` 只在**全部** Behavior CQRS-split 后返回 `:replay_enabled`。`replay_readiness/1` 不变量测试枚举每个 action × 每个 Behavior，任何路径缺三元组都失败。回放通过 `EventLog.stream_by_aggregate + Enum.reduce(events, init_slice, &apply_event/2)` 重建 slice；effects 在回放期间**不**重执行（它们在原派发时已经执行；回放是状态重建，不是副作用重放）。
 
-  **为什么重要**：ezagent 今天保持可发布（不重写 Behavior）。第一个需要回放的 Kind（§1.5.3 的 P5）一次只迁一个 Kind。跨 Kind 编排（B'' §1.5.7.4 模块 #4 SagaRunner）不需要事件拆分 — 合成事件就够作触发。
+  **为什么重要**：ezagent 今天保持可发布（不重写 Behavior）。第一个需要回放的 Kind 一次只迁一个 Kind，**但按 Kind 迁移成本是 Kind 上每个 Behavior 的完整 CQRS-split — 不是给一个 Behavior 加一个 callback。** 跨 Kind 编排（B'' §1.5.7.4 模块 #4 SagaRunner）不需要事件拆分 — 合成事件作触发足够，因为触发是审计形状（读「发生了什么」+ 决定下一步），不是回放形状（重建状态）。
 
 ##### c. Aggregate 身份
 
@@ -686,14 +704,16 @@ ezagent 今天怎么跑：`Ezagent.Idempotency` keyed 在 `%Invocation{}` 信封
 @spec stream_since(cursor :: DateTime.t, opts) :: [event_row]
 ```
 
-**设计理由**：薄 facade 在现有 `invocations` 表上。envelope 形状标准化 telemetry handler 已经在写的（`%{trace_id, caller, target, action, args, result, ...}`）；`Audit.Writer` 变成 `append/1` 的一个实现（批的那个）；未来 Postgres 后端实现直接换模块、调用方不变。Stream-by-aggregate 是新辅助 — 一行 Ecto 查询（`from i in "invocations", where: i.target == ^uri_str, order_by: i.inserted_at`）。
+**设计理由**：薄 facade 在现有 `invocations` 表上。envelope 形状标准化 telemetry handler 已经在写的；`Audit.Writer` 变成 `append/1` 的一个实现（批的那个）；未来 Postgres 后端实现直接换模块、调用方不变。Stream-by-aggregate 是新辅助。
+
+**排序契约（codex r7 MED-4 关闭，2026-05-28）**：`stream_by_aggregate/2` 按 `(inserted_at ASC, id ASC)` 排序。`id` 列是现有 `invocations` 主键（`apps/ezagent_core/priv/repo/migrations/20260515160000_phase1_audit_dlq_snapshots.exs:7`，单调整数）。仅按 `inserted_at` 在同微秒 tie 下**不**稳定（测试批量插入、高吞吐生产） — `id` tie-breaker 让顺序在跨查询读时全序且稳定。Cursor 分页用 `(inserted_at, id)` 对作 cursor key：`WHERE (inserted_at, id) > (^cursor_at, ^cursor_id)`。这镜像 Commanded `RecordedEvent` 的 `(stream_version, event_number)` 对，只是 keyed on `(inserted_at, id)` 因为 ezagent invocations 表早于 per-stream-version-counter 设计。Phase 2 扩展点：加 `expected_version` 时，SPEC 迁移到真正的 per-stream version 列 — 但 (inserted_at, id) 排序保持作为 wire-format cursor 后向兼容。
 
 **扩展点**：
 - `replay_aggregate(uri, init_slice, apply_event_fn)` — v1 禁用；文档化为第一个 Kind opt-in 事件作真理源时的 Phase 2 入口。
 - 可插拔存储后端：今天 SQLite via Ecto；Phase 3+ 可换到 Postgres 或 `commanded_eventstore_adapter`，调用方不变。
-- `append/1` 上的乐观并发 `expected_version` 参数 — Phase 2（今天 `Kind.Server` GenServer 序列化拿到同样属性）。
+- `append/1` 上的乐观并发 `expected_version` 参数 — Phase 2（今天 `Kind.Server` GenServer 序列化拿到同样属性；`expected_version` 加入时引入 `stream_version` 列）。
 
-**测试策略**：stream-by-aggregate 顺序 + cursor 分页的单元测试；模拟 1000 次派发并断言 stream 有序 + 完整的集成测试。
+**测试策略**：stream-by-aggregate 顺序 + cursor 分页的单元测试（含显式同微秒批量插入测试验证 `id` tie-breaker）；模拟 1000 次派发并断言 stream 有序 + 完整 + 跨查询可重现的集成测试。
 
 **估算 LOC**：~150（大多是 delegation）。
 
@@ -737,14 +757,29 @@ ezagent 今天怎么跑：`Ezagent.Idempotency` keyed 在 `%Invocation{}` 信封
 
 ##### 4. `Ezagent.SagaRunner`
 
-**签名**：
+**签名**（codex r7 契约关闭，2026-05-28）：
+
 ```elixir
 defstruct steps: [], compensations: [], ctx: %{}, name: nil, command_uuid: nil
 
+@type effect_map :: %{atom() => term()}   # step_name -> forward_fn 的 :ok 值
+
 @spec new(name :: String.t, opts :: [command_uuid: String.t]) :: %SagaRunner{}
-@spec run(saga, name :: atom, forward :: (ctx -> {:ok, term} | {:error, term}), compensate :: (ctx, effects -> :ok | {:error, term})) :: %SagaRunner{}
-@spec execute(saga, ctx :: map) :: {:ok, ctx} | {:error, step :: atom, reason :: term, compensated_steps :: [atom]}
+@spec run(
+  saga,
+  step_name :: atom,
+  forward :: (effect_map -> {:ok, term} | {:error, term}),
+  compensate :: (effect_map, effects_so_far :: effect_map -> :ok | {:error, term})
+) :: %SagaRunner{}
+@spec execute(saga, initial_ctx :: map) :: {:ok, effect_map} | {:error, step :: atom, reason :: term, compensated_steps :: [atom]}
 ```
+
+**Ctx 传递契约**：
+1. `execute/2` 把 `effect_map = initial_ctx` 作种（initial_ctx 折进 effect_map：`Map.merge(initial_ctx, %{})`）。
+2. 每个 `forward/1` 接收当前 `effect_map`（含 initial ctx **加** 每个前序步的 `:ok` 结果按 step_name keyed）。`{:ok, value}` 时 runner 扩展 `effect_map = Map.put(effect_map, step_name, value)` 继续；`{:error, reason}` 时触发逆向补偿。
+3. 每个 `compensate/2` 接收 `(this_step's_effect_map_entry, effect_map_built_through_prior_steps)`。第一个 arg 是**本**步 forward 返回的（`Map.get(effect_map, step_name)`）；第二个是前序步建好的完整 prior-state map，给跨步补偿用（例如第 3 步 compensate 需要读第 1 步的 snapshot）。
+4. 补偿按 step 逆序跑（步 N-1 → 1 — 失败步 N 本身无 `:ok` 值可补偿）。
+5. 成功返回：完整 `effect_map`，调用方看到每步结果。
 
 用法示例（销毁级联）：
 
@@ -756,6 +791,8 @@ Ezagent.SagaRunner.new("destroy_agent:#{uri}", command_uuid: trace_id)
 |> SagaRunner.run(:audit,       &write_destroy_audit/1,    &noop/2)
 |> SagaRunner.execute(%{agent_uri: uri, workspace_uri: ws_uri})
 ```
+
+上面级联里，`capture_pre_destroy/1` 收 `%{agent_uri: ..., workspace_uri: ...}`（initial ctx），返回 `{:ok, %{caps: caps, sessions: sessions, lineage: parent}}`；若 `terminate` 在 cap 已被 revoke 后失败，`restore_caps/2` 就能拿到该 snapshot 作 `effects_so_far[:snapshot]`。
 
 **设计理由**：B'' 内联 saga 原语而非依赖 Sage（§1.5.4 风险：Sage 2022-09、ex_audit 2023-02）。内联是 ~200 LOC；依赖 Sage 是同样 LOC 加上依赖陈旧风险。按 `feedback_let_it_crash_no_workarounds` 我们自有结构性原语。契约故意是 **Sage 的子集** — 我们不需要 Sage 暴露的异步/并行特性；ezagent 的 saga 清单（§4.4）都是线性步。
 
@@ -770,12 +807,15 @@ Ezagent.SagaRunner.new("destroy_agent:#{uri}", command_uuid: trace_id)
 
 ##### 5. `Ezagent.EventSubscriber`（behaviour）
 
-**签名**：
+**签名**（codex r7 MED-5 关闭，2026-05-28 — partition 模式拉到 Phase 2）：
+
 ```elixir
-@callback interested?(event :: map) :: boolean | {:partition, key :: term}
+@callback interested?(event :: map) :: boolean
 @callback handle_event(event :: map, state :: map) :: {:ok, new_state} | {:dispatch, [%Command{}], new_state} | {:error, term}
 @callback initial_state(opts) :: map  # 默认 %{}
 ```
+
+v1 的 `interested?/1` 返回类型只是 `boolean`。先前的 `{:partition, key}` 形状被提到 Phase 2 扩展点，因为 v1 无法诚实规约分区生命周期、按 key 顺序、重启行为、GC 策略、重复处理 — 没有 outbox（Phase 2 — Ext.c）支撑。v1 subscriber 单进程，subscriber 模块内一次一个；顺序是 `EventLog.stream_by_aggregate` 顺序；并发通过注册多个 subscriber 模块达成。
 
 注册机制（`use Ezagent.EventSubscriber, application: :ezagent_core`）监督每个注册的 subscriber 一个进程，订阅 `EventLog` 的 append 后 PubSub topic。`BindingCreated` 上的 worker bootstrap 变成：
 
@@ -793,7 +833,7 @@ end
 
 **扩展点**：
 - `Ezagent.EventOutbox` — Phase 2 给 subscriber 在 handler 中途崩时持久重试。今天 subscriber 崩 + supervisor 重启会重订阅但丢正在处理的事件。Outbox 在 subscriber 处理事件**前**把派发意图写到 `event_subscriber_outbox` 表；轮询 worker drain。
-- 分区模式 — 给高量 topic，按 `{:partition, key}` 分区起 N 个并行 subscriber 进程。
+- **分区模式（Phase 2 — codex r7 MED-5 关闭）** — 给高量 topic，按 key（例如 workspace_uri）分区起 N 个并行 subscriber 进程。Phase 2 契约**必须**规定：(i) 分区所有权（按 key 一进程，或固定 N 池按 hash keyed），(ii) 按分区顺序保证，(iii) 崩 + 重启的回放行为，(iv) GC 策略（按分区 idle timeout 或持久），(v) 通过 `command_uuid` 防重 handler。v1 的 `interested?/1` callback 仅返回 `boolean` — `{:partition, key}` 待 Phase 2 SPEC 定义 (i)-(v) 后再落地。
 
 **测试策略**：派发触发事件，断言 subscriber 的 `handle_event/2` 恰好跑一次；杀掉 subscriber 在 handler 中途、重启、断言 handler 不重跑（通过 §1.5.7.3 的 `command_uuid` 幂等）。
 
@@ -817,9 +857,18 @@ end
 
 **触发**：合规要求重建历史状态（例如 SOC 2 审计「user X 在 2025-09-12 14:00 UTC 时持有哪些 cap」）；**或** 某个 Kind 受益于事件驱动的事故后复现。
 
-**B'' 生长路径**：该 Kind 在它的每个 Behavior 上实现 `events_for/4` + `apply_event/2`。`EventLog.replay_aggregate/2` 亮起（被实现）。Kind 的 `persistence/0` 返回 `{:replay_enabled, snapshot_policy}`。`StateRebuilder.rebuild_from_events/3` 接上。其它 Kind 不受影响。**成本**：每 Kind ~2-3 周。按 `feedback_let_it_crash_no_workarounds`，无 shim 或双模式 — 一旦 Kind opt-in，每次重启都走事件路径。
+**B'' 生长路径**：该 Kind 把其上每个 Behavior 都 opt-in 到 CQRS triplet（`events_for/4` + `apply_event/2` + `effects/2`）。`EventLog.replay_aggregate/2` 亮起（被实现）。Kind 的 `persistence/0` 返回 `:replay_enabled`。`StateRebuilder.rebuild_from_events/3` 接上。其它 Kind 不受影响。按 `feedback_let_it_crash_no_workarounds`，无 shim 或双模式 — 一旦 Kind opt-in，每次重启都走事件路径。
 
-**关键属性**：按 Kind 迁移，不是 big-bang。对比 Option A 在一个 Phase-10 计划里迁所有 5 个实体 Kind（本 SPEC §6，~3 个月 wall-time）。
+**具体走查 — User Kind（codex r7 HIGH-2 关闭，2026-05-28）**。User Kind 实际注册的 Behavior（按 `apps/ezagent_domain_identity/lib/ezagent/entity/user.ex:226-231` 加 `application.ex:271-284` 的 `IdentityAdmin` 扩展）：**`Identity`、`UserCredentials`、`UserTokens`、`IdentityAdmin`**。按 Behavior 的回放就绪评估：
+
+- **`Identity`** — caps slice 是内存 `MapSet`；cap grant/revoke 是 slice 变更；`reconcile_after_load/2` 从 `users.caps_json` rehydrate（`identity.ex:156-206, 228-245`）。回放路径：`events_for(:grant_cap, ...)` 发 `%CapGranted{cap}`，`apply_event(%CapGranted{cap}, slice) = MapSet.put(slice.caps, cap)`。**可回放** 若 `users.caps_json` 投影写变成 `effects/2` 声明而非内联 DB 写。
+- **`UserCredentials`** — `invoke(:set_password, ...)` bcrypt-hash + 通过 `Ezagent.Entity.User.update_password/2` 写 `users.password_hash`（`user_credentials.ex:112-122`，`users.ex:100-112`）。DB 写是 canonical 来源 — slice 不带 password。回放路径：`events_for(:set_password, ...)` 发 `%PasswordChanged{hash}`；`apply_event` 对 slice 是 no-op（无内存表示）；`effects/2` 声明 `%DbWrite{table: users, set: %{password_hash: hash}}`，Runtime 执行。**可回放** 仅当 `effects/2` 在回放期间**不**重执行（否则回放会重写历史）。B'' 契约（§1.5.7.2.b）是回放重新 fold 事件但**不**重执行 effects — 已验证。
+- **`UserTokens`** — `invoke(:mint_token, ...)` 生成 token、bcrypt-hash、插入 `entity_tokens`（`user_tokens.ex:120-146`，`token.ex:75-91`）；`invoke(:revoke_token, ...)` 预读 + 删除（`user_tokens.ex:173-191, 260-272`）。Token 表是真理源 — slice 镜像它做热路径读。回放路径：`events_for(:mint_token, ...)` 发 `%TokenMinted{token_id, label, hash}`；`apply_event` 更新 slice MapSet；`effects/2` 声明 `entity_tokens` insert。Revoke 对称。**可回放** 同 `UserCredentials` 的 effects-not-replayed 属性。`mix ezagent.user.replay` 任务**不会**重新 mint token；只从现有事件重建 slice 的 token-MapSet。
+- **`IdentityAdmin`** — admin-scope grant。与 `Identity` 同形状。**可回放**。
+
+**User Kind opt-in 总成本**：~3-4 周（非最初 2-3 周 — r7 修正）。分解：`UserCredentials` + `UserTokens` 各 ~1 周（DB-写 Behavior 需要小心提取 `effects/2`）；`Identity` + `IdentityAdmin` 各 ~3 天（仅 slice）；`replay_readiness/1` 不变量测试 + 集成测试（从 100 个事件重建 User 并对比 snapshot 版本）~1 周。**第一个 Kind opt-in 是贵的**，因为测试 scaffolding 是 greenfield；后续 Kind 摊销到 ~2 周。
+
+**关键属性**：按 Kind 迁移，不是 big-bang。对比 Option A 在一个 Phase-10 计划里迁所有 5 个实体 Kind（本 SPEC §6，~3 个月 wall-time）。**但**：B'' 回放 opt-in 门控在 Kind 上**每个** Behavior 通过 `replay_readiness/1`。一个 Behavior 未迁的 Kind 不能 opt-in。这是 §1.5.7.2.b 原子三元组不变量强制的结构性成本。
 
 ##### c. 若 saga 持久变成需要（跨重启 resume）
 
@@ -844,9 +893,18 @@ end
 - **Option A（Commanded 直接）** — 已经在那。成本：0。
 - **Option B（Sage + ex_audit）** — strangle 模式迁移：事件得从 `Ecto.Changeset` 历史回溯推断；saga 模块从 Sage 重写到 Commanded PM。成本：~10-12 周。
 - **Option B'（DIY Ecto.Multi）** — 事件得从零建模；saga 重写。成本：~14-16 周。
-- **Option B''（原生整合）** — 事件已存在（在 `EventLog` / `invocations`）；aggregate 已存在（按 Kind）；snapshot 已存在（`SnapshotStore` / `kind_snapshots`）；saga 有 Runner 1:1 映射到 Commanded PM。迁移变成「替换 3-4 个内部模块的实现」：`EventLog` → 封装 `commanded_eventstore_adapter`，`SnapshotStore` → 封装 Commanded snapshot，`SagaRunner` → 封装 `Commanded.ProcessManagers.ProcessManager`，`EventSubscriber` → 封装 `Commanded.Event.Handler`。成本：~4-6 周。
+- **Option B''（原生整合）** — 事件已存在（在 `EventLog` / `invocations`）；aggregate 已存在（按 Kind）；snapshot 已存在（`SnapshotStore` / `kind_snapshots`）。saga 存在于 `SagaRunner` 形状里，**概念上邻近但与** Commanded PM **不是 1:1**（codex r7 HIGH-3 关闭，2026-05-28）：`SagaRunner` 是无状态调用内闭包列表（`run/4` + `execute/2`）；Commanded PM 是有状态的，含 `interested?/1` + `handle/2` + `apply/2` + 按实例的 correlation-id PM 状态。saga 迁移**不**是 wrapping swap — 它要求把每个 `SagaRunner.execute` 调用站点翻译成带 `interested?` clause + correlation id + 持久 PM 状态 + 停止条件的 PM。
 
-**这就是「面向未来 Commanded」的意思。** 现在把抽象命名正确，既保留选项又**缩小**未来成本。B'' 不是分叉路；它是会合路。
+  按组件迁移成本分解：
+  - `EventLog` → `commanded_eventstore_adapter`：~1 周（主要是 schema 迁移 + 双写 cutover；公共 API **已经**是 stream-by-aggregate 语义的 1:1 wrap）。
+  - `SnapshotStore` → Commanded snapshot：~3-4 天（策略不同 — `:on_change` / `:on_terminate` 是 ezagent 形状 vs Commanded 的 `snapshot_every: N`；迁移转换策略声明）。
+  - `EventSubscriber` → `Commanded.Event.Handler`：~1 周（订阅者注册语义匹配；partition 模式（B'' Ext.）映射到 Commanded 的 `subscribe_to: :all` + handler 并发）。
+  - **`SagaRunner` → `Commanded.ProcessManagers.ProcessManager`：每个非平凡 saga ~3-4 周**，因为每步的 forward/compensate 闭包变成 PM 事件 handler 分支，含 correlation id 派生 + interested? 选择器 + apply/2 fold + 停止条件。§4.4 的 5 个单调用级联各 ~3-5 天；跨调用工作流如 `EzagentDomainChat.create_session/3` 流（lock + spawn + bind + 异步 cast `chat.join` + grant owner cap + `ensure_orchestrator_with_meta` 带 `:partial` 有界重试 — `ezagent_domain_chat.ex:143-200, 540-615, 619-648`；`session.ex:850-889, 984-1003`）各 ~1-2 周，因为异步腿和 `:partial`-结果分支需要持久 PM correlation 状态。
+  - 每 Kind `events_for/4` + `apply_event/2` + `effects/2` 三元组 → Commanded `execute/2` + `apply/2`：每个 opt-in 的 Kind ~1-2 周（slice-per-Behavior 模型必须融合成单一 aggregate 状态 struct — 见下方 §1.5.7.1 codex r7 HIGH 承认）。
+
+  **诚实修正总数**：~6-10 周（最简单组合：1-2 个小 saga，无跨调用工作流，无 Kind opt-in 到事件作真理源），~10-14 周（若有 2+ 跨调用工作流 + 多 Behavior Kind 需要迁移）。先前「~4-6 周」是乐观下限；codex r7 HIGH-3 评审正确标记为低估。**即便在修正区间，B'' → Commanded 仍比 Option B → Commanded 便宜（仅 saga 就 ~10-12 周，加上事件得从零推断），比 Option B' → Commanded 戏剧性更便宜（~14-16 周）。**
+
+**修正后「面向未来 Commanded」的意思。** 通过让 `EventLog`、`SnapshotStore`、`EventSubscriber` 与 Commanded 等价物近 1:1，且 `SagaRunner` 提供 ezagent 今天需要的 saga 形状（线性、同步）**加** 难情况下到 PM 的清晰迁移路径，我们既保留选项又**缩小**未来成本（最低限度省了 Option B 受困的「事件得推断」~6 周）。B'' 不是 Commanded 的 1:1 wrapper；它是**会合性**设计 — 大多数概念紧密对齐；saga 需要翻译但不需要重发明。
 
 #### 1.5.7.6 — 对比总结表
 
@@ -859,7 +917,7 @@ end
 | **长期回放** | 原生 | 按 Kind 手写 | 按 Kind 手写 | **按 Kind opt-in 原生（Ext.b）** |
 | **长期分布式扩展** | 原生（多节点 aggregate） | 可能通过 Oban 分布 | 可能通过 Postgres | **可能通过 SagaOutbox / EventOutbox（Ext.c/Ext.d）** |
 | **长期多租户** | 按 aggregate 强隔离 | Workspace 通过 DB scoping | Workspace 通过 DB scoping | **Workspace 通过 `Persistence.scope_by_workspace`（已经在）** |
-| **若未来需要 Commanded 时的迁移成本** | 0 | ~10-12 周 | ~14-16 周 | **~4-6 周** |
+| **若未来需要 Commanded 时的迁移成本** | 0 | ~10-12 周 | ~14-16 周 | **~6-14 周（按 §1.5.7.5(e) r7 诚实区间；下限取决于 saga 清单 + Kind opt-in 数）** |
 | **依赖风险** | Commanded 自身（活跃、好维护）；EventStore lib | Sage 2022 陈旧；ex_audit 2023 陈旧；Oban Pro 付费 | 无（stdlib + Ecto） | **无（用现有 ezagent 原语）** |
 | **派发延迟开销** | +5x 按 §7.1 | 0 | 0 | **0** |
 | **Dev-loop 摩擦** | Postgres 必须 | Postgres 必须（Oban） | 无 | **无** |
@@ -882,7 +940,7 @@ end
 
 2. **无依赖风险** — Option B 继承 Sage 2022-09 + ex_audit 2023-02 陈旧（§1.5.4）。B'' 用 ezagent 自身原语 + 标准 Ecto + Phoenix.PubSub。唯一加的「库」是 `ezagent_core` 里已存在模块的名字。
 
-3. **对未来 Commanded 迁移最优位置** — §1.5.7.5(e)。B'' → Commanded 的迁移 ~4-6 周（换 3-4 个内部模块），vs Option B 的 ~10-12 周（事件得推断 + saga 重写）。B'' 让最终 Commanded 迁移成为 4 个路径里**最便宜**的。
+3. **对未来 Commanded 迁移最优位置** — §1.5.7.5(e)。B'' → Commanded 的迁移 ~6-14 周（codex r7 HIGH-3 诚实区间；下限取决于 saga 清单 + Kind opt-in 数）。便宜部分（`EventLog`、`SnapshotStore`、`EventSubscriber`）是近 1:1 wrap；贵部分（saga → Commanded PM）需要翻译而非改名。即便上限仍比 Option B 的 ~10-12 周（事件推断 **加** saga 重写）便宜，比 Option B 的 ~14-16 周戏剧性更便宜。B'' 让最终 Commanded 迁移成为非平凡路径里**最便宜**的。
 
 4. **对齐 `feedback_let_it_crash_no_workarounds`** — 每个其它选项加 shim（Sage 的 saga 状态、Oban 的 outbox、ex_audit 的 changeset interceptor）。B'' 不加 — 它命名的每个原语都是已经在代码里的结构性真相。「缺失的 30%」是模块命名，不是新行为。
 
