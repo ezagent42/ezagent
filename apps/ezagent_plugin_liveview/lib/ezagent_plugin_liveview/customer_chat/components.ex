@@ -76,13 +76,19 @@ defmodule EzagentPluginLiveview.CustomerChat.Components do
   attr :welcome, :string, required: true
 
   def message_list(assigns) do
+    # Welcome bubble lives OUTSIDE the phx-update="stream" container: a
+    # static child inside a stream container gets misplaced when stream
+    # items are inserted (it rendered below the messages). Keep the stream
+    # container holding only stream items.
     ~H"""
-    <div id="cc-messages" phx-update="stream" class="flex flex-col">
+    <div class="flex flex-col">
       <div :if={@empty?} id="cc-welcome" class="mr-auto max-w-[80%] px-3 py-2 rounded-2xl text-sm bg-zinc-100 text-zinc-900 mb-2">
         {@welcome}
       </div>
-      <div :for={{dom_id, row} <- @messages} id={dom_id}>
-        <.bubble row={row} />
+      <div id="cc-messages" phx-update="stream" class="flex flex-col">
+        <div :for={{dom_id, row} <- @messages} id={dom_id}>
+          <.bubble row={row} />
+        </div>
       </div>
     </div>
     """
@@ -99,6 +105,7 @@ defmodule EzagentPluginLiveview.CustomerChat.Components do
         type="text"
         name="chat[text]"
         id="cc-input"
+        value={@form[:text].value}
         autocomplete="off"
         disabled={@disabled}
         placeholder={@placeholder}

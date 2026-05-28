@@ -106,6 +106,17 @@ const CustomerChatPersist = {
     const conv = this.el.dataset.conv;
     const cid = this.el.dataset.cid;
     if (conv) localStorage.setItem(key, conv + "|" + (cid || ""));
+
+    // Clear the composer after submit. LiveView resets the value
+    // ATTRIBUTE but deliberately preserves the input value PROPERTY
+    // across patches (so it never clobbers active typing), so binding
+    // value= alone can't clear it — clear the property here.
+    this.el.addEventListener("submit", () => {
+      requestAnimationFrame(() => {
+        const input = this.el.querySelector("#cc-input");
+        if (input) input.value = "";
+      });
+    });
   }
 };
 
