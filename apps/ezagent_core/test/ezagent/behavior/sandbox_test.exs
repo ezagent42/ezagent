@@ -13,6 +13,38 @@ defmodule Ezagent.Behavior.SandboxTest do
 
   alias Ezagent.Behavior.Sandbox
 
+  # ---------------------------------------------------------------
+  # Legacy-shape adapter (Phase 2.5 migration helper)
+  #
+  # The pre-migration tests called `invoke_via_new_contract(action, slice, args,
+  # ctx)` and asserted on the resulting `{:ok, new_slice, result}` /
+  # `{:error, reason}` shape. The new contract dispatches via
+  # `handle_<action>/2` + `{:set, key, value}` effects.
+  #
+  # `invoke_via_new_contract/4` provides the legacy shape on top of
+  # the new contract: it injects `ctx[:read]/2` to expose the slice
+  # to the handler, runs `apply_effects/2` against the slice to
+  # produce the new slice, and lifts the result back into the
+  # 3-tuple the legacy tests assert on. This keeps the SEMANTIC
+  # coverage of the existing tests intact (they catch any regression
+  # in the read/write/validate logic) while validating the new
+  # contract's effect application at the same time.
+  # ---------------------------------------------------------------
+  defp invoke_via_new_contract(action, slice, args, ctx) do
+    handler = String.to_atom("handle_#{action}")
+    read = fn key, default -> Map.get(slice, key, default) end
+    ctx_with_read = Map.put(ctx, :read, read)
+
+    case apply(Sandbox, handler, [args, ctx_with_read]) do
+      {:ok, result, effects} when is_list(effects) ->
+        {:ok, %{state: new_slice}} = Ezagent.Behavior.apply_effects(effects, slice)
+        {:ok, new_slice, result}
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
   describe "Behavior contract surface" do
     test "actions/0 returns [:read, :write_path, :destroy]" do
       assert Sandbox.actions() == [:read, :write_path, :destroy]
@@ -130,7 +162,7 @@ defmodule Ezagent.Behavior.SandboxTest do
                 respawn_template_data: %{"cwd" => "/tmp/cd"},
                 pty_phase: :running
               }} =
-               Sandbox.invoke(:read, slice, %{}, %{})
+               invoke_via_new_contract(:read, slice, %{}, %{})
     end
 
     test "returns nils for an unpopulated slice" do
@@ -148,14 +180,14 @@ defmodule Ezagent.Behavior.SandboxTest do
                 respawn_template_data: nil,
                 pty_phase: nil
               }} =
-               Sandbox.invoke(:read, slice, %{}, %{})
+               invoke_via_new_contract(:read, slice, %{}, %{})
     end
 
     test "REJECTS once the process-dict gate is set (codex PR2 round-1 HIGH-2)" do
       Process.put({Sandbox, :destroyed?}, true)
       slice = %{config_dir_path: "/tmp/x", template_class: SomeMod, respawn_template_data: nil}
 
-      assert {:error, :destroyed} = Sandbox.invoke(:read, slice, %{}, %{})
+      assert {:error, :destroyed} = invoke_via_new_contract(:read, slice, %{}, %{})
     end
   end
 
@@ -175,7 +207,7 @@ defmodule Ezagent.Behavior.SandboxTest do
                 template_class: MyClass,
                 respawn_template_data: nil
               }} =
-               Sandbox.invoke(:write_path, slice, args, %{})
+               invoke_via_new_contract(:write_path, slice, args, %{})
 
       # Legacy 2-key write — respawn_template_data is NOT touched.
       assert new_slice == %{
@@ -200,7 +232,7 @@ defmodule Ezagent.Behavior.SandboxTest do
                 template_class: MyClass,
                 respawn_template_data: %{"cwd" => "/tmp/agent-z", "extra" => "k"}
               }} =
-               Sandbox.invoke(:write_path, slice, args, %{})
+               invoke_via_new_contract(:write_path, slice, args, %{})
 
       assert new_slice == %{
                config_dir_path: "/tmp/agent-z",
@@ -228,7 +260,7 @@ defmodule Ezagent.Behavior.SandboxTest do
                 template_class: NewClass,
                 respawn_template_data: %{"cwd" => "/new/path"}
               }} =
-               Sandbox.invoke(:write_path, slice, args, %{})
+               invoke_via_new_contract(:write_path, slice, args, %{})
 
       assert new_slice == %{
                config_dir_path: "/new/path",
@@ -241,7 +273,7 @@ defmodule Ezagent.Behavior.SandboxTest do
       slice = %{config_dir_path: nil, template_class: nil, respawn_template_data: nil}
 
       assert {:error, {:invalid_config_dir_path, 123}} =
-               Sandbox.invoke(
+               invoke_via_new_contract(
                  :write_path,
                  slice,
                  %{config_dir_path: 123, template_class: nil},
@@ -253,7 +285,7 @@ defmodule Ezagent.Behavior.SandboxTest do
       slice = %{config_dir_path: nil, template_class: nil, respawn_template_data: nil}
 
       assert {:error, {:invalid_template_class, "ModString"}} =
-               Sandbox.invoke(
+               invoke_via_new_contract(
                  :write_path,
                  slice,
                  %{config_dir_path: nil, template_class: "ModString"},
@@ -265,7 +297,7 @@ defmodule Ezagent.Behavior.SandboxTest do
       slice = %{config_dir_path: nil, template_class: nil, respawn_template_data: nil}
 
       assert {:error, {:invalid_respawn_template_data, "not-a-map"}} =
-               Sandbox.invoke(
+               invoke_via_new_contract(
                  :write_path,
                  slice,
                  %{
@@ -290,7 +322,7 @@ defmodule Ezagent.Behavior.SandboxTest do
                 template_class: nil,
                 respawn_template_data: nil
               }} =
-               Sandbox.invoke(
+               invoke_via_new_contract(
                  :write_path,
                  slice,
                  %{config_dir_path: nil, template_class: nil, respawn_template_data: nil},
@@ -309,7 +341,7 @@ defmodule Ezagent.Behavior.SandboxTest do
       slice = %{config_dir_path: "/tmp/x", template_class: SomeMod, respawn_template_data: nil}
 
       assert {:error, :destroyed} =
-               Sandbox.invoke(
+               invoke_via_new_contract(
                  :write_path,
                  slice,
                  %{config_dir_path: "/new", template_class: NewMod},

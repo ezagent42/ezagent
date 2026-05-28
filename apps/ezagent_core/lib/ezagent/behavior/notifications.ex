@@ -15,17 +15,41 @@ defmodule Ezagent.Behavior.Notifications do
   Per SPEC trigger: Allen 2026-05-23 "plugin 是否有注册 notification 的
   统一入口？" → `Ezagent.Notifications` is the unified entry; this
   Behavior is its CapBAC subject.
+
+  ## Migration to §2.2 declarative contract (Phase 2.5 — 2026-05-28)
+
+  Per SPEC `2026-05-28-router-behavior-kind-architecture.md` §6.2,
+  this Behavior is migrated from the legacy `@behaviour Ezagent.Behavior`
+  contract to the new `use Ezagent.Behavior` macro + per-action
+  `action/3` declarations + `handle_<action>/2` handlers. Semantics
+  unchanged — `dispatchable?/0 == false` keeps the marker behaviour
+  identical (handlers raise if ever reached as defence in depth).
+
+  Custom `required_caps/0` retained (not auto-derived) because the
+  cap axis is `:user`, not the macro's default `:any`.
   """
 
-  @behaviour Ezagent.Behavior
+  use Ezagent.Behavior
 
-  @impl Ezagent.Behavior
-  def actions, do: [:notify, :subscribe]
+  action :notify,
+    args: %{},
+    returns: :ok,
+    caps: [:notify],
+    modes: [:call],
+    description: "push a notification into a user's inbox (used by plugins / domains)"
+
+  action :subscribe,
+    args: %{},
+    returns: :ok,
+    caps: [:subscribe],
+    modes: [:call],
+    description: "subscribe to a user's notification stream (used by LV / admin / monitoring)"
 
   # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
   # Notifications is cap-only and registered on User Kind only — kind
-  # axis is `:user`.
-  @impl Ezagent.Behavior
+  # axis is `:user`. The macro-derived default would be `:any`; we
+  # override to preserve the `:user` axis the CapabilityRegistry needs
+  # to match the existing grants.
   def required_caps do
     %{
       notify: Ezagent.Capability.cap(:user, __MODULE__, :notify),
@@ -33,35 +57,29 @@ defmodule Ezagent.Behavior.Notifications do
     }
   end
 
-  @impl Ezagent.Behavior
-  def cap_subjects do
-    [
-      {:notify, "push a notification into a user's inbox (used by plugins / domains)"},
-      {:subscribe, "subscribe to a user's notification stream (used by LV / admin / monitoring)"}
-    ]
-  end
-
-  @impl Ezagent.Behavior
   def dispatchable?, do: false
 
-  @impl Ezagent.Behavior
   def state_slice, do: :notifications
 
-  @impl Ezagent.Behavior
   def init_slice(_args), do: %{}
 
-  @impl Ezagent.Behavior
-  def invoke(action, _slice, _args, _ctx) do
-    raise "Ezagent.Behavior.Notifications.#{inspect(action)} is cap-only — " <>
-            "use Ezagent.Notifications.notify/2 or .subscribe/2 instead of dispatching."
+  # Cap-only marker — must define `handle_<action>/2` to satisfy the
+  # `use Ezagent.Behavior` macro's @before_compile invariant (every
+  # declared action requires a matching handler). Raises identically
+  # to the legacy contract clause; `dispatchable?/0 == false`
+  # prevents the framework dispatcher from ever routing here.
+  def handle_notify(_args, _ctx) do
+    raise "Ezagent.Behavior.Notifications.:notify is cap-only — " <>
+            "use Ezagent.Notifications.notify/2 instead of dispatching."
   end
 
-  @impl Ezagent.Behavior
-  def interface, do: %{}
+  def handle_subscribe(_args, _ctx) do
+    raise "Ezagent.Behavior.Notifications.:subscribe is cap-only — " <>
+            "use Ezagent.Notifications.subscribe/2 instead of dispatching."
+  end
 
   # PR-OWN-4 (caps-data-ownership SPEC #306 §6): per-entity Behavior
   # — the entity (user / agent) owns its own state for this Behavior.
-  @impl Ezagent.Behavior
   def data_owner(%URI{} = entity_uri), do: Ezagent.URI.instance(entity_uri)
   def data_owner(:any), do: :any
   def data_owner(_), do: :no_owner
