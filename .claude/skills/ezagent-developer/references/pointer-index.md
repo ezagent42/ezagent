@@ -20,6 +20,8 @@ When you (or a future contributor) need authoritative answers:
 | `docs/superpowers/specs/2026-05-24-notification-architecture-v2.md` | Notifications v2 spec (single PubSub chokepoint + SubscriberFan) |
 | `docs/superpowers/specs/notifications.md` | Notifications stable contract (public surface, invariants, cap model) |
 | `docs/superpowers/specs/2026-05-25-caps-cleanup-v1.md` | Caps-cleanup SPEC (PR-CC-1 ambient authority removal + PR-CC-2-v2 boundary concern model) |
+| `docs/superpowers/specs/2026-05-28-router-behavior-kind-architecture.md` | **Router/Behavior/Kind self-built architecture SPEC (PR #445, r3 normative)** — 3 primitives + 3 composition patterns + 9-effect vocabulary + 8 framework-internal modules + 10-check acceptance criteria. The plugin contract rewritten 2026-05-28. |
+| `docs/scenarios/README.md` | E2E scenarios master catalog — 30 scenarios across UI/CLI/Feishu/agent flavors/persistence/recovery/plugin authoring. Bilingual lockstep. Scenario #30 is the canonical greenfield-Behavior end-to-end exercise. |
 | `docs/phase-specs/phase7/SPEC.md` | Phase 7 design (LOCKED v3) |
 | `docs/phase-specs/phase7/VERIFICATION.md` | V1-V5 acceptance criteria + e2e flows |
 | `docs/phase-specs/phase7/PLAN.md` | 24-PR sequence + per-PR workflow + risk register |
@@ -34,8 +36,9 @@ When you (or a future contributor) need authoritative answers:
 | `apps/ezagent_domain_chat/lib/ezagent/entity/agent_template.ex` moduledoc | **Authoritative source for cc agent sandbox/config** — `claude_config_dir` / `settings_path` / `mcp_config_path` / `api_key_helper`. The standalone `cc-agent-config` SPEC was retired 2026-05-23 and absorbed here. Operator companion: `docs/runbook/cc-agent-config.md` |
 | `docs/futures/todo.md` | Durable TODO list (deferred items across sessions). The source of truth for in-flight + future work per `feedback_durable_todo_list`. |
 
-## Current state awareness (Phase 8 / Phase 9 / Caps-cleanup batch)
+## Current state awareness (Router/Behavior/Kind migration — Phase 1-4 complete)
 
+- **Router/Behavior/Kind self-built architecture shipped 2026-05-28** (SPEC PR #445; integration PRs #451 / #453 / #454 / #462 / #463 / #464 / #469; E2E tests #465-#468; scenarios catalog #452). 165 E2E tests passing; legacy `Behavior.invoke/4` retired to `@optional_callbacks`; `LegacyBehaviorAdapter` DELETED. Decision Log #147-#152 captures per-phase landmarks. `references/new-contract.md` is the operational reference for plugin authors.
 - **v1 release shipped 2026-05-18** (Phase 7 closeout — Decision #144 captures the cross-PR invariant set; `docs/notes/phase-7-handoff.md` is the release note).
 - **URI SPEC v2 migration shipped 2026-05-19** as PRs #140–#149:
   - #140 — SPEC v2 doc (this is the normative source)
