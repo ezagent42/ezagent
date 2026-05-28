@@ -1,8 +1,23 @@
 # SPEC — Kind lifecycle CRUD parity (destroy callback + DB-backing spawn)
 
-**Status:** r7 — wholesale rewrite. Allen pushback 2026-05-28 03:36–03:43: (1) "tombstone 永久不允许 re-register 很奇怪 —— 重走创建流程就该可以"; (2) "更深层 Kind 缺 D（destroy）callback，所有 Kind 应该有完整 CRUD". Option B chosen — inline pivot of SPEC #440 from "EntityDeletion + tombstone" to "Kind lifecycle CRUD parity". No codex round on r7 (Allen's directive).
+**Status:** r8 — race / idempotency / inventory fixes per codex r7 REJECT verdict. Five critical blockers + two nits addressed below; three new invariants (INV-19/20/21) added.
 
-**r7 changes — wholesale scope pivot:**
+**r8 changes (over r7):**
+
+- **B1 — transaction scope unified + race fenced by reordering.** §3.4 / §4.1 / Appendix A previously gave three inconsistent transaction-scope claims (steps 5+6 / 5–7 / 6+7). r8 picks ONE normative scope: the Repo.transaction wraps the **three DB writes** — `delete kind_snapshot row` + `delete domain row (Users.delete / Agents.delete / …)` + `audit row insert`. Per `feedback_let_it_crash_no_workarounds`, the race is fenced by **structural reordering** (DB delete BEFORE terminate_child), NOT by adding ETS markers or extra state: the orchestration now runs `pre-check → per-Kind destroy → Repo.transaction[snapshot purge + DB row delete + audit insert] → terminate_child → broadcast`. Between the transaction commit and `terminate_child`, the live pid is still alive — but the DB-backing check at the SpawnRegistry entry point (B2) means no new dispatch can spawn a fresh Kind, and the live pid is being drained by `terminate/2`. Linearization point: the transaction commit. After commit, no spawn path can produce a Kind at this URI; the in-flight pid is unreachable to new callers because (a) its caps are revoked (step 3), (b) the DB-backing check rejects re-entry (B2), and (c) `terminate_child` completes synchronously immediately after.
+- **B2 — `SpawnRegistry.spawn/1` DB-backing check moved BEFORE `KindRegistry.lookup/1`.** r7 placed the DB-backing check inside each scheme's spawn fn (only reached after `lookup` MISSES). If the Kind is alive (mid-tear-down or recently respawned via another path), `spawn_detailed/1` returns the live pid WITHOUT consulting the DB. r8 introduces a per-scheme `backing_check_fn/1` registered alongside `spawn_fn/1`; `SpawnRegistry.spawn/1` calls the backing check FIRST and returns `{:error, :no_backing_entity}` if the row is gone — even if a live pid happens to still exist. Each scheme owner (identity / chat / workspace / external_mirror) provides its own backing_check_fn.
+- **B3 — concurrent-destroy idempotency contract.** r7's return shape did not cover "two callers race to destroy the same URI". r8 adds `{:ok, :already_destroyed}`: the loser of the race (whose DB delete affects 0 rows because the winner already committed) returns success-with-tag. Both callers' audit rows are recorded under distinct `trace_id`s. Single DB row delete actually happens. INV-19 pins this.
+- **B4 — Workspace cascade refuses nested workspaces.** r7 said "every member is a leaf Kind" but did not enforce. r8 adds explicit rejection in `Workspace.can_destroy?/2`: if any member URI's scheme/host starts with `workspace://`, return `{:error, :nested_workspace_not_supported}`. Fail-fast, no cycle-detection. INV-14 fixture extended.
+- **B5 — REQUIRED destroy/2 migration inventory expanded.** Real grep of `@behaviour Ezagent.Kind` across lib/ (excluding test/support): **11 production Kinds + 6 production Kind.Templates**, not the 5 r7 claimed. Production Kinds: `User`, `Agent`, `Session`, `Workspace`, `ExternalMirrorWorker`, `System`, `AgentTemplate`, `SessionTemplate`, `Echo`, `CurlAgent`, `NpAgent`. Production Templates (impl `Ezagent.Kind.Template`): `CcAgent`, `CodexAgent`, `EchoAgent`, `CurlAgent` template, `GenericSession`, `NpAgent` template. Per recommendation (a): REQUIRED for all production Kinds + Templates; test-support Kinds get a default no-op `Kind.default_destroy/2` macro. PR-C migration list expanded accordingly.
+- **N1 — Loader / BootReconciler note.** §3.5 adds one line: "Loader/BootReconciler paths accept the same DB-backing check at SpawnRegistry entry; no cache layer planned." Closes codex r7 N1.
+- **N2 — Appendix INV count corrected.** Appendix B previously said "16 entries"; the INV table actually went to INV-18. r8 adds INV-19/20/21 → 21 total. Appendix B updated.
+- **INV-19 NEW** — concurrent double-destroy idempotency: two parallel `Kind.Server.destroy(uri)` calls; assert one `{:ok, %{...}}` + one `{:ok, :already_destroyed}`; single DB delete; both audit rows present with distinct trace_ids.
+- **INV-20 NEW** — spawn-after-DB-delete returns `{:error, :no_backing_entity}` even when a live pid still exists from a pre-delete spawn (the B2 check fires before `KindRegistry.lookup`).
+- **INV-21 NEW** — backing_check_fn ordering: monkey-patch `KindRegistry.lookup` to assert NOT called before `backing_check_fn`; verifies §2 / §4.1 wiring is correct.
+
+**r7 (compressed):** wholesale pivot from r1–r6 tombstone design to "Kind lifecycle CRUD parity" — added `Ezagent.Kind.destroy/2` callback, `Ezagent.Kind.Server.destroy/2` orchestrator, DB-backing check at SpawnRegistry entity callback, `AgentBridge.Adapter.teardown/1` extension. INV-13 (re-register works) + INV-14 (Workspace cascade) as architectural-goal gates. No codex round on r7 (Allen's directive).
+
+**r7 changes (preserved for history):**
 
 - **DELETE** entire tombstone design (the r1–r6 mechanism): `entity_tombstones` DB table, ETS mirror, `Ezagent.SpawnRegistry.tombstone_and_kill/1` atomic primitive, multi-boundary `tombstoned?/1` checks at three spawn paths, append-only "permanent deny" semantics, OQ-1 TTL discussion, all r1–r6 codex review responses about tombstone correctness.
 - **ADD** `Ezagent.Kind.destroy/2` callback to the `Ezagent.Kind` behaviour. This is the structural fix — Kinds today expose `type_name/0`, `behaviors/0`, `persistence/0`, `uri_from_args/1`, `snapshot_version/0`, `supervisor/0`, `spawn_strategy/0`, `terminate_strategy/0`, `holds_cap?/2` (the C and R of CRUD plus operational metadata) but NO D. r7 closes the gap.
@@ -138,14 +153,24 @@ defmodule Ezagent.Kind.Server do
     6. Audit emit: `invocations` row `action = "kind.destroyed"`
        with trace_id, caller, reason, per-step sub-rows
 
-  Re-spawn after destroy: SpawnRegistry entity callback sees
-  `Users.get_by_uri(uri) == nil` and returns `{:error, :no_backing_entity}`.
-  No tombstone needed — the DB row IS the source of truth.
+  Re-spawn after destroy: SpawnRegistry.spawn/1 calls the registered
+  backing_check_fn BEFORE KindRegistry.lookup and returns
+  `{:error, :no_backing_entity}` if the row is gone. No tombstone
+  needed — the DB row IS the source of truth.
 
-  Returns `:ok | {:error, {:partial, ...}} | {:error, {:precheck_failed, _}}`.
+  Returns:
+    * `{:ok, summary}`            — destroy completed cleanly
+    * `{:ok, :already_destroyed}` — concurrent destroy lost the DB-delete
+                                    race; the row is already gone (idempotent
+                                    success — INV-19). Both callers' audit
+                                    rows are recorded under distinct trace_ids.
+    * `{:error, {:partial, ...}}`        — per-Kind destroy/2 returned error
+                                            but DB row + snapshot are gone
+    * `{:error, {:precheck_failed, _}}`  — can_destroy?/2 refused; no mutation
   """
   @spec destroy(URI.t(), ctx :: %{caller: URI.t(), reason: String.t()}) ::
           {:ok, summary :: map()}
+          | {:ok, :already_destroyed}
           | {:error, {:partial, map()}}
           | {:error, {:precheck_failed, term()}}
   def destroy(%URI{} = target_uri, ctx), do: ...
@@ -177,34 +202,59 @@ end
 ```
 
 ```elixir
-# Extension to each SpawnRegistry entity callback registration
-# (apps/ezagent_domain_identity/lib/ezagent_domain_identity/application.ex:222,
-#  apps/ezagent_domain_chat/lib/ezagent_domain_chat/application.ex:493)
-SpawnRegistry.register("entity", fn uri ->
-  case uri.host do
-    "user" ->
-      # NEW: DB-backing check. The row is the source of truth.
-      if Users.get_by_uri(uri) == nil do
-        {:error, :no_backing_entity}
-      else
+# (r8) SpawnRegistry gains a 3-arity register/3 with a backing_check_fn.
+# Existing 2-arity register/2 stays for plugins with no DB backing (System,
+# test Kinds); 3-arity is REQUIRED for any scheme whose Kinds are backed by
+# a DB row that may be deleted at runtime.
+#
+# CRITICAL — the backing_check_fn is called BEFORE KindRegistry.lookup in
+# SpawnRegistry.spawn/1, so a live (mid-tear-down) pid does NOT short-circuit
+# the check. This closes the r7 race where a destroyed-but-still-alive Kind
+# remained reachable through lookup until terminate_child completed.
+SpawnRegistry.register("entity",
+  spawn_fn: fn uri ->
+    case uri.host do
+      "user" ->
         initial_caps = User.initial_caps_for_spawn(uri)
         Ezagent.Kind.spawn(User, %{uri: uri, initial_caps: initial_caps})
-      end
 
-    "agent" ->
-      # Same pattern; Agents.get_by_uri/1 is the per-Kind equivalent.
-      if Agents.get_by_uri(uri) == nil do
-        {:error, :no_backing_entity}
-      else
+      "agent" ->
         # ... existing Agent spawn logic ...
-      end
 
-    other -> {:error, {:no_entity_host_handler, other}}
-  end
-end)
+      other -> {:error, {:no_entity_host_handler, other}}
+    end
+  end,
+  backing_check_fn: fn uri ->
+    # Called at the TOP of SpawnRegistry.spawn/1, BEFORE KindRegistry.lookup.
+    # Each scheme owner knows its own backing source.
+    case uri.host do
+      "user"   -> Users.get_by_uri(uri) != nil
+      "agent"  -> Agents.get_by_uri(uri) != nil
+      _other   -> true  # unknown host falls through to spawn_fn's error
+    end
+  end)
 ```
 
-The field-name parallels are intentional: `destroy/2` mirrors `init_slice/1` (the Behavior callback that creates a Kind's initial state). Plugin authors who already know how to write the C of CRUD now have an obvious place to write the D.
+```elixir
+# Extension to Ezagent.SpawnRegistry.spawn/1 (apps/ezagent_core/lib/ezagent/spawn_registry.ex)
+def spawn(%URI{scheme: scheme} = uri) do
+  case :ets.lookup(@table, scheme) do
+    [{^scheme, spawn_fn, backing_check_fn}] ->
+      if backing_check_fn.(uri) do
+        spawn_via_existing_path(uri, spawn_fn)   # KindRegistry.lookup → DynamicSupervisor.start_child
+      else
+        {:error, :no_backing_entity}
+      end
+    [{^scheme, spawn_fn}] ->
+      # Legacy 2-arity registration (no backing data — System, test Kinds).
+      spawn_via_existing_path(uri, spawn_fn)
+    [] ->
+      {:error, {:no_spawn_fn, scheme}}
+  end
+end
+```
+
+The field-name parallels are intentional: `destroy/2` mirrors `init_slice/1` (the Behavior callback that creates a Kind's initial state). Plugin authors who already know how to write the C of CRUD now have an obvious place to write the D. The `backing_check_fn` likewise mirrors `spawn_fn`: each scheme owner provides both the construct path and the existence test.
 
 ---
 
@@ -246,23 +296,24 @@ Each Kind module defines its own `can_destroy?/2`. Example invariants:
 - `Workspace.can_destroy?` refuses a workspace that contains live members the operator can't also destroy
 - `Agent.can_destroy?` MAY refuse an Agent currently serving an in-flight session (operator-policy decision)
 
-### 3.4 Orchestration sequence (the §2 numbered list, expanded)
+### 3.4 Orchestration sequence — normative (r8: DB-delete BEFORE terminate_child)
 
-The `Kind.Server.destroy/2` body:
+The `Kind.Server.destroy/2` body. **The order matters**: r8 places the DB row delete BEFORE `terminate_child` so the spawn race window observed in r7 is eliminated structurally (no "Kind dead + DB row alive" interleaving exists). Per `feedback_let_it_crash_no_workarounds`, a reorder is preferred over an ETS marker / fencing-state mechanism.
 
 1. **Pre-check.** Call `kind_module.can_destroy?(target_uri, ctx)`. On error → return `{:error, {:precheck_failed, reason}}`; no mutation has occurred.
 2. **Generate `trace_id`.** A new UUID; threaded through every sub-row.
 3. **Call `kind_module.destroy(target_uri, ctx_with_trace)`.** Per-Kind cleanup (release sidecars, scrub cross-refs, revoke caps, drop memberships). Returns `{:ok, summary} | {:error, reason}`. On error: record the per-Kind failure in audit but CONTINUE (destroy is best-effort from the per-Kind perspective; the Kind is going away regardless).
-4. **Locate the live pid.** `KindRegistry.lookup(target_uri)`. Two arms:
-   - `{:ok, pid}` — proceed to step 5.
-   - `:error` — the Kind isn't currently alive (snapshot-only). Skip step 5; proceed to step 6.
-5. **Terminate the GenServer gracefully.** `DynamicSupervisor.terminate_child(kind_module.supervisor(), pid)`. This runs the Kind's `terminate/2` callback (if any), giving Behaviors a chance for last-mile drain. NOT `:brutal_kill` — there is no race vs respawn here because step 6 deletes the DB row and the SpawnRegistry entity callback then sees `:no_backing_entity`. The Kind cannot respawn even if a concurrent dispatch fires between steps 5 and 6, because:
-   - the post-terminate registry lookup returns `:error` (Registry drops dead pids);
-   - the entity callback's DB-backing check has not yet flipped (DB row still exists until step 6), so a concurrent spawn between steps 5 and 6 WOULD succeed — but the resulting fresh Kind is itself harmless: its `init_slice/1` runs on an empty-snapshot path (we deleted the snapshot in step 6 only AFTER step 5, so the Kind that races in between still loads from the about-to-be-deleted snapshot); the dispatch that re-spawned it sees a Kind with the prior state. The window is bounded by the time between `terminate_child/2` return and `Repo.delete(user)` (step 6) — sub-millisecond inside a single Repo transaction.
-   - **To close the race entirely**, steps 5 + 6 are wrapped in a Repo transaction: step 6's DB row delete commits ATOMICALLY with the pre-step-6 audit row, and the Registry's dead-pid drop is guaranteed before any concurrent `SpawnRegistry.spawn` call could traverse the new entity-callback path (because `Registry.unregister` is synchronous inside `terminate_child/2`). See §3.6 for the race analysis in detail.
-6. **DB row delete.** `kind_module.delete_db_row(target_uri)` — per-Kind hook into the domain's `delete/1` (e.g. `Users.delete/1`). This is the "DB row is truth" commit: AFTER this point, every `SpawnRegistry.spawn(target_uri)` call returns `{:error, :no_backing_entity}` because the entity callback's `get_by_uri/1` returns `nil`.
-7. **Snapshot purge.** `Repo.delete(Ezagent.Ecto.KindSnapshot, uri_str)`. Idempotent. Ordered AFTER step 5 + 6 so a respawn-race in step 5 still loads valid snapshot state; ordered BEFORE step 8 audit emit so audit sees a clean post-state.
-8. **Audit emit.** Single `invocations` row `action = "kind.destroyed"` + per-step sub-rows from step 3's `kind.destroy/2` summary. All share `trace_id`.
+4. **Repo.transaction — the 3 DB writes commit atomically.** Inside the transaction:
+   - **4a.** `Repo.delete(Ezagent.Ecto.KindSnapshot, uri_str)` — idempotent (rows-affected = 0 if already gone).
+   - **4b.** `kind_module.delete_db_row(target_uri)` — per-Kind hook into the domain's `delete/1` (e.g. `Users.delete/1`). Returns `{rows_affected, _}`. If `rows_affected == 0` AND the per-Kind destroy/2 in step 3 succeeded, treat as **idempotent loser** (a concurrent destroy committed first): roll back the snapshot delete's effect on this branch is not needed (the snapshot was already gone too); insert the audit row tagged `outcome: :already_destroyed` and return `{:ok, :already_destroyed}` outside the transaction. INV-19 gate. If `rows_affected == 0` AND step 3 had nothing to clean (precheck-only case where the row vanished mid-flight), same idempotent loser path.
+   - **4c.** `Repo.insert(InvocationsAudit, %{action: "kind.destroyed", target_uri, caller, reason, trace_id, outcome, kind_summary})`. The audit goes INSIDE the transaction so a per-Kind cleanup that partially fails STILL records the attempt; if 4b's delete failed (rare — DB error, not a 0-row case), the transaction rolls back and step 3's effects (caps revoked, memberships dropped) are NOT rolled back (they're outside the transaction by design — let-it-crash, no compensating action; operator sees the error and re-runs destroy, which is idempotent under INV-19).
+5. **Locate the live pid.** `KindRegistry.lookup(target_uri)`. Two arms:
+   - `{:ok, pid}` — proceed to step 6.
+   - `:error` — the Kind isn't currently alive (snapshot-only). Skip step 6; proceed to step 7.
+6. **Terminate the GenServer gracefully.** `DynamicSupervisor.terminate_child(kind_module.supervisor(), pid)`. This runs the Kind's `terminate/2` callback (if any), giving Behaviors a chance for last-mile drain. NOT `:brutal_kill`. **No respawn race**: at this point the DB row is already gone (step 4b committed). Any concurrent `SpawnRegistry.spawn(target_uri)` consults the per-scheme `backing_check_fn` (§2 + B2) BEFORE `KindRegistry.lookup` — sees the row absence — returns `{:error, :no_backing_entity}`. The live pid being terminated CANNOT be reached by new dispatchers via SpawnRegistry. Existing in-flight messages to the pid drain naturally under `terminate/2`'s timeout; their post-delete effects are limited to the slice's in-memory state (which is about to be discarded with the pid).
+7. **Broadcast.** `Phoenix.PubSub.broadcast({:kind_destroyed, target_uri, reason})` for LV consumers. Outside the transaction.
+
+**Linearization point** = the Repo.transaction commit (step 4). After commit, the URI is destroyed; SpawnRegistry refuses new spawns. The live Kind in step 6 is in tear-down but no new dispatches reach it because the supervisor has already received (or is about to receive) `terminate_child`.
 
 ### 3.5 Per-Kind `destroy/2` responsibilities
 
@@ -318,6 +369,10 @@ Session is mostly stateless beyond its slice — most of its "members" are point
 
 This is the cross-Kind cascade that the r1–r6 SPEC excluded as out of scope. Under r7 it's just another `destroy/2` impl that happens to call `Kind.Server.destroy/2` on its members. The recursion bottoms out because each member is a leaf Kind (User / Session / Agent), and their `destroy/2` does not recurse back into the workspace. Trace correlation: all sub-destroys share the parent workspace destroy's `trace_id` so audit can group.
 
+**r8 — Workspace.can_destroy?/2 explicitly rejects nested workspaces (B4).** Member URI scheme must be `entity://...`. If `Workspace.can_destroy?/2` sees ANY member URI whose scheme/host indicates `workspace://...`, it returns `{:error, :nested_workspace_not_supported}`. Fail-fast; no cycle-detection. The recursion bottoms out trivially because members can never be workspaces. INV-14 fixture extended to verify rejection on a planted nested workspace.
+
+**r8 — Loader / BootReconciler note (N1).** The Loader and BootReconciler paths that materialize Kinds at boot ALSO go through `SpawnRegistry.spawn/1` and therefore hit the same `backing_check_fn` (§2). A row deleted via `Kind.Server.destroy/2` is invisible at boot — no cache layer is planned; the DB read on every spawn is acceptable.
+
 **Worker cascade (Worker.destroy/2):**
 
 ```
@@ -328,19 +383,31 @@ This is the cross-Kind cascade that the r1–r6 SPEC excluded as out of scope. U
 
 This requires `external_mirror_bindings.worker_uri` to be a real column (the B5 column add from r1–r2). The column is kept (it's structurally correct — `worker_uri` is a useful denormalized index regardless of tombstone). The two-migration + backfill task from r1–r6 §4.1 + §9.1 is retained as-is; under r7 the column is consumed by Worker.destroy/2 rather than by a cascade Adapter. The BindingRow schema / cast / validate_required updates from CRIT-4.2 are also retained.
 
-### 3.6 Race analysis — concurrent dispatch during destroy
+### 3.6 Race analysis — concurrent dispatch during destroy (r8 reorder)
 
-The r7 design replaces the r1–r6 tombstone-based race elimination with a Repo-transaction-based ordering. The key invariant: **the DB row delete commits BEFORE the GenServer's Registry registration is reusable for a fresh spawn**.
+The r8 design closes the spawn race STRUCTURALLY by reordering: the DB row delete commits BEFORE `terminate_child` runs. The "Kind dead + DB row alive" interleaving that existed in r7 has no analog under r8. The remaining race surface is small and bounded.
 
-Five race windows:
+Five race windows under the r8 order (pre-check → per-Kind destroy → transaction[snapshot + DB row + audit] → terminate_child → broadcast):
 
 1. **Dispatch arriving BEFORE step 1.** Normal dispatch; the Kind is alive; no destroy in progress. Handled by existing CapBAC.
-2. **Dispatch arriving BETWEEN step 1 and step 3.** The pre-check has passed but no mutation yet. Dispatch sees a healthy Kind; succeeds. The eventual destroy proceeds independently. No race — the dispatch's effect is processed by the still-alive Kind before destroy mutates anything.
-3. **Dispatch arriving BETWEEN step 3 and step 5.** Per-Kind `destroy/2` has run (caps revoked, memberships dropped). The Kind is still alive. The dispatch's cap-check may now fail (caps revoked) — this is the CORRECT behavior; the entity is mid-destroy and is no longer authorized. If the dispatch happens to invoke a Behavior that doesn't require the revoked caps, it succeeds against the dying Kind — also acceptable; the Kind's slice changes are about to be discarded along with the snapshot purge in step 7.
-4. **Dispatch arriving BETWEEN step 5 and step 6.** The GenServer is terminating; `KindRegistry.lookup/1` returns `:error` (Registry drops dead pids synchronously inside `terminate_child/2`'s return path). If the dispatch traverses `SpawnRegistry.spawn/1`, the entity callback sees the DB row still exists (step 6 has not yet run) and spawns a fresh Kind. This Kind loads from the still-present snapshot, which is about to be deleted in step 7. The window between step 5 return and step 6 commit is sub-millisecond inside a single Repo transaction. **Mitigation:** wrap steps 5 + 6 + 7 in a `Repo.transaction/1`. The transaction's commit is the linearization point; no spawn between step 5 and step 6 within the transaction is possible because step 6's `Repo.delete(user)` holds a row-level lock on the `users` row from the moment the transaction begins, and any concurrent `SpawnRegistry.spawn → Users.get_by_uri` either (a) reads the pre-delete state and proceeds with the spawn (acceptable — the destroy has not committed yet, so re-spawning is logically a no-op cancelled by the destroy's eventual commit + the resulting Kind sees the snapshot purge on next supervisor-restart cycle) or (b) reads the post-delete state and returns `:no_backing_entity`. The window is structurally bounded by the transaction.
-5. **Dispatch arriving AFTER step 6 commit.** The DB row is gone. `SpawnRegistry.spawn/1`'s entity callback returns `{:error, :no_backing_entity}`. Dispatch fails cleanly. This is the steady-state post-destroy.
+2. **Dispatch arriving BETWEEN step 1 and step 3.** Pre-check passed but no mutation yet. Dispatch sees a healthy Kind; succeeds. Destroy proceeds; the dispatch's effect is processed by the still-alive Kind before destroy mutates anything.
+3. **Dispatch arriving BETWEEN step 3 and step 4 (transaction begin).** Per-Kind `destroy/2` has run; caps revoked, memberships dropped. The Kind is still alive. The dispatch's cap-check may fail (caps revoked) — CORRECT; mid-destroy entities are no longer authorized. Any state changes inside the dying Kind are discarded with step 4a's snapshot purge.
+4. **Dispatch arriving DURING the transaction (between 4a / 4b / 4c).** The transaction holds row-level locks on `kind_snapshots(uri)` and the per-Kind backing row (e.g. `users(uri)`). A concurrent `SpawnRegistry.spawn(target_uri)` calls the per-scheme `backing_check_fn` — that's a SELECT against the locked row, which under Postgres' READ COMMITTED reads the **pre-transaction state** (sees the row, returns true). The spawn would then proceed to `KindRegistry.lookup` (which hits the live pid → returns it as `:already_started`). The dispatch sees a still-alive Kind with revoked caps; cap-check fails OR an unrelated Behavior succeeds against the slice that's about to be discarded. **This is acceptable**: the destroy is not yet committed; no irreversible "destroyed" state is observable. After the transaction commits, the next backing_check_fn call reads post-commit state and returns false → `{:error, :no_backing_entity}`.
+5. **Dispatch arriving AFTER transaction commit (step 4) and BEFORE / DURING terminate_child (step 6).** This is the critical r8 fix. The DB row is GONE; `backing_check_fn` returns false; `SpawnRegistry.spawn(target_uri)` returns `{:error, :no_backing_entity}` — even though `KindRegistry.lookup` would have found the live tearing-down pid. The B2 ordering (backing_check BEFORE lookup) is what makes this safe. Existing in-flight messages already in the live pid's mailbox drain under `terminate/2`; their effects are bounded to in-memory state being discarded with the pid.
+6. **Dispatch arriving AFTER step 6 (terminate_child returns).** Steady state. DB row gone; pid gone; backing_check_fn false; lookup `:error`; dispatch returns `{:error, :no_backing_entity}`.
 
-**Why this is structurally cleaner than r1–r6's tombstone:** the prior design needed a SEPARATE table (`entity_tombstones`) + ETS mirror + multi-boundary check + atomic primitive specifically to prevent respawn after destroy. Under r7 the `users` row's absence IS the prevention; there's nothing extra to keep consistent. The cost is one extra DB read on every spawn (the `get_by_uri/1` check), which is bounded by the Repo's connection pool and amortized over the spawn fn's existing cost.
+**Concurrent destroys (idempotency — B3 + INV-19).** Two callers race `Kind.Server.destroy(uri)`:
+- Both pass step 1 (caps + can_destroy?/2).
+- Both generate distinct `trace_id`s.
+- Both run step 3 (per-Kind destroy/2 — idempotent operations: revoking already-revoked caps is no-op; deleting already-deleted bindings affects 0 rows).
+- Both enter step 4 transaction; Postgres serializes them by the row-level lock on `users(uri)`.
+- Winner: 4b `Users.delete` returns `{1, _}`; emits audit row with `outcome: :ok`; commits.
+- Loser: 4b `Users.delete` returns `{0, _}`; emits audit row with `outcome: :already_destroyed`; commits. Returns `{:ok, :already_destroyed}` to caller.
+- Single actual DB delete; both audit rows present with distinct trace_ids.
+
+**Why r8 reordering is structurally cleaner than r7's "wrap 5+6+7 in transaction":** r7 left a real window where `KindRegistry.lookup` could still hit a live-but-DB-deleted Kind via `SpawnRegistry.spawn`. r8 closes that with the B2 ordering (backing check before lookup) AND moves the DB delete to BEFORE terminate_child so no such interleaving exists in the first place. Per `feedback_let_it_crash_no_workarounds`, this is a reorder, not a new fencing-state mechanism.
+
+**Cost vs r1–r6 tombstone:** still one DB read per spawn (the `backing_check_fn`), bounded by Repo's connection pool. No separate table, no ETS mirror, no multi-boundary check, no atomic primitive.
 
 ### 3.7 Cross-Kind dispatch during destroy — system principal
 
@@ -373,19 +440,19 @@ A workspace admin who calls `Kind.Server.destroy(their_own_uri, ctx)` proceeds: 
 After `Kind.Server.destroy(uri)` completes, the operator may immediately call `Users.create(uri, ...)`. This:
 
 1. Inserts a fresh `users` row at the same URI (with new password_hash, new initial caps, fresh metadata).
-2. The next `SpawnRegistry.spawn(uri)` call sees `Users.get_by_uri(uri)` return the new row and proceeds to spawn.
-3. The new Kind's `init_slice/1` runs from defaults — there is NO snapshot (step 7 of destroy purged it), no inherited caps (step 3 revoked them), no inherited memberships (step 3 dropped them).
+2. The next `SpawnRegistry.spawn(uri)` call: `backing_check_fn` reads the new row → returns true → `KindRegistry.lookup` returns `:error` (the old pid was terminated in step 6) → the spawn_fn runs and produces a fresh pid.
+3. The new Kind's `init_slice/1` runs from defaults — there is NO snapshot (step 4a of destroy purged it), no inherited caps (step 3 revoked them), no inherited memberships (step 3 dropped them).
 4. The new Kind is structurally distinct from the prior incarnation despite operating at the same URI. The URI is a name, not an identity; the row's primary key is the identity.
 
 This is INV-13 in §5. The r1–r6 design forbade this (tombstones were append-only); Allen's pushback (2026-05-28 03:36) corrected the direction.
 
 ### 3.11 Edge case — destroy of a Kind that's not currently alive
 
-If `KindRegistry.lookup(target_uri)` returns `:error` (the Kind has no live pid — snapshot-only), step 5 is skipped. The DB row delete + snapshot purge still proceed. This is fine: there's no live pid to terminate, and the post-destroy state is identical.
+If `KindRegistry.lookup(target_uri)` returns `:error` (the Kind has no live pid — snapshot-only), step 6 is skipped. The DB row delete + snapshot purge + audit (step 4) still commit. This is fine: there's no live pid to terminate, and the post-destroy state is identical.
 
 ### 3.12 Edge case — `destroy/2` returns `{:error, _}` (per-Kind cleanup failed)
 
-The orchestrator (§3.4 step 3) records the per-Kind error in audit and continues. Step 5–8 still execute. The destroy returns `{:error, {:partial, %{step_failed: :kind_destroy, kind_error: <inner>, steps_completed: [...]}}}` so the operator knows the Kind's cleanup was incomplete (e.g. AgentBridge.Adapter.teardown failed because the sidecar was already dead — usually harmless). The DB row + snapshot are gone; the URI is no longer reachable. Operator-runbook decision: investigate the inner error OR accept the partial.
+The orchestrator (§3.4 step 3) records the per-Kind error in the eventual audit row (step 4c) and continues to steps 4–7. The transaction (step 4) still commits — DB row + snapshot delete + audit insert atomically. `terminate_child` (step 6) still runs. The destroy returns `{:error, {:partial, %{step_failed: :kind_destroy, kind_error: <inner>, steps_completed: [...]}}}` so the operator knows the per-Kind cleanup was incomplete (e.g. AgentBridge.Adapter.teardown failed because the sidecar was already dead — usually harmless). The DB row + snapshot are gone; the URI is no longer reachable. Operator-runbook decision: investigate the inner error OR accept the partial.
 
 ---
 
@@ -397,10 +464,12 @@ The orchestrator (§3.4 step 3) records the per-Kind error in audit and continue
 
 **PR-B core — Kind.destroy callback + Kind.Server.destroy/2 + SpawnRegistry DB-backing check + AgentBridge.Adapter.teardown extension:**
 
-- **Modify** `apps/ezagent_core/lib/ezagent/kind.ex` — add `destroy/2` to `@callback` list. Either add to `@optional_callbacks` (with default no-op via `Kind.default_destroy/2`) OR keep required (OQ-NEW — Allen decision).
-- **Modify** `apps/ezagent_core/lib/ezagent/kind/server.ex` — add public `destroy/2` API per §2 + §3.4. Wrap steps 5–7 in a `Repo.transaction/1` per §3.6.
-- **Modify** `apps/ezagent_domain_identity/lib/ezagent_domain_identity/application.ex:222-258` — add DB-backing check at the `"user" ->` arm: `if Users.get_by_uri(uri) == nil, do: {:error, :no_backing_entity}, else: ...existing spawn logic...`.
-- **Modify** `apps/ezagent_domain_chat/lib/ezagent_domain_chat/application.ex:493+` — same pattern at the `"agent" ->` and `"user" ->` arms.
+- **Modify** `apps/ezagent_core/lib/ezagent/kind.ex` — add `destroy/2` + `can_destroy?/2` + `delete_db_row/1` to `@callback` list. Per OQ-NEW recommendation (a), REQUIRED for all production Kinds; test-support Kinds use the `Kind.default_destroy/2` macro (default no-op) imported via `use Ezagent.Kind.TestImpl`.
+- **Modify** `apps/ezagent_core/lib/ezagent/kind/server.ex` — add public `destroy/2` API per §2 + §3.4. Wrap **step 4 (snapshot + DB row + audit)** in a `Repo.transaction/1` per §3.6. Note ordering: DB write transaction commits BEFORE `terminate_child` (step 6) — this is the structural race fix.
+- **Modify** `apps/ezagent_core/lib/ezagent/spawn_registry.ex` — extend `register/3` to accept `backing_check_fn` keyword; modify `spawn/1` + `spawn_detailed/1` to call `backing_check_fn` FIRST, BEFORE `KindRegistry.lookup`. Legacy 2-arity `register/2` callers (no backing data) continue to work; missing `backing_check_fn` defaults to "always true" for backward compatibility (System Kind, test Kinds).
+- **Modify** `apps/ezagent_domain_identity/lib/ezagent_domain_identity/application.ex:222-258` — switch to 3-arity `SpawnRegistry.register` with `backing_check_fn: fn uri -> case uri.host do "user" -> Users.get_by_uri(uri) != nil; ... end end`.
+- **Modify** `apps/ezagent_domain_chat/lib/ezagent_domain_chat/application.ex:493+` — same 3-arity pattern at the `"agent" ->` arm (`Agents.get_by_uri/1`).
+- **Modify** other domain Application files that `SpawnRegistry.register` (workspace, external_mirror, system) — convert to 3-arity with appropriate `backing_check_fn`.
 - **Modify** `apps/ezagent_domain_agent_bridge/lib/ezagent/agent_bridge/adapter.ex` — add `teardown/1` to `@callback`, list under `@optional_callbacks` with default no-op (default impl in the Adapter module itself for fallthrough).
 - **Add** `Ezagent.SystemPrincipal.Catalog` entry: `{"system://kind-destroy-cascade", [Capability.cap(Ezagent.Entity.Session, Ezagent.Behavior.Chat, :scrub_owner, :any, :any)]}` (renamed from r1–r6's `system://entity-deletion-cascade`).
 - **Modify** `apps/ezagent_core/lib/ezagent_core/application.ex` — add `SystemPrincipal.ensure(SystemPrincipal.uri("kind-destroy-cascade"))` after existing principal ensures.
@@ -420,13 +489,32 @@ The orchestrator (§3.4 step 3) records the per-Kind error in audit and continue
   - `Ezagent.Behavior.EntityDeletion` + `EntityDeletion.Adapter` + `EntityDeletion.AdapterRegistry` — replaced by `Kind.destroy/2` callback on `Ezagent.Kind` + per-Kind impls
 - Tests: §5 invariant test + per-Kind destroy unit tests + DB-backing-check unit test on each entity callback + AgentBridge.Adapter.teardown unit test + Chat.scrub_owner unit test + data_owner DB-backing-check tests at all three sites + Token.verify DB-backing-check test.
 
-**PR-C domain Kinds — per-Kind `destroy/2` impls:**
+**PR-C domain Kinds — per-Kind `destroy/2` impls (B5 — FULL inventory from grep `@behaviour Ezagent.Kind` in lib/):**
 
-- `apps/ezagent_domain_identity/lib/ezagent/entity/user.ex` — add `destroy/2` (User cascade per §3.5) + `can_destroy?/2` (bootstrap admin protection) + `delete_db_row/1` hook into `Users.delete/1`.
-- `apps/ezagent_domain_chat/lib/ezagent/entity/agent.ex` — add `destroy/2` (Agent cascade per §3.5, delegating to `AgentBridge.Adapter.teardown/1`) + `can_destroy?/2`.
-- `apps/ezagent_domain_chat/lib/ezagent/entity/session.ex` — add `destroy/2` (Session cascade per §3.5) + `can_destroy?/2`.
-- `apps/ezagent_domain_workspace/lib/ezagent/entity/workspace.ex` — add `destroy/2` (Workspace cascade per §3.5, recursing via `Kind.Server.destroy/2`) + `can_destroy?/2`.
-- `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/worker.ex` — add `destroy/2` (Worker cascade per §3.5, using the `worker_uri` column) + `can_destroy?/2`.
+Production Kinds (`@behaviour Ezagent.Kind`):
+
+- `apps/ezagent_domain_identity/lib/ezagent/entity/user.ex` — `destroy/2` (User cascade per §3.5) + `can_destroy?/2` (bootstrap admin protection) + `delete_db_row/1` → `Users.delete/1`.
+- `apps/ezagent_domain_chat/lib/ezagent/entity/agent.ex` — `destroy/2` (Agent cascade per §3.5; delegates to `AgentBridge.Adapter.teardown/1`) + `can_destroy?/2`.
+- `apps/ezagent_domain_chat/lib/ezagent/entity/session.ex` — `destroy/2` (Session cascade per §3.5) + `can_destroy?/2`.
+- `apps/ezagent_domain_chat/lib/ezagent/entity/agent_template.ex` — `destroy/2` cascades to all agents instantiated from this template (`Agents.list_by_template/1` + each `Kind.Server.destroy(agent_uri, ctx_with_parent_trace)`) + `can_destroy?/2` refuses templates with active in-flight sessions. **NEW for r8 — codex r7 caught this gap.**
+- `apps/ezagent_domain_chat/lib/ezagent/entity/session_template.ex` — `destroy/2` cascades to sessions instantiated from this template + `can_destroy?/2`. **NEW for r8.**
+- `apps/ezagent_domain_workspace/lib/ezagent/entity/workspace.ex` — `destroy/2` (Workspace cascade per §3.5; recurses via `Kind.Server.destroy/2`) + `can_destroy?/2` (B4 — rejects nested workspace members).
+- `apps/ezagent_domain_external_mirror/lib/ezagent/entity/external_mirror_worker.ex` — `destroy/2` (Worker cascade per §3.5; uses `worker_uri` column) + `can_destroy?/2`.
+- `apps/ezagent_core/lib/ezagent/entity/system.ex` — System Kind (system principal carrier). `destroy/2` returns `{:ok, %{steps: []}}` (no per-Kind state) + `can_destroy?/2` returns `{:error, :system_principal_undestroyable}` for ALL bootstrap system URIs. **NEW for r8 — codex r7 caught this.**
+- `apps/ezagent_plugin_echo/lib/ezagent/entity/echo.ex` — `destroy/2` no-op (echo is stateless) + `can_destroy?/2` `:ok`. **NEW for r8.**
+- `apps/ezagent_plugin_curl_agent/lib/ezagent/entity/curl_agent.ex` — `destroy/2` releases any in-flight curl handles + `can_destroy?/2` `:ok`. **NEW for r8.**
+- `apps/ezagent_plugin_np/lib/ezagent/entity/np_agent.ex` — `destroy/2` stops nested-process state (parallel to bridge teardown) + `can_destroy?/2` `:ok`. **NEW for r8.**
+
+Production Templates (`@behaviour Ezagent.Kind.Template` — these are template Kinds, deletable as their own URI):
+
+- `apps/ezagent_plugin_cc/lib/ezagent/template/cc_agent.ex` — `destroy/2` cascades to cc agents using this template + `can_destroy?/2`. **NEW for r8.**
+- `apps/ezagent_plugin_codex/lib/ezagent/template/codex_agent.ex` — `destroy/2` cascades to codex agents + `can_destroy?/2`. **NEW for r8.**
+- `apps/ezagent_plugin_echo/lib/ezagent/template/echo_agent.ex` — `destroy/2` cascades + `can_destroy?/2`. **NEW for r8.**
+- `apps/ezagent_plugin_curl_agent/lib/ezagent/template/curl_agent.ex` — `destroy/2` cascades + `can_destroy?/2`. **NEW for r8.**
+- `apps/ezagent_plugin_np/lib/ezagent/template/np_agent.ex` — `destroy/2` cascades + `can_destroy?/2`. **NEW for r8.**
+- `apps/ezagent_domain_chat/lib/ezagent/template/generic_session.ex` — `destroy/2` cascades to sessions using this template + `can_destroy?/2`. **NEW for r8.**
+
+Test-support Kinds (`apps/ezagent_core/test/support/test_behavior.ex`, `post_init_test_behaviors.ex`, etc.) use `Kind.default_destroy/2` macro (no-op) — they exist only inside test runs and have no production lifecycle. The macro lives in `Ezagent.Kind.TestImpl` (new helper module added in PR-B).
 
 **PR-D plugin bridge teardown impls (each plugin adds `teardown/1` to its `AgentBridge.Adapter` impl):**
 
@@ -448,7 +536,7 @@ The orchestrator (§3.4 step 3) records the per-Kind error in audit and continue
 
 NO existing code path is removed. NO change to `Users.delete/1` (or per-Kind equivalent) semantics — those paths still exist as the LOW-LEVEL DB-only delete, BUT will emit a deprecation warning suggesting `Kind.Server.destroy/2` instead. Migration target: in a follow-up PR (post PR-E), mark each `XXX.delete/1` as `@deprecated` and route operator-facing call sites through `Kind.Server.destroy/2`.
 
-Existing Kinds that DO NOT implement the new `destroy/2` callback: if the callback is OPTIONAL (OQ-NEW default), they get the default no-op (DB row delete + snapshot purge only — no per-Kind cleanup). If the callback is REQUIRED (recommended), PR-C must add a `destroy/2` impl to EVERY existing Kind (User, Agent, Session, Workspace, Worker — these are the only Kinds today per `apps/` scan). New plugin Kinds added post-PR-B must implement `destroy/2` as part of the behaviour contract.
+Existing Kinds that DO NOT implement the new `destroy/2` callback: per OQ-NEW recommendation (a) — REQUIRED for ALL production Kinds + Templates. PR-C adds `destroy/2` to all 11 production Kinds (User, Agent, Session, AgentTemplate, SessionTemplate, Workspace, ExternalMirrorWorker, System, Echo, CurlAgent, NpAgent) + 6 production Templates (CcAgent, CodexAgent, EchoAgent, CurlAgent, GenericSession, NpAgent template). Test-support Kinds use the `Kind.default_destroy/2` macro (no-op) via `use Ezagent.Kind.TestImpl`. New plugin Kinds added post-PR-B must implement `destroy/2` as part of the behaviour contract.
 
 ### 4.3 DB migration for production data
 
@@ -456,7 +544,7 @@ Existing Kinds that DO NOT implement the new `destroy/2` callback: if the callba
 
 ### 4.4 Coordinated PR sequence
 
-PR-A (this SPEC) lands first. PR-B (core) is the **smallest viable shippable** — adds the contract + DB-backing check + AgentBridge.Adapter.teardown extension. PR-C (per-Kind destroy impls) lands next; until PR-C lands, every Kind has either default no-op `destroy/2` (if optional) OR PR-C is a single atomic addition (if required) — PR-C cannot land before PR-B because the callback doesn't exist yet. PR-D (plugin teardown) can land in parallel with PR-C (different files). PR-E (LV UI + CLI) lands last; depends on PR-C being complete because the LV "destroy" button must call `Kind.Server.destroy/2` which dispatches into per-Kind `destroy/2`.
+PR-A (this SPEC) lands first. PR-B (core) is the **smallest viable shippable** — adds the contract + SpawnRegistry 3-arity + AgentBridge.Adapter.teardown extension. PR-C (per-Kind destroy impls) lands next as a SINGLE atomic addition spanning 17 production Kind/Template modules (per B5 full inventory). PR-C cannot land before PR-B because the callback doesn't exist yet. PR-D (plugin teardown for bridge flavors) can land in parallel with PR-C (different files; PR-D is about `AgentBridge.Adapter.teardown/1`, not `Kind.destroy/2`). PR-E (LV UI + CLI) lands last; depends on PR-C being complete because the LV "destroy" button must call `Kind.Server.destroy/2` which dispatches into per-Kind `destroy/2`.
 
 The plugin-isolation north-star is preserved: PR-B adds the contract; PR-C/D/E plug into it. Future Kinds add `destroy/2` without touching core; future bridge flavors add `teardown/1` without touching core.
 
@@ -498,17 +586,23 @@ Per `feedback_completion_requires_invariant_test`, this SPEC is "done" iff the t
 | INV-16 | **(replaces r1–r6 INV-13b)** Cold-load a snapshotted Session whose `:chat` slice has `owner_uri = target` AFTER destroy. Call ALL THREE production data-owner resolvers and assert each returns `:no_owner` (NOT the destroyed target URI): (1) `Behavior.Chat.data_owner(S_uri)`; (2) `Behavior.ExternalMirror.data_owner(S_uri)`; (3) `Behavior.Publisher.SessionImpl.data_owner(S_uri)`. Each applies the `Users.get_by_uri/1` DB-backing defense at the read site. | Cold-Session privilege disclosure across all data_owner resolvers |
 | INV-17 | After PR-B + backfill task + Migration B: every row in `external_mirror_bindings` has non-NULL `worker_uri` matching `WorkerSpawn.worker_uri_for(parsed_session_uri, adapter_id, target_id) |> URI.to_string()`. | Backfill incorrect (preserved verbatim from r1–r6 INV-15) |
 | INV-18 | **(Agent bridge teardown)** Spawn an Agent + bind its bridge via the cc flavor adapter. Call `Kind.Server.destroy(agent_uri, ...)`. Assert: `BridgeRegistry.lookup(agent_uri)` returns `:error` (cc's `teardown/1` unbinds). For a codex Agent: assert the sidecar process has exited + the per-agent dir is removed. | AgentBridge.Adapter.teardown/1 not wired or not invoked from Agent.destroy/2 |
+| INV-19 | **(NEW r8 — B3 concurrent-destroy idempotency)** Two `Task.async` calls to `Kind.Server.destroy(target, ctx_a)` + `Kind.Server.destroy(target, ctx_b)` on the SAME `target_uri`. Wait for both. Assert: (a) exactly ONE returns `{:ok, %{...full summary...}}`; (b) exactly ONE returns `{:ok, :already_destroyed}`; (c) `Users.get_by_uri(target)` returns `nil` (single delete); (d) TWO audit rows present in `invocations`, both with `action = "kind.destroyed"`, target = target_uri_str, with DISTINCT `trace_id`s, and `outcome` fields `:ok` + `:already_destroyed` respectively. | Race produces double-delete error, duplicate audit, OR one caller sees `{:error, _}` instead of the idempotent success tag |
+| INV-20 | **(NEW r8 — B2 spawn-race-after-DB-delete)** Spawn target Kind → `{:ok, pid_old}`. In test process: (1) MANUALLY call `Users.delete(target)` to delete the DB row WITHOUT calling `Kind.Server.destroy` (simulates the race window where `terminate_child` hasn't run yet — `pid_old` is still alive). (2) Call `SpawnRegistry.spawn(target)`. Assert: returns `{:error, :no_backing_entity}` — NOT `{:ok, pid_old}` (which would happen if `KindRegistry.lookup` fired before the backing check). | `SpawnRegistry.spawn/1` consulted `KindRegistry.lookup` before `backing_check_fn` — B2 reordering wired wrong |
+| INV-21 | **(NEW r8 — B2 backing_check ordering verification)** Replace `Ezagent.KindRegistry` with a test-double that increments a counter on `lookup/1`. Call `SpawnRegistry.spawn(uri_with_deleted_row)`. Assert: (a) result is `{:error, :no_backing_entity}`; (b) the `KindRegistry.lookup` counter is **0** (NOT 1) — i.e. `backing_check_fn` short-circuited before lookup. Then call `SpawnRegistry.spawn(uri_with_existing_row)`. Assert: (a) result is `{:ok, pid}`; (b) the lookup counter is **1**. | `backing_check_fn` is placed AFTER `KindRegistry.lookup` (would let live tearing-down pids leak through) |
 
 **Cannot pass with partial impl** — failure mappings:
 
 - Skip `Kind.destroy/2` callback addition: INV-3 + INV-4 + INV-6 + INV-7 + INV-8 fail (per-Kind cleanup never runs)
-- Skip DB-backing check at entity callback: INV-2 + INV-13 (c) fail
+- Skip DB-backing check at entity callback: INV-2 + INV-13 (c) + INV-20 fail
 - Skip `Kind.Server.destroy/2` orchestrator: INV-1 + INV-10 fail
 - Skip `AgentBridge.Adapter.teardown/1`: INV-18 fails
 - Skip Workspace.destroy/2 cascade: INV-14 fails
 - Skip Token.verify DB-backing check: INV-15 fails
 - Skip data_owner DB-backing check at any of three sites: INV-16 fails
 - Skip bootstrap protection: INV-12 fails
+- Skip `{:ok, :already_destroyed}` idempotency return: INV-19 fails
+- Place `backing_check_fn` AFTER `KindRegistry.lookup`: INV-20 + INV-21 fail
+- Wire `SpawnRegistry.register` as 2-arity (no backing_check_fn): INV-2 + INV-20 + INV-21 fail
 
 The test fails on the FIRST mismatch, with a message identifying the leak.
 
@@ -644,9 +738,21 @@ The audit row uses the existing `invocations` table with `action = "kind.destroy
 
 PR-E admin LV adds a "Destroy" button + confirm dialog asking for reason. Should we also require the operator to TYPE the URI being destroyed (GitHub repo-name-confirmation parity)? Default proposed: type-the-name confirmation for irreversible operations. Allen confirm?
 
-### OQ-NEW — `destroy/2` REQUIRED vs OPTIONAL
+### OQ-NEW — `destroy/2` REQUIRED vs OPTIONAL (r8 — fully scoped)
 
-Should `Ezagent.Kind.destroy/2` be a REQUIRED callback (every Kind module MUST implement) or OPTIONAL (with a default no-op via `Kind.default_destroy/2`)? **Recommendation: REQUIRED**, per §7.6 — forces every Kind author to think about cleanup at the boundary, prevents silent state leaks. PR-C enumerates the five existing Kinds and adds `destroy/2` to each. Allen confirm.
+Should `Ezagent.Kind.destroy/2` be a REQUIRED callback (every Kind module MUST implement) or OPTIONAL (with a default no-op via `Kind.default_destroy/2`)? **r8 recommendation (a): REQUIRED for all production Kinds + Templates.** Full grep of `lib/` produces 11 production `@behaviour Ezagent.Kind` modules + 6 production `@behaviour Ezagent.Kind.Template` modules:
+
+Production Kinds: User / Agent / Session / AgentTemplate / SessionTemplate / Workspace / ExternalMirrorWorker / System / Echo / CurlAgent / NpAgent.
+
+Production Templates: CcAgent / CodexAgent / EchoAgent / CurlAgent template / GenericSession / NpAgent template.
+
+Even AgentTemplate / SessionTemplate get a meaningful `destroy/2` because destroying a template SHOULD cascade to entities instantiated from it (open question: cascade vs refuse-when-in-use — r8 picks cascade per `feedback_let_it_crash_no_workarounds`; operator can use `can_destroy?/2` to refuse if they want). System Kind's `destroy/2` is a no-op + `can_destroy?/2` refuses (system principals are bootstrap-only). Test-support Kinds (`test/support/test_behavior.ex` etc.) use the `Kind.default_destroy/2` macro via `use Ezagent.Kind.TestImpl` (PR-B new helper).
+
+Alternatives considered:
+- **(b)** REQUIRED only for "true entities" (User/Agent/Session/Workspace/Worker — 5 Kinds); rest OPTIONAL no-op. **Rejected**: prone to silent state leak (the original ghost-user bug had the same character — "no one thought to cascade").
+- **(c)** Two-tier: REQUIRED for deletable-concept Kinds, OPTIONAL for utility Kinds. **Rejected**: subjective boundary; what's "utility" today becomes deletable tomorrow.
+
+Allen confirm.
 
 ### REMOVED open questions
 
@@ -655,15 +761,15 @@ Should `Ezagent.Kind.destroy/2` be a REQUIRED callback (every Kind module MUST i
 
 ---
 
-## §11 Codex adversarial review questions (for r7+)
+## §11 Codex adversarial review questions (for r7+; r8 status noted)
 
-> r7 reset: r1–r6 questions targeted tombstone correctness. Under r7's pivot those are moot. New attack surface:
+> r7 reset: r1–r6 questions targeted tombstone correctness. r8 closes the 5 r7-REJECT blockers (B1 transaction scope + reorder; B2 backing_check BEFORE lookup; B3 idempotency contract; B4 nested workspace refusal; B5 full inventory). The original r7 attack questions are preserved below with **r8 STATUS** annotations so codex r8 can attack the *new* surface r8 introduced: the reorder semantics, the per-scheme backing_check_fn wiring, and the idempotency contract under race.
 
-1. **DB-backing check race (§3.6 step 4 race):** the entity callback reads `Users.get_by_uri(uri)` and decides to spawn. Concurrently, `Kind.Server.destroy(uri)` is at step 5 (terminate_child). Between the get_by_uri read and the spawn fn's eventual `Ezagent.Kind.spawn/2` call, the destroy commits step 6 (DB row delete). Does the spawn fn then load a snapshot for a Kind whose DB row is gone? Walk through the Repo transaction boundary in step 5+6+7.
+1. **DB-backing check race (§3.6 step 4 race):** the entity callback reads `Users.get_by_uri(uri)` and decides to spawn. Concurrently, `Kind.Server.destroy(uri)` is at step 5 (terminate_child). Between the get_by_uri read and the spawn fn's eventual `Ezagent.Kind.spawn/2` call, the destroy commits step 6 (DB row delete). Does the spawn fn then load a snapshot for a Kind whose DB row is gone? Walk through the Repo transaction boundary in step 5+6+7. **r8 STATUS: addressed by reorder — DB delete (step 4b) is now BEFORE terminate_child (step 6). The "Kind dead + DB row alive" interleaving no longer exists. backing_check_fn at the TOP of SpawnRegistry.spawn/1 short-circuits before KindRegistry.lookup; INV-20 + INV-21 pin this.**
 
 2. **Workspace cross-Kind cascade depth (§3.5 Workspace.destroy):** a workspace contains 100 users. `Workspace.destroy/2` iterates and calls `Kind.Server.destroy/2` on each. Is the iteration serial (one at a time) or parallel (Task.async_stream)? Serial: O(N) cascade time; admin LV times out. Parallel: race on shared resources (e.g. workspace.member_uris list mutated by each User.destroy/2). Pick one + justify in §3.5.
 
-3. **AgentBridge.Adapter.teardown/1 failure isolation:** if codex's `teardown/1` raises (e.g. sidecar already dead, supervisor times out), does Agent.destroy/2 propagate or swallow? §3.5 says "best-effort"; verify the orchestrator's audit row records the error AND step 5–8 still run. INV-18 should fail if the orchestrator aborts on teardown error.
+3. **AgentBridge.Adapter.teardown/1 failure isolation:** if codex's `teardown/1` raises (e.g. sidecar already dead, supervisor times out), does Agent.destroy/2 propagate or swallow? §3.5 says "best-effort"; verify the orchestrator's audit row records the error AND step 4 + step 6 still run. INV-18 should fail if the orchestrator aborts on teardown error.
 
 4. **Re-register inheritance (INV-13):** the test asserts NO inherited caps / memberships / snapshot. But the `users` table is created fresh; the new row's `caps_json` defaults to whatever `Users.create/3` sets. Verify the test asserts the NEW caps (whatever Users.create installs) rather than the OLD caps — there's no "empty caps" universal state.
 
@@ -678,6 +784,22 @@ Should `Ezagent.Kind.destroy/2` be a REQUIRED callback (every Kind module MUST i
 9. **`destroy/2` REQUIRED migration cost:** if OQ-NEW chooses REQUIRED, every existing Kind module must add `destroy/2`. Enumerate: `apps/ezagent_domain_identity/lib/ezagent/entity/user.ex`, `apps/ezagent_domain_chat/lib/ezagent/entity/agent.ex`, `apps/ezagent_domain_chat/lib/ezagent/entity/session.ex`, `apps/ezagent_domain_workspace/lib/ezagent/entity/workspace.ex`, `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/worker.ex`. Is anything missed? Are there test-fixture Kinds that need it?
 
 10. **LV confirm dialog UX (preserved from r1–r6 q9):** type-the-URI confirmation default. Allen confirm in OQ-9.
+
+### §11.r8 — new attack surface introduced by r8
+
+11. **Reorder coherence (B1):** DB delete moved BEFORE terminate_child. Is there a new race introduced? Specifically: between transaction commit (step 4) and `KindRegistry.lookup` (step 5), can a concurrent dispatch reach the live-but-DB-deleted pid via *another* path (e.g. a previously cached pid reference held by another GenServer's slice state, a process Dictionary)? Walk through every place a `pid` reference might be retained across the destroy window. The B2 SpawnRegistry check guards the spawn path; what about non-spawn dispatch paths?
+
+12. **Per-scheme backing_check_fn placement (B2):** the new `SpawnRegistry.spawn/1` calls `backing_check_fn` BEFORE `KindRegistry.lookup`. Verify: (a) NO other entry point produces a Kind without going through `SpawnRegistry.spawn/1` (e.g. `Ezagent.Kind.spawn/2` direct calls in Loader / BootReconciler / test helpers); (b) `backing_check_fn` is registered for EVERY scheme that has DB-backed Kinds (identity / chat / workspace / external_mirror / system — and System might not need it); (c) the legacy 2-arity `register/2` fallback (returns "always true") doesn't quietly bypass the check for an in-prod scheme.
+
+13. **Idempotency contract under partial failure (B3):** `{:ok, :already_destroyed}` returns when 4b returns 0 rows. But what if 4b returns 0 because the row NEVER existed (operator typo'd a URI)? Distinguish that from "concurrent destroy already committed"? `Kind.Server.destroy` of a URI that never had a row: should that be `{:error, :not_found}` or `{:ok, :already_destroyed}` (idempotent)? Walk through the orchestrator's behavior on a non-existent URI; verify can_destroy?/2 catches it OR the precheck does.
+
+14. **Workspace nested-member refusal (B4):** `Workspace.can_destroy?/2` refuses if any member URI is `workspace://...`. But the member list comes from the live Workspace slice; can a member be ADDED concurrently between can_destroy?/2 and the cascade in step 3? Verify the cascade itself re-reads the member list under a consistent point (or that the slice is frozen by the orchestrator). What if a member is a workspace via *indirect* construction (a User Kind whose URI scheme is `entity://` but whose host is `workspace` — typo case)?
+
+15. **B5 — REQUIRED enforcement at compile time:** if `destroy/2` is `@callback` (REQUIRED), every Kind module that fails to implement it should produce a compile warning. Verify the behavior contract is REQUIRED not `@optional_callbacks`. For test-support Kinds, the `Kind.default_destroy/2` macro is described — is it a `defmacro use` that injects the impl, OR is it a separate `Ezagent.Kind.TestImpl` behavior? The spec is ambiguous (the §4.1 wording uses both phrasings).
+
+16. **Transaction atomicity vs per-Kind cleanup (4a/4b/4c):** the transaction wraps snapshot + DB row + audit. Per-Kind `destroy/2` (step 3 — caps revocation, binding deletion, etc.) is OUTSIDE the transaction. What happens if 4b's DB delete fails (e.g. FK constraint, DB error)? The transaction rolls back; the audit row is NOT inserted; but step 3's caps revocation has already happened (it's outside the transaction). The system ends up in a "user exists in DB, has no caps" state — the EXACT bug the original ghost issue had. Is there a compensating action, or does the orchestrator return `{:error, {:partial, ...}}` and rely on the operator to re-run? The §3.12 says "let-it-crash, no compensating action" — does this satisfy `feedback_let_it_crash_no_workarounds` cleanly, or does it leave a footgun?
+
+17. **INV-19 race precision:** the test races two concurrent destroys. Under Postgres READ COMMITTED, both may pass can_destroy?/2 + run destroy/2; both enter the transaction; one blocks on the row lock. The blocked transaction, when unblocked after the winner commits, will see the row gone. `Users.delete(uri)` returns `{0, _}`. Does the SECOND transaction's audit insert COMMIT successfully, or does it fail because the per-Kind destroy/2 in step 3 left the system in a state that step 4c's audit row references something now-deleted (FK to caller? to target?)? Verify the audit table has no FK that breaks under this ordering.
 
 ---
 
@@ -715,22 +837,26 @@ kind.destroy(target_uri, ctx_with_trace)
   │   - Session: drop members / unsubscribe publisher
   ▼ {:ok, summary} or {:error, reason} (best-effort; orchestrator continues)
   │
-  ▼ step 4: KindRegistry.lookup(target_uri)
-  │     {:ok, pid} → step 5
-  │     :error → skip step 5 (Kind wasn't alive)
+  ▼ step 4 — Repo.transaction (the 3 DB writes commit atomically)
+  │     step 4a: Repo.delete(KindSnapshot, target_uri_str)             [idempotent]
+  │     step 4b: kind.delete_db_row(target_uri)                        [Users.delete / Agents.delete / …]
+  │             if rows_affected == 0 → idempotent loser path,
+  │             emit audit with outcome: :already_destroyed,
+  │             return {:ok, :already_destroyed}                      [INV-19]
+  │     step 4c: Repo.insert(InvocationsAudit, %{action: "kind.destroyed",
+  │             target, caller, reason, trace_id, outcome, kind_summary})
   │
-  ▼ step 5: DynamicSupervisor.terminate_child(supervisor, pid)
+  ▼ step 5: KindRegistry.lookup(target_uri)
+  │     {:ok, pid} → step 6
+  │     :error → skip step 6 (Kind wasn't alive)
+  │
+  ▼ step 6: DynamicSupervisor.terminate_child(supervisor, pid)
   │     (graceful — runs Kind's terminate/2 if any)
+  │     NOTE: DB row is ALREADY gone (step 4b committed). Any concurrent
+  │     SpawnRegistry.spawn now returns {:error, :no_backing_entity}
+  │     via the per-scheme backing_check_fn (which runs BEFORE KindRegistry.lookup).
   │
-  ▼ steps 6+7 wrapped in Repo.transaction (race-bounded)
-  │     step 6: kind.delete_db_row(target_uri)  [DB row IS the source of truth]
-  │     step 7: Repo.delete(KindSnapshot, target_uri_str)
-  │
-  ▼ step 8: audit emit
-  │     invocations action = "kind.destroyed"
-  │     per-step sub-rows from step 3's summary (shared trace_id)
-  │
-  ▼ broadcast
+  ▼ step 7: broadcast
 Phoenix.PubSub.broadcast({:kind_destroyed, target_uri, reason})
   │
   ▼
@@ -738,26 +864,40 @@ Phoenix.PubSub.broadcast({:kind_destroyed, target_uri, reason})
 
 # Re-spawn after destroy
 SpawnRegistry.spawn(target_uri)
-  │ entity callback: Users.get_by_uri(target_uri) == nil → {:error, :no_backing_entity}
+  │ STEP 1: backing_check_fn(target_uri) → false (row gone)
+  │         [r8 — BEFORE KindRegistry.lookup; B2 fix]
   ▼
 {:error, :no_backing_entity}
 
 # Re-register
 Users.create(target_uri, fresh_attrs)  # writes new row
 SpawnRegistry.spawn(target_uri)
-  │ entity callback: Users.get_by_uri → new row exists → Kind.spawn(User, ...)
+  │ STEP 1: backing_check_fn(target_uri) → true (new row exists)
+  │ STEP 2: KindRegistry.lookup → :error (old pid was terminated in step 6)
+  │ STEP 3: spawn_fn fires → Kind.spawn(User, ...)
   ▼
 {:ok, fresh_pid}  # no inherited state — fresh Kind, fresh slice, no snapshot
+
+# Concurrent destroy race [INV-19]
+A: Kind.Server.destroy(uri, ctx_a)  ─┐
+B: Kind.Server.destroy(uri, ctx_b)  ─┤ both pass precheck + per-Kind destroy
+                                     │ both enter step 4 transaction
+                                     │ Postgres row-lock serializes them
+A: 4b returns {1, _} → outcome :ok ──┘    → {:ok, %{...}}
+B: 4b returns {0, _} → outcome :already_destroyed → {:ok, :already_destroyed}
+  Both audit rows present, distinct trace_ids
 ```
 
 ## Appendix B — Why this SPEC is shorter than r6
 
-r6 was 985 lines. r7 is ~60% of that: the tombstone mechanism (entity_tombstones table, ETS mirror, atomic primitive, three-boundary enforcement, the codex-driven rev history) was the bulk of r6. r7 removes that artifact entirely. What remains: the `Kind.destroy/2` callback contract (~20 lines), the `Kind.Server.destroy/2` orchestration (~50 lines), the per-Kind cascade tables (preserved from r6, ~80 lines), the AgentBridge.Adapter.teardown extension (~10 lines), the DB-backing check at entity callbacks (~10 lines), the INV table (16 entries, ~40 lines), the OQ list (6 entries, ~30 lines).
+r6 was 985 lines. r7–r8 ≈ 60–70% of that: the tombstone mechanism (entity_tombstones table, ETS mirror, atomic primitive, three-boundary enforcement, the codex-driven rev history) was the bulk of r6. r7 removed that artifact entirely; r8 added race / idempotency / inventory rigor on top. What remains: the `Kind.destroy/2` callback contract (~20 lines), the `Kind.Server.destroy/2` orchestration (~70 lines under r8's transaction-block detail), the per-Kind cascade tables (preserved from r6, ~80 lines), the AgentBridge.Adapter.teardown extension (~10 lines), the SpawnRegistry 3-arity register + backing_check_fn ordering (~20 lines, r8), the **INV table (21 entries — INV-1 through INV-21, ~55 lines)**, the OQ list (6 entries, ~30 lines).
 
 ## Appendix C — Author's recommendation
 
-Land PR-A (this SPEC) → PR-B (core: Kind.destroy callback + Kind.Server.destroy + DB-backing check + AgentBridge.Adapter.teardown). PR-C (per-Kind destroy impls) follows immediately because the callback contract is required (per OQ-NEW recommendation); PR-D (plugin teardown impls) can land parallel to PR-C; PR-E (LV UI + CLI) lands last.
+Land PR-A (this SPEC) → PR-B (core: Kind.destroy callback + Kind.Server.destroy + SpawnRegistry 3-arity register + backing_check_fn-before-lookup + AgentBridge.Adapter.teardown). PR-C (per-Kind destroy impls — 11 Kinds + 6 Templates per B5 full inventory) follows immediately because the callback contract is REQUIRED (per OQ-NEW recommendation (a)); PR-D (plugin bridge teardown impls) can land parallel to PR-C; PR-E (LV UI + CLI) lands last.
 
-The `system/linyilun` ghost — surfaced 2026-05-28 — is the empirical motivation, but the structural fix is broader: every Kind gains a clean lifecycle CRUD parity, and re-register at a destroyed URI works naturally because the DB row is the source of truth. The architectural goal Allen articulated (2026-05-28 03:43) is met: "all Kinds should have complete CRUD".
+The `system/linyilun` ghost — surfaced 2026-05-28 — is the empirical motivation, but the structural fix is broader: every Kind gains a clean lifecycle CRUD parity, re-register at a destroyed URI works naturally because the DB row is the source of truth, and concurrent destroy is idempotent (`{:ok, :already_destroyed}` for the loser). The architectural goal Allen articulated (2026-05-28 03:43) is met: "all Kinds should have complete CRUD".
+
+INV-1 through INV-21 (21 invariants total) are the merge gates: a passing test suite proves the design's claims; a partial impl is structurally unable to pass.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)

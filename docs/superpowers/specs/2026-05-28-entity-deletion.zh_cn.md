@@ -1,8 +1,23 @@
 # SPEC —— Kind 生命周期 CRUD 对等（destroy callback + DB-backing spawn）
 
-**状态：** r7 —— 整体重写。Allen pushback 2026-05-28 03:36–03:43：(1)"tombstone 永久不允许 re-register 很奇怪 —— 重走创建流程就该可以"；(2)"更深层 Kind 缺 D（destroy）callback，所有 Kind 应该有完整 CRUD"。选项 B —— inline 重写 SPEC #440，从 "EntityDeletion + tombstone" 转向 "Kind 生命周期 CRUD 对等"。r7 不跑 codex round（Allen 指令）。
+**状态：** r8 —— 按 codex r7 REJECT 裁定修 race / idempotency / inventory。下方处理五个关键 blocker + 两个 nit；加三个新不变性（INV-19/20/21）。
 
-**r7 变更 —— 整体 scope pivot：**
+**r8 变更（在 r7 之上）：**
+
+- **B1 —— transaction scope 统一 + 通过重排修 race。** §3.4 / §4.1 / Appendix A 先前给三个相互矛盾的 transaction-scope 主张（步 5+6 / 5–7 / 6+7）。r8 选**一**个规范 scope：Repo.transaction 包**三个 DB write** —— `删 kind_snapshot 行` + `删 domain 行（Users.delete / Agents.delete / …）` + `audit 行 insert`。按 `feedback_let_it_crash_no_workarounds`，race 用**结构性重排**修（DB delete 在 terminate_child **之前**），**不是**加 ETS marker 或额外 state：编排器现跑 `预检 → per-Kind destroy → Repo.transaction[snapshot purge + DB 行删 + audit insert] → terminate_child → broadcast`。在 transaction 提交与 `terminate_child` 之间，活 pid 仍活 —— 但 SpawnRegistry 入口的 DB-backing check（B2）意味无新 dispatch 能 spawn 新 Kind，且活 pid 正被 `terminate/2` drain。线性化点：transaction 提交。提交后无 spawn 路径能在此 URI 产生 Kind；in-flight pid 对新 caller 不可达，因为 (a) 它的 caps 已撤销（step 3），(b) DB-backing check 拒重入（B2），(c) `terminate_child` 紧接同步完成。
+- **B2 —— `SpawnRegistry.spawn/1` DB-backing check 移到 `KindRegistry.lookup/1` 之前。** r7 把 DB-backing check 放在每个 scheme 的 spawn fn 内（仅在 `lookup` MISS 时才到达）。若 Kind 活（拆中或刚通过别路重生），`spawn_detailed/1` 返回活 pid **不**查 DB。r8 引入 per-scheme `backing_check_fn/1`，与 `spawn_fn/1` 一并注册；`SpawnRegistry.spawn/1` **先**调 backing check 并返回 `{:error, :no_backing_entity}` 若行没 —— 即使恰好仍有活 pid。每个 scheme 拥有者（identity / chat / workspace / external_mirror）提供自己的 backing_check_fn。
+- **B3 —— 并发 destroy idempotency 契约。** r7 返回 shape 未覆盖 "两 caller race destroy 同 URI"。r8 加 `{:ok, :already_destroyed}`：race 输家（其 DB delete 影响 0 行因赢家已提交）返回 success-with-tag。两 caller 的 audit 行用不同 `trace_id` 记录。实际只一次 DB 行删。INV-19 钉住。
+- **B4 —— Workspace cascade 拒绝嵌套 workspace。** r7 说 "每个 member 是叶 Kind" 但未强制。r8 在 `Workspace.can_destroy?/2` 加显式拒绝：若任何 member URI 的 scheme/host 以 `workspace://` 开头，返回 `{:error, :nested_workspace_not_supported}`。Fail-fast，不做循环检测。INV-14 fixture 扩展。
+- **B5 —— REQUIRED destroy/2 迁移清单扩展。** 真 grep `@behaviour Ezagent.Kind` 跨 lib/（排除 test/support）：**11 个生产 Kind + 6 个生产 Kind.Template**，不是 r7 声称的 5 个。生产 Kind：`User`、`Agent`、`Session`、`Workspace`、`ExternalMirrorWorker`、`System`、`AgentTemplate`、`SessionTemplate`、`Echo`、`CurlAgent`、`NpAgent`。生产 Template（实现 `Ezagent.Kind.Template`）：`CcAgent`、`CodexAgent`、`EchoAgent`、`CurlAgent` template、`GenericSession`、`NpAgent` template。按推荐 (a)：所有生产 Kind + Template 都 REQUIRED；test-support Kind 用默认 no-op `Kind.default_destroy/2` 宏。PR-C 迁移列表相应扩展。
+- **N1 —— Loader / BootReconciler 注。** §3.5 加一行："Loader/BootReconciler 路径在 SpawnRegistry 入口接受同 DB-backing check；不计划 cache 层。" 关闭 codex r7 N1。
+- **N2 —— Appendix INV 计数修正。** Appendix B 先前说 "16 条"；INV 表实际到 INV-18。r8 加 INV-19/20/21 → 共 21。Appendix B 更新。
+- **INV-19 新** —— 并发双 destroy idempotency：两个并行 `Kind.Server.destroy(uri)` 调用；断言一个 `{:ok, %{...}}` + 一个 `{:ok, :already_destroyed}`；单次 DB delete；两 audit 行都在，trace_id 不同。
+- **INV-20 新** —— spawn-after-DB-delete 返回 `{:error, :no_backing_entity}` 即使来自 pre-delete spawn 的活 pid 仍在（B2 check 在 `KindRegistry.lookup` 前触发）。
+- **INV-21 新** —— backing_check_fn 顺序：用 monkey-patch `KindRegistry.lookup` 断言**不**先于 `backing_check_fn` 调；验证 §2 / §4.1 接线正确。
+
+**r7（压缩）：** 从 r1–r6 tombstone 设计整体 pivot 到 "Kind 生命周期 CRUD 对等" —— 加 `Ezagent.Kind.destroy/2` callback、`Ezagent.Kind.Server.destroy/2` 编排器、SpawnRegistry entity callback DB-backing check、`AgentBridge.Adapter.teardown/1` 扩展。INV-13（re-register 工作）+ INV-14（Workspace cascade）作架构目标 gate。r7 不跑 codex round（Allen 指令）。
+
+**r7 变更（历史保留）：**
 
 - **删除** 整个 tombstone 设计（r1–r6 机制）：`entity_tombstones` DB 表、ETS 镜像、`Ezagent.SpawnRegistry.tombstone_and_kill/1` 原子 primitive、三 spawn 路径的多边界 `tombstoned?/1` 检查、append-only "permanent deny" 语义、OQ-1 TTL 讨论，以及全部 r1–r6 codex review 关于 tombstone 正确性的回复。
 - **新增** `Ezagent.Kind.destroy/2` callback 到 `Ezagent.Kind` behaviour。这是结构性修复 —— 目前 Kind 暴露 `type_name/0`、`behaviors/0`、`persistence/0`、`uri_from_args/1`、`snapshot_version/0`、`supervisor/0`、`spawn_strategy/0`、`terminate_strategy/0`、`holds_cap?/2`（CRUD 的 C 和 R 加操作元数据）但**没有 D**。r7 关闭这道缺口。
@@ -136,14 +151,22 @@ defmodule Ezagent.Kind.Server do
     6. Audit emit：`invocations` 行 `action = "kind.destroyed"`
        含 trace_id、caller、reason、per-step 子行
 
-  Destroy 后重 spawn：SpawnRegistry entity callback 见
-  `Users.get_by_uri(uri) == nil` 并返回 `{:error, :no_backing_entity}`。
-  无需 tombstone —— DB 行**就是** source of truth。
+  Destroy 后重 spawn：SpawnRegistry.spawn/1 先调注册的
+  backing_check_fn BEFORE KindRegistry.lookup，若行没则返回
+  `{:error, :no_backing_entity}`。无需 tombstone —— DB 行**就是** source of truth。
 
-  返回 `:ok | {:error, {:partial, ...}} | {:error, {:precheck_failed, _}}`。
+  返回：
+    * `{:ok, summary}`            —— destroy 干净完成
+    * `{:ok, :already_destroyed}` —— 并发 destroy 输 DB-delete race；行
+                                    已没（幂等成功 —— INV-19）。两 caller
+                                    audit 行用不同 trace_id 记录。
+    * `{:error, {:partial, ...}}`        —— per-Kind destroy/2 返回错误
+                                            但 DB 行 + snapshot 已没
+    * `{:error, {:precheck_failed, _}}`  —— can_destroy?/2 拒绝；无 mutation
   """
   @spec destroy(URI.t(), ctx :: %{caller: URI.t(), reason: String.t()}) ::
           {:ok, summary :: map()}
+          | {:ok, :already_destroyed}
           | {:error, {:partial, map()}}
           | {:error, {:precheck_failed, term()}}
   def destroy(%URI{} = target_uri, ctx), do: ...
@@ -174,34 +197,57 @@ end
 ```
 
 ```elixir
-# 每个 SpawnRegistry entity callback 注册的扩展
-# (apps/ezagent_domain_identity/lib/ezagent_domain_identity/application.ex:222,
-#  apps/ezagent_domain_chat/lib/ezagent_domain_chat/application.ex:493)
-SpawnRegistry.register("entity", fn uri ->
-  case uri.host do
-    "user" ->
-      # 新增：DB-backing check。行是 source of truth。
-      if Users.get_by_uri(uri) == nil do
-        {:error, :no_backing_entity}
-      else
+# (r8) SpawnRegistry 得 3-arity register/3 配 backing_check_fn。
+# 已有 2-arity register/2 保留给无 DB backing 的 plugin（System、test Kind）；
+# 3-arity 对任何 Kind 由 runtime 可删 DB 行 backing 的 scheme 是必需的。
+#
+# 关键 —— backing_check_fn 在 SpawnRegistry.spawn/1 中 KindRegistry.lookup
+# 之前调，所以活（拆中）pid **不**短路 check。这关闭 r7 中已销毁但仍活的
+# Kind 在 terminate_child 完成前通过 lookup 可达的 race。
+SpawnRegistry.register("entity",
+  spawn_fn: fn uri ->
+    case uri.host do
+      "user" ->
         initial_caps = User.initial_caps_for_spawn(uri)
         Ezagent.Kind.spawn(User, %{uri: uri, initial_caps: initial_caps})
-      end
 
-    "agent" ->
-      # 同模式；Agents.get_by_uri/1 是 per-Kind 等价。
-      if Agents.get_by_uri(uri) == nil do
-        {:error, :no_backing_entity}
-      else
+      "agent" ->
         # ... 已有 Agent spawn 逻辑 ...
-      end
 
-    other -> {:error, {:no_entity_host_handler, other}}
-  end
-end)
+      other -> {:error, {:no_entity_host_handler, other}}
+    end
+  end,
+  backing_check_fn: fn uri ->
+    # 在 SpawnRegistry.spawn/1 顶部调，BEFORE KindRegistry.lookup。
+    # 每个 scheme 拥有者知道自家 backing source。
+    case uri.host do
+      "user"   -> Users.get_by_uri(uri) != nil
+      "agent"  -> Agents.get_by_uri(uri) != nil
+      _other   -> true  # 未知 host fall through 到 spawn_fn 的错误
+    end
+  end)
 ```
 
-字段名平行刻意：`destroy/2` 镜像 `init_slice/1`（Behavior callback 创建 Kind 初始状态）。已经知道写 CRUD 的 C 的 plugin 作者现在有写 D 的明确去处。
+```elixir
+# Ezagent.SpawnRegistry.spawn/1 扩展 (apps/ezagent_core/lib/ezagent/spawn_registry.ex)
+def spawn(%URI{scheme: scheme} = uri) do
+  case :ets.lookup(@table, scheme) do
+    [{^scheme, spawn_fn, backing_check_fn}] ->
+      if backing_check_fn.(uri) do
+        spawn_via_existing_path(uri, spawn_fn)   # KindRegistry.lookup → DynamicSupervisor.start_child
+      else
+        {:error, :no_backing_entity}
+      end
+    [{^scheme, spawn_fn}] ->
+      # 旧 2-arity 注册（无 backing 数据 —— System、test Kind）。
+      spawn_via_existing_path(uri, spawn_fn)
+    [] ->
+      {:error, {:no_spawn_fn, scheme}}
+  end
+end
+```
+
+字段名平行刻意：`destroy/2` 镜像 `init_slice/1`（Behavior callback 创建 Kind 初始状态）。已经知道写 CRUD 的 C 的 plugin 作者现在有写 D 的明确去处。`backing_check_fn` 同样镜像 `spawn_fn`：每个 scheme 拥有者提供构造路径**和**存在测试。
 
 ---
 
@@ -243,23 +289,24 @@ Capability{
 - `Workspace.can_destroy?` 拒绝含 operator 不能一并销毁的活 member 的 workspace
 - `Agent.can_destroy?` **可** 拒绝当前服务 in-flight session 的 Agent（operator-policy 决策）
 
-### 3.4 编排序列（§2 编号列表，展开）
+### 3.4 编排序列 —— 规范（r8：DB-delete 在 terminate_child **之前**）
 
-`Kind.Server.destroy/2` 体：
+`Kind.Server.destroy/2` 体。**顺序重要**：r8 把 DB 行删除放在 `terminate_child` **之前**，从而结构性消除 r7 观察到的 spawn race 窗口（不存在 "Kind 死 + DB 行活" 的交错）。按 `feedback_let_it_crash_no_workarounds`，偏好重排 over ETS marker / fencing-state 机制。
 
 1. **预检。** 调 `kind_module.can_destroy?(target_uri, ctx)`。出错 → 返回 `{:error, {:precheck_failed, reason}}`；无 mutation。
 2. **生成 `trace_id`。** 新 UUID；穿过每个 sub-row。
 3. **调 `kind_module.destroy(target_uri, ctx_with_trace)`。** Per-Kind 清理（释放 sidecar、scrub cross-ref、撤销 caps、删 memberships）。返回 `{:ok, summary} | {:error, reason}`。出错：audit 记录 per-Kind 失败但**继续**（destroy 从 per-Kind 视角是 best-effort；Kind 反正要走）。
-4. **定位活 pid。** `KindRegistry.lookup(target_uri)`。两支：
-   - `{:ok, pid}` —— 进 step 5。
-   - `:error` —— Kind 当前不活（仅 snapshot）。跳 step 5；进 step 6。
-5. **优雅终止 GenServer。** `DynamicSupervisor.terminate_child(kind_module.supervisor(), pid)`。运行 Kind 的 `terminate/2` callback（若有），给 Behavior 最后一公里 drain 的机会。**不是** `:brutal_kill` —— 此处无 vs 重生竞速，因 step 6 删 DB 行后 SpawnRegistry entity callback 即见 `:no_backing_entity`。Kind 不能重生即使并发 dispatch 在 step 5 和 6 之间触发，因为：
-   - 终止后的 registry lookup 返回 `:error`（Registry drop 死 pid）；
-   - entity callback 的 DB-backing check 还未翻转（DB 行 step 6 前仍在），所以 step 5 和 6 间并发 spawn **会** 成功 —— 但产生的新 Kind 自身无害：其 `init_slice/1` 在空 snapshot 路径运行（step 7 仅在 step 5 后删 snapshot，所以中间竞速进来的 Kind 仍从即将被删的 snapshot load）；重 spawn 它的 dispatch 看到的 Kind 带有先前 state。窗口由 `terminate_child/2` 返回与 `Repo.delete(user)`（step 6）间的时间限制 —— 单 Repo transaction 内 < 1ms。
-   - **要完全闭合竞速**，step 5 + 6 包在 Repo transaction 内：step 6 的 DB 行删除与 pre-step-6 audit 行**原子**提交，Registry 的死-pid-drop 保证在任何并发 `SpawnRegistry.spawn` 调走新 entity-callback 路径前发生（因 `Registry.unregister` 在 `terminate_child/2` 内同步）。竞速详析见 §3.6。
-6. **DB 行删除。** `kind_module.delete_db_row(target_uri)` —— per-Kind 钩入 domain 的 `delete/1`（如 `Users.delete/1`）。这是 "DB 行是 truth" 的提交：此后**每个** `SpawnRegistry.spawn(target_uri)` 调用返回 `{:error, :no_backing_entity}`，因 entity callback 的 `get_by_uri/1` 返回 `nil`。
-7. **Snapshot purge。** `Repo.delete(Ezagent.Ecto.KindSnapshot, uri_str)`。幂等。排在 step 5 + 6 **后** 以让 step 5 的重生竞速仍 load 有效 snapshot state；排在 step 8 audit emit **前** 以让 audit 见干净 post-state。
-8. **Audit emit。** 单 `invocations` 行 `action = "kind.destroyed"` + step 3 `kind.destroy/2` summary 的 per-step 子行。共享 `trace_id`。
+4. **Repo.transaction —— 三个 DB write 原子提交。** Transaction 内：
+   - **4a.** `Repo.delete(Ezagent.Ecto.KindSnapshot, uri_str)` —— 幂等（已没则 rows-affected = 0）。
+   - **4b.** `kind_module.delete_db_row(target_uri)` —— per-Kind 钩入 domain 的 `delete/1`（如 `Users.delete/1`）。返回 `{rows_affected, _}`。若 `rows_affected == 0` **且** step 3 的 per-Kind destroy/2 成功，视为**幂等输家**（并发 destroy 先提交了）：不需要回滚此分支 snapshot 删除的影响（snapshot 已经一并没了）；插入 audit 行 tag `outcome: :already_destroyed` 并在 transaction 外返回 `{:ok, :already_destroyed}`。INV-19 gate。若 `rows_affected == 0` 且 step 3 没东西可清（precheck-only case，行 mid-flight 消失），同幂等输家路径。
+   - **4c.** `Repo.insert(InvocationsAudit, %{action: "kind.destroyed", target_uri, caller, reason, trace_id, outcome, kind_summary})`。Audit 在 transaction **内** 以让 per-Kind 部分失败仍**记录尝试**；若 4b 删除失败（罕见 —— DB 错误，非 0-行 case），transaction 回滚但 step 3 的效果（caps 撤销、memberships 删除）**不**回滚（按设计在 transaction 外 —— let-it-crash，无补偿动作；operator 见错误并重跑 destroy，在 INV-19 下幂等）。
+5. **定位活 pid。** `KindRegistry.lookup(target_uri)`。两支：
+   - `{:ok, pid}` —— 进 step 6。
+   - `:error` —— Kind 当前不活（仅 snapshot）。跳 step 6；进 step 7。
+6. **优雅终止 GenServer。** `DynamicSupervisor.terminate_child(kind_module.supervisor(), pid)`。运行 Kind 的 `terminate/2` callback（若有）。**不是** `:brutal_kill`。**无重生竞速**：此点 DB 行已没（step 4b 已提交）。任何并发 `SpawnRegistry.spawn(target_uri)` 先调 per-scheme `backing_check_fn`（§2 + B2）BEFORE `KindRegistry.lookup` —— 见行缺席 —— 返回 `{:error, :no_backing_entity}`。被终止的活 pid 经 SpawnRegistry **不可达**新 dispatcher。pid mailbox 中已有的 in-flight 消息在 `terminate/2` 超时下自然 drain；post-delete 效果限于 slice 内存状态（即将与 pid 一并丢）。
+7. **广播。** `Phoenix.PubSub.broadcast({:kind_destroyed, target_uri, reason})` for LV consumer。在 transaction 外。
+
+**线性化点** = Repo.transaction 提交（step 4）。提交后 URI 已销毁；SpawnRegistry 拒新 spawn。step 6 的活 Kind 在拆中但无新 dispatch 到达，因 supervisor 已经（或即将）收到 `terminate_child`。
 
 ### 3.5 Per-Kind `destroy/2` 责任
 
@@ -315,6 +362,10 @@ Session 除 slice 外大多无状态 —— 其 "member" 多是指针（User URI
 
 这是 r1–r6 SPEC 排除为 out of scope 的 cross-Kind cascade。在 r7 下它只是另一个 `destroy/2` 实现，恰好对其 member 调 `Kind.Server.destroy/2`。递归终止因每个 member 是叶 Kind（User / Session / Agent），其 `destroy/2` 不递归回 workspace。Trace correlation：所有子 destroy 共享父 workspace destroy 的 `trace_id` 以便 audit 分组。
 
+**r8 —— Workspace.can_destroy?/2 显式拒绝嵌套 workspace（B4）。** Member URI 的 scheme 必须是 `entity://...`。若 `Workspace.can_destroy?/2` 见**任何** member URI 的 scheme/host 指示 `workspace://...`，返回 `{:error, :nested_workspace_not_supported}`。Fail-fast；不做循环检测。递归 trivially 终止因 member 永远不能是 workspace。INV-14 fixture 扩展为在 planted 嵌套 workspace 上验证拒绝。
+
+**r8 —— Loader / BootReconciler 注（N1）。** Boot 时把 Kind 物质化的 Loader 和 BootReconciler 路径**也**走 `SpawnRegistry.spawn/1`，因此命中同 `backing_check_fn`（§2）。通过 `Kind.Server.destroy/2` 删除的行在 boot 不可见 —— 不计划 cache 层；每次 spawn 的 DB 读可接受。
+
 **Worker cascade（Worker.destroy/2）：**
 
 ```
@@ -325,19 +376,31 @@ Session 除 slice 外大多无状态 —— 其 "member" 多是指针（User URI
 
 要 `external_mirror_bindings.worker_uri` 是真列（r1–r2 的 B5 列添加）。列保留（它结构正确 —— `worker_uri` 是有用的去规范化索引，与 tombstone 无关）。r1–r6 §4.1 + §9.1 的两-migration + backfill 任务原样保留；r7 下该列由 Worker.destroy/2 消费而非 cascade Adapter。CRIT-4.2 的 BindingRow schema / cast / validate_required 更新也保留。
 
-### 3.6 竞速分析 —— destroy 期间的并发 dispatch
+### 3.6 竞速分析 —— destroy 期间的并发 dispatch（r8 重排）
 
-r7 设计用 Repo-transaction-based 顺序替代 r1–r6 的 tombstone-based 竞速消除。关键不变性：**DB 行删除提交早于 GenServer 的 Registry 注册可重用于新 spawn**。
+r8 设计通过**重排**结构性闭合 spawn race：DB 行删除提交在 `terminate_child` **之前**。r7 中存在的 "Kind 死 + DB 行活" 交错在 r8 下无对应物。剩余 race 表面小且有界。
 
-五个竞速窗：
+按 r8 顺序的五个竞速窗（预检 → per-Kind destroy → transaction[snapshot + DB 行 + audit] → terminate_child → broadcast）：
 
 1. **Dispatch 在 step 1 前到达。** 正常 dispatch；Kind 活；无 destroy 进行。已有 CapBAC 处理。
-2. **Dispatch 在 step 1 和 3 之间到达。** 预检通过但无 mutation。Dispatch 见健康 Kind；成功。后续 destroy 独立进行。无竞速 —— dispatch 效应在 destroy mutate 任何东西前由仍活 Kind 处理。
-3. **Dispatch 在 step 3 和 5 之间到达。** Per-Kind `destroy/2` 已跑（caps 撤销、memberships 删除）。Kind 仍活。Dispatch 的 cap-check 可能现在失败（caps 撤销）—— 这是**正确** 行为；entity 在 destroy 中且不再被授权。如 dispatch 恰好调不需被撤销 caps 的 Behavior，它对垂死 Kind 成功 —— 也可接受；Kind 的 slice 变更即将和 step 7 的 snapshot purge 一起被丢。
-4. **Dispatch 在 step 5 和 6 之间到达。** GenServer 在终止；`KindRegistry.lookup/1` 返回 `:error`（Registry 在 `terminate_child/2` 返回路径中同步 drop 死 pid）。如 dispatch 走 `SpawnRegistry.spawn/1`，entity callback 见 DB 行仍在（step 6 还未跑）并 spawn 新 Kind。这个 Kind 从仍在的 snapshot load，snapshot 即将在 step 7 删除。Step 5 返回与 step 6 提交间的窗口在单 Repo transaction 内 < 1ms。**缓解：** step 5 + 6 + 7 包在 `Repo.transaction/1`。Transaction 提交是线性化点；transaction 内 step 5 和 step 6 间无 spawn 可能，因 step 6 的 `Repo.delete(user)` 从 transaction 开始就持 `users` 行的 row-level lock，任何并发 `SpawnRegistry.spawn → Users.get_by_uri` 要么 (a) 读 pre-delete state 并进行 spawn（可接受 —— destroy 还未提交，所以重 spawn 逻辑上是被 destroy 最终提交取消的 no-op + 产生的 Kind 在下次 supervisor-restart 周期见 snapshot purge），要么 (b) 读 post-delete state 并返回 `:no_backing_entity`。窗口由 transaction 结构限定。
-5. **Dispatch 在 step 6 提交后到达。** DB 行已没。`SpawnRegistry.spawn/1` 的 entity callback 返回 `{:error, :no_backing_entity}`。Dispatch 干净失败。这是 destroy 后稳态。
+2. **Dispatch 在 step 1 和 3 之间到达。** 预检通过但无 mutation。Dispatch 见健康 Kind；成功。Destroy 继续；dispatch 效应在 destroy mutate 任何东西前由仍活 Kind 处理。
+3. **Dispatch 在 step 3 和 step 4（transaction 开始）之间到达。** Per-Kind `destroy/2` 已跑；caps 撤销、memberships 删除。Kind 仍活。Dispatch 的 cap-check 可能失败（caps 撤销）—— **正确**；mid-destroy entity 不再被授权。垂死 Kind 内任何状态变更和 step 4a 的 snapshot purge 一并丢。
+4. **Dispatch 在 transaction 期间（4a / 4b / 4c 之间）到达。** Transaction 持 `kind_snapshots(uri)` 和 per-Kind backing 行（如 `users(uri)`）的 row-level lock。并发 `SpawnRegistry.spawn(target_uri)` 调 per-scheme `backing_check_fn` —— 那是对被锁行的 SELECT，在 Postgres 的 READ COMMITTED 下读 **pre-transaction state**（见行，返回 true）。Spawn 然后进 `KindRegistry.lookup`（命中活 pid → 作 `:already_started` 返回）。Dispatch 见仍活 Kind 配撤销 caps；cap-check 失败 OR 不相关 Behavior 对即将丢的 slice 成功。**这可接受**：destroy 还未提交；无不可逆 "已销毁" 状态可观察。Transaction 提交后，下次 backing_check_fn 调读 post-commit state 并返回 false → `{:error, :no_backing_entity}`。
+5. **Dispatch 在 transaction 提交（step 4）后、terminate_child（step 6）**前/期间**到达。** 这是关键 r8 修复。DB 行**已没**；`backing_check_fn` 返回 false；`SpawnRegistry.spawn(target_uri)` 返回 `{:error, :no_backing_entity}` —— 即使 `KindRegistry.lookup` **本** 会找到活的拆中 pid。B2 顺序（backing_check **先于** lookup）使这安全。已在活 pid mailbox 中的 in-flight 消息在 `terminate/2` 下 drain；效果限于即将与 pid 一并丢的内存状态。
+6. **Dispatch 在 step 6（terminate_child 返回）后到达。** 稳态。DB 行没；pid 没；backing_check_fn false；lookup `:error`；dispatch 返回 `{:error, :no_backing_entity}`。
 
-**为什么这比 r1–r6 的 tombstone 结构更干净：** 先前设计需要**单独**表（`entity_tombstones`）+ ETS 镜像 + 多边界 check + 原子 primitive 专为 destroy 后阻止重生。r7 下 `users` 行的缺席**就是**预防；无额外东西需保持一致。代价是每次 spawn 多一次 DB 读（`get_by_uri/1` check），由 Repo 连接池限制并均摊到 spawn fn 已有成本。
+**并发 destroy（idempotency —— B3 + INV-19）。** 两个 caller race `Kind.Server.destroy(uri)`：
+- 都通过 step 1（caps + can_destroy?/2）。
+- 都生成不同 `trace_id`。
+- 都跑 step 3（per-Kind destroy/2 —— 幂等操作：撤销已撤销的 caps 是 no-op；删除已删除 binding 影响 0 行）。
+- 都进 step 4 transaction；Postgres 通过 `users(uri)` 的 row-level lock 序列化它们。
+- 赢家：4b `Users.delete` 返回 `{1, _}`；emit audit 行 `outcome: :ok`；提交。
+- 输家：4b `Users.delete` 返回 `{0, _}`；emit audit 行 `outcome: :already_destroyed`；提交。给 caller 返回 `{:ok, :already_destroyed}`。
+- 实际单次 DB 删除；两 audit 行都在配不同 trace_id。
+
+**为什么 r8 重排比 r7 的 "包 5+6+7 在 transaction" 结构更干净：** r7 留有真实窗口让 `KindRegistry.lookup` 仍能经 `SpawnRegistry.spawn` 命中活但 DB 已删的 Kind。r8 用 B2 顺序（backing check 先于 lookup）关闭它**且**把 DB delete 移到 terminate_child 之前以便不存在这种交错。按 `feedback_let_it_crash_no_workarounds`，这是重排，不是新 fencing-state 机制。
+
+**对比 r1–r6 tombstone 的成本：** 每次 spawn 仍多一次 DB 读（`backing_check_fn`），由 Repo 连接池限制。无单独表、无 ETS 镜像、无多边界 check、无原子 primitive。
 
 ### 3.7 Destroy 期间的 cross-Kind dispatch —— system principal
 
@@ -370,19 +433,19 @@ end
 `Kind.Server.destroy(uri)` 完成后，operator 可立即调 `Users.create(uri, ...)`。这：
 
 1. 在同 URI 插新 `users` 行（新 password_hash、新 initial caps、新 metadata）。
-2. 下次 `SpawnRegistry.spawn(uri)` 见 `Users.get_by_uri(uri)` 返回新行并 spawn。
-3. 新 Kind 的 `init_slice/1` 从 defaults 跑 —— **无** snapshot（destroy 的 step 7 已 purge）、**无**继承 caps（step 3 撤销）、**无**继承 memberships（step 3 删）。
+2. 下次 `SpawnRegistry.spawn(uri)`：`backing_check_fn` 读新行 → 返回 true → `KindRegistry.lookup` 返回 `:error`（旧 pid 在 step 6 已终止）→ spawn_fn 跑并产新 pid。
+3. 新 Kind 的 `init_slice/1` 从 defaults 跑 —— **无** snapshot（destroy 的 step 4a 已 purge）、**无**继承 caps（step 3 撤销）、**无**继承 memberships（step 3 删）。
 4. 新 Kind 与前 incarnation 结构上不同，尽管在同 URI 操作。URI 是名字，不是 identity；行的主键才是 identity。
 
 这是 §5 的 INV-13。r1–r6 设计禁止（tombstone 是 append-only）；Allen pushback（2026-05-28 03:36）纠正方向。
 
 ### 3.11 边界情况 —— 销毁当前不活的 Kind
 
-如 `KindRegistry.lookup(target_uri)` 返回 `:error`（Kind 无活 pid —— 仅 snapshot），step 5 跳过。DB 行删 + snapshot purge 仍进行。这没问题：无活 pid 可终止，post-destroy state 相同。
+如 `KindRegistry.lookup(target_uri)` 返回 `:error`（Kind 无活 pid —— 仅 snapshot），step 6 跳过。DB 行删 + snapshot purge + audit（step 4）仍提交。这没问题：无活 pid 可终止，post-destroy state 相同。
 
 ### 3.12 边界情况 —— `destroy/2` 返回 `{:error, _}`（per-Kind 清理失败）
 
-编排器（§3.4 step 3）audit 记录 per-Kind 错误并继续。Step 5–8 仍执行。Destroy 返回 `{:error, {:partial, %{step_failed: :kind_destroy, kind_error: <内层>, steps_completed: [...]}}}` 让 operator 知 Kind 清理不完整（如 AgentBridge.Adapter.teardown 失败因 sidecar 已死 —— 通常无害）。DB 行 + snapshot 已没；URI 不再可达。Operator-runbook 决策：调查内层错误**或**接受 partial。
+编排器（§3.4 step 3）把 per-Kind 错误记入最终 audit 行（step 4c）并继续到 step 4–7。Transaction（step 4）仍提交 —— DB 行 + snapshot 删除 + audit insert 原子。`terminate_child`（step 6）仍跑。Destroy 返回 `{:error, {:partial, %{step_failed: :kind_destroy, kind_error: <内层>, steps_completed: [...]}}}` 让 operator 知 per-Kind 清理不完整（如 AgentBridge.Adapter.teardown 失败因 sidecar 已死 —— 通常无害）。DB 行 + snapshot 已没；URI 不再可达。Operator-runbook 决策：调查内层错误**或**接受 partial。
 
 ---
 
@@ -394,10 +457,12 @@ end
 
 **PR-B 核心 —— Kind.destroy callback + Kind.Server.destroy/2 + SpawnRegistry DB-backing check + AgentBridge.Adapter.teardown 扩展：**
 
-- **修改** `apps/ezagent_core/lib/ezagent/kind.ex` —— 加 `destroy/2` 到 `@callback` 列表。要么加到 `@optional_callbacks`（配 `Kind.default_destroy/2` 默认 no-op）**或**保 required（OQ-NEW —— Allen 决策）。
-- **修改** `apps/ezagent_core/lib/ezagent/kind/server.ex` —— 加公共 `destroy/2` API 按 §2 + §3.4。包 step 5–7 在 `Repo.transaction/1` 内按 §3.6。
-- **修改** `apps/ezagent_domain_identity/lib/ezagent_domain_identity/application.ex:222-258` —— 在 `"user" ->` arm 加 DB-backing check：`if Users.get_by_uri(uri) == nil, do: {:error, :no_backing_entity}, else: ...已有 spawn 逻辑...`。
-- **修改** `apps/ezagent_domain_chat/lib/ezagent_domain_chat/application.ex:493+` —— `"agent" ->` 和 `"user" ->` arm 同模式。
+- **修改** `apps/ezagent_core/lib/ezagent/kind.ex` —— 加 `destroy/2` + `can_destroy?/2` + `delete_db_row/1` 到 `@callback` 列表。按 OQ-NEW 推荐 (a)，对所有生产 Kind REQUIRED；test-support Kind 用 `Kind.default_destroy/2` 宏（默认 no-op）通过 `use Ezagent.Kind.TestImpl` 导入。
+- **修改** `apps/ezagent_core/lib/ezagent/kind/server.ex` —— 加公共 `destroy/2` API 按 §2 + §3.4。包**step 4（snapshot + DB 行 + audit）**在 `Repo.transaction/1` 内按 §3.6。注意顺序：DB write transaction 在 `terminate_child`（step 6）**之前**提交 —— 这是结构性 race 修复。
+- **修改** `apps/ezagent_core/lib/ezagent/spawn_registry.ex` —— 扩展 `register/3` 接受 `backing_check_fn` keyword；改 `spawn/1` + `spawn_detailed/1` **先**调 `backing_check_fn` BEFORE `KindRegistry.lookup`。旧 2-arity `register/2` caller（无 backing 数据）继续工作；缺 `backing_check_fn` 默认 "总 true" 以保向后兼容（System Kind、test Kind）。
+- **修改** `apps/ezagent_domain_identity/lib/ezagent_domain_identity/application.ex:222-258` —— 切到 3-arity `SpawnRegistry.register` 配 `backing_check_fn: fn uri -> case uri.host do "user" -> Users.get_by_uri(uri) != nil; ... end end`。
+- **修改** `apps/ezagent_domain_chat/lib/ezagent_domain_chat/application.ex:493+` —— `"agent" ->` arm 同 3-arity 模式（`Agents.get_by_uri/1`）。
+- **修改** 其他 `SpawnRegistry.register` 的 domain Application 文件（workspace、external_mirror、system）—— 转 3-arity 配合适 `backing_check_fn`。
 - **修改** `apps/ezagent_domain_agent_bridge/lib/ezagent/agent_bridge/adapter.ex` —— 加 `teardown/1` 到 `@callback`，列在 `@optional_callbacks` 配默认 no-op（默认实现在 Adapter 模块自身用于 fallthrough）。
 - **加** `Ezagent.SystemPrincipal.Catalog` 条目：`{"system://kind-destroy-cascade", [Capability.cap(Ezagent.Entity.Session, Ezagent.Behavior.Chat, :scrub_owner, :any, :any)]}`（从 r1–r6 的 `system://entity-deletion-cascade` 重命名）。
 - **修改** `apps/ezagent_core/lib/ezagent_core/application.ex` —— 在已有 principal ensure 后加 `SystemPrincipal.ensure(SystemPrincipal.uri("kind-destroy-cascade"))`。
@@ -417,13 +482,32 @@ end
   - `Ezagent.Behavior.EntityDeletion` + `EntityDeletion.Adapter` + `EntityDeletion.AdapterRegistry` —— 被 `Ezagent.Kind` 的 `Kind.destroy/2` callback + per-Kind 实现替换
 - 测试：§5 invariant test + per-Kind destroy 单测 + 每个 entity callback 的 DB-backing-check 单测 + AgentBridge.Adapter.teardown 单测 + Chat.scrub_owner 单测 + 三站点 data_owner DB-backing-check 测试 + Token.verify DB-backing-check 测试。
 
-**PR-C 域 Kind —— per-Kind `destroy/2` 实现：**
+**PR-C 域 Kind —— per-Kind `destroy/2` 实现（B5 —— 来自 grep `@behaviour Ezagent.Kind` 在 lib/ 的完整清单）：**
 
-- `apps/ezagent_domain_identity/lib/ezagent/entity/user.ex` —— 加 `destroy/2`（User cascade 按 §3.5）+ `can_destroy?/2`（bootstrap admin 保护）+ `delete_db_row/1` 钩入 `Users.delete/1`。
-- `apps/ezagent_domain_chat/lib/ezagent/entity/agent.ex` —— 加 `destroy/2`（Agent cascade 按 §3.5，委托 `AgentBridge.Adapter.teardown/1`）+ `can_destroy?/2`。
-- `apps/ezagent_domain_chat/lib/ezagent/entity/session.ex` —— 加 `destroy/2`（Session cascade 按 §3.5）+ `can_destroy?/2`。
-- `apps/ezagent_domain_workspace/lib/ezagent/entity/workspace.ex` —— 加 `destroy/2`（Workspace cascade 按 §3.5，通过 `Kind.Server.destroy/2` 递归）+ `can_destroy?/2`。
-- `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/worker.ex` —— 加 `destroy/2`（Worker cascade 按 §3.5，用 `worker_uri` 列）+ `can_destroy?/2`。
+生产 Kind（`@behaviour Ezagent.Kind`）：
+
+- `apps/ezagent_domain_identity/lib/ezagent/entity/user.ex` —— `destroy/2`（User cascade 按 §3.5）+ `can_destroy?/2`（bootstrap admin 保护）+ `delete_db_row/1` → `Users.delete/1`。
+- `apps/ezagent_domain_chat/lib/ezagent/entity/agent.ex` —— `destroy/2`（Agent cascade 按 §3.5；委托 `AgentBridge.Adapter.teardown/1`）+ `can_destroy?/2`。
+- `apps/ezagent_domain_chat/lib/ezagent/entity/session.ex` —— `destroy/2`（Session cascade 按 §3.5）+ `can_destroy?/2`。
+- `apps/ezagent_domain_chat/lib/ezagent/entity/agent_template.ex` —— `destroy/2` 级联到所有从此 template 实例化的 agent（`Agents.list_by_template/1` + 每个 `Kind.Server.destroy(agent_uri, ctx_with_parent_trace)`）+ `can_destroy?/2` 拒绝含活 in-flight session 的 template。**r8 新加 —— codex r7 抓到此缺口。**
+- `apps/ezagent_domain_chat/lib/ezagent/entity/session_template.ex` —— `destroy/2` 级联到从此 template 实例化的 session + `can_destroy?/2`。**r8 新加。**
+- `apps/ezagent_domain_workspace/lib/ezagent/entity/workspace.ex` —— `destroy/2`（Workspace cascade 按 §3.5；通过 `Kind.Server.destroy/2` 递归）+ `can_destroy?/2`（B4 —— 拒绝嵌套 workspace member）。
+- `apps/ezagent_domain_external_mirror/lib/ezagent/entity/external_mirror_worker.ex` —— `destroy/2`（Worker cascade 按 §3.5；用 `worker_uri` 列）+ `can_destroy?/2`。
+- `apps/ezagent_core/lib/ezagent/entity/system.ex` —— System Kind（system principal carrier）。`destroy/2` 返回 `{:ok, %{steps: []}}`（无 per-Kind state）+ `can_destroy?/2` 对**所有** bootstrap system URI 返回 `{:error, :system_principal_undestroyable}`。**r8 新加 —— codex r7 抓到。**
+- `apps/ezagent_plugin_echo/lib/ezagent/entity/echo.ex` —— `destroy/2` no-op（echo 无状态）+ `can_destroy?/2` `:ok`。**r8 新加。**
+- `apps/ezagent_plugin_curl_agent/lib/ezagent/entity/curl_agent.ex` —— `destroy/2` 释放任何 in-flight curl handle + `can_destroy?/2` `:ok`。**r8 新加。**
+- `apps/ezagent_plugin_np/lib/ezagent/entity/np_agent.ex` —— `destroy/2` 停嵌套进程 state（与 bridge teardown 平行）+ `can_destroy?/2` `:ok`。**r8 新加。**
+
+生产 Template（`@behaviour Ezagent.Kind.Template` —— 这些是 template Kind，可作其自家 URI 销毁）：
+
+- `apps/ezagent_plugin_cc/lib/ezagent/template/cc_agent.ex` —— `destroy/2` 级联到用此 template 的 cc agent + `can_destroy?/2`。**r8 新加。**
+- `apps/ezagent_plugin_codex/lib/ezagent/template/codex_agent.ex` —— `destroy/2` 级联到 codex agent + `can_destroy?/2`。**r8 新加。**
+- `apps/ezagent_plugin_echo/lib/ezagent/template/echo_agent.ex` —— `destroy/2` 级联 + `can_destroy?/2`。**r8 新加。**
+- `apps/ezagent_plugin_curl_agent/lib/ezagent/template/curl_agent.ex` —— `destroy/2` 级联 + `can_destroy?/2`。**r8 新加。**
+- `apps/ezagent_plugin_np/lib/ezagent/template/np_agent.ex` —— `destroy/2` 级联 + `can_destroy?/2`。**r8 新加。**
+- `apps/ezagent_domain_chat/lib/ezagent/template/generic_session.ex` —— `destroy/2` 级联到用此 template 的 session + `can_destroy?/2`。**r8 新加。**
+
+Test-support Kind（`apps/ezagent_core/test/support/test_behavior.ex`、`post_init_test_behaviors.ex` 等）用 `Kind.default_destroy/2` 宏（no-op）—— 它们仅在 test run 内存在且无生产生命周期。宏住在 `Ezagent.Kind.TestImpl`（PR-B 加的新 helper 模块）。
 
 **PR-D 插件 bridge teardown 实现（每个 plugin 在其 `AgentBridge.Adapter` 实现加 `teardown/1`）：**
 
@@ -445,7 +529,7 @@ end
 
 **无**已有代码路径被移除。**无**对 `Users.delete/1`（或 per-Kind 等价）语义的变更 —— 这些路径仍作为 LOW-LEVEL DB-only 删除存在，但会发出 deprecation 警告建议 `Kind.Server.destroy/2`。迁移目标：在后续 PR（PR-E 之后），把每个 `XXX.delete/1` 标为 `@deprecated` 并将 operator-facing 调用站点经 `Kind.Server.destroy/2`。
 
-不实现新 `destroy/2` callback 的已有 Kind：若 callback OPTIONAL（OQ-NEW 默认），它们得到默认 no-op（仅 DB 行删 + snapshot purge —— 无 per-Kind 清理）。若 callback REQUIRED（推荐），PR-C 必须给**每个**已有 Kind 加 `destroy/2` 实现（User、Agent、Session、Workspace、Worker —— `apps/` 扫描显示当今唯五）。post-PR-B 加的新 plugin Kind 必须按 behaviour 契约实现 `destroy/2`。
+不实现新 `destroy/2` callback 的已有 Kind：按 OQ-NEW 推荐 (a) —— 对**所有**生产 Kind + Template REQUIRED。PR-C 给全部 11 个生产 Kind 加 `destroy/2`（User、Agent、Session、AgentTemplate、SessionTemplate、Workspace、ExternalMirrorWorker、System、Echo、CurlAgent、NpAgent）+ 6 个生产 Template（CcAgent、CodexAgent、EchoAgent、CurlAgent、GenericSession、NpAgent template）。Test-support Kind 用 `Kind.default_destroy/2` 宏（no-op）通过 `use Ezagent.Kind.TestImpl`。post-PR-B 加的新 plugin Kind 必须按 behaviour 契约实现 `destroy/2`。
 
 ### 4.3 生产数据 DB 迁移
 
@@ -453,7 +537,7 @@ end
 
 ### 4.4 协同 PR 序列
 
-PR-A（本 SPEC）先 land。PR-B（核心）是**最小可上线** —— 加契约 + DB-backing check + AgentBridge.Adapter.teardown 扩展。PR-C（per-Kind destroy 实现）紧接 land；PR-C land 前每个 Kind 要么有默认 no-op `destroy/2`（若 optional），要么 PR-C 是单个原子加法（若 required）—— PR-C 不能在 PR-B 前 land 因 callback 不存在。PR-D（plugin teardown）可与 PR-C 并行 land（不同文件）。PR-E（LV UI + CLI）最后 land；依赖 PR-C 完成因 LV "destroy" 按钮必须调 `Kind.Server.destroy/2` 它 dispatch 到 per-Kind `destroy/2`。
+PR-A（本 SPEC）先 land。PR-B（核心）是**最小可上线** —— 加契约 + SpawnRegistry 3-arity + AgentBridge.Adapter.teardown 扩展。PR-C（per-Kind destroy 实现）作为跨 17 个生产 Kind/Template 模块的**单个**原子加法紧接 land（按 B5 完整清单）。PR-C 不能在 PR-B 前 land 因 callback 不存在。PR-D（plugin bridge teardown）可与 PR-C 并行 land（不同文件；PR-D 是关于 `AgentBridge.Adapter.teardown/1`，非 `Kind.destroy/2`）。PR-E（LV UI + CLI）最后 land；依赖 PR-C 完成因 LV "destroy" 按钮必须调 `Kind.Server.destroy/2` 它 dispatch 到 per-Kind `destroy/2`。
 
 Plugin-isolation north-star 保留：PR-B 加契约；PR-C/D/E 插入它。未来 Kind 加 `destroy/2` 不碰核心；未来 bridge flavor 加 `teardown/1` 不碰核心。
 
@@ -495,17 +579,23 @@ Plugin-isolation north-star 保留：PR-B 加契约；PR-C/D/E 插入它。未�
 | INV-16 | **（替换 r1–r6 INV-13b）** Destroy 后 cold-load 一个 `:chat` slice 含 `owner_uri = target` 的 snapshot Session。调**全部三**生产 data-owner 解析器并断言每个返回 `:no_owner`（**不是**被销毁 target URI）：(1) `Behavior.Chat.data_owner(S_uri)`；(2) `Behavior.ExternalMirror.data_owner(S_uri)`；(3) `Behavior.Publisher.SessionImpl.data_owner(S_uri)`。每个在读站点用 `Users.get_by_uri/1` DB-backing 防御。 | 三 data_owner 解析器跨站点 cold-Session 权限泄露 |
 | INV-17 | PR-B + backfill 任务 + Migration B 后：`external_mirror_bindings` 每行 `worker_uri` 非 NULL 且等于 `WorkerSpawn.worker_uri_for(parsed_session_uri, adapter_id, target_id) |> URI.to_string()`。 | Backfill 错误（原样保留自 r1–r6 INV-15）|
 | INV-18 | **（Agent bridge teardown）** Spawn Agent + 通过 cc flavor adapter 绑定其 bridge。调 `Kind.Server.destroy(agent_uri, ...)`。断言：`BridgeRegistry.lookup(agent_uri)` 返回 `:error`（cc 的 `teardown/1` unbind）。对 codex Agent：断言 sidecar 进程已退 + per-agent dir 已删。 | AgentBridge.Adapter.teardown/1 未接线或未从 Agent.destroy/2 调 |
+| INV-19 | **（r8 新 —— B3 并发 destroy idempotency）** 对**同**`target_uri` 起两个 `Task.async` 调 `Kind.Server.destroy(target, ctx_a)` + `Kind.Server.destroy(target, ctx_b)`。等两者。断言：(a) **恰好一个**返回 `{:ok, %{...完整 summary...}}`；(b) **恰好一个**返回 `{:ok, :already_destroyed}`；(c) `Users.get_by_uri(target)` 返回 `nil`（单次 delete）；(d) `invocations` 中**两**条 audit 行，都配 `action = "kind.destroyed"`、target = target_uri_str，**不同**`trace_id`，`outcome` 字段分别为 `:ok` + `:already_destroyed`。 | Race 产生双删错误、重复 audit、**或**一个 caller 见 `{:error, _}` 而非幂等 success tag |
+| INV-20 | **（r8 新 —— B2 spawn-race-after-DB-delete）** Spawn target Kind → `{:ok, pid_old}`。在 test process 中：(1) **手动**调 `Users.delete(target)` 删 DB 行而**不**调 `Kind.Server.destroy`（模拟 race window 即 `terminate_child` 还未跑 —— `pid_old` 仍活）。(2) 调 `SpawnRegistry.spawn(target)`。断言：返回 `{:error, :no_backing_entity}` —— **非** `{:ok, pid_old}`（若 `KindRegistry.lookup` 在 backing check 前触发就会这样）。 | `SpawnRegistry.spawn/1` 在 `backing_check_fn` 前查了 `KindRegistry.lookup` —— B2 重排接线错 |
+| INV-21 | **（r8 新 —— B2 backing_check 顺序验证）** 用 test-double 替 `Ezagent.KindRegistry`，对 `lookup/1` 调用计数器加一。调 `SpawnRegistry.spawn(uri_with_deleted_row)`。断言：(a) 结果是 `{:error, :no_backing_entity}`；(b) `KindRegistry.lookup` 计数器为 **0**（**非** 1）—— 即 `backing_check_fn` 在 lookup 前短路。然后调 `SpawnRegistry.spawn(uri_with_existing_row)`。断言：(a) 结果是 `{:ok, pid}`；(b) lookup 计数器为 **1**。 | `backing_check_fn` 放在 `KindRegistry.lookup` 之后（会让活的拆中 pid 漏过）|
 
 **部分实现不能通过** —— 失败映射：
 
 - 跳过 `Kind.destroy/2` callback 加：INV-3 + INV-4 + INV-6 + INV-7 + INV-8 失败（per-Kind 清理从未跑）
-- 跳过 entity callback 的 DB-backing check：INV-2 + INV-13 (c) 失败
+- 跳过 entity callback 的 DB-backing check：INV-2 + INV-13 (c) + INV-20 失败
 - 跳过 `Kind.Server.destroy/2` 编排器：INV-1 + INV-10 失败
 - 跳过 `AgentBridge.Adapter.teardown/1`：INV-18 失败
 - 跳过 Workspace.destroy/2 cascade：INV-14 失败
 - 跳过 Token.verify DB-backing check：INV-15 失败
 - 跳过三站点中任一 data_owner DB-backing check：INV-16 失败
 - 跳过 bootstrap 保护：INV-12 失败
+- 跳过 `{:ok, :already_destroyed}` 幂等返回：INV-19 失败
+- `backing_check_fn` 放在 `KindRegistry.lookup` **之后**：INV-20 + INV-21 失败
+- `SpawnRegistry.register` 接为 2-arity（无 backing_check_fn）：INV-2 + INV-20 + INV-21 失败
 
 测试在**首次**不匹配失败，消息标识泄漏。
 
@@ -641,9 +731,21 @@ Audit 行用已有 `invocations` 表配 `action = "kind.destroyed"` + per-step �
 
 PR-E admin LV 加 "Destroy" 按钮 + confirm dialog 问 reason。也该要 operator **输入** 被销毁的 URI（GitHub repo-name-confirmation 对等）？默认提议：不可逆操作要 type-the-name 确认。Allen 确认？
 
-### OQ-NEW —— `destroy/2` REQUIRED vs OPTIONAL
+### OQ-NEW —— `destroy/2` REQUIRED vs OPTIONAL（r8 —— 完整 scope）
 
-`Ezagent.Kind.destroy/2` 该是 REQUIRED callback（每个 Kind 模块**必须**实现）还是 OPTIONAL（配 `Kind.default_destroy/2` 默认 no-op）？**推荐：REQUIRED**，按 §7.6 —— 强制每个 Kind 作者在边界思考清理，阻止静默 state 泄漏。PR-C 枚举五个已有 Kind 并给每个加 `destroy/2`。Allen 确认。
+`Ezagent.Kind.destroy/2` 该是 REQUIRED callback（每个 Kind 模块**必须**实现）还是 OPTIONAL（配 `Kind.default_destroy/2` 默认 no-op）？**r8 推荐 (a)：对所有生产 Kind + Template REQUIRED。** 完整 grep `lib/` 产 11 个生产 `@behaviour Ezagent.Kind` 模块 + 6 个生产 `@behaviour Ezagent.Kind.Template` 模块：
+
+生产 Kind：User / Agent / Session / AgentTemplate / SessionTemplate / Workspace / ExternalMirrorWorker / System / Echo / CurlAgent / NpAgent。
+
+生产 Template：CcAgent / CodexAgent / EchoAgent / CurlAgent template / GenericSession / NpAgent template。
+
+即便 AgentTemplate / SessionTemplate 也有意义的 `destroy/2` 因为销毁 template **应**级联到由它实例化的 entity（开放问题：cascade vs 在用时拒 —— r8 按 `feedback_let_it_crash_no_workarounds` 选 cascade；operator 可用 `can_destroy?/2` 拒）。System Kind 的 `destroy/2` 是 no-op + `can_destroy?/2` 拒（system principal 仅 bootstrap）。Test-support Kind（`test/support/test_behavior.ex` 等）用 `Kind.default_destroy/2` 宏通过 `use Ezagent.Kind.TestImpl`（PR-B 新 helper）。
+
+考虑过的备选：
+- **(b)** 仅 "真 entity" REQUIRED（User/Agent/Session/Workspace/Worker —— 5 个 Kind）；其余 OPTIONAL no-op。**拒绝**：易静默 state 泄漏（原始 ghost-user bug 同性质 —— "没人想到去 cascade"）。
+- **(c)** 两层：可删概念 Kind REQUIRED、工具 Kind OPTIONAL。**拒绝**：边界主观；今天的 "工具" 明天就成可删。
+
+Allen 确认。
 
 ### REMOVED 开放问题
 
@@ -652,15 +754,15 @@ PR-E admin LV 加 "Destroy" 按钮 + confirm dialog 问 reason。也该要 opera
 
 ---
 
-## §11 Codex 对抗性 review 问题 (for r7+)
+## §11 Codex 对抗性 review 问题 (for r7+；r8 status 已注)
 
-> r7 重置：r1–r6 问题瞄 tombstone 正确性。r7 pivot 下它们 moot。新攻击面：
+> r7 重置：r1–r6 问题瞄 tombstone 正确性。r8 关闭 5 个 r7-REJECT blocker（B1 transaction scope + 重排；B2 backing_check BEFORE lookup；B3 idempotency 契约；B4 嵌套 workspace 拒绝；B5 完整 inventory）。原 r7 攻击问题保留下方并附 **r8 STATUS** 标注，以便 codex r8 攻击 r8 引入的*新*表面：重排语义、per-scheme backing_check_fn 接线、race 下的 idempotency 契约。
 
-1. **DB-backing check 竞速（§3.6 step 4 竞速）：** entity callback 读 `Users.get_by_uri(uri)` 并决定 spawn。并发地，`Kind.Server.destroy(uri)` 在 step 5（terminate_child）。在 get_by_uri 读和 spawn fn 最终的 `Ezagent.Kind.spawn/2` 调之间，destroy 提交 step 6（DB 行删）。Spawn fn 然后 load 一个 DB 行没的 Kind 的 snapshot 吗？走通 step 5+6+7 的 Repo transaction 边界。
+1. **DB-backing check 竞速（§3.6 step 4 竞速）：** entity callback 读 `Users.get_by_uri(uri)` 并决定 spawn。并发地，`Kind.Server.destroy(uri)` 在 step 5（terminate_child）。在 get_by_uri 读和 spawn fn 最终的 `Ezagent.Kind.spawn/2` 调之间，destroy 提交 step 6（DB 行删）。Spawn fn 然后 load 一个 DB 行没的 Kind 的 snapshot 吗？走通 step 5+6+7 的 Repo transaction 边界。 **r8 STATUS：通过重排处理 —— DB delete（step 4b）现在 BEFORE terminate_child（step 6）。"Kind 死 + DB 行活" 交错不再存在。SpawnRegistry.spawn/1 顶部的 backing_check_fn 在 KindRegistry.lookup 前短路；INV-20 + INV-21 钉住。**
 
 2. **Workspace cross-Kind cascade 深度（§3.5 Workspace.destroy）：** workspace 含 100 user。`Workspace.destroy/2` 遍历并对每个调 `Kind.Server.destroy/2`。遍历串行（一次一个）还是并行（Task.async_stream）？串行：O(N) cascade 时间；admin LV 超时。并行：共享资源竞速（如 workspace.member_uris 列表被每个 User.destroy/2 改）。在 §3.5 选一 + 论证。
 
-3. **AgentBridge.Adapter.teardown/1 失败隔离：** 若 codex 的 `teardown/1` 抛（如 sidecar 已死、supervisor 超时），Agent.destroy/2 传播还是吞？§3.5 说 "best-effort"；验证编排器的 audit 行记录错误 AND step 5–8 仍跑。INV-18 在编排器因 teardown 错误中止时应失败。
+3. **AgentBridge.Adapter.teardown/1 失败隔离：** 若 codex 的 `teardown/1` 抛（如 sidecar 已死、supervisor 超时），Agent.destroy/2 传播还是吞？§3.5 说 "best-effort"；验证编排器的 audit 行记录错误 AND step 4 + step 6 仍跑。INV-18 在编排器因 teardown 错误中止时应失败。
 
 4. **Re-register 继承（INV-13）：** 测试断言**无**继承 caps / memberships / snapshot。但 `users` 表是新创的；新行的 `caps_json` 默认成 `Users.create/3` 设的任何东西。验证测试断言**新** caps（Users.create 安装的什么）而非**旧** caps —— 没有 "空 caps" 普遍 state。
 
@@ -675,6 +777,22 @@ PR-E admin LV 加 "Destroy" 按钮 + confirm dialog 问 reason。也该要 opera
 9. **`destroy/2` REQUIRED 迁移成本：** 若 OQ-NEW 选 REQUIRED，每个已有 Kind 模块必须加 `destroy/2`。枚举：`apps/ezagent_domain_identity/lib/ezagent/entity/user.ex`、`apps/ezagent_domain_chat/lib/ezagent/entity/agent.ex`、`apps/ezagent_domain_chat/lib/ezagent/entity/session.ex`、`apps/ezagent_domain_workspace/lib/ezagent/entity/workspace.ex`、`apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/worker.ex`。漏什么吗？有 test-fixture Kind 需要它吗？
 
 10. **LV confirm dialog UX（保留自 r1–r6 q9）：** type-the-URI 确认默认。Allen 在 OQ-9 确认。
+
+### §11.r8 —— r8 引入的新攻击面
+
+11. **重排连贯性（B1）：** DB delete 移到 terminate_child **之前**。引入新 race 了吗？具体：在 transaction 提交（step 4）与 `KindRegistry.lookup`（step 5）之间，并发 dispatch 能经*另一*路径到达活但 DB 已删的 pid 吗（如另一 GenServer 的 slice state、process Dictionary 中的 pid 引用 cache）？走通每个跨 destroy 窗口可能保留 pid 引用的地方。B2 SpawnRegistry check 守卫 spawn 路径；非-spawn dispatch 路径呢？
+
+12. **Per-scheme backing_check_fn 位置（B2）：** 新 `SpawnRegistry.spawn/1` 在 `KindRegistry.lookup` 之前调 `backing_check_fn`。验证：(a) **无** 其他入口产生 Kind 不走 `SpawnRegistry.spawn/1`（如 Loader / BootReconciler / test helper 中的直接 `Ezagent.Kind.spawn/2` 调）；(b) `backing_check_fn` 给**每**个有 DB-backed Kind 的 scheme 都注册（identity / chat / workspace / external_mirror / system —— System 可能不需）；(c) 旧 2-arity `register/2` fallback（返回"总 true"）不会静默绕过 in-prod scheme 的 check。
+
+13. **部分失败下的 idempotency 契约（B3）：** `{:ok, :already_destroyed}` 在 4b 返回 0 行时返回。但若 4b 返回 0 是因为行**从未**存在（operator 输错 URI）？把这与"并发 destroy 已提交"区分？`Kind.Server.destroy` 一个从未有行的 URI：该是 `{:error, :not_found}` 还是 `{:ok, :already_destroyed}`（幂等）？走通编排器对不存在 URI 的行为；验证 can_destroy?/2 抓它 OR 预检抓它。
+
+14. **Workspace 嵌套-member 拒绝（B4）：** `Workspace.can_destroy?/2` 拒若任何 member URI 是 `workspace://...`。但 member 列表来自活 Workspace slice；can_destroy?/2 与 step 3 cascade 之间 member 能并发**新增**吗？验证 cascade 自身在一致点重读 member 列表（或编排器冻结 slice）。member 通过*间接*构造是 workspace 的话呢（User Kind 其 URI scheme 为 `entity://` 但 host 为 `workspace` —— typo case）？
+
+15. **B5 —— REQUIRED 编译时强制：** 若 `destroy/2` 是 `@callback`（REQUIRED），未实现的每个 Kind 模块应产生编译警告。验证 behaviour 契约是 REQUIRED 非 `@optional_callbacks`。对 test-support Kind，`Kind.default_destroy/2` 宏被描述 —— 它是 `defmacro use` 注入实现，**还是**单独的 `Ezagent.Kind.TestImpl` behavior？SPEC 措辞模糊（§4.1 两种用法都用）。
+
+16. **Transaction 原子性 vs per-Kind 清理（4a/4b/4c）：** transaction 包 snapshot + DB 行 + audit。Per-Kind `destroy/2`（step 3 —— caps 撤销、binding 删除等）**在** transaction 外。若 4b DB delete 失败（如 FK 约束、DB 错误）会怎样？Transaction 回滚；audit 行**未**插入；但 step 3 的 caps 撤销已发生（按设计在 transaction 外）。系统进 "user 存在 DB 但无 caps" 状态 —— **完全是**原始 ghost 问题的 bug。有补偿动作吗，还是编排器返 `{:error, {:partial, ...}}` 让 operator 重跑？§3.12 说 "let-it-crash, 无补偿动作" —— 这干净满足 `feedback_let_it_crash_no_workarounds`，还是留下 footgun？
+
+17. **INV-19 race 精度：** 测试 race 两个并发 destroy。在 Postgres READ COMMITTED 下，两者**都可能**通过 can_destroy?/2 + 跑 destroy/2；都进 transaction；一个在 row lock 上阻塞。被阻塞的 transaction 在赢家提交后解阻塞，看到行已没。`Users.delete(uri)` 返回 `{0, _}`。**第二**个 transaction 的 audit insert 成功**提交**了吗，还是因为 step 3 留下的状态让 step 4c 的 audit 行引用已删的东西（FK to caller？to target？）而失败？验证 audit 表无在此顺序下断的 FK。
 
 ---
 
@@ -712,22 +830,26 @@ kind.destroy(target_uri, ctx_with_trace)
   │   - Session: 删 member / unsubscribe publisher
   ▼ {:ok, summary} 或 {:error, reason}（best-effort；编排器继续）
   │
-  ▼ step 4: KindRegistry.lookup(target_uri)
-  │     {:ok, pid} → step 5
-  │     :error → 跳 step 5（Kind 不活）
+  ▼ step 4 —— Repo.transaction（三个 DB write 原子提交）
+  │     step 4a: Repo.delete(KindSnapshot, target_uri_str)             [幂等]
+  │     step 4b: kind.delete_db_row(target_uri)                        [Users.delete / Agents.delete / …]
+  │             若 rows_affected == 0 → 幂等输家路径，
+  │             emit audit outcome: :already_destroyed,
+  │             返回 {:ok, :already_destroyed}                       [INV-19]
+  │     step 4c: Repo.insert(InvocationsAudit, %{action: "kind.destroyed",
+  │             target, caller, reason, trace_id, outcome, kind_summary})
   │
-  ▼ step 5: DynamicSupervisor.terminate_child(supervisor, pid)
+  ▼ step 5: KindRegistry.lookup(target_uri)
+  │     {:ok, pid} → step 6
+  │     :error → 跳 step 6（Kind 不活）
+  │
+  ▼ step 6: DynamicSupervisor.terminate_child(supervisor, pid)
   │     （优雅 —— 跑 Kind 的 terminate/2 若有）
+  │     注意：DB 行**已没**（step 4b 已提交）。任何并发
+  │     SpawnRegistry.spawn 现在返回 {:error, :no_backing_entity}
+  │     经 per-scheme backing_check_fn（其在 KindRegistry.lookup **之前**跑）。
   │
-  ▼ step 6+7 包在 Repo.transaction（竞速有界）
-  │     step 6: kind.delete_db_row(target_uri)  [DB 行**就是** source of truth]
-  │     step 7: Repo.delete(KindSnapshot, target_uri_str)
-  │
-  ▼ step 8: audit emit
-  │     invocations action = "kind.destroyed"
-  │     step 3 summary 的 per-step 子行（共享 trace_id）
-  │
-  ▼ 广播
+  ▼ step 7: 广播
 Phoenix.PubSub.broadcast({:kind_destroyed, target_uri, reason})
   │
   ▼
@@ -735,26 +857,40 @@ Phoenix.PubSub.broadcast({:kind_destroyed, target_uri, reason})
 
 # Destroy 后重 spawn
 SpawnRegistry.spawn(target_uri)
-  │ entity callback: Users.get_by_uri(target_uri) == nil → {:error, :no_backing_entity}
+  │ STEP 1: backing_check_fn(target_uri) → false（行没）
+  │         [r8 —— BEFORE KindRegistry.lookup；B2 修复]
   ▼
 {:error, :no_backing_entity}
 
 # Re-register
 Users.create(target_uri, fresh_attrs)  # 写新行
 SpawnRegistry.spawn(target_uri)
-  │ entity callback: Users.get_by_uri → 新行存在 → Kind.spawn(User, ...)
+  │ STEP 1: backing_check_fn(target_uri) → true（新行存在）
+  │ STEP 2: KindRegistry.lookup → :error（旧 pid 在 step 6 已终止）
+  │ STEP 3: spawn_fn 触发 → Kind.spawn(User, ...)
   ▼
 {:ok, fresh_pid}  # 无继承状态 —— 新 Kind、新 slice、无 snapshot
+
+# 并发 destroy race [INV-19]
+A: Kind.Server.destroy(uri, ctx_a)  ─┐
+B: Kind.Server.destroy(uri, ctx_b)  ─┤ 都过预检 + per-Kind destroy
+                                     │ 都进 step 4 transaction
+                                     │ Postgres 行锁序列化它们
+A: 4b 返回 {1, _} → outcome :ok ─────┘    → {:ok, %{...}}
+B: 4b 返回 {0, _} → outcome :already_destroyed → {:ok, :already_destroyed}
+  两 audit 行都在，trace_id 不同
 ```
 
 ## Appendix B —— 为什么本 SPEC 比 r6 短
 
-r6 是 984 行。r7 是其 ~60%：tombstone 机制（entity_tombstones 表、ETS 镜像、原子 primitive、三边界强制、codex 驱动的 rev 历史）是 r6 大部。r7 完全去除该 artifact。剩下：`Kind.destroy/2` callback 契约（~20 行）、`Kind.Server.destroy/2` 编排（~50 行）、per-Kind cascade 表（保留自 r6，~80 行）、AgentBridge.Adapter.teardown 扩展（~10 行）、entity callback 的 DB-backing check（~10 行）、INV 表（16 条，~40 行）、OQ 列表（6 条，~30 行）。
+r6 是 984 行。r7–r8 约其 60–70%：tombstone 机制（entity_tombstones 表、ETS 镜像、原子 primitive、三边界强制、codex 驱动的 rev 历史）是 r6 大部。r7 完全去除该 artifact；r8 在其上加 race / idempotency / inventory 严格性。剩下：`Kind.destroy/2` callback 契约（~20 行）、`Kind.Server.destroy/2` 编排（r8 transaction-block 细节下 ~70 行）、per-Kind cascade 表（保留自 r6，~80 行）、AgentBridge.Adapter.teardown 扩展（~10 行）、SpawnRegistry 3-arity register + backing_check_fn 顺序（~20 行，r8）、**INV 表（21 条 —— INV-1 到 INV-21，~55 行）**、OQ 列表（6 条，~30 行）。
 
 ## Appendix C —— 作者推荐
 
-Land PR-A（本 SPEC）→ PR-B（核心：Kind.destroy callback + Kind.Server.destroy + DB-backing check + AgentBridge.Adapter.teardown）。PR-C（per-Kind destroy 实现）紧接因 callback 契约 required（按 OQ-NEW 推荐）；PR-D（plugin teardown 实现）可与 PR-C 并行 land；PR-E（LV UI + CLI）最后 land。
+Land PR-A（本 SPEC）→ PR-B（核心：Kind.destroy callback + Kind.Server.destroy + SpawnRegistry 3-arity register + backing_check_fn-before-lookup + AgentBridge.Adapter.teardown）。PR-C（per-Kind destroy 实现 —— 按 B5 完整 inventory 共 11 个 Kind + 6 个 Template）紧接因 callback 契约 REQUIRED（按 OQ-NEW 推荐 (a)）；PR-D（plugin bridge teardown 实现）可与 PR-C 并行 land；PR-E（LV UI + CLI）最后 land。
 
-`system/linyilun` ghost —— 2026-05-28 浮现 —— 是经验动机，但结构修复更广：每个 Kind 获得干净的生命周期 CRUD 对等，已销毁 URI 的 re-register 自然工作因 DB 行是 source of truth。Allen 表述的架构目标（2026-05-28 03:43）达成："所有 Kind 应该有完整 CRUD"。
+`system/linyilun` ghost —— 2026-05-28 浮现 —— 是经验动机，但结构修复更广：每个 Kind 获得干净的生命周期 CRUD 对等，已销毁 URI 的 re-register 自然工作因 DB 行是 source of truth，并发 destroy 幂等（输家得 `{:ok, :already_destroyed}`）。Allen 表述的架构目标（2026-05-28 03:43）达成："所有 Kind 应该有完整 CRUD"。
+
+INV-1 到 INV-21（共 21 个不变性）是 merge gate：通过的测试套件证明设计主张；部分实现结构上无法通过。
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
