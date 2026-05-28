@@ -628,7 +628,31 @@ defmodule Ezagent.Kind.Runtime do
     end
   end
 
+  # Phase 1.5 (SPEC 2026-05-28 Router/Behavior/Kind) — branch between
+  # the legacy `invoke/4` contract and the new per-action declarative
+  # contract (`handle_<action>/2` + `apply_effects/2`).
+  #
+  # New-contract Behaviors carry a `__behavior__?/0` marker injected by
+  # `use Ezagent.Behavior`. When present, the runtime resolves the
+  # action's handler atom (`:handle_<action>`), invokes it with
+  # `(args, ctx)` (slice exposed to the handler via `ctx[:read]/1-2`),
+  # applies the returned effects against the slice, and lifts the
+  # result back into the legacy `{:ok, new_slice, result}` shape so
+  # the rest of the dispatch pipeline (snapshot commit, slice-change
+  # emit, telemetry) is unchanged.
+  #
+  # Legacy Behaviors (no marker) keep the existing `invoke/4` call
+  # path verbatim — Phase 2 migrates each Behavior individually, and
+  # this branch is the single switch point.
   defp invoke_behavior(behavior_module, action, slice, args, ctx) do
+    if Ezagent.Behavior.new_style?(behavior_module) do
+      invoke_new_contract(behavior_module, action, slice, args, ctx)
+    else
+      invoke_legacy(behavior_module, action, slice, args, ctx)
+    end
+  end
+
+  defp invoke_legacy(behavior_module, action, slice, args, ctx) do
     case behavior_module.invoke(action, slice, args, ctx) do
       {:ok, new_slice} -> {:ok, new_slice, nil}
       {:ok, new_slice, result} -> {:ok, new_slice, result}
@@ -644,6 +668,110 @@ defmodule Ezagent.Kind.Runtime do
       )
 
       {:error, {:behavior_exception, kind, reason}}
+  end
+
+  # New-contract dispatch (SPEC §4.3 / §4.4).
+  #
+  # Flow:
+  # 1. Validate the action is declared via `__actions__/0`. The
+  #    BehaviorRegistry already filtered by `{kind_module, action}`
+  #    BEFORE this call, but a new-contract Behavior may have been
+  #    cap-registered while declaring its action set independently;
+  #    re-check here gives a precise `:unknown_action` error instead
+  #    of a `FunctionClauseError` from a missing handler/2.
+  # 2. Resolve the handler atom — must already exist (`@before_compile`
+  #    enforces `def handle_<action>/2` per action declaration).
+  # 3. Call `handle_<action>(args, ctx_with_read)` where `ctx[:read]`
+  #    exposes the current slice's fields to the handler (the new
+  #    contract doesn't receive the slice as an arg).
+  # 4. Apply the handler's effects against `slice` (Behavior.apply_effects/2).
+  # 5. Lift the result back into the 3-tuple shape the rest of
+  #    `handle_dispatch/4` consumes — the framework-state from
+  #    `apply_effects` IS the new slice (each `{:set, key, value}` in
+  #    the handler's returned effects mutates the slice).
+  #
+  # Halts and bad-shape handler returns are mapped to `{:error, _}`
+  # tuples that flow through the same telemetry-on-error branch as
+  # the legacy path.
+  defp invoke_new_contract(behavior_module, action, slice, args, ctx) do
+    cond do
+      action not in Ezagent.Behavior.action_names(behavior_module) ->
+        {:error, {:unknown_action, action}}
+
+      true ->
+        handler_name = handler_atom_for(action)
+
+        if function_exported?(behavior_module, handler_name, 2) do
+          invoke_new_contract_handler(behavior_module, action, handler_name, slice, args, ctx)
+        else
+          # `@before_compile` should prevent this — a missing handler is
+          # a compile-time error in `use Ezagent.Behavior`. Guard
+          # defensively so a manually-crafted (e.g. test-time) module
+          # without the macro doesn't crash the dispatcher.
+          {:error, {:missing_handler, behavior_module, handler_name}}
+        end
+    end
+  end
+
+  defp invoke_new_contract_handler(behavior_module, action, handler_name, slice, args, ctx) do
+    handler_ctx = Map.put(ctx, :read, fn key, default -> Map.get(slice, key, default) end)
+
+    case apply(behavior_module, handler_name, [args, handler_ctx]) do
+      {:ok, result, effects} when is_list(effects) ->
+        apply_new_contract_effects(slice, result, effects)
+
+      {:ok, result} ->
+        # No effects → slice unchanged, propagate the result.
+        {:ok, slice, result}
+
+      {:error, _reason} = err ->
+        err
+
+      other ->
+        Logger.error(
+          "Behavior #{inspect(behavior_module)}.#{handler_name}/2 returned bad shape: " <>
+            "#{inspect(other)}"
+        )
+
+        {:error, {:bad_handler_return, behavior_module, action, other}}
+    end
+  catch
+    kind, reason ->
+      Logger.error(
+        "Behavior #{inspect(behavior_module)}.#{handler_name}/2 crashed: " <>
+          "#{inspect(kind)} #{inspect(reason)}"
+      )
+
+      {:error, {:behavior_exception, kind, reason}}
+  end
+
+  defp apply_new_contract_effects(slice, result, effects) do
+    case Ezagent.Behavior.apply_effects(effects, slice) do
+      {:ok, %{state: new_slice}} ->
+        {:ok, new_slice, result}
+
+      {:halt, reason, _partial} ->
+        # `apply_effects/2` is the single point that knows whether to
+        # commit partial effects — its `:halt` return is the signal
+        # to roll back. Propagate as a typed error so the caller sees
+        # the dispatch failed without persisting anything.
+        {:error, {:halt, reason}}
+    end
+  end
+
+  defp handler_atom_for(action) when is_atom(action) do
+    # Use `to_existing_atom/1` — `use Ezagent.Behavior` already
+    # compiled the `:handle_<action>` atom into the BEAM via the
+    # `def handle_<action>` clause `@before_compile` enforced. A
+    # genuinely missing handler is the `function_exported?/3` guard
+    # in `invoke_new_contract/5`, not an atom-table lookup.
+    String.to_existing_atom("handle_" <> Atom.to_string(action))
+  rescue
+    ArgumentError ->
+      # Pathological — the action atom is declared but no `handle_<x>`
+      # symbol ever existed in the BEAM. Surface as a clear error
+      # rather than crashing the caller's `case`.
+      :__no_handler_atom__
   end
 
   # Phase 7 PR 43 — derive session URI from target URI for ctx enrichment.
