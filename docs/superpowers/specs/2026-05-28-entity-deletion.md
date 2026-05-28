@@ -1,8 +1,17 @@
 # SPEC — Entity deletion lifecycle (User / Agent / Worker)
 
-**Status:** r2 — codex r1 review (REJECT) addressed: 6 critical blockers + 3 nits. 2026-05-28.
+**Status:** r3 — codex r2 review (REJECT) addressed: 3 CRIT + 1 HIGH + 1 MED + 1 LOW. 2026-05-28.
 
-**r2 changes (codex r1 verdict REJECT — 6 blockers + 3 nits resolved):**
+**r3 changes (codex r2 verdict REJECT — 6 findings resolved):**
+
+- **CRIT-3.1 (`:scrub_owner` unsatisfiable for cascade caller):** codex r2 found that the proposed Chat action `:scrub_owner` with `cap(:any, Chat, :scrub_owner)` would fail CapBAC at `Kind.Runtime.authorize/4` (`apps/ezagent_core/lib/ezagent/kind/runtime.ex:249`) — the operator's `:delete` cap on EntityDeletion does NOT satisfy `Chat:scrub_owner`, and the r2 example dispatch did not provide `ctx.caps` or a system caller. **Fix:** the cascade dispatches `:scrub_owner` AS the dedicated system principal `system://entity-deletion-cascade` (new entry in `Ezagent.SystemPrincipal.Catalog` carrying ONLY `Capability{kind: Ezagent.Entity.Session, behavior: Ezagent.Behavior.Chat, action: :scrub_owner, instance: :any, workspace_uri: :any}` — narrowly scoped per `feedback_let_it_crash_no_workarounds`). `Behavior.EntityDeletion` step 4 ensures the principal via `SystemPrincipal.ensure/1` once at install time (PR-B Application boot) and the cascade builds the dispatch envelope with `caller = SystemPrincipal.uri("entity-deletion-cascade")` + `caps = SystemPrincipal.caps("entity-deletion-cascade")`. This is structurally narrow — the principal cannot do anything else. §3.5 + Catalog entry + INV-13a updated accordingly.
+- **CRIT-3.2 (cold-session `Session.owner/1` doesn't consult tombstones):** codex r2 found that production `Session.owner/1` (`apps/ezagent_domain_chat/lib/ezagent/entity/session.ex:649-657`) reads only the live `:chat` slice via `Ezagent.Kind.get_slice/2` and returns `{:ok, owner_uri}` unconditionally — it does NOT check User existence or tombstones. A cold-loaded Session with stale `owner_uri = target` would keep the deleted user as its data owner, defeating B3's safety argument. **Fix:** `Chat.data_owner/1` (`apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:1333-1342`) gains a tombstone defense check — after `Session.owner/1` returns `{:ok, %URI{} = owner}`, call `SpawnRegistry.tombstoned?(owner)`; if true, return `:no_owner` instead of the URI. This is defense-in-depth at the read site (parallel to INV-14's Token.verify check), AND the cascade still does the proactive in-memory scrub for live Sessions. INV-13b added: cold-load a Session with stale `owner_uri` AFTER deletion; assert `Chat.data_owner/1` returns `:no_owner`.
+- **CRIT-3.3 (B5 backfill path under-specified):** codex r2 found that §9.3 defines only a discovery task for snapshot orphans, NOT an idempotent `worker_uri` backfill; the cascade `WHERE worker_uri = target` silently skips NULL rows; the NOT NULL migration has no documented pre-condition. **Fix:** new mix task `mix ezagent.entity.deletion.backfill_worker_uri` defined explicitly in §4.2 + §9.1 — idempotent (sets `worker_uri` ONLY where NULL, derives via `WorkerSpawn.worker_uri_for/3`, logs row count), with a documented pre-condition check (`SELECT count(*) FROM external_mirror_bindings WHERE worker_uri IS NULL`) that the follow-up `NOT NULL` migration runs first and aborts if non-zero. PR-B also includes a defensive read-path: the cascade does `Repo.delete_all(...)` against `WHERE worker_uri = target OR worker_uri IS NULL AND <derived match>` as a transitional safety net, removed in the follow-up PR after `NOT NULL` lands. INV-15 added: after PR-B + backfill, every row has non-NULL `worker_uri` matching `WorkerSpawn.worker_uri_for(session_uri, adapter_id, target_id)`.
+- **HIGH-3.4 (B6 Token.verify defense not in PR-B change list):** codex r2 found INV-14 requires `Token.verify/2` to reject tombstoned URIs but §4.1's PR-B change list omitted `apps/ezagent_domain_identity/lib/ezagent/entity/token.ex`. **Fix:** §4.1 explicitly adds the Token.verify modification: at `verify/2` entry (BEFORE bcrypt comparison, AFTER the `uri_str` derivation), call `Ezagent.SpawnRegistry.tombstoned?(uri)`; if true, run `Bcrypt.no_user_verify()` (timing-leak-safe per the existing pattern at `token.ex:112`) and return `{:error, :tombstoned}`. Structural placement BEFORE bcrypt is correct: we don't want to advertise that a token row exists or even that the URI was ever provisioned. INV-14 phrasing updated.
+- **MED-3.5 (§3.9 brutal_kill / cast semantics misstated):** codex r2 found `:brutal_kill` bypasses `terminate/2` entirely (so the "drains the mailbox" claim is wrong), AND `GenServer.cast` to a killed process returns `:ok` (the cast was already sent; the process death drops the message silently — there's no `{:error, :noproc}` for casts). **Fix:** §3.9 rewritten to state the truth: (1) `brutal_kill` skips `terminate/2`; mailbox messages are dropped, not drained; (2) in-flight `cast` returns `:ok` on the sender side and is silently lost (this is acceptable because boundary 3 refuses re-spawn — the next dispatch attempt gets `:tombstoned` cleanly); (3) in-flight `call` returns `{:error, :noproc}` from the link-monitor; (4) Kind's persistence is durable via the SYNCHRONOUS pre-kill snapshot save in `tombstone_and_kill/1`'s ordering (see Appendix A — DB tombstone insert happens BEFORE the kill, so even if any in-flight cast is lost, the entity is structurally gone). Concretely: the §3.3 atomic primitive ordering is updated to (1) DB insert, (2) ETS insert, (3) `Process.exit(pid, :brutal_kill)`, (4) Process.monitor + receive `{:DOWN, ...}` (NOT a `terminate/2` drain — there isn't one). The "wait for terminate to complete" phrasing is replaced with "wait for the registered pid's DOWN message via Process.monitor".
+- **LOW-3.6 (ZH §3.5 cascade tables not byte-identical):** codex r2 found EN cascade markers `[B3 — see below]` / `[B5 — see below]` / `[B6]` differ from ZH `[B3 —— 见下]` / `[B5 —— 见下]` / `[B6]`. The instruction was "byte-for-byte" not "semantically aligned". **Fix:** ZH §3.5 cascade table code blocks now use the EN annotations VERBATIM (`[B3 — see below]`, `[B5 — see below]`, `[B6]`) — these are structural markers, not narrative prose, and the byte-identical rule applies. Surrounding paragraphs remain translated.
+
+**r2 changes (preserved — codex r1 verdict REJECT — 6 blockers + 3 nits resolved):**
 
 - **B1 (CRIT — multi-boundary tombstone enforcement):** r1 §3.3 + PR-B only guarded tombstone at `Ezagent.SpawnRegistry.spawn/1`. But production has direct `Ezagent.Kind.spawn/2` paths (`apps/ezagent_core/lib/ezagent/kind.ex:293-308`) and `Ezagent.ExternalMirror.WorkerSpawn` (`apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/worker_spawn.ex:72-113`) that build child specs via `DynamicSupervisor.start_child/2` directly — bypassing the SpawnRegistry layer entirely. Boot path was also unresolved: `Ezagent.Kind.Server.init/1` (`apps/ezagent_core/lib/ezagent/kind/server.ex:103-130`) loads slice state without tombstone consultation. **Fix:** §3.3 + §4.1 rewritten to make tombstone enforcement authoritative at THREE boundaries: (1) `Ezagent.Kind.Server.init/1` (the only chokepoint every Kind start traverses) — this is the source-of-truth check; (2) `Ezagent.Kind.spawn/2` (pre-check before `DynamicSupervisor.start_child`); (3) `Ezagent.SpawnRegistry.spawn/1` (pre-check before scheme-dispatch). Tombstone ETS table loaded BEFORE `KindSupervisor` boots, in `EzagentCore.Application.start/2`. Backfill mix task demoted to DISCOVERY/CLEANUP (not source of truth) in §9.3.
 - **B2 (CRIT — atomic primitive replaces race-prone sequence):** r1 had THREE inconsistent descriptions of the kill-vs-tombstone ordering (§3 :110-112 sequential, §10 OQ-2 :495-498 "kill FIRST then DB", §11 q2 :528-530 "kills the Kind THEN installs the tombstone"); only Appendix A showed `SpawnRegistry.tombstone_and_kill/1` atomic. **Fix:** `Ezagent.SpawnRegistry.tombstone_and_kill/1` promoted to the SOLE normative primitive in §3.3 with an atomicity contract: tombstone DB row + ETS row + Kind brutal_kill happen as one operation; rollback discipline on partial failure. OQ-2 DELETED (resolved by atomicity, moved to §10 RESOLVED). §11 q2 rewritten to attack the new primitive instead of the obsolete race.
@@ -203,12 +212,16 @@ defmodule Ezagent.SpawnRegistry do
     2. :ets.insert(@tombstone_table, ...) (ETS mirror).
        If fails (extremely unlikely — protected ETS) → DELETE the DB
        row inserted in step 1; return {:error, {:tombstone_ets_failed, _}}.
-    3. Process.exit(pid, :brutal_kill) + wait for terminate-monitor.
-       Returns :ok once the registered pid is gone (or was already
-       absent, in which case steps 1+2 still hold).
+    3. Process.exit(pid, :brutal_kill) — bypasses terminate/2 entirely
+       (this is intentional; see §3.9 for why the cascade does NOT rely
+       on graceful terminate semantics for the deleted Kind).
+    4. Process.monitor(pid) + receive {:DOWN, _ref, :process, pid, _reason}
+       (with a short timeout, e.g. 5s — defensive against a stuck
+       linked process). Returns :ok once the DOWN message arrives OR
+       the pid was already absent (steps 1+2 still hold either way).
 
   Because the DB row is committed BEFORE the kill, a BEAM crash between
-  steps 1 and 3 leaves the tombstone authoritative on next boot — the
+  steps 1 and 4 leaves the tombstone authoritative on next boot — the
   Kind cannot resurrect because Kind.Server.init/1 (see boundary 1 below)
   refuses to boot any tombstoned URI.
   """
@@ -262,48 +275,101 @@ The **three enforcement boundaries**:
 :delete_users_row              → Repo.delete(user)
 ```
 
-**B3 — Session owner scrub via real Behavior.Chat action.** `Behavior.Chat` (`apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:88`) declares actions `[:send, :receive, :join, :leave, :set_working_copy]` today. This SPEC adds a NEW Session-side action `:scrub_owner` with:
+**B3 — Session owner scrub via real Behavior.Chat action (dispatched as a system principal — CRIT-3.1 fix).** `Behavior.Chat` (`apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:88`) declares actions `[:send, :receive, :join, :leave, :set_working_copy]` today. This SPEC adds a NEW Session-side action `:scrub_owner` with:
 
 - `actions/0`: `[:send, :receive, :join, :leave, :set_working_copy, :scrub_owner]`
-- `required_caps/0`: `:scrub_owner` is gated on the bootstrap-admin shape via `cap(:any, __MODULE__, :scrub_owner)` (only the EntityDeletion cascade ever invokes this — operator-level dispatch is structurally rejected by `Adapter.can_delete?/2`'s admin-only path)
+- `required_caps/0`: `:scrub_owner` declares `cap(Ezagent.Entity.Session, __MODULE__, :scrub_owner, :any, :any)` — a per-action cap, NOT `:any`. Per the capability-action-axis SPEC §3.6.1, this is a concrete atom.
 - `invoke(:scrub_owner, slice, %{deleted_uri}, _ctx)`: if `slice.owner_uri == deleted_uri`, set `owner_uri: nil` (NOT a sentinel URI — `nil` falls through to `data_owner/1`'s `:no_owner` clause at `chat.ex:1337`, preserving existing semantics for system sessions). Returns `{:ok, %{owner_scrubbed: true}, slice_with_nil_owner, dispatch_envelope}` so the standard `Kind.Runtime` step 9.5 persists via `:on_change` strategy.
+
+**Dispatch authorization (CRIT-3.1).** The operator's `:delete` cap on `Behavior.EntityDeletion` does NOT satisfy `Behavior.Chat.scrub_owner` at `Kind.Runtime.authorize/4` (`apps/ezagent_core/lib/ezagent/kind/runtime.ex:249-298`). The cascade therefore dispatches `:scrub_owner` AS a dedicated narrow system principal:
+
+```
+system://entity-deletion-cascade
+  caps: [
+    %Capability{
+      kind: Ezagent.Entity.Session,
+      behavior: Ezagent.Behavior.Chat,
+      action: :scrub_owner,
+      instance: :any,
+      workspace_uri: :any,
+      granted_by: URI.new!("system://bootstrap/default")
+    }
+  ]
+```
+
+Added to `Ezagent.SystemPrincipal.Catalog` as a new entry alongside `system://chat-router`, `system://chat-reply`, etc (`apps/ezagent_core/lib/ezagent/system_principal/catalog.ex:135+`). Structurally narrow — this principal can ONLY invoke Chat:scrub_owner on Sessions; nothing else. `Ezagent.SystemPrincipal.ensure(SystemPrincipal.uri("entity-deletion-cascade"))` is called at `EzagentCore.Application.start/2` AFTER the existing system kinds registration so the principal's `:identity` slice is ready before any deletion fires.
 
 The cascade step body:
 
 ```elixir
 def scrub_session_owner_uri(target_user_uri, _ctx) do
-  # Lookup is over the live registry — only sessions whose Kind is alive
-  # AND whose slice currently has owner_uri = target. Snapshotted-but-
-  # not-resident sessions don't matter: when they rehydrate, the merged
-  # slice is overlaid by the post-tombstone DB cascade's audit, and the
-  # next reconcile (Kind.Snapshot.load_or_init/3) sees the User's URI is
-  # tombstoned — but no action runs on a non-resident Session here.
-  # SAFETY: any Session that loads later with stale owner_uri = deleted
-  # is reconciled at chat.join time (the deleted user can't join, so
-  # the session can't act on their behalf; owner authority falls
-  # through to :no_owner via chat.ex:1337 since the deleted URI is
-  # tombstoned and Session.owner/1 returns an error path).
-  alive_sessions =
-    Ezagent.KindRegistry.list_matching(scheme: "session")
-    |> Enum.filter(fn {_uri, pid} -> alive_session_owned_by?(pid, target_user_uri) end)
+  # Lookup is over the live registry. KindRegistry exposes `list_all/0`
+  # (no list_matching — see apps/ezagent_core/lib/ezagent/kind_registry.ex:73);
+  # we filter to session:// URIs and probe each for owner match.
+  # Snapshotted-but-not-resident sessions are handled at READ time by
+  # the Chat.data_owner/1 tombstone defense (CRIT-3.2 fix) — see below.
+  cascade_principal = Ezagent.SystemPrincipal.uri("entity-deletion-cascade")
+  cascade_caps = Ezagent.SystemPrincipal.caps("entity-deletion-cascade")
 
-  Enum.reduce(alive_sessions, %{scrubbed: 0, errors: []}, fn {session_uri, _pid}, acc ->
+  alive_sessions =
+    Ezagent.KindRegistry.list_all()
+    |> Enum.filter(fn {uri_str, _pid} -> String.starts_with?(uri_str, "session://") end)
+    |> Enum.filter(fn {uri_str, _pid} ->
+      case Ezagent.Entity.Session.owner(uri_str) do
+        {:ok, %URI{} = owner} -> URI.to_string(owner) == URI.to_string(target_user_uri)
+        _ -> false
+      end
+    end)
+
+  Enum.reduce(alive_sessions, %{scrubbed: 0, errors: []}, fn {uri_str, _pid}, acc ->
+    session_uri = Ezagent.URI.parse!(uri_str)
+
     case Ezagent.Invocation.dispatch(%Invocation{
            kind: Ezagent.Entity.Session,
            behavior: Ezagent.Behavior.Chat,
            action: :scrub_owner,
            target: session_uri,
            args: %{deleted_uri: target_user_uri},
-           ctx: %{caller: cascade_caller_uri, trace_id: cascade_trace_id}
+           ctx: %{
+             caller: cascade_principal,
+             caps: cascade_caps,
+             trace_id: cascade_trace_id
+           }
          }) do
       {:ok, _} -> %{acc | scrubbed: acc.scrubbed + 1}
-      {:error, reason} -> %{acc | errors: [{session_uri, reason} | acc.errors]}
+      {:error, :noproc} -> %{acc | scrubbed: acc.scrubbed}  # session died — fine
+      {:error, :tombstoned} -> %{acc | scrubbed: acc.scrubbed}  # session deleted — fine
+      {:error, reason} -> %{acc | errors: [{uri_str, reason} | acc.errors]}
     end
   end)
 end
 ```
 
-**Session-deleted-between-lookup-and-dispatch race:** if a Session Kind dies between `KindRegistry.list_matching/1` and `Invocation.dispatch/1`, dispatch returns `{:error, :noproc}`. The cascade treats this as success (the session is gone; there's nothing to scrub). If the Session was tombstoned (by a concurrent Session deletion), dispatch returns `{:error, :tombstoned}` from boundary 1 — also treated as success. The cascade step's idempotency contract holds: re-running is a no-op.
+**Cold-load defense (CRIT-3.2 fix).** Production `Session.owner/1` (`apps/ezagent_domain_chat/lib/ezagent/entity/session.ex:649-657`) reads only the live `:chat` slice and returns `{:ok, owner_uri}` unconditionally — it does NOT check tombstones. So a Session that loads from snapshot AFTER deletion still reports the deleted URI as owner. The fix is at the data-owner read site:
+
+`Behavior.Chat.data_owner/1` (`apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:1333-1342`) gains a tombstone defense check:
+
+```elixir
+@impl Ezagent.Behavior
+def data_owner(%URI{scheme: "session"} = session_uri) do
+  case Ezagent.Entity.Session.owner(session_uri) do
+    {:ok, %URI{} = owner} ->
+      # CRIT-3.2 defense — even if the live slice (or a cold-loaded
+      # snapshot) carries a stale owner_uri, the tombstone check
+      # refuses to honor a deleted URI as data_owner.
+      if Ezagent.SpawnRegistry.tombstoned?(owner) do
+        :no_owner
+      else
+        owner
+      end
+    _ -> :no_owner
+  end
+end
+```
+
+This is defense-in-depth at the read site (parallel to INV-14's Token.verify check). The proactive in-memory scrub (above) handles live Sessions immediately; the read-site check covers cold loads + the lookup/dispatch race window.
+
+**Session-deleted-between-lookup-and-dispatch race:** if a Session Kind dies between `KindRegistry.list_all/0` and `Invocation.dispatch/1`, dispatch returns `{:error, :noproc}`. The cascade treats this as success (the session is gone; there's nothing to scrub). If the Session was tombstoned (by a concurrent Session deletion), dispatch returns `{:error, :tombstoned}` from boundary 1 — also treated as success. The cascade step's idempotency contract holds: re-running is a no-op.
 
 **Agent cascade** (`Ezagent.Domain.Chat.AgentDeletionAdapter.cascade_steps/2`):
 
@@ -321,20 +387,65 @@ end
 **Worker cascade** (`Ezagent.Domain.ExternalMirror.WorkerDeletionAdapter.cascade_steps/2`):
 
 ```
-:drop_external_mirror_bindings → delete external_mirror_bindings WHERE worker_uri = target    [B5 — see below]
+:drop_external_mirror_bindings → see B5 cascade query below                                   [B5 — see below]
 :unsubscribe_session_publisher → Publisher.unsubscribe(target)
 :terminate_adapter             → adapter_module.terminate(target)
 ```
 
-**B5 — Worker cascade column fix.** r1's `WHERE bound_by = target` was wrong: `bound_by` records the CREATING USER URI per `apps/ezagent_core/priv/repo/migrations/20260607000000_pr_em_3_external_mirror_bindings.exs:54`, while the Worker URI is structurally derived from `(session_uri, adapter_id, target_id)` via `WorkerSpawn.worker_uri_for/3` (`worker_spawn.ex:217-230`) and NOT stored in the table.
+**B5 — Worker cascade column fix + r3 backfill specification (CRIT-3.3).** r1's `WHERE bound_by = target` was wrong: `bound_by` records the CREATING USER URI per `apps/ezagent_core/priv/repo/migrations/20260607000000_pr_em_3_external_mirror_bindings.exs:54`, while the Worker URI is structurally derived from `(session_uri, adapter_id, target_id)` via `WorkerSpawn.worker_uri_for/3` (`worker_spawn.ex:217-230`) and NOT stored in the table.
 
-Per `feedback_let_it_crash_no_workarounds` (structural over policy), the r2 fix adds a persisted `worker_uri` column to `external_mirror_bindings`:
+Per `feedback_let_it_crash_no_workarounds` (structural over policy), the r2 fix adds a persisted `worker_uri` column to `external_mirror_bindings`. r3 fully specifies the backfill + cascade race-free behavior:
 
-- **Forward-only migration** (`apps/ezagent_core/priv/repo/migrations/<timestamp>_pr_a_worker_uri_column.exs`): `add :worker_uri, :string, null: true` initially (to allow backfill), then populate via the same backfill mix task in PR-A, then a follow-up migration sets `NOT NULL`. Greenfield deployments (dev / test) get `NOT NULL` immediately because there are no pre-existing rows.
-- **Write path:** `Behavior.ExternalMirror.invoke(:bind, ...)`'s persistence step (the action body that writes to `external_mirror_bindings`) is updated to populate `worker_uri = WorkerSpawn.worker_uri_for(session_uri, adapter_id, target_id) |> URI.to_string()`.
-- **Read path:** `AdapterInstall.reconcile_persisted_bindings/1` (`apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/adapter_install.ex:193-220`) still derives the Worker URI structurally (it has session_uri + adapter_id + target_id from the row); the new column is for the deletion cascade, not the reconcile path.
-- **Cascade query:** `Repo.delete_all(from b in BindingRow, where: b.worker_uri == ^target_uri_str)` — direct + race-free.
-- **`bound_by` unchanged.** Still records creator identity. The User cascade scrubs `bound_by` references separately (no, actually — `bound_by` doesn't need a cascade since a user being deleted doesn't invalidate the bindings they CREATED; the bindings stay bound to a still-alive Worker/Session and the operator-of-record is rewritten to the tombstone sentinel only when the cascade's `:scrub_audit_owner_refs` step runs, which is User-scope, not Binding-scope). See §3.7 for the cross-reference scrub policy.
+- **Forward-only migration A** (`apps/ezagent_core/priv/repo/migrations/<timestamp>_pr_a_worker_uri_column.exs`): `add :worker_uri, :string, null: true` initially (to allow backfill on pre-r2 rows). Adds index `create index(:external_mirror_bindings, [:worker_uri])` for the cascade query. Greenfield deployments (dev / test) start with the column from day one.
+- **Backfill task `mix ezagent.entity.deletion.backfill_worker_uri`** (new in PR-B, NOT the discovery task — that's a different unrelated tool):
+  - **Idempotent:** `WHERE worker_uri IS NULL` filter; only NULL rows are updated.
+  - **Derivation:** for each NULL row, parse `session_uri`, compute `WorkerSpawn.worker_uri_for(parsed, adapter_id, target_id)`, write the result back as a string.
+  - **Logging:** prints count of updated rows + count of remaining NULL rows. Exits 0 on full success; non-zero if any derivation raises (per `feedback_let_it_crash_no_workarounds` — bad row is a bug, not a soft-fail).
+  - **Operator workflow:** runs once between Migration A and Migration B; mix task is operator-runnable without phx restart.
+- **Forward-only migration B** (`apps/ezagent_core/priv/repo/migrations/<later_timestamp>_pr_a_worker_uri_not_null.exs`): the `NOT NULL` flag. Pre-condition check executes BEFORE the alter: `SELECT count(*) FROM external_mirror_bindings WHERE worker_uri IS NULL`; if non-zero, the migration aborts with a clear error pointing the operator at the backfill task. The follow-up migration belongs to PR-A (this SPEC's impl pair) but runs ONLY after the backfill task has been run; documented in §9.1.
+- **Write path:** `Behavior.ExternalMirror.invoke(:bind, ...)`'s persistence step (the action body that writes to `external_mirror_bindings`) is updated in PR-B to populate `worker_uri = WorkerSpawn.worker_uri_for(session_uri, adapter_id, target_id) |> URI.to_string()`. All NEW rows have non-NULL `worker_uri` from PR-B forward.
+- **Read path:** `AdapterInstall.reconcile_persisted_bindings/1` (`apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/adapter_install.ex:193-220`) still derives the Worker URI structurally (it has session_uri + adapter_id + target_id from the row); the new column is for the deletion cascade, not the reconcile path. The reconcile path is unchanged.
+- **Cascade query (transitional, PR-B impl):**
+
+  ```elixir
+  # Until Migration B lands and pre-r2 NULL rows are backfilled, the
+  # cascade defensively matches BOTH worker_uri-equality AND the derived
+  # match for any still-NULL rows. After Migration B asserts NOT NULL,
+  # the second clause is dead and can be removed in a follow-up PR.
+  worker_uri_str = URI.to_string(target_worker_uri)
+
+  # Direct match — populated rows.
+  Repo.delete_all(
+    from b in BindingRow,
+    where: b.worker_uri == ^worker_uri_str
+  )
+
+  # Transitional safety net — defensively re-derive Worker URI for any
+  # still-NULL row and compare. Removed in the follow-up PR after
+  # Migration B's NOT NULL is in effect (at which point NULL rows
+  # cannot exist by invariant).
+  null_rows = Repo.all(
+    from b in BindingRow,
+    where: is_nil(b.worker_uri)
+  )
+
+  Enum.each(null_rows, fn row ->
+    derived =
+      WorkerSpawn.worker_uri_for(
+        Ezagent.URI.parse!(row.session_uri),
+        row.adapter_id,
+        row.target_id
+      )
+      |> URI.to_string()
+
+    if derived == worker_uri_str do
+      Repo.delete(row)
+    end
+  end)
+  ```
+
+  Race-free + NULL-safe. The transitional second clause is gated by the same `null:` filter; once Migration B's pre-condition asserts zero NULL rows, the second clause is dead. INV-15 (added) pins the post-backfill invariant.
+- **`bound_by` unchanged.** Still records creator identity. `bound_by`'s User cascade scrub belongs to the User cascade's audit-tombstone-sentinel step; not Worker-scope.
 
 Each step records to `invocations` audit before invoking the inner function (so partial-failure audit shows which step blew up). The audit row's `target` field is the deletion-target URI; the `caller` is the operator; the `action` is `entity.deleted.<step_name>`; the `trace_id` is the parent cascade's trace.
 
@@ -377,15 +488,21 @@ end
 
 Other adapters MAY add similar protected URIs (e.g. system orchestrator agent, system feishu binding).
 
-### 3.9 Edge case — concurrent dispatch during deletion
+### 3.9 Edge case — concurrent dispatch during deletion (MED-3.5 — corrected BEAM/OTP semantics)
 
-The atomic `tombstone_and_kill/1` (§3.3) closes the original kill-vs-tombstone race. Remaining concurrency:
+The atomic `tombstone_and_kill/1` (§3.3) closes the original kill-vs-tombstone race. The remaining concurrency story relies on the truth of `:brutal_kill` and `GenServer` semantics, NOT on a graceful terminate drain:
 
-- Dispatch to the dying Kind: `GenServer.call` blocks until terminate completes, then returns `{:error, :noproc}`. Acceptable — caller gets a clean error.
-- Dispatch arrives after `tombstone_and_kill` but before later cascade steps: SpawnRegistry.spawn refuses with `:tombstoned` (boundary 3); the dispatch surfaces a clean error.
-- Dispatch from a queued message already in the Kind's mailbox: `Kind.Server.terminate/2` drains the mailbox naturally per OTP semantics; queued messages effectively get `{:error, :noproc}`.
+1. **`:brutal_kill` bypasses `terminate/2` entirely.** The Kind.Server GenServer's `terminate/2` callback at `apps/ezagent_core/lib/ezagent/kind/server.ex:752-791` (which handles `:on_terminate` snapshot save + Behavior teardown drain) is NOT invoked when the parent does `Process.exit(pid, :brutal_kill)`. This is intentional: any state the deleted Kind was about to snapshot is now-irrelevant (the entity is being permanently removed). Durability instead comes from the SYNCHRONOUS DB tombstone insert that precedes the kill — at the moment the kill fires, the durability promise ("this URI is permanently gone") is already in the DB.
 
-No "transactional dispatch barrier" is needed.
+2. **In-flight `GenServer.cast` to the killed pid.** Production dispatch uses raw `GenServer.cast` at `apps/ezagent_core/lib/ezagent/invocation.ex:111`. A cast already sent before the kill returns `:ok` to the sender (the cast was enqueued; the sender does not know whether it was processed). After the kill, the mailbox is dropped silently — there is no `{:error, :noproc}` for casts. **This is acceptable** because: (a) boundary 3 (SpawnRegistry.spawn) refuses re-spawn on the next dispatch attempt, so the system does not respawn a Kind to handle the lost cast; (b) the entity is being structurally removed — silently losing a cast to a deleted entity is the correct outcome, NOT a bug.
+
+3. **In-flight `GenServer.call` to the killed pid.** Calls use `GenServer.call(pid, ..., timeout)`. If the call was issued BEFORE the kill and the pid was monitored (the standard call path), the call returns `{:error, :noproc}` (or raises `:exit, {:noproc, _}` depending on `GenServer.call` vs `GenServer.cast` semantics) once the link/monitor fires. Callers that use `Invocation.dispatch_call/1` (the `:call` mode path) surface this as a clean error to the LV/HTTP caller.
+
+4. **Dispatch arriving AFTER `tombstone_and_kill` but before later cascade steps complete.** The lookup phase (`KindRegistry.lookup/1`) returns `:error` (pid dropped from the Registry on process death), or the SpawnRegistry path returns `{:error, :tombstoned}` (boundary 3). Either way, the dispatch surfaces a clean error.
+
+5. **Dispatch arriving after the FULL deletion sequence.** All three boundaries refuse — caller gets `:tombstoned` or `:noproc` depending on the path it took.
+
+No "transactional dispatch barrier" is needed. The combination of (a) DB-tombstone-before-kill (durability), (b) `:brutal_kill` (immediate termination, no graceful drain), (c) the three enforcement boundaries (no re-spawn), and (d) accepting cast-loss as correct semantics for deleted entities, is structurally race-free.
 
 ### 3.10 Edge case — operator who deletes themselves
 
@@ -404,15 +521,19 @@ A workspace admin who calls `Behavior.EntityDeletion.invoke(:delete, slice, %{ta
 - `apps/ezagent_core/lib/ezagent/entity_deletion/adapter_registry.ex` (new) — flavor-style registry (mirror of `Ezagent.AgentBridge.AdapterRegistry`)
 - `apps/ezagent_core/lib/ezagent/spawn_registry/tombstone.ex` (new) — internal ETS + DB store; `load_into_ets/0` called from `EzagentCore.Application.start/2`
 - `apps/ezagent_core/priv/repo/migrations/<timestamp>_entity_tombstones.exs` (new) — DB table for tombstones
-- `apps/ezagent_core/priv/repo/migrations/<timestamp>_pr_a_worker_uri_column.exs` (new) — adds `worker_uri` to `external_mirror_bindings` (B5)
-- **Modify** `apps/ezagent_core/lib/ezagent/spawn_registry.ex` — add `tombstone_and_kill/1` public primitive + `tombstoned?/1` read + tombstone check at `spawn/1` entry (boundary 3)
+- `apps/ezagent_core/priv/repo/migrations/<timestamp>_pr_a_worker_uri_column.exs` (new) — adds `worker_uri` to `external_mirror_bindings` as `null: true` (B5 Migration A)
+- `apps/ezagent_core/priv/repo/migrations/<later_timestamp>_pr_a_worker_uri_not_null.exs` (new) — sets `worker_uri NOT NULL` with the documented pre-condition check (CRIT-3.3 Migration B)
+- `apps/ezagent_core/lib/mix/tasks/ezagent_entity_deletion_backfill_worker_uri.ex` (new) — idempotent backfill mix task (CRIT-3.3); MUST be run between Migration A and Migration B
+- **Modify** `apps/ezagent_core/lib/ezagent/spawn_registry.ex` — add `tombstone_and_kill/1` public primitive + `tombstoned?/1` read + tombstone check at `spawn/1` entry (boundary 3); the primitive's kill step uses `Process.exit(pid, :brutal_kill)` + `Process.monitor` + `receive {:DOWN, ...}` per §3.3 (MED-3.5)
 - **Modify** `apps/ezagent_core/lib/ezagent/kind.ex` — add tombstone check at `spawn/2` entry (boundary 2)
 - **Modify** `apps/ezagent_core/lib/ezagent/kind/server.ex` — add tombstone check at `init/1` entry, return `{:stop, :tombstoned}` (boundary 1 — authoritative)
-- **Modify** `apps/ezagent_core/lib/ezagent_core/application.ex` — slot `Ezagent.SpawnRegistry.Tombstone.load_into_ets/0` call AFTER `Repo` migrate + BEFORE `Ezagent.KindSupervisor` boot
+- **Modify** `apps/ezagent_core/lib/ezagent_core/application.ex` — slot `Ezagent.SpawnRegistry.Tombstone.load_into_ets/0` call AFTER `Repo` migrate + BEFORE `Ezagent.KindSupervisor` boot; add `SystemPrincipal.ensure(SystemPrincipal.uri("entity-deletion-cascade"))` call AFTER `register_system_kind/0` so the cascade principal exists before any deletion fires (CRIT-3.1)
+- **Modify** `apps/ezagent_core/lib/ezagent/system_principal/catalog.ex` — add `{"system://entity-deletion-cascade", [<narrow Chat:scrub_owner cap>]}` entry (CRIT-3.1)
 - **Modify** `apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror.ex` (the `:bind` action body) — populate `worker_uri` column on insert (B5)
-- **Modify** `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex` — add `:scrub_owner` action (B3); update `actions/0` + `required_caps/0` + `invoke/4`
+- **Modify** `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex` — add `:scrub_owner` action (B3); update `actions/0` + `required_caps/0` + `invoke/4`; ALSO modify `data_owner/1` (`chat.ex:1333-1342`) to add the tombstone defense check (CRIT-3.2)
+- **Modify** `apps/ezagent_domain_identity/lib/ezagent/entity/token.ex` — at `verify/2` entry (BEFORE bcrypt), call `SpawnRegistry.tombstoned?(uri)`; if true, run `Bcrypt.no_user_verify()` and return `{:error, :tombstoned}` (HIGH-3.4 — INV-14 defense-in-depth)
 - `apps/ezagent_domain_identity/lib/ezagent_domain_identity/user_deletion_adapter.ex` (new)
-- Tests: §5 invariant test + adapter unit tests + boundary-1 unit test (Kind.Server refuses tombstoned URI) + boundary-2 + boundary-3 + chat.scrub_owner unit test
+- Tests: §5 invariant test + adapter unit tests + boundary-1 unit test (Kind.Server refuses tombstoned URI) + boundary-2 + boundary-3 + chat.scrub_owner unit test + chat.data_owner cold-load test (INV-13b) + token.verify tombstone test (INV-14)
 
 **PR-C admin LV integration**:
 
@@ -433,6 +554,8 @@ A workspace admin who calls `Behavior.EntityDeletion.invoke(:delete, slice, %{ta
 NO existing code path is removed. NO change to `Users.delete/1` semantics — that path still exists as the LOW-LEVEL DB-only delete, BUT will emit a deprecation warning suggesting `EntityDeletion.delete/3` instead. Migration target: in a follow-up PR-E, mark `Users.delete/1` as `@deprecated` and route operator-facing call sites through `EntityDeletion`.
 
 Discovery for historical orphans: a `mix ezagent.entity.deletion.discover_orphans` mix task scans `kind_snapshots` for orphaned rows (a Kind URI with no corresponding `users` or `agents` row) and PRINTS them. Operator decides whether to tombstone each. **This is DISCOVERY, not source of truth** — see §3.3 boundary-1 paragraph.
+
+Worker URI backfill (CRIT-3.3, separate from discover_orphans): a SECOND mix task `mix ezagent.entity.deletion.backfill_worker_uri` populates the new `external_mirror_bindings.worker_uri` column for pre-r2 rows. Idempotent (filter `WHERE worker_uri IS NULL`). MUST run between B5 Migration A (`null: true` column add) and Migration B (`NOT NULL`); Migration B aborts if any NULL rows remain.
 
 ### 4.3 No DB migration for production data
 
@@ -478,8 +601,11 @@ Per `feedback_completion_requires_invariant_test`, this SPEC is "done" iff the t
 | INV-10 | An audit row exists: `invocations` with `action = "entity.deleted"`, `target = target_uri_str`, `caller = admin_uri_str`, AND every cascade step has a sub-row with the SAME `trace_id` (N2) | Audit trail incomplete or trace correlation broken |
 | INV-11 | Kill the BEAM (simulate restart via `Application.stop(:ezagent_core) + Application.start(:ezagent_core)`). After restart, INV-1 + INV-2 + INV-2a + INV-2b + INV-3 still hold. Specifically, `Kind.Server.init/1` on the target URI returns `{:stop, :tombstoned}` proving boundary 1 loads its check from the boot-time-populated ETS table | Tombstone DB persistence failed OR boot-time load missed |
 | INV-12 | `Behavior.EntityDeletion.invoke(:delete, ..., %{target: Ezagent.Entity.User.admin_uri()})` returns `{:error, :bootstrap_admin_undeletable}` | Bootstrap admin protection missing |
-| INV-13 | For the Session S created in setup with `owner_uri = target`: dispatch `Behavior.Chat.data_owner(S_uri)` returns `:no_owner` (not the deleted target URI), AND inspect S's live slice: `slice.owner_uri == nil` | B3 — Session owner not scrubbed via the new `:scrub_owner` action → deleted user still drives data_owner authz |
-| INV-14 | For a token minted in setup for the target: `Token.verify(plain_token, target)` returns `{:error, :tombstoned}` (NOT `{:error, :invalid_credentials}` and NOT `{:ok, _}`) | B6 — token-row escapes cascade OR Token.verify lacks the tombstone defense check |
+| INV-13 | For the Session S created in setup with `owner_uri = target`: after deletion, dispatch `Behavior.Chat.data_owner(S_uri)` returns `:no_owner` (not the deleted target URI), AND inspect S's live slice: `slice.owner_uri == nil` | B3 — Session owner not scrubbed via the new `:scrub_owner` action → deleted user still drives data_owner authz |
+| INV-13a | The `system://entity-deletion-cascade` principal exists in `KindRegistry` after `EzagentCore.Application.start/2` AND its caps contain exactly one `%Capability{kind: Ezagent.Entity.Session, behavior: Ezagent.Behavior.Chat, action: :scrub_owner, ...}` cap (no extra wildcards) | CRIT-3.1 — narrow system principal not installed or caps drift wider than necessary |
+| INV-13b | Cold-load a snapshotted Session whose `:chat` slice has `owner_uri = target` AFTER the User deletion (and AFTER restart so the principal is absent from KindRegistry until lookup-driven respawn): dispatch `Behavior.Chat.data_owner(S_uri)` STILL returns `:no_owner` because the SpawnRegistry tombstone defense at `chat.ex:data_owner/1` refuses to honor the tombstoned URI as data_owner | CRIT-3.2 — cold-Session safety relies on the read-site tombstone check; if that check is missing, the deleted user still drives authz |
+| INV-14 | For a token minted in setup for the target: `Token.verify(plain_token, target)` returns `{:error, :tombstoned}` (NOT `{:error, :invalid_credentials}` and NOT `{:ok, _}`). Validation: the tombstone check at `Token.verify/2` entry fires BEFORE the bcrypt comparison, AND `Bcrypt.no_user_verify()` is invoked to defeat timing leaks. | B6 + HIGH-3.4 — token-row escapes cascade OR Token.verify lacks the tombstone defense check OR the check is placed AFTER bcrypt (timing leak) |
+| INV-15 | After PR-B + backfill task run + Migration B applied, for every row in `external_mirror_bindings`: `worker_uri` is non-NULL AND equals `WorkerSpawn.worker_uri_for(parsed_session_uri, adapter_id, target_id) |> URI.to_string()`. Additionally: the `Repo.delete_all(WHERE worker_uri IS NULL)` transitional branch in the cascade query is structurally dead (returns 0 affected rows). | CRIT-3.3 — backfill task did not run, OR derivation is wrong, OR Migration B's pre-condition check was bypassed |
 
 **Cannot pass with partial impl** — if any cascade step or boundary is skipped, the corresponding INV fails:
 
@@ -559,6 +685,18 @@ r1 originally guarded only `SpawnRegistry.spawn/1`. Codex r1 identified that pro
 
 Alternative to B5's column add: at deletion time, given a worker URI, reverse-engineer the `(session_uri, adapter_id, target_id)` triple from the rows OR iterate every row and call `WorkerSpawn.worker_uri_for/3` to match. **Rejected**: O(N) lookup hack instead of an O(1) indexed column; per `feedback_let_it_crash_no_workarounds` (structural fix over policy fix); also fragile — `worker_uri_for/3` is a private hash-derivation contract and any future change to the hash function (truncation length, salting, scheme) silently invalidates the reverse lookup. The persisted column is the simpler, more robust answer.
 
+### 7.8a "Cascade dispatches `:scrub_owner` with `ctx.caps = admin_wildcard`" (r3 — rejected per CRIT-3.1)
+
+Alternative to CRIT-3.1's narrow system principal: inject `Ezagent.SystemPrincipal.caps("bootstrap")` (the wildcard admin caps) into `ctx.caps` at the cascade dispatch site. **Rejected**: per `feedback_let_it_crash_no_workarounds`, prefer structural narrowness over policy-wildcards. The wildcard would let any future bug in the cascade dispatch escalate to ANY action on any Kind. The dedicated `system://entity-deletion-cascade` principal carries exactly the cap it needs and nothing more, auditable via the Catalog.
+
+### 7.8b "Only proactive in-memory scrub for B3, skip read-site defense" (r3 — rejected per CRIT-3.2)
+
+Alternative: rely entirely on the cascade's `:scrub_session_owner_uri` step to mutate live Sessions, and accept that cold-loaded Sessions briefly carry stale `owner_uri` until next user-driven action triggers a re-read. **Rejected**: cold loads are not the only race — there's also the window between `KindRegistry.list_all/0` and per-session dispatch in the cascade itself. The read-site tombstone defense in `Chat.data_owner/1` is defense-in-depth (parallel to `Token.verify`'s tombstone check) and closes BOTH windows with one check.
+
+### 7.8c "Single migration with maintenance window for B5 NOT NULL" (r3 — considered, deferred to OQ-8)
+
+Alternative to CRIT-3.3's two-migration + backfill-task approach: a single migration that adds the column + populates it + sets NOT NULL atomically, requiring phx to be stopped (per `feedback_destructive_migration_anti_pattern`). **Deferred**: this is a real choice for Allen; the two-migration path is friendlier in CI and dev (greenfield deployments don't notice it) but requires operator discipline in prod (must run backfill task before Migration B). OQ-8 documents the choice.
+
 ### 7.8 "Workspace deletion via the same Adapter dispatch" (rejected in r2 per B4)
 
 r1 PR-C added a `workspaces_live.ex` delete button that would route through `Behavior.EntityDeletion`. But `workspace://<name>` URIs don't match the `entity://<scheme>/<subscheme>` shape that the `entity_scheme/0 + entity_subscheme/0` Adapter dispatch keys on. **Rejected**: workspace deletion is structurally distinct — it cascade-deletes ALL members + templates + sessions + bindings within the workspace; the semantics are different from entity deletion (which is per-URI). Forcing both under one Adapter contract conflates two unrelated lifecycle responsibilities. Workspace deletion gets its own future SPEC.
@@ -602,6 +740,7 @@ Agent deletion needs to terminate sidecars. PR-G introduced `Ezagent.AgentBridge
 - `mix ezagent.user.delete` (current behavior: low-level DB delete) — **DEPRECATED**, will emit warning + suggest `mix ezagent.entity.delete`
 - `mix ezagent.entity.delete <uri> --reason "<reason>"` (new) — calls `Behavior.EntityDeletion.invoke(:delete, ...)`
 - `mix ezagent.entity.deletion.discover_orphans` (new) — DISCOVERY only (scans snapshot-orphans, prints, NO automatic tombstone install)
+- `mix ezagent.entity.deletion.backfill_worker_uri` (new — CRIT-3.3) — idempotent backfill of `external_mirror_bindings.worker_uri` for pre-r2 rows. Pre-flight for B5 Migration B (NOT NULL). Operator runs once per environment after Migration A lands; Migration B will refuse to run if any NULL rows remain.
 
 ### 9.2 External callers
 
@@ -660,13 +799,19 @@ When a user is deleted, their `feishu_user_bindings` rows are dropped (§3.5). B
 
 `entity_tombstones` is one row per deleted URI. At scale (e.g. 10K tenants × 100 test users × delete cycles), the table grows. Should it be partitioned by workspace? Default: no, single table; revisit if performance issue. Documenting for future awareness.
 
-### OQ-8 — `external_mirror_bindings.worker_uri` NOT NULL timing (r2 — added)
+### OQ-8 — `external_mirror_bindings.worker_uri` NOT NULL timing (r3 — refined per CRIT-3.3)
 
-The B5 fix adds `worker_uri` as `null: true` initially with a follow-up migration to set `NOT NULL` after backfill. Allen confirms the two-step is acceptable, OR prefers a single migration that requires a maintenance window with phx stopped? Default: two-step (greenfield deployments get NOT NULL immediately since they have no pre-existing rows; production-shaped deployments do backfill + flag).
+The B5 fix adds `worker_uri` as `null: true` initially (Migration A) with a follow-up Migration B to set `NOT NULL` after the operator runs `mix ezagent.entity.deletion.backfill_worker_uri`. Migration B has a pre-condition check that aborts if any NULL rows remain. Greenfield deployments (dev/test/fresh prod) skip the gap entirely. Allen confirm the two-migration + backfill-task pattern is acceptable, OR prefer a single migration with maintenance window?
 
 ---
 
-## §11 Codex adversarial review questions (for r2)
+## §11 Codex adversarial review questions (for r3)
+
+0. **Narrow system principal soundness (CRIT-3.1):** the new `system://entity-deletion-cascade` carries exactly one cap `%Capability{kind: Ezagent.Entity.Session, behavior: Ezagent.Behavior.Chat, action: :scrub_owner, instance: :any, workspace_uri: :any}`. Validate that this cap satisfies `Kind.Runtime.authorize/4` for the Session-side `:scrub_owner` dispatch, AND that this principal CANNOT escalate to invoke any other action (e.g. send/join/leave on Sessions, or any cap-grant flow). Trace the cap-matching code paths in `Capability.matches?/2` and `holds_cap?/2`.
+
+0a. **Cold-load defense correctness (CRIT-3.2):** the `Chat.data_owner/1` defense calls `SpawnRegistry.tombstoned?(owner)` on every read. Validate: (a) the ETS lookup is fast enough for the data_owner hot path (data_owner is called inside CapBAC for every cap-grant); (b) the check runs BEFORE the URI is returned, not after; (c) there is no path where `data_owner/1` returns the URI without consulting the tombstone (e.g. a fast-path optimization that bypasses the check); (d) the check is consistent with INV-13b's cold-load assertion.
+
+0b. **r3 contradictory text?** Re-read §3.3 atomic primitive ordering (now 4 steps), §3.5 Worker cascade query (transitional null-safety branch), §3.9 corrected semantics, §4.1 PR-B change list (now larger than r2). Do any two statements contradict? Specifically: §3.9's "brutal_kill bypasses terminate/2" vs Appendix A's step 2 ordering; §3.5's CRIT-3.2 defense in data_owner/1 vs INV-13's "scrub_session_owner_uri sets owner_uri=nil" (the two are complementary, not redundant — but verify the SPEC distinguishes them clearly).
 
 1. **Multi-boundary tombstone enforcement (B1 verification):** the r2 fix installs the check at THREE boundaries (Kind.Server.init/1 authoritative + Kind.spawn/2 + SpawnRegistry.spawn/1). Trace every code path in the apps/ tree that culminates in a Kind being alive in memory. Is `Kind.Server.init/1` truly the only chokepoint every Kind start traverses, OR is there a path that constructs a `Kind.Server`-like GenServer without going through `init/1`? (Hot-takeover from another node? Direct `:proc_lib.start_link`? Some plugin custom DynamicSupervisor child_spec that doesn't use `Kind.Server`?) Find ANY bypass path that survives the r2 fix.
 
@@ -720,12 +865,12 @@ Adapter.can_delete?(target, ctx)
   │ adapter-specific pre-check
   ▼ :ok or {:error, :precheck_failed_reason}
   │
-  ▼ step 2 (THE atomic primitive — B2)
+  ▼ step 2 (THE atomic primitive — B2 + MED-3.5 corrections)
 SpawnRegistry.tombstone_and_kill(target):
   │   - INSERT entity_tombstones row (DB)
   │   - :ets.insert(@tombstone_table, ...) (rollback DB on failure)
-  │   - Process.exit(Kind pid, :brutal_kill)
-  │   - wait for terminate to complete
+  │   - Process.exit(Kind pid, :brutal_kill)  [bypasses terminate/2 — intentional]
+  │   - Process.monitor(pid) + receive {:DOWN, ...} (short timeout)
   ▼ tombstone installed; Kind dead; respawn refused at boundaries 1/2/3
   │
   ▼ step 3
@@ -736,9 +881,10 @@ for each {step_name, step_fn} in adapter steps:
   │   audit "cascade.<step_name>.start" (trace_id = parent)
   │   step_fn.()
   │   audit "cascade.<step_name>.complete" (trace_id = parent)
-  │   [B3: :scrub_session_owner_uri dispatches Chat.invoke(:scrub_owner, ...) per session]
-  │   [B5: :drop_external_mirror_bindings uses WHERE worker_uri = target]
-  │   [B6: :revoke_entity_tokens deletes from entity_tokens]
+  │   [B3 + CRIT-3.1: :scrub_session_owner_uri dispatches as system://entity-deletion-cascade]
+  │   [CRIT-3.2: Chat.data_owner/1 read-site tombstone defense covers cold-loaded sessions]
+  │   [B5 + CRIT-3.3: :drop_external_mirror_bindings uses worker_uri = target + transitional null safety net]
+  │   [B6 + HIGH-3.4: :revoke_entity_tokens + Token.verify rejects tombstoned URIs (defense-in-depth)]
   ▼
   │
   ▼ step 5 (audit emit)
