@@ -21,6 +21,15 @@ defmodule EzagentWeb.Router do
     plug :accepts, ["json"]
   end
 
+  # Lean pipeline for public, cross-origin-embeddable static assets
+  # (e.g. the customer-chat widget loader). No session, no CSRF — the
+  # :browser pipeline's :protect_from_forgery raises
+  # Plug.CSRFProtection.InvalidCrossOriginRequestError on a cross-origin
+  # GET, which is exactly what a <script src> embed from another site is.
+  pipeline :public_asset do
+    plug :accepts, ["js"]
+  end
+
   scope "/", EzagentWeb do
     pipe_through :browser
 
@@ -48,12 +57,17 @@ defmodule EzagentWeb.Router do
     post "/onboarding/workspace", OnboardingController, :submit
     get "/register/complete", RegistrationController, :complete_new
     post "/register/complete", RegistrationController, :complete_create
+  end
 
-    # Task 7 (Phase 2.7): embeddable customer-chat widget loader.
-    # Served as plain JS — no auth, no CSRF. A business drops one
-    # <script src="/customer-chat/widget.js" data-tenant="acme"></script>
-    # on their page; the loader injects a floating chat bubble that
-    # toggles an <iframe> pointing at /chat/<tenant>?embed=1.
+  # Embeddable customer-chat widget loader. Fetched cross-origin from
+  # arbitrary third-party sites via <script src=...>, so it goes through
+  # the lean :public_asset pipeline (NOT :browser) to avoid CSRF. A
+  # business drops one
+  #   <script src="/customer-chat/widget.js" data-tenant="acme"></script>
+  # on their page; the loader injects a floating chat bubble that toggles
+  # an <iframe> pointing at /chat/<tenant>?embed=1.
+  scope "/", EzagentWeb do
+    pipe_through :public_asset
     get "/customer-chat/widget.js", CustomerChatWidgetController, :widget
   end
 
