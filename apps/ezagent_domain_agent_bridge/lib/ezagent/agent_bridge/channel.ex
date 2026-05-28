@@ -127,15 +127,18 @@ defmodule Ezagent.AgentBridge.Channel do
   end
 
   defp adapter_join_info(flavor, params, socket) do
-    case AdapterRegistry.lookup(flavor) do
-      {:ok, adapter} when function_exported?(adapter, :join_info, 2) ->
-        case adapter.join_info(params, socket) do
-          info when is_map(info) -> info
-          _other -> %{}
-        end
-
-      _ ->
-        %{}
+    # `join_info/2` is an `@optional_callbacks` on `Ezagent.AgentBridge.Adapter`;
+    # `function_exported?/3` is NOT guard-allowed in Elixir 1.19 (CompileError
+    # since 1.18+), so the check is hoisted into the case body. `Code.ensure_loaded?`
+    # forces module load before introspection — adapter modules from other apps
+    # may not be auto-loaded at the boundary.
+    with {:ok, adapter} <- AdapterRegistry.lookup(flavor),
+         true <- Code.ensure_loaded?(adapter),
+         true <- function_exported?(adapter, :join_info, 2),
+         info when is_map(info) <- adapter.join_info(params, socket) do
+      info
+    else
+      _ -> %{}
     end
   end
 

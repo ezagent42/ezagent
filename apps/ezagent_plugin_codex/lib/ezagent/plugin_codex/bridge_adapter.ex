@@ -78,18 +78,28 @@ defmodule EzagentPluginCodex.BridgeAdapter do
 
   @doc false
   def dispatch_reply(agent_uri, sessions, text, ref, attachments) do
+    # SPEC 2026-05-27-uri-canonicalization §3.3 — every boundary input
+    # routed through the canonical chokepoint. Mirrors the parity treatment
+    # already applied to `EzagentPluginCc.BridgeAdapter` (cc and codex
+    # bridges share a contract: client supplies raw strings, plugin
+    # canonicalizes at the boundary).
     ref_uri =
       case ref do
         nil -> nil
         "" -> nil
-        s when is_binary(s) -> URI.new!(s)
+        s when is_binary(s) -> Ezagent.URI.parse!(s)
       end
 
     body = %{text: text, attachments: normalize_attachments(attachments)}
     msg = Ezagent.Message.new(agent_uri, body, ref: ref_uri)
 
     for session_uri_str <- sessions do
-      target = URI.new!("#{session_uri_str}?action=chat.send")
+      session_uri = Ezagent.URI.parse!(session_uri_str)
+
+      # SPEC §3.4 query-target idiom — `session_uri` is canonical-by-construction
+      # via the chokepoint above; URI.new!/1 here consumes the canonical-form
+      # string the carve-out permits.
+      target = URI.new!("#{URI.to_string(session_uri)}?action=chat.send")
 
       Ezagent.Invocation.dispatch(%Ezagent.Invocation{
         target: target,

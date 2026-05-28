@@ -35,7 +35,10 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
 
   @impl Ezagent.Kind.Template
   def instantiate(_tmpl_name, %{"agent_uri" => uri_str} = tmpl, workspace_uri) do
-    agent_uri = URI.parse(uri_str)
+    # SPEC 2026-05-27-uri-canonicalization §3 — boundary input routed
+    # through the canonical chokepoint. Parity with the cc Template
+    # `EzagentPluginCc.Template.CcAgent`.
+    agent_uri = Ezagent.URI.parse!(uri_str)
 
     cond do
       fully_alive?(agent_uri) ->
@@ -390,31 +393,38 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
   end
 
   defp check_agent_uri(%{"agent_uri" => uri_str}) when is_binary(uri_str) and uri_str != "" do
-    case URI.new(uri_str) do
-      {:ok, %URI{scheme: "entity", host: "agent", path: "/" <> rest}} when rest != "" ->
-        with [_workspace, entity_name] when entity_name != "" <-
-               String.split(rest, "/", parts: 2),
-             [flavor, suffix] when flavor != "" and suffix != "" <-
-               String.split(entity_name, "_", parts: 2) do
-          if flavor == "codex" do
-            :ok
+    # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
+    # with try/rescue keeping the structured `{:error, _}` contract for
+    # each validator branch. Mirrors `EzagentPluginCc.Template.CcAgent.check_agent_uri/1`.
+    try do
+      case Ezagent.URI.parse!(uri_str) do
+        %URI{scheme: "entity", host: "agent", path: "/" <> rest} when rest != "" ->
+          with [_workspace, entity_name] when entity_name != "" <-
+                 String.split(rest, "/", parts: 2),
+               [flavor, suffix] when flavor != "" and suffix != "" <-
+                 String.split(entity_name, "_", parts: 2) do
+            if flavor == "codex" do
+              :ok
+            else
+              {:error, {:wrong_agent_flavor, flavor, expected: "codex"}}
+            end
           else
-            {:error, {:wrong_agent_flavor, flavor, expected: "codex"}}
+            _ ->
+              {:error,
+               {:missing_flavor_prefix, uri_str,
+                "agent URIs must be `entity://agent/<workspace>/codex_<name>`"}}
           end
-        else
-          _ ->
-            {:error,
-             {:missing_flavor_prefix, uri_str,
-              "agent URIs must be `entity://agent/<workspace>/codex_<name>`"}}
-        end
 
-      {:ok, %URI{scheme: "entity"}} ->
-        {:error,
-         {:invalid_agent_uri, uri_str,
-          "agent URIs must be `entity://agent/<workspace>/codex_<name>`"}}
+        %URI{scheme: "entity"} ->
+          {:error,
+           {:invalid_agent_uri, uri_str,
+            "agent URIs must be `entity://agent/<workspace>/codex_<name>`"}}
 
-      _ ->
-        {:error, {:bad_agent_uri, uri_str}}
+        _ ->
+          {:error, {:bad_agent_uri, uri_str}}
+      end
+    rescue
+      ArgumentError -> {:error, {:bad_agent_uri, uri_str}}
     end
   end
 
