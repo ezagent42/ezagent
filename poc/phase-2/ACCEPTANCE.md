@@ -166,3 +166,44 @@ curl -N -X POST http://localhost:10142/api/customer/acme/chat \
 # Browser → http://localhost:10142/admin/customer_sessions
 # (Log in as admin via /login → entity://user/system/admin / <password>)
 ```
+
+## Phase 3 — Customer chat frontend (acceptance results, 2026-05-28)
+
+Implemented per `8-customer-chat-frontend-design.md` + `-PLAN.md` (Approach A:
+LiveView `/chat/:tenant` + iframe widget; code in `ezagent_plugin_liveview`
+under the `CustomerChat` namespace). 13 unit tests green; our code
+compiles warning-clean.
+
+### Verified server-side (curl against running poc-phase2 server)
+
+1. **Hosted page renders themed** — `GET /chat/acme` dead-render contains
+   `Acme Support` (title), `--cc-primary: #e11d48` (acme rose from the
+   `acme.json` fixture), `cc-root` + `CustomerChatPersist` hook,
+   `Type your message…` placeholder, `connecting` status, disabled-composer
+   classes. ✅ (criterion 1, structural)
+2. **Embed mode** — `GET /chat/acme?embed=1` applies `bg-transparent` and
+   drops the header. ✅ (criterion 2, render)
+3. **Widget loader** — `GET /customer-chat/widget.js` returns
+   `application/javascript` with the launcher+iframe loader (`data-tenant`,
+   `/chat/`, `?embed=1`, `iframe`, `addEventListener`). ✅ (criterion 2)
+   - **Bug caught + fixed by this e2e**: the route was initially under the
+     `:browser` pipeline, whose `:protect_from_forgery` raised
+     `Plug.CSRFProtection.InvalidCrossOriginRequestError` on the
+     cross-origin `<script src>` fetch. Moved to a lean `:public_asset`
+     pipeline (no session/CSRF). The unit test didn't catch it because
+     `ConnCase` doesn't exercise the CSRF plug.
+4. **No hardcoded tenant data** — zero `acme` in executable code; only in
+   the `acme.json` fixture + two doc-comment examples. ✅ (criterion 5)
+
+### Pending live-browser validation (require WebSocket + cc cold start)
+
+- **criterion 1 (full):** type a message → cc agent spawns (~10s) → AI reply
+  with acme soul facts (12-mo / 24-mo Pro) streams in live.
+- **criterion 4:** reload the page → same conversation thread restored
+  (localStorage `conv`/`cid` resume).
+- **criterion 3:** operator takes over from `/admin/customer_sessions` →
+  customer page shows `客服已接管` + operator message live, no SSE timeout
+  (the C3-tension fix — validated structurally; needs a live two-party run).
+
+These three are interactive and are validated by opening the page in a
+browser (the customer-facing payoff the whole task targets).
