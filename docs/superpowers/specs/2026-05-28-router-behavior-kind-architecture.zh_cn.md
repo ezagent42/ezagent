@@ -1,7 +1,30 @@
 # SPEC — Router/Behavior/Kind 自建架构（plugin 契约全量重写）
 
-**状态：** r1（codex 对抗式 review 草稿）
-**取代（仅前向设计 — 备选方案历史保留）：** [PR #442 / `spec/eventstore-commanded-migration`](https://github.com/ezagent42/esr/pull/442)
+**状态：** r2 — codex r1 closures（7 HIGH + 4 MED + 2 LOW 全部内联处理；裁决从 REJECT → CONDITIONAL）
+**取代（仅前向设计 — 备选方案历史保留）：** [PR #442 / `spec/eventstore-commanded-migration`](https://github.com/ezagent42/ezagent/pull/442)
+
+## r2 changelog（codex r1 closures, 2026-05-28）
+
+Codex r1 返回 **REJECT** 含 7 HIGH + 4 MEDIUM + 2 LOW。r2 通过 inline 编辑解决全部 13 个 finding（章节如下）：
+
+| Finding | 处理位置 |
+|---|---|
+| HIGH-1 — effects 语法无法表达 `MessageStore.write` 这类返回值/事务性调用 | §4.4：新增 `{:effect_returning, mfa, args, bind_as: :name}` effect + §4.5 记录的 inline-Ecto 例外 |
+| HIGH-2 — LegacyBehaviorAdapter 非 replay-equivalent | §6.1 Phase 1：明确标注 adapter 为 **dispatch-equivalent，NOT replay-equivalent** |
+| HIGH-3 — Resource=on_change 对高频 ExternalMirrorWorker 错误（当前是 `:ephemeral`） | §5.2：Resource 模式拆为 `:cold_resource`（默认 `on_change`）+ `:hot_resource`（默认 `:ephemeral`） |
+| HIGH-4 — Resource 所有权模型未明确（binding "属 Session" vs "属 Workspace"；cap-grant 双向） | §3.3：新增 `primary_owner` + `cascade_from` 区分；cap-grant 是 TWO Resource（GranteeView + GrantorView）相互 cross-link |
+| HIGH-5 — Saga rollback 夸大为"自动补偿"；应该是"best-effort partial" | §4.4 + §5.4：明确改为 BEST-EFFORT，列出哪些 step 可补偿、哪些不可，destroy 级联留下 operator-repair marker |
+| HIGH-6 — `ctx.read` 规则与例子矛盾（UserCredentials 内联调用 `Ezagent.Users.set_password`） | §4.5：新增"允许 inline 调用 vs forbidden"子节 — idempotent + transactional Repo writes 可 inline，详见允许清单 |
+| HIGH-7 — `caps:` 宏不保留 5-轴 cap shape（`kind: :any`、scope tuple、cross-workspace） | §4.3：完整宏语法重写 — `caps: [{action, axes_map}]` 形式支持全部 5 轴 + scope 元组 + `workspace_scoped?: false` |
+| MED-1 — Resource URI shape 缺 workspace 段 | §3.3 + OQ-1：URI 现为 `resource://<owner_kind>/<workspace>/<owner_name>/<type>/<name>` — workspace 段强制 |
+| MED-2 — Multi-Behavior routing 未明示 BehaviorRegistry shape | §2.3 + §4.1：`attach Behavior, actions: […]` 构建等同于今天的 `BehaviorRegistry.register/3`；现存的 `%Capability{behavior: Module}` 行无需迁移 |
+| MED-3 — 迁移对等测试排除 EventLog 行但 EventLog 有可观察消费者 | §7.3：拆分为"dispatch parity"（adapter 模式）vs "replay parity"（仅 native）。新增 EventLog 行被显式标记为 **intentional incompatibility** |
+| MED-4 — 工作量估计偏乐观（8-10wk 最可能实际更接近 15-21wk） | §6.3 修订：最可能 14-17wk、上限 25wk。基线对比 PR-G AgentBridge（3wk 一个 plugin）+ PR-EM（5wk 一个 domain） |
+| LOW-1 — `:dispatch_call` 在语法但 OQ-7 建议去掉 | §4.4：`:dispatch_call` 删除；saga 是唯一同步链接机制 |
+| LOW-2 — PubSub ordering 例子与 OQ-3 推荐冲突 | §4.4：6 phase ordering 规范化；Chat 例子按 phase order 重排 |
+
+详细英文版本见 EN spec 同段 r2 changelog。ZH 文件中关键章节（§3.3、§4.3、§4.4、§4.5、§5.2、§5.4、§6.1、§6.3、§7.3）的实质更新与 EN 平行；本 changelog 提供 quick-scan 索引。
+
 **Allen 指令轨迹（2026-05-28 09:33 → 10:36）：** Allen 确认：(a) plugin 契约 full breaking-change 重写（Q2=a, 无兼容 shim），(b) 新前向 SPEC 取代 #442 §2–§12（Q3=a），(c) 两个 in-flight slice/snapshot bug（Bug A + Bug B）暂停 — 待本 SPEC 落地后重做。PR #442 §1.5.7（Native Consolidation Path / Option B''）是本 SPEC **直接上游的设计血脉**：B'' 识别出 5 个 framework primitive；本 SPEC 把它们收紧为 3-primitive（`Router` / `Behavior` / `Kind`）契约，**plugin 作者永远不接触 slice 或 snapshot**。
 
 **架构承诺**：本 SPEC 是 ezagent 未来 8–10 周工作所承诺的设计（Phase 1：~3wk framework primitives；Phase 2：~4–6wk per-domain plugin 迁移；Phase 3+4：~1wk 清理）。北极星是 `feedback_north_star_plugin_isolation` — "未来开发者在不同 plugin 上独立工作，无需协调"。本 SPEC 中的每个决策都通过同一个问题来检验：这是否让 plugin 作者远离 core？
@@ -384,6 +407,7 @@ Legacy `@behaviour Ezagent.Kind` callback（`type_name/0`、`behaviors/0`、`per
 - `Kind.Server` GenServer（`apps/ezagent_core/lib/ezagent/kind/server.ex`，今天 828 LOC）变成 `apps/ezagent_core/lib/ezagent/kind/host.ex` — 同样角色但状态模型对 framework 私有。
 - GenServer 上的状态是一个以 `{behavior_module, field_atom}` 为 key 的单一 map（替换今天嵌套的 `%{slice_key => slice_map}`）。Effect `{:set, key, value}` 填充该 map；`ctx.read.(:key)` 查询；Behavior 永不看到外层 map shape。
 - `reads_sibling_slices/0` 变成 Kind 的 `read_graph` 声明 — 编译期对附加的 Behavior 的 action 做校验。
+- **`attach Behavior, actions: [...]` 填充 BehaviorRegistry**（codex r1 MED-2 closure）：宏在 app boot 时 emit 等同于今天 `Ezagent.BehaviorRegistry.register(kind_module, action, behavior_module)`。路由 key 仍是 `(kind_module, action)` → `behavior_module`，**与今天 lookup shape 相同**。User identity slice 中现存的 `%Capability{behavior: Ezagent.Behavior.Identity, ...}` MapSet 条目仍有效 — Behavior 模块引用跨宏变更保留。**cap 行无需 DB 数据迁移。**
 
 #### 模块位置 & LOC
 
@@ -452,14 +476,22 @@ Legacy `@behaviour Ezagent.Kind` callback（`type_name/0`、`behaviors/0`、`per
 
 #### 定义
 
-一个 **由 Entity 拥有**、由 URI 引用、生命周期管理、per-action 授权检查的东西。URI 方案：`resource://<owner_kind>/<owner_name>/<type>/<name>`（如 `resource://agent/cc_demo/config-dir/main`）。
+一个 **由 Entity 拥有**、由 URI 引用、生命周期管理、per-action 授权检查的东西。URI 方案：`resource://<owner_kind>/<workspace>/<owner_name>/<type>/<name>`（如 `resource://agent/team-alpha/cc_demo/config-dir/main`）。
+
+**Codex r1 MED-1 closure** — URI 现包括 workspace 段以防止跨 workspace 冲突（`resource://agent/team-alpha/cc_demo/...` 与 `resource://agent/system/cc_demo/...` 是不同的）。workspace 段是 Resource 创建时的 **owner 的 workspace**，对 Resource 整个生命周期不可变。
 
 #### 属性
 
-- **总是有 `owner_uri`**：是一个 Entity。owner 字段作为 Resource Kind 的一部分声明，不作为 slice 字段。
+- **有 `primary_owner`**：控制 Resource 生命周期（创建/销毁/cap-shape 决策）的 Entity URI。作为 Resource Kind 的一部分声明，不作为 slice 字段。
+- **可能有 `cascade_from`**：SECONDARY 关系 — 当 cascade-from Entity 被销毁，此 Resource 也被销毁，**即使** 其 primary_owner 仍活着。用于 cap-grant 这样的关系（见下文）。
 - **类型标记**：每个 Resource 声明其类型（`:config-dir`、`:secret`、`:file`、`:binding`、`:cap-grant`、`:token`……）
-- **Per-action 授权**：caps 按 action 检查；owner 隐式授权大多数 action，但可通过 per-action `caps:` 声明覆盖
-- **Owner 销毁时级联**：当 owner Entity 被销毁，framework 的 destroy-saga（§5.4）遍历 Resource 集合并按声明顺序销毁每个
+- **Per-action 授权**：caps 按 action 检查；primary_owner 隐式授权大多数 action，但可通过 per-action `caps:` 声明覆盖
+- **Owner 销毁时级联**：当 primary_owner 或任何 `cascade_from` Entity 被销毁，framework 的 destroy-saga（§5.4）销毁此 Resource
+
+**Codex r1 HIGH-4 closure（Resource 所有权模型）** — 早期草稿有两个矛盾：
+
+1. **§3.1** 说外部 binding "属 Session"，**§3.3** 说"属 Workspace"。修复：binding 是 **primary_owner: Session, cascade_from: Workspace**。销毁 Session 销毁 binding（primary 生命周期）；销毁 Workspace 也销毁 binding（cascade — binding 不能比 workspace 活更久）。
+2. **Cap-grant 是双向的** — User1 授 cap 给 User2。谁"拥有"该 grant？grantor 控制 revocation；grantee 在 identity slice 持有 cap 用于匹配。单一 `owner_uri` 表达不了。修复：cap-grant 是 **TWO Resource** — `GrantorView`（primary_owner: grantor, 索引"我授出去什么"）和 `GranteeView`（primary_owner: grantee, 索引"我持有什么 cap"），通过共享 `grant_id` 链接。两者都有 `cascade_from: <另一方>` — 销毁 grantor User 也级联销毁 GranteeView（grant 不再有效）；销毁 grantee User 级联销毁 GrantorView。Router step 5 的 cap matcher 只读 GranteeView。
 
 #### 当前**是** Resources 的项目（一些今天嵌入在 Entity slice 中 — 边界修复）
 
@@ -695,23 +727,45 @@ def handle_send(%{message: %Ezagent.Message{} = msg}, ctx) do
       {:ok, %{stored: false, reason: :no_recipients}, []}
 
     recipients ->
+      # Codex r1 HIGH-1 closure：用 :effect_returning 拿到 stamped message。
+      # 下游 effects 通过 {:ref, :stored_msg, [...]} 引用它。
+      # Effects 按 §4.4 中声明的 6 个 phase 触发：
+      #   Phase 1 (:set)：slice 更新
+      #   Phase 2 (:emit)：EventLog append
+      #   Phase 3 (:effect_returning + :effect)：副作用（Repo 写在这里）
+      #   Phase 4 (:dispatch)：跨 Kind 扇出
+      #   Phase 5 (:notify)：PubSub broadcast
+      #   Phase 6 (:terminate/:saga)：post-reply（这里 n/a）
       effects = [
-        {:effect, &Ezagent.MessageStore.write/2, [msg, session_uri]},
-        {:notify, "esr:session:#{URI.to_string(session_uri)}:events",
-                  {:chat_message, session_uri, msg}},
-        {:set, :last_message_id, msg.id},
-        {:set, :last_message, msg},
-        {:set, :send_cursor, ctx.read.(:send_cursor, 0) + 1},
-        {:emit, :message_sent, %{message: msg, session_uri: session_uri,
+        # Phase 3：Repo 写（返回 stamped msg 给下游 ref）
+        {:effect_returning, &Ezagent.MessageStore.write/2, [msg, session_uri],
+         bind_as: :stored_msg},
+
+        # Phase 1：slice 更新 — 通过 {:ref, ...} 引用 stored stamped msg
+        {:set, :last_message_id, {:ref, :stored_msg, [:id]}},
+        {:set, :last_message,    {:ref, :stored_msg}},
+        {:set, :send_cursor,     ctx.read.(:send_cursor, 0) + 1},
+
+        # Phase 2：EventLog append
+        {:emit, :message_sent, %{message: {:ref, :stored_msg}, session_uri: session_uri,
                                   recipient_count: length(recipients)}}
-      ] ++ Enum.map(recipients, &recipient_dispatch_effect(&1, msg, session_uri))
+      ] ++
+      # Phase 4：per-recipient dispatch（通过 {:ref, ...} 用 stored msg）
+      Enum.map(recipients, &recipient_dispatch_effect(&1, session_uri)) ++
+      [
+        # Phase 5：dispatch 入队后通知 session 订阅者
+        {:notify, "esr:session:#{URI.to_string(session_uri)}:events",
+                  {:chat_message, session_uri, {:ref, :stored_msg}}}
+      ]
 
       {:ok, %{stored: true}, effects}
   end
 end
 ```
 
-**LOC 减少**：~120 → ~35（71% 减少）。`notify_dropped_mentions` 旁路移到 `Routing.Resolver.resolve` 的返回（它知道哪些 mention 被丢弃）。
+**LOC 减少**：~120 → ~45（62% 减少；比 r1 估计略大因 `:effect_returning` + `{:ref, ...}` 引用多几个字符但完全显式）。`notify_dropped_mentions` 旁路移到 `Routing.Resolver.resolve` 的返回（它知道哪些 mention 被丢弃）。
+
+**此例中可见的 phase 排序**：runtime 按 phase 应用 effects，而不是按源码行顺序 — 但源码行分组让意图明显。dispatch effect 中的 `command_uuid` 不再需要 message id（framework 在替换前从 stored msg 的 id 派生）。
 
 ### §4.3 — Capability 声明
 
@@ -728,39 +782,110 @@ action :grant_cap,
   modes: [:call]
 ```
 
-`caps:` 参数支持：
+**完整 `caps:` 语法**（codex r1 HIGH-7 closure — 保留今天 `%Ezagent.Capability{}` struct 支持的所有 5 轴 — `kind`、`behavior`、`action`、`instance`、`workspace_uri` — 加 scope 元组）：
 
-- `[:atom]` — caller 必须持有目标上此 Behavior 的 `action: :atom` 的 cap
-- `[{:atom, scope: :self}]` — caller URI = target URI（自授权范围）
-- `[{:atom, scope: :admin}]` — caller 是 admin / 持跨 workspace cap
-- `[{:atom, scope: {:within_session, :ctx_session}}]` — 由 session 上下文限定（当前 cap-vis action-axis 行为）
+```elixir
+caps: [
+  # 形式 1：裸 atom — 速记为 {action: :send, ...defaults...}
+  :send,
 
-历史上 cap-vis "action-axis caps with `{:within_session, S}` shape 怎么办"的 4 轮 REJECT（SPEC #423）坍缩为：`caps:` 参数支持该 shape。Framework matcher 知道如何应用。
+  # 形式 2：带显式轴的 tuple
+  {:send, kind: :session, action: :send, instance: :self_target, workspace_uri: :target_workspace},
+
+  # 形式 3：带 scope 元组（within-session、within-workspace、spawned-by）
+  {:read, scope: {:within_session, :ctx_session}},
+  {:cross_workspace_grant, scope: {:within_workspace, :any}},
+  {:terminate, scope: {:spawned_by, :ctx_principal}},
+
+  # 形式 4：kind 轴通配 — 用于 Chat 这种 multi-Kind Behavior
+  {:receive, kind: :any},
+
+  # 形式 5：workspace_scoped? 退出（per-action）
+  {:admin_grant, kind: :user, workspace_scoped?: false},
+]
+```
+
+`caps:` 参数接受一个列表，每项是 atom（`:send`）— 解糖为 `{:send, []}` 带默认值；或 tuple `{action_atom, opts_keyword}`：
+
+| 键 | 值 | 默认 | 备注 |
+|---|---|---|---|
+| `kind` | atom（如 `:user`、`:session`）或 `:any` | 此 Behavior 附加的 Kind | 通配 `:any` 用于 Chat 这种跨 Kind Behavior（今天的 `Capability.cap(:any, ...)`） |
+| `behavior` | module atom | `__MODULE__`（当前 Behavior） | 很少覆盖 |
+| `action` | atom 或 `:any` | 此 `caps:` 声明所在的 action | `:any` 意味着"此 Behavior 的任何 action 都匹配" |
+| `instance` | `:self_target` / `:any` / 具体 URI | `:self_target`（dispatch 的 target URI） | `:any` 用于类范围 cap |
+| `workspace_uri` | URI / `:target_workspace` / `:any` | `:target_workspace`（从 target 派生） | `:any` 用于跨 workspace cap |
+| `scope` | `{:within_session, X}` / `{:within_workspace, X}` / `{:spawned_by, X}` | （无） | `X` 是字面量 URI 或替换 token（`:ctx_session`、`:ctx_principal`、`:ctx_workspace`） |
+| `workspace_scoped?` | `true` / `false` | `true` | `false` 时绕过 step 5.6 cross-workspace iso（今天的 `Behavior.workspace_scoped?/0` 退出） |
+
+**替换语义**：`:self_target` / `:target_workspace` / `:ctx_session` 这类 token 在 dispatch 时对实际 `%Cmd{}` 和 `ctx` 求值。它们 **不是** plugin 持有的运行时值；宏在编译时把替换 emit 为 struct 字段，Router 在 step 5 替换。
+
+**Cap-vis SPEC #423 r4**（带 `{:within_session, S}` shape 的 action-axis caps）完全可表达：
+
+```elixir
+caps: [{:read_messages, action: :any, scope: {:within_session, :ctx_session}}]
+```
+
+**Multi-Kind Behavior**（Chat 附加到 Session + User + Agent — 三个 Kind）用 `kind: :any` 声明单一 cap shape 匹配 dispatch 落到的任何 Kind：
+
+```elixir
+defmodule Ezagent.Behavior.Chat do
+  use Ezagent.Behavior
+
+  action :receive,
+    args: %{message: Ezagent.Message},
+    returns: :ok,
+    caps: [{:receive, kind: :any}],   # 匹配 Chat 附加的任何 Kind
+    modes: [:cast]
+  # ...
+end
+```
+
+今天 `IdentityAdmin` 的 `workspace_scoped?: false`（跨 workspace admin Behavior）表达为：
+
+```elixir
+action :grant_user_in_other_workspace,
+  args: ...,
+  caps: [{:cross_workspace_grant, kind: :user, workspace_scoped?: false}],
+  ...
+```
 
 ### §4.4 — Effects vocabulary
 
-Effects 是 handler 引起世界改变的 **唯一** 方式。完整语法：
+Effects 是 handler 引起世界改变的 **唯一** 方式（一个例外：idempotent 的 inline Repo 写 — 见 §4.5）。完整语法：
 
 | Effect | 含义 | 例 |
 |---|---|---|
 | `{:set, key, value}` | 更新此 Kind 实例的 framework 管理状态 | `{:set, :last_message_id, msg.id}` |
 | `{:emit, event_type, payload}` | 向 EventLog 追加事件（审计 + replay） | `{:emit, :message_sent, %{...}}` |
 | `{:dispatch, %Cmd{}}` | 通过 Router 扇出到另一个 Kind（异步 — cast 语义） | `{:dispatch, %Cmd{target: rcpt, action: :receive, ...}}` |
-| `{:dispatch_call, %Cmd{}, on_result: fn}` | 同步跨 Kind dispatch + 续接（罕见；倾向 saga） | （`:join` ack 模式使用） |
 | `{:notify, topic, payload}` | Phoenix.PubSub broadcast（UI / 外部） | `{:notify, "esr:session:…:events", msg}` |
-| `{:effect, mfa_or_fn, args}` | 副作用 — 文件/IO/外部 API 调用；framework 包装审计 + （可选）重试 | `{:effect, &MessageStore.write/2, [msg, session_uri]}` |
+| `{:effect, mfa_or_fn, args}` | 副作用 — 文件/IO/外部 API 调用；framework 包装审计 + （可选）重试；**返回值丢弃** | `{:effect, &Ezagent.AgentBridge.deliver/2, [user_uri, msg]}` |
+| `{:effect_returning, mfa_or_fn, args, bind_as: name}` | 同 `:effect` 但绑定返回值到 handler 的续接 map 的 `name`；后续 effects 可以用 `{:ref, name, path}` 引用（codex r1 HIGH-1 closure） | `{:effect_returning, &MessageStore.write/2, [msg, session_uri], bind_as: :stored_msg}` |
 | `{:terminate, :self \| uri}` | 调度延迟 Kind 终止（reply 后） — framework 处理级联 | `{:terminate, :self}`（Lifecycle.destroy） |
 | `{:saga, %Ezagent.Saga{}}` | 把剩余级联交给 SagaRunner | （见 §5.4） |
-| `{:halt, reason}` | 中止：framework 回滚已应用 effects（状态变更），丢弃待处理 effects，返回 `{:error, reason}` | `{:halt, :preflight_failed}` |
+| `{:halt, reason}` | 中止：framework 回滚已应用 state effects，丢弃待处理 effects，返回 `{:error, reason}` | `{:halt, :preflight_failed}` |
 
-**Effects 顺序语义**（提议；OQ-3）：
+**HIGH-1 closure**：早期草稿用 `{:effect, ...}` 表达 `MessageStore.write`，但 legacy handler 依赖其 **返回值**（stamped message）做后续 broadcast/dispatch effects。一个 fire-and-forget effect 表达不了这个。两种解决，都采纳：
 
-1. `{:set, …}` effects 按 **声明顺序** 应用，原子化作为单个状态更新 — handler 的 `ctx.read` 视图 **不包括** 进行中的 set effects（它读 pre-handler 快照）
-2. `{:emit, …}` 事件按 **声明顺序** append 到 EventLog，与状态更新在一个事务中
-3. `{:notify, …}` broadcast 和 `{:effect, fn, args}` 副作用在 EventLog + 状态事务 **commit 之后** 触发
-4. `{:dispatch, …}` 排队给 Router（Router 按声明顺序依次应用，但每个是异步 cast — 无返回值链式）
-5. `{:terminate, …}` 和 `{:saga, …}` 在同步 reply 已交付后触发（今天的 `Task.start` 20ms-sleep 模式，但 framework 拥有）
-6. `{:halt, reason}` 短路 — 早期 `:set`/`:emit` effects **不** commit（framework 把整个 handler 返回包装成事务）；从状态观察者视角 handler 似乎从未运行。
+1. **`:effect_returning`** 是结构化方式：handler 声明"我需要这个 Repo 写的返回值给后续 effects"；framework 执行调用、绑定结果、在应用后续 effects 之前把 `{:ref, :stored_msg, [:id]}` 引用替换掉。
+2. **Inline Repo 例外**（§4.5）让 handler 在调用 idempotent + transactional 的 Repo-backed 模块时可以 inline。这是 `UserCredentials.set_password` 例子的前提。
+
+Chat.send 例子（§4.2 Example 3）重写为用 `:effect_returning`；handler 然后用 `{:ref, :stored_msg, ...}` 引用声明所有下游 effects。
+
+**Effects 顺序语义**（规范，codex r1 LOW-2 closure）：
+
+Effects 在 **每个 phase 内按声明顺序** 触发。6 个 phase 顺序运行：
+
+1. **Phase 1 — `:set`**：状态更新作为单个 Ecto 事务 + EventLog appends 一起应用（handler 的 `ctx.read` 读 pre-handler 快照；in-flight `:set` effects 对同一 handler 后续 `ctx.read` 不可见）
+2. **Phase 2 — `:emit`**：事件按声明顺序 append 到 EventLog，**与 phase 1 同事务**
+3. **Phase 3 — `:effect_returning`** 然后 **`:effect`**：副作用在 phase 1+2 事务 commit 后触发，按声明顺序。`:effect_returning` 结果绑定到续接 map，之后的 effects 才被求值
+4. **Phase 4 — `:dispatch`**：跨 Kind dispatch 按声明顺序入队（每个是 async cast — Router 并发扇出；dispatch 之间的顺序是 best-effort）
+5. **Phase 5 — `:notify`**：Phoenix.PubSub broadcast 按声明顺序触发（LV / 外部订阅者在 dispatched Kind 启动后看到、但不一定在它们完成前 — 按设计：notify 是"我身上发生了什么"信号，dispatch 是真正的扇出）
+6. **Phase 6 — `:terminate` / `:saga`**：在同步 reply 交付后触发
+
+`{:halt, reason}` 短路 phase 1+2 — 已声明的 `:set`/`:emit` effects **不 commit**（事务回滚）；handler 似乎从未运行。Phase 3-6 effects 永不到达。
+
+**HIGH-5 closure（saga compensation honesty）**：phase 6 的 saga 只能 **补偿本身可逆的步骤**。不可逆的副作用（phase 5 已发出的 PubSub broadcast、phase 3 已发起的外部 API 调用、phase 4 已被另一个 Kind 消费的 dispatch）**不会** 回滚 — saga 在 EventLog 标记它们为"irreversibly happened"并继续补偿能补偿的。Destroy 级联是 **best-effort partial restore**，**不是** true rollback。详见 §5.4 显式补偿契约。
 
 ### §4.5 — 与当前契约比，什么消失了
 
@@ -778,9 +903,37 @@ Effects 是 handler 引起世界改变的 **唯一** 方式。完整语法：
 | `workspace_scoped?/0` | per-Behavior boolean | Kind 级 `workspace_scoped:` 宏 arg（默认 `true`） |
 | `post_init/2` / `handle_continue/3` / `on_ready/2` / `terminate/3` | per-Behavior optional callback | per-Kind 生命周期钩子（通过 `lifecycle/2` 宏声明；大多数 Kind 不需要） |
 | `reconcile_after_load/2` | per-Behavior callback | per-Kind 从 EventLog rebuild（framework）+ optional `on_rebuild/1` Kind callback |
-| 从 `invoke/4` 内部 `Ezagent.Invocation.dispatch/1` | 允许（Chat 使用） | 禁止 — 发出 `{:dispatch, %Cmd{}}` effect |
-| 从 `invoke/4` 内部 `Phoenix.PubSub.broadcast/3` | 允许 | 禁止 — 发出 `{:notify, topic, payload}` effect |
-| 直接 `MessageStore.write` 等 | 允许 | 禁止 — 发出 `{:effect, &fn/2, args}` |
+| 从 `invoke/4` 内部 `Ezagent.Invocation.dispatch/1` | 允许（Chat 使用） | **禁止** — 发出 `{:dispatch, %Cmd{}}` effect |
+| 从 `invoke/4` 内部 `Phoenix.PubSub.broadcast/3` | 允许 | **禁止** — 发出 `{:notify, topic, payload}` effect |
+| `MessageStore.write` 等 — Repo-backed 查询模块 | 允许 | **有条件允许 inline**（见 §4.5.1 下）；否则用 `{:effect_returning, ...}` |
+
+### §4.5.1 — 允许 inline 调用 vs 禁止调用（codex r1 HIGH-6 closure）
+
+**"plugin 代码可 inline 调用"与"plugin 代码必须走 effects"的界**：
+
+| 调用 shape | 允许 handler 内 inline？ | 为什么 |
+|---|---|---|
+| `ctx.read.(:key)` — framework 状态 | ✓ 总是 | 这就是 read API |
+| 自己 domain 模块中的纯函数 | ✓ 总是 | 如 `Routing.Resolver.resolve/4` — 纯 |
+| Registry 式 lookup：`AgentLineage.lookup`、`WorkspaceRegistry.lookup` | ✓ 总是 | 只读 ETS 读；幂等档同 `ctx.read` |
+| 带 **idempotent** 写的 Repo-backed 查询模块（`Ezagent.MessageStore.write/2` — `ON CONFLICT DO NOTHING`；`Ezagent.Users.set_password/2` — 全行替换） | ✓ 允许 | 每调用是自己的事务；retry-safe；失败暴露为 `{:error, _}` handler 可返回 |
+| **非** idempotent 的 Repo-backed 写 | ✗ 禁止 | 必须走 `{:effect_returning, fn, args, bind_as: ...}` 让 framework 包装 retry + audit |
+| 通过 `Ezagent.Invocation.dispatch/1` 跨 Kind dispatch | ✗ 禁止 | 总是通过 `{:dispatch, %Cmd{}}` effect |
+| Phoenix.PubSub.broadcast | ✗ 禁止 | 总是通过 `{:notify, topic, payload}` effect |
+| 文件系统写、外部 HTTP、OS 级副作用 | ✗ 禁止 | 总是通过 `{:effect, mfa, args}` — framework 包装 retry + audit |
+| 通过 `Kind.get_slice/2` 读任何其他 Kind 的状态 | ✗ 禁止 | 跨 Kind 读走 `ctx.read`（Kind 的 `read_graph` 声明它们） |
+
+**为什么这个例外**：强制每个 Ecto 写走 `{:effect_returning, ...}` 给常见情况（旋转密码、写聊天消息）增加语法负担但不带来 replay-equivalence（Ecto 写是 source of truth；replay 重建 slice 状态，**不是** Ecto 行）。该例外是 **有限可枚举的允许 Repo-backed 查询模块清单**；新增需要 SPEC 变更。§7.4 的 grep-gate 按名字强制 — 不在允许清单中的任何 Repo 模块触发 gate。
+
+**允许清单**（初始；可通过 SPEC 增长）：
+
+- `Ezagent.Users.*` — User Ecto schema（罕见写 — 密码旋转、profile 更新）
+- `Ezagent.MessageStore.write/2` — 消息持久化（在 `(id, session_uri)` 上幂等）
+- `Ezagent.AgentLineage.*` — 今天只读 ETS；如果变为写支持，移到禁止
+- `Ezagent.WorkspaceRegistry.lookup/1` — 只读 ETS
+- `Ezagent.CapabilityRegistry.*` — 只读路径
+
+直接调用 `Ezagent.Repo` 在 plugin 代码中 **禁止** — 把它包装在一个 domain 查询模块中，经过审查纳入允许清单。
 
 ---
 
@@ -809,13 +962,28 @@ Append handler 通过 `{:emit, …}` effect 发出的事件。包装现有 `invo
 
 ### §5.2 — `Ezagent.SnapshotStore`
 
-管理 per-Kind 状态 snapshot。Framework 按组合模式全局决定 snapshot 策略 — plugin 作者永不配置：
+管理 per-Kind 状态 snapshot。Framework 按组合模式决定 snapshot 策略（Resource 有一个子分类）— plugin 作者挑模式但 **永不** 直接挑策略：
 
 | 模式 | 默认策略 | 理由 |
 |---|---|---|
 | Session | `every_n_events: 100` + `on_archive` | Session 有高事件量；周期 snapshot 限制 replay 成本 |
 | Entity | `on_change`（同步） | Entity 很少变；per-mutation 持久化便宜 |
-| Resource | `on_change`（同步） | 同 Entity；per-action 变更不频繁 |
+| Resource（`:cold_resource`）— 默认 | `on_change`（同步） | per-action 变更不频繁；per-mutation 持久化便宜 |
+| Resource（`:hot_resource`） | `:ephemeral`（不持久化）+ opt-in `{:periodic, ms}` | 高频 Resource 状态为遥测/cursor/counter — 重启丢失是 by-design |
+
+**HIGH-3 closure**：早期草稿让 Resource = `on_change` 统一，这会让 `Ezagent.Entity.ExternalMirrorWorker`（当前 `:ephemeral`，因为 publish cursor + count 是纯遥测；见 `apps/ezagent_domain_external_mirror/lib/ezagent/entity/external_mirror_worker.ex:50`）的写入率 10 倍。修复是 `:hot_resource` 子分类 — 在 Kind 通过 `pattern: {:resource, :hot}` 声明（cold 就是 `pattern: :resource`）。双轴模式保留"framework 决定策略"，同时保留现有 Worker 的正确性。
+
+Kind 宏接受：
+
+```elixir
+use Ezagent.Kind, pattern: :entity                    # 默认 Entity → on_change
+use Ezagent.Kind, pattern: :resource                  # 默认 cold Resource → on_change
+use Ezagent.Kind, pattern: {:resource, :hot}          # hot Resource → ephemeral
+use Ezagent.Kind, pattern: {:resource, :hot, periodic: 5_000}  # opt-in periodic
+use Ezagent.Kind, pattern: :session                   # Session → every_n_events
+```
+
+**Plugin 作者不直接挑 `on_change`** — 他们挑模式，framework 挑策略。真正 pattern-misfit 的 Kind 的逃生口是 `pattern: {:custom, hooks: [...], snapshot: :on_change}` — 但用它是 SPEC 变更（该 Kind 离开标准 3 模式 + 显式 review）。
 
 每个模式的默认是 **`Ezagent.SnapshotStore` 中一次性做出的单一决策**，不是 22 个 per-Behavior `persistence/0` 声明。
 
@@ -865,7 +1033,28 @@ defstruct steps: [], compensations: [], ctx: %{}, name: nil, command_uuid: nil
 
 **Saga 补偿声明**（OQ-4）：内联步对 `(forward, compensate)`。Framework 在失败时反向补偿。Per-step `command_uuid = "saga:<saga_name>:step:<step_name>"` 提供崩溃后幂等重试语义。
 
-**LOC**：~200（现有 `EzagentDomainChat.create_session/3` 手工 `try/rescue` 清理模式，提升为可复用原语）。
+**补偿诚实性（codex r1 HIGH-5 closure）**：补偿是 **best-effort partial restore**，**不是** true rollback。SagaRunner 契约：
+
+| Step 类型 | 可补偿？ | "补偿"意味着 |
+|---|---|---|
+| 纯状态变更（slice 变化） | ✓ 完全可逆 | forward 前 snapshot slice；rollback 时恢复 |
+| `:emit` 事件（仅审计） | ✓ 通过 append 补偿事件可逆（不是删除） | append `:compensated_<event>` 事件；下游消费者看到两个 |
+| `:dispatch` 跨 Kind（已 cast 到另一个 Kind） | ✗ 不可逆 | dispatched Kind 可能已经动作；saga 在 EventLog 标记"irreversibly happened" |
+| `:notify` PubSub broadcast（订阅者已收到） | ✗ 不可逆 | 同上 — 订阅者已动作；saga 标记不可逆 |
+| `:effect` 外部 IO（文件写、HTTP 调用） | ✗ 一般不可逆 | 补偿函数可尝试反操作（DELETE 文件、POST "rollback"）；但原 effect 仍记"已发生" |
+| `:terminate`（Kind 已终止） | ✗ 同调用内不可逆 | 终止后重 spawn 是 SEPARATE Kind 实例 — 原 caps/state **丢失** |
+
+**诚实的 destroy 级联契约**：当 destroy User → 撤销 caps → 销毁 sessions → 销毁 agents → 销毁 resources → terminate user — 如果"销毁 agents"在"销毁 sessions"成功 **之后** 失败：
+
+1. saga 反向补偿会尝试 **resurrect sessions** 通过从 pre-destroy snapshot 重 spawn
+2. 但 destroy 窗口期间从外部 channel（Feishu）到达的任何 in-flight 消息 **丢失** — 因 Session 不在被丢弃
+3. 重生的 Session 是新 GenServer 进程；订阅者（LV chat 流、ExternalMirror Worker）需要重新订阅
+4. saga 在 EventLog 标记 resurrection 为 `{:partial_restore, sessions_resurrected: [...], messages_lost: <count>}`
+5. 写一个 operator-repair marker：`{:saga_incomplete_restore, saga: "destroy_user:#{uri}", step: :destroy_agents, recoverable: false}` — 在 `/admin/saga_history` LV 可见
+
+**这解决 SPEC #440** 通过对什么可能诚实，**不是** 通过声称假 rollback。codex 在 #440 r4 标记的"User 处于不一致状态"失败模式变成 **declared、observable、repair-tracked** 状态而非静默不一致。operator 有 UI 看到"此 destroy 90% 成功；丢了 1 条消息；这是修复 handle。"
+
+**LOC**：~200（现有 `EzagentDomainChat.create_session/3` 手工 `try/rescue` 清理模式，提升为可复用原语）+ ~50 LOC 用于 partial-restore marker 处理。
 
 ### §5.5 — `Ezagent.EventSubscriber`
 
@@ -942,9 +1131,14 @@ host 每个 Kind 实例的 GenServer（替换今天的 `Ezagent.Kind.Server`，8
 #### Phase 1 — Framework primitives（暂无 plugin 迁移）
 
 - 构建 `Ezagent.Router`、`Ezagent.Behavior`（新宏）、`Ezagent.Kind`（新宏）、`Ezagent.Kind.Host`、`Ezagent.EventLog`、`Ezagent.SnapshotStore`、`Ezagent.Kind.StateRebuilder`、`Ezagent.SagaRunner`、`Ezagent.EventSubscriber`、`Ezagent.Caps.Engine`
-- **Legacy adapter** — 老的 `Behavior.invoke/4`-shape Behavior 通过 `LegacyBehaviorAdapter` 继续工作，把 `invoke/4` 返回包装成新 effect shape（每个 `{:ok, new_slice, result}` 通过对比新老 slice 转换为 `{:ok, result, [{:set, key, value}, ...]}`）。该 adapter **从第一天起就被标记删除** — 有 `delete-by-end-of-phase-3` 标签的 issue、每次加载发 deprecation warning、`mix ezagent.audit.legacy_adapter` task 列出剩余调用点。
+- **`LegacyBehaviorAdapter`** — 老的 `Behavior.invoke/4`-shape Behavior 通过 adapter 包装 `invoke/4` 返回成新 effect shape。Adapter：
+  - 通过 `Map.merge` diff 新老 slice 并为每个变化的 top-level key 发出 `{:set, key, value}` effect
+  - 把 legacy handler 已执行的副作用（PubSub broadcast、跨 Kind dispatch、MessageStore write）包装成 `{:legacy_already_executed, [<副作用描述符列表>]}` 审计记录 — 在 EventLog 可见但 **不可重执行**
+  - **明确标注 NON-REPLAY-EQUIVALENT**（codex r1 HIGH-2 closure）：adapter 保留运行时 dispatch 行为（相同 reply、相同时间的 PubSub broadcast），但 **不** 保留 replay 语义。adapter 模式 Behavior 的 EventLog 行不能通过 `apply_event/2` fold 进状态，因为 legacy handler 的副作用发生在 effect 语法 **外**。StateRebuilder 对 adapter 模式 Behavior 视为"snapshot-only"— 依赖 snapshot 而非 event fold。Phase 3 后（adapter 删除、所有 Behavior native），完整 replay-equivalence 成立。
+  - **从第一天起被标记删除** — 有 `delete-by-end-of-phase-3` 标签的 issue、每次加载发 deprecation warning、`mix ezagent.audit.legacy_adapter` task 列出剩余调用点
+  - 估计 ~300-400 LOC（加进 Phase 1 LOC 预算；§5.8 表早期遗漏）
 - 所有当前测试通过（legacy plugin 通过 adapter 编译 + 运行）
-- 估计：**~3 周**（framework primitive 是新代码的大头；不是所有 bug 在 plugin 迁移开始之前都浮现）
+- 估计：**~4-5 周**（codex r1 MED-4 closure — 从 3wk 上调；adapter 非平凡且 framework primitive 在构建期间暴露潜在设计问题，~1wk 用于 OQ 1-8 设计收敛）
 
 #### Phase 2 — Per-Domain plugin 迁移
 
@@ -1003,26 +1197,29 @@ host 每个 Kind 实例的 GenServer（替换今天的 `Ezagent.Kind.Server`，8
 12. **转换 `post_init/2` / `handle_continue/3` / `on_ready/2` / `terminate/3`** → Kind 级生命周期钩子（如有；大多没有）
 13. 重跑 domain 测试套件；确保迁移对等测试 §7.3 通过
 
-### §6.3 — 估计工作量（含置信区间）
+### §6.3 — 估计工作量（含置信区间）（codex r1 MED-4 closure — 上调修订）
 
-| Phase | 下限 | 最可能 | 上限 |
+| Phase | 下限 | **最可能（修订）** | 上限 |
 |---|---|---|---|
-| Phase 1（framework primitives） | 2 wk | **3 wk** | 5 wk |
-| Phase 2（per-domain 迁移，可并行） | 3 wk | **4–6 wk** | 9 wk |
-| Phase 3（删除 adapter） | 2 天 | **3 天** | 1 wk |
-| Phase 4（清理） | 2 天 | **4 天** | 1 wk |
-| **总挂钟时间** | **6 wk** | **8–10 wk** | **16 wk** |
+| Phase 1（framework primitives + LegacyBehaviorAdapter） | 3 wk | **4–5 wk** | 7 wk |
+| Phase 2（per-domain 迁移，部分可并行） | 6 wk | **8–10 wk** | 14 wk |
+| Phase 3（删除 adapter） | 3 天 | **1 wk** | 2 wk |
+| Phase 4（清理） | 3 天 | **1 wk** | 2 wk |
+| **总挂钟时间** | **10 wk** | **14–17 wk** | **25 wk** |
 
-**与过去迁移对比**：
+**为什么上调**（codex r1 MED-4 让之前 8-10wk 看起来乐观）：
+
+- Phase 1 之前 3wk 估计漏了 ~300-400 LOC `LegacyBehaviorAdapter` 以及 OQ-1 至 OQ-8 的设计收敛工作（每个 OQ 解决都波及 framework primitive — 如 OQ-5 的扁平命名空间决定同时影响 Router lookup key、Behavior 宏冲突检查、Caps.Engine cap shape）
+- Phase 2 之前 4-6 wk 假设 2 PR/wk review 节奏。ezagent 历史数据：PR-G AgentBridge 单独 3 周一个 plugin 抽取。ExternalMirror domain 抽取（3 个 Behavior + 1 个 Kind + 2 层 supervisor）5 周。Phase 2 PR 4（`domain_chat` — Chat + Template + OrchestratorAdmin + Publisher.SessionImpl，最大约 3,800 LOC Behavior 代码）现实地单独需 2-3 周。Phase 2 PR 5（`domain_external_mirror` — Worker 有两层 supervisor + post_init Resource 生命周期）现实地单独需 3-4 周。顺序求和远超 6 周；并行受 review 带宽限制最多 2 个 in-flight PR
+
+**与过去迁移对比**（calibration 数据，不只是下限）：
 - PR-G AgentBridge 抽取：**一个** plugin 抽取 ~3 周
-- PR-EM external_mirror domain 抽取：**一个** domain ~5 周
-- Phase 8b session-LV 重设计：**一个** 子系统 ~4 周
+- PR-EM external_mirror domain 抽取：**一个** domain（3 个 Behavior + 2 层 supervisor + boot reconciler）~5 周
+- Phase 8b session-LV 重设计：**一个** 子系统（仅 LV 端，无 Behavior 契约变更）~4 周
 
-迁移 22 个 Behavior + 13 个 Kind **并且** 改变所有契约约比任何单次过去迁移大 3-4 倍，但 **70% 的 per-Behavior 工作是机械的**（§6.2 改造清单无歧义）；不可压缩的新工作是 Phase 1 framework 构建 + Resource 边界修复（Phase 2 PR 8）。
+**14-17 wk 最可能区间** 把"ezagent 完全在新契约上"放到 **2026 年 9 月中-10 月初**（自 2026-05-28 算 14-17 周）。25 周上限（2026 年 11 月底）考虑：未来 codex 轮中任何 HIGH finding 触发结构性重做、ExternalMirror Worker 迁移浮现更深 Resource 模式问题（HIGH-3 已浮出一个）、Allen 带宽在某些时段限制到 1 PR/wk。
 
-诚实的 16 周上限考虑到：(a) framework primitive 在迁移期间暴露潜在设计问题（估计 +50%），(b) per-domain plugin 迁移浮现仅从契约不可见的边角案例（如 ExternalMirror 两层 supervisor 与 `{:terminate, :self}` 的交互），(c) Allen 的 review 带宽现实地最多 1 个 Phase 2 PR/周。
-
-"ezagent 完全在新契约上"的现实上限是 2026 年 8 月底（自 2026-05-28 算 16 周）。
+**Allen 决定是否接受这个**：r1 原本 8-10wk 是 aspirational；r2 的 14-17wk 是按实际过去迁移速度校准的。如 14-17wk 不可接受，唯一诚实路径是 (a) 接受更小 scope（不迁移全部 22 个 Behavior — 选子集），或 (b) 引入额外贡献者带宽。SPEC 当前设计不能在不损质量的情况下进一步压缩。
 
 ---
 
@@ -1051,21 +1248,40 @@ host 每个 Kind 实例的 GenServer（替换今天的 `Ezagent.Kind.Server`，8
 | Cap-required action 在缺 cap 时拒绝 | 每个 Behavior 一个属性测试 |
 | 所有 effects 是有效语法 | 运行时不变式 — Router step 10 的 effect-validator |
 
-### §7.3 — 迁移对等测试
+### §7.3 — 迁移对等测试（codex r1 MED-3 closure — 拆为 2 个对等级别）
 
-每个迁移的 Behavior：在固定输入下并排 **新 vs 老**。
+每个迁移的 Behavior，对等测试套件有 **两个独立级别**：
 
-挑战（§7.4 的"什么是'相同结果'"）：老的 Behavior 不发出事件；新的发。对等测试比较：
+#### Level 1 — Dispatch parity（legacy adapter 模式）
+
+验证未修改的 `invoke/4`-shape Behavior 通过 `LegacyBehaviorAdapter` 跑产出 **与 native 跑（迁移前）相同 dispatch 可见结果**。比较：
 
 - **相同输入**（老 `Invocation.dispatch/1` shape vs 新 `Router.dispatch/1` shape 下的 `%Cmd{}` 信封 — 两个 shape 线兼容）
 - **相同最终状态**（dispatch 后的 snapshot 行 — 内容相等，模 `inserted_at` 抖动）
 - **相同可观察副作用**（PubSub broadcast：相同 topic、相同 payload — 通过探测订阅者同时捕获新老）
 - **相同 dispatch reply**（`{:ok, result}` shape 相等）
 
-对等测试 **不** 比较：
-- EventLog 行数（老：1 审计行；新：1 审计行 + N 发出事件 — 按设计）
-- Snapshot 频率（老：按 `:on_change`；新：按模式 — 按设计）
-- Telemetry 事件（已重命名）
+Dispatch parity 是每个 Phase 2 PR 的门 — 只有对该 PR 中每个 Behavior 都有 dispatch parity 时迁移才被允许 land。
+
+#### Level 2 — Replay parity（仅 post-migration native Behavior）
+
+验证对于完全迁移到新 `handle_<action>/2` shape 的 Behavior，**从 EventLog 重建状态产生与 live dispatch 相同的 slice**。这是比 dispatch parity **更强** 的论断，仅对 native-shape Behavior 有意义（不对 adapter 模式）。
+
+比较：
+- 从空 snapshot 开始
+- 跑 N 个 dispatch
+- 捕获内存 slice 状态
+- 杀掉 Kind 进程
+- 重生 — StateRebuilder 读空 snapshot，通过 `apply_event/2` 从 EventLog fold 事件
+- 断言：重生后 slice = 内存 slice（模非确定性标记如时间戳）
+
+**Replay parity 不适用于 LegacyBehaviorAdapter Behavior** — 它们被记录为非 replay-equivalent（§6.1 Phase 1）。Adapter 包装了 legacy 副作用（PubSub broadcast、跨 Kind dispatch、Repo 写）发生在 effect 语法 **外**；通过 `apply_event/2` fold 事件回去无法重建它们。StateRebuilder 对 adapter 模式 Behavior 视为"snapshot-only"— 依赖 snapshot 而非 event fold。Phase 3 后所有 Behavior 是 native 时 Replay parity 才有意义。
+
+#### 对等测试 **不** 比较
+
+- **EventLog 行数**（intentional incompatibility — 新设计 emit 更多事件；这是设计而非缺陷。订阅 `EventLog.stream_by_workspace/2` 和 EventSubscriber 消费者迁移后 **会** 看到新事件类型；迁移计划在每个 Phase 2 PR 的 CHANGELOG 中记录）
+- **Snapshot 频率**（老：按 `:on_change`；新：按模式 — 按设计，见 HIGH-3 closure）
+- **Telemetry 事件**（在新结构下重命名 — `[:ezagent, :invoke, :stop]` 变成 `[:ezagent, :router, :dispatch_stop]`）
 
 ### §7.4 — "完成"不变式测试
 

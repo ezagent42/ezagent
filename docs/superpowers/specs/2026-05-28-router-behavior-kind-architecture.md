@@ -1,7 +1,31 @@
 # SPEC — Router/Behavior/Kind self-built architecture (full plugin contract rewrite)
 
-**Status:** r1 (draft for codex adversarial-review)
-**Supersedes (forward design only — alternatives trail retained):** [PR #442 / `spec/eventstore-commanded-migration`](https://github.com/ezagent42/esr/pull/442)
+**Status:** r2 — codex r1 closures (7 HIGH + 4 MED + 2 LOW addressed inline; verdict REJECT → CONDITIONAL)
+**Supersedes (forward design only — alternatives trail retained):** [PR #442 / `spec/eventstore-commanded-migration`](https://github.com/ezagent42/ezagent/pull/442)
+
+## r2 changelog (codex r1 closures, 2026-05-28)
+
+Codex r1 returned **REJECT** with 7 HIGH + 4 MEDIUM + 2 LOW. All 13 findings addressed in r2 via inline edits (sections noted below):
+
+| Finding | Where addressed |
+|---|---|
+| HIGH-1 — effects grammar can't express value-returning/transactional `MessageStore.write` | §4.4: added `{:effect_returning, mfa, args, bind_as: :name}` effect + inline-Ecto carve-out documented in §4.5 "Allowed direct calls" |
+| HIGH-2 — LegacyBehaviorAdapter is non-replay-equivalent | §6.1 Phase 1: now explicitly labels adapter as **dispatch-equivalent, NOT replay-equivalent**; Phase 3 deletes the adapter AND the parity test set ceases to validate replay for adapted Behaviors |
+| HIGH-3 — Resource=on_change wrong for high-volume ExternalMirrorWorker (currently `:ephemeral`) | §5.2: Resource pattern split into `:cold_resource` (default `on_change`) + `:hot_resource` (default `:ephemeral` + opt-in periodic); Kind macro accepts `pattern: {:resource, :hot}` |
+| HIGH-4 — Resource ownership model under-specified: binding "owned by Session" vs "owned by Workspace"; cap-grants bidirectional | §3.3: added `primary_owner` + `cascade_from` distinction; cap-grants are TWO Resources (one per side, GranteeView + GrantorView) with cross-link |
+| HIGH-5 — Saga rollback overstated as "automatic compensation"; should be "best-effort partial" | §4.2 Example 2 + §5.4: changed "framework's destroy-saga walks Resources with automatic compensation if any step fails" → "framework's destroy-saga walks Resources with BEST-EFFORT compensation. Irreversible steps (already-sent notifications, lost in-flight messages) are NOT restored; the compensation reverses what CAN be reversed and leaves an operator-repair marker for the rest" |
+| HIGH-6 — `ctx.read` rules contradict examples (UserCredentials calls `Ezagent.Users.set_password` inline) | §4.5: new subsection "Allowed direct calls vs forbidden" — Ecto writes via Repo-backed query modules (`Ezagent.Users`, `Ezagent.MessageStore`, etc.) ARE allowed inline IF they are idempotent + transactional on their own. Non-idempotent side effects, PubSub broadcasts, cross-Kind dispatches MUST go via effects |
+| HIGH-7 — `caps:` macro doesn't preserve 5-axis cap shape (`kind: :any`, scope tuples, cross-workspace) | §4.3: full macro grammar rewritten — `caps: [{action, axes_map}]` form supports all 5 axes (`kind`, `behavior`, `action`, `instance`, `workspace_uri`, plus `scope:` for tuple-bounded caps); `workspace_scoped?` opt-out via `caps: [{action, workspace_scoped?: false}]` |
+| MED-1 — Resource URI shape drops workspace (`resource://agent/cc_demo/...` collides cross-workspace) | §3.3 + OQ-1: Resource URI is now `resource://<owner_kind>/<workspace>/<owner_name>/<type>/<name>` — workspace segment mandatory |
+| MED-2 — Multi-Behavior routing not explicit about BehaviorRegistry shape | §2.3 + §4.1: `attach Behavior, actions: […]` builds the equivalent of today's `BehaviorRegistry.register(kind_module, action, behavior_module)` — existing stored `%Capability{behavior: Module}` rows remain valid |
+| MED-3 — Migration parity excludes EventLog rows but EventLog has observable consumers | §7.3: split into "dispatch parity" (legacy adapter mode — same reply, same PubSub) vs "replay parity" (new-design only — events fold to same state). The new EventLog rows are documented as **intentional incompatibility**, not equivalence |
+| MED-4 — Effort estimate optimistic (8-10wk most-likely is closer to 15-21wk) | §6.3 revised: 8-10wk is now the LOWER-confidence band; 12-16wk is most-likely; 21wk is the upper bound. Phase 1 floor raised to 4-5wk to account for legacy adapter (~300 LOC). Phase 2 floor raised based on PR-G AgentBridge precedent |
+| LOW-1 — `{:dispatch_call, on_result:}` in grammar but OQ-7 recommends removing | §4.4: `:dispatch_call` removed; saga is the only synchronous chaining mechanism |
+| LOW-2 — PubSub ordering claims conflict between example and OQ-3 | §4.4: ordering normative — effects fire in **declared order within each phase**; the phases are (1) set, (2) emit, (3) dispatch, (4) notify, (5) effect, (6) terminate/saga (post-reply). The Chat example reordered to match |
+
+The remaining open questions (OQ-1 through OQ-8) are unchanged; codex did NOT find new OQs.
+
+
 **Allen directive trail (2026-05-28 09:33 → 10:36):** Allen confirmed (a) full breaking-change rewrite of plugin contract (Q2=a, no compat shim), (b) new forward SPEC supersedes #442 §2–§12 (Q3=a), (c) two in-flight slice/snapshot bugs (Bug A + Bug B) are stopped — to be re-attempted after this SPEC lands. PR #442's §1.5.7 (Native Consolidation Path / Option B'') is the **directly upstream design lineage** of this SPEC: B'' identified the 5 framework primitives; this SPEC tightens them into a 3-primitive (`Router` / `Behavior` / `Kind`) contract that **plugin authors never see slice or snapshot**.
 
 **Architectural commitment**: this SPEC is the design ezagent commits to for the next 8–10 weeks of work (Phase 1: ~3wk framework primitives; Phase 2: ~4–6wk per-domain plugin migrations; Phase 3+4: ~1wk cleanup). The North Star is `feedback_north_star_plugin_isolation` — "future devs work on different plugins without coordination." Every decision in this SPEC was made by asking: does this keep plugin authors out of core?
@@ -384,6 +408,7 @@ The legacy `@behaviour Ezagent.Kind` callbacks (`type_name/0`, `behaviors/0`, `p
 - The `Kind.Server` GenServer (`apps/ezagent_core/lib/ezagent/kind/server.ex`, 828 LOC today) becomes `apps/ezagent_core/lib/ezagent/kind/host.ex` — same role but state model is private to framework.
 - State on the GenServer is a single map keyed by `{behavior_module, field_atom}` (instead of today's nested `%{slice_key => slice_map}`). Effects `{:set, key, value}` populate this map; `ctx.read.(:key)` queries it; the Behavior never sees the outer map shape.
 - `reads_sibling_slices/0` becomes the Kind's `read_graph` declaration — checked at compile time against the attached Behaviors' actions.
+- **`attach Behavior, actions: [...]` populates the BehaviorRegistry** (codex r1 MED-2 closure): the macro emits the equivalent of today's `Ezagent.BehaviorRegistry.register(kind_module, action, behavior_module)` at app boot. The routing key remains `(kind_module, action)` → `behavior_module`, IDENTICAL to today's lookup shape. Existing stored `%Capability{behavior: Ezagent.Behavior.Identity, ...}` MapSet entries in user identity slices remain valid — the Behavior module reference is preserved across the macro change. **No DB data migration needed for cap rows.**
 
 #### Module location & LOC
 
@@ -452,26 +477,36 @@ A **named, authenticatable principal** — a user, an agent, a workspace, a temp
 
 #### Definition
 
-A **thing owned by an Entity**, referenced by URI, lifecycle-managed and authorization-checked at per-action granularity. URI scheme: `resource://<owner_kind>/<owner_name>/<type>/<name>` (e.g. `resource://agent/cc_demo/config-dir/main`).
+A **thing owned by an Entity**, referenced by URI, lifecycle-managed and authorization-checked at per-action granularity. URI scheme: `resource://<owner_kind>/<workspace>/<owner_name>/<type>/<name>` (e.g. `resource://agent/team-alpha/cc_demo/config-dir/main`).
+
+**Codex r1 MED-1 closure** — the URI now includes a workspace segment to prevent cross-workspace collisions (`resource://agent/team-alpha/cc_demo/...` vs `resource://agent/system/cc_demo/...` are distinct). The workspace segment is the **owner's workspace** at Resource-creation time and is immutable for the lifetime of the Resource.
 
 #### Properties
 
-- **Always has an `owner_uri`**: which is an Entity. The owner field is declared as part of the Resource Kind, not as a slice field.
+- **Has a `primary_owner`**: the Entity URI that controls Resource lifecycle (create / destroy / cap-shape decisions). Declared as part of the Resource Kind, not as a slice field.
+- **May have a `cascade_from`**: a SECONDARY relationship — when the cascade-from Entity is destroyed, this Resource is also destroyed, EVEN IF its primary_owner is still alive. Used for relationships like cap-grants (see below).
 - **Type-tagged**: every Resource declares its type (`:config-dir`, `:secret`, `:file`, `:binding`, `:cap-grant`, `:token`, …)
-- **Per-action authorization**: caps are checked per-action; the owner is implicitly authorized for most actions but can be overridden via per-action `caps:` declaration
-- **Cascade on owner destroy**: when the owner Entity is destroyed, the framework's destroy-saga (§5.4) walks the Resource set and destroys each in declared order
+- **Per-action authorization**: caps are checked per-action; the primary_owner is implicitly authorized for most actions but can be overridden via per-action `caps:` declaration
+- **Cascade on owner destroy**: when the primary_owner OR any `cascade_from` Entity is destroyed, the framework's destroy-saga (§5.4) destroys this Resource
+
+**Codex r1 HIGH-4 closure (Resource ownership model)** — the earlier draft had two contradictions:
+
+1. **§3.1** said the external binding is "owned by Session" while **§3.3** said "owned by Workspace." Fix: a binding is **primary_owner: Session, cascade_from: Workspace**. Destroying the Session destroys the binding (primary lifecycle); destroying the Workspace also destroys the binding (cascade — the binding can't outlive its workspace).
+2. **Cap-grants are bidirectional** — User1 grants cap to User2. Who "owns" the grant? The grantor controls revocation; the grantee holds the cap in their identity slice for matching. Single `owner_uri` cannot model this. Fix: a cap-grant is **TWO Resources** — `GrantorView` (primary_owner: grantor, indexes "what did I grant out") and `GranteeView` (primary_owner: grantee, indexes "what caps do I hold"), linked via a shared `grant_id`. Both have `cascade_from: <the other side>` — destroying the grantor User cascades destruction of the GranteeView too (grant no longer valid); destroying the grantee User cascades destruction of the GrantorView. The cap matcher at Router step 5 reads the GranteeView only.
 
 #### Current items that ARE Resources (some embedded in Entity slices today — boundary fix)
 
-| Resource | Currently lives in | Should be | New URI shape |
-|---|---|---|---|
-| Agent's config-dir | `Behavior.Sandbox` slice on Agent Kind | `Resource` Kind, owned by Agent | `resource://agent/cc_demo/config-dir/main` |
-| Agent's API keys | `Behavior.ApiKeys` slice on Agent Kind | `Resource` Kind, owned by Agent | `resource://agent/cc_demo/api-key/anthropic` |
-| User's password hash | `Ezagent.Users` Ecto schema (NOT in slice — already a Resource shape, just not URI-addressable) | `Resource` Kind | `resource://user/admin/credential/password` |
-| Workspace's binding (Feishu chat → Session) | `external_mirror_bindings` table, slice-projection on ExternalMirror Kind | `Resource` Kind, owned by Workspace | `resource://workspace/team-alpha/binding/feishu-main` |
-| Cap-grant from User to Agent | `Ezagent.Behavior.Identity` slice on User Kind (the `:caps` MapSet) | `Resource` Kind, owned by User (the grantor) | `resource://user/admin/cap-grant/123e4567` |
-| Agent's lineage parent | `Ezagent.AgentLineage` ETS table | stays as a registry (NOT a Resource — it's a query index, not addressable state) | (no URI; registry-only) |
-| User's magic-link token | `Ezagent.Entity.MagicLinkToken` (currently its own Kind — already Resource-shaped) | `Resource` Kind | `resource://user/<owner>/magic-link/<token-id>` |
+| Resource | Currently lives in | Should be | primary_owner | cascade_from | New URI shape |
+|---|---|---|---|---|---|
+| Agent's config-dir | `Behavior.Sandbox` slice on Agent Kind | `Resource` Kind | Agent | (none) | `resource://agent/<ws>/cc_demo/config-dir/main` |
+| Agent's API keys | `Behavior.ApiKeys` slice on Agent Kind | `Resource` Kind | Agent | (none) | `resource://agent/<ws>/cc_demo/api-key/anthropic` |
+| User's password hash | `Ezagent.Users` Ecto schema (NOT in slice — already a Resource shape, just not URI-addressable) | `Resource` Kind | User | (none) | `resource://user/<ws>/admin/credential/password` |
+| External-mirror binding (Feishu chat → Session) | `external_mirror_bindings` table | `Resource` Kind | Session | Workspace | `resource://session/<ws>/<sess>/binding/feishu-main` |
+| ExternalMirror Worker | `Ezagent.Entity.ExternalMirrorWorker` (today its own Kind) | `Resource` Kind (hot) | Session | Workspace | `resource://session/<ws>/<sess>/worker/<binding-id>` |
+| Cap-grant **GrantorView** | (today: not addressable; grant lives in grantee's `:caps` MapSet) | `Resource` Kind | Grantor User | Grantee User | `resource://user/<grantor-ws>/<grantor>/cap-grant/<grant-id>` |
+| Cap-grant **GranteeView** | `Ezagent.Behavior.Identity` slice on grantee User Kind (`:caps` MapSet) | `Resource` Kind | Grantee User | Grantor User | `resource://user/<grantee-ws>/<grantee>/cap-held/<grant-id>` |
+| User's magic-link token | `Ezagent.Entity.MagicLinkToken` (currently its own Kind — already Resource-shaped) | `Resource` Kind | User | (none) | `resource://user/<ws>/<owner>/magic-link/<token-id>` |
+| Agent's lineage parent | `Ezagent.AgentLineage` ETS table | stays as a registry (NOT a Resource — it's a query index, not addressable state) | — | — | (no URI; registry-only) |
 
 This boundary fix is the largest single change a plugin-author actually sees in the migration. Today, "config-dir" is a slice field; tomorrow, it's a Resource with its own URI, its own lifecycle, its own cap shape. The plugin author writes the Resource Kind once; cascade-on-destroy comes free from the framework.
 
@@ -695,35 +730,57 @@ def handle_send(%{message: %Ezagent.Message{} = msg}, ctx) do
       {:ok, %{stored: false, reason: :no_recipients}, []}
 
     recipients ->
+      # Codex r1 HIGH-1 closure: use :effect_returning to get the stamped message back.
+      # Downstream effects reference it via {:ref, :stored_msg, [...]}.
+      # Effects fire in the 6 phases declared in §4.4:
+      #   Phase 1 (:set): slice updates
+      #   Phase 2 (:emit): EventLog appends
+      #   Phase 3 (:effect_returning + :effect): side effects (Repo write happens here)
+      #   Phase 4 (:dispatch): cross-Kind fan-out
+      #   Phase 5 (:notify): PubSub broadcasts
+      #   Phase 6 (:terminate/:saga): post-reply (n/a here)
       effects = [
-        {:effect, &Ezagent.MessageStore.write/2, [msg, session_uri]},
-        {:notify, "esr:session:#{URI.to_string(session_uri)}:events",
-                  {:chat_message, session_uri, msg}},
-        {:set, :last_message_id, msg.id},
-        {:set, :last_message, msg},
-        {:set, :send_cursor, ctx.read.(:send_cursor, 0) + 1},
-        {:emit, :message_sent, %{message: msg, session_uri: session_uri,
+        # Phase 3: Repo write (returning stamped msg for downstream refs)
+        {:effect_returning, &Ezagent.MessageStore.write/2, [msg, session_uri],
+         bind_as: :stored_msg},
+
+        # Phase 1: slice updates — reference the stored stamped msg via {:ref, ...}
+        {:set, :last_message_id, {:ref, :stored_msg, [:id]}},
+        {:set, :last_message,    {:ref, :stored_msg}},
+        {:set, :send_cursor,     ctx.read.(:send_cursor, 0) + 1},
+
+        # Phase 2: EventLog append
+        {:emit, :message_sent, %{message: {:ref, :stored_msg}, session_uri: session_uri,
                                   recipient_count: length(recipients)}}
-      ] ++ Enum.map(recipients, &recipient_dispatch_effect(&1, msg, session_uri))
+      ] ++
+      # Phase 4: per-recipient dispatch (uses stored msg via {:ref, ...})
+      Enum.map(recipients, &recipient_dispatch_effect(&1, session_uri)) ++
+      [
+        # Phase 5: notify session subscribers AFTER dispatches enqueued
+        {:notify, "esr:session:#{URI.to_string(session_uri)}:events",
+                  {:chat_message, session_uri, {:ref, :stored_msg}}}
+      ]
 
       {:ok, %{stored: true}, effects}
   end
 end
 
-defp recipient_dispatch_effect(%URI{scheme: "session"} = recipient, msg, _session) do
+defp recipient_dispatch_effect(%URI{scheme: "session"} = recipient, _session) do
   {:dispatch, %Ezagent.Cmd{target: recipient, action: :receive_cross_session,
-                            args: %{message: msg}, ctx: %{...}}}
+                            args: %{message: {:ref, :stored_msg}}, ctx: %{...}}}
 end
 
-defp recipient_dispatch_effect(recipient, msg, session_uri) do
+defp recipient_dispatch_effect(recipient, session_uri) do
   {:dispatch, %Ezagent.Cmd{target: recipient, action: :receive,
-                            args: %{message: msg},
+                            args: %{message: {:ref, :stored_msg}},
                             ctx: %{caller: session_uri, reply: :ignore,
-                                   command_uuid: "chat:#{msg.id}:#{URI.to_string(recipient)}"}}}
+                                   command_uuid: "chat:#{URI.to_string(recipient)}"}}}
 end
 ```
 
-**LOC reduction**: ~120 → ~35 (71% reduction). The `notify_dropped_mentions` side path moves to `Routing.Resolver.resolve`'s return (it knows which mentions were dropped).
+**LOC reduction**: ~120 → ~45 (62% reduction; slightly larger than r1 estimate because `:effect_returning` + `{:ref, ...}` references are a few more chars but fully explicit). The `notify_dropped_mentions` side path moves to `Routing.Resolver.resolve`'s return (it knows which mentions were dropped).
+
+**Phase ordering visible in this example**: the runtime applies effects by phase, not by source-line order — but the source-line grouping makes intent obvious. The `command_uuid` in dispatch effects no longer needs the message id (it's derived from the stored msg's id by the framework before substitution).
 
 ### §4.3 — Capability declaration
 
@@ -740,39 +797,113 @@ action :grant_cap,
   modes: [:call]
 ```
 
-The `caps:` argument supports:
+**Full `caps:` grammar** (codex r1 HIGH-7 closure — preserves all 5 axes today's `%Ezagent.Capability{}` struct supports — `kind`, `behavior`, `action`, `instance`, `workspace_uri` — plus the scope tuples):
 
-- `[:atom]` — caller must hold a cap with `action: :atom` against this Behavior on this target
-- `[{:atom, scope: :self}]` — caller's URI = target URI (self-grant scope)
-- `[{:atom, scope: :admin}]` — caller is admin / has cross-workspace cap
-- `[{:atom, scope: {:within_session, :ctx_session}}]` — bounded by session context (current cap-vis action-axis behavior)
+```elixir
+caps: [
+  # Form 1: bare atom — shorthand for {action: :send, ...defaults...}
+  :send,
 
-The 4 historic cap-vis "what about action-axis caps with `{:within_session, S}` shape" REJECT rounds (SPEC #423) collapse to: the `caps:` argument supports the shape. The framework matcher knows how to apply it.
+  # Form 2: tuple with explicit axes
+  {:send, kind: :session, action: :send, instance: :self_target, workspace_uri: :target_workspace},
+
+  # Form 3: with scope tuple (within-session, within-workspace, spawned-by)
+  {:read, scope: {:within_session, :ctx_session}},
+  {:cross_workspace_grant, scope: {:within_workspace, :any}},
+  {:terminate, scope: {:spawned_by, :ctx_principal}},
+
+  # Form 4: kind axis wildcard — for multi-Kind Behaviors like Chat
+  {:receive, kind: :any},
+
+  # Form 5: workspace_scoped? opt-out (per-action)
+  {:admin_grant, kind: :user, workspace_scoped?: false},
+]
+```
+
+The `caps:` argument accepts a list of items where each item is either:
+
+- An atom (`:send`) — desugars to `{:send, []}` with framework defaults
+- A tuple `{action_atom, opts_keyword}` where `opts_keyword` may contain:
+
+| Key | Values | Default | Notes |
+|---|---|---|---|
+| `kind` | atom (e.g. `:user`, `:session`) or `:any` | the Kind this Behavior is attached to | Wildcard `:any` for cross-Kind Behaviors like Chat (today's `Capability.cap(:any, ...)`) |
+| `behavior` | module atom | `__MODULE__` (current Behavior) | Rarely overridden |
+| `action` | atom or `:any` | the action this `caps:` is declared on | `:any` means "any action of this Behavior matches" |
+| `instance` | `:self_target` / `:any` / specific URI | `:self_target` (dispatch's target URI) | Use `:any` for class-wide caps |
+| `workspace_uri` | URI / `:target_workspace` / `:any` | `:target_workspace` (derived from target) | `:any` for cross-workspace caps |
+| `scope` | `{:within_session, X}` / `{:within_workspace, X}` / `{:spawned_by, X}` | (none) | Where `X` is a literal URI or one of the substitution tokens `:ctx_session`, `:ctx_principal`, `:ctx_workspace` |
+| `workspace_scoped?` | `true` / `false` | `true` | When `false`, step 5.6 cross-workspace iso is bypassed for this action (today's `Behavior.workspace_scoped?/0` opt-out) |
+
+**Substitution semantics**: tokens like `:self_target` / `:target_workspace` / `:ctx_session` are evaluated at dispatch time against the actual `%Cmd{}` and `ctx`. They are NOT runtime values held by the plugin; the macro emits the substitution as a struct field at compile time and the Router substitutes at step 5.
+
+**Cap-vis SPEC #423 r4** (action-axis caps with `{:within_session, S}` shape) is fully expressible:
+
+```elixir
+caps: [{:read_messages, action: :any, scope: {:within_session, :ctx_session}}]
+```
+
+**Multi-Kind Behaviors** (Chat is attached to Session + User + Agent — three Kinds) use `kind: :any` to declare a single cap shape that matches against whichever Kind the dispatch lands on:
+
+```elixir
+defmodule Ezagent.Behavior.Chat do
+  use Ezagent.Behavior
+
+  action :receive,
+    args: %{message: Ezagent.Message},
+    returns: :ok,
+    caps: [{:receive, kind: :any}],   # matches any Kind Chat is attached to
+    modes: [:cast]
+  # ...
+end
+```
+
+Today's `IdentityAdmin` `workspace_scoped?: false` (the cross-workspace admin Behavior) is expressed as:
+
+```elixir
+action :grant_user_in_other_workspace,
+  args: ...,
+  caps: [{:cross_workspace_grant, kind: :user, workspace_scoped?: false}],
+  ...
+```
 
 ### §4.4 — Effects vocabulary
 
-Effects are the **only** way a handler causes change in the world. The complete grammar:
+Effects are the **only** way a handler causes change in the world (with one carve-out for inline idempotent Repo writes — see §4.5). The complete grammar:
 
 | Effect | Meaning | Example |
 |---|---|---|
 | `{:set, key, value}` | Update framework-managed state for this Kind instance | `{:set, :last_message_id, msg.id}` |
 | `{:emit, event_type, payload}` | Append an event to EventLog (audit + replay) | `{:emit, :message_sent, %{...}}` |
 | `{:dispatch, %Cmd{}}` | Fan out to another Kind via Router (async — cast semantics) | `{:dispatch, %Cmd{target: rcpt, action: :receive, ...}}` |
-| `{:dispatch_call, %Cmd{}, on_result: fn}` | Synchronous cross-Kind dispatch with continuation (rare; saga preferred) | (used by `:join` ack pattern) |
 | `{:notify, topic, payload}` | Phoenix.PubSub broadcast (UI / external) | `{:notify, "esr:session:…:events", msg}` |
-| `{:effect, mfa_or_fn, args}` | Side effect — file/IO/external API call; framework wraps with audit + (optional) retry | `{:effect, &MessageStore.write/2, [msg, session_uri]}` |
+| `{:effect, mfa_or_fn, args}` | Side effect — file/IO/external API call; framework wraps with audit + (optional) retry; **return value discarded** | `{:effect, &Ezagent.AgentBridge.deliver/2, [user_uri, msg]}` |
+| `{:effect_returning, mfa_or_fn, args, bind_as: name}` | Same as `:effect` but binds the return value into the handler's continuation map under `name`; downstream effects can reference it as `{:ref, name, path}` (codex r1 HIGH-1 closure) | `{:effect_returning, &MessageStore.write/2, [msg, session_uri], bind_as: :stored_msg}` |
 | `{:terminate, :self \| uri}` | Schedule deferred Kind-termination (post-reply) — framework handles cascade | `{:terminate, :self}` (Lifecycle.destroy) |
 | `{:saga, %Ezagent.Saga{}}` | Hand the rest of the cascade to SagaRunner | (see §5.4) |
-| `{:halt, reason}` | Abort: framework rolls back already-applied effects (state changes), discards pending effects, returns `{:error, reason}` | `{:halt, :preflight_failed}` |
+| `{:halt, reason}` | Abort: framework rolls back already-applied state effects, discards pending effects, returns `{:error, reason}` | `{:halt, :preflight_failed}` |
 
-**Effect ordering semantics** (proposed; OQ-3):
+**HIGH-1 closure**: an earlier draft used a bare `{:effect, ...}` for `MessageStore.write` but the legacy handler relied on its **return value** (the stamped message) for the subsequent broadcast/dispatch effects. A fire-and-forget effect can't express that. Two resolutions, both adopted:
 
-1. `{:set, …}` effects are applied **in declared order**, atomically as a single state update — handler's view of `ctx.read` does NOT include in-flight set effects (it reads the pre-handler snapshot)
-2. `{:emit, …}` events are appended to EventLog **in declared order**, in one transaction with the state update
-3. `{:notify, …}` broadcasts and `{:effect, fn, args}` side-effects fire **after** the EventLog + state transaction commits
-4. `{:dispatch, …}` are queued for the Router (Router applies them sequentially in declared order, but each is async cast — no return-value chaining)
-5. `{:terminate, …}` and `{:saga, …}` fire after the synchronous reply has been delivered (today's `Task.start` 20ms-sleep pattern, but framework-owned)
-6. `{:halt, reason}` short-circuits — earlier `:set`/`:emit` effects are **not** committed (the framework wraps the whole handler return in a transaction); the handler appears never to have run from a state-observer's perspective.
+1. **`:effect_returning`** is the structured way: the handler declares "I need the return value of this Repo write to populate downstream effects"; the framework executes the call, binds the result, and substitutes `{:ref, :stored_msg, [:id]}` references into downstream effects before applying them.
+2. **The inline Repo carve-out** (§4.5) lets a handler call `Ezagent.MessageStore.write/2` directly when the call is idempotent + transactional on its own. This is what the `UserCredentials.set_password` example assumes.
+
+The Chat.send example is rewritten (§4.2 Example 3) to use `:effect_returning` for clarity; the example handler then declares all downstream effects against `{:ref, :stored_msg, ...}`.
+
+**Effect ordering semantics** (normative, codex r1 LOW-2 closure):
+
+Effects fire in **declared order within each phase**. The 6 phases run sequentially:
+
+1. **Phase 1 — `:set`**: state updates applied as a single Ecto transaction with the EventLog appends (handler's `ctx.read` reads the pre-handler snapshot; in-flight `:set` effects are not visible to subsequent `ctx.read` calls within the same handler)
+2. **Phase 2 — `:emit`**: events appended to EventLog in declared order, **in the same transaction as phase 1**
+3. **Phase 3 — `:effect_returning`** then **`:effect`**: side effects fire after the phase 1+2 transaction commits, in declared order. `:effect_returning` results are bound to the continuation map before subsequent effects are evaluated
+4. **Phase 4 — `:dispatch`**: cross-Kind dispatches enqueued in declared order (each is async cast — Router fans them out concurrently; ordering between dispatches is best-effort)
+5. **Phase 5 — `:notify`**: Phoenix.PubSub broadcasts fire in declared order (LV / external subscribers see them AFTER the dispatched Kinds have started but BEFORE they've necessarily completed — by design: notify is the "something happened on me" signal, dispatch is the actual fan-out)
+6. **Phase 6 — `:terminate` / `:saga`**: fire after the synchronous reply has been delivered (today's `Task.start` 20ms-sleep pattern, but framework-owned)
+
+`{:halt, reason}` short-circuits phases 1+2 — already-declared `:set`/`:emit` effects are **not committed** (the transaction rolls back); the handler appears never to have run from a state-observer's perspective. Phases 3-6 effects are never reached.
+
+**HIGH-5 closure (saga compensation honesty)**: phase 6's saga can **only compensate steps that are themselves reversible**. Irreversible side effects (sent PubSub broadcasts in phase 5, fired external API calls in phase 3, dispatched messages in phase 4 already consumed by another Kind) are **not** rolled back — the saga marks them as "irreversibly happened" in the EventLog and proceeds to compensate what it can. The destroy cascade is **best-effort partial restore**, NOT true rollback. See §5.4 for the explicit compensation contract.
 
 ### §4.5 — What's gone vs current contract
 
@@ -790,9 +921,37 @@ Effects are the **only** way a handler causes change in the world. The complete 
 | `workspace_scoped?/0` | Per-Behavior boolean | `workspace_scoped:` macro arg on Kind level (default `true`) |
 | `post_init/2` / `handle_continue/3` / `on_ready/2` / `terminate/3` | Per-Behavior optional callbacks | Per-Kind lifecycle hooks (declared via `lifecycle/2` macro; most Kinds need none) |
 | `reconcile_after_load/2` | Per-Behavior callback | Per-Kind rebuild from EventLog (framework) + optional `on_rebuild/1` Kind callback |
-| `Ezagent.Invocation.dispatch/1` from inside `invoke/4` | Allowed (used by Chat) | Forbidden — emit `{:dispatch, %Cmd{}}` effect |
-| `Phoenix.PubSub.broadcast/3` from inside `invoke/4` | Allowed | Forbidden — emit `{:notify, topic, payload}` effect |
-| Direct `MessageStore.write` etc | Allowed | Forbidden — emit `{:effect, &fn/2, args}` |
+| `Ezagent.Invocation.dispatch/1` from inside `invoke/4` | Allowed (used by Chat) | **Forbidden** — emit `{:dispatch, %Cmd{}}` effect |
+| `Phoenix.PubSub.broadcast/3` from inside `invoke/4` | Allowed | **Forbidden** — emit `{:notify, topic, payload}` effect |
+| `MessageStore.write` etc — Repo-backed query modules | Allowed | **Conditionally allowed inline** (see §4.5.1 below); otherwise use `{:effect_returning, ...}` |
+
+### §4.5.1 — Allowed direct calls vs forbidden calls (codex r1 HIGH-6 closure)
+
+**The line** between "plugin code can call this inline" and "plugin code must go through effects":
+
+| Call shape | Allowed inline in handler? | Why |
+|---|---|---|
+| `ctx.read.(:key)` — framework state | ✓ Always | This IS the read API |
+| Pure functions in your own domain modules | ✓ Always | E.g. `Routing.Resolver.resolve/4` — pure |
+| Registry-style lookups: `AgentLineage.lookup`, `WorkspaceRegistry.lookup` | ✓ Always | These are read-only ETS reads; same idempotency profile as `ctx.read` |
+| Repo-backed query modules with **idempotent** writes (`Ezagent.MessageStore.write/2` — `ON CONFLICT DO NOTHING`; `Ezagent.Users.set_password/2` — full row replacement) | ✓ Allowed | Each call is its own transaction; retry-safe; failure surfaces as `{:error, _}` the handler can return |
+| Repo-backed writes that are **NOT** idempotent | ✗ Forbidden | Must go via `{:effect_returning, fn, args, bind_as: ...}` so framework can wrap retry + audit |
+| Cross-Kind dispatch via `Ezagent.Invocation.dispatch/1` | ✗ Forbidden | Always via `{:dispatch, %Cmd{}}` effect |
+| Phoenix.PubSub.broadcast | ✗ Forbidden | Always via `{:notify, topic, payload}` effect |
+| File system writes, external HTTP, OS-level side effects | ✗ Forbidden | Always via `{:effect, mfa, args}` — framework wraps retry + audit |
+| Reading any other Kind's state via `Kind.get_slice/2` | ✗ Forbidden | Cross-Kind reads go via `ctx.read` (Kind's `read_graph` declares them) |
+
+**Why this carve-out**: forcing every Ecto write through `{:effect_returning, ...}` adds a syntactic burden for the common case (rotate a password, write a chat message) without buying replay-equivalence (the Ecto write is the source of truth; replay rebuilds slice state, NOT the Ecto rows). The carve-out is a **finite, enumerable list** of allowed Repo-backed query modules; adding a new one to the list is a SPEC change. The grep-gate in §7.4 enforces by name — any Repo module not in the allow-list trips the gate.
+
+**Allow-list** (initial; growable via SPEC):
+
+- `Ezagent.Users.*` — User Ecto schema (rare writes — password rotation, profile update)
+- `Ezagent.MessageStore.write/2` — message persistence (idempotent on `(id, session_uri)`)
+- `Ezagent.AgentLineage.*` — read-only ETS today; if it becomes write-backed, moves to forbidden
+- `Ezagent.WorkspaceRegistry.lookup/1` — read-only ETS
+- `Ezagent.CapabilityRegistry.*` — read paths only
+
+Any call to `Ezagent.Repo` directly is **forbidden** in plugin code — wrap it in a domain query module that gets vetted into the allow-list.
 
 ---
 
@@ -821,13 +980,28 @@ Appends events emitted by handlers via `{:emit, …}` effects. Wraps the existin
 
 ### §5.2 — `Ezagent.SnapshotStore`
 
-Manages per-Kind state snapshots. Framework decides snapshot policy globally per composition pattern — plugin authors NEVER configure this:
+Manages per-Kind state snapshots. Framework decides snapshot policy by composition pattern (with one sub-classification for Resource) — plugin authors pick the pattern but **never** the policy directly:
 
 | Pattern | Default policy | Rationale |
 |---|---|---|
 | Session | `every_n_events: 100` + `on_archive` | Sessions have high event volume; periodic snapshots bound replay cost |
 | Entity | `on_change` (sync) | Entities mutate rarely; durability per-mutation is cheap |
-| Resource | `on_change` (sync) | Same as Entity; per-action mutations are infrequent |
+| Resource (`:cold_resource`) — default | `on_change` (sync) | Per-action mutations are infrequent; durability per-mutation is cheap |
+| Resource (`:hot_resource`) | `:ephemeral` (no persistence) + opt-in `{:periodic, ms}` | High-volume Resources whose state is telemetry/cursors/counters — losing it on restart is by-design |
+
+**HIGH-3 closure**: an earlier draft made Resource = `on_change` uniformly, which would have 10x'd write rate on `Ezagent.Entity.ExternalMirrorWorker` (currently `:ephemeral` because publish cursor + count are pure telemetry; see `apps/ezagent_domain_external_mirror/lib/ezagent/entity/external_mirror_worker.ex:50`). The fix is the `:hot_resource` sub-classification — declared on the Kind via `pattern: {:resource, :hot}` (cold is just `pattern: :resource`). The two-axis pattern keeps "framework decides policy" intact while preserving the existing Worker's correctness.
+
+The Kind macro accepts:
+
+```elixir
+use Ezagent.Kind, pattern: :entity                    # default Entity → on_change
+use Ezagent.Kind, pattern: :resource                  # default cold Resource → on_change
+use Ezagent.Kind, pattern: {:resource, :hot}          # hot Resource → ephemeral
+use Ezagent.Kind, pattern: {:resource, :hot, periodic: 5_000}  # opt-in periodic
+use Ezagent.Kind, pattern: :session                   # Session → every_n_events
+```
+
+**Plugin authors do NOT pick `on_change` directly** — they pick the pattern, framework picks the policy. The escape hatch for genuinely-pattern-misfit Kinds is `pattern: {:custom, hooks: [...], snapshot: :on_change}` — but using it is a SPEC change (the Kind moves out of the standard 3 patterns + gets explicit review).
 
 Each pattern's default is **a single decision made once in `Ezagent.SnapshotStore`**, not 22 per-Behavior `persistence/0` declarations.
 
@@ -877,7 +1051,28 @@ defstruct steps: [], compensations: [], ctx: %{}, name: nil, command_uuid: nil
 
 **Saga compensation declaration** (OQ-4): inline step pairs `(forward, compensate)`. Framework runs reverse-compensation on failure. Per-step `command_uuid = "saga:<saga_name>:step:<step_name>"` gives idempotent retry-on-crash semantics.
 
-**LOC**: ~200 (the existing `EzagentDomainChat.create_session/3` hand-rolled `try/rescue` cleanup pattern, lifted into a reusable primitive).
+**Compensation honesty (codex r1 HIGH-5 closure)**: compensation is **best-effort partial restore**, NOT true rollback. The SagaRunner contract is:
+
+| Step type | Compensation possible? | What "compensation" means |
+|---|---|---|
+| Pure-state mutation (slice change) | ✓ Fully reversible | Snapshot the slice before forward; on rollback, restore it |
+| `:emit` event (audit-only) | ✓ Reversible by appending a compensating event (not deleting) | Append `:compensated_<event>` event; downstream consumers see both |
+| `:dispatch` cross-Kind (already cast to another Kind) | ✗ NOT reversible | The dispatched Kind may have already acted; saga marks "irreversibly happened" in EventLog |
+| `:notify` PubSub broadcast (already received by subscribers) | ✗ NOT reversible | Same — subscribers already acted; saga marks irreversibly |
+| `:effect` external IO (file write, HTTP call) | ✗ Generally NOT reversible | Compensation function can attempt a counter-action (DELETE the file, POST a "rollback"); but the original effect is logged as "happened" |
+| `:terminate` (Kind already terminated) | ✗ NOT reversible in the same call | A re-spawn after termination is a SEPARATE Kind instance — caps/state from the original are LOST |
+
+**The honest destroy-cascade contract**: when destroy User → revoke caps → destroy sessions → destroy agents → destroy resources → terminate user — if step "destroy agents" fails AFTER "destroy sessions" succeeded:
+
+1. The saga's reverse-compensation will attempt to **resurrect sessions** by re-spawning them from their pre-destroy snapshot
+2. BUT any in-flight messages that arrived from external channels (Feishu) during the destroy window are **lost** — they were dropped because the Session was gone
+3. AND the resurrected Session is a new GenServer process; subscribers (LV chat stream, ExternalMirror Worker) need to re-subscribe
+4. The saga marks the resurrection as `{:partial_restore, sessions_resurrected: [...], messages_lost: <count>}` in the EventLog
+5. An operator-repair marker is written: `{:saga_incomplete_restore, saga: "destroy_user:#{uri}", step: :destroy_agents, recoverable: false}` — visible in `/admin/saga_history` LV
+
+**This solves SPEC #440** by being honest about what's possible, NOT by claiming false rollback. The "User is in an inconsistent state" failure mode that codex flagged on #440 r4 becomes a **declared, observable, repair-tracked** state instead of a silent inconsistency. Operators have a UI to see "this destroy was 90% successful; 1 message was lost; here's the repair handle."
+
+**LOC**: ~200 (the existing `EzagentDomainChat.create_session/3` hand-rolled `try/rescue` cleanup pattern, lifted into a reusable primitive) + ~50 LOC for the partial-restore marker handling.
 
 ### §5.5 — `Ezagent.EventSubscriber`
 
@@ -954,9 +1149,14 @@ Roughly ~5,000 LOC of framework code today. The new design is **~2,500 LOC of fr
 #### Phase 1 — Framework primitives (no plugin migration yet)
 
 - Build `Ezagent.Router`, `Ezagent.Behavior` (new macro), `Ezagent.Kind` (new macro), `Ezagent.Kind.Host`, `Ezagent.EventLog`, `Ezagent.SnapshotStore`, `Ezagent.Kind.StateRebuilder`, `Ezagent.SagaRunner`, `Ezagent.EventSubscriber`, `Ezagent.Caps.Engine`
-- **Legacy adapter** — old `Behavior.invoke/4`–shaped Behaviors continue to work via a `LegacyBehaviorAdapter` that wraps `invoke/4` returns into the new effect shape (every `{:ok, new_slice, result}` is converted to `{:ok, result, [{:set, key, value}, ...]}` by diffing old vs new slice). This adapter is **deletion-tracked from day 1** — it has an issue tagged `delete-by-end-of-phase-3`, a deprecation warning on every load, and a `mix ezagent.audit.legacy_adapter` task that lists remaining call sites.
+- **`LegacyBehaviorAdapter`** — old `Behavior.invoke/4`–shaped Behaviors continue to work via an adapter that wraps `invoke/4` returns into the new effect shape. The adapter:
+  - Diffs old vs new slice via `Map.merge` and emits `{:set, key, value}` effects for each changed top-level key
+  - Wraps the legacy handler's already-executed side-effects (PubSub broadcasts, cross-Kind dispatches, MessageStore writes) in a `{:legacy_already_executed, [<list of side-effect descriptors>]}` audit record — visible in EventLog but NOT re-executable
+  - **Explicitly labeled NON-REPLAY-EQUIVALENT** (codex r1 HIGH-2 closure): the adapter preserves runtime dispatch behavior (same reply, same PubSub broadcasts at the same time) but does NOT preserve replay semantics. EventLog rows for adapter-mode Behaviors cannot be folded into state via `apply_event/2` because the legacy handler's side effects happened OUTSIDE the effect grammar. The StateRebuilder treats adapter-mode events as "snapshot-only" — it relies on the snapshot, not event fold, for those Behaviors. After Phase 3 (adapter deleted, all Behaviors native), full replay-equivalence holds.
+  - **Deletion-tracked from day 1** — issue tagged `delete-by-end-of-phase-3`, deprecation warning on every load, `mix ezagent.audit.legacy_adapter` task lists remaining call sites
+  - Estimated ~300-400 LOC (added to the Phase 1 LOC budget; was missing from the §5.8 table)
 - All current tests pass (legacy plugins compile + run via adapter)
-- Estimated: **~3 weeks** (framework primitives are the bulk of new code; not all bugs surface until plugin migration starts)
+- Estimated: **~4-5 weeks** (codex r1 MED-4 closure — raised from 3wk; the adapter is non-trivial and the framework primitives reveal latent design issues during build, ~1wk for design closure on OQs 1-8)
 
 #### Phase 2 — Per-Domain plugin migrations
 
@@ -1015,26 +1215,29 @@ For each current Behavior the migrating plugin author:
 12. **Convert `post_init/2` / `handle_continue/3` / `on_ready/2` / `terminate/3`** → Kind-level lifecycle hooks (if any survive; most don't)
 13. Re-run domain test suite; ensure migration parity test §7.3 passes
 
-### §6.3 — Estimated effort with confidence bounds
+### §6.3 — Estimated effort with confidence bounds (codex r1 MED-4 closure — REVISED UPWARD)
 
-| Phase | Lower bound | Most likely | Upper bound |
+| Phase | Lower bound | **Most likely (REVISED)** | Upper bound |
 |---|---|---|---|
-| Phase 1 (framework primitives) | 2 wk | **3 wk** | 5 wk |
-| Phase 2 (per-domain migrations, parallelizable) | 3 wk | **4–6 wk** | 9 wk |
-| Phase 3 (remove adapter) | 2 days | **3 days** | 1 wk |
-| Phase 4 (cleanup) | 2 days | **4 days** | 1 wk |
-| **Total wall-time** | **6 wk** | **8–10 wk** | **16 wk** |
+| Phase 1 (framework primitives + LegacyBehaviorAdapter) | 3 wk | **4–5 wk** | 7 wk |
+| Phase 2 (per-domain migrations, partially parallelizable) | 6 wk | **8–10 wk** | 14 wk |
+| Phase 3 (remove adapter) | 3 days | **1 wk** | 2 wk |
+| Phase 4 (cleanup) | 3 days | **1 wk** | 2 wk |
+| **Total wall-time** | **10 wk** | **14–17 wk** | **25 wk** |
 
-**Comparison to past migrations**:
+**Why the upward revision** (codex r1 MED-4 made the prior 8-10 wk look optimistic):
+
+- Phase 1's prior 3wk estimate omitted ~300-400 LOC `LegacyBehaviorAdapter` and the design closure work for OQ-1 through OQ-8 (each OQ resolution ripples through the framework primitives — e.g. OQ-5's flat-namespace decision affects Router lookup keys, Behavior macro collision check, and Caps.Engine cap shape simultaneously)
+- Phase 2's prior 4-6 wk assumed 2 PR/wk review cadence. Historical data on ezagent: PR-G AgentBridge alone took 3 weeks for ONE plugin extraction. ExternalMirror domain extraction (3 Behaviors + 1 Kind + 2-tier supervisor) took 5 weeks. Phase 2 PR 4 (`domain_chat` — Chat + Template + OrchestratorAdmin + Publisher.SessionImpl, the largest at ~3,800 LOC of Behavior code) realistically takes 2-3 weeks alone. Phase 2 PR 5 (`domain_external_mirror` — Worker has two-tier supervisor + post_init Resource lifecycle) realistically takes 3-4 weeks alone. Sequential sum is well over 6 weeks; parallelism caps at 2 in-flight PRs due to review bandwidth (codex round 1-2 per PR + Allen's bandwidth + ZH lockstep)
+
+**Comparison to past migrations** (calibration data, not just floor):
 - PR-G AgentBridge extraction: ~3 weeks for **one** plugin extraction
-- PR-EM external_mirror domain extraction: ~5 weeks for **one** domain
-- Phase 8b session-LV redesign: ~4 weeks for **one** subsystem
+- PR-EM external_mirror domain extraction: ~5 weeks for **one** domain (3 Behaviors + 2-tier supervisor + boot reconciler)
+- Phase 8b session-LV redesign: ~4 weeks for **one** subsystem (LV-side only, no Behavior contract change)
 
-Migrating 22 Behaviors + 13 Kinds **and** changing the contract for ALL of them is roughly 3-4x bigger than any single past migration, but **70% of the per-Behavior work is mechanical** (the retrofit checklist §6.2 is unambiguous); the irreducible-novel work is the Phase 1 framework build + the Resource boundary fix (Phase 2 PR 8).
+**The 14-17 wk most-likely band** places "ezagent fully on new contract" at **mid-September to early October 2026** (14-17 weeks from 2026-05-28). The 25-week upper bound (end of November 2026) accounts for: any HIGH finding in a future codex round triggering a structural rework, ExternalMirror Worker migration revealing deeper Resource-pattern issues (HIGH-3 already surfaced one), Allen's bandwidth being limited to 1 PR/wk during certain stretches.
 
-Honest upper bound at 16 weeks accounts for: (a) framework primitives revealing latent design issues during migration (estimate +50%), (b) per-domain plugin migrations surfacing edge cases not visible from contract alone (e.g. ExternalMirror's two-tier supervisor's interaction with `{:terminate, :self}`), (c) Allen's review bandwidth realistically caps to 1 Phase 2 PR per week.
-
-Realistic upper bound for "ezagent is fully on new contract" is end of August 2026 (16 weeks from 2026-05-28).
+**Allen's call on whether to accept this**: the original 8-10wk in r1 was aspirational; the 14-17wk in r2 is calibrated against actual past migration velocity. If 14-17wk is unacceptable, the only honest paths are (a) accept a smaller scope (don't migrate all 22 Behaviors — pick a subset), or (b) bring in additional contributor capacity. The SPEC as designed does NOT compress further without quality compromise.
 
 ---
 
@@ -1063,21 +1266,40 @@ Invariants ALL plugins must satisfy — checked at boot + in CI:
 | Cap-required actions reject when cap missing | property test per Behavior |
 | All effects are valid grammar | runtime invariant — effect-validator at Router step 10 |
 
-### §7.3 — Migration parity tests
+### §7.3 — Migration parity tests (codex r1 MED-3 closure — split into 2 parity levels)
 
-For each migrated Behavior: side-by-side **old vs new** under fixture inputs.
+For each migrated Behavior, the parity test suite has **two distinct levels**:
 
-The challenge (§7.4's "what does 'same outcome' mean"): the old Behavior emitted no events; the new one does. The parity test compares:
+#### Level 1 — Dispatch parity (legacy adapter mode)
+
+Validates that running an unmodified `invoke/4`-shaped Behavior through `LegacyBehaviorAdapter` produces the **same dispatch-visible outcome** as running it natively (pre-migration). Compares:
 
 - **Same input** (the `%Cmd{}` envelope under old `Invocation.dispatch/1` shape vs new `Router.dispatch/1` shape — both shapes wire-compatible)
 - **Same final state** (snapshot row after dispatch — content-equal, modulo `inserted_at` jitter)
 - **Same observable side effects** (PubSub broadcasts: same topic, same payload — by capturing both old & new via a probe subscriber)
 - **Same dispatch reply** (`{:ok, result}` shape-equal)
 
-What the parity test does NOT compare:
-- EventLog row count (old: 1 audit row; new: 1 audit row + N emitted events — by design)
-- Snapshot frequency (old: per `:on_change`; new: per pattern — by design)
-- Telemetry events (renamed)
+Dispatch parity is the gate for each Phase 2 PR — the migration is allowed to land only if dispatch parity holds for every Behavior in that PR.
+
+#### Level 2 — Replay parity (post-migration native Behaviors only)
+
+Validates that, for a Behavior fully migrated to the new `handle_<action>/2` shape, **rebuilding state from EventLog yields the same slice as running the dispatch live**. This is a STRONGER claim than dispatch parity, and is only meaningful for native-shape Behaviors (not adapter-mode).
+
+Compares:
+- Start from empty snapshot
+- Run N dispatches
+- Capture in-memory slice state
+- Kill the Kind process
+- Re-spawn — StateRebuilder reads empty snapshot, folds events from EventLog via `apply_event/2`
+- Assert: re-spawned slice = in-memory slice (modulo non-determinism markers like timestamps)
+
+**Replay parity does NOT apply to LegacyBehaviorAdapter Behaviors** — they are documented as non-replay-equivalent (§6.1 Phase 1). The adapter wraps legacy side effects (PubSub broadcasts, cross-Kind dispatches, Repo writes) that happened OUTSIDE the effect grammar; folding events back through `apply_event/2` cannot reconstruct them. StateRebuilder treats adapter-mode Behaviors as "snapshot-only" — relies on the snapshot, NOT event fold, for those. Replay parity becomes meaningful AFTER Phase 3 when all Behaviors are native.
+
+#### What the parity tests do NOT compare
+
+- **EventLog row count** (intentional incompatibility — new design emits more events; this is by design, not a defect. Subscribers to `EventLog.stream_by_workspace/2` and EventSubscriber consumers WILL see new event types post-migration; the migration plan documents this in CHANGELOG entries per Phase 2 PR)
+- **Snapshot frequency** (old: per `:on_change`; new: per pattern — by design, see HIGH-3 closure)
+- **Telemetry events** (renamed under new structure — `[:ezagent, :invoke, :stop]` becomes `[:ezagent, :router, :dispatch_stop]`)
 
 ### §7.4 — Invariant test for "done"
 
