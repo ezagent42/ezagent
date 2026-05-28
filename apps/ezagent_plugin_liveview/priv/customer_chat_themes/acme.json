@@ -1,0 +1,7 @@
+{
+  "title": "Acme Support",
+  "primary_color": "#e11d48",
+  "welcome_message": "Hi! I'm the Acme assistant. Ask me about warranties, orders, or returns.",
+  "placeholder": "Type your message…",
+  "logo_url": null
+}
