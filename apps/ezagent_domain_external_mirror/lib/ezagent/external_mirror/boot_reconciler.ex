@@ -73,6 +73,37 @@ defmodule Ezagent.ExternalMirror.BootReconciler do
   exits without touching any Kind. Each Session Kind's own
   `init_slice/1` is the primary rehydration path; this is the
   multi-node / cold-start safety net.
+
+  ## Phase 4 Item 2 evaluation (2026-05-28): no delegation to `Kind.StateRebuilder`
+
+  A Phase 2-d r3 subagent report suggested refactoring this module
+  to delegate to `Ezagent.Kind.StateRebuilder.rebuild_all/1`. After
+  rereading both modules' contracts (Phase 4 cleanup), the two are
+  structurally different concerns and delegation would break that
+  separation:
+
+  - `BootReconciler` walks `external_mirror_bindings` (Domain-specific
+    binding table, owned by `ezagent_domain_external_mirror`) and
+    calls `SpawnRegistry.spawn/1` per session URI. Spawning IS the
+    rehydration — the Session Kind's `init_slice/1` reads
+    `external_mirror_bindings` rows and rebuilds the `:external_mirror`
+    slice from them.
+
+  - `Kind.StateRebuilder.rebuild_all/1` walks `kind_snapshots` (the
+    generic per-Kind state table owned by `ezagent_core`) and decodes
+    each row's state binary; it explicitly does NOT spawn Kind
+    processes (per its module doc).
+
+  Delegating here would either (a) teach `StateRebuilder` about
+  `external_mirror_bindings` (wrong direction — breaks plugin
+  isolation, the North Star) or (b) make BootReconciler call
+  `StateRebuilder.rebuild_all/1` after spawning, which is redundant
+  because the spawn path already runs `init_slice/1` which already
+  reads the snapshot. Either way the change makes things worse, not
+  better. The two modules legitimately share the word "recovery"
+  but operate on different tables with different responsibilities.
+
+  Decision: leave BootReconciler as-is; document the divergence.
   """
 
   use GenServer

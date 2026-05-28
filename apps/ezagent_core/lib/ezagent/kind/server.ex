@@ -183,7 +183,7 @@ defmodule Ezagent.Kind.Server do
   # Workspace.create_agent / LV) instead of leaving a Kind in
   # memory-only mode that disappears on restart.
   defp persist_initial_snapshot(uri, kind_module, slice_state) do
-    case kind_module.persistence() do
+    case Ezagent.Kind.persistence_of(kind_module) do
       :ephemeral ->
         :ok
 
@@ -213,7 +213,7 @@ defmodule Ezagent.Kind.Server do
   # export `post_init/2` or that returned `:ok` are skipped. Order is
   # `kind_module.behaviors/0` (declaration order) — deterministic.
   defp collect_post_init_queue(kind_module, args, slice_state) do
-    kind_module.behaviors()
+    Ezagent.Kind.behaviors_of(kind_module)
     |> Enum.reduce([], fn behavior, acc ->
       if function_exported?(behavior, :post_init, 2) do
         slice = Map.get(slice_state, behavior.state_slice(), %{})
@@ -230,7 +230,7 @@ defmodule Ezagent.Kind.Server do
   end
 
   defp schedule_periodic_snapshot(kind_module) do
-    case kind_module.persistence() do
+    case Ezagent.Kind.persistence_of(kind_module) do
       {:snapshot, :periodic, ms} when is_integer(ms) and ms > 0 ->
         Process.send_after(self(), :snapshot_tick, ms)
         :ok
@@ -464,7 +464,7 @@ defmodule Ezagent.Kind.Server do
   defp run_on_ready_hooks(kind_module, self_uri, slice_state) do
     ctx = %{kind_module: kind_module, self_uri: self_uri}
 
-    Enum.each(kind_module.behaviors(), fn behavior ->
+    Enum.each(Ezagent.Kind.behaviors_of(kind_module), fn behavior ->
       if function_exported?(behavior, :on_ready, 2) do
         slice = Map.get(slice_state, behavior.state_slice(), %{})
 
@@ -614,7 +614,7 @@ defmodule Ezagent.Kind.Server do
     # Phase 4-completion: periodic strategy — write via Writer (async)
     # then re-schedule. If Writer isn't running (e.g. test envs without
     # full sup tree), fall back to sync save_now to remain useful.
-    case kind_module.persistence() do
+    case Ezagent.Kind.persistence_of(kind_module) do
       {:snapshot, :periodic, ms} ->
         if Process.whereis(Ezagent.Snapshot.Writer) do
           Ezagent.Snapshot.Writer.async_save(uri, kind_module, slice_state)
@@ -643,7 +643,7 @@ defmodule Ezagent.Kind.Server do
 
   def handle_info(message, %{kind: kind_module, uri: self_uri, state: slice_state} = wrapper) do
     new_slice_state =
-      kind_module.behaviors()
+      Ezagent.Kind.behaviors_of(kind_module)
       |> Enum.reduce(slice_state, fn behavior, acc_state ->
         forward_to_behavior(behavior, message, acc_state, kind_module, self_uri)
       end)
@@ -754,7 +754,7 @@ defmodule Ezagent.Kind.Server do
     # Phase 4-completion: :on_terminate strategy writes on graceful
     # shutdown. Use try/rescue so a failing save never prevents the
     # Kind from going down.
-    case kind_module.persistence() do
+    case Ezagent.Kind.persistence_of(kind_module) do
       :on_terminate ->
         try do
           _ = Ezagent.Kind.Snapshot.save_now(uri, kind_module, slice_state)
@@ -797,7 +797,7 @@ defmodule Ezagent.Kind.Server do
   defp drain_behavior_terminates(reason, kind_module, uri, slice_state) do
     ctx = %{kind_module: kind_module, self_uri: uri}
 
-    Enum.each(kind_module.behaviors(), fn behavior ->
+    Enum.each(Ezagent.Kind.behaviors_of(kind_module), fn behavior ->
       if function_exported?(behavior, :terminate, 3) do
         slice = Map.get(slice_state, behavior.state_slice(), %{})
 
