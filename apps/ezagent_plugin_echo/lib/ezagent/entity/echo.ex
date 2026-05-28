@@ -7,22 +7,31 @@ defmodule Ezagent.Entity.Echo do
   prefix on name). Composing only the Echo Behavior, it's the
   smallest possible Kind that exercises dispatch + audit +
   (eventually) LiveView render.
+
+  ## Phase 2-g r3 migration (2026-05-28)
+
+  Adopts the `use Ezagent.Kind, pattern: :entity, ...` macro per
+  SPEC §2.3 + §3 composition patterns. The `attach Ezagent.Behavior.Echo`
+  declaration provides OQ-2 / OQ-5 compile-time checks
+  (action-collision detection, pattern compatibility). Legacy
+  `behaviors/0`, `persistence/0`, `type_name/0`, `supervisor/0`
+  callbacks remain — `Ezagent.Kind.Server` still reads them — but
+  are now declared inline alongside the macro.
   """
+
+  use Ezagent.Kind,
+    pattern: :entity,
+    uri_scheme: "entity://agent/",
+    type_name: :echo,
+    supervisor: EzagentDomainChat.AgentSupervisor
 
   @behaviour Ezagent.Kind
 
-  @impl Ezagent.Kind
-  def type_name, do: :echo
+  attach Ezagent.Behavior.Echo
 
-  @impl Ezagent.Kind
+  # Kind.Server still reads behaviors/0; keep the legacy callback.
   def behaviors, do: [Ezagent.Behavior.Echo]
 
-  @impl Ezagent.Kind
+  # Kind.Server still reads persistence/0; keep the legacy callback.
   def persistence, do: :ephemeral
-
-  # V1 prevention (Allen 2026-05-21): Echo Kinds live under the chat
-  # domain's AgentSupervisor (chat's `spawn_agent/1` flavor-prefix
-  # resolver routes echo there). `Ezagent.Kind.spawn/2` reads this.
-  @impl Ezagent.Kind
-  def supervisor, do: EzagentDomainChat.AgentSupervisor
 end
