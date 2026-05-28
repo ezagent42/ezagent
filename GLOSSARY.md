@@ -156,6 +156,12 @@ Ezagent 项目的**单一真相源**(single source of truth)for:
 | 127 | **PID-file orphan reaper(`Ezagent.Runtime.PidFile`)**(PR #388,2026-05-26)— 替代 PR #385 的 `ps -axEo pid,command` 扫描 + argv signature + env var parse 路径。新 core 层模块 `Ezagent.Runtime.PidFile`:`write/3` + `remove/2` + `enumerate/1` + `process_start_seconds/1`。文件路径:`<EZAGENT_HOME>/<profile>/pty-pids/<sanitized_deployment_id>/<plugin>/<sanitized_uri>.pid`,内容 `<os_pid>\n<start_epoch_seconds>\n`。`Ezagent.Domain.Pty.Server` + `Ezagent.Domain.Python.Server` spawn 后 `PidFile.write`,`terminate/2` 中 `PidFile.remove`(brutal kill 跳 terminate → file 留盘等下次 boot reap)。`EzagentPluginCc.OrphanReaper` + `EzagentPluginNp.OrphanReaper` 重写:`PidFile.enumerate/1` 自己 deployment 的 pid-files,检 `process_start_seconds` 验 PID 复用,SIGTERM 命中。**Friendly-fire 结构性不可能**:per-deployment subdir 隔离 parallel BEAMs,一 deployment 看不到另一 deployment 的 pid-files。原 `EZAGENT_DEPLOYMENT_ID` env tag 降级为 informational(operator 用 `ps -axE` 调试用)| impl |
 | 128 | **cc/np 子进程 orphan-on-restart 结构性修复**(PR #385,2026-05-26)— cc(claude TUI)/ np(Python compute)agents 双层:Agent Kind(OTP-supervised,snapshot 持久化)+ OS subprocess(erlexec `:exec.run/2`,**不跨 BEAM restart OTP-supervised**)。Brutal BEAM kill(SIGKILL/panic/SEGV)跳过 erlexec port-death cleanup,OS-level claude/python 变孤儿。**Layer 1 post_init respawn hook**:`Ezagent.Behavior.Sandbox` slice 加 `respawn_template_data`(snapshot 持久化),`post_init/2` + `handle_continue/3` 调 plugin Template Class 的 `Ezagent.Kind.Template.ensure_subprocess_alive/2` optional callback(cc 用 `ensure_pty_server/3`,np `Ezagent.Behavior.NpAgent` 对称在自己 Behavior 上挂 hook + `start_python/2`)。**Layer 2 OrphanReaper**(后被 PR #388 PidFile 重写)。**demand-spawn race 闭环 via `owns_this_agent?/2` workspace-segment gate**:`cc.agent.instantiate/3` 的 `:already_started` 分支当 agent_uri.workspace_segment == Workspace.Loader.workspace_uri.host 时调 `ensure_subprocess_alive_best_effort/2`(永不传播 error,Kind alive in degraded state,operator 看 LV 点 Restart)— close codex round-2 finding #1。`Ezagent.DeploymentId` 模块(node|cwd_at_boot)给 reaper friendly-fire safety(已被 PR #388 升级为结构性隔离)| impl |
 | 129 | **Session URI shape 澄清**(PR #399 revert PR #397,2026-05-26)— SPEC v3 §3.6 canonical 形状:`session://<template>/<workspace>/<name>`。PR #335 workspace rename(default → system)只动 **workspace 段(第二段)**,**template 段(第一段)不变**。`session://default/system/main`:template=`"default"`(默认 session template,稳定 post-rename),workspace=`"system"`,name=`"main"` — 完全合法。PR #397 误把 template 段也改 system → `session://system/system/main`(template="system" 非合法 template 名),由 PR #399 revert。**Lesson:编辑 default_uri/0 时 docstring 里 `SPEC v3 §3.6` 注释就在隔壁;`grep -B 2` 5 秒可避 — over-correction 后被 ExternalMirrorWorker `{:error, :no_such_actor}` restart loop surface,根因实际是 Workspace.Loader 没 auto-spawn session kinds for bindings(separate follow-up)** | impl |
+| 147 | **Router / Behavior / Kind self-built architecture(SPEC PR #445)— full plugin contract rewrite**(2026-05-28)— 3 个核心 primitives + 3 composition patterns + 9-effect declarative vocabulary。Plugin authors 写 `handle_<action>(args, ctx)` 返 effects,**永不**见 slice 或 snapshot。Framework 8 个 plugin-invisible 模块(Router / EventLog / SnapshotStore / StateRebuilder / SagaRunner / EventSubscriber / Caps.Engine / Kind.Host)。OQ-1 Resource URI scheme(3-segment with workspace);OQ-2 compile-time pattern enforcement;OQ-5 flat action namespace;OQ-6 Worker as `:hot_resource`;OQ-8 StateRebuilder lazy-on-first-load。详 ARCHITECTURE §6.0 + Decision #147 entry in Appendix B | impl |
+| 148 | **Phase 1 ship — Router + Behavior(new) + Kind + LegacyBehaviorAdapter primitives**(PR #451)— `Ezagent.Router` ~140 LOC,`%Ezagent.Cmd{}` dispatch envelope,`use Ezagent.Behavior` + `action/3` defmacro + `apply_effects/2` pure bucketiser。LegacyBehaviorAdapter dispatch-equivalent **NOT replay-equivalent**(r2 HIGH-2 closure)。子 PRs:#447 EventLog,#448 SnapshotStore,#449 SagaRunner,#450 Router/Behavior/Kind integration | impl |
+| 149 | **Phase 1.5 / 1.5b ship — Kind.Runtime new-contract dispatch + effect executor wiring**(PR #453 + #454)— `Kind.Runtime.apply_new_contract_effects/4` 接 PURE bucketiser 跟实际 framework 操作,bucket 固定顺序 State → Halt-check → Saga → Dispatches → Notifies → Events → Terminations。`:effect_returning` + `{:ref, name, path}` substitution 走通 | impl |
+| 150 | **Phase 2 / 2.5 ship — 28+ domain + 6 core Behaviors 全部 migrate 到 new contract**(PR #462 + #463)— Chat / Identity / ApiKeys / UserCredentials / WorkspaceUserAdmin / Workspace / Pty / ExternalMirror / Feishu / Echo / NpAgent / CurlAgent / Lifecycle / Routing / Presence / Sandbox / Notifications 等 38 Behaviors 全部从 `@behaviour Ezagent.Behavior` + `invoke/4` 切到 `use Ezagent.Behavior` + `action/3` + `handle_<action>/2` + effects | impl |
+| 151 | **Phase 3 ship — LegacyBehaviorAdapter DELETED + `invoke/4` retired to `@optional_callbacks`**(PR #464)— 物理删除 `Ezagent.LegacyBehaviorAdapter` 模块 + 所有引用;`@callback invoke/4` declaration 标 `@optional_callbacks`(仅 grep-able);Phase 1+2 grace window 关闭;任何遗漏的 legacy Behavior 见 missing-handler CompileError(SPEC §4.3 `@before_compile` invariant) | impl |
+| 152 | **Phase 4 ship — Kind.Server attach metadata + read_graph cleanup + audit fix + 165 E2E tests**(PR #469 + #465-#468 + #452)— `Kind.behaviors_of/1` + `persistence_of/1` 新 helpers 优先于 `__attached_behaviors__/0`;`Audit.uri_to_str(:system)` 返 `"system://anonymous"`;30 个 E2E scenarios catalog ship in `docs/scenarios/`,165 个 passing E2E tests 覆盖 SPEC §7 全部 acceptance criteria — Phase 1-4 completion 的 actual gate per `feedback_completion_requires_invariant_test` | impl |
 
 实施期决策(impl)将持续从 #114 起 append →
 
@@ -192,25 +198,47 @@ Adapter subprocess 由谁拉起:
 
 ### Behavior
 
-Kind 上的能力切片,跨 Kind 复用。每个 Behavior 模块定义 `actions/0`、`state_slice/0`、`init_slice/1`、`invoke/4`,以及 (PR-CC-2-v2, 2026-05-25 起强制) `required_caps/0`、可选 `workspace_scoped?/0`。Behavior 是 domain 或 plugin,不是 core(core 只有 behaviour 契约)。
+Kind 上的能力切片,跨 Kind 复用。**Post-2026-05-28(Phase 1-4 migration 完成)**:每个 Behavior 通过 `use Ezagent.Behavior` 接入新合约,声明 `action :foo, args: ..., returns: ..., caps: [...]` 宏 + 编写 `def handle_foo(args, ctx)` 处理器 + 返 `{:ok, result, [effect]}`。`state_slice/0` + `init_slice/1` + `required_caps/0` + `cap_subjects/0` + `interface/0` 由宏在 `@before_compile` 自动派生,plugin 作者不再手写。Behavior 是 domain 或 plugin,不是 core(core 只有 behaviour 契约)。
 
 ```elixir
 defmodule Ezagent.Behavior.Chat do
-  use Ezagent.Behavior
-  @interface [
-    receive: %{args: %{message: Ezagent.Message}, ...},
-    send: ...
-  ]
-  def actions, do: [:receive, :send]
-  def state_slice, do: :chat_state
-  def init_slice(_), do: %{...}
-  def invoke(:receive, slice, args, ctx), do: ...
-  def required_caps, do: %{receive: [...], send: [...]}    # PR-CC-2-v2
-  def workspace_scoped?, do: true                          # PR-CC-2-v2 default
+  use Ezagent.Behavior    # post-2026-05-28 new contract
+
+  action :send,
+    args:        %{message: Ezagent.Message},
+    returns:     %{stored: :boolean},
+    caps:        [:send],
+    modes:       [:cast],
+    description: "Post a message into the session and fan it out to members"
+
+  action :receive,
+    args:        %{message: Ezagent.Message},
+    returns:     %{},
+    caps:        [:receive],
+    modes:       [:cast],
+    description: "Deliver a session message to this member"
+
+  def state_slice, do: :chat
+  def init_slice(_), do: %{members: %{}, ...}
+
+  def handle_send(%{message: msg}, ctx) do
+    # ctx[:read].(:key, default) for slice access; ctx[:self_uri] / ctx[:kind_module]
+    # injected by Kind.Runtime; effect grammar replaces direct PubSub / dispatch calls.
+    {:ok, %{stored: true},
+     [
+       {:set, :last_message_id, msg.id},
+       {:notify, "session:#{ctx[:self_uri]}:events", {:chat_message, msg}},
+       {:dispatch, %Ezagent.Cmd{target: recipient_uri, action: :receive, args: %{message: msg}, ctx: %{caller: ctx[:self_uri]}}}
+     ]}
+  end
+
+  def handle_receive(_args, _ctx), do: {:ok, %{}, []}
 end
 ```
 
-参考: ARCHITECTURE.md §6,Decision #2,PR-CC-2-v2
+Pre-2026-05-28 legacy 形态:`@behaviour Ezagent.Behavior` + `@interface` module attribute + `invoke(action, slice, args, ctx)` callback。Phase 3 PR #464 后该 callback 是 `@optional_callbacks` 仅作 grep-ability;无 runtime 路径调用。见 ARCHITECTURE §6.1。
+
+参考: ARCHITECTURE.md §6 + §6.0(new contract),Decision #2, #147-#152,SPEC PR #445
 
 ### `Behavior.required_caps/0`(PR-CC-2-v2, 2026-05-25)
 
@@ -297,9 +325,33 @@ Ezagent 通过 `ezagent_plugin_cc`(Elixir HTTP/SSE + Python MCP server)桥接外
 
 参考: ARCHITECTURE.md §12.8(Phase 1b 后已重写),Decision #86 #132; [docs/notes/phase-6-architecture-closeout.md](docs/notes/phase-6-architecture-closeout.md) §2.3
 
+### `Ezagent.Cmd`(dispatch envelope,post-2026-05-28)
+
+Router 的 dispatch 入口 envelope struct(SPEC §2.1)。Adapter(LV / CLI / Channel / external mirror)构造 `%Ezagent.Cmd{target, action, args, ctx}`,handed to `Ezagent.Router.dispatch/1`。
+
+```elixir
+%Ezagent.Cmd{
+  target: %URI{},        # Kind instance URI(canonicalised by Router step 1)
+  action: :send,         # action atom declared on a Behavior attached to target's Kind
+  args:   %{...},        # validated against Behavior.@interface/0[action].args
+  ctx:    %{
+    caller: %URI{} | :system,
+    reply:  Ezagent.Invocation.reply_target(),
+    trace_id: String.t() | nil,
+    command_uuid: String.t() | nil,   # caller-supplied idempotency key
+    deadline_ms: pos_integer() | nil,
+    caps: MapSet.t(Capability.t()) | nil
+  }
+}
+```
+
+跟 legacy `%Ezagent.Invocation{}` 的区别:`Invocation` 把 action 编码在 URI query string(`target?action=behavior.action`),conflate identity(URI)跟 intent(action);`Cmd` 显式分离。Phase 1 Router 内部把 `Cmd` 翻译回 `Invocation` 走老 pipeline(additive);Phase 2+ 直接走 new-contract handler invocation。
+
+参考: ARCHITECTURE.md §6.0.1;`apps/ezagent_core/lib/ezagent/cmd.ex`;Decision #147 #148
+
 ### ctx(Invocation context)
 
-`%Invocation{}.ctx` 字段。包含:
+`%Invocation{}.ctx` 字段(legacy)/ `%Ezagent.Cmd{}.ctx` 字段(new contract)。包含:
 
 ```elixir
 %{
@@ -313,7 +365,13 @@ Ezagent 通过 `ezagent_plugin_cc`(Elixir HTTP/SSE + Python MCP server)桥接外
 }
 ```
 
-参考: ARCHITECTURE.md §4
+新合约下,framework 在 handler 调用前还会注入两个 keys:
+- **`ctx[:read]`** — slice 读 function,`ctx[:read].(key, default)` 取当前 Behavior 的 slice 字段(plugin authors 不再直接拿 slice map)
+- **`ctx[:self_uri]`** — 当前 Kind instance 的 URI
+- **`ctx[:kind_module]`** — 当前 Kind 的 module(handlers 分支 User vs Agent 等用)
+- **`ctx[:sibling_slices]`** — opt-in via `reads_sibling_slices/0`(invariant 18 不变)
+
+参考: ARCHITECTURE.md §4 + §6.0
 
 ### default_caps(`Ezagent.Entity.User.default_caps/0`)
 
@@ -327,9 +385,9 @@ Phase 6 PR 27 引入。User Kind 的**结构性基线 cap 集**——返回 `[%C
 
 ### Dispatch
 
-`Ezagent.Invocation.dispatch/1` — 中心化 invocation 路由入口。所有 actor 间通信都走这条路径,**没有第二条**。9 步标准 flow 见 Appendix A。
+`Ezagent.Router.dispatch/1`(post-2026-05-28 SPEC PR #445)/ legacy `Ezagent.Invocation.dispatch/1` — 中心化 invocation 路由入口。所有 actor 间通信都走这条路径,**没有第二条**。新合约 13 步 flow 见 ARCHITECTURE §6.0.1;legacy 9 步 flow 见 Appendix A。Phase 1 (PR #451) Router `wraps` 老 `Invocation.dispatch` 通过 `%Cmd{}` → `%Invocation{}` 翻译,Phase 2+ 直接走 new-contract handler invocation。
 
-参考: ARCHITECTURE.md §5,Decision #3 #43
+参考: ARCHITECTURE.md §5 + §6.0,Decision #3 #43 #147 #148
 
 ⚠️ 不要跟 `Phoenix.Router.dispatch`(HTTP path 路由)混。
 
@@ -339,11 +397,53 @@ Phase 6 PR 27 引入。User Kind 的**结构性基线 cap 集**——返回 `[%C
 
 参考: ARCHITECTURE.md §5.5.5,Decision #68
 
+### Effect(post-2026-05-28 — handler 返值的 effect vocabulary)
+
+新合约 `handle_<action>/2` 返 `{:ok, result, [effect]} | {:ok, result} | {:error, reason}`,其中 `effect` 是 9 种 declarative tuple 之一(SPEC §4.4 normative):
+
+| Effect tuple | 用途 |
+|---|---|
+| `{:set, key, value}` | mutate this Kind's slice — framework 通过 SnapshotStore commit |
+| `{:emit, event_name, payload}` | append to EventLog(audit + EventSubscriber consumers) |
+| `{:dispatch, %Cmd{}}` | cross-Kind dispatch — framework 重入 Router |
+| `{:notify, topic, payload}` | `Phoenix.PubSub.broadcast` fire-and-forget |
+| `{:effect, mfa_or_fun, args}` | fire-and-forget side-effect(caller wraps try/rescue) |
+| `{:effect_returning, mfa_or_fun, args, bind_as: :name}` | value-returning side-effect;result via `{:ref, :name, [path]}` in later effects |
+| `{:saga, %SagaRunner.Saga{}}` | hand a linear saga to SagaRunner |
+| `{:terminate, :self | URI.t()}` | schedule Kind termination AFTER reply lands |
+| `{:halt, reason}` | short-circuit — remaining effects skipped, SnapshotStore never sees would-be new slice |
+
+**Ordering normative**(SPEC §4.4): within each phase effects fire in declared order. Across phases the buckets execute in fixed `Kind.Runtime` order: **State → Halt-check → Saga → Dispatches → Notifies → Events → Terminations**。
+
+**Plugin author 不直接调** `Phoenix.PubSub.broadcast` / `Ezagent.Router.dispatch` / `Ezagent.EventLog.append` / `Ezagent.Kind.terminate` — 通过 effects 间接表达;framework 应用。SPEC §11 grep gate 强制。
+
+参考: ARCHITECTURE.md §6.0.2;`Ezagent.Behavior.apply_effects/2`;Decision #147
+
 ### Entity
 
 Kind 三子类之一。**Principal**——发起 Invocation,持有 caps。例:`agent://...` / `user://...`。
 
 参考: ARCHITECTURE.md §3.1,Decision #7
+
+### `Ezagent.EventLog`(framework-internal,post-2026-05-28)
+
+Append-only 事件存储(SPEC §5.1)。包 existing `invocations` 表(migration `20260515160000_phase1_audit_dlq_snapshots.exs` 重建于 `20260601000000_phase9_pr6_workspace_uri_columns.exs`)。Phase 1B(PR #447)introduce synchronous append + replay-stream API,Router 在处理 `{:emit, event_name, payload}` effect 时调 `append/4`;`Ezagent.Kind.StateRebuilder` 在 Phase 2+ 走 `stream_by_aggregate/2` 跟 snapshot fold。
+
+**Plugin code MUST NOT import `Ezagent.EventLog`** —— SPEC §11 grep gate fail CI for any `Ezagent.Plugin.*` / `ezagent_plugin_*` 引用。Plugin handlers 声明 emit via `{:emit, _, _}` effect;framework calls append。读 events for replay 走 `StateRebuilder`,not plugin code。
+
+Coexistence with `Ezagent.Audit.Writer`:Writer 通过 telemetry handler 异步 batch 写 `invocations` 表;EventLog.append 是 Router 的同步 emit-effect 写路径。两者目标同一表 — Phase 3 cleanup 计划移除 telemetry-derived rows for new-contract Behaviors。
+
+参考: ARCHITECTURE.md §6.0.5;`apps/ezagent_core/lib/ezagent/event_log.ex` moduledoc;Decision #147 #148
+
+### `Ezagent.EventSubscriber`(framework-internal,post-2026-05-28)
+
+Declarative event-driven cross-Kind reactions(SPEC §5.5)。`use Ezagent.EventSubscriber` 提供 `subscribe to: ..., only: [...]` 宏 + `@behaviour` callback contract(`interested?/1` + `handle_event/2`,后者返同 Behavior effect 词汇)。Framework 在 boot 收集所有 declared subscriber + EventLog 写 row 时 fan-out 到 subscribed scope 的 subscribers。
+
+Subscription scopes:`:all` / `{:aggregate, uri}` / `{:workspace, uri}`。
+
+**Subscriber 不直接调** PubSub / dispatch / EventLog —— `handle_event/2` 返 effects,framework 应用 through Router pipeline。这是 SPEC §10 (f) invariant 16 的归并:bindings/subscribers 一律 effect-based 不直接 PubSub.subscribe。
+
+参考: ARCHITECTURE.md §6.0.5;`apps/ezagent_core/lib/ezagent/event_subscriber.ex` moduledoc;Decision #147
 
 ### ExternalMirror Adapter(`Ezagent.ExternalMirror.Adapter` behaviour)
 
@@ -439,6 +539,28 @@ Ezagent actor 间通信的 envelope:
 ```
 
 参考: ARCHITECTURE.md §4,Decision #3 #5
+
+### `handle_<action>(args, ctx)` — new-contract Behavior handler(post-2026-05-28)
+
+Plugin author 的核心写入面。每个用 `action :foo, ...` 宏声明的 action MUST 有对应 `def handle_foo(args, ctx)` clause(`@before_compile` invariant — 缺失 raise CompileError)。
+
+```elixir
+def handle_send(%{message: msg}, ctx) do
+  # args 已 validated against action's :args schema
+  # ctx 含 framework-injected: :read / :self_uri / :kind_module / :caller / :reply / :sibling_slices(opt-in)
+  {:ok, %{stored: true},                                  # result(per action's :returns schema)
+   [
+     {:set, :last_message_id, msg.id},                    # slice mutation effect
+     {:emit, :message_sent, %{recipient: ...}},           # EventLog append effect
+     {:notify, "session:#{ctx[:self_uri]}:events", _},    # PubSub broadcast effect
+     {:dispatch, %Ezagent.Cmd{target: ..., ...}}          # cross-Kind dispatch effect
+   ]}
+end
+```
+
+返契约:`{:ok, result, [effect]} | {:ok, result} | {:error, reason}`。`:ok` 走正常 effect 应用 + reply 路径;`:error` 短路,**不应用任何 effect**,error propagate up through Router。
+
+参考: ARCHITECTURE.md §6.0.2 + §6.0.3;`apps/ezagent_core/lib/ezagent/behavior.ex` `__before_compile__`;Decision #147 #150
 
 ### Kind
 
@@ -605,6 +727,73 @@ Synthetic singleton Kind(`routing-admin://default`,Phase 5 PR 4 落地 Decision 
 
 参考: ARCHITECTURE.md §5.4,Decision #65
 
+### `Ezagent.Router`(post-2026-05-28 dispatch primitive)
+
+SPEC PR #445 §2.1 的 dispatch primitive。Take `%Ezagent.Cmd{target, action, args, ctx}` envelope,返 `{:ok, result} | :ok | {:error, dispatch_error}`,内部完成 URI 解析、cap 检查、idempotency、workspace 隔离、audit 写、Behavior handler 路由、effect 应用、result post-processing。
+
+Phase 1(PR #451)Router `wraps` 老 `Ezagent.Invocation.dispatch/1` + `Kind.Runtime.handle_dispatch/4` 通过 `Cmd → Invocation` 翻译,additive 不动既有路径;Phase 2+ direct handler invocation through `Kind.Host.handle_call/cast`,绕开 legacy `invoke/4` shim for new-style Behaviors。
+
+13-step dispatch flow 见 ARCHITECTURE §6.0.1;module moduledoc 是 normative。
+
+公开 API:
+- `dispatch(%Cmd{})` — 标准 dispatch
+- `dispatch_saga(saga, ctx)` — hand a `%Ezagent.SagaRunner.Saga{}` to SagaRunner
+
+参考: ARCHITECTURE.md §6.0.1;`apps/ezagent_core/lib/ezagent/router.ex` moduledoc;SPEC PR #445 §2.1;Decision #147 #148
+
+### `Ezagent.SagaRunner`(framework-internal,post-2026-05-28)
+
+Stateless linear saga 原语(SPEC §5.4)。当 Behavior handler 返 `{:saga, %Ezagent.SagaRunner.Saga{}}` effect,framework 把 saga handle 给 SagaRunner 执行 forward + compensate steps。
+
+**Compensation 是 best-effort partial restore,NOT atomic rollback**(SPEC r2 codex HIGH-5 closure):
+- pure-state mutations(slice changes)IS 可逆 IFF compensate function snapshot-before-forward + restore-on-rollback
+- already-sent PubSub broadcasts、already-dispatched cross-Kind messages、already-fired external IO(HTTP / file)、already-terminated Kinds **不可逆**;compensate 可以尝试 counter-action(DELETE 文件 / POST "rollback")但原 side effect 已经发生
+- 如 compensate 自身失败,saga 写 operator-repair marker(UUID + log line at `:error` level)+ abort compensation walk + error tuple 含 successfully-compensated steps list + failed-compensation step
+
+Plugin authors 写 saga 时 **MUST** design steps assuming partial-failure recovery may require operator intervention。Saga 设计模式见 SPEC §5.4 + Ezagent.SagaRunner moduledoc。
+
+参考: ARCHITECTURE.md §6.0.5;`apps/ezagent_core/lib/ezagent/saga_runner.ex`;Decision #147 #148
+
+### `Ezagent.SnapshotStore`(framework-internal,post-2026-05-28)
+
+Per-Kind state snapshot store(SPEC §5.2)。包 existing `kind_snapshots` 表,API 是 plugin-invisible 4 个函数:`latest/1` + `write/3` + `delete/1` + `count/0`。
+
+**Snapshot policy is framework-decided**(r2 codex HIGH-3 closure):per-Behavior `persistence/0` enum 不再存在 for new-contract Kinds。policy 集中在 SnapshotStore 一个模块的决策树:
+- **every N events**(default 100,configurable `:ezagent_core, :snapshot_every_n_events`)
+- **on graceful terminate**(Kind.Host terminate hook 最后 final write)
+
+Phase 1 coexistence with legacy `Ezagent.Kind.Snapshot`:legacy module 继续 production write path until Phase 2 migrations cut Kinds over to Behavior-emitted effects;SnapshotStore 是 Phase 2+ 写路径,Phase 1 stake-in-the-ground for StateRebuilder + EventLog 依赖。两者 read/write 同一表 `kind_snapshots`,但不竞争 — legacy writers 写 per Kind 声明的 `persistence/0`,SnapshotStore 写 per framework-decided 策略。Phase 2 migrated Kind 不再声明 `persistence/0`,只一个 writer 触每行。
+
+**Plugin code MUST NOT import** — SPEC §11 grep gate。
+
+参考: ARCHITECTURE.md §6.0.5;`apps/ezagent_core/lib/ezagent/snapshot_store.ex`;Decision #147 #150
+
+### `Ezagent.Kind.StateRebuilder`(framework-internal,post-2026-05-28)
+
+Rebuild Kind 的 in-memory state from persisted snapshot(Phase 1)+ (Phase 2+) fold subsequent events on top(SPEC §5.3)。
+
+**Lazy-on-first-load**(OQ-8 decision):rebuild 发生在 Router dispatch 到 KindRegistry 未有的 entity URI 时,**NOT** at application boot。Router lookup 失败 → spawn Kind via `Kind.spawn/2`;`Kind.Host.init/1` calls StateRebuilder。
+
+Kind module 可选 implement `rebuild_from_snapshot/1`(REQUIRED for custom semantics — 否则 default path 使用 snapshot.state 直接)+ `rebuild_from_events/2`(OPTIONAL — Phase 2+ events-as-source-of-truth 用)。
+
+Generalises per-domain `BootReconciler` pattern(today only `Ezagent.ExternalMirror.BootReconciler` — stays as-is Phase 1,Phase 2+ refactors to delegate)。
+
+**Plugin code MUST NOT import** — SPEC §11 grep gate。
+
+参考: ARCHITECTURE.md §6.0.5;`apps/ezagent_core/lib/ezagent/kind/state_rebuilder.ex`;Decision #147 #150
+
+### `Ezagent.LegacyBehaviorAdapter` — DELETED(Phase 3 PR #464,2026-05-28)
+
+**Historical entry — for git archaeology only.**
+
+Existed in Phase 1(PR #451)+ Phase 2(PR #462)as a dispatch-equivalent(**NOT replay-equivalent**,SPEC r2 codex HIGH-2 closure)bridge from new `Cmd` / handler-effects pipeline to legacy `invoke/4` Behaviors。Phase 3(PR #464)deleted the adapter + retired `invoke/4` to `@optional_callbacks` once every concrete Behavior had migrated to new contract(Phase 2 + 2.5)。
+
+The `@callback invoke/4` declaration is kept in `Ezagent.Behavior` only so a stale Behavior referencing it surfaces a precise CompileError rather than silent dispatch failure。**No runtime path consults `invoke/4` post-Phase 3。**
+
+任何 tutorial / blog post / forensic note 引用 `Behavior.invoke/4` 作为 dispatch 入口 = 2026-05-28 之前写的 + stale。
+
+参考: ARCHITECTURE.md §6.0.6 + §6.1;Decision #148 #151
+
 ### Session
 
 Kind 三子类之一。**Routing context owner**——IRC 的 channel 类比;RoutingRules 挂在 Session 上;消息 dispatch 时 Session 决定 N 个 receiver。
@@ -617,27 +806,41 @@ Kind 三子类之一。**Routing context owner**——IRC 的 channel 类比;Rou
 
 每个 Behavior 拥有的 state 切片,在 Kind 模块的 state map 里独立 key。Behavior 只能读写自己声明的 slice(Decision #16)。
 
+**Post-2026-05-28(Phase 2 migration)**:slice 是 **framework-internal** —— plugin authors 不再直接接触。读取通过 `ctx[:read].(key, default)`(framework 在 handler 前注入 read function);写入通过返回 `{:set, key, value}` effect(framework 在 `apply_effects/2` bucketise 后 commit 到 snapshot)。pre-Phase-2 的 `invoke(action, slice, args, ctx)` 第三参 `slice` map 现在是 `@optional_callbacks` 唯一可见路径,production 代码不走该路径。
+
+跨 Behavior slice 读取(sibling slice)仍是 opt-in via `reads_sibling_slices/0` callback(Decision #124 / invariant 18 不变)。
+
 ```elixir
-# Kind GenServer state:
+# Kind GenServer state(framework 内部 — plugin 作者不见):
 %{
   uri: ...,
   caps: ...,        # Identity Behavior slice
-  chat_state: ...,  # Chat Behavior slice  
+  chat: ...,        # Chat Behavior slice
   routing: ...,     # SessionRouting Behavior slice
 }
+
+# Plugin author 看到的接口:
+def handle_send(args, ctx) do
+  current = ctx[:read].(:send_cursor, 0)
+  {:ok, %{}, [{:set, :send_cursor, current + 1}]}
+end
 ```
+
+参考: ARCHITECTURE.md §6.0(new contract slice access);Decision #16, #150
 
 ### Snapshot
 
-Kind state 的 SQLite 持久化(`kind_snapshots` 表)。4 种策略(Decision #27):
+Kind state 的 SQLite 持久化(`kind_snapshots` 表)。
 
-- `:on_change` — slice 真变了才写(Decision #59)
-- `:periodic` — 定时
-- `:on_terminate` — Session 类适合
-- `:ephemeral` — 不持久化(测试用)
-- `:external` — state 在外部系统
+**Pre-2026-05-28(legacy `Kind.persistence/0` enum)**:5 种策略 — `:on_change` / `{:snapshot, :periodic, ms}` / `:on_terminate` / `:ephemeral` / `:external`,plugin author 在 `Kind.persistence/0` 选(Decision #27)。
 
-参考: ARCHITECTURE.md §10.1
+**Post-2026-05-28(Phase 2.5+ via SPEC §5.2)**:snapshot policy is **framework-decided** — plugin authors 不再 tune。policy 集中在 `Ezagent.SnapshotStore` 一个 module 决策树:
+- **Snapshot every N events**(default `100`,configurable via app env `:ezagent_core, :snapshot_every_n_events`)— framework EventLog 每 aggregate URI 增 event counter,到 N 时 framework call `SnapshotStore.write/3` with current Kind state
+- **Snapshot on graceful terminate** — framework `Kind.Host.terminate/2` 在 process exit 前 final write
+
+没有 `:on_change` / `:on_terminate` / per-pattern enum。新 Kinds 走 framework-decided 路径(codex r2 HIGH-3 closure:"framework decides policy, plugin authors pick the pattern")。legacy `persistence/0` callback 在 `Ezagent.Kind` 仍是 `@callback`,Phase 2 + 2.5 migrated Behaviors 的 Kind 仍 declare(coexistence)。Phase 2+ 新 Kinds 不再 declare —— SnapshotStore + StateRebuilder 接管。
+
+参考: ARCHITECTURE.md §10.1 + §6.0.5;Decision #27, #115, #147(SPEC §5.2);`Ezagent.SnapshotStore` moduledoc
 
 ### Stub(authz stub)
 

@@ -153,7 +153,7 @@ runbook 路径 + 至少一个 PR 证据截图时，才标 ✅。这是 2026-05-0
 | 27 | [Per-agent api-key + 沙箱隔离](./27-api-keys-sandbox/scenario.zh_cn.md) | 15 | ⚠️ | `cc_agent_sandbox_credentials_test.exs` — Bug A（config_dir 原子化）推迟 |
 | 28 | [派发审计行（invocations → EventLog）](./28-dispatch-audit/scenario.zh_cn.md) | 16 | ⏳ | `Audit.@events` 已覆盖；EventLog 迁移是 Phase 2+ |
 | 29 | [Admin LV smoke — registry / snapshots / templates / routing / cmdK](./29-admin-lv-smoke/scenario.zh_cn.md) | 17 | ⚠️ | per-LV 手动 smoke；`/admin/agents` 返回 404（gap）|
-| 30 | [插件作者 DX — 用 effects 写新 Behavior](./30-plugin-author-behavior/scenario.zh_cn.md) | 18 | ⏳ | Phase 1 落地 LegacyAdapter（PR #451）；Phase 2 将演练绿地 Behavior 编写 |
+| 30 | [插件作者 DX — 用 effects 写新 Behavior](./30-plugin-author-behavior/scenario.zh_cn.md) | 18 | ✅ | Phase 1-4 迁移完成（PR #451-#469）；E2E test #468 演练新合约下的绿地 Behavior 编写 |
 
 ---
 
@@ -325,34 +325,28 @@ PR #451 加 `EventLog` 作为规范事件表（Phase 2 把 `invocations` 迁移�
 | `/admin/agents/:uri/terminal` | ✅ live PTY 镜像 |
 | cmdK 搜索 | ⚠️ 已发布（SPEC `v1-uri-pickers-and-cmdk`）— 全部 action verb 覆盖未测 |
 
-### 类别 18 — 插件作者 DX（新 — 为 Router/Behavior/Kind）
+### 类别 18 — 插件作者 DX（Router/Behavior/Kind — Phase 1-4 完成）
 
-按 SPEC #445 §4（PR 2026-05-28 合并），插件作者将用 `use Ezagent.Behavior`
-模块写 `action :foo, caps: [...] do ... end` 宏，返回 effects。
-Phase 1（PR #451）发布原语 + `LegacyBehaviorAdapter`（包装 62 个现有
-`invoke/4` 调用点）；Phase 2 将 per-domain 改造。
+按 SPEC #445 §4（Phase 1-4 迁移 PR #451 / #453 / #454 / #462 / #463 / #464 / #469 全部 2026-05-28 合并），插件作者用 `use Ezagent.Behavior` 模块写 `action :foo, args: ..., returns: ..., caps: [...]` 宏 + `def handle_foo(args, ctx)` 返 effects。Phase 1（PR #451）发布原语 + `LegacyBehaviorAdapter` 作过渡桥;Phase 2（PR #462 + #463）迁移所有 34+ Behaviors 到新合约;**Phase 3（PR #464）删除 `LegacyBehaviorAdapter` 并把 `Behavior.invoke/4` 退役到 `@optional_callbacks`**;Phase 4（PR #469）打磨 Kind.Server metadata + audit fix。165 个 E2E tests 通过（#465-#468）。
 
-本类别场景目标：
-1. 写一个新 Behavior（绿地）— 演练 action 宏、effects 词汇表、cap 声明、
-   EventLog 发射。
-2. 经 LegacyAdapter 迁移一个现有 `Behavior.invoke/4` — 验证 adapter
-   对调用者透明。
-3. Saga 补偿模式 — 声明多步骤 saga，验证部分失败时的补偿顺序。
+本类别场景目标:
+1. 写一个新 Behavior（绿地）— 演练 action 宏、effects 词汇表、cap 声明、EventLog 发射。场景 #30 是 canonical 演练。
+2. （历史 — 仅 Phase 1-2 期）经 LegacyAdapter 迁移一个现有 `Behavior.invoke/4` — 验证 adapter 对调用者透明。Phase 3（PR #464）删除 adapter 后此场景不再可跑;保留在 catalog 仅作 git 考古。
+3. Saga 补偿模式 — 声明多步骤 saga，验证部分失败时的补偿顺序（注:补偿是 best-effort 部分还原,**非** 原子 rollback — codex r2 HIGH-5 closure;SPEC §5.4）。
 
 ---
 
-## 6. 优先级 — Phase 2 测试基础设施 Top 5
+## 6. 优先级 — Top 5（历史: Phase 2 测试基础设施投资）
 
-Phase 2（按 SPEC #445 §6）从 `invoke/4` 迁移 22 个 Behavior 到新
-`action/3` 宏。最大限度降低迁移风险的测试基础设施投资：
+**状态更新（2026-05-28）**: 所有 Phase 1-4 迁移 PR（#451 / #453 / #454 / #462 / #463 / #464 / #469）已合并 + 165 个 E2E tests 通过（#465-#468）。下面的列表是 Phase 2 实施前的优先级理由;保留作存档。Top scenarios 仍是任何未来 Behavior 合约变化的 canonical 演练。
 
-| 排名 | 场景 | 为什么 |
+| 排名 | 场景 | 为什么（历史,Phase-2 前） |
 |---|---|---|
-| **1** | **30 — 插件作者 DX（绿地 Behavior）** | Phase 2 的 done-gate 是插件作者无核心知识写新 Behavior。改造之前需要可运行的 E2E + golden file。 |
-| **2** | **25 — Phx 重启重建** | 基于快照的恢复是 22-Behavior 迁移的安全网。如果 StateRebuilder 回归，每个改造的 Behavior 都有风险。 |
-| **3** | **24 — 销毁级联 w/ Saga** | PR #451 的 `SagaRunner` 在生产未测。Phase 2 将用于多步骤 Behavior 迁移；之前需要 baseline 场景。 |
-| **4** | **05 + 06 + 07 — 跨 flavor agent 往返** | 3 个最常用 agent flavor。任何 Phase 2 触及 `chat.send` / `chat.receive` 的 Behavior 必须回归通过这些。 |
-| **5** | **14 — Cap action-axis 授予** | Cap-axis 是插件隔离的**核心**不变式（一个 wildcard cap 会破坏模型）。任何 Phase 2 Behavior 迁移必须保留 action-narrow 授予。 |
+| **1** | **30 — 插件作者 DX（绿地 Behavior）** | Phase 2 的 done-gate 是插件作者无核心知识写新 Behavior。状态:PR #468 已发布。 |
+| **2** | **25 — Phx 重启重建** | 基于快照的恢复是 34+ Behavior 迁移的安全网。如果 StateRebuilder 回归,每个改造的 Behavior 都有风险。状态:PR #466 已发布。 |
+| **3** | **24 — 销毁级联 w/ Saga** | PR #451 的 `SagaRunner` 在生产未测。Phase 2 将用于多步骤 Behavior 迁移;之前需要 baseline 场景。状态:PR #466 已发布。 |
+| **4** | **05 + 06 + 07 — 跨 flavor agent 往返** | 3 个最常用 agent flavor。任何 Phase 2 触及 `chat.send` / `chat.receive` 的 Behavior 必须回归通过这些。状态:PR #468 已发布。 |
+| **5** | **14 — Cap action-axis 授予** | Cap-axis 是插件隔离的**核心**不变式（一个 wildcard cap 会破坏模型）。任何 Phase 2 Behavior 迁移必须保留 action-narrow 授予。状态:PR #465 已发布。 |
 
 次级投资（top-5 之后）：
 - **17 — 多 workspace 用户** — 今天是 gap；需要在任何 workspace-aware

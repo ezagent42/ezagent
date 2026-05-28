@@ -85,3 +85,31 @@ Refuse. SPEC §10 (g) + invariant `no_dispatch_in_target_ownership_check_test.ex
 ## "I'll cap-check inside the LV / inside a controller, not at dispatch"
 
 Refuse. Per PR-CC-2-v2 (2026-05-25): cap-checking is a Behavior × Entity boundary concern, performed exactly once at **dispatch step 5.5** via the chokepoint callback `Kind.holds_cap?/2` consulting `Behavior.required_caps/0`. LV `handle_event` calls dispatch → step 5.5 fires → result propagates back. Pre-dispatch cap checks inside the LV are a defence-in-depth pattern only (e.g. to hide a button); they MUST NOT be the source of authority. The `cap_check_only_at_chokepoint` invariant test fails any module under `apps/ezagent_*` (except the chokepoint itself) that calls `Capability.matches?/2` in production code.
+
+## "I'll write a new Behavior using `@behaviour Ezagent.Behavior` + `invoke/4`"
+
+Refuse for any greenfield Behavior. Per SPEC PR #445 + Phase 3 PR #464 (2026-05-28): `Behavior.invoke/4` is `@optional_callbacks` only; **no runtime path consults it**. The `@callback invoke/4` declaration is kept solely so a stale reference surfaces precise CompileError. New Behaviors use `use Ezagent.Behavior` + `action :foo, args: ..., returns: ..., caps: [...]` macros + `def handle_foo(args, ctx) -> {:ok, result, [effect]}`. See `references/new-contract.md`.
+
+If you're migrating a Phase 2 leftover that still uses `invoke/4`, that's a legitimate migration PR (Phase 2 is "complete" but a Behavior could have been added in a parallel branch); open a PR converting it to the new contract.
+
+## "I'll `Phoenix.PubSub.broadcast` from inside my new-contract handler"
+
+Refuse. Per SPEC PR #445 + §11 grep gate: new-contract handlers MUST emit a `{:notify, topic, payload}` effect for fire-and-forget broadcasts; framework calls `Phoenix.PubSub.broadcast/3` from inside `Kind.Runtime.apply_new_contract_effects/4` in the declared bucket order. Direct calls bypass (a) the bucket ordering invariant (notifies fire after dispatches), (b) the effect substitution for `{:ref, ...}` references, (c) the audit + trace correlation. Same applies to `Ezagent.Invocation.dispatch/1` (→ `{:dispatch, %Cmd{}}` effect) and `Ezagent.Kind.terminate/1` (→ `{:terminate, target}` effect).
+
+Exception: result-dependent in-handler dispatch (where you need the dispatch return value, e.g. `ReadMarker.mark` only on successful chat.receive cast) — stay in-handler with `Ezagent.Router.dispatch/1` because the effect grammar discards dispatch return values. See `Ezagent.Behavior.Chat.handle_send/2` for the canonical pattern.
+
+## "I'll import `Ezagent.EventLog` / `Ezagent.SnapshotStore` / `Ezagent.Kind.StateRebuilder` / `Ezagent.SagaRunner` from my plugin"
+
+Refuse. SPEC §11 grep gate: any `Ezagent.Plugin.*` or `ezagent_plugin_*` / `ezagent_domain_*` module referencing these framework-internal modules fails CI. Plugin code:
+- Emits events via `{:emit, event_name, payload}` effect — framework calls `EventLog.append/4`
+- Lets framework write snapshots — framework calls `SnapshotStore.write/3` per `:set` effects + the every-N + on-terminate policy
+- Lets framework rebuild from snapshot — `Kind.Host.init/1` calls `StateRebuilder.rebuild/1` on demand
+- Hands sagas to runner via `{:saga, %Saga{}}` effect — framework calls `SagaRunner.execute/2`
+
+The grep gate is structural: it ensures plugin authors can write a Behavior without ever knowing these modules exist.
+
+## "I'll tune snapshot policy on my new Kind via `persistence/0`"
+
+Refuse for new-contract Kinds. Per SPEC r2 codex HIGH-3 closure: snapshot policy is **framework-decided**, not per-Behavior. `Ezagent.SnapshotStore` writes every N events (default 100, configurable `:ezagent_core, :snapshot_every_n_events`) + on graceful terminate. The legacy `Kind.persistence/0` callback enum (`:on_change` / `{:periodic, ms}` / `:on_terminate` / `:ephemeral` / `:external`) still exists for Phase 2 migrated Kinds in coexistence, but Phase 2+ NEW Kinds should not declare it — let SnapshotStore handle it.
+
+If you genuinely need different snapshot semantics (e.g. high-volume Worker Kind), declare the Kind with `pattern: {:resource, :hot}` (OQ-6) — that picks `:ephemeral` default + opt-in periodic, framework-managed. Do NOT reach for `persistence/0`.

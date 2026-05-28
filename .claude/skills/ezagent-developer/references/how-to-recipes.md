@@ -35,18 +35,50 @@ Reference Kinds:
 
 ## How-to: add a Behavior
 
-1. Create `apps/<your_domain_or_plugin>/lib/<your>/behavior/<your_behavior>.ex`.
-2. `@behaviour Ezagent.Behavior`.
-3. Implement `state_slice/0`, `init_slice/1`, `interface/0` (action schema), `invoke/4`.
-4. **Implement `required_caps/0`** (PR-CC-2-v2 — 2026-05-25): return `%{action_atom => [cap_template, ...]}` — the per-action cap requirements consulted at dispatch step 5.5. Returning `%{}` means "no cap required" (dispatchable to anyone; reserved for read-only public actions).
-5. Optional: `workspace_scoped?/0 → boolean` (dispatch step 5.6 — workspace isolation enforcement; defaults to `true` for per-tenant Kinds).
-6. Register per-Kind in the plugin's `register_<X>_behaviors()`:
-   `:ok = BehaviorRegistry.register(SomeKind, :action, YourBehavior)`.
-7. Actions are dispatched via `?action=<your_behavior_dot_form>.<action>` per SPEC v2 §5.2. The behavior dot-form is what `interface/0` returns (e.g. `:chat` → `?action=chat.send`).
+**Post-2026-05-28 — new contract (SPEC PR #445, Phase 1-4 complete).** Use this recipe for all greenfield Behaviors. The legacy `invoke/4` recipe below is kept only for git archaeology — `Behavior.invoke/4` is `@optional_callbacks` post Phase 3 (PR #464) and no production path consults it.
 
-**Multi-action Behaviors and the action-axis limitation**: per docs/futures/todo.md "Capability struct lacks an action axis", `Capability` matches on kind+behavior+instance+workspace — NOT on action. Any holder of cap-on-Behavior holds all of the Behavior's actions. **Workaround until SPEC lands**: carve privileged actions into their own Behavior module (PR #356 pattern — `WorkspaceUserAdmin` for privileged `:create_user`, separate from generic `Workspace`).
+1. Read `references/new-contract.md` first — the 9-effect vocabulary, the `action/3` macro grammar, and the bucket execution order are normative.
+2. Create `apps/<your_domain_or_plugin>/lib/<your>/behavior/<your_behavior>.ex`.
+3. `use Ezagent.Behavior` (opts into the new contract — injects `action/3` macro + `@before_compile` invariants + derived `actions/0` / `interface/0` / `required_caps/0` / `cap_subjects/0`).
+4. Declare each action with the `action/3` macro:
 
-Reference: `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex` (most complex, well-commented).
+   ```elixir
+   action :send,
+     args:        %{message: Ezagent.Message},      # validated by InterfaceValidator
+     returns:     %{stored: :boolean},
+     caps:        [:send],                          # default [action_name]
+     modes:       [:cast],                          # default [:call]
+     description: "Post a message into the session and fan it out to members"
+   ```
+
+5. Implement `state_slice/0` + `init_slice/1` (slice ownership stays; framework manages reads via `ctx[:read]`).
+6. Implement `def handle_<action>(args, ctx)` for **every** declared action (compile-time check raises CompileError otherwise). Return `{:ok, result, [effect]}`:
+
+   ```elixir
+   def handle_send(%{message: msg}, ctx) do
+     {:ok, %{stored: true},
+      [
+        {:set, :last_message_id, msg.id},
+        {:notify, "session:#{ctx[:self_uri]}:events", {:chat_message, msg}},
+        {:dispatch, %Ezagent.Cmd{target: recipient, action: :receive, args: %{message: msg}, ctx: %{caller: ctx[:self_uri]}}},
+        {:emit, :message_sent, %{recipient: recipient}}
+      ]}
+   end
+   ```
+
+7. Register per-Kind in the plugin's `register_<X>_behaviors()`:
+   `:ok = BehaviorRegistry.register(SomeKind, :action, YourBehavior)`. The new-contract Behavior is fully back-compat with the legacy `BehaviorRegistry` API — the macro auto-derives `actions/0` etc.
+8. Actions still dispatched via `?action=<behavior_dot_form>.<action>` per SPEC v2 §5.2 (URI form unchanged); internally Router translates to `%Cmd{target, action}` and routes to your `handle_<action>/2`.
+
+**Multi-action Behaviors and the action-axis limitation**: per docs/futures/todo.md "Capability struct lacks an action axis", `Capability` matches on kind+behavior+instance+workspace — NOT on action. Any holder of cap-on-Behavior holds all of the Behavior's actions. The new `caps: [list]` per-action declaration captures multi-cap intent (SPEC HIGH-7 closure) but the underlying `Capability.matches?/2` axes are unchanged. **Workaround until SPEC lands**: carve privileged actions into their own Behavior module (PR #356 pattern — `WorkspaceUserAdmin` for privileged `:create_user`, separate from generic `Workspace`).
+
+**Result-dependent in-handler dispatch**: if you need the dispatch return value (e.g. `ReadMarker.mark` only after successful chat.receive cast), call `Ezagent.Router.dispatch/1` directly from inside the handler body — the `{:dispatch, _}` effect discards return values. See `Ezagent.Behavior.Chat.handle_send/2` for the canonical example.
+
+Reference: `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex` (most complex new-contract Behavior, well-commented).
+
+### Legacy — `@behaviour Ezagent.Behavior` + `invoke/4` (HISTORICAL, do NOT use for new code)
+
+Pre-2026-05-28 Behaviors implemented `@behaviour Ezagent.Behavior` + module attribute `@interface` + `invoke(action, slice, args, ctx)` callback. Phase 3 (PR #464) deleted `LegacyBehaviorAdapter` and retired the `invoke/4` callback to `@optional_callbacks`. **No runtime path consults `invoke/4` post-Phase 3.** If you find a Behavior still using `invoke/4`, it's a Phase 2 migration leftover — open a PR migrating it to the new contract. The legacy callback declaration is kept in `Ezagent.Behavior` purely to surface CompileError on stale references (rather than silent dispatch failure).
 
 ## How-to: add a Template Class
 

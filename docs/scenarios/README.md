@@ -159,7 +159,7 @@ test path + a runbook path + at least one PR-evidence screenshot. The
 | 27 | [Per-agent api-keys + sandbox isolation](./27-api-keys-sandbox/scenario.md) | 15 | ⚠️ | `cc_agent_sandbox_credentials_test.exs` — Bug A (config_dir atomic setup) deferred |
 | 28 | [Dispatch audit row (invocations → EventLog)](./28-dispatch-audit/scenario.md) | 16 | ⏳ | `Audit.@events` covered; EventLog migration is Phase 2+ |
 | 29 | [Admin LV smoke — registry / snapshots / templates / routing / cmdK](./29-admin-lv-smoke/scenario.md) | 17 | ⚠️ | per-LV manual smoke; `/admin/agents` returns 404 (gap) |
-| 30 | [Plugin author DX — write a new Behavior with effects](./30-plugin-author-behavior/scenario.md) | 18 | ⏳ | Phase 1 lands LegacyAdapter (PR #451); Phase 2 will exercise greenfield Behavior writes |
+| 30 | [Plugin author DX — write a new Behavior with effects](./30-plugin-author-behavior/scenario.md) | 18 | ✅ | Phase 1-4 migration complete (PRs #451-#469); E2E test #468 exercises greenfield Behavior writes against the new contract |
 
 ---
 
@@ -344,37 +344,28 @@ queries or telemetry dashboards.
 | `/admin/agents/:uri/terminal` | ✅ live PTY mirror |
 | cmdK search | ⚠️ shipped (SPEC `v1-uri-pickers-and-cmdk`) — coverage of all action verbs not tested |
 
-### Category 18 — Plugin author DX (NEW — for Router/Behavior/Kind)
+### Category 18 — Plugin author DX (Router/Behavior/Kind — Phase 1-4 complete)
 
-Per SPEC #445 §4 (PR merged 2026-05-28), plugin authors will write
-`use Ezagent.Behavior` modules with `action :foo, caps: [...] do ...
-end` macros returning effects. Phase 1 (PR #451) ships the primitives
-+ `LegacyBehaviorAdapter` (wraps 62 existing `invoke/4` callsites);
-Phase 2 will retrofit per-domain.
+Per SPEC #445 §4 (Phase 1-4 migration PRs #451 / #453 / #454 / #462 / #463 / #464 / #469 all merged 2026-05-28), plugin authors write `use Ezagent.Behavior` modules with `action :foo, args: ..., returns: ..., caps: [...]` macros + `def handle_foo(args, ctx)` returning effects. Phase 1 (PR #451) shipped the primitives + `LegacyBehaviorAdapter` as a transitional bridge; Phase 2 (PR #462 + #463) migrated all 34+ Behaviors to new contract; **Phase 3 (PR #464) deleted `LegacyBehaviorAdapter` and retired `Behavior.invoke/4` to `@optional_callbacks`**; Phase 4 (PR #469) polished Kind.Server metadata + audit fix. 165 E2E tests passing (#465-#468).
 
 Scenarios for this category target:
-1. Writing a new Behavior (greenfield) — exercises the action macro,
-   effects vocabulary, cap declaration, EventLog emission.
-2. Migrating an existing `Behavior.invoke/4` via LegacyAdapter — proves
-   the adapter is transparent to callers.
-3. Saga compensation pattern — declare a multi-step saga, verify
-   compensation order on partial failure.
+1. Writing a new Behavior (greenfield) — exercises the action macro, effects vocabulary, cap declaration, EventLog emission. Scenario #30 is the canonical exercise.
+2. (HISTORICAL — Phase 1-2 only) Migrating an existing `Behavior.invoke/4` via LegacyAdapter — proves the adapter was transparent to callers. After Phase 3 (PR #464) deleted the adapter, this scenario is no longer runnable; it remains in the catalog as git archaeology.
+3. Saga compensation pattern — declare a multi-step saga, verify compensation order on partial failure (note: compensation is best-effort partial restore, NOT atomic rollback — codex r2 HIGH-5 closure; SPEC §5.4).
 
 ---
 
-## 6. Prioritization — top 5 for Phase 2 test infra
+## 6. Prioritization — top 5 (historical: Phase 2 test infra investment)
 
-Phase 2 (per SPEC #445 §6) migrates 22 Behaviors from `invoke/4` to
-the new `action/3` macro. The test-infra investment that maximally
-de-risks this migration:
+**Status update (2026-05-28)**: All Phase 1-4 migration PRs (#451 / #453 / #454 / #462 / #463 / #464 / #469) merged + 165 E2E tests pass (#465-#468). The list below was the prioritization rationale BEFORE Phase 2 implementation; preserved for archival reasons. Top scenarios remain the canonical exercises for any future Behavior contract change.
 
-| Rank | Scenario | Why |
+| Rank | Scenario | Why (historical, pre-Phase-2) |
 |---|---|---|
-| **1** | **30 — Plugin author DX (greenfield Behavior)** | Phase 2's done-gate is plugin authors writing new Behaviors without core knowledge. Need a runnable E2E + golden file before retrofitting. |
-| **2** | **25 — Phx restart rebuild** | Snapshot-based recovery is the safety net for the 22-Behavior migration. If StateRebuilder regresses, every retrofitted Behavior is at risk. |
-| **3** | **24 — Destroy cascade w/ Saga** | PR #451's `SagaRunner` is untested in production. Phase 2 will use it for multi-step Behavior migrations; need a baseline scenario before that. |
-| **4** | **05 + 06 + 07 — cross-flavor agent roundtrip** | The 3 most-used agent flavors. Any Phase 2 Behavior touching `chat.send` / `chat.receive` must regression-pass these. |
-| **5** | **14 — cap action-axis grant** | Cap-axis is THE invariant for plugin isolation (a wildcard cap defeats the model). Any Phase 2 Behavior migration must preserve action-narrow grants. |
+| **1** | **30 — Plugin author DX (greenfield Behavior)** | Phase 2's done-gate is plugin authors writing new Behaviors without core knowledge. Status: shipped in PR #468. |
+| **2** | **25 — Phx restart rebuild** | Snapshot-based recovery is the safety net for the 34+ Behavior migration. If StateRebuilder regresses, every retrofitted Behavior is at risk. Status: shipped in PR #466. |
+| **3** | **24 — Destroy cascade w/ Saga** | PR #451's `SagaRunner` is untested in production. Phase 2 will use it for multi-step Behavior migrations; need a baseline scenario before that. Status: shipped in PR #466. |
+| **4** | **05 + 06 + 07 — cross-flavor agent roundtrip** | The 3 most-used agent flavors. Any Phase 2 Behavior touching `chat.send` / `chat.receive` must regression-pass these. Status: shipped in PR #468. |
+| **5** | **14 — cap action-axis grant** | Cap-axis is THE invariant for plugin isolation (a wildcard cap defeats the model). Any Phase 2 Behavior migration must preserve action-narrow grants. Status: shipped in PR #465. |
 
 Secondary investments (post-top-5):
 - **17 — Multi-workspace user** — gap today; needs to land before any
