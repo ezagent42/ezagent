@@ -1,6 +1,15 @@
 # SPEC — Ezagent 状态模型迁移到 EventStore + Commanded (CQRS / 事件溯源)
 
-**状态：** r4-FINAL — 4 轮 codex 预算已耗尽（REJECT 仍有 4 HIGH + 3 MED）。剩余 findings 作 **KNOWN LIMITATIONS** 带入 Allen grill-with-doc 讨论（按 cap-vis / URI-canonical 同模式 + Allen 指令明示「max budget exhausted with documented limits」）。2026-05-28。
+**状态：** r5 — **§1.5 已添加（备选方案审视）；结论 = Option B（轻路径更优）**。§2-§12 描述的 Commanded 迁移**不**建议照样实施；§1.5 的诚实对比结论是 Sage + ex_audit + 收紧 `Ecto.Multi` 覆盖 §1 痛点 P1-P4，仅 P5（时间旅行回放）是 Commanded 独占 — 而 P5 不在 roadmap 上。PR #442 应暂停，等待配套「Path B SPEC」(`2026-05-28-destroy-cascade-sage-ex_audit.md`)，按 §1.5.5。之前的 r4-FINAL 状态（4 轮 codex 预算耗尽，7 条 carry-over limitations）若日后重审 Option A 仍适用于 §2-§12。2026-05-28。
+
+## r5 changelog（相对 r4 的 delta）
+
+按 Allen 2026-05-28 08:15 指令添加 — SPEC 必须自我证立**为什么是 Commanded 具体**而非更轻的原生 Phoenix 路径。之前 SPEC 从 §1 问题直接跳到 §2 决策、零备选分析（0 处提到 Sage、ex_audit、"alternatives considered"）。
+
+- **§1.5 插入**在 §1（问题）和 §2（决策）之间 — 「备选方案审视 — 原生 Phoenix 轻路径」。结构：5 条候选路径（L1 Ecto.Multi、L2 Sage、L3 ex_audit、L4 Oban Workflow、L5 DIY）× 5 个痛点（P1 销毁级联、P2 审计、P3 跨-Kind 工作流、P4 竞态、P5 回放）的诚实矩阵 + 5 段逐场景深挖。
+- **§1.5 结论 = Option B** — Ecto.Multi + Sage + ex_audit 覆盖 P1-P4；P5 是唯一 Commanded 独占且不在 roadmap 上。
+- **⚠️ §2 前置说明添加**在 §2 顶部 — 标记 §2-§12 反映**被否决的** Commanded 路径，不应按现状合并。§1.5.5 列出具体下一步（暂停 #442，起草 Path B SPEC）。
+- §2-§12 本身**未改** — 逐字保留作上下文 / 若日后 P5 进入 roadmap 时重审。
 
 ## r4 后已知限制（带入 grill-with-doc）
 
@@ -198,7 +207,173 @@ Commanded + EventStore 提供：
 
 ---
 
+## 1.5 备选方案审视 — 原生 Phoenix 轻路径
+
+在采纳 Commanded + EventStore（一个 3 个月的迁移、退役 `Kind.Server`、`KindRegistry`、`SpawnRegistry`、`Audit.Writer`、`Persistence` 对 slice 的写、并把 Postgres 引进 dev loop）之前，BEAM/Phoenix 生态用**原生原语或更轻的纯 Elixir 库**能不能解决 §1 的痛点？
+
+本节为轻路径做 steel-man。Allen 的指令（2026-05-28 08:15）：SPEC 必须自我证立**为什么是 Commanded**，而不是默认「最重的锤子就赢」。按 `feedback_let_it_crash_no_workarounds`，这里假造 ❌ 与制造 Commanded-only 优势是同一个反模式 — 都掩盖结构真相。
+
+### 1.5.1 5 条候选轻路径
+
+| 路径 | 库 / 模式 | 星 / 年龄 / 稳定性 |
+|---|---|---|
+| **L1** | 纯 [`Ecto.Multi`](https://hexdocs.pm/ecto/Ecto.Multi.html) — 收紧事务范围 | 内建（`ecto_sql`）— 每个 Phoenix 应用都有 |
+| **L2** | [Sage](https://github.com/Nebo15/sage) — 纯 Elixir saga 补偿 | 962⭐，零依赖，最后一次发布 2022-09（稳定；不再活跃但生产用） |
+| **L3** | [ex_audit](https://github.com/ZennerIoT/ex_audit) — Ecto changeset → 审计日志 + revert | 380+⭐，活跃维护 |
+| **L4** | [Oban Pro Workflow](https://oban.pro/docs/pro/1.5.0-rc.7/Oban.Pro.Workflow.html) — 带依赖 + 补偿的 job DAG | 付费库，成熟，活跃开发 |
+| **L5** | DIY GenServer + append-only 事件日志表（无库） | 内建 |
+
+（`Honeydew`、`Flow`、`GenStage` 已考虑并直接排除 — 它们解决并发 / 流，不解决多 aggregate 原子性或审计。不列。）
+
+### 1.5.2 痛点矩阵 — 每条轻路径 vs §1 每个痛点
+
+| # | 痛点（来自 §1） | L1 Ecto.Multi | L2 Sage | L3 ex_audit | L4 Oban Workflow | L5 DIY 事件日志 | Commanded |
+|---|---|---|---|---|---|---|---|
+| **P1** | 跨-Kind 销毁级联 — 7 步，部分失败需补偿 | ❌ 仅同库事务；跨-Kind = 跨进程 | ✅ 经典模式 — 每步 transaction/compensation 对 | —（不是工作流库） | ✅ 仅异步 — 调用者拿不到同步结果 | ✅ 可行 — 但你在手卷 Sage | ✅ Process Manager — 与 Sage 同形 + 状态持久 |
+| **P2** | 审计日志支持任意 SQL 查询（"用户 X 昨天 14:00 持有哪些 cap？"） | ⚠️ 部分 — 需要手维护旁路 `audit_log` 表 | —（不是审计库） | ✅ 经典 — `Ecto.Changeset` → `version_table` 行，SQL 可查 | —（不是审计库） | ✅ DIY — 和 ex_audit 同形，但触发由你维护 | ⚠️ 事件流就是审计，但**不能直接 SQL 查** — 需要由事件 handler 维护的 `audit_projection` 表（多一跳，ex_audit 不需要） |
+| **P3** | 跨-Kind 工作流编排（session 创建级联、worker 引导、cap-grant 验证） | ❌ 同 P1 — 事务范围内 | ✅ 与 P1 同机制 — 模块即编排者 | — | ✅ 异步，带重试 | ✅ DIY | ✅ 带持久状态的 Process Manager |
+| **P4** | 竞态（read-then-lock、授予时 cap 检查、注册/查找 key 一致性） | ✅ — 收紧 Ecto.Multi + DB 约束（唯一索引、exclusion constraint、FK cascade）是经典答案 | ✅ — Sage 跑在事务或事务链里 | — | — | ✅ — DIY + DB 约束 | ⚠️ — **同样的问题、不同的位置** — aggregate-process 串行化和当前 `Kind.Server.handle_call` 串行化等价；真正的竞态修复是 DB 约束，与模型无关 |
+| **P5** | 时间旅行回放 / "重建 T 时刻状态" | ❌ | ❌ | ⚠️ — 数据在（审计表），但没有回放到状态的机制 | ❌ | ⚠️ — DIY（你有事件，自己写 fold 函数） | ✅ — aggregate 状态**派生**自事件回放；原生原语 |
+
+**单元语义**：✅ = 该路径用所述机制解决该痛点。⚠️ = 部分 / 需多一跳。❌ = 该路径不覆盖此维度。"—" = 不在该库范围（不要因为库聚焦而扣分）。
+
+### 1.5.3 逐场景深挖
+
+#### P1 — 销毁级联（这整个 SPEC 的触发器）
+
+**Sage 直接解决。** §3.8 的 7 步级联映射到 Sage 的 `run/compensate` 对：
+
+```elixir
+defmodule Ezagent.DestroyAgent do
+  import Sage
+
+  def destroy(agent_uri, workspace_uri) do
+    new()
+    |> run(:snapshot,           &capture_pre_destroy_snapshot/2, &noop_compensate/3)
+    |> run(:revoke_caps,        &revoke_all_caps_held_by/2,      &restore_caps_from_snapshot/3)
+    |> run(:destroy_children,   &destroy_child_agents/2,         &respawn_children/3)
+    |> run(:drop_memberships,   &drop_all_session_memberships/2, &restore_memberships_from_snapshot/3)
+    |> run(:unlink_lineage,     &unlink_lineage/2,               &relink_lineage_from_snapshot/3)
+    |> run(:terminate,          &terminate_agent/2,              &noop_compensate/3)
+    |> run(:audit,              &write_destroy_audit_row/2,      &noop_compensate/3)
+    |> execute(%{agent_uri: agent_uri, workspace_uri: workspace_uri})
+  end
+
+  defp restore_caps_from_snapshot(error, effects_so_far, %{agent_uri: uri}) do
+    Ezagent.Capability.restore_for(uri, effects_so_far.snapshot.caps)
+    {:ok, :restored}
+  end
+end
+```
+
+这是 Sage 的**经典**模式。Sage 的契约正是 §3.8 DestroyAgentSaga 需要的：每步一个 forward + 一个 compensate；若第 N 步失败，1..N-1 的补偿按逆序运行。Sage 负责编排；步骤就是函数。
+
+**具体失败模式**：
+- Sage 补偿**不能** raise（语义上 — 若 compensate 失败，saga 处于未定义状态而中止）。这与 Commanded Process Manager 的约束相同（compensation 中的 `handle/2` raise 同样致命）。不是 Sage 独有弱点。
+- Sage 的状态是 `execute/1` 调用期间的内存状态。若编排进程在 execute 中途崩，saga 失去进度。**问题**：ezagent 是否经常出现中途崩？读 Phase 2-3 复盘：没有。派发通常 <100ms；BEAM 稳定；6 个月 dogfood 中**没有**观察到「销毁中途留下孤儿」的事故。Commanded 的 PM 持久状态在你**确实**中途崩时有意义 — 不崩时，持久性纯粹是开销。
+
+**P1 诚实结论**：Sage 完整解决销毁级联。**如果销毁级联是唯一动机**（按 §1.1，它就是这个 SPEC 的触发器），Commanded Process Manager 是过度工程。
+
+#### P2 — 审计日志支持 ad-hoc SQL 查询
+
+SPEC §1.3 把当前 audit 表诊断为「telemetry handler 的旁路记录」（`(caller, target, action, result)` 元组）。需要的形状是：「任意历史 SQL 查询（X 在时刻 T 持有哪些 cap；昨天 14:00 session S 的成员名单）的答案在可查表里」。
+
+**`ex_audit`** 是纯 Phoenix 的经典答案：
+
+```elixir
+schema "capabilities" do
+  field :uri, :string
+  field :scope_uri, :string
+  field :verb, :string
+  field :holder_uri, :string
+  # ex_audit 注入：
+  # - changes 表跟踪每次 Ecto.Changeset 变更
+  # - SQL 可查：`from c in CapabilityVersion, where: c.holder_uri == ^uri and c.recorded_at < ^t`
+end
+```
+
+审计表**直接 SQL 可查**。无投影步骤，无事件回放再折叠。
+
+**反之**：Commanded 的事件流**是**审计日志，但回答 "X 在 T 时刻持有哪些 cap" 需要：
+1. 一张专门的 `caps_history_projection` 表，由 `CapsHistoryProjector` 维护（多一跳、多 LOC、投影器有延迟），**或**
+2. 把 X 的 aggregate 事件回放到 T（服务端、慢、一次只能一个 aggregate）。
+
+对 ad-hoc 管理查询 — 人在 psql 里查事故 — `ex_audit` + 原生 SQL **胜过** Commanded 事件流。事件流在「订阅未来 audit」（Commanded handler）上赢，但在「回答这个历史 SQL 问题」上输。
+
+**P2 诚实结论**：对 SPEC 描述的审计需求，ex_audit **优于** Commanded 事件流。Commanded 的事件审计对 SQL 友好查询是降级。
+
+#### P3 — 跨-Kind 工作流编排
+
+形状同 P1。Sage 同样处理 `CreateSessionSaga`、`CreateUserInWorkspaceSaga`、`BootstrapWorkerSaga`、`RevokeCapCascadeSaga`、`CapGrantOwnershipVerifySaga` — 每个都是 `new() |> run(...) |> run(...) |> execute(ctx)`。
+
+**唯一差异点**：Sage 的状态在 `execute/1` 内存里；若工作流要跨多个独立 caller 调用（如「用户点 Create，30 秒后 worker 在 binding 事件后异步引导」），Sage 的单 execute 范围不合适 — 你要把它实现为两个独立的 Sage，各在自己的 caller。Commanded PM 的持久状态会跨过。
+
+**但是**：看 §4.4 saga 清单：
+- `DestroyAgentSaga`、`DestroyUserSaga`、`DestroySessionSaga`、`DestroyWorkspaceSaga`：全是单调用级联。Sage 合适。
+- `CreateSessionSaga`、`CreateUserInWorkspaceSaga`：单调用。Sage 合适。
+- `BootstrapWorkerSaga`：由独立事务里的 `BindingCreated` 事件触发。**这一个**确实是跨 caller 边界的事件驱动 — Sage 不合适，但在原生模型里你也不需要 saga；它就是受监督 GenServer 里的一个 `Phoenix.PubSub.subscribe(:bindings)` + handler。「saga」的框架是 Commanded 形状的解 — 给一个 CQRS 外不存在的问题。
+- `RevokeCapCascadeSaga`：由 membership 撤销触发。同 bootstrap — PubSub handler 即可。
+- `CapGrantOwnershipVerifySaga`：这是一个**单命令**检查（验证授予者有 cap，然后授予或拒绝）。根本不是 saga — 是 guard 子句。「saga」的框架是过度建模。
+
+**P3 诚实结论**：§4.4 的 9 个 saga 中 5 个是单调用级联 → Sage 处理。2 个是事件触发的跨调用 → GenServer 里的 PubSub handler。2 个根本不是 saga。Commanded 的框架把数字虚高了。
+
+#### P4 — 竞态（read-then-lock、授予时检查、注册/查找一致性）
+
+这是 §1 假设在严密审视下**最弱**的痛点。
+
+§1.4 说：「在 CQRS/ES 下，授予者在授予时刻的 caps 可从授予者 Aggregate 在 grant 命令应用瞬间的事件回放状态中推导；aggregate 级别的串行化给同样性质。」
+
+**再读一遍**：「aggregate 级别的串行化给同样性质」。这字面就是当前模型。`Kind.Server.handle_call` per-instance 串行化；`Commanded.Aggregates.Aggregate` 进程 per-aggregate-UUID 串行化。同形。竞态修复不是事件溯源 — 是 per-key 的进程串行化。两个模型都有。
+
+**真正**的竞态修复，cap-vis-SPEC + URI-canonical-SPEC 都收敛到的，是：
+1. 唯一索引（每个实体表的 `uri` 列 NOT NULL UNIQUE）
+2. exclusion constraint（同 scope/verb 对上不能并存两个 grant）
+3. 外键级联（删用户 → 级联删持有的 cap）
+4. 更紧的 `Ecto.Multi` 事务边界（grant + audit 行在一个事务里）
+
+这些是 DB 级约束。它们在 Commanded vs 当前模型上一样工作。Commanded 对竞态解决**没**增加任何东西 — 它只把串行化点从 `Kind.Server` 搬到 `Commanded.Aggregates.Aggregate`。DB 约束修的竞态在两个模型都修；aggregate 串行化修的竞态今天 `Kind.Server` 串行化也修。
+
+**P4 诚实结论**：Commanded 在竞态解决上**没**胜过当前模型。修复是 L1（更紧 Ecto.Multi + DB 约束），与哪个 actor 模型包裹无关。
+
+#### P5 — 时间旅行回放
+
+这是矩阵里**唯一**Commanded 有结构优势、没有轻路径能匹的痛点。Aggregate 状态**就是**事件派生；回到 T 时刻就是把事件回放到 T，得到当时状态。原生 Elixir + ex_audit 给你审计数据，但「重建 T 时刻 slice」需要每个 Kind 手卷 fold-over-history 代码。
+
+**关键问题 — ezagent 是否需要过回放？**
+
+搜 docs/ futures、IMPLEMENTATION_ROADMAP、codex 拒收 trail 里的 "replay"、"time-travel"、"重建 T 时刻状态"：
+- §3.7 把回放列为 Commanded 能力（正面）。
+- §1.4 把「无回放」列为当前模型缺口。
+- **实际事故复盘和未来工作列表中没有任何条目把回放列为需求。** 没有 GitHub issue 要它。没有客户（Allen）说过「我需要倒回 2 周前的状态来调试事故」。
+- 销毁级联崩溃后续跑是最接近的类比，且 Sage 补偿 + 持久 saga 状态就能解（子问题：我们是否需要跨进程重启的 saga 持久？按上面 §4.4 saga 分析：不需要，当前 saga 是单调用）。
+
+**P5 诚实结论**：回放是矩阵里**唯一**Commanded 独占的结构优势，而它**不在 roadmap 上**。我们会获得一项能力，但近期没有使用它的计划。
+
+### 1.5.4 结论
+
+**Option B**：**L1（更紧 Ecto.Multi + DB 约束）+ L2（Sage）+ L3（ex_audit）** 覆盖 §1 痛点 P1、P2、P3、P4 — 而且 **P2（审计）和 P4（竞态）实际上轻路径解得比 Commanded 好**。Commanded 不被挑战的唯一维度是 **P5（回放）**，P5 不在 roadmap 上。
+
+总成本对比：
+- **Option A（Commanded）**：3 个月迁移，退役 7 个内部模块，把 Postgres 引进 dev loop，热路径派发延迟 +5x（按 §7.1），1500-2000 LOC saga 代码（按 §4.4），每个 aggregate 的 snapshot 调参是新的 ops 旋钮。
+- **Option B（轻路径）**：约 2 周加 Sage + ex_audit 依赖，写 9 个 Sage 模块（每个 ~50-150 LOC，对应 §4.4 saga 清单），在现有领域模块里收紧 Ecto.Multi 范围，退役 0 个内部模块，dev loop 不变，无延迟开销。
+
+**数据强迫 Option B**。P5 单独不足以在 P5 不在 roadmap 上时证立 Option A 的成本。
+
+### 1.5.5 这个结论的下游影响
+
+本 SPEC 起草时隐含假设销毁级联 4 轮 codex 失败（§1.1）需要 CQRS 才能解决。**这个假设现在被 §1.5.3 P1 反驳**：Sage 的补偿模式用与 Commanded Process Manager 相同的原语解决销毁级联，迁移成本只是零头。
+
+具体下一步（**本 SPEC 不承诺** — 这是给 Allen 的建议）：
+1. **暂停 PR #442**（不要按现状合并 §2-§12；Decision 现在被 §1.5 挑战）。
+2. **起草配套「Path B SPEC」**：标题 `2026-05-28-destroy-cascade-sage-ex_audit.md` — 用 Sage 做销毁级联 + 跨-Kind 编排，用 ex_audit 做审计日志，收紧 Ecto.Multi 做授予时检查 + workspace 隔离的竞态修复。~2 周实施。无 CQRS 迁移。
+3. **若 Path B SPEC 落地**：本 SPEC（#442）可以 `wontfix-superseded-by-#NNN` 关闭，保留 §1.5 作为理由。
+4. **若日后回放成为 roadmap 项**：重审本 SPEC。一旦 P5 进入需求集，CQRS/Commanded 仍是正确答案。§1.5 不是在说「永远别 Commanded」 — 是在说「现在不需要，当前需求被轻路径满足」。
+
+---
+
 ## 2. 决策 — 采用 Commanded + EventStore 作为主状态模型
+
+> ⚠️ **§2 前置说明（r5）**：§1.5 结论是 **Option B**（Ecto.Multi + Sage + ex_audit 覆盖 §1 痛点，P5 回放除外；P5 不在当前 roadmap 上）。下方 §2 反映的是**被否决的** Commanded 路径，保留作上下文 — §2-§12 描述的是「若选 Option A 则 Commanded 迁移会是什么样」。见 §1.5.5 的建议下一步（暂停 PR #442；起草配套 Path B SPEC）。**不要按现状合并 §2-§12**。
 
 ### 2.1 采纳的组件
 

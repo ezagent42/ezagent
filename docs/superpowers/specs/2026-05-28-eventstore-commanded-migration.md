@@ -1,6 +1,15 @@
 # SPEC — Ezagent state model migration to EventStore + Commanded (CQRS / event-sourcing)
 
-**Status:** r4-FINAL — 4-round codex budget exhausted with REJECT verdict. Remaining findings carried as KNOWN LIMITATIONS for Allen grill-with-doc discussion (per `feedback_register_lookup_key_parity` SPEC-iteration pattern + the explicit "max budget exhausted with documented limits" instruction in the Allen brief). 2026-05-28.
+**Status:** r5 — **§1.5 added (Alternatives Considered); verdict = Option B (lighter path preferred)**. The Commanded migration described in §2-§12 is NOT recommended as-is; the §1.5 honest-comparison concludes that Sage + ex_audit + tighter `Ecto.Multi` covers §1's pain points P1-P4, and only P5 (time-travel replay) is Commanded-exclusive — and P5 is not on the roadmap. PR #442 should be paused pending a companion "Path B SPEC" (`2026-05-28-destroy-cascade-sage-ex_audit.md`) per §1.5.5. The prior r4-FINAL status (4-round codex budget exhaustion, 7 carry-over limitations) still applies to §2-§12 if Option A is ever revisited. 2026-05-28.
+
+## r5 changelog (delta from r4)
+
+Added per Allen's 2026-05-28 08:15 directive — SPEC must self-justify why Commanded specifically vs lighter native-Phoenix paths. Previously the SPEC jumped from §1 Problem to §2 Decision with zero alternatives analysis (0 mentions of Sage, ex_audit, "alternatives considered").
+
+- **§1.5 inserted** between §1 (Problem) and §2 (Decision) — "Alternatives considered — native-Phoenix lighter paths". Structure: 5 candidate paths (L1 Ecto.Multi, L2 Sage, L3 ex_audit, L4 Oban Workflow, L5 DIY) × 5 pain points (P1 destroy cascade, P2 audit, P3 cross-Kind workflow, P4 races, P5 replay) honesty matrix + 5 per-scenario paragraphs.
+- **§1.5 verdict = Option B** — Ecto.Multi + Sage + ex_audit covers P1-P4; P5 is the only Commanded-exclusive and not on the roadmap.
+- **⚠️ Pre-§2 note added** at the top of §2 — flags that §2-§12 reflects the **rejected** Commanded path and should not be merged as-is. §1.5.5 lists concrete next steps (pause #442, draft Path B SPEC).
+- §2-§12 themselves are UNCHANGED — kept verbatim for context / future revisit if P5 enters the roadmap.
 
 ## Known Limitations after r4 (carried into grill-with-doc)
 
@@ -226,7 +235,173 @@ Every one of §1.2's pain points dissolves to a framework primitive. The migrati
 
 ---
 
+## 1.5 Alternatives considered — native-Phoenix lighter paths
+
+Before adopting Commanded + EventStore — a 3-month migration that retires `Kind.Server`, `KindRegistry`, `SpawnRegistry`, `Audit.Writer`, `Persistence` (for slices), and introduces Postgres into the dev loop — what could the BEAM/Phoenix ecosystem solve §1's pain points with using **native primitives or lighter pure-Elixir libraries**?
+
+This section steel-mans the lighter path. Allen's directive (2026-05-28 08:15): the SPEC must self-justify why Commanded specifically, not "the heaviest hammer wins by default." Per `feedback_let_it_crash_no_workarounds`, false ❌s here would be the same anti-pattern as manufactured Commanded-only advantages — both hide structural truth.
+
+### 1.5.1 The 5 candidate lighter paths
+
+| Path | Library / Pattern | Stars / Age / Stability |
+|---|---|---|
+| **L1** | Pure [`Ecto.Multi`](https://hexdocs.pm/ecto/Ecto.Multi.html) — tighter transaction scope | builtin (`ecto_sql`) — every Phoenix app already has it |
+| **L2** | [Sage](https://github.com/Nebo15/sage) — pure-Elixir saga compensation | 962⭐, dep-free, last release Sep 2022 (stable; not actively-developed but production-used) |
+| **L3** | [ex_audit](https://github.com/ZennerIoT/ex_audit) — Ecto changeset → audit log w/ revert | 380+⭐, active maintenance |
+| **L4** | [Oban Pro Workflow](https://oban.pro/docs/pro/1.5.0-rc.7/Oban.Pro.Workflow.html) — DAG of jobs with deps + compensation | paid lib, mature, in active dev |
+| **L5** | DIY GenServer + append-only event journal table (no library) | builtin |
+
+(`Honeydew`, `Flow`, `GenStage` were considered and rejected outright — they solve concurrency / streaming, not multi-aggregate atomicity or audit. Not listed.)
+
+### 1.5.2 Pain-point matrix — each lighter path vs each §1 pain point
+
+| # | Pain point (from §1) | L1 Ecto.Multi | L2 Sage | L3 ex_audit | L4 Oban Workflow | L5 DIY event log | Commanded |
+|---|---|---|---|---|---|---|---|
+| **P1** | Cross-Kind destroy cascade — 7 steps, compensation on partial failure | ❌ same-DB-transaction only; cross-Kind = cross-process | ✅ canonical pattern — transaction/compensation pairs per step | — (not a workflow lib) | ✅ async-only — caller doesn't see result synchronously | ✅ feasible — but you're hand-rolling Sage | ✅ Process Manager — same shape as Sage + durable state |
+| **P2** | Audit log queryable by ad-hoc SQL ("what caps did user X hold yesterday at 14:00?") | ⚠️ partial — needs side `audit_log` table maintained by hand | — (not an audit lib) | ✅ canonical — `Ecto.Changeset` → `version_table` row, SQL-queryable | — (not an audit lib) | ✅ DIY — same data shape as ex_audit, but you maintain the trigger | ⚠️ event stream is the audit, but **NOT directly SQL-queryable** — needs an `audit_projection` table populated by an event handler (an extra hop ex_audit doesn't need) |
+| **P3** | Cross-Kind workflow orchestration (session create cascade, worker bootstrap, cap-grant verify) | ❌ same as P1 — DB-transaction scope only | ✅ same mechanism as P1 — modules-as-orchestrator | — | ✅ async, with retries | ✅ DIY | ✅ Process Manager with persistent state |
+| **P4** | Race conditions (read-then-lock, grant-time cap check, register/lookup parity) | ✅ — tighter Ecto.Multi + DB constraints (unique index, exclusion constraint, FK cascade) is the canonical answer | ✅ — Sage runs inside a transaction or chain of transactions | — | — | ✅ — DIY w/ DB constraints | ⚠️ — **same problem, different location** — aggregate-process serialization is identical to current `Kind.Server.handle_call` serialization; the actual race fix is DB constraints regardless of model |
+| **P5** | Time-travel replay / "rebuild state at timestamp T from history" | ❌ | ❌ | ⚠️ — data is there (audit table), but no replay-into-state machinery | ❌ | ⚠️ — DIY (you have events, write a replay fn) | ✅ — aggregate state IS derived from event replay; this is the native primitive |
+
+**Honest cell semantics**: ✅ = the path solves this pain point with the named mechanism. ⚠️ = partial / needs an extra hop. ❌ = the path doesn't address this dimension. "—" = not in scope for this lib (don't penalize a lib for being focused).
+
+### 1.5.3 Per-scenario deep dive
+
+#### P1 — destroy cascade (the trigger for this whole SPEC)
+
+**Sage solves this directly.** The 7-step cascade in §3.8 maps to Sage's `run/compensate` pairs:
+
+```elixir
+defmodule Ezagent.DestroyAgent do
+  import Sage
+
+  def destroy(agent_uri, workspace_uri) do
+    new()
+    |> run(:snapshot,           &capture_pre_destroy_snapshot/2, &noop_compensate/3)
+    |> run(:revoke_caps,        &revoke_all_caps_held_by/2,      &restore_caps_from_snapshot/3)
+    |> run(:destroy_children,   &destroy_child_agents/2,         &respawn_children/3)
+    |> run(:drop_memberships,   &drop_all_session_memberships/2, &restore_memberships_from_snapshot/3)
+    |> run(:unlink_lineage,     &unlink_lineage/2,               &relink_lineage_from_snapshot/3)
+    |> run(:terminate,          &terminate_agent/2,              &noop_compensate/3)
+    |> run(:audit,              &write_destroy_audit_row/2,      &noop_compensate/3)
+    |> execute(%{agent_uri: agent_uri, workspace_uri: workspace_uri})
+  end
+
+  defp restore_caps_from_snapshot(error, effects_so_far, %{agent_uri: uri}) do
+    Ezagent.Capability.restore_for(uri, effects_so_far.snapshot.caps)
+    {:ok, :restored}
+  end
+end
+```
+
+This is the **canonical** Sage pattern. Sage's contract is exactly what §3.8's DestroyAgentSaga needs: each step has a forward action + a compensate action; if step N fails, compensations 1..N-1 run in reverse. Sage handles the orchestration; the steps are just functions.
+
+**Concrete failure modes**:
+- Sage compensations MUST NOT raise (semantically — if a compensate fails, the saga aborts in an undefined state). This is the same constraint Commanded Process Managers have (a `handle/2` clause that raises during compensation is equally fatal). Not a Sage-specific weakness.
+- Sage state is in-memory across the `execute/1` call. If the orchestrator process crashes mid-execute, the saga loses its progress. **Question**: is mid-call crash a recurring incident class in ezagent? Reading Phase 2-3 retros: no. Dispatches are <100ms typical; the BEAM is stable; we have not observed a "destroy mid-cascade left orphan" incident in 6 months of dogfood. Commanded's durable PM state matters if you DO crash mid-cascade — but if you don't, the durability is pure overhead.
+
+**Honest verdict for P1**: Sage solves the destroy cascade fully. Commanded Process Manager is overkill **if destroy cascade is the only motivator** — and per §1.1, it IS the trigger for this SPEC.
+
+#### P2 — audit log queryable by ad-hoc SQL
+
+The SPEC's §1.3 diagnoses the current audit table as a "side-channel telemetry recording" (`(caller, target, action, result)` tuples written by a telemetry handler). The needed shape is: "for any historical SQL query (who had cap X at time T; what was session S's member list yesterday at 14:00), the answer is in a queryable table."
+
+**`ex_audit`** is the canonical pure-Phoenix answer:
+
+```elixir
+schema "capabilities" do
+  field :uri, :string
+  field :scope_uri, :string
+  field :verb, :string
+  field :holder_uri, :string
+  # ex_audit injects:
+  # - changes table tracking every Ecto.Changeset mutation
+  # - SQL-queryable: `from c in CapabilityVersion, where: c.holder_uri == ^uri and c.recorded_at < ^t`
+end
+```
+
+The audit table is **directly SQL-queryable**. No projection step, no event-replay-then-fold.
+
+**By contrast**: Commanded's event stream IS the audit log, but querying "what caps did user X hold at time T" requires either:
+1. A purpose-built `caps_history_projection` table populated by a `CapsHistoryProjector` (extra hop, extra LOC, projector lag is a thing), OR
+2. Replaying X's aggregate event history up to T (server-side, slow, only works for one aggregate at a time).
+
+For ad-hoc admin queries — the kind a human types into psql to debug an incident — `ex_audit` + raw SQL **beats** Commanded's event stream. The event stream wins on "subscribe to future audit entries" (Commanded handlers) but loses on "answer this historical SQL question."
+
+**Honest verdict for P2**: ex_audit is BETTER than Commanded's event stream for the SPEC's stated audit need. Commanded's audit-via-events is a downgrade for SQL-ergonomic queries.
+
+#### P3 — cross-Kind workflow orchestration
+
+Same shape as P1. Sage handles `CreateSessionSaga`, `CreateUserInWorkspaceSaga`, `BootstrapWorkerSaga`, `RevokeCapCascadeSaga`, `CapGrantOwnershipVerifySaga` identically — each is `new() |> run(...) |> run(...) |> execute(ctx)`.
+
+**The one differentiator**: Sage's state is in-memory across `execute/1`; if you need a workflow that spans multiple separate caller-invocations (e.g. "user clicks Create, then 30s later worker bootstraps async after binding event"), Sage's single-execute scope doesn't fit — you'd implement it as two separate Sages each in their own caller. Commanded PM's persistent state would carry across.
+
+**But**: looking at the §4.4 saga inventory:
+- `DestroyAgentSaga`, `DestroyUserSaga`, `DestroySessionSaga`, `DestroyWorkspaceSaga`: all single-call cascades. Sage fits.
+- `CreateSessionSaga`, `CreateUserInWorkspaceSaga`: single-call. Sage fits.
+- `BootstrapWorkerSaga`: triggered by `BindingCreated` event in a separate transaction. **This one** is genuinely event-driven across caller boundaries — Sage doesn't fit, but neither do you need it as a saga in the native model; it's just a `Phoenix.PubSub.subscribe(:bindings)` + handler in a supervised GenServer. The "saga" framing is a Commanded-shaped solution to a problem that doesn't exist outside CQRS.
+- `RevokeCapCascadeSaga`: triggered by membership revoked. Same as bootstrap — PubSub handler suffices.
+- `CapGrantOwnershipVerifySaga`: this is a SINGLE-COMMAND check (verify granter has cap, then either grant or reject). It's not a saga at all — it's a guard clause. The "saga" framing is over-modeling.
+
+**Honest verdict for P3**: 5 of the 9 sagas in §4.4 are single-call cascades → Sage handles. 2 are event-triggered cross-call → PubSub handler in a GenServer. 2 are not sagas at all. Commanded's framing inflates the count.
+
+#### P4 — race conditions (read-then-lock, grant-time check, register/lookup parity)
+
+This is the pain point where §1's hypothesis is **weakest** under scrutiny.
+
+§1.4 claims: "Under CQRS/ES, the granter's caps at grant time are derivable from the granter Aggregate's event-replayed state at the instant the grant command was applied; the aggregate-level serialization gives the same property."
+
+**Read that again**: "aggregate-level serialization gives the same property." That's literally the current model. `Kind.Server.handle_call` serializes per-instance; a `Commanded.Aggregates.Aggregate` process serializes per-aggregate-UUID. Same shape. The race fix isn't event-sourcing — it's process-serialization-per-key. Both models have it.
+
+The **actual** race fix, the one cap-vis-SPEC + URI-canonical-SPEC converged on, is:
+1. Unique indexes (`uri` column NOT NULL UNIQUE on every entity table)
+2. Exclusion constraints where two grants on the same scope/verb pair can't coexist
+3. Foreign key cascade (delete user → cascade caps held)
+4. Tighter `Ecto.Multi` transaction boundaries (the grant + the audit row in one transaction)
+
+These are DB-level constraints. They work regardless of Commanded vs current model. Commanded doesn't add anything to race resolution — it just relocates the serialization point from `Kind.Server` to `Commanded.Aggregates.Aggregate`. The races that DB constraints fix are fixed in both. The races that aggregate serialization fixes are also fixed by `Kind.Server` serialization today.
+
+**Honest verdict for P4**: Commanded does NOT solve races better than the current model. The fix is L1 (tighter Ecto.Multi + DB constraints), regardless of which actor model wraps it.
+
+#### P5 — time-travel replay
+
+This is the ONE pain point where Commanded has a structural advantage no lighter path matches. Aggregate state IS event-derived; rewinding to time T means replay events up to T and you have the historical state. Native Elixir + ex_audit gives you the audit data, but rebuilding "what was the slice at time T" requires hand-rolled fold-over-history code per Kind.
+
+**Critical question — has ezagent ever needed replay?**
+
+Searching the docs/ futures, IMPLEMENTATION_ROADMAP, and codex-rejection trail for "replay", "time-travel", "rebuild state at T":
+- §3.7 mentions replay as a Commanded capability (positive framing).
+- §1.4 lists "no replay" as a current-model gap.
+- **Nothing in the actual incident retros or future-work list cites replay as a need.** No GitHub issue asks for it. No customer (Allen) has flagged "I need to debug a 2-week-old incident by rewinding state."
+- The destroy-cascade resume-after-crash story is the closest analog, and that's solved by Sage compensation + persistent saga state (sub-question: do we need cross-process-restart saga persistence? Per §4.4 saga inventory analysis above: no, current sagas are single-call).
+
+**Honest verdict for P5**: Replay is the ONLY structural Commanded-exclusive advantage in the matrix, and it is not on the roadmap. It's a capability we'd gain but have no near-term plan to use.
+
+### 1.5.4 Verdict
+
+**Option B**: **L1 (tighter Ecto.Multi + DB constraints) + L2 (Sage) + L3 (ex_audit)** covers all §1 pain points P1, P2, P3, P4 — with **P2 (audit) and P4 (races) actually solved BETTER** by the lighter path than by Commanded. The single dimension Commanded wins on uncontested is **P5 (replay)**, and P5 is not on the roadmap.
+
+Aggregate cost comparison:
+- **Option A (Commanded)**: 3-month migration, retire 7 internal modules, introduce Postgres to dev loop, +5x dispatch latency hot-path (per §7.1), 1500-2000 LOC saga code (per §4.4), every aggregate's snapshot tuning is a new ops knob.
+- **Option B (lighter)**: ~2 weeks to add Sage + ex_audit deps, write 9 Sage modules (~50-150 LOC each, parallel to the §4.4 saga inventory), tighten Ecto.Multi scopes in existing domain modules, retire 0 internal modules, no dev-loop change, no latency hit.
+
+**The data forces Option B.** P5 alone does not justify Option A's cost when P5 is not a roadmap item.
+
+### 1.5.5 What changes downstream of this verdict
+
+This SPEC was drafted with the implicit assumption that the destroy-cascade 4-round codex failure (§1.1) required CQRS to resolve. **That assumption is now contradicted by §1.5.3 P1**: Sage's compensation pattern resolves the destroy cascade with the same primitives Commanded's Process Manager would use, at a tiny fraction of the migration cost.
+
+Concrete next steps (NOT committed by this SPEC — these are recommendations for Allen):
+1. **Pause PR #442** (do not merge §2-§12 as-is; the Decision is now contested by §1.5).
+2. **Draft a companion "Path B SPEC"**: title `2026-05-28-destroy-cascade-sage-ex_audit.md` — adopt Sage for destroy cascades + cross-Kind orchestration, adopt ex_audit for audit log, tighten Ecto.Multi for grant-time checks + workspace isolation race fixes. ~2-week impl. No CQRS migration.
+3. **If Path B SPEC ships and lands**: this SPEC (#442) can be closed `wontfix-superseded-by-#NNN` with §1.5 preserved as the rationale.
+4. **If replay becomes a roadmap item later**: revisit this SPEC. CQRS/Commanded remains the right answer once P5 enters the requirement set. §1.5 isn't saying "never Commanded" — it's saying "not now, the current need is met by lighter paths."
+
+---
+
 ## 2. Decision — adopt Commanded + EventStore as primary state model
+
+> ⚠️ **Pre-§2 note (r5)**: §1.5 verdict is **Option B** (Ecto.Multi + Sage + ex_audit covers §1 pain points except P5 replay; P5 is not on the current roadmap). §2 below reflects the **rejected** Commanded path and is retained for context — §2-§12 describe what a Commanded migration WOULD look like if Option A were chosen. See §1.5.5 for recommended next steps (pause PR #442; draft companion Path B SPEC). Do not merge §2-§12 as-is.
 
 ### 2.1 What we adopt
 
