@@ -530,10 +530,9 @@ defmodule Ezagent.Kind do
 
     quote do
       Module.register_attribute(__MODULE__, :ezagent_kind_attached, accumulate: true)
-      Module.register_attribute(__MODULE__, :ezagent_kind_read_graph, accumulate: false)
       Module.put_attribute(__MODULE__, :ezagent_kind_pattern, unquote(Macro.escape(pattern)))
 
-      import Ezagent.Kind, only: [attach: 1, attach: 2, read_graph: 1]
+      import Ezagent.Kind, only: [attach: 1, attach: 2]
 
       @before_compile Ezagent.Kind
 
@@ -607,23 +606,18 @@ defmodule Ezagent.Kind do
     end
   end
 
-  @doc """
-  Declare the cross-Behavior read graph for this Kind. Replaces
-  the per-Behavior `reads_sibling_slices/0` callback.
-
-      read_graph %{
-        Ezagent.Behavior.Chat => [Ezagent.Behavior.ApiKeys]
-      }
-
-  Keys are Behavior modules; values are lists of OTHER Behavior
-  modules whose state the key Behavior is allowed to read via
-  `ctx.read`.
-  """
-  defmacro read_graph(graph) do
-    quote do
-      @ezagent_kind_read_graph unquote(graph)
-    end
-  end
+  # Phase 4 Item 3 (2026-05-28) — the `read_graph %{...}` macro and its
+  # generated `__read_graph__/0` accessor were a planned Kind-level DSL
+  # for declaring cross-Behavior read permissions. No Kind in the
+  # codebase used it (rg `read_graph %{` returns only this file), and
+  # the runtime authoritatively read sibling-slice permissions via the
+  # per-Behavior `reads_sibling_slices/0` callback resolved by
+  # `Ezagent.Behavior.reads_sibling_slices_of/1`. The dual path was the
+  # codex r3 finding on PR #458 ("two sources of truth, one of them
+  # unused"). Macro + accessor removed; `reads_sibling_slices_of/1` is
+  # the canonical and only source of truth. A future PR can re-add a
+  # Kind-level read-graph DSL when it ALSO wires consumption in
+  # `Kind.Runtime.maybe_inject_sibling_slices/3`.
 
   @doc false
   defmacro __before_compile__(env) do
@@ -684,7 +678,6 @@ defmodule Ezagent.Kind do
     end)
 
     behavior_modules = Enum.map(attached, fn {b, _} -> b end) |> Enum.uniq()
-    read_graph = Module.get_attribute(env.module, :ezagent_kind_read_graph) || %{}
 
     quote do
       @doc false
@@ -695,9 +688,6 @@ defmodule Ezagent.Kind do
 
       @doc false
       def __action_to_behavior__, do: unquote(Macro.escape(action_to_behavior))
-
-      @doc false
-      def __read_graph__, do: unquote(Macro.escape(read_graph))
     end
   end
 
@@ -819,5 +809,90 @@ defmodule Ezagent.Kind do
     if function_exported?(mod, :__pattern__, 0) do
       apply(mod, :__pattern__, [])
     end
+  end
+
+  # ---------------------------------------------------------------------
+  # Phase 4 Item 1 (2026-05-28) — unified attach-metadata accessors.
+  #
+  # Background: a Kind module may declare its Behaviors via TWO paths:
+  #
+  #   - The legacy `@behaviour Ezagent.Kind` + explicit `def behaviors/0`
+  #     callback (every Kind in `apps/ezagent_domain_*` uses this).
+  #   - The new `use Ezagent.Kind, pattern: ...` + `attach Behavior, ...`
+  #     DSL, which auto-generates `__attached_behaviors__/0`.
+  #
+  # Plugin Kinds (Echo, CurlAgent, NpAgent) use BOTH simultaneously — they
+  # `use Ezagent.Kind` AND keep `def behaviors/0` for explicit clarity.
+  # Pre-PR-464 (Phase 3) the two could silently drift: Kind.Server +
+  # Kind.Runtime called `kind.behaviors()` (explicit), the registry
+  # introspection called `__attached__()` (macro). codex r3 on PR #458
+  # flagged the dual-source-of-truth.
+  #
+  # `behaviors_of/1` is the canonical accessor for runtime consumers.
+  # When BOTH paths are exported AND disagree, we PREFER the macro
+  # metadata (`__attached_behaviors__/0` — what the compile-time DSL
+  # actually produced + verified for collisions) and log a warning so
+  # the drift surfaces in dev logs without crashing the live system.
+  # ---------------------------------------------------------------------
+
+  @doc """
+  Return the list of Behaviors attached to this Kind.
+
+  Prefers the macro-generated `__attached_behaviors__/0` (produced by
+  `use Ezagent.Kind` + `attach`) when available. Falls back to the
+  explicit `behaviors/0` callback for Kinds that don't yet use the
+  DSL. When BOTH are present AND their lists differ, the macro list
+  wins and a `Logger.warning/1` records the drift so the author sees
+  it in dev logs.
+  """
+  @spec behaviors_of(module()) :: [module()]
+  def behaviors_of(kind_module) when is_atom(kind_module) do
+    has_attach? = function_exported?(kind_module, :__attached_behaviors__, 0)
+    has_callback? = function_exported?(kind_module, :behaviors, 0)
+
+    cond do
+      has_attach? and has_callback? ->
+        attach_list = apply(kind_module, :__attached_behaviors__, [])
+        callback_list = apply(kind_module, :behaviors, [])
+
+        if MapSet.new(attach_list) != MapSet.new(callback_list) do
+          require Logger
+
+          Logger.warning(
+            "Ezagent.Kind.behaviors_of/1: " <>
+              "#{inspect(kind_module)} declares Behaviors via BOTH `use Ezagent.Kind` + " <>
+              "`attach` (#{inspect(attach_list)}) AND `def behaviors/0` " <>
+              "(#{inspect(callback_list)}); the two sets differ. Preferring the " <>
+              "attach-metadata list (compile-time verified for action collisions). " <>
+              "Reconcile by removing `def behaviors/0` or updating the `attach` block."
+          )
+        end
+
+        attach_list
+
+      has_attach? ->
+        apply(kind_module, :__attached_behaviors__, [])
+
+      has_callback? ->
+        apply(kind_module, :behaviors, [])
+
+      true ->
+        []
+    end
+  end
+
+  @doc """
+  Return the persistence strategy declared by this Kind.
+
+  Today every Kind exports `def persistence/0` explicitly (the
+  `use Ezagent.Kind` macro does not inject it — there's no sensible
+  default). This accessor exists for symmetry with `behaviors_of/1`
+  so runtime call sites read a single uniform API; a future PR that
+  teaches the macro to inject persistence via `use Ezagent.Kind,
+  persistence: ...` won't need to touch every consumer.
+  """
+  @spec persistence_of(module()) :: persistence_policy()
+  def persistence_of(kind_module) when is_atom(kind_module) do
+    kind_module.persistence()
   end
 end

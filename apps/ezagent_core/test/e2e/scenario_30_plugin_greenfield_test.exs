@@ -159,14 +159,12 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
     :ok = BehaviorRegistry.register(WidgetKind, :broadcast, WidgetBehavior)
     :ok = BehaviorRegistry.register(WidgetKind, :forward, WidgetBehavior)
 
-    # The ambient `esr-audit` telemetry handler crashes on
-    # `caller: :system` (`Ezagent.Audit.uri_to_str(:system)` has
-    # no clause). Telemetry detaches the handler on first crash,
-    # but the per-test boot order means a CAST dispatch on a freshly-
-    # built widget can interleave the handler-detach with the
-    # downstream `:dispatch` effect execution. Pre-detach for the
-    # lifetime of the test so the runtime stays clean.
-    :telemetry.detach("esr-audit")
+    # Phase 4 Item 4 (2026-05-28) — `Ezagent.Audit.uri_to_str/1` now has
+    # an explicit `:system` clause that canonicalizes to `"system://anonymous"`,
+    # so the ambient `esr-audit` telemetry handler no longer crashes on
+    # `caller: :system`. The pre-detach workaround that lived here has
+    # been removed; the test now exercises the real audit pipeline end-
+    # to-end, matching production behaviour.
 
     uri =
       URI.parse(

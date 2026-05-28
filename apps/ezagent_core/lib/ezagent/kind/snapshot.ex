@@ -49,7 +49,7 @@ defmodule Ezagent.Kind.Snapshot do
   """
   @spec load_or_init(URI.t() | String.t(), module(), map()) :: %{atom() => map()}
   def load_or_init(uri, kind_module, args) do
-    case kind_module.persistence() do
+    case Ezagent.Kind.persistence_of(kind_module) do
       :ephemeral ->
         init_fresh(kind_module, args)
 
@@ -127,7 +127,7 @@ defmodule Ezagent.Kind.Snapshot do
   # for REMOVED slices.
   defp prune_orphan_slices(state, kind_module) do
     declared =
-      kind_module.behaviors()
+      Ezagent.Kind.behaviors_of(kind_module)
       |> Enum.map(& &1.state_slice())
       |> MapSet.new()
 
@@ -153,7 +153,7 @@ defmodule Ezagent.Kind.Snapshot do
   # supervisor restarts the Kind. Persistent reconcile failure =
   # Kind stays down = correct (operator must fix the DB).
   defp reconcile_after_load_behaviors(state, %URI{} = uri, kind_module) do
-    Enum.reduce(kind_module.behaviors(), state, fn behavior, acc ->
+    Enum.reduce(Ezagent.Kind.behaviors_of(kind_module), state, fn behavior, acc ->
       slice_key = behavior.state_slice()
       slice_value = Map.get(acc, slice_key)
 
@@ -253,7 +253,7 @@ defmodule Ezagent.Kind.Snapshot do
   @spec commit(URI.t() | String.t(), module(), %{atom() => map()}, %{atom() => map()}) ::
           :ok | :not_durable | {:error, term()}
   def commit(uri, kind_module, old_state, new_state) do
-    case kind_module.persistence() do
+    case Ezagent.Kind.persistence_of(kind_module) do
       :ephemeral ->
         :not_durable
 
@@ -405,7 +405,7 @@ defmodule Ezagent.Kind.Snapshot do
   # Internals
 
   defp init_fresh(kind_module, args) do
-    kind_module.behaviors()
+    Ezagent.Kind.behaviors_of(kind_module)
     |> Enum.map(fn behavior ->
       {behavior.state_slice(), behavior.init_slice(args)}
     end)

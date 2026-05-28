@@ -197,9 +197,11 @@ defmodule Ezagent.KindExtensionsTest do
       assert mapping[:b_action] == BehaviorB
     end
 
-    test "__read_graph__/0 returns the declared graph (empty if none)" do
-      assert SessionKind.__read_graph__() == %{}
-    end
+    # Phase 4 Item 3 (2026-05-28) — `__read_graph__/0` removed; the
+    # Kind-level read-graph DSL was an unused planned path. Canonical
+    # source for cross-Behavior read permissions is the per-Behavior
+    # `reads_sibling_slices/0` callback (resolved via
+    # `Ezagent.Behavior.reads_sibling_slices_of/1`).
 
     test "Kind.new_style?/1 detects new-style Kinds" do
       assert Kind.new_style?(SessionKind)
