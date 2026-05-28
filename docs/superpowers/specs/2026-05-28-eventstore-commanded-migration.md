@@ -1,6 +1,26 @@
 # SPEC — Ezagent state model migration to EventStore + Commanded (CQRS / event-sourcing)
 
-**Status:** r7 — **§1.5.7 added + codex-r1-reviewed; verdict = Option B'' (native consolidation)**. Allen's directive 2026-05-28 09:33: ezagent has been DIY-implementing the event-sourcing primitives organically for 9 months (invocations table = event log; kind_snapshots = aggregate snapshots; Behavior.invoke = combined execute+apply; ExternalMirror.BootReconciler = state recovery; Persistence + slice policy = snapshot policy) — just never **named** them as ES primitives. §1.5.7 formalizes what's there + adds the missing 30%, informed by Commanded's design lessons + CQRS principles. New top recommendation: **Option B'' — native consolidation**, ~880 LOC across 5 internal modules (`EventLog`, `SnapshotStore`, `StateRebuilder`, `SagaRunner`, `EventSubscriber`), ~2-3 weeks. Option B (Sage + ex_audit + Oban) remains as first fallback if B'' design fails; Option A (Commanded full migration) is second fallback if replay (P5) enters the 6-month horizon. B'' is **pro-future-Commanded**: by naming the abstractions correctly now, the eventual migration to Commanded shrinks from ~10-12 weeks (Option B) to ~6-14 weeks (r7-honest range per §1.5.7.5(e); floor depends on saga inventory + Kinds opted in). Codex r1 review on §1.5.7 returned REJECT with 3 HIGH + 2 MED + 1 LOW; all 6 addressed inline (synthetic-event replay-safety honesty, User Kind replay readiness checklist, SagaRunner-PM 1:1 claim downgraded, EventLog ordering tie-breaker, EventSubscriber partition mode pulled to Phase 2, audit args/result population gap acknowledged). Previous r6 verdict (CONDITIONAL Option B) is downgraded to first-fallback. The prior r4-FINAL status (4-round codex budget exhaustion, 7 carry-over limitations) still applies to §2-§12 if Option A is ever revisited. 2026-05-28.
+**Status:** r8 — **§1.5.7.8 added (Allen 10:11 re-evaluation: would Commanded + Ecto + SQLite flip the verdict?); verdict UNCHANGED = Option B'' (native consolidation)**. r8 adds Allen's Router insight (10:08) as a 6th B'' module (~50 LOC `Ezagent.Router`), then re-evaluates Option A under the Postgres-removal hypothetical (via `commanded-ecto-projections` + ecto_sqlite3 + custom SQLite event store adapter). Conclusion: no off-the-shelf SQLite event store adapter exists for Commanded; writing one adds ~3-4 weeks; even with Postgres removed, all other Commanded costs (5x latency, 5000-7000 LOC, 7 retired modules, per-Behavior boilerplate, Multi-Behavior-per-Kind asymmetry) remain; B'' is still ~10-15 weeks cheaper. The jfcloutier 2015 DIY CQRS article is the historical precedent that B'' formalizes. Fallback ordering refined: B'' > B > A' (Commanded+SQLite-custom-adapter) > A (Commanded+Postgres). **r7 prior status:** §1.5.7 added + codex-r1-reviewed. Allen's directive 2026-05-28 09:33: ezagent has been DIY-implementing the event-sourcing primitives organically for 9 months (invocations table = event log; kind_snapshots = aggregate snapshots; Behavior.invoke = combined execute+apply; ExternalMirror.BootReconciler = state recovery; Persistence + slice policy = snapshot policy) — just never **named** them as ES primitives. §1.5.7 formalizes what's there + adds the missing 30%, informed by Commanded's design lessons + CQRS principles. New top recommendation: **Option B'' — native consolidation**, ~880 LOC across 5 internal modules (`EventLog`, `SnapshotStore`, `StateRebuilder`, `SagaRunner`, `EventSubscriber`), ~2-3 weeks. Option B (Sage + ex_audit + Oban) remains as first fallback if B'' design fails; Option A (Commanded full migration) is second fallback if replay (P5) enters the 6-month horizon. B'' is **pro-future-Commanded**: by naming the abstractions correctly now, the eventual migration to Commanded shrinks from ~10-12 weeks (Option B) to ~6-14 weeks (r7-honest range per §1.5.7.5(e); floor depends on saga inventory + Kinds opted in). Codex r1 review on §1.5.7 returned REJECT with 3 HIGH + 2 MED + 1 LOW; all 6 addressed inline (synthetic-event replay-safety honesty, User Kind replay readiness checklist, SagaRunner-PM 1:1 claim downgraded, EventLog ordering tie-breaker, EventSubscriber partition mode pulled to Phase 2, audit args/result population gap acknowledged). Previous r6 verdict (CONDITIONAL Option B) is downgraded to first-fallback. The prior r4-FINAL status (4-round codex budget exhaustion, 7 carry-over limitations) still applies to §2-§12 if Option A is ever revisited. 2026-05-28.
+
+## r8 changelog (delta from r7)
+
+Allen's 2026-05-28 10:08 + 10:11 + 10:12 messages — sharper observations needing re-evaluation:
+- **10:08** "Behavior 已经接近 Command 逻辑，只需要加 Router？"
+- **10:11** "[`commanded-ecto-projections`](https://github.com/commanded/commanded-ecto-projections) 似乎也不一定使用 EventStore，而是可以通过 Ecto 使用 SQLite？"
+- **10:12** reference: [jfcloutier 2015 DIY CQRS in Elixir+Phoenix](https://jfcloutier.github.io/jekyll/update/2015/11/04/cqrs_elixir_phoenix.html)
+
+- **§1.5.7.8 INSERTED** — "Re-evaluation: would `commanded` + `ecto_sqlite3` flip the verdict?". 7 subsections (a-g) + verdict update. Conclusion: **no flip**. The Postgres-removal hypothetical addresses the strongest single anti-Commanded argument but leaves all OTHER Commanded costs intact (5x latency, 5000-7000 LOC, 7 retired modules, per-Behavior boilerplate). Cost comparison table updated with `A' (Commanded + custom SQLite adapter)` row showing ~3.5-4 months wall-time (A + 3-4 weeks adapter + ongoing maintenance). B'' is still ~10-15 weeks cheaper than the cheapest Commanded variant.
+- **`Ezagent.Router` (~50 LOC) added as 6th B'' module** (Allen 10:08 insight). Names the dispatch-step primitive that was previously implicit in `Ezagent.Invocation.dispatch/1`. Total B'' budget revised from ~880 LOC to ~930 LOC; still well below all other options.
+- **Fallback ordering refined**:
+  1. B'' (primary) — this SPEC's §1.5.7
+  2. B (Sage + ex_audit + Oban outbox) — first fallback
+  3. **A' (Commanded + custom SQLite adapter)** — second fallback IF replay (P5) enters roadmap AND community ships a SQLite event store adapter (currently neither holds)
+  4. A (Commanded full, Postgres) — third fallback, the §2-§12 path
+- **jfcloutier 2015 article cited as historical precedent** for B'' (DIY CQRS in 1 day using GenServer + GenEvent + Mnesia). The "missing pieces" the author cites (no replay, no formal aggregate root) match exactly B'''s deferred extension points.
+
+§1.5.1-§1.5.7.7 (everything before §1.5.7.8) UNCHANGED — r8 is additive.
+
+§2-§12 UNCHANGED — same status as r7.
 
 ## r7 changelog (delta from r6)
 
@@ -990,6 +1010,78 @@ This last point is critical. The four options compared in §1.5.7.6 have differe
    - `2026-05-28-ezagent-state-rebuilder.md` — lift `Kind.Server.init/1` recovery into the StateRebuilder behaviour
 3. Each companion SPEC gets codex adversarial-review per `feedback_codex_review_every_pr`.
 4. If any companion SPEC fails its review badly enough that the abstraction shape changes, this §1.5.7 gets revisited.
+
+#### 1.5.7.8 — Re-evaluation: would `commanded` + `ecto_sqlite3` flip the verdict? (Allen 2026-05-28 10:08–10:11)
+
+After §1.5.7.1-7 were drafted, Allen surfaced two sharper observations worth re-evaluating:
+
+- **10:08** — "Behavior 已经接近 Command 逻辑，只需要加 Router？"
+- **10:11** — "[`commanded-ecto-projections`](https://github.com/commanded/commanded-ecto-projections) 似乎也不一定使用 EventStore，而是可以通过 Ecto 使用 SQLite？"
+- **10:12** (reference) — [jfcloutier 2015 DIY CQRS in Elixir+Phoenix](https://jfcloutier.github.io/jekyll/update/2015/11/04/cqrs_elixir_phoenix.html) — 1-day implementation using GenServer + GenEvent + Mnesia
+
+These two observations attack the strongest single anti-Commanded argument in §1.5: **the Postgres-in-dev-loop friction**. If that vanishes, does Option A become viable again?
+
+**Honest re-evaluation:**
+
+**(a) The Router observation is correct, and it's already what B'' encodes.** The r7-codex-r1 closure (commit `8917b054`, §1.5.7.2 row b) split the dispatch path into:
+- **Legacy invoke/4 path** — `Behavior.invoke(:action, slice, args, ctx) → new_slice` writes an audit row in `invocations` (NOT a synthetic event). This is the path 100% of current Behaviors use; B'' v1 keeps it intact.
+- **Events-as-truth path** — opt-in per Behavior via the atomic triplet `events_for/4 + apply_event/2 + effects/2` (Ext.a, Phase 2).
+
+What Allen's Router observation adds: **an `Ezagent.Router` module (~50 LOC) that names the dispatch step explicitly.** Today it's implicit in `Ezagent.Invocation.dispatch/1` (`apps/ezagent_core/lib/ezagent/invocation.ex:87`); the Router is just a named cap on top — `Router.dispatch(%Cmd{target, action, args, ctx}) → Behavior.invoke(...)`. This is the 6th B'' module (joining EventLog / SnapshotStore / StateRebuilder / SagaRunner / EventSubscriber) and adds ~50 LOC — already absorbed into the existing ~880 LOC budget. **`Ezagent.Router` is `Commanded.Commands.Router` for ezagent without the Commanded machinery.** Allen's insight does not change the verdict; it sharpens §1.5.7.4 by adding a named module that was previously implicit.
+
+**(b) `commanded-ecto-projections` does support SQLite** via `ecto_sqlite3` (see [hex.pm](https://hex.pm/packages/ecto_sqlite3)). This is real and tested. But **`commanded-ecto-projections` is the read-model layer only** — it consumes events from an event store and writes Ecto projections. It does NOT provide an event store.
+
+**(c) The event store layer is the actual question.** `commanded` core requires a `Commanded.EventStore.Adapter` implementation. The canonical adapter `commanded_eventstore_adapter` wraps the standalone [`eventstore`](https://github.com/commanded/eventstore) lib, which is **Postgres-only**. There is **no off-the-shelf SQLite event store adapter** for Commanded as of 2025 research (ElixirForum + hex.pm searches turned up zero). The `Commanded.EventStore.Adapter` behaviour requires 11 callbacks (`child_spec`, `append_to_stream`, `stream_forward`, `subscribe`, `subscribe_to`, `unsubscribe`, `ack_event`, `delete_subscription`, `read_snapshot`, `record_snapshot`, `delete_snapshot`) per [hexdocs](https://hexdocs.pm/commanded/Commanded.EventStore.Adapter.html). The required guarantees (per-stream ordering, atomic batch append, durable subscription state, batch ack semantics) are achievable on SQLite but require careful concurrent-subscription handling — **moderately challenging**, estimated **~3-4 weeks for a stable adapter + ongoing maintenance**.
+
+**(d) Three sub-options if we wanted Commanded + SQLite:**
+
+| Sub-option | Description | Day-1 cost vs A | New burden |
+|---|---|---|---|
+| **A-mix** | Postgres event store + SQLite projections | Same as A (Postgres still required) | None new — defeats the goal |
+| **A'-SQLite-custom** | Custom SQLite `Commanded.EventStore.Adapter` + Commanded core + SQLite projections | A + ~3-4 weeks for adapter + maintenance | We own a non-trivial ecosystem component |
+| **A''-InMemory-then-migrate** | Use `Commanded.EventStore.Adapters.InMemory` initially; migrate to Postgres in production | Same as A but no dev-loop friction | Production still needs Postgres event store |
+
+A-mix doesn't help. A''-InMemory only defers the Postgres problem to prod. A'-SQLite-custom is the only "stay-SQLite-forever" option — and it adds **a SQLite event store adapter** to our maintenance surface alongside ALL the other Commanded costs (5x dispatch latency per §7.1, 5000-7000 LOC migration, retiring 7 internal modules, Commanded boilerplate per Kind).
+
+**(e) The other Commanded costs are unchanged by the SQLite possibility.** Removing Postgres-in-dev-loop is the single specific cost the SQLite path addresses. Everything else in §1.5.7.6's Option A column stays:
+
+- 5x dispatch latency (per §7.1) — unaffected by storage choice
+- 5000-7000 day-1 LOC delta (3 umbrella apps + 9 sagas + 5 aggregates + 8 projectors) — unaffected
+- 7 internal modules retired (Kind.Server, KindRegistry, Audit.Writer, Persistence, Snapshot.Writer, etc.) — unaffected
+- Per-Behavior boilerplate (Command + Event + execute + apply functions) — unaffected
+- Multi-Behavior-per-Kind asymmetry (User has 4 Behaviors; Commanded aggregates are single-module — see §1.5.7.1 codex r7 HIGH-acknowledgment) — unaffected
+- Library dependency surface (commanded core + adapters + projections + their upstream releases) — unaffected
+
+**(f) Updated cost comparison with the Postgres-removal hypothetical:**
+
+| Option | Day-1 wall-time | New LOC | Lib deps | SQLite-only? | Notes |
+|---|---|---|---|---|---|
+| **A (Commanded full, Postgres)** | ~3 months | 5000-7000 | 5+ Commanded libs | ❌ | The original §2-§12 path |
+| **A' (Commanded + custom SQLite adapter)** | ~3.5-4 months | 5500-8000 | 5+ libs + custom adapter | ✓ | Adds 3-4w + adapter maintenance |
+| **B (Sage + ex_audit + Oban)** | ~3-4 weeks | 1500-2000 | 3 (Sage, ex_audit, Oban Pro) | ✓ (with Oban-on-SQLite caveat) | Postgres-free path via Sage |
+| **B'' (native consolidation)** | **~2-3 weeks** | **880 + 50 (Router)** | **0** | **✓** | This SPEC's recommendation |
+
+A' is worse than A — same Commanded costs PLUS the SQLite adapter maintenance burden. Even with the strongest anti-Commanded argument neutralized, **B'' is still ~10-15 weeks cheaper than the cheapest Commanded variant** AND has zero new dependencies AND keeps the migration path open (per §1.5.7.5(e)).
+
+**(g) The jfcloutier 2015 article is the historical precedent for B''.** The author's 1-day DIY in Elixir+Phoenix using GenServer + GenEvent + Mnesia is structurally what B'' formalizes. The "missing pieces" the author cites (no replay, no formal aggregate root) are exactly the extension points B'' v1 defers (Ext.b replay, Ext.a events-as-truth opt-in). **B'' is the well-named 2026 version of a pattern the Elixir community has practiced for 10 years.**
+
+**Verdict update (r8 — Allen 2026-05-28 10:11 re-evaluation):**
+
+**No flip. B'' remains the primary recommendation.** The Postgres-removal hypothetical, the Router insight, and the historical precedent all *strengthen* the case for B'' rather than weaken it:
+
+- The Router insight names a primitive B'' already has (now ~6th module, +50 LOC); doesn't change semantics
+- `commanded-ecto-projections` on SQLite is a real fact about Commanded but doesn't give us a full SQLite-Commanded path without writing a custom event store adapter (~3-4 weeks)
+- The full SQLite-Commanded path (A') retains all other Commanded costs, ending up *worse* than A on total wall-time
+- jfcloutier 2015 demonstrates the simple DIY pattern was already viable a decade ago; B'' is the named + tested version
+
+**Where this WOULD change**: if Commanded's ecosystem ships a stable, community-maintained SQLite event store adapter (NOT us writing it), AND replay (P5) enters the 6-month roadmap, THEN Option A' becomes attractive. Until both conditions hold, B'' is the cheapest path that keeps the option open.
+
+**Updated fallback ordering (r8):**
+
+1. **B'' (native consolidation)** — primary recommendation, this SPEC's §1.5.7
+2. **B (Sage + ex_audit + Oban outbox)** — first fallback per §1.5.5 r6
+3. **A' (Commanded + custom SQLite adapter)** — second fallback IF replay (P5) enters roadmap AND community ships a SQLite event store adapter
+4. **A (Commanded full, Postgres)** — third fallback, the §2-§12 path, justified only if all of B'' + B + A' prove infeasible AND Postgres in dev is acceptable
 
 ---
 

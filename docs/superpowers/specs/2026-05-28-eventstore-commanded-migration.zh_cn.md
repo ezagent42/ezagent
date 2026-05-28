@@ -1,6 +1,26 @@
 # SPEC — Ezagent 状态模型迁移到 EventStore + Commanded (CQRS / 事件溯源)
 
-**状态：** r7 — **§1.5.7 添加 + codex r1 评审；结论 = Option B''（原生整合）**。Allen 2026-05-28 09:33 指令：ezagent 9 个月来一直在**有机地**实现事件溯源的原语 — 只是从未把它们**命名**为 ES 原语。§1.5.7 把存在的部分形式化 + 加上缺失的 30%，参考 Commanded 的设计教训 + CQRS 原则。主推荐：**Option B'' — 原生整合**，5 个内部模块共 ~880 LOC，约 2-3 周。Option B（Sage + ex_audit + Oban）保留作第一备选若 B'' 设计失败；Option A（Commanded 完整迁移）作第二备选若回放（P5）进入 6 个月窗口。B'' 是**面向未来 Commanded 的**：未来迁移到 Commanded 时成本从 ~10-12 周（Option B）压缩到 ~6-14 周（r7 诚实区间见 §1.5.7.5(e)；下限取决于 saga 清单 + 多少 Kind opt-in）。Codex r1 评审 §1.5.7 返回 REJECT 3 HIGH + 2 MED + 1 LOW；全部 6 条 inline 修复（合成事件不可回放须显式承认 / User Kind 实际是 Identity + UserCredentials + UserTokens + IdentityAdmin / SagaRunner-PM 「1:1」改为 convergent 不是 wrapping / EventLog 排序加 `id` tie-breaker / EventSubscriber partition 模式拉到 Phase 2 / audit args+result 当前未填充承认）。之前 r6 结论（条件性 Option B）降级为第一备选。之前的 r4-FINAL 状态若日后重审 Option A 仍适用于 §2-§12。2026-05-28。
+**状态：** r8 — **§1.5.7.8 添加（Allen 10:11 再评估：commanded + ecto + SQLite 会翻转结论吗？）；结论不变 = Option B''（原生整合）**。r8 加入 Allen 的 Router 洞察（10:08）作为第 6 个 B'' 模块（~50 LOC `Ezagent.Router`），然后在 Postgres 移除假设下（通过 `commanded-ecto-projections` + ecto_sqlite3 + 自写 SQLite 事件存储适配器）重新评估 Option A。结论：Commanded 没有现成的 SQLite 事件存储适配器；自写需要 ~3-4 周；即便移除 Postgres，所有其他 Commanded 成本（5x 延迟、5000-7000 LOC、退役 7 个模块、per-Behavior 样板、multi-Behavior-per-Kind 不对称）依然存在；B'' 仍便宜 ~10-15 周。jfcloutier 2015 DIY CQRS 文章是 B'' 形式化的历史先例。Fallback 顺序精化：B'' > B > A'（Commanded+自写 SQLite 适配器）> A（Commanded+Postgres）。**r7 之前状态：** §1.5.7 添加 + codex r1 评审。Allen 2026-05-28 09:33 指令：ezagent 9 个月来一直在**有机地**实现事件溯源的原语 — 只是从未把它们**命名**为 ES 原语。§1.5.7 把存在的部分形式化 + 加上缺失的 30%，参考 Commanded 的设计教训 + CQRS 原则。主推荐：**Option B'' — 原生整合**，5 个内部模块共 ~880 LOC，约 2-3 周。Option B（Sage + ex_audit + Oban）保留作第一备选若 B'' 设计失败；Option A（Commanded 完整迁移）作第二备选若回放（P5）进入 6 个月窗口。B'' 是**面向未来 Commanded 的**：未来迁移到 Commanded 时成本从 ~10-12 周（Option B）压缩到 ~6-14 周（r7 诚实区间见 §1.5.7.5(e)；下限取决于 saga 清单 + 多少 Kind opt-in）。Codex r1 评审 §1.5.7 返回 REJECT 3 HIGH + 2 MED + 1 LOW；全部 6 条 inline 修复（合成事件不可回放须显式承认 / User Kind 实际是 Identity + UserCredentials + UserTokens + IdentityAdmin / SagaRunner-PM 「1:1」改为 convergent 不是 wrapping / EventLog 排序加 `id` tie-breaker / EventSubscriber partition 模式拉到 Phase 2 / audit args+result 当前未填充承认）。之前 r6 结论（条件性 Option B）降级为第一备选。之前的 r4-FINAL 状态若日后重审 Option A 仍适用于 §2-§12。2026-05-28。
+
+## r8 changelog（相对 r7 的 delta）
+
+Allen 2026-05-28 10:08 + 10:11 + 10:12 消息 —— 更锐利的观察需要重新评估：
+- **10:08** "Behavior 已经接近 Command 逻辑，只需要加 Router？"
+- **10:11** "[`commanded-ecto-projections`](https://github.com/commanded/commanded-ecto-projections) 似乎也不一定使用 EventStore，而是可以通过 Ecto 使用 SQLite？"
+- **10:12** 引用：[jfcloutier 2015 DIY CQRS in Elixir+Phoenix](https://jfcloutier.github.io/jekyll/update/2015/11/04/cqrs_elixir_phoenix.html)
+
+- **§1.5.7.8 插入** —— 「再评估：`commanded` + `ecto_sqlite3` 会翻转结论吗？」7 个子节（a-g） + 结论更新。结论：**不翻转**。Postgres 移除假设修复了最强单一反 Commanded 论点，但保留所有其他 Commanded 成本（5x 延迟、5000-7000 LOC、退役 7 个模块、per-Behavior 样板）。成本对比表加 `A'（Commanded + 自写 SQLite 适配器）` 行，显示 ~3.5-4 个月 wall-time（A + 3-4 周适配器 + 持续维护）。B'' 仍比最便宜 Commanded 变体便宜 ~10-15 周。
+- **`Ezagent.Router`（~50 LOC）作为第 6 个 B'' 模块加入**（Allen 10:08 洞察）。命名之前隐藏在 `Ezagent.Invocation.dispatch/1` 里的派发步骤原语。B'' 预算从 ~880 LOC 修订为 ~930 LOC；仍远低于所有其他选项。
+- **Fallback 顺序精化**：
+  1. B''（主要）—— 本 SPEC §1.5.7
+  2. B（Sage + ex_audit + Oban outbox）—— 一线 fallback
+  3. **A'（Commanded + 自写 SQLite 适配器）** —— 二线 fallback **如果**回放（P5）进 roadmap **且**社区发布 SQLite 事件存储适配器（目前两个都不成立）
+  4. A（Commanded 全套，Postgres）—— 三线 fallback，§2-§12 路径
+- **jfcloutier 2015 文章引用为 B'' 历史先例**（用 GenServer + GenEvent + Mnesia 1 天 DIY CQRS）。作者提到的"缺失部分"（无回放、无正式 aggregate root）正好对应 B'' 延后的扩展点。
+
+§1.5.1-§1.5.7.7（§1.5.7.8 之前全部）未变 —— r8 是增量。
+
+§2-§12 未变 —— 同 r7 状态。
 
 ## r7 changelog（相对 r6 的 delta）
 
@@ -962,6 +982,78 @@ end
    - `2026-05-28-ezagent-state-rebuilder.md` — 把 `Kind.Server.init/1` 的恢复提升到 StateRebuilder behaviour
 3. 每个配套 SPEC 按 `feedback_codex_review_every_pr` 走 codex adversarial-review。
 4. 若任何配套 SPEC 在 review 中失败到抽象形状变化，本 §1.5.7 重审。
+
+#### 1.5.7.8 — 再评估：`commanded` + `ecto_sqlite3` 会翻转结论吗？（Allen 2026-05-28 10:08-10:11）
+
+§1.5.7.1-7 起草之后，Allen 抛出两个更锐利的观察，值得重新评估：
+
+- **10:08** — "Behavior 已经接近 Command 逻辑，只需要加 Router？"
+- **10:11** — "[`commanded-ecto-projections`](https://github.com/commanded/commanded-ecto-projections) 似乎也不一定使用 EventStore，而是可以通过 Ecto 使用 SQLite？"
+- **10:12** (引用) — [jfcloutier 2015 DIY CQRS in Elixir+Phoenix](https://jfcloutier.github.io/jekyll/update/2015/11/04/cqrs_elixir_phoenix.html) — 1 天实现，用 GenServer + GenEvent + Mnesia
+
+这两个观察击中 §1.5 里最强的单一反 Commanded 论点：**Postgres-in-dev-loop 摩擦**。若它消失，Option A 是否再次可行？
+
+**诚实再评估**：
+
+**(a) Router 观察正确，且就是 B'' 已经编码的形状。** r7-codex-r1 closure（commit `8917b054`，§1.5.7.2 row b）已经把派发路径切分为：
+- **legacy invoke/4 路径** — `Behavior.invoke(:action, slice, args, ctx) → new_slice` 写一行 audit 到 `invocations`（**不是**合成事件）。这是当前 100% Behavior 用的路径；B'' v1 完整保留。
+- **events-as-truth 路径** — 按 Behavior 自选启用，通过原子三元组 `events_for/4 + apply_event/2 + effects/2`（Ext.a，Phase 2）。
+
+Allen 的 Router 观察增添的：**`Ezagent.Router` 模块（~50 LOC）显式命名派发步骤**。今天它隐藏在 `Ezagent.Invocation.dispatch/1`（`apps/ezagent_core/lib/ezagent/invocation.ex:87`）里；Router 只是顶层的命名 cap —— `Router.dispatch(%Cmd{target, action, args, ctx}) → Behavior.invoke(...)`。这是 B'' 的第 6 个模块（与 EventLog / SnapshotStore / StateRebuilder / SagaRunner / EventSubscriber 并列），添加 ~50 LOC —— 已经吸收进现有 ~880 LOC 预算。**`Ezagent.Router` 就是 ezagent 版的 `Commanded.Commands.Router`，不带 Commanded 机器**。Allen 的洞察不翻转结论；它锐化 §1.5.7.4，添加一个之前隐式的命名模块。
+
+**(b) `commanded-ecto-projections` 确实支持 SQLite** 通过 `ecto_sqlite3`（见 [hex.pm](https://hex.pm/packages/ecto_sqlite3)）。这是真实可用的。但 **`commanded-ecto-projections` 是读模型层** —— 它消费事件存储里的事件，写到 Ecto projection。它**不**提供事件存储。
+
+**(c) 事件存储层才是真正的问题。** `commanded` 核心需要 `Commanded.EventStore.Adapter` 实现。规范适配器 `commanded_eventstore_adapter` 包了独立 [`eventstore`](https://github.com/commanded/eventstore) 库，**仅 Postgres**。截至 2025 年研究（ElixirForum + hex.pm 搜索），**没有现成的 SQLite 事件存储适配器** for Commanded。`Commanded.EventStore.Adapter` behaviour 需要 11 个回调（`child_spec`、`append_to_stream`、`stream_forward`、`subscribe`、`subscribe_to`、`unsubscribe`、`ack_event`、`delete_subscription`、`read_snapshot`、`record_snapshot`、`delete_snapshot`）见 [hexdocs](https://hexdocs.pm/commanded/Commanded.EventStore.Adapter.html)。需要的保证（per-stream 顺序、原子批量 append、持久订阅状态、批量 ack 语义）在 SQLite 上可实现，但并发订阅处理需要小心 —— **中等难度**，估 **~3-4 周稳定适配器 + 持续维护**。
+
+**(d) 想要 Commanded + SQLite 的三个子选项：**
+
+| 子选项 | 描述 | 相对 A 的 day-1 成本 | 新负担 |
+|---|---|---|---|
+| **A-mix** | Postgres 事件存储 + SQLite projection | 同 A（Postgres 仍需要） | 无新增 —— 失去意义 |
+| **A'-SQLite-custom** | 自写 SQLite `Commanded.EventStore.Adapter` + Commanded 核心 + SQLite projection | A + ~3-4 周适配器 + 维护 | 我们拥有一个非平凡生态组件 |
+| **A''-InMemory-then-migrate** | 用 `Commanded.EventStore.Adapters.InMemory` 起步；prod 迁 Postgres | 同 A 但无 dev-loop 摩擦 | prod 仍需 Postgres 事件存储 |
+
+A-mix 没用。A''-InMemory 只是把 Postgres 问题延后到 prod。A'-SQLite-custom 是唯一"永远 SQLite"的选项 —— 而它**给我们维护表面加了一个 SQLite 事件存储适配器**，并且所有其他 Commanded 成本（每次派发 +5x 延迟见 §7.1、5000-7000 LOC 迁移、退役 7 个内部模块、per-Kind Commanded 样板）依然存在。
+
+**(e) 其他 Commanded 成本不被 SQLite 可能性改变。** 去掉 Postgres-in-dev-loop 是 SQLite 路径修复的唯一具体成本。§1.5.7.6 Option A 列里其他都保留：
+
+- 每次派发 5x 延迟（见 §7.1）—— 与存储选择无关
+- day-1 5000-7000 LOC delta（3 umbrella app + 9 saga + 5 aggregate + 8 projector）—— 无关
+- 退役 7 个内部模块（Kind.Server、KindRegistry、Audit.Writer、Persistence、Snapshot.Writer 等）—— 无关
+- per-Behavior 样板（Command + Event + execute + apply 函数）—— 无关
+- multi-Behavior-per-Kind 不对称（User 有 4 个 Behavior；Commanded aggregate 是单 module —— 见 §1.5.7.1 codex r7 HIGH 确认）—— 无关
+- 库依赖表面（commanded 核心 + adapter + projection + 它们的上游 release）—— 无关
+
+**(f) 加上 Postgres 移除假设的成本比较：**
+
+| 选项 | day-1 wall-time | 新 LOC | lib 依赖 | 仅 SQLite？ | 备注 |
+|---|---|---|---|---|---|
+| **A（Commanded 全套，Postgres）** | ~3 个月 | 5000-7000 | 5+ Commanded libs | ❌ | 原 §2-§12 路径 |
+| **A'（Commanded + 自写 SQLite 适配器）** | ~3.5-4 个月 | 5500-8000 | 5+ libs + 自写适配器 | ✓ | 加 3-4 周 + 适配器维护 |
+| **B（Sage + ex_audit + Oban）** | ~3-4 周 | 1500-2000 | 3（Sage、ex_audit、Oban Pro） | ✓（带 Oban-on-SQLite 注意） | 通过 Sage 的 Postgres-free 路径 |
+| **B''（原生整合）** | **~2-3 周** | **880 + 50（Router）** | **0** | **✓** | 本 SPEC 推荐 |
+
+A' 比 A 更差 —— Commanded 全部成本 加上 SQLite 适配器维护负担。即便最强反 Commanded 论点完全中和，**B'' 仍比最便宜的 Commanded 变体便宜 ~10-15 周**，且零新依赖，且保留迁移路径（按 §1.5.7.5(e)）。
+
+**(g) jfcloutier 2015 文章是 B'' 的历史先例。** 作者用 GenServer + GenEvent + Mnesia 在 1 天内完成 Elixir+Phoenix DIY CQRS 实现，结构上就是 B'' 形式化的内容。作者提到的"缺失部分"（无回放、无正式 aggregate root）正好对应 B'' v1 延后的扩展点（Ext.b replay、Ext.a events-as-truth 自选）。**B'' 是 Elixir 社区实践了 10 年的模式的 2026 命名版**。
+
+**结论更新（r8 — Allen 2026-05-28 10:11 再评估）：**
+
+**不翻转。B'' 仍是主要推荐**。Postgres 移除假设、Router 洞察、历史先例都*强化*了 B'' 的论证而非削弱：
+
+- Router 洞察命名了 B'' 已经有的原语（现在第 6 个模块，+50 LOC）；语义不变
+- `commanded-ecto-projections` on SQLite 是关于 Commanded 的真实事实，但不给我们完整 SQLite-Commanded 路径，除非自写事件存储适配器（~3-4 周）
+- 完整 SQLite-Commanded 路径（A'）保留所有其他 Commanded 成本，总 wall-time *比* A 更长
+- jfcloutier 2015 证明简单 DIY 模式 10 年前已可行；B'' 是命名 + 测试过的版本
+
+**何时 WOULD 翻转**：若 Commanded 生态发布稳定的、社区维护的 SQLite 事件存储适配器（**不是**我们自写），**且**回放（P5）进入 6 个月 roadmap，则 Option A' 变得有吸引力。在两条件都成立前，B'' 是最便宜且保留选项的路径。
+
+**更新 fallback 顺序（r8）：**
+
+1. **B''（原生整合）** —— 主要推荐，本 SPEC §1.5.7
+2. **B（Sage + ex_audit + Oban outbox）** —— 一线 fallback 按 §1.5.5 r6
+3. **A'（Commanded + 自写 SQLite 适配器）** —— 二线 fallback **如果**回放（P5）进 roadmap **且**社区发布 SQLite 事件存储适配器
+4. **A（Commanded 全套，Postgres）** —— 三线 fallback，§2-§12 路径，仅当 B'' + B + A' 都不可行**且** Postgres in dev 可接受
 
 ---
 
