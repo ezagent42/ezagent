@@ -229,12 +229,45 @@ browser (the customer-facing payoff the whole task targets).
   laptop?" → AI replied *"Acme laptops come with a 12-month warranty … Acme
   Pro … 24 months."* Live AI reply + soul personalization + multilingual,
   end-to-end in the real LiveView page (not curl). (criterion 1, full)
-- ✅ **Test 4 (widget) effectively confirmed** — embedding the widget on a
-  cross-origin host page (`http://localhost:8088/widget-test.html`) loads the
-  iframe (`/chat/acme?embed=1` sub-resources fetched). The launcher bubble is
-  `position:fixed; right:20px` and was simply hidden behind the right-docked
-  DevTools panel.
-- ⏳ Test 3 (reload resume) + Test 5/6 (operator takeover) — not yet run.
+- ✅ **Test 3 (reload resume) PASS** — navigating to bare `/chat/acme` (no
+  params) triggered the localStorage hook to redirect to
+  `?conv=…&cid=…`; `load_history` restored the full thread (customer Q + AI
+  reply) from MessageStore.
+- ✅ **Test 4 (widget) confirmed** — embedding on a cross-origin host page
+  (`http://localhost:8088/widget-test.html`) loads the iframe
+  (`/chat/acme?embed=1`). The launcher bubble (`position:fixed; right:20px`)
+  was just hidden behind the right-docked DevTools panel.
+- ✅ **Test 5 (operator dashboard) PASS** — after switching to the `acme`
+  workspace, `/admin/customer_sessions` lists live sessions (conv_id + Auto
+  mode badge + last-message preview + timestamp). The detail view shows the
+  live transcript.
+- ✅ **Test 6 (operator takeover) PASS** — clicked "Take over": dashboard
+  flipped to **Takeover** + posted the `(客服已接管对话)` notice from
+  `system://chat-router`; sent an operator message. On the CUSTOMER tab,
+  live with no reload: the `客服已接管` banner appeared, the takeover notice
+  bubble showed, and the operator's message arrived as a green "客服" bubble.
+  This proves the C3-tension fix — operator → customer in real time, no
+  120 s SSE window.
+
+**Full E2E (Test 1–6) PASS, driven in Chrome 2026-05-28.**
+
+### Findings during the live run (non-blocking)
+
+- **Operator workspace scoping** — the dashboard lists sessions for the
+  operator's CURRENT workspace. The admin defaults to `workspace://system`;
+  customer chats live in the tenant workspace (`acme`). The operator must
+  switch to the tenant's workspace (top-left switcher) to see/take-over its
+  sessions. This is correct (workspace-scoped visibility) but worth a UX note
+  for productionization (operators provisioned per-tenant, or a cross-tenant
+  super-operator view).
+- **Cosmetic, live-append path only** (both self-correct on reload):
+  1. The welcome bubble (`:if={@empty?}`) is a static child inside the
+     `phx-update="stream"` container, so on the first live message it renders
+     *below* the streamed messages instead of disappearing. Fix: render the
+     welcome OUTSIDE the stream container.
+  2. The composer `<input>` is uncontrolled, so resetting `compose_form` on
+     submit doesn't clear the typed text. Fix: bind the input value to the
+     form field (or clear via a small hook).
 
 ### Bugs found + fixed during live validation
 
