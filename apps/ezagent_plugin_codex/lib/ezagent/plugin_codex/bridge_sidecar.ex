@@ -39,6 +39,16 @@ defmodule EzagentPluginCodex.BridgeSidecar do
     end
   end
 
+  @spec recent_output(URI.t()) :: String.t()
+  def recent_output(%URI{} = agent_uri) do
+    case lookup(agent_uri) do
+      {:ok, pid} -> GenServer.call(pid, :recent_output, 1_000)
+      :error -> ""
+    end
+  catch
+    _, _ -> ""
+  end
+
   @spec stop(URI.t()) :: :ok
   def stop(%URI{} = agent_uri) do
     case lookup(agent_uri) do
@@ -73,13 +83,27 @@ defmodule EzagentPluginCodex.BridgeSidecar do
   end
 
   @impl true
+  def handle_call(:recent_output, _from, state) do
+    {:reply, state.output, state}
+  end
+
+  @impl true
   def handle_info({_port, {:data, data}}, state) when is_binary(data) do
+    case String.trim(data) do
+      "" ->
+        :ok
+
+      output ->
+        Logger.info("codex bridge sidecar output for #{URI.to_string(state.agent_uri)}:\n#{output}")
+    end
+
     {:noreply, %{state | output: trim_output(state.output <> data)}}
   end
 
   def handle_info({_port, {:exit_status, status}}, state) do
     Logger.warning(
-      "codex bridge sidecar exited for #{URI.to_string(state.agent_uri)} with status #{status}"
+      "codex bridge sidecar exited for #{URI.to_string(state.agent_uri)} " <>
+        "with status #{status}; recent output:\n#{state.output}"
     )
 
     {:stop, {:bridge_sidecar_exit, status}, state}

@@ -27,6 +27,17 @@ import websockets
 
 LOG = logging.getLogger("ezagent_codex_bridge")
 
+
+def float_env(name: str, default: float) -> float:
+    raw = os.environ.get(name, "")
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
 WS_URL = os.environ.get("EZAGENT_BRIDGE_WS_URL", "ws://127.0.0.1:10042/agent_bridge/websocket")
 AGENT_URI = os.environ.get("EZAGENT_AGENT_URI", "")
 AGENT_TOKEN = os.environ.get("EZAGENT_AGENT_TOKEN", "")
@@ -37,6 +48,7 @@ CODEX_BIN = os.environ.get("EZAGENT_CODEX_BIN", "codex")
 MODEL = os.environ.get("EZAGENT_CODEX_MODEL", "")
 APPROVAL_POLICY = os.environ.get("EZAGENT_CODEX_APPROVAL_POLICY", "")
 SANDBOX = os.environ.get("EZAGENT_CODEX_SANDBOX", "")
+RPC_TIMEOUT = float_env("EZAGENT_CODEX_RPC_TIMEOUT", 20.0)
 
 
 def setup_logging() -> None:
@@ -52,10 +64,12 @@ def setup_logging() -> None:
     handler.setFormatter(
         logging.Formatter(f"[ezagent_codex_bridge {slug}] %(asctime)s %(levelname)s %(message)s")
     )
+    stream = logging.StreamHandler()
+    stream.setFormatter(logging.Formatter("[ezagent_codex_bridge] %(levelname)s %(message)s"))
 
     root = logging.getLogger()
     root.setLevel(logging.INFO)
-    root.handlers = [handler]
+    root.handlers = [handler, stream]
 
     LOG.info("bridge log: %s", log_path)
 
@@ -98,6 +112,7 @@ def write_thread_id_file(thread_id: str) -> None:
         f.write(thread_id)
         f.write("\n")
     os.replace(tmp_path, THREAD_ID_FILE)
+    LOG.info("wrote codex thread id file: %s", THREAD_ID_FILE)
 
 
 class CodexClient:
@@ -114,6 +129,7 @@ class CodexClient:
         if not CODEX_SOCK:
             raise RuntimeError("EZAGENT_CODEX_APP_SERVER_SOCK is required")
 
+        LOG.info("starting codex app-server proxy; sock=%s cwd=%s", CODEX_SOCK, CWD)
         self.proc = await asyncio.create_subprocess_exec(
             CODEX_BIN,
             "app-server",
@@ -148,16 +164,19 @@ class CodexClient:
         persisted_thread_id = read_thread_id_file()
         if persisted_thread_id:
             try:
+                LOG.info("resuming persisted codex thread: %s", persisted_thread_id)
                 params = self.thread_options()
                 params["threadId"] = persisted_thread_id
                 result = await self.call("thread/resume", params)
                 thread = result.get("thread") or {}
                 self.thread_id = thread.get("id") or persisted_thread_id
                 write_thread_id_file(self.thread_id)
+                LOG.info("codex thread ready: %s", self.thread_id)
                 return self.thread_id
             except Exception:
                 LOG.exception("failed to resume persisted codex thread %s", persisted_thread_id)
 
+        LOG.info("starting new codex thread; cwd=%s", CWD)
         params = self.thread_options()
         params["sessionStartSource"] = "startup"
         params["ephemeral"] = False
@@ -169,6 +188,7 @@ class CodexClient:
 
         self.thread_id = thread_id
         write_thread_id_file(thread_id)
+        LOG.info("codex thread ready: %s", thread_id)
         return thread_id
 
     def thread_options(self) -> dict[str, Any]:
@@ -244,7 +264,11 @@ class CodexClient:
         fut = loop.create_future()
         self.pending[req_id] = fut
         await self._write({"jsonrpc": "2.0", "id": req_id, "method": method, "params": params})
-        return await fut
+        try:
+            return await asyncio.wait_for(fut, timeout=RPC_TIMEOUT)
+        except asyncio.TimeoutError as exc:
+            self.pending.pop(req_id, None)
+            raise TimeoutError(f"codex RPC {method} timed out after {RPC_TIMEOUT}s") from exc
 
     async def notify(self, method: str, params: dict[str, Any]) -> None:
         await self._write({"jsonrpc": "2.0", "method": method, "params": params})
@@ -271,6 +295,8 @@ class CodexClient:
             if "id" in msg and ("result" in msg or "error" in msg):
                 fut = self.pending.pop(msg["id"], None)
                 if fut is None:
+                    continue
+                if fut.done():
                     continue
                 if "error" in msg:
                     fut.set_exception(RuntimeError(msg["error"]))
@@ -427,7 +453,14 @@ async def connect_loop() -> None:
 
 async def main() -> None:
     setup_logging()
-    LOG.info("starting codex bridge; ws=%s agent=%s sock=%s", WS_URL, AGENT_URI, CODEX_SOCK)
+    LOG.info(
+        "starting codex bridge; ws=%s agent=%s sock=%s cwd=%s thread_id_file=%s",
+        WS_URL,
+        AGENT_URI,
+        CODEX_SOCK,
+        CWD,
+        THREAD_ID_FILE,
+    )
     await connect_loop()
 
 

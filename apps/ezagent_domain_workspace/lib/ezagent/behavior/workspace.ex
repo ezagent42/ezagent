@@ -796,14 +796,14 @@ defmodule Ezagent.Behavior.Workspace do
   defp require_workspace_uri(other), do: {:error, {:bad_workspace_uri, other}}
 
   # Flavor validation: must be registered in AgentFlavorRegistry. Empty
-  # registry (test bootstrap) falls back to the well-known 4 names so a
+  # registry (test bootstrap) falls back to the well-known names so a
   # unit test that doesn't boot plugins can still drive the action body.
   defp validate_flavor(""), do: {:error, :flavor_required}
 
   defp validate_flavor(flavor) when is_binary(flavor) do
     case Ezagent.AgentFlavorRegistry.list_all() do
       [] ->
-        if flavor in ~w(cc echo curl np),
+        if flavor in ~w(cc echo curl np codex),
           do: :ok,
           else: {:error, {:bad_flavor, flavor}}
 
@@ -836,6 +836,11 @@ defmodule Ezagent.Behavior.Workspace do
   defp validate_cwd_for_flavor("echo", true, ""), do: {:error, :cwd_required_for_echo_with_pty}
   defp validate_cwd_for_flavor("echo", true, cwd), do: validate_cwd_dir(cwd)
   defp validate_cwd_for_flavor("echo", false, _cwd), do: :ok
+
+  defp validate_cwd_for_flavor("codex", _with_pty?, ""),
+    do: {:error, :cwd_required_for_codex}
+
+  defp validate_cwd_for_flavor("codex", _with_pty?, cwd), do: validate_cwd_dir(cwd)
 
   defp validate_cwd_for_flavor("curl", _with_pty?, _cwd), do: :ok
   defp validate_cwd_for_flavor(_, _, _), do: :ok
@@ -944,7 +949,7 @@ defmodule Ezagent.Behavior.Workspace do
     end
   end
 
-  # cc / echo → register a Workspace-scoped template + persist + invoke.
+  # cc / echo / codex → register a Workspace-scoped template + persist + invoke.
   defp do_create_agent("cc", agent_uri, slice, params) do
     %{
       cwd: cwd,
@@ -991,6 +996,31 @@ defmodule Ezagent.Behavior.Workspace do
       # requires it when `with_pty: true`. Path.expand("") is "" so
       # this round-trips safely for the no-PTY case.
       "cwd" => if(with_pty?, do: Path.expand(cwd), else: cwd)
+    }
+
+    register_and_invoke_template(
+      slice,
+      workspace_name,
+      workspace_uri,
+      tmpl_name,
+      tmpl,
+      agent_uri
+    )
+  end
+
+  defp do_create_agent("codex", agent_uri, slice, params) do
+    %{
+      cwd: cwd,
+      workspace_name: workspace_name,
+      workspace_uri: workspace_uri
+    } = params
+
+    tmpl_name = "codex.agent." <> agent_name(agent_uri)
+
+    tmpl = %{
+      "class" => "codex.agent",
+      "agent_uri" => URI.to_string(agent_uri),
+      "cwd" => Path.expand(cwd)
     }
 
     register_and_invoke_template(
