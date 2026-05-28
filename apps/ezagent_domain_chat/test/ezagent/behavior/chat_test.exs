@@ -24,7 +24,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
   # Phase 9 PR-6 — `MessageStore.write/2` requires the session to be
   # bound to a workspace via WorkspaceRegistry (invariant 4 + SPEC v3
-  # §7). Helper binds + queues teardown so tests calling Chat.invoke(:send)
+  # §7). Helper binds + queues teardown so tests calling EzagentDomainChat.Test.BehaviorLegacyInvoke.invoke(Ezagent.Behavior.Chat, :send)
   # or :join don't hit the "no workspace binding" raise.
   defp bind_to_default(session_uri) do
     :ok = Ezagent.WorkspaceRegistry.bind(session_uri, URI.new!("workspace://team-alpha"))
@@ -123,7 +123,7 @@ defmodule Ezagent.Behavior.ChatTest do
       # so fall-through fan-outs to members minus sender. dispatch_receive
       # may return :error :no_such_actor for unregistered URIs but that's
       # fire-and-forget — invoke still {:ok, ...}.
-      assert {:ok, _, %{stored: true}} = Chat.invoke(:send, slice, %{message: msg}, ctx)
+      assert {:ok, _, %{stored: true}} = EzagentDomainChat.Test.BehaviorLegacyInvoke.invoke(Ezagent.Behavior.Chat, :send, slice, %{message: msg}, ctx)
     end
 
     test "with active mention routing rule → respects rule receivers" do
@@ -165,7 +165,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       # invoke fires routing path; recipients = [target_session] (per rule),
       # NOT the in-session member list. invoke still succeeds.
-      assert {:ok, _, %{stored: true}} = Chat.invoke(:send, slice, %{message: msg}, ctx)
+      assert {:ok, _, %{stored: true}} = EzagentDomainChat.Test.BehaviorLegacyInvoke.invoke(Ezagent.Behavior.Chat, :send, slice, %{message: msg}, ctx)
     end
   end
 
@@ -187,7 +187,7 @@ defmodule Ezagent.Behavior.ChatTest do
       # `:send_cursor`), so this is no longer a `^slice` pin match.
       # The bound `new_slice` shape is asserted below.
       assert {:ok, new_slice, %{stored: true}} =
-               Chat.invoke(:send, slice, %{message: msg}, ctx)
+               EzagentDomainChat.Test.BehaviorLegacyInvoke.invoke(Ezagent.Behavior.Chat, :send, slice, %{message: msg}, ctx)
 
       # Slice mutation: id stamp + full message + cursor bump (the
       # three fields that make `new_slice != slice` for both first
@@ -235,7 +235,7 @@ defmodule Ezagent.Behavior.ChatTest do
       # dispatch returns :ok or {:error, :no_such_actor} but we don't
       # consume the return — fan-out is fire-and-forget).
       assert {:ok, _new_slice, %{stored: true}} =
-               Chat.invoke(:send, slice, %{message: msg}, ctx)
+               EzagentDomainChat.Test.BehaviorLegacyInvoke.invoke(Ezagent.Behavior.Chat, :send, slice, %{message: msg}, ctx)
     end
 
     test "returns error when MessageStore write fails (let-it-crash policy)" do
@@ -250,7 +250,7 @@ defmodule Ezagent.Behavior.ChatTest do
       ctx = %{self_uri: :not_a_uri, kind_module: Ezagent.Entity.Session, caller: sender}
 
       assert_raise FunctionClauseError, fn ->
-        Chat.invoke(:send, slice, %{message: msg}, ctx)
+        EzagentDomainChat.Test.BehaviorLegacyInvoke.invoke(Ezagent.Behavior.Chat, :send, slice, %{message: msg}, ctx)
       end
     end
   end
@@ -285,7 +285,7 @@ defmodule Ezagent.Behavior.ChatTest do
       ctx = %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: sender}
 
       assert {:ok, new_slice, %{stored: true}} =
-               Chat.invoke(:send, slice, %{message: msg}, ctx)
+               EzagentDomainChat.Test.BehaviorLegacyInvoke.invoke(Ezagent.Behavior.Chat, :send, slice, %{message: msg}, ctx)
 
       assert is_binary(msg.id)
       assert new_slice.last_message_id == msg.id
@@ -330,12 +330,12 @@ defmodule Ezagent.Behavior.ChatTest do
 
       slice = Chat.init_slice(%{})
 
-      assert {:ok, slice1, _} = Chat.invoke(:send, slice, %{message: msg1}, ctx)
+      assert {:ok, slice1, _} = EzagentDomainChat.Test.BehaviorLegacyInvoke.invoke(Ezagent.Behavior.Chat, :send, slice, %{message: msg1}, ctx)
       assert slice1.last_message_id == msg1.id
       assert slice1.last_message.id == msg1.id
       assert slice1.send_cursor == 1
 
-      assert {:ok, slice2, _} = Chat.invoke(:send, slice1, %{message: msg2}, ctx)
+      assert {:ok, slice2, _} = EzagentDomainChat.Test.BehaviorLegacyInvoke.invoke(Ezagent.Behavior.Chat, :send, slice1, %{message: msg2}, ctx)
       assert slice2.last_message_id == msg2.id
       assert slice2.last_message.id == msg2.id
       assert slice2.send_cursor == 2
@@ -362,7 +362,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       slice = Chat.init_slice(%{})
 
-      assert {:ok, slice1, %{stored: true}} = Chat.invoke(:send, slice, %{message: msg}, ctx)
+      assert {:ok, slice1, %{stored: true}} = EzagentDomainChat.Test.BehaviorLegacyInvoke.invoke(Ezagent.Behavior.Chat, :send, slice, %{message: msg}, ctx)
       assert slice1.last_message_id == msg.id
       assert slice1.send_cursor == 1
 
@@ -370,7 +370,7 @@ defmodule Ezagent.Behavior.ChatTest do
       # MessageStore is idempotent on `(msg.id, session_uri)`; the
       # second invoke succeeds without crashing and still returns
       # `{:ok, _, %{stored: true}}`.
-      assert {:ok, slice2, %{stored: true}} = Chat.invoke(:send, slice1, %{message: msg}, ctx)
+      assert {:ok, slice2, %{stored: true}} = EzagentDomainChat.Test.BehaviorLegacyInvoke.invoke(Ezagent.Behavior.Chat, :send, slice1, %{message: msg}, ctx)
 
       # The id + message itself are byte-equal across the retry...
       assert slice2.last_message_id == slice1.last_message_id
@@ -413,7 +413,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       # First send persists the original
       assert {:ok, slice1, %{stored: true}} =
-               Chat.invoke(:send, slice, %{message: original}, ctx)
+               EzagentDomainChat.Test.BehaviorLegacyInvoke.invoke(Ezagent.Behavior.Chat, :send, slice, %{message: original}, ctx)
 
       assert slice1.last_message_id == original.id
       assert slice1.last_message.body["text"] == "original truth"
@@ -423,7 +423,7 @@ defmodule Ezagent.Behavior.ChatTest do
       # returns the ORIGINAL row — :last_message in the new slice
       # MUST be the original row, not the adversarial one.
       assert {:ok, slice2, %{stored: true}} =
-               Chat.invoke(:send, slice1, %{message: adversarial}, ctx)
+               EzagentDomainChat.Test.BehaviorLegacyInvoke.invoke(Ezagent.Behavior.Chat, :send, slice1, %{message: adversarial}, ctx)
 
       assert slice2.last_message_id == original.id
       assert slice2.last_message.body["text"] == "original truth"
@@ -458,7 +458,7 @@ defmodule Ezagent.Behavior.ChatTest do
       ctx = %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: sender}
 
       assert {:ok, new_slice, %{stored: true}} =
-               Chat.invoke(:send, legacy_slice, %{message: msg}, ctx)
+               EzagentDomainChat.Test.BehaviorLegacyInvoke.invoke(Ezagent.Behavior.Chat, :send, legacy_slice, %{message: msg}, ctx)
 
       assert new_slice.last_message_id == msg.id
       assert new_slice.last_message.id == msg.id
@@ -563,7 +563,7 @@ defmodule Ezagent.Behavior.ChatTest do
       slice = %{}
       ctx = %{self_uri: user_uri, kind_module: Ezagent.Entity.User, caller: sender}
 
-      assert {:ok, ^slice} = Chat.invoke(:receive, slice, %{message: msg}, ctx)
+      assert {:ok, ^slice} = EzagentDomainChat.Test.BehaviorLegacyInvoke.invoke(Ezagent.Behavior.Chat, :receive, slice, %{message: msg}, ctx)
       assert_receive {:message_received, %Message{id: rid}}, 500
       assert rid == msg.id
     end
@@ -578,7 +578,7 @@ defmodule Ezagent.Behavior.ChatTest do
       slice = %{}
       ctx = %{self_uri: agent_uri, kind_module: Ezagent.Entity.Agent, caller: sender}
 
-      assert {:ok, ^slice} = Chat.invoke(:receive, slice, %{message: msg}, ctx)
+      assert {:ok, ^slice} = EzagentDomainChat.Test.BehaviorLegacyInvoke.invoke(Ezagent.Behavior.Chat, :receive, slice, %{message: msg}, ctx)
     end
 
     # PR 26 (2026-05-18): the channels-reference protocol declares
@@ -599,7 +599,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       ctx = %{self_uri: agent_uri, kind_module: Ezagent.Entity.Agent, caller: session_uri}
 
-      Chat.invoke(:receive, %{}, %{message: msg}, ctx)
+      EzagentDomainChat.Test.BehaviorLegacyInvoke.invoke(Ezagent.Behavior.Chat, :receive, %{}, %{message: msg}, ctx)
 
       assert_receive {:to_claude, %{"content" => content, "meta" => meta}}, 500
 
@@ -637,7 +637,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       ctx = %{self_uri: agent_uri, kind_module: Ezagent.Entity.Agent, caller: session_uri}
 
-      Chat.invoke(:receive, %{}, %{message: msg}, ctx)
+      EzagentDomainChat.Test.BehaviorLegacyInvoke.invoke(Ezagent.Behavior.Chat, :receive, %{}, %{message: msg}, ctx)
 
       assert_receive {:to_claude, %{"content" => content, "meta" => meta}}, 500
 
@@ -674,7 +674,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       ctx = %{self_uri: agent_uri, kind_module: Ezagent.Entity.Agent, caller: session_uri}
 
-      Chat.invoke(:receive, %{}, %{message: msg}, ctx)
+      EzagentDomainChat.Test.BehaviorLegacyInvoke.invoke(Ezagent.Behavior.Chat, :receive, %{}, %{message: msg}, ctx)
 
       assert_receive {:to_claude, %{"content" => content, "meta" => meta}}, 500
 
@@ -697,7 +697,7 @@ defmodule Ezagent.Behavior.ChatTest do
       ctx = %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: member_uri}
 
       assert {:ok, new_slice, %{members: [^member_uri]}} =
-               Chat.invoke(:join, slice, %{member: member_uri}, ctx)
+               EzagentDomainChat.Test.BehaviorLegacyInvoke.invoke(Ezagent.Behavior.Chat, :join, slice, %{member: member_uri}, ctx)
 
       assert Map.has_key?(new_slice.members, member_uri)
       assert new_slice.members[member_uri].online == true
@@ -716,7 +716,7 @@ defmodule Ezagent.Behavior.ChatTest do
       ctx = %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: missing_uri}
 
       assert {:error, {:member_not_registered, ^missing_uri}} =
-               Chat.invoke(:join, slice, %{member: missing_uri}, ctx)
+               EzagentDomainChat.Test.BehaviorLegacyInvoke.invoke(Ezagent.Behavior.Chat, :join, slice, %{member: missing_uri}, ctx)
     end
 
     test "notifies the joinee when member is a user URI (todo.md notification coverage)" do
@@ -737,7 +737,7 @@ defmodule Ezagent.Behavior.ChatTest do
       slice = Chat.init_slice(%{})
       ctx = %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: member_uri}
 
-      assert {:ok, _slice, _result} = Chat.invoke(:join, slice, %{member: member_uri}, ctx)
+      assert {:ok, _slice, _result} = EzagentDomainChat.Test.BehaviorLegacyInvoke.invoke(Ezagent.Behavior.Chat, :join, slice, %{member: member_uri}, ctx)
 
       assert_receive {:notification, ^member_uri,
                       %{
@@ -777,7 +777,7 @@ defmodule Ezagent.Behavior.ChatTest do
       slice = Chat.init_slice(%{})
       ctx = %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: agent_uri}
 
-      assert {:ok, _slice, _result} = Chat.invoke(:join, slice, %{member: agent_uri}, ctx)
+      assert {:ok, _slice, _result} = EzagentDomainChat.Test.BehaviorLegacyInvoke.invoke(Ezagent.Behavior.Chat, :join, slice, %{member: agent_uri}, ctx)
 
       refute_receive {:notification, ^agent_uri, _}, 200
 
@@ -812,7 +812,7 @@ defmodule Ezagent.Behavior.ChatTest do
       slice = %{members: %{}, monitors: %{}, last_seen: %{member_uri => base}}
       ctx = %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: member_uri}
 
-      assert {:ok, new_slice, _} = Chat.invoke(:join, slice, %{member: member_uri}, ctx)
+      assert {:ok, new_slice, _} = EzagentDomainChat.Test.BehaviorLegacyInvoke.invoke(Ezagent.Behavior.Chat, :join, slice, %{member: member_uri}, ctx)
       # last_seen for this member is cleared
       refute Map.has_key?(new_slice.last_seen, member_uri)
 
@@ -834,7 +834,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       ctx = %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: member_uri}
 
-      assert {:ok, new_slice} = Chat.invoke(:leave, slice, %{member: member_uri}, ctx)
+      assert {:ok, new_slice} = EzagentDomainChat.Test.BehaviorLegacyInvoke.invoke(Ezagent.Behavior.Chat, :leave, slice, %{member: member_uri}, ctx)
 
       refute Map.has_key?(new_slice.members, member_uri)
       refute Map.has_key?(new_slice.monitors, ref)

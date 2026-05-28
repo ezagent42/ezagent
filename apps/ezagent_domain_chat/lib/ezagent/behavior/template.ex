@@ -14,10 +14,9 @@ defmodule Ezagent.Behavior.Template do
   holds CAPS, not template content), and `Ezagent.Kind.Template` is a
   callback-module contract, not a `BehaviorRegistry`-registered action.
 
-  `Ezagent.Behavior.Template` is the fix: a real `@behaviour
-  Ezagent.Behavior` carrying the persistent template-CONTENT slice with
-  dispatchable `:read` / `:write` / `:instantiate` actions, registered on
-  BOTH Template Kinds.
+  `Ezagent.Behavior.Template` is the fix: a real Behavior carrying the
+  persistent template-CONTENT slice with dispatchable `:read` / `:write`
+  / `:instantiate` actions, registered on BOTH Template Kinds.
 
   ## State slice — `:template`
 
@@ -43,8 +42,7 @@ defmodule Ezagent.Behavior.Template do
 
   ## Actions — `:read` / `:write` / `:instantiate` / `:fork`
 
-  - **`:read`** (`:call`) — `{:ok, slice, %{content: map | nil}}`.
-    Returns the `:template` slice content.
+  - **`:read`** (`:call`) — returns the `:template` slice content.
   - **`:write`** (`:call`, args `%{content: map}`) — persists the
     `:template` slice content. Because both Template Kinds are
     `{:snapshot, :on_change}`, a `:write` triggers a `kind_snapshots`
@@ -104,7 +102,7 @@ defmodule Ezagent.Behavior.Template do
     URI + `:fork` subject — a caller holding `Behavior.Template` on the
     parent's workspace is authorized (the `:fork` cap_subject is for
     documentation; matches by Behavior, not action). Returns
-    `{:ok, slice, %{template_uri: new_uri}}`.
+    `{:ok, %{template_uri: new_uri}, effects}`.
 
   ## Relationship to `Ezagent.Kind.Template`
 
@@ -115,72 +113,93 @@ defmodule Ezagent.Behavior.Template do
   Template KIND** that holds + serves the persistent content slice and
   routes dispatchable actions. The `:instantiate` action *delegates to*
   a `Ezagent.Kind.Template` Class — it does not replace it.
+
+  ## Migration note (P2-a r3, 2026-05-28)
+
+  Migrated to the new SPEC 2026-05-28 action grammar. `:write` /
+  `:instantiate` mutate the slice via `{:set, :content, value}`
+  effects; `:fork` calls Router.dispatch in-handler for the followup
+  `:write` + `identity.grant_cap` (because their results are needed
+  for error monadics) and returns the slice unchanged from the
+  PARENT's perspective (the fork's content lives on a different Kind
+  instance, written via the in-handler dispatch).
   """
 
-  @behaviour Ezagent.Behavior
+  use Ezagent.Behavior
 
   require Logger
 
+  alias Ezagent.Cmd
   alias Ezagent.Entity.{AgentTemplate, SessionTemplate}
-
-  @impl Ezagent.Behavior
-  def actions, do: [:read, :write, :instantiate, :fork]
 
   # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
   # Template is registered on both AgentTemplate AND SessionTemplate
   # Kinds — kind axis is `:any` per check 11(b)'s multi-Kind escape.
   # template:// URIs are cross-cutting (workspace_uri segment is :any
   # at the scheme level), so workspace_scoped? = false.
-  @impl Ezagent.Behavior
-  def required_caps do
-    %{
-      read: Ezagent.Capability.cap(:any, __MODULE__, :read),
-      write: Ezagent.Capability.cap(:any, __MODULE__, :write),
-      instantiate: Ezagent.Capability.cap(:any, __MODULE__, :instantiate),
-      fork: Ezagent.Capability.cap(:any, __MODULE__, :fork)
-    }
-  end
 
-  @impl Ezagent.Behavior
-  def workspace_scoped?, do: false
+  action :read,
+    args: %{},
+    returns: %{content: :map},
+    caps: [:read],
+    modes: [:call],
+    description: "read the template's content + metadata (write_count, last_version_hash)",
+    workspace_scoped?: false
 
-  @impl Ezagent.Behavior
-  def cap_subjects do
-    [
-      {:read, "read the template's content + metadata (write_count, last_version_hash)"},
-      {:write, "write a new immutable version of the template (CAS-keyed)"},
-      {:instantiate, "instantiate this template into a live Kind (Session / Agent / …)"},
-      {:fork,
-       "fork this template into a NEW Template Kind whose `parent_template_uri` " <>
-         "points back at this one (PR1 2026-05-24)"}
-    ]
-  end
+  action :write,
+    args: %{content: :map},
+    returns: %{content: :map},
+    caps: [:write],
+    modes: [:call],
+    description: "write a new immutable version of the template (CAS-keyed)",
+    workspace_scoped?: false
 
-  @impl Ezagent.Behavior
+  action :instantiate,
+    args: %{
+      instance_name: {:option, :string},
+      workspace_uri: {:option, :uri},
+      spawned_by: {:option, :uri}
+    },
+    returns: %{workers: {:list, :uri}, fresh?: :boolean},
+    caps: [:instantiate],
+    modes: [:call],
+    description:
+      "instantiate this template into a live Kind (Session / Agent / …)",
+    workspace_scoped?: false
+
+  action :fork,
+    args: %{new_name: :string, owner: {:option, :uri}},
+    returns: %{template_uri: :uri},
+    caps: [:fork],
+    modes: [:call],
+    description:
+      "fork this template into a NEW Template Kind whose `parent_template_uri` " <>
+        "points back at this one (PR1 2026-05-24)",
+    workspace_scoped?: false
+
   def state_slice, do: :template
 
-  @impl Ezagent.Behavior
   def init_slice(args) do
     %{content: Map.get(args, :content)}
   end
 
   # --- :read -------------------------------------------------------------
 
-  @impl Ezagent.Behavior
-  def invoke(:read, slice, _args, _ctx) do
-    {:ok, slice, %{content: Map.get(slice, :content)}}
+  def handle_read(_args, ctx) do
+    content = ctx[:read].(:content, nil)
+    {:ok, %{content: content}, []}
   end
 
   # --- :write ------------------------------------------------------------
 
-  def invoke(:write, slice, %{content: content}, ctx) when is_map(content) do
+  def handle_write(%{content: content}, ctx) when is_map(content) do
     case Map.get(ctx, :kind_module) do
       SessionTemplate ->
-        write_session_template(slice, content, ctx)
+        write_session_template(content, ctx)
 
       AgentTemplate ->
         # AgentTemplate URIs are versionless — plain mutable replace.
-        {:ok, %{slice | content: content}, %{content: content}}
+        {:ok, %{content: content}, [{:set, :content, content}]}
 
       other ->
         {:error, {:template_write_unsupported_for_kind, other}}
@@ -198,13 +217,13 @@ defmodule Ezagent.Behavior.Template do
   # branch on `ctx[:kind_module]`. Cap preflight is delegated to the
   # dispatch CapBAC against the parent URI (caller holding
   # `Behavior.Template` on the parent's workspace is authorized).
-  def invoke(:fork, slice, args, ctx) do
+  def handle_fork(args, ctx) do
     case Map.get(ctx, :kind_module) do
       SessionTemplate ->
-        fork_session_template(slice, args, ctx)
+        fork_session_template(args, ctx)
 
       AgentTemplate ->
-        fork_agent_template(slice, args, ctx)
+        fork_agent_template(args, ctx)
 
       other ->
         {:error, {:template_fork_unsupported_for_kind, other}}
@@ -216,10 +235,10 @@ defmodule Ezagent.Behavior.Template do
   # codex rev-5 HIGH-2 — `:instantiate` runs IN-PROCESS with the slice
   # already in hand. It NEVER dispatches `:read` back to its own Kind
   # process (a self-`GenServer.call` deadlock).
-  def invoke(:instantiate, slice, args, ctx) do
+  def handle_instantiate(args, ctx) do
     case Map.get(ctx, :kind_module) do
       AgentTemplate ->
-        instantiate_agent_template(slice, args, ctx)
+        instantiate_agent_template(args, ctx)
 
       SessionTemplate ->
         # SessionTemplate instantiation IS the Generator
@@ -232,60 +251,6 @@ defmodule Ezagent.Behavior.Template do
     end
   end
 
-  # --- interface ---------------------------------------------------------
-
-  @impl Ezagent.Behavior
-  def interface do
-    %{
-      read: %{
-        description: "Read the template's content slice",
-        args: %{},
-        returns: %{content: :map},
-        modes: [:call]
-      },
-      write: %{
-        description:
-          "Persist the template's content slice (SessionTemplate write-once + " <>
-            "hash-checked; AgentTemplate mutable replace)",
-        args: %{content: :map},
-        returns: %{content: :map},
-        modes: [:call]
-      },
-      instantiate: %{
-        description:
-          "Instantiate the template — AgentTemplate spawns a worker via its " <>
-            "flavor Class into the AgentTemplate's OWN (cap-checked) workspace; " <>
-            "an explicit workspace_uri arg differing from it is rejected " <>
-            ":cross_workspace_denied. SessionTemplate returns {:error, :use_generator}",
-        args: %{
-          instance_name: {:option, :string},
-          # `workspace_uri` is NOT the destination selector — the
-          # destination is always the AgentTemplate's own workspace
-          # (codex HIGH-1). When supplied it must MATCH that workspace
-          # or the call is rejected :cross_workspace_denied.
-          workspace_uri: {:option, :uri},
-          spawned_by: {:option, :uri}
-        },
-        returns: %{workers: {:list, :uri}, fresh?: :boolean},
-        modes: [:call]
-      },
-      fork: %{
-        description:
-          "Fork this template into a NEW Template Kind whose " <>
-            "`parent_template_uri` points back at this one. The fork inherits " <>
-            "the parent's workspace; the destination URI is Kind-specific " <>
-            "(SessionTemplate → content-hash; AgentTemplate → versionless). " <>
-            "Owner cap is granted to `owner` (default: caller).",
-        args: %{
-          new_name: :string,
-          owner: {:option, :uri}
-        },
-        returns: %{template_uri: :uri},
-        modes: [:call]
-      }
-    }
-  end
-
   # --- internals ---------------------------------------------------------
 
   # SessionTemplate `:write` — write-once + hash-checked (codex rev-5
@@ -293,13 +258,14 @@ defmodule Ezagent.Behavior.Template do
   # `@<hash>` segment of its URI MUST equal the recomputed hash of the
   # content being written, and an already-populated slice may not be
   # divergently overwritten.
-  defp write_session_template(slice, content, ctx) do
+  defp write_session_template(content, ctx) do
     self_uri = Map.get(ctx, :self_uri)
+    existing_content = ctx[:read].(:content, nil)
 
     with {:ok, uri_hash} <- uri_hash_segment(self_uri),
          :ok <- check_hash_matches(content, uri_hash),
-         :ok <- check_immutable(Map.get(slice, :content), content) do
-      {:ok, %{slice | content: content}, %{content: content}}
+         :ok <- check_immutable(existing_content, content) do
+      {:ok, %{content: content}, [{:set, :content, content}]}
     end
   end
 
@@ -358,10 +324,11 @@ defmodule Ezagent.Behavior.Template do
   # `%{workers: ..., fresh?: ...}`; the `fresh?` flag is threaded into
   # the action result so `update_agent_template` can reject silently
   # adopting an already-live worker.
-  defp instantiate_agent_template(slice, args, ctx) do
+  defp instantiate_agent_template(args, ctx) do
     self_uri = Map.get(ctx, :self_uri)
+    content = ctx[:read].(:content, nil)
 
-    case Map.get(slice, :content) do
+    case content do
       content when is_map(content) ->
         with {:ok, instance_uri} <- resolve_instance_uri(content, args, self_uri, ctx),
              {:ok, workspace_uri} <- resolve_workspace_uri(content, args, self_uri),
@@ -380,7 +347,7 @@ defmodule Ezagent.Behavior.Template do
             spawn_result
             |> Map.take([:workers, :fresh?, :role_degraded, :role_degraded_reason])
 
-          {:ok, slice, result}
+          {:ok, result, []}
         end
 
       _ ->
@@ -491,8 +458,10 @@ defmodule Ezagent.Behavior.Template do
   # concern, not Kind-specific). Each Kind branch just supplies its own
   # URI builder + cap-shape + version-field reset.
 
-  defp fork_session_template(slice, args, ctx) do
-    with {:ok, parent_content} <- fetch_slice_content(slice),
+  defp fork_session_template(args, ctx) do
+    parent_content = ctx[:read].(:content, nil)
+
+    with {:ok, parent_content} <- fetch_slice_content(parent_content),
          {:ok, new_name} <- fetch_string_arg(args, :new_name),
          {:ok, %URI{} = parent_uri} <- fetch_self_uri(ctx),
          {:ok, %URI{} = workspace_uri} <- workspace_uri_of(parent_uri) do
@@ -512,13 +481,15 @@ defmodule Ezagent.Behavior.Template do
 
       with {:ok, new_uri} <- persist_session_template_version(content, workspace_uri, ctx),
            :ok <- grant_session_template_owner_cap(owner_uri, workspace_uri) do
-        {:ok, slice, %{template_uri: new_uri}}
+        {:ok, %{template_uri: new_uri}, []}
       end
     end
   end
 
-  defp fork_agent_template(slice, args, ctx) do
-    with {:ok, parent_content} <- fetch_slice_content(slice),
+  defp fork_agent_template(args, ctx) do
+    parent_content = ctx[:read].(:content, nil)
+
+    with {:ok, parent_content} <- fetch_slice_content(parent_content),
          {:ok, new_name} <- fetch_string_arg(args, :new_name),
          {:ok, %URI{} = parent_uri} <- fetch_self_uri(ctx),
          {:ok, %URI{} = workspace_uri} <- workspace_uri_of(parent_uri) do
@@ -546,7 +517,7 @@ defmodule Ezagent.Behavior.Template do
            {:ok, _result} <- dispatch_template_write(new_uri, content, ctx),
            :ok <- grant_agent_template_owner_cap(owner_uri, workspace_uri) do
         notify_fork_owner(owner_uri, parent_uri, new_uri)
-        {:ok, slice, %{template_uri: new_uri}}
+        {:ok, %{template_uri: new_uri}, []}
       end
     end
   end
@@ -609,12 +580,8 @@ defmodule Ezagent.Behavior.Template do
 
   # Shared shape helpers ---------------------------------------------------
 
-  defp fetch_slice_content(slice) do
-    case Map.get(slice, :content) do
-      content when is_map(content) -> {:ok, content}
-      _ -> {:error, :template_not_populated}
-    end
-  end
+  defp fetch_slice_content(content) when is_map(content), do: {:ok, content}
+  defp fetch_slice_content(_), do: {:error, :template_not_populated}
 
   defp fetch_string_arg(args, key) do
     case Map.get(args, key) do
@@ -645,12 +612,14 @@ defmodule Ezagent.Behavior.Template do
     end
   end
 
+  # In-handler Router.dispatch — `:write` needs to succeed before we
+  # grant the owner cap (let-it-crash error monadics), so we cannot
+  # express it as a `:dispatch` effect (effect executor discards the
+  # return value).
   defp dispatch_template_write(uri, content, ctx) do
-    target = Ezagent.URI.parse!("#{URI.to_string(uri)}?action=template.write")
-
-    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-      target: target,
-      mode: :call,
+    Ezagent.Router.dispatch(%Cmd{
+      target: uri,
+      action: :write,
       args: %{content: content},
       ctx: ctx
     })
@@ -717,11 +686,9 @@ defmodule Ezagent.Behavior.Template do
   # `:fork` action; this is purely the followup grant so the owner can
   # later operate on the fork.
   defp grant_cap(%URI{} = owner_uri, %Ezagent.Capability{} = cap) do
-    target = Ezagent.URI.parse!("#{URI.to_string(owner_uri)}?action=identity.grant_cap")
-
-    case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-           target: target,
-           mode: :call,
+    case Ezagent.Router.dispatch(%Cmd{
+           target: owner_uri,
+           action: :grant_cap,
            args: %{cap: cap},
            # SPEC caps-cleanup-v1 §4.4 — Template fork side-effect
            # grants owner cap on the fork; runs under
@@ -732,6 +699,7 @@ defmodule Ezagent.Behavior.Template do
              reply: {:caller_inbox, self()}
            }
          }) do
+      :ok -> :ok
       {:ok, _} -> :ok
       {:error, _} = err -> err
       other -> {:error, {:owner_cap_grant_failed, other}}
@@ -741,7 +709,5 @@ defmodule Ezagent.Behavior.Template do
   # PR-OWN-4 (caps-data-ownership SPEC #306 §6): workspace-scoped
   # Behavior — workspace admin grants. `:any` return signals
   # "class-wide cap, grantable by workspace admin via §5.2 admin branch".
-  @impl Ezagent.Behavior
   def data_owner(_), do: :any
-
 end

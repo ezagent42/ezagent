@@ -8,7 +8,7 @@ defmodule EzagentDomainChat.Integration.RealClaudeHotfixesTest do
 
   ## Fix #1: source session in to_claude meta
 
-  Chat.invoke(:receive) on Agent Kind must include `"session"` in the
+  EzagentDomainChat.Test.BehaviorLegacyInvoke.invoke(Ezagent.Behavior.Chat, :receive) on Agent Kind must include `"session"` in the
   meta map so claude can fill `session_uris` correctly on reply.
   Previously claude guessed (badly) from sender URI. The fix
   populates `meta["session"]` from `ctx.caller` before sending the
@@ -45,7 +45,7 @@ defmodule EzagentDomainChat.Integration.RealClaudeHotfixesTest do
   end
 
   describe "fix #1: to_claude payload meta includes source session" do
-    test "Chat.invoke(:receive) on Agent sends {:to_claude, %{meta}} to bound channel pid with session key" do
+    test "EzagentDomainChat.Test.BehaviorLegacyInvoke.invoke(Ezagent.Behavior.Chat, :receive) on Agent sends {:to_claude, %{meta}} to bound channel pid with session key" do
       agent_uri = URI.new!("entity://agent/team-alpha/cc_meta-test-#{System.unique_integer([:positive])}")
       session_uri = URI.new!("session://default/team-alpha/meta-source-#{System.unique_integer([:positive])}")
 
@@ -73,7 +73,7 @@ defmodule EzagentDomainChat.Integration.RealClaudeHotfixesTest do
         self_uri: agent_uri
       }
 
-      assert {:ok, _} = Chat.invoke(:receive, %{}, %{message: msg}, ctx)
+      assert {:ok, _} = EzagentDomainChat.Test.BehaviorLegacyInvoke.invoke(Ezagent.Behavior.Chat, :receive, %{}, %{message: msg}, ctx)
 
       assert_receive {:to_claude, %{"meta" => meta}}, 500
       assert meta["session"] == URI.to_string(session_uri)
