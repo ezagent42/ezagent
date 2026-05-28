@@ -7,10 +7,10 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
 
   Per `docs/futures/todo.md` HIGH-2 (CLI/LV parity) and codex PR #304
   round-1 HIGH finding: every legacy `mix ezagent.*` task that mutates
-  state MUST go via `Ezagent.Invocation.dispatch/1` so the call gets
+  state MUST go through the framework dispatcher so the call gets
   CapBAC + audit + cross-workspace-check. Adding a `FacadeRegistry`
   shortcut for `feishu bind` would reproduce the exact bypass HIGH-2
-  is meant to retire (FacadeRegistry skips Invocation entirely).
+  is meant to retire (FacadeRegistry skips the dispatcher entirely).
 
   The natural Kind target is `Ezagent.Entity.Workspace` because:
   - The Feishu binding is a tenant-scoped operation (different
@@ -37,7 +37,7 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
   - `:unbind` — args `%{open_id: String.t()}` → `{:ok, %{unbound: String.t()}}`.
     Wraps `EzagentPluginFeishu.UserBinding.unbind/1`.
 
-  - `:list` — `{:ok, slice, %{bindings: [%{open_id, user_uri, bound_by, bound_at}]}}`.
+  - `:list_feishu_bindings` — `{:ok, %{bindings: [%{open_id, user_uri, bound_by, bound_at}]}}`.
     Read-only; wraps `EzagentPluginFeishu.UserBinding.list_all/0`.
 
   ## Slice
@@ -78,16 +78,68 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
   the auto-derived path; the operator-facing command line is
   preserved for muscle memory while the internals go through
   CapBAC + audit). See `@deprecated` annotations on those tasks.
+
+  ## Migration to §2.2 declarative contract (Phase 2-f r3)
+
+  Per SPEC `2026-05-28-router-behavior-kind-architecture.md` §6.2 +
+  §4.4 effect grammar, this Behavior is migrated from legacy
+  `invoke/4` to the new `use Ezagent.Behavior` + `action/3` + per-
+  action `handle_<action>/2` shape. Per-action handler returns
+  `{:ok, result, [effects]}` where effects are `{:set, key, value}`
+  for slice mutations.
+
+  Custom `required_caps/0` is retained (not auto-derived) because
+  the cap axis is `:workspace`, not the macro's default `:any`. The
+  derived `cap_subjects/0` is also overridden — the existing
+  English descriptions are richer than the action's `description:`
+  field. The bulk side-effecting helpers (workspace check,
+  hijack check, rollback) survive unchanged because they are pure
+  Elixir functions called from the handler body (SPEC §4.5.1 allows
+  direct calls to pure helpers; what's forbidden is the framework
+  dispatcher and the framework PubSub broadcaster from handler
+  bodies — this Behavior never had those).
   """
 
-  @behaviour Ezagent.Behavior
+  use Ezagent.Behavior
 
   alias EzagentPluginFeishu.{BindingPolicy, UserBinding}
 
-  @impl Ezagent.Behavior
-  def actions, do: [:bind, :unbind, :list_feishu_bindings]
+  # ===================================================================
+  # Action declarations (SPEC §2.2 + §4.3)
+  # ===================================================================
 
-  @impl Ezagent.Behavior
+  action :bind,
+    args: %{open_id: :string, user_uri: :uri},
+    returns: %{open_id: :string, user_uri: :string},
+    caps: [:bind],
+    description:
+      "Bind a Feishu open_id to a local ESR user URI. Also " <>
+        "applies the default session-participation cap (idempotent) so " <>
+        "the bound user can dispatch chat messages.",
+    modes: [:call]
+
+  action :unbind,
+    args: %{open_id: :string},
+    returns: %{unbound: :string},
+    caps: [:unbind],
+    description: "Remove a Feishu open_id binding.",
+    modes: [:call]
+
+  action :list_feishu_bindings,
+    args: %{},
+    returns: %{bindings: {:list, :map}},
+    caps: [:list_feishu_bindings],
+    description:
+      "List all Feishu open_id → user URI bindings (read-only). " <>
+        "Returns a list of %{open_id, user_uri, bound_by, bound_at}.",
+    modes: [:call]
+
+  # ===================================================================
+  # Legacy callbacks retained for framework wiring
+  # ===================================================================
+
+  # Custom `required_caps/0` (overrides macro-derived default) — cap
+  # axis is `:workspace`, not the macro's `:any` default.
   def required_caps do
     %{
       bind: Ezagent.Capability.cap(:workspace, __MODULE__, :bind),
@@ -97,7 +149,10 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
     }
   end
 
-  @impl Ezagent.Behavior
+  # Custom `cap_subjects/0` (overrides macro-derived default) — the
+  # pre-migration English is richer than the action's `description:`
+  # field. The `:bind` description in particular calls out the
+  # BindingPolicy side effect.
   def cap_subjects do
     [
       {:bind,
@@ -108,10 +163,8 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
     ]
   end
 
-  @impl Ezagent.Behavior
+  # Framework still calls these at Kind boot (Kind.Server.init/1).
   def state_slice, do: :feishu_user_bindings
-
-  @impl Ezagent.Behavior
   def init_slice(_args), do: %{bind_count: 0}
 
   # Codex r1 P1: `workspace_scoped? = true` would only check that the
@@ -131,22 +184,32 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
   # This matches the pattern `Behavior.Routing.workspace_scoped? =
   # false` uses for the global `system://routing/default` shape —
   # cross-workspace by Kind, structurally-enforced inside the action.
-  @impl Ezagent.Behavior
   def workspace_scoped?, do: false
 
   # PR-OWN-4 data_owner pattern (matching Behavior.Workspace): the
   # workspace itself owns its bindings. `:any` means workspace-admin
   # grantable; bootstrap admin always grants per the IdentityAdmin
   # §5.2 ladder.
-  @impl Ezagent.Behavior
   def data_owner(_), do: :any
 
   # ===================================================================
-  # Action bodies
+  # Handler bodies (new contract — §6.2 retrofit)
   # ===================================================================
+  #
+  # Each handler is `(args, ctx) → {:ok, result, [effect]} | {:error, reason}`.
+  # `ctx.read.(:key, default)` reads the current slice's field via
+  # the framework-managed `read` closure (`Kind.Runtime` step 5.5
+  # builds it before calling the handler). Slice mutations are emitted
+  # as `{:set, key, value}` effects; the framework applies them and
+  # commits the snapshot.
+  #
+  # Argument-shape validation is done with explicit `is_binary/1`
+  # guards at the handler head — the legacy `invoke/4` used clause
+  # pattern matching for the same purpose; per SPEC §6.2 step 1 we
+  # preserve the structural check inline rather than introducing
+  # a separate `validate_args/2`.
 
-  @impl Ezagent.Behavior
-  def invoke(:bind, slice, %{open_id: open_id, user_uri: user_uri}, ctx)
+  def handle_bind(%{open_id: open_id, user_uri: user_uri}, ctx)
       when is_binary(open_id) and open_id != "" do
     # The `bound_by` attribution is the caller URI from the dispatch
     # ctx — never a CLI-supplied flag. This prevents an admin
@@ -187,9 +250,13 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
       # `bind_count` so `slice + 1` doesn't crash AFTER side-effects.
       # Same pattern as `Behavior.Routing.bump/1` (its lib/.../routing.ex
       # comments cite the same reason).
-      new_slice = Map.update(slice, :bind_count, 1, &(&1 + 1))
+      #
+      # New contract: read via `ctx.read`, write via `{:set, :bind_count, ...}`
+      # effect; the framework's `apply_effects` builds the new slice.
+      cur = ctx[:read].(:bind_count, 0)
 
-      {:ok, new_slice, %{open_id: open_id, user_uri: user_uri_str}}
+      {:ok, %{open_id: open_id, user_uri: user_uri_str},
+       [{:set, :bind_count, cur + 1}]}
     else
       {:error, _} = err ->
         err
@@ -199,11 +266,11 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
     end
   end
 
-  def invoke(:bind, _slice, args, _ctx) do
+  def handle_bind(args, _ctx) do
     {:error, {:bad_args, "bind requires {open_id: String, user_uri: URI|String}", args}}
   end
 
-  def invoke(:unbind, slice, %{open_id: open_id}, ctx)
+  def handle_unbind(%{open_id: open_id}, ctx)
       when is_binary(open_id) and open_id != "" do
     # Codex r1 P1.2: before unbinding, check that the existing binding
     # row belongs to the dispatch target's workspace. Without this, a
@@ -214,8 +281,8 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
          :ok <- UserBinding.unbind(open_id) do
       # Slice's bind_count is incidental — don't decrement (could go
       # negative on a multi-Kind restart race). The DB is the source
-      # of truth.
-      {:ok, slice, %{unbound: open_id}}
+      # of truth. Returns no effects (slice unchanged).
+      {:ok, %{unbound: open_id}, []}
     else
       {:error, :not_found} = err ->
         err
@@ -228,11 +295,11 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
     end
   end
 
-  def invoke(:unbind, _slice, args, _ctx) do
+  def handle_unbind(args, _ctx) do
     {:error, {:bad_args, "unbind requires {open_id: String}", args}}
   end
 
-  def invoke(:list_feishu_bindings, slice, _args, ctx) do
+  def handle_list_feishu_bindings(_args, ctx) do
     # Codex r1 P1.2: filter rows by the dispatch target's workspace
     # so a tenant operator only sees bindings for their workspace's
     # users. Bootstrap admin sees all rows (the :any-instance cap
@@ -252,40 +319,8 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
         }
       end)
 
-    {:ok, slice, %{bindings: bindings}}
-  end
-
-  # ===================================================================
-  # Interface — drives `mix ezagent` auto-derivation + CmdK help.
-  # ===================================================================
-
-  @impl Ezagent.Behavior
-  def interface do
-    %{
-      bind: %{
-        description:
-          "Bind a Feishu open_id to a local ESR user URI. Also " <>
-            "applies the default session-participation cap (idempotent) so " <>
-            "the bound user can dispatch chat messages.",
-        args: %{open_id: :string, user_uri: :uri},
-        returns: %{open_id: :string, user_uri: :string},
-        modes: [:call]
-      },
-      unbind: %{
-        description: "Remove a Feishu open_id binding.",
-        args: %{open_id: :string},
-        returns: %{unbound: :string},
-        modes: [:call]
-      },
-      list_feishu_bindings: %{
-        description:
-          "List all Feishu open_id → user URI bindings (read-only). " <>
-            "Returns a list of %{open_id, user_uri, bound_by, bound_at}.",
-        args: %{},
-        returns: %{bindings: {:list, :map}},
-        modes: [:call]
-      }
-    }
+    # Read-only: no effects. Slice unchanged.
+    {:ok, %{bindings: bindings}, []}
   end
 
   # ===================================================================
