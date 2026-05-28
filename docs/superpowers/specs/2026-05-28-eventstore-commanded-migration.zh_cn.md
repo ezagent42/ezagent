@@ -1,6 +1,24 @@
 # SPEC — Ezagent 状态模型迁移到 EventStore + Commanded (CQRS / 事件溯源)
 
-**状态：** r3 — codex 对抗审查 r3 草稿。2026-05-28。
+**状态：** r4 — codex 对抗审查 r4 草稿（4 轮预算的最终轮）。2026-05-28。
+
+## r4 changelog（相对 r3 的 delta，保留作 trail）
+
+回应 codex r3 REJECT 的 6 HIGH + 2 MED + 1 corollary HIGH（按 cap-vis / URI-canonical 4-轮上限，这是最终轮）：
+
+- **HIGH-1（§4.1.5 仍误分类）：** r3 把 Echo + NpAgent 标为模糊「per-flavor」靠 `kind_snapshots` — 两者实际 `:ephemeral`（`echo.ex:21`、`np_agent.ex:65`）；Sandbox 标「test fixture only」但生产 `Entity.Agent` 在 `agent.ex:75` 声明它且暴露 `:read/:write_path/:destroy` actions @ `sandbox.ex:86`。**r4 fix：** §4.1.5 表更新 Echo + NpAgent 为 `:ephemeral`（无持久状态 — 仅以 message-reply 事件出现）；Sandbox 行加入 behavior 列表，显式迁移去向：作为 Agent aggregate 命令保留（真实 `:read`/`:write_path`/`:destroy` 命令 on Agent aggregate）。
+- **HIGH-2（§4.1 旧「不迁」行与 §6.0 矛盾）：** r3 §4.1 关于 `kind_snapshots` 的行仍说「迁移 Kind 的现有 snapshot **不**迁；首条命令创建新鲜事件溯源状态」— 与 §6.0 强制 import 矛盾。**r4 fix：** §4.1 行重写为：「迁移 Kind 的现有 snapshot 数据经 §6.0 snapshot-import 作每 Phase 的 Step 0 前向迁移。`kind_snapshots` 表 import 后只读；删表本身经 §6.4 preflight 门控。」
+- **HIGH-3（§4.8 AST 门追不到 facade）：** r3 AST 门只匹配 `handle_event/3` 中的直接 `Ezagent.CommandedApp.dispatch/2`。实际 LV 写经 facade：`Ezagent.Workspace.add_template/3` @ `workspace_detail_live.ex:307`、`EzagentDomainChat.create_session/3` @ `admin_live.ex:804`、chat.join @ `admin_live.ex:1019`、session routing @ `:1381`、`EzagentPluginFeishu.bind/2` @ `feishu_bindings_live.ex:88`、`ExternalMirror.bind/4` @ `session_external_mirror_live.ex:221`。**r4 fix：** §4.8 双门架构：(Gate 1) 每个 domain-context 写 facade 在公开 `def` 上声明 `@consistency` 模块属性；invariant `FacadeConsistencyDeclaredTest` 验所有发派发的 facade 都带属性。(Gate 2) `LVConsistencyTest` 走 LV `handle_event/3` 找 facade 调用 + 后续 `assign/2` 重读、按 facade `@consistency` 验。Projection→facade 映射表见新 Appendix D。
+- **HIGH-4（§6.1 split-brain 对 bind→spawn→subscribe 仍不安全）：** r3 显式跑两份状态存储 + 比对 legacy slice 与 aggregate projection — 但 bind/spawn/subscribe 是一个跨 `:external_mirror` slice + `:publisher` 订阅的工作流，分裂仍不安全。**r4 fix：** Option a 默认 — **完全放弃 split-brain**。Session 在 10-A 保持完全 legacy GenServer（Chat + Publisher + ExternalMirror + OrchestratorAdmin slice 全留）。只有 Worker 迁到 aggregate。`BootstrapWorkerSaga` 订阅 legacy Session 的 `:slice_change` PubSub topic（不是事件流），观察绑定后派发 `%SpawnWorker{}` 到 Worker aggregate；Worker 反向订阅 Session publisher 经 `MigrationBridge` 走 legacy `Invocation.dispatch/1` 到 `Behavior.Publisher.SessionImpl.subscribe_from/4`。无种族；legacy + 新 aggregate 经 PubSub（push）+ bridge（pull）协调。SessionRouter 与 SessionSplitBrainConsistencyTest **删除**。
+- **HIGH-5（§6.0 UNION 漏 workspace + cursor 类型错）：** r3 UNION 过滤/排序按 `m.inserted_at` 但漏 `m.workspace_uri == ?`（per `message_store.ex:174`/`:201`/`:149`）。r3 写 `older_than(session_uri, msg_id)` — 实际 cursor 类型是 `DateTime`，不是 msg_id（per `message_store.ex:195`）。**r4 fix：** §6.0 UNION 重写三个 SQL 模板：`recent_in_session(session_uri, workspace_str, n)`、`older_than(session_uri, workspace_str, before_dt :: DateTime, limit)`、`in_session_since(session_uri, workspace_str, since_dt :: DateTime)`。每个 SQL 在两半 UNION 中都带 `workspace_uri` 过滤 + `r.inserted_at` 排序。
+- **HIGH-6（§5.1 + §6.0 User projection parity 未真正实施）：** r3 说 §5.1 更新了但 §6.0 verify 仍引用泛 `kind_snapshots.state_binary` parity。**r4 fix：** §5.1 投影列表显式枚举每个 User projection 的 COLUMNS；§6.0 `mix ezagent.aggregate.verify --kind user` 扩展显式 per-表 parity 断言：遍历 `entity_profiles` 每行断言对应 `user_profile_projection` 行 `display_name + email + workspace_uri + registered_at` 相等；遍历 `entity_tokens` 断言对应 `user_tokens_projection` 行 `token_hash + label + last_used_at + workspace_uri` 相等。
+- **MED-7（§4.2.3 working-copy 嵌套字段名错）：** r3 写 `source_template_uri` — 实际字段 per `chat.ex:257` 是 `source_agent_template_uri` + `live_worker_uri` + `generation`。**r4 fix：** §4.2.3 working-copy 嵌套形状重写匹配 `default_template_working_copy/0` 原样 — `agent_slots: [{slot_name, source_agent_template_uri, live_worker_uri, generation}]`。
+- **HIGH-8（§3.8 step 0 读过期投影）：** r3 `%CaptureDestroyPreSnapshot{}` 从 projection（最终一致）读 caps/sessions/lineage — projection 是最终一致；过期 baseline 不能作补偿源。Lineage 实际在 ETS（`agent_lineage.ex:31`）；caps 是 slice 状态（`identity.ex:89`）。**r4 fix：** Step 0 从 **AUTHORITATIVE** 源直接抓 — aggregate 的 `execute/2` 读 aggregate 自身的 `caps: MapSet`、`lineage_parent_uri`、`sessions: MapSet` 字段（都在 aggregate-load 从事件回放水合；无投影 lag 关心）。Aggregate 状态**就是**真值。
+- **MED-9（§6.4 cooldown 其实是 expiry）：** r3 `expires_at = drill_completed_at + 24h` 并称之 cooldown；但 `execute` 允许 `now > drill_completed_at` — DROP 可立即跑。**r4 fix：** receipt schema 加显式 `earliest_execute_at = drill_completed_at + cooldown_hours`（默认 24h）作为**真的** cooldown；`expires_at` 单独成字段（默认 +7d）是有效窗口。Execute 验证 `earliest_execute_at < now < expires_at`。Receipt 一次性消费：execute 成功后写 `.consumed` marker；replay 受 marker 阻挡。`execution_nonce` 由 execute 生成、写 `audit_events` 行作取证。
+
+---
+
+## r3 之前的状态
 
 ## r3 changelog（相对 r2 的 delta，保留作 trail）
 
