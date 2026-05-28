@@ -1,6 +1,23 @@
 # SPEC — Ezagent 状态模型迁移到 EventStore + Commanded (CQRS / 事件溯源)
 
-**状态：** r1 — codex 对抗审查 r1 草稿。2026-05-28。
+**状态：** r2 — codex 对抗审查 r2 草稿。2026-05-28。
+
+## r2 changelog（相对 r1 的 delta，保留作 trail）
+
+回应 codex r1 REJECT 的 2 CRIT + 4 HIGH + 2 MED：
+
+- **CRIT-1（缺前向数据迁移计划 — §4.1 / §6 / §8）：** r1 说迁移后的 Kind "不迁现有 snapshot；第一条命令创建新鲜事件溯源状态"。这在切换点丢失活的 User/Session/Agent/Workspace state，按 `feedback_destructive_migration_anti_pattern` 不可接受。**r2 fix：** 新增 §6.0（前向数据迁移）为每个 Phase 10-A 到 10-C 起点的强制 Step 0。它定义 per-Aggregate 的「snapshot import」事件类（如 `%UserSnapshotImported{}`），由 `mix ezagent.aggregate.import --kind <kind>` 任务在生产派发路由到 aggregate **之前**对每个现有 URI 发射一次。Import 事件携带完整的 pre-existing slice payload。Aggregate 的 `apply/2` 有专门子句处理 import 事件、水合 aggregate 状态。Parity 门（事件回放 aggregate 状态 vs `kind_snapshots` 行的回读对比）是 import 步骤的成功标准；切换在 parity 绿之前**不**发生。§6.1/6.2/6.3 扩展为含 import 任务作为每 Phase 的 Step 0。
+- **CRIT-2（Phase 10-A 桥缺口 — §6.1 / §8.2）：** r1 Phase 10-A 只迁 Worker，但 legacy Session 的 `Behavior.ExternalMirror` 仍在 `apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror.ex:394` + `:677` 直接调 `Ezagent.Kind.spawn(Ezagent.Entity.ExternalMirrorWorker, params)`。Session 仍为 GenServer 时不发 `BindingCreated` 事件，`BootstrapWorkerSaga` 永远不触发。**r2 fix：** Phase 10-A 修订为：(a) 把 Session ExternalMirror behavior + Worker 一起迁（推荐 — bind 调用点紧耦合）**或** (b) ship 显式 `Ezagent.MigrationBridge.LegacyBind` shim，把 legacy `Kind.spawn(Worker, params)` 翻译为新 aggregate 上的 `%SpawnWorker{}` 命令 + 向新事件流注入合成 `%BindingCreated{}` 事件触发 saga。r2 默认选 (a)；如 Session-side 迁移过于纠缠则 fallback 到 (b)。§6.1 扩展含 Session ExternalMirror behavior delta。
+- **HIGH-3（缺读后写一致性矩阵 — §3.3 / §6.2）：** r1 只说 "per 派发点 opt 到 :strong"、不枚举。r2 新增 §4.8（LV / Channel / CLI 一致性矩阵）— 一张表列出所有写后立即重读 state 的 callsite 及其要求一致性模式。静态枚举的 sites：`apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/users_live.ex:137`（create→list_users）、`workspace_detail_live.ex:165`（add member→get_by_name）、`entity_caps_live.ex:142`（grant cap→reload caps）、`routing_live.ex:235`（add rule→reload rules）。所有这些**必须**用 `consistency: :strong`（或具名投影器列表）。Phase 10-B/10-C 不变式测试断言每个枚举 site 满足；CI grep 门拒绝在这些派发路径上显式用 `consistency: :eventual`。
+- **HIGH-4（Kind/Behavior 清单不全 — §4.2 / §4.3）：** r1 "5 entity Kind + 11 Behavior" — 实际 checkout 计数大得多。r2 新增 §4.1.5（完整 Kind/Behavior 清单）从 checkout 静态枚举：15+ Kind 模块（含持久的 `Ezagent.Entity.AgentTemplate` + `Ezagent.Entity.SessionTemplate`，皆 `{:snapshot, :on_change}`，加 per-flavor `CurlAgent` / `Echo` / `NpAgent`），24 个 Behavior 模块（漏掉：`ApiKeys`、`Template`、`OrchestratorAdmin`、`Pty`、`UserBinding`、`FeishuAllow`，加 4 个插件 agent-flavor behavior）。每个加 per-Phase 迁移去向列。§4.3 用完整列表重写。
+- **HIGH-5（Session aggregate state 漏耐久字段 — §4.2.3）：** r1 Session aggregate struct 漏 `owner_uri`、`last_seen`、`monitors`、`last_message_id`、`last_message`、`send_cursor`、`recent_messages`、`template_working_copy` + Publisher 的 `ring` / `cursor` / `retention`（都耐久 — `Behavior.Chat.init_slice` 在 `apps/ezagent_domain_chat/lib/ezagent/behavior/chat.ex:144`-`:242` + `Publisher.SessionImpl.init_slice` 在 `apps/ezagent_domain_chat/lib/ezagent/behavior/publisher/session_impl.ex:150`-`:165`）。r2 fix：§4.2.3 Session aggregate state struct **重写**枚举每个耐久字段；非耐久运行时字段（`monitors` — 进程 ref 跨重启不存活）显式排除并加注。Rejoin / external mirror dedupe / publisher cursor catchup 的 replay 测试加入 Phase 10-B 不变式测试。
+- **HIGH-6（User 投影 schema 漏 profile + token 字段 — §4.2.1 / §4.7）：** r1 `user_profile_projection` 只 `(uri, workspace_uri, registered_at, destroyed?)`。当前 `Entity.Profile` schema（`apps/ezagent_domain_identity/lib/ezagent/entity/profile.ex:21`）有 `display_name`（必需）+ `email`。当前 `Entity.Token` schema（`apps/ezagent_domain_identity/lib/ezagent/entity/token.ex:43`）有 `token_hash`、`label`、`last_used_at`。**r2 fix：** §4.2.1 User aggregate 加 `:profile` 字段（`%{display_name, email}`）+ 命令 `%UpsertProfile{}` / 事件 `%ProfileUpserted{}`。Token aggregate state + events 扩展含 hash/label/last-used。§5.1 投影更新匹配。
+- **MED-7（DestroyAgentSaga 补偿只 retry/stop — §3.8 / §4.4）：** r1 saga `error/3` 重试后停。当前清理路径（`apps/ezagent_domain_chat/lib/ezagent_domain_chat.ex:189` session-create rollback、`apps/ezagent_core/lib/ezagent/behavior/sandbox.ex:240` sandbox-destroy cleanup）做显式逆操作。**r2 fix：** §3.8 DestroyAgentSaga 重写为 `error/3` 回调用 `{:continue, [%ReverseCommand{}, ...], context}` per-step 补偿。每步文档化：(a) 幂等合约；(b) 失败残留；(c) 逆命令；(d) 续跑行为。Step-failure 测试是 Phase 10-C 不变式。
+- **MED-8（Phase 10-D 破坏性清理缺 operator gate — §6.4 / §8.4）：** r1 "最后 data dump 后删 `kind_snapshots`"。按 `feedback_destructive_migration_anti_pattern` + `feedback_completion_requires_invariant_test`，那不是门。**r2 fix：** §6.4 Phase 10-D `DROP TABLE kind_snapshots` 由三项门控：(a) 迁移脚本里 operator 批准 flag（mix 任务需 `--operator-approved <ticket-id>`）；(b) 已验证 backup restore drill — operator 把上次 snapshot dump 恢复到 temp DB 并断言行数匹配；(c) restore 后 parity check — import-replay vs 原 snapshot 在所有迁移 URI 跨字段相等。门本身是 `mix ezagent.cleanup.preflight` 任务，除非 (a)+(b)+(c) 全成立否则非 0 退出。SPEC §8.4 扩展。
+
+---
+
+## r1（初版）状态
 
 **Tier:** 跨切的架构迁移。涉及 `apps/ezagent_core/`（Kind / Behavior / Invocation / Persistence / Snapshot / Audit），所有 `apps/ezagent_domain_*/`（User、Session、Agent、Workspace、ExternalMirror Worker 实体 Kind），LiveView 读层（`apps/ezagent_plugin_liveview/`），CLI（`apps/ezagent_cli/`），Web 派发面（`apps/ezagent_web/`），以及所有插件的写法范例。引入三个新的 umbrella app（`ezagent_event_store`、`ezagent_commanded_app`、`ezagent_projections`）以及一段混合运行期 — 部分 Kind 已是 Aggregate、其余仍为 GenServer。
 
@@ -515,6 +532,29 @@ end
 | `Ezagent.CapabilityRegistry` + `Ezagent.BehaviorRegistry` | 原样保留 | 编译/启动期注册 cap subject；registry 在派发前流水线被查。无事件溯源相关。 |
 | `@behaviour Ezagent.Behavior` + cap_subjects/0 + data_owner/1 | 保留（语义微变）— cap_subjects 表示哪些命令通过 CapBAC 受门控；data_owner 表示哪个 aggregate 拥有底层数据 | 派发前的 CapBAC chokepoint 不变；cap_subject **就是**命令的 behavior + action 轴。data_owner 现在指向 aggregate URI 而非 Kind 的拥有 principal。 |
 
+### 4.1.5 完整 Kind / Behavior 清单（r2 — 静态生成）
+
+r1 说「5 entity Kinds + 11 Behavior modules」— 实际 checkout 枚举：
+
+**耐久 Kind 模块（`{:snapshot, :on_change}` 或 `:on_terminate`）— 全部需迁移目标：**
+
+| Kind 模块 | App | 持久化 | 迁移目标 |
+|---|---|---|---|
+| `Ezagent.Entity.User` | ezagent_domain_identity | `{:snapshot, :on_change}` | `Ezagent.Aggregate.User`（§4.2.1） |
+| `Ezagent.Entity.Session` | ezagent_domain_chat | `{:snapshot, :on_change}` | `Ezagent.Aggregate.Session`（§4.2.3） |
+| `Ezagent.Entity.Agent` | ezagent_domain_chat | `{:snapshot, :on_change}` | `Ezagent.Aggregate.Agent`（§4.2.2） |
+| `Ezagent.Workspace` | ezagent_domain_workspace | `{:snapshot, :on_change}` | `Ezagent.Aggregate.Workspace`（§4.2.4） |
+| `Ezagent.Entity.AgentTemplate` | ezagent_domain_chat | `{:snapshot, :on_change}` | **`Ezagent.Aggregate.AgentTemplate`**（r2 §4.2.6 新加） |
+| `Ezagent.Entity.SessionTemplate` | ezagent_domain_chat | `{:snapshot, :on_change}` | **`Ezagent.Aggregate.SessionTemplate`**（r2 §4.2.7 新加） |
+| `Ezagent.Entity.ExternalMirrorWorker` | ezagent_domain_external_mirror | `:on_terminate` | `Ezagent.Aggregate.ExternalMirrorWorker`（§4.2.5） |
+| `Ezagent.Entity.CurlAgent` | ezagent_plugin_curl_agent | `{:snapshot, :on_change}` | `Aggregate.Agent` 的 flavor 变体 |
+| `Ezagent.Entity.Echo` | ezagent_plugin_echo | 视 flavor | `Aggregate.Agent` 的 flavor 变体 |
+| `Ezagent.Entity.NpAgent` | ezagent_plugin_np | 视 flavor | `Aggregate.Agent` 的 flavor 变体 |
+
+**Behavior 模块（24 个 — `find apps -path "*/behavior/*.ex"` 静态枚举），含 r1 漏掉的 ApiKeys / Template / OrchestratorAdmin / Pty / UserBinding / FeishuAllow 等 — 完整表见 EN §4.1.5。**
+
+**Phase 门（per `feedback_completion_requires_invariant_test`）：** 每阶段的不变式测试枚举范围内所有 Behavior、断言每个有对应迁移目标（或显式"保留 runtime"决定）。新 `Ezagent.Invariants.NoBehaviorLeftBehindTest` 在 Phase 10-D 合并前走 BehaviorRegistry、若有可派发 Behavior 缺 Aggregate 命令映射则 FAIL。
+
 ### 4.2 5 个实体 Kind — 每 Kind 的迁移目标
 
 #### 4.2.1 `Ezagent.Entity.User` → `Ezagent.Aggregate.User`
@@ -832,6 +872,33 @@ Aggregate ID 对 aggregate 不透明（它是路由 key、不是状态）；aggr
 
 ---
 
+### 4.8 LV / Channel / CLI 写后立即重读一致性矩阵（r2 — HIGH-3 fix）
+
+Codex r1 HIGH-3：r1 只说 "per 派发点 opt 到 :strong"、不枚举 site。默认 `:eventual` 在任何写后立即重读 state 的 callsite 都不安全。
+
+**静态枚举的写→读 site 必须用 `consistency: :strong`**（或具名投影器一致性列表）：
+
+| Callsite | 文件:行 | 写 | 立即重读 | 要求模式 |
+|---|---|---|---|---|
+| 建用户 | `users_live.ex:137` | RegisterUser | `list_users()` | `:strong`（或 `[UserProfileProjector]`） |
+| 加 workspace 成员 | `workspace_detail_live.ex:165` | AddMemberToWorkspace | `Workspace.Store.get_by_name/1` | `:strong` |
+| 授予 cap | `entity_caps_live.ex:142` | GrantCapToUser/GrantCapToAgent | reload caps | `:strong`（或 `[UserCapsProjector, AgentCapsProjector]`） |
+| 加 routing rule | `routing_live.ex:235` | AddRoutingRule | reload rules | `:strong` |
+| 建 session（向导） | `home_live.ex` 向导提交 | CreateSession | redirect→/sessions/X mount | `:strong` |
+| 铸用户 token（CLI） | `ezagent.user.token.ex:75` | MintTokenForUser | 打印 token 行 | `:strong` |
+| 建 agent（CLI + LV） | `agents_live.ex`、`mix ezagent.agent.create` | CreateAgent | reload agent | `:strong` |
+| 置 api_key（LV） | agent api_keys LV — TBD | PutApiKeyForAgent | reload keys 列表 | `:strong` |
+| 绑外部 mirror | feishu bind LV/CLI | BindExternalMirror | reload bindings | `:strong` |
+| Workspace 建 | `workspaces_live.ex` | CreateWorkspace | redirect→detail | `:strong` |
+| Profile upsert | `users_live.ex:177` | UpsertProfile | reload user | `:strong` |
+| 发 chat 消息 | LV / Channel chat send | PostMessageToSession | （无重读；fanout 经 PubSub） | `:eventual`（可接受 — 异步 UI 更新） |
+
+**Phase 10-B/10-C 不变式测试：** `Ezagent.Invariants.ConsistencyMatrixTest` 走枚举 callsite、解析 AST、断言 dispatch 调用用 `consistency: :strong`（或具名投影器列表）。CI grep 门拒绝任何枚举派发路径显式用 `consistency: :eventual`。
+
+**未来 callsite：** 任何新的写→立即读模式**必须**在 SPEC 时加入此矩阵 + 不变式更新。矩阵是纪律；不变式是门。
+
+---
+
 ## 5. Read Model 策略
 
 ### 5.1 每个逻辑读视图一个投影
@@ -914,6 +981,58 @@ LV mount 时读投影（同步 DB 查询）。若 LV 是从派发点 redirect �
 ## 6. 迁移计划 — 分阶段
 
 迁移作为 **Phase 10** 在 IMPLEMENTATION_ROADMAP 中。四个子阶段（10-A 到 10-D），每个由 /goal + per-phase 不变式测试把关。
+
+### 6.0 前向数据迁移 — snapshot import（r2 — CRIT-1 fix）
+
+**Codex r1 CRIT-1：** r1 说迁移 Kind "不迁现有 snapshot；第一条命令创建新鲜事件溯源状态"。这在切换点丢失活的 User/Session/Agent/Workspace state。按 `feedback_destructive_migration_anti_pattern` **不可接受**。
+
+**r2 fix — 每个 Phase 10-A 到 10-C 都在生产派发路由到 aggregate 之前先跑 Step 0（snapshot import）：**
+
+每个 Aggregate 类定义专门的 `%XSnapshotImported{}` 事件 variant。Aggregate 的 `apply/2` 有处理 import 事件的子句、从 snapshot payload 水合 aggregate 状态。事件由 `mix ezagent.aggregate.import --kind <kind>` 任务在 per-Phase 切换前对每个现有 URI 发射**一次**。
+
+**Per-Kind import 事件：**
+
+| Kind | Import 事件 | Payload |
+|---|---|---|
+| User | `%UserSnapshotImported{}` | 完整 pre-existing slice（identity caps、user_credentials counter、user_tokens counter），加 `users.password_hash`、`entity_profiles.*`、`entity_tokens.*` JOIN 列 |
+| Session | `%SessionSnapshotImported{}` | 完整 Chat slice + Publisher slice + ExternalMirror slice + members + ring 状态 |
+| Agent | `%AgentSnapshotImported{}` | 完整 per-flavor slice + lineage + api_keys |
+| Workspace | `%WorkspaceSnapshotImported{}` | name、members、routing rules |
+| ExternalMirrorWorker | `%WorkerSnapshotImported{}` | binding descriptor + cursor 状态 |
+| AgentTemplate | `%AgentTemplateSnapshotImported{}` | identity caps + template content |
+| SessionTemplate | `%SessionTemplateSnapshotImported{}` | identity caps + template content |
+
+**Import 任务：**
+
+```
+mix ezagent.aggregate.import \
+  --kind user \
+  --batch-size 100 \
+  --dry-run    # 默认 — 打印将 import 的内容、退出
+```
+
+去掉 `--dry-run` 后：
+1. 对 Kind type 匹配的每个 `kind_snapshots` 行，读 `state_binary`。
+2. JOIN 补充表（User 是 `users.password_hash`、`entity_profiles.*`、`entity_tokens.*`；Session 不含 `messages` — 见下）。
+3. 构 `%XSnapshotImported{}` 事件 payload。
+4. 作为 aggregate stream 上第一个事件派发（经 `EventStore.append_to_stream/4`，**不**经 aggregate `execute/2` — 这些不是命令，是构造期 aggregate 接受的直接事件）。
+5. 重放 aggregate；`apply/2` 子句水合状态。
+
+**Session 的 `messages` 表处理：** 现有 `messages` SQLite 表含全部历史消息。把每条历史消息作 `%MessagePosted{}` 事件 import 会让事件存储膨胀。**决定：** `%SessionSnapshotImported{}` 事件 payload 只载 `last_message_id` + `recent_messages` ring（耐久 Chat slice 字段）；**完整**消息历史**留**在 SQLite `messages` 表（变只读归档表；投影表 `session_messages_projection` 装切换后的新消息）。查询历史消息时 JOIN 两表、按 `created_at < <切换时间戳>` 过滤。Phase 10-D 把这作为永久形状文档化；`messages` 表**不**删。
+
+**Parity 门（切换准则，per `feedback_completion_requires_invariant_test`）：**
+
+```
+mix ezagent.aggregate.verify --kind <kind>
+```
+
+读每个 URI 的事件回放 aggregate 状态 + 与原 `kind_snapshots.state_binary` 跨字段比对。断言 §4.2.* 枚举的所有耐久字段相等。任何不匹配 → import 不全；切换被阻塞。
+
+**切换是这个瞬间：** 派发前流水线把目标为 Aggregate 的命令路由到 `Commanded.Application.dispatch/2` 而非 legacy `Invocation.dispatch/1`。所有迁移 URI 的 parity 门绿后切换提交。
+
+**切换前回滚：** 微 — 从 aggregate stream 删事件；aggregate 恢复新鲜。原 `kind_snapshots` 数据不动。
+
+**切换后回滚：** 较难 — 切换后由生产派发写入的事件需经 §12 unwind 路径回放到 slice/snapshot。
 
 ### 6.1 Phase 10-A — 依赖 + 骨架 + 先迁 Worker（最小 Kind）
 
