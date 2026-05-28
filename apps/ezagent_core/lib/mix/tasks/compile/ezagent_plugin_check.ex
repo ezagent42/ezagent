@@ -294,16 +294,14 @@ defmodule Mix.Tasks.Compile.EzagentPluginCheck do
       |> List.flatten()
 
     cond do
-      behaviour in behaviours ->
-        true
+      # Phase 3 deletion (2026-05-28): the `@behaviour Ezagent.Behavior`
+      # alternative is no longer accepted. Every Behavior MUST opt in
+      # via `use Ezagent.Behavior`, which emits the `__behavior__?/0`
+      # marker the gate consults below.
+      behaviour == Ezagent.Behavior ->
+        new_style_behavior?(module)
 
-      # SPEC 2026-05-28 §6.2 — new-style Behaviors opt in via `use
-      # Ezagent.Behavior` instead of `@behaviour Ezagent.Behavior`.
-      # The macro emits a `__behavior__?/0` marker. The plugin
-      # contract is satisfied via the macro's @before_compile
-      # injection of the legacy callbacks (actions/0, interface/0,
-      # required_caps/0, cap_subjects/0) plus per-action handlers.
-      behaviour == Ezagent.Behavior and new_style_behavior?(module) ->
+      behaviour in behaviours ->
         true
 
       true ->

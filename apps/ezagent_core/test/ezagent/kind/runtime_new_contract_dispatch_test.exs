@@ -1,13 +1,11 @@
 defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
   @moduledoc """
-  Phase 1.5 wire-up — `Ezagent.Kind.Runtime.handle_dispatch/4` must
-  detect new-contract Behaviors (via `__behavior__?/0` injected by
-  `use Ezagent.Behavior`) and dispatch through the
-  `handle_<action>/2` + `apply_effects/2` pipeline instead of the
-  legacy `invoke/4` shim.
+  `Ezagent.Kind.Runtime.handle_dispatch/4` must detect new-contract
+  Behaviors (via `__behavior__?/0` injected by `use Ezagent.Behavior`)
+  and dispatch through the `handle_<action>/2` + `apply_effects/2`
+  pipeline.
 
-  These tests verify the dispatcher branches cleanly between the two
-  contracts within ONE Kind, and that the new-contract path:
+  These tests verify the new-contract path:
 
   1. Calls `handle_<action>(args, ctx)` with `ctx[:read]` exposing the
      slice as a `(key, default)` getter.
@@ -17,13 +15,23 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
      pipeline consumes.
   4. Maps action-not-declared / bad-shape / `:halt` returns to typed
      `{:error, _}` tuples instead of crashing or silently succeeding.
-  5. Leaves the existing legacy `invoke/4` path UNCHANGED — same
-     Kind can host both contracts side-by-side.
 
   The fixtures live inline (rather than `test/support/`) so the
   Behavior modules pre-exist for the `String.to_existing_atom`
   handler resolution and so the cap-axis-derivation under the
   Runtime authz step has a real `__action_spec__/1` to consult.
+
+  ## History — Phase 3 deletion (2026-05-28)
+
+  Earlier revisions of this file also tested the LEGACY `invoke/4`
+  contract running alongside the new contract on a single Kind. The
+  legacy dispatch path was removed in Phase 3 r3 (the only
+  Runtime-visible contract is now `use Ezagent.Behavior` /
+  `handle_<action>/2`), so the mixed-contract assertions + the
+  `LegacyContractBehavior` fixture were deleted with that phase.
+  Phase 3's structural invariant — that the Runtime refuses to
+  dispatch a non-new-style module — is enforced by the explicit
+  `{:not_a_behavior, _}` return in `invoke_behavior/5` (lib/ezagent/kind/runtime.ex).
   """
 
   use ExUnit.Case, async: false
@@ -171,10 +179,14 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
     end
 
     def handle_dispatch_to(%{target: target_str}, _ctx) do
+      # Target URI doesn't exist (the smoke test deliberately points
+      # at a missing actor) — Router.dispatch short-circuits with
+      # :no_such_actor before the Behavior contract is consulted, so
+      # the action atom here is arbitrary.
       cmd =
         Ezagent.Cmd.new(
           target_str,
-          :legacy_noop,
+          :bump,
           %{msg: "from-effect-dispatch"},
           %{caller: :system, reply: :ignore, caps: MapSet.new()}
         )
@@ -243,49 +255,13 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
     end
   end
 
-  # Legacy-contract Behavior on the SAME Kind — proves the
-  # dispatcher routes per-Behavior, not per-Kind.
-  defmodule LegacyContractBehavior do
-    @moduledoc false
-    @behaviour Ezagent.Behavior
-
-    @impl true
-    def actions, do: [:legacy_noop]
-
-    @impl true
-    def cap_subjects, do: [{:legacy_noop, "legacy no-op"}]
-
-    @impl true
-    def state_slice, do: :legacy
-
-    @impl true
-    def init_slice(_args), do: %{count: 0}
-
-    @impl true
-    def invoke(:legacy_noop, slice, %{msg: msg}, _ctx) do
-      {:ok, %{slice | count: slice.count + 1}, %{legacy_echo: msg}}
-    end
-
-    @impl true
-    def interface do
-      %{
-        legacy_noop: %{
-          description: "legacy no-op",
-          args: %{msg: :string},
-          returns: %{legacy_echo: :string},
-          modes: [:call]
-        }
-      }
-    end
-
-    @impl true
-    def required_caps do
-      %{legacy_noop: Ezagent.Capability.cap(:any, __MODULE__, :legacy_noop)}
-    end
-  end
-
   defmodule MixedKind do
-    @moduledoc "Hosts BOTH contracts to prove dispatch branches per-Behavior."
+    @moduledoc """
+    Hosts the new-contract Behavior. (Pre–Phase-3 this Kind also
+    hosted a `LegacyContractBehavior` to prove dispatch branched
+    per-Behavior across contracts; the legacy contract was removed
+    in Phase 3 r3, so this Kind now hosts a single Behavior.)
+    """
 
     @behaviour Ezagent.Kind
 
@@ -293,7 +269,7 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
     def type_name, do: :test_mixed
 
     @impl true
-    def behaviors, do: [NewContractBehavior, LegacyContractBehavior]
+    def behaviors, do: [NewContractBehavior]
 
     @impl true
     def persistence, do: :ephemeral
@@ -310,8 +286,6 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
     :ok = BehaviorRegistry.register(MixedKind, :fail, NewContractBehavior)
     :ok = BehaviorRegistry.register(MixedKind, :bad_return, NewContractBehavior)
     :ok = BehaviorRegistry.register(MixedKind, :halts, NewContractBehavior)
-    :ok = BehaviorRegistry.register(MixedKind, :legacy_noop, LegacyContractBehavior)
-
     # Phase 1.5b — register new actions used by effect-executor tests.
     :ok = BehaviorRegistry.register(MixedKind, :notify_topic, NewContractBehavior)
     :ok = BehaviorRegistry.register(MixedKind, :emit_event, NewContractBehavior)
@@ -327,8 +301,7 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
     # Start with empty slices for each Behavior (defensive; mirrors
     # what Kind.Server.init/1 would have built via init_slice/1).
     state = %{
-      new_contract: %{},
-      legacy: %{count: 0}
+      new_contract: %{}
     }
 
     {:ok, state: state, self_uri: self_uri}
@@ -363,8 +336,6 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
 
       assert result == %{count: 1}
       assert new_state.new_contract == %{count: 1}
-      # Legacy slice untouched (different Behavior, different slice key).
-      assert new_state.legacy == %{count: 0}
 
       # Slice changed → event should fire post-commit.
       assert is_map(slice_change_event)
@@ -421,42 +392,6 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
 
       assert {:error, {:halt, :on_purpose}} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, MixedKind, self_uri)
-    end
-  end
-
-  # ---------------------------------------------------------------
-  # Mixed-contract proof: same Kind, different Behavior, different
-  # contract — dispatcher branches per-call.
-  # ---------------------------------------------------------------
-
-  describe "mixed-contract dispatch (legacy + new-contract share one Kind)" do
-    test "legacy invoke/4 path still runs unchanged",
-         %{state: state, self_uri: self_uri} do
-      inv = invocation(self_uri, :legacy_noop, %{msg: "still-legacy"})
-
-      assert {:ok, new_state, result, _evt} =
-               Ezagent.Kind.Runtime.handle_dispatch(inv, state, MixedKind, self_uri)
-
-      assert result == %{legacy_echo: "still-legacy"}
-      assert new_state.legacy == %{count: 1}
-      # New-contract slice untouched on a legacy dispatch.
-      assert new_state.new_contract == %{}
-    end
-
-    test "two dispatches against the same state route to their respective contracts",
-         %{state: state, self_uri: self_uri} do
-      inv1 = invocation(self_uri, :bump, %{})
-
-      assert {:ok, state_after_new, _r1, _e1} =
-               Ezagent.Kind.Runtime.handle_dispatch(inv1, state, MixedKind, self_uri)
-
-      inv2 = invocation(self_uri, :legacy_noop, %{msg: "second"})
-
-      assert {:ok, state_after_legacy, _r2, _e2} =
-               Ezagent.Kind.Runtime.handle_dispatch(inv2, state_after_new, MixedKind, self_uri)
-
-      assert state_after_legacy.new_contract == %{count: 1}
-      assert state_after_legacy.legacy == %{count: 1}
     end
   end
 

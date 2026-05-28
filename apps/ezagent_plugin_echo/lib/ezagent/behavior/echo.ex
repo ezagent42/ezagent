@@ -75,16 +75,6 @@ defmodule Ezagent.Behavior.Echo do
 
   def init_slice(_args), do: %{count: 0, last_msg: nil}
 
-  # Legacy-contract shim — required to satisfy `@behaviour
-  # Ezagent.Behavior` until `invoke/4` is added to `@optional_callbacks`
-  # in core. `Ezagent.Kind.Runtime` detects new-style via
-  # `Behavior.new_style?/1` (the macro injects `__behavior__?/0`) and
-  # dispatches through `handle_<action>/2`, so this clause is never
-  # called in production. Phase 2-g r3 migration.
-  def invoke(action, _slice, _args, _ctx) do
-    {:error, {:legacy_invoke_deprecated_use_handle_action, __MODULE__, action}}
-  end
-
   # ---------------------------------------------------------------
   # handle_<action>/2 (new contract)
   # ---------------------------------------------------------------

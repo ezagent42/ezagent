@@ -53,7 +53,7 @@ defmodule Ezagent.Behavior.OrchestratorAdminTest do
 
     test "invoke/4 raises (cap-only — should never be dispatched)" do
       assert_raise RuntimeError, ~r/cap-only/, fn ->
-        EzagentDomainChat.Test.BehaviorLegacyInvoke.invoke(Ezagent.Behavior.OrchestratorAdmin, :restart, %{}, %{}, %{})
+        EzagentDomainChat.Test.BehaviorInvoker.invoke(Ezagent.Behavior.OrchestratorAdmin, :restart, %{}, %{}, %{})
       end
     end
   end
