@@ -1,6 +1,6 @@
 defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
   @moduledoc """
-  Bug 2 regression (Allen 2026-05-26) — `IdentityAdmin.invoke(:grant_cap, ...)`
+  Bug 2 regression (Allen 2026-05-26) — `invoke_shim(:grant_cap, ...)`
   used to store the input `cap` arg as-is into the slice MapSet. Three
   caller-shaped inputs reach this entry point:
 
@@ -24,6 +24,69 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
   @workspace_uri URI.new!("workspace://system")
   @session_uri URI.new!("session://default/system/main")
   @granter URI.parse("entity://user/system/admin")
+
+  # P2-b migration test helper — bridges the legacy
+  # `invoke(action, slice, args, ctx)` 4-tuple call shape used by this
+  # test file's pre-migration assertions onto the new-contract
+  # `handle_<action>(args, ctx)` shape. The helper:
+  #
+  #   1. Injects `ctx[:read]` that exposes `slice[:caps]` so the
+  #      handler's `ctx[:read].(:caps, ...)` lookup returns the same
+  #      MapSet the legacy `slice` arg carried.
+  #   2. Runs the new-contract handler.
+  #   3. Reconstructs a legacy-shaped `{:ok, new_slice, result}` by
+  #      finding the `:set` effect for `:caps` in the returned effects
+  #      list and lifting it into `new_slice.caps`.
+  #
+  # The handler's other effects (`:emit` audit events) are discarded —
+  # the test file's assertions are slice-based and don't inspect
+  # auxiliary effects. Dispatch-parity through Kind.Runtime is covered
+  # by `identity_migration_parity_test.exs`.
+  defp invoke_shim(:grant_cap, slice, args, ctx) do
+    handler_ctx = Map.put(ctx, :read, fn key, default ->
+      case key do
+        :caps -> Map.get(slice, :caps, default)
+        _ -> default
+      end
+    end)
+
+    case IdentityAdmin.handle_grant_cap(args, handler_ctx) do
+      {:ok, result, effects} ->
+        new_caps =
+          case Enum.find(effects, &match?({:set, :caps, _}, &1)) do
+            {:set, :caps, set} -> set
+            nil -> Map.get(slice, :caps, MapSet.new())
+          end
+
+        {:ok, %{slice | caps: new_caps}, result}
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  defp invoke_shim(:revoke_cap, slice, args, ctx) do
+    handler_ctx = Map.put(ctx, :read, fn key, default ->
+      case key do
+        :caps -> Map.get(slice, :caps, default)
+        _ -> default
+      end
+    end)
+
+    case IdentityAdmin.handle_revoke_cap(args, handler_ctx) do
+      {:ok, result, effects} ->
+        new_caps =
+          case Enum.find(effects, &match?({:set, :caps, _}, &1)) do
+            {:set, :caps, set} -> set
+            nil -> Map.get(slice, :caps, MapSet.new())
+          end
+
+        {:ok, %{slice | caps: new_caps}, result}
+
+      {:error, _} = err ->
+        err
+    end
+  end
 
   # All three input shapes encode the same logical capability:
   #
@@ -79,7 +142,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
       cap = shape_struct()
 
       {:ok, new_slice, %{caps: caps}} =
-        IdentityAdmin.invoke(:grant_cap, %{caps: MapSet.new()}, %{cap: cap}, admin_ctx())
+        invoke_shim(:grant_cap, %{caps: MapSet.new()}, %{cap: cap}, admin_ctx())
 
       [stored] = caps
       assert MapSet.size(new_slice.caps) == 1
@@ -94,7 +157,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
       params = shape_atom_keyed_map()
 
       {:ok, new_slice, %{caps: caps}} =
-        IdentityAdmin.invoke(:grant_cap, %{caps: MapSet.new()}, %{cap: params}, admin_ctx())
+        invoke_shim(:grant_cap, %{caps: MapSet.new()}, %{cap: params}, admin_ctx())
 
       [stored] = caps
       assert MapSet.size(new_slice.caps) == 1
@@ -111,7 +174,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
       json_map = shape_string_keyed_map()
 
       {:ok, new_slice, %{caps: caps}} =
-        IdentityAdmin.invoke(:grant_cap, %{caps: MapSet.new()}, %{cap: json_map}, admin_ctx())
+        invoke_shim(:grant_cap, %{caps: MapSet.new()}, %{cap: json_map}, admin_ctx())
 
       [stored] = caps
       assert MapSet.size(new_slice.caps) == 1
@@ -138,7 +201,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
       ctx = admin_ctx()
 
       {:ok, slice_1, _} =
-        IdentityAdmin.invoke(
+        invoke_shim(
           :grant_cap,
           %{caps: MapSet.new()},
           %{cap: shape_struct()},
@@ -146,10 +209,10 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
         )
 
       {:ok, slice_2, _} =
-        IdentityAdmin.invoke(:grant_cap, slice_1, %{cap: shape_atom_keyed_map()}, ctx)
+        invoke_shim(:grant_cap, slice_1, %{cap: shape_atom_keyed_map()}, ctx)
 
       {:ok, slice_3, %{caps: caps}} =
-        IdentityAdmin.invoke(:grant_cap, slice_2, %{cap: shape_string_keyed_map()}, ctx)
+        invoke_shim(:grant_cap, slice_2, %{cap: shape_string_keyed_map()}, ctx)
 
       assert MapSet.size(slice_3.caps) == 1,
              "three grants of the same identity tuple must collapse to ONE row in " <>
@@ -173,7 +236,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
       ctx = admin_ctx()
 
       {:ok, slice_after_grant, _} =
-        IdentityAdmin.invoke(
+        invoke_shim(
           :grant_cap,
           %{caps: MapSet.new()},
           %{cap: shape_struct()},
@@ -187,7 +250,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
       Process.sleep(1)
 
       {:ok, slice_after_revoke, %{caps: caps}} =
-        IdentityAdmin.invoke(
+        invoke_shim(
           :revoke_cap,
           slice_after_grant,
           %{cap: shape_string_keyed_map()},
@@ -205,7 +268,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
       ctx = admin_ctx()
 
       {:ok, slice_after_grant, _} =
-        IdentityAdmin.invoke(
+        invoke_shim(
           :grant_cap,
           %{caps: MapSet.new()},
           %{cap: shape_struct()},
@@ -215,7 +278,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
       Process.sleep(1)
 
       {:ok, slice_after_revoke, _} =
-        IdentityAdmin.invoke(
+        invoke_shim(
           :revoke_cap,
           slice_after_grant,
           %{cap: shape_atom_keyed_map()},
@@ -244,7 +307,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
       slice = %{caps: MapSet.new([bootstrap_cap])}
 
       assert {:error, :cannot_revoke_admin} =
-               IdentityAdmin.invoke(:revoke_cap, slice, %{cap: bootstrap_cap}, admin_ctx())
+               invoke_shim(:revoke_cap, slice, %{cap: bootstrap_cap}, admin_ctx())
     end
   end
 
@@ -257,7 +320,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
       json_map = shape_string_keyed_map()
 
       {:ok, slice, _} =
-        IdentityAdmin.invoke(:grant_cap, %{caps: MapSet.new()}, %{cap: json_map}, admin_ctx())
+        invoke_shim(:grant_cap, %{caps: MapSet.new()}, %{cap: json_map}, admin_ctx())
 
       needed = %{
         kind: :session,
@@ -276,7 +339,7 @@ defmodule Ezagent.Behavior.IdentityGrantCapShapeTest do
       params = shape_atom_keyed_map()
 
       {:ok, slice, _} =
-        IdentityAdmin.invoke(:grant_cap, %{caps: MapSet.new()}, %{cap: params}, admin_ctx())
+        invoke_shim(:grant_cap, %{caps: MapSet.new()}, %{cap: params}, admin_ctx())
 
       needed = %{
         kind: :session,

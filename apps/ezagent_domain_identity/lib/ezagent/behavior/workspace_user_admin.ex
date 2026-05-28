@@ -37,8 +37,7 @@ defmodule Ezagent.Behavior.WorkspaceUserAdmin do
   ## Action
 
   - `:create_user` — args `%{user_uri: String.t(), password: String.t() | nil,
-    caps: String.t() | nil}` → `{:ok, slice, %{user_uri, caps_granted,
-    password_set, spawned}}`.
+    caps: String.t() | nil}` → `%{user_uri, caps_granted, password_set, spawned}`.
 
     Wraps `Ezagent.Users.create/3` + opportunistic
     `SpawnRegistry.spawn`. Enforces a structural cross-workspace
@@ -56,10 +55,10 @@ defmodule Ezagent.Behavior.WorkspaceUserAdmin do
 
   ## Cap shape (PR-CC-2-v2 contract)
 
-  One `required_caps/0` entry — `Capability.cap(:workspace,
-  __MODULE__, :create_user)`. Kind axis is `:workspace` because the
-  Behavior is registered on Workspace Kind. The cap is its OWN
-  subject — no overlap with `Behavior.Workspace`'s 10 actions.
+  One cap entry — `Capability.cap(:workspace, __MODULE__,
+  :create_user)`. Kind axis is `:workspace` because the Behavior is
+  registered on Workspace Kind. The cap is its OWN subject — no
+  overlap with `Behavior.Workspace`'s 10 actions.
 
   ## Auto-derived CLI
 
@@ -71,47 +70,66 @@ defmodule Ezagent.Behavior.WorkspaceUserAdmin do
 
   Legacy `mix ezagent.user.create` is retained for muscle memory
   with a deprecation notice (PR #355 pattern).
+
+  ## P2-b migration (2026-05-28)
+
+  Migrated to the new `use Ezagent.Behavior` action/handler contract
+  per SPEC #445 §4 + §6.2. Legacy `invoke/4` replaced by
+  `handle_create_user/2`. The DB side effect (`Users.create/3` + the
+  opportunistic `SpawnRegistry.spawn`) runs inline in the handler —
+  per §4.5 inline idempotent Repo writes are permitted; the
+  `:set`/`:emit` effects then record the slice counter bump + audit
+  event after the row is durably inserted.
   """
 
-  @behaviour Ezagent.Behavior
+  use Ezagent.Behavior
 
-  @impl Ezagent.Behavior
-  def actions, do: [:create_user]
+  action :create_user,
+    args: %{
+      user_uri: :string,
+      password: {:option, :string},
+      caps: {:option, :string}
+    },
+    returns: %{
+      user_uri: :string,
+      caps_granted: :integer,
+      password_set: :boolean,
+      spawned: :string
+    },
+    caps: [{:create_user, kind: :workspace}],
+    description:
+      "Provision a new ESR user in this workspace. Inserts a row in " <>
+        "the `users` table (password bcrypt-hashed) and " <>
+        "opportunistically spawns the User Kind. Distinct cap " <>
+        "subject from `Behavior.Workspace`'s member-management " <>
+        "actions (codex PR #356 r1 CRIT fix).",
+    modes: [:call]
 
-  @impl Ezagent.Behavior
+  # =================================================================
+  # Explicit `required_caps/0` — preserves `kind: :workspace` axis.
+  # =================================================================
   def required_caps do
     %{
       create_user: Ezagent.Capability.cap(:workspace, __MODULE__, :create_user)
     }
   end
 
-  @impl Ezagent.Behavior
-  def cap_subjects do
-    [
-      {:create_user,
-       "provision a new ESR user in this workspace. Distinct cap " <>
-         "subject from `Behavior.Workspace` so workspace admins can " <>
-         "grant member-management WITHOUT also granting new-user " <>
-         "provisioning."}
-    ]
-  end
+  # =================================================================
+  # Slice machinery (legacy callbacks; §6.2 step 9)
+  # =================================================================
 
-  @impl Ezagent.Behavior
   def state_slice, do: :workspace_user_admin
 
-  @impl Ezagent.Behavior
   def init_slice(_args), do: %{create_count: 0}
 
   # PR-OWN-4: workspace-scoped, workspace-admin grantable.
-  @impl Ezagent.Behavior
   def data_owner(_), do: :any
 
   # =================================================================
-  # Action body
+  # New-contract action handler (§6.2 — replaces invoke/4)
   # =================================================================
 
-  @impl Ezagent.Behavior
-  def invoke(:create_user, slice, args, ctx) when is_map(args) do
+  def handle_create_user(args, ctx) when is_map(args) do
     raw_target_uri = Map.get(ctx, :self_uri)
 
     with {:ok, user_uri_str, password, caps_str} <- coerce_create_user_args(args),
@@ -122,57 +140,32 @@ defmodule Ezagent.Behavior.WorkspaceUserAdmin do
            Ezagent.Capability.Parser.parse(caps_str || "", Ezagent.Entity.User.admin_uri()),
          {:ok, decoded} <- Ezagent.Users.create(user_uri, password, caps) do
       spawn_result = maybe_spawn_user_kind(user_uri)
-      new_slice = Map.update(slice, :create_count, 1, &(&1 + 1))
+      cur = ctx[:read].(:create_count, 0)
 
-      {:ok, new_slice,
-       %{
-         user_uri: URI.to_string(decoded.uri),
-         caps_granted: length(caps),
-         password_set: is_binary(password) and password != "",
-         spawned: spawn_result
-       }}
+      result = %{
+        user_uri: URI.to_string(decoded.uri),
+        caps_granted: length(caps),
+        password_set: is_binary(password) and password != "",
+        spawned: spawn_result
+      }
+
+      {:ok, result,
+       [
+         {:set, :create_count, cur + 1},
+         {:emit, :user_created,
+          %{
+            user_uri: URI.to_string(decoded.uri),
+            workspace_uri: URI.to_string(target_ws),
+            caps_granted: length(caps),
+            password_set: is_binary(password) and password != "",
+            at: DateTime.utc_now()
+          }}
+       ]}
     end
   end
 
-  def invoke(:create_user, _slice, args, _ctx) do
+  def handle_create_user(args, _ctx) do
     {:error, {:bad_args, "create_user requires {user_uri, password?, caps?}", args}}
-  end
-
-  # =================================================================
-  # Interface — drives `mix ezagent` auto-derivation.
-  # =================================================================
-
-  @impl Ezagent.Behavior
-  def interface do
-    %{
-      create_user: %{
-        description:
-          "Provision a new ESR user in this workspace. Inserts a row in " <>
-            "the `users` table (password bcrypt-hashed) and " <>
-            "opportunistically spawns the User Kind. Distinct cap " <>
-            "subject from `Behavior.Workspace`'s member-management " <>
-            "actions (codex PR #356 r1 CRIT fix).",
-        args: %{
-          # Use `:string` (not `:uri`) so the caller can pass a full
-          # `entity://user/<workspace>/<name>` string from argv; the
-          # action body parses it with `Ezagent.URI.parse!/1` so the
-          # SPEC v3 3-segment shape is enforced.
-          user_uri: :string,
-          # `:option`-wrapped so an empty body is accepted (password
-          # can be set later via the `:set_password` action on the
-          # spawned User Kind).
-          password: {:option, :string},
-          caps: {:option, :string}
-        },
-        returns: %{
-          user_uri: :string,
-          caps_granted: :integer,
-          password_set: :boolean,
-          spawned: :string
-        },
-        modes: [:call]
-      }
-    }
   end
 
   # =================================================================

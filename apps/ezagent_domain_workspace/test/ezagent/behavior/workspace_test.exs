@@ -8,6 +8,69 @@ defmodule Ezagent.Behavior.WorkspaceTest do
 
   alias Ezagent.Behavior.Workspace, as: WB
 
+  # ---------------------------------------------------------------
+  # Test helpers — bridge the new `use Ezagent.Behavior` contract
+  # (handler/2 + effects) back to the legacy `invoke/4` return
+  # shape these tests originally expressed. Phase 2-c migration
+  # (SPEC 2026-05-28 PR #445) replaced `def invoke(:action, slice,
+  # args, ctx)` with `def handle_action(args, ctx)` returning
+  # `{:ok, result, effects}`. The runtime applies effects against
+  # the slice in `Ezagent.Behavior.apply_effects/2`; we replicate
+  # that here so the existing test assertions (which compare
+  # slices + result maps) keep working without each test having to
+  # learn the effect grammar.
+  # ---------------------------------------------------------------
+
+  defp invoke(action, slice, args, ctx) do
+    handler = String.to_atom("handle_#{action}")
+    read = fn key, default -> Map.get(slice, key, default) end
+    ctx_with_read = Map.put(ctx, :read, read)
+
+    case apply(WB, handler, [args, ctx_with_read]) do
+      {:ok, result, effects} when is_list(effects) ->
+        case Ezagent.Behavior.apply_effects(effects, slice) do
+          {:ok, %{state: new_slice}} ->
+            cond do
+              # No mutation + handler returned a result map → legacy
+              # 3-tuple shape (`{:ok, slice, result}`).
+              new_slice == slice and is_map(result) and result != %{} ->
+                {:ok, new_slice, result}
+
+              # Mutation + empty result map → legacy 2-tuple
+              # (`{:ok, new_slice}`) — pre-migration `:add_member`,
+              # `:remove_member`, `:add_template`, `:remove_template`,
+              # `:set_routing_rules` returned this shape.
+              new_slice != slice and (result == %{} or result == nil) ->
+                {:ok, new_slice}
+
+              # Mutation + result map → legacy 3-tuple
+              # (`{:ok, new_slice, result}`) —
+              # `:create_agent`, `:remove_cross_prefix_members`.
+              new_slice != slice and is_map(result) ->
+                {:ok, new_slice, result}
+
+              # No mutation + empty result → bare `:ok`-ish shape;
+              # tests don't exercise this branch on Workspace, but
+              # surface it for completeness.
+              true ->
+                {:ok, new_slice, result}
+            end
+
+          {:halt, reason, _partial} ->
+            {:error, {:halt, reason}}
+        end
+
+      {:ok, result} ->
+        # Effect-less success — never produced by Workspace handlers
+        # today (they all return effect lists, even if `[]`), but
+        # mirror the runtime's accommodation.
+        {:ok, slice, result}
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
   describe "init_slice/1" do
     test "defaults to empty MapSet + empty templates + empty rules" do
       slice = WB.init_slice(%{})
@@ -45,7 +108,7 @@ defmodule Ezagent.Behavior.WorkspaceTest do
           ]
         })
 
-      assert {:ok, ^slice, %{members: members}} = WB.invoke(:list_members, slice, %{}, %{})
+      assert {:ok, ^slice, %{members: members}} = invoke(:list_members, slice, %{}, %{})
       assert length(members) == 2
     end
 
@@ -53,7 +116,7 @@ defmodule Ezagent.Behavior.WorkspaceTest do
       slice = WB.init_slice(%{})
       uri = URI.parse("entity://user/system/admin")
 
-      assert {:ok, new_slice} = WB.invoke(:add_member, slice, %{member: uri}, %{})
+      assert {:ok, new_slice} = invoke(:add_member, slice, %{member: uri}, %{})
       assert MapSet.member?(new_slice.members, uri)
     end
 
@@ -61,7 +124,7 @@ defmodule Ezagent.Behavior.WorkspaceTest do
       uri = URI.parse("entity://user/system/admin")
       slice = WB.init_slice(%{members: [uri]})
 
-      assert {:ok, new_slice} = WB.invoke(:remove_member, slice, %{member: uri}, %{})
+      assert {:ok, new_slice} = invoke(:remove_member, slice, %{member: uri}, %{})
       assert MapSet.size(new_slice.members) == 0
     end
   end
@@ -85,7 +148,7 @@ defmodule Ezagent.Behavior.WorkspaceTest do
 
       ctx = %{self_uri: workspace_uri}
 
-      assert {:ok, new_slice} = WB.invoke(:add_member, slice, %{member: member_uri}, ctx)
+      assert {:ok, new_slice} = invoke(:add_member, slice, %{member: member_uri}, ctx)
       assert MapSet.member?(new_slice.members, member_uri)
     end
 
@@ -96,7 +159,7 @@ defmodule Ezagent.Behavior.WorkspaceTest do
 
       ctx = %{self_uri: workspace_uri}
 
-      assert {:ok, new_slice} = WB.invoke(:add_member, slice, %{member: member_uri}, ctx)
+      assert {:ok, new_slice} = invoke(:add_member, slice, %{member: member_uri}, ctx)
       assert MapSet.member?(new_slice.members, member_uri)
     end
 
@@ -111,7 +174,7 @@ defmodule Ezagent.Behavior.WorkspaceTest do
       ctx = %{self_uri: workspace_uri}
 
       assert {:error, {:cross_workspace_member_not_permitted, ^member_uri, ^workspace_uri}} =
-               WB.invoke(:add_member, slice, %{member: member_uri}, ctx)
+               invoke(:add_member, slice, %{member: member_uri}, ctx)
 
       # Slice must be untouched on rejection — no half-applied state.
       assert MapSet.size(slice.members) == 0
@@ -125,7 +188,7 @@ defmodule Ezagent.Behavior.WorkspaceTest do
       ctx = %{self_uri: workspace_uri}
 
       assert {:error, {:cross_workspace_member_not_permitted, ^member_uri, ^workspace_uri}} =
-               WB.invoke(:add_member, slice, %{member: member_uri}, ctx)
+               invoke(:add_member, slice, %{member: member_uri}, ctx)
     end
 
     test "rejects non-entity member (system://)" do
@@ -136,7 +199,7 @@ defmodule Ezagent.Behavior.WorkspaceTest do
       ctx = %{self_uri: workspace_uri}
 
       assert {:error, {:non_entity_member, ^member_uri, ^workspace_uri}} =
-               WB.invoke(:add_member, slice, %{member: member_uri}, ctx)
+               invoke(:add_member, slice, %{member: member_uri}, ctx)
     end
 
     test "accepts when ctx.self_uri is missing (unit test surface)" do
@@ -148,7 +211,7 @@ defmodule Ezagent.Behavior.WorkspaceTest do
       member_uri = URI.parse("entity://user/system/admin")
       slice = WB.init_slice(%{})
 
-      assert {:ok, new_slice} = WB.invoke(:add_member, slice, %{member: member_uri}, %{})
+      assert {:ok, new_slice} = invoke(:add_member, slice, %{member: member_uri}, %{})
       assert MapSet.member?(new_slice.members, member_uri)
     end
   end
@@ -180,7 +243,7 @@ defmodule Ezagent.Behavior.WorkspaceTest do
       ctx = %{self_uri: workspace_uri}
 
       assert {:error, {:bad_member_uri, ^member_uri}} =
-               WB.invoke(:add_member, slice, %{member: member_uri}, ctx)
+               invoke(:add_member, slice, %{member: member_uri}, ctx)
     end
 
     test "rejects entity URI with trailing slash" do
@@ -196,7 +259,7 @@ defmodule Ezagent.Behavior.WorkspaceTest do
       ctx = %{self_uri: workspace_uri}
 
       assert {:error, {:bad_member_uri, ^member_uri}} =
-               WB.invoke(:add_member, slice, %{member: member_uri}, ctx)
+               invoke(:add_member, slice, %{member: member_uri}, ctx)
     end
 
     test "rejects entity URI with query string (action=) that masks the prefix check" do
@@ -214,7 +277,7 @@ defmodule Ezagent.Behavior.WorkspaceTest do
       ctx = %{self_uri: workspace_uri}
 
       assert {:error, {:bad_member_uri, ^member_uri}} =
-               WB.invoke(:add_member, slice, %{member: member_uri}, ctx)
+               invoke(:add_member, slice, %{member: member_uri}, ctx)
     end
 
     test "rejects SAME-workspace entity URI with query (instance-form required) — codex r2 HIGH-1 follow-up" do
@@ -231,7 +294,7 @@ defmodule Ezagent.Behavior.WorkspaceTest do
       ctx = %{self_uri: workspace_uri}
 
       assert {:error, {:bad_member_uri, ^member_uri}} =
-               WB.invoke(:add_member, slice, %{member: member_uri}, ctx)
+               invoke(:add_member, slice, %{member: member_uri}, ctx)
     end
 
     test "rejects entity URI with #fragment (instance-form required)" do
@@ -242,7 +305,7 @@ defmodule Ezagent.Behavior.WorkspaceTest do
       ctx = %{self_uri: workspace_uri}
 
       assert {:error, {:bad_member_uri, ^member_uri}} =
-               WB.invoke(:add_member, slice, %{member: member_uri}, ctx)
+               invoke(:add_member, slice, %{member: member_uri}, ctx)
     end
 
     test "rejects entity URI with non-user, non-agent host segment" do
@@ -262,7 +325,7 @@ defmodule Ezagent.Behavior.WorkspaceTest do
       ctx = %{self_uri: workspace_uri}
 
       assert {:error, {:bad_member_uri, ^member_uri}} =
-               WB.invoke(:add_member, slice, %{member: member_uri}, ctx)
+               invoke(:add_member, slice, %{member: member_uri}, ctx)
     end
 
     test "rejects 2-segment entity URI (missing workspace segment)" do
@@ -275,7 +338,7 @@ defmodule Ezagent.Behavior.WorkspaceTest do
       ctx = %{self_uri: workspace_uri}
 
       assert {:error, {:bad_member_uri, ^member_uri}} =
-               WB.invoke(:add_member, slice, %{member: member_uri}, ctx)
+               invoke(:add_member, slice, %{member: member_uri}, ctx)
     end
   end
 
@@ -301,7 +364,7 @@ defmodule Ezagent.Behavior.WorkspaceTest do
       ctx = %{self_uri: workspace_uri}
 
       assert {:ok, new_slice, %{removed: removed, kept_count: 2}} =
-               WB.invoke(:remove_cross_prefix_members, slice, %{}, ctx)
+               invoke(:remove_cross_prefix_members, slice, %{}, ctx)
 
       removed_strs = removed |> Enum.map(&URI.to_string/1) |> Enum.sort()
 
@@ -324,7 +387,7 @@ defmodule Ezagent.Behavior.WorkspaceTest do
       ctx = %{self_uri: workspace_uri}
 
       assert {:ok, new_slice, %{removed: [^bad_system], kept_count: 1}} =
-               WB.invoke(:remove_cross_prefix_members, slice, %{}, ctx)
+               invoke(:remove_cross_prefix_members, slice, %{}, ctx)
 
       assert MapSet.size(new_slice.members) == 1
       assert MapSet.member?(new_slice.members, legit)
@@ -339,14 +402,14 @@ defmodule Ezagent.Behavior.WorkspaceTest do
       ctx = %{self_uri: workspace_uri}
 
       assert {:ok, ^slice, %{removed: [], kept_count: 2}} =
-               WB.invoke(:remove_cross_prefix_members, slice, %{}, ctx)
+               invoke(:remove_cross_prefix_members, slice, %{}, ctx)
     end
 
     test "errors when ctx.self_uri is missing (production safety net)" do
       slice = WB.init_slice(%{members: [URI.parse("entity://user/system/admin")]})
 
       assert {:error, {:missing_self_uri, nil}} =
-               WB.invoke(:remove_cross_prefix_members, slice, %{}, %{})
+               invoke(:remove_cross_prefix_members, slice, %{}, %{})
     end
 
     test "classifies SAME-workspace URI with ?query as violator — codex r2 HIGH-2 follow-up" do
@@ -364,7 +427,7 @@ defmodule Ezagent.Behavior.WorkspaceTest do
       ctx = %{self_uri: workspace_uri}
 
       assert {:ok, new_slice, %{removed: removed, kept_count: 1}} =
-               WB.invoke(:remove_cross_prefix_members, slice, %{}, ctx)
+               invoke(:remove_cross_prefix_members, slice, %{}, ctx)
 
       assert removed == [non_canonical]
       assert MapSet.member?(new_slice.members, canonical_same)
@@ -377,15 +440,15 @@ defmodule Ezagent.Behavior.WorkspaceTest do
       slice = WB.init_slice(%{})
       tmpl = %{members: ["entity://user/system/admin"], routing_rules: []}
 
-      {:ok, slice2} = WB.invoke(:add_template, slice, %{name: "main", template: tmpl}, %{})
+      {:ok, slice2} = invoke(:add_template, slice, %{name: "main", template: tmpl}, %{})
 
       assert {:ok, ^slice2, %{templates: %{"main" => ^tmpl}}} =
-               WB.invoke(:list_templates, slice2, %{}, %{})
+               invoke(:list_templates, slice2, %{}, %{})
     end
 
     test "remove_template drops by name" do
       slice = WB.init_slice(%{session_templates: %{"foo" => %{}}})
-      {:ok, slice2} = WB.invoke(:remove_template, slice, %{name: "foo"}, %{})
+      {:ok, slice2} = invoke(:remove_template, slice, %{name: "foo"}, %{})
       assert slice2.session_templates == %{}
     end
   end
@@ -395,10 +458,10 @@ defmodule Ezagent.Behavior.WorkspaceTest do
       slice = WB.init_slice(%{})
       rules = [%{matcher: %{type: "always"}, receivers: ["session://default/system/main"]}]
 
-      {:ok, slice2} = WB.invoke(:set_routing_rules, slice, %{rules: rules}, %{})
+      {:ok, slice2} = invoke(:set_routing_rules, slice, %{rules: rules}, %{})
 
       assert {:ok, ^slice2, %{rules: ^rules}} =
-               WB.invoke(:list_routing_rules, slice2, %{}, %{})
+               invoke(:list_routing_rules, slice2, %{}, %{})
     end
   end
 
@@ -412,7 +475,7 @@ defmodule Ezagent.Behavior.WorkspaceTest do
       slice = WB.init_slice(%{members: uris})
 
       assert {:ok, ^slice, %{children: children}} =
-               WB.invoke(:instantiate, slice, %{}, %{})
+               invoke(:instantiate, slice, %{}, %{})
 
       assert length(children) == 2
 
@@ -421,7 +484,7 @@ defmodule Ezagent.Behavior.WorkspaceTest do
 
     test "empty workspace instantiates to empty child list" do
       slice = WB.init_slice(%{})
-      assert {:ok, ^slice, %{children: []}} = WB.invoke(:instantiate, slice, %{}, %{})
+      assert {:ok, ^slice, %{children: []}} = invoke(:instantiate, slice, %{}, %{})
     end
   end
 

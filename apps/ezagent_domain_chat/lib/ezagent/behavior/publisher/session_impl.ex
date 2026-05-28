@@ -26,9 +26,9 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
   raises on `{kind, action}` conflict — a single action cannot have
   both a cap-only subject AND a separate dispatchable handler. So
   the publisher actions live on ONE dispatchable Behavior whose
-  `cap_subjects/0` is the cap shape and whose `invoke/4` is the
-  handler. Step 5.5 (CapBAC) still gates every dispatch via this
-  Behavior's cap subjects — the SPEC's gating guarantee holds.
+  declared actions are the cap shape and whose `handle_<action>/2`
+  are the handlers. Step 5.5 (CapBAC) still gates every dispatch via
+  this Behavior's cap subjects — the SPEC's gating guarantee holds.
 
   ## :publisher slice shape
 
@@ -79,9 +79,18 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
     `(from, to]` window.
 
   All three are `:call` mode — the result is read by the caller.
+
+  ## Migration note (P2-a r3, 2026-05-28)
+
+  Migrated to the new SPEC 2026-05-28 action grammar. The handlers
+  mutate the slice via `{:set, key, value}` effects. `:subscribe_from`
+  still does `send/2` to the subscriber (a pid handle write, not a
+  PubSub broadcast) — kept in-handler because the call returns the
+  cursor synchronously and the per-replay-event sends are inherently
+  imperative and aimed at a specific pid (not a topic).
   """
 
-  @behaviour Ezagent.Behavior
+  use Ezagent.Behavior
 
   require Logger
 
@@ -94,33 +103,40 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
 
   # ----- Ezagent.Behavior callbacks --------------------------------------
 
-  @impl Ezagent.Behavior
-  def actions, do: [:subscribe_from, :snapshot, :history]
-
   # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
   # Publisher.SessionImpl is registered on Session Kind only — kind axis
   # is `:session`.
-  @impl Ezagent.Behavior
-  def required_caps do
-    %{
-      subscribe_from: Ezagent.Capability.cap(:session, __MODULE__, :subscribe_from),
-      snapshot: Ezagent.Capability.cap(:session, __MODULE__, :snapshot),
-      history: Ezagent.Capability.cap(:session, __MODULE__, :history)
-    }
-  end
 
-  @impl Ezagent.Behavior
-  def state_slice, do: :publisher
+  action :subscribe_from,
+    # `args: %{}` for all three actions — the InterfaceValidator's
+    # schema grammar does not have a `:pid` or `:any` atom (see
+    # `Ezagent.InterfaceValidator` @moduledoc), and the publisher
+    # actions pass typed-but-unrestricted runtime values (a `pid()`,
+    # the polymorphic `cursor()` sentinel-or-integer, the
+    # `from`/`to` window endpoints). Argument shape is enforced by
+    # the handler (Map.fetch! on required keys + guard clauses on
+    # type) — the validator pre-check just confirms args is a map.
+    args: %{},
+    returns: %{cursor: :integer},
+    caps: [:subscribe_from],
+    modes: [:call],
+    description:
+      "Subscribe a pid to this Publisher's structured stream from a cursor " <>
+        "(:latest / :earliest / integer)"
 
-  @impl Ezagent.Behavior
-  def cap_subjects do
-    [
-      {:subscribe_from,
-       "subscribe to a publisher Kind's structured slice-change stream from a cursor"},
-      {:snapshot, "read a publisher Kind's current cursor + state without subscribing"},
-      {:history, "read events from a publisher Kind's retained history in a cursor window"}
-    ]
-  end
+  action :snapshot,
+    args: %{},
+    returns: %{cursor: :integer},
+    caps: [:snapshot],
+    modes: [:call],
+    description: "Read this Publisher's current cursor + state without subscribing"
+
+  action :history,
+    args: %{},
+    returns: %{},
+    caps: [:history],
+    modes: [:call],
+    description: "Read events in the (from, to] cursor window from this Publisher's ring"
 
   @doc """
   Per SPEC §2.1: the Publisher cap is gated on the publishing Kind
@@ -132,7 +148,6 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
   `:any` (workspace-scoped publisher caps) → workspace admin grants.
   Concrete session URI → that session's owner.
   """
-  @impl Ezagent.Behavior
   def data_owner(%URI{scheme: "session"} = session_uri) do
     case Ezagent.Entity.Session.owner(session_uri) do
       {:ok, %URI{} = owner_uri} -> Ezagent.URI.instance(owner_uri)
@@ -145,7 +160,8 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
   def data_owner({:within_workspace, %URI{}}), do: :any
   def data_owner(_), do: :no_owner
 
-  @impl Ezagent.Behavior
+  def state_slice, do: :publisher
+
   def init_slice(args) do
     retention =
       case Map.get(args, :publisher_retention) do
@@ -175,13 +191,11 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
   `Ezagent.ReadyGate.mark_ready/1` flips. See `on_ready/2` doc +
   task #49 codex round-1 FAIL #6.
   """
-  @impl Ezagent.Behavior
-  def post_init(_args, _slice) do
+  def post_init(_args, _publisher_slice) do
     {:continue, :subscribe_to_self_slice_change}
   end
 
-  @impl Ezagent.Behavior
-  def handle_continue(:subscribe_to_self_slice_change, _slice, %{self_uri: self_uri}) do
+  def handle_continue(:subscribe_to_self_slice_change, _publisher_slice, %{self_uri: self_uri}) do
     :ok = Ezagent.SliceChange.subscribe_unverified(self_uri)
 
     # Slice unchanged — return `:ignore` so the Server skips the
@@ -202,7 +216,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
       Session.handle_continue → broadcast :publisher_alive
                               → Worker receives event
                               → Worker calls subscribe_to_session_publisher (mode :call)
-                              → Invocation.dispatch sees Session ReadyGate :not_ready
+                              → Router.dispatch sees Session ReadyGate :not_ready
                               → returns {:error, :not_ready}
                               → Worker logs + discards (no retry)
                               → SILENT FAIL on cold-spawn — the exact case this
@@ -215,8 +229,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
   `:publisher_alive` clause) — primary fix is the on_ready ordering;
   the retry is the belt-and-braces backup.
   """
-  @impl Ezagent.Behavior
-  def on_ready(_slice, %{self_uri: self_uri}) do
+  def on_ready(_publisher_slice, %{self_uri: self_uri}) do
     :ok = Ezagent.PublisherLifecycle.broadcast_alive(self_uri)
   end
 
@@ -255,9 +268,8 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
   (already `%{}`). Matches the task #34 `reconcile_after_load/2`
   contract for DB-projection slices.
   """
-  @impl Ezagent.Behavior
-  def reconcile_after_load(_uri, slice) do
-    %{slice | subscribers: %{}, monitors: %{}}
+  def reconcile_after_load(_uri, publisher_slice) do
+    %{publisher_slice | subscribers: %{}, monitors: %{}}
   end
 
   # ----- Kind-message hook ----------------------------------------------
@@ -279,7 +291,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
   slice-change event, which would add an entry to the ring). The
   Publisher mirrors slice changes from OTHER slices (`:chat` etc).
   """
-  def handle_kind_message({:slice_changed, %{} = event}, slice, ctx) do
+  def handle_kind_message({:slice_changed, %{} = event}, publisher_slice, ctx) do
     self_uri = Map.fetch!(ctx, :self_uri)
 
     cond do
@@ -291,7 +303,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
         :ignore
 
       true ->
-        new_cursor = slice.cursor + 1
+        new_cursor = publisher_slice.cursor + 1
 
         publisher_event = %Event{
           cursor: new_cursor,
@@ -302,33 +314,33 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
           payload: build_payload(event, ctx)
         }
 
-        new_ring = append_with_retention(slice.ring, publisher_event, slice.retention)
+        new_ring =
+          append_with_retention(publisher_slice.ring, publisher_event, publisher_slice.retention)
 
-        fan_out(publisher_event, slice.subscribers)
+        fan_out(publisher_event, publisher_slice.subscribers)
 
-        {:ok, %{slice | ring: new_ring, cursor: new_cursor}}
+        {:ok, %{publisher_slice | ring: new_ring, cursor: new_cursor}}
     end
   end
 
-  def handle_kind_message({:DOWN, ref, :process, _pid, _reason}, slice, _ctx) do
-    case Map.pop(slice.monitors, ref) do
+  def handle_kind_message({:DOWN, ref, :process, _pid, _reason}, publisher_slice, _ctx) do
+    case Map.pop(publisher_slice.monitors, ref) do
       {nil, _} ->
         # Not one of our refs (could belong to another Behavior on
         # the same Kind — Chat also monitors pids).
         :ignore
 
       {pid, new_monitors} ->
-        new_subscribers = Map.delete(slice.subscribers, pid)
-        {:ok, %{slice | subscribers: new_subscribers, monitors: new_monitors}}
+        new_subscribers = Map.delete(publisher_slice.subscribers, pid)
+        {:ok, %{publisher_slice | subscribers: new_subscribers, monitors: new_monitors}}
     end
   end
 
-  def handle_kind_message(_other, _slice, _ctx), do: :ignore
+  def handle_kind_message(_other, _publisher_slice, _ctx), do: :ignore
 
-  # ----- Invoke ---------------------------------------------------------
+  # ----- Handlers -------------------------------------------------------
 
-  @impl Ezagent.Behavior
-  def invoke(:subscribe_from, slice, args, _ctx) do
+  def handle_subscribe_from(args, ctx) do
     subscriber_pid = Map.fetch!(args, :subscriber_pid)
     cursor = Map.get(args, :cursor, :latest)
 
@@ -337,7 +349,9 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
             "publisher_subscribe_from: :subscriber_pid must be a pid, got #{inspect(subscriber_pid)}"
     end
 
-    case prepare_replay(slice, cursor) do
+    current_publisher_slice = current_slice(ctx)
+
+    case prepare_replay(current_publisher_slice, cursor) do
       {:error, reason} ->
         {:error, reason}
 
@@ -358,69 +372,58 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
         # before they're even dequeued. Filter is O(N) over a bounded
         # subscribers map — cheap when small, surfaces the leak
         # immediately when large.
-        flushed_slice = prune_dead_subscribers(slice)
-        {_ref, new_slice} = ensure_monitored(flushed_slice, subscriber_pid)
+        flushed_publisher_slice = prune_dead_subscribers(current_publisher_slice)
+        {_ref, new_publisher_slice} = ensure_monitored(flushed_publisher_slice, subscriber_pid)
 
-        {:ok, new_slice, %{cursor: slice.cursor}}
+        # Three fields can change vs the source: subscribers, monitors.
+        # Use a single `:set` per field so the effect grammar's snapshot
+        # writes are surgical (vs replacing the whole slice).
+        {:ok, %{cursor: current_publisher_slice.cursor},
+         [
+           {:set, :subscribers, new_publisher_slice.subscribers},
+           {:set, :monitors, new_publisher_slice.monitors}
+         ]}
     end
   end
 
-  def invoke(:snapshot, slice, _args, _ctx) do
+  def handle_snapshot(_args, ctx) do
+    current = current_slice(ctx)
+
     state =
-      case List.last(slice.ring) do
+      case List.last(current.ring) do
         nil -> nil
         %Event{payload: payload} -> payload
       end
 
-    {:ok, slice, %{cursor: slice.cursor, state: state}}
+    {:ok, %{cursor: current.cursor, state: state}, []}
   end
 
-  def invoke(:history, slice, args, _ctx) do
+  def handle_history(args, ctx) do
+    current = current_slice(ctx)
     from = Map.get(args, :from, :earliest)
     to = Map.get(args, :to, :latest)
 
-    case window(slice, from, to) do
-      {:ok, events} -> {:ok, slice, %{events: events}}
+    case window(current, from, to) do
+      {:ok, events} -> {:ok, %{events: events}, []}
       {:error, reason} -> {:error, reason}
     end
   end
 
-  # ----- Interface schema -----------------------------------------------
+  # ----- Internals ------------------------------------------------------
 
-  @impl Ezagent.Behavior
-  def interface do
-    # `args: %{}` for all three actions — the InterfaceValidator's
-    # schema grammar does not have a `:pid` or `:any` atom (see
-    # `Ezagent.InterfaceValidator` @moduledoc), and the publisher
-    # actions pass typed-but-unrestricted runtime values (a `pid()`,
-    # the polymorphic `cursor()` sentinel-or-integer, the
-    # `from`/`to` window endpoints). Argument shape is enforced by
-    # `invoke/4` (Map.fetch! on required keys + guard clauses on
-    # type) — the validator pre-check just confirms args is a map.
+  # Reconstruct the current publisher slice from ctx[:read]/2. The new
+  # contract doesn't pass the slice as an arg; instead each field is
+  # read on demand. We re-materialise the slice as a map for the
+  # internal helpers (window/3, prepare_replay/2, etc).
+  defp current_slice(ctx) do
     %{
-      subscribe_from: %{
-        description:
-          "Subscribe a pid to this Publisher's structured stream from a cursor (:latest / :earliest / integer)",
-        args: %{},
-        returns: %{cursor: :integer},
-        modes: [:call]
-      },
-      snapshot: %{
-        description: "Read this Publisher's current cursor + state without subscribing",
-        args: %{},
-        returns: %{cursor: :integer},
-        modes: [:call]
-      },
-      history: %{
-        description: "Read events in the (from, to] cursor window from this Publisher's ring",
-        args: %{},
-        returns: %{},
-        modes: [:call]
-      }
+      ring: ctx[:read].(:ring, []),
+      cursor: ctx[:read].(:cursor, 0),
+      retention: ctx[:read].(:retention, @default_retention),
+      subscribers: ctx[:read].(:subscribers, %{}),
+      monitors: ctx[:read].(:monitors, %{})
     }
   end
-
-  # ----- Internals ------------------------------------------------------
 
   # Default retention used when `init_slice/1` is called without
   # publisher_retention (the Session implementation reads
@@ -485,35 +488,35 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
     end)
   end
 
-  defp ensure_monitored(slice, pid) do
-    case Map.get(slice.subscribers, pid) do
+  defp ensure_monitored(publisher_slice, pid) do
+    case Map.get(publisher_slice.subscribers, pid) do
       nil ->
         ref = Process.monitor(pid)
 
-        new_slice = %{
-          slice
-          | subscribers: Map.put(slice.subscribers, pid, ref),
-            monitors: Map.put(slice.monitors, ref, pid)
+        new_publisher_slice = %{
+          publisher_slice
+          | subscribers: Map.put(publisher_slice.subscribers, pid, ref),
+            monitors: Map.put(publisher_slice.monitors, ref, pid)
         }
 
-        {ref, new_slice}
+        {ref, new_publisher_slice}
 
       ref ->
         # Already monitored — return existing ref, slice unchanged.
-        {ref, slice}
+        {ref, publisher_slice}
     end
   end
 
-  # 2026-05-26 (perf fix paired with the prune in `invoke(:subscribe_from)`):
-  # walks `slice.subscribers` and removes any pid whose process is no
-  # longer alive locally. Demonitors the matching ref with
+  # 2026-05-26 (perf fix paired with the prune in `handle_subscribe_from/2`):
+  # walks `publisher_slice.subscribers` and removes any pid whose process
+  # is no longer alive locally. Demonitors the matching ref with
   # `:flush` so the inevitable `:DOWN` (already queued for these dead
   # pids) is swallowed rather than racing the next `handle_kind_message`.
   # If two nodes ever publish into one Session this needs to grow a
   # remote-node liveness check; today's single-node invariant lets us
   # use `Process.alive?/1`.
-  defp prune_dead_subscribers(slice) do
-    Enum.reduce(slice.subscribers, slice, fn {pid, ref}, acc ->
+  defp prune_dead_subscribers(publisher_slice) do
+    Enum.reduce(publisher_slice.subscribers, publisher_slice, fn {pid, ref}, acc ->
       if Process.alive?(pid) do
         acc
       else
@@ -529,30 +532,30 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
   end
 
   # Build the message list a subscriber receives based on `cursor`.
-  defp prepare_replay(_slice, :latest), do: {:ok, []}
-  defp prepare_replay(slice, :earliest), do: {:ok, slice.ring}
+  defp prepare_replay(_publisher_slice, :latest), do: {:ok, []}
+  defp prepare_replay(publisher_slice, :earliest), do: {:ok, publisher_slice.ring}
 
-  defp prepare_replay(slice, cursor) when is_integer(cursor) and cursor >= 0 do
-    case window(slice, cursor, :latest) do
+  defp prepare_replay(publisher_slice, cursor) when is_integer(cursor) and cursor >= 0 do
+    case window(publisher_slice, cursor, :latest) do
       {:ok, events} -> {:ok, events}
       {:error, _} = err -> err
     end
   end
 
-  defp prepare_replay(_slice, bad),
+  defp prepare_replay(_publisher_slice, bad),
     do: {:error, {:invalid_cursor, bad}}
 
-  # window(slice, from, to) — returns events with cursor in (from, to]:
+  # window(publisher_slice, from, to) — returns events with cursor in (from, to]:
   #   - from = :earliest  → no lower bound
   #   - from = integer    → cursor > from (exclusive)
   #   - to   = :latest    → no upper bound
   #   - to   = integer    → cursor <= to (inclusive)
   # Raises `{:error, :cursor_out_of_window}` if `from` is older than
   # the oldest retained cursor (the ring's first entry's cursor - 1).
-  defp window(slice, from, to) do
-    with :ok <- validate_window(slice, from, to) do
+  defp window(publisher_slice, from, to) do
+    with :ok <- validate_window(publisher_slice, from, to) do
       events =
-        slice.ring
+        publisher_slice.ring
         |> Enum.filter(fn %Event{cursor: c} -> in_window?(c, from, to) end)
 
       {:ok, events}
@@ -560,7 +563,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
   end
 
   # `:earliest` lower bound is always in-window (no lower bound at all).
-  defp validate_window(_slice, :earliest, _to), do: :ok
+  defp validate_window(_publisher_slice, :earliest, _to), do: :ok
 
   # Integer `from`: bounds-check + retention-check. Order matters —
   # bounds-check first (basic shape), then retention (the "is `from`
@@ -568,7 +571,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
   # `to` is `:latest` because the SPEC says raise on cursor_out_of_window
   # for ANY history call whose lower bound predates the oldest
   # retained event.
-  defp validate_window(slice, from, to) when is_integer(from) and from >= 0 do
+  defp validate_window(publisher_slice, from, to) when is_integer(from) and from >= 0 do
     cond do
       is_integer(to) and to < from ->
         {:error, {:invalid_window, from, to}}
@@ -576,7 +579,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
       true ->
         # Retention check (applies whether `to` is `:latest` or integer).
         # See `cursor_out_of_window?/2` for the semantics.
-        if cursor_out_of_window?(slice, from) do
+        if cursor_out_of_window?(publisher_slice, from) do
           {:error, :cursor_out_of_window}
         else
           :ok
@@ -584,7 +587,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
     end
   end
 
-  defp validate_window(_slice, bad, _to), do: {:error, {:invalid_cursor, bad}}
+  defp validate_window(_publisher_slice, bad, _to), do: {:error, {:invalid_cursor, bad}}
 
   # `from` is out of window iff:
   #   - The publisher HAS emitted at least one event (cursor > 0),
@@ -596,7 +599,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
   # Empty ring before any emission (cursor == 0) → any `from >= 0` is
   # valid (no events yet means trivially the requested window is
   # in-bounds, the result is just `[]`).
-  defp cursor_out_of_window?(%{ring: []} = _slice, _from), do: false
+  defp cursor_out_of_window?(%{ring: []}, _from), do: false
 
   defp cursor_out_of_window?(%{ring: [%Event{cursor: oldest} | _]}, from),
     do: from < oldest - 1
