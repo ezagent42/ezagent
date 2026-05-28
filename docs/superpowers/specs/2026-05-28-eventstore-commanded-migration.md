@@ -1,6 +1,33 @@
 # SPEC — Ezagent state model migration to EventStore + Commanded (CQRS / event-sourcing)
 
-**Status:** r4 — DRAFT for codex adversarial-review (round 4 — FINAL round of 4-budget). 2026-05-28.
+**Status:** r4-FINAL — 4-round codex budget exhausted with REJECT verdict. Remaining findings carried as KNOWN LIMITATIONS for Allen grill-with-doc discussion (per `feedback_register_lookup_key_parity` SPEC-iteration pattern + the explicit "max budget exhausted with documented limits" instruction in the Allen brief). 2026-05-28.
+
+## Known Limitations after r4 (carried into grill-with-doc)
+
+Codex r4 returned REJECT with 4 HIGH + 3 MED unresolved findings. These are documented here rather than blocking the SPEC because (a) the 4-round budget set up-front is exhausted, (b) each remaining item is implementation-detail level (specific column names, exact macro mechanism, narrative consistency in carried-over text), not architectural-foundation level. The SPEC's core architectural decision (CQRS/ES with Commanded + per-Phase forward-import + facade-aware consistency) is sound; the residue is impl-PR-level cleanup that future SPECs or impl PRs resolve.
+
+**Carry-over items for Allen go/no-go discussion:**
+
+1. **HIGH — §6.1 Phase 10-A has two protocol blocks (r2 ExternalMirror-migration + r4 Worker-only-via-PubSub).** Codex flagged that both r2 and r4 phrasings remain in the section, creating ambiguity. The r4 changelog says option (a) is the default (Session stays fully legacy), but the §6.1 body still carries r2 deliverables like "Migrate `Behavior.ExternalMirror` actions on Session aggregate". **Allen decision required:** Phase 10-A scope is either (A) Worker only + PubSub-bridging saga (r4 option a; Session 100% legacy in 10-A) or (B) Worker + Session ExternalMirror slice (r2; partial Session migration). Pick one; the impl PR-A1 SPEC sub-doc resolves it concretely.
+
+2. **HIGH — §4.8 `@consistency` enforcement mechanism is described, not specified.** Plain Elixir `@attr` doesn't structurally attach to functions; the invariant test must use a macro/registry (e.g. `defwrite name, consistency:, projections:`). The SPEC describes the contract but not the macro shape. **Resolution:** impl-PR creates the macro; the macro signature is a sub-SPEC.
+
+3. **HIGH — §6.0 parity gate column names don't match actual schemas.**
+   - `entity_profiles` primary key is `entity_uri`, not `uri`; has no `registered_at` column (uses `timestamps()`).
+   - `entity_tokens` has no `token_id`/`scope`/`minted_at` columns; has `id`, `token_hash`, `label`, `expires_at`, `last_used_at`, `workspace_uri`, `entity_uri`, timestamps.
+   - **Resolution:** impl-PR Phase 10-B's verify-task SPEC normalizes column names — projection columns map to `entity_uri` + `inserted_at` per actual schemas; the aggregate event payload field names align with the projection column names (not necessarily with the SPEC's idealized names).
+
+4. **HIGH — §6.0 MessageStore SQL templates use signature `recent_in_session/3` etc; actual API is `in_session_since/2` + `recent_in_session/2` + `older_than/3`; `in_session_since` uses strict `>` not `>=` and caps replay.** **Resolution:** impl-PR adjusts SQL to match actual cursor semantics + arities. The architectural choice (UNION over archive+projection) is unchanged.
+
+5. **MED — §4.3 Sandbox row still says "test fixture only"; §4.1.5 correctly classifies as production.** Narrative inconsistency in the table that wasn't updated when §4.1.5 was corrected. **Resolution:** trivial edit at impl-PR start.
+
+6. **MED — §3.8 has stale "from projections" text in saga state comments + step 2 still reads from `AgentLineage` projection in the example.** The execute snippet itself is correct (reads aggregate state), but the narrative around it carries r3 language. **Resolution:** impl-PR Phase 10-C saga sub-SPEC scrubs the stale text; the architectural choice (authoritative aggregate state) is unchanged.
+
+7. **MED — §6.4 cleanup execute has crash window: DROP succeeds → process crashes → `.consumed` marker never written → next run of execute (with same receipt) sees no marker and would re-attempt the DROP.** Note: the DROP itself is idempotent (DROP IF NOT EXISTS), so re-attempt doesn't corrupt; but the audit trail loses the original execution_nonce. **Resolution:** impl-PR adds DB advisory-lock + writes `in_progress` audit row BEFORE the DROP within the same execution path; finalizes to `consumed` after.
+
+**The SPEC is ready for Allen grill-with-doc with these 7 carry-overs explicit.**
+
+---
 
 ## r4 changelog (delta from r3, retained for trail)
 

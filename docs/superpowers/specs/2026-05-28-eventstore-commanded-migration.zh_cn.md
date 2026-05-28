@@ -1,6 +1,33 @@
 # SPEC — Ezagent 状态模型迁移到 EventStore + Commanded (CQRS / 事件溯源)
 
-**状态：** r4 — codex 对抗审查 r4 草稿（4 轮预算的最终轮）。2026-05-28。
+**状态：** r4-FINAL — 4 轮 codex 预算已耗尽（REJECT 仍有 4 HIGH + 3 MED）。剩余 findings 作 **KNOWN LIMITATIONS** 带入 Allen grill-with-doc 讨论（按 cap-vis / URI-canonical 同模式 + Allen 指令明示「max budget exhausted with documented limits」）。2026-05-28。
+
+## r4 后已知限制（带入 grill-with-doc）
+
+Codex r4 REJECT 仍有 4 HIGH + 3 MED 未决。这些**不**继续阻塞 SPEC，原因：(a) 上限的 4 轮预算已耗尽；(b) 每条剩余项是实施 PR 层细节（具体列名、精确宏机制、carry-over 文本叙述一致性），不是架构基础。SPEC 核心架构决策（CQRS/ES + Commanded + 每 Phase 前向 import + facade-aware 一致性）成立；残留是未来 SPEC / 实施 PR 解决的清理。
+
+**Allen 讨论的 carry-over 项目：**
+
+1. **HIGH — §6.1 Phase 10-A 含两个协议块（r2 ExternalMirror 迁移 + r4 Worker-only-via-PubSub 都在）。** Codex 标 §6.1 同时保留 r2 措辞「Migrate `Behavior.ExternalMirror` actions on Session aggregate」与 r4 措辞「Session 完全 legacy」。**需 Allen 决定：** Phase 10-A scope 是 (A) Worker only + PubSub-bridging saga（r4 option a；Session 100% legacy）还是 (B) Worker + Session ExternalMirror slice（r2；部分 Session 迁）。impl-PR-A1 sub-SPEC 落实。
+
+2. **HIGH — §4.8 `@consistency` 机制描述、未规范。** 朴素 Elixir `@attr` 不结构上附函数；invariant 必须用宏/registry（如 `defwrite name, consistency:, projections:`）。SPEC 描述合约但未定义宏形状。**解决：** impl-PR 造宏；宏签名是 sub-SPEC。
+
+3. **HIGH — §6.0 parity 门列名与实际 schema 不匹配。**
+   - `entity_profiles` 主键是 `entity_uri`（非 `uri`）；无 `registered_at` 列（用 `timestamps()`）。
+   - `entity_tokens` 无 `token_id`/`scope`/`minted_at` 列；有 `id`、`token_hash`、`label`、`expires_at`、`last_used_at`、`workspace_uri`、`entity_uri`、timestamps。
+   - **解决：** impl-PR Phase 10-B 的 verify-task sub-SPEC 规范化列名 — 投影列映射到 `entity_uri` + `inserted_at`；aggregate 事件 payload 字段名与投影列名对齐。
+
+4. **HIGH — §6.0 MessageStore SQL 用签名 `recent_in_session/3` 等；实际 API 是 `in_session_since/2` + `recent_in_session/2` + `older_than/3`；`in_session_since` 用严格 `>` 不是 `>=` 且帽 replay。** **解决：** impl-PR 调整 SQL 匹配实际 cursor 语义 + arity。架构选择（archive+projection 上 UNION）不变。
+
+5. **MED — §4.3 Sandbox 行仍写「test fixture only」；§4.1.5 正确分类为生产。** §4.1.5 校正后表叙述未同步。**解决：** impl-PR 起点 trivial 编辑。
+
+6. **MED — §3.8 saga state 注释 + step 2 例子里仍有 r3 旧的「从 projection 读」表述。** execute 代码片段本身正确（读 aggregate state），但周围叙述带 r3 语言。**解决：** impl-PR Phase 10-C saga sub-SPEC 清理；架构选择（authoritative aggregate state）不变。
+
+7. **MED — §6.4 cleanup execute 有崩溃窗口：DROP 成功 → 进程崩 → `.consumed` marker 未写 → 下次 execute（同 receipt）见无 marker、会重试 DROP。** 注：DROP 本身幂等（DROP IF NOT EXISTS），重试不破坏；但审计 trail 丢失原 execution_nonce。**解决：** impl-PR 在同一 execution path 内加 DB advisory-lock + DROP **前**写 `in_progress` audit 行；DROP 后 finalize 到 `consumed`。
+
+**SPEC 在这 7 个 carry-over 明示下、即可进 Allen grill-with-doc。**
+
+---
 
 ## r4 changelog（相对 r3 的 delta，保留作 trail）
 
