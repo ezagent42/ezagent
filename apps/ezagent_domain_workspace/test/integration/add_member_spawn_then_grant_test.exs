@@ -33,6 +33,52 @@ defmodule Ezagent.Integration.AddMemberSpawnThenGrantTest do
   alias Ezagent.{Identity, KindRegistry, SpawnRegistry, Workspace}
   alias Ezagent.Behavior.Workspace, as: WB
 
+  # Phase 2-c migration (SPEC 2026-05-28 PR #445) — `Behavior.Workspace`
+  # uses the new `use Ezagent.Behavior` contract. Direct callers of
+  # `WB.invoke/4` route through this helper, which drives the
+  # `handle_<action>/2` + `apply_effects/2` pipeline and returns the
+  # legacy `{:ok, new_slice}` shape these integration assertions expect.
+  # The runtime's real path (`Ezagent.Kind.Runtime.handle_dispatch/4`)
+  # additionally executes `:dispatch` effects via the Router; we DO
+  # NOT execute them here because each test's pre-existing assertions
+  # poll for the grant via `eventually_has_create_session_cap?/2`,
+  # which only fires when the dispatch lands. To preserve that
+  # observation, we route `:dispatch` effects through `Ezagent.Router.dispatch/1`
+  # exactly as the runtime would.
+  defp invoke(action, slice, args, ctx) do
+    handler = String.to_atom("handle_#{action}")
+    read = fn key, default -> Map.get(slice, key, default) end
+    ctx_with_read = Map.put(ctx, :read, read)
+
+    case apply(WB, handler, [args, ctx_with_read]) do
+      {:ok, _result, effects} = ok when is_list(effects) ->
+        execute_handler_return(ok, slice)
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  defp execute_handler_return({:ok, result, effects}, slice) do
+    case Ezagent.Behavior.apply_effects(effects, slice) do
+      {:ok, %{state: new_slice, dispatches: dispatches}} ->
+        # Mirror `Ezagent.Kind.Runtime.execute_dispatches/2` — sequential
+        # Router dispatch. Failure logs + aborts subsequent dispatches.
+        Enum.each(dispatches, fn {:dispatch, %Ezagent.Cmd{} = cmd} ->
+          _ = Ezagent.Router.dispatch(cmd)
+        end)
+
+        if result == %{} or result == nil do
+          {:ok, new_slice}
+        else
+          {:ok, new_slice, result}
+        end
+
+      {:halt, reason, _} ->
+        {:error, {:halt, reason}}
+    end
+  end
+
   setup do
     ws_name = "addmember-spawn-#{System.unique_integer([:positive])}"
     {:ok, _ws_pid} = Workspace.create(ws_name, %{})
@@ -70,7 +116,7 @@ defmodule Ezagent.Integration.AddMemberSpawnThenGrantTest do
     slice = WB.init_slice(%{})
     ctx = %{self_uri: workspace_uri}
 
-    assert {:ok, new_slice} = WB.invoke(:add_member, slice, %{member: user_uri}, ctx)
+    assert {:ok, new_slice} = invoke(:add_member, slice, %{member: user_uri}, ctx)
     assert MapSet.member?(new_slice.members, user_uri)
 
     # (a) User Kind alive — pre-fix this lookup was `:error` (no spawn
@@ -132,7 +178,7 @@ defmodule Ezagent.Integration.AddMemberSpawnThenGrantTest do
     slice = WB.init_slice(%{})
     ctx = %{self_uri: workspace_uri}
 
-    assert {:ok, new_slice} = WB.invoke(:add_member, slice, %{member: user_uri}, ctx)
+    assert {:ok, new_slice} = invoke(:add_member, slice, %{member: user_uri}, ctx)
     assert MapSet.member?(new_slice.members, user_uri)
 
     # Same PID — the action body adopted the existing Kind rather
