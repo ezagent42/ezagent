@@ -156,5 +156,23 @@ EZAGENT_PROFILE=poc-phase2 PORT=10142 \
   mix phx.server
 ```
 
-> 注：客户聊天页是 LiveView，需要浏览器加载 JS/CSS（esbuild + tailwind 在
-> dev 下随服务启动构建）。如果页面没样式，等几秒让 watcher 编译完再刷新。
+> 注：客户聊天页是 LiveView，需要浏览器加载 `/assets/js/app.js`（LiveSocket
+> 客户端）。如果页面**永远卡在 "connecting…"、输入框禁用**，多半是 app.js 没构建
+> （返回 404）→ LiveView 连不上 socket → 异步 bootstrap 不触发。
+>
+> **共享 MIX_DEPS_PATH 下的资源构建坑**：esbuild 的 `NODE_PATH` 指向仓库本地
+> `deps/`，但我们用共享 deps，本地 `deps/` 不存在 → esbuild 找不到 phoenix /
+> phoenix_live_view 的 JS。一次性修复：
+>
+> ```bash
+> cd /Users/daiming/workspace/ezagent42/ezagent-poc-phase-2
+> # 1) 让本地 deps/ 指向共享缓存（gitignored，安全）
+> [ -e deps ] || ln -s /Users/daiming/workspace/ezagent42/.poc-shared-deps deps
+> # 2) 构建前端 bundle
+> MIX_DEPS_PATH=/Users/daiming/workspace/ezagent42/.poc-shared-deps mix esbuild ezagent_web
+> MIX_DEPS_PATH=/Users/daiming/workspace/ezagent42/.poc-shared-deps mix tailwind ezagent_web
+> # 3) 验证（都应 200）
+> curl -s -o /dev/null -w "%{http_code}\n" http://localhost:10142/assets/js/app.js
+> ```
+> 做完后**硬刷新**浏览器（Cmd+Shift+R）清掉缓存的 404。建好 deps 符号链接后，
+> dev 的 esbuild/tailwind watcher 后续也能正常增量构建。
