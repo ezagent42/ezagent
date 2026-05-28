@@ -34,6 +34,14 @@ defmodule EzagentPluginLiveview.CustomerChat.Bootstrap do
   def generate_conv_id,
     do: Base.url_encode64(:crypto.strong_rand_bytes(8), padding: false)
 
+  @doc """
+  Build the inbound customer message. We synthesize a server-side
+  `mentions: [cc_agent_uri]` because ezagent's default routing rule is
+  `[session_users, mentions]` — an agent only receives messages it is
+  @-mentioned in, and a customer's natural-language text carries no
+  @-syntax. The synthesized mention is what makes the resolver fan
+  `chat.receive` out to the cc agent.
+  """
   @spec customer_message(URI.t(), String.t(), URI.t()) :: Ezagent.Message.t()
   def customer_message(customer_uri, text, cc_agent_uri) do
     Ezagent.Message.new(customer_uri, %{text: text, attachments: []},

@@ -15,7 +15,7 @@ defmodule EzagentPluginLiveview.CustomerChat.BootstrapTest do
   test "agent_name_for sanitizes and truncates conv_id" do
     assert Bootstrap.agent_name_for("t2-AbC_99") == "cust_t2_AbC_99"
     long = String.duplicate("x", 80)
-    assert String.length(Bootstrap.agent_name_for(long)) <= length('cust_') + 32
+    assert String.length(Bootstrap.agent_name_for(long)) == String.length("cust_") + 32
   end
 
   test "generate_conv_id is url-safe and unique-ish" do
