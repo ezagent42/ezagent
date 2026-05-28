@@ -36,16 +36,31 @@ minimal cost.
 
 ## 3. Architecture
 
-New plugin **`ezagent_plugin_customer_chat`** = the frontend slice of the
+The customer-chat frontend = the frontend slice of the
 AI-customer-service template.
+
+**Prototype home (this round): `ezagent_plugin_liveview`**, under a
+distinct `CustomerChat` namespace. Rationale: every umbrella app must
+satisfy the `Ezagent.Plugin` declarative contract + the non-bypassable
+`:ezagent_plugin_check` Mix-compiler gate (even the pure-UI liveview app
+does). Spinning a brand-new `ezagent_plugin_customer_chat` app means
+replicating that ceremony + umbrella/dep wiring — yak-shaving that does
+not advance a working chat page at prototype stage. `ezagent_plugin_liveview`
+already depends on exactly what CustomerChatLive needs: `ezagent_plugin_cc`
+(EagerBridge), `ezagent_domain_chat` (Chat behavior / topic / MessageStore),
+`ezagent_domain_ui` (HEEx primitives). **Extraction into a dedicated
+`ezagent_plugin_customer_chat` is the documented productionization step
+(§11).** The namespace (`EzagentPluginLiveview.CustomerChat.*`) keeps the
+slice cohesive so the later move is a rename, not a rewrite.
 
 | Component | What | Where |
 |---|---|---|
-| **CustomerChatLive** | Customer chat page (LiveView, public, no login) | `live "/chat/:tenant"` |
-| **CustomerChatComponents** | Shared HEEx function components (message bubble / list / input / takeover banner) | `customer_chat_components.ex` |
-| **widget.js** | ~40-line loader: injects launcher bubble + iframe | static asset at `/customer-chat/widget.js` |
-| **Theme loader** | Per-tenant theme (logo / primary color / title / welcome / placeholder), config-driven | `theme/<tenant>.json` fixture (acme) |
-| **headless API** (existing, stays in `ezagent_web` this round) | `customer_chat_controller.ex` HTTP+SSE — kept for machine/3rd-party integrators (e.g. CINNOX using its own IM); logical home is this plugin but relocation is deferred (§11) | `POST /api/customer/:tenant/chat` |
+| **CustomerChat.ChatLive** | Customer chat page (LiveView, public, no login) | `live "/chat/:tenant"` |
+| **CustomerChat.Components** | Shared HEEx function components (message bubble / list / input / takeover banner) | `customer_chat/components.ex` |
+| **CustomerChat.Bootstrap** | Reusable "ensure session + cc + bind + join" + mention synthesis (extracted from `customer_chat_controller.ex`, DRY) | `customer_chat/bootstrap.ex` |
+| **CustomerChat.Theme** | Per-tenant theme (logo / primary color / title / welcome / placeholder), config-driven | `customer_chat/theme.ex` + `theme/<tenant>.json` fixture (acme) |
+| **widget.js** | ~40-line loader: injects launcher bubble + iframe | served by a plain `EzagentWeb` route at `/customer-chat/widget.js` |
+| **headless API** (existing, stays in `ezagent_web` this round) | `customer_chat_controller.ex` HTTP+SSE — kept for machine/3rd-party integrators (e.g. CINNOX using its own IM); refactored to call `CustomerChat.Bootstrap` so logic is shared, not duplicated | `POST /api/customer/:tenant/chat` |
 
 Two legs by consumer:
 - **Humans** open a web page → **LiveView** (persistent connection).
@@ -186,8 +201,13 @@ Browser opens /chat/acme  (or iframe inside widget)
 - conv_id client-side resume (localStorage) so reload keeps the thread.
 
 **DEFER (documented, not built)**
-- Relocating `customer_chat_controller.ex` into the plugin (keep in
-  `ezagent_web` this round to minimize churn; target home is this plugin).
+- **Extracting a dedicated `ezagent_plugin_customer_chat` umbrella app**
+  (full `Ezagent.Plugin` contract + `:ezagent_plugin_check` gate + dep
+  wiring). Prototype hosts the slice inside `ezagent_plugin_liveview`
+  under the `CustomerChat` namespace; the later move is a namespace
+  rename, not a rewrite.
+- Relocating `customer_chat_controller.ex` out of `ezagent_web` (it stays;
+  this round it is refactored to call the shared `CustomerChat.Bootstrap`).
 - Abuse protection on the public page (rate-limit / captcha).
 - Rich content (attachments, markdown rendering).
 - Operator console rewrite / moving it into this plugin (it works; leave it).
