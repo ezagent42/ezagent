@@ -123,9 +123,39 @@ defmodule Ezagent.Behavior.Template do
   for error monadics) and returns the slice unchanged from the
   PARENT's perspective (the fork's content lives on a different Kind
   instance, written via the in-handler dispatch).
+
+  ## Lifecycle migration (Phase B, SPEC 2026-05-29 §2.3 — the
+  ## pure-state, no-transients case)
+
+  Converted from `use Ezagent.Behavior` to `use Ezagent.Lifecycle`. The
+  `:template` slice is ENTIRELY persistent — its one field `:content` is
+  the durable template record that MUST survive a restart (both Template
+  Kinds are `{:snapshot, :on_change}`). There are NO transients (no PID /
+  ref / ETS / port / subprocess / monitor), so:
+
+  - `init_slice/1` → `create/1`: build the persistent `%{content: ...}`
+    once, reading `args[:content]` (default `nil` for an unpopulated
+    template Kind).
+  - `activate/2` is the macro-injected no-op default (nothing transient
+    to rebuild).
+  - The hand-rolled `def state_slice` is gone — the macro auto-derives
+    `Ezagent.Behavior.Template` → `:template`, the pre-Lifecycle key, so
+    no `state_slice:` override is needed (SPEC §5 step 2 / §7 OQ-7).
+
+  Handlers are unchanged: `:read` / `:write` / `:instantiate` / `:fork`
+  keep their `ctx[:read]` slice access + `{:set, :content, _}` effects +
+  in-handler `Router.dispatch` for the result-dependent fork followups
+  (the canonical "result-dependent in-handler dispatch" pattern §10 /
+  `Chat.handle_send/2`). `data_owner/1` passes through unchanged.
+
+  Naming (§11 NP-1/NP-2/NP-3 audit): `Ezagent.Behavior.Template` — a
+  domain module naming its own domain concept (`Template`), four actions
+  whose intent the name tracks. NO violation; a rename would touch the
+  `:template` snapshot key + every dispatch call site for no gain.
+  Kept as-is.
   """
 
-  use Ezagent.Behavior
+  use Ezagent.Lifecycle
 
   require Logger
 
@@ -177,10 +207,14 @@ defmodule Ezagent.Behavior.Template do
         "points back at this one (PR1 2026-05-24)",
     workspace_scoped?: false
 
-  def state_slice, do: :template
-
-  def init_slice(args) do
-    %{content: Map.get(args, :content)}
+  # `init_slice/1` → `create/1` (SPEC §3 mapping). Build the persistent
+  # `%{content: ...}` once, on first-ever existence. `:content` survives
+  # restart (durable template record), so it lives in `state`; there are
+  # no transients, so `activate/2` is the macro no-op default.
+  # `state_slice/0` is auto-derived to `:template` (the pre-Lifecycle key).
+  @impl Ezagent.Lifecycle
+  def create(args) do
+    {:ok, %{content: Map.get(args, :content)}}
   end
 
   # --- :read -------------------------------------------------------------

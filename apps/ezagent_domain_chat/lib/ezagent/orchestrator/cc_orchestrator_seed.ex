@@ -170,8 +170,17 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
   # `:sys.get_state` returns the Kind.Server state map; slice data lives
   # under the `:state` key (per `Ezagent.Kind.Server` shape — confirmed
   # via :sys.get_state on a live AgentTemplate pid).
+  #
+  # Lifecycle migration (SPEC 2026-05-29): `Ezagent.Behavior.Template`
+  # now `use Ezagent.Lifecycle`, so the `:template` slice is the
+  # two-container `%{state: %{content: ...}, transients: %{}}` shape (the
+  # framework persists only `:state`; `:content` is fully persistent).
+  # Match the two-container form FIRST, then fall back to the legacy flat
+  # `%{content: ...}` (a pre-migration snapshot / non-Lifecycle Behavior).
   defp read_template_slice(pid) do
     case :sys.get_state(pid, 500) do
+      %{state: %{template: %{state: %{content: content}}}} when is_map(content) -> content
+      %{state: %{template: %{state: %{content: nil}}}} -> %{}
       %{state: %{template: %{content: content}}} when is_map(content) -> content
       %{state: %{template: %{content: nil}}} -> %{}
       _ -> %{}

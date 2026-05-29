@@ -967,12 +967,25 @@ defmodule Ezagent.Entity.Session do
     end
   end
 
-  # `:sys.get_state` on a Kind.Server returns `%{state: %{template: %{content: ...}}}`.
+  # `:sys.get_state` on a Kind.Server returns `%{state: %{template: <slice>}}`.
   # Wrapped to swallow timeouts / restarts (the AgentTemplate Kind is
   # snapshot-persisted, so a brief restart races are normal) — returns
-  # `nil` on any failure so the caller surfaces `:orchestrator_template_not_populated`.
+  # `%{}` on any failure so the caller surfaces
+  # `:orchestrator_template_not_populated`.
+  #
+  # Lifecycle migration (SPEC 2026-05-29): `Ezagent.Behavior.Template`
+  # now uses `use Ezagent.Lifecycle`, so the `:template` slice is the
+  # two-container `%{state: %{content: ...}, transients: %{}}` shape (the
+  # framework persists only `:state`; `:content` is fully persistent).
+  # This raw `:sys.get_state` read therefore matches the two-container
+  # form FIRST, then falls back to the legacy flat `%{content: ...}` form
+  # (a pre-migration snapshot or a non-Lifecycle Behavior). Reading the
+  # raw process state (vs `Kind.get_slice/2`'s normalized view) is
+  # deliberate here — it swallows restart-race timeouts the comment above
+  # describes without a blocking `GenServer.call`.
   defp safe_get_template_content(pid) do
     case :sys.get_state(pid, 500) do
+      %{state: %{template: %{state: %{content: content}}}} when is_map(content) -> content
       %{state: %{template: %{content: content}}} when is_map(content) -> content
       _ -> %{}
     end

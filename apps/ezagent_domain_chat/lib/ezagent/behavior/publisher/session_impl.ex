@@ -7,7 +7,71 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
 
   Added to `Ezagent.Entity.Session.behaviors/0` so every Session Kind
   boots with a `:publisher` slice and self-subscribes to its own
-  `Ezagent.SliceChange` topic via `post_init/2`.
+  `Ezagent.SliceChange` topic in `activate/2`.
+
+  ## Lifecycle migration (Phase B, SPEC 2026-05-29 — the transients +
+  ## post-ready reference case)
+
+  Converted from `use Ezagent.Behavior` to `use Ezagent.Lifecycle`. This
+  is the module the brief calls out as "transients + post-ready": it
+  exercises EVERY non-trivial Lifecycle moment.
+
+  ### Two-container split (SPEC §0.1 / §2.1)
+
+  - **STATE (persistent — framework auto-snapshots):** `ring` / `cursor`
+    / `retention`. These are the durable event-log fields (the Session is
+    `{:snapshot, :on_change}`; the ring survives restart).
+  - **TRANSIENT (never persisted — rebuilt every `activate/2`):**
+    `subscribers` (`pid → ref`) + `monitors` (`ref → pid`). Both are
+    BEAM-local handles to live processes — a snapshot binary written by
+    ONE BEAM and loaded by ANOTHER holds non-routable / stale pids + refs
+    (the exact hazard the pre-Lifecycle `reconcile_after_load/2` existed
+    to scrub). Under Lifecycle they live in `transients`, which has NO
+    serialization path, so they CANNOT be persisted and START EMPTY on
+    every `activate/2` — live workers re-subscribe via the lifecycle
+    handshake (`activated/2` → `broadcast_alive`). This makes the
+    snapshot-of-stale-handles bug structurally impossible.
+
+  ### Boot hooks (SPEC §10-R1 / §9 OQ-5)
+
+  - `init_slice/1` → `create/1` (persistent `ring`/`cursor`/`retention`).
+  - `post_init/2` + `handle_continue(:subscribe_to_self_slice_change)`
+    → folded into `activate/2`: the self-subscription to this Kind's OWN
+    `Ezagent.SliceChange` topic is pre-`:ready` boot work with NO
+    `send(self(), ...)` self-deferral, so per §10-R1 it belongs in
+    `activate/2`. The subscription is also a TRANSIENT (it binds THIS
+    Kind.Server process; `activate/2` records the subscriber pid as the
+    cold-restart-detectable token — a brutal kill + cold-load yields a
+    DIFFERENT live pid, proving the binding was rebuilt, not rehydrated).
+  - `on_ready/2` (the `:publisher_alive` reachability broadcast that
+    invites a worker `:call` round-trip) → `activated/2` (§9 OQ-5 /
+    §10-R1): it MUST fire AFTER the `ReadyGate` flips or the worker's
+    re-subscribe `:call` hits `{:error, :not_ready}` (the exact cold-spawn
+    silent-fail this broadcast was moved out of `handle_continue` to fix
+    — see the `activated/2` doc). `activate` is pre-`:ready`; `activated`
+    is post-`:ready`. Keeping them distinct PRESERVES that ordering.
+  - `reconcile_after_load/2` is GONE: it cleared `subscribers`/`monitors`
+    on snapshot load — but those are now transients that start empty
+    every `activate/2`, so there is NOTHING to clear. The reconcile-clear
+    is subsumed by the container model (SPEC §10-R1 / §9 OQ-5 — folding
+    the clear into the structural transient guarantee).
+  - `handle_kind_message/3` → `handle_signal/2` (§9 OQ-3): `{:slice_changed,
+    event}` mutates `ring`/`cursor` (state → `{:set, ...}`); `{:DOWN, ...}`
+    mutates `subscribers`/`monitors` (transient → `{:set_transient, ...}`).
+    The per-subscriber `fan_out` (`send/2` to specific pids) + the replay
+    `send/2`s stay imperative in-handler — they target specific pids, not
+    a topic, so they are not `:notify` effects.
+
+  Handler accessor changes: `ring`/`cursor`/`retention` stay `ctx[:read]`
+  + `{:set, ...}`; `subscribers`/`monitors` reads go to
+  `ctx.transients[k]` and writes become `{:set_transient, k, v}` effects.
+
+  Naming (§11 NP-1/NP-2/NP-3 audit): `Ezagent.Behavior.Publisher.SessionImpl`
+  — a domain module (`apps/ezagent_domain_chat`); names a domain concept
+  (`Publisher` contract + `SessionImpl` = "the Session's implementation of
+  it"). NP-2 only forbids upper-layer words in `ezagent_core`; this is a
+  domain module. NO violation; the `Session`-named segment legitimately
+  identifies which Kind implements the contract. Kept as-is.
 
   ## Where this module lives
 
@@ -90,7 +154,15 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
   imperative and aimed at a specific pid (not a topic).
   """
 
-  use Ezagent.Behavior
+  # lifecycle:state_slice_override
+  #
+  # The `:publisher` slice key is pinned (snapshot-compat — SPEC §5 step 2
+  # / §7 OQ-7). The macro would auto-derive the last module segment
+  # `SessionImpl` → `:session_impl`, which would orphan every existing
+  # `kind_snapshots` row + break the sibling-of-`:chat` placement + the
+  # Session's `behaviors/0` registration. Declared explicitly with the
+  # sanctioned marker.
+  use Ezagent.Lifecycle, state_slice: :publisher
 
   require Logger
 
@@ -160,123 +232,129 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
   def data_owner({:within_workspace, %URI{}}), do: :any
   def data_owner(_), do: :no_owner
 
-  def state_slice, do: :publisher
-
-  def init_slice(args) do
+  # `init_slice/1` → `create/1` (SPEC §3 mapping). Build ONLY the
+  # PERSISTENT fields (`ring` / `cursor` / `retention` — the durable
+  # event log). `subscribers` + `monitors` are GONE from state — they are
+  # TRANSIENTS now (BEAM-local pid/ref handles), rebuilt EMPTY by
+  # `activate/2` on every start. `args` carries the spawn-time retention;
+  # a snapshot rehydrate shadows this `state` on cold-load.
+  @impl Ezagent.Lifecycle
+  def create(args) do
     retention =
       case Map.get(args, :publisher_retention) do
         n when is_integer(n) and n > 0 -> n
         _ -> @default_retention
       end
 
-    %{
-      ring: [],
-      cursor: 0,
-      retention: retention,
-      subscribers: %{},
-      monitors: %{}
-    }
+    {:ok,
+     %{
+       ring: [],
+       cursor: 0,
+       retention: retention
+     }}
   end
 
   @doc """
-  Schedules a post-init continuation to subscribe this Kind's pid to
-  its OWN SliceChange topic (PR-EM-CORE hook + r4 split-init pattern).
+  `activate/2` (SPEC §10-R1) — EVERY process (re)start. UNIFIES the
+  pre-Lifecycle `post_init/2` + `handle_continue(:subscribe_to_self_slice_change)`
+  AND the `reconcile_after_load/2` subscriber-clear:
 
-  Returns `{:continue, :subscribe_to_self_slice_change}` so the
-  subscribe runs AFTER `:announce_ready` — by the time SliceChange
-  events flow, the Kind is reachable for dispatch.
+  1. Self-subscribe this Kind's pid to its OWN `Ezagent.SliceChange`
+     topic via `Ezagent.SliceChange.subscribe_unverified/1` (same-VM
+     trust per PR-N1 round-5 — the Kind subscribing to its own topic is
+     the canonical legitimate use; the Kind's pid IS the topic owner).
+     This is pre-`:ready` boot work with NO `send(self(), ...)`
+     self-deferral, so per §10-R1 it folds into `activate/2` (NOT
+     `activated/2`). Idempotent at the PubSub level — a cold-restored
+     Session re-running `activate/2` re-subscribes without dup-fan-out.
 
-  NOTE: the `:publisher_alive` lifecycle broadcast does NOT happen
-  here — it lives in `on_ready/2` so it fires AFTER
-  `Ezagent.ReadyGate.mark_ready/1` flips. See `on_ready/2` doc +
-  task #49 codex round-1 FAIL #6.
+  2. Rebuild the TRANSIENT bookkeeping: `subscribers` + `monitors` start
+     EMPTY on every start. Live workers re-subscribe via the lifecycle
+     handshake (the `activated/2` `:publisher_alive` broadcast →
+     worker `:subscribe_from`). The subscription record is itself a
+     transient — `subscription.subscriber` is the host Kind.Server pid,
+     the cold-restart-detectable token (a brutal kill + cold-load yields
+     a DIFFERENT live pid, proving the binding was rebuilt — SPEC §6
+     step 5c). This SUBSUMES the old `reconcile_after_load/2` clear: the
+     maps cannot carry stale handles because they live in `transients`,
+     which has no serialization path and is rebuilt here every start.
+
+  Runs PRE-`:ready` (the `:publisher_alive` reachability broadcast is in
+  `activated/2`, post-`:ready` — §9 OQ-5).
   """
-  def post_init(_args, _publisher_slice) do
-    {:continue, :subscribe_to_self_slice_change}
+  @impl Ezagent.Lifecycle
+  def activate(_state, ctx) do
+    self_uri = Map.fetch!(ctx, :self_uri)
+
+    subscription = subscribe_to_self_slice_change(self_uri)
+
+    {:ok,
+     %{
+       subscribers: %{},
+       monitors: %{},
+       slice_change_subscription: subscription
+     }}
   end
 
-  def handle_continue(:subscribe_to_self_slice_change, _publisher_slice, %{self_uri: self_uri}) do
-    :ok = Ezagent.SliceChange.subscribe_unverified(self_uri)
+  # Subscribe THIS process to its own SliceChange topic and return the
+  # transient record. The `subscriber` pid (= the host Kind.Server) is the
+  # cold-restart-detectable token (SPEC §6 step 5c). Best-effort: a
+  # subscribe failure must not crash the boot.
+  defp subscribe_to_self_slice_change(%URI{} = self_uri) do
+    try do
+      :ok = Ezagent.SliceChange.subscribe_unverified(self_uri)
+      %{subscribed_to: URI.to_string(self_uri), subscriber: self()}
+    catch
+      kind, reason ->
+        Logger.warning(
+          "Ezagent.Behavior.Publisher.SessionImpl.activate: SliceChange.subscribe " <>
+            "failed (#{inspect(kind)}, #{inspect(reason)}) for " <>
+            "#{URI.to_string(self_uri)}; this incarnation will not mirror slice changes"
+        )
 
-    # Slice unchanged — return `:ignore` so the Server skips the
-    # snapshot commit path (we just opened a PubSub subscription;
-    # no slice mutation).
-    :ignore
+        %{subscribed_to: URI.to_string(self_uri), subscriber: self()}
+    end
   end
 
   @doc """
-  Task #49 codex round-1 FAIL #6 (2026-05-27) — broadcast the
-  `:publisher_alive` lifecycle event AFTER
-  `Ezagent.ReadyGate.mark_ready/1` has flipped this Session to
+  `activated/2` (SPEC §9 OQ-5 / §10-R1, post-`:ready`) — successor to the
+  engine's `on_ready/2`. Broadcast the `:publisher_alive` lifecycle event
+  AFTER `Ezagent.ReadyGate.mark_ready/1` has flipped this Session to
   `:ready` and the PendingDelivery buffer has drained.
 
-  Previously this broadcast lived in `handle_continue/3`, which
-  runs BEFORE ReadyGate flips. Cold-spawn flow:
+  This MUST be post-`:ready`, NOT in `activate/2`. Cold-spawn flow if it
+  fired pre-`:ready`:
 
-      Session.handle_continue → broadcast :publisher_alive
-                              → Worker receives event
-                              → Worker calls subscribe_to_session_publisher (mode :call)
-                              → Router.dispatch sees Session ReadyGate :not_ready
-                              → returns {:error, :not_ready}
-                              → Worker logs + discards (no retry)
-                              → SILENT FAIL on cold-spawn — the exact case this
-                                mechanism was meant to fix.
+      activate → broadcast :publisher_alive
+               → Worker receives event
+               → Worker calls subscribe_to_session_publisher (mode :call)
+               → Router.dispatch sees Session ReadyGate :not_ready
+               → returns {:error, :not_ready}
+               → Worker logs + discards (no retry)
+               → SILENT FAIL on cold-spawn — the exact case this mechanism
+                 was meant to fix (task #49 codex round-1 FAIL #6).
 
-  Moving the broadcast to `on_ready/2` ensures the Worker's
-  re-subscribe `:call` finds the Session `:ready`. The Worker also
-  carries a defence-in-depth retry on `{:error, :not_ready}` (see
-  `Ezagent.Behavior.ExternalMirrorWorker.handle_kind_message/3`
-  `:publisher_alive` clause) — primary fix is the on_ready ordering;
-  the retry is the belt-and-braces backup.
+  Running it in `activated/2` (which compiles to `on_ready/2`, post-flip)
+  ensures the Worker's re-subscribe `:call` finds the Session `:ready`.
+  The Worker also carries a defence-in-depth retry on `{:error,
+  :not_ready}` (`Ezagent.Behavior.ExternalMirrorWorker` `:publisher_alive`
+  clause) — primary fix is the ordering; the retry is belt-and-braces.
   """
-  def on_ready(_publisher_slice, %{self_uri: self_uri}) do
+  @impl Ezagent.Lifecycle
+  def activated(_state, %{self_uri: self_uri}) do
     :ok = Ezagent.PublisherLifecycle.broadcast_alive(self_uri)
   end
 
-  @doc """
-  Task #49 codex round-1 CONCERN #3 (2026-05-27) — clear transient
-  `:subscribers` + `:monitors` maps on snapshot load.
-
-  Why transient: the Publisher slice's `:subscribers` map keys are
-  `pid()` values + the `:monitors` map values are monitor `reference()`
-  values. Both are BEAM-local handles to live processes — a snapshot
-  binary written by ONE BEAM that's then loaded by a DIFFERENT BEAM
-  (cold-spawn, BEAM restart) holds non-routable / stale handles.
-  `Process.alive?/1` on a stale pid from another BEAM returns `false`
-  (or worse, the local BEAM has reassigned that pid number to a new
-  process); a stale monitor reference cannot be demonitored on a
-  remote BEAM.
-
-  Worse: the pre-task-#49 lifecycle-broadcast handshake relies on
-  `ensure_monitored/2` to dedupe by pid (the publisher's "already
-  subscribed" fast path). If the snapshot persisted a `subscribers`
-  entry like `%{<stale_pid> => <stale_ref>}`, a fresh worker
-  attempting to subscribe (which has the SAME pid number by sheer
-  bad luck — pid reuse IS a thing in long-running BEAMs) would be
-  recognised as "already subscribed", `ensure_monitored/2` skips
-  the monitor install, the worker pid is recorded but no monitor
-  exists, AND the Publisher fans out events to a non-routable
-  handle (the stale ref).
-
-  Clearing both maps on every snapshot load makes the transient
-  membership EXPLICIT: every restart starts with an empty subscribers
-  map; live workers re-subscribe via the lifecycle handshake. The
-  `:ring`, `:cursor`, and `:retention` fields are durable and
-  preserved.
-
-  Idempotent: re-running on an already-cleared slice is a no-op
-  (already `%{}`). Matches the task #34 `reconcile_after_load/2`
-  contract for DB-projection slices.
-  """
-  def reconcile_after_load(_uri, publisher_slice) do
-    %{publisher_slice | subscribers: %{}, monitors: %{}}
-  end
-
-  # ----- Kind-message hook ----------------------------------------------
+  # ----- Signal hook (non-action GenServer messages) --------------------
 
   @doc """
+  `handle_signal/2` (SPEC §9 OQ-3) — the Lifecycle successor to the
+  engine's `handle_kind_message/3`. Returns the SAME effect grammar a
+  `handle_<action>/2` does; the macro reduces it into the two-container
+  slice (`:set` → state, `:set_transient` → transients).
+
   Receives `{:slice_changed, event}` from `Ezagent.SliceChange` (our
-  own topic — we subscribed in `post_init/2`'s continuation) and
+  own topic — we subscribed in `activate/2`) and
   `{:DOWN, ref, :process, pid, reason}` from `Process.monitor/1` of
   subscriber pids.
 
@@ -286,12 +364,20 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
   to mirror foreign data).
 
   Importantly, slice changes to the `:publisher` slice itself are
-  IGNORED (they would re-trigger an emit-loop: a subscriber being
-  added mutates `:publisher.subscribers`, which becomes its own
-  slice-change event, which would add an entry to the ring). The
-  Publisher mirrors slice changes from OTHER slices (`:chat` etc).
+  IGNORED (they would re-trigger an emit-loop: a subscriber being added
+  mutates `:publisher.subscribers`, which becomes its own slice-change
+  event, which would add an entry to the ring). The Publisher mirrors
+  slice changes from OTHER slices (`:chat` etc).
+
+  `ring` + `cursor` are PERSISTENT — written via `{:set, ...}`. The
+  `fan_out` (`send/2` to specific subscriber pids) stays imperative
+  in-handler — it targets pids, not a topic, so it is not a `:notify`
+  effect. `subscribers` is read from `ctx.transients` (the macro injects
+  `ctx.transients` + a `ctx.read` over `:state` for the signal path —
+  see `Ezagent.Lifecycle.__run_signal__/4`).
   """
-  def handle_kind_message({:slice_changed, %{} = event}, publisher_slice, ctx) do
+  @impl Ezagent.Lifecycle
+  def handle_signal({:slice_changed, %{} = event}, ctx) do
     self_uri = Map.fetch!(ctx, :self_uri)
 
     cond do
@@ -303,7 +389,12 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
         :ignore
 
       true ->
-        new_cursor = publisher_slice.cursor + 1
+        cursor = ctx[:read].(:cursor, 0)
+        ring = ctx[:read].(:ring, [])
+        retention = ctx[:read].(:retention, @default_retention)
+        subscribers = (ctx[:transients] || %{})[:subscribers] || %{}
+
+        new_cursor = cursor + 1
 
         publisher_event = %Event{
           cursor: new_cursor,
@@ -314,29 +405,44 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
           payload: build_payload(event, ctx)
         }
 
-        new_ring =
-          append_with_retention(publisher_slice.ring, publisher_event, publisher_slice.retention)
+        new_ring = append_with_retention(ring, publisher_event, retention)
 
-        fan_out(publisher_event, publisher_slice.subscribers)
+        fan_out(publisher_event, subscribers)
 
-        {:ok, %{publisher_slice | ring: new_ring, cursor: new_cursor}}
+        # `ring` + `cursor` are PERSISTENT state.
+        {:ok,
+         [
+           {:set, :ring, new_ring},
+           {:set, :cursor, new_cursor}
+         ]}
     end
   end
 
-  def handle_kind_message({:DOWN, ref, :process, _pid, _reason}, publisher_slice, _ctx) do
-    case Map.pop(publisher_slice.monitors, ref) do
+  def handle_signal({:DOWN, ref, :process, _pid, _reason}, ctx) do
+    # `subscribers` + `monitors` are TRANSIENTS (BEAM-local handles) —
+    # read from ctx.transients, written via `{:set_transient, ...}`.
+    transients = ctx[:transients] || %{}
+    monitors = transients[:monitors] || %{}
+    subscribers = transients[:subscribers] || %{}
+
+    case Map.pop(monitors, ref) do
       {nil, _} ->
         # Not one of our refs (could belong to another Behavior on
         # the same Kind — Chat also monitors pids).
         :ignore
 
       {pid, new_monitors} ->
-        new_subscribers = Map.delete(publisher_slice.subscribers, pid)
-        {:ok, %{publisher_slice | subscribers: new_subscribers, monitors: new_monitors}}
+        new_subscribers = Map.delete(subscribers, pid)
+
+        {:ok,
+         [
+           {:set_transient, :subscribers, new_subscribers},
+           {:set_transient, :monitors, new_monitors}
+         ]}
     end
   end
 
-  def handle_kind_message(_other, _publisher_slice, _ctx), do: :ignore
+  def handle_signal(_other, _ctx), do: :ignore
 
   # ----- Handlers -------------------------------------------------------
 
@@ -375,13 +481,15 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
         flushed_publisher_slice = prune_dead_subscribers(current_publisher_slice)
         {_ref, new_publisher_slice} = ensure_monitored(flushed_publisher_slice, subscriber_pid)
 
-        # Three fields can change vs the source: subscribers, monitors.
-        # Use a single `:set` per field so the effect grammar's snapshot
-        # writes are surgical (vs replacing the whole slice).
+        # `subscribers` + `monitors` are TRANSIENTS (BEAM-local pid/ref
+        # handles) — written via `{:set_transient, ...}`, NEVER persisted
+        # (SPEC §0.1 / §7 OQ-2). Surgical per-field writes (vs replacing
+        # the whole transients map) so the macro's transient reduction is
+        # minimal.
         {:ok, %{cursor: current_publisher_slice.cursor},
          [
-           {:set, :subscribers, new_publisher_slice.subscribers},
-           {:set, :monitors, new_publisher_slice.monitors}
+           {:set_transient, :subscribers, new_publisher_slice.subscribers},
+           {:set_transient, :monitors, new_publisher_slice.monitors}
          ]}
     end
   end
@@ -411,17 +519,22 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
 
   # ----- Internals ------------------------------------------------------
 
-  # Reconstruct the current publisher slice from ctx[:read]/2. The new
-  # contract doesn't pass the slice as an arg; instead each field is
-  # read on demand. We re-materialise the slice as a map for the
-  # internal helpers (window/3, prepare_replay/2, etc).
+  # Reconstruct the current publisher slice from ctx. The new contract
+  # doesn't pass the slice as an arg; instead each field is read on
+  # demand. PERSISTENT fields (`ring` / `cursor` / `retention`) come from
+  # `ctx[:read]`; TRANSIENT fields (`subscribers` / `monitors`,
+  # BEAM-local handles) come from `ctx.transients` (SPEC §2.1 / §2.2). We
+  # re-materialise the flat map for the internal helpers (window/3,
+  # prepare_replay/2, ensure_monitored/2, prune_dead_subscribers/1).
   defp current_slice(ctx) do
+    transients = ctx[:transients] || %{}
+
     %{
       ring: ctx[:read].(:ring, []),
       cursor: ctx[:read].(:cursor, 0),
       retention: ctx[:read].(:retention, @default_retention),
-      subscribers: ctx[:read].(:subscribers, %{}),
-      monitors: ctx[:read].(:monitors, %{})
+      subscribers: transients[:subscribers] || %{},
+      monitors: transients[:monitors] || %{}
     }
   end
 

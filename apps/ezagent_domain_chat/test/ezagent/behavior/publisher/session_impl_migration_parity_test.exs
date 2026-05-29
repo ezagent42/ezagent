@@ -6,10 +6,30 @@ defmodule Ezagent.Behavior.Publisher.SessionImplMigrationParityTest do
 
   Covers the three actions (:subscribe_from / :snapshot / :history)
   via their `handle_<action>/2` shape, asserting:
-  - Slice-state reads via ctx[:read]
-  - Effects produced match expected shape (:set for state mutations)
+  - Slice-state reads via ctx[:read] (persistent) + ctx.transients
+    (subscribers / monitors)
+  - Effects produced match expected shape (:set for persistent state
+    mutations; :set_transient for the transient subscriber/monitor maps)
   - Error paths return the expected typed errors
-  - reconcile_after_load + on_ready + post_init contracts
+
+  ## Lifecycle migration (SPEC 2026-05-29) — accessor updates
+
+  After the `use Ezagent.Behavior` → `use Ezagent.Lifecycle` migration:
+  - `init_slice/1` now returns the two-container `%{state:, transients:}`
+    shape; persistent fields (`ring`/`cursor`/`retention`) live under
+    `.state`, the transient maps (`subscribers`/`monitors`) under
+    `.transients` (filled by `activate/2`, EMPTY at `create`).
+  - `post_init/2` is macro-emitted and returns `{:continue,
+    :ezagent_activate}` (the macro's unified activate continuation), NOT
+    the old `:subscribe_to_self_slice_change`.
+  - `reconcile_after_load/2` is GONE — its subscriber/monitor clear is
+    subsumed by the transient container (they start empty every
+    `activate/2`). The two reconcile tests are replaced by a `create/1`
+    persistent-only assertion + an `activate/2` empty-transients
+    assertion that prove the same invariant structurally.
+  - `subscribe_from` now produces `{:set_transient, ...}` (not `{:set,
+    ...}`) for the subscriber/monitor maps; the handler reads them from
+    `ctx.transients`.
   """
 
   use ExUnit.Case, async: true
@@ -30,10 +50,14 @@ defmodule Ezagent.Behavior.Publisher.SessionImplMigrationParityTest do
     )
   end
 
+  # Lifecycle: persistent fields read via `:read`; transient maps
+  # (subscribers / monitors) read via `:transients`. The flat parity
+  # slice co-locates both, so expose the same flat map as `:transients`.
   defp ctx_for(slice, extras \\ %{}) do
     Map.merge(
       %{
         read: fn key, default -> Map.get(slice, key, default) end,
+        transients: slice,
         self_uri: URI.parse("session://default/team-alpha/parity"),
         caller: nil,
         caps: MapSet.new()
@@ -56,41 +80,49 @@ defmodule Ezagent.Behavior.Publisher.SessionImplMigrationParityTest do
       assert SessionImpl.state_slice() == :publisher
     end
 
-    test "init_slice/1 with default retention" do
+    # Lifecycle: `create/1` builds ONLY the persistent fields; the
+    # transient subscriber/monitor maps are NOT in `state` — `activate/2`
+    # fills them empty on every start.
+    test "create/1 with default retention (persistent fields only)" do
+      assert {:ok, state} = SessionImpl.create(%{})
+      assert state.ring == []
+      assert state.cursor == 0
+      assert state.retention == SessionImpl.default_retention()
+      refute Map.has_key?(state, :subscribers)
+      refute Map.has_key?(state, :monitors)
+    end
+
+    test "init_slice/1 wraps create/1 in the two-container shape (transients empty)" do
       slice = SessionImpl.init_slice(%{})
-      assert slice.ring == []
-      assert slice.cursor == 0
-      assert slice.retention == SessionImpl.default_retention()
-      assert slice.subscribers == %{}
-      assert slice.monitors == %{}
+      assert slice.state.ring == []
+      assert slice.state.cursor == 0
+      assert slice.transients == %{}
     end
 
-    test "init_slice/1 with custom retention" do
-      assert SessionImpl.init_slice(%{publisher_retention: 50}).retention == 50
+    test "create/1 with custom retention" do
+      assert {:ok, %{retention: 50}} = SessionImpl.create(%{publisher_retention: 50})
     end
 
-    test "post_init/2 returns continuation atom" do
-      assert {:continue, :subscribe_to_self_slice_change} =
-               SessionImpl.post_init(%{}, %{})
+    test "post_init/2 returns the macro activate continuation" do
+      assert {:continue, :ezagent_activate} = SessionImpl.post_init(%{}, %{})
     end
 
-    test "reconcile_after_load/2 clears transient subscribers + monitors" do
-      slice = empty_slice(%{subscribers: %{:fake_pid => :fake_ref}, monitors: %{:fake_ref => :fake_pid}, cursor: 42, ring: [:e1]})
-      reconciled = SessionImpl.reconcile_after_load(URI.parse("session://x/y/z"), slice)
-
-      # Transient fields cleared.
-      assert reconciled.subscribers == %{}
-      assert reconciled.monitors == %{}
-      # Durable fields preserved.
-      assert reconciled.cursor == 42
-      assert reconciled.ring == [:e1]
+    # reconcile_after_load/2 is GONE (subsumed by the transient container).
+    # The same invariant — subscribers/monitors never carry stale handles
+    # across a restart — is now structural: they live in `transients`,
+    # which `activate/2` rebuilds EMPTY every start. These two tests prove
+    # it directly.
+    test "create/1 does NOT carry the transient bookkeeping maps" do
+      assert {:ok, state} = SessionImpl.create(%{})
+      refute Map.has_key?(state, :subscribers)
+      refute Map.has_key?(state, :monitors)
     end
 
-    test "reconcile_after_load/2 is idempotent" do
-      slice = empty_slice()
-      once = SessionImpl.reconcile_after_load(URI.parse("session://x/y/z"), slice)
-      twice = SessionImpl.reconcile_after_load(URI.parse("session://x/y/z"), once)
-      assert once == twice
+    test "activate/2 rebuilds subscribers + monitors EMPTY (no stale-handle carry)" do
+      ctx = %{self_uri: URI.parse("session://default/team-alpha/parity")}
+      assert {:ok, transients} = SessionImpl.activate(%{ring: [], cursor: 0, retention: 100}, ctx)
+      assert transients.subscribers == %{}
+      assert transients.monitors == %{}
     end
   end
 
@@ -138,7 +170,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplMigrationParityTest do
     end
   end
 
-  describe "handle_subscribe_from/2 — :set effects for subscribers + monitors" do
+  describe "handle_subscribe_from/2 — :set_transient effects for subscribers + monitors" do
     test "requires a real pid arg" do
       ctx = ctx_for(empty_slice())
 
@@ -147,20 +179,21 @@ defmodule Ezagent.Behavior.Publisher.SessionImplMigrationParityTest do
       end
     end
 
-    test "subscribing a fresh pid produces two :set effects (subscribers + monitors)" do
+    # Lifecycle: subscribers/monitors are TRANSIENTS — written via
+    # `{:set_transient, ...}`, never persisted (SPEC §0.1 / §7 OQ-2).
+    test "subscribing a fresh pid produces two :set_transient effects (subscribers + monitors)" do
       ctx = ctx_for(empty_slice())
 
       assert {:ok, %{cursor: 0}, effects} =
                SessionImpl.handle_subscribe_from(%{subscriber_pid: self()}, ctx)
 
-      # Both bookkeeping maps get a :set effect.
       assert Enum.any?(effects, fn
-               {:set, :subscribers, m} -> is_map(m) and Map.has_key?(m, self())
+               {:set_transient, :subscribers, m} -> is_map(m) and Map.has_key?(m, self())
                _ -> false
              end)
 
       assert Enum.any?(effects, fn
-               {:set, :monitors, m} -> is_map(m)
+               {:set_transient, :monitors, m} -> is_map(m)
                _ -> false
              end)
     end

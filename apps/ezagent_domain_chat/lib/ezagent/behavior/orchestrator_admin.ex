@@ -60,9 +60,37 @@ defmodule Ezagent.Behavior.OrchestratorAdmin do
   `Ezagent.Behavior.Chat.data_owner/1` (which reads
   `slice.chat.owner_uri`); a `ezagent_core` location would create a
   core→domain dependency.
+
+  ## Lifecycle migration (Phase B, SPEC 2026-05-29 §2.3 — the cap-only /
+  ## no-state case)
+
+  Converted from `use Ezagent.Behavior` to `use Ezagent.Lifecycle`. This
+  is the trivial conversion: cap-only Behavior with an EMPTY slice and NO
+  transients. `init_slice/1` → `create/1` returning `{:ok, %{}}` (the
+  persistent state is empty — the cap is the whole point); `activate/2`
+  is the macro-injected no-op default (no transients to rebuild). The
+  hand-rolled `def state_slice` is gone — the macro auto-derives
+  `Ezagent.Behavior.OrchestratorAdmin` → `:orchestrator_admin`, which is
+  EXACTLY the pre-Lifecycle key, so no `state_slice:` override is needed
+  (SPEC §5 step 2 / §7 OQ-7).
+
+  `required_caps/0` / `dispatchable?/0` / `data_owner/1` / the
+  `handle_restart/2` cap-only handler all pass through the Lifecycle
+  macro unchanged (SPEC §3 mapping table).
+
+  Naming (§11 NP-1/NP-2/NP-3 audit): `Ezagent.Behavior.OrchestratorAdmin`
+  — a domain module (`apps/ezagent_domain_chat`); NP-2 (layer-vocabulary)
+  only forbids upper-layer concept words in `apps/ezagent_core/`, so an
+  `Orchestrator`-named domain module is permitted. NP-3 (width): the name
+  is broader than its single `:restart` action — but it names a coherent
+  authority surface (session-owner authority over the orchestrator),
+  matching the existing `Presence` cap-only sibling, and a rename would
+  touch the `:orchestrator_admin` snapshot key + the LV's restart gate +
+  the first-join owner-cap grant in `Chat.grant_first_join_owner_cap/2`
+  for no clarity gain. Kept as-is.
   """
 
-  use Ezagent.Behavior
+  use Ezagent.Lifecycle
 
   # NOTE: `:restart` carries the cap-subject + handler shape required
   # by the new-contract Behavior macro; reaching the handler in
@@ -78,9 +106,13 @@ defmodule Ezagent.Behavior.OrchestratorAdmin do
     description: "restart this session's orchestrator agent (session-owner authority)",
     data_owner: :self
 
-  def state_slice, do: :orchestrator_admin
-
-  def init_slice(_args), do: %{}
+  # `init_slice/1` → `create/1` (SPEC §3 mapping): the persistent state
+  # is empty (this is a cap-only Behavior — the authority lives in the
+  # cap, not in per-instance state). `activate/2` is the macro no-op
+  # default (no transients). `state_slice/0` is auto-derived to
+  # `:orchestrator_admin` (the pre-Lifecycle key).
+  @impl Ezagent.Lifecycle
+  def create(_args), do: {:ok, %{}}
 
   # Override the macro-generated `required_caps/0` to declare the
   # `:session` kind axis explicitly. OrchestratorAdmin registers only

@@ -48,9 +48,12 @@ defmodule Ezagent.Behavior.TemplateMigrationParityTest do
       assert Template.state_slice() == :template
     end
 
+    # Lifecycle migration (SPEC 2026-05-29 §2.3): `init_slice/1` wraps
+    # `create/1`'s persistent `%{content: ...}` in the two-container
+    # shape (no transients). Assert on `.state`.
     test "init_slice/1 reads :content key (default nil)" do
-      assert Template.init_slice(%{}) == %{content: nil}
-      assert Template.init_slice(%{content: %{x: 1}}) == %{content: %{x: 1}}
+      assert Template.init_slice(%{}).state == %{content: nil}
+      assert Template.init_slice(%{content: %{x: 1}}).state == %{content: %{x: 1}}
     end
 
     test "workspace_scoped? is false (cross-cutting template:// URIs)" do
