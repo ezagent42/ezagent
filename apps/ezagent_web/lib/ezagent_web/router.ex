@@ -258,7 +258,6 @@ defmodule EzagentWeb.Router do
       # bind flow this LV drives.
       live "/admin/sessions/:id/external_mirror",
            Admin.SessionExternalMirrorLive
-
     end
   end
 
@@ -274,10 +273,10 @@ defmodule EzagentWeb.Router do
     live_session :operator_console, on_mount: {EzagentWeb.LiveAuth, :require_entity} do
       live "/operator", DashboardLive
       live "/operator/:tenant", DashboardLive
+      live "/plugins/customer-chat/:tenant/config", ConfigLive
       live "/operator/:tenant/:conv", SessionViewLive
     end
   end
-
 
   # Liveness probe — plain JSON, no ESR dispatch path involved.
   scope "/", EzagentWeb do
