@@ -346,3 +346,46 @@ Re-verified end-to-end in Chrome on the extracted + latest-main-merged tree:
 Deferred (documented, not regressions): escalation signal, CINNOX EM adapter,
 operator-cap legacy-`:any` tolerance, picker filtering of `workspace://system`,
 `servable_tenants` N-dispatch refactor.
+
+---
+
+## Scope #1 — Editable Soul (2026-05-30, home machine)
+
+Spec/plan: `11-admin-edit-soul-{design,PLAN}.md`. Implemented T1–T7 via
+subagent-driven TDD (commits `9721c30d` SoulStore, `915a00f4` bootstrap delegate,
+`3215146c` ConfigAuth, `f4641c8c` ConfigLive, `f6abd36a` route, `f793f80f`
+dashboard link, + cinnox fixture seed). All on `poc/phase-2-customer-service`.
+
+### Verified ✅
+- **Unit:** SoulStore 6 tests (edited→fixture→nil resolution; write snapshots
+  `.prev`; revert; reset) + ConfigAuth 6 tests (admin via capability — NOT a
+  membership bypass; workspace-admin admits; per-tenant isolation; responder
+  `Mode.set` excluded; action-axis). Full app suite **24 tests, 0 failures**;
+  our-app `--warning-as-errors` clean.
+- **Route:** `mix phx.routes` → `/plugins/customer-chat/:tenant/config` resolves
+  to `EzagentPluginCustomerChat.ConfigLive` (scope-alias gotcha avoided).
+- **Mechanism — edit → new conversation uses it (PROVEN live at spawn):** with a
+  distinctive edited soul written to the cinnox sandbox edited-path, a **new**
+  conversation's cc-agent spawn command carried
+  `--append-system-prompt = channel_preamble() <> <EDITED soul body>` (captured in
+  the server log) — the new conv picked up the **edited** soul (not the fixture)
+  via `SoulStore.effective_path` at spawn. Core scope-#1 claim, end-to-end through
+  T1+T2+cc_agent.
+- **Reset reverts (PROVEN live at the resolution layer):** in the running config,
+  `read_effective("cinnox","customer")` returned `source: :edited` with the edit
+  present, then `source: :fixture` (the seeded cinnox soul) after `reset/2`;
+  `edited?` back to `false`.
+
+### Blocked (environment, NOT this feature) ⚠️
+- **Live AI reply round-trip** (customer sends → claude replies per the soul) is
+  blocked on this machine: the cc agent is a `claude` **PTY** subprocess spawned
+  via erlexec, and `exec-port` crashes the `:exec` manager with **`:einval` on the
+  `:pty` spawn** (`Application erlexec exited: shutdown` → later spawns `:no_pty`).
+  OTP 28 / macOS 12 / Intel `exec-port` build. Platform agent-execution layer,
+  orthogonal to scope #1, and it **blocks the reply via the browser too** (same
+  PTY path). Handoff flags cc/PTY e2e as work-machine territory (cc agents already
+  run there). Web/LiveView/SoulStore-writes/auth are unaffected (server up on
+  :10142) — the UI is manually testable; only the reply needs the working PTY.
+- **To get a full live reply here** (optional): rebuild erlexec for OTP 28
+  (`mix deps.compile erlexec --force`) or bump erlexec (see the `erlexec-elixir`
+  skill) — OR run the reply round-trip on the work machine.
