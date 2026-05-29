@@ -88,23 +88,142 @@ defmodule Ezagent.Invocation do
     instance_uri = Ezagent.URI.instance(target)
 
     with :ok <- maybe_idempotency_check(ctx) do
-      case {Ezagent.ReadyGate.status(instance_uri), mode} do
-        {:ready, _} ->
-          deliver_to_ready(instance_uri, mode, inv)
+      dispatch_with_lazy_spawn(instance_uri, mode, inv)
+    end
+  end
 
-        {:not_ready, :cast} ->
-          # Buffer for delivery once instance announces ready.
-          Ezagent.PendingDelivery.buffer(instance_uri, inv)
-          :ok
+  # codex E2E fix v2 Bug B (2026-05-29) — cold-spawn-from-snapshot on the
+  # dispatch path. Pre-fix, a dispatch to a Kind URI whose process was
+  # never spawned in this BEAM (ReadyGate status `:unknown`) returned
+  # `{:error, :no_such_actor}` even when a `kind_snapshots` row existed.
+  # Only `Ezagent.ExternalMirror.BootReconciler` rehydrated Kinds at
+  # boot — every other Kind family (Agent, Session, Workspace, ...) was
+  # silently invisible across BEAM restarts until something explicitly
+  # called `SpawnRegistry.spawn/1` (e.g. Workspace.Loader walking
+  # workspace members).
+  #
+  # Allen 2026-05-28 e2e symptom — DB had a `kind_snapshots` row for
+  # `entity://agent/h2oslabs/codex_test_alpha`, the KindRegistry lookup
+  # missed (BEAM restarted, ETS was empty), the dispatch returned
+  # `:no_such_actor`. The codex e2e bridge surfaced this as "no such
+  # actor (did you spawn the instance?)" — confusing because the agent
+  # visibly existed in the DB.
+  #
+  # The fix wires `Ezagent.Kind.StateRebuilder` (Phase 1 SPEC §5.3
+  # lazy-on-first-load primitive) into the dispatch chokepoint: on
+  # `:unknown` we attempt to:
+  #
+  #   1. Check whether a `kind_snapshots` row exists for `instance_uri`.
+  #      Cheap single-row PK lookup via `SnapshotStore.latest/1`. A
+  #      `{:error, :not_found}` short-circuits to the legacy
+  #      `:no_such_actor` (true "this URI has never existed" signal).
+  #   2. If a snapshot exists, call `SpawnRegistry.spawn/1` to bring
+  #      the Kind up. The spawn fn the plugin registered routes through
+  #      `Kind.spawn/2` → `Kind.Server.init/1` → `Snapshot.load_or_init/3`
+  #      which loads the snapshot AND merges with fresh per-Behavior
+  #      init slices.
+  #   3. After spawn, re-check ReadyGate. If `:ready` → proceed to
+  #      `deliver_to_ready/3`. If `:not_ready` (post_init still running)
+  #      and mode is `:cast` → buffer via `PendingDelivery` per the
+  #      existing not-ready branch. If `:not_ready` and mode is `:call`
+  #      → bounded `ReadyGate.await/2` (post-init chains are typically
+  #      <100ms).
+  #
+  # ## Why this lives in `Invocation.dispatch/1` and NOT in the Router
+  #
+  # The SPEC §5.3 OQ-8 directive says "lazy-on-first-load" happens at
+  # the Router level. In this codebase the Router is a Phase-2+ name
+  # for what `Invocation.dispatch/1` does today; per SPEC §6 phasing
+  # the chokepoint flip is staged here. When the Router lands the
+  # logic moves with it — same semantics, new caller.
+  #
+  # ## What about cross-plugin Kinds?
+  #
+  # `Ezagent.ExternalMirror.BootReconciler` rebuilds ExternalMirror
+  # workers at app boot via a different path (it watches for resumed
+  # subscriptions, not snapshot rows). That path STAYS — Phase 4
+  # explicitly kept it. The dispatch-time lazy-spawn is ADDITIONAL,
+  # not a replacement; BootReconciler covers the "subscribe to peer
+  # before any dispatch reaches us" case, lazy-spawn covers the
+  # "dispatch lands while the Kind's process was reaped" case.
+  defp dispatch_with_lazy_spawn(instance_uri, mode, inv) do
+    case {Ezagent.ReadyGate.status(instance_uri), mode} do
+      {:ready, _} ->
+        deliver_to_ready(instance_uri, mode, inv)
 
-        {:not_ready, m} when m in [:call, :call_stream] ->
-          # Invariant #3: :call to not-ready fail-fast (caller's
-          # synchronous block would otherwise hit deadline_ms).
-          {:error, :not_ready}
+      {:not_ready, :cast} ->
+        # Buffer for delivery once instance announces ready.
+        Ezagent.PendingDelivery.buffer(instance_uri, inv)
+        :ok
 
-        {:unknown, _} ->
-          {:error, :no_such_actor}
-      end
+      {:not_ready, m} when m in [:call, :call_stream] ->
+        # Invariant #3: :call to not-ready fail-fast (caller's
+        # synchronous block would otherwise hit deadline_ms).
+        {:error, :not_ready}
+
+      {:unknown, _} ->
+        attempt_lazy_spawn_and_redispatch(instance_uri, mode, inv)
+    end
+  end
+
+  # The cold-spawn-from-snapshot attempt. Returns the dispatch outcome
+  # after the spawn (succeeded or not) — `:no_such_actor` is returned
+  # for the genuine "no snapshot + no live process" case and for any
+  # spawn fn failure (so the caller sees the same shape as the
+  # pre-fix path).
+  defp attempt_lazy_spawn_and_redispatch(instance_uri, mode, inv) do
+    case Ezagent.Kind.StateRebuilder.snapshot_exists?(instance_uri) do
+      false ->
+        # Genuine "never existed" — return the legacy shape so
+        # existing telemetry / error handling is unchanged.
+        {:error, :no_such_actor}
+
+      true ->
+        case lazy_spawn_from_snapshot(instance_uri) do
+          {:ok, _pid} ->
+            # The Kind is now in KindRegistry. Re-enter the gate check
+            # — its ReadyGate status flipped to `:not_ready` inside
+            # `Kind.Server.init/1`, which is the same starting point
+            # the post-spawn paths see.
+            #
+            # For `:call` mode we await readiness with the same bounded
+            # poll Bug A introduced — the post_init chain is short
+            # (<100ms typical), and a `:call` caller is already
+            # synchronously blocked so a brief await is preferable to
+            # an immediate `:not_ready` error.
+            case mode do
+              :cast ->
+                dispatch_with_lazy_spawn(instance_uri, mode, inv)
+
+              m when m in [:call, :call_stream] ->
+                _ = Ezagent.ReadyGate.await(instance_uri, 5_000)
+                dispatch_with_lazy_spawn(instance_uri, mode, inv)
+            end
+
+          {:error, reason} ->
+            # Spawn fn failed (e.g. plugin's Kind module not loaded,
+            # supervisor down). Surface as `:no_such_actor` for
+            # backwards compat but emit telemetry so operators can see
+            # the underlying cause.
+            :telemetry.execute(
+              [:ezagent, :dispatch, :lazy_spawn_failed],
+              %{},
+              %{instance_uri: instance_uri, reason: reason, mode: mode}
+            )
+
+            {:error, :no_such_actor}
+        end
+    end
+  end
+
+  defp lazy_spawn_from_snapshot(instance_uri) do
+    try do
+      Ezagent.SpawnRegistry.spawn(instance_uri)
+    rescue
+      e -> {:error, {:lazy_spawn_raised, Exception.message(e)}}
+    catch
+      :exit, reason -> {:error, {:lazy_spawn_exited, reason}}
+      kind, payload -> {:error, {:lazy_spawn_threw, kind, payload}}
     end
   end
 

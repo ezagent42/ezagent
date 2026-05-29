@@ -131,6 +131,55 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
     def instantiate(_n, tmpl, _ws), do: {:error, {:invalid_template, tmpl}}
   end
 
+  # codex E2E fix v2 Bug A regression (2026-05-29) — like TestFlavorClass
+  # but emits `:config_dir_path` + `:respawn_template_data` in meta so
+  # `record_sandbox_state` actually dispatches `sandbox.write_path`
+  # (the path that was hitting `:not_ready` pre-fix). Models cc.agent's
+  # contract without doing any PTY / filesystem work — the regression
+  # is purely about the dispatch timing.
+  defmodule SandboxAwareFlavorClass do
+    @moduledoc false
+    @behaviour Ezagent.Kind.Template
+
+    @impl true
+    def template_name, do: "phase7.bug-a.sandbox-aware"
+
+    @impl true
+    def validate(tmpl) when is_map(tmpl),
+      do: if(Map.has_key?(tmpl, "agent_uri"), do: :ok, else: {:error, :missing_agent_uri})
+
+    def validate(_), do: {:error, :not_a_map}
+
+    @impl true
+    def instantiate(_tmpl_name, %{"agent_uri" => uri_str} = tmpl, _workspace_uri) do
+      agent_uri = URI.parse(uri_str)
+
+      # Derive a per-agent dir from the template's reference dir — the
+      # exact pattern cc.agent uses (a simple suffix is enough for the
+      # test; we don't actually touch the filesystem).
+      ref_dir = Map.get(tmpl, "claude_config_dir") || "/tmp/no-ref"
+      per_agent_dir = ref_dir <> "-per-agent"
+
+      case Ezagent.SpawnRegistry.spawn_detailed(agent_uri) do
+        {:ok, :started, _pid} ->
+          {:ok, [agent_uri],
+           %{
+             fresh?: true,
+             config_dir_path: per_agent_dir,
+             respawn_template_data: tmpl
+           }}
+
+        {:ok, :already_started, _pid} ->
+          {:ok, [agent_uri], %{fresh?: false}}
+
+        {:error, _} = err ->
+          err
+      end
+    end
+
+    def instantiate(_n, tmpl, _ws), do: {:error, {:invalid_template, tmpl}}
+  end
+
   # A test Template Class that spawns the worker Agent Kind and then
   # TERMINATES the freshly-spawned orchestrator agent as a side effect —
   # used by the HIGH-3 r2 test to force a Generator failure AFTER
@@ -279,6 +328,23 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
         flavor: flavor,
         kind: Agent,
         template_class: TestFlavorClass
+      })
+
+    flavor
+  end
+
+  # codex E2E fix v2 Bug A regression — registers a flavor pointing at
+  # `SandboxAwareFlavorClass` so `record_sandbox_state` dispatches
+  # `sandbox.write_path` (the `:config_dir_path`-in-meta path that
+  # was hitting the `:not_ready` race pre-fix).
+  defp register_sandbox_aware_flavor do
+    flavor = "ph7bugA#{uniq()}"
+
+    :ok =
+      AgentFlavorRegistry.register(%{
+        flavor: flavor,
+        kind: Agent,
+        template_class: SandboxAwareFlavorClass
       })
 
     flavor
@@ -2184,6 +2250,59 @@ defmodule EzagentDomainChat.Integration.Phase7HardeningTest do
       assert {:ok, %{workers: [^instance_uri], fresh?: false}} =
                Agent.spawn_from_template_content(content, instance_uri, spawned_by, @default_ws),
              "a re-spawn at an already-live URI must report fresh?: false (adoption)"
+    end
+
+    # codex E2E fix v2 Bug A regression (2026-05-29) — `record_sandbox_state`
+    # dispatches `sandbox.write_path` immediately after `instantiate/3`
+    # returns. Allen's e2e symptom was `{:sandbox_write_path_failed,
+    # %URI{cc_orchestrator-main}, :not_ready}` because the dispatch
+    # ran microseconds after `Kind.Server.init/1` registered the URI
+    # as `:not_ready` and BEFORE the `handle_continue(:announce_ready,
+    # …)` chain had flipped it to `:ready`. A `:call`-mode dispatch
+    # in that window fails fast per hard invariant #3, never reaching
+    # the Sandbox Behavior — so `respawn_template_data` was never
+    # persisted and `Sandbox.post_init/2` could not re-spawn the PTY
+    # subprocess on phx restart.
+    #
+    # The fix is `ReadyGate.await(worker_uri, 5_000)` immediately
+    # before the dispatch (see `Agent.do_record_sandbox_state/4`).
+    # This test exercises the path with a Template Class that emits
+    # `:config_dir_path` in meta — `do_record_sandbox_state` then
+    # dispatches `sandbox.write_path` and asserts the worker's
+    # `:sandbox` slice ends up populated. A regression here (await
+    # removed) would manifest as `{:sandbox_write_path_failed, _,
+    # :not_ready}` returning from `spawn_from_template_content/4`.
+    test "spawn_from_template_content populates sandbox slice without :not_ready race (Bug A)" do
+      flavor = register_sandbox_aware_flavor()
+      tmpl = URI.new!("template://agent/team-alpha/ph7-bug-a-#{uniq()}")
+
+      content =
+        agent_template_content(flavor, "bug-a")
+        |> Map.put(:claude_config_dir, "/tmp/phase7-bug-a-config")
+
+      :ok = create_agent_template(tmpl, content)
+
+      instance_uri =
+        URI.parse("entity://agent/team-alpha/#{flavor}_bug-a-#{uniq()}")
+
+      spawned_by = User.admin_uri()
+
+      assert {:ok, %{workers: [^instance_uri], fresh?: true}} =
+               Agent.spawn_from_template_content(
+                 content,
+                 instance_uri,
+                 spawned_by,
+                 @default_ws
+               ),
+             "fresh spawn must succeed — sandbox.write_path dispatch must NOT fail with :not_ready"
+
+      # The Sandbox slice was populated by `record_sandbox_state` →
+      # `sandbox.write_path` dispatch → handler. If the dispatch had
+      # failed with `:not_ready` (pre-Bug-A-fix race) the slice would
+      # be empty and `config_dir_path` would be `nil`.
+      assert {:ok, sandbox_slice} = Ezagent.Kind.get_slice(instance_uri, :sandbox)
+      assert sandbox_slice.config_dir_path == "/tmp/phase7-bug-a-config-per-agent"
+      assert sandbox_slice.template_class == SandboxAwareFlavorClass
     end
   end
 

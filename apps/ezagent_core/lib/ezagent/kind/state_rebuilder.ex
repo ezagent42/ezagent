@@ -190,6 +190,66 @@ defmodule Ezagent.Kind.StateRebuilder do
   end
 
   @doc """
+  Cheap existence check — does `uri` have a `kind_snapshots` row?
+
+  Used by `Ezagent.Invocation.dispatch/1`'s cold-spawn-from-snapshot
+  path (codex E2E fix v2 Bug B, 2026-05-29). The dispatch chokepoint
+  must decide quickly whether a `:unknown`-status URI is genuinely
+  "never existed" (legacy `:no_such_actor` return) or "snapshot
+  exists, just not in-memory" (lazy-spawn via `SpawnRegistry.spawn/1`).
+
+  `SnapshotStore.latest/1` already does a single PK lookup on
+  `kind_snapshots` (no decode pre-load), but this thin wrapper drops
+  the decoded `:state` map so the caller doesn't pay the
+  `binary_to_term/:safe` allocation just to discover existence.
+
+  Returns `true` iff a row exists. Decoding errors (corrupt blob,
+  unknown atoms) ALSO return `true` — the row IS there; the dispatch
+  path will then either spawn (and the `Kind.Server.init/1` `load_or_init`
+  will hit the same decode error + use fresh init per its
+  `{:error, _} -> fresh` fallback) or the spawn fn itself will fail
+  cleanly. Treating a decode error as "not found" here would silently
+  hide a real corruption from the dispatch caller.
+
+  Failure modes:
+  - DB unreachable / Repo not started — returns `false` (degraded:
+    we cannot prove existence, so don't claim it; the dispatch falls
+    back to `:no_such_actor`).
+  """
+  @spec snapshot_exists?(URI.t() | String.t()) :: boolean()
+  def snapshot_exists?(uri) do
+    case SnapshotStore.latest(uri) do
+      {:ok, _snapshot} -> true
+      # A `{:error, :not_found}` from `KindSnapshot.decode_state/1` is
+      # actually "row exists but no decodable state field." Treat as
+      # not-existing for the dispatch path's purposes — a row with no
+      # decodable state can't be brought up.
+      {:error, :not_found} -> false
+      # Other decode errors (corrupt term_to_binary blob, version
+      # mismatch) → return `true` so the dispatch path attempts spawn,
+      # which surfaces the underlying error rather than silently
+      # masking corruption as `:no_such_actor`.
+      {:error, _reason} -> true
+    end
+  rescue
+    e ->
+      Logger.warning(
+        "Ezagent.Kind.StateRebuilder.snapshot_exists?: snapshot lookup raised for " <>
+          "#{inspect(uri)}: #{inspect(e)} — treating as not-existing"
+      )
+
+      false
+  catch
+    :exit, reason ->
+      Logger.warning(
+        "Ezagent.Kind.StateRebuilder.snapshot_exists?: snapshot lookup exited for " <>
+          "#{inspect(uri)}: #{inspect(reason)} — treating as not-existing"
+      )
+
+      false
+  end
+
+  @doc """
   Rebuild a Kind's state using a Kind-module callback rather than
   returning the raw snapshot state.
 
