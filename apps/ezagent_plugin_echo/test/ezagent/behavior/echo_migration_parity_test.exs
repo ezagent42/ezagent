@@ -29,10 +29,13 @@ defmodule Ezagent.Behavior.EchoMigrationParityTest do
 
   describe ":say parity" do
     test "increments count by 1 starting from any base" do
-      slice0 = Echo.init_slice(%{})
-      ctx0 = %{read: fn k, d -> Map.get(slice0, k, d) end}
+      # Lifecycle (SPEC 2026-05-29 §2.3): the `read` closure +
+      # `apply_effects/2` both work against the FLAT persistent `.state`
+      # container (`apply_effects` returns `{:ok, %{state: new_state}}`).
+      state0 = Echo.init_slice(%{}).state
+      ctx0 = %{read: fn k, d -> Map.get(state0, k, d) end}
       {:ok, _result, effects0} = Echo.handle_say(%{msg: "first"}, ctx0)
-      {:ok, %{state: state1}} = Ezagent.Behavior.apply_effects(effects0, slice0)
+      {:ok, %{state: state1}} = Ezagent.Behavior.apply_effects(effects0, state0)
       assert state1.count == 1
       assert state1.last_msg == "first"
 

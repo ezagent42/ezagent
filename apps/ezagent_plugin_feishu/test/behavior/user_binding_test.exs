@@ -83,8 +83,11 @@ defmodule EzagentPluginFeishu.Behavior.UserBindingTest do
       assert BV.state_slice() == :feishu_user_bindings
     end
 
-    test "init_slice returns starting counter" do
-      assert BV.init_slice(%{}) == %{bind_count: 0}
+    test "init_slice returns the two-container slice with the starting counter" do
+      # Lifecycle (SPEC 2026-05-29 §2.3): `init_slice/1` returns
+      # `%{state:, transients:}`; the persistent `bind_count` lives in
+      # `.state` (no transients).
+      assert BV.init_slice(%{}) == %{state: %{bind_count: 0}, transients: %{}}
     end
 
     test "workspace_scoped? is false (cross-workspace by design; structural check in body)" do

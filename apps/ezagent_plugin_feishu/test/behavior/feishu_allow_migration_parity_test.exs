@@ -75,9 +75,13 @@ defmodule EzagentPluginFeishu.Behavior.FeishuAllowMigrationParityTest do
       assert is_binary(desc) and desc != ""
     end
 
-    test "state_slice/0 + init_slice/1 unchanged (framework wiring)" do
+    test "state_slice/0 + init_slice/1 (Lifecycle two-container wiring)" do
+      # Lifecycle (SPEC 2026-05-29 §2.3): `state_slice/0` is macro-emitted
+      # from the `state_slice: :external_adapter_feishu` override;
+      # `init_slice/1` returns the two-container slice (empty state — this
+      # marker holds none — and empty transients).
       assert Allow.state_slice() == :external_adapter_feishu
-      assert Allow.init_slice(%{}) == %{}
+      assert Allow.init_slice(%{}) == %{state: %{}, transients: %{}}
     end
   end
 end

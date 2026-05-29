@@ -9,8 +9,10 @@ defmodule Ezagent.Behavior.NpAgentMigrationParityTest do
   - `:configure` updates `timeout_ms`
   - `:receive` from self is a no-op (loop guard)
   - The full action set is unchanged
-  - Optional callbacks (`post_init/2`, `handle_continue/3`,
-    `handle_kind_message/3`) preserve the PTY-orphan-restart contract
+  - Lifecycle hooks (`activate/2`, `handle_signal/2`) preserve the
+    PTY-orphan-restart contract (Phase B, SPEC 2026-05-29 §2.3B — the
+    pre-Lifecycle `post_init/2` + `handle_continue/3` + `handle_kind_message/3`
+    unify into the macro-emitted start/signal path).
   """
 
   use ExUnit.Case, async: true
@@ -19,15 +21,21 @@ defmodule Ezagent.Behavior.NpAgentMigrationParityTest do
 
   describe ":reset parity" do
     test "produces effects that, when applied, clear all 3 last_* fields" do
-      slice =
-        NpAgent.init_slice(%{uri: URI.parse("entity://agent/ws/np_x")})
-        |> Map.put(:last_input, "2+2")
-        |> Map.put(:last_result, 4)
-        |> Map.put(:last_error, {:python_error, -32_602, "x"})
+      # `apply_effects/2` reduces an effect list against a FLAT state map
+      # (the persistent `.state` container) and returns
+      # `{:ok, %{state: new_state}}`. Seed the persistent fields non-nil so
+      # the reset effects are observably clearing them.
+      state =
+        NpAgent.init_slice(%{uri: URI.parse("entity://agent/ws/np_x")}).state
+        |> Map.merge(%{
+          last_input: "2+2",
+          last_result: 4,
+          last_error: {:python_error, -32_602, "x"}
+        })
 
       assert {:ok, %{ok: true}, effects} = NpAgent.handle_reset(%{}, %{})
 
-      assert {:ok, %{state: new_state}} = Ezagent.Behavior.apply_effects(effects, slice)
+      assert {:ok, %{state: new_state}} = Ezagent.Behavior.apply_effects(effects, state)
       assert new_state.last_input == nil
       assert new_state.last_result == nil
       assert new_state.last_error == nil
@@ -36,13 +44,15 @@ defmodule Ezagent.Behavior.NpAgentMigrationParityTest do
 
   describe ":configure parity" do
     test "updates timeout_ms through the apply_effects pipeline" do
-      slice = NpAgent.init_slice(%{uri: URI.parse("entity://agent/ws/np_x")})
-      ctx = %{read: fn k, d -> Map.get(slice, k, d) end}
+      # The framework `read` closure + `apply_effects/2` both work against
+      # the FLAT persistent `.state` container.
+      state = NpAgent.init_slice(%{uri: URI.parse("entity://agent/ws/np_x")}).state
+      ctx = %{read: fn k, d -> Map.get(state, k, d) end}
 
       assert {:ok, %{ok: true}, effects} =
                NpAgent.handle_configure(%{timeout_ms: 30_000}, ctx)
 
-      assert {:ok, %{state: new_state}} = Ezagent.Behavior.apply_effects(effects, slice)
+      assert {:ok, %{state: new_state}} = Ezagent.Behavior.apply_effects(effects, state)
       assert new_state.timeout_ms == 30_000
     end
   end
@@ -86,51 +96,46 @@ defmodule Ezagent.Behavior.NpAgentMigrationParityTest do
     end
   end
 
-  describe "post_init/2 + handle_continue/3 parity" do
-    test "post_init/2 unconditionally returns {:continue, :setup_phase_tracking_and_ensure_python}" do
+  # Lifecycle (SPEC 2026-05-29 §2.3B): `post_init/2` is macro-emitted and
+  # ALWAYS schedules the engine `:ezagent_activate` continuation; the
+  # developer subscribe-+-self-heal logic lives in `activate/2`.
+  describe "activate/2 parity (unified start hook)" do
+    test "post_init/2 unconditionally schedules the engine activate continuation" do
       slice = NpAgent.init_slice(%{uri: URI.parse("entity://agent/ws/np_x")})
-      assert {:continue, :setup_phase_tracking_and_ensure_python} =
-               NpAgent.post_init(%{}, slice)
+      assert {:continue, :ezagent_activate} = NpAgent.post_init(%{}, slice)
     end
 
-    test "handle_continue/3 :ignores when cwd is absent (demand-spawn path)" do
+    test "activate/2 rebuilds the phase-subscription transient when cwd absent (demand-spawn)" do
       uri = URI.parse("entity://agent/ws/np_demand")
-      slice = NpAgent.init_slice(%{uri: uri})
+      %{state: state} = NpAgent.init_slice(%{uri: uri})
       ctx = %{self_uri: uri}
 
-      assert :ignore =
-               NpAgent.handle_continue(:setup_phase_tracking_and_ensure_python, slice, ctx)
+      assert {:ok, %{phase_subscription: %{topic: topic, subscriber: sub}}} =
+               NpAgent.activate(state, ctx)
+
+      assert topic == "pty:phase:" <> URI.to_string(uri)
+      assert sub == self()
     end
   end
 
-  describe "handle_kind_message/3 parity" do
-    test "writes :pty_phase event into :python_phase" do
+  # Lifecycle (SPEC 2026-05-29 §2.3B): `handle_kind_message/3` is
+  # macro-emitted; the developer hook is `handle_signal/2`, returning the
+  # SAME effect list as an action handler.
+  describe "handle_signal/2 parity" do
+    test "emits {:set, :python_phase, phase} for a matching :pty_phase" do
       uri = URI.parse("entity://agent/ws/np_x")
-      slice = NpAgent.init_slice(%{uri: uri})
       ctx = %{self_uri: uri}
 
-      assert {:ok, new_slice} =
-               NpAgent.handle_kind_message(
-                 {:pty_phase, uri, :running, %{}},
-                 slice,
-                 ctx
-               )
-
-      assert new_slice.python_phase == :running
+      assert {:ok, effects} = NpAgent.handle_signal({:pty_phase, uri, :running, %{}}, ctx)
+      assert {:set, :python_phase, :running} in effects
     end
 
     test "drops mismatched agent_uri (topic-collision defense)" do
       self_uri = URI.parse("entity://agent/ws/np_self")
       foreign_uri = URI.parse("entity://agent/ws/np_other")
-      slice = NpAgent.init_slice(%{uri: self_uri})
       ctx = %{self_uri: self_uri}
 
-      assert :ignore =
-               NpAgent.handle_kind_message(
-                 {:pty_phase, foreign_uri, :dead, %{}},
-                 slice,
-                 ctx
-               )
+      assert :ignore = NpAgent.handle_signal({:pty_phase, foreign_uri, :dead, %{}}, ctx)
     end
   end
 end
