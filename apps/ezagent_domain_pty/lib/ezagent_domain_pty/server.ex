@@ -474,25 +474,59 @@ defmodule Ezagent.Domain.Pty.Server do
   # WebSocket). The MCP config writer + claude invocation is built by
   # the cc plugin and passed in as `cmd_override`; this Server module
   # no longer references any cc-plugin module.
+  # erlexec frames each run command to its `exec-port` over a {packet,2}
+  # channel — 65535 bytes max (deps/erlexec/src/exec.erl). If the
+  # term_to_binary'd run command exceeds it, the BEAM port write fails
+  # with :einval, which crashes the SHARED node-wide `:exec` manager and
+  # takes EVERY subsequent PTY/Python spawn down (:no_pty), not just this
+  # one. Two distinct sources have hit this: an oversized `{:env, ...}`
+  # (fixed in build_env/1) and an oversized argv (e.g. a large soul
+  # inlined via --append-system-prompt; cc now passes souls by file).
+  # This guard is the backstop: estimate the command size and fail THIS
+  # spawn alone with a clear error rather than letting any future
+  # oversized command become a node-wide outage.
+  @packet2_limit 65_535
+  # Headroom for erlexec's own framing + the non-cmd/env run options.
+  @command_size_headroom 4_096
+
   defp spawn_claude_directly(state) do
     exec_cmd = build_exec_cmd(state.cmd_override, state.agent_uri)
     env = build_env(state)
 
-    case :exec.run(exec_cmd, [
-           :pty,
-           :monitor,
-           # `:stdin` keeps the child's stdin pipe open so :exec.send/2
-           # can write to it (dev-channels auto-confirm "1\r"). Without
-           # this, child sees EOF on stdin → `read` fails → claude can't
-           # see operator input.
-           :stdin,
-           {:env, env},
-           {:cd, String.to_charlist(state.cwd)},
-           :stderr,
-           :stdout
-         ]) do
-      {:ok, exec_pid, os_pid} -> {:ok, exec_pid, os_pid}
-      err -> err
+    with :ok <- check_command_size(exec_cmd, env) do
+      case :exec.run(exec_cmd, [
+             :pty,
+             :monitor,
+             # `:stdin` keeps the child's stdin pipe open so :exec.send/2
+             # can write to it (dev-channels auto-confirm "1\r"). Without
+             # this, child sees EOF on stdin → `read` fails → claude can't
+             # see operator input.
+             :stdin,
+             {:env, env},
+             {:cd, String.to_charlist(state.cwd)},
+             :stderr,
+             :stdout
+           ]) do
+        {:ok, exec_pid, os_pid} -> {:ok, exec_pid, os_pid}
+        err -> err
+      end
+    end
+  end
+
+  @doc false
+  # Proxy for the size erlexec encodes for its {packet,2} port write.
+  # exec_cmd (argv) + the env list dominate; term_to_binary them together.
+  def estimated_command_size(exec_cmd, env) do
+    byte_size(:erlang.term_to_binary({exec_cmd, env}))
+  end
+
+  defp check_command_size(exec_cmd, env) do
+    size = estimated_command_size(exec_cmd, env)
+
+    if size <= @packet2_limit - @command_size_headroom do
+      :ok
+    else
+      {:error, {:command_too_large, size}}
     end
   end
 
@@ -610,9 +644,7 @@ defmodule Ezagent.Domain.Pty.Server do
       {:reply, :ok, state}
     catch
       kind, reason ->
-        Logger.warning(
-          "PtyServer.write_input failed (#{inspect(kind)}, #{inspect(reason)})"
-        )
+        Logger.warning("PtyServer.write_input failed (#{inspect(kind)}, #{inspect(reason)})")
 
         {:reply, {:error, {kind, reason}}, state}
     end
@@ -671,9 +703,7 @@ defmodule Ezagent.Domain.Pty.Server do
       :exec.winsz(os_pid, 40, 120)
     catch
       kind, why ->
-        Logger.warning(
-          "PtyServer: winsz send failed (#{inspect(kind)}, #{inspect(why)})"
-        )
+        Logger.warning("PtyServer: winsz send failed (#{inspect(kind)}, #{inspect(why)})")
     end
 
     {:noreply, state}

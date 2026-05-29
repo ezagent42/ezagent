@@ -938,7 +938,9 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
       # eyeball the last-spawned agent's creds; they no longer gate
       # the runtime claude → bridge handshake).
       per_agent_mcp_path = Path.join(agent_cwd, ".mcp.json")
-      settings_mcp_args = assemble_settings_mcp_args(mandatory_settings_path(), per_agent_mcp_path, tmpl)
+
+      settings_mcp_args =
+        assemble_settings_mcp_args(mandatory_settings_path(), per_agent_mcp_path, tmpl)
 
       # argv element 0 is the resolved ABSOLUTE path (not bare
       # "claude"); the rest is the hardening's safe arg assembly,
@@ -946,19 +948,23 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
       #
       # POC EXP-A1 (2026-05-26): replaced Phase 0 Hack 1 (hardcoded
       # Acme soul string) with a read of the optional `soul_path`
-      # template field. When present + file exists, the file contents
-      # are inlined as ONE argv element after `--append-system-prompt`
-      # (argv-safe — no shell, so newlines / quotes / `$()` are inert).
-      # When absent or file missing, NO `--append-system-prompt` flag
-      # is emitted (claude runs with no extra system prompt).
+      # template field. The (preamble + soul) is written to a per-agent
+      # FILE and passed via `--append-system-prompt-file`, NOT inlined as
+      # an argv element: erlexec frames the run command to exec-port over
+      # a {packet,2} channel (65535-byte max), so a large soul inlined as
+      # an arg overflows it → :einval → node-wide :exec manager crash
+      # (every later spawn :no_pty). The file form keeps the soul out of
+      # the command-size budget. When absent or unreadable/unwritable,
+      # NO system-prompt flag is emitted (claude runs with no extra
+      # system prompt — non-fatal, matches Phase 0's permissive posture).
       #
-      # Static-soul model: the file is read ONCE here at PtyServer
-      # spawn. A subsequent edit to the file has NO effect on the live
+      # Static-soul model: the soul is read ONCE here at PtyServer
+      # spawn. A subsequent edit to the soul has NO effect on the live
       # agent — the operator must restart the agent (terminate Kind +
       # re-instantiate template) to pick it up. This matches the
       # EXP-A1 hypothesis: soul is a per-agent static Template
       # parameter, hot-reload requires agent restart.
-      soul_args = build_soul_args(agent_uri, tmpl)
+      soul_args = build_soul_args(agent_uri, agent_cwd, tmpl)
 
       argv =
         [
@@ -1040,32 +1046,63 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   defp valid_dir?(d) when is_binary(d) and d != "", do: true
   defp valid_dir?(_), do: false
 
-  # POC EXP-A1 — read `tmpl["soul_path"]` at spawn-time and turn it
-  # into a `["--append-system-prompt", <file contents>]` argv pair.
-  # Returns `[]` when the field is absent or the file is unreadable
-  # (logged at warning) — claude then runs with no extra system prompt.
-  # Errors are non-fatal: a typo in `soul_path` degrades the agent to
-  # "no Acme soul" rather than killing the spawn, which matches Phase
-  # 0's already-permissive posture (the bridge handshake is a bigger
-  # cliff than a missing soul).
-  defp build_soul_args(%URI{} = agent_uri, tmpl) do
+  # POC EXP-A1 — read `tmpl["soul_path"]` at spawn-time and turn it into
+  # a `["--append-system-prompt-file", <path>]` argv pair, writing the
+  # (preamble + soul) to a per-agent file under `agent_cwd`. The FILE
+  # form (not inline `--append-system-prompt <contents>`) is mandatory:
+  # erlexec frames the run command to exec-port over a {packet,2} channel
+  # (65535-byte max), so a large soul inlined as an argv element pushes
+  # the term_to_binary'd command past 64KB → :einval → node-wide :exec
+  # crash. A file path is a handful of bytes regardless of soul size.
+  # Returns `[]` when the field is absent or the soul is unreadable /
+  # unwritable (logged at warning) — claude then runs with no extra
+  # system prompt. Non-fatal: a bad soul degrades the agent rather than
+  # killing the spawn (the bridge handshake is a bigger cliff).
+  # `@doc false def` (not `defp`) so the file-not-inline invariant can be
+  # unit-tested without a live spawn (see cc_agent_soul_args_test.exs).
+  @doc false
+  def build_soul_args(%URI{} = agent_uri, agent_cwd, tmpl)
+      when is_binary(agent_cwd) do
     case Map.get(tmpl, "soul_path") do
       path when is_binary(path) and path != "" ->
         case File.read(path) do
           {:ok, contents} ->
-            ["--append-system-prompt", channel_preamble() <> contents]
+            write_soul_prompt_file(agent_uri, agent_cwd, channel_preamble() <> contents)
 
           {:error, reason} ->
             Logger.warning(
               "cc.agent: soul_path #{inspect(path)} unreadable " <>
                 "(#{inspect(reason)}) for #{URI.to_string(agent_uri)}; " <>
-                "spawning claude with no --append-system-prompt"
+                "spawning claude with no system prompt"
             )
 
             []
         end
 
       _ ->
+        []
+    end
+  end
+
+  # Write the (preamble + soul) to a per-agent file and return the
+  # `--append-system-prompt-file` argv pair. The file lives under the
+  # agent cwd (bound to that cwd's lifetime, like the per-agent
+  # `.mcp.json`). On write error, degrade to no system prompt rather
+  # than risk inlining a large soul back onto the command line.
+  defp write_soul_prompt_file(%URI{} = agent_uri, agent_cwd, system_prompt) do
+    path = Path.join(agent_cwd, ".esr-system-prompt.md")
+
+    case File.write(path, system_prompt) do
+      :ok ->
+        ["--append-system-prompt-file", path]
+
+      {:error, reason} ->
+        Logger.warning(
+          "cc.agent: could not write system-prompt file #{inspect(path)} " <>
+            "(#{inspect(reason)}) for #{URI.to_string(agent_uri)}; " <>
+            "spawning claude with no system prompt"
+        )
+
         []
     end
   end
