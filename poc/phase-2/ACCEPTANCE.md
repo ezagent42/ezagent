@@ -389,3 +389,21 @@ dashboard link, + cinnox fixture seed). All on `poc/phase-2-customer-service`.
 - **To get a full live reply here** (optional): rebuild erlexec for OTP 28
   (`mix deps.compile erlexec --force`) or bump erlexec (see the `erlexec-elixir`
   skill) — OR run the reply round-trip on the work machine.
+
+### Browser UI e2e (live, 2026-05-30 — Claude-in-Chrome)
+
+Driven live against the running server (login `entity://user/system/admin`):
+- ✅ Gated **"Configure soul"** link shows on `/operator/cinnox` for the admin.
+- ✅ Editor loads at `/plugins/customer-chat/cinnox/config` (fixture soul,
+  **"default"** badge, **Revert disabled** with no prior version).
+- ✅ Edit → **Save** → badge → **"customized"** + file written to the sandbox
+  edited-path (disk-confirmed).
+- ✅ 2nd Save → **Revert enabled** (`.prev` snapshotted) → **Revert** restored v1.
+- ✅ **Reset** → reverts to fixture, badge → **"default"**, Revert disabled,
+  sandbox edited+`.prev` deleted (disk-confirmed).
+
+UI fix during this run (`bd9d71ce`): replaced the Reset `data-confirm` (native
+`window.confirm`, which blocks the renderer + is unstyled) with an **inline
+LiveView two-step confirm** ("Reset to default? · Confirm reset · Cancel") —
+non-blocking + styled; re-verified live. Only the AI *reply* remains PTY-blocked
+(separate task).
