@@ -92,11 +92,11 @@ defmodule EzagentWeb.Router do
   # synthetic entity://user/<tenant>/customer_<id>. Reuses the :public
   # on_mount (locale only, no auth). Same LV serves the hosted page and
   # the iframe widget (?embed=1).
-  scope "/", EzagentPluginLiveview do
+  scope "/", EzagentPluginCustomerChat do
     pipe_through :customer_chat_browser
 
     live_session :customer_chat_public, on_mount: {EzagentWeb.LiveAuth, :put_locale} do
-      live "/chat/:tenant", CustomerChat.ChatLive
+      live "/chat/:tenant", ChatLive
     end
   end
 
@@ -259,16 +259,23 @@ defmodule EzagentWeb.Router do
       live "/admin/sessions/:id/external_mirror",
            Admin.SessionExternalMirrorLive
 
-      # Phase 2.7 (AutoService → ezagent migration) — operator
-      # dashboard for live customer sessions. Lives under /admin
-      # to satisfy the router invariant ("every /admin/* route is
-      # in :require_admin"); the in-LV authz currently re-asserts
-      # via the operator-cap check (any cap). A future PR can
-      # split this off into a `:require_operator_cap` live_session
-      # once Behavior.Workspace :customer_session_observer is
-      # registered — see poc/phase-2/7-operator-dashboard.md.
-      live "/admin/customer_sessions", CustomerSessionsDashboardLive
-      live "/admin/customer_sessions/:id", CustomerSessionViewLive
+    end
+  end
+
+  # Phase 2.7 (AutoService → ezagent migration) — operator dashboard for
+  # live customer sessions. Extracted into its own scope + live_session so
+  # the EzagentPluginCustomerChat module alias resolves correctly (Phoenix's
+  # scope/2 alias prefix cannot be escaped inside scope "/", EzagentPluginLiveview).
+  # Same pipe_through + on_mount as :require_admin above — security invariant
+  # is preserved. Live navigation between this session and :require_admin is
+  # a full-page reload (acceptable; these are separate concerns).
+  scope "/", EzagentPluginCustomerChat do
+    pipe_through [:browser, EzagentWeb.Plugs.RequireEntity]
+
+    live_session :require_admin_customer_chat,
+      on_mount: {EzagentWeb.LiveAuth, :require_admin} do
+      live "/admin/customer_sessions", DashboardLive
+      live "/admin/customer_sessions/:id", SessionViewLive
     end
   end
 

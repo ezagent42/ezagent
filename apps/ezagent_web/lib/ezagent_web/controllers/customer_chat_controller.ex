@@ -62,7 +62,7 @@ defmodule EzagentWeb.CustomerChatController do
 
   require Logger
 
-  alias EzagentPluginLiveview.CustomerChat.Bootstrap
+  alias EzagentPluginCustomerChat.Bootstrap
 
   @reply_timeout_ms 120_000
 
