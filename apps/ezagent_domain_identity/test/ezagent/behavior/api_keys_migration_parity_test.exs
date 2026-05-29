@@ -70,7 +70,8 @@ defmodule Ezagent.Behavior.ApiKeysMigrationParityTest do
       assert {:ok, new_state, %{ok: true, provider: "deepseek"}, slice_change_event} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, StubAgentKind, agent_uri)
 
-      assert new_state.api_keys.keys == %{"deepseek" => "sk-aaaabbbbccccdddd"}
+      # Phase B: two-container slice — persistent fields live under `.state`.
+      assert new_state.api_keys.state.keys == %{"deepseek" => "sk-aaaabbbbccccdddd"}
       assert is_map(slice_change_event)
       assert slice_change_event.slice_key == :api_keys
     end

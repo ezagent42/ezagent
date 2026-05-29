@@ -53,8 +53,9 @@ defmodule Ezagent.Behavior.UserTokensTest do
       assert UT.state_slice() == :user_tokens
     end
 
-    test "init_slice/1 starts with mint_count + revoke_count both at 0" do
-      assert UT.init_slice(%{}) == %{mint_count: 0, revoke_count: 0}
+    # Phase B: `init_slice/1` → `create/1` (PERSISTENT state).
+    test "create/1 starts with mint_count + revoke_count both at 0" do
+      assert UT.create(%{}) == {:ok, %{mint_count: 0, revoke_count: 0}}
     end
 
     test "__actions__/0 covers every action in actions/0" do

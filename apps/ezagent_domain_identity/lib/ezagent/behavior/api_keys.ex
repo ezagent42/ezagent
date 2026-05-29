@@ -55,9 +55,21 @@ defmodule Ezagent.Behavior.ApiKeys do
   (put/delete a key) and `:emit` (audit event). The `:list_api_keys`
   and `:get_api_key` reads use `ctx[:read]` to access the slice
   instead of receiving it as an arg.
+
+  ## Phase B migration (2026-05-29) — `use Ezagent.Lifecycle`
+
+  Converted to the Lifecycle developer API per SPEC
+  `docs/superpowers/specs/2026-05-29-lifecycle-hooks-design.md` §5.
+  STATE-ONLY: `keys` + `creator_uri` are both PERSISTENT, no
+  PID/ref/ETS/port/subprocess transients exist, so `init_slice/1` →
+  `create/1` and `activate/2` is the macro-injected no-op rebuild
+  (omitted). The auto-derived `state_slice` (`:api_keys`) matches the
+  old explicit one — no override marker needed. Handler bodies are
+  byte-identical (`ctx[:read]` works unchanged through the two-container
+  ctx). `required_caps/0` + `data_owner/1` pass through verbatim.
   """
 
-  use Ezagent.Behavior
+  use Ezagent.Lifecycle
 
   action :list_api_keys,
     args: %{},
@@ -105,16 +117,18 @@ defmodule Ezagent.Behavior.ApiKeys do
   end
 
   # =================================================================
-  # Slice machinery (legacy callbacks; §6.2 step 9)
+  # Lifecycle state — `create/1` builds the PERSISTENT state once
+  # (Phase B; was `init_slice/1`). No transients → `activate/2` is the
+  # macro-injected no-op. `state_slice` is auto-derived to `:api_keys`.
   # =================================================================
 
-  def state_slice, do: :api_keys
-
-  def init_slice(args) do
-    %{
-      keys: %{},
-      creator_uri: Map.get(args, :creator_uri)
-    }
+  @impl Ezagent.Lifecycle
+  def create(args) do
+    {:ok,
+     %{
+       keys: %{},
+       creator_uri: Map.get(args, :creator_uri)
+     }}
   end
 
   # =================================================================

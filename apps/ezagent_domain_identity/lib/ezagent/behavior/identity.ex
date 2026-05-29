@@ -47,9 +47,30 @@ defmodule Ezagent.Behavior.Identity do
   (`init_slice/1`, `post_init/2`, `handle_continue/3`) are preserved
   per §6.2 step 9 — the Kind.Server still calls them directly. The
   caps_json reconcile mechanism stays intact.
+
+  ## Phase B migration (2026-05-29) — `use Ezagent.Lifecycle`
+
+  Converted to the Lifecycle developer API per SPEC
+  `docs/superpowers/specs/2026-05-29-lifecycle-hooks-design.md` §5 + OQ-8.
+  STATE-ONLY: `caps` (a `MapSet` of `%Capability{}`) is PERSISTENT; no
+  PID/ref/ETS transients exist. The conversion:
+
+  - `init_slice/1` → `create/1` (build the caps set + owner identity cap).
+  - The `post_init/2` + `handle_continue/3` caps_json reconcile is a
+    DB-PROJECTION reconcile (OQ-8); it FOLDS into `activate/2`'s 3-arity
+    return — `activate` re-reads `users.caps_json`, unions it into the
+    persistent `state`, and returns the reconciled state. Idempotent
+    set-union by `MapSet` (invariant 20). Runs on EVERY start (fresh +
+    cold-load), subsuming the old post-init-only path.
+
+  No transients → the `activate` rebuild is purely the reconcile read
+  (returns `{:ok, %{}, reconciled_state}` for user URIs, `{:ok, %{}}`
+  otherwise). Auto-derived `state_slice` is `:identity` (matches the old
+  explicit one). Handler bodies byte-identical. `required_caps/0` +
+  `data_owner/1` pass through verbatim.
   """
 
-  use Ezagent.Behavior
+  use Ezagent.Lifecycle
 
   # PR-OWN-3 (caps-data-ownership SPEC #306 §7): SPLIT — Identity
   # keeps only the safe read actions (`:list_caps`, `:has_cap?`).
@@ -84,12 +105,13 @@ defmodule Ezagent.Behavior.Identity do
   end
 
   # =================================================================
-  # Slice machinery (legacy callbacks; §6.2 step 9)
+  # Lifecycle state — `create/1` builds the PERSISTENT caps set once
+  # (Phase B; was `init_slice/1`). `state_slice` auto-derives to
+  # `:identity`.
   # =================================================================
 
-  def state_slice, do: :identity
-
-  def init_slice(args) do
+  @impl Ezagent.Lifecycle
+  def create(args) do
     caps =
       case Map.get(args, :initial_caps) do
         nil -> MapSet.new()
@@ -108,7 +130,7 @@ defmodule Ezagent.Behavior.Identity do
           caps
       end
 
-    %{caps: caps}
+    {:ok, %{caps: caps}}
   end
 
   defp add_owner_identity_cap(caps, %URI{} = uri) do
@@ -143,31 +165,32 @@ defmodule Ezagent.Behavior.Identity do
   def data_owner(:any), do: :any
   def data_owner(_), do: :no_owner
 
-  # Post-init reconciliation: re-merge caps from `users.caps_json` into
-  # the just-loaded `:identity` slice. See pre-migration moduledoc for
-  # full rationale.
-  def post_init(%{uri: %URI{scheme: "entity", host: "user"} = uri}, _slice),
-    do: {:continue, {:reconcile_caps_json, uri}}
-
-  def post_init(_args, _slice), do: :ok
-
-  def handle_continue({:reconcile_caps_json, %URI{} = uri}, slice, _ctx) do
+  # `activate/2` — caps_json reconcile, folded from the old
+  # `post_init/2` + `handle_continue/3` (Phase B / OQ-8: a DB-projection
+  # reconcile moves into `activate`'s 3-arity return). Runs on EVERY
+  # start (fresh + cold-load), re-reading `users.caps_json` and unioning
+  # it into the persistent `state.caps` (idempotent set-union, invariant
+  # 20). No transients to rebuild → the 2-arity `{:ok, %{}}` no-op is
+  # returned when there is no reconcile (non-user URI, empty caps_json,
+  # or the union is a no-op).
+  @impl Ezagent.Lifecycle
+  def activate(%{caps: existing_caps} = state, %{self_uri: %URI{scheme: "entity", host: "user"} = uri}) do
     case caps_from_caps_json(uri) do
       [] ->
-        :ignore
+        {:ok, %{}}
 
       caps_list when is_list(caps_list) ->
-        caps_from_json = MapSet.new(caps_list)
-        existing_caps = Map.get(slice, :caps, MapSet.new())
-        merged = MapSet.union(existing_caps, caps_from_json)
+        merged = MapSet.union(existing_caps, MapSet.new(caps_list))
 
         if MapSet.size(merged) == MapSet.size(existing_caps) do
-          :ignore
+          {:ok, %{}}
         else
-          {:ok, %{slice | caps: merged}}
+          {:ok, %{}, %{state | caps: merged}}
         end
     end
   end
+
+  def activate(_state, _ctx), do: {:ok, %{}}
 
   defp caps_from_caps_json(%URI{} = uri) do
     if Code.ensure_loaded?(Ezagent.Users) and
@@ -233,9 +256,26 @@ defmodule Ezagent.Behavior.IdentityAdmin do
   call) — it's an idempotent, observation-only Notify path that
   doesn't need to be lifted into the effect grammar per SPEC §4.5
   inline-permitted-side-effects.
+
+  ## Phase B migration (2026-05-29) — `use Ezagent.Lifecycle`
+
+  Converted to the Lifecycle developer API per SPEC
+  `docs/superpowers/specs/2026-05-29-lifecycle-hooks-design.md` §5 +
+  OQ-7. STATE-ONLY: shares the `:identity` slice with
+  `Ezagent.Behavior.Identity` (the caps `MapSet`); no transients. Because
+  the slice key (`:identity`) differs from the module-name derivation
+  (`identity_admin`), it uses the sanctioned `state_slice:` override
+  escape hatch (SPEC §5 / §7 OQ-7) and carries the
+  `# lifecycle:state_slice_override` marker. `init_slice/1` → `create/1`
+  (delegates to `Identity.create/1`, the shared slice shape). The
+  caps_json reconcile lives on `Identity.activate/2`, so IdentityAdmin's
+  `activate/2` is the macro no-op (omitted). Handler bodies
+  byte-identical. `required_caps/0` + `data_owner/1` + `workspace_scoped?/0`
+  pass through.
   """
 
-  use Ezagent.Behavior
+  # lifecycle:state_slice_override
+  use Ezagent.Lifecycle, state_slice: :identity
 
   action :grant_cap,
     args: %{cap: :map},
@@ -266,14 +306,17 @@ defmodule Ezagent.Behavior.IdentityAdmin do
   def workspace_scoped?, do: false
 
   # =================================================================
-  # Slice machinery (legacy callbacks; §6.2 step 9)
+  # Lifecycle state — `create/1` delegates to `Identity.create/1`, the
+  # shared `:identity` slice shape (Phase B; was `init_slice/1`). The
+  # `state_slice:` override pins the key to `:identity`. The caps_json
+  # reconcile lives on `Identity.activate/2`; IdentityAdmin's `activate`
+  # is the macro no-op.
   # =================================================================
 
-  def state_slice, do: :identity
-
-  def init_slice(args) do
-    # Defer to Identity for slice init shape — both Behaviors share it.
-    Ezagent.Behavior.Identity.init_slice(args)
+  @impl Ezagent.Lifecycle
+  def create(args) do
+    # Defer to Identity for slice shape — both Behaviors share it.
+    Ezagent.Behavior.Identity.create(args)
   end
 
   # PR-OWN-3: data_owner = :no_owner.
