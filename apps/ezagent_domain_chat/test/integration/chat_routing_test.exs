@@ -26,7 +26,7 @@ defmodule EzagentDomainChat.Integration.ChatRoutingTest do
   test "admin User landed in session://default/system/main members after boot" do
     {:ok, session_pid} = KindRegistry.lookup(Session.default_uri())
 
-    %{state: %{chat: chat_slice}} = :sys.get_state(session_pid)
+    %{state: %{chat: %{state: chat_slice}}} = :sys.get_state(session_pid)
 
     assert Map.has_key?(chat_slice.members, User.admin_uri()),
            "expected admin User in Session members; got #{inspect(chat_slice.members)}"
@@ -80,7 +80,7 @@ defmodule EzagentDomainChat.Integration.ChatRoutingTest do
     # GenServer, so by the time it returns any prior handle_cast
     # (including commit_and_notify's Snapshot.commit) has drained.
     {:ok, session_pid} = KindRegistry.lookup(session_uri)
-    %{state: %{chat: chat_slice}} = :sys.get_state(session_pid)
+    %{state: %{chat: %{state: chat_slice}}} = :sys.get_state(session_pid)
     assert chat_slice.last_message_id == msg.id
   end
 
@@ -101,7 +101,7 @@ defmodule EzagentDomainChat.Integration.ChatRoutingTest do
       })
 
     # Allow cast to process
-    %{state: %{chat: pre_kill_slice}} = :sys.get_state(session_pid)
+    %{state: %{chat: %{state: pre_kill_slice}}} = :sys.get_state(session_pid)
     assert pre_kill_slice.members[transient_uri].online == true
 
     # Kill the transient process; Session.Process.monitor fires :DOWN.
@@ -112,7 +112,7 @@ defmodule EzagentDomainChat.Integration.ChatRoutingTest do
 
     post_kill_slice =
       wait_until(fn ->
-        %{state: %{chat: s}} = :sys.get_state(session_pid)
+        %{state: %{chat: %{state: s}}} = :sys.get_state(session_pid)
         if s.members[transient_uri].online == false, do: s, else: nil
       end)
 

@@ -198,6 +198,9 @@ defmodule EzagentDomainChat.Integration.UpdateAgentTemplateReconcilerTest do
       |> :sys.get_state()
       |> Map.get(:state, %{})
       |> Map.get(:chat, %{})
+      # Lifecycle migration (SPEC 2026-05-29 §2.3C): unwrap the Chat
+      # two-container slice to its persistent :state (flat falls through).
+      |> then(&Map.get(&1, :state, &1))
 
     Ezagent.Behavior.Chat.template_working_copy(chat_slice)
   end

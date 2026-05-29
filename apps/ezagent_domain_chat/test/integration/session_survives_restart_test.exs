@@ -97,7 +97,12 @@ defmodule EzagentDomainChat.Integration.SessionSurvivesRestartTest do
   defp list_members(session_uri) do
     {:ok, pid} = KindRegistry.lookup(session_uri)
     wrapper = :sys.get_state(pid)
-    wrapper.state |> Map.get(:chat, %{}) |> Map.get(:members, %{})
+    # Lifecycle migration (SPEC 2026-05-29 §2.3C): the `:chat` slice is now
+    # the two-container `%{state, transients}` shape; `members` lives in
+    # `:state`. (`:monitors` moved to `:transients` — rebuilt by activate/2.)
+    chat_slice = Map.get(wrapper.state, :chat, %{})
+    chat_state = Map.get(chat_slice, :state, chat_slice)
+    Map.get(chat_state, :members, %{})
   end
 
   defp wait_until(fun, attempts \\ 50)
@@ -242,8 +247,14 @@ defmodule EzagentDomainChat.Integration.SessionSurvivesRestartTest do
 
       loaded = Snapshot.load_or_init(session_uri, Session, %{uri: session_uri})
 
-      # The chat slice survives the round-trip verbatim.
-      assert loaded.chat == chat_only_slice.chat
+      # T4 (Lifecycle Phase B foundation): `Behavior.Chat` is now a
+      # `use Ezagent.Lifecycle` behavior, so `init_fresh` carries `:chat`
+      # as the two-container `%{state, transients}` shape. A LEGACY FLAT
+      # snapshot slice is coerced on load to `%{state: flat, transients:
+      # %{}}` (`Snapshot.coerce_loaded_to_fresh_shape/2`). Normalize to the
+      # flat `.state` view (the same T3 chokepoint production consumers
+      # use) before the verbatim round-trip assertion.
+      assert Ezagent.Kind.normalize_slice_view(loaded.chat) == chat_only_slice.chat
 
       # The :publisher slice (added by ExternalMirror PR-EM-0) gets
       # fresh init values via the Q5 merge path in
@@ -295,7 +306,12 @@ defmodule EzagentDomainChat.Integration.SessionSurvivesRestartTest do
 
       loaded = Snapshot.load_or_init(session_uri, Session, %{uri: session_uri})
 
-      assert Chat.template_working_copy(loaded.chat) == working_copy,
+      # T4: the loaded flat snapshot is coerced to two-container; the
+      # `Chat.template_working_copy/1` accessor reads the flat `:chat` slice,
+      # so pass the normalized `.state` view (same as the production
+      # consumers — `McpServer.load_chat_slice`, `Session.read_*`).
+      assert Chat.template_working_copy(Ezagent.Kind.normalize_slice_view(loaded.chat)) ==
+               working_copy,
              "the durable template_working_copy field must survive a Session " <>
                "snapshot/restore — Session is {:snapshot, :on_change}"
     end
@@ -318,16 +334,20 @@ defmodule EzagentDomainChat.Integration.SessionSurvivesRestartTest do
 
       :ok = Snapshot.save_now(session_uri, Session, %{chat: pre_pr2_chat})
 
-      # The snapshot loads without crashing; the loaded `:chat` slice
-      # has no `template_working_copy` key (the snapshot layer merges
-      # at slice-key level, so the loaded slice replaces the fresh one).
+      # The snapshot loads without crashing. T4: the legacy flat slice is
+      # coerced to the two-container `%{state, transients}` shape on load
+      # (Chat is now `use Ezagent.Lifecycle`); normalize to the flat
+      # `.state` view to inspect the persistent fields. It still has no
+      # `template_working_copy` key (the snapshot layer merges at
+      # slice-key level, so the loaded slice replaces the fresh one).
       loaded = Snapshot.load_or_init(session_uri, Session, %{uri: session_uri})
-      assert Map.has_key?(loaded.chat, :members)
-      assert loaded.chat.members == pre_pr2_chat.members
+      loaded_chat = Ezagent.Kind.normalize_slice_view(loaded.chat)
+      assert Map.has_key?(loaded_chat, :members)
+      assert loaded_chat.members == pre_pr2_chat.members
 
       # Reading the field via the accessor yields the empty default —
       # no crash, the field gracefully defaults.
-      assert Chat.template_working_copy(loaded.chat) == Chat.default_template_working_copy()
+      assert Chat.template_working_copy(loaded_chat) == Chat.default_template_working_copy()
     end
   end
 end

@@ -57,8 +57,9 @@ defmodule Ezagent.Behavior.WorkspaceUserAdminTest do
       refute WUA.state_slice() == :workspace
     end
 
-    test "init_slice/1 starts with create_count: 0" do
-      assert WUA.init_slice(%{}) == %{create_count: 0}
+    # Phase B: `init_slice/1` → `create/1` (PERSISTENT state).
+    test "create/1 starts with create_count: 0" do
+      assert WUA.create(%{}) == {:ok, %{create_count: 0}}
     end
 
     test "__actions__/0 covers every action in actions/0" do

@@ -1808,13 +1808,18 @@ defmodule Ezagent.Orchestrator.Tools do
   defp read_template_working_copy(%URI{} = session_uri) do
     case Ezagent.KindRegistry.lookup(session_uri) do
       {:ok, pid} ->
+        # Lifecycle migration (SPEC 2026-05-29 §2.3C): the Chat slice is now
+        # two-container; unwrap to its persistent `:state` before reading
+        # `template_working_copy` (flat slice falls through unchanged).
         chat_slice =
           pid
           |> :sys.get_state()
           |> Map.get(:state, %{})
           |> Map.get(Chat.state_slice(), %{})
 
-        Chat.template_working_copy(chat_slice)
+        chat_persistent = Map.get(chat_slice, :state, chat_slice)
+
+        Chat.template_working_copy(chat_persistent)
 
       :error ->
         Chat.default_template_working_copy()

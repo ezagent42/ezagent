@@ -81,9 +81,20 @@ defmodule EzagentDomainChat.Test.BehaviorInvoker do
   def invoke_with_effects(behavior_module, action, slice, args, ctx) do
     handler = String.to_atom("handle_" <> Atom.to_string(action))
 
+    # Lifecycle two-container support (SPEC 2026-05-29 §2.3): a converted
+    # Behavior reads persistent fields via `ctx.read` (over the flat
+    # slice here) and TRANSIENT fields via `ctx.transients[k]`, writing
+    # transients with `{:set_transient, k, v}` effects. A flat (legacy)
+    # slice has no separate transient container, so we expose the SAME
+    # flat slice as `ctx.transients` — the transient keys (e.g.
+    # `:monitors`) live alongside the persistent ones in the test's flat
+    # slice, and `apply_set_effects/2` folds BOTH `:set` and
+    # `:set_transient` back onto that one flat map. This is additive:
+    # behaviors that emit no `:set_transient` are unaffected.
     enriched_ctx =
       ctx
       |> Map.put_new(:read, fn key, default -> Map.get(slice, key, default) end)
+      |> Map.put_new(:transients, slice)
 
     if function_exported?(behavior_module, handler, 2) do
       case apply(behavior_module, handler, [args, enriched_ctx]) do
@@ -110,9 +121,14 @@ defmodule EzagentDomainChat.Test.BehaviorInvoker do
     end
   end
 
+  # Folds BOTH `:set` (persistent) and `:set_transient` (volatile)
+  # effects onto the single flat test slice. For a flat slice the two
+  # containers are co-located, so a `{:set_transient, :monitors, m}`
+  # writes `:monitors` back where the test reads it via `new_slice.monitors`.
   defp apply_set_effects(slice, effects) do
     Enum.reduce(effects, slice, fn
       {:set, key, value}, acc -> Map.put(acc, key, value)
+      {:set_transient, key, value}, acc -> Map.put(acc, key, value)
       _other_effect, acc -> acc
     end)
   end

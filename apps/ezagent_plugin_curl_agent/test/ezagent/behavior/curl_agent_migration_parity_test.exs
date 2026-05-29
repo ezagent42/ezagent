@@ -19,8 +19,10 @@ defmodule Ezagent.Behavior.CurlAgentMigrationParityTest do
 
   describe ":reset_conversation parity" do
     test "produces effects that, when applied, clear conversation + last_error" do
+      {:ok, base} = CurlAgent.create(%{})
+
       slice =
-        CurlAgent.init_slice(%{})
+        base
         |> Map.put(:conversation, [%{role: "user", content: "hi"}])
         |> Map.put(:last_error, {:http, 429, "rate limited"})
 
@@ -35,7 +37,7 @@ defmodule Ezagent.Behavior.CurlAgentMigrationParityTest do
 
   describe ":configure parity" do
     test "mutates all 5 configurable fields through apply_effects" do
-      slice = CurlAgent.init_slice(%{})
+      {:ok, slice} = CurlAgent.create(%{})
       ctx = %{read: fn k, d -> Map.get(slice, k, d) end}
 
       args = %{
@@ -56,7 +58,7 @@ defmodule Ezagent.Behavior.CurlAgentMigrationParityTest do
     end
 
     test "stray owner_uri (legacy field) does NOT leak into the slice" do
-      slice = CurlAgent.init_slice(%{})
+      {:ok, slice} = CurlAgent.create(%{})
       ctx = %{read: fn k, d -> Map.get(slice, k, d) end}
 
       args = %{
@@ -82,7 +84,7 @@ defmodule Ezagent.Behavior.CurlAgentMigrationParityTest do
         read: fn _k, d -> d end,
         self_uri: agent_uri,
         caller: URI.parse("session://default/team-alpha/main"),
-        sibling_slices: %{api_keys: %{keys: %{}}}
+        siblings: %{api_keys: %{keys: %{}}}
       }
 
       assert {:ok, %{ok: true, ignored: :self_message}, []} =
@@ -92,6 +94,7 @@ defmodule Ezagent.Behavior.CurlAgentMigrationParityTest do
     test "missing api_key emits operator-help reply dispatch + sets last_error" do
       agent_uri = URI.parse("entity://agent/team-alpha/curl_x")
       session_uri = URI.parse("session://default/team-alpha/main")
+
       msg =
         Ezagent.Message.new(
           URI.parse("entity://user/team-alpha/alice"),
@@ -110,7 +113,7 @@ defmodule Ezagent.Behavior.CurlAgentMigrationParityTest do
         end,
         self_uri: agent_uri,
         caller: session_uri,
-        sibling_slices: %{api_keys: %{keys: %{}}}
+        siblings: %{api_keys: %{keys: %{}}}
       }
 
       assert {:ok, %{ok: false, error: :no_api_key}, effects} =
@@ -149,8 +152,8 @@ defmodule Ezagent.Behavior.CurlAgentMigrationParityTest do
       end
     end
 
-    test "reads_sibling_slices/0 returns [:api_keys]" do
-      assert CurlAgent.reads_sibling_slices() == [:api_keys]
+    test "reads_siblings/0 returns [:api_keys]" do
+      assert CurlAgent.reads_siblings() == [:api_keys]
     end
   end
 end

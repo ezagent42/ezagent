@@ -649,7 +649,13 @@ defmodule Ezagent.Entity.Session do
   """
   @spec owner(URI.t() | String.t()) :: {:ok, URI.t() | nil} | {:error, term()}
   def owner(uri) do
+    # Lifecycle migration (SPEC 2026-05-29 §2.3C): `Ezagent.Behavior.Chat`
+    # now stores the two-container `%{state, transients}` slice, so
+    # `get_slice(uri, :chat)` returns that shape and `:owner_uri` lives
+    # under `:state`. Unwrap (a flat slice falls through unchanged for any
+    # not-yet-converted snapshot path).
     case Ezagent.Kind.get_slice(uri, :chat) do
+      {:ok, %{state: %{owner_uri: owner_uri}}} -> {:ok, owner_uri}
       {:ok, %{owner_uri: owner_uri}} -> {:ok, owner_uri}
       {:ok, nil} -> {:ok, nil}
       {:ok, _} -> {:ok, nil}
@@ -1572,13 +1578,20 @@ defmodule Ezagent.Entity.Session do
   defp read_template_working_copy(%URI{} = session_uri) do
     case Ezagent.KindRegistry.lookup(session_uri) do
       {:ok, pid} ->
+        # Lifecycle migration (SPEC 2026-05-29 §2.3C): the Chat slice is now
+        # two-container; the persistent `template_working_copy` lives under
+        # its `:state`. The outer `Map.get(:state, ...)` reaches the
+        # per-Kind slice store; the inner one unwraps the Chat two-container
+        # (falling through for a not-yet-converted flat slice).
         chat_slice =
           pid
           |> :sys.get_state()
           |> Map.get(:state, %{})
           |> Map.get(Ezagent.Behavior.Chat.state_slice(), %{})
 
-        Ezagent.Behavior.Chat.template_working_copy(chat_slice)
+        chat_persistent = Map.get(chat_slice, :state, chat_slice)
+
+        Ezagent.Behavior.Chat.template_working_copy(chat_persistent)
 
       :error ->
         Ezagent.Behavior.Chat.default_template_working_copy()

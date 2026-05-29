@@ -54,14 +54,19 @@ defmodule Ezagent.Behavior.SandboxTest do
       assert Sandbox.state_slice() == :sandbox
     end
 
-    test "init_slice/1 defaults all fields to nil for an unconfigured agent" do
+    test "init_slice/1 defaults all state fields to nil for an unconfigured agent" do
+      # Lifecycle two-container shape (SPEC §2.1): durable fields under
+      # `:state`, `:transients` empty (activate/2 fills it).
       assert Sandbox.init_slice(%{uri: URI.new!("entity://agent/team-alpha/x")}) ==
                %{
-                 config_dir_path: nil,
-                 template_class: nil,
-                 respawn_template_data: nil,
-                 # PTY-phase-state-machine 2026-05-26 follow-up (b)
-                 pty_phase: nil
+                 state: %{
+                   config_dir_path: nil,
+                   template_class: nil,
+                   respawn_template_data: nil,
+                   # PTY-phase-state-machine 2026-05-26 follow-up (b)
+                   pty_phase: nil
+                 },
+                 transients: %{}
                }
     end
 
@@ -74,57 +79,48 @@ defmodule Ezagent.Behavior.SandboxTest do
 
       assert Sandbox.init_slice(args) ==
                %{
-                 config_dir_path: "/tmp/agent-x",
-                 template_class: SomeMod,
-                 respawn_template_data: %{"cwd" => "/tmp/agent-x"},
-                 pty_phase: nil
+                 state: %{
+                   config_dir_path: "/tmp/agent-x",
+                   template_class: SomeMod,
+                   respawn_template_data: %{"cwd" => "/tmp/agent-x"},
+                   pty_phase: nil
+                 },
+                 transients: %{}
                }
     end
 
     test "init_slice/1 omits respawn_template_data when absent from args" do
       args = %{config_dir_path: "/tmp/agent-x", template_class: SomeMod}
 
-      # Missing key → nil in the slice (the PTY-orphan-restart respawn
-      # flow opts in via :write_path, not via init_slice; legacy spawn
-      # paths that don't dispatch the new key still produce a clean slice).
+      # Missing key → nil in state (the PTY-orphan-restart respawn flow
+      # opts in via :write_path, not via create/1; legacy spawn paths
+      # that don't dispatch the new key still produce a clean state).
       assert Sandbox.init_slice(args) ==
                %{
-                 config_dir_path: "/tmp/agent-x",
-                 template_class: SomeMod,
-                 respawn_template_data: nil,
-                 pty_phase: nil
+                 state: %{
+                   config_dir_path: "/tmp/agent-x",
+                   template_class: SomeMod,
+                   respawn_template_data: nil,
+                   pty_phase: nil
+                 },
+                 transients: %{}
                }
     end
 
-    test "init_slice/1 accepts pty_phase from rehydrated snapshot" do
-      # PTY-phase-state-machine 2026-05-26 follow-up (b): when the
-      # Kind.Server loads from snapshot, the slice arrives carrying
-      # the persisted phase. init_slice/1 passes it through.
-      args = %{pty_phase: :running}
-
-      slice = Sandbox.init_slice(args)
-      assert slice.pty_phase == :running
+    test "create/1 accepts pty_phase from rehydrated snapshot" do
+      # PTY-phase-state-machine 2026-05-26 follow-up (b): create/1 passes
+      # a valid persisted phase through.
+      assert {:ok, state} = Sandbox.create(%{pty_phase: :running})
+      assert state.pty_phase == :running
     end
 
-    test "init_slice/1 normalizes invalid pty_phase values to nil" do
-      # Defensive: a corrupt snapshot or buggy caller supplies a
-      # non-atom or unknown atom — reset to nil so the next live
-      # broadcast (or post_init re-spawn) writes the correct value.
-      assert Sandbox.init_slice(%{pty_phase: :totally_bogus}).pty_phase == nil
-      assert Sandbox.init_slice(%{pty_phase: "starting"}).pty_phase == nil
-      assert Sandbox.init_slice(%{pty_phase: 42}).pty_phase == nil
-    end
-
-    test "init_slice/1 RESETS the process-dict destroyed gate (codex PR2 round-2 HIGH-2)" do
-      # A prior incarnation in the SAME OS process could have left
-      # the gate set. init_slice MUST clear it so a re-spawn at the
-      # same URI is not silently locked out.
-      Process.put({Sandbox, :destroyed?}, true)
-
-      _ = Sandbox.init_slice(%{})
-
-      refute Process.get({Sandbox, :destroyed?}),
-             "init_slice must clear the destroyed gate"
+    test "create/1 normalizes invalid pty_phase values to nil" do
+      # Defensive: a corrupt snapshot or buggy caller supplies a non-atom
+      # or unknown atom — reset to nil so the next live broadcast (or the
+      # activate re-spawn flow) writes the correct value.
+      assert {:ok, %{pty_phase: nil}} = Sandbox.create(%{pty_phase: :totally_bogus})
+      assert {:ok, %{pty_phase: nil}} = Sandbox.create(%{pty_phase: "starting"})
+      assert {:ok, %{pty_phase: nil}} = Sandbox.create(%{pty_phase: 42})
     end
 
     test "cap_subjects/0 carries all 3 subjects" do
@@ -140,13 +136,6 @@ defmodule Ezagent.Behavior.SandboxTest do
   end
 
   describe "invoke(:read, ...)" do
-    setup do
-      # Process-dict gate isolation — each test starts with the gate
-      # absent (the test process has never been "destroyed").
-      Process.delete({Sandbox, :destroyed?})
-      :ok
-    end
-
     test "returns the slice fields" do
       slice = %{
         config_dir_path: "/tmp/cd",
@@ -183,20 +172,14 @@ defmodule Ezagent.Behavior.SandboxTest do
                invoke_via_new_contract(:read, slice, %{}, %{})
     end
 
-    test "REJECTS once the process-dict gate is set (codex PR2 round-1 HIGH-2)" do
-      Process.put({Sandbox, :destroyed?}, true)
-      slice = %{config_dir_path: "/tmp/x", template_class: SomeMod, respawn_template_data: nil}
-
-      assert {:error, :destroyed} = invoke_via_new_contract(:read, slice, %{}, %{})
-    end
+    # NOTE: the pre-Lifecycle `:read` destroyed?-gate rejection test was
+    # REMOVED — the process-dict gate DISAPPEARS under Lifecycle (SPEC
+    # §2.3B: destroyed = absence of state). A `:read` is no longer
+    # special-cased; the destroy path terminates the process so there is
+    # no live process to race a stale read against.
   end
 
   describe "invoke(:write_path, ...)" do
-    setup do
-      Process.delete({Sandbox, :destroyed?})
-      :ok
-    end
-
     test "sets both fields in the slice (legacy 2-key write, leaves respawn_template_data alone)" do
       slice = %{config_dir_path: nil, template_class: nil, respawn_template_data: nil}
       args = %{config_dir_path: "/tmp/agent-y", template_class: MyClass}
@@ -336,142 +319,99 @@ defmodule Ezagent.Behavior.SandboxTest do
              }
     end
 
-    test "REJECTS once the process-dict gate is set (codex PR2 round-1 HIGH-2)" do
-      Process.put({Sandbox, :destroyed?}, true)
-      slice = %{config_dir_path: "/tmp/x", template_class: SomeMod, respawn_template_data: nil}
+    # NOTE: the pre-Lifecycle `:write_path` destroyed?-gate rejection test
+    # was REMOVED for the same reason as `:read` above (SPEC §2.3B — the
+    # gate disappears; destroyed = absence of state).
+  end
 
-      assert {:error, :destroyed} =
-               invoke_via_new_contract(
-                 :write_path,
-                 slice,
-                 %{config_dir_path: "/new", template_class: NewMod},
-                 %{}
-               )
+  describe "activate/2 (folds in the old post_init/handle_continue — SPEC §5/§10-R1)" do
+    test "post_init/2 schedules the unified :ezagent_activate continuation (macro-emitted)" do
+      # The pre-Lifecycle module returned `{:continue, {:setup_phase_tracking,
+      # ...}}`; the Lifecycle macro now emits `{:continue, :ezagent_activate}`,
+      # which runs the author's `activate/2`. The subscribe + ensure-subprocess
+      # logic moved INTO activate/2 (both pre-`:ready`, no `send(self(), ...)`
+      # self-deferral — §10-R1).
+      assert {:continue, :ezagent_activate} = Sandbox.post_init(%{}, %{})
+    end
+
+    test "activate/2 rebuilds the phase-subscription transient (subscribe-only path)" do
+      # nil template_class → "subscribe-only": phase-topic subscription
+      # transient is rebuilt, but no subprocess re-spawn is attempted.
+      state = %{config_dir_path: nil, template_class: nil, respawn_template_data: nil, pty_phase: nil}
+      ctx = %{self_uri: uniq_uri(), kind_module: SomeKind}
+
+      assert {:ok, %{phase_subscription: %{topic: topic, subscriber: sub}}} =
+               Sandbox.activate(state, ctx)
+
+      assert topic == "pty:phase:" <> URI.to_string(ctx.self_uri)
+      assert sub == self()
+    end
+
+    test "activate/2 skips subprocess re-spawn when template_class lacks ensure_subprocess_alive/2" do
+      # `Enum` is a stdlib module that does not export the callback — the
+      # `should_ensure_subprocess?/2` probe path is exercised; activate
+      # still rebuilds the subscription transient and returns cleanly.
+      state = %{config_dir_path: nil, template_class: Enum, respawn_template_data: %{}, pty_phase: nil}
+      ctx = %{self_uri: uniq_uri(), kind_module: SomeKind}
+
+      assert {:ok, %{phase_subscription: %{}}} = Sandbox.activate(state, ctx)
+    end
+
+    test "activate/2 skips subprocess re-spawn when template_class is not an atom" do
+      state =
+        %{config_dir_path: nil, template_class: "not-atom", respawn_template_data: %{}, pty_phase: nil}
+
+      ctx = %{self_uri: uniq_uri(), kind_module: SomeKind}
+
+      assert {:ok, %{phase_subscription: %{}}} = Sandbox.activate(state, ctx)
     end
   end
 
-  describe "post_init/2 + handle_continue/3 (PTY-orphan-restart 2026-05-26 + phase-state-machine follow-up b)" do
-    setup do
-      Process.delete({Sandbox, :destroyed?})
-      :ok
-    end
-
-    test "post_init/2 ALWAYS returns {:continue, :setup_phase_tracking, ...} (follow-up b)" do
-      # PTY-phase-state-machine follow-up (b): post_init now
-      # unconditionally schedules the subscribe+ensure continuation
-      # so the Kind.Server subscribes to `pty:phase:<self_uri>` for
-      # every Sandbox-bearing agent (fresh-spawn, restart, demand-spawn).
-      slice = %{config_dir_path: nil, template_class: nil, respawn_template_data: nil}
-
-      assert {:continue, {:setup_phase_tracking, nil, nil}} =
-               Sandbox.post_init(%{}, slice)
-    end
-
-    test "post_init/2 carries template_class + respawn_data into the continuation" do
-      slice = %{
-        config_dir_path: "/tmp/x",
-        template_class: SomeMod,
-        respawn_template_data: %{"cwd" => "/tmp/x"}
-      }
-
-      assert {:continue, {:setup_phase_tracking, SomeMod, %{"cwd" => "/tmp/x"}}} =
-               Sandbox.post_init(%{}, slice)
-    end
-
-    test "handle_continue/3 :ignores when template_class is nil (subscribe-only path)" do
-      # PTY-phase-state-machine follow-up (b): nil template_class
-      # means "subscribe-only" — phase tracking is set up but no
-      # subprocess re-spawn is attempted.
-      slice = %{config_dir_path: nil, template_class: nil, respawn_template_data: nil}
-      ctx = %{self_uri: URI.new!("entity://agent/system/cc_x"), kind_module: SomeKind}
-
-      assert :ignore =
-               Sandbox.handle_continue({:setup_phase_tracking, nil, nil}, slice, ctx)
-    end
-
-    test "handle_continue/3 :ignores when template_class does not export ensure_subprocess_alive/2" do
-      # `Enum` is a stdlib module that does not export the callback —
-      # the probe path is exercised without needing a mock module.
-      slice = %{config_dir_path: nil, template_class: Enum, respawn_template_data: %{}}
-      ctx = %{self_uri: URI.new!("entity://agent/system/cc_x"), kind_module: SomeKind}
-
-      assert :ignore =
-               Sandbox.handle_continue({:setup_phase_tracking, Enum, %{}}, slice, ctx)
-    end
-
-    test "handle_continue/3 :ignores when template_class is not an atom" do
-      slice = %{config_dir_path: nil, template_class: "not-atom", respawn_template_data: %{}}
-      ctx = %{self_uri: URI.new!("entity://agent/system/cc_x"), kind_module: SomeKind}
-
-      assert :ignore =
-               Sandbox.handle_continue({:setup_phase_tracking, "not-atom", %{}}, slice, ctx)
-    end
-  end
-
-  describe "handle_kind_message/3 (PTY-phase-state-machine 2026-05-26 follow-up b)" do
-    test "writes a :pty_phase event into the slice" do
-      slice = %{
-        config_dir_path: "/tmp/x",
-        template_class: SomeMod,
-        respawn_template_data: nil,
-        pty_phase: :starting
-      }
-
-      agent_uri = URI.new!("entity://agent/system/cc_x")
+  describe "handle_signal/2 (PTY phase mirror — successor to handle_kind_message/3, SPEC §9 OQ-3)" do
+    test "emits a {:set, :pty_phase, _} effect for a matching phase event" do
+      # The phase value is DURABLE state (the snapshot-persisted LV-badge
+      # mirror), so it is written via {:set, :pty_phase, _} — NOT a
+      # transient. handle_signal returns the same effect list as a handler.
+      agent_uri = uniq_uri()
       ctx = %{self_uri: agent_uri, kind_module: SomeKind}
-
       meta = %{os_pid: 12_345, reason: nil, at: 1_700_000_000_000}
 
-      assert {:ok, new_slice} =
-               Sandbox.handle_kind_message(
-                 {:pty_phase, agent_uri, :running, meta},
-                 slice,
-                 ctx
-               )
+      assert {:ok, effects} =
+               Sandbox.handle_signal({:pty_phase, agent_uri, :running, meta}, ctx)
 
-      assert new_slice.pty_phase == :running
-      # Other fields preserved
-      assert new_slice.config_dir_path == "/tmp/x"
-      assert new_slice.template_class == SomeMod
+      assert effects == [{:set, :pty_phase, :running}]
     end
 
     test "ignores non-phase messages" do
-      slice = %{pty_phase: :running}
-      ctx = %{self_uri: URI.new!("entity://agent/system/cc_x")}
+      ctx = %{self_uri: uniq_uri()}
 
-      assert :ignore = Sandbox.handle_kind_message(:something_else, slice, ctx)
-      assert :ignore = Sandbox.handle_kind_message({:not_a_phase, :foo}, slice, ctx)
+      assert :ignore = Sandbox.handle_signal(:something_else, ctx)
+      assert :ignore = Sandbox.handle_signal({:not_a_phase, :foo}, ctx)
     end
 
     test "ignores phase events with invalid phase atoms (defensive)" do
-      slice = %{pty_phase: :running}
-      agent_uri = URI.new!("entity://agent/system/cc_x")
+      agent_uri = uniq_uri()
       ctx = %{self_uri: agent_uri}
 
-      assert :ignore =
-               Sandbox.handle_kind_message(
-                 {:pty_phase, agent_uri, :bogus, %{}},
-                 slice,
-                 ctx
-               )
+      assert :ignore = Sandbox.handle_signal({:pty_phase, agent_uri, :bogus, %{}}, ctx)
     end
 
     test "ignores phase events whose agent_uri ≠ ctx.self_uri (codex MED-2 topic-collision defense)" do
       # PubSub topics are not an authentication boundary; a stray
       # publisher or topic collision could deliver a `{:pty_phase, X, ...}`
-      # to a Kind whose self_uri is Y. Verify identity BEFORE
-      # mutating the slice.
-      slice = %{pty_phase: :running}
+      # to a Kind whose self_uri is Y. Verify identity BEFORE emitting an
+      # effect.
       self_uri = URI.new!("entity://agent/system/cc_self")
       foreign_uri = URI.new!("entity://agent/system/cc_other")
       ctx = %{self_uri: self_uri}
 
-      assert :ignore =
-               Sandbox.handle_kind_message(
-                 {:pty_phase, foreign_uri, :dead, %{}},
-                 slice,
-                 ctx
-               )
+      assert :ignore = Sandbox.handle_signal({:pty_phase, foreign_uri, :dead, %{}}, ctx)
     end
   end
+
+  # Unique URI per call so each `activate/2` subscribes to a distinct
+  # PubSub topic (the test process subscribes; distinct topics avoid
+  # cross-test interference under async).
+  defp uniq_uri,
+    do: URI.new!("entity://agent/system/cc_x-#{System.unique_integer([:positive])}")
 end

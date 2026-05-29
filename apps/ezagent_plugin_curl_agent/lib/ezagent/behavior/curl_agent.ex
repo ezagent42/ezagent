@@ -4,25 +4,42 @@ defmodule Ezagent.Behavior.CurlAgent do
   conversation, calls a remote LLM completion API per :receive, and
   dispatches the reply back into the originating session.
 
-  ## Phase 2-g r3 migration (2026-05-28)
+  ## Phase B migration (2026-05-29) — Lifecycle API
 
-  Migrated to `use Ezagent.Behavior` + per-action declarative
-  contract per SPEC `2026-05-28-router-behavior-kind-architecture.md`
-  §2.2 + §4.4. The `:receive` handler builds the chat reply via a
+  Migrated from `use Ezagent.Behavior` to `use Ezagent.Lifecycle`
+  per SPEC `2026-05-29-lifecycle-hooks-design.md` §2.3 (representative
+  example A — the simple, no-transients case). The CQRS engine
+  (slice / invocation / snapshot) is hidden behind two state
+  containers + lifecycle moments:
+
+  - `create/1` builds the PERSISTENT `state` (was `init_slice/1`).
+  - There are NO transients (no PID / ETS / port / subprocess /
+    monitor), so `activate/2` is the macro-injected no-op default —
+    omitted here.
+  - `handle_<action>/2` is byte-identical except `ctx[:read]` →
+    `ctx.read` and the sibling read `ctx[:sibling_slices]` →
+    `ctx.siblings` (with `reads_sibling_slices/0` → `reads_siblings/0`).
+
+  The `:receive` handler builds the chat reply via a
   `{:dispatch, %Cmd{}}` effect; `:reset_conversation` and `:configure`
-  mutate the slice via `{:set, _, _}` effects.
+  mutate the persistent `state` via `{:set, _, _}` effects.
 
   `required_caps/0` is still manually exported to preserve the
   kind axis `:curl_agent` (the macro auto-derives uses `:any`).
+
+  The auto-derived `state_slice/0` (last module segment `CurlAgent`
+  → `:curl_agent`) equals the historical snapshot key, so NO
+  `state_slice:` override is needed (SPEC §5 step 2 / §7 OQ-7).
 
   Registered for `(Ezagent.Entity.CurlAgent, :receive)` in
   `EzagentPluginCurlAgent.Application`. The chat router targets
   `entity://agent/team-alpha/curl_<name>?action=chat.receive`; the dispatcher
   pattern-matches behavior_module to land here.
 
-  ## Slice (state_slice :curl_agent)
+  ## Persistent state (auto-derived state_slice :curl_agent)
 
-  See `Ezagent.Entity.CurlAgent` moduledoc for the schema. This
+  All fields are PERSISTENT (no transients). See
+  `Ezagent.Entity.CurlAgent` moduledoc for the schema. This
   behavior:
   - reads `provider / api_url / model / system_prompt / max_history`
     for the outbound call (set at instantiate via the Template Class)
@@ -55,30 +72,31 @@ defmodule Ezagent.Behavior.CurlAgent do
   (`system://chat-reply`) per SPEC caps-cleanup-v1 §4.4.
   """
 
-  use Ezagent.Behavior
-  @behaviour Ezagent.Behavior
+  use Ezagent.Lifecycle
 
   require Logger
 
   alias Ezagent.{Cmd, Message}
   alias Ezagent.PluginCurlAgent.ApiClient
 
-  action :receive,
+  action(:receive,
     args: %{message: :map},
     returns: %{ok: :boolean, tokens: :integer, error: :atom},
     caps: [:receive],
     modes: [:cast],
     description:
       "receive a session message and call the configured curl endpoint (LLM API mirror)"
+  )
 
-  action :reset_conversation,
+  action(:reset_conversation,
     args: %{},
     returns: %{ok: :boolean},
     caps: [:reset_conversation],
     modes: [:call],
     description: "clear the curl agent's conversation history"
+  )
 
-  action :configure,
+  action(:configure,
     args: %{
       provider: :string,
       api_url: :string,
@@ -90,6 +108,7 @@ defmodule Ezagent.Behavior.CurlAgent do
     caps: [:configure],
     modes: [:call],
     description: "set or update the curl agent's endpoint config (URL, headers, prompt)"
+  )
 
   # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
   # CurlAgent is registered on Entity.CurlAgent Kind (type_name
@@ -103,26 +122,31 @@ defmodule Ezagent.Behavior.CurlAgent do
     }
   end
 
-  def state_slice, do: :curl_agent
-
-  # Allen 2026-05-26 — declare the sibling slice this Behavior reads
+  # Allen 2026-05-26 — declare the sibling state this Behavior reads
   # in-process. `:api_keys` lives on the SAME Agent Kind; reading it
   # via dispatch back to `ctx.self_uri` would be a `GenServer.call(self)`
-  # deadlock. The Runtime injects the declared slice into
-  # `ctx[:sibling_slices][:api_keys]` as a read-only O(1) lookup.
-  def reads_sibling_slices, do: [:api_keys]
+  # deadlock. The Runtime injects the declared sibling into
+  # `ctx.siblings[:api_keys]` as a read-only O(1) lookup. Renamed from
+  # `reads_sibling_slices/0` per SPEC §2.2 (same opt-in semantics).
+  reads_siblings([:api_keys])
 
-  def init_slice(args) do
-    %{
-      provider: Map.get(args, :provider, "deepseek"),
-      api_url: Map.get(args, :api_url, "https://api.deepseek.com/chat/completions"),
-      model: Map.get(args, :model, "deepseek-chat"),
-      system_prompt: Map.get(args, :system_prompt),
-      max_history: Map.get(args, :max_history, 20),
-      conversation: [],
-      last_error: nil,
-      last_tokens: nil
-    }
+  # `init_slice/1` → `create/1` (SPEC §3 mapping). Build the initial
+  # PERSISTENT `state` once, on first-ever existence. No transients
+  # here (all fields survive restart), so `activate/2` is the
+  # macro-injected no-op default.
+  @impl Ezagent.Lifecycle
+  def create(args) do
+    {:ok,
+     %{
+       provider: Map.get(args, :provider, "deepseek"),
+       api_url: Map.get(args, :api_url, "https://api.deepseek.com/chat/completions"),
+       model: Map.get(args, :model, "deepseek-chat"),
+       system_prompt: Map.get(args, :system_prompt),
+       max_history: Map.get(args, :max_history, 20),
+       conversation: [],
+       last_error: nil,
+       last_tokens: nil
+     }}
   end
 
   # ---------------------------------------------------------------
@@ -151,11 +175,11 @@ defmodule Ezagent.Behavior.CurlAgent do
   end
 
   def handle_configure(args, ctx) when is_map(args) do
-    provider = ctx[:read].(:provider, "deepseek")
-    api_url = ctx[:read].(:api_url, "https://api.deepseek.com/chat/completions")
-    model = ctx[:read].(:model, "deepseek-chat")
-    system_prompt = ctx[:read].(:system_prompt, nil)
-    max_history = ctx[:read].(:max_history, 20)
+    provider = ctx.read.(:provider, "deepseek")
+    api_url = ctx.read.(:api_url, "https://api.deepseek.com/chat/completions")
+    model = ctx.read.(:model, "deepseek-chat")
+    system_prompt = ctx.read.(:system_prompt, nil)
+    max_history = ctx.read.(:max_history, 20)
 
     {:ok, %{ok: true},
      [
@@ -174,12 +198,12 @@ defmodule Ezagent.Behavior.CurlAgent do
     source_session_uri = ctx[:caller]
     self_uri = Map.get(ctx, :self_uri)
 
-    provider = ctx[:read].(:provider, "deepseek")
-    api_url = ctx[:read].(:api_url, "https://api.deepseek.com/chat/completions")
-    model = ctx[:read].(:model, "deepseek-chat")
-    system_prompt = ctx[:read].(:system_prompt, nil)
-    max_history = ctx[:read].(:max_history, 20)
-    current_conv = ctx[:read].(:conversation, [])
+    provider = ctx.read.(:provider, "deepseek")
+    api_url = ctx.read.(:api_url, "https://api.deepseek.com/chat/completions")
+    model = ctx.read.(:model, "deepseek-chat")
+    system_prompt = ctx.read.(:system_prompt, nil)
+    max_history = ctx.read.(:max_history, 20)
+    current_conv = ctx.read.(:conversation, [])
 
     appended_conv = append_turn(current_conv, "user", user_text)
     trimmed_conv = trim(appended_conv, max_history)
@@ -249,10 +273,11 @@ defmodule Ezagent.Behavior.CurlAgent do
   end
 
   # Allen 2026-05-26 — fetch the agent's OWN api_key from its `:api_keys`
-  # sibling slice (post ApiKeys-to-Agent flip).
+  # sibling state (post ApiKeys-to-Agent flip). Reads via the Lifecycle
+  # `ctx.siblings` surface (SPEC §2.2 — renamed from `ctx.sibling_slices`).
   defp fetch_self_api_key(ctx, provider) when is_binary(provider) do
-    api_keys_slice = ctx |> Map.get(:sibling_slices, %{}) |> Map.get(:api_keys, %{})
-    keys = Map.get(api_keys_slice, :keys, %{})
+    api_keys_sibling = ctx |> Map.get(:siblings, %{}) |> Map.get(:api_keys, %{})
+    keys = Map.get(api_keys_sibling, :keys, %{})
 
     case Map.fetch(keys, provider) do
       {:ok, key} when is_binary(key) and key != "" -> {:ok, key}

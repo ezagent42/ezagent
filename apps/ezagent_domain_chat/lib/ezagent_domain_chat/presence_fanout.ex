@@ -231,7 +231,11 @@ defmodule EzagentDomainChat.PresenceFanout do
           # path. Short timeout — bootstrap is best-effort.
           wrapper = :sys.get_state(session_pid, 1_000)
           slice = get_in(wrapper, [:state, :chat]) || %{}
-          members = Map.keys(Map.get(slice, :members, %{}))
+          # Lifecycle migration (SPEC 2026-05-29 §2.3C): the Chat slice is
+          # now two-container; `members` lives under `:state` (a flat slice
+          # falls through unchanged).
+          chat_persistent = Map.get(slice, :state, slice)
+          members = Map.keys(Map.get(chat_persistent, :members, %{}))
 
           Enum.reduce(members, state, fn member_uri, acc ->
             register_member(acc, session_uri, member_uri)

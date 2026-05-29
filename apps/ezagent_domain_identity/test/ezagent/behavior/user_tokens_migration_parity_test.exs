@@ -55,7 +55,8 @@ defmodule Ezagent.Behavior.UserTokensMigrationParityTest do
       assert {:ok, new_state, %{token_id: token_id, plain: plain, label: "parity-mint"}, _evt} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, User, user_uri)
 
-      assert new_state.user_tokens.mint_count == 1
+      # Phase B: two-container slice — persistent counter lives under `.state`.
+      assert new_state.user_tokens.state.mint_count == 1
       assert String.starts_with?(plain, "esr_pat_")
 
       # DB row exists.
@@ -90,7 +91,7 @@ defmodule Ezagent.Behavior.UserTokensMigrationParityTest do
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, User, user_uri)
 
       assert revoked_id == row.id
-      assert new_state.user_tokens.revoke_count == 1
+      assert new_state.user_tokens.state.revoke_count == 1
       assert Token.list(user_uri) == []
     end
 

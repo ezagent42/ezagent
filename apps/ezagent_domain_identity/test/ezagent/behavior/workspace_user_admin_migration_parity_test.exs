@@ -82,7 +82,8 @@ defmodule Ezagent.Behavior.WorkspaceUserAdminMigrationParityTest do
                  workspace_uri
                )
 
-      assert new_state.workspace_user_admin.create_count == 1
+      # Phase B: two-container slice — persistent counter lives under `.state`.
+      assert new_state.workspace_user_admin.state.create_count == 1
       # Row inserted in the users table.
       assert Ezagent.Users.get_by_uri(user_uri) != nil
     end

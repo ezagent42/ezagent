@@ -70,8 +70,15 @@ defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
     {:ok, pid} = Ezagent.Kind.spawn(Session, %{uri: session_uri})
 
     :sys.replace_state(pid, fn server_state ->
-      chat_slice = get_in(server_state, [:state, Chat.state_slice()]) || %{}
-      new_chat = Map.put(chat_slice, :template_working_copy, working_copy)
+      # Lifecycle migration (SPEC 2026-05-29 §2.3C): the Chat slice is now
+      # the two-container `%{state, transients}` shape; the persistent
+      # `template_working_copy` lives under `:state`. Stamp it there (the
+      # Generator/orchestrator tools write via `{:set, ...}` effects, which
+      # land in the same place).
+      chat_slice = get_in(server_state, [:state, Chat.state_slice()]) || %{state: %{}, transients: %{}}
+      chat_state = Map.get(chat_slice, :state, %{})
+      new_state = Map.put(chat_state, :template_working_copy, working_copy)
+      new_chat = Map.put(chat_slice, :state, new_state)
       put_in(server_state, [:state, Chat.state_slice()], new_chat)
     end)
 
