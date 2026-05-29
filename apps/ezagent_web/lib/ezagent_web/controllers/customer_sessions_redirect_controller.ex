@@ -7,7 +7,12 @@ defmodule EzagentWeb.CustomerSessionsRedirectController do
 
   use Phoenix.Controller, formats: [:html]
 
-  def redirect(conn, _params) do
+  # Named `index` (not `redirect`) to avoid shadowing
+  # `Phoenix.Controller.redirect/2`. Covers both the legacy list page
+  # and old `/admin/customer_sessions/:id` deep links (the old `:id` was
+  # an encoded session URI not derivable to the new tenant/conv shape, so
+  # both land on the `/operator` picker).
+  def index(conn, _params) do
     conn |> Phoenix.Controller.redirect(to: "/operator") |> Plug.Conn.halt()
   end
 end

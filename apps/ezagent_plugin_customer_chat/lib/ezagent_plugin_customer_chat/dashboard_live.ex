@@ -84,18 +84,19 @@ defmodule EzagentPluginCustomerChat.DashboardLive do
   end
 
   @impl true
-  def handle_info({:chat_message, _src_uri, _msg}, socket) do
-    # Cheap re-enumeration — picks up new sessions and updated
-    # last-activity / preview at once. For PoC scale (≤ tens of
-    # sessions) this is fine.
-    rows = enumerate_session_rows(socket.assigns.workspace_uri)
+  # Guard on :workspace_uri being present — the no-tenant picker branch
+  # of mount never assigns it (and never subscribes), so this clause only
+  # matches a tenant-scoped console socket. Cheap re-enumeration picks up
+  # new sessions + updated last-activity/preview at once (PoC scale).
+  def handle_info({:chat_message, _src_uri, _msg}, %{assigns: %{workspace_uri: ws_uri}} = socket)
+      when not is_nil(ws_uri) do
+    rows = enumerate_session_rows(ws_uri)
     # Re-subscribe to catch any new session URIs that appeared since
     # mount. PubSub.subscribe is idempotent per (pid, topic).
-    if connected?(socket), do: subscribe_to_sessions(socket.assigns.workspace_uri)
+    if connected?(socket), do: subscribe_to_sessions(ws_uri)
     {:noreply, assign(socket, :rows, rows)}
   end
 
-  def handle_info({:chat_message, _msg}, socket), do: {:noreply, socket}
   def handle_info(_other, socket), do: {:noreply, socket}
 
   @impl true

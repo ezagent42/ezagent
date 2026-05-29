@@ -284,7 +284,8 @@ defmodule EzagentWeb.Router do
   scope "/", EzagentWeb do
     pipe_through [:browser, EzagentWeb.Plugs.RequireEntity]
 
-    get "/admin/customer_sessions", CustomerSessionsRedirectController, :redirect
+    get "/admin/customer_sessions", CustomerSessionsRedirectController, :index
+    get "/admin/customer_sessions/:id", CustomerSessionsRedirectController, :index
   end
 
   # Liveness probe — plain JSON, no ESR dispatch path involved.
