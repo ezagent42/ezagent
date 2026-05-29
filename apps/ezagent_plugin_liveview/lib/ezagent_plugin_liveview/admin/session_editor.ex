@@ -87,6 +87,7 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
     ~H"""
     <header class="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shrink-0">
       <.session_selector current_session_uri={@current_session_uri} sessions={@sessions} />
+      <.loom_link current_session_uri={@current_session_uri} />
       <.create_session_button
         new_session_form={@new_session_form}
         template_class_options={@template_class_options}
@@ -132,6 +133,41 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
     </div>
     """
   end
+
+  # --- loom_link ------------------------------------------------------------
+  # loom 前端集成 (2026-05-29): 给 loom session 在 header 加一个"打开 Loom"入口,
+  # 新标签打开该 session 专属的 ai-ui-builder 页(/loom/:ws/:name,由
+  # EzagentPluginLoom.WebPlug 提供)。仅对 session://loom/... 显示;非 loom
+  # session 返回 nil → 不渲染。
+
+  attr(:current_session_uri, URI, required: true)
+
+  defp loom_link(assigns) do
+    assigns = assign(assigns, :loom_url, loom_session_url(assigns.current_session_uri))
+
+    ~H"""
+    <a
+      :if={@loom_url}
+      href={@loom_url}
+      target="_blank"
+      rel="noopener"
+      class="inline-flex items-center gap-1 text-xs px-2 py-1 rounded border border-violet-300 dark:border-violet-700 text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-950"
+      title={gettext("Open this session's Loom page-builder in a new tab")}
+    >
+      {gettext("Open Loom")} ↗
+    </a>
+    """
+  end
+
+  # session://loom/<ws>/<name>  →  "/loom/<ws>/<name>"; nil for non-loom sessions.
+  defp loom_session_url(%URI{scheme: "session", host: "loom", path: path}) when is_binary(path) do
+    case String.split(path, "/", trim: true) do
+      [ws, name | _] -> "/loom/#{ws}/#{name}"
+      _ -> nil
+    end
+  end
+
+  defp loom_session_url(_), do: nil
 
   # --- create_session_button ------------------------------------------------
 

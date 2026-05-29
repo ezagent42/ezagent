@@ -51,7 +51,11 @@ defmodule EzagentPluginLoom.MixProject do
       # loom v0.2 — `EzagentPluginLoom.Feishu` binds bootstrapped
       # sessions to the demo Feishu group via `Ezagent.ExternalMirror.BindingRow`
       # + spawns `Ezagent.Entity.ExternalMirrorWorker` (one-way mirror, PRD §5.4).
-      {:ezagent_domain_external_mirror, in_umbrella: true}
+      {:ezagent_domain_external_mirror, in_umbrella: true},
+      # loom 前端集成 (2026-05-29) — `EzagentPluginLoom.WebPlug` 用
+      # `Plug.Router` 在 /loom 下提供 ai-ui-builder 静态产物 +
+      # /loom/api/chat 代理。同飞书 WebhookPlug 的 `:plug` 声明。
+      {:plug, "~> 1.18"}
     ]
   end
 end
