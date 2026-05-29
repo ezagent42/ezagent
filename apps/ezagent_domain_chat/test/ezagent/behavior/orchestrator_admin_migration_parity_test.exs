@@ -55,8 +55,10 @@ defmodule Ezagent.Behavior.OrchestratorAdminMigrationParityTest do
       assert OrchestratorAdmin.state_slice() == :orchestrator_admin
     end
 
-    test "init_slice/1 returns empty map" do
-      assert OrchestratorAdmin.init_slice(%{}) == %{}
+    # Lifecycle migration (SPEC 2026-05-29 §2.3): `init_slice/1` now wraps
+    # `create/1`'s (empty) persistent state in the two-container shape.
+    test "init_slice/1 returns the two-container shape with empty persistent state" do
+      assert OrchestratorAdmin.init_slice(%{}) == %{state: %{}, transients: %{}}
     end
   end
 

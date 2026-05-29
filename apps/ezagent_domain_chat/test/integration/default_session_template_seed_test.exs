@@ -78,7 +78,18 @@ defmodule EzagentDomainChat.Integration.DefaultSessionTemplateSeedTest do
     # `Behavior.Template` registration).
     {:ok, state} = KindSnapshot.decode_state(default_template)
     template_slice = Map.get(state, :template) || Map.get(state, "template") || %{}
-    content = Map.get(template_slice, :content) || Map.get(template_slice, "content") || %{}
+
+    # Lifecycle migration (SPEC 2026-05-29): `Ezagent.Behavior.Template`
+    # now `use Ezagent.Lifecycle`, so the PERSISTED `:template` slice is
+    # the two-container `%{state: %{content: ...}}` shape (the framework
+    # persists only `:state`; `:transients` is stripped at the serialize
+    # boundary). Unwrap to the persistent `:state` view before reading
+    # `:content` — a pre-migration flat slice falls through unchanged.
+    template_persistent =
+      Map.get(template_slice, :state) || Map.get(template_slice, "state") || template_slice
+
+    content =
+      Map.get(template_persistent, :content) || Map.get(template_persistent, "content") || %{}
 
     # The seed writes atom-keyed content. `state_binary` preserves
     # atom keys via term_to_binary roundtrip; the legacy JSON `state`

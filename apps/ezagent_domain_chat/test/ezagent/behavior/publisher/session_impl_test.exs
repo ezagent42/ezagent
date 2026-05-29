@@ -1,9 +1,27 @@
 defmodule Ezagent.Behavior.Publisher.SessionImplTest do
   @moduledoc """
   Unit tests for `Ezagent.Behavior.Publisher.SessionImpl` — direct
-  `invoke/4` + `handle_kind_message/3` exercises against synthetic
-  slices. No live KindRegistry / SliceChange wiring (covered by the
-  integration tests in `EzagentDomainChat.Integration.PublisherSessionTest`).
+  handler + `handle_signal/2` exercises against synthetic flat slices. No
+  live KindRegistry / SliceChange wiring (covered by the integration tests
+  in `EzagentDomainChat.Integration.PublisherSessionTest`).
+
+  ## Lifecycle migration (SPEC 2026-05-29) — accessor updates
+
+  After `use Ezagent.Behavior` → `use Ezagent.Lifecycle`:
+  - `init_slice/1` returns the two-container `%{state:, transients:}`
+    shape; `fresh_slice/1` returns a FLAT working slice (persistent +
+    transient co-located) for the direct-handler unit tests, the same
+    way `EzagentDomainChat.Test.BehaviorInvoker` exposes a flat slice.
+  - `handle_kind_message/3` → `handle_signal/2`. The `signal/3` helper
+    below calls `handle_signal/2` with `ctx.read` over the flat slice +
+    `ctx.transients` = the flat slice, folds the returned `:set` /
+    `:set_transient` effects back onto the flat slice (both containers
+    co-located), and lifts the `{:ok, [effects]} | :ignore` result into
+    the old `{:ok, new_slice} | :ignore` shape the assertions use.
+  - `reconcile_after_load/2` is GONE — its subscriber/monitor clear is
+    subsumed by the transient container (rebuilt EMPTY every `activate/2`).
+    The reconcile describe block is replaced with `create/1` +
+    `activate/2` structural assertions of the same invariant.
   """
 
   use ExUnit.Case, async: true
@@ -20,8 +38,39 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
     }
   end
 
+  # FLAT working slice for direct-handler unit tests: persistent fields
+  # (`ring`/`cursor`/`retention`) + transient maps (`subscribers`/
+  # `monitors`) co-located, matching the BehaviorInvoker convention.
   defp fresh_slice(opts \\ []) do
-    SessionImpl.init_slice(%{publisher_retention: Keyword.get(opts, :retention, 100)})
+    {:ok, state} =
+      SessionImpl.create(%{publisher_retention: Keyword.get(opts, :retention, 100)})
+
+    Map.merge(state, %{subscribers: %{}, monitors: %{}})
+  end
+
+  # Call `handle_signal/2` with a flat slice and fold the returned effects
+  # back onto it (both `:set` and `:set_transient` write the same flat
+  # map). Lifts `{:ok, [effects]} | :ignore` → `{:ok, new_slice} | :ignore`.
+  defp signal(message, slice, ctx) do
+    enriched =
+      ctx
+      |> Map.put(:read, fn key, default -> Map.get(slice, key, default) end)
+      |> Map.put(:transients, slice)
+
+    case SessionImpl.handle_signal(message, enriched) do
+      :ignore ->
+        :ignore
+
+      {:ok, effects} when is_list(effects) ->
+        new_slice =
+          Enum.reduce(effects, slice, fn
+            {:set, k, v}, acc -> Map.put(acc, k, v)
+            {:set_transient, k, v}, acc -> Map.put(acc, k, v)
+            _other, acc -> acc
+          end)
+
+        {:ok, new_slice}
+    end
   end
 
   # PR-N3 codex r2 HIGH-1 (Allen 2026-05-25) — the SliceChange
@@ -87,22 +136,37 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
     end
   end
 
-  describe "init_slice/1" do
-    test "returns the documented slice shape with default retention 100" do
+  describe "create/1 + init_slice/1 (Lifecycle two-container)" do
+    test "create/1 returns the persistent fields only (default retention 100)" do
+      assert {:ok, state} = SessionImpl.create(%{})
+
+      assert state == %{ring: [], cursor: 0, retention: 100}
+      # subscribers / monitors are TRANSIENTS, not in persistent state.
+      refute Map.has_key?(state, :subscribers)
+      refute Map.has_key?(state, :monitors)
+    end
+
+    test "init_slice/1 wraps create/1 in the two-container shape (transients empty)" do
       slice = SessionImpl.init_slice(%{})
 
       assert slice == %{
-               ring: [],
-               cursor: 0,
-               retention: 100,
-               subscribers: %{},
-               monitors: %{}
+               state: %{ring: [], cursor: 0, retention: 100},
+               transients: %{}
              }
     end
 
     test "honors :publisher_retention spawn arg" do
-      slice = SessionImpl.init_slice(%{publisher_retention: 3})
-      assert slice.retention == 3
+      assert {:ok, %{retention: 3}} = SessionImpl.create(%{publisher_retention: 3})
+    end
+
+    test "activate/2 rebuilds the transient subscriber/monitor maps EMPTY + the SliceChange subscription token" do
+      ctx = %{self_uri: URI.parse("session://default/team-alpha/activate")}
+      assert {:ok, transients} = SessionImpl.activate(%{ring: [], cursor: 0, retention: 100}, ctx)
+      assert transients.subscribers == %{}
+      assert transients.monitors == %{}
+      # The subscription record is itself a transient; subscriber pid is
+      # the cold-restart-detectable token (SPEC §6 step 5c).
+      assert transients.slice_change_subscription.subscriber == self()
     end
   end
 
@@ -125,9 +189,23 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
       end)
     end
 
-    test "post_init/2 returns {:continue, :subscribe_to_self_slice_change}" do
+    # Lifecycle: `post_init/2` is macro-emitted and returns the unified
+    # activate continuation; the self-subscribe folded into `activate/2`.
+    test "post_init/2 returns the macro activate continuation" do
       assert SessionImpl.post_init(%{}, fresh_slice()) ==
-               {:continue, :subscribe_to_self_slice_change}
+               {:continue, :ezagent_activate}
+    end
+
+    test "activated/2 broadcasts publisher-alive AFTER :ready (post-ready reachability hook)" do
+      # `activated/2` (= engine on_ready) runs post-`:ready`; in this unit
+      # context PublisherLifecycle.broadcast_alive/1 returns :ok without a
+      # live subscriber. The point of the assertion is the hook EXISTS and
+      # is the post-ready successor to on_ready (SPEC §9 OQ-5 / §10-R1).
+      assert function_exported?(SessionImpl, :activated, 2)
+
+      assert SessionImpl.activated(%{}, %{
+               self_uri: URI.parse("session://default/team-alpha/activated")
+             }) == :ok
     end
   end
 
@@ -140,7 +218,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
         slice_change(self_uri, %{members: %{:m1 => true}}, slice_key: :chat, action: :join)
 
       assert {:ok, new_slice} =
-               SessionImpl.handle_kind_message({:slice_changed, change}, slice, ctx(self_uri))
+               signal({:slice_changed, change}, slice, ctx(self_uri))
 
       assert new_slice.cursor == 1
       assert [%Event{cursor: 1, slice_key: :chat}] = new_slice.ring
@@ -167,7 +245,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
         ctx(self_uri) |> Map.put(:slice_state, %{chat: lifecycle_sibling})
 
       assert {:ok, new_slice} =
-               SessionImpl.handle_kind_message({:slice_changed, change}, slice, ctx_with_state)
+               signal({:slice_changed, change}, slice, ctx_with_state)
 
       [%Event{payload: payload}] = new_slice.ring
       stored = payload.new_slice
@@ -187,7 +265,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
       ctx_with_state = ctx(self_uri) |> Map.put(:slice_state, %{chat: legacy_flat})
 
       assert {:ok, new_slice} =
-               SessionImpl.handle_kind_message({:slice_changed, change}, slice, ctx_with_state)
+               signal({:slice_changed, change}, slice, ctx_with_state)
 
       [%Event{payload: payload}] = new_slice.ring
       assert payload.new_slice == legacy_flat
@@ -200,7 +278,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
 
       change = slice_change(other_uri, %{x: 1})
 
-      assert SessionImpl.handle_kind_message({:slice_changed, change}, slice, ctx(self_uri)) ==
+      assert signal({:slice_changed, change}, slice, ctx(self_uri)) ==
                :ignore
     end
 
@@ -210,7 +288,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
 
       change = slice_change(self_uri, %{x: 1}, slice_key: :publisher)
 
-      assert SessionImpl.handle_kind_message({:slice_changed, change}, slice, ctx(self_uri)) ==
+      assert signal({:slice_changed, change}, slice, ctx(self_uri)) ==
                :ignore
     end
 
@@ -223,7 +301,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
           change = slice_change(self_uri, %{n: n})
 
           {:ok, new_slice} =
-            SessionImpl.handle_kind_message({:slice_changed, change}, acc, ctx(self_uri))
+            signal({:slice_changed, change}, acc, ctx(self_uri))
 
           new_slice
         end)
@@ -264,7 +342,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
       change = slice_change(self_uri, %{x: 1})
 
       {:ok, _new_slice} =
-        SessionImpl.handle_kind_message({:slice_changed, change}, slice, ctx(self_uri))
+        signal({:slice_changed, change}, slice, ctx(self_uri))
 
       assert {:publisher_event, %Event{cursor: 1}} = Task.await(task1)
       assert {:publisher_event, %Event{cursor: 1}} = Task.await(task2)
@@ -281,7 +359,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
           change = slice_change(self_uri, %{n: n})
 
           {:ok, new} =
-            SessionImpl.handle_kind_message({:slice_changed, change}, acc, ctx(self_uri))
+            signal({:slice_changed, change}, acc, ctx(self_uri))
 
           new
         end)
@@ -320,7 +398,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
           change = slice_change(self_uri, %{n: n})
 
           {:ok, new} =
-            SessionImpl.handle_kind_message({:slice_changed, change}, acc, ctx(self_uri))
+            signal({:slice_changed, change}, acc, ctx(self_uri))
 
           new
         end)
@@ -420,7 +498,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
           change = slice_change(self_uri, %{n: n})
 
           {:ok, new} =
-            SessionImpl.handle_kind_message({:slice_changed, change}, acc, ctx(self_uri))
+            signal({:slice_changed, change}, acc, ctx(self_uri))
 
           new
         end)
@@ -455,7 +533,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
           change = slice_change(self_uri, %{n: n})
 
           {:ok, new} =
-            SessionImpl.handle_kind_message({:slice_changed, change}, acc, ctx(self_uri))
+            signal({:slice_changed, change}, acc, ctx(self_uri))
 
           new
         end)
@@ -479,7 +557,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
       change = slice_change(self_uri, %{x: 1}, slice_key: :chat, action: :send)
 
       {:ok, slice, _} =
-        SessionImpl.handle_kind_message({:slice_changed, change}, slice, ctx(self_uri))
+        signal({:slice_changed, change}, slice, ctx(self_uri))
         |> case do
           {:ok, new_slice} -> {:ok, new_slice, nil}
         end
@@ -515,7 +593,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
           change = slice_change(self_uri, %{n: n})
 
           {:ok, new} =
-            SessionImpl.handle_kind_message({:slice_changed, change}, acc, ctx(self_uri))
+            signal({:slice_changed, change}, acc, ctx(self_uri))
 
           new
         end)
@@ -535,7 +613,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
           change = slice_change(self_uri, %{n: n})
 
           {:ok, new} =
-            SessionImpl.handle_kind_message({:slice_changed, change}, acc, ctx(self_uri))
+            signal({:slice_changed, change}, acc, ctx(self_uri))
 
           new
         end)
@@ -554,7 +632,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
           change = slice_change(self_uri, %{n: n})
 
           {:ok, new} =
-            SessionImpl.handle_kind_message({:slice_changed, change}, acc, ctx(self_uri))
+            signal({:slice_changed, change}, acc, ctx(self_uri))
 
           new
         end)
@@ -580,7 +658,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
 
       down_msg = {:DOWN, ref, :process, pid, :normal}
 
-      assert {:ok, new_slice} = SessionImpl.handle_kind_message(down_msg, slice, ctx(self_uri))
+      assert {:ok, new_slice} = signal(down_msg, slice, ctx(self_uri))
 
       assert new_slice.subscribers == %{}
       assert new_slice.monitors == %{}
@@ -590,7 +668,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
       foreign_ref = Process.monitor(self())
       slice = fresh_slice()
       down_msg = {:DOWN, foreign_ref, :process, self(), :normal}
-      assert :ignore = SessionImpl.handle_kind_message(down_msg, slice, ctx())
+      assert :ignore = signal(down_msg, slice, ctx())
     after
       :ok
     end
@@ -613,7 +691,7 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
 
       # First simulate the DOWN cleanup the Server would deliver.
       assert {:ok, cleaned} =
-               SessionImpl.handle_kind_message(
+               signal(
                  {:DOWN, ref, :process, pid, :normal},
                  slice,
                  ctx(self_uri)
@@ -625,93 +703,81 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
       change = slice_change(self_uri, %{x: 1})
 
       assert {:ok, after_emit} =
-               SessionImpl.handle_kind_message({:slice_changed, change}, cleaned, ctx(self_uri))
+               signal({:slice_changed, change}, cleaned, ctx(self_uri))
 
       assert after_emit.cursor == 1
       assert length(after_emit.ring) == 1
     end
   end
 
-  describe "reconcile_after_load/2 — task #49 codex r1 CONCERN #3 (2026-05-27)" do
-    # Pure-function unit coverage for the snapshot-load reconciliation
-    # hook. The cold-spawn integration scenario lives in
-    # `apps/ezagent_domain_external_mirror/test/.../worker_resubscribe_on_session_cold_spawn_test.exs`
-    # (end-to-end); this set asserts the reconcile contract directly so
-    # the assertion is race-free (no live KindRegistry / ReadyGate /
-    # lifecycle handshake involved).
-
-    test "clears `:subscribers` map populated with stale pid->ref entries" do
-      uri = URI.parse("session://default/team-alpha/reconcile-after-load-1")
-      stale_pid = spawn(fn -> :ok end)
-      stale_ref = make_ref()
-
-      slice = %{
-        ring: [],
-        cursor: 0,
-        retention: 100,
-        subscribers: %{stale_pid => stale_ref},
-        monitors: %{stale_ref => stale_pid}
-      }
-
-      reconciled = SessionImpl.reconcile_after_load(uri, slice)
-
-      assert reconciled.subscribers == %{}
-      assert reconciled.monitors == %{}
+  # Lifecycle migration (SPEC 2026-05-29 §10-R1 / §9 OQ-5): the old
+  # `reconcile_after_load/2` cleared the transient subscriber/monitor maps
+  # on snapshot load. Under Lifecycle those maps are TRANSIENTS — they
+  # live in `transients`, which has NO serialization path and is rebuilt
+  # EMPTY by `activate/2` on every start. The reconcile-clear is therefore
+  # subsumed by the container model: there is structurally nothing to
+  # clear. These tests assert that the SAME invariant — no stale handle
+  # survives a restart — holds by construction.
+  describe "transients are NOT persisted (subsumes the old reconcile_after_load clear)" do
+    test "create/1 builds NO subscriber/monitor maps in persistent state" do
+      assert {:ok, state} = SessionImpl.create(%{})
+      refute Map.has_key?(state, :subscribers)
+      refute Map.has_key?(state, :monitors)
     end
 
-    test "preserves durable fields (`:ring`, `:cursor`, `:retention`) on reconcile" do
-      uri = URI.parse("session://default/team-alpha/reconcile-after-load-2")
-      stale_event_cursor = 7
+    test "activate/2 rebuilds subscribers + monitors EMPTY regardless of prior incarnation" do
+      uri = URI.parse("session://default/team-alpha/transient-rebuild-1")
+
+      # A rehydrated persistent state carries ONLY the durable fields.
+      state = %{ring: [], cursor: 0, retention: 100}
+
+      assert {:ok, transients} = SessionImpl.activate(state, %{self_uri: uri})
+      assert transients.subscribers == %{}
+      assert transients.monitors == %{}
+    end
+
+    test "durable fields are preserved through a cold-load (rehydrated state passes through activate untouched)" do
+      uri = URI.parse("session://default/team-alpha/transient-rebuild-2")
 
       stale_event = %Event{
-        cursor: stale_event_cursor,
+        cursor: 7,
         publisher_uri: uri,
         slice_key: :chat,
         event_at: DateTime.utc_now(),
         payload: %{new_slice: %{}}
       }
 
-      slice = %{
-        ring: [stale_event],
-        cursor: stale_event_cursor,
-        retention: 42,
-        subscribers: %{self() => make_ref()},
-        monitors: %{make_ref() => self()}
-      }
+      # `activate/2` returns a 2-arity {:ok, transients} — it does NOT
+      # reconcile state for SessionImpl (state is already durable), so the
+      # persistent ring/cursor/retention survive unchanged from the
+      # rehydrated snapshot.
+      state = %{ring: [stale_event], cursor: 7, retention: 42}
 
-      reconciled = SessionImpl.reconcile_after_load(uri, slice)
-
-      assert reconciled.ring == [stale_event]
-      assert reconciled.cursor == stale_event_cursor
-      assert reconciled.retention == 42
-      assert reconciled.subscribers == %{}
-      assert reconciled.monitors == %{}
+      assert {:ok, transients} = SessionImpl.activate(state, %{self_uri: uri})
+      assert transients.subscribers == %{}
+      assert transients.monitors == %{}
+      # State is unchanged by activate (no 3-arity reconcile return).
     end
 
-    test "is idempotent — re-running on already-cleared slice is identity" do
-      uri = URI.parse("session://default/team-alpha/reconcile-after-load-3")
+    test "activate/2 is idempotent — re-running yields EMPTY transient maps again" do
+      uri = URI.parse("session://default/team-alpha/transient-rebuild-3")
+      state = %{ring: [], cursor: 0, retention: 100}
 
-      cleared = %{
-        ring: [],
-        cursor: 0,
-        retention: 100,
-        subscribers: %{},
-        monitors: %{}
-      }
-
-      once = SessionImpl.reconcile_after_load(uri, cleared)
-      twice = SessionImpl.reconcile_after_load(uri, once)
-
-      assert once == twice
-      assert twice == cleared
+      assert {:ok, once} = SessionImpl.activate(state, %{self_uri: uri})
+      assert {:ok, twice} = SessionImpl.activate(state, %{self_uri: uri})
+      assert once.subscribers == twice.subscribers
+      assert once.monitors == twice.monitors
+      assert once.subscribers == %{}
     end
 
-    test "is callable via the `Snapshot.reconcile_after_load_behaviors/3` walker contract" do
-      # Confirms `function_exported?/3` finds `reconcile_after_load/2` on
-      # the behavior module (the snapshot.ex walker probes via this exact
-      # mechanism). If a future refactor accidentally removed the export
-      # this guard fails before the integration test would.
-      assert function_exported?(SessionImpl, :reconcile_after_load, 2)
+    test "reconcile_after_load/2 is GONE from the developer surface (folded into activate)" do
+      # The Lifecycle migration removed the developer-facing
+      # `reconcile_after_load/2`; the transient container subsumes it.
+      refute function_exported?(SessionImpl, :reconcile_after_load, 2)
+      # The Lifecycle hooks that replace it ARE exported.
+      assert function_exported?(SessionImpl, :create, 1)
+      assert function_exported?(SessionImpl, :activate, 2)
+      assert function_exported?(SessionImpl, :activated, 2)
     end
   end
 

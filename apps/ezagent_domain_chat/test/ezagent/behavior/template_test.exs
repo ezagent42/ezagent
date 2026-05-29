@@ -24,14 +24,22 @@ defmodule Ezagent.Behavior.TemplateTest do
       assert Template.state_slice() == :template
     end
 
+    # Lifecycle migration (SPEC 2026-05-29 §2.3): `init_slice/1` is
+    # macro-emitted, wrapping `create/1`'s persistent `%{content: ...}` in
+    # the two-container `%{state:, transients:}` shape (no transients —
+    # the content is fully persistent). Assert on `.state`.
     test "init_slice/1 defaults content to nil (unpopulated template Kind)" do
-      assert Template.init_slice(%{uri: URI.new!("template://agent/team-alpha/x")}) ==
+      assert Template.init_slice(%{uri: URI.new!("template://agent/team-alpha/x")}).state ==
                %{content: nil}
+
+      assert Template.create(%{uri: URI.new!("template://agent/team-alpha/x")}) ==
+               {:ok, %{content: nil}}
     end
 
     test "init_slice/1 reads args[:content]" do
       content = %{name: "x", flavor: "cc"}
-      assert Template.init_slice(%{content: content}) == %{content: content}
+      assert Template.init_slice(%{content: content}).state == %{content: content}
+      assert Template.create(%{content: content}) == {:ok, %{content: content}}
     end
 
     test "interface/0 declares all four actions, all :call mode" do

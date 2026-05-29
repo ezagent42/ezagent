@@ -262,9 +262,18 @@ defmodule EzagentDomainChat.Integration.SessionSurvivesRestartTest do
       # CORRECT behavior — a pre-PR-EM-0 snapshot doesn't have a
       # :publisher field, and the merge ensures the new Behavior
       # boots with empty ring + cursor=0 rather than crashing on
-      # KeyError. See SessionImpl.init_slice/1 for the default shape.
-      assert %{ring: [], cursor: 0, retention: 100, subscribers: %{}, monitors: %{}} =
-               loaded.publisher
+      # KeyError.
+      #
+      # Lifecycle migration (SPEC 2026-05-29): `Behavior.Publisher.SessionImpl`
+      # now `use Ezagent.Lifecycle`, so the fresh-init `:publisher` slice is
+      # the two-container `%{state: %{ring, cursor, retention}, transients:
+      # %{}}` shape. `create/1` builds ONLY the persistent fields; the
+      # transient `subscribers`/`monitors` maps are NOT in fresh init —
+      # `activate/2` fills them empty on every start (so they don't appear
+      # in the snapshot-loaded slice at all). Normalize to the flat `.state`
+      # view (the T3 chokepoint) and assert the persistent fields.
+      assert Ezagent.Kind.normalize_slice_view(loaded.publisher) ==
+               %{ring: [], cursor: 0, retention: 100}
     end
   end
 
