@@ -320,9 +320,9 @@ defmodule Ezagent.Kind.Snapshot do
   system-tier state — these snapshots own no per-tenant data, so
   landing in admin is structurally correct).
   """
-  @spec save_now(URI.t() | String.t(), module(), %{atom() => map()}) ::
+  @spec save_now(URI.t() | String.t(), module(), %{atom() => map()}, keyword()) ::
           :ok | {:error, term()}
-  def save_now(uri, kind_module, state) do
+  def save_now(uri, kind_module, state, opts \\ []) do
     uri_str = uri_to_str(uri)
     kind_type_str = Atom.to_string(kind_module.type_name())
     version = snapshot_version_of(kind_module)
@@ -338,7 +338,18 @@ defmodule Ezagent.Kind.Snapshot do
     binary = :erlang.term_to_binary(strip_transients(state))
     workspace_uri_str = derive_workspace_uri(uri)
 
-    case KindSnapshot.upsert(uri_str, kind_type_str, binary, version, workspace_uri_str) do
+    # Lifecycle Phase A (SPEC §9 OQ-1, F3) — when the caller is the
+    # initial-persist of a Lifecycle Kind, set the `ever_created` marker
+    # in the SAME upsert as the state binary so the marker is atomic with
+    # the snapshot it gates. No separate fire-and-forget write that a
+    # crash could land between.
+    upsert_opts =
+      case Keyword.get(opts, :mark_ever_created, false) do
+        true -> [mark_ever_created: true]
+        _ -> []
+      end
+
+    case KindSnapshot.upsert(uri_str, kind_type_str, binary, version, workspace_uri_str, upsert_opts) do
       {:ok, _row} ->
         :telemetry.execute(
           [:ezagent, :persistence, :written],

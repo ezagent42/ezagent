@@ -444,6 +444,22 @@ defmodule Ezagent.Behavior do
   @callback reads_sibling_slices() :: [atom()]
 
   @doc """
+  Lifecycle Phase A (SPEC §2.2) — the Lifecycle-surface rename of
+  `reads_sibling_slices/0`. A Lifecycle module declares the sibling
+  state keys it reads via `reads_siblings [:api_keys]` (or
+  `def reads_siblings, do: [:api_keys]`); the runtime surfaces them on
+  `ctx.siblings` (normalized to each sibling's persistent flat view —
+  see `Ezagent.Kind.Runtime`).
+
+  Same opt-in, same scoping, same `:all_slices`-is-banned rule
+  (invariant 18) as the legacy `reads_sibling_slices/0`. Optional
+  callback — `Ezagent.Behavior.reads_siblings_of/1` reads the UNION of
+  this and the legacy callback so a Kind mixing legacy + Lifecycle
+  Behaviors is correct.
+  """
+  @callback reads_siblings() :: [atom()]
+
+  @doc """
   Reconcile this Behavior's slice with an external source of truth
   (e.g. a projection table in the DB) after the Kind has loaded
   state from a snapshot.
@@ -550,6 +566,7 @@ defmodule Ezagent.Behavior do
     cap_exempt_actions: 0,
     workspace_scoped?: 0,
     reads_sibling_slices: 0,
+    reads_siblings: 0,
     reconcile_after_load: 2,
     on_ready: 2
   ]
@@ -1337,6 +1354,33 @@ defmodule Ezagent.Behavior do
     else
       []
     end
+  end
+
+  @doc """
+  Lifecycle Phase A (SPEC §2.2, F2) — the UNION of a Behavior's declared
+  sibling-read keys across BOTH the legacy `reads_sibling_slices/0` and
+  the Lifecycle `reads_siblings/0` callbacks.
+
+  Used by `Ezagent.Kind.Runtime.handle_dispatch/4` to decide which
+  sibling slices to surface on `ctx.sibling_slices` (legacy reader
+  surface) AND `ctx.siblings` (Lifecycle reader surface). Reading the
+  union means a module mid-migration that has renamed its callback —
+  or a Kind composing one legacy + one Lifecycle Behavior — is correct
+  regardless of which callback name each declares.
+  """
+  @spec reads_siblings_of(module()) :: [atom()]
+  def reads_siblings_of(behavior_module) when is_atom(behavior_module) do
+    legacy =
+      if function_exported?(behavior_module, :reads_sibling_slices, 0),
+        do: behavior_module.reads_sibling_slices(),
+        else: []
+
+    lifecycle =
+      if function_exported?(behavior_module, :reads_siblings, 0),
+        do: behavior_module.reads_siblings(),
+        else: []
+
+    (legacy ++ lifecycle) |> Enum.uniq()
   end
 
   @doc """

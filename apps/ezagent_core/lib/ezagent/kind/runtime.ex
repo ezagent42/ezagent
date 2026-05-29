@@ -205,7 +205,7 @@ defmodule Ezagent.Kind.Runtime do
       # topic + payload self_uri — `target` includes `?action=…`
       # query but subscribers want one topic per Kind instance.
       slice_change_event =
-        if new_slice != slice do
+        if slice_persistably_changed?(slice, new_slice) do
           %{
             self_uri: Ezagent.URI.instance(target),
             kind_module: kind_module,
@@ -261,6 +261,25 @@ defmodule Ezagent.Kind.Runtime do
         err
     end
   end
+
+  # Lifecycle Phase A (SPEC §0.1 / §10-R2, F1a) — a SliceChange must
+  # fire only on a change to the PERSISTABLE view of the slice. For a
+  # Lifecycle two-container slice (`%{state: _, transients: _}`) a
+  # `{:set_transient, ...}`-only handler mutates ONLY `:transients`,
+  # which is never persisted and never mirrored into a durable Publisher
+  # ring — so it must NOT emit a SliceChange (which drives both the
+  # persistence-coupled notification and the Publisher ring append).
+  # We therefore compare the transients-stripped views. Legacy flat
+  # slices have no `:transients` sub-key, so the strip is a no-op and
+  # the comparison is byte-identical to the old `new_slice != slice`.
+  defp slice_persistably_changed?(old_slice, new_slice) do
+    strip_transients_one(old_slice) != strip_transients_one(new_slice)
+  end
+
+  defp strip_transients_one(%{transients: _} = slice) when is_map(slice),
+    do: Map.delete(slice, :transients)
+
+  defp strip_transients_one(other), do: other
 
   defp lookup_behavior(kind_module, action) do
     case Ezagent.BehaviorRegistry.lookup(kind_module, action) do
@@ -758,13 +777,61 @@ defmodule Ezagent.Kind.Runtime do
   defp invoke_new_contract_handler(behavior_module, action, handler_name, slice, args, ctx) do
     handler_ctx = build_handler_ctx(slice, ctx)
 
+    # Lifecycle Phase A (SPEC §2 fine interception, F6) — wrap the handler
+    # dispatch with the OPTIONAL `pre_handle/3` (before, may halt/rewrite
+    # args) + `post_handle/4` (after, may rewrite result/effects) hooks.
+    # Both are probed via `function_exported?/3`, so a Behavior that
+    # doesn't declare them (the common case + every legacy Behavior) is
+    # byte-for-byte unaffected.
+    case run_pre_handle(behavior_module, action, args, handler_ctx) do
+      {:halt, result} ->
+        # pre_handle short-circuited — skip the handler, no effects, slice
+        # unchanged. (A pre_handle authz gate returning {:halt, result}.)
+        {:ok, slice, result}
+
+      {:error, _reason} = err ->
+        err
+
+      {:cont, effective_args} ->
+        invoke_handler_with_post(
+          behavior_module,
+          action,
+          handler_name,
+          slice,
+          effective_args,
+          handler_ctx,
+          ctx
+        )
+    end
+  end
+
+  # Run the handler, then thread its (result, effects) through
+  # `post_handle/4` before executing the effects.
+  defp invoke_handler_with_post(
+         behavior_module,
+         action,
+         handler_name,
+         slice,
+         args,
+         handler_ctx,
+         ctx
+       ) do
     case apply(behavior_module, handler_name, [args, handler_ctx]) do
       {:ok, result, effects} when is_list(effects) ->
+        {result, effects} =
+          run_post_handle(behavior_module, action, result, effects, handler_ctx)
+
         apply_new_contract_effects(slice, result, effects, ctx)
 
       {:ok, result} ->
-        # No effects → slice unchanged, propagate the result.
-        {:ok, slice, result}
+        # No effects → run post_handle with an empty effect list so a
+        # post_handle hook may still INJECT effects (audit/mirror).
+        {result, effects} = run_post_handle(behavior_module, action, result, [], handler_ctx)
+
+        case effects do
+          [] -> {:ok, slice, result}
+          _ -> apply_new_contract_effects(slice, result, effects, ctx)
+        end
 
       {:error, _reason} = err ->
         err
@@ -785,6 +852,40 @@ defmodule Ezagent.Kind.Runtime do
       )
 
       {:error, {:behavior_exception, kind, reason}}
+  end
+
+  # `pre_handle/3` — OPTIONAL fine interception BEFORE the handler.
+  # Returns (normalized to a uniform internal shape):
+  #   :cont                → {:cont, args}   (proceed unchanged)
+  #   {:cont, new_args}    → {:cont, new_args}
+  #   {:halt, result}      → {:halt, result} (skip handler, no effects)
+  #   {:error, reason}     → {:error, reason} (deny)
+  defp run_pre_handle(behavior_module, action, args, handler_ctx) do
+    if function_exported?(behavior_module, :pre_handle, 3) do
+      case behavior_module.pre_handle(action, args, handler_ctx) do
+        :cont -> {:cont, args}
+        {:cont, new_args} when is_map(new_args) -> {:cont, new_args}
+        {:halt, result} -> {:halt, result}
+        {:error, reason} -> {:error, reason}
+      end
+    else
+      {:cont, args}
+    end
+  end
+
+  # `post_handle/4` — OPTIONAL fine interception AFTER the handler, BEFORE
+  # effects execute. May replace the (result, effects) pair.
+  #   {:ok, result, effects} → use the replacement pair
+  #   :cont                  → keep (result, effects) unchanged
+  defp run_post_handle(behavior_module, action, result, effects, handler_ctx) do
+    if function_exported?(behavior_module, :post_handle, 4) do
+      case behavior_module.post_handle(action, result, effects, handler_ctx) do
+        {:ok, new_result, new_effects} when is_list(new_effects) -> {new_result, new_effects}
+        :cont -> {result, effects}
+      end
+    else
+      {result, effects}
+    end
   end
 
   # Build the `ctx` handed to a `handle_<action>/2` handler.
@@ -1237,27 +1338,50 @@ defmodule Ezagent.Kind.Runtime do
   # case, preserving deny-as-default).
   # Allen 2026-05-26 (codex CRIT-1 closure) — inject the OPT-IN
   # `ctx[:sibling_slices]` read view scoped to ONLY the slice keys the
-  # Behavior declared via `Ezagent.Behavior.reads_sibling_slices/0`.
-  # Default (empty list) skips the injection entirely — `ctx` carries
-  # no `:sibling_slices` key for the common case. A declaration like
-  # `def reads_sibling_slices, do: [:api_keys]` exposes exactly that
-  # slice (read-only by Behavior contract; the Runtime ignores any
-  # mutation to ctx[:sibling_slices] — only the third arg to
-  # `invoke/4` is the writable slice).
+  # Behavior declared via `Ezagent.Behavior.reads_sibling_slices/0`
+  # (legacy) / `reads_siblings/0` (Lifecycle rename, SPEC §2.2).
+  #
+  # Lifecycle Phase A (SPEC §2.2 / §7 OQ-7, F2) — the Phase B coexistence
+  # invariant: conversion order must NOT matter. A sibling slice may be
+  # legacy-flat (`%{keys: ...}`) OR Lifecycle two-container
+  # (`%{state: %{keys: ...}, transients: %{}}`) depending on whether that
+  # sibling's module has been converted yet. We NORMALIZE every two-
+  # container sibling to its persistent `:state` view so a legacy reader
+  # (`ctx.sibling_slices[:api_keys][:keys]`) sees flat fields unchanged
+  # regardless of the sibling's conversion state. We ALSO surface the
+  # SPEC-promised Lifecycle `ctx.siblings` map (same normalized-flat
+  # shape) for converted modules that read `ctx.siblings[:api_keys]`.
+  # Both keys carry the SAME normalized-flat values, so ANY mix of
+  # legacy/Lifecycle siblings + ANY mix of legacy/Lifecycle readers on
+  # one Kind is correct.
+  #
+  # Read-only by Behavior contract; the Runtime ignores any mutation to
+  # either ctx key — only the dispatching Behavior's own slice is the
+  # writable target.
   defp maybe_inject_sibling_slices(ctx, behavior_module, state) do
-    case Ezagent.Behavior.reads_sibling_slices_of(behavior_module) do
+    case Ezagent.Behavior.reads_siblings_of(behavior_module) do
       [] ->
         ctx
 
       keys when is_list(keys) ->
-        sibling =
+        siblings =
           for key <- keys, into: %{} do
-            {key, Map.get(state, key, %{})}
+            {key, normalize_sibling_slice(Map.get(state, key, %{}))}
           end
 
-        Map.put(ctx, :sibling_slices, sibling)
+        ctx
+        |> Map.put(:sibling_slices, siblings)
+        |> Map.put(:siblings, siblings)
     end
   end
+
+  # Normalize a sibling slice to its persistent flat view. A Lifecycle
+  # two-container slice (`%{state: _, transients: _}`) collapses to its
+  # `:state` sub-map; a legacy flat slice passes through unchanged. This
+  # is what makes a reader's `ctx.siblings[:api_keys][:keys]` resolve
+  # whether or not `:api_keys` has been converted to Lifecycle yet.
+  defp normalize_sibling_slice(%{state: st, transients: _} = _slice) when is_map(st), do: st
+  defp normalize_sibling_slice(other), do: other
 
   defp derive_session_uri(%URI{scheme: "session"} = target) do
     # PR #141 SPEC v2: session URIs are `session://<type>/<name>`

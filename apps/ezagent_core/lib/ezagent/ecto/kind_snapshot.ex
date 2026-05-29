@@ -85,12 +85,22 @@ defmodule Ezagent.Ecto.KindSnapshot do
   caller from the Kind URI (entity URI carries it as path segment;
   session URI looked up via `WorkspaceRegistry`; workspace URI is
   itself). The column is NOT NULL — caller MUST supply.
+
+  ## `opts[:mark_ever_created]` (Lifecycle Phase A — SPEC §9 OQ-1, F3)
+
+  When `true`, the `ever_created` column is set to `true` in the SAME
+  `INSERT`/`UPDATE` as the state binary — atomic with the initial Lifecycle
+  snapshot persist. This closes the create-re-run window: there is no
+  longer a separate fire-and-forget marker write that a crash could land
+  AFTER the snapshot but BEFORE the marker. When the opt is absent /
+  `false`, the column is left untouched (an UPDATE of an already-created
+  row keeps its `true`; a fresh row defaults to `false`).
   """
-  @spec upsert(String.t(), String.t(), binary(), non_neg_integer(), String.t()) ::
+  @spec upsert(String.t(), String.t(), binary(), non_neg_integer(), String.t(), keyword()) ::
           {:ok, %__MODULE__{}} | {:error, term()}
-  def upsert(uri_str, kind_type_str, binary, version, workspace_uri_str)
+  def upsert(uri_str, kind_type_str, binary, version, workspace_uri_str, opts \\ [])
       when is_binary(uri_str) and is_binary(kind_type_str) and is_binary(binary) and
-             is_integer(version) and is_binary(workspace_uri_str) do
+             is_integer(version) and is_binary(workspace_uri_str) and is_list(opts) do
     now = DateTime.utc_now()
 
     attrs = %{
@@ -102,6 +112,13 @@ defmodule Ezagent.Ecto.KindSnapshot do
       workspace_uri: workspace_uri_str,
       updated_at: now
     }
+
+    attrs =
+      if Keyword.get(opts, :mark_ever_created, false) do
+        Map.put(attrs, :ever_created, true)
+      else
+        attrs
+      end
 
     do_upsert_with_retry(uri_str, attrs, now, _attempt = 0)
   end

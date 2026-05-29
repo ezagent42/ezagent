@@ -146,6 +146,53 @@ defmodule Ezagent.Behavior.Publisher.SessionImplTest do
       assert [%Event{cursor: 1, slice_key: :chat}] = new_slice.ring
     end
 
+    test "F1b — Lifecycle :transients are STRIPPED from the slice mirrored into the durable ring" do
+      # SPEC §0.1 / §10-R2 / codex F1b. When the mirrored sibling slice
+      # has the Lifecycle two-container shape, the Publisher must store
+      # ONLY the persistent `:state` view in its ring (the ring IS
+      # persisted via the Session's {:snapshot, :on_change}); a live
+      # monitor-ref map in `:transients` would otherwise be serialized
+      # into durable storage — the indirect "transients leak" path.
+      self_uri = URI.parse("session://default/team-alpha/strip-transients")
+      slice = fresh_slice()
+
+      change = slice_change(self_uri, %{ignored: true}, slice_key: :chat)
+
+      lifecycle_sibling = %{
+        state: %{members: %{m1: true}},
+        transients: %{monitors: %{make_ref() => :pid}}
+      }
+
+      ctx_with_state =
+        ctx(self_uri) |> Map.put(:slice_state, %{chat: lifecycle_sibling})
+
+      assert {:ok, new_slice} =
+               SessionImpl.handle_kind_message({:slice_changed, change}, slice, ctx_with_state)
+
+      [%Event{payload: payload}] = new_slice.ring
+      stored = payload.new_slice
+
+      refute Map.has_key?(stored, :transients),
+             "Publisher ring stored the :transients sub-key — transients leaked into the durable ring (F1b)"
+
+      assert stored == %{state: %{members: %{m1: true}}}
+    end
+
+    test "F1b — a legacy flat sibling slice mirrors UNCHANGED (no :transients sub-key)" do
+      self_uri = URI.parse("session://default/team-alpha/legacy-mirror")
+      slice = fresh_slice()
+      change = slice_change(self_uri, %{ignored: true}, slice_key: :chat)
+
+      legacy_flat = %{members: %{m1: true}, owner_uri: :x}
+      ctx_with_state = ctx(self_uri) |> Map.put(:slice_state, %{chat: legacy_flat})
+
+      assert {:ok, new_slice} =
+               SessionImpl.handle_kind_message({:slice_changed, change}, slice, ctx_with_state)
+
+      [%Event{payload: payload}] = new_slice.ring
+      assert payload.new_slice == legacy_flat
+    end
+
     test "ignores slice_changed events for OTHER URIs (topic shape is per-URI but defense-in-depth)" do
       self_uri = URI.parse("session://default/team-alpha/me")
       other_uri = URI.parse("session://default/team-alpha/other")

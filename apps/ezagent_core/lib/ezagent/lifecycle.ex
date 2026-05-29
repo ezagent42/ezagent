@@ -30,7 +30,7 @@ defmodule Ezagent.Lifecycle do
   | `destroy/2` | `terminate/3` (destroy path) + clears `state` + flips marker | permanent deletion |
   | `activated/2` | `on_ready/2` | every start, POST-`:ready` (§10-R1) |
   | `handle_signal/2` | `handle_kind_message/3` | `:DOWN` / PubSub deliveries |
-  | `pre_handle/3` / `post_handle/4` | fine interception (composed in handler path) | cross-cutting |
+  | `pre_handle/3` / `post_handle/4` | wired in `Ezagent.Kind.Runtime` around the handler dispatch (probed via `function_exported?/3`) | cross-cutting, per dispatched action |
 
   ## Two-container state (SPEC §0.1 / §2.1)
 
@@ -88,10 +88,26 @@ defmodule Ezagent.Lifecycle do
   @doc """
   `deactivate/2` — graceful stop; the ENTITY PERSISTS (NOT destroy).
   Flush buffers / close handles politely. Best-effort (OTP terminate
-  semantics). Returned `state` is persisted before exit; `transients`
-  are discarded.
+  semantics — NOT called on a brutal kill / VM crash; `activate/2`
+  self-heals).
+
+  ## Contract: `:ok`-only — deactivate CANNOT mutate persisted state (F5)
+
+  `deactivate/2` runs through OTP `terminate/3`, which fires AFTER the
+  final persistence snapshot has already been written (`:on_terminate`
+  saves above the per-Behavior terminate drain; `:on_change` / `:periodic`
+  persisted on the last mutation). A state mutation returned here could
+  NOT be reliably persisted (the snapshot is already on disk, and on a
+  brutal kill this hook never runs at all). Returning a new state would
+  therefore be a silent no-op or a torn write — a contradictory contract.
+
+  We resolve it by making `deactivate/2` `:ok`-only: it is for
+  side-effecting graceful cleanup (flush a buffer to an EXTERNAL system,
+  close a handle politely), not for mutating the entity's own persisted
+  `state`. Durable state changes belong in a `handle_<action>` (effects)
+  or in `activate/2`'s reconciliation return.
   """
-  @callback deactivate(reason :: term(), ctx :: ctx()) :: :ok | {:ok, state()}
+  @callback deactivate(reason :: term(), ctx :: ctx()) :: :ok
 
   @doc """
   `destroy/2` — PERMANENT deletion of the entity. The framework clears
@@ -171,6 +187,12 @@ defmodule Ezagent.Lifecycle do
       @behaviour Ezagent.Behavior
       @behaviour Ezagent.Lifecycle
 
+      # The Lifecycle-surface sibling-read declaration (SPEC §2.2). A
+      # converted module writes `reads_siblings [:api_keys]`; this emits
+      # `def reads_siblings, do: [:api_keys]` which the runtime reads via
+      # `Ezagent.Behavior.reads_siblings_of/1` to surface `ctx.siblings`.
+      import Ezagent.Lifecycle, only: [reads_siblings: 1]
+
       # Auto-derive `state_slice/0` from the module name unless an
       # explicit override is supplied (snapshot-compat hatch). The
       # override path is overridable so the author may still hand-roll it.
@@ -216,12 +238,29 @@ defmodule Ezagent.Lifecycle do
 
       # terminate/3 → deactivate/2 (graceful stop, entity persists).
       # Returned `{:ok, state}` is folded into the slice's state sub-map.
-      # (`destroy/2` deletion path is driven by the framework's destroy
-      # primitive — Phase A wires the deactivate path; the destroy
-      # data-clear is exercised via `Ezagent.Lifecycle.destroy/1`.)
+      #
+      # The DESTROY (permanent deletion) path is DISTINCT — it does NOT
+      # run through OTP `terminate/3` (which fires on every graceful stop,
+      # including idle-eviction where the entity persists). It is driven
+      # explicitly by `Ezagent.Lifecycle.destroy/2`, which calls the
+      # macro-emitted `__ezagent_lifecycle_destroy__/3` convention BELOW
+      # so the author's `destroy/2` runs (in the Kind's own process, with
+      # its slice) BEFORE the framework clears durable `state` + the
+      # ever-created marker. This is the engine's destroy-vs-deactivate
+      # signal (§2 + §OTP): graceful stop → `terminate/3` → `deactivate`;
+      # permanent deletion → explicit destroy call → `destroy`.
       @impl Ezagent.Behavior
       def terminate(reason, slice, ctx) do
         Ezagent.Lifecycle.__run_deactivate__(__MODULE__, reason, slice, ctx)
+      end
+
+      # Destroy convention — probed by `Ezagent.Kind.Server` via
+      # `function_exported?/3` during the explicit destroy path. Runs the
+      # author's `destroy/2` hook with the live slice's `:state` view; the
+      # framework clears durable state + the marker AFTER this returns.
+      @doc false
+      def __ezagent_lifecycle_destroy__(reason, slice, ctx) do
+        Ezagent.Lifecycle.__run_destroy__(__MODULE__, reason, slice, ctx)
       end
 
       # handle_kind_message/3 → handle_signal/2 (§9 OQ-3). The signal
@@ -256,6 +295,19 @@ defmodule Ezagent.Lifecycle do
                      destroy: 2,
                      activated: 2,
                      handle_signal: 2
+    end
+  end
+
+  @doc """
+  `reads_siblings [:api_keys]` — declare the sibling state keys this
+  Lifecycle module reads (SPEC §2.2). Surfaced on `ctx.siblings`
+  (normalized to each sibling's persistent flat view). Same opt-in /
+  scoping as the legacy `reads_sibling_slices/0`.
+  """
+  defmacro reads_siblings(keys) do
+    quote do
+      @impl Ezagent.Behavior
+      def reads_siblings, do: unquote(keys)
     end
   end
 
@@ -341,6 +393,10 @@ defmodule Ezagent.Lifecycle do
   end
 
   @doc false
+  # F5 — `deactivate/2` is `:ok`-only. We deliberately DISCARD any return
+  # value (the contract is documented as "cannot mutate persisted state")
+  # and always return `:ok` so the engine's graceful-stop path is a pure
+  # side-effecting cleanup, never a (torn) state write.
   @spec __run_deactivate__(module(), term(), %{state: map(), transients: map()}, map()) :: :ok
   def __run_deactivate__(module, reason, %{state: st}, ctx) do
     deactivate_ctx = Map.put(ctx, :state, st)
@@ -385,28 +441,94 @@ defmodule Ezagent.Lifecycle do
     :ok
   end
 
+  @doc false
+  @spec __run_destroy__(module(), term(), %{state: map(), transients: map()} | map(), map()) :: :ok
+  def __run_destroy__(module, reason, slice, ctx) do
+    st =
+      case slice do
+        %{state: state_map} when is_map(state_map) -> state_map
+        other when is_map(other) -> other
+        _ -> %{}
+      end
+
+    destroy_ctx =
+      ctx
+      |> Map.put(:state, st)
+      |> Map.put(:read, fn key, default -> Map.get(st, key, default) end)
+
+    _ = module.destroy(reason, destroy_ctx)
+    :ok
+  end
+
   # ---------------------------------------------------------------
-  # Framework destroy primitive (SPEC §2 destroy path). Clears the
-  # durable `state` for a URI and flips the ever-created marker off, so
-  # a respawn at the same URI goes through `create/1` again. Best-effort
-  # `destroy/2` cleanup is the author's; this is the framework's durable
-  # erase. Phase A exposes it as a function (no dispatch action yet —
-  # that is a per-Kind concern in Phase B).
+  # Framework destroy primitive (SPEC §2 destroy path). PERMANENT
+  # deletion: (1) run each Lifecycle Behavior's `destroy/2` cleanup hook
+  # while the Kind is still LIVE (so the author can tear down subprocess
+  # handles / external mirrors with access to its `state`), THEN (2) clear
+  # the durable `state` + ever-created marker (delete the snapshot row),
+  # THEN (3) terminate the Kind process. A respawn at the same URI goes
+  # through `create/1` again. This is distinct from `deactivate` (graceful
+  # stop — the entity persists; runs through OTP `terminate/3`).
   # ---------------------------------------------------------------
 
   @doc """
-  Permanently erase the durable `state` for `uri` and clear the
-  ever-created marker (so a future spawn re-runs `create/1`). Deletes
-  the `kind_snapshots` row. Idempotent.
+  Permanently DELETE the entity at `uri`.
+
+  Ordered (SPEC §2 / F4):
+
+  1. Invoke each Lifecycle Behavior's `destroy(reason, ctx)` cleanup hook
+     against the LIVE Kind (subprocess teardown, ExternalMirror release,
+     etc.) — BEFORE durable state is cleared, so the hook can read its
+     own `state`. Best-effort + per-Behavior isolated (§OTP).
+  2. Clear durable `state` + the ever-created marker (delete the
+     `kind_snapshots` row) so a future spawn re-runs `create/1`.
+  3. Terminate the Kind process.
+
+  Idempotent — an already-absent URI clears nothing and returns `:ok`.
   """
-  @spec destroy(URI.t() | String.t()) :: :ok
-  def destroy(uri) do
+  @spec destroy(URI.t() | String.t(), term()) :: :ok
+  def destroy(uri, reason \\ :destroy) do
     uri_str =
       case uri do
         %URI{} = u -> URI.to_string(u)
         s when is_binary(s) -> s
       end
 
-    Ezagent.Ecto.KindSnapshot.delete(uri_str)
+    # 1. Run the developer destroy hooks against the live Kind (best-
+    #    effort — a brutal kill may have skipped this, which is why the
+    #    next incarnation's `activate/2` must self-heal — §OTP).
+    run_developer_destroy_hooks(uri_str, reason)
+
+    # 2. Clear durable state + ever-created marker (one row delete).
+    :ok = Ezagent.Ecto.KindSnapshot.delete(uri_str)
+
+    # 3. Terminate the process (idempotent — already-gone is :ok).
+    case Ezagent.KindRegistry.lookup(uri_str) do
+      {:ok, _pid} -> Ezagent.Kind.terminate(Ezagent.URI.new!(uri_str))
+      :error -> :ok
+    end
+
+    :ok
+  end
+
+  # Ask the live Kind.Server to drain each of its Lifecycle Behaviors'
+  # `destroy/2` hooks (via the macro-emitted `__ezagent_lifecycle_destroy__/3`
+  # convention) IN the Kind's own process, so each hook reads its slice.
+  # No live Kind → nothing to drain (the durable clear in step 2 still
+  # runs). Best-effort: a failed call must not block the durable delete.
+  defp run_developer_destroy_hooks(uri_str, reason) do
+    case Ezagent.KindRegistry.lookup(uri_str) do
+      {:ok, pid} when is_pid(pid) ->
+        try do
+          GenServer.call(pid, {:ezagent_lifecycle_destroy, reason}, 5_000)
+        catch
+          :exit, _ -> :ok
+        end
+
+        :ok
+
+      :error ->
+        :ok
+    end
   end
 end
