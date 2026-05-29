@@ -70,9 +70,84 @@ defmodule Ezagent.Behavior.Workspace do
   Kind's supervisor. The Workspace Kind itself stays plugin-agnostic
   by returning the declared shape; the Loader injects the spawn
   policy (DI at the boundary, per the north star).
+
+  ## Lifecycle migration (Phase B, SPEC 2026-05-29 §5 + §9 OQ-8 — the
+  ## EXTERNAL-SoT case: state reconciled from a foreign source of truth)
+
+  Converted from `use Ezagent.Behavior` to `use Ezagent.Lifecycle` (the
+  two-container `%{state, transients}` developer API). The Workspace Kind
+  is `persistence :ephemeral` (`Ezagent.Entity.Workspace`) — the
+  `kind_snapshots` BLOB is NEVER the source of truth. The `workspaces`
+  SQLite table (via `Ezagent.Workspace.Store`) is the SoT; the
+  `Ezagent.Workspace.Loader` reads it at boot and seeds the spawn args.
+  This is the legacy `:external` persistence strategy in
+  `references/slice-and-snapshot.md` ("Kind's `init_slice/1` reads from a
+  foreign system on every spawn").
+
+  The natural Lifecycle split:
+
+  - **STATE (the cluster shape):** `members`, `session_templates`,
+    `routing_rules`. Built by `create/1` from the Loader-supplied args
+    (the SoT, decoded from the `workspaces` row). Because the Kind is
+    `:ephemeral`, no snapshot row is ever written, so the durable
+    ever-created marker is never set and `create/1` runs on EVERY spawn —
+    exactly the legacy "load from SoT on every spawn" semantics, preserved
+    byte-for-byte from the old `init_slice/1`.
+  - **TRANSIENT:** none. A Workspace holds no PID / ref / port / ETS
+    handle in its slice — `:instantiate` returns child tuples as DATA for
+    the Loader to spawn (plugin isolation), it does not hold child pids.
+
+  ### SoT load happens in `create/1`, NOT a separate `activate` reconcile
+
+  > **Deliberate deviation from SPEC §9 OQ-8 — surfaced per the
+  > `ezagent-developer` "code wins, surface the discrepancy" rule.**
+  > OQ-8 prescribes "reconcile from SoT in `activate`", with the stated
+  > rationale "`activate` doing DB I/O on every start is acceptable — it
+  > already did via `reconcile_after_load`." That rationale does NOT hold
+  > for Workspace: this Kind is `:ephemeral` and NEVER had
+  > `reconcile_after_load/2` — it has no snapshot to merge, so there was no
+  > prior `activate`-time DB read to inherit. Its SoT load has ALWAYS been
+  > `init_slice/1`-from-args, where `Ezagent.Workspace.Loader` decodes the
+  > `workspaces` row and threads it into the spawn args.
+
+  Under Lifecycle that maps cleanly to `create/1`-from-args:
+
+  1. `create/1` loads the cluster shape from the Loader-threaded args on
+     EVERY spawn. An OTP crash-restart re-threads the SAME args via the
+     child spec (`Ezagent.Kind.spawn/2` stores `{kind_module, params}` and
+     the Workspace Kind is a `:permanent` child of a `:one_for_one`
+     DynamicSupervisor), so `create/1` rebuilds the same SoT-derived state
+     on a brutal restart too. The SoT is therefore ALREADY loaded at
+     `:ready` — there is nothing for a separate reconcile to add.
+  2. A separate post-create reconcile would be actively HARMFUL: the
+     Workspace accepts runtime mutations (`:add_member`, `:add_template`,
+     `:set_routing_rules`) that write to the live slice but persist to the
+     SoT via the Store on their own path. A reconcile re-reading the Store
+     races those runtime dispatches and would CLOBBER a just-applied
+     mutation with a stale row (a `feedback_register_lookup_key_parity`-class
+     overwrite). Per `feedback_let_it_crash_no_workarounds` we do NOT add a
+     clobber-prone reconcile shim — `create/1`-from-args is the single,
+     correct SoT-load site.
+
+  So Workspace is the NO-TRANSIENTS, create-from-args case (like Pty /
+  example A): `create/1` builds `state` from args, `activate/2` is the
+  macro-injected no-op default (omitted — nothing process-bound to rebuild,
+  no reconcile to run).
+
+  The auto-derived `state_slice/0` (last module segment `Workspace` →
+  `:workspace`) equals the historical snapshot key, so NO `state_slice:`
+  override is needed (SPEC §5 step 2 / §7 OQ-7).
+
+  Naming (§11 NP-1/NP-2/NP-3 audit): `Ezagent.Behavior.Workspace` — a
+  domain module (`apps/ezagent_domain_workspace`) naming its own domain
+  concept (`Workspace`), whose actions (`list_members` / `add_member` /
+  `create_session` / …) track the cluster-shape intent directly. NO
+  violation; kept as-is (a rename would touch the `:workspace` snapshot
+  slice key + every cap grant + every integration test reading `:workspace`
+  by name for no clarity gain).
   """
 
-  use Ezagent.Behavior
+  use Ezagent.Lifecycle
 
   # ---------------------------------------------------------------
   # Action declarations (SPEC §4.3 — per-action grammar)
@@ -198,15 +273,32 @@ defmodule Ezagent.Behavior.Workspace do
   # does not redeclare these)
   # ---------------------------------------------------------------
 
-  def state_slice, do: :workspace
+  # The auto-derived slice key for `Ezagent.Behavior.Workspace` is the
+  # underscored last segment `Workspace` → `:workspace`, which is EXACTLY
+  # the pre-Lifecycle `state_slice/0`. Snapshot-compat key preserved with
+  # no explicit override (SPEC §3 / §7 OQ-7).
 
-  def init_slice(args) do
-    %{
-      members: read_members(args),
-      session_templates: Map.get(args, :session_templates, %{}),
-      routing_rules: Map.get(args, :routing_rules, [])
-    }
+  # `init_slice/1` → `create/1` (SPEC §3 mapping). Build the durable
+  # cluster-shape `state` from the Loader-supplied args (the decoded
+  # `workspaces` SoT row). Byte-identical to the pre-Lifecycle
+  # `init_slice/1` body; the macro wraps it in the two-container
+  # `%{state: ..., transients: %{}}` shape. Because the Workspace Kind is
+  # `:ephemeral`, the ever-created marker is never set, so `create/1` runs
+  # on EVERY spawn — preserving the legacy "load from SoT on every spawn"
+  # semantics.
+  @impl Ezagent.Lifecycle
+  def create(args) do
+    {:ok,
+     %{
+       members: read_members(args),
+       session_templates: Map.get(args, :session_templates, %{}),
+       routing_rules: Map.get(args, :routing_rules, [])
+     }}
   end
+
+  # NO `activate/2` override — Workspace holds no transient and its SoT
+  # load lives in `create/1`-from-args (see moduledoc "SoT load happens in
+  # create/1"). The macro-injected no-op `activate/2` default applies.
 
   defp read_members(args) do
     case Map.get(args, :members) do
@@ -223,13 +315,14 @@ defmodule Ezagent.Behavior.Workspace do
 
   # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
   # Workspace is registered on the Workspace Kind only — kind axis is
-  # `:workspace`. The new `use Ezagent.Behavior` macro derives a
-  # legacy `required_caps/0` from `action :name, caps: [...]` decls,
-  # but its derivation always emits the `:any` kind axis (the macro
-  # cannot know the Behavior's intended Kind binding from the action
-  # declaration alone). We override it here to preserve the
-  # `:workspace` kind axis the dispatch tests + caps catalogue
-  # expect. Phase 2-c migration parity.
+  # `:workspace`. The `use Ezagent.Behavior` engine macro (emitted under
+  # `use Ezagent.Lifecycle`) derives a legacy `required_caps/0` from
+  # `action :name, caps: [...]` decls, but its derivation always emits the
+  # `:any` kind axis (the macro cannot know the Behavior's intended Kind
+  # binding from the action declaration alone). We override it here to
+  # preserve the `:workspace` kind axis the dispatch tests + caps catalogue
+  # expect. Passes through the Lifecycle macro unchanged (SPEC §3 mapping
+  # table). Phase 2-c migration parity.
   #
   # workspace_scoped? defaults to true (intra-workspace admin); the
   # structural ws-cap-set on `workspace://system` members bypasses
