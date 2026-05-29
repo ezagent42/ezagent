@@ -80,6 +80,9 @@ defmodule Ezagent.Behavior.ChatTest do
                agent_slots: [],
                routing_rules: [],
                orchestrator_template_uri: nil,
+               # Task #110 — durable SessionTemplate URI for cold-load
+               # McpRegistry re-registration (the parent_template_uri).
+               session_template_uri: nil,
                default_workspace_uri: nil,
                description: ""
              }
