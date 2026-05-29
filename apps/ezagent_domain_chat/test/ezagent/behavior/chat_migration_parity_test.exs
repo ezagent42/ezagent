@@ -47,14 +47,25 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
     end
   end
 
+  # Lifecycle migration (SPEC 2026-05-29 §2.3C): `init_slice/1` now returns
+  # the two-container `%{state, transients}` shape. The handlers are pure
+  # `(args, ctx)` fns that read persistent fields via `ctx.read` and
+  # transient fields via `ctx.transients[k]`. These helpers work on the
+  # flat PERSISTENT slice (`.state`) + a `ctx` exposing it via `read`, plus
+  # a `transients` view for `:monitors`. `extras` may seed either a
+  # persistent field (e.g. `members:`) or, via the `:monitors` key, the
+  # transient — `ctx_for/2` routes `:monitors` into `ctx.transients`.
   defp empty_chat_slice(extras \\ %{}) do
-    Map.merge(Chat.init_slice(%{}), extras)
+    Map.merge(Chat.init_slice(%{}).state, extras)
   end
 
   defp ctx_for(chat_slice, extras \\ %{}) do
+    monitors = Map.get(chat_slice, :monitors, %{})
+
     Map.merge(
       %{
         read: fn key, default -> Map.get(chat_slice, key, default) end,
+        transients: %{monitors: monitors},
         self_uri: nil,
         kind_module: Ezagent.Entity.Session,
         caller: nil,
@@ -78,22 +89,28 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
       assert Chat.state_slice() == :chat
     end
 
-    test "init_slice/1 returns the PR-EM-6-PRE shape" do
+    test "init_slice/1 returns the two-container PR-EM-6-PRE shape (monitors → transient)" do
+      # Lifecycle migration: two-container slice. Persistent fields live
+      # under `.state`; `:monitors` is GONE (it's a transient, rebuilt by
+      # `activate/2` — SPEC §2.3C).
       slice = Chat.init_slice(%{})
-      assert slice.members == %{}
-      assert slice.monitors == %{}
-      assert slice.last_seen == %{}
-      assert slice.last_message_id == nil
-      assert slice.last_message == nil
-      assert slice.send_cursor == 0
-      assert slice.recent_messages == []
-      assert slice.owner_uri == nil
-      assert slice.template_working_copy == Chat.default_template_working_copy()
+      assert slice.transients == %{}
+
+      st = slice.state
+      assert st.members == %{}
+      refute Map.has_key?(st, :monitors)
+      assert st.last_seen == %{}
+      assert st.last_message_id == nil
+      assert st.last_message == nil
+      assert st.send_cursor == 0
+      assert st.recent_messages == []
+      assert st.owner_uri == nil
+      assert st.template_working_copy == Chat.default_template_working_copy()
     end
 
     test "init_slice/1 honors :owner_uri arg (PR-OWN-2)" do
       owner = URI.parse("entity://user/system/admin")
-      assert Chat.init_slice(%{owner_uri: owner}).owner_uri == owner
+      assert Chat.init_slice(%{owner_uri: owner}).state.owner_uri == owner
     end
 
     test "recent_messages_ring_depth/0 returns the SPEC-pinned constant" do
@@ -416,17 +433,21 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
     end
   end
 
-  describe "handle_kind_message/3 — :DOWN bookkeeping" do
+  # Lifecycle migration (SPEC 2026-05-29 §2.3C) — the `:DOWN` hook moved
+  # from `handle_kind_message/3` (flat-slice, returns `{:ok, new_slice}`)
+  # to `handle_signal/2` (returns the effect grammar). `:monitors` is a
+  # TRANSIENT: read from `ctx.transients[:monitors]`, dead ref dropped via
+  # `{:set_transient, :monitors, _}`; offline-flip + last_seen persisted.
+  describe "handle_signal/2 — :DOWN bookkeeping" do
     test "unknown ref returns :ignore" do
-      ctx = %{self_uri: URI.parse("session://x/y/z")}
-      slice = empty_chat_slice()
+      ctx = ctx_for(empty_chat_slice(), %{self_uri: URI.parse("session://x/y/z")})
 
       msg = {:DOWN, make_ref(), :process, self(), :normal}
 
-      assert :ignore = Chat.handle_kind_message(msg, slice, ctx)
+      assert :ignore = Chat.handle_signal(msg, ctx)
     end
 
-    test "known ref flips member online → false + records last_seen" do
+    test "known ref flips member online → false + records last_seen + drops transient ref" do
       ref = make_ref()
       member = URI.new!("entity://user/team-alpha/down-test")
 
@@ -436,18 +457,25 @@ defmodule Ezagent.Behavior.ChatMigrationParityTest do
           monitors: %{ref => member}
         })
 
-      ctx = %{self_uri: URI.parse("session://default/team-alpha/down-parity")}
+      ctx = ctx_for(slice, %{self_uri: URI.parse("session://default/team-alpha/down-parity")})
 
-      assert {:ok, new_slice} =
-               Chat.handle_kind_message(
-                 {:DOWN, ref, :process, self(), :normal},
-                 slice,
-                 ctx
-               )
+      assert {:ok, effects} =
+               Chat.handle_signal({:DOWN, ref, :process, self(), :normal}, ctx)
 
-      assert new_slice.members[member] == %{online: false}
-      assert is_struct(new_slice.last_seen[member], DateTime)
-      refute Map.has_key?(new_slice.monitors, ref)
+      assert Enum.any?(effects, fn
+               {:set, :members, m} -> m[member] == %{online: false}
+               _ -> false
+             end)
+
+      assert Enum.any?(effects, fn
+               {:set, :last_seen, ls} -> is_struct(ls[member], DateTime)
+               _ -> false
+             end)
+
+      assert Enum.any?(effects, fn
+               {:set_transient, :monitors, mons} -> not Map.has_key?(mons, ref)
+               _ -> false
+             end)
     end
   end
 end

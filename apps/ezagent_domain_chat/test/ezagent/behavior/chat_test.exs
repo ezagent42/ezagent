@@ -44,35 +44,36 @@ defmodule Ezagent.Behavior.ChatTest do
       assert Chat.state_slice() == :chat
     end
 
-    test "init_slice/1 returns slice with all PR-EM-6-PRE fields + empty template_working_copy" do
-      # Phase 7 completion PR-2 — the `:chat` slice now also carries
-      # the durable `template_working_copy` field (SPEC §1.3 / §1.6).
+    test "init_slice/1 returns two-container slice; create/1 holds the PERSISTENT fields (no :monitors)" do
+      # Lifecycle migration (SPEC 2026-05-29 §2.3C) — the `:chat` slice is
+      # now the two-container `%{state, transients}` shape. `:monitors`
+      # moved OUT of the persistent state into the TRANSIENT container
+      # (rebuilt by `activate/2`), so `create/1` (the persistent builder)
+      # no longer carries it.
       #
-      # PR-EM-6-PRE (Allen 2026-05-25) — fresh sessions have three
-      # send-tracking fields at their identity defaults
-      # (`:last_message_id == nil`, `:last_message == nil`,
-      # `:send_cursor == 0`). All three are necessary: ids cover the
-      # stable cross-reference, the struct carries adapter-facing
-      # body/sender data without DB lookups (HIGH-2), the cursor
-      # guarantees `new_slice != slice` for retried sends with
-      # idempotent msg.id writes (HIGH-1).
+      # Phase 7 completion PR-2 — `:chat` state carries the durable
+      # `template_working_copy` (SPEC §1.3 / §1.6).
       #
-      # `:owner_uri` defaults to `Map.get(args, :owner_uri)` = `nil`
-      # for arg-less init (PR-OWN-2 introduced the field; the
-      # original assertion in this test was stale and missed it).
+      # PR-EM-6-PRE (Allen 2026-05-25) — three send-tracking fields at
+      # their identity defaults. `:owner_uri` defaults to nil for arg-less
+      # init (PR-OWN-2).
       assert Chat.init_slice(%{}) == %{
-               members: %{},
-               owner_uri: nil,
-               monitors: %{},
-               last_seen: %{},
-               last_message_id: nil,
-               last_message: nil,
-               send_cursor: 0,
-               # PR-N3 r4 — cursor-indexed bounded ring of recent
-               # message ids; starts empty on fresh sessions.
-               recent_messages: [],
-               template_working_copy: Chat.default_template_working_copy()
+               state: %{
+                 members: %{},
+                 owner_uri: nil,
+                 last_seen: %{},
+                 last_message_id: nil,
+                 last_message: nil,
+                 send_cursor: 0,
+                 # PR-N3 r4 — cursor-indexed bounded ring; starts empty.
+                 recent_messages: [],
+                 template_working_copy: Chat.default_template_working_copy()
+               },
+               transients: %{}
              }
+
+      # :monitors is GONE from the persistent state (it's a transient).
+      refute Map.has_key?(Chat.init_slice(%{}).state, :monitors)
     end
 
     test "default_template_working_copy/0 is the empty template-shaped record (PR-2)" do
@@ -89,8 +90,9 @@ defmodule Ezagent.Behavior.ChatTest do
     end
 
     test "template_working_copy/1 returns the field, defaulting when key is absent (pre-PR-2 slice)" do
-      # A fresh `init_slice/1` carries the field.
-      slice = Chat.init_slice(%{})
+      # A fresh `create/1` state carries the field. `template_working_copy/1`
+      # operates on the PERSISTENT slice (the `:state` sub-map post-Lifecycle).
+      slice = Chat.init_slice(%{}).state
       assert Chat.template_working_copy(slice) == Chat.default_template_working_copy()
 
       # A pre-PR-2 `:chat` slice has no `template_working_copy` key —
@@ -179,7 +181,7 @@ defmodule Ezagent.Behavior.ChatTest do
       sender = URI.new!("entity://user/system/admin")
       msg = Message.new(sender, %{text: "hello world", attachments: []})
 
-      slice = Chat.init_slice(%{})
+      slice = Chat.init_slice(%{}).state
       ctx = %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: sender}
 
       topic = Chat.session_events_topic(session_uri)
@@ -200,9 +202,11 @@ defmodule Ezagent.Behavior.ChatTest do
       assert id == msg.id
       assert new_slice.send_cursor == 1
 
-      # All other fields unchanged from the fresh init
+      # All other PERSISTENT fields unchanged from the fresh init.
+      # (`:monitors` is no longer a persistent field — it's a transient,
+      # and `:send` produces no monitor effect, so it is absent here.)
       assert new_slice.members == slice.members
-      assert new_slice.monitors == slice.monitors
+      refute Map.has_key?(new_slice, :monitors)
       assert new_slice.last_seen == slice.last_seen
       assert new_slice.owner_uri == slice.owner_uri
       assert new_slice.template_working_copy == slice.template_working_copy
@@ -249,7 +253,7 @@ defmodule Ezagent.Behavior.ChatTest do
       # rejects with :error.
       sender = URI.new!("entity://user/system/admin")
       msg = Message.new(sender, %{text: "boom", attachments: []})
-      slice = Chat.init_slice(%{})
+      slice = Chat.init_slice(%{}).state
       ctx = %{self_uri: :not_a_uri, kind_module: Ezagent.Entity.Session, caller: sender}
 
       assert_raise FunctionClauseError, fn ->
@@ -267,7 +271,7 @@ defmodule Ezagent.Behavior.ChatTest do
     # the `new_slice != slice` predicate that gates the event.
 
     test "fresh session has nil id, nil message, cursor 0" do
-      slice = Chat.init_slice(%{})
+      slice = Chat.init_slice(%{}).state
 
       assert Map.has_key?(slice, :last_message_id)
       assert Map.has_key?(slice, :last_message)
@@ -284,7 +288,7 @@ defmodule Ezagent.Behavior.ChatTest do
       sender = URI.new!("entity://user/system/admin")
       msg = Message.new(sender, %{text: "ping", attachments: []})
 
-      slice = Chat.init_slice(%{})
+      slice = Chat.init_slice(%{}).state
       ctx = %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: sender}
 
       assert {:ok, new_slice, %{stored: true}} =
@@ -331,7 +335,7 @@ defmodule Ezagent.Behavior.ChatTest do
       # Sanity: independent message ids
       refute msg1.id == msg2.id
 
-      slice = Chat.init_slice(%{})
+      slice = Chat.init_slice(%{}).state
 
       assert {:ok, slice1, _} = EzagentDomainChat.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Chat, :send, slice, %{message: msg1}, ctx)
       assert slice1.last_message_id == msg1.id
@@ -363,7 +367,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       msg = Message.new(sender, %{text: "same payload, sent twice", attachments: []})
 
-      slice = Chat.init_slice(%{})
+      slice = Chat.init_slice(%{}).state
 
       assert {:ok, slice1, %{stored: true}} = EzagentDomainChat.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Chat, :send, slice, %{message: msg}, ctx)
       assert slice1.last_message_id == msg.id
@@ -412,7 +416,7 @@ defmodule Ezagent.Behavior.ChatTest do
       assert original.id == adversarial.id
       refute original.body == adversarial.body
 
-      slice = Chat.init_slice(%{})
+      slice = Chat.init_slice(%{}).state
 
       # First send persists the original
       assert {:ok, slice1, %{stored: true}} =
@@ -487,6 +491,9 @@ defmodule Ezagent.Behavior.ChatTest do
       sender = URI.new!("entity://user/system/admin")
       msg = Message.new(sender, %{text: "emit me", attachments: []})
 
+      # Lifecycle migration: the Kind stores `:chat` as the two-container
+      # `%{state, transients}` slice; seed that shape so the runtime's
+      # handler-ctx builder reads persistent fields from `:state`.
       slice = Chat.init_slice(%{})
 
       # Subscribe to the entity's slice-changed topic. The hook fires
@@ -530,21 +537,22 @@ defmodule Ezagent.Behavior.ChatTest do
       assert slice_change_event.kind_module == Ezagent.Entity.Session
 
       # All three send-tracking fields carry across in `new_slice` and
-      # are at their pre-send defaults in `old_slice`.
-      assert slice_change_event.new_slice.last_message_id == msg.id
-      assert slice_change_event.new_slice.last_message.id == msg.id
-      assert slice_change_event.new_slice.last_message.sender == sender
-      assert slice_change_event.new_slice.last_message.session_uri == session_uri
-      assert slice_change_event.new_slice.send_cursor == 1
+      # are at their pre-send defaults in `old_slice`. Post-Lifecycle the
+      # slice is two-container; the persistent fields live under `.state`.
+      assert slice_change_event.new_slice.state.last_message_id == msg.id
+      assert slice_change_event.new_slice.state.last_message.id == msg.id
+      assert slice_change_event.new_slice.state.last_message.sender == sender
+      assert slice_change_event.new_slice.state.last_message.session_uri == session_uri
+      assert slice_change_event.new_slice.state.send_cursor == 1
 
-      assert slice_change_event.old_slice.last_message_id == nil
-      assert slice_change_event.old_slice.last_message == nil
-      assert slice_change_event.old_slice.send_cursor == 0
+      assert slice_change_event.old_slice.state.last_message_id == nil
+      assert slice_change_event.old_slice.state.last_message == nil
+      assert slice_change_event.old_slice.state.send_cursor == 0
 
       # State carries the mutated slice
-      assert new_state.chat.last_message_id == msg.id
-      assert new_state.chat.last_message.id == msg.id
-      assert new_state.chat.send_cursor == 1
+      assert new_state.chat.state.last_message_id == msg.id
+      assert new_state.chat.state.last_message.id == msg.id
+      assert new_state.chat.state.send_cursor == 1
 
       # Fire emit directly the same way Kind.Server.commit_and_notify/3
       # does post-snapshot — and assert subscribers receive the event.
@@ -696,7 +704,7 @@ defmodule Ezagent.Behavior.ChatTest do
       # so KindRegistry.lookup returns ITS pid (the Registry's owner-pid).
       {:ok, member_pid} = GenServer.start_link(__MODULE__.NoopServer, member_uri)
 
-      slice = Chat.init_slice(%{})
+      slice = Chat.init_slice(%{}).state
       ctx = %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: member_uri}
 
       assert {:ok, new_slice, %{members: [^member_uri]}} =
@@ -715,7 +723,7 @@ defmodule Ezagent.Behavior.ChatTest do
       session_uri = URI.new!("session://default/team-alpha/join-missing-#{System.unique_integer([:positive])}")
       missing_uri = URI.new!("entity://user/team-alpha/does-not-exist-#{System.unique_integer([:positive])}")
 
-      slice = Chat.init_slice(%{})
+      slice = Chat.init_slice(%{}).state
       ctx = %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: missing_uri}
 
       assert {:error, {:member_not_registered, ^missing_uri}} =
@@ -737,7 +745,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       {:ok, member_pid} = GenServer.start_link(__MODULE__.NoopServer, member_uri)
 
-      slice = Chat.init_slice(%{})
+      slice = Chat.init_slice(%{}).state
       ctx = %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: member_uri}
 
       assert {:ok, _slice, _result} = EzagentDomainChat.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Chat, :join, slice, %{member: member_uri}, ctx)
@@ -777,7 +785,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       {:ok, agent_pid} = GenServer.start_link(__MODULE__.NoopServer, agent_uri)
 
-      slice = Chat.init_slice(%{})
+      slice = Chat.init_slice(%{}).state
       ctx = %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: agent_uri}
 
       assert {:ok, _slice, _result} = EzagentDomainChat.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Chat, :join, slice, %{member: agent_uri}, ctx)
@@ -845,45 +853,71 @@ defmodule Ezagent.Behavior.ChatTest do
     end
   end
 
-  describe "handle_kind_message/3 (:DOWN forwarder)" do
-    test "marks member offline + records last_seen" do
+  # Lifecycle migration (SPEC 2026-05-29 §2.3C) — `handle_kind_message/3`
+  # is now macro-emitted; the developer hook is `handle_signal/2`, which
+  # returns the same effect list a handler does. `:monitors` is a
+  # TRANSIENT: the signal reads it from `ctx.transients[:monitors]` and
+  # drops the dead ref via `{:set_transient, :monitors, _}`; the offline
+  # flip + last_seen are persisted via `{:set, _, _}`.
+  describe "handle_signal/2 (:DOWN forwarder)" do
+    test "marks member offline + records last_seen + drops dead monitor ref (transient)" do
       member_uri = URI.new!("entity://user/team-alpha/crashed-#{System.unique_integer([:positive])}")
       ref = make_ref()
 
-      slice = %{
-        members: %{member_uri => %{online: true}},
-        monitors: %{ref => member_uri},
-        last_seen: %{}
-      }
+      members = %{member_uri => %{online: true}}
 
-      ctx = %{self_uri: URI.new!("session://default/team-alpha/x"), kind_module: Ezagent.Entity.Session}
+      ctx = %{
+        self_uri: URI.new!("session://default/team-alpha/x"),
+        kind_module: Ezagent.Entity.Session,
+        read: fn key, default -> %{members: members, last_seen: %{}}[key] || default end,
+        transients: %{monitors: %{ref => member_uri}}
+      }
 
       down_msg = {:DOWN, ref, :process, self(), :normal}
 
-      assert {:ok, new_slice} = Chat.handle_kind_message(down_msg, slice, ctx)
-      assert new_slice.members[member_uri].online == false
-      refute Map.has_key?(new_slice.monitors, ref)
-      assert %DateTime{} = new_slice.last_seen[member_uri]
+      assert {:ok, effects} = Chat.handle_signal(down_msg, ctx)
+
+      # member flipped offline (persisted :set)
+      assert Enum.any?(effects, fn
+               {:set, :members, m} -> m[member_uri].online == false
+               _ -> false
+             end)
+
+      # last_seen recorded (persisted :set)
+      assert Enum.any?(effects, fn
+               {:set, :last_seen, ls} -> match?(%DateTime{}, ls[member_uri])
+               _ -> false
+             end)
+
+      # dead ref dropped from the TRANSIENT monitors map (:set_transient)
+      assert Enum.any?(effects, fn
+               {:set_transient, :monitors, mons} -> not Map.has_key?(mons, ref)
+               _ -> false
+             end)
     end
 
     test "ignores unknown refs" do
-      slice = %{members: %{}, monitors: %{}, last_seen: %{}}
-      ctx = %{self_uri: URI.new!("session://default/team-alpha/y"), kind_module: Ezagent.Entity.Session}
+      ctx = %{
+        self_uri: URI.new!("session://default/team-alpha/y"),
+        kind_module: Ezagent.Entity.Session,
+        read: fn _key, default -> default end,
+        transients: %{monitors: %{}}
+      }
 
       assert :ignore =
-               Chat.handle_kind_message(
-                 {:DOWN, make_ref(), :process, self(), :normal},
-                 slice,
-                 ctx
-               )
+               Chat.handle_signal({:DOWN, make_ref(), :process, self(), :normal}, ctx)
     end
 
     test "ignores non-:DOWN messages" do
-      slice = Chat.init_slice(%{})
-      ctx = %{self_uri: URI.new!("session://default/team-alpha/z"), kind_module: Ezagent.Entity.Session}
+      ctx = %{
+        self_uri: URI.new!("session://default/team-alpha/z"),
+        kind_module: Ezagent.Entity.Session,
+        read: fn _key, default -> default end,
+        transients: %{monitors: %{}}
+      }
 
-      assert :ignore = Chat.handle_kind_message(:tick, slice, ctx)
-      assert :ignore = Chat.handle_kind_message({:any, "thing"}, slice, ctx)
+      assert :ignore = Chat.handle_signal(:tick, ctx)
+      assert :ignore = Chat.handle_signal({:any, "thing"}, ctx)
     end
   end
 
