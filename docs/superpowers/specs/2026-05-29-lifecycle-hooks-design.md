@@ -131,10 +131,16 @@ defmodule MyAgent.Lifecycle do
 
   # `deactivate/2` — graceful stop; the ENTITY PERSISTS (state is kept
   # on disk; this is NOT destroy). Use to flush buffers, close handles
-  # politely. Best-effort (OTP terminate semantics — §OTP). `state`
-  # mutations returned here are persisted before exit; `transients`
-  # are discarded.
-  #   return :: :ok | {:ok, state :: map()}
+  # politely. Best-effort (OTP terminate semantics — §OTP).
+  #
+  # CONTRACT (resolved 2026-05-29, F5): `:ok`-only. deactivate runs
+  # through OTP terminate/3, AFTER the final persistence snapshot is
+  # already written (and not at all on a brutal kill), so it CANNOT
+  # mutate persisted state — a returned state would be a silent no-op
+  # or a torn write. Durable changes go in a handle_<action> or
+  # activate/2's reconciliation return; deactivate is for side-effecting
+  # external cleanup only.
+  #   return :: :ok
   @impl Ezagent.Lifecycle
   def deactivate(reason, ctx)
 
@@ -154,6 +160,9 @@ defmodule MyAgent.Lifecycle do
   # ============================================================
 
   # `pre_handle/3` — runs BEFORE the matched `handle_<action>`.
+  # WIRED in Phase A (F6): `Ezagent.Kind.Runtime` probes
+  # `function_exported?(mod, :pre_handle, 3)` and, when present, runs it
+  # around the handler dispatch.
   #   :cont                       → proceed to handle unchanged
   #   {:cont, args}               → proceed with rewritten args
   #   {:halt, result}             → skip handle; return result, no effects
@@ -163,8 +172,11 @@ defmodule MyAgent.Lifecycle do
 
   # `post_handle/4` — runs AFTER `handle_<action>` returns, BEFORE the
   # effect list is executed. May inject/append effects (audit, mirror).
-  #   {:ok, result, effects}      → replace the handler's effect list
-  #   :cont                       → effects unchanged
+  # WIRED in Phase A (F6) in `Ezagent.Kind.Runtime` (also fires when the
+  # handler returned `{:ok, result}` with no effects, so a post_handle
+  # may INJECT effects).
+  #   {:ok, result, effects}      → replace the handler's result + effects
+  #   :cont                       → result + effects unchanged
   @impl Ezagent.Lifecycle
   def post_handle(action, result, effects, ctx)
 end

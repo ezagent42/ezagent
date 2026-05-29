@@ -444,6 +444,22 @@ defmodule Ezagent.Behavior do
   @callback reads_sibling_slices() :: [atom()]
 
   @doc """
+  Lifecycle Phase A (SPEC §2.2) — the Lifecycle-surface rename of
+  `reads_sibling_slices/0`. A Lifecycle module declares the sibling
+  state keys it reads via `reads_siblings [:api_keys]` (or
+  `def reads_siblings, do: [:api_keys]`); the runtime surfaces them on
+  `ctx.siblings` (normalized to each sibling's persistent flat view —
+  see `Ezagent.Kind.Runtime`).
+
+  Same opt-in, same scoping, same `:all_slices`-is-banned rule
+  (invariant 18) as the legacy `reads_sibling_slices/0`. Optional
+  callback — `Ezagent.Behavior.reads_siblings_of/1` reads the UNION of
+  this and the legacy callback so a Kind mixing legacy + Lifecycle
+  Behaviors is correct.
+  """
+  @callback reads_siblings() :: [atom()]
+
+  @doc """
   Reconcile this Behavior's slice with an external source of truth
   (e.g. a projection table in the DB) after the Kind has loaded
   state from a snapshot.
@@ -550,6 +566,7 @@ defmodule Ezagent.Behavior do
     cap_exempt_actions: 0,
     workspace_scoped?: 0,
     reads_sibling_slices: 0,
+    reads_siblings: 0,
     reconcile_after_load: 2,
     on_ready: 2
   ]
@@ -875,6 +892,7 @@ defmodule Ezagent.Behavior do
   """
   @type effect ::
           {:set, atom(), term()}
+          | {:set_transient, atom(), term()}
           | {:emit, atom(), map()}
           | {:dispatch, Ezagent.Cmd.t()}
           | {:dispatch_returning, Ezagent.Cmd.t(), keyword()}
@@ -1007,6 +1025,26 @@ defmodule Ezagent.Behavior do
       {:set, _key, _value} = e ->
         bucket_by_phase(rest, Map.update!(acc, :events, &[{:__set__, e} | &1]) |> bucket_set(e))
 
+      # Lifecycle Phase A (SPEC 2026-05-29 §9 OQ-2 + §10-R2) —
+      # `{:set_transient, key, value}` writes into the Lifecycle slice's
+      # `:transients` sub-map. Like `:set`, it is reduced into the
+      # in-memory accumulator BEFORE the caller commits (R10-2: both
+      # containers advance together pre-commit; if the durable commit of
+      # `state` fails, the caller keeps the prior slice and neither
+      # container advances — see `Kind.Server.commit_and_notify/3`).
+      # `transients` is NEVER serialized (stripped at the snapshot
+      # boundary, `Ezagent.Kind.Snapshot.strip_transients/1`), so a
+      # `:set_transient` carries no durability promise — it lives in the
+      # host GenServer's memory until the next stop, then is rebuilt by
+      # `activate/2`.
+      #
+      # We deliberately keep it OUT of the `:events` ordering list (it is
+      # a pure container reduction, not an audit-visible state event) and
+      # OUT of every side-effect bucket. It only mutates the accumulator
+      # `state` (the two-container slice) in place.
+      {:set_transient, _key, _value} = e ->
+        bucket_by_phase(rest, bucket_set_transient(acc, e))
+
       {:emit, _type, _payload} = e ->
         bucket_by_phase(rest, Map.update!(acc, :events, &[e | &1]))
 
@@ -1052,8 +1090,44 @@ defmodule Ezagent.Behavior do
 
   # Apply `:set` effects to state in-place during the first pass so
   # downstream effect-substitution can see them via {:ref, ...}.
+  #
+  # Lifecycle Phase A (SPEC 2026-05-29 §0.1) — two-container awareness.
+  # When the slice has the Lifecycle two-container shape (`%{state: _,
+  # transients: _}`), `{:set, key, value}` writes into the `:state`
+  # sub-map (the persistent container). For a legacy flat slice (no
+  # `:transients` sub-key) the write is flat, exactly as before — so
+  # every existing Behavior is byte-for-byte unaffected.
   defp bucket_set(acc, {:set, key, value}) do
-    %{acc | state: Map.put(acc.state, key, value)}
+    %{acc | state: put_state_field(acc.state, key, value)}
+  end
+
+  # Lifecycle Phase A (SPEC 2026-05-29 §9 OQ-2 + §10-R2) — apply a
+  # `{:set_transient, key, value}` into the slice's `:transients`
+  # sub-map. Only valid on a Lifecycle two-container slice; a
+  # `:set_transient` against a flat (legacy) slice is a programmer error
+  # (a legacy Behavior has no transients container) and raises, per
+  # `feedback_let_it_crash_no_workarounds` — no silent shim.
+  defp bucket_set_transient(acc, {:set_transient, key, value}) do
+    %{acc | state: put_transient_field(acc.state, key, value)}
+  end
+
+  defp put_state_field(%{state: st, transients: _tr} = slice, key, value) when is_map(st) do
+    %{slice | state: Map.put(st, key, value)}
+  end
+
+  defp put_state_field(flat_slice, key, value) when is_map(flat_slice) do
+    Map.put(flat_slice, key, value)
+  end
+
+  defp put_transient_field(%{state: _st, transients: tr} = slice, key, value) when is_map(tr) do
+    %{slice | transients: Map.put(tr, key, value)}
+  end
+
+  defp put_transient_field(other, key, _value) do
+    raise ArgumentError,
+          "{:set_transient, #{inspect(key)}, _} requires a Lifecycle two-container " <>
+            "slice (`%{state: _, transients: _}`); got a flat slice: #{inspect(other)}. " <>
+            "Only modules using `use Ezagent.Lifecycle` may emit :set_transient effects."
   end
 
   # Second pass: filter the synthetic `__set__` markers out of
@@ -1280,6 +1354,33 @@ defmodule Ezagent.Behavior do
     else
       []
     end
+  end
+
+  @doc """
+  Lifecycle Phase A (SPEC §2.2, F2) — the UNION of a Behavior's declared
+  sibling-read keys across BOTH the legacy `reads_sibling_slices/0` and
+  the Lifecycle `reads_siblings/0` callbacks.
+
+  Used by `Ezagent.Kind.Runtime.handle_dispatch/4` to decide which
+  sibling slices to surface on `ctx.sibling_slices` (legacy reader
+  surface) AND `ctx.siblings` (Lifecycle reader surface). Reading the
+  union means a module mid-migration that has renamed its callback —
+  or a Kind composing one legacy + one Lifecycle Behavior — is correct
+  regardless of which callback name each declares.
+  """
+  @spec reads_siblings_of(module()) :: [atom()]
+  def reads_siblings_of(behavior_module) when is_atom(behavior_module) do
+    legacy =
+      if function_exported?(behavior_module, :reads_sibling_slices, 0),
+        do: behavior_module.reads_sibling_slices(),
+        else: []
+
+    lifecycle =
+      if function_exported?(behavior_module, :reads_siblings, 0),
+        do: behavior_module.reads_siblings(),
+        else: []
+
+    (legacy ++ lifecycle) |> Enum.uniq()
   end
 
   @doc """

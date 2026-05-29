@@ -213,7 +213,23 @@ defmodule Ezagent.SnapshotStore do
     uri_str = uri_to_str(uri)
     kind_type_str = stringify_kind_type(kind_type)
     workspace_uri_str = derive_workspace(uri, opts)
-    binary = :erlang.term_to_binary(state)
+    # Lifecycle Phase A (SPEC 2026-05-29 §0.1 + §10-R2, codex r2 F1) —
+    # strip every Lifecycle slice's `:transients` sub-key BEFORE
+    # serialization, mirroring `Ezagent.Kind.Snapshot.save_now/3`. This is
+    # the Phase 2+ durable-write seam (this module's moduledoc points
+    # future writers here), so it MUST enforce the same transient-leak
+    # invariant as every other durable-write path (`save_now/3`, the
+    # `:on_change` dirty-check in `Kind.Runtime`, the Publisher ring): a
+    # transient (PID / ref / ETS handle / port / monitor ref) has no
+    # serialization path by construction and is rebuilt by `activate/2` on
+    # the next start. Legacy (non-Lifecycle) flat slices carry no
+    # `:transients` sub-key, so the strip is a structural no-op and the
+    # serialized bytes are identical. `strip_transients/1` is a plain
+    # runtime function in `Ezagent.Kind.Snapshot` — calling it here
+    # introduces NO module cycle (Kind.Snapshot does not reference
+    # SnapshotStore; both live in :ezagent_core), so no helper relocation
+    # was needed.
+    binary = :erlang.term_to_binary(Ezagent.Kind.Snapshot.strip_transients(state))
 
     version =
       case Keyword.fetch(opts, :version) do

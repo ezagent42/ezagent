@@ -466,12 +466,28 @@ defmodule Ezagent.Behavior.Publisher.SessionImpl do
     slice_key = Map.get(event, :slice_key)
     slice_state = Map.get(ctx, :slice_state, %{})
 
-    new_slice = Map.get(slice_state, slice_key)
+    # Lifecycle Phase A (SPEC §0.1 / §10-R2, F1b) — strip the Lifecycle
+    # `:transients` sub-key BEFORE the slice goes into the durable
+    # Publisher ring. The ring is part of the `:publisher` slice and IS
+    # persisted (`{:snapshot, :on_change}` Session); a mirrored peer
+    # slice carrying live PIDs/refs/handles in `:transients` would
+    # otherwise be serialized into the ring — the exact "transients never
+    # persisted" violation via the indirect Publisher path. Only the
+    # persistent `:state` view is mirrored. A legacy flat slice (no
+    # `:transients` sub-key) passes through unchanged.
+    new_slice = strip_transients(Map.get(slice_state, slice_key))
 
     %{
       new_slice: new_slice
     }
   end
+
+  # Strip a Lifecycle two-container slice down to its persistent `:state`
+  # view; pass a legacy flat slice (or nil) through unchanged.
+  defp strip_transients(%{transients: _} = slice) when is_map(slice),
+    do: Map.delete(slice, :transients)
+
+  defp strip_transients(other), do: other
 
   defp append_with_retention(ring, %Event{} = event, retention) do
     new_ring = ring ++ [event]

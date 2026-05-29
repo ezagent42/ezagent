@@ -265,7 +265,13 @@ defmodule Ezagent.Kind.Snapshot do
         :not_durable
 
       {:snapshot, :on_change} ->
-        if old_state == new_state do
+        # Lifecycle Phase A (SPEC 2026-05-29 §0.1 + §10-R2) — compare the
+        # PERSISTABLE view only. A `{:set_transient, ...}` effect mutates
+        # a Lifecycle slice's `:transients` sub-key, which is NEVER
+        # snapshotted; a transient-only change must therefore NOT trigger
+        # a durable write (the stripped views are equal). Legacy slices
+        # (no `:transients` sub-key) are unaffected by the strip.
+        if strip_transients(old_state) == strip_transients(new_state) do
           :not_durable
         else
           # save_now/3 is now strict (issue #342, Allen 2026-05-25 —
@@ -314,16 +320,36 @@ defmodule Ezagent.Kind.Snapshot do
   system-tier state — these snapshots own no per-tenant data, so
   landing in admin is structurally correct).
   """
-  @spec save_now(URI.t() | String.t(), module(), %{atom() => map()}) ::
+  @spec save_now(URI.t() | String.t(), module(), %{atom() => map()}, keyword()) ::
           :ok | {:error, term()}
-  def save_now(uri, kind_module, state) do
+  def save_now(uri, kind_module, state, opts \\ []) do
     uri_str = uri_to_str(uri)
     kind_type_str = Atom.to_string(kind_module.type_name())
     version = snapshot_version_of(kind_module)
-    binary = :erlang.term_to_binary(state)
+    # Lifecycle Phase A (SPEC 2026-05-29 §0.1 + §10-R2) — strip every
+    # Lifecycle slice's `:transients` sub-key BEFORE serialization.
+    # `transients` (PIDs / refs / ETS handles / ports / monitor refs)
+    # has no serialization path by construction: it is dropped here and
+    # rebuilt by `activate/2` on the next start. This is the mechanism
+    # that kills the cold-restart bug class — a transient CANNOT be
+    # accidentally persisted because the only serialization site strips
+    # it. Legacy (non-Lifecycle) slices have no `:transients` sub-key
+    # and pass through unchanged.
+    binary = :erlang.term_to_binary(strip_transients(state))
     workspace_uri_str = derive_workspace_uri(uri)
 
-    case KindSnapshot.upsert(uri_str, kind_type_str, binary, version, workspace_uri_str) do
+    # Lifecycle Phase A (SPEC §9 OQ-1, F3) — when the caller is the
+    # initial-persist of a Lifecycle Kind, set the `ever_created` marker
+    # in the SAME upsert as the state binary so the marker is atomic with
+    # the snapshot it gates. No separate fire-and-forget write that a
+    # crash could land between.
+    upsert_opts =
+      case Keyword.get(opts, :mark_ever_created, false) do
+        true -> [mark_ever_created: true]
+        _ -> []
+      end
+
+    case KindSnapshot.upsert(uri_str, kind_type_str, binary, version, workspace_uri_str, upsert_opts) do
       {:ok, _row} ->
         :telemetry.execute(
           [:ezagent, :persistence, :written],
@@ -403,6 +429,37 @@ defmodule Ezagent.Kind.Snapshot do
 
   # ---------------------------------------------------------------------
   # Internals
+
+  @doc """
+  Lifecycle Phase A (SPEC 2026-05-29 §0.1 + §10-R2) — return the
+  PERSISTABLE view of a Kind's `slice_state` map: every Lifecycle
+  slice's `:transients` sub-key is dropped.
+
+  A Lifecycle slice has the two-container shape `%{state: map(),
+  transients: map()}` (emitted by `use Ezagent.Lifecycle`). `transients`
+  holds PIDs / refs / ETS handles / ports / monitor refs that MUST NOT
+  be serialized — they are rebuilt by `activate/2` on every start. This
+  function is the single chokepoint that enforces "only `state` is
+  snapshotted": it runs at the serialize boundary (`save_now/3`) and in
+  the `:on_change` dirty-check (`commit/4`).
+
+  Legacy (non-Lifecycle) slices do NOT carry a `:transients` sub-key, so
+  they pass through structurally unchanged — the strip is a no-op for
+  them. The detection is purely structural (a map slice carrying a
+  `:transients` key), so no engine/Behavior coupling is introduced.
+  """
+  @spec strip_transients(%{atom() => term()}) :: %{atom() => term()}
+  def strip_transients(slice_state) when is_map(slice_state) do
+    Map.new(slice_state, fn {slice_key, slice} ->
+      {slice_key, strip_one_slice(slice)}
+    end)
+  end
+
+  defp strip_one_slice(%{transients: _} = slice) when is_map(slice) do
+    Map.delete(slice, :transients)
+  end
+
+  defp strip_one_slice(other), do: other
 
   defp init_fresh(kind_module, args) do
     Ezagent.Kind.behaviors_of(kind_module)
