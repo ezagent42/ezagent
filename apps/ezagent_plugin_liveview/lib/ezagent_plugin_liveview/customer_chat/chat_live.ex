@@ -13,8 +13,9 @@ defmodule EzagentPluginLiveview.CustomerChat.ChatLive do
   via a self-sent `:bootstrap` message, so the dead render is instant.
   """
   use Phoenix.LiveView
-  import EzagentPluginLiveview.CustomerChat.Components
-  alias EzagentPluginLiveview.CustomerChat.{Bootstrap, Components, Theme}
+  import EzagentPluginCustomerChat.Components
+  alias EzagentPluginCustomerChat.Components
+  alias EzagentPluginLiveview.CustomerChat.{Bootstrap, Theme}
   require Logger
 
   @message_limit 50

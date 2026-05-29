@@ -1,6 +1,6 @@
-defmodule EzagentPluginLiveview.CustomerChat.ComponentsTest do
+defmodule EzagentPluginCustomerChat.ComponentsTest do
   use ExUnit.Case, async: true
-  alias EzagentPluginLiveview.CustomerChat.Components
+  alias EzagentPluginCustomerChat.Components
 
   test "message_to_row classifies a customer message as :customer" do
     msg = Ezagent.Message.new(URI.parse("entity://user/acme/customer_alice"), %{text: "hi"})

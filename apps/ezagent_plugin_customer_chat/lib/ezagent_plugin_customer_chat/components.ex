@@ -1,4 +1,4 @@
-defmodule EzagentPluginLiveview.CustomerChat.Components do
+defmodule EzagentPluginCustomerChat.Components do
   @moduledoc """
   Shared HEEx function components for the customer chat surface, plus
   the pure `message_to_row/2` mapper. Used by `CustomerChat.ChatLive`;
