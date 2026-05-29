@@ -49,10 +49,19 @@ defmodule Ezagent.Orchestrator.McpRegistry do
   orchestrator overwrites its row. There is no automatic unregister
   on orchestrator termination: the row is a small static map and a
   stale entry is harmless (a dead orchestrator's bridge cannot
-  authenticate). The registry is rebuilt empty on a phx restart;
-  the Generator re-registers when a snapshotted orchestrator is
-  next instantiated. A `unregister/1` is provided for explicit
-  cleanup (used by tests).
+  authenticate). A `unregister/1` is provided for explicit cleanup
+  (used by tests).
+
+  ## This is a CACHE, not the source of truth (Task #110)
+
+  The registry is rebuilt EMPTY on a phx restart. That used to be a
+  correctness bug — the orchestrator's 7 management MCP tools went dead
+  until a fresh session re-spawn. As of Task #110 it is a non-issue:
+  `Ezagent.Orchestrator.McpServer.from_orchestrator_uri/1` treats this
+  table as a READ-THROUGH CACHE. On a miss it LAZILY REBUILDS the
+  context from the Session's durable `kind_snapshots` row (Session is
+  `{:snapshot, :on_change}`) and fills the cache. The durable Session
+  snapshot — not this ETS row — is the source of truth.
   """
 
   @table :ezagent_orchestrator_mcp_registry

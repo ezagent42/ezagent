@@ -299,6 +299,18 @@ defmodule Ezagent.Behavior.Chat do
       routing_rules: [],
       # URI.t() | nil — the orchestrator agent's AgentTemplate
       orchestrator_template_uri: nil,
+      # URI.t() | nil — the SessionTemplate this Session was
+      # instantiated from (the Generator's `parent_template_uri`,
+      # Task #110). Durable because Session is `{:snapshot, :on_change}`,
+      # so it survives a phx restart. It is the canonical source the
+      # lazy rebuild in
+      # `Ezagent.Orchestrator.McpServer.from_orchestrator_uri/1` prefers
+      # for the `:parent_template_uri` the `update_template` MCP tool
+      # requires — NOT derivable from the session URI in the general case
+      # (the `<owner>-<template>` path segment can be ambiguous). `nil`
+      # for sessions that never went through the Generator (plain system
+      # sessions) — those have no orchestrator.
+      session_template_uri: nil,
       # URI.t() | nil — workspace newly-instantiated sessions land in
       default_workspace_uri: nil,
       # String.t() — human description of the team
@@ -906,6 +918,30 @@ defmodule Ezagent.Behavior.Chat do
   end
 
   def handle_kind_message(_other_message, _chat_slice, _ctx), do: :ignore
+
+  # --- Task #110 — orchestrator MCP context is now LAZILY REBUILT --------
+  #
+  # The earlier patch (commit 73044554) re-registered the orchestrator
+  # `McpRegistry` row from an `on_ready/2` cache-warm here. That has been
+  # REMOVED in favour of the read-through cache in
+  # `Ezagent.Orchestrator.McpServer.from_orchestrator_uri/1`: on an ETS
+  # miss it lazily rebuilds the context from the Session's durable
+  # `kind_snapshots` row and fills the cache.
+  #
+  # Lazy rebuild fully subsumes the on_ready cache-warm for correctness
+  # AND covers a case on_ready could not: the orchestrator bridge can
+  # join `orch:bridge:<uri>` BEFORE the Session Kind cold-spawns (or
+  # while it is not running at all) — on_ready only fires when the
+  # Session Kind itself reaches `:ready`, so it could not have warmed
+  # the cache in time for that race. The cache-warm offered at best a
+  # marginal first-join latency saving (one indexed snapshot query,
+  # once per orchestrator per restart, cached thereafter), so it is
+  # dropped to reduce surface per the plugin-isolation north star.
+  #
+  # The durable `:session_template_uri` field on the working copy (added
+  # by the same commit, persisted by `Session.merge_working_copy/6`) is
+  # KEPT — it is the canonical source the lazy rebuild prefers for
+  # `parent_template_uri`.
 
   # --- Topic helpers (public — Ezagent.Kind.Server / LV subscribe via these) -
 

@@ -441,7 +441,8 @@ defmodule Ezagent.Entity.Session do
         template_content,
         slot_results,
         workspace_uri,
-        orchestrator_uri
+        orchestrator_uri,
+        session_template_uri
       )
 
     # Step 6: grant scoped caps (idempotent, logical-equality)
@@ -1477,7 +1478,8 @@ defmodule Ezagent.Entity.Session do
          template_content,
          slot_results,
          %URI{} = workspace_uri,
-         %URI{} = orchestrator_uri
+         %URI{} = orchestrator_uri,
+         %URI{} = session_template_uri
        ) do
     prior = read_template_working_copy(session_uri)
 
@@ -1543,6 +1545,12 @@ defmodule Ezagent.Entity.Session do
       orchestrator_template_uri:
         Map.get(template_content, :orchestrator_template_uri) ||
           Ezagent.URI.parse!("template://agent/system/cc-orchestrator"),
+      # Task #110 — the SessionTemplate this Session was instantiated
+      # from. Persisted on the durable working copy so `Chat.on_ready/2`
+      # can recover the McpRegistry `:parent_template_uri` on cold-load
+      # (the `update_template` MCP tool requires it). Same value the
+      # Generator passes to `register_orchestrator_mcp_context/5` step 7.
+      session_template_uri: session_template_uri,
       default_workspace_uri: Map.get(template_content, :default_workspace_uri) || workspace_uri,
       description: Map.get(template_content, :description, "")
     }
