@@ -92,23 +92,36 @@ defmodule Ezagent.Behavior.ExternalMirrorMigrationParityTest do
     end
   end
 
-  describe "lifecycle hooks (slice machinery — unchanged by migration)" do
-    test "init_slice/1 + post_init/2 + handle_continue/3 stay as exported callbacks" do
+  describe "lifecycle hooks (Lifecycle migration — Phase B)" do
+    # The `use Ezagent.Lifecycle` macro emits init_slice/1 + post_init/2 +
+    # handle_continue/3 (the engine boot path); the developer-facing hooks
+    # are create/1 + activate/2 + handle_signal/2. `reconcile_after_load/2`
+    # is FOLDED into activate/2 (SPEC §5 / OQ-8) — its logic survives as the
+    # public `reconcile_bindings/2`.
+    test "engine boot callbacks stay exported (macro-emitted) + Lifecycle hooks present" do
       assert function_exported?(ExternalMirror, :init_slice, 1)
       assert function_exported?(ExternalMirror, :post_init, 2)
       assert function_exported?(ExternalMirror, :handle_continue, 3)
-      assert function_exported?(ExternalMirror, :reconcile_after_load, 2)
       assert function_exported?(ExternalMirror, :data_owner, 1)
       assert function_exported?(ExternalMirror, :handle_kind_message, 3)
+      # Developer Lifecycle hooks.
+      assert function_exported?(ExternalMirror, :create, 1)
+      assert function_exported?(ExternalMirror, :activate, 2)
+      assert function_exported?(ExternalMirror, :handle_signal, 2)
+      # reconcile_after_load/2 folded into activate/2; logic kept here.
+      assert function_exported?(ExternalMirror, :reconcile_bindings, 2)
+      refute function_exported?(ExternalMirror, :reconcile_after_load, 2)
     end
 
-    test "post_init/2 returns `:ok` for an empty-bindings slice" do
-      assert ExternalMirror.post_init(%{}, %{bindings: []}) == :ok
-    end
+    test "post_init/2 returns `{:continue, :ezagent_activate}` (Lifecycle unified start hook)" do
+      # The macro always schedules the unified activate continuation,
+      # regardless of bindings; activate/2 reconciles + defers the
+      # worker-spawn loop via a self-message (§10-R1).
+      assert ExternalMirror.post_init(%{}, %{state: %{bindings: []}}) ==
+               {:continue, :ezagent_activate}
 
-    test "post_init/2 schedules reconcile when slice has bindings" do
-      assert ExternalMirror.post_init(%{}, %{bindings: [%{binding_id: "x"}]}) ==
-               {:continue, :reconcile_external_mirror_workers}
+      assert ExternalMirror.post_init(%{}, %{state: %{bindings: [%{binding_id: "x"}]}}) ==
+               {:continue, :ezagent_activate}
     end
 
     test "data_owner/1 for :any returns :any (class-wide grant)" do

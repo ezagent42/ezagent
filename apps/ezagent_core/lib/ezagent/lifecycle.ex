@@ -403,8 +403,25 @@ defmodule Ezagent.Lifecycle do
   # and always return `:ok` so the engine's graceful-stop path is a pure
   # side-effecting cleanup, never a (torn) state write.
   @spec __run_deactivate__(module(), term(), %{state: map(), transients: map()}, map()) :: :ok
-  def __run_deactivate__(module, reason, %{state: st}, ctx) do
-    deactivate_ctx = Map.put(ctx, :state, st)
+  def __run_deactivate__(module, reason, slice, ctx) do
+    # Phase B (T1 batch follow-on): `deactivate/2` does side-effecting
+    # cleanup of TRANSIENT handles (close a transport, release a port) — so
+    # its ctx MUST expose `:transients` + `:read` + `:state`, mirroring the
+    # `__run_signal__`/`__run_destroy__` ctx shape. The original Phase A
+    # `__run_deactivate__` forwarded only `:state`, so a `deactivate` that
+    # reached for `ctx.transients[handle]` (the canonical use — e.g.
+    # `ExternalMirrorWorker` releasing its binding transport) raised
+    # `KeyError :transients`. This is an additive ctx completion; it does
+    # NOT change the F5 `:ok`-only contract (the return is still discarded).
+    st = Map.get(slice, :state, %{})
+    transients = Map.get(slice, :transients, %{})
+
+    deactivate_ctx =
+      ctx
+      |> Map.put(:state, st)
+      |> Map.put(:transients, transients)
+      |> Map.put(:read, fn key, default -> Map.get(st, key, default) end)
+
     _ = module.deactivate(reason, deactivate_ctx)
     :ok
   end

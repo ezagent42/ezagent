@@ -77,14 +77,21 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
       Process.sleep(50)
 
       worker_uri = WorkerSpawn.worker_uri_for(session_uri, "mock_publish", target_id)
-      {:ok, slice} = Ezagent.Kind.get_slice(worker_uri, :external_mirror_worker)
 
-      # After handle_continue completes, subscription_state is :active
-      # and binding_state + the adapter/binding modules are bound.
-      assert slice.subscription_state == :active
-      assert slice.adapter_module == MockPublishAdapter
-      assert slice.binding_module == MockPublishBinding
-      assert slice.binding_state != nil
+      # Lifecycle migration (Phase B): subscription_state + adapter_module
+      # + binding_module + binding_state are now TRANSIENTS (the live
+      # transport handles), rebuilt by activate/2. `get_slice/2` normalizes
+      # to the persistent `.state` view (T3) which would hide them — use
+      # `get_raw_slice/2` to inspect the `transients` container.
+      {:ok, %{transients: transients}} =
+        Ezagent.Kind.get_raw_slice(worker_uri, :external_mirror_worker)
+
+      # After activate/2 completes, subscription_state is :active and
+      # binding_state + the adapter/binding modules are bound.
+      assert transients.subscription_state == :active
+      assert transients.adapter_module == MockPublishAdapter
+      assert transients.binding_module == MockPublishBinding
+      assert transients.binding_state != nil
     end
   end
 

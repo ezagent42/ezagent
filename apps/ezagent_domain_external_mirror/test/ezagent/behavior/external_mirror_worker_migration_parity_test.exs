@@ -70,21 +70,35 @@ defmodule Ezagent.Behavior.ExternalMirrorWorkerMigrationParityTest do
     end
   end
 
-  describe "lifecycle hooks (slice machinery — unchanged by migration)" do
-    test "init_slice/1 + post_init/2 + handle_continue/3 + terminate/3 stay exported" do
+  describe "lifecycle hooks (Lifecycle migration — Phase B)" do
+    # init_slice/1 + post_init/2 + handle_continue/3 + terminate/3 are now
+    # EMITTED BY the `use Ezagent.Lifecycle` macro (which compiles down to
+    # `@behaviour Ezagent.Behavior`), so they remain exported — the engine
+    # still drives the same boot/terminate path. The DEVELOPER-facing hooks
+    # are now create/1 + activate/2 + handle_signal/2 + deactivate/2.
+    test "engine boot callbacks stay exported (macro-emitted) + Lifecycle hooks present" do
+      # Engine callbacks the macro emits.
       assert function_exported?(ExternalMirrorWorker, :init_slice, 1)
       assert function_exported?(ExternalMirrorWorker, :post_init, 2)
       assert function_exported?(ExternalMirrorWorker, :handle_continue, 3)
       assert function_exported?(ExternalMirrorWorker, :terminate, 3)
       assert function_exported?(ExternalMirrorWorker, :data_owner, 1)
+      # handle_kind_message/3 is the macro-emitted bridge to handle_signal/2.
       assert function_exported?(ExternalMirrorWorker, :handle_kind_message, 3)
+      # Developer Lifecycle hooks.
+      assert function_exported?(ExternalMirrorWorker, :create, 1)
+      assert function_exported?(ExternalMirrorWorker, :activate, 2)
+      assert function_exported?(ExternalMirrorWorker, :handle_signal, 2)
+      assert function_exported?(ExternalMirrorWorker, :deactivate, 2)
     end
 
-    test "post_init/2 returns `{:continue, :subscribe_and_init}` (split-init pattern)" do
-      assert ExternalMirrorWorker.post_init(%{}, %{}) == {:continue, :subscribe_and_init}
+    test "post_init/2 returns `{:continue, :ezagent_activate}` (Lifecycle unified start hook)" do
+      # The macro emits `post_init(_args, _slice), do: {:continue, :ezagent_activate}`;
+      # the engine drains the queue → handle_continue runs activate/2.
+      assert ExternalMirrorWorker.post_init(%{}, %{}) == {:continue, :ezagent_activate}
     end
 
-    test "init_slice/1 produces the documented :pending shape with all keys present" do
+    test "create/1 produces the PERSISTENT state shape (transients built in activate/2)" do
       args = %{
         session_uri: Ezagent.URI.new!("session://default/team-alpha/p2d-worker-parity"),
         adapter_id: "test-adapter",
@@ -92,19 +106,23 @@ defmodule Ezagent.Behavior.ExternalMirrorWorkerMigrationParityTest do
         opts: %{}
       }
 
-      slice = ExternalMirrorWorker.init_slice(args)
+      {:ok, state} = ExternalMirrorWorker.create(args)
 
-      assert slice.subscription_state == :pending
-      assert slice.publisher_cursor == :latest
-      assert slice.count == 0
-      assert slice.error_count == 0
-      assert is_nil(slice.binding_state)
-      assert is_nil(slice.last_published_message_id)
-      # The session_uri / adapter_id / target_id must round-trip
-      # unchanged so the post_init handle_continue can resolve the
-      # adapter + binding modules.
-      assert slice.session_uri == args.session_uri
-      assert slice.adapter_id == args.adapter_id
+      # publisher_cursor + counters are PERSISTENT (survive restart).
+      assert state.publisher_cursor == :latest
+      assert state.count == 0
+      assert state.error_count == 0
+      assert is_nil(state.last_published_message_id)
+      # The session_uri / adapter_id / target_id round-trip unchanged so
+      # activate/2 can resolve the adapter + binding modules.
+      assert state.session_uri == args.session_uri
+      assert state.adapter_id == args.adapter_id
+      # The transport handles (adapter_module / binding_module /
+      # binding_state / subscription_state) are TRANSIENTS — NOT in
+      # `create`'s persistent state; activate/2 (re)builds them every start.
+      refute Map.has_key?(state, :binding_state)
+      refute Map.has_key?(state, :subscription_state)
+      refute Map.has_key?(state, :adapter_module)
     end
 
     test "data_owner/1 always returns :no_owner (framework-internal Kind)" do

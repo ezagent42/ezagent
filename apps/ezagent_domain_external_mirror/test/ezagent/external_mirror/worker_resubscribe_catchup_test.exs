@@ -246,9 +246,15 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeCatchupTest do
 
       # Move the worker's persisted cursor to 0 (older than the
       # ring's current contents which is cursor=1+).
+      #
+      # Lifecycle migration (Phase B): the worker slice is now the
+      # two-container `%{state: %{...}, transients: %{...}}` shape, and
+      # `publisher_cursor` is a PERSISTENT field — so mutate it under
+      # `.state` (not the top level).
       :sys.replace_state(worker_pid, fn kind_state ->
         worker_slice = kind_state.state.external_mirror_worker
-        new_worker_slice = %{worker_slice | publisher_cursor: 0}
+        new_worker_state = %{worker_slice.state | publisher_cursor: 0}
+        new_worker_slice = %{worker_slice | state: new_worker_state}
         new_state = %{kind_state.state | external_mirror_worker: new_worker_slice}
         %{kind_state | state: new_state}
       end)

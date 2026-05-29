@@ -90,30 +90,51 @@ defmodule Ezagent.Behavior.ExternalMirror do
   `apps/ezagent_domain_external_mirror/mix.exs` moduledoc).
   """
 
-  use Ezagent.Behavior
+  use Ezagent.Lifecycle
 
   require Logger
 
   alias Ezagent.ExternalMirror.{AdapterRegistry, BindingRow, FacadeNonceTable, WorkerSpawn}
 
-  # ----- Ezagent.Behavior contract (new — Phase 2-d r3 migration) ---------
+  # ----- Ezagent.Lifecycle contract (Phase B lifecycle migration) ---------
   #
-  # SPEC `docs/superpowers/specs/2026-05-28-router-behavior-kind-architecture.md`
-  # §6.2 retrofit: replace `@behaviour Ezagent.Behavior` + manual
-  # `actions/0` / `interface/0` / `required_caps/0` / `cap_subjects/0`
-  # with `use Ezagent.Behavior` + per-action `action :name, ...` macro
-  # declarations that auto-derive every legacy callback at compile time.
+  # SPEC `docs/superpowers/specs/2026-05-29-lifecycle-hooks-design.md` §2.3
+  # / §5 / §10-R1. Converted from `use Ezagent.Behavior`.
   #
-  # `state_slice/0` + `init_slice/1` + `post_init/2` + `handle_continue/3`
-  # + `reconcile_after_load/2` + `data_owner/1` + `handle_kind_message/3`
-  # are slice-machinery / lifecycle hooks (NOT action handlers) — they
-  # stay as plain function defs invoked directly by `Ezagent.Kind.Server`.
+  # Two-container split (SPEC §0.1 / §2.1):
   #
-  # `invoke/4` is REPLACED by per-action `handle_<action>(args, ctx)` —
-  # the runtime (`Kind.Runtime.invoke_new_contract_handler/6`) injects
-  # `ctx[:read].(:key, default)` for slice reads and consumes the
-  # returned `{:ok, result, [effect]}` shape. SPEC §4.4 effect grammar
-  # for slice mutation (`{:set, :bindings, _}`).
+  #   - `state` (PERSISTENT): `bindings` — the binding list. Per P3 this
+  #     slice IS the source of truth in memory; `external_mirror_bindings`
+  #     (DB) is the projection it caches (OQ-8 DB-projection Behavior).
+  #   - `transients`: NONE. This Behavior holds no live handle of its own
+  #     — it SPAWNS Worker Kinds (whose pids the supervisor owns) but never
+  #     caches one. So `activate/2` returns an empty transients map.
+  #
+  # `create/1` ← `init_slice/1`: re-read the DB projection on first-ever
+  # existence (auto-persisted thereafter).
+  #
+  # `activate/2` (SPEC §5 step 5 / OQ-8) UNIFIES the old `init_slice` DB
+  # read + `reconcile_after_load/2`: re-read the SoT projection every start
+  # and union it (idempotent, by binding_id — invariant 20) into the
+  # rehydrated `state.bindings`, returning the reconciled state via the
+  # 3-arity `{:ok, transients, state}` form. This SUBSUMES
+  # `reconcile_after_load/2` (which no longer exists as an engine callback);
+  # the reconcile LOGIC lives in `reconcile_bindings/2` (callable directly
+  # for the unit test).
+  #
+  # §10-R1 (CRITICAL — self-deferred post-ready work): the old
+  # `handle_continue/3` did `send(self(), {:ezagent_em_reconcile, …})` to
+  # DEFER the worker-spawn loop past `:ready` (the workers' subscribe
+  # `:call` hits the SESSION which must be `:ready`). That defer is
+  # PRESERVED: `activate/2` (pre-`:ready`) reconciles state and then
+  # `send(self(), {:ezagent_em_reconcile, bindings})`; the mailbox message
+  # drains AFTER the host is `:ready` and is handled by `handle_signal/2`,
+  # which runs the idempotent `Kind.spawn/2` loop. The worker-spawn does
+  # NOT go in `activate` (which is pre-`:ready`).
+  #
+  # `handle_<action>/2` reads state via `ctx.read.(:key, default)` and
+  # returns `{:ok, result, [effect]}` with `{:set, :bindings, _}` for the
+  # slice mutation (SPEC §4.4 effect grammar).
 
   # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
   # ExternalMirror is registered on Session Kind only — kind axis is
@@ -155,12 +176,17 @@ defmodule Ezagent.Behavior.ExternalMirror do
     }
   end
 
-  def state_slice, do: :external_mirror
+  # state_slice/0 is AUTO-DERIVED: `Ezagent.Behavior.ExternalMirror` →
+  # `:external_mirror` — identical to the pre-migration explicit
+  # `def state_slice, do: :external_mirror`. Snapshot key unchanged; no
+  # override needed (SPEC §5 step 2 / A5 verdict).
 
-  def init_slice(args) do
-    # Per §3.1 r4 HIGH-3 fix: rehydrate the binding LIST on init. The
-    # WORKER spawn loop is deferred to handle_continue/3 below
-    # (post_init returns `{:continue, :reconcile_external_mirror_workers}`).
+  # `create/1` ← `init_slice/1`: rehydrate the binding LIST from the DB
+  # projection on first-ever existence (§3.1 r4 HIGH-3 fix). The WORKER
+  # spawn loop is deferred (§10-R1) to `handle_signal/2` via the
+  # self-message that `activate/2` sends.
+  @impl Ezagent.Lifecycle
+  def create(args) do
     session_uri = Map.fetch!(args, :uri)
 
     bindings =
@@ -168,41 +194,60 @@ defmodule Ezagent.Behavior.ExternalMirror do
       |> BindingRow.list_for_session()
       |> Enum.map(&row_to_slice_binding/1)
 
-    %{bindings: bindings}
+    {:ok, %{bindings: bindings}}
   rescue
     # DB unavailable at boot (Ecto Sandbox not checked out, repo not
-    # started, etc.) — start with an empty list. The :on_change
-    # snapshot path repopulates on first mutation; if the DB comes
-    # back later, rows survive on disk but are NOT auto-replayed
-    # until Session Kind restarts. This matches the existing
-    # `bind_session_workspace/1` boot tolerance pattern in
-    # `EzagentDomainChat.Application`.
+    # started, etc.) — start with an empty list. The snapshot path
+    # repopulates on first mutation; activate/2's reconcile re-reads the
+    # SoT on the next start. Matches the existing `bind_session_workspace/1`
+    # boot tolerance pattern in `EzagentDomainChat.Application`.
     _ ->
-      %{bindings: []}
+      {:ok, %{bindings: []}}
   end
 
-  def post_init(_args, %{bindings: []}), do: :ok
+  @doc """
+  `activate/2` (SPEC §5 step 5 / OQ-8 / §10-R1) — the UNIFIED start hook.
 
-  def post_init(_args, %{bindings: _bindings}),
-    do: {:continue, :reconcile_external_mirror_workers}
+  1. RECONCILE (subsumes the old `reconcile_after_load/2`): re-read the DB
+     projection SoT and idempotently union it into the rehydrated
+     `state.bindings` (dedupe by binding_id — invariant 20). On a cold-load
+     the snapshot merge has already shadowed `create/1`'s state with the
+     rehydrated `state`; we re-read here because rows inserted between the
+     last snapshot and this restart would otherwise be lost.
+  2. DEFER the worker-spawn loop past `:ready` (§10-R1): `send(self(),
+     {:ezagent_em_reconcile, bindings})`. activate is PRE-`:ready`, so we
+     must NOT `Kind.spawn/2` here — each Worker's own activate subscribes
+     to THIS Session's Publisher (`:call`), which would hit `:not_ready`.
+     The mailbox message drains AFTER the host is `:ready` and is handled
+     by `handle_signal/2`.
 
-  def post_init(_args, _slice), do: :ok
+  No transients → returns `{:ok, %{}, reconciled_state}` (3-arity, so the
+  reconciled `state.bindings` is committed).
+  """
+  @impl Ezagent.Lifecycle
+  def activate(state, %{self_uri: session_uri}) do
+    reconciled = reconcile_bindings(session_uri, state)
 
-  # Allen 2026-05-26 task #34 — `init_slice/1` reads the DB
-  # projection at fresh-init time, but `Ezagent.Kind.Snapshot.
-  # load_or_init/3` MERGES the snapshot over the fresh state, so
-  # the DB-read result is shadowed. Rows inserted AFTER the last
-  # snapshot but BEFORE the next Kind restart are silently lost
-  # from the live slice.
-  #
-  # `reconcile_after_load/2` runs AFTER the snapshot merge.
-  # We re-read the projection rows for this session and union
-  # them with the loaded slice's bindings, dedupe by binding id.
-  # The normal-path bind (where the snapshot already captured
-  # the binding) is a no-op union; the bypass paths (SQL insert,
-  # snapshot/DB write race) get the new binding pulled into
-  # slice for `handle_continue/3` to spawn the worker.
-  def reconcile_after_load(%URI{} = session_uri, %{bindings: existing} = slice) do
+    # §10-R1: defer the worker-spawn loop to post-`:ready`. `self()` is the
+    # Kind.Server pid — `:ready` by the time the mailbox drains.
+    send(self(), {:ezagent_em_reconcile, reconciled.bindings})
+
+    {:ok, %{}, reconciled}
+  end
+
+  @doc """
+  Reconcile the binding list against the DB projection SoT (Task #34 /
+  OQ-8 / invariant 20). This is the reconcile LOGIC that was the
+  `reconcile_after_load/2` engine callback pre-migration; under Lifecycle
+  it is folded into `activate/2` (which calls this) but kept as a public
+  function with the same `(session_uri, state)` arg order so the reconcile
+  unit test calls it directly. Re-reads the projection rows for the
+  session and unions them into the slice, deduping by `binding_id`
+  (idempotent — a normal-path bind where the snapshot already captured the
+  binding is a no-op union; bypass paths get the new binding pulled in for
+  `handle_signal/2` to spawn the worker).
+  """
+  def reconcile_bindings(%URI{} = session_uri, %{bindings: existing} = state) do
     db_bindings =
       session_uri
       |> BindingRow.list_for_session()
@@ -213,59 +258,36 @@ defmodule Ezagent.Behavior.ExternalMirror do
     additions =
       Enum.reject(db_bindings, fn b -> MapSet.member?(existing_ids, b.binding_id) end)
 
-    %{slice | bindings: existing ++ additions}
+    %{state | bindings: existing ++ additions}
   rescue
-    # DB unavailable — keep snapshot's bindings. Matches init_slice's
-    # rescue branch; same tolerance pattern.
-    _ -> slice
+    # DB unavailable — keep the snapshot's bindings. Same tolerance as
+    # create/1's rescue.
+    _ -> state
   end
 
-  def reconcile_after_load(_uri, slice), do: slice
+  def reconcile_bindings(_session_uri, state), do: state
 
   @doc """
-  §3.1 reconciliation — runs AFTER `:announce_ready` for Sessions
-  whose `init_slice/1` rebuilt non-empty `bindings`.
+  Mailbox handler (`handle_signal/2`, the `handle_kind_message/3`
+  successor) for the deferred reconciliation message scheduled from
+  `activate/2` (§10-R1). Walks the binding list + idempotently spawns each
+  Worker. By the time this runs, the Session is `:ready` so the Workers'
+  subscribe calls succeed.
 
-  **Important:** during this `handle_continue/3`, the Session Kind
-  is still `:not_ready` per the post-init invariant
-  (`Ezagent.Kind.Server` moduledoc — round-2 HIGH-1 fix). If we
-  synchronously `Kind.spawn/2` the Workers here, each Worker's OWN
-  post-init `handle_continue` would call back into the Session
-  Publisher's `subscribe_from` (a `GenServer.call` against the
-  Session) and get `{:error, :not_ready}` — crashing the Worker.
+  Skips rows whose adapter isn't (yet) in `AdapterRegistry` — the Worker's
+  `activate/2` would raise on `AdapterRegistry.lookup!/1` per SPEC §5.2,
+  exhaust the PerBindingSupervisor budget, and potentially cascade up to
+  RootSupervisor. Plugin authors expecting their adapter to be registered
+  must ensure the plugin boots BEFORE any session referencing it
+  rehydrates — V1 single-node, the umbrella's mix.exs dep edges control
+  this.
 
-  Workaround: defer the actual spawn loop via `Process.send_after(
-  self(), {:ezagent_em_reconcile, bindings}, 0)`. The mailbox
-  message is processed by `handle_kind_message/3` AFTER the
-  Kind.Server completes its post-init phase + marks `:ready`. At
-  that point, Worker spawns succeed because the Session is alive +
-  ready to service subscribe calls.
-
-  Slice itself is unchanged — return `:ignore` so `Kind.Server` skips
-  the snapshot-commit path.
+  Returns `:ignore` (no slice mutation) — the spawn loop is pure side
+  effect (idempotent `Kind.spawn/2`); the binding list is already
+  committed by `activate/2`'s reconcile.
   """
-  def handle_continue(:reconcile_external_mirror_workers, slice, _ctx) do
-    # `self()` is the Kind.Server pid — the same process that will
-    # be `:ready` by the time the mailbox drains.
-    send(self(), {:ezagent_em_reconcile, slice.bindings})
-    :ignore
-  end
-
-  @doc """
-  Mailbox handler for the deferred reconciliation message scheduled
-  from `handle_continue/3`. Walks the binding list + idempotently
-  spawns each Worker. By the time this runs, the Session is
-  `:ready` so the Workers' subscribe calls succeed.
-
-  Skips rows whose adapter isn't (yet) in `AdapterRegistry` — the
-  Worker's `handle_continue` would raise on `AdapterRegistry.lookup!/1`
-  per SPEC §5.2, exhaust the PerBindingSupervisor budget, and
-  potentially cascade up to RootSupervisor. Plugin authors expecting
-  their adapter to be registered must ensure the plugin boots BEFORE
-  any session referencing it rehydrates — V1 single-node, the
-  umbrella's mix.exs dep edges control this.
-  """
-  def handle_kind_message({:ezagent_em_reconcile, bindings}, _slice, %{self_uri: session_uri}) do
+  @impl Ezagent.Lifecycle
+  def handle_signal({:ezagent_em_reconcile, bindings}, %{self_uri: session_uri}) do
     Enum.each(bindings, fn binding ->
       case AdapterRegistry.lookup(binding.adapter_id) do
         {:ok, _module} ->
@@ -298,21 +320,20 @@ defmodule Ezagent.Behavior.ExternalMirror do
     :ignore
   end
 
-  def handle_kind_message(_other, _slice, _ctx), do: :ignore
+  def handle_signal(_other, _ctx), do: :ignore
 
   # ----- The :bind action ---------------------------------------------------
 
-  # Phase 2-d r3: `invoke/4` replaced by per-action `handle_<action>/2`
-  # handlers per SPEC §6.2 retrofit. Each handler reads the slice via
-  # `ctx[:read].(:key, default)` (injected by
-  # `Kind.Runtime.invoke_new_contract_handler/6`) and returns
-  # `{:ok, result, [effect]}` where slice mutations are encoded as
-  # `{:set, key, value}` effects per the SPEC §4.4 grammar.
+  # `invoke/4` was replaced (pre-Lifecycle) by per-action
+  # `handle_<action>/2` handlers. Each handler reads state via
+  # `ctx.read.(:key, default)` and returns `{:ok, result, [effect]}` where
+  # slice mutations are encoded as `{:set, key, value}` effects per the
+  # SPEC §4.4 grammar.
   #
   # The pre-migration body shape (slice in, new_slice out) is preserved
   # internally by `do_bind` / `do_unbind` for diff-minimisation; the
-  # action handlers reconstruct the slice from `ctx[:read]` and
-  # translate the new_slice return into `{:set, :bindings, _}` effects.
+  # action handlers reconstruct the slice from `ctx.read` and translate the
+  # new_slice return into `{:set, :bindings, _}` effects.
 
   def handle_bind(args, ctx) do
     # codex r3 CRIT fix (2026-05-25): atomic single-use nonce check
@@ -351,16 +372,16 @@ defmodule Ezagent.Behavior.ExternalMirror do
   end
 
   def handle_list_bindings(_args, ctx) do
-    bindings = ctx[:read].(:bindings, [])
+    bindings = ctx.read.(:bindings, [])
     {:ok, %{bindings: bindings}, []}
   end
 
   # Reconstruct the in-memory slice shape `do_bind` / `do_unbind`
-  # expect (a map with `:bindings`). The runtime's `ctx[:read]` is a
-  # `(key, default) -> value` accessor over the slice; only `:bindings`
-  # is in this Behavior's slice.
+  # expect (a map with `:bindings`). The runtime's `ctx.read` is a
+  # `(key, default) -> value` accessor over the persistent `state`; only
+  # `:bindings` is in this Behavior's state.
   defp read_slice(ctx) do
-    %{bindings: ctx[:read].(:bindings, [])}
+    %{bindings: ctx.read.(:bindings, [])}
   end
 
   # Translate the legacy `{:ok, new_slice, result} | {:error, _}` shape

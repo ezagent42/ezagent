@@ -45,7 +45,7 @@ defmodule Ezagent.Behavior.ExternalMirror.ReconcileAfterLoadTest do
       _row = insert_binding!(session, "feishu", "oc_test_target_a")
 
       slice = %{bindings: []}
-      reconciled = ExternalMirror.reconcile_after_load(session, slice)
+      reconciled = ExternalMirror.reconcile_bindings(session, slice)
 
       assert length(reconciled.bindings) == 1
       assert hd(reconciled.bindings).adapter_id == "feishu"
@@ -58,11 +58,11 @@ defmodule Ezagent.Behavior.ExternalMirror.ReconcileAfterLoadTest do
 
       # First reconcile picks up the row.
       slice = %{bindings: []}
-      first = ExternalMirror.reconcile_after_load(session, slice)
+      first = ExternalMirror.reconcile_bindings(session, slice)
       assert length(first.bindings) == 1
 
       # Second reconcile on the same slice — must be a no-op (idempotent).
-      second = ExternalMirror.reconcile_after_load(session, first)
+      second = ExternalMirror.reconcile_bindings(session, first)
       assert length(second.bindings) == 1
       assert second == first
     end
@@ -87,7 +87,7 @@ defmodule Ezagent.Behavior.ExternalMirror.ReconcileAfterLoadTest do
       # bypass (SQL insert, race, etc.).
       _row_b = insert_binding!(session, "feishu", "oc_b")
 
-      reconciled = ExternalMirror.reconcile_after_load(session, slice)
+      reconciled = ExternalMirror.reconcile_bindings(session, slice)
       assert length(reconciled.bindings) == 2
       target_ids = Enum.map(reconciled.bindings, & &1.target_id) |> Enum.sort()
       assert target_ids == ["oc_a", "oc_b"]
@@ -95,7 +95,7 @@ defmodule Ezagent.Behavior.ExternalMirror.ReconcileAfterLoadTest do
 
     test "non-URI session arg returns slice unchanged (no crash)" do
       slice = %{bindings: []}
-      assert ExternalMirror.reconcile_after_load("not-a-uri", slice) == slice
+      assert ExternalMirror.reconcile_bindings("not-a-uri", slice) == slice
     end
   end
 end
