@@ -416,10 +416,68 @@ defmodule Ezagent.Kind do
   NOT a hot-path API — `Behavior.invoke/4` should read its own
   slice via the `slice` argument; this is for cross-process
   lookups during default-grant evaluation, admin LV display, etc.
+
+  ## Two-container normalization (Lifecycle Phase B foundation, T3)
+
+  A Behavior converted to `use Ezagent.Lifecycle` stores its slice as the
+  two-container shape `%{state: persistent, transients: volatile}` (SPEC
+  2026-05-29 §0.1). Cross-module callers (`Ezagent.Identity`,
+  `Ezagent.Behavior.ApiKeys`, `Ezagent.Behavior.ExternalMirror`,
+  `Ezagent.Entity.Session`, the admin LVs, …) read a converted producer's
+  slice via FLAT field access — e.g. `get_slice(uri, :chat).owner_uri`.
+  Returning the raw two-container map would make every such field resolve
+  to `nil` (the flat field lives under `:state`, not at the top level) —
+  a silent-nil that corrupts the consumer without crashing.
+
+  `get_slice/2` therefore returns the `:state` view at this single
+  chokepoint when the slice is two-container, and the slice UNCHANGED when
+  it is legacy-flat. This makes a converted producer transparent to all
+  consumers (the Phase-A sibling-normalization precedent, generalized to
+  the cross-process read path) — the consumer never learns whether the
+  producer migrated. This is NOT a back-compat shim: it turns a
+  silent-nil into the correct durable data (`feedback_let_it_crash_no_workarounds`).
   """
   @spec get_slice(URI.t() | String.t(), atom()) ::
           {:ok, term()} | {:error, term()}
   def get_slice(uri, slice_key) when is_atom(slice_key) do
+    uri_str =
+      case uri do
+        %URI{} = u -> URI.to_string(u)
+        s when is_binary(s) -> s
+      end
+
+    case Ezagent.KindRegistry.lookup(uri_str) do
+      {:ok, pid} when is_pid(pid) ->
+        try do
+          {:ok, slice} = GenServer.call(pid, {:ezagent_get_slice, slice_key}, 5_000)
+          {:ok, normalize_slice_view(slice)}
+        catch
+          :exit, reason -> {:error, {:get_slice_exit, reason}}
+        end
+
+      :error ->
+        {:error, :not_found}
+    end
+  end
+
+  @doc """
+  Read a slice WITHOUT the T3 two-container normalization — the RAW slice
+  as the host GenServer holds it.
+
+  For a converted Lifecycle Behavior this returns the full
+  `%{state: persistent, transients: volatile}` map (NOT the flattened
+  `:state` view that `get_slice/2` returns). This is the introspection
+  path the Lifecycle test infrastructure
+  (`Ezagent.LifecycleCase.assert_transients_rebuilt/2`) needs to assert on
+  the `transients` container — a normalized read would hide it.
+
+  Production cross-module consumers want the flat `.state` view and MUST
+  use `get_slice/2`; this raw variant exists for test infra + any rare
+  caller that legitimately needs to see the container split.
+  """
+  @spec get_raw_slice(URI.t() | String.t(), atom()) ::
+          {:ok, term()} | {:error, term()}
+  def get_raw_slice(uri, slice_key) when is_atom(slice_key) do
     uri_str =
       case uri do
         %URI{} = u -> URI.to_string(u)
@@ -439,6 +497,27 @@ defmodule Ezagent.Kind do
         {:error, :not_found}
     end
   end
+
+  @doc """
+  Normalize a slice to its consumer-facing flat view (T3).
+
+  A converted Lifecycle slice is `%{state: persistent, transients:
+  volatile}`; cross-module consumers want the `state` map. A legacy flat
+  slice has no `:transients` sub-key and passes through unchanged. The
+  detection is purely structural (a map carrying BOTH `:state` and
+  `:transients` keys), so no engine/Behavior coupling is introduced —
+  symmetric with `Ezagent.Kind.Snapshot.strip_transients/1`.
+
+  Exposed (not private) so the persisted-snapshot read path
+  (`McpServer.load_chat_slice` and any other `decode_state`-then-read
+  consumer) can apply the SAME normalization to an on-disk slice that a
+  converted Kind wrote in the two-container shape.
+  """
+  @spec normalize_slice_view(term()) :: term()
+  def normalize_slice_view(%{state: state, transients: _transients}) when is_map(state),
+    do: state
+
+  def normalize_slice_view(slice), do: slice
 
   defp safe_kind_module(pid) when is_pid(pid) do
     {:ok, _} = GenServer.call(pid, :ezagent_kind_module, 5_000)

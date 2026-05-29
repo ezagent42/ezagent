@@ -424,16 +424,32 @@ defmodule Ezagent.Lifecycle do
         :ignore
 
       {:ok, effects} when is_list(effects) ->
-        # Reduce the signal's effects into the two-container slice via
-        # the same pure reducer dispatch uses. Only the container
-        # mutations matter for a signal; side-effect buckets
-        # (dispatch/notify/...) are NOT executed from the signal path in
-        # Phase A (the engine's handle_kind_message contract returns a
-        # new slice, not buckets). Signals SHOULD therefore emit only
-        # `:set` / `:set_transient` effects in Phase A.
-        case Ezagent.Behavior.apply_effects(effects, slice) do
-          {:ok, %{state: new_slice}} -> {:ok, new_slice}
-          {:halt, _reason, _partial} -> :ignore
+        # T1 (Phase B foundation) — run the FULL effect pipeline, not just
+        # `:set` / `:set_transient`. Real signal handlers DISPATCH /
+        # EMIT / NOTIFY (e.g. ExternalMirror's `:publisher_event` →
+        # dispatch-to-self, `:ezagent_em_reconcile` → spawn workers;
+        # Chat's `:DOWN` → set_transient + notify). Under Lifecycle those
+        # MUST be declarative effects executed here (the Phase C "no
+        # imperative Invocation.dispatch in dev code" gate), with the SAME
+        # ordering (State → Halt → Saga → DispatchesReturning → Dispatches
+        # → Notifies → Events → Terminations) and the R10-2 pre-commit
+        # atomicity (state + transient reduced into the new slice BEFORE
+        # any commit) as the action path.
+        #
+        # `Ezagent.Kind.Runtime.apply_signal_effects/3` is the SAME
+        # `apply_effects/2` + `execute_buckets/2` the action path uses; it
+        # returns `{:ok, new_slice}` (the engine's `handle_kind_message/3`
+        # contract carries only a new slice, no result) or `:ignore` on a
+        # `{:halt, _}` short-circuit OR a side-effect bucket failure
+        # (slice NOT advanced either way — the signal is an atomic unit,
+        # so partial side effects don't leak, mirroring the action path).
+        #
+        # ctx already carries `:self_uri` (the engine's signal ctx); that
+        # is what the dispatch/event buckets need for caller default +
+        # EventLog aggregate.
+        case Ezagent.Kind.Runtime.apply_signal_effects(slice, effects, signal_ctx) do
+          {:ok, new_slice} -> {:ok, new_slice}
+          :ignore -> :ignore
         end
     end
   end

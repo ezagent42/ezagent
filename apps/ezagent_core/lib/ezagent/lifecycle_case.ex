@@ -9,12 +9,30 @@ defmodule Ezagent.LifecycleCase do
   exactly when the cold-restart bug class reappears (a transient that got
   persisted, or an `activate/2` rebuild that was deleted).
 
+  ## Why this lives in `lib/` (T2 — Phase B foundation)
+
+  It is an `ExUnit.CaseTemplate` and therefore looks like test code, but
+  it is deliberately in `lib/` (NOT `test/support/`) — EXACTLY the
+  convention `EzagentCore.DataCase` (`lib/ezagent_core/data_case.ex`)
+  already uses. `test/support/` is only on the OWNING app's elixirc path
+  (`elixirc_paths(:test)` = `["lib", "test/support"]`), so a helper there
+  is invisible to the plugin / domain test suites (curl / feishu / np,
+  domain_chat / identity / …) that must `use Ezagent.LifecycleCase` to
+  assert `assert_transients_rebuilt/2` on their converted modules.
+  Compiling it into `ezagent_core/lib` puts it on every dependent app's
+  compile path (those apps already depend on `:ezagent_core` and
+  `use EzagentCore.DataCase` cross-app today). `CaseTemplate` compiles
+  cleanly in all envs — `ExUnit` ships with Elixir and is always loadable
+  — so it adds no prod runtime cost beyond a never-instantiated module,
+  the same trade-off `DataCase` accepts.
+
   ## Phase A status
 
   `assert_transients_rebuilt/2` is implemented (not stubbed) for the
   single-Lifecycle-slice case the Phase A fixture needs. Phase B widens
   the four named historical restart tests (session-members,
-  orchestrator-MCP, codex-bridge, AgentLineage) onto it.
+  orchestrator-MCP, codex-bridge, AgentLineage) onto it, and the plugin /
+  domain batches import it cross-app via the `lib/` relocation above.
   """
 
   use ExUnit.CaseTemplate
@@ -89,8 +107,12 @@ defmodule Ezagent.LifecycleCase do
     # 2. Drive to a non-trivial state, then capture both containers.
     drive.(uri)
 
+    # T3: `get_slice/2` now normalizes a two-container slice to its flat
+    # `.state` view for production consumers — which would HIDE the
+    # `transients` container this gate must inspect. Use the RAW read so we
+    # see the full `%{state:, transients:}` split.
     {:ok, %{state: state_before, transients: transients_before}} =
-      Ezagent.Kind.get_slice(uri, slice_key)
+      Ezagent.Kind.get_raw_slice(uri, slice_key)
 
     ExUnit.Assertions.assert(
       map_size(transients_before) > 0,
@@ -124,7 +146,7 @@ defmodule Ezagent.LifecycleCase do
     ExUnit.Assertions.refute(pid1 == pid2, "cold restart must produce a new pid")
 
     {:ok, %{state: state_after, transients: transients_after}} =
-      Ezagent.Kind.get_slice(uri, slice_key)
+      Ezagent.Kind.get_raw_slice(uri, slice_key)
 
     # 5a. State rehydrated correctly.
     ExUnit.Assertions.assert(

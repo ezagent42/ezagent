@@ -103,7 +103,7 @@ defmodule Ezagent.Kind.Snapshot do
         canonicalized = canonicalize_uris(loaded_state)
 
         fresh
-        |> Map.merge(canonicalized)
+        |> Map.merge(coerce_loaded_to_fresh_shape(fresh, canonicalized))
         |> prune_orphan_slices(kind_module)
         |> reconcile_after_load_behaviors(uri, kind_module)
 
@@ -460,6 +460,50 @@ defmodule Ezagent.Kind.Snapshot do
   end
 
   defp strip_one_slice(other), do: other
+
+  # T4 (Lifecycle Phase B foundation) — coerce a LEGACY FLAT snapshot slice
+  # into the two-container shape when the Behavior has since converted to
+  # `use Ezagent.Lifecycle`.
+  #
+  # The hazard: `fresh` (from `init_fresh/2`) carries a converted
+  # Behavior's slice as `%{state: %{}, transients: %{}}`, but a
+  # pre-migration `kind_snapshots` row holds that slice as a FLAT map
+  # (persistent + transient mixed, the old shape). The subsequent
+  # `Map.merge(fresh, loaded)` lets the flat slice SHADOW the two-container
+  # fresh value, so the live slice becomes flat — and a converted Kind's
+  # `__run_activate__` (which matches `%{state: st}`) crashes on boot.
+  #
+  # We detect the per-slice-key mismatch STRUCTURALLY (fresh is
+  # two-container `%{state: _, transients: _}` while the loaded value is a
+  # flat map with NO `:state` key) and coerce the loaded flat map to
+  # `%{state: flat, transients: %{}}` on read. The persistent data
+  # rehydrates under `:state`; `transients` starts empty and `activate/2`
+  # rebuilds it on this same start — exactly the cold-load contract.
+  #
+  # This does NOT replace the R-2 WIPE (the prod cutover plan stays a clean
+  # snapshot wipe). It is the safety net that keeps a stray flat row from
+  # CRASHING a converted Kind — reducing reliance on a perfect test-DB
+  # wipe and making the eventual prod cutover safer. A loaded value that is
+  # ALREADY two-container (a post-migration row) or whose fresh peer is
+  # legacy-flat (an un-migrated Behavior) passes through unchanged.
+  @spec coerce_loaded_to_fresh_shape(%{atom() => term()}, %{atom() => term()}) ::
+          %{atom() => term()}
+  defp coerce_loaded_to_fresh_shape(fresh, loaded) do
+    Map.new(loaded, fn {slice_key, loaded_slice} ->
+      {slice_key, coerce_one_slice(Map.get(fresh, slice_key), loaded_slice)}
+    end)
+  end
+
+  # Fresh is two-container, loaded is flat (no `:state`) → wrap the flat
+  # persistent map; `transients` rebuilt by `activate/2`.
+  defp coerce_one_slice(%{state: _, transients: _}, loaded_slice)
+       when is_map(loaded_slice) and not is_map_key(loaded_slice, :state) do
+    %{state: loaded_slice, transients: %{}}
+  end
+
+  # Any other combination (both two-container, both flat, fresh has no peer,
+  # non-map loaded value) → unchanged.
+  defp coerce_one_slice(_fresh_slice, loaded_slice), do: loaded_slice
 
   defp init_fresh(kind_module, args) do
     Ezagent.Kind.behaviors_of(kind_module)

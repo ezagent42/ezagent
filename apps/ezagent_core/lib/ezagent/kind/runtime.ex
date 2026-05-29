@@ -914,6 +914,67 @@ defmodule Ezagent.Kind.Runtime do
     Map.put(ctx, :read, fn key, default -> Map.get(flat_slice, key, default) end)
   end
 
+  @doc """
+  Lifecycle signal effect application (T1 — Phase B foundation).
+
+  Runs the SAME full effect pipeline as the action path
+  (`apply_new_contract_effects/4`) for a `handle_signal/2` effect list:
+  `Ezagent.Behavior.apply_effects/2` (state + transient reduced pre-commit,
+  R10-2 atomicity) → `execute_buckets/2` (Saga → DispatchesReturning →
+  Dispatches → Notifies → Events → Terminations, identical order).
+
+  Used by `Ezagent.Lifecycle.__run_signal__/4` so a real signal handler
+  (e.g. `ExternalMirror`'s `:publisher_event` / `:ezagent_em_reconcile`,
+  `Chat`'s `:DOWN`) can DISPATCH / EMIT / NOTIFY declaratively instead of
+  imperatively — the Phase C "no imperative `Invocation.dispatch` in dev
+  code" gate.
+
+  Return contract (mapped to the engine's `handle_kind_message/3` shape,
+  which only carries a new slice — NOT a `{slice, result}` pair):
+
+  - `{:ok, new_slice}` — effects applied + side-effect buckets executed;
+    `new_slice` is the reduced two-container slice the caller commits.
+  - `:ignore` — either a `{:halt, _}` short-circuit (roll back: NO slice
+    change, side-effect buckets DROPPED — same atomicity as the action
+    path) OR a side-effect bucket failure (a `:dispatch`/`:saga` returned
+    `{:error, _}`). In both cases the slice is NOT advanced, mirroring the
+    action path's "atomic unit — partial side effects don't leak."
+
+  `ctx` MUST carry `:self_uri` (for EventLog aggregate + dispatch caller
+  default); `:caller` / `:trace_id` are optional (same as the action
+  path).
+  """
+  @spec apply_signal_effects(
+          %{state: map(), transients: map()},
+          [Ezagent.Behavior.effect()],
+          map()
+        ) :: {:ok, %{state: map(), transients: map()}} | :ignore
+  def apply_signal_effects(slice, effects, ctx) when is_list(effects) do
+    case Ezagent.Behavior.apply_effects(effects, slice) do
+      {:ok, buckets} ->
+        case execute_buckets(buckets, ctx) do
+          :ok ->
+            {:ok, buckets.state}
+
+          {:error, reason} ->
+            Logger.warning(
+              "Ezagent.Kind.Runtime.apply_signal_effects: side-effect bucket failed; " <>
+                "slice NOT advanced (atomic signal): reason=#{inspect(reason)}"
+            )
+
+            :ignore
+        end
+
+      {:halt, reason, _partial} ->
+        Logger.debug(
+          "Ezagent.Kind.Runtime.apply_signal_effects: signal halted; " <>
+            "slice NOT advanced: reason=#{inspect(reason)}"
+        )
+
+        :ignore
+    end
+  end
+
   # Phase 1.5b — execute the full effect grammar produced by
   # `Ezagent.Behavior.apply_effects/2`.
   #
