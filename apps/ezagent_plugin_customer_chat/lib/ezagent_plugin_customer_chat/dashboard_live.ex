@@ -39,7 +39,7 @@ defmodule EzagentPluginCustomerChat.DashboardLive do
 
   use EzagentDomainUi.Components
 
-  alias EzagentPluginCustomerChat.OperatorAuth
+  alias EzagentPluginCustomerChat.{ConfigAuth, OperatorAuth}
 
   @impl true
   def mount(params, _session, socket) do
@@ -58,7 +58,8 @@ defmodule EzagentPluginCustomerChat.DashboardLive do
              socket
              |> assign(:tenant, nil)
              |> assign(:servable_tenants, tenants)
-             |> assign(:page_title, "Customer Service")}
+             |> assign(:page_title, "Customer Service")
+             |> assign(:can_config, false)}
         end
 
       not OperatorAuth.operator?(caller, tenant, sys?) ->
@@ -79,7 +80,8 @@ defmodule EzagentPluginCustomerChat.DashboardLive do
          |> assign(:workspace_uri, workspace_uri)
          |> assign(:rows, rows)
          |> assign(:flash_error, nil)
-         |> assign(:servable_tenants, nil)}
+         |> assign(:servable_tenants, nil)
+         |> assign(:can_config, ConfigAuth.config_admin?(caller, tenant))}
     end
   end
 
@@ -107,6 +109,13 @@ defmodule EzagentPluginCustomerChat.DashboardLive do
         <span class="font-semibold text-zinc-900">Customer Service</span>
         <span :if={@tenant} class="text-xs text-zinc-500 font-mono">{@tenant}</span>
         <span :if={is_nil(@tenant)} class="text-xs text-zinc-500">All workspaces</span>
+        <.link
+          :if={@tenant && @can_config}
+          navigate={"/plugins/customer-chat/#{@tenant}/config"}
+          class="text-xs text-blue-600 hover:underline"
+        >
+          Configure soul
+        </.link>
       </header>
       <div class="flex-1 min-h-0 overflow-auto">
         <div class="flex-1 overflow-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
@@ -135,13 +144,16 @@ defmodule EzagentPluginCustomerChat.DashboardLive do
               </:subtitle>
             </.page_header>
 
-            <p :if={@flash_error} class="text-rose-600 dark:text-rose-400 text-xs mb-4">{@flash_error}</p>
+            <p :if={@flash_error} class="text-rose-600 dark:text-rose-400 text-xs mb-4">
+              {@flash_error}
+            </p>
 
             <p :if={@rows == []} id="empty" class="text-zinc-500 italic text-sm">
               {"No active customer sessions yet."}
-              <br/>
+              <br />
               <span class="text-xs">
-                Sessions matching <code class="font-mono">session://default/&lt;ws&gt;/&lt;conv-id&gt;</code>
+                Sessions matching
+                <code class="font-mono">session://default/&lt;ws&gt;/&lt;conv-id&gt;</code>
                 appear here when customers start chatting.
               </span>
             </p>
