@@ -44,9 +44,7 @@ defmodule EzagentPluginCustomerChat.Bootstrap do
   """
   @spec customer_message(URI.t(), String.t(), URI.t()) :: Ezagent.Message.t()
   def customer_message(customer_uri, text, cc_agent_uri) do
-    Ezagent.Message.new(customer_uri, %{text: text, attachments: []},
-      mentions: [cc_agent_uri]
-    )
+    Ezagent.Message.new(customer_uri, %{text: text, attachments: []}, mentions: [cc_agent_uri])
   end
 
   defp sanitize_for_uri(conv_id) when is_binary(conv_id) do
@@ -76,10 +74,17 @@ defmodule EzagentPluginCustomerChat.Bootstrap do
            workspace_uri: URI.parse("workspace://#{workspace}"),
            template_name: "default"
          ) do
-      {:ok, _session_uri, _meta} -> :ok
-      {:error, {:already_started, _}} -> :ok
+      {:ok, _session_uri, _meta} ->
+        :ok
+
+      {:error, {:already_started, _}} ->
+        :ok
+
       {:error, reason} ->
-        Logger.warning("customer_chat ensure_session(#{workspace}, #{conv_id}) failed: #{inspect(reason)}")
+        Logger.warning(
+          "customer_chat ensure_session(#{workspace}, #{conv_id}) failed: #{inspect(reason)}"
+        )
+
         :ok
     end
   end
@@ -114,17 +119,27 @@ defmodule EzagentPluginCustomerChat.Bootstrap do
     args = if soul_path, do: Map.put(args, :soul_path, soul_path), else: args
 
     case Ezagent.Workspace.create_agent(ws_uri, args, ctx) do
-      {:ok, %{agent_uri: u}} -> {:ok, u}
-      {:error, {:already_exists, u_str}} when is_binary(u_str) -> {:ok, URI.parse(u_str)}
-      {:error, {:already_exists, %URI{} = u}} -> {:ok, u}
+      {:ok, %{agent_uri: u}} ->
+        {:ok, u}
+
+      {:error, {:already_exists, u_str}} when is_binary(u_str) ->
+        {:ok, URI.parse(u_str)}
+
+      {:error, {:already_exists, %URI{} = u}} ->
+        {:ok, u}
+
       {:error, reason} ->
-        Logger.warning("customer_chat ensure_cc_agent(#{workspace}, #{agent_name}) failed: #{inspect(reason)}")
+        Logger.warning(
+          "customer_chat ensure_cc_agent(#{workspace}, #{agent_name}) failed: #{inspect(reason)}"
+        )
+
         {:error, reason}
     end
   end
 
   defp ensure_agent_in_session(session_uri, agent_uri, ctx) do
     target = URI.new!(URI.to_string(session_uri) <> "?action=chat.join")
+
     inv = %Ezagent.Invocation{
       target: target,
       mode: :cast,
@@ -133,8 +148,12 @@ defmodule EzagentPluginCustomerChat.Bootstrap do
     }
 
     case Ezagent.Invocation.dispatch(inv) do
-      :ok -> :ok
-      {:ok, _} -> :ok
+      :ok ->
+        :ok
+
+      {:ok, _} ->
+        :ok
+
       {:error, reason} ->
         Logger.warning("customer_chat join failed: #{inspect(reason)}")
         :ok
@@ -142,19 +161,18 @@ defmodule EzagentPluginCustomerChat.Bootstrap do
   end
 
   defp cc_cwd_for_workspace(workspace) do
-    root = Application.get_env(:ezagent_plugin_customer_chat, :customer_chat_sandbox_root, "~/poc-sandbox-phase2")
+    root =
+      Application.get_env(
+        :ezagent_plugin_customer_chat,
+        :customer_chat_sandbox_root,
+        "~/poc-sandbox-phase2"
+      )
+
     Path.join(Path.expand(root), workspace)
   end
 
   defp cc_soul_path_for_workspace(workspace, role) do
-    # PoC default: <repo>/poc/fixtures/plugins ; this module sits at
-    # apps/ezagent_plugin_customer_chat/lib/ezagent_plugin_customer_chat/bootstrap.ex
-    # → five `..` hops reach the repo root (one fewer than the old liveview location,
-    #   which had an extra customer_chat/ subdirectory level).
-    root_default = Path.expand("../../../../../poc/fixtures/plugins", __ENV__.file)
-    root = Application.get_env(:ezagent_plugin_customer_chat, :customer_chat_soul_root, root_default)
-    path = Path.join([root, workspace, "souls", "#{role}.md"])
-    if File.exists?(path), do: path, else: nil
+    EzagentPluginCustomerChat.SoulStore.effective_path(workspace, role)
   end
 
   # ---- dispatch ---------------------------------------------------------
