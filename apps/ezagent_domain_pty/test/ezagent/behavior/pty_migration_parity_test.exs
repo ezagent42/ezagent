@@ -190,9 +190,19 @@ defmodule Ezagent.Behavior.PtyMigrationParityTest do
                caps[:write]
     end
 
-    test "state_slice/0 + init_slice/1 unchanged" do
+    test "state_slice/0 unchanged; init_slice/1 builds the two-container shape" do
+      # state_slice is auto-derived by the Lifecycle macro from the
+      # module's last segment (`Pty` → `:pty`) — the SAME key the
+      # pre-Lifecycle module declared, so snapshot compatibility holds
+      # with no explicit override (SPEC §3 / §7 OQ-7).
       assert Pty.state_slice() == :pty
-      assert Pty.init_slice(%{}) == %{write_calls: 0, total_bytes: 0}
+
+      # Lifecycle migration (SPEC 2026-05-29 §2.1): `init_slice/1` is now
+      # macro-emitted and returns the two-container `%{state: ...,
+      # transients: %{}}` shape. The durable counters `create/1` builds
+      # live under `:state`; `transients` is empty (no PtyServer handle is
+      # held — it's resolved per-write via `Domain.Pty.lookup/1`).
+      assert Pty.init_slice(%{}) == %{state: %{write_calls: 0, total_bytes: 0}, transients: %{}}
     end
 
     test "interface declares both :call AND :cast modes" do

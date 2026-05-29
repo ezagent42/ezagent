@@ -117,6 +117,17 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
   # the helper in `workspace_test.exs` BUT keeps the dispatch list
   # so we can assert on it (the regular test helper consumed it).
   # ---------------------------------------------------------------
+  # Lifecycle migration (SPEC 2026-05-29): `init_slice/1` → `create/1`.
+  # The handler tests drive the FLAT durable slice (`:state` container);
+  # this builds it via the author's `create/1` (returning `{:ok, state}`),
+  # the SAME flat map the pre-Lifecycle `init_slice/1` produced. The
+  # macro-emitted two-container `init_slice/1` shape is asserted in its own
+  # test below.
+  defp slice(args \\ %{}) do
+    {:ok, state} = WB.create(args)
+    state
+  end
+
   defp dispatch(action, args, ctx, slice) do
     handler = String.to_atom("handle_#{action}")
     read = fn key, default -> Map.get(slice, key, default) end
@@ -144,7 +155,7 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
     test "returns the members MapSet as a list" do
       a = URI.parse("entity://user/system/alice")
       b = URI.parse("entity://agent/team-alpha/cc_bot")
-      slice = WB.init_slice(%{members: [a, b]})
+      slice = slice(%{members: [a, b]})
 
       assert {:ok, %{result: %{members: members}, slice: ^slice}} =
                dispatch(:list_members, %{}, %{}, slice)
@@ -154,7 +165,7 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
     end
 
     test "returns empty list for empty workspace" do
-      slice = WB.init_slice(%{})
+      slice = slice(%{})
 
       assert {:ok, %{result: %{members: []}, slice: ^slice}} =
                dispatch(:list_members, %{}, %{}, slice)
@@ -167,7 +178,7 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
   describe ":add_member" do
     test "emits {:set, :members, MapSet} effect adding the URI" do
       uri = URI.parse("entity://user/system/admin")
-      slice = WB.init_slice(%{})
+      slice = slice(%{})
       # ctx without self_uri — bypasses prefix check (legacy unit-test
       # surface preserved in `validate_member_prefix/2`).
       ctx = %{}
@@ -179,7 +190,7 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
     test "rejects cross-prefix entity URI WITHOUT mutating slice" do
       workspace_uri = URI.parse("workspace://team-alpha")
       member_uri = URI.parse("entity://user/other-ws/leaker")
-      slice = WB.init_slice(%{})
+      slice = slice(%{})
       ctx = %{self_uri: workspace_uri}
 
       assert {:error, {:cross_workspace_member_not_permitted, ^member_uri, ^workspace_uri}} =
@@ -189,7 +200,7 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
     test "agent member: NO :dispatch effect (only users get the grant)" do
       workspace_uri = URI.parse("workspace://team-alpha")
       agent_uri = URI.parse("entity://agent/team-alpha/cc_main")
-      slice = WB.init_slice(%{})
+      slice = slice(%{})
       ctx = %{self_uri: workspace_uri}
 
       assert {:ok, %{buckets: buckets}} =
@@ -207,7 +218,7 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
       # user row so the spawn finds its projection (same pattern as
       # the existing `workspace_test.exs` add_member tests).
       {:ok, _} = Ezagent.Users.create(user_uri, nil, [])
-      slice = WB.init_slice(%{})
+      slice = slice(%{})
       ctx = %{self_uri: workspace_uri}
 
       assert {:ok, %{buckets: buckets}} =
@@ -240,7 +251,7 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
     test "emits {:set, :members, MapSet} effect dropping the URI" do
       uri = URI.parse("entity://user/system/admin")
       other = URI.parse("entity://user/system/bob")
-      slice = WB.init_slice(%{members: [uri, other]})
+      slice = slice(%{members: [uri, other]})
 
       assert {:ok, %{slice: new_slice}} =
                dispatch(:remove_member, %{member: uri}, %{}, slice)
@@ -251,7 +262,7 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
 
     test "removing a non-member is a no-op" do
       uri = URI.parse("entity://user/system/ghost")
-      slice = WB.init_slice(%{})
+      slice = slice(%{})
 
       assert {:ok, %{slice: new_slice}} =
                dispatch(:remove_member, %{member: uri}, %{}, slice)
@@ -266,7 +277,7 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
   describe ":list_templates" do
     test "returns the session_templates map verbatim" do
       tmpl = %{"class" => "cc.agent", "agent_uri" => "entity://agent/x/y"}
-      slice = WB.init_slice(%{session_templates: %{"cc.agent.demo" => tmpl}})
+      slice = slice(%{session_templates: %{"cc.agent.demo" => tmpl}})
 
       assert {:ok, %{result: %{templates: tmpls}, slice: ^slice}} =
                dispatch(:list_templates, %{}, %{}, slice)
@@ -280,7 +291,7 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
   # ---------------------------------------------------------------
   describe ":add_template" do
     test "puts the template into the slice's session_templates" do
-      slice = WB.init_slice(%{})
+      slice = slice(%{})
       tmpl = %{"class" => "echo.agent", "agent_uri" => "entity://agent/x/y"}
 
       assert {:ok, %{slice: new_slice}} =
@@ -292,7 +303,7 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
     test "replaces an existing template under the same name (last-write-wins)" do
       tmpl_v1 = %{"v" => 1}
       tmpl_v2 = %{"v" => 2}
-      slice = WB.init_slice(%{session_templates: %{"x" => tmpl_v1}})
+      slice = slice(%{session_templates: %{"x" => tmpl_v1}})
 
       assert {:ok, %{slice: new_slice}} =
                dispatch(:add_template, %{name: "x", template: tmpl_v2}, %{}, slice)
@@ -307,7 +318,7 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
   describe ":remove_template" do
     test "drops the named template" do
       slice =
-        WB.init_slice(%{
+        slice(%{
           session_templates: %{"a" => %{"v" => 1}, "b" => %{"v" => 2}}
         })
 
@@ -324,7 +335,7 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
   describe ":list_routing_rules" do
     test "returns the routing_rules list verbatim" do
       rules = [%{matcher: %{type: "always"}, receivers: ["session://x"]}]
-      slice = WB.init_slice(%{routing_rules: rules})
+      slice = slice(%{routing_rules: rules})
 
       assert {:ok, %{result: %{rules: ^rules}, slice: ^slice}} =
                dispatch(:list_routing_rules, %{}, %{}, slice)
@@ -336,7 +347,7 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
   # ---------------------------------------------------------------
   describe ":set_routing_rules" do
     test "replaces the routing_rules list wholesale" do
-      slice = WB.init_slice(%{routing_rules: [%{old: true}]})
+      slice = slice(%{routing_rules: [%{old: true}]})
       new_rules = [%{shiny: 1}, %{shiny: 2}]
 
       assert {:ok, %{slice: new_slice}} =
@@ -356,7 +367,7 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
       tmpl = %{"class" => "echo.agent"}
 
       slice =
-        WB.init_slice(%{
+        slice(%{
           members: [m1, m2],
           session_templates: %{"x" => tmpl}
         })
@@ -386,7 +397,7 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
 
       workspace_uri = URI.parse("workspace://team-alpha")
       caller = URI.parse("entity://user/team-alpha/alice")
-      slice = WB.init_slice(%{})
+      slice = slice(%{})
 
       ctx = %{self_uri: workspace_uri, caller: caller}
 
@@ -417,7 +428,7 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
 
       workspace_uri = URI.parse("workspace://team-alpha")
       caller = URI.parse("entity://user/team-alpha/alice")
-      slice = WB.init_slice(%{})
+      slice = slice(%{})
       ctx = %{self_uri: workspace_uri, caller: caller}
 
       assert {:error, :upstream_boom} =
@@ -437,7 +448,7 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
 
       workspace_uri = URI.parse("workspace://team-alpha")
       caller = URI.parse("entity://user/team-alpha/alice")
-      slice = WB.init_slice(%{})
+      slice = slice(%{})
       ctx = %{self_uri: workspace_uri, caller: caller}
 
       assert {:error, :short_name_required} =
@@ -456,7 +467,7 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
 
       workspace_uri = URI.parse("workspace://team-alpha")
       caller = URI.parse("entity://user/team-alpha/alice")
-      slice = WB.init_slice(%{})
+      slice = slice(%{})
       ctx = %{self_uri: workspace_uri, caller: caller}
 
       assert {:error, :template_name_required} =
@@ -469,7 +480,7 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
       Application.put_env(:ezagent_domain_workspace, :session_facade, FakeChatFacade)
 
       workspace_uri = URI.parse("workspace://team-alpha")
-      slice = WB.init_slice(%{})
+      slice = slice(%{})
       ctx = %{self_uri: workspace_uri}  # no :caller key
 
       assert {:error, {:bad_caller, nil}} =
@@ -490,7 +501,7 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
 
       workspace_uri = URI.parse("workspace://team-alpha")
       caller = URI.parse("entity://user/team-alpha/alice")
-      slice = WB.init_slice(%{})
+      slice = slice(%{})
       ctx = %{self_uri: workspace_uri, caller: caller}
 
       assert {:error, {:session_facade_unavailable, ThisModuleDoesNotExist}} =
@@ -512,7 +523,7 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
       violator = URI.parse("entity://user/other-ws/leaker")
       kept = URI.parse("entity://user/team-alpha/alice")
 
-      slice = WB.init_slice(%{members: [violator, kept]})
+      slice = slice(%{members: [violator, kept]})
       ctx = %{self_uri: workspace_uri}
 
       assert {:ok, %{result: result, slice: new_slice}} =
@@ -525,7 +536,7 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
     end
 
     test "errors when self_uri is missing" do
-      slice = WB.init_slice(%{members: [URI.parse("entity://user/x/y")]})
+      slice = slice(%{members: [URI.parse("entity://user/x/y")]})
 
       assert {:error, {:missing_self_uri, nil}} =
                dispatch(:remove_cross_prefix_members, %{}, %{}, slice)
@@ -589,11 +600,19 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
       assert WB.state_slice() == :workspace
     end
 
-    test "init_slice/1 builds the canonical 3-field slice" do
-      slice = WB.init_slice(%{})
-      assert %MapSet{} = slice.members
-      assert slice.session_templates == %{}
-      assert slice.routing_rules == []
+    test "init_slice/1 builds the two-container Lifecycle slice (create/1 under :state)" do
+      # Lifecycle migration (SPEC 2026-05-29 §2.1 / §3): `init_slice/1` is
+      # macro-emitted and wraps the author's `create/1` durable map under
+      # the `:state` container; `transients` starts empty (Workspace holds
+      # no process-bound resource).
+      full = WB.init_slice(%{})
+      assert %{state: state, transients: %{}} = full
+      assert %MapSet{} = state.members
+      assert state.session_templates == %{}
+      assert state.routing_rules == []
+
+      # create/1 itself returns the flat durable state directly.
+      assert {:ok, ^state} = WB.create(%{})
     end
 
     test "data_owner/1 returns :any (workspace admin grants)" do

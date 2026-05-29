@@ -113,7 +113,7 @@ defmodule Ezagent.Integration.AddMemberSpawnThenGrantTest do
 
     # Drive the Behavior action body directly — the canonical dispatch
     # chokepoint shared by every caller (LV form, mix task, CLI, RPC).
-    slice = WB.init_slice(%{})
+    slice = elem(WB.create(%{}), 1)
     ctx = %{self_uri: workspace_uri}
 
     assert {:ok, new_slice} = invoke(:add_member, slice, %{member: user_uri}, ctx)
@@ -175,7 +175,7 @@ defmodule Ezagent.Integration.AddMemberSpawnThenGrantTest do
     # duplicate spawn must NOT crash.
     assert {:ok, pid1} = SpawnRegistry.spawn(user_uri)
 
-    slice = WB.init_slice(%{})
+    slice = elem(WB.create(%{}), 1)
     ctx = %{self_uri: workspace_uri}
 
     assert {:ok, new_slice} = invoke(:add_member, slice, %{member: user_uri}, ctx)

@@ -61,9 +61,50 @@ defmodule Ezagent.Behavior.Pty do
   legacy contract clause (matches the pattern documented in
   `Ezagent.Behavior.Chat`'s moduledoc — "result-dependent in-handler
   dispatches stay as direct calls in the handler body").
+
+  ## Lifecycle migration (Phase B, SPEC 2026-05-29 §2.3 — the
+  ## NO-TRANSIENTS case, like example A `CurlAgent`)
+
+  Converted from `use Ezagent.Behavior` to `use Ezagent.Lifecycle`
+  (the two-container `%{state, transients}` developer API).
+
+  ### Why NO transients
+
+  Despite the name, this Behavior holds NO process-bound resource in
+  its slice. The PtyServer port/process is owned by the
+  `ezagent_domain_pty` app's own supervised `Ezagent.Domain.Pty.Server`
+  and is resolved fresh on every write via `Ezagent.Domain.Pty.lookup/1`
+  (the `EzagentDomainPty.Registry` `:via` source). The Behavior's slice
+  is therefore PURE durable counters:
+
+  - **STATE (persistent):** `write_calls`, `total_bytes` — cumulative
+    write accounting that legitimately survives a restart (the §1.3 #1
+    audit invariant counts every operator-typed byte). Built by `create/1`.
+  - **TRANSIENT:** none. The PtyServer handle is NOT held here, so
+    `activate/2` is the macro-injected no-op default (omitted) — there
+    is nothing process-bound to rebuild. A snapshot rehydrates the
+    counters directly; no dead reference can be carried across a restart
+    because no reference lives in the slice.
+
+  This is the simple example-A shape (`CurlAgent`): `init_slice/1` →
+  `create/1` builds the durable `state`, `handle_write/2` is byte-identical
+  except `ctx[:read]` reads now resolve against the Lifecycle `:state`
+  container (the runtime + `get_slice/2` normalization handle the
+  two-container split transparently).
+
+  The auto-derived `state_slice/0` (last module segment `Pty` → `:pty`)
+  equals the historical snapshot key, so NO `state_slice:` override is
+  needed (SPEC §5 step 2 / §7 OQ-7).
+
+  Naming (§11 NP-1/NP-2/NP-3 audit): `Ezagent.Behavior.Pty` — a domain
+  module (`apps/ezagent_domain_pty`) naming its own domain concept
+  (`Pty`), single `:write` action whose intent the name tracks exactly.
+  NO violation; kept as-is (a rename would touch the `:pty` snapshot
+  slice key + every DB cap grant referencing `"Elixir.Ezagent.Behavior.Pty"`
+  for no clarity gain).
   """
 
-  use Ezagent.Behavior
+  use Ezagent.Lifecycle
 
   action :write,
     args: %{bytes: :string},
@@ -83,9 +124,17 @@ defmodule Ezagent.Behavior.Pty do
     }
   end
 
-  def state_slice, do: :pty
+  # The auto-derived slice key for `Ezagent.Behavior.Pty` is the
+  # underscored last segment `Pty` → `:pty`, which is EXACTLY the
+  # pre-Lifecycle `state_slice/0`. The snapshot-compat key is preserved
+  # with no explicit override needed (SPEC §3 / §7 OQ-7).
 
-  def init_slice(_args), do: %{write_calls: 0, total_bytes: 0}
+  # `init_slice/1` → `create/1` (SPEC §3 mapping). Build the initial
+  # PERSISTENT `state` once, on first-ever existence. No transients
+  # (the PtyServer handle is resolved per-write, never held), so
+  # `activate/2` is the macro-injected no-op default.
+  @impl Ezagent.Lifecycle
+  def create(_args), do: {:ok, %{write_calls: 0, total_bytes: 0}}
 
   def handle_write(%{bytes: bytes}, ctx) when is_binary(bytes) do
     case Map.get(ctx, :self_uri) do
@@ -94,13 +143,15 @@ defmodule Ezagent.Behavior.Pty do
           {:ok, pid} ->
             case Ezagent.Domain.Pty.Server.write_input(pid, bytes) do
               :ok ->
-                # `slice` may be `%{}` on first write — the host Agent
+                # `state` may be `%{}` on first write — the host Agent
                 # Kind doesn't list `Behavior.Pty` in `behaviors/0`
                 # (PR #146: cc plugin can't be a chat-domain dep, so the
                 # Behavior is added via BehaviorRegistry at boot, not
-                # statically declared). Initialize lazily from a base
-                # map so re-writes accumulate normally.
-                base = init_slice(%{})
+                # statically declared). Initialize lazily from the
+                # `create/1` base so re-writes accumulate normally.
+                # (Under Lifecycle `create/1` returns the durable `state`
+                # map directly; we pull its defaults for the lazy seed.)
+                {:ok, base} = create(%{})
 
                 prev_write_calls = ctx[:read].(:write_calls, base.write_calls)
                 prev_total_bytes = ctx[:read].(:total_bytes, base.total_bytes)
