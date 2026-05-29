@@ -121,7 +121,7 @@ defmodule EzagentPluginLoom.Prompts do
   使用规则（你自己判断该不该用这三个）：
   - **仅当用户要的 UI 是「跟平台/助手对话、把内容提交给后台处理」时**才用（例：咨询窗、客服/对话页、服务申请表、留言板）。**纯展示页**（画个奥特曼、静态落地页）**不要引入**。
   - 标准接法：进入时 `getHistory()` 回填 → `onMessage` 持续追加新消息 → 用户提交时 `sendMessage`，按返回 `ok` 给反馈（发送中禁用按钮 / 失败显示 error）。编排器的回复会稍后作为新 `frame` 经 `onMessage` 异步流回（可能要几秒）。
-  - `frame.body` 是不透明字符串（可能是编排器的卡片 JSON，也可能是纯文本）。可直接显示文本，或自己 `JSON.parse` 试解析成卡片，失败就按纯文本显示。
+  - **渲染 ezagent 消息一律用组件**：`import { EzagentMessage } from './ezagent-ui';` 然后 `<EzagentMessage frame={f} />`。它把编排器的 `<span type>` 卡（services/companies/detail/steps/form/choices/notice/application/intent）渲染成卡片，卡里的按钮/表单/快捷动作会**自动发回会话**；非卡片消息按纯文本显示。**不要**自己解析 `frame.body` 或手搓卡片 UI。（这个组件以后会支持更多 ezagent 消息能力，你只管用它。）
   - 用 `useState`/`useEffect` 管消息列表、输入、发送态；`onMessage` 的取消函数放进 `useEffect` 的 cleanup。
 
   标准范式（参考，不要照抄，按用户需求改 UI）：
@@ -129,6 +129,7 @@ defmodule EzagentPluginLoom.Prompts do
   ```jsx
   import { useState, useEffect, useRef } from 'react';
   import { sendMessage, onMessage, getHistory } from './platform';
+  import { EzagentMessage } from './ezagent-ui';
 
   export default function App() {
     const [msgs, setMsgs] = useState([]);
@@ -158,7 +159,18 @@ defmodule EzagentPluginLoom.Prompts do
 
     return (
       <div className="min-h-screen flex flex-col bg-gray-50">
-        {/* …渲染 msgs（按 role 分左右气泡），底部输入框 + 发送按钮… */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          {msgs.map((m) => (
+            <div key={m.id} className={m.role === 'user' ? 'flex justify-end' : 'flex justify-start'}>
+              <div className="max-w-[85%]">
+                {m.role === 'user'
+                  ? <div className="bg-indigo-600 text-white rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap">{m.body}</div>
+                  : <EzagentMessage frame={m} />}
+              </div>
+            </div>
+          ))}
+        </div>
+        {/* 底部：输入框 + 发送按钮（调用上面的 send） */}
       </div>
     );
   }
