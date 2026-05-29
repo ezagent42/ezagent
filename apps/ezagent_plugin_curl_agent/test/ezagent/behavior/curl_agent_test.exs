@@ -37,8 +37,8 @@ defmodule Ezagent.Behavior.CurlAgentTest do
       assert caps.configure.kind == :curl_agent
     end
 
-    test "reads_sibling_slices/0 declares [:api_keys] (post ApiKeys-to-Agent flip)" do
-      assert CurlAgent.reads_sibling_slices() == [:api_keys]
+    test "reads_siblings/0 declares [:api_keys] (post ApiKeys-to-Agent flip)" do
+      assert CurlAgent.reads_siblings() == [:api_keys]
     end
 
     test "Behavior.new_style?/1 detects the new contract" do
@@ -46,33 +46,37 @@ defmodule Ezagent.Behavior.CurlAgentTest do
     end
   end
 
-  describe "init_slice/1" do
+  # Phase B (2026-05-29): `init_slice/1` → `create/1`. `create/1` returns
+  # `{:ok, state}` — the PERSISTENT container (no transients here). Same
+  # field assertions, new accessor (`create` tuple instead of the old
+  # flat `init_slice` map).
+  describe "create/1" do
     test "defaults to deepseek/chat with empty conversation" do
-      slice = CurlAgent.init_slice(%{})
+      assert {:ok, state} = CurlAgent.create(%{})
 
-      assert slice.provider == "deepseek"
-      assert slice.api_url == "https://api.deepseek.com/chat/completions"
-      assert slice.model == "deepseek-chat"
-      assert slice.max_history == 20
-      assert slice.conversation == []
-      assert slice.last_error == nil
+      assert state.provider == "deepseek"
+      assert state.api_url == "https://api.deepseek.com/chat/completions"
+      assert state.model == "deepseek-chat"
+      assert state.max_history == 20
+      assert state.conversation == []
+      assert state.last_error == nil
     end
 
     test "accepts per-instance overrides (Allen 2026-05-26 — owner_uri gone)" do
-      slice =
-        CurlAgent.init_slice(%{
-          provider: "openai",
-          api_url: "https://api.openai.com/v1/chat/completions",
-          model: "gpt-4o-mini",
-          system_prompt: "You are pirate.",
-          max_history: 10
-        })
+      assert {:ok, state} =
+               CurlAgent.create(%{
+                 provider: "openai",
+                 api_url: "https://api.openai.com/v1/chat/completions",
+                 model: "gpt-4o-mini",
+                 system_prompt: "You are pirate.",
+                 max_history: 10
+               })
 
-      assert slice.provider == "openai"
-      assert slice.model == "gpt-4o-mini"
-      assert slice.system_prompt == "You are pirate."
-      assert slice.max_history == 10
-      refute Map.has_key?(slice, :owner_uri)
+      assert state.provider == "openai"
+      assert state.model == "gpt-4o-mini"
+      assert state.system_prompt == "You are pirate."
+      assert state.max_history == 10
+      refute Map.has_key?(state, :owner_uri)
     end
   end
 
@@ -146,7 +150,7 @@ defmodule Ezagent.Behavior.CurlAgentTest do
         read: fn _k, d -> d end,
         self_uri: agent_uri,
         caller: URI.parse("session://default/team-alpha/main"),
-        sibling_slices: %{api_keys: %{keys: %{}}}
+        siblings: %{api_keys: %{keys: %{}}}
       }
 
       assert {:ok, %{ok: true, ignored: :self_message}, []} =
@@ -174,7 +178,7 @@ defmodule Ezagent.Behavior.CurlAgentTest do
         self_uri: agent_uri,
         caller: session_uri,
         # No keys for "deepseek" → no_api_key path.
-        sibling_slices: %{api_keys: %{keys: %{}}}
+        siblings: %{api_keys: %{keys: %{}}}
       }
 
       assert {:ok, %{ok: false, error: :no_api_key}, effects} =

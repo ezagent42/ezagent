@@ -68,8 +68,8 @@ defmodule EzagentPluginCurlAgent.E2E.Scenario07CurlAgentRoundtripTest do
       assert caps.reset_conversation.kind == :curl_agent
     end
 
-    test "reads_sibling_slices/0 declares [:api_keys] (post ApiKeys-to-Agent flip)" do
-      assert CurlAgent.reads_sibling_slices() == [:api_keys]
+    test "reads_siblings/0 declares [:api_keys] (post ApiKeys-to-Agent flip)" do
+      assert CurlAgent.reads_siblings() == [:api_keys]
     end
   end
 
@@ -79,7 +79,7 @@ defmodule EzagentPluginCurlAgent.E2E.Scenario07CurlAgentRoundtripTest do
 
   describe "handle_configure/2 — `:set` effects" do
     test "produces :set effects for each of the 5 configurable fields" do
-      slice = CurlAgent.init_slice(%{})
+      {:ok, slice} = CurlAgent.create(%{})
       ctx = %{read: fn k, d -> Map.get(slice, k, d) end}
 
       args = %{
@@ -100,7 +100,7 @@ defmodule EzagentPluginCurlAgent.E2E.Scenario07CurlAgentRoundtripTest do
     end
 
     test "framework-applies the effects to produce the new slice" do
-      slice = CurlAgent.init_slice(%{})
+      {:ok, slice} = CurlAgent.create(%{})
       ctx = %{read: fn k, d -> Map.get(slice, k, d) end}
 
       args = %{
@@ -136,8 +136,10 @@ defmodule EzagentPluginCurlAgent.E2E.Scenario07CurlAgentRoundtripTest do
     end
 
     test "framework-applies the reset against a populated slice" do
+      {:ok, base} = CurlAgent.create(%{})
+
       slice =
-        CurlAgent.init_slice(%{})
+        base
         |> Map.put(:conversation, [
           %{role: "user", content: "hi"},
           %{role: "assistant", content: "hello"}
@@ -165,7 +167,7 @@ defmodule EzagentPluginCurlAgent.E2E.Scenario07CurlAgentRoundtripTest do
         read: fn _k, d -> d end,
         self_uri: agent_uri,
         caller: URI.parse("session://default/team-alpha/main"),
-        sibling_slices: %{api_keys: %{keys: %{}}}
+        siblings: %{api_keys: %{keys: %{}}}
       }
 
       assert {:ok, %{ok: true, ignored: :self_message}, []} =
@@ -192,7 +194,7 @@ defmodule EzagentPluginCurlAgent.E2E.Scenario07CurlAgentRoundtripTest do
         end,
         self_uri: agent_uri,
         caller: session_uri,
-        sibling_slices: %{api_keys: %{keys: %{}}}
+        siblings: %{api_keys: %{keys: %{}}}
       }
 
       assert {:ok, %{ok: false, error: :no_api_key}, effects} =
@@ -236,7 +238,11 @@ defmodule EzagentPluginCurlAgent.E2E.Scenario07CurlAgentRoundtripTest do
       # The data_owner/1 for a live agent URI reads its :api_keys
       # slice; a freshly-spawned URI with no live Kind returns
       # :no_owner per the post-#326 caps-data-ownership contract.
-      agent_uri = URI.parse("entity://agent/team-alpha/curl_no_creator_#{System.unique_integer([:positive])}")
+      agent_uri =
+        URI.parse(
+          "entity://agent/team-alpha/curl_no_creator_#{System.unique_integer([:positive])}"
+        )
+
       assert CurlAgent.data_owner(agent_uri) == :no_owner
     end
   end
