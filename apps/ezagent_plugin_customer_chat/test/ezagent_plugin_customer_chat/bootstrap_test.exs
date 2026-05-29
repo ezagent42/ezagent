@@ -1,6 +1,6 @@
-defmodule EzagentPluginLiveview.CustomerChat.BootstrapTest do
+defmodule EzagentPluginCustomerChat.BootstrapTest do
   use ExUnit.Case, async: true
-  alias EzagentPluginLiveview.CustomerChat.Bootstrap
+  alias EzagentPluginCustomerChat.Bootstrap
 
   test "session_uri_for builds the per-conv URI" do
     uri = Bootstrap.session_uri_for("acme", "c1")

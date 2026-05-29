@@ -1,4 +1,4 @@
-defmodule EzagentPluginLiveview.CustomerChat.Bootstrap do
+defmodule EzagentPluginCustomerChat.Bootstrap do
   @moduledoc """
   Shared customer-chat bootstrap, extracted from
   `EzagentWeb.CustomerChatController` so the SSE controller and the
@@ -142,16 +142,17 @@ defmodule EzagentPluginLiveview.CustomerChat.Bootstrap do
   end
 
   defp cc_cwd_for_workspace(workspace) do
-    root = Application.get_env(:ezagent_plugin_liveview, :customer_chat_sandbox_root, "~/poc-sandbox-phase2")
+    root = Application.get_env(:ezagent_plugin_customer_chat, :customer_chat_sandbox_root, "~/poc-sandbox-phase2")
     Path.join(Path.expand(root), workspace)
   end
 
   defp cc_soul_path_for_workspace(workspace, role) do
     # PoC default: <repo>/poc/fixtures/plugins ; this module sits at
-    # apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/customer_chat/bootstrap.ex
-    # → six `..` hops reach the repo root.
-    root_default = Path.expand("../../../../../../poc/fixtures/plugins", __ENV__.file)
-    root = Application.get_env(:ezagent_plugin_liveview, :customer_chat_soul_root, root_default)
+    # apps/ezagent_plugin_customer_chat/lib/ezagent_plugin_customer_chat/bootstrap.ex
+    # → five `..` hops reach the repo root (one fewer than the old liveview location,
+    #   which had an extra customer_chat/ subdirectory level).
+    root_default = Path.expand("../../../../../poc/fixtures/plugins", __ENV__.file)
+    root = Application.get_env(:ezagent_plugin_customer_chat, :customer_chat_soul_root, root_default)
     path = Path.join([root, workspace, "souls", "#{role}.md"])
     if File.exists?(path), do: path, else: nil
   end
