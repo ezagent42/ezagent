@@ -45,7 +45,7 @@ defmodule Ezagent.PluginLoom.Template.LoomSession do
 
   require Logger
 
-  alias EzagentPluginLoom.Team
+  alias EzagentPluginLoom.{Feishu, Team}
 
   @impl Ezagent.Kind.Template
   def template_name, do: "session.loom"
@@ -66,11 +66,31 @@ defmodule Ezagent.PluginLoom.Template.LoomSession do
     with {:ok, _session_pid} <- spawn_session(session_uri),
          {:ok, %{orchestrator: _orch, workers: _workers}} <- Team.ensure_team(session_uri),
          :ok <- join_members(session_uri, Map.get(tmpl, "members", [])) do
+      # Best-effort one-way Feishu mirror (gated by FEISHU_MIRROR_ENABLED=1),
+      # mirroring EzagentPluginLoom.Bootstrap — so a UI-created loom session
+      # also mirrors to the demo Feishu group, not just the script path.
+      # Failure must NOT fail instantiate; idempotent on re-add.
+      maybe_bind_feishu(session_uri)
       {:ok, [session_uri]}
     end
   end
 
   def instantiate(_tmpl_name, tmpl, _workspace_uri), do: {:error, {:invalid_template, tmpl}}
+
+  # Gated + best-effort, identical semantics to Bootstrap.maybe_bind_feishu/1.
+  defp maybe_bind_feishu(%URI{} = session_uri) do
+    if System.get_env("FEISHU_MIRROR_ENABLED") == "1" do
+      case Feishu.bind(session_uri) do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          Logger.warning("LoomSession: feishu bind skipped — #{inspect(reason)}")
+      end
+    else
+      :ok
+    end
+  end
 
   defp spawn_session(%URI{} = session_uri) do
     case Ezagent.SpawnRegistry.spawn(session_uri) do

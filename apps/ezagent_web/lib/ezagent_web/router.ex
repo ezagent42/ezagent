@@ -232,6 +232,13 @@ defmodule EzagentWeb.Router do
   # north star ("beyond webhook route registration").
   forward "/api/feishu/webhook", EzagentPluginFeishu.WebhookPlug
 
+  # loom 前端集成 (2026-05-29) — 同飞书 webhook 的 plugin→web 唯一触碰模式:
+  # 一条 forward,所有逻辑(ai-ui-builder 静态产物 + /api/chat 代理)都在
+  # plugin 的 EzagentPluginLoom.WebPlug 里。提供 GET /loom/:workspace/:session_id
+  # 的页面 + POST /loom/api/chat。顶层 forward(绕过 :browser 管线,无 CSRF),
+  # 且必须在末尾兜底 `get "/*path"` 之前。
+  forward "/loom", EzagentPluginLoom.WebPlug
+
   # Phase 6 PR 9: canonical auto-derived JSON API. Single controller
   # dispatches every `{kind, action}` registered in BehaviorRegistry.
   # GET /api/v1 = introspection (route catalog + interfaces).

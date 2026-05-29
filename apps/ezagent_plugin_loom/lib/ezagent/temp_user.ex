@@ -54,6 +54,29 @@ defmodule EzagentPluginLoom.TempUser do
 
   def provision(_), do: {:error, :invalid_workspace}
 
+  @doc """
+  Provision-or-reuse a **deterministic** named user
+  `entity://user/<ws>/<name>` (vs `provision/1`'s random `tmp_<id>`).
+  Idempotent: an existing `users` row is treated as success (the create
+  error is ignored), an already-live Kind returns its pid. Used by the
+  loom frontend SDK bridge (`EzagentPluginLoom.WebPlug`) to send under a
+  stable per-session identity (`loomui_<sid>`), so repeated sends from
+  the same page share one sender.
+  """
+  @spec ensure_named(String.t(), String.t()) :: {:ok, URI.t()} | {:error, term()}
+  def ensure_named(ws, name)
+      when is_binary(ws) and ws != "" and is_binary(name) and name != "" do
+    uri = URI.parse("entity://user/#{ws}/#{name}")
+    _ = Users.create(uri, nil, [])
+
+    case spawn_user(uri) do
+      {:ok, _pid} -> {:ok, uri}
+      err -> err
+    end
+  end
+
+  def ensure_named(_, _), do: {:error, :invalid_args}
+
   defp spawn_user(%URI{} = uri) do
     case Ezagent.SpawnRegistry.spawn(uri) do
       {:ok, pid} -> {:ok, pid}

@@ -23,24 +23,24 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
   use EzagentDomainUi.Primitives
   alias Phoenix.LiveView.JS
 
-  attr :current_session_uri, URI, required: true
-  attr :sessions, :list, required: true
-  attr :applicable_views, :list, required: true
-  attr :current_view, :atom, required: true
-  attr :new_session_form, :map, required: true
+  attr(:current_session_uri, URI, required: true)
+  attr(:sessions, :list, required: true)
+  attr(:applicable_views, :list, required: true)
+  attr(:current_view, :atom, required: true)
+  attr(:new_session_form, :map, required: true)
   # SPEC #366 (Allen 2026-05-26) — template-class dropdown options.
   # `[String.t()]` of class keys from the current workspace's
   # `session_templates` map; empty list triggers the "no templates"
   # empty-state inside `create_session_button/1`.
-  attr :template_class_options, :list, default: []
-  attr :compose_form, :map, required: true
-  attr :member_options, :list, required: true
-  attr :session_info, :map, required: true
-  attr :feishu_chat_ids, :list, default: []
-  attr :debug_open, :boolean, default: false
-  attr :uploads, :map, default: nil
-  attr :flash_error, :string, default: nil
-  slot :main_view, required: true
+  attr(:template_class_options, :list, default: [])
+  attr(:compose_form, :map, required: true)
+  attr(:member_options, :list, required: true)
+  attr(:session_info, :map, required: true)
+  attr(:feishu_chat_ids, :list, default: [])
+  attr(:debug_open, :boolean, default: false)
+  attr(:uploads, :map, default: nil)
+  attr(:flash_error, :string, default: nil)
+  slot(:main_view, required: true)
 
   def session_editor(assigns) do
     ~H"""
@@ -73,20 +73,21 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
 
   # --- session_header -------------------------------------------------------
 
-  attr :current_session_uri, URI, required: true
-  attr :sessions, :list, required: true
-  attr :applicable_views, :list, required: true
-  attr :current_view, :atom, required: true
-  attr :new_session_form, :map, required: true
-  attr :template_class_options, :list, default: []
-  attr :session_info, :map, required: true
-  attr :feishu_chat_ids, :list, default: []
-  attr :debug_open, :boolean, default: false
+  attr(:current_session_uri, URI, required: true)
+  attr(:sessions, :list, required: true)
+  attr(:applicable_views, :list, required: true)
+  attr(:current_view, :atom, required: true)
+  attr(:new_session_form, :map, required: true)
+  attr(:template_class_options, :list, default: [])
+  attr(:session_info, :map, required: true)
+  attr(:feishu_chat_ids, :list, default: [])
+  attr(:debug_open, :boolean, default: false)
 
   defp session_header(assigns) do
     ~H"""
     <header class="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shrink-0">
       <.session_selector current_session_uri={@current_session_uri} sessions={@sessions} />
+      <.loom_link current_session_uri={@current_session_uri} />
       <.create_session_button
         new_session_form={@new_session_form}
         template_class_options={@template_class_options}
@@ -107,8 +108,8 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
 
   # --- session_selector -----------------------------------------------------
 
-  attr :current_session_uri, URI, required: true
-  attr :sessions, :list, required: true
+  attr(:current_session_uri, URI, required: true)
+  attr(:sessions, :list, required: true)
 
   defp session_selector(assigns) do
     ~H"""
@@ -133,15 +134,50 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
     """
   end
 
+  # --- loom_link ------------------------------------------------------------
+  # loom 前端集成 (2026-05-29): 给 loom session 在 header 加一个"打开 Loom"入口,
+  # 新标签打开该 session 专属的 ai-ui-builder 页(/loom/:ws/:name,由
+  # EzagentPluginLoom.WebPlug 提供)。仅对 session://loom/... 显示;非 loom
+  # session 返回 nil → 不渲染。
+
+  attr(:current_session_uri, URI, required: true)
+
+  defp loom_link(assigns) do
+    assigns = assign(assigns, :loom_url, loom_session_url(assigns.current_session_uri))
+
+    ~H"""
+    <a
+      :if={@loom_url}
+      href={@loom_url}
+      target="_blank"
+      rel="noopener"
+      class="inline-flex items-center gap-1 text-xs px-2 py-1 rounded border border-violet-300 dark:border-violet-700 text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-950"
+      title={gettext("Open this session's Loom page-builder in a new tab")}
+    >
+      {gettext("Open Loom")} ↗
+    </a>
+    """
+  end
+
+  # session://loom/<ws>/<name>  →  "/loom/<ws>/<name>"; nil for non-loom sessions.
+  defp loom_session_url(%URI{scheme: "session", host: "loom", path: path}) when is_binary(path) do
+    case String.split(path, "/", trim: true) do
+      [ws, name | _] -> "/loom/#{ws}/#{name}"
+      _ -> nil
+    end
+  end
+
+  defp loom_session_url(_), do: nil
+
   # --- create_session_button ------------------------------------------------
 
-  attr :new_session_form, :map, required: true
+  attr(:new_session_form, :map, required: true)
   # SPEC #366 (Allen 2026-05-26) — `[String.t()]` from
   # `Workspace.Store.get_by_name(ws).session_templates |> Map.keys()`.
   # Empty list → render the empty-state pointing to /admin/templates;
   # non-empty → render a `<select>` with each key as an explicit option
   # plus a placeholder `""` (refused by the LV handler).
-  attr :template_class_options, :list, default: []
+  attr(:template_class_options, :list, default: [])
 
   defp create_session_button(assigns) do
     ~H"""
@@ -222,12 +258,15 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
 
   # --- view_switcher --------------------------------------------------------
 
-  attr :applicable_views, :list, required: true
-  attr :current_view, :atom, required: true
+  attr(:applicable_views, :list, required: true)
+  attr(:current_view, :atom, required: true)
 
   defp view_switcher(assigns) do
     ~H"""
-    <div id="view-switcher" class="flex items-center gap-px border border-zinc-300 dark:border-zinc-700 rounded overflow-hidden">
+    <div
+      id="view-switcher"
+      class="flex items-center gap-px border border-zinc-300 dark:border-zinc-700 rounded overflow-hidden"
+    >
       <button
         :for={view <- @applicable_views}
         type="button"
@@ -235,9 +274,9 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
         phx-value-view={view.id}
         class={[
           "flex items-center gap-1 px-2 py-1 text-xs",
-          view.id == @current_view
-            && "bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900"
-            || "bg-white dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+          (view.id == @current_view &&
+             "bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900") ||
+            "bg-white dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800"
         ]}
         title={view.label}
       >
@@ -250,10 +289,10 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
 
   # --- setting_dropdown -----------------------------------------------------
 
-  attr :current_session_uri, URI, required: true
-  attr :session_info, :map, required: true
-  attr :feishu_chat_ids, :list, default: []
-  attr :debug_open, :boolean, default: false
+  attr(:current_session_uri, URI, required: true)
+  attr(:session_info, :map, required: true)
+  attr(:feishu_chat_ids, :list, default: [])
+  attr(:debug_open, :boolean, default: false)
 
   defp setting_dropdown(assigns) do
     # Task #52 (2026-05-27, Allen 02:09) — fix session routing nav
@@ -295,14 +334,17 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
         id="session-setting-menu"
         phx-click-away={
           JS.hide(
-            transition: {"ease-in duration-100", "opacity-100 translate-y-0", "opacity-0 -translate-y-1"}
+            transition:
+              {"ease-in duration-100", "opacity-100 translate-y-0", "opacity-0 -translate-y-1"}
           )
         }
         class="hidden absolute right-0 top-full mt-1 w-80 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-md shadow-lg z-40 text-xs transition transform"
       >
         <div class="px-3 py-2 border-b border-zinc-200 dark:border-zinc-800">
           <div class="text-[10px] uppercase tracking-wide text-zinc-500">{gettext("Session")}</div>
-          <div class="font-mono text-zinc-800 dark:text-zinc-200 break-all mt-0.5">{URI.to_string(@current_session_uri)}</div>
+          <div class="font-mono text-zinc-800 dark:text-zinc-200 break-all mt-0.5">
+            {URI.to_string(@current_session_uri)}
+          </div>
         </div>
 
         <div class="px-3 py-2 border-b border-zinc-200 dark:border-zinc-800">
@@ -316,12 +358,12 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
               phx-click="toggle_debug_panel"
               class={[
                 "relative inline-flex h-4 w-7 items-center rounded-full transition-colors",
-                @debug_open && "bg-emerald-600" || "bg-zinc-300"
+                (@debug_open && "bg-emerald-600") || "bg-zinc-300"
               ]}
             >
               <span class={[
                 "inline-block h-3 w-3 transform rounded-full bg-white dark:bg-zinc-900 transition-transform",
-                @debug_open && "translate-x-3.5" || "translate-x-0.5"
+                (@debug_open && "translate-x-3.5") || "translate-x-0.5"
               ]} />
             </button>
           </label>
@@ -330,7 +372,9 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
         <div class="px-3 py-2 border-b border-zinc-200 dark:border-zinc-800">
           <div class="flex items-center gap-2 mb-1">
             <.icon name="message-square" size="xs" />
-            <span class="text-[10px] uppercase tracking-wide text-zinc-500">{gettext("Feishu binding")}</span>
+            <span class="text-[10px] uppercase tracking-wide text-zinc-500">
+              {gettext("Feishu binding")}
+            </span>
           </div>
           <div :if={@feishu_chat_ids == []} class="text-zinc-500 italic">
             {gettext("no chat bound — bind via mix ezagent.feishu.chat.bind")}
@@ -342,7 +386,9 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
                 type="button"
                 phx-click="unbind_feishu_chat"
                 phx-value-chat_id={chat_id}
-                data-confirm={gettext("Unbind Feishu chat %{chat_id} from this session?", chat_id: chat_id)}
+                data-confirm={
+                  gettext("Unbind Feishu chat %{chat_id} from this session?", chat_id: chat_id)
+                }
                 class="text-[10px] text-rose-600 dark:text-rose-400 hover:text-rose-700"
               >
                 {gettext("Unbind")}
@@ -375,9 +421,20 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
         <div class="px-3 py-2">
           <div class="text-[10px] uppercase tracking-wide text-zinc-500 mb-1">{gettext("Info")}</div>
           <dl class="space-y-0.5 text-zinc-700 dark:text-zinc-300">
-            <div class="flex justify-between"><dt>{gettext("members")}</dt><dd>{@session_info[:member_count] || 0}</dd></div>
-            <div class="flex justify-between"><dt>{gettext("workspace")}</dt><dd class="font-mono text-[10px] truncate max-w-[60%]">{@session_info[:workspace_uri] || "—"}</dd></div>
-            <div class="flex justify-between"><dt>{gettext("created")}</dt><dd class="text-[10px]">{format_dt(@session_info[:created_at])}</dd></div>
+            <div class="flex justify-between">
+              <dt>{gettext("members")}</dt>
+              <dd>{@session_info[:member_count] || 0}</dd>
+            </div>
+            <div class="flex justify-between">
+              <dt>{gettext("workspace")}</dt>
+              <dd class="font-mono text-[10px] truncate max-w-[60%]">
+                {@session_info[:workspace_uri] || "—"}
+              </dd>
+            </div>
+            <div class="flex justify-between">
+              <dt>{gettext("created")}</dt>
+              <dd class="text-[10px]">{format_dt(@session_info[:created_at])}</dd>
+            </div>
           </dl>
         </div>
 
@@ -407,8 +464,10 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
               <dd>
                 {gettext("%{filled}/%{total} filled",
                   filled: @session_info[:generator][:filled],
-                  total: @session_info[:generator][:filled] +
-                    @session_info[:generator][:pending])}
+                  total:
+                    @session_info[:generator][:filled] +
+                      @session_info[:generator][:pending]
+                )}
                 <span
                   :if={@session_info[:generator][:pending] > 0}
                   class="text-amber-700 dark:text-amber-300 ml-1"
@@ -448,10 +507,10 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
 
   # --- message_composer -----------------------------------------------------
 
-  attr :compose_form, :map, required: true
-  attr :member_options, :list, required: true
-  attr :uploads, :map, default: nil
-  attr :flash_error, :string, default: nil
+  attr(:compose_form, :map, required: true)
+  attr(:member_options, :list, required: true)
+  attr(:uploads, :map, default: nil)
+  attr(:flash_error, :string, default: nil)
 
   defp message_composer(assigns) do
     members_json = Jason.encode!(assigns.member_options)
@@ -467,7 +526,8 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
       <div
         id="mention-popover"
         class="hidden absolute z-50 bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded-md shadow-lg max-h-48 overflow-y-auto"
-      ></div>
+      >
+      </div>
 
       <div class="flex gap-2 items-center">
         <%!-- Phase 8c follow-up (Allen 2026-05-20): the input was missing
@@ -529,7 +589,10 @@ defmodule EzagentPluginLiveview.Admin.SessionEditor do
             ×
           </button>
         </div>
-        <div :for={err <- my_upload_errors(@uploads.attachments)} class="basis-full text-rose-600 dark:text-rose-400 text-[11px]">
+        <div
+          :for={err <- my_upload_errors(@uploads.attachments)}
+          class="basis-full text-rose-600 dark:text-rose-400 text-[11px]"
+        >
           {format_upload_error(err)}
         </div>
       </div>
