@@ -198,47 +198,48 @@ Adapter subprocess 由谁拉起:
 
 ### Behavior
 
-Kind 上的能力切片,跨 Kind 复用。**Post-2026-05-28(Phase 1-4 migration 完成)**:每个 Behavior 通过 `use Ezagent.Behavior` 接入新合约,声明 `action :foo, args: ..., returns: ..., caps: [...]` 宏 + 编写 `def handle_foo(args, ctx)` 处理器 + 返 `{:ok, result, [effect]}`。`state_slice/0` + `init_slice/1` + `required_caps/0` + `cap_subjects/0` + `interface/0` 由宏在 `@before_compile` 自动派生,plugin 作者不再手写。Behavior 是 domain 或 plugin,不是 core(core 只有 behaviour 契约)。
+**INTERNAL ENGINE primitive(post-2026-05-29 Lifecycle migration)**。Kind 上的能力切片,跨 Kind 复用。`use Ezagent.Behavior` + `action/3` + `handle_<action>/2` + effects 是 **engine 合约**,**不再是 developer surface** —— 它是 `use Ezagent.Lifecycle` 宏的 compile target(见 **Lifecycle** 条目)。Plugin / domain 作者**永不**写 `use Ezagent.Behavior`、`state_slice/0`、`init_slice/1`、`invoke/4`;他们写 `use Ezagent.Lifecycle`。`required_caps/0` + `cap_subjects/0` + `interface/0` + `action/3` 语法 + effect 词汇全部从 Lifecycle 宏透传到 engine。Behavior(engine 词)只活在 `ezagent_core/lib/ezagent/behavior.ex`(macro)+ `kind/runtime.ex`(executor)。
+
+`invoke/4` legacy callback:Phase 3 PR #464 已删除 dispatch 分支,`@callback invoke/4` 留作 `@optional_callbacks` 仅 grep-ability(让 stale Behavior 见 precise CompileError)。Phase C 不删它(R10-3 保护 engine callback 定义)。见 ARCHITECTURE §6.1。
+
+参考: ARCHITECTURE.md §6 + §6.0(engine contract)+ §6.0.7(Lifecycle developer surface),Decision #2, #147-#153,SPEC `2026-05-28-router-behavior-kind-architecture.md` + `2026-05-29-lifecycle-hooks-design.md`
+
+### Lifecycle(`use Ezagent.Lifecycle`)
+
+**SPEC 2026-05-29 — 唯一的 developer-facing Behavior 编写方式**。把 §6.0 的 CQRS 机制(slice / invocation / snapshot / persistence-strategy / 四个 boot hooks)藏在 agent-SDK 风格的 hooks 后面。宏 compile down 到 `use Ezagent.Behavior`(R10-3),engine 看到的形状不变。
+
+**两容器状态模型**:`state`(PERSISTENT,framework auto-snapshot,`ctx.read.(k, default)` 读 / `{:set, k, v}` 写)+ `transients`(NEVER persisted,`ctx.transients[k]` 读 / `{:set_transient, k, v}` 写;PIDs / refs / ETS / ports / subprocess / monitor refs)。一个 transient **结构上**不可能被持久化(无序列化路径)或在重启时被遗忘(只能在 `activate/2` 建,`activate` 每次 start 跑)—— 这 by construction 杀掉 cold-restart bug class。
+
+**五 coarse + 二 fine + 二补充 hooks**:`create/1`(首次存在,`ever_created` 列 gated)/ `activate/2`(每次 start,pre-`:ready`,重建 transients + reconcile DB state)/ `handle_<action>/2`(per declared action)/ `deactivate/2`(优雅停,`:ok`-only)/ `destroy/2`(永久删)/ `pre_handle/3` + `post_handle/4`(横切)/ `handle_signal/2`(非-action 消息,`handle_kind_message/3` 后继)/ `activated/2`(post-`:ready` reachability broadcast,`on_ready/2` 改名)。
 
 ```elixir
 defmodule Ezagent.Behavior.Chat do
-  use Ezagent.Behavior    # post-2026-05-28 new contract
+  use Ezagent.Lifecycle, state_slice: :chat   # state_slice override (snapshot-compat)
+  # lifecycle:state_slice_override            # ← Phase C gate sanctions only marked overrides
 
-  action :send,
-    args:        %{message: Ezagent.Message},
-    returns:     %{stored: :boolean},
-    caps:        [:send],
-    modes:       [:cast],
-    description: "Post a message into the session and fan it out to members"
+  action :send, args: %{message: Ezagent.Message}, returns: %{stored: :boolean},
+    caps: [:send], modes: [:cast], description: "Post a message + fan out"
 
-  action :receive,
-    args:        %{message: Ezagent.Message},
-    returns:     %{},
-    caps:        [:receive],
-    modes:       [:cast],
-    description: "Deliver a session message to this member"
+  # init_slice → create/1: build PERSISTENT state only (no PIDs/refs/ETS).
+  def create(_args), do: {:ok, %{members: %{}, owner_uri: nil, last_seen: %{}, ...}}
 
-  def state_slice, do: :chat
-  def init_slice(_), do: %{members: %{}, ...}
-
-  def handle_send(%{message: msg}, ctx) do
-    # ctx[:read].(:key, default) for slice access; ctx[:self_uri] / ctx[:kind_module]
-    # injected by Kind.Runtime; effect grammar replaces direct PubSub / dispatch calls.
-    {:ok, %{stored: true},
-     [
-       {:set, :last_message_id, msg.id},
-       {:notify, "session:#{ctx[:self_uri]}:events", {:chat_message, msg}},
-       {:dispatch, %Ezagent.Cmd{target: recipient_uri, action: :receive, args: %{message: msg}, ctx: %{caller: ctx[:self_uri]}}}
-     ]}
+  # activate/2 rebuilds TRANSIENTS every start (monitors = Process.monitor map —
+  # was silently snapshotted-as-dead-refs in the old single-slice model).
+  def activate(state, _ctx) do
+    monitors = state.members |> Map.keys() |> rebuild_monitors()
+    {:ok, %{monitors: monitors}}
   end
 
-  def handle_receive(_args, _ctx), do: {:ok, %{}, []}
+  def handle_send(%{message: msg}, ctx) do
+    {:ok, %{stored: true},
+     [{:set, :last_message_id, msg.id},
+      {:notify, "session:#{ctx.self_uri}:events", {:chat_message, msg}},
+      {:dispatch, %Ezagent.Cmd{target: recipient_uri, action: :receive, args: %{message: msg}, ctx: %{caller: ctx.self_uri}}}]}
+  end
 end
 ```
 
-Pre-2026-05-28 legacy 形态:`@behaviour Ezagent.Behavior` + `@interface` module attribute + `invoke(action, slice, args, ctx)` callback。Phase 3 PR #464 后该 callback 是 `@optional_callbacks` 仅作 grep-ability;无 runtime 路径调用。见 ARCHITECTURE §6.1。
-
-参考: ARCHITECTURE.md §6 + §6.0(new contract),Decision #2, #147-#152,SPEC PR #445
+**§11 命名原则**(NP-1 按职责命名 / NP-2 `ezagent_core` 不得含上层概念词 / NP-3 名宽 = action 宽)+ **Phase C HARD gate** `mix ezagent.check_invariants.lifecycle`:见 **Phase C gates** 条目 + ARCHITECTURE §6.0.7 + Decision #153 + SPEC `2026-05-29-lifecycle-hooks-design.md`。命名旅程 `Lifecycle → AdminControl → TerminateWorker → Terminable`(OQ-6)即 NP 原则的活样本。
 
 ### `Behavior.required_caps/0`(PR-CC-2-v2, 2026-05-25)
 

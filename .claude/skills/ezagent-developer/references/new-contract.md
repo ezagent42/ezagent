@@ -1,8 +1,10 @@
-# Router / Behavior / Kind — the new contract (post 2026-05-28)
+# Router / Behavior / Kind — the INTERNAL engine (post 2026-05-28)
 
-> **Authoritative source**: SPEC `docs/superpowers/specs/2026-05-28-router-behavior-kind-architecture.md` (PR #445, r3). This file is the navigable reference for plugin authors; the SPEC is normative. ARCHITECTURE.md §6.0 is the load-bearing project doc; Decision Log #147-#152 are the per-phase landmarks.
+> **⚠️ SUPERSEDED AS THE DEVELOPER SURFACE (2026-05-29).** Since the Lifecycle migration (Phase A/B/C), `use Ezagent.Behavior` + `action/3` + hand-rolled `state_slice`/`init_slice` is the **INTERNAL ENGINE**, NOT what plugin/domain authors write. **If you are writing or modifying a Behavior, read `references/lifecycle.md` FIRST** — you write `use Ezagent.Lifecycle`. This file remains the reference for the engine the Lifecycle macro compiles down to (Router, Behavior macro, Kind, effect executor) — consult it when working on the engine ITSELF, the effect grammar, or the dispatch pipeline. The Phase C gate `mix ezagent.check_invariants.lifecycle` HARD-fails CI if developer-tier code uses `use Ezagent.Behavior` directly.
 
-This file is REQUIRED reading before writing any new Behavior, modifying an existing Behavior, or reviewing PRs that touch `apps/ezagent_*/lib/ezagent/behavior/`. The contract changed structurally on 2026-05-28 — every reference to `Behavior.invoke/4` you may find in older docs / forensic notes / tutorials is **stale**.
+> **Authoritative source**: SPEC `docs/superpowers/specs/2026-05-28-router-behavior-kind-architecture.md` (PR #445, r3) for the engine; `docs/superpowers/specs/2026-05-29-lifecycle-hooks-design.md` for the developer surface that wraps it. ARCHITECTURE.md §6.0 (engine) + §6.0.7 (Lifecycle) are the load-bearing project docs; Decision Log #147-#153.
+
+The `Behavior.invoke/4` callback is retired (`@optional_callbacks` only since Phase 3 PR #464) — every reference to it in older docs / tutorials is **stale**.
 
 ## Phase chronology (all merged to main)
 
