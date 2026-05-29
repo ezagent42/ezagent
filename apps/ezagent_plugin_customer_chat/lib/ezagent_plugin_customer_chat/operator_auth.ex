@@ -30,8 +30,8 @@ defmodule EzagentPluginCustomerChat.OperatorAuth do
 
   defp mode_set_cap_for_workspace?(%Ezagent.Capability{} = c, %URI{} = ws) do
     c.kind == :session and c.behavior == Ezagent.Behavior.Mode and c.action == :set and
-      (c.workspace == :any or
-         (match?(%URI{}, c.workspace) and URI.to_string(c.workspace) == URI.to_string(ws)))
+      (c.workspace_uri == :any or
+         (match?(%URI{}, c.workspace_uri) and URI.to_string(c.workspace_uri) == URI.to_string(ws)))
   end
 
   defp mode_set_cap_for_workspace?(_, _), do: false
