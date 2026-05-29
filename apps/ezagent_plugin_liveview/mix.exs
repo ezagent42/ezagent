@@ -77,10 +77,7 @@ defmodule EzagentPluginLiveview.MixProject do
       # adapter dropdown. Per-LV admin tooling is the canonical caller for
       # the facade, so the dep is direct (no transitive coverage from any
       # of the existing :ezagent_plugin_* / :ezagent_domain_* deps).
-      {:ezagent_domain_external_mirror, in_umbrella: true},
-      # Phase 2 Task 4: HEEx components (message bubble/list/composer +
-      # message_to_row/2 mapper) extracted into the customer-chat plugin.
-      {:ezagent_plugin_customer_chat, in_umbrella: true}
+      {:ezagent_domain_external_mirror, in_umbrella: true}
     ]
   end
 end
