@@ -166,4 +166,28 @@ defmodule Ezagent.Kind.StateRebuilderTest do
 
     assert {:rebuild_from_events, 2} in optional
   end
+
+  describe "snapshot_exists?/1 (codex E2E fix v2 Bug B, 2026-05-29)" do
+    test "returns true when a kind_snapshots row exists" do
+      uri = entity_uri()
+      :ok = write!(uri, %{slice_x: %{count: 1}})
+
+      assert StateRebuilder.snapshot_exists?(uri) == true
+    end
+
+    test "returns false when no row exists" do
+      uri = entity_uri()
+      # NOT writing the row.
+
+      assert StateRebuilder.snapshot_exists?(uri) == false
+    end
+
+    test "accepts URI struct and string forms identically" do
+      uri = entity_uri()
+      :ok = write!(uri, %{slice_x: %{count: 1}})
+
+      assert StateRebuilder.snapshot_exists?(uri) == true
+      assert StateRebuilder.snapshot_exists?(URI.to_string(uri)) == true
+    end
+  end
 end
