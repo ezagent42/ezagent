@@ -227,14 +227,32 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
     # a fresh spawn it is `:latest` (no prior cursor) → no replay (V1
     # fire-and-forget per OQ-EM-10). `subscribe_to_session_publisher_from`
     # handles both + the `:cursor_out_of_window` fallback.
-    {:ok, current_cursor} =
-      subscribe_to_session_publisher_from(state.session_uri, self_uri, state.publisher_cursor)
-      |> case do
-        {:ok, _} = ok ->
-          ok
+    # The bound Session may not be spawned yet on a full cold boot (the
+    # worker is re-spawned from its durable binding row before the Session
+    # Kind exists) → subscribe returns `{:error, :no_such_actor}` (or
+    # `:not_ready`). Per §10-R1 + Task #49 this is NOT fatal: go `:pending`
+    # and let the `PublisherLifecycle.subscribe/1` kick (below) re-subscribe
+    # via the `:publisher_alive` `handle_signal/2` clause when the Session
+    # cold-spawns. Crashing here (the old `{:ok, _} =` match) took the
+    # worker into a permanent restart loop on cold boot.
+    {subscription_state, current_cursor} =
+      case subscribe_to_session_publisher_from(state.session_uri, self_uri, state.publisher_cursor) do
+        {:ok, cursor} ->
+          {:active, cursor}
 
         {:error, :cursor_out_of_window} ->
-          subscribe_to_session_publisher_from(state.session_uri, self_uri, :latest)
+          case subscribe_to_session_publisher_from(state.session_uri, self_uri, :latest) do
+            {:ok, cursor} -> {:active, cursor}
+            {:error, _} -> {:pending, state.publisher_cursor}
+          end
+
+        {:error, reason} when reason in [:no_such_actor, :not_ready] ->
+          Logger.info(
+            "ExternalMirrorWorker activate: session #{URI.to_string(state.session_uri)} " <>
+              "not yet available (#{inspect(reason)}); subscription deferred to :pending"
+          )
+
+          {:pending, state.publisher_cursor}
       end
 
     # Task #49 (2026-05-27) — subscribe to the Session's lifecycle topic
@@ -250,7 +268,7 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
           adapter_module: adapter_module,
           binding_module: binding_module,
           binding_state: binding_state,
-          subscription_state: :active
+          subscription_state: subscription_state
         }
 
         # 3-arity return: reconcile `state.publisher_cursor` against the
