@@ -1,4 +1,4 @@
-defmodule EzagentPluginLiveview.CustomerSessionsDashboardLive do
+defmodule EzagentPluginCustomerChat.DashboardLive do
   @moduledoc """
   Phase 2.7 — Operator dashboard for live customer sessions.
 
@@ -42,12 +42,9 @@ defmodule EzagentPluginLiveview.CustomerSessionsDashboardLive do
   """
 
   use Phoenix.LiveView
-  use Gettext, backend: EzagentPluginLiveview.Gettext
   import Phoenix.Component
   require Logger
 
-  alias EzagentDomainUi.AdminShell
-  alias EzagentPluginLiveview.AppShell
   use EzagentDomainUi.Components
 
   @impl true
@@ -67,6 +64,7 @@ defmodule EzagentPluginLiveview.CustomerSessionsDashboardLive do
          socket
          |> assign(:page_title, "Customer Sessions")
          |> assign(:workspace_uri, workspace_uri)
+         |> assign(:tenant, workspace_label(workspace_uri))
          |> assign(:rows, rows)
          |> assign(:flash_error, nil)
          |> assign_new(:current_entity_uri_str, fn ->
@@ -99,73 +97,63 @@ defmodule EzagentPluginLiveview.CustomerSessionsDashboardLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <AppShell.app_shell
-      perspective={:admin}
-      current_entity_uri={@current_entity_uri_str}
-      current_workspace_uri={@current_workspace_uri}
-      workspaces={@workspaces}
-      workspace_name={@workspace_name}
-      is_admin?={@is_admin?}
-      is_system_member?={@is_system_member?}
-      cmdk_nav_routes={@cmdk_nav_routes}
-    >
-      <:body>
-        <AdminShell.admin_shell current_path="/admin/customer_sessions" active_section={:sessions}>
-          <:main>
-            <div class="flex-1 overflow-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
-              <.page_header title={gettext("Customer Sessions")}>
-                <:subtitle>
-                  {gettext("Live customer conversations in workspace %{ws}.",
-                    ws: workspace_label(@workspace_uri))}
-                </:subtitle>
-              </.page_header>
+    <div class="h-screen flex flex-col bg-zinc-50">
+      <header class="px-6 py-3 border-b border-zinc-200 bg-white flex items-center gap-3">
+        <span class="font-semibold text-zinc-900">Customer Service</span>
+        <span class="text-xs text-zinc-500 font-mono">{@tenant}</span>
+      </header>
+      <div class="flex-1 min-h-0 overflow-auto">
+        <div class="flex-1 overflow-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
+          <.page_header title="Customer Sessions">
+            <:subtitle>
+              {"Live customer conversations in workspace #{workspace_label(@workspace_uri)}."}
+            </:subtitle>
+          </.page_header>
 
-              <p :if={@flash_error} class="text-rose-600 dark:text-rose-400 text-xs mb-4">{@flash_error}</p>
+          <p :if={@flash_error} class="text-rose-600 dark:text-rose-400 text-xs mb-4">{@flash_error}</p>
 
-              <p :if={@rows == []} id="empty" class="text-zinc-500 italic text-sm">
-                {gettext("No active customer sessions yet.")}
-                <br/>
-                <span class="text-xs">
-                  Sessions matching <code class="font-mono">session://default/&lt;ws&gt;/&lt;conv-id&gt;</code>
-                  appear here when customers start chatting.
-                </span>
-              </p>
+          <p :if={@rows == []} id="empty" class="text-zinc-500 italic text-sm">
+            {"No active customer sessions yet."}
+            <br/>
+            <span class="text-xs">
+              Sessions matching <code class="font-mono">session://default/&lt;ws&gt;/&lt;conv-id&gt;</code>
+              appear here when customers start chatting.
+            </span>
+          </p>
 
-              <.card :if={@rows != []} class="p-0">
-                <ul id="customer-sessions" class="divide-y divide-zinc-200 dark:divide-zinc-800">
-                  <li :for={row <- @rows} class="hover:bg-zinc-50 dark:hover:bg-zinc-900">
-                    <.link
-                      navigate={"/admin/customer_sessions/" <> URI.encode_www_form(row.session_uri_str)}
-                      class="block px-4 py-3"
-                    >
-                      <div class="flex items-center justify-between">
-                        <div class="flex-1 min-w-0">
-                          <div class="flex items-center gap-2">
-                            <span class="font-medium">{row.conv_id}</span>
-                            <.mode_badge mode={row.mode} />
-                          </div>
-                          <div class="text-sm text-zinc-600 dark:text-zinc-400 truncate mt-1">
-                            <%= if row.last_message_preview do %>
-                              <span class="text-zinc-500">{row.last_sender_short}:</span>
-                              {row.last_message_preview}
-                            <% else %>
-                              <span class="italic text-zinc-400">{gettext("No messages yet")}</span>
-                            <% end %>
-                          </div>
-                        </div>
-                        <div class="text-xs text-zinc-400 ml-4 whitespace-nowrap">
-                          {format_at(row.last_activity_at)}
-                        </div>
+          <.card :if={@rows != []} class="p-0">
+            <ul id="customer-sessions" class="divide-y divide-zinc-200 dark:divide-zinc-800">
+              <li :for={row <- @rows} class="hover:bg-zinc-50 dark:hover:bg-zinc-900">
+                <.link
+                  navigate={"/admin/customer_sessions/" <> URI.encode_www_form(row.session_uri_str)}
+                  class="block px-4 py-3"
+                >
+                  <div class="flex items-center justify-between">
+                    <div class="flex-1 min-w-0">
+                      <div class="flex items-center gap-2">
+                        <span class="font-medium">{row.conv_id}</span>
+                        <.mode_badge mode={row.mode} />
                       </div>
-                    </.link>
-                  </li>
-                </ul>
-              </.card>
-            </div>
-          </:main>
-        </AdminShell.admin_shell>
-      </:body>
-    </AppShell.app_shell>
+                      <div class="text-sm text-zinc-600 dark:text-zinc-400 truncate mt-1">
+                        <%= if row.last_message_preview do %>
+                          <span class="text-zinc-500">{row.last_sender_short}:</span>
+                          {row.last_message_preview}
+                        <% else %>
+                          <span class="italic text-zinc-400">{"No messages yet"}</span>
+                        <% end %>
+                      </div>
+                    </div>
+                    <div class="text-xs text-zinc-400 ml-4 whitespace-nowrap">
+                      {format_at(row.last_activity_at)}
+                    </div>
+                  </div>
+                </.link>
+              </li>
+            </ul>
+          </.card>
+        </div>
+      </div>
+    </div>
     """
   end
 

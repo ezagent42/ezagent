@@ -1,4 +1,4 @@
-defmodule EzagentPluginLiveview.CustomerSessionViewLive do
+defmodule EzagentPluginCustomerChat.SessionViewLive do
   @moduledoc """
   Phase 2.7 — detail view for one customer session.
 
@@ -25,12 +25,9 @@ defmodule EzagentPluginLiveview.CustomerSessionViewLive do
   """
 
   use Phoenix.LiveView
-  use Gettext, backend: EzagentPluginLiveview.Gettext
   import Phoenix.Component
   require Logger
 
-  alias EzagentDomainUi.AdminShell
-  alias EzagentPluginLiveview.AppShell
   use EzagentDomainUi.Components
 
   @message_limit 50
@@ -57,6 +54,7 @@ defmodule EzagentPluginLiveview.CustomerSessionViewLive do
        |> assign(:session_uri_str, URI.to_string(session_uri))
        |> assign(:conv_id, conv_id_of(session_uri))
        |> assign(:workspace_seg, workspace_of(session_uri))
+       |> assign(:tenant, workspace_of(session_uri))
        |> assign(:mode, lookup_mode(session_uri))
        |> assign(:caller_caps, caller_caps)
        |> assign(:flash_error, nil)
@@ -97,22 +95,20 @@ defmodule EzagentPluginLiveview.CustomerSessionViewLive do
         {:noreply,
          socket
          |> assign(:mode, :takeover)
-         |> put_flash(:info, gettext("Take-over engaged."))}
+         |> put_flash(:info, "Take-over engaged.")}
 
       {:ok, _} ->
         {:noreply,
          socket
          |> assign(:mode, :takeover)
-         |> put_flash(:info, gettext("Take-over engaged."))}
+         |> put_flash(:info, "Take-over engaged.")}
 
       {:error, reason} ->
         {:noreply,
          socket
          |> assign(
            :flash_error,
-           gettext("Take-over failed: %{reason} (expected pre-Phase-2.6 — wire is connected)",
-             reason: inspect(reason)
-           )
+           "Take-over failed: #{inspect(reason)} (expected pre-Phase-2.6 — wire is connected)"
          )}
     end
   end
@@ -134,9 +130,7 @@ defmodule EzagentPluginLiveview.CustomerSessionViewLive do
 
       {:error, reason} ->
         {:noreply,
-         assign(socket, :flash_error,
-           gettext("Send failed: %{reason}", reason: inspect(reason))
-         )}
+         assign(socket, :flash_error, "Send failed: #{inspect(reason)}")}
     end
   end
 
@@ -145,105 +139,96 @@ defmodule EzagentPluginLiveview.CustomerSessionViewLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <AppShell.app_shell
-      perspective={:admin}
-      current_entity_uri={@current_entity_uri_str}
-      current_workspace_uri={@current_workspace_uri}
-      workspaces={@workspaces}
-      workspace_name={@workspace_name}
-      is_admin?={@is_admin?}
-      is_system_member?={@is_system_member?}
-      cmdk_nav_routes={@cmdk_nav_routes}
-    >
-      <:body>
-        <AdminShell.admin_shell current_path="/admin/customer_sessions" active_section={nil}>
-          <:main>
-            <div class="flex-1 flex flex-col min-h-0">
-              <header class="px-6 py-4 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 flex items-start justify-between gap-4">
-                <div class="min-w-0">
-                  <div class="flex items-center gap-2">
-                    <.link
-                      navigate="/admin/customer_sessions"
-                      class="text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
-                    >← {gettext("Back")}</.link>
-                  </div>
-                  <h1 class="text-lg font-semibold mt-1 truncate">{@conv_id}</h1>
-                  <p class="font-mono text-xs text-zinc-500 truncate">{@session_uri_str}</p>
-                </div>
-                <div class="flex items-center gap-3 shrink-0">
-                  <.mode_badge mode={@mode} />
-                  <button
-                    type="button"
-                    phx-click="take_over"
-                    disabled={@mode == :takeover}
-                    class={[
-                      "px-3 py-1.5 text-sm rounded-md font-medium",
-                      @mode == :takeover && "bg-zinc-200 text-zinc-500 cursor-not-allowed",
-                      @mode != :takeover &&
-                        "bg-amber-500 text-white hover:bg-amber-600"
-                    ]}
-                    id="take-over-button"
-                  >
-                    <%= if @mode == :takeover, do: gettext("Taken over"), else: gettext("Take over") %>
-                  </button>
-                </div>
-              </header>
-
-              <p :if={@flash_error} class="px-6 py-2 text-rose-600 dark:text-rose-400 text-xs bg-rose-50 dark:bg-rose-950 border-b border-rose-200 dark:border-rose-800">
-                {@flash_error}
-              </p>
-
-              <div class="flex-1 overflow-auto px-6 py-4 space-y-2" id="transcript">
-                <p :if={@messages_empty?} class="text-zinc-500 italic text-sm">
-                  {gettext("No messages yet.")}
-                </p>
-                <div
-                  id="messages"
-                  phx-update="stream"
-                  class="space-y-2"
-                >
-                  <div
-                    :for={{dom_id, row} <- @streams.messages}
-                    id={dom_id}
-                    class={[
-                      "px-3 py-2 rounded text-sm max-w-2xl",
-                      row.sender_kind == :user && "bg-blue-50 dark:bg-blue-950 self-start",
-                      row.sender_kind == :agent && "bg-zinc-100 dark:bg-zinc-800 ml-auto",
-                      row.sender_kind == :other && "bg-yellow-50 dark:bg-yellow-950"
-                    ]}
-                  >
-                    <div class="text-xs text-zinc-500 mb-0.5 font-mono">{row.sender_display}</div>
-                    <div class="whitespace-pre-wrap break-words">{row.text}</div>
-                  </div>
-                </div>
+    <div class="h-screen flex flex-col bg-zinc-50">
+      <header class="px-6 py-3 border-b border-zinc-200 bg-white flex items-center gap-3">
+        <span class="font-semibold text-zinc-900">Customer Service</span>
+        <span class="text-xs text-zinc-500 font-mono">{@tenant}</span>
+      </header>
+      <div class="flex-1 min-h-0 overflow-auto">
+        <div class="flex-1 flex flex-col min-h-0">
+          <header class="px-6 py-4 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 flex items-start justify-between gap-4">
+            <div class="min-w-0">
+              <div class="flex items-center gap-2">
+                <.link
+                  navigate="/admin/customer_sessions"
+                  class="text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
+                >← {"Back"}</.link>
               </div>
-
-              <%= if @mode == :takeover do %>
-                <footer class="border-t border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 px-6 py-3">
-                  <.form
-                    for={@compose_form}
-                    phx-submit="send_chat"
-                    class="flex gap-2 items-center"
-                  >
-                    <input
-                      type="text"
-                      name="chat[text]"
-                      id="chat_text"
-                      placeholder={gettext("Reply as operator…")}
-                      class="flex-1 px-3 py-1.5 text-sm border border-zinc-300 dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 focus:outline-none focus:ring-2 focus:ring-zinc-500"
-                    />
-                    <.button type="submit" variant="primary" size="sm">{gettext("Send")}</.button>
-                  </.form>
-                  <p class="text-[10px] text-zinc-500 mt-1">
-                    {gettext("Sending as operator (PUBLIC). Customer sees these messages.")}
-                  </p>
-                </footer>
-              <% end %>
+              <h1 class="text-lg font-semibold mt-1 truncate">{@conv_id}</h1>
+              <p class="font-mono text-xs text-zinc-500 truncate">{@session_uri_str}</p>
             </div>
-          </:main>
-        </AdminShell.admin_shell>
-      </:body>
-    </AppShell.app_shell>
+            <div class="flex items-center gap-3 shrink-0">
+              <.mode_badge mode={@mode} />
+              <button
+                type="button"
+                phx-click="take_over"
+                disabled={@mode == :takeover}
+                class={[
+                  "px-3 py-1.5 text-sm rounded-md font-medium",
+                  @mode == :takeover && "bg-zinc-200 text-zinc-500 cursor-not-allowed",
+                  @mode != :takeover &&
+                    "bg-amber-500 text-white hover:bg-amber-600"
+                ]}
+                id="take-over-button"
+              >
+                <%= if @mode == :takeover, do: "Taken over", else: "Take over" %>
+              </button>
+            </div>
+          </header>
+
+          <p :if={@flash_error} class="px-6 py-2 text-rose-600 dark:text-rose-400 text-xs bg-rose-50 dark:bg-rose-950 border-b border-rose-200 dark:border-rose-800">
+            {@flash_error}
+          </p>
+
+          <div class="flex-1 overflow-auto px-6 py-4 space-y-2" id="transcript">
+            <p :if={@messages_empty?} class="text-zinc-500 italic text-sm">
+              {"No messages yet."}
+            </p>
+            <div
+              id="messages"
+              phx-update="stream"
+              class="space-y-2"
+            >
+              <div
+                :for={{dom_id, row} <- @streams.messages}
+                id={dom_id}
+                class={[
+                  "px-3 py-2 rounded text-sm max-w-2xl",
+                  row.sender_kind == :user && "bg-blue-50 dark:bg-blue-950 self-start",
+                  row.sender_kind == :agent && "bg-zinc-100 dark:bg-zinc-800 ml-auto",
+                  row.sender_kind == :other && "bg-yellow-50 dark:bg-yellow-950"
+                ]}
+              >
+                <div class="text-xs text-zinc-500 mb-0.5 font-mono">{row.sender_display}</div>
+                <div class="whitespace-pre-wrap break-words">{row.text}</div>
+              </div>
+            </div>
+          </div>
+
+          <%= if @mode == :takeover do %>
+            <footer class="border-t border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 px-6 py-3">
+              <.form
+                for={@compose_form}
+                phx-submit="send_chat"
+                class="flex gap-2 items-center"
+              >
+                <input
+                  type="text"
+                  name="chat[text]"
+                  id="chat_text"
+                  placeholder="Reply as operator…"
+                  class="flex-1 px-3 py-1.5 text-sm border border-zinc-300 dark:border-zinc-700 rounded-md bg-white dark:bg-zinc-900 focus:outline-none focus:ring-2 focus:ring-zinc-500"
+                />
+                <.button type="submit" variant="primary" size="sm">{"Send"}</.button>
+              </.form>
+              <p class="text-[10px] text-zinc-500 mt-1">
+                {"Sending as operator (PUBLIC). Customer sees these messages."}
+              </p>
+            </footer>
+          <% end %>
+        </div>
+      </div>
+    </div>
     """
   end
 
