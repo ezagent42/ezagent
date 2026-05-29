@@ -536,18 +536,39 @@ defmodule Ezagent.Domain.Pty.Server do
             "cc plugin's Template.CcAgent does this via Ezagent.Domain.Pty.start/2."
   end
 
-  defp build_env(state) do
-    # Pass operator's existing env through (proxy / API key / etc) so
-    # operator-set vars from their shell where `mix phx.server` runs
-    # reach claude. The two we own are EZAGENT_AGENT_URI (informational)
-    # and EZAGENT_BRIDGE_URL (so the spawned MCP bridge knows where to announce).
-    base = :os.getenv() |> Enum.map(fn s ->
-      case :string.split(s, ~c"=") do
-        [k, v] -> {k, v}
-        _ -> {s, ~c""}
-      end
-    end)
-
+  # Environment for the spawned child.
+  #
+  # Pass ONLY the vars we add or override — NEVER the whole inherited
+  # environment. erlexec's `exec-port` already hands the child THIS
+  # BEAM's full environment (the operator's PATH / HOME / proxy / API
+  # key / etc. exported in the shell where `mix phx.server` runs flow
+  # through automatically via OS process inheritance), so re-enumerating
+  # `:os.getenv()` into `{:env, ...}` is redundant — and actively
+  # dangerous:
+  #
+  #   * erlexec frames every run command to its `exec-port` over a
+  #     `{packet, 2}` channel — max 65535 bytes (deps/erlexec/src/exec.erl
+  #     line ~989). Splatting the full environment can push the
+  #     `term_to_binary`-encoded command past that limit; the BEAM then
+  #     fails the port write with `:einval`, which crashes the erlexec
+  #     `:exec` manager and takes PTY spawns down for the WHOLE node
+  #     (every later spawn → `:no_pty`), not just this agent. This is the
+  #     bug once misread as an "OTP 28 / erlexec 2.3.0 PTY
+  #     incompatibility" — the real trigger was environment *size*.
+  #   * an env entry with an empty key (e.g. a var whose name begins with
+  #     `=`) is rejected by erlexec as "invalid env argument".
+  #
+  # Relying on inheritance avoids both and matches the documented
+  # `:cmd_env` contract ("merged into the inherited OS env"). Anything
+  # claude needs that is NOT already in the ambient env is passed
+  # explicitly by the caller via `:cmd_env` (the cc plugin does this for
+  # CLAUDE_CONFIG_DIR / EZAGENT_AGENT_TOKEN).
+  #
+  # Exposed (`def` + `@doc false`, not `defp`) only so the override-only
+  # / size-bounded invariant can be unit-tested without a live PTY spawn
+  # (see server_env_test.exs).
+  @doc false
+  def build_env(state) do
     # Caller-supplied extra env (e.g. cc plugin's CLAUDE_CONFIG_DIR).
     # Passed as a structured `{name, value}` pair to `:exec.run/2` —
     # NOT interpolated into any command line — so the value cannot be
@@ -558,21 +579,18 @@ defmodule Ezagent.Domain.Pty.Server do
         {String.to_charlist(to_string(k)), String.to_charlist(to_string(v))}
       end)
 
-    overrides =
-      [
-        {~c"EZAGENT_AGENT_URI", String.to_charlist(URI.to_string(state.agent_uri))},
-        # PTY-orphan-restart 2026-05-26 round-2 (codex finding #2) —
-        # tag the subprocess with THIS DEPLOYMENT's identity. The
-        # plugin's OrphanReaper compares against the same identity at
-        # boot: a subprocess whose tag differs belongs to a DIFFERENT
-        # deployment (parallel dev tree, another release path,
-        # different OS user's instance) and is NOT ours to reap, even
-        # though its URI is absent from this BEAM's local Pty registry.
-        # See `Ezagent.DeploymentId` for identity composition.
-        {~c"EZAGENT_DEPLOYMENT_ID", String.to_charlist(Ezagent.DeploymentId.deployment_id())}
-      ] ++ cmd_env
-
-    overrides ++ base
+    [
+      {~c"EZAGENT_AGENT_URI", String.to_charlist(URI.to_string(state.agent_uri))},
+      # PTY-orphan-restart 2026-05-26 round-2 (codex finding #2) — tag
+      # the subprocess with THIS DEPLOYMENT's identity. The plugin's
+      # OrphanReaper compares against the same identity at boot: a
+      # subprocess whose tag differs belongs to a DIFFERENT deployment
+      # (parallel dev tree, another release path, different OS user's
+      # instance) and is NOT ours to reap, even though its URI is absent
+      # from this BEAM's local Pty registry. See `Ezagent.DeploymentId`
+      # for identity composition.
+      {~c"EZAGENT_DEPLOYMENT_ID", String.to_charlist(Ezagent.DeploymentId.deployment_id())}
+    ] ++ cmd_env
   end
 
   # --- erlexec messages -----------------------------------------------

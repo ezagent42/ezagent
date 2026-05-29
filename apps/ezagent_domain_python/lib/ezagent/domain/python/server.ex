@@ -341,27 +341,29 @@ defmodule Ezagent.Domain.Python.Server do
     end
   end
 
+  # Environment for the spawned Python sidecar.
+  #
+  # Pass ONLY the vars we add or override — NEVER the whole inherited
+  # environment. erlexec's `exec-port` already hands the child this
+  # BEAM's full environment (python interpreter PATH / HOME / proxy /
+  # etc. flow through via OS process inheritance), so re-enumerating
+  # `:os.getenv()` into `{:env, ...}` is redundant — and dangerous:
+  # erlexec frames every run command to its `exec-port` over a
+  # `{packet, 2}` channel (max 65535 bytes — deps/erlexec/src/exec.erl).
+  # Splatting the full environment can push the encoded command past
+  # that limit; the BEAM then fails the port write with `:einval`, which
+  # crashes the SHARED erlexec `:exec` manager — taking down BOTH the
+  # Python sidecars AND the PTY (cc-agent) spawns for the whole node.
+  # Same root cause and fix as `Ezagent.Domain.Pty.Server.build_env/1`.
   defp build_env(%Python.Spec{} = spec) do
-    base =
-      :os.getenv()
-      |> Enum.map(fn s ->
-        case :string.split(s, ~c"=") do
-          [k, v] -> {k, v}
-          _ -> {s, ~c""}
-        end
-      end)
-
     lib_dir = python_lib_dir()
 
-    overrides =
-      [
-        {~c"EZAGENT_PYTHON_LIB_DIR", String.to_charlist(lib_dir)}
-      ] ++
-        Enum.map(spec.env, fn {k, v} ->
-          {String.to_charlist(k), String.to_charlist(v)}
-        end)
-
-    overrides ++ base
+    [
+      {~c"EZAGENT_PYTHON_LIB_DIR", String.to_charlist(lib_dir)}
+    ] ++
+      Enum.map(spec.env, fn {k, v} ->
+        {String.to_charlist(k), String.to_charlist(v)}
+      end)
   end
 
   defp python_lib_dir do
