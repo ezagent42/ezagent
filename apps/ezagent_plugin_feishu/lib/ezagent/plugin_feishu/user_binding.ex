@@ -86,7 +86,7 @@ defmodule EzagentPluginFeishu.UserBinding do
   def resolve(open_id) when is_binary(open_id) and open_id != "" do
     case Repo.get(__MODULE__, open_id) do
       nil -> :error
-      %__MODULE__{user_uri: uri_str} -> {:ok, Ezagent.URI.parse!(uri_str)}
+      %__MODULE__{user_uri: uri_str} -> {:ok, Ezagent.URI.new!(uri_str)}
     end
   end
 

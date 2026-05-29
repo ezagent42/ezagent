@@ -73,7 +73,7 @@ defmodule Ezagent.PluginCurlAgent.Template do
     # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
     # with try/rescue keeping the structured `{:error, _}` contract.
     try do
-      case Ezagent.URI.parse!(uri_str) do
+      case Ezagent.URI.new!(uri_str) do
         %URI{scheme: "entity", host: "agent", path: "/" <> rest} when rest != "" ->
           # Phase 9 PR-2 (SPEC v3 §3): entity URIs are 3-segment:
           # /<workspace>/<entity_name>. Flavor lives in entity_name prefix.
@@ -126,7 +126,7 @@ defmodule Ezagent.PluginCurlAgent.Template do
 
   @impl Ezagent.Kind.Template
   def instantiate(_tmpl_name, %{"agent_uri" => agent_uri_str} = tmpl, _workspace_uri) do
-    agent_uri = Ezagent.URI.parse!(agent_uri_str)
+    agent_uri = Ezagent.URI.new!(agent_uri_str)
 
     init_args = %{
       uri: agent_uri,

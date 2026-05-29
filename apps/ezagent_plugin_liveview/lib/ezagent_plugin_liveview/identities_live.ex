@@ -156,7 +156,7 @@ defmodule EzagentPluginLiveview.IdentitiesLive do
   defp matches_filter?(_, _), do: false
 
   defp safe_parse_entity(s) when is_binary(s) do
-    {:ok, Ezagent.URI.parse!(s)}
+    {:ok, Ezagent.URI.new!(s)}
   rescue
     ArgumentError -> :error
   end
@@ -165,7 +165,7 @@ defmodule EzagentPluginLiveview.IdentitiesLive do
   def render(assigns) do
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
-        URI.to_string(Map.get(assigns, :current_entity_uri) || Ezagent.URI.parse!("entity://user/system/admin"))
+        URI.to_string(Map.get(assigns, :current_entity_uri) || Ezagent.URI.new!("entity://user/system/admin"))
       end)
 
     ~H"""

@@ -170,7 +170,7 @@ defmodule Ezagent.Kind.Snapshot do
     # SPEC 2026-05-27-uri-canonicalization §B4 — snapshot reload routes
     # URI strings through the canonical chokepoint; let-it-crash on
     # malformed (supervisor restarts the Kind, operator sees the error).
-    uri = Ezagent.URI.parse!(uri_str)
+    uri = Ezagent.URI.new!(uri_str)
     reconcile_after_load_behaviors(state, uri, kind_module)
   end
 
@@ -369,7 +369,7 @@ defmodule Ezagent.Kind.Snapshot do
     parsed =
       case uri do
         %URI{} = u -> u
-        s when is_binary(s) -> Ezagent.URI.parse!(s)
+        s when is_binary(s) -> Ezagent.URI.new!(s)
       end
 
     case Ezagent.Persistence.workspace_uri_for(parsed) do
@@ -436,7 +436,7 @@ defmodule Ezagent.Kind.Snapshot do
   5. Tuple (`is_tuple/1`) — convert to list, walk, convert back.
   6. Fallthrough — atoms, numbers, binaries, pids — unchanged.
 
-  The `%URI{}` clause routes through `Ezagent.URI.parse!/1` (the
+  The `%URI{}` clause routes through `Ezagent.URI.new!/1` (the
   canonical chokepoint). Non-Ezagent schemes (e.g. external `http://`
   URLs that snuck into a slice via legacy code) fall back to strict
   stdlib `URI.new/1` per the §3.7 dual-fallback contract. Outright
@@ -448,7 +448,7 @@ defmodule Ezagent.Kind.Snapshot do
     s = URI.to_string(uri)
 
     try do
-      Ezagent.URI.parse!(s)
+      Ezagent.URI.new!(s)
     rescue
       # External (non-Ezagent) scheme — §3.7 fallback. Re-parse via
       # strict URI.new/1 so authority is RFC-3986-normalized; leave

@@ -416,8 +416,8 @@ defmodule EzagentDomainChat.Application do
   end
 
   defp do_seed_default_session_template do
-    workspace_uri = Ezagent.URI.parse!("workspace://system")
-    orchestrator_uri = Ezagent.URI.parse!(Ezagent.Orchestrator.CcOrchestratorSeed.template_uri())
+    workspace_uri = Ezagent.URI.new!("workspace://system")
+    orchestrator_uri = Ezagent.URI.new!(Ezagent.Orchestrator.CcOrchestratorSeed.template_uri())
 
     content = %{
       name: "default",

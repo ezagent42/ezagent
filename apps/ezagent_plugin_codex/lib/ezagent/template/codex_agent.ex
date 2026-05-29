@@ -38,7 +38,7 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
     # SPEC 2026-05-27-uri-canonicalization §3 — boundary input routed
     # through the canonical chokepoint. Parity with the cc Template
     # `EzagentPluginCc.Template.CcAgent`.
-    agent_uri = Ezagent.URI.parse!(uri_str)
+    agent_uri = Ezagent.URI.new!(uri_str)
 
     cond do
       fully_alive?(agent_uri) ->
@@ -403,7 +403,7 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
     # with try/rescue keeping the structured `{:error, _}` contract for
     # each validator branch. Mirrors `EzagentPluginCc.Template.CcAgent.check_agent_uri/1`.
     try do
-      case Ezagent.URI.parse!(uri_str) do
+      case Ezagent.URI.new!(uri_str) do
         %URI{scheme: "entity", host: "agent", path: "/" <> rest} when rest != "" ->
           with [_workspace, entity_name] when entity_name != "" <-
                  String.split(rest, "/", parts: 2),

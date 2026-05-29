@@ -274,7 +274,7 @@ defmodule Ezagent.Routing.Resolver do
 
   defp expand_receiver(receiver, _message, _current, _members, _ws)
        when is_binary(receiver),
-       do: [Ezagent.URI.parse!(receiver)]
+       do: [Ezagent.URI.new!(receiver)]
 
   defp expand_receiver(%URI{} = receiver, _message, _current, _members, _ws),
     do: [receiver]
@@ -285,13 +285,13 @@ defmodule Ezagent.Routing.Resolver do
   A candidate receiver URI is a valid recipient iff ALL of:
 
     1. It is a well-formed, canonical `entity://` or `session://` URI
-       — it parses cleanly through the STRICT `Ezagent.URI.parse!/1`
+       — it parses cleanly through the STRICT `Ezagent.URI.new!/1`
        validator (SPEC-v3 3-segment authority, reserved sub-resource
        positions rejected) AND its canonical string round-trip equals
        the input. This is applied IDENTICALLY whether the candidate
        arrived as a binary or as a pre-built `%URI{}` struct — the
        real mention sources build `%URI{}` via `URI.new/URI.new!`
-       (NOT `Ezagent.URI.parse!`), so a hand-built struct carrying an
+       (NOT `Ezagent.URI.new!`), so a hand-built struct carrying an
        extra path segment (`entity://user/team-alpha/bob/extra`) would
        otherwise bypass the shape rule. `current_session_uri` is
        held to the same strict standard.
@@ -313,7 +313,7 @@ defmodule Ezagent.Routing.Resolver do
   `slice.members` via programmatic `chat.join` / template
   instantiation must receive NOTHING).
 
-  Never raises — `Ezagent.URI.parse!/1` raises on bad input, so the
+  Never raises — `Ezagent.URI.new!/1` raises on bad input, so the
   canonicalization is wrapped; a malformed candidate is a `false`,
   not a crash.
   """
@@ -337,8 +337,8 @@ defmodule Ezagent.Routing.Resolver do
   def valid_member?(_candidate, _current_session_uri, _members), do: false
 
   # Canonicalize ANY candidate (binary OR %URI{}) through the strict
-  # `Ezagent.URI.parse!/1` validator. The real mention sources build
-  # `%URI{}` via `URI.new/URI.new!` — NOT `Ezagent.URI.parse!` — so a
+  # `Ezagent.URI.new!/1` validator. The real mention sources build
+  # `%URI{}` via `URI.new/URI.new!` — NOT `Ezagent.URI.new!` — so a
   # struct path that skipped strict validation let a crafted member
   # with an extra path segment (`entity://user/team-alpha/bob/extra`)
   # bypass the SPEC-v3 3-segment / reserved-sub-resource rule and
@@ -350,7 +350,7 @@ defmodule Ezagent.Routing.Resolver do
   defp canonicalize(%URI{} = uri), do: canonicalize(URI.to_string(uri))
 
   defp canonicalize(s) when is_binary(s) do
-    Ezagent.URI.parse!(s)
+    Ezagent.URI.new!(s)
   rescue
     _ -> nil
   end
@@ -385,7 +385,7 @@ defmodule Ezagent.Routing.Resolver do
   defp to_uri(%URI{} = uri), do: uri
 
   defp to_uri(s) when is_binary(s) do
-    Ezagent.URI.parse!(s)
+    Ezagent.URI.new!(s)
   rescue
     _ -> nil
   end

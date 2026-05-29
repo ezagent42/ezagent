@@ -119,7 +119,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
         "cwd" => "/tmp"
       }
 
-      workspace_uri = Ezagent.URI.parse!("workspace://test")
+      workspace_uri = Ezagent.URI.new!("workspace://test")
 
       # codex round-6 HIGH-1 — `instantiate/3` returns the 3-element
       # `{:ok, uris, %{fresh?: _}}` form; a first spawn is `fresh?: true`.
@@ -135,7 +135,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
       # 1. KindRegistry.lookup(agent_uri) must succeed — Agent Kind alive
       # 2. PtyServer.find_by_agent_uri(agent_uri) must succeed — PTY alive
       agent_uri_str = "entity://agent/team-alpha/cc_v1fix-#{System.unique_integer([:positive])}"
-      agent_uri = Ezagent.URI.parse!(agent_uri_str)
+      agent_uri = Ezagent.URI.new!(agent_uri_str)
 
       tmpl = %{
         "class" => "cc.agent",
@@ -143,7 +143,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
         "cwd" => "/tmp"
       }
 
-      workspace_uri = Ezagent.URI.parse!("workspace://test")
+      workspace_uri = Ezagent.URI.new!("workspace://test")
 
       # codex round-6 HIGH-1 — 3-element return; a first spawn is fresh.
       assert {:ok, [^agent_uri], %{fresh?: true}} =
@@ -164,7 +164,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
 
     test "is idempotent — second call returns same URI without spawning a second PtyServer" do
       agent_uri_str = "entity://agent/team-alpha/cc_idem-#{System.unique_integer([:positive])}"
-      uri = Ezagent.URI.parse!(agent_uri_str)
+      uri = Ezagent.URI.new!(agent_uri_str)
 
       tmpl = %{
         "class" => "cc.agent",
@@ -172,7 +172,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
         "cwd" => "/tmp"
       }
 
-      workspace_uri = Ezagent.URI.parse!("workspace://test")
+      workspace_uri = Ezagent.URI.new!("workspace://test")
 
       # codex round-6 HIGH-1 — first spawn is fresh, the idempotent
       # re-call adopts the already-live worker (`fresh?: false`).
@@ -197,7 +197,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
       agent_uri_str =
         "entity://agent/team-alpha/cc_already-#{System.unique_integer([:positive])}"
 
-      agent_uri = Ezagent.URI.parse!(agent_uri_str)
+      agent_uri = Ezagent.URI.new!(agent_uri_str)
 
       # Bring up ONLY the Agent Kind — directly, NOT via the template.
       # This is the "worker this call did not create" state: Kind alive,
@@ -214,7 +214,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
         "cwd" => "/tmp"
       }
 
-      workspace_uri = Ezagent.URI.parse!("workspace://test")
+      workspace_uri = Ezagent.URI.new!("workspace://test")
 
       # The instantiate hits `spawn_for_local_pty` (Kind alive but PTY
       # absent, so the idempotency short-circuit does not fire), and

@@ -411,7 +411,7 @@ defmodule EzagentDomainUi.IdeShell do
     # with try/rescue keeping the display-fallback behaviour (return
     # raw string on parse failure).
     try do
-      case Ezagent.URI.parse!(uri_str) do
+      case Ezagent.URI.new!(uri_str) do
         %URI{host: host} when is_binary(host) -> host
         _ -> uri_str
       end
@@ -422,7 +422,7 @@ defmodule EzagentDomainUi.IdeShell do
   defp workspace_item_name(%URI{host: host}) when is_binary(host), do: host
   defp workspace_item_name(s) when is_binary(s) do
     try do
-      case Ezagent.URI.parse!(s) do
+      case Ezagent.URI.new!(s) do
         %URI{host: host} when is_binary(host) and host != "" -> host
         _ -> s
       end

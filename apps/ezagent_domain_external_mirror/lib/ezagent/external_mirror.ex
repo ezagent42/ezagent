@@ -206,7 +206,7 @@ defmodule Ezagent.ExternalMirror do
   def unbind(%URI{} = session_uri, adapter_id, target_id, ctx)
       when is_binary(adapter_id) and is_map(ctx) do
     target =
-      Ezagent.URI.parse!("#{URI.to_string(session_uri)}?action=external_mirror.unbind")
+      Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=external_mirror.unbind")
 
     inv = %Ezagent.Invocation{
       target: target,
@@ -247,7 +247,7 @@ defmodule Ezagent.ExternalMirror do
   @spec list_bindings(URI.t(), caller_ctx()) :: {:ok, [binding()]} | {:error, term()}
   def list_bindings(%URI{} = session_uri, ctx) when is_map(ctx) do
     target =
-      Ezagent.URI.parse!("#{URI.to_string(session_uri)}?action=external_mirror.list_bindings")
+      Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=external_mirror.list_bindings")
 
     inv = %Ezagent.Invocation{
       target: target,
@@ -388,7 +388,7 @@ defmodule Ezagent.ExternalMirror do
   defp safe_parse_uri(nil), do: nil
 
   defp safe_parse_uri(s) when is_binary(s) do
-    Ezagent.URI.parse!(s)
+    Ezagent.URI.new!(s)
   rescue
     _ -> nil
   end
@@ -547,7 +547,7 @@ defmodule Ezagent.ExternalMirror do
     # expired / replayed / tuple mismatch) → action body returns
     # `:bind_must_go_through_facade`.
     target =
-      Ezagent.URI.parse!("#{URI.to_string(session_uri)}?action=external_mirror.bind")
+      Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=external_mirror.bind")
 
     inv = %Ezagent.Invocation{
       target: target,

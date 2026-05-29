@@ -322,7 +322,7 @@ defmodule Ezagent.Behavior.Workspace do
   # bypass it can keep ctx empty.
   #
   # Task #55 round-2 codex HIGH-1 (2026-05-27) — canonicalize via
-  # `Ezagent.URI.parse!/1` + `Ezagent.URI.instance/1` to reject ALL
+  # `Ezagent.URI.new!/1` + `Ezagent.URI.instance/1` to reject ALL
   # non-canonical shapes that the pre-fix `String.split(rest, "/",
   # parts: 2)` accepted as a side-effect of the `parts: 2` limit:
   #
@@ -332,7 +332,7 @@ defmodule Ezagent.Behavior.Workspace do
   #   - `entity://user/ws/alice?action=x` (query string — not stripped)
   #   - `entity://something/ws/name` (no host allowlist on user|agent)
   #
-  # `Ezagent.URI.parse!/1` enforces the 3-segment shape + scheme
+  # `Ezagent.URI.new!/1` enforces the 3-segment shape + scheme
   # registry; `Ezagent.URI.instance/1` strips query + fragment.
   # Together they fully canonicalize before the prefix comparison.
   defp validate_member_prefix(_member_uri, nil), do: :ok
@@ -344,7 +344,7 @@ defmodule Ezagent.Behavior.Workspace do
        when is_binary(workspace_name) and workspace_name != "" do
     # Task #55 round-2 codex r2 review HIGH-1 follow-up — explicitly
     # reject query + fragment on the ORIGINAL member URI. Pre-fix
-    # `Ezagent.URI.parse!/1` accepts URIs with query strings (they're
+    # `Ezagent.URI.new!/1` accepts URIs with query strings (they're
     # not malformed per the parser); `instance/1` strips them for the
     # workspace-prefix check, so a same-workspace URI with a query
     # passed the prefix gate AND landed durable in the slice/Store
@@ -383,7 +383,7 @@ defmodule Ezagent.Behavior.Workspace do
           {:error, {:cross_workspace_member_not_permitted, member_uri, workspace_uri}}
 
         _ ->
-          # Defense in depth — `Ezagent.URI.parse!/1` already rejects
+          # Defense in depth — `Ezagent.URI.new!/1` already rejects
           # non-3-segment forms, so this branch is structurally
           # unreachable in production. Kept so a future change to
           # `parse!/1` can't silently widen acceptance.
@@ -401,7 +401,7 @@ defmodule Ezagent.Behavior.Workspace do
     end
   end
 
-  # Canonicalize via `Ezagent.URI.parse!/1` (3-segment shape gate +
+  # Canonicalize via `Ezagent.URI.new!/1` (3-segment shape gate +
   # scheme registry) and `Ezagent.URI.instance/1` (strip query +
   # fragment). A `parse!`-rejecting URI (4-segment, trailing slash,
   # missing workspace) raises ArgumentError → we catch and return
@@ -411,7 +411,7 @@ defmodule Ezagent.Behavior.Workspace do
     canonical =
       member_uri
       |> URI.to_string()
-      |> Ezagent.URI.parse!()
+      |> Ezagent.URI.new!()
       |> Ezagent.URI.instance()
 
     {:ok, canonical}
@@ -511,7 +511,7 @@ defmodule Ezagent.Behavior.Workspace do
   #   - entity URI whose canonicalized workspace segment doesn't match
   #     `workspace_name`;
   #   - entity URI whose host axis isn't `user`/`agent`;
-  #   - entity URI that `Ezagent.URI.parse!/1` raises on (4-segment,
+  #   - entity URI that `Ezagent.URI.new!/1` raises on (4-segment,
   #     trailing slash, missing workspace).
   #
   # Implemented by reusing `validate_member_prefix/2` with a
@@ -920,7 +920,7 @@ defmodule Ezagent.Behavior.Workspace do
     full = "entity://agent/#{workspace_name}/#{flavor}_#{name}"
 
     try do
-      {:ok, Ezagent.URI.parse!(full)}
+      {:ok, Ezagent.URI.new!(full)}
     rescue
       ArgumentError -> {:error, {:bad_uri, full}}
     end

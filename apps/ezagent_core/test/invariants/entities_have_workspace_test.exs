@@ -5,7 +5,7 @@ defmodule EzagentCore.Invariants.EntitiesHaveWorkspaceTest do
   Every entity URI in the system MUST carry its workspace as the first
   path segment under the type axis: `entity://<type>/<workspace>/<name>`.
   The previous 2-segment form (`entity://user/admin`) is rejected by
-  `Ezagent.URI.parse!/1` at parse time.
+  `Ezagent.URI.new!/1` at parse time.
 
   This test guards against three regressions:
 
@@ -24,7 +24,7 @@ defmodule EzagentCore.Invariants.EntitiesHaveWorkspaceTest do
   """
   use ExUnit.Case, async: true
 
-  describe "Ezagent.URI.parse!/1 — SPEC v3 §3.2 enforcement" do
+  describe "Ezagent.URI.new!/1 — SPEC v3 §3.2 enforcement" do
     test "rejects 2-segment entity URI with `workspace segment` in message" do
       # NOTE: literal `entity://user/admin` constructed via string
       # concatenation so the bulk-rewrite never silently 3-segments it.
@@ -32,7 +32,7 @@ defmodule EzagentCore.Invariants.EntitiesHaveWorkspaceTest do
 
       err =
         assert_raise ArgumentError, fn ->
-          Ezagent.URI.parse!(legacy)
+          Ezagent.URI.new!(legacy)
         end
 
       assert err.message =~ "workspace segment"
@@ -42,7 +42,7 @@ defmodule EzagentCore.Invariants.EntitiesHaveWorkspaceTest do
       # SPEC #324: tenant users live in workspace://<tenant>, not the
       # deleted `default`. Use team-alpha to pin the
       # "workspace segment in path" invariant.
-      uri = Ezagent.URI.parse!("entity://user/team-alpha/allen")
+      uri = Ezagent.URI.new!("entity://user/team-alpha/allen")
       assert uri.scheme == "entity"
       assert uri.host == "user"
       assert uri.path == "/team-alpha/allen"
@@ -51,22 +51,22 @@ defmodule EzagentCore.Invariants.EntitiesHaveWorkspaceTest do
 
   describe "Ezagent.URI.entity_workspace_uri/1 — SPEC v3 §3.3" do
     test "extracts workspace URI from tenant-workspace user entity" do
-      uri = Ezagent.URI.parse!("entity://user/team-alpha/allen")
+      uri = Ezagent.URI.new!("entity://user/team-alpha/allen")
       assert Ezagent.URI.entity_workspace_uri(uri) == URI.new!("workspace://team-alpha")
     end
 
     test "extracts workspace URI from cross-workspace agent entity" do
-      uri = Ezagent.URI.parse!("entity://agent/team-alpha/cc_demo")
+      uri = Ezagent.URI.new!("entity://agent/team-alpha/cc_demo")
       assert Ezagent.URI.entity_workspace_uri(uri) == URI.new!("workspace://team-alpha")
     end
 
     test "extracts workspace://system URI from admin entity (Phase 9 PR-8)" do
-      uri = Ezagent.URI.parse!("entity://user/system/admin")
+      uri = Ezagent.URI.new!("entity://user/system/admin")
       assert Ezagent.URI.entity_workspace_uri(uri) == URI.new!("workspace://system")
     end
 
     test "ignores query string when extracting workspace" do
-      uri = Ezagent.URI.parse!("entity://user/team-alpha/allen?action=identity.list_caps")
+      uri = Ezagent.URI.new!("entity://user/team-alpha/allen?action=identity.list_caps")
       assert Ezagent.URI.entity_workspace_uri(uri) == URI.new!("workspace://team-alpha")
     end
   end
@@ -100,7 +100,7 @@ defmodule EzagentCore.Invariants.EntitiesHaveWorkspaceTest do
                  legacy = "entity://user/" <> "admin"
 
              so the grep + bulk-rewrite tooling skips them. See
-             `Ezagent.URI.parse!/1` rejection cases in
+             `Ezagent.URI.new!/1` rejection cases in
              `apps/ezagent_core/test/ezagent/uri_test.exs`.
              """
     end

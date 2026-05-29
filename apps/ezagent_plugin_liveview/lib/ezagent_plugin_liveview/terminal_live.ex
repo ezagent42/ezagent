@@ -122,7 +122,7 @@ defmodule EzagentPluginLiveview.TerminalLive do
     # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
     # with try/rescue keeping the `:error` failure contract.
     try do
-      case Ezagent.URI.parse!(decoded) do
+      case Ezagent.URI.new!(decoded) do
         %URI{scheme: "entity", host: "agent", path: "/" <> rest} = uri
         when is_binary(rest) and rest != "" ->
           {:ok, uri}
@@ -252,7 +252,7 @@ defmodule EzagentPluginLiveview.TerminalLive do
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
         URI.to_string(
-          Map.get(assigns, :current_entity_uri) || Ezagent.URI.parse!("entity://user/system/admin")
+          Map.get(assigns, :current_entity_uri) || Ezagent.URI.new!("entity://user/system/admin")
         )
       end)
 

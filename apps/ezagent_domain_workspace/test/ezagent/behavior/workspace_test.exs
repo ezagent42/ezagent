@@ -223,7 +223,7 @@ defmodule Ezagent.Behavior.WorkspaceTest do
     # the workspace segment into `entity_name` regardless of shape.
     # Plus the validator only checked `scheme: "entity"`, never that
     # `host in ["user", "agent"]`. Post-fix: canonicalize via
-    # `Ezagent.URI.parse!/1` + `Ezagent.URI.instance/1` + host
+    # `Ezagent.URI.new!/1` + `Ezagent.URI.instance/1` + host
     # allowlist.
 
     test "rejects 4-segment entity URI (extra path segment)" do

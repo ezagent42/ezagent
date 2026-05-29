@@ -510,8 +510,8 @@ defmodule Ezagent.Behavior.Chat do
         session_uri =
           case msg.session_uri do
             %URI{} = uri -> uri
-            s when is_binary(s) and s != "" -> Ezagent.URI.parse!(s)
-            _ when source_session != "" -> Ezagent.URI.parse!(source_session)
+            s when is_binary(s) and s != "" -> Ezagent.URI.new!(s)
+            _ when source_session != "" -> Ezagent.URI.new!(source_session)
             _ -> nil
           end
 
@@ -1017,7 +1017,7 @@ defmodule Ezagent.Behavior.Chat do
   defp to_uri_struct(%URI{} = uri), do: uri
 
   defp to_uri_struct(s) when is_binary(s) do
-    Ezagent.URI.parse!(s)
+    Ezagent.URI.new!(s)
   rescue
     _ -> nil
   end

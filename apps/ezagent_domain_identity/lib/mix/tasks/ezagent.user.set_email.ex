@@ -118,7 +118,7 @@ defmodule Mix.Tasks.Ezagent.User.SetEmail do
     # Mirror ezagent.user.create's URI guard so the SPEC v3 §3 error
     # surfaces cleanly for 2-segment / non-`user` URIs.
     try do
-      uri = Ezagent.URI.parse!(s)
+      uri = Ezagent.URI.new!(s)
 
       case uri do
         %URI{scheme: "entity", host: "user", path: "/" <> _rest} ->

@@ -117,7 +117,7 @@ defmodule Ezagent.PluginEcho.Template.EchoAgent do
     # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
     # with try/rescue keeping the structured `{:error, _}` contract.
     try do
-      case Ezagent.URI.parse!(uri_str) do
+      case Ezagent.URI.new!(uri_str) do
         %URI{scheme: "entity", host: "agent", path: "/" <> rest} when rest != "" ->
           with [_workspace, entity_name] when entity_name != "" <-
                  String.split(rest, "/", parts: 2),
@@ -162,7 +162,7 @@ defmodule Ezagent.PluginEcho.Template.EchoAgent do
 
   @impl Ezagent.Kind.Template
   def instantiate(_tmpl_name, %{"agent_uri" => uri_str} = tmpl, _workspace_uri) do
-    agent_uri = Ezagent.URI.parse!(uri_str)
+    agent_uri = Ezagent.URI.new!(uri_str)
 
     # codex round-6 HIGH-1 — the 3-element `{:ok, uris, %{fresh?: _}}`
     # return carries whether THIS call STARTED the Agent Kind worker.

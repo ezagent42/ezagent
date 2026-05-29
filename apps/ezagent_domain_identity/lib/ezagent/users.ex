@@ -73,7 +73,7 @@ defmodule Ezagent.Users do
     #
     # Phase 9 PR-3 (SPEC v3 §4.5): default caps are workspace-scoped
     # — derive the user's workspace from their URI.
-    user_workspace = Ezagent.URI.entity_workspace_uri(Ezagent.URI.parse!(uri_str))
+    user_workspace = Ezagent.URI.entity_workspace_uri(Ezagent.URI.new!(uri_str))
     final_caps = Ezagent.Entity.User.default_caps(user_workspace) ++ caps
 
     changeset =
@@ -197,7 +197,7 @@ defmodule Ezagent.Users do
   defp decode(%__MODULE__{} = row) do
     %{
       id: row.id,
-      uri: Ezagent.URI.parse!(row.uri),
+      uri: Ezagent.URI.new!(row.uri),
       password_hash: row.password_hash,
       caps: decode_caps(row.caps_json)
     }

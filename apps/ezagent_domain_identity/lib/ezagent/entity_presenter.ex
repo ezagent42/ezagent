@@ -62,7 +62,7 @@ defmodule Ezagent.EntityPresenter do
     # Display fallback: parse errors (malformed cookie) fall back to the
     # raw string per the original semantics.
     try do
-      case Ezagent.URI.parse!(uri_str) do
+      case Ezagent.URI.new!(uri_str) do
         %URI{scheme: "entity", path: "/" <> rest} when rest != "" ->
           # Phase 9 PR-2 (SPEC v3 §3): entity URIs are 3-segment —
           # `/<workspace>/<entity_name>`. Display only the entity name;

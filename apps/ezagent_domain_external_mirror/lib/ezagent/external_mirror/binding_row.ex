@@ -233,7 +233,7 @@ defmodule Ezagent.ExternalMirror.BindingRow do
         distinct: true
       )
     )
-    |> Enum.map(&Ezagent.URI.parse!/1)
+    |> Enum.map(&Ezagent.URI.new!/1)
   end
 
   @doc """

@@ -16,7 +16,7 @@ Refuse. SPEC v2 §5.2 + PR #146: action invocation uses query string, never path
 
 ## "I'll add `user://X` or `agent://X` back as an alias"
 
-Refuse. SPEC v2 §5.12 + PR #141: `user://` and `agent://` merged into `entity://`. Canonical forms: `entity://user/<workspace>/<name>`, `entity://agent/<workspace>/<flavor>_<name>`. No 1-segment fallback, no legacy URI form accepted, no `default`-injection logic. `Ezagent.URI.parse!/1` rejects un-canonical input.
+Refuse. SPEC v2 §5.12 + PR #141: `user://` and `agent://` merged into `entity://`. Canonical forms: `entity://user/<workspace>/<name>`, `entity://agent/<workspace>/<flavor>_<name>`. No 1-segment fallback, no legacy URI form accepted, no `default`-injection logic. `Ezagent.URI.new!/1` rejects un-canonical input.
 
 ## "I'll use Message.uri"
 

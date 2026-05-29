@@ -94,7 +94,7 @@ defmodule Ezagent.Template.GenericSession do
     # `session://<template>/<workspace>/<name>`. GenericSession is
     # itself the template (template name `generic`).
     workspace_name = workspace_uri.host
-    session_uri = Ezagent.URI.parse!("session://generic/#{workspace_name}/#{session_name}")
+    session_uri = Ezagent.URI.new!("session://generic/#{workspace_name}/#{session_name}")
 
     with {:ok, _session_pid} <- spawn_session(session_uri),
          :ok <- join_members(session_uri, Map.get(tmpl, "members", [])),
@@ -115,7 +115,7 @@ defmodule Ezagent.Template.GenericSession do
 
   defp join_members(session_uri, members) do
     target =
-      Ezagent.URI.parse!("#{URI.to_string(session_uri)}?action=chat.join")
+      Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=chat.join")
 
     Enum.each(members, fn member_uri_str ->
       # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
@@ -165,7 +165,7 @@ defmodule Ezagent.Template.GenericSession do
     # with try/rescue keeping the `{:error, :bad_uri}` shape; returns
     # the scheme of a valid Ezagent URI.
     try do
-      %URI{scheme: scheme} = Ezagent.URI.parse!(s)
+      %URI{scheme: scheme} = Ezagent.URI.new!(s)
       {:ok, scheme}
     rescue
       ArgumentError -> {:error, :bad_uri}
@@ -175,7 +175,7 @@ defmodule Ezagent.Template.GenericSession do
   defp parse_uri(_), do: {:error, :not_a_string}
 
   defp safe_parse_member_uri(s) when is_binary(s) do
-    {:ok, Ezagent.URI.parse!(s)}
+    {:ok, Ezagent.URI.new!(s)}
   rescue
     ArgumentError -> :error
   end

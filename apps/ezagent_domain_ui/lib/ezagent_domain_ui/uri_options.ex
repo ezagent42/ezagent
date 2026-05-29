@@ -112,7 +112,7 @@ defmodule Ezagent.UI.UriOptions do
 
   A submitted picker URI is valid when ALL of:
 
-  1. It is well-formed per `Ezagent.URI.parse!/1` (registered scheme,
+  1. It is well-formed per `Ezagent.URI.new!/1` (registered scheme,
      correct 3-segment shape).
   2. Its scheme is one of `kinds` (`:entity` / `:session`).
   3. The caller is authorized to see `workspace_uri` (system member,
@@ -243,7 +243,7 @@ defmodule Ezagent.UI.UriOptions do
   defp safe_parse(%URI{} = uri), do: {:ok, uri}
 
   defp safe_parse(str) when is_binary(str) do
-    {:ok, Ezagent.URI.parse!(str)}
+    {:ok, Ezagent.URI.new!(str)}
   rescue
     _ -> :error
   end

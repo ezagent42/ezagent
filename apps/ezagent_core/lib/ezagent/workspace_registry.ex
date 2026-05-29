@@ -105,7 +105,7 @@ defmodule Ezagent.WorkspaceRegistry do
     s = uri_to_str(session_uri)
 
     case :ets.lookup(@table, s) do
-      [{^s, w}] -> {:ok, Ezagent.URI.parse!(w)}
+      [{^s, w}] -> {:ok, Ezagent.URI.new!(w)}
       [] -> :error
     end
   end

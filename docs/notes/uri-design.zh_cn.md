@@ -41,7 +41,7 @@
 
 - `parse!/1` 的 `@known_schemes` 是 `~w(agent session user resource system)` —— **5 个 scheme**。
 - 实际使用中有 **11+** 个 scheme（见上表），还有 `feishu://` 以及若干单例。
-- 因此 `Ezagent.URI.parse!/1` 在遇到 `workspace://default`、`template://session/X@hash`、`feishu://oc_xxx`、`message://abcd`、`pty-input://default`、`routing-admin://default` 时会崩溃。
+- 因此 `Ezagent.URI.new!/1` 在遇到 `workspace://default`、`template://session/X@hash`、`feishu://oc_xxx`、`message://abcd`、`pty-input://default`、`routing-admin://default` 时会崩溃。
 - 实际情况是大家都直接用 `URI.parse/1`（stdlib）来处理这些 —— 绕开了白名单。今天这个白名单是局部文档，而非被强制执行的不变量。
 - `instance/1` 与 `subresource/1` 通过两个子句实现 scheme 感知：`agent://`（path = `/<name>/<sub>...`）与其它一切（path = `/<sub>...`）。`template://session/X@hash` 之所以能工作，是因为当后续没有路径时 `subresource("/")` 为空；但若有人尝试 `template://session/X@hash/behavior/...`，agent 风格的 2 段切分会错误地把 `X@hash` 当作 name、把 `behavior/...` 当作子资源 —— 这碰巧也是对的！ —— 不过纯属巧合；实际走的是"非 agent"分支，它会吞掉整个路径。
 
@@ -92,7 +92,7 @@ PR-A（PR #132）通过位置切分解决了 **解析器** 的歧义（解析器
 
 ### 2.6 Scheme 白名单漂移
 
-`Ezagent.URI.@known_schemes` 列了 5 个；代码库实际用了 11 个。任何选择 `Ezagent.URI.parse!/1` 而不是 stdlib `URI.parse/1` 的人都会撞上幻象失败。这是文档腐烂，同时也是一个什么都拦不住的安全网。
+`Ezagent.URI.@known_schemes` 列了 5 个；代码库实际用了 11 个。任何选择 `Ezagent.URI.new!/1` 而不是 stdlib `URI.parse/1` 的人都会撞上幻象失败。这是文档腐烂，同时也是一个什么都拦不住的安全网。
 
 ### 2.7 单例合成 scheme 与实例 scheme 形态分歧
 
@@ -206,7 +206,7 @@ PR-A（PR #132）通过位置切分解决了 **解析器** 的歧义（解析器
 
 **现状**：它列了 5 个 scheme；现实有 11+。这是文档漂移。
 
-**提案 A（闭环）**：让 `SpawnRegistry.register/2` 同时调用 `Ezagent.URI.register_scheme/1`。白名单变成由插件喂入的运行时 ETS 表。`Ezagent.URI.parse!/1` 查它。`pty-input` 这类单例在启动时自行注册。
+**提案 A（闭环）**：让 `SpawnRegistry.register/2` 同时调用 `Ezagent.URI.register_scheme/1`。白名单变成由插件喂入的运行时 ETS 表。`Ezagent.URI.new!/1` 查它。`pty-input` 这类单例在启动时自行注册。
 
 **提案 B（删除白名单）**：它什么也拦不住 —— 把它从 `parse!/1` 里去掉，直接委托给 stdlib `URI.parse/1`。
 

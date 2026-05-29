@@ -77,7 +77,7 @@ defmodule EzagentPluginFeishu.MentionParser do
       # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
       # with try/rescue (silent-drop fallback for corrupted registry rows).
       try do
-        case Ezagent.URI.parse!(uri_str) do
+        case Ezagent.URI.new!(uri_str) do
           %URI{scheme: "entity", host: "agent"} = uri -> [uri]
           _ -> []
         end

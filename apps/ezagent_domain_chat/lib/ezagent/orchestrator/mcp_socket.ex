@@ -68,7 +68,7 @@ defmodule Ezagent.Orchestrator.McpSocket do
   def id(socket), do: "orchestrator_socket:" <> URI.to_string(socket.assigns.agent_uri)
 
   defp safe_parse_uri(s) when is_binary(s) do
-    {:ok, Ezagent.URI.parse!(s)}
+    {:ok, Ezagent.URI.new!(s)}
   rescue
     ArgumentError -> :error
   end

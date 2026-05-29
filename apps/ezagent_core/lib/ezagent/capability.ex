@@ -323,7 +323,7 @@ defmodule Ezagent.Capability do
   # WHY this is the correct equality:
   #
   #   URI.parse/1 (deprecated since Elixir 1.13) sets the legacy
-  #   `authority` field; URI.new/1 (which `Ezagent.URI.parse!/1` uses)
+  #   `authority` field; URI.new/1 (which `Ezagent.URI.new!/1` uses)
   #   leaves `authority: nil`. Both yield identical canonical strings
   #   for the same URI, but as structs they differ. Held caps are
   #   deserialized from `users.caps_json` / `kind_snapshots` via
@@ -828,7 +828,7 @@ defmodule Ezagent.Capability do
   end
 
   defp parse_granter(%URI{} = uri), do: uri
-  defp parse_granter(s) when is_binary(s), do: Ezagent.URI.parse!(s)
+  defp parse_granter(s) when is_binary(s), do: Ezagent.URI.new!(s)
 
   defp parse_granter(other) do
     raise ArgumentError,
@@ -896,7 +896,7 @@ defmodule Ezagent.Capability do
   # and crashes anyway; we raise with context).
   defp decode_uri_or_any_strict!("any", _field), do: :any
 
-  defp decode_uri_or_any_strict!(s, _field) when is_binary(s), do: Ezagent.URI.parse!(s)
+  defp decode_uri_or_any_strict!(s, _field) when is_binary(s), do: Ezagent.URI.new!(s)
 
   defp decode_uri_or_any_strict!(other, field) do
     raise ArgumentError,
@@ -974,7 +974,7 @@ defmodule Ezagent.Capability do
   defp uri_or_any_to_string(%URI{} = u), do: URI.to_string(u)
 
   defp string_to_uri_or_any("any"), do: :any
-  defp string_to_uri_or_any(s) when is_binary(s), do: Ezagent.URI.parse!(s)
+  defp string_to_uri_or_any(s) when is_binary(s), do: Ezagent.URI.new!(s)
 
   defp parse_datetime(nil), do: DateTime.utc_now()
 

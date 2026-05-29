@@ -160,7 +160,7 @@ defmodule EzagentWeb.HomeLive do
   # Echo's :receive action emits a chat reply (PR-J), so the user
   # gets a working ping-pong loop out of the box.
   defp join_echo_agent(session_uri, caller_uri) do
-    echo_uri = Ezagent.URI.parse!("entity://agent/system/echo_default")
+    echo_uri = Ezagent.URI.new!("entity://agent/system/echo_default")
     # Make sure the echo Kind is live (spawn is idempotent — returns
     # `{:error, {:already_started, _}}` if already up). Spawn happens
     # in the echo plugin's Application.start; this is a defensive
@@ -199,7 +199,7 @@ defmodule EzagentWeb.HomeLive do
     # cookies (LiveAuth catches these on protected routes; wizard runs
     # outside that live_session and tolerates them).
     try do
-      case Ezagent.URI.parse!(uri_str) do
+      case Ezagent.URI.new!(uri_str) do
         %URI{scheme: "entity"} = uri -> uri
         _ -> Ezagent.Entity.User.admin_uri()
       end

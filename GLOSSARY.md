@@ -970,7 +970,7 @@ Phase 9 §13 的结构特例:`workspace://system` 是**真实** workspace 但 `v
 
 ### 3-segment URI(SPEC v3,Phase 9 PR-2 + PR-7)
 
-Phase 9 之前所有 URI 都是 2-segment authority(`<scheme>://<type>/<name>`,Phase 7 PR 31 SPEC v2)。Phase 9 之后所有 per-tenant scheme(`entity://`, `session://`, `template://`, `resource://`)升级到 3-segment:`<scheme>://<type>/<workspace>/<name>`。`workspace://<name>` 和 `system://<type>/<name>` 不变(workspace 是 tenant root 本身,system 是 cross-cutting)。**为什么(Option A)**:URI 自描述,不需要 out-of-band lookup;auth token 携带完整身份;同 handle 在两个 workspace 就是两个独立 entity(隔离干净);cap matching O(1) 从字符串提取。**不做** Option B(envelope 携带 workspace),因为 ambient context 容易忘 + 数据泄露风险。`Ezagent.URI.parse!/1` parse-time 拒绝 2-segment per-tenant URI(`ArgumentError: <scheme> URI must include workspace segment`)。
+Phase 9 之前所有 URI 都是 2-segment authority(`<scheme>://<type>/<name>`,Phase 7 PR 31 SPEC v2)。Phase 9 之后所有 per-tenant scheme(`entity://`, `session://`, `template://`, `resource://`)升级到 3-segment:`<scheme>://<type>/<workspace>/<name>`。`workspace://<name>` 和 `system://<type>/<name>` 不变(workspace 是 tenant root 本身,system 是 cross-cutting)。**为什么(Option A)**:URI 自描述,不需要 out-of-band lookup;auth token 携带完整身份;同 handle 在两个 workspace 就是两个独立 entity(隔离干净);cap matching O(1) 从字符串提取。**不做** Option B(envelope 携带 workspace),因为 ambient context 容易忘 + 数据泄露风险。`Ezagent.URI.new!/1` parse-time 拒绝 2-segment per-tenant URI(`ArgumentError: <scheme> URI must include workspace segment`)。
 
 参考: ARCHITECTURE.md Decision #145,SPEC v3 §3,`docs/notes/uri-design.md` §5.15
 

@@ -55,7 +55,7 @@ defmodule EzagentPluginLiveview.AutoDeriveLive do
     # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
     # with try/rescue keeping the nil-fallback display semantics.
     try do
-      Ezagent.URI.parse!(URI.decode(encoded))
+      Ezagent.URI.new!(URI.decode(encoded))
     rescue
       ArgumentError -> nil
     end
@@ -76,7 +76,7 @@ defmodule EzagentPluginLiveview.AutoDeriveLive do
   def render(assigns) do
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
-        URI.to_string(Map.get(assigns, :current_entity_uri) || Ezagent.URI.parse!("entity://user/system/admin"))
+        URI.to_string(Map.get(assigns, :current_entity_uri) || Ezagent.URI.new!("entity://user/system/admin"))
       end)
 
     ~H"""

@@ -28,7 +28,7 @@ defmodule Ezagent.Ecto.URI do
   # Cast: input → in-memory %URI{} (used by Ecto.Changeset.cast/3).
   #
   # SPEC 2026-05-27-uri-canonicalization §3.7 — Ezagent-scheme strings
-  # route through `Ezagent.URI.parse!/1` (the canonical chokepoint).
+  # route through `Ezagent.URI.new!/1` (the canonical chokepoint).
   # Non-Ezagent strings fall back to strict `URI.new/1` so external
   # URLs (e.g. http feishu webhook addresses) still load. The bare
   # `URI.new/1` calls below are the §5.2.1 allowlisted external-URI
@@ -38,7 +38,7 @@ defmodule Ezagent.Ecto.URI do
 
   def cast(s) when is_binary(s) do
     try do
-      {:ok, Ezagent.URI.parse!(s)}
+      {:ok, Ezagent.URI.new!(s)}
     rescue
       ArgumentError ->
         case URI.new(s) do
@@ -54,7 +54,7 @@ defmodule Ezagent.Ecto.URI do
   @impl true
   def load(s) when is_binary(s) do
     try do
-      {:ok, Ezagent.URI.parse!(s)}
+      {:ok, Ezagent.URI.new!(s)}
     rescue
       ArgumentError ->
         case URI.new(s) do

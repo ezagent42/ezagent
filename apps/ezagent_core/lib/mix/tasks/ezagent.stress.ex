@@ -501,7 +501,7 @@ defmodule Mix.Tasks.Ezagent.Stress do
 
   # --- misc --------------------------------------------------------------
 
-  defp uri!(s), do: Ezagent.URI.parse!(s)
+  defp uri!(s), do: Ezagent.URI.new!(s)
 
   defp timed(fun) do
     t0 = System.monotonic_time(:microsecond)

@@ -74,7 +74,7 @@ defmodule Ezagent.AgentLineage do
     a = uri_to_str(agent_uri)
 
     case :ets.lookup(@table, a) do
-      [{^a, s}] -> {:ok, Ezagent.URI.parse!(s)}
+      [{^a, s}] -> {:ok, Ezagent.URI.new!(s)}
       [] -> :error
     end
   end

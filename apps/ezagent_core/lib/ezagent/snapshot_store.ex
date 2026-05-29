@@ -293,7 +293,7 @@ defmodule Ezagent.SnapshotStore do
         parsed =
           case uri do
             %URI{} = u -> u
-            s when is_binary(s) -> Ezagent.URI.parse!(s)
+            s when is_binary(s) -> Ezagent.URI.new!(s)
           end
 
         case Ezagent.Persistence.workspace_uri_for(parsed) do

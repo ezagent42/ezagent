@@ -151,7 +151,7 @@ defmodule Ezagent.Routing.ResolverMentionGatedTest do
     end
 
     # codex HIGH-1: the real mention sources build `%URI{}` via
-    # `URI.new/URI.new!` — NOT `Ezagent.URI.parse!`. A hand-built
+    # `URI.new/URI.new!` — NOT `Ezagent.URI.new!`. A hand-built
     # struct carrying an extra path segment violates the SPEC-v3
     # 3-segment / reserved-sub-resource rule but, before the fix,
     # passed through `valid_member?/2` unchecked because only the
@@ -160,7 +160,7 @@ defmodule Ezagent.Routing.ResolverMentionGatedTest do
     test "(e) a %URI{} agent member with an extra path segment is dropped" do
       # entity://agent/team-alpha/cc_x/extra — 4-segment, reserved
       # sub-resource position. `URI.new!/1` builds it happily; the
-      # strict `Ezagent.URI.parse!/1` rejects it.
+      # strict `Ezagent.URI.new!/1` rejects it.
       bad = %URI{scheme: "entity", host: "agent", path: "/team-alpha/cc_x/extra"}
       m = Message.new(URI.new!(@sender), %{text: "hi", attachments: []}, mentions: [bad])
       # Present in members — the membership check alone would have
@@ -244,7 +244,7 @@ defmodule Ezagent.Routing.ResolverMentionGatedTest do
 
     # codex HIGH-1: a hand-built %URI{} struct with an extra path
     # segment must fail identically to its binary equivalent — the
-    # strict `Ezagent.URI.parse!/1` validation applies to BOTH input
+    # strict `Ezagent.URI.new!/1` validation applies to BOTH input
     # forms, not just binaries.
     test "false for a %URI{} struct with an extra path segment (binary + struct parity)" do
       bad_str = "entity://agent/team-alpha/cc_x/extra"

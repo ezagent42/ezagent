@@ -27,7 +27,7 @@ struct equality on `%URI{}` values. For URIs produced by two different
 parsers this pattern silently FAILED:
 
 - `URI.parse/1` (deprecated since Elixir 1.13) sets the legacy
-  `authority` field; `URI.new!/1` (used by `Ezagent.URI.parse!/1`)
+  `authority` field; `URI.new!/1` (used by `Ezagent.URI.new!/1`)
   leaves `authority: nil`. Both stringify identically.
 
 The held self-Identity cap that `Behavior.Identity.add_owner_identity_cap/2`

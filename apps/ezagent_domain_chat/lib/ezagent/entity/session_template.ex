@@ -185,7 +185,7 @@ defmodule Ezagent.Entity.SessionTemplate do
             "(e.g. \"system\" for admin templates, \"team-alpha\" for tenant)."
         )
 
-    Ezagent.URI.parse!("template://session/#{workspace}/#{name}@#{version_hash}")
+    Ezagent.URI.new!("template://session/#{workspace}/#{name}@#{version_hash}")
   end
 
   @doc """
@@ -422,7 +422,7 @@ defmodule Ezagent.Entity.SessionTemplate do
          {:ok, _pid} <- ensure_kind_alive(parent_uri) do
       args = build_fork_args(new_name, opts, caller_uri)
       ctx = build_fork_ctx(caller_uri, caps)
-      target = Ezagent.URI.parse!("#{URI.to_string(parent_uri)}?action=template.fork")
+      target = Ezagent.URI.new!("#{URI.to_string(parent_uri)}?action=template.fork")
 
       case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
              target: target,
@@ -582,7 +582,7 @@ defmodule Ezagent.Entity.SessionTemplate do
           # Action `:any` preserves the pre-SPEC predicate semantics;
           # a granular per-action gate is a future PR.
           action: :any,
-          instance: Ezagent.URI.parse!("template://session/#{workspace_name}/_preflight@_"),
+          instance: Ezagent.URI.new!("template://session/#{workspace_name}/_preflight@_"),
           workspace_uri: workspace_uri
         }
 
@@ -624,7 +624,7 @@ defmodule Ezagent.Entity.SessionTemplate do
         granted_at: DateTime.utc_now()
       }
 
-      target = Ezagent.URI.parse!("#{URI.to_string(owner_uri)}?action=identity.grant_cap")
+      target = Ezagent.URI.new!("#{URI.to_string(owner_uri)}?action=identity.grant_cap")
 
       case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
              target: target,
@@ -683,7 +683,7 @@ defmodule Ezagent.Entity.SessionTemplate do
 
   defp workspace_uri(other) do
     case workspace_segment(other) do
-      name when is_binary(name) -> {:ok, Ezagent.URI.parse!("workspace://#{name}")}
+      name when is_binary(name) -> {:ok, Ezagent.URI.new!("workspace://#{name}")}
       nil -> :error
     end
   end
@@ -715,7 +715,7 @@ defmodule Ezagent.Entity.SessionTemplate do
   # CapBAC-checked against the caller's real authority. Only
   # `persist_version_as_system/2` passes a system (`admin`) ctx.
   defp dispatch_write(uri, content, ctx) do
-    target = Ezagent.URI.parse!("#{URI.to_string(uri)}?action=template.write")
+    target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=template.write")
 
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
       target: target,

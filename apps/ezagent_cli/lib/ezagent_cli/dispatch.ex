@@ -126,8 +126,8 @@ defmodule EzagentCli.Dispatch do
     # with try/rescue: a full Ezagent URI is parsed canonical + action
     # appended; bare instance falls back to scheme-prefix legacy form.
     try do
-      parsed_uri = Ezagent.URI.parse!(instance)
-      Ezagent.URI.parse!(URI.to_string(parsed_uri) <> action_qs)
+      parsed_uri = Ezagent.URI.new!(instance)
+      Ezagent.URI.new!(URI.to_string(parsed_uri) <> action_qs)
     rescue
       ArgumentError ->
         # Bare name — fall back to legacy scheme = type_name + promote.
@@ -135,7 +135,7 @@ defmodule EzagentCli.Dispatch do
         caller_workspace = workspace_name_from_caller(caller_uri)
         instance_class = Map.get(options, :instance_class)
         promoted_instance = promote_to_3seg(scheme, instance, caller_workspace, instance_class)
-        Ezagent.URI.parse!("#{scheme}://#{promoted_instance}#{action_qs}")
+        Ezagent.URI.new!("#{scheme}://#{promoted_instance}#{action_qs}")
     end
   end
 
@@ -266,7 +266,7 @@ defmodule EzagentCli.Dispatch do
     # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
     # with try/rescue preserving the `:bad_as_uri` error contract.
     try do
-      uri = Ezagent.URI.parse!(as_str)
+      uri = Ezagent.URI.new!(as_str)
       caps = lookup_identity_caps(uri)
       {uri, caps}
     rescue
