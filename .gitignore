@@ -50,3 +50,8 @@ docs/phase-specs/phase3/artifacts/phase3-multi-agent*
 __pycache__/
 *.pyc
 .worktrees/
+
+# workspace artifacts (do not track)
+.DS_Store
+**/.DS_Store
+/deps
