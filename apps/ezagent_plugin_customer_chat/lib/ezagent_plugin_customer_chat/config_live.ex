@@ -35,6 +35,7 @@ defmodule EzagentPluginCustomerChat.ConfigLive do
     |> assign(:source, source)
     |> assign(:has_previous, SoulStore.has_previous?(tenant, @role))
     |> assign(:flash_error, nil)
+    |> assign(:confirm_reset, false)
   end
 
   @impl true
@@ -63,9 +64,18 @@ defmodule EzagentPluginCustomerChat.ConfigLive do
     end
   end
 
+  def handle_event("reset_prompt", _params, socket) do
+    {:noreply, assign(socket, :confirm_reset, true)}
+  end
+
+  def handle_event("reset_cancel", _params, socket) do
+    {:noreply, assign(socket, :confirm_reset, false)}
+  end
+
   def handle_event("reset", _params, socket) do
     tenant = socket.assigns.tenant
     :ok = SoulStore.reset(tenant, @role)
+    # load/2 resets :confirm_reset back to false
     {:noreply, socket |> load(tenant) |> put_flash(:info, "Reset to default.")}
   end
 
@@ -108,13 +118,30 @@ defmodule EzagentPluginCustomerChat.ConfigLive do
             Revert to previous
           </button>
           <button
+            :if={not @confirm_reset}
             type="button"
-            phx-click="reset"
-            data-confirm="Reset to the default soul? This discards your edits."
+            phx-click="reset_prompt"
             class="px-3 py-1.5 text-sm rounded-md border border-rose-300 text-rose-700 hover:bg-rose-50"
           >
             Reset to default
           </button>
+          <span :if={@confirm_reset} class="flex items-center gap-2">
+            <span class="text-sm text-zinc-600">Reset to default? This discards your edits.</span>
+            <button
+              type="button"
+              phx-click="reset"
+              class="px-3 py-1.5 text-sm rounded-md bg-rose-600 text-white hover:bg-rose-700"
+            >
+              Confirm reset
+            </button>
+            <button
+              type="button"
+              phx-click="reset_cancel"
+              class="px-3 py-1.5 text-sm rounded-md border border-zinc-300 text-zinc-700 hover:bg-zinc-100"
+            >
+              Cancel
+            </button>
+          </span>
         </div>
       </form>
     </div>
