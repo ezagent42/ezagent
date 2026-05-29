@@ -1,8 +1,8 @@
-defmodule EzagentPluginLiveview.CustomerChat.ThemeTest do
+defmodule EzagentPluginCustomerChat.ThemeTest do
   # async: false — test 3 mutates global Application env (:customer_chat_themes);
   # process-global put/delete must not race with concurrent cases.
   use ExUnit.Case, async: false
-  alias EzagentPluginLiveview.CustomerChat.Theme
+  alias EzagentPluginCustomerChat.Theme
 
   test "unknown tenant returns defaults with the tenant title interpolated" do
     t = Theme.for_tenant("no_such_tenant")
@@ -21,10 +21,10 @@ defmodule EzagentPluginLiveview.CustomerChat.ThemeTest do
   end
 
   test "config override beats fixture file" do
-    Application.put_env(:ezagent_plugin_liveview, :customer_chat_themes, %{
+    Application.put_env(:ezagent_plugin_customer_chat, :customer_chat_themes, %{
       "acme" => %{"title" => "Overridden", "primary_color" => "#000000"}
     })
-    on_exit(fn -> Application.delete_env(:ezagent_plugin_liveview, :customer_chat_themes) end)
+    on_exit(fn -> Application.delete_env(:ezagent_plugin_customer_chat, :customer_chat_themes) end)
 
     t = Theme.for_tenant("acme")
     assert t.title == "Overridden"

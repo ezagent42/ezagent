@@ -1,10 +1,10 @@
-defmodule EzagentPluginLiveview.CustomerChat.Theme do
+defmodule EzagentPluginCustomerChat.Theme do
   @moduledoc """
   Per-tenant customer-chat theme. Config-driven — NO hardcoded tenant
   data (migration constraint #1). Resolution order (later wins):
     1. built-in defaults
     2. `priv/customer_chat_themes/<tenant>.json` fixture (if present)
-    3. `config :ezagent_plugin_liveview, :customer_chat_themes` map (prod override)
+    3. `config :ezagent_plugin_customer_chat, :customer_chat_themes` map (prod override)
   """
 
   @type t :: %{
@@ -35,7 +35,7 @@ defmodule EzagentPluginLiveview.CustomerChat.Theme do
   end
 
   defp file_theme(tenant) do
-    path = Path.join(:code.priv_dir(:ezagent_plugin_liveview), "customer_chat_themes/#{tenant}.json")
+    path = Path.join(:code.priv_dir(:ezagent_plugin_customer_chat), "customer_chat_themes/#{tenant}.json")
 
     with {:ok, body} <- File.read(path),
          {:ok, map} <- Jason.decode(body) do
@@ -46,7 +46,7 @@ defmodule EzagentPluginLiveview.CustomerChat.Theme do
   end
 
   defp config_theme(tenant) do
-    :ezagent_plugin_liveview
+    :ezagent_plugin_customer_chat
     |> Application.get_env(:customer_chat_themes, %{})
     |> Map.get(tenant, %{})
   end
