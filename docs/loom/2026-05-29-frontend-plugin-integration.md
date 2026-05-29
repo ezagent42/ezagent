@@ -79,6 +79,8 @@ ESR 核心总侵入 = **1 行 `forward` + 1 个 workspace LV 链接**。唯一�
 
 env 开关建议:用一个 build-time flag(如 `NEXT_PUBLIC_ESR_MODE=1` 或 `process.env.NODE_ENV==='production'` + 自定义变量)统一切 basePath / chat-url。
 
+> **Node 只在前端仓库、只在构建/调试时出现**:`pnpm dev`(可选,独立预览)和 `pnpm build`(改前端时重出 dist)都在 `Desktop\ai-ui-builder` 跑。**ESR 永不跑 Node / 永不跑 dev** —— `mix phx.server` 直接喂已提交的 dist。
+
 ## 6. ESR 端:WebPlug
 
 `EzagentPluginLoom.WebPlug`(`use Plug.Router`),经 `forward "/loom"` 挂载 —— **forward 会剥掉 `/loom` 前缀**,所以 plug 内部看到的是相对路径。
