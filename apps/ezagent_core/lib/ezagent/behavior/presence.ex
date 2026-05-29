@@ -7,9 +7,10 @@ defmodule Ezagent.Behavior.Presence do
   the rest of CapBAC (`%Capability{kind, behavior: Ezagent.Behavior.Presence,
   instance, workspace_uri}`).
 
-  `dispatchable?/0` returns `false`, so `Ezagent.CapabilityRegistry.register/3`
+  `dispatchable?/0` returns `false`, so the CapabilityRegistry
+  registration (via the public `Ezagent.Behavior` author surface)
   records the subject but does NOT write to `BehaviorRegistry` —
-  `Invocation.dispatch/1` can never accidentally invoke `:online`.
+  `Router.dispatch/1` can never accidentally invoke `:online`.
   `handle_online/2` raises with a clear error if dispatch ever reaches
   it (defence in depth; should be unreachable given `dispatchable?: false`).
 

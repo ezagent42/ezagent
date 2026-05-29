@@ -435,7 +435,14 @@ defmodule Ezagent.Behavior.IdentityAdmin do
        when is_atom(behavior) do
     if Code.ensure_loaded?(behavior) and
          function_exported?(behavior, :data_owner, 1) do
-      case Ezagent.CapabilityRegistry.data_owner_of(behavior, instance) do
+      # SPEC `2026-05-29-dispatch-returning-effect.md` §2b — call
+      # the public re-export on `Ezagent.Behavior` rather than reaching
+      # into `Ezagent.CapabilityRegistry` directly. §11 Gate 6 grep
+      # gate forbids plugin Behavior modules from talking to the
+      # registry as an implementation detail; the Behavior helper is
+      # the sanctioned author-facing surface. The underlying logic is
+      # unchanged (the re-export is a thin delegate).
+      case Ezagent.Behavior.data_owner_of(behavior, instance) do
         %URI{} = owner ->
           caller = Map.get(ctx, :caller)
 

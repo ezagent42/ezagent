@@ -33,7 +33,7 @@ defmodule Ezagent.Behavior.Pty do
 
   ## Critical invariant (IMPLEMENTATION_ROADMAP §1.3 #1)
 
-  Every operator-typed byte goes through `Ezagent.Invocation.dispatch`
+  Every operator-typed byte goes through `Ezagent.Router.dispatch`
   → CapBAC step 5.5 → audit telemetry → PtyServer write. The xterm.js
   hook never touches the PtyServer directly or pushes raw PubSub.
 

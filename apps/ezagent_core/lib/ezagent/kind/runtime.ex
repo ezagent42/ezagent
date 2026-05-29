@@ -10,7 +10,16 @@ defmodule Ezagent.Kind.Runtime do
   each effect bucket against the rest of the system in the following
   fixed order:
 
-      State → Halt-check → Saga → Dispatches → Notifies → Events → Terminations
+      State → Halt-check → Saga → DispatchesReturning → Dispatches
+        → Notifies → Events → Terminations
+
+  (`DispatchesReturning` was inserted by SPEC
+  `2026-05-29-dispatch-returning-effect.md` — it runs synchronous
+  `Router.dispatch/1` calls whose return value binds into the shared
+  `returning` map for downstream `{:ref, ...}` substitution. It runs
+  AFTER saga and BEFORE the regular `:dispatch` bucket so a returning
+  dispatch's value is available to any `{:ref, ...}` reference in the
+  remaining buckets.)
 
   Rationale (per SPEC `2026-05-28-router-behavior-kind-architecture.md`
   §4.4 + Phase 1.5b directive):
@@ -817,20 +826,103 @@ defmodule Ezagent.Kind.Runtime do
     end
   end
 
-  # Bucket execution — runs Saga → Dispatches → Notifies → Events →
-  # Terminations in that order. First failing dispatch / saga short-
-  # circuits with `{:error, _}`. Notifies / events / terminations
-  # NEVER abort the dispatch (broadcasts/audit/termination are
-  # observational + idempotent; their failure is logged but the
-  # dispatch still completes from the caller's POV — the slice WILL
-  # be committed and the slice_change event WILL fire).
+  # Bucket execution — runs Saga → DispatchesReturning → Dispatches →
+  # Notifies → Events → Terminations in that order. First failing
+  # dispatch / saga / dispatch_returning short-circuits with
+  # `{:error, _}`. Notifies / events / terminations NEVER abort the
+  # dispatch (broadcasts/audit/termination are observational +
+  # idempotent; their failure is logged but the dispatch still
+  # completes from the caller's POV — the slice WILL be committed
+  # and the slice_change event WILL fire).
+  #
+  # 2026-05-29 dispatch_returning SPEC §5 — `:dispatch_returning`
+  # runs IMMEDIATELY AFTER saga + BEFORE regular `:dispatch` so the
+  # `returning` map is populated before any downstream effect that
+  # might reference a `{:ref, name, path}` from a returning
+  # dispatch. We THEN re-substitute refs against the freshly-
+  # bound names in the remaining buckets (dispatches/notifies/
+  # events) — `apply_effects/2`'s earlier substitution only saw
+  # `:effect_returning` bindings; this second pass covers
+  # `:dispatch_returning` bindings.
   defp execute_buckets(buckets, ctx) do
     with :ok <- execute_saga(buckets.saga, ctx),
-         :ok <- execute_dispatches(buckets.dispatches, ctx) do
-      execute_notifies(buckets.notifies)
-      execute_events(buckets.events, ctx)
-      execute_terminations(buckets.terminations, ctx)
-      :ok
+         {:ok, returning2} <-
+           execute_dispatches_returning(
+             Map.get(buckets, :dispatches_returning, []),
+             buckets.returning,
+             ctx
+           ) do
+      # Re-substitute refs in the buckets that haven't run yet, using
+      # the FULL returning map (effect_returning + dispatch_returning
+      # bindings). `apply_effects/2`'s first pass already substituted
+      # the `:effect_returning` portion; this pass covers the new
+      # `:dispatch_returning` bindings without losing the earlier ones
+      # (same module, same predicate — idempotent on already-
+      # substituted leaves).
+      dispatches = Enum.map(buckets.dispatches, &Ezagent.Behavior.substitute_refs(&1, returning2))
+      notifies = Enum.map(buckets.notifies, &Ezagent.Behavior.substitute_refs(&1, returning2))
+      events = Enum.map(buckets.events, &Ezagent.Behavior.substitute_refs(&1, returning2))
+
+      with :ok <- execute_dispatches(dispatches, ctx) do
+        execute_notifies(notifies)
+        execute_events(events, ctx)
+        execute_terminations(buckets.terminations, ctx)
+        :ok
+      end
+    end
+  end
+
+  # 2026-05-29 dispatch_returning SPEC §4-6 — synchronously run each
+  # `:dispatch_returning` effect through `Router.dispatch/1`, binding
+  # successes into the `returning` accumulator. Any failure short-
+  # circuits with `{:error, {:dispatch_returning_failed, name, reason}}`
+  # — the handler asked for the dispatch's value to make a downstream
+  # decision; if the dispatch failed, the safe semantics is abort.
+  #
+  # Cmds may reference earlier `:effect_returning`/`:dispatch_returning`
+  # bindings via `{:ref, ...}`. We substitute against `returning_acc`
+  # BEFORE handing the Cmd to the Router so the dispatch sees concrete
+  # values.
+  #
+  # Caller / trace_id enrichment mirrors `enrich_dispatch_cmd/2` (the
+  # regular `:dispatch` path) so a handler-supplied Cmd without an
+  # explicit caller inherits `self_uri` — same hygiene as `:dispatch`.
+  defp execute_dispatches_returning([], returning, _ctx), do: {:ok, returning}
+
+  defp execute_dispatches_returning(
+         [{:dispatch_returning, %Ezagent.Cmd{} = cmd, opts} | rest],
+         returning_acc,
+         ctx
+       ) do
+    name = Keyword.fetch!(opts, :bind_as)
+
+    # Substitute refs in the Cmd struct against bindings collected so
+    # far. `substitute_refs/2` walks the struct fields, so
+    # `cmd.target`, `cmd.args`, and `cmd.ctx` all get the substitution.
+    resolved_cmd =
+      cmd
+      |> Ezagent.Behavior.substitute_refs(returning_acc)
+      |> enrich_dispatch_cmd(ctx)
+
+    case Ezagent.Router.dispatch(resolved_cmd) do
+      {:ok, value} ->
+        execute_dispatches_returning(rest, Map.put(returning_acc, name, value), ctx)
+
+      :ok ->
+        # Cast / fire-and-forget. Bind `:ok` so any downstream
+        # `{:ref, name}` still substitutes deterministically. Authors
+        # who care about the value should set `reply: {:caller_inbox, _}`
+        # on the Cmd; see SPEC §4b + §11 attack vector 5.
+        execute_dispatches_returning(rest, Map.put(returning_acc, name, :ok), ctx)
+
+      {:error, reason} ->
+        Logger.warning(
+          "Ezagent.Kind.Runtime: :dispatch_returning failed; aborting handler: " <>
+            "bind_as=#{inspect(name)} target=#{inspect(cmd.target)} " <>
+            "action=#{inspect(cmd.action)} reason=#{inspect(reason)}"
+        )
+
+        {:error, {:dispatch_returning_failed, name, reason}}
     end
   end
 

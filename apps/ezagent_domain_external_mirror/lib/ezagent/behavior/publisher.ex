@@ -24,7 +24,7 @@ defmodule Ezagent.Behavior.Publisher do
   `Ezagent.Entity.Session` in `apps/ezagent_domain_chat/`. The
   Session module declares `@behaviour Ezagent.Behavior.Publisher`
   and exposes the four callbacks as module functions that route
-  through `Ezagent.Invocation.dispatch/1` against the session URI
+  through `Ezagent.Router.dispatch/1` against the session URI
   (subscribe/snapshot/history are dispatchable actions on the
   `Ezagent.Behavior.Publisher.SessionImpl` Kind-Behavior — caps gate
   via standard step 5.5).

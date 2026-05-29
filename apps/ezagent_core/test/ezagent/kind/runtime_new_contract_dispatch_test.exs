@@ -135,6 +135,25 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
       caps: [:order_trace],
       modes: [:call]
 
+    # SPEC 2026-05-29 `:dispatch_returning` exercising actions.
+    action :dispatch_returning_to,
+      args: %{target: :string},
+      returns: :ok,
+      caps: [:dispatch_returning_to],
+      modes: [:call]
+
+    action :dispatch_returning_with_ref,
+      args: %{target: :string},
+      returns: :ok,
+      caps: [:dispatch_returning_with_ref],
+      modes: [:call]
+
+    action :dispatch_returning_mixed_with_effect_returning,
+      args: %{target: :string},
+      returns: :ok,
+      caps: [:dispatch_returning_mixed_with_effect_returning],
+      modes: [:call]
+
     def state_slice, do: :new_contract
 
     def handle_bump(_args, ctx) do
@@ -253,6 +272,64 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
          {:emit, :order_b, %{}}
        ]}
     end
+
+    # SPEC 2026-05-29 dispatch_returning handlers.
+
+    def handle_dispatch_returning_to(%{target: target_str}, _ctx) do
+      # Single dispatch_returning effect against a missing actor —
+      # the executor's `execute_dispatches_returning/3` will surface
+      # the Router.dispatch failure as
+      # `{:error, {:dispatch_returning_failed, name, reason}}`.
+      cmd =
+        Ezagent.Cmd.new(
+          target_str,
+          :bump,
+          %{},
+          %{caller: :system, reply: {:caller_inbox, self()}, caps: MapSet.new()}
+        )
+
+      {:ok, :ok, [{:dispatch_returning, cmd, bind_as: :bumped}]}
+    end
+
+    def handle_dispatch_returning_with_ref(%{target: target_str}, _ctx) do
+      # dispatch_returning followed by a downstream :notify whose
+      # payload references the bound value via `{:ref, name, path}`.
+      # When the dispatch fails, the executor aborts BEFORE the
+      # notify runs — but this test exercises ONLY the binding-shape
+      # path through the executor (via the deliberate-failure mode).
+      cmd =
+        Ezagent.Cmd.new(
+          target_str,
+          :bump,
+          %{},
+          %{caller: :system, reply: {:caller_inbox, self()}, caps: MapSet.new()}
+        )
+
+      {:ok, :ok,
+       [
+         {:dispatch_returning, cmd, bind_as: :bumped},
+         {:notify, "test:dr-ref:notify", {:ref, :bumped, [:count]}}
+       ]}
+    end
+
+    def handle_dispatch_returning_mixed_with_effect_returning(%{target: target_str}, _ctx) do
+      # Two returning effects in one handler. The executor must run
+      # them in declared order, populating the shared `returning` map.
+      cmd =
+        Ezagent.Cmd.new(
+          target_str,
+          :bump,
+          %{},
+          %{caller: :system, reply: {:caller_inbox, self()}, caps: MapSet.new()}
+        )
+
+      {:ok, :ok,
+       [
+         {:effect_returning, fn -> %{token: :token_a} end, [], bind_as: :first},
+         {:dispatch_returning, cmd, bind_as: :second},
+         {:set, :marker_first, {:ref, :first, [:token]}}
+       ]}
+    end
   end
 
   defmodule MixedKind do
@@ -295,6 +372,16 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
     :ok = BehaviorRegistry.register(MixedKind, :halt_after_set_and_notify, NewContractBehavior)
     :ok = BehaviorRegistry.register(MixedKind, :multi_effect, NewContractBehavior)
     :ok = BehaviorRegistry.register(MixedKind, :order_trace, NewContractBehavior)
+    # SPEC 2026-05-29 dispatch_returning actions.
+    :ok = BehaviorRegistry.register(MixedKind, :dispatch_returning_to, NewContractBehavior)
+    :ok = BehaviorRegistry.register(MixedKind, :dispatch_returning_with_ref, NewContractBehavior)
+
+    :ok =
+      BehaviorRegistry.register(
+        MixedKind,
+        :dispatch_returning_mixed_with_effect_returning,
+        NewContractBehavior
+      )
 
     self_uri = URI.parse("entity://agent/team-alpha/runtime-new-contract-test")
 
@@ -627,6 +714,80 @@ defmodule Ezagent.Kind.RuntimeNewContractDispatchTest do
       # is synchronous from the broadcaster's POV when local).
       assert_receive :first_notify, 500
       assert_receive :second_notify, 500
+    end
+  end
+
+  # ===============================================================
+  # SPEC 2026-05-29 — `:dispatch_returning` effect executor
+  # (full grammar — happy path / multi-step bind / failure / mixed
+  # with `:effect_returning`)
+  # ===============================================================
+
+  describe "SPEC 2026-05-29 — :dispatch_returning failure mode" do
+    test "{:error, ...} from Router.dispatch surfaces as :dispatch_returning_failed",
+         %{state: state, self_uri: self_uri} do
+      # The dispatched Cmd targets a URI that has no live Kind process.
+      # Router.dispatch returns `{:error, :no_such_actor}`; the executor
+      # MUST surface that as `{:error, {:dispatch_returning_failed, :bumped, :no_such_actor}}`
+      # — NOT silently succeed (pre-SPEC behaviour for `:dispatch`) and
+      # NOT collapse into the generic `:effect_dispatch_failed` wrapper.
+      target_str = "entity://agent/team-alpha/dr-failure-target"
+
+      inv = invocation(self_uri, :dispatch_returning_to, %{target: target_str})
+
+      assert {:error, {:dispatch_returning_failed, :bumped, :no_such_actor}} =
+               Ezagent.Kind.Runtime.handle_dispatch(inv, state, MixedKind, self_uri)
+    end
+
+    test "failure aborts downstream effects — :notify after failing :dispatch_returning never fires",
+         %{state: state, self_uri: self_uri} do
+      # Subscribe to the topic referenced by the notify — if it fires,
+      # the executor incorrectly ran past the failure.
+      :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, "test:dr-ref:notify")
+
+      target_str = "entity://agent/team-alpha/dr-ref-failure-target"
+      inv = invocation(self_uri, :dispatch_returning_with_ref, %{target: target_str})
+
+      assert {:error, {:dispatch_returning_failed, :bumped, :no_such_actor}} =
+               Ezagent.Kind.Runtime.handle_dispatch(inv, state, MixedKind, self_uri)
+
+      # The notify referencing {:ref, :bumped, [:count]} MUST NOT have
+      # fired — the executor short-circuited at the failed returning
+      # dispatch.
+      refute_receive _any, 100
+    end
+  end
+
+  describe "SPEC 2026-05-29 — :dispatch_returning mixed with :effect_returning" do
+    test "both bindings populate; downstream :set substitutes the :effect_returning ref",
+         %{state: state, self_uri: self_uri} do
+      # The :dispatch_returning side fails (no live target) — we
+      # assert that the failure carries the :second binding name,
+      # proving the executor reached the :dispatch_returning bucket
+      # AFTER processing the :effect_returning bucket (which had
+      # populated `returning` before the :dispatch_returning ran).
+      target_str = "entity://agent/team-alpha/dr-mixed-failure-target"
+
+      inv =
+        invocation(
+          self_uri,
+          :dispatch_returning_mixed_with_effect_returning,
+          %{target: target_str}
+        )
+
+      # The handler's effects list is:
+      #   [{:effect_returning, fn, [], bind_as: :first},
+      #    {:dispatch_returning, cmd, bind_as: :second},
+      #    {:set, :marker_first, {:ref, :first, [:token]}}]
+      #
+      # `apply_effects/2` runs the effect_returning bucket (populating
+      # :first = %{token: :token_a}) AND substitutes the :set effect's
+      # ref BEFORE the executor handles the buckets. The executor THEN
+      # runs the :dispatch_returning bucket, which fails — surfacing
+      # `{:dispatch_returning_failed, :second, _}` (the failing
+      # binding's name).
+      assert {:error, {:dispatch_returning_failed, :second, :no_such_actor}} =
+               Ezagent.Kind.Runtime.handle_dispatch(inv, state, MixedKind, self_uri)
     end
   end
 end
