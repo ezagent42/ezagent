@@ -443,3 +443,24 @@ The "PTY-env-blocked" note above was on the right track but the root cause was
 
 Net: env fix verified (the original blocker); live AI reply now blocked only by
 (1)/(2), both distinct from the env fix and scope #1.
+
+**Finding (1) FIXED** (commit `4a283a35`, see `fix(cc,pty): pass soul via
+--append-system-prompt-file; guard oversized commands`):
+- cc `build_soul_args/3` writes (preamble + soul) to a per-agent file under the
+  cwd and passes `--append-system-prompt-file <path>` — the soul is no longer an
+  argv element, so it can't blow the `{packet,2}` command budget. (`claude` CLI
+  supports the `-file` form; verified.)
+- `Pty.Server` adds a defensive size guard (`estimated_command_size/2` +
+  `{:error, {:command_too_large, size}}`) so ANY future oversized command fails
+  that one spawn instead of crashing the shared `:exec`.
+- Tests: `cc_agent_soul_args_test.exs` (4 — file-not-inline; 89 KB soul keeps
+  argv <1 KB) + `server_command_size_test.exs` (3). **Verified live:** a new
+  cinnox conversation with the **89 KB fixture soul now spawns claude**
+  (`os_pid` assigned, **0 `:einval`**, `.esr-system-prompt.md` written) — pre-fix
+  this exact case crashed `:exec` node-wide.
+- This also resolves the boot fragility: a persisted large-soul agent now
+  eager-spawns fine (no node-wide crash).
+
+Remaining: only (2), the cc **bridge handshake** `:timeout` (claude launches but
+never announces) — a cc-onboarding/MCP layer, the last gate before a full live
+customer→claude→reply on this box.

@@ -276,6 +276,37 @@ Either use `run_link` (which gives you `{:EXIT, pid, reason}` via the process li
 
 Applies to `{:cd, ...}` too.
 
+### ❌ The `{packet, 2}` 64 KB command-size limit (huge env OR huge args)
+
+erlexec frames **each run command** to its `exec-port` over a `{packet, 2}`
+channel — **max 65535 bytes** (`deps/erlexec/src/exec.erl`, ~line 989). The
+whole run command (argv + `{:env, ...}` + opts) is `term_to_binary`-encoded into
+that one frame. Exceed it and the BEAM port write fails with **`:einval`**, which
+crashes the **shared, node-wide `:exec` manager** — every *subsequent* `run`
+returns **`:no_pty`**, not just the oversized one. It is NOT a PTY/OTP-version
+bug; bare `:pty` allocates fine. It's purely command *size*.
+
+Two real ways to blow it (both bit ezagent):
+
+```elixir
+# ❌ Splatting the whole inherited env into {:env, ...}
+{:env, :os.getenv() |> Enum.map(&split/1)}   # a big shell env → >64 KB → :einval
+# ✅ Pass ONLY the vars you add/override. The child still inherits the BEAM's
+#    env via exec-port's normal OS-process inheritance.
+
+# ❌ A large argument (e.g. a system prompt inlined on the command line)
+[~c"claude", ~c"--append-system-prompt", big_89kb_charlist]   # >64 KB → :einval
+# ✅ Write large content to a FILE and pass the path (e.g.
+#    --append-system-prompt-file <path>); a path is a handful of bytes.
+```
+
+Defensive backstop: before `:exec.run`, check
+`byte_size(:erlang.term_to_binary({exec_cmd, env}))` against the limit and fail
+THAT spawn (`{:error, {:command_too_large, size}}`) rather than letting the port
+write crash the shared manager. (See `Ezagent.Domain.Pty.Server` —
+`estimated_command_size/2` + the `build_env/1` override-only rule, with regression
+tests `server_env_test.exs` / `server_command_size_test.exs`.)
+
 ### ❌ Parsing stdout line-by-line assuming `{:stdout, os_pid, full_line}`
 
 erlexec delivers arbitrary chunks. You will see partial lines, multiple lines in one message, and (with PTY) CRLF instead of LF. Buffer and split manually — see the `split_lines/1` helper in the pattern above.
