@@ -147,8 +147,16 @@ defmodule EzagentDomainChat.Integration.SessionAutoJoinTest do
   defp session_members(%URI{} = session_uri) do
     {:ok, pid} = KindRegistry.lookup(session_uri)
 
-    %{state: %{chat: slice}} = :sys.get_state(pid)
-    {Map.keys(slice.members), slice.monitors, slice}
+    # Lifecycle migration (SPEC 2026-05-29 §2.3C): the Chat slice is now the
+    # two-container `%{state, transients}` shape. `members` lives in
+    # `:state` (persisted); `monitors` lives in `:transients` (rebuilt by
+    # activate/2). Return the same `{members, monitors, persistent_slice}`
+    # tuple the callers expect.
+    %{state: %{chat: chat}} = :sys.get_state(pid)
+    persistent = Map.get(chat, :state, chat)
+    transients = Map.get(chat, :transients, %{})
+    monitors = Map.get(transients, :monitors, Map.get(persistent, :monitors, %{}))
+    {Map.keys(persistent.members), monitors, persistent}
   end
 
   defp wait_until(fun, retries \\ 100) do

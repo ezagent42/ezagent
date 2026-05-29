@@ -58,9 +58,56 @@ defmodule Ezagent.Behavior.Chat do
     dispatch return value, e.g. `ReadMarker.mark` after a successful
     chat.receive cast) stay as `Ezagent.Router.dispatch/1` calls in the
     handler body — the effect grammar discards dispatch return values.
+
+  ## Lifecycle migration (Phase B, SPEC 2026-05-29 §2.3C — representative
+  ## example C: the RICH case)
+
+  Converted from `use Ezagent.Behavior` to `use Ezagent.Lifecycle` (the
+  two-container `%{state, transients}` developer API). The natural split:
+
+  - **STATE (persistent — survives restart):** `members`, `owner_uri`,
+    `last_seen`, `last_message_id`, `last_message`, `send_cursor`,
+    `recent_messages`, `template_working_copy`. Built ONCE by `create/1`.
+
+  - **TRANSIENT (never persisted — rebuilt every start):** `monitors`
+    (the `ref → URI` map from `Process.monitor`). The refs are dead after
+    a restart; before this migration they lived in the SAME `:chat` slice
+    as `members` and got snapshotted-then-rehydrated-as-garbage — a latent
+    bug where `handle_signal({:DOWN, ...})` could NEVER match a rehydrated
+    ref, so offline detection silently degraded.
+
+  `activate/2` rebuilds the monitor map from the PERSISTED `members` set:
+  `Process.monitor` each live member, producing a fresh `ref → URI` map.
+  This is the self-heal that the snapshot-of-dead-refs approach lacked
+  (§2.3C — THE KEY FIX). Because `activate/2` runs on EVERY start (fresh
+  spawn AND cold-load) and is the ONLY site that fills `:monitors`, a dead
+  ref can no longer survive a restart.
+
+  Handler accessor changes (§5 recipe step 7): `members` / `owner_uri` /
+  `last_seen` / send-tracking fields stay `ctx[:read]` + `{:set, ...}`;
+  `monitors` reads go to `ctx.transients[:monitors]` and `monitors` writes
+  become `{:set_transient, :monitors, ...}` effects (§7 OQ-2). The `:DOWN`
+  signal in `handle_signal/2` returns `{:set_transient, :monitors, ...}`
+  (drop the dead ref) + `{:set, :last_seen, ...}` (persisted) + the
+  `online → false` member flip via `{:set, :members, ...}`.
+
+  Naming (§11 NP-1/NP-2/NP-3 audit): `Ezagent.Behavior.Chat` — a domain
+  module (`apps/ezagent_domain_chat`) naming its own domain concept
+  (`Chat`), with five actions whose intent the name closely tracks. NO
+  violation; kept as-is (a rename would touch the `:chat` snapshot slice
+  key + every call site for no clarity gain).
   """
 
-  use Ezagent.Behavior
+  # lifecycle:state_slice_override
+  #
+  # The `:chat` slice key is pinned (snapshot-compat — SPEC §5 step 2 /
+  # §7 OQ-7). The auto-derived key from `Ezagent.Behavior.Chat` would be
+  # `:chat` anyway, but the multi-Kind subset registration (Session uses
+  # the slice; User/Agent default it to `%{}`) + every existing
+  # `kind_snapshots` row + integration test that reads `:chat` by name
+  # depends on the stable key, so we declare it explicitly with the
+  # sanctioned marker rather than relying on derivation.
+  use Ezagent.Lifecycle, state_slice: :chat
 
   require Logger
 
@@ -143,16 +190,24 @@ defmodule Ezagent.Behavior.Chat do
       "Write the durable template_working_copy field on the Session's :chat " <>
         "slice (the orchestrator's source-template record — Phase 7 SPEC §1.6)"
 
-  def state_slice, do: :chat
-
-  def init_slice(args) do
-    # Slice shape is the union across Kinds — Session uses all three
-    # maps; User/Agent's :receive doesn't read or write the slice but
-    # leaving the keys here means a `Map.get` on any Kind returns the
-    # consistent shape (defensive over the BehaviorRegistry per-Kind
-    # subset model where User/Agent don't list Chat in `behaviors/0`
-    # and so don't init this slice anyway — `Kind.Runtime` defaults
-    # missing slices to `%{}`, which the Session-only fields tolerate).
+  # `create/1` — FIRST-EVER existence (SPEC 2026-05-29 §2). Builds the
+  # PERSISTENT `state`. The macro-injected `init_slice/1` wraps this in
+  # the two-container `%{state: ..., transients: %{}}` shape and runs it
+  # ONCE (gated by the durable ever-created marker). `:monitors` is NOT
+  # here — it is a TRANSIENT, rebuilt by `activate/2` on every start.
+  #
+  # NOTE: `state_slice/0` is macro-emitted from the `state_slice: :chat`
+  # override above — the hand-rolled `def state_slice, do: :chat` is gone.
+  @impl Ezagent.Lifecycle
+  def create(args) do
+    # Slice shape is the union across Kinds — Session uses all the
+    # persistent maps; User/Agent's :receive doesn't read or write most
+    # of them but leaving the keys here means a `Map.get` on any Kind
+    # returns the consistent shape (defensive over the BehaviorRegistry
+    # per-Kind subset model where User/Agent don't list Chat in
+    # `behaviors/0` and so don't create this state anyway — `Kind.Runtime`
+    # defaults missing slices to `%{}`, which the Session-only fields
+    # tolerate).
     #
     # PR-OWN-2 (caps-data-ownership SPEC #306 §7): `:owner_uri` carries
     # the entity URI that "owns" this session (created it). Used by
@@ -164,14 +219,16 @@ defmodule Ezagent.Behavior.Chat do
     # admin can grant. A pre-PR-2 Session snapshot has no `:owner_uri`;
     # `Kind.Snapshot.load_or_init/3` merges fresh into loaded, so this
     # default fills missing entries.
-    %{
-      # %{URI => %{online: bool}}
-      members: %{},
-      owner_uri: Map.get(args, :owner_uri),
-      # %{ref => URI} — Process.monitor refs
-      monitors: %{},
-      # %{URI => DateTime} — when last seen offline (only present for offline)
-      last_seen: %{},
+    {:ok,
+     %{
+       # %{URI => %{online: bool}}
+       members: %{},
+       owner_uri: Map.get(args, :owner_uri),
+       # NOTE: `:monitors` (%{ref => URI} Process.monitor refs) is GONE
+       # from STATE — it is a TRANSIENT now, rebuilt by `activate/2`
+       # (SPEC §2.3C). Persisting it snapshotted dead refs.
+       # %{URI => DateTime} — when last seen offline (only present for offline)
+       last_seen: %{},
       # PR-EM-6-PRE (Allen 2026-05-25) — the architectural seam
       # external-mirror plugins (Feishu / future Slack / etc) ride on
       # after PR-EM-6 deletes `maybe_notify_external/3`. The flow is
@@ -265,7 +322,36 @@ defmodule Ezagent.Behavior.Chat do
       # MUST therefore treat a missing key as the default via
       # `template_working_copy/1` below rather than dot-access.
       template_working_copy: default_template_working_copy()
-    }
+     }}
+  end
+
+  # `activate/2` — EVERY process (re)start (SPEC 2026-05-29 §2.3C, THE
+  # KEY FIX). Rebuilds the TRANSIENT `:monitors` map from the PERSISTED
+  # `members` set: `Process.monitor` each live member, producing a fresh
+  # `ref → URI` map. The refs from a prior incarnation are dead; this is
+  # the self-heal that the old snapshot-of-`:monitors` lacked.
+  #
+  # `:error` from `KindRegistry.lookup/1` means the member's Kind is not
+  # currently alive — we simply do not install a monitor for it (its URI
+  # stays in the persisted `members` so a later `:join` / `:DOWN` still
+  # recognizes it; if it is genuinely offline, no monitor is needed until
+  # it rejoins). Members that ARE live get a fresh, REAL monitor — so the
+  # `:DOWN` signal (`handle_signal/2`) can match again after a restart.
+  @impl Ezagent.Lifecycle
+  def activate(state, _ctx) do
+    monitors =
+      state
+      |> Map.get(:members, %{})
+      |> Map.keys()
+      |> Enum.flat_map(fn %URI{} = uri ->
+        case KindRegistry.lookup(uri) do
+          {:ok, pid} when is_pid(pid) -> [{Process.monitor(pid), uri}]
+          _ -> []
+        end
+      end)
+      |> Map.new()
+
+    {:ok, %{monitors: monitors}}
   end
 
   @doc """
@@ -546,7 +632,9 @@ defmodule Ezagent.Behavior.Chat do
         # ref in `slice.monitors` (cleaned only on `:DOWN`, which never
         # fired for the live member).
         members = ctx[:read].(:members, %{})
-        monitors = ctx[:read].(:monitors, %{})
+        # `:monitors` is a TRANSIENT now (SPEC §2.3C) — read it from
+        # `ctx.transients`, not the persistent `ctx[:read]`.
+        monitors = (ctx[:transients] || %{})[:monitors] || %{}
 
         case Map.get(members, member_uri) do
           %{online: true} ->
@@ -596,7 +684,8 @@ defmodule Ezagent.Behavior.Chat do
   defp do_join(%URI{} = member_uri, member_pid, ctx) do
     session_uri = ctx[:self_uri]
     members = ctx[:read].(:members, %{})
-    monitors = ctx[:read].(:monitors, %{})
+    # `:monitors` is a TRANSIENT (SPEC §2.3C) — read from ctx.transients.
+    monitors = (ctx[:transients] || %{})[:monitors] || %{}
     last_seen = ctx[:read].(:last_seen, %{})
     prior_owner = ctx[:read].(:owner_uri, nil)
 
@@ -656,7 +745,9 @@ defmodule Ezagent.Behavior.Chat do
     {:ok, %{members: Map.keys(new_members)},
      [
        {:set, :members, new_members},
-       {:set, :monitors, new_monitors},
+       # `:monitors` is a TRANSIENT (SPEC §2.3C / §7 OQ-2) — written via
+       # `:set_transient`, never persisted.
+       {:set_transient, :monitors, new_monitors},
        {:set, :last_seen, new_last_seen},
        {:set, :owner_uri, new_owner_uri}
      ] ++ broadcast_membership_effects(session_uri, {:member_joined, member_uri})}
@@ -754,7 +845,8 @@ defmodule Ezagent.Behavior.Chat do
 
   def handle_leave(%{member: %URI{} = member_uri}, ctx) do
     members = ctx[:read].(:members, %{})
-    monitors = ctx[:read].(:monitors, %{})
+    # `:monitors` is a TRANSIENT (SPEC §2.3C) — read from ctx.transients.
+    monitors = (ctx[:transients] || %{})[:monitors] || %{}
     last_seen = ctx[:read].(:last_seen, %{})
 
     {ref_to_remove, new_monitors} = pop_monitor_ref(monitors, member_uri)
@@ -767,7 +859,8 @@ defmodule Ezagent.Behavior.Chat do
     {:ok, %{},
      [
        {:set, :members, new_members},
-       {:set, :monitors, new_monitors},
+       # `:monitors` is a TRANSIENT (SPEC §2.3C / §7 OQ-2).
+       {:set_transient, :monitors, new_monitors},
        {:set, :last_seen, new_last_seen}
      ] ++ broadcast_membership_effects(ctx[:self_uri], {:member_left, member_uri})}
   end
@@ -873,20 +966,32 @@ defmodule Ezagent.Behavior.Chat do
     end
   end
 
-  # --- Kind-message hook -------------------------------------------------
+  # --- Signal hook (non-action GenServer messages) -----------------------
 
   @doc """
-  `Ezagent.Kind.Server.handle_info/2` forwards all GenServer messages here.
-  Phase 2 handles `:DOWN` from `Process.monitor`; everything else is
-  `:ignore`-ed (return value tells the server "current slice unchanged").
+  `handle_signal/2` (SPEC 2026-05-29 §2 / §9 OQ-3) — the Lifecycle
+  successor to the engine's `handle_kind_message/3`. The macro reduces
+  the returned effect list into the two-container slice (`:set` → state,
+  `:set_transient` → transients), so this hook returns the SAME effect
+  grammar a `handle_<action>` does.
 
-  On `:DOWN` for a known member ref: flip `online` → false, record
-  `last_seen = now`. The monitor ref is removed from `monitors` (no
-  point holding a dead ref) but the URI stays in `members` so rejoin
-  recognizes it.
+  Handles `:DOWN` from `Process.monitor`; everything else is `:ignore`d.
+
+  On `:DOWN` for a known member ref: flip `online` → false (persisted via
+  `{:set, :members, ...}`), record `last_seen = now` (persisted via
+  `{:set, :last_seen, ...}`), and DROP the dead ref from the TRANSIENT
+  `:monitors` map via `{:set_transient, :monitors, ...}`. The URI stays
+  in `members` so a rejoin still recognizes it.
+
+  `:monitors` is read from `ctx.transients` (the macro injects
+  `ctx.transients` + a `ctx.read` over the persistent `:state` for the
+  signal path — see `Ezagent.Lifecycle.__run_signal__/4`).
   """
-  def handle_kind_message({:DOWN, ref, :process, _pid, _reason}, chat_slice, ctx) do
-    case Map.pop(chat_slice.monitors, ref) do
+  @impl Ezagent.Lifecycle
+  def handle_signal({:DOWN, ref, :process, _pid, _reason}, ctx) do
+    monitors = (ctx[:transients] || %{})[:monitors] || %{}
+
+    case Map.pop(monitors, ref) do
       {nil, _} ->
         # Not one of our monitors (could be another Behavior's ref or
         # a stale ref after a leave).
@@ -894,30 +999,31 @@ defmodule Ezagent.Behavior.Chat do
 
       {member_uri, new_monitors} ->
         now = DateTime.utc_now()
+        members = ctx[:read].(:members, %{})
+        last_seen = ctx[:read].(:last_seen, %{})
 
         new_members =
-          Map.update(chat_slice.members, member_uri, %{online: false}, &Map.put(&1, :online, false))
+          Map.update(members, member_uri, %{online: false}, &Map.put(&1, :online, false))
 
-        new_last_seen = Map.put(chat_slice.last_seen, member_uri, now)
+        new_last_seen = Map.put(last_seen, member_uri, now)
 
-        new_chat_slice = %{
-          chat_slice
-          | monitors: new_monitors,
-            members: new_members,
-            last_seen: new_last_seen
-        }
-
-        # broadcast_membership/2 from handle_info — handle_kind_message
-        # cannot return effects (different contract); call the raw
-        # broadcasts here. The handler-side `handle_join`/`handle_leave`
-        # use :notify effects via broadcast_membership_effects/2.
+        # broadcast_membership_direct/2 stays a no-op: SliceChange (hooked
+        # at the Kind.Server commit level) emits the membership mutation
+        # downstream. Signals in Phase A only execute container mutations
+        # (not :notify), so we DON'T emit a :notify effect here.
         broadcast_membership_direct(ctx[:self_uri], {:member_offline, member_uri, now})
 
-        {:ok, new_chat_slice}
+        {:ok,
+         [
+           {:set, :members, new_members},
+           {:set, :last_seen, new_last_seen},
+           # Drop the dead ref from the TRANSIENT monitor map.
+           {:set_transient, :monitors, new_monitors}
+         ]}
     end
   end
 
-  def handle_kind_message(_other_message, _chat_slice, _ctx), do: :ignore
+  def handle_signal(_other_message, _ctx), do: :ignore
 
   # --- Task #110 — orchestrator MCP context is now LAZILY REBUILT --------
   #

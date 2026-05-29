@@ -322,6 +322,15 @@ defmodule Ezagent.Orchestrator.McpServer do
       %Ezagent.Ecto.KindSnapshot{} = row ->
         case Ezagent.Ecto.KindSnapshot.decode_state(row) do
           {:ok, %{chat: chat_slice}} when is_map(chat_slice) ->
+            # Lifecycle migration (SPEC 2026-05-29 §2.3C): the persisted Chat
+            # slice is now the two-container shape (transients stripped at
+            # persist, so only `:state` survives). The orchestrator reads
+            # (`:template_working_copy` / `:owner_uri`) live under `:state`.
+            # Route through the canonical T3 chokepoint
+            # `Ezagent.Kind.normalize_slice_view/1` (same fn the live
+            # `get_slice/2` read path uses) rather than an inline unwrap, so
+            # there is one normalization definition; a pre-migration flat
+            # snapshot falls through unchanged.
             case Ezagent.Kind.normalize_slice_view(chat_slice) do
               normalized when is_map(normalized) -> {:ok, normalized}
               _ -> :error

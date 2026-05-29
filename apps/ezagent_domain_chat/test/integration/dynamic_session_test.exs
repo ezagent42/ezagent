@@ -30,7 +30,9 @@ defmodule EzagentDomainChat.Integration.DynamicSessionTest do
     # admin in members (poll briefly for cast to land)
 
     assert wait_until(fn ->
-             %{state: %{chat: slice}} = :sys.get_state(pid)
+             # Lifecycle migration (SPEC 2026-05-29 §2.3C): `members` lives
+             # under the Chat slice's persistent `:state`.
+             %{state: %{chat: %{state: slice}}} = :sys.get_state(pid)
              Map.has_key?(slice.members, admin_uri)
            end)
   end
