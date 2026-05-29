@@ -251,3 +251,28 @@ not reinventing it — we are leaving the seam where it belongs.
   re-verified and the PR re-opened for review.
 - Deferred, tracked elsewhere: escalation signal; CINNOX EM adapter;
   production operator SSO + per-tenant operator provisioning.
+
+## 12. Next phase after this extraction (sequencing decision 2026-05-29)
+
+The third leg of the core triad — **admin iterates the AI** (edit soul /
+话术 / KB / service flow) — is the agreed NEXT phase, to be built **after**
+this extraction lands, **inside the new plugin**. Decision: extract first
+(this spec), then admin-edit; rationale = admin-edit is another
+customer-service-shaped surface whose home is this plugin, so building it
+pre-extraction would only grow the extraction debt.
+
+**admin-edit is NOT a small feature** — it decomposes like Mode/EM into a
+generic-vs-specific split and must get its **own brainstorm** (do not jump
+to implement):
+- **soul / 话术 editing** — partly generic (any agent has a soul/config);
+  check whether ezagent's existing agent/template admin surfaces
+  (`agent_detail_live`, `AdminTemplatesLive`, `session_editor`,
+  `EntityCapsLive`) already cover part of it before building new UI.
+- **KB / knowledge retrieval** — generic, PoC-deferred, large
+  (AutoService: `kb_chunks` + `kb_search` MCP).
+- **service flow / flow_directives** — generic, PoC-deferred, large.
+
+The admin-edit brainstorm must (a) scope the minimal PoC version, and
+(b) decide what lands in ezagent core/domain (generic) vs this plugin
+(customer-service-specific) — same discipline as the Mode (core) /
+operator-console (plugin) split.
