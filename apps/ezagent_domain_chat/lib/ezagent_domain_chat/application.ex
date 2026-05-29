@@ -685,8 +685,8 @@ defmodule EzagentDomainChat.Application do
       :ok = CapabilityRegistry.register(Session, action, ExternalMirrorBehavior)
     end)
 
-    # Phase 7 completion PR-5 (SPEC §1.6b) — register the new core
-    # `Ezagent.Behavior.Lifecycle` Behavior's `:terminate` action on the
+    # Phase 7 completion PR-5 (SPEC §1.6b) — register the core
+    # `Ezagent.Behavior.Terminable` Behavior's `:terminate` action on the
     # Agent Kind. After this, `entity://agent/...?action=lifecycle.terminate`
     # resolves through `BehaviorRegistry` and is dispatch-invocable +
     # CapBAC-gated — so the orchestrator's `remove_agent_slot` /
@@ -694,18 +694,20 @@ defmodule EzagentDomainChat.Application do
     # NOT a bare `DynamicSupervisor.terminate_child` (which would bypass
     # CapBAC and let an orchestrator kill any agent). The orchestrator's
     # cap #2 (`{:spawned_by, orchestrator}`) is what permits it to
-    # terminate only ITS OWN workers.
-    alias Ezagent.Behavior.Lifecycle, as: LifecycleB
+    # terminate only ITS OWN workers. (The dispatch action string stays
+    # `lifecycle.terminate` — a cosmetic label; resolution is by the
+    # `:terminate` action atom, not the prefix.)
+    alias Ezagent.Behavior.Terminable, as: TerminableB
 
-    Enum.each(LifecycleB.actions(), fn action ->
-      :ok = CapabilityRegistry.register(Agent, action, LifecycleB)
+    Enum.each(TerminableB.actions(), fn action ->
+      :ok = CapabilityRegistry.register(Agent, action, TerminableB)
     end)
 
     # PR2 2026-05-24 (Allen) — Sandbox Behavior registers the per-agent
     # config_dir + extension-management actions. Listed in
     # `Agent.behaviors/0` so init_slice fires; ALSO registered with
     # CapabilityRegistry so dispatch (read / write_path / destroy) goes
-    # through CapBAC. Same pattern as Lifecycle above.
+    # through CapBAC. Same pattern as Terminable above.
     alias Ezagent.Behavior.Sandbox, as: SandboxB
 
     Enum.each(SandboxB.actions(), fn action ->

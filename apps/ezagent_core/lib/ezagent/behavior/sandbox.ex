@@ -63,7 +63,7 @@ defmodule Ezagent.Behavior.Sandbox do
     FS cleanup wrapped in `try/rescue/catch` (best-effort — raises,
     exits, and throws are caught + logged, do NOT block termination);
     (3) schedules Kind-process termination via the same detached-Task
-    pattern `Ezagent.Behavior.Lifecycle.handle_terminate/2` uses
+    pattern `Ezagent.Behavior.Terminable.handle_terminate/2` uses
     (so the dispatch reply wins the race against process death).
     Codex PR2 round-1 HIGH-2 + round-2 HIGH-1 fixes.
 
@@ -451,7 +451,7 @@ defmodule Ezagent.Behavior.Sandbox do
     :ok
   end
 
-  # Mirrors `Ezagent.Behavior.Lifecycle.schedule_termination/2` — detached
+  # Mirrors `Ezagent.Behavior.Terminable.schedule_termination/2` — detached
   # Task + 20ms sleep so the dispatch reply wins the race against the
   # supervisor terminating this GenServer.
   #

@@ -276,9 +276,13 @@ defmodule Ezagent.Behavior.RoutingMigrationParityTest do
       assert Routing.workspace_scoped?() == false
     end
 
-    test "state_slice/0 + init_slice/1 unchanged" do
+    test "state_slice/0 preserved + create/1 builds persistent state (Lifecycle migration)" do
+      # Slice key still auto-derives to `:routing`. Under `use
+      # Ezagent.Lifecycle`, the persistent-state builder is `create/1`;
+      # `init_slice/1` is the macro-emitted two-container wrapper.
       assert Routing.state_slice() == :routing
-      assert Routing.init_slice(%{}) == %{calls: 0}
+      assert Routing.create(%{}) == {:ok, %{calls: 0}}
+      assert Routing.init_slice(%{}) == %{state: %{calls: 0}, transients: %{}}
     end
 
     test "data_owner/1 — workspace-scoped URI returns :any (workspace admin grants)" do

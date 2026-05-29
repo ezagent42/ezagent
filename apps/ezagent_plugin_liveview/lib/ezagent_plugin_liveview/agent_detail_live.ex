@@ -147,7 +147,7 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
   @impl true
   def handle_event("restart", _params, socket) do
     # V-2 fix (audit 2026-05-23) — restart now routes through
-    # `Ezagent.Behavior.Lifecycle` `:terminate` dispatch instead of a
+    # `Ezagent.Behavior.Terminable` `:terminate` dispatch instead of a
     # direct `Process.exit/2` on a PtyServer pid. This restores all
     # three principles the old path bypassed:
     #
@@ -160,7 +160,7 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
     # terminating the worker brings it back automatically — the operator
     # observes a brief "Restarting..." then the fresh status. The actual
     # `DynamicSupervisor.terminate_child` is scheduled in a detached
-    # Task by `Behavior.Lifecycle` so the dispatch reply wins the race
+    # Task by `Behavior.Terminable` so the dispatch reply wins the race
     # (the Behavior runs INSIDE the target's GenServer).
     target =
       URI.new!(URI.to_string(socket.assigns.agent_uri) <> "?action=lifecycle.terminate")
@@ -173,7 +173,7 @@ defmodule EzagentPluginLiveview.AgentDetailLive do
          }) do
       {:ok, _} ->
         # Allow supervisor restart to settle before re-reading the status
-        # (Behavior.Lifecycle schedules termination with a 20ms yield, then
+        # (Behavior.Terminable schedules termination with a 20ms yield, then
         # supervisor restart is sub-100ms; 500ms is a safe operator-visible
         # refresh window — same as the pre-V-2 path).
         Process.send_after(self(), :refresh, 500)

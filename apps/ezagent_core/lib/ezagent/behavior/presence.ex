@@ -28,9 +28,18 @@ defmodule Ezagent.Behavior.Presence do
   is registered on BOTH User AND Agent — `:any` kind axis per check
   11(b)'s multi-Kind escape (dispatch substitutes the actual target's
   `type_name/0` at step 5.5 runtime).
+
+  ## Migration to `use Ezagent.Lifecycle` (Phase B — 2026-05-29)
+
+  Cap-only, state-only Behavior: no PIDs/refs/handles, so there are NO
+  transients. `init_slice/1` (empty `%{}`) → `create/1` (empty `%{}`);
+  `activate/2` is the macro's no-op default. The slice key auto-derives
+  to `:presence` (module last segment), matching the previous explicit
+  `state_slice/0`, so no `state_slice:` override is needed. The cap-only
+  handler + `dispatchable?/0 == false` are unchanged.
   """
 
-  use Ezagent.Behavior
+  use Ezagent.Lifecycle
 
   action :online,
     args: %{},
@@ -53,9 +62,10 @@ defmodule Ezagent.Behavior.Presence do
 
   def dispatchable?, do: false
 
-  def state_slice, do: :presence
-
-  def init_slice(_args), do: %{}
+  # Cap-only, state-only: empty persistent state, no transients. Slice
+  # key auto-derives to `:presence` (module last segment).
+  @impl Ezagent.Lifecycle
+  def create(_args), do: {:ok, %{}}
 
   # Cap-only marker — must define `handle_online/2` to satisfy the
   # `use Ezagent.Behavior` macro's @before_compile invariant. Raises

@@ -27,9 +27,18 @@ defmodule Ezagent.Behavior.Notifications do
 
   Custom `required_caps/0` retained (not auto-derived) because the
   cap axis is `:user`, not the macro's default `:any`.
+
+  ## Migration to `use Ezagent.Lifecycle` (Phase B — 2026-05-29)
+
+  Cap-only, state-only Behavior: no PIDs/refs/handles, so there are NO
+  transients. `init_slice/1` (empty `%{}`) → `create/1` (empty `%{}`);
+  `activate/2` is the macro's no-op default. The slice key auto-derives
+  to `:notifications` (module last segment), matching the previous
+  explicit `state_slice/0`, so no `state_slice:` override is needed.
+  The cap-only handlers + `dispatchable?/0 == false` are unchanged.
   """
 
-  use Ezagent.Behavior
+  use Ezagent.Lifecycle
 
   action :notify,
     args: %{},
@@ -59,9 +68,10 @@ defmodule Ezagent.Behavior.Notifications do
 
   def dispatchable?, do: false
 
-  def state_slice, do: :notifications
-
-  def init_slice(_args), do: %{}
+  # Cap-only, state-only: empty persistent state, no transients. Slice
+  # key auto-derives to `:notifications` (module last segment).
+  @impl Ezagent.Lifecycle
+  def create(_args), do: {:ok, %{}}
 
   # Cap-only marker — must define `handle_<action>/2` to satisfy the
   # `use Ezagent.Behavior` macro's @before_compile invariant (every

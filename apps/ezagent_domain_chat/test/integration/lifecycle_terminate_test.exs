@@ -1,6 +1,8 @@
 defmodule EzagentDomainChat.Integration.LifecycleTerminateTest do
   @moduledoc """
-  Phase 7 completion PR-5 (SPEC §1.6b) — `Ezagent.Behavior.Lifecycle`
+  Phase 7 completion PR-5 (SPEC §1.6b) — `Ezagent.Behavior.Terminable`
+  (renamed from `Ezagent.Behavior.Lifecycle` in the Phase B Lifecycle
+  migration; the `lifecycle.terminate` action namespace is unchanged)
   is dispatch-routed + CapBAC-gated agent termination.
 
   Asserts:
@@ -18,7 +20,7 @@ defmodule EzagentDomainChat.Integration.LifecycleTerminateTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.{AgentLineage, BehaviorRegistry, Capability, KindRegistry}
-  alias Ezagent.Behavior.Lifecycle
+  alias Ezagent.Behavior.Terminable
   alias Ezagent.Entity.{Agent, User}
 
   defp uniq, do: System.unique_integer([:positive])
@@ -67,7 +69,7 @@ defmodule EzagentDomainChat.Integration.LifecycleTerminateTest do
   end
 
   test "lifecycle.terminate resolves through BehaviorRegistry on the Agent Kind" do
-    assert {:ok, Lifecycle} = BehaviorRegistry.lookup(Agent, :terminate)
+    assert {:ok, Terminable} = BehaviorRegistry.lookup(Agent, :terminate)
   end
 
   test "an in-lineage worker is terminated via dispatch (cap-#2 happy path)" do
@@ -117,7 +119,7 @@ defmodule EzagentDomainChat.Integration.LifecycleTerminateTest do
   end
 
   describe "notification of spawning principal (med-batch MED-3)" do
-    # `Behavior.Lifecycle.:terminate` must surface termination to the
+    # `Behavior.Terminable.:terminate` must surface termination to the
     # spawning principal so the orchestrator / user who originated the
     # spawn learns the worker is going away. Gated by user_uri?/1:
     # only USER URIs get notifications (agents have no inbox).
@@ -140,7 +142,7 @@ defmodule EzagentDomainChat.Integration.LifecycleTerminateTest do
                       %{
                         type: :agent_terminated,
                         body: %{text: _, agent_uri: ^worker_uri},
-                        source: Ezagent.Behavior.Lifecycle
+                        source: Ezagent.Behavior.Terminable
                       }},
                      1_000
     end

@@ -109,9 +109,14 @@ defmodule Ezagent.Behavior.PresenceMigrationParityTest do
       assert is_binary(desc) and desc != ""
     end
 
-    test "state_slice/0 + init_slice/1 unchanged (framework wiring)" do
+    test "state_slice/0 preserved + create/1 builds persistent state (Lifecycle migration)" do
+      # Slice key still auto-derives to `:presence`. Under `use
+      # Ezagent.Lifecycle`, the persistent-state builder is `create/1`
+      # (empty — cap-only Behavior); `init_slice/1` is the macro-emitted
+      # two-container wrapper.
       assert Presence.state_slice() == :presence
-      assert Presence.init_slice(%{}) == %{}
+      assert Presence.create(%{}) == {:ok, %{}}
+      assert Presence.init_slice(%{}) == %{state: %{}, transients: %{}}
     end
   end
 end
