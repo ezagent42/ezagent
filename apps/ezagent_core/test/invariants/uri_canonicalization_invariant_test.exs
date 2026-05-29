@@ -285,6 +285,90 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
   end
 
   # ---------------------------------------------------------------------
+  # Task #111 — canonicalize as a MAP KEY survives a snapshot round-trip
+  #
+  # The session-membership-survives-restart bug: a member `%URI{}` is a
+  # KEY in the `:members` slice map. A caller holds a canonical
+  # (`parse!/1`, authority:nil) member URI; the slice is snapshotted,
+  # reloaded, and re-walked by `canonicalize_uris/1`. If the round-trip
+  # were not struct-stable, the reloaded key would not `==` the held URI
+  # and `Map.has_key?/2` would miss even though the strings are equal.
+  #
+  # This pins BOTH invariants the task requires:
+  #   (1) idempotence — canonicalize(u) == canonicalize(canonicalize(u))
+  #   (2) round-trip struct-equality as a map key — a URI built by the
+  #       sanctioned path is `==` to the same URI after a snapshot
+  #       round-trip, so `Map.has_key?/2` succeeds.
+
+  test "canonical URI is map-key-stable across a canonicalize_uris/1 round-trip (Task #111)" do
+    cases = [
+      "entity://user/team-alpha/m-1",
+      "entity://agent/team-alpha/cc_demo",
+      "session://default/team-alpha/main",
+      "session://template-x/team-alpha/main",
+      "workspace://team-alpha",
+      "system://routing/default"
+    ]
+
+    for s <- cases do
+      held = Ezagent.URI.parse!(s)
+
+      # (1) Idempotence: canonicalize is a fixed point.
+      assert Ezagent.Kind.Snapshot.canonicalize_uris(held) ==
+               Ezagent.Kind.Snapshot.canonicalize_uris(
+                 Ezagent.Kind.Snapshot.canonicalize_uris(held)
+               ),
+             "canonicalize_uris/1 not idempotent for #{s}"
+
+      # (2) Round-trip struct-equality AS A MAP KEY through the real
+      #     snapshot serialization path (term_to_binary → binary_to_term →
+      #     canonicalize_uris), then prove `Map.has_key?/2` succeeds with
+      #     the originally-held URI.
+      members = %{held => %{online: true}}
+
+      reloaded =
+        members
+        |> :erlang.term_to_binary()
+        |> :erlang.binary_to_term([:safe])
+        |> Ezagent.Kind.Snapshot.canonicalize_uris()
+
+      [{reloaded_key, _}] = Enum.to_list(reloaded)
+
+      assert reloaded_key == held,
+             "reloaded member key not struct-equal to held URI for #{s} — " <>
+               "Map.has_key?/2 would miss after restart"
+
+      assert reloaded_key.authority == nil,
+             "reloaded key authority not nil for #{s}"
+
+      assert Map.has_key?(reloaded, held),
+             "Map.has_key?/2 missed the originally-held URI key for #{s}"
+    end
+  end
+
+  test "a stdlib-URI.parse-built (authority-bearing) key is rescued to canonical by the reload walker (Task #111)" do
+    # The exact bug shape: a NON-canonical (authority:"user") URI got
+    # into a snapshot (pre-migration, or a fixture built the wrong way).
+    # The reload walker must rewrite it so it matches the canonical
+    # form a current caller holds.
+    legacy_key = apply(URI, :parse, ["entity://user/team-alpha/m-1"]) # uri-canonical-allow: Task #111 adversarial fixture
+    refute legacy_key.authority == nil, "fixture precondition: legacy key carries authority"
+
+    held = Ezagent.URI.parse!("entity://user/team-alpha/m-1")
+    refute legacy_key == held, "fixture precondition: legacy and canonical structs differ"
+
+    reloaded =
+      %{legacy_key => %{online: true}}
+      |> :erlang.term_to_binary()
+      |> :erlang.binary_to_term([:safe])
+      |> Ezagent.Kind.Snapshot.canonicalize_uris()
+
+    assert Map.has_key?(reloaded, held),
+           "the reload walker did not canonicalize a legacy authority-bearing key — " <>
+             "Map.has_key?/2 with the canonical URI missed"
+  end
+
+  # ---------------------------------------------------------------------
   # §5.5 r3 adversarial — the same-line URI.new + URI.new! mix must be
   # caught by §5.2.1's regex. r4 fix uses PCRE negative lookahead.
 
