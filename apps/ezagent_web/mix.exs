@@ -76,6 +76,13 @@ defmodule EzagentWeb.MixProject do
       # The plugin contract stays narrow — ezagent_web depends on it for
       # routing only, not for code calls.
       {:ezagent_plugin_liveview, in_umbrella: true},
+      # Customer-chat plugin: web chat, embeddable widget, operator console.
+      # Application.start registers the plugin via `Ezagent.Plugin.boot/1`
+      # so the `/plugins` catalog card + config_surface (:route /operator)
+      # are available at boot. Declared here (not as a transitive dep) so
+      # ezagent_web is the explicit boot-order anchor (compile order:
+      # plugin compiles first, then web references it).
+      {:ezagent_plugin_customer_chat, in_umbrella: true},
       {:ezagent_plugin_echo, in_umbrella: true},
       # Phase 5 PR 6: Feishu webhook route forwards to
       # EzagentPluginFeishu.WebhookPlug — needed at compile time so the
