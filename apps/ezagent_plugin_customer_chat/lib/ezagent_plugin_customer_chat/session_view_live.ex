@@ -1,10 +1,8 @@
 defmodule EzagentPluginCustomerChat.SessionViewLive do
   @moduledoc """
-  Phase 2.7 — detail view for one customer session.
+  Phase 2.8 — detail view for one customer session.
 
-  URL: `/admin/customer_sessions/:id` where `:id` is the
-  URL-encoded canonical session URI string (matches the
-  agent_detail_live convention).
+  URL: `/operator/:tenant/:conv`
 
   Shows:
   - Session metadata (URI, workspace, conv-id, mode)
@@ -30,30 +28,33 @@ defmodule EzagentPluginCustomerChat.SessionViewLive do
 
   use EzagentDomainUi.Components
 
+  alias EzagentPluginCustomerChat.OperatorAuth
+
   @message_limit 50
 
   @impl true
-  def mount(%{"id" => encoded_id}, _session, socket) do
-    caller_uri = socket.assigns[:current_entity_uri]
-    workspace_uri = socket.assigns[:current_workspace_uri]
+  def mount(%{"tenant" => tenant, "conv" => conv}, _session, socket) do
+    caller = socket.assigns[:current_entity_uri]
+    sys? = socket.assigns[:is_system_member?]
 
-    with {:ok, session_uri} <- parse_session_uri(encoded_id),
-         :ok <- authorize(caller_uri, workspace_uri, session_uri) do
+    if OperatorAuth.operator?(caller, tenant, sys?) do
+      session_uri = URI.parse("session://default/#{tenant}/#{conv}")
+      caller_caps = Ezagent.Identity.list_caps_for(caller)
+
       if connected?(socket) do
         topic = Ezagent.Behavior.Chat.session_events_topic(session_uri)
         Phoenix.PubSub.subscribe(EzagentCore.PubSub, topic)
       end
 
-      caller_caps = Ezagent.Identity.list_caps_for(caller_uri)
       messages = load_messages(session_uri)
 
       {:ok,
        socket
-       |> assign(:page_title, "Session " <> conv_id_of(session_uri))
+       |> assign(:page_title, "Session " <> conv)
+       |> assign(:tenant, tenant)
        |> assign(:session_uri, session_uri)
        |> assign(:session_uri_str, URI.to_string(session_uri))
-       |> assign(:conv_id, conv_id_of(session_uri))
-       |> assign(:tenant, workspace_of(session_uri))
+       |> assign(:conv_id, conv)
        |> assign(:mode, lookup_mode(session_uri))
        |> assign(:caller_caps, caller_caps)
        |> assign(:flash_error, nil)
@@ -61,11 +62,10 @@ defmodule EzagentPluginCustomerChat.SessionViewLive do
        |> stream(:messages, Enum.map(messages, &message_to_row/1))
        |> assign(:messages_empty?, messages == [])}
     else
-      {:error, reason} ->
-        {:ok,
-         socket
-         |> put_flash(:error, deny_message(reason))
-         |> redirect(to: "/admin/customer_sessions")}
+      {:ok,
+       socket
+       |> put_flash(:error, "Operator access required.")
+       |> redirect(to: "/operator")}
     end
   end
 
@@ -146,7 +146,7 @@ defmodule EzagentPluginCustomerChat.SessionViewLive do
             <div class="min-w-0">
               <div class="flex items-center gap-2">
                 <.link
-                  navigate="/admin/customer_sessions"
+                  navigate={"/operator/#{@tenant}"}
                   class="text-xs text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
                 >← {"Back"}</.link>
               </div>
@@ -339,73 +339,8 @@ defmodule EzagentPluginCustomerChat.SessionViewLive do
 
   defp short_sender(uri), do: URI.to_string(uri)
 
-  defp conv_id_of(%URI{path: "/" <> rest}) do
-    case String.split(rest, "/", parts: 2) do
-      [_ws, conv_id] -> conv_id
-      _ -> "(unknown)"
-    end
-  end
-
-  defp conv_id_of(_), do: "(unknown)"
-
-  defp workspace_of(%URI{path: "/" <> rest}) do
-    case String.split(rest, "/", parts: 2) do
-      [ws, _] -> ws
-      _ -> "(unknown)"
-    end
-  end
-
-  defp workspace_of(_), do: "(unknown)"
-
   # PHASE_2.6_INTEGRATION — mirror the dashboard's placeholder. The
   # mode is sourced however Phase 2.6 decides (slice read, Behavior
   # query, etc). Pre-2.6 every session is reported :auto.
   defp lookup_mode(_session_uri), do: :auto
-
-  defp parse_session_uri(encoded_id) when is_binary(encoded_id) do
-    decoded = URI.decode_www_form(encoded_id)
-
-    case URI.new(decoded) do
-      {:ok, %URI{scheme: "session", path: "/" <> _} = uri} -> {:ok, uri}
-      _ -> {:error, :bad_uri}
-    end
-  end
-
-  defp parse_session_uri(_), do: {:error, :bad_uri}
-
-  defp authorize(nil, _, _), do: {:error, :no_entity}
-  defp authorize(_, nil, _), do: {:error, :no_workspace}
-
-  defp authorize(%URI{} = caller, %URI{host: ws_name}, %URI{} = session_uri)
-       when is_binary(ws_name) do
-    cond do
-      workspace_of(session_uri) != ws_name ->
-        # Belt-and-suspenders cross-workspace block. Operator can
-        # only view sessions in their current workspace.
-        {:error, :cross_workspace}
-
-      not has_any_cap?(caller) ->
-        {:error, :no_caps}
-
-      true ->
-        :ok
-    end
-  end
-
-  defp authorize(_, _, _), do: {:error, :bad_state}
-
-  # `Ezagent.Identity.list_caps_for/1` returns a `MapSet`; we only
-  # need "at least one" for the PoC gate (see moduledoc + FINDINGS).
-  defp has_any_cap?(caller_uri) do
-    caller_uri
-    |> Ezagent.Identity.list_caps_for()
-    |> Enum.any?()
-  end
-
-  defp deny_message(:no_entity), do: "Sign in required."
-  defp deny_message(:no_workspace), do: "No workspace context — pick a workspace first."
-  defp deny_message(:no_caps), do: "Operator role required (any cap)."
-  defp deny_message(:cross_workspace), do: "That session belongs to a different workspace."
-  defp deny_message(:bad_uri), do: "Malformed session URI."
-  defp deny_message(_), do: "Access denied."
 end

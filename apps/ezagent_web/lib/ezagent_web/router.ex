@@ -262,21 +262,29 @@ defmodule EzagentWeb.Router do
     end
   end
 
-  # Phase 2.7 (AutoService → ezagent migration) — operator dashboard for
-  # live customer sessions. Extracted into its own scope + live_session so
-  # the EzagentPluginCustomerChat module alias resolves correctly (Phoenix's
-  # scope/2 alias prefix cannot be escaped inside scope "/", EzagentPluginLiveview).
-  # Same pipe_through + on_mount as :require_admin above — security invariant
-  # is preserved. Live navigation between this session and :require_admin is
-  # a full-page reload (acceptable; these are separate concerns).
+  # Phase 2.8 (AutoService → ezagent migration) — operator console for
+  # live customer sessions, reachable at `/operator/:tenant` (tenant baked
+  # into the route) or `/operator` (no-tenant picker). Auth is a real
+  # workspace-scoped operator cap (`Mode.set`) via `OperatorAuth`; system
+  # members pass unconditionally. Separate scope so the
+  # EzagentPluginCustomerChat alias resolves correctly.
   scope "/", EzagentPluginCustomerChat do
     pipe_through [:browser, EzagentWeb.Plugs.RequireEntity]
 
-    live_session :require_admin_customer_chat,
-      on_mount: {EzagentWeb.LiveAuth, :require_admin} do
-      live "/admin/customer_sessions", DashboardLive
-      live "/admin/customer_sessions/:id", SessionViewLive
+    live_session :operator_console, on_mount: {EzagentWeb.LiveAuth, :require_entity} do
+      live "/operator", DashboardLive
+      live "/operator/:tenant", DashboardLive
+      live "/operator/:tenant/:conv", SessionViewLive
     end
+  end
+
+  # Redirect legacy `/admin/customer_sessions` → `/operator`.
+  # Plain controller route (not LV) — placed inside the RequireEntity
+  # plug scope so it shares the same auth gate as the operator LVs.
+  scope "/", EzagentWeb do
+    pipe_through [:browser, EzagentWeb.Plugs.RequireEntity]
+
+    get "/admin/customer_sessions", CustomerSessionsRedirectController, :redirect
   end
 
   # Liveness probe — plain JSON, no ESR dispatch path involved.

@@ -1,22 +1,14 @@
 defmodule EzagentPluginCustomerChat.DashboardLive do
   @moduledoc """
-  Phase 2.7 — Operator dashboard for live customer sessions.
+  Phase 2.8 — Operator dashboard for live customer sessions.
 
-  Lists every active customer session (per-conv URI shape
-  `session://default/<ws>/<conv-id>`) for the operator's current
-  workspace, with last-message preview + mode badge. Click a row to
-  navigate to the per-session detail LV
-  (`SessionViewLive`) which shows the live transcript +
-  Take-over button.
+  Reachable at `/operator/:tenant` (tenant baked into the route) or
+  `/operator` (no-tenant picker: redirects to the only servable
+  workspace, or lists all servable workspaces).
 
-  ## Operator model (constraint #2 in migration-design-constraints.md)
-
-  Operator is NOT a new entity Kind. It's an authenticated
-  `entity://user/<ws>/<name>` that holds *some* cap. The PoC gate
-  here is "any cap on the workspace". Production-shape gate would
-  be a dedicated `Behavior.Workspace :customer_session_observer`
-  cap (and a separate `Behavior.Mode :set` cap for take-over).
-  See FINDINGS for the production cap design recommendation.
+  The operator cap is a real workspace-scoped cap: the caller must hold
+  `Mode.set` over `workspace://<tenant>`. System members (admins) pass
+  unconditionally. See `OperatorAuth` for the full gate logic.
 
   ## Session enumeration
 
@@ -47,32 +39,47 @@ defmodule EzagentPluginCustomerChat.DashboardLive do
 
   use EzagentDomainUi.Components
 
-  @impl true
-  def mount(_params, _session, socket) do
-    caller_uri = socket.assigns[:current_entity_uri]
-    workspace_uri = socket.assigns[:current_workspace_uri]
+  alias EzagentPluginCustomerChat.OperatorAuth
 
-    case authorize_operator(caller_uri, workspace_uri) do
-      :ok ->
-        if connected?(socket) do
-          subscribe_to_sessions(workspace_uri)
+  @impl true
+  def mount(params, _session, socket) do
+    caller = socket.assigns[:current_entity_uri]
+    sys? = socket.assigns[:is_system_member?]
+    tenant = params["tenant"]
+
+    cond do
+      is_nil(tenant) ->
+        case OperatorAuth.servable_tenants(caller, sys?) do
+          [only] ->
+            {:ok, push_navigate(socket, to: "/operator/#{only}")}
+
+          tenants ->
+            {:ok,
+             socket
+             |> assign(:tenant, nil)
+             |> assign(:servable_tenants, tenants)
+             |> assign(:page_title, "Customer Service")}
         end
 
+      not OperatorAuth.operator?(caller, tenant, sys?) ->
+        {:ok,
+         socket
+         |> put_flash(:error, "Operator access required for #{tenant}.")
+         |> redirect(to: "/operator")}
+
+      true ->
+        workspace_uri = URI.parse("workspace://#{tenant}")
+        if connected?(socket), do: subscribe_to_sessions(workspace_uri)
         rows = enumerate_session_rows(workspace_uri)
 
         {:ok,
          socket
          |> assign(:page_title, "Customer Sessions")
+         |> assign(:tenant, tenant)
          |> assign(:workspace_uri, workspace_uri)
-         |> assign(:tenant, workspace_uri.host)
          |> assign(:rows, rows)
-         |> assign(:flash_error, nil)}
-
-      {:error, reason} ->
-        {:ok,
-         socket
-         |> put_flash(:error, deny_message(reason))
-         |> redirect(to: "/sessions")}
+         |> assign(:flash_error, nil)
+         |> assign(:servable_tenants, nil)}
     end
   end
 
@@ -97,57 +104,78 @@ defmodule EzagentPluginCustomerChat.DashboardLive do
     <div class="h-screen flex flex-col bg-zinc-50">
       <header class="px-6 py-3 border-b border-zinc-200 bg-white flex items-center gap-3">
         <span class="font-semibold text-zinc-900">Customer Service</span>
-        <span class="text-xs text-zinc-500 font-mono">{@tenant}</span>
+        <span :if={@tenant} class="text-xs text-zinc-500 font-mono">{@tenant}</span>
+        <span :if={is_nil(@tenant)} class="text-xs text-zinc-500">All workspaces</span>
       </header>
       <div class="flex-1 min-h-0 overflow-auto">
         <div class="flex-1 overflow-auto px-6 py-6 text-zinc-900 dark:text-zinc-100">
-          <.page_header title="Customer Sessions">
-            <:subtitle>
-              {"Live customer conversations in workspace #{workspace_label(@workspace_uri)}."}
-            </:subtitle>
-          </.page_header>
+          <%= if is_nil(@tenant) do %>
+            <.page_header title="Customer Service">
+              <:subtitle>{"Select a workspace to open the operator console."}</:subtitle>
+            </.page_header>
 
-          <p :if={@flash_error} class="text-rose-600 dark:text-rose-400 text-xs mb-4">{@flash_error}</p>
+            <p :if={@servable_tenants == []} class="text-zinc-500 italic text-sm">
+              {"You don't have operator access to any workspace."}
+            </p>
 
-          <p :if={@rows == []} id="empty" class="text-zinc-500 italic text-sm">
-            {"No active customer sessions yet."}
-            <br/>
-            <span class="text-xs">
-              Sessions matching <code class="font-mono">session://default/&lt;ws&gt;/&lt;conv-id&gt;</code>
-              appear here when customers start chatting.
-            </span>
-          </p>
+            <.card :if={@servable_tenants != []} class="p-0">
+              <ul class="divide-y divide-zinc-200 dark:divide-zinc-800">
+                <li :for={t <- @servable_tenants} class="hover:bg-zinc-50 dark:hover:bg-zinc-900">
+                  <.link navigate={"/operator/#{t}"} class="block px-4 py-3 font-medium">
+                    {t}
+                  </.link>
+                </li>
+              </ul>
+            </.card>
+          <% else %>
+            <.page_header title="Customer Sessions">
+              <:subtitle>
+                {"Live customer conversations in workspace #{workspace_label(@workspace_uri)}."}
+              </:subtitle>
+            </.page_header>
 
-          <.card :if={@rows != []} class="p-0">
-            <ul id="customer-sessions" class="divide-y divide-zinc-200 dark:divide-zinc-800">
-              <li :for={row <- @rows} class="hover:bg-zinc-50 dark:hover:bg-zinc-900">
-                <.link
-                  navigate={"/admin/customer_sessions/" <> URI.encode_www_form(row.session_uri_str)}
-                  class="block px-4 py-3"
-                >
-                  <div class="flex items-center justify-between">
-                    <div class="flex-1 min-w-0">
-                      <div class="flex items-center gap-2">
-                        <span class="font-medium">{row.conv_id}</span>
-                        <.mode_badge mode={row.mode} />
+            <p :if={@flash_error} class="text-rose-600 dark:text-rose-400 text-xs mb-4">{@flash_error}</p>
+
+            <p :if={@rows == []} id="empty" class="text-zinc-500 italic text-sm">
+              {"No active customer sessions yet."}
+              <br/>
+              <span class="text-xs">
+                Sessions matching <code class="font-mono">session://default/&lt;ws&gt;/&lt;conv-id&gt;</code>
+                appear here when customers start chatting.
+              </span>
+            </p>
+
+            <.card :if={@rows != []} class="p-0">
+              <ul id="customer-sessions" class="divide-y divide-zinc-200 dark:divide-zinc-800">
+                <li :for={row <- @rows} class="hover:bg-zinc-50 dark:hover:bg-zinc-900">
+                  <.link
+                    navigate={"/operator/#{@tenant}/#{row.conv_id}"}
+                    class="block px-4 py-3"
+                  >
+                    <div class="flex items-center justify-between">
+                      <div class="flex-1 min-w-0">
+                        <div class="flex items-center gap-2">
+                          <span class="font-medium">{row.conv_id}</span>
+                          <.mode_badge mode={row.mode} />
+                        </div>
+                        <div class="text-sm text-zinc-600 dark:text-zinc-400 truncate mt-1">
+                          <%= if row.last_message_preview do %>
+                            <span class="text-zinc-500">{row.last_sender_short}:</span>
+                            {row.last_message_preview}
+                          <% else %>
+                            <span class="italic text-zinc-400">{"No messages yet"}</span>
+                          <% end %>
+                        </div>
                       </div>
-                      <div class="text-sm text-zinc-600 dark:text-zinc-400 truncate mt-1">
-                        <%= if row.last_message_preview do %>
-                          <span class="text-zinc-500">{row.last_sender_short}:</span>
-                          {row.last_message_preview}
-                        <% else %>
-                          <span class="italic text-zinc-400">{"No messages yet"}</span>
-                        <% end %>
+                      <div class="text-xs text-zinc-400 ml-4 whitespace-nowrap">
+                        {format_at(row.last_activity_at)}
                       </div>
                     </div>
-                    <div class="text-xs text-zinc-400 ml-4 whitespace-nowrap">
-                      {format_at(row.last_activity_at)}
-                    </div>
-                  </div>
-                </.link>
-              </li>
-            </ul>
-          </.card>
+                  </.link>
+                </li>
+              </ul>
+            </.card>
+          <% end %>
         </div>
       </div>
     </div>
@@ -300,37 +328,4 @@ defmodule EzagentPluginCustomerChat.DashboardLive do
   end
 
   defp subscribe_to_sessions(_), do: :ok
-
-  # ---- authz -------------------------------------------------------------
-
-  # PoC operator gate (constraint #2): any cap on the workspace
-  # counts. Production should require a dedicated
-  # `Behavior.Workspace :customer_session_observer` cap. See
-  # FINDINGS for the recommended cap shape.
-  defp authorize_operator(nil, _), do: {:error, :no_entity}
-  defp authorize_operator(_, nil), do: {:error, :no_workspace}
-
-  defp authorize_operator(%URI{} = caller_uri, %URI{} = _workspace_uri) do
-    if has_any_cap?(caller_uri) do
-      :ok
-    else
-      {:error, :no_caps}
-    end
-  end
-
-  # `Ezagent.Identity.list_caps_for/1` returns a `MapSet`. We don't
-  # care which caps the operator holds for the PoC gate — only that
-  # they hold *at least one*. Production should swap this for a
-  # specific cap check (see moduledoc + FINDINGS).
-  defp has_any_cap?(caller_uri) do
-    caller_uri
-    |> Ezagent.Identity.list_caps_for()
-    |> Enum.any?()
-  end
-
-  defp deny_message(:no_entity), do: "Sign in required."
-  defp deny_message(:no_workspace), do: "No workspace context — pick a workspace first."
-
-  defp deny_message(:no_caps),
-    do: "Operator role required — you need at least one capability on this workspace."
 end
