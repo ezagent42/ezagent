@@ -70,6 +70,19 @@ defmodule EzagentPluginCustomerChat.Bootstrap do
   def ensure_session(workspace, conv_id) do
     admin_uri = Ezagent.Entity.User.admin_uri()
 
+    # DEFERRED ARCHITECTURE DECISION (2026-05-30) — accepted for the PoC; do
+    # NOT change core now. `create_session/3` UNCONDITIONALLY spawns a
+    # per-session cc-orchestrator (Phase-7 "session-create-orchestrator-unified"
+    # SPEC — no opt-out). Customer-chat does NOT use it: the customer message is
+    # mention-routed straight to the cc_cust agent (see `customer_message/3` +
+    # `dispatch_chat_send/2`); the orchestrator sits idle — an extra claude PTY
+    # + system prompt per conversation. We accept this for now because whether
+    # CS actually needs an orchestrator only becomes clear once the remaining
+    # AutoService features are migrated. NOTE: even AutoService's fast/slow
+    # agent pattern is just fan-out to 2 session members, NOT the LLM
+    # orchestrator. REVISIT after migration — if CS stays orchestrator-less,
+    # ask Allen for a `create_session(orchestrator: false)` opt-out. Tracked in
+    # HANDOFF-2026-05-30.md "Deferred decisions".
     case EzagentDomainChat.create_session(conv_id, admin_uri,
            workspace_uri: URI.parse("workspace://#{workspace}"),
            template_name: "default"
