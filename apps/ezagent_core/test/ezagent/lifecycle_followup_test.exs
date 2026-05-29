@@ -13,6 +13,15 @@ defmodule Ezagent.LifecycleFollowupTest do
     state is cleared).
   - F5 — `deactivate/2` is `:ok`-only (a returned state is discarded).
   - F6 — `pre_handle/3` + `post_handle/4` run around the handler dispatch.
+
+  ## Codex round-2 follow-ups (2026-05-29)
+
+  - F1-remainder — `Ezagent.SnapshotStore.write/3` (the Phase 2+ durable-
+    write seam) ALSO strips Lifecycle transients before serialization,
+    matching every other durable-write path.
+  - F2 (self-destroy) — `Ezagent.Lifecycle.destroy/2` rejects a self-call
+    with `{:error, :cannot_self_destroy}` instead of half-completing
+    (row deleted but process alive).
   """
 
   use Ezagent.LifecycleCase
@@ -20,7 +29,7 @@ defmodule Ezagent.LifecycleFollowupTest do
   alias Ezagent.Behavior
   alias Ezagent.Kind.{Runtime, Snapshot}
   alias Ezagent.Ecto.KindSnapshot
-  alias Ezagent.Invocation
+  alias Ezagent.{Invocation, SnapshotStore}
 
   alias Ezagent.TestSupport.{
     LifecycleFixture,
@@ -29,6 +38,8 @@ defmodule Ezagent.LifecycleFollowupTest do
     LifecycleDestroyKind,
     LifecycleInterceptFixture,
     LifecycleInterceptKind,
+    SelfDestroyFixture,
+    SelfDestroyKind,
     SiblingReader,
     SiblingMixKind,
     LegacySibling,
@@ -43,6 +54,8 @@ defmodule Ezagent.LifecycleFollowupTest do
           LifecycleDestroyKind,
           LifecycleInterceptFixture,
           LifecycleInterceptKind,
+          SelfDestroyFixture,
+          SelfDestroyKind,
           SiblingReader,
           SiblingMixKind,
           LegacySibling,
@@ -60,6 +73,7 @@ defmodule Ezagent.LifecycleFollowupTest do
     register.(LifecycleDestroyKind, :touch, LifecycleDestroyFixture)
     register.(LifecycleInterceptKind, :run, LifecycleInterceptFixture)
     register.(LifecycleInterceptKind, :guarded, LifecycleInterceptFixture)
+    register.(SelfDestroyKind, :boom, SelfDestroyFixture)
     register.(SiblingMixKind, :read, SiblingReader)
 
     :ok
@@ -342,6 +356,113 @@ defmodule Ezagent.LifecycleFollowupTest do
       # The handler never ran, so it never set :seen to :should_not_happen.
       {:ok, %{state: state}} = Ezagent.Kind.get_slice(u, :lifecycle_intercept_fixture)
       refute state.seen == :should_not_happen
+    end
+  end
+
+  # ===================================================================
+  # F1-remainder — SnapshotStore.write/3 strips transients
+  # ===================================================================
+
+  describe "F1-remainder — SnapshotStore.write/3 strips Lifecycle transients" do
+    test "a two-container write persists ONLY the :state view (transients gone on reload)" do
+      u = uri("lifecycle_fixture")
+      uri_str = URI.to_string(u)
+
+      {:ok, %{version: _}} =
+        SnapshotStore.write(
+          u,
+          %{lifecycle_fixture: %{state: %{x: 1}, transients: %{pid: self()}}},
+          kind_type: :lifecycle_fixture
+        )
+
+      # Reload through the public read API: the transients sub-key is
+      # ABSENT — a PID had no serialization path and was stripped at the
+      # write boundary, exactly like save_now/3.
+      assert {:ok, %{state: reloaded}} = SnapshotStore.latest(uri_str)
+      assert reloaded == %{lifecycle_fixture: %{state: %{x: 1}}}
+      refute Map.has_key?(reloaded.lifecycle_fixture, :transients)
+
+      # And the raw row confirms it (no live PID smuggled into the BLOB).
+      assert {:ok, decoded} = KindSnapshot.decode_state(KindSnapshot.get(uri_str))
+      assert decoded == %{lifecycle_fixture: %{state: %{x: 1}}}
+    end
+
+    test "a legacy flat slice (no :transients key) round-trips unchanged" do
+      u = uri("lifecycle_fixture")
+      uri_str = URI.to_string(u)
+
+      flat = %{some_slice: %{x: 1, y: "z"}}
+
+      {:ok, %{version: _}} =
+        SnapshotStore.write(u, flat, kind_type: :lifecycle_fixture)
+
+      # No :transients sub-key anywhere → the strip is a structural no-op
+      # and the state round-trips byte-for-byte.
+      assert {:ok, %{state: ^flat}} = SnapshotStore.latest(uri_str)
+    end
+  end
+
+  # ===================================================================
+  # F2 (self-destroy) — destroy/2 rejects a self-call (never torn state)
+  # ===================================================================
+
+  describe "F2 — self-destroy from inside the target Kind is rejected, not half-completed" do
+    test "a handler that calls destroy(self_uri) gets {:error, :cannot_self_destroy}; row + process intact" do
+      probe = :ets.new(:self_destroy_probe, [:public, :set])
+      u = uri("lifecycle_self_destroy_fixture")
+      uri_str = URI.to_string(u)
+
+      {:ok, pid} =
+        Ezagent.Kind.spawn(SelfDestroyKind, %{uri: u, label: "doomed?", probe: probe})
+
+      wait_until(fn -> Ezagent.ReadyGate.status(u) == :ready end)
+      assert KindSnapshot.ever_created?(uri_str)
+
+      target = URI.new!("#{uri_str}?action=lifecycle_self_destroy_fixture.boom")
+
+      # The handler runs IN the Kind.Server process and calls
+      # destroy(self_uri). The call must NOT deadlock (it would if the
+      # guard were absent → the inner GenServer.call(self()) blocks until
+      # the 5s timeout); it returns promptly with the rejection.
+      {:ok, result} =
+        Invocation.dispatch(%Invocation{
+          target: target,
+          mode: :call,
+          args: %{},
+          ctx: %{caller: :system, reply: {:caller_inbox, self()}}
+        })
+
+      # The handler observed the structural rejection.
+      assert result.result == {:error, :cannot_self_destroy}
+      assert [{:boom_result, {:error, :cannot_self_destroy}}] = :ets.lookup(probe, :boom_result)
+
+      # INVARIANT: NEITHER torn state NOR honest destruction. The durable
+      # row + marker are INTACT and the process is STILL ALIVE — the
+      # self-destroy did not clear the row (which, with a live process,
+      # is exactly the torn state F2 guards against) and did not kill it.
+      assert Process.alive?(pid)
+      assert {:ok, ^pid} = Ezagent.KindRegistry.lookup(u)
+      refute is_nil(KindSnapshot.get(uri_str))
+      assert KindSnapshot.ever_created?(uri_str)
+    end
+
+    test "destroy/2 from an EXTERNAL process (not self) still destroys normally" do
+      u = uri("lifecycle_self_destroy_fixture")
+      uri_str = URI.to_string(u)
+
+      {:ok, pid} = Ezagent.Kind.spawn(SelfDestroyKind, %{uri: u, label: "ext"})
+      wait_until(fn -> Ezagent.ReadyGate.status(u) == :ready end)
+      assert KindSnapshot.ever_created?(uri_str)
+
+      # The test process is NOT the Kind.Server pid, so this is the
+      # legitimate external-caller path — it fully destroys.
+      refute self() == pid
+      assert :ok = Ezagent.Lifecycle.destroy(u, :external_requested)
+
+      assert is_nil(KindSnapshot.get(uri_str))
+      refute KindSnapshot.ever_created?(uri_str)
+      wait_until(fn -> Ezagent.KindRegistry.lookup(u) == :error end)
+      refute Process.alive?(pid)
     end
   end
 

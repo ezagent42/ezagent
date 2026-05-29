@@ -218,6 +218,69 @@ defmodule Ezagent.TestSupport.LifecycleDestroyKind do
   def persistence, do: {:snapshot, :on_change}
 end
 
+defmodule Ezagent.TestSupport.SelfDestroyFixture do
+  @moduledoc """
+  Lifecycle fixture whose `:boom` handler calls
+  `Ezagent.Lifecycle.destroy(ctx.self_uri)` — i.e. it tries to destroy
+  the very Kind it is running inside (codex r2 F2). The handler runs IN
+  the Kind.Server process, so the inner destroy's hook-drain
+  `GenServer.call(self(), …)` would re-enter this GenServer. The fix
+  REJECTS the self-call with `{:error, :cannot_self_destroy}` BEFORE the
+  durable row is cleared / the process is terminated, so the test can
+  assert NEITHER the torn "row gone but alive" state NOR an honest
+  destruction occurs — the entity is left fully intact.
+
+  The handler records the rejection result into a test-supplied ETS probe
+  so the test can confirm the handler observed `{:error,
+  :cannot_self_destroy}` (not `:ok`, not a deadlock).
+  """
+
+  use Ezagent.Lifecycle
+
+  action :boom,
+    args: %{},
+    returns: %{result: :term},
+    caps: [:boom],
+    modes: [:call],
+    description: "attempt to self-destroy from inside the handler (F2 footgun)"
+
+  @impl Ezagent.Behavior
+  def workspace_scoped?, do: false
+  @impl Ezagent.Behavior
+  def cap_exempt_actions, do: [:boom]
+
+  @impl Ezagent.Lifecycle
+  def create(args), do: {:ok, %{label: Map.get(args, :label, "self"), probe: Map.get(args, :probe)}}
+
+  @impl Ezagent.Lifecycle
+  def activate(_state, _ctx), do: {:ok, %{}}
+
+  def handle_boom(_args, ctx) do
+    # Self-destroy: target == ctx.self_uri == THIS Kind. Must be rejected
+    # structurally, NOT half-completed.
+    result = Ezagent.Lifecycle.destroy(ctx.self_uri, :self_requested)
+
+    case ctx.read.(:probe, nil) do
+      nil -> :ok
+      probe -> :ets.insert(probe, {:boom_result, result})
+    end
+
+    {:ok, %{result: result}, []}
+  end
+end
+
+defmodule Ezagent.TestSupport.SelfDestroyKind do
+  @moduledoc false
+  @behaviour Ezagent.Kind
+
+  @impl Ezagent.Kind
+  def type_name, do: :lifecycle_self_destroy_fixture
+  @impl Ezagent.Kind
+  def behaviors, do: [Ezagent.TestSupport.SelfDestroyFixture]
+  @impl Ezagent.Kind
+  def persistence, do: {:snapshot, :on_change}
+end
+
 defmodule Ezagent.TestSupport.LifecycleInterceptFixture do
   @moduledoc """
   Lifecycle fixture exercising the FINE interception hooks

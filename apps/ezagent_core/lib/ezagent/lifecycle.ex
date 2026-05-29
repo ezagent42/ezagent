@@ -237,7 +237,12 @@ defmodule Ezagent.Lifecycle do
       end
 
       # terminate/3 → deactivate/2 (graceful stop, entity persists).
-      # Returned `{:ok, state}` is folded into the slice's state sub-map.
+      # `deactivate/2` is `:ok`-only (F5): it runs AFTER the final
+      # persistence snapshot is already on disk, so any returned value is
+      # DISCARDED by `__run_deactivate__/4` and the slice is left
+      # unchanged. It is for side-effecting graceful cleanup, never a
+      # (torn) state write — durable changes belong in a `handle_<action>`
+      # or in `activate/2`'s reconciliation return.
       #
       # The DESTROY (permanent deletion) path is DISTINCT — it does NOT
       # run through OTP `terminate/3` (which fires on every graceful stop,
@@ -485,8 +490,27 @@ defmodule Ezagent.Lifecycle do
   3. Terminate the Kind process.
 
   Idempotent — an already-absent URI clears nothing and returns `:ok`.
+
+  ## Self-destroy is rejected (codex r2 F2)
+
+  `destroy/2` runs in the caller's process. A Lifecycle `handle_<action>`
+  (or `destroy`/`deactivate`) hook runs INSIDE the target Kind.Server
+  process; if such a hook calls `Ezagent.Lifecycle.destroy(ctx.self_uri)`,
+  step 1's hook-drain would `GenServer.call(self(), …)` — a re-entrant
+  call that deadlocks until the 5s timeout, after which steps 2-3 would
+  still delete the durable row + terminate the process. That is the torn
+  invariant "row deleted but process alive (mid-call)".
+
+  Self-destroy through this synchronous primitive is never legitimate (a
+  Kind cannot run its own destroy hooks while it is the process executing
+  them), so we REJECT it structurally with `{:error,
+  :cannot_self_destroy}` BEFORE touching the durable row or the process
+  (per `feedback_let_it_crash_no_workarounds` — a clear refusal, not a
+  silent degrade). The row stays intact and the process stays alive. A
+  Kind that wants to delete itself must emit a `:terminate` effect (which
+  ends its own life) and let an EXTERNAL caller invoke `destroy/2`.
   """
-  @spec destroy(URI.t() | String.t(), term()) :: :ok
+  @spec destroy(URI.t() | String.t(), term()) :: :ok | {:error, :cannot_self_destroy}
   def destroy(uri, reason \\ :destroy) do
     uri_str =
       case uri do
@@ -496,28 +520,45 @@ defmodule Ezagent.Lifecycle do
 
     # 1. Run the developer destroy hooks against the live Kind (best-
     #    effort — a brutal kill may have skipped this, which is why the
-    #    next incarnation's `activate/2` must self-heal — §OTP).
-    run_developer_destroy_hooks(uri_str, reason)
+    #    next incarnation's `activate/2` must self-heal — §OTP). The
+    #    self-call guard lives HERE (before the durable clear) so a
+    #    rejected self-destroy leaves the row + process untouched.
+    case run_developer_destroy_hooks(uri_str, reason) do
+      :ok ->
+        # 2. Clear durable state + ever-created marker (one row delete).
+        :ok = Ezagent.Ecto.KindSnapshot.delete(uri_str)
 
-    # 2. Clear durable state + ever-created marker (one row delete).
-    :ok = Ezagent.Ecto.KindSnapshot.delete(uri_str)
+        # 3. Terminate the process (idempotent — already-gone is :ok).
+        case Ezagent.KindRegistry.lookup(uri_str) do
+          {:ok, _pid} -> Ezagent.Kind.terminate(Ezagent.URI.new!(uri_str))
+          :error -> :ok
+        end
 
-    # 3. Terminate the process (idempotent — already-gone is :ok).
-    case Ezagent.KindRegistry.lookup(uri_str) do
-      {:ok, _pid} -> Ezagent.Kind.terminate(Ezagent.URI.new!(uri_str))
-      :error -> :ok
+        :ok
+
+      {:error, :cannot_self_destroy} = err ->
+        # NEVER proceed to the durable clear / terminate — that is the
+        # torn "row gone but process alive" state F2 guards against.
+        err
     end
-
-    :ok
   end
 
   # Ask the live Kind.Server to drain each of its Lifecycle Behaviors'
   # `destroy/2` hooks (via the macro-emitted `__ezagent_lifecycle_destroy__/3`
   # convention) IN the Kind's own process, so each hook reads its slice.
-  # No live Kind → nothing to drain (the durable clear in step 2 still
+  # No live Kind → nothing to drain (the durable clear in the caller still
   # runs). Best-effort: a failed call must not block the durable delete.
+  #
+  # Self-destroy guard (codex r2 F2): if the resolved Kind pid IS the
+  # current process, the hook-drain `GenServer.call` would re-enter this
+  # very GenServer and deadlock. Reject up-front with
+  # `{:error, :cannot_self_destroy}` so the caller aborts BEFORE the
+  # durable row delete + terminate — never leaving the torn state.
   defp run_developer_destroy_hooks(uri_str, reason) do
     case Ezagent.KindRegistry.lookup(uri_str) do
+      {:ok, pid} when is_pid(pid) and pid == self() ->
+        {:error, :cannot_self_destroy}
+
       {:ok, pid} when is_pid(pid) ->
         try do
           GenServer.call(pid, {:ezagent_lifecycle_destroy, reason}, 5_000)
