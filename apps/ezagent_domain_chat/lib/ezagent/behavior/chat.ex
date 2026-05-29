@@ -301,14 +301,15 @@ defmodule Ezagent.Behavior.Chat do
       orchestrator_template_uri: nil,
       # URI.t() | nil — the SessionTemplate this Session was
       # instantiated from (the Generator's `parent_template_uri`,
-      # Task #110). Recorded here so the orchestrator MCP context can
-      # be re-registered on a cold-load: it is the `:parent_template_uri`
-      # the `update_template` MCP tool requires, and is NOT derivable
-      # from the session URI (the `<owner>-<template>` path segment is
-      # ambiguous). Durable because Session is `{:snapshot, :on_change}`.
-      # `nil` for sessions that never went through the Generator (plain
-      # system sessions) — those have no orchestrator and skip
-      # re-registration entirely (see `Chat.on_ready/2`).
+      # Task #110). Durable because Session is `{:snapshot, :on_change}`,
+      # so it survives a phx restart. It is the canonical source the
+      # lazy rebuild in
+      # `Ezagent.Orchestrator.McpServer.from_orchestrator_uri/1` prefers
+      # for the `:parent_template_uri` the `update_template` MCP tool
+      # requires — NOT derivable from the session URI in the general case
+      # (the `<owner>-<template>` path segment can be ambiguous). `nil`
+      # for sessions that never went through the Generator (plain system
+      # sessions) — those have no orchestrator.
       session_template_uri: nil,
       # URI.t() | nil — workspace newly-instantiated sessions land in
       default_workspace_uri: nil,
@@ -918,99 +919,29 @@ defmodule Ezagent.Behavior.Chat do
 
   def handle_kind_message(_other_message, _chat_slice, _ctx), do: :ignore
 
-  # --- on_ready: re-register the orchestrator MCP context (Task #110) -----
-
-  @doc """
-  Re-register this Session's orchestrator MCP context after a cold-load.
-
-  ## The bug (Task #110)
-
-  `Ezagent.Orchestrator.McpRegistry` is an in-memory ETS table mapping
-  an orchestrator agent URI → `(session_uri, workspace_uri, owner_uri,
-  parent_template_uri)`. It is written ONLY at session-spawn time by
-  the Generator (`Ezagent.Entity.Session` step 7). On a phx restart the
-  Session Kind cold-loads from its `kind_snapshots` row (Session is
-  `{:snapshot, :on_change}`) but the Generator path never runs again, so
-  the ETS row is gone. The orchestrator's `claude` PTY then spams the
-  `orch:bridge:<uri>` channel join, which `McpServer.from_orchestrator_uri/1`
-  fail-closes with `{:error, :orchestrator_not_registered}` — the 7
-  management MCP tools are dead until the session is freshly re-spawned.
-
-  ## Why `on_ready/2` (not `handle_continue/3` or `reconcile_after_load/2`)
-
-  Registration is a PURE ETS side-effect (idempotent put) — it changes
-  no slice data, so `reconcile_after_load/2` (a pure slice transformer)
-  is the wrong hook. `on_ready/2` runs once AFTER `ReadyGate` flips to
-  `:ready` (see `Ezagent.Behavior.on_ready/2` + `Ezagent.Kind.Server`
-  moduledoc) — exactly the seam for boot-time side-effects, and it runs
-  on every spawn (fresh AND cold-load). Idempotency makes the redundant
-  fresh-spawn registration (the Generator already wrote the row) a
-  no-op overwrite.
-
-  ## Recovering the context on cold-load
-
-  - `orchestrator_uri` — `Ezagent.Entity.Session.derive_orchestrator_uri/2`
-    is deterministic from `(session_uri, workspace_uri)`; it is the SAME
-    URI the Generator registered.
-  - `session_uri` — the Kind's own URI (`ctx.self_uri`).
-  - `workspace_uri` — `Ezagent.Capability.workspace_of/1` derives it
-    purely from the 3-segment session URI path (NO `WorkspaceRegistry`
-    dependency, so no race with the post-spawn `bind_session_workspace/1`).
-  - `owner_uri` — the `:owner_uri` field on this `:chat` slice (durable).
-  - `parent_template_uri` — the `:session_template_uri` field on the
-    durable `template_working_copy` (persisted at spawn by
-    `Ezagent.Entity.Session.merge_working_copy/6`). NOT derivable from
-    the session URI; persisted specifically so `update_template` works
-    after a restart.
-
-  ## No-op guard
-
-  A Session has an orchestrator iff its `template_working_copy` carries
-  an `:orchestrator_template_uri` (the Generator always sets it; the
-  `default_template_working_copy/0` leaves it `nil`). Plain system
-  sessions that never went through the Generator skip registration
-  entirely — a clean no-op.
-  """
-  def on_ready(chat_slice, ctx) when is_map(chat_slice) and is_map(ctx) do
-    session_uri = Map.get(ctx, :self_uri)
-    wc = template_working_copy(chat_slice)
-
-    with %URI{} = session_uri <- session_uri,
-         %URI{} <- Map.get(wc, :orchestrator_template_uri),
-         %URI{} = workspace_uri <- Ezagent.Capability.workspace_of(session_uri) do
-      orchestrator_uri =
-        Ezagent.Entity.Session.derive_orchestrator_uri(session_uri, workspace_uri)
-
-      case Ezagent.Orchestrator.McpRegistry.register(orchestrator_uri,
-             session_uri: session_uri,
-             workspace_uri: workspace_uri,
-             owner_uri: Map.get(chat_slice, :owner_uri),
-             parent_template_uri: Map.get(wc, :session_template_uri)
-           ) do
-        :ok ->
-          :ok
-
-        {:error, reason} ->
-          # Let-it-crash posture: a register/2 failure here is a real
-          # structural error (missing required session/workspace URI),
-          # not a degrade path. We log it (on_ready is best-effort +
-          # per-Behavior isolated by Kind.Server) so it is observable
-          # rather than a silent fail-closed storm on the bridge.
-          Logger.warning(
-            "Behavior.Chat.on_ready: McpRegistry.register failed for orchestrator " <>
-              "#{URI.to_string(orchestrator_uri)} on session " <>
-              "#{URI.to_string(session_uri)}: #{inspect(reason)}"
-          )
-
-          :ok
-      end
-    else
-      # No orchestrator (plain/system session) or no session URI — no-op.
-      _ -> :ok
-    end
-  end
-
-  def on_ready(_chat_slice, _ctx), do: :ok
+  # --- Task #110 — orchestrator MCP context is now LAZILY REBUILT --------
+  #
+  # The earlier patch (commit 73044554) re-registered the orchestrator
+  # `McpRegistry` row from an `on_ready/2` cache-warm here. That has been
+  # REMOVED in favour of the read-through cache in
+  # `Ezagent.Orchestrator.McpServer.from_orchestrator_uri/1`: on an ETS
+  # miss it lazily rebuilds the context from the Session's durable
+  # `kind_snapshots` row and fills the cache.
+  #
+  # Lazy rebuild fully subsumes the on_ready cache-warm for correctness
+  # AND covers a case on_ready could not: the orchestrator bridge can
+  # join `orch:bridge:<uri>` BEFORE the Session Kind cold-spawns (or
+  # while it is not running at all) — on_ready only fires when the
+  # Session Kind itself reaches `:ready`, so it could not have warmed
+  # the cache in time for that race. The cache-warm offered at best a
+  # marginal first-join latency saving (one indexed snapshot query,
+  # once per orchestrator per restart, cached thereafter), so it is
+  # dropped to reduce surface per the plugin-isolation north star.
+  #
+  # The durable `:session_template_uri` field on the working copy (added
+  # by the same commit, persisted by `Session.merge_working_copy/6`) is
+  # KEPT — it is the canonical source the lazy rebuild prefers for
+  # `parent_template_uri`.
 
   # --- Topic helpers (public — Ezagent.Kind.Server / LV subscribe via these) -
 
