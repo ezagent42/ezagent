@@ -302,3 +302,47 @@ first send until `status == :ready` is confirmed client-side.
    `content-security-policy: frame-ancestors 'self'`, blocking embedding on a
    business's site. Fix: `:customer_chat_browser` pipeline keeps CSRF/session
    but relaxes `frame-ancestors` (commit `4762a943`).
+
+## Plugin extraction — acceptance (2026-05-30)
+
+Extracted the customer-service surface into `ezagent_plugin_customer_chat`
+(spec/plan `10-customer-chat-plugin-extraction-*.md`), 11 tasks via
+subagent-driven dev (each substantive task got spec + code-quality review).
+Re-verified end-to-end in Chrome on the extracted + latest-main-merged tree:
+
+- ✅ **Plugin registers** — `/plugins` shows a "Customer Service" card linking
+  to `/operator` (via `config_surface: %{kind: :route, ...}`). `PluginRegistry`
+  lists `customer_chat | Customer Service`.
+- ✅ **Customer chat + soul** — `/chat/acme`: themed page, live AI reply with
+  acme soul facts (12-mo / 24-mo Pro). (SSE headless path also re-verified.)
+- ✅ **Reload-resume** — hard-reload restored the thread.
+- ✅ **`/operator/:tenant` direct entry** — logging in then going straight to
+  `/operator/acme` lands on the dashboard for acme **with no workspace switch**
+  (the friction the extraction set out to remove). Lists live sessions.
+- ✅ **Operator takeover** — `/operator/acme/<conv>` → "Take over" → operator
+  message reaches the customer page live (banner + `(客服已接管对话)` notice +
+  green 客服 bubble), no SSE timeout.
+- ✅ **Old-link redirect** — `/admin/customer_sessions[/:id]` → `/operator`
+  (302; bounces through `/login` for anon, as gated).
+- ✅ **No hardcoded tenant** in `ezagent_plugin_customer_chat/lib` (grep clean).
+- ✅ **13 unit tests** green under the new app; our code `--warnings-as-errors` clean.
+
+### Bugs found + fixed during extraction (each by the review/e2e gate)
+
+1. **Soul-root hop count** (T3) — the old `customer_chat/` subdir added a path
+   level the flat plugin layout drops; `..` count 6→5. Caught by the implementer
+   verifying the resolved path.
+2. **Operator cap field name** (T8) — `OperatorAuth` used `Capability.workspace`
+   but the field is `workspace_uri`; the wrong key returned `nil` → the gate
+   silently denied ALL non-admin operators (fail-closed). Caught by spec review
+   (compiler also warned `unknown key`).
+3. **`handle_info` KeyError guard + old `:id` redirect + action-name shadow**
+   (T8) — code-quality review items, fixed.
+4. **Tailwind `@source` regression** (T11 e2e) — the new app's lib path wasn't in
+   the Tailwind v4 content globs, so its classes were purged → broken layout +
+   missing theme. Caught only by the live browser run (compile/tests were green).
+   Fixed by adding `@source "../../../ezagent_plugin_customer_chat/lib"`.
+
+Deferred (documented, not regressions): escalation signal, CINNOX EM adapter,
+operator-cap legacy-`:any` tolerance, picker filtering of `workspace://system`,
+`servable_tenants` N-dispatch refactor.
