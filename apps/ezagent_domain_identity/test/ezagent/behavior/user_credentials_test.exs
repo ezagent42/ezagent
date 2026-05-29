@@ -56,8 +56,9 @@ defmodule Ezagent.Behavior.UserCredentialsTest do
       assert UC.state_slice() == :user_credentials
     end
 
-    test "init_slice/1 starts with set_password_count: 0" do
-      assert UC.init_slice(%{}) == %{set_password_count: 0}
+    # Phase B: `init_slice/1` → `create/1` (PERSISTENT state).
+    test "create/1 starts with set_password_count: 0" do
+      assert UC.create(%{}) == {:ok, %{set_password_count: 0}}
     end
 
     test "__actions__/0 covers every action in actions/0 (new-contract interface source)" do

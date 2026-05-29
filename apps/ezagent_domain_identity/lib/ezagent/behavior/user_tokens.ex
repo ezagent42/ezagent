@@ -77,9 +77,20 @@ defmodule Ezagent.Behavior.UserTokens do
   reads (`Token.list/1`, `Repo.get`) are wrapped in `:effect_returning`
   so the result can be referenced via `{:ref, ...}` in downstream
   effects (counter `:set` + audit `:emit`).
+
+  ## Phase B migration (2026-05-29) — `use Ezagent.Lifecycle`
+
+  Converted to the Lifecycle developer API per SPEC
+  `docs/superpowers/specs/2026-05-29-lifecycle-hooks-design.md` §5.
+  STATE-ONLY: the slice is the incidental `mint_count` / `revoke_count`
+  counters (durable tokens are owned by the `entity_tokens` table via
+  `Ezagent.Entity.Token`); no transients. `init_slice/1` → `create/1`;
+  `activate/2` is the macro no-op (omitted). Auto-derived `state_slice`
+  is `:user_tokens` (matches the old explicit one). Handler bodies
+  byte-identical. `required_caps/0` + `data_owner/1` pass through.
   """
 
-  use Ezagent.Behavior
+  use Ezagent.Lifecycle
 
   action :mint_token,
     args: %{
@@ -128,12 +139,13 @@ defmodule Ezagent.Behavior.UserTokens do
   end
 
   # =================================================================
-  # Slice machinery (legacy callbacks; §6.2 step 9)
+  # Lifecycle state — `create/1` builds the PERSISTENT counters once
+  # (Phase B; was `init_slice/1`). No transients → `activate/2` is the
+  # macro no-op. `state_slice` auto-derives to `:user_tokens`.
   # =================================================================
 
-  def state_slice, do: :user_tokens
-
-  def init_slice(_args), do: %{mint_count: 0, revoke_count: 0}
+  @impl Ezagent.Lifecycle
+  def create(_args), do: {:ok, %{mint_count: 0, revoke_count: 0}}
 
   # PR-OWN-4 / codex PR #356 r1 MED fix: same shape as Identity /
   # ApiKeys / UserCredentials — the User Kind owns its tokens.

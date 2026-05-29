@@ -70,7 +70,8 @@ defmodule Ezagent.Behavior.UserCredentialsMigrationParityTest do
       assert result == %{user_uri: URI.to_string(user_uri), password_set: true}
 
       # Slice mutation: counter went from 0 to 1.
-      assert new_state.user_credentials.set_password_count == 1
+      # Phase B: two-container slice — persistent counter lives under `.state`.
+      assert new_state.user_credentials.state.set_password_count == 1
 
       # slice_change event fired because :set effect mutated the slice.
       assert is_map(slice_change_event)
@@ -88,14 +89,14 @@ defmodule Ezagent.Behavior.UserCredentialsMigrationParityTest do
       assert {:ok, state_after_1, _r1, _e1} =
                Ezagent.Kind.Runtime.handle_dispatch(inv1, state, User, user_uri)
 
-      assert state_after_1.user_credentials.set_password_count == 1
+      assert state_after_1.user_credentials.state.set_password_count == 1
 
       inv2 = build_invocation(user_uri, :set_password, %{password: "step2"})
 
       assert {:ok, state_after_2, _r2, _e2} =
                Ezagent.Kind.Runtime.handle_dispatch(inv2, state_after_1, User, user_uri)
 
-      assert state_after_2.user_credentials.set_password_count == 2
+      assert state_after_2.user_credentials.state.set_password_count == 2
       assert Users.verify_password(user_uri, "step2")
     end
 

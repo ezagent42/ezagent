@@ -68,9 +68,20 @@ defmodule Ezagent.Behavior.UserCredentials do
   per §6.2 step 9 — the Kind.Server still calls these directly.
   Dispatch goes through `Ezagent.Kind.Runtime` post-#453+#454
   (Phase 1.5+1.5b — new-contract detection via `__behavior__?/0`).
+
+  ## Phase B migration (2026-05-29) — `use Ezagent.Lifecycle`
+
+  Converted to the Lifecycle developer API per SPEC
+  `docs/superpowers/specs/2026-05-29-lifecycle-hooks-design.md` §5.
+  STATE-ONLY: the slice is the incidental `set_password_count` counter
+  (the durable password hash is owned by the `users` table via
+  `Ezagent.Users`); no transients. `init_slice/1` → `create/1`;
+  `activate/2` is the macro no-op (omitted). Auto-derived `state_slice`
+  is `:user_credentials` (matches the old explicit one). Handler body
+  byte-identical. `required_caps/0` + `data_owner/1` pass through.
   """
 
-  use Ezagent.Behavior
+  use Ezagent.Lifecycle
 
   action :set_password,
     args: %{password: :string},
@@ -101,14 +112,13 @@ defmodule Ezagent.Behavior.UserCredentials do
   end
 
   # =================================================================
-  # Slice machinery (legacy callbacks; §6.2 step 9 preserves these —
-  # the Kind.Server calls them directly via behavior.state_slice/0 /
-  # behavior.init_slice/1).
+  # Lifecycle state — `create/1` builds the PERSISTENT counter once
+  # (Phase B; was `init_slice/1`). No transients → `activate/2` is the
+  # macro no-op. `state_slice` auto-derives to `:user_credentials`.
   # =================================================================
 
-  def state_slice, do: :user_credentials
-
-  def init_slice(_args), do: %{set_password_count: 0}
+  @impl Ezagent.Lifecycle
+  def create(_args), do: {:ok, %{set_password_count: 0}}
 
   # PR-OWN-4 data_owner pattern: the user (the Kind instance) owns its
   # credentials. Concrete user URIs map to themselves (self-owned;

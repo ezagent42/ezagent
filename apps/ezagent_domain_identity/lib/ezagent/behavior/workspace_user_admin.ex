@@ -80,9 +80,20 @@ defmodule Ezagent.Behavior.WorkspaceUserAdmin do
   per §4.5 inline idempotent Repo writes are permitted; the
   `:set`/`:emit` effects then record the slice counter bump + audit
   event after the row is durably inserted.
+
+  ## Phase B migration (2026-05-29) — `use Ezagent.Lifecycle`
+
+  Converted to the Lifecycle developer API per SPEC
+  `docs/superpowers/specs/2026-05-29-lifecycle-hooks-design.md` §5.
+  STATE-ONLY: the slice is the incidental `create_count` counter (the
+  durable `users` rows are owned by `Ezagent.Users`); no transients.
+  `init_slice/1` → `create/1`; `activate/2` is the macro no-op
+  (omitted). Auto-derived `state_slice` is `:workspace_user_admin`
+  (matches the old explicit one). Handler body byte-identical.
+  `required_caps/0` + `data_owner/1` pass through.
   """
 
-  use Ezagent.Behavior
+  use Ezagent.Lifecycle
 
   action :create_user,
     args: %{
@@ -115,12 +126,13 @@ defmodule Ezagent.Behavior.WorkspaceUserAdmin do
   end
 
   # =================================================================
-  # Slice machinery (legacy callbacks; §6.2 step 9)
+  # Lifecycle state — `create/1` builds the PERSISTENT counter once
+  # (Phase B; was `init_slice/1`). No transients → `activate/2` is the
+  # macro no-op. `state_slice` auto-derives to `:workspace_user_admin`.
   # =================================================================
 
-  def state_slice, do: :workspace_user_admin
-
-  def init_slice(_args), do: %{create_count: 0}
+  @impl Ezagent.Lifecycle
+  def create(_args), do: {:ok, %{create_count: 0}}
 
   # PR-OWN-4: workspace-scoped, workspace-admin grantable.
   def data_owner(_), do: :any

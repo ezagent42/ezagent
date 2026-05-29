@@ -23,14 +23,15 @@ defmodule Ezagent.Behavior.ApiKeysTest do
     }
   end
 
-  describe "init_slice/1" do
+  # Phase B: `init_slice/1` → `create/1` (builds the PERSISTENT state).
+  describe "create/1" do
     test "starts with empty keys and nil creator_uri" do
-      assert ApiKeys.init_slice(%{}) == %{keys: %{}, creator_uri: nil}
+      assert ApiKeys.create(%{}) == {:ok, %{keys: %{}, creator_uri: nil}}
     end
 
     test "captures creator_uri when provided" do
       creator = URI.parse("entity://user/system/admin")
-      assert ApiKeys.init_slice(%{creator_uri: creator}) == %{keys: %{}, creator_uri: creator}
+      assert ApiKeys.create(%{creator_uri: creator}) == {:ok, %{keys: %{}, creator_uri: creator}}
     end
   end
 
