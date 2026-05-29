@@ -1,4 +1,4 @@
-defmodule EzagentPluginLiveview.CustomerChat.ChatLive do
+defmodule EzagentPluginCustomerChat.ChatLive do
   @moduledoc """
   Public customer chat page at `/chat/:tenant`. No login. The customer
   is a synthetic `entity://user/<tenant>/customer_<id>`.
@@ -15,7 +15,7 @@ defmodule EzagentPluginLiveview.CustomerChat.ChatLive do
   use Phoenix.LiveView
   import EzagentPluginCustomerChat.Components
   alias EzagentPluginCustomerChat.Components
-  alias EzagentPluginLiveview.CustomerChat.{Bootstrap, Theme}
+  alias EzagentPluginCustomerChat.{Bootstrap, Theme}
   require Logger
 
   @message_limit 50
