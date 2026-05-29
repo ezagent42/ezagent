@@ -10,6 +10,7 @@
    compiled into the output CSS. */
 @source "../../../ezagent_plugin_liveview/lib";
 @source "../../../ezagent_domain_ui/lib";
+@source "../../../ezagent_plugin_customer_chat/lib";
 
 /* A Tailwind plugin that makes "hero-#{ICON}" classes available.
    The heroicons installation itself is managed by your mix.exs */
