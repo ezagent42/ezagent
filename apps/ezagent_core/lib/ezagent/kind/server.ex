@@ -129,6 +129,13 @@ defmodule Ezagent.Kind.Server do
 
         case persist_initial_snapshot(uri, kind_module, slice_state) do
           :ok ->
+            # Lifecycle Phase A (SPEC 2026-05-29 §9 OQ-1) — once the
+            # initial `state` has durably landed, flip the ever-created
+            # marker so a future cold-load SKIPS `create/1` and runs
+            # only `activate/2`. Ordered AFTER persist so the marker is
+            # never set ahead of the state it gates. Best-effort + only
+            # for Kinds carrying a Lifecycle (two-container) slice.
+            maybe_mark_ever_created(uri, kind_module, slice_state)
             schedule_periodic_snapshot(kind_module)
             {:ok, state, {:continue, :announce_ready}}
 
@@ -227,6 +234,40 @@ defmodule Ezagent.Kind.Server do
       end
     end)
     |> Enum.reverse()
+  end
+
+  # Lifecycle Phase A (SPEC 2026-05-29 §9 OQ-1) — flip the durable
+  # ever-created marker once the initial slice has persisted, IF this
+  # Kind hosts at least one Lifecycle (two-container) slice. Structural
+  # detection (a slice carrying a `:transients` sub-key) — no Behavior
+  # coupling. Skipped for `:ephemeral` / `:external` Kinds (no row to
+  # mark) and best-effort otherwise (a marker-write failure must not
+  # crash the boot — the create-once guard simply degrades to
+  # re-running `create`, which the snapshot merge shadows anyway).
+  defp maybe_mark_ever_created(uri, kind_module, slice_state) do
+    has_lifecycle_slice? =
+      Enum.any?(slice_state, fn {_key, slice} ->
+        is_map(slice) and Map.has_key?(slice, :transients)
+      end)
+
+    persisted? =
+      case Ezagent.Kind.persistence_of(kind_module) do
+        :ephemeral -> false
+        :external -> false
+        _ -> true
+      end
+
+    if has_lifecycle_slice? and persisted? do
+      try do
+        _ = Ezagent.Ecto.KindSnapshot.mark_ever_created(URI.to_string(uri))
+      rescue
+        _ -> :ok
+      catch
+        :exit, _ -> :ok
+      end
+    end
+
+    :ok
   end
 
   defp schedule_periodic_snapshot(kind_module) do

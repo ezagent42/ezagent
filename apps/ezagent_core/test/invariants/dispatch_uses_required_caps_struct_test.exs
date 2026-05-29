@@ -58,6 +58,13 @@ defmodule EzagentCore.Invariants.DispatchUsesRequiredCapsStructTest do
           Regex.match?(~r/^\s*@behaviour Ezagent\.Behavior\s*$/m, content),
           # Skip the @callback declaration file itself.
           not String.ends_with?(path, "lib/ezagent/behavior.ex"),
+          # Skip the Lifecycle macro (SPEC 2026-05-29) — it EMITS
+          # `@behaviour Ezagent.Behavior` inside its `__using__` quote
+          # block (so the line-anchored regex matches the macro source),
+          # but `required_caps/0` is injected for the USING module by
+          # `use Ezagent.Behavior`'s @before_compile, not defined here.
+          # Same class of exclusion as behavior.ex above.
+          not String.ends_with?(path, "lib/ezagent/lifecycle.ex"),
           do: path
 
     refute behavior_modules == [],

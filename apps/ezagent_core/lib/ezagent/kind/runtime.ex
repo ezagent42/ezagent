@@ -756,7 +756,7 @@ defmodule Ezagent.Kind.Runtime do
   end
 
   defp invoke_new_contract_handler(behavior_module, action, handler_name, slice, args, ctx) do
-    handler_ctx = Map.put(ctx, :read, fn key, default -> Map.get(slice, key, default) end)
+    handler_ctx = build_handler_ctx(slice, ctx)
 
     case apply(behavior_module, handler_name, [args, handler_ctx]) do
       {:ok, result, effects} when is_list(effects) ->
@@ -785,6 +785,32 @@ defmodule Ezagent.Kind.Runtime do
       )
 
       {:error, {:behavior_exception, kind, reason}}
+  end
+
+  # Build the `ctx` handed to a `handle_<action>/2` handler.
+  #
+  # Legacy (flat) slice: `ctx[:read].(key, default)` reads the slice
+  # directly — byte-identical to the pre-Lifecycle engine.
+  #
+  # Lifecycle Phase A (SPEC 2026-05-29 §2.2) — a two-container slice
+  # (`%{state: _, transients: _}`) exposes:
+  #   - `ctx.read.(key, default)` → reads from the PERSISTENT `:state`
+  #     sub-map (so a handler's `ctx.read.(:conversation, [])` sees the
+  #     durable field, NOT the literal `:state` / `:transients` keys).
+  #   - `ctx.transients` → the volatile container (read view), so a
+  #     handler reads a PID/ref/handle via `ctx.transients[:monitors]`.
+  # The `:set` / `:set_transient` effects the handler returns are routed
+  # to the matching sub-map by `Ezagent.Behavior.apply_effects/2`.
+  defp build_handler_ctx(%{state: st, transients: tr} = _slice, ctx)
+       when is_map(st) and is_map(tr) do
+    ctx
+    |> Map.put(:read, fn key, default -> Map.get(st, key, default) end)
+    |> Map.put(:state, st)
+    |> Map.put(:transients, tr)
+  end
+
+  defp build_handler_ctx(flat_slice, ctx) when is_map(flat_slice) do
+    Map.put(ctx, :read, fn key, default -> Map.get(flat_slice, key, default) end)
   end
 
   # Phase 1.5b — execute the full effect grammar produced by

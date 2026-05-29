@@ -875,6 +875,7 @@ defmodule Ezagent.Behavior do
   """
   @type effect ::
           {:set, atom(), term()}
+          | {:set_transient, atom(), term()}
           | {:emit, atom(), map()}
           | {:dispatch, Ezagent.Cmd.t()}
           | {:dispatch_returning, Ezagent.Cmd.t(), keyword()}
@@ -1007,6 +1008,26 @@ defmodule Ezagent.Behavior do
       {:set, _key, _value} = e ->
         bucket_by_phase(rest, Map.update!(acc, :events, &[{:__set__, e} | &1]) |> bucket_set(e))
 
+      # Lifecycle Phase A (SPEC 2026-05-29 §9 OQ-2 + §10-R2) —
+      # `{:set_transient, key, value}` writes into the Lifecycle slice's
+      # `:transients` sub-map. Like `:set`, it is reduced into the
+      # in-memory accumulator BEFORE the caller commits (R10-2: both
+      # containers advance together pre-commit; if the durable commit of
+      # `state` fails, the caller keeps the prior slice and neither
+      # container advances — see `Kind.Server.commit_and_notify/3`).
+      # `transients` is NEVER serialized (stripped at the snapshot
+      # boundary, `Ezagent.Kind.Snapshot.strip_transients/1`), so a
+      # `:set_transient` carries no durability promise — it lives in the
+      # host GenServer's memory until the next stop, then is rebuilt by
+      # `activate/2`.
+      #
+      # We deliberately keep it OUT of the `:events` ordering list (it is
+      # a pure container reduction, not an audit-visible state event) and
+      # OUT of every side-effect bucket. It only mutates the accumulator
+      # `state` (the two-container slice) in place.
+      {:set_transient, _key, _value} = e ->
+        bucket_by_phase(rest, bucket_set_transient(acc, e))
+
       {:emit, _type, _payload} = e ->
         bucket_by_phase(rest, Map.update!(acc, :events, &[e | &1]))
 
@@ -1052,8 +1073,44 @@ defmodule Ezagent.Behavior do
 
   # Apply `:set` effects to state in-place during the first pass so
   # downstream effect-substitution can see them via {:ref, ...}.
+  #
+  # Lifecycle Phase A (SPEC 2026-05-29 §0.1) — two-container awareness.
+  # When the slice has the Lifecycle two-container shape (`%{state: _,
+  # transients: _}`), `{:set, key, value}` writes into the `:state`
+  # sub-map (the persistent container). For a legacy flat slice (no
+  # `:transients` sub-key) the write is flat, exactly as before — so
+  # every existing Behavior is byte-for-byte unaffected.
   defp bucket_set(acc, {:set, key, value}) do
-    %{acc | state: Map.put(acc.state, key, value)}
+    %{acc | state: put_state_field(acc.state, key, value)}
+  end
+
+  # Lifecycle Phase A (SPEC 2026-05-29 §9 OQ-2 + §10-R2) — apply a
+  # `{:set_transient, key, value}` into the slice's `:transients`
+  # sub-map. Only valid on a Lifecycle two-container slice; a
+  # `:set_transient` against a flat (legacy) slice is a programmer error
+  # (a legacy Behavior has no transients container) and raises, per
+  # `feedback_let_it_crash_no_workarounds` — no silent shim.
+  defp bucket_set_transient(acc, {:set_transient, key, value}) do
+    %{acc | state: put_transient_field(acc.state, key, value)}
+  end
+
+  defp put_state_field(%{state: st, transients: _tr} = slice, key, value) when is_map(st) do
+    %{slice | state: Map.put(st, key, value)}
+  end
+
+  defp put_state_field(flat_slice, key, value) when is_map(flat_slice) do
+    Map.put(flat_slice, key, value)
+  end
+
+  defp put_transient_field(%{state: _st, transients: tr} = slice, key, value) when is_map(tr) do
+    %{slice | transients: Map.put(tr, key, value)}
+  end
+
+  defp put_transient_field(other, key, _value) do
+    raise ArgumentError,
+          "{:set_transient, #{inspect(key)}, _} requires a Lifecycle two-container " <>
+            "slice (`%{state: _, transients: _}`); got a flat slice: #{inspect(other)}. " <>
+            "Only modules using `use Ezagent.Lifecycle` may emit :set_transient effects."
   end
 
   # Second pass: filter the synthetic `__set__` markers out of
