@@ -82,7 +82,10 @@ defmodule EzagentPluginLoom.Application do
     do: [
       Ezagent.PluginLoom.Template.LoomAgent,
       Ezagent.PluginLoom.Template.LoomWorker,
-      Ezagent.PluginLoom.Template.LoomOrchestrator
+      Ezagent.PluginLoom.Template.LoomOrchestrator,
+      # Session template: "create a loom session" auto-assembles the team
+      # (orchestrator + 2 workers) instead of a bare session.
+      Ezagent.PluginLoom.Template.LoomSession
     ]
 
   @impl Ezagent.Plugin
