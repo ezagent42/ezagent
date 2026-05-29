@@ -55,15 +55,15 @@ defmodule Ezagent.Behavior.SandboxMigrationParityTest do
     :ok = BehaviorRegistry.register(StubAgentKind, :write_path, Sandbox)
     :ok = BehaviorRegistry.register(StubAgentKind, :destroy, Sandbox)
 
-    # Each test starts with the process-dict gate cleared — every
-    # action's destroyed?-gate code path checks via Process.get on
-    # the same key the Behavior sets in :destroy.
-    Process.delete({Sandbox, :destroyed?})
-
     agent_uri =
       URI.parse("entity://agent/parity/cc_sandbox-#{System.unique_integer([:positive])}")
 
     admin_caps = Ezagent.SystemPrincipal.caps("system://bootstrap")
+
+    # Lifecycle two-container slice — `init_slice/1` now returns
+    # `%{state: ..., transients: %{}}` (SPEC §2.1). `create/1` (run on
+    # first-ever existence; here the rescued no-DB path runs it) builds
+    # the durable `state` fields.
     state = %{sandbox: Sandbox.init_slice(%{})}
 
     {:ok, agent_uri: agent_uri, admin_caps: admin_caps, state: state}
@@ -102,13 +102,17 @@ defmodule Ezagent.Behavior.SandboxMigrationParityTest do
   describe "Level 1 — dispatch parity through Kind.Runtime" do
     test ":read via Kind.Runtime.handle_dispatch/4 — full dispatch path",
          %{agent_uri: agent_uri, admin_caps: admin_caps} do
-      # FULL dispatch-path coverage (codex r3 P2-g).
+      # FULL dispatch-path coverage (codex r3 P2-g). Lifecycle
+      # two-container slice — the durable fields live under `:state`.
       state = %{
         sandbox: %{
-          config_dir_path: "/tmp/x",
-          template_class: SomeMod,
-          respawn_template_data: %{"cwd" => "/tmp/x"},
-          pty_phase: :running
+          state: %{
+            config_dir_path: "/tmp/x",
+            template_class: SomeMod,
+            respawn_template_data: %{"cwd" => "/tmp/x"},
+            pty_phase: :running
+          },
+          transients: %{}
         }
       }
 
@@ -127,14 +131,35 @@ defmodule Ezagent.Behavior.SandboxMigrationParityTest do
       assert result.pty_phase == :running
     end
 
-    test ":read — destroyed gate set → {:error, :destroyed}",
-         %{agent_uri: agent_uri, admin_caps: admin_caps, state: state} do
-      Process.put({Sandbox, :destroyed?}, true)
+    test ":read on cleared state returns nils (destroyed?-gate REMOVED — SPEC §2.3B)",
+         %{agent_uri: agent_uri, admin_caps: admin_caps} do
+      # SPEC §2.3B: the process-dict `destroyed?` gate DISAPPEARS under
+      # Lifecycle — destroyed = ABSENCE of state (the destroy path clears
+      # `state` + terminates the process). A `:read` against a CLEARED
+      # (destroyed-then-but-still-momentarily-alive) state is no longer
+      # special-cased to `{:error, :destroyed}`; it reads the cleared
+      # fields as nils. The race the gate guarded is closed by the
+      # destroy path terminating the process (no live process to dispatch
+      # a stale read to).
+      cleared = %{
+        sandbox: %{
+          state: %{
+            config_dir_path: nil,
+            template_class: nil,
+            respawn_template_data: nil,
+            pty_phase: nil
+          },
+          transients: %{}
+        }
+      }
 
       inv = build_invocation(agent_uri, :read, %{}, admin_caps)
 
-      assert {:error, :destroyed} =
-               Ezagent.Kind.Runtime.handle_dispatch(inv, state, StubAgentKind, agent_uri)
+      assert {:ok, _new_state, result, _evt} =
+               Ezagent.Kind.Runtime.handle_dispatch(inv, cleared, StubAgentKind, agent_uri)
+
+      assert result.config_dir_path == nil
+      assert result.template_class == nil
     end
 
     test ":write_path via Kind.Runtime — slice mutates via :set effects",
@@ -150,10 +175,11 @@ defmodule Ezagent.Behavior.SandboxMigrationParityTest do
       assert {:ok, new_state, result, _evt} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, StubAgentKind, agent_uri)
 
-      # Slice mutated through the {:set, key, value} effects.
-      assert new_state.sandbox.config_dir_path == "/tmp/agent-z"
-      assert new_state.sandbox.template_class == MyClass
-      assert new_state.sandbox.respawn_template_data == %{"cwd" => "/tmp/agent-z"}
+      # Slice mutated through the {:set, key, value} effects — the
+      # durable fields live under the Lifecycle `:state` container.
+      assert new_state.sandbox.state.config_dir_path == "/tmp/agent-z"
+      assert new_state.sandbox.state.template_class == MyClass
+      assert new_state.sandbox.state.respawn_template_data == %{"cwd" => "/tmp/agent-z"}
 
       # Result mirrors what was written.
       assert result.config_dir_path == "/tmp/agent-z"
@@ -161,15 +187,20 @@ defmodule Ezagent.Behavior.SandboxMigrationParityTest do
       assert result.respawn_template_data == %{"cwd" => "/tmp/agent-z"}
     end
 
-    test ":write_path — destroyed gate set → {:error, :destroyed} (no slice mutation)",
+    test ":write_path is NOT gated by a destroyed flag (gate REMOVED — SPEC §2.3B)",
          %{agent_uri: agent_uri, admin_caps: admin_caps, state: state} do
-      Process.put({Sandbox, :destroyed?}, true)
-
+      # SPEC §2.3B: the process-dict `destroyed?` gate is gone. A
+      # write_path is no longer rejected with `{:error, :destroyed}`; the
+      # destroy path instead clears `state` + terminates the process, so
+      # there is no live process to race a write against post-destroy.
       args = %{config_dir_path: "/new/path", template_class: NewMod}
       inv = build_invocation(agent_uri, :write_path, args, admin_caps)
 
-      assert {:error, :destroyed} =
+      assert {:ok, new_state, _result, _evt} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, StubAgentKind, agent_uri)
+
+      assert new_state.sandbox.state.config_dir_path == "/new/path"
+      assert new_state.sandbox.state.template_class == NewMod
     end
 
     test ":write_path — invalid config_dir_path → {:error, _}",
@@ -193,10 +224,13 @@ defmodule Ezagent.Behavior.SandboxMigrationParityTest do
          %{agent_uri: agent_uri, admin_caps: admin_caps} do
       state = %{
         sandbox: %{
-          config_dir_path: nil,
-          template_class: nil,
-          respawn_template_data: %{"prior" => "value"},
-          pty_phase: nil
+          state: %{
+            config_dir_path: nil,
+            template_class: nil,
+            respawn_template_data: %{"prior" => "value"},
+            pty_phase: nil
+          },
+          transients: %{}
         }
       }
 
@@ -208,46 +242,39 @@ defmodule Ezagent.Behavior.SandboxMigrationParityTest do
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, StubAgentKind, agent_uri)
 
       # Prior respawn_template_data preserved.
-      assert new_state.sandbox.respawn_template_data == %{"prior" => "value"}
+      assert new_state.sandbox.state.respawn_template_data == %{"prior" => "value"}
       # The other two fields ARE mutated.
-      assert new_state.sandbox.config_dir_path == "/tmp/x"
-      assert new_state.sandbox.template_class == MyClass
+      assert new_state.sandbox.state.config_dir_path == "/tmp/x"
+      assert new_state.sandbox.state.template_class == MyClass
     end
   end
 
-  describe ":destroy ordering invariant (codex PR2 round-1 HIGH-2)" do
-    test ":destroy SETS the process-dict gate BEFORE the FS cleanup runs" do
-      # Driven via direct handler call (rather than full dispatch) so
-      # we can assert on the process-dict state inside the cleanup
-      # callback — full-dispatch can't introspect mid-handler state.
-      defmodule GateOrderingTC do
+  describe ":destroy effect shape (cleanup success → clear all 4 fields)" do
+    test ":destroy clears every state field via :set effects when FS cleanup succeeds" do
+      # SPEC §2.3B: the process-dict `destroyed?` gate is GONE (destroyed
+      # = absence of state, enforced by the destroy path clearing state +
+      # terminating the process). The FS-cleanup-then-clear logic is
+      # preserved: on cleanup `:ok` the handler emits `{:set, field, nil}`
+      # for all four durable fields so the `:on_terminate` snapshot saves
+      # cleared state and a re-spawn rehydrates as if fresh.
+      defmodule SuccessTC do
         @moduledoc false
         @doc false
-        def destroy_config_dir(_uri, _path) do
-          # At this point, the destroyed? gate MUST already be set
-          # (codex PR2 round-1 HIGH-2). If the gate were set AFTER
-          # cleanup, a racing :read in the 20ms window would see
-          # stale config_dir_path pointing at a dir being deleted.
-          if Process.get({Ezagent.Behavior.Sandbox, :destroyed?}) == true do
-            :ok
-          else
-            {:error, :gate_not_set_before_cleanup}
-          end
-        end
+        def destroy_config_dir(_uri, _path), do: :ok
       end
 
-      slice = %{
+      slice_state = %{
         config_dir_path: "/tmp/x",
-        template_class: GateOrderingTC,
+        template_class: SuccessTC,
         respawn_template_data: nil,
         pty_phase: nil
       }
 
-      read = fn key, default -> Map.get(slice, key, default) end
+      read = fn key, default -> Map.get(slice_state, key, default) end
 
       ctx = %{
         self_uri: URI.parse("entity://agent/parity/cc_gate-#{System.unique_integer([:positive])}"),
-        kind_module: GateOrderingTC,
+        kind_module: SuccessTC,
         read: read
       }
 
@@ -255,15 +282,10 @@ defmodule Ezagent.Behavior.SandboxMigrationParityTest do
       assert {:ok, result, effects} = Sandbox.handle_destroy(%{}, ctx)
 
       assert result.destroyed == true
-      # The cleanup returned :ok because the gate was set before it
-      # was invoked. If the ordering were reversed (or if my migration
-      # accidentally moved the Process.put into the effects), this
-      # assertion would fail with `:gate_not_set_before_cleanup`.
       assert result.cleanup == :ok
 
-      # The effect grammar carries :set effects for cleanup-success
-      # case (clear all 4 fields) + a {:effect, ...} schedule_termination
-      # for the Task spawn.
+      # cleanup-success case: clear all 4 fields + a {:effect, ...}
+      # schedule_termination for the Task spawn.
       set_keys =
         for {:set, k, _v} <- effects, do: k
 
@@ -341,15 +363,25 @@ defmodule Ezagent.Behavior.SandboxMigrationParityTest do
       end
     end
 
-    test "state_slice/0 + init_slice/1 unchanged" do
+    test "state_slice/0 unchanged; init_slice/1 builds the two-container shape" do
+      # state_slice is auto-derived by the Lifecycle macro from the
+      # module's last segment (`Sandbox` → `:sandbox`) — the SAME key the
+      # pre-Lifecycle module declared, so snapshot compatibility holds
+      # with no explicit override (SPEC §3 / §7 OQ-7).
       assert Sandbox.state_slice() == :sandbox
 
+      # init_slice/1 now returns `%{state: ..., transients: %{}}` (SPEC
+      # §2.1). The durable fields `create/1` builds live under `:state`;
+      # `transients` always starts empty (activate/2 fills it).
       assert Sandbox.init_slice(%{}) ==
                %{
-                 config_dir_path: nil,
-                 template_class: nil,
-                 respawn_template_data: nil,
-                 pty_phase: nil
+                 state: %{
+                   config_dir_path: nil,
+                   template_class: nil,
+                   respawn_template_data: nil,
+                   pty_phase: nil
+                 },
+                 transients: %{}
                }
     end
 
@@ -359,29 +391,34 @@ defmodule Ezagent.Behavior.SandboxMigrationParityTest do
     end
   end
 
-  describe "post_init/2 + handle_continue/3 (Kind boot hooks preserved)" do
-    test "post_init/2 schedules the :setup_phase_tracking continuation" do
-      slice = %{
+  describe "activate/2 (boot hook — folds in the old post_init/handle_continue — SPEC §5/§10-R1)" do
+    test "post_init/2 schedules the unified :ezagent_activate continuation (macro-emitted)" do
+      # The pre-Lifecycle module returned `{:continue, {:setup_phase_tracking,
+      # ...}}`; the Lifecycle macro now emits `{:continue, :ezagent_activate}`
+      # which runs the author's `activate/2`. The subscribe + ensure-subprocess
+      # logic moved INTO activate/2 (both pre-`:ready`, no self-deferral).
+      assert {:continue, :ezagent_activate} = Sandbox.post_init(%{}, %{})
+    end
+
+    test "activate/2 rebuilds the phase-subscription transient (subscribe-only path)" do
+      # nil template_class → no subprocess re-spawn; activate still
+      # rebuilds the phase-topic subscription transient on every start.
+      state = %{
         config_dir_path: nil,
-        template_class: SomeMod,
-        respawn_template_data: %{"cwd" => "/tmp/x"},
+        template_class: nil,
+        respawn_template_data: nil,
         pty_phase: nil
       }
 
-      assert {:continue, {:setup_phase_tracking, SomeMod, %{"cwd" => "/tmp/x"}}} =
-               Sandbox.post_init(%{}, slice)
-    end
-
-    test "handle_continue/3 :ignores when template_class is nil" do
-      slice = %{config_dir_path: nil, template_class: nil, respawn_template_data: nil}
-
       ctx = %{
-        self_uri: URI.parse("entity://agent/parity/cc_x"),
-        kind_module: __MODULE__
+        self_uri: URI.parse("entity://agent/parity/cc_x-#{System.unique_integer([:positive])}"),
+        kind_module: StubAgentKind
       }
 
-      assert :ignore =
-               Sandbox.handle_continue({:setup_phase_tracking, nil, nil}, slice, ctx)
+      assert {:ok, transients} = Sandbox.activate(state, ctx)
+      assert %{phase_subscription: %{topic: topic, subscriber: sub}} = transients
+      assert is_binary(topic)
+      assert sub == self()
     end
   end
 end
