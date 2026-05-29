@@ -105,9 +105,14 @@ defmodule Ezagent.Behavior.NotificationsMigrationParityTest do
       assert Enum.sort(subjects) == [:notify, :subscribe]
     end
 
-    test "state_slice/0 + init_slice/1 unchanged (framework wiring)" do
+    test "state_slice/0 preserved + create/1 builds persistent state (Lifecycle migration)" do
+      # Slice key still auto-derives to `:notifications`. Under `use
+      # Ezagent.Lifecycle`, the persistent-state builder is `create/1`
+      # (empty — cap-only Behavior); `init_slice/1` is the macro-emitted
+      # two-container wrapper.
       assert Notifications.state_slice() == :notifications
-      assert Notifications.init_slice(%{}) == %{}
+      assert Notifications.create(%{}) == {:ok, %{}}
+      assert Notifications.init_slice(%{}) == %{state: %{}, transients: %{}}
     end
   end
 end

@@ -71,9 +71,20 @@ defmodule Ezagent.Behavior.Routing do
   dispatch target (`system://routing/default`) is cross-workspace by
   nature; dispatching routing rules to a `workspace://` or
   `session://` target stays workspace-scoped via the target URI shape.
+
+  ## Migration to `use Ezagent.Lifecycle` (Phase B — 2026-05-29)
+
+  State-only Behavior: the slice is a trivial `:calls` counter — no
+  PIDs/refs/handles, so there are NO transients. `init_slice/1` →
+  `create/1` (the persistent `%{calls: 0}` builder); `activate/2` is the
+  macro's no-op default. The slice key auto-derives to `:routing`
+  (module last segment), matching the previous explicit `state_slice/0`,
+  so no `state_slice:` override is needed. Handlers are byte-identical
+  except `ctx[:read]` → `ctx.read`. The synchronous `RuleStore` calls
+  stay inline (their return values gate the action result).
   """
 
-  use Ezagent.Behavior
+  use Ezagent.Lifecycle
 
   alias Ezagent.Routing.{Matcher, RuleStore}
 
@@ -123,14 +134,15 @@ defmodule Ezagent.Behavior.Routing do
 
   def workspace_scoped?, do: false
 
-  def state_slice, do: :routing
-
-  def init_slice(_args), do: %{calls: 0}
+  # State-only: persistent `:calls` counter, no transients. Slice key
+  # auto-derives to `:routing` (module last segment).
+  @impl Ezagent.Lifecycle
+  def create(_args), do: {:ok, %{calls: 0}}
 
   def handle_add_rule(args, ctx) do
     %{table: table, matcher_json: matcher_json, receivers: receivers} = args
     opts = build_add_opts(args, ctx)
-    prev_calls = ctx[:read].(:calls, 0)
+    prev_calls = ctx.read.(:calls, 0)
 
     with {:ok, matcher} <- Matcher.from_json(matcher_json),
          {:ok, row} <- RuleStore.add(table, matcher, receivers, nil, opts),
@@ -144,7 +156,7 @@ defmodule Ezagent.Behavior.Routing do
 
   def handle_delete_rule(%{id: id} = args, ctx) when is_integer(id) do
     table = Map.fetch!(args, :table)
-    prev_calls = ctx[:read].(:calls, 0)
+    prev_calls = ctx.read.(:calls, 0)
 
     case RuleStore.delete(id) do
       :ok ->
@@ -158,7 +170,7 @@ defmodule Ezagent.Behavior.Routing do
 
   def handle_disable_rule(%{id: id} = args, ctx) when is_integer(id) do
     table = Map.fetch!(args, :table)
-    prev_calls = ctx[:read].(:calls, 0)
+    prev_calls = ctx.read.(:calls, 0)
 
     case RuleStore.disable(id) do
       :ok ->
@@ -172,7 +184,7 @@ defmodule Ezagent.Behavior.Routing do
 
   def handle_enable_rule(%{id: id} = args, ctx) when is_integer(id) do
     table = Map.fetch!(args, :table)
-    prev_calls = ctx[:read].(:calls, 0)
+    prev_calls = ctx.read.(:calls, 0)
 
     case RuleStore.enable(id) do
       :ok ->

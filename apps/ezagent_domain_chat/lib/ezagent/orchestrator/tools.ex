@@ -386,7 +386,7 @@ defmodule Ezagent.Orchestrator.Tools do
   - **Slot already absent** → `{:ok, :already_removed}`. No dispatch.
   - **Slot present** → remove from working copy + remove routing rules
     naming the worker (transactional via the round-4 `Repo.transaction`
-    primitive) + terminate the worker via `Behavior.Lifecycle` `:terminate`
+    primitive) + terminate the worker via `Behavior.Terminable` `:terminate`
     (round-5/6). A re-run after a partial failure picks up at whichever
     step did not converge.
 
@@ -594,7 +594,7 @@ defmodule Ezagent.Orchestrator.Tools do
      primitive — KEPT);
   3. **commit the slot tuple** to the new (template_uri, worker_uri,
      generation+1) via the `chat.set_working_copy` dispatch;
-  4. **terminate the OLD worker** via `Behavior.Lifecycle` `:terminate`
+  4. **terminate the OLD worker** via `Behavior.Terminable` `:terminate`
      — only after routing AND slot both name the new worker.
 
   Steps 2-4 each leave the system in a forward-progress state; a

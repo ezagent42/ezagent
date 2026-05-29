@@ -30,7 +30,7 @@ defmodule Ezagent.Domain.Agent do
 
   Per `docs/futures/v2-feedback-log.md` (Architecture gap — No
   auto-trigger from URI registration to associated template
-  instantiate): the V2 path is a generic `Ezagent.Behavior.Lifecycle`
+  instantiate): the V2 path is a generic `Ezagent.Behavior.Terminable`
   contract carried by every "running" Kind, dispatched via
   `?action=lifecycle.phase`. For V1 the facade derives flavor only for
   display and detects PTY-backed runtime by behavior. The response

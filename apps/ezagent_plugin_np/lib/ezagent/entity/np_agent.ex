@@ -50,12 +50,12 @@ defmodule Ezagent.Entity.NpAgent do
 
   attach Ezagent.Behavior.NpAgent
   # PTY-phase-state-machine 2026-05-26 follow-up (b) codex HIGH-1
-  # fix: Lifecycle attached so `lifecycle.terminate` dispatches reach
+  # fix: Terminable attached so `lifecycle.terminate` dispatches reach
   # np-agents (Dead-Restart badge in LV).
-  attach Ezagent.Behavior.Lifecycle
+  attach Ezagent.Behavior.Terminable
 
   # Kind.Server still reads behaviors/0; keep the legacy callback.
-  def behaviors, do: [Ezagent.Behavior.NpAgent, Ezagent.Behavior.Lifecycle]
+  def behaviors, do: [Ezagent.Behavior.NpAgent, Ezagent.Behavior.Terminable]
 
   # Kind.Server still reads persistence/0; keep the legacy callback.
   def persistence, do: :ephemeral
