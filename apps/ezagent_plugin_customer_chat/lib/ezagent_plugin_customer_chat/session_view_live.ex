@@ -53,15 +53,11 @@ defmodule EzagentPluginCustomerChat.SessionViewLive do
        |> assign(:session_uri, session_uri)
        |> assign(:session_uri_str, URI.to_string(session_uri))
        |> assign(:conv_id, conv_id_of(session_uri))
-       |> assign(:workspace_seg, workspace_of(session_uri))
        |> assign(:tenant, workspace_of(session_uri))
        |> assign(:mode, lookup_mode(session_uri))
        |> assign(:caller_caps, caller_caps)
        |> assign(:flash_error, nil)
        |> assign(:compose_form, to_form(%{"text" => ""}, as: "chat"))
-       |> assign_new(:current_entity_uri_str, fn ->
-         URI.to_string(caller_uri || URI.parse("entity://user/system/admin"))
-       end)
        |> stream(:messages, Enum.map(messages, &message_to_row/1))
        |> assign(:messages_empty?, messages == [])}
     else

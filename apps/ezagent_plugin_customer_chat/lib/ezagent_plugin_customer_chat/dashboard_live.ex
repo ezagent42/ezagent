@@ -6,7 +6,7 @@ defmodule EzagentPluginCustomerChat.DashboardLive do
   `session://default/<ws>/<conv-id>`) for the operator's current
   workspace, with last-message preview + mode badge. Click a row to
   navigate to the per-session detail LV
-  (`CustomerSessionViewLive`) which shows the live transcript +
+  (`SessionViewLive`) which shows the live transcript +
   Take-over button.
 
   ## Operator model (constraint #2 in migration-design-constraints.md)
@@ -64,12 +64,9 @@ defmodule EzagentPluginCustomerChat.DashboardLive do
          socket
          |> assign(:page_title, "Customer Sessions")
          |> assign(:workspace_uri, workspace_uri)
-         |> assign(:tenant, workspace_label(workspace_uri))
+         |> assign(:tenant, workspace_uri.host)
          |> assign(:rows, rows)
-         |> assign(:flash_error, nil)
-         |> assign_new(:current_entity_uri_str, fn ->
-           URI.to_string(caller_uri || URI.parse("entity://user/system/admin"))
-         end)}
+         |> assign(:flash_error, nil)}
 
       {:error, reason} ->
         {:ok,
