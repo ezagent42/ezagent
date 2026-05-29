@@ -22,13 +22,20 @@ defmodule Ezagent.Behavior.Workspace do
     - `state_slice/0`, `init_slice/1`, and `data_owner/1` remain as
       regular functions (the macro does not redeclare them).
     - Cross-domain interactions remain expressed as either:
-      * inline `Ezagent.Invocation.dispatch/1` when the handler needs
-        the return value before continuing (e.g. `resolve_source_config_dir/2`),
+      * inline `Ezagent.Router.dispatch/1` when the handler needs
+        the return value before continuing (e.g. `resolve_source_config_dir/2` —
+        was the legacy Invocation entry-point pre-2026-05-29
+        dispatch_returning SPEC; swapped to Router because the `with`
+        chain's per-flavor error mapping happens INSIDE the handler
+        body, not in downstream effects),
       * inline facade calls when the handler needs a structured return
         (e.g. `EzagentDomainChat.create_session/3` in `:create_session`),
       * `{:dispatch, %Ezagent.Cmd{...}}` effects when the side-effect
         is fire-and-forget AFTER the slice mutation is committed
-        (e.g. the post-add-member `:create_session` cap grant).
+        (e.g. the post-add-member `:create_session` cap grant),
+      * `{:dispatch_returning, %Ezagent.Cmd{...}, bind_as: name}` effects
+        when downstream effects need the dispatch return value via
+        `{:ref, name, [path]}`.
 
   ## State slice (`:workspace`)
 
@@ -856,25 +863,36 @@ defmodule Ezagent.Behavior.Workspace do
   # `do_create_agent`. A `{:error, _}` here short-circuits BEFORE any
   # template registration, Store write, or filesystem op.
   #
-  # NOTE: this is a SYNCHRONOUS `Invocation.dispatch/1` (not a
-  # `:dispatch` effect) because the handler needs the return value
-  # to build the template. Effects run AFTER the handler returns;
-  # there is no effect grammar shape that returns a value INTO the
-  # handler's `with` chain.
+  # NOTE: this is a SYNCHRONOUS sub-dispatch — the handler's `with`
+  # chain needs the return value to map per-flavor error atoms
+  # (`:source_not_found`, `:source_not_readable`, etc.) BEFORE
+  # `do_create_agent/4` runs. The `:dispatch_returning` effect
+  # (SPEC `2026-05-29-dispatch-returning-effect.md`) binds a value
+  # for DOWNSTREAM EFFECT references — it does NOT push the value
+  # back into the handler's `with` chain (effects run AFTER the
+  # handler returns).
+  #
+  # So we use `Ezagent.Router.dispatch/1` (the modern sanctioned
+  # entry-point) instead of the legacy Invocation entry-point.
+  # The §11 Gate 3 grep gate fires on the legacy Invocation dispatch
+  # in plugin Behaviors specifically; `Router.dispatch` is the
+  # public author-facing surface and is fine for this sub-dispatch
+  # pattern.
   defp resolve_source_config_dir(nil, _ctx), do: {:ok, nil}
 
   defp resolve_source_config_dir(%URI{} = source_uri, ctx) do
-    target = URI.new!("#{URI.to_string(source_uri)}?action=sandbox.read")
-
     caller = Map.fetch!(ctx, :caller)
     caps = Map.fetch!(ctx, :caps)
 
-    case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-           target: target,
-           mode: :call,
-           args: %{},
-           ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}}
-         }) do
+    cmd =
+      Ezagent.Cmd.new(
+        source_uri,
+        :read,
+        %{},
+        %{caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+      )
+
+    case Ezagent.Router.dispatch(cmd) do
       {:ok, %{config_dir_path: path}} when is_binary(path) and path != "" ->
         {:ok, path}
 

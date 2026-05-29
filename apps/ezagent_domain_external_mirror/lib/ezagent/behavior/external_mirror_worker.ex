@@ -702,57 +702,84 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
   # own GenServer reply). They land in `handle_kind_message/3` as
   # `{:publisher_event, %Event{}}` and self-dispatch through the regular
   # `:publish` path — same dedupe, same telemetry.
+  #
+  # SPEC `2026-05-29-dispatch-returning-effect.md` §8b: this call
+  # is invoked from `handle_continue/3` (a Kind.Server lifecycle
+  # callback), NOT from an action handler. The `:dispatch_returning`
+  # effect grammar requires a returning action-handler context;
+  # lifecycle callbacks have no effect pipeline around them. The
+  # structural cure for §11 Gate 3 (no plugin Behavior calls
+  # the legacy Invocation entry-point) is to swap to
+  # `Ezagent.Router.dispatch/1` via a `%Ezagent.Cmd{}` envelope —
+  # Router is the modern sanctioned entry-point and is appropriate
+  # for sub-dispatch from lifecycle callbacks.
   defp subscribe_to_session_publisher_from(%URI{} = session_uri, %URI{} = self_uri, cursor) do
-    target = Ezagent.URI.parse!("#{URI.to_string(session_uri)}?action=publisher.subscribe_from")
+    cmd =
+      Ezagent.Cmd.new(
+        session_uri,
+        :subscribe_from,
+        %{subscriber_pid: self(), cursor: cursor},
+        # SPEC caps-cleanup-v1 §4.4 — Worker's internal dispatches run
+        # under `system://worker-publish` per the closed Catalog.
+        %{
+          caller: self_uri,
+          caps: Ezagent.SystemPrincipal.caps("system://worker-publish"),
+          reply: {:caller_inbox, self()},
+          # 2026-05-26 (Allen e2e blocker): Session.handle_call queues
+          # subscribe_from behind concurrent list_bindings polls, chat
+          # mutations, and snapshot.commit cycles (each writing ~30KB
+          # state binary to SQLite). Under steady-state polling the
+          # default 5s `deadline_ms` is too tight — the call times out
+          # and the worker exits, supervisor restarts it, and the cycle
+          # accumulates dead subscriber pids in the Publisher slice
+          # (each fresh worker subscribes with a NEW pid that gets
+          # monitored; DOWN fires only after replacement). Bumping
+          # subscribe_from's deadline to 30s lets the call complete
+          # under realistic load. Bind/publish flows have their own
+          # deadlines; this only widens the SETUP path.
+          deadline_ms: 30_000
+        }
+      )
 
-    inv = %Ezagent.Invocation{
-      target: target,
-      mode: :call,
-      args: %{subscriber_pid: self(), cursor: cursor},
-      # SPEC caps-cleanup-v1 §4.4 — Worker's internal dispatches run
-      # under `system://worker-publish` per the closed Catalog.
-      ctx: %{
-        caller: self_uri,
-        caps: Ezagent.SystemPrincipal.caps("system://worker-publish"),
-        reply: :ignore,
-        # 2026-05-26 (Allen e2e blocker): Session.handle_call queues
-        # subscribe_from behind concurrent list_bindings polls, chat
-        # mutations, and snapshot.commit cycles (each writing ~30KB
-        # state binary to SQLite). Under steady-state polling the
-        # default 5s `deadline_ms` is too tight — the call times out
-        # and the worker exits, supervisor restarts it, and the cycle
-        # accumulates dead subscriber pids in the Publisher slice
-        # (each fresh worker subscribes with a NEW pid that gets
-        # monitored; DOWN fires only after replacement). Bumping
-        # subscribe_from's deadline to 30s lets the call complete
-        # under realistic load. Bind/publish flows have their own
-        # deadlines; this only widens the SETUP path.
-        deadline_ms: 30_000
-      }
-    }
-
-    case Ezagent.Invocation.dispatch(inv) do
+    case Ezagent.Router.dispatch(cmd) do
       {:ok, %{cursor: new_cursor}} -> {:ok, new_cursor}
       {:error, _} = err -> err
       :ok -> {:ok, :latest}
     end
   end
 
+  # SPEC `2026-05-29-dispatch-returning-effect.md` §8c: same fix as
+  # §8b — `handle_kind_message/3` is a lifecycle callback with no
+  # surrounding effect pipeline; swap `Invocation.dispatch` →
+  # `Router.dispatch` so the §11 Gate 3 grep gate stays green
+  # without forcing the lifecycle callback into a fake action-handler
+  # shape.
   defp dispatch_publish_to_self(%URI{} = self_uri, %Event{} = event) do
-    target = Ezagent.URI.parse!("#{URI.to_string(self_uri)}?action=external_mirror_worker.publish")
+    # Preserve the original idempotency key semantics: pre-2026-05-29
+    # this used `idempotency_key:` against `Ezagent.Invocation`'s
+    # checker. The new Router envelope spells the same field
+    # `:command_uuid`; Router → Invocation translation preserves it
+    # via the ctx map (Invocation.dispatch reads `:idempotency_key`
+    # but the Router currently forwards both names to keep callers
+    # like this one working without coordination).
+    idem = "external_mirror_worker.publish/#{event.cursor}"
 
-    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-      target: target,
-      mode: :cast,
-      args: %{event: event},
-      # SPEC caps-cleanup-v1 §4.4 — Worker outbound publish runs
-      # under `system://worker-publish` (closed Catalog).
-      ctx: %{
-        caller: self_uri,
-        caps: Ezagent.SystemPrincipal.caps("system://worker-publish"),
-        reply: :ignore,
-        idempotency_key: "external_mirror_worker.publish/#{event.cursor}"
-      }
-    })
+    cmd =
+      Ezagent.Cmd.new(
+        self_uri,
+        :publish,
+        %{event: event},
+        # SPEC caps-cleanup-v1 §4.4 — Worker outbound publish runs
+        # under `system://worker-publish` (closed Catalog).
+        %{
+          caller: self_uri,
+          caps: Ezagent.SystemPrincipal.caps("system://worker-publish"),
+          reply: :ignore,
+          command_uuid: idem,
+          idempotency_key: idem
+        }
+      )
+
+    Ezagent.Router.dispatch(cmd)
   end
 end

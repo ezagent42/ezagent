@@ -214,6 +214,64 @@ defmodule Ezagent.BehaviorTest do
     end
   end
 
+  describe "apply_effects/2 — :dispatch_returning bucketing (SPEC 2026-05-29)" do
+    test "valid :dispatch_returning is bucketed into :dispatches_returning, preserving declared order" do
+      cmd1 =
+        Cmd.new("entity://user/acme/alice", :ping, %{}, %{
+          caller: :system,
+          reply: {:caller_inbox, self()}
+        })
+
+      cmd2 =
+        Cmd.new("entity://user/acme/bob", :ping, %{}, %{
+          caller: :system,
+          reply: {:caller_inbox, self()}
+        })
+
+      effects = [
+        {:dispatch_returning, cmd1, bind_as: :alice},
+        {:set, :foo, :bar},
+        {:dispatch_returning, cmd2, bind_as: :bob}
+      ]
+
+      assert {:ok, result} = Behavior.apply_effects(effects, %{})
+
+      # apply_effects/2 is pure — it bucketises but does NOT execute
+      # the returning dispatches (the executor runs them via Router).
+      # Order must be preserved.
+      assert [
+               {:dispatch_returning, ^cmd1, [bind_as: :alice]},
+               {:dispatch_returning, ^cmd2, [bind_as: :bob]}
+             ] = result.dispatches_returning
+
+      # :set still applied eagerly into state.
+      assert result.state.foo == :bar
+    end
+
+    test ":dispatch_returning without :bind_as raises ArgumentError" do
+      cmd =
+        Cmd.new("entity://user/acme/alice", :ping, %{}, %{
+          caller: :system,
+          reply: {:caller_inbox, self()}
+        })
+
+      assert_raise ArgumentError, ~r/dispatch_returning requires.*bind_as/, fn ->
+        Behavior.apply_effects([{:dispatch_returning, cmd, []}], %{})
+      end
+    end
+
+    test ":dispatch_returning with non-Cmd target raises ArgumentError via unknown-effect path" do
+      # Shape doesn't match the dispatch_returning bucket pattern
+      # (no %Cmd{}) — falls through to the unknown-effect raise.
+      assert_raise ArgumentError, ~r/unknown effect/, fn ->
+        Behavior.apply_effects(
+          [{:dispatch_returning, :not_a_cmd, [bind_as: :x]}],
+          %{}
+        )
+      end
+    end
+  end
+
   describe "Behavior.action_names/1 + action_spec/2 introspection" do
     test "action_names/1 lists actions of a new-style module" do
       names = Behavior.action_names(SimpleBehavior)
@@ -228,6 +286,28 @@ defmodule Ezagent.BehaviorTest do
     test "action_spec/2 returns the full spec" do
       spec = Behavior.action_spec(SimpleBehavior, :greet)
       assert spec.description == "say hello"
+    end
+  end
+
+  describe "Behavior.data_owner_of/2 — re-export (SPEC 2026-05-29 §2b)" do
+    defmodule DataOwnerBehavior do
+      @moduledoc false
+      def data_owner(%URI{} = uri), do: %URI{uri | path: "/owner"}
+      def data_owner(_), do: :no_owner
+    end
+
+    test "delegates to behavior.data_owner/1 for concrete instances" do
+      uri = URI.parse("entity://agent/team-alpha/foo")
+      assert %URI{path: "/owner"} = Behavior.data_owner_of(DataOwnerBehavior, uri)
+    end
+
+    test "returns :no_owner for non-URI instances" do
+      assert Behavior.data_owner_of(DataOwnerBehavior, :any) == :no_owner
+    end
+
+    test "returns :no_owner when behavior doesn't export data_owner/1" do
+      # `Enum` doesn't `use Ezagent.Behavior` + has no data_owner/1.
+      assert Behavior.data_owner_of(Enum, :any) == :no_owner
     end
   end
 end

@@ -877,6 +877,7 @@ defmodule Ezagent.Behavior do
           {:set, atom(), term()}
           | {:emit, atom(), map()}
           | {:dispatch, Ezagent.Cmd.t()}
+          | {:dispatch_returning, Ezagent.Cmd.t(), keyword()}
           | {:notify, String.t(), term()}
           | {:effect, mfa_or_fun(), [term()]}
           | {:effect_returning, mfa_or_fun(), [term()], keyword()}
@@ -914,6 +915,22 @@ defmodule Ezagent.Behavior do
   (`:dispatch`/`:notify`/`:terminate`/`:saga`) collect into output
   buckets. `{:halt, reason}` short-circuits.
 
+  ## `:dispatch_returning` (SPEC `2026-05-29-dispatch-returning-effect.md`)
+
+  Shape: `{:dispatch_returning, %Ezagent.Cmd{}, bind_as: name}`.
+
+  Like `:dispatch`, but runs SYNCHRONOUSLY in the executor and
+  binds the dispatch's return value to `name` in the shared
+  `returning` map. Downstream effects' `{:ref, name, [path]}`
+  references substitute against the bound value. Failure
+  (`{:error, reason}` from `Router.dispatch/1`) aborts the
+  handler with `{:error, {:dispatch_returning_failed, name, reason}}`
+  — same hard-abort semantics as `:halt`.
+
+  Bucketed alongside `:effect_returning`; the executor runs both
+  buckets in declared order before any `:dispatch` / `:notify` /
+  event flushing.
+
   ## Bucket-execution order (Phase 1.5b — `Ezagent.Kind.Runtime`)
 
   `apply_effects/2` is PURE: it bucketises effects + applies `:set`
@@ -937,7 +954,17 @@ defmodule Ezagent.Behavior do
   any process/IO setup.
   """
   @spec apply_effects([effect()], map()) ::
-          {:ok, %{state: map(), events: list(), dispatches: list(), notifies: list(), terminations: list(), saga: term() | nil, returning: map()}}
+          {:ok,
+           %{
+             state: map(),
+             events: list(),
+             dispatches: list(),
+             dispatches_returning: list(),
+             notifies: list(),
+             terminations: list(),
+             saga: term() | nil,
+             returning: map()
+           }}
           | {:halt, term(), map()}
   def apply_effects(effects, state) when is_list(effects) and is_map(state) do
     initial = %{
@@ -948,6 +975,16 @@ defmodule Ezagent.Behavior do
       terminations: [],
       effects: [],
       effects_returning: [],
+      # 2026-05-29 dispatch_returning SPEC §4a — collected during
+      # bucketing alongside `:effect_returning`. The executor
+      # (Kind.Runtime) is responsible for running each entry through
+      # `Router.dispatch/1` synchronously, binding the result into
+      # the shared `returning` map BEFORE downstream
+      # dispatches/notifies/events are flushed. Holding the bucket
+      # in `apply_effects/2` rather than running it inline keeps
+      # this module pure (no Router dependency) — same separation
+      # we use for the existing buckets.
+      dispatches_returning: [],
       saga: nil,
       returning: %{}
     }
@@ -981,6 +1018,22 @@ defmodule Ezagent.Behavior do
 
       {:dispatch, %Ezagent.Cmd{}} = e ->
         bucket_by_phase(rest, Map.update!(acc, :dispatches, &[e | &1]))
+
+      # 2026-05-29 dispatch_returning SPEC §3 — `:dispatch_returning`
+      # MUST carry a Cmd struct + a `bind_as:` atom. Validate shape
+      # at bucket time so a malformed effect surfaces with a clear
+      # ArgumentError instead of a runtime KeyError inside the
+      # executor's Router.dispatch call.
+      {:dispatch_returning, %Ezagent.Cmd{}, opts} = e when is_list(opts) ->
+        case Keyword.fetch(opts, :bind_as) do
+          {:ok, name} when is_atom(name) ->
+            bucket_by_phase(rest, Map.update!(acc, :dispatches_returning, &[e | &1]))
+
+          _ ->
+            raise ArgumentError,
+                  "Ezagent.Behavior.apply_effects/2 :dispatch_returning requires " <>
+                    "an atom `:bind_as` option; got: #{inspect(opts)}"
+        end
 
       {:notify, _topic, _payload} = e ->
         bucket_by_phase(rest, Map.update!(acc, :notifies, &[e | &1]))
@@ -1018,6 +1071,10 @@ defmodule Ezagent.Behavior do
     terminations = Enum.reverse(acc.terminations)
     effects = Enum.reverse(acc.effects)
     effects_returning = Enum.reverse(acc.effects_returning)
+    # 2026-05-29 dispatch_returning SPEC §4a — the executor consumes
+    # this list. We restore declared order so the executor's Router
+    # calls happen in the same order the handler declared them.
+    dispatches_returning = Enum.reverse(acc.dispatches_returning)
 
     # Execute :effect_returning calls in declared order, binding
     # returns into `returning` map. Subsequent effects' `{:ref,
@@ -1064,6 +1121,18 @@ defmodule Ezagent.Behavior do
        state: acc.state,
        events: events,
        dispatches: dispatches,
+       # 2026-05-29 dispatch_returning SPEC §4a — surface the
+       # collected `:dispatch_returning` effects to the executor.
+       # `apply_effects/2` does NOT run them itself (that would
+       # require a Router dependency in this pure module). The
+       # caller (Kind.Runtime.apply_new_contract_effects/4) runs
+       # each entry synchronously via `Router.dispatch/1`, binds
+       # the result into `returning`, and THEN substitutes refs in
+       # the dispatches/notifies/events lists (which `apply_effects/2`
+       # has already substituted using ONLY `:effect_returning`
+       # bindings). The double-substitution is the executor's
+       # responsibility.
+       dispatches_returning: dispatches_returning,
        notifies: notifies,
        terminations: terminations,
        saga: acc.saga,
@@ -1171,6 +1240,31 @@ defmodule Ezagent.Behavior do
   # ---------------------------------------------------------------
   # Legacy helpers (existed pre-SPEC; preserved)
   # ---------------------------------------------------------------
+
+  @doc """
+  Look up the `data_owner/1` URI for the given Behavior + instance
+  via the CapabilityRegistry.
+
+  Re-exported on `Ezagent.Behavior` so plugin Behavior modules can
+  introspect data ownership WITHOUT depending on
+  `Ezagent.CapabilityRegistry` directly — that direct dependency
+  is banned by SPEC #445 §11 Gate 6 (plugin Behaviors only talk to
+  the public `Ezagent.Behavior` surface; the registry is an
+  implementation detail of the runtime).
+
+  Returns the same shape `CapabilityRegistry.data_owner_of/2`
+  returns: `URI.t() | :any | :no_owner | {:scope, atom(), URI.t()}`.
+
+  Added 2026-05-29 — closes §11 Gate 6 in `identity.ex` without
+  forcing the lookup through a fake `:dispatch_returning` effect
+  (the call is a pure synchronous callback introspection — no Kind
+  is consulted, no slice is read).
+  """
+  @spec data_owner_of(module(), URI.t() | :any | {atom(), URI.t()}) ::
+          URI.t() | :any | :no_owner | {:scope, atom(), URI.t()}
+  def data_owner_of(behavior, instance) when is_atom(behavior) do
+    Ezagent.CapabilityRegistry.data_owner_of(behavior, instance)
+  end
 
   @doc """
   Read `reads_sibling_slices/0` from `behavior_module`, defaulting
