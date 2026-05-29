@@ -31,11 +31,15 @@ defmodule EzagentPluginFeishu.BindingPolicyTest do
   grant-boundary assertion fail; an additive grant of a new
   Behavior/action drives the explicit shape assertions to fail.
 
-  These tests use the standalone `IdentityAdmin.invoke(:grant_cap, ...)`
-  surface (no Kind spawning, no DB sandbox sharing) so they pin the
+  These tests call the standalone `IdentityAdmin.handle_grant_cap/2`
+  handler (no Kind spawning, no DB sandbox sharing) so they pin the
   §3.6.1(b) invariant without coupling to the full
-  dispatch-and-spawn integration path. The end-to-end integration is
-  exercised by the mix task
+  dispatch-and-spawn integration path. (Pre-Lifecycle-migration this was
+  `IdentityAdmin.invoke(:grant_cap, slice, args, ctx)`; the retired
+  `invoke/4` Behavior callback is gone — Phase C — and the handler is
+  now the `handle_<action>(args, ctx)` clause the dispatch path calls.
+  The slice is supplied to the handler through `ctx[:read]`, matching
+  the runtime.) The end-to-end integration is exercised by the mix task
   `apps/ezagent_plugin_feishu/lib/mix/tasks/ezagent.feishu.bind.ex`.
 
   ## What this test gates against
@@ -71,10 +75,15 @@ defmodule EzagentPluginFeishu.BindingPolicyTest do
   # The runtime caps held by the `system://feishu-binding-policy`
   # principal at dispatch time — narrow, NOT admin shape. Matches the
   # `Ezagent.SystemPrincipal.Catalog` entry.
-  defp binding_policy_ctx do
+  defp binding_policy_ctx(slice \\ %{caps: MapSet.new()}) do
     %{
       caller: @binding_policy_uri,
-      caps: Ezagent.SystemPrincipal.caps("system://feishu-binding-policy")
+      caps: Ezagent.SystemPrincipal.caps("system://feishu-binding-policy"),
+      # The Lifecycle handler reads its slice via `ctx[:read]` (the
+      # runtime injects this closure). The §3.6.1(b) rejection paths
+      # return BEFORE any read, but supply it so the success branch is
+      # also exercisable with the same shape the runtime uses.
+      read: fn key, default -> Map.get(slice, key, default) end
     }
   end
 
@@ -82,7 +91,6 @@ defmodule EzagentPluginFeishu.BindingPolicyTest do
 
   describe "§3.6.1(b) grant-boundary regression" do
     test "every cap the production module would grant passes the action-wildcard check under the non-admin principal" do
-      empty_slice = %{caps: MapSet.new()}
       caps = production_caps()
 
       # Sanity — the production module must actually emit some caps
@@ -91,7 +99,7 @@ defmodule EzagentPluginFeishu.BindingPolicyTest do
 
       for cap <- caps do
         result =
-          IdentityAdmin.invoke(:grant_cap, empty_slice, %{cap: cap}, binding_policy_ctx())
+          IdentityAdmin.handle_grant_cap(%{cap: cap}, binding_policy_ctx())
 
         refute match?({:error, :wildcard_action_grant_requires_admin_authority}, result),
                "Cap #{inspect(cap)} hit §3.6.1(b) — the binding-policy non-admin " <>
@@ -116,12 +124,8 @@ defmodule EzagentPluginFeishu.BindingPolicyTest do
         granted_at: ~U[2026-01-01 00:00:00Z]
       }
 
-      empty_slice = %{caps: MapSet.new()}
-
       assert {:error, :wildcard_action_grant_requires_admin_authority} =
-               IdentityAdmin.invoke(
-                 :grant_cap,
-                 empty_slice,
+               IdentityAdmin.handle_grant_cap(
                  %{cap: legacy_cap},
                  binding_policy_ctx()
                )

@@ -19,7 +19,7 @@ description: >-
 
 You are working in the **ezagent** repo. The architectural rules below were locked across 7 phases of brainstorm with Allen, then re-shaped in PRs #140–#149 (URI SPEC v2 migration, 2026-05-19), Phase 9 (#155-#170 tenant isolation), the 2026-05-25 caps-cleanup batch, and most recently the **Router/Behavior/Kind self-built architecture (SPEC PR #445, 2026-05-28; Phase 1-4 migration PRs #451-#469)**. Allen is no longer hand-walking each PR — your job is to keep the system honest without breaking the invariants he encoded as CI gates + Decision Log entries + the normative SPEC v2/v3 + 2026-05-28 SPEC doc.
 
-> **2026-05-28 contract change — read this BEFORE writing any Behavior or Kind code.** Plugin Behaviors now opt into the new per-action declarative contract via `use Ezagent.Behavior` + `action/3` macro + `handle_<action>(args, ctx)` handlers returning effects (`{:ok, result, [effect]}`). The legacy `Behavior.invoke/4` callback is `@optional_callbacks` only — no runtime path consults it after Phase 3 (PR #464). Plugin authors **never** see `slice` or `snapshot` directly. Effects vocabulary: `:set` / `:emit` / `:dispatch` / `:notify` / `:effect` / `:effect_returning` / `:saga` / `:terminate` / `:halt`. **Always read `references/new-contract.md` first if writing Behavior code.** Reference: `ARCHITECTURE.md §6.0`, SPEC `docs/superpowers/specs/2026-05-28-router-behavior-kind-architecture.md`, Decision Log #147-#152.
+> **2026-05-29 contract change — read this BEFORE writing any Behavior or Kind code.** `use Ezagent.Lifecycle` is now the **SOLE developer-facing way to author a Behavior**. The `use Ezagent.Behavior` + `action/3` + hand-rolled `state_slice`/`init_slice`/`invoke/4` surface is the **INTERNAL ENGINE** the Lifecycle macro compiles down to (R10-3) — developer/plugin/domain code NEVER writes it. A Lifecycle module holds two state containers — `state` (PERSISTENT, auto-snapshotted) and `transients` (NEVER persisted; PIDs/refs/ETS/ports/subprocesses/monitors, rebuilt every start in `activate/2`) — and exposes hooks `create` / `activate` / `handle_<action>` / `handle_signal` / `activated` / `pre_handle` / `post_handle` / `deactivate` / `destroy`. This kills the cold-restart bug class (#110/#113/#114) by construction. The effect grammar is UNCHANGED plus `{:set_transient, k, v}`. **Always read `references/lifecycle.md` first if writing Behavior code.** The Phase C gate `mix ezagent.check_invariants.lifecycle` HARD-fails CI on any developer-tier `use Ezagent.Behavior` / `init_slice` / `def state_slice` / `invoke/4` / boot-hook re-introduction, plus the §11 NP-1/2/3 naming lints. Reference: `ARCHITECTURE.md §6.0.7`, SPEC `docs/superpowers/specs/2026-05-29-lifecycle-hooks-design.md`, Decision Log #153. (The underlying engine: `references/new-contract.md`, SPEC `2026-05-28-router-behavior-kind-architecture.md`, Decision #147-#152.)
 
 Read the relevant references before writing code. **The most expensive bugs in this codebase are invariant violations that pass type-check + tests-pass and only surface as silent drops in production.**
 
@@ -51,8 +51,9 @@ ezagent-developer/
     ├── how-to-recipes.md             ← contributor recipes (add plugin / Kind / Behavior / …)
     ├── debug-recipes.md              ← symptom-first debug
     ├── ui-contract.md                ← 3-layer UI + nested shell + DO/DON'T
-    ├── slice-and-snapshot.md         ← Behavior slice + Kind snapshot model + recurring bug class
-    ├── new-contract.md               ← post-2026-05-28 Router/Behavior/Kind contract (use Ezagent.Behavior + action/3 + effects)
+    ├── slice-and-snapshot.md         ← Behavior slice + Kind snapshot model + recurring bug class (ENGINE-internal now)
+    ├── lifecycle.md                  ← post-2026-05-29 Lifecycle API: the SOLE developer surface (use Ezagent.Lifecycle + two-container state + hooks + §11 naming)
+    ├── new-contract.md               ← the INTERNAL engine (R/B/K) the Lifecycle macro compiles down to (use Ezagent.Behavior + action/3 + effects)
     └── pointer-index.md              ← durable record + current state
 ```
 
@@ -69,10 +70,13 @@ The references are organized so you only load the file relevant to your current 
 | "How do I add X?" | `references/how-to-recipes.md` |
 | "Why isn't my thing working?" | `references/debug-recipes.md` |
 | "How do I render this LV/component?" | `references/ui-contract.md` |
-| "What's a slice / why is the snapshot doing weird things?" | `references/slice-and-snapshot.md` |
+| "What's a slice / why is the snapshot doing weird things?" | `references/slice-and-snapshot.md` (engine-internal) — for developer state, see `references/lifecycle.md` two-container model |
 | "Where's the spec for X?" | `references/pointer-index.md` |
-| "How do I write a Behavior in the new contract?" | `references/new-contract.md` |
-| "What's the effects vocabulary?" | `references/new-contract.md` §"Effect grammar" |
+| "How do I write a Behavior?" | `references/lifecycle.md` (developer surface — `use Ezagent.Lifecycle`) |
+| "How does the engine the macro compiles to work?" | `references/new-contract.md` (R/B/K internals) |
+| "What's the effects vocabulary?" | `references/lifecycle.md` + `references/new-contract.md` §"Effect vocabulary" |
+| "state vs transients / cold-restart bug class / activate?" | `references/lifecycle.md` two-container model |
+| "§11 naming (NP-1/2/3) / why was it renamed?" | `references/lifecycle.md` §"naming principles" |
 
 ## Key invariants at a glance (full list in references/architecture-invariants.md)
 

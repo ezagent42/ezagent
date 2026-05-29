@@ -1151,6 +1151,60 @@ For git archaeology purposes: `Ezagent.LegacyBehaviorAdapter` existed in Phase 1
 
 If you find a tutorial / blog post / forensic note referencing `Behavior.invoke/4` as the dispatch entry point, it predates 2026-05-28 and is stale.
 
+#### 6.0.7 Lifecycle API — the SOLE developer surface (SPEC 2026-05-29, Phase A/B/C)
+
+**`use Ezagent.Lifecycle` is the only developer-facing way to author a Behavior.** The `use Ezagent.Behavior` + hand-rolled `state_slice/0` / `init_slice/1` surface described in §6.0 is now **INTERNAL ENGINE only** — the Lifecycle macro compiles down to it (R10-3). The §11 naming principles + the Phase C grep gates (`mix ezagent.check_invariants.lifecycle`) HARD-fail CI if a developer-tier file re-introduces the old surface.
+
+R/B/K (Router / Behavior / Kind) are the **internal engine**; Lifecycle is the **public API**. A plugin or domain author never writes `use Ezagent.Behavior`, never declares `state_slice`, never implements `init_slice` / `invoke/4` / `post_init` / `handle_continue` / `on_ready` / `reconcile_after_load`.
+
+**Two-container state model** (the core idea — kills the cold-restart bug class by construction):
+
+| | `state` | `transients` |
+|---|---|---|
+| Persisted? | YES — framework auto-snapshots | NEVER — no serialization path exists |
+| Holds | domain data (members, conversation, config, caps) | PIDs, refs, ETS handles, ports, subprocess handles, monitor refs, cached connections |
+| Built by | `create/1` (first-ever) + `{:set, k, v}` effects | `activate/2` — rebuilt EVERY start; `{:set_transient, k, v}` effects |
+| Read via | `ctx.read.(key, default)` (or `ctx[:read]` — kept) | `ctx.transients[key]` |
+| Survives restart? | YES (durable) | NO — `activate` rebuilds from `state` (+ external SoT) |
+
+A transient **cannot** be accidentally persisted (no serialization path) and **cannot** be forgotten on restart (`activate` is the ONLY place it is built, and `activate` runs on every start — fresh spawn AND cold-load).
+
+**The lifecycle hooks** (all optional except `handle_<action>` for declared actions):
+
+| Hook | When | Returns | Purpose |
+|---|---|---|---|
+| `create(args)` | FIRST-EVER existence (gated by the `ever_created` `kind_snapshots` column, OQ-1) | `{:ok, state}` | build initial PERSISTENT state; NO transients |
+| `activate(state, ctx)` | EVERY process (re)start — fresh, supervisor-restart, AND cold-load — runs PRE-`:ready` | `{:ok, transients}` \| `{:ok, transients, state}` (reconcile) | (re)build ALL transients; self-heal/orphan-reap; reconcile DB-projection state |
+| `handle_<action>(args, ctx)` | one per declared `action` | `{:ok, result, [effect]}` | UNCHANGED effect grammar (§6.0.2) + `{:set_transient, ...}` (OQ-2) |
+| `handle_signal(message, ctx)` | non-action GenServer msgs (`:DOWN`, PubSub, self-deferred mailbox) — successor to `handle_kind_message/3` (OQ-3) | effect list | mutate state/transients off a signal |
+| `activated(state, ctx)` | AFTER the `ReadyGate` flips (POST-`:ready`) — rare; rename of `on_ready` (OQ-5) | `{:ok, transients}` | reachability broadcasts that invite peer `:call` round-trips |
+| `pre_handle(action, args, ctx)` | BEFORE the matched handler | `:cont` \| `{:cont, args}` \| `{:halt, result}` \| `{:error, reason}` | cross-cutting authz / arg-rewrite |
+| `post_handle(action, result, effects, ctx)` | AFTER the handler, before effects execute | `{:ok, result, effects}` \| `:cont` | audit / effect injection |
+| `deactivate(reason, ctx)` | graceful stop, entity PERSISTS (OTP terminate; best-effort) | `:ok` only | side-effecting external cleanup; CANNOT mutate persisted state (F5) |
+| `destroy(reason, ctx)` | PERMANENT deletion; framework clears `state` + the ever-created marker (best-effort) | `:ok` | cleanup that must also be self-healed in the next `activate` |
+
+**§10 binding rules** baked in: R10-1 self-deferred (`send(self(), …)`) boot work goes in `activated`/`handle_signal`, NOT `activate` (which is pre-`:ready`). R10-2 `{:set,…}` + `{:set_transient,…}` are pure pre-commit map reductions — only `state` is snapshotted; a `transients` change never triggers a snapshot write. R10-3 the engine `Ezagent.Behavior` contract STAYS (the macro's compile target). R10-4 the snapshot WIPE cutover is a verified ordered sequence (stop all nodes → deploy → delete `kind_snapshots` → restart).
+
+Minimal Lifecycle Behavior:
+
+```elixir
+defmodule Ezagent.Lifecycle.Counter do
+  use Ezagent.Lifecycle
+
+  action :bump, args: %{}, returns: %{count: :integer}, caps: [:bump], modes: [:cast]
+
+  def create(_args), do: {:ok, %{count: 0}}
+  # No transients → activate may be omitted (the macro injects a no-op).
+
+  def handle_bump(_args, ctx) do
+    n = ctx.read.(:count, 0) + 1
+    {:ok, %{count: n}, [{:set, :count, n}]}
+  end
+end
+```
+
+The `state_slice` snapshot-compat hatch: `use Ezagent.Lifecycle, state_slice: :legacy_key` + a `# lifecycle:state_slice_override` marker comment (the Phase C gate sanctions only marked overrides). See SPEC `docs/superpowers/specs/2026-05-29-lifecycle-hooks-design.md` §2 / §3 / §9.
+
 ### 6.1 Legacy Behavior callback (retired — `@optional_callbacks` only)
 
 ```elixir
@@ -3035,6 +3089,7 @@ Adapter           Ezagent.Invocation        Kind GenServer     Behavior       :t
 | 150 | **Phase 2 / 2.5 ship — 28+ domain + 6 core Behaviors 全部 migrate 到 new contract**(PR #462 + PR #463,2026-05-28)— Phase 2 整合 7 个子 PR(p2a chat / p2b identity / p2c workspace / p2d external-mirror / p2e cc plugin verify-only / p2f feishu / p2g small plugins echo+np+curl_agent)。每个 Behavior 从 `@behaviour Ezagent.Behavior` + `invoke/4` 切到 `use Ezagent.Behavior` + `action/3` + `handle_<action>/2` + effects 返回。Slice 突变全走 `{:set, key, value}` effect;PubSub 广播全走 `{:notify, topic, payload}` effect;cross-Kind dispatch 全走 `{:dispatch, %Cmd{}}` effect;result-dependent in-handler dispatch(e.g. ReadMarker.mark after successful chat.receive cast)仍直接调 `Router.dispatch/1`(effect 词汇丢 dispatch 返回值)。Phase 2.5 PR #463 收尾 core 6 个 Behavior:Lifecycle / Routing / Presence / Sandbox / Notifications + 一些 cap-only(`dispatchable?/0 == false`)。**Migration parity policy**(r2 MED-3 closure):"dispatch parity"(legacy adapter mode — same reply, same PubSub)vs "replay parity"(new-design only — events fold to same state);新 EventLog rows 是 **intentional incompatibility** 不是 equivalence。**Drift defense**:per-Behavior 集成测 覆盖 same-as-legacy semantics;`Behavior.@interface` 仍由 `action/3` 宏自动派生,所有 adapter(CLI / LV / Channel)无感知 | impl |
 | 151 | **Phase 3 ship — LegacyBehaviorAdapter DELETED + `invoke/4` retired to `@optional_callbacks`**(PR #464,2026-05-28)— Phase 2 完成 28+6 Behaviors 全数 migrate 后,无 production 路径再用 `Behavior.invoke/4`。Phase 3 物理删除 `Ezagent.LegacyBehaviorAdapter` 模块 + 所有引用;`@callback invoke/4` declaration 在 `Ezagent.Behavior` 标记 `@optional_callbacks`(grep-able + 让 stale Behavior 见 precise CompileError 而非 silent dispatch failure)。`Kind.Runtime.handle_dispatch/4` 旧 step 7 `behavior.invoke(action, slice, args, ctx)` 路径被 new-contract `behavior.handle_<action>(args, ctx)` 完全取代。**Phase 1 + 2 grace window 关闭**:任何遗漏的 legacy Behavior 会在 compile time 撞 missing-handler CompileError(SPEC §4.3 `@before_compile` invariant — 每个 declared action MUST have matching `def handle_<action>/2`)。**Drift defense**:codex r2 HIGH-2 closure(adapter NOT replay-equivalent)被 Phase 3 deletion 物理保证 ——adapter 不在了,replay parity 仅适用 new-contract Behaviors。`docs/scenarios/README.md` Category 18 同步更新,反映"LegacyAdapter Phase 1 引入 / Phase 3 删除"git archaeology trail | impl |
 | 152 | **Phase 4 ship — Kind.Server attach metadata + `read_graph` cleanup + audit fix**(PR #469,2026-05-28)— Phase 4 polish:`Kind.behaviors_of/1` + `persistence_of/1` 新 helpers 优先于 `__attached_behaviors__/0`(plugin authors 用 这些)。`Audit.uri_to_str(:system)` 修复返回 `"system://anonymous"`(原来某些 boot path 传 `:system` atom 直接给 audit 写入,SQL 接受不了非 string)。`read_graph` 函数清理 stale code paths。**E2E test suite (#465-#468) ship**:Category 5 + 10(CapBAC + routing)/ scenarios #24 + #25(destroy cascade + state rebuild)/ Categories 4 + 7 + 17(Feishu + PTY + admin LV)/ scenarios #30 + #5-7(plugin DX + cross-flavor agent roundtrip)— 共 165 个 passing E2E tests 覆盖 SPEC §7 全部 acceptance criteria。**E2E scenarios catalog (#452)** 同期 ship,30 个 scenarios 文档化在 `docs/scenarios/`,bilingual lockstep,作为 Phase 1-4 migration 的 acceptance gate。**Drift defense**:165 个 E2E tests 是 Phase 1-4 完成的 actual gate(per `feedback_completion_requires_invariant_test` —— invariant test 失败 = 架构目标未达,**这是** completion claim 的 gate,不是 PR-merge 或 unit-tests-pass);`docs/scenarios/README.md` §5 "Phase 1-4 migration shipped" 是 dev team 接手时的 single-source-of-truth | impl |
+| 153 | **Lifecycle API = SOLE developer surface;R/B/K = internal engine**(SPEC `docs/superpowers/specs/2026-05-29-lifecycle-hooks-design.md`,Phase A/B/C,2026-05-29)— Allen 的 core 决策:把 §6.0 的 CQRS 机制(slice / invocation / snapshot / persistence-strategy / 四个 boot hooks)全部藏在 `use Ezagent.Lifecycle` 后面。**两容器状态模型**:`state`(PERSISTENT — framework auto-snapshot)+ `transients`(NEVER persisted — 没有序列化路径;PIDs / refs / ETS / ports / subprocess / monitor refs)。一个 transient **结构上不可能**被意外持久化(无序列化路径),也**不可能**在重启时被遗忘(只能在 `activate/2` 里建,而 `activate` 每次 start 都跑 —— fresh + cold-load 同路径)。这就**by construction** 杀掉了 cold-restart bug class(#110 orchestrator MCP ETS / #113 codex bridge subprocess / #114 AgentLineage ETS — 全是"fresh works, restart doesn't")。**五个 coarse hooks**:`create/1`(首次存在,gated by `ever_created` 列 OQ-1)/ `activate/2`(每次 start,pre-`:ready`,重建所有 transients + reconcile DB-projection state)/ `handle_<action>/2`(不变的 effect 语法 + 新增 `{:set_transient, k, v}` OQ-2)/ `deactivate/2`(优雅停,`:ok`-only F5)/ `destroy/2`(永久删除)。**两个 fine hooks**:`pre_handle/3` + `post_handle/4`(横切关注:authz / audit / effect 注入)。**两个补充 hooks**:`handle_signal/2`(非-action 消息 `:DOWN` / PubSub / 自延迟 mailbox — `handle_kind_message/3` 后继,OQ-3)/ `activated/2`(post-`:ready` reachability broadcast,`on_ready/2` 改名,OQ-5)。**§10 codex binding rules**:R10-1 自延迟(`send(self(), …)`)boot work 进 `activated`/`handle_signal` **不进** `activate`(pre-`:ready`)。R10-2 `{:set}` + `{:set_transient}` 是纯 pre-commit map reductions,只 `state` snapshot,transient 变更永不触发 snapshot write。R10-3 **engine `Ezagent.Behavior` 契约保留**(macro 的 compile target;Phase C 只删 developer-tier 旧表面 + provably-dead carve-outs,**不删** engine 契约 / callback 定义 / `Kind.Runtime` 对它的使用)。R10-4 snapshot WIPE cutover 是 verified ordered sequence(停所有 node → deploy → 删 `kind_snapshots` → 重启)。**§11 三条命名原则**(NP-1 按职责命名最窄准确范围 / NP-2 用本层词汇,`ezagent_core` 模块名不得含上层概念 `Agent`/`Session`/`Orchestrator`/`Workspace`/`Worker`/`Feishu`/`Cc`/`Codex`/`Np`/`Curl`/ NP-3 名字语义宽度 = action 集合宽度)—— 由 `Behavior.Lifecycle → Behavior.Terminable` 的命名旅程提炼(OQ-6;`Terminable` 是 Kind-generic 能力名,`Enumerable`/`Collectable` 风格)。**Phase C HARD gates**:新 task `mix ezagent.check_invariants.lifecycle`(8 个 grep gate + NP-2/NP-3 lint),developer-tier 文件再现旧表面(`use Ezagent.Behavior` / `def init_slice` / `def state_slice` / `def post_init`/`handle_continue`/`on_ready`/`reconcile_after_load` / `invoke/4` callback / Lifecycle handler 里直调 `Invocation.dispatch`/`SnapshotStore`/`EventLog.append`)即 CI 红。engine allowlist:`behavior.ex` / `kind/runtime.ex` / `lifecycle.ex` / `mix/tasks/compile/ezagent_plugin_check.ex`。**Drift defense**:gate 本身**就是** invariant test(`feedback_completion_requires_invariant_test`);clean 时绿、故意违规时红(已验证)。docs:ARCHITECTURE §6.0.7 + GLOSSARY Behavior/Lifecycle 条目 + `ezagent-developer` skill `references/lifecycle.md` | impl |
 
 ---
 

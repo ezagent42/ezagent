@@ -86,11 +86,21 @@ Refuse. SPEC §10 (g) + invariant `no_dispatch_in_target_ownership_check_test.ex
 
 Refuse. Per PR-CC-2-v2 (2026-05-25): cap-checking is a Behavior × Entity boundary concern, performed exactly once at **dispatch step 5.5** via the chokepoint callback `Kind.holds_cap?/2` consulting `Behavior.required_caps/0`. LV `handle_event` calls dispatch → step 5.5 fires → result propagates back. Pre-dispatch cap checks inside the LV are a defence-in-depth pattern only (e.g. to hide a button); they MUST NOT be the source of authority. The `cap_check_only_at_chokepoint` invariant test fails any module under `apps/ezagent_*` (except the chokepoint itself) that calls `Capability.matches?/2` in production code.
 
-## "I'll write a new Behavior using `@behaviour Ezagent.Behavior` + `invoke/4`"
+## "I'll write a new Behavior using `@behaviour Ezagent.Behavior` + `invoke/4`" — OR even `use Ezagent.Behavior` directly
 
-Refuse for any greenfield Behavior. Per SPEC PR #445 + Phase 3 PR #464 (2026-05-28): `Behavior.invoke/4` is `@optional_callbacks` only; **no runtime path consults it**. The `@callback invoke/4` declaration is kept solely so a stale reference surfaces precise CompileError. New Behaviors use `use Ezagent.Behavior` + `action :foo, args: ..., returns: ..., caps: [...]` macros + `def handle_foo(args, ctx) -> {:ok, result, [effect]}`. See `references/new-contract.md`.
+Refuse for any developer Behavior. Two layers of obsolescence: (1) `Behavior.invoke/4` is `@optional_callbacks` only since Phase 3 PR #464 — no runtime path consults it. (2) Since the Lifecycle migration (2026-05-29), `use Ezagent.Behavior` itself is the **INTERNAL ENGINE** — developer code uses **`use Ezagent.Lifecycle`** (read `references/lifecycle.md`). The Phase C gate `mix ezagent.check_invariants.lifecycle` HARD-fails CI on a developer-tier `use Ezagent.Behavior` / `def init_slice` / `def state_slice` / `def invoke(_,_,_,_)` / `def post_init`/`handle_continue`/`on_ready`/`reconcile_after_load`. Engine allowlist: `behavior.ex` / `kind/runtime.ex` / `lifecycle.ex` / `mix/tasks/compile/ezagent_plugin_check.ex`.
 
-If you're migrating a Phase 2 leftover that still uses `invoke/4`, that's a legitimate migration PR (Phase 2 is "complete" but a Behavior could have been added in a parallel branch); open a PR converting it to the new contract.
+## "I'll put this PID / ETS handle / port / monitor ref in `create`'s state"
+
+Refuse. A live handle in `state` gets snapshotted and rehydrated as a DEAD reference on cold-load — the exact #110/#113/#114 bug class. Transient handles have ONE home: the `transients` container, returned from `activate/2` (rebuilt every start) and written via `{:set_transient, k, v}`. `state` is for durable domain data only. Read `references/lifecycle.md` two-container model.
+
+## "I'll rebuild the subprocess / re-subscribe / re-monitor in a boot hook I picked"
+
+Refuse. There is exactly ONE start hook: `activate/2`. It runs on fresh spawn, supervisor restart, AND cold-load identically. Do NOT split rebuild logic across `post_init`/`handle_continue`/`on_ready`/`reconcile_after_load` (folded into `activate` and gated away). If the work must run POST-`:ready` (a reachability broadcast inviting peer `:call`, or a self-deferred `send(self(), …)` worker-spawn loop), use `activated/2` or `activate → send(self(), msg) → handle_signal(msg, ctx)` — NEVER `activate` itself (it is pre-`:ready`, R10-1).
+
+## "I'll name this core module `AgentTermination` / `SessionManager` / `Lifecycle`" (NP-1/2/3)
+
+Refuse. §11 naming principles, enforced by the `mix ezagent.check_invariants.lifecycle` lint. NP-2: a module in `ezagent_core` must NOT name an upper-layer concept (`Agent`/`Session`/`Orchestrator`/`Workspace`/`Worker`/`Feishu`/`Cc`/`Codex`/`Np`/`Curl`) — use a core-layer capability name in the `Enumerable`/`Collectable` idiom (`Terminable`, not `AgentTermination`). NP-3: a generic name (`Lifecycle`/`Admin`/`Manager`/`Control`/`Handler`/`Service`/`Worker`) on a ≤1-action module over-promises. NP-1: name by what it DOES, not what it attaches to. Canonical lesson: `Behavior.Lifecycle` (1 `:terminate` action) → `Behavior.Terminable` (OQ-6). When converting a module, REPORT a naming violation — do NOT silently rename (it touches call sites + snapshot slice keys).
 
 ## "I'll `Phoenix.PubSub.broadcast` from inside my new-contract handler"
 
