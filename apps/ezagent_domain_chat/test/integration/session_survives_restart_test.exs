@@ -18,15 +18,15 @@ defmodule EzagentDomainChat.Integration.SessionSurvivesRestartTest do
   fails if `persistence/0` ever regresses to `:ephemeral` — the
   respawned session would come back with an empty members map.
 
-  ## Fixtures MUST use the canonical chokepoint `Ezagent.URI.parse!/1`
+  ## Fixtures MUST use the canonical chokepoint `Ezagent.URI.new!/1`
 
   Task #111 (2026-05-29) — these fixtures previously built URIs via
   stdlib `URI.parse/1`, which sets the deprecated RFC-2396 `:authority`
   field (`authority: "user"`). Production constructs every URI through
-  `Ezagent.URI.parse!/1` (RFC-3986, `authority: nil`) per SPEC
+  `Ezagent.URI.new!/1` (RFC-3986, `authority: nil`) per SPEC
   `2026-05-27-uri-canonicalization` §3.1, and the snapshot reload path
   re-canonicalizes every embedded `%URI{}` via
-  `Ezagent.Kind.Snapshot.canonicalize_uris/1` → `Ezagent.URI.parse!/1`.
+  `Ezagent.Kind.Snapshot.canonicalize_uris/1` → `Ezagent.URI.new!/1`.
 
   A member URI is a MAP KEY in the `:members` slice. An authority-
   bearing fixture key is struct-UNEQUAL to its authority-nil reloaded
@@ -48,7 +48,7 @@ defmodule EzagentDomainChat.Integration.SessionSurvivesRestartTest do
   # production "add an agent to a session" flow.
   defp spawn_member do
     member_uri =
-      Ezagent.URI.parse!(
+      Ezagent.URI.new!(
         "entity://user/team-alpha/restart-member-#{System.unique_integer([:positive])}"
       )
 
@@ -115,7 +115,7 @@ defmodule EzagentDomainChat.Integration.SessionSurvivesRestartTest do
   describe "session membership survives a Kind restart — THE GATE" do
     test "a member added at runtime is still present after stop + respawn" do
       session_uri =
-        Ezagent.URI.parse!(
+        Ezagent.URI.new!(
           "session://default/team-alpha/restart-#{System.unique_integer([:positive])}"
         )
 
@@ -160,7 +160,7 @@ defmodule EzagentDomainChat.Integration.SessionSurvivesRestartTest do
       # Guards against the inverse failure: the snapshot load path must
       # not resurrect membership from an unrelated/stale snapshot.
       session_uri =
-        Ezagent.URI.parse!(
+        Ezagent.URI.new!(
           "session://default/team-alpha/fresh-#{System.unique_integer([:positive])}"
         )
 
@@ -175,7 +175,7 @@ defmodule EzagentDomainChat.Integration.SessionSurvivesRestartTest do
   describe "WorkspaceRegistry rebind on rehydrate (invariant 4)" do
     test "respawning a session re-establishes its workspace binding" do
       session_uri =
-        Ezagent.URI.parse!(
+        Ezagent.URI.new!(
           "session://default/team-alpha/ws-rebind-#{System.unique_integer([:positive])}"
         )
 
@@ -224,12 +224,12 @@ defmodule EzagentDomainChat.Integration.SessionSurvivesRestartTest do
   describe "Snapshot.load_or_init for Session Kind" do
     test "a Session snapshot round-trips its Chat slice (other behaviors get fresh init per Q5 merge)" do
       session_uri =
-        Ezagent.URI.parse!(
+        Ezagent.URI.new!(
           "session://default/team-alpha/load-init-#{System.unique_integer([:positive])}"
         )
 
       member =
-        Ezagent.URI.parse!("entity://user/team-alpha/m-#{System.unique_integer([:positive])}")
+        Ezagent.URI.new!("entity://user/team-alpha/m-#{System.unique_integer([:positive])}")
 
       # Old-shape snapshot (chat slice only — pre-PR-EM-0 Session had
       # only [Chat] in behaviors/0). Saved verbatim to simulate a
@@ -264,7 +264,7 @@ defmodule EzagentDomainChat.Integration.SessionSurvivesRestartTest do
 
     test "the template_working_copy field round-trips through a Session snapshot/restore" do
       session_uri =
-        Ezagent.URI.parse!(
+        Ezagent.URI.new!(
           "session://default/team-alpha/twc-roundtrip-#{System.unique_integer([:positive])}"
         )
 
@@ -275,12 +275,12 @@ defmodule EzagentDomainChat.Integration.SessionSurvivesRestartTest do
       # receivers are slot NAMES.
       working_copy = %{
         agent_slots: [
-          {"backend", Ezagent.URI.parse!("template://agent/system/cc-backend")},
-          {"frontend", Ezagent.URI.parse!("template://agent/team-alpha/cc-frontend")}
+          {"backend", Ezagent.URI.new!("template://agent/system/cc-backend")},
+          {"frontend", Ezagent.URI.new!("template://agent/team-alpha/cc-frontend")}
         ],
         routing_rules: [{{:mention, "backend"}, ["backend"]}],
-        orchestrator_template_uri: Ezagent.URI.parse!("template://agent/system/cc-orchestrator"),
-        default_workspace_uri: Ezagent.URI.parse!("workspace://team-alpha"),
+        orchestrator_template_uri: Ezagent.URI.new!("template://agent/system/cc-orchestrator"),
+        default_workspace_uri: Ezagent.URI.new!("workspace://team-alpha"),
         description: "a two-agent team"
       }
 
@@ -302,14 +302,14 @@ defmodule EzagentDomainChat.Integration.SessionSurvivesRestartTest do
 
     test "a pre-PR-2 Session snapshot (no template_working_copy key) still loads — field defaults" do
       session_uri =
-        Ezagent.URI.parse!(
+        Ezagent.URI.new!(
           "session://default/team-alpha/twc-pre-pr2-#{System.unique_integer([:positive])}"
         )
 
       :ok = KindSnapshot.delete(URI.to_string(session_uri))
 
       member =
-        Ezagent.URI.parse!("entity://user/team-alpha/pre-#{System.unique_integer([:positive])}")
+        Ezagent.URI.new!("entity://user/team-alpha/pre-#{System.unique_integer([:positive])}")
 
       # The exact pre-PR-2 `:chat` slice shape — members/monitors/last_seen
       # only, NO `template_working_copy` key.

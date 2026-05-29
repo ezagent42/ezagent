@@ -86,7 +86,7 @@ defmodule Ezagent.AgentBridge.Channel do
   end
 
   defp safe_parse_uri(s) when is_binary(s) do
-    {:ok, Ezagent.URI.parse!(s)}
+    {:ok, Ezagent.URI.new!(s)}
   rescue
     ArgumentError -> :error
   end

@@ -104,7 +104,7 @@ defmodule EzagentDomainUi.Primitives do
       # with try/rescue for display-fallback ("?", "fallback") on parse
       # failure (avatar must always render).
       try do
-        case Ezagent.URI.parse!(str) do
+        case Ezagent.URI.new!(str) do
           # Phase 9 PR-2 (SPEC v3 §3): entity URIs are 3-segment;
           # extract entity_name (second path segment) for label/hue.
           %URI{scheme: "entity", host: "user", path: "/" <> rest} ->

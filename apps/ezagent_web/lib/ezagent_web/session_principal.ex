@@ -79,7 +79,7 @@ defmodule EzagentWeb.SessionPrincipal do
   @spec put(Plug.Conn.t(), String.t(), keyword()) :: Plug.Conn.t()
   def put(conn, raw, opts) when is_binary(raw) and is_list(opts) do
     canonical = canonicalize(raw, opts)
-    entity_uri = Ezagent.URI.parse!(canonical)
+    entity_uri = Ezagent.URI.new!(canonical)
     workspace_uri = Ezagent.URI.entity_workspace_uri(entity_uri)
 
     conn
@@ -156,7 +156,7 @@ defmodule EzagentWeb.SessionPrincipal do
     # with try/rescue keeping the ArgumentError contract; malformed
     # input is rejected with an actionable message either way.
     case (try do
-            Ezagent.URI.parse!(candidate)
+            Ezagent.URI.new!(candidate)
           rescue
             ArgumentError -> :error
           end) do

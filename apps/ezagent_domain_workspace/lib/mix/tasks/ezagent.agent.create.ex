@@ -197,10 +197,10 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
   defp build_create_args(base), do: base
 
   defp parse_uri(s) when is_binary(s) do
-    # Phase 9 PR-2 (SPEC v3 §3): route through Ezagent.URI.parse!/1
+    # Phase 9 PR-2 (SPEC v3 §3): route through Ezagent.URI.new!/1
     # so 2-segment URIs are rejected with the SPEC v3 error.
     try do
-      uri = Ezagent.URI.parse!(s)
+      uri = Ezagent.URI.new!(s)
 
       case uri do
         %URI{scheme: "entity", host: "agent", path: "/" <> rest} ->

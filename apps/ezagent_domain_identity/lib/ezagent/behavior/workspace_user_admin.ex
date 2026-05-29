@@ -194,7 +194,7 @@ defmodule Ezagent.Behavior.WorkspaceUserAdmin do
 
   defp parse_user_uri(s) when is_binary(s) do
     try do
-      case Ezagent.URI.parse!(s) do
+      case Ezagent.URI.new!(s) do
         %URI{scheme: "entity", host: "user", path: "/" <> _} = uri ->
           {:ok, uri}
 

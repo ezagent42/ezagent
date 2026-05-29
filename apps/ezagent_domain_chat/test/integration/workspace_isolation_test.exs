@@ -193,7 +193,7 @@ defmodule EzagentDomainChat.Integration.WorkspaceIsolationTest do
     # because every session URI MUST be 3-segment
     # `session://<template>/<workspace>/<name>`. The pre-PR-7
     # "unbound session" failure mode has been replaced by a parse-time
-    # rejection: `Ezagent.URI.parse!/1` raises on 2-segment session
+    # rejection: `Ezagent.URI.new!/1` raises on 2-segment session
     # URIs.
     ctx = setup_scenario()
 
@@ -204,7 +204,7 @@ defmodule EzagentDomainChat.Integration.WorkspaceIsolationTest do
     legacy = "session://" <> "#{suffix}-unbound"
 
     assert_raise ArgumentError, ~r/workspace segment/, fn ->
-      Ezagent.URI.parse!(legacy)
+      Ezagent.URI.new!(legacy)
     end
 
     eavesdropper_before = length(receive_dispatches_to(ctx.eavesdropper))

@@ -77,7 +77,7 @@ defmodule Mix.Tasks.Ezagent.Workspace.AddMember do
 
   defp parse_entity_uri(s) do
     try do
-      {:ok, Ezagent.URI.parse!(s)}
+      {:ok, Ezagent.URI.new!(s)}
     rescue
       e in ArgumentError -> {:error, Exception.message(e)}
     end

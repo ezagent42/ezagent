@@ -300,7 +300,7 @@ defmodule Ezagent.Behavior.CurlAgent do
     # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
     # with try/rescue keeping the nil fallback for malformed input.
     try do
-      case Ezagent.URI.parse!(s) do
+      case Ezagent.URI.new!(s) do
         %URI{scheme: "session"} = u -> u
         _ -> nil
       end

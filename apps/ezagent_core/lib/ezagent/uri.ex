@@ -90,7 +90,7 @@ defmodule Ezagent.URI do
   Boot-time seeded schemes (SPEC §5.6):
   `entity`, `workspace`, `session`, `template`, `resource`, `system`.
 
-  Deleted (rejected by `parse!/1`):
+  Deleted (rejected by `new!/1`):
   - `user`, `agent` (PR #141 — merged into `entity://`)
   - `feishu` (PR #143 — plugin re-shaped, SPEC §5.8)
   - `routing-admin`, `pty-input` (PR #144 — synthetic singletons
@@ -100,8 +100,16 @@ defmodule Ezagent.URI do
   """
 
   @doc """
-  Parse a binary URI into a stdlib `%URI{}`. Raises on malformed input
-  (let-it-crash — adapter is responsible for clean URIs).
+  Construct a canonical Ezagent `%URI{}` from a binary (RFC-3986 form,
+  `authority: nil`). The canonical constructor for Ezagent-scheme URIs.
+  Raises on malformed input (let-it-crash — adapter is responsible for
+  clean URIs).
+
+  Named `new!/1` (not `parse!/1`) to end the confusion with the stdlib
+  `URI.parse/1`, which builds a non-canonical authority-bearing struct.
+  `Ezagent.URI.new!/1` is the sanctioned chokepoint that yields the
+  canonical RFC-3986 `authority: nil` shape every Ezagent comparison
+  relies on.
 
   Rejects any scheme not registered in `Ezagent.URI.SchemeRegistry` —
   the SPEC v2 §5.11 lockdown that prevents documentation-drift bugs
@@ -121,8 +129,8 @@ defmodule Ezagent.URI do
   Cross-cutting schemes (`workspace://`, `system://`) are unchanged
   — their authority shape is enforced by their own consumers.
   """
-  @spec parse!(String.t()) :: URI.t()
-  def parse!(s) when is_binary(s) do
+  @spec new!(String.t()) :: URI.t()
+  def new!(s) when is_binary(s) do
     case URI.new(s) do
       {:ok, %URI{scheme: nil}} ->
         raise ArgumentError, "URI missing scheme: #{inspect(s)}"
@@ -227,9 +235,9 @@ defmodule Ezagent.URI do
     # SPEC v3 §3.6 (Phase 9 PR-7) — 3-segment authority for unified
     # per-tenant schemes: <scheme>://<type>/<workspace>/<name>. Both
     # workspace AND name are part of the URI's identity, so instance/1
-    # keeps both. parse!/1 already rejected non-3-segment forms; if we
+    # keeps both. new!/1 already rejected non-3-segment forms; if we
     # encounter one here it means the URI was hand-constructed bypassing
-    # parse!/1 — treat as a programming error and leave the path
+    # new!/1 — treat as a programming error and leave the path
     # unchanged (let the caller find out via downstream lookup failure
     # rather than silently masking it).
     case String.split(rest, "/", parts: 3) do
@@ -399,10 +407,10 @@ defmodule Ezagent.URI do
   def subresource(%URI{scheme: scheme, path: "/" <> rest})
       when scheme in @unified_per_tenant_schemes do
     # SPEC v3 §3.6 (Phase 9 PR-7) — unified 3-segment authority:
-    # /<workspace>/<name>[/<sub-resource>...]. parse!/1 rejects
+    # /<workspace>/<name>[/<sub-resource>...]. new!/1 rejects
     # 4+ segment URIs at the top, so in practice this returns "".
     # The split is retained so manually-constructed URIs that bypass
-    # parse!/1 don't crash here.
+    # new!/1 don't crash here.
     case String.split(rest, "/", parts: 3) do
       [_workspace, _name] -> ""
       [_workspace, _name, sub] -> sub

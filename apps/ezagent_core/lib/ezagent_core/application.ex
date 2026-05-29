@@ -100,7 +100,7 @@ defmodule EzagentCore.Application do
     :ok = Ezagent.Audit.attach()
 
     # PR #145 (SPEC v2 §5.6 §5.11) — seed the runtime URI scheme allowlist
-    # BEFORE any code path that calls `Ezagent.URI.parse!/1` or
+    # BEFORE any code path that calls `Ezagent.URI.new!/1` or
     # `Ezagent.SpawnRegistry.register/2` (which now co-registers schemes).
     # EtsOwner already created the table; this populates the 6 core schemes.
     :ok = seed_uri_schemes()

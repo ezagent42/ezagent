@@ -275,7 +275,7 @@ defmodule Ezagent.Runtime.PidFile do
         # for any URI string entering the system. Try/rescue keeps the
         # `{:ok, _} | {:error, _}` contract of this private helper.
         try do
-          {:ok, Ezagent.URI.parse!("entity://agent/#{workspace}/#{entity_name}")}
+          {:ok, Ezagent.URI.new!("entity://agent/#{workspace}/#{entity_name}")}
         rescue
           ArgumentError -> {:error, :bad_filename}
         end

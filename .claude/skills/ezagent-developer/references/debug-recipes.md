@@ -49,7 +49,7 @@ Check `parent_template_uri` field on the new template. If `nil`, the fork code p
 
 ## Symptom: SchemeRegistry parse error on a previously-working URI
 
-Per SPEC v2 §5.6 + PR #147: `Ezagent.URI.SchemeRegistry` is the runtime ETS source of truth, fed by `SpawnRegistry.register/2`. If a URI parses fine in isolation but fails inside `Ezagent.URI.parse!/1`, the scheme isn't registered yet (boot-order issue) or the URI uses a deleted scheme (`user://`, `agent://`, `message://`, `feishu://`, `routing-admin://`, `pty-input://`).
+Per SPEC v2 §5.6 + PR #147: `Ezagent.URI.SchemeRegistry` is the runtime ETS source of truth, fed by `SpawnRegistry.register/2`. If a URI parses fine in isolation but fails inside `Ezagent.URI.new!/1`, the scheme isn't registered yet (boot-order issue) or the URI uses a deleted scheme (`user://`, `agent://`, `message://`, `feishu://`, `routing-admin://`, `pty-input://`).
 
 ## Symptom: audit log query returns rows from other workspaces
 

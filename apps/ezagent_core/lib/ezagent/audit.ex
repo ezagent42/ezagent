@@ -398,7 +398,7 @@ defmodule Ezagent.Audit do
           # system-scoped predicate returns false (correct: unknown scheme
           # is not system-scoped).
           try do
-            Ezagent.URI.parse!(s)
+            Ezagent.URI.new!(s)
           rescue
             ArgumentError -> nil
           end

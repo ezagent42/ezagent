@@ -227,7 +227,7 @@ defmodule Ezagent.ExternalMirror.WorkerSpawn do
       |> Base.encode16(case: :lower)
       |> String.slice(0, 12)
 
-    Ezagent.URI.parse!("entity://worker/#{workspace}/em_#{hash}")
+    Ezagent.URI.new!("entity://worker/#{workspace}/em_#{hash}")
   end
 
   # Session URIs are `session://<template>/<workspace>/<name>`

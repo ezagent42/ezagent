@@ -49,7 +49,7 @@ defmodule Ezagent.Persistence do
   ## Examples
 
       iex> import Ecto.Query
-      iex> q = Ezagent.Persistence.scope_by_workspace(Ezagent.Message, Ezagent.URI.parse!("workspace://team-alpha"))
+      iex> q = Ezagent.Persistence.scope_by_workspace(Ezagent.Message, Ezagent.URI.new!("workspace://team-alpha"))
       iex> %Ecto.Query{} = q
       iex> Macro.to_string(q.wheres |> hd() |> Map.get(:expr)) =~ "workspace_uri"
       true
@@ -98,7 +98,7 @@ defmodule Ezagent.Persistence do
   end
 
   def workspace_uri_for(uri) when is_binary(uri),
-    do: workspace_uri_for(Ezagent.URI.parse!(uri))
+    do: workspace_uri_for(Ezagent.URI.new!(uri))
 
   @doc """
   Like `workspace_uri_for/1` but raises `ArgumentError` on

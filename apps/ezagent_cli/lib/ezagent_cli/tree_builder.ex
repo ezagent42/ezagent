@@ -216,7 +216,7 @@ defmodule EzagentCli.TreeBuilder do
       # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
       # with try/rescue keeping the parser's `{:error, msg}` contract.
       try do
-        {:ok, Ezagent.URI.parse!(s)}
+        {:ok, Ezagent.URI.new!(s)}
       rescue
         ArgumentError -> {:error, "malformed URI: #{inspect(s)}"}
       end

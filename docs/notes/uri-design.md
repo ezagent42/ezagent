@@ -41,7 +41,7 @@ Every URI scheme currently constructed or parsed in `apps/`. Columns:
 
 - `parse!/1`'s `@known_schemes` is `~w(agent session user resource system)` — **5 schemes**.
 - Reality has **11+** schemes in use (table above) plus `feishu://` and the singletons.
-- So `Ezagent.URI.parse!/1` would crash on `workspace://default`, `template://session/X@hash`, `feishu://oc_xxx`, `message://abcd`, `pty-input://default`, `routing-admin://default`.
+- So `Ezagent.URI.new!/1` would crash on `workspace://default`, `template://session/X@hash`, `feishu://oc_xxx`, `message://abcd`, `pty-input://default`, `routing-admin://default`.
 - In practice everyone uses `URI.parse/1` (stdlib) directly for these — bypassing the allowlist. The allowlist is, today, partial documentation rather than an enforced invariant.
 - `instance/1` and `subresource/1` are scheme-aware via two clauses: `agent://` (path = `/<name>/<sub>...`) vs everything else (path = `/<sub>...`). `template://session/X@hash` happens to work because `subresource("/")` is empty when no further path is present, but if anyone tried `template://session/X@hash/behavior/...` the agent-style 2-segment split would incorrectly take `X@hash` as the name and `behavior/...` as sub-resource — which happens to be correct! — but only by coincidence; the code path is the "non-agent" branch which gobbles the entire path.
 
@@ -92,7 +92,7 @@ PR-A (PR #132) addressed the **parser** ambiguity with a positional split (the p
 
 ### 2.6 Scheme allowlist drift
 
-`Ezagent.URI.@known_schemes` lists 5; the codebase uses 11. Anyone reaching for `Ezagent.URI.parse!/1` instead of stdlib `URI.parse/1` would hit a phantom failure. This is documentation rot, but it's also the safety net that doesn't catch anything.
+`Ezagent.URI.@known_schemes` lists 5; the codebase uses 11. Anyone reaching for `Ezagent.URI.new!/1` instead of stdlib `URI.parse/1` would hit a phantom failure. This is documentation rot, but it's also the safety net that doesn't catch anything.
 
 ### 2.7 Singleton synthetic schemes diverge from instance schemes
 
@@ -206,7 +206,7 @@ This is the **plugin isolation north star** rule made specific to URIs.
 
 **Status quo**: It lists 5 schemes; reality has 11+. It's documentation drift.
 
-**Proposal A (close the loop)**: Have `SpawnRegistry.register/2` also call `Ezagent.URI.register_scheme/1`. The allowlist becomes a runtime ETS table fed by plugins. `Ezagent.URI.parse!/1` consults it. Singletons like `pty-input` register themselves at boot.
+**Proposal A (close the loop)**: Have `SpawnRegistry.register/2` also call `Ezagent.URI.register_scheme/1`. The allowlist becomes a runtime ETS table fed by plugins. `Ezagent.URI.new!/1` consults it. Singletons like `pty-input` register themselves at boot.
 
 **Proposal B (delete the allowlist)**: It catches nothing — remove it from `parse!/1` and just delegate to stdlib `URI.parse/1`.
 
@@ -420,7 +420,7 @@ Most clusters have ONE Workspace. Multi-tenant deployments have N (where N = num
 
 ### §5.6 Scheme allowlist — 6 schemes, `@known_schemes` as SoT
 
-`Ezagent.URI.@known_schemes` is the single canonical list. `Ezagent.URI.parse!/1` rejects URIs whose scheme is not in the list (PR #145 enforces this at parse-time; no escape hatch).
+`Ezagent.URI.@known_schemes` is the single canonical list. `Ezagent.URI.new!/1` rejects URIs whose scheme is not in the list (PR #145 enforces this at parse-time; no escape hatch).
 
 | Scheme | Purpose | Type-axis semantics | Today's values |
 |---|---|---|---|
@@ -487,7 +487,7 @@ The canonical name for a singleton instance is `default`. Examples: `workspace:/
 Existing DB data is wiped + rebuilt. No operator shorthand. No legacy URI form accepted. Every URI in CLI input, LV form input, stored data, audit log, KindRegistry, routing matchers — canonical from day 1.
 
 Consequences:
-- `Ezagent.URI.parse!/1` rejects un-canonical input. No `default`-injection logic. No 1-segment fallback.
+- `Ezagent.URI.new!/1` rejects un-canonical input. No `default`-injection logic. No 1-segment fallback.
 - LV form placeholders show canonical form.
 - Migration PRs (#141-#147) carry **no legacy-URI rewrite migrations**. Schema changes + code changes only. Dev DB refresh: `mix ezagent.db.reset` (drops + recreates + reseeds).
 
@@ -556,7 +556,7 @@ For `resource://`:
 
 Option B (`%{workspace: ws_uri}` in dispatch envelope) was rejected: ambient context is easy to forget; cap matcher would need 2-key lookup; data leak risk if envelope isn't validated.
 
-**Parser change** (`Ezagent.URI.parse!/1`):
+**Parser change** (`Ezagent.URI.new!/1`):
 - Accepts 3-segment authority path for per-tenant schemes
 - **Rejects** 2-segment forms for those schemes with `ArgumentError: <scheme> URI must include workspace segment`
 - Rejects 4+ segments (sub-resource positions reserved per §5.1)

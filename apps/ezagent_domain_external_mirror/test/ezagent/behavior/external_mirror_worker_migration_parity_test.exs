@@ -86,7 +86,7 @@ defmodule Ezagent.Behavior.ExternalMirrorWorkerMigrationParityTest do
 
     test "init_slice/1 produces the documented :pending shape with all keys present" do
       args = %{
-        session_uri: Ezagent.URI.parse!("session://default/team-alpha/p2d-worker-parity"),
+        session_uri: Ezagent.URI.new!("session://default/team-alpha/p2d-worker-parity"),
         adapter_id: "test-adapter",
         target_id: "t-1",
         opts: %{}
@@ -108,7 +108,7 @@ defmodule Ezagent.Behavior.ExternalMirrorWorkerMigrationParityTest do
     end
 
     test "data_owner/1 always returns :no_owner (framework-internal Kind)" do
-      worker_uri = Ezagent.URI.parse!("entity://worker/default/em_test_t1")
+      worker_uri = Ezagent.URI.new!("entity://worker/default/em_test_t1")
       assert ExternalMirrorWorker.data_owner(worker_uri) == :no_owner
       assert ExternalMirrorWorker.data_owner(:any) == :no_owner
       assert ExternalMirrorWorker.data_owner({:scope, :within_session, worker_uri}) == :no_owner

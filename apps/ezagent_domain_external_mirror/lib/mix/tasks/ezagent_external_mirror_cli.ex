@@ -42,7 +42,7 @@ defmodule Mix.Tasks.Ezagent.ExternalMirror.CLI do
   `caller_uri/1` and `parse_session_uri/1` both go through stock
   `URI.parse/1` which populates the `:authority` field. Without
   this, `Capability.matches?/2` instance equality silently denies
-  against a `Ezagent.URI.parse!`-produced URI (no authority) — the
+  against a `Ezagent.URI.new!`-produced URI (no authority) — the
   same trap PR-EM-4 worked around in its LV mount.
   """
 
@@ -158,7 +158,7 @@ defmodule Mix.Tasks.Ezagent.ExternalMirror.CLI do
           reply: :ignore
         }
   def build_ctx(as_uri) when is_binary(as_uri) do
-    caller_uri = Ezagent.URI.parse!(as_uri)
+    caller_uri = Ezagent.URI.new!(as_uri)
     caps = load_caps(caller_uri)
 
     %{caller: caller_uri, caps: caps, reply: :ignore}
@@ -215,7 +215,7 @@ defmodule Mix.Tasks.Ezagent.ExternalMirror.CLI do
   Parse a session URI string into a canonical `%URI{}`.
 
   SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
-  (`Ezagent.URI.parse!/1`). Downstream cap matching is to_string-based
+  (`Ezagent.URI.new!/1`). Downstream cap matching is to_string-based
   (`Ezagent.Capability.instance_match?/2`) so the canonical authority:nil
   form is correct.
   """
@@ -232,7 +232,7 @@ defmodule Mix.Tasks.Ezagent.ExternalMirror.CLI do
   end
 
   defp safe_parse(s) when is_binary(s) do
-    {:ok, Ezagent.URI.parse!(s)}
+    {:ok, Ezagent.URI.new!(s)}
   rescue
     ArgumentError -> :error
   end

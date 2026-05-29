@@ -78,7 +78,7 @@ defmodule Ezagent.Cmd do
     target_uri =
       case target do
         %URI{} = u -> u
-        s when is_binary(s) -> Ezagent.URI.parse!(s)
+        s when is_binary(s) -> Ezagent.URI.new!(s)
       end
 
     %__MODULE__{

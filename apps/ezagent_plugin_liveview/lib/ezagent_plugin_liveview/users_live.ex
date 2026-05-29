@@ -271,7 +271,7 @@ defmodule EzagentPluginLiveview.UsersLive do
     # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
     # with try/rescue keeping the `{:error, {:bad_user_uri, _}}` contract.
     try do
-      case Ezagent.URI.parse!(s) do
+      case Ezagent.URI.new!(s) do
         %URI{scheme: "entity", host: "user", path: "/" <> rest} = uri
         when is_binary(rest) and rest != "" ->
           {:ok, uri}
@@ -285,7 +285,7 @@ defmodule EzagentPluginLiveview.UsersLive do
   end
 
   defp maybe_spawn_kind(uri_str) do
-    uri = Ezagent.URI.parse!(uri_str)
+    uri = Ezagent.URI.new!(uri_str)
 
     if Code.ensure_loaded?(Ezagent.SpawnRegistry) do
       _ = Ezagent.SpawnRegistry.spawn(uri)
@@ -359,7 +359,7 @@ defmodule EzagentPluginLiveview.UsersLive do
   def render(assigns) do
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
-        URI.to_string(assigns.current_entity_uri || Ezagent.URI.parse!("entity://user/system/admin"))
+        URI.to_string(assigns.current_entity_uri || Ezagent.URI.new!("entity://user/system/admin"))
       end)
 
     ~H"""

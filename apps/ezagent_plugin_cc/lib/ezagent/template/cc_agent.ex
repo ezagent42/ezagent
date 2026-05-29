@@ -255,7 +255,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
     # with try/rescue keeping the structured `{:error, _}` contract for
     # each validator branch.
     try do
-      case Ezagent.URI.parse!(uri_str) do
+      case Ezagent.URI.new!(uri_str) do
         %URI{scheme: "entity", host: "agent", path: "/" <> rest} when rest != "" ->
           # Phase 9 PR-2 (SPEC v3 §3): entity URIs are 3-segment:
           # /<workspace>/<entity_name>. Flavor lives in the entity_name
@@ -297,7 +297,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
 
   @impl Ezagent.Kind.Template
   def instantiate(_tmpl_name, %{"agent_uri" => uri_str} = tmpl, workspace_uri) do
-    agent_uri = Ezagent.URI.parse!(uri_str)
+    agent_uri = Ezagent.URI.new!(uri_str)
 
     # PR-D2 idempotency short-circuit: if BOTH the Agent Kind and the
     # PtyServer are already alive we have nothing to do. Each plugin

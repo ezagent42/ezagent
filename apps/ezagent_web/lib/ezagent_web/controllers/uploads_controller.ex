@@ -237,7 +237,7 @@ defmodule EzagentWeb.UploadsController do
     # with try/rescue keeping the boolean-return contract; malformed
     # mention URIs simply don't match.
     try do
-      attachment_matches?(Ezagent.URI.parse!(s), filename)
+      attachment_matches?(Ezagent.URI.new!(s), filename)
     rescue
       ArgumentError -> false
     end

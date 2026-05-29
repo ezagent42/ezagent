@@ -14,7 +14,7 @@ defmodule Ezagent.Invariants.AllPerTenantURIsHaveWorkspaceTest do
 
   This test guards four regressions:
 
-  1. **Parser regression** — `Ezagent.URI.parse!/1` weakens to accept
+  1. **Parser regression** — `Ezagent.URI.new!/1` weakens to accept
      2-segment URIs again (silent tenant leak).
   2. **Capability regression** — `Ezagent.Capability.workspace_of/1`
      for a unified scheme stops returning the URI's path segment.
@@ -26,14 +26,14 @@ defmodule Ezagent.Invariants.AllPerTenantURIsHaveWorkspaceTest do
   """
   use ExUnit.Case, async: true
 
-  describe "Ezagent.URI.parse!/1 — SPEC v3 §3.6 enforcement" do
+  describe "Ezagent.URI.new!/1 — SPEC v3 §3.6 enforcement" do
     test "rejects 2-segment session URI" do
       # Literal `session://default/main` constructed via `<>` so the
       # bulk-rewrite tool doesn't silently 3-segment it.
       legacy = "session://default/" <> "main"
 
       assert_raise ArgumentError, ~r/workspace segment/, fn ->
-        Ezagent.URI.parse!(legacy)
+        Ezagent.URI.new!(legacy)
       end
     end
 
@@ -41,7 +41,7 @@ defmodule Ezagent.Invariants.AllPerTenantURIsHaveWorkspaceTest do
       legacy = "template://agent/" <> "cc-orch"
 
       assert_raise ArgumentError, ~r/workspace segment/, fn ->
-        Ezagent.URI.parse!(legacy)
+        Ezagent.URI.new!(legacy)
       end
     end
 
@@ -49,12 +49,12 @@ defmodule Ezagent.Invariants.AllPerTenantURIsHaveWorkspaceTest do
       legacy = "resource://uploads/" <> "abc"
 
       assert_raise ArgumentError, ~r/workspace segment/, fn ->
-        Ezagent.URI.parse!(legacy)
+        Ezagent.URI.new!(legacy)
       end
     end
 
     test "accepts 3-segment session URI" do
-      uri = Ezagent.URI.parse!("session://default/system/main")
+      uri = Ezagent.URI.new!("session://default/system/main")
       assert uri.scheme == "session"
       assert uri.host == "default"
       assert uri.path == "/system/main"
@@ -64,7 +64,7 @@ defmodule Ezagent.Invariants.AllPerTenantURIsHaveWorkspaceTest do
     end
 
     test "accepts 3-segment template URI" do
-      uri = Ezagent.URI.parse!("template://agent/team-alpha/cc-orchestrator")
+      uri = Ezagent.URI.new!("template://agent/team-alpha/cc-orchestrator")
       assert uri.scheme == "template"
       assert uri.host == "agent"
       assert uri.path == "/team-alpha/cc-orchestrator"
@@ -74,20 +74,20 @@ defmodule Ezagent.Invariants.AllPerTenantURIsHaveWorkspaceTest do
     end
 
     test "accepts 3-segment resource URI" do
-      uri = Ezagent.URI.parse!("resource://uploads/team-alpha/file-abc")
+      uri = Ezagent.URI.new!("resource://uploads/team-alpha/file-abc")
 
       assert Ezagent.Capability.workspace_of(uri) |> URI.to_string() ==
                "workspace://team-alpha"
     end
 
     test "workspace:// (1-seg) unchanged — tenant root" do
-      uri = Ezagent.URI.parse!("workspace://team-alpha")
+      uri = Ezagent.URI.new!("workspace://team-alpha")
       assert uri.scheme == "workspace"
       assert uri.host == "team-alpha"
     end
 
     test "system:// (2-seg) unchanged — cross-workspace" do
-      uri = Ezagent.URI.parse!("system://routing/default")
+      uri = Ezagent.URI.new!("system://routing/default")
       assert uri.scheme == "system"
       assert uri.host == "routing"
       assert uri.path == "/default"

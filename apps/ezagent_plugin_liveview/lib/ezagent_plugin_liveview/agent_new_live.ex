@@ -125,7 +125,7 @@ defmodule EzagentPluginLiveview.AgentNewLive do
     with_pty? = parse_checkbox(Map.get(params, "with_pty"))
 
     workspace_name = workspace_name(socket)
-    workspace_uri = Ezagent.URI.parse!("workspace://#{workspace_name}")
+    workspace_uri = Ezagent.URI.new!("workspace://#{workspace_name}")
     caller_ctx = %{caller: caller_uri(socket), caps: caller_caps(socket)}
 
     # SPEC 2026-05-25-agent-create-cli-gui-parity — the LV keeps its
@@ -252,7 +252,7 @@ defmodule EzagentPluginLiveview.AgentNewLive do
         # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
         # with try/rescue keeping the fallback workspace name semantics.
         try do
-          case Ezagent.URI.parse!(uri_str) do
+          case Ezagent.URI.new!(uri_str) do
             %URI{scheme: "workspace", host: name} when is_binary(name) and name != "" ->
               name
 
@@ -419,7 +419,7 @@ defmodule EzagentPluginLiveview.AgentNewLive do
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
         URI.to_string(
-          Map.get(assigns, :current_entity_uri) || Ezagent.URI.parse!("entity://user/system/admin")
+          Map.get(assigns, :current_entity_uri) || Ezagent.URI.new!("entity://user/system/admin")
         )
       end)
 

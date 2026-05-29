@@ -200,8 +200,8 @@ defmodule Ezagent.Workspace.Store do
     %{
       id: row.id,
       name: row.name,
-      uri: Ezagent.URI.parse!(row.uri),
-      members: row.member_uris |> Jason.decode!() |> Enum.map(&Ezagent.URI.parse!/1),
+      uri: Ezagent.URI.new!(row.uri),
+      members: row.member_uris |> Jason.decode!() |> Enum.map(&Ezagent.URI.new!/1),
       session_templates: Jason.decode!(row.session_templates),
       routing_rules: Jason.decode!(row.routing_rules),
       created_by: parse_uri_or_nil(row.created_by)
@@ -209,5 +209,5 @@ defmodule Ezagent.Workspace.Store do
   end
 
   defp parse_uri_or_nil(nil), do: nil
-  defp parse_uri_or_nil(s) when is_binary(s), do: Ezagent.URI.parse!(s)
+  defp parse_uri_or_nil(s) when is_binary(s), do: Ezagent.URI.new!(s)
 end

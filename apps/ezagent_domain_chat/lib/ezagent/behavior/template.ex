@@ -372,12 +372,12 @@ defmodule Ezagent.Behavior.Template do
 
       case Map.get(args, :instance_name) do
         name when is_binary(name) and name != "" and is_binary(flavor) and flavor != "" ->
-          {:ok, Ezagent.URI.parse!("entity://agent/#{workspace_name}/#{flavor}_#{name}")}
+          {:ok, Ezagent.URI.new!("entity://agent/#{workspace_name}/#{flavor}_#{name}")}
 
         name when is_binary(name) and name != "" ->
           # No flavor in the content — let the helper error on the
           # flavor lookup instead of constructing a bad URI.
-          {:ok, Ezagent.URI.parse!("entity://agent/#{workspace_name}/#{name}")}
+          {:ok, Ezagent.URI.new!("entity://agent/#{workspace_name}/#{name}")}
 
         _ ->
           {:error, {:missing_instance_name, kind: Map.get(ctx, :kind_module)}}
@@ -504,7 +504,7 @@ defmodule Ezagent.Behavior.Template do
                   ". Per SPEC #324 rev 3 / PR #335, there is NO silent default workspace " <>
                   "fallback; callers must pass a workspace URI with an explicit name."
 
-      new_uri = Ezagent.URI.parse!("template://agent/#{workspace_name}/#{new_name}")
+      new_uri = Ezagent.URI.new!("template://agent/#{workspace_name}/#{new_name}")
 
       content =
         parent_content

@@ -118,7 +118,7 @@ defmodule Ezagent.Capability.Parser do
         # for any URI string entering the system. Try/rescue keeps the
         # `{body, :any}` fall-through for malformed CLI specs.
         try do
-          {body, Ezagent.URI.parse!(instance_str)}
+          {body, Ezagent.URI.new!(instance_str)}
         rescue
           ArgumentError -> {body, :any}
         end

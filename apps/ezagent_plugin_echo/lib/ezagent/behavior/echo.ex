@@ -191,7 +191,7 @@ defmodule Ezagent.Behavior.Echo do
     # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
     # with try/rescue keeping the nil fallback for malformed caller URI.
     try do
-      Ezagent.URI.parse!(s)
+      Ezagent.URI.new!(s)
     rescue
       ArgumentError -> nil
     end

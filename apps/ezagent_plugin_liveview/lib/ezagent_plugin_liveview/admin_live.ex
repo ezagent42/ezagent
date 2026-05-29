@@ -68,14 +68,14 @@ defmodule EzagentPluginLiveview.AdminLive do
   @message_limit 50
 
   defp default_main_session_uri(%URI{scheme: "workspace", host: ws}) when is_binary(ws) and ws != "",
-    do: Ezagent.URI.parse!("session://default/#{ws}/main")
+    do: Ezagent.URI.new!("session://default/#{ws}/main")
 
   defp default_main_session_uri(_),
     # Early-mount / test paths with no workspace assigned — fall back
     # to the system workspace's main. LiveAuth populates the assign
     # for every `:require_entity` mount in production, so this branch
     # fires only when the LV is mounted outside that live_session.
-    do: Ezagent.URI.parse!("session://default/system/main")
+    do: Ezagent.URI.new!("session://default/system/main")
 
   @impl true
   def mount(_params, _session, socket) do
@@ -284,7 +284,7 @@ defmodule EzagentPluginLiveview.AdminLive do
     # with try/rescue keeping the "Bad session URI" flash for malformed
     # query params.
     try do
-      case Ezagent.URI.parse!(URI.decode_www_form(encoded)) do
+      case Ezagent.URI.new!(URI.decode_www_form(encoded)) do
         %URI{scheme: "session"} = session_uri ->
           {:noreply, select_session(socket, session_uri)}
 
@@ -723,7 +723,7 @@ defmodule EzagentPluginLiveview.AdminLive do
         stored_name = "#{uuid}-#{safe_name}"
         dest = Path.join(Ezagent.Home.path("uploads"), stored_name)
         File.cp!(tmp_path, dest)
-        {:ok, Ezagent.URI.parse!("resource://uploads/#{workspace_name}/#{stored_name}")}
+        {:ok, Ezagent.URI.new!("resource://uploads/#{workspace_name}/#{stored_name}")}
       end)
 
     if String.trim(text) == "" and attachments == [] do
@@ -769,7 +769,7 @@ defmodule EzagentPluginLiveview.AdminLive do
     # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
     # with try/rescue keeping the malformed-URI error flash.
     case (try do
-            {:ok, Ezagent.URI.parse!(session_uri_str)}
+            {:ok, Ezagent.URI.new!(session_uri_str)}
           rescue
             ArgumentError -> :error
           end) do
@@ -1019,7 +1019,7 @@ defmodule EzagentPluginLiveview.AdminLive do
           Ezagent.Invocation.dispatch(%Ezagent.Invocation{
             target: target,
             mode: :call,
-            args: %{member: Ezagent.URI.parse!(trimmed)},
+            args: %{member: Ezagent.URI.new!(trimmed)},
             ctx: %{
               caller: socket.assigns.caller_uri,
               caps: socket.assigns.caller_caps,
@@ -1283,7 +1283,7 @@ defmodule EzagentPluginLiveview.AdminLive do
         # with try/rescue (malformed agent URI silently noop, preserves
         # original case-fallthrough semantics).
         case (try do
-                {:ok, Ezagent.URI.parse!(agent_uri_str)}
+                {:ok, Ezagent.URI.new!(agent_uri_str)}
               rescue
                 ArgumentError -> :error
               end) do
@@ -1459,7 +1459,7 @@ defmodule EzagentPluginLiveview.AdminLive do
     session_uri = socket.assigns.current_session_uri
 
     target =
-      Ezagent.URI.parse!(URI.to_string(session_uri) <> "?action=routing." <> Atom.to_string(action))
+      Ezagent.URI.new!(URI.to_string(session_uri) <> "?action=routing." <> Atom.to_string(action))
 
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
       target: target,
@@ -1749,7 +1749,7 @@ defmodule EzagentPluginLiveview.AdminLive do
         try do
           caller_workspace =
             assigns.caller_uri_str
-            |> Ezagent.URI.parse!()
+            |> Ezagent.URI.new!()
             |> Ezagent.URI.entity_workspace_uri()
 
           URI.to_string(caller_workspace) == "workspace://system"
@@ -2563,7 +2563,7 @@ defmodule EzagentPluginLiveview.AdminLive do
       # with try/rescue keeping the silent-drop semantics for malformed
       # @-mentions in user-typed chat text.
       try do
-        [Ezagent.URI.parse!(uri_str)]
+        [Ezagent.URI.new!(uri_str)]
       rescue
         ArgumentError -> []
       end
@@ -2628,7 +2628,7 @@ defmodule EzagentPluginLiveview.AdminLive do
         # with try/rescue keeping the silent-drop fallback for malformed
         # member URIs (corrupted Workspace.Store row, etc.).
         try do
-          [Ezagent.URI.parse!(uri_str)]
+          [Ezagent.URI.new!(uri_str)]
         rescue
           ArgumentError -> []
         end
@@ -2659,7 +2659,7 @@ defmodule EzagentPluginLiveview.AdminLive do
     # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
     # with try/rescue (display fallback to nil for malformed input).
     try do
-      case Ezagent.URI.parse!(uri_str) do
+      case Ezagent.URI.new!(uri_str) do
         %URI{path: "/" <> rest} when rest != "" ->
           # entity URIs are `/<workspace>/<name>`; bare display is last segment.
           case String.split(rest, "/", parts: 2) do
@@ -2957,7 +2957,7 @@ defmodule EzagentPluginLiveview.AdminLive do
     # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
     # with try/rescue keeping the `{s, s}` display-string fallback.
     try do
-      att_to_link(Ezagent.URI.parse!(s))
+      att_to_link(Ezagent.URI.new!(s))
     rescue
       ArgumentError -> {s, s}
     end
@@ -3066,7 +3066,7 @@ defmodule EzagentPluginLiveview.AdminLive do
     # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
     # with try/rescue (display fallback to nil for malformed input).
     try do
-      case Ezagent.URI.parse!(uri_str) do
+      case Ezagent.URI.new!(uri_str) do
         %URI{host: name} when is_binary(name) and name != "" -> name
         _ -> nil
       end

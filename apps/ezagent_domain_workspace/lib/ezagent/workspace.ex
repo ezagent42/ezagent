@@ -258,7 +258,7 @@ defmodule Ezagent.Workspace do
         {:error, :not_found}
 
       _persisted ->
-        target = Ezagent.URI.parse!("workspace://#{name}?action=workspace.remove_cross_prefix_members")
+        target = Ezagent.URI.new!("workspace://#{name}?action=workspace.remove_cross_prefix_members")
 
         case Invocation.dispatch(%Invocation{
                target: target,
@@ -296,7 +296,7 @@ defmodule Ezagent.Workspace do
   end
 
   defp list_current_members_for_persist(name) do
-    target = Ezagent.URI.parse!("workspace://#{name}?action=workspace.list_members")
+    target = Ezagent.URI.new!("workspace://#{name}?action=workspace.list_members")
 
     case Invocation.dispatch(%Invocation{
            target: target,
@@ -355,7 +355,7 @@ defmodule Ezagent.Workspace do
   end
 
   defp invoke_template_now(name, tmpl_name) do
-    workspace_uri = Ezagent.URI.parse!("workspace://#{name}")
+    workspace_uri = Ezagent.URI.new!("workspace://#{name}")
 
     case Loader.invoke_template(workspace_uri, tmpl_name) do
       {:ok, _uris} -> :ok
@@ -443,7 +443,7 @@ defmodule Ezagent.Workspace do
   # `:call`, a `:cast` dispatch silently drops the error and the facade
   # persists the bad URI regardless.
   defp dispatch_mutation(name, action_str, args, mode) when mode in [:cast, :call] do
-    target = Ezagent.URI.parse!("workspace://#{name}?action=workspace.#{action_str}")
+    target = Ezagent.URI.new!("workspace://#{name}?action=workspace.#{action_str}")
 
     reply =
       case mode do
@@ -479,7 +479,7 @@ defmodule Ezagent.Workspace do
   def list_workspaces do
     KindRegistry.list_all()
     |> Enum.filter(fn {uri_str, _pid} -> String.starts_with?(uri_str, "workspace://") end)
-    |> Enum.map(fn {uri_str, _pid} -> Ezagent.URI.parse!(uri_str) end)
+    |> Enum.map(fn {uri_str, _pid} -> Ezagent.URI.new!(uri_str) end)
     |> Enum.sort_by(&URI.to_string/1)
   end
 

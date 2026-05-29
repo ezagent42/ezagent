@@ -296,7 +296,7 @@ defmodule Ezagent.Orchestrator.McpServer do
   end
 
   defp safe_parse(uri_str) do
-    {:ok, Ezagent.URI.parse!(uri_str)}
+    {:ok, Ezagent.URI.new!(uri_str)}
   rescue
     _ -> :error
   end
@@ -382,7 +382,7 @@ defmodule Ezagent.Orchestrator.McpServer do
   # yields an empty set, and every tool then DENIES (no `admin_caps`
   # fallback — SPEC §2 PR-5 HIGH-1).
   defp load_orchestrator_caps(%URI{} = orchestrator_uri) do
-    target = Ezagent.URI.parse!("#{URI.to_string(orchestrator_uri)}?action=identity.list_caps")
+    target = Ezagent.URI.new!("#{URI.to_string(orchestrator_uri)}?action=identity.list_caps")
 
     case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
            target: target,
@@ -425,7 +425,7 @@ defmodule Ezagent.Orchestrator.McpServer do
         # with try/rescue to preserve the `{:error, _}` contract for
         # malformed opts.
         try do
-          {:ok, Ezagent.URI.parse!(s)}
+          {:ok, Ezagent.URI.new!(s)}
         rescue
           ArgumentError -> {:error, {:invalid_uri_opt, key, s}}
         end
@@ -711,7 +711,7 @@ defmodule Ezagent.Orchestrator.McpServer do
         # with try/rescue to preserve the `{:error, _}` contract for
         # malformed MCP args.
         try do
-          {:ok, Ezagent.URI.parse!(s)}
+          {:ok, Ezagent.URI.new!(s)}
         rescue
           ArgumentError -> {:error, {:invalid_arg, key}}
         end

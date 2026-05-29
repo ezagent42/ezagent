@@ -55,7 +55,7 @@ defmodule Ezagent.PluginNp.Template.NpAgentTest do
       # entity_name] destructure fails. Surfaces as :missing_flavor_prefix
       # (the catch-all destructure-failure error). The narrower
       # :invalid_agent_uri / 2-segment-rejection path requires the
-      # strict Ezagent.URI.parse!/1 which raises at construction; this
+      # strict Ezagent.URI.new!/1 which raises at construction; this
       # template's check_agent_uri uses URI.new which is more lenient
       # and falls into the destructure path.
       #

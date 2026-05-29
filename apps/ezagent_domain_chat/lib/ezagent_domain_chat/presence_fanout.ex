@@ -211,7 +211,7 @@ defmodule EzagentDomainChat.PresenceFanout do
   # ----- Internal helpers ----------------------------------------------------
 
   defp topic_to_member_uri("esr:presence:" <> uri_str) do
-    {:ok, Ezagent.URI.parse!(uri_str)}
+    {:ok, Ezagent.URI.new!(uri_str)}
   rescue
     _ -> :error
   end

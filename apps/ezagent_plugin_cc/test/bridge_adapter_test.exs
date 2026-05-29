@@ -37,7 +37,7 @@ defmodule EzagentPluginCc.BridgeAdapterTest do
     # rejects the case with a structured `:error` ACK + Logger
     # warning + telemetry.
     socket = %Phoenix.Socket{
-      assigns: %{agent_uri: Ezagent.URI.parse!("entity://agent/team-alpha/cc_test")}
+      assigns: %{agent_uri: Ezagent.URI.new!("entity://agent/team-alpha/cc_test")}
     }
 
     assert {:reply,
@@ -59,7 +59,7 @@ defmodule EzagentPluginCc.BridgeAdapterTest do
     # - `failed`:     Invocation.dispatch returned {:error, reason}
     #                 (e.g. :no_such_actor for a stale-but-canonical URI).
     # - `skipped`:    safe_parse_session failed (malformed string).
-    agent_uri = Ezagent.URI.parse!("entity://agent/team-alpha/cc_test")
+    agent_uri = Ezagent.URI.new!("entity://agent/team-alpha/cc_test")
 
     # All test URIs are syntactically canonical but no Kinds are alive,
     # so dispatch will return {:error, :no_such_actor} for the
