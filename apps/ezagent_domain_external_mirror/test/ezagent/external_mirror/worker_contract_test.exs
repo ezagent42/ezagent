@@ -75,9 +75,13 @@ defmodule Ezagent.ExternalMirror.WorkerContractTest do
       assert Ezagent.Behavior.ExternalMirrorWorker.data_owner(:any) == :no_owner
     end
 
-    test "post_init/2 schedules :subscribe_and_init continuation" do
+    test "post_init/2 schedules the Lifecycle :ezagent_activate continuation" do
+      # Lifecycle migration (Phase B): the `use Ezagent.Lifecycle` macro
+      # emits `post_init(_, _), do: {:continue, :ezagent_activate}`; the
+      # engine drains it → handle_continue runs activate/2 (which resolves
+      # the adapter/binding modules, opens the transport, and subscribes).
       assert Ezagent.Behavior.ExternalMirrorWorker.post_init(%{}, %{}) ==
-               {:continue, :subscribe_and_init}
+               {:continue, :ezagent_activate}
     end
   end
 

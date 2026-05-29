@@ -80,26 +80,57 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
   enforce the per-session delegation — that's PR-EM-3's scope.
   """
 
-  use Ezagent.Behavior
+  use Ezagent.Lifecycle
 
   require Logger
 
   alias Ezagent.ExternalMirror.{AdapterRegistry, BindingRegistry}
   alias Ezagent.Publisher.Event
 
-  # ----- Ezagent.Behavior contract (Phase 2-d r3 migration) ---------------
+  # ----- Ezagent.Lifecycle contract (Phase B lifecycle migration) ---------
   #
-  # SPEC §6.2 retrofit: `use Ezagent.Behavior` + `action :publish, ...`
-  # macro declaration auto-derives `actions/0` / `interface/0` /
-  # `cap_subjects/0`. `state_slice/0` + lifecycle hooks
-  # (`init_slice/1`, `post_init/2`, `handle_continue/3`, `terminate/3`,
-  # `data_owner/1`, `handle_kind_message/3`) stay as plain function
-  # defs invoked directly by `Ezagent.Kind.Server`.
+  # SPEC `docs/superpowers/specs/2026-05-29-lifecycle-hooks-design.md` §2.3
+  # / §5. Converted from `use Ezagent.Behavior` to `use Ezagent.Lifecycle`.
   #
-  # `:publish` was `invoke(:publish, slice, args, ctx)`; the new
-  # handler `handle_publish/2` reads slice keys via
-  # `ctx[:read].(:key, default)` and returns `{:ok, result, [effect]}`
-  # with `{:set, key, value}` for the multi-key slice mutation.
+  # Two-container split (SPEC §0.1 / §2.1):
+  #
+  #   - `state` (PERSISTENT, auto-snapshotted): the binding's identity
+  #     (`session_uri` / `adapter_id` / `target_id` / `opts`) + the
+  #     publish telemetry the worker accumulates and that must survive a
+  #     cold restart so cursor-based catch-up replays the right window
+  #     (`publisher_cursor` / `count` / `error_count` / `last_published_at`
+  #     / `last_publish_result` / `last_published_message_id`).
+  #   - `transients` (NEVER persisted, rebuilt in `activate/2`): the LIVE
+  #     transport handles — `adapter_module` / `binding_module` (resolved
+  #     from registries every start), `binding_state` (the OPEN transport
+  #     connection, dead after a restart), and `subscription_state` (the
+  #     live Publisher subscription, re-established every start). These are
+  #     exactly the "PIDs/refs/handles/cached connections" the SPEC names
+  #     as transient. Persisting `binding_state` was the latent
+  #     cold-restart bug — a snapshotted-then-rehydrated transport handle
+  #     is dead; `activate/2` re-opens it.
+  #
+  # `activate/2` UNIFIES the old `post_init/2` → `handle_continue/3`
+  # split-init: resolve modules, open the binding transport, and subscribe
+  # to the Session Publisher + lifecycle topic. This runs PRE-`:ready` — the
+  # SAME timing as the old `handle_continue(:subscribe_and_init, …)` (the
+  # engine runs post-init continuations while the host is still
+  # `:not_ready`; SPEC §10-R1 only forces a defer when the work targets
+  # THIS Kind's own readiness — here the subscribe `:call` targets the
+  # SESSION Kind, which is already `:ready`, so no self-defer is needed).
+  #
+  # `handle_signal/2` (the `handle_kind_message/3` successor) handles the
+  # `:publisher_event` / `:publisher_alive` / resubscribe-retry mailbox
+  # messages. CRITICALLY (T1): on `:publisher_event` it now returns a
+  # `{:dispatch, %Cmd{}}` EFFECT (was an imperative `Router.dispatch/1`
+  # call) — the declarative effect path executes the cross-Kind publish
+  # dispatch with the same ordering + atomicity as an action handler.
+  #
+  # `handle_publish/2` reads slice keys via `ctx.read.(:key, default)` for
+  # persistent fields and `ctx.transients[:key]` for the live transport
+  # handles, and returns `{:ok, result, [effect]}` with `{:set, …}` for
+  # persistent mutations and `{:set_transient, :binding_state, …}` for the
+  # advanced transport handle.
 
   # `caps: [:publish]` ⇒ atom; the macro's auto-derived `required_caps/0`
   # would produce `cap(:any, _, :publish)`. We override below to pin
@@ -120,107 +151,111 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
     }
   end
 
-  def state_slice, do: :external_mirror_worker
+  # state_slice/0 is AUTO-DERIVED by `use Ezagent.Lifecycle` from the
+  # module's last segment: `Ezagent.Behavior.ExternalMirrorWorker` →
+  # `:external_mirror_worker` — identical to the pre-migration explicit
+  # `def state_slice, do: :external_mirror_worker`, so the snapshot slice
+  # key is unchanged and no `state_slice:` override is needed (SPEC §5
+  # step 2 / A5 verdict).
 
-  def init_slice(args) do
-    # SPEC §8.3 r4 HIGH-1 fix: minimal slice. NO Publisher.subscribe_from
-    # here (would deadlock — see Behavior.post_init/2 + handle_continue/3
-    # below). NO binding.init/1 either (transport open is the binding
-    # module's job, deferred to handle_continue/3).
-    %{
-      session_uri: Map.fetch!(args, :session_uri),
-      adapter_id: Map.fetch!(args, :adapter_id),
-      target_id: Map.fetch!(args, :target_id),
-      opts: Map.get(args, :opts, %{}),
-      adapter_module: nil,
-      binding_module: nil,
-      binding_state: nil,
-      subscription_state: :pending,
-      publisher_cursor: :latest,
-      count: 0,
-      error_count: 0,
-      last_published_at: nil,
-      last_publish_result: nil,
-      # 2026-05-26 (Allen e2e Bug 5): every chat-slice mutation
-      # (presence updates, member joins, last_seen ticks, ...) emits
-      # a fresh publisher_event with `new_slice` carrying the CURRENT
-      # `last_message`. The adapter's `event_to_payload/1` sees a
-      # `nil` old_slice (PR-N3 r2 HIGH-1 stripped slice content from
-      # the envelope) and falls into `chat_send_occurred?(new_slice,
-      # nil)` which returns true for any non-nil last_message_id —
-      # re-publishing the SAME message every time the chat slice
-      # mutates for ANY reason. Result: Allen got 4 identical replies
-      # in Feishu. The worker dedupes by tracking the most recently
-      # published message_id; if a publish event's payload carries
-      # the same `last_message_id`, the worker skips before invoking
-      # the adapter — no HTTP call, no Feishu duplicate.
-      last_published_message_id: nil
-    }
+  # `create/1` builds ONLY the PERSISTENT `state` (SPEC §2.3 step 3). The
+  # transport handles + subscription that the old `init_slice/1` seeded as
+  # `nil`/`:pending` placeholders are now TRANSIENTS, built in `activate/2`.
+  @impl Ezagent.Lifecycle
+  def create(args) do
+    {:ok,
+     %{
+       session_uri: Map.fetch!(args, :session_uri),
+       adapter_id: Map.fetch!(args, :adapter_id),
+       target_id: Map.fetch!(args, :target_id),
+       opts: Map.get(args, :opts, %{}),
+       publisher_cursor: :latest,
+       count: 0,
+       error_count: 0,
+       last_published_at: nil,
+       last_publish_result: nil,
+       # 2026-05-26 (Allen e2e Bug 5): every chat-slice mutation
+       # (presence updates, member joins, last_seen ticks, ...) emits
+       # a fresh publisher_event with `new_slice` carrying the CURRENT
+       # `last_message`. The adapter's `event_to_payload/1` sees a
+       # `nil` old_slice (PR-N3 r2 HIGH-1 stripped slice content from
+       # the envelope) and falls into `chat_send_occurred?(new_slice,
+       # nil)` which returns true for any non-nil last_message_id —
+       # re-publishing the SAME message every time the chat slice
+       # mutates for ANY reason. Result: Allen got 4 identical replies
+       # in Feishu. The worker dedupes by tracking the most recently
+       # published message_id; if a publish event's payload carries
+       # the same `last_message_id`, the worker skips before invoking
+       # the adapter — no HTTP call, no Feishu duplicate.
+       last_published_message_id: nil
+     }}
   end
 
   @doc """
-  Defer Publisher subscription + binding transport-open until AFTER
-  `:announce_ready`. The PR-EM-CORE post-init hook handles the
-  chaining; see SPEC §6.1 + §8.3 for the deadlock rationale.
+  `activate/2` (SPEC §2.3 step 4-5) — the UNIFIED start hook. Rebuilds
+  ALL transients from `state`, every start (fresh spawn + cold-load):
 
-  Returning `{:continue, :subscribe_and_init}` populates
-  `Kind.Server`'s `post_init_queue`; the queue drains via
-  `handle_continue/3` below.
+  1. Resolve `adapter_module` + `binding_module` from the registries
+     (raises on missing — structural error per SPEC §5.2; let-it-crash
+     → PerBindingSupervisor restarts → `activate` re-runs).
+  2. Open the binding's transport via `binding_module.init/1` → the live
+     `binding_state` handle (TRANSIENT — a snapshotted handle would be a
+     dead reference; this is precisely the cold-restart bug the
+     two-container model kills).
+  3. Subscribe `self()` to the Session Publisher (+ the lifecycle topic).
+     The subscribe is a `:call` to the SESSION Kind (already `:ready`),
+     NOT to this worker — so it is correct PRE-`:ready` (no §10-R1
+     self-defer needed; this matches the old post-init `handle_continue`
+     timing exactly).
+
+  On binding-init failure → raise (let-it-crash; PerBindingSupervisor
+  `:permanent` + 3/30s budget per SPEC §6.2).
+
+  The 3-arity `{:ok, transients, state}` return reconciles `state`: on a
+  cold-load the persisted `publisher_cursor` drives cursor-based catch-up
+  (so re-subscribe replays events emitted during the down window), and
+  `current_cursor` from the subscribe is folded back into `state` so the
+  worker resumes from the right point.
   """
-  def post_init(_args, _slice), do: {:continue, :subscribe_and_init}
+  @impl Ezagent.Lifecycle
+  def activate(state, %{self_uri: self_uri}) do
+    adapter_module = AdapterRegistry.lookup!(state.adapter_id)
+    binding_module = BindingRegistry.lookup!(state.adapter_id)
 
-  @doc """
-  Subscribe to the Session Publisher + open the binding's transport.
-  Runs after `:announce_ready` (PR-EM-CORE invariant — see
-  `Ezagent.Kind.Server` moduledoc).
+    # On a cold-load `state.publisher_cursor` carries the last published
+    # cursor → cursor-based catch-up replay (Task #49 r3 NEW CHECK C). On
+    # a fresh spawn it is `:latest` (no prior cursor) → no replay (V1
+    # fire-and-forget per OQ-EM-10). `subscribe_to_session_publisher_from`
+    # handles both + the `:cursor_out_of_window` fallback.
+    {:ok, current_cursor} =
+      subscribe_to_session_publisher_from(state.session_uri, self_uri, state.publisher_cursor)
+      |> case do
+        {:ok, _} = ok ->
+          ok
 
-  Both calls go through the lookup-then-act pattern:
-  1. Resolve `adapter_module` + `binding_module` from registries
-     (raises on missing — structural error per SPEC §5.2).
-  2. Subscribe `self()` to the Session Publisher at cursor `:latest`
-     (no replay — V1 fire-and-forget per OQ-EM-10).
-  3. Call `binding_module.init({target_id, adapter_module, opts})`
-     to open the transport.
-  4. On success → flip `subscription_state` to `:active` + store
-     `binding_state` + the resolved modules in the slice.
-  5. On binding init failure → raise (let-it-crash; PerBindingSupervisor
-     restarts per `:permanent` budget per SPEC §6.2).
-  """
-  def handle_continue(:subscribe_and_init, slice, %{self_uri: self_uri}) do
-    adapter_module = AdapterRegistry.lookup!(slice.adapter_id)
-    binding_module = BindingRegistry.lookup!(slice.adapter_id)
+        {:error, :cursor_out_of_window} ->
+          subscribe_to_session_publisher_from(state.session_uri, self_uri, :latest)
+      end
 
-    # SPEC §6.1: subscribe via the Publisher API (NOT
-    # Phoenix.PubSub.subscribe — invariant 4 enforced by PR-EM-FINAL
-    # grep gate). For PR-EM-2 we use the 4-ary form on
-    # `Ezagent.Entity.Session.subscribe_from/4` with the Worker's
-    # OWN URI as caller + a synthetic delegation cap so step 5.5
-    # admits the subscribe. PR-EM-3 will replace the synthetic cap
-    # with the formal scope-bounded `{:within_session, session_uri}`
-    # delegation per SPEC §7.3 Cap 3.
-    {:ok, current_cursor} = subscribe_to_session_publisher(slice.session_uri, self_uri)
+    # Task #49 (2026-05-27) — subscribe to the Session's lifecycle topic
+    # so we get a kick if the Session is cold-spawned later. On
+    # `:publisher_alive` we re-attach our (still-live) pid to the new
+    # (empty) `:publisher.subscribers` map. See `Ezagent.PublisherLifecycle`
+    # moduledoc + the `handle_signal/2` `:publisher_alive` clause below.
+    :ok = Ezagent.PublisherLifecycle.subscribe(state.session_uri)
 
-    # Task #49 (2026-05-27) — subscribe to the Session's lifecycle
-    # topic so we get a kick if the Session is cold-spawned later.
-    # On `:publisher_alive` we re-run `subscribe_to_session_publisher/2`
-    # to re-attach our (still-live) pid to the new (empty)
-    # `:publisher.subscribers` map. See `Ezagent.PublisherLifecycle`
-    # moduledoc + `handle_kind_message/3` `:publisher_alive` clause
-    # below.
-    :ok = Ezagent.PublisherLifecycle.subscribe(slice.session_uri)
-
-    case binding_module.init({slice.target_id, adapter_module, slice.opts}) do
+    case binding_module.init({state.target_id, adapter_module, state.opts}) do
       {:ok, binding_state} ->
-        new_slice = %{
-          slice
-          | adapter_module: adapter_module,
-            binding_module: binding_module,
-            binding_state: binding_state,
-            subscription_state: :active,
-            publisher_cursor: current_cursor
+        transients = %{
+          adapter_module: adapter_module,
+          binding_module: binding_module,
+          binding_state: binding_state,
+          subscription_state: :active
         }
 
-        {:ok, new_slice}
+        # 3-arity return: reconcile `state.publisher_cursor` against the
+        # cursor the subscribe resolved to.
+        {:ok, transients, %{state | publisher_cursor: current_cursor}}
 
       {:error, reason} ->
         # SPEC §6.2: binding's transport failed to open; raise to
@@ -233,11 +268,14 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
   end
 
   @doc """
-  Multi-clause `handle_kind_message/3` covering:
+  Multi-clause `handle_signal/2` (the `handle_kind_message/3` successor —
+  SPEC §9 OQ-3) covering:
 
-  - `{:publisher_event, %Event{}}` — Publisher event from Session; self-
-    dispatch the `:publish` action so step 5.5 CapBAC + audit + telemetry +
-    idempotency apply (P14 hygiene).
+  - `{:publisher_event, %Event{}}` — Publisher event from Session. Under
+    Lifecycle (T1) this returns a `{:dispatch, %Cmd{}}` EFFECT (NOT an
+    imperative `Router.dispatch/1` call) routing the `:publish` action to
+    self, so step 5.5 CapBAC + audit + telemetry + idempotency apply (P14
+    hygiene) AND the dispatch flows through the declarative effect pipeline.
   - `{:publisher_alive, %URI{}}` — Session lifecycle handshake (task #49);
     re-subscribe the still-alive Worker pid to a newly cold-spawned Session's
     publisher slice (which loads with `:subscribers = %{}` per CONCERN #3).
@@ -245,15 +283,22 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
     the `:not_ready` defence-in-depth backoff (see `attempt_resubscribe/3`).
   - `_other` — ignored.
 
-  Slice mutation on the `:publisher_alive` + retry clauses updates
-  `publisher_cursor`; the publisher-event and retry-pending clauses return
-  `:ignore` so `Kind.Server` skips the snapshot commit path.
+  The `:publisher_alive` + retry clauses mutate the PERSISTENT
+  `publisher_cursor` via a `{:set, :publisher_cursor, …}` effect; the
+  publisher-event clause emits a `:dispatch` effect; clauses with nothing
+  to do return `:ignore` so the engine skips the commit path.
+  `subscription_state` is now a TRANSIENT (read via
+  `ctx.transients[:subscription_state]`).
   """
-  def handle_kind_message(message, slice, ctx)
+  @impl Ezagent.Lifecycle
+  def handle_signal({:publisher_event, %Event{} = event}, ctx) do
+    self_uri = ctx.self_uri
 
-  def handle_kind_message({:publisher_event, %Event{} = event}, slice, %{self_uri: self_uri}) do
-    if slice.subscription_state == :active do
-      dispatch_publish_to_self(self_uri, event)
+    if ctx.transients[:subscription_state] == :active do
+      # T1: declarative cross-Kind dispatch effect (was an imperative
+      # `Router.dispatch/1` call). The framework re-enters the Router
+      # with this %Cmd{}; same CapBAC + idempotency + audit as before.
+      {:ok, [dispatch_publish_effect(self_uri, event)]}
     else
       # Defensive: events shouldn't arrive while subscription_state
       # is :pending (we're not subscribed yet). Log + drop per
@@ -262,45 +307,44 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
         "ExternalMirrorWorker received publisher_event while subscription_state=:pending; " <>
           "dropping (latest-wins per SPEC §3). uri=#{URI.to_string(self_uri)}"
       )
-    end
 
-    :ignore
+      :ignore
+    end
   end
 
   # Task #49 (2026-05-27) — Session lifecycle event hook. See the
-  # `handle_kind_message/3` function-head moduledoc above.
-  def handle_kind_message({:publisher_alive, %URI{} = pub_uri}, slice, %{self_uri: self_uri}) do
+  # `handle_signal/2` function-head moduledoc above.
+  def handle_signal({:publisher_alive, %URI{} = pub_uri}, ctx) do
+    session_uri = ctx.read.(:session_uri, nil)
+
     cond do
-      URI.to_string(pub_uri) != URI.to_string(slice.session_uri) ->
+      is_nil(session_uri) or URI.to_string(pub_uri) != URI.to_string(session_uri) ->
         # Lifecycle event for a different Session. Topic shape is
         # per-URI so this shouldn't happen, but be paranoid.
         :ignore
 
-      slice.subscription_state != :active ->
-        # Our own handle_continue hasn't completed yet — the
-        # subscribe_to_session_publisher inside it will pick up the
-        # current cursor. Skip the re-subscribe.
+      ctx.transients[:subscription_state] != :active ->
+        # Our own activate/2 hasn't completed yet — the subscribe inside
+        # it will pick up the current cursor. Skip the re-subscribe.
         :ignore
 
       true ->
-        attempt_resubscribe(slice, self_uri, 1)
+        attempt_resubscribe(ctx, session_uri, ctx.self_uri, 1)
     end
   end
 
   # Task #49 codex round-1 FAIL #6 (2026-05-27) — retry tick for the
-  # defence-in-depth `:not_ready` backoff (see `attempt_resubscribe/3`).
-  # See the `handle_kind_message/3` function-head moduledoc above.
-  def handle_kind_message({:ezagent_worker_resubscribe_retry, attempt}, slice, %{
-        self_uri: self_uri
-      }) do
-    if slice.subscription_state == :active do
-      attempt_resubscribe(slice, self_uri, attempt)
+  # defence-in-depth `:not_ready` backoff (see `attempt_resubscribe/4`).
+  # See the `handle_signal/2` function-head moduledoc above.
+  def handle_signal({:ezagent_worker_resubscribe_retry, attempt}, ctx) do
+    if ctx.transients[:subscription_state] == :active do
+      attempt_resubscribe(ctx, ctx.read.(:session_uri, nil), ctx.self_uri, attempt)
     else
       :ignore
     end
   end
 
-  def handle_kind_message(_other, _slice, _ctx), do: :ignore
+  def handle_signal(_other, _ctx), do: :ignore
 
   # Task #49 codex round-1 FAIL #6 — bounded retry on `{:error, :not_ready}`.
   #
@@ -359,17 +403,17 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
   #
   # First-subscribe (`publisher_cursor == :latest`) keeps the
   # original behaviour — there's no prior cursor to replay from,
-  # the first subscribe in `handle_continue/3` IS the first
-  # subscribe.
+  # the first subscribe in `activate/2` IS the first subscribe.
+  #
+  # Returns a `handle_signal/2`-shaped result: `{:ok, [effect]}` (a
+  # `{:set, :publisher_cursor, cursor}` effect on the PERSISTENT cursor)
+  # or `:ignore`. `publisher_cursor` is read from `ctx.read` (state).
+  defp attempt_resubscribe(ctx, session_uri, self_uri, attempt) do
+    persisted_cursor = ctx.read.(:publisher_cursor, :latest)
 
-  defp attempt_resubscribe(slice, self_uri, attempt) do
-    case subscribe_to_session_publisher_from(
-           slice.session_uri,
-           self_uri,
-           slice.publisher_cursor
-         ) do
+    case subscribe_to_session_publisher_from(session_uri, self_uri, persisted_cursor) do
       {:ok, current_cursor} ->
-        {:ok, %{slice | publisher_cursor: current_cursor}}
+        {:ok, [{:set, :publisher_cursor, current_cursor}]}
 
       {:error, :cursor_out_of_window} ->
         # Persisted cursor is older than the publisher's retention
@@ -378,18 +422,18 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
         # cursor-out-of-window log.
         Logger.warning(
           "ExternalMirrorWorker re-subscribe: persisted cursor " <>
-            "#{inspect(slice.publisher_cursor)} older than publisher retention; " <>
-            "falling back to :latest. session=#{URI.to_string(slice.session_uri)}"
+            "#{inspect(persisted_cursor)} older than publisher retention; " <>
+            "falling back to :latest. session=#{URI.to_string(session_uri)}"
         )
 
-        case subscribe_to_session_publisher_from(slice.session_uri, self_uri, :latest) do
+        case subscribe_to_session_publisher_from(session_uri, self_uri, :latest) do
           {:ok, current_cursor} ->
-            {:ok, %{slice | publisher_cursor: current_cursor}}
+            {:ok, [{:set, :publisher_cursor, current_cursor}]}
 
           {:error, reason} ->
             Logger.warning(
               "ExternalMirrorWorker re-subscribe (fallback :latest) failed; " <>
-                "session=#{URI.to_string(slice.session_uri)} reason=#{inspect(reason)}"
+                "session=#{URI.to_string(session_uri)} reason=#{inspect(reason)}"
             )
 
             :ignore
@@ -407,7 +451,7 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
       {:error, reason} ->
         Logger.warning(
           "ExternalMirrorWorker re-subscribe failed after #{attempt} attempt(s); " <>
-            "session=#{URI.to_string(slice.session_uri)} reason=#{inspect(reason)}"
+            "session=#{URI.to_string(session_uri)} reason=#{inspect(reason)}"
         )
 
         :ignore
@@ -415,42 +459,51 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
   end
 
   @doc """
-  PR-EM-2 codex round-1 HIGH-1 fix (2026-05-25): graceful shutdown
-  hook — invoked by `Ezagent.Kind.Server.terminate/2` on Kind
-  exit. Calls `binding_module.terminate(reason, binding_state)`
-  per SPEC §6.2 ("`terminate/2` runs on graceful unbind ... the
-  Worker Kind's `terminate/2` callback calls the binding module's
-  `terminate/2` to release transport resources").
+  `deactivate/2` (SPEC §2.3 step 6) — the `terminate/3` successor:
+  graceful shutdown hook invoked on Kind exit. Calls
+  `binding_module.terminate(reason, binding_state)` per SPEC §6.2 to
+  release the transport. `:ok`-only (F5) — it does side-effecting
+  external cleanup, never a state write.
 
-  Defensive: if the Binding's terminate is not exported (optional
-  per SPEC §2.3), skip. If the slice was never advanced past
-  `:pending` (e.g. terminate during handle_continue), there's no
-  binding_state to clean up — skip.
+  The binding handles it reads (`subscription_state` / `binding_module`
+  / `binding_state`) are TRANSIENTS, read via `ctx.transients[:key]`.
+
+  Defensive: if the Binding's terminate is not exported (optional per
+  SPEC §2.3), skip. If activate never advanced past `:pending` (e.g. a
+  brutal kill before activate completed), there's no binding_state to
+  clean up — skip. (On a brutal kill `deactivate` does not run at all —
+  §OTP; that path leaks nothing this hook would have freed because the
+  whole BEAM is gone.)
   """
-  def terminate(reason, slice, _ctx) do
+  @impl Ezagent.Lifecycle
+  def deactivate(reason, ctx) do
+    subscription_state = ctx.transients[:subscription_state]
+    binding_module = ctx.transients[:binding_module]
+    binding_state = ctx.transients[:binding_state]
+
     cond do
-      slice.subscription_state != :active ->
+      subscription_state != :active ->
         # Binding never finished init (still :pending) — no
         # transport handle to release.
         :ok
 
-      not is_atom(slice.binding_module) ->
+      not is_atom(binding_module) ->
         :ok
 
-      not function_exported?(slice.binding_module, :terminate, 2) ->
+      not function_exported?(binding_module, :terminate, 2) ->
         # Binding.terminate/2 is optional per SPEC §2.3.
         :ok
 
       true ->
         try do
-          _ = slice.binding_module.terminate(reason, slice.binding_state)
+          _ = binding_module.terminate(reason, binding_state)
           :ok
         rescue
           err ->
             Logger.warning(
-              "ExternalMirrorWorker: binding #{inspect(slice.binding_module)}.terminate/2 " <>
+              "ExternalMirrorWorker: binding #{inspect(binding_module)}.terminate/2 " <>
                 "raised on shutdown (#{inspect(err)}); transport resources may leak. " <>
-                "binding_id=#{slice.adapter_id}/#{inspect(slice.target_id)}"
+                "binding_id=#{ctx.read.(:adapter_id, nil)}/#{inspect(ctx.read.(:target_id, nil))}"
             )
 
             :ok
@@ -460,13 +513,15 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
 
   # ----- The :publish action ------------------------------------------------
 
-  # Phase 2-d r3: `handle_publish/2` replaces `invoke(:publish, ...)`.
-  # The slice (all keys initialised by `init_slice/1`) is reconstructed
-  # from `ctx[:read]` so `do_invoke_publish/3` (kept verbatim from the
-  # pre-migration body) operates on the same in-memory shape.
-  # `translate_publish_return/2` emits one `:set` effect per slice
-  # field the handler actually mutates — preserving the dispatch
-  # pipeline's slice_change_event diff semantics.
+  # `handle_publish/2`. The in-memory working shape `do_invoke_publish/3`
+  # expects is reconstructed from BOTH containers — persistent fields via
+  # `ctx.read`, the live transport handles (`adapter_module` /
+  # `binding_module` / `binding_state` / `subscription_state`) via
+  # `ctx.transients`. `translate_publish_return/2` emits one effect per
+  # CHANGED field: `{:set, …}` for persistent keys, `{:set_transient,
+  # :binding_state, …}` for the advanced transport handle (a transient) —
+  # preserving the dispatch pipeline's slice-change diff semantics while
+  # keeping the open transport out of the snapshot.
   def handle_publish(%{event: %Event{} = event}, ctx) do
     slice = read_full_slice(ctx)
 
@@ -502,36 +557,37 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
     translate_publish_return(slice, legacy_result)
   end
 
-  # Reconstruct the in-memory slice shape `do_invoke_publish/3` expects.
-  # The `:default` map mirrors `init_slice/1`'s shape so a slice that
-  # hasn't been fully written (e.g. a Worker still in `:pending`) reads
-  # back as documented.
+  # Reconstruct the in-memory working shape `do_invoke_publish/3` expects.
+  # PERSISTENT fields come from `ctx.read`; the live transport handles
+  # (`adapter_module` / `binding_module` / `binding_state` /
+  # `subscription_state`) are TRANSIENTS, read from `ctx.transients` (the
+  # `:pending` / nil defaults match a Worker that hasn't activated yet).
   defp read_full_slice(ctx) do
     %{
-      session_uri: ctx[:read].(:session_uri, nil),
-      adapter_id: ctx[:read].(:adapter_id, nil),
-      target_id: ctx[:read].(:target_id, nil),
-      opts: ctx[:read].(:opts, %{}),
-      adapter_module: ctx[:read].(:adapter_module, nil),
-      binding_module: ctx[:read].(:binding_module, nil),
-      binding_state: ctx[:read].(:binding_state, nil),
-      subscription_state: ctx[:read].(:subscription_state, :pending),
-      publisher_cursor: ctx[:read].(:publisher_cursor, :latest),
-      count: ctx[:read].(:count, 0),
-      error_count: ctx[:read].(:error_count, 0),
-      last_published_at: ctx[:read].(:last_published_at, nil),
-      last_publish_result: ctx[:read].(:last_publish_result, nil),
-      last_published_message_id: ctx[:read].(:last_published_message_id, nil)
+      session_uri: ctx.read.(:session_uri, nil),
+      adapter_id: ctx.read.(:adapter_id, nil),
+      target_id: ctx.read.(:target_id, nil),
+      opts: ctx.read.(:opts, %{}),
+      adapter_module: ctx.transients[:adapter_module],
+      binding_module: ctx.transients[:binding_module],
+      binding_state: ctx.transients[:binding_state],
+      subscription_state: ctx.transients[:subscription_state] || :pending,
+      publisher_cursor: ctx.read.(:publisher_cursor, :latest),
+      count: ctx.read.(:count, 0),
+      error_count: ctx.read.(:error_count, 0),
+      last_published_at: ctx.read.(:last_published_at, nil),
+      last_publish_result: ctx.read.(:last_publish_result, nil),
+      last_published_message_id: ctx.read.(:last_published_message_id, nil)
     }
   end
 
-  # Translate `{:ok, new_slice, result}` from legacy `do_invoke_publish/3`
-  # into `{:ok, result, [{:set, key, value}, ...]}`. We emit one `:set`
-  # per CHANGED slice key (skip unchanged) so the slice_change_event
-  # diff (`new_slice != slice` in `Kind.Runtime.handle_dispatch/4`)
-  # fires identically to the pre-migration path.
-  @publish_slice_keys [
-    :binding_state,
+  # Translate `{:ok, new_slice, result}` from `do_invoke_publish/3` into
+  # `{:ok, result, [effect]}`. We emit one effect per CHANGED field (skip
+  # unchanged) so the slice-change diff fires identically to the
+  # pre-migration path. `:binding_state` is a TRANSIENT (the live transport
+  # handle) → `{:set_transient, …}`; every other mutated field is
+  # persistent → `{:set, …}`.
+  @publish_persistent_keys [
     :publisher_cursor,
     :count,
     :error_count,
@@ -543,21 +599,24 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
   defp translate_publish_return(old_slice, {:ok, new_slice, result}) do
     # `:publish` only ever returns `{:ok, _, _}` (recoverable transport
     # failures are folded into the success path with bumped
-    # `error_count`); the legacy `{:error, _}` branch from the
-    # `Ezagent.Behavior.invoke_return/0` typespec is unreachable here.
-    effects =
-      Enum.flat_map(@publish_slice_keys, fn key ->
-        old_val = Map.get(old_slice, key)
-        new_val = Map.get(new_slice, key)
-
-        if old_val == new_val do
+    # `error_count`); the `{:error, _}` branch is unreachable here.
+    persistent_effects =
+      Enum.flat_map(@publish_persistent_keys, fn key ->
+        if Map.get(old_slice, key) == Map.get(new_slice, key) do
           []
         else
-          [{:set, key, new_val}]
+          [{:set, key, Map.get(new_slice, key)}]
         end
       end)
 
-    {:ok, result, effects}
+    transient_effects =
+      if Map.get(old_slice, :binding_state) == Map.get(new_slice, :binding_state) do
+        []
+      else
+        [{:set_transient, :binding_state, Map.get(new_slice, :binding_state)}]
+      end
+
+    {:ok, result, persistent_effects ++ transient_effects}
   end
 
   # ----- internals -----
@@ -658,11 +717,10 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
   # delegated to the Session Kind at bind time.
   #
   # codex round-1 STRUCTURAL fix (2026-05-25): the PR-EM-2 deferral
-  # to PR-EM-3 covers BOTH internal dispatch sites — `subscribe_to_
-  # session_publisher/2` AND `dispatch_publish_to_self/2` (the
-  # `:publish` self-cast on `{:publisher_event, _}` mailbox
-  # message). Both currently use the inline admin caps; PR-EM-3
-  # will:
+  # to PR-EM-3 covers BOTH internal dispatch sites —
+  # `subscribe_to_session_publisher_from/3` AND `dispatch_publish_effect/2`
+  # (the `:publish` dispatch effect on the `{:publisher_event, _}` signal).
+  # Both currently use the inline admin caps; PR-EM-3 will:
   #
   #   - subscribe path: switch to the scope-bounded
   #     `{:within_session, session_uri}` Cap 3 delegated at bind time
@@ -683,36 +741,28 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
   # The dispatch goes through `?action=publisher.subscribe_from`
   # — identical wire-shape to what `Session.subscribe_from/4`
   # constructs (SPEC §8.1).
-  defp subscribe_to_session_publisher(%URI{} = session_uri, %URI{} = self_uri) do
-    # First subscribe (from `handle_continue/3`) — no prior cursor,
-    # `:latest` is correct (V1 fire-and-forget per OQ-EM-10).
-    subscribe_to_session_publisher_from(session_uri, self_uri, :latest)
-  end
 
   # Task #49 codex r3 NEW CHECK C — catchup-on-resubscribe.
   #
   # `cursor` is either:
-  #   - `:latest` (no replay; same as the original `subscribe_to_session_publisher/2`)
+  #   - `:latest` (no replay; the fresh-spawn first-subscribe case)
   #   - non-negative integer (Publisher replays events with cursor > given)
   #
   # The Publisher's `prepare_replay/2` returns the events; `subscribe_from`
   # `send/2`s each one to `subscriber_pid` BEFORE returning. By the time
   # this call returns `{:ok, current_cursor}` the replay messages are
   # already in our mailbox (or will be — same process can't out-pace its
-  # own GenServer reply). They land in `handle_kind_message/3` as
-  # `{:publisher_event, %Event{}}` and self-dispatch through the regular
-  # `:publish` path — same dedupe, same telemetry.
+  # own GenServer reply). They land in `handle_signal/2` as
+  # `{:publisher_event, %Event{}}` and emit a `:publish` dispatch effect
+  # through the regular path — same dedupe, same telemetry.
   #
-  # SPEC `2026-05-29-dispatch-returning-effect.md` §8b: this call
-  # is invoked from `handle_continue/3` (a Kind.Server lifecycle
-  # callback), NOT from an action handler. The `:dispatch_returning`
-  # effect grammar requires a returning action-handler context;
-  # lifecycle callbacks have no effect pipeline around them. The
-  # structural cure for §11 Gate 3 (no plugin Behavior calls
-  # the legacy Invocation entry-point) is to swap to
-  # `Ezagent.Router.dispatch/1` via a `%Ezagent.Cmd{}` envelope —
-  # Router is the modern sanctioned entry-point and is appropriate
-  # for sub-dispatch from lifecycle callbacks.
+  # This helper is invoked from `activate/2` + `handle_signal/2` (Lifecycle
+  # hooks), NOT from an action handler — so we use `Ezagent.Router.dispatch/1`
+  # directly (the sanctioned modern entry-point for sub-dispatch from a
+  # lifecycle hook that needs the subscribe's RETURN cursor synchronously;
+  # a `:dispatch` effect is fire-and-forget and could not return the
+  # cursor). The `{:publisher_event, …}` → `:publish` path IS a
+  # declarative `:dispatch` effect (see `dispatch_publish_effect/2`).
   defp subscribe_to_session_publisher_from(%URI{} = session_uri, %URI{} = self_uri, cursor) do
     cmd =
       Ezagent.Cmd.new(
@@ -748,38 +798,36 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
     end
   end
 
-  # SPEC `2026-05-29-dispatch-returning-effect.md` §8c: same fix as
-  # §8b — `handle_kind_message/3` is a lifecycle callback with no
-  # surrounding effect pipeline; swap `Invocation.dispatch` →
-  # `Router.dispatch` so the §11 Gate 3 grep gate stays green
-  # without forcing the lifecycle callback into a fake action-handler
-  # shape.
-  defp dispatch_publish_to_self(%URI{} = self_uri, %Event{} = event) do
-    # Preserve the original idempotency key semantics: pre-2026-05-29
-    # this used `idempotency_key:` against `Ezagent.Invocation`'s
-    # checker. The new Router envelope spells the same field
-    # `:command_uuid`; Router → Invocation translation preserves it
-    # via the ctx map (Invocation.dispatch reads `:idempotency_key`
-    # but the Router currently forwards both names to keep callers
-    # like this one working without coordination).
+  # T1 (Phase B): build the `{:dispatch, %Cmd{}}` EFFECT for the
+  # `:publish` self-dispatch. Pre-migration this called
+  # `Ezagent.Router.dispatch/1` imperatively from `handle_kind_message/3`;
+  # under Lifecycle the signal handler returns this effect and the engine's
+  # `apply_signal_effects/3` re-enters the Router for us (same CapBAC +
+  # idempotency + audit, now flowing through the declarative pipeline — the
+  # "no imperative dispatch in developer code" Phase C gate). Routing the
+  # publish through the Router (not invoking the binding inline) keeps step
+  # 5.5 CapBAC + telemetry + idempotency on the publish path (P14 hygiene).
+  defp dispatch_publish_effect(%URI{} = self_uri, %Event{} = event) do
+    # Idempotency key (preserved verbatim): Router forwards both
+    # `:command_uuid` and `:idempotency_key` so the de-dupe behaves as
+    # before — replayed events for an already-published cursor short-
+    # circuit without a second outbound transport call.
     idem = "external_mirror_worker.publish/#{event.cursor}"
 
-    cmd =
-      Ezagent.Cmd.new(
-        self_uri,
-        :publish,
-        %{event: event},
-        # SPEC caps-cleanup-v1 §4.4 — Worker outbound publish runs
-        # under `system://worker-publish` (closed Catalog).
-        %{
-          caller: self_uri,
-          caps: Ezagent.SystemPrincipal.caps("system://worker-publish"),
-          reply: :ignore,
-          command_uuid: idem,
-          idempotency_key: idem
-        }
-      )
-
-    Ezagent.Router.dispatch(cmd)
+    {:dispatch,
+     Ezagent.Cmd.new(
+       self_uri,
+       :publish,
+       %{event: event},
+       # SPEC caps-cleanup-v1 §4.4 — Worker outbound publish runs
+       # under `system://worker-publish` (closed Catalog).
+       %{
+         caller: self_uri,
+         caps: Ezagent.SystemPrincipal.caps("system://worker-publish"),
+         reply: :ignore,
+         command_uuid: idem,
+         idempotency_key: idem
+       }
+     )}
   end
 end
