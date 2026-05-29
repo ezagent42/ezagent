@@ -100,6 +100,10 @@ defmodule EzagentWeb.MixProject do
       # `all_plugin_apps_wired_to_web_test` invariant in
       # ezagent_core/test/invariants/ locks this in.
       {:ezagent_plugin_np, in_umbrella: true},
+      # loom: backend-only orchestration + Feishu-mirror plugin. Wired here
+      # per the `all_plugin_apps_wired_to_web_test` invariant so its flavors
+      # (loom / loomworker / loomorch) register in AgentFlavorRegistry.
+      {:ezagent_plugin_loom, in_umbrella: true},
       {:jason, "~> 1.2"},
       {:bandit, "~> 1.5"}
     ]
