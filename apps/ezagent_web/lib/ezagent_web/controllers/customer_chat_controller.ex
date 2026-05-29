@@ -24,7 +24,7 @@ defmodule EzagentWeb.CustomerChatController do
     (which returns the 3-tuple `{:ok, uri, meta}` post-ezagent#408).
 
   All session/cc/dispatch logic is delegated to the shared
-  `EzagentPluginLiveview.CustomerChat.Bootstrap` module (the customer
+  `EzagentPluginCustomerChat.Bootstrap` module (the customer
   LiveView shares the same code path). This controller owns only the
   HTTP+SSE transport.
 
@@ -54,7 +54,7 @@ defmodule EzagentWeb.CustomerChatController do
     - Client disconnect (`chunk/2` returns `{:error, :closed}`).
 
   Session/cc/builder logic is delegated to
-  `EzagentPluginLiveview.CustomerChat.Bootstrap` so the SSE controller
+  `EzagentPluginCustomerChat.Bootstrap` so the SSE controller
   and the upcoming customer LiveView share one code path.
   """
 
