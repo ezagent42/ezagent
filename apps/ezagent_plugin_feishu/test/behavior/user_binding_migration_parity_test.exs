@@ -109,9 +109,13 @@ defmodule EzagentPluginFeishu.Behavior.UserBindingMigrationParityTest do
       end
     end
 
-    test "state_slice/0 + init_slice/1 unchanged (framework wiring)" do
+    test "state_slice/0 + init_slice/1 (Lifecycle two-container wiring)" do
+      # Lifecycle (SPEC 2026-05-29 §2.3): `state_slice/0` is macro-emitted
+      # from the `state_slice: :feishu_user_bindings` override;
+      # `init_slice/1` returns the two-container slice (persistent
+      # `bind_count` counter in `.state`, empty transients).
       assert BV.state_slice() == :feishu_user_bindings
-      assert BV.init_slice(%{}) == %{bind_count: 0}
+      assert BV.init_slice(%{}) == %{state: %{bind_count: 0}, transients: %{}}
     end
 
     test "workspace_scoped? + data_owner shape preserved" do

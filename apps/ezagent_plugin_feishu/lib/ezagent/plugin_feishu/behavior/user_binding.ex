@@ -79,14 +79,27 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
   preserved for muscle memory while the internals go through
   CapBAC + audit). See `@deprecated` annotations on those tasks.
 
-  ## Migration to §2.2 declarative contract (Phase 2-f r3)
+  ## Phase B migration (2026-05-29) — Lifecycle API
 
-  Per SPEC `2026-05-28-router-behavior-kind-architecture.md` §6.2 +
-  §4.4 effect grammar, this Behavior is migrated from legacy
-  `invoke/4` to the new `use Ezagent.Behavior` + `action/3` + per-
-  action `handle_<action>/2` shape. Per-action handler returns
-  `{:ok, result, [effects]}` where effects are `{:set, key, value}`
-  for slice mutations.
+  Migrated from `use Ezagent.Behavior` to `use Ezagent.Lifecycle`
+  per SPEC `2026-05-29-lifecycle-hooks-design.md` §2.3 (the simple,
+  no-transients case). The `:bind_count` slice is durable PERSISTENT
+  `state` (an incidental counter; the DB table is the real SSOT) —
+  there are NO transients (no PID / ETS / port / subprocess /
+  monitor), so `init_slice/1` → `create/1` and `activate/2` is the
+  macro-injected no-op default. The `handle_<action>/2` bodies are
+  byte-identical.
+
+  The slice key `:feishu_user_bindings` does NOT match the macro's
+  auto-derived key (the last module segment `UserBinding` would
+  derive `:user_binding`), so the snapshot-compat `state_slice:`
+  override is used (SPEC §5 / §7 OQ-7) with the required
+  `# lifecycle:state_slice_override` marker comment.
+
+  Earlier (Phase 2-f r3, 2026-05-28) this Behavior was already on the
+  declarative `action/3` + per-action `handle_<action>/2` + effects
+  contract; handlers return `{:ok, result, [effects]}` where effects
+  are `{:set, key, value}` for slice mutations.
 
   Custom `required_caps/0` is retained (not auto-derived) because
   the cap axis is `:workspace`, not the macro's default `:any`. The
@@ -100,7 +113,8 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
   bodies — this Behavior never had those).
   """
 
-  use Ezagent.Behavior
+  # lifecycle:state_slice_override
+  use Ezagent.Lifecycle, state_slice: :feishu_user_bindings
 
   alias EzagentPluginFeishu.{BindingPolicy, UserBinding}
 
@@ -163,9 +177,13 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
     ]
   end
 
-  # Framework still calls these at Kind boot (Kind.Server.init/1).
-  def state_slice, do: :feishu_user_bindings
-  def init_slice(_args), do: %{bind_count: 0}
+  # `state_slice/0` is macro-emitted from the `state_slice:
+  # :feishu_user_bindings` override above (the hand-rolled
+  # `def state_slice` is gone). `init_slice/1` → `create/1`: build the
+  # initial PERSISTENT `state` once. No transients, so `activate/2` is
+  # the macro-injected no-op default.
+  @impl Ezagent.Lifecycle
+  def create(_args), do: {:ok, %{bind_count: 0}}
 
   # Codex r1 P1: `workspace_scoped? = true` would only check that the
   # CALLER and TARGET share a workspace; the action body operates on

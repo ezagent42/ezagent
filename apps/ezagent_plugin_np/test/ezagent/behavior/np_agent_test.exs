@@ -42,18 +42,23 @@ defmodule Ezagent.Behavior.NpAgentTest do
     end
   end
 
-  describe "init_slice/1" do
+  # Lifecycle migration (SPEC 2026-05-29 §2.3B) — `init_slice/1` is now
+  # macro-emitted and returns the two-container slice `%{state:,
+  # transients:}`; the developer builder is `create/1`. The durable
+  # fields live in `.state`, so these tests read `init_slice(...).state`
+  # (the chat reference precedent).
+  describe "create/1 (PERSISTENT state)" do
     test "captures python_handle (via :python_handle or fallback :uri)" do
       uri = URI.parse("entity://agent/team-alpha/np_test")
-      s1 = NpAgent.init_slice(%{python_handle: uri})
+      s1 = NpAgent.init_slice(%{python_handle: uri}).state
       assert s1.python_handle == uri
 
-      s2 = NpAgent.init_slice(%{uri: uri})
+      s2 = NpAgent.init_slice(%{uri: uri}).state
       assert s2.python_handle == uri
     end
 
     test "defaults timeout_ms to 10s" do
-      s = NpAgent.init_slice(%{uri: URI.parse("entity://agent/team-alpha/np_test")})
+      s = NpAgent.init_slice(%{uri: URI.parse("entity://agent/team-alpha/np_test")}).state
       assert s.timeout_ms == 10_000
       assert s.last_input == nil
       assert s.last_result == nil
@@ -61,8 +66,15 @@ defmodule Ezagent.Behavior.NpAgentTest do
     end
 
     test "accepts timeout_ms override" do
-      s = NpAgent.init_slice(%{uri: URI.parse("entity://agent/team-alpha/np_x"), timeout_ms: 5_000})
+      s =
+        NpAgent.init_slice(%{uri: URI.parse("entity://agent/team-alpha/np_x"), timeout_ms: 5_000}).state
+
       assert s.timeout_ms == 5_000
+    end
+
+    test "init_slice/1 starts with an EMPTY transients container" do
+      slice = NpAgent.init_slice(%{uri: URI.parse("entity://agent/team-alpha/np_x")})
+      assert slice.transients == %{}
     end
   end
 
@@ -109,29 +121,46 @@ defmodule Ezagent.Behavior.NpAgentTest do
     end
   end
 
-  describe "post_init/2 + handle_continue/3 (PTY-phase-state-machine)" do
-    test "post_init/2 ALWAYS returns {:continue, :setup_phase_tracking_and_ensure_python}" do
+  # Lifecycle migration (SPEC 2026-05-29 §2.3B) — the pre-Lifecycle
+  # `post_init/2` + `handle_continue/3` UNIFY into `activate/2` (the ONE
+  # start hook). `post_init/2` is now macro-emitted and ALWAYS schedules
+  # the engine's `:ezagent_activate` continuation; the developer logic
+  # (subscribe to phase topic + ensure subprocess alive) lives in
+  # `activate/2`, which returns `{:ok, transients}` with the rebuilt
+  # phase-subscription transient.
+  describe "activate/2 (PTY-phase-state-machine — unified start hook)" do
+    test "post_init/2 ALWAYS schedules the engine activate continuation" do
       slice = NpAgent.init_slice(%{uri: URI.parse("entity://agent/team-alpha/np_x")})
 
-      assert {:continue, :setup_phase_tracking_and_ensure_python} =
-               NpAgent.post_init(%{}, slice)
+      assert {:continue, :ezagent_activate} = NpAgent.post_init(%{}, slice)
     end
 
-    test "handle_continue/3 :ignores when cwd is missing (demand-spawn path)" do
+    test "activate/2 rebuilds the phase-subscription transient (subscriber = self)" do
       uri = URI.parse("entity://agent/team-alpha/np_demand")
-      slice = NpAgent.init_slice(%{uri: uri})
-      assert slice.cwd == nil
+      %{state: state} = NpAgent.init_slice(%{uri: uri})
+      assert state.cwd == nil
 
       ctx = %{self_uri: uri, kind_module: SomeKind}
 
-      assert :ignore =
-               NpAgent.handle_continue(:setup_phase_tracking_and_ensure_python, slice, ctx)
+      # cwd missing → demand-spawn path: no subprocess re-spawn, but the
+      # phase subscription transient is STILL rebuilt against this process.
+      assert {:ok, %{phase_subscription: %{topic: topic, subscriber: sub}}} =
+               NpAgent.activate(state, ctx)
+
+      assert topic == "pty:phase:" <> URI.to_string(uri)
+      assert sub == self()
     end
   end
 
-  describe "init_slice/1 / handle_kind_message/3 — python_phase" do
+  # Lifecycle migration (SPEC 2026-05-29 §2.3B) — `python_phase` is
+  # DURABLE state (the LV-badge mirror), read via `init_slice(...).state`.
+  # `handle_kind_message/3` is now macro-emitted; the developer hook is
+  # `handle_signal/2`, which returns the SAME effect list as an action
+  # handler — so a `:pty_phase` signal returns `[{:set, :python_phase,
+  # phase}]` (the macro reduces it into the two-container slice).
+  describe "create/1 / handle_signal/2 — python_phase" do
     test "init_slice/1 defaults python_phase to nil" do
-      slice = NpAgent.init_slice(%{uri: URI.parse("entity://agent/team-alpha/np_x")})
+      slice = NpAgent.init_slice(%{uri: URI.parse("entity://agent/team-alpha/np_x")}).state
       assert slice.python_phase == nil
     end
 
@@ -140,7 +169,7 @@ defmodule Ezagent.Behavior.NpAgentTest do
         NpAgent.init_slice(%{
           uri: URI.parse("entity://agent/team-alpha/np_x"),
           python_phase: :running
-        })
+        }).state
 
       assert slice.python_phase == :running
     end
@@ -150,64 +179,44 @@ defmodule Ezagent.Behavior.NpAgentTest do
         NpAgent.init_slice(%{
           uri: URI.parse("entity://agent/team-alpha/np_x"),
           python_phase: :bogus_atom
-        })
+        }).state
 
       assert slice.python_phase == nil
     end
 
-    test "handle_kind_message/3 writes :pty_phase events into :python_phase" do
+    test "handle_signal/2 emits {:set, :python_phase, phase} for a matching :pty_phase" do
       uri = URI.parse("entity://agent/team-alpha/np_x")
-      slice = NpAgent.init_slice(%{uri: uri})
       ctx = %{self_uri: uri}
 
       meta = %{os_pid: 999, reason: nil, at: System.os_time(:millisecond)}
 
-      assert {:ok, new_slice} =
-               NpAgent.handle_kind_message(
-                 {:pty_phase, uri, :running, meta},
-                 slice,
-                 ctx
-               )
+      assert {:ok, effects} =
+               NpAgent.handle_signal({:pty_phase, uri, :running, meta}, ctx)
 
-      assert new_slice.python_phase == :running
-      assert new_slice.python_handle == uri
-      assert new_slice.timeout_ms == 10_000
+      assert {:set, :python_phase, :running} in effects
     end
 
-    test "handle_kind_message/3 ignores non-phase messages" do
+    test "handle_signal/2 ignores non-phase messages" do
       uri = URI.parse("entity://agent/team-alpha/np_x")
-      slice = NpAgent.init_slice(%{uri: uri})
       ctx = %{self_uri: uri}
 
-      assert :ignore = NpAgent.handle_kind_message(:other, slice, ctx)
-      assert :ignore = NpAgent.handle_kind_message({:foo, :bar}, slice, ctx)
+      assert :ignore = NpAgent.handle_signal(:other, ctx)
+      assert :ignore = NpAgent.handle_signal({:foo, :bar}, ctx)
     end
 
-    test "handle_kind_message/3 ignores invalid phase atoms (defensive)" do
+    test "handle_signal/2 ignores invalid phase atoms (defensive)" do
       uri = URI.parse("entity://agent/team-alpha/np_x")
-      slice = NpAgent.init_slice(%{uri: uri})
       ctx = %{self_uri: uri}
 
-      assert :ignore =
-               NpAgent.handle_kind_message(
-                 {:pty_phase, uri, :totally_bogus, %{}},
-                 slice,
-                 ctx
-               )
+      assert :ignore = NpAgent.handle_signal({:pty_phase, uri, :totally_bogus, %{}}, ctx)
     end
 
-    test "handle_kind_message/3 ignores phase events whose agent_uri ≠ ctx.self_uri" do
+    test "handle_signal/2 ignores phase events whose agent_uri ≠ ctx.self_uri" do
       self_uri = URI.parse("entity://agent/team-alpha/np_self")
       foreign_uri = URI.parse("entity://agent/team-alpha/np_other")
-      slice = NpAgent.init_slice(%{uri: self_uri})
       ctx = %{self_uri: self_uri}
 
-      assert :ignore =
-               NpAgent.handle_kind_message(
-                 {:pty_phase, foreign_uri, :dead, %{}},
-                 slice,
-                 ctx
-               )
+      assert :ignore = NpAgent.handle_signal({:pty_phase, foreign_uri, :dead, %{}}, ctx)
     end
   end
 

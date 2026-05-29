@@ -37,15 +37,24 @@ defmodule EzagentPluginFeishu.Behavior.ExternalAdapter.Feishu.Allow do
   `apps/ezagent_domain_external_mirror/test/support/mock_publish_adapter.ex`
   (the `MockPublishAdapter.Allow` shape PR-EM-2 ships).
 
-  ## Migration to §2.2 declarative contract (Phase 2-f r3)
+  ## Phase B migration (2026-05-29) — Lifecycle API
 
-  Per SPEC `2026-05-28-router-behavior-kind-architecture.md` §6.2,
-  this Behavior is migrated from the legacy contract to the new
-  `use Ezagent.Behavior` macro + per-action `action/3` declaration
-  + `handle_<action>/2` handler. The migration is effectively a
-  no-op semantically — the marker raises identically in both
-  shapes — but it exercises the macro's cap-only-Behavior pathway:
-  `dispatchable?/0 == false` + a raising handler.
+  Migrated from `use Ezagent.Behavior` to `use Ezagent.Lifecycle`
+  per SPEC `2026-05-29-lifecycle-hooks-design.md` §2.3 (the simple,
+  no-transients, cap-only case). This is a marker Behavior:
+  `dispatchable?/0 == false`, a raising handler, no state mutation,
+  no transients — so `create/1` builds an empty `state` and
+  `activate/2` is the macro-injected no-op default.
+
+  The slice key `:external_adapter_feishu` does NOT match the
+  macro's auto-derived key (the last module segment `Allow` would
+  derive `:allow`), so the snapshot-compat `state_slice:` override
+  is used (SPEC §5 / §7 OQ-7) with the required
+  `# lifecycle:state_slice_override` marker comment the Phase C grep
+  gate sanctions.
+
+  Earlier (Phase 2-f r3, 2026-05-28) this Behavior was already on the
+  declarative `action/3` + `handle_<action>/2` contract.
 
   Custom `required_caps/0` is retained (not auto-derived) because
   the cap axis is `:session`, not the macro's default `:any`. The
@@ -53,7 +62,8 @@ defmodule EzagentPluginFeishu.Behavior.ExternalAdapter.Feishu.Allow do
   exact pre-migration English wording.
   """
 
-  use Ezagent.Behavior
+  # lifecycle:state_slice_override
+  use Ezagent.Lifecycle, state_slice: :external_adapter_feishu
 
   action :allow_feishu,
     args: %{},
@@ -79,11 +89,13 @@ defmodule EzagentPluginFeishu.Behavior.ExternalAdapter.Feishu.Allow do
 
   def dispatchable?, do: false
 
-
-  def state_slice, do: :external_adapter_feishu
-
-
-  def init_slice(_args), do: %{}
+  # `state_slice/0` is macro-emitted from the `state_slice:
+  # :external_adapter_feishu` override above (the hand-rolled
+  # `def state_slice` is gone). `init_slice/1` → `create/1`: an empty
+  # PERSISTENT `state` (this marker holds no state). No transients, so
+  # `activate/2` is the macro-injected no-op default.
+  @impl Ezagent.Lifecycle
+  def create(_args), do: {:ok, %{}}
 
   # Cap-only marker — must define `handle_allow_feishu/2` to satisfy the
   # `use Ezagent.Behavior` macro's @before_compile invariant (every

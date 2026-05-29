@@ -41,8 +41,12 @@ defmodule Ezagent.Behavior.EchoTest do
       assert Echo.state_slice() == :echo
     end
 
-    test "init_slice/1 returns %{count: 0, last_msg: nil}" do
-      assert Echo.init_slice(%{}) == %{count: 0, last_msg: nil}
+    test "init_slice/1 returns the two-container slice; .state holds the persistent fields" do
+      # Lifecycle (SPEC 2026-05-29 §2.3): `init_slice/1` is macro-emitted
+      # and returns `%{state:, transients:}`; `create/1` builds the
+      # persistent `.state` (Echo has no transients).
+      assert Echo.init_slice(%{}) == %{state: %{count: 0, last_msg: nil}, transients: %{}}
+      assert {:ok, %{count: 0, last_msg: nil}} = Echo.create(%{})
     end
 
     test "required_caps/0 uses :echo kind axis (not auto-derived :any)" do
@@ -84,12 +88,14 @@ defmodule Ezagent.Behavior.EchoTest do
 
     test "apply_effects/2 commits :set effects against slice" do
       # End-to-end: handle_say emits effects, apply_effects mutates state.
-      slice = Echo.init_slice(%{})
-      ctx = %{read: fn k, d -> Map.get(slice, k, d) end}
+      # The framework `read` closure + `apply_effects/2` work against the
+      # FLAT persistent `.state` container.
+      state = Echo.init_slice(%{}).state
+      ctx = %{read: fn k, d -> Map.get(state, k, d) end}
 
       {:ok, _result, effects} = Echo.handle_say(%{msg: "hello"}, ctx)
 
-      assert {:ok, %{state: new_state}} = Ezagent.Behavior.apply_effects(effects, slice)
+      assert {:ok, %{state: new_state}} = Ezagent.Behavior.apply_effects(effects, state)
       assert new_state.count == 1
       assert new_state.last_msg == "hello"
     end

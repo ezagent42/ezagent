@@ -3,11 +3,24 @@ defmodule Ezagent.Behavior.Echo do
   Echo Behavior — `:say` returns the message; `:receive` echoes inbound
   chat messages back to the originating session.
 
-  ## Migration to new-contract (Phase 2-g r3, 2026-05-28)
+  ## Phase B migration (2026-05-29) — Lifecycle API
 
-  Per SPEC `2026-05-28-router-behavior-kind-architecture.md` §2.2 +
-  §4.4. Declares actions via `action/3`, returns effects from
-  `handle_<action>/2` instead of mutating slice inside `invoke/4`.
+  Migrated from `use Ezagent.Behavior` to `use Ezagent.Lifecycle`
+  per SPEC `2026-05-29-lifecycle-hooks-design.md` §2.3 (the simple,
+  no-transients case — same shape as the reference `CurlAgent`
+  conversion). The CQRS engine (slice / invocation / snapshot) is
+  hidden behind two state containers + lifecycle moments:
+
+  - `init_slice/1` → `create/1` builds the PERSISTENT `state`.
+  - There are NO transients (no PID / ETS / port / subprocess /
+    monitor), so `activate/2` is the macro-injected no-op default —
+    omitted here.
+  - `handle_<action>/2` bodies are byte-identical (effects already
+    declarative from the Phase 2-g new-contract migration; the only
+    surface is `ctx[:read]` which the Lifecycle macro keeps).
+
+  Earlier (Phase 2-g r3, 2026-05-28) this Behavior was already on the
+  declarative `action/3` + `handle_<action>/2` + effects contract:
 
   - `:set` effect — slice writes (replacing `%{slice | k: v}` in-place
     mutation)
@@ -16,6 +29,10 @@ defmodule Ezagent.Behavior.Echo do
   - `required_caps/0` is still manually exported to preserve the
     kind axis `:echo`. The macro-derived legacy callback would use
     `:any`, which would silently downgrade cap precision.
+
+  The auto-derived `state_slice/0` (last module segment `Echo` →
+  `:echo`) equals the historical snapshot key, so NO `state_slice:`
+  override is needed (SPEC §5 step 2 / §7 OQ-7).
 
   ## Actions
 
@@ -41,8 +58,7 @@ defmodule Ezagent.Behavior.Echo do
   back to the echo agent.
   """
 
-  use Ezagent.Behavior
-  @behaviour Ezagent.Behavior
+  use Ezagent.Lifecycle
 
   alias Ezagent.{Cmd, Message}
 
@@ -71,12 +87,21 @@ defmodule Ezagent.Behavior.Echo do
     }
   end
 
-  def state_slice, do: :echo
+  # The auto-derived slice key for `Ezagent.Behavior.Echo` is the
+  # underscored last segment `Echo` → `:echo`, EXACTLY the pre-Lifecycle
+  # `state_slice/0`. The snapshot-compat key is preserved with no
+  # explicit override (SPEC §5 step 2 / §7 OQ-7) — the hand-rolled
+  # `def state_slice, do: :echo` is gone.
 
-  def init_slice(_args), do: %{count: 0, last_msg: nil}
+  # `init_slice/1` → `create/1` (SPEC §3 mapping). Build the initial
+  # PERSISTENT `state` once, on first-ever existence. No transients
+  # here (count + last_msg both survive restart), so `activate/2` is the
+  # macro-injected no-op default.
+  @impl Ezagent.Lifecycle
+  def create(_args), do: {:ok, %{count: 0, last_msg: nil}}
 
   # ---------------------------------------------------------------
-  # handle_<action>/2 (new contract)
+  # handle_<action>/2 (new contract — unchanged by Lifecycle migration)
   # ---------------------------------------------------------------
 
   def handle_say(%{msg: msg}, ctx) when is_binary(msg) do
