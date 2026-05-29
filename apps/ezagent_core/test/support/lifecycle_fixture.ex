@@ -448,3 +448,84 @@ defmodule Ezagent.TestSupport.SiblingMixKind do
   @impl Ezagent.Kind
   def persistence, do: {:snapshot, :on_change}
 end
+
+defmodule Ezagent.TestSupport.LifecycleSignalFixture do
+  @moduledoc """
+  Lifecycle fixture exercising T1 — a `handle_signal/2` returning the
+  FULL effect grammar (not just `:set` / `:set_transient`). A real signal
+  handler DISPATCHES / EMITS / NOTIFIES (e.g. ExternalMirror's
+  `:publisher_event`/`:ezagent_em_reconcile`, Chat's `:DOWN`); under
+  Lifecycle those are declarative effects the signal path MUST execute.
+
+  Two signal messages:
+
+  - `{:lifecycle_signal_notify, topic}` → returns `{:set, :signaled, true}`
+    + `{:set_transient, :signal_hits, n+1}` + `{:notify, topic, payload}`.
+    Proves a `:notify` side-effect bucket actually broadcasts AND both
+    containers advance (R10-2 pre-commit ordering).
+  - `{:lifecycle_signal_dispatch, target_uri}` → returns
+    `{:dispatch, %Cmd{}}` to `target_uri`'s `:bump` action. Proves a
+    cross-Kind `:dispatch` effect from a signal actually re-enters the
+    Router (the imperative-Invocation-in-dev-code elimination).
+  """
+
+  use Ezagent.Lifecycle, state_slice: :lifecycle_signal
+
+  # lifecycle:state_slice_override
+  action :noop, args: %{}, returns: %{}, caps: [:noop], modes: [:call], description: "noop"
+
+  @impl Ezagent.Behavior
+  def workspace_scoped?, do: false
+  @impl Ezagent.Behavior
+  def cap_exempt_actions, do: [:noop]
+
+  @impl Ezagent.Lifecycle
+  def create(_args), do: {:ok, %{signaled: false, dispatched_to: nil}}
+
+  @impl Ezagent.Lifecycle
+  def activate(_state, _ctx), do: {:ok, %{signal_hits: 0}}
+
+  @impl Ezagent.Lifecycle
+  def handle_signal({:lifecycle_signal_notify, topic}, ctx) do
+    hits = ctx.transients[:signal_hits] || 0
+
+    {:ok,
+     [
+       {:set, :signaled, true},
+       {:set_transient, :signal_hits, hits + 1},
+       {:notify, topic, {:lifecycle_signal_fired, ctx.self_uri}}
+     ]}
+  end
+
+  def handle_signal({:lifecycle_signal_dispatch, %URI{} = target_uri}, _ctx) do
+    bump_target = URI.new!("#{URI.to_string(target_uri)}?action=lifecycle_fixture.bump")
+
+    {:ok,
+     [
+       {:set, :dispatched_to, target_uri},
+       {:dispatch,
+        %Ezagent.Cmd{
+          target: bump_target,
+          action: :bump,
+          args: %{by: 7},
+          ctx: %{reply: :none}
+        }}
+     ]}
+  end
+
+  def handle_signal(_other, _ctx), do: :ignore
+
+  def handle_noop(_args, _ctx), do: {:ok, %{}, []}
+end
+
+defmodule Ezagent.TestSupport.LifecycleSignalKind do
+  @moduledoc false
+  @behaviour Ezagent.Kind
+
+  @impl Ezagent.Kind
+  def type_name, do: :lifecycle_signal_fixture
+  @impl Ezagent.Kind
+  def behaviors, do: [Ezagent.TestSupport.LifecycleSignalFixture]
+  @impl Ezagent.Kind
+  def persistence, do: {:snapshot, :on_change}
+end

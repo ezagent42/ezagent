@@ -194,8 +194,10 @@ defmodule Ezagent.LifecycleTest do
       wait_until(fn -> Ezagent.ReadyGate.status(uri) == :ready end)
 
       # After boot: state from create, transients from activate.
+      # Raw read — these tests inspect the two-container split (T3's
+      # get_slice/2 normalizes to flat .state for production consumers).
       {:ok, %{state: state0, transients: tr0}} =
-        Ezagent.Kind.get_slice(uri, :lifecycle_fixture)
+        Ezagent.Kind.get_raw_slice(uri, :lifecycle_fixture)
 
       assert state0 == %{counter: 0, label: "fx"}
       assert is_pid(tr0.worker)
@@ -213,7 +215,7 @@ defmodule Ezagent.LifecycleTest do
                })
 
       {:ok, %{state: state1, transients: tr1}} =
-        Ezagent.Kind.get_slice(uri, :lifecycle_fixture)
+        Ezagent.Kind.get_raw_slice(uri, :lifecycle_fixture)
 
       assert state1.counter == 2
       assert tr1.hits == 1
@@ -252,6 +254,204 @@ defmodule Ezagent.LifecycleTest do
       assert is_pid(result.after.transients.worker)
       assert Process.alive?(result.after.transients.worker)
       refute result.after.transients.worker == result.before.transients.worker
+    end
+  end
+
+  # ===================================================================
+  # T1 — handle_signal runs the FULL effect pipeline (not just :set /
+  # :set_transient). A signal handler that returns :notify / :dispatch
+  # effects actually executes them.
+  # ===================================================================
+  describe "T1 — handle_signal runs the full effect pipeline" do
+    setup do
+      Code.ensure_loaded!(Ezagent.TestSupport.LifecycleSignalFixture)
+      Code.ensure_loaded!(Ezagent.TestSupport.LifecycleSignalKind)
+
+      if Ezagent.BehaviorRegistry.lookup(
+           Ezagent.TestSupport.LifecycleSignalKind,
+           :noop
+         ) == :error do
+        :ok =
+          Ezagent.CapabilityRegistry.register(
+            Ezagent.TestSupport.LifecycleSignalKind,
+            :noop,
+            Ezagent.TestSupport.LifecycleSignalFixture
+          )
+      end
+
+      :ok
+    end
+
+    defp signal_uri do
+      URI.new!("system://lifecycle_signal_fixture/inst-#{System.unique_integer([:positive])}")
+    end
+
+    test "a :notify effect from handle_signal actually broadcasts + both containers advance" do
+      uri = signal_uri()
+
+      {:ok, pid} =
+        Ezagent.Kind.spawn(Ezagent.TestSupport.LifecycleSignalKind, %{uri: uri})
+
+      wait_until(fn -> Ezagent.ReadyGate.status(uri) == :ready end)
+
+      topic = "lifecycle_signal_test:#{System.unique_integer([:positive])}"
+      :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, topic)
+
+      # Deliver the signal as a raw GenServer message — the engine's
+      # handle_info forwards it to handle_kind_message → __run_signal__.
+      send(pid, {:lifecycle_signal_notify, topic})
+
+      # The :notify side-effect bucket must have executed (NOT just the
+      # :set / :set_transient) — we receive the broadcast.
+      assert_receive {:lifecycle_signal_fired, ^uri}, 1_000
+
+      # Both containers advanced (R10-2 pre-commit): :set → state,
+      # :set_transient → transients. Raw read to inspect both containers.
+      {:ok, %{state: state, transients: transients}} =
+        Ezagent.Kind.get_raw_slice(uri, :lifecycle_signal)
+
+      assert state.signaled == true
+      assert transients.signal_hits == 1
+    end
+
+    test "a :dispatch effect from handle_signal re-enters the Router (cross-Kind)" do
+      # Target Kind that receives the dispatched :bump.
+      target = fixture_uri()
+
+      {:ok, _} =
+        Ezagent.Kind.spawn(LifecycleFixtureKind, %{uri: target, counter: 0, label: "tgt"})
+
+      wait_until(fn -> Ezagent.ReadyGate.status(target) == :ready end)
+
+      # Signal-emitting Kind.
+      uri = signal_uri()
+      {:ok, pid} = Ezagent.Kind.spawn(Ezagent.TestSupport.LifecycleSignalKind, %{uri: uri})
+      wait_until(fn -> Ezagent.ReadyGate.status(uri) == :ready end)
+
+      send(pid, {:lifecycle_signal_dispatch, target})
+
+      # The :dispatch effect must have executed against the target Kind:
+      # its counter is bumped by 7 (proving the signal path ran the
+      # dispatch bucket, not just slice mutations).
+      wait_until(fn ->
+        case Ezagent.Kind.get_raw_slice(target, :lifecycle_fixture) do
+          {:ok, %{state: %{counter: 7}}} -> true
+          _ -> false
+        end
+      end)
+
+      {:ok, %{state: target_state}} = Ezagent.Kind.get_raw_slice(target, :lifecycle_fixture)
+      assert target_state.counter == 7
+
+      # The signaling Kind's own :set landed too. get_slice/2 NORMALIZES a
+      # two-container slice to flat .state for consumers (T3), so the field
+      # is read at the top level here.
+      {:ok, %{dispatched_to: dispatched_to}} =
+        Ezagent.Kind.get_slice(uri, :lifecycle_signal)
+
+      assert dispatched_to == target
+    end
+  end
+
+  # ===================================================================
+  # T3 — get_slice normalizes a two-container slice to its .state view.
+  # ===================================================================
+  describe "T3 — get_slice normalizes two-container → flat state" do
+    test "get_slice returns the flat .state view for a two-container slice" do
+      uri = fixture_uri()
+
+      {:ok, _} =
+        Ezagent.Kind.spawn(LifecycleFixtureKind, %{uri: uri, counter: 3, label: "norm"})
+
+      wait_until(fn -> Ezagent.ReadyGate.status(uri) == :ready end)
+
+      # The fixture's slice is two-container. get_slice/2 NORMALIZES it to
+      # the flat .state view a cross-module consumer expects — so
+      # `flat.counter` resolves (NOT nil, which is what the raw
+      # `%{state:, transients:}` map would give a flat-field reader).
+      {:ok, flat} = Ezagent.Kind.get_slice(uri, :lifecycle_fixture)
+      assert flat == %{counter: 3, label: "norm"}
+      refute Map.has_key?(flat, :transients)
+
+      # get_raw_slice/2 still exposes the unnormalized two-container split
+      # for test infra / introspection.
+      {:ok, raw} = Ezagent.Kind.get_raw_slice(uri, :lifecycle_fixture)
+      assert %{state: %{counter: 3, label: "norm"}, transients: _} = raw
+    end
+
+    test "normalize_slice_view flattens two-container; passes legacy flat unchanged" do
+      two_container = %{state: %{owner_uri: :x, members: %{}}, transients: %{monitors: %{}}}
+      assert Ezagent.Kind.normalize_slice_view(two_container) == %{owner_uri: :x, members: %{}}
+
+      legacy_flat = %{owner_uri: :y, members: %{a: 1}}
+      assert Ezagent.Kind.normalize_slice_view(legacy_flat) == legacy_flat
+
+      # A map carrying :state but NO :transients is NOT two-container
+      # (could be a legacy slice that happens to have a :state field) →
+      # unchanged.
+      ambiguous = %{state: :running, other: 1}
+      assert Ezagent.Kind.normalize_slice_view(ambiguous) == ambiguous
+    end
+  end
+
+  # ===================================================================
+  # T4 — load_with_fallback coerces a legacy FLAT snapshot row into the
+  # two-container shape on read, so a pre-migration row boots a converted
+  # Kind without crashing.
+  # ===================================================================
+  describe "T4 — legacy flat snapshot row coerced to two-container on load" do
+    # Persist a PRE-MIGRATION snapshot: the fixture's slice in the OLD flat
+    # shape (no :state / :transients split), with `ever_created` marked so
+    # the boot path takes the cold-load branch (create SKIPPED — the most
+    # dangerous case: fresh state is empty, only the flat loaded row
+    # carries data). Mirrors a row written before the Behavior converted
+    # to `use Ezagent.Lifecycle`.
+    defp persist_flat_legacy(uri_str, slice) do
+      binary = :erlang.term_to_binary(%{lifecycle_fixture: slice})
+
+      {:ok, _} =
+        Ezagent.Ecto.KindSnapshot.upsert(
+          uri_str,
+          "lifecycle_fixture",
+          binary,
+          0,
+          "workspace://system",
+          mark_ever_created: true
+        )
+    end
+
+    test "a flat legacy row loads into a converted Kind under :state without crashing" do
+      uri = fixture_uri()
+      persist_flat_legacy(URI.to_string(uri), %{counter: 42, label: "legacy-flat"})
+
+      # Boot the (now two-container) Kind from that flat row. Without the
+      # T4 coercion, init would crash: __run_activate__ matches %{state:
+      # st} but the merged slice would be the flat map (the legacy row
+      # shadowing fresh's two-container value).
+      {:ok, _pid} = Ezagent.Kind.spawn(LifecycleFixtureKind, %{uri: uri})
+      wait_until(fn -> Ezagent.ReadyGate.status(uri) == :ready end)
+
+      {:ok, %{state: state, transients: transients}} =
+        Ezagent.Kind.get_raw_slice(uri, :lifecycle_fixture)
+
+      # The legacy persistent data rehydrated UNDER :state.
+      assert state == %{counter: 42, label: "legacy-flat"}
+      # Transients were rebuilt fresh by activate/2 (not carried from the
+      # flat row, which had none).
+      assert is_pid(transients.worker)
+      assert Process.alive?(transients.worker)
+    end
+
+    test "Snapshot.load_or_init coerces a flat slice for a two-container fresh peer" do
+      uri = fixture_uri()
+      persist_flat_legacy(URI.to_string(uri), %{counter: 9, label: "unit"})
+
+      loaded = Ezagent.Kind.Snapshot.load_or_init(uri, LifecycleFixtureKind, %{uri: uri})
+
+      # The slice came back in the two-container shape with the legacy data
+      # under :state — NOT the raw flat map (which would crash activate).
+      assert %{lifecycle_fixture: %{state: %{counter: 9, label: "unit"}, transients: %{}}} =
+               loaded
     end
   end
 end
