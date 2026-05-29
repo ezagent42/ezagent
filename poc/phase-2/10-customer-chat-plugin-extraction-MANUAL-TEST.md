@@ -28,7 +28,7 @@
 > 注:如果布局错乱(输入框跑到顶部、没颜色),说明 CSS 没加载——硬刷新(Cmd+Shift+R)。
 > 抽取时踩过一个 Tailwind 的坑已修,正常应该是对的。
 
-📝 结果 1:
+📝 结果 1: OK
 
 ---
 
@@ -36,7 +36,7 @@
 **窗口 A** Test 1 聊完后刷新(F5 / Cmd+R)。
 **预期**: 同一段对话还在(不是空白新会话)。
 
-📝 结果 2:
+📝 结果 2: OK
 
 ---
 
@@ -44,7 +44,7 @@
 **窗口 B**: 登录后打开 👉 **http://localhost:10142/plugins**
 **预期**: 看到一张 **"Customer Service"** 插件卡片。点它 → 跳到 **`/operator`**。
 
-📝 结果 3(卡片在不在 + 点击是否进 /operator):
+📝 结果 3(卡片在不在 + 点击是否进 /operator): OK
 
 ---
 
@@ -58,7 +58,7 @@ acme 工作区(对比之前:要 `/admin/customer_sessions` + 左上角切工作�
 
 > `/operator`(不带租户)会列出你有权限的工作区;只有一个时直接跳进去。
 
-📝 结果 4(是否免切工作区直达 + 列表是否有会话):
+📝 结果 4(是否免切工作区直达 + 列表是否有会话):OK
 
 ---
 
@@ -73,8 +73,8 @@ acme 工作区(对比之前:要 `/admin/customer_sessions` + 左上角切工作�
 - 出现 **"客服已接管"** 角标 + 居中 **"(客服已接管对话)"** 通知气泡
 - 收到你发的 operator 消息(绿色"客服"气泡)
 
-📝 结果 5A(接管通知):
-📝 结果 5B(operator 消息实时到客户):
+📝 结果 5A(接管通知): OK
+📝 结果 5B(operator 消息实时到客户): OK
 
 ---
 
@@ -82,7 +82,7 @@ acme 工作区(对比之前:要 `/admin/customer_sessions` + 左上角切工作�
 **窗口 B**(已登录)打开 👉 **http://localhost:10142/admin/customer_sessions**
 **预期**: 自动跳到 `/operator`(不是 404)。
 
-📝 结果 6:
+📝 结果 6:OK，但是我们还在poc阶段，这个重定向功能，我觉得可以删掉，就饿的URL没有用户知道。
 
 ---
 
@@ -91,7 +91,7 @@ widget 控制器没动(还在 ezagent_web),iframe 指向 `/chat/acme?embed=1`(�
 如果想验:终端起一个 `cd /tmp && python3 -m http.server 8088`,然后浏览器开
 `http://localhost:8088/widget-test.html`(之前建过)。右下角💬气泡 → 点开 iframe 聊天。
 
-📝 结果 7:
+📝 结果 7: OK
 
 ---
 

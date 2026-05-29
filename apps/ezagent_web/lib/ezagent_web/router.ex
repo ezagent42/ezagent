@@ -278,15 +278,6 @@ defmodule EzagentWeb.Router do
     end
   end
 
-  # Redirect legacy `/admin/customer_sessions` → `/operator`.
-  # Plain controller route (not LV) — placed inside the RequireEntity
-  # plug scope so it shares the same auth gate as the operator LVs.
-  scope "/", EzagentWeb do
-    pipe_through [:browser, EzagentWeb.Plugs.RequireEntity]
-
-    get "/admin/customer_sessions", CustomerSessionsRedirectController, :index
-    get "/admin/customer_sessions/:id", CustomerSessionsRedirectController, :index
-  end
 
   # Liveness probe — plain JSON, no ESR dispatch path involved.
   scope "/", EzagentWeb do
