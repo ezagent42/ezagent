@@ -407,3 +407,39 @@ UI fix during this run (`bd9d71ce`): replaced the Reset `data-confirm` (native
 LiveView two-step confirm** ("Reset to default? · Confirm reset · Cancel") —
 non-blocking + styled; re-verified live. Only the AI *reply* remains PTY-blocked
 (separate task).
+
+### PTY blocker FIXED + corrected diagnosis (2026-05-30, pulled from sub-task)
+
+The "PTY-env-blocked" note above was on the right track but the root cause was
+**env *size***, not PTY/OTP-28. Fix pulled in + committed `200c3317`
+(`fix(pty,python): build_env passes only overrides`):
+- **Root cause:** `Ezagent.Domain.Pty.Server.build_env/1` (and the Python
+  sidecar's) splatted the **entire** inherited `:os.getenv()` into erlexec's
+  `{:env,...}`. erlexec frames each run command to `exec-port` over a `{packet,2}`
+  channel (65535-byte max). A large shell env pushed the `term_to_binary`'d
+  command past 64 KB → BEAM port write `:einval` → node-wide `:exec` manager
+  crash → erlexec shutdown → every later spawn `:no_pty`. "Works on the work
+  machine" = its env is just smaller. Bare `:pty` on OTP 28 / erlexec 2.3.0 is
+  fine. Fix: pass only overrides; child still inherits ambient env via exec-port.
+- **Verified:** `server_env_test.exs` 4/4 (override-only + <8 KB even with a
+  100 KB inherited var). **Live:** with the fix, cc-agent claude processes now
+  **launch** (`os_pid` assigned) carrying the correct `--append-system-prompt`
+  (a small edited cinnox soul → "…reply SENTINEL-ALPHA-42"); pre-fix nothing
+  spawned. This also confirms scope #1's soul-flow live (editor edit → new conv's
+  cc spawn uses the edited soul).
+
+**Two further findings (separate from the env fix, NOT scope #1):**
+1. **Large soul as CLI arg also overflows the same 64 KB `{packet,2}` limit.** The
+   89 KB cinnox *fixture* soul, passed via `--append-system-prompt`, blows the
+   command-size budget → identical `:einval`. So the *default* cinnox soul can't
+   spawn; small/edited souls do. Worse, a *persisted* large-soul agent (e.g.
+   `cc_cs_main` from `setup.exs` with the fixture soul) eager-spawns at boot and
+   crashes the node-wide `:exec` → boot fails. **Follow-up:** pass large souls via
+   a file, not an inline arg. (Filed as a task.)
+2. **cc bridge handshake** times out on this fresh machine (`agent_setup_failed /
+   :timeout`): claude launches but never announces back to the esr-bridge — a
+   cc-onboarding/MCP layer (first-run), separate again from the above. The full
+   live customer→claude→reply round-trip needs this resolved too.
+
+Net: env fix verified (the original blocker); live AI reply now blocked only by
+(1)/(2), both distinct from the env fix and scope #1.
