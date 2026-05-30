@@ -37,6 +37,16 @@ defmodule Ezagent.LifecycleCase do
 
   use ExUnit.CaseTemplate
 
+  @doc """
+  Registered name of the dedicated `DynamicSupervisor` that hosts
+  cold-restart GATE test Kinds, isolating them from the shared
+  `Ezagent.KindSupervisor`. GATE Kinds opt in with
+  `def supervisor, do: Ezagent.LifecycleCase.gate_supervisor()`. See
+  `ensure_gate_supervisor!/0` for the full rationale (P6 determinism).
+  """
+  @gate_supervisor Ezagent.LifecycleCase.GateSupervisor
+  def gate_supervisor, do: @gate_supervisor
+
   using do
     quote do
       use EzagentCore.DataCase, async: false
@@ -44,6 +54,99 @@ defmodule Ezagent.LifecycleCase do
       import Ezagent.LifecycleCase
 
       alias Ezagent.KindRegistry
+
+      # P6 cold-restart determinism (remediation §3 C-D / §1 P6). Ensure
+      # the dedicated gate supervisor is running before any GATE test
+      # spawns under it. Idempotent; started once per BEAM and reused.
+      setup do
+        Ezagent.LifecycleCase.ensure_gate_supervisor!()
+        :ok
+      end
+    end
+  end
+
+  @doc """
+  Idempotently start `Ezagent.LifecycleCase.GateSupervisor`, the
+  dedicated `DynamicSupervisor` for cold-restart GATE test Kinds.
+
+  ## Why a dedicated supervisor (P6 — the residual restart-intensity flake)
+
+  The cold-restart GATE tests (`SandboxColdRestartTest`,
+  `TerminableColdLoadTest`, `PtyColdRestartTest`, `LifecycleTest "THE
+  GATE"`) `Process.exit(pid, :kill)` a `:snapshot` Kind and rely on the
+  OTHER end of the contract: the OTP supervisor AUTO-RESTARTS a new pid
+  that cold-loads from `kind_snapshots`. By default a Kind with no
+  `supervisor/0` spawns under the SHARED `Ezagent.KindSupervisor`
+  (`max_restarts: 3, max_seconds: 5`).
+
+  In the full concurrent umbrella run that shared supervisor is also the
+  host of dozens of OTHER test Kinds. When a wave of those crash inside a
+  5-second window — the inherent residue of `Ecto.Adapters.SQL.Sandbox`
+  owner-exit (a late PubSub `handle_info` snapshot-write after the owning
+  test's connection is reclaimed; the `EzagentCore.DataCase` drain is
+  best-effort and cannot catch a delivery that lands post-drain) — the
+  shared `KindSupervisor` exceeds its restart intensity and **terminates
+  itself**, to be restarted EMPTY by its parent. The GATE's
+  deliberately-killed Kind is collateral: it is never restarted, so
+  `KindRegistry.lookup/1` stays `:error` and the test's `wait_until`
+  flunks. (Diagnosed live: at failure time the test process can still
+  read the DB — shared mode is fine — but `KindSupervisor` is alive with
+  `active = 0` children, i.e. it was bounced and came back empty.)
+
+  This is the SAME P6 test-isolation class as the DB-read flake fixed in
+  `EzagentCore.DataCase.start_owner_stable!/1`, one layer up: there the
+  victim was the restart's first DB read; here it is the restart itself.
+
+  ## The fix
+
+  Host GATE Kinds on a DEDICATED `DynamicSupervisor` that no
+  crash-storming production-shaped Kind shares. A GATE test kills its own
+  Kind at most a couple of times, so a high `max_restarts` here is the
+  honest budget for "deliberate brutal-kills in a tight test loop" — NOT
+  a weakening of production restart-storm detection (the real
+  `Ezagent.KindSupervisor` keeps `max_restarts: 3` unchanged, so a
+  genuine production thrash is still caught). GATE Kinds opt in by
+  declaring `def supervisor, do: Ezagent.LifecycleCase.gate_supervisor()`.
+
+  Started under `EzagentCore.Supervisor`'s lifetime via a plain
+  `DynamicSupervisor.start_link` (named, idempotent) rather than
+  `start_supervised!/1` so it OUTLIVES individual tests — the GATE Kinds
+  it hosts must survive across the kill→restart cycle and across the
+  serial GATE tests, and a per-test teardown would defeat the isolation.
+  """
+  @spec ensure_gate_supervisor!() :: :ok
+  def ensure_gate_supervisor! do
+    case Process.whereis(@gate_supervisor) do
+      pid when is_pid(pid) ->
+        :ok
+
+      nil ->
+        # Start the gate supervisor UNLINKED from the (transient) test
+        # process so it persists for the whole BEAM and survives across
+        # the serial GATE tests + each test's kill→restart cycle. A
+        # short-lived starter Task owns the `start_link`, then we unlink
+        # so the supervisor is parentless (a deliberate, test-only
+        # long-lived singleton). Idempotent under the `whereis` guard +
+        # the `:already_started` race branch.
+        opts = [
+          name: @gate_supervisor,
+          strategy: :one_for_one,
+          # Test-only budget for deliberate brutal-kills in a tight GATE
+          # loop. High enough that the gate's own kill→restart cycles
+          # (plus any sandbox-teardown crash of a gate Kind) never bounce
+          # THIS supervisor; production `KindSupervisor` is untouched.
+          max_restarts: 1_000_000,
+          max_seconds: 1
+        ]
+
+        case DynamicSupervisor.start_link(opts) do
+          {:ok, pid} ->
+            Process.unlink(pid)
+            :ok
+
+          {:error, {:already_started, _pid}} ->
+            :ok
+        end
     end
   end
 

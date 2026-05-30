@@ -44,6 +44,12 @@ defmodule Ezagent.Behavior.PtyColdRestartTest do
 
     @impl Ezagent.Kind
     def persistence, do: {:snapshot, :on_change}
+
+    # P6 cold-restart determinism: isolate THE GATE Kind's kill→restart
+    # from the shared `Ezagent.KindSupervisor`'s restart-intensity
+    # exhaustion — see `Ezagent.LifecycleCase.ensure_gate_supervisor!/0`.
+    @impl Ezagent.Kind
+    def supervisor, do: Ezagent.LifecycleCase.gate_supervisor()
   end
 
   setup_all do
