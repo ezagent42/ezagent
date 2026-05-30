@@ -76,9 +76,94 @@ defmodule EzagentCore.DataCase do
   radius to exactly the DBConnection class.
   """
   def setup_sandbox(tags) do
-    pid = Ecto.Adapters.SQL.Sandbox.start_owner!(EzagentCore.Repo, shared: not tags[:async])
+    pid = start_owner_stable!(not tags[:async])
     on_exit(fn -> Ecto.Adapters.SQL.Sandbox.stop_owner(pid) end)
     on_exit(&drain_live_kinds/0)
+  end
+
+  # P6 cold-restart determinism (remediation §3 C-D). A drop-in for
+  # `Ecto.Adapters.SQL.Sandbox.start_owner!/2` whose SHARED-mode handshake
+  # RETRIES past a lingering prior owner instead of crashing on it.
+  #
+  # ## Why the stock `start_owner!(shared: true)` flakes
+  #
+  # `start_owner!(shared: true)` spawns an `Agent` owner that runs
+  # `:ok = mode(Repo, {:shared, agent})`. `DBConnection.Ownership.Manager`
+  # answers `:already_shared` whenever a PRIOR non-async test's
+  # shared-owner `Agent` is *still alive* at that instant — its
+  # `stop_owner` `on_exit` may not have completed, or a leftover Kind
+  # keeps it referenced. On `:already_shared` the `:ok =` match CRASHES
+  # the new owner `Agent`, so THIS test has no live shared owner of its
+  # own and free-rides on the lingering prior owner's connection. When
+  # that prior owner finally exits, the Manager's `:DOWN` handler reverts
+  # the pool to `:manual`.
+  #
+  # That revert is invisible to ordinary tests (they finish their queries
+  # before it lands), but it is fatal to the cold-restart GATE tests
+  # (`SandboxColdRestartTest`, `TerminableColdLoadTest`,
+  # `PtyColdRestartTest`, `LifecycleTest "THE GATE"`): they
+  # `Process.exit(pid, :kill)` a `:snapshot` Kind, OTP auto-restarts a
+  # NEW pid that reads `kind_snapshots` in `Kind.Server.init/1` BEFORE it
+  # registers in `KindRegistry`. That pid is the supervisor's child, so
+  # `DBConnection`'s `$callers`-chain owner lookup finds only the
+  # supervisor (never allowed) — the test cannot `Sandbox.allow/3` it
+  # ahead of the first read. Its ONLY route to a connection is shared
+  # mode, so a reverted pool raises `DBConnection.OwnershipError`, the
+  # restart never reaches `:ready`, and `wait_until` flunks. Passes in
+  # isolation; flakes ~half the seeds in the full concurrent umbrella run.
+  #
+  # ## The fix
+  #
+  # `:already_shared` is TRANSIENT: the Manager reverts to `:manual` the
+  # moment the prior owner's `:DOWN` lands, at which point a re-attempt
+  # wins. So we retry the `mode/2` call on a short tick until it succeeds
+  # (or a generous ceiling, after which we flunk LOUDLY rather than
+  # silently run in a reverted pool). The owner then OWNS shared mode for
+  # the whole test — and since the cold-restart test process blocks in
+  # `wait_until` across the kill→restart→ready cycle, the share can no
+  # longer revert mid-restart. This removes the revert *cause* (an
+  # unstable, foreign shared owner). It is NOT a masked sleep or a
+  # widened `wait_until`, and it never stamps the pool to `:manual`
+  # globally (which would check in connections in-use by concurrent
+  # leftover Kinds). The async path is unchanged: `shared: false` uses
+  # per-connection `allow`, has no shared mode, and never flaked.
+  @share_attempts 500
+
+  defp start_owner_stable!(false = _shared) do
+    Ecto.Adapters.SQL.Sandbox.start_owner!(EzagentCore.Repo, shared: false)
+  end
+
+  defp start_owner_stable!(true = _shared) do
+    parent = self()
+
+    {:ok, owner} =
+      Agent.start(fn ->
+        :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
+        :ok = share_with_retry(self(), @share_attempts)
+        # Allow the test process itself onto the stable shared connection
+        # so the test body is robust even in the instant before shared
+        # mode is observed everywhere.
+        _ = Ecto.Adapters.SQL.Sandbox.allow(EzagentCore.Repo, self(), parent)
+        :ok
+      end)
+
+    owner
+  end
+
+  defp share_with_retry(_owner, 0) do
+    raise "EzagentCore.DataCase: could not acquire stable {:shared, _} sandbox mode — " <>
+            "a prior shared owner stayed alive past the retry budget (cold-restart reads would flake)"
+  end
+
+  defp share_with_retry(owner, attempts) when attempts > 0 do
+    case Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, owner}) do
+      :ok ->
+        :ok
+
+      :already_shared ->
+        Process.sleep(5)
+        share_with_retry(owner, attempts - 1)
+    end
   end
 
   # Bounded number of drain passes. One pass flushes each Kind's mailbox
