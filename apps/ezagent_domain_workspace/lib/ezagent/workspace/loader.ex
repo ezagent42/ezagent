@@ -35,7 +35,7 @@ defmodule Ezagent.Workspace.Loader do
 
   require Logger
 
-  alias Ezagent.{Invocation, SpawnRegistry, TemplateRegistry, Workspace}
+  alias Ezagent.{Cmd, Router, SpawnRegistry, TemplateRegistry, Workspace}
 
   @doc """
   Invoke a single Template Class's `instantiate/3` by name, against
@@ -75,8 +75,9 @@ defmodule Ezagent.Workspace.Loader do
 
     with %{session_templates: tmpls} <- Workspace.Store.get_by_name(name),
          {:ok, tmpl_data} <- fetch_template(tmpls, tmpl_name),
-         class_name when is_binary(class_name) <- extract_class_name(tmpl_data) ||
-                                                  {:error, :missing_class_field},
+         class_name when is_binary(class_name) <-
+           extract_class_name(tmpl_data) ||
+             {:error, :missing_class_field},
          {:ok, class_module} <- TemplateRegistry.lookup(class_name) do
       do_invoke(class_module, tmpl_name, tmpl_data, workspace_uri)
     else
@@ -320,19 +321,22 @@ defmodule Ezagent.Workspace.Loader do
   defp instantiate_via_dispatch(workspace_uri) do
     target = Ezagent.URI.new!("#{URI.to_string(workspace_uri)}?action=workspace.instantiate")
 
-    case Invocation.dispatch(%Invocation{
+    case Router.dispatch(%Cmd{
            target: target,
-           mode: :call,
+           action: :instantiate,
            args: %{},
            # SPEC caps-cleanup-v1 §4.4 — Workspace Loader re-spawn at
            # boot runs under `system://workspace-loader` (closed Catalog).
            ctx: %{
+             mode: :call,
              caller: Ezagent.SystemPrincipal.uri("workspace-loader"),
              caps: Ezagent.SystemPrincipal.caps("system://workspace-loader"),
              reply: {:caller_inbox, self()}
            }
          }) do
-      {:ok, %{children: children}} -> children
+      {:ok, %{children: children}} ->
+        children
+
       other ->
         Logger.warning(
           "Workspace.Loader: instantiate dispatch returned unexpected: #{inspect(other)}"
@@ -348,9 +352,7 @@ defmodule Ezagent.Workspace.Loader do
         {uri, {:ok, pid}}
 
       {:error, reason} = err ->
-        Logger.warning(
-          "Workspace.Loader: spawn #{URI.to_string(uri)} failed: #{inspect(reason)}"
-        )
+        Logger.warning("Workspace.Loader: spawn #{URI.to_string(uri)} failed: #{inspect(reason)}")
 
         {uri, err}
     end

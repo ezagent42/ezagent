@@ -13,7 +13,7 @@ defmodule Ezagent.Identity do
   users CAN read their own caps via dispatch without bypassing auth.
   """
 
-  alias Ezagent.{Invocation, KindRegistry}
+  alias Ezagent.{Cmd, KindRegistry, Router}
 
   @doc """
   List capabilities held by `principal_uri`. Returns `MapSet.t(Capability.t())`.
@@ -44,11 +44,12 @@ defmodule Ezagent.Identity do
 
         target = Ezagent.URI.new!("#{URI.to_string(user_uri)}?action=identity.list_caps")
 
-        case Invocation.dispatch(%Invocation{
+        case Router.dispatch(%Cmd{
                target: target,
-               mode: :call,
+               action: :list_caps,
                args: %{},
                ctx: %{
+                 mode: :call,
                  caller: user_uri,
                  caps: bootstrap_self_cap(user_uri),
                  reply: {:caller_inbox, self()}
@@ -230,18 +231,25 @@ defmodule Ezagent.Identity do
     # owner-delegated grants must call lower-level APIs.
     granter_caps = read_granter_caps(granter)
 
-    inv = %Ezagent.Invocation{
+    # `:call` mode returns the handler result directly from the Kind's
+    # GenServer.call — the `reply` target is only consulted on the
+    # `:cast` path (Kind.Server.handle_cast). The legacy `reply: :sync`
+    # was inert for a `:call` (it never reached `Invocation.reply/2`);
+    # `:ignore` is the canonical call-mode reply and avoids relying on a
+    # reply atom Router/Invocation don't model.
+    cmd = %Cmd{
       target: target,
-      mode: :call,
+      action: :grant_cap,
       args: %{cap: cap},
       ctx: %{
+        mode: :call,
         caller: granter,
         caps: granter_caps,
-        reply: :sync
+        reply: :ignore
       }
     }
 
-    case Ezagent.Invocation.dispatch(inv) do
+    case Router.dispatch(cmd) do
       {:ok, _} -> :ok
       :ok -> :ok
       err -> err
