@@ -60,12 +60,12 @@ defmodule Ezagent.Behavior.EchoMigrationParityTest do
     test "produces a chat.send dispatch with text='echo: <input>'" do
       input_msg =
         Ezagent.Message.new(
-          URI.parse("entity://user/ws/alice"),
+          Ezagent.URI.new!("entity://user/ws/alice"),
           %{text: "ping"}
         )
 
-      session_uri = URI.parse("session://default/ws/main")
-      self_uri = URI.parse("entity://agent/ws/echo_test")
+      session_uri = Ezagent.URI.new!("session://default/ws/main")
+      self_uri = Ezagent.URI.new!("entity://agent/ws/echo_test")
 
       ctx = %{
         read: fn _k, d -> d end,
@@ -82,12 +82,12 @@ defmodule Ezagent.Behavior.EchoMigrationParityTest do
 
     test "increments count + stashes last_msg on :receive" do
       input_msg =
-        Ezagent.Message.new(URI.parse("entity://user/ws/alice"), %{text: "pong"})
+        Ezagent.Message.new(Ezagent.URI.new!("entity://user/ws/alice"), %{text: "pong"})
 
       ctx = %{
         read: fn :count, _ -> 3; _, d -> d end,
-        self_uri: URI.parse("entity://agent/ws/echo_test"),
-        caller: URI.parse("session://default/ws/main")
+        self_uri: Ezagent.URI.new!("entity://agent/ws/echo_test"),
+        caller: Ezagent.URI.new!("session://default/ws/main")
       }
 
       assert {:ok, _, effects} = Echo.handle_receive(%{message: input_msg}, ctx)
@@ -98,14 +98,14 @@ defmodule Ezagent.Behavior.EchoMigrationParityTest do
     test "stress meta gates the reply dispatch (hop >= turn_cap → no dispatch)" do
       msg =
         Ezagent.Message.new(
-          URI.parse("entity://user/ws/alice"),
+          Ezagent.URI.new!("entity://user/ws/alice"),
           %{text: "x", meta: %{"hop" => 2, "turn_cap" => 2}}
         )
 
       ctx = %{
         read: fn _k, d -> d end,
-        self_uri: URI.parse("entity://agent/ws/echo_test"),
-        caller: URI.parse("session://default/ws/main")
+        self_uri: Ezagent.URI.new!("entity://agent/ws/echo_test"),
+        caller: Ezagent.URI.new!("session://default/ws/main")
       }
 
       assert {:ok, _, effects} = Echo.handle_receive(%{message: msg}, ctx)

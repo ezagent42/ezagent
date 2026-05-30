@@ -66,7 +66,7 @@ defmodule Ezagent.Behavior.CurlAgentMigrationParityTest do
         # Legacy field that no longer exists on the slice; must be silently
         # ignored (the handler only emits :set effects for the 5 known
         # config fields).
-        owner_uri: URI.parse("entity://user/team-alpha/attacker")
+        owner_uri: Ezagent.URI.new!("entity://user/team-alpha/attacker")
       }
 
       assert {:ok, %{ok: true}, effects} = CurlAgent.handle_configure(args, ctx)
@@ -77,13 +77,13 @@ defmodule Ezagent.Behavior.CurlAgentMigrationParityTest do
 
   describe ":receive parity" do
     test "self-message returns identity tuple with no effects (loop guard)" do
-      agent_uri = URI.parse("entity://agent/team-alpha/curl_self")
+      agent_uri = Ezagent.URI.new!("entity://agent/team-alpha/curl_self")
       msg = Ezagent.Message.new(agent_uri, %{text: "self-loop"})
 
       ctx = %{
         read: fn _k, d -> d end,
         self_uri: agent_uri,
-        caller: URI.parse("session://default/team-alpha/main"),
+        caller: Ezagent.URI.new!("session://default/team-alpha/main"),
         siblings: %{api_keys: %{keys: %{}}}
       }
 
@@ -92,12 +92,12 @@ defmodule Ezagent.Behavior.CurlAgentMigrationParityTest do
     end
 
     test "missing api_key emits operator-help reply dispatch + sets last_error" do
-      agent_uri = URI.parse("entity://agent/team-alpha/curl_x")
-      session_uri = URI.parse("session://default/team-alpha/main")
+      agent_uri = Ezagent.URI.new!("entity://agent/team-alpha/curl_x")
+      session_uri = Ezagent.URI.new!("session://default/team-alpha/main")
 
       msg =
         Ezagent.Message.new(
-          URI.parse("entity://user/team-alpha/alice"),
+          Ezagent.URI.new!("entity://user/team-alpha/alice"),
           %{text: "hi"}
         )
 

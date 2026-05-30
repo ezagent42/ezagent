@@ -104,13 +104,13 @@ defmodule Ezagent.Behavior.EchoTest do
   describe "handle_receive/2 — chat fan-out reply" do
     test "ignores message when caller is absent (no dispatch effect emitted)" do
       msg = Ezagent.Message.new(
-        URI.parse("entity://agent/team-alpha/echo_default"),
+        Ezagent.URI.new!("entity://agent/team-alpha/echo_default"),
         %{text: "hi"}
       )
 
       ctx = %{
         read: fn _k, d -> d end,
-        self_uri: URI.parse("entity://agent/team-alpha/echo_default")
+        self_uri: Ezagent.URI.new!("entity://agent/team-alpha/echo_default")
         # no :caller in ctx → no session URI → no dispatch effect
       }
 
@@ -123,12 +123,12 @@ defmodule Ezagent.Behavior.EchoTest do
 
     test "emits :dispatch effect targeting the session's chat.send when caller is a session URI" do
       msg = Ezagent.Message.new(
-        URI.parse("entity://user/team-alpha/alice"),
+        Ezagent.URI.new!("entity://user/team-alpha/alice"),
         %{text: "ping"}
       )
 
-      session_uri = URI.parse("session://default/team-alpha/main")
-      agent_uri = URI.parse("entity://agent/team-alpha/echo_default")
+      session_uri = Ezagent.URI.new!("session://default/team-alpha/main")
+      agent_uri = Ezagent.URI.new!("entity://agent/team-alpha/echo_default")
 
       ctx = %{
         read: fn _k, d -> d end,
@@ -150,14 +150,14 @@ defmodule Ezagent.Behavior.EchoTest do
 
     test "suppresses reply when stress turn_cap == 0 (sink mode)" do
       msg = Ezagent.Message.new(
-        URI.parse("entity://user/team-alpha/alice"),
+        Ezagent.URI.new!("entity://user/team-alpha/alice"),
         %{text: "ping", meta: %{"hop" => 0, "turn_cap" => 0}}
       )
 
       ctx = %{
         read: fn _k, d -> d end,
-        self_uri: URI.parse("entity://agent/team-alpha/echo_default"),
-        caller: URI.parse("session://default/team-alpha/main")
+        self_uri: Ezagent.URI.new!("entity://agent/team-alpha/echo_default"),
+        caller: Ezagent.URI.new!("session://default/team-alpha/main")
       }
 
       assert {:ok, _, effects} = Echo.handle_receive(%{message: msg}, ctx)
@@ -168,14 +168,14 @@ defmodule Ezagent.Behavior.EchoTest do
 
     test "still increments count via :set effects on receive" do
       msg = Ezagent.Message.new(
-        URI.parse("entity://user/team-alpha/alice"),
+        Ezagent.URI.new!("entity://user/team-alpha/alice"),
         %{text: "hi"}
       )
 
       ctx = %{
         read: fn :count, _ -> 7; _, d -> d end,
-        self_uri: URI.parse("entity://agent/team-alpha/echo_default"),
-        caller: URI.parse("session://default/team-alpha/main")
+        self_uri: Ezagent.URI.new!("entity://agent/team-alpha/echo_default"),
+        caller: Ezagent.URI.new!("session://default/team-alpha/main")
       }
 
       assert {:ok, _, effects} = Echo.handle_receive(%{message: msg}, ctx)
@@ -187,7 +187,7 @@ defmodule Ezagent.Behavior.EchoTest do
   describe "data_owner/1" do
     test "returns :no_owner (admin-only Behavior)" do
       assert Echo.data_owner(:any) == :no_owner
-      assert Echo.data_owner(URI.parse("entity://agent/x/y")) == :no_owner
+      assert Echo.data_owner(Ezagent.URI.new!("entity://agent/x/y")) == :no_owner
     end
   end
 end

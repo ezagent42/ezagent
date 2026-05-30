@@ -160,13 +160,13 @@ defmodule EzagentPluginCurlAgent.E2E.Scenario07CurlAgentRoundtripTest do
 
   describe "handle_receive/2 — loop guard" do
     test "self-message returns identity result tuple with NO effects" do
-      agent_uri = URI.parse("entity://agent/team-alpha/curl_self")
+      agent_uri = Ezagent.URI.new!("entity://agent/team-alpha/curl_self")
       msg = Ezagent.Message.new(agent_uri, %{text: "self-loop"})
 
       ctx = %{
         read: fn _k, d -> d end,
         self_uri: agent_uri,
-        caller: URI.parse("session://default/team-alpha/main"),
+        caller: Ezagent.URI.new!("session://default/team-alpha/main"),
         siblings: %{api_keys: %{keys: %{}}}
       }
 
@@ -177,9 +177,9 @@ defmodule EzagentPluginCurlAgent.E2E.Scenario07CurlAgentRoundtripTest do
 
   describe "handle_receive/2 — missing API key path" do
     test "emits :set last_error + dispatches operator-help reply" do
-      agent_uri = URI.parse("entity://agent/team-alpha/curl_x")
-      session_uri = URI.parse("session://default/team-alpha/main")
-      sender_uri = URI.parse("entity://user/team-alpha/alice")
+      agent_uri = Ezagent.URI.new!("entity://agent/team-alpha/curl_x")
+      session_uri = Ezagent.URI.new!("session://default/team-alpha/main")
+      sender_uri = Ezagent.URI.new!("entity://user/team-alpha/alice")
       msg = Ezagent.Message.new(sender_uri, %{text: "hi"})
 
       ctx = %{
@@ -231,7 +231,7 @@ defmodule EzagentPluginCurlAgent.E2E.Scenario07CurlAgentRoundtripTest do
     end
 
     test "returns :no_owner for a non-agent URI" do
-      assert CurlAgent.data_owner(URI.parse("session://default/team-alpha/x")) == :no_owner
+      assert CurlAgent.data_owner(Ezagent.URI.new!("session://default/team-alpha/x")) == :no_owner
     end
 
     test "returns :no_owner when the api_keys slice has no creator_uri" do
@@ -239,7 +239,7 @@ defmodule EzagentPluginCurlAgent.E2E.Scenario07CurlAgentRoundtripTest do
       # slice; a freshly-spawned URI with no live Kind returns
       # :no_owner per the post-#326 caps-data-ownership contract.
       agent_uri =
-        URI.parse(
+        Ezagent.URI.new!(
           "entity://agent/team-alpha/curl_no_creator_#{System.unique_integer([:positive])}"
         )
 
