@@ -136,6 +136,19 @@ defmodule Mix.Tasks.Compile.EzagentPluginCheckTest do
     test "FAILS for a fixture where a single module implements BOTH behaviours (test 4 / Grill-5 e)" do
       compile_fixture_module("ezagent_plugin_em_dual", "ezagent_plugin_em_dual.ex")
 
+      # The `em_dual` fixture deliberately implements BOTH @behaviour
+      # Adapter AND @behaviour Binding to exercise this COMPILE-time gate.
+      # Once `Code.compile_file/1` loads it, it lingers in the BEAM's
+      # module table and `:code.all_loaded/0` reflects it — which makes
+      # `BindingAdapterGrill5Test`'s RUNTIME (e) sweep flag it as a real
+      # production violation under cross-app concurrency. Purge it once
+      # this test (the only one that needs it loaded) finishes.
+      on_exit(fn ->
+        :code.purge(EzagentPluginEmDual.DualModule)
+        :code.delete(EzagentPluginEmDual.DualModule)
+        :code.purge(EzagentPluginEmDual.DualModule)
+      end)
+
       result =
         in_fixture_project(:ezagent_plugin_em_dual, "ezagent_plugin_em_dual", fn ->
           EzagentPluginCheck.run([])

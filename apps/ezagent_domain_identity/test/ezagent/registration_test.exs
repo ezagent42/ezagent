@@ -48,8 +48,12 @@ defmodule Ezagent.RegistrationTest do
         email: "known@good.com"
       })
 
+    # Compare via the canonical constructor `Ezagent.URI.new!/1` — the
+    # same one `principal_for_email/1` uses. Stdlib `URI.parse/1` would
+    # populate the deprecated `:authority` field that `Ezagent.URI`
+    # deliberately omits, producing a spurious struct mismatch.
     assert Registration.principal_for_email("known@good.com") ==
-             {:ok, URI.parse("entity://user/#{@test_workspace}/known")}
+             {:ok, Ezagent.URI.new!("entity://user/#{@test_workspace}/known")}
 
     assert Registration.principal_for_email("nobody@good.com") == :none
   end
