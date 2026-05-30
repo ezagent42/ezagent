@@ -228,17 +228,7 @@ defmodule Ezagent.URI do
   Used by dispatch to find the instance pid in KindRegistry.
   """
   @spec instance(URI.t()) :: URI.t()
-  # Every clause clears `:authority` as well as query/fragment so the
-  # instance form is the canonical RFC-3986 `authority: nil` shape that
-  # `new!/1` produces and that every Ezagent `==` comparison relies on.
-  # An instance URI derived from a `URI.parse/1`-built target (which
-  # populates the deprecated `:authority`) would otherwise NOT match a
-  # `new!/1`-built URI of the same logical identity — the bug that made
-  # the `{:chat_message, session_uri, _}` broadcast (session_uri =
-  # ctx[:self_uri], authority-bearing) fail to match a pinned
-  # `URI.new!(...)` in F1DirectInvokeTest.
-  def instance(%URI{path: nil} = uri),
-    do: %URI{uri | authority: nil, query: nil, fragment: nil}
+  def instance(%URI{path: nil} = uri), do: %URI{uri | query: nil, fragment: nil}
 
   def instance(%URI{scheme: scheme, path: "/" <> rest} = uri)
       when scheme in @unified_per_tenant_schemes do
@@ -252,19 +242,13 @@ defmodule Ezagent.URI do
     # rather than silently masking it).
     case String.split(rest, "/", parts: 3) do
       [_workspace, _name] ->
-        %URI{uri | authority: nil, query: nil, fragment: nil}
+        %URI{uri | query: nil, fragment: nil}
 
       [workspace, name, _subresource] ->
-        %URI{
-          uri
-          | authority: nil,
-            path: "/" <> workspace <> "/" <> name,
-            query: nil,
-            fragment: nil
-        }
+        %URI{uri | path: "/" <> workspace <> "/" <> name, query: nil, fragment: nil}
 
       _ ->
-        %URI{uri | authority: nil, query: nil, fragment: nil}
+        %URI{uri | query: nil, fragment: nil}
     end
   end
 
@@ -274,17 +258,17 @@ defmodule Ezagent.URI do
     # `system://bootstrap/default`).
     case String.split(rest, "/", parts: 2) do
       [_name_only] ->
-        %URI{uri | authority: nil, query: nil, fragment: nil}
+        %URI{uri | query: nil, fragment: nil}
 
       [name, _subresource] ->
-        %URI{uri | authority: nil, path: "/" <> name, query: nil, fragment: nil}
+        %URI{uri | path: "/" <> name, query: nil, fragment: nil}
     end
   end
 
   def instance(%URI{path: _path} = uri) do
     # 1-segment-authority schemes (workspace://) — entire path is
     # sub-resource. Drop it to recover the bare instance form.
-    %URI{uri | authority: nil, path: nil, query: nil, fragment: nil}
+    %URI{uri | path: nil, query: nil, fragment: nil}
   end
 
   @doc """

@@ -496,12 +496,24 @@ defmodule Ezagent.Behavior.Chat do
 
         # In-session broadcast for LV chat stream is a :notify effect
         # (the executor calls the PubSub broadcast for us).
+        #
+        # `session_uri` here is `ctx[:self_uri]`, which — when the
+        # inbound target was built via stdlib `URI.parse/1` — carries the
+        # deprecated `:authority` field. The broadcast payload is the
+        # subscriber-facing value (LV chat stream + tests pattern-match
+        # on `{:chat_message, session_uri, _}`), and a consumer comparing
+        # it to a canonical `Ezagent.URI.new!(...)` URI (authority: nil)
+        # would not `==`-match. Canonicalize the broadcast URI so the
+        # payload always carries the RFC-3986 `authority: nil` shape.
+        canonical_session_uri = Ezagent.URI.new!(URI.to_string(session_uri))
+
         {:ok, %{stored: true},
          [
            {:set, :last_message_id, msg.id},
            {:set, :last_message, msg},
            {:set, :send_cursor, prev_cursor + 1},
-           {:notify, session_events_topic(session_uri), {:chat_message, session_uri, msg}}
+           {:notify, session_events_topic(session_uri),
+            {:chat_message, canonical_session_uri, msg}}
          ]}
 
       {:error, reason} ->
