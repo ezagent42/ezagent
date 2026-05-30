@@ -94,7 +94,14 @@ defmodule Ezagent.Identity do
 
     MapSet.new([
       %Ezagent.Capability{
-        kind: :user,
+        # Derive the kind axis from the URI — Identity lives on BOTH the
+        # User and the Agent Kind (Allen 2026-05-26). `identity.list_caps`'s
+        # needed cap has its kind substituted from the target Kind's
+        # type_name (`:user` / `:agent`), so a hardcoded `kind: :user`
+        # self-cap never authorizes an Agent reading its OWN caps — the
+        # exact regression that made `list_caps_for/1` return empty for
+        # orchestrator agents (OrchestratorMcpBridge unauthorized).
+        kind: self_cap_kind(user_uri),
         behavior: Ezagent.Behavior.Identity,
         # SPEC 2026-05-27 capability-action-axis — self-cap is for
         # `:list_caps` (Identity.actions/0 == [:list_caps, :has_cap?,
@@ -107,6 +114,12 @@ defmodule Ezagent.Identity do
       }
     ])
   end
+
+  # Identity is hosted on both the User and Agent Kind; the self-cap's
+  # kind axis must match the target Kind's `type_name/0` so it satisfies
+  # the runtime-substituted needed cap.
+  defp self_cap_kind(%URI{scheme: "entity", host: "agent"}), do: :agent
+  defp self_cap_kind(_), do: :user
 
   @doc """
   Phase 8c PR-F (Allen 2026-05-20) — does `entity_uri` belong to the

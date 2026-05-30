@@ -83,6 +83,7 @@ defmodule Ezagent.SystemPrincipal.Catalog do
   alias Ezagent.Behavior.Chat
   alias Ezagent.Behavior.ExternalMirror
   alias Ezagent.Behavior.ExternalMirrorWorker
+  alias Ezagent.Behavior.Identity
   alias Ezagent.Behavior.IdentityAdmin
   # 2026-05-26 — Publisher.SessionImpl lives in `ezagent_domain_chat`.
   # Like the other Behavior aliases in this block, the module is
@@ -215,7 +216,16 @@ defmodule Ezagent.SystemPrincipal.Catalog do
        [
          # `session.*` → Chat behavior on Session (orchestrator tools
          # write into the session's chat slice).
-         Capability.cap(:session, Chat, :any)
+         Capability.cap(:session, Chat, :any),
+         # `agent.identity.list_caps` — the MCP McpServer loads the
+         # orchestrator AGENT's OWN four delegated caps from its
+         # `:identity` slice under this principal
+         # (`McpServer.load_orchestrator_caps/1` dispatches
+         # `identity.list_caps` against the agent URI). Identity is hosted
+         # on the Agent Kind, so the principal needs an agent-scoped
+         # list_caps cap; without it the cap load returns empty and every
+         # orchestrator tool runs cap-less → unauthorized.
+         Capability.cap(:agent, Identity, :list_caps)
        ]},
       {"system://session-internal",
        [
