@@ -25,8 +25,8 @@ defmodule Mix.Tasks.Ezagent.Workspace.CleanupCrossPrefixMembersTest do
   describe "run/1 dry-run (default)" do
     test "reports cross-prefix violator without stripping" do
       workspace_name = "task55-dry-#{System.unique_integer([:positive])}"
-      violator = URI.parse("entity://user/system/linyilun")
-      legit = URI.parse("entity://user/#{workspace_name}/alice")
+      violator = Ezagent.URI.new!("entity://user/system/linyilun")
+      legit = Ezagent.URI.new!("entity://user/#{workspace_name}/alice")
 
       {:ok, _} = Store.create(workspace_name, %{members: [violator, legit]})
 
@@ -47,7 +47,7 @@ defmodule Mix.Tasks.Ezagent.Workspace.CleanupCrossPrefixMembersTest do
 
     test "explicit --dry-run flag behaves same as default" do
       workspace_name = "task55-explicit-dry-#{System.unique_integer([:positive])}"
-      violator = URI.parse("entity://user/system/linyilun")
+      violator = Ezagent.URI.new!("entity://user/system/linyilun")
 
       {:ok, _} = Store.create(workspace_name, %{members: [violator]})
 
@@ -64,7 +64,7 @@ defmodule Mix.Tasks.Ezagent.Workspace.CleanupCrossPrefixMembersTest do
 
     test "clean workspace prints check mark + summary line" do
       workspace_name = "task55-clean-#{System.unique_integer([:positive])}"
-      legit = URI.parse("entity://user/#{workspace_name}/alice")
+      legit = Ezagent.URI.new!("entity://user/#{workspace_name}/alice")
 
       {:ok, _} = Store.create(workspace_name, %{members: [legit]})
 
@@ -87,8 +87,8 @@ defmodule Mix.Tasks.Ezagent.Workspace.CleanupCrossPrefixMembersTest do
 
     test "strips cross-prefix violator from DB via dispatch + slice atomic update" do
       workspace_name = "task55-apply-#{System.unique_integer([:positive])}"
-      violator = URI.parse("entity://user/system/linyilun")
-      legit = URI.parse("entity://user/#{workspace_name}/alice")
+      violator = Ezagent.URI.new!("entity://user/system/linyilun")
+      legit = Ezagent.URI.new!("entity://user/#{workspace_name}/alice")
 
       {:ok, _pid} = Ezagent.Workspace.create(workspace_name, %{members: [violator, legit]})
 
@@ -129,10 +129,10 @@ defmodule Mix.Tasks.Ezagent.Workspace.CleanupCrossPrefixMembersTest do
 
     test "strips multiple violators + keeps multiple legits" do
       workspace_name = "task55-mixed-#{System.unique_integer([:positive])}"
-      violator_a = URI.parse("entity://user/system/v_a")
-      violator_b = URI.parse("entity://agent/other-ws/cc_v_b")
-      legit_a = URI.parse("entity://user/#{workspace_name}/legit_a")
-      legit_b = URI.parse("entity://agent/#{workspace_name}/cc_legit_b")
+      violator_a = Ezagent.URI.new!("entity://user/system/v_a")
+      violator_b = Ezagent.URI.new!("entity://agent/other-ws/cc_v_b")
+      legit_a = Ezagent.URI.new!("entity://user/#{workspace_name}/legit_a")
+      legit_b = Ezagent.URI.new!("entity://agent/#{workspace_name}/cc_legit_b")
 
       {:ok, _pid} =
         Ezagent.Workspace.create(workspace_name, %{
