@@ -292,8 +292,10 @@ defmodule Ezagent.Kind do
   """
   @spec spawn(module(), map()) :: DynamicSupervisor.on_start_child()
   def spawn(kind_module, params) when is_atom(kind_module) and is_map(params) do
+    strategy = spawn_strategy(kind_module)
+
     result =
-      case spawn_strategy(kind_module) do
+      case strategy do
         :standard ->
           supervisor = resolve_supervisor(kind_module)
           DynamicSupervisor.start_child(supervisor, {Ezagent.Kind.Server, {kind_module, params}})
@@ -322,7 +324,26 @@ defmodule Ezagent.Kind do
     # a genuinely slow/looping `activate` degrades to the prior behaviour
     # (logged; first dispatch may still see `:not_ready`) rather than failing
     # the spawn.
-    await_ready_after_spawn(result, params)
+    #
+    # `:standard`-strategy ONLY (remediation SPEC 2026-05-30, second pass):
+    # `{:custom, …}` Kinds (today: ExternalMirrorWorker) own their OWN
+    # readiness sequencing inside a domain supervision tree, and — critically
+    # — their `activate` does a synchronous `:call` BACK to the Kind that
+    # spawned them (the Worker subscribes to its Session Publisher). When the
+    # spawning Kind runs `Kind.spawn(Worker)` from INSIDE its own
+    # `handle_call` (the canonical `external_mirror.bind` flow), awaiting the
+    # Worker's `:ready` here is a re-entrant DEADLOCK: spawn-await blocks the
+    # Session while the Worker's `activate` subscribe `:call` blocks on that
+    # same Session. The custom-spawn contract is "spawn returns immediately;
+    # the Kind self-sequences its own post-spawn readiness/subscribe" — so we
+    # do NOT await it. No caller synchronously dispatches to a freshly-spawned
+    # custom Kind (the Worker is reached only via Publisher fan-out, which it
+    # subscribes to itself), so the readiness window C-A closes does not apply.
+    case strategy do
+      :standard -> await_ready_after_spawn(result, params)
+      _ -> :ok
+    end
+
     result
   end
 
@@ -361,8 +382,20 @@ defmodule Ezagent.Kind do
   # Inlined to keep `spawn/2` flat. Defaults to `:standard` when the
   # Kind module hasn't exported `spawn_strategy/0` — backward-compat
   # with every pre-PR-EM-2 Kind.
+  #
+  # `Code.ensure_loaded?/1` BEFORE `function_exported?/3` (remediation SPEC
+  # 2026-05-30): `function_exported?/3` returns `false` for a not-yet-loaded
+  # module even when the callback IS defined. In a cold VM (or a test where
+  # the Entity module hasn't been touched yet) the ExternalMirrorWorker
+  # Entity's `{:custom, WorkerSpawn, :spawn_kind_server}` strategy was
+  # silently missed → the Worker spawned via the `:standard` path under the
+  # default KindSupervisor instead of the two-tier
+  # RootSupervisor→PerBindingSupervisor, so `WorkerRegistry.lookup/1`
+  # returned `:error` (the PerBindingSupervisor was never registered). The
+  # ensure-loaded makes strategy resolution deterministic regardless of
+  # module-load timing.
   defp spawn_strategy(kind_module) do
-    if function_exported?(kind_module, :spawn_strategy, 0) do
+    if Code.ensure_loaded?(kind_module) and function_exported?(kind_module, :spawn_strategy, 0) do
       kind_module.spawn_strategy()
     else
       :standard
