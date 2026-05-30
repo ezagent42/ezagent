@@ -110,7 +110,14 @@ defmodule EzagentCli.Dispatch do
     end
   end
 
-  defp build_target_uri(type_name, instance, behavior_module, action, %URI{} = caller_uri, options)
+  defp build_target_uri(
+         type_name,
+         instance,
+         behavior_module,
+         action,
+         %URI{} = caller_uri,
+         options
+       )
        when is_map(options) do
     behavior_seg = behavior_module.state_slice() |> to_string()
     action_qs = "?action=#{behavior_seg}.#{to_string(action)}"
@@ -276,17 +283,17 @@ defmodule EzagentCli.Dispatch do
   end
 
   defp lookup_identity_caps(uri) do
-    case KindRegistry.lookup(uri) do
-      {:ok, pid} ->
-        try do
-          %{state: %{identity: %{caps: caps}}} = :sys.get_state(pid, 1_000)
-          caps
-        catch
-          _, _ -> MapSet.new()
-        end
-
-      :error ->
-        MapSet.new()
+    # Lifecycle migration (PR #485 — Identity → use Ezagent.Lifecycle):
+    # the `:identity` slice is now the two-container shape
+    # `%{state: %{caps}, transients}`. Read through the canonical
+    # `Ezagent.Kind.get_slice/2` chokepoint, which normalizes to the
+    # flat `:state` view (T3); a raw `:sys.get_state` match on
+    # `%{state: %{identity: %{caps: _}}}` would silently miss the
+    # nested `:state` and return empty caps for `--as <uri>`.
+    case Ezagent.Kind.get_slice(uri, :identity) do
+      {:ok, %{caps: caps}} when is_struct(caps, MapSet) -> caps
+      {:ok, %{caps: caps}} when is_list(caps) -> MapSet.new(caps)
+      _ -> MapSet.new()
     end
   end
 
