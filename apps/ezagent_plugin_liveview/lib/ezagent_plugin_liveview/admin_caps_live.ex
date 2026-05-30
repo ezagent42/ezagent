@@ -199,7 +199,7 @@ defmodule EzagentPluginLiveview.AdminCapsLive do
                 </h2>
                 <p class="text-xs text-zinc-500 mb-3">
                   {gettext("Caps a fresh entity of each Kind receives at spawn, scoped to:")}
-                  <code class="font-mono">{URI.to_string(current_workspace_uri(@socket))}</code>
+                  <code class="font-mono">{URI.to_string(@current_workspace_uri)}</code>
                 </p>
 
                 <div :if={@default_grants == []} class="text-xs italic text-zinc-500">

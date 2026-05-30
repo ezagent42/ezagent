@@ -16,42 +16,89 @@ defmodule EzagentPluginLiveview.ComposerMentionTest do
   silent no-op on the real surface.
   """
 
-  use ExUnit.Case
+  # This test counts persisted audit rows (the `invocations` table) to
+  # prove the mention actuated the agent. Audit rows are written by the
+  # async `Ezagent.Audit.Writer`, which is DELIBERATELY skipped from the
+  # boot supervision tree in `:test` (it stamps over sandbox connections
+  # of exited tests). `Ezagent.Test.AuditCase` is the opt-in that
+  # `start_supervised!`s the Writer per-test AND `Sandbox.allow`s it onto
+  # the per-test connection — without it the `:invoke :stop` casts hit a
+  # dead name and no row is ever persisted, so the count stays 0 forever.
+  # (post-lifecycle remediation: the test asserted on audit rows without
+  # opting into the Writer.)
+  use Ezagent.Test.AuditCase, writers: [:audit]
   import Phoenix.ConnTest
   import Phoenix.LiveViewTest
   import Ecto.Query
 
   @endpoint EzagentWeb.Endpoint
 
-  @session URI.new!("session://default/system/main")
+  # The mentioned agents live in `entity://agent/team-alpha/…`. The
+  # Resolver's `valid_member?/3` trust boundary drops any candidate whose
+  # workspace segment differs from the session's (check #3), so a
+  # team-alpha agent mentioned in a `system` session is rejected and
+  # never actuated. The session — and the operator's viewed workspace —
+  # must therefore be team-alpha so the mention validates in-workspace.
+  # (post-lifecycle remediation: the session was pinned to `system` while
+  # the agents were team-alpha.)
+  @session URI.new!("session://default/team-alpha/main")
 
+  # AuditCase's `setup` already checks out + shares the sandbox and
+  # starts/allows the Writer; this `setup` only builds the conn.
   setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
-
     conn =
       Phoenix.ConnTest.build_conn()
       |> Plug.Test.init_test_session(%{
-        "current_entity_uri" => URI.to_string(Ezagent.Entity.User.admin_uri())
+        "current_entity_uri" => URI.to_string(Ezagent.Entity.User.admin_uri()),
+        "current_workspace_uri" => "workspace://team-alpha"
       })
 
     {:ok, conn: conn}
   end
 
   defp receive_dispatch_count(target_uri) do
-    prefix = "#{URI.to_string(target_uri)}?action=chat.receive"
+    # The audit row's target embeds the action as a `?action=…receive`
+    # query. Chat fan-out now dispatches via `Ezagent.Router.dispatch/1`
+    # (the §11 facade-consistency migration), which annotates the target
+    # with `?action=_.receive` (the `_.` behavior-name placeholder a
+    # `%Cmd{}` carries) rather than the legacy `?action=chat.receive`.
+    # Match the action suffix so the count is robust to the behavior-name
+    # prefix. (post-lifecycle remediation.)
+    base = URI.to_string(target_uri)
 
     EzagentCore.Repo.aggregate(
       from(i in "invocations",
         where:
-          fragment("? LIKE ?", i.target, ^"#{prefix}%") and
+          fragment("? LIKE ?", i.target, ^"#{base}?action=%receive%") and
             i.authz == "granted"
       ),
       :count
     )
   end
 
+  # Ensure the team-alpha main session Kind is live BEFORE any join —
+  # the agents join `@session` via a fire-and-forget cast, which would
+  # be dropped with `:no_such_actor` if the session weren't spawned yet
+  # (it is created lazily on LV mount, which happens AFTER these joins).
+  defp ensure_session do
+    case Ezagent.KindRegistry.lookup(@session) do
+      {:ok, _pid} ->
+        :ok
+
+      :error ->
+        {:ok, _spawned, _meta} =
+          EzagentDomainChat.create_session("main", Ezagent.Entity.User.admin_uri(),
+            template_name: "default",
+            workspace_uri: Ezagent.Capability.workspace_of(@session)
+          )
+
+        :ok
+    end
+  end
+
   defp join(member) do
+    :ok = ensure_session()
+
     :ok =
       Ezagent.Invocation.dispatch(%Ezagent.Invocation{
         target: URI.new!("#{URI.to_string(@session)}?action=chat.join"),
@@ -86,14 +133,28 @@ defmodule EzagentPluginLiveview.ComposerMentionTest do
     |> form("form[phx-submit=chat_compose]", %{"chat" => %{"text" => text}})
     |> render_submit()
 
-    # Audit writes flush asynchronously — force + wait.
-    if Process.whereis(Ezagent.Audit.Writer), do: send(Ezagent.Audit.Writer, :flush)
-    Process.sleep(400)
-
-    assert receive_dispatch_count(agent) > before,
+    # The chat.receive dispatch + its audit row are written by the async
+    # Audit.Writer; poll (flush + re-query) instead of a single fixed
+    # sleep so the assertion isn't flaky under serial/--trace scheduling.
+    assert wait_for_dispatch(agent, before),
            "composing '@<agent_uri>' through the real LiveView composer must " <>
              "populate Message.mentions and actuate the mentioned agent — " <>
              "the compose → $mentions path is not wired"
+  end
+
+  # Poll up to ~2s for the receive-dispatch count to exceed `before`.
+  defp wait_for_dispatch(agent, before, retries \\ 40)
+  defp wait_for_dispatch(_agent, _before, 0), do: false
+
+  defp wait_for_dispatch(agent, before, retries) do
+    if Process.whereis(Ezagent.Audit.Writer), do: send(Ezagent.Audit.Writer, :flush)
+
+    if receive_dispatch_count(agent) > before do
+      true
+    else
+      Process.sleep(50)
+      wait_for_dispatch(agent, before, retries - 1)
+    end
   end
 
   test "composing plain agent-name text (no @) does NOT actuate the agent", %{conn: conn} do

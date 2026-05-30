@@ -43,19 +43,20 @@ defmodule EzagentDomainUi.Pty.TerminalView do
 
   @impl true
   def applies_to?(%URI{} = session_uri) do
-    case Ezagent.KindRegistry.lookup(session_uri) do
-      {:ok, pid} ->
-        try do
-          %{state: %{chat: slice}} = :sys.get_state(pid, 200)
+    # Read the chat slice through the T3-normalized accessor
+    # (`Kind.get_slice/2`). Post-lifecycle the on-process slice is
+    # two-container (`%{state: …, transients: …}`); the old
+    # `%{state: %{chat: slice}}` raw `:sys.get_state` match returned the
+    # two-container wrapper, so `slice.members` raised → caught → false,
+    # and the Terminal tab never became applicable even with a live
+    # PTY-backed member. (post-lifecycle remediation.)
+    case Ezagent.Kind.get_slice(session_uri, :chat) do
+      {:ok, %{members: members}} when is_map(members) ->
+        members
+        |> Map.keys()
+        |> Enum.any?(&pty_backed_member?/1)
 
-          slice.members
-          |> Map.keys()
-          |> Enum.any?(&pty_backed_member?/1)
-        catch
-          _, _ -> false
-        end
-
-      :error ->
+      _ ->
         false
     end
   end

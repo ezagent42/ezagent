@@ -40,9 +40,16 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLiveTest do
   @endpoint EzagentWeb.Endpoint
   @workspace_uri URI.parse("workspace://team-alpha")
 
-  setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
+  setup tags do
+    # Use the shared-sandbox OWNER pattern (`start_owner!`) via DataCase
+    # rather than `checkout` + `mode({:shared, self()})`. The bind flow
+    # spawns Session/ExternalMirror-Worker Kinds under a DynamicSupervisor
+    # (NOT descendants of the test process); only `start_owner!`'s shared
+    # owner lets those non-descendant processes find the connection —
+    # otherwise their DB ops raise `DBConnection.OwnershipError` and the
+    # bind `:call` times out. DataCase also registers the P6 Kind-drain
+    # `on_exit`. (post-lifecycle remediation.)
+    EzagentCore.DataCase.setup_sandbox(tags)
 
     :ok = ensure_adapter_registered(PR4TestAdapter, PR4TestBinding)
     :ok = ensure_adapter_registered(PR4TestAdapterB, PR4TestBindingB)
@@ -347,10 +354,17 @@ defmodule EzagentPluginLiveview.Admin.SessionExternalMirrorLiveTest do
       # (production: `Behavior.IdentityAdmin.invoke(:revoke_cap, ...)`).
       # Self-Identity cap left intact so the post-revoke
       # `list_caps_for` dispatch still admits step 5.5.
+      # Post-lifecycle the per-Behavior slice is two-container
+      # (`%{state: %{caps: …}, transients: …}`); `:caps` lives under the
+      # `:state` sub-key, not at the slice's top level. Navigate the extra
+      # level so the revoke mutation lands (the old path raised
+      # `{:badkey, :caps}`). (post-lifecycle remediation.)
       :sys.replace_state(user_pid, fn state ->
         Map.update!(state, :state, fn slice_map ->
           Map.update!(slice_map, :identity, fn identity ->
-            Map.update!(identity, :caps, fn caps -> MapSet.delete(caps, cap1) end)
+            Map.update!(identity, :state, fn identity_state ->
+              Map.update!(identity_state, :caps, fn caps -> MapSet.delete(caps, cap1) end)
+            end)
           end)
         end)
       end)
