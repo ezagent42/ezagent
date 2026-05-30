@@ -79,7 +79,7 @@ defmodule Ezagent.Routing.RuntimeAddTest do
     # from this test process must still update the live table.
     table = EzagentDomainChat.Routing.MentionRouting
 
-    {:ok, _row} =
+    {:ok, row} =
       RuleStore.add(
         table,
         Matcher.always(),
@@ -98,6 +98,17 @@ defmodule Ezagent.Routing.RuntimeAddTest do
         {_matcher, %{receivers: r}} -> "test-receiver://pr127" in r
         _ -> false
       end)
+
+    # Clean up BEFORE asserting (still inside the test's shared sandbox
+    # connection). This rule lands in the PRODUCTION MentionRouting table
+    # (a global singleton), and its `test-receiver://` receiver scheme is
+    # NOT in the global SchemeRegistry — left in place, any concurrent
+    # chat send (ChatRoutingTest / MentionFailedTest) resolves this rule
+    # and crashes in Ezagent.URI.new!/1 ("scheme test-receiver not
+    # registered"). Remove the rule + reload so the global table returns
+    # to its pre-test state regardless of the assertion outcome.
+    _ = RuleStore.delete(row.id, force: true)
+    :ok = RuleStore.load_into_registry(table)
 
     assert found, "PR #127 regression: rule added via RuleStore.add not in live RoutingRegistry"
   end

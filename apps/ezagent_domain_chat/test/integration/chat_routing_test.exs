@@ -20,6 +20,17 @@ defmodule EzagentDomainChat.Integration.ChatRoutingTest do
   setup do
     :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
     Ecto.Adapters.SQL.Sandbox.mode(Repo, {:shared, self()})
+
+    # session://default/system/main is a DynamicSupervisor child spawned
+    # ONCE at chat-app boot — NOT a permanent static child. Under the full
+    # concurrent umbrella run another test can terminate it before these
+    # examples run, so the boot-time seed is not guaranteed live (the
+    # "admin landed in members" + "send→broadcast→receive" assertions then
+    # see a dead/absent Session). Ensure it via the idempotent
+    # create_session facade (adopts the existing Session if alive).
+    _ =
+      EzagentDomainChat.create_session("main", User.admin_uri(), template_name: "default")
+
     :ok
   end
 
