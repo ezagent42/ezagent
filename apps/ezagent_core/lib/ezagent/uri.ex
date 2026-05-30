@@ -2,6 +2,44 @@ defmodule Ezagent.URI do
   @moduledoc """
   URI helpers — thin convenience over stdlib `URI`.
 
+  ## Canonical form + the silent-address-error class (URI hardening, 2026-05-30)
+
+  > "URI机制是整个系统中最核心的机制，地址静默错误是不可接受的" —
+  > silent address errors are unacceptable (Allen 2026-05-30).
+
+  The single most expensive URI bug class in this codebase is the
+  **silent address error**: the SAME logical URI has two structurally-
+  different `%URI{}` representations. `URI.parse("entity://user/system/admin")`
+  yields `authority: "user"` (deprecated RFC-2396); `URI.new!/1` /
+  `Ezagent.URI.new!/1` yield `authority: nil` (RFC-3986). Every other
+  field is identical, so the two `to_string/1` to the same bytes — but
+  as structs they are NOT `==`. When one code path keys a `MapSet` /
+  `Map` / ETS table / presence index with the `URI.parse` form and
+  another looks up with the canonical form, the lookup SILENTLY misses
+  (a `nil`/empty result, no crash).
+
+  The defenses, in order of strength:
+
+  1. **`new!/1`** — THE canonical constructor for Ezagent-scheme strings.
+     Strict RFC-3986 (`authority: nil`), scheme-allowlist validated,
+     3-segment-shape validated, and now `canonical!/1`-asserted as a
+     post-condition.
+  2. **`parse/1`** — non-raising inbound wrapper (`{:ok, uri} | {:error, _}`)
+     for external boundaries that must surface a tagged error instead of
+     crashing (Invariant #9). Yields the SAME canonical form as `new!/1`.
+  3. **`canonical?/1`** — predicate: `authority == nil` (scheme-independent).
+  4. **`canonical!/1`** — the structural GUARD: raises `ArgumentError`
+     (loud) on a non-canonical `%URI{}` so a leaked authority-bearing
+     struct crashes at the boundary instead of silently mismatching
+     downstream. Call it on any inbound URI of uncertain provenance.
+  5. **`with_action/3`** — build an `?action=` dispatch target through the
+     canonical chokepoint, eliminating the stdlib-`URI.new!` query-target
+     carve-out.
+
+  The CI gate `EzagentCore.Invariants.UriCanonicalizationInvariantTest`
+  forbids raw stdlib `URI.parse/1` / `URI.new!/1` / `URI.new/1` in
+  product `lib/`. This module is the only sanctioned home for them.
+
   ## Shape (SPEC v3 §3.6 — Phase 9 PR-7 onwards)
 
   SPEC v3 §3.6 (Amendment 2 — Allen 2026-05-21) unifies the
@@ -138,7 +176,14 @@ defmodule Ezagent.URI do
       {:ok, %URI{scheme: scheme} = u} ->
         if Ezagent.URI.SchemeRegistry.registered?(scheme) do
           validate_3seg_shape!(u, s)
-          u
+          # Post-condition / defense-in-depth (URI hardening — "address
+          # silent errors unacceptable", Allen 2026-05-30): `URI.new/1`
+          # always yields the RFC-3986 `authority: nil` form, so this
+          # cannot fire today. It is an assertion that pins the canonical
+          # invariant against any future refactor of this function that
+          # might re-introduce an authority-bearing struct (e.g. a switch
+          # back to `URI.parse/1`). The cost is one struct field read.
+          canonical!(u)
         else
           raise ArgumentError,
                 "URI scheme #{inspect(scheme)} not registered. " <>
@@ -148,6 +193,188 @@ defmodule Ezagent.URI do
       {:error, part} ->
         raise ArgumentError, "URI parse failed at #{inspect(part)}: #{inspect(s)}"
     end
+  end
+
+  @doc """
+  Non-raising inbound wrapper — `string |> URI.new/1 |> validate`,
+  returning `{:ok, canonical_uri} | {:error, reason}`.
+
+  This is the boundary constructor for surfaces that must NOT crash on
+  malformed external input (Invariant #9 — "no silent drops at
+  user-facing surfaces": surface a `{:error, _}`, don't let the process
+  die). It yields the SAME canonical `%URI{}` `new!/1` produces — same
+  scheme allowlist, same 3-segment validation, same `authority: nil`
+  form — but converts the `ArgumentError` raises into tagged errors.
+
+  Use `new!/1` for trusted/internal strings (let-it-crash); use
+  `parse/1` at external boundaries (CLI args, HTTP params, plugin
+  payloads) where a bad string is a user error, not a bug.
+
+  ## Error reasons
+
+  - `:missing_scheme` — no scheme component.
+  - `{:unregistered_scheme, scheme}` — scheme not in the SchemeRegistry
+    allowlist (e.g. a deleted `user://` / `agent://` or an external
+    `http://`).
+  - `{:malformed, part}` — `URI.new/1` itself rejected the string.
+  - `{:invalid_shape, message}` — registered scheme but wrong authority
+    shape (e.g. a 2-segment `entity://`).
+
+  ## Examples
+
+      iex> {:ok, u} = Ezagent.URI.parse("entity://user/system/admin")
+      iex> u == Ezagent.URI.new!("entity://user/system/admin")
+      true
+
+      iex> Ezagent.URI.parse("not a uri at all ::::")
+      {:error, {:malformed, _}}
+
+      iex> Ezagent.URI.parse("http://example.com")
+      {:error, {:unregistered_scheme, "http"}}
+  """
+  @spec parse(String.t()) ::
+          {:ok, URI.t()}
+          | {:error,
+             :missing_scheme
+             | {:unregistered_scheme, String.t()}
+             | {:malformed, term()}
+             | {:invalid_shape, String.t()}}
+  def parse(s) when is_binary(s) do
+    case URI.new(s) do
+      {:ok, %URI{scheme: nil}} ->
+        {:error, :missing_scheme}
+
+      {:ok, %URI{scheme: scheme} = u} ->
+        if Ezagent.URI.SchemeRegistry.registered?(scheme) do
+          try do
+            validate_3seg_shape!(u, s)
+            {:ok, canonical!(u)}
+          rescue
+            e in ArgumentError -> {:error, {:invalid_shape, Exception.message(e)}}
+          end
+        else
+          {:error, {:unregistered_scheme, scheme}}
+        end
+
+      {:error, part} ->
+        {:error, {:malformed, part}}
+    end
+  end
+
+  @doc """
+  Predicate — is this `%URI{}` in canonical RFC-3986 form?
+
+  The canonical-form rule (SPEC 2026-05-27-uri-canonicalization §3.2;
+  URI hardening 2026-05-30) is **structural and scheme-independent**:
+
+      a %URI{} is canonical ⇔ its `:authority` field is nil
+
+  This is the ONLY field on which `URI.parse/1` (deprecated RFC-2396,
+  sets `:authority` to the host) and `URI.new/1` (RFC-3986, leaves it
+  nil) diverge for the same input string. Both keep `:host`, `:path`,
+  etc. identical. The `:authority` asymmetry is exactly what makes two
+  structurally-different `%URI{}` for the same logical address fail
+  `==` / `MapSet` / `Map`-key / ETS-key comparison — a SILENT
+  `nil`/empty downstream result. `canonical?/1` is `true` for the form
+  every Ezagent comparison relies on.
+
+  Holds for EVERY scheme — `entity://`, `system://`, `workspace://`,
+  and external `http://` alike — because `URI.new/1` always omits
+  `:authority`. This intentionally does NOT re-check the Ezagent scheme
+  allowlist or 3-segment shape: those are `new!/1`'s job at construction
+  time. `canonical?/1` answers the narrower, comparison-critical
+  question "could this struct silently mismatch a `new!/1`-built peer?".
+
+  ## Examples
+
+      iex> Ezagent.URI.canonical?(Ezagent.URI.new!("entity://user/system/admin"))
+      true
+
+      iex> Ezagent.URI.canonical?(URI.parse("entity://user/system/admin"))
+      false
+
+      iex> Ezagent.URI.canonical?(URI.new!("http://example.com"))
+      true
+  """
+  @spec canonical?(URI.t()) :: boolean()
+  def canonical?(%URI{authority: nil}), do: true
+  def canonical?(%URI{}), do: false
+
+  @doc """
+  Assert canonical form — return the URI unchanged if canonical, else
+  RAISE `ArgumentError` (loud) with the divergent `:authority` field
+  spelled out.
+
+  This is the structural guard that makes the silent-address-error
+  class IMPOSSIBLE to express quietly: a leaked non-canonical `%URI{}`
+  (e.g. one built via the deprecated `URI.parse/1`) CRASHES at the
+  boundary that calls `canonical!/1` instead of slipping downstream and
+  silently missing a `MapSet`/`Map`/ETS lookup. "Address silent errors
+  are unacceptable" — Allen 2026-05-30.
+
+  `new!/1` calls this as a post-condition; `parse/1` converts the raise
+  into `{:error, {:invalid_shape, _}}`. Comparison-critical call sites
+  (presence index keys, capability owner checks, slot-worker URIs) can
+  call `canonical!/1` on an inbound `%URI{}` of uncertain provenance to
+  turn a would-be silent mismatch into an immediate, attributable crash.
+
+  Accepts any input; non-`%URI{}` values raise with a clear message
+  rather than failing a downstream pattern match cryptically.
+
+  ## Examples
+
+      iex> u = Ezagent.URI.new!("entity://user/system/admin")
+      iex> Ezagent.URI.canonical!(u) == u
+      true
+
+      iex> Ezagent.URI.canonical!(URI.parse("entity://user/system/admin"))
+      ** (ArgumentError) non-canonical %URI{} ...
+  """
+  @spec canonical!(URI.t()) :: URI.t()
+  def canonical!(%URI{authority: nil} = uri), do: uri
+
+  def canonical!(%URI{authority: authority} = uri) do
+    raise ArgumentError,
+          "non-canonical %URI{} (authority: #{inspect(authority)}) reached a " <>
+            "canonical boundary. The canonical RFC-3986 form has authority: nil " <>
+            "(produced by Ezagent.URI.new!/1 or stdlib URI.new/1). This struct " <>
+            "was almost certainly built by the deprecated URI.parse/1, which " <>
+            "sets :authority and silently mismatches every ==/MapSet/Map/ETS key " <>
+            "comparison against a canonical peer. Re-parse via Ezagent.URI.new!/1. " <>
+            "Got: #{URI.to_string(uri)}"
+  end
+
+  def canonical!(other) do
+    raise ArgumentError,
+          "canonical!/1 requires a %URI{}; got: #{inspect(other)}"
+  end
+
+  @doc """
+  Construct an action-bearing dispatch target from a canonical instance
+  URI, routing through the canonical chokepoint.
+
+  The pervasive pattern `URI.new!("\#{URI.to_string(uri)}?action=b.a")`
+  (the SPEC §3.4 "query-target idiom", ~89 sites) appends an `?action=`
+  query to a canonical instance URI to build a dispatch target. It uses
+  *stdlib* `URI.new!/1`, which yields the right `authority: nil` struct
+  BUT bypasses the SchemeRegistry + shape validation — a typo'd scheme
+  or a malformed base would pass silently. `with_action/3` closes that
+  gap: it canonical-asserts the base, re-parses the assembled string
+  through `new!/1` (full validation), and returns a canonical target.
+
+  This is the helper flagged in SPEC §10 OQ-2 to eliminate the stdlib
+  `URI.new!/1` carve-out entirely (URI hardening 2026-05-30).
+
+  ## Examples
+
+      iex> base = Ezagent.URI.new!("entity://agent/team-alpha/cc_demo")
+      iex> Ezagent.URI.with_action(base, :chat, :receive) |> URI.to_string()
+      "entity://agent/team-alpha/cc_demo?action=chat.receive"
+  """
+  @spec with_action(URI.t(), atom() | String.t(), atom() | String.t()) :: URI.t()
+  def with_action(%URI{} = base, behavior, action) do
+    instance = base |> canonical!() |> instance()
+    new!("#{URI.to_string(instance)}?action=#{behavior}.#{action}")
   end
 
   # SPEC v3 §3.6 (Phase 9 PR-7) — unified per-tenant schemes MUST
