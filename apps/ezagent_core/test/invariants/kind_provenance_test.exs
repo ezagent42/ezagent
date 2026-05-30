@@ -92,7 +92,15 @@ defmodule Ezagent.Invariants.KindProvenanceTest do
       # PerBindingSupervisors (`:supervisor`-typed); the actual
       # Kind.Server pids are the inner tier. `expand_via_tier/1`
       # recurses one level for `:supervisor` children.
-      Ezagent.ExternalMirror.RootSupervisor
+      Ezagent.ExternalMirror.RootSupervisor,
+      # P6 cold-restart determinism: cold-restart GATE test Kinds
+      # declare `supervisor/0 -> Ezagent.LifecycleCase.gate_supervisor()`
+      # to isolate their kill→restart cycle from the shared
+      # `KindSupervisor`'s restart-intensity exhaustion. Started lazily
+      # by `Ezagent.LifecycleCase.ensure_gate_supervisor!/0`, so it is
+      # `nil` (skipped by `direct_children/1`) when no GATE test ran in
+      # this BEAM, and a live `DynamicSupervisor` otherwise.
+      Ezagent.LifecycleCase.gate_supervisor()
     ]
   end
 end

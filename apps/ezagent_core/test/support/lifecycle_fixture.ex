@@ -93,6 +93,13 @@ defmodule Ezagent.TestSupport.LifecycleFixtureKind do
 
   @impl Ezagent.Kind
   def persistence, do: {:snapshot, :on_change}
+
+  # P6 cold-restart determinism: host THE GATE Kind on the dedicated
+  # gate supervisor, isolating its kill→restart cycle from the shared
+  # `Ezagent.KindSupervisor`'s restart-intensity exhaustion. See
+  # `Ezagent.LifecycleCase.ensure_gate_supervisor!/0`.
+  @impl Ezagent.Kind
+  def supervisor, do: Ezagent.LifecycleCase.gate_supervisor()
 end
 
 defmodule Ezagent.TestSupport.LifecycleFixtureOverride do
