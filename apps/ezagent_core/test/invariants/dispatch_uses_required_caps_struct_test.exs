@@ -73,6 +73,13 @@ defmodule EzagentCore.Invariants.DispatchUsesRequiredCapsStructTest do
           # The engine macro module + the Lifecycle macro module declare
           # the behaviour on themselves but are not production Behaviors.
           module not in [Ezagent.Behavior, Ezagent.Lifecycle],
+          # PRODUCTION only — the original source-scan deliberately
+          # excluded `test/`. Reflection over `:code.all_loaded` also sees
+          # test-fixture mock Behaviors (e.g. CapabilityRegistryTest's
+          # Mock* modules) loaded by concurrent suites; those legitimately
+          # omit required_caps/0. Filter to modules whose compile source
+          # lives under `apps/*/lib/`.
+          production_behavior_source?(module),
           do: module
 
     refute behavior_modules == [],
@@ -98,6 +105,28 @@ defmodule EzagentCore.Invariants.DispatchUsesRequiredCapsStructTest do
     |> Enum.map(fn mix_path ->
       mix_path |> Path.dirname() |> Path.basename() |> String.to_atom()
     end)
+  end
+
+  # True when the module was compiled from a source file under an
+  # `apps/*/lib/` path — i.e. it is production code, not a `test/`
+  # fixture. Mirrors the original source-scan's lib-only scoping.
+  defp production_behavior_source?(module) do
+    case module_source(module) do
+      nil -> false
+      source -> Regex.match?(~r{/apps/[^/]+/lib/}, to_string(source))
+    end
+  end
+
+  defp module_source(module) do
+    if function_exported?(module, :module_info, 1) do
+      try do
+        module.module_info(:compile)[:source]
+      rescue
+        _ -> nil
+      end
+    else
+      nil
+    end
   end
 
   # Behaviours a module declares, robust against modules whose
