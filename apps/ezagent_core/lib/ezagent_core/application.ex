@@ -127,6 +127,16 @@ defmodule EzagentCore.Application do
     # (child ①) already created the cache table.
     :ok = Ezagent.TemplateTags.load_into_registry()
 
+    # Remediation C-B (#114) — hydrate the AgentLineage ETS read cache
+    # from the durable `agent_lineage` SQLite table, the
+    # `Ezagent.TemplateTags.load_into_registry/0` analogue. Without this
+    # the lineage `agent_uri → spawned_by` mapping is lost on every
+    # restart (EtsOwner recreates the table empty), so previously-owned
+    # agents become "foreign" and `{:spawned_by, P}` CapBAC matching
+    # breaks. Runs after the Repo + Migrator children are up (children
+    # ④); EtsOwner (child ①) already created the (empty) cache table.
+    :ok = Ezagent.AgentLineage.rehydrate()
+
     # Post-Phase-5 (Allen 2026-05-17): start distributed Erlang as the
     # named runtime node so `mix ezagent` (CLI) can reach us via :rpc.call.
     # Cookie + node name from Ezagent.Runtime. Skip in test env to avoid

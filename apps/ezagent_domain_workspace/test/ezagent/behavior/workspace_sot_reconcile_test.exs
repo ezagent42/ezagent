@@ -44,8 +44,19 @@ defmodule Ezagent.Behavior.WorkspaceSotReconcileTest do
     @moduledoc false
     @behaviour Ezagent.Kind
 
+    # DISTINCT type_name (NOT the production `:workspace`). The Kind is
+    # registered into the GLOBAL BehaviorRegistry on spawn; reusing
+    # `:workspace` made this throwaway stub (which carries only the
+    # Workspace Behavior's read actions) collide with the real
+    # `Ezagent.Entity.Workspace` in `EzagentCli.TreeBuilder`'s
+    # type-name-keyed CLI-tree derivation under cross-app concurrency,
+    # shadowing the real `workspace` subcommand and dropping `add_member`
+    # / `instantiate` (CLIDispatchTest failures). The slice name
+    # (`:workspace`, from WB.state_slice) and the `workspace://` URI are
+    # independent of this Kind's `type_name`, so a distinct value changes
+    # nothing about what this test exercises.
     @impl Ezagent.Kind
-    def type_name, do: :workspace
+    def type_name, do: :workspace_sot_stub
 
     @impl Ezagent.Kind
     def behaviors, do: [WB]
@@ -76,7 +87,7 @@ defmodule Ezagent.Behavior.WorkspaceSotReconcileTest do
 
     member = URI.new!("entity://user/#{name}/alice")
     tmpl = %{"class" => "echo.agent", "agent_uri" => "entity://agent/#{name}/echo_x"}
-    rule = %{"matcher" => %{"type" => "always"}, "receivers" => ["session://x"]}
+    rule = %{"matcher" => %{"type" => "always"}, "receivers" => ["session://default/x/x"]}
 
     # Loader-equivalent spawn: the decoded SoT cluster shape threaded as
     # args. (The production Loader reads the `workspaces` row and passes

@@ -60,7 +60,8 @@ Most scenarios assume:
 | Local-only URL | `http://127.0.0.1:10042` (operator-local; LV will load but Feishu webhooks need the public sidecar) |
 | Allen's Feishu chat_id (DM) | `oc_d9b47511b085e9d5b66c4595b3ef9bb9` |
 | Dev / smoke Feishu chat_id | `oc_83a4f1ff0bf627ffe26aa60647e5b04a` |
-| System admin | `entity://user/system/admin` (password `8bdemo` in dev seed) |
+| System admin | `entity://user/system/admin` — temp dev password `e2e-admin-2026` (set 2026-05-30 for the post-lifecycle E2E re-run; Allen may rotate). **Log in with the FULL URI in the username field** — the bare handle `admin` does NOT resolve at the form yet (minor UI nit). |
+| Self-serve creds (no asking Allen) | Bootstrap an admin token: `mix ezagent.user.token entity://user/system/admin --mint` → use `EZAGENT_USER_TOKEN=<tok> EZAGENT_ENTITY_URI=entity://user/system/admin mix ezagent user set_password --user <uri> --password <pw>` to set a login password, or `mix ezagent user create` + `set_password` to mint a throwaway test user. Never block on asking Allen for a password (his directive 2026-05-30). |
 | Default workspace | `workspace://system` (post-#398 rename; `workspace://default` is forbidden alias per PR #399) |
 
 ### 1.2 Tooling

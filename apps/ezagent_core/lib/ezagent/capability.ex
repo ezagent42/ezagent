@@ -1036,3 +1036,34 @@ defmodule Ezagent.Capability do
     }
   end
 end
+
+# Remediation SPEC 2026-05-30 C-C: make %Capability{} JSON-encodable so the
+# `{:emit, :cap_granted | :cap_revoked, %{cap: %Capability{}}}` effect actually
+# persists to EventLog. Pre-fix the emit raised `Jason.Encoder not implemented
+# for Ezagent.Capability` and Kind.Runtime swallowed it ("continuing") — every
+# cap-grant/revoke audit event was silently dropped (337+ raises in a single
+# test run). We implement an EXPLICIT encoder (not a blanket EventLog
+# normalization layer, which would mask the NEXT non-encodable struct): URI
+# fields stringify, scope tuples become lists, atoms/DateTime pass through.
+defimpl Jason.Encoder, for: Ezagent.Capability do
+  def encode(%Ezagent.Capability{} = cap, opts) do
+    Jason.Encode.map(
+      %{
+        kind: cap.kind,
+        behavior: json_safe(cap.behavior),
+        action: cap.action,
+        instance: json_safe(cap.instance),
+        workspace_uri: json_safe(cap.workspace_uri),
+        granted_by: json_safe(cap.granted_by),
+        granted_at: cap.granted_at
+      },
+      opts
+    )
+  end
+
+  # URI struct → canonical string; scope tuple → list; everything else
+  # (atoms incl. `:any`, module atoms, strings, DateTime) is Jason-native.
+  defp json_safe(%URI{} = u), do: URI.to_string(u)
+  defp json_safe(t) when is_tuple(t), do: t |> Tuple.to_list() |> Enum.map(&json_safe/1)
+  defp json_safe(v), do: v
+end

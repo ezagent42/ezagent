@@ -53,10 +53,20 @@ defmodule Ezagent.InvocationTest do
       assert {:error, :no_such_actor} = Invocation.dispatch(inv)
     end
 
-    test ":not_ready + :call → fail-fast (invariant #3)", %{instance_uri: uri} do
-      # Force the instance back into not_ready to exercise the
-      # invariant — caller doesn't actually need it ready for the test.
+    test ":not_ready + :call → waits through the activate window then serves (C-A readiness)",
+         %{instance_uri: uri} do
+      # Readiness contract (post-lifecycle remediation, spec C-A): a
+      # synchronous dispatch landing while the target is `:not_ready`
+      # (post-init `activate` still running) MUST wait-then-serve, NOT
+      # fail-fast with `:not_ready`. Force not-ready, then flip to ready
+      # from a concurrent process partway through the bounded wait — the
+      # call must return the real result, never `:not_ready`.
       :ok = Ezagent.ReadyGate.put(uri, :not_ready)
+
+      spawn(fn ->
+        Process.sleep(50)
+        :ok = Ezagent.ReadyGate.mark_ready(uri)
+      end)
 
       inv = %Invocation{
         target: URI.parse("#{URI.to_string(uri)}?action=test.noop"),
@@ -65,9 +75,9 @@ defmodule Ezagent.InvocationTest do
         ctx: ctx_for(self())
       }
 
-      assert {:error, :not_ready} = Invocation.dispatch(inv)
+      assert {:ok, _result} = Invocation.dispatch(inv)
 
-      # Restore for cleanup.
+      # Ensure ready for cleanup (idempotent).
       :ok = Ezagent.ReadyGate.mark_ready(uri)
     end
 

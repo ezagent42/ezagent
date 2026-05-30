@@ -44,7 +44,9 @@ defmodule EzagentDomainChat.Integration.GeneratorTest do
     def template_name, do: "generator.test.agent"
 
     @impl true
-    def validate(tmpl) when is_map(tmpl), do: if(Map.has_key?(tmpl, "agent_uri"), do: :ok, else: {:error, :missing_agent_uri})
+    def validate(tmpl) when is_map(tmpl),
+      do: if(Map.has_key?(tmpl, "agent_uri"), do: :ok, else: {:error, :missing_agent_uri})
+
     def validate(_), do: {:error, :not_a_map}
 
     # Just bring the Agent Kind up — no PTY, no claude. The flavor's
@@ -176,6 +178,10 @@ defmodule EzagentDomainChat.Integration.GeneratorTest do
     |> :sys.get_state()
     |> Map.get(:state, %{})
     |> Map.get(:identity, %{})
+    # Lifecycle migration (PR #485 — Identity → use Ezagent.Lifecycle):
+    # unwrap the two-container Identity slice to its persistent :state
+    # (flat falls through), mirroring session_working_copy/1's Chat unwrap.
+    |> then(&Map.get(&1, :state, &1))
     |> Map.get(:caps, MapSet.new())
   end
 
@@ -307,8 +313,9 @@ defmodule EzagentDomainChat.Integration.GeneratorTest do
           Enum.any?(r.receivers, &(&1 in worker_uris))
         end)
 
-      assert installed, "the Generator must install the SessionTemplate's routing rule " <>
-                          "with slot names resolved to live worker URIs"
+      assert installed,
+             "the Generator must install the SessionTemplate's routing rule " <>
+               "with slot names resolved to live worker URIs"
     end
 
     test "the working-copy slice survives a Session restart", %{
@@ -689,5 +696,4 @@ defmodule EzagentDomainChat.Integration.GeneratorTest do
       wait_until(fun, attempts - 1)
     end
   end
-
 end

@@ -2402,18 +2402,17 @@ defmodule EzagentPluginLiveview.AdminLive do
       :error ->
         nil
 
-      {:ok, pid} ->
+      {:ok, _pid} ->
+        # Read the chat slice through the T3-normalized accessor — post-
+        # lifecycle the on-process slice is two-container, so a raw
+        # `%{state: %{chat: chat_slice}}` match would hand
+        # `template_working_copy/1` the `%{state: …, transients: …}`
+        # wrapper instead of the flat chat slice. (post-lifecycle
+        # remediation.)
         slice =
-          try do
-            # The Kind.Server state map holds slice data under `:state`
-            # (per `Ezagent.Kind.Server` shape — confirmed via
-            # :sys.get_state on a live Session pid).
-            case :sys.get_state(pid, 500) do
-              %{state: %{chat: chat_slice}} -> chat_slice
-              _ -> nil
-            end
-          catch
-            :exit, _ -> nil
+          case Ezagent.Kind.get_slice(session_uri, :chat) do
+            {:ok, chat_slice} when is_map(chat_slice) -> chat_slice
+            _ -> nil
           end
 
         if is_map(slice) do
@@ -2786,7 +2785,21 @@ defmodule EzagentPluginLiveview.AdminLive do
         # the meta was log-only; an operator who landed on the admin
         # page right after a failed orchestrator-spawn rehydrate had
         # zero visibility into the failure.
-        case EzagentDomainChat.create_session("main", creator, template_name: "default") do
+        # Task #55: the main session must be created in the workspace the
+        # operator is VIEWING (the workspace segment of `uri`), not the
+        # creator's own workspace. A system-member admin viewing
+        # `team-alpha` ensures `session://default/team-alpha/main`;
+        # without the explicit `workspace_uri`, `create_session/3` derives
+        # the workspace structurally from the creator (admin → `system`)
+        # and the team-alpha session is never spawned — so a routing
+        # dispatch to `current_session_uri` hits `:no_such_actor`. (post-
+        # lifecycle remediation.)
+        session_workspace_uri = Ezagent.Capability.workspace_of(uri)
+
+        case EzagentDomainChat.create_session("main", creator,
+               template_name: "default",
+               workspace_uri: session_workspace_uri
+             ) do
           {:ok, _spawned_uri, meta} ->
             log_orchestrator_status_on_rehydrate(uri, meta)
             {uri, assign_rehydrate_flash(socket, meta)}
@@ -2850,24 +2863,28 @@ defmodule EzagentPluginLiveview.AdminLive do
   def assign_rehydrate_flash(socket, _), do: socket
 
   defp read_session_members(%URI{} = session_uri) do
-    case Ezagent.KindRegistry.lookup(session_uri) do
-      {:ok, pid} ->
-        try do
-          %{state: %{chat: slice}} = :sys.get_state(pid, 1_000)
+    # Read the chat slice through the T3-normalized accessor
+    # (`Kind.get_slice/2`), NOT a raw `:sys.get_state` + manual
+    # destructure. Post-lifecycle the on-process slice is two-container
+    # (`%{state: …, transients: …}`); `get_slice/2` flattens it to the
+    # developer view so `members`/`last_seen` are read off the right
+    # level. The old `%{state: %{chat: slice}}` match handed back the
+    # two-container wrapper, so `slice.members` raised → caught → []
+    # (members table silently empty). (post-lifecycle remediation.)
+    case Ezagent.Kind.get_slice(session_uri, :chat) do
+      {:ok, %{members: members} = slice} when is_map(members) ->
+        last_seen = Map.get(slice, :last_seen, %{})
 
-          for {uri, %{online: online?}} <- slice.members do
-            %{
-              uri: URI.to_string(uri),
-              online: online?,
-              last_seen: Map.get(slice.last_seen, uri)
-            }
-          end
-          |> Enum.sort_by(& &1.uri)
-        catch
-          _, _ -> []
+        for {uri, %{online: online?}} <- members do
+          %{
+            uri: URI.to_string(uri),
+            online: online?,
+            last_seen: Map.get(last_seen, uri)
+          }
         end
+        |> Enum.sort_by(& &1.uri)
 
-      :error ->
+      _ ->
         []
     end
   end

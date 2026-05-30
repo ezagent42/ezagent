@@ -556,26 +556,58 @@ defmodule Ezagent.Behavior.ChatTest do
 
       # Fire emit directly the same way Kind.Server.commit_and_notify/3
       # does post-snapshot — and assert subscribers receive the event.
+      #
+      # `SliceChange.emit/1` takes the fat producer event but broadcasts
+      # the SECURITY-MINIMAL 5-key envelope (codex PR-N3 r2 HIGH-1 —
+      # slice content never crosses PubSub; locked by
+      # slice_change_event_carries_no_slice_content_test.exs). Subscribers
+      # receive that minimal shape, NOT the fat event; the slice diff
+      # asserted above is the producer-side value, not what's broadcast.
       :ok = Ezagent.SliceChange.emit(slice_change_event)
 
-      assert_receive {:slice_changed, ^slice_change_event}, 500
+      assert_receive {:slice_changed,
+                      %{
+                        uri: ^session_uri,
+                        slice_key: :chat,
+                        cursor: cursor,
+                        event_at: %DateTime{},
+                        result_summary: :ok
+                      }},
+                     500
+
+      assert is_integer(cursor) and cursor > 0
     end
   end
 
   describe "invoke(:receive, ...) — User branch" do
-    test "broadcasts {:message_received, msg} on user events topic" do
+    # PR-N3 (SPEC v2 notification-architecture-v2 §2.4 + §3, Allen
+    # 2026-05-25) replaced the legacy raw `{:message_received, msg}`
+    # broadcast on `esr:user:<uri>:events` with the PRODUCER pattern:
+    # the User-branch just mutates its `:chat` slice (`:last_received`
+    # + the cursor-indexed `:recent_messages` ring), and the runtime
+    # emits the slice-change event post-commit via SliceChange.emit/1.
+    # The handler itself does NO broadcast — the slice mutation IS the
+    # notification.
+    test "mutates the receive slice (:last_received + :recent_messages ring)" do
       user_uri = URI.new!("entity://user/team-alpha/admin-recv-#{System.unique_integer([:positive])}")
       sender = URI.new!("entity://agent/team-alpha/test_cc-builder")
       msg = Message.new(sender, %{text: "reply incoming", attachments: []})
 
-      topic = Chat.user_events_topic(user_uri)
-      :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, topic)
-
       slice = %{}
       ctx = %{self_uri: user_uri, kind_module: Ezagent.Entity.User, caller: sender}
 
-      assert {:ok, ^slice} = EzagentDomainChat.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Chat, :receive, slice, %{message: msg}, ctx)
-      assert_receive {:message_received, %Message{id: rid}}, 500
+      assert {:ok, new_slice} =
+               EzagentDomainChat.Test.BehaviorInvoker.invoke(
+                 Ezagent.Behavior.Chat,
+                 :receive,
+                 slice,
+                 %{message: msg},
+                 ctx
+               )
+
+      assert new_slice.last_received.message_id == msg.id
+      assert match?(%DateTime{}, new_slice.last_received.at)
+      assert [{_cursor, rid} | _] = new_slice.recent_messages
       assert rid == msg.id
     end
   end
@@ -612,7 +644,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       EzagentDomainChat.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Chat, :receive, %{}, %{message: msg}, ctx)
 
-      assert_receive {:to_claude, %{"content" => content, "meta" => meta}}, 500
+      assert_receive {:agent_bridge_push, "to_claude", %{"content" => content, "meta" => meta}}, 500
 
       assert is_binary(content)
       assert content == "plain text"
@@ -650,7 +682,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       EzagentDomainChat.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Chat, :receive, %{}, %{message: msg}, ctx)
 
-      assert_receive {:to_claude, %{"content" => content, "meta" => meta}}, 500
+      assert_receive {:agent_bridge_push, "to_claude", %{"content" => content, "meta" => meta}}, 500
 
       assert content =~ "see file"
       assert content =~ "name=a.txt"
@@ -687,7 +719,7 @@ defmodule Ezagent.Behavior.ChatTest do
 
       EzagentDomainChat.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Chat, :receive, %{}, %{message: msg}, ctx)
 
-      assert_receive {:to_claude, %{"content" => content, "meta" => meta}}, 500
+      assert_receive {:agent_bridge_push, "to_claude", %{"content" => content, "meta" => meta}}, 500
 
       assert content =~ "from db"
       assert meta["file_path"] == "/tmp/x.txt"

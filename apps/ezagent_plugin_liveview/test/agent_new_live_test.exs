@@ -58,7 +58,16 @@ defmodule EzagentPluginLiveview.AgentNewLiveTest do
   # globally and outlives sandbox rollback, so subsequent tests must
   # tolerate "DB row gone but Kind still alive".
   defp ensure_default_workspace do
-    name = "default"
+    # The conn session pins `current_workspace_uri` to
+    # `workspace://team-alpha` (V-6 fix), and every assertion expects
+    # agents under `entity://agent/team-alpha/…`. AgentNewLive dispatches
+    # `workspace.create_agent` to the session's workspace, so the
+    # workspace that must exist (DB row + live Kind) is `team-alpha`, not
+    # the legacy `default` — otherwise the dispatch hits `:no_such_actor`
+    # and the form re-renders instead of redirecting. (post-lifecycle
+    # remediation: stale `default` setup never matched the team-alpha
+    # session.)
+    name = "team-alpha"
 
     case Ezagent.Workspace.Store.get_by_name(name) do
       nil ->

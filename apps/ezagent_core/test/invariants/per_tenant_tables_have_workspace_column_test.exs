@@ -86,6 +86,15 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
       "Cross-workspace by design — email-based pre-login, no workspace context at mint time.",
     "feishu_user_bindings" =>
       "Plugin-owned mapping; workspace inherent in bound user_uri downstream.",
+    # Remediation C-B (#114): durable backing for the `Ezagent.AgentLineage`
+    # ETS read-cache. A global lineage index keyed by `agent_uri` (the
+    # child URI is itself workspace-qualified); the `(agent_uri →
+    # spawned_by)` mapping is NOT workspace-scoped — a spawn lineage may
+    # legitimately cross workspaces, and CapBAC `{:spawned_by, P}` matching
+    # resolves by agent_uri, not by workspace. SQLite is the rebuild source
+    # for `AgentLineage.rehydrate/0` at boot.
+    "agent_lineage" =>
+      "Global lineage cache keyed by agent_uri (not workspace-scoped); rebuild source for the AgentLineage ETS index.",
     # PR-EM-6 (SPEC `docs/superpowers/specs/2026-05-24-external-mirror-domain.md` §9):
     # `feishu_session_bindings` was retired in favor of the generic
     # `external_mirror_bindings` projection table (workspace_uri NOT

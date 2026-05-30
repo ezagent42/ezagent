@@ -44,3 +44,8 @@ config :phoenix, :plug_init_mode, :runtime
 # Enable helpful, but potentially expensive runtime checks
 config :phoenix_live_view,
   enable_expensive_runtime_checks: true
+
+# Readiness-await bound for Kind.spawn (remediation SPEC 2026-05-30 C-A).
+# Prod default is 500ms; the ExUnit sandbox / DBConnection checkout can
+# stretch a Kind post-init/activate well past that, so give tests headroom.
+config :ezagent_core, :spawn_await_ready_ms, 5_000

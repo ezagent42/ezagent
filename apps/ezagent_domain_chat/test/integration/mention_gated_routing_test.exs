@@ -33,6 +33,15 @@ defmodule EzagentDomainChat.Integration.MentionGatedRoutingTest do
   alias Ezagent.Routing.Resolver
 
   setup do
+    # `chat.receive` dispatches are observed via the `invocations` audit
+    # log (the moduledoc's "authoritative cross-recipient observable").
+    # `Ezagent.Audit.Writer` is skipped from the test-env supervision tree
+    # (2026-05-26 sandbox-isolation fix), so start it per-test and allow it
+    # onto this test's sandbox connection — otherwise no rows are written
+    # and every `receive_dispatch_count/1` stays 0.
+    {:ok, writer} = start_supervised(Ezagent.Audit.Writer)
+    Ecto.Adapters.SQL.Sandbox.allow(EzagentCore.Repo, self(), writer)
+
     original = Application.get_env(:ezagent_core, :routing_tables)
 
     on_exit(fn ->

@@ -27,6 +27,15 @@ defmodule EzagentDomainChat.Integration.WorkspaceIsolationTest do
   alias Ezagent.Entity.User
 
   setup do
+    # This suite observes `chat.receive` fan-out via the `invocations`
+    # audit table. `Ezagent.Audit.Writer` is skipped from the test-env
+    # supervision tree (2026-05-26 sandbox-isolation fix); start it
+    # per-test and allow it onto this test's sandbox connection so the
+    # telemetry → row write actually lands. Without this, no invocation
+    # rows are written and every `receive_dispatches_to/1` count stays 0.
+    {:ok, writer} = start_supervised(Ezagent.Audit.Writer)
+    Ecto.Adapters.SQL.Sandbox.allow(EzagentCore.Repo, self(), writer)
+
     original = Application.get_env(:ezagent_core, :routing_tables)
 
     on_exit(fn ->

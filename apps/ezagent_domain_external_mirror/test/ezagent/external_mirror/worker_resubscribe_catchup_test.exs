@@ -61,7 +61,11 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeCatchupTest do
   at `:latest`, no replay, the event is gone).
   """
 
-  use ExUnit.Case, async: false
+  # Remediation P6 (sandbox isolation): spawns Session/Worker Kinds that run
+  # Repo queries in other processes; `EzagentCore.DataCase` provides the
+  # shared sandbox owner + P6 drain so they don't hit
+  # `DBConnection.OwnershipError`. See WorkerPublishTest for the full note.
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.ExternalMirror.{
     AdapterRegistry,
@@ -143,9 +147,17 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeCatchupTest do
       # is identical regardless of HOW the subscribers map got cleared.
       {:ok, session_pid} = Ezagent.KindRegistry.lookup(session_uri)
 
+      # Post-lifecycle migration (remediation 2026-05-30): `subscribers` +
+      # `monitors` are TRANSIENTS on the `:publisher` slice
+      # (`%{state: …, transients: %{subscribers, monitors}}`), not flat slice
+      # fields. Clear them in the `transients` container — writing the old
+      # flat keys raises `{:badkey, :monitors}`. This simulates the
+      # empty-fanout window (the same state a cold-spawned Session loads,
+      # where `activate/2` rebuilds `subscribers`/`monitors` empty).
       :sys.replace_state(session_pid, fn kind_state ->
         publisher_slice = kind_state.state.publisher
-        cleared_publisher = %{publisher_slice | subscribers: %{}, monitors: %{}}
+        cleared_transients = %{publisher_slice.transients | subscribers: %{}, monitors: %{}}
+        cleared_publisher = %{publisher_slice | transients: cleared_transients}
         new_state = %{kind_state.state | publisher: cleared_publisher}
         %{kind_state | state: new_state}
       end)
@@ -165,16 +177,22 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeCatchupTest do
 
       # Sanity: publisher's `:cursor` has advanced past the worker's
       # persisted cursor — there IS something to catch up on.
+      # Post-lifecycle migration (remediation 2026-05-30): `cursor` is a
+      # PERSISTENT field (T3-normalized `get_slice` view), while `subscribers`
+      # is a TRANSIENT — read the latter from the `transients` container via
+      # `get_raw_slice/2` (the `get_slice` view hides it).
       {:ok, publisher_slice_mid} = Ezagent.Kind.get_slice(session_uri, :publisher)
+      {:ok, %{transients: publisher_transients_mid}} =
+        Ezagent.Kind.get_raw_slice(session_uri, :publisher)
 
       assert publisher_slice_mid.cursor > cursor_at_window_start,
              "test pre-condition broken — the slice change in the empty-fanout window " <>
                "did not advance the publisher cursor. Worker cursor=#{cursor_at_window_start}, " <>
                "publisher cursor=#{publisher_slice_mid.cursor}. SliceChange may not be firing."
 
-      assert publisher_slice_mid.subscribers == %{},
+      assert publisher_transients_mid.subscribers == %{},
              "test pre-condition broken — subscribers should still be empty (the missed " <>
-               "event happened with no subscribers). Found: #{inspect(publisher_slice_mid.subscribers)}"
+               "event happened with no subscribers). Found: #{inspect(publisher_transients_mid.subscribers)}"
 
       # Re-register the observer (some test infra paths can flush it).
       MockPublishBinding.register_observer(target_id, self())
@@ -276,12 +294,17 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeCatchupTest do
           }
         ]
 
+        # Post-lifecycle migration (remediation 2026-05-30): split the
+        # persistent fields (`ring`/`cursor`, under `.state`) from the
+        # transient bookkeeping (`subscribers`/`monitors`, under
+        # `.transients`). A flat update raises `{:badkey, :monitors}`.
+        new_pub_state = %{publisher_slice.state | ring: synthetic_ring, cursor: 100}
+        new_pub_transients = %{publisher_slice.transients | subscribers: %{}, monitors: %{}}
+
         cleared_publisher = %{
           publisher_slice
-          | subscribers: %{},
-            monitors: %{},
-            ring: synthetic_ring,
-            cursor: 100
+          | state: new_pub_state,
+            transients: new_pub_transients
         }
 
         new_state = %{kind_state.state | publisher: cleared_publisher}
@@ -298,11 +321,14 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeCatchupTest do
       # subscribers map.
       Process.sleep(300)
 
-      {:ok, publisher_slice_after} = Ezagent.Kind.get_slice(session_uri, :publisher)
+      # `subscribers` is a TRANSIENT (remediation 2026-05-30) — read it from
+      # the `transients` container via `get_raw_slice/2`.
+      {:ok, %{transients: publisher_transients_after}} =
+        Ezagent.Kind.get_raw_slice(session_uri, :publisher)
 
-      assert map_size(publisher_slice_after.subscribers) >= 1,
+      assert map_size(publisher_transients_after.subscribers) >= 1,
              "Out-of-window fallback did not re-subscribe the worker at :latest. " <>
-               "subscribers=#{inspect(publisher_slice_after.subscribers)}"
+               "subscribers=#{inspect(publisher_transients_after.subscribers)}"
 
       # Sanity: worker is still alive (no crash).
       assert Process.alive?(worker_pid),

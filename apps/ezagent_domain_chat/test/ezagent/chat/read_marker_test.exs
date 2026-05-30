@@ -21,14 +21,19 @@ defmodule Ezagent.Chat.ReadMarkerTest do
     :ok
   end
 
+  # Canonical (`authority: nil`) construction — `ReadMarker.mark/4`
+  # rebuilds the broadcast URIs via `Ezagent.URI.new!/1`, so a test
+  # pinning `^session`/`^user` must hold the same canonical struct.
+  # `URI.parse/1` yields the non-canonical `authority`-bearing shape and
+  # the assert_receive pin would never match.
   defp unique_session_uri(suffix) do
-    URI.parse(
+    Ezagent.URI.new!(
       "session://default/team-alpha/read_marker_#{suffix}_#{System.unique_integer([:positive])}"
     )
   end
 
   defp unique_user_uri(suffix) do
-    URI.parse(
+    Ezagent.URI.new!(
       "entity://user/team-alpha/read_marker_user_#{suffix}_#{System.unique_integer([:positive])}"
     )
   end

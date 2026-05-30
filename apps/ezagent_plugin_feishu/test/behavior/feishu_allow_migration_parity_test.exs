@@ -53,7 +53,7 @@ defmodule EzagentPluginFeishu.Behavior.FeishuAllowMigrationParityTest do
 
     test "data_owner/1 returns :any (workspace-admin grantable)" do
       assert Allow.data_owner(:any) == :any
-      assert Allow.data_owner(URI.parse("session://team-alpha/main")) == :any
+      assert Allow.data_owner(URI.parse("session://default/team-alpha/main")) == :any
     end
 
     test "handle_allow_feishu/2 raises if ever invoked (defence in depth)" do

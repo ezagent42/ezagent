@@ -74,6 +74,7 @@ defmodule Ezagent.Invocation do
           | :ok
           | {:error, :no_such_actor}
           | {:error, :not_ready}
+          | {:error, :activate_timeout}
           | {:error, :unsupported_mode}
           | {:error, {:invalid_args, list()}}
           | {:error, {:unknown_action, atom()}}
@@ -157,9 +158,23 @@ defmodule Ezagent.Invocation do
         :ok
 
       {:not_ready, m} when m in [:call, :call_stream] ->
-        # Invariant #3: :call to not-ready fail-fast (caller's
-        # synchronous block would otherwise hit deadline_ms).
-        {:error, :not_ready}
+        # Readiness contract (post-lifecycle remediation, spec C-A):
+        # a synchronous dispatch landing during the target's
+        # `activate`/post-init window must WAIT-then-serve, not
+        # fail-fast. `activate/2` now runs in post-init `handle_continue`
+        # (widening the not-ready window), so the old fail-fast turned
+        # a benign timing gap into a live regression — a join/list_caps/
+        # subscribe issued right after a (re)spawn would spuriously see
+        # `:not_ready`. We bound the wait so a genuinely stuck `activate`
+        # surfaces a DISTINCT `:activate_timeout` signal (never the
+        # silent `:not_ready`), preserving let-it-crash visibility.
+        case Ezagent.ReadyGate.await(instance_uri, 5_000) do
+          :ok ->
+            dispatch_with_lazy_spawn(instance_uri, mode, inv)
+
+          {:error, :timeout} ->
+            {:error, :activate_timeout}
+        end
 
       {:unknown, _} ->
         attempt_lazy_spawn_and_redispatch(instance_uri, mode, inv)

@@ -144,7 +144,13 @@ defmodule Ezagent.PluginEcho.Template.EchoAgentTest do
       agent_uri_str =
         "entity://agent/team-alpha/echo_test-no-pty-#{System.unique_integer([:positive])}"
 
-      agent_uri = URI.parse(agent_uri_str)
+      # Build via the canonical chokepoint so the pinned struct matches
+      # what `instantiate/3` returns. Post-SPEC 2026-05-27 URI
+      # canonicalization (#431/#438) the product threads URIs through
+      # `Ezagent.URI.new!/1`, whose canonical `%URI{}` does NOT carry the
+      # `authority` field that `URI.parse/1` populates — so a
+      # `URI.parse`-built pin no longer `==` the returned URI.
+      agent_uri = Ezagent.URI.new!(agent_uri_str)
 
       tmpl = %{
         "class" => "echo.agent",
@@ -176,7 +182,13 @@ defmodule Ezagent.PluginEcho.Template.EchoAgentTest do
       agent_uri_str =
         "entity://agent/team-alpha/echo_test-pty-#{System.unique_integer([:positive])}"
 
-      agent_uri = URI.parse(agent_uri_str)
+      # Build via the canonical chokepoint so the pinned struct matches
+      # what `instantiate/3` returns. Post-SPEC 2026-05-27 URI
+      # canonicalization (#431/#438) the product threads URIs through
+      # `Ezagent.URI.new!/1`, whose canonical `%URI{}` does NOT carry the
+      # `authority` field that `URI.parse/1` populates — so a
+      # `URI.parse`-built pin no longer `==` the returned URI.
+      agent_uri = Ezagent.URI.new!(agent_uri_str)
 
       tmpl = %{
         "class" => "echo.agent",
@@ -210,7 +222,13 @@ defmodule Ezagent.PluginEcho.Template.EchoAgentTest do
       agent_uri_str =
         "entity://agent/team-alpha/echo_idem-#{System.unique_integer([:positive])}"
 
-      agent_uri = URI.parse(agent_uri_str)
+      # Build via the canonical chokepoint so the pinned struct matches
+      # what `instantiate/3` returns. Post-SPEC 2026-05-27 URI
+      # canonicalization (#431/#438) the product threads URIs through
+      # `Ezagent.URI.new!/1`, whose canonical `%URI{}` does NOT carry the
+      # `authority` field that `URI.parse/1` populates — so a
+      # `URI.parse`-built pin no longer `==` the returned URI.
+      agent_uri = Ezagent.URI.new!(agent_uri_str)
 
       tmpl = %{
         "class" => "echo.agent",
@@ -245,7 +263,13 @@ defmodule Ezagent.PluginEcho.Template.EchoAgentTest do
       agent_uri_str =
         "entity://agent/team-alpha/echo_already-#{System.unique_integer([:positive])}"
 
-      agent_uri = URI.parse(agent_uri_str)
+      # Build via the canonical chokepoint so the pinned struct matches
+      # what `instantiate/3` returns. Post-SPEC 2026-05-27 URI
+      # canonicalization (#431/#438) the product threads URIs through
+      # `Ezagent.URI.new!/1`, whose canonical `%URI{}` does NOT carry the
+      # `authority` field that `URI.parse/1` populates — so a
+      # `URI.parse`-built pin no longer `==` the returned URI.
+      agent_uri = Ezagent.URI.new!(agent_uri_str)
 
       # Bring up ONLY the Agent Kind — directly, NOT via the template.
       # Kind alive, no PtyServer: the "worker this call did not create"

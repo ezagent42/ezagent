@@ -27,10 +27,13 @@ defmodule Ezagent.ExternalMirrorTest do
   alias Ezagent.{Capability, ExternalMirror}
   alias Ezagent.ExternalMirror.AdapterRegistry
   alias Ezagent.ExternalMirror.TestSupport.MockAdapter
+  alias Ezagent.ExternalMirror.TestSupport.RegistrySnapshot
 
   setup do
-    :ets.delete_all_objects(AdapterRegistry.table())
-    :ok
+    # Snapshot + wipe + restore-on-exit so wiping the GLOBAL registry
+    # doesn't drop production rows (e.g. feishu) for concurrent async
+    # tests.
+    RegistrySnapshot.with_clean_registries()
   end
 
   # Admin-shape ctx for "bare unit tests don't care about caps" cases.

@@ -169,7 +169,14 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
        adapter_id: Map.fetch!(args, :adapter_id),
        target_id: Map.fetch!(args, :target_id),
        opts: Map.get(args, :opts, %{}),
-       publisher_cursor: :latest,
+       # Remediation SPEC 2026-05-30 (C-A): seed the FIRST-subscribe cursor
+       # from the Session's publisher cursor captured at BIND time (passed by
+       # `Behavior.ExternalMirror.do_bind` as `initial_publisher_cursor`).
+       # Subscribing from this cursor replays any slice change that lands in
+       # the Publisher ring during the deferred-subscribe window — no
+       # first-event loss. Defaults `:latest` when not supplied (cold-load
+       # rehydration doesn't run `create/1`; direct unit spawns omit it).
+       publisher_cursor: Map.get(args, :initial_publisher_cursor, :latest),
        count: 0,
        error_count: 0,
        last_published_at: nil,
@@ -218,48 +225,41 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
   worker resumes from the right point.
   """
   @impl Ezagent.Lifecycle
-  def activate(state, %{self_uri: self_uri}) do
+  def activate(state, %{self_uri: _self_uri}) do
     adapter_module = AdapterRegistry.lookup!(state.adapter_id)
     binding_module = BindingRegistry.lookup!(state.adapter_id)
 
-    # On a cold-load `state.publisher_cursor` carries the last published
-    # cursor → cursor-based catch-up replay (Task #49 r3 NEW CHECK C). On
-    # a fresh spawn it is `:latest` (no prior cursor) → no replay (V1
-    # fire-and-forget per OQ-EM-10). `subscribe_to_session_publisher_from`
-    # handles both + the `:cursor_out_of_window` fallback.
-    # The bound Session may not be spawned yet on a full cold boot (the
-    # worker is re-spawned from its durable binding row before the Session
-    # Kind exists) → subscribe returns `{:error, :no_such_actor}` (or
-    # `:not_ready`). Per §10-R1 + Task #49 this is NOT fatal: go `:pending`
-    # and let the `PublisherLifecycle.subscribe/1` kick (below) re-subscribe
-    # via the `:publisher_alive` `handle_signal/2` clause when the Session
-    # cold-spawns. Crashing here (the old `{:ok, _} =` match) took the
-    # worker into a permanent restart loop on cold boot.
-    {subscription_state, current_cursor} =
-      case subscribe_to_session_publisher_from(state.session_uri, self_uri, state.publisher_cursor) do
-        {:ok, cursor} ->
-          {:active, cursor}
-
-        {:error, :cursor_out_of_window} ->
-          case subscribe_to_session_publisher_from(state.session_uri, self_uri, :latest) do
-            {:ok, cursor} -> {:active, cursor}
-            {:error, _} -> {:pending, state.publisher_cursor}
-          end
-
-        {:error, reason} when reason in [:no_such_actor, :not_ready] ->
-          Logger.info(
-            "ExternalMirrorWorker activate: session #{URI.to_string(state.session_uri)} " <>
-              "not yet available (#{inspect(reason)}); subscription deferred to :pending"
-          )
-
-          {:pending, state.publisher_cursor}
-      end
+    # §10-R1 (remediation SPEC 2026-05-30 C-A) — DEFER the Session-Publisher
+    # subscribe to a DETACHED Task, off this Worker's own GenServer.
+    #
+    # The subscribe is a synchronous Router `:call` to the SESSION Kind.
+    # Doing it INLINE here deadlocks: `external_mirror.unbind` (running in the
+    # Session's `handle_call`) tears THIS Worker down via
+    # `WorkerSpawn.terminate → DynamicSupervisor.terminate_child`; a Worker
+    # blocked in a `:call` to that same Session cannot process its own
+    # shutdown until the call returns, while the Session is blocked in
+    # `terminate_child` waiting for the Worker to die — deadlock until the 5s
+    # shutdown brutal-kill (observed as the bind→unbind roundtrip timing out).
+    # Running the subscribe in a Task keeps the Worker GenServer responsive.
+    # The Task carries the Worker's pid as `subscriber_pid` (so the Session
+    # fans publisher events to the Worker, not the Task) and reports its
+    # outcome back as a `{:ezagent_worker_subscribe_result, _}` signal. This
+    # is the canonical §10-R1 `activate → defer → handle_signal` pattern.
+    #
+    # On a cold-load `state.publisher_cursor` is the last-published cursor
+    # (cursor-based catch-up replay); on a fresh spawn it is the cursor
+    # captured at BIND time (`Behavior.ExternalMirror.do_bind` passes the
+    # Session's then-current publisher cursor as `initial_publisher_cursor`),
+    # so the first subscribe replays any slice change emitted during the
+    # spawn→subscribe window — no first-event loss.
+    send(self(), :ezagent_worker_initial_subscribe)
 
     # Task #49 (2026-05-27) — subscribe to the Session's lifecycle topic
     # so we get a kick if the Session is cold-spawned later. On
     # `:publisher_alive` we re-attach our (still-live) pid to the new
     # (empty) `:publisher.subscribers` map. See `Ezagent.PublisherLifecycle`
     # moduledoc + the `handle_signal/2` `:publisher_alive` clause below.
+    # Local PubSub.subscribe (no cross-Kind `:call`) — safe here.
     :ok = Ezagent.PublisherLifecycle.subscribe(state.session_uri)
 
     case binding_module.init({state.target_id, adapter_module, state.opts}) do
@@ -268,12 +268,19 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
           adapter_module: adapter_module,
           binding_module: binding_module,
           binding_state: binding_state,
-          subscription_state: subscription_state
+          # OPTIMISTICALLY `:active` (the Worker IS the subscriber pid). The
+          # Publisher fans replay/live events straight to the Worker mailbox
+          # during the Task's `subscribe_from`; those `:publisher_event`
+          # messages can land BEFORE the Task's result signal flips the flag,
+          # and the `:publisher_event` clause DROPS events while `:pending`.
+          # Marking `:active` up front ensures the catch-up window is
+          # accepted. If the subscribe ultimately fails (Session unreachable),
+          # no events arrive and "active" is harmless until the
+          # `:publisher_alive` handshake re-subscribes.
+          subscription_state: :active
         }
 
-        # 3-arity return: reconcile `state.publisher_cursor` against the
-        # cursor the subscribe resolved to.
-        {:ok, transients, %{state | publisher_cursor: current_cursor}}
+        {:ok, transients}
 
       {:error, reason} ->
         # SPEC §6.2: binding's transport failed to open; raise to
@@ -362,7 +369,82 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
     end
   end
 
+  # §10-R1 / remediation C-A — kick the DEFERRED initial subscribe (self-sent
+  # from `activate/2`). Runs the blocking `subscribe_from` `:call` in a
+  # DETACHED Task (off this Worker process) so the Worker stays responsive to
+  # a concurrent unbind→terminate. The Task reports back via
+  # `{:ezagent_worker_subscribe_result, _}`.
+  def handle_signal(:ezagent_worker_initial_subscribe, ctx) do
+    session_uri = ctx.read.(:session_uri, nil)
+    persisted_cursor = ctx.read.(:publisher_cursor, :latest)
+
+    spawn_initial_subscribe_task(session_uri, ctx.self_uri, persisted_cursor)
+    # Still optimistically `:active` from activate — nothing to commit yet.
+    :ignore
+  end
+
+  # §10-R1 / remediation C-A — the Task's result. The catch-up replay was
+  # already applied IN the Task's `subscribe_from`; here we just fold the
+  # resolved cursor into PERSISTENT state (subscription_state is already
+  # `:active`). On a not-yet-reachable Session, leave it (the
+  # `:publisher_alive` handshake re-arms when the Session cold-spawns).
+  def handle_signal({:ezagent_worker_subscribe_result, result}, _ctx) do
+    case result do
+      {:ok, current_cursor} ->
+        {:ok, [{:set, :publisher_cursor, current_cursor}]}
+
+      {:error, reason} ->
+        Logger.info(
+          "ExternalMirrorWorker initial subscribe deferred-task result " <>
+            "#{inspect(reason)}; will re-subscribe on :publisher_alive"
+        )
+
+        :ignore
+    end
+  end
+
   def handle_signal(_other, _ctx), do: :ignore
+
+  # Run the (blocking) initial Publisher subscribe in a DETACHED Task under
+  # `SubscribeTaskSup`, NOT on the Worker's own GenServer (see `activate/2`
+  # for the deadlock rationale). The Task carries the Worker's pid as the
+  # `subscriber_pid` (so the Session fans publisher events to the Worker, not
+  # the Task) and the Worker URI as the CapBAC caller; it sends the result
+  # back as a signal.
+  defp spawn_initial_subscribe_task(nil, _self_uri, _cursor), do: :ok
+
+  defp spawn_initial_subscribe_task(%URI{} = session_uri, %URI{} = self_uri, persisted_cursor) do
+    worker_pid = self()
+
+    {:ok, _task_pid} =
+      Task.Supervisor.start_child(Ezagent.ExternalMirror.SubscribeTaskSup, fn ->
+        result = do_initial_subscribe(session_uri, self_uri, worker_pid, persisted_cursor)
+        send(worker_pid, {:ezagent_worker_subscribe_result, result})
+      end)
+
+    :ok
+  end
+
+  # Cursor-based catch-up for the FIRST subscribe, run INSIDE the detached
+  # Task (`subscriber_pid` passed explicitly — it is the Worker, not the
+  # Task). On `:cursor_out_of_window` we fall back to `:earliest` (NOT
+  # `:latest`): the captured/persisted cursor is older than the ring's oldest
+  # retained entry, so replaying the WHOLE (bounded-by-retention) ring is the
+  # correct catch-up — `:latest` would silently DROP the spawn→subscribe
+  # window. Dedup by `last_published_message_id` keeps replayed-but-already-
+  # published events from re-hitting the external transport.
+  defp do_initial_subscribe(%URI{} = session_uri, %URI{} = self_uri, worker_pid, persisted_cursor) do
+    case subscribe_to_session_publisher_from(session_uri, self_uri, persisted_cursor, worker_pid) do
+      {:ok, current_cursor} ->
+        {:ok, current_cursor}
+
+      {:error, :cursor_out_of_window} ->
+        subscribe_to_session_publisher_from(session_uri, self_uri, :earliest, worker_pid)
+
+      {:error, _reason} = err ->
+        err
+    end
+  end
 
   # Task #49 codex round-1 FAIL #6 — bounded retry on `{:error, :not_ready}`.
   #
@@ -781,12 +863,20 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
   # a `:dispatch` effect is fire-and-forget and could not return the
   # cursor). The `{:publisher_event, …}` → `:publish` path IS a
   # declarative `:dispatch` effect (see `dispatch_publish_effect/2`).
-  defp subscribe_to_session_publisher_from(%URI{} = session_uri, %URI{} = self_uri, cursor) do
+  # `subscriber_pid` is the WORKER's pid — the process that must receive the
+  # `{:publisher_event, _}` fan-out + replay. Passed EXPLICITLY because the
+  # initial subscribe runs in a detached Task. The re-subscribe paths
+  # (`attempt_resubscribe`) run on the Worker process and default to `self()`.
+  defp subscribe_to_session_publisher_from(session_uri, self_uri, cursor, subscriber_pid \\ nil)
+
+  defp subscribe_to_session_publisher_from(%URI{} = session_uri, %URI{} = self_uri, cursor, sub_pid) do
+    subscriber_pid = sub_pid || self()
+
     cmd =
       Ezagent.Cmd.new(
         session_uri,
         :subscribe_from,
-        %{subscriber_pid: self(), cursor: cursor},
+        %{subscriber_pid: subscriber_pid, cursor: cursor},
         # SPEC caps-cleanup-v1 §4.4 — Worker's internal dispatches run
         # under `system://worker-publish` per the closed Catalog.
         %{

@@ -8,7 +8,13 @@ defmodule EzagentPluginFeishu.Integration.PluginContractTest do
   already published every declaration by the time this test runs.
   """
 
-  use ExUnit.Case, async: true
+  # async: false — this test asserts the GLOBAL production-boot state of
+  # the umbrella-wide AdapterRegistry/BindingRegistry/CapabilityRegistry
+  # singletons. Running concurrently with the external_mirror registry
+  # tests (which wipe + restore those tables) produced flaky `:error`
+  # lookups. The registry tests now snapshot+restore, but keep this
+  # serial so it never observes a mid-wipe window.
+  use ExUnit.Case, async: false
 
   test "feishu plugin is registered in Ezagent.PluginRegistry after boot" do
     assert EzagentPluginFeishu.Application in Ezagent.PluginRegistry.list_all(),

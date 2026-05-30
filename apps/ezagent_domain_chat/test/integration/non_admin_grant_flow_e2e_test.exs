@@ -43,6 +43,14 @@ defmodule EzagentDomainChat.Integration.NonAdminGrantFlowE2ETest do
     {uri, MapSet.new(caps)}
   end
 
+  # The session is created in workspace://system (derived from the admin
+  # creator). The operator is a team-alpha user whose User-Kind baseline
+  # `default_caps` covers ONLY its own (team-alpha) workspace — so it holds
+  # NO cap for a system-workspace session. That's what makes Step 1's
+  # denial real and the grant meaningful. The granted cap below is therefore
+  # scoped to workspace://system to match the session's workspace.
+  @session_workspace_uri URI.parse("workspace://system")
+
   defp default_session do
     short = "non_admin_e2e_#{System.unique_integer([:positive])}"
     {:ok, uri, _meta} =
@@ -93,7 +101,11 @@ defmodule EzagentDomainChat.Integration.NonAdminGrantFlowE2ETest do
                chat_send(operator_uri, operator_caps_empty, session_uri, "first try")
 
       # ---------- Step 2: admin grants operator a workspace session cap ----------
-      workspace_uri = URI.parse("workspace://team-alpha")
+      # Scope the grant to the SESSION's workspace (system), not the
+      # operator's home workspace — otherwise the workspace axis of the
+      # granted cap won't match `chat.send`'s needed cap (whose
+      # workspace_uri is substituted from the session URI).
+      workspace_uri = @session_workspace_uri
 
       session_cap = %Capability{
         kind: :session,

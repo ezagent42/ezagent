@@ -1235,7 +1235,19 @@ defmodule Ezagent.Entity.Session do
     end
   end
 
-  defp first_worker([%URI{} = worker_uri | _]), do: {:ok, worker_uri}
+  # Canonicalize the worker URI through `Ezagent.URI.new!/1` regardless
+  # of which shape `template.instantiate` returned. The cc Template Class
+  # builds workers via `URI.parse` (authority-bearing: `authority:
+  # "agent"`); `URI.new!` yields the canonical RFC-3986 `authority: nil`
+  # form that the snapshot reload path produces. Storing the non-canonical
+  # struct in the live working copy made the in-memory `agent_slots` tuple
+  # diverge from its post-restart rehydrated form on the `authority` field
+  # alone (same string, different struct) — see the codex PR #408 CRIT note
+  # on `ensure_orchestrator`. Canonicalizing here keeps the live and
+  # rehydrated working copies struct-equal.
+  defp first_worker([%URI{} = worker_uri | _]),
+    do: {:ok, Ezagent.URI.new!(URI.to_string(worker_uri))}
+
   defp first_worker([uri | _]) when is_binary(uri), do: {:ok, Ezagent.URI.new!(uri)}
   defp first_worker([]), do: {:error, :instantiate_returned_no_worker}
 

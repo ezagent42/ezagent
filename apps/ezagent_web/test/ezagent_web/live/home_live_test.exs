@@ -90,33 +90,58 @@ defmodule EzagentWeb.HomeLiveTest do
   # Terminate every session under EzagentDomainChat.SessionSupervisor so
   # the wizard's empty-list branch can be exercised. Returns the list of
   # session short_names that were torn down (so `on_exit` can re-seed).
+  # Drive `EzagentDomainChat.list_sessions/0` to empty so HomeLive takes
+  # the wizard branch.
+  #
+  # `list_sessions/0` derives its result from `Ezagent.KindRegistry`
+  # (every live `session://` Kind), NOT from the membership of any one
+  # supervisor. The boot-seeded `session://default/system/main` is in
+  # fact a `:permanent` child of the GENERIC `Ezagent.KindSupervisor`
+  # (the `resolve_supervisor/1` fallback), NOT
+  # `EzagentDomainChat.SessionSupervisor` — so the old drain, which
+  # only walked `SessionSupervisor`'s children, found nothing to
+  # terminate and the wizard branch never fired.
+  #
+  # Drain from the registry instead: enumerate every live `session://`
+  # Kind, and `DynamicSupervisor.terminate_child/2` each one against its
+  # ACTUAL parent supervisor (resolved from the process's `$ancestors`).
+  # `terminate_child` is the only call that permanently removes a
+  # `:permanent` child — a bare `Process.exit`/`GenServer.stop` would
+  # trigger the supervisor restart and the session would reappear.
   defp drain_sessions do
-    sup = Process.whereis(EzagentDomainChat.SessionSupervisor)
+    live_sessions =
+      Ezagent.KindRegistry.list_all()
+      |> Enum.filter(fn {uri, pid} ->
+        is_binary(uri) and String.starts_with?(uri, "session://") and is_pid(pid)
+      end)
 
-    children =
-      if sup do
-        DynamicSupervisor.which_children(sup)
-      else
-        []
+    shorts = Enum.map(live_sessions, fn {uri_str, _pid} -> URI.new!(uri_str).host end)
+
+    for {_uri_str, pid} <- live_sessions do
+      case parent_supervisor(pid) do
+        nil -> :ok
+        sup -> DynamicSupervisor.terminate_child(sup, pid)
       end
-
-    shorts =
-      for {_id, pid, _type, _modules} <- children, is_pid(pid) do
-        Ezagent.KindRegistry.list_all()
-        |> Enum.find_value(fn
-          {uri_str, ^pid} -> uri_str
-          _ -> nil
-        end)
-      end
-      |> Enum.reject(&is_nil/1)
-      |> Enum.map(fn uri_str -> URI.new!(uri_str).host end)
-
-    for {_id, pid, _type, _modules} <- children, is_pid(pid) do
-      DynamicSupervisor.terminate_child(sup, pid)
     end
 
     wait_until_empty()
     shorts
+  end
+
+  # The parent DynamicSupervisor of a Kind.Server pid is the first entry
+  # of its `$ancestors` process-dict key (set by `proc_lib` on spawn).
+  defp parent_supervisor(pid) do
+    case Process.info(pid, :dictionary) do
+      {:dictionary, dict} ->
+        case Keyword.get(dict, :"$ancestors") do
+          [parent | _] when is_atom(parent) -> Process.whereis(parent)
+          [parent | _] when is_pid(parent) -> parent
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
   end
 
   defp wait_until_empty(retries \\ 50)

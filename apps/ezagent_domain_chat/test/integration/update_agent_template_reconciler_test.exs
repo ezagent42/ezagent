@@ -128,7 +128,11 @@ defmodule EzagentDomainChat.Integration.UpdateAgentTemplateReconcilerTest do
   end
 
   defp admin_ctx do
-    %{caller: User.admin_uri(), caps: Ezagent.SystemPrincipal.caps("system://bootstrap"), reply: {:caller_inbox, self()}}
+    %{
+      caller: User.admin_uri(),
+      caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+      reply: {:caller_inbox, self()}
+    }
   end
 
   defp create_session_template(name, agent_slots, routing_rules, opts \\ []) do
@@ -187,6 +191,10 @@ defmodule EzagentDomainChat.Integration.UpdateAgentTemplateReconcilerTest do
     |> :sys.get_state()
     |> Map.get(:state, %{})
     |> Map.get(:identity, %{})
+    # Lifecycle migration (PR #485 — Identity → use Ezagent.Lifecycle):
+    # unwrap the two-container Identity slice to its persistent :state
+    # (flat falls through), mirroring session_working_copy/1's Chat unwrap.
+    |> then(&Map.get(&1, :state, &1))
     |> Map.get(:caps, MapSet.new())
   end
 

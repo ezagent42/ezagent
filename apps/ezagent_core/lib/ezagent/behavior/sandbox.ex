@@ -247,20 +247,30 @@ defmodule Ezagent.Behavior.Sandbox do
 
   # ---- :read ----------------------------------------------------------------
 
-  # The `destroyed?` gate is GONE (SPEC §2.3B): a destroyed agent has its
-  # state cleared + its process terminated by `destroy/2`, so there is no
-  # live process to dispatch a stale `:read` to.
+  # Destroyed-gate (remediation SPEC 2026-05-30 C-C): once `:destroy` has run,
+  # a `:read` arriving in the brief live window before scheduled termination
+  # must STRICTLY return `{:error, :destroyed}` (not the cleared `{:ok, state}`).
+  # The gate is a TRANSIENT — never persisted, rebuilt empty on re-spawn — so
+  # the old persisted-flag bug §2.3B cannot recur.
   def handle_read(_args, ctx) do
-    {:ok,
-     %{
-       config_dir_path: ctx.read.(:config_dir_path, nil),
-       template_class: ctx.read.(:template_class, nil),
-       respawn_template_data: ctx.read.(:respawn_template_data, nil),
-       # Expose the mirrored phase so LV / admin callers read it without
-       # subscribing to the phase topic themselves.
-       pty_phase: ctx.read.(:pty_phase, nil)
-     }, []}
+    if destroyed?(ctx) do
+      {:error, :destroyed}
+    else
+      {:ok,
+       %{
+         config_dir_path: ctx.read.(:config_dir_path, nil),
+         template_class: ctx.read.(:template_class, nil),
+         respawn_template_data: ctx.read.(:respawn_template_data, nil),
+         # Expose the mirrored phase so LV / admin callers read it without
+         # subscribing to the phase topic themselves.
+         pty_phase: ctx.read.(:pty_phase, nil)
+       }, []}
+    end
   end
+
+  # The destroyed marker lives in the TRANSIENT container (set by
+  # `handle_destroy`), read via `ctx.transients` like every other transient.
+  defp destroyed?(ctx), do: (ctx[:transients] || %{})[:destroyed] == true
 
   # ---- :write_path ----------------------------------------------------------
 
@@ -268,8 +278,14 @@ defmodule Ezagent.Behavior.Sandbox do
   # `instantiate/3` returned the per-agent dir in meta (PR3 wiring).
   # Subsequent invocations are allowed (re-spawn / re-bind) — there is no
   # immutability semantics here; the caller (spawn orchestrator) is trusted.
-  def handle_write_path(args, _ctx) when is_map(args) do
-    do_write_path(args)
+  def handle_write_path(args, ctx) when is_map(args) do
+    # Destroyed-gate (C-C): same strict rejection as `:read` during the
+    # post-destroy live window.
+    if destroyed?(ctx) do
+      {:error, :destroyed}
+    else
+      do_write_path(args)
+    end
   end
 
   # ---- :destroy -------------------------------------------------------------
@@ -336,7 +352,20 @@ defmodule Ezagent.Behavior.Sandbox do
     #    dispatch reply has been sent.
     {:ok, %{destroyed: true, cleanup: cleanup_result},
      set_effects ++
-       [{:effect, {__MODULE__, :schedule_termination}, [self_uri, kind_module]}]}
+       [
+         # Remediation SPEC 2026-05-30 C-C: re-introduce the destroyed-gate,
+         # but as a TRANSIENT (never persisted) instead of the old process-dict
+         # / persisted flag. During the ~20ms live window before the scheduled
+         # termination removes the process, a concurrent `:read`/`:write_path`
+         # must STRICTLY return `{:error, :destroyed}` (SandboxDestroyTest) —
+         # NOT `{:ok, cleared_state}`. Because transients are stripped at the
+         # serialize boundary and rebuilt EMPTY in `activate/2`, a re-spawn
+         # CANNOT rehydrate `destroyed: true` — which is exactly the
+         # persisted-flag bug §2.3B removed. The two-container model makes the
+         # gate safe by construction.
+         {:set_transient, :destroyed, true},
+         {:effect, {__MODULE__, :schedule_termination}, [self_uri, kind_module]}
+       ]}
   end
 
   # Validate the write_path args + build the `:set` effects. Returns the

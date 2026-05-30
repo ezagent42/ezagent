@@ -125,7 +125,11 @@ defmodule EzagentDomainChat.Integration.LifecycleTerminateTest do
     # only USER URIs get notifications (agents have no inbox).
 
     test "notifies a user-URI spawning principal on terminate" do
-      user_uri = URI.parse("entity://user/team-alpha/spawner-#{uniq()}")
+      # Canonical (`authority: nil`) — `Notifications.notify/3` rebroadcasts
+      # the recipient URI via `parse_uri!` (canonical), so the `^user_uri`
+      # pin on the `{:notification, user_uri, _}` envelope must hold the
+      # canonical struct, not the `URI.parse` (`authority: "user"`) form.
+      user_uri = Ezagent.URI.new!("entity://user/team-alpha/spawner-#{uniq()}")
       :ok = Ezagent.Notifications.subscribe(user_uri, %{caps: :system})
 
       worker_uri = spawn_worker(user_uri)

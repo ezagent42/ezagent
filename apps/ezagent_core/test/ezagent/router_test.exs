@@ -71,8 +71,19 @@ defmodule Ezagent.RouterTest do
       assert {:error, :no_such_actor} = Router.dispatch(cmd)
     end
 
-    test "not_ready fail-fast for :call to not-ready actor", %{target: target} do
+    test ":call to not-ready actor waits through the activate window then serves (C-A readiness)",
+         %{target: target} do
+      # Readiness contract (post-lifecycle remediation, spec C-A): a
+      # synchronous dispatch to a `:not_ready` target waits-then-serves
+      # rather than fail-fasting with `:not_ready`. Flip to ready from a
+      # concurrent process during the bounded wait; the dispatch must
+      # return the real result.
       :ok = Ezagent.ReadyGate.put(target, :not_ready)
+
+      spawn(fn ->
+        Process.sleep(50)
+        :ok = Ezagent.ReadyGate.mark_ready(target)
+      end)
 
       cmd =
         Cmd.new(target, :noop, %{msg: "x"}, %{
@@ -80,7 +91,7 @@ defmodule Ezagent.RouterTest do
           caps: MapSet.new()
         })
 
-      assert {:error, :not_ready} = Router.dispatch(cmd)
+      assert {:ok, _result} = Router.dispatch(cmd)
     after
       :ok
     end

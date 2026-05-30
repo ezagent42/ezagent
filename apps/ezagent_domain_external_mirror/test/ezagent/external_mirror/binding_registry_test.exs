@@ -16,10 +16,13 @@ defmodule Ezagent.ExternalMirror.BindingRegistryTest do
 
   alias Ezagent.ExternalMirror.BindingRegistry
   alias Ezagent.ExternalMirror.TestSupport.{MockBinding, OtherBinding}
+  alias Ezagent.ExternalMirror.TestSupport.RegistrySnapshot
 
   setup do
-    :ets.delete_all_objects(BindingRegistry.table())
-    :ok
+    # Snapshot + wipe + restore-on-exit so wiping the GLOBAL registry
+    # doesn't drop production rows (e.g. feishu) for concurrent async
+    # tests like EzagentPluginFeishu PluginContractTest.
+    RegistrySnapshot.with_clean_registries()
   end
 
   describe "register_module/2 + lookup/1 + lookup!/1" do

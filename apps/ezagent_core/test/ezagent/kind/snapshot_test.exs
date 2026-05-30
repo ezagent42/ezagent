@@ -25,7 +25,8 @@ defmodule Ezagent.Kind.SnapshotTest do
     # PR-OWN-3 (caps-data-ownership-v2 SPEC #306) added self-Identity
     # cap provisioning at init — the entity gets a `Behavior.Identity`
     # cap on its own URI so dispatch-path list_caps/has_cap? authorize.
-    assert %{identity: %{caps: caps}} = state
+    # remediation C-D — the slice is now two-container (state/transients).
+    assert %{identity: %{state: %{caps: caps}}} = state
     refute Map.has_key?(state, :api_keys),
            "User Kind no longer holds :api_keys post Allen 2026-05-26 flip"
 
@@ -140,10 +141,11 @@ defmodule Ezagent.Kind.SnapshotTest do
     # Asserting the full structure here keeps the invariant tight —
     # adding a new User-Behavior should force this assertion to be
     # updated alongside.
+    # remediation C-D — each slice is now two-container (state/transients).
     assert loaded == %{
-             identity: %{caps: caps},
-             user_credentials: %{set_password_count: 0},
-             user_tokens: %{mint_count: 0, revoke_count: 0}
+             identity: %{state: %{caps: caps}, transients: %{}},
+             user_credentials: %{state: %{set_password_count: 0}, transients: %{}},
+             user_tokens: %{state: %{mint_count: 0, revoke_count: 0}, transients: %{}}
            }
   end
 
@@ -153,7 +155,8 @@ defmodule Ezagent.Kind.SnapshotTest do
 
     :ok = Snapshot.save_now(uri, Ezagent.Entity.User, %{identity: %{caps: caps}})
 
-    %{identity: %{caps: loaded_caps}} =
+    # remediation C-D — the slice is now two-container (state/transients).
+    %{identity: %{state: %{caps: loaded_caps}}} =
       Snapshot.load_or_init(uri, Ezagent.Entity.User, %{uri: uri})
 
     assert %MapSet{} = loaded_caps
@@ -168,6 +171,7 @@ defmodule Ezagent.Kind.SnapshotTest do
 
     # Now load — the merge should make Identity's fresh init appear
     loaded = Snapshot.load_or_init(uri, Ezagent.Entity.User, %{uri: uri})
-    assert %{identity: %{caps: %MapSet{}}} = loaded
+    # remediation C-D — the slice is now two-container (state/transients).
+    assert %{identity: %{state: %{caps: %MapSet{}}}} = loaded
   end
 end
