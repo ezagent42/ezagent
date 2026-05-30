@@ -31,6 +31,7 @@ defmodule Ezagent.ExternalMirror do
   - `list_adapters/0` — reads AdapterRegistry (PR-EM-1).
   """
 
+  alias Ezagent.{Cmd, Router}
   alias Ezagent.ExternalMirror.{AdapterRegistry, BindingRow, FacadeNonceTable}
 
   require Logger
@@ -208,14 +209,14 @@ defmodule Ezagent.ExternalMirror do
     target =
       Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=external_mirror.unbind")
 
-    inv = %Ezagent.Invocation{
+    cmd = %Cmd{
       target: target,
-      mode: :call,
+      action: :unbind,
       args: %{adapter_id: adapter_id, target_id: target_id},
-      ctx: ensure_reply(ctx)
+      ctx: ensure_call_ctx(ctx)
     }
 
-    Ezagent.Invocation.dispatch(inv)
+    Router.dispatch(cmd)
   end
 
   # ----- Reads --------------------------------------------------------------
@@ -249,14 +250,14 @@ defmodule Ezagent.ExternalMirror do
     target =
       Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=external_mirror.list_bindings")
 
-    inv = %Ezagent.Invocation{
+    cmd = %Cmd{
       target: target,
-      mode: :call,
+      action: :list_bindings,
       args: %{},
-      ctx: ensure_reply(ctx)
+      ctx: ensure_call_ctx(ctx)
     }
 
-    case Ezagent.Invocation.dispatch(inv) do
+    case Router.dispatch(cmd) do
       {:ok, %{bindings: bindings}} -> {:ok, bindings}
       {:ok, _other} -> {:ok, []}
       {:error, _} = err -> err
@@ -549,26 +550,29 @@ defmodule Ezagent.ExternalMirror do
     target =
       Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=external_mirror.bind")
 
-    inv = %Ezagent.Invocation{
+    cmd = %Cmd{
       target: target,
-      mode: :call,
+      action: :bind,
       args: %{
         adapter_id: adapter_id,
         target_id: target_id,
         opts: opts,
         _facade_nonce: nonce
       },
-      ctx: ensure_reply(ctx)
+      ctx: ensure_call_ctx(ctx)
     }
 
-    Ezagent.Invocation.dispatch(inv)
+    Router.dispatch(cmd)
   end
 
-  defp ensure_reply(ctx) do
-    if Map.has_key?(ctx, :reply) do
-      ctx
-    else
-      Map.put(ctx, :reply, :ignore)
-    end
+  # Build the Cmd ctx for a `:call`-mode Router dispatch from a
+  # caller-supplied ctx (caller URI + caps). Defaults `:reply` to
+  # `:ignore` when absent and pins `mode: :call` so Router's
+  # `derive_mode/1` selects synchronous delivery (the facade reads the
+  # handler result from the return value, not via the reply target).
+  defp ensure_call_ctx(ctx) do
+    ctx
+    |> Map.put_new(:reply, :ignore)
+    |> Map.put(:mode, :call)
   end
 end
