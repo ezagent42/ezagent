@@ -113,6 +113,15 @@ defmodule Ezagent.LifecycleCase do
 
     wait_until(fn -> Ezagent.ReadyGate.status(uri) == :ready end)
 
+    # The cold-restart wait below (step 4) is the slowest operation in
+    # this gate: a brutal kill triggers an OTP supervisor auto-restart
+    # (which may carry a small restart-backoff) followed by a full
+    # init → cold-load → activate → ReadyGate-flip cycle. Under the full
+    # concurrent umbrella run (ezagent_core alone runs ~22s) that
+    # legitimately needs a larger budget than the generic 3s default, so
+    # the restart-readiness poll gets an explicit ~6s ceiling.
+    cold_restart_attempts = 600
+
     # 2. Drive to a non-trivial state, then capture both containers.
     drive.(uri)
 
@@ -144,12 +153,15 @@ defmodule Ezagent.LifecycleCase do
     #    registry to point at a DIFFERENT, ready pid.
     Process.exit(pid1, :kill)
 
-    wait_until(fn ->
-      case Ezagent.KindRegistry.lookup(uri) do
-        {:ok, p} when p != pid1 -> Ezagent.ReadyGate.status(uri) == :ready
-        _ -> false
-      end
-    end)
+    wait_until(
+      fn ->
+        case Ezagent.KindRegistry.lookup(uri) do
+          {:ok, p} when p != pid1 -> Ezagent.ReadyGate.status(uri) == :ready
+          _ -> false
+        end
+      end,
+      cold_restart_attempts
+    )
 
     {:ok, pid2} = Ezagent.KindRegistry.lookup(uri)
     ExUnit.Assertions.refute(pid1 == pid2, "cold restart must produce a new pid")
