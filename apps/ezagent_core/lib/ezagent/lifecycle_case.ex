@@ -51,8 +51,17 @@ defmodule Ezagent.LifecycleCase do
   Poll `fun` until it returns truthy, or flunk after `attempts` 10ms
   ticks. Mirrors the private helper used across the engine integration
   tests; lifted here so every Lifecycle test reuses one copy.
+
+  Default budget is 300 ticks (~3s). The poll returns the instant the
+  condition holds, so a healthy fast path is unaffected; the generous
+  ceiling is for the FULL concurrent umbrella run, where a brutal-kill →
+  supervisor-restart → `activate` → ReadyGate-flip → snapshot-commit
+  round-trip (the SandboxColdRestart GATE) competes for schedulers + the
+  Ecto sandbox connection and legitimately needs more than the prior
+  500ms before the condition becomes true. A genuinely stuck restart
+  still flunks (at 3s), so this is a realistic bound, not a masked hang.
   """
-  def wait_until(fun, attempts \\ 50)
+  def wait_until(fun, attempts \\ 300)
   def wait_until(_fun, 0), do: ExUnit.Assertions.flunk("wait_until: condition never became true")
 
   def wait_until(fun, attempts) when attempts > 0 do
