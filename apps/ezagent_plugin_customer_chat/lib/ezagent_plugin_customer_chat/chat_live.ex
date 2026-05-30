@@ -38,6 +38,7 @@ defmodule EzagentPluginCustomerChat.ChatLive do
       |> assign(:theme, theme)
       |> assign(:customer_id, customer_id)
       |> assign(:conv_id, conv_id)
+      |> assign(:bootstrap_attempts, 0)
       |> assign(:session_uri, session_uri)
       |> assign(:session_uri_str, session_uri_str)
       |> assign(:customer_uri_str, URI.to_string(customer_uri))
@@ -66,9 +67,20 @@ defmodule EzagentPluginCustomerChat.ChatLive do
     end
   end
 
+  # Max bootstrap attempts. A COLD cc agent (fresh claude spawn + startup
+  # dialogs + first-run `uv` MCP env build) routinely takes longer than
+  # one `ensure_bound!/2` budget (~15s) to bind its bridge. Without a
+  # retry the very first page load shows "Could not reach the assistant"
+  # even though the agent binds a moment later — forcing a manual refresh.
+  # Retrying (status stays :connecting) lets the cold start finish on its
+  # own. A warm agent binds on attempt 1, so this only costs the first
+  # load after a fresh spawn.
+  @max_bootstrap_attempts 4
+
   @impl true
   def handle_info(:bootstrap, socket) do
     %{tenant: tenant, conv_id: conv_id, session_uri: session_uri} = socket.assigns
+    attempt = socket.assigns.bootstrap_attempts + 1
     :ok = Bootstrap.ensure_session(tenant, conv_id)
 
     case Bootstrap.ensure_cc_for_conv(tenant, conv_id, session_uri) do
@@ -83,10 +95,20 @@ defmodule EzagentPluginCustomerChat.ChatLive do
          |> assign(:mode, lookup_mode(session_uri))
          |> assign(:cc_agent_uri, agent_uri)}
 
+      {:error, reason} when reason in [:timeout, :no_pty] and attempt < @max_bootstrap_attempts ->
+        # Cold-start in progress — keep :connecting and try again shortly.
+        Logger.info(
+          "ChatLive bootstrap attempt #{attempt} pending (#{inspect(reason)}); retrying"
+        )
+
+        Process.send_after(self(), :bootstrap, 2_000)
+        {:noreply, assign(socket, :bootstrap_attempts, attempt)}
+
       {:error, reason} ->
         {:noreply,
          socket
          |> assign(:status, :error)
+         |> assign(:bootstrap_attempts, attempt)
          |> assign(:error, "Could not reach the assistant. Please try again.")
          |> tap(fn _ -> Logger.warning("ChatLive bootstrap failed: #{inspect(reason)}") end)}
     end
