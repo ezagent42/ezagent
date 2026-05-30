@@ -130,9 +130,19 @@ defmodule EzagentDomainChat.PresenceFanout do
 
   @impl true
   def handle_info(
-        {:session_membership_change, %URI{} = session_uri, {:member_joined, %URI{} = member_uri}},
+        {:session_membership_change, %URI{} = session_uri0, {:member_joined, %URI{} = member_uri0}},
         state
       ) do
+    # Key parity (feedback_register_lookup_key_parity): the presence-diff
+    # handler looks the index up with a CANONICAL member_uri
+    # (`Ezagent.URI.new!` derived from the topic, `authority: nil`). The
+    # inbound `:session_membership_change` URIs may be non-canonical
+    # (`URI.parse`, `authority: "user"`). Canonicalize on the way IN so
+    # store and lookup keys are struct-equal; otherwise the diff lookup
+    # misses and no `:member_presence` ever fans out.
+    session_uri = canon(session_uri0)
+    member_uri = canon(member_uri0)
+
     sessions = Map.get(state, member_uri, MapSet.new())
 
     # FIRST session for this member → subscribe to Presence diffs
@@ -145,9 +155,11 @@ defmodule EzagentDomainChat.PresenceFanout do
   end
 
   def handle_info(
-        {:session_membership_change, %URI{} = session_uri, {:member_left, %URI{} = member_uri}},
+        {:session_membership_change, %URI{} = session_uri0, {:member_left, %URI{} = member_uri0}},
         state
       ) do
+    session_uri = canon(session_uri0)
+    member_uri = canon(member_uri0)
     sessions = Map.get(state, member_uri, MapSet.new())
     new_sessions = MapSet.delete(sessions, session_uri)
 
@@ -218,6 +230,11 @@ defmodule EzagentDomainChat.PresenceFanout do
 
   defp topic_to_member_uri(_), do: :error
 
+  # Canonicalize a URI to the `authority: nil` form the presence-diff
+  # lookup uses (`Ezagent.URI.new!` over the topic). Keeps the index's
+  # store keys struct-equal to its lookup keys (key parity).
+  defp canon(%URI{} = uri), do: Ezagent.URI.new!(URI.to_string(uri))
+
   # PR-5 (Allen 2026-05-23) bootstrap helper — peek a Session GenServer's
   # `:chat` slice, register (member → session_uri) for each current
   # member. Best-effort; failure is tolerated (next
@@ -250,7 +267,9 @@ defmodule EzagentDomainChat.PresenceFanout do
     end
   end
 
-  defp register_member(state, %URI{} = session_uri, %URI{} = member_uri) do
+  defp register_member(state, %URI{} = session_uri0, %URI{} = member_uri0) do
+    session_uri = canon(session_uri0)
+    member_uri = canon(member_uri0)
     sessions = Map.get(state, member_uri, MapSet.new())
 
     # FIRST session for this member → subscribe to Presence diffs
