@@ -222,7 +222,12 @@ defmodule EzagentDomainChat.Integration.BehaviorTemplateDispatchTest do
 
     test "the same template name in two workspaces are distinct Kinds (no collision)" do
       name = "shared-name-#{uniq()}"
-      uri_a = URI.new!("template://agent/team-alpha/#{name}")
+      # Same template NAME, two DISTINCT workspaces (default vs
+      # team-alpha) — the 3-segment per-tenant URI scopes them to
+      # separate Kinds. (Both legs previously read `team-alpha`, so
+      # `uri_a == uri_b` collapsed to one Kind and the cross-leak the
+      # test guards against could never be observed.)
+      uri_a = URI.new!("template://agent/default/#{name}")
       uri_b = URI.new!("template://agent/team-alpha/#{name}")
       :ok = KindSnapshot.delete(URI.to_string(uri_a))
       :ok = KindSnapshot.delete(URI.to_string(uri_b))
