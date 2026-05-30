@@ -123,6 +123,12 @@ defmodule EzagentPluginCustomerChat.Bootstrap do
     # also restores cc_agent.ex's per-agent-cwd isolation assumption that
     # the per-workspace cwd quietly violated.
     cwd = cc_cwd_for_conv(workspace, agent_name)
+    # The cc flavor REQUIRES its cwd to already exist (workspace
+    # create_agent validates `File.dir?/1` and rejects with
+    # `{:cwd_not_a_dir, _}` otherwise). A per-conversation cwd is fresh
+    # every time, so create it up front. mkdir_p is idempotent — a
+    # resumed conversation reuses the same dir.
+    File.mkdir_p!(cwd)
     soul_path = cc_soul_path_for_workspace(workspace, "customer")
     admin_uri = Ezagent.Entity.User.admin_uri()
     admin_caps = Ezagent.SystemPrincipal.caps("system://bootstrap")
