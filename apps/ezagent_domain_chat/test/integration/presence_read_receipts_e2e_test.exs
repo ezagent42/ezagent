@@ -78,7 +78,13 @@ defmodule EzagentDomainChat.Integration.PresenceReadReceiptsE2ETest do
   defp build_session_for_pair do
     suffix = unique_suffix()
     short_name = "cc_demo_e2e_#{suffix}"
-    cc_demo_uri = URI.parse("entity://agent/team-alpha/cc_demo_#{suffix}")
+    # `create_session/3` derives the session's workspace structurally from
+    # the creator (admin = entity://user/system/admin → workspace://system).
+    # cc_demo MUST live in that SAME workspace, or `Resolver.valid_member?/2`
+    # drops it as cross-workspace and the @cc-demo mention never fans out
+    # (no chat.receive → no :delivered mark). Build it in `system`, not
+    # `team-alpha`.
+    cc_demo_uri = URI.new!("entity://agent/system/cc_demo_#{suffix}")
 
     # Spawn the agent (live in KindRegistry — :member_joined can find it)
     {:ok, _pid} = Ezagent.SpawnRegistry.spawn(cc_demo_uri)
