@@ -91,6 +91,12 @@ defmodule EzagentDomainExternalMirror.Application do
       # target_ownership_check/2 Task. Must be alive before the
       # first `Ezagent.ExternalMirror.bind/4` call.
       {Task.Supervisor, name: Ezagent.ExternalMirror.TargetCheckTaskSup},
+      # Remediation SPEC 2026-05-30 (C-A): Task.Supervisor for the Worker's
+      # DEFERRED initial Publisher subscribe. The subscribe is a synchronous
+      # `:call` to the Session Kind; running it OFF the Worker's GenServer
+      # keeps the Worker responsive to a concurrent unbind→terminate (which
+      # otherwise deadlocks). See `Ezagent.Behavior.ExternalMirrorWorker.activate/2`.
+      {Task.Supervisor, name: Ezagent.ExternalMirror.SubscribeTaskSup},
       # PR-EM-3 + r3: one-shot reconciliation that ensures the
       # SESSION Kind exists for every persisted binding row. Worker
       # reconciliation moved to `AdapterInstall.install/1` per the
