@@ -31,7 +31,11 @@ defmodule Ezagent.Behavior.ExternalMirrorWorkerColdRestartTest do
      call — never the stale prior handle).
   """
 
-  use ExUnit.Case, async: false
+  # Remediation P6 (sandbox isolation): spawns Session/Worker Kinds that run
+  # Repo queries in other processes; `EzagentCore.DataCase` provides the
+  # shared sandbox owner + P6 drain so they don't hit
+  # `DBConnection.OwnershipError`. See WorkerPublishTest for the full note.
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.ExternalMirror.{RootSupervisor, WorkerRegistry, WorkerSpawn}
   alias Ezagent.ExternalMirror.{AdapterRegistry, BindingRegistry}

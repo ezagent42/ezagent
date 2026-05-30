@@ -164,6 +164,18 @@ defmodule Ezagent.Behavior.ExternalMirror do
     modes: [:call],
     description: "List all external-mirror bindings on this session."
 
+  # Remediation SPEC 2026-05-30 (C-A): `:bind` reads the SESSION's
+  # `:publisher` sibling slice to capture its CURRENT cursor at bind time,
+  # so the freshly-spawned Worker subscribes FROM that cursor. The Worker's
+  # subscribe is now deferred off its GenServer (to avoid the unbind
+  # deadlock — see ExternalMirrorWorker.activate/2), which opens a small
+  # spawn→subscribe window where a slice change could land in the Publisher
+  # ring before the Worker is in the subscribers map. Subscribing from the
+  # bind-point cursor REPLAYS exactly that window (cursor-based catch-up) —
+  # no first-event loss. `ctx.siblings[:publisher][:cursor]` is the
+  # T3-normalized persistent cursor (invariant 18 — declared key only).
+  reads_siblings [:publisher]
+
   # Explicit override — the macro's auto-derived `required_caps/0` would
   # use `kind: :any` per `build_required_cap_ast/3`. ExternalMirror is
   # registered on Session Kind only; pin `:session` so step 5.5's
@@ -384,6 +396,20 @@ defmodule Ezagent.Behavior.ExternalMirror do
     %{bindings: ctx.read.(:bindings, [])}
   end
 
+  # Remediation SPEC 2026-05-30 (C-A) — read the SESSION's current publisher
+  # cursor from the `:publisher` sibling slice (declared via
+  # `reads_siblings`). `ctx.siblings[:publisher]` is the T3-normalized
+  # persistent view (`%{cursor, ring, retention}`). Defaults to `:latest`
+  # when the publisher slice isn't present yet (brand-new Session) or
+  # siblings weren't injected (unit-test ctx) — "from now", correct since
+  # there are no prior events to miss.
+  defp sibling_publisher_cursor(ctx) do
+    case Map.get(ctx, :siblings, %{}) do
+      %{publisher: %{cursor: cursor}} when is_integer(cursor) -> cursor
+      _ -> :latest
+    end
+  end
+
   # Translate the legacy `{:ok, new_slice, result} | {:error, _}` shape
   # `do_bind` + `do_unbind` return into the new-contract
   # `{:ok, result, [effect]} | {:error, _}` shape. The single slice
@@ -415,13 +441,21 @@ defmodule Ezagent.Behavior.ExternalMirror do
     session_uri = Map.fetch!(ctx, :self_uri)
     binding_id = BindingRow.binding_id(aid, tid)
 
+    # Remediation SPEC 2026-05-30 (C-A): capture the SESSION's CURRENT
+    # publisher cursor (sibling read, declared via `reads_siblings`) so the
+    # freshly-spawned Worker subscribes FROM this cursor — replaying any
+    # slice change that lands during the Worker's deferred-subscribe window
+    # (no first-event loss, no old-history replay). `:latest` when there is
+    # no publisher slice / cursor yet (brand-new Session — nothing to miss).
+    initial_cursor = sibling_publisher_cursor(ctx)
+
     case Enum.find(slice.bindings, fn b -> b.binding_id == binding_id end) do
       %{} = existing ->
         # Already bound — idempotent success (concurrent :bind for
         # the same triple lands here on the second call). Confirm
         # the worker is alive (defensive — if it died between
         # rehydrate + this dispatch, respawn now).
-        case spawn_worker_idempotently(session_uri, existing) do
+        case spawn_worker_idempotently(session_uri, existing, initial_cursor) do
           :ok ->
             worker_uri = WorkerSpawn.worker_uri_for(session_uri, aid, tid)
 
@@ -475,7 +509,7 @@ defmodule Ezagent.Behavior.ExternalMirror do
         #     "binding row but no worker" state).
         case insert_binding_row(session_uri, binding) do
           {:ok, :persisted} ->
-            do_spawn_after_persist(session_uri, binding, slice, aid, tid, binding_id)
+            do_spawn_after_persist(session_uri, binding, slice, aid, tid, binding_id, initial_cursor)
 
           {:ok, :idempotent_unique_conflict} ->
             # Concurrent :bind from another caller for the SAME triple
@@ -485,7 +519,7 @@ defmodule Ezagent.Behavior.ExternalMirror do
             # an idempotent spawn here so this caller also returns
             # success; `{:already_started, _}` from the racing winner
             # is the expected path.
-            do_spawn_after_persist(session_uri, binding, slice, aid, tid, binding_id)
+            do_spawn_after_persist(session_uri, binding, slice, aid, tid, binding_id, initial_cursor)
 
           {:error, {:db_insert_failed, _cs}} = err ->
             # Real DB error (NOT NULL / FK / etc.) — NOT an
@@ -500,8 +534,8 @@ defmodule Ezagent.Behavior.ExternalMirror do
   # delete on spawn failure. Extracted so the two callers (fresh
   # insert AND concurrent-race insert that hit the unique constraint)
   # share the same spawn + rollback logic.
-  defp do_spawn_after_persist(session_uri, binding, slice, aid, tid, binding_id) do
-    case spawn_worker_idempotently(session_uri, binding) do
+  defp do_spawn_after_persist(session_uri, binding, slice, aid, tid, binding_id, initial_cursor) do
+    case spawn_worker_idempotently(session_uri, binding, initial_cursor) do
       :ok ->
         new_slice = update_in(slice.bindings, &[binding | &1])
         worker_uri = WorkerSpawn.worker_uri_for(session_uri, aid, tid)
@@ -726,7 +760,16 @@ defmodule Ezagent.Behavior.ExternalMirror do
   # action body returns the error to the facade caller. The
   # rehydration loop logs at warning and skips — the next adapter
   # install or admin retry will re-attempt.
-  defp spawn_worker_idempotently(%URI{} = session_uri, %{} = binding, retries \\ 3) do
+  # `initial_cursor` (remediation SPEC 2026-05-30 C-A) — the publisher cursor
+  # the freshly-spawned Worker's `create/1` seeds as `publisher_cursor`, so
+  # its (deferred, off-process) first subscribe replays any slice change that
+  # landed during the spawn→subscribe window. `:latest` for the cold-load
+  # rehydration path (`:ezagent_em_reconcile`), where `create/1` does NOT run
+  # (the Worker already existed) and the persisted snapshot cursor drives
+  # catch-up instead — so the value is inert there.
+  defp spawn_worker_idempotently(session_uri, binding, initial_cursor \\ :latest, retries \\ 3)
+
+  defp spawn_worker_idempotently(%URI{} = session_uri, %{} = binding, initial_cursor, retries) do
     worker_uri =
       WorkerSpawn.worker_uri_for(session_uri, binding.adapter_id, binding.target_id)
 
@@ -735,7 +778,8 @@ defmodule Ezagent.Behavior.ExternalMirror do
       session_uri: session_uri,
       adapter_id: binding.adapter_id,
       target_id: binding.target_id,
-      opts: Map.get(binding, :opts, %{})
+      opts: Map.get(binding, :opts, %{}),
+      initial_publisher_cursor: initial_cursor
     }
 
     case Ezagent.Kind.spawn(Ezagent.Entity.ExternalMirrorWorker, params) do
@@ -749,7 +793,7 @@ defmodule Ezagent.Behavior.ExternalMirror do
       {:error, {:shutdown, {:failed_to_start_child, _, {:already_registered, _}}}}
       when retries > 0 ->
         Process.sleep(5)
-        spawn_worker_idempotently(session_uri, binding, retries - 1)
+        spawn_worker_idempotently(session_uri, binding, initial_cursor, retries - 1)
 
       # codex r4 HIGH-2 (2026-05-25): the inner `KindRegistry.put_new`
       # surface returns the bare `{:error, {:already_registered, _}}`
@@ -758,7 +802,7 @@ defmodule Ezagent.Behavior.ExternalMirror do
       # transient retry so test + production cover the same branch.
       {:error, {:already_registered, _}} when retries > 0 ->
         Process.sleep(5)
-        spawn_worker_idempotently(session_uri, binding, retries - 1)
+        spawn_worker_idempotently(session_uri, binding, initial_cursor, retries - 1)
 
       {:error, {:shutdown, {:failed_to_start_child, _, {:already_registered, _}}}} ->
         # codex r4 HIGH-2: retries exhausted with NO live worker —

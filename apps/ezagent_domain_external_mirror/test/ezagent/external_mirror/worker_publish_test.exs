@@ -29,7 +29,17 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
     cursor reset to `:latest`-equivalent (not N).
   """
 
-  use ExUnit.Case, async: false
+  # Remediation P6 (sandbox isolation): this suite spawns Session / User /
+  # Worker Kind.Server GenServers (via `WorkerSpawn.spawn` + `chat.join`
+  # dispatch) that run Repo queries (snapshot load in `init`, projection
+  # reads in `activate`) in OTHER processes. With bare `ExUnit.Case` those
+  # processes have no sandbox connection owner → `DBConnection.OwnershipError`
+  # on the spawned Kind's `Kind.Snapshot.fetch_snapshot`. `EzagentCore.DataCase`
+  # establishes SHARED sandbox mode (`shared: not async`) so spawned Kinds
+  # find the owner, plus the P6 drain that flushes live Kinds before the
+  # owner exits. Matches the passing sibling integration suites
+  # (`AuthModelInvariantTest`, `ExternalMirrorTest`).
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.ExternalMirror.{
     AdapterRegistry,
