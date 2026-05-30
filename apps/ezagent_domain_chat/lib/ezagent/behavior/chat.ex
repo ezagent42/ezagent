@@ -1134,8 +1134,14 @@ defmodule Ezagent.Behavior.Chat do
   # :cast (reply :ignore). The target session handles its own member
   # fan-out + further routing rules.
   defp dispatch_cross_session_call(target_session_uri, %Message{} = msg) do
+    # Pre-bake `chat.send` so the audit `target` carries the real
+    # behavior name (see `dispatch_receive_call/3` — a bare
+    # `action: :send` yields the `_.send` Router sentinel).
+    send_target =
+      Ezagent.URI.new!("#{URI.to_string(target_session_uri)}?action=chat.send")
+
     Ezagent.Router.dispatch(%Cmd{
-      target: target_session_uri,
+      target: send_target,
       action: :send,
       args: %{message: msg},
       ctx: %{
@@ -1155,9 +1161,21 @@ defmodule Ezagent.Behavior.Chat do
     # SPEC caps-cleanup-v1 §4.4 — Session fan-out is system-routed
     # message delivery; runs under `system://chat-router` (closed
     # Catalog). The session URI stays as caller for provenance.
+    #
+    # Pre-bake the FULL `chat.receive` action onto the target so the
+    # telemetry/audit `target` carries the real behavior name. A bare
+    # `action: :receive` makes the Router synthesise the `_.receive`
+    # sentinel (it can't infer the behavior from a `%Cmd{}` alone), which
+    # erases `chat.receive` from the `invocations` audit log — breaking
+    # the operator query (and the routing-fanout tests) that filter on
+    # `?action=chat.receive`. Router's `annotate_target_with_action/2`
+    # leaves a pre-baked `action=` query untouched.
+    receive_target =
+      Ezagent.URI.new!("#{URI.to_string(recipient_uri)}?action=chat.receive")
+
     result =
       Ezagent.Router.dispatch(%Cmd{
-        target: recipient_uri,
+        target: receive_target,
         action: :receive,
         args: %{message: msg},
         ctx: %{
