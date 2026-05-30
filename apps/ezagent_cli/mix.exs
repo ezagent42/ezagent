@@ -33,6 +33,16 @@ defmodule EzagentCli.MixProject do
       {:ezagent_core, in_umbrella: true},
       {:ezagent_domain_identity, in_umbrella: true},
       {:ezagent_domain_workspace, in_umbrella: true},
+      # TEST-ONLY (post-lifecycle remediation): the CLI invariant suites
+      # spawn `Session` Kinds and assert the auto-derived `session`
+      # subcommand. The Session Kind + its Chat Behaviors + the `session`
+      # SpawnRegistry handler are all owned by ezagent_domain_chat;
+      # running the cli suite in isolation without it yields
+      # `{:no_spawn_fn, "session"}` and a missing `session` subcommand.
+      # In production the CLI RPCs into the running BEAM (which has chat
+      # loaded), so depending on chat `only: :test` makes the isolated
+      # suite faithful to that topology without coupling the CLI lib/.
+      {:ezagent_domain_chat, in_umbrella: true, only: :test},
       {:optimus, "~> 0.5"},
       {:jason, ">= 0.0.0"}
     ]
