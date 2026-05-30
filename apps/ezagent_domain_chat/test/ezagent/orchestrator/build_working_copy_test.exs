@@ -173,10 +173,17 @@ defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
         |> List.last()
         |> String.split("@", parts: 2)
 
+      # The product's `build_working_copy/4` defaults the orchestrator
+      # template URI via `Ezagent.URI.new!/1` (canonical `authority: nil`).
+      # `compute_version_hash/1` hashes `:erlang.term_to_binary/1`, which is
+      # sensitive to the URI struct's `authority` field — so the expected
+      # slice MUST use the canonical constructor, not `URI.parse/1`
+      # (`authority: "agent"`), or the hashes diverge despite identical
+      # canonical strings. (`created_by` is dropped by the hash.)
       empty_slice = %{
         description: "",
         agent_slots: [],
-        orchestrator_template_uri: URI.parse("template://agent/system/cc-orchestrator"),
+        orchestrator_template_uri: Ezagent.URI.new!("template://agent/system/cc-orchestrator"),
         routing_rules: [],
         default_workspace_uri: URI.parse("workspace://team-alpha"),
         parent_template_uri: nil,
