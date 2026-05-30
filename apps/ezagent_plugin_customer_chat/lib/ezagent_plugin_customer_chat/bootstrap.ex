@@ -112,9 +112,18 @@ defmodule EzagentPluginCustomerChat.Bootstrap do
   @spec ensure_cc_for_conv(String.t(), String.t(), URI.t()) ::
           {:ok, URI.t()} | {:error, term()}
   def ensure_cc_for_conv(workspace, conv_id, session_uri) do
-    cwd = cc_cwd_for_workspace(workspace)
-    soul_path = cc_soul_path_for_workspace(workspace, "customer")
     agent_name = agent_name_for(conv_id)
+    # Per-CONVERSATION cwd, not per-workspace. Every cc agent gets its
+    # own sandbox dir so its `.mcp.json` (bridge token), per-agent
+    # `.esr-system-prompt.md`, and any files claude writes are isolated.
+    # A shared per-workspace cwd made all concurrent conversations write
+    # the SAME `<cwd>/.mcp.json` — the last spawn's `EZAGENT_AGENT_TOKEN`
+    # clobbered the others, so only one agent ever bound to the bridge
+    # (every other conv's reply silently dropped as `:no_bridge`). This
+    # also restores cc_agent.ex's per-agent-cwd isolation assumption that
+    # the per-workspace cwd quietly violated.
+    cwd = cc_cwd_for_conv(workspace, agent_name)
+    soul_path = cc_soul_path_for_workspace(workspace, "customer")
     admin_uri = Ezagent.Entity.User.admin_uri()
     admin_caps = Ezagent.SystemPrincipal.caps("system://bootstrap")
     ctx = %{caller: admin_uri, caps: admin_caps, reply: {:caller_inbox, self()}}
@@ -182,6 +191,15 @@ defmodule EzagentPluginCustomerChat.Bootstrap do
       )
 
     Path.join(Path.expand(root), workspace)
+  end
+
+  # Per-conversation sandbox cwd: `<sandbox_root>/<workspace>/<agent_name>`.
+  # `agent_name` is already URI-sanitized (`cust_<conv>`), so it is a safe
+  # single path segment. Isolating per agent is what keeps each agent's
+  # `.mcp.json` bridge token from clobbering the others (see
+  # ensure_cc_for_conv/3).
+  defp cc_cwd_for_conv(workspace, agent_name) do
+    Path.join(cc_cwd_for_workspace(workspace), agent_name)
   end
 
   defp cc_soul_path_for_workspace(workspace, role) do
