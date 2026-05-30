@@ -2786,7 +2786,21 @@ defmodule EzagentPluginLiveview.AdminLive do
         # the meta was log-only; an operator who landed on the admin
         # page right after a failed orchestrator-spawn rehydrate had
         # zero visibility into the failure.
-        case EzagentDomainChat.create_session("main", creator, template_name: "default") do
+        # Task #55: the main session must be created in the workspace the
+        # operator is VIEWING (the workspace segment of `uri`), not the
+        # creator's own workspace. A system-member admin viewing
+        # `team-alpha` ensures `session://default/team-alpha/main`;
+        # without the explicit `workspace_uri`, `create_session/3` derives
+        # the workspace structurally from the creator (admin → `system`)
+        # and the team-alpha session is never spawned — so a routing
+        # dispatch to `current_session_uri` hits `:no_such_actor`. (post-
+        # lifecycle remediation.)
+        session_workspace_uri = Ezagent.Capability.workspace_of(uri)
+
+        case EzagentDomainChat.create_session("main", creator,
+               template_name: "default",
+               workspace_uri: session_workspace_uri
+             ) do
           {:ok, _spawned_uri, meta} ->
             log_orchestrator_status_on_rehydrate(uri, meta)
             {uri, assign_rehydrate_flash(socket, meta)}
