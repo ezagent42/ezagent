@@ -65,31 +65,94 @@ visually (agent-browser):**
   taxonomy in the table above (no orphan routes, no dead links — `ui-contract`
   DON'T #93).
 
-## Q3 — Principles for adding a new LV feature component
+## Q3 — Decision procedure: where does a UI component go?
 
-Codified in `ui-contract.md`; the load-bearing rules:
+A component's home is decided by two orthogonal axes — **SCOPE** (what it acts
+on) and **PROVIDER TIER** (who owns the code) — then refined by within-page
+rules. The axes are independent: scope picks the *route + perspective*; tier
+picks the *owning module* and whether a dedicated plugin surface is required.
 
-1. **3 layers, never skip.** Layer 1 stateless atoms (`ezagent_domain_ui`) →
-   Layer 2 plugin compositions → Layer 3 LV containers. Don't fork atom logic
-   into an LV "just for this page" — that breaks the style-replacement boundary.
-2. **Render through `AppShell.app_shell`** with the right `perspective`; never a
-   shell component directly (it wires CmdK exactly once).
-3. **Place controls by the header/status-bar litmus**, not by convenience.
-4. **Use the atoms** (`.page_header`, `.breadcrumb`, `.card`, `.button`,
-   `.badge`, `.empty_state`, `.uri_picker`) — never raw inputs / inline `style=`
-   / hard-coded hex; always pair `bg-*`/`text-*` with `dark:`.
-5. **Earn the CLI counterpart.** A new mutating `handle_event` MUST add its row
-   to `LvCliParityTest`'s mapping (or be classified `:ui_only`/`:pty_stream`) —
-   keeps the LV from becoming the only way to do something headless ops needs.
-6. **No dead links.** If a feature is removed, remove the link, don't strand a
-   button (`feedback_ui_no_misleading_buttons`).
+### Axis 1 — SCOPE → route + perspective (dominant axis)
 
-The first principle worth adding from this audit: **a new operator feature
-should land in BOTH a mix task and an LV surface in the same change** — the
-parity test enforces LV→CLI, but nothing forces a new CLI feature to grow a UI.
-The "justified gaps" above are fine; the risk is a *runtime* feature shipping
-CLI-only by omission. Make "does this need an LV entry?" a checklist item when
-adding a `mix ezagent.<x>` task.
+Ask: *"what does this feature operate on?"* (all routes below verified against
+`apps/ezagent_web/lib/ezagent_web/router.ex`):
+
+| Scope (operates on…) | Route | Perspective |
+|---|---|---|
+| The whole deployment / system | `/admin/<feature>` | `:admin` |
+| A workspace | `/workspaces/:name` | `:admin` |
+| A session — **live use** | in-session tab on `/sessions` | `:workspace` |
+| A session — **config/admin** | `/admin/sessions/:id/<feature>` | `:admin` |
+| An entity (agent / user) | `/identities/{agents,users}/:uri/<feature>` | `:workspace` |
+| The current user (self-service) | `/profile` | `:workspace` |
+
+Rule of thumb: **system-wide config → `:admin` perspective; anything you operate
+*within* a workspace / session / entity → `:workspace` perspective.** (The
+perspective is the typed `AppShell.app_shell perspective={…}` contract: `:admin`
+shows the `ezagent / system` context label, `:workspace` shows the workspace
+switcher.)
+
+### Axis 2 — PROVIDER TIER → ownership + dedicated plugin surface
+
+- **Core / domain feature** (e.g. routing = `ezagent_core`, caps = core CapBAC,
+  api-keys = `ezagent_domain_identity`, templates/snapshots = core): it lives
+  *directly* on the Axis-1 surface — `/admin/routing`, `/identities/*/caps`,
+  `/admin/snapshots`, etc. No extra indirection.
+- **Plugin feature**: the plugin owns a **global config page** at
+  `/plugins/<plugin>/<feature>` (e.g. `/plugins/feishu/bindings`). Per the North
+  Star (plugin isolation) plugin UI must NOT be hard-coded into core admin
+  pages — it self-registers its `/plugins/<plugin>` surface.
+- **Plugin feature scoped to a session / entity / workspace**: it appears in
+  BOTH — the plugin's global page (`/plugins/<plugin>`, cross-instance
+  management) AND the scope's Axis-1 surface (`/admin/sessions/:id/<feature>`,
+  etc.) for the per-instance config.
+
+### Canonical worked example — ExternalMirror (verified live)
+
+ExternalMirror is a **domain primitive** (the `ExternalMirror` Domain owns every
+outbound mirror — arch invariant #15); **Feishu** is a **plugin adapter**; a
+binding is **session-scoped**. Applying the axes → it surfaces in four
+coordinated places, exactly the *"plugin 提供配置界面 + sessions/xx 提供
+per-session 配置页面"* pattern:
+
+- `/plugins/feishu/bindings` — the **plugin's** global binding management.
+- `/admin/sessions/:id/external_mirror` — **per-session** binding config (`:admin`).
+- Session **"Bindings"** tab on `/sessions` — in-context, live, per-session view (`:workspace`).
+- `/admin/routing?tab=bindings` — cross-session global read view.
+
+### Axis 3 — within the chosen page, where does the control sit?
+
+1. **Build it 3-layer**: atom (`ezagent_domain_ui`) → composition
+   (`ezagent_plugin_liveview`) → LV container. Never fork atom logic into one LV.
+2. **Render through `AppShell.app_shell perspective={…}`** (wires CmdK once);
+   never a shell component directly.
+3. **Header vs status-bar litmus**: would the control make sense on *every* page
+   (workspace-invariant)? → header. Tied to the *current* position
+   (this session / entity / view)? → status bar.
+4. **Use the atoms** (`.page_header` / `.card` / `.button` / `.badge` /
+   `.empty_state` / `.uri_picker`); never raw inputs / inline `style=` /
+   hard-coded hex; always pair `bg-*`/`text-*` with `dark:`.
+5. **Earn the CLI row**: a new mutating `handle_event` MUST add its `mix ezagent
+   …` counterpart to `LvCliParityTest` (or be classified `:ui_only` /
+   `:pty_stream`).
+6. **No dead links** — remove links to deleted features, don't strand buttons.
+
+### One-line decision flow
+
+```
+scope?  ──► route + perspective (Axis 1)
+  └─ tier?  ──► core/domain: use the Axis-1 surface directly
+               plugin:      also expose /plugins/<plugin>, and if scoped,
+                            put the per-instance config on the scope surface (Axis 2)
+        └─ within page: 3-layer + app_shell + header/status litmus (Axis 3)
+              └─ add the LvCliParity row
+```
+
+Audit-derived addition: **a new *runtime* operator feature should land in BOTH a
+`mix ezagent` task and an LV surface in the same change.** `LvCliParityTest`
+enforces LV→CLI, but nothing forces a new CLI feature to grow a UI — so "does
+this need an LV entry, and by Axis 1 where?" belongs on the checklist for every
+new `mix ezagent.<x>` task.
 
 ## Q2 — visual validation (agent-browser, live :10042, 2026-05-30)
 
