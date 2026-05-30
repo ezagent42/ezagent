@@ -42,6 +42,14 @@ defmodule Ezagent.Domain.Pty.Server do
   Built-in prompts:
   - `:dev_channels_dialog` — `--dangerously-load-development-channels`
     security confirm. Sends `"1\r"`.
+  - `:trust_folder_dialog` — claude's first-run "Is this a project you
+    trust?" folder-trust prompt, shown the first time claude runs in a
+    cwd not yet recorded as trusted in its config dir. PtyServer always
+    spawns claude in an operator-configured sandbox cwd, so trust is
+    implied (same rationale as auto-accepting dev channels). Sends
+    `"1\r"` to pick "Yes, I trust this folder". Without this the PTY
+    hangs at the dialog → MCP never initializes → `esr-bridge` never
+    binds → `EagerBridge.ensure_bound!/2` times out.
 
   Phase 6 PR 19 also added eager bridge-announce in the Python MCP
   bridge so the Agent Kind registers even when claude doesn't lazily
@@ -392,11 +400,27 @@ defmodule Ezagent.Domain.Pty.Server do
   # Phase 6 PR 19 — well-known prompts the spawned `claude` may pause
   # on. Each prompt fires once; the data-driven structure means new
   # prompts get added here without touching the dispatch loop.
-  defp default_auto_prompts do
+  # Exposed (`def` + `@doc false`, not `defp`) only so the dialog match
+  # specs can be unit-tested against real ANSI-stripped PTY buffers
+  # without a live claude spawn (see server_auto_prompts_test.exs).
+  @doc false
+  def default_auto_prompts do
     [
       %{
         name: :dev_channels_dialog,
-        match: ["Loading development channels", "I am using this for local development"],
+        # Anchor on the menu OPTION label, not the WARNING prose: claude's
+        # TUI animates/redraws the banner ("Loading…") with cursor-move
+        # escapes, so after ANSI-strip the word can fragment ("L ading"),
+        # breaking a literal "Loading development channels" match. The
+        # option-1 label is rendered atomically and is specific enough to
+        # this exact dialog to avoid false positives.
+        match: ["development channels", "I am using this for local development"],
+        send: "1\r",
+        fired?: false
+      },
+      %{
+        name: :trust_folder_dialog,
+        match: ["Is this a project you", "trust this folder"],
         send: "1\r",
         fired?: false
       }
@@ -751,13 +775,16 @@ defmodule Ezagent.Domain.Pty.Server do
     end
   end
 
-  defp matches?(needle, stripped) when is_binary(needle),
+  # `@doc false def` (not `defp`) so the scanner's match semantics can be
+  # unit-tested against real captured PTY buffers (server_auto_prompts_test.exs).
+  @doc false
+  def matches?(needle, stripped) when is_binary(needle),
     do: String.contains?(stripped, needle)
 
-  defp matches?(needles, stripped) when is_list(needles),
+  def matches?(needles, stripped) when is_list(needles),
     do: Enum.all?(needles, &String.contains?(stripped, &1))
 
-  defp matches?(%Regex{} = re, stripped), do: Regex.match?(re, stripped)
+  def matches?(%Regex{} = re, stripped), do: Regex.match?(re, stripped)
 
   defp fire_prompt(prompt, state) do
     Logger.info(
