@@ -22,10 +22,16 @@ defmodule EzagentPluginLiveview.EntityCapsLiveTest do
     :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
     Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
 
+    # The agents these tests spawn live in `entity://agent/team-alpha/…`.
+    # IdentitiesLive filters its directory to the operator's current
+    # workspace (Task #55), so the session must view team-alpha — without
+    # it the admin lands in `workspace://system` and the team-alpha agent
+    # is filtered out of the listing. (post-lifecycle remediation.)
     conn =
       Phoenix.ConnTest.build_conn()
       |> Plug.Test.init_test_session(%{
-        "current_entity_uri" => URI.to_string(Ezagent.Entity.User.admin_uri())
+        "current_entity_uri" => URI.to_string(Ezagent.Entity.User.admin_uri()),
+        "current_workspace_uri" => "workspace://team-alpha"
       })
 
     {:ok, conn: conn}
@@ -53,8 +59,12 @@ defmodule EzagentPluginLiveview.EntityCapsLiveTest do
     assert html =~ "Caps for"
     assert html =~ URI.to_string(agent_uri)
     assert html =~ "Grant new cap"
-    # Fresh agent has no caps by default.
-    assert html =~ "No caps. Grant one above."
+    # A fresh agent is provisioned with exactly one structural baseline
+    # cap at spawn: the owner-derived self-Identity cap that lets it read
+    # its own caps (PR-OWN-3, asserted by Identity.create/1's unit test).
+    # The caps table therefore renders that row, not the empty state.
+    assert html =~ "Ezagent.Behavior.Identity"
+    refute html =~ "No caps. Grant one above."
   end
 
   test "grant + revoke round-trip works on a live agent", %{conn: conn} do
@@ -77,8 +87,22 @@ defmodule EzagentPluginLiveview.EntityCapsLiveTest do
     assert html =~ "Granted cap to"
     assert html =~ ":echo"
 
-    # Revoke it (index 0).
-    lv |> element("button[phx-click=\"revoke\"][phx-value-index=\"0\"]") |> render_click()
+    # The agent now holds two caps: its structural self-Identity baseline
+    # cap (provisioned at spawn, PR-OWN-3) plus the just-granted :echo
+    # cap. Revoke every row (index 0 each time — the list re-renders and
+    # shrinks) so the round-trip drains both and lands on the empty
+    # state. (post-lifecycle remediation: the old test assumed a fresh
+    # agent had zero caps, ignoring the baseline self-cap.)
+    revoke_sel = "button[phx-click=\"revoke\"][phx-value-index=\"0\"]"
+
+    revoke_all = fn revoke_all ->
+      if has_element?(lv, revoke_sel) do
+        lv |> element(revoke_sel) |> render_click()
+        revoke_all.(revoke_all)
+      end
+    end
+
+    revoke_all.(revoke_all)
 
     html = render(lv)
     assert html =~ "Revoked cap"
