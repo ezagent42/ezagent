@@ -146,22 +146,78 @@ defmodule EzagentPluginCustomerChat.Bootstrap do
     args = %{flavor: "cc", name: agent_name, cwd: cwd, with_pty: true}
     args = if soul_path, do: Map.put(args, :soul_path, soul_path), else: args
 
-    case Ezagent.Workspace.create_agent(ws_uri, args, ctx) do
-      {:ok, %{agent_uri: u}} ->
-        {:ok, u}
+    result =
+      case Ezagent.Workspace.create_agent(ws_uri, args, ctx) do
+        {:ok, %{agent_uri: u}} ->
+          {:ok, u}
 
-      {:error, {:already_exists, u_str}} when is_binary(u_str) ->
-        {:ok, URI.parse(u_str)}
+        {:error, {:already_exists, u_str}} when is_binary(u_str) ->
+          {:ok, URI.parse(u_str)}
 
-      {:error, {:already_exists, %URI{} = u}} ->
-        {:ok, u}
+        {:error, {:already_exists, %URI{} = u}} ->
+          {:ok, u}
+
+        {:error, reason} ->
+          Logger.warning(
+            "customer_chat ensure_cc_agent(#{workspace}, #{agent_name}) failed: #{inspect(reason)}"
+          )
+
+          {:error, reason}
+      end
+
+    # Per-conversation cc agents are EPHEMERAL: customer-chat re-creates
+    # them on demand every time a conversation opens (static-soul model).
+    # `create_agent` unconditionally registers a `cc.agent.<name>` spawn
+    # template in `workspaces.session_templates`, which the boot loader
+    # replays — so every conversation ever opened respawns its claude PTY
+    # at boot ("boot storm" that saturates spawn capacity and blocks new
+    # conversations). Deregister the template right after create:
+    # `remove_template` only drops the boot-restore registration, it does
+    # NOT terminate the running Kind, so the agent keeps serving this
+    # conversation. Best-effort — a deregister failure only degrades to
+    # the old (accumulating) behavior, never to a reply failure. See
+    # docs/superpowers/specs/2026-05-30-ephemeral-cc-agents-design.md.
+    case result do
+      {:ok, agent_uri} ->
+        deregister_ephemeral(workspace, agent_uri)
+        {:ok, agent_uri}
+
+      err ->
+        err
+    end
+  end
+
+  # Build the `session_templates` key `create_agent` registered for this
+  # cc agent: `"cc.agent." <> <entity-name>`. The entity name is the LAST
+  # path segment of the agent URI and INCLUDES the `cc_` flavor prefix
+  # (e.g. `entity://agent/cinnox/cc_cust_abc` → `cc.agent.cc_cust_abc`),
+  # so it must be derived from the returned `agent_uri`, not rebuilt from
+  # the bare `agent_name` (`cust_abc`). Mirrors `agent_name/1` in
+  # Ezagent.Behavior.Workspace.
+  @doc false
+  def ephemeral_template_name(%URI{path: "/" <> rest}) do
+    entity =
+      case String.split(rest, "/", parts: 2) do
+        [_workspace, entity_name] -> entity_name
+        [entity_name] -> entity_name
+      end
+
+    "cc.agent." <> entity
+  end
+
+  defp deregister_ephemeral(workspace, agent_uri) do
+    tmpl_name = ephemeral_template_name(agent_uri)
+
+    case Ezagent.Workspace.remove_template(workspace, tmpl_name) do
+      :ok ->
+        :ok
 
       {:error, reason} ->
         Logger.warning(
-          "customer_chat ensure_cc_agent(#{workspace}, #{agent_name}) failed: #{inspect(reason)}"
+          "customer_chat deregister ephemeral template #{tmpl_name} failed: #{inspect(reason)}"
         )
 
-        {:error, reason}
+        :ok
     end
   end
 

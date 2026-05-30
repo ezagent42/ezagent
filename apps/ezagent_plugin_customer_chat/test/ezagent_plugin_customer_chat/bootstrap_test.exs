@@ -32,4 +32,14 @@ defmodule EzagentPluginCustomerChat.BootstrapTest do
     assert msg.mentions == [agent]
     assert msg.body.text == "hello"
   end
+
+  test "ephemeral_template_name derives the cc.agent key from the agent_uri (keeps the cc_ flavor prefix)" do
+    uri = URI.parse("entity://agent/cinnox/cc_cust_abc123")
+    assert Bootstrap.ephemeral_template_name(uri) == "cc.agent.cc_cust_abc123"
+  end
+
+  test "ephemeral_template_name handles a bare entity path" do
+    uri = %URI{path: "/cc_cust_x"}
+    assert Bootstrap.ephemeral_template_name(uri) == "cc.agent.cc_cust_x"
+  end
 end
