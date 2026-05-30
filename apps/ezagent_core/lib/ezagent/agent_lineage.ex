@@ -28,39 +28,88 @@ defmodule Ezagent.AgentLineage do
     pathological cycles (which shouldn't happen but defense in
     depth).
 
-  ## ETS layout
+  ## Storage — durable source of truth + ETS read cache (remediation C-B #114)
 
-  `:ezagent_agent_lineage` set table owned by `EzagentCore.EtsOwner`. Keys
-  are agent URI strings, values are spawned_by URI strings.
+  The `:ezagent_agent_lineage` set table (owned by `EzagentCore.EtsOwner`,
+  keys are agent URI strings, values are spawned_by URI strings) is the
+  fast runtime READ cache. Behind it sits the durable `agent_lineage`
+  SQLite table — the SOURCE OF TRUTH — so lineage survives a restart.
+
+  This is the `Ezagent.TemplateTags` / `Ezagent.Routing.RuleStore`
+  pattern: `record/2` write-through (upsert) to the DB AND the cache;
+  `forget/1` deletes from both; `rehydrate/0` re-populates the empty ETS
+  cache from the table at boot (the `EtsOwner` recreates the table empty
+  on every start). `lookup/1` / `spawned_in_lineage?/3` keep the
+  lock-free ETS read path.
+
+  Before C-B the table was pure ETS: the `agent_uri → spawned_by`
+  mapping was lost on restart, so a previously-owned agent became
+  "foreign" and `{:spawned_by, P}` CapBAC matching broke for every
+  agent spawned before the restart. codex confirmed there was no durable
+  `spawned_by` field on the Agent Kind to rebuild from, so the durable
+  row IS the rebuild source.
 
   ## Why not a slice field on Agent Kind
 
   Identity slice already exists per Decision #88; adding spawned_by
   there would couple two unrelated concepts (caps + lineage). A
-  separate ETS registry is consistent with the WorkspaceRegistry
-  pattern (5th Registry per Decision #135) and avoids slice-shape
-  churn for what is effectively a runtime lookup table, not
-  per-Agent state worth snapshotting (lineage is set once at
-  spawn, never changes).
+  dedicated lineage table is consistent with the WorkspaceRegistry /
+  TemplateTags pattern and avoids slice-shape churn for what is
+  effectively a lookup table, not per-Agent state worth snapshotting
+  (lineage is set once at spawn, never changes).
 
   ## Boot-time ordering
 
   Lives in ezagent_core so it's available before any plugin starts.
-  EzagentCore.EtsOwner creates the table at boot before plugin
-  Application.start callbacks run.
+  `EzagentCore.EtsOwner` creates the (empty) ETS table at boot before
+  plugin `Application.start` callbacks run; `EzagentCore.Application`
+  then calls `rehydrate/0` AFTER the Repo + Migrator children are up
+  (alongside `Ezagent.TemplateTags.load_into_registry/0`) to fill the
+  cache from the durable table.
   """
+
+  use Ecto.Schema
+  import Ecto.Query
+  alias EzagentCore.Repo
 
   @table :ezagent_agent_lineage
 
+  @primary_key {:agent_uri, :string, autogenerate: false}
+  schema "agent_lineage" do
+    field :spawned_by, :string
+
+    timestamps(type: :utc_datetime_usec, updated_at: false)
+  end
+
+  @type t :: %__MODULE__{
+          agent_uri: String.t(),
+          spawned_by: String.t() | nil
+        }
+
+  @doc "The ETS read-cache table name. `EzagentCore.EtsOwner` creates it."
   def table, do: @table
 
   @doc """
   Record that `agent_uri` was spawned by `spawned_by`. Idempotent.
+
+  remediation C-B (#114) — write-through: upsert the durable row (the
+  source of truth) AND the ETS cache. The `agent_uri` PRIMARY KEY makes
+  the upsert idempotent — re-recording the same pair overwrites in place,
+  matching the prior `:ets.insert/2` overwrite semantics.
   """
   @spec record(URI.t() | String.t(), URI.t() | String.t()) :: :ok
   def record(agent_uri, spawned_by) do
     a = uri_to_str(agent_uri)
     s = uri_to_str(spawned_by)
+
+    row = %__MODULE__{agent_uri: a, spawned_by: s, inserted_at: DateTime.utc_now()}
+
+    {:ok, _} =
+      Repo.insert(row,
+        on_conflict: [set: [spawned_by: s]],
+        conflict_target: [:agent_uri]
+      )
+
     :ets.insert(@table, {a, s})
     :ok
   end
@@ -107,10 +156,43 @@ defmodule Ezagent.AgentLineage do
     end
   end
 
-  @doc "Remove the lineage entry for `agent_uri`. Returns `:ok` either way."
+  @doc """
+  Remove the lineage entry for `agent_uri`. Returns `:ok` either way.
+
+  remediation C-B (#114) — deletes the durable row AND the ETS cache so
+  a subsequent `rehydrate/0` does not resurrect a forgotten entry.
+  """
   @spec forget(URI.t() | String.t()) :: :ok
   def forget(agent_uri) do
-    :ets.delete(@table, uri_to_str(agent_uri))
+    a = uri_to_str(agent_uri)
+    Repo.delete_all(from(r in __MODULE__, where: r.agent_uri == ^a))
+    :ets.delete(@table, a)
+    :ok
+  end
+
+  @doc """
+  Hydrate the ETS read cache from the durable `agent_lineage` SQLite
+  table (remediation C-B #114).
+
+  Called at boot from `EzagentCore.Application` AFTER the Repo + Migrator
+  children are up — the `Ezagent.TemplateTags.load_into_registry/0`
+  analogue. `EtsOwner` recreates the ETS table EMPTY on every start, so
+  without this call every pre-restart lineage entry would be lost. Clears
+  the cache and re-populates it from every persisted row, so the cache
+  reflects exactly what the durable table holds.
+
+  Returns `:ok`.
+  """
+  @spec rehydrate() :: :ok
+  def rehydrate do
+    rows = Repo.all(__MODULE__)
+
+    :ets.delete_all_objects(@table)
+
+    Enum.each(rows, fn r ->
+      :ets.insert(@table, {r.agent_uri, r.spawned_by})
+    end)
+
     :ok
   end
 

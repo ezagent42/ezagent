@@ -1,5 +1,10 @@
 defmodule Ezagent.CapabilityTest do
-  use ExUnit.Case, async: true
+  # remediation C-B (#114) — `Ezagent.AgentLineage.record/2` is now
+  # write-through to the durable `agent_lineage` SQLite table, so the
+  # `{:spawned_by, P}` lineage tests need an Ecto sandbox connection.
+  # DataCase sets one up per test; `async: false` because it shares the
+  # global AgentLineage ETS cache + a sandbox connection.
+  use EzagentCore.DataCase, async: false
   alias Ezagent.Capability
   import Ezagent.Test.CapHelper
 
