@@ -98,6 +98,15 @@ server 重启 → Loader.load_all → session_templates 里已无 cc_cust_* → 
 - **orphaned `kind_snapshots`**:运行期注销不清快照(只清扫 task 清)。无害(无 boot-spawn 触发),但行会缓慢增长。彻底解决属下方 B。
 - **orchestrator/session 累积**:本次不动。验收时确认是否独立造成风暴;若是,写进 B。
 
+## EMPIRICAL 验收结果(2026-05-30,T4)
+
+- ✅ **deregister 生效**:同一 session 开 3 个会话(gcA/gcB/gcC),3 个 cc_cust agent 全部创建+在 KindRegistry 存活,但 `cinnox.session_templates` **只剩** `cc.agent.cc_cs_main`、**0 个 cc_cust**。
+- ✅ **回复未坏**:gcA 正常收到 soul 一致的 AI 回复。
+- ✅ **gc `run/0` IO 路径**首次真实运行成功:清掉 5 个累积的旧 `cc.agent.cc_cust_*` + 1 个孤儿 `cc_cust_%` 快照,只留 `cc_cs_main`。
+- ⚠️ **boot 风暴未完全消除 —— 发现第二条恢复路径(session 成员恢复)**:重启后 boot **仍 spawn 了 gcA、gcB**(它们完成了 `ensure_agent_in_session` 入会),gcC(未完成 join)未被 spawn。即 `session_templates` 路径已修,但**持久化的 per-conversation session 在 boot 恢复其成员 cc agent + orchestrator**——这条路径**和 session_templates 一样无界增长**(每个完成的会话一条 session)。
+  - **结论:plugin-local deregister 是必要但不充分的。** 彻底消除需让 per-conversation **session 本身 ephemeral**(不持久化/不在 boot 恢复其成员)——属 domain,归 **B**(见 Allen note)。
+  - 对**当前 scope #2 A/B**(2 个并发 agent)够用:不再是 ~10 个的饱和风暴,新会话可正常开。但长期(多会话)仍会经 session 路径累积。
+
 ## B — 提给 Allen 的正式修复(不在本次实施)
 
 在 `Ezagent.Workspace.create_agent/3` 引入 `ephemeral: true`(或 `persist: false`)选项:

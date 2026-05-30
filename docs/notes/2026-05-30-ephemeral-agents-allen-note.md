@@ -38,13 +38,31 @@ core agent-create contract + the invariant test
 `agent_create_single_path_test.exs`, so it's an architecture decision for
 you, not implementation-phase work.
 
-## Also unaddressed by the stopgap
-The per-session **orchestrator** (created by domain `create_session`)
-restores via session snapshots, not `session_templates`, so the plugin
-stopgap does not cover it — and the gc task intentionally does NOT delete
-orchestrator/session snapshots (a `session://%` sweep would also wipe the
-legitimate `session://default/system/main` and other tenants). If the
-orchestrator independently storms at boot it belongs in this same B
-(`create_session(orchestrator: false)` / ephemeral session members). The
-PoC empirical verification result is recorded in
-`docs/superpowers/specs/2026-05-30-ephemeral-cc-agents-design.md`.
+## Also unaddressed by the stopgap — CONFIRMED EMPIRICALLY (2026-05-30)
+The deregister fixes the `session_templates` vector but there is a SECOND,
+equally-unbounded restoration vector: the **per-conversation session
+itself**. After deregister, opening 3 conversations (gcA/gcB/gcC) left
+`session_templates` with zero `cc_cust_*` entries — yet a server restart
+STILL respawned gcA + gcB (the two whose `ensure_agent_in_session` join
+had completed); gcC (join not completed) did not come back. So the
+persisted Session Kind restores its **member cc agent + per-session
+orchestrator** at boot, independent of `session_templates`. This grows
+one-session-per-conversation, same unbounded shape as the original bug.
+
+The plugin stopgap cannot fix this: the cc agent MUST be a live session
+member to receive `chat.receive` during the conversation (can't be
+removed mid-conversation), and session persistence is a core
+snapshot-on-change primitive (P22) a plugin can't bypass. The gc task
+also deliberately does NOT delete session/orchestrator snapshots (a
+`session://%` sweep would wipe the legitimate `session://default/system/main`
+and other tenants).
+
+**So B should make per-conversation sessions (and their member agents +
+orchestrator) EPHEMERAL** — not just add `ephemeral:` to `create_agent`,
+but also a `create_session(ephemeral: true)` / non-persistent session
+path so an abandoned/old conversation's session does not resurrect its
+members at boot. Same direction as the G-12 `session_templates`
+retirement + curl/np's register-free spawn.
+
+PoC empirical detail recorded in
+`docs/superpowers/specs/2026-05-30-ephemeral-cc-agents-design.md` (§EMPIRICAL 验收结果).
