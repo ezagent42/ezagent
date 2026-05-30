@@ -90,3 +90,26 @@ parity test enforces LV→CLI, but nothing forces a new CLI feature to grow a UI
 The "justified gaps" above are fine; the risk is a *runtime* feature shipping
 CLI-only by omission. Make "does this need an LV entry?" a checklist item when
 adding a `mix ezagent.<x>` task.
+
+## Q2 — visual validation (agent-browser, live :10042, 2026-05-30)
+
+Logged in as `entity://user/system/admin` and captured both perspectives. Both
+flagged items confirmed GREEN:
+
+- **Admin chrome inheritance ✓** — `/admin` renders the full outer header
+  (⌘K search · bell · help · avatar) AND the correct **`ezagent / system`**
+  system-context label (not a workspace dropdown — the a11y label
+  "切换工作区" is misleading, the rendered control shows `system`). The
+  nested-shell refactor goal (admin pages keep avatar/notifications/search)
+  is intact.
+- **Taxonomy / header-vs-status separation ✓** — workspace perspective
+  (`/sessions`) shows Activity Bar + main (Chat/Routing/Bindings) + right
+  sidebar (Orchestrator/Members) + a position-scoped **status bar** (current
+  entity + session URI, `13 代理 / 0 桥接` signal lights, Members toggle,
+  version). Admin perspective shows the settings drawer (Overview / Workspaces
+  / Logs&Audit / Registry / Snapshots / Templates / Routing / Settings) over
+  the same chrome. No dead links, no orphan surfaces, atoms used throughout
+  (stat cards, `alive`/`seeded` badges, `font-mono` URIs).
+
+**Verdict:** placement + styling adhere to `ui-contract.md`. No issues found.
+The audit is complete; no restyling work indicated.
