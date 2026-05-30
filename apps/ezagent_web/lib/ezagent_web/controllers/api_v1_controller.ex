@@ -202,7 +202,7 @@ defmodule EzagentWeb.ApiV1Controller do
       |> List.last()
       |> Macro.underscore()
 
-    URI.new!("#{URI.to_string(target_uri)}?action=#{behavior_short}.#{action}")
+    Ezagent.URI.with_action(target_uri, behavior_short, action)
   end
 
   defp atomize_keys(map) when is_map(map) do

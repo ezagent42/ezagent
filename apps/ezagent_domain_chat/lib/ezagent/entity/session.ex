@@ -525,7 +525,7 @@ defmodule Ezagent.Entity.Session do
       [orchestrator_uri | extract_slot_worker_uris(slot_results)]
       |> Enum.uniq_by(&URI.to_string/1)
 
-    target = URI.new!("#{URI.to_string(session_uri)}?action=chat.join")
+    target = Ezagent.URI.with_action(session_uri, :chat, :join)
 
     Enum.each(member_uris, fn %URI{} = member_uri ->
       result =
@@ -1676,7 +1676,7 @@ defmodule Ezagent.Entity.Session do
         Enum.any?(current, &cap_equal_ignoring_metadata?(&1, want))
       end)
 
-    target = URI.new!("#{URI.to_string(orchestrator_uri)}?action=identity.grant_cap")
+    target = Ezagent.URI.with_action(orchestrator_uri, :identity, :grant_cap)
 
     # SPEC caps-cleanup-v1 §4.4 — granting scoped caps to the
     # orchestrator at session creation is template materialization;
@@ -1742,7 +1742,7 @@ defmodule Ezagent.Entity.Session do
     if Enum.any?(current, &cap_equal_ignoring_metadata?(&1, want)) do
       :ok
     else
-      target = URI.new!("#{URI.to_string(owner_uri)}?action=identity.grant_cap")
+      target = Ezagent.URI.with_action(owner_uri, :identity, :grant_cap)
       cap = %{want | granted_at: DateTime.utc_now()}
 
       result =

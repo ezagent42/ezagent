@@ -704,7 +704,7 @@ defmodule Ezagent.Workspace do
   def create_agent(%URI{scheme: "workspace"} = workspace_uri, args, ctx)
       when is_map(args) and is_map(ctx) do
     target =
-      URI.new!("#{URI.to_string(workspace_uri)}?action=workspace.create_agent")
+      Ezagent.URI.with_action(workspace_uri, :workspace, :create_agent)
 
     caller = Map.fetch!(ctx, :caller)
     caps = Map.fetch!(ctx, :caps)
@@ -752,7 +752,7 @@ defmodule Ezagent.Workspace do
   def create_session(%URI{scheme: "workspace"} = workspace_uri, args, ctx)
       when is_map(args) and is_map(ctx) do
     target =
-      URI.new!("#{URI.to_string(workspace_uri)}?action=workspace.create_session")
+      Ezagent.URI.with_action(workspace_uri, :workspace, :create_session)
 
     caller = Map.fetch!(ctx, :caller)
     caps = Map.fetch!(ctx, :caps)
@@ -827,7 +827,7 @@ defmodule Ezagent.Workspace do
 
   def grant_initial_caps(%URI{} = agent_uri, [cap | rest], ctx) when is_map(ctx) do
     target =
-      URI.new!("#{URI.to_string(agent_uri)}?action=identity.grant_cap")
+      Ezagent.URI.with_action(agent_uri, :identity, :grant_cap)
 
     caller = Map.fetch!(ctx, :caller)
     caps = Map.fetch!(ctx, :caps)

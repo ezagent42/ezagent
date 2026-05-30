@@ -1010,7 +1010,7 @@ defmodule EzagentPluginLiveview.AdminLive do
          )}
 
       true ->
-        target = URI.new!("#{URI.to_string(session_uri)}?action=chat.join")
+        target = Ezagent.URI.with_action(session_uri, :chat, :join)
 
         # SPEC §2C.4 step 2 — dispatch as `:call` so the result is
         # observable; `:caller_inbox` is irrelevant for `:call` (the
@@ -1110,7 +1110,7 @@ defmodule EzagentPluginLiveview.AdminLive do
 
       true ->
         target =
-          URI.new!("#{URI.to_string(health.template_uri)}?action=template.instantiate")
+          Ezagent.URI.with_action(health.template_uri, :template, :instantiate)
 
         # The orchestrator's instance NAME-segment is `cc_orchestrator-<disc>`
         # (history: `Session.ensure_orchestrator` builds it directly via
@@ -1977,7 +1977,7 @@ defmodule EzagentPluginLiveview.AdminLive do
 
     case caller_uri do
       %URI{} = caller_uri when not is_nil(caller_caps) ->
-        target = URI.new!("#{URI.to_string(session_uri)}?action=chat.join")
+        target = Ezagent.URI.with_action(session_uri, :chat, :join)
 
         result =
           Ezagent.Invocation.dispatch(%Ezagent.Invocation{
@@ -3012,7 +3012,7 @@ defmodule EzagentPluginLiveview.AdminLive do
         mentions: mentions
       )
 
-    target = URI.new!("#{URI.to_string(socket.assigns.current_session_uri)}?action=chat.send")
+    target = Ezagent.URI.with_action(socket.assigns.current_session_uri, :chat, :send)
 
     inv = %Ezagent.Invocation{
       target: target,
