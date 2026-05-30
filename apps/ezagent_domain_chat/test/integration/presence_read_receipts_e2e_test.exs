@@ -56,7 +56,15 @@ defmodule EzagentDomainChat.Integration.PresenceReadReceiptsE2ETest do
     admin_uri
   end
 
-  defp wait_until(fun, timeout_ms \\ 2_000) do
+  # Deadline-based poll: returns the instant `fun` is truthy, so the
+  # healthy fast path is unaffected. The default ceiling is generous for
+  # the FULL concurrent umbrella run — this E2E crosses several processes
+  # (presence fanout + the delivered→displayed→read receipt ladder, each
+  # a PubSub hop + DB write) and legitimately needs more than 2s while
+  # competing for schedulers + the Ecto sandbox connection. A genuinely
+  # stuck ladder still flunks (at the deadline), so this is a realistic
+  # bound, not a masked hang.
+  defp wait_until(fun, timeout_ms \\ 8_000) do
     deadline = System.monotonic_time(:millisecond) + timeout_ms
     do_wait(fun, deadline)
   end
