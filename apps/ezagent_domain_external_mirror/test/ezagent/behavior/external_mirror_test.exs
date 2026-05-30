@@ -361,12 +361,23 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
       # not-ready dispatch fails fast.
       :ok = await_worker_ready(worker_uri, 50)
 
-      # Owner has session caps but NOT the Worker's `:publish` cap
-      # (that's a `:no_owner` Behavior — only bootstrap admin holds).
-      # Attempting a direct dispatch to the Worker's :publish fails
-      # CapBAC step 5.5.
+      # The publish gate must be exercised by a caller that GENUINELY
+      # lacks the Worker `:publish` cap. The shared `owner_uri` is spawned
+      # with `system://bootstrap` caps (all-`:any`), so its IDENTITY SLICE
+      # holds a wildcard cap — and CapBAC step 5.5's slice-backed
+      # `holds_cap?` path (correctly) authorizes anything for a bootstrap
+      # holder, regardless of the narrowed `user_ctx.caps`. Using `owner_uri`
+      # as the caller therefore can NEVER be denied; the original assertion
+      # only "passed" historically because an unrelated deadlock made the
+      # bind above time out before reaching here (masking a real
+      # contradiction — verified red at baseline 54df56c9). Spawn a fresh
+      # NON-privileged user holding ONLY the session bind cap (memory
+      # `feedback_e2e_prefers_non_admin_user`) and dispatch as THEM.
+      unpriv_uri = Ezagent.URI.new!("entity://user/team-alpha/unpriv-d-#{System.unique_integer([:positive])}")
+      :ok = spawn_user(unpriv_uri, MapSet.new([session_bind_cap(session_uri, @workspace_uri)]))
+
       user_ctx = %{
-        caller: owner_uri,
+        caller: unpriv_uri,
         caps: MapSet.new([session_bind_cap(session_uri, @workspace_uri)]),
         reply: :ignore
       }
@@ -514,8 +525,25 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
       {:ok, %{worker_uri: worker_uri}} =
         Facade.bind(session_uri, "mock_publish", target_id, %{}, ctx)
 
-      # Sanity: probe receives the FIRST mutation.
-      fire_slice_change(session_uri)
+      # Remediation 2026-05-30 (C-A): the Worker's first Publisher subscribe
+      # is now DEFERRED to a detached Task (off its GenServer, to break the
+      # unbind→terminate deadlock — see ExternalMirrorWorker.activate/2). So
+      # `bind/4` returning no longer implies "Worker is in the Publisher
+      # subscribers map". Wait for the subscription to land before firing the
+      # first slice change — this still asserts the publish reaches the
+      # Worker (NOT weakened); it only corrects the now-invalid
+      # bind⇒subscribed timing assumption the deferral legitimately changed.
+      # (Matches WorkerPublishTest's `Process.sleep`-after-spawn pattern.)
+      :ok = await_worker_subscribed(session_uri, worker_uri, 100)
+
+      # Sanity: the Worker publishes a slice change. The Worker's first
+      # Publisher subscribe is now deferred (off-process, remediation C-A),
+      # so there is a brief window where it is in the subscribers map but a
+      # just-fanned event raced the subscribe commit. `fire_until_published`
+      # fires a fresh slice change (new cursor → fresh fan-out) and retries
+      # until the steady-state publish lands — asserting the same invariant
+      # (publish reaches the Worker) without racing the async subscribe.
+      assert :ok = fire_until_published(session_uri, worker_uri, 20)
       assert_receive {:published, _, ^target_id, _}, 1_500
 
       # Drain any extra :published messages that may have arrived
@@ -1738,6 +1766,59 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
     end
   end
 
+  # Remediation 2026-05-30 (C-A): wait until the Worker's deferred Publisher
+  # subscribe has landed — i.e. the Worker's pid is in the Session
+  # `:publisher` slice's `transients.subscribers` map. `subscribers` is a
+  # TRANSIENT, read via `get_raw_slice/2`. Used by tests that fire a slice
+  # change immediately after `bind/4` and assert the publish reaches the
+  # Worker (the deferred subscribe means bind-return no longer implies
+  # subscribed).
+  defp await_worker_subscribed(_session_uri, _worker_uri, 0), do: {:error, :timeout}
+
+  defp await_worker_subscribed(session_uri, worker_uri, retries) do
+    with {:ok, worker_pid} <- Ezagent.KindRegistry.lookup(worker_uri),
+         {:ok, %{transients: %{subscribers: subscribers}}} <-
+           Ezagent.Kind.get_raw_slice(session_uri, :publisher),
+         true <- Map.has_key?(subscribers, worker_pid) do
+      :ok
+    else
+      _ ->
+        Process.sleep(20)
+        await_worker_subscribed(session_uri, worker_uri, retries - 1)
+    end
+  end
+
+  # Remediation 2026-05-30 (C-A): fire fresh slice changes until the Worker
+  # actually publishes (its persisted `count` advances), then return `:ok`
+  # WITHOUT consuming the `{:published, …}` observer message (the caller's
+  # `assert_receive` still verifies it). The Worker's deferred subscribe can
+  # land in the subscribers map a beat after the FIRST fire's fan-out already
+  # ran (a fanned event raced the subscribe commit); each subsequent fire is
+  # a new cursor → fresh fan-out that reaches the now-subscribed Worker. This
+  # asserts the steady-state publish invariant without flaking on the async
+  # subscribe ordering.
+  defp fire_until_published(_session_uri, _worker_uri, 0), do: {:error, :no_publish}
+
+  defp fire_until_published(session_uri, worker_uri, retries) do
+    fire_slice_change(session_uri)
+
+    case worker_published?(worker_uri) do
+      true ->
+        :ok
+
+      false ->
+        Process.sleep(50)
+        fire_until_published(session_uri, worker_uri, retries - 1)
+    end
+  end
+
+  defp worker_published?(worker_uri) do
+    case Ezagent.Kind.get_slice(worker_uri, :external_mirror_worker) do
+      {:ok, %{count: count}} when is_integer(count) and count > 0 -> true
+      _ -> false
+    end
+  end
+
   defp wait_until_dead(_uri, 0), do: :error
 
   defp wait_until_dead(uri, retries) do
@@ -1814,7 +1895,15 @@ defmodule Ezagent.Behavior.ExternalMirrorTest do
   end
 
   defp unique_session_uri(prefix) do
-    URI.parse("session://default/team-alpha/#{prefix}-#{System.unique_integer([:positive])}")
+    # Use the CANONICAL constructor `Ezagent.URI.new!/1` (authority: nil),
+    # NOT raw `URI.parse/1` (which sets authority: "default"). Production
+    # read paths (`BindingRow.sessions_for_adapter/1` etc.) reconstruct
+    # session URIs via `Ezagent.URI.new!/1`, so a test URI built with
+    # `URI.parse/1` is NOT struct-equal to the one the facade returns even
+    # though both stringify identically — breaking `session_uri in
+    # admin_sessions` assertions on `==`. Building the test URI canonically
+    # keeps the fixture shape == production shape.
+    Ezagent.URI.new!("session://default/team-alpha/#{prefix}-#{System.unique_integer([:positive])}")
   end
 
   # Trigger a chat-slice change on the Session to fire a Publisher

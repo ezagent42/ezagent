@@ -91,7 +91,11 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeOnSessionColdSpawnTest do
   (app already started).
   """
 
-  use ExUnit.Case, async: false
+  # Remediation P6 (sandbox isolation): spawns Session/Worker Kinds that run
+  # Repo queries in other processes; `EzagentCore.DataCase` provides the
+  # shared sandbox owner + P6 drain so they don't hit
+  # `DBConnection.OwnershipError`. See WorkerPublishTest for the full note.
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.ExternalMirror.{
     AdapterRegistry,
@@ -170,40 +174,32 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeOnSessionColdSpawnTest do
 
       {:ok, session_pid_1} = Ezagent.KindRegistry.lookup(session_uri)
 
-      # Production-faithful path (codex round-1 CONCERN #5 fix):
-      # snapshot the LIVE state — the live worker pid IS in
-      # `:publisher.subscribers`. `:on_change` would write the same
-      # snapshot on any future slice mutation; forcing it
-      # synchronously here makes the assertion time-independent.
+      # Production-faithful path: snapshot the LIVE state. `:on_change`
+      # would write the same snapshot on any future slice mutation; forcing
+      # it synchronously here makes the assertion time-independent.
       #
-      # Crucially, this snapshot carries the worker's STILL-ALIVE
-      # pid + monitor ref. The cold-spawn load path's
-      # `Behavior.Publisher.SessionImpl.reconcile_after_load/2`
-      # (CONCERN #3 fix) clears both maps on load — that's the
-      # production behaviour we're testing. Pre-CONCERN-#3-fix the
-      # test had to fabricate empty subscribers via
-      # `:sys.replace_state`; post-fix we just save the natural
-      # state and let `reconcile_after_load/2` do its job.
+      # Post-lifecycle migration (remediation 2026-05-30): `subscribers` +
+      # `monitors` are now TRANSIENTS on the `:publisher` slice
+      # (`%{state: …, transients: %{subscribers, monitors}}`), NOT persisted
+      # slice fields. The cold-restart bug the old `reconcile_after_load/2`
+      # scrubbed (a snapshotted-then-rehydrated dead subscriber pid) is now
+      # IMPOSSIBLE BY CONSTRUCTION — `Snapshot.save_now` only persists the
+      # `.state` sub-key, so the live worker pid never reaches the snapshot,
+      # and every `activate/2` rebuilds `subscribers` empty. So we read the
+      # LIVE subscribers from the `transients` container (to confirm the
+      # pre-condition that the Worker subscribed pre-vanish) and no longer
+      # assert the snapshot carries the pid (it correctly does not — that is
+      # the structural guarantee the migration delivered).
       kind_state = :sys.get_state(session_pid_1)
       :ok = Ezagent.Kind.Snapshot.save_now(session_uri, kind_state.kind, kind_state.state)
 
-      # Sanity: the snapshot we just wrote includes the worker's
-      # live pid. (If `reconcile_after_load/2` is missing the cold
-      # spawn would re-install this pid, and the test would PASS
-      # against a buggy build — that's exactly what CONCERN #5
-      # called out. The first slice change after cold-spawn would
-      # still publish to the pre-vanish pid, which happens to be
-      # the same live pid in a same-VM test, masking the prod
-      # silent-drop. Asserting the snapshot carries the pid +
-      # then asserting `reconcile_after_load/2` clears it is what
-      # makes this test a true regression for the prod path.)
-      persisted_subscribers =
-        kind_state.state.publisher.subscribers
+      live_subscribers =
+        get_in(kind_state.state, [:publisher, :transients, :subscribers]) || %{}
 
-      assert is_map(persisted_subscribers) and map_size(persisted_subscribers) >= 1,
+      assert is_map(live_subscribers) and map_size(live_subscribers) >= 1,
              "test pre-condition broken — the Worker did not subscribe to the Session " <>
                "Publisher pre-vanish; cold-spawn scenario does not apply. " <>
-               "subscribers=#{inspect(persisted_subscribers)}"
+               "live subscribers (transient)=#{inspect(live_subscribers)}"
 
       # Terminate the Session via its supervisor (boot-seed path uses
       # EzagentDomainChat.SessionSupervisor; lazy-demand spawn path
