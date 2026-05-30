@@ -108,7 +108,12 @@ defmodule EzagentDomainChat.Integration.SessionOwnerOrchestratorCapTest do
       # to that user AND (b) grant them the OrchestratorAdmin
       # :restart cap on this session.
       short_name = "rfc402-legacy-join-#{System.unique_integer([:positive])}"
-      workspace_uri = URI.parse("workspace://system")
+      # Canonical (`authority: nil`) — the granted cap's workspace_uri is
+      # stored canonically (the grant path normalizes through
+      # Ezagent.URI.new!), so the `cap.workspace_uri == workspace_uri`
+      # predicate must compare against the canonical struct. `URI.parse`
+      # (`authority: "system"`) is field-divergent and never `==`-matches.
+      workspace_uri = Ezagent.URI.new!("workspace://system")
 
       session_uri =
         URI.new!("session://default/system/#{short_name}")
