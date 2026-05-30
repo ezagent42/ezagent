@@ -521,3 +521,58 @@ From `docs/notes/2026-05-24-architecture-audit-v1.md` (5 LOW):
   augment the catchup test (or write a sibling) to drive an actual
   `chat.send` through the window so the catchup + dedupe interact
   end-to-end.
+
+---
+
+## Post-lifecycle-migration full E2E findings (2026-05-30, Allen "e2e全量重跑")
+
+Methodology: phx restarted on complete `d46bd2d2`; live agent-browser + full
+umbrella `mix test` (407 files) + isolated chat re-runs + **pre-lifecycle
+baseline worktree (`54df56c9`) chat run for apples-to-apples diff**.
+
+### Verdict
+- **Live product migration: VALIDATED.** phx boots clean; cold-restart rebuild
+  works (7 cc agents respawn from snapshot, ExternalMirror BootReconciler
+  reconciles, KindRegistry repopulated — agent-browser screenshot captured);
+  `snapshot_restart_test` GATE 3/3 from umbrella root.
+- **Automated suite: ~131 raw failures full-run, triaged:**
+
+#### A. PRE-EXISTING (confirmed via baseline diff — NOT migration's fault)
+- **Sandbox-isolation flakiness**: chat baseline = 23 failures, ~39
+  `DBConnection.ConnectionError` (`owner exited / Client still using
+  connection` — spawned Kind.Servers outlive the test that owns the sandbox
+  connection). Present pre-lifecycle. Run files isolated/serial to confirm green.
+- **`Jason.Encoder not implemented for Ezagent.Capability`** (HIGH, pre-existing):
+  baseline 337 / migrated 332 raised `:emit` of `:cap_granted` EventLog rows
+  (`identity.ex:361`). The emit is caught ("continuing") so cap_granted events
+  are **silently dropped from EventLog**. Fix: `@derive {Jason.Encoder, ...}` on
+  `Ezagent.Capability` (+ nested URI/MapSet/DateTime encoders) OR emit a plain
+  map payload instead of the struct.
+- URI fixture artifacts (`host: {:not,:a,:string}`, `String.Chars.URI`),
+  feishu BindingPolicy retired-API, etc. — documented earlier.
+
+#### B. MIGRATION-INTRODUCED (chat: baseline 23 → migrated 43 failures, +20)
+- **`:not_ready` readiness regression (PRIMARY, ~6 direct + cascade)**:
+  `join`/`subscribe_from` called synchronously right after a Session (re)spawn
+  returns `{:error, :not_ready}` instead of buffering. Engine
+  `kind/server.ex` ReadyGate/PendingDelivery path was touched by Phase A
+  (#478); the documented contract ("dispatch during post-init buffers via
+  PendingDelivery and runs after :ready") is NOT covered for the synchronous
+  call path now that `activate/2` runs in post-init `handle_continue`,
+  widening the not-ready window. Failing: `SessionSurvivesRestartTest — THE
+  GATE`, `WorkspaceRegistry rebind on rehydrate`, `PublisherSessionTest
+  no-ambient-caps`, etc. **These tests encode a real production invariant**
+  (join-right-after-(re)spawn must not be rejected — exactly the cold-restart
+  message-loss class the migration was meant to kill). FIX DIRECTION: restore
+  buffering for synchronous dispatch during `:not_ready` at the engine level —
+  do NOT paper over by making tests await-ready (would mask the regression).
+  *Needs Allen's architectural steer (core-engine + behavior change).*
+- **destroy-gate semantics change (SandboxDestroyTest, 2)**: after `:destroy`,
+  `read`/`write_path` return `{:ok, %{...: nil}}` (empty two-container state)
+  instead of `{:error, :destroyed}`. The process-dict `destroyed?` gate was
+  intentionally removed in the Sandbox→Lifecycle conversion ("destroyed =
+  absence of state"). Either re-add a destroyed sentinel or update the 2 tests
+  — decision pending (is read-after-destroy-returns-empty acceptable?).
+- two-container parity test-debt (Kind.SnapshotTest etc., few): tests assert
+  old flat slice shape `%{identity: %{caps:}}`; product correctly returns
+  `%{identity: %{state: %{caps:}}}`. Update the test assertions.
