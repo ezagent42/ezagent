@@ -576,3 +576,14 @@ baseline worktree (`54df56c9`) chat run for apples-to-apples diff**.
 - two-container parity test-debt (Kind.SnapshotTest etc., few): tests assert
   old flat slice shape `%{identity: %{caps:}}`; product correctly returns
   `%{identity: %{state: %{caps:}}}`. Update the test assertions.
+- **home portability (#120) — relativize Sandbox `config_dir_path`**: SHIPPED a
+  working `mix ezagent.home.backup` + `ezagent.home.restore` (VACUUM-INTO
+  consistent DB copy + rewrite-on-restore of the absolute `config_dir_path` /
+  `respawn_template_data` paths buried in `kind_snapshots.state_binary`, e2e in
+  `apps/ezagent_core/test/integration/home_migration_test.exs`). DEFERRED the
+  durable structural fix: store the Sandbox slice path **profile-relative**
+  (`cc-agents/<ws>/<name>`) and resolve against `Ezagent.Home` at read time in
+  `activate/2`, so restore needs no rewrite at all. Invasive — touches the
+  Sandbox slice contract, the cc Template Class, `:write_path` callers,
+  `reconcile_after_load`, + a data migration of existing rows. See
+  `docs/notes/home-portability-audit.md` §"Conclusion" approach 2.
