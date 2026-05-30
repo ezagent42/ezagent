@@ -10,21 +10,31 @@ defmodule EzagentDomainChat.PresenceFanoutTest do
   exercised via existing chat tests.
   """
 
-  use ExUnit.Case, async: false
+  # DataCase (not bare ExUnit.Case) — the "bootstrap rebuild" test calls
+  # Ezagent.Users.create/3 + EzagentDomainChat.create_session/3, which hit
+  # the Repo from the test process and from spawned Kinds. Without a sandbox
+  # checkout in shared mode those raise DBConnection.OwnershipError. DataCase
+  # also brings the P6 owner-exit Kind drain.
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.Behavior.Chat
   alias Ezagent.Presence
   alias EzagentDomainChat.PresenceFanout
 
+  # Canonical (`authority: nil`) construction — PresenceFanout rebroadcasts
+  # `:member_presence` with the canonical member_uri (`Ezagent.URI.new!`
+  # derived from the Presence topic), so a test pinning `^member_uri` must
+  # hold the canonical struct. `URI.parse/1` yields the non-canonical
+  # `authority`-bearing shape and the assert_receive pin would never match.
   defp unique_session_uri(suffix),
     do:
-      URI.parse(
+      Ezagent.URI.new!(
         "session://default/team-alpha/presence_fanout_#{suffix}_#{System.unique_integer([:positive])}"
       )
 
   defp unique_user_uri(suffix),
     do:
-      URI.parse(
+      Ezagent.URI.new!(
         "entity://user/team-alpha/presence_fanout_#{suffix}_#{System.unique_integer([:positive])}"
       )
 
@@ -143,7 +153,9 @@ defmodule EzagentDomainChat.PresenceFanoutTest do
       # join an extra member, then RESTART the fanout and assert the
       # index gets re-populated from the live Session's :chat slice.
       member_uri =
-        URI.parse("entity://user/team-alpha/bootstrap_test_#{System.unique_integer([:positive])}")
+        Ezagent.URI.new!(
+          "entity://user/team-alpha/bootstrap_test_#{System.unique_integer([:positive])}"
+        )
 
       # Spawn the member user Kind
       {:ok, _} = Ezagent.Users.create(URI.to_string(member_uri), nil, [])
