@@ -130,7 +130,14 @@ defmodule EzagentCore.Invariants.EntitiesHaveWorkspaceTest do
       # NOT followed by `/` (which would make it 3-segment) and NOT
       # followed by more identifier chars (which would extend the
       # match). Negative lookahead allowed in Erlang :re for this case.
-      regex = ~r{entity://(?:user|agent)/[a-zA-Z0-9][a-zA-Z0-9_-]*(?![a-zA-Z0-9_./-])}
+      #
+      # `#` is in the exclusion set so an interpolation-continued segment
+      # (`entity://user/uc-parity-#{n}/alice` — a CANONICAL 3-segment URI
+      # whose workspace segment is dynamic) is not mis-flagged as a
+      # terminal 2-segment literal. A genuine 2-segment literal like
+      # `"entity://user/admin"` is still caught (next char is `"`, not
+      # an identifier/`#`).
+      regex = ~r{entity://(?:user|agent)/[a-zA-Z0-9][a-zA-Z0-9_-]*(?![a-zA-Z0-9_./#-])}
 
       path
       |> File.read!()

@@ -76,7 +76,7 @@ defmodule Ezagent.Behavior.WorkspaceSotReconcileTest do
 
     member = URI.new!("entity://user/#{name}/alice")
     tmpl = %{"class" => "echo.agent", "agent_uri" => "entity://agent/#{name}/echo_x"}
-    rule = %{"matcher" => %{"type" => "always"}, "receivers" => ["session://x"]}
+    rule = %{"matcher" => %{"type" => "always"}, "receivers" => ["session://default/x/x"]}
 
     # Loader-equivalent spawn: the decoded SoT cluster shape threaded as
     # args. (The production Loader reads the `workspaces` row and passes

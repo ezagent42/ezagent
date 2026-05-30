@@ -334,7 +334,7 @@ defmodule Ezagent.Behavior.WorkspaceMigrationParityTest do
   # ---------------------------------------------------------------
   describe ":list_routing_rules" do
     test "returns the routing_rules list verbatim" do
-      rules = [%{matcher: %{type: "always"}, receivers: ["session://x"]}]
+      rules = [%{matcher: %{type: "always"}, receivers: ["session://default/x/x"]}]
       slice = slice(%{routing_rules: rules})
 
       assert {:ok, %{result: %{rules: ^rules}, slice: ^slice}} =
