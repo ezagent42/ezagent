@@ -50,21 +50,27 @@ defmodule Ezagent.PluginNp.Template.NpAgentTest do
     end
 
     test "rejects 2-segment legacy URI (no workspace segment)" do
-      # `entity://agent/np_x` parses as host=agent, path=/np_x — split-2
-      # on "np_x" gives ["np_x"] (single element), so the [workspace,
-      # entity_name] destructure fails. Surfaces as :missing_flavor_prefix
-      # (the catch-all destructure-failure error). The narrower
-      # :invalid_agent_uri / 2-segment-rejection path requires the
-      # strict Ezagent.URI.new!/1 which raises at construction; this
-      # template's check_agent_uri uses URI.new which is more lenient
-      # and falls into the destructure path.
+      # `entity://agent/np_x` is a 2-segment entity URI (missing the
+      # mandatory `<workspace>` segment). Per SPEC 2026-05-27 URI
+      # canonicalization, `check_agent_uri` now routes through the
+      # STRICT `Ezagent.URI.new!/1`, which enforces the 3-segment
+      # authority rule (invariant #11) and RAISES `ArgumentError` at
+      # construction for a 2-segment entity URI. The template rescues
+      # that into the structured `{:bad_agent_uri, uri_str}` contract.
+      #
+      # (Pre-canonicalization the template used the lenient `URI.new`,
+      # which parsed leniently and fell into the [workspace, entity]
+      # destructure-failure path → `:missing_flavor_prefix`. The
+      # migration moved rejection EARLIER — to URI construction — which
+      # is the stronger guarantee. This test asserts the current
+      # contract.)
       #
       # NOTE: the 2-segment literal is split across two strings so the
       # `EntitiesHaveWorkspaceTest` codebase-grep gate (Phase 9 PR-2)
       # doesn't flag this intentional negative test as a regression.
       legacy = "entity://agent/" <> "np_x"
 
-      assert {:error, {:missing_flavor_prefix, ^legacy, _}} =
+      assert {:error, {:bad_agent_uri, ^legacy}} =
                Tmpl.validate(%{
                  "class" => "np.agent",
                  "agent_uri" => legacy

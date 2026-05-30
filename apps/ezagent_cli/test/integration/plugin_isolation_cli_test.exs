@@ -22,34 +22,27 @@ defmodule EzagentCli.Integration.PluginIsolationCLITest do
   # ----- Fake plugin types — defined inline, NOT in lib/ ------------
 
   defmodule ProbeBehavior do
-    @behaviour Ezagent.Behavior
+    # Migrated to the current `use Ezagent.Lifecycle` developer surface
+    # (post-lifecycle remediation 2026-05-30). The legacy
+    # `@behaviour Ezagent.Behavior` + state_slice/init_slice/invoke form
+    # no longer carries the `__behavior__?/0` marker the runtime
+    # requires, so `Ezagent.Kind.Runtime` would REFUSE to dispatch to it.
+    use Ezagent.Lifecycle, state_slice: :probe_cli
 
-    @impl true
-    def actions, do: [:do_thing]
+    action :do_thing,
+      args: %{x: :string},
+      returns: %{result: :string},
+      caps: [:do_thing],
+      modes: [:call],
+      description: "test fixture — append x to the probe slice and echo it back"
 
-    @impl true
-    def cap_subjects, do: [{:do_thing, "test fixture"}]
+    @impl Ezagent.Lifecycle
+    def create(_args), do: {:ok, %{things: []}}
 
-    @impl true
-    def state_slice, do: :probe_cli
-
-    @impl true
-    def init_slice(_args), do: %{things: []}
-
-    @impl true
-    def invoke(:do_thing, slice, %{x: x}, _ctx) do
-      {:ok, %{slice | things: [x | slice.things]}, %{result: x}}
+    def handle_do_thing(%{x: x}, ctx) do
+      things = ctx[:read].(:things, [])
+      {:ok, %{result: x}, [{:set, :things, [x | things]}]}
     end
-
-    @impl true
-    def interface,
-      do: %{
-        do_thing: %{
-          args: %{x: :string},
-          returns: %{result: :string},
-          modes: [:call]
-        }
-      }
   end
 
   defmodule ProbeKind do
@@ -85,7 +78,15 @@ defmodule EzagentCli.Integration.PluginIsolationCLITest do
   end
 
   test "PHASE 4 CLI INVARIANT: plugin-defined Behavior action auto-appears in mix ezagent tree" do
-    # 1. Plugin-author work: register Kind ↔ Behavior at runtime
+    # 1. Plugin-author work: register Kind ↔ Behavior at runtime.
+    #    In production `Ezagent.SpawnRegistry.register/2` co-registers a
+    #    new scheme into `Ezagent.URI.SchemeRegistry`; this fixture spawns
+    #    `ProbeKind` directly (no scheme spawn fn), so register the
+    #    `probecli` scheme explicitly — otherwise the canonical
+    #    `Ezagent.URI.new!/1` in `Dispatch.run_action` rejects it as
+    #    unregistered (SPEC 2026-05-27 URI canonicalization tightened the
+    #    allowlist check).
+    :ok = Ezagent.URI.SchemeRegistry.register("probecli")
     :ok = Ezagent.BehaviorRegistry.register(ProbeKind, :do_thing, ProbeBehavior)
 
     # 2. Build CLI tree — picks up the new action without ANY mix task code

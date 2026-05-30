@@ -25,73 +25,76 @@ defmodule Ezagent.PluginNp.Test.FakeCcAgent do
 
   ## What this Behavior simulates from the real cc-agent
 
-    * `chat.receive` → reply with `\\int_0^1 x dx + <inbound>`. The
+    * `chat.receive` → reply with `\\latex{...} = \\int_0^1 x dx`. The
       backslash hints to the downstream agent that this is LaTeX
       (the curl-agent's job is to convert LaTeX → numpy expr).
     * Loop safety — ignores messages whose sender is itself.
-    * Reply dispatched under admin_caps (matches the real cc Channel's
-      reply path).
+    * Reply dispatched under `system://chat-reply` caps (matches the
+      real cc Channel's reply path).
+
+  ## Lifecycle migration (post-lifecycle remediation, 2026-05-30)
+
+  Converted from the legacy `@behaviour Ezagent.Behavior` +
+  `state_slice/0` / `init_slice/1` / `invoke/4` surface to the
+  current `use Ezagent.Lifecycle` developer contract (SPEC
+  2026-05-29). The old surface no longer carries the `__behavior__?/0`
+  marker the runtime requires, so `Ezagent.Kind.Runtime` REFUSED to
+  dispatch to it (`"... is not a new-style Behavior ... Dispatch
+  refused."`) — which silently broke the cc→curl leg of the e2e
+  chain (the round-trip then timed out at 120s). The reply is now
+  expressed as a `{:dispatch, %Ezagent.Cmd{}}` effect rather than a
+  direct `Ezagent.Invocation.dispatch/1` inside the handler (per the
+  Lifecycle DON'T list).
 
   ## Registration
 
   Registered against the EXISTING `Ezagent.Entity.Agent` Kind (the
-  generic Agent Kind from `ezagent_domain_chat`). The test fixture
-  registers it transiently for the test session via the runtime
-  registry API (see the integration test's setup block) so the
-  orchestration e2e doesn't touch global state permanently.
+  generic Agent Kind from `ezagent_domain_chat`). The integration
+  test's `.exs` setup block binds it transiently to the Agent Kind's
+  `:receive` action for the test session, then restores
+  `Ezagent.Behavior.Chat` in `on_exit`, so the e2e doesn't
+  permanently mutate global Behavior bindings. (The binding call
+  itself lives in the test, not here — this module is a plain
+  Lifecycle Behavior and touches no `*Registry` API, per the
+  `:ezagent_plugin_check` §3.2 grep gate.)
 
   This Behavior lives in `test/support/` and is only compiled in
   `:test` env per `mix.exs` `elixirc_paths(:test)`.
   """
 
-  @behaviour Ezagent.Behavior
+  use Ezagent.Lifecycle, state_slice: :fake_cc
 
-  alias Ezagent.{Invocation, Message}
+  alias Ezagent.{Cmd, Message}
 
-  @impl Ezagent.Behavior
-  def actions, do: [:receive]
+  action :receive,
+    args: %{message: :map},
+    returns: %{},
+    caps: [:receive],
+    modes: [:cast],
+    description: "Transform inbound text to a LaTeX expression and reply into the session"
 
-  @impl Ezagent.Behavior
-  def cap_subjects do
-    [{:receive, "test fixture — fake CC agent's :receive action"}]
-  end
+  # `create/1` — FIRST-EVER existence; build the PERSISTENT state. The
+  # FakeCcAgent is registered against the existing Agent Kind, which
+  # does NOT list this Behavior in `behaviors/0`, so in practice the
+  # slice arrives as `%{}` and the handler reads counts defensively
+  # via `ctx.read.(:count, 0)`. Keeping `create/1` makes the slice
+  # shape explicit for any future direct-spawn use.
+  @impl Ezagent.Lifecycle
+  def create(_args), do: {:ok, %{count: 0, last_input: nil}}
 
-  @impl Ezagent.Behavior
-  def required_caps do
-    %{receive: Ezagent.Capability.cap(:agent, __MODULE__, :receive)}
-  end
-
-  @impl Ezagent.Behavior
-  def state_slice, do: :fake_cc
-
-  @impl Ezagent.Behavior
-  def init_slice(_args), do: %{count: 0, last_input: nil}
-
-  @impl Ezagent.Behavior
-  def invoke(:receive, slice, %{message: %Message{} = msg}, ctx) do
-    self_uri_str = URI.to_string(ctx.self_uri)
-    sender_str = sender_string(msg.sender)
+  def handle_receive(%{message: %Message{} = msg}, ctx) do
+    self_uri_str = uri_string(ctx[:self_uri])
+    sender_str = uri_string(msg.sender)
 
     if sender_str == self_uri_str do
-      {:ok, slice}
+      # Loop safety — never reply to our own message.
+      {:ok, %{}, []}
     else
-      do_receive(slice, msg, ctx)
+      do_receive(msg, ctx)
     end
   end
 
-  @impl Ezagent.Behavior
-  def interface do
-    %{
-      receive: %{
-        description: "Transform inbound text to a LaTeX expression and reply into the session",
-        args: %{message: :map},
-        returns: %{},
-        modes: [:cast]
-      }
-    }
-  end
-
-  defp do_receive(slice, msg, ctx) do
+  defp do_receive(%Message{} = msg, ctx) do
     inbound_text = extract_text(msg.body)
 
     # The deterministic LaTeX transformation — wrap the inbound text
@@ -101,54 +104,59 @@ defmodule Ezagent.PluginNp.Test.FakeCcAgent do
     # numpy-acceptable expression.
     latex_reply = "\\latex{" <> inbound_text <> "} = \\int_0^1 x \\, dx"
 
-    send_reply_to_session(ctx[:caller], ctx.self_uri, latex_reply, msg)
+    count = ctx[:read].(:count, 0)
 
-    # The FakeCcAgent is registered against the EXISTING
-    # Ezagent.Entity.Agent Kind via BehaviorRegistry, NOT by adding
-    # `state_slice: :fake_cc` to the Kind's declared behaviors. As a
-    # result `init_slice/1` is never called by Kind.Server — `slice`
-    # arrives as `%{}`. Tolerate that: read counts via Map.get/3 and
-    # rebuild defensively.
-    count = Map.get(slice, :count, 0)
-    {:ok, Map.merge(slice, %{count: count + 1, last_input: inbound_text})}
+    reply_effects =
+      case reply_effect(ctx[:caller], ctx[:self_uri], latex_reply, msg) do
+        nil -> []
+        eff -> [eff]
+      end
+
+    effects =
+      reply_effects ++
+        [
+          {:set, :count, count + 1},
+          {:set, :last_input, inbound_text}
+        ]
+
+    {:ok, %{}, effects}
   end
+
+  # Build the `{:dispatch, %Cmd{}}` effect that posts the transformed
+  # reply back into the originating session via `chat.send`. Mirrors
+  # the real CC agent's reply path (`system://chat-reply`).
+  defp reply_effect(nil, _agent_uri, _text, _in_msg), do: nil
+
+  defp reply_effect(%URI{scheme: "session"} = session, agent_uri, text, %Message{} = in_msg) do
+    reply_msg = Message.new(agent_uri, %{text: text, attachments: []}, ref_id: in_msg.id)
+
+    {:dispatch,
+     %Cmd{
+       target: session,
+       action: :send,
+       args: %{message: reply_msg},
+       ctx: %{
+         caller: agent_uri,
+         caps: Ezagent.SystemPrincipal.caps("system://chat-reply"),
+         reply: :ignore
+       }
+     }}
+  end
+
+  defp reply_effect(s, agent_uri, text, in_msg) when is_binary(s) do
+    case URI.new(s) do
+      {:ok, %URI{scheme: "session"} = u} -> reply_effect(u, agent_uri, text, in_msg)
+      _ -> nil
+    end
+  end
+
+  defp reply_effect(_, _, _, _), do: nil
 
   defp extract_text(%{text: t}) when is_binary(t), do: t
   defp extract_text(%{"text" => t}) when is_binary(t), do: t
   defp extract_text(_), do: ""
 
-  defp sender_string(%URI{} = u), do: URI.to_string(u)
-  defp sender_string(s) when is_binary(s), do: s
-  defp sender_string(_), do: ""
-
-  defp send_reply_to_session(nil, _, _, _), do: :ok
-
-  defp send_reply_to_session(%URI{scheme: "session"} = session, agent_uri, text, in_msg) do
-    msg = Message.new(agent_uri, %{text: text, attachments: []}, ref_id: in_msg.id)
-    target = URI.new!("#{URI.to_string(session)}?action=chat.send")
-
-    Invocation.dispatch(%Invocation{
-      target: target,
-      mode: :cast,
-      args: %{message: msg},
-      # SPEC caps-cleanup-v1 §4.4 — test stub mirroring the real CC
-      # agent reply path (`system://chat-reply`).
-      ctx: %{
-        caller: agent_uri,
-        caps: Ezagent.SystemPrincipal.caps("system://chat-reply"),
-        reply: :ignore
-      }
-    })
-
-    :ok
-  end
-
-  defp send_reply_to_session(s, agent_uri, text, in_msg) when is_binary(s) do
-    case URI.new(s) do
-      {:ok, %URI{scheme: "session"} = u} -> send_reply_to_session(u, agent_uri, text, in_msg)
-      _ -> :ok
-    end
-  end
-
-  defp send_reply_to_session(_, _, _, _), do: :ok
+  defp uri_string(%URI{} = u), do: URI.to_string(u)
+  defp uri_string(s) when is_binary(s), do: s
+  defp uri_string(_), do: ""
 end

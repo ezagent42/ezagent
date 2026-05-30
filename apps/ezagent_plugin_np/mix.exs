@@ -45,11 +45,27 @@ defmodule EzagentPluginNp.MixProject do
       # `Ezagent.Domain.Python.Server` running the numpy/sympy
       # compute script.
       {:ezagent_domain_python, in_umbrella: true},
-      # Test-only — the comprehensive 4-agent e2e mocks the curl-
-      # agent's downstream DeepSeek endpoint via a tiny Bandit+Plug
-      # listener (see test/support/mock_deepseek.ex).
-      {:plug, "~> 1.18", only: [:test]},
-      {:bandit, "~> 1.5", only: [:test]}
+      # TEST-ONLY (post-lifecycle remediation): the comprehensive
+      # 4-agent e2e (admin → cc → curl → np → admin) spawns a CurlAgent
+      # leg via `Ezagent.Kind.spawn(Ezagent.Entity.CurlAgent, …)`. That
+      # Kind module is DEFINED in ezagent_plugin_curl_agent; running the
+      # np suite in isolation without it leaves the module unloaded, so
+      # the spawn fails `{:undef, [{Ezagent.Entity.CurlAgent,
+      # :persistence, …}]}`. The full umbrella masks this (curl_agent
+      # boots alongside np). Depend on it `only: :test` so the isolated
+      # e2e matches the production topology without coupling lib/.
+      {:ezagent_plugin_curl_agent, in_umbrella: true, only: :test},
+      # The comprehensive 4-agent e2e mocks the curl-agent's downstream
+      # DeepSeek endpoint via a tiny Bandit+Plug listener (see
+      # test/support/mock_deepseek.ex). NOT `only: [:test]`: sibling
+      # umbrella apps (ezagent_plugin_feishu → :plug, ezagent_web →
+      # :bandit) declare these deps unrestricted, and Mix requires the
+      # `:only` scope to agree across the umbrella — a `[:test]`
+      # restriction here makes np un-runnable as the lead project
+      # ("the :only option ... does not match the :only option
+      # calculated for {:plug, ..., optional: false}").
+      {:plug, "~> 1.18"},
+      {:bandit, "~> 1.5"}
     ]
   end
 end
