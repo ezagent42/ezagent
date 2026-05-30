@@ -11,16 +11,20 @@ defmodule EzagentDomainChat.Integration.ChatRoutingTest do
 
   # Non-async — we share the live Session GenServer + EzagentCore.Repo across
   # examples and the :DOWN test will pollute the shared Session's slice.
-  use ExUnit.Case
+  #
+  # EzagentCore.DataCase (not bare ExUnit.Case): its setup_sandbox installs
+  # the P6 drain-live-kinds teardown — before this test's sandbox owner is
+  # stopped, EVERY globally-registered Kind (incl. the boot-time main
+  # Session) is synchronously drained so no in-flight DB query outlives the
+  # owner. Without it, a concurrent async test's owner-exit reverted the
+  # shared connection mid-query and crashed the Session with a
+  # DBConnection.OwnershipError, dropping the :chat_message broadcast.
+  use EzagentCore.DataCase, async: false
   alias Ezagent.{Invocation, KindRegistry, Message, MessageStore}
   alias Ezagent.Behavior.Chat
   alias Ezagent.Entity.{Session, User}
-  alias EzagentCore.Repo
 
   setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(Repo, {:shared, self()})
-
     # session://default/system/main is a DynamicSupervisor child spawned
     # ONCE at chat-app boot — NOT a permanent static child. Under the full
     # concurrent umbrella run another test can terminate it before these
