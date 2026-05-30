@@ -45,40 +45,74 @@ defmodule EzagentCore.Invariants.DispatchUsesRequiredCapsStructTest do
   end
 
   test "every production Behavior implements required_caps/0" do
-    # Find every module with `@behaviour Ezagent.Behavior` exact match
-    # in apps/*/lib (excluding test/ + the @callback declaration file).
-    paths = Path.wildcard(Path.join(umbrella_root(), "apps/*/lib/**/*.ex"))
+    # SPEC 2026-05-29 (lifecycle migration): developer Behaviors are now
+    # authored via `use Ezagent.Lifecycle` (or the engine `use
+    # Ezagent.Behavior`), which EMITS `@behaviour Ezagent.Behavior`
+    # inside the macro's `__using__` quote — so a static source-grep for
+    # a line-anchored `@behaviour Ezagent.Behavior` literal no longer
+    # finds production Behaviors (only the macro source itself). Discover
+    # via runtime reflection instead: every loaded module that declares
+    # the `Ezagent.Behavior` behaviour is a production Behavior, and the
+    # macro's @before_compile injects `required_caps/0` for it. This
+    # check verifies the function is actually exported (catches a
+    # regression where the macro stops injecting it, or a hand-rolled
+    # engine Behavior omits it).
+    #
+    # NB: reflection only sees loaded modules — this assertion is
+    # meaningful under the full umbrella `mix test` (all apps loaded);
+    # ensure the umbrella apps are loaded so a solo run still discovers
+    # them.
+    for app <- umbrella_apps() do
+      _ = Application.load(app)
+      _ = Application.ensure_all_started(app)
+    end
 
     behavior_modules =
-      for path <- paths,
-          content = File.read!(path),
-          # Direct line-anchored match — avoids picking up
-          # `@behaviour Ezagent.Behavior.Publisher` and similar
-          # sub-behaviour declarations.
-          Regex.match?(~r/^\s*@behaviour Ezagent\.Behavior\s*$/m, content),
-          # Skip the @callback declaration file itself.
-          not String.ends_with?(path, "lib/ezagent/behavior.ex"),
-          # Skip the Lifecycle macro (SPEC 2026-05-29) — it EMITS
-          # `@behaviour Ezagent.Behavior` inside its `__using__` quote
-          # block (so the line-anchored regex matches the macro source),
-          # but `required_caps/0` is injected for the USING module by
-          # `use Ezagent.Behavior`'s @before_compile, not defined here.
-          # Same class of exclusion as behavior.ex above.
-          not String.ends_with?(path, "lib/ezagent/lifecycle.ex"),
-          do: path
+      for {module, _file} <- :code.all_loaded(),
+          Ezagent.Behavior in module_behaviours(module),
+          # The engine macro module + the Lifecycle macro module declare
+          # the behaviour on themselves but are not production Behaviors.
+          module not in [Ezagent.Behavior, Ezagent.Lifecycle],
+          do: module
 
     refute behavior_modules == [],
-           "test setup: expected at least one production Behavior under apps/*/lib"
+           "test setup: expected at least one production Behavior loaded " <>
+             "(run the full umbrella `mix test` so all apps' Behaviors are loaded)"
 
     missing =
-      for path <- behavior_modules,
-          content = File.read!(path),
-          not Regex.match?(~r/def\s+required_caps\b/, content),
-          do: path
+      for module <- behavior_modules,
+          not function_exported?(module, :required_caps, 0),
+          do: module
 
     assert missing == [],
            "Behaviors missing required_caps/0:\n  " <>
-             Enum.join(missing, "\n  ") <>
+             Enum.map_join(missing, "\n  ", &inspect/1) <>
              "\nSee SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2."
+  end
+
+  # All umbrella OTP apps (each app dir under apps/ with a matching
+  # mix.exs) — used to force-load Behaviors before reflection.
+  defp umbrella_apps do
+    Path.join(umbrella_root(), "apps/*/mix.exs")
+    |> Path.wildcard()
+    |> Enum.map(fn mix_path ->
+      mix_path |> Path.dirname() |> Path.basename() |> String.to_atom()
+    end)
+  end
+
+  # Behaviours a module declares, robust against modules whose
+  # `__info__/1` is unavailable (bootstrap/erlang modules).
+  defp module_behaviours(module) do
+    if function_exported?(module, :__info__, 1) do
+      try do
+        module.__info__(:attributes)
+        |> Keyword.get_values(:behaviour)
+        |> List.flatten()
+      rescue
+        _ -> []
+      end
+    else
+      []
+    end
   end
 end

@@ -102,25 +102,42 @@ defmodule Ezagent.Router do
   end
 
   @doc """
-  Run a saga via `Ezagent.SagaRunner.execute/2` (Subagent D
-  module). Phase 1 stub: if the runner module is missing, returns
-  `{:error, :saga_runner_not_loaded}`. Once integrated, this is a
-  passthrough.
+  Run a saga via `Ezagent.SagaRunner.execute/2`.
+
+  Returns `{:error, :saga_runner_not_loaded}` (a clean, documented
+  signal — never a `FunctionClause` crash) when the runner cannot run
+  the given input: either the `Ezagent.SagaRunner` module is not loaded,
+  OR the supplied `saga` is not a `%Ezagent.SagaRunner.Saga{}` struct
+  the runner knows how to execute. Both are "the runner is not in a
+  position to run this" from the caller's perspective.
+
+  When the runner is loaded and `saga` is a valid `%Saga{}`, this is a
+  passthrough to `SagaRunner.execute/2`.
   """
   @spec dispatch_saga(term(), map()) ::
           {:ok, map()}
           | {:error, atom(), term(), [atom()]}
           | {:error, :saga_runner_not_loaded}
   def dispatch_saga(saga, ctx) when is_map(ctx) do
-    if Code.ensure_loaded?(Ezagent.SagaRunner) and
-         function_exported?(Ezagent.SagaRunner, :execute, 2) do
-      apply(Ezagent.SagaRunner, :execute, [saga, ctx])
-    else
-      Logger.debug(
-        "Ezagent.Router.dispatch_saga/2 called but Ezagent.SagaRunner not loaded (Subagent D pending)"
-      )
+    runner_ready? =
+      Code.ensure_loaded?(Ezagent.SagaRunner) and
+        function_exported?(Ezagent.SagaRunner, :execute, 2)
 
-      {:error, :saga_runner_not_loaded}
+    cond do
+      not runner_ready? ->
+        Logger.debug("Ezagent.Router.dispatch_saga/2 called but Ezagent.SagaRunner not loaded")
+        {:error, :saga_runner_not_loaded}
+
+      not is_struct(saga, Ezagent.SagaRunner.Saga) ->
+        Logger.debug(
+          "Ezagent.Router.dispatch_saga/2 called with a non-%Saga{} input " <>
+            "(#{inspect(saga)}); the runner cannot execute it"
+        )
+
+        {:error, :saga_runner_not_loaded}
+
+      true ->
+        Ezagent.SagaRunner.execute(saga, ctx)
     end
   end
 
