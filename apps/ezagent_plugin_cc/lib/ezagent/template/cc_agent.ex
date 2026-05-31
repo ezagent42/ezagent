@@ -944,13 +944,33 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
       settings_mcp_args = assemble_settings_mcp_args(mandatory_settings_path(), per_agent_mcp_path, tmpl)
 
       # argv element 0 is the resolved ABSOLUTE path (not bare
-      # "claude"); the rest is the hardening's safe arg assembly,
-      # unchanged.
+      # "claude"); the rest is the hardening's safe arg assembly.
+      #
+      # 2026-06-01 — headless startup-dialog fix (verified via tmux +
+      # live orchestrator round-trip; see
+      # [[project_cc_channel_reply_unverified]]).
+      #
+      # `--permission-mode bypassPermissions` shows a "Bypass Permissions
+      # mode … Yes, I accept" CONFIRMATION dialog at startup that a
+      # headless PTY can't answer → claude parks pre-REPL → never loads
+      # the esr-bridge channel → inbound `notifications/claude/channel`
+      # are SILENTLY DROPPED (per the channels-reference) → the agent
+      # receives mentions but never replies. Critically this dialog
+      # appears BEFORE the `--dangerously-load-development-channels`
+      # prompt, so the PtyServer auto-prompt scanner
+      # (`default_auto_prompts/0`, which already answers the dev-channels
+      # dialog with "1\r") never saw its trigger text.
+      #
+      # `--dangerously-skip-permissions` runs in the SAME bypass mode
+      # WITHOUT that confirmation (verified: REPL still reports "bypass
+      # permissions on"; the `--settings` safety file is unchanged). With
+      # the bypass dialog gone, claude reaches the dev-channels prompt,
+      # which the EXISTING PtyServer scanner auto-confirms — the channel
+      # loads and the agent replies. No extra dialog-clearing code here.
       argv =
         [
           claude_path,
-          "--permission-mode",
-          "bypassPermissions",
+          "--dangerously-skip-permissions",
           "--dangerously-load-development-channels",
           "server:esr-bridge"
         ] ++ settings_mcp_args
