@@ -15,10 +15,30 @@ defmodule Ezagent.NotificationSubscriptionsTest do
 
   defp uniq, do: System.unique_integer([:positive])
 
+  # Subscription-admin authority is the `:subscribe` action axis,
+  # cross-workspace (`workspace_uri: :any`). SPEC 2026-05-27
+  # capability-action-axis §3.6.1 — admin predicates match the action
+  # axis explicitly.
   defp notifications_admin_cap do
     %Ezagent.Capability{
       kind: :user,
       behavior: Ezagent.Behavior.Notifications,
+      action: :subscribe,
+      instance: :any,
+      workspace_uri: :any,
+      granted_by: URI.parse("entity://user/system/test"),
+      granted_at: DateTime.utc_now()
+    }
+  end
+
+  # A `:notify`-scoped cross-workspace cap — the action a plugin holds
+  # to PUSH a notification into a user's inbox. It must NOT count as
+  # subscription-admin (cross-action elevation regression).
+  defp notify_only_cap do
+    %Ezagent.Capability{
+      kind: :user,
+      behavior: Ezagent.Behavior.Notifications,
+      action: :notify,
       instance: :any,
       workspace_uri: :any,
       granted_by: URI.parse("entity://user/system/test"),
@@ -582,6 +602,76 @@ defmodule Ezagent.NotificationSubscriptionsTest do
             caps: MapSet.new()
           })
       end
+    end
+  end
+
+  describe "action-axis admin-exemption (SPEC 2026-05-27 cross-action elevation fix)" do
+    # The `notifications_admin?/1` predicate previously matched ANY
+    # `Behavior.Notifications` cap with `workspace_uri: :any`, ignoring
+    # the action axis. A holder of a `:notify`-action wildcard (which a
+    # plugin pushing notifications legitimately holds) was thereby
+    # treated as a subscription administrator — register / unregister
+    # on behalf of OTHER users. The fix requires `action: :subscribe`.
+
+    test "notify-only cap does NOT authorize unregister of another entity" do
+      owner = URI.parse("entity://user/acme/owner-#{uniq()}")
+      attacker = URI.parse("entity://user/acme/attacker-#{uniq()}")
+      stream = URI.parse("entity://user/acme/stream-#{uniq()}")
+
+      seed(owner, stream)
+
+      assert {:error, :unauthorized} =
+               Subs.unregister_subscription(owner, stream, %{
+                 caller: attacker,
+                 caps: MapSet.new([notify_only_cap()])
+               })
+
+      # Victim's subscription untouched.
+      assert [{_, _}] = Subs.list_subscriptions(owner)
+    end
+
+    test "notify-only cap does NOT authorize register on behalf of another entity" do
+      attacker = URI.parse("entity://user/acme/attacker-#{uniq()}")
+      victim = URI.parse("entity://user/acme/victim-#{uniq()}")
+      stream = URI.parse("entity://user/acme/stream-#{uniq()}")
+
+      assert {:error, :unauthorized_for_entity} =
+               Subs.register_subscription(victim, stream, %{
+                 caller: attacker,
+                 caps: MapSet.new([notify_only_cap()])
+               })
+
+      assert Subs.list_subscriptions(victim) == []
+    end
+
+    test "notify-only cap does NOT authorize subscribe on behalf of another entity" do
+      attacker = URI.parse("entity://user/acme/attacker-#{uniq()}")
+      victim = URI.parse("entity://user/acme/victim-#{uniq()}")
+      stream = URI.parse("entity://user/acme/stream-#{uniq()}")
+
+      assert {:error, :unauthorized_for_entity} =
+               Subs.subscribe(victim, stream, %{
+                 caller: attacker,
+                 caps: MapSet.new([notify_only_cap()])
+               })
+
+      assert Subs.list_subscriptions(victim) == []
+    end
+
+    test "subscribe-action wildcard cap DOES authorize admin (positive control)" do
+      owner = URI.parse("entity://user/acme/owner-#{uniq()}")
+      admin = URI.parse("entity://user/system/admin-#{uniq()}")
+      stream = URI.parse("entity://user/acme/stream-#{uniq()}")
+
+      seed(owner, stream)
+
+      assert :ok =
+               Subs.unregister_subscription(owner, stream, %{
+                 caller: admin,
+                 caps: MapSet.new([notifications_admin_cap()])
+               })
+
+      assert Subs.list_subscriptions(owner) == []
     end
   end
 
