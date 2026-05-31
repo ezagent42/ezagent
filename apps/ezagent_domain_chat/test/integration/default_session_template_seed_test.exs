@@ -121,4 +121,21 @@ defmodule EzagentDomainChat.Integration.DefaultSessionTemplateSeedTest do
              "AgentTemplate seed URI (`#{CcOrchestratorSeed.template_uri()}`); " <>
              "got #{inspect(orchestrator_uri)}"
   end
+
+  # 2026-05-31 orchestrator-startup-atomicity §3 — the seed is a HARD boot
+  # invariant in prod/dev (crash boot if it can't persist) but `:test` is
+  # CARVED OUT (best-effort; Ecto SQL Sandbox). This test asserts the
+  # carve-out: the test-only entry returns `:ok` (NOT a crash) and the
+  # boot we are running inside did NOT abort — if the §3 carve-out were
+  # wrong (hard-crashing in test), the whole suite's boot would fail and
+  # this test could never run.
+  test "§3 seed-invariant test-env carve-out: seed is best-effort in :test" do
+    # Idempotent re-run inside the sandbox — must be `:ok`, never a raise
+    # (the prod/dev path raises on `{:error, _}`; the test path tolerates).
+    assert :ok = EzagentDomainChat.Application.seed_default_session_template_now()
+
+    # The carve-out only applies in :test — guard that we ARE in test env
+    # (otherwise this assertion is meaningless).
+    assert Mix.env() == :test
+  end
 end

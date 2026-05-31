@@ -401,8 +401,36 @@ defmodule EzagentDomainChat.Application do
   # logs a warning and returns `:ok`. The next boot retries — same
   # pattern as `ensure_system_workspace/0` and the cc-orchestrator
   # seed.
+  # 2026-05-31 orchestrator-startup-atomicity §3 — the `"default"`
+  # SessionTemplate is a HARD boot invariant in prod/dev: the
+  # orchestrator-bearing default template MUST exist so `create_session`
+  # can resolve `"default"` (the wizard + Feishu + `mix create_session`
+  # all default to it). If it can't persist, crash the boot LOUDLY rather
+  # than run a system where every default create fails with
+  # `{:session_template_not_found, "default", _}` (fail-loud, no degrade —
+  # `feedback_let_it_crash_no_workarounds`).
+  #
+  # `:test` is CARVED OUT: test already skips `ensure_system_workspace`
+  # (boot-time DB writes interact poorly with Ecto SQL Sandbox checkout)
+  # and uses its own sandbox seed — DataCase tests that need the default
+  # template drive `seed_default_session_template_now/0` inside an active
+  # checkout. A hard crash here would break the whole suite's boot.
   defp seed_default_session_template do
-    do_seed_default_session_template()
+    if test_env?() do
+      _ = do_seed_default_session_template()
+      :ok
+    else
+      case do_seed_default_session_template() do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          raise "EzagentDomainChat boot aborted — the `default` SessionTemplate " <>
+                  "(orchestrator-bearing) could not be persisted (fail-closed, §3): " <>
+                  "#{inspect(reason)}. Every `create_session(... template_name: \"default\")` " <>
+                  "would fail to resolve the template; refusing to boot."
+      end
+    end
   end
 
   @doc """
@@ -458,6 +486,11 @@ defmodule EzagentDomainChat.Application do
       created_at: nil
     }
 
+    # 2026-05-31 orchestrator-startup-atomicity §3 — PROPAGATE the failure
+    # (no longer swallow to `:ok`). The prod/dev caller
+    # (`seed_default_session_template/0`) turns a `{:error, _}` into a hard
+    # boot crash; the test caller tolerates it (Sandbox). Logging stays so
+    # the failure is visible regardless of which caller handles it.
     case Ezagent.Entity.SessionTemplate.persist_version_as_system(content, workspace_uri) do
       {:ok, _uri} ->
         :ok
@@ -465,26 +498,24 @@ defmodule EzagentDomainChat.Application do
       {:error, reason} ->
         require Logger
 
-        Logger.warning(
+        Logger.error(
           "seed_default_session_template: persist failed: #{inspect(reason)} — " <>
-            "/admin/templates will be empty until the next boot retries; " <>
-            "`mix ezagent workspace create_session --template-name default` " <>
-            "will resolve to a not-yet-instantiated template URI (the " <>
-            "Generator gates on a populated `:template` slice). Task #50."
+            "the orchestrator-bearing `default` SessionTemplate is the boot " <>
+            "invariant create_session resolves `template_name: \"default\"` against. " <>
+            "§3 hard-fails boot in prod/dev on this error."
         )
 
-        :ok
+        {:error, reason}
     end
   rescue
     e ->
       require Logger
 
-      Logger.warning(
-        "seed_default_session_template raised #{inspect(e)} — best-effort, " <>
-          "skipping. Task #50."
+      Logger.error(
+        "seed_default_session_template raised #{inspect(e)} — §3 boot invariant."
       )
 
-      :ok
+      {:error, {:seed_default_session_template_raised, e}}
   end
 
   defp register_spawn_fns do

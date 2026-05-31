@@ -1109,60 +1109,22 @@ defmodule EzagentPluginLiveview.AdminLive do
          )}
 
       true ->
-        target =
-          Ezagent.URI.with_action(health.template_uri, :template, :instantiate)
-
-        # The orchestrator's instance NAME-segment is `cc_orchestrator-<disc>`
-        # (history: `Session.ensure_orchestrator` builds it directly via
-        # `Agent.spawn_fresh` which does NOT prepend flavor). The
-        # `template.instantiate` dispatch path, by contrast, ALWAYS
-        # flavor-prepends (`<flavor>_<instance_name>`). The cc-orchestrator
-        # template's flavor IS `cc`, so to land on the same final URI shape
-        # we strip the leading `cc_` before handing the name to dispatch.
-        # Without this we'd get `cc_cc_orchestrator-<disc>` — a new
-        # double-prefixed agent, distinct from the one the health card was
-        # restarting (the original would stay :crashed, and a phantom
-        # `cc_cc_orchestrator-<disc>` would appear).
-        dispatch_instance_name =
-          case health.instance_name do
-            "cc_" <> rest -> rest
-            other -> other
-          end
-
-        # Codex review PR #376 P2 — `spawned_by` must equal the SESSION
-        # OWNER, not the LV operator. `Session.ensure_orchestrator/3`
-        # (apps/ezagent_domain_chat/lib/ezagent/entity/session.ex:565)
-        # later requires `AgentLineage.lookup(orch_uri)` to equal the
-        # session's owner_uri; if a non-owner operator triggers Restart
-        # and `spawned_by` is the operator, the next reconcile reads
-        # the lineage as a mismatch and classifies the fresh
-        # orchestrator as `{:foreign, _}` — the very state Restart was
-        # supposed to clear. Resolve the owner from the Session Kind;
-        # fall back to the caller (covers system sessions with
-        # `owner_uri: nil`).
-        spawned_by =
-          case Ezagent.Entity.Session.owner(session_uri) do
-            {:ok, %URI{} = owner} -> owner
-            _ -> socket.assigns.caller_uri
-          end
-
         # RFC #402 (Allen 2026-05-26) — restart is authorized by the
         # caller holding `Ezagent.Behavior.OrchestratorAdmin :restart`
         # on this session (`caller_can_restart_orchestrator?/2` —
-        # computed in `assign_session_context/2`). Re-check here as
-        # the dispatch chokepoint: a DOM tamper bypassing the
-        # `:if={@orchestrator_can_restart?}` render guard MUST still
-        # land in :unauthorized.
+        # computed in `assign_session_context/2`). Re-check here as the
+        # chokepoint: a DOM tamper bypassing the
+        # `:if={@orchestrator_can_restart?}` render guard MUST still land
+        # in :unauthorized.
         #
-        # Once the cap check passes, the actual `template.instantiate`
-        # dispatch runs under `system://template-materialize` (closed
-        # Catalog) — the SAME principal `Session.spawn_from_template/2`
-        # uses for the initial orchestrator spawn. This keeps the
-        # restart code path structurally identical to first-spawn and
-        # avoids requiring the owner to hold both the OrchestratorAdmin
-        # cap AND the template-instantiate cap (the latter would
-        # transitively let them instantiate arbitrary cc agents, which
-        # is overkill for the restart-only authority RFC #402 asks for).
+        # 2026-05-31 orchestrator-startup-atomicity §6 — once the cap
+        # check passes, the restart REPAIRS via
+        # `EzagentDomainChat.repair_orchestrator/2` (re-materialize OTU +
+        # §5 atomic gate). The owner/lineage/`spawned_by` resolution that
+        # the old `template.instantiate` dispatch needed is now internal
+        # to `repair_orchestrator` (it reads `Session.owner/1`), so the LV
+        # no longer computes the dispatch target / instance-name /
+        # spawned_by here.
         if not caller_can_restart_orchestrator?(socket, session_uri) do
           {:noreply,
            assign(
@@ -1171,14 +1133,7 @@ defmodule EzagentPluginLiveview.AdminLive do
              gettext("Unauthorized — only the session owner may restart the orchestrator.")
            )}
         else
-          do_restart_orchestrator(
-            socket,
-            target,
-            dispatch_instance_name,
-            health,
-            spawned_by,
-            session_uri
-          )
+          do_restart_orchestrator(socket, health, session_uri)
         end
     end
   end
@@ -1192,35 +1147,22 @@ defmodule EzagentPluginLiveview.AdminLive do
      )}
   end
 
-  defp do_restart_orchestrator(
-         socket,
-         target,
-         dispatch_instance_name,
-         health,
-         spawned_by,
-         session_uri
-       ) do
-    result =
-      Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-        target: target,
-        mode: :call,
-        args: %{
-          instance_name: dispatch_instance_name,
-          workspace_uri: health.workspace_uri,
-          spawned_by: spawned_by
-        },
-        ctx: %{
-          caller: socket.assigns.caller_uri,
-          caps: Ezagent.SystemPrincipal.caps("system://template-materialize"),
-          reply: :ignore
-        }
-      })
+  defp do_restart_orchestrator(socket, health, session_uri) do
+    # 2026-05-31 orchestrator-startup-atomicity §6 — Restart is now a
+    # REPAIR. The old path dispatched `template.instantiate` + respawned
+    # the PTY but NEVER set `orchestrator_template_uri` (OTU), so it could
+    # not fix the nil-OTU sessions (`main`, `orch-feishu-7429`) that were
+    # the whole reason for the SPEC. `EzagentDomainChat.repair_orchestrator/2`
+    # RE-MATERIALIZES the OTU from the session's template THEN runs the §5
+    # atomic readiness gate (cap grants + MCP registration + member join).
+    # The OrchestratorAdmin :restart cap was already checked in the
+    # `handle_event` clause above.
+    result = EzagentDomainChat.repair_orchestrator(session_uri, health.workspace_uri)
 
     case result do
-      {:ok, %{workers: _workers}} ->
-        # Re-classify; success path lands `:alive` (or a new
-        # `:crashed` if the fresh worker died immediately, which is
-        # itself a useful signal).
+      {:ok, ^session_uri, _meta} ->
+        # Re-classify; success path lands `:alive` (or a new `:crashed`
+        # if the fresh worker died immediately — itself a useful signal).
         {:noreply,
          socket
          |> assign_session_context(session_uri)

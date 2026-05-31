@@ -167,6 +167,102 @@ defmodule EzagentDomainChat do
 
   def create_session(_short_name, _creator, _opts), do: {:error, :short_name_required}
 
+  @doc """
+  Repair an EXISTING session's orchestrator (SPEC 2026-05-31 §6).
+
+  Fixes sessions whose `orchestrator_template_uri` (OTU) is nil — the
+  `main` / `orch-feishu-7429` class created before the atomic flow set
+  OTU, and any session whose orchestrator died. Unlike a plain restart
+  (which only re-dispatched `template.instantiate` + respawned the PTY,
+  NEVER setting OTU), this:
+
+    1. resolves the session's SessionTemplate from its 3-segment URI
+       (`session://<template>/<ws>/<name>` — the `<template>` segment is
+       the host) and reads its content (fail-loud if absent);
+    2. RE-MATERIALIZES the working copy — writes `orchestrator_template_uri`
+       + `session_template_uri` (`materialize_orchestrator_working_copy/3`,
+       the same write the create flow does);
+    3. runs the §5 atomic orchestrator-ensure gate + cap grants + MCP
+       registration + member join (`ensure_orchestrated_session/4`).
+
+  Returns `{:ok, session_uri, meta}` (same `create_session_meta` shape) or
+  `{:error, reason}`. A plain (no-orchestrator) template is a no-op success.
+
+  Cap-gated by the caller: the LV's `restart_orchestrator` path checks
+  `Ezagent.Behavior.OrchestratorAdmin :restart` BEFORE dispatching here.
+  """
+  @spec repair_orchestrator(URI.t()) ::
+          {:ok, URI.t(), create_session_meta()} | {:error, term()}
+  def repair_orchestrator(%URI{scheme: "session"} = session_uri) do
+    workspace_uri =
+      case Ezagent.Capability.workspace_of(session_uri) do
+        %URI{} = ws -> ws
+        :any -> nil
+      end
+
+    repair_orchestrator(session_uri, workspace_uri)
+  end
+
+  @spec repair_orchestrator(URI.t(), URI.t() | nil) ::
+          {:ok, URI.t(), create_session_meta()} | {:error, term()}
+  def repair_orchestrator(%URI{scheme: "session", host: template_name} = session_uri, %URI{} = workspace_uri)
+      when is_binary(template_name) and template_name != "" do
+    # Same thin per-URI lock the create flow uses — a repair racing a
+    # concurrent create / repair of the same session would tear state.
+    lock_id = {{:ezagent_domain_chat, :repair_orchestrator, URI.to_string(session_uri)}, self()}
+
+    try do
+      true = :global.set_lock(lock_id, [node()])
+      do_repair_orchestrator(session_uri, workspace_uri)
+    after
+      _ = :global.del_lock(lock_id, [node()])
+    end
+  end
+
+  def repair_orchestrator(%URI{scheme: "session"}, nil),
+    do: {:error, :repair_requires_workspace}
+
+  defp do_repair_orchestrator(%URI{host: template_name} = session_uri, %URI{} = workspace_uri) do
+    # The session OWNER carries the orchestrator ownership obligations; read
+    # it from the live/durable session so the re-materialize + ensure use
+    # the SAME owner the session was created with (NOT the repairing
+    # operator — same constraint as the LV restart's `spawned_by` lineage).
+    effective_owner =
+      case Session.owner(session_uri) do
+        {:ok, %URI{} = owner} -> owner
+        _ -> User.admin_uri()
+      end
+
+    case resolve_session_template!(template_name, workspace_uri) do
+      {:error, _} = err ->
+        err
+
+      {:ok, session_template_uri, template_content} ->
+        orchestrator_template_uri = orchestrator_template_uri_of(template_content)
+
+        with :ok <-
+               materialize_orchestrator_working_copy(
+                 session_uri,
+                 session_template_uri,
+                 orchestrator_template_uri
+               ) do
+          case orchestrator_template_uri do
+            nil ->
+              # Plain template — nothing to repair (no orchestrator role).
+              {:ok, session_uri, plain_session_meta()}
+
+            %URI{} ->
+              ensure_orchestrated_session(
+                session_uri,
+                workspace_uri,
+                effective_owner,
+                session_template_uri
+              )
+          end
+        end
+    end
+  end
+
   # The atomic create_session flow (SPEC §4). A single fail-loud
   # sequence; any 4-8 failure rolls back the freshly-created session.
   defp do_create_session(
