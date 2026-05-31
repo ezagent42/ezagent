@@ -57,6 +57,18 @@ defmodule Ezagent.Orchestrator.McpChannel do
 
   alias Ezagent.Orchestrator.McpServer
 
+  # 2026-05-31 orchestrator-startup-atomicity §5 — the async readiness
+  # signal. A LIVE claude orchestrator's stdio bridge JOINing this Channel
+  # (and resolving to a registered `%McpServer{}`) is the SINGLE definitive
+  # signal that the orchestrator is functional end-to-end (PTY up → claude
+  # up → MCP bridge up → registered). The creating process (the §5 30s
+  # gate in `Ezagent.Entity.Session.ensure_orchestrator/3`) subscribes to
+  # this topic BEFORE spawning the PTY, then `receive`s filtered by URI.
+  @orch_lifecycle_topic "orch:lifecycle"
+
+  @doc "PubSub topic the readiness signal is broadcast on (§5)."
+  def lifecycle_topic, do: @orch_lifecycle_topic
+
   @impl true
   def join("orch:bridge:" <> topic_uri, _params, socket) do
     claimed = topic_uri
@@ -72,6 +84,21 @@ defmodule Ezagent.Orchestrator.McpChannel do
       true ->
         case McpServer.from_orchestrator_uri(socket.assigns.agent_uri) do
           {:ok, %McpServer{} = mcp} ->
+            # 2026-05-31 orchestrator-startup-atomicity §5 — broadcast the
+            # readiness signal on a SUCCESSFUL registration/join. This is
+            # the live-bridge confirmation the §5 30s gate awaits. The URI
+            # is the token-authenticated `agent_uri` (== the registered
+            # orchestrator URI); the gate filters by it. Fire-and-forget —
+            # a no-subscriber broadcast is a harmless no-op (the gate may
+            # not be running, e.g. a reconnect after a prior successful
+            # create).
+            :ok =
+              Phoenix.PubSub.broadcast(
+                EzagentCore.PubSub,
+                @orch_lifecycle_topic,
+                {:orchestrator_ready, socket.assigns.agent_uri}
+              )
+
             {:ok, assign(socket, :mcp, mcp)}
 
           {:error, reason} ->

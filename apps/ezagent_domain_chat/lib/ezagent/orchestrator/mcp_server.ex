@@ -209,9 +209,11 @@ defmodule Ezagent.Orchestrator.McpServer do
   # deliberately: the orchestrator bridge may join `orch:bridge:<uri>`
   # before the Session Kind has cold-spawned, and the Session is a
   # distinct lifecycle (it may not be running at all). The snapshot row
-  # exists the moment the Generator first persisted it and survives the
-  # restart that emptied ETS — so reading it works regardless of whether
-  # the Session Kind is currently alive.
+  # exists the moment `EzagentDomainChat.create_session/3` first
+  # persisted it (step-4 materialization + the Session's
+  # `{:snapshot, :on_change}` write) and survives the restart that
+  # emptied ETS — so reading it works regardless of whether the Session
+  # Kind is currently alive.
   #
   # Returns `{:error, :orchestrator_not_registered}` when no durable
   # Session snapshot maps back to this orchestrator URI, or that session
@@ -346,9 +348,11 @@ defmodule Ezagent.Orchestrator.McpServer do
   end
 
   # A session HAS an orchestrator iff its durable working copy carries an
-  # `:orchestrator_template_uri`. The Generator always sets it; a plain /
-  # system session leaves it `nil`. No orchestrator → legitimate
-  # fail-closed (the caller maps `:error` → `:orchestrator_not_registered`).
+  # `:orchestrator_template_uri`. `EzagentDomainChat.create_session/3`'s
+  # step-4 materialization sets it for an orchestrator-bearing template;
+  # a plain / system session leaves it `nil`. No orchestrator →
+  # legitimate fail-closed (the caller maps `:error` →
+  # `:orchestrator_not_registered`).
   defp orchestrator_working_copy(chat_slice) do
     wc = Map.get(chat_slice, :template_working_copy, %{})
 
@@ -362,7 +366,10 @@ defmodule Ezagent.Orchestrator.McpServer do
   # instantiated from) — the opt `Tools.update_template/1` hard-requires.
   #
   # POST-#110 snapshots persist it durably on the working copy as
-  # `:session_template_uri` (written by `Session.merge_working_copy/6`).
+  # `:session_template_uri` (written by
+  # `EzagentDomainChat.create_session/3`'s step-4
+  # `materialize_orchestrator_working_copy/3` — the atomic writer that
+  # replaced the deleted Generator `Session.merge_working_copy/6`).
   # That is the canonical source — use it when present.
   #
   # LEGACY snapshots (written before the #110 commit) have NO

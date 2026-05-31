@@ -595,9 +595,31 @@ defmodule Ezagent.Kind do
   (`McpServer.load_chat_slice` and any other `decode_state`-then-read
   consumer) can apply the SAME normalization to an on-disk slice that a
   converted Kind wrote in the two-container shape.
+
+  ## Persisted shape (the transients-stripped case)
+
+  The in-MEMORY converted slice is `%{state, transients}`. But the snapshot
+  persist path strips `:transients` (`Ezagent.Kind.Snapshot.strip_transients/1`),
+  so the ON-DISK slice is a single-key `%{state: persistent}` with NO
+  `:transients`. The first clause (both keys present) therefore does NOT match a
+  persisted slice — hence the second clause below, which unwraps a single-key
+  `%{state: map}`. Without it, a `decode_state`-then-read consumer reads the
+  wrapped shape and finds none of the persistent fields (the regression that
+  broke orchestrator MCP registration + Feishu mirror #502).
+
+  > CONSTRAINT for Kind authors: a Kind's flat persistent state must NEVER be a
+  > bare single-key `%{state: map}`, or it would be wrongly unwrapped here. (All
+  > current Kinds' flat states are multi-key or `%{caps: ...}`/`%{content:
+  > ...}`/`%{}` — verified.)
   """
   @spec normalize_slice_view(term()) :: term()
   def normalize_slice_view(%{state: state, transients: _transients}) when is_map(state),
+    do: state
+
+  # Persisted (transients-stripped) two-container slice: a single-key
+  # `%{state: map}`. The `map_size == 1` guard matches ONLY this exact shape,
+  # never a legacy-flat slice that merely carries a `:state` field among others.
+  def normalize_slice_view(%{state: state} = slice) when is_map(state) and map_size(slice) == 1,
     do: state
 
   def normalize_slice_view(slice), do: slice

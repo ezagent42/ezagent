@@ -98,20 +98,25 @@ defmodule Ezagent.Entity.SessionTemplate do
   Both `fork/3` and `create/3` require a `Behavior.Template`
   `:session_template` cap as a preflight (§1.4) — a caller without it
   → `{:error, :unauthorized}`. Neither instantiates a session;
-  instantiation is `Ezagent.Entity.Session.spawn_from_template/2`.
+  instantiation is `EzagentDomainChat.create_session/3`.
 
   Fork unit = configuration only. Message history does NOT fork
   (D7-7) — a forked/instantiated session starts with EMPTY chat.
 
-  ## Generator (Ezagent.Entity.Session.spawn_from_template/2 — PR 41)
+  ## Instantiation (EzagentDomainChat.create_session/3 — 2026-05-31)
 
-  The program that instantiates a SessionTemplate into a running
-  Session: reads the SessionTemplate by URI → fresh session URI →
-  resolves agent_slots' template URIs → spawns orchestrator agent
-  from `orchestrator_template_uri` → spawns each worker agent from
-  its AgentTemplate → installs routing rules with
-  `workspace_uri = default_workspace_uri` → initializes Session's
-  `template_working_copy` slice (PR 44).
+  The dead `Session.spawn_from_template/2` Generator was DELETED in the
+  2026-05-31 orchestrator-startup-atomicity pass (SPEC §1/§7 — it was
+  production-dead, the live path never dispatched to it). A
+  SessionTemplate is now instantiated into a running Session by the
+  atomic `EzagentDomainChat.create_session/3` writer: it resolves the
+  `template_name` → this SessionTemplate, reads its
+  `orchestrator_template_uri`, and materializes the session's
+  `template_working_copy` (OTU + `session_template_uri`) directly,
+  then atomically ensures the orchestrator + grants caps + registers
+  the MCP context + joins members (SPEC §4). The orchestrator
+  dispatches workers dynamically at runtime — static agent_slots /
+  routing-rule reconcile were removed (SPEC §3).
   """
 
   @behaviour Ezagent.Kind
@@ -373,8 +378,8 @@ defmodule Ezagent.Entity.SessionTemplate do
   1. **Cap preflight** (§1.4) — the caller MUST hold a `Behavior.Template`
      cap for `:session_template` covering the parent's workspace. A
      caller without it → `{:error, :unauthorized}`. This is the
-     template-create authority gate, symmetric with
-     `Session.spawn_from_template/2`'s owner preflight.
+     template-create authority gate, symmetric with the owner cap
+     `EzagentDomainChat.create_session/3` requires to instantiate.
   2. **Read the parent** — dispatch `Behavior.Template` `:read` on
      `parent_uri` to fetch its `:template` content. A parent with no
      populated slice / not resolvable → `{:error, _}`.
@@ -385,7 +390,7 @@ defmodule Ezagent.Entity.SessionTemplate do
      at the fork's own content-hash URI and writes its `:template` slice.
   5. **Owner-cap grant** (§1.7 (e)) — grant the owner a `Behavior.Template`
      SessionTemplate cap (`{:within_workspace, ws}`) so they can later
-     instantiate the fork via the Generator.
+     instantiate the fork via `EzagentDomainChat.create_session/3`.
 
   ## Options
 
@@ -406,8 +411,8 @@ defmodule Ezagent.Entity.SessionTemplate do
   - `{:error, reason}` — read / persist failure.
 
   Does NOT instantiate a session — instantiation is
-  `Ezagent.Entity.Session.spawn_from_template/2` (PR-4). `fork` returns
-  the new template URI; the caller decides whether to instantiate it.
+  `EzagentDomainChat.create_session/3`. `fork` returns the new template
+  URI; the caller decides whether to instantiate it.
   """
   @spec fork(URI.t(), String.t(), keyword()) ::
           {:ok, URI.t()} | {:error, term()}

@@ -120,6 +120,17 @@ defmodule EzagentPluginCc.Application do
   def after_boot do
     _ = maybe_reap_orphans()
     _ = Ezagent.Workspace.Loader.load_all()
+
+    # 2026-05-31 orchestrator-startup-atomicity §4 — the test-only
+    # `session://default/system/main` seed runs HERE (not in
+    # `EzagentDomainChat.Application.start/2`) because the atomic
+    # `create_session/3` rolls `main` back when the orchestrator can't be
+    # ensured. The orchestrator needs the `"cc"` agent flavor this plugin
+    # registers; chat boots before us, so seeding at chat-boot always hit
+    # `{:unknown_flavor, "cc"}` and tore `main` down. By `after_boot`,
+    # `agent_flavors/0` has published `"cc"`, so the orchestrator spawns
+    # and `main` persists. Same boot-order fix the echo seed uses.
+    _ = EzagentDomainChat.Application.maybe_seed_main_session_for_tests()
     :ok
   end
 

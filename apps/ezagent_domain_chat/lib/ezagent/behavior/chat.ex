@@ -941,18 +941,21 @@ defmodule Ezagent.Behavior.Chat do
   end
 
   @doc """
-  Generator-only internal path to write the durable
-  `template_working_copy` field (HIGH-2 hardening).
+  System-internal path to write the durable `template_working_copy`
+  field (HIGH-2 hardening).
 
-  `Ezagent.Entity.Session.spawn_from_template/2` is the privileged
-  bootstrap program that does the FIRST `template_working_copy` write,
-  before any orchestrator cap exists. It cannot hold the orchestrator's
-  `{:within_session, _}` cap (the session is brand-new), so it uses
-  this path: a `chat.set_working_copy` dispatch carrying
-  `ctx[:system_internal] = true`. That marker is honored ONLY here and
-  by `handle_set_working_copy/2`'s `working_copy_write_authorized?/1`
-  — it is NOT settable from any user-facing dispatch (the MCP tool
-  path supplies `caps`, never `system_internal`).
+  `EzagentDomainChat.create_session/3` (the atomic single writer — the
+  dead `Session.spawn_from_template/2` Generator was deleted in the
+  2026-05-31 orchestrator-startup-atomicity pass) does the FIRST
+  `template_working_copy` write in step 4
+  (`materialize_orchestrator_working_copy/3`), before any orchestrator
+  cap exists. It cannot hold the orchestrator's `{:within_session, _}`
+  cap (the session is brand-new), so it uses this path: a
+  `chat.set_working_copy` dispatch carrying `ctx[:system_internal] =
+  true`. That marker is honored ONLY here and by
+  `handle_set_working_copy/2`'s `working_copy_write_authorized?/1` — it
+  is NOT settable from any user-facing dispatch (the MCP tool path
+  supplies `caps`, never `system_internal`).
 
   Returns the dispatch result.
   """
@@ -1056,10 +1059,11 @@ defmodule Ezagent.Behavior.Chat do
   # once per orchestrator per restart, cached thereafter), so it is
   # dropped to reduce surface per the plugin-isolation north star.
   #
-  # The durable `:session_template_uri` field on the working copy (added
-  # by the same commit, persisted by `Session.merge_working_copy/6`) is
-  # KEPT — it is the canonical source the lazy rebuild prefers for
-  # `parent_template_uri`.
+  # The durable `:session_template_uri` field on the working copy
+  # (written by `EzagentDomainChat.create_session/3`'s step-4
+  # `materialize_orchestrator_working_copy/3` — replacing the deleted
+  # Generator `Session.merge_working_copy/6`) is KEPT — it is the
+  # canonical source the lazy rebuild prefers for `parent_template_uri`.
 
   # --- Topic helpers (public — Ezagent.Kind.Server / LV subscribe via these) -
 

@@ -392,6 +392,27 @@ defmodule Ezagent.LifecycleTest do
       ambiguous = %{state: :running, other: 1}
       assert Ezagent.Kind.normalize_slice_view(ambiguous) == ambiguous
     end
+
+    test "normalize_slice_view flattens the PERSISTED single-key %{state} (transients stripped)" do
+      # Snapshot persist strips :transients, so the on-disk slice is a
+      # single-key `%{state: map}`. This MUST flatten — the regression that
+      # broke orchestrator MCP registration (+ Feishu mirror #502) was this
+      # exact case falling through unchanged.
+      persisted = %{state: %{owner_uri: :z, template_working_copy: %{orchestrator_template_uri: :u}}}
+
+      assert Ezagent.Kind.normalize_slice_view(persisted) ==
+               %{owner_uri: :z, template_working_copy: %{orchestrator_template_uri: :u}}
+
+      # Guard the false-match: a single-key %{state: <non-map>} is NOT a
+      # persisted slice → unchanged (the `is_map(state)` guard).
+      assert Ezagent.Kind.normalize_slice_view(%{state: :running}) == %{state: :running}
+
+      # Guard the false-match: a multi-key map that happens to carry a
+      # :state MAP among other keys is NOT a persisted slice → unchanged
+      # (the `map_size == 1` guard).
+      multi = %{state: %{a: 1}, other: 2}
+      assert Ezagent.Kind.normalize_slice_view(multi) == multi
+    end
   end
 
   # ===================================================================

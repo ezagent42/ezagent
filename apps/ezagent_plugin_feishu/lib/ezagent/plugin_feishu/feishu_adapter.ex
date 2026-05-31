@@ -270,13 +270,24 @@ defmodule EzagentPluginFeishu.FeishuAdapter do
   defp slice_diag(other), do: {:not_a_map, other}
 
   # Unwrap the two-container Lifecycle slice (`%{state: <persistent>, ...}`) to
-  # the flat developer slice the rest of this module reads. Tolerant of: the
-  # nested atom-keyed shape, the nested string-keyed (post-JSON) shape, and the
-  # legacy flat shape (passthrough). Only unwraps when `:state`/`"state"` maps to
-  # a map — a flat slice that happens to carry an unrelated key is left alone.
-  defp slice_state(%{state: %{} = inner}), do: inner
-  defp slice_state(%{"state" => %{} = inner}), do: inner
-  defp slice_state(other), do: other
+  # the flat developer slice the rest of this module reads.
+  #
+  # 2026-05-31 orchestrator-startup-atomicity §8 (Unwrap A+C2 fold) — DELEGATE
+  # the atom-keyed case to the single `Ezagent.Kind.normalize_slice_view/1`
+  # chokepoint instead of duplicating the unwrap logic here. The chokepoint
+  # handles the two real two-container shapes: the in-memory `%{state,
+  # transients}` and the persisted single-key `%{state}` (transients stripped),
+  # plus passthrough for a legacy-flat slice.
+  #
+  # The chokepoint is ATOM-keyed only; the Feishu event payload can carry a
+  # string-keyed `%{"state" => ...}` (post-JSON over the wire). We keep a THIN
+  # string-key shim that unwraps `"state"` to its map, then hands the atom-keyed
+  # inner map back through the chokepoint (idempotent — a flat inner map is
+  # passthrough). We deliberately do NOT broaden `normalize_slice_view/1` to
+  # string keys (it guards core-Kind state shapes; a string-key clause there
+  # could wrongly unwrap an unrelated map).
+  defp slice_state(%{"state" => %{} = inner}), do: Ezagent.Kind.normalize_slice_view(inner)
+  defp slice_state(other), do: Ezagent.Kind.normalize_slice_view(other)
 
   def event_to_payload(%Event{}), do: :skip
 

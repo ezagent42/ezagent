@@ -173,8 +173,14 @@ defmodule EzagentDomainChat.Application do
         # AgentTemplate URI.
         :ok = seed_default_session_template()
 
-        # Phase 8c PR-J — test-only main session seed. See moduledoc.
-        :ok = maybe_seed_main_session_for_tests()
+        # Phase 8c PR-J — test-only main session seed.
+        #
+        # 2026-05-31 orchestrator-startup-atomicity §4 — MOVED to
+        # `EzagentPluginCc.Application.after_boot/0`. The atomic
+        # `create_session/3` rolls back when the orchestrator can't be
+        # ensured, and the orchestrator's `"cc"` flavor is registered by
+        # the cc plugin AFTER this app boots — so seeding here always
+        # tore `main` back down. Same boot-order fix as the echo seed.
 
         # PR-M (Allen 2026-05-20) — admin User Kind is NOT auto-spawned
         # at boot. The static `kind_server_spec(:user_admin, ...)` child
@@ -200,19 +206,30 @@ defmodule EzagentDomainChat.Application do
   # `EzagentDomainChat.create_session/2` facade the wizard uses. In
   # `:dev` and `:prod` this is a no-op — the wizard at `/` creates main
   # on the operator's first login.
-  defp maybe_seed_main_session_for_tests do
+  @doc """
+  Test-only seed of `session://default/system/main`.
+
+  2026-05-31 orchestrator-startup-atomicity §4 — this seed is now
+  invoked from `EzagentPluginCc.Application.after_boot/0` (NOT from this
+  app's `start/2`), because the atomic `create_session/3` rolls the
+  session back when the orchestrator can't be ensured. The orchestrator
+  needs the `"cc"` agent flavor, which the cc plugin registers AFTER
+  `ezagent_domain_chat` boots — so seeding here at chat-boot time always
+  failed with `{:orchestrator_ensure_failed, {:unknown_flavor, "cc"}}`
+  and tore `main` down (the same boot-order race the echo seed hit, now
+  fixed the same way — defer to the plugin's `after_boot`). Idempotent.
+  """
+  @spec maybe_seed_main_session_for_tests() :: :ok
+  def maybe_seed_main_session_for_tests do
     if test_env?() do
       # PR-M (2026-05-20) — `create_session/2` now demand-spawns the
-      # creator via SpawnRegistry before dispatching `chat.join` (see
-      # `join_creator/2`). Admin User Kind is no longer a static child;
-      # the demand-spawn covers the gap so admin appears in
-      # session://default/system/main's members map post-seed.
-      # SPEC #366 (Allen 2026-05-26): `:template_name` is now required.
-      # Pass `"default"` explicitly to preserve the existing
+      # creator via SpawnRegistry before dispatching `chat.join`. Admin
+      # User Kind is no longer a static child; the demand-spawn covers
+      # the gap so admin appears in main's members map post-seed.
+      # SPEC #366 (Allen 2026-05-26): `:template_name` is required. Pass
+      # `"default"` explicitly to preserve the existing
       # `session://default/system/main` URI shape that ~10 test suites
-      # assert against. This is a literal namespace segment, not a
-      # registered template class — the bootstrap seed predates the
-      # Template Registry by design.
+      # assert against.
       case EzagentDomainChat.create_session("main", User.admin_uri(), template_name: "default") do
         # SPEC `2026-05-26-session-create-orchestrator-unified` Gap A —
         # `create_session/3` now returns a 3-tuple including
@@ -384,8 +401,36 @@ defmodule EzagentDomainChat.Application do
   # logs a warning and returns `:ok`. The next boot retries — same
   # pattern as `ensure_system_workspace/0` and the cc-orchestrator
   # seed.
+  # 2026-05-31 orchestrator-startup-atomicity §3 — the `"default"`
+  # SessionTemplate is a HARD boot invariant in prod/dev: the
+  # orchestrator-bearing default template MUST exist so `create_session`
+  # can resolve `"default"` (the wizard + Feishu + `mix create_session`
+  # all default to it). If it can't persist, crash the boot LOUDLY rather
+  # than run a system where every default create fails with
+  # `{:session_template_not_found, "default", _}` (fail-loud, no degrade —
+  # `feedback_let_it_crash_no_workarounds`).
+  #
+  # `:test` is CARVED OUT: test already skips `ensure_system_workspace`
+  # (boot-time DB writes interact poorly with Ecto SQL Sandbox checkout)
+  # and uses its own sandbox seed — DataCase tests that need the default
+  # template drive `seed_default_session_template_now/0` inside an active
+  # checkout. A hard crash here would break the whole suite's boot.
   defp seed_default_session_template do
-    do_seed_default_session_template()
+    if test_env?() do
+      _ = do_seed_default_session_template()
+      :ok
+    else
+      case do_seed_default_session_template() do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          raise "EzagentDomainChat boot aborted — the `default` SessionTemplate " <>
+                  "(orchestrator-bearing) could not be persisted (fail-closed, §3): " <>
+                  "#{inspect(reason)}. Every `create_session(... template_name: \"default\")` " <>
+                  "would fail to resolve the template; refusing to boot."
+      end
+    end
   end
 
   @doc """
@@ -441,6 +486,11 @@ defmodule EzagentDomainChat.Application do
       created_at: nil
     }
 
+    # 2026-05-31 orchestrator-startup-atomicity §3 — PROPAGATE the failure
+    # (no longer swallow to `:ok`). The prod/dev caller
+    # (`seed_default_session_template/0`) turns a `{:error, _}` into a hard
+    # boot crash; the test caller tolerates it (Sandbox). Logging stays so
+    # the failure is visible regardless of which caller handles it.
     case Ezagent.Entity.SessionTemplate.persist_version_as_system(content, workspace_uri) do
       {:ok, _uri} ->
         :ok
@@ -448,26 +498,24 @@ defmodule EzagentDomainChat.Application do
       {:error, reason} ->
         require Logger
 
-        Logger.warning(
+        Logger.error(
           "seed_default_session_template: persist failed: #{inspect(reason)} — " <>
-            "/admin/templates will be empty until the next boot retries; " <>
-            "`mix ezagent workspace create_session --template-name default` " <>
-            "will resolve to a not-yet-instantiated template URI (the " <>
-            "Generator gates on a populated `:template` slice). Task #50."
+            "the orchestrator-bearing `default` SessionTemplate is the boot " <>
+            "invariant create_session resolves `template_name: \"default\"` against. " <>
+            "§3 hard-fails boot in prod/dev on this error."
         )
 
-        :ok
+        {:error, reason}
     end
   rescue
     e ->
       require Logger
 
-      Logger.warning(
-        "seed_default_session_template raised #{inspect(e)} — best-effort, " <>
-          "skipping. Task #50."
+      Logger.error(
+        "seed_default_session_template raised #{inspect(e)} — §3 boot invariant."
       )
 
-      :ok
+      {:error, {:seed_default_session_template_raised, e}}
   end
 
   defp register_spawn_fns do
