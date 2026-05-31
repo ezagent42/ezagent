@@ -1,113 +1,108 @@
 # Orchestrator Startup Atomicity + Two-Container Slice Unwrap
 
 **Date:** 2026-05-31
-**Status:** IMPLEMENTATION-READY (pending codex adversarial-review)
+**Status:** rev2 — IMPLEMENTATION-READY (pending 2nd codex adversarial-review)
 **Author:** Claude (brainstorm with Allen, 2026-05-31)
-**Origin:** Allen "更完整测试飞书同步" e2e — chained dispatch from the feishu
-group `oc_83a4f1ff` never fired; root-cause investigation uncovered a
-HIGH-severity regression in orchestrator MCP registration plus a family of
-"half-started" anti-patterns in session/orchestrator creation.
+**Reviews folded in:** codex adversarial-review rev1 (verdict "needs rework" — false-premise + root-cause correction), Allen spec review.
+
+**Origin:** Allen "更完整测试飞书同步" e2e — chained dispatch from the Feishu
+group `oc_83a4f1ff` never fired. Root-cause investigation found that **no
+orchestrator can register** after a phx restart (`from_orchestrator_uri/1` →
+`:orchestrator_not_registered`), so every MCP bridge JOIN is fail-closed.
 
 ---
 
 ## 1. Problem
 
-Driving a chained agent dispatch from a Feishu-bound session (`orch-feishu-7429`)
-produced no orchestrator activity. Investigation (live `iex` on the running node)
-found that **no orchestrator can register on this boot** — both
-`cc_orchestrator-main` and `cc_orchestrator-orch-feishu-7429` return
-`{:error, :orchestrator_not_registered}` from
-`Ezagent.Orchestrator.McpServer.from_orchestrator_uri/1`, so every MCP bridge
-JOIN is fail-closed and no orchestrator can dispatch.
+Two compounding defects make the orchestrator subsystem non-functional:
 
-This is broader than Feishu — the orchestrator subsystem is non-functional after
-a phx restart.
+1. A two-container **slice-unwrap regression** prevents reading an orchestrator's
+   durable config on restart.
+2. The public **`create_session/3`** never actually instantiates the named
+   SessionTemplate, so orchestrator sessions are born without an orchestrator
+   (and with a family of "half-started" degrade paths that hide it).
 
-## 2. Root-cause analysis
+## 2. Root-cause analysis (corrected by codex rev1)
 
-### 2.1 Two-container slice unwrap regression (HIGH)
+### 2.1 Two-container slice unwrap regression (HIGH, confirmed)
 
-`Ezagent.Kind.normalize_slice_view/1` (apps/ezagent_core/lib/ezagent/kind.ex:600):
+`Ezagent.Kind.normalize_slice_view/1` (kind.ex:600):
 
 ```elixir
 def normalize_slice_view(%{state: state, transients: _transients}) when is_map(state), do: state
 def normalize_slice_view(slice), do: slice
 ```
 
-It only unwraps when **both** `:state` AND `:transients` are present. But the
-snapshot persist path **strips `:transients`** (per the Lifecycle migration
-#481 — `feat(lifecycle): Phase B foundation tweaks T1-T4`), so the on-disk chat
-slice is `%{state: persistent}` — which falls through the second clause
-**unchanged**.
+Unwraps only when **both** `:state` AND `:transients` are present. The snapshot
+persist path **strips `:transients`** (Lifecycle migration #481), so the on-disk
+slice is `%{state: persistent}` → falls through unwrapped.
+`McpServer.load_chat_slice/1` (mcp_server.ex:320) routes the decoded chat slice
+through `normalize_slice_view/1` *expecting it flattened*, then
+`orchestrator_working_copy/1` reads `template_working_copy` at the top level →
+nil → `:error` → `:orchestrator_not_registered`. **Same class as the Feishu
+mirror bug (#502)**, unfixed in `mcp_server.ex`.
 
-`Ezagent.Orchestrator.McpServer.load_chat_slice/1`
-(apps/ezagent_domain_chat/lib/ezagent/orchestrator/mcp_server.ex:320) routes the
-decoded snapshot chat slice through `normalize_slice_view/1` *expecting it to
-flatten* (its own comment says so), then `orchestrator_working_copy/1` reads
-`Map.get(chat_slice, :template_working_copy)` at the **top level**. Because the
-slice was never unwrapped, `template_working_copy` is nil (it lives under
-`:state`), so `orchestrator_working_copy/1` returns `:error` →
-`rebuild_from_durable/1` → `:orchestrator_not_registered`.
+### 2.2 `create_session/3` never instantiates the named template (HIGH, codex rev1 correction)
 
-**This is the same root-cause class as the Feishu mirror bug (#502)** — a
-two-container slice not unwrapped. #502 patched the Feishu adapter locally
-(`feishu_adapter.ex` `slice_state/1`); `mcp_server.ex` has the same bug,
-unfixed. Verified live: `normalize_slice_view(%{state: ...})` returns
-`%{state: ...}` unchanged (`Map.keys == [:state]`).
+The nil `orchestrator_template_uri` is **NOT** #481 data-loss. `create_session/3`
+already **requires** a `template_name` (`require_template_name!`, ezagent_domain_chat.ex:112)
+— but it uses the name only to build the session URI, then `do_create_session/3`
+spawns the Kind directly via `Ezagent.Kind.spawn(Session, ...)`
+(ezagent_domain_chat.ex:157). It **does not instantiate from the named
+SessionTemplate** — it never calls the Generator
+(`Session.spawn_from_template/2`), so it never materializes the template's
+working copy (which is what sets `orchestrator_template_uri`) and never runs
+Generator step 7 (`register_orchestrator_mcp_context/5`, session.ex:1836).
 
-### 2.2 Half-started orchestrator/session creation (the "hack 启动一半" family)
+So a "default"-named session gets `orchestrator_template_uri: nil` and no MCP
+registration — a session that *looks* templated but is actually bare. Both
+`main` and `orch-feishu-7429` are in this state.
 
-`EzagentDomainChat.create_session/3`
-(apps/ezagent_domain_chat/lib/ezagent_domain_chat.ex:340-370) intentionally
-keeps the session alive when orchestrator setup is incomplete (SPEC
-2026-05-26-session-create-orchestrator-unified "Gap A" + codex PR #408 HIGH-3):
+### 2.3 Half-started degrade paths (the "hack 启动一半" family)
 
-- orchestrator spawn `{:error, reason}` → session **alive**, `orchestrator_status: :failed`, "operator may click Restart in LV".
-- skill / CLAUDE.md load failure → **degraded to "plain claude session"** (alive but does not orchestrate; owner gets a notification).
-- `{:partial, orchestrator_pending}` → `:pending` middle state.
+`create_session/3` (ezagent_domain_chat.ex:340-370) intentionally keeps a
+session alive with a non-functional orchestrator (SPEC 2026-05-26 "Gap A" +
+codex PR #408 HIGH-3): spawn `:error` → `orchestrator_status: :failed` (operator
+clicks Restart); skill load failure → `:degraded` "plain claude"; `{:partial}` →
+`:pending`. `ensure_subprocess_alive/2` (cc_agent.ex:1389) then treats "PTY
+process running" as "alive" and respawns the PTY on boot **without
+re-registering** (registration is Generator-only), so the orchestrator silently
+retries the bridge JOIN forever and is refused.
 
-These leave an orchestrator agent **alive-but-non-functional** (a zombie):
-`ensure_subprocess_alive/2` (apps/ezagent_plugin_cc/lib/ezagent/template/cc_agent.ex:1389)
-defines "alive" as **PtyServer process running**, not "registered/ready", so on
-boot it respawns the PTY but never re-registers the MCP context (registration
-happens only in the session Generator's step 7,
-`Session.register_orchestrator_mcp_context/5`, session.ex:1836). The PTY then
-silently retries the bridge join forever and gets refused.
+## 3. Design decisions (brainstorm + reviews, Allen-approved)
 
-**Consequence (data):** both existing sessions have
-`template_working_copy.orchestrator_template_uri == nil` (key present, value
-nil) — the orchestrator bootstrap degraded at create-time, so OTU was never set.
-A session with nil OTU is correctly treated as "no orchestrator" by
-`orchestrator_working_copy/1`.
-
-## 3. Design decisions (brainstorm outcomes, Allen-approved 2026-05-31)
-
-1. **Unwrap fix = A+C (defense in depth).** Fix at BOTH the read chokepoint (A)
-   and the decode boundary (C) so no consumer ever sees a raw two-container
-   shape regardless of read path.
-2. **Atomic orchestrator startup = strict fail-loud, 30s registration gate.**
-   Registration is the readiness proxy (a registered orchestrator must be
-   PTY-alive + Anthropic-connected + onboarded). On timeout → kill PTY, mark
-   `:failed`, emit operator-visible error, **stop auto-respawn**. Transient
-   network blips are absorbed by claude's in-PTY connection retry inside the 30s
-   window. Eliminate the `:pending` and `:degraded`/"plain claude" middle states.
-3. **Orchestrator is an optional Session Template setting (B).** Whether a
-   session has an orchestrator is determined by its SessionTemplate's
-   `orchestrator_template_uri` (set ⇒ orchestrator required; nil ⇒ plain session,
-   a first-class legitimate case — future templates may omit it). The **session
-   is always a valid container**; the **orchestrator** is the thing that is
-   binary `ready | failed-loud`. On orchestrator failure the session is NOT
-   rolled back; the orchestrator agent is marked `:failed` + quarantined (no
-   silent retry) and requires explicit restart.
-4. **Scope:** orchestrators only this round. Regular cc-agent readiness (no MCP
-   registry signal) is a documented follow-up.
+1. **Unwrap fix = A + C2 (defense in depth).** A: extend `normalize_slice_view/1`
+   to flatten single-key `%{state: map}`. C2: enforce all `decode_state`
+   consumers through the normalize chokepoint (a normalized accessor), rather
+   than C1 (rehydrate in decode) — codex rev1 + Allen both chose C2, since C1
+   would change raw decode output for UI / snapshot tooling / `SnapshotStore` /
+   `StateRebuilder` whose contract is "snapshot state."
+2. **Generator is the SOLE session-creation path; direct create is internal.**
+   `do_create_session` routes through `Session.spawn_from_template/2` so the
+   (already-required) `template_name` actually instantiates the template
+   (materializes working copy → sets `orchestrator_template_uri` + registers).
+   The bare `Kind.spawn(Session, ...)` becomes an internal primitive used only
+   by the Generator. A template with `orchestrator_template_uri` set ⇒
+   orchestrator session; nil ⇒ plain session (first-class, future-proof).
+3. **Atomic orchestrator startup = strict fail-loud, 30s registration gate, via
+   an async readiness signal.** codex rev1 showed bridge JOIN success is not
+   synchronously observable. Add an async readiness signal (PubSub broadcast
+   from `McpChannel.join/3` on successful registration); the Generator's
+   orchestrator-ensure step waits on it ≤30s (non-blocking — uses the signal,
+   does not busy-poll). On timeout: kill PTY, mark `:failed`, emit
+   operator-visible error, **stop auto-respawn**. Eliminate `:pending` and
+   `:degraded`. Registration = readiness proxy.
+4. **Fail-loud preserves the `{:ok, session_uri, failed_meta}` shape** (codex
+   rev1): the session is created (it is a valid container); only the orchestrator
+   is `:failed`. `create_session` must NOT start returning `{:error, _}` —
+   AdminLive, bootstrap, and tests treat orchestrator failure as non-fatal to the
+   session. Collapsing the states requires updating AdminLive + the affected tests.
+5. **Scope:** orchestrators only. Generic cc-agent readiness (no MCP registry
+   signal) is a documented follow-up.
 
 ## 4. The fix
 
-### 4.1 Component A+C — slice unwrap
-
-**A (read chokepoint).** Extend `Ezagent.Kind.normalize_slice_view/1` to also
-flatten the transients-stripped persisted shape:
+### 4.1 A — `normalize_slice_view/1` (kind.ex)
 
 ```elixir
 def normalize_slice_view(%{state: state, transients: _transients}) when is_map(state), do: state
@@ -115,152 +110,146 @@ def normalize_slice_view(%{state: state} = slice) when is_map(state) and map_siz
 def normalize_slice_view(slice), do: slice
 ```
 
-The new clause matches ONLY a single-key `%{state: map}` (the exact persisted
-shape) — it does NOT match a legacy-flat slice that merely happens to contain a
-`:state` field among others (`map_size == 1` guard). **codex must verify** no
-legacy-flat slice is a single-key `%{state: ...}`.
+The `map_size == 1` guard matches ONLY the exact transients-stripped persisted
+shape, never a legacy-flat slice. codex rev1 verified **no current Kind's flat
+slice is a single-key `%{state: map}`** (Chat/Workspace/Identity/Template/
+Publisher/Sandbox/ExternalMirror flats are all multi-key or `%{caps: …}` /
+`%{content: …}` / `%{}`). **Constraint for future Kind authors (document in the
+moduledoc):** a Kind's flat persistent state must never be a bare single-key
+`%{state: …}`.
 
-**C (decode boundary).** `Ezagent.Ecto.KindSnapshot.decode_state/1`
-(kind_snapshot.ex:236/250) returns the full multi-slice Kind state
-(`%{chat: ..., external_mirror: ..., publisher: ...}`), where individual
-Lifecycle-based slices are in `%{state: ...}` form. Add a normalization that
-routes each slice value through the same single chokepoint so decode output is
-shape-consistent with live reads.
+### 4.2 C2 — enforce the chokepoint at decode consumers (kind_snapshot.ex + 5 sites)
 
-**Precise C mechanism — DECISION FOR CODEX:** two candidate placements, pick the
-one codex judges lower-risk:
-- **C1 (rehydrate):** in `decode_state`, re-wrap each transients-stripped slice
-  back to `%{state, transients: <default>}` so it is indistinguishable from a
-  live slice and the *existing* `normalize_slice_view` first clause handles it.
-  No new `normalize_slice_view` clause needed (A becomes a no-op safeguard).
-- **C2 (enforce chokepoint):** keep A's new clause; make `decode_state` (or a
-  thin `decode_state_normalized/1` consumers use) map slice values through
-  `normalize_slice_view/1`, and audit that every persisted-snapshot consumer
-  uses the normalized accessor rather than reading raw `decode_state` output.
+`decode_state/1` returns the full multi-slice Kind state; individual
+Lifecycle slices are `%{state: …}`. Do NOT mutate `decode_state`'s raw output
+(preserves the UI/tooling contract). Instead provide a normalized accessor
+(e.g. `decode_state_normalized/1` or a per-slice `slice_view/2`) that maps slice
+values through `normalize_slice_view/1`, and route the **persisted-snapshot
+internal-readers** through it. codex rev1 enumerated the 5 `decode_state`
+consumers — only **MCP durable rebuild** (`mcp_server.ex:323`) reads slice
+internals and must use the normalized accessor; the other four (snapshot UI dump,
+`SnapshotStore.latest/1`, Kind boot restore, `mix ezagent.snapshot.dump`) keep
+the raw "snapshot state" contract.
 
-Either way the invariant is: **a persisted two-container slice never reaches a
-consumer un-normalized.**
+**Fold-in:** refactor `feishu_adapter.ex` `slice_state/1` (feishu_adapter.ex:277)
+to delegate to the same chokepoint (handle string-keyed `%{"state" => …}` too),
+removing #502's duplicate local definition.
 
-**Fold-in:** once A handles `%{state: ...}` (and `%{"state" => ...}` if
-string-keyed snapshots exist), refactor `feishu_adapter.ex` `slice_state/1`
-(feishu_adapter.ex:277) to delegate to the chokepoint, removing the duplicate
-local definition (so #502's local patch becomes the canonical path).
+### 4.3 Generator as the sole creation path (ezagent_domain_chat.ex + session.ex)
 
-### 4.2 Component — atomic orchestrator startup
+- `do_create_session/3`: replace the bare `Ezagent.Kind.spawn(Session, …)`
+  (ezagent_domain_chat.ex:157) with `Session.spawn_from_template/2` using the
+  required `template_name` → materializes the template working copy (sets
+  `orchestrator_template_uri` when the template defines one) + runs the Generator
+  finalize incl. step 7 registration. The `:fresh`/`:adopted` freshness +
+  per-URI `:global` lock semantics are preserved.
+- The bare `Kind.spawn(Session, …)` is demoted to a Generator-internal primitive
+  (not a public create path).
+- **Named templates must exist:** ensure a `"default"` SessionTemplate (with an
+  orchestrator) and any other names callers pass (`require_template_name!`
+  already forces a name; now it must resolve to a real template — fail loudly if
+  the named template is missing).
+- Public signature unchanged → the ~96 call sites (mostly tests + a few LV /
+  bootstrap) keep working; most already pass `template_name`. The behavioral
+  change is internal (they now get a properly-instantiated session).
 
-**Readiness gate (the 30s rule).** Define orchestrator readiness as: the
-orchestrator's MCP context is registered (`McpRegistry.lookup/1` returns `{:ok,
-_}` AND/OR a successful bridge JOIN) within **30 seconds** of PTY spawn.
+### 4.4 Atomic orchestrator startup (session.ex Generator step + cc_agent.ex)
 
-Apply at BOTH startup paths:
+- **Async readiness signal:** `McpChannel.join/3` (mcp_channel.ex:61), on
+  successful registration, broadcasts a PubSub message keyed by orchestrator
+  URI (e.g. `Phoenix.PubSub.broadcast(…, "orch:ready:" <> uri, :registered)`).
+- **30s gate in the Generator's orchestrator-ensure step:** after spawning the
+  orchestrator PTY, subscribe + wait on the readiness signal with a 30s timeout
+  (receive/await — does not block other work; the caller process awaits its own
+  child). On `:registered` → `:ready`. On timeout → kill PTY, mark orchestrator
+  `:failed` with reason, emit operator-visible error event (EventLog + owner
+  notification), DO NOT leave a retrying PTY. Return `{:ok, session_uri,
+  %{orchestrator_status: :failed, …}}`.
+- **Eliminate `:pending` and the `:degraded` "plain claude" path** — collapse to
+  `:ready | :failed`. Update `create_session/3`'s typed response + callers.
+- **`ensure_subprocess_alive/2` (boot reconcile):** readiness = registered, not
+  process-alive. After respawning an orchestrator PTY, await the same 30s
+  registration gate; on timeout, fail-loud (mark `:failed`, stop respawn loop).
+  **Stagger** concurrent gates on boot (bounded concurrency) so N orchestrators
+  do not pin N processes for 30s simultaneously (codex rev1 boot-storm note).
 
-- **`create_session/3`** (ezagent_domain_chat.ex): collapse the orchestrator
-  outcome to binary. Remove the `:pending` branch and the
-  `notify_orchestrator_role_degraded` "plain claude" degrade path. Outcomes:
-  - `:ready` — orchestrator registered within 30s.
-  - `:failed` — not registered within 30s OR spawn/role-bootstrap error. Kill
-    the PTY, set `orchestrator_status: :failed` with the reason, emit an
-    operator-visible error event (EventLog + owner notification), and DO NOT
-    leave a retrying PTY. The session is created (B); the orchestrator is
-    quarantined until explicit restart.
-- **`ensure_subprocess_alive/2`** (cc_agent.ex:1389) / boot reconcile: after
-  respawning the PTY for an orchestrator agent, the orchestrator must
-  re-register within 30s (the registry is in-memory and empty after restart, so
-  respawn alone is insufficient). If not registered in 30s → kill PTY, mark
-  `:failed`, emit error, stop the respawn loop. "Alive" must mean "registered",
-  not "process running".
+### 4.5 Existing-session repair
 
-**Registration on boot.** Because `McpRegistry` is in-memory and rebuilt lazily
-via `rebuild_from_durable/1` on bridge JOIN, the A+C unwrap fix is what makes
-boot-time re-registration actually succeed for an OTU-bearing session. The
-atomic gate then guarantees we either reach that registered state or fail loudly.
-
-**Explicit restart path.** Reuse the existing `Behavior.OrchestratorAdmin
-:restart` (orchestrator_admin.ex:101; flow at ezagent_domain_chat.ex:276/529) as
-the operator/system action to bring a `:failed` orchestrator back. Restart must
-itself be atomic (subject to the same 30s gate).
-
-### 4.3 Component — orchestrator as Session Template setting
-
-No behavioral change to the data model (already
-`SessionTemplate.orchestrator_template_uri`). Make the contract explicit:
-- Generator: if the template's `orchestrator_template_uri` is set, the session's
-  working copy MUST persist a non-nil OTU and the orchestrator MUST be brought
-  to `:ready` atomically (or the orchestrator is `:failed`, per §4.2).
-- If the template's `orchestrator_template_uri` is nil, the session is a plain
-  session — no orchestrator, no startup gate, OTU stays nil legitimately.
-
-### 4.4 Component — existing-session repair
-
-`main` and `orch-feishu-7429` carry nil OTU from the historical degrade. Do NOT
-run a risky data migration. Instead:
-- Provide/confirm an explicit **repair** = `OrchestratorAdmin :restart` that
-  re-runs orchestrator setup atomically against the session's template
-  (re-deriving and persisting OTU from the template, then the 30s gate).
-- For the default session `main` (whose default template carries an
-  orchestrator), repair brings it to `:ready`.
-- For the e2e: create a FRESH session from an orchestrator-bearing template,
-  verify `:ready`, bind Feishu `oc_83a4f1ff` to it, drive the chain.
+`main` / `orch-feishu-7429` carry nil OTU from §2.2. No risky data migration.
+Repair = `Behavior.OrchestratorAdmin :restart` (orchestrator_admin.ex:101)
+re-runs orchestrator setup atomically by (re)instantiating from the session's
+template (deriving + persisting `orchestrator_template_uri`, then the 30s gate).
+For the e2e: create a FRESH session from an orchestrator-bearing template (now
+properly instantiated), verify `:ready`, bind Feishu `oc_83a4f1ff`, drive the chain.
 
 ## 5. Files touched (anticipated)
 
 | File | Change |
 |------|--------|
-| `apps/ezagent_core/lib/ezagent/kind.ex` | A: `normalize_slice_view/1` new single-key `%{state}` clause |
-| `apps/ezagent_core/lib/ezagent/ecto/kind_snapshot.ex` | C: decode-boundary normalization (C1 or C2 per codex) |
-| `apps/ezagent_domain_chat/lib/ezagent/orchestrator/mcp_server.ex` | consumes the fixed unwrap (verify `load_chat_slice`/`orchestrator_working_copy`) |
-| `apps/ezagent_domain_chat/lib/ezagent_domain_chat.ex` | atomic `create_session` orchestrator outcome (remove `:pending`/`:degraded`; 30s gate; fail-loud) |
-| `apps/ezagent_plugin_cc/lib/ezagent/template/cc_agent.ex` | `ensure_subprocess_alive` = registration-gated readiness, not process-liveness |
-| `apps/ezagent_domain_chat/lib/ezagent/entity/session.ex` | Generator: enforce OTU-set ⇒ atomic orchestrator |
+| `apps/ezagent_core/lib/ezagent/kind.ex` | A: `normalize_slice_view/1` single-key `%{state}` clause + Kind-author constraint moduledoc |
+| `apps/ezagent_core/lib/ezagent/ecto/kind_snapshot.ex` | C2: normalized accessor (raw `decode_state` unchanged) |
+| `apps/ezagent_domain_chat/lib/ezagent/orchestrator/mcp_server.ex` | use normalized accessor in `load_chat_slice/1` |
+| `apps/ezagent_domain_chat/lib/ezagent_domain_chat.ex` | route `do_create_session` → Generator; collapse orchestrator states → ready\|failed; preserve `{:ok, _, failed_meta}` |
+| `apps/ezagent_domain_chat/lib/ezagent/entity/session.ex` | Generator orchestrator-ensure: async readiness gate (30s, fail-loud); OTU-set ⇒ atomic |
+| `apps/ezagent_domain_chat/lib/ezagent/orchestrator/mcp_channel.ex` | broadcast readiness PubSub on registration |
+| `apps/ezagent_plugin_cc/lib/ezagent/template/cc_agent.ex` | `ensure_subprocess_alive` = registration-gated readiness + staggered |
+| `apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/admin_live.ex` | handle collapsed `:ready\|:failed` (drop `:pending`/`:degraded` UI) |
 | `apps/ezagent_plugin_feishu/lib/ezagent/plugin_feishu/feishu_adapter.ex` | fold `slice_state/1` into the chokepoint |
+| (templates seed) | ensure a `"default"` SessionTemplate with an orchestrator exists |
 
 ## 6. Testing / validation
 
-### 6.1 Invariant / regression test (the gate — per feedback_completion_requires_invariant_test)
+### 6.1 Invariant gate test (per feedback_completion_requires_invariant_test)
+1. Create a session from an orchestrator-bearing template → orchestrator reaches
+   `:ready` (registered).
+2. **Drop the in-memory `McpRegistry`, call `McpServer.from_orchestrator_uri/1`,
+   assert `{:ok, _}`** (rebuilt from durable). FAILS on `main` today (unwrap bug),
+   PASSES with A+C2. This is the architectural gate.
+3. A session from an orchestrator-LESS template → no orchestrator, no failure.
+4. An orchestrator that cannot register within 30s → `:failed` (loud), NOT a
+   zombie / `:pending` / `:degraded`.
 
-A test that:
-1. Creates a session from an orchestrator-bearing template; asserts orchestrator
-   reaches `:ready` (registered).
-2. Simulates a restart: drops the in-memory `McpRegistry`, then calls
-   `McpServer.from_orchestrator_uri/1` and asserts `{:ok, _}` (registration
-   rebuilt from the durable snapshot). **This test FAILS on `main` today** (the
-   unwrap bug makes `rebuild_from_durable` return `:orchestrator_not_registered`)
-   and PASSES with A+C. This is the architectural gate.
-3. Asserts a session from an orchestrator-LESS template has no orchestrator and
-   does not fail.
-4. Asserts orchestrator startup that cannot register within the gate ends in
-   `:failed` (loud), NOT a zombie or `:pending`/`:degraded`.
-
-### 6.2 Unit tests
+### 6.2 Unit
 - `normalize_slice_view/1`: single-key `%{state}` → unwrapped; `%{state,
-  transients}` → unwrapped; legacy-flat (multi-key) → unchanged; non-map → unchanged.
-- `decode_state` normalization (C): persisted slice → normalized shape.
+  transients}` → unwrapped; legacy multi-key flat → unchanged; non-map → unchanged.
+- C2 normalized accessor; raw `decode_state` output unchanged (regression-guard
+  the UI/tooling contract).
 
-### 6.3 E2E (the original goal)
-Fresh orchestrator session + bind Feishu `oc_83a4f1ff` + send a chained-dispatch
-prompt → orchestrator dispatches → chained replies mirror back to the group.
+### 6.3 E2E (original goal)
+Fresh orchestrator session + bind Feishu `oc_83a4f1ff` + chained-dispatch prompt
+→ orchestrator dispatches → chained replies mirror back to the group.
 
 ## 7. Scope / out of scope
 
-- **In:** orchestrator startup atomicity + the A+C unwrap + existing-session
-  repair + the validation suite.
-- **Out (follow-up):** generic (non-orchestrator) cc-agent readiness gating —
-  regular agents have no MCP registry signal; a separate readiness probe is
-  needed and is tracked separately.
+- **In:** A + C2 unwrap; Generator-as-sole-creation-path; atomic 30s fail-loud
+  orchestrator startup (async signal, staggered); existing-session repair;
+  AdminLive + test updates; validation suite.
+- **Out (follow-up):** generic non-orchestrator cc-agent readiness gating
+  (no MCP registry signal — needs a separate readiness probe).
 
-## 8. Risks / open questions for codex adversarial-review
+## 8. Open questions resolved by codex rev1
 
-1. **A's new clause safety:** is any legacy-flat slice a single-key `%{state:
-   map}` that would be wrongly unwrapped? (The `map_size == 1` guard is meant to
-   prevent this.)
-2. **C placement (C1 rehydrate vs C2 enforce-chokepoint):** which is lower-risk
-   given ALL `decode_state` consumers across every Kind, not just chat?
-3. **Removing the degrade paths:** does any current caller DEPEND on the
-   `:pending`/`:degraded`/"session-alive-on-orchestrator-failure" behavior such
-   that fail-loud breaks it? (Reverses SPEC 2026-05-26 Gap A + codex PR #408
-   HIGH-3 — confirm those rationales no longer hold.)
-4. **30s gate mechanics:** is bridge-JOIN/registration observable to
-   `create_session` and `ensure_subprocess_alive` synchronously within 30s, or
-   does it need an async readiness callback? Avoid blocking the caller for 30s.
-5. **Boot storm:** with N orchestrators respawning on boot, do N concurrent 30s
-   gates create load/timeout cascades? Consider staggering.
+1. A's clause safe ✓ (no current single-key `%{state}` flat slice; documented for future authors).
+2. C2 chosen over C1 ✓ (preserves raw decode contract; only MCP reads internals).
+3. Removing `:pending`/`:degraded` = contract break ⇒ must update AdminLive +
+   tests + preserve `{:ok, _, failed_meta}` (folded into §4.4/§5).
+4. 30s gate needs an async readiness signal (PubSub from `McpChannel.join`) —
+   no synchronous JOIN observability today (folded into §4.4).
+5. Boot storm ⇒ staggered/bounded gates, do not block boot activation per agent
+   (folded into §4.4).
+6. nil OTU root cause = direct-create bypassing the Generator, NOT #481
+   data-loss (folded into §2.2/§4.3).
+
+## 9. Remaining questions for codex rev2
+
+1. Does routing `do_create_session` → `spawn_from_template/2` preserve the
+   `:fresh`/`:adopted` adoption + per-URI `:global` lock + rollback semantics
+   currently in `do_create_session`? Any behavior the bare `Kind.spawn` path had
+   that `spawn_from_template` lacks (or vice-versa)?
+2. Are there session-create callers that pass a `template_name` for which **no
+   SessionTemplate exists** (relying on the current name-only-for-URI behavior)?
+   Those break under §4.3 (fail-loud on missing template) and must be enumerated.
+3. PubSub readiness signal: is there an existing orchestrator-lifecycle PubSub
+   topic to reuse, or a cleaner GenServer-reply path from the bridge?
+4. Repair via `OrchestratorAdmin :restart` — does the restart flow already
+   re-instantiate from template (set OTU) or only respawn the PTY?
