@@ -185,6 +185,13 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
 
   require Logger
 
+  # Compile-time env capture. `Mix.env()` is NOT available in a compiled
+  # release (Mix is not loaded — see migration_gate.ex), so calling it at
+  # runtime would crash the orchestrator PTY spawn path. The deployment env
+  # is fixed at compile time, so a module attribute is both release-safe and
+  # correct. (codex final-review Q1.)
+  @compile_env Mix.env()
+
   @impl Ezagent.Kind.Template
   def template_name, do: "cc.agent"
 
@@ -807,7 +814,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   # `apps/ezagent_plugin_cc/test/ezagent/template/cc_agent_spawn_invariant_test.exs`.
   @doc false
   def build_pty_params(agent_uri, cwd, tmpl) do
-    build_pty_params_for_env(agent_uri, cwd, tmpl, Mix.env())
+    build_pty_params_for_env(agent_uri, cwd, tmpl, @compile_env)
   end
 
   # Codex 2026-05-26 MEDIUM — splitting the env axis out lets the
@@ -1543,13 +1550,10 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
     end
   end
 
-  # test_mode = `Mix.env() == :test` — same rationale as the create-time
-  # gate (cc PtyServer short-circuits real claude in `:test`).
-  defp orchestrator_gate_test_mode? do
-    Code.ensure_loaded?(Mix) and Mix.env() == :test
-  rescue
-    _ -> false
-  end
+  # test_mode = compile-time `:test` — same rationale as the create-time
+  # gate (cc PtyServer short-circuits real claude in `:test`). Compile-time
+  # attr (not runtime Mix.env()) for release-safety. (codex final-review Q1.)
+  defp orchestrator_gate_test_mode?, do: @compile_env == :test
 
   # Cross-workspace adoption gate (codex round-2 finding #1). We only
   # bring up a PTY for an already-started Kind when the agent URI's

@@ -21,6 +21,10 @@ defmodule Ezagent.Entity.Session do
   @behaviour Ezagent.Kind
   @behaviour Ezagent.Behavior.Publisher
 
+  # Compile-time env capture (release-safe; Mix is not loaded in releases).
+  # Used by the orchestrator-readiness gate's test-mode bypass. (codex Q1.)
+  @compile_env Mix.env()
+
   @impl Ezagent.Kind
   def type_name, do: :session
 
@@ -502,7 +506,12 @@ defmodule Ezagent.Entity.Session do
   #     `register_orchestrator_mcp_context` (caller step 7) is the test's
   #     readiness; skip the live wait + return the spawn ok unchanged. The
   #     true 30s gate is validated by the live e2e, NOT the unit suite.
-  defp gate_orchestrator_readiness({:error, _} = err, _candidate_uri, _ready_ref), do: err
+  defp gate_orchestrator_readiness({:error, _} = err, _candidate_uri, ready_ref) do
+    # Don't leak the "orch:lifecycle" subscription on the spawn/finalize
+    # error path (success + timeout paths already unsubscribe). (codex Q2.)
+    if ready_ref == :subscribed, do: unsubscribe_orchestrator_lifecycle()
+    err
+  end
 
   defp gate_orchestrator_readiness({:ok, %URI{} = candidate_uri, _, _} = ok, candidate_uri, ref) do
     await_orchestrator_ready(ok, candidate_uri, ref)
@@ -592,12 +601,9 @@ defmodule Ezagent.Entity.Session do
   # → `test_mode: true`), so no live claude exists to JOIN the MCP bridge
   # and signal readiness — the gate would always time out. The synchronous
   # `register_orchestrator_mcp_context` is the test's readiness instead.
-  # Only PRODUCTION (real PTY) awaits the live join.
-  defp orchestrator_gate_test_mode? do
-    Code.ensure_loaded?(Mix) and Mix.env() == :test
-  rescue
-    _ -> false
-  end
+  # Only PRODUCTION (real PTY) awaits the live join. Compile-time attr
+  # (not runtime Mix.env()) for release-safety. (codex final-review Q1.)
+  defp orchestrator_gate_test_mode?, do: @compile_env == :test
 
   # codex PR #408 review CRIT — call `Agent.spawn_from_template_content/4`
   # directly after reading the cc-orchestrator AgentTemplate's content

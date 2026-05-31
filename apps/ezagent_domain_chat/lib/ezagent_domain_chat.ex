@@ -207,9 +207,10 @@ defmodule EzagentDomainChat do
           {:ok, URI.t(), create_session_meta()} | {:error, term()}
   def repair_orchestrator(%URI{scheme: "session", host: template_name} = session_uri, %URI{} = workspace_uri)
       when is_binary(template_name) and template_name != "" do
-    # Same thin per-URI lock the create flow uses — a repair racing a
-    # concurrent create / repair of the same session would tear state.
-    lock_id = {{:ezagent_domain_chat, :repair_orchestrator, URI.to_string(session_uri)}, self()}
+    # The SAME per-URI lock ResourceId the create flow uses (`:create_session`,
+    # NOT a distinct `:repair_orchestrator` id) so a repair and a concurrent
+    # create/repair of the same session actually serialize on one lock. (codex Q4.)
+    lock_id = {{:ezagent_domain_chat, :create_session, URI.to_string(session_uri)}, self()}
 
     try do
       true = :global.set_lock(lock_id, [node()])
@@ -233,7 +234,7 @@ defmodule EzagentDomainChat do
         _ -> User.admin_uri()
       end
 
-    case resolve_session_template!(template_name, workspace_uri) do
+    case resolve_repair_template(session_uri, template_name, workspace_uri) do
       {:error, _} = err ->
         err
 
@@ -626,6 +627,30 @@ defmodule EzagentDomainChat do
   # the live Kind whose name segment equals `template_name`. Fail-loud
   # (SPEC §4 step 1) — the boot seed (`"default"` under `workspace://system`)
   # + tenant `add_template` are the population paths.
+  # Repair-time template resolution: prefer the EXACT content-addressed
+  # SessionTemplate version the session already recorded in its working copy
+  # (`:session_template_uri`) over a bare-name lookup, which could pick a
+  # different/newer version and re-materialize OTU + parent context from the
+  # wrong template. Falls back to name resolution when the session has no
+  # recorded version (old/never-materialized session) or it's unreadable.
+  # (codex final-review Q4.)
+  defp resolve_repair_template(%URI{} = session_uri, template_name, %URI{} = workspace_uri) do
+    wc = Session.read_template_working_copy(session_uri)
+
+    case Map.get(wc, :session_template_uri) do
+      %URI{} = recorded ->
+        with {:ok, _pid} <- Session.ensure_template_alive(recorded),
+             {:ok, content} <- Session.read_template_content(recorded) do
+          {:ok, recorded, content}
+        else
+          _ -> resolve_session_template!(template_name, workspace_uri)
+        end
+
+      _ ->
+        resolve_session_template!(template_name, workspace_uri)
+    end
+  end
+
   defp resolve_session_template!(template_name, %URI{} = workspace_uri)
        when is_binary(template_name) do
     workspace_name = workspace_name_of!(workspace_uri)
