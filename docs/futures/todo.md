@@ -609,3 +609,20 @@ baseline worktree (`54df56c9`) chat run for apples-to-apples diff**.
   Sandbox slice contract, the cc Template Class, `:write_path` callers,
   `reconcile_after_load`, + a data migration of existing rows. See
   `docs/notes/home-portability-audit.md` §"Conclusion" approach 2.
+
+- **cc-agent claude credential durability (2026-06-01)**: cc agents
+  (orchestrators + workers) authenticate to Anthropic via the Claude Max
+  OAuth token in `<CLAUDE_CONFIG_DIR>/.claude/.credentials.json`, which
+  EXPIRES ~daily. When it expires, claude receives channel messages but
+  every reply fails `401 Invalid authentication credentials · Please run
+  /login` — the agent looks alive (bridge joined, mentions delivered) but
+  silently never replies. Found while debugging the orchestrator-chain
+  (`[[project_cc_channel_reply_unverified]]`): orch's token had expired
+  ~8h prior; refreshed operationally by copying the operator's valid
+  `~/.claude/.credentials.json`. DURABLE FIX options: (a) configure an
+  `api_key_helper` / long-lived API key for spawned agents instead of the
+  expiring OAuth token; (b) ensure the headless claude auto-refreshes via
+  its refresh token on launch (it has one — confirm why it didn't); (c)
+  a spawn-time credential-freshness preflight that fails loud (or
+  refreshes) rather than letting the agent run with a dead token. Until
+  fixed, long-lived agents go mute a day after the last login.
