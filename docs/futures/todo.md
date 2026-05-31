@@ -526,6 +526,28 @@ From `docs/notes/2026-05-24-architecture-audit-v1.md` (5 LOW):
 
 ## Post-lifecycle-migration full E2E findings (2026-05-30, Allen "e2e全量重跑")
 
+> **RESOLVED 2026-05-31** — the migration-introduced (B) findings + the
+> highest-stakes pre-existing (A) finding were closed by the remediation batch
+> merged 2026-05-30/31, verified on `origin/main`:
+> - `:not_ready` readiness regression (B, PRIMARY) → **#493** (`kind/server.ex`
+>   `ReadyGate` + `PendingDelivery.flush` buffering present; full umbrella 169→0).
+> - `Jason.Encoder not implemented for Ezagent.Capability` silently dropping
+>   `cap_granted` from EventLog (A, HIGH) → **#493** (`defimpl Jason.Encoder,
+>   for: Ezagent.Capability` in `capability.ex`).
+> - destroy-gate + AgentLineage durability (B/C) → **#493** (+ prod migration
+>   `20260616000000_agent_lineage_durable_backing`, see `pending-prod-migrations`).
+> - cold-restart P6 determinism → **#498**; URI silent-address hardening → **#496**;
+>   router facade `Invocation.dispatch`→`Router.dispatch` (#112) → **#494**;
+>   home backup/restore CLI (#120) → **#497**.
+> - Sandbox-isolation full-run flakiness (A) is **pre-existing test-infra**, NOT
+>   migration-caused (deterministic-0 on fresh worktrees; double-digit counts
+>   come from concurrent-suite contention / a bisect-churned worktree's drifted
+>   test DB — see memory `feedback_fresh_worktree_for_test_measurement`).
+>
+> Still OPEN from below: the home-portability **durable** profile-relative path
+> fix (CLI shipped in #497; structural fix deferred — see
+> `docs/notes/home-portability-audit.md`). Findings retained verbatim below.
+
 Methodology: phx restarted on complete `d46bd2d2`; live agent-browser + full
 umbrella `mix test` (407 files) + isolated chat re-runs + **pre-lifecycle
 baseline worktree (`54df56c9`) chat run for apples-to-apples diff**.
