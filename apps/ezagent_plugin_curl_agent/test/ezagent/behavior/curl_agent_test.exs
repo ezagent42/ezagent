@@ -143,13 +143,13 @@ defmodule Ezagent.Behavior.CurlAgentTest do
 
   describe "handle_receive/2 — loop safety" do
     test "self-message returns identity result tuple with no effects" do
-      agent_uri = URI.parse("entity://agent/team-alpha/curl_self")
+      agent_uri = Ezagent.URI.new!("entity://agent/team-alpha/curl_self")
       msg = Ezagent.Message.new(agent_uri, %{text: "self-loop"})
 
       ctx = %{
         read: fn _k, d -> d end,
         self_uri: agent_uri,
-        caller: URI.parse("session://default/team-alpha/main"),
+        caller: Ezagent.URI.new!("session://default/team-alpha/main"),
         siblings: %{api_keys: %{keys: %{}}}
       }
 
@@ -160,9 +160,9 @@ defmodule Ezagent.Behavior.CurlAgentTest do
 
   describe "handle_receive/2 — no API key" do
     test "emits :set last_error + dispatches operator help reply" do
-      agent_uri = URI.parse("entity://agent/team-alpha/curl_x")
-      session_uri = URI.parse("session://default/team-alpha/main")
-      sender_uri = URI.parse("entity://user/team-alpha/alice")
+      agent_uri = Ezagent.URI.new!("entity://agent/team-alpha/curl_x")
+      session_uri = Ezagent.URI.new!("session://default/team-alpha/main")
+      sender_uri = Ezagent.URI.new!("entity://user/team-alpha/alice")
       msg = Ezagent.Message.new(sender_uri, %{text: "hi"})
 
       ctx = %{
@@ -201,7 +201,7 @@ defmodule Ezagent.Behavior.CurlAgentTest do
     end
 
     test "returns :no_owner for non-entity-agent" do
-      assert CurlAgent.data_owner(URI.parse("session://x/y/z")) == :no_owner
+      assert CurlAgent.data_owner(Ezagent.URI.new!("session://x/y/z")) == :no_owner
     end
   end
 end

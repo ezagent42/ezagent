@@ -704,7 +704,7 @@ defmodule Ezagent.Workspace do
   def create_agent(%URI{scheme: "workspace"} = workspace_uri, args, ctx)
       when is_map(args) and is_map(ctx) do
     target =
-      URI.new!("#{URI.to_string(workspace_uri)}?action=workspace.create_agent")
+      Ezagent.URI.with_action(workspace_uri, :workspace, :create_agent)
 
     caller = Map.fetch!(ctx, :caller)
     caps = Map.fetch!(ctx, :caps)
@@ -752,7 +752,7 @@ defmodule Ezagent.Workspace do
   def create_session(%URI{scheme: "workspace"} = workspace_uri, args, ctx)
       when is_map(args) and is_map(ctx) do
     target =
-      URI.new!("#{URI.to_string(workspace_uri)}?action=workspace.create_session")
+      Ezagent.URI.with_action(workspace_uri, :workspace, :create_session)
 
     caller = Map.fetch!(ctx, :caller)
     caps = Map.fetch!(ctx, :caps)
@@ -796,9 +796,7 @@ defmodule Ezagent.Workspace do
     # Codex PR #356 r1 CRIT fix: `:create_user` lives on the new
     # `Ezagent.Behavior.WorkspaceUserAdmin` (slice `:workspace_user_admin`),
     # NOT on `Behavior.Workspace` — so the cap subject is distinct.
-    # uri-canonical-allow: §3.4 query-target idiom (multi-line)
-    target =
-      URI.new!("#{URI.to_string(workspace_uri)}?action=workspace_user_admin.create_user")
+    target = Ezagent.URI.with_action(workspace_uri, :workspace_user_admin, :create_user)
 
     caller = Map.fetch!(ctx, :caller)
     caps = Map.fetch!(ctx, :caps)
@@ -827,7 +825,7 @@ defmodule Ezagent.Workspace do
 
   def grant_initial_caps(%URI{} = agent_uri, [cap | rest], ctx) when is_map(ctx) do
     target =
-      URI.new!("#{URI.to_string(agent_uri)}?action=identity.grant_cap")
+      Ezagent.URI.with_action(agent_uri, :identity, :grant_cap)
 
     caller = Map.fetch!(ctx, :caller)
     caps = Map.fetch!(ctx, :caps)

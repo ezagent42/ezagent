@@ -31,7 +31,7 @@ defmodule EzagentPluginLiveview.EntityCapsLive do
   the canonical operator surface. The underlying calls are:
 
       Invocation.dispatch(%Invocation{
-        target: URI.new!("\#{entity_uri}?action=identity.grant_cap"),
+        target: Ezagent.URI.with_action(entity_uri, :identity, :grant_cap),
         mode: :call,
         args: %{cap: %Capability{...}},
         ctx: %{caller: admin_uri, caps: admin_caps, reply: :sync}
@@ -84,7 +84,7 @@ defmodule EzagentPluginLiveview.EntityCapsLive do
 
       {:ok, _pid} ->
         # Dispatch list_caps and capture the result.
-        target = URI.new!("#{URI.to_string(socket.assigns.entity_uri)}?action=identity.list_caps")
+        target = Ezagent.URI.with_action(socket.assigns.entity_uri, :identity, :list_caps)
 
         case Invocation.dispatch(%Invocation{
                target: target,
@@ -137,7 +137,7 @@ defmodule EzagentPluginLiveview.EntityCapsLive do
 
   defp do_grant_or_revoke(socket, action, cap, msg) do
     target =
-      URI.new!("#{URI.to_string(socket.assigns.entity_uri)}?action=identity.#{action}")
+      Ezagent.URI.with_action(socket.assigns.entity_uri, :identity, action)
 
     case Invocation.dispatch(%Invocation{
            target: target,

@@ -304,7 +304,7 @@ defmodule Ezagent.Behavior.CurlAgent do
 
       %URI{} = session ->
         reply_msg = Message.new(self_uri, %{text: text, attachments: []})
-        target = URI.new!("#{URI.to_string(session)}?action=chat.send")
+        target = Ezagent.URI.with_action(session, :chat, :send)
 
         cmd =
           Cmd.new(target, :send, %{message: reply_msg}, %{

@@ -10,8 +10,8 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
 
   1. §5.1 — no stdlib `URI.parse/1` in `apps/*/lib/**/*.ex` (outside the
      canonical-module allowlist).
-  2. §5.2 — no stdlib `URI.new!/1` outside the §3.4 query-target idiom
-     + §3.5 compile-time module-attribute carve-outs.
+  2. §5.2 — no stdlib `URI.new!/1` outside the §3.5 compile-time
+     module-attribute carve-out.
   3. §5.2.1 — no stdlib `URI.new/1` (non-bang) outside the §3.7 dual-
      fallback allowlist (`Ezagent.URI`, `Ezagent.Ecto.URI`).
   4. §5.3 — canonical URI round-trip property.
@@ -19,6 +19,21 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
   6. §5.5 — snapshot `canonicalize_uris/1` covers every required shape.
   7. §5.5 r3 adversarial — the same-line `URI.new(s); URI.new!(t)` mix
      is not a false negative under the §5.2.1 regex.
+
+  ## URI hardening 2026-05-30 — query-target carve-out CLOSED
+
+  > "address silent errors are unacceptable" — Allen 2026-05-30.
+
+  SPEC §3.4 previously CARVED OUT the query-target idiom
+  `URI.new!("\#{URI.to_string(uri)}?action=b.a")` — stdlib `URI.new!/1`
+  was permitted when the line also contained `?action=`. That carve-out
+  was a real silent-error hole: stdlib `URI.new!/1` yields the right
+  `authority: nil` struct BUT bypasses the SchemeRegistry + 3-segment
+  validation, so a typo'd scheme or malformed base passed silently. The
+  carve-out is now CLOSED — those ~28 sites migrated to
+  `Ezagent.URI.with_action/3`, which re-parses the assembled string
+  through the canonical chokepoint (full validation). The §5.2 test no
+  longer exempts `?action=` lines.
 
   Suppression: any line ending with `# uri-canonical-allow: <reason>`
   is exempt. This is the escape hatch for genuine structural
@@ -80,9 +95,14 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
   end
 
   # ---------------------------------------------------------------------
-  # §5.2 — no stdlib URI.new!/1 outside §3.4/§3.5 carve-outs
+  # §5.2 — no stdlib URI.new!/1 outside the §3.5 module-attr carve-out.
+  #
+  # URI hardening 2026-05-30: the §3.4 query-target carve-out
+  # (`URI.new!("...?action=...")`) is CLOSED — those sites migrated to
+  # `Ezagent.URI.with_action/3` (routes through the validating chokepoint).
+  # stdlib `URI.new!/1` with `?action=` is now a violation.
 
-  test "no stdlib URI.new!/1 in apps outside §3.4 query-target + §3.5 module-attr carve-outs" do
+  test "no stdlib URI.new!/1 in apps outside §3.5 module-attr carve-out (query-target carve-out CLOSED)" do
     violations =
       for path <- lib_files(),
           relative(path) not in @uri_parse_allowlist,
@@ -94,7 +114,6 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
           # ~400 renamed call sites would false-positive as a stdlib
           # violation.
           Regex.match?(~r/(?<![\w.])URI\.new!\(/, line),
-          not is_query_target_idiom?(line),
           not is_module_attribute?(line),
           not String.contains?(line, "# uri-canonical-allow"),
           not in_comment?(line) do
@@ -104,10 +123,15 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
     assert violations == [],
            """
            Found #{length(violations)} use(s) of stdlib URI.new!/1 outside the
-           §3.4 query-target idiom (`URI.new!("...?action=...")`) and §3.5
-           compile-time module-attribute carve-outs. Use
-           `Ezagent.URI.new!/1` at runtime; if this is a legitimate
-           structural derivation (§3.6), append:
+           §3.5 compile-time module-attribute carve-out.
+
+           For a plain string: use `Ezagent.URI.new!/1`.
+           For the `?action=` query-target idiom
+           (`URI.new!("\#{URI.to_string(uri)}?action=b.a")`): use
+           `Ezagent.URI.with_action(uri, :b, :a)` — it routes through the
+           validating chokepoint instead of bypassing SchemeRegistry +
+           shape validation (the closed §3.4 carve-out).
+           If this is a legitimate structural derivation (§3.6), append:
                # uri-canonical-allow: <reason>
            Violations:
            #{format(violations)}
@@ -394,9 +418,6 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
     # immediately followed by `!`. SPEC §5.2.1 r4 fix.
     Regex.match?(~r/\bURI\.new(?!!)\(/, line)
   end
-
-  defp is_query_target_idiom?(line),
-    do: String.contains?(line, "URI.new!(") and String.contains?(line, "?action=")
 
   defp is_module_attribute?(line),
     do: Regex.match?(~r/^\s*@\w+\s+URI\.new!\(/, line)

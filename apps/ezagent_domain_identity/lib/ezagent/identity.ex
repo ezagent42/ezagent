@@ -203,7 +203,7 @@ defmodule Ezagent.Identity do
   def grant_cap(entity_uri, %Ezagent.Capability{} = cap, granter_uri) do
     target_uri = parse_uri(entity_uri)
     granter = parse_uri(granter_uri)
-    target = URI.new!("#{URI.to_string(target_uri)}?action=identity.grant_cap")
+    target = Ezagent.URI.with_action(target_uri, :identity, :grant_cap)
 
     # PR-OWN-2 (caps-data-ownership SPEC #306 §5.2 + r4 fix): pass
     # the granter's REAL caps into dispatch ctx, not a hardcoded

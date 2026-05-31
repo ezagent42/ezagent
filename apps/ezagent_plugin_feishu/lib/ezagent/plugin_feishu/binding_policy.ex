@@ -238,7 +238,7 @@ defmodule EzagentPluginFeishu.BindingPolicy do
   end
 
   defp grant_cap(user_uri, _admin_uri, %Capability{} = cap) do
-    target = URI.new!("#{to_str(user_uri)}?action=identity.grant_cap")
+    target = Ezagent.URI.with_action(Ezagent.URI.new!(to_str(user_uri)), :identity, :grant_cap)
 
     inv = %Invocation{
       target: target,

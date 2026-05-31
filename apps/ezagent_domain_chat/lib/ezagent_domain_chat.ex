@@ -575,7 +575,7 @@ defmodule EzagentDomainChat do
     if has_equiv? do
       :ok
     else
-      target = URI.new!("#{URI.to_string(owner_uri)}?action=identity.grant_cap")
+      target = Ezagent.URI.with_action(owner_uri, :identity, :grant_cap)
       cap = %{want | granted_at: DateTime.utc_now()}
 
       # codex PR #408 review HIGH-1 — dispatch result MUST be checked.
@@ -628,7 +628,7 @@ defmodule EzagentDomainChat do
     # ({:ok, pid} for already-alive).
     _ = Ezagent.SpawnRegistry.spawn(creator_uri)
 
-    target = URI.new!("#{URI.to_string(session_uri)}?action=chat.join")
+    target = Ezagent.URI.with_action(session_uri, :chat, :join)
 
     _ =
       Invocation.dispatch(%Invocation{

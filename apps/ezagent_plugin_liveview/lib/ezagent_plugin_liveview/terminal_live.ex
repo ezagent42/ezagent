@@ -194,7 +194,7 @@ defmodule EzagentPluginLiveview.TerminalLive do
   # post_init re-spawns the subprocess.
   def handle_event("restart_pty", _params, socket) do
     target =
-      URI.new!(URI.to_string(socket.assigns.agent_uri) <> "?action=lifecycle.terminate")
+      Ezagent.URI.with_action(socket.assigns.agent_uri, :lifecycle, :terminate)
 
     case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
            target: target,

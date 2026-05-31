@@ -48,7 +48,7 @@ defmodule EzagentPluginEcho.Integration.F1DirectInvokeTest do
   end
 
   test "F1: dispatch :say to entity://agent/system/echo_default, get reply, see audit event + SQLite row" do
-    target = URI.parse("#{URI.to_string(EchoApp.default_uri())}?action=echo.say")
+    target = Ezagent.URI.new!("#{URI.to_string(EchoApp.default_uri())}?action=echo.say")
 
     inv = %Invocation{
       target: target,
@@ -97,7 +97,7 @@ defmodule EzagentPluginEcho.Integration.F1DirectInvokeTest do
   end
 
   test "F1 via :cast — reply lands in caller_inbox" do
-    target = URI.parse("#{URI.to_string(EchoApp.default_uri())}?action=echo.say")
+    target = Ezagent.URI.new!("#{URI.to_string(EchoApp.default_uri())}?action=echo.say")
 
     inv = %Invocation{
       target: target,
@@ -202,7 +202,7 @@ defmodule EzagentPluginEcho.Integration.F1DirectInvokeTest do
   end
 
   test "F1 invalid args fail-stop at validator (does not reach Echo slice)" do
-    target = URI.parse("#{URI.to_string(EchoApp.default_uri())}?action=echo.say")
+    target = Ezagent.URI.new!("#{URI.to_string(EchoApp.default_uri())}?action=echo.say")
 
     inv = %Invocation{
       target: target,

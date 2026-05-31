@@ -33,7 +33,7 @@ defmodule EzagentPluginLiveview.AgentApiKeysLiveTest do
 
   defp spawn_curl_agent do
     agent_uri =
-      URI.parse(
+      Ezagent.URI.new!(
         "entity://agent/team-alpha/curl_apikeys-#{System.unique_integer([:positive])}"
       )
 

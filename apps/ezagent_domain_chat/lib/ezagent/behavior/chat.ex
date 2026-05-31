@@ -1170,6 +1170,16 @@ defmodule Ezagent.Behavior.Chat do
   # On success, mark :delivered on the read marker (PR-3 of Read Receipts
   # rollout — fire-and-forget, must not block message fan-out).
   defp dispatch_receive_call(recipient_uri, %Message{} = msg, session_uri) do
+    # Canonicalize the session URI before it crosses into the recipient's
+    # `chat.receive` — it becomes `ctx.caller`, which the recipient behavior
+    # feeds to `Ezagent.URI.with_action/3` (e.g. Echo's reply path), and it
+    # keys the ReadMarker below. `ctx[:self_uri]` carries the deprecated
+    # `:authority` field when the inbound target was built via stdlib
+    # `URI.parse/1`; both the `with_action/3` canonical guard and every
+    # canonical MapSet/ETS comparison require the RFC-3986 `authority: nil`
+    # shape. (Sibling of the broadcast-site canonicalization in `handle_send`.)
+    session_uri = Ezagent.URI.new!(URI.to_string(session_uri))
+
     # SPEC caps-cleanup-v1 §4.4 — Session fan-out is system-routed
     # message delivery; runs under `system://chat-router` (closed
     # Catalog). The session URI stays as caller for provenance.
