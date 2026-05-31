@@ -1406,7 +1406,17 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
                     URI.to_string(agent_uri)
                 )
 
-                :ok
+                # 2026-05-31 orchestrator-startup-atomicity §5 — for an
+                # ORCHESTRATOR boot respawn, readiness = REGISTERED, not
+                # process-alive. Await the same live-join gate (staggered
+                # so N orchestrators don't each block 30s simultaneously);
+                # on timeout fail-loud (returns `{:error, _}` → Sandbox
+                # logs + telemetry `:subprocess_unhealthy` + stops the
+                # respawn — the operator restarts via /admin). Test-mode
+                # skips the live wait (no real claude to JOIN). A non-
+                # orchestrator cc agent has no registration gate (out of
+                # scope per SPEC §10) → `:ok` immediately.
+                await_orchestrator_boot_readiness(agent_uri, respawn_data)
 
               {:error, reason} = err ->
                 Logger.error(
@@ -1424,6 +1434,122 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   end
 
   def ensure_subprocess_alive(_, _), do: {:error, :invalid_args}
+
+  # 2026-05-31 orchestrator-startup-atomicity §5 — orchestrator boot
+  # readiness gate. Mirrors `Session.ensure_orchestrator/3`'s create-time
+  # gate, on the BOOT respawn path: a respawned orchestrator PTY is only
+  # READY once its live claude's MCP bridge JOINs + registers (broadcast
+  # on `"orch:lifecycle"`). Until then it is a non-functional zombie that
+  # would retry the bridge JOIN forever.
+  #
+  # Bounded-concurrency STAGGER: on a multi-orchestrator boot, having
+  # every Kind's `activate/2` block 30s simultaneously is an N×30s boot
+  # storm. We serialize the WAITS through `@orch_boot_gate_slots`
+  # `:global.trans` lock slots (slot = `phash2(uri) rem N`) so at most N
+  # gates wait concurrently; the rest queue behind a slot.
+  @orchestrator_boot_readiness_timeout_ms 30_000
+  @orch_boot_gate_slots 4
+
+  defp await_orchestrator_boot_readiness(%URI{} = agent_uri, respawn_data) do
+    cond do
+      not orchestrator_role?(respawn_data) ->
+        # Non-orchestrator cc agent — no registration gate (SPEC §10 out).
+        :ok
+
+      orchestrator_gate_test_mode?() ->
+        # No live claude in test_mode → no bridge JOIN → the gate would
+        # always time out. The synchronous registration is the test's
+        # readiness; skip the live wait.
+        :ok
+
+      true ->
+        with_orch_boot_gate_slot(agent_uri, fn ->
+          do_await_orchestrator_boot_readiness(agent_uri)
+        end)
+    end
+  end
+
+  # Run `fun` while holding one of N global gate slots — bounds the number
+  # of concurrent 30s waits across all booting orchestrators. `:global.trans`
+  # blocks until the slot lock is acquired (FIFO-ish), then releases it
+  # when `fun` returns.
+  defp with_orch_boot_gate_slot(%URI{} = agent_uri, fun) when is_function(fun, 0) do
+    slot = :erlang.phash2(URI.to_string(agent_uri), @orch_boot_gate_slots)
+    lock_id = {{:ezagent_orch_boot_gate, slot}, self()}
+    :global.trans(lock_id, fun)
+  end
+
+  # Subscribe-then-check-then-wait. We subscribe to `"orch:lifecycle"`
+  # FIRST, then check whether the orchestrator is ALREADY registered
+  # (the bridge may have joined during the PTY respawn / slot wait); if so
+  # we are done. Otherwise `receive` the readiness signal ≤30s. On timeout
+  # fail-loud.
+  defp do_await_orchestrator_boot_readiness(%URI{} = agent_uri) do
+    :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, orch_lifecycle_topic())
+
+    if orchestrator_registered?(agent_uri) do
+      _ = Phoenix.PubSub.unsubscribe(EzagentCore.PubSub, orch_lifecycle_topic())
+      :ok
+    else
+      receive_orchestrator_boot_ready(agent_uri)
+    end
+  end
+
+  defp receive_orchestrator_boot_ready(%URI{} = agent_uri) do
+    receive do
+      {:orchestrator_ready, %URI{} = ready_uri} ->
+        if URI.to_string(ready_uri) == URI.to_string(agent_uri) do
+          _ = Phoenix.PubSub.unsubscribe(EzagentCore.PubSub, orch_lifecycle_topic())
+          :ok
+        else
+          receive_orchestrator_boot_ready(agent_uri)
+        end
+    after
+      @orchestrator_boot_readiness_timeout_ms ->
+        _ = Phoenix.PubSub.unsubscribe(EzagentCore.PubSub, orch_lifecycle_topic())
+
+        Logger.error(
+          "cc.agent.ensure_subprocess_alive: orchestrator #{URI.to_string(agent_uri)} did " <>
+            "NOT register within #{@orchestrator_boot_readiness_timeout_ms}ms on boot respawn " <>
+            "— failing loud (Sandbox stops the respawn; operator restarts via /admin)."
+        )
+
+        {:error, {:orchestrator_not_ready_within, @orchestrator_boot_readiness_timeout_ms}}
+    end
+  end
+
+  # The lifecycle topic string. Hard-coded here (NOT a call into
+  # `Ezagent.Orchestrator.McpChannel.lifecycle_topic/0`) because
+  # `ezagent_domain_chat` is a `only: :test` dep of this plugin — it is
+  # NOT a compile dep in prod. The topic is a stable string contract
+  # shared with `McpChannel.join/3`'s broadcast (§5); a drift would be
+  # caught by the live e2e (the only validator of the live gate).
+  defp orch_lifecycle_topic, do: "orch:lifecycle"
+
+  # Registered? = `Ezagent.Orchestrator.McpServer.from_orchestrator_uri/1`
+  # resolves. Runtime-guarded `apply` (NOT a direct module ref) for the
+  # same `only: :test` dep reason as `orch_lifecycle_topic/0`: the module
+  # IS loaded at runtime (chat boots in the umbrella) but referencing it
+  # at compile time would break this plugin's prod build. A not-loaded
+  # module (impossible in the running umbrella, but defensive) → not
+  # registered → fall through to the live wait.
+  defp orchestrator_registered?(%URI{} = agent_uri) do
+    mod = Ezagent.Orchestrator.McpServer
+
+    if Code.ensure_loaded?(mod) and function_exported?(mod, :from_orchestrator_uri, 1) do
+      match?({:ok, _}, apply(mod, :from_orchestrator_uri, [agent_uri]))
+    else
+      false
+    end
+  end
+
+  # test_mode = `Mix.env() == :test` — same rationale as the create-time
+  # gate (cc PtyServer short-circuits real claude in `:test`).
+  defp orchestrator_gate_test_mode? do
+    Code.ensure_loaded?(Mix) and Mix.env() == :test
+  rescue
+    _ -> false
+  end
 
   # Cross-workspace adoption gate (codex round-2 finding #1). We only
   # bring up a PTY for an already-started Kind when the agent URI's

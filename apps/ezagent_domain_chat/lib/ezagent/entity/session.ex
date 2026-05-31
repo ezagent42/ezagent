@@ -48,6 +48,18 @@ defmodule Ezagent.Entity.Session do
   @impl Ezagent.Kind
   def supervisor, do: EzagentDomainChat.SessionSupervisor
 
+  require Logger
+
+  # 2026-05-31 orchestrator-startup-atomicity §5 — the LIVE-join readiness
+  # gate timeout. After spawning the orchestrator PTY, the create flow
+  # awaits `{:orchestrator_ready, uri}` (broadcast by
+  # `Ezagent.Orchestrator.McpChannel.join/3` when the real claude's MCP
+  # bridge joins + resolves to a registered orchestrator). On timeout the
+  # PTY is killed + `{:error, {:orchestrator_not_ready_within, 30_000}}`
+  # is returned so the caller fail-loud rolls back. NO `:pending`, NO
+  # `:failed`-alive.
+  @orchestrator_readiness_timeout_ms 30_000
+
   @doc """
   URI of the default Session instance spawned at boot.
 
@@ -365,26 +377,42 @@ defmodule Ezagent.Entity.Session do
         # still does not classify `:owned` is a real foreign claim →
         # `{:error, _}` (→ caller rollback, fail-loud). No silent success
         # on an unverified adoption.
-        case spawn_orchestrator_via_template_content(
-               candidate_uri,
-               orch_template_uri,
-               instance_name,
-               workspace_uri,
-               owner_uri
-             ) do
-          {:error, _} = err ->
-            err
+        #
+        # 2026-05-31 orchestrator-startup-atomicity §5 — the 30s readiness
+        # gate wraps the spawn. We SUBSCRIBE to the `"orch:lifecycle"`
+        # topic BEFORE the spawn (to avoid the race where the live bridge
+        # joins between spawn and subscribe), spawn + finalize ownership,
+        # THEN await `{:orchestrator_ready, candidate_uri}`. On timeout the
+        # PTY is killed + `{:error, {:orchestrator_not_ready_within, ...}}`
+        # → caller rollback. In test_mode the synchronous
+        # `register_orchestrator_mcp_context` is the readiness signal
+        # (there is no live claude to join the bridge), so the live wait
+        # is skipped — see `await_orchestrator_ready/2`.
+        ready_ref = subscribe_orchestrator_lifecycle()
 
-          {:ok, ^candidate_uri, outcome, fresh?, degraded_meta} ->
-            finalize_spawned_orchestrator(
-              candidate_uri,
-              owner_uri,
-              workspace_uri,
-              outcome,
-              fresh?,
-              degraded_meta
-            )
-        end
+        spawn_result =
+          case spawn_orchestrator_via_template_content(
+                 candidate_uri,
+                 orch_template_uri,
+                 instance_name,
+                 workspace_uri,
+                 owner_uri
+               ) do
+            {:error, _} = err ->
+              err
+
+            {:ok, ^candidate_uri, outcome, fresh?, degraded_meta} ->
+              finalize_spawned_orchestrator(
+                candidate_uri,
+                owner_uri,
+                workspace_uri,
+                outcome,
+                fresh?,
+                degraded_meta
+              )
+          end
+
+        gate_orchestrator_readiness(spawn_result, candidate_uri, ready_ref)
 
       {:foreign, evidence} ->
         # POSITIVE foreign evidence (lineage / workspace POSITIVELY
@@ -457,6 +485,119 @@ defmodule Ezagent.Entity.Session do
 
   defp wrap_orchestrator_ok(%URI{} = candidate_uri, outcome, degraded_meta),
     do: {:ok, candidate_uri, outcome, degraded_meta}
+
+  # 2026-05-31 orchestrator-startup-atomicity §5 — the LIVE-join readiness
+  # gate. Called AFTER the spawn + ownership finalize. On a spawn/finalize
+  # error it short-circuits (no PTY to gate). On success it awaits the
+  # async readiness signal:
+  #
+  #   * PRODUCTION (real PTY) — `receive` the `{:orchestrator_ready,
+  #     candidate_uri}` broadcast (≤30s). On receipt → return the spawn
+  #     ok. On timeout → kill the orchestrator PTY + Kind and return
+  #     `{:error, {:orchestrator_not_ready_within, 30_000}}` so the caller
+  #     (`EzagentDomainChat.ensure_orchestrated_session/4`) fail-loud rolls
+  #     back. NO `:pending`, NO `:failed`-alive zombie.
+  #   * TEST-MODE — there is no live claude to JOIN the MCP bridge, so the
+  #     readiness signal NEVER fires. The synchronous
+  #     `register_orchestrator_mcp_context` (caller step 7) is the test's
+  #     readiness; skip the live wait + return the spawn ok unchanged. The
+  #     true 30s gate is validated by the live e2e, NOT the unit suite.
+  defp gate_orchestrator_readiness({:error, _} = err, _candidate_uri, _ready_ref), do: err
+
+  defp gate_orchestrator_readiness({:ok, %URI{} = candidate_uri, _, _} = ok, candidate_uri, ref) do
+    await_orchestrator_ready(ok, candidate_uri, ref)
+  end
+
+  defp gate_orchestrator_readiness({:ok, %URI{} = candidate_uri, _} = ok, candidate_uri, ref) do
+    await_orchestrator_ready(ok, candidate_uri, ref)
+  end
+
+  # Subscribe to the orchestrator lifecycle topic BEFORE the spawn. In
+  # test_mode we don't subscribe (no live join arrives) — `nil` ref signals
+  # the await to bypass. Returns `:subscribed | nil`.
+  defp subscribe_orchestrator_lifecycle do
+    if orchestrator_gate_test_mode?() do
+      nil
+    else
+      :ok =
+        Phoenix.PubSub.subscribe(
+          EzagentCore.PubSub,
+          Ezagent.Orchestrator.McpChannel.lifecycle_topic()
+        )
+
+      :subscribed
+    end
+  end
+
+  # Await the readiness signal filtered by `candidate_uri`. `nil` ref →
+  # test_mode bypass (return ok unchanged). On timeout → kill the PTY +
+  # Kind, return the loud error.
+  defp await_orchestrator_ready(ok, _candidate_uri, nil), do: ok
+
+  defp await_orchestrator_ready(ok, %URI{} = candidate_uri, :subscribed) do
+    receive do
+      {:orchestrator_ready, %URI{} = ready_uri} ->
+        if URI.to_string(ready_uri) == URI.to_string(candidate_uri) do
+          unsubscribe_orchestrator_lifecycle()
+          ok
+        else
+          # A DIFFERENT orchestrator's readiness — keep waiting for ours
+          # within the remaining window. (A fresh `receive` resets the
+          # timeout; acceptable — a concurrent orchestrator's signal is
+          # rare and the e2e validates the live single-orchestrator path.)
+          await_orchestrator_ready(ok, candidate_uri, :subscribed)
+        end
+    after
+      @orchestrator_readiness_timeout_ms ->
+        unsubscribe_orchestrator_lifecycle()
+
+        Logger.error(
+          "Session.ensure_orchestrator: orchestrator #{URI.to_string(candidate_uri)} did " <>
+            "NOT register within #{@orchestrator_readiness_timeout_ms}ms — killing the PTY " <>
+            "+ Kind and failing loud (caller rolls back the create)."
+        )
+
+        kill_orchestrator(candidate_uri)
+
+        {:error, {:orchestrator_not_ready_within, @orchestrator_readiness_timeout_ms}}
+    end
+  end
+
+  defp unsubscribe_orchestrator_lifecycle do
+    _ =
+      Phoenix.PubSub.unsubscribe(
+        EzagentCore.PubSub,
+        Ezagent.Orchestrator.McpChannel.lifecycle_topic()
+      )
+
+    :ok
+  end
+
+  # Tear down a PTY + Agent Kind that never reported ready. Best-effort,
+  # each idempotent — the caller's rollback also runs, but the PTY/Kind
+  # teardown belongs HERE (the gate spawned them).
+  defp kill_orchestrator(%URI{} = candidate_uri) do
+    _ =
+      if Code.ensure_loaded?(Ezagent.Domain.Pty) and
+           function_exported?(Ezagent.Domain.Pty, :stop, 1) do
+        Ezagent.Domain.Pty.stop(candidate_uri)
+      end
+
+    _ = Ezagent.Kind.terminate(candidate_uri)
+    :ok
+  end
+
+  # test_mode = `Mix.env() == :test`. The cc PtyServer short-circuits the
+  # real `:exec.run/2` in `:test` env (cc_agent.ex build_pty_params_for_env
+  # → `test_mode: true`), so no live claude exists to JOIN the MCP bridge
+  # and signal readiness — the gate would always time out. The synchronous
+  # `register_orchestrator_mcp_context` is the test's readiness instead.
+  # Only PRODUCTION (real PTY) awaits the live join.
+  defp orchestrator_gate_test_mode? do
+    Code.ensure_loaded?(Mix) and Mix.env() == :test
+  rescue
+    _ -> false
+  end
 
   # codex PR #408 review CRIT — call `Agent.spawn_from_template_content/4`
   # directly after reading the cc-orchestrator AgentTemplate's content
