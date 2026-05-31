@@ -351,13 +351,40 @@ defmodule Ezagent.Entity.Session do
         # codex PR #408 review CRIT — instantiate via the cc Template
         # Class (`spawn_from_template_content/4`) so the role-bootstrap
         # runs, instead of bypass-spawning via `Agent.spawn_fresh/4`.
-        spawn_orchestrator_via_template_content(
-          candidate_uri,
-          orch_template_uri,
-          instance_name,
-          workspace_uri,
-          owner_uri
-        )
+        #
+        # 2026-05-31 codex-review Q4 — the pre-spawn `check_orchestrator`
+        # above is a TOCTOU window: a concurrent registration of the same
+        # orchestrator URI between this `:not_live` classification and
+        # the template-instantiate makes `Agent.spawn_from_template_content`
+        # ADOPT the existing worker (`fresh? == false`), and the adopted
+        # path SKIPS the lineage + workspace obligations a fresh spawn
+        # establishes. We therefore RE-VERIFY ownership AFTER the spawn
+        # (`finalize_spawned_orchestrator/5`): an adopted worker has its
+        # lineage + bind established idempotently so it carries the SAME
+        # ownership records a fresh one does, and a post-spawn URI that
+        # still does not classify `:owned` is a real foreign claim →
+        # `{:error, _}` (→ caller rollback, fail-loud). No silent success
+        # on an unverified adoption.
+        case spawn_orchestrator_via_template_content(
+               candidate_uri,
+               orch_template_uri,
+               instance_name,
+               workspace_uri,
+               owner_uri
+             ) do
+          {:error, _} = err ->
+            err
+
+          {:ok, ^candidate_uri, outcome, fresh?, degraded_meta} ->
+            finalize_spawned_orchestrator(
+              candidate_uri,
+              owner_uri,
+              workspace_uri,
+              outcome,
+              fresh?,
+              degraded_meta
+            )
+        end
 
       {:foreign, evidence} ->
         # POSITIVE foreign evidence (lineage / workspace POSITIVELY
@@ -365,6 +392,71 @@ defmodule Ezagent.Entity.Session do
         {:error, {:orchestrator_foreign, candidate_uri, evidence}}
     end
   end
+
+  # 2026-05-31 codex-review Q4 — post-spawn ownership re-verification +
+  # adopted-orchestrator lineage/bind establishment.
+  #
+  #   * `fresh? == true`  — `spawn_from_template_content/4` already ran
+  #     `establish_post_spawn_obligations/3` (lineage + workspace bind)
+  #     inside the spawn. We still RE-CHECK to close the race where a
+  #     concurrent claimant overwrote our just-recorded ownership; a
+  #     non-`:owned` result is fail-loud.
+  #   * `fresh? == false` — ADOPTED a worker someone else (or a racing
+  #     create) registered. The adopt path in `spawn_from_template_content/4`
+  #     SKIPS the obligations, so we establish them HERE, idempotently
+  #     (`AgentLineage.record/2` upserts; `WorkspaceRegistry.bind/2`
+  #     overwrites), giving the adopted orchestrator the SAME lineage +
+  #     bind a fresh one has — THEN re-check `:owned`.
+  #
+  # A `check_orchestrator/3` that is not `:owned` after this →
+  # `{:error, {:orchestrator_not_owned_after_spawn, candidate_uri, ev}}`
+  # so the caller (`EzagentDomainChat.create_session/3`) rolls back.
+  defp finalize_spawned_orchestrator(
+         %URI{} = candidate_uri,
+         %URI{} = owner_uri,
+         %URI{} = workspace_uri,
+         outcome,
+         fresh?,
+         degraded_meta
+       ) do
+    unless fresh? do
+      _ = establish_orchestrator_ownership(candidate_uri, owner_uri, workspace_uri)
+    end
+
+    case check_orchestrator(candidate_uri, owner_uri, workspace_uri) do
+      {:owned, ^candidate_uri} ->
+        wrap_orchestrator_ok(candidate_uri, outcome, degraded_meta)
+
+      other ->
+        {:error, {:orchestrator_not_owned_after_spawn, candidate_uri, other}}
+    end
+  end
+
+  # Idempotent ownership records for an ADOPTED orchestrator — the same
+  # two writes `Agent.establish_post_spawn_obligations/3` performs for a
+  # fresh worker, lifted here so the adopt path is not left without them.
+  # Both are upsert/overwrite semantics, so a re-run (or running over a
+  # worker that already had them) is a no-op.
+  defp establish_orchestrator_ownership(
+         %URI{} = orchestrator_uri,
+         %URI{} = owner_uri,
+         %URI{} = workspace_uri
+       ) do
+    if Code.ensure_loaded?(Ezagent.AgentLineage) and
+         function_exported?(Ezagent.AgentLineage, :record, 2) do
+      _ = Ezagent.AgentLineage.record(orchestrator_uri, owner_uri)
+    end
+
+    _ = Ezagent.WorkspaceRegistry.bind(orchestrator_uri, workspace_uri)
+    :ok
+  end
+
+  defp wrap_orchestrator_ok(%URI{} = candidate_uri, outcome, degraded_meta)
+       when map_size(degraded_meta) == 0,
+       do: {:ok, candidate_uri, outcome}
+
+  defp wrap_orchestrator_ok(%URI{} = candidate_uri, outcome, degraded_meta),
+    do: {:ok, candidate_uri, outcome, degraded_meta}
 
   # codex PR #408 review CRIT — call `Agent.spawn_from_template_content/4`
   # directly after reading the cc-orchestrator AgentTemplate's content
@@ -403,15 +495,16 @@ defmodule Ezagent.Entity.Session do
       # `authority` field that `URI.new!` omits, and downstream
       # callers/tests pinned against the URI.new! shape `spawn_fresh/4`
       # used pre-fix).
-      outcome = if Map.get(result, :fresh?, false), do: :created, else: :already_present
+      #
+      # 2026-05-31 codex-review Q4 — surface the raw `fresh?` flag so the
+      # caller (`ensure_orchestrator/3` → `finalize_spawned_orchestrator/5`)
+      # can re-verify ownership and establish lineage/bind on the adopt
+      # path (`fresh? == false`). The 5-tuple is internal to this module.
+      fresh? = Map.get(result, :fresh?, false) == true
+      outcome = if fresh?, do: :created, else: :already_present
+      degraded_meta = Map.take(result, [:role_degraded, :role_degraded_reason])
 
-      case Map.take(result, [:role_degraded, :role_degraded_reason]) do
-        map when map_size(map) == 0 ->
-          {:ok, candidate_uri, outcome}
-
-        degraded_meta ->
-          {:ok, candidate_uri, outcome, degraded_meta}
-      end
+      {:ok, candidate_uri, outcome, fresh?, degraded_meta}
     end
   end
 
