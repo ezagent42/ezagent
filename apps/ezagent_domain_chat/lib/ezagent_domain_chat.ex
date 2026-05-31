@@ -275,8 +275,16 @@ defmodule EzagentDomainChat do
         ok
 
       {:error, reason} ->
-        # Step 9 — minimal rollback of the freshly-created session.
-        rollback_session(session_uri, nil)
+        # Step 9 — rollback of the freshly-created session. No
+        # orchestrator was spawned in THIS arm (the orchestrator-bearing
+        # branch delegates to `ensure_orchestrated_session/4`, which owns
+        # its own rollback), so the orchestrator URI is nil — but we
+        # still pass owner + workspace so any owner cap is revoked.
+        rollback_session(session_uri, nil,
+          owner_uri: effective_owner,
+          workspace_uri: workspace_uri
+        )
+
         {:error, reason}
     end
   end
@@ -292,7 +300,16 @@ defmodule EzagentDomainChat do
     # rollback → {:error,_}).
     case Session.ensure_orchestrator(session_uri, workspace_uri, effective_owner) do
       {:error, reason} ->
-        rollback_session(session_uri, nil)
+        # `ensure_orchestrator/3` self-cleans the orchestrator it spawned
+        # on its own failure paths (Fix Q4 + `spawn_from_template_content`
+        # round-10), so the orchestrator URI is nil here. Still pass owner
+        # + workspace to revoke any owner cap (defensive — none granted
+        # yet at this point).
+        rollback_session(session_uri, nil,
+          owner_uri: effective_owner,
+          workspace_uri: workspace_uri
+        )
+
         {:error, {:orchestrator_ensure_failed, reason}}
 
       ensure_ok ->
@@ -324,8 +341,14 @@ defmodule EzagentDomainChat do
            ready_meta(orchestrator_uri, effective_owner, session_uri, degraded_meta)}
         else
           {:error, reason} ->
-            # Step 9 — rollback including the spawned orchestrator Kind.
-            rollback_session(session_uri, orchestrator_uri)
+            # Step 9 — rollback including the spawned orchestrator Kind +
+            # its registry/lineage/bind/snapshot + the granted caps
+            # (owner restart cap + orchestrator scoped caps), reversed.
+            rollback_session(session_uri, orchestrator_uri,
+              owner_uri: effective_owner,
+              workspace_uri: workspace_uri
+            )
+
             {:error, reason}
         end
     end
@@ -534,30 +557,130 @@ defmodule EzagentDomainChat do
 
   # ── Step 9 — rollback ────────────────────────────────────────────────
 
-  # SPEC §4 step 9 — minimal, idempotent rollback. Terminate the
-  # orchestrator Kind (if spawned) + the Session Kind, unbind the
-  # workspace, delete the snapshot row `Kind.Server.init/1` wrote
-  # synchronously at spawn time (Session.persistence/0 = {:snapshot,
-  # :on_change}). Each step best-effort so the original failure reason
-  # still surfaces. (The 4-store `rollback_fresh_session` enumeration was
-  # removed — atomic structure means little has been committed.)
+  # SPEC §4 step 9 — idempotent rollback that MIRRORS create's writes in
+  # REVERSE (codex-review Q1). By the time a LATE step (cap grant / MCP
+  # register / member join) fails, create has written, for an
+  # orchestrator-bearing session: the orchestrator workspace bind +
+  # orchestrator lineage (`Agent.establish_post_spawn_obligations/3`) +
+  # orchestrator snapshot + MCP registry context + the owner
+  # `OrchestratorAdmin :restart` cap + the orchestrator scoped caps —
+  # PLUS the Session's own bind + snapshot. The pre-Q1 rollback only tore
+  # down the Kinds + Session bind + Session snapshot, leaving the MCP
+  # registry row, the orchestrator lineage/bind/snapshot, and (the
+  # durable one) the owner restart cap behind.
+  #
+  # Reverse order (un-register → un-bind/forget/terminate orchestrator →
+  # revoke caps → tear down Session). Each step best-effort + idempotent
+  # (absent → :ok) so the original failure reason still surfaces and a
+  # double-rollback is harmless. `opts` carries `:owner_uri` +
+  # `:workspace_uri` so the cap revokes can reconstruct the granted caps
+  # by identity-key; absent (the arity-2 unit-test path) → cap revoke is
+  # skipped (nothing was granted in that scenario).
   @doc false
   @spec rollback_session(URI.t(), URI.t() | nil) :: :ok
-  def rollback_session(%URI{} = session_uri, orchestrator_uri) do
+  @spec rollback_session(URI.t(), URI.t() | nil, keyword()) :: :ok
+  def rollback_session(session_uri, orchestrator_uri, opts \\ [])
+
+  def rollback_session(%URI{} = session_uri, orchestrator_uri, opts) when is_list(opts) do
+    owner_uri = Keyword.get(opts, :owner_uri)
+    workspace_uri = Keyword.get(opts, :workspace_uri)
+
     Logger.warning(
       "EzagentDomainChat.create_session: rolling back freshly-created " <>
         "session=#{URI.to_string(session_uri)} after a 4-8 failure — " <>
-        "tearing down orchestrator + Session Kind + workspace binding + " <>
-        "snapshot row (SPEC 2026-05-31 §4 step 9)."
+        "reversing create's writes (MCP unregister + orchestrator " <>
+        "lineage/bind/snapshot/Kind + granted caps + Session Kind/bind/" <>
+        "snapshot) (SPEC 2026-05-31 §4 step 9, codex-review Q1)."
     )
 
+    # 1. Orchestrator-side teardown (only if an orchestrator was spawned).
     if match?(%URI{}, orchestrator_uri) do
+      # 1a. MCP registry context (the step-7 write).
+      safe(fn -> Ezagent.Orchestrator.McpRegistry.unregister(orchestrator_uri) end)
+
+      # 1b. Orchestrator scoped caps (the step-6 grant TO the orchestrator).
+      #     Needs owner + workspace to reconstruct the cap identity-keys.
+      if match?(%URI{}, owner_uri) and match?(%URI{}, workspace_uri) do
+        safe(fn ->
+          Session.revoke_orchestrator_scoped_caps(
+            orchestrator_uri,
+            session_uri,
+            owner_uri,
+            workspace_uri
+          )
+        end)
+      end
+
+      # 1c. Orchestrator Kind + its lineage + workspace binding (the
+      #     spawn's `establish_post_spawn_obligations/3` writes) + its
+      #     own snapshot row.
       _ = Ezagent.Kind.terminate(orchestrator_uri)
+      safe(fn -> Ezagent.WorkspaceRegistry.unbind(orchestrator_uri) end)
+      forget_lineage(orchestrator_uri)
+      safe(fn -> Ezagent.Ecto.KindSnapshot.delete(URI.to_string(orchestrator_uri)) end)
     end
 
+    # 2. Owner `OrchestratorAdmin :restart` cap (the step-6 grant on the
+    #    DURABLE owner User Kind — the residue that outlives Kind
+    #    teardown). Best-effort + idempotent (revoke matches by
+    #    identity-key; an absent cap is a clean no-op).
+    if match?(%URI{}, owner_uri) and match?(%URI{}, workspace_uri) do
+      safe(fn -> revoke_owner_orchestrator_admin_cap(session_uri, owner_uri, workspace_uri) end)
+    end
+
+    # 3. Session Kind + its workspace binding + its snapshot row
+    #    (`Kind.Server.init/1` wrote it synchronously at spawn time —
+    #    Session.persistence/0 = {:snapshot, :on_change}).
     _ = Ezagent.Kind.terminate(session_uri)
     safe(fn -> Ezagent.WorkspaceRegistry.unbind(session_uri) end)
     safe(fn -> Ezagent.Ecto.KindSnapshot.delete(URI.to_string(session_uri)) end)
+    :ok
+  end
+
+  # Idempotent lineage forget for the orchestrator (mirror of
+  # `Agent.undo_fresh_workers/1`'s lineage cleanup). Guarded because
+  # `AgentLineage` may not be loaded in a minimal test boot.
+  defp forget_lineage(%URI{} = uri) do
+    if Code.ensure_loaded?(Ezagent.AgentLineage) and
+         function_exported?(Ezagent.AgentLineage, :forget, 1) do
+      safe(fn -> Ezagent.AgentLineage.forget(uri) end)
+    end
+
+    :ok
+  end
+
+  # Revoke the single owner `OrchestratorAdmin :restart` cap
+  # `grant_owner_orchestrator_admin_cap/3` adds. Mirror of that grant.
+  # Idempotent via `:revoke_cap`'s identity-key match.
+  defp revoke_owner_orchestrator_admin_cap(
+         %URI{} = session_uri,
+         %URI{} = owner_uri,
+         %URI{} = workspace_uri
+       ) do
+    cap = %Ezagent.Capability{
+      kind: :session,
+      behavior: Ezagent.Behavior.OrchestratorAdmin,
+      action: :restart,
+      instance: session_uri,
+      workspace_uri: workspace_uri,
+      granted_by: owner_uri,
+      granted_at: nil
+    }
+
+    target = Ezagent.URI.with_action(owner_uri, :identity, :revoke_cap)
+
+    _ =
+      Invocation.dispatch(%Invocation{
+        target: target,
+        mode: :call,
+        args: %{cap: cap},
+        ctx: %{
+          caller: owner_uri,
+          caps: Ezagent.SystemPrincipal.caps("system://template-materialize"),
+          reply: {:caller_inbox, self()}
+        }
+      })
+
     :ok
   end
 

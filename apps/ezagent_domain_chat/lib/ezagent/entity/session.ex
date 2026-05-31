@@ -802,6 +802,53 @@ defmodule Ezagent.Entity.Session do
     end
   end
 
+  @doc """
+  Revoke the orchestrator's scope-bounded delegation caps — the exact
+  cap set `grant_orchestrator_scoped_caps/3` adds.
+
+  2026-05-31 orchestrator-startup-atomicity §4 step 9 (codex-review Q1)
+  — the rollback inverse of the step-6 grant. Used by
+  `EzagentDomainChat.rollback_session/3` so a late create failure leaves
+  NO scoped-cap residue on the orchestrator entity (in addition to the
+  Kind teardown). Best-effort + idempotent: `:revoke_cap` matches by the
+  cap identity-key (kind/behavior/instance/workspace_uri), so revoking
+  an absent cap is a clean no-op. A dispatch failure is swallowed (the
+  orchestrator Kind + its `:identity` snapshot are torn down anyway —
+  this is belt-and-suspenders for the durable `caps_json` projection).
+
+  `workspace_uri` is taken explicitly (not via `WorkspaceRegistry`)
+  because the binding may already have been unbound by the time rollback
+  reaches this step.
+  """
+  @spec revoke_orchestrator_scoped_caps(URI.t(), URI.t(), URI.t(), URI.t()) :: :ok
+  def revoke_orchestrator_scoped_caps(
+        %URI{} = orchestrator_uri,
+        %URI{} = session_uri,
+        %URI{} = owner_uri,
+        %URI{} = workspace_uri
+      ) do
+    desired = build_desired_caps(orchestrator_uri, session_uri, owner_uri, workspace_uri)
+    target = Ezagent.URI.with_action(orchestrator_uri, :identity, :revoke_cap)
+
+    ctx = %{
+      caller: owner_uri,
+      caps: Ezagent.SystemPrincipal.caps("system://template-materialize"),
+      reply: :ignore
+    }
+
+    Enum.each(desired, fn cap ->
+      _ =
+        Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+          target: target,
+          mode: :call,
+          args: %{cap: cap},
+          ctx: ctx
+        })
+    end)
+
+    :ok
+  end
+
   defp build_desired_caps(
          %URI{} = orchestrator_uri,
          %URI{} = session_uri,
