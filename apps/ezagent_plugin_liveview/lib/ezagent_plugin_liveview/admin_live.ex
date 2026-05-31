@@ -850,20 +850,30 @@ defmodule EzagentPluginLiveview.AdminLive do
   # `:failed` → human-readable text that surfaces the partial-success
   # to the operator. The `flash_error` assign re-uses the LV's existing
   # admin-error banner; a future PR can split this into its own slot.
+  # 2026-05-31 orchestrator-startup-atomicity §8 — the orchestrator status
+  # is now a 2-STATE model: `:ready | :failed`. `:pending` is GONE (the
+  # atomic gate either succeeds or fails-loud → rollback within the 30s
+  # window; there is no half-started "pending" surface). `:degraded` is no
+  # longer a separate STATE either — it is `:ready` + a degraded warning
+  # carried in `orchestrator_error` (`{:role_degraded, _}`), so the happy
+  # `:ready` arm suppresses the banner and the role-degraded notification
+  # flows through the owner inbox (Invariant #9), not the create flash.
   defp orchestrator_flash_text(meta) when is_map(meta) do
     case Map.get(meta, :orchestrator_status) do
       :ready ->
         nil
 
-      :pending ->
-        gettext("Orchestrator pending — refresh in a moment.")
-
       :failed ->
         reason = Map.get(meta, :orchestrator_error)
 
-        gettext("Orchestrator failed: %{reason}; click Restart to retry.",
-          reason: inspect(reason)
-        )
+        # `:no_orchestrator` (plain session) is NOT an error — suppress.
+        if reason == :no_orchestrator do
+          nil
+        else
+          gettext("Orchestrator failed: %{reason}; click Restart to retry.",
+            reason: inspect(reason)
+          )
+        end
 
       _ ->
         nil
@@ -2763,13 +2773,14 @@ defmodule EzagentPluginLiveview.AdminLive do
   end
 
   # codex PR #408 review MED-1 — translate the orchestrator-status meta
-  # into a LV flash assign. `:ready` → no change; `:pending` → info-style
-  # text; `:failed` → error-style text. Both render through the admin
-  # error-banner slot (we re-use `:flash_error` like the
-  # `create_session` event handler at line ~738; a future PR can split
-  # info vs error into separate slots).
+  # into a LV flash assign. 2026-05-31 orchestrator-startup-atomicity §8 —
+  # the status is now a 2-STATE model: `:ready | :failed`. `:ready` → no
+  # change (the `:no_orchestrator` plain-session case is `:failed` with a
+  # benign reason, suppressed); `:failed` → error-style text. `:pending`
+  # is GONE (the atomic gate succeeds or fails-loud within 30s; no
+  # half-started surface).
   #
-  # Public-for-test via `@doc false` so unit tests can exercise the 3
+  # Public-for-test via `@doc false` so unit tests can exercise the
   # branches without booting the full LV (the rehydrate path's first-mount
   # window is a flaky setup to drive otherwise).
   @doc false
@@ -2778,24 +2789,21 @@ defmodule EzagentPluginLiveview.AdminLive do
       :ready ->
         socket
 
-      :pending ->
-        assign(
-          socket,
-          :flash_error,
-          gettext("Orchestrator pending after main-session rehydrate — refresh in a moment.")
-        )
-
       :failed ->
         reason = Map.get(meta, :orchestrator_error)
 
-        assign(
-          socket,
-          :flash_error,
-          gettext(
-            "Orchestrator failed during main-session rehydrate: %{reason}; click Restart to retry.",
-            reason: inspect(reason)
+        if reason == :no_orchestrator do
+          socket
+        else
+          assign(
+            socket,
+            :flash_error,
+            gettext(
+              "Orchestrator failed during main-session rehydrate: %{reason}; click Restart to retry.",
+              reason: inspect(reason)
+            )
           )
-        )
+        end
 
       _ ->
         socket
