@@ -46,9 +46,17 @@ full agent-flavor matrix works end-to-end under live orchestrator dispatch.
 - **Automated** (`apps/*/test/e2e/scenario_33_*` or a cross-app harness): orchestrator
   tool-dispatch creates an agent of each flavor + asserts each round-trips (flavor
   fixtures may stub the provider call where a live provider isn't available in CI).
-- **Live runbook**: real `@orch` Feishu messages create + round-trip all three flavors
-  live; agent-browser screenshot of the Feishu group showing `cc OK` / `codex OK` /
-  `ds OK` (per `feedback_esr_e2e_standards`). This is the true gate.
+- **Live runbook — Feishu-group sync MANDATORY (Standard 3, Allen 2026-06-01)**: real
+  `@orch` messages sent FROM the bound ESR Feishu group create + round-trip all three
+  flavors live; each worker's reply MIRRORS BACK to the group (`FeishuClient.send_text
+  OK (code=0)` in the phx log + the user sees `cc OK` / `codex OK` / `ds OK`). Same
+  gate as Scenario 32's live runbook: exactly one binding per chat, inbound is a REAL
+  Feishu message (not a programmatic dispatch), and a programmatic `send_cursor` read is
+  NOT sufficient. Per `feedback_esr_e2e_standards` Standard 3. This is the true gate.
+- **Provider prerequisites (flag as user-assist if missing)**: the cc / codex / curl
+  worker AgentTemplates must be seeded, and each flavor needs live provider creds
+  (Anthropic via proxy / `codex login` / DeepSeek key). A missing template or cred is a
+  user-assist step, NOT something to silently stub past in the LIVE tier.
 
 ## Cross-references
 

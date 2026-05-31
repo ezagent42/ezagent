@@ -626,3 +626,16 @@ baseline worktree (`54df56c9`) chat run for apples-to-apples diff**.
   a spawn-time credential-freshness preflight that fails loud (or
   refreshes) rather than letting the agent run with a dead token. Until
   fixed, long-lived agents go mute a day after the last login.
+
+- **inbound feishu: disambiguate multi-session chat binding by @-mention (2026-06-01,
+  Allen Q "为什么不能绑定多session")**: the `external_mirror_bindings` data model ALLOWS a
+  chat→N-sessions (intended for OUTBOUND fan-out). But INBOUND
+  (`InboundChatLookup.resolve/1`) fails closed with `:ambiguous_chat_binding` when a
+  chat has 2+ bindings, because it can't decide which session an inbound message
+  targets. Improvement: when the inbound message @-mentions a specific agent (e.g.
+  `@cc_orchestrator-e2e-orch14`), route to the SESSION that agent is a member of —
+  letting one Feishu group host multiple orchestrator sessions, disambiguated by who
+  is @-mentioned. Until then, keep one binding per chat (delete stale rows when a
+  bound session is destroyed — destroying a session should cascade-delete its
+  `external_mirror_bindings` rows; today it doesn't, which is how the orch5/orch14
+  ambiguity arose).

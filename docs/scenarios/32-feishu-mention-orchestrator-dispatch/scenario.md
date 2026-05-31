@@ -67,11 +67,21 @@ and the result is visible back in the Feishu group.
   by dispatching the orchestrator's tool actions and asserting their durable effects,
   and G6 by asserting an ExternalMirror outbound publish. (Does NOT require a live
   claude — exercises the mechanism deterministically.)
-- **Live runbook** (this scenario, run on the branch): a real `@orch` Feishu message
-  → the orchestrator's live claude actually performs the action and the result
-  appears in the Feishu group. Verified per `feedback_esr_e2e_standards`
-  (agent-browser screenshot of the Feishu round-trip). This is the true end-to-end —
-  the automated test alone is NOT sufficient to claim "solved" (lesson 2026-05-31).
+- **Live runbook — Feishu-group sync is MANDATORY (Standard 3, Allen 2026-06-01)**:
+  a real `@orch` message sent FROM the bound ESR Feishu group → the orchestrator's
+  live claude performs the action → the reply MIRRORS BACK and is visible IN THE
+  GROUP. The gate, concretely:
+  1. the session is bound (`ExternalMirror.bind(session, "feishu", chat_id, ctx)` →
+     `{:ok, ...}`; exactly ONE binding per chat — a stale 2nd binding yields
+     `:ambiguous_chat_binding` and fails closed);
+  2. the @mention is sent FROM the Feishu group (real inbound via ws_client), NOT a
+     programmatic `Invocation.dispatch`;
+  3. the reply is visible in the group — `FeishuClient.send_text OK (code=0)
+     chat_id=<group>` in the phx log AND the user sees it.
+  Reading `send_cursor`/sender from the session store is NOT sufficient (lesson
+  2026-05-31: "在飞书 dev chat 啥都没看到" — the test sessions weren't Feishu-bound).
+  ESR Feishu app `cli_a96e7103…`, scenario group `oc_83a4f1ff…` — DISTINCT from the
+  cc-openclaw dev chat. The automated test alone is NOT sufficient to claim "solved".
 
 ## Known blockers this scenario gates the fix for
 
