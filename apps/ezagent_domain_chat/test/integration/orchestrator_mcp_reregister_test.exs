@@ -130,6 +130,43 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpReregisterTest do
       assert URI.to_string(ctx.parent_template_uri) == URI.to_string(session_template_uri)
     end
 
+    test "rebuilds from the PERSISTED TWO-CONTAINER chat slice (transients stripped) — the real regression" do
+      # The sibling test above persists a FLAT chat slice. But a converted
+      # Behavior.Chat (use Ezagent.Lifecycle) persists the TWO-CONTAINER
+      # shape, and the snapshot path strips :transients, so the ON-DISK
+      # :chat value is a single-key %{state: persistent}. This is the shape
+      # production actually writes — and the regression (normalize_slice_view
+      # only unwrapping %{state, transients}, never the persisted single-key
+      # %{state}) made from_orchestrator_uri fail-closed for EVERY real
+      # orchestrator session after a restart. Without the single-key clause
+      # in Ezagent.Kind.normalize_slice_view/1 this assertion fails with
+      # {:error, :orchestrator_not_registered}.
+      session_uri = unique_session_uri()
+      owner_uri = URI.parse("entity://user/default/owner-2c")
+      session_template_uri = URI.parse("template://session/default/owner-2c-team@def456")
+
+      chat_slice =
+        orchestrator_chat_slice(owner_uri: owner_uri, session_template_uri: session_template_uri)
+
+      workspace_uri = Capability.workspace_of(session_uri)
+      orchestrator_uri = Session.derive_orchestrator_uri(session_uri, workspace_uri)
+
+      :ok = KindSnapshot.delete(URI.to_string(session_uri))
+      :ok = McpRegistry.unregister(orchestrator_uri)
+      # Persist the EXACT on-disk shape: :chat wrapped in single-key %{state}
+      # (what strip_transients leaves of the two-container in-memory slice).
+      :ok = Snapshot.save_now(session_uri, Session, %{chat: %{state: chat_slice}})
+      assert McpRegistry.lookup(orchestrator_uri) == :error
+
+      assert {:ok, %McpServer{} = mcp} = McpServer.from_orchestrator_uri(orchestrator_uri),
+             "from_orchestrator_uri must rebuild from the PERSISTED two-container " <>
+               "(single-key %{state}) chat slice — the production shape"
+
+      assert URI.to_string(mcp.session_uri) == URI.to_string(session_uri)
+      assert URI.to_string(mcp.owner_uri) == URI.to_string(owner_uri)
+      assert URI.to_string(mcp.parent_template_uri) == URI.to_string(session_template_uri)
+    end
+
     test "concurrent rebuilds are idempotent — same single cache row, no crash" do
       session_uri = unique_session_uri()
       owner_uri = URI.parse("entity://user/default/owner-idem")
