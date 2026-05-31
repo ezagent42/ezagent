@@ -69,6 +69,14 @@ defmodule EzagentDomainChat.Application do
     # lazy-`init/0` pattern as the AgentBridge registry.
     :ok = Ezagent.Orchestrator.McpRegistry.init()
 
+    # 2026-05-31 orchestrator-startup-atomicity — the
+    # `orchestrator_uri → live-bridge-joined?` durable-state table the
+    # §5 readiness gate POLLS. Written ONLY by `McpChannel.join/3`
+    # (mark) + `terminate/2` (clear) — distinct from `McpRegistry`,
+    # whose read-through rebuild can't tell a live join from a cache
+    # repopulate. Same lazy-`init/0` domain-app pattern.
+    :ok = Ezagent.Orchestrator.LiveJoinRegistry.init()
+
     # Phase 8c PR-J (Allen 2026-05-20) — `session://default/system/main` is no longer
     # a static supervisor child. The first-login wizard at `/` creates
     # the default session via the canonical `EzagentDomainChat.create_session/2`
