@@ -192,6 +192,11 @@ defmodule EzagentPluginFeishu.Client do
     do: {:reply, {:error, :credentials_not_configured}, state}
 
   def handle_call({:send_text, chat_id, text}, _from, state) do
+    Logger.info(
+      "FeishuClient.send_text → POST im/v1/messages receive_id=#{inspect(chat_id)} " <>
+        "text_len=#{byte_size(text)}"
+    )
+
     case ensure_token(state) do
       {:ok, token, new_state} ->
         body = %{
@@ -206,16 +211,27 @@ defmodule EzagentPluginFeishu.Client do
                [{~c"Authorization", String.to_charlist("Bearer #{token}")}]
              ) do
           {:ok, %{"code" => 0}} ->
+            Logger.info("FeishuClient.send_text OK (code=0) chat_id=#{inspect(chat_id)}")
             {:reply, :ok, new_state}
 
           {:ok, %{"code" => code, "msg" => msg}} ->
+            Logger.warning(
+              "FeishuClient.send_text LARK ERROR chat_id=#{inspect(chat_id)} " <>
+                "code=#{code} msg=#{inspect(msg)}"
+            )
             {:reply, {:error, {:lark_error, code, msg}}, new_state}
 
           err ->
+            Logger.warning(
+              "FeishuClient.send_text TRANSPORT ERROR chat_id=#{inspect(chat_id)} err=#{inspect(err)}"
+            )
             {:reply, err, new_state}
         end
 
       err ->
+        Logger.warning(
+          "FeishuClient.send_text TOKEN ERROR chat_id=#{inspect(chat_id)} err=#{inspect(err)}"
+        )
         {:reply, err, state}
     end
   end
