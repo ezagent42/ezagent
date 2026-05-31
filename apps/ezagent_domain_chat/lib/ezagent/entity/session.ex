@@ -607,18 +607,17 @@ defmodule Ezagent.Entity.Session do
           wait_ms = min(@orchestrator_readiness_poll_ms, remaining)
 
           receive do
-            {:orchestrator_ready, %URI{} = ready_uri} ->
-              if URI.to_string(ready_uri) == URI.to_string(candidate_uri) do
-                # Instant-wake path; confirm against the durable state
-                # (mark_joined runs before the broadcast in join/3) and
-                # return ready.
-                unsubscribe_orchestrator_lifecycle()
-                ok
-              else
-                # A DIFFERENT orchestrator's signal — ignore + keep polling
-                # within the SAME deadline (no timeout reset).
-                poll_orchestrator_ready(ok, candidate_uri, deadline)
-              end
+            {:orchestrator_ready, %URI{}} ->
+              # The broadcast is ONLY a wake signal (instant-wake so we
+              # don't sleep the full poll tick). It is NOT proof of
+              # readiness: loop back so the DURABLE
+              # `LiveJoinRegistry.joined?/1` check at the top of
+              # poll_orchestrator_ready/3 is the SOLE authority. A
+              # spurious/stale broadcast for `candidate_uri` (one not
+              # backed by a `mark_joined`) must NOT pass the gate.
+              # codex #505 review MED. (The unsubscribe happens at the
+              # top once `joined?` is true.)
+              poll_orchestrator_ready(ok, candidate_uri, deadline)
           after
             wait_ms ->
               # Poll tick — re-check `joined?/1` (covers the lost-broadcast

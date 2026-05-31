@@ -907,6 +907,15 @@ defmodule EzagentDomainChat do
       safe(fn -> Ezagent.WorkspaceRegistry.unbind(orchestrator_uri) end)
       forget_lineage(orchestrator_uri)
       safe(fn -> Ezagent.Ecto.KindSnapshot.delete(URI.to_string(orchestrator_uri)) end)
+
+      # 1d. Live-join durable readiness marker (codex #505 review HIGH).
+      #     If the gate already saw the orchestrator's bridge join (step 5
+      #     succeeded) and a LATER step 6-8 failed, the `{orchestrator_uri,
+      #     true}` row survives Kind teardown — a retry of the SAME URI
+      #     would then satisfy `LiveJoinRegistry.joined?/1` instantly,
+      #     before the new live bridge actually joins. Clear it so the
+      #     gate re-arms (mirrors `Session.kill_orchestrator/1`).
+      safe(fn -> Ezagent.Orchestrator.LiveJoinRegistry.clear(orchestrator_uri) end)
     end
 
     # 2. Owner `OrchestratorAdmin :restart` cap (the step-6 grant on the
