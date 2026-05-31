@@ -206,13 +206,14 @@ defmodule EzagentDomainChat do
          %URI{} = session_template_uri,
          template_content
        ) do
-    # Step 2 — spawn the Session Kind. `{:already_started}` /
-    # `{:already_registered}` → return existing (idempotent, NO adoption
-    # re-finalize). The orchestrator working copy + caps + MCP context +
-    # member joins are all idempotent, but for an already-existing
-    # session we trust the original create committed them — re-running
-    # would risk a foreign-orchestrator false positive. We return the
-    # existing session with a best-effort orchestrator status read.
+    # Step 2 — spawn the Session Kind. A fresh spawn runs the full
+    # finalize. `{:already_started}` / `{:already_registered}` →
+    # VERIFY COMPLETENESS (codex-review Q2): a crash mid-create can leave
+    # a half-session (Session spawned + bound but no OTU / no caps / no
+    # orchestrator / owner not joined); returning that as success is the
+    # half-start the SPEC forbids. A COMPLETE session is returned
+    # idempotently; an INCOMPLETE one is rolled back fully (§4 step 9)
+    # then RECREATED fresh.
     case Ezagent.Kind.spawn(Session, %{uri: session_uri, owner_uri: effective_owner}) do
       {:ok, _pid} ->
         finalize_fresh_session(
@@ -224,13 +225,180 @@ defmodule EzagentDomainChat do
         )
 
       {:error, {:already_started, _pid}} ->
-        {:ok, session_uri, existing_orchestrator_meta(session_uri, workspace_uri)}
+        verify_or_recreate(
+          session_uri,
+          workspace_uri,
+          effective_owner,
+          session_template_uri,
+          template_content
+        )
 
       {:error, {:already_registered, _}} ->
-        {:ok, session_uri, existing_orchestrator_meta(session_uri, workspace_uri)}
+        verify_or_recreate(
+          session_uri,
+          workspace_uri,
+          effective_owner,
+          session_template_uri,
+          template_content
+        )
 
       {:error, reason} ->
         {:error, reason}
+    end
+  end
+
+  # codex-review Q2 — for an already-existing Session: verify it is a
+  # COMPLETE session; if so return it (idempotent success); if not, roll
+  # it back FULLY (Fix Q1) then RECREATE fresh (re-spawn + full
+  # finalize). Never return an incomplete session as success.
+  defp verify_or_recreate(
+         %URI{} = session_uri,
+         %URI{} = workspace_uri,
+         %URI{} = effective_owner,
+         %URI{} = session_template_uri,
+         template_content
+       ) do
+    orchestrator_template_uri = orchestrator_template_uri_of(template_content)
+
+    if session_complete?(session_uri, workspace_uri, effective_owner, orchestrator_template_uri) do
+      {:ok, session_uri, existing_orchestrator_meta(session_uri, workspace_uri)}
+    else
+      Logger.warning(
+        "EzagentDomainChat.create_session: existing session=" <>
+          "#{URI.to_string(session_uri)} is INCOMPLETE (half-create residue) — " <>
+          "rolling it back fully then recreating fresh (SPEC 2026-05-31 §4 " <>
+          "step 2, codex-review Q2)."
+      )
+
+      orch_uri =
+        if match?(%URI{}, orchestrator_template_uri) do
+          Session.derive_orchestrator_uri(session_uri, workspace_uri)
+        else
+          nil
+        end
+
+      rollback_session(session_uri, orch_uri,
+        owner_uri: effective_owner,
+        workspace_uri: workspace_uri
+      )
+
+      # Give the supervisor a moment to actually terminate the Session
+      # Kind so the re-spawn below gets a clean `:ok` (not another
+      # `:already_started`).
+      _ = await_terminated(session_uri, 2_000)
+
+      recreate_fresh(
+        session_uri,
+        workspace_uri,
+        effective_owner,
+        session_template_uri,
+        template_content
+      )
+    end
+  end
+
+  # Re-spawn the (now-rolled-back) Session Kind fresh and run the full
+  # finalize. A `:already_started` here means the prior Kind has not yet
+  # fully terminated — surfaced as `{:error, _}` (fail-loud) rather than
+  # looping, so a genuinely-stuck Kind doesn't spin.
+  defp recreate_fresh(
+         %URI{} = session_uri,
+         %URI{} = workspace_uri,
+         %URI{} = effective_owner,
+         %URI{} = session_template_uri,
+         template_content
+       ) do
+    case Ezagent.Kind.spawn(Session, %{uri: session_uri, owner_uri: effective_owner}) do
+      {:ok, _pid} ->
+        finalize_fresh_session(
+          session_uri,
+          workspace_uri,
+          effective_owner,
+          session_template_uri,
+          template_content
+        )
+
+      {:error, reason} ->
+        {:error, {:recreate_after_incomplete_failed, reason}}
+    end
+  end
+
+  # Completeness predicate (codex-review Q2). For an orchestrator-bearing
+  # template ALL must hold; for a plain template only bound + owner-member.
+  #
+  #   * workspace bound — `WorkspaceRegistry.lookup(session_uri)` hits;
+  #   * owner is a chat member — `Session.session_member_uris/1` includes
+  #     the owner (the step-8 join ran);
+  #   * (orchestrator only) working-copy OTU set — the step-4
+  #     materialization ran;
+  #   * (orchestrator only) orchestrator registered-or-rebuildable —
+  #     `McpServer.from_orchestrator_uri/1` → {:ok} (the registry row OR
+  #     a durable rebuild succeeds — the step-5/7 outcome).
+  defp session_complete?(
+         %URI{} = session_uri,
+         %URI{} = _workspace_uri,
+         %URI{} = owner_uri,
+         orchestrator_template_uri
+       ) do
+    bound? = match?({:ok, _}, Ezagent.WorkspaceRegistry.lookup(session_uri))
+    owner_member? = owner_uri in Session.session_member_uris(session_uri)
+
+    case orchestrator_template_uri do
+      nil ->
+        # Plain session — bound + owner-member is the whole contract.
+        bound? and owner_member?
+
+      %URI{} ->
+        wc = Session.read_template_working_copy(session_uri)
+        otu_set? = match?(%URI{}, Map.get(wc, :orchestrator_template_uri))
+
+        orchestrator_ok? =
+          if bound? do
+            orch_uri = Session.derive_orchestrator_uri(session_uri, derive_workspace(session_uri))
+
+            match?(
+              {:ok, _},
+              Ezagent.Orchestrator.McpServer.from_orchestrator_uri(orch_uri)
+            )
+          else
+            false
+          end
+
+        bound? and owner_member? and otu_set? and orchestrator_ok?
+    end
+  end
+
+  # The session's bound workspace (for orchestrator URI derivation in the
+  # completeness check). Falls back to the session URI's own workspace
+  # segment when the binding is absent — but in that case `bound?` is
+  # already false, so the orchestrator check is short-circuited anyway.
+  defp derive_workspace(%URI{} = session_uri) do
+    case Ezagent.WorkspaceRegistry.lookup(session_uri) do
+      {:ok, %URI{} = ws} -> ws
+      :error -> Ezagent.Capability.workspace_of(session_uri)
+    end
+  end
+
+  # Best-effort wait for the Session Kind to leave the KindRegistry after
+  # a rollback terminate (so the recreate re-spawn is clean). Bounded
+  # poll; returns `:ok` once gone or `:timeout` after `deadline_ms`.
+  defp await_terminated(%URI{} = session_uri, deadline_ms) do
+    deadline = System.monotonic_time(:millisecond) + deadline_ms
+    do_await_terminated(session_uri, deadline)
+  end
+
+  defp do_await_terminated(%URI{} = session_uri, deadline) do
+    case KindRegistry.lookup(session_uri) do
+      :error ->
+        :ok
+
+      {:ok, _pid} ->
+        if System.monotonic_time(:millisecond) >= deadline do
+          :timeout
+        else
+          Process.sleep(20)
+          do_await_terminated(session_uri, deadline)
+        end
     end
   end
 

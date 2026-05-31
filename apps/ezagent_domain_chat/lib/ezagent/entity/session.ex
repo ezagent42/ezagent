@@ -712,6 +712,40 @@ defmodule Ezagent.Entity.Session do
     end
   end
 
+  @doc """
+  Read the live Session's `:chat` member URIs as a list.
+
+  2026-05-31 orchestrator-startup-atomicity §4 step 2 (codex-review Q2)
+  — used by the completeness check for an already-existing session: an
+  owner that is NOT a chat member is one symptom of a half-create that
+  crashed before the step-8 member join. Reads the same two-container
+  `:chat` slice `read_template_working_copy/1` does (the persistent
+  `:members` map lives under `:state`). Returns `[]` when the Session
+  Kind is not live (it cannot have members if it isn't running).
+  """
+  @spec session_member_uris(URI.t()) :: [URI.t()]
+  def session_member_uris(%URI{} = session_uri) do
+    case Ezagent.KindRegistry.lookup(session_uri) do
+      {:ok, pid} ->
+        chat_slice =
+          pid
+          |> :sys.get_state()
+          |> Map.get(:state, %{})
+          |> Map.get(Ezagent.Behavior.Chat.state_slice(), %{})
+
+        chat_persistent = Map.get(chat_slice, :state, chat_slice)
+
+        chat_persistent
+        |> Map.get(:members, %{})
+        |> Map.keys()
+
+      :error ->
+        []
+    end
+  catch
+    :exit, _ -> []
+  end
+
   # ─────────────────────────────────────────────────────────────────────
   # grant_orchestrator_scoped_caps  (2026-05-31 §4 step 6; codex rev-2
   # HIGH-1 idempotency)

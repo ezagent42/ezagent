@@ -210,6 +210,15 @@ defmodule Ezagent.SystemPrincipal.Catalog do
          Capability.cap(:any, Template, :any),
          Capability.cap(:session, Chat, :any),
          Capability.cap(:user, IdentityAdmin, :grant_cap),
+         # 2026-05-31 orchestrator-startup-atomicity §4 step 9
+         # (codex-review Q1) — rollback is the symmetric INVERSE of the
+         # materialization grant: `EzagentDomainChat.rollback_session/3`
+         # dispatches `identity.revoke_cap` (owner restart cap +
+         # orchestrator scoped caps) under THIS principal. Without the
+         # revoke_cap cap those revokes are denied and the owner restart
+         # cap survives on the durable owner User Kind — exactly the Q1
+         # residue. Symmetric with the grant_cap above.
+         Capability.cap(:user, IdentityAdmin, :revoke_cap),
          Capability.cap(:workspace, Workspace, :any)
        ]},
       {"system://orchestrator-tools",
