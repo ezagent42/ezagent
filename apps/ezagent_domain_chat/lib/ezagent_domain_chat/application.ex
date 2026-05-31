@@ -173,8 +173,14 @@ defmodule EzagentDomainChat.Application do
         # AgentTemplate URI.
         :ok = seed_default_session_template()
 
-        # Phase 8c PR-J — test-only main session seed. See moduledoc.
-        :ok = maybe_seed_main_session_for_tests()
+        # Phase 8c PR-J — test-only main session seed.
+        #
+        # 2026-05-31 orchestrator-startup-atomicity §4 — MOVED to
+        # `EzagentPluginCc.Application.after_boot/0`. The atomic
+        # `create_session/3` rolls back when the orchestrator can't be
+        # ensured, and the orchestrator's `"cc"` flavor is registered by
+        # the cc plugin AFTER this app boots — so seeding here always
+        # tore `main` back down. Same boot-order fix as the echo seed.
 
         # PR-M (Allen 2026-05-20) — admin User Kind is NOT auto-spawned
         # at boot. The static `kind_server_spec(:user_admin, ...)` child
@@ -200,19 +206,30 @@ defmodule EzagentDomainChat.Application do
   # `EzagentDomainChat.create_session/2` facade the wizard uses. In
   # `:dev` and `:prod` this is a no-op — the wizard at `/` creates main
   # on the operator's first login.
-  defp maybe_seed_main_session_for_tests do
+  @doc """
+  Test-only seed of `session://default/system/main`.
+
+  2026-05-31 orchestrator-startup-atomicity §4 — this seed is now
+  invoked from `EzagentPluginCc.Application.after_boot/0` (NOT from this
+  app's `start/2`), because the atomic `create_session/3` rolls the
+  session back when the orchestrator can't be ensured. The orchestrator
+  needs the `"cc"` agent flavor, which the cc plugin registers AFTER
+  `ezagent_domain_chat` boots — so seeding here at chat-boot time always
+  failed with `{:orchestrator_ensure_failed, {:unknown_flavor, "cc"}}`
+  and tore `main` down (the same boot-order race the echo seed hit, now
+  fixed the same way — defer to the plugin's `after_boot`). Idempotent.
+  """
+  @spec maybe_seed_main_session_for_tests() :: :ok
+  def maybe_seed_main_session_for_tests do
     if test_env?() do
       # PR-M (2026-05-20) — `create_session/2` now demand-spawns the
-      # creator via SpawnRegistry before dispatching `chat.join` (see
-      # `join_creator/2`). Admin User Kind is no longer a static child;
-      # the demand-spawn covers the gap so admin appears in
-      # session://default/system/main's members map post-seed.
-      # SPEC #366 (Allen 2026-05-26): `:template_name` is now required.
-      # Pass `"default"` explicitly to preserve the existing
+      # creator via SpawnRegistry before dispatching `chat.join`. Admin
+      # User Kind is no longer a static child; the demand-spawn covers
+      # the gap so admin appears in main's members map post-seed.
+      # SPEC #366 (Allen 2026-05-26): `:template_name` is required. Pass
+      # `"default"` explicitly to preserve the existing
       # `session://default/system/main` URI shape that ~10 test suites
-      # assert against. This is a literal namespace segment, not a
-      # registered template class — the bootstrap seed predates the
-      # Template Registry by design.
+      # assert against.
       case EzagentDomainChat.create_session("main", User.admin_uri(), template_name: "default") do
         # SPEC `2026-05-26-session-create-orchestrator-unified` Gap A —
         # `create_session/3` now returns a 3-tuple including

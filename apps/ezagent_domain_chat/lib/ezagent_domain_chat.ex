@@ -2,7 +2,7 @@ defmodule EzagentDomainChat do
   @moduledoc """
   Top-level facade for the chat plugin (Phase 3b-step 1).
 
-  Provides `create_session/2` to dynamically spawn additional Session
+  Provides `create_session/3` to dynamically spawn additional Session
   Kinds at runtime (admin LV / mix task / external API / first-login
   wizard can call this).
 
@@ -15,11 +15,33 @@ defmodule EzagentDomainChat do
   test environment seeds it via this same facade in
   `EzagentDomainChat.Application` (test-only branch).
 
-  `create_session/2` is the canonical session-creation API: it spawns
-  the Kind, binds it to the creator's workspace (derived structurally
-  from the caller's entity URI per SPEC v3 §3.3), and joins the
-  creator. Idempotent for same short_name — re-call returns the
-  existing URI + (re)joins creator.
+  ## 2026-05-31 — atomic, single-entry session creation
+
+  `create_session/3` is the canonical session-creation API and the
+  **single live entry** (the dead Generator path
+  `Session.spawn_from_template/2` was deleted — SPEC
+  `docs/superpowers/specs/2026-05-31-orchestrator-startup-atomicity-and-slice-unwrap.md`
+  §1/§7). It runs a single fail-loud sequence (§4):
+
+    1. resolve + validate + build the `session://<template>/<ws>/<name>`
+       URI; resolve `template_name` → a real SessionTemplate (fail-loud
+       if absent);
+    2. spawn the Session Kind (`{:already_started}`/`{:already_registered}`
+       → return existing, idempotent, NO adoption re-finalize);
+    3. bind the workspace (one idempotent `WorkspaceRegistry.bind`);
+    4. materialize the orchestrator working-copy fields EARLY — write
+       `orchestrator_template_uri` + `session_template_uri` to the
+       session working copy BEFORE the orchestrator can JOIN. A template
+       with no orchestrator → plain session, skip 5-7;
+    5. ensure the orchestrator (`Session.ensure_orchestrator/3`); ensure
+       FAILURE → rollback → `{:error, _}` (no `:pending`, no
+       `:failed`-alive);
+    6. grant the orchestrator its scoped caps + ONE owner
+       `OrchestratorAdmin :restart` cap;
+    7. register the orchestrator MCP context;
+    8. join `[owner, orchestrator]` as session members;
+    9. on any 4-8 failure: minimal rollback (terminate orchestrator +
+       Session Kind, unbind workspace, delete snapshot row).
   """
 
   alias Ezagent.{Invocation, KindRegistry}
@@ -29,7 +51,8 @@ defmodule EzagentDomainChat do
 
   @doc """
   Spawn a new Session Kind under `EzagentDomainChat.SessionSupervisor`,
-  bind it to the creator's workspace, and join `creator_uri` to it.
+  bind it to the creator's workspace, materialize + ensure its
+  orchestrator atomically, and join the creator + orchestrator.
 
   SPEC v3 §3.6 (Phase 9 PR-7) — sessions are
   `session://<template>/<workspace>/<name>`. `short_name` becomes the
@@ -40,14 +63,14 @@ defmodule EzagentDomainChat do
   admin flows).
 
   `opts[:template_name]` is **required** per SPEC #366 (Allen
-  2026-05-26, `feedback_let_it_crash_no_workarounds`) — the previous
-  silent `"default"` fallback was eliminated. The value becomes the
-  session URI's class segment (`session://<template_name>/<workspace>/<short_name>`)
-  literally — there is NO `Ezagent.TemplateRegistry.lookup/1` resolution
-  here; downstream code treats segment 1 as informational. Operators
-  pass:
-    * `"default"` for the bootstrap session-naming convention (the
-      legacy URI shape ~10 test suites assert against), OR
+  2026-05-26, `feedback_let_it_crash_no_workarounds`). The value becomes
+  the session URI's class segment
+  (`session://<template_name>/<workspace>/<short_name>`) literally AND —
+  2026-05-31 — is resolved to a live `SessionTemplate` Kind in the
+  session's workspace so the orchestrator working copy can be
+  materialized from it. Operators pass:
+    * `"default"` for the bootstrap session-naming convention (resolves
+      to the boot-seeded `template://session/<ws>/default@<hash>`), OR
     * Any key from the current workspace's `session_templates` map
       for tenant flows (LV form sources this directly).
 
@@ -55,32 +78,39 @@ defmodule EzagentDomainChat do
 
   Returns `{:ok, session_uri, meta}` on success where `meta` is
   `%{orchestrator_uri: URI.t() | nil, orchestrator_status: :ready |
-  :pending | :failed, orchestrator_error: term() | nil}` — SPEC
-  `2026-05-26-session-create-orchestrator-unified` Gap A. The
-  `orchestrator_status` field surfaces the result of the auto-spawned
-  orchestrator Agent Kind:
+  :failed, orchestrator_error: term() | nil}`.
+
+  2026-05-31 orchestrator-startup-atomicity §4 — `orchestrator_status`
+  is now a **2-state** shape:
 
     * `:ready` — orchestrator agent is alive (was `:created` or
-      `:already_present` per `Session.ensure_orchestrator/3`)
-    * `:pending` — orchestrator URI reserved but ownership not yet
-      classified; LV should render "pending — refresh in a moment"
-    * `:failed` — orchestrator spawn failed; the session itself is
-      alive and usable, but `orchestrator_error` carries the reason
-      and the LV restart button is the recovery path
+      `:already_present` per `Session.ensure_orchestrator/3`). May carry
+      a non-nil `orchestrator_error` of the form `{:role_degraded,
+      reason}` when the agent is up but its orchestrator skill failed to
+      load (`:ready+degraded`); the agent is still usable.
+    * `:failed` — this arm only appears for a *plain session* (a
+      SessionTemplate with no `orchestrator_template_uri`): there is no
+      orchestrator to bring up, so the meta carries `:failed` with a nil
+      URI to signal "this session has no orchestrator role". An
+      orchestrator *ensure failure* does NOT surface as `:failed` here —
+      it rolls the whole create back and returns `{:error, _}`
+      (fail-loud, no half-started zombie).
 
-  Returns `{:error, reason}` on session-create failure (the orchestrator
-  step is only attempted if session creation + cap grant succeed).
+  Returns `{:error, reason}` when session creation, the workspace bind,
+  OTU materialization, orchestrator ensure, cap grant, or MCP
+  registration fails. Any 4-8 failure rolls back (terminate
+  orchestrator + Session, unbind workspace, delete the snapshot row).
 
   Raises `ArgumentError` if neither `creator_uri` nor
   `opts[:workspace_uri]` is supplied (a `nil` creator with no explicit
   workspace cannot be assigned a workspace structurally).
 
   Idempotent re-spawn of same short_name returns `{:ok, existing_uri, meta}`
-  (via `{:already_started, pid}` → reuse pid).
+  (via `{:already_started, pid}` → reuse pid, NO adoption re-finalize).
   """
   @type create_session_meta :: %{
           orchestrator_uri: URI.t() | nil,
-          orchestrator_status: :ready | :pending | :failed,
+          orchestrator_status: :ready | :failed,
           orchestrator_error: term() | nil
         }
 
@@ -115,149 +145,419 @@ defmodule EzagentDomainChat do
     session_uri =
       Ezagent.URI.new!("session://#{template_name}/#{workspace_name}/#{short_name}")
 
-    # codex PR #409 r1 review HIGH-2 — serialize concurrent create_session
-    # calls per session_uri. Two callers racing on the same URI used to
-    # observe a destructive interleave: A (`:fresh`) hits cap-grant
-    # failure mid-finalize, B (`:adopted`) finishes finalize successfully
-    # and returns `{:ok, _, _}` to its caller; A's rollback then tears
-    # down the Session B's caller observed as live. Wrapping the
-    # spawn+finalize+rollback body in a per-URI `:global.set_lock/3`
-    # forces adopters to wait until the fresh path commits or rolls
-    # back. By the time the second caller takes the lock, the Session
-    # is either alive (B sees `:already_started` → `:adopted` finalize,
-    # idempotent) or fully gone (B sees `{:ok, pid}` → `:fresh`, gets
-    # its own chance to commit). Single-machine BEAM per the project's
-    # standing constraint, so `:global` within one node suffices; the
-    # `[node()]` scope is explicit so a future clustering change does
-    # not silently broaden the lock.
+    # 2026-05-31 orchestrator-startup-atomicity §4 — a thin per-URI lock.
+    # With adoption gone + spawn idempotent, the `:fresh`-rollback vs
+    # `:adopted`-commit interleave that originally justified this lock
+    # (codex #409) no longer exists. We KEEP a thin per-URI lock because
+    # it remains cheap and clearly safe: two callers racing the SAME URI
+    # would otherwise both run the 4-8 setup + a possible rollback,
+    # tearing each other's partial state. Single-machine BEAM per the
+    # project constraint, so `:global` within `[node()]` suffices; the
+    # explicit `[node()]` scope keeps a future clustering change from
+    # silently broadening the lock.
     lock_id = {{:ezagent_domain_chat, :create_session, URI.to_string(session_uri)}, self()}
 
     try do
       true = :global.set_lock(lock_id, [node()])
-      do_create_session(session_uri, workspace_uri, creator_uri)
+      do_create_session(session_uri, workspace_uri, creator_uri, template_name)
     after
       _ = :global.del_lock(lock_id, [node()])
     end
   end
 
-  defp do_create_session(%URI{} = session_uri, %URI{} = workspace_uri, creator_uri) do
-    # V1 prevention (Allen 2026-05-21): route via Ezagent.Kind.spawn/2.
-    # Session Kind declares EzagentDomainChat.SessionSupervisor via
-    # supervisor/0 — destination preserved.
-    #
-    # RFC #402 (Allen 2026-05-26) — thread the creator URI as
-    # `owner_uri` so `Behavior.Chat.init_slice/1` records it on the
-    # session's `:chat` slice. The Generator path
-    # (`Session.spawn_from_template/2`) does the same; this brings the
-    # direct-create path to parity. Falls back to the bootstrap admin
-    # for system-internal session creates (`creator_uri == nil`);
-    # `data_owner/1` then routes through `Session.owner/1` so the
-    # restart-cap grant flows correctly.
+  def create_session(_short_name, _creator, _opts), do: {:error, :short_name_required}
+
+  # The atomic create_session flow (SPEC §4). A single fail-loud
+  # sequence; any 4-8 failure rolls back the freshly-created session.
+  defp do_create_session(
+         %URI{} = session_uri,
+         %URI{} = workspace_uri,
+         creator_uri,
+         template_name
+       )
+       when is_binary(template_name) do
+    # RFC #402 (Allen 2026-05-26) — thread the creator URI as `owner_uri`
+    # so `Behavior.Chat.init_slice/1` records it on the session's `:chat`
+    # slice. Falls back to the bootstrap admin for system-internal
+    # creates (`creator_uri == nil`).
     effective_owner = creator_uri || User.admin_uri()
-    result = Ezagent.Kind.spawn(Session, %{uri: session_uri, owner_uri: effective_owner})
 
-    # codex PR #408 r2 review HIGH-1 — track whether THIS call freshly
-    # created the Session Kind so finalize-step failures can roll the
-    # session back. Round-1 only fixed the swallow + short-circuit; the
-    # residual leak (live Session + workspace bind + creator-join left
-    # behind on cap-grant failure) needed the freshness signal too.
-    {session_outcome, finalize_result} =
-      case result do
-        {:ok, _pid} ->
-          {:fresh, finalize_session_create(session_uri, workspace_uri, effective_owner)}
+    # Step 1b — resolve `template_name` → a real SessionTemplate in the
+    # session's workspace, fail-loud if absent (SPEC §4 step 1).
+    case resolve_session_template!(template_name, workspace_uri) do
+      {:error, _} = err ->
+        err
 
-        # `:already_started` = same child spec already in supervisor's children
-        # `:already_registered` = Kind.Server.init crashed on KindRegistry.put_new
-        # conflict (URI claimed by another pid, possibly outside this supervisor).
-        # Both indicate "session exists" — return success + re-bind workspace
-        # (idempotent ETS overwrite) + re-attempt join (cast is idempotent on
-        # members map).
-        {:error, {:already_started, _pid}} ->
-          {:adopted, finalize_session_create(session_uri, workspace_uri, effective_owner)}
+      {:ok, session_template_uri, template_content} ->
+        do_create_session_with_template(
+          session_uri,
+          workspace_uri,
+          effective_owner,
+          session_template_uri,
+          template_content
+        )
+    end
+  end
 
-        {:error, {:already_registered, _}} ->
-          {:adopted, finalize_session_create(session_uri, workspace_uri, effective_owner)}
+  defp do_create_session_with_template(
+         %URI{} = session_uri,
+         %URI{} = workspace_uri,
+         %URI{} = effective_owner,
+         %URI{} = session_template_uri,
+         template_content
+       ) do
+    # Step 2 — spawn the Session Kind. `{:already_started}` /
+    # `{:already_registered}` → return existing (idempotent, NO adoption
+    # re-finalize). The orchestrator working copy + caps + MCP context +
+    # member joins are all idempotent, but for an already-existing
+    # session we trust the original create committed them — re-running
+    # would risk a foreign-orchestrator false positive. We return the
+    # existing session with a best-effort orchestrator status read.
+    case Ezagent.Kind.spawn(Session, %{uri: session_uri, owner_uri: effective_owner}) do
+      {:ok, _pid} ->
+        finalize_fresh_session(
+          session_uri,
+          workspace_uri,
+          effective_owner,
+          session_template_uri,
+          template_content
+        )
 
-        {:error, reason} ->
-          {:spawn_failed, {:error, reason}}
-      end
+      {:error, {:already_started, _pid}} ->
+        {:ok, session_uri, existing_orchestrator_meta(session_uri, workspace_uri)}
 
-    case finalize_result do
-      {:ok, _, _} = ok ->
-        ok
+      {:error, {:already_registered, _}} ->
+        {:ok, session_uri, existing_orchestrator_meta(session_uri, workspace_uri)}
 
       {:error, reason} ->
-        # codex PR #408 r2 review HIGH-1 — if THIS call freshly created
-        # the Session Kind and finalize_session_create failed (e.g.
-        # cap-grant denial), tear it down so the caller observes a
-        # CLEAN `{:error, _}` rather than a residue (live Session with
-        # workspace binding + creator-join, no orchestrator, no
-        # restart-cap on the owner). An adopted session is left alone
-        # — finalize is idempotent on the adoption path, and tearing
-        # down a session WE didn't create would punish a different
-        # caller's setup.
-        if session_outcome == :fresh do
-          rollback_fresh_session(session_uri, effective_owner)
-        end
-
         {:error, reason}
     end
   end
 
-  # codex PR #408 r2 review HIGH-1 — tear down the partial state
-  # `finalize_session_create/3` built before failing. Best-effort: each
-  # step swallows its own errors so the original failure reason from
-  # the caller still surfaces. Operator-visible audit lives in the
-  # Logger.warning the caller's `{:error, _}` produced upstream.
-  #
-  # codex PR #409 r1 review LOW — exposed as `@doc false` (instead of
-  # `defp`) so the rollback invariants (Kind terminated + workspace
-  # unbound + kind_snapshots row deleted) can be exercised directly as
-  # a deterministic unit test. The integration path through
-  # `create_session/3` cannot trigger this rollback for the
-  # bare-user-creates-own-session case because `OrchestratorAdmin`'s
-  # `data_owner/1` resolves to the session owner (the bare user
-  # themselves), so the `IdentityAdmin.check_grant_authorized` cond
-  # `caller == owner` short-circuits to `:ok`. Direct unit invocation
-  # bypasses that architectural quirk and asserts rollback's own
-  # contract (codex r1 LOW).
-  @doc false
-  @spec rollback_fresh_session(URI.t(), URI.t()) :: :ok
-  def rollback_fresh_session(%URI{} = session_uri, %URI{} = creator_uri) do
-    require Logger
+  # Steps 3-9 for a freshly-spawned Session Kind. Any failure rolls back.
+  defp finalize_fresh_session(
+         session_uri,
+         workspace_uri,
+         effective_owner,
+         session_template_uri,
+         template_content
+       ) do
+    orchestrator_template_uri = orchestrator_template_uri_of(template_content)
 
+    result =
+      with :ok <- Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri),
+           :ok <-
+             materialize_orchestrator_working_copy(
+               session_uri,
+               session_template_uri,
+               orchestrator_template_uri
+             ) do
+        case orchestrator_template_uri do
+          nil ->
+            # Step 4 — plain session (no orchestrator). Join the creator
+            # only; skip 5-7.
+            with :ok <- join_session_members(session_uri, [effective_owner]) do
+              {:ok, session_uri, plain_session_meta()}
+            end
+
+          %URI{} ->
+            ensure_orchestrated_session(
+              session_uri,
+              workspace_uri,
+              effective_owner,
+              session_template_uri
+            )
+        end
+      end
+
+    case result do
+      {:ok, _, _} = ok ->
+        ok
+
+      {:error, reason} ->
+        # Step 9 — minimal rollback of the freshly-created session.
+        rollback_session(session_uri, nil)
+        {:error, reason}
+    end
+  end
+
+  # Steps 5-8 for an orchestrator-bearing session.
+  defp ensure_orchestrated_session(
+         session_uri,
+         workspace_uri,
+         effective_owner,
+         session_template_uri
+       ) do
+    # Step 5 — ensure orchestrator (2-way ownership; ensure failure →
+    # rollback → {:error,_}).
+    case Session.ensure_orchestrator(session_uri, workspace_uri, effective_owner) do
+      {:error, reason} ->
+        rollback_session(session_uri, nil)
+        {:error, {:orchestrator_ensure_failed, reason}}
+
+      ensure_ok ->
+        {orchestrator_uri, degraded_meta} = decompose_ensure(ensure_ok)
+
+        # Steps 6-8.
+        with :ok <-
+               Session.grant_orchestrator_scoped_caps(
+                 orchestrator_uri,
+                 session_uri,
+                 effective_owner
+               ),
+             :ok <-
+               grant_owner_orchestrator_admin_cap(
+                 session_uri,
+                 effective_owner,
+                 workspace_uri
+               ),
+             :ok <-
+               Session.register_orchestrator_mcp_context(
+                 orchestrator_uri,
+                 session_uri,
+                 workspace_uri,
+                 effective_owner,
+                 session_template_uri
+               ),
+             :ok <- join_session_members(session_uri, [effective_owner, orchestrator_uri]) do
+          {:ok, session_uri,
+           ready_meta(orchestrator_uri, effective_owner, session_uri, degraded_meta)}
+        else
+          {:error, reason} ->
+            # Step 9 — rollback including the spawned orchestrator Kind.
+            rollback_session(session_uri, orchestrator_uri)
+            {:error, reason}
+        end
+    end
+  end
+
+  # ── Step 1b — SessionTemplate resolution ─────────────────────────────
+
+  # Resolve `template_name` → a live SessionTemplate Kind in
+  # `workspace_uri`, then read its content. SessionTemplates are
+  # content-addressed (`template://session/<ws>/<name>@<hash>`); we find
+  # the live Kind whose name segment equals `template_name`. Fail-loud
+  # (SPEC §4 step 1) — the boot seed (`"default"` under `workspace://system`)
+  # + tenant `add_template` are the population paths.
+  defp resolve_session_template!(template_name, %URI{} = workspace_uri)
+       when is_binary(template_name) do
+    workspace_name = workspace_name_of!(workspace_uri)
+
+    case find_session_template_uri(template_name, workspace_name) do
+      {:ok, %URI{} = session_template_uri} ->
+        # Demand-spawn the SessionTemplate Kind (it may have been seeded
+        # at boot but not be live in this process's KindRegistry view —
+        # e.g. resolved via the snapshot store). `ensure_template_alive`
+        # is the kept helper for this.
+        with {:ok, _pid} <- Session.ensure_template_alive(session_template_uri),
+             {:ok, content} <- Session.read_template_content(session_template_uri) do
+          {:ok, session_template_uri, content}
+        else
+          {:error, reason} ->
+            {:error, {:session_template_not_readable, template_name, reason}}
+        end
+
+      :error ->
+        {:error, {:session_template_not_found, template_name, workspace_name}}
+    end
+  end
+
+  # Resolve `template://session/<ws>/<name>@<hash>` (any hash) whose
+  # `<name>` matches. SessionTemplates are content-addressed (a given
+  # name+content is one URI); any match is returned. Checks the live
+  # `KindRegistry` first, then the durable snapshot store (the boot seed
+  # writes a snapshot row but the Kind may not be live in this view).
+  defp find_session_template_uri(template_name, workspace_name) do
+    prefix = "template://session/#{workspace_name}/#{template_name}@"
+
+    live =
+      KindRegistry.list_all()
+      |> Enum.find_value(false, fn {uri_str, _pid} ->
+        if String.starts_with?(uri_str, prefix), do: {:ok, Ezagent.URI.new!(uri_str)}, else: false
+      end)
+
+    cond do
+      live != false -> live
+      true -> find_session_template_uri_in_snapshots(prefix)
+    end
+  end
+
+  defp find_session_template_uri_in_snapshots(prefix) do
+    Ezagent.Ecto.KindSnapshot.list_all()
+    |> Enum.find_value(:error, fn %{uri: uri_str} ->
+      if is_binary(uri_str) and String.starts_with?(uri_str, prefix) do
+        {:ok, Ezagent.URI.new!(uri_str)}
+      else
+        false
+      end
+    end)
+  rescue
+    # DB unavailable — the live registry was already checked; treat as
+    # not-found so the caller fails loud.
+    _ -> :error
+  end
+
+  defp orchestrator_template_uri_of(template_content) when is_map(template_content) do
+    case Map.get(template_content, :orchestrator_template_uri) ||
+           Map.get(template_content, "orchestrator_template_uri") do
+      %URI{} = uri ->
+        uri
+
+      uri_str when is_binary(uri_str) and uri_str != "" ->
+        Ezagent.URI.new!(uri_str)
+
+      _ ->
+        nil
+    end
+  end
+
+  # ── Step 4 — early OTU materialization ───────────────────────────────
+
+  # Write `orchestrator_template_uri` + `session_template_uri` to the
+  # session's durable working copy NOW, before the orchestrator can JOIN
+  # (SPEC §4 step 4; codex rev3 Q3 — this narrow early write is safe, it
+  # needs only template content). Replaces the deleted Generator
+  # `merge_working_copy/6` for the OTU fields. For a plain session
+  # (no OTU) we still record `session_template_uri` for provenance.
+  defp materialize_orchestrator_working_copy(
+         %URI{} = session_uri,
+         %URI{} = session_template_uri,
+         orchestrator_template_uri
+       ) do
+    prior = Session.read_template_working_copy(session_uri)
+
+    working_copy =
+      prior
+      |> Map.put(:orchestrator_template_uri, orchestrator_template_uri)
+      |> Map.put(:session_template_uri, session_template_uri)
+
+    case Ezagent.Behavior.Chat.system_set_working_copy(session_uri, working_copy) do
+      {:ok, _} -> :ok
+      {:error, _} = err -> err
+      other -> {:error, {:unexpected_set_working_copy_result, other}}
+    end
+  end
+
+  # ── Step 6 — owner OrchestratorAdmin :restart cap (the single grant) ──
+
+  # 2026-05-31 orchestrator-startup-atomicity §4 step 6 — the SINGLE
+  # owner `OrchestratorAdmin :restart` grant (the duplicate at
+  # session.ex:1722 was deleted). The cap is what the LV's
+  # `OrchestratorHealthCard` consults to gate the Restart button.
+  # Idempotent via the named `Session.cap_equal_ignoring_metadata?/2`
+  # (the inlined `has_equiv?` was dropped).
+  defp grant_owner_orchestrator_admin_cap(
+         %URI{} = session_uri,
+         %URI{} = owner_uri,
+         %URI{} = workspace_uri
+       ) do
+    want = %Ezagent.Capability{
+      kind: :session,
+      behavior: Ezagent.Behavior.OrchestratorAdmin,
+      action: :restart,
+      instance: session_uri,
+      workspace_uri: workspace_uri,
+      granted_by: owner_uri,
+      granted_at: nil
+    }
+
+    current = Ezagent.Identity.list_caps_for(owner_uri)
+
+    if Enum.any?(current, &Session.cap_equal_ignoring_metadata?(&1, want)) do
+      :ok
+    else
+      target = Ezagent.URI.with_action(owner_uri, :identity, :grant_cap)
+      cap = %{want | granted_at: DateTime.utc_now()}
+
+      result =
+        Invocation.dispatch(%Invocation{
+          target: target,
+          mode: :call,
+          args: %{cap: cap},
+          # SPEC caps-cleanup-v1 §4.4 — granting an ownership cap at
+          # session-create time is template-materialization-equivalent;
+          # runs under `system://template-materialize` (closed Catalog).
+          ctx: %{
+            caller: owner_uri,
+            caps: Ezagent.SystemPrincipal.caps("system://template-materialize"),
+            reply: {:caller_inbox, self()}
+          }
+        })
+
+      case result do
+        {:ok, _} -> :ok
+        :ok -> :ok
+        {:error, reason} -> {:error, {:orchestrator_admin_cap_grant_failed, reason}}
+        other -> {:error, {:orchestrator_admin_cap_grant_unexpected, other}}
+      end
+    end
+  end
+
+  # ── Step 8 — member join (one helper over a member list) ─────────────
+
+  # 2026-05-31 orchestrator-startup-atomicity §4 step 8 — ONE helper
+  # joining each member, merging the deleted `join_creator/2` +
+  # `auto_join_session_members/3`. Both dispatched `chat.join` as
+  # `system://session-internal`; this unifies them. `:call` mode so
+  # failures are observable (codex r1 HIGH-2) — a failed join aborts the
+  # create (the rollback then tears the session down). Demand-spawn each
+  # member's Kind first (idempotent) — `chat.join` requires it alive.
+  defp join_session_members(%URI{} = session_uri, members) when is_list(members) do
+    target = Ezagent.URI.with_action(session_uri, :chat, :join)
+
+    Enum.reduce_while(members, :ok, fn %URI{} = member_uri, :ok ->
+      _ = Ezagent.SpawnRegistry.spawn(member_uri)
+
+      result =
+        Invocation.dispatch(%Invocation{
+          target: target,
+          mode: :call,
+          args: %{member: member_uri},
+          # SPEC caps-cleanup-v1 §4.4 — Session slice-internal member
+          # bookkeeping. The `system://session-internal` principal holds
+          # the `cap(:any, Chat, :any)` cap step 5.5 checks.
+          ctx: %{
+            caller: Ezagent.SystemPrincipal.uri("session-internal"),
+            caps: Ezagent.SystemPrincipal.caps("system://session-internal"),
+            reply: {:caller_inbox, self()}
+          }
+        })
+
+      case result do
+        :ok -> {:cont, :ok}
+        {:ok, _} -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, {:member_join_failed, member_uri, reason}}}
+        other -> {:halt, {:error, {:member_join_unexpected, member_uri, other}}}
+      end
+    end)
+  end
+
+  # ── Step 9 — rollback ────────────────────────────────────────────────
+
+  # SPEC §4 step 9 — minimal, idempotent rollback. Terminate the
+  # orchestrator Kind (if spawned) + the Session Kind, unbind the
+  # workspace, delete the snapshot row `Kind.Server.init/1` wrote
+  # synchronously at spawn time (Session.persistence/0 = {:snapshot,
+  # :on_change}). Each step best-effort so the original failure reason
+  # still surfaces. (The 4-store `rollback_fresh_session` enumeration was
+  # removed — atomic structure means little has been committed.)
+  @doc false
+  @spec rollback_session(URI.t(), URI.t() | nil) :: :ok
+  def rollback_session(%URI{} = session_uri, orchestrator_uri) do
     Logger.warning(
       "EzagentDomainChat.create_session: rolling back freshly-created " <>
-        "session=#{URI.to_string(session_uri)} after finalize failure — " <>
-        "tearing down Kind + workspace binding so the caller does not " <>
-        "leak partial state (codex PR #408 r2 HIGH-1)."
+        "session=#{URI.to_string(session_uri)} after a 4-8 failure — " <>
+        "tearing down orchestrator + Session Kind + workspace binding + " <>
+        "snapshot row (SPEC 2026-05-31 §4 step 9)."
     )
 
-    # Terminate the Session Kind (no other process owns its lifecycle —
-    # we just created it).
+    if match?(%URI{}, orchestrator_uri) do
+      _ = Ezagent.Kind.terminate(orchestrator_uri)
+    end
+
     _ = Ezagent.Kind.terminate(session_uri)
-
-    # Unbind workspace (idempotent ETS delete).
     safe(fn -> Ezagent.WorkspaceRegistry.unbind(session_uri) end)
-
-    # codex PR #409 r1 review HIGH-1 — delete the kind_snapshots row
-    # `Kind.Server.init/1` wrote synchronously at spawn time
-    # (Session.persistence/0 = {:snapshot, :on_change}, so the initial
-    # slice landed in DB the moment the GenServer reached
-    # `KindRegistry.put_new` — well before this rollback path). Without
-    # this delete, the row outlives the dead Kind: next boot's
-    # `ReadyGate` replays every snapshot via `KindSnapshot.list_all/0`,
-    # which would resurrect a session whose `create_session/3` failed
-    # cap-grant — defeating the whole rollback. Wrapped in `safe/1` per
-    # the existing best-effort teardown contract: the Kind is already
-    # terminated, an orphan row is the worst-case fallback and the
-    # original `{:error, _}` reason still surfaces to the caller.
     safe(fn -> Ezagent.Ecto.KindSnapshot.delete(URI.to_string(session_uri)) end)
-
-    # Creator join — we don't have an `unjoin` primitive and the Session
-    # is being torn down anyway, so the slice goes away with the Kind.
-    # No additional cleanup needed for chat.join's cast side effects.
-    _ = creator_uri
     :ok
   end
 
@@ -269,113 +569,66 @@ defmodule EzagentDomainChat do
     _, _ -> :error
   end
 
-  def create_session(_short_name, _creator, _opts), do: {:error, :short_name_required}
+  # ── Meta-map builders + ensure-result decomposition ──────────────────
 
-  # Shared finalization for the three success branches of the Session
-  # spawn step. Binds workspace, joins creator, grants the
-  # OrchestratorAdmin :restart cap, then auto-spawns the orchestrator
-  # Agent Kind (SPEC `2026-05-26-session-create-orchestrator-unified`
-  # Gap A).
-  #
-  # Returns `{:ok, session_uri, meta}` where `meta` carries the
-  # orchestrator status. `:ok` from the spawn step (any of `:created`,
-  # `:already_present`) yields `:ready`; `:partial` yields `:pending`;
-  # `:error` yields `:failed` WITH the session still alive — the cap is
-  # already granted, so the operator can click Restart in LV. This is
-  # NOT a silent fallback per `feedback_let_it_crash_no_workarounds`:
-  # the meta map structurally surfaces the failure so callers MUST
-  # render it (Invariant #9 — no silent drops at user-facing surfaces).
-  defp finalize_session_create(session_uri, workspace_uri, effective_owner) do
-    # codex PR #408 review HIGH-1 — convert the linear `:ok = ...` chain
-    # to a `with` so cap-grant failure short-circuits BEFORE the
-    # orchestrator-ensure step. Pre-fix the cap grant's dispatch result
-    # was discarded via `_ = Invocation.dispatch(...)` and the helper
-    # unconditionally returned `:ok`; a denied grant therefore allowed
-    # `ensure_orchestrator_meta/3` to fire anyway, producing an
-    # orchestrator under a Session whose owner could not actually drive
-    # Restart. SPEC requires a failed grant to surface as
-    # `{:error, reason}` and skip orchestrator spawn.
-    with :ok <- Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri),
-         :ok <- join_creator(session_uri, effective_owner),
-         :ok <- grant_owner_orchestrator_admin_cap(session_uri, effective_owner, workspace_uri) do
-      meta = ensure_orchestrator_meta(session_uri, workspace_uri, effective_owner)
-      {:ok, session_uri, meta}
-    end
+  # `Session.ensure_orchestrator/3` returns `{:ok, uri, outcome}` or
+  # `{:ok, uri, outcome, %{role_degraded: ...}}`. Decompose into the
+  # URI + (possibly empty) degraded meta.
+  defp decompose_ensure({:ok, %URI{} = uri, _outcome, degraded_meta}) when is_map(degraded_meta),
+    do: {uri, degraded_meta}
+
+  defp decompose_ensure({:ok, %URI{} = uri, _outcome}), do: {uri, %{}}
+
+  # `:ready` (+ optional `:role_degraded` surfacing per Invariant #9).
+  defp ready_meta(
+         %URI{} = orch_uri,
+         owner_uri,
+         session_uri,
+         %{role_degraded: true} = degraded_meta
+       ) do
+    notify_orchestrator_role_degraded(owner_uri, session_uri, orch_uri, degraded_meta)
+
+    %{
+      orchestrator_uri: orch_uri,
+      orchestrator_status: :ready,
+      orchestrator_error: {:role_degraded, Map.get(degraded_meta, :role_degraded_reason)}
+    }
   end
 
-  # Translate `Session.ensure_orchestrator/3`'s return shapes to the
-  # public meta map. The shapes (per the @spec on
-  # `Session.ensure_orchestrator/3`):
-  #
-  #   {:ok, orch_uri, :created | :already_present}        → :ready
-  #   {:ok, orch_uri, _outcome, %{role_degraded: true,..}}→ :ready (degraded)
-  #   {:partial, %{orchestrator_pending: uri}}            → :pending
-  #   {:error, reason}                                    → :failed (logged)
-  #
-  # codex PR #408 review HIGH-3 — a `:role_degraded` flag from the cc
-  # Template Class (orchestrator-skill-copy failure) keeps the status at
-  # `:ready` (the agent IS alive) but populates `orchestrator_error`
-  # with the degraded reason AND emits a notification to the owner so
-  # Invariant #9 (no silent drops at user-facing surfaces) is honored.
-  defp ensure_orchestrator_meta(session_uri, workspace_uri, owner_uri) do
-    # codex PR #408 review HIGH-3 — call the 4-tuple-capable variant so
-    # the role-bootstrap degradation surfaces in the meta map per
-    # Invariant #9.
-    case Session.ensure_orchestrator_with_meta(session_uri, workspace_uri, owner_uri) do
-      {:ok, %URI{} = orch_uri, _outcome, %{role_degraded: true} = degraded_meta} ->
-        notify_orchestrator_role_degraded(owner_uri, session_uri, orch_uri, degraded_meta)
+  defp ready_meta(%URI{} = orch_uri, _owner_uri, _session_uri, _degraded_meta) do
+    %{orchestrator_uri: orch_uri, orchestrator_status: :ready, orchestrator_error: nil}
+  end
 
-        %{
-          orchestrator_uri: orch_uri,
-          orchestrator_status: :ready,
-          orchestrator_error: {:role_degraded, Map.get(degraded_meta, :role_degraded_reason)}
-        }
+  # Plain session — no orchestrator role. `:failed` with a nil URI is the
+  # 2-state contract's "no orchestrator" signal (NOT an error; the
+  # session is valid + usable).
+  defp plain_session_meta do
+    %{orchestrator_uri: nil, orchestrator_status: :failed, orchestrator_error: :no_orchestrator}
+  end
 
-      {:ok, %URI{} = orch_uri, _outcome} ->
-        %{
-          orchestrator_uri: orch_uri,
-          orchestrator_status: :ready,
-          orchestrator_error: nil
-        }
+  # Best-effort orchestrator status for an idempotent re-create of an
+  # already-existing session. We do not re-run setup; we read whether the
+  # orchestrator Agent Kind is live.
+  defp existing_orchestrator_meta(%URI{} = session_uri, %URI{} = workspace_uri) do
+    orch_uri = Session.derive_orchestrator_uri(session_uri, workspace_uri)
 
-      {:ok, %URI{} = orch_uri, _outcome, _meta} ->
-        # Forward-compat: an `{:ok, _, _, _}` shape without role_degraded
-        # is still `:ready` with no error.
-        %{
-          orchestrator_uri: orch_uri,
-          orchestrator_status: :ready,
-          orchestrator_error: nil
-        }
+    case KindRegistry.lookup(orch_uri) do
+      {:ok, _pid} ->
+        %{orchestrator_uri: orch_uri, orchestrator_status: :ready, orchestrator_error: nil}
 
-      {:partial, %{orchestrator_pending: %URI{} = pending_uri}} ->
-        %{
-          orchestrator_uri: pending_uri,
-          orchestrator_status: :pending,
-          orchestrator_error: nil
-        }
-
-      {:error, reason} ->
-        Logger.warning(
-          "EzagentDomainChat.create_session: orchestrator spawn failed for " <>
-            "session=#{URI.to_string(session_uri)}: #{inspect(reason)} — " <>
-            "session is alive, operator may click Restart in LV to retry " <>
-            "(SPEC 2026-05-26-session-create-orchestrator-unified Gap A)"
-        )
-
+      :error ->
         %{
           orchestrator_uri: nil,
           orchestrator_status: :failed,
-          orchestrator_error: reason
+          orchestrator_error: :no_orchestrator
         }
     end
   end
 
   # codex PR #408 review HIGH-3 — notify the session owner that the
   # orchestrator's role-bootstrap (skill copy / CLAUDE.md hint) failed.
-  # The agent itself is alive; the orchestrator-specific UX is
-  # degraded. Best-effort: a notify failure logs but never bubbles up
-  # past the meta map (the orchestrator IS up — the notification is the
-  # UX surfacing, not the source of truth).
+  # The agent itself is alive; the orchestrator-specific UX is degraded.
+  # Best-effort: a notify failure logs but never bubbles up.
   defp notify_orchestrator_role_degraded(
          %URI{scheme: "entity", host: "user"} = owner_uri,
          %URI{} = session_uri,
@@ -419,8 +672,7 @@ defmodule EzagentDomainChat do
     :ok
   end
 
-  # Non-user owner (e.g. system principal or agent) — no inbox to notify;
-  # the Logger warning above is the audit trail.
+  # Non-user owner (e.g. system principal or agent) — no inbox to notify.
   defp notify_orchestrator_role_degraded(_owner, %URI{} = session_uri, %URI{} = orch_uri, meta) do
     reason = Map.get(meta, :role_degraded_reason)
 
@@ -433,9 +685,8 @@ defmodule EzagentDomainChat do
     :ok
   end
 
-  # workspace://<name> → "<name>". Raises ArgumentError if the URI
-  # isn't a bare workspace URI (helps catch passing entity / session
-  # URIs by accident).
+  # workspace://<name> → "<name>". Raises ArgumentError if the URI isn't a
+  # bare workspace URI (helps catch passing entity / session URIs).
   defp workspace_name_of!(%URI{scheme: "workspace", host: name}) when is_binary(name),
     do: name
 
@@ -444,11 +695,6 @@ defmodule EzagentDomainChat do
 
   # SPEC #366 (Allen 2026-05-26) — eliminate the silent `"default"`
   # template-class fallback. Callers MUST pass `:template_name` in opts.
-  # The previous code (`Keyword.get(opts, :template_name, "default")`)
-  # let LV/CLI/test sites omit the choice and silently land in the
-  # `session://default/…` namespace — operationally invisible, blocks
-  # tenant-customized session templates per the same reasoning as
-  # `feedback_let_it_crash_no_workarounds`.
   defp require_template_name!(opts) do
     case Keyword.fetch(opts, :template_name) do
       {:ok, name} when is_binary(name) and name != "" ->
@@ -524,127 +770,4 @@ defmodule EzagentDomainChat do
   end
 
   defp session_in_workspace?(_, _), do: false
-
-  # RFC #402 (Allen 2026-05-26) — grant the session creator the
-  # `Behavior.OrchestratorAdmin :restart` cap on this session so the
-  # `OrchestratorHealthCard` LV renders the Restart button for them
-  # (and a non-creator gets nothing). Idempotent: re-calling
-  # `create_session/3` for the same session re-enters this path; the
-  # cap-equality check inside the helper skips a re-grant when a
-  # logically-equal cap row is already on the owner.
-  #
-  # Mirrors the same grant `Session.spawn_from_template/2` does for
-  # the orchestrator-template path; here it covers the direct-create
-  # path (`create_session/3` without going through SessionTemplate
-  # materialization).
-  defp grant_owner_orchestrator_admin_cap(
-         %URI{} = session_uri,
-         %URI{} = owner_uri,
-         %URI{} = workspace_uri
-       ) do
-    want = %Ezagent.Capability{
-      kind: :session,
-      behavior: Ezagent.Behavior.OrchestratorAdmin,
-      # SPEC 2026-05-27 capability-action-axis — OrchestratorAdmin
-      # has a single action `:restart` (per `actions/0`); make it
-      # explicit so the cap matches the narrow needed-cap shape
-      # admin_live's `caller_can_restart_orchestrator?` constructs.
-      action: :restart,
-      instance: session_uri,
-      workspace_uri: workspace_uri,
-      granted_by: owner_uri,
-      granted_at: nil
-    }
-
-    current = Ezagent.Identity.list_caps_for(owner_uri)
-
-    has_equiv? =
-      Enum.any?(current, fn cap ->
-        match?(%Ezagent.Capability{}, cap) and
-          cap.kind == want.kind and
-          cap.behavior == want.behavior and
-          # SPEC 2026-05-27 capability-action-axis — include action
-          # in the equivalence check via `action_of/1` for snapshot-
-          # restored old-shape tolerance.
-          Ezagent.Capability.action_of(cap) == Ezagent.Capability.action_of(want) and
-          cap.instance == want.instance and
-          cap.workspace_uri == want.workspace_uri and
-          cap.granted_by == want.granted_by
-      end)
-
-    if has_equiv? do
-      :ok
-    else
-      target = Ezagent.URI.with_action(owner_uri, :identity, :grant_cap)
-      cap = %{want | granted_at: DateTime.utc_now()}
-
-      # codex PR #408 review HIGH-1 — dispatch result MUST be checked.
-      # Pre-fix `_ = Invocation.dispatch(...); :ok` silently swallowed
-      # a denied grant, letting `finalize_session_create/3` proceed to
-      # spawn the orchestrator even though the owner could not actually
-      # restart it. Use `:cast`-style reply but :call mode so we observe
-      # the result; `reply: :ignore` was the silent-swallow vector.
-      result =
-        Invocation.dispatch(%Invocation{
-          target: target,
-          mode: :call,
-          args: %{cap: cap},
-          # SPEC caps-cleanup-v1 §4.4 — granting an ownership cap at
-          # session-create time is template-materialization-equivalent;
-          # runs under `system://template-materialize` (closed
-          # Catalog). Owner stays as caller for provenance.
-          ctx: %{
-            caller: owner_uri,
-            caps: Ezagent.SystemPrincipal.caps("system://template-materialize"),
-            reply: {:caller_inbox, self()}
-          }
-        })
-
-      case result do
-        {:ok, _} ->
-          :ok
-
-        :ok ->
-          :ok
-
-        {:error, reason} ->
-          {:error, {:orchestrator_admin_cap_grant_failed, reason}}
-
-        other ->
-          {:error, {:orchestrator_admin_cap_grant_unexpected, other}}
-      end
-    end
-  end
-
-  defp join_creator(session_uri, creator_uri) do
-    # PR-M (Allen 2026-05-20) — `chat.join` requires the member's Kind
-    # alive in KindRegistry (see Behavior.Chat.invoke(:join) — returns
-    # `{:error, {:member_not_registered, _}}` if absent). In production
-    # the login path already calls `Ezagent.Entity.ensure_spawned/1`
-    # before the wizard reaches create_session. For mix tasks /
-    # boot-time test seeds, the test-env admin Kind seed in
-    # `EzagentDomainIdentity.Application` covers admin. Demand-spawn
-    # any non-admin caller here as belt-and-suspenders — idempotent
-    # ({:ok, pid} for already-alive).
-    _ = Ezagent.SpawnRegistry.spawn(creator_uri)
-
-    target = Ezagent.URI.with_action(session_uri, :chat, :join)
-
-    _ =
-      Invocation.dispatch(%Invocation{
-        target: target,
-        mode: :cast,
-        args: %{member: creator_uri},
-        # SPEC caps-cleanup-v1 §4.4 — Session creator-join is
-        # Session slice-internal (member sync); runs under
-        # `system://session-internal` (closed Catalog).
-        ctx: %{
-          caller: creator_uri,
-          caps: Ezagent.SystemPrincipal.caps("system://session-internal"),
-          reply: :ignore
-        }
-      })
-
-    :ok
-  end
 end
