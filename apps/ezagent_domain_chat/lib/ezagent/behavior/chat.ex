@@ -206,6 +206,22 @@ defmodule Ezagent.Behavior.Chat do
       "Write the session-scoped legend registry on the Session's :chat slice " <>
         "(team-routing-unification §3.6, PR-6)"
 
+  # team-routing-unification §3.4 (PR-4b) / §3.7 (PR-7) — install/overwrite the
+  # session-scoped named prompt-template map (`name => template string`) on the
+  # Session's :chat slice. Same trusted-principal authority class as
+  # :set_legends (a prompt-template fronts a team's delivery transform, an
+  # orchestrator/system-config concern). PR-4b added the READ side
+  # (`render_for_delivery/4`); PR-7 adds this WRITE side so SessionTemplate
+  # materialization can install a template's `prompt_templates`.
+  action :set_prompt_templates,
+    args: %{prompt_templates: :map},
+    returns: %{prompt_templates: :map},
+    caps: [:set_prompt_templates],
+    modes: [:call],
+    description:
+      "Write the session-scoped named prompt-template map on the Session's " <>
+        ":chat slice (team-routing-unification §3.4/§3.7, PR-7)"
+
   # `create/1` — FIRST-EVER existence (SPEC 2026-05-29 §2). Builds the
   # PERSISTENT `state`. The macro-injected `init_slice/1` wraps this in
   # the two-container `%{state: ..., transients: %{}}` shape and runs it
@@ -703,7 +719,17 @@ defmodule Ezagent.Behavior.Chat do
     # pass through unvalidated by the runtime — sanitize_facets/1 drops any
     # malformed value (codex PR-5a #1 "type-check the facet args") so a bad
     # `role_name` can't crash the downstream `is_binary` guards.
-    facets = args |> Map.take([:role_name, :in_session_template]) |> sanitize_facets()
+    # team-routing-unification §3.1 / §3.7 (PR-7): `:source_template_uri` is a
+    # SPAWN-SOURCE facet — the AgentTemplate URI a spawned/managed member was
+    # recreated from, so SessionTemplate materialization (and a future
+    # respawn/regeneration) can rebuild this member. It is NON-authority-bearing
+    # (provenance, the management-authority facet, is still deliberately absent
+    # here — it lands in PR-5b/PR-8 with its caller-derivation). Like the other
+    # facets it is sanitized below so a malformed value can't crash a guard.
+    facets =
+      args
+      |> Map.take([:role_name, :in_session_template, :source_template_uri])
+      |> sanitize_facets()
 
     case KindRegistry.lookup(member_uri) do
       {:ok, member_pid} ->
@@ -886,6 +912,7 @@ defmodule Ezagent.Behavior.Chat do
     meta
     |> maybe_put_facet(:role_name, Map.get(facets, :role_name))
     |> maybe_put_facet(:in_session_template, Map.get(facets, :in_session_template))
+    |> maybe_put_facet(:source_template_uri, Map.get(facets, :source_template_uri))
   end
 
   defp maybe_put_facet(map, _key, nil), do: map
@@ -899,6 +926,8 @@ defmodule Ezagent.Behavior.Chat do
     facets
     |> drop_facet_unless(:role_name, &is_binary/1)
     |> drop_facet_unless(:in_session_template, &is_boolean/1)
+    # PR-7: spawn-source facet — must be a `%URI{}` (the AgentTemplate URI).
+    |> drop_facet_unless(:source_template_uri, &match?(%URI{}, &1))
   end
 
   defp drop_facet_unless(map, key, pred) do
@@ -1277,6 +1306,53 @@ defmodule Ezagent.Behavior.Chat do
       {:ok, %{legends: _} = ok} -> {:ok, ok}
       {:error, _} = err -> err
       other -> {:error, {:unexpected_set_legends_result, other}}
+    end
+  end
+
+  # --- :set_prompt_templates (team-routing-unification §3.4/§3.7, PR-7) ---
+
+  # Install/overwrite the session-scoped named prompt-template map on the :chat
+  # slice. Authorization mirrors `:set_legends` EXACTLY (codex 2026-06-01 HIGH
+  # #2 — gate on a TRUSTED IDENTITY, not a ctx boolean): the caller must EITHER
+  # be a trusted system principal (`set_legends` allowlist) OR be the session's
+  # orchestrator (the `{:within_session, self_uri}` delegated cap). A
+  # prompt-template fronts a team's delivery transform — the same
+  # orchestrator/system-config authority class a legend has.
+  def handle_set_prompt_templates(%{prompt_templates: pts}, ctx) when is_map(pts) do
+    if legends_write_authorized?(ctx) do
+      {:ok, %{prompt_templates: pts}, [{:set, :prompt_templates, pts}]}
+    else
+      {:error, :unauthorized}
+    end
+  end
+
+  @doc """
+  System-internal path to install the session-scoped named prompt-template map
+  (team-routing-unification §3.4/§3.7, PR-7). Mirrors `system_set_legends/2`: a
+  `chat.set_prompt_templates` dispatch under the `system://session-internal`
+  principal. Used by tests and by the PR-7 SessionTemplate materialization path
+  (which installs a template's `prompt_templates` at create_session time,
+  before any orchestrator cap exists).
+
+  Authorization rides the TRUSTED `caller` (`system://session-internal` ∈ the
+  `set_legends`/`set_prompt_templates` allowlist), NOT a ctx flag.
+  """
+  @spec system_set_prompt_templates(URI.t(), map()) :: {:ok, map()} | {:error, term()}
+  def system_set_prompt_templates(%URI{} = session_uri, prompt_templates)
+      when is_map(prompt_templates) do
+    case Ezagent.Router.dispatch(%Cmd{
+           target: session_uri,
+           action: :set_prompt_templates,
+           args: %{prompt_templates: prompt_templates},
+           ctx: %{
+             caller: Ezagent.SystemPrincipal.uri("session-internal"),
+             caps: Ezagent.SystemPrincipal.caps("system://session-internal"),
+             reply: {:caller_inbox, self()}
+           }
+         }) do
+      {:ok, %{prompt_templates: _} = ok} -> {:ok, ok}
+      {:error, _} = err -> err
+      other -> {:error, {:unexpected_set_prompt_templates_result, other}}
     end
   end
 
