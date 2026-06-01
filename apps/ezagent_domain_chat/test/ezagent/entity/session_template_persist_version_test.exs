@@ -76,10 +76,12 @@ defmodule Ezagent.Entity.SessionTemplatePersistVersionTest do
   end
 
   defp session_content(name) do
+    # `agent_slots` is intentionally absent — it is no longer a content
+    # field (codex MINOR / PR-8) and is stripped at persistence, so a
+    # fixture carrying it would no longer round-trip verbatim.
     %{
       name: name,
       description: "a team",
-      agent_slots: [],
       routing_rules: [],
       orchestrator_template_uri: URI.parse("template://agent/system/cc-orchestrator"),
       default_workspace_uri: URI.parse("workspace://team-alpha"),

@@ -134,7 +134,7 @@ defmodule Ezagent.Entity.SessionTemplateForkCreateTest do
       assert fork_content.parent_template_uri == parent_uri
     end
 
-    test "the fork copies the parent's CONFIG (description, agent_slots)" do
+    test "the fork copies the parent's CONFIG (description); agent_slots is NOT persisted (codex MINOR / PR-8)" do
       parent_uri =
         persist_parent("fc-cfg-parent-#{uniq()}",
           description: "the original team",
@@ -153,7 +153,11 @@ defmodule Ezagent.Entity.SessionTemplateForkCreateTest do
       fork_content = read_content(fork_uri)
 
       assert fork_content.description == "the original team"
-      assert fork_content.agent_slots == [{"backend", URI.parse("template://agent/team-alpha/be")}]
+
+      # `agent_slots` is stripped at persistence (codex MINOR) — the parent
+      # never durably stored it, so the fork cannot carry it either.
+      refute Map.has_key?(fork_content, :agent_slots)
+      refute Map.has_key?(fork_content, "agent_slots")
     end
 
     test "the parent template row is UNCHANGED after a fork (immutable)" do

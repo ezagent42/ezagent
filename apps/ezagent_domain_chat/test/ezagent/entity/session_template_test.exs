@@ -111,6 +111,22 @@ defmodule Ezagent.Entity.SessionTemplateTest do
                SessionTemplate.compute_version_hash(slice_b),
              "hash input must exclude version_hash + version_tag — otherwise hash depends on prior hash, infinite recursion"
     end
+
+    test "agent_slots (atom OR string key) does NOT affect hash (codex MINOR — PR-8 removed slot tools)" do
+      base = %{name: "x", description: "same team"}
+
+      # `agent_slots` is no longer a content field — neither the atom nor
+      # the string key may ride into the version hash. A template with a
+      # vestigial slot list must hash identically to one without.
+      with_atom = Map.put(base, :agent_slots, [{"backend", "template://agent/team-alpha/be"}])
+      with_string = Map.put(base, "agent_slots", [%{"slot" => "frontend"}])
+
+      assert SessionTemplate.compute_version_hash(base) ==
+               SessionTemplate.compute_version_hash(with_atom)
+
+      assert SessionTemplate.compute_version_hash(base) ==
+               SessionTemplate.compute_version_hash(with_string)
+    end
   end
 
   describe "build_uri/2" do

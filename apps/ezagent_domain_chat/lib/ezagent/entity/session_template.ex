@@ -187,7 +187,19 @@ defmodule Ezagent.Entity.SessionTemplate do
   def compute_version_hash(slice_content) when is_map(slice_content) do
     canonical =
       slice_content
-      |> Map.drop([:created_at, :created_by, :version_hash, :version_tag, :name])
+      # codex MINOR — `agent_slots` is no longer a content field (PR-8
+      # removed the slot tools). Strip BOTH the atom and the string key so
+      # a vestigial slot list (e.g. a string-keyed JSON tool boundary) can
+      # never ride into the version hash and silently fork the identity.
+      |> Map.drop([
+        :created_at,
+        :created_by,
+        :version_hash,
+        :version_tag,
+        :name,
+        :agent_slots,
+        "agent_slots"
+      ])
       |> :erlang.term_to_binary([:deterministic])
 
     :crypto.hash(:sha256, canonical) |> Base.encode16(case: :lower)
@@ -331,6 +343,12 @@ defmodule Ezagent.Entity.SessionTemplate do
   end
 
   defp do_persist_version(content, workspace, ctx) when is_map(content) do
+    # codex MINOR — strip `agent_slots` (atom AND string key) before BOTH
+    # the hash and the persisted `:write`, so a vestigial slot list never
+    # lands in durable content nor shifts the content hash. This is the
+    # single persistence chokepoint (`fork`/`create`/system-seed all route
+    # here), so the strip covers every write path.
+    content = Map.drop(content, [:agent_slots, "agent_slots"])
     name = Map.get(content, :name) || Map.get(content, "name")
     workspace_segment = workspace_segment(workspace)
 
