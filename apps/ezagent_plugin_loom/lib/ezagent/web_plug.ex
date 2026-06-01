@@ -74,6 +74,35 @@ defmodule EzagentPluginLoom.WebPlug do
     stream_session(conn, ws, sid)
   end
 
+  # 2026-06-01 save-as-template — snapshot 当前 session 的 :loom_source 进 workspace.session_templates。
+  # body: %{"name" => "incubator-portal", "description" => "..可选.."}
+  # 流程:read orch slice → build template payload → Workspace.add_template/3
+  #       (auto-invokes LoomSession.instantiate → 新 session 在 session://loom/<ws>/<name>)。
+  post "/api/:ws/:sid/save-as-template" do
+    name = conn.body_params |> Map.get("name", "") |> to_string() |> String.trim()
+    description = conn.body_params |> Map.get("description", "") |> to_string()
+    json_resp(conn, 200, save_as_template(ws, sid, name, description))
+  end
+
+  # 已注册的 template 列表(用于 Phase 2 的 admin UI;也方便 loom UI 检查重名)。
+  get "/api/:ws/templates" do
+    json_resp(conn, 200, list_loom_templates(ws))
+  end
+
+  # 删除一个 template entry。
+  delete "/api/:ws/templates/:name" do
+    json_resp(conn, 200, remove_template_entry(ws, name))
+  end
+
+  # 用模板创建一个新 session(loom UI 自己的"从模板新建"入口,绕过 LV "+ New"
+  # 那条不查 recipe 的死路)。body: %{"session_name" => "demo7"}。
+  # 后端把 recipe 里的 session_name override 成请求里的,然后直接
+  # `LoomSession.instantiate` —— 走 spawn + Team.ensure_team + seed source 全套。
+  post "/api/:ws/templates/:name/spawn" do
+    new_name = conn.body_params |> Map.get("session_name", "") |> to_string() |> String.trim()
+    json_resp(conn, 200, spawn_from_template(ws, name, new_name))
+  end
+
   # SPA 兜底:任何 GET 都返回 index.html(客户端从 /loom/:ws/:sid 读身份)。
   get "/*_path" do
     send_index(conn)
@@ -114,19 +143,33 @@ defmodule EzagentPluginLoom.WebPlug do
 
   defp session_uri(ws, sid), do: Ezagent.URI.parse!("session://loom/#{ws}/#{sid}")
 
-  # 2026-06-01 redesign: mentions come from the user's text (@<URI> tokens),
-  # NOT auto-prepended with the orchestrator. Per the new design, the user
-  # MUST @ explicitly (typically @loomorch_<sid>); no @ → empty mentions →
-  # no agent responds. The ChatPanel's autocomplete makes this easy.
+  # 2026-06-01 redesign: the loom view has no @-mention concept — every
+  # message from this endpoint goes to the session's orchestrator, period.
+  # (Power-user "direct @worker" is intentionally NOT exposed in loom; if
+  # ever needed, use the `/sessions` admin compose instead.)
+  #
+  # 2026-06-01 UX fix: prepend `@<orch-id>` to the visible text so the admin
+  # session-view shows the @ — routing 还是基于 `mentions` 字段(不依赖文本
+  # 解析),前缀只是给人眼看。loom UI 自己的用户气泡也会带上前缀,接受。
   defp send_to_session(ws, sid, text) do
     suri = session_uri(ws, sid)
+    orch_id = "loomorch_#{sid}"
+    orchestrator = Ezagent.URI.parse!("entity://agent/#{ws}/#{orch_id}")
+
+    # 2026-06-01 — 识别消息开头的 @<entity-id>。
+    # - 用户写 "@loommeta_<sid> 加 painter" → mentions = [loommeta_<sid>]
+    # - 用户写 "改成蓝色" → 默认 mention = orchestrator(老行为)
+    # 文本可见层不动 — 让 admin chat 看见用户实际打的字。
+    {mentions, visible_text} = parse_mentions(text, ws, sid, orchestrator)
 
     with {:ok, user_uri} <- EzagentPluginLoom.TempUser.ensure_named(ws, "loomui_#{sid}"),
          :ok <- ensure_joined(suri, user_uri) do
-      mentions = parse_at_uris(text)
-
       msg =
-        Ezagent.Message.new(user_uri, %{text: text, attachments: []}, mentions: mentions)
+        Ezagent.Message.new(
+          user_uri,
+          %{text: visible_text, attachments: []},
+          mentions: mentions
+        )
 
       inv = %Ezagent.Invocation{
         target: URI.new!("#{URI.to_string(suri)}?action=chat.send"),
@@ -149,24 +192,41 @@ defmodule EzagentPluginLoom.WebPlug do
     end
   end
 
-  # Extract `@entity://...` URIs from message text (one regex pass).
-  # Returns a list of %URI{} (entity-scheme only; other schemes filtered out).
-  defp parse_at_uris(text) when is_binary(text) do
-    ~r/@(entity:\/\/[^\s]+)/
-    |> Regex.scan(text, capture: :all_but_first)
-    |> Enum.flat_map(fn
-      [uri_str] ->
-        case URI.new(uri_str) do
-          {:ok, %URI{scheme: "entity"} = u} -> [u]
-          _ -> []
+  # 2026-06-01 — 提取消息开头的 @<entity-id>(限定 loom 团队里 well-known
+  # 命名:loommeta_<sid> / loomorch_<sid> / loomworker_<sid>_<theme> /
+  # loomv0_<sid>)。命中 → mentions = [那条 URI],visible_text 保留原样
+  # (含 @ 前缀,这样 admin chat 视图看得到)。
+  # 没命中(消息不是 @ 开头,或 @ 的不是已知 loom 成员)→ 默认 @ orchestrator,
+  # 在 visible_text 前缀 "@<orch-id>" 让 admin 看得清。
+  defp parse_mentions(text, ws, sid, orchestrator_uri) do
+    valid_ids = [
+      "loommeta_#{sid}",
+      "loomorch_#{sid}",
+      "loomv0_#{sid}"
+    ]
+
+    case Regex.run(~r/^\s*@([a-zA-Z_][a-zA-Z0-9_]*)\s*/, text) do
+      [_full, target_id] ->
+        cond do
+          target_id in valid_ids ->
+            uri = Ezagent.URI.parse!("entity://agent/#{ws}/#{target_id}")
+            {[uri], text}
+
+          # 也允许 @loomworker_<sid>_<theme>(自定义 worker 也能直接 @)
+          String.starts_with?(target_id, "loomworker_#{sid}_") ->
+            uri = Ezagent.URI.parse!("entity://agent/#{ws}/#{target_id}")
+            {[uri], text}
+
+          true ->
+            # @ 了一个不认识的 id → fallback 到 orchestrator,但保留用户写的 @
+            {[orchestrator_uri], "@loomorch_#{sid} " <> text}
         end
 
-      _ ->
-        []
-    end)
+      nil ->
+        # 不是 @ 开头 → 默认 orchestrator,加 @ 前缀让 admin chat 看见
+        {[orchestrator_uri], "@loomorch_#{sid} " <> text}
+    end
   end
-
-  defp parse_at_uris(_), do: []
 
   defp ensure_joined(%URI{} = suri, %URI{} = member_uri) do
     inv = %Ezagent.Invocation{
@@ -251,5 +311,208 @@ defmodule EzagentPluginLoom.WebPlug do
     conn
     |> put_resp_content_type("application/json")
     |> send_resp(status, Jason.encode!(data))
+  end
+
+  # --- save-as-template helpers ----------------------------------------
+
+  defp save_as_template(_ws, _sid, "", _description),
+    do: %{ok: false, error: "name is required"}
+
+  defp save_as_template(ws, sid, name, description) do
+    # name 必须像 session short_name(URL 段),否则 session://loom/<ws>/<name> 不合法。
+    if name =~ ~r/^[a-zA-Z0-9_-]+$/ do
+      do_save_as_template(ws, sid, name, description)
+    else
+      %{ok: false, error: "name must match [a-zA-Z0-9_-]+"}
+    end
+  end
+
+  defp do_save_as_template(ws, sid, name, description) do
+    # 2026-06-01 Phase 2 — Class 级 + 全队 slice 快照。
+    # saved_state shape:
+    #   %{ "orchestrator" => %{persona, loom_source},
+    #      "workers"      => [%{theme, system_prompt, role}, ...],
+    #      "v0"           => %{} }
+    # 实例化时 LoomSession.pre_spawn_workers_if_saved 按数组逐个 spawn,
+    # Team.ensure_team 用 worker_themes 跑出对应 URI。增/删/改 worker
+    # 都通过这个数组持久化(目前无 UI 改动,等 UI 上来自动 work)。
+    with {:ok, full_snapshot} <- read_full_session_snapshot(ws, sid),
+         {:ok, class_name} <-
+           Ezagent.PluginLoom.SavedClasses.save_one(name, full_snapshot, description) do
+      %{ok: true, class_name: class_name}
+    else
+      {:error, reason} -> %{ok: false, error: inspect(reason)}
+    end
+  end
+
+  defp read_full_session_snapshot(ws, sid) do
+    case read_orchestrator_snapshot(ws, sid) do
+      {:ok, orch_snapshot} ->
+        workers = read_workers_snapshot(ws, sid)
+        v0 = read_v0_snapshot(ws, sid)
+
+        {:ok,
+         %{
+           "orchestrator" => orch_snapshot,
+           "workers" => workers,
+           "v0" => v0
+         }}
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  # 从 session 的 chat.members 里扫所有 loomworker_<sid>_<theme> URI;
+  # 对每个 worker 读 :loom_worker slice,出 {theme, system_prompt, role} 三件套。
+  # 找不到 session / slice 缺数据 → 空列表(降级到 Team 默认)。
+  defp read_workers_snapshot(ws, sid) do
+    session_uri = Ezagent.URI.parse!("session://loom/#{ws}/#{sid}")
+
+    case Ezagent.Kind.get_slice(session_uri, :chat) do
+      {:ok, %{members: members}} when is_map(members) ->
+        members
+        |> Map.keys()
+        |> Enum.flat_map(fn member_uri -> snapshot_worker_if_match(member_uri, sid) end)
+        |> Enum.sort_by(& &1["theme"])
+
+      _ ->
+        []
+    end
+  rescue
+    _ -> []
+  end
+
+  defp snapshot_worker_if_match(%URI{path: "/" <> rest} = worker_uri, sid)
+       when is_binary(rest) do
+    case String.split(rest, "/") do
+      [_ws, "loomworker_" <> tail] ->
+        # tail = "<sid>_<theme>" — split first segment off as sid, rest is theme
+        prefix = sid <> "_"
+
+        case String.starts_with?(tail, prefix) do
+          true ->
+            theme = String.replace_prefix(tail, prefix, "")
+
+            case Ezagent.Kind.get_slice(worker_uri, :loom_worker) do
+              {:ok, slice} when is_map(slice) ->
+                [
+                  %{
+                    "theme" => theme,
+                    "system_prompt" => to_string(slice[:system_prompt] || slice["system_prompt"] || ""),
+                    "role" => to_string(slice[:role] || slice["role"] || theme)
+                  }
+                ]
+
+              _ ->
+                []
+            end
+
+          false ->
+            []
+        end
+
+      _ ->
+        []
+    end
+  end
+
+  defp snapshot_worker_if_match(_, _), do: []
+
+  # v0 当前 slice 没有 user-meaningful 字段(只有 count / last_error)。
+  # 返回空 map 占位,以后 v0 有 user-customizable 状态时填充。
+  defp read_v0_snapshot(_ws, _sid), do: %{}
+
+  # 抓 orchestrator slice 的"用户可感知"字段(persona + loom_source);
+  # `pending` / `count` / `last_error` 是 runtime 易逝态,不进快照。
+  # workers 也不抓 —— 当前 LoomWorker 用 init 默认值,LoomV0Worker 无状态。
+  defp read_orchestrator_snapshot(ws, sid) do
+    orch_uri = Ezagent.URI.parse!("entity://agent/#{ws}/loomorch_#{sid}")
+
+    case Ezagent.Kind.get_slice(orch_uri, :loom_orchestrator) do
+      {:ok, slice} when is_map(slice) ->
+        persona = slice[:persona] || slice["persona"] || "visitor"
+        loom_source = slice[:loom_source] || slice["loom_source"] || ""
+
+        cond do
+          loom_source == "" ->
+            {:error, :no_source_in_orchestrator}
+
+          true ->
+            {:ok,
+             %{
+               "persona" => to_string(persona),
+               "loom_source" => to_string(loom_source)
+             }}
+        end
+
+      {:error, _} = err ->
+        err
+
+      other ->
+        {:error, {:get_slice_unexpected, inspect(other)}}
+    end
+  end
+
+  # 2026-06-01 — Class-级:从 SavedClasses JSON 文件读保存项,不再扫
+  # workspace.session_templates(那里现在是 Instance 级别,跟保存的 Class 是不同概念)。
+  defp list_loom_templates(_ws) do
+    Ezagent.PluginLoom.SavedClasses.list_entries()
+    |> Enum.map(fn entry ->
+      %{
+        "name" => entry["name"],
+        "summary" => entry["description"] || "",
+        "has_custom_source" => true,
+        "saved_at" => entry["saved_at"]
+      }
+    end)
+  end
+
+  defp remove_template_entry(_ws, name) do
+    # 2026-06-01 — Class-级:从 SavedClasses 删 + deregister 模块。
+    case Ezagent.PluginLoom.SavedClasses.delete_one(name) do
+      :ok -> %{ok: true}
+      {:error, reason} -> %{ok: false, error: inspect(reason)}
+    end
+  end
+
+  # --- spawn-from-template helpers -------------------------------------
+
+  defp spawn_from_template(_ws, _tmpl_name, ""),
+    do: %{ok: false, error: "session_name is required"}
+
+  defp spawn_from_template(ws, tmpl_name, new_session_name) do
+    if new_session_name =~ ~r/^[a-zA-Z0-9_-]+$/ do
+      do_spawn_from_template(ws, tmpl_name, new_session_name)
+    else
+      %{ok: false, error: "session_name must match [a-zA-Z0-9_-]+"}
+    end
+  end
+
+  # 2026-06-01 — Class 级 spawn:`class_name` 是 `session.<saved>`(在
+  # `TemplateRegistry` 里能查到 SavedClasses 生成的模块);拿这模块直接
+  # instantiate(Module 内部已经把 saved_state 注好,delegate 给 LoomSession)。
+  defp do_spawn_from_template(ws, class_name, new_session_name) do
+    with {:ok, class_module} <- Ezagent.TemplateRegistry.lookup(class_name),
+         :ok <- refuse_if_session_exists(ws, new_session_name),
+         tmpl = %{"class" => class_name, "session_name" => new_session_name},
+         workspace_uri = Ezagent.URI.parse!("workspace://#{ws}"),
+         {:ok, [session_uri | _]} <-
+           class_module.instantiate(new_session_name, tmpl, workspace_uri) do
+      %{ok: true, session_uri: URI.to_string(session_uri)}
+    else
+      :error -> %{ok: false, error: "class_not_registered"}
+      {:error, reason} -> %{ok: false, error: inspect(reason)}
+      other -> %{ok: false, error: inspect({:unexpected, other})}
+    end
+  end
+
+  defp refuse_if_session_exists(ws, name) do
+    uri = Ezagent.URI.parse!("session://loom/#{ws}/#{name}")
+
+    case Ezagent.KindRegistry.lookup(uri) do
+      {:ok, _pid} -> {:error, :session_already_exists}
+      _ -> :ok
+    end
   end
 end

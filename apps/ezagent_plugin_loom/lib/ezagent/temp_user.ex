@@ -66,7 +66,10 @@ defmodule EzagentPluginLoom.TempUser do
   @spec ensure_named(String.t(), String.t()) :: {:ok, URI.t()} | {:error, term()}
   def ensure_named(ws, name)
       when is_binary(ws) and ws != "" and is_binary(name) and name != "" do
-    uri = URI.parse("entity://user/#{ws}/#{name}")
+    # 2026-06-01 — 用 canonical `Ezagent.URI.parse!`(走 URI.new!,无 :authority
+    # 字段);deprecated `URI.parse/1` 留 `authority: "user"`,跟 chat.members
+    # 里其它 canonical key 不匹配,同一逻辑 URI 在 slice 占两条。
+    uri = Ezagent.URI.parse!("entity://user/#{ws}/#{name}")
     _ = Users.create(uri, nil, [])
 
     case spawn_user(uri) do

@@ -257,11 +257,25 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
   end
 
   def handle_event("remove_template", %{"name" => tmpl_name}, socket) do
-    case Ezagent.Workspace.remove_template(socket.assigns.name, tmpl_name) do
+    ws_name = socket.assigns.name
+
+    # 2026-06-01 — Read recipe BEFORE removal so we know what (if anything)
+    # to tear down post-removal. The 'Remove' button is operator-expected
+    # to also evict the spawned Session: a Template Instance and the
+    # Session it auto-materialized are conceptually a single object.
+    # See user feedback "删除了之后它们的一切应该都没了才对啊".
+    recipe = recipe_for(socket.assigns.workspace, tmpl_name)
+
+    case Ezagent.Workspace.remove_template(ws_name, tmpl_name) do
       :ok ->
+        # Fire-and-forget cleanup. Plugin Template Classes that want to
+        # tear down their spawned Kinds implement `cleanup/3`(duck-typed,
+        # no formal callback in `Ezagent.Kind.Template` behaviour yet).
+        _ = maybe_call_class_cleanup(recipe, ws_name, tmpl_name)
+
         {:noreply,
          socket
-         |> assign(:workspace, Ezagent.Workspace.Store.get_by_name(socket.assigns.name))
+         |> assign(:workspace, Ezagent.Workspace.Store.get_by_name(ws_name))
          |> assign(:flash_error, nil)}
 
       {:error, reason} ->
@@ -273,6 +287,73 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
          )}
     end
   end
+
+  defp recipe_for(%{session_templates: tmpls}, tmpl_name) when is_map(tmpls),
+    do: Map.get(tmpls, tmpl_name)
+
+  defp recipe_for(_, _), do: nil
+
+  defp maybe_call_class_cleanup(nil, _ws_name, tmpl_name) do
+    require Logger
+    Logger.info("remove_template[#{tmpl_name}] recipe was nil — no cleanup")
+    :ok
+  end
+
+  defp maybe_call_class_cleanup(recipe, ws_name, tmpl_name) when is_map(recipe) do
+    require Logger
+    Logger.info("remove_template[#{tmpl_name}] recipe keys = #{inspect(Map.keys(recipe))}")
+
+    case Map.get(recipe, "class") do
+      class_name when is_binary(class_name) ->
+        Logger.info("remove_template[#{tmpl_name}] class = #{class_name}")
+
+        with {:ok, class_module} <- Ezagent.TemplateRegistry.lookup(class_name),
+             true <- function_exported?(class_module, :cleanup, 3) do
+          Logger.info(
+            "remove_template[#{tmpl_name}] calling #{inspect(class_module)}.cleanup/3"
+          )
+
+          ws_uri = Ezagent.URI.parse!("workspace://#{ws_name}")
+
+          try do
+            result = class_module.cleanup(tmpl_name, recipe, ws_uri)
+            Logger.info("remove_template[#{tmpl_name}] cleanup returned #{inspect(result)}")
+            result
+          rescue
+            e ->
+              Logger.warning("remove_template[#{tmpl_name}] cleanup raised: #{inspect(e)}")
+              :ok
+          catch
+            kind, reason ->
+              Logger.warning(
+                "remove_template[#{tmpl_name}] cleanup threw #{inspect(kind)} #{inspect(reason)}"
+              )
+
+              :ok
+          end
+        else
+          :error ->
+            Logger.warning(
+              "remove_template[#{tmpl_name}] no TemplateRegistry entry for class #{class_name}"
+            )
+
+            :ok
+
+          false ->
+            Logger.warning(
+              "remove_template[#{tmpl_name}] class #{class_name} module doesn't export cleanup/3"
+            )
+
+            :ok
+        end
+
+      _ ->
+        Logger.info("remove_template[#{tmpl_name}] recipe missing \"class\" field")
+        :ok
+    end
+  end
+
+  defp maybe_call_class_cleanup(_, _, _), do: :ok
 
   def handle_event("remove_member", %{"member_uri" => uri_str}, socket) do
     # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
@@ -328,9 +409,13 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
   defp do_add_template(socket, tmpl_name, tmpl) do
     case Ezagent.Workspace.add_template(socket.assigns.name, tmpl_name, tmpl) do
       :ok ->
-        # Trigger Class.instantiate so the Session goes live immediately
-        # (Loader path runs on boot; this is the runtime path).
-        _ = trigger_instantiate(socket.assigns.name, tmpl_name, tmpl)
+        # 2026-06-01 fix:删掉 `trigger_instantiate` —— `Workspace.add_template/3`
+        # 内部已经调 `invoke_template_now` → `Loader.invoke_template` →
+        # `class_module.instantiate`(无论 boot 期还是 runtime)。这里再手动
+        # instantiate 一次造成 LoomSession 双 spawn,Team.ensure_team 重复 join,
+        # chat.members 出现 4 个 agent × 2 = 8 行 + admin 的诡异成员面板。
+        # 老注释"Loader path runs on boot"是误导:`add_template` 走的是
+        # `Workspace.add_template/3` 的 facade,facade 本身就把 invoke 跑了。
 
         {:noreply,
          socket
@@ -348,30 +433,11 @@ defmodule EzagentPluginLiveview.WorkspaceDetailLive do
     end
   end
 
-  defp trigger_instantiate(workspace_name, tmpl_name, tmpl) do
-    workspace_uri = Ezagent.Entity.Workspace.uri_for(workspace_name)
-
-    case tmpl["class"] do
-      class_name when is_binary(class_name) ->
-        case Ezagent.TemplateRegistry.lookup(class_name) do
-          {:ok, class_module} ->
-            # PR-3 (domain.agent D2) — operator-create routes through the core
-            # contract-boundary wrapper (domain-allocated config_dir TARGET).
-            Ezagent.Kind.Template.provision_and_instantiate(
-              class_module,
-              tmpl_name,
-              tmpl,
-              workspace_uri
-            )
-
-          :error ->
-            {:error, {:no_template_class, class_name}}
-        end
-
-      _ ->
-        {:error, :missing_class}
-    end
-  end
+  # 2026-06-01 — `trigger_instantiate/3` 整段删除。`Workspace.add_template/3`
+  # 已经在内部触发 instantiate;这里再叠一发会让 `LoomSession.instantiate`
+  # 跑两次,Team.ensure_team 重复 spawn + join,造成 chat.members 成员数翻倍。
+  # (2026-06-05 merge origin/main:main 把本函数重构为 provision_and_instantiate,
+  #  但 add_template 内部已 instantiate,函数仍冗余 → 保留删除。)
 
   @impl true
   def render(%{not_found: true} = assigns) do

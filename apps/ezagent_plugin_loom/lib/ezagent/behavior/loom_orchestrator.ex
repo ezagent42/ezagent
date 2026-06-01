@@ -40,7 +40,13 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
   alias Ezagent.{Cmd, Message}
   alias EzagentPluginLoom.{DeepSeek, Span, Prompts}
 
-  @agg_timeout_ms 12_000
+  # Bumped 12s → 45s (2026-06-01): v0worker calls DeepSeek to generate full
+  # pages, which routinely takes 10-20s. Old 12s timeout was firing before v0
+  # returned, leaving the user with a "partial" notice and then a silent late
+  # page_update. 45s comfortably covers v0; for business turns (policy/company)
+  # this slightly delays the "partial" notice but those workers reply in 1-3s
+  # anyway, so the timeout only fires on real failures.
+  @agg_timeout_ms 45_000
 
   action(:receive,
     args: %{message: :map},
@@ -175,8 +181,16 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
         |> Map.keys()
         |> Enum.flat_map(fn uri ->
           case worker_label(uri) do
-            nil -> []
-            label -> [%{uri: to_uri(uri), label: label}]
+            nil ->
+              []
+
+            label ->
+              # 2026-06-01 — 自定义 worker(painter / lawyer 等)从 worker 自己
+              # 的 :loom_worker slice 里读 role,供 dispatch_messages 拼进
+              # system prompt。预制 worker 的 role 不读(label 命中 v0/policy/
+              # company,worker_hint/1 已经有 hardcoded 描述)。
+              role = read_worker_role(label, uri)
+              [%{uri: to_uri(uri), label: label, role: role}]
           end
         end)
         |> Enum.reject(&is_nil(&1.uri))
@@ -192,11 +206,26 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
 
   def worker_label(s) when is_binary(s) do
     cond do
-      String.contains?(s, "/loomv0_") -> "v0"
-      not String.contains?(s, "/loomworker_") -> nil
-      String.contains?(s, "policy") -> "policy"
-      String.contains?(s, "company") -> "company"
-      true -> "worker"
+      String.contains?(s, "/loomv0_") ->
+        "v0"
+
+      not String.contains?(s, "/loomworker_") ->
+        # loommeta_ / loomorch_ / user URIs / 等等 — 不算 worker
+        nil
+
+      # 2026-06-01 — 提取 `loomworker_<sid>_<theme>` 末段的 <theme> 作 label。
+      # 这样 painter / lawyer 等自定义 worker 在 fan_out prompt 里有可区分
+      # 的名字,而不是全部叫 "worker"。policy / company 走同一路径,自然
+      # 还是出 "policy" / "company",所以预制行为不变。
+      true ->
+        extract_worker_theme(s) || "worker"
+    end
+  end
+
+  defp extract_worker_theme(uri_str) do
+    case Regex.run(~r{loomworker_[^_/]+_([a-z][a-z0-9_]*)$}, uri_str) do
+      [_full, theme] -> theme
+      _ -> nil
     end
   end
 
@@ -355,7 +384,7 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
   # === prompts ===
 
   defp dispatch_messages(workers, user_text) do
-    roster = workers |> Enum.map(&"- #{&1.label} #{worker_hint(&1.label)}") |> Enum.join("\n")
+    roster = workers |> Enum.map(&"- #{&1.label} #{worker_hint(&1)}") |> Enum.join("\n")
 
     sys = """
     你是Loom 孵化器助手「Loom」的编排器。你手下有这些 worker(按 label):
@@ -364,8 +393,10 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
     用户这轮的话见下。把这轮任务拆成给 worker 的子任务并派发出去(不要自己直接回答用户)。
 
     **分类规则**:
-    - 当用户的请求是关于**生成、修改、设计页面 / UI**(例如"做一个登录页"、"把按钮改深色"、"加一个登录表单"),只派给 `v0`(它已经有当前页面源码,会输出新的 jsx)。**不要**同时派给 policy/company。
-    - 当用户的请求是关于**业务咨询、政策、企业匹配**等,派给 policy / company(可一条或两条);**不要**派给 v0。
+    - 当用户的请求是关于**生成、修改、设计页面 / UI**(例如"做一个登录页"、"把按钮改深色"、"加一个登录表单"),只派给 `v0`(它已有当前页面源码,会输出新的 jsx)。**不要**同时派给业务类 worker。
+    - 当用户的请求是关于**业务咨询、政策、企业匹配**等,派给上面括号里描述匹配的业务 worker(可一条或多条);**不要**派给 v0。
+    - **不要**派给 `meta`(团队管家)—— 它只处理 @-mention,不接编排器分配。
+    - 用户加入的新 worker(label 不在 policy/company/v0/meta 中)也可以派,只要其括号里的描述跟用户请求对得上。
 
     只输出一个 JSON 对象,形如:
     {"dispatch":[{"to":"<worker label>","task":"<给该 worker 的具体子任务,中文>"}]}
@@ -375,10 +406,31 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
     [%{"role" => "system", "content" => sys}, %{"role" => "user", "content" => user_text}]
   end
 
-  defp worker_hint("v0"), do: "(页面生成/修改:UI/页面相关请求)"
-  defp worker_hint("policy"), do: "(政策/资源面)"
-  defp worker_hint("company"), do: "(企业匹配/对接面)"
+  # `dispatch_messages/2` 已经按 `&"- #{&1.label} #{worker_hint(&1)}"` 调用,
+  # 收到的是 `%{uri, label, role}` map(2026-06-01 加了 role 字段)。
+  defp worker_hint(%{label: "v0"}), do: "(页面生成/修改:UI/页面相关请求)"
+  defp worker_hint(%{label: "policy"}), do: "(政策/资源面)"
+  defp worker_hint(%{label: "company"}), do: "(企业匹配/对接面)"
+
+  defp worker_hint(%{role: role}) when is_binary(role) and role != "" and role != "worker",
+    do: "(#{role})"
+
   defp worker_hint(_), do: ""
+
+  # 自定义 worker 的 role 从 :loom_worker slice 里读;预制 worker 不用读
+  # (worker_hint 直接 hard-code)。
+  defp read_worker_role(label, _uri) when label in ["v0", "policy", "company"], do: ""
+
+  defp read_worker_role(_label, %URI{} = uri) do
+    case Ezagent.Kind.get_slice(uri, :loom_worker) do
+      {:ok, %{role: r}} when is_binary(r) -> r
+      _ -> ""
+    end
+  rescue
+    _ -> ""
+  end
+
+  defp read_worker_role(_, _), do: ""
 
   defp compose_messages(persona, frags, partial) do
     joined =
@@ -452,12 +504,20 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
     end)
   end
 
+  # 2026-06-01 — 保留可选 :role 字段,如果传进来的 map 有的话(给 worker_hint
+  # 用)。slice 里持久化的 workers 列表通常没有 role,运行时 discover_workers
+  # 会产出含 role 的 map。
   defp normalize_workers(list) when is_list(list) do
     list
     |> Enum.map(fn
-      %{uri: u, label: l} -> %{uri: to_uri(u), label: to_string(l)}
-      %{"uri" => u, "label" => l} -> %{uri: to_uri(u), label: to_string(l)}
-      _ -> nil
+      %{uri: u, label: l} = m ->
+        %{uri: to_uri(u), label: to_string(l), role: to_string(Map.get(m, :role) || Map.get(m, "role") || "")}
+
+      %{"uri" => u, "label" => l} = m ->
+        %{uri: to_uri(u), label: to_string(l), role: to_string(Map.get(m, "role") || "")}
+
+      _ ->
+        nil
     end)
     |> Enum.reject(&(is_nil(&1) or is_nil(&1.uri)))
   end
@@ -512,10 +572,15 @@ defmodule Ezagent.Behavior.LoomOrchestrator do
 
   # Return the embedded `source` string from a `<span type="page_update">{...}</span>`
   # message body, or nil if absent / malformed.
+  #
+  # Greedy match (`[\s\S]*` NOT `[\s\S]*?`) is essential: v0's generated JSX often
+  # contains nested `</span>` tokens; a non-greedy match terminates on the FIRST
+  # inner `</span>` and yields malformed JSON. Greedy + the closing `</span>`
+  # naturally anchors on the LAST occurrence which is the outer span's close.
   defp page_update_source(%Message{body: body}) do
     text = body_text(body)
 
-    case Regex.run(~r/<span\s+type="page_update"\s*>([\s\S]*?)<\/span>/, text) do
+    case Regex.run(~r/<span\s+type="page_update"\s*>([\s\S]*)<\/span>/, text) do
       [_full, inner] ->
         case Jason.decode(String.trim(inner)) do
           {:ok, %{"source" => src}} when is_binary(src) -> src
