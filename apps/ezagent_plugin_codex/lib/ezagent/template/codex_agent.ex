@@ -352,13 +352,33 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
       Path.join(Path.dirname(app_server_socket_path(agent_uri, tmpl)), "bridge-thread-id")
   end
 
-  defp default_app_server_socket_path(agent_uri) do
-    slug =
-      agent_uri
-      |> URI.to_string()
-      |> String.replace(["://", "/", "?", "&", "="], "_")
-
+  # `@doc false` public so the SUN_LEN regression test can assert the
+  # path length without spawning a real app-server.
+  @doc false
+  def default_app_server_socket_path(agent_uri) do
+    # The socket dir MUST keep the full path under the unix-domain socket
+    # limit (`SUN_LEN` ≈ 104 bytes on macOS). The previous slug embedded
+    # the FULL sanitized agent URI, which for orchestrator-spawned workers
+    # (`codex_worker-<slot>-<32hex>--<session>`) produced a ~135-byte path
+    # → `codex app-server --listen unix://<path>` fails with
+    # `Error: path must be shorter than SUN_LEN`, the app-server exits
+    # status 1, the bridge can't connect, and the thread-id file is never
+    # written (→ `:codex_thread_id_file_timeout` → spawn rollback). Use a
+    # SHORT deterministic hash of the URI instead (~72-byte path). See
+    # docs/superpowers/specs/2026-06-01-codex-socket-path-sunlen.md.
+    slug = socket_dir_slug(agent_uri)
     Path.join([Ezagent.Home.path("codex"), slug, "app-server.sock"])
+  end
+
+  # 16 lower-hex chars (64 bits) of the URI's SHA-256 — deterministic
+  # (respawn/adopt + the 4 path consumers always agree), collision-safe,
+  # and short enough to stay well under SUN_LEN.
+  defp socket_dir_slug(agent_uri) do
+    agent_uri
+    |> URI.to_string()
+    |> then(&:crypto.hash(:sha256, &1))
+    |> Base.encode16(case: :lower)
+    |> binary_part(0, 16)
   end
 
   defp default_bridge_ws_url do
