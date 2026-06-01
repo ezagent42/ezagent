@@ -1,5 +1,10 @@
 defmodule Ezagent.CapabilityTest do
-  use ExUnit.Case, async: true
+  # remediation C-B (#114) — `Ezagent.AgentLineage.record/2` is now
+  # write-through to the durable `agent_lineage` SQLite table, so the
+  # `{:spawned_by, P}` lineage tests need an Ecto sandbox connection.
+  # DataCase sets one up per test; `async: false` because it shares the
+  # global AgentLineage ETS cache + a sandbox connection.
+  use EzagentCore.DataCase, async: false
   alias Ezagent.Capability
   import Ezagent.Test.CapHelper
 
@@ -594,6 +599,50 @@ defmodule Ezagent.CapabilityTest do
                )
              ),
              "{:within_workspace, _} narrows; it must not match a workspace-less system:// URI"
+    end
+  end
+
+  # Remediation SPEC 2026-05-30 C-C regression: a %Capability{} MUST be
+  # JSON-encodable so the `{:emit, :cap_granted, %{cap: cap}}` effect persists
+  # to EventLog. Before the encoder, this raised `Jason.EncodeError` /
+  # `Protocol.UndefinedError` and Kind.Runtime swallowed it ("continuing") —
+  # silently dropping every cap-grant/revoke audit event.
+  describe "Jason.Encoder (EventLog emit integrity)" do
+    test "encodes a Capability with URI fields, atoms and DateTime without raising" do
+      cap = %Capability{
+        kind: :user,
+        behavior: Ezagent.Behavior.Chat,
+        action: :send,
+        instance: :any,
+        workspace_uri: @ws_default,
+        granted_by: @system_uri,
+        granted_at: @now
+      }
+
+      json = Jason.encode!(cap)
+      decoded = Jason.decode!(json)
+
+      assert decoded["kind"] == "user"
+      assert decoded["action"] == "send"
+      # URI fields stringify; :any atoms pass through.
+      assert decoded["granted_by"] == URI.to_string(@system_uri)
+      assert decoded["workspace_uri"] == URI.to_string(@ws_default)
+      assert decoded["instance"] == "any"
+    end
+
+    test "encodes a Capability nested in an emit-style payload map" do
+      cap = %Capability{
+        kind: :user,
+        behavior: :any,
+        action: :any,
+        instance: :any,
+        workspace_uri: :any,
+        granted_by: @system_uri,
+        granted_at: @now
+      }
+
+      payload = %{target_uri: "entity://user/team-alpha/alice", cap: cap, at: @now}
+      assert {:ok, _json} = Jason.encode(payload)
     end
   end
 end

@@ -23,10 +23,18 @@ defmodule EzagentPluginLiveview.AdminLiveRoutingViewTest do
     :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
     Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, {:shared, self()})
 
+    # Session-scoped routing rules are validated against the session's
+    # workspace. The rule URIs these tests submit live in `team-alpha`, so
+    # the operator must view the team-alpha session — otherwise the admin
+    # lands in the `system` workspace and every team-alpha matcher_arg /
+    # receiver is rejected as cross-workspace ("Rejected URI"). (post-
+    # lifecycle remediation: the setup never pinned the session workspace
+    # to match the rule URIs.)
     conn =
       Phoenix.ConnTest.build_conn()
       |> Plug.Test.init_test_session(%{
-        "current_entity_uri" => URI.to_string(Ezagent.Entity.User.admin_uri())
+        "current_entity_uri" => URI.to_string(Ezagent.Entity.User.admin_uri()),
+        "current_workspace_uri" => "workspace://team-alpha"
       })
 
     {:ok, conn: conn}

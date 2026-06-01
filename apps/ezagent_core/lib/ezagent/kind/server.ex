@@ -183,7 +183,7 @@ defmodule Ezagent.Kind.Server do
   # Workspace.create_agent / LV) instead of leaving a Kind in
   # memory-only mode that disappears on restart.
   defp persist_initial_snapshot(uri, kind_module, slice_state) do
-    case kind_module.persistence() do
+    case Ezagent.Kind.persistence_of(kind_module) do
       :ephemeral ->
         :ok
 
@@ -191,14 +191,28 @@ defmodule Ezagent.Kind.Server do
         :ok
 
       _ ->
-        # save_now/3 may raise (infra exceptions) OR exit (linked DB
+        # Lifecycle Phase A (SPEC §9 OQ-1, F3) — when this Kind hosts a
+        # Lifecycle (two-container) slice, the `ever_created` marker is
+        # written in the SAME upsert as the initial state binary
+        # (`save_now/4` with `mark_ever_created: true`), so the marker is
+        # ATOMIC with the snapshot it gates. There is no separate
+        # fire-and-forget marker write that a crash between save + mark
+        # could skip, re-running `create` on the next boot. Per
+        # let-it-crash, a failed atomic write propagates to `{:stop, ...}`
+        # below — the same durability promise as the state itself.
+        save_opts =
+          if hosts_lifecycle_slice?(slice_state),
+            do: [mark_ever_created: true],
+            else: []
+
+        # save_now/4 may raise (infra exceptions) OR exit (linked DB
         # connection process death — observed in the ExUnit sandbox
         # when the test owner has exited before the Kind init runs).
         # Catch BOTH at this boundary so init/1 can return
         # `{:stop, ...}` cleanly rather than have the failure abort
         # the GenServer with an opaque `:EXIT` tuple.
         try do
-          Ezagent.Kind.Snapshot.save_now(uri, kind_module, slice_state)
+          Ezagent.Kind.Snapshot.save_now(uri, kind_module, slice_state, save_opts)
         rescue
           e -> {:error, e}
         catch
@@ -207,13 +221,23 @@ defmodule Ezagent.Kind.Server do
     end
   end
 
+  # Lifecycle Phase A (SPEC §9 OQ-1) — structural detection (a slice
+  # carrying a `:transients` sub-key), no Behavior coupling. A Kind with
+  # any Lifecycle slice gets the atomic ever-created marker on its initial
+  # persist.
+  defp hosts_lifecycle_slice?(slice_state) do
+    Enum.any?(slice_state, fn {_key, slice} ->
+      is_map(slice) and Map.has_key?(slice, :transients)
+    end)
+  end
+
   # PR-EM-CORE: walk each Behavior, call its optional post_init/2 with
   # (args, behavior's own slice), and collect `{behavior, term}` entries
   # for any that returned `{:continue, term}`. Behaviors that don't
   # export `post_init/2` or that returned `:ok` are skipped. Order is
   # `kind_module.behaviors/0` (declaration order) — deterministic.
   defp collect_post_init_queue(kind_module, args, slice_state) do
-    kind_module.behaviors()
+    Ezagent.Kind.behaviors_of(kind_module)
     |> Enum.reduce([], fn behavior, acc ->
       if function_exported?(behavior, :post_init, 2) do
         slice = Map.get(slice_state, behavior.state_slice(), %{})
@@ -230,7 +254,7 @@ defmodule Ezagent.Kind.Server do
   end
 
   defp schedule_periodic_snapshot(kind_module) do
-    case kind_module.persistence() do
+    case Ezagent.Kind.persistence_of(kind_module) do
       {:snapshot, :periodic, ms} when is_integer(ms) and ms > 0 ->
         Process.send_after(self(), :snapshot_tick, ms)
         :ok
@@ -464,7 +488,7 @@ defmodule Ezagent.Kind.Server do
   defp run_on_ready_hooks(kind_module, self_uri, slice_state) do
     ctx = %{kind_module: kind_module, self_uri: self_uri}
 
-    Enum.each(kind_module.behaviors(), fn behavior ->
+    Enum.each(Ezagent.Kind.behaviors_of(kind_module), fn behavior ->
       if function_exported?(behavior, :on_ready, 2) do
         slice = Map.get(slice_state, behavior.state_slice(), %{})
 
@@ -511,6 +535,52 @@ defmodule Ezagent.Kind.Server do
   def handle_call({:ezagent_get_slice, slice_key}, _from, %{state: slice_state} = state)
       when is_atom(slice_key) do
     {:reply, {:ok, Map.get(slice_state, slice_key)}, state}
+  end
+
+  # Lifecycle Phase A (SPEC §2 destroy path, F4) — drain each Lifecycle
+  # Behavior's `destroy/2` cleanup hook BEFORE the framework clears
+  # durable state. Invoked synchronously by `Ezagent.Lifecycle.destroy/2`
+  # so the hook runs IN this Kind's process (reading its own slice) while
+  # the entity is still live. This is the destroy-vs-deactivate signal:
+  # a graceful stop reaches OTP `terminate/3` (→ `deactivate`); a
+  # permanent deletion reaches HERE (→ `destroy`).
+  #
+  # Per-Behavior isolated (try/rescue) so one buggy hook doesn't block
+  # the others or the caller's durable delete. The slice is NOT mutated —
+  # the row is about to be deleted regardless.
+  def handle_call({:ezagent_lifecycle_destroy, reason}, _from, state) do
+    %{kind: kind_module, uri: self_uri, state: slice_state} = state
+    ctx = %{kind_module: kind_module, self_uri: self_uri}
+
+    Enum.each(Ezagent.Kind.behaviors_of(kind_module), fn behavior ->
+      if function_exported?(behavior, :__ezagent_lifecycle_destroy__, 3) do
+        slice = Map.get(slice_state, behavior.state_slice(), %{})
+
+        try do
+          _ = behavior.__ezagent_lifecycle_destroy__(reason, slice, ctx)
+        rescue
+          err ->
+            require Logger
+
+            Logger.warning(
+              "Ezagent.Kind.Server: Behavior #{inspect(behavior)} destroy/2 raised " <>
+                "(#{inspect(err)}). Continuing destroy of remaining behaviors. " <>
+                "URI=#{URI.to_string(self_uri)}"
+            )
+        catch
+          kind, value ->
+            require Logger
+
+            Logger.warning(
+              "Ezagent.Kind.Server: Behavior #{inspect(behavior)} destroy/2 threw " <>
+                "#{inspect({kind, value})}. Continuing destroy of remaining behaviors. " <>
+                "URI=#{URI.to_string(self_uri)}"
+            )
+        end
+      end
+    end)
+
+    {:reply, :ok, state}
   end
 
   def handle_call({:ezagent_dispatch, %Ezagent.Invocation{} = inv}, _from, state) do
@@ -614,7 +684,7 @@ defmodule Ezagent.Kind.Server do
     # Phase 4-completion: periodic strategy — write via Writer (async)
     # then re-schedule. If Writer isn't running (e.g. test envs without
     # full sup tree), fall back to sync save_now to remain useful.
-    case kind_module.persistence() do
+    case Ezagent.Kind.persistence_of(kind_module) do
       {:snapshot, :periodic, ms} ->
         if Process.whereis(Ezagent.Snapshot.Writer) do
           Ezagent.Snapshot.Writer.async_save(uri, kind_module, slice_state)
@@ -643,7 +713,7 @@ defmodule Ezagent.Kind.Server do
 
   def handle_info(message, %{kind: kind_module, uri: self_uri, state: slice_state} = wrapper) do
     new_slice_state =
-      kind_module.behaviors()
+      Ezagent.Kind.behaviors_of(kind_module)
       |> Enum.reduce(slice_state, fn behavior, acc_state ->
         forward_to_behavior(behavior, message, acc_state, kind_module, self_uri)
       end)
@@ -754,7 +824,7 @@ defmodule Ezagent.Kind.Server do
     # Phase 4-completion: :on_terminate strategy writes on graceful
     # shutdown. Use try/rescue so a failing save never prevents the
     # Kind from going down.
-    case kind_module.persistence() do
+    case Ezagent.Kind.persistence_of(kind_module) do
       :on_terminate ->
         try do
           _ = Ezagent.Kind.Snapshot.save_now(uri, kind_module, slice_state)
@@ -797,7 +867,7 @@ defmodule Ezagent.Kind.Server do
   defp drain_behavior_terminates(reason, kind_module, uri, slice_state) do
     ctx = %{kind_module: kind_module, self_uri: uri}
 
-    Enum.each(kind_module.behaviors(), fn behavior ->
+    Enum.each(Ezagent.Kind.behaviors_of(kind_module), fn behavior ->
       if function_exported?(behavior, :terminate, 3) do
         slice = Map.get(slice_state, behavior.state_slice(), %{})
 

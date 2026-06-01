@@ -43,7 +43,7 @@ defmodule EzagentCore.Invariants.SessionsHaveWorkspaceTest do
         uri_str = entry_uri(entry)
 
         try do
-          parsed = Ezagent.URI.parse!(uri_str)
+          parsed = Ezagent.URI.new!(uri_str)
           ws = Capability.workspace_of(parsed)
           match?(%URI{scheme: "workspace"}, ws)
         rescue

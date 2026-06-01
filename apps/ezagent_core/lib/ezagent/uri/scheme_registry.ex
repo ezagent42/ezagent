@@ -15,7 +15,7 @@ defmodule Ezagent.URI.SchemeRegistry do
   alongside the other reliability primitives). `EzagentCore.Application`
   calls `init/0` (idempotent) + seeds the 6 SPEC §5.6 schemes
   (entity/workspace/session/template/resource/system) before any code
-  that would call `Ezagent.URI.parse!/1`.
+  that would call `Ezagent.URI.new!/1`.
 
   ## Lockdown invariant
 

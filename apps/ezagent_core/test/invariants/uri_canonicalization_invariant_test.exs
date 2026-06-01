@@ -10,8 +10,8 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
 
   1. §5.1 — no stdlib `URI.parse/1` in `apps/*/lib/**/*.ex` (outside the
      canonical-module allowlist).
-  2. §5.2 — no stdlib `URI.new!/1` outside the §3.4 query-target idiom
-     + §3.5 compile-time module-attribute carve-outs.
+  2. §5.2 — no stdlib `URI.new!/1` outside the §3.5 compile-time
+     module-attribute carve-out.
   3. §5.2.1 — no stdlib `URI.new/1` (non-bang) outside the §3.7 dual-
      fallback allowlist (`Ezagent.URI`, `Ezagent.Ecto.URI`).
   4. §5.3 — canonical URI round-trip property.
@@ -19,6 +19,21 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
   6. §5.5 — snapshot `canonicalize_uris/1` covers every required shape.
   7. §5.5 r3 adversarial — the same-line `URI.new(s); URI.new!(t)` mix
      is not a false negative under the §5.2.1 regex.
+
+  ## URI hardening 2026-05-30 — query-target carve-out CLOSED
+
+  > "address silent errors are unacceptable" — Allen 2026-05-30.
+
+  SPEC §3.4 previously CARVED OUT the query-target idiom
+  `URI.new!("\#{URI.to_string(uri)}?action=b.a")` — stdlib `URI.new!/1`
+  was permitted when the line also contained `?action=`. That carve-out
+  was a real silent-error hole: stdlib `URI.new!/1` yields the right
+  `authority: nil` struct BUT bypasses the SchemeRegistry + 3-segment
+  validation, so a typo'd scheme or malformed base passed silently. The
+  carve-out is now CLOSED — those ~28 sites migrated to
+  `Ezagent.URI.with_action/3`, which re-parses the assembled string
+  through the canonical chokepoint (full validation). The §5.2 test no
+  longer exempts `?action=` lines.
 
   Suppression: any line ending with `# uri-canonical-allow: <reason>`
   is exempt. This is the escape hatch for genuine structural
@@ -70,7 +85,7 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
     assert violations == [],
            """
            Found #{length(violations)} use(s) of stdlib URI.parse/1 in production lib/.
-           Use `Ezagent.URI.parse!/1` instead for Ezagent-scheme URIs
+           Use `Ezagent.URI.new!/1` instead for Ezagent-scheme URIs
            (SPEC 2026-05-27-uri-canonicalization §3). If this is a
            legitimate structural derivation, append a comment:
                # uri-canonical-allow: <reason>
@@ -80,15 +95,25 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
   end
 
   # ---------------------------------------------------------------------
-  # §5.2 — no stdlib URI.new!/1 outside §3.4/§3.5 carve-outs
+  # §5.2 — no stdlib URI.new!/1 outside the §3.5 module-attr carve-out.
+  #
+  # URI hardening 2026-05-30: the §3.4 query-target carve-out
+  # (`URI.new!("...?action=...")`) is CLOSED — those sites migrated to
+  # `Ezagent.URI.with_action/3` (routes through the validating chokepoint).
+  # stdlib `URI.new!/1` with `?action=` is now a violation.
 
-  test "no stdlib URI.new!/1 in apps outside §3.4 query-target + §3.5 module-attr carve-outs" do
+  test "no stdlib URI.new!/1 in apps outside §3.5 module-attr carve-out (query-target carve-out CLOSED)" do
     violations =
       for path <- lib_files(),
           relative(path) not in @uri_parse_allowlist,
           {line, lineno} <- Enum.with_index(File.stream!(path), 1),
-          Regex.match?(~r/\bURI\.new!\(/, line),
-          not is_query_target_idiom?(line),
+          # Negative lookbehind `(?<![\w.])` — match the BARE stdlib
+          # `URI.new!(` only, NOT a module-qualified `Ezagent.URI.new!(`
+          # (the canonical chokepoint, formerly `Ezagent.URI.parse!/1`,
+          # renamed 2026-05-29). Without this anchor every one of the
+          # ~400 renamed call sites would false-positive as a stdlib
+          # violation.
+          Regex.match?(~r/(?<![\w.])URI\.new!\(/, line),
           not is_module_attribute?(line),
           not String.contains?(line, "# uri-canonical-allow"),
           not in_comment?(line) do
@@ -98,10 +123,15 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
     assert violations == [],
            """
            Found #{length(violations)} use(s) of stdlib URI.new!/1 outside the
-           §3.4 query-target idiom (`URI.new!("...?action=...")`) and §3.5
-           compile-time module-attribute carve-outs. Use
-           `Ezagent.URI.parse!/1` at runtime; if this is a legitimate
-           structural derivation (§3.6), append:
+           §3.5 compile-time module-attribute carve-out.
+
+           For a plain string: use `Ezagent.URI.new!/1`.
+           For the `?action=` query-target idiom
+           (`URI.new!("\#{URI.to_string(uri)}?action=b.a")`): use
+           `Ezagent.URI.with_action(uri, :b, :a)` — it routes through the
+           validating chokepoint instead of bypassing SchemeRegistry +
+           shape validation (the closed §3.4 carve-out).
+           If this is a legitimate structural derivation (§3.6), append:
                # uri-canonical-allow: <reason>
            Violations:
            #{format(violations)}
@@ -127,7 +157,7 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
            """
            Found #{length(violations)} use(s) of stdlib URI.new/1 outside
            the SPEC §3.7 dual-fallback allowlist (Ezagent.URI,
-           Ezagent.Ecto.URI). Use `Ezagent.URI.parse!/1` (wrapped in
+           Ezagent.Ecto.URI). Use `Ezagent.URI.new!/1` (wrapped in
            try/rescue if you need to keep a `{:error, _}` contract for
            the boundary). Violations:
            #{format(violations)}
@@ -171,8 +201,8 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
            Found #{length(violations)} bypass(es) of the URI canonical chokepoint.
            Stdlib URI cannot be referenced via capture syntax (`&URI.parse/1`),
            Erlang-style apply (`apply(URI, :parse, [_])`), or module alias
-           (`alias URI, as: Foo`). Use `Ezagent.URI.parse!/1` (or the
-           `&Ezagent.URI.parse!/1` capture). If this is a legitimate
+           (`alias URI, as: Foo`). Use `Ezagent.URI.new!/1` (or the
+           `&Ezagent.URI.new!/1` capture). If this is a legitimate
            structural derivation, append `# uri-canonical-allow: <reason>`
            on the same line. Violations:
            #{format(violations)}
@@ -198,8 +228,8 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
     ]
 
     for s <- cases do
-      a = Ezagent.URI.parse!(s)
-      b = Ezagent.URI.parse!(URI.to_string(a))
+      a = Ezagent.URI.new!(s)
+      b = Ezagent.URI.new!(URI.to_string(a))
       assert a == b, "round-trip diverged for #{s}"
       assert a.authority == nil, "expected authority:nil for #{s}, got #{inspect(a.authority)}"
       assert URI.to_string(a) == s, "to_string non-idempotent for #{s}"
@@ -211,7 +241,7 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
 
   test "admin_uri produced any-which-way is canonical-equal" do
     from_constant = Ezagent.Entity.User.admin_uri()
-    from_parse = Ezagent.URI.parse!("entity://user/system/admin")
+    from_parse = Ezagent.URI.new!("entity://user/system/admin")
     {:ok, from_string_via_ecto} = Ezagent.Ecto.URI.load("entity://user/system/admin")
 
     assert from_constant == from_parse,
@@ -281,7 +311,91 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
     assert canonicalized.chat.binding.uri.authority == nil
 
     # Equality against parse!/1 result holds
-    assert canonicalized.chat.owner == Ezagent.URI.parse!("entity://user/system/admin")
+    assert canonicalized.chat.owner == Ezagent.URI.new!("entity://user/system/admin")
+  end
+
+  # ---------------------------------------------------------------------
+  # Task #111 — canonicalize as a MAP KEY survives a snapshot round-trip
+  #
+  # The session-membership-survives-restart bug: a member `%URI{}` is a
+  # KEY in the `:members` slice map. A caller holds a canonical
+  # (`parse!/1`, authority:nil) member URI; the slice is snapshotted,
+  # reloaded, and re-walked by `canonicalize_uris/1`. If the round-trip
+  # were not struct-stable, the reloaded key would not `==` the held URI
+  # and `Map.has_key?/2` would miss even though the strings are equal.
+  #
+  # This pins BOTH invariants the task requires:
+  #   (1) idempotence — canonicalize(u) == canonicalize(canonicalize(u))
+  #   (2) round-trip struct-equality as a map key — a URI built by the
+  #       sanctioned path is `==` to the same URI after a snapshot
+  #       round-trip, so `Map.has_key?/2` succeeds.
+
+  test "canonical URI is map-key-stable across a canonicalize_uris/1 round-trip (Task #111)" do
+    cases = [
+      "entity://user/team-alpha/m-1",
+      "entity://agent/team-alpha/cc_demo",
+      "session://default/team-alpha/main",
+      "session://template-x/team-alpha/main",
+      "workspace://team-alpha",
+      "system://routing/default"
+    ]
+
+    for s <- cases do
+      held = Ezagent.URI.new!(s)
+
+      # (1) Idempotence: canonicalize is a fixed point.
+      assert Ezagent.Kind.Snapshot.canonicalize_uris(held) ==
+               Ezagent.Kind.Snapshot.canonicalize_uris(
+                 Ezagent.Kind.Snapshot.canonicalize_uris(held)
+               ),
+             "canonicalize_uris/1 not idempotent for #{s}"
+
+      # (2) Round-trip struct-equality AS A MAP KEY through the real
+      #     snapshot serialization path (term_to_binary → binary_to_term →
+      #     canonicalize_uris), then prove `Map.has_key?/2` succeeds with
+      #     the originally-held URI.
+      members = %{held => %{online: true}}
+
+      reloaded =
+        members
+        |> :erlang.term_to_binary()
+        |> :erlang.binary_to_term([:safe])
+        |> Ezagent.Kind.Snapshot.canonicalize_uris()
+
+      [{reloaded_key, _}] = Enum.to_list(reloaded)
+
+      assert reloaded_key == held,
+             "reloaded member key not struct-equal to held URI for #{s} — " <>
+               "Map.has_key?/2 would miss after restart"
+
+      assert reloaded_key.authority == nil,
+             "reloaded key authority not nil for #{s}"
+
+      assert Map.has_key?(reloaded, held),
+             "Map.has_key?/2 missed the originally-held URI key for #{s}"
+    end
+  end
+
+  test "a stdlib-URI.parse-built (authority-bearing) key is rescued to canonical by the reload walker (Task #111)" do
+    # The exact bug shape: a NON-canonical (authority:"user") URI got
+    # into a snapshot (pre-migration, or a fixture built the wrong way).
+    # The reload walker must rewrite it so it matches the canonical
+    # form a current caller holds.
+    legacy_key = apply(URI, :parse, ["entity://user/team-alpha/m-1"]) # uri-canonical-allow: Task #111 adversarial fixture
+    refute legacy_key.authority == nil, "fixture precondition: legacy key carries authority"
+
+    held = Ezagent.URI.new!("entity://user/team-alpha/m-1")
+    refute legacy_key == held, "fixture precondition: legacy and canonical structs differ"
+
+    reloaded =
+      %{legacy_key => %{online: true}}
+      |> :erlang.term_to_binary()
+      |> :erlang.binary_to_term([:safe])
+      |> Ezagent.Kind.Snapshot.canonicalize_uris()
+
+    assert Map.has_key?(reloaded, held),
+           "the reload walker did not canonicalize a legacy authority-bearing key — " <>
+             "Map.has_key?/2 with the canonical URI missed"
   end
 
   # ---------------------------------------------------------------------
@@ -304,9 +418,6 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
     # immediately followed by `!`. SPEC §5.2.1 r4 fix.
     Regex.match?(~r/\bURI\.new(?!!)\(/, line)
   end
-
-  defp is_query_target_idiom?(line),
-    do: String.contains?(line, "URI.new!(") and String.contains?(line, "?action=")
 
   defp is_module_attribute?(line),
     do: Regex.match?(~r/^\s*@\w+\s+URI\.new!\(/, line)

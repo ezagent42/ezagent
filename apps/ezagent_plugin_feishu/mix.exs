@@ -47,6 +47,16 @@ defmodule EzagentPluginFeishu.MixProject do
       # lookup; the migration mix task uses WorkerSpawn + BindingRow
       # directly to migrate legacy feishu_session_bindings rows.
       {:ezagent_domain_external_mirror, in_umbrella: true},
+      # TEST-ONLY (post-lifecycle remediation): MentionParserTest spawns
+      # LIVE `cc_`-flavored agents (the parser walks KindRegistry and the
+      # URI assertions pin `entity://agent/<ws>/cc_<name>`). Post PR #149
+      # the `cc` flavor → Ezagent.Entity.Agent is registered by the cc
+      # PLUGIN's `Plugin.boot` into AgentFlavorRegistry, NOT by chat.
+      # Running the feishu suite in isolation without the cc plugin yields
+      # `{:no_kind_module_for_agent, "...cc_..."}`. The full umbrella
+      # masks this (cc boots alongside feishu). Depend on cc `only: :test`
+      # so the isolated suite registers the `cc` flavor it asserts against.
+      {:ezagent_plugin_cc, in_umbrella: true, only: :test},
       {:jason, "~> 1.2"},
       {:plug, "~> 1.18"},
       {:yaml_elixir, "~> 2.9"}

@@ -398,7 +398,7 @@ defmodule Ezagent.Audit do
           # system-scoped predicate returns false (correct: unknown scheme
           # is not system-scoped).
           try do
-            Ezagent.URI.parse!(s)
+            Ezagent.URI.new!(s)
           rescue
             ArgumentError -> nil
           end
@@ -426,6 +426,21 @@ defmodule Ezagent.Audit do
   defp uri_to_str(%URI{} = u), do: URI.to_string(u)
   defp uri_to_str(s) when is_binary(s), do: s
   defp uri_to_str(nil), do: nil
+
+  # Phase 4 Item 4 — `Ezagent.Cmd.new/4` defaults `ctx.caller` to the atom
+  # `:system` (the canonical "system-originated dispatch" marker — see
+  # `apps/ezagent_core/lib/ezagent/cmd.ex`). The audit telemetry handler
+  # receives that atom verbatim via the `:invoke` / `:authz` events. We
+  # canonicalize the atom at the boundary into a `system://` URI string
+  # so it flows through the strict `system_scoped_uri?/1` allowlist and
+  # lands the audit row in `workspace://system` (admin tier) — the same
+  # treatment as any other system-scoped caller. Without this clause the
+  # handler crashes (no-function-clause), telemetry detaches the handler
+  # for the rest of the node lifetime, and the audit log silently goes
+  # missing (see scenario_30_plugin_greenfield_test.exs's pre-detach
+  # workaround at line 169 — removed once this clause lands).
+  defp uri_to_str(:system), do: "system://anonymous"
+  defp uri_to_str(a) when is_atom(a), do: "system://#{a}"
   defp stringify(nil), do: nil
   defp stringify(a) when is_atom(a), do: Atom.to_string(a)
   defp stringify(s) when is_binary(s), do: s

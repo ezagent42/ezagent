@@ -79,7 +79,7 @@ defmodule Ezagent.PluginNp.Template.NpAgent do
     # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
     # with try/rescue keeping the structured `{:error, _}` contract.
     try do
-      case Ezagent.URI.parse!(uri_str) do
+      case Ezagent.URI.new!(uri_str) do
         %URI{scheme: "entity", host: "agent", path: "/" <> rest} when rest != "" ->
           with [_workspace, entity_name] when entity_name != "" <-
                  String.split(rest, "/", parts: 2),
@@ -131,7 +131,7 @@ defmodule Ezagent.PluginNp.Template.NpAgent do
 
   @impl Ezagent.Kind.Template
   def instantiate(_tmpl_name, %{"agent_uri" => agent_uri_str} = tmpl, _workspace_uri) do
-    agent_uri = Ezagent.URI.parse!(agent_uri_str)
+    agent_uri = Ezagent.URI.new!(agent_uri_str)
     cwd = Map.get(tmpl, "cwd") || System.tmp_dir!()
     timeout_ms = parse_int(tmpl["timeout_ms"], 10_000)
 

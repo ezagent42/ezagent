@@ -293,7 +293,28 @@ defmodule Mix.Tasks.Compile.EzagentPluginCheck do
       |> Keyword.get_values(:behaviour)
       |> List.flatten()
 
-    behaviour in behaviours
+    cond do
+      # Phase 3 deletion (2026-05-28): the `@behaviour Ezagent.Behavior`
+      # alternative is no longer accepted. Every Behavior MUST opt in
+      # via `use Ezagent.Behavior`, which emits the `__behavior__?/0`
+      # marker the gate consults below.
+      behaviour == Ezagent.Behavior ->
+        new_style_behavior?(module)
+
+      behaviour in behaviours ->
+        true
+
+      true ->
+        false
+    end
+  rescue
+    _ -> false
+  end
+
+  defp new_style_behavior?(module) do
+    Code.ensure_loaded?(module) and
+      function_exported?(module, :__behavior__?, 0) and
+      apply(module, :__behavior__?, [])
   rescue
     _ -> false
   end

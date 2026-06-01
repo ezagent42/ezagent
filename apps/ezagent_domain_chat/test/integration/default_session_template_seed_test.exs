@@ -78,7 +78,18 @@ defmodule EzagentDomainChat.Integration.DefaultSessionTemplateSeedTest do
     # `Behavior.Template` registration).
     {:ok, state} = KindSnapshot.decode_state(default_template)
     template_slice = Map.get(state, :template) || Map.get(state, "template") || %{}
-    content = Map.get(template_slice, :content) || Map.get(template_slice, "content") || %{}
+
+    # Lifecycle migration (SPEC 2026-05-29): `Ezagent.Behavior.Template`
+    # now `use Ezagent.Lifecycle`, so the PERSISTED `:template` slice is
+    # the two-container `%{state: %{content: ...}}` shape (the framework
+    # persists only `:state`; `:transients` is stripped at the serialize
+    # boundary). Unwrap to the persistent `:state` view before reading
+    # `:content` — a pre-migration flat slice falls through unchanged.
+    template_persistent =
+      Map.get(template_slice, :state) || Map.get(template_slice, "state") || template_slice
+
+    content =
+      Map.get(template_persistent, :content) || Map.get(template_persistent, "content") || %{}
 
     # The seed writes atom-keyed content. `state_binary` preserves
     # atom keys via term_to_binary roundtrip; the legacy JSON `state`
@@ -109,5 +120,22 @@ defmodule EzagentDomainChat.Integration.DefaultSessionTemplateSeedTest do
            "expected orchestrator_template_uri to point at the cc-orchestrator " <>
              "AgentTemplate seed URI (`#{CcOrchestratorSeed.template_uri()}`); " <>
              "got #{inspect(orchestrator_uri)}"
+  end
+
+  # 2026-05-31 orchestrator-startup-atomicity §3 — the seed is a HARD boot
+  # invariant in prod/dev (crash boot if it can't persist) but `:test` is
+  # CARVED OUT (best-effort; Ecto SQL Sandbox). This test asserts the
+  # carve-out: the test-only entry returns `:ok` (NOT a crash) and the
+  # boot we are running inside did NOT abort — if the §3 carve-out were
+  # wrong (hard-crashing in test), the whole suite's boot would fail and
+  # this test could never run.
+  test "§3 seed-invariant test-env carve-out: seed is best-effort in :test" do
+    # Idempotent re-run inside the sandbox — must be `:ok`, never a raise
+    # (the prod/dev path raises on `{:error, _}`; the test path tolerates).
+    assert :ok = EzagentDomainChat.Application.seed_default_session_template_now()
+
+    # The carve-out only applies in :test — guard that we ARE in test env
+    # (otherwise this assertion is meaningless).
+    assert Mix.env() == :test
   end
 end

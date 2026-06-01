@@ -5,6 +5,9 @@ defmodule Ezagent.Behavior.IdentityGrantTest do
   Phase 9 PR-3 (SPEC v3 §4): caps carry `workspace_uri`. Tests pass
   the field explicitly since `@enforce_keys` rejects struct
   construction without it.
+
+  P2-b migration (2026-05-28): rewritten to exercise the new-contract
+  `handle_grant_cap/2` / `handle_revoke_cap/2` handlers.
   """
   use EzagentCore.DataCase, async: false
 
@@ -25,82 +28,84 @@ defmodule Ezagent.Behavior.IdentityGrantTest do
     }
   end
 
-  test "grant_cap adds to slice + returns updated list" do
-    slice = %{caps: MapSet.new()}
+  defp ctx_with(caller_caps, slice_caps) do
+    %{
+      caller: @granter,
+      caps: caller_caps,
+      self_uri: URI.parse("entity://user/team-alpha/target"),
+      reply: :sync,
+      read: fn key, default ->
+        case key do
+          :caps -> slice_caps
+          _ -> default
+        end
+      end
+    }
+  end
 
+  test "grant_cap adds to slice + returns updated list via :set effect" do
     new_cap = echo_cap()
 
-    # PR-OWN-2 §5.2: wildcard caps (`behavior: :any`) require the
-    # caller to hold the bootstrap admin marker. Provide admin caps
-    # in ctx — test direct invoke bypasses dispatch's CapBAC gate
-    # which would have set this in production.
-    ctx = %{caps: Ezagent.SystemPrincipal.caps("system://bootstrap")}
+    # PR-OWN-2 §5.2: wildcard caps require bootstrap-admin caller.
+    ctx = ctx_with(Ezagent.SystemPrincipal.caps("system://bootstrap"), MapSet.new())
 
-    {:ok, new_slice, %{caps: caps}} =
-      IdentityAdmin.invoke(:grant_cap, slice, %{cap: new_cap}, ctx)
+    {:ok, %{caps: caps}, effects} =
+      IdentityAdmin.handle_grant_cap(%{cap: new_cap}, ctx)
 
-    assert MapSet.size(new_slice.caps) == 1
+    # The :set effect carries the new MapSet.
+    assert {:set, :caps, new_set} = Enum.find(effects, &match?({:set, :caps, _}, &1))
+    assert MapSet.size(new_set) == 1
     assert new_cap in caps
   end
 
-  test "revoke_cap removes from slice" do
+  test "revoke_cap removes from slice via :set effect" do
     cap = echo_cap()
+    ctx = ctx_with(MapSet.new(), MapSet.new([cap]))
 
-    slice = %{caps: MapSet.new([cap])}
+    {:ok, %{caps: caps}, effects} =
+      IdentityAdmin.handle_revoke_cap(%{cap: cap}, ctx)
 
-    {:ok, new_slice, %{caps: caps}} =
-      IdentityAdmin.invoke(:revoke_cap, slice, %{cap: cap}, %{})
-
-    assert MapSet.size(new_slice.caps) == 0
+    assert {:set, :caps, new_set} = Enum.find(effects, &match?({:set, :caps, _}, &1))
+    assert MapSet.size(new_set) == 0
     assert caps == []
   end
 
-  test "grant_cap is idempotent (MapSet semantics)" do
+  test "grant_cap is idempotent (MapSet semantics + identity-tuple dedup)" do
     cap = echo_cap()
+    ctx = ctx_with(Ezagent.SystemPrincipal.caps("system://bootstrap"), MapSet.new([cap]))
 
-    slice = %{caps: MapSet.new([cap])}
-
-    # See sibling test — admin caps required for wildcard grants
-    # under PR-OWN-2 §5.2.
-    ctx = %{caps: Ezagent.SystemPrincipal.caps("system://bootstrap")}
-
-    {:ok, new_slice, _} = IdentityAdmin.invoke(:grant_cap, slice, %{cap: cap}, ctx)
-    assert MapSet.size(new_slice.caps) == 1
+    {:ok, _result, effects} = IdentityAdmin.handle_grant_cap(%{cap: cap}, ctx)
+    assert {:set, :caps, new_set} = Enum.find(effects, &match?({:set, :caps, _}, &1))
+    assert MapSet.size(new_set) == 1
   end
 
-  test "IdentityAdmin interface declares grant_cap + revoke_cap (PR-OWN-3 split)" do
-    iface = IdentityAdmin.interface()
-    assert Map.has_key?(iface, :grant_cap)
-    assert Map.has_key?(iface, :revoke_cap)
-    assert iface.grant_cap.modes == [:call]
+  test "IdentityAdmin __actions__/0 declares grant_cap + revoke_cap (PR-OWN-3 split)" do
+    action_specs = IdentityAdmin.__actions__()
+    assert Map.has_key?(action_specs, :grant_cap)
+    assert Map.has_key?(action_specs, :revoke_cap)
+    assert action_specs.grant_cap.modes == [:call]
   end
 
   describe "notify_cap_change — `Notifications.notify` shape (regression: E2E 2026-05-25)" do
-    # Bug: `IdentityAdmin.invoke(:grant_cap, ...)` calls private
-    # `notify_cap_change/4` which posted a notification with the
-    # legacy `%{kind:, text:, cap_summary:}` shape — but
-    # `Ezagent.Notifications.notify/2` now requires
-    # `%{type: atom, body: map, source: module}` and raises
-    # `ArgumentError` otherwise. Surfaced via
-    # `mix ezagent.feishu.bind ou_xxx entity://user/team-alpha/<u>`:
-    # the binding row was saved but BindingPolicy cap-grant crashed
-    # the dispatch path for non-admin users.
     test "grant_cap with `:self_uri` user ctx does NOT raise ArgumentError" do
-      # Subscribe so we (a) verify no crash AND (b) verify the
-      # notification reaches the user inbox with the new contract shape.
       user_uri = URI.parse("entity://user/team-alpha/notify_shape_grant")
       :ok = Ezagent.Notifications.subscribe(user_uri, %{caps: :system})
 
       ctx = %{
+        caller: @granter,
         caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
-        self_uri: user_uri
+        self_uri: user_uri,
+        read: fn key, default ->
+          case key do
+            :caps -> MapSet.new()
+            _ -> default
+          end
+        end
       }
 
-      slice = %{caps: MapSet.new()}
       cap = echo_cap()
 
-      assert {:ok, _new_slice, _result} =
-               IdentityAdmin.invoke(:grant_cap, slice, %{cap: cap}, ctx)
+      assert {:ok, _result, _effects} = IdentityAdmin.handle_grant_cap(%{cap: cap}, ctx)
 
       assert_receive {:notification, ^user_uri,
                       %{
@@ -118,12 +123,21 @@ defmodule Ezagent.Behavior.IdentityGrantTest do
       user_uri = URI.parse("entity://user/team-alpha/notify_shape_revoke")
       :ok = Ezagent.Notifications.subscribe(user_uri, %{caps: :system})
 
-      ctx = %{self_uri: user_uri}
       cap = echo_cap()
-      slice = %{caps: MapSet.new([cap])}
 
-      assert {:ok, _new_slice, _result} =
-               IdentityAdmin.invoke(:revoke_cap, slice, %{cap: cap}, ctx)
+      ctx = %{
+        caller: @granter,
+        caps: MapSet.new(),
+        self_uri: user_uri,
+        read: fn key, default ->
+          case key do
+            :caps -> MapSet.new([cap])
+            _ -> default
+          end
+        end
+      }
+
+      assert {:ok, _result, _effects} = IdentityAdmin.handle_revoke_cap(%{cap: cap}, ctx)
 
       assert_receive {:notification, ^user_uri,
                       %{
@@ -137,62 +151,33 @@ defmodule Ezagent.Behavior.IdentityGrantTest do
 
   describe "§5.2 admin predicate (codex PR-OWN-2 round-2 HIGH-1 regression)" do
     test "instance-scoped wildcard cap does NOT count as bootstrap admin" do
-      # Codex round-2 HIGH-1: round-1's holds_admin_caps?/1 omitted
-      # `instance: :any` from the match. A delegated cap with
-      # `kind: :any, behavior: :any, instance: <target>, workspace: :any`
-      # would have satisfied it — privilege escalation for that target.
-      # Round-2 requires ALL FOUR :any wildcards.
       target_uri = URI.parse("entity://user/acme/victim-x")
 
       delegated_wildcard = %Capability{
         kind: :any,
         behavior: :any,
-        # Narrowed to a specific instance — NOT bootstrap admin shape.
         instance: target_uri,
         workspace_uri: :any,
         granted_by: @granter,
         granted_at: DateTime.utc_now()
       }
 
-      slice = %{caps: MapSet.new()}
       cap_to_grant = echo_cap()
+      ctx = ctx_with(MapSet.new([delegated_wildcard]), MapSet.new())
 
-      # Caller holds the delegated wildcard, attempts to grant
-      # another wildcard cap. Round-1 buggy predicate would have
-      # let this through. Round-2 must reject.
-      ctx = %{caps: MapSet.new([delegated_wildcard])}
-
-      # Pathology-B follow-up to PR-CC-2-v2:
-      # `check_grant_authorized/2` now narrows the bootstrap-admin
-      # requirement to TRUE wildcards (all four axes `:any`). A
-      # scope-bounded wildcard cap like `echo_cap()` (concrete
-      # `workspace_uri`) is granted via the workspace-admin path —
-      # the caller needs a `Behavior.Workspace` cap on the target
-      # workspace. The instance-scoped delegated cap above doesn't
-      # confer Workspace authority either, so the grant still rejects.
-      #
       # SPEC 2026-05-27 capability-action-axis §3.6.1(b): the
       # action-wildcard runtime check fires BEFORE the per-shape
-      # workspace-admin check. `echo_cap()` has `action: :any` (no
-      # explicit action passed; defstruct default). The caller's
-      # delegated wildcard is instance-narrowed → not full-wildcard
-      # admin per `holds_admin_caps?/1` → action-wildcard rejection
-      # fires first. Both error codes mean "rejected"; the test's
-      # invariant is "privilege escalation denied", which holds either
-      # way.
+      # workspace-admin check.
       assert {:error, :wildcard_action_grant_requires_admin_authority} =
-               IdentityAdmin.invoke(:grant_cap, slice, %{cap: cap_to_grant}, ctx)
+               IdentityAdmin.handle_grant_cap(%{cap: cap_to_grant}, ctx)
     end
 
     test "only the all-four-wildcards bootstrap-admin shape qualifies" do
-      # Sanity: verify the EXACT shape passes (positive test pairing
-      # with the negative above).
-      slice = %{caps: MapSet.new()}
       cap_to_grant = echo_cap()
-      ctx = %{caps: Ezagent.SystemPrincipal.caps("system://bootstrap")}
+      ctx = ctx_with(Ezagent.SystemPrincipal.caps("system://bootstrap"), MapSet.new())
 
-      assert {:ok, _new_slice, _result} =
-               IdentityAdmin.invoke(:grant_cap, slice, %{cap: cap_to_grant}, ctx)
+      assert {:ok, _result, _effects} =
+               IdentityAdmin.handle_grant_cap(%{cap: cap_to_grant}, ctx)
     end
   end
 end

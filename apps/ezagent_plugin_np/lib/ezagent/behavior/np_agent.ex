@@ -4,6 +4,49 @@ defmodule Ezagent.Behavior.NpAgent do
   expressions in a per-agent Python subprocess via `Ezagent.Domain.Python`,
   and dispatches the result back into the originating session.
 
+  ## Phase B migration (2026-05-29) — Lifecycle API
+
+  Migrated from `use Ezagent.Behavior` to `use Ezagent.Lifecycle`
+  per SPEC `2026-05-29-lifecycle-hooks-design.md` §2.3B (the
+  TRANSIENTS case — modeled on the reference `Ezagent.Behavior.Sandbox`
+  conversion). Two state containers + lifecycle moments hide the engine.
+
+  ### Two-container split (SPEC §0.1 / §2.1 / §2.3B)
+
+  - **`state` (PERSISTENT — auto-snapshotted)** — `python_handle`,
+    `timeout_ms`, `cwd`, `python_phase`, `last_input`, `last_result`,
+    `last_error`. `cwd` is read by the cold-load `activate/2` to
+    re-spawn the Python subprocess; `python_phase` is the
+    snapshot-persisted LV-badge mirror. All durable → `state`.
+  - **`transients` (NEVER persisted — rebuilt every `activate/2`)** —
+    `phase_subscription: %{topic, subscriber}`. The PTY phase-topic
+    PubSub subscription binds the host `Kind.Server` process; it DIES
+    with the process and has no serialization path (the textbook
+    transient). `activate/2` re-subscribes on EVERY start, recording
+    the CURRENT subscriber pid (the cold-restart-detectable token).
+
+  ### Hook mapping (SPEC §3)
+
+  - `init_slice/1` → `create/1` (PERSISTENT `state` only).
+  - `post_init/2` + `handle_continue/3` → `activate/2` (UNIFIED start
+    hook): subscribe to the phase topic (transient) + self-heal the
+    Python subprocess from `state.cwd` on EVERY start (the §4-#113
+    "fresh works, restart doesn't" fix made structural).
+  - `handle_kind_message({:pty_phase, ...})` → `handle_signal/2`
+    returning `{:set, :python_phase, phase}` (the phase is DURABLE
+    state; the subscription delivering it is the transient).
+
+  ## Phase 2-g r3 migration (2026-05-28)
+
+  Earlier this Behavior was migrated to the declarative per-action
+  contract per SPEC `2026-05-28-router-behavior-kind-architecture.md`
+  §2.2 + §4.4. The `:receive` handler builds a `chat.send` reply
+  via the `{:dispatch, %Cmd{}}` effect; `:reset` and `:configure`
+  mutate the slice via `{:set, _, _}` effects.
+
+  `required_caps/0` is still manually exported to preserve the
+  kind axis `:np_agent` (the macro auto-derives uses `:any`).
+
   Registered for `(Ezagent.Entity.NpAgent, :receive | :configure | :reset)`
   in `EzagentPluginNp.Application`. The chat router targets
   `entity://agent/<ws>/np_<name>?action=chat.receive`; the dispatcher
@@ -26,39 +69,53 @@ defmodule Ezagent.Behavior.NpAgent do
      `chat.send` back into the originating session.
   5. On error, format the error human-readably and reply with that.
 
-  The Python script does the safety validation (no raw `eval`); see
-  `np_compute_server.py` moduledoc.
-
   ## Loop safety
 
   Mirrors the curl_agent pattern: ignore messages whose sender is the
-  np-agent itself (defensive — Resolver also drops the sender from
-  fan-out, but {:always} rules + mention-gated routing both rely on
-  this self-check).
+  np-agent itself.
 
   ## Cap reuse
 
   Reply dispatch runs under `Ezagent.SystemPrincipal` (`system://chat-reply`)
   per SPEC caps-cleanup-v1 §4.4 — same v1 trust model as curl_agent / echo.
-  Granular per-agent caps are a Phase 9 concern (PR-CC-2 sub-PRs).
   """
 
-  @behaviour Ezagent.Behavior
+  use Ezagent.Lifecycle
 
   require Logger
 
-  alias Ezagent.{Invocation, Message}
+  alias Ezagent.{Cmd, Message}
   alias Ezagent.Domain.Python
 
   @default_timeout_ms 10_000
 
-  @impl Ezagent.Behavior
-  def actions, do: [:receive, :reset, :configure]
+  action :receive,
+    args: %{message: :map},
+    returns: %{ok: :boolean, result: :string, error: :atom},
+    caps: [:receive],
+    modes: [:cast],
+    description:
+      "Evaluate the inbound text as a numpy/sympy expression and reply " <>
+        "with the computed value"
+
+  action :reset,
+    args: %{},
+    returns: %{ok: :boolean},
+    caps: [:reset],
+    modes: [:call],
+    description: "Clear the agent's last_input / last_result / last_error"
+
+  action :configure,
+    args: %{timeout_ms: :integer},
+    returns: %{ok: :boolean},
+    caps: [:configure],
+    modes: [:call],
+    description: "Update the agent's per-call timeout (ms)"
 
   # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
   # NpAgent is registered on Entity.NpAgent Kind (type_name :np_agent) —
-  # kind axis is `:np_agent`.
-  @impl Ezagent.Behavior
+  # kind axis is `:np_agent`. Manually exported to override the macro's
+  # `:any` default.
   def required_caps do
     %{
       receive: Ezagent.Capability.cap(:np_agent, __MODULE__, :receive),
@@ -67,137 +124,113 @@ defmodule Ezagent.Behavior.NpAgent do
     }
   end
 
-  @impl Ezagent.Behavior
-  def cap_subjects do
-    [
-      {:receive,
-       "receive a session message and forward to the Python compute subprocess (sympy/numpy)"},
-      {:reset, "tear down + respawn the Python compute subprocess (clears state)"},
-      {:configure, "set or update the np-agent's subprocess config (timeout, allowed funcs)"}
-    ]
+  # The auto-derived slice key for `Ezagent.Behavior.NpAgent` is the
+  # underscored last segment `NpAgent` → `:np_agent`, EXACTLY the
+  # pre-Lifecycle `state_slice/0`. The snapshot-compat key is preserved
+  # with no explicit override (SPEC §5 step 2 / §7 OQ-7) — the
+  # hand-rolled `def state_slice, do: :np_agent` is gone.
+
+  # `init_slice/1` → `create/1` (SPEC §3 mapping). Build ONLY the
+  # durable fields. The phase subscription transient is `activate/2`'s
+  # job. `args` carries the spawn-time values; a snapshot rehydrate
+  # shadows this `state` on cold-load, so `create/1` runs once-ever.
+  @impl Ezagent.Lifecycle
+  def create(args) do
+    {:ok,
+     %{
+       python_handle: Map.get(args, :python_handle) || Map.get(args, :uri),
+       timeout_ms: Map.get(args, :timeout_ms, @default_timeout_ms),
+       cwd: Map.get(args, :cwd),
+       python_phase: validate_phase(Map.get(args, :python_phase)),
+       last_input: nil,
+       last_result: nil,
+       last_error: nil
+     }}
   end
 
-  @impl Ezagent.Behavior
-  def state_slice, do: :np_agent
-
-  @impl Ezagent.Behavior
-  def init_slice(args) do
-    %{
-      # The Python subprocess handle. By convention the Template Class
-      # uses the agent URI itself — one Server per NpAgent Kind.
-      python_handle: Map.get(args, :python_handle) || Map.get(args, :uri),
-      timeout_ms: Map.get(args, :timeout_ms, @default_timeout_ms),
-      # PTY-orphan-restart 2026-05-26: cwd for the Python subprocess.
-      # Captured in slice so post_init/2's `handle_continue/3` can
-      # respawn the subprocess on phx boot — without re-walking the
-      # workspace template store (cross-tier coupling). NpAgent's Kind
-      # persistence is `:ephemeral`, so the slice does NOT survive a
-      # restart via snapshot; instead the Template Class re-runs
-      # `instantiate/3` which threads `:cwd` through here on every
-      # respawn.
-      cwd: Map.get(args, :cwd),
-      # PTY-phase-state-machine 2026-05-26 follow-up (b): mirror of
-      # Python Server's `phase` field, updated via PubSub broadcasts
-      # on `pty:phase:<agent_uri>`. Same shape as Sandbox's
-      # `:pty_phase`; the LV badge reads whichever slice the agent's
-      # Kind carries (Sandbox for cc, NpAgent for np).
-      python_phase: validate_phase(Map.get(args, :python_phase)),
-      last_input: nil,
-      last_result: nil,
-      last_error: nil
-    }
-  end
-
-  # Reject corrupt rehydrated values. NpAgent's persistence is
-  # `:ephemeral` so this is more defensive than load-bearing.
+  # Reject corrupt rehydrated values (anything not nil-or-one-of-the-
+  # three-atoms). The next live phase broadcast writes the correct value.
   defp validate_phase(p) when p in [:starting, :running, :dead, nil], do: p
   defp validate_phase(_), do: nil
 
-  @impl Ezagent.Behavior
-  def invoke(:receive, slice, %{message: %Message{} = msg}, ctx) do
+  # ---------------------------------------------------------------
+  # handle_<action>/2 (new contract)
+  # ---------------------------------------------------------------
+
+  def handle_receive(%{message: %Message{} = msg}, ctx) do
     # Loop prevention: ignore messages we sent ourselves.
-    self_uri_str = URI.to_string(ctx.self_uri)
+    self_uri = Map.get(ctx, :self_uri)
     sender_str = sender_string(msg.sender)
+    self_uri_str = if is_struct(self_uri, URI), do: URI.to_string(self_uri), else: ""
 
     if sender_str == self_uri_str do
-      {:ok, slice}
+      {:ok, %{ok: true, ignored: :self_message}, []}
     else
-      do_receive(slice, msg, ctx)
+      do_receive_effects(msg, ctx)
     end
   end
 
-  def invoke(:reset, slice, _args, _ctx) do
-    new_slice = %{slice | last_input: nil, last_result: nil, last_error: nil}
-    {:ok, new_slice, %{ok: true}}
+  def handle_reset(_args, _ctx) do
+    {:ok, %{ok: true},
+     [
+       {:set, :last_input, nil},
+       {:set, :last_result, nil},
+       {:set, :last_error, nil}
+     ]}
   end
 
-  def invoke(:configure, slice, args, _ctx) when is_map(args) do
-    new_slice = %{
-      slice
-      | timeout_ms: Map.get(args, :timeout_ms, slice.timeout_ms)
-    }
+  def handle_configure(args, ctx) when is_map(args) do
+    cur_timeout = ctx[:read].(:timeout_ms, @default_timeout_ms)
+    new_timeout = Map.get(args, :timeout_ms, cur_timeout)
 
-    {:ok, new_slice, %{ok: true}}
-  end
-
-  @impl Ezagent.Behavior
-  def interface do
-    %{
-      receive: %{
-        description:
-          "Evaluate the inbound text as a numpy/sympy expression and reply " <>
-            "with the computed value",
-        args: %{message: :map},
-        returns: %{ok: :boolean, result: :string, error: :atom},
-        modes: [:cast]
-      },
-      reset: %{
-        description: "Clear the agent's last_input / last_result / last_error",
-        args: %{},
-        returns: %{ok: :boolean},
-        modes: [:call]
-      },
-      configure: %{
-        description: "Update the agent's per-call timeout (ms)",
-        args: %{timeout_ms: :integer},
-        returns: %{ok: :boolean},
-        modes: [:call]
-      }
-    }
+    {:ok, %{ok: true}, [{:set, :timeout_ms, new_timeout}]}
   end
 
   # --- internals ---------------------------------------------------------
 
-  defp do_receive(slice, %Message{} = msg, ctx) do
+  defp do_receive_effects(%Message{} = msg, ctx) do
     text = extract_text(msg.body)
     source_session_uri = ctx[:caller]
+    self_uri = Map.get(ctx, :self_uri)
+    python_handle = ctx[:read].(:python_handle, self_uri)
+    timeout_ms = ctx[:read].(:timeout_ms, @default_timeout_ms)
 
-    case run_compute(slice, text) do
+    case run_compute(python_handle, timeout_ms, text) do
       {:ok, result_value} ->
         result_text = "= #{format_result(result_value)}"
-        new_slice = %{slice | last_input: text, last_result: result_value, last_error: nil}
 
-        send_reply_to_session(source_session_uri, ctx.self_uri, result_text, msg)
-        {:ok, new_slice, %{ok: true, result: result_text}}
+        effects =
+          [
+            {:set, :last_input, text},
+            {:set, :last_result, result_value},
+            {:set, :last_error, nil}
+          ] ++ maybe_reply_effect(source_session_uri, self_uri, result_text, msg)
+
+        {:ok, %{ok: true, result: result_text}, effects}
 
       {:error, reason} ->
-        Logger.warning(
-          "NpAgent #{URI.to_string(ctx.self_uri)} compute failed " <>
-            "input=#{inspect(text)} reason=#{inspect(reason)}"
-        )
-
-        new_slice = %{slice | last_input: text, last_result: nil, last_error: reason}
+        if is_struct(self_uri, URI) do
+          Logger.warning(
+            "NpAgent #{URI.to_string(self_uri)} compute failed " <>
+              "input=#{inspect(text)} reason=#{inspect(reason)}"
+          )
+        end
 
         reply_text = "compute error: #{format_error(reason)}"
-        send_reply_to_session(source_session_uri, ctx.self_uri, reply_text, msg)
-        {:ok, new_slice, %{ok: false, error: error_kind(reason)}}
+
+        effects =
+          [
+            {:set, :last_input, text},
+            {:set, :last_result, nil},
+            {:set, :last_error, reason}
+          ] ++ maybe_reply_effect(source_session_uri, self_uri, reply_text, msg)
+
+        {:ok, %{ok: false, error: error_kind(reason)}, effects}
     end
   end
 
-  defp run_compute(slice, text) when is_binary(text) and text != "" do
-    handle = slice.python_handle
+  defp run_compute(handle, timeout, text) when is_binary(text) and text != "" do
     method = pick_method(text)
-    timeout = slice.timeout_ms || @default_timeout_ms
 
     case Python.call(handle, method, %{"expr" => text}, timeout) do
       {:ok, %{"result" => r}} ->
@@ -214,11 +247,11 @@ defmodule Ezagent.Behavior.NpAgent do
     end
   end
 
-  defp run_compute(_slice, _empty), do: {:error, :empty_input}
+  defp run_compute(_handle, _timeout, _empty), do: {:error, :empty_input}
 
-  # Heuristic: latex if it contains a backslash command, `^`, `_`, or
-  # `\\frac` etc. Pure numpy expressions (`2 + 2`, `sin(0.5)`,
-  # `np.array([1,2,3]).sum()`) go to `compute`.
+  # Heuristic: latex if it contains a backslash command. Pure numpy
+  # expressions (`2 + 2`, `sin(0.5)`, `np.array([1,2,3]).sum()`) go to
+  # `compute`.
   defp pick_method(text) do
     cond do
       String.contains?(text, "\\") -> "compute_latex"
@@ -261,35 +294,33 @@ defmodule Ezagent.Behavior.NpAgent do
   defp error_kind(:empty_input), do: :empty_input
   defp error_kind(_), do: :other
 
-  # Re-use the curl_agent reply-dispatch pattern.
-  defp send_reply_to_session(nil, _, _, _), do: :ok
-  defp send_reply_to_session("", _, _, _), do: :ok
+  # Build a single `{:dispatch, %Cmd{}}` effect when source session +
+  # self URI are both well-formed; otherwise emit nothing.
+  defp maybe_reply_effect(nil, _self_uri, _text, _in_msg), do: []
+  defp maybe_reply_effect("", _self_uri, _text, _in_msg), do: []
+  defp maybe_reply_effect(_, nil, _text, _in_msg), do: []
 
-  defp send_reply_to_session(session_uri, agent_uri, text, in_msg) do
+  defp maybe_reply_effect(session_uri, %URI{} = self_uri, text, in_msg) do
     case parse_session_uri(session_uri) do
       nil ->
-        :ok
+        []
 
       %URI{} = session ->
-        msg =
-          Message.new(agent_uri, %{text: text, attachments: []}, ref_id: in_msg.id)
+        reply_msg =
+          Message.new(self_uri, %{text: text, attachments: []}, ref_id: in_msg.id)
 
-        target = URI.new!("#{URI.to_string(session)}?action=chat.send")
+        target = Ezagent.URI.with_action(session, :chat, :send)
 
-        Invocation.dispatch(%Invocation{
-          target: target,
-          mode: :cast,
-          args: %{message: msg},
-          ctx: %{
-            caller: agent_uri,
+        cmd =
+          Cmd.new(target, :send, %{message: reply_msg}, %{
+            caller: self_uri,
             # SPEC caps-cleanup-v1 §4.4 — agent reply runs under
             # `system://chat-reply` (closed Catalog).
             caps: Ezagent.SystemPrincipal.caps("system://chat-reply"),
             reply: :ignore
-          }
-        })
+          })
 
-        :ok
+        [{:dispatch, cmd}]
     end
   end
 
@@ -299,7 +330,7 @@ defmodule Ezagent.Behavior.NpAgent do
     # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
     # with try/rescue keeping the nil fallback for malformed input.
     try do
-      case Ezagent.URI.parse!(s) do
+      case Ezagent.URI.new!(s) do
         %URI{scheme: "session"} = u -> u
         _ -> nil
       end
@@ -310,110 +341,95 @@ defmodule Ezagent.Behavior.NpAgent do
 
   defp parse_session_uri(_), do: nil
 
-  # PR-OWN-4 (caps-data-ownership SPEC #306 §6): admin-only
-  # Behavior — no per-entity owner; only bootstrap admin grants
-  # via §5.2 admin branch. Test/demo Behaviors + system control
-  # surfaces fall here pending dedicated SPEC for any specific
-  # owner model they need (e.g. FeishuOutbound: future PR could
-  # delegate to session owner like Chat does, but the current
-  # outbound path is admin-gated).
-  @impl Ezagent.Behavior
+  # PR-OWN-4 (caps-data-ownership SPEC #306 §6): admin-only Behavior —
+  # no per-entity owner; only bootstrap admin grants via §5.2 admin
+  # branch.
   def data_owner(_), do: :no_owner
 
-  # --- PTY-orphan-restart 2026-05-26 — Python subprocess re-spawn -----------
+  # --- activate/2 — rebuild ALL transients + self-heal (SPEC §5 step 4) ----
   #
-  # Mirrors the cc-Sandbox post_init pattern. The Python subprocess
-  # (uv-launched per agent) is NOT OTP-supervised across BEAM restarts.
-  # An NpAgent Kind that gets demand-spawned by the chat router (e.g.
-  # a chat message arriving before Workspace.Loader runs the template)
-  # comes up WITHOUT a Python subprocess — `handle_continue/3` brings
-  # it up via the Template Class's `ensure_subprocess_alive/2` callback.
+  # PTY-orphan-restart 2026-05-26 (Allen directive). UNIFIES the
+  # pre-Lifecycle `post_init/2` + `handle_continue/3` into the ONE start
+  # hook. Runs on EVERY start (fresh spawn, supervisor restart,
+  # cold-load) — the structural guarantee that makes the §4-#113 "fresh
+  # works, restart doesn't" bug impossible. Both steps are pre-`:ready`
+  # boot work with NO self-deferral, so per §10-R1 both belong here in
+  # `activate` (NOT `activated/2`):
   #
-  # The Template Class's normal `instantiate/3` also covers this via
-  # the `ensure_python_alive/2` branch on `:already_started`, but
-  # there's a window between demand-spawn and Loader where the agent
-  # is alive without a subprocess. post_init/2 closes it: the
-  # subprocess is up by the time ReadyGate flips the Kind to `:ready`.
-  @impl Ezagent.Behavior
-  def post_init(_args, _slice) do
-    # PTY-phase-state-machine 2026-05-26 follow-up (b): ALWAYS schedule
-    # the post_init continuation so the Kind.Server subscribes to
-    # `pty:phase:<self_uri>` regardless of whether `cwd` is populated
-    # (i.e. whether we have respawn ammo). Same shape as
-    # `Ezagent.Behavior.Sandbox` — the subscribe is unconditional;
-    # the Python subprocess ensure is conditional on `cwd`.
-    {:continue, :setup_phase_tracking_and_ensure_python}
-  end
-
-  @impl Ezagent.Behavior
-  def handle_continue(:setup_phase_tracking_and_ensure_python, slice, ctx) do
+  #   1. transient: subscribe to the PTY phase topic. The subscription
+  #      binds THIS Kind.Server process; it is rebuilt every start and
+  #      recorded in `transients` (the subscriber pid is the
+  #      cold-restart-detectable token).
+  #   2. self-heal: (re)spawn the Python subprocess if `state.cwd` says
+  #      there should be one. Best-effort — a brutal kill may have
+  #      skipped `destroy`/`deactivate`, so the ensure-alive runs HERE
+  #      every start (§OTP / §10-F4).
+  @impl Ezagent.Lifecycle
+  def activate(state, ctx) do
     self_uri = Map.get(ctx, :self_uri)
-    cwd = Map.get(slice, :cwd)
+    cwd = Map.get(state, :cwd)
 
-    # 1. Subscribe to the phase topic — same topic shape as Sandbox.
-    #    Subscribers for cc-flavor and np-flavor agents both consume
-    #    `pty:phase:<agent_uri>`; the LV doesn't need to know which
-    #    flavor produced the broadcast.
-    subscribe_to_phase_topic(self_uri)
+    # 1. Rebuild the phase-topic subscription transient. Best-effort: a
+    #    subscribe failure (PubSub down) is logged + swallowed —
+    #    operator-visibility plumbing must not crash the boot.
+    phase_subscription = subscribe_to_phase_topic(self_uri)
 
-    # 2. Maybe ensure the Python subprocess is alive (the legacy
-    #    PR #385 path). Skipped when slice has no cwd (demand-spawned
-    #    NpAgent — Template Class Loader will rebuild the slice).
+    # 2. Self-heal the Python subprocess from durable `state`. Skipped on
+    #    the demand-spawn path (no cwd) — the phase subscription is still
+    #    in place; an eventual Loader pass triggers a fresh
+    #    `ensure_subprocess_alive` via its own dispatch.
     cond do
       not is_struct(self_uri, URI) ->
         Logger.warning(
-          "Ezagent.Behavior.NpAgent.post_init: non-URI self_uri " <>
+          "Ezagent.Behavior.NpAgent.activate: non-URI self_uri " <>
             "#{inspect(self_uri)} — skipping subprocess re-spawn"
         )
 
-        :ignore
-
       not is_binary(cwd) or cwd == "" ->
-        # No cwd → demand-spawn path. Phase subscription still in
-        # place; eventual Loader pass triggers a fresh
-        # `ensure_subprocess_alive` via its own dispatch.
-        :ignore
+        :ok
 
       true ->
-        do_ensure_python_alive(self_uri, cwd)
+        _ = do_ensure_python_alive(self_uri, cwd)
     end
+
+    {:ok, %{phase_subscription: phase_subscription}}
   end
 
+  # Subscribe THIS process to the agent's PTY phase topic and return the
+  # transient record. The `subscriber` pid (= the host Kind.Server) is the
+  # cold-restart-detectable token: after a brutal kill + cold-load it is a
+  # DIFFERENT, live pid — proving the subscription was rebuilt against the
+  # new process, not rehydrated as a stale binding (SPEC §6 step 5c).
   defp subscribe_to_phase_topic(%URI{} = self_uri) do
     topic = "pty:phase:" <> URI.to_string(self_uri)
 
     try do
-      Phoenix.PubSub.subscribe(EzagentCore.PubSub, topic)
+      :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, topic)
+      %{topic: topic, subscriber: self()}
     catch
       kind, reason ->
         Logger.warning(
-          "Ezagent.Behavior.NpAgent.post_init: PubSub.subscribe failed " <>
+          "Ezagent.Behavior.NpAgent.activate: PubSub.subscribe failed " <>
             "(#{inspect(kind)}, #{inspect(reason)}) for #{URI.to_string(self_uri)}; " <>
             "phase tracking disabled for this incarnation"
         )
 
-        :ok
+        %{topic: topic, subscriber: self()}
     end
   end
 
-  defp subscribe_to_phase_topic(_), do: :ok
+  defp subscribe_to_phase_topic(_), do: %{topic: nil, subscriber: self()}
 
   defp do_ensure_python_alive(self_uri, cwd) do
     case Ezagent.PluginNp.Template.NpAgent.ensure_subprocess_alive(self_uri, %{
            "cwd" => cwd
          }) do
       :ok ->
-        :ignore
+        :ok
 
       {:error, reason} ->
-        # PTY-orphan-restart round-2 (codex finding #3) — same
-        # degraded-state pattern as `Ezagent.Behavior.Sandbox`:
-        # log + telemetry + :ignore. A raise here would exhaust
-        # the EzagentPluginNp.InstanceSupervisor's intensity on
-        # a persistent failure (uv missing, FS read-only) and
-        # cascade to sibling np agents.
         Logger.error(
-          "Ezagent.Behavior.NpAgent.post_init: " <>
+          "Ezagent.Behavior.NpAgent.activate: " <>
             "Template.NpAgent.ensure_subprocess_alive/2 failed for " <>
             "#{URI.to_string(self_uri)}: #{inspect(reason)}. " <>
             "NpAgent Kind stays alive in DEGRADED state (no Python " <>
@@ -430,24 +446,26 @@ defmodule Ezagent.Behavior.NpAgent do
           }
         )
 
-        :ignore
+        {:error, reason}
     end
   end
 
-  # PTY-phase-state-machine 2026-05-26 follow-up (b): consume Python
-  # Server's phase broadcasts. Symmetric to Sandbox's
-  # `handle_kind_message/3`; writes to `:python_phase` instead of
-  # `:pty_phase` so the slice carries the np-flavor variant. Optional
-  # hook — probed via `function_exported?/3`, NOT a declared
-  # `@behaviour` callback.
-  def handle_kind_message({:pty_phase, %URI{} = agent_uri, phase, meta}, slice, ctx)
+  # --- handle_signal/2 — non-action GenServer messages (SPEC §9 OQ-3) ------
+  #
+  # `handle_kind_message/3` → `handle_signal/2`: consume the Python
+  # Server's phase broadcasts on every `:starting | :running | :dead`
+  # transition. The phase is DURABLE `state` (the snapshot-persisted
+  # LV-badge mirror), so it is written via `{:set, :python_phase, phase}`
+  # — NOT a transient. The subscription delivering the message is the
+  # transient; the phase value it carries is persistent state.
+  @impl Ezagent.Lifecycle
+  def handle_signal({:pty_phase, %URI{} = agent_uri, phase, meta}, ctx)
       when phase in [:starting, :running, :dead] do
     self_uri = Map.get(ctx, :self_uri)
 
     # codex round-1 MED-2: PubSub topics are not an authentication
-    # boundary. Verify identity BEFORE mutating the slice — drop
-    # mismatches with a warning log. Symmetric to
-    # `Ezagent.Behavior.Sandbox.handle_kind_message/3`.
+    # boundary. Verify identity BEFORE mutating state — drop mismatches
+    # with a warning log.
     if uris_equal?(agent_uri, self_uri) do
       :telemetry.execute(
         [:ezagent, :np_agent, :python_phase],
@@ -460,10 +478,10 @@ defmodule Ezagent.Behavior.NpAgent do
         }
       )
 
-      {:ok, Map.put(slice, :python_phase, phase)}
+      {:ok, [{:set, :python_phase, phase}]}
     else
       Logger.warning(
-        "Ezagent.Behavior.NpAgent.handle_kind_message: pty_phase " <>
+        "Ezagent.Behavior.NpAgent.handle_signal: pty_phase " <>
           "agent_uri=#{URI.to_string(agent_uri)} != self_uri=" <>
           "#{inspect(self_uri)}; dropping (topic-collision defense)"
       )
@@ -472,7 +490,7 @@ defmodule Ezagent.Behavior.NpAgent do
     end
   end
 
-  def handle_kind_message(_other, _slice, _ctx), do: :ignore
+  def handle_signal(_other, _ctx), do: :ignore
 
   defp uris_equal?(%URI{} = a, %URI{} = b), do: URI.to_string(a) == URI.to_string(b)
   defp uris_equal?(_, _), do: false

@@ -68,14 +68,14 @@ defmodule EzagentPluginLiveview.AdminLive do
   @message_limit 50
 
   defp default_main_session_uri(%URI{scheme: "workspace", host: ws}) when is_binary(ws) and ws != "",
-    do: Ezagent.URI.parse!("session://default/#{ws}/main")
+    do: Ezagent.URI.new!("session://default/#{ws}/main")
 
   defp default_main_session_uri(_),
     # Early-mount / test paths with no workspace assigned — fall back
     # to the system workspace's main. LiveAuth populates the assign
     # for every `:require_entity` mount in production, so this branch
     # fires only when the LV is mounted outside that live_session.
-    do: Ezagent.URI.parse!("session://default/system/main")
+    do: Ezagent.URI.new!("session://default/system/main")
 
   @impl true
   def mount(_params, _session, socket) do
@@ -284,7 +284,7 @@ defmodule EzagentPluginLiveview.AdminLive do
     # with try/rescue keeping the "Bad session URI" flash for malformed
     # query params.
     try do
-      case Ezagent.URI.parse!(URI.decode_www_form(encoded)) do
+      case Ezagent.URI.new!(URI.decode_www_form(encoded)) do
         %URI{scheme: "session"} = session_uri ->
           {:noreply, select_session(socket, session_uri)}
 
@@ -723,7 +723,7 @@ defmodule EzagentPluginLiveview.AdminLive do
         stored_name = "#{uuid}-#{safe_name}"
         dest = Path.join(Ezagent.Home.path("uploads"), stored_name)
         File.cp!(tmp_path, dest)
-        {:ok, Ezagent.URI.parse!("resource://uploads/#{workspace_name}/#{stored_name}")}
+        {:ok, Ezagent.URI.new!("resource://uploads/#{workspace_name}/#{stored_name}")}
       end)
 
     if String.trim(text) == "" and attachments == [] do
@@ -769,7 +769,7 @@ defmodule EzagentPluginLiveview.AdminLive do
     # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
     # with try/rescue keeping the malformed-URI error flash.
     case (try do
-            {:ok, Ezagent.URI.parse!(session_uri_str)}
+            {:ok, Ezagent.URI.new!(session_uri_str)}
           rescue
             ArgumentError -> :error
           end) do
@@ -850,20 +850,30 @@ defmodule EzagentPluginLiveview.AdminLive do
   # `:failed` → human-readable text that surfaces the partial-success
   # to the operator. The `flash_error` assign re-uses the LV's existing
   # admin-error banner; a future PR can split this into its own slot.
+  # 2026-05-31 orchestrator-startup-atomicity §8 — the orchestrator status
+  # is now a 2-STATE model: `:ready | :failed`. `:pending` is GONE (the
+  # atomic gate either succeeds or fails-loud → rollback within the 30s
+  # window; there is no half-started "pending" surface). `:degraded` is no
+  # longer a separate STATE either — it is `:ready` + a degraded warning
+  # carried in `orchestrator_error` (`{:role_degraded, _}`), so the happy
+  # `:ready` arm suppresses the banner and the role-degraded notification
+  # flows through the owner inbox (Invariant #9), not the create flash.
   defp orchestrator_flash_text(meta) when is_map(meta) do
     case Map.get(meta, :orchestrator_status) do
       :ready ->
         nil
 
-      :pending ->
-        gettext("Orchestrator pending — refresh in a moment.")
-
       :failed ->
         reason = Map.get(meta, :orchestrator_error)
 
-        gettext("Orchestrator failed: %{reason}; click Restart to retry.",
-          reason: inspect(reason)
-        )
+        # `:no_orchestrator` (plain session) is NOT an error — suppress.
+        if reason == :no_orchestrator do
+          nil
+        else
+          gettext("Orchestrator failed: %{reason}; click Restart to retry.",
+            reason: inspect(reason)
+          )
+        end
 
       _ ->
         nil
@@ -1010,7 +1020,7 @@ defmodule EzagentPluginLiveview.AdminLive do
          )}
 
       true ->
-        target = URI.new!("#{URI.to_string(session_uri)}?action=chat.join")
+        target = Ezagent.URI.with_action(session_uri, :chat, :join)
 
         # SPEC §2C.4 step 2 — dispatch as `:call` so the result is
         # observable; `:caller_inbox` is irrelevant for `:call` (the
@@ -1019,7 +1029,7 @@ defmodule EzagentPluginLiveview.AdminLive do
           Ezagent.Invocation.dispatch(%Ezagent.Invocation{
             target: target,
             mode: :call,
-            args: %{member: Ezagent.URI.parse!(trimmed)},
+            args: %{member: Ezagent.URI.new!(trimmed)},
             ctx: %{
               caller: socket.assigns.caller_uri,
               caps: socket.assigns.caller_caps,
@@ -1109,60 +1119,22 @@ defmodule EzagentPluginLiveview.AdminLive do
          )}
 
       true ->
-        target =
-          URI.new!("#{URI.to_string(health.template_uri)}?action=template.instantiate")
-
-        # The orchestrator's instance NAME-segment is `cc_orchestrator-<disc>`
-        # (history: `Session.ensure_orchestrator` builds it directly via
-        # `Agent.spawn_fresh` which does NOT prepend flavor). The
-        # `template.instantiate` dispatch path, by contrast, ALWAYS
-        # flavor-prepends (`<flavor>_<instance_name>`). The cc-orchestrator
-        # template's flavor IS `cc`, so to land on the same final URI shape
-        # we strip the leading `cc_` before handing the name to dispatch.
-        # Without this we'd get `cc_cc_orchestrator-<disc>` — a new
-        # double-prefixed agent, distinct from the one the health card was
-        # restarting (the original would stay :crashed, and a phantom
-        # `cc_cc_orchestrator-<disc>` would appear).
-        dispatch_instance_name =
-          case health.instance_name do
-            "cc_" <> rest -> rest
-            other -> other
-          end
-
-        # Codex review PR #376 P2 — `spawned_by` must equal the SESSION
-        # OWNER, not the LV operator. `Session.ensure_orchestrator/3`
-        # (apps/ezagent_domain_chat/lib/ezagent/entity/session.ex:565)
-        # later requires `AgentLineage.lookup(orch_uri)` to equal the
-        # session's owner_uri; if a non-owner operator triggers Restart
-        # and `spawned_by` is the operator, the next reconcile reads
-        # the lineage as a mismatch and classifies the fresh
-        # orchestrator as `{:foreign, _}` — the very state Restart was
-        # supposed to clear. Resolve the owner from the Session Kind;
-        # fall back to the caller (covers system sessions with
-        # `owner_uri: nil`).
-        spawned_by =
-          case Ezagent.Entity.Session.owner(session_uri) do
-            {:ok, %URI{} = owner} -> owner
-            _ -> socket.assigns.caller_uri
-          end
-
         # RFC #402 (Allen 2026-05-26) — restart is authorized by the
         # caller holding `Ezagent.Behavior.OrchestratorAdmin :restart`
         # on this session (`caller_can_restart_orchestrator?/2` —
-        # computed in `assign_session_context/2`). Re-check here as
-        # the dispatch chokepoint: a DOM tamper bypassing the
-        # `:if={@orchestrator_can_restart?}` render guard MUST still
-        # land in :unauthorized.
+        # computed in `assign_session_context/2`). Re-check here as the
+        # chokepoint: a DOM tamper bypassing the
+        # `:if={@orchestrator_can_restart?}` render guard MUST still land
+        # in :unauthorized.
         #
-        # Once the cap check passes, the actual `template.instantiate`
-        # dispatch runs under `system://template-materialize` (closed
-        # Catalog) — the SAME principal `Session.spawn_from_template/2`
-        # uses for the initial orchestrator spawn. This keeps the
-        # restart code path structurally identical to first-spawn and
-        # avoids requiring the owner to hold both the OrchestratorAdmin
-        # cap AND the template-instantiate cap (the latter would
-        # transitively let them instantiate arbitrary cc agents, which
-        # is overkill for the restart-only authority RFC #402 asks for).
+        # 2026-05-31 orchestrator-startup-atomicity §6 — once the cap
+        # check passes, the restart REPAIRS via
+        # `EzagentDomainChat.repair_orchestrator/2` (re-materialize OTU +
+        # §5 atomic gate). The owner/lineage/`spawned_by` resolution that
+        # the old `template.instantiate` dispatch needed is now internal
+        # to `repair_orchestrator` (it reads `Session.owner/1`), so the LV
+        # no longer computes the dispatch target / instance-name /
+        # spawned_by here.
         if not caller_can_restart_orchestrator?(socket, session_uri) do
           {:noreply,
            assign(
@@ -1171,14 +1143,7 @@ defmodule EzagentPluginLiveview.AdminLive do
              gettext("Unauthorized — only the session owner may restart the orchestrator.")
            )}
         else
-          do_restart_orchestrator(
-            socket,
-            target,
-            dispatch_instance_name,
-            health,
-            spawned_by,
-            session_uri
-          )
+          do_restart_orchestrator(socket, health, session_uri)
         end
     end
   end
@@ -1192,35 +1157,22 @@ defmodule EzagentPluginLiveview.AdminLive do
      )}
   end
 
-  defp do_restart_orchestrator(
-         socket,
-         target,
-         dispatch_instance_name,
-         health,
-         spawned_by,
-         session_uri
-       ) do
-    result =
-      Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-        target: target,
-        mode: :call,
-        args: %{
-          instance_name: dispatch_instance_name,
-          workspace_uri: health.workspace_uri,
-          spawned_by: spawned_by
-        },
-        ctx: %{
-          caller: socket.assigns.caller_uri,
-          caps: Ezagent.SystemPrincipal.caps("system://template-materialize"),
-          reply: :ignore
-        }
-      })
+  defp do_restart_orchestrator(socket, health, session_uri) do
+    # 2026-05-31 orchestrator-startup-atomicity §6 — Restart is now a
+    # REPAIR. The old path dispatched `template.instantiate` + respawned
+    # the PTY but NEVER set `orchestrator_template_uri` (OTU), so it could
+    # not fix the nil-OTU sessions (`main`, `orch-feishu-7429`) that were
+    # the whole reason for the SPEC. `EzagentDomainChat.repair_orchestrator/2`
+    # RE-MATERIALIZES the OTU from the session's template THEN runs the §5
+    # atomic readiness gate (cap grants + MCP registration + member join).
+    # The OrchestratorAdmin :restart cap was already checked in the
+    # `handle_event` clause above.
+    result = EzagentDomainChat.repair_orchestrator(session_uri, health.workspace_uri)
 
     case result do
-      {:ok, %{workers: _workers}} ->
-        # Re-classify; success path lands `:alive` (or a new
-        # `:crashed` if the fresh worker died immediately, which is
-        # itself a useful signal).
+      {:ok, ^session_uri, _meta} ->
+        # Re-classify; success path lands `:alive` (or a new `:crashed`
+        # if the fresh worker died immediately — itself a useful signal).
         {:noreply,
          socket
          |> assign_session_context(session_uri)
@@ -1283,7 +1235,7 @@ defmodule EzagentPluginLiveview.AdminLive do
         # with try/rescue (malformed agent URI silently noop, preserves
         # original case-fallthrough semantics).
         case (try do
-                {:ok, Ezagent.URI.parse!(agent_uri_str)}
+                {:ok, Ezagent.URI.new!(agent_uri_str)}
               rescue
                 ArgumentError -> :error
               end) do
@@ -1459,7 +1411,7 @@ defmodule EzagentPluginLiveview.AdminLive do
     session_uri = socket.assigns.current_session_uri
 
     target =
-      Ezagent.URI.parse!(URI.to_string(session_uri) <> "?action=routing." <> Atom.to_string(action))
+      Ezagent.URI.new!(URI.to_string(session_uri) <> "?action=routing." <> Atom.to_string(action))
 
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
       target: target,
@@ -1749,7 +1701,7 @@ defmodule EzagentPluginLiveview.AdminLive do
         try do
           caller_workspace =
             assigns.caller_uri_str
-            |> Ezagent.URI.parse!()
+            |> Ezagent.URI.new!()
             |> Ezagent.URI.entity_workspace_uri()
 
           URI.to_string(caller_workspace) == "workspace://system"
@@ -1977,7 +1929,7 @@ defmodule EzagentPluginLiveview.AdminLive do
 
     case caller_uri do
       %URI{} = caller_uri when not is_nil(caller_caps) ->
-        target = URI.new!("#{URI.to_string(session_uri)}?action=chat.join")
+        target = Ezagent.URI.with_action(session_uri, :chat, :join)
 
         result =
           Ezagent.Invocation.dispatch(%Ezagent.Invocation{
@@ -2402,18 +2354,17 @@ defmodule EzagentPluginLiveview.AdminLive do
       :error ->
         nil
 
-      {:ok, pid} ->
+      {:ok, _pid} ->
+        # Read the chat slice through the T3-normalized accessor — post-
+        # lifecycle the on-process slice is two-container, so a raw
+        # `%{state: %{chat: chat_slice}}` match would hand
+        # `template_working_copy/1` the `%{state: …, transients: …}`
+        # wrapper instead of the flat chat slice. (post-lifecycle
+        # remediation.)
         slice =
-          try do
-            # The Kind.Server state map holds slice data under `:state`
-            # (per `Ezagent.Kind.Server` shape — confirmed via
-            # :sys.get_state on a live Session pid).
-            case :sys.get_state(pid, 500) do
-              %{state: %{chat: chat_slice}} -> chat_slice
-              _ -> nil
-            end
-          catch
-            :exit, _ -> nil
+          case Ezagent.Kind.get_slice(session_uri, :chat) do
+            {:ok, chat_slice} when is_map(chat_slice) -> chat_slice
+            _ -> nil
           end
 
         if is_map(slice) do
@@ -2563,7 +2514,7 @@ defmodule EzagentPluginLiveview.AdminLive do
       # with try/rescue keeping the silent-drop semantics for malformed
       # @-mentions in user-typed chat text.
       try do
-        [Ezagent.URI.parse!(uri_str)]
+        [Ezagent.URI.new!(uri_str)]
       rescue
         ArgumentError -> []
       end
@@ -2628,7 +2579,7 @@ defmodule EzagentPluginLiveview.AdminLive do
         # with try/rescue keeping the silent-drop fallback for malformed
         # member URIs (corrupted Workspace.Store row, etc.).
         try do
-          [Ezagent.URI.parse!(uri_str)]
+          [Ezagent.URI.new!(uri_str)]
         rescue
           ArgumentError -> []
         end
@@ -2659,7 +2610,7 @@ defmodule EzagentPluginLiveview.AdminLive do
     # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
     # with try/rescue (display fallback to nil for malformed input).
     try do
-      case Ezagent.URI.parse!(uri_str) do
+      case Ezagent.URI.new!(uri_str) do
         %URI{path: "/" <> rest} when rest != "" ->
           # entity URIs are `/<workspace>/<name>`; bare display is last segment.
           case String.split(rest, "/", parts: 2) do
@@ -2786,7 +2737,21 @@ defmodule EzagentPluginLiveview.AdminLive do
         # the meta was log-only; an operator who landed on the admin
         # page right after a failed orchestrator-spawn rehydrate had
         # zero visibility into the failure.
-        case EzagentDomainChat.create_session("main", creator, template_name: "default") do
+        # Task #55: the main session must be created in the workspace the
+        # operator is VIEWING (the workspace segment of `uri`), not the
+        # creator's own workspace. A system-member admin viewing
+        # `team-alpha` ensures `session://default/team-alpha/main`;
+        # without the explicit `workspace_uri`, `create_session/3` derives
+        # the workspace structurally from the creator (admin → `system`)
+        # and the team-alpha session is never spawned — so a routing
+        # dispatch to `current_session_uri` hits `:no_such_actor`. (post-
+        # lifecycle remediation.)
+        session_workspace_uri = Ezagent.Capability.workspace_of(uri)
+
+        case EzagentDomainChat.create_session("main", creator,
+               template_name: "default",
+               workspace_uri: session_workspace_uri
+             ) do
           {:ok, _spawned_uri, meta} ->
             log_orchestrator_status_on_rehydrate(uri, meta)
             {uri, assign_rehydrate_flash(socket, meta)}
@@ -2808,13 +2773,14 @@ defmodule EzagentPluginLiveview.AdminLive do
   end
 
   # codex PR #408 review MED-1 — translate the orchestrator-status meta
-  # into a LV flash assign. `:ready` → no change; `:pending` → info-style
-  # text; `:failed` → error-style text. Both render through the admin
-  # error-banner slot (we re-use `:flash_error` like the
-  # `create_session` event handler at line ~738; a future PR can split
-  # info vs error into separate slots).
+  # into a LV flash assign. 2026-05-31 orchestrator-startup-atomicity §8 —
+  # the status is now a 2-STATE model: `:ready | :failed`. `:ready` → no
+  # change (the `:no_orchestrator` plain-session case is `:failed` with a
+  # benign reason, suppressed); `:failed` → error-style text. `:pending`
+  # is GONE (the atomic gate succeeds or fails-loud within 30s; no
+  # half-started surface).
   #
-  # Public-for-test via `@doc false` so unit tests can exercise the 3
+  # Public-for-test via `@doc false` so unit tests can exercise the
   # branches without booting the full LV (the rehydrate path's first-mount
   # window is a flaky setup to drive otherwise).
   @doc false
@@ -2823,24 +2789,21 @@ defmodule EzagentPluginLiveview.AdminLive do
       :ready ->
         socket
 
-      :pending ->
-        assign(
-          socket,
-          :flash_error,
-          gettext("Orchestrator pending after main-session rehydrate — refresh in a moment.")
-        )
-
       :failed ->
         reason = Map.get(meta, :orchestrator_error)
 
-        assign(
-          socket,
-          :flash_error,
-          gettext(
-            "Orchestrator failed during main-session rehydrate: %{reason}; click Restart to retry.",
-            reason: inspect(reason)
+        if reason == :no_orchestrator do
+          socket
+        else
+          assign(
+            socket,
+            :flash_error,
+            gettext(
+              "Orchestrator failed during main-session rehydrate: %{reason}; click Restart to retry.",
+              reason: inspect(reason)
+            )
           )
-        )
+        end
 
       _ ->
         socket
@@ -2850,24 +2813,28 @@ defmodule EzagentPluginLiveview.AdminLive do
   def assign_rehydrate_flash(socket, _), do: socket
 
   defp read_session_members(%URI{} = session_uri) do
-    case Ezagent.KindRegistry.lookup(session_uri) do
-      {:ok, pid} ->
-        try do
-          %{state: %{chat: slice}} = :sys.get_state(pid, 1_000)
+    # Read the chat slice through the T3-normalized accessor
+    # (`Kind.get_slice/2`), NOT a raw `:sys.get_state` + manual
+    # destructure. Post-lifecycle the on-process slice is two-container
+    # (`%{state: …, transients: …}`); `get_slice/2` flattens it to the
+    # developer view so `members`/`last_seen` are read off the right
+    # level. The old `%{state: %{chat: slice}}` match handed back the
+    # two-container wrapper, so `slice.members` raised → caught → []
+    # (members table silently empty). (post-lifecycle remediation.)
+    case Ezagent.Kind.get_slice(session_uri, :chat) do
+      {:ok, %{members: members} = slice} when is_map(members) ->
+        last_seen = Map.get(slice, :last_seen, %{})
 
-          for {uri, %{online: online?}} <- slice.members do
-            %{
-              uri: URI.to_string(uri),
-              online: online?,
-              last_seen: Map.get(slice.last_seen, uri)
-            }
-          end
-          |> Enum.sort_by(& &1.uri)
-        catch
-          _, _ -> []
+        for {uri, %{online: online?}} <- members do
+          %{
+            uri: URI.to_string(uri),
+            online: online?,
+            last_seen: Map.get(last_seen, uri)
+          }
         end
+        |> Enum.sort_by(& &1.uri)
 
-      :error ->
+      _ ->
         []
     end
   end
@@ -2957,7 +2924,7 @@ defmodule EzagentPluginLiveview.AdminLive do
     # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
     # with try/rescue keeping the `{s, s}` display-string fallback.
     try do
-      att_to_link(Ezagent.URI.parse!(s))
+      att_to_link(Ezagent.URI.new!(s))
     rescue
       ArgumentError -> {s, s}
     end
@@ -2995,7 +2962,7 @@ defmodule EzagentPluginLiveview.AdminLive do
         mentions: mentions
       )
 
-    target = URI.new!("#{URI.to_string(socket.assigns.current_session_uri)}?action=chat.send")
+    target = Ezagent.URI.with_action(socket.assigns.current_session_uri, :chat, :send)
 
     inv = %Ezagent.Invocation{
       target: target,
@@ -3066,7 +3033,7 @@ defmodule EzagentPluginLiveview.AdminLive do
     # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
     # with try/rescue (display fallback to nil for malformed input).
     try do
-      case Ezagent.URI.parse!(uri_str) do
+      case Ezagent.URI.new!(uri_str) do
         %URI{host: name} when is_binary(name) and name != "" -> name
         _ -> nil
       end

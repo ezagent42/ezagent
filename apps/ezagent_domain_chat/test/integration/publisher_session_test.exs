@@ -269,10 +269,20 @@ defmodule EzagentDomainChat.Integration.PublisherSessionTest do
 
   # ---- helpers ----------------------------------------------------------
 
+  # Lifecycle migration (SPEC 2026-05-29): the `:publisher` slice is now a
+  # two-container `%{state:, transients:}` map (`ring`/`cursor`/`retention`
+  # under `.state`; `subscribers`/`monitors` under `.transients`). This
+  # raw `:sys.get_state` helper sees the full split — flatten the two
+  # containers back into one map so the existing `%{cursor:}` /
+  # `%{subscribers:}` assertions keep reading the right values.
   defp publisher_slice(session_uri) do
     {:ok, pid} = KindRegistry.lookup(session_uri)
     state = :sys.get_state(pid)
-    Map.get(state.state, :publisher, %{})
+
+    case Map.get(state.state, :publisher, %{}) do
+      %{state: persistent, transients: transients} -> Map.merge(persistent, transients)
+      flat -> flat
+    end
   end
 
   defp wait_until_cursor(session_uri, target, attempts \\ 50)

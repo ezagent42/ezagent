@@ -2,6 +2,8 @@
 
 The Design Principles (references/design-principles.md) capture *what / why*; the numbered invariants below are the *operational specifics + CI gate names*. Pre-existing numbering preserved — each maps back to a principle.
 
+> **2026-05-28 — Router/Behavior/Kind migration impact**: SPEC PR #445 (Phase 1-4 migration PRs #451-#469) rewrote the plugin contract — Behaviors now use `use Ezagent.Behavior` + `action/3` macro + `handle_<action>(args, ctx)` returning effects. The invariants below remain CI-enforced and unchanged in intent; what shifted is that **plugin code can no longer accidentally violate them by reaching for framework internals**. SPEC §11 added 7 grep gates against `Ezagent.Plugin.*` / `ezagent_plugin_*` / `ezagent_domain_*` importing `Ezagent.EventLog` / `Ezagent.SnapshotStore` / `Ezagent.Kind.StateRebuilder` / `Ezagent.EventSubscriber` / `Ezagent.Router` internals / `Ezagent.SagaRunner.execute/2`. Invariants 18 (sibling slices), 19 (cap normalize), 20 (reconcile_after_load) are unchanged by the migration — they remain Behavior-author-facing concerns. See `references/new-contract.md` for the operational contract.
+
 ## Table of contents
 
 1. Dispatch is the only path
@@ -120,7 +122,7 @@ Deleted schemes (do NOT reintroduce): `user://`, `agent://`, `message://`, `feis
 
 **Helper for extracting workspace from any per-tenant URI**: `Ezagent.URI.entity_workspace_uri/1` (entity scheme) or `Ezagent.Capability.workspace_of/1` (any scheme; raises on per-tenant URI with bad shape).
 
-CI gates: `Ezagent.URI.parse!/1` test suite + `Ezagent.URI.SchemeRegistry` ETS lockdown; new Phase 9 invariants `entities_have_workspace_test.exs` + `all_per_tenant_uris_have_workspace_test.exs` reject 2-segment forms.
+CI gates: `Ezagent.URI.new!/1` test suite + `Ezagent.URI.SchemeRegistry` ETS lockdown; new Phase 9 invariants `entities_have_workspace_test.exs` + `all_per_tenant_uris_have_workspace_test.exs` reject 2-segment forms.
 
 ## 12. **Synthetic singletons are dissolved — Behaviors live on the actual scope-owning Kind** (SPEC v2 §5.7, PR #144)
 

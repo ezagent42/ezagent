@@ -56,7 +56,15 @@ defmodule EzagentDomainChat.Integration.PresenceReadReceiptsE2ETest do
     admin_uri
   end
 
-  defp wait_until(fun, timeout_ms \\ 2_000) do
+  # Deadline-based poll: returns the instant `fun` is truthy, so the
+  # healthy fast path is unaffected. The default ceiling is generous for
+  # the FULL concurrent umbrella run — this E2E crosses several processes
+  # (presence fanout + the delivered→displayed→read receipt ladder, each
+  # a PubSub hop + DB write) and legitimately needs more than 2s while
+  # competing for schedulers + the Ecto sandbox connection. A genuinely
+  # stuck ladder still flunks (at the deadline), so this is a realistic
+  # bound, not a masked hang.
+  defp wait_until(fun, timeout_ms \\ 8_000) do
     deadline = System.monotonic_time(:millisecond) + timeout_ms
     do_wait(fun, deadline)
   end
@@ -78,7 +86,13 @@ defmodule EzagentDomainChat.Integration.PresenceReadReceiptsE2ETest do
   defp build_session_for_pair do
     suffix = unique_suffix()
     short_name = "cc_demo_e2e_#{suffix}"
-    cc_demo_uri = URI.parse("entity://agent/team-alpha/cc_demo_#{suffix}")
+    # `create_session/3` derives the session's workspace structurally from
+    # the creator (admin = entity://user/system/admin → workspace://system).
+    # cc_demo MUST live in that SAME workspace, or `Resolver.valid_member?/2`
+    # drops it as cross-workspace and the @cc-demo mention never fans out
+    # (no chat.receive → no :delivered mark). Build it in `system`, not
+    # `team-alpha`.
+    cc_demo_uri = URI.new!("entity://agent/system/cc_demo_#{suffix}")
 
     # Spawn the agent (live in KindRegistry — :member_joined can find it)
     {:ok, _pid} = Ezagent.SpawnRegistry.spawn(cc_demo_uri)

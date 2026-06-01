@@ -53,7 +53,7 @@ defmodule EzagentCore.EtsOwner do
     # fn looks up kind_module from snapshot first, AgentTemplate
     # second — no per-flavor lookup table needed.
     # PR #145 (SPEC v2 §5.6 §5.11): runtime ETS allowlist of URI schemes
-    # accepted by `Ezagent.URI.parse!/1`. Seeded at boot with the 6 core
+    # accepted by `Ezagent.URI.new!/1`. Seeded at boot with the 6 core
     # schemes; plugins extend it ONLY via `Ezagent.SpawnRegistry.register/2`
     # (which co-registers). Eliminates the hardcoded `@known_schemes`
     # drift bug.

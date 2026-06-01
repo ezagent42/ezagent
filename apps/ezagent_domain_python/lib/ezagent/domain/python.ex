@@ -12,10 +12,10 @@ defmodule Ezagent.Domain.Python do
 
   Handles MUST be one of:
 
-    * `%URI{}` — production case; produced by `Ezagent.URI.parse!/1`
+    * `%URI{}` — production case; produced by `Ezagent.URI.new!/1`
       so it is already canonical.
     * binary — RESTRICTED to either (a) `URI.to_string/1` output of a
-      URI that would have round-tripped through `Ezagent.URI.parse!/1`,
+      URI that would have round-tripped through `Ezagent.URI.new!/1`,
       or (b) test fixtures prefixed `"test://"`.
 
   Any other type (atom, tuple, integer, map) raises `ArgumentError`
@@ -38,11 +38,11 @@ defmodule Ezagent.Domain.Python do
 
   Raises `ArgumentError` on:
     * any non-URI / non-binary input
-    * a binary whose canonical form via `Ezagent.URI.parse!/1` +
+    * a binary whose canonical form via `Ezagent.URI.new!/1` +
       `URI.to_string/1` differs from the input
-    * a malformed URI binary (rejected by `Ezagent.URI.parse!/1`)
+    * a malformed URI binary (rejected by `Ezagent.URI.new!/1`)
     * a binary using an unregistered scheme (rejected by
-      `Ezagent.URI.parse!/1`, except `"test://"` which is admitted as
+      `Ezagent.URI.new!/1`, except `"test://"` which is admitted as
       identity for test fixtures)
   """
   @spec handle_key(handle()) :: binary()
@@ -53,7 +53,7 @@ defmodule Ezagent.Domain.Python do
   def handle_key(bin) when is_binary(bin) do
     uri =
       try do
-        Ezagent.URI.parse!(bin)
+        Ezagent.URI.new!(bin)
       rescue
         e ->
           reraise ArgumentError,

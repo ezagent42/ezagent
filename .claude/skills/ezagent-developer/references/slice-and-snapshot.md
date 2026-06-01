@@ -4,6 +4,8 @@ Two of the most-load-bearing yet least-intuitive concepts in Ezagent. This file 
 
 Allen 2026-05-26 (after 6 PRs in a row touching slice/snapshot edges): "这是 ezagent 中实现最为复杂、意义最不清晰的一部分".
 
+> **2026-05-28 update — post Phase 1-4 migration**: Slice access has been moved BEHIND the new-contract `ctx[:read]` reader function for `handle_<action>/2` handlers (SPEC PR #445); plugin authors don't directly receive the slice map any more. Snapshot policy is **framework-decided** for Phase 2+ Kinds — `Ezagent.SnapshotStore` manages every-N events + on-terminate centrally, replacing the per-Behavior `persistence/0` enum (codex r2 HIGH-3 closure). The mental model + bug classes below are still load-bearing — slice keys, sibling-slice opt-in (invariant 18), `reconcile_after_load/2` (invariant 20), and the snapshot↔DB-SSOT relationship are unchanged. **Read `references/new-contract.md` first for the handler-side API**; this file remains canonical for the underlying state model.
+
 ## TL;DR
 
 | Concept | Lives where | What | When persisted |

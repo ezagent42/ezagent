@@ -1,7 +1,7 @@
 defmodule EzagentWeb.LiveAuthTest do
   @moduledoc """
   V1 fix (Allen Feishu 2026-05-21) — `LiveAuth.parse_entity_uri/1`
-  delegates to `Ezagent.URI.parse!/1` (the SPEC v3 canonical parser)
+  delegates to `Ezagent.URI.new!/1` (the SPEC v3 canonical parser)
   so the write side (`EzagentWeb.SessionPrincipal.canonicalize/2` —
   3-segment URIs) and the read side (LiveAuth) cannot diverge.
 

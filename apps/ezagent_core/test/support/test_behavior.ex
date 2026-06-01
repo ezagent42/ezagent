@@ -4,23 +4,35 @@ defmodule Ezagent.Test.TestBehavior do
   Lives under `test/support/` (compiled only in `:test` per
   `mix.exs` `elixirc_paths(:test)`).
 
+  Migrated to the new per-action declarative contract (`use
+  Ezagent.Behavior`) as part of Phase 3 r3 (2026-05-28); the legacy
+  `invoke/4` dispatch path is gone, so every Behavior the Runtime
+  sees MUST be new-style.
+
   Action `:noop` updates the slice's `:count` field; action `:fail`
-  returns `{:error, :test_failure}`.
+  returns `{:error, :test_failure}`; action `:raise` raises.
   """
 
+  use Ezagent.Behavior
   @behaviour Ezagent.Behavior
 
-  @impl Ezagent.Behavior
-  def actions, do: [:noop, :fail, :raise]
+  action :noop,
+    args: %{msg: :string},
+    returns: %{echoed: :string},
+    modes: [:call, :cast],
+    description: "Bump the slice counter and echo the message"
 
-  @impl Ezagent.Behavior
-  def cap_subjects do
-    [
-      {:noop, "test — no-op action"},
-      {:fail, "test — returns {:error, _}"},
-      {:raise, "test — raises an exception"}
-    ]
-  end
+  action :fail,
+    args: %{},
+    returns: %{},
+    modes: [:call],
+    description: "Always return {:error, :test_failure}"
+
+  action :raise,
+    args: %{},
+    returns: %{},
+    modes: [:call],
+    description: "Always raise — exercises the crash path"
 
   @impl Ezagent.Behavior
   def state_slice, do: :test
@@ -28,38 +40,19 @@ defmodule Ezagent.Test.TestBehavior do
   @impl Ezagent.Behavior
   def init_slice(_args), do: %{count: 0, last_msg: nil}
 
-  @impl Ezagent.Behavior
-  def invoke(:noop, slice, %{msg: msg}, _ctx) do
-    {:ok, %{slice | count: slice.count + 1, last_msg: msg}, %{echoed: msg}}
+  def handle_noop(%{msg: msg}, ctx) do
+    count = ctx[:read].(:count, 0)
+
+    {:ok, %{echoed: msg},
+     [
+       {:set, :count, count + 1},
+       {:set, :last_msg, msg}
+     ]}
   end
 
-  def invoke(:fail, _slice, _args, _ctx), do: {:error, :test_failure}
+  def handle_fail(_args, _ctx), do: {:error, :test_failure}
 
-  def invoke(:raise, _slice, _args, _ctx), do: raise("boom")
-
-  @impl Ezagent.Behavior
-  def interface do
-    %{
-      noop: %{
-        description: "Bump the slice counter and echo the message",
-        args: %{msg: :string},
-        returns: %{echoed: :string},
-        modes: [:call, :cast]
-      },
-      fail: %{
-        description: "Always return {:error, :test_failure}",
-        args: %{},
-        returns: %{},
-        modes: [:call]
-      },
-      raise: %{
-        description: "Always raise — exercises the crash path",
-        args: %{},
-        returns: %{},
-        modes: [:call]
-      }
-    }
-  end
+  def handle_raise(_args, _ctx), do: raise("boom")
 end
 
 defmodule Ezagent.Test.TestKind do

@@ -112,6 +112,7 @@ defmodule Ezagent.ExternalMirror.Invariants.AdapterInstallOrderingTest do
     # hook because the cap subject was already present from setup_all
     # in another test).
     fresh_id = "ordering_test_em_endstate_a_#{System.unique_integer([:positive])}"
+    cleanup_registries(fresh_id)
     {adapter_module, binding_module} = build_synthetic_pair(fresh_id)
     expected_action = String.to_atom("allow_" <> fresh_id)
     %{behavior_module: expected_behavior} = adapter_module.cap_subject()
@@ -152,6 +153,7 @@ defmodule Ezagent.ExternalMirror.Invariants.AdapterInstallOrderingTest do
   test "after BOTH registries populate the SAME fresh adapter_id (Binding first, Adapter second), cap subject IS registered" do
     # Symmetric ordering scenario, also hermetic.
     fresh_id = "ordering_test_em_endstate_b_#{System.unique_integer([:positive])}"
+    cleanup_registries(fresh_id)
     {adapter_module, binding_module} = build_synthetic_pair(fresh_id)
     expected_action = String.to_atom("allow_" <> fresh_id)
     %{behavior_module: expected_behavior} = adapter_module.cap_subject()
@@ -180,6 +182,22 @@ defmodule Ezagent.ExternalMirror.Invariants.AdapterInstallOrderingTest do
            observes that BindingRegistry already has the paired binding
            for this id.
            """
+  end
+
+  # These tests register synthetic adapter/binding pairs into the GLOBAL
+  # named AdapterRegistry / BindingRegistry (shared ETS, umbrella-wide).
+  # Without teardown the synthetic ids leak into other invariant tests
+  # (BindingAdapterGrill5Test walks the same registries + `:code.all_loaded`)
+  # — under cross-app concurrency that produced spurious
+  # "Adapter registered without paired Binding" Grill-5 violations.
+  # Register an `on_exit` that deletes this id from BOTH registries so the
+  # global tables return to their pre-test state. `__delete__/1` is the
+  # registries' test-cleanup surface and is idempotent on a missing id.
+  defp cleanup_registries(adapter_id) do
+    on_exit(fn ->
+      _ = AdapterRegistry.__delete__(adapter_id)
+      _ = BindingRegistry.__delete__(adapter_id)
+    end)
   end
 
   # Build a throwaway `{adapter_module, binding_module}` pair with a

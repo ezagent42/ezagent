@@ -185,8 +185,43 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
 
   require Logger
 
+  # Compile-time env capture. `Mix.env()` is NOT available in a compiled
+  # release (Mix is not loaded — see migration_gate.ex), so calling it at
+  # runtime would crash the orchestrator PTY spawn path. The deployment env
+  # is fixed at compile time, so a module attribute is both release-safe and
+  # correct. (codex final-review Q1.)
+  @compile_env Mix.env()
+
   @impl Ezagent.Kind.Template
   def template_name, do: "cc.agent"
+
+  # SPEC 2026-06-01-flavor-generic-template-data (approach B): the
+  # cc-specific template_data fields formerly hardcoded in
+  # `AgentTemplate.to_template_data/2`. Reads atom-or-string content keys;
+  # returns string keys; nil values are dropped by the caller. Output is
+  # byte-for-byte the pre-fix cc set, so orchestrators + existing cc agents
+  # are unaffected.
+  @impl Ezagent.Kind.Template
+  def template_data_extra(content) when is_map(content) do
+    %{
+      "claude_config_dir" => content_field(content, :claude_config_dir),
+      "operator_settings_path" => content_field(content, :settings_path),
+      "operator_mcp_config_path" => content_field(content, :mcp_config_path),
+      "api_key_helper" => content_field(content, :api_key_helper),
+      "role" => content_field(content, :role)
+    }
+  end
+
+  def template_data_extra(_), do: %{}
+
+  # AgentTemplate `content` may carry atom (fresh) or string (post-JSON)
+  # keys — read tolerantly.
+  defp content_field(content, key) when is_atom(key) do
+    case Map.get(content, key) do
+      nil -> Map.get(content, Atom.to_string(key))
+      v -> v
+    end
+  end
 
   @impl Ezagent.Kind.Template
   def validate(tmpl) when is_map(tmpl) do
@@ -259,7 +294,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
     # with try/rescue keeping the structured `{:error, _}` contract for
     # each validator branch.
     try do
-      case Ezagent.URI.parse!(uri_str) do
+      case Ezagent.URI.new!(uri_str) do
         %URI{scheme: "entity", host: "agent", path: "/" <> rest} when rest != "" ->
           # Phase 9 PR-2 (SPEC v3 §3): entity URIs are 3-segment:
           # /<workspace>/<entity_name>. Flavor lives in the entity_name
@@ -301,7 +336,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
 
   @impl Ezagent.Kind.Template
   def instantiate(_tmpl_name, %{"agent_uri" => uri_str} = tmpl, workspace_uri) do
-    agent_uri = Ezagent.URI.parse!(uri_str)
+    agent_uri = Ezagent.URI.new!(uri_str)
 
     # PR-D2 idempotency short-circuit: if BOTH the Agent Kind and the
     # PtyServer are already alive we have nothing to do. Each plugin
@@ -811,7 +846,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   # `apps/ezagent_plugin_cc/test/ezagent/template/cc_agent_spawn_invariant_test.exs`.
   @doc false
   def build_pty_params(agent_uri, cwd, tmpl) do
-    build_pty_params_for_env(agent_uri, cwd, tmpl, Mix.env())
+    build_pty_params_for_env(agent_uri, cwd, tmpl, @compile_env)
   end
 
   # Codex 2026-05-26 MEDIUM — splitting the env axis out lets the
@@ -943,34 +978,48 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
         assemble_settings_mcp_args(mandatory_settings_path(), per_agent_mcp_path, tmpl)
 
       # argv element 0 is the resolved ABSOLUTE path (not bare
-      # "claude"); the rest is the hardening's safe arg assembly,
-      # unchanged.
+      # "claude"); the rest is the hardening's safe arg assembly.
       #
-      # POC EXP-A1 (2026-05-26): replaced Phase 0 Hack 1 (hardcoded
-      # Acme soul string) with a read of the optional `soul_path`
-      # template field. The (preamble + soul) is written to a per-agent
-      # FILE and passed via `--append-system-prompt-file`, NOT inlined as
-      # an argv element: erlexec frames the run command to exec-port over
-      # a {packet,2} channel (65535-byte max), so a large soul inlined as
-      # an arg overflows it → :einval → node-wide :exec manager crash
-      # (every later spawn :no_pty). The file form keeps the soul out of
-      # the command-size budget. When absent or unreadable/unwritable,
-      # NO system-prompt flag is emitted (claude runs with no extra
-      # system prompt — non-fatal, matches Phase 0's permissive posture).
+      # 2026-06-01 — headless startup-dialog fix (verified via tmux +
+      # live orchestrator round-trip; see
+      # [[project_cc_channel_reply_unverified]]).
       #
-      # Static-soul model: the soul is read ONCE here at PtyServer
-      # spawn. A subsequent edit to the soul has NO effect on the live
-      # agent — the operator must restart the agent (terminate Kind +
-      # re-instantiate template) to pick it up. This matches the
-      # EXP-A1 hypothesis: soul is a per-agent static Template
-      # parameter, hot-reload requires agent restart.
+      # `--permission-mode bypassPermissions` shows a "Bypass Permissions
+      # mode … Yes, I accept" CONFIRMATION dialog at startup that a
+      # headless PTY can't answer → claude parks pre-REPL → never loads
+      # the esr-bridge channel → inbound `notifications/claude/channel`
+      # are SILENTLY DROPPED (per the channels-reference) → the agent
+      # receives mentions but never replies. Critically this dialog
+      # appears BEFORE the `--dangerously-load-development-channels`
+      # prompt, so the PtyServer auto-prompt scanner
+      # (`default_auto_prompts/0`, which already answers the dev-channels
+      # dialog with "1\r") never saw its trigger text.
+      #
+      # `--dangerously-skip-permissions` runs in the SAME bypass mode
+      # WITHOUT that confirmation (verified: REPL still reports "bypass
+      # permissions on"; the `--settings` safety file is unchanged). With
+      # the bypass dialog gone, claude reaches the dev-channels prompt,
+      # which the EXISTING PtyServer scanner auto-confirms — the channel
+      # loads and the agent replies. No extra dialog-clearing code here.
+      # (claude 2.1.92 ALSO inserts a theme-picker + Unicode banner ahead
+      # of dev-channels — handled by the PtyServer auto-prompt scanner's
+      # :theme_picker_dialog + scrub_utf8, see ezagent_domain_pty/server.ex.)
+      #
+      # POC EXP-A1 (2026-05-26): the (preamble + soul) is written to a
+      # per-agent FILE and passed via `--append-system-prompt-file`, NOT
+      # inlined as an argv element: erlexec frames the run command to
+      # exec-port over a {packet,2} channel (65535-byte max), so a large
+      # soul inlined as an arg overflows it → :einval → node-wide :exec
+      # manager crash (every later spawn :no_pty). The file form keeps the
+      # soul out of the command-size budget. When absent/unreadable, NO
+      # system-prompt flag is emitted. Static-soul model: read ONCE at
+      # spawn; a soul edit needs an agent restart to take effect.
       soul_args = build_soul_args(agent_uri, agent_cwd, tmpl)
 
       argv =
         [
           claude_path,
-          "--permission-mode",
-          "bypassPermissions",
+          "--dangerously-skip-permissions",
           "--dangerously-load-development-channels",
           "server:esr-bridge"
         ] ++ soul_args ++ settings_mcp_args
@@ -1537,7 +1586,17 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
                     URI.to_string(agent_uri)
                 )
 
-                :ok
+                # 2026-05-31 orchestrator-startup-atomicity §5 — for an
+                # ORCHESTRATOR boot respawn, readiness = REGISTERED, not
+                # process-alive. Await the same live-join gate (staggered
+                # so N orchestrators don't each block 30s simultaneously);
+                # on timeout fail-loud (returns `{:error, _}` → Sandbox
+                # logs + telemetry `:subprocess_unhealthy` + stops the
+                # respawn — the operator restarts via /admin). Test-mode
+                # skips the live wait (no real claude to JOIN). A non-
+                # orchestrator cc agent has no registration gate (out of
+                # scope per SPEC §10) → `:ok` immediately.
+                await_orchestrator_boot_readiness(agent_uri, respawn_data)
 
               {:error, reason} = err ->
                 Logger.error(
@@ -1555,6 +1614,119 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   end
 
   def ensure_subprocess_alive(_, _), do: {:error, :invalid_args}
+
+  # 2026-05-31 orchestrator-startup-atomicity §5 — orchestrator boot
+  # readiness gate. Mirrors `Session.ensure_orchestrator/3`'s create-time
+  # gate, on the BOOT respawn path: a respawned orchestrator PTY is only
+  # READY once its live claude's MCP bridge JOINs + registers (broadcast
+  # on `"orch:lifecycle"`). Until then it is a non-functional zombie that
+  # would retry the bridge JOIN forever.
+  #
+  # Bounded-concurrency STAGGER: on a multi-orchestrator boot, having
+  # every Kind's `activate/2` block 30s simultaneously is an N×30s boot
+  # storm. We serialize the WAITS through `@orch_boot_gate_slots`
+  # `:global.trans` lock slots (slot = `phash2(uri) rem N`) so at most N
+  # gates wait concurrently; the rest queue behind a slot.
+  @orchestrator_boot_readiness_timeout_ms 30_000
+  @orch_boot_gate_slots 4
+
+  defp await_orchestrator_boot_readiness(%URI{} = agent_uri, respawn_data) do
+    cond do
+      not orchestrator_role?(respawn_data) ->
+        # Non-orchestrator cc agent — no registration gate (SPEC §10 out).
+        :ok
+
+      orchestrator_gate_test_mode?() ->
+        # No live claude in test_mode → no bridge JOIN → the gate would
+        # always time out. The synchronous registration is the test's
+        # readiness; skip the live wait.
+        :ok
+
+      true ->
+        with_orch_boot_gate_slot(agent_uri, fn ->
+          do_await_orchestrator_boot_readiness(agent_uri)
+        end)
+    end
+  end
+
+  # Run `fun` while holding one of N global gate slots — bounds the number
+  # of concurrent 30s waits across all booting orchestrators. `:global.trans`
+  # blocks until the slot lock is acquired (FIFO-ish), then releases it
+  # when `fun` returns.
+  defp with_orch_boot_gate_slot(%URI{} = agent_uri, fun) when is_function(fun, 0) do
+    slot = :erlang.phash2(URI.to_string(agent_uri), @orch_boot_gate_slots)
+    lock_id = {{:ezagent_orch_boot_gate, slot}, self()}
+    :global.trans(lock_id, fun)
+  end
+
+  # Subscribe-then-check-then-wait. We subscribe to `"orch:lifecycle"`
+  # FIRST, then check whether the orchestrator is ALREADY registered
+  # (the bridge may have joined during the PTY respawn / slot wait); if so
+  # we are done. Otherwise `receive` the readiness signal ≤30s. On timeout
+  # fail-loud.
+  defp do_await_orchestrator_boot_readiness(%URI{} = agent_uri) do
+    :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, orch_lifecycle_topic())
+
+    if orchestrator_registered?(agent_uri) do
+      _ = Phoenix.PubSub.unsubscribe(EzagentCore.PubSub, orch_lifecycle_topic())
+      :ok
+    else
+      receive_orchestrator_boot_ready(agent_uri)
+    end
+  end
+
+  defp receive_orchestrator_boot_ready(%URI{} = agent_uri) do
+    receive do
+      {:orchestrator_ready, %URI{} = ready_uri} ->
+        if URI.to_string(ready_uri) == URI.to_string(agent_uri) do
+          _ = Phoenix.PubSub.unsubscribe(EzagentCore.PubSub, orch_lifecycle_topic())
+          :ok
+        else
+          receive_orchestrator_boot_ready(agent_uri)
+        end
+    after
+      @orchestrator_boot_readiness_timeout_ms ->
+        _ = Phoenix.PubSub.unsubscribe(EzagentCore.PubSub, orch_lifecycle_topic())
+
+        Logger.error(
+          "cc.agent.ensure_subprocess_alive: orchestrator #{URI.to_string(agent_uri)} did " <>
+            "NOT register within #{@orchestrator_boot_readiness_timeout_ms}ms on boot respawn " <>
+            "— failing loud (Sandbox stops the respawn; operator restarts via /admin)."
+        )
+
+        {:error, {:orchestrator_not_ready_within, @orchestrator_boot_readiness_timeout_ms}}
+    end
+  end
+
+  # The lifecycle topic string. Hard-coded here (NOT a call into
+  # `Ezagent.Orchestrator.McpChannel.lifecycle_topic/0`) because
+  # `ezagent_domain_chat` is a `only: :test` dep of this plugin — it is
+  # NOT a compile dep in prod. The topic is a stable string contract
+  # shared with `McpChannel.join/3`'s broadcast (§5); a drift would be
+  # caught by the live e2e (the only validator of the live gate).
+  defp orch_lifecycle_topic, do: "orch:lifecycle"
+
+  # Registered? = `Ezagent.Orchestrator.McpServer.from_orchestrator_uri/1`
+  # resolves. Runtime-guarded `apply` (NOT a direct module ref) for the
+  # same `only: :test` dep reason as `orch_lifecycle_topic/0`: the module
+  # IS loaded at runtime (chat boots in the umbrella) but referencing it
+  # at compile time would break this plugin's prod build. A not-loaded
+  # module (impossible in the running umbrella, but defensive) → not
+  # registered → fall through to the live wait.
+  defp orchestrator_registered?(%URI{} = agent_uri) do
+    mod = Ezagent.Orchestrator.McpServer
+
+    if Code.ensure_loaded?(mod) and function_exported?(mod, :from_orchestrator_uri, 1) do
+      match?({:ok, _}, apply(mod, :from_orchestrator_uri, [agent_uri]))
+    else
+      false
+    end
+  end
+
+  # test_mode = compile-time `:test` — same rationale as the create-time
+  # gate (cc PtyServer short-circuits real claude in `:test`). Compile-time
+  # attr (not runtime Mix.env()) for release-safety. (codex final-review Q1.)
+  defp orchestrator_gate_test_mode?, do: @compile_env == :test
 
   # Cross-workspace adoption gate (codex round-2 finding #1). We only
   # bring up a PTY for an already-started Kind when the agent URI's

@@ -31,6 +31,7 @@ defmodule Ezagent.ExternalMirror do
   - `list_adapters/0` — reads AdapterRegistry (PR-EM-1).
   """
 
+  alias Ezagent.{Cmd, Router}
   alias Ezagent.ExternalMirror.{AdapterRegistry, BindingRow, FacadeNonceTable}
 
   require Logger
@@ -206,16 +207,16 @@ defmodule Ezagent.ExternalMirror do
   def unbind(%URI{} = session_uri, adapter_id, target_id, ctx)
       when is_binary(adapter_id) and is_map(ctx) do
     target =
-      Ezagent.URI.parse!("#{URI.to_string(session_uri)}?action=external_mirror.unbind")
+      Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=external_mirror.unbind")
 
-    inv = %Ezagent.Invocation{
+    cmd = %Cmd{
       target: target,
-      mode: :call,
+      action: :unbind,
       args: %{adapter_id: adapter_id, target_id: target_id},
-      ctx: ensure_reply(ctx)
+      ctx: ensure_call_ctx(ctx)
     }
 
-    Ezagent.Invocation.dispatch(inv)
+    Router.dispatch(cmd)
   end
 
   # ----- Reads --------------------------------------------------------------
@@ -247,16 +248,16 @@ defmodule Ezagent.ExternalMirror do
   @spec list_bindings(URI.t(), caller_ctx()) :: {:ok, [binding()]} | {:error, term()}
   def list_bindings(%URI{} = session_uri, ctx) when is_map(ctx) do
     target =
-      Ezagent.URI.parse!("#{URI.to_string(session_uri)}?action=external_mirror.list_bindings")
+      Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=external_mirror.list_bindings")
 
-    inv = %Ezagent.Invocation{
+    cmd = %Cmd{
       target: target,
-      mode: :call,
+      action: :list_bindings,
       args: %{},
-      ctx: ensure_reply(ctx)
+      ctx: ensure_call_ctx(ctx)
     }
 
-    case Ezagent.Invocation.dispatch(inv) do
+    case Router.dispatch(cmd) do
       {:ok, %{bindings: bindings}} -> {:ok, bindings}
       {:ok, _other} -> {:ok, []}
       {:error, _} = err -> err
@@ -388,7 +389,7 @@ defmodule Ezagent.ExternalMirror do
   defp safe_parse_uri(nil), do: nil
 
   defp safe_parse_uri(s) when is_binary(s) do
-    Ezagent.URI.parse!(s)
+    Ezagent.URI.new!(s)
   rescue
     _ -> nil
   end
@@ -547,28 +548,31 @@ defmodule Ezagent.ExternalMirror do
     # expired / replayed / tuple mismatch) → action body returns
     # `:bind_must_go_through_facade`.
     target =
-      Ezagent.URI.parse!("#{URI.to_string(session_uri)}?action=external_mirror.bind")
+      Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=external_mirror.bind")
 
-    inv = %Ezagent.Invocation{
+    cmd = %Cmd{
       target: target,
-      mode: :call,
+      action: :bind,
       args: %{
         adapter_id: adapter_id,
         target_id: target_id,
         opts: opts,
         _facade_nonce: nonce
       },
-      ctx: ensure_reply(ctx)
+      ctx: ensure_call_ctx(ctx)
     }
 
-    Ezagent.Invocation.dispatch(inv)
+    Router.dispatch(cmd)
   end
 
-  defp ensure_reply(ctx) do
-    if Map.has_key?(ctx, :reply) do
-      ctx
-    else
-      Map.put(ctx, :reply, :ignore)
-    end
+  # Build the Cmd ctx for a `:call`-mode Router dispatch from a
+  # caller-supplied ctx (caller URI + caps). Defaults `:reply` to
+  # `:ignore` when absent and pins `mode: :call` so Router's
+  # `derive_mode/1` selects synchronous delivery (the facade reads the
+  # handler result from the return value, not via the reply target).
+  defp ensure_call_ctx(ctx) do
+    ctx
+    |> Map.put_new(:reply, :ignore)
+    |> Map.put(:mode, :call)
   end
 end

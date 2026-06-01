@@ -114,6 +114,18 @@ defmodule EzagentCore.Invariants.DemoSmokeTest do
     end
 
     test "list_instances(:session) finds the seeded default session" do
+      # The `session://default/system/main` seed is a DynamicSupervisor
+      # child spawned ONCE at chat-app boot — NOT a permanent static
+      # child. Under the full concurrent umbrella run another test can
+      # terminate it (or it is mid-respawn) when this assertion reads the
+      # global registry, so the seed is not guaranteed live here. Ensure
+      # it via the idempotent create_session facade (returns the existing
+      # Session via the `:adopted` path if already alive) before asserting.
+      _ =
+        EzagentDomainChat.create_session("main", Ezagent.Entity.User.admin_uri(),
+          template_name: "default"
+        )
+
       instances = EzagentDomainUi.AutoDerive.list_instances(:session)
       uris = Enum.map(instances, &URI.to_string(&1.uri))
       # Seed name was renamed from "main" → "default" (#408/#410 era).

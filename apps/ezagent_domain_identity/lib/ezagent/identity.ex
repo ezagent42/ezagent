@@ -13,7 +13,7 @@ defmodule Ezagent.Identity do
   users CAN read their own caps via dispatch without bypassing auth.
   """
 
-  alias Ezagent.{Invocation, KindRegistry}
+  alias Ezagent.{Cmd, KindRegistry, Router}
 
   @doc """
   List capabilities held by `principal_uri`. Returns `MapSet.t(Capability.t())`.
@@ -42,13 +42,14 @@ defmodule Ezagent.Identity do
         # `mix ezagent.stress.await_ready!/1`).
         await_ready(user_uri)
 
-        target = Ezagent.URI.parse!("#{URI.to_string(user_uri)}?action=identity.list_caps")
+        target = Ezagent.URI.new!("#{URI.to_string(user_uri)}?action=identity.list_caps")
 
-        case Invocation.dispatch(%Invocation{
+        case Router.dispatch(%Cmd{
                target: target,
-               mode: :call,
+               action: :list_caps,
                args: %{},
                ctx: %{
+                 mode: :call,
                  caller: user_uri,
                  caps: bootstrap_self_cap(user_uri),
                  reply: {:caller_inbox, self()}
@@ -94,7 +95,14 @@ defmodule Ezagent.Identity do
 
     MapSet.new([
       %Ezagent.Capability{
-        kind: :user,
+        # Derive the kind axis from the URI — Identity lives on BOTH the
+        # User and the Agent Kind (Allen 2026-05-26). `identity.list_caps`'s
+        # needed cap has its kind substituted from the target Kind's
+        # type_name (`:user` / `:agent`), so a hardcoded `kind: :user`
+        # self-cap never authorizes an Agent reading its OWN caps — the
+        # exact regression that made `list_caps_for/1` return empty for
+        # orchestrator agents (OrchestratorMcpBridge unauthorized).
+        kind: self_cap_kind(user_uri),
         behavior: Ezagent.Behavior.Identity,
         # SPEC 2026-05-27 capability-action-axis — self-cap is for
         # `:list_caps` (Identity.actions/0 == [:list_caps, :has_cap?,
@@ -102,11 +110,17 @@ defmodule Ezagent.Identity do
         action: :list_caps,
         instance: user_uri,
         workspace_uri: workspace_uri,
-        granted_by: Ezagent.URI.parse!("system://bootstrap"),
+        granted_by: Ezagent.URI.new!("system://bootstrap"),
         granted_at: ~U[2026-01-01 00:00:00Z]
       }
     ])
   end
+
+  # Identity is hosted on both the User and Agent Kind; the self-cap's
+  # kind axis must match the target Kind's `type_name/0` so it satisfies
+  # the runtime-substituted needed cap.
+  defp self_cap_kind(%URI{scheme: "entity", host: "agent"}), do: :agent
+  defp self_cap_kind(_), do: :user
 
   @doc """
   Phase 8c PR-F (Allen 2026-05-20) — does `entity_uri` belong to the
@@ -153,7 +167,7 @@ defmodule Ezagent.Identity do
     # with try/rescue keeping the `:error` atom-shape contract for
     # this private helper (caller pattern-matches on it).
     try do
-      Ezagent.URI.parse!(s)
+      Ezagent.URI.new!(s)
     rescue
       ArgumentError -> :error
     end
@@ -162,7 +176,7 @@ defmodule Ezagent.Identity do
   defp parse_uri_safe(_), do: :error
 
   defp parse_uri(%URI{} = u), do: u
-  defp parse_uri(s) when is_binary(s), do: Ezagent.URI.parse!(s)
+  defp parse_uri(s) when is_binary(s), do: Ezagent.URI.new!(s)
 
   @doc """
   Grant a capability to `entity_uri`. Dispatches `identity.grant_cap`
@@ -189,7 +203,7 @@ defmodule Ezagent.Identity do
   def grant_cap(entity_uri, %Ezagent.Capability{} = cap, granter_uri) do
     target_uri = parse_uri(entity_uri)
     granter = parse_uri(granter_uri)
-    target = URI.new!("#{URI.to_string(target_uri)}?action=identity.grant_cap")
+    target = Ezagent.URI.with_action(target_uri, :identity, :grant_cap)
 
     # PR-OWN-2 (caps-data-ownership SPEC #306 §5.2 + r4 fix): pass
     # the granter's REAL caps into dispatch ctx, not a hardcoded
@@ -217,18 +231,25 @@ defmodule Ezagent.Identity do
     # owner-delegated grants must call lower-level APIs.
     granter_caps = read_granter_caps(granter)
 
-    inv = %Ezagent.Invocation{
+    # `:call` mode returns the handler result directly from the Kind's
+    # GenServer.call — the `reply` target is only consulted on the
+    # `:cast` path (Kind.Server.handle_cast). The legacy `reply: :sync`
+    # was inert for a `:call` (it never reached `Invocation.reply/2`);
+    # `:ignore` is the canonical call-mode reply and avoids relying on a
+    # reply atom Router/Invocation don't model.
+    cmd = %Cmd{
       target: target,
-      mode: :call,
+      action: :grant_cap,
       args: %{cap: cap},
       ctx: %{
+        mode: :call,
         caller: granter,
         caps: granter_caps,
-        reply: :sync
+        reply: :ignore
       }
     }
 
-    case Ezagent.Invocation.dispatch(inv) do
+    case Router.dispatch(cmd) do
       {:ok, _} -> :ok
       :ok -> :ok
       err -> err

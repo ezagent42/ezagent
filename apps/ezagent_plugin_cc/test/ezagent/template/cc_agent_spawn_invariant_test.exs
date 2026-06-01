@@ -128,15 +128,27 @@ defmodule Ezagent.PluginCc.Template.CcAgentSpawnInvariantTest do
 
       assert {:ok, {argv, _env}} = CcAgent.build_claude_cmd(@agent_uri, @cwd, tmpl)
 
-      assert "--permission-mode" in argv
-      assert "bypassPermissions" in argv
+      # 2026-06-01 headless-reply fix: bypass mode is enabled via
+      # `--dangerously-skip-permissions`, NOT `--permission-mode
+      # bypassPermissions`. The latter triggers an interactive "Yes, I
+      # accept" startup confirmation a headless PTY can't answer →
+      # claude parks pre-REPL, never loads the esr-bridge channel, and
+      # silently drops inbound messages (agent never replies). The skip
+      # flag runs the same bypass mode with no dialog.
+      assert "--dangerously-skip-permissions" in argv
+
+      refute "bypassPermissions" in argv,
+             "--permission-mode bypassPermissions reintroduces the startup " <>
+               "confirmation dialog that mutes headless cc agents"
+
       assert "--dangerously-load-development-channels" in argv
       assert "server:esr-bridge" in argv
 
       # Flag + value must be adjacent — a regression that inserted
       # something between them would break the dev-channels enable.
-      assert adjacent?(argv, "--permission-mode", "bypassPermissions")
-
+      # (The dev-channels confirmation itself is auto-answered by the
+      # PtyServer auto-prompt scanner, reachable only now that the
+      # bypass dialog above is gone.)
       assert adjacent?(
                argv,
                "--dangerously-load-development-channels",

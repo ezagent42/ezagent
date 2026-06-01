@@ -27,6 +27,15 @@ defmodule EzagentDomainChat.Integration.WorkspaceIsolationTest do
   alias Ezagent.Entity.User
 
   setup do
+    # This suite observes `chat.receive` fan-out via the `invocations`
+    # audit table. `Ezagent.Audit.Writer` is skipped from the test-env
+    # supervision tree (2026-05-26 sandbox-isolation fix); start it
+    # per-test and allow it onto this test's sandbox connection so the
+    # telemetry → row write actually lands. Without this, no invocation
+    # rows are written and every `receive_dispatches_to/1` count stays 0.
+    {:ok, writer} = start_supervised(Ezagent.Audit.Writer)
+    Ecto.Adapters.SQL.Sandbox.allow(EzagentCore.Repo, self(), writer)
+
     original = Application.get_env(:ezagent_core, :routing_tables)
 
     on_exit(fn ->
@@ -193,7 +202,7 @@ defmodule EzagentDomainChat.Integration.WorkspaceIsolationTest do
     # because every session URI MUST be 3-segment
     # `session://<template>/<workspace>/<name>`. The pre-PR-7
     # "unbound session" failure mode has been replaced by a parse-time
-    # rejection: `Ezagent.URI.parse!/1` raises on 2-segment session
+    # rejection: `Ezagent.URI.new!/1` raises on 2-segment session
     # URIs.
     ctx = setup_scenario()
 
@@ -204,7 +213,7 @@ defmodule EzagentDomainChat.Integration.WorkspaceIsolationTest do
     legacy = "session://" <> "#{suffix}-unbound"
 
     assert_raise ArgumentError, ~r/workspace segment/, fn ->
-      Ezagent.URI.parse!(legacy)
+      Ezagent.URI.new!(legacy)
     end
 
     eavesdropper_before = length(receive_dispatches_to(ctx.eavesdropper))

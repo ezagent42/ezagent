@@ -477,7 +477,11 @@ From `docs/notes/2026-05-24-architecture-audit-v1.md` (5 LOW):
 5. **DONE** (PR-F #297) — `Registration.create_principal/3` "default"
    default arg removed.
 
-### ExternalMirrorWorker dedupe drops retry-send with reused msg.id (PR #420 codex r4 MED)
+### ✅ ExternalMirrorWorker dedupe drops retry-send with reused msg.id — RESOLVED 2026-06-01 (PR #516)
+
+> Dedupe key changed to composite `{msg.id, send_cursor}`; codex also caught
+> (HIGH) that the production Lifecycle `%{state: ...}` slice wasn't unwrapped —
+> fixed so dedupe works in the real path, with a wrapped-slice regression test.
 
 - **Where:** `apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror_worker.ex:469-486`
   (`invoke(:publish)` dedupes by `event_msg_id == slice.last_published_message_id`).
@@ -521,3 +525,175 @@ From `docs/notes/2026-05-24-architecture-audit-v1.md` (5 LOW):
   augment the catchup test (or write a sibling) to drive an actual
   `chat.send` through the window so the catchup + dedupe interact
   end-to-end.
+
+---
+
+## Post-lifecycle-migration full E2E findings (2026-05-30, Allen "e2e全量重跑")
+
+> **RESOLVED 2026-05-31** — the migration-introduced (B) findings + the
+> highest-stakes pre-existing (A) finding were closed by the remediation batch
+> merged 2026-05-30/31, verified on `origin/main`:
+> - `:not_ready` readiness regression (B, PRIMARY) → **#493** (`kind/server.ex`
+>   `ReadyGate` + `PendingDelivery.flush` buffering present; full umbrella 169→0).
+> - `Jason.Encoder not implemented for Ezagent.Capability` silently dropping
+>   `cap_granted` from EventLog (A, HIGH) → **#493** (`defimpl Jason.Encoder,
+>   for: Ezagent.Capability` in `capability.ex`).
+> - destroy-gate + AgentLineage durability (B/C) → **#493** (+ prod migration
+>   `20260616000000_agent_lineage_durable_backing`, see `pending-prod-migrations`).
+> - cold-restart P6 determinism → **#498**; URI silent-address hardening → **#496**;
+>   router facade `Invocation.dispatch`→`Router.dispatch` (#112) → **#494**;
+>   home backup/restore CLI (#120) → **#497**.
+> - Sandbox-isolation full-run flakiness (A) is **pre-existing test-infra**, NOT
+>   migration-caused (deterministic-0 on fresh worktrees; double-digit counts
+>   come from concurrent-suite contention / a bisect-churned worktree's drifted
+>   test DB — see memory `feedback_fresh_worktree_for_test_measurement`).
+>
+> Still OPEN from below: the home-portability **durable** profile-relative path
+> fix (CLI shipped in #497; structural fix deferred — see
+> `docs/notes/home-portability-audit.md`). Findings retained verbatim below.
+
+Methodology: phx restarted on complete `d46bd2d2`; live agent-browser + full
+umbrella `mix test` (407 files) + isolated chat re-runs + **pre-lifecycle
+baseline worktree (`54df56c9`) chat run for apples-to-apples diff**.
+
+### Verdict
+- **Live product migration: VALIDATED.** phx boots clean; cold-restart rebuild
+  works (7 cc agents respawn from snapshot, ExternalMirror BootReconciler
+  reconciles, KindRegistry repopulated — agent-browser screenshot captured);
+  `snapshot_restart_test` GATE 3/3 from umbrella root.
+- **Automated suite: ~131 raw failures full-run, triaged:**
+
+#### A. PRE-EXISTING (confirmed via baseline diff — NOT migration's fault)
+- **Sandbox-isolation flakiness**: chat baseline = 23 failures, ~39
+  `DBConnection.ConnectionError` (`owner exited / Client still using
+  connection` — spawned Kind.Servers outlive the test that owns the sandbox
+  connection). Present pre-lifecycle. Run files isolated/serial to confirm green.
+- **`Jason.Encoder not implemented for Ezagent.Capability`** (HIGH, pre-existing):
+  baseline 337 / migrated 332 raised `:emit` of `:cap_granted` EventLog rows
+  (`identity.ex:361`). The emit is caught ("continuing") so cap_granted events
+  are **silently dropped from EventLog**. Fix: `@derive {Jason.Encoder, ...}` on
+  `Ezagent.Capability` (+ nested URI/MapSet/DateTime encoders) OR emit a plain
+  map payload instead of the struct.
+- URI fixture artifacts (`host: {:not,:a,:string}`, `String.Chars.URI`),
+  feishu BindingPolicy retired-API, etc. — documented earlier.
+
+#### B. MIGRATION-INTRODUCED (chat: baseline 23 → migrated 43 failures, +20)
+- **`:not_ready` readiness regression (PRIMARY, ~6 direct + cascade)**:
+  `join`/`subscribe_from` called synchronously right after a Session (re)spawn
+  returns `{:error, :not_ready}` instead of buffering. Engine
+  `kind/server.ex` ReadyGate/PendingDelivery path was touched by Phase A
+  (#478); the documented contract ("dispatch during post-init buffers via
+  PendingDelivery and runs after :ready") is NOT covered for the synchronous
+  call path now that `activate/2` runs in post-init `handle_continue`,
+  widening the not-ready window. Failing: `SessionSurvivesRestartTest — THE
+  GATE`, `WorkspaceRegistry rebind on rehydrate`, `PublisherSessionTest
+  no-ambient-caps`, etc. **These tests encode a real production invariant**
+  (join-right-after-(re)spawn must not be rejected — exactly the cold-restart
+  message-loss class the migration was meant to kill). FIX DIRECTION: restore
+  buffering for synchronous dispatch during `:not_ready` at the engine level —
+  do NOT paper over by making tests await-ready (would mask the regression).
+  *Needs Allen's architectural steer (core-engine + behavior change).*
+- **destroy-gate semantics change (SandboxDestroyTest, 2)**: after `:destroy`,
+  `read`/`write_path` return `{:ok, %{...: nil}}` (empty two-container state)
+  instead of `{:error, :destroyed}`. The process-dict `destroyed?` gate was
+  intentionally removed in the Sandbox→Lifecycle conversion ("destroyed =
+  absence of state"). Either re-add a destroyed sentinel or update the 2 tests
+  — decision pending (is read-after-destroy-returns-empty acceptable?).
+- two-container parity test-debt (Kind.SnapshotTest etc., few): tests assert
+  old flat slice shape `%{identity: %{caps:}}`; product correctly returns
+  `%{identity: %{state: %{caps:}}}`. Update the test assertions.
+- **home portability (#120) — relativize Sandbox `config_dir_path`**: SHIPPED a
+  working `mix ezagent.home.backup` + `ezagent.home.restore` (VACUUM-INTO
+  consistent DB copy + rewrite-on-restore of the absolute `config_dir_path` /
+  `respawn_template_data` paths buried in `kind_snapshots.state_binary`, e2e in
+  `apps/ezagent_core/test/integration/home_migration_test.exs`). DEFERRED the
+  durable structural fix: store the Sandbox slice path **profile-relative**
+  (`cc-agents/<ws>/<name>`) and resolve against `Ezagent.Home` at read time in
+  `activate/2`, so restore needs no rewrite at all. Invasive — touches the
+  Sandbox slice contract, the cc Template Class, `:write_path` callers,
+  `reconcile_after_load`, + a data migration of existing rows. See
+  `docs/notes/home-portability-audit.md` §"Conclusion" approach 2.
+
+- **cc-agent claude credential durability (2026-06-01)**: cc agents
+  (orchestrators + workers) authenticate to Anthropic via the Claude Max
+  OAuth token in `<CLAUDE_CONFIG_DIR>/.claude/.credentials.json`, which
+  EXPIRES ~daily. When it expires, claude receives channel messages but
+  every reply fails `401 Invalid authentication credentials · Please run
+  /login` — the agent looks alive (bridge joined, mentions delivered) but
+  silently never replies. Found while debugging the orchestrator-chain
+  (`[[project_cc_channel_reply_unverified]]`): orch's token had expired
+  ~8h prior; refreshed operationally by copying the operator's valid
+  `~/.claude/.credentials.json`. DURABLE FIX options: (a) configure an
+  `api_key_helper` / long-lived API key for spawned agents instead of the
+  expiring OAuth token; (b) ensure the headless claude auto-refreshes via
+  its refresh token on launch (it has one — confirm why it didn't); (c)
+  a spawn-time credential-freshness preflight that fails loud (or
+  refreshes) rather than letting the agent run with a dead token. Until
+  fixed, long-lived agents go mute a day after the last login.
+
+- **✅ RESOLVED (PR #517) — inbound feishu: disambiguate multi-session chat binding by @-mention (2026-06-01,
+  Allen Q "为什么不能绑定多session")**: the `external_mirror_bindings` data model ALLOWS a
+  chat→N-sessions (intended for OUTBOUND fan-out). But INBOUND
+  (`InboundChatLookup.resolve/1`) fails closed with `:ambiguous_chat_binding` when a
+  chat has 2+ bindings, because it can't decide which session an inbound message
+  targets. Improvement: when the inbound message @-mentions a specific agent (e.g.
+  `@cc_orchestrator-e2e-orch14`), route to the SESSION that agent is a member of —
+  letting one Feishu group host multiple orchestrator sessions, disambiguated by who
+  is @-mentioned. Until then, keep one binding per chat (delete stale rows when a
+  bound session is destroyed — destroying a session should cascade-delete its
+  `external_mirror_bindings` rows; today it doesn't, which is how the orch5/orch14
+  ambiguity arose).
+
+- **✅ RESOLVED (PR #508) — AgentTemplate.to_template_data/2 is cc-centric — blocks orchestrator-spawned
+  curl/codex workers (2026-06-01, scenario 33 live)**: the mapping only propagates
+  `class`/`agent_uri`/`cwd` + the cc-specific optional set
+  (`claude_config_dir`/`operator_settings_path`/`operator_mcp_config_path`/
+  `api_key_helper`/`role`). It does NOT carry curl's `provider`/`api_url`/`model`
+  or codex's `model`/`approval_policy`/`sandbox`. So when the orchestrator's
+  `add_agent_slot` spawns a curl/codex worker, the worker's flavor slice gets those
+  fields as `nil` — verified live: an orch-spawned curl worker had `provider`/
+  `api_url`/`model` all nil (DeepSeek key WAS set on its `:api_keys` slice and
+  readable, but it couldn't call the API — didn't know the URL/model). cc workers
+  work only because their needed field (`claude_config_dir`) happens to be in the cc
+  allowlist. FIX (needs brainstorm + codex spec): make `to_template_data`
+  flavor-generic — e.g. the flavor's Template Class declares which content keys to
+  thread, or thread all non-reserved content keys. This is THE blocker for live
+  multi-flavor full-star (scenario 33 live tier); the deterministic scenario_33 test
+  uses synthetic no-PTY flavors so it doesn't exercise this mapping.
+- **✅ RESOLVED (PR #509 — root cause: app-server unix socket path exceeded SUN_LEN) — codex worker bridge fails to connect (2026-06-01)**: an orch-spawned codex
+  worker spawns + the codex `app-server` procs start, but `codex_bridge.py` logs
+  `bridge connection fail` / `codex_thread_id_file_timeout` — the worker never
+  becomes reachable. codex CLI 0.134.0 + `~/.codex/auth.json` present. Separate from
+  the to_template_data gap; a codex-plugin bridge bug to debug (thread_id file
+  handshake / timeout).
+- **✅ RESOLVED (PR #518) — add_agent_slot is a synchronous 5s GenServer.call — too short for slow-spawning
+  flavors (2026-06-01)**: spawning a codex worker (cold app-server start >5s) made
+  `add_agent_slot` return `{:exit, {:timeout, GenServer.call}}` to the caller, even
+  though the spawn continued async and the worker Kind was created. The slot-spawn
+  should tolerate slow flavors (async spawn + readiness poll, or a longer/ configurable
+  timeout) rather than surfacing a spurious timeout.
+
+- **⚠️ PARTIALLY RESOLVED (PR #519 — observability landed) — remove_agent_slot silently drops routing rules that point only to that slot —
+  no error, no recovery on re-add (2026-06-01, relay 传话游戏 debug; Allen flagged
+  as "又是静默失败")**: `Orchestrator.Tools.remove_agent_slot` GC's every routing rule
+  whose ONLY receiver is the removed slot (`RuleStore.delete(rule.id, force: true)`,
+  tools.ex ~1095). Defensible as GC, BUT: (a) re-adding the SAME slot name does NOT
+  recreate the rules, and nothing warns — so "remove + add" (the intuitive "restart
+  this worker") silently loses all routing to it; (b) a subsequent message that then
+  matches NO worker rule just falls through to the session default fan-out
+  (`$session_users`/`$mentions`) and goes nowhere — no "unroutable to any worker"
+  signal. Symptom seen: re-spawned a cc relay worker via remove+add, its `BATON->cc`
+  rule was gone, kickoff messages silently went unanswered (looked like the cc worker
+  was mute — it wasn't; it never received anything). Structural fixes (no workaround):
+  re-add restores the slot's rules, OR remove emits a warning naming the rules it
+  cascade-deletes, OR give "message matched no worker receiver" an observable signal
+  instead of a silent default fan-out. Also: prefer a non-destructive worker-restart
+  primitive (update_agent_template / PTY restart) over remove+add when only swapping
+  creds/config.
+  > **PR #519 landed the observability half**: each cascade force-delete now emits a
+  > `Logger.warning` (rule id + matcher + worker) AFTER the txn commits, and
+  > `remove_agent_slot` returns `{deleted_rules, repointed_rules}`. STILL OPEN:
+  > (a) re-add restoring a slot's dropped rules, (b) the "message matched no worker
+  > receiver" observable signal (the silent default-fan-out half), (c) the
+  > disable-not-delete GC option. Confirmed live 2026-06-01: an @-mention to a
+  > non-member slot worker silently goes nowhere — that's the (b) gap.

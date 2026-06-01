@@ -11,7 +11,7 @@ defmodule Ezagent.Workspace do
   Mutation helpers (`add_member`, `remove_member`, `add_template`,
   `remove_template`, `set_routing_rules`) perform two writes:
   1. `Ezagent.Workspace.Store.update_*` — durable
-  2. `Invocation.dispatch(:<action>, ...)` — live Kind
+  2. `Router.dispatch(%Cmd{action: :<action>, ...})` — live Kind
 
   Both succeed atomically per call (no transaction across them yet —
   Phase 5 may wrap in a single transactional path). The DB write is
@@ -24,7 +24,7 @@ defmodule Ezagent.Workspace do
   """
 
   alias Ezagent.Entity.Workspace, as: WK
-  alias Ezagent.{Invocation, KindRegistry, Workspace.Loader, Workspace.Store}
+  alias Ezagent.{Cmd, KindRegistry, Router, Workspace.Loader, Workspace.Store}
 
   # --- spawn ---------------------------------------------------------
 
@@ -258,13 +258,15 @@ defmodule Ezagent.Workspace do
         {:error, :not_found}
 
       _persisted ->
-        target = Ezagent.URI.parse!("workspace://#{name}?action=workspace.remove_cross_prefix_members")
+        target =
+          Ezagent.URI.new!("workspace://#{name}?action=workspace.remove_cross_prefix_members")
 
-        case Invocation.dispatch(%Invocation{
+        case Router.dispatch(%Cmd{
                target: target,
-               mode: :call,
+               action: :remove_cross_prefix_members,
                args: %{},
                ctx: %{
+                 mode: :call,
                  caller: Ezagent.SystemPrincipal.uri("workspace-loader"),
                  caps: Ezagent.SystemPrincipal.caps("system://workspace-loader"),
                  reply: {:caller_inbox, self()}
@@ -296,13 +298,14 @@ defmodule Ezagent.Workspace do
   end
 
   defp list_current_members_for_persist(name) do
-    target = Ezagent.URI.parse!("workspace://#{name}?action=workspace.list_members")
+    target = Ezagent.URI.new!("workspace://#{name}?action=workspace.list_members")
 
-    case Invocation.dispatch(%Invocation{
+    case Router.dispatch(%Cmd{
            target: target,
-           mode: :call,
+           action: :list_members,
            args: %{},
            ctx: %{
+             mode: :call,
              caller: Ezagent.SystemPrincipal.uri("workspace-loader"),
              caps: Ezagent.SystemPrincipal.caps("system://workspace-loader"),
              reply: {:caller_inbox, self()}
@@ -355,7 +358,7 @@ defmodule Ezagent.Workspace do
   end
 
   defp invoke_template_now(name, tmpl_name) do
-    workspace_uri = Ezagent.URI.parse!("workspace://#{name}")
+    workspace_uri = Ezagent.URI.new!("workspace://#{name}")
 
     case Loader.invoke_template(workspace_uri, tmpl_name) do
       {:ok, _uris} -> :ok
@@ -435,7 +438,8 @@ defmodule Ezagent.Workspace do
   # Default `:cast` mode preserves existing call sites (add_template,
   # remove_template, remove_member, set_routing_rules) that are
   # validator-free and don't need synchronous error propagation.
-  defp dispatch_mutation(name, action_str, args), do: dispatch_mutation(name, action_str, args, :cast)
+  defp dispatch_mutation(name, action_str, args),
+    do: dispatch_mutation(name, action_str, args, :cast)
 
   # Task #55 round-2 codex CRIT-1 — `:call` mode for add_member so the
   # facade can see the Behavior validator's rejection (cross-prefix
@@ -443,7 +447,13 @@ defmodule Ezagent.Workspace do
   # `:call`, a `:cast` dispatch silently drops the error and the facade
   # persists the bad URI regardless.
   defp dispatch_mutation(name, action_str, args, mode) when mode in [:cast, :call] do
-    target = Ezagent.URI.parse!("workspace://#{name}?action=workspace.#{action_str}")
+    target = Ezagent.URI.new!("workspace://#{name}?action=workspace.#{action_str}")
+    # The action verb already lives in the URI's `?action=workspace.<verb>`
+    # query (Router preserves a pre-baked `action=` and the registry
+    # resolves `{kind_module, action}` from it). `Cmd.action` carries the
+    # same atom for the EventLog audit row Router injects. `to_existing_atom`
+    # is safe: every `action_str` is a compile-time-known Workspace action.
+    action = String.to_existing_atom(action_str)
 
     reply =
       case mode do
@@ -451,13 +461,14 @@ defmodule Ezagent.Workspace do
         :cast -> :ignore
       end
 
-    case Invocation.dispatch(%Invocation{
+    case Router.dispatch(%Cmd{
            target: target,
-           mode: mode,
+           action: action,
            args: args,
            # SPEC caps-cleanup-v1 §4.4 — Workspace mutation runs under
            # `system://workspace-loader` (closed Catalog).
            ctx: %{
+             mode: mode,
              caller: Ezagent.SystemPrincipal.uri("workspace-loader"),
              caps: Ezagent.SystemPrincipal.caps("system://workspace-loader"),
              reply: reply
@@ -479,7 +490,7 @@ defmodule Ezagent.Workspace do
   def list_workspaces do
     KindRegistry.list_all()
     |> Enum.filter(fn {uri_str, _pid} -> String.starts_with?(uri_str, "workspace://") end)
-    |> Enum.map(fn {uri_str, _pid} -> Ezagent.URI.parse!(uri_str) end)
+    |> Enum.map(fn {uri_str, _pid} -> Ezagent.URI.new!(uri_str) end)
     |> Enum.sort_by(&URI.to_string/1)
   end
 
@@ -693,16 +704,16 @@ defmodule Ezagent.Workspace do
   def create_agent(%URI{scheme: "workspace"} = workspace_uri, args, ctx)
       when is_map(args) and is_map(ctx) do
     target =
-      URI.new!("#{URI.to_string(workspace_uri)}?action=workspace.create_agent")
+      Ezagent.URI.with_action(workspace_uri, :workspace, :create_agent)
 
     caller = Map.fetch!(ctx, :caller)
     caps = Map.fetch!(ctx, :caps)
 
-    Invocation.dispatch(%Invocation{
+    Router.dispatch(%Cmd{
       target: target,
-      mode: :call,
+      action: :create_agent,
       args: args,
-      ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+      ctx: %{mode: :call, caller: caller, caps: caps, reply: {:caller_inbox, self()}}
     })
   end
 
@@ -741,16 +752,16 @@ defmodule Ezagent.Workspace do
   def create_session(%URI{scheme: "workspace"} = workspace_uri, args, ctx)
       when is_map(args) and is_map(ctx) do
     target =
-      URI.new!("#{URI.to_string(workspace_uri)}?action=workspace.create_session")
+      Ezagent.URI.with_action(workspace_uri, :workspace, :create_session)
 
     caller = Map.fetch!(ctx, :caller)
     caps = Map.fetch!(ctx, :caps)
 
-    Invocation.dispatch(%Invocation{
+    Router.dispatch(%Cmd{
       target: target,
-      mode: :call,
+      action: :create_session,
       args: args,
-      ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+      ctx: %{mode: :call, caller: caller, caps: caps, reply: {:caller_inbox, self()}}
     })
   end
 
@@ -785,19 +796,16 @@ defmodule Ezagent.Workspace do
     # Codex PR #356 r1 CRIT fix: `:create_user` lives on the new
     # `Ezagent.Behavior.WorkspaceUserAdmin` (slice `:workspace_user_admin`),
     # NOT on `Behavior.Workspace` — so the cap subject is distinct.
-    target =
-      URI.new!( # uri-canonical-allow: §3.4 query-target idiom (multi-line)
-        "#{URI.to_string(workspace_uri)}?action=workspace_user_admin.create_user"
-      )
+    target = Ezagent.URI.with_action(workspace_uri, :workspace_user_admin, :create_user)
 
     caller = Map.fetch!(ctx, :caller)
     caps = Map.fetch!(ctx, :caps)
 
-    Invocation.dispatch(%Invocation{
+    Router.dispatch(%Cmd{
       target: target,
-      mode: :call,
+      action: :create_user,
       args: args,
-      ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+      ctx: %{mode: :call, caller: caller, caps: caps, reply: {:caller_inbox, self()}}
     })
   end
 
@@ -817,16 +825,16 @@ defmodule Ezagent.Workspace do
 
   def grant_initial_caps(%URI{} = agent_uri, [cap | rest], ctx) when is_map(ctx) do
     target =
-      URI.new!("#{URI.to_string(agent_uri)}?action=identity.grant_cap")
+      Ezagent.URI.with_action(agent_uri, :identity, :grant_cap)
 
     caller = Map.fetch!(ctx, :caller)
     caps = Map.fetch!(ctx, :caps)
 
-    case Invocation.dispatch(%Invocation{
+    case Router.dispatch(%Cmd{
            target: target,
-           mode: :call,
+           action: :grant_cap,
            args: %{cap: cap},
-           ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+           ctx: %{mode: :call, caller: caller, caps: caps, reply: {:caller_inbox, self()}}
          }) do
       {:ok, _} -> grant_initial_caps(agent_uri, rest, ctx)
       {:error, reason} -> {:error, {:grant_failed, cap, reason}}

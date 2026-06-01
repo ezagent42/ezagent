@@ -1,71 +1,24 @@
 defmodule Ezagent.Entity.SessionReconcilerHelpersTest do
   @moduledoc """
-  Generator-reconciler PR-A — unit tests for the 4 Kind-idempotency
-  helpers introduced by the SPEC §5 audit.
+  Unit tests for the Kind-idempotency / ownership helpers KEPT on
+  `Ezagent.Entity.Session` after the 2026-05-31 orchestrator-startup-
+  atomicity pass deleted the dead Generator tree.
 
-  Helpers under test:
-  - `Ezagent.Entity.Session.derive_session_uri/3` (SPEC §7-1 Option A)
+  Helpers under test (the Generator-only `derive_session_uri/3` +
+  `existing_routing_rule_for/4` describe blocks were removed with the
+  functions they covered):
   - `Ezagent.Entity.Session.cap_equal_ignoring_metadata?/2` (codex rev-2 HIGH-1)
-  - `Ezagent.Entity.Session.existing_routing_rule_for/4` (codex rev-2 HIGH-5)
   - `Ezagent.Entity.Session.worker_already_owned_by_us?/3` (codex rev-3 HIGH-1)
   """
 
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Capability
-  alias Ezagent.Entity.{Session, User}
-  alias Ezagent.Routing.RuleStore
+  alias Ezagent.Entity.Session
 
   @default_ws URI.new!("workspace://team-alpha")
 
   defp uniq, do: System.unique_integer([:positive])
-
-  describe "derive_session_uri/3 — SPEC §7-1 Option A determinism" do
-    test "identical (template_content, owner) → identical URI" do
-      content = %{name: "support-team", class: "generic"}
-      owner = URI.parse("entity://user/team-alpha/alice")
-
-      uri1 = Session.derive_session_uri(content, @default_ws, owner)
-      uri2 = Session.derive_session_uri(content, @default_ws, owner)
-
-      assert URI.to_string(uri1) == URI.to_string(uri2)
-    end
-
-    test "different owners → different URIs" do
-      content = %{name: "team", class: "generic"}
-      alice = URI.parse("entity://user/team-alpha/alice")
-      bob = URI.parse("entity://user/team-alpha/bob")
-
-      uri_a = Session.derive_session_uri(content, @default_ws, alice)
-      uri_b = Session.derive_session_uri(content, @default_ws, bob)
-
-      refute URI.to_string(uri_a) == URI.to_string(uri_b)
-    end
-
-    test "different templates → different URIs" do
-      content_a = %{name: "team-a", class: "generic"}
-      content_b = %{name: "team-b", class: "generic"}
-      owner = URI.parse("entity://user/team-alpha/alice")
-
-      uri_a = Session.derive_session_uri(content_a, @default_ws, owner)
-      uri_b = Session.derive_session_uri(content_b, @default_ws, owner)
-
-      refute URI.to_string(uri_a) == URI.to_string(uri_b)
-    end
-
-    test "workspace segment matches the resolved workspace name" do
-      content = %{name: "team", class: "generic"}
-      owner = URI.parse("entity://user/team-alpha/alice")
-      ws = URI.new!("workspace://team-alpha")
-
-      uri = Session.derive_session_uri(content, ws, owner)
-
-      # session://<class>/<workspace>/<owner-template>
-      assert uri.scheme == "session"
-      assert uri.host == "generic"
-      assert String.starts_with?(uri.path, "/team-alpha/")
-    end
-  end
 
   describe "cap_equal_ignoring_metadata?/2 — codex rev-2 HIGH-1" do
     defp base_cap(opts) do
@@ -105,109 +58,6 @@ defmodule Ezagent.Entity.SessionReconcilerHelpersTest do
       b = base_cap(workspace_uri: URI.new!("workspace://other"))
 
       refute Session.cap_equal_ignoring_metadata?(a, b)
-    end
-  end
-
-  describe "existing_routing_rule_for/4 — codex rev-2 HIGH-5 full-contract probe" do
-    @table EzagentDomainChat.Routing.MentionRouting
-
-    test "exact match (matcher + receivers + scope + enabled + source) → {:found, _}" do
-      marker = "helper-found-#{uniq()}"
-      matcher = {:text_contains, marker}
-      receivers = [URI.parse("entity://agent/team-alpha/worker-#{uniq()}")]
-
-      assert {:ok, _row} =
-               RuleStore.add(
-                 @table,
-                 matcher,
-                 receivers,
-                 User.admin_uri(),
-                 workspace_uri: @default_ws,
-                 source: RuleStore.system_default_source()
-               )
-
-      assert {:found, _row} =
-               Session.existing_routing_rule_for(@table, matcher, receivers, @default_ws)
-    end
-
-    test "receivers differ → :not_found" do
-      marker = "helper-recvdiff-#{uniq()}"
-      matcher = {:text_contains, marker}
-      inserted = [URI.parse("entity://agent/team-alpha/worker-a-#{uniq()}")]
-      probed = [URI.parse("entity://agent/team-alpha/worker-b-#{uniq()}")]
-
-      assert {:ok, _row} =
-               RuleStore.add(
-                 @table,
-                 matcher,
-                 inserted,
-                 User.admin_uri(),
-                 workspace_uri: @default_ws,
-                 source: RuleStore.system_default_source()
-               )
-
-      assert :not_found =
-               Session.existing_routing_rule_for(@table, matcher, probed, @default_ws)
-    end
-
-    test "workspace scope differs → :not_found" do
-      marker = "helper-wsdiff-#{uniq()}"
-      matcher = {:text_contains, marker}
-      receivers = [URI.parse("entity://agent/team-alpha/worker-#{uniq()}")]
-      other_ws = URI.new!("workspace://other-helper-#{uniq()}")
-
-      assert {:ok, _row} =
-               RuleStore.add(
-                 @table,
-                 matcher,
-                 receivers,
-                 User.admin_uri(),
-                 workspace_uri: other_ws,
-                 source: RuleStore.system_default_source()
-               )
-
-      assert :not_found =
-               Session.existing_routing_rule_for(@table, matcher, receivers, @default_ws)
-    end
-
-    test "enabled == false but otherwise matches → {:disabled, _}" do
-      marker = "helper-disabled-#{uniq()}"
-      matcher = {:text_contains, marker}
-      receivers = [URI.parse("entity://agent/team-alpha/worker-#{uniq()}")]
-
-      assert {:ok, row} =
-               RuleStore.add(
-                 @table,
-                 matcher,
-                 receivers,
-                 User.admin_uri(),
-                 workspace_uri: @default_ws,
-                 source: RuleStore.system_default_source()
-               )
-
-      # Disable the row directly via Ecto so we don't need the full
-      # RuleStore admin API.
-      Ecto.Changeset.change(row, %{enabled: false}) |> EzagentCore.Repo.update!()
-
-      assert {:disabled, %{id: id}} =
-               Session.existing_routing_rule_for(@table, matcher, receivers, @default_ws)
-
-      assert id == row.id
-    end
-
-    test "source == admin → :not_found (operator's rule, not ours)" do
-      marker = "helper-adminsource-#{uniq()}"
-      matcher = {:text_contains, marker}
-      receivers = [URI.parse("entity://agent/team-alpha/worker-#{uniq()}")]
-
-      # Default source = "admin" (RuleStore.add/5 default)
-      assert {:ok, _row} =
-               RuleStore.add(@table, matcher, receivers, User.admin_uri(),
-                 workspace_uri: @default_ws
-               )
-
-      assert :not_found =
-               Session.existing_routing_rule_for(@table, matcher, receivers, @default_ws)
     end
   end
 

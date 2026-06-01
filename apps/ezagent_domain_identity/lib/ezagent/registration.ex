@@ -90,7 +90,7 @@ defmodule Ezagent.Registration do
   @spec principal_for_email(String.t()) :: {:ok, URI.t()} | :none
   def principal_for_email(email) when is_binary(email) do
     case Profile.by_email(email) do
-      %Profile{entity_uri: uri_str} -> {:ok, Ezagent.URI.parse!(uri_str)}
+      %Profile{entity_uri: uri_str} -> {:ok, Ezagent.URI.new!(uri_str)}
       nil -> :none
     end
   end
@@ -113,7 +113,7 @@ defmodule Ezagent.Registration do
       when is_binary(slug) and is_binary(display_name) and is_binary(email) and
              is_binary(workspace) do
     uri_str = "entity://user/#{workspace}/" <> slug
-    uri = Ezagent.URI.parse!(uri_str)
+    uri = Ezagent.URI.new!(uri_str)
 
     cond do
       not slug_available?(slug, workspace) ->

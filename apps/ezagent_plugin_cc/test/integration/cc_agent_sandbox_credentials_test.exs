@@ -544,8 +544,9 @@ defmodule Ezagent.PluginCc.Integration.CcAgentSandboxCredentialsTest do
     argv =
       [
         claude_path,
-        "--permission-mode",
-        "bypassPermissions",
+        # Mirror production (cc_agent build_claude_cmd) — see the
+        # 2026-06-01 headless startup-dialog fix.
+        "--dangerously-skip-permissions",
         "--dangerously-load-development-channels",
         "server:esr-bridge"
       ] ++ settings_mcp_args

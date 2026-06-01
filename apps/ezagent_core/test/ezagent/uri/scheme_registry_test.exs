@@ -46,23 +46,23 @@ defmodule Ezagent.URI.SchemeRegistryTest do
     end
   end
 
-  describe "Ezagent.URI.parse!/1 — SchemeRegistry-backed" do
+  describe "Ezagent.URI.new!/1 — SchemeRegistry-backed" do
     test "accepts a registered scheme" do
-      assert %URI{} = Ezagent.URI.parse!("entity://user/system/admin")
+      assert %URI{} = Ezagent.URI.new!("entity://user/system/admin")
     end
 
     test "rejects an unregistered scheme with clear error" do
       scheme = "neverregistered-#{System.unique_integer([:positive])}"
 
       assert_raise ArgumentError, ~r/not registered/, fn ->
-        Ezagent.URI.parse!("#{scheme}://x/y")
+        Ezagent.URI.new!("#{scheme}://x/y")
       end
     end
 
     test "newly-registered scheme is then accepted by parse!" do
       scheme = "newreg-#{System.unique_integer([:positive])}"
       :ok = SchemeRegistry.register(scheme)
-      assert %URI{} = Ezagent.URI.parse!("#{scheme}://default/x")
+      assert %URI{} = Ezagent.URI.new!("#{scheme}://default/x")
     end
   end
 

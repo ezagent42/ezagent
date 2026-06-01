@@ -100,12 +100,12 @@ defmodule EzagentPluginCodex.BridgeAdapter do
     msg = Ezagent.Message.new(agent_uri, body, ref_id: ref_id)
 
     for session_uri_str <- sessions do
-      session_uri = Ezagent.URI.parse!(session_uri_str)
+      session_uri = Ezagent.URI.new!(session_uri_str)
 
       # SPEC §3.4 query-target idiom — `session_uri` is canonical-by-construction
       # via the chokepoint above; URI.new!/1 here consumes the canonical-form
       # string the carve-out permits.
-      target = URI.new!("#{URI.to_string(session_uri)}?action=chat.send")
+      target = Ezagent.URI.with_action(session_uri, :chat, :send)
 
       Ezagent.Invocation.dispatch(%Ezagent.Invocation{
         target: target,

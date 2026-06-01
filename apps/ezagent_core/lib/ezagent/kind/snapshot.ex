@@ -49,7 +49,7 @@ defmodule Ezagent.Kind.Snapshot do
   """
   @spec load_or_init(URI.t() | String.t(), module(), map()) :: %{atom() => map()}
   def load_or_init(uri, kind_module, args) do
-    case kind_module.persistence() do
+    case Ezagent.Kind.persistence_of(kind_module) do
       :ephemeral ->
         init_fresh(kind_module, args)
 
@@ -103,7 +103,7 @@ defmodule Ezagent.Kind.Snapshot do
         canonicalized = canonicalize_uris(loaded_state)
 
         fresh
-        |> Map.merge(canonicalized)
+        |> Map.merge(coerce_loaded_to_fresh_shape(fresh, canonicalized))
         |> prune_orphan_slices(kind_module)
         |> reconcile_after_load_behaviors(uri, kind_module)
 
@@ -127,7 +127,7 @@ defmodule Ezagent.Kind.Snapshot do
   # for REMOVED slices.
   defp prune_orphan_slices(state, kind_module) do
     declared =
-      kind_module.behaviors()
+      Ezagent.Kind.behaviors_of(kind_module)
       |> Enum.map(& &1.state_slice())
       |> MapSet.new()
 
@@ -153,7 +153,7 @@ defmodule Ezagent.Kind.Snapshot do
   # supervisor restarts the Kind. Persistent reconcile failure =
   # Kind stays down = correct (operator must fix the DB).
   defp reconcile_after_load_behaviors(state, %URI{} = uri, kind_module) do
-    Enum.reduce(kind_module.behaviors(), state, fn behavior, acc ->
+    Enum.reduce(Ezagent.Kind.behaviors_of(kind_module), state, fn behavior, acc ->
       slice_key = behavior.state_slice()
       slice_value = Map.get(acc, slice_key)
 
@@ -170,7 +170,7 @@ defmodule Ezagent.Kind.Snapshot do
     # SPEC 2026-05-27-uri-canonicalization §B4 — snapshot reload routes
     # URI strings through the canonical chokepoint; let-it-crash on
     # malformed (supervisor restarts the Kind, operator sees the error).
-    uri = Ezagent.URI.parse!(uri_str)
+    uri = Ezagent.URI.new!(uri_str)
     reconcile_after_load_behaviors(state, uri, kind_module)
   end
 
@@ -253,7 +253,7 @@ defmodule Ezagent.Kind.Snapshot do
   @spec commit(URI.t() | String.t(), module(), %{atom() => map()}, %{atom() => map()}) ::
           :ok | :not_durable | {:error, term()}
   def commit(uri, kind_module, old_state, new_state) do
-    case kind_module.persistence() do
+    case Ezagent.Kind.persistence_of(kind_module) do
       :ephemeral ->
         :not_durable
 
@@ -265,7 +265,13 @@ defmodule Ezagent.Kind.Snapshot do
         :not_durable
 
       {:snapshot, :on_change} ->
-        if old_state == new_state do
+        # Lifecycle Phase A (SPEC 2026-05-29 §0.1 + §10-R2) — compare the
+        # PERSISTABLE view only. A `{:set_transient, ...}` effect mutates
+        # a Lifecycle slice's `:transients` sub-key, which is NEVER
+        # snapshotted; a transient-only change must therefore NOT trigger
+        # a durable write (the stripped views are equal). Legacy slices
+        # (no `:transients` sub-key) are unaffected by the strip.
+        if strip_transients(old_state) == strip_transients(new_state) do
           :not_durable
         else
           # save_now/3 is now strict (issue #342, Allen 2026-05-25 —
@@ -314,16 +320,36 @@ defmodule Ezagent.Kind.Snapshot do
   system-tier state — these snapshots own no per-tenant data, so
   landing in admin is structurally correct).
   """
-  @spec save_now(URI.t() | String.t(), module(), %{atom() => map()}) ::
+  @spec save_now(URI.t() | String.t(), module(), %{atom() => map()}, keyword()) ::
           :ok | {:error, term()}
-  def save_now(uri, kind_module, state) do
+  def save_now(uri, kind_module, state, opts \\ []) do
     uri_str = uri_to_str(uri)
     kind_type_str = Atom.to_string(kind_module.type_name())
     version = snapshot_version_of(kind_module)
-    binary = :erlang.term_to_binary(state)
+    # Lifecycle Phase A (SPEC 2026-05-29 §0.1 + §10-R2) — strip every
+    # Lifecycle slice's `:transients` sub-key BEFORE serialization.
+    # `transients` (PIDs / refs / ETS handles / ports / monitor refs)
+    # has no serialization path by construction: it is dropped here and
+    # rebuilt by `activate/2` on the next start. This is the mechanism
+    # that kills the cold-restart bug class — a transient CANNOT be
+    # accidentally persisted because the only serialization site strips
+    # it. Legacy (non-Lifecycle) slices have no `:transients` sub-key
+    # and pass through unchanged.
+    binary = :erlang.term_to_binary(strip_transients(state))
     workspace_uri_str = derive_workspace_uri(uri)
 
-    case KindSnapshot.upsert(uri_str, kind_type_str, binary, version, workspace_uri_str) do
+    # Lifecycle Phase A (SPEC §9 OQ-1, F3) — when the caller is the
+    # initial-persist of a Lifecycle Kind, set the `ever_created` marker
+    # in the SAME upsert as the state binary so the marker is atomic with
+    # the snapshot it gates. No separate fire-and-forget write that a
+    # crash could land between.
+    upsert_opts =
+      case Keyword.get(opts, :mark_ever_created, false) do
+        true -> [mark_ever_created: true]
+        _ -> []
+      end
+
+    case KindSnapshot.upsert(uri_str, kind_type_str, binary, version, workspace_uri_str, upsert_opts) do
       {:ok, _row} ->
         :telemetry.execute(
           [:ezagent, :persistence, :written],
@@ -369,7 +395,7 @@ defmodule Ezagent.Kind.Snapshot do
     parsed =
       case uri do
         %URI{} = u -> u
-        s when is_binary(s) -> Ezagent.URI.parse!(s)
+        s when is_binary(s) -> Ezagent.URI.new!(s)
       end
 
     case Ezagent.Persistence.workspace_uri_for(parsed) do
@@ -404,8 +430,83 @@ defmodule Ezagent.Kind.Snapshot do
   # ---------------------------------------------------------------------
   # Internals
 
+  @doc """
+  Lifecycle Phase A (SPEC 2026-05-29 §0.1 + §10-R2) — return the
+  PERSISTABLE view of a Kind's `slice_state` map: every Lifecycle
+  slice's `:transients` sub-key is dropped.
+
+  A Lifecycle slice has the two-container shape `%{state: map(),
+  transients: map()}` (emitted by `use Ezagent.Lifecycle`). `transients`
+  holds PIDs / refs / ETS handles / ports / monitor refs that MUST NOT
+  be serialized — they are rebuilt by `activate/2` on every start. This
+  function is the single chokepoint that enforces "only `state` is
+  snapshotted": it runs at the serialize boundary (`save_now/3`) and in
+  the `:on_change` dirty-check (`commit/4`).
+
+  Legacy (non-Lifecycle) slices do NOT carry a `:transients` sub-key, so
+  they pass through structurally unchanged — the strip is a no-op for
+  them. The detection is purely structural (a map slice carrying a
+  `:transients` key), so no engine/Behavior coupling is introduced.
+  """
+  @spec strip_transients(%{atom() => term()}) :: %{atom() => term()}
+  def strip_transients(slice_state) when is_map(slice_state) do
+    Map.new(slice_state, fn {slice_key, slice} ->
+      {slice_key, strip_one_slice(slice)}
+    end)
+  end
+
+  defp strip_one_slice(%{transients: _} = slice) when is_map(slice) do
+    Map.delete(slice, :transients)
+  end
+
+  defp strip_one_slice(other), do: other
+
+  # T4 (Lifecycle Phase B foundation) — coerce a LEGACY FLAT snapshot slice
+  # into the two-container shape when the Behavior has since converted to
+  # `use Ezagent.Lifecycle`.
+  #
+  # The hazard: `fresh` (from `init_fresh/2`) carries a converted
+  # Behavior's slice as `%{state: %{}, transients: %{}}`, but a
+  # pre-migration `kind_snapshots` row holds that slice as a FLAT map
+  # (persistent + transient mixed, the old shape). The subsequent
+  # `Map.merge(fresh, loaded)` lets the flat slice SHADOW the two-container
+  # fresh value, so the live slice becomes flat — and a converted Kind's
+  # `__run_activate__` (which matches `%{state: st}`) crashes on boot.
+  #
+  # We detect the per-slice-key mismatch STRUCTURALLY (fresh is
+  # two-container `%{state: _, transients: _}` while the loaded value is a
+  # flat map with NO `:state` key) and coerce the loaded flat map to
+  # `%{state: flat, transients: %{}}` on read. The persistent data
+  # rehydrates under `:state`; `transients` starts empty and `activate/2`
+  # rebuilds it on this same start — exactly the cold-load contract.
+  #
+  # This does NOT replace the R-2 WIPE (the prod cutover plan stays a clean
+  # snapshot wipe). It is the safety net that keeps a stray flat row from
+  # CRASHING a converted Kind — reducing reliance on a perfect test-DB
+  # wipe and making the eventual prod cutover safer. A loaded value that is
+  # ALREADY two-container (a post-migration row) or whose fresh peer is
+  # legacy-flat (an un-migrated Behavior) passes through unchanged.
+  @spec coerce_loaded_to_fresh_shape(%{atom() => term()}, %{atom() => term()}) ::
+          %{atom() => term()}
+  defp coerce_loaded_to_fresh_shape(fresh, loaded) do
+    Map.new(loaded, fn {slice_key, loaded_slice} ->
+      {slice_key, coerce_one_slice(Map.get(fresh, slice_key), loaded_slice)}
+    end)
+  end
+
+  # Fresh is two-container, loaded is flat (no `:state`) → wrap the flat
+  # persistent map; `transients` rebuilt by `activate/2`.
+  defp coerce_one_slice(%{state: _, transients: _}, loaded_slice)
+       when is_map(loaded_slice) and not is_map_key(loaded_slice, :state) do
+    %{state: loaded_slice, transients: %{}}
+  end
+
+  # Any other combination (both two-container, both flat, fresh has no peer,
+  # non-map loaded value) → unchanged.
+  defp coerce_one_slice(_fresh_slice, loaded_slice), do: loaded_slice
+
   defp init_fresh(kind_module, args) do
-    kind_module.behaviors()
+    Ezagent.Kind.behaviors_of(kind_module)
     |> Enum.map(fn behavior ->
       {behavior.state_slice(), behavior.init_slice(args)}
     end)
@@ -436,7 +537,7 @@ defmodule Ezagent.Kind.Snapshot do
   5. Tuple (`is_tuple/1`) — convert to list, walk, convert back.
   6. Fallthrough — atoms, numbers, binaries, pids — unchanged.
 
-  The `%URI{}` clause routes through `Ezagent.URI.parse!/1` (the
+  The `%URI{}` clause routes through `Ezagent.URI.new!/1` (the
   canonical chokepoint). Non-Ezagent schemes (e.g. external `http://`
   URLs that snuck into a slice via legacy code) fall back to strict
   stdlib `URI.new/1` per the §3.7 dual-fallback contract. Outright
@@ -448,7 +549,7 @@ defmodule Ezagent.Kind.Snapshot do
     s = URI.to_string(uri)
 
     try do
-      Ezagent.URI.parse!(s)
+      Ezagent.URI.new!(s)
     rescue
       # External (non-Ezagent) scheme — §3.7 fallback. Re-parse via
       # strict URI.new/1 so authority is RFC-3986-normalized; leave

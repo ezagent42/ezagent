@@ -150,7 +150,7 @@ defmodule Mix.Tasks.Ezagent.ExternalMirror.MigrateFeishuBindings do
          admin_uri_str,
          dry_run?
        ) do
-    session_uri = Ezagent.URI.parse!(session_uri_str)
+    session_uri = Ezagent.URI.new!(session_uri_str)
 
     if dry_run? do
       Mix.shell().info("  [dry-run] would bind feishu/#{chat_id} → #{session_uri_str}")

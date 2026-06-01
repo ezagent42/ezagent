@@ -205,33 +205,89 @@ defmodule EzagentPluginFeishu.FeishuAdapter do
   """
   @impl Ezagent.ExternalMirror.Adapter
   def event_to_payload(%Event{slice_key: :chat, payload: %{} = payload}) do
-    new_slice = Map.get(payload, :new_slice) || Map.get(payload, "new_slice")
-    old_slice = Map.get(payload, :old_slice) || Map.get(payload, "old_slice")
+    # Two-container Lifecycle migration (2026-05-29) wraps the developer slice
+    # as `%{state: <persistent>, transients: ...}`. The Publisher event carries
+    # that wrapped shape, but every reader below (chat_send_occurred?,
+    # extract_last_message) expects the FLAT slice. Unwrap `:state` here —
+    # tolerant of both the new nested shape and the legacy flat shape — so chat
+    # sends are detected and mirrored. (Before this fix: new_slice = %{state: …}
+    # → `chat_send_occurred?` always false → every message SILENTLY skipped, the
+    # post-lifecycle feishu-mirror outage. Allen 2026-05-31.)
+    new_slice = slice_state(Map.get(payload, :new_slice) || Map.get(payload, "new_slice"))
+    old_slice = slice_state(Map.get(payload, :old_slice) || Map.get(payload, "old_slice"))
 
     cond do
       not is_map(new_slice) ->
+        Logger.warning(
+          "FeishuAdapter.event_to_payload: SKIP (new_slice not a map) — chat slice-change " <>
+            "dropped from mirror. new_slice=#{inspect(new_slice, limit: 5)}"
+        )
         :skip
 
       not chat_send_occurred?(new_slice, old_slice) ->
+        Logger.warning(
+          "FeishuAdapter.event_to_payload: SKIP (chat_send_occurred? = false) — chat send " <>
+            "NOT mirrored to external. new_slice keys=#{inspect(slice_diag(new_slice))} " <>
+            "old_slice keys=#{inspect(slice_diag(old_slice))}"
+        )
         :skip
 
       true ->
         case extract_last_message(new_slice) do
           {:ok, msg} ->
             if from_feishu?(msg) do
+              Logger.debug("FeishuAdapter.event_to_payload: SKIP (from_feishu? echo-guard)")
               :skip
             else
               case build_lark_payloads(msg) do
-                [] -> :skip
-                list -> {:publish, list}
+                [] ->
+                  Logger.warning(
+                    "FeishuAdapter.event_to_payload: SKIP (build_lark_payloads = []) — " <>
+                      "no renderable payload for msg id=#{inspect(Map.get(msg, :id))} " <>
+                      "body_keys=#{inspect(msg.body |> case do m when is_map(m) -> Map.keys(m); _ -> :not_map end)}"
+                  )
+                  :skip
+
+                list ->
+                  {:publish, list}
               end
             end
 
           :error ->
+            Logger.warning(
+              "FeishuAdapter.event_to_payload: SKIP (extract_last_message :error) — " <>
+                "no :last_message in slice. new_slice keys=#{inspect(slice_diag(new_slice))}"
+            )
             :skip
         end
     end
   end
+
+  # Diagnostic helper: surface a slice's shape (top-level keys) without dumping
+  # full content, so a silent mirror-skip is traceable (Allen 2026-05-31:
+  # silent failure violates the no-silent-drop rule).
+  defp slice_diag(s) when is_map(s), do: Map.keys(s)
+  defp slice_diag(other), do: {:not_a_map, other}
+
+  # Unwrap the two-container Lifecycle slice (`%{state: <persistent>, ...}`) to
+  # the flat developer slice the rest of this module reads.
+  #
+  # 2026-05-31 orchestrator-startup-atomicity §8 (Unwrap A+C2 fold) — DELEGATE
+  # the atom-keyed case to the single `Ezagent.Kind.normalize_slice_view/1`
+  # chokepoint instead of duplicating the unwrap logic here. The chokepoint
+  # handles the two real two-container shapes: the in-memory `%{state,
+  # transients}` and the persisted single-key `%{state}` (transients stripped),
+  # plus passthrough for a legacy-flat slice.
+  #
+  # The chokepoint is ATOM-keyed only; the Feishu event payload can carry a
+  # string-keyed `%{"state" => ...}` (post-JSON over the wire). We keep a THIN
+  # string-key shim that unwraps `"state"` to its map, then hands the atom-keyed
+  # inner map back through the chokepoint (idempotent — a flat inner map is
+  # passthrough). We deliberately do NOT broaden `normalize_slice_view/1` to
+  # string keys (it guards core-Kind state shapes; a string-key clause there
+  # could wrongly unwrap an unrelated map).
+  defp slice_state(%{"state" => %{} = inner}), do: Ezagent.Kind.normalize_slice_view(inner)
+  defp slice_state(other), do: Ezagent.Kind.normalize_slice_view(other)
 
   def event_to_payload(%Event{}), do: :skip
 

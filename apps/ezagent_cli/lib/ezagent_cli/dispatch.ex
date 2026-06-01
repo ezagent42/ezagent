@@ -110,7 +110,14 @@ defmodule EzagentCli.Dispatch do
     end
   end
 
-  defp build_target_uri(type_name, instance, behavior_module, action, %URI{} = caller_uri, options)
+  defp build_target_uri(
+         type_name,
+         instance,
+         behavior_module,
+         action,
+         %URI{} = caller_uri,
+         options
+       )
        when is_map(options) do
     behavior_seg = behavior_module.state_slice() |> to_string()
     action_qs = "?action=#{behavior_seg}.#{to_string(action)}"
@@ -126,8 +133,8 @@ defmodule EzagentCli.Dispatch do
     # with try/rescue: a full Ezagent URI is parsed canonical + action
     # appended; bare instance falls back to scheme-prefix legacy form.
     try do
-      parsed_uri = Ezagent.URI.parse!(instance)
-      Ezagent.URI.parse!(URI.to_string(parsed_uri) <> action_qs)
+      parsed_uri = Ezagent.URI.new!(instance)
+      Ezagent.URI.new!(URI.to_string(parsed_uri) <> action_qs)
     rescue
       ArgumentError ->
         # Bare name — fall back to legacy scheme = type_name + promote.
@@ -135,7 +142,7 @@ defmodule EzagentCli.Dispatch do
         caller_workspace = workspace_name_from_caller(caller_uri)
         instance_class = Map.get(options, :instance_class)
         promoted_instance = promote_to_3seg(scheme, instance, caller_workspace, instance_class)
-        Ezagent.URI.parse!("#{scheme}://#{promoted_instance}#{action_qs}")
+        Ezagent.URI.new!("#{scheme}://#{promoted_instance}#{action_qs}")
     end
   end
 
@@ -266,7 +273,7 @@ defmodule EzagentCli.Dispatch do
     # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
     # with try/rescue preserving the `:bad_as_uri` error contract.
     try do
-      uri = Ezagent.URI.parse!(as_str)
+      uri = Ezagent.URI.new!(as_str)
       caps = lookup_identity_caps(uri)
       {uri, caps}
     rescue
@@ -276,17 +283,17 @@ defmodule EzagentCli.Dispatch do
   end
 
   defp lookup_identity_caps(uri) do
-    case KindRegistry.lookup(uri) do
-      {:ok, pid} ->
-        try do
-          %{state: %{identity: %{caps: caps}}} = :sys.get_state(pid, 1_000)
-          caps
-        catch
-          _, _ -> MapSet.new()
-        end
-
-      :error ->
-        MapSet.new()
+    # Lifecycle migration (PR #485 — Identity → use Ezagent.Lifecycle):
+    # the `:identity` slice is now the two-container shape
+    # `%{state: %{caps}, transients}`. Read through the canonical
+    # `Ezagent.Kind.get_slice/2` chokepoint, which normalizes to the
+    # flat `:state` view (T3); a raw `:sys.get_state` match on
+    # `%{state: %{identity: %{caps: _}}}` would silently miss the
+    # nested `:state` and return empty caps for `--as <uri>`.
+    case Ezagent.Kind.get_slice(uri, :identity) do
+      {:ok, %{caps: caps}} when is_struct(caps, MapSet) -> caps
+      {:ok, %{caps: caps}} when is_list(caps) -> MapSet.new(caps)
+      _ -> MapSet.new()
     end
   end
 

@@ -27,7 +27,7 @@ defmodule EzagentWeb.Plugs.RequireEntity do
         # with try/rescue; stale or malformed cookie URIs bounce to login
         # (Invariant #9 — graceful surface, not silent crash).
         try do
-          case Ezagent.URI.parse!(uri_str) do
+          case Ezagent.URI.new!(uri_str) do
             %URI{scheme: "entity", host: host} = uri when host in ["user", "agent"] ->
               assign(conn, :current_entity_uri, uri)
 

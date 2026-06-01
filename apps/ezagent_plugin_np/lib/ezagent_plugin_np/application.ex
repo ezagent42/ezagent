@@ -63,13 +63,13 @@ defmodule EzagentPluginNp.Application do
   alias Ezagent.PluginNp.Template.NpAgent, as: NpAgentTemplate
 
   # PTY-phase-state-machine 2026-05-26 follow-up (b) codex HIGH-1
-  # fix: register `Ezagent.Behavior.Lifecycle` `:terminate` on the
+  # fix: register `Ezagent.Behavior.Terminable` `:terminate` on the
   # NpAgent Kind so the LV `restart_pty` dispatch (and any other
   # caller using `?action=lifecycle.terminate`) routes through
   # CapBAC + audit + supervisor restart. Matches the cc plugin's
   # symmetric registration in `EzagentDomainChat.Application` for
   # the cc Agent Kind.
-  alias Ezagent.Behavior.Lifecycle, as: LifecycleBehavior
+  alias Ezagent.Behavior.Terminable, as: TerminableBehavior
 
   # --- OTP Application -------------------------------------------------
 
@@ -98,15 +98,15 @@ defmodule EzagentPluginNp.Application do
       end
 
     # PTY-phase-state-machine 2026-05-26 follow-up (b) codex HIGH-1
-    # fix — register Lifecycle's :terminate on NpAgent Kind so the
+    # fix — register Terminable's :terminate on NpAgent Kind so the
     # LV "Dead — Restart" badge button (`restart_pty` event) can
     # dispatch `?action=lifecycle.terminate` against np-flavor agents.
-    lifecycle_actions =
-      for action <- LifecycleBehavior.actions() do
-        {NpAgentKind, action, LifecycleBehavior}
+    terminable_actions =
+      for action <- TerminableBehavior.actions() do
+        {NpAgentKind, action, TerminableBehavior}
       end
 
-    np_actions ++ lifecycle_actions
+    np_actions ++ terminable_actions
   end
 
   @impl Ezagent.Plugin

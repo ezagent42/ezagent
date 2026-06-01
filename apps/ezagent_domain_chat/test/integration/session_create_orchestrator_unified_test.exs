@@ -42,9 +42,7 @@ defmodule EzagentDomainChat.Integration.SessionCreateOrchestratorUnifiedTest do
       short = "unified-a1-#{System.unique_integer([:positive])}"
 
       assert {:ok, session_uri, meta} =
-               EzagentDomainChat.create_session(short, User.admin_uri(),
-                 template_name: "default"
-               )
+               EzagentDomainChat.create_session(short, User.admin_uri(), template_name: "default")
 
       assert URI.to_string(session_uri) == "session://default/system/#{short}"
       assert is_map(meta)
@@ -193,7 +191,7 @@ defmodule EzagentDomainChat.Integration.SessionCreateOrchestratorUnifiedTest do
       # override points at NOTHING, the cc Template Class's
       # `try_role_bootstrap/3` returns `{:ok, %{role_degraded: true,
       # role_degraded_reason: _}}` — propagated up through
-      # `spawn_from_template_content/4` → `ensure_orchestrator_with_meta/3`
+      # `spawn_from_template_content/4` → `Session.ensure_orchestrator/3`
       # → `EzagentDomainChat.create_session/3`'s meta map. If the
       # auto-spawn path were going through `spawn_fresh/4` (the
       # pre-CRIT-fix bypass), the cc Template Class would NEVER have
@@ -301,12 +299,18 @@ defmodule EzagentDomainChat.Integration.SessionCreateOrchestratorUnifiedTest do
     # short-circuits to `:ok` before any cap-deny path can fire).
     #
     # To exercise the rollback contract deterministically we drop the
-    # public-API integration path and unit-test `rollback_fresh_session/2`
+    # public-API integration path and unit-test `rollback_session/2`
     # directly (made `@doc false` for this purpose, see lib comment).
     # This asserts the three invariants — Kind terminated, workspace
     # binding removed, kind_snapshots row deleted (HIGH-1) — without
     # relying on the unreachable cap-grant failure injection path.
-    test "rollback_fresh_session/2 tears down Kind + workspace bind + snapshot row" do
+    #
+    # 2026-05-31 orchestrator-startup-atomicity §4 step 9 — the helper
+    # was renamed `rollback_fresh_session/2` → `rollback_session/2`; the
+    # 2nd arg is now the orchestrator URI (or `nil`) to terminate, not
+    # the creator URI. The 4-store enumeration collapsed to: terminate
+    # orchestrator (if any) + Session, unbind workspace, delete snapshot.
+    test "rollback_session/2 tears down Kind + workspace bind + snapshot row" do
       # Spawn a real Session so rollback has something to tear down.
       short = "hi1-rollback-unit-#{System.unique_integer([:positive])}"
       session_uri = URI.new!("session://default/system/#{short}")
@@ -316,9 +320,8 @@ defmodule EzagentDomainChat.Integration.SessionCreateOrchestratorUnifiedTest do
       {:ok, _pid} =
         Ezagent.Kind.spawn(Session, %{uri: session_uri, owner_uri: User.admin_uri()})
 
-      # Bind workspace to match what `finalize_session_create/3` would
-      # have done before failing — this is the state rollback must
-      # undo.
+      # Bind workspace to match what the atomic create flow would have
+      # done before failing — this is the state rollback must undo.
       :ok = Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)
 
       # Pre-rollback invariants — the state IS present.
@@ -328,8 +331,8 @@ defmodule EzagentDomainChat.Integration.SessionCreateOrchestratorUnifiedTest do
       assert %Ezagent.Ecto.KindSnapshot{} = Ezagent.Ecto.KindSnapshot.get(uri_str),
              "Session.persistence/0 = {:snapshot, :on_change} writes initial row at spawn"
 
-      # Execute rollback.
-      assert :ok = EzagentDomainChat.rollback_fresh_session(session_uri, User.admin_uri())
+      # Execute rollback (no orchestrator spawned in this unit scenario).
+      assert :ok = EzagentDomainChat.rollback_session(session_uri, nil)
 
       # Give supervisor a moment to actually terminate the child.
       Process.sleep(50)
@@ -422,13 +425,15 @@ defmodule EzagentDomainChat.Integration.SessionCreateOrchestratorUnifiedTest do
     end
   end
 
-  # codex PR #408 r2 review HIGH-3 — the Generator path
-  # (Session.spawn_from_template/2 → reconcile_loop/4) was calling the
-  # 3-tuple `ensure_orchestrator/3` wrapper, which silently collapsed
-  # any `:role_degraded` meta from the cc Template Class. Post-r2 the
-  # Generator path calls `ensure_orchestrator_with_meta/3` and threads
-  # the warnings into the outcome map's new `:warnings` field.
-  describe "codex PR #408 r2 review HIGH-3 — Generator surfaces role_degraded" do
+  # codex PR #408 r2 review HIGH-3 — role-degraded surfacing.
+  #
+  # 2026-05-31 orchestrator-startup-atomicity §7 — the dead 3-tuple
+  # `ensure_orchestrator/3` wrapper was deleted and the 4-tuple-capable
+  # `ensure_orchestrator_with_meta/3` was RENAMED to `ensure_orchestrator/3`
+  # (it is now the sole variant). `EzagentDomainChat.create_session/3`
+  # threads the `:role_degraded` meta into its `{:role_degraded, reason}`
+  # `orchestrator_error` (status stays `:ready` — the agent is alive).
+  describe "role_degraded surfacing via Session.ensure_orchestrator/3" do
     setup do
       # Same fixture as the CRIT describe block — point the skill source
       # at a planted fixture so the bootstrap CAN succeed when we don't
@@ -449,7 +454,7 @@ defmodule EzagentDomainChat.Integration.SessionCreateOrchestratorUnifiedTest do
       :ok
     end
 
-    test "ensure_orchestrator_with_meta/3 surfaces role_degraded meta on bootstrap failure" do
+    test "ensure_orchestrator/3 surfaces role_degraded meta on bootstrap failure" do
       # Force skill-source missing so cc Template Class returns degraded
       # meta from `try_role_bootstrap/3`.
       Application.put_env(
@@ -462,13 +467,13 @@ defmodule EzagentDomainChat.Integration.SessionCreateOrchestratorUnifiedTest do
       session_uri = URI.new!("session://default/system/#{short}")
       workspace_uri = URI.new!("workspace://system")
 
-      # Spawn the Session first so ensure_orchestrator_with_meta has
-      # something to work with (it doesn't spawn the Session itself).
+      # Spawn the Session first so ensure_orchestrator has something to
+      # work with (it doesn't spawn the Session itself).
       {:ok, _pid} =
         Ezagent.Kind.spawn(Session, %{uri: session_uri, owner_uri: User.admin_uri()})
 
       result =
-        Session.ensure_orchestrator_with_meta(session_uri, workspace_uri, User.admin_uri())
+        Session.ensure_orchestrator(session_uri, workspace_uri, User.admin_uri())
 
       # Either the 4-tuple shape (role_degraded surfaced) — that's the
       # invariant we're verifying.

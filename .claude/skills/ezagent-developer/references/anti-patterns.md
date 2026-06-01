@@ -16,7 +16,7 @@ Refuse. SPEC v2 §5.2 + PR #146: action invocation uses query string, never path
 
 ## "I'll add `user://X` or `agent://X` back as an alias"
 
-Refuse. SPEC v2 §5.12 + PR #141: `user://` and `agent://` merged into `entity://`. Canonical forms: `entity://user/<workspace>/<name>`, `entity://agent/<workspace>/<flavor>_<name>`. No 1-segment fallback, no legacy URI form accepted, no `default`-injection logic. `Ezagent.URI.parse!/1` rejects un-canonical input.
+Refuse. SPEC v2 §5.12 + PR #141: `user://` and `agent://` merged into `entity://`. Canonical forms: `entity://user/<workspace>/<name>`, `entity://agent/<workspace>/<flavor>_<name>`. No 1-segment fallback, no legacy URI form accepted, no `default`-injection logic. `Ezagent.URI.new!/1` rejects un-canonical input.
 
 ## "I'll use Message.uri"
 
@@ -85,3 +85,41 @@ Refuse. SPEC §10 (g) + invariant `no_dispatch_in_target_ownership_check_test.ex
 ## "I'll cap-check inside the LV / inside a controller, not at dispatch"
 
 Refuse. Per PR-CC-2-v2 (2026-05-25): cap-checking is a Behavior × Entity boundary concern, performed exactly once at **dispatch step 5.5** via the chokepoint callback `Kind.holds_cap?/2` consulting `Behavior.required_caps/0`. LV `handle_event` calls dispatch → step 5.5 fires → result propagates back. Pre-dispatch cap checks inside the LV are a defence-in-depth pattern only (e.g. to hide a button); they MUST NOT be the source of authority. The `cap_check_only_at_chokepoint` invariant test fails any module under `apps/ezagent_*` (except the chokepoint itself) that calls `Capability.matches?/2` in production code.
+
+## "I'll write a new Behavior using `@behaviour Ezagent.Behavior` + `invoke/4`" — OR even `use Ezagent.Behavior` directly
+
+Refuse for any developer Behavior. Two layers of obsolescence: (1) `Behavior.invoke/4` is `@optional_callbacks` only since Phase 3 PR #464 — no runtime path consults it. (2) Since the Lifecycle migration (2026-05-29), `use Ezagent.Behavior` itself is the **INTERNAL ENGINE** — developer code uses **`use Ezagent.Lifecycle`** (read `references/lifecycle.md`). The Phase C gate `mix ezagent.check_invariants.lifecycle` HARD-fails CI on a developer-tier `use Ezagent.Behavior` / `def init_slice` / `def state_slice` / `def invoke(_,_,_,_)` / `def post_init`/`handle_continue`/`on_ready`/`reconcile_after_load`. Engine allowlist: `behavior.ex` / `kind/runtime.ex` / `lifecycle.ex` / `mix/tasks/compile/ezagent_plugin_check.ex`.
+
+## "I'll put this PID / ETS handle / port / monitor ref in `create`'s state"
+
+Refuse. A live handle in `state` gets snapshotted and rehydrated as a DEAD reference on cold-load — the exact #110/#113/#114 bug class. Transient handles have ONE home: the `transients` container, returned from `activate/2` (rebuilt every start) and written via `{:set_transient, k, v}`. `state` is for durable domain data only. Read `references/lifecycle.md` two-container model.
+
+## "I'll rebuild the subprocess / re-subscribe / re-monitor in a boot hook I picked"
+
+Refuse. There is exactly ONE start hook: `activate/2`. It runs on fresh spawn, supervisor restart, AND cold-load identically. Do NOT split rebuild logic across `post_init`/`handle_continue`/`on_ready`/`reconcile_after_load` (folded into `activate` and gated away). If the work must run POST-`:ready` (a reachability broadcast inviting peer `:call`, or a self-deferred `send(self(), …)` worker-spawn loop), use `activated/2` or `activate → send(self(), msg) → handle_signal(msg, ctx)` — NEVER `activate` itself (it is pre-`:ready`, R10-1).
+
+## "I'll name this core module `AgentTermination` / `SessionManager` / `Lifecycle`" (NP-1/2/3)
+
+Refuse. §11 naming principles, enforced by the `mix ezagent.check_invariants.lifecycle` lint. NP-2: a module in `ezagent_core` must NOT name an upper-layer concept (`Agent`/`Session`/`Orchestrator`/`Workspace`/`Worker`/`Feishu`/`Cc`/`Codex`/`Np`/`Curl`) — use a core-layer capability name in the `Enumerable`/`Collectable` idiom (`Terminable`, not `AgentTermination`). NP-3: a generic name (`Lifecycle`/`Admin`/`Manager`/`Control`/`Handler`/`Service`/`Worker`) on a ≤1-action module over-promises. NP-1: name by what it DOES, not what it attaches to. Canonical lesson: `Behavior.Lifecycle` (1 `:terminate` action) → `Behavior.Terminable` (OQ-6). When converting a module, REPORT a naming violation — do NOT silently rename (it touches call sites + snapshot slice keys).
+
+## "I'll `Phoenix.PubSub.broadcast` from inside my new-contract handler"
+
+Refuse. Per SPEC PR #445 + §11 grep gate: new-contract handlers MUST emit a `{:notify, topic, payload}` effect for fire-and-forget broadcasts; framework calls `Phoenix.PubSub.broadcast/3` from inside `Kind.Runtime.apply_new_contract_effects/4` in the declared bucket order. Direct calls bypass (a) the bucket ordering invariant (notifies fire after dispatches), (b) the effect substitution for `{:ref, ...}` references, (c) the audit + trace correlation. Same applies to `Ezagent.Invocation.dispatch/1` (→ `{:dispatch, %Cmd{}}` effect) and `Ezagent.Kind.terminate/1` (→ `{:terminate, target}` effect).
+
+Exception: result-dependent in-handler dispatch (where you need the dispatch return value, e.g. `ReadMarker.mark` only on successful chat.receive cast) — stay in-handler with `Ezagent.Router.dispatch/1` because the effect grammar discards dispatch return values. See `Ezagent.Behavior.Chat.handle_send/2` for the canonical pattern.
+
+## "I'll import `Ezagent.EventLog` / `Ezagent.SnapshotStore` / `Ezagent.Kind.StateRebuilder` / `Ezagent.SagaRunner` from my plugin"
+
+Refuse. SPEC §11 grep gate: any `Ezagent.Plugin.*` or `ezagent_plugin_*` / `ezagent_domain_*` module referencing these framework-internal modules fails CI. Plugin code:
+- Emits events via `{:emit, event_name, payload}` effect — framework calls `EventLog.append/4`
+- Lets framework write snapshots — framework calls `SnapshotStore.write/3` per `:set` effects + the every-N + on-terminate policy
+- Lets framework rebuild from snapshot — `Kind.Host.init/1` calls `StateRebuilder.rebuild/1` on demand
+- Hands sagas to runner via `{:saga, %Saga{}}` effect — framework calls `SagaRunner.execute/2`
+
+The grep gate is structural: it ensures plugin authors can write a Behavior without ever knowing these modules exist.
+
+## "I'll tune snapshot policy on my new Kind via `persistence/0`"
+
+Refuse for new-contract Kinds. Per SPEC r2 codex HIGH-3 closure: snapshot policy is **framework-decided**, not per-Behavior. `Ezagent.SnapshotStore` writes every N events (default 100, configurable `:ezagent_core, :snapshot_every_n_events`) + on graceful terminate. The legacy `Kind.persistence/0` callback enum (`:on_change` / `{:periodic, ms}` / `:on_terminate` / `:ephemeral` / `:external`) still exists for Phase 2 migrated Kinds in coexistence, but Phase 2+ NEW Kinds should not declare it — let SnapshotStore handle it.
+
+If you genuinely need different snapshot semantics (e.g. high-volume Worker Kind), declare the Kind with `pattern: {:resource, :hot}` (OQ-6) — that picks `:ephemeral` default + opt-in periodic, framework-managed. Do NOT reach for `persistence/0`.

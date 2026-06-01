@@ -7,9 +7,6 @@ defmodule Ezagent.Entity.NpAgent do
 
   `entity://agent/<workspace>/np_<instance_name>` — flavor `np` prefix on
   the name segment distinguishes from `cc_*` / `curl_*` / `echo_*`.
-  Spawned via the standard `entity://` SpawnRegistry dispatcher; the
-  chat plugin's flavor resolver consults `Ezagent.AgentFlavorRegistry`
-  to map `"np"` → this Kind module.
 
   ## Slice shape
 
@@ -26,47 +23,40 @@ defmodule Ezagent.Entity.NpAgent do
   ## Persistence
 
   `:ephemeral` — the Python subprocess does the heavy lifting and is
-  itself ephemeral (no per-instance state worth persisting across
-  phx restart). When the Kind is restarted the Template Class will
-  re-start the Python subprocess on the next instantiate.
+  itself ephemeral.
 
   ## Per-agent (not shared) Python subprocess
 
   Each NpAgent Kind owns its OWN `Ezagent.Domain.Python.Server`
-  identified by the agent URI as the Domain.Python handle. The choice
-  mirrors the per-cc-agent `Ezagent.Domain.Pty.Server` ownership
-  pattern: keeps Python interpreter state (numpy globals, sympy
-  caches, accidental mutable state) scoped to the agent, and prevents
-  cross-agent message interleaving inside the single-threaded Python
-  event loop (`ezagent_python.run/0` is single-threaded by design —
-  see Domain.Python SPEC §6.2). A shared subprocess would serialize
-  every NpAgent's compute call behind every other; a per-agent
-  subprocess preserves the parallelism Allen expects when multiple
-  np-agents are mentioned in a single workflow.
+  identified by the agent URI as the Domain.Python handle. Mirrors
+  the per-cc-agent `Ezagent.Domain.Pty.Server` ownership pattern.
+
+  ## Phase 2-g r3 migration (2026-05-28)
+
+  Adopts `use Ezagent.Kind, pattern: :entity, ...` per SPEC §2.3 +
+  §3 composition patterns. Legacy `behaviors/0`, `persistence/0`,
+  `type_name/0`, `supervisor/0` callbacks remain — `Kind.Server`
+  still reads them — but the macro also runs OQ-2 / OQ-5
+  compile-time checks (pattern compatibility + action collision).
   """
+
+  use Ezagent.Kind,
+    pattern: :entity,
+    uri_scheme: "entity://agent/",
+    type_name: :np_agent,
+    supervisor: EzagentPluginNp.InstanceSupervisor
 
   @behaviour Ezagent.Kind
 
-  @impl Ezagent.Kind
-  def type_name, do: :np_agent
-
+  attach Ezagent.Behavior.NpAgent
   # PTY-phase-state-machine 2026-05-26 follow-up (b) codex HIGH-1
-  # fix: include `Ezagent.Behavior.Lifecycle` so the LV
-  # `restart_pty` event (TerminalLive — Dead-Restart badge button)
-  # can dispatch `?action=lifecycle.terminate` against an np-agent
-  # URI. Without this, np agents would surface `{:unknown_action,
-  # :terminate}` because the cc Agent Kind registers Lifecycle but
-  # the np plugin's NpAgent Kind did not. Same per-Kind registration
-  # pattern as cc Agent (`Ezagent.Entity.Agent.behaviors/0`).
-  @impl Ezagent.Kind
-  def behaviors, do: [Ezagent.Behavior.NpAgent, Ezagent.Behavior.Lifecycle]
+  # fix: Terminable attached so `lifecycle.terminate` dispatches reach
+  # np-agents (Dead-Restart badge in LV).
+  attach Ezagent.Behavior.Terminable
 
-  @impl Ezagent.Kind
+  # Kind.Server still reads behaviors/0; keep the legacy callback.
+  def behaviors, do: [Ezagent.Behavior.NpAgent, Ezagent.Behavior.Terminable]
+
+  # Kind.Server still reads persistence/0; keep the legacy callback.
   def persistence, do: :ephemeral
-
-  # V1 prevention (Allen 2026-05-21): NpAgent Kinds live under the
-  # np plugin's own InstanceSupervisor. `Ezagent.Kind.spawn/2` reads
-  # this.
-  @impl Ezagent.Kind
-  def supervisor, do: EzagentPluginNp.InstanceSupervisor
 end

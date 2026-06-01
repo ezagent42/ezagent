@@ -24,14 +24,22 @@ defmodule Ezagent.Behavior.TemplateTest do
       assert Template.state_slice() == :template
     end
 
+    # Lifecycle migration (SPEC 2026-05-29 §2.3): `init_slice/1` is
+    # macro-emitted, wrapping `create/1`'s persistent `%{content: ...}` in
+    # the two-container `%{state:, transients:}` shape (no transients —
+    # the content is fully persistent). Assert on `.state`.
     test "init_slice/1 defaults content to nil (unpopulated template Kind)" do
-      assert Template.init_slice(%{uri: URI.new!("template://agent/team-alpha/x")}) ==
+      assert Template.init_slice(%{uri: URI.new!("template://agent/team-alpha/x")}).state ==
                %{content: nil}
+
+      assert Template.create(%{uri: URI.new!("template://agent/team-alpha/x")}) ==
+               {:ok, %{content: nil}}
     end
 
     test "init_slice/1 reads args[:content]" do
       content = %{name: "x", flavor: "cc"}
-      assert Template.init_slice(%{content: content}) == %{content: content}
+      assert Template.init_slice(%{content: content}).state == %{content: content}
+      assert Template.create(%{content: content}) == {:ok, %{content: content}}
     end
 
     test "interface/0 declares all four actions, all :call mode" do
@@ -51,12 +59,12 @@ defmodule Ezagent.Behavior.TemplateTest do
       content = %{name: "orch", flavor: "cc"}
       slice = %{content: content}
 
-      assert {:ok, ^slice, %{content: ^content}} = Template.invoke(:read, slice, %{}, %{})
+      assert {:ok, ^slice, %{content: ^content}} = EzagentDomainChat.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Template, :read, slice, %{}, %{})
     end
 
     test "returns nil for an unpopulated slice" do
       slice = %{content: nil}
-      assert {:ok, ^slice, %{content: nil}} = Template.invoke(:read, slice, %{}, %{})
+      assert {:ok, ^slice, %{content: nil}} = EzagentDomainChat.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Template, :read, slice, %{}, %{})
     end
   end
 
@@ -66,7 +74,7 @@ defmodule Ezagent.Behavior.TemplateTest do
       ctx = %{kind_module: AgentTemplate}
 
       assert {:ok, %{content: ^content}, %{content: ^content}} =
-               Template.invoke(:write, %{content: nil}, %{content: content}, ctx)
+               EzagentDomainChat.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Template, :write, %{content: nil}, %{content: content}, ctx)
     end
 
     test "overwrites an already-populated slice in place (operator edit)" do
@@ -75,7 +83,7 @@ defmodule Ezagent.Behavior.TemplateTest do
       new = %{name: "a", flavor: "cc", working_directory: "/new"}
 
       assert {:ok, %{content: ^new}, %{content: ^new}} =
-               Template.invoke(:write, %{content: old}, %{content: new}, ctx)
+               EzagentDomainChat.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Template, :write, %{content: old}, %{content: new}, ctx)
     end
   end
 
@@ -102,7 +110,7 @@ defmodule Ezagent.Behavior.TemplateTest do
       ctx = %{kind_module: SessionTemplate, self_uri: st_uri(content)}
 
       assert {:ok, %{content: ^content}, %{content: ^content}} =
-               Template.invoke(:write, %{content: nil}, %{content: content}, ctx)
+               EzagentDomainChat.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Template, :write, %{content: nil}, %{content: content}, ctx)
     end
 
     test "a hash-mismatched write → {:error, :hash_mismatch}" do
@@ -112,7 +120,7 @@ defmodule Ezagent.Behavior.TemplateTest do
       ctx = %{kind_module: SessionTemplate, self_uri: wrong_uri}
 
       assert {:error, :hash_mismatch} =
-               Template.invoke(:write, %{content: nil}, %{content: content}, ctx)
+               EzagentDomainChat.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Template, :write, %{content: nil}, %{content: content}, ctx)
     end
 
     test "a second DIVERGENT write to a populated slice → {:error, :immutable_version}" do
@@ -125,7 +133,7 @@ defmodule Ezagent.Behavior.TemplateTest do
       divergent_ctx = %{kind_module: SessionTemplate, self_uri: st_uri(divergent)}
 
       assert {:error, :immutable_version} =
-               Template.invoke(:write, %{content: content}, %{content: divergent}, divergent_ctx)
+               EzagentDomainChat.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Template, :write, %{content: content}, %{content: divergent}, divergent_ctx)
     end
 
     test "an idempotent retry (identical content) to a populated slice no-ops as success" do
@@ -133,7 +141,7 @@ defmodule Ezagent.Behavior.TemplateTest do
       ctx = %{kind_module: SessionTemplate, self_uri: st_uri(content)}
 
       assert {:ok, %{content: ^content}, %{content: ^content}} =
-               Template.invoke(:write, %{content: content}, %{content: content}, ctx)
+               EzagentDomainChat.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Template, :write, %{content: content}, %{content: content}, ctx)
     end
   end
 
@@ -142,7 +150,7 @@ defmodule Ezagent.Behavior.TemplateTest do
       ctx = %{kind_module: SessionTemplate, self_uri: URI.new!("template://session/team-alpha/x@h")}
       slice = %{content: %{name: "x"}}
 
-      assert {:error, :use_generator} = Template.invoke(:instantiate, slice, %{}, ctx)
+      assert {:error, :use_generator} = EzagentDomainChat.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Template, :instantiate, slice, %{}, ctx)
     end
   end
 
@@ -151,7 +159,7 @@ defmodule Ezagent.Behavior.TemplateTest do
       ctx = %{kind_module: AgentTemplate, self_uri: URI.new!("template://agent/team-alpha/x")}
 
       assert {:error, :template_not_populated} =
-               Template.invoke(:instantiate, %{content: nil}, %{}, ctx)
+               EzagentDomainChat.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Template, :instantiate, %{content: nil}, %{}, ctx)
     end
   end
 
@@ -177,7 +185,7 @@ defmodule Ezagent.Behavior.TemplateTest do
       slice = %{content: agent_template_content()}
 
       assert {:error, :cross_workspace_denied} =
-               Template.invoke(
+               EzagentDomainChat.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Template, 
                  :instantiate,
                  slice,
                  %{instance_name: "demo", workspace_uri: URI.new!("workspace://team-bravo")},
@@ -200,7 +208,7 @@ defmodule Ezagent.Behavior.TemplateTest do
       slice = %{content: agent_template_content()}
 
       assert {:error, :cross_workspace_denied} =
-               Template.invoke(
+               EzagentDomainChat.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Template, 
                  :instantiate,
                  slice,
                  %{
@@ -221,7 +229,7 @@ defmodule Ezagent.Behavior.TemplateTest do
       slice = %{content: agent_template_content()}
 
       result =
-        Template.invoke(
+        EzagentDomainChat.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Template, 
           :instantiate,
           slice,
           %{instance_name: "demo", workspace_uri: URI.new!("workspace://team-alpha")},
@@ -237,7 +245,7 @@ defmodule Ezagent.Behavior.TemplateTest do
       ctx = %{kind_module: AgentTemplate, self_uri: self_uri}
       slice = %{content: agent_template_content()}
 
-      result = Template.invoke(:instantiate, slice, %{instance_name: "demo"}, ctx)
+      result = EzagentDomainChat.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Template, :instantiate, slice, %{instance_name: "demo"}, ctx)
 
       refute match?({:error, :cross_workspace_denied}, result),
              "the happy path (no workspace_uri arg) must derive the workspace " <>

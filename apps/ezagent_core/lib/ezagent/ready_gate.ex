@@ -46,6 +46,79 @@ defmodule Ezagent.ReadyGate do
   @spec mark_ready(URI.t() | String.t()) :: :ok
   def mark_ready(uri), do: put(uri, :ready)
 
+  @doc """
+  Block (with bounded polling) until `uri` reaches `:ready` status.
+
+  Returns `:ok` when the URI flips to `:ready`, or `{:error, :timeout}`
+  if the bound is exhausted. The bound is expressed in milliseconds;
+  polling is a 10ms `Process.sleep` loop (low overhead, the wait is
+  expected to be short).
+
+  This is the canonical helper for callers that just spawned a Kind
+  (e.g. via `SpawnRegistry.spawn_detailed/1`) and need to dispatch a
+  follow-up `:call`-mode action against it BEFORE the dispatch path's
+  `{:not_ready, :call}` fail-fast (hard invariant #3) fires. The
+  post-spawn `handle_continue` chain (post_init Behaviors + ReadyGate
+  flip) runs asynchronously after `start_link` returns; this helper
+  closes the timing gap structurally instead of forcing every caller
+  to re-implement the same `:not_ready` retry loop (the duplicated
+  pattern in `Ezagent.Identity.await_ready/2` motivated lifting this
+  into a public helper, codex E2E fix v2 Bug A 2026-05-29).
+
+  ## Why call-mode + `:not_ready` is a race, not a contract violation
+
+  - Step 1 — `Kind.Server.init/1` synchronously registers the URI in
+    `KindRegistry` and calls `ReadyGate.put(uri, :not_ready)`.
+  - Step 2 — `init/1` returns `{:ok, state, {:continue, :announce_ready}}`
+    BEFORE the post-init Behaviors run.
+  - Step 3 — `start_link` returns `{:ok, pid}` to the spawner.
+  - Step 4 — the spawner now holds the pid AND the URI but
+    `ReadyGate.status(uri)` is still `:not_ready`. A `:call` dispatch
+    here fails fast with `{:error, :not_ready}` even though the Kind
+    is fully constructed and the message would have succeeded a few
+    ms later.
+
+  Bounded waits are the structural answer — `:call` cannot buffer
+  (the caller is synchronously waiting on the result, so there's no
+  receiver for a delayed reply if the call has already returned).
+
+  ## Bound
+
+  Default `500ms` matches the empirical bound used by
+  `Ezagent.Identity.await_ready/2` (50 × 10ms). post_init handlers
+  do a single SQLite PK lookup + slice mutation, so 500ms is generous
+  even under contention.
+
+  Test environments can override (`await(uri, 5_000)`) when the
+  ExUnit sandbox / DBConnection checkout can stretch handle_continue.
+  """
+  @spec await(URI.t() | String.t(), timeout_ms :: pos_integer()) ::
+          :ok | {:error, :timeout}
+  def await(uri, timeout_ms \\ 500) when is_integer(timeout_ms) and timeout_ms > 0 do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+    do_await(uri, deadline)
+  end
+
+  defp do_await(uri, deadline) do
+    case status(uri) do
+      :ready ->
+        :ok
+
+      _ ->
+        now = System.monotonic_time(:millisecond)
+
+        if now >= deadline do
+          {:error, :timeout}
+        else
+          # 10ms poll — short enough that the typical 1-2ms post_init
+          # finishes inside one iteration; long enough that we don't
+          # burn CPU.
+          Process.sleep(10)
+          do_await(uri, deadline)
+        end
+    end
+  end
+
   defp key(%URI{} = uri), do: URI.to_string(uri)
   defp key(uri) when is_binary(uri), do: uri
 end

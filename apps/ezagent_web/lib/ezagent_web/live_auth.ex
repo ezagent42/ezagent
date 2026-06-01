@@ -250,7 +250,7 @@ defmodule EzagentWeb.LiveAuth do
     # input, so we preserve the original degraded path by falling back
     # to the entity-derived workspace URI (which is always canonical
     # because LiveAuth already validated `current_entity_uri`).
-    Ezagent.URI.parse!(ws_str)
+    Ezagent.URI.new!(ws_str)
   rescue
     ArgumentError -> Ezagent.URI.entity_workspace_uri(entity_uri)
   end
@@ -354,7 +354,7 @@ defmodule EzagentWeb.LiveAuth do
   # PR #149 (S-8): accept entity://user/* and entity://agent/* uniformly.
   #
   # V1 fix (Allen Feishu 2026-05-21) — strict delegation to
-  # `Ezagent.URI.parse!/1` (the SPEC v3 canonical parser). Previously
+  # `Ezagent.URI.new!/1` (the SPEC v3 canonical parser). Previously
   # this accepted ANY `entity://<host>/<path>` shape including the
   # legacy 2-segment `entity://user/admin` form, which broke the
   # write/read URI parity invariant (memory
@@ -366,11 +366,11 @@ defmodule EzagentWeb.LiveAuth do
   # Delegating to `parse!/1` means stale cookies raise `ArgumentError`
   # → `:error` → caller redirects to /login → session cleared → fresh
   # login writes a canonical 3-segment cookie. Single source of truth
-  # for URI shape lives in `Ezagent.URI.parse!/1`.
+  # for URI shape lives in `Ezagent.URI.new!/1`.
   @spec parse_entity_uri(any) :: {:ok, URI.t()} | :error
   defp parse_entity_uri(uri_str) when is_binary(uri_str) do
     try do
-      uri = Ezagent.URI.parse!(uri_str)
+      uri = Ezagent.URI.new!(uri_str)
 
       case uri do
         %URI{scheme: "entity", host: host} when host in ["user", "agent"] ->

@@ -485,7 +485,7 @@ defmodule Ezagent.NotificationSubscriptions do
   defp stream_to_string(s) when is_binary(s), do: s
 
   defp parse_stream_uri(%URI{} = u), do: u
-  defp parse_stream_uri(s) when is_binary(s), do: Ezagent.URI.parse!(s)
+  defp parse_stream_uri(s) when is_binary(s), do: Ezagent.URI.new!(s)
 
   # Codex round-3 CRITICAL fix: REMOVED the `%{caps: :system} -> :ok`
   # clause entirely. System callers no longer go through this
@@ -534,12 +534,22 @@ defmodule Ezagent.NotificationSubscriptions do
 
   defp authorize_unregister(_, _), do: {:error, :unauthorized}
 
+  # Admin over subscriptions = the `:subscribe` action axis, cross-
+  # workspace (`workspace_uri: :any`). SPEC 2026-05-27 capability-
+  # action-axis §3.6.1: an admin predicate matches the action axis
+  # EXPLICITLY (no missing-key tolerance), so a holder of a `:notify`
+  # cap — the action plugins use to PUSH into an inbox — cannot
+  # administer (register / unregister on behalf of others) another
+  # user's subscriptions. Cross-action elevation was the bug: pre-fix
+  # this matched ANY `Behavior.Notifications` cross-workspace cap,
+  # so a `:notify`-scoped wildcard satisfied subscription-admin.
   defp notifications_admin?(%{caps: caps}) do
     caps
     |> normalize_caps()
     |> Enum.any?(fn
       %Ezagent.Capability{
         behavior: Ezagent.Behavior.Notifications,
+        action: :subscribe,
         workspace_uri: :any
       } ->
         true

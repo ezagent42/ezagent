@@ -146,7 +146,7 @@ defmodule EzagentPluginCc.BridgeAdapter do
     # pre-#438 code wrapped it in `URI.new!/1` and passed `ref:` to
     # `Message.new/3`, but `Message.new/3` only accepts `:ref_id`
     # (string), not `:ref` — so the URI was silently dropped. The
-    # #438 sweep over-tightened `URI.new!/1` → `Ezagent.URI.parse!/1`
+    # #438 sweep over-tightened `URI.new!/1` → `Ezagent.URI.new!/1`
     # and exposed the dead-end path by crashing on the bare hex id.
     # Fix: thread the id through as `:ref_id` (string), as the schema
     # requires. No URI parsing involved.
@@ -169,7 +169,7 @@ defmodule EzagentPluginCc.BridgeAdapter do
             # canonicalized via the chokepoint above; URI.new!/1 here
             # consumes the canonical-by-construction string per the
             # §3.4 query-target idiom.
-            target = URI.new!("#{URI.to_string(session_uri)}?action=chat.send")
+            target = Ezagent.URI.with_action(session_uri, :chat, :send)
 
             result =
               Ezagent.Invocation.dispatch(%Ezagent.Invocation{
@@ -237,7 +237,7 @@ defmodule EzagentPluginCc.BridgeAdapter do
   end
 
   defp safe_parse_session(s) when is_binary(s) do
-    {:ok, Ezagent.URI.parse!(s)}
+    {:ok, Ezagent.URI.new!(s)}
   rescue
     ArgumentError -> :error
   end

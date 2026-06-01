@@ -163,21 +163,24 @@ defmodule Ezagent.Kind.ServerPostInitTest do
       :ok = Ezagent.PendingDelivery.buffer(uri, pre_inv)
       assert Ezagent.PendingDelivery.buffer_size(uri) == 1
 
-      # Suppress the expected crash + Logger.warning noise.
+      # Suppress the expected crash + Logger.warning noise LOCALLY via
+      # capture_log. The previous `Logger.configure(level: :critical)`
+      # mutated the GLOBAL logger level — and this test is async: true, so
+      # that window suppressed error logs in any concurrent async test.
+      # That broke `Ezagent.SagaRunnerTest`'s `with_log` capture of its
+      # `Logger.error` operator-repair marker (captured "" → flaky
+      # failure). `capture_log/1` redirects only this process's logs, so
+      # the global level is untouched.
       Process.flag(:trap_exit, true)
-      log_level = Logger.level()
-      Logger.configure(level: :critical)
 
-      try do
+      ExUnit.CaptureLog.capture_log(fn ->
         {:ok, pid} =
           Ezagent.Kind.Server.start_link({PostInitCrashKind, %{uri: uri}})
 
         # Wait for the process to crash (post-init raises).
         ref = Process.monitor(pid)
         assert_receive {:DOWN, ^ref, :process, ^pid, _reason}, 500
-      after
-        Logger.configure(level: log_level)
-      end
+      end)
 
       # Boot-order invariant: the deferred flush means the buffer is
       # STILL POPULATED after the crash — no silent loss. (Pre-PR

@@ -29,10 +29,22 @@ ESR(Ezagent Session Router)— Elixir/OTP message router runtime,multi-channel �
 历史上本节列过 "8 条硬不变式",现已合并进 SKILL 权威集(对照表见 SKILL §"Where each old principle now lives")。**本文件在每个 prompt 都加载,刻意不复述原则**(memory `feedback_claude_md_links_only`)— 写代码 / review 前 load SKILL,改架构原则改 SKILL,不在这里。
 
 最常出 bug 的两条速查:
-- **P14 — Dispatch is the only path between Kinds**(inbound 永远走 `Ezagent.Invocation.dispatch/1`,不许 `PubSub.broadcast` 到 inbound topic — 事故 2.1 根因)
+- **P14 — Dispatch is the only path between Kinds**(inbound 永远走 `Ezagent.Router.dispatch/1`/legacy `Ezagent.Invocation.dispatch/1`,不许 `PubSub.broadcast` 到 inbound topic — 事故 2.1 根因)
 - **P22 — Reliability primitives live in core**(ReadyGate / PendingDelivery / Idempotency / Snapshot-on-change / async audit / DLQ-on-zero-match;plugin 作者绕不过)
 
 完整集 + CI gate + 触发的 Decision Log 编号都在 SKILL。
+
+## Behavior contract(2026-05-28 重写)
+
+写任何 Behavior / Kind 代码前必读:`.claude/skills/ezagent-developer/references/new-contract.md`(Router / Behavior / Kind self-built architecture,SPEC PR #445)。
+
+短结论:
+- `use Ezagent.Behavior` + `action :foo, args: ..., returns: ..., caps: [...]` 宏 + `def handle_foo(args, ctx) → {:ok, result, [effect]}` —— **不再写** `invoke/4`(Phase 3 PR #464 后是 `@optional_callbacks`,无 runtime 路径用)
+- 9 个 effects:`:set` / `:emit` / `:dispatch` / `:notify` / `:effect` / `:effect_returning` / `:saga` / `:terminate` / `:halt`
+- Plugin author **永远不见** `slice` 或 `snapshot`(framework 通过 `ctx[:read]` reader 注入读;`{:set, key, value}` effect 写)
+- Plugin code 禁止 import `Ezagent.EventLog` / `SnapshotStore` / `StateRebuilder` / `EventSubscriber` / `Router internals` / `SagaRunner.execute/2`(SPEC §11 grep gate)
+
+ARCHITECTURE.md §6.0 是 load-bearing 项目文档;Decision Log #147-#152 是 per-phase landmarks。
 
 ---
 

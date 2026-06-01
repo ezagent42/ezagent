@@ -20,11 +20,13 @@ defmodule Ezagent.ExternalMirror.PluginContractTest do
 
   alias Ezagent.ExternalMirror.{AdapterRegistry, BindingRegistry}
   alias Ezagent.ExternalMirror.TestSupport.{MockAdapter, MockBinding}
+  alias Ezagent.ExternalMirror.TestSupport.RegistrySnapshot
 
   setup do
-    :ets.delete_all_objects(AdapterRegistry.table())
-    :ets.delete_all_objects(BindingRegistry.table())
-    :ok
+    # Snapshot + wipe + restore-on-exit so wiping the GLOBAL registries
+    # doesn't drop production rows (e.g. feishu) for concurrent async
+    # tests like EzagentPluginFeishu PluginContractTest.
+    RegistrySnapshot.with_clean_registries()
   end
 
   describe "Ezagent.Plugin.boot/1 publishes adapters/0" do

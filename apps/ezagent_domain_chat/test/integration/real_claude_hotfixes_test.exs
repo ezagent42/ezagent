@@ -8,7 +8,7 @@ defmodule EzagentDomainChat.Integration.RealClaudeHotfixesTest do
 
   ## Fix #1: source session in to_claude meta
 
-  Chat.invoke(:receive) on Agent Kind must include `"session"` in the
+  EzagentDomainChat.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Chat, :receive) on Agent Kind must include `"session"` in the
   meta map so claude can fill `session_uris` correctly on reply.
   Previously claude guessed (badly) from sender URI. The fix
   populates `meta["session"]` from `ctx.caller` before sending the
@@ -45,7 +45,7 @@ defmodule EzagentDomainChat.Integration.RealClaudeHotfixesTest do
   end
 
   describe "fix #1: to_claude payload meta includes source session" do
-    test "Chat.invoke(:receive) on Agent sends {:to_claude, %{meta}} to bound channel pid with session key" do
+    test "EzagentDomainChat.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Chat, :receive) on Agent sends {:agent_bridge_push, \"to_claude\", %{meta}} to bound channel pid with session key" do
       agent_uri = URI.new!("entity://agent/team-alpha/cc_meta-test-#{System.unique_integer([:positive])}")
       session_uri = URI.new!("session://default/team-alpha/meta-source-#{System.unique_integer([:positive])}")
 
@@ -58,8 +58,10 @@ defmodule EzagentDomainChat.Integration.RealClaudeHotfixesTest do
         )
 
       # Bind the *test process* as the "channel pid" for this agent.
-      # AgentBridge.deliver/2 will resolve the cc adapter and send
-      # {:to_claude, payload} here so we can assert_receive on it.
+      # AgentBridge.deliver/2 resolves the cc adapter, which sends
+      # {:agent_bridge_push, "to_claude", payload} (the wire shape the
+      # AgentBridge.Channel re-pushes, since #429) here so we can
+      # assert_receive on it.
       :ok = Ezagent.AgentBridge.Registry.bind(agent_uri, self())
 
       msg =
@@ -73,9 +75,9 @@ defmodule EzagentDomainChat.Integration.RealClaudeHotfixesTest do
         self_uri: agent_uri
       }
 
-      assert {:ok, _} = Chat.invoke(:receive, %{}, %{message: msg}, ctx)
+      assert {:ok, _} = EzagentDomainChat.Test.BehaviorInvoker.invoke(Ezagent.Behavior.Chat, :receive, %{}, %{message: msg}, ctx)
 
-      assert_receive {:to_claude, %{"meta" => meta}}, 500
+      assert_receive {:agent_bridge_push, "to_claude", %{"meta" => meta}}, 500
       assert meta["session"] == URI.to_string(session_uri)
       assert meta["sender"] == "entity://user/system/admin"
       assert meta["message_id"] == msg.id

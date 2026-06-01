@@ -31,7 +31,7 @@ defmodule EzagentPluginLiveview.EntityCapsLive do
   the canonical operator surface. The underlying calls are:
 
       Invocation.dispatch(%Invocation{
-        target: URI.new!("\#{entity_uri}?action=identity.grant_cap"),
+        target: Ezagent.URI.with_action(entity_uri, :identity, :grant_cap),
         mode: :call,
         args: %{cap: %Capability{...}},
         ctx: %{caller: admin_uri, caps: admin_caps, reply: :sync}
@@ -62,7 +62,7 @@ defmodule EzagentPluginLiveview.EntityCapsLive do
 
   @impl true
   def mount(%{"uri" => encoded}, _session, socket) do
-    entity_uri = encoded |> URI.decode_www_form() |> Ezagent.URI.parse!()
+    entity_uri = encoded |> URI.decode_www_form() |> Ezagent.URI.new!()
     # PR #123 hardening: on_mount sets current_entity_uri; caller is
     # the logged-in user, not a hardcoded admin fallback.
     caller_uri = socket.assigns.current_entity_uri
@@ -98,7 +98,7 @@ defmodule EzagentPluginLiveview.EntityCapsLive do
 
       {:ok, _pid} ->
         # Dispatch list_caps and capture the result.
-        target = URI.new!("#{URI.to_string(socket.assigns.entity_uri)}?action=identity.list_caps")
+        target = Ezagent.URI.with_action(socket.assigns.entity_uri, :identity, :list_caps)
 
         case Invocation.dispatch(%Invocation{
                target: target,
@@ -152,8 +152,10 @@ defmodule EzagentPluginLiveview.EntityCapsLive do
   defp do_grant_or_revoke(socket, action, cap, msg) do
     entity_uri = socket.assigns.entity_uri
 
-    target =
-      URI.new!("#{URI.to_string(entity_uri)}?action=identity.#{action}")
+    # origin/main URI hardening (#496/#476): build the action URI via the
+    # canonical helper instead of string interpolation. `entity_uri` is also
+    # used below by the #419 pre-spawn (ensure_entity_ready/1).
+    target = Ezagent.URI.with_action(entity_uri, :identity, action)
 
     # Issue #395 — `Invocation.dispatch/1` returns `:no_such_actor` for
     # `entity://` URIs that haven't been lazy-spawned yet (the admin
@@ -253,7 +255,7 @@ defmodule EzagentPluginLiveview.EntityCapsLive do
       case Map.get(params, "workspace_uri", "") do
         "any" -> :any
         "" -> default_workspace_for_entity(params)
-        s when is_binary(s) -> Ezagent.URI.parse!(s)
+        s when is_binary(s) -> Ezagent.URI.new!(s)
       end
 
     %Capability{
@@ -289,7 +291,7 @@ defmodule EzagentPluginLiveview.EntityCapsLive do
 
   defp to_uri_or_any("any"), do: :any
   defp to_uri_or_any(""), do: :any
-  defp to_uri_or_any(s) when is_binary(s), do: Ezagent.URI.parse!(s)
+  defp to_uri_or_any(s) when is_binary(s), do: Ezagent.URI.new!(s)
 
   # Breadcrumb back-link target — `/identities` for agents (no
   # dedicated agents-list page), `/identities/users` for users
@@ -304,7 +306,7 @@ defmodule EzagentPluginLiveview.EntityCapsLive do
   def render(assigns) do
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
-        URI.to_string(Map.get(assigns, :current_entity_uri) || Ezagent.URI.parse!("entity://user/system/admin"))
+        URI.to_string(Map.get(assigns, :current_entity_uri) || Ezagent.URI.new!("entity://user/system/admin"))
       end)
 
     ~H"""

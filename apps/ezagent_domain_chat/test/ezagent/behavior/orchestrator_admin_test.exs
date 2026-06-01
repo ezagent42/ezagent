@@ -47,13 +47,19 @@ defmodule Ezagent.Behavior.OrchestratorAdminTest do
       assert OrchestratorAdmin.state_slice() == :orchestrator_admin
     end
 
+    # Lifecycle migration (SPEC 2026-05-29 §2.3): `init_slice/1` is now
+    # macro-emitted, wrapping `create/1`'s persistent state in the
+    # two-container `%{state:, transients:}` shape. The persistent state
+    # is still empty (cap-only Behavior), so we assert on `.state`.
     test "init_slice/1 is empty (no per-instance state needed)" do
-      assert OrchestratorAdmin.init_slice(%{}) == %{}
+      assert OrchestratorAdmin.init_slice(%{}) == %{state: %{}, transients: %{}}
+      assert OrchestratorAdmin.init_slice(%{}).state == %{}
+      assert OrchestratorAdmin.create(%{}) == {:ok, %{}}
     end
 
     test "invoke/4 raises (cap-only — should never be dispatched)" do
       assert_raise RuntimeError, ~r/cap-only/, fn ->
-        OrchestratorAdmin.invoke(:restart, %{}, %{}, %{})
+        EzagentDomainChat.Test.BehaviorInvoker.invoke(Ezagent.Behavior.OrchestratorAdmin, :restart, %{}, %{}, %{})
       end
     end
   end

@@ -70,8 +70,15 @@ defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
     {:ok, pid} = Ezagent.Kind.spawn(Session, %{uri: session_uri})
 
     :sys.replace_state(pid, fn server_state ->
-      chat_slice = get_in(server_state, [:state, Chat.state_slice()]) || %{}
-      new_chat = Map.put(chat_slice, :template_working_copy, working_copy)
+      # Lifecycle migration (SPEC 2026-05-29 §2.3C): the Chat slice is now
+      # the two-container `%{state, transients}` shape; the persistent
+      # `template_working_copy` lives under `:state`. Stamp it there (the
+      # Generator/orchestrator tools write via `{:set, ...}` effects, which
+      # land in the same place).
+      chat_slice = get_in(server_state, [:state, Chat.state_slice()]) || %{state: %{}, transients: %{}}
+      chat_state = Map.get(chat_slice, :state, %{})
+      new_state = Map.put(chat_state, :template_working_copy, working_copy)
+      new_chat = Map.put(chat_slice, :state, new_state)
       put_in(server_state, [:state, Chat.state_slice()], new_chat)
     end)
 
@@ -166,10 +173,17 @@ defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
         |> List.last()
         |> String.split("@", parts: 2)
 
+      # The product's `build_working_copy/4` defaults the orchestrator
+      # template URI via `Ezagent.URI.new!/1` (canonical `authority: nil`).
+      # `compute_version_hash/1` hashes `:erlang.term_to_binary/1`, which is
+      # sensitive to the URI struct's `authority` field — so the expected
+      # slice MUST use the canonical constructor, not `URI.parse/1`
+      # (`authority: "agent"`), or the hashes diverge despite identical
+      # canonical strings. (`created_by` is dropped by the hash.)
       empty_slice = %{
         description: "",
         agent_slots: [],
-        orchestrator_template_uri: URI.parse("template://agent/system/cc-orchestrator"),
+        orchestrator_template_uri: Ezagent.URI.new!("template://agent/system/cc-orchestrator"),
         routing_rules: [],
         default_workspace_uri: URI.parse("workspace://team-alpha"),
         parent_template_uri: nil,

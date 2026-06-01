@@ -38,7 +38,7 @@ defmodule Ezagent.AgentBridge.Socket do
   def id(socket), do: "agent_bridge:" <> URI.to_string(socket.assigns.agent_uri)
 
   defp safe_parse_uri(s) when is_binary(s) do
-    {:ok, Ezagent.URI.parse!(s)}
+    {:ok, Ezagent.URI.new!(s)}
   rescue
     ArgumentError -> :error
   end

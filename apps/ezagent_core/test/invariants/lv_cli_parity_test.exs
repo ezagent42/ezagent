@@ -84,7 +84,7 @@ defmodule EzagentCore.Invariants.LvCliParityTest do
     # (PR-AC-1 single-path invariant); the operator CLI is the legacy
     # task which itself dispatches via the same action body.
     "create_agent" => {:cli, "mix ezagent.agent.create <agent-uri> --caps ..."},
-    # restart is auto-derived from Behavior.Lifecycle :terminate +
+    # restart is auto-derived from Behavior.Terminable :terminate +
     # supervisor restart policy.
     "restart" => {:cli, "mix ezagent agent terminate --agent <uri>"},
     # restart_pty (PTY-phase-state-machine 2026-05-26 follow-up b) —

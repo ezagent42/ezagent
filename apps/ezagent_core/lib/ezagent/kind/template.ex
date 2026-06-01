@@ -64,6 +64,33 @@ defmodule Ezagent.Kind.Template do
               | {:ok, [URI.t()], instantiate_meta()}
               | {:error, term()}
 
+  # --- flavor-specific template_data fields (SPEC 2026-06-01 approach B) -
+  #
+  # `Ezagent.Entity.AgentTemplate.to_template_data/2` builds the universal
+  # base (`class` / `agent_uri` / `cwd`) and then MERGES this callback's
+  # result for the flavor-specific fields the flavor's `instantiate/3`
+  # reads. This keeps core flavor-agnostic — cc's `claude_config_dir`,
+  # curl's `provider`/`api_url`/`model`, codex's `model`/`sandbox`/… are
+  # each owned by the respective plugin, NOT hardcoded in
+  # `ezagent_domain_chat`.
+  #
+  # Contract:
+  # - Read from `content` (the AgentTemplate `:template` slice), which may
+  #   carry ATOM or STRING keys (atom when freshly built, string after a
+  #   JSON snapshot round-trip).
+  # - Return a map with STRING keys (the `instantiate/3`/`validate/1`
+  #   contract reads string keys). nil values are dropped by the caller;
+  #   the reserved keys `class`/`agent_uri`/`cwd` are ignored if returned.
+  # - Omit optional fields that are not present / not non-empty binaries
+  #   (e.g. codex `bridge_ws_url`/`codex_path` feed runtime paths).
+  #
+  # Optional: a flavor without this callback contributes no extras (base
+  # only). `to_template_data/2` then runs the flavor's `validate/1` on the
+  # merged data, so a flavor template MISSING a required field fails LOUD
+  # (`{:error, {:invalid_template_data, _}}`) instead of spawning a
+  # nil-config worker.
+  @callback template_data_extra(content :: map()) :: %{optional(String.t()) => term()}
+
   # --- per-agent extension management (PR2 2026-05-24, codex round-1) ---
   #
   # Allen 2026-05-24 architectural decision: every spawned agent gets
@@ -202,6 +229,7 @@ defmodule Ezagent.Kind.Template do
 
   @optional_callbacks [
     validate: 1,
+    template_data_extra: 1,
     list_extensions: 1,
     toggle_extension: 3,
     destroy_config_dir: 2,

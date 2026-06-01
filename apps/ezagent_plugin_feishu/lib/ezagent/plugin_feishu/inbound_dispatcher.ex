@@ -9,10 +9,13 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
     2. If pending → log + react `THUMBSDOWN` so the human sees ESR
        got the message but ops needs to bind their identity.
     3. If bound → look up session_uri for chat_id via
-       `EzagentPluginFeishu.InboundChatLookup.resolve/1` (PR-EM-6 —
+       `EzagentPluginFeishu.InboundChatLookup.resolve/2` (PR-EM-6 —
        replaces the retired `SessionBinding.resolve/1` reverse-lookup
        and reads from the generic `external_mirror_bindings` table
-       maintained by `Ezagent.Behavior.ExternalMirror`).
+       maintained by `Ezagent.Behavior.ExternalMirror`). The message's
+       `@`-mentions are passed in so a chat bound to multiple sessions
+       routes to the session the mentioned agent is a member of
+       (2026-06-01).
     4. On bound + session-bound → dispatch
        `<session_uri>?action=chat.send`. On success, react `OK`
        emoji (Allen 2026-05-17 "受到了信息" 反馈).
@@ -78,9 +81,15 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
         # (this process is short-lived per inbound request).
         EzagentPluginFeishu.PresenceMirror.touch(caller_uri)
 
-        case InboundChatLookup.resolve(chat_id) do
+        # 2026-06-01 — extract @mentions ONCE, up front, so they can both
+        # (a) disambiguate which session this chat_id targets when the
+        # Feishu group hosts multiple orchestrator sessions, and
+        # (b) flow into the dispatched Message for MentionRouting.
+        mentions = EzagentPluginFeishu.MentionParser.extract_agent_mentions(body[:text] || "")
+
+        case InboundChatLookup.resolve(chat_id, mentions) do
           {:ok, session_uri} ->
-            case do_dispatch(session_uri, caller_uri, caps, body) do
+            case do_dispatch(session_uri, caller_uri, caps, body, mentions) do
               :ok ->
                 react_safe(message_id, "OK")
                 :ok
@@ -188,7 +197,7 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
     end
   end
 
-  defp do_dispatch(session_uri, caller_uri, caps, body) do
+  defp do_dispatch(session_uri, caller_uri, caps, body, mentions) do
     # Phase 6 PR 15: download attachments to local paths so recipients
     # (CC bridge, LV chat thread, future viewers) can show content
     # rather than just metadata. Best-effort — download failure keeps
@@ -203,15 +212,14 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
     # and FeishuOutbound matches both shapes.
     body = Map.put(body, :_feishu_origin, true)
 
-    # Phase 6 PR 16: extract @mentions from text (B2 route per Allen
-    # 2026-05-17). Resolved live agent URIs go into Message.mentions
-    # so the existing MentionRouting matcher routes the message ONLY
-    # to the mentioned agent rather than fanning out to all members.
-    mentions = EzagentPluginFeishu.MentionParser.extract_agent_mentions(body[:text] || "")
-
+    # Phase 6 PR 16: @mentions (extracted up front in dispatch/1, B2 route
+    # per Allen 2026-05-17). Resolved live agent URIs go into
+    # Message.mentions so the existing MentionRouting matcher routes the
+    # message ONLY to the mentioned agent rather than fanning out to all
+    # members.
     msg = Ezagent.Message.new(caller_uri, body, mentions: mentions)
 
-    target = Ezagent.URI.parse!("#{URI.to_string(session_uri)}?action=chat.send")
+    target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=chat.send")
 
     # Allen 2026-05-18: mode :call so cap-denial bubbles back
     # synchronously; the caller (dispatch/1) sends a text message to

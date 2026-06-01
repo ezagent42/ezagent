@@ -34,15 +34,20 @@ defmodule Ezagent.TestSupport.PostInitBehavior do
   callbacks record their invocation to the `OrderTracker` (when one
   is supplied via `args[:tracker]`) so tests can assert ordering
   vs `:announce_ready`.
+
+  Migrated to new-contract `use Ezagent.Behavior` as part of Phase 3
+  r3 (2026-05-28) — `:noop` is a degenerate `{:ok, slice}` action so
+  the new handler simply returns no effects.
   """
 
+  use Ezagent.Behavior
   @behaviour Ezagent.Behavior
 
-  @impl Ezagent.Behavior
-  def actions, do: [:noop]
-
-  @impl Ezagent.Behavior
-  def cap_subjects, do: [{:noop, "test — no-op"}]
+  action :noop,
+    args: %{},
+    returns: %{},
+    modes: [:call],
+    description: "test — no-op"
 
   @impl Ezagent.Behavior
   def state_slice, do: :post_init_behavior
@@ -56,15 +61,7 @@ defmodule Ezagent.TestSupport.PostInitBehavior do
     }
   end
 
-  @impl Ezagent.Behavior
-  def invoke(:noop, slice, _args, _ctx), do: {:ok, slice}
-
-  @impl Ezagent.Behavior
-  def interface do
-    %{
-      noop: %{args: %{}, returns: %{}, modes: [:call]}
-    }
-  end
+  def handle_noop(_args, _ctx), do: {:ok, %{}, []}
 
   @impl Ezagent.Behavior
   def post_init(_args, _slice), do: {:continue, :setup_thing}
@@ -100,13 +97,14 @@ defmodule Ezagent.TestSupport.PostInitBehaviorA do
   ordering). Records `:post_init_a` on the shared tracker.
   """
 
+  use Ezagent.Behavior
   @behaviour Ezagent.Behavior
 
-  @impl Ezagent.Behavior
-  def actions, do: [:noop]
-
-  @impl Ezagent.Behavior
-  def cap_subjects, do: [{:noop, "test — no-op"}]
+  action :noop,
+    args: %{},
+    returns: %{},
+    modes: [:call],
+    description: "test — no-op"
 
   @impl Ezagent.Behavior
   def state_slice, do: :post_init_a
@@ -114,11 +112,7 @@ defmodule Ezagent.TestSupport.PostInitBehaviorA do
   @impl Ezagent.Behavior
   def init_slice(args), do: %{tracker: Map.get(args, :tracker), ran: false}
 
-  @impl Ezagent.Behavior
-  def invoke(:noop, slice, _args, _ctx), do: {:ok, slice}
-
-  @impl Ezagent.Behavior
-  def interface, do: %{noop: %{args: %{}, returns: %{}, modes: [:call]}}
+  def handle_noop(_args, _ctx), do: {:ok, %{}, []}
 
   @impl Ezagent.Behavior
   def post_init(_args, _slice), do: {:continue, :run_a}
@@ -140,13 +134,14 @@ defmodule Ezagent.TestSupport.PostInitBehaviorB do
   `Kind.behaviors/0` declaration order.
   """
 
+  use Ezagent.Behavior
   @behaviour Ezagent.Behavior
 
-  @impl Ezagent.Behavior
-  def actions, do: [:noop]
-
-  @impl Ezagent.Behavior
-  def cap_subjects, do: [{:noop, "test — no-op"}]
+  action :noop,
+    args: %{},
+    returns: %{},
+    modes: [:call],
+    description: "test — no-op"
 
   @impl Ezagent.Behavior
   def state_slice, do: :post_init_b
@@ -154,11 +149,7 @@ defmodule Ezagent.TestSupport.PostInitBehaviorB do
   @impl Ezagent.Behavior
   def init_slice(args), do: %{tracker: Map.get(args, :tracker), ran: false}
 
-  @impl Ezagent.Behavior
-  def invoke(:noop, slice, _args, _ctx), do: {:ok, slice}
-
-  @impl Ezagent.Behavior
-  def interface, do: %{noop: %{args: %{}, returns: %{}, modes: [:call]}}
+  def handle_noop(_args, _ctx), do: {:ok, %{}, []}
 
   @impl Ezagent.Behavior
   def post_init(_args, _slice), do: {:continue, :run_b}
@@ -180,13 +171,14 @@ defmodule Ezagent.TestSupport.NoPostInitBehavior do
   noise.
   """
 
+  use Ezagent.Behavior
   @behaviour Ezagent.Behavior
 
-  @impl Ezagent.Behavior
-  def actions, do: [:noop]
-
-  @impl Ezagent.Behavior
-  def cap_subjects, do: [{:noop, "test — no-op"}]
+  action :noop,
+    args: %{},
+    returns: %{},
+    modes: [:call],
+    description: "test — no-op"
 
   @impl Ezagent.Behavior
   def state_slice, do: :no_post_init
@@ -194,11 +186,7 @@ defmodule Ezagent.TestSupport.NoPostInitBehavior do
   @impl Ezagent.Behavior
   def init_slice(_args), do: %{baseline: :ok, count: 0}
 
-  @impl Ezagent.Behavior
-  def invoke(:noop, slice, _args, _ctx), do: {:ok, slice}
-
-  @impl Ezagent.Behavior
-  def interface, do: %{noop: %{args: %{}, returns: %{}, modes: [:call]}}
+  def handle_noop(_args, _ctx), do: {:ok, %{}, []}
 end
 
 defmodule Ezagent.TestSupport.PostInitKind do
@@ -224,13 +212,14 @@ defmodule Ezagent.TestSupport.PostInitCrashBehavior do
   fix defers `PendingDelivery.flush/1` until AFTER post-init).
   """
 
+  use Ezagent.Behavior
   @behaviour Ezagent.Behavior
 
-  @impl Ezagent.Behavior
-  def actions, do: [:noop]
-
-  @impl Ezagent.Behavior
-  def cap_subjects, do: [{:noop, "test — no-op"}]
+  action :noop,
+    args: %{},
+    returns: %{},
+    modes: [:call],
+    description: "test — no-op"
 
   @impl Ezagent.Behavior
   def state_slice, do: :crash
@@ -238,11 +227,7 @@ defmodule Ezagent.TestSupport.PostInitCrashBehavior do
   @impl Ezagent.Behavior
   def init_slice(_args), do: %{}
 
-  @impl Ezagent.Behavior
-  def invoke(:noop, slice, _args, _ctx), do: {:ok, slice}
-
-  @impl Ezagent.Behavior
-  def interface, do: %{noop: %{args: %{}, returns: %{}, modes: [:call]}}
+  def handle_noop(_args, _ctx), do: {:ok, %{}, []}
 
   @impl Ezagent.Behavior
   def post_init(_args, _slice), do: {:continue, :will_crash}
@@ -274,13 +259,14 @@ defmodule Ezagent.TestSupport.PersistentPostInitBehavior do
   just held in memory).
   """
 
+  use Ezagent.Behavior
   @behaviour Ezagent.Behavior
 
-  @impl Ezagent.Behavior
-  def actions, do: [:noop]
-
-  @impl Ezagent.Behavior
-  def cap_subjects, do: [{:noop, "test — no-op"}]
+  action :noop,
+    args: %{},
+    returns: %{},
+    modes: [:call],
+    description: "test — no-op"
 
   @impl Ezagent.Behavior
   def state_slice, do: :persistent
@@ -288,11 +274,7 @@ defmodule Ezagent.TestSupport.PersistentPostInitBehavior do
   @impl Ezagent.Behavior
   def init_slice(_args), do: %{post_init_value: nil, init_value: :from_init_slice}
 
-  @impl Ezagent.Behavior
-  def invoke(:noop, slice, _args, _ctx), do: {:ok, slice}
-
-  @impl Ezagent.Behavior
-  def interface, do: %{noop: %{args: %{}, returns: %{}, modes: [:call]}}
+  def handle_noop(_args, _ctx), do: {:ok, %{}, []}
 
   @impl Ezagent.Behavior
   def post_init(_args, _slice), do: {:continue, :write_sentinel}
@@ -317,13 +299,14 @@ defmodule Ezagent.TestSupport.SlowPostInitBehavior do
   (default 50ms — enough for the test to issue a dispatch).
   """
 
+  use Ezagent.Behavior
   @behaviour Ezagent.Behavior
 
-  @impl Ezagent.Behavior
-  def actions, do: [:noop]
-
-  @impl Ezagent.Behavior
-  def cap_subjects, do: [{:noop, "test — no-op"}]
+  action :noop,
+    args: %{msg: :string},
+    returns: %{echoed: :string},
+    modes: [:call, :cast],
+    description: "test — no-op"
 
   @impl Ezagent.Behavior
   def state_slice, do: :slow
@@ -337,16 +320,14 @@ defmodule Ezagent.TestSupport.SlowPostInitBehavior do
     }
   end
 
-  @impl Ezagent.Behavior
-  def invoke(:noop, slice, %{msg: msg}, _ctx) do
-    {:ok, %{slice | msgs: slice.msgs ++ [msg]}, %{echoed: msg}}
-  end
+  def handle_noop(%{msg: msg}, ctx) do
+    msgs = ctx[:read].(:msgs, [])
 
-  @impl Ezagent.Behavior
-  def interface,
-    do: %{
-      noop: %{args: %{msg: :string}, returns: %{echoed: :string}, modes: [:call, :cast]}
-    }
+    {:ok, %{echoed: msg},
+     [
+       {:set, :msgs, msgs ++ [msg]}
+     ]}
+  end
 
   @impl Ezagent.Behavior
   def post_init(_args, _slice), do: {:continue, :sleep_then_return}

@@ -49,6 +49,32 @@ defmodule Ezagent.PluginCurlAgent.Template do
   @impl Ezagent.Kind.Template
   def template_name, do: "curl.agent"
 
+  # SPEC 2026-06-01-flavor-generic-template-data (approach B): curl's
+  # template_data fields, so an orchestrator-spawned curl worker LEARNS
+  # its provider/api_url/model (pre-fix these were dropped by core's
+  # cc-only mapping → nil → couldn't call the provider). provider/api_url/
+  # model are required (validate/1 rejects empty); max_history is threaded
+  # as-is (int or string) — instantiate/3 coerces via parse_int/2.
+  @impl Ezagent.Kind.Template
+  def template_data_extra(content) when is_map(content) do
+    %{
+      "provider" => content_field(content, :provider),
+      "api_url" => content_field(content, :api_url),
+      "model" => content_field(content, :model),
+      "system_prompt" => content_field(content, :system_prompt),
+      "max_history" => content_field(content, :max_history)
+    }
+  end
+
+  def template_data_extra(_), do: %{}
+
+  defp content_field(content, key) when is_atom(key) do
+    case Map.get(content, key) do
+      nil -> Map.get(content, Atom.to_string(key))
+      v -> v
+    end
+  end
+
   @impl Ezagent.Kind.Template
   def validate(tmpl) when is_map(tmpl) do
     with :ok <- check_class(tmpl),
@@ -73,7 +99,7 @@ defmodule Ezagent.PluginCurlAgent.Template do
     # SPEC 2026-05-27-uri-canonicalization §3.3 — canonical chokepoint
     # with try/rescue keeping the structured `{:error, _}` contract.
     try do
-      case Ezagent.URI.parse!(uri_str) do
+      case Ezagent.URI.new!(uri_str) do
         %URI{scheme: "entity", host: "agent", path: "/" <> rest} when rest != "" ->
           # Phase 9 PR-2 (SPEC v3 §3): entity URIs are 3-segment:
           # /<workspace>/<entity_name>. Flavor lives in entity_name prefix.
@@ -126,7 +152,7 @@ defmodule Ezagent.PluginCurlAgent.Template do
 
   @impl Ezagent.Kind.Template
   def instantiate(_tmpl_name, %{"agent_uri" => agent_uri_str} = tmpl, _workspace_uri) do
-    agent_uri = Ezagent.URI.parse!(agent_uri_str)
+    agent_uri = Ezagent.URI.new!(agent_uri_str)
 
     init_args = %{
       uri: agent_uri,

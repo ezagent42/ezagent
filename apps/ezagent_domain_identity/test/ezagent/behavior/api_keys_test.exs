@@ -1,60 +1,71 @@
 defmodule Ezagent.Behavior.ApiKeysTest do
+  @moduledoc """
+  P2-b migration (2026-05-28): rewritten to exercise the new-contract
+  `handle_<action>/2` handlers. Dispatch parity via Kind.Runtime lives
+  in `api_keys_migration_parity_test.exs`.
+  """
   use ExUnit.Case, async: true
 
   alias Ezagent.Behavior.ApiKeys
 
-  describe "init_slice/1" do
+  defp ctx_with_keys(keys) do
+    %{
+      caller: :system,
+      caps: MapSet.new(),
+      self_uri: URI.parse("entity://agent/team-alpha/curl_test"),
+      reply: :sync,
+      read: fn key, default ->
+        case key do
+          :keys -> keys
+          _ -> default
+        end
+      end
+    }
+  end
+
+  # Phase B: `init_slice/1` → `create/1` (builds the PERSISTENT state).
+  describe "create/1" do
     test "starts with empty keys and nil creator_uri" do
-      assert ApiKeys.init_slice(%{}) == %{keys: %{}, creator_uri: nil}
+      assert ApiKeys.create(%{}) == {:ok, %{keys: %{}, creator_uri: nil}}
     end
 
     test "captures creator_uri when provided" do
       creator = URI.parse("entity://user/system/admin")
-      assert ApiKeys.init_slice(%{creator_uri: creator}) == %{keys: %{}, creator_uri: creator}
+      assert ApiKeys.create(%{creator_uri: creator}) == {:ok, %{keys: %{}, creator_uri: creator}}
     end
   end
 
-  describe "invoke(:put_api_key, ...)" do
-    test "adds a key" do
-      slice = ApiKeys.init_slice(%{})
+  describe "handle_put_api_key/2" do
+    test "adds a key + emits :set + :emit effects" do
+      ctx = ctx_with_keys(%{})
       args = %{provider: "deepseek", key: "sk-1234567890abcdef"}
 
-      assert {:ok, new_slice, %{ok: true, provider: "deepseek"}} =
-               ApiKeys.invoke(:put_api_key, slice, args, %{})
+      assert {:ok, %{ok: true, provider: "deepseek"}, effects} =
+               ApiKeys.handle_put_api_key(args, ctx)
 
-      assert new_slice.keys == %{"deepseek" => "sk-1234567890abcdef"}
+      assert {:set, :keys, %{"deepseek" => "sk-1234567890abcdef"}} in effects
+      assert Enum.any?(effects, &match?({:emit, :api_key_put, _}, &1))
     end
 
     test "overwrites existing key for the same provider (rotation)" do
-      slice = %{keys: %{"deepseek" => "sk-old-key-xxxx"}, creator_uri: nil}
+      ctx = ctx_with_keys(%{"deepseek" => "sk-old-key-xxxx"})
       args = %{provider: "deepseek", key: "sk-new-key-yyyy"}
 
-      assert {:ok, new_slice, _} = ApiKeys.invoke(:put_api_key, slice, args, %{})
-      assert new_slice.keys["deepseek"] == "sk-new-key-yyyy"
-    end
-
-    test "preserves creator_uri on put" do
-      creator = URI.parse("entity://user/team-alpha/alice")
-      slice = %{keys: %{}, creator_uri: creator}
-
-      assert {:ok, new_slice, _} =
-               ApiKeys.invoke(:put_api_key, slice, %{provider: "deepseek", key: "sk-aaaabbbbccccdddd"}, %{})
-
-      assert new_slice.creator_uri == creator
+      assert {:ok, _result, effects} = ApiKeys.handle_put_api_key(args, ctx)
+      assert {:set, :keys, %{"deepseek" => "sk-new-key-yyyy"}} in effects
     end
   end
 
-  describe "invoke(:list_api_keys, ...)" do
-    test "returns masked keys, sorted by provider" do
-      slice = %{
-        keys: %{
+  describe "handle_list_api_keys/2" do
+    test "returns masked keys, sorted by provider (no effects)" do
+      ctx =
+        ctx_with_keys(%{
           "openai" => "sk-aaaabbbbccccdddd",
           "deepseek" => "sk-1234567890abcdef"
-        },
-        creator_uri: nil
-      }
+        })
 
-      assert {:ok, _slice, %{api_keys: listing}} = ApiKeys.invoke(:list_api_keys, slice, %{}, %{})
+      assert {:ok, %{api_keys: listing}, []} = ApiKeys.handle_list_api_keys(%{}, ctx)
+
       providers = Enum.map(listing, & &1.provider)
       assert providers == ["deepseek", "openai"]
 
@@ -65,42 +76,45 @@ defmodule Ezagent.Behavior.ApiKeysTest do
     end
 
     test "empty slice returns empty list" do
-      assert {:ok, _, %{api_keys: []}} =
-               ApiKeys.invoke(:list_api_keys, ApiKeys.init_slice(%{}), %{}, %{})
+      ctx = ctx_with_keys(%{})
+      assert {:ok, %{api_keys: []}, []} = ApiKeys.handle_list_api_keys(%{}, ctx)
     end
   end
 
-  describe "invoke(:delete_api_key, ...)" do
-    test "removes the provider entry" do
-      slice = %{keys: %{"deepseek" => "sk-x"}, creator_uri: nil}
+  describe "handle_delete_api_key/2" do
+    test "removes the provider entry via :set effect" do
+      ctx = ctx_with_keys(%{"deepseek" => "sk-x", "openai" => "sk-y"})
 
-      assert {:ok, new_slice, %{ok: true}} =
-               ApiKeys.invoke(:delete_api_key, slice, %{provider: "deepseek"}, %{})
+      assert {:ok, %{ok: true, provider: "deepseek"}, effects} =
+               ApiKeys.handle_delete_api_key(%{provider: "deepseek"}, ctx)
 
-      assert new_slice.keys == %{}
+      assert {:set, :keys, %{"openai" => "sk-y"}} in effects
+      assert Enum.any?(effects, &match?({:emit, :api_key_deleted, _}, &1))
     end
 
-    test "deleting a non-existent provider is a no-op" do
-      slice = %{keys: %{}, creator_uri: nil}
+    test "deleting a non-existent provider produces an empty-result :set effect" do
+      ctx = ctx_with_keys(%{})
 
-      assert {:ok, ^slice, %{ok: true}} =
-               ApiKeys.invoke(:delete_api_key, slice, %{provider: "ghost"}, %{})
+      assert {:ok, %{ok: true}, effects} =
+               ApiKeys.handle_delete_api_key(%{provider: "ghost"}, ctx)
+
+      assert {:set, :keys, %{}} in effects
     end
   end
 
-  describe "invoke(:get_api_key, ...)" do
-    test "returns the plaintext for a registered provider" do
-      slice = %{keys: %{"deepseek" => "sk-1234567890abcdef"}, creator_uri: nil}
+  describe "handle_get_api_key/2" do
+    test "returns the plaintext for a registered provider (no effects)" do
+      ctx = ctx_with_keys(%{"deepseek" => "sk-1234567890abcdef"})
 
-      assert {:ok, _slice, %{key: "sk-1234567890abcdef", provider: "deepseek"}} =
-               ApiKeys.invoke(:get_api_key, slice, %{provider: "deepseek"}, %{})
+      assert {:ok, %{key: "sk-1234567890abcdef", provider: "deepseek"}, []} =
+               ApiKeys.handle_get_api_key(%{provider: "deepseek"}, ctx)
     end
 
     test "errors for an unknown provider" do
-      slice = ApiKeys.init_slice(%{})
+      ctx = ctx_with_keys(%{})
 
       assert {:error, {:no_api_key, "missing"}} =
-               ApiKeys.invoke(:get_api_key, slice, %{provider: "missing"}, %{})
+               ApiKeys.handle_get_api_key(%{provider: "missing"}, ctx)
     end
   end
 
@@ -141,12 +155,22 @@ defmodule Ezagent.Behavior.ApiKeysTest do
     end
 
     test "agent URI whose Kind isn't live → :no_owner" do
-      # No KindRegistry entry for this URI → get_slice returns :error.
       assert ApiKeys.data_owner(
                URI.parse(
                  "entity://agent/team-alpha/curl_no-such-#{System.unique_integer([:positive])}"
                )
              ) == :no_owner
+    end
+  end
+
+  describe "P2-b new-contract markers" do
+    test "__behavior__?/0 is true" do
+      assert ApiKeys.__behavior__?() == true
+    end
+
+    test "__action_names__/0 lists all four actions" do
+      assert Enum.sort(ApiKeys.__action_names__()) ==
+               [:delete_api_key, :get_api_key, :list_api_keys, :put_api_key]
     end
   end
 end

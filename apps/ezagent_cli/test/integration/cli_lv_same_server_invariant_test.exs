@@ -60,8 +60,13 @@ defmodule EzagentCli.Integration.CliLvSameServerInvariantTest do
     session_name = "cli-same-server-test-#{System.unique_integer([:positive])}"
     # SPEC v3 §3.6 (Phase 9 PR-7) — sessions are 3-segment.
     session_uri = URI.parse("session://default/team-alpha/" <> session_name)
-    # PR-A: agent URIs include a type segment.
-    member_uri = URI.parse("entity://agent/team-alpha/cc_cli-test-member-#{System.unique_integer([:positive])}")
+    # PR-A: agent URIs include a type segment. Use the `test_` flavor
+    # (hardcoded in chat → Ezagent.Entity.Agent, no agent-flavor plugin
+    # needed) rather than `cc_`: this CLI-same-BEAM invariant only needs
+    # a spawnable generic agent member, and the cli suite does not load
+    # the cc plugin that registers the `cc` flavor — a `cc_` URI would
+    # fail `{:no_kind_module_for_agent, ...}`.
+    member_uri = URI.parse("entity://agent/team-alpha/test_cli-member-#{System.unique_integer([:positive])}")
 
     # Spawn session in this BEAM
     {:ok, session_pid} = Ezagent.SpawnRegistry.spawn(session_uri)
@@ -74,10 +79,15 @@ defmodule EzagentCli.Integration.CliLvSameServerInvariantTest do
     member_uri_str = URI.to_string(member_uri)
 
     # Confirm member is NOT there yet (compare by URI string to dodge
-    # %URI{authority: ...} vs host-only equality quirk)
+    # %URI{authority: ...} vs host-only equality quirk).
+    #
+    # Post-lifecycle two-container slice (SPEC 2026-05-29): the Kind
+    # Server state is `%{state: %{<slice> => %{state: _, transients: _}}}`,
+    # so the `:chat` slice's members live at `.state.chat.state.members`
+    # (was the flat `.state.chat.members` pre-migration).
     state_before = :sys.get_state(session_pid, 500)
 
-    refute Enum.any?(Map.keys(state_before.state.chat.members), fn k ->
+    refute Enum.any?(Map.keys(state_before.state.chat.state.members), fn k ->
              URI.to_string(k) == member_uri_str
            end)
 
@@ -135,7 +145,7 @@ defmodule EzagentCli.Integration.CliLvSameServerInvariantTest do
     state_after = :sys.get_state(session_pid, 500)
 
     member_present? =
-      Enum.any?(Map.keys(state_after.state.chat.members), fn k ->
+      Enum.any?(Map.keys(state_after.state.chat.state.members), fn k ->
         URI.to_string(k) == member_uri_str
       end)
 
@@ -146,7 +156,7 @@ defmodule EzagentCli.Integration.CliLvSameServerInvariantTest do
     Means CLI dispatched against a DIFFERENT BEAM than the test — breaks
     CLI ↔ LV isomorphism.
 
-    Members in this BEAM: #{inspect(Enum.map(Map.keys(state_after.state.chat.members), &URI.to_string/1))}
+    Members in this BEAM: #{inspect(Enum.map(Map.keys(state_after.state.chat.state.members), &URI.to_string/1))}
     """
   end
 

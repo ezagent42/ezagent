@@ -15,7 +15,7 @@ defmodule Ezagent.Behavior.Routing do
 
   - `:add_rule` — args `%{table: atom, matcher_json: map, receivers: [String]}`
     → returns `%{id: integer}`. The dispatch target URI's instance is
-    read in `invoke/4` and recorded as the rule's `workspace_uri` when
+    read in the handler and recorded as the rule's `workspace_uri` when
     the target scheme is `workspace://`; for `session://` and
     `system://` the rule is unscoped at the workspace dimension (rules
     apply by virtue of being installed; session/global semantics
@@ -36,8 +36,8 @@ defmodule Ezagent.Behavior.Routing do
 
   - For `workspace://X` targets: cap needed `kind: :workspace,
     behavior: Ezagent.Behavior.Routing, instance: <workspace uri>`.
-  - For `session://default/team-alpha/Y` targets: cap needed `kind: :session, behavior:
-    Ezagent.Behavior.Routing, instance: <session uri>`.
+  - For `session://default/team-alpha/Y` targets: cap needed `kind: :session,
+    behavior: Ezagent.Behavior.Routing, instance: <session uri>`.
   - For `system://routing/default` targets: cap needed `kind: :system,
     behavior: Ezagent.Behavior.Routing, instance: <system uri>`.
 
@@ -49,22 +49,80 @@ defmodule Ezagent.Behavior.Routing do
   Trivial counter (`%{calls: 0}`). Snapshot intentionally not declared
   here — each scope-owning Kind's own `persistence/0` decides what
   survives restart. The routing counter is incidental state.
+
+  ## Migration to §2.2 declarative contract (Phase 2.5 — 2026-05-28)
+
+  Per SPEC `2026-05-28-router-behavior-kind-architecture.md` §6.2,
+  migrated from `@behaviour Ezagent.Behavior` + `invoke/4` to
+  `use Ezagent.Behavior` + `action/3` + `handle_<action>/2`.
+
+  The `RuleStore.add/5` + `RuleStore.load_into_registry/1` calls stay
+  in the handler body — they are SYNCHRONOUS database operations
+  whose return values gate the action result (`row.id` is part of the
+  return). Expressing these as `{:dispatch, ...}` / `{:effect, ...}`
+  is not possible: the new contract's effect grammar discards effect
+  return values, so a RuleStore operation that produces an id usable
+  by the caller must remain inline (matches the chat reference
+  Behavior's "result-dependent in-handler dispatches stay direct"
+  pattern). The slice counter bump moves to a `{:set, :calls, ...}`
+  effect.
+
+  `workspace_scoped?/0 == false` preserved: the system-routing
+  dispatch target (`system://routing/default`) is cross-workspace by
+  nature; dispatching routing rules to a `workspace://` or
+  `session://` target stays workspace-scoped via the target URI shape.
+
+  ## Migration to `use Ezagent.Lifecycle` (Phase B — 2026-05-29)
+
+  State-only Behavior: the slice is a trivial `:calls` counter — no
+  PIDs/refs/handles, so there are NO transients. `init_slice/1` →
+  `create/1` (the persistent `%{calls: 0}` builder); `activate/2` is the
+  macro's no-op default. The slice key auto-derives to `:routing`
+  (module last segment), matching the previous explicit `state_slice/0`,
+  so no `state_slice:` override is needed. Handlers are byte-identical
+  except `ctx[:read]` → `ctx.read`. The synchronous `RuleStore` calls
+  stay inline (their return values gate the action result).
   """
 
-  @behaviour Ezagent.Behavior
+  use Ezagent.Lifecycle
 
   alias Ezagent.Routing.{Matcher, RuleStore}
 
-  @impl Ezagent.Behavior
-  def actions, do: [:add_rule, :delete_rule, :disable_rule, :enable_rule]
+  action :add_rule,
+    args: %{table: :atom, matcher_json: :map, receivers: {:list, :string}},
+    returns: %{id: :integer},
+    caps: [:add_rule],
+    modes: [:call],
+    description: "add a routing rule to this scope's rule store"
+
+  action :delete_rule,
+    args: %{table: :atom, id: :integer},
+    returns: %{deleted: :integer},
+    caps: [:delete_rule],
+    modes: [:call],
+    description: "delete a routing rule from this scope's rule store"
+
+  action :disable_rule,
+    args: %{table: :atom, id: :integer},
+    returns: %{disabled: :integer},
+    caps: [:disable_rule],
+    modes: [:call],
+    description: "disable an existing routing rule without removing it"
+
+  action :enable_rule,
+    args: %{table: :atom, id: :integer},
+    returns: %{enabled: :integer},
+    caps: [:enable_rule],
+    modes: [:call],
+    description: "re-enable a previously disabled routing rule"
 
   # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
   # Routing is registered on System + Workspace + Session — kind axis is
-  # `:any` per check 11(b)'s multi-Kind escape. workspace_scoped? = false:
-  # the system-routing dispatch target (system://routing/default) is
-  # cross-workspace by nature; dispatching routing rules to a workspace://
-  # or session:// target stays workspace-scoped via the target URI shape.
-  @impl Ezagent.Behavior
+  # `:any` per check 11(b)'s multi-Kind escape. The macro-derived default
+  # already yields `:any`, but we keep the explicit override so a future
+  # macro default change can't silently widen the cap shape. workspace_scoped?
+  # = false: the system-routing dispatch target (system://routing/default)
+  # is cross-workspace by nature.
   def required_caps do
     %{
       add_rule: Ezagent.Capability.cap(:any, __MODULE__, :add_rule),
@@ -74,88 +132,69 @@ defmodule Ezagent.Behavior.Routing do
     }
   end
 
-  @impl Ezagent.Behavior
   def workspace_scoped?, do: false
 
-  @impl Ezagent.Behavior
-  def cap_subjects do
-    [
-      {:add_rule, "add a routing rule to this scope's rule store"},
-      {:delete_rule, "delete a routing rule from this scope's rule store"},
-      {:disable_rule, "disable an existing routing rule without removing it"},
-      {:enable_rule, "re-enable a previously disabled routing rule"}
-    ]
-  end
+  # State-only: persistent `:calls` counter, no transients. Slice key
+  # auto-derives to `:routing` (module last segment).
+  @impl Ezagent.Lifecycle
+  def create(_args), do: {:ok, %{calls: 0}}
 
-  @impl Ezagent.Behavior
-  def state_slice, do: :routing
-
-  @impl Ezagent.Behavior
-  def init_slice(_args), do: %{calls: 0}
-
-  @impl Ezagent.Behavior
-  def invoke(:add_rule, slice, args, ctx) do
+  def handle_add_rule(args, ctx) do
     %{table: table, matcher_json: matcher_json, receivers: receivers} = args
     opts = build_add_opts(args, ctx)
+    prev_calls = ctx.read.(:calls, 0)
 
     with {:ok, matcher} <- Matcher.from_json(matcher_json),
-         {:ok, row} <- RuleStore.add(table, matcher, receivers, nil, opts) do
-      :ok = RuleStore.load_into_registry(table)
-      {:ok, bump(slice), %{id: row.id}}
+         {:ok, row} <- RuleStore.add(table, matcher, receivers, nil, opts),
+         :ok <- RuleStore.load_into_registry(table) do
+      {:ok, %{id: row.id}, [{:set, :calls, prev_calls + 1}]}
     else
       {:error, _} = err -> err
       err -> {:error, err}
     end
   end
 
-  def invoke(:delete_rule, slice, %{id: id} = args, _ctx) when is_integer(id) do
+  def handle_delete_rule(%{id: id} = args, ctx) when is_integer(id) do
     table = Map.fetch!(args, :table)
+    prev_calls = ctx.read.(:calls, 0)
 
     case RuleStore.delete(id) do
       :ok ->
         :ok = RuleStore.load_into_registry(table)
-        {:ok, bump(slice), %{deleted: id}}
+        {:ok, %{deleted: id}, [{:set, :calls, prev_calls + 1}]}
 
       err ->
         err
     end
   end
 
-  def invoke(:disable_rule, slice, %{id: id} = args, _ctx) when is_integer(id) do
+  def handle_disable_rule(%{id: id} = args, ctx) when is_integer(id) do
     table = Map.fetch!(args, :table)
+    prev_calls = ctx.read.(:calls, 0)
 
     case RuleStore.disable(id) do
       :ok ->
         :ok = RuleStore.load_into_registry(table)
-        {:ok, bump(slice), %{disabled: id}}
+        {:ok, %{disabled: id}, [{:set, :calls, prev_calls + 1}]}
 
       err ->
         err
     end
   end
 
-  def invoke(:enable_rule, slice, %{id: id} = args, _ctx) when is_integer(id) do
+  def handle_enable_rule(%{id: id} = args, ctx) when is_integer(id) do
     table = Map.fetch!(args, :table)
+    prev_calls = ctx.read.(:calls, 0)
 
     case RuleStore.enable(id) do
       :ok ->
         :ok = RuleStore.load_into_registry(table)
-        {:ok, bump(slice), %{enabled: id}}
+        {:ok, %{enabled: id}, [{:set, :calls, prev_calls + 1}]}
 
       err ->
         err
     end
   end
-
-  # Defensive — when Routing is registered on a Kind that does NOT
-  # declare it in `behaviors/0` (Session + Workspace per SPEC v2 §5.7
-  # register Routing after-the-fact via `BehaviorRegistry.register/3`),
-  # `Snapshot.init_fresh/2` skips `init_slice/1` and the runtime hands
-  # us an empty slice (`%{}` via `Map.get(state, slice_key, %{})` in
-  # `Kind.Runtime.handle_dispatch/4`). The original `%{slice | calls:
-  # ...}` form crashes on missing key. Lazy-seed the counter so the
-  # Behavior is correct for any Kind it's registered against.
-  defp bump(slice), do: Map.update(slice, :calls, 1, &(&1 + 1))
 
   # Build RuleStore.add/5 opts, populating `workspace_uri` when the
   # dispatch target scheme is `workspace://`. Caller can override via
@@ -182,36 +221,6 @@ defmodule Ezagent.Behavior.Routing do
     end
   end
 
-  @impl Ezagent.Behavior
-  def interface do
-    %{
-      add_rule: %{
-        description: "Add a routing rule to a table and reload the live registry",
-        args: %{table: :atom, matcher_json: :map, receivers: {:list, :string}},
-        returns: %{id: :integer},
-        modes: [:call]
-      },
-      delete_rule: %{
-        description: "Delete a routing rule by id and reload the live registry",
-        args: %{table: :atom, id: :integer},
-        returns: %{deleted: :integer},
-        modes: [:call]
-      },
-      disable_rule: %{
-        description: "Disable a routing rule by id and reload the live registry",
-        args: %{table: :atom, id: :integer},
-        returns: %{disabled: :integer},
-        modes: [:call]
-      },
-      enable_rule: %{
-        description: "Enable a routing rule by id and reload the live registry",
-        args: %{table: :atom, id: :integer},
-        returns: %{enabled: :integer},
-        modes: [:call]
-      }
-    }
-  end
-
   # PR-OWN-4 round-3 (codex round-2 HIGH fix): Routing covers BOTH
   # workspace-scoped routing tables AND the global
   # `system://routing/default` sentinel. The latter affects all
@@ -223,7 +232,6 @@ defmodule Ezagent.Behavior.Routing do
   # `entity://`) return a concrete `%URI{}`. Global system
   # instances (`system://routing/default`) return `:any` — those
   # require bootstrap admin per the `:no_owner` branch.
-  @impl Ezagent.Behavior
   def data_owner(%URI{} = instance) do
     case Ezagent.Capability.workspace_of(instance) do
       %URI{} -> :any

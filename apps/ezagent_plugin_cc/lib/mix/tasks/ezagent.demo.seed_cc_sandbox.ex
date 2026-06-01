@@ -198,7 +198,7 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcSandbox do
     {:ok, _} = Application.ensure_all_started(:ezagent_plugin_cc)
 
     uri_str = "template://agent/system/cc-#{template_name}"
-    uri = Ezagent.URI.parse!(uri_str)
+    uri = Ezagent.URI.new!(uri_str)
 
     with {:ok, _pid} <- ensure_template_kind(uri),
          :ok <- write_template_slice(uri, sandbox_dir, template_name) do
@@ -240,7 +240,7 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcSandbox do
       created_at: DateTime.utc_now()
     }
 
-    target = Ezagent.URI.parse!("#{URI.to_string(uri)}?action=template.write")
+    target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=template.write")
 
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
       target: target,

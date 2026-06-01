@@ -59,8 +59,8 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcAgent do
     {:ok, _} = Application.ensure_all_started(:ezagent_domain_chat)
     {:ok, _} = Application.ensure_all_started(:ezagent_plugin_cc)
 
-    agent_uri = Ezagent.URI.parse!(@agent_uri_str)
-    session_uri = Ezagent.URI.parse!(@session_uri_str)
+    agent_uri = Ezagent.URI.new!(@agent_uri_str)
+    session_uri = Ezagent.URI.new!(@session_uri_str)
 
     with :ok <- spawn_agent_if_absent(agent_uri),
          :ok <- ensure_session_alive(session_uri),
@@ -139,7 +139,7 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcAgent do
   end
 
   defp join_agent_to_session(%URI{} = agent_uri, %URI{} = session_uri) do
-    target = URI.new!("#{URI.to_string(session_uri)}?action=chat.join")
+    target = Ezagent.URI.with_action(session_uri, :chat, :join)
 
     # SPEC caps-cleanup-v1 §4.4 — operator demo mix task runs under
     # `system://mix-task` (closed Catalog; operator already has shell

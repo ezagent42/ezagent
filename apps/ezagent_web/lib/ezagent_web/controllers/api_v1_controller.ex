@@ -118,7 +118,7 @@ defmodule EzagentWeb.ApiV1Controller do
     # for inbound HTTP target URI; try/rescue keeps the structured 400
     # error path for malformed input (Invariant #9 — graceful surface).
     try do
-      {:ok, Ezagent.URI.parse!(target_str)}
+      {:ok, Ezagent.URI.new!(target_str)}
     rescue
       ArgumentError -> {:error, 400, "bad_target_uri", target_str}
     end
@@ -139,7 +139,7 @@ defmodule EzagentWeb.ApiV1Controller do
         # bcrypt scan of the whole table.)
         case Plug.Conn.get_req_header(conn, "x-ezagent-entity-uri") do
           [uri_str | _] ->
-            uri = Ezagent.URI.parse!(uri_str)
+            uri = Ezagent.URI.new!(uri_str)
 
             case Ezagent.Entity.authenticate(uri, token) do
               {:ok, %{caps: caps}} ->
@@ -202,7 +202,7 @@ defmodule EzagentWeb.ApiV1Controller do
       |> List.last()
       |> Macro.underscore()
 
-    URI.new!("#{URI.to_string(target_uri)}?action=#{behavior_short}.#{action}")
+    Ezagent.URI.with_action(target_uri, behavior_short, action)
   end
 
   defp atomize_keys(map) when is_map(map) do

@@ -130,9 +130,19 @@ defmodule EzagentDomainChat.PresenceFanout do
 
   @impl true
   def handle_info(
-        {:session_membership_change, %URI{} = session_uri, {:member_joined, %URI{} = member_uri}},
+        {:session_membership_change, %URI{} = session_uri0, {:member_joined, %URI{} = member_uri0}},
         state
       ) do
+    # Key parity (feedback_register_lookup_key_parity): the presence-diff
+    # handler looks the index up with a CANONICAL member_uri
+    # (`Ezagent.URI.new!` derived from the topic, `authority: nil`). The
+    # inbound `:session_membership_change` URIs may be non-canonical
+    # (`URI.parse`, `authority: "user"`). Canonicalize on the way IN so
+    # store and lookup keys are struct-equal; otherwise the diff lookup
+    # misses and no `:member_presence` ever fans out.
+    session_uri = canon(session_uri0)
+    member_uri = canon(member_uri0)
+
     sessions = Map.get(state, member_uri, MapSet.new())
 
     # FIRST session for this member → subscribe to Presence diffs
@@ -145,9 +155,11 @@ defmodule EzagentDomainChat.PresenceFanout do
   end
 
   def handle_info(
-        {:session_membership_change, %URI{} = session_uri, {:member_left, %URI{} = member_uri}},
+        {:session_membership_change, %URI{} = session_uri0, {:member_left, %URI{} = member_uri0}},
         state
       ) do
+    session_uri = canon(session_uri0)
+    member_uri = canon(member_uri0)
     sessions = Map.get(state, member_uri, MapSet.new())
     new_sessions = MapSet.delete(sessions, session_uri)
 
@@ -211,12 +223,17 @@ defmodule EzagentDomainChat.PresenceFanout do
   # ----- Internal helpers ----------------------------------------------------
 
   defp topic_to_member_uri("esr:presence:" <> uri_str) do
-    {:ok, Ezagent.URI.parse!(uri_str)}
+    {:ok, Ezagent.URI.new!(uri_str)}
   rescue
     _ -> :error
   end
 
   defp topic_to_member_uri(_), do: :error
+
+  # Canonicalize a URI to the `authority: nil` form the presence-diff
+  # lookup uses (`Ezagent.URI.new!` over the topic). Keeps the index's
+  # store keys struct-equal to its lookup keys (key parity).
+  defp canon(%URI{} = uri), do: Ezagent.URI.new!(URI.to_string(uri))
 
   # PR-5 (Allen 2026-05-23) bootstrap helper — peek a Session GenServer's
   # `:chat` slice, register (member → session_uri) for each current
@@ -231,7 +248,11 @@ defmodule EzagentDomainChat.PresenceFanout do
           # path. Short timeout — bootstrap is best-effort.
           wrapper = :sys.get_state(session_pid, 1_000)
           slice = get_in(wrapper, [:state, :chat]) || %{}
-          members = Map.keys(Map.get(slice, :members, %{}))
+          # Lifecycle migration (SPEC 2026-05-29 §2.3C): the Chat slice is
+          # now two-container; `members` lives under `:state` (a flat slice
+          # falls through unchanged).
+          chat_persistent = Map.get(slice, :state, slice)
+          members = Map.keys(Map.get(chat_persistent, :members, %{}))
 
           Enum.reduce(members, state, fn member_uri, acc ->
             register_member(acc, session_uri, member_uri)
@@ -246,7 +267,9 @@ defmodule EzagentDomainChat.PresenceFanout do
     end
   end
 
-  defp register_member(state, %URI{} = session_uri, %URI{} = member_uri) do
+  defp register_member(state, %URI{} = session_uri0, %URI{} = member_uri0) do
+    session_uri = canon(session_uri0)
+    member_uri = canon(member_uri0)
     sessions = Map.get(state, member_uri, MapSet.new())
 
     # FIRST session for this member → subscribe to Presence diffs

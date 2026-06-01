@@ -17,13 +17,15 @@ defmodule Ezagent.ExternalMirror.AdapterRegistryTest do
 
   alias Ezagent.ExternalMirror.AdapterRegistry
   alias Ezagent.ExternalMirror.TestSupport.{MockAdapter, OtherAdapter}
+  alias Ezagent.ExternalMirror.TestSupport.RegistrySnapshot
 
   setup do
     # Each test starts from a clean table — every test in this suite
     # is `async: false` and we delete on entry to keep tests
-    # order-independent.
-    :ets.delete_all_objects(AdapterRegistry.table())
-    :ok
+    # order-independent. Snapshot + restore-on-exit so wiping the GLOBAL
+    # registry doesn't drop production rows (e.g. feishu) for concurrent
+    # async tests.
+    RegistrySnapshot.with_clean_registries()
   end
 
   describe "register/1 + lookup/1 + lookup!/1" do

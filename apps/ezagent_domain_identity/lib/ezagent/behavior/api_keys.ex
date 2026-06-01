@@ -45,25 +45,68 @@ defmodule Ezagent.Behavior.ApiKeys do
   - Invariant test: API key plaintext must never appear in Audit
     invocation rows. Enforced by per-action `result` redaction in
     audit writer.
+
+  ## P2-b migration (2026-05-28)
+
+  Migrated to the new `use Ezagent.Behavior` action/handler contract
+  per SPEC #445 §4 + §6.2. Legacy `invoke/4` replaced by
+  `handle_<action>/2`. All actions are pure slice mutations / reads —
+  no DB / PubSub side effects — so effects are limited to `:set`
+  (put/delete a key) and `:emit` (audit event). The `:list_api_keys`
+  and `:get_api_key` reads use `ctx[:read]` to access the slice
+  instead of receiving it as an arg.
+
+  ## Phase B migration (2026-05-29) — `use Ezagent.Lifecycle`
+
+  Converted to the Lifecycle developer API per SPEC
+  `docs/superpowers/specs/2026-05-29-lifecycle-hooks-design.md` §5.
+  STATE-ONLY: `keys` + `creator_uri` are both PERSISTENT, no
+  PID/ref/ETS/port/subprocess transients exist, so `init_slice/1` →
+  `create/1` and `activate/2` is the macro-injected no-op rebuild
+  (omitted). The auto-derived `state_slice` (`:api_keys`) matches the
+  old explicit one — no override marker needed. Handler bodies are
+  byte-identical (`ctx[:read]` works unchanged through the two-container
+  ctx). `required_caps/0` + `data_owner/1` pass through verbatim.
   """
 
-  @behaviour Ezagent.Behavior
+  use Ezagent.Lifecycle
 
-  @impl Ezagent.Behavior
-  def actions, do: [:list_api_keys, :put_api_key, :delete_api_key, :get_api_key]
+  action :list_api_keys,
+    args: %{},
+    returns: %{api_keys: {:list, :map}},
+    caps: [{:list_api_keys, kind: :any}],
+    description: "List the agent's stored API keys with masked values",
+    modes: [:call]
 
-  # Allen 2026-05-26 flip from User Kind. ApiKeys now lives on every
-  # agent-flavor Kind (`Ezagent.Entity.Agent` / `Ezagent.Entity.CurlAgent`
-  # / `Ezagent.Entity.Echo` — `type_name` varies per flavor:
-  # `:agent` / `:curl_agent` / `:echo`). Per the
-  # `feedback_register_lookup_key_parity` convention the cap shape uses
-  # `:any` for the kind axis so a single cap declaration matches every
-  # flavor (Lifecycle / Routing / Presence follow the same pattern when
-  # cross-Kind). The kind axis is fixed at registration via
-  # `kind_module.type_name()` in `cap_for_action/3`; using `:any` here
-  # widens what a granted cap matches but the registration site still
-  # bounds WHICH Kinds can dispatch this Behavior.
-  @impl Ezagent.Behavior
+  action :put_api_key,
+    args: %{provider: :string, key: :string},
+    returns: %{ok: :boolean, provider: :string},
+    caps: [{:put_api_key, kind: :any}],
+    description: "Store or replace the agent's API key for a provider",
+    modes: [:call]
+
+  action :delete_api_key,
+    args: %{provider: :string},
+    returns: %{ok: :boolean, provider: :string},
+    caps: [{:delete_api_key, kind: :any}],
+    description: "Delete the agent's API key for a provider",
+    modes: [:call]
+
+  action :get_api_key,
+    args: %{provider: :string},
+    returns: %{key: :string, provider: :string},
+    caps: [{:get_api_key, kind: :any}],
+    description: "Fetch the agent's plaintext API key for a provider",
+    modes: [:call]
+
+  # =================================================================
+  # Explicit `required_caps/0` — preserved as `kind: :any` (ApiKeys
+  # is attached to multiple agent-flavor Kinds; see moduledoc).
+  # The auto-derived macro version would also produce `:any` so this
+  # override is technically a no-op, but kept explicit for parity
+  # with the pre-migration shape + future-proofing against macro
+  # default changes.
+  # =================================================================
   def required_caps do
     %{
       list_api_keys: Ezagent.Capability.cap(:any, __MODULE__, :list_api_keys),
@@ -73,95 +116,84 @@ defmodule Ezagent.Behavior.ApiKeys do
     }
   end
 
-  @impl Ezagent.Behavior
-  def cap_subjects do
-    [
-      {:list_api_keys, "list the API-key slot names this agent holds (values redacted)"},
-      {:put_api_key, "set or rotate an API key value for a named slot on this agent"},
-      {:delete_api_key, "remove an API key slot from this agent"},
-      {:get_api_key,
-       "fetch the agent's API key for outbound use (sensitive — caller must hold cap)"}
-    ]
+  # =================================================================
+  # Lifecycle state — `create/1` builds the PERSISTENT state once
+  # (Phase B; was `init_slice/1`). No transients → `activate/2` is the
+  # macro-injected no-op. `state_slice` is auto-derived to `:api_keys`.
+  # =================================================================
+
+  @impl Ezagent.Lifecycle
+  def create(args) do
+    {:ok,
+     %{
+       keys: %{},
+       creator_uri: Map.get(args, :creator_uri)
+     }}
   end
 
-  @impl Ezagent.Behavior
-  def state_slice, do: :api_keys
+  # =================================================================
+  # New-contract action handlers (§6.2 — replace invoke/4)
+  # =================================================================
 
-  @impl Ezagent.Behavior
-  def init_slice(args) do
-    %{
-      keys: %{},
-      # Allen 2026-05-26 — `:creator_uri` carries the entity URI that
-      # created this agent (passed via `instantiate` args). Used by
-      # `data_owner/1` so `default_grants_from_data_owner/2` grants the
-      # creator the right to view / rotate / delete this agent's keys.
-      # Mirrors the `Behavior.Chat.init_slice/1` `:owner_uri` pattern
-      # (PR-OWN-2). `nil` for agents spawned without a creator arg
-      # (system / test paths) — those fall back to `:no_owner` in
-      # `data_owner/1`, so only the bootstrap admin can grant.
-      creator_uri: Map.get(args, :creator_uri)
-    }
-  end
+  def handle_list_api_keys(_args, ctx) do
+    keys = ctx[:read].(:keys, %{})
 
-  @impl Ezagent.Behavior
-  def invoke(:list_api_keys, slice, _args, _ctx) do
     listing =
-      slice.keys
+      keys
       |> Enum.map(fn {provider, key} -> %{provider: provider, masked: mask(key)} end)
       |> Enum.sort_by(& &1.provider)
 
-    {:ok, slice, %{api_keys: listing}}
+    # Read-only — no slice mutation.
+    {:ok, %{api_keys: listing}, []}
   end
 
-  def invoke(:put_api_key, slice, %{provider: provider, key: key}, _ctx)
+  def handle_put_api_key(%{provider: provider, key: key}, ctx)
       when is_binary(provider) and is_binary(key) and provider != "" and key != "" do
-    new_slice = %{slice | keys: Map.put(slice.keys, provider, key)}
-    {:ok, new_slice, %{ok: true, provider: provider}}
+    current_keys = ctx[:read].(:keys, %{})
+    new_keys = Map.put(current_keys, provider, key)
+
+    {:ok, %{ok: true, provider: provider},
+     [
+       {:set, :keys, new_keys},
+       {:emit, :api_key_put, %{provider: provider, at: DateTime.utc_now()}}
+     ]}
   end
 
-  def invoke(:delete_api_key, slice, %{provider: provider}, _ctx)
-      when is_binary(provider) do
-    new_slice = %{slice | keys: Map.delete(slice.keys, provider)}
-    {:ok, new_slice, %{ok: true, provider: provider}}
+  def handle_put_api_key(args, _ctx) do
+    {:error, {:bad_args, "put_api_key requires {provider, key} as non-empty strings", args}}
   end
 
-  def invoke(:get_api_key, slice, %{provider: provider}, _ctx)
-      when is_binary(provider) do
-    case Map.fetch(slice.keys, provider) do
-      {:ok, key} -> {:ok, slice, %{key: key, provider: provider}}
+  def handle_delete_api_key(%{provider: provider}, ctx) when is_binary(provider) do
+    current_keys = ctx[:read].(:keys, %{})
+    new_keys = Map.delete(current_keys, provider)
+
+    {:ok, %{ok: true, provider: provider},
+     [
+       {:set, :keys, new_keys},
+       {:emit, :api_key_deleted, %{provider: provider, at: DateTime.utc_now()}}
+     ]}
+  end
+
+  def handle_delete_api_key(args, _ctx) do
+    {:error, {:bad_args, "delete_api_key requires {provider: String}", args}}
+  end
+
+  def handle_get_api_key(%{provider: provider}, ctx) when is_binary(provider) do
+    keys = ctx[:read].(:keys, %{})
+
+    case Map.fetch(keys, provider) do
+      {:ok, key} -> {:ok, %{key: key, provider: provider}, []}
       :error -> {:error, {:no_api_key, provider}}
     end
   end
 
-  @impl Ezagent.Behavior
-  def interface do
-    %{
-      list_api_keys: %{
-        description: "List the agent's stored API keys with masked values",
-        args: %{},
-        returns: %{api_keys: {:list, :map}},
-        modes: [:call]
-      },
-      put_api_key: %{
-        description: "Store or replace the agent's API key for a provider",
-        args: %{provider: :string, key: :string},
-        returns: %{ok: :boolean, provider: :string},
-        modes: [:call]
-      },
-      delete_api_key: %{
-        description: "Delete the agent's API key for a provider",
-        args: %{provider: :string},
-        returns: %{ok: :boolean, provider: :string},
-        modes: [:call]
-      },
-      get_api_key: %{
-        description: "Fetch the agent's plaintext API key for a provider",
-        args: %{provider: :string},
-        returns: %{key: :string, provider: :string},
-        modes: [:call]
-      }
-    }
+  def handle_get_api_key(args, _ctx) do
+    {:error, {:bad_args, "get_api_key requires {provider: String}", args}}
   end
+
+  # =================================================================
+  # Helpers
+  # =================================================================
 
   @doc """
   Mask an API key for UI display.
@@ -190,28 +222,15 @@ defmodule Ezagent.Behavior.ApiKeys do
   # tiers (in order):
   #
   #  1. `:api_keys` slice's `:creator_uri` — durable via the Agent
-  #     Kind's `{:snapshot, :on_change}` persistence. Set when an
-  #     instantiate path threads `creator_uri` into init args.
-  #
-  #  2. `Ezagent.AgentLineage.lookup/1` fallback (codex HIGH-1 closure)
-  #     — `Workspace.create_agent`'s SpawnRegistry catch-all records
-  #     `agent_uri → caller` in this ETS, so a non-admin who created
-  #     a curl/np agent via the LV resolves to themselves here even
-  #     when the spawn-time `creator_uri` arg threading isn't wired.
-  #
-  #  3. `:no_owner` — neither source has a record (system / test paths
-  #     spawning ad-hoc); only bootstrap admin can grant.
-  #
-  # Mirrors `Behavior.Chat.data_owner/1`'s pattern (PR-OWN-2 §6) of
-  # reading the entity's own durable state for ownership.
-  @impl Ezagent.Behavior
+  #     Kind's `{:snapshot, :on_change}` persistence.
+  #  2. `Ezagent.AgentLineage.lookup/1` fallback (codex HIGH-1 closure).
+  #  3. `:no_owner` — neither source has a record.
   def data_owner(%URI{scheme: "entity", host: "agent"} = agent_uri) do
     case Ezagent.Kind.get_slice(agent_uri, :api_keys) do
       {:ok, %{creator_uri: %URI{} = creator}} ->
         creator
 
       _ ->
-        # Tier 2: lineage ETS fallback (codex HIGH-1).
         case lineage_lookup(agent_uri) do
           {:ok, %URI{} = creator} -> creator
           _ -> :no_owner
@@ -223,9 +242,7 @@ defmodule Ezagent.Behavior.ApiKeys do
   def data_owner(_), do: :no_owner
 
   # Wrap `Ezagent.AgentLineage.lookup/1` so a missing/un-booted
-  # registry degrades gracefully (no crash, just `:no_owner`). Lineage
-  # ETS is in-memory; cleared on BEAM restart, so the slice's
-  # `creator_uri` is the durable source-of-truth when populated.
+  # registry degrades gracefully (no crash, just `:no_owner`).
   defp lineage_lookup(agent_uri) do
     if Code.ensure_loaded?(Ezagent.AgentLineage) and
          function_exported?(Ezagent.AgentLineage, :lookup, 1) do

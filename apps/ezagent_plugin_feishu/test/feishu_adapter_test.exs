@@ -266,6 +266,52 @@ defmodule EzagentPluginFeishu.FeishuAdapterTest do
     end
   end
 
+  describe "event_to_payload/1 — two-container Lifecycle slice (regression)" do
+    # Post-2026-05-29 Lifecycle migration wraps the developer slice as
+    # `%{state: <persistent>, transients: ...}`. The Publisher event carries
+    # this nested shape. Before the unwrap fix, the adapter read the FLAT
+    # shape (`new_slice.last_message_id`) → `chat_send_occurred?` always false
+    # → EVERY chat send SILENTLY skipped (the post-lifecycle feishu-mirror
+    # outage, Allen 2026-05-31). These pin that a nested slice still publishes.
+
+    test "nested %{state: …} chat send → {:publish} (was silently skipped)" do
+      msg = build_msg(%{text: "nested-state send"})
+
+      event =
+        chat_event(%{
+          action: :send,
+          caller: msg.sender,
+          new_slice: %{state: %{last_message_id: msg.id, last_message: msg, send_cursor: 1}},
+          old_slice: %{state: %{last_message_id: nil, last_message: nil, send_cursor: 0}}
+        })
+
+      assert {:publish, [{:lark_text, text}]} = FeishuAdapter.event_to_payload(event)
+      assert text =~ "nested-state send"
+    end
+
+    test "nested string-keyed %{\"state\" => …} (post-JSON rehydrate) → {:publish}" do
+      msg = build_msg(%{text: "string-key state"})
+
+      event =
+        chat_event(%{
+          action: :send,
+          caller: msg.sender,
+          new_slice: %{"state" => %{last_message_id: msg.id, last_message: msg, send_cursor: 1}},
+          old_slice: nil
+        })
+
+      assert {:publish, [{:lark_text, text}]} = FeishuAdapter.event_to_payload(event)
+      assert text =~ "string-key state"
+    end
+
+    test "legacy FLAT slice still publishes (unwrap is passthrough)" do
+      msg = build_msg(%{text: "flat slice still works"})
+      event = chat_send_event(msg, prev_cursor: 0)
+      assert {:publish, [{:lark_text, text}]} = FeishuAdapter.event_to_payload(event)
+      assert text =~ "flat slice still works"
+    end
+  end
+
   describe "target_ownership_check/2 — no Feishu identity" do
     test "returns {:error, :no_feishu_identity} when caller has no open_id binding" do
       # The test caller is never bound (no row in feishu_user_bindings).

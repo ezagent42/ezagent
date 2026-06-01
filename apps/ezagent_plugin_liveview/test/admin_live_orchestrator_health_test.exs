@@ -43,6 +43,29 @@ defmodule EzagentPluginLiveview.AdminLiveOrchestratorHealthTest do
       :error -> :ok = Ezagent.WorkspaceRegistry.bind(@main_session_uri, @main_workspace_uri)
     end
 
+    # Pre-create the main session so AdminLive.ensure_main_session is a
+    # no-op at mount. The mount otherwise lazily creates the session via
+    # `create_session/3`, which AUTO-SPAWNS a live cc-orchestrator —
+    # resurrecting the very orchestrator each `:not_spawned` / `:crashed`
+    # test tore down, so `classify/1` always reported `:alive`. With the
+    # session already live, the mount skips creation and each test's
+    # `ensure_no_orchestrator/1` (which now properly terminates the
+    # orchestrator Kind, not just kills the supervised pid) survives.
+    # (post-lifecycle remediation.)
+    case Ezagent.KindRegistry.lookup(@main_session_uri) do
+      {:ok, _pid} ->
+        :ok
+
+      :error ->
+        {:ok, _spawned, _meta} =
+          EzagentDomainChat.create_session("main", Ezagent.Entity.User.admin_uri(),
+            template_name: "default",
+            workspace_uri: @main_workspace_uri
+          )
+
+        :ok
+    end
+
     orch_uri =
       Ezagent.Entity.Session.derive_orchestrator_uri(
         @main_session_uri,
@@ -212,19 +235,21 @@ defmodule EzagentPluginLiveview.AdminLiveOrchestratorHealthTest do
     # always start clean.
     KindSnapshot.delete(URI.to_string(orch_uri))
 
-    # If a previous test left a pid registered, kill it so this test
-    # observes :not_spawned (or its own setup).
+    # If a previous test (or the session's auto-spawn) left an
+    # orchestrator registered, terminate the Kind PROPERLY via
+    # `Ezagent.Kind.terminate/1` (DynamicSupervisor.terminate_child) so
+    # it does NOT respawn — a bare `Process.exit(pid, :kill)` only trips
+    # the supervisor, which immediately restarts the orchestrator and the
+    # test keeps observing `:alive`. (post-lifecycle remediation.)
     case KindRegistry.lookup(orch_uri) do
       {:ok, pid} when is_pid(pid) ->
-        if Process.alive?(pid) do
-          ref = Process.monitor(pid)
-          Process.exit(pid, :kill)
+        ref = Process.monitor(pid)
+        _ = Ezagent.Kind.terminate(orch_uri)
 
-          receive do
-            {:DOWN, ^ref, :process, ^pid, _} -> :ok
-          after
-            500 -> :ok
-          end
+        receive do
+          {:DOWN, ^ref, :process, ^pid, _} -> :ok
+        after
+          500 -> :ok
         end
 
       :error ->

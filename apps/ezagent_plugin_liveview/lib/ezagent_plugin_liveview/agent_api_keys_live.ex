@@ -48,7 +48,7 @@ defmodule EzagentPluginLiveview.AgentApiKeysLive do
 
   @impl true
   def mount(%{"uri" => encoded}, _session, socket) do
-    agent_uri = encoded |> URI.decode_www_form() |> Ezagent.URI.parse!()
+    agent_uri = encoded |> URI.decode_www_form() |> Ezagent.URI.new!()
     caller_uri = socket.assigns.current_entity_uri
 
     # SPEC caps-cleanup-v1 §4.4 — admin caps now live in slice.
@@ -106,7 +106,7 @@ defmodule EzagentPluginLiveview.AgentApiKeysLive do
 
       {:ok, _pid} ->
         target =
-          URI.new!("#{URI.to_string(socket.assigns.agent_uri)}?action=identity.list_api_keys")
+          Ezagent.URI.with_action(socket.assigns.agent_uri, :identity, :list_api_keys)
 
         case Invocation.dispatch(%Invocation{
                target: target,
@@ -172,7 +172,7 @@ defmodule EzagentPluginLiveview.AgentApiKeysLive do
   defp authorized?(socket), do: socket.assigns.is_admin? or socket.assigns.creator?
 
   defp dispatch(action, socket, args, success_msg) do
-    target = URI.new!("#{URI.to_string(socket.assigns.agent_uri)}?action=identity.#{action}")
+    target = Ezagent.URI.with_action(socket.assigns.agent_uri, :identity, action)
 
     case Invocation.dispatch(%Invocation{
            target: target,
@@ -205,7 +205,7 @@ defmodule EzagentPluginLiveview.AgentApiKeysLive do
     assigns =
       assign_new(assigns, :current_entity_uri_str, fn ->
         URI.to_string(
-          Map.get(assigns, :current_entity_uri) || Ezagent.URI.parse!("entity://user/system/admin")
+          Map.get(assigns, :current_entity_uri) || Ezagent.URI.new!("entity://user/system/admin")
         )
       end)
 

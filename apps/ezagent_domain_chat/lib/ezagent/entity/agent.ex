@@ -229,7 +229,7 @@ defmodule Ezagent.Entity.Agent do
                 ". Per SPEC #324 rev 3 / PR #335, there is NO silent default workspace " <>
                 "fallback; callers must pass a workspace URI with an explicit name."
 
-    agent_uri = Ezagent.URI.parse!("entity://agent/#{workspace_name}/#{instance_name}")
+    agent_uri = Ezagent.URI.new!("entity://agent/#{workspace_name}/#{instance_name}")
 
     case Ezagent.SpawnRegistry.spawn_detailed(agent_uri) do
       {:ok, :started, pid} ->
@@ -650,7 +650,35 @@ defmodule Ezagent.Entity.Agent do
 
   defp do_record_sandbox_state(workers, config_dir, template_class, respawn_data) do
     Enum.reduce_while(workers, :ok, fn worker_uri, :ok ->
-      target = Ezagent.URI.parse!("#{URI.to_string(worker_uri)}?action=sandbox.write_path")
+      target = Ezagent.URI.new!("#{URI.to_string(worker_uri)}?action=sandbox.write_path")
+
+      # codex E2E fix v2 Bug A (2026-05-29) — the Agent Kind was just
+      # spawned by `template_class.instantiate/3`. `Kind.Server.init/1`
+      # registers `:not_ready` synchronously and returns
+      # `{:continue, :announce_ready}`; the `:ready` flip happens
+      # asynchronously in `handle_continue` after the post-init Behavior
+      # chain runs. The orchestrator-spawn path
+      # (`Session.ensure_orchestrator` → `spawn_from_template_content` →
+      # `record_sandbox_state`) hits this dispatch microseconds after
+      # `start_link` returns — typically before the GenServer's
+      # `handle_continue(:announce_ready, ...)` message has been
+      # processed. A `:call` dispatch in that window fails fast with
+      # `{:error, :not_ready}` (hard invariant #3, so the synchronous
+      # caller doesn't block on `deadline_ms`), and the Sandbox slice's
+      # `respawn_template_data` never gets written — which means
+      # `Sandbox.post_init/2` cannot re-spawn the PTY subprocess on the
+      # next phx restart. Allen e2e symptom 2026-05-28 was
+      # `{:sandbox_write_path_failed, %URI{cc_orchestrator-main},
+      # :not_ready}`.
+      #
+      # `ReadyGate.await/2` is the structural fix — a bounded poll
+      # (5s test-tolerance bound; production typically resolves in
+      # 1-2ms once the post-init chain completes). The wait is only
+      # "best-effort accelerate the success path"; if the bound is
+      # exhausted (impossible in practice except under DBConnection
+      # contention) the dispatch is still attempted and the original
+      # `:not_ready` shape is preserved for callers' error handling.
+      _ = Ezagent.ReadyGate.await(worker_uri, 5_000)
 
       case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
              target: target,

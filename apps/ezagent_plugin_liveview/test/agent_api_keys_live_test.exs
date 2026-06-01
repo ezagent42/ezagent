@@ -33,7 +33,7 @@ defmodule EzagentPluginLiveview.AgentApiKeysLiveTest do
 
   defp spawn_curl_agent do
     agent_uri =
-      URI.parse(
+      Ezagent.URI.new!(
         "entity://agent/team-alpha/curl_apikeys-#{System.unique_integer([:positive])}"
       )
 
@@ -97,8 +97,15 @@ defmodule EzagentPluginLiveview.AgentApiKeysLiveTest do
     # tier-2 fallback when the slice's `:creator_uri` is nil. The
     # full mount-against-conn coverage stays in the admin test; this
     # asserts the resolution layer itself (no LV-conn dependency).
+    # Build the creator URI canonically (`Ezagent.URI.new!`), matching the
+    # representation production uses. AgentLineage now persists URIs as
+    # canonical strings and re-parses them via `Ezagent.URI.new!` on
+    # lookup, so a stdlib `URI.parse/1` here (which sets the deprecated
+    # `:authority` field that the canonical form drops) would fail the
+    # strict `^pin` round-trip. (post-lifecycle remediation: lineage
+    # gained durable string backing; the string round-trip canonicalizes.)
     creator_uri =
-      URI.parse("entity://user/team-alpha/creator-#{System.unique_integer([:positive])}")
+      Ezagent.URI.new!("entity://user/team-alpha/creator-#{System.unique_integer([:positive])}")
 
     agent_uri = spawn_curl_agent()
     :ok = Ezagent.AgentLineage.record(agent_uri, creator_uri)

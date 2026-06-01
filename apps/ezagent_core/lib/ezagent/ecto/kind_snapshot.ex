@@ -32,6 +32,11 @@ defmodule Ezagent.Ecto.KindSnapshot do
     # the snapshotted Kind URI via `Ezagent.Persistence.workspace_uri_for!/1`.
     # Stored as canonical `workspace://<name>` string.
     field :workspace_uri, :string
+    # Lifecycle Phase A (SPEC 2026-05-29 §9 OQ-1) — the ever-created
+    # marker. `false` until `Ezagent.Lifecycle.create/1` has run for
+    # this URI; the boot path uses it to run `create` once vs `activate`
+    # every start. Cleared (row deleted) by `destroy/2`.
+    field :ever_created, :boolean, default: false
     field :inserted_at, :utc_datetime_usec
     field :updated_at, :utc_datetime_usec
   end
@@ -80,12 +85,22 @@ defmodule Ezagent.Ecto.KindSnapshot do
   caller from the Kind URI (entity URI carries it as path segment;
   session URI looked up via `WorkspaceRegistry`; workspace URI is
   itself). The column is NOT NULL — caller MUST supply.
+
+  ## `opts[:mark_ever_created]` (Lifecycle Phase A — SPEC §9 OQ-1, F3)
+
+  When `true`, the `ever_created` column is set to `true` in the SAME
+  `INSERT`/`UPDATE` as the state binary — atomic with the initial Lifecycle
+  snapshot persist. This closes the create-re-run window: there is no
+  longer a separate fire-and-forget marker write that a crash could land
+  AFTER the snapshot but BEFORE the marker. When the opt is absent /
+  `false`, the column is left untouched (an UPDATE of an already-created
+  row keeps its `true`; a fresh row defaults to `false`).
   """
-  @spec upsert(String.t(), String.t(), binary(), non_neg_integer(), String.t()) ::
+  @spec upsert(String.t(), String.t(), binary(), non_neg_integer(), String.t(), keyword()) ::
           {:ok, %__MODULE__{}} | {:error, term()}
-  def upsert(uri_str, kind_type_str, binary, version, workspace_uri_str)
+  def upsert(uri_str, kind_type_str, binary, version, workspace_uri_str, opts \\ [])
       when is_binary(uri_str) and is_binary(kind_type_str) and is_binary(binary) and
-             is_integer(version) and is_binary(workspace_uri_str) do
+             is_integer(version) and is_binary(workspace_uri_str) and is_list(opts) do
     now = DateTime.utc_now()
 
     attrs = %{
@@ -97,6 +112,13 @@ defmodule Ezagent.Ecto.KindSnapshot do
       workspace_uri: workspace_uri_str,
       updated_at: now
     }
+
+    attrs =
+      if Keyword.get(opts, :mark_ever_created, false) do
+        Map.put(attrs, :ever_created, true)
+      else
+        attrs
+      end
 
     do_upsert_with_retry(uri_str, attrs, now, _attempt = 0)
   end
@@ -155,6 +177,52 @@ defmodule Ezagent.Ecto.KindSnapshot do
   def delete(uri_str) when is_binary(uri_str) do
     from(s in __MODULE__, where: s.uri == ^uri_str) |> Repo.delete_all()
     :ok
+  end
+
+  @doc """
+  Lifecycle Phase A (SPEC 2026-05-29 §9 OQ-1) — read the ever-created
+  marker for `uri_str`.
+
+  Returns `true` iff a snapshot row exists for the URI AND its
+  `ever_created` column is `true`. A missing row means the URI was
+  never created (or its `destroy/2` cleared it), so this returns
+  `false` — the boot path must run `create/1`.
+
+  This is the durable source of truth the Lifecycle boot path consults
+  to decide `create` (once) vs `activate` (every start). It is robust
+  to a legitimately-empty initial `state` (the column is independent of
+  state content — that is exactly why OQ-1 chose a dedicated column over
+  "snapshot-row-exists").
+  """
+  @spec ever_created?(String.t()) :: boolean()
+  def ever_created?(uri_str) when is_binary(uri_str) do
+    case Repo.get(__MODULE__, uri_str) do
+      %__MODULE__{ever_created: true} -> true
+      _ -> false
+    end
+  end
+
+  @doc """
+  Lifecycle Phase A (SPEC 2026-05-29 §9 OQ-1) — flip the ever-created
+  marker to `true` for an EXISTING snapshot row.
+
+  Called by the Lifecycle boot path AFTER `create/1` has run and the
+  initial `state` has been durably persisted (so the marker is never
+  set ahead of the state it gates). A no-op `{:error, :no_row}` if the
+  row does not exist yet (the caller persists state first via the
+  normal `upsert/5` path, then marks).
+  """
+  @spec mark_ever_created(String.t()) :: {:ok, %__MODULE__{}} | {:error, term()}
+  def mark_ever_created(uri_str) when is_binary(uri_str) do
+    case Repo.get(__MODULE__, uri_str) do
+      nil ->
+        {:error, :no_row}
+
+      row ->
+        row
+        |> Ecto.Changeset.change(%{ever_created: true, updated_at: DateTime.utc_now()})
+        |> Repo.update()
+    end
   end
 
   @doc """

@@ -33,9 +33,9 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeCatchupTest do
   `subscribe_from`; Publisher replays every ring event with
   `cursor > persisted` BEFORE returning. Replay messages land in the
   Worker's mailbox, self-dispatch through the normal `:publish` path,
-  hit the same `last_published_message_id` dedupe — so duplicate
-  replays (e.g. on snapshot churn) do not produce duplicate Feishu
-  posts.
+  hit the same `last_published_send_key` (`{msg.id, send_cursor}`)
+  dedupe — so duplicate replays (e.g. on snapshot churn) do not produce
+  duplicate Feishu posts.
 
   ## Test shape (independent of cold-spawn end-to-end)
 
@@ -50,9 +50,10 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeCatchupTest do
      — simulating the post-`reconcile_after_load` state without
      terminating the Session (so the same publisher `:cursor` keeps
      ticking).
-  3. Fire a slice mutation (`chat.join`). The Publisher appends to
-     `:ring` with `cursor = N+1` and fans out to the (now-empty)
-     subscribers map — silent drop.
+  3. Fire a slice mutation (`chat.send`, carrying a real
+     `{msg.id, send_cursor}`). The Publisher appends to `:ring` with
+     `cursor = N+1` and fans out to the (now-empty) subscribers map —
+     silent drop.
   4. Manually invoke `Ezagent.PublisherLifecycle.broadcast_alive/1`
      to trigger the Worker's re-subscribe handler.
   5. Assert the Worker eventually publishes the missed event.
@@ -61,7 +62,11 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeCatchupTest do
   at `:latest`, no replay, the event is gone).
   """
 
-  use ExUnit.Case, async: false
+  # Remediation P6 (sandbox isolation): spawns Session/Worker Kinds that run
+  # Repo queries in other processes; `EzagentCore.DataCase` provides the
+  # shared sandbox owner + P6 drain so they don't hit
+  # `DBConnection.OwnershipError`. See WorkerPublishTest for the full note.
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.ExternalMirror.{
     AdapterRegistry,
@@ -143,20 +148,30 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeCatchupTest do
       # is identical regardless of HOW the subscribers map got cleared.
       {:ok, session_pid} = Ezagent.KindRegistry.lookup(session_uri)
 
+      # Post-lifecycle migration (remediation 2026-05-30): `subscribers` +
+      # `monitors` are TRANSIENTS on the `:publisher` slice
+      # (`%{state: …, transients: %{subscribers, monitors}}`), not flat slice
+      # fields. Clear them in the `transients` container — writing the old
+      # flat keys raises `{:badkey, :monitors}`. This simulates the
+      # empty-fanout window (the same state a cold-spawned Session loads,
+      # where `activate/2` rebuilds `subscribers`/`monitors` empty).
       :sys.replace_state(session_pid, fn kind_state ->
         publisher_slice = kind_state.state.publisher
-        cleared_publisher = %{publisher_slice | subscribers: %{}, monitors: %{}}
+        cleared_transients = %{publisher_slice.transients | subscribers: %{}, monitors: %{}}
+        cleared_publisher = %{publisher_slice | transients: cleared_transients}
         new_state = %{kind_state.state | publisher: cleared_publisher}
         %{kind_state | state: new_state}
       end)
 
       # ----- emit one event INTO the empty subscribers map ----------------
       #
-      # `chat.join` mutates `:chat.members` → SliceChange fires →
-      # Publisher's `handle_kind_message/3` appends to `:ring` at
-      # `cursor = N+1` and fans out to `subscribers = %{}` (no-op).
-      # The Worker (subscribed to the lifecycle topic but NOT to the
-      # publisher) sees nothing.
+      # `chat.send` mutates `:chat` (last_message / last_message_id /
+      # send_cursor) → SliceChange fires → Publisher's
+      # `handle_kind_message/3` appends to `:ring` at `cursor = N+1` and
+      # fans out to `subscribers = %{}` (no-op). The Worker (subscribed to
+      # the lifecycle topic but NOT to the publisher) sees nothing. Because
+      # the event carries a real `{msg.id, send_cursor}`, the replayed copy
+      # traverses the Worker's populated composite-dedupe path on catch-up.
       send_chat_to_session(session_uri)
 
       # Brief wait for SliceChange / Publisher append. The event is now
@@ -165,16 +180,22 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeCatchupTest do
 
       # Sanity: publisher's `:cursor` has advanced past the worker's
       # persisted cursor — there IS something to catch up on.
+      # Post-lifecycle migration (remediation 2026-05-30): `cursor` is a
+      # PERSISTENT field (T3-normalized `get_slice` view), while `subscribers`
+      # is a TRANSIENT — read the latter from the `transients` container via
+      # `get_raw_slice/2` (the `get_slice` view hides it).
       {:ok, publisher_slice_mid} = Ezagent.Kind.get_slice(session_uri, :publisher)
+      {:ok, %{transients: publisher_transients_mid}} =
+        Ezagent.Kind.get_raw_slice(session_uri, :publisher)
 
       assert publisher_slice_mid.cursor > cursor_at_window_start,
              "test pre-condition broken — the slice change in the empty-fanout window " <>
                "did not advance the publisher cursor. Worker cursor=#{cursor_at_window_start}, " <>
                "publisher cursor=#{publisher_slice_mid.cursor}. SliceChange may not be firing."
 
-      assert publisher_slice_mid.subscribers == %{},
+      assert publisher_transients_mid.subscribers == %{},
              "test pre-condition broken — subscribers should still be empty (the missed " <>
-               "event happened with no subscribers). Found: #{inspect(publisher_slice_mid.subscribers)}"
+               "event happened with no subscribers). Found: #{inspect(publisher_transients_mid.subscribers)}"
 
       # Re-register the observer (some test infra paths can flush it).
       MockPublishBinding.register_observer(target_id, self())
@@ -246,9 +267,15 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeCatchupTest do
 
       # Move the worker's persisted cursor to 0 (older than the
       # ring's current contents which is cursor=1+).
+      #
+      # Lifecycle migration (Phase B): the worker slice is now the
+      # two-container `%{state: %{...}, transients: %{...}}` shape, and
+      # `publisher_cursor` is a PERSISTENT field — so mutate it under
+      # `.state` (not the top level).
       :sys.replace_state(worker_pid, fn kind_state ->
         worker_slice = kind_state.state.external_mirror_worker
-        new_worker_slice = %{worker_slice | publisher_cursor: 0}
+        new_worker_state = %{worker_slice.state | publisher_cursor: 0}
+        new_worker_slice = %{worker_slice | state: new_worker_state}
         new_state = %{kind_state.state | external_mirror_worker: new_worker_slice}
         %{kind_state | state: new_state}
       end)
@@ -270,12 +297,17 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeCatchupTest do
           }
         ]
 
+        # Post-lifecycle migration (remediation 2026-05-30): split the
+        # persistent fields (`ring`/`cursor`, under `.state`) from the
+        # transient bookkeeping (`subscribers`/`monitors`, under
+        # `.transients`). A flat update raises `{:badkey, :monitors}`.
+        new_pub_state = %{publisher_slice.state | ring: synthetic_ring, cursor: 100}
+        new_pub_transients = %{publisher_slice.transients | subscribers: %{}, monitors: %{}}
+
         cleared_publisher = %{
           publisher_slice
-          | subscribers: %{},
-            monitors: %{},
-            ring: synthetic_ring,
-            cursor: 100
+          | state: new_pub_state,
+            transients: new_pub_transients
         }
 
         new_state = %{kind_state.state | publisher: cleared_publisher}
@@ -292,11 +324,14 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeCatchupTest do
       # subscribers map.
       Process.sleep(300)
 
-      {:ok, publisher_slice_after} = Ezagent.Kind.get_slice(session_uri, :publisher)
+      # `subscribers` is a TRANSIENT (remediation 2026-05-30) — read it from
+      # the `transients` container via `get_raw_slice/2`.
+      {:ok, %{transients: publisher_transients_after}} =
+        Ezagent.Kind.get_raw_slice(session_uri, :publisher)
 
-      assert map_size(publisher_slice_after.subscribers) >= 1,
+      assert map_size(publisher_transients_after.subscribers) >= 1,
              "Out-of-window fallback did not re-subscribe the worker at :latest. " <>
-               "subscribers=#{inspect(publisher_slice_after.subscribers)}"
+               "subscribers=#{inspect(publisher_transients_after.subscribers)}"
 
       # Sanity: worker is still alive (no crash).
       assert Process.alive?(worker_pid),
@@ -331,27 +366,36 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeCatchupTest do
     :ok
   end
 
+  # PR #420 codex r4 MED (2026-06-01): use `chat.send` (NOT `chat.join`).
+  #
+  # `chat.send` mutates the `:chat` slice with `last_message` +
+  # `last_message_id` + `send_cursor` (PR-EM-6-PRE), so the publisher
+  # event carries a real `{msg.id, send_cursor}` composite — the Worker's
+  # dedupe path is exercised with a POPULATED key. `chat.join` only touches
+  # `:members`, leaving `extract_event_send_key/1` to return nil so the
+  # dedupe cond never engaged (the catchup assertion passed vacuously w.r.t.
+  # dedupe). Each call mints a FRESH msg.id + bumped send_cursor (monotonic
+  # via the live slice), so successive sends are distinct events.
+  #
+  # No recipients/mentions → the send just persists + mutates the slice
+  # (firing SliceChange) without needing any member to be present.
   defp send_chat_to_session(%URI{} = session_uri) do
-    member_uri =
+    sender_uri =
       URI.parse("entity://user/team-alpha/em-catchup-#{System.unique_integer([:positive])}")
 
-    user_module = Module.concat([Ezagent, Entity, User])
-
-    case apply(Ezagent.Kind, :spawn, [
-           user_module,
-           %{uri: member_uri, initial_caps: MapSet.new()}
-         ]) do
-      {:ok, _pid} -> :ok
-      {:error, {:already_started, _pid}} -> :ok
-    end
+    msg =
+      Ezagent.Message.new(
+        sender_uri,
+        %{text: "catchup-#{System.unique_integer([:positive])}"}
+      )
 
     admin_uri = URI.parse("entity://user/system/admin")
-    target = URI.parse("#{URI.to_string(session_uri)}?action=chat.join")
+    target = URI.parse("#{URI.to_string(session_uri)}?action=chat.send")
 
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
       target: target,
       mode: :call,
-      args: %{member: member_uri},
+      args: %{message: msg},
       ctx: %{caller: admin_uri, caps: admin_caps(), reply: :ignore}
     })
   end

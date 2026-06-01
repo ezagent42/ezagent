@@ -101,7 +101,7 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
   """
   @spec seed() :: :ok
   def seed do
-    uri = Ezagent.URI.parse!(@template_uri)
+    uri = Ezagent.URI.new!(@template_uri)
 
     # `ensure_sandbox_files/0` raises `InstallError` on a bridge/schema
     # install failure — deliberately NOT caught here.
@@ -145,7 +145,7 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
   """
   @spec seed_status() :: {:ok | :partial | :missing, map()}
   def seed_status do
-    uri = Ezagent.URI.parse!(@template_uri)
+    uri = Ezagent.URI.new!(@template_uri)
 
     case Ezagent.KindRegistry.lookup(uri) do
       :error ->
@@ -170,8 +170,17 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
   # `:sys.get_state` returns the Kind.Server state map; slice data lives
   # under the `:state` key (per `Ezagent.Kind.Server` shape — confirmed
   # via :sys.get_state on a live AgentTemplate pid).
+  #
+  # Lifecycle migration (SPEC 2026-05-29): `Ezagent.Behavior.Template`
+  # now `use Ezagent.Lifecycle`, so the `:template` slice is the
+  # two-container `%{state: %{content: ...}, transients: %{}}` shape (the
+  # framework persists only `:state`; `:content` is fully persistent).
+  # Match the two-container form FIRST, then fall back to the legacy flat
+  # `%{content: ...}` (a pre-migration snapshot / non-Lifecycle Behavior).
   defp read_template_slice(pid) do
     case :sys.get_state(pid, 500) do
+      %{state: %{template: %{state: %{content: content}}}} when is_map(content) -> content
+      %{state: %{template: %{state: %{content: nil}}}} -> %{}
       %{state: %{template: %{content: content}}} when is_map(content) -> content
       %{state: %{template: %{content: nil}}} -> %{}
       _ -> %{}
@@ -385,7 +394,7 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
       created_at: DateTime.utc_now()
     }
 
-    target = Ezagent.URI.parse!("#{URI.to_string(uri)}?action=template.write")
+    target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=template.write")
 
     case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
            target: target,

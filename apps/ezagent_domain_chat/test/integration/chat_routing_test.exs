@@ -11,22 +11,37 @@ defmodule EzagentDomainChat.Integration.ChatRoutingTest do
 
   # Non-async — we share the live Session GenServer + EzagentCore.Repo across
   # examples and the :DOWN test will pollute the shared Session's slice.
-  use ExUnit.Case
+  #
+  # EzagentCore.DataCase (not bare ExUnit.Case): its setup_sandbox installs
+  # the P6 drain-live-kinds teardown — before this test's sandbox owner is
+  # stopped, EVERY globally-registered Kind (incl. the boot-time main
+  # Session) is synchronously drained so no in-flight DB query outlives the
+  # owner. Without it, a concurrent async test's owner-exit reverted the
+  # shared connection mid-query and crashed the Session with a
+  # DBConnection.OwnershipError, dropping the :chat_message broadcast.
+  use EzagentCore.DataCase, async: false
   alias Ezagent.{Invocation, KindRegistry, Message, MessageStore}
   alias Ezagent.Behavior.Chat
   alias Ezagent.Entity.{Session, User}
-  alias EzagentCore.Repo
 
   setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(Repo, {:shared, self()})
+    # session://default/system/main is a DynamicSupervisor child spawned
+    # ONCE at chat-app boot — NOT a permanent static child. Under the full
+    # concurrent umbrella run another test can terminate it before these
+    # examples run, so the boot-time seed is not guaranteed live (the
+    # "admin landed in members" + "send→broadcast→receive" assertions then
+    # see a dead/absent Session). Ensure it via the idempotent
+    # create_session facade (adopts the existing Session if alive).
+    _ =
+      EzagentDomainChat.create_session("main", User.admin_uri(), template_name: "default")
+
     :ok
   end
 
   test "admin User landed in session://default/system/main members after boot" do
     {:ok, session_pid} = KindRegistry.lookup(Session.default_uri())
 
-    %{state: %{chat: chat_slice}} = :sys.get_state(session_pid)
+    %{state: %{chat: %{state: chat_slice}}} = :sys.get_state(session_pid)
 
     assert Map.has_key?(chat_slice.members, User.admin_uri()),
            "expected admin User in Session members; got #{inspect(chat_slice.members)}"
@@ -80,7 +95,7 @@ defmodule EzagentDomainChat.Integration.ChatRoutingTest do
     # GenServer, so by the time it returns any prior handle_cast
     # (including commit_and_notify's Snapshot.commit) has drained.
     {:ok, session_pid} = KindRegistry.lookup(session_uri)
-    %{state: %{chat: chat_slice}} = :sys.get_state(session_pid)
+    %{state: %{chat: %{state: chat_slice}}} = :sys.get_state(session_pid)
     assert chat_slice.last_message_id == msg.id
   end
 
@@ -101,7 +116,7 @@ defmodule EzagentDomainChat.Integration.ChatRoutingTest do
       })
 
     # Allow cast to process
-    %{state: %{chat: pre_kill_slice}} = :sys.get_state(session_pid)
+    %{state: %{chat: %{state: pre_kill_slice}}} = :sys.get_state(session_pid)
     assert pre_kill_slice.members[transient_uri].online == true
 
     # Kill the transient process; Session.Process.monitor fires :DOWN.
@@ -112,7 +127,7 @@ defmodule EzagentDomainChat.Integration.ChatRoutingTest do
 
     post_kill_slice =
       wait_until(fn ->
-        %{state: %{chat: s}} = :sys.get_state(session_pid)
+        %{state: %{chat: %{state: s}}} = :sys.get_state(session_pid)
         if s.members[transient_uri].online == false, do: s, else: nil
       end)
 

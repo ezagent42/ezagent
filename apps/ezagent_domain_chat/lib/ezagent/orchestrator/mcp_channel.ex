@@ -57,6 +57,18 @@ defmodule Ezagent.Orchestrator.McpChannel do
 
   alias Ezagent.Orchestrator.McpServer
 
+  # 2026-05-31 orchestrator-startup-atomicity §5 — the async readiness
+  # signal. A LIVE claude orchestrator's stdio bridge JOINing this Channel
+  # (and resolving to a registered `%McpServer{}`) is the SINGLE definitive
+  # signal that the orchestrator is functional end-to-end (PTY up → claude
+  # up → MCP bridge up → registered). The creating process (the §5 30s
+  # gate in `Ezagent.Entity.Session.ensure_orchestrator/3`) subscribes to
+  # this topic BEFORE spawning the PTY, then `receive`s filtered by URI.
+  @orch_lifecycle_topic "orch:lifecycle"
+
+  @doc "PubSub topic the readiness signal is broadcast on (§5)."
+  def lifecycle_topic, do: @orch_lifecycle_topic
+
   @impl true
   def join("orch:bridge:" <> topic_uri, _params, socket) do
     claimed = topic_uri
@@ -72,6 +84,31 @@ defmodule Ezagent.Orchestrator.McpChannel do
       true ->
         case McpServer.from_orchestrator_uri(socket.assigns.agent_uri) do
           {:ok, %McpServer{} = mcp} ->
+            # 2026-05-31 orchestrator-startup-atomicity §5 — record the
+            # live-join as DURABLE STATE. This is the SINGLE definitive
+            # confirmation the orchestrator is functional end-to-end
+            # (PTY up → claude up → MCP bridge up → registered). The §5
+            # startup gate (`Session.await_orchestrator_ready/3`) POLLS
+            # `LiveJoinRegistry.joined?/1` on a bounded loop, so it cannot
+            # miss a join that already happened — the fire-once broadcast
+            # below was lost whenever the gate's `receive` was not yet
+            # parked, killing a working orchestrator + rolling back create
+            # with empty members.
+            :ok = Ezagent.Orchestrator.LiveJoinRegistry.mark_joined(socket.assigns.agent_uri)
+
+            # KEEP the broadcast as an INSTANT-WAKE optimization for the
+            # poll. The URI is the token-authenticated `agent_uri` (== the
+            # registered orchestrator URI); the gate filters by it.
+            # Fire-and-forget — a no-subscriber broadcast is a harmless
+            # no-op (the gate may not be running, e.g. a reconnect after a
+            # prior successful create).
+            :ok =
+              Phoenix.PubSub.broadcast(
+                EzagentCore.PubSub,
+                @orch_lifecycle_topic,
+                {:orchestrator_ready, socket.assigns.agent_uri}
+              )
+
             {:ok, assign(socket, :mcp, mcp)}
 
           {:error, reason} ->
@@ -119,4 +156,24 @@ defmodule Ezagent.Orchestrator.McpChannel do
   end
 
   def handle_in(_event, _params, socket), do: {:noreply, socket}
+
+  # 2026-05-31 orchestrator-startup-atomicity §5 — on bridge disconnect,
+  # CLEAR the durable live-join state so a stale row from a dead
+  # incarnation never satisfies a future startup gate. `socket.assigns`
+  # carries the token-authenticated `:agent_uri` from `McpSocket.connect/3`
+  # (set before `join/3`); a socket that never joined still has it, so the
+  # clear is safe + idempotent. Best-effort — `LiveJoinRegistry.clear/1`
+  # tolerates an absent row.
+  @impl true
+  def terminate(_reason, socket) do
+    case socket.assigns do
+      %{agent_uri: %URI{} = agent_uri} ->
+        Ezagent.Orchestrator.LiveJoinRegistry.clear(agent_uri)
+
+      _ ->
+        :ok
+    end
+
+    :ok
+  end
 end

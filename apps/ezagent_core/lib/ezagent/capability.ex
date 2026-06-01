@@ -323,7 +323,7 @@ defmodule Ezagent.Capability do
   # WHY this is the correct equality:
   #
   #   URI.parse/1 (deprecated since Elixir 1.13) sets the legacy
-  #   `authority` field; URI.new/1 (which `Ezagent.URI.parse!/1` uses)
+  #   `authority` field; URI.new/1 (which `Ezagent.URI.new!/1` uses)
   #   leaves `authority: nil`. Both yield identical canonical strings
   #   for the same URI, but as structs they differ. Held caps are
   #   deserialized from `users.caps_json` / `kind_snapshots` via
@@ -828,7 +828,7 @@ defmodule Ezagent.Capability do
   end
 
   defp parse_granter(%URI{} = uri), do: uri
-  defp parse_granter(s) when is_binary(s), do: Ezagent.URI.parse!(s)
+  defp parse_granter(s) when is_binary(s), do: Ezagent.URI.new!(s)
 
   defp parse_granter(other) do
     raise ArgumentError,
@@ -896,7 +896,7 @@ defmodule Ezagent.Capability do
   # and crashes anyway; we raise with context).
   defp decode_uri_or_any_strict!("any", _field), do: :any
 
-  defp decode_uri_or_any_strict!(s, _field) when is_binary(s), do: Ezagent.URI.parse!(s)
+  defp decode_uri_or_any_strict!(s, _field) when is_binary(s), do: Ezagent.URI.new!(s)
 
   defp decode_uri_or_any_strict!(other, field) do
     raise ArgumentError,
@@ -974,7 +974,7 @@ defmodule Ezagent.Capability do
   defp uri_or_any_to_string(%URI{} = u), do: URI.to_string(u)
 
   defp string_to_uri_or_any("any"), do: :any
-  defp string_to_uri_or_any(s) when is_binary(s), do: Ezagent.URI.parse!(s)
+  defp string_to_uri_or_any(s) when is_binary(s), do: Ezagent.URI.new!(s)
 
   defp parse_datetime(nil), do: DateTime.utc_now()
 
@@ -1035,4 +1035,35 @@ defmodule Ezagent.Capability do
       workspace_uri: workspace_of(target_uri)
     }
   end
+end
+
+# Remediation SPEC 2026-05-30 C-C: make %Capability{} JSON-encodable so the
+# `{:emit, :cap_granted | :cap_revoked, %{cap: %Capability{}}}` effect actually
+# persists to EventLog. Pre-fix the emit raised `Jason.Encoder not implemented
+# for Ezagent.Capability` and Kind.Runtime swallowed it ("continuing") — every
+# cap-grant/revoke audit event was silently dropped (337+ raises in a single
+# test run). We implement an EXPLICIT encoder (not a blanket EventLog
+# normalization layer, which would mask the NEXT non-encodable struct): URI
+# fields stringify, scope tuples become lists, atoms/DateTime pass through.
+defimpl Jason.Encoder, for: Ezagent.Capability do
+  def encode(%Ezagent.Capability{} = cap, opts) do
+    Jason.Encode.map(
+      %{
+        kind: cap.kind,
+        behavior: json_safe(cap.behavior),
+        action: cap.action,
+        instance: json_safe(cap.instance),
+        workspace_uri: json_safe(cap.workspace_uri),
+        granted_by: json_safe(cap.granted_by),
+        granted_at: cap.granted_at
+      },
+      opts
+    )
+  end
+
+  # URI struct → canonical string; scope tuple → list; everything else
+  # (atoms incl. `:any`, module atoms, strings, DateTime) is Jason-native.
+  defp json_safe(%URI{} = u), do: URI.to_string(u)
+  defp json_safe(t) when is_tuple(t), do: t |> Tuple.to_list() |> Enum.map(&json_safe/1)
+  defp json_safe(v), do: v
 end

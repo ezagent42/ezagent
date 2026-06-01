@@ -54,7 +54,7 @@ defmodule Ezagent.Orchestrator.Tools do
   orchestrator's caller context:
 
       Tools.add_agent_slot("backend-dev",
-        Ezagent.URI.parse!("template://agent/system/cc-backend"),
+        Ezagent.URI.new!("template://agent/system/cc-backend"),
         nil,
         caller: %URI{} = orchestrator_uri,
         caps: caps,
@@ -92,6 +92,20 @@ defmodule Ezagent.Orchestrator.Tools do
   alias Ezagent.Behavior.Chat
   alias Ezagent.Entity.SessionTemplate
   alias Ezagent.Invocation
+
+  # The slot-commit (`upsert_agent_slot`/`drop_agent_slot` →
+  # `write_working_copy`) dispatches `chat.set_working_copy` as a
+  # `mode: :call`, which resolves to a `GenServer.call` against the
+  # Session Kind (see `Ezagent.Invocation` deliver_to_ready/3). The
+  # default `deadline_ms` there is 5_000 — too tight for slow-cold-start
+  # flavors (codex: app-server + bridge sidecar + thread-id file
+  # handshake + PTY commonly exceed 5s). When the Session is mid-spawn,
+  # the 5s default surfaces a spurious `{:exit, {:timeout, GenServer.call}}`
+  # to the caller even though the worker Kind was created and the spawn
+  # continues — wrongly read as failure. A generous, named deadline keeps
+  # the slot-commit honest (still let-it-crash on a genuinely dead
+  # Session — we do NOT swallow the timeout, only lengthen it).
+  @slot_commit_timeout 30_000
 
   @doc "The 7 orchestration tool names. CI gate test pins this list at 7."
   @spec tool_names() :: [atom()]
@@ -320,7 +334,7 @@ defmodule Ezagent.Orchestrator.Tools do
        )
        when is_binary(instance_name) do
     with {:ok, _pid} <- ensure_template_alive(agent_template_uri) do
-      target = Ezagent.URI.parse!("#{URI.to_string(agent_template_uri)}?action=template.instantiate")
+      target = Ezagent.URI.new!("#{URI.to_string(agent_template_uri)}?action=template.instantiate")
 
       case Invocation.dispatch(%Invocation{
              target: target,
@@ -386,7 +400,7 @@ defmodule Ezagent.Orchestrator.Tools do
   - **Slot already absent** → `{:ok, :already_removed}`. No dispatch.
   - **Slot present** → remove from working copy + remove routing rules
     naming the worker (transactional via the round-4 `Repo.transaction`
-    primitive) + terminate the worker via `Behavior.Lifecycle` `:terminate`
+    primitive) + terminate the worker via `Behavior.Terminable` `:terminate`
     (round-5/6). A re-run after a partial failure picks up at whichever
     step did not converge.
 
@@ -396,12 +410,22 @@ defmodule Ezagent.Orchestrator.Tools do
 
   Required `opts`: `:caller`, `:caps`, `:workspace_uri`, `:session_uri`.
 
-  Returns `{:ok, :removed}` or `{:ok, :already_removed}` on success;
-  `{:partial, info}` if some converging step did not complete (e.g.
-  routing-rule removal failed); `{:error, reason}` otherwise.
+  ## Return shape
+
+  - `{:ok, %{status: :removed, deleted_rules: n, repointed_rules: m}}` —
+    slot removed. `deleted_rules` is how many routing rules were
+    cascade-FORCE-DELETED because pruning the worker left them with zero
+    receivers (routing to those rules is LOST — re-adding the slot does
+    NOT restore it; each such delete also emits a `Logger.warning`).
+    `repointed_rules` is how many rules merely had the worker dropped but
+    kept other receivers. (todo #9 — make the silent GC observable.)
+  - `{:ok, :already_removed}` — nothing was recorded; no dispatch.
+  - `{:partial, info}` — some converging step did not complete (e.g.
+    routing-rule removal failed).
+  - `{:error, reason}` — preflight / authorization failure.
   """
   @spec remove_agent_slot(String.t(), keyword()) ::
-          {:ok, :removed | :already_removed}
+          {:ok, :already_removed | %{status: :removed, deleted_rules: non_neg_integer(), repointed_rules: non_neg_integer()}}
           | {:partial, map()}
           | {:error, term()}
   def remove_agent_slot(slot_name, opts \\ []) when is_binary(slot_name) do
@@ -427,9 +451,10 @@ defmodule Ezagent.Orchestrator.Tools do
 
       {_n, _src, nil, _gen} ->
         # Slot recorded but with no live worker URI (legacy / partial).
-        # Just drop the slot tuple; nothing to terminate.
+        # Just drop the slot tuple; nothing to terminate, no routing to
+        # prune → zero rule counts.
         case drop_agent_slot(session_uri, slot_name, caller, caps) do
-          :ok -> {:ok, :removed}
+          :ok -> {:ok, %{status: :removed, deleted_rules: 0, repointed_rules: 0}}
           {:error, reason} -> {:error, reason}
         end
 
@@ -488,14 +513,18 @@ defmodule Ezagent.Orchestrator.Tools do
     errors = []
 
     # Step 2 — remove routing rules naming the worker, transactionally
-    # (round-4 atomic-repoint primitive REUSED for prune).
-    {pending, errors} =
+    # (round-4 atomic-repoint primitive REUSED for prune). The prune now
+    # reports how many rules were cascade-DELETED (last receiver pruned →
+    # routing lost) vs merely REPOINTED — surfaced to the caller so the
+    # silent loss (todo #9) becomes visible in the tool result.
+    {pending, errors, prune_counts} =
       case prune_routing_rules_for(worker_uri) do
-        :ok ->
-          {pending, errors}
+        {:ok, %{deleted_rules: _, repointed_rules: _} = counts} ->
+          {pending, errors, counts}
 
         {:error, reason} ->
-          {[:routing | pending], [{:routing, reason} | errors]}
+          {[:routing | pending], [{:routing, reason} | errors],
+           %{deleted_rules: 0, repointed_rules: 0}}
       end
 
     # Step 3 — drop the slot tuple from the working copy.
@@ -507,7 +536,12 @@ defmodule Ezagent.Orchestrator.Tools do
 
     case {pending, errors} do
       {[], []} ->
-        {:ok, :removed}
+        {:ok,
+         %{
+           status: :removed,
+           deleted_rules: prune_counts.deleted_rules,
+           repointed_rules: prune_counts.repointed_rules
+         }}
 
       _ ->
         {:partial,
@@ -529,7 +563,7 @@ defmodule Ezagent.Orchestrator.Tools do
   # curl, np that never populated), Sandbox short-circuits the cleanup
   # and just schedules termination — safe drop-in for all flavors.
   defp terminate_worker(%URI{} = worker_uri, %URI{} = caller, caps) do
-    target = Ezagent.URI.parse!("#{URI.to_string(worker_uri)}?action=sandbox.destroy")
+    target = Ezagent.URI.new!("#{URI.to_string(worker_uri)}?action=sandbox.destroy")
 
     case Invocation.dispatch(%Invocation{
            target: target,
@@ -594,7 +628,7 @@ defmodule Ezagent.Orchestrator.Tools do
      primitive — KEPT);
   3. **commit the slot tuple** to the new (template_uri, worker_uri,
      generation+1) via the `chat.set_working_copy` dispatch;
-  4. **terminate the OLD worker** via `Behavior.Lifecycle` `:terminate`
+  4. **terminate the OLD worker** via `Behavior.Terminable` `:terminate`
      — only after routing AND slot both name the new worker.
 
   Steps 2-4 each leave the system in a forward-progress state; a
@@ -1001,7 +1035,7 @@ defmodule Ezagent.Orchestrator.Tools do
   # BEFORE any destructive step.
   defp preflight_template_read(%URI{} = agent_template_uri, %URI{} = caller, caps) do
     with {:ok, _pid} <- ensure_template_alive(agent_template_uri),
-         target <- Ezagent.URI.parse!("#{URI.to_string(agent_template_uri)}?action=template.read"),
+         target <- Ezagent.URI.new!("#{URI.to_string(agent_template_uri)}?action=template.read"),
          {:ok, result} <-
            Invocation.dispatch(%Invocation{
              target: target,
@@ -1053,7 +1087,7 @@ defmodule Ezagent.Orchestrator.Tools do
                 "fallback; callers must pass a workspace URI with an explicit name."
 
     if is_binary(flavor) and flavor != "" do
-      {:ok, Ezagent.URI.parse!("entity://agent/#{workspace_name}/#{flavor}_#{instance_name}")}
+      {:ok, Ezagent.URI.new!("entity://agent/#{workspace_name}/#{flavor}_#{instance_name}")}
     else
       :no_flavor
     end
@@ -1074,6 +1108,27 @@ defmodule Ezagent.Orchestrator.Tools do
   # every routing rule's receiver set inside ONE `Repo.transaction`.
   # Rules left with zero receivers are also removed (no stale empty
   # rules).
+  #
+  # OBSERVABILITY (todo #9, Allen 2026-06-01) — the cascade delete is a
+  # GC the user explicitly flagged as a SILENT failure: "remove + re-add"
+  # (the intuitive restart-this-worker move) loses ALL routing to a rule
+  # whose ONLY receiver was the pruned worker, and re-adding the slot
+  # does NOT restore it. We do NOT change the GC behavior here — we make
+  # the loss OBSERVABLE:
+  #
+  #   1. every force-deleted rule emits a `Logger.warning` naming the
+  #      rule id, its matcher, and the worker URI being removed;
+  #   2. the cascade-delete + repoint COUNTS are returned to the caller
+  #      so the tool result (and the LLM driving it) sees them.
+  #
+  # Returns `{:ok, %{deleted_rules: n, repointed_rules: m}}` on success,
+  # `{:error, reason}` on a transaction / registry failure.
+  #
+  # RECOMMENDATION (NOT implemented per todo #9 scope): the GC SHOULD
+  # arguably DISABLE the last-receiver rule (set `enabled: false`) rather
+  # than force-delete it, so a subsequent `add_agent_slot` + re-point (or
+  # a dedicated "restore" path) could revive routing. That is a behavior
+  # change, deferred — this PR is observability-only.
   defp prune_routing_rules_for(%URI{} = worker_uri) do
     table = EzagentDomainChat.Routing.MentionRouting
     worker_str = URI.to_string(worker_uri)
@@ -1084,31 +1139,57 @@ defmodule Ezagent.Orchestrator.Tools do
 
         rules
         |> Enum.filter(fn rule -> worker_str in (rule.receivers || []) end)
-        |> Enum.each(fn rule ->
+        |> Enum.reduce_while({[], 0}, fn rule, {deleted_meta, repointed} ->
           remaining =
             (rule.receivers || [])
             |> Enum.reject(fn r -> r == worker_str end)
             |> Enum.uniq()
 
-          result =
+          {result, acc} =
             if remaining == [] do
-              Ezagent.Routing.RuleStore.delete(rule.id, force: true)
+              # LAST receiver pruned → force-delete; routing to this rule is
+              # LOST. We do NOT log inside the transaction — a later
+              # `RuleStore` failure rolls the whole thing back, and an
+              # in-txn warning would falsely claim "routing LOST" for a
+              # delete that never committed (codex 2026-06-01 MED). Capture
+              # the rule id + matcher so the POST-COMMIT warning can name
+              # exactly what disappeared (todo #9 observability).
+              {Ezagent.Routing.RuleStore.delete(rule.id, force: true),
+               {[{rule.id, rule_matcher(rule)} | deleted_meta], repointed}}
             else
-              Ezagent.Routing.RuleStore.update_receivers(rule.id, remaining, rule.enabled)
+              # Rule still has other receivers — merely repoint (not a loss).
+              {Ezagent.Routing.RuleStore.update_receivers(rule.id, remaining, rule.enabled),
+               {deleted_meta, repointed + 1}}
             end
 
           case result do
-            :ok -> :ok
+            :ok -> {:cont, acc}
             {:error, reason} -> EzagentCore.Repo.rollback({:prune_failed, reason})
           end
         end)
-
-        :ok
       end)
 
     case txn do
-      {:ok, :ok} ->
-        reload_registry(table)
+      {:ok, {deleted_meta, repointed}} ->
+        case reload_registry(table) do
+          :ok ->
+            # Transaction committed — NOW it is safe to warn about routing
+            # that was ACTUALLY lost (codex MED: post-commit only). One
+            # warning per force-deleted rule, naming id + matcher + worker.
+            Enum.each(deleted_meta, fn {id, matcher} ->
+              Logger.warning(
+                "remove_agent_slot routing GC: force-deleted routing rule " <>
+                  "id=#{inspect(id)} matcher=#{inspect(matcher)} " <>
+                  "because removing worker #{worker_str} left it with ZERO receivers. " <>
+                  "Routing to this rule is LOST — re-adding the slot does NOT restore it."
+              )
+            end)
+
+            {:ok, %{deleted_rules: length(deleted_meta), repointed_rules: repointed}}
+
+          {:error, _} = err ->
+            err
+        end
 
       {:error, reason} ->
         {:error, reason}
@@ -1118,6 +1199,13 @@ defmodule Ezagent.Orchestrator.Tools do
   catch
     kind, reason -> {:error, {:prune_failed, {kind, reason}}}
   end
+
+  # Matcher accessor for the GC warning — `Ezagent.Routing.RuleStore`
+  # rows carry the matcher AST under `:matcher_data` (Jason-encoded per
+  # `Ezagent.Routing.Matcher.to_json/1`). Defensive `Map.get/3` so a
+  # non-standard row (test double / future shape) degrades to `:unknown`
+  # rather than raising inside the warning.
+  defp rule_matcher(rule), do: Map.get(rule, :matcher_data, :unknown)
 
   # HIGH-1 (round 4) — rewrite every routing rule whose receivers name
   # `old_worker_uri` so they point at `new_worker_uri` instead, inside
@@ -1255,7 +1343,7 @@ defmodule Ezagent.Orchestrator.Tools do
          {:ok, matcher_json} <- normalize_matcher(matcher_ast),
          {:ok, receiver_uris} <-
            resolve_receiver_uris(session_uri, receiver_slot_names, workspace_uri) do
-      target = Ezagent.URI.parse!("#{URI.to_string(session_uri)}?action=routing.add_rule")
+      target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=routing.add_rule")
 
       case Invocation.dispatch(%Invocation{
              target: target,
@@ -1435,7 +1523,7 @@ defmodule Ezagent.Orchestrator.Tools do
       granted_at: DateTime.utc_now()
     }
 
-    target = Ezagent.URI.parse!("#{URI.to_string(owner_uri)}?action=identity.grant_cap")
+    target = Ezagent.URI.new!("#{URI.to_string(owner_uri)}?action=identity.grant_cap")
 
     case Invocation.dispatch(%Invocation{
            target: target,
@@ -1513,7 +1601,7 @@ defmodule Ezagent.Orchestrator.Tools do
   defp filter_rows(rows, kind_type, expected_host, name_filter) do
     rows
     |> Enum.filter(fn row -> row.kind_type == kind_type end)
-    |> Enum.map(fn row -> Ezagent.URI.parse!(row.uri) end)
+    |> Enum.map(fn row -> Ezagent.URI.new!(row.uri) end)
     |> Enum.filter(&template_match?(&1, expected_host, name_filter))
     |> Enum.sort_by(&URI.to_string/1)
   end
@@ -1535,12 +1623,20 @@ defmodule Ezagent.Orchestrator.Tools do
 
   # === internals =========================================================
 
-  defp ctx(%URI{} = caller, caps) do
-    %{
+  defp ctx(%URI{} = caller, caps, opts \\ []) do
+    base = %{
       caller: caller,
       caps: to_cap_set(caps),
       reply: {:caller_inbox, self()}
     }
+
+    # `:deadline_ms` (when given) flows to `Ezagent.Invocation`'s
+    # `GenServer.call` timeout for `mode: :call` dispatches; absent, the
+    # Invocation layer falls back to its own 5s default.
+    case Keyword.get(opts, :deadline_ms) do
+      nil -> base
+      ms when is_integer(ms) and ms > 0 -> Map.put(base, :deadline_ms, ms)
+    end
   end
 
   defp to_cap_set(%MapSet{} = caps), do: caps
@@ -1579,8 +1675,8 @@ defmodule Ezagent.Orchestrator.Tools do
 
     representative =
       case kind do
-        :agent_template -> Ezagent.URI.parse!("template://agent/#{workspace_name}/_catalog")
-        :session_template -> Ezagent.URI.parse!("template://session/#{workspace_name}/_catalog@_")
+        :agent_template -> Ezagent.URI.new!("template://agent/#{workspace_name}/_catalog")
+        :session_template -> Ezagent.URI.new!("template://session/#{workspace_name}/_catalog@_")
       end
 
     needed = %{
@@ -1696,13 +1792,16 @@ defmodule Ezagent.Orchestrator.Tools do
   defp slot_tuple_name(_), do: nil
 
   defp write_working_copy(%URI{} = session_uri, working_copy, %URI{} = caller, caps) do
-    target = Ezagent.URI.parse!("#{URI.to_string(session_uri)}?action=chat.set_working_copy")
+    target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=chat.set_working_copy")
 
+    # The slot-commit write against the Session Kind: use the generous,
+    # named deadline (NOT the implicit 5s) so slow-cold-start flavors
+    # don't trip a spurious `{:exit, {:timeout, GenServer.call}}`.
     case Invocation.dispatch(%Invocation{
            target: target,
            mode: :call,
            args: %{template_working_copy: working_copy},
-           ctx: ctx(caller, caps)
+           ctx: ctx(caller, caps, deadline_ms: @slot_commit_timeout)
          }) do
       {:ok, %{template_working_copy: _}} -> :ok
       {:error, _} = err -> err
@@ -1736,7 +1835,7 @@ defmodule Ezagent.Orchestrator.Tools do
   defp normalize_slot(other), do: other
 
   defp as_uri(%URI{} = u), do: u
-  defp as_uri(s) when is_binary(s), do: Ezagent.URI.parse!(s)
+  defp as_uri(s) when is_binary(s), do: Ezagent.URI.new!(s)
   defp as_uri(other), do: other
 
   defp resolve_slot_worker_uri(%URI{} = session_uri, slot_name, %URI{} = _workspace_uri) do
@@ -1777,7 +1876,7 @@ defmodule Ezagent.Orchestrator.Tools do
 
     orchestrator_template_uri =
       Map.get(wc, :orchestrator_template_uri) ||
-        Ezagent.URI.parse!("template://agent/system/cc-orchestrator")
+        Ezagent.URI.new!("template://agent/system/cc-orchestrator")
 
     default_workspace_uri = Map.get(wc, :default_workspace_uri) || workspace_uri
 
@@ -1808,13 +1907,18 @@ defmodule Ezagent.Orchestrator.Tools do
   defp read_template_working_copy(%URI{} = session_uri) do
     case Ezagent.KindRegistry.lookup(session_uri) do
       {:ok, pid} ->
+        # Lifecycle migration (SPEC 2026-05-29 §2.3C): the Chat slice is now
+        # two-container; unwrap to its persistent `:state` before reading
+        # `template_working_copy` (flat slice falls through unchanged).
         chat_slice =
           pid
           |> :sys.get_state()
           |> Map.get(:state, %{})
           |> Map.get(Chat.state_slice(), %{})
 
-        Chat.template_working_copy(chat_slice)
+        chat_persistent = Map.get(chat_slice, :state, chat_slice)
+
+        Chat.template_working_copy(chat_persistent)
 
       :error ->
         Chat.default_template_working_copy()
