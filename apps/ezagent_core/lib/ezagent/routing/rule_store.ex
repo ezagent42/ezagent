@@ -49,6 +49,12 @@ defmodule Ezagent.Routing.RuleStore do
     field :applies_to_users_json, :string, source: :applies_to_users, default: "[]"
     # Phase 6 PR 8: per-rule workspace scope. nil = applies globally.
     field :workspace_uri, :string
+    # team-routing-unification §3.3: rule-set membership + ordering + the
+    # named prompt template applied at delivery to this rule's receiver.
+    # All nullable/defaulted → existing rows unaffected.
+    field :rule_set, :string
+    field :position, :integer, default: 0
+    field :prompt_template_ref, :string
   end
 
   @type t :: %__MODULE__{
@@ -60,7 +66,11 @@ defmodule Ezagent.Routing.RuleStore do
           created_at: DateTime.t() | nil,
           source: String.t(),
           enabled: boolean(),
-          applies_to_users_json: String.t()
+          applies_to_users_json: String.t(),
+          workspace_uri: String.t() | nil,
+          rule_set: String.t() | nil,
+          position: integer(),
+          prompt_template_ref: String.t() | nil
         }
 
   @system_default "system_default"
@@ -87,20 +97,34 @@ defmodule Ezagent.Routing.RuleStore do
     source = Keyword.get(opts, :source, @admin)
     applies_to_users = Keyword.get(opts, :applies_to_users, []) |> Enum.map(&uri_to_string/1)
     workspace_uri = Keyword.get(opts, :workspace_uri) |> uri_to_string_or_nil()
+    rule_set = Keyword.get(opts, :rule_set)
+    position = Keyword.get(opts, :position, 0)
+    prompt_template_ref = Keyword.get(opts, :prompt_template_ref)
 
-    rule = %__MODULE__{
-      table_name: Atom.to_string(table_name_atom),
-      matcher_data: Ezagent.Routing.Matcher.to_json(matcher_tuple),
-      receivers: receivers_str,
-      created_by: uri_to_string_or_nil(created_by),
-      created_at: DateTime.utc_now(),
-      source: source,
-      enabled: true,
-      applies_to_users_json: Jason.encode!(applies_to_users),
-      workspace_uri: workspace_uri
-    }
+    # team-routing-unification §3.3: a rule in a NAMED rule-set must be
+    # single-receiver (multi-receiver fan-out is expressed as multiple
+    # rules / an explicit broadcast rule). Standalone rules (rule_set nil)
+    # keep the multi-receiver capability.
+    if not is_nil(rule_set) and length(receivers_str) != 1 do
+      {:error, :rule_set_requires_single_receiver}
+    else
+      rule = %__MODULE__{
+        table_name: Atom.to_string(table_name_atom),
+        matcher_data: Ezagent.Routing.Matcher.to_json(matcher_tuple),
+        receivers: receivers_str,
+        created_by: uri_to_string_or_nil(created_by),
+        created_at: DateTime.utc_now(),
+        source: source,
+        enabled: true,
+        applies_to_users_json: Jason.encode!(applies_to_users),
+        workspace_uri: workspace_uri,
+        rule_set: rule_set,
+        position: position,
+        prompt_template_ref: prompt_template_ref
+      }
 
-    Repo.insert(rule)
+      Repo.insert(rule)
+    end
   end
 
   @doc """
@@ -161,7 +185,13 @@ defmodule Ezagent.Routing.RuleStore do
             value = %{
               receivers: row.receivers,
               applies_to_users: applies_to_users(row),
-              workspace_uri: row.workspace_uri
+              workspace_uri: row.workspace_uri,
+              # team-routing-unification §3.3/§3.5: carry rule identity +
+              # the prompt-template ref so the Resolver can return them as
+              # matched-rule context (the next PR threads ctx → delivery).
+              rule_id: row.id,
+              rule_set: row.rule_set,
+              prompt_template_ref: row.prompt_template_ref
             }
 
             [{matcher_tuple, value}]
@@ -271,6 +301,13 @@ defmodule Ezagent.Routing.RuleStore do
     case Repo.get(__MODULE__, id) do
       nil ->
         {:error, :not_found}
+
+      %__MODULE__{rule_set: rs} when not is_nil(rs) and length(receivers_str) != 1 ->
+        # team-routing-unification §3.3 (codex 2026-06-01 LOW): the
+        # single-receiver invariant for a NAMED rule-set rule holds at the
+        # mutation boundary too, not just on insert — `update_receivers/3`
+        # must not widen a rule-set rule to multi-receiver.
+        {:error, :rule_set_requires_single_receiver}
 
       rule ->
         rule
