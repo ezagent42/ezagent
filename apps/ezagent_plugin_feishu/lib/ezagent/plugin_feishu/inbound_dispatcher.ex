@@ -85,9 +85,18 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
         # (a) disambiguate which session this chat_id targets when the
         # Feishu group hosts multiple orchestrator sessions, and
         # (b) flow into the dispatched Message for MentionRouting.
-        mentions = EzagentPluginFeishu.MentionParser.extract_agent_mentions(body[:text] || "")
+        text = body[:text] || ""
+        mentions = EzagentPluginFeishu.MentionParser.extract_agent_mentions(text)
 
-        case InboundChatLookup.resolve(chat_id, mentions) do
+        # team-routing-unification §3.6 (PR-6, codex 2026-06-01 MED #3): legends
+        # are SESSION-scoped, so a chat bound to multiple sessions that contains
+        # ONLY `@<legend>` (no concrete agent mention) can't be disambiguated by
+        # `mentions` alone. Pass the raw text so `InboundChatLookup.resolve/3`
+        # can resolve the typed tokens against EACH candidate session's legend
+        # registry — a session whose legend the message triggers becomes a
+        # disambiguation candidate (still fail-closed: must narrow to exactly
+        # one).
+        case InboundChatLookup.resolve(chat_id, mentions, text) do
           {:ok, session_uri} ->
             case do_dispatch(session_uri, caller_uri, caps, body, mentions) do
               :ok ->
@@ -217,7 +226,23 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
     # Message.mentions so the existing MentionRouting matcher routes the
     # message ONLY to the mentioned agent rather than fanning out to all
     # members.
-    msg = Ezagent.Message.new(caller_uri, body, mentions: mentions)
+    #
+    # team-routing-unification §3.6 (PR-6): legends are SESSION-scoped, so the
+    # legend-aware re-extraction can only run now that the session is known
+    # (the up-front extraction in dispatch/1 is URI-only — it just helps
+    # disambiguate multi-session chat bindings, where a symbolic legend handle
+    # is irrelevant). Re-extract with this session's legend registry so a
+    # `@legend` becomes a SYMBOLIC legend NAME (carried in the message's virtual
+    # `:legend_triggers`, matched by the rule-set entry's `mention(<name>)`)
+    # instead of silent-dropping through the URI-mention matcher. Empty legends
+    # → identical to the up-front mentions, with no legend triggers.
+    {mentions, legend_triggers} = legend_aware_mentions(session_uri, body, mentions)
+
+    msg =
+      Ezagent.Message.new(caller_uri, body,
+        mentions: mentions,
+        legend_triggers: legend_triggers
+      )
 
     target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=chat.send")
 
@@ -236,6 +261,35 @@ defmodule EzagentPluginFeishu.InboundDispatcher do
       {:ok, _} -> :ok
       :ok -> :ok
       {:error, _} = err -> err
+    end
+  end
+
+  # team-routing-unification §3.6 (PR-6) — legend-aware mention resolution.
+  # Reads the session's legend registry and re-extracts mentions from the body
+  # text so a `@legend` resolves to its symbolic NAME (carried in
+  # `:legend_triggers`, precedence over the URI-mention path). Returns
+  # `{mentions, legend_triggers}`. Falls back to the up-front URI-only
+  # `mentions` (no legend triggers) when the session has no legends OR the text
+  # is unavailable (best-effort — never crashes inbound). The legend reader is a
+  # seam (overridable per-env) so unit tests need not spin up the full Session
+  # Kind tree.
+  @default_legends_reader {Ezagent.Entity.Session, :session_legends}
+  @spec legend_aware_mentions(URI.t(), map(), [URI.t()]) :: {[URI.t()], [String.t()]}
+  defp legend_aware_mentions(%URI{} = session_uri, body, fallback_mentions) do
+    text = Map.get(body, :text) || Map.get(body, "text")
+
+    with true <- is_binary(text),
+         {mod, fun} <-
+           Application.get_env(
+             :ezagent_plugin_feishu,
+             :session_legends_reader,
+             @default_legends_reader
+           ),
+         legends when is_map(legends) and map_size(legends) > 0 <-
+           apply(mod, fun, [session_uri]) do
+      EzagentPluginFeishu.MentionParser.extract_mentions(text, legends)
+    else
+      _ -> {fallback_mentions, []}
     end
   end
 

@@ -689,7 +689,12 @@ defmodule EzagentPluginLiveview.AdminLive do
 
   def handle_event("chat_compose", %{"chat" => %{"text" => text}}, socket)
       when is_binary(text) do
-    mentions = parse_mentions(text, socket.assigns[:member_options] || [])
+    {mentions, legend_triggers} =
+      parse_mentions(
+        text,
+        socket.assigns[:member_options] || [],
+        socket.assigns[:session_legends] || %{}
+      )
 
     File.mkdir_p!(Ezagent.Home.path("uploads"))
 
@@ -734,7 +739,7 @@ defmodule EzagentPluginLiveview.AdminLive do
          gettext("Message text or at least one attachment is required.")
        )}
     else
-      send_chat_message(socket, text, attachments, mentions)
+      send_chat_message(socket, text, attachments, mentions, legend_triggers)
     end
   end
 
@@ -2055,9 +2060,15 @@ defmodule EzagentPluginLiveview.AdminLive do
 
     {orchestrator_health, can_restart?} = compute_orchestrator_health(socket, session_uri)
 
+    # team-routing-unification §3.6 (PR-6) — the session legend registry, so
+    # the chat composer's `parse_mentions/3` can resolve a `@legend` to its
+    # symbolic token (precedence over the URI/bare-member path).
+    session_legends = read_session_legends(session_uri)
+
     socket
     |> assign(:session_members, members)
     |> assign(:member_options, member_options)
+    |> assign(:session_legends, session_legends)
     |> assign(:invite_options, invite_options)
     |> assign(:display_map, display_map)
     |> assign(:applicable_views, applicable)
@@ -2504,6 +2515,81 @@ defmodule EzagentPluginLiveview.AdminLive do
 
   def parse_mentions(_, _), do: []
 
+  # team-routing-unification §3.6 (PR-6) — legend-aware mention parsing.
+  # Consults the session legend registry BEFORE the URI/bare-member path and
+  # returns a `{mentions :: [URI.t()], legend_triggers :: [String.t()]}` pair:
+  #
+  #   * a typed `@<name>` that IS a registered legend is intercepted and
+  #     surfaced as a SYMBOLIC legend NAME in `legend_triggers` — NOT
+  #     pre-canonicalized to concrete URIs. The send path
+  #     (`Behavior.Chat.handle_send`) fires the legend's bound rule-set ENTRY
+  #     rule through the NORMAL Resolver expansion (matching
+  #     `mention(<legend_name>)` against the virtual `Message.legend_triggers`),
+  #     carrying the entry's `prompt_template_ref` AND expanding magic receivers.
+  #     The legend NAME never lands in `:mentions` (not URI-castable).
+  #
+  #   * concrete `@`-mentions resolve from the text with the legend `@<name>`
+  #     tokens STRIPPED FIRST (codex 2026-06-01 MED #4). The previous code
+  #     parsed the FULL text and only rejected resolved URIs whose path SEGMENT
+  #     equaled the legend token — so a member whose mutable `display_name`
+  #     equaled the legend (but whose URI segment differed) still leaked the
+  #     message. Stripping the token text before bare/URI parsing closes that
+  #     by construction: the legend token never reaches the member resolver on
+  #     EITHER the segment or the display-name axis.
+  #
+  # `legends` is the session legend registry (`name => entry`); `%{}` yields
+  # `{parse_mentions(text, members), []}`.
+  @doc false
+  @spec parse_mentions(String.t(), [map()], map()) :: {[URI.t()], [String.t()]}
+  def parse_mentions(text, members, legends)
+      when is_binary(text) and is_list(members) and is_map(legends) do
+    if map_size(legends) == 0 do
+      {parse_mentions(text, members), []}
+    else
+      legend_names =
+        legend_mention_tokens(text)
+        |> Enum.filter(fn name ->
+          match?({:legend, _}, Ezagent.Routing.Legend.mention_token(legends, name))
+        end)
+
+      # Strip the legend `@<token>` occurrences from the text BEFORE concrete
+      # URI/bare resolution, so a legend token can NEVER also resolve to a
+      # member (segment OR display-name axis) — the legend's entry rule wins.
+      stripped_text = strip_legend_tokens(text, legend_names)
+
+      mentions = parse_mentions(stripped_text, members)
+
+      {mentions, legend_names}
+    end
+  end
+
+  def parse_mentions(_, _, _), do: {[], []}
+
+  # Remove every `@<token>` occurrence for the given legend names from the text
+  # (left-boundary aware), so concrete-mention parsing never sees them. The
+  # surrounding text (and any non-legend `@`-mentions) is preserved.
+  defp strip_legend_tokens(text, []), do: text
+
+  defp strip_legend_tokens(text, legend_names) do
+    Enum.reduce(legend_names, text, fn name, acc ->
+      # Escape the legend name (CJK / dotted / hyphenated) for literal match;
+      # same left-boundary rule as the parsers so `foo@legend` isn't touched.
+      re = ~r/(?<![\p{L}\p{N}_])@#{Regex.escape(name)}/u
+      Regex.replace(re, acc, "")
+    end)
+  end
+
+  # Unicode-aware `@<token>` scan used ONLY for legend detection (the legend
+  # name may be CJK — e.g. `@传话游戏` — which the ASCII URI/bare regexes don't
+  # capture). Mirrors the bare-mention boundary rule (no letter/number/_ before
+  # `@`).
+  defp legend_mention_tokens(text) do
+    ~r/(?<![\p{L}\p{N}_])@([\p{L}\p{N}][\p{L}\p{N}._-]*)/u
+    |> Regex.scan(text, capture: :all_but_first)
+    |> List.flatten()
+    |> Enum.uniq()
+  end
+
   defp parse_uri_mentions(text) do
     ~r/@(entity:\/\/[^\s]+)/
     |> Regex.scan(text, capture: :all_but_first)
@@ -2839,6 +2925,18 @@ defmodule EzagentPluginLiveview.AdminLive do
     end
   end
 
+  # team-routing-unification §3.6 (PR-6) — read the session-scoped legend
+  # registry off the `:chat` slice via the T3-normalized accessor (same path
+  # as `read_session_members/1`). Returns `%{}` when the session has none /
+  # isn't live; `Ezagent.Behavior.Chat.legends_of/1` defaults the legacy
+  # (key-absent) shape.
+  defp read_session_legends(%URI{} = session_uri) do
+    case Ezagent.Kind.get_slice(session_uri, :chat) do
+      {:ok, slice} when is_map(slice) -> Ezagent.Behavior.Chat.legends_of(slice)
+      _ -> %{}
+    end
+  end
+
   defp bridge_topic_safely, do: EzagentPluginCc.BridgeRegistry.topic()
 
   # Single-message variant — used by handle_info live deliveries
@@ -2954,12 +3052,13 @@ defmodule EzagentPluginLiveview.AdminLive do
 
   defp sanitize_filename(_), do: "file"
 
-  defp send_chat_message(socket, text, attachments, mentions) do
+  defp send_chat_message(socket, text, attachments, mentions, legend_triggers) do
     msg =
       Ezagent.Message.new(
         socket.assigns.caller_uri,
         %{text: text, attachments: attachments},
-        mentions: mentions
+        mentions: mentions,
+        legend_triggers: legend_triggers
       )
 
     target = Ezagent.URI.with_action(socket.assigns.current_session_uri, :chat, :send)

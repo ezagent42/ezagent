@@ -139,11 +139,17 @@ defmodule Ezagent.Routing.Matcher do
   regex if profiling shows.
   """
   @spec match?(matcher(), Ezagent.Message.t()) :: boolean()
-  def match?({:mention, uri_str}, %Ezagent.Message{mentions: mentions}) do
-    Enum.any?(mentions, fn
-      %URI{} = u -> URI.to_string(u) == uri_str
-      s when is_binary(s) -> s == uri_str
-    end)
+  def match?({:mention, token}, %Ezagent.Message{} = msg) do
+    # A `mention(token)` matcher fires when `token` is in `message.mentions`
+    # (concrete agent/user URIs — the usual case) OR in
+    # `message.legend_triggers` (team-routing §3.6, PR-6 — the SYMBOLIC legend
+    # NAME a rule-set ENTRY rule keys on, e.g. `mention("传话游戏")`). The legend
+    # name CANNOT ride `:mentions` (typed `[URI.t()]`; a CJK / non-URI name
+    # crashes the Ecto cast), so it rides the virtual `:legend_triggers` and is
+    # matched here — letting the entry rule fire through the NORMAL Resolver
+    # expansion (matched-rule ctx + magic-receiver expansion intact).
+    mention_match?(msg.mentions, token) or
+      legend_trigger_match?(Map.get(msg, :legend_triggers) || [], token)
   end
 
   def match?({:from, uri_str}, %Ezagent.Message{sender: sender}) do
@@ -288,4 +294,23 @@ defmodule Ezagent.Routing.Matcher do
   defp extract_text(%{text: t}) when is_binary(t), do: t
   defp extract_text(%{"text" => t}) when is_binary(t), do: t
   defp extract_text(_), do: nil
+
+  # Concrete-URI mention match (the usual `@agent` path).
+  defp mention_match?(mentions, token) when is_list(mentions) do
+    Enum.any?(mentions, fn
+      %URI{} = u -> URI.to_string(u) == token
+      s when is_binary(s) -> s == token
+      _ -> false
+    end)
+  end
+
+  defp mention_match?(_, _), do: false
+
+  # Symbolic legend-name match (team-routing §3.6, PR-6) — the virtual
+  # `legend_triggers` carries plain name strings (e.g. "传话游戏").
+  defp legend_trigger_match?(triggers, token) when is_list(triggers) do
+    Enum.any?(triggers, fn t -> t == token end)
+  end
+
+  defp legend_trigger_match?(_, _), do: false
 end

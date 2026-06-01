@@ -74,6 +74,15 @@ defmodule Ezagent.Routing.Resolver do
     EzagentDomainChat.Routing.MentionRouting
   ]
 
+  @doc """
+  The primary routing table rules (and legend rule-sets) live in. Single source
+  for callers that need to fetch a legend's bound rule-set entry rule via
+  `Ezagent.Routing.Legend.entry_rule/2` (team-routing-unification §3.6, PR-6) —
+  so they don't hard-code the table name.
+  """
+  @spec default_routing_table() :: atom()
+  def default_routing_table, do: hd(@default_routing_tables)
+
   @session_members_token "$session_members"
   @session_users_token "$session_users"
   @mentions_token "$mentions"

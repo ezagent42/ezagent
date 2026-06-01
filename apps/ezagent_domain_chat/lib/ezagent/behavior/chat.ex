@@ -112,6 +112,7 @@ defmodule Ezagent.Behavior.Chat do
   require Logger
 
   alias Ezagent.{Cmd, KindRegistry, Message, MessageStore}
+  alias Ezagent.Routing.Legend
 
   # PR-N3 r4 (Allen 2026-05-25) — bounded cursor-indexed ring depth for
   # the User-branch `:receive` `:recent_messages` ring. SPEC-pinned (NOT
@@ -189,6 +190,21 @@ defmodule Ezagent.Behavior.Chat do
     description:
       "Write the durable template_working_copy field on the Session's :chat " <>
         "slice (the orchestrator's source-template record — Phase 7 SPEC §1.6)"
+
+  # team-routing-unification §3.6 (PR-6) — install/overwrite the session-scoped
+  # legend registry (`name => %{member_set, bound_rule_set, fold}`) on the
+  # Session's :chat slice, alongside :members. Same authority class as
+  # :set_working_copy (orchestrator / system-internal only — a legend fronts a
+  # team + its rule-set, an orchestrator-config concern), so it reuses
+  # `working_copy_write_authorized?/1`.
+  action :set_legends,
+    args: %{legends: :map},
+    returns: %{legends: :map},
+    caps: [:set_legends],
+    modes: [:call],
+    description:
+      "Write the session-scoped legend registry on the Session's :chat slice " <>
+        "(team-routing-unification §3.6, PR-6)"
 
   # `create/1` — FIRST-EVER existence (SPEC 2026-05-29 §2). Builds the
   # PERSISTENT `state`. The macro-injected `init_slice/1` wraps this in
@@ -311,6 +327,12 @@ defmodule Ezagent.Behavior.Chat do
       # (behaviour-preserving). Readers MUST default via
       # `Map.get(slice, :prompt_templates, %{})` for legacy snapshots.
       prompt_templates: %{},
+      # team-routing-unification §3.6 (PR-6): session-scoped legend registry
+      # (`name => %{member_set, bound_rule_set, fold}`). A legend is a symbolic
+      # team handle that fronts a rule-set (resolution layer: `Ezagent.Routing.
+      # Legend`). Empty by default → no legends (behaviour-preserving). Readers
+      # MUST default via `legends_of/1` for legacy snapshots.
+      legends: %{},
       # Phase 7 completion PR-2 (SPEC §1.3 / §1.6) — the durable
       # source-template record for the orchestrator's working copy.
       # `template_working_copy` is template-SHAPED, not live-runtime
@@ -425,6 +447,15 @@ defmodule Ezagent.Behavior.Chat do
   def handle_send(%{message: %Message{} = msg}, ctx) do
     session_uri = ctx[:self_uri]
 
+    # team-routing-unification §3.6 (PR-6): `:legend_triggers` is VIRTUAL, so
+    # the `MessageStore.write/2` round-trip re-fetches a persisted row WITHOUT
+    # it (resets to the `[]` default). Capture it off the ORIGINAL inbound msg
+    # and re-attach to `stored_msg` below so the rule-set ENTRY rule's
+    # `mention(<legend_name>)` matcher fires through the NORMAL Resolver
+    # expansion (carrying the entry's `prompt_template_ref` + expanding magic
+    # receivers like `$session_members`). `[]` → identical to pre-PR-6 routing.
+    legend_triggers = Map.get(msg, :legend_triggers) || []
+
     # 1. Persist — write failure means send failure per DECISIONS
     # impl-time §write-failure; let-it-crash on Repo errors rather than
     # silently dropping the message.
@@ -436,7 +467,10 @@ defmodule Ezagent.Behavior.Chat do
         # new `in_session(session_uri)` matcher (introduced for Feishu
         # binding) return false. Without this fix, in_session-scoped
         # routing rules never fire even when the binding is correct.
-        msg = stored_msg
+        #
+        # Re-attach the virtual legend triggers (lost across the persist
+        # round-trip) so the legend entry rule still matches (PR-6).
+        msg = %{stored_msg | legend_triggers: legend_triggers}
 
         # Phase 4-completion PR 9: Resolver is the SINGLE source of
         # truth for routing decisions. No hardcoded fan-out here — the
@@ -1110,6 +1144,139 @@ defmodule Ezagent.Behavior.Chat do
       {:ok, %{template_working_copy: _} = ok} -> {:ok, ok}
       {:error, _} = err -> err
       other -> {:error, {:unexpected_set_working_copy_result, other}}
+    end
+  end
+
+  # --- :set_legends (team-routing-unification §3.6, PR-6) ----------------
+
+  # Install/overwrite the session-scoped legend registry on the :chat slice.
+  #
+  # ## Authorization (codex 2026-06-01 HIGH #2 — `system_internal` bypass fix)
+  #
+  # `set_legends` is a normal Chat action, so dispatch CapBAC step 5.5 derives
+  # the cap as `{kind: :session, behavior: Chat, instance: <session_uri>}` —
+  # which ANY non-admin session-cap holder holds STRUCTURALLY. So the handler
+  # needs an EXPLICIT extra gate.
+  #
+  # The PRIOR gate (`working_copy_write_authorized?/1`) trusted a
+  # CALLER-SUPPLIED `ctx[:system_internal] == true` boolean. But the runtime
+  # PRESERVES caller ctx before authz, so any dispatch that simply sets
+  # `system_internal: true` in its ctx installed legends — a privilege hole.
+  #
+  # The fix gates on a TRUSTED IDENTITY, not a ctx boolean
+  # (`legends_write_authorized?/1`): the caller must EITHER
+  #
+  #   - be a trusted system principal — `ctx.caller` ∈ a small allowlist
+  #     (`system://session-internal` / `system://orchestrator-tools`), the same
+  #     provenance-setting pattern; the `system_set_legends/2` path dispatches
+  #     under `system://session-internal` so it still works, OR
+  #   - be the session's orchestrator — hold the exact `{:within_session,
+  #     self_uri}` delegated cap (cap #1, granted only by the Generator).
+  #
+  # The `system_internal`-ctx-flag is NO LONGER consulted for legends.
+  def handle_set_legends(%{legends: legends}, ctx) when is_map(legends) do
+    if legends_write_authorized?(ctx) do
+      {:ok, %{legends: legends}, [{:set, :legends, legends}]}
+    else
+      {:error, :unauthorized}
+    end
+  end
+
+  # The trusted-principal allowlist for `set_legends` — installing a legend is
+  # orchestrator/system config (a legend fronts a team + rule-set). Mirrors the
+  # provenance-setting trusted-principal pattern. `set_working_copy` STILL uses
+  # the older `system_internal`-flag gate (`working_copy_write_authorized?/1`) —
+  # codex flagged it shares the same flaw; tracked separately (see report), this
+  # PR fixes `set_legends` properly.
+  @legends_trusted_principals [
+    "system://session-internal",
+    "system://orchestrator-tools"
+  ]
+
+  defp legends_write_authorized?(ctx) do
+    trusted_legends_principal?(ctx) or orchestrator_cap_present?(ctx)
+  end
+
+  # True iff `ctx.caller` is one of the trusted system principals allowed to
+  # install legends. The caller is set by the dispatch path, NOT freely by an
+  # arbitrary user dispatch (a user dispatch carries the user's own
+  # `entity://user/...` caller), so unlike the old `system_internal` boolean
+  # this cannot be spoofed by setting a ctx field.
+  defp trusted_legends_principal?(ctx) do
+    case Map.get(ctx, :caller) do
+      %URI{} = caller -> URI.to_string(caller) in @legends_trusted_principals
+      caller when is_binary(caller) -> caller in @legends_trusted_principals
+      _ -> false
+    end
+  end
+
+  @doc """
+  Read the session-scoped legend registry from a `:chat` slice, defaulting to
+  `%{}` when the key is absent (a pre-PR-6 Session snapshot — see `create/1`).
+  """
+  @spec legends_of(map()) :: Legend.registry()
+  def legends_of(chat_slice) when is_map(chat_slice) do
+    Map.get(chat_slice, :legends, %{})
+  end
+
+  @doc """
+  Resolve a legend NAME against a `:chat` slice's registry to its entry (the
+  bound rule-set handle). Delegates to `Ezagent.Routing.Legend.resolve/2`.
+
+  `{:ok, entry}` (carrying `:bound_rule_set` + `:name`) for a registered
+  legend, `:error` otherwise. team-routing-unification §3.6 (PR-6, GATE a).
+  """
+  @spec resolve_legend(map(), String.t()) :: {:ok, Legend.entry()} | :error
+  def resolve_legend(chat_slice, name) when is_map(chat_slice) and is_binary(name) do
+    Legend.resolve(legends_of(chat_slice), name)
+  end
+
+  @doc """
+  Member-list rows with folded legends collapsed (team-routing-unification
+  §3.6 fold, PR-6, GATE c). Wires this Behavior's `role_name_to_uri/2` into
+  `Ezagent.Routing.Legend.fold_members/3` so a legend's `member_set`
+  role_names resolve to live member URIs. Pure presentation transform — the
+  slice `:members` map is untouched, so every collapsed member stays
+  individually `@`-able.
+
+  Returns `[{:legend, name, [URI.t()]} | {:member, URI.t(), meta}]`.
+  """
+  @spec fold_members(map()) :: [
+          {:legend, String.t(), [URI.t()]} | {:member, URI.t(), map()}
+        ]
+  def fold_members(chat_slice) when is_map(chat_slice) do
+    members = Map.get(chat_slice, :members, %{})
+    legends = legends_of(chat_slice)
+    Legend.fold_members(members, legends, fn role -> role_name_to_uri(members, role) end)
+  end
+
+  @doc """
+  System-internal path to install the legend registry (team-routing-unification
+  §3.6, PR-6). Mirrors `system_set_working_copy/2`: a `chat.set_legends`
+  dispatch under the `system://session-internal` principal. Used by tests and
+  by the PR-7 template materialization path (which installs a template's
+  legends at create_session time, before any orchestrator cap exists).
+
+  Authorization rides the TRUSTED `caller` (`system://session-internal` ∈ the
+  `set_legends` allowlist), NOT a ctx flag (codex 2026-06-01 HIGH #2). The old
+  `system_internal: true` marker is no longer consulted for legends — it is
+  omitted here.
+  """
+  @spec system_set_legends(URI.t(), Legend.registry()) :: {:ok, map()} | {:error, term()}
+  def system_set_legends(%URI{} = session_uri, legends) when is_map(legends) do
+    case Ezagent.Router.dispatch(%Cmd{
+           target: session_uri,
+           action: :set_legends,
+           args: %{legends: legends},
+           ctx: %{
+             caller: Ezagent.SystemPrincipal.uri("session-internal"),
+             caps: Ezagent.SystemPrincipal.caps("system://session-internal"),
+             reply: {:caller_inbox, self()}
+           }
+         }) do
+      {:ok, %{legends: _} = ok} -> {:ok, ok}
+      {:error, _} = err -> err
+      other -> {:error, {:unexpected_set_legends_result, other}}
     end
   end
 

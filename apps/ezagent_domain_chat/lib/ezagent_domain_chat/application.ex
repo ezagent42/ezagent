@@ -666,6 +666,11 @@ defmodule EzagentDomainChat.Application do
     # orchestrator slot tools write the durable `template_working_copy`
     # field via `?action=chat.set_working_copy` on the Session Kind.
     :ok = CapabilityRegistry.register(Session, :set_working_copy, Chat)
+    # team-routing-unification §3.6 (PR-6) — the session-scoped legend
+    # registry is written via `?action=chat.set_legends` on the Session Kind
+    # (orchestrator / system-internal authority — same class as
+    # :set_working_copy; the PR-7 template materialization path will use it).
+    :ok = CapabilityRegistry.register(Session, :set_legends, Chat)
     :ok = CapabilityRegistry.register(User, :receive, Chat)
     :ok = CapabilityRegistry.register(Agent, :receive, Chat)
     # Phase 6 PR 2: Identity behavior registration (list_caps / has_cap?)

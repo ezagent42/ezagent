@@ -117,8 +117,30 @@ defmodule EzagentPluginFeishu.InboundChatLookup do
   """
   @spec resolve(String.t(), [URI.t()]) ::
           {:ok, URI.t()} | {:error, :ambiguous_chat_binding} | :error
-  def resolve(chat_id, mentions)
-      when is_binary(chat_id) and chat_id != "" and is_list(mentions) do
+  def resolve(chat_id, mentions), do: resolve(chat_id, mentions, "")
+
+  @doc """
+  Resolve a Feishu `chat_id` to its bound session URI, using BOTH the
+  inbound message's `@`-mentions AND the raw message text (for
+  session-scoped `@legend` narrowing) to disambiguate when the chat is
+  bound to multiple sessions.
+
+  `text` is the raw inbound message body text. team-routing-unification
+  §3.6 (PR-6, codex 2026-06-01 MED #3): legends are SESSION-scoped, so a
+  shared chat that contains ONLY `@<legend>` (no concrete agent mention)
+  can't be narrowed by `mentions`. For each candidate session, the typed
+  `@`-tokens in `text` are resolved against THAT session's legend registry;
+  a session whose legend the message triggers becomes a candidate, exactly
+  like a session that hosts a mentioned member. Still fail-closed: the
+  combined signal must narrow to EXACTLY one session.
+
+  Pass `text = ""` (or use `resolve/2`) when no body text is available —
+  behaviour then matches the mention-only `resolve/2`.
+  """
+  @spec resolve(String.t(), [URI.t()], String.t()) ::
+          {:ok, URI.t()} | {:error, :ambiguous_chat_binding} | :error
+  def resolve(chat_id, mentions, text)
+      when is_binary(chat_id) and chat_id != "" and is_list(mentions) and is_binary(text) do
     rows =
       from(r in BindingRow,
         where: r.adapter_id == ^@adapter_id and r.target_id == ^chat_id,
@@ -135,41 +157,47 @@ defmodule EzagentPluginFeishu.InboundChatLookup do
         {:ok, Ezagent.URI.new!(session_uri_str)}
 
       multiple ->
-        disambiguate(chat_id, multiple, mentions)
+        disambiguate(chat_id, multiple, mentions, text)
     end
   end
 
-  def resolve(_, _), do: :error
+  def resolve(_, _, _), do: :error
 
-  # 2+ bindings: the only way OUT of fail-closed is an `@`-mention
-  # that narrows the set to EXACTLY one bound session whose membership
-  # contains the mentioned agent.
-  defp disambiguate(chat_id, session_uri_strs, mentions) do
+  # 2+ bindings: the only way OUT of fail-closed is a signal — an `@`-mention
+  # whose agent is a member of EXACTLY one bound session, OR (PR-6) a
+  # `@legend` registered in EXACTLY one bound session's registry — that
+  # narrows the set to EXACTLY one session.
+  defp disambiguate(chat_id, session_uri_strs, mentions, text) do
     mention_keys = MapSet.new(mentions, &URI.to_string/1)
+    typed_tokens = typed_at_tokens(text)
 
     candidates =
       session_uri_strs
       |> Enum.map(&Ezagent.URI.new!/1)
-      |> Enum.filter(&session_has_mentioned_member?(&1, mention_keys))
+      |> Enum.filter(fn session_uri ->
+        session_has_mentioned_member?(session_uri, mention_keys) or
+          session_triggers_a_legend?(session_uri, typed_tokens)
+      end)
 
     case candidates do
       [session_uri] ->
-        # Exactly one bound session has a mentioned agent as a member —
-        # the @-mention unambiguously identifies the target session.
+        # Exactly one bound session is identified by the @-mention or the
+        # @-legend — unambiguous target.
         {:ok, session_uri}
 
       _ ->
-        # Zero candidates (no mention, or the mentioned agent is in none
-        # of the bound sessions) OR 2+ candidates (a mentioned agent is a
-        # member of several bound sessions). Either way the mention does
-        # not narrow to exactly one — fail closed, no arbitrary pick.
+        # Zero candidates (no signal, or it points at none of the bound
+        # sessions) OR 2+ candidates (the signal points at several). Either
+        # way it does not narrow to exactly one — fail closed, no arbitrary
+        # pick.
         Logger.error(
           "InboundChatLookup: chat_id #{chat_id} resolves to MULTIPLE sessions " <>
             "(#{length(session_uri_strs)} bindings): #{inspect(session_uri_strs)}; " <>
-            "@-mentions #{inspect(MapSet.to_list(mention_keys))} narrow to " <>
-            "#{length(candidates)} candidate session(s) — failing closed " <>
-            "(need exactly one; operator must unbind stale row(s) or @-mention " <>
-            "an agent that is a member of exactly one bound session)"
+            "@-mentions #{inspect(MapSet.to_list(mention_keys))} + @-legend tokens " <>
+            "#{inspect(typed_tokens)} narrow to #{length(candidates)} candidate " <>
+            "session(s) — failing closed (need exactly one; operator must unbind " <>
+            "stale row(s) or @-mention an agent / @-legend scoped to exactly one " <>
+            "bound session)"
         )
 
         {:error, :ambiguous_chat_binding}
@@ -190,6 +218,31 @@ defmodule EzagentPluginFeishu.InboundChatLookup do
     end
   end
 
+  # True if any typed `@<token>` in the message is a registered legend in
+  # THIS session's session-scoped legend registry (team-routing §3.6, PR-6).
+  # Legends are session-scoped, so the same `@传话游戏` may name a legend in
+  # session A but not session B — this is precisely the disambiguation signal.
+  defp session_triggers_a_legend?(%URI{} = session_uri, typed_tokens) do
+    if typed_tokens == [] do
+      false
+    else
+      legends = session_legends(session_uri)
+
+      is_map(legends) and
+        Enum.any?(typed_tokens, fn token -> Ezagent.Routing.Legend.legend?(legends, token) end)
+    end
+  end
+
+  # Unicode-aware `@<token>` scan with the same left-boundary rule the
+  # parsers use, so `foo@x` doesn't spuriously produce a token. Used ONLY for
+  # candidate-session legend narrowing (the token may be CJK).
+  defp typed_at_tokens(text) when is_binary(text) do
+    ~r/(?<![\p{L}\p{N}_])@([\p{L}\p{N}_.\-]+)/u
+    |> Regex.scan(text, capture: :all_but_first)
+    |> List.flatten()
+    |> Enum.uniq()
+  end
+
   # Membership reader seam. Production reads the live Session Kind's
   # `:chat` members via `Ezagent.Entity.Session.session_member_uris/1`
   # (returns `[]` for a non-live session — which cannot be a routing
@@ -200,6 +253,19 @@ defmodule EzagentPluginFeishu.InboundChatLookup do
   defp member_uris(%URI{} = session_uri) do
     {mod, fun} =
       Application.get_env(:ezagent_plugin_feishu, :session_member_reader, @default_member_reader)
+
+    apply(mod, fun, [session_uri])
+  end
+
+  # Session legend-registry reader seam (PR-6). Production reads the live
+  # Session Kind's `:chat` legends via `Ezagent.Entity.Session.session_legends/1`
+  # (returns `%{}` for a non-live session). Overridable per-env for unit tests
+  # (same DI pattern as `:session_member_reader` + the dispatcher's
+  # `:session_legends_reader`).
+  @default_legends_reader {Ezagent.Entity.Session, :session_legends}
+  defp session_legends(%URI{} = session_uri) do
+    {mod, fun} =
+      Application.get_env(:ezagent_plugin_feishu, :session_legends_reader, @default_legends_reader)
 
     apply(mod, fun, [session_uri])
   end
