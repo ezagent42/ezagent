@@ -652,7 +652,15 @@ defmodule Ezagent.Behavior.Chat do
 
   # --- :join -------------------------------------------------------------
 
-  def handle_join(%{member: %URI{} = member_uri}, ctx) do
+  def handle_join(%{member: %URI{} = member_uri} = args, ctx) do
+    # team-routing-unification §3.1 — optional member facets carried on the
+    # join: `:provenance` (which authority manages this member), `:role_name`
+    # (a stable per-session alias the member can be addressed by), and
+    # `:in_session_template` (snapshot flag for SessionTemplate materialize,
+    # PR-7). Absent keys default to "no facet" so a plain user join keeps the
+    # minimal `%{online: true}` meta and existing membership tests are unaffected.
+    facets = Map.take(args, [:provenance, :role_name, :in_session_template])
+
     case KindRegistry.lookup(member_uri) do
       {:ok, member_pid} ->
         # Session auto-join (Allen 2026-05-26) — idempotency: when a
@@ -674,11 +682,11 @@ defmodule Ezagent.Behavior.Chat do
             else
               # Stale ref (different/dead PID) or no ref — drop any
               # stale entries + install a fresh monitor.
-              do_join(member_uri, member_pid, ctx)
+              do_join(member_uri, member_pid, ctx, facets)
             end
 
           _ ->
-            do_join(member_uri, member_pid, ctx)
+            do_join(member_uri, member_pid, ctx, facets)
         end
 
       :error ->
@@ -710,7 +718,7 @@ defmodule Ezagent.Behavior.Chat do
     end
   end
 
-  defp do_join(%URI{} = member_uri, member_pid, ctx) do
+  defp do_join(%URI{} = member_uri, member_pid, ctx, facets) do
     session_uri = ctx[:self_uri]
     members = ctx[:read].(:members, %{})
     # `:monitors` is a TRANSIENT (SPEC §2.3C) — read from ctx.transients.
@@ -733,7 +741,9 @@ defmodule Ezagent.Behavior.Chat do
 
     ref = Process.monitor(member_pid)
 
-    new_members = Map.put(members, member_uri, %{online: true})
+    new_members =
+      Map.put(members, member_uri, put_member_facets(%{online: true}, facets))
+
     new_monitors = Map.put(monitors_without_member, ref, member_uri)
 
     # If this member has prior last_seen, replay missed messages.
@@ -788,6 +798,47 @@ defmodule Ezagent.Behavior.Chat do
   # workspace-domain boundary.
   defp user_uri?(%URI{scheme: "entity", host: "user"}), do: true
   defp user_uri?(_), do: false
+
+  # team-routing-unification §3.1 — fold the optional join facets into a
+  # member's meta map. Only keys actually supplied are written, so a plain
+  # join stays `%{online: true}`. `:in_session_template` defaults to `false`
+  # only when the join explicitly passed it; absent → key omitted entirely.
+  defp put_member_facets(meta, facets) when is_map(meta) and is_map(facets) do
+    meta
+    |> maybe_put_facet(:provenance, Map.get(facets, :provenance))
+    |> maybe_put_facet(:role_name, Map.get(facets, :role_name))
+    |> maybe_put_facet(:in_session_template, Map.get(facets, :in_session_template))
+  end
+
+  defp maybe_put_facet(map, _key, nil), do: map
+  defp maybe_put_facet(map, key, value), do: Map.put(map, key, value)
+
+  @doc """
+  team-routing-unification §3.1 — the `:provenance` facet of a member (which
+  authority manages it), or `nil` if the member has no provenance / is absent.
+  `members` is a session's member-meta map (`%{URI.t() => meta}`).
+  """
+  @spec member_provenance(map(), URI.t()) :: term() | nil
+  def member_provenance(members, %URI{} = member_uri) when is_map(members) do
+    case Map.get(members, member_uri) do
+      %{provenance: provenance} -> provenance
+      _ -> nil
+    end
+  end
+
+  @doc """
+  team-routing-unification §3.1 — resolve a member `role_name` (stable
+  per-session alias) to its member URI within a `members` map, or `nil` when
+  no member carries that role_name. First match wins (role_names are intended
+  to be unique within a session).
+  """
+  @spec role_name_to_uri(map(), String.t()) :: URI.t() | nil
+  def role_name_to_uri(members, role_name) when is_map(members) and is_binary(role_name) do
+    Enum.find_value(members, nil, fn
+      {%URI{} = uri, %{role_name: ^role_name}} -> uri
+      _ -> nil
+    end)
+  end
 
   # RFC #402 (codex r1 HIGH 2026-05-26) — companion to the
   # first-USER-join owner claim. Dispatches `identity.grant_cap` on
