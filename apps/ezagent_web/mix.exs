@@ -100,6 +100,11 @@ defmodule EzagentWeb.MixProject do
       # `all_plugin_apps_wired_to_web_test` invariant in
       # ezagent_core/test/invariants/ locks this in.
       {:ezagent_plugin_np, in_umbrella: true},
+      # Autoservice plugin: customer-service vertical. ezagent_web's
+      # router references its customer/operator LiveView modules by atom,
+      # so it must be a build-time dep (compile order) + a started OTP app
+      # (the `all_plugin_apps_wired_to_web_test` invariant locks this in).
+      {:ezagent_plugin_autoservice, in_umbrella: true},
       {:jason, "~> 1.2"},
       {:bandit, "~> 1.5"}
     ]
