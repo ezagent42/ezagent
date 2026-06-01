@@ -270,11 +270,13 @@ defmodule EzagentDomainChat.Integration.SessionAutoJoinTest do
   # ----------------------------------------------------------------------
 
   describe "provenance facet (team-routing-unification §3.1, PR-5b-i)" do
-    test "a trusted system:// caller's :provenance arg is stored on the member" do
+    test "a caller HOLDING the set_member_provenance cap stores :provenance" do
       {session_uri, _admin} = new_session("ajs-prov-trusted")
       member_uri = register_member()
       owner = URI.new!("entity://agent/team-alpha/orchestrator-#{uniq()}")
 
+      # Default caps = system://session-internal (holds cap(:any, Chat, :any),
+      # which satisfies the set_member_provenance cap).
       :ok = join_cast(session_uri, member_uri, %{provenance: owner})
 
       meta = await_meta(session_uri, member_uri, &Map.has_key?(&1, :provenance))
@@ -283,17 +285,18 @@ defmodule EzagentDomainChat.Integration.SessionAutoJoinTest do
                owner
     end
 
-    test "an UNTRUSTED entity:// caller's :provenance arg is dropped (codex #1 forge-guard)" do
+    test "a caller WITHOUT the set_member_provenance cap has :provenance dropped (codex A1/B1 forge-guard)" do
       {session_uri, _admin} = new_session("ajs-prov-untrusted")
       member_uri = register_member()
-      # A non-system caller (here the admin USER) — authorized to join (caps),
-      # but NOT trusted to set provenance. The forged owner must be ignored.
-      untrusted_caller = User.admin_uri()
+      # A narrow cap that authorizes :join but NOT :set_member_provenance — the
+      # shape an ordinary Feishu user / agent carries. The forged owner must be
+      # ignored regardless of who the caller claims to be.
+      join_only_caps = [Ezagent.Capability.cap(:session, Ezagent.Behavior.Chat, :join)]
       forged_owner = URI.new!("entity://user/system/attacker-#{uniq()}")
 
-      :ok = join_cast(session_uri, member_uri, %{provenance: forged_owner}, untrusted_caller)
+      :ok = join_cast(session_uri, member_uri, %{provenance: forged_owner}, join_only_caps)
 
-      # Member joins (role-less), but provenance is NOT set from the untrusted arg.
+      # Member joins (the :join cap authorizes that), but provenance is NOT set.
       meta = await_meta(session_uri, member_uri, &(&1[:online] == true))
       refute Map.has_key?(meta, :provenance)
     end
@@ -368,16 +371,16 @@ defmodule EzagentDomainChat.Integration.SessionAutoJoinTest do
     send(pid, :stop)
   end
 
-  # System principal — both a trusted provenance setter AND a holder of
-  # `cap(:any, Chat, :any)` so the `:join` step-5.5 cap check passes.
-  defp system_caller, do: Ezagent.SystemPrincipal.uri("session-internal")
+  # system://session-internal holds cap(:any, Chat, :any) — satisfies BOTH the
+  # `:join` step-5.5 check AND the `:set_member_provenance` provenance gate.
+  defp system_caps, do: Ezagent.SystemPrincipal.caps("system://session-internal")
 
-  defp join_cast(session_uri, member_uri, facets, caller \\ system_caller()) do
+  defp join_cast(session_uri, member_uri, facets, caps \\ system_caps()) do
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
       target: URI.new!("#{URI.to_string(session_uri)}?action=chat.join"),
       mode: :cast,
       args: Map.put(facets, :member, member_uri),
-      ctx: join_ctx(:ignore, caller)
+      ctx: join_ctx(:ignore, caps)
     })
   end
 
@@ -386,18 +389,18 @@ defmodule EzagentDomainChat.Integration.SessionAutoJoinTest do
       target: URI.new!("#{URI.to_string(session_uri)}?action=chat.join"),
       mode: :call,
       args: Map.put(facets, :member, member_uri),
-      ctx: join_ctx({:caller_inbox, self()}, system_caller())
+      ctx: join_ctx({:caller_inbox, self()}, system_caps())
     })
   end
 
-  # `caller` carries the principal identity used for the provenance trust
-  # check; `caps` always grants `:join` (provenance trust is orthogonal to the
-  # join cap — a caller may be authorized to join yet untrusted to set
-  # provenance, which is exactly the untrusted-drop test below).
-  defp join_ctx(reply, caller) do
+  # `caps` is the authenticated carrier the provenance gate (and the `:join`
+  # cap check) read. The caller identity is fixed to the internal principal; the
+  # provenance authorization now turns on the CAPS, not the caller scheme — a
+  # caller may hold `:join` yet lack `:set_member_provenance` (the forge-guard).
+  defp join_ctx(reply, caps) do
     %{
-      caller: caller,
-      caps: Ezagent.SystemPrincipal.caps("system://session-internal"),
+      caller: Ezagent.SystemPrincipal.uri("session-internal"),
+      caps: caps,
       reply: reply
     }
   end

@@ -111,7 +111,7 @@ defmodule Ezagent.Behavior.Chat do
 
   require Logger
 
-  alias Ezagent.{Cmd, KindRegistry, Message, MessageStore}
+  alias Ezagent.{Capability, Cmd, KindRegistry, Message, MessageStore}
 
   # PR-N3 r4 (Allen 2026-05-25) — bounded cursor-indexed ring depth for
   # the User-branch `:receive` `:recent_messages` ring. SPEC-pinned (NOT
@@ -667,16 +667,21 @@ defmodule Ezagent.Behavior.Chat do
 
     # team-routing-unification §3.1 (PR-5b-i) — `:provenance` (management
     # authority over this member + the routing rows that reference it). It is
-    # authority-bearing, so it is NEVER taken from an untrusted caller's args:
-    # the actual join caller cannot be `provenance`-derived (the unified join
-    # path dispatches as `system://session-internal`, not the real owner), so
-    # provenance must be PASSED explicitly — and is honored ONLY when the
-    # dispatching `ctx.caller` is a trusted `system://` principal vouching for
-    # the real owner (create_session / PR-7 materialization / orchestrator
-    # spawn). A Feishu user or agent dispatching `chat.join` directly carries an
-    # `entity://...` caller, so their `:provenance` arg is dropped — closing the
-    # forge-the-authority hole codex flagged on PR-5a.
-    facets = put_trusted_provenance(facets, args, ctx[:caller])
+    # authority-bearing, so two concerns are kept SEPARATE (Allen 2026-06-01):
+    #   * the VALUE — who the owner is — is PASSED explicitly here (a later tier,
+    #     PR-7, may derive it from the member's creator/lineage where recorded);
+    #   * the AUTHORIZATION — who may set it — is a dedicated CAPABILITY, checked
+    #     through the same CapBAC machinery as every other action.
+    # The earlier "caller is a system:// principal" check was an unsound proxy:
+    # `ctx.caller` is an unauthenticated field (codex A1) and `system://` is far
+    # too broad (chat-router / chat-reply are system but only fan out messages —
+    # codex B1). So provenance is honored ONLY when the caller HOLDS the
+    # `Chat :set_member_provenance` cap. The allowlist principals
+    # (session-internal / template-materialize / orchestrator-tools) already hold
+    # an `:any`-action Chat cap that satisfies it — no new grant needed; a narrow
+    # `:join`-only user cap does NOT match, so a Feishu user / agent dispatching
+    # `chat.join` directly cannot forge management authority.
+    facets = put_authorized_provenance(facets, args, ctx)
 
     case KindRegistry.lookup(member_uri) do
       {:ok, member_pid} ->
@@ -874,34 +879,65 @@ defmodule Ezagent.Behavior.Chat do
   defp put_provenance_once(%{provenance: existing} = meta, _new) when not is_nil(existing), do: meta
   defp put_provenance_once(meta, new), do: Map.put(meta, :provenance, new)
 
-  # team-routing-unification §3.1 (PR-5b-i) — `:provenance` is authority-bearing,
-  # so it is honored ONLY from a trusted `system://` caller (the internal join
-  # path / materialization vouches for the real owner). An untrusted
-  # `entity://...` caller's `:provenance` arg is silently dropped.
-  defp put_trusted_provenance(facets, args, caller) do
+  @doc false
+  # The dedicated authorization action gating who may SET a member's provenance
+  # (team-routing-unification §3.1, PR-5b-i). This is NOT a dispatchable `:join`-
+  # style action — it is the action axis of the capability the setter must hold.
+  # A narrow `cap(_, Chat, :join)` does NOT match it; an `:any`-action Chat cap
+  # (held by the session-internal / template-materialize / orchestrator-tools
+  # allowlist) does. Exposed so tests + the catalog can reference one symbol.
+  def set_provenance_action, do: :set_member_provenance
+
+  # team-routing-unification §3.1 (PR-5b-i) — honor a supplied `:provenance`
+  # ONLY when the caller is AUTHORIZED to set it (holds the
+  # `Chat :set_member_provenance` cap). Authority is checked via the same CapBAC
+  # path used elsewhere — over `ctx.caps` (the system-principal-carried caps;
+  # ordinary user/agent callers carry no such cap, so theirs is dropped). The
+  # VALUE is whatever the trusted setter passes; set-once is enforced later by
+  # put_provenance_once/2.
+  defp put_authorized_provenance(facets, args, ctx) do
     case Map.get(args, :provenance) do
       %URI{} = prov ->
-        if trusted_provenance_setter?(caller), do: Map.put(facets, :provenance, prov), else: facets
+        if caller_may_set_provenance?(ctx), do: Map.put(facets, :provenance, prov), else: facets
 
       _ ->
         facets
     end
   end
 
-  defp trusted_provenance_setter?(%URI{scheme: "system"}), do: true
-  defp trusted_provenance_setter?(_), do: false
+  # True iff one of the caller's caps satisfies a `Chat :set_member_provenance`
+  # cap on this session. Mirrors the `holds_admin_caps?`/`Capability.matches?`
+  # pattern (Ezagent.Behavior.Identity). Reads `ctx.caps` — the authenticated
+  # carrier for system principals; user/agent callers whose caps live only in an
+  # identity slice carry none here and are therefore (correctly) denied.
+  defp caller_may_set_provenance?(ctx) do
+    needed = %{
+      kind: :session,
+      behavior: __MODULE__,
+      action: set_provenance_action(),
+      instance: ctx[:self_uri],
+      workspace_uri: :any
+    }
+
+    # `ctx.caps` is a MapSet for system principals (SystemPrincipal.caps/1) and
+    # a plain list for other carriers — both are Enumerable, so iterate as-is;
+    # a missing key means no carried caps (→ denied).
+    (Map.get(ctx, :caps) || [])
+    |> Enum.any?(&Capability.matches?(&1, needed))
+  end
 
   @doc """
   team-routing-unification §3.1 (PR-5b-i) — the `:provenance` facet of a member
   (the authority that manages it + the routing rows that reference it), or `nil`
   if the member has no provenance / is absent. `members` is a session's
   member-meta map (`%{URI.t() => meta}`). PR-5b-ii gates routing-row edits on
-  `{:manages, provenance}` using this.
+  `{:manages, provenance}` using this. Only a `%URI{}` is returned as provenance
+  (codex PR-5b-i D1) — any non-URI stored value is treated as absent.
   """
   @spec member_provenance(map(), URI.t()) :: URI.t() | nil
   def member_provenance(members, %URI{} = member_uri) when is_map(members) do
     case Map.get(members, member_uri) do
-      %{provenance: provenance} -> provenance
+      %{provenance: %URI{} = provenance} -> provenance
       _ -> nil
     end
   end
