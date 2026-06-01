@@ -222,64 +222,64 @@ defmodule EzagentPluginLiveview.AdminLiveMentionParseTest do
     end
   end
 
-  # team-routing-unification §3.6 (PR-6) — legend precedence in the LV parser.
-  # parse_mentions/3 consults the session legend registry BEFORE the URI/bare
-  # member path: a `@legend` is intercepted and resolved to its bound rule-set
-  # entry's CONCRETE receiver URIs (firing the flow's first hop) instead of
-  # silent-dropping / mis-routing through the concrete-URI resolution.
+  # team-routing-unification §3.6 (PR-6, codex-redesign) — legend precedence in
+  # the LV parser. parse_mentions/3 consults the session legend registry BEFORE
+  # the URI/bare member path and returns `{mentions, legend_triggers}`. A
+  # `@legend` is surfaced as a SYMBOLIC NAME in `legend_triggers` (NOT
+  # pre-canonicalized to URIs — the send path fires the entry rule via the
+  # Resolver). The legend `@<token>` is STRIPPED from the text before concrete
+  # member resolution so it can NEVER also resolve to a member (codex MED #4).
   describe "parse_mentions/3 — legend precedence (GATE b)" do
-    @entry_receiver "entity://agent/system/cc_relay_lv"
-
-    test "a legend resolves to its bound rule-set entry's concrete receiver URI" do
-      seed_entry!("telephone", @entry_receiver)
-
+    test "a legend token surfaces as a SYMBOLIC name in legend_triggers, not mentions" do
       legends =
         Ezagent.Routing.Legend.put(%{}, "传话游戏", member_set: [], bound_rule_set: "telephone")
 
-      assert [%URI{} = uri] = AdminLive.parse_mentions("@传话游戏 开始", members(), legends)
-      assert URI.to_string(uri) == @entry_receiver
+      assert {[], ["传话游戏"]} = AdminLive.parse_mentions("@传话游戏 开始", members(), legends)
     end
 
-    test "a legend wins even when a member shares the typed token" do
-      seed_entry!("rs", @entry_receiver)
-
+    test "a legend wins even when a member's URI segment shares the typed token" do
       legends =
         Ezagent.Routing.Legend.put(%{}, "cc_e2e_final", member_set: [], bound_rule_set: "rs")
 
       # Without precedence this would resolve to the cc agent URI; the legend
-      # registry intercepts it first → its entry receiver, NOT the member.
-      assert [%URI{} = uri] = AdminLive.parse_mentions("@cc_e2e_final hi", members(), legends)
-      assert URI.to_string(uri) == @entry_receiver
+      # registry intercepts it first → legend trigger, NO concrete mention.
+      assert {[], ["cc_e2e_final"]} ==
+               AdminLive.parse_mentions("@cc_e2e_final hi", members(), legends)
     end
 
-    test "non-legend mentions still resolve to member URIs (mixed)" do
-      seed_entry!("telephone", @entry_receiver)
+    # codex 2026-06-01 MED #4 — display-name collision. The legend token is
+    # stripped from the text BEFORE bare parsing, so a member whose mutable
+    # `display_name` equals the legend (but whose URI segment differs) does NOT
+    # get the message. The PRE-fix code only rejected resolved URIs whose URI
+    # SEGMENT equaled the token, so a display-name-only collision leaked.
+    test "a member whose DISPLAY_NAME (not URI segment) equals the legend does NOT leak" do
+      # Member URI segment is `bob`; display_name happens to equal the legend
+      # `传话游戏`. Typing `@传话游戏` must NOT resolve to bob.
+      collide_members = [
+        %{"uri" => "entity://user/system/bob", "display_name" => "传话游戏"}
+      ]
 
       legends =
         Ezagent.Routing.Legend.put(%{}, "传话游戏", member_set: [], bound_rule_set: "telephone")
 
-      out = AdminLive.parse_mentions("@传话游戏 and @cc_e2e_final", members(), legends)
-      assert Enum.any?(out, &(URI.to_string(&1) == @entry_receiver))
-      assert Enum.any?(out, &(URI.to_string(&1) == @cc_agent_uri))
+      assert {[], ["传话游戏"]} =
+               AdminLive.parse_mentions("@传话游戏 hi", collide_members, legends)
     end
 
-    test "empty legends → identical to parse_mentions/2" do
+    test "non-legend mentions still resolve to member URIs (mixed)" do
+      legends =
+        Ezagent.Routing.Legend.put(%{}, "传话游戏", member_set: [], bound_rule_set: "telephone")
+
+      {mentions, legend_triggers} =
+        AdminLive.parse_mentions("@传话游戏 and @cc_e2e_final", members(), legends)
+
+      assert legend_triggers == ["传话游戏"]
+      assert Enum.any?(mentions, &(URI.to_string(&1) == @cc_agent_uri))
+    end
+
+    test "empty legends → {parse_mentions/2, []}" do
       assert AdminLive.parse_mentions("@cc_e2e_final hi", members(), %{}) ==
-               AdminLive.parse_mentions("@cc_e2e_final hi", members())
-    end
-
-    defp seed_entry!(rule_set, receiver) do
-      {:ok, _} =
-        Ezagent.Routing.RuleStore.add(
-          Ezagent.Routing.Resolver.default_routing_table(),
-          Ezagent.Routing.Matcher.mention(rule_set),
-          [receiver],
-          URI.new!("entity://user/system/admin"),
-          rule_set: rule_set,
-          position: 0
-        )
-
-      :ok
+               {AdminLive.parse_mentions("@cc_e2e_final hi", members()), []}
     end
   end
 
