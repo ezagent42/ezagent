@@ -18,9 +18,14 @@ set -uo pipefail
 
 input=$(cat)
 
-# Only gate `git commit` / `git tag`. Wide match by design — P0-D5 实施期原则:
-# 宁可宽也不要漏. A false-positive merely runs the (harmless) gate.
-if ! printf '%s' "$input" | grep -qE 'git[[:space:]]+(commit|tag)'; then
+# Only gate `git commit` or `git tag` mutation operations.
+# Matches `git commit`, any `git tag` with flags (short or long form,
+# e.g. `-a`, `-d`, `-f`, `-s`, `--delete`, `--annotate`, `--force`),
+# and `git tag <name>` (non-option arg).
+# Also matches queries like `git tag --sort` / `git tag --list` as
+# collateral — the gate is intentionally wide; a false-positive merely
+# runs the (harmless) gate.
+if ! printf '%s' "$input" | grep -qE 'git[[:space:]]+(commit|tag[[:space:]]+(--?[A-Za-z]|[^-]))'; then
   exit 0
 fi
 
@@ -49,20 +54,27 @@ fi
 echo "[sub-step-gate] git commit/tag detected — running Phase 1 gate" >&2
 
 echo "[sub-step-gate] → mix format --check-formatted" >&2
-if ! mix format --check-formatted >&2; then
+FMT_OUTPUT=$(mix format --check-formatted 2>&1)
+if [ $? -ne 0 ]; then
+  echo "$FMT_OUTPUT" | tail -10 >&2
   echo "[sub-step-gate] BLOCKED: code not formatted (run: mix format)" >&2
   exit 2
 fi
 
 echo "[sub-step-gate] → mix test" >&2
-if ! mix test >&2; then
-  echo "[sub-step-gate] BLOCKED: mix test failed" >&2
+TEST_OUTPUT=$(mix test 2>&1)
+TEST_EXIT=$?
+if [ $TEST_EXIT -ne 0 ]; then
+  echo "$TEST_OUTPUT" | tail -30 >&2
+  echo "[sub-step-gate] BLOCKED: mix test failed (exit=$TEST_EXIT, tail above)" >&2
   exit 2
 fi
 
 echo "[sub-step-gate] → mix ezagent.check_invariants" >&2
-if ! mix ezagent.check_invariants >&2; then
-  echo "[sub-step-gate] BLOCKED: invariant violation (see grep output above)" >&2
+INV_OUTPUT=$(mix ezagent.check_invariants 2>&1)
+if [ $? -ne 0 ]; then
+  echo "$INV_OUTPUT" | tail -10 >&2
+  echo "[sub-step-gate] BLOCKED: invariant violation (tail above)" >&2
   exit 2
 fi
 
