@@ -1,332 +1,310 @@
-# Unified Kind Creation via Templates — Design
+# Unified Kind Creation via Templates — Design (rev 2)
 
 **Date:** 2026-06-01
-**Status:** Draft (brainstorm output, pending codex adversarial review + Allen approval)
+**Status:** Draft rev 2 (codex adversarial review folded in; pending re-review + Allen approval)
 **Author:** Claude (with Allen)
+
+> **rev 2 changes** (codex review of rev 1): the unified authorized create entry
+> does **not** exist today and must be BUILT (B-1); freshness comes from the
+> CORE `ever_created` signal, not a Class's optional `fresh?` meta (A-1); the
+> manage-cap is `action: :any` scoped to `Behavior.Manage` + instance (C-1) with an
+> explicit Session caveat; `reconfigure` is a NEW per-Class hook, not "rerun
+> instantiate" (D-1); a per-Class teardown/rollback contract is defined (G-1); plus
+> bridge-join existence predicate (G-2), User create ordering (E-1), one-shot
+> migration (F-1).
 
 ## 1. Problem & context
 
-A design discussion on team-routing "management authority" (who may edit a Kind / its
-routing rows) surfaced a deeper structural problem, confirmed by a read-only audit of
-every Kind creation path:
+A team-routing "management authority" discussion surfaced a structural problem,
+confirmed by a read-only audit of every Kind creation path:
 
 - There **is** a mechanical single-spawn chokepoint — `Ezagent.Kind.spawn/2`
   (`apps/ezagent_core/lib/ezagent/kind.ex:294`) → `Kind.Server.init/1`
-  (`server.ex:104`) → `KindRegistry.put_new/2` (`kind_registry.ex:42`) — enforced by
-  `single_spawn_entry_test.exs` + `kind_provenance_test.exs`. **But it is
-  authorization-free and owner-free**: it only does URI→pid registration.
-  **Registration ≠ authorized creation.**
-- Authorization is bolted on **only at dispatch of wrapped create actions**
-  (`workspace.create_agent`, `workspace.create_session`,
-  `workspace_user_admin.create_user`). Any path calling `SpawnRegistry.spawn/1` /
-  `Kind.spawn/2` directly bypasses authz by construction.
-- The audit found **~7 ad-hoc creation paths**. Worst (external-reachable, fresh
-  unowned create, invisible to the only CI gate): the **agent-bridge channel join**
-  (`apps/ezagent_domain_agent_bridge/lib/ezagent/agent_bridge/channel.ex:146` —
-  `SpawnRegistry.spawn(agent_uri)` materializes a fresh, unowned Agent; uses a
-  variable arg so `agent_create_single_path_test.exs` doesn't see it). Also
-  `Workspace.create/2` (`workspace.ex:62`, no CapBAC).
-- The **owner-cap-at-creation pattern already exists piecemeal** for Sessions
-  (`owner_uri` create-arg + `grant_first_join_owner_cap` + `OrchestratorAdmin
-  :restart`) and Templates (`grant_{agent,session}_template_owner_cap`), and the
-  `OwnedBehavior` test idiom documents "spawning X grants the X→X data-owner cap"
-  (`apps/ezagent_core/test/support/owned_behavior.ex`). It is **not** wired into the
-  mechanical chokepoint, **not** present for Agents (lineage only, not a cap),
-  Workspaces (no owner at all), or Users.
+  (`server.ex:104`) → `KindRegistry.put_new/2` (`kind_registry.ex:42`), enforced by
+  `single_spawn_entry_test.exs`. **But it is authorization-free and owner-free** —
+  pure URI→pid registration. **Registration ≠ authorized creation.**
+- There is **no universal authorized create entry today.** `template.instantiate`
+  exists only on AgentTemplate/SessionTemplate
+  (`apps/ezagent_domain_chat/lib/ezagent/behavior/template.ex:280`), and SessionTemplate
+  explicitly refuses it (`:285` → `{:error, :use_generator}`). Session/Workspace/User
+  creation go through **domain-specific functions** — `create_session/3`
+  (`ezagent_domain_chat.ex:119`), `Workspace.create/2` (`workspace.ex:61`),
+  `Users.create/3` via `workspace_user_admin` (`workspace_user_admin.ex:151`) — **none
+  carrying a `ctx.caller`**. Authorization is bolted on only at the dispatched
+  `workspace.create_*` actions; the ~7 direct-`spawn` paths bypass it (worst: the
+  agent-bridge channel join, `agent_bridge/channel.ex:146`, which materializes a fresh
+  unowned Agent and is invisible to `agent_create_single_path_test.exs`).
+- The **owner-cap-at-creation pattern exists piecemeal** (Session `owner_uri` +
+  `grant_first_join_owner_cap`; Template `grant_*_owner_cap`; the `OwnedBehavior` test
+  idiom) but is **not** at the chokepoint, and absent for Agents (lineage only),
+  Workspaces (no owner), Users.
 
-Allen's directive (2026-06-01): **introduce a Template concept for ALL Kinds and
-funnel all creation (and modification) through one authorized chokepoint that threads
-`created_by` and grants a management capability at creation.** Do this foundational
-unification FIRST — it removes a class of "hackable creation" bugs and is the natural
-home for the management-cap that the team-routing work needs.
+**Therefore the unified authorized create entry is the thing this spec BUILDS** — it
+is not a wrapper over an existing universal action. Allen's directive (2026-06-01):
+introduce a Template concept for ALL Kinds and funnel creation + modification through
+one authorized chokepoint that threads `created_by` and grants a management capability
+at creation; do this foundation FIRST.
 
-R/B/K = Router / Behavior / Kind is the internal engine; Lifecycle
-(`use Ezagent.Lifecycle`) is the public developer API (ARCHITECTURE.md:1158, §153).
-A **Template** is the double-layer model already in the codebase (GLOSSARY §64/§114):
-a **Template Class** (developer-written module implementing the `Ezagent.Kind.Template`
-behaviour) + a **Template Instance** (the runtime Kind it produces). This design
-**generalizes** that pattern; it does not invent one.
+R/B/K = Router/Behavior/Kind (internal engine); Lifecycle = public API
+(ARCHITECTURE.md §153). A **Template** = Template **Class** (module implementing
+`Ezagent.Kind.Template`) + Template **Instance** (the runtime Kind). This generalizes
+the existing pattern.
 
 ## 2. Goals / non-goals
 
 **Goals**
 1. Every Kind type (Session, Agent, Workspace, User, AgentTemplate, SessionTemplate)
-   is created through a **Template Class** via a single **authorized** entry.
-2. That entry threads `created_by` (the authenticated caller) and, on **fresh create
-   only**, grants `cap(:<kind>, Ezagent.Behavior.Manage, :manage, instance)` to
-   `created_by`.
-3. **Modification** (`reconfigure` / `delete`) is unified through a `Manage` behavior
-   on every Kind, gated by the manage-cap, and is **lifecycle-consistent**: a config
-   change re-materializes the **live** Kind preserving identity + runtime state, never
-   destroy+recreate.
-4. The ~7 ad-hoc creation paths are converged onto the chokepoint (or explicitly
-   refuse to create).
-5. CI invariants make a future bypass fail loudly.
+   is created through a Template Class via a single **authorized, `ctx.caller`-bearing**
+   dispatched entry — **built** by this work.
+2. That entry grants `cap(:<kind>, Ezagent.Behavior.Manage, :any, instance)` to
+   `created_by` (= `ctx.caller`) on **fresh create only**, where "fresh" is decided by
+   the CORE `ever_created` signal (not a Class return value).
+3. **Modification** (`reconfigure`/`delete`) is unified through `Ezagent.Behavior.Manage`
+   on every Kind, gated by the manage-cap, and is lifecycle-consistent via a **new
+   per-Class `reconfigure` hook** that mutates the live Kind preserving identity +
+   runtime state (never destroy+recreate).
+4. Each Template Class declares a **teardown contract** used for both failed-create
+   rollback and `manage.delete`.
+5. The ~7 ad-hoc creation paths converge onto the entry (or refuse to create via an
+   explicit existence predicate).
+6. CI invariants make a future bypass fail loudly.
 
 **Non-goals (this spec)**
-- The routing-row edit authz that *consumes* the manage-cap (`{:manages}` →
-  `cap(:<kind>, Manage, :manage, ref)`) — that is the team-routing continuation, a
-  follow-up spec. This spec only *produces* the cap.
-- Versioned/blueprint template synthesis (Phase 8+).
-- Re-modelling Behaviors or the Lifecycle engine.
+- Routing-row edit authz consuming the manage-cap (team-routing follow-up).
+- Versioned/blueprint template synthesis.
+- Re-modelling Behaviors or the Lifecycle engine (we ADD one hook + one behavior).
 
 ## 3. Design
 
-### 3.1 Template Class for every Kind
+### 3.1 Freshness is a CORE signal, not a Class return (A-1)
 
-The `Ezagent.Kind.Template` behaviour (`apps/ezagent_core/lib/ezagent/kind/template.ex`)
-is the Class contract. Today's required callbacks:
+`Ezagent.Kind.Template.instantiate/3` MAY return `{:ok, uris}` (2-tuple) or
+`{:ok, uris, %{fresh?: bool}}` — the 2-tuple is explicitly valid and
+`GenericSession.instantiate/3` (`generic_session.ex:99`) returns it with no signal. So
+the manage-cap grant must NOT depend on the Class's `fresh?`.
 
-```
-@callback template_name() :: String.t()
-@callback validate(template_data()) :: :ok | {:error, term()}
-@callback instantiate(template_name(), template_data(), workspace_uri :: URI.t()) ::
-            {:ok, [URI.t()]} | {:ok, [URI.t()], %{optional(:fresh?) => boolean()}} | {:error, term()}
-```
+**Authoritative freshness lives in core:** `Kind.Server.init/1` + `Snapshot.load_or_init`
+already decide create-vs-rehydrate, and the Lifecycle `create/1` hook fires exactly once
+per URI, gated by the durable `ever_created` marker written atomically with the first
+snapshot (`server.ex:185-222`, `snapshot.ex:341-352`). The grant keys off **that** —
+i.e. the create entry asks core "was this instance freshly created in THIS call?" via
+the `ever_created` transition, independent of any Class return shape.
 
-`instantiate/3` **already returns** `%{fresh?: boolean()}` — `true` iff THIS call
-started the worker (vs adopting/rehydrating a pre-existing one). This is the exact
-signal the manage-cap grant keys off (§3.3); no Class signature change is required for
-the grant.
+### 3.2 The unified authorized create entry (BUILD) (B-1)
 
-Concrete Classes today: `Ezagent.Template.GenericSession` (sessions), `Entity.Agent`
-flavor classes (cc/codex/curl/echo/np), `AgentTemplate`, `SessionTemplate`. **New in
-this spec:** a **Workspace Template Class** (§3.6) and a **User Template Class** (§3.7).
+Introduce one dispatched create surface that every Kind's creation flows through.
+Concretely:
 
-Invariant: **every Kind type has exactly one registered Template Class** that is its
-sole creation path (CI §6).
+- A create action — `kind.create` (carried on a core/domain create behavior, or the
+  generalized `Ezagent.Behavior.Template`) — dispatched against the **scope** that owns
+  the new Kind (workspace for agents/sessions/users; system/bootstrap for workspaces),
+  so `Kind.Runtime` step 5.5 CapBAC runs and `ctx.caller` is the authenticated
+  `created_by`. Authorization reuses the existing per-scope create caps (OQ-1) — this
+  work does not widen WHO may create, it makes the authz uniform + unavoidable.
+- The handler: resolve the target Template Class → `validate/1` → `instantiate/3` →
+  observe the CORE `ever_created` transition (§3.1) → on fresh, run the grant (§3.3);
+  on any failure after a fresh spawn, run the Class teardown (§5/G-1).
+- **Migration of existing create paths onto the entry** (the bulk of the work):
+  `create_session/3`, `Workspace.create/2`, `create_user`, the Loader fresh-create
+  branch, `Agent.spawn_fresh/4` / `spawn_from_template_content/4`, and the plugin Class
+  spawns become callers of (or are replaced by) this entry, each supplying a real
+  `created_by`. Boot/login/bridge **rehydrate** stays on `SpawnRegistry.spawn` (no
+  ctx.caller needed — no grant on rehydrate).
 
-### 3.2 Unified, authorized create chokepoint
+`Kind.spawn/2` remains the mechanical primitive for rehydrate; **fresh creation outside
+the entry is a CI failure** (§6).
 
-All creation flows through a single dispatched action — **`template.instantiate`** —
-carried on the `Ezagent.Behavior.Template` behaviour (which already hosts
-fork/create-shaped actions). Because it is **dispatched**, it passes through
-`Kind.Runtime` step 5.5 CapBAC and carries an **authenticated `ctx.caller`** = the
-`created_by` principal.
+### 3.3 Manage-cap grant — CORE step, `:any` action, Session caveat (A-1, C-1)
 
-- Authorization to *create* is the existing per-scope create cap (e.g. a workspace
-  admin cap to instantiate within a workspace). This spec does not widen who may
-  create; it makes the authz *uniform and unavoidable* (no direct-`spawn` bypass).
-- The action resolves the target Template Class, runs `validate/1`, then the Class's
-  `instantiate/3`, then the **core post-instantiate grant step** (§3.3).
-- `created_by` is `ctx.caller` (authenticated on external paths via token →
-  `Entity.authenticate/2`; trusted in-VM). It is **never** read from `template_data`
-  (no forge surface).
-
-`Ezagent.Kind.spawn/2` / `SpawnRegistry.spawn/1` remain the **mechanical** primitive
-(used by rehydrate/boot), but **fresh creation** is only legitimate through
-`template.instantiate`. The CI invariant (§6) forbids new direct-spawn fresh-create
-call sites outside the allowlisted engine + rehydrate paths.
-
-### 3.3 Manage-cap grant — a CORE post-instantiate step (keeps auth in core)
-
-The grant is **core infrastructure**, not plugin Class code (north-star: plugin
-authors stay out of the auth path). After the Class's `instantiate/3` returns
-`{:ok, uris, %{fresh?: true}}`, the `Ezagent.Behavior.Template` handler (core/domain,
-trusted) grants, for each fresh URI:
+After a fresh create (§3.1 signal), the core handler grants, for each freshly created
+owned Kind URI:
 
 ```
-cap(kind_of(uri), Ezagent.Behavior.Manage, :manage, instance: uri)  → granted to ctx.caller
+cap(kind_of(uri), Ezagent.Behavior.Manage, :any, instance: uri)  → granted to ctx.caller
 ```
 
-- On `fresh?: false` (rehydrate/adopt) the grant is **skipped** — the durable cap
-  already exists (caps survive restart; rehydrate reloads them). Granting is therefore
-  idempotent across restart by construction.
-- The grant uses `created_by` = `ctx.caller`. A Class CANNOT influence the grantee —
-  it only reports `fresh?` + the URIs.
-- The existing piecemeal owner-cap grants (Session `owner_uri`/restart-cap, Template
-  `grant_*_owner_cap`) are **folded into** this single core step (one grant shape, one
-  place), removing the per-Kind divergence.
+- **`action: :any`** (not `:manage`): dispatch overwrites the needed-cap action with the
+  concrete dispatched action (`runtime.ex:392-431`), and `matches?` compares
+  `action_of(cap)` to the needed action (`capability.ex:212-229`). A held `:manage`
+  action would NOT match a needed `:reconfigure`/`:delete`. `:any` (scoped to
+  `Behavior.Manage` + the specific `instance`) means "any management action on THIS
+  instance" — which is exactly "manage" and is NOT over-broad (behavior + instance
+  pinned).
+- The grant uses `created_by` = `ctx.caller`; a Class cannot influence the grantee.
+- Skipped on rehydrate (cap already durable). Idempotent across restart by construction.
+- Folds in the piecemeal Session/Template owner-cap grants.
 
-**Why this closes the authority hole cleanly:** the manage-cap lives on the **`:<kind>`
-axis** (`:agent` / `:session` / `:workspace` / `:user`), and the baseline cap every
-user receives (`User.default_caps/1` = `cap(:session, :any, :any)`) is **kind
-`:session`** — it cannot match a `:agent`/`:workspace`/`:user` manage-cap, and for
-`:session` it is *behavior-* and *action-*scoped to a different shape. An ordinary user
-therefore does not implicitly hold `:manage` on resources they did not create. (This
-is the lesson from the abandoned PR-5b-i cap gate, where anchoring on a session-scoped
-op let the session wildcard satisfy it.)
+**Session caveat (C-1) — DECISION PENDING (OQ-4):** the kind-axis trick (a `:agent`/
+`:workspace`/`:user` manage-cap is NOT matched by the user baseline
+`cap(:session, :any, :any)`, `user.ex:175`) cleanly excludes ordinary users for those
+three Kinds. But a **`:session`** manage-cap `cap(:session, Manage, :any, S)` **IS**
+matched by that baseline wildcard when S is in the user's workspace — so in a shared
+workspace any member could `manage.reconfigure`/`delete` any session. Lean:
+**session-manage authority retains the existing `owner_uri` gate** (the Manage behavior,
+for Session, additionally checks the caller is the session owner or admin), with the
+uniform manage-cap serving Agent/Workspace/User. The alternative (narrow the default
+user `:session` wildcard) is a broader change. Allen to decide.
 
-### 3.4 `Ezagent.Behavior.Manage` — uniform management surface on every Kind
+### 3.4 `Ezagent.Behavior.Manage` — uniform management surface (C-1)
 
-A single new behaviour `Ezagent.Behavior.Manage` (core), registered against **every**
-Kind via `CapabilityRegistry.register(<Kind>, <action>, Ezagent.Behavior.Manage)` in
-the owning Application boot (same mechanism as
-`CapabilityRegistry.register(Session, :join, Chat)`).
+New core behaviour registered on every Kind via
+`CapabilityRegistry.register(<Kind>, <action>, Ezagent.Behavior.Manage)` (same mechanism
+as `register(Session, :join, Chat)`, `application.ex:662`). Actions:
 
-Actions:
-- `:reconfigure` — args `%{template_data: map}` → re-materialize live (§3.5).
-- `:delete` — permanent removal (maps to the Lifecycle `destroy/2`).
-- `:transfer` *(optional, deferred)* — grant the manage-cap to another principal /
-  revoke. Out of scope v1 unless trivial; flagged as future.
+- `:reconfigure` — args `%{template_data: map}` → live re-materialize (§3.5).
+- `:delete` — `manage.delete`, maps to Lifecycle `destroy/2` via the Class teardown (§5).
 
-All `Manage` actions require `cap(:<kind>, Ezagent.Behavior.Manage, :manage, instance)`
-(`required_caps[:reconfigure] = required_caps[:delete] = cap(:any, Manage, :manage)`,
-resolved against the target instance at dispatch). The cap shape is uniform across
-Kinds — `behavior` is fixed to `Manage`, self-documenting, and not subsumed by user
-session wildcards (§3.3).
+`required_caps[:reconfigure] = required_caps[:delete] = cap(:any, Manage, :any)`,
+resolved against the target instance at dispatch. The granted manage-cap
+(`cap(:<kind>, Manage, :any, instance)`, §3.3) satisfies both. For Session, the handler
+adds the `owner_uri`/admin check (§3.3 caveat) until OQ-4 is decided.
 
-### 3.5 Modification = lifecycle-consistent re-materialization (D2)
+### 3.5 `reconfigure` is a NEW per-Class hook (D-1)
 
-`manage.reconfigure` does NOT destroy+recreate. It:
-1. Validates the new `template_data` via the Kind's Template Class `validate/1`.
-2. Writes the new durable spec into the Kind's persistent `state` (the slice that
-   carries its template params) — the Kind stays alive, same URI, same identity.
-3. Re-applies the materialization side-effects against the **live** Kind: re-bind /
-   re-grant / re-apply routing rules — the idempotent subset of what `instantiate`
-   does, expressed as Lifecycle effects.
-4. For Kinds whose config change requires a subprocess restart (cc PTY, np Python),
-   the existing `Ezagent.Kind.Template.ensure_subprocess_alive/2` /
-   `start_python` hooks (GLOSSARY §128) are invoked to relaunch the subprocess against
-   the new config — runtime conversation/snapshot state is preserved by the existing
-   two-container Lifecycle model (`state` persists; `transients` rebuilt by
-   `activate/2`).
+There is no existing "re-apply instantiate to a live Kind" capability — `instantiate/3`
+is a create/adopt procedure (spawns, starts sidecars, joins members;
+`cc_agent.ex:385`, `generic_session.ex:99`); re-running it against a live Kind is
+undefined and would hit `put_new` `{:already_started}`. So this spec **adds** an
+**optional** Template Class callback:
 
-Runtime state survives because reconfigure is a **state mutation through the
-Lifecycle**, not a Kind teardown. (`Snapshot.load_or_init` create/rehydrate semantics
-are untouched.)
+```
+@callback reconfigure(uri :: URI.t(), old_data :: map(), new_data :: map(), ctx) ::
+            {:ok, [effect]} | {:error, term()}
+```
+
+- `validate/1` runs on `new_data` first.
+- `reconfigure/4` returns **Lifecycle effects** (`{:set, :state_key, v}` for the durable
+  spec, `{:set_transient, …}`, dispatches for re-bind/re-grant/route reconcile) applied
+  to the LIVE Kind — same URI, same identity, runtime `transients` untouched except where
+  the Class explicitly restarts them.
+- Sidecar-bearing Classes (cc PTY, np) relaunch the subprocess against the new config via
+  the existing `ensure_subprocess_alive/2` hook (GLOSSARY §128), preserving conversation
+  state (durable `state` persists; `transients` rebuilt by `activate/2`).
+- A Class without `reconfigure/4` → `manage.reconfigure` returns
+  `{:error, :reconfigure_unsupported}` (immutable Kind). Immutable identity fields
+  (username, workspace name) are rejected by the Class `validate`/`reconfigure` (OQ-3).
+
+This is a small, well-bounded Lifecycle addition — NOT "rerun instantiate".
 
 ### 3.6 Workspace Template Class (proposed)
 
-`Ezagent.Template.Workspace` (workspace domain). `template_data`:
-- `name` (workspace short name) — drives the `workspace://<name>` URI.
-- `owner` — the principal that will hold the manage-cap (defaults to `created_by`).
-- `default_agent_template` — the AgentTemplate to seed the per-user `<username>-default`
-  cc agent from (ties into the existing `<username>-default` flow, memory
-  `project_username_default_agent`).
-- `default_caps_policy` *(optional)* — baseline caps minted for members.
+`Ezagent.Template.Workspace` (workspace domain). `template_data`: `name`, `owner`
+(defaults to `created_by`), `default_agent_template` (seeds `<username>-default`),
+optional `default_caps_policy`. `instantiate/3` = `Workspace.Store.create/2` +
+`Kind.spawn(Workspace)`; teardown = delete the workspace row + terminate the Kind.
+`Workspace.create/2` becomes a thin caller of the create entry (authorized).
 
-`instantiate/3` = `Workspace.Store.create/2` (persist row) + `Kind.spawn(Workspace)` +
-return `{:ok, [workspace_uri], %{fresh?: true}}`. The current `Workspace.create/2`
-(`workspace.ex:62`) becomes a thin wrapper that dispatches `template.instantiate`
-(authorized) or is removed in favor of it.
+### 3.7 User Template Class — explicit ordering + rollback (E-1)
 
-### 3.7 User Template Class (proposed)
+`Ezagent.Template.User` (identity domain). `template_data`: `username`, `initial_caps`,
+`default_workspace`, `default_agent_spec`. **Ordering (each step rolls back the prior on
+failure):**
 
-Users are "created" at registration (external identity), not user-chosen instantiation.
-The **User Template Class models the registration/materialization spec** — almost all
-users use one default user-template. `Ezagent.Template.User` (identity domain).
-`template_data`:
-- `username` — drives `entity://user/<ws>/<username>`.
-- `initial_caps` — merged with `User.default_caps/1`.
-- `default_workspace` — the workspace to bind into.
-- `default_agent_spec` — the `<username>-default` cc agent to fork at registration.
+1. Persist the user row (`Users.create/3`) with `caps_json = default_caps ++ initial_caps`
+   **including the user's self manage-cap** — so self-ownership is durable from row
+   creation, before any Kind exists (avoids "grant a cap on a Kind that isn't live yet").
+   Rollback: delete row.
+2. Spawn/hydrate the User Kind (`ever_created` → fresh). Rollback: terminate + delete row.
+3. Grant the **admin/registrar** manage-cap on the user via dispatch to the registrar's
+   identity (the core §3.3 grant, `created_by` = registrar). Rollback: revoke.
+4. Create the `<username>-default` agent **via the same create entry** (nested). Rollback:
+   teardown the agent.
 
-`instantiate/3` = `Users.create/3` (persist row + `caps_json = default_caps ++ initial`)
-+ workspace bind + fork the `<username>-default` agent (itself via
-`template.instantiate`) + return `{:ok, [user_uri | agent_uri], %{fresh?: true}}`.
+manage-cap recipients (Allen-approved): the user (self, step 1) + the creating
+admin/registrar (step 3). `Entity.ensure_spawned/1` (login) is a rehydrate → no re-grant.
 
-**manage-cap recipients for a User (Allen-approved):** the user holds `:manage` on
-**itself** (self-ownership), AND the **admin/registrar that created it** also holds
-`:manage` on the user (so an admin can administer accounts). Both grants happen at the
-fresh-create step (§3.3): the core step grants `created_by`; the User Class
-additionally self-grants the user. (The only Kind with a 2-recipient grant; documented
-as such.)
+**Nested-create ordering note:** the default-agent create (step 4) recurses through the
+entry but is NOT mutually recursive (a user does not require an agent to exist first;
+the agent's `created_by` is the just-created user or the registrar). No bootstrap cycle.
 
-`Entity.ensure_spawned/1` (login demand-spawn) is a **rehydrate** of an
-already-created user — `fresh?: false`, no re-grant.
+### 3.8 Converging ad-hoc paths + bridge existence predicate (G-2)
 
-### 3.8 Converging the ad-hoc creation paths
-
-| Path | Today | After |
-|---|---|---|
-| agent-bridge channel join (`channel.ex:146`) | `SpawnRegistry.spawn` creates fresh unowned Agent | **Refuse to create on join** — require the Agent Kind to pre-exist (created via `template.instantiate`); join only *attaches* to a live/rehydratable Kind. A join for a non-existent agent is an error, not a silent create. |
-| `Workspace.create/2` (`workspace.ex:62`) | plain fn, no CapBAC | dispatch `template.instantiate` (Workspace Template), authorized |
-| plugin Class `instantiate/3` (cc/np/curl/echo/codex) | already via instantiate, but no `created_by`/cap | unchanged Class code; the **core wrapper** (§3.3) grants the cap using `ctx.caller` |
-| `Agent.spawn_fresh/4` / `spawn_from_template_content/4` | records lineage, no cap | the core wrapper grants the manage-cap; lineage stays (orthogonal provenance-of-creation) |
-| boot `Workspace.Loader` / BootReconciler | rehydrate | unchanged — `fresh?: false`, reload durable caps |
-| mix tasks / demo seeds | direct spawn (operator-local) | route through `template.instantiate` for parity; lowest priority |
-
-### 3.9 Component summary (isolation boundaries)
-
-- `Ezagent.Kind.Template` (core) — Class contract (unchanged signatures).
-- `Ezagent.Behavior.Template` (core/domain) — hosts `template.instantiate`; **owns the
-  core post-instantiate manage-cap grant** keyed off `fresh?` + `ctx.caller`.
-- `Ezagent.Behavior.Manage` (core) — `:reconfigure` / `:delete`; registered on every
-  Kind; gated by the manage-cap.
-- `Ezagent.Template.Workspace` (workspace domain) — new Class.
-- `Ezagent.Template.User` (identity domain) — new Class.
-- CI invariants (test) — §6.
+| Path | After |
+|---|---|
+| agent-bridge join (`channel.ex:146`) | **Existence predicate before spawn**: if a durable snapshot/provenance row exists for the agent URI → rehydrate via `SpawnRegistry.spawn` (legitimate); if it was **never created** → `{:error, :agent_not_created}` (no silent fresh create). The predicate is "durable create marker exists" (the `ever_created`/snapshot row), NOT "currently live". |
+| `Workspace.create/2` | dispatch the create entry (Workspace Template), authorized |
+| plugin Class `instantiate/3` | unchanged Class code; core grant via `ctx.caller` + `ever_created` |
+| `Agent.spawn_fresh` / `spawn_from_template_content` | route through the entry; lineage stays (orthogonal) |
+| boot Loader / BootReconciler / login | rehydrate — unchanged, `ever_created` already set → no grant |
+| mix tasks / seeds | route through the entry (operator principal); low priority |
 
 ## 4. Data flow
 
-**Create:** caller → dispatch `template.instantiate` (CapBAC: create cap) → resolve
-Class → `validate/1` → `instantiate/3` → `{:ok, uris, %{fresh?}}` → **core grant step**
-(if `fresh?`, grant `cap(:<kind>, Manage, :manage, uri)` to `ctx.caller`) → return uris.
+**Create:** caller → dispatch `kind.create` (CapBAC create cap) → resolve Class →
+`validate/1` → `instantiate/3` → core observes `ever_created` fresh transition → grant
+`cap(:<kind>, Manage, :any, uri)` to `ctx.caller` → return uris. On post-spawn failure →
+Class teardown (§5).
 
-**Modify:** caller → dispatch `manage.reconfigure` (CapBAC:
-`cap(:<kind>, Manage, :manage, instance)`) → `validate/1` → write new spec to durable
-`state` → re-apply idempotent materialization effects on the live Kind → (if needed)
-`ensure_subprocess_alive/2`.
+**Modify:** caller → dispatch `manage.reconfigure` (cap `cap(:<kind>, Manage, :any,
+instance)`; Session also owner-checked) → `validate/1` → Class `reconfigure/4` effects on
+the live Kind → (if sidecar) `ensure_subprocess_alive/2`.
 
-**Rehydrate (boot/login/bridge-attach):** `SpawnRegistry.spawn(uri)` →
-`Snapshot.load_or_init` finds a row → rehydrate (`fresh?: false`) → durable manage-cap
-already present, no grant.
+**Delete:** `manage.delete` → Class teardown → Lifecycle `destroy/2`.
 
-## 5. Error handling
+**Rehydrate:** `SpawnRegistry.spawn(uri)` → `load_or_init` finds row → rehydrate, no grant.
 
-- `template.instantiate` for an already-existing URI → `{:error, {:already_started, _}}`
-  (current `Workspace.create` behavior, generalized).
-- `validate/1` failure → `{:error, {:invalid_template_data, _}}` (fail loud, no
-  partial spawn — existing contract, GLOSSARY §128).
-- agent-bridge join for a non-existent Agent → `{:error, :agent_not_created}` (NOT a
-  silent create).
-- manage action without the manage-cap → `{:error, :unauthorized}` (standard step-5.5).
-- grant failure after a fresh spawn → treat as create failure; roll back the spawn
-  (mirror `create_session` rollback). The grant is part of the create's atomic unit.
+## 5. Teardown / rollback contract (G-1)
+
+Each Template Class declares a teardown — `@callback teardown(uri, data, ctx) :: :ok |
+{:error, term()}` — enumerating what its `instantiate` made durable (rows, snapshots,
+caps, bindings, sidecars) and how to undo it. Used by:
+- **Create-failure rollback** (after a fresh spawn, before/at grant): the create entry
+  calls the Class teardown (mirrors `rollback_session/3`'s explicit reversal,
+  `ezagent_domain_chat.ex:871`, generalized per-Class).
+- **`manage.delete`**: the same teardown, then Lifecycle `destroy/2`.
+
+Failures during teardown are best-effort + logged; the original create error surfaces
+(idempotent, double-teardown-safe). The grant itself is the LAST create step so a grant
+failure only has the spawn + Class durables to undo.
 
 ## 6. Testing / CI invariants
 
-- **Single authorized create path** (strengthen `agent_create_single_path_test.exs`):
-  detect **variable-argument** `SpawnRegistry.spawn` / `Kind.spawn` fresh-create calls
-  (not just literal `entity://agent/` strings) across **all** schemes
-  (`session://`, `workspace://`, `entity://user`, `template://`); allowlist only the
-  engine + rehydrate sites. The agent-bridge join (`channel.ex:146`) must NOT be on the
-  create allowlist.
-- **Grant-at-create invariant:** a freshly created owned Kind carries
-  `cap(:<kind>, Manage, :manage, self)` for its `created_by` (assert via the
-  `OwnedBehavior`-style harness, generalized).
-- **Template Class coverage:** every Kind type has a registered Template Class
-  (`TemplateRegistry`), and `Ezagent.Behavior.Manage` is registered on every Kind
-  (`CapabilityRegistry`).
-- **Reconfigure preserves identity + state:** `manage.reconfigure` keeps the same URI
-  and a representative runtime-state field across a config change (per Kind with state:
-  Session members, Agent conversation/PTY-alive).
-- **Rehydrate does not re-grant / does not duplicate:** restart of an owned Kind
-  reloads the durable manage-cap without a second grant.
-- **No external forge of `created_by`:** a non-allowlisted caller cannot set
-  `created_by` (it is `ctx.caller`, authenticated) — assert the create authz + that
-  `template_data` cannot carry `created_by`.
+- **Single authorized create path:** strengthen `agent_create_single_path_test.exs` to
+  detect **variable-argument** `SpawnRegistry.spawn`/`Kind.spawn` fresh-create calls
+  across ALL schemes (`session://`/`workspace://`/`entity://user`/`template://`);
+  allowlist only the engine + rehydrate sites; the bridge join must NOT be allowlisted as
+  a create.
+- **Grant-at-create:** a freshly created Agent/Workspace/User carries
+  `cap(:<kind>, Manage, :any, self)` for `created_by`; rehydrate does NOT re-grant or
+  duplicate.
+- **Template Class + Manage coverage:** every Kind type has a registered Template Class
+  and `Behavior.Manage` registered (`CapabilityRegistry`).
+- **Reconfigure preserves identity + state:** `manage.reconfigure` keeps the URI and a
+  representative runtime-state field (Session members; Agent conversation/PTY-alive).
+- **Manage authz:** non-owner without the manage-cap is denied `:reconfigure`/`:delete`;
+  for Session, a non-owner workspace member is denied (encodes the OQ-4 decision).
+- **No external forge of `created_by`:** `created_by` is `ctx.caller` (authenticated);
+  `template_data` cannot carry it.
 
 ## 7. Out of scope (this spec)
 
-- Routing-row edit authz consuming the manage-cap (team-routing continuation).
-- `manage.transfer` ownership transfer (flagged; v1 may omit).
-- Versioned/blueprint templates.
-- Multi-owner sets beyond the User self+admin case (general co-management is future;
-  expressed naturally as additional manage-cap grants when needed).
+Routing-row edit authz (team-routing follow-up); `manage.transfer`; versioned templates;
+narrowing the default user `:session` cap (unless OQ-4 chooses it).
 
 ## 8. Decisions (Allen-approved 2026-06-01)
 
-1. **D1:** Template concept for ALL Kinds (incl. Workspace + User); unified create
-   chokepoint.
-2. **D2:** Modification = rewrite template params → lifecycle-consistent
-   re-materialization preserving identity + runtime state (NOT destroy+recreate).
-3. **Manage surface:** a dedicated `Ezagent.Behavior.Manage` registered on every Kind
-   (not a vague "primary behavior"); manage-cap = `cap(:<kind>, Manage, :manage,
-   instance)`.
-4. **User manage-cap recipients:** the user (self) + the creating admin/registrar.
-5. **Grant location:** core post-`instantiate` step keyed off `fresh?` + `ctx.caller`
-   (plugin Classes unchanged — auth stays in core).
+1. **D1:** Template concept for ALL Kinds; unified create chokepoint (BUILT here).
+2. **D2:** Modify = lifecycle-consistent re-materialization preserving identity + state
+   (NOT destroy+recreate) — realized as the new `reconfigure/4` Class hook (§3.5).
+3. **Manage surface:** dedicated `Ezagent.Behavior.Manage` on every Kind; manage-cap =
+   `cap(:<kind>, Manage, :any, instance)` (`:any` action — C-1).
+4. **User manage-cap recipients:** user (self, in `caps_json` at row create) + creating
+   admin/registrar.
+5. **Grant location:** core create-entry step keyed off the `ever_created` signal +
+   `ctx.caller` (plugin Classes unchanged).
 
 ## 9. Open questions
 
-- **OQ-1:** Does `template.instantiate` need a new dedicated create-cap shape per Kind,
-  or do existing per-scope create caps (`workspace.create_agent` etc.) become the
-  authz, with the Template behavior reusing them? (Lean: reuse existing create caps;
-  the Template behavior is the *dispatch surface*, the cap is per-scope.)
-- **OQ-2:** Migration/cutover — existing live Kinds created before this change have no
-  manage-cap. Backfill at next rehydrate (grant on first post-deploy activate if
-  absent) vs a one-shot migration. (Lean: backfill-on-activate, idempotent.)
-- **OQ-3:** `Workspace`/`User` reconfigure scope — which params are reconfigurable vs
-  immutable (e.g. a user's username / a workspace's name are likely immutable identity).
+- **OQ-1:** Does `kind.create` reuse existing per-scope create caps
+  (`workspace.create_agent` etc.) as its authz, or get a dedicated create-cap? (Lean:
+  reuse; the entry is the dispatch surface, the cap is per-scope.)
+- **OQ-2 (F-1):** Migration of pre-existing Kinds with no manage-cap → a **one-shot
+  migration** deriving owners from durable tables (Session `owner_uri`; Agent
+  lineage/`creator_uri`; Workspace — no owner field, needs a chosen default e.g.
+  bootstrap-admin or `:no_owner`) with explicit "no owner found" handling. NOT
+  activate-backfill (`activate/2` only reconciles a Kind's own slice; the cap lives on
+  the owner's identity — F-1).
+- **OQ-3:** Per-Kind immutable identity fields (username, workspace name) — rejected by
+  `validate`/`reconfigure`.
+- **OQ-4 (C-1) — Allen:** Session-manage authority: retain `owner_uri`/admin gate (lean)
+  vs narrow the default user `:session` wildcard.
