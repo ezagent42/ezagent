@@ -7,7 +7,7 @@
 
 **Login (for tests 2 & 3):** http://127.0.0.1:10142/login/credentials
 - Username/URI: `entity://user/system/admin`
-- Password: `poctest123`
+- Password: `ezagent-dev` (matches the demo recorder's `DEMO_PASS` default, so recording works out-of-the-box)
 (system admin holds the `:any` wildcard cap → passes both operator and config gates.)
 
 ---
