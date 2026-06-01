@@ -3,24 +3,30 @@
 > 2026-06-01. **Course-correction.** Earlier this session I recommended making the
 > `autoservice` (B) plugin canonical and *merging* the colleague's fast-agent +
 > `configure` machinery with our `customer_chat` (A) work. That optimized for
-> "best production architecture" — the wrong goal. **The PoC's job is to validate
-> migration feasibility with minimal code and minimal core changes, and to *learn*
-> cleverer native expressions from the colleague's work — not to absorb their
-> plugin.** This doc re-anchors on that. Supersedes the B-canonical framing in
+> "best production architecture" — the wrong goal. **The PoC's real job (per
+> FatNine): prove AutoService's customer-service capabilities CAN migrate onto
+> ezagent, with minimal code and minimal core change, and surface the main GAPS &
+> BLOCKS for the core team.** Learning from the colleague's work is *incidental
+> reference*, not the purpose. The deliverable = a minimal working demo + the
+> gaps/blocks findings list (§3). This supersedes the B-canonical framing in
 > `13-pr-split-plan` for the *plugin* decision (the generic primitives — Mode,
 > bridge fix — and the takeover/orchestrator learnings still stand).
 
-## 1. PoC principles (the red lines we drifted from)
-1. **Minimal code.** Smallest slice that proves the capability migrates.
-2. **Minimal core/domain change.** Prefer composing existing ezagent primitives.
+## 1. PoC principles
+1. **Validate migratability + find the gaps.** The goal is to prove each CS
+   capability maps onto ezagent, and to *discover and document* where it doesn't
+   fit natively. A discovered gap that we **document** (rather than fix) is a valid
+   — often the most valuable — outcome.
+2. **Minimal code.** Smallest slice that proves the capability migrates.
+3. **Minimal core/domain change.** Prefer composing existing ezagent primitives.
    When a core/domain change is genuinely needed, make it on our branch and
    **flag it in the PR comment for Allen to approve or send back** — don't merge
    core changes silently.
-3. **Borrow, don't absorb.** The colleague's `feat/autoservice-cinnox` (hjj) is a
-   **reference** for native patterns; we cite/learn from it, we do not merge it.
-4. **Surface decisions for the core team.** Every "native primitive vs custom
-   workaround" fork is a documented question for Allen — that *is* the PoC's
-   highest-value output.
+4. **Borrow is incidental, not the purpose.** The colleague's
+   `feat/autoservice-cinnox` (hjj) is a *reference* — we may cite a cleaner native
+   pattern as a finding, but we do **not** refactor toward it or merge it just to
+   "improve." Fixing a gap is out of scope unless it's required to *prove* a
+   capability migrates.
 5. **Lose no one's work.** Verified: all our open PRs (#511/#512/#515/#525/#526)
    are 100% our commits; hjj's work lives only in `feat/autoservice-cinnox` + #510.
    Nothing of anyone else's is embedded in our branches.
@@ -39,7 +45,19 @@ The `autoservice` (B) split PRs I made this session (#525/#526) are **superseded
 by this re-anchor; close them (all our own commits — nothing lost). #511 (Mode)
 stays — it's the generic takeover primitive, used by A too.
 
-## 3. Capabilities × native mapping (what the PoC demonstrates)
+## 3. Capabilities × native mapping + Gaps/Blocks found (the deliverable)
+
+**Gaps & Blocks findings list** (the PoC's primary output, for Allen/the core team):
+
+| # | Item | Type | Status |
+|---|---|---|---|
+| G1 | cc bridge JOIN (claude 2.1.92 OAuth screen + dialog-gate timeout) | **BLOCK** | found + **fixed** (#524, in branch) |
+| G2 | agent lifecycle for anonymous/per-conversation customers — ezagent's boot-restore + no persistent customer URI forces A's `remove_template`+GC workaround; the native long-lived-template pattern needs a logged-in customer model | **GAP** | **documented** (§4), not fixed (fixing = out of scope per §1.4) |
+| G3 | operator takeover requires either a core `Chat.handle_send` suppression hook (Mode, #511) or pure routing (zero core) | **CORE CHANGE / DECISION** | demonstrate Mode; **hand to Allen** (§6) |
+| G4 | orchestrator cannot provide soul-edit or takeover (it's an LLM-driven slot/router engine) | **FINDING** | documented (`12-orchestrator-vs-our-capabilities`) |
+| G5 | soul edit, customer-chat fan-out, capability gating | **NO GAP** | ✅ migrate natively (table below) |
+
+The per-capability detail:
 
 | Capability | A's implementation | Native ezagent primitive used | Verdict |
 |---|---|---|---|
