@@ -1125,7 +1125,7 @@ defmodule Ezagent.Orchestrator.Tools do
 
         rules
         |> Enum.filter(fn rule -> worker_str in (rule.receivers || []) end)
-        |> Enum.reduce_while({0, 0}, fn rule, {deleted, repointed} ->
+        |> Enum.reduce_while({[], 0}, fn rule, {deleted_meta, repointed} ->
           remaining =
             (rule.receivers || [])
             |> Enum.reject(fn r -> r == worker_str end)
@@ -1133,30 +1133,19 @@ defmodule Ezagent.Orchestrator.Tools do
 
           {result, acc} =
             if remaining == [] do
-              # LAST receiver pruned → the rule is force-deleted and
-              # routing to it is LOST. Warn loudly (todo #9) — name the
-              # rule id, its matcher, and the worker being removed so the
-              # operator/LLM can see exactly what routing disappeared.
-              Logger.warning(
-                "remove_agent_slot routing GC: force-deleting routing rule " <>
-                  "id=#{inspect(rule.id)} matcher=#{inspect(rule_matcher(rule))} " <>
-                  "because removing worker #{worker_str} left it with ZERO receivers. " <>
-                  "Routing to this rule is LOST — re-adding the slot does NOT restore it."
-              )
-
+              # LAST receiver pruned → force-delete; routing to this rule is
+              # LOST. We do NOT log inside the transaction — a later
+              # `RuleStore` failure rolls the whole thing back, and an
+              # in-txn warning would falsely claim "routing LOST" for a
+              # delete that never committed (codex 2026-06-01 MED). Capture
+              # the rule id + matcher so the POST-COMMIT warning can name
+              # exactly what disappeared (todo #9 observability).
               {Ezagent.Routing.RuleStore.delete(rule.id, force: true),
-               {deleted + 1, repointed}}
+               {[{rule.id, rule_matcher(rule)} | deleted_meta], repointed}}
             else
-              # Rule still has other receivers — merely repoint. A debug
-              # line is enough; this is not a loss.
-              Logger.debug(
-                "remove_agent_slot routing GC: repointing routing rule " <>
-                  "id=#{inspect(rule.id)} — dropping worker #{worker_str}, " <>
-                  "#{length(remaining)} receiver(s) remain."
-              )
-
+              # Rule still has other receivers — merely repoint (not a loss).
               {Ezagent.Routing.RuleStore.update_receivers(rule.id, remaining, rule.enabled),
-               {deleted, repointed + 1}}
+               {deleted_meta, repointed + 1}}
             end
 
           case result do
@@ -1167,10 +1156,25 @@ defmodule Ezagent.Orchestrator.Tools do
       end)
 
     case txn do
-      {:ok, {deleted, repointed}} ->
+      {:ok, {deleted_meta, repointed}} ->
         case reload_registry(table) do
-          :ok -> {:ok, %{deleted_rules: deleted, repointed_rules: repointed}}
-          {:error, _} = err -> err
+          :ok ->
+            # Transaction committed — NOW it is safe to warn about routing
+            # that was ACTUALLY lost (codex MED: post-commit only). One
+            # warning per force-deleted rule, naming id + matcher + worker.
+            Enum.each(deleted_meta, fn {id, matcher} ->
+              Logger.warning(
+                "remove_agent_slot routing GC: force-deleted routing rule " <>
+                  "id=#{inspect(id)} matcher=#{inspect(matcher)} " <>
+                  "because removing worker #{worker_str} left it with ZERO receivers. " <>
+                  "Routing to this rule is LOST — re-adding the slot does NOT restore it."
+              )
+            end)
+
+            {:ok, %{deleted_rules: length(deleted_meta), repointed_rules: repointed}}
+
+          {:error, _} = err ->
+            err
         end
 
       {:error, reason} ->

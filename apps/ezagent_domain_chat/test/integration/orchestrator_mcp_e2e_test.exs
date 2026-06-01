@@ -521,7 +521,7 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpE2eTest do
       assert result["structuredContent"]["repointed_rules"] == 0
 
       # The loss is no longer silent — a warning names the rule + worker.
-      assert log =~ "force-deleting routing rule"
+      assert log =~ "force-deleted routing rule"
       assert log =~ "ZERO receivers"
 
       # The rule is in fact gone (GC behavior unchanged).
