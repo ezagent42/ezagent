@@ -100,6 +100,19 @@ defmodule EzagentWeb.Router do
     end
   end
 
+  # Admin soul editor (PoC PR-2). Logged-in workspace admin edits the
+  # tenant customer soul; ConfigLive gates on the workspace-admin cap
+  # via ConfigAuth. Separate scope so the EzagentPluginCustomerChat
+  # alias resolves and the route is auth-gated (RequireEntity) rather
+  # than public like the customer chat above.
+  scope "/", EzagentPluginCustomerChat do
+    pipe_through [:browser, EzagentWeb.Plugs.RequireEntity]
+
+    live_session :customer_chat_config, on_mount: {EzagentWeb.LiveAuth, :require_entity} do
+      live "/plugins/customer-chat/:tenant/config", ConfigLive
+    end
+  end
+
   # /admin* requires login (Phase 4-completion Spec 05 §A.2.3 +
   # PR #123 hardening: live_session on_mount gates the WS reconnect
   # path that bypasses the HTTP Plug pipeline).
