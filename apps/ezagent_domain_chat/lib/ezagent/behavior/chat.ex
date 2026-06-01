@@ -653,13 +653,23 @@ defmodule Ezagent.Behavior.Chat do
   # --- :join -------------------------------------------------------------
 
   def handle_join(%{member: %URI{} = member_uri} = args, ctx) do
-    # team-routing-unification §3.1 — optional member facets carried on the
-    # join: `:provenance` (which authority manages this member), `:role_name`
-    # (a stable per-session alias the member can be addressed by), and
-    # `:in_session_template` (snapshot flag for SessionTemplate materialize,
-    # PR-7). Absent keys default to "no facet" so a plain user join keeps the
-    # minimal `%{online: true}` meta and existing membership tests are unaffected.
-    facets = Map.take(args, [:provenance, :role_name, :in_session_template])
+    # team-routing-unification §3.1 — optional, NON-authority-bearing member
+    # facets carried on the join: `:role_name` (a stable per-session alias the
+    # member can be addressed by) and `:in_session_template` (snapshot flag for
+    # SessionTemplate materialize, PR-7). Absent keys default to "no facet" so a
+    # plain join keeps the minimal `%{online: true}` meta.
+    #
+    # `:provenance` (management authority) is DELIBERATELY NOT accepted here:
+    # codex review of PR-5a flagged that an args-supplied provenance lets a
+    # join caller forge the authority PR-5b will trust ({:manages, provenance}).
+    # provenance is introduced in PR-5b together with its caller-derivation +
+    # authorization, as one reviewable security unit — never from raw args.
+    #
+    # The `:join` action schema declares only `member`, so these facet args
+    # pass through unvalidated by the runtime — sanitize_facets/1 drops any
+    # malformed value (codex PR-5a #1 "type-check the facet args") so a bad
+    # `role_name` can't crash the downstream `is_binary` guards.
+    facets = args |> Map.take([:role_name, :in_session_template]) |> sanitize_facets()
 
     case KindRegistry.lookup(member_uri) do
       {:ok, member_pid} ->
@@ -678,6 +688,14 @@ defmodule Ezagent.Behavior.Chat do
             if monitor_ref_for_current_pid?(monitors, member_uri, member_pid) do
               # Already a live, monitored, online member with the
               # SAME PID we're being asked to (re)join. True no-op.
+              #
+              # team-routing-unification §3.1 (codex PR-5a #3): facets are
+              # set at join, NOT mutated by an idempotent rejoin — this branch
+              # intentionally does NOT apply `facets`. Changing a live member's
+              # role_name / in_session_template is a member-RECONFIGURE concern
+              # (PR-5b's `:manage` authority), not a side effect of re-issuing
+              # `chat.join`. The stale/offline paths below DO reach do_join and
+              # preserve+overlay facets (so reconnect never loses them).
               {:ok, %{members: Map.keys(members), already_member: true}, []}
             else
               # Stale ref (different/dead PID) or no ref — drop any
@@ -719,6 +737,19 @@ defmodule Ezagent.Behavior.Chat do
   end
 
   defp do_join(%URI{} = member_uri, member_pid, ctx, facets) do
+    members = ctx[:read].(:members, %{})
+
+    # team-routing-unification §3.1 (spec §8 decision #2) — `role_name` is
+    # UNIQUE PER SESSION. Reject a join that would assign a role_name already
+    # held by a DIFFERENT member BEFORE any monitor side effect, so a rejected
+    # join leaks no monitor. A member rejoining with its OWN role_name is fine.
+    case role_name_conflict(members, member_uri, Map.get(facets, :role_name)) do
+      {:error, _} = err -> err
+      :ok -> do_join_apply(member_uri, member_pid, ctx, facets)
+    end
+  end
+
+  defp do_join_apply(%URI{} = member_uri, member_pid, ctx, facets) do
     session_uri = ctx[:self_uri]
     members = ctx[:read].(:members, %{})
     # `:monitors` is a TRANSIENT (SPEC §2.3C) — read from ctx.transients.
@@ -741,8 +772,20 @@ defmodule Ezagent.Behavior.Chat do
 
     ref = Process.monitor(member_pid)
 
+    # team-routing-unification §3.1 (codex PR-5a HIGH #2) — PRESERVE any
+    # facets a faceted member already carries when it rejoins through the
+    # stale-monitor / offline path. Start from the EXISTING meta (not a fresh
+    # `%{online: true}`), force `online: true`, then overlay only the non-nil
+    # facets this join supplied. Durable management/snapshot facets therefore
+    # survive reconnect/repair instead of being silently dropped.
+    existing_meta = Map.get(members, member_uri, %{})
+
     new_members =
-      Map.put(members, member_uri, put_member_facets(%{online: true}, facets))
+      Map.put(
+        members,
+        member_uri,
+        put_member_facets(Map.put(existing_meta, :online, true), facets)
+      )
 
     new_monitors = Map.put(monitors_without_member, ref, member_uri)
 
@@ -799,13 +842,14 @@ defmodule Ezagent.Behavior.Chat do
   defp user_uri?(%URI{scheme: "entity", host: "user"}), do: true
   defp user_uri?(_), do: false
 
-  # team-routing-unification §3.1 — fold the optional join facets into a
-  # member's meta map. Only keys actually supplied are written, so a plain
-  # join stays `%{online: true}`. `:in_session_template` defaults to `false`
-  # only when the join explicitly passed it; absent → key omitted entirely.
+  # team-routing-unification §3.1 — fold the optional, non-authority facets
+  # into a member's meta map. Only keys actually supplied (non-nil) are
+  # written, so a plain join keeps `%{online: true}` and a rejoin overlays
+  # only the deltas it carries (preserving prior facets — see do_join_apply).
+  # `:provenance` is intentionally NOT a facet here; it lands in PR-5b with its
+  # caller-derivation + authorization.
   defp put_member_facets(meta, facets) when is_map(meta) and is_map(facets) do
     meta
-    |> maybe_put_facet(:provenance, Map.get(facets, :provenance))
     |> maybe_put_facet(:role_name, Map.get(facets, :role_name))
     |> maybe_put_facet(:in_session_template, Map.get(facets, :in_session_template))
   end
@@ -813,24 +857,44 @@ defmodule Ezagent.Behavior.Chat do
   defp maybe_put_facet(map, _key, nil), do: map
   defp maybe_put_facet(map, key, value), do: Map.put(map, key, value)
 
-  @doc """
-  team-routing-unification §3.1 — the `:provenance` facet of a member (which
-  authority manages it), or `nil` if the member has no provenance / is absent.
-  `members` is a session's member-meta map (`%{URI.t() => meta}`).
-  """
-  @spec member_provenance(map(), URI.t()) :: term() | nil
-  def member_provenance(members, %URI{} = member_uri) when is_map(members) do
-    case Map.get(members, member_uri) do
-      %{provenance: provenance} -> provenance
-      _ -> nil
+  # team-routing-unification §3.1 (codex PR-5a #1) — drop facet args that are
+  # the wrong type, so malformed input is ignored rather than persisted /
+  # crashing a guard. `role_name` must be a binary; `in_session_template` a
+  # boolean. Absent keys are left absent.
+  defp sanitize_facets(facets) do
+    facets
+    |> drop_facet_unless(:role_name, &is_binary/1)
+    |> drop_facet_unless(:in_session_template, &is_boolean/1)
+  end
+
+  defp drop_facet_unless(map, key, pred) do
+    case Map.fetch(map, key) do
+      {:ok, value} -> if pred.(value), do: map, else: Map.delete(map, key)
+      :error -> map
     end
   end
+
+  # team-routing-unification §3.1 (spec §8 decision #2) — role_name is unique
+  # per session. `:ok` when `role_name` is nil (no facet) OR free OR already
+  # held by THIS same member (idempotent rejoin); `{:error, {:role_name_taken,
+  # role_name}}` when a DIFFERENT member already holds it.
+  defp role_name_conflict(_members, _member_uri, nil), do: :ok
+
+  defp role_name_conflict(members, %URI{} = member_uri, role_name)
+       when is_map(members) and is_binary(role_name) do
+    case role_name_to_uri(members, role_name) do
+      nil -> :ok
+      %URI{} = holder -> if uri_eq?(holder, member_uri), do: :ok, else: {:error, {:role_name_taken, role_name}}
+    end
+  end
+
+  defp uri_eq?(%URI{} = a, %URI{} = b), do: URI.to_string(a) == URI.to_string(b)
 
   @doc """
   team-routing-unification §3.1 — resolve a member `role_name` (stable
   per-session alias) to its member URI within a `members` map, or `nil` when
-  no member carries that role_name. First match wins (role_names are intended
-  to be unique within a session).
+  no member carries that role_name. role_name is enforced unique per session
+  at join (`role_name_conflict/3`), so at most one member matches.
   """
   @spec role_name_to_uri(map(), String.t()) :: URI.t() | nil
   def role_name_to_uri(members, role_name) when is_map(members) and is_binary(role_name) do

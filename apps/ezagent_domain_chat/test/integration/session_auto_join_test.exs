@@ -198,83 +198,157 @@ defmodule EzagentDomainChat.Integration.SessionAutoJoinTest do
   # Layer 3 — member facets thread through chat.join (§3.1, PR-5a)
   # ----------------------------------------------------------------------
 
-  describe "member facets (team-routing-unification §3.1)" do
-    test "join carrying provenance/role_name/in_session_template lands them on member meta" do
-      short = "ajs-facets-#{uniq()}"
-      admin = User.admin_uri()
+  describe "member facets (team-routing-unification §3.1, PR-5a)" do
+    test "join carrying role_name + in_session_template lands them on member meta" do
+      {session_uri, _admin} = new_session("ajs-facets")
+      member_uri = register_member()
 
-      {:ok, session_uri, _meta} =
-        EzagentDomainChat.create_session(short, admin, template_name: "default")
+      :ok = join_cast(session_uri, member_uri, %{role_name: "relay", in_session_template: true})
 
-      # A dummy agent member registered in KindRegistry so the session's
-      # `chat.join` resolves a live pid to monitor. An agent host (not
-      # `entity://user/...`) skips the user-only notify + owner-cap branches.
-      member_uri = URI.new!("entity://agent/team-alpha/relay-#{uniq()}")
-      test_pid = self()
+      meta = await_meta(session_uri, member_uri, &Map.has_key?(&1, :role_name))
 
-      member_pid =
-        spawn(fn ->
-          :ok = KindRegistry.put_new(member_uri)
-          send(test_pid, :registered)
-
-          receive do
-            :stop -> :ok
-          end
-        end)
-
-      assert_receive :registered, 1_000
-      on_exit(fn -> send(member_pid, :stop) end)
-
-      target = URI.new!("#{URI.to_string(session_uri)}?action=chat.join")
-
-      :ok =
-        Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-          target: target,
-          mode: :cast,
-          args: %{
-            member: member_uri,
-            provenance: admin,
-            role_name: "relay",
-            in_session_template: true
-          },
-          ctx: %{
-            caller: Ezagent.SystemPrincipal.uri("session-internal"),
-            caps: Ezagent.SystemPrincipal.caps("system://session-internal"),
-            reply: :ignore
-          }
-        })
-
-      meta =
-        wait_until(fn ->
-          m = session_members_meta(session_uri)[member_uri]
-          if is_map(m) and Map.has_key?(m, :role_name), do: m, else: false
-        end)
-
-      assert is_map(meta), "member must appear in chat.members with facet meta after join"
       assert meta.online == true
-      assert meta.provenance == admin
       assert meta.role_name == "relay"
       assert meta.in_session_template == true
+      # provenance is a PR-5b facet — NEVER set from a join's args.
+      refute Map.has_key?(meta, :provenance)
     end
 
     test "a plain join (no facets) keeps the minimal %{online: true} meta" do
-      short = "ajs-plain-#{uniq()}"
-      admin = User.admin_uri()
+      {session_uri, admin} = new_session("ajs-plain")
 
-      {:ok, session_uri, _meta} =
-        EzagentDomainChat.create_session(short, admin, template_name: "default")
+      meta = await_meta(session_uri, admin, fn _ -> true end)
 
-      meta =
-        wait_until(fn ->
-          m = session_members_meta(session_uri)[admin]
-          if is_map(m), do: m, else: false
-        end)
-
-      assert is_map(meta)
       assert meta.online == true
       refute Map.has_key?(meta, :role_name)
       refute Map.has_key?(meta, :provenance)
       refute Map.has_key?(meta, :in_session_template)
     end
+
+    test "facets SURVIVE a reconnect through the offline/stale-monitor path (codex #2)" do
+      {session_uri, _admin} = new_session("ajs-rejoin")
+      member_uri = register_member()
+
+      # First join carries the facets.
+      :ok = join_cast(session_uri, member_uri, %{role_name: "keep", in_session_template: true})
+      _ = await_meta(session_uri, member_uri, &(&1[:role_name] == "keep"))
+
+      # Member process dies → :DOWN flips online → false (facets preserved in meta).
+      kill_member(member_uri)
+      _ = await_meta(session_uri, member_uri, &(&1[:online] == false))
+
+      # A NEW pid re-registers + rejoins WITHOUT supplying facets — the
+      # offline path reaches do_join, which must PRESERVE the prior facets.
+      member_uri2 = re_register_member(member_uri)
+      assert URI.to_string(member_uri2) == URI.to_string(member_uri)
+      :ok = join_cast(session_uri, member_uri, %{})
+
+      meta = await_meta(session_uri, member_uri, &(&1[:online] == true))
+      assert meta.role_name == "keep", "role_name must survive reconnect (was dropped pre-fix)"
+      assert meta.in_session_template == true
+    end
+
+    test "a duplicate role_name from a DIFFERENT member is rejected (codex #4, spec §8.2)" do
+      {session_uri, _admin} = new_session("ajs-dup")
+      member1 = register_member()
+      member2 = register_member()
+
+      :ok = join_cast(session_uri, member1, %{role_name: "relay"})
+      _ = await_meta(session_uri, member1, &(&1[:role_name] == "relay"))
+
+      # member2 tries to take the same role_name via :call so we observe the error.
+      assert {:error, {:role_name_taken, "relay"}} =
+               join_call(session_uri, member2, %{role_name: "relay"})
+
+      # member2 must NOT have been added, and "relay" still resolves to member1.
+      assert is_nil(session_members_meta(session_uri)[member2])
+    end
+  end
+
+  # --- Layer 3 helpers --------------------------------------------------
+
+  defp new_session(prefix) do
+    admin = User.admin_uri()
+
+    {:ok, session_uri, _meta} =
+      EzagentDomainChat.create_session("#{prefix}-#{uniq()}", admin, template_name: "default")
+
+    {session_uri, admin}
+  end
+
+  # A dummy agent member registered in KindRegistry so `chat.join` resolves a
+  # live pid to monitor. An agent host (not `entity://user/...`) skips the
+  # user-only notify + owner-cap branches in do_join_apply.
+  defp register_member do
+    member_uri = URI.new!("entity://agent/team-alpha/relay-#{uniq()}")
+    {member_uri, _pid} = spawn_registered(member_uri)
+    member_uri
+  end
+
+  defp re_register_member(%URI{} = member_uri) do
+    # Old pid is gone (kill_member waited for offline). Re-register a fresh pid.
+    wait_until(fn -> KindRegistry.lookup(member_uri) == :error end)
+    {uri, _pid} = spawn_registered(member_uri)
+    uri
+  end
+
+  defp spawn_registered(%URI{} = member_uri) do
+    test_pid = self()
+
+    pid =
+      spawn(fn ->
+        :ok = KindRegistry.put_new(member_uri)
+        send(test_pid, :registered)
+
+        receive do
+          :stop -> :ok
+        end
+      end)
+
+    assert_receive :registered, 1_000
+    on_exit(fn -> if Process.alive?(pid), do: send(pid, :stop) end)
+    {member_uri, pid}
+  end
+
+  defp kill_member(%URI{} = member_uri) do
+    {:ok, pid} = KindRegistry.lookup(member_uri)
+    send(pid, :stop)
+  end
+
+  defp join_cast(session_uri, member_uri, facets) do
+    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      target: URI.new!("#{URI.to_string(session_uri)}?action=chat.join"),
+      mode: :cast,
+      args: Map.put(facets, :member, member_uri),
+      ctx: join_ctx(:ignore)
+    })
+  end
+
+  defp join_call(session_uri, member_uri, facets) do
+    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      target: URI.new!("#{URI.to_string(session_uri)}?action=chat.join"),
+      mode: :call,
+      args: Map.put(facets, :member, member_uri),
+      ctx: join_ctx({:caller_inbox, self()})
+    })
+  end
+
+  defp join_ctx(reply) do
+    %{
+      caller: Ezagent.SystemPrincipal.uri("session-internal"),
+      caps: Ezagent.SystemPrincipal.caps("system://session-internal"),
+      reply: reply
+    }
+  end
+
+  defp await_meta(session_uri, member_uri, pred) do
+    meta =
+      wait_until(fn ->
+        m = session_members_meta(session_uri)[member_uri]
+        if is_map(m) and pred.(m), do: m, else: false
+      end)
+
+    assert is_map(meta), "expected member #{URI.to_string(member_uri)} meta to satisfy predicate"
+    meta
   end
 end
