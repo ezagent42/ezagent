@@ -161,6 +161,10 @@ test path + a runbook path + at least one PR-evidence screenshot. The
 | 28 | [Dispatch audit row (invocations → EventLog)](./28-dispatch-audit/scenario.md) | 16 | ⏳ | `Audit.@events` covered; EventLog migration is Phase 2+ |
 | 29 | [Admin LV smoke — registry / snapshots / templates / routing / cmdK](./29-admin-lv-smoke/scenario.md) | 17 | ⚠️ | per-LV manual smoke; `/admin/agents` returns 404 (gap) |
 | 30 | [Plugin author DX — write a new Behavior with effects](./30-plugin-author-behavior/scenario.md) | 18 | ✅ | Phase 1-4 migration complete (PRs #451-#469); E2E test #468 exercises greenfield Behavior writes against the new contract |
+| 31 | [Home backup / restore / migration](./31-home-backup-restore-migration/scenario.md) | 13 | 🚧 | see scenario doc |
+| 32 | [Feishu @-mention → orchestrator dispatch](./32-feishu-mention-orchestrator-dispatch/scenario.md) | 3 | 🚧 | `scenario_32_mention_orchestrator_dispatch_test.exs` (deterministic) + live runbook |
+| 33 | [Full-star — orchestrator dispatches ALL flavors (cc + codex + curl)](./33-full-star-orchestrator-all-flavors/scenario.md) | 3 | 🚧 | `scenario_33_full_star_test.exs` (deterministic) + live runbook |
+| 34 | [Sender-locked relay (传话游戏) — legend + rule-set + prompt-template, no baton](./34-sender-locked-relay/scenario.md) | 3 | 🚧 | `scenario_34_sender_locked_relay_test.exs` (deterministic, 8 tests green) + `scenario_34_*_live_test.exs` (live runbook, `@tag :live`) |
 
 ---
 
