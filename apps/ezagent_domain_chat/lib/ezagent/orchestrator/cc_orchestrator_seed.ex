@@ -50,11 +50,11 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
   1. **copies `orchestrator_bridge.py`** from this app's `priv/` into
      the sandbox dir the MCP config references
      (`~/.ezagent/cc-orchestrator/orchestrator_bridge.py`);
-  2. **exports the 7 tool JSON schemas** —
+  2. **exports the tool JSON schemas** —
      `Ezagent.Orchestrator.McpServer.tool_schemas/0` — to
      `orchestrator_tools.json` beside the script, so the bridge serves
      `tools/list` from a file (the schemas stay single-sourced in
-     Elixir, and the configured command lists all 7 tools without the
+     Elixir, and the configured command lists all tools without the
      BEAM running);
   3. **writes the MCP config** pointing at the copied script + the
      exported schema file via `EZAGENT_ORCHESTRATOR_TOOLS_PATH`.
@@ -62,7 +62,7 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
   Without step 1 the pre-PR-5 config referenced a script that was
   never written — a codex CRITICAL finding: a real orchestrator's
   `claude` started with a broken MCP command and could reach none of
-  the 7 tools.
+  the orchestrator tools.
   """
 
   require Logger
@@ -292,7 +292,7 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
 
   @doc """
   Copy `orchestrator_bridge.py` out of this app's `priv/` into the
-  sandbox dir the mcp.json references, and export the 7 tool JSON
+  sandbox dir the mcp.json references, and export the tool JSON
   schemas (`McpServer.tool_schemas/0`) to `orchestrator_tools.json`
   beside it. This is what makes the configured `uv run --script …`
   command actually start a working MCP server (codex CRITICAL — the
@@ -478,13 +478,26 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
     """
     # You are an ESR session orchestrator
 
-    You manage a team of worker agents inside one chat session. You have
-    7 orchestration tools (via the `esr-orchestrator` MCP server):
+    You manage a team of worker agents inside one chat session. You build
+    the team from MEMBERS + RULE-SETS (via the `esr-orchestrator` MCP
+    server) — a worker is a session MEMBER with a stable `role_name`; a
+    multi-agent flow is a named RULE-SET of single-receiver routing rules,
+    optionally fronted by a `@legend`:
 
-    - `add_agent_slot` — spawn a worker agent into a named slot.
-    - `remove_agent_slot` — despawn a worker.
-    - `update_agent_template` — swap a slot's AgentTemplate (rollback-safe).
-    - `write_matcher` — add a routing rule so messages reach the right slots.
+    - `add_managed_member` — spawn a worker from an AgentTemplate and join
+      it as a member with a stable `role_name`.
+    - `remove_member` — remove a member by `role_name` (terminates the
+      worker you spawned + prunes its routing rules).
+    - `define_rule_set_rule` — add a single-receiver routing rule to a
+      named rule-set: when a message matches, deliver it to the member
+      named by `receiver_role_name` (optionally rendered with a prompt
+      template). Express a relay as static rules — e.g. `{from: relay-cc}
+      → relay-codex` — NEVER ask a worker to compute the next hop itself.
+    - `define_prompt_template` — install a named prompt template (rules
+      reference it via `prompt_template_ref`; it renders into the
+      delivered message, e.g. `"接龙：{body}（by {sender}）"`).
+    - `define_legend` — front a rule-set with a `@legend` handle so a user
+      can trigger the whole team by `@`-mentioning the legend name.
     - `update_template` — save the current team as a new version of its
       parent SessionTemplate.
     - `save_template_as` — save the current team as a NEW template family.
@@ -499,8 +512,10 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
     - When a tool returns an error, surface it plainly to the user and
       explain what they could do (e.g. "that template is outside your
       workspace").
-    - Compose the team to fit the user's task; route messages with
-      `write_matcher` so each worker sees what it needs.
+    - Compose the team to fit the user's task: add members with role_names,
+      then wire the flow with `define_rule_set_rule` (the routing TABLE is
+      the baton — workers never emit hop tokens), and front it with a
+      `@legend` if the user should trigger it by name.
     """
   end
 

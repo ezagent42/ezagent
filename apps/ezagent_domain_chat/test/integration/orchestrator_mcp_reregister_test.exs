@@ -53,7 +53,6 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpReregisterTest do
   # (template-SHAPED working copy + the Task #110 :session_template_uri).
   defp orchestrator_chat_slice(opts) do
     wc = %{
-      agent_slots: [],
       routing_rules: [],
       orchestrator_template_uri: URI.parse("template://agent/system/cc-orchestrator"),
       default_workspace_uri: URI.parse("workspace://default"),

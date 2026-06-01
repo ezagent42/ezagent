@@ -31,11 +31,12 @@ defmodule EzagentDomainChat.E2E.Scenario32_MentionOrchestratorDispatchTest do
       decision the feishu inbound path drives.
 
   **G3 (create-agent) and G4 (modify-routing)** — the orchestrator's
-  `add_agent_slot` + `write_matcher` tools — are already covered
+  `add_managed_member` + `define_rule_set_rule` tools (team-routing-
+  unification §3.8 retired the slot tools) — are already covered
   deterministically by
   `apps/ezagent_domain_chat/test/integration/orchestrator_mcp_e2e_test.exs`
-  (drives all 7 tools through `McpServer.handle_tool_call/3` with the
-  orchestrator's bound caps). This file does NOT duplicate that surface;
+  (drives the member/rule-set tools through `McpServer.handle_tool_call/3`
+  with the orchestrator's bound caps). This file does NOT duplicate that surface;
   it pins the membership + mention-routing invariants that connect a
   Feishu @-mention to those already-tested tools.
 

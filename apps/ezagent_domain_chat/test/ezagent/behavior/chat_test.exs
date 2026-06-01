@@ -88,9 +88,15 @@ defmodule Ezagent.Behavior.ChatTest do
       refute Map.has_key?(Chat.init_slice(%{}).state, :monitors)
     end
 
-    test "default_template_working_copy/0 is the empty template-shaped record (PR-2)" do
-      assert Chat.default_template_working_copy() == %{
-               agent_slots: [],
+    test "default_template_working_copy/0 is the empty template-shaped record (no agent_slots, §3.8)" do
+      wc = Chat.default_template_working_copy()
+
+      # team-routing-unification §3.8 (PR-8) — `agent_slots` is DROPPED from
+      # the live working copy (clean cutover). A team is members + rule-sets.
+      refute Map.has_key?(wc, :agent_slots),
+             "default working copy must not carry :agent_slots — §3.8 retires the slot mechanism"
+
+      assert wc == %{
                routing_rules: [],
                orchestrator_template_uri: nil,
                # Task #110 — durable SessionTemplate URI for cold-load

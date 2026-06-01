@@ -221,35 +221,27 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpE2eTest do
     ctx
   end
 
-  # Read the durable template_working_copy off the live Session.
-  defp session_working_copy(session_uri) do
+  # Read the live Session Kind's :chat persistent slice.
+  defp chat_slice(session_uri) do
     {:ok, pid} = KindRegistry.lookup(session_uri)
-
-    chat_slice =
-      pid
-      |> :sys.get_state()
-      |> Map.get(:state, %{})
-      |> Map.get(:chat, %{})
-      # Lifecycle migration (SPEC 2026-05-29 §2.3C): unwrap the Chat
-      # two-container slice to its persistent :state (flat falls through).
-      |> then(&Map.get(&1, :state, &1))
-
-    Behavior.Chat.template_working_copy(chat_slice)
+    %{state: %{chat: %{state: slice}}} = :sys.get_state(pid)
+    slice
   end
 
   # --- the MCP-server tool schema surface --------------------------------
 
-  describe "the orchestrator MCP server exposes exactly the 7 tools" do
-    test "tool_schemas/0 has one valid JSON schema per the 7 tools" do
+  describe "the orchestrator MCP server exposes the §3.8 member/rule-set + template tools" do
+    test "tool_schemas/0 has one valid JSON schema per declared tool" do
       schemas = McpServer.tool_schemas()
-
-      assert length(schemas) == 7
 
       names = Enum.map(schemas, & &1["name"]) |> MapSet.new()
 
+      # §3.8 retired the slot tools; the surface is member + rule-set
+      # oriented plus the three retained template tools.
       assert names ==
-               MapSet.new(~w(add_agent_slot remove_agent_slot update_agent_template
-                             write_matcher update_template save_template_as list_templates))
+               MapSet.new(~w(add_managed_member remove_member define_rule_set_rule
+                             define_prompt_template define_legend
+                             update_template save_template_as list_templates))
 
       for schema <- schemas do
         assert is_binary(schema["description"])
@@ -390,14 +382,12 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpE2eTest do
 
   # --- per-tool effect + cap-#2 happy path -------------------------------
 
-  describe "add_agent_slot / remove_agent_slot / update_agent_template (cap-#2 path)" do
+  describe "add_managed_member / remove_member / define_rule_set_rule (member + rule-set, §3.8)" do
     setup do
       flavor = register_test_flavor()
 
       backend_uri = URI.new!("template://agent/team-alpha/mcp-backend-#{uniq()}")
-      replacement_uri = URI.new!("template://agent/team-alpha/mcp-replacement-#{uniq()}")
       :ok = create_agent_template(backend_uri, flavor, "backend")
-      :ok = create_agent_template(replacement_uri, flavor, "replacement")
 
       session_uri = spawn_session()
       orchestrator_uri = spawn_orchestrator()
@@ -415,92 +405,83 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpE2eTest do
         session_uri: session_uri,
         orchestrator_uri: orchestrator_uri,
         backend_uri: backend_uri,
-        replacement_uri: replacement_uri,
         mcp: mcp
       }
     end
 
-    test "add_agent_slot spawns a worker, records it under the orchestrator + updates the slice",
+    test "add_managed_member spawns a worker, records it under the orchestrator + joins it as a member",
          ctx do
       result =
-        McpServer.handle_tool_call(ctx.mcp, "add_agent_slot", %{
-          "slot_name" => "backend-dev",
-          "agent_template_uri" => URI.to_string(ctx.backend_uri)
+        McpServer.handle_tool_call(ctx.mcp, "add_managed_member", %{
+          "source_agent_template_uri" => URI.to_string(ctx.backend_uri),
+          "role_name" => "backend-dev",
+          "in_session_template" => true
         })
 
-      refute result["isError"], "add_agent_slot failed: #{inspect(result)}"
-      worker_uri_str = result["structuredContent"]
+      refute result["isError"], "add_managed_member failed: #{inspect(result)}"
+      member_uri_str = result["structuredContent"]
 
-      # The worker is in AgentLineage UNDER THE ORCHESTRATOR — this is
-      # what makes cap #2 resolve for the remove/update tools.
-      assert AgentLineage.spawned_in_lineage?(
-               URI.parse(worker_uri_str),
-               ctx.orchestrator_uri
-             ),
-             "the spawned worker must be recorded under the orchestrator's lineage " <>
-               "(§1.6a) — cap #2 depends on it"
+      # The worker is in AgentLineage UNDER THE ORCHESTRATOR — what makes
+      # cap #2 resolve for remove_member.
+      assert AgentLineage.spawned_in_lineage?(URI.parse(member_uri_str), ctx.orchestrator_uri),
+             "the spawned member must be recorded under the orchestrator's lineage — cap #2 depends on it"
 
-      # The durable template_working_copy.agent_slots carries the slot.
-      # Phase 7 hardening — agent_slots is the 4-tuple
-      # {slot_name, source_agent_template_uri, live_worker_uri, generation}.
-      wc = session_working_copy(ctx.session_uri)
-
-      assert {"backend-dev", _src, _live, _gen} =
-               Enum.find(wc.agent_slots, &(elem(&1, 0) == "backend-dev"))
+      # It joined the session as a member carrying its role_name + facets.
+      slice = chat_slice(ctx.session_uri)
+      member_uri = Behavior.Chat.role_name_to_uri(slice.members, "backend-dev")
+      assert URI.to_string(member_uri) == member_uri_str
+      assert slice.members[member_uri].in_session_template == true
+      assert slice.members[member_uri].source_template_uri == ctx.backend_uri
     end
 
-    test "remove_agent_slot terminates the orchestrator's own worker (cap-#2 happy path)", ctx do
+    test "remove_member terminates the orchestrator's own worker (cap-#2 happy path)", ctx do
       add =
-        McpServer.handle_tool_call(ctx.mcp, "add_agent_slot", %{
-          "slot_name" => "rm-slot",
-          "agent_template_uri" => URI.to_string(ctx.backend_uri)
+        McpServer.handle_tool_call(ctx.mcp, "add_managed_member", %{
+          "source_agent_template_uri" => URI.to_string(ctx.backend_uri),
+          "role_name" => "rm-role"
         })
 
       refute add["isError"]
 
-      result = McpServer.handle_tool_call(ctx.mcp, "remove_agent_slot", %{"slot_name" => "rm-slot"})
+      result = McpServer.handle_tool_call(ctx.mcp, "remove_member", %{"role_name" => "rm-role"})
 
       refute result["isError"],
-             "remove_agent_slot on the orchestrator's OWN worker must SUCCEED — " <>
-               "cap #2 ({:spawned_by, orchestrator}) authorizes it. Got: #{inspect(result)}"
+             "remove_member on the orchestrator's OWN worker must SUCCEED — cap #2 " <>
+               "({:spawned_by, orchestrator}) authorizes it. Got: #{inspect(result)}"
 
-      # The slot is gone from the working copy.
-      wc = session_working_copy(ctx.session_uri)
-      refute Enum.any?(wc.agent_slots, &(elem(&1, 0) == "rm-slot"))
+      assert result["structuredContent"]["status"] in [:removed, "removed"]
+
+      # The member is gone from the session.
+      slice = chat_slice(ctx.session_uri)
+      refute Behavior.Chat.role_name_to_uri(slice.members, "rm-role")
     end
 
-    test "remove_agent_slot of an absent slot is idempotent success", ctx do
+    test "remove_member of an absent role is idempotent success", ctx do
       result =
-        McpServer.handle_tool_call(ctx.mcp, "remove_agent_slot", %{
-          "slot_name" => "never-existed-#{uniq()}"
+        McpServer.handle_tool_call(ctx.mcp, "remove_member", %{
+          "role_name" => "never-existed-#{uniq()}"
         })
 
       refute result["isError"]
     end
 
-    # todo #9 (Allen 2026-06-01) — the routing-rule GC is SILENT: removing
-    # a slot whose worker is a rule's SOLE receiver force-deletes the rule
-    # and routing to it is LOST. This regression test pins the
-    # OBSERVABILITY contract: the count reaches the caller AND a warning
-    # is logged. (We do NOT assert the GC behavior changes — only that it
-    # is no longer silent.)
-    test "remove_agent_slot of a rule's SOLE receiver reports deleted_rules:1 + logs a warning",
-         ctx do
+    test "remove_member of a rule's SOLE receiver reports deleted_rules:1 + logs a warning", ctx do
       add =
-        McpServer.handle_tool_call(ctx.mcp, "add_agent_slot", %{
-          "slot_name" => "sole-dev",
-          "agent_template_uri" => URI.to_string(ctx.backend_uri)
+        McpServer.handle_tool_call(ctx.mcp, "add_managed_member", %{
+          "source_agent_template_uri" => URI.to_string(ctx.backend_uri),
+          "role_name" => "sole-dev"
         })
 
       refute add["isError"]
 
       wm =
-        McpServer.handle_tool_call(ctx.mcp, "write_matcher", %{
+        McpServer.handle_tool_call(ctx.mcp, "define_rule_set_rule", %{
           "matcher_ast" => %{"type" => "text_contains", "arg" => "deploy"},
-          "receiver_slot_names" => ["sole-dev"]
+          "receiver_role_name" => "sole-dev",
+          "rule_set" => "deploy-rs"
         })
 
-      refute wm["isError"], "write_matcher failed: #{inspect(wm)}"
+      refute wm["isError"], "define_rule_set_rule failed: #{inspect(wm)}"
       rule_id = wm["structuredContent"]["id"]
       assert is_integer(rule_id)
 
@@ -509,118 +490,150 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpE2eTest do
 
       {result, log} =
         ExUnit.CaptureLog.with_log(fn ->
-          McpServer.handle_tool_call(ctx.mcp, "remove_agent_slot", %{"slot_name" => "sole-dev"})
+          McpServer.handle_tool_call(ctx.mcp, "remove_member", %{"role_name" => "sole-dev"})
         end)
 
-      refute result["isError"], "remove_agent_slot failed: #{inspect(result)}"
+      refute result["isError"], "remove_member failed: #{inspect(result)}"
 
-      # The cascade-delete count reached the caller via the tool result.
       assert result["structuredContent"]["deleted_rules"] == 1,
              "removing the sole receiver must report deleted_rules:1 — got #{inspect(result["structuredContent"])}"
 
       assert result["structuredContent"]["repointed_rules"] == 0
-
-      # The loss is no longer silent — a warning names the rule + worker.
       assert log =~ "force-deleted routing rule"
       assert log =~ "ZERO receivers"
-
-      # The rule is in fact gone (GC behavior unchanged).
       refute Enum.any?(Ezagent.Routing.RuleStore.list(table), &(&1.id == rule_id))
     end
 
-    test "remove_agent_slot of ONE of several receivers reports repointed_rules:1, rule survives",
-         ctx do
+    test "remove_member of ONE of several receivers reports repointed_rules:1, rule survives", ctx do
       keep_a =
-        McpServer.handle_tool_call(ctx.mcp, "add_agent_slot", %{
-          "slot_name" => "keep-a",
-          "agent_template_uri" => URI.to_string(ctx.backend_uri)
+        McpServer.handle_tool_call(ctx.mcp, "add_managed_member", %{
+          "source_agent_template_uri" => URI.to_string(ctx.backend_uri),
+          "role_name" => "keep-a"
         })
 
       keep_b =
-        McpServer.handle_tool_call(ctx.mcp, "add_agent_slot", %{
-          "slot_name" => "keep-b",
-          "agent_template_uri" => URI.to_string(ctx.backend_uri)
+        McpServer.handle_tool_call(ctx.mcp, "add_managed_member", %{
+          "source_agent_template_uri" => URI.to_string(ctx.backend_uri),
+          "role_name" => "keep-b"
         })
 
       refute keep_a["isError"]
       refute keep_b["isError"]
       keep_b_worker = keep_b["structuredContent"]
 
-      wm =
-        McpServer.handle_tool_call(ctx.mcp, "write_matcher", %{
-          "matcher_ast" => %{"type" => "text_contains", "arg" => "review"},
-          "receiver_slot_names" => ["keep-a", "keep-b"]
-        })
+      # A standalone (no rule_set) multi-receiver rule naming both members.
+      # define_rule_set_rule is single-receiver; for the multi-receiver
+      # prune-vs-repoint test we write the rule directly via the same
+      # routing.add_rule dispatch the tool uses.
+      {:ok, %Ezagent.Routing.RuleStore{id: rule_id}} =
+        Ezagent.Routing.RuleStore.add(
+          EzagentDomainChat.Routing.MentionRouting,
+          {:text_contains, "review"},
+          [keep_a["structuredContent"], keep_b_worker],
+          ctx.session_uri,
+          workspace_uri: @workspace_uri,
+          source: "admin"
+        )
 
-      refute wm["isError"], "write_matcher failed: #{inspect(wm)}"
-      rule_id = wm["structuredContent"]["id"]
+      :ok = Ezagent.Routing.RuleStore.load_into_registry(EzagentDomainChat.Routing.MentionRouting)
 
       {result, log} =
         ExUnit.CaptureLog.with_log(fn ->
-          McpServer.handle_tool_call(ctx.mcp, "remove_agent_slot", %{"slot_name" => "keep-a"})
+          McpServer.handle_tool_call(ctx.mcp, "remove_member", %{"role_name" => "keep-a"})
         end)
 
-      refute result["isError"], "remove_agent_slot failed: #{inspect(result)}"
+      refute result["isError"], "remove_member failed: #{inspect(result)}"
 
       assert result["structuredContent"]["repointed_rules"] == 1,
              "removing one of several receivers must report repointed_rules:1 — got #{inspect(result["structuredContent"])}"
 
       assert result["structuredContent"]["deleted_rules"] == 0
+      refute log =~ "force-deleted routing rule"
 
-      # No force-delete warning for a mere repoint.
-      refute log =~ "force-deleting routing rule"
-
-      # The rule SURVIVES, still naming the kept worker.
       table = EzagentDomainChat.Routing.MentionRouting
       surviving = Enum.find(Ezagent.Routing.RuleStore.list(table), &(&1.id == rule_id))
       assert surviving, "the rule must survive — it still has keep-b as a receiver"
       assert keep_b_worker in surviving.receivers
     end
 
-    test "update_agent_template swaps the slot's template, rollback-safe (cap-#2 + cap-#4)", ctx do
+    test "codex B2 — remove_member prune is SCOPED to this session; a foreign session's rule naming the same member is UNTOUCHED",
+         ctx do
       add =
-        McpServer.handle_tool_call(ctx.mcp, "add_agent_slot", %{
-          "slot_name" => "upd-slot",
-          "agent_template_uri" => URI.to_string(ctx.backend_uri)
+        McpServer.handle_tool_call(ctx.mcp, "add_managed_member", %{
+          "source_agent_template_uri" => URI.to_string(ctx.backend_uri),
+          "role_name" => "scoped-dev"
         })
 
       refute add["isError"]
+      member_uri_str = add["structuredContent"]
 
-      result =
-        McpServer.handle_tool_call(ctx.mcp, "update_agent_template", %{
-          "slot_name" => "upd-slot",
-          "new_agent_template_uri" => URI.to_string(ctx.replacement_uri)
-        })
+      table = EzagentDomainChat.Routing.MentionRouting
 
-      refute result["isError"],
-             "update_agent_template on the orchestrator's own slot must SUCCEED. " <>
-               "Got: #{inspect(result)}"
+      # A FOREIGN session's rule that ALSO names this member URI as a
+      # receiver, created_by a DIFFERENT session. Pre-fix the unscoped prune
+      # (filter = "member string in receivers", no created_by check) would
+      # delete/mutate it out from under that other session.
+      foreign_session = URI.new!("session://default/team-alpha/foreign-#{uniq()}")
 
-      # The slot tuple now points at the REPLACEMENT AgentTemplate URI,
-      # carries a NEW live worker URI, and a bumped generation (HIGH-6).
-      wc = session_working_copy(ctx.session_uri)
+      {:ok, foreign_row} =
+        Ezagent.Routing.RuleStore.add(
+          table,
+          {:text_contains, "foreign"},
+          [member_uri_str],
+          foreign_session,
+          workspace_uri: @workspace_uri,
+          rule_set: "foreign-rs",
+          position: 0
+        )
 
-      {"upd-slot", new_src, new_live, new_gen} =
-        Enum.find(wc.agent_slots, &(elem(&1, 0) == "upd-slot"))
+      :ok = Ezagent.Routing.RuleStore.load_into_registry(table)
 
-      assert URI.to_string(new_src) == URI.to_string(ctx.replacement_uri)
-      assert new_gen == 1, "a same-flavor swap bumps the slot's generation"
-      assert %URI{scheme: "entity"} = new_live
+      result = McpServer.handle_tool_call(ctx.mcp, "remove_member", %{"role_name" => "scoped-dev"})
+      refute result["isError"], "remove_member failed: #{inspect(result)}"
+
+      # The foreign session's rule SURVIVES with its receiver unchanged —
+      # only THIS session's rules (created_by == ctx.session_uri) are prunable.
+      surviving = Enum.find(Ezagent.Routing.RuleStore.list(table), &(&1.id == foreign_row.id))
+
+      assert surviving,
+             "B2: a foreign session's rule must NOT be deleted by remove_member's scoped prune"
+
+      assert member_uri_str in (surviving.receivers || []),
+             "B2: the foreign rule's receiver must be UNCHANGED — got #{inspect(surviving.receivers)}"
     end
 
-    test "cap-#2 CONTROL — another orchestrator cannot remove this orchestrator's worker", ctx do
-      # Orchestrator A spawns a worker.
+    test "codex B2 — remove_member PROPAGATES a prune failure (no swallow into deleted_rules:0)" do
+      # No mocking library is available in this umbrella, so assert the
+      # propagation STRUCTURALLY over the source (mirrors the existing
+      # `save_template_as does NOT call check_parent_alive` design-lock test):
+      # the prune-result handling in `do_remove_member` must NOT convert an
+      # `{:error, _}` prune into a fabricated `%{deleted_rules: 0}` success.
+      source = File.read!(Path.join(__DIR__, "../../lib/ezagent/orchestrator/tools.ex"))
+
+      [remove_block | _] =
+        Regex.scan(~r/defp do_remove_member.*?\n  end/s, source) |> Enum.map(&hd/1)
+
+      refute String.contains?(remove_block, "{:error, _} -> %{deleted_rules: 0"),
+             "B2: do_remove_member must NOT swallow a prune {:error, _} into a fabricated " <>
+               "%{deleted_rules: 0} success — it must propagate the prune failure."
+
+      # And the prune call is in an explicit case that propagates the error arm.
+      assert String.contains?(remove_block, "prune_routing_rules_for(session_uri, member_uri)"),
+             "B2: prune must be scoped to the session (prune_routing_rules_for(session_uri, ...))"
+
+      assert Regex.match?(~r/\{:error,.*\} = err ->\s*\n.*err/s, remove_block),
+             "B2: do_remove_member must have an {:error, _} = err arm that returns the error"
+    end
+
+    test "cap-#2 CONTROL — another orchestrator cannot remove this orchestrator's member", ctx do
       add =
-        McpServer.handle_tool_call(ctx.mcp, "add_agent_slot", %{
-          "slot_name" => "owned-by-a",
-          "agent_template_uri" => URI.to_string(ctx.backend_uri)
+        McpServer.handle_tool_call(ctx.mcp, "add_managed_member", %{
+          "source_agent_template_uri" => URI.to_string(ctx.backend_uri),
+          "role_name" => "owned-by-a"
         })
 
       refute add["isError"]
 
-      # Orchestrator B — a DIFFERENT orchestrator — gets a cap #2 scoped
-      # to ITSELF, and an MCP server bound to the SAME session (so the
-      # slot is visible) but its OWN orchestrator URI.
       orchestrator_b = spawn_orchestrator()
 
       caps_b =
@@ -631,19 +644,19 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpE2eTest do
 
       mcp_b = mcp_server(ctx.session_uri, orchestrator_b, caps_b)
 
-      result = McpServer.handle_tool_call(mcp_b, "remove_agent_slot", %{"slot_name" => "owned-by-a"})
+      result = McpServer.handle_tool_call(mcp_b, "remove_member", %{"role_name" => "owned-by-a"})
 
       assert result["isError"] == true,
-             "orchestrator B must NOT be able to terminate orchestrator A's worker — " <>
-               "cap #2 is {:spawned_by, B}, the worker is spawned_by A. Got: #{inspect(result)}"
+             "orchestrator B must NOT be able to terminate orchestrator A's member — " <>
+               "cap #2 is {:spawned_by, B}, the member is spawned_by A. Got: #{inspect(result)}"
 
       assert result["error"]["code"] == "unauthorized"
     end
   end
 
-  # --- write_matcher -----------------------------------------------------
+  # --- define_rule_set_rule / define_prompt_template / define_legend ------
 
-  describe "write_matcher dispatches routing.add_rule on the session (cap-#1)" do
+  describe "define_rule_set_rule / define_prompt_template / define_legend (cap-#1)" do
     setup do
       flavor = register_test_flavor()
       backend_uri = URI.new!("template://agent/team-alpha/mcp-wm-backend-#{uniq()}")
@@ -660,11 +673,11 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpE2eTest do
 
       mcp = mcp_server(session_uri, orchestrator_uri, caps)
 
-      # A slot must exist so the receiver slot name resolves.
+      # A member must exist so the receiver role_name resolves.
       add =
-        McpServer.handle_tool_call(mcp, "add_agent_slot", %{
-          "slot_name" => "wm-dev",
-          "agent_template_uri" => URI.to_string(backend_uri)
+        McpServer.handle_tool_call(mcp, "add_managed_member", %{
+          "source_agent_template_uri" => URI.to_string(backend_uri),
+          "role_name" => "wm-dev"
         })
 
       refute add["isError"]
@@ -672,15 +685,72 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpE2eTest do
       %{mcp: mcp, session_uri: session_uri}
     end
 
-    test "write_matcher writes a routing rule and returns its id", ctx do
+    test "define_rule_set_rule writes a single-receiver rule and returns its id", ctx do
       result =
-        McpServer.handle_tool_call(ctx.mcp, "write_matcher", %{
+        McpServer.handle_tool_call(ctx.mcp, "define_rule_set_rule", %{
           "matcher_ast" => %{"type" => "text_contains", "arg" => "ship"},
-          "receiver_slot_names" => ["wm-dev"]
+          "receiver_role_name" => "wm-dev",
+          "rule_set" => "ship-rs",
+          "position" => 0
         })
 
-      refute result["isError"], "write_matcher failed: #{inspect(result)}"
+      refute result["isError"], "define_rule_set_rule failed: #{inspect(result)}"
       assert is_integer(result["structuredContent"]["id"])
+    end
+
+    test "define_prompt_template installs a named template on the session", ctx do
+      result =
+        McpServer.handle_tool_call(ctx.mcp, "define_prompt_template", %{
+          "name" => "hop",
+          "template" => "接龙：{body}"
+        })
+
+      refute result["isError"], "define_prompt_template failed: #{inspect(result)}"
+      assert chat_slice(ctx.session_uri).prompt_templates["hop"] == "接龙：{body}"
+    end
+
+    test "define_legend fronts a rule-set with a @legend handle", ctx do
+      result =
+        McpServer.handle_tool_call(ctx.mcp, "define_legend", %{
+          "legend_name" => "team-x",
+          "member_role_names" => ["wm-dev"],
+          "bound_rule_set" => "ship-rs",
+          "fold" => true
+        })
+
+      refute result["isError"], "define_legend failed: #{inspect(result)}"
+
+      assert {:ok, %{bound_rule_set: "ship-rs"}} =
+               Behavior.Chat.resolve_legend(chat_slice(ctx.session_uri), "team-x")
+    end
+
+    test "define_rule_set_rule with an unknown receiver role → structured error (codex M1)", ctx do
+      result =
+        McpServer.handle_tool_call(ctx.mcp, "define_rule_set_rule", %{
+          "matcher_ast" => %{"type" => "text_contains", "arg" => "x"},
+          "receiver_role_name" => "ghost-role-#{uniq()}",
+          "rule_set" => "rs"
+        })
+
+      assert result["isError"] == true
+      # codex M1 — a dangling role_name is now rejected as a non-member role
+      # (it MUST resolve to a current session member), not parsed as a URI.
+      assert result["error"]["code"] == "unknown_member_role"
+    end
+
+    test "define_rule_set_rule with a URI-shaped non-member receiver is rejected (codex M1 bypass)",
+         ctx do
+      # Pre-fix this URI-shaped string fell through to URI parsing and bound
+      # a NON-MEMBER receiver. It must now be rejected as a non-member role.
+      result =
+        McpServer.handle_tool_call(ctx.mcp, "define_rule_set_rule", %{
+          "matcher_ast" => %{"type" => "text_contains", "arg" => "x"},
+          "receiver_role_name" => "entity://agent/team-alpha/not_a_member_#{uniq()}",
+          "rule_set" => "rs"
+        })
+
+      assert result["isError"] == true
+      assert result["error"]["code"] == "unknown_member_role"
     end
   end
 
@@ -781,8 +851,8 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpE2eTest do
 
       mcp = mcp_server(session_uri, orchestrator_uri, caps)
 
-      # add_agent_slot without agent_template_uri.
-      result = McpServer.handle_tool_call(mcp, "add_agent_slot", %{"slot_name" => "x"})
+      # add_managed_member without source_agent_template_uri.
+      result = McpServer.handle_tool_call(mcp, "add_managed_member", %{"role_name" => "x"})
 
       assert result["isError"] == true
       assert result["error"]["code"] == "invalid_arguments"
@@ -815,9 +885,9 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpE2eTest do
         )
 
       result =
-        McpServer.tool_call(pid, "add_agent_slot", %{
-          "slot_name" => "proc-slot",
-          "agent_template_uri" => URI.to_string(backend_uri)
+        McpServer.tool_call(pid, "add_managed_member", %{
+          "source_agent_template_uri" => URI.to_string(backend_uri),
+          "role_name" => "proc-role"
         })
 
       refute result["isError"], "process-form tool_call failed: #{inspect(result)}"

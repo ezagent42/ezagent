@@ -409,23 +409,16 @@ defmodule Ezagent.Behavior.Chat do
   @spec default_template_working_copy() :: map()
   def default_template_working_copy do
     %{
-      # [{slot_name :: String.t(),
-      #   source_agent_template_uri :: URI.t(),
-      #   live_worker_uri :: URI.t(),
-      #   generation :: non_neg_integer()}]
+      # team-routing-unification §3.8 (PR-8) — `agent_slots` is REMOVED
+      # (clean cutover, no shim). A "slot" was a member with extra facets
+      # (§3.1); the orchestrator now builds a team via session MEMBERS +
+      # RULE-SETS (see `Ezagent.Orchestrator.Tools.add_managed_member` +
+      # `define_rule_set_rule`). Spawn-source state (`source_template_uri`)
+      # lives on the member's `:members` meta, NOT a slot tuple.
       #
-      # The 4-tuple (CRITICAL + HIGH-6 hardening fix): `slot_name` is
-      # the stable template-shaped key; `source_agent_template_uri` is
-      # the `template://agent/<ws>/<name>` the slot was spawned from
-      # (the durable source); `live_worker_uri` is the CURRENT
-      # session-unique live `entity://agent/...` instance URI;
-      # `generation` is the swap counter (0 at Generator init,
-      # incremented by each `update_agent_template`). Storing the live
-      # URI + generation means readers never re-derive a collision-prone
-      # URI from `{workspace, flavor, slot_name}`.
-      agent_slots: [],
-      # [{matcher_ast :: term(), [slot_name :: String.t()]}]
-      # receivers are slot NAMES, resolved to URIs only on instantiate.
+      # [{matcher_ast :: term(), [role_name :: String.t()]}]
+      # rule-set routing rows (receivers are role_names / URIs, resolved on
+      # instantiate). Kept for SessionTemplate snapshot compatibility.
       routing_rules: [],
       # URI.t() | nil — the orchestrator agent's AgentTemplate
       orchestrator_template_uri: nil,

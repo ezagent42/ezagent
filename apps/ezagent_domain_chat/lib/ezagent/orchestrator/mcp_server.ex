@@ -484,63 +484,57 @@ defmodule Ezagent.Orchestrator.McpServer do
   def tool_schemas do
     [
       %{
-        "name" => "add_agent_slot",
+        "name" => "add_managed_member",
         "description" =>
-          "Spawn a worker agent into a named slot from an AgentTemplate. " <>
-            "The worker is created in your session's workspace and recorded " <>
-            "under your orchestration lineage.",
+          "Spawn a worker agent from an AgentTemplate and join it to your " <>
+            "session as a MEMBER with a stable role_name. The member is " <>
+            "reached by rules targeting its role_name (see " <>
+            "define_rule_set_rule). Replaces the retired add_agent_slot " <>
+            "(a slot was just a member with extra facets).",
         "inputSchema" => %{
           "type" => "object",
           "properties" => %{
-            "slot_name" => %{"type" => "string", "description" => "Name for the agent slot."},
-            "agent_template_uri" => %{
+            "source_agent_template_uri" => %{
               "type" => "string",
-              "description" => "template://agent/<workspace>/<name> of the AgentTemplate to spawn."
+              "description" => "template://agent/<workspace>/<name> to spawn the member from."
             },
-            "prompt_override" => %{
+            "role_name" => %{
               "type" => "string",
-              "description" => "Optional — accepted for API parity, not consumed."
+              "description" => "Stable per-session alias for this member (rules/legends target it)."
+            },
+            "in_session_template" => %{
+              "type" => "boolean",
+              "description" =>
+                "Whether this member is captured in a SessionTemplate snapshot " <>
+                  "(true for a persistent team member). Defaults to true."
             }
           },
-          "required" => ["slot_name", "agent_template_uri"]
+          "required" => ["source_agent_template_uri", "role_name"]
         }
       },
       %{
-        "name" => "remove_agent_slot",
+        "name" => "remove_member",
         "description" =>
-          "Despawn the worker agent in a slot. Idempotent — removing a " <>
-            "slot that does not exist still succeeds.",
+          "Remove a session member by role_name: terminate the worker you " <>
+            "spawned and prune routing rules naming it. Idempotent. Reports " <>
+            "the rule-set impact (deleted vs repointed rules). Replaces the " <>
+            "retired remove_agent_slot.",
         "inputSchema" => %{
           "type" => "object",
           "properties" => %{
-            "slot_name" => %{"type" => "string", "description" => "The slot to remove."}
+            "role_name" => %{"type" => "string", "description" => "The member role_name to remove."}
           },
-          "required" => ["slot_name"]
+          "required" => ["role_name"]
         }
       },
       %{
-        "name" => "update_agent_template",
+        "name" => "define_rule_set_rule",
         "description" =>
-          "Replace a slot's AgentTemplate, rollback-safe: the new worker is " <>
-            "spawned and the slot re-pointed before the old worker is " <>
-            "terminated. A bad new template aborts with the old worker intact.",
-        "inputSchema" => %{
-          "type" => "object",
-          "properties" => %{
-            "slot_name" => %{"type" => "string", "description" => "The slot to update."},
-            "new_agent_template_uri" => %{
-              "type" => "string",
-              "description" => "template://agent/<workspace>/<name> of the replacement template."
-            }
-          },
-          "required" => ["slot_name", "new_agent_template_uri"]
-        }
-      },
-      %{
-        "name" => "write_matcher",
-        "description" =>
-          "Add a routing rule to your session: when an incoming message " <>
-            "matches the matcher, it is delivered to the named receiver slots.",
+          "Add a SINGLE-RECEIVER routing rule to a named rule-set: when a " <>
+            "message matches the matcher, deliver it to the member named by " <>
+            "receiver_role_name, optionally rendered with a prompt template. " <>
+            "Rule-sets express multi-agent flows as static {from: X} -> Y " <>
+            "rules (NO model-computed baton). Replaces write_matcher.",
         "inputSchema" => %{
           "type" => "object",
           "properties" => %{
@@ -548,15 +542,75 @@ defmodule Ezagent.Orchestrator.McpServer do
               "type" => "object",
               "description" =>
                 "A routing matcher in JSON form, e.g. " <>
-                  ~s({"type":"mention","arg":"backend"}.)
+                  ~s({"type":"mention","arg":"传话游戏"} or {"type":"from","arg":"<member-uri>"}.)
             },
-            "receiver_slot_names" => %{
-              "type" => "array",
-              "items" => %{"type" => "string"},
-              "description" => "Slot names the matched message is routed to."
+            "receiver_role_name" => %{
+              "type" => "string",
+              "description" => "The member role_name (or concrete URI) the matched message routes to."
+            },
+            "rule_set" => %{
+              "type" => "string",
+              "description" => "Name of the rule-set this rule belongs to (the team-flow group)."
+            },
+            "position" => %{
+              "type" => "integer",
+              "description" => "Ordinal position of this rule within the rule-set (default 0)."
+            },
+            "prompt_template_ref" => %{
+              "type" => "string",
+              "description" =>
+                "Optional — name of a prompt template (see define_prompt_template) " <>
+                  "rendered into the delivered message."
             }
           },
-          "required" => ["matcher_ast", "receiver_slot_names"]
+          "required" => ["matcher_ast", "receiver_role_name", "rule_set"]
+        }
+      },
+      %{
+        "name" => "define_prompt_template",
+        "description" =>
+          "Install a named prompt template on your session. Rules reference " <>
+            "it via prompt_template_ref; it is rendered at delivery with " <>
+            "variables like {body}/{sender}. Merges into the existing map.",
+        "inputSchema" => %{
+          "type" => "object",
+          "properties" => %{
+            "name" => %{"type" => "string", "description" => "The prompt template name."},
+            "template" => %{
+              "type" => "string",
+              "description" =>
+                "The template string, e.g. " <> ~s("接龙：{body}（by {sender}）". {body} is required.)
+            }
+          },
+          "required" => ["name", "template"]
+        }
+      },
+      %{
+        "name" => "define_legend",
+        "description" =>
+          "Front a rule-set with a @legend handle: a user-facing name that " <>
+            "collapses a team (members by role_name) and triggers its " <>
+            "rule-set flow. @legend resolves through the legend registry to " <>
+            "the rule-set's entry rule.",
+        "inputSchema" => %{
+          "type" => "object",
+          "properties" => %{
+            "legend_name" => %{"type" => "string", "description" => "The @-handle, e.g. 传话游戏."},
+            "member_role_names" => %{
+              "type" => "array",
+              "items" => %{"type" => "string"},
+              "description" => "Role_names of the team members this legend collapses."
+            },
+            "bound_rule_set" => %{
+              "type" => "string",
+              "description" => "The rule-set name @legend triggers."
+            },
+            "fold" => %{
+              "type" => "boolean",
+              "description" => "Whether the legend collapses (folds) the member set. Defaults to true."
+            }
+          },
+          "required" => ["legend_name", "member_role_names", "bound_rule_set"]
         }
       },
       %{
@@ -664,30 +718,48 @@ defmodule Ezagent.Orchestrator.McpServer do
   # operation args from `arguments` (the LLM-supplied map) and the
   # caller/cap/session context from `ctx` — the LLM never supplies the
   # latter.
-  defp run_tool(%__MODULE__{} = ctx, :add_agent_slot, args) do
-    with {:ok, slot} <- arg_string(args, "slot_name"),
-         {:ok, tmpl_uri} <- arg_uri(args, "agent_template_uri") do
-      Tools.add_agent_slot(slot, tmpl_uri, arg_optional_string(args, "prompt_override"), tool_opts(ctx))
+  defp run_tool(%__MODULE__{} = ctx, :add_managed_member, args) do
+    with {:ok, tmpl_uri} <- arg_uri(args, "source_agent_template_uri"),
+         {:ok, role_name} <- arg_string(args, "role_name") do
+      in_session_template = arg_optional_boolean(args, "in_session_template", true)
+      Tools.add_managed_member(tmpl_uri, role_name, in_session_template, tool_opts(ctx))
     end
   end
 
-  defp run_tool(%__MODULE__{} = ctx, :remove_agent_slot, args) do
-    with {:ok, slot} <- arg_string(args, "slot_name") do
-      Tools.remove_agent_slot(slot, tool_opts(ctx))
+  defp run_tool(%__MODULE__{} = ctx, :remove_member, args) do
+    with {:ok, role_name} <- arg_string(args, "role_name") do
+      Tools.remove_member(role_name, tool_opts(ctx))
     end
   end
 
-  defp run_tool(%__MODULE__{} = ctx, :update_agent_template, args) do
-    with {:ok, slot} <- arg_string(args, "slot_name"),
-         {:ok, new_uri} <- arg_uri(args, "new_agent_template_uri") do
-      Tools.update_agent_template(slot, new_uri, tool_opts(ctx))
-    end
-  end
-
-  defp run_tool(%__MODULE__{} = ctx, :write_matcher, args) do
+  defp run_tool(%__MODULE__{} = ctx, :define_rule_set_rule, args) do
     with {:ok, matcher} <- arg_matcher(args, "matcher_ast"),
-         {:ok, receivers} <- arg_string_list(args, "receiver_slot_names") do
-      Tools.write_matcher(matcher, receivers, tool_opts(ctx))
+         {:ok, receiver_role} <- arg_string(args, "receiver_role_name"),
+         {:ok, rule_set} <- arg_string(args, "rule_set") do
+      rule_opts =
+        [
+          rule_set: rule_set,
+          position: arg_optional_integer(args, "position", 0),
+          prompt_template_ref: arg_optional_string(args, "prompt_template_ref")
+        ] ++ tool_opts(ctx)
+
+      Tools.define_rule_set_rule(matcher, receiver_role, rule_opts)
+    end
+  end
+
+  defp run_tool(%__MODULE__{} = ctx, :define_prompt_template, args) do
+    with {:ok, name} <- arg_string(args, "name"),
+         {:ok, template} <- arg_string(args, "template") do
+      Tools.define_prompt_template(name, template, tool_opts(ctx))
+    end
+  end
+
+  defp run_tool(%__MODULE__{} = ctx, :define_legend, args) do
+    with {:ok, legend_name} <- arg_string(args, "legend_name"),
+         {:ok, member_role_names} <- arg_string_list(args, "member_role_names"),
+         {:ok, bound_rule_set} <- arg_string(args, "bound_rule_set") do
+      fold = arg_optional_boolean(args, "fold", true)
+      Tools.define_legend(legend_name, member_role_names, bound_rule_set, fold, tool_opts(ctx))
     end
   end
 
@@ -705,10 +777,15 @@ defmodule Ezagent.Orchestrator.McpServer do
     Tools.list_templates(arg_optional_string(args, "name_filter"), tool_opts(ctx))
   end
 
-  # The orchestrator's caller context every Tools.* function consumes.
-  # caller + caps + session_uri + workspace_uri come from the bound
-  # `%McpServer{}` — NEVER from tool args.
-  defp tool_opts(%__MODULE__{} = ctx) do
+  @doc """
+  The orchestrator's caller context every `Tools.*` function consumes:
+  `caller` + `caps` + `session_uri` + `workspace_uri` (+ `owner` /
+  `parent_template_uri` for the template tools) — all from the bound
+  `%McpServer{}`, NEVER from tool args. Public so tests (and the live
+  bridge) can drive `Tools.*` against a bound context directly.
+  """
+  @spec tool_opts(t()) :: keyword()
+  def tool_opts(%__MODULE__{} = ctx) do
     [
       caller: ctx.orchestrator_uri,
       caps: ctx.caps,
@@ -732,6 +809,20 @@ defmodule Ezagent.Orchestrator.McpServer do
     case Map.get(args, key) do
       s when is_binary(s) and s != "" -> s
       _ -> nil
+    end
+  end
+
+  defp arg_optional_boolean(args, key, default) do
+    case Map.get(args, key) do
+      b when is_boolean(b) -> b
+      _ -> default
+    end
+  end
+
+  defp arg_optional_integer(args, key, default) do
+    case Map.get(args, key) do
+      i when is_integer(i) -> i
+      _ -> default
     end
   end
 
@@ -784,24 +875,6 @@ defmodule Ezagent.Orchestrator.McpServer do
     }
   end
 
-  # Generator-reconciler PR-C — reconciler tools return `{:partial, info}`
-  # when at least one converging step did not complete. Surface as a
-  # structured MCP tool error so the LLM sees the pending steps and the
-  # cue to RE-INVOKE (a re-invocation continues forward progress; the
-  # reconciler is idempotent). NOT a generic failure — distinct
-  # `:partial_convergence` code so the orchestrator can route this
-  # specifically.
-  defp to_mcp_result(_tool, {:partial, info}) when is_map(info) do
-    {code, message} = partial_to_mcp(info)
-
-    %{
-      "isError" => true,
-      "content" => [%{"type" => "text", "text" => message}],
-      "error" => %{"code" => to_string(code), "message" => message},
-      "structuredContent" => stringify(info)
-    }
-  end
-
   defp to_mcp_result(_tool, {:error, reason}) do
     {code, message} = error_to_mcp(reason)
     mcp_error(code, message)
@@ -837,25 +910,32 @@ defmodule Ezagent.Orchestrator.McpServer do
       {:parent_template_deleted,
        "The parent template is gone — use save_template_as to persist under a new name."}
 
-  # Generator-reconciler PR-C — `:no_such_slot` and `:no_live_worker`
-  # are structured `update_agent_template` errors (preflight didn't
-  # find a slot to reconcile). Mapped to distinct codes so the LLM can
-  # distinguish "you asked about a slot that doesn't exist" from a
-  # real failure.
-  defp error_to_mcp(:no_such_slot),
+  # team-routing-unification §3.8 — member/rule-set tool errors.
+  # codex M1 — `define_rule_set_rule`'s `receiver_role_name` MUST resolve to
+  # a CURRENT session member's role (or a magic token); a dangling
+  # role_name (even one that parses as a URI) is rejected here rather than
+  # silently binding a non-member receiver.
+  defp error_to_mcp({:unknown_member_role, r}),
     do:
-      {:no_such_slot,
-       "No such slot — there is nothing to update. Use add_agent_slot first."}
+      {:unknown_member_role,
+       "Rule receiver_role_name #{inspect(r)} is not a current session member's role_name — " <>
+         "add the managed member (add_managed_member) first, or use a magic token."}
 
-  defp error_to_mcp(:no_live_worker),
+  defp error_to_mcp({:unknown_rule_receiver, r}),
     do:
-      {:no_live_worker,
-       "The slot has no live worker recorded — re-establish it via remove_agent_slot + add_agent_slot."}
+      {:unknown_rule_receiver,
+       "Rule receiver #{inspect(r)} is neither a current member role_name nor a " <>
+         "valid URI — add the managed member (add_managed_member) first."}
 
-  defp error_to_mcp(:slot_conflict),
+  defp error_to_mcp({:source_template_missing_flavor, uri}),
     do:
-      {:slot_conflict,
-       "Slot already exists at a different template — use update_agent_template to change templates."}
+      {:source_template_missing_flavor,
+       "The source AgentTemplate #{URI.to_string(uri)} has no flavor — cannot spawn a member from it."}
+
+  defp error_to_mcp({:role_name_taken, role_name}),
+    do:
+      {:role_name_taken,
+       "role_name #{inspect(role_name)} is already held by another member in this session."}
 
   defp error_to_mcp({:missing_opt, key}),
     do: {:missing_context, "Missing orchestrator context: #{key}"}
@@ -866,11 +946,6 @@ defmodule Ezagent.Orchestrator.McpServer do
   defp error_to_mcp({:invalid_matcher, _}),
     do: {:invalid_matcher, "Invalid matcher — could not parse the routing matcher."}
 
-  defp error_to_mcp(:no_resolvable_receivers),
-    do:
-      {:no_resolvable_receivers,
-       "No receiver slot resolved to a live worker — add the agent slots first."}
-
   defp error_to_mcp(:hash_mismatch),
     do: {:hash_mismatch, "Template content hash mismatch — refusing to persist."}
 
@@ -880,35 +955,8 @@ defmodule Ezagent.Orchestrator.McpServer do
   defp error_to_mcp(reason),
     do: {:tool_error, "Operation failed: #{inspect(reason)}"}
 
-  # Generator-reconciler PR-C — render a `{:partial, info}` reconciler
-  # return as a structured MCP "still-converging" error. The LLM sees
-  # exactly which steps did not complete and the cue to RE-INVOKE the
-  # same tool (idempotent — the next pass continues from current
-  # reality).
-  defp partial_to_mcp(info) when is_map(info) do
-    pending = info[:pending] || []
-    errors = info[:errors] || []
-    slot = info[:slot]
-
-    detail =
-      cond do
-        slot && pending != [] ->
-          "slot=#{inspect(slot)} pending=#{inspect(pending)} errors=#{inspect(errors)}"
-
-        pending != [] ->
-          "pending=#{inspect(pending)} errors=#{inspect(errors)}"
-
-        true ->
-          inspect(info)
-      end
-
-    {:partial_convergence,
-     "Reconciler did not complete this pass — RE-INVOKE the same tool to continue. " <>
-       "All workers were kept alive (no rollback). " <> detail}
-  end
-
   defp describe_success(%URI{} = uri), do: "ok: #{URI.to_string(uri)}"
-  defp describe_success(:removed), do: "ok: slot removed"
+  defp describe_success(:already_removed), do: "ok: member already removed"
   defp describe_success(map) when is_map(map), do: "ok: #{inspect(stringify(map))}"
   defp describe_success(other), do: "ok: #{inspect(other)}"
 

@@ -1481,6 +1481,20 @@ defmodule EzagentDomainChat do
   # parses it (`String.split(name, "_", parts: 2)`) to resolve the Kind
   # module, so the prefix must stay first and the discriminator rides in the
   # suffix.
+  # PR-8 (§3.8): the orchestrator's `add_managed_member` tool spawns a
+  # member the SAME way materialization does — so it shares this canonical
+  # session-unique, flavor-prefixed instance name (one source of truth for
+  # the per-(session, role) member URI). Exposed via
+  # `spawned_member_instance_name_public/4`.
+  @doc false
+  def spawned_member_instance_name_public(
+        flavor,
+        %URI{} = source_template_uri,
+        role_name,
+        %URI{} = session_uri
+      ),
+      do: spawned_member_instance_name(flavor, source_template_uri, role_name, session_uri)
+
   defp spawned_member_instance_name(flavor, %URI{} = source_template_uri, role_name, %URI{} = session_uri)
        when is_binary(flavor) do
     slot =

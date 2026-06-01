@@ -6,11 +6,11 @@ defmodule EzagentDomainChat.E2E.Scenario33_FullStarTest do
   This is the **deterministic invariant gate** (the scenario's
   Verification tier 1). It proves the orchestrator can compose a team of
   THREE DISTINCT flavors — the `cc` / `codex` / `curl` matrix Scenario 33
-  targets — via its `add_agent_slot` MCP tool: each worker is spawned,
-  recorded under THIS orchestrator's lineage (so cap #2 authorizes
-  managing it), and carried as a distinct slot in the durable
-  `template_working_copy.agent_slots`. All three coexist + route
-  independently (`write_matcher`).
+  targets — via its `add_managed_member` MCP tool (team-routing-unification
+  §3.8 retired the slot tools): each worker is spawned, recorded under THIS
+  orchestrator's lineage (so cap #2 authorizes managing it), and joined as
+  a distinct session MEMBER with a stable `role_name`. All three coexist +
+  route independently (`define_rule_set_rule`).
 
   Per the scenario doc, the automated tier "may stub the provider call
   where a live provider isn't available in CI": the three flavors here
@@ -178,17 +178,10 @@ defmodule EzagentDomainChat.E2E.Scenario33_FullStarTest do
     ctx
   end
 
-  defp session_working_copy(session_uri) do
+  defp chat_slice(session_uri) do
     {:ok, pid} = KindRegistry.lookup(session_uri)
-
-    chat_slice =
-      pid
-      |> :sys.get_state()
-      |> Map.get(:state, %{})
-      |> Map.get(:chat, %{})
-      |> then(&Map.get(&1, :state, &1))
-
-    Behavior.Chat.template_working_copy(chat_slice)
+    %{state: %{chat: %{state: slice}}} = :sys.get_state(pid)
+    slice
   end
 
   describe "orchestrator composes a 3-flavor team (cc + codex + curl stand-ins)" do
@@ -215,58 +208,58 @@ defmodule EzagentDomainChat.E2E.Scenario33_FullStarTest do
       %{mcp: mcp, session_uri: session_uri, orchestrator_uri: orchestrator_uri, templates: templates}
     end
 
-    test "add_agent_slot spawns one worker per flavor, each under the orchestrator lineage", ctx do
-      slots = [{"worker-cc", ctx.templates.cc}, {"worker-codex", ctx.templates.codex}, {"worker-ds", ctx.templates.curl}]
+    test "add_managed_member spawns one member per flavor, each under the orchestrator lineage", ctx do
+      members = [{"worker-cc", ctx.templates.cc}, {"worker-codex", ctx.templates.codex}, {"worker-ds", ctx.templates.curl}]
 
-      worker_uris =
-        for {slot_name, tmpl_uri} <- slots do
+      member_uris =
+        for {role_name, tmpl_uri} <- members do
           result =
-            McpServer.handle_tool_call(ctx.mcp, "add_agent_slot", %{
-              "slot_name" => slot_name,
-              "agent_template_uri" => URI.to_string(tmpl_uri)
+            McpServer.handle_tool_call(ctx.mcp, "add_managed_member", %{
+              "source_agent_template_uri" => URI.to_string(tmpl_uri),
+              "role_name" => role_name
             })
 
-          refute result["isError"], "add_agent_slot #{slot_name} failed: #{inspect(result)}"
-          worker_uri = URI.parse(result["structuredContent"])
+          refute result["isError"], "add_managed_member #{role_name} failed: #{inspect(result)}"
+          member_uri = URI.parse(result["structuredContent"])
 
-          assert AgentLineage.spawned_in_lineage?(worker_uri, ctx.orchestrator_uri),
-                 "#{slot_name} worker must be recorded under the orchestrator lineage (cap #2)"
+          assert AgentLineage.spawned_in_lineage?(member_uri, ctx.orchestrator_uri),
+                 "#{role_name} member must be recorded under the orchestrator lineage (cap #2)"
 
-          {slot_name, worker_uri}
+          {role_name, member_uri}
         end
 
-      # All THREE slots coexist in the durable working copy — the
-      # full-star team, one slot per flavor.
-      wc = session_working_copy(ctx.session_uri)
-      slot_names = Enum.map(wc.agent_slots, &elem(&1, 0)) |> MapSet.new()
+      # All THREE members coexist in the session, each carrying its role_name
+      # — the full-star team, one member per flavor.
+      slice = chat_slice(ctx.session_uri)
 
-      for {slot_name, _} <- slots do
-        assert MapSet.member?(slot_names, slot_name),
-               "slot #{slot_name} must be present in template_working_copy.agent_slots — got #{inspect(slot_names)}"
+      for {role_name, _} <- members do
+        assert Behavior.Chat.role_name_to_uri(slice.members, role_name),
+               "member #{role_name} must be a live session member — got #{inspect(Map.keys(slice.members))}"
       end
 
-      # The three workers are distinct entities.
-      uris = Enum.map(worker_uris, fn {_, u} -> URI.to_string(u) end)
-      assert length(Enum.uniq(uris)) == 3, "the three flavor workers must be distinct: #{inspect(uris)}"
+      # The three members are distinct entities.
+      uris = Enum.map(member_uris, fn {_, u} -> URI.to_string(u) end)
+      assert length(Enum.uniq(uris)) == 3, "the three flavor members must be distinct: #{inspect(uris)}"
     end
 
-    test "write_matcher routes to each flavor slot independently", ctx do
-      for {slot_name, tmpl_uri} <- [{"wm-cc", ctx.templates.cc}, {"wm-codex", ctx.templates.codex}, {"wm-ds", ctx.templates.curl}] do
+    test "define_rule_set_rule routes to each flavor member independently", ctx do
+      for {role_name, tmpl_uri} <- [{"wm-cc", ctx.templates.cc}, {"wm-codex", ctx.templates.codex}, {"wm-ds", ctx.templates.curl}] do
         add =
-          McpServer.handle_tool_call(ctx.mcp, "add_agent_slot", %{
-            "slot_name" => slot_name,
-            "agent_template_uri" => URI.to_string(tmpl_uri)
+          McpServer.handle_tool_call(ctx.mcp, "add_managed_member", %{
+            "source_agent_template_uri" => URI.to_string(tmpl_uri),
+            "role_name" => role_name
           })
 
-        refute add["isError"], "add_agent_slot #{slot_name} failed: #{inspect(add)}"
+        refute add["isError"], "add_managed_member #{role_name} failed: #{inspect(add)}"
 
         wm =
-          McpServer.handle_tool_call(ctx.mcp, "write_matcher", %{
-            "matcher_ast" => %{"type" => "text_contains", "arg" => slot_name},
-            "receiver_slot_names" => [slot_name]
+          McpServer.handle_tool_call(ctx.mcp, "define_rule_set_rule", %{
+            "matcher_ast" => %{"type" => "text_contains", "arg" => role_name},
+            "receiver_role_name" => role_name,
+            "rule_set" => "rs-#{role_name}"
           })
 
-        refute wm["isError"], "write_matcher for #{slot_name} failed: #{inspect(wm)}"
+        refute wm["isError"], "define_rule_set_rule for #{role_name} failed: #{inspect(wm)}"
         assert is_integer(wm["structuredContent"]["id"])
       end
     end
