@@ -305,6 +305,12 @@ defmodule Ezagent.Behavior.Chat do
       # until the next `:receive` populates it. Readers MUST default
       # via `Map.get(slice, :recent_messages, [])`.
       recent_messages: [],
+      # team-routing-unification §3.4 (PR-4b): session-scoped named prompt
+      # templates (name => template string), applied at delivery to a rule's
+      # receiver via `render_for_delivery/4`. Empty by default → no rendering
+      # (behaviour-preserving). Readers MUST default via
+      # `Map.get(slice, :prompt_templates, %{})` for legacy snapshots.
+      prompt_templates: %{},
       # Phase 7 completion PR-2 (SPEC §1.3 / §1.6) — the durable
       # source-template record for the orchestrator's working copy.
       # `template_working_copy` is template-SHAPED, not live-runtime
@@ -454,13 +460,20 @@ defmodule Ezagent.Behavior.Chat do
             :error -> nil
           end
 
-        recipients =
-          Ezagent.Routing.Resolver.resolve(
+        # team-routing-unification §3.4/§3.5 (PR-4b): resolve WITH matched-rule
+        # ctx so the per-recipient delivery can render that rule's prompt
+        # template. The bare URI list (for notify_dropped_mentions) is mapped
+        # off; ctx is threaded into the dispatch loop below.
+        recipients_with_ctx =
+          Ezagent.Routing.Resolver.resolve_with_ctx(
             msg,
             session_uri,
             in_session_members,
             workspace_uri: workspace_uri
           )
+
+        recipients = Enum.map(recipients_with_ctx, fn {uri, _ctx} -> uri end)
+        prompt_templates = ctx[:read].(:prompt_templates, %{})
 
         # Allen 2026-05-26: surface "mention dropped — target not in
         # session" as a notification to the sender. Without this, the
@@ -480,11 +493,15 @@ defmodule Ezagent.Behavior.Chat do
         # mark, so this stays in-handler (effect grammar discards
         # dispatch return values). Cross-session forwarding does not
         # need a ReadMarker side effect.
-        for recipient <- recipients do
+        for {recipient, rule_ctx} <- recipients_with_ctx do
           if recipient.scheme == "session" do
             dispatch_cross_session_call(recipient, msg)
           else
-            dispatch_receive_call(recipient, msg, session_uri)
+            # Path-A delivery transform (§3.4): render the matched rule's
+            # prompt template into THIS recipient's message (no template →
+            # unchanged). Applies to agent + user recipients alike.
+            delivered = render_for_delivery(msg, rule_ctx, prompt_templates, session_uri)
+            dispatch_receive_call(recipient, delivered, session_uri)
           end
         end
 
@@ -1173,6 +1190,53 @@ defmodule Ezagent.Behavior.Chat do
   # Per-recipient receive dispatch — :cast for Session→member fan-out.
   # On success, mark :delivered on the read marker (PR-3 of Read Receipts
   # rollout — fire-and-forget, must not block message fan-out).
+  @doc false
+  # team-routing-unification §3.4 (PR-4b): render the matched rule's prompt
+  # template (carried in `ctx.prompt_template_ref` from
+  # `Resolver.resolve_with_ctx/4`) over the message, using the session's
+  # `prompt_templates` map. No ref / no such template / nil ctx → the message
+  # is returned UNCHANGED (behaviour-preserving when no rule names a template).
+  @spec render_for_delivery(Message.t(), map() | nil, map(), URI.t()) :: Message.t()
+  def render_for_delivery(%Message{} = msg, ctx, templates, %URI{} = session_uri)
+      when is_map(templates) do
+    ref = ctx && Map.get(ctx, :prompt_template_ref)
+
+    case ref && Map.get(templates, ref) do
+      template when is_binary(template) ->
+        rendered =
+          Ezagent.Routing.PromptTemplate.render(template, message_vars(msg, session_uri))
+
+        %{msg | body: put_rendered_text(msg.body, rendered)}
+
+      _ ->
+        msg
+    end
+  end
+
+  @doc false
+  # The fixed v1 template variable set, extracted from the delivered message +
+  # current session (team-routing-unification §3.2/§3.4). `flavor` is "" for
+  # now (the sender's agent flavor needs a lookup — deferred).
+  @spec message_vars(Message.t(), URI.t()) :: map()
+  def message_vars(%Message{} = msg, %URI{} = session_uri) do
+    %{
+      sender: msg.sender && URI.to_string(msg.sender),
+      # reuse the existing body-map `body_text/1` helper (defined later in
+      # this module) — do NOT define a Message-taking clause here: its
+      # catch-all would shadow the body-map clauses + break the :receive
+      # Agent-branch payload path (regression caught 2026-06-01).
+      body: body_text(msg.body),
+      session: URI.to_string(session_uri),
+      sent_at: msg.inserted_at && DateTime.to_iso8601(msg.inserted_at),
+      flavor: ""
+    }
+  end
+
+  defp put_rendered_text(%{text: _} = body, text), do: %{body | text: text}
+  defp put_rendered_text(%{"text" => _} = body, text), do: Map.put(body, "text", text)
+  defp put_rendered_text(body, text) when is_map(body), do: Map.put(body, :text, text)
+  defp put_rendered_text(_body, text), do: %{text: text}
+
   defp dispatch_receive_call(recipient_uri, %Message{} = msg, session_uri) do
     # Canonicalize the session URI before it crosses into the recipient's
     # `chat.receive` — it becomes `ctx.caller`, which the recipient behavior

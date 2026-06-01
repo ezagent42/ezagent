@@ -67,6 +67,9 @@ defmodule Ezagent.Behavior.ChatTest do
                  send_cursor: 0,
                  # PR-N3 r4 — cursor-indexed bounded ring; starts empty.
                  recent_messages: [],
+                 # team-routing-unification §3.4 (PR-4b) — session-scoped
+                 # named prompt templates; empty by default.
+                 prompt_templates: %{},
                  template_working_copy: Chat.default_template_working_copy()
                },
                transients: %{}
