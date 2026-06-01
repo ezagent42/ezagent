@@ -14,7 +14,7 @@ defmodule EzagentPluginLoom.Span do
   contract is byte-identical to v0.1.
   """
 
-  @known_types ~w(text notice services detail companies steps form choices application intent)
+  @known_types ~w(text notice services detail companies steps form choices application intent page_update)
 
   @doc "The closed set of card types the frontend renders."
   def known_types, do: @known_types

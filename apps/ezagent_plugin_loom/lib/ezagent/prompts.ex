@@ -183,6 +183,25 @@ defmodule EzagentPluginLoom.Prompts do
   请始终用中文回复用户的对话部分（简短说明你做了什么），但代码本身保持英文。
   """
 
+  # Seed source for a fresh loom session — written into the orchestrator's
+  # `:loom_source` slice at spawn; the orchestrator's post_init emits this as
+  # the first `<span type="page_update">` chat message so the bridge picks it
+  # up on history fetch. See `docs/loom/2026-06-01-loom-as-session-redesign.md`.
+  @loom_seed_source ~S"""
+  export default function App() {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-50">
+        <div className="text-center">
+          <h1 className="text-3xl font-bold text-gray-800 mb-2">
+            欢迎使用 Loom
+          </h1>
+          <p className="text-gray-500">在左侧 @编排器 告诉我你想要什么页面</p>
+        </div>
+      </div>
+    );
+  }
+  """
+
   @persona_line %{
     "visitor" =>
       ~S|当前用户身份：**访客**（普通官网访客）。services 只展示 openTo="外部可咨询" 的服务；companies 不展示 fit。语气客气。|,
@@ -196,10 +215,20 @@ defmodule EzagentPluginLoom.Prompts do
   def web_system_prompt, do: @web_system_prompt
 
   @doc """
-  Page-generation system prompt for the loom frontend (ai-ui-builder).
-  Served via `EzagentPluginLoom.WebPlug` on `POST /loom/api/chat`.
+  Page-generation system prompt — the rules the AI must follow to emit a
+  single jsx code block. Used by `Ezagent.Behavior.LoomV0Worker` in the
+  session-rooted redesign (previously also served `POST /loom/api/chat`
+  for the standalone frontend, now deleted).
   """
   def page_gen_system_prompt, do: @page_gen_system_prompt
+
+  @doc """
+  Seed jsx source for a fresh loom session. Orchestrator's `post_init` emits
+  this as a `<span type="page_update">` chat message so the loom-view bridge
+  has something to render on first open. Overridden by `LoomSavedSession`
+  (which seeds with the saved snapshot's source instead).
+  """
+  def loom_seed_source, do: @loom_seed_source
 
   @doc "The plain-chat system prompt (loom's `:receive` path)."
   def chat_system_prompt, do: @chat_system_prompt

@@ -66,6 +66,15 @@ defmodule Ezagent.PluginLoom.Template.LoomSession do
     with {:ok, _session_pid} <- spawn_session(session_uri),
          {:ok, %{orchestrator: _orch, workers: _workers}} <- Team.ensure_team(session_uri),
          :ok <- join_members(session_uri, Map.get(tmpl, "members", [])) do
+      # 2026-06-01 redesign: seed a `<span type="page_update">` message into
+      # the session so the loom-view bridge has something to render on first
+      # open. Best-effort (don't fail instantiate if the dispatch errors).
+      seed_loom_source(
+        session_uri,
+        EzagentPluginLoom.Prompts.loom_seed_source(),
+        "初始页"
+      )
+
       # Best-effort one-way Feishu mirror (gated by FEISHU_MIRROR_ENABLED=1),
       # mirroring EzagentPluginLoom.Bootstrap — so a UI-created loom session
       # also mirrors to the demo Feishu group, not just the script path.
@@ -76,6 +85,47 @@ defmodule Ezagent.PluginLoom.Template.LoomSession do
   end
 
   def instantiate(_tmpl_name, tmpl, _workspace_uri), do: {:error, {:invalid_template, tmpl}}
+
+  # 2026-06-01 redesign: emit a system `<span type="page_update">` chat message
+  # so the loom-view bridge picks it up via `getHistory()` on first open. Sender
+  # = `system://session-internal` (same principal LoomSession uses for joins);
+  # `mentions = []` (session-wide announcement, not addressed to anyone).
+  # Best-effort; failures logged + swallowed.
+  defp seed_loom_source(%URI{} = session_uri, source, summary)
+       when is_binary(source) and is_binary(summary) do
+    body =
+      EzagentPluginLoom.Span.span("page_update", %{
+        "source" => source,
+        "summary" => summary
+      })
+
+    sender = Ezagent.SystemPrincipal.uri("session-internal")
+    msg = Ezagent.Message.new(sender, %{text: body, attachments: []}, mentions: [])
+    target = Ezagent.URI.parse!("#{URI.to_string(session_uri)}?action=chat.send")
+
+    inv = %Ezagent.Invocation{
+      target: target,
+      mode: :cast,
+      args: %{message: msg},
+      ctx: %{
+        caller: sender,
+        caps: Ezagent.SystemPrincipal.caps("system://session-internal"),
+        reply: :ignore
+      }
+    }
+
+    case Ezagent.Invocation.dispatch(inv) do
+      :ok ->
+        :ok
+
+      {:ok, _} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("LoomSession: seed loom_source dispatch failed — #{inspect(reason)}")
+        :ok
+    end
+  end
 
   # Gated + best-effort, identical semantics to Bootstrap.maybe_bind_feishu/1.
   defp maybe_bind_feishu(%URI{} = session_uri) do

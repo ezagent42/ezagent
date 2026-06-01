@@ -73,7 +73,11 @@ defmodule EzagentPluginLoom.Application do
       {Ezagent.Entity.LoomWorker, :receive, Ezagent.Behavior.LoomWorker},
       # loom v0.2 G-D — orchestrator agent: decompose → fan out →
       # aggregate → compose, all on the session's chat fan-out hook.
-      {Ezagent.Entity.LoomOrchestrator, :receive, Ezagent.Behavior.LoomOrchestrator}
+      {Ezagent.Entity.LoomOrchestrator, :receive, Ezagent.Behavior.LoomOrchestrator},
+      # 2026-06-01 redesign — v0worker: AI page generator, dispatched by the
+      # orchestrator with current source + user request, replies with a
+      # <span type="page_update"> body.
+      {Ezagent.Entity.LoomV0Worker, :receive, Ezagent.Behavior.LoomV0Worker}
     ]
   end
 
@@ -83,8 +87,11 @@ defmodule EzagentPluginLoom.Application do
       Ezagent.PluginLoom.Template.LoomAgent,
       Ezagent.PluginLoom.Template.LoomWorker,
       Ezagent.PluginLoom.Template.LoomOrchestrator,
+      # 2026-06-01 redesign — v0worker Template Class (flavor declaration
+      # satisfies the :ezagent_plugin_check gate).
+      Ezagent.PluginLoom.Template.LoomV0Worker,
       # Session template: "create a loom session" auto-assembles the team
-      # (orchestrator + 2 workers) instead of a bare session.
+      # (orchestrator + 2 workers + v0worker) instead of a bare session.
       Ezagent.PluginLoom.Template.LoomSession
     ]
 
@@ -107,6 +114,13 @@ defmodule EzagentPluginLoom.Application do
         flavor: "loomorch",
         kind: Ezagent.Entity.LoomOrchestrator,
         template_class: Ezagent.PluginLoom.Template.LoomOrchestrator
+      },
+      # 2026-06-01 redesign — `entity://agent/<ws>/loomv0_<name>` (AI page
+      # generator worker; one per loom session, spawned by Team.ensure_team).
+      %{
+        flavor: "loomv0",
+        kind: Ezagent.Entity.LoomV0Worker,
+        template_class: Ezagent.PluginLoom.Template.LoomV0Worker
       }
     ]
   end

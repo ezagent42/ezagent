@@ -34,7 +34,9 @@ defmodule EzagentPluginLoom.WebPlug do
   use Plug.Router
   require Logger
 
-  alias EzagentPluginLoom.{DeepSeek, Prompts}
+  # NOTE: `EzagentPluginLoom.DeepSeek` and `Prompts.page_gen_system_prompt`
+  # are no longer used here — page generation moved to `LoomV0Worker`
+  # (2026-06-01 redesign). The bridge endpoints dispatch session actions only.
 
   @loom_ui_root "priv/static/loom_ui"
 
@@ -48,24 +50,10 @@ defmodule EzagentPluginLoom.WebPlug do
   plug(:match)
   plug(:dispatch)
 
-  # 聊天代理(非流式):messages 已被 endpoint 的 Plug.Parsers 解析进
-  # conn.body_params(同飞书 WebhookPlug)。
-  post "/api/chat" do
-    messages = sanitize_messages(conn.body_params)
-    sys = %{"role" => "system", "content" => Prompts.page_gen_system_prompt()}
-
-    case DeepSeek.chat([sys | messages], thinking_disabled: true, temperature: 0.7) do
-      {:ok, text} ->
-        text_resp(conn, 200, text)
-
-      {:error, :no_api_key} ->
-        text_resp(conn, 502, "DeepSeek 未配置:phx.server 进程缺 DEEPSEEK_KEY 环境变量。")
-
-      {:error, reason} ->
-        Logger.warning("loom WebPlug /api/chat DeepSeek error: #{inspect(reason)}")
-        text_resp(conn, 502, "DeepSeek 调用失败,请重试。")
-    end
-  end
+  # POST /api/chat removed by 2026-06-01 redesign — page generation no longer
+  # runs from the standalone left-chat → DeepSeek path; it's now a worker
+  # (LoomV0Worker) dispatched by the session orchestrator. See
+  # docs/loom/2026-06-01-loom-as-session-redesign.md.
 
   # --- loom SDK 桥:per-session 端点(同源;沙箱经宿主桥调用)-----------
   # 见 docs/loom/2026-05-29-loom-sdk-bridge.md。
@@ -97,25 +85,6 @@ defmodule EzagentPluginLoom.WebPlug do
 
   # --- helpers ---------------------------------------------------------
 
-  # useChat 发来的 messages 含 role/content(可能还有 id/parts);只取
-  # role + 字符串 content,role 限定 user|assistant|system。
-  defp sanitize_messages(%{"messages" => msgs}) when is_list(msgs) do
-    msgs
-    |> Enum.map(fn
-      %{"role" => role, "content" => content} when is_binary(content) ->
-        %{"role" => normalize_role(role), "content" => content}
-
-      _ ->
-        nil
-    end)
-    |> Enum.reject(&is_nil/1)
-  end
-
-  defp sanitize_messages(_), do: []
-
-  defp normalize_role(r) when r in ["user", "assistant", "system"], do: r
-  defp normalize_role(_), do: "user"
-
   defp send_index(conn) do
     path = Application.app_dir(:ezagent_plugin_loom, "#{@loom_ui_root}/index.html")
 
@@ -145,15 +114,19 @@ defmodule EzagentPluginLoom.WebPlug do
 
   defp session_uri(ws, sid), do: Ezagent.URI.parse!("session://loom/#{ws}/#{sid}")
 
-  # 发一条消息进 session:稳定临时用户身份 + @编排器(否则 mention-gated 不触发)。
+  # 2026-06-01 redesign: mentions come from the user's text (@<URI> tokens),
+  # NOT auto-prepended with the orchestrator. Per the new design, the user
+  # MUST @ explicitly (typically @loomorch_<sid>); no @ → empty mentions →
+  # no agent responds. The ChatPanel's autocomplete makes this easy.
   defp send_to_session(ws, sid, text) do
     suri = session_uri(ws, sid)
-    orchestrator = URI.parse("entity://agent/#{ws}/loomorch_#{sid}")
 
     with {:ok, user_uri} <- EzagentPluginLoom.TempUser.ensure_named(ws, "loomui_#{sid}"),
          :ok <- ensure_joined(suri, user_uri) do
+      mentions = parse_at_uris(text)
+
       msg =
-        Ezagent.Message.new(user_uri, %{text: text, attachments: []}, mentions: [orchestrator])
+        Ezagent.Message.new(user_uri, %{text: text, attachments: []}, mentions: mentions)
 
       inv = %Ezagent.Invocation{
         target: URI.new!("#{URI.to_string(suri)}?action=chat.send"),
@@ -175,6 +148,25 @@ defmodule EzagentPluginLoom.WebPlug do
       {:error, reason} -> %{ok: false, error: inspect(reason)}
     end
   end
+
+  # Extract `@entity://...` URIs from message text (one regex pass).
+  # Returns a list of %URI{} (entity-scheme only; other schemes filtered out).
+  defp parse_at_uris(text) when is_binary(text) do
+    ~r/@(entity:\/\/[^\s]+)/
+    |> Regex.scan(text, capture: :all_but_first)
+    |> Enum.flat_map(fn
+      [uri_str] ->
+        case URI.new(uri_str) do
+          {:ok, %URI{scheme: "entity"} = u} -> [u]
+          _ -> []
+        end
+
+      _ ->
+        []
+    end)
+  end
+
+  defp parse_at_uris(_), do: []
 
   defp ensure_joined(%URI{} = suri, %URI{} = member_uri) do
     inv = %Ezagent.Invocation{
