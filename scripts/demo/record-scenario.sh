@@ -12,8 +12,14 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PW_HOME="${PW_HOME:-$HOME/.cache/ezagent-demo-record}"
 OUTDIR="${DEMO_OUTDIR:-./demo-out}"
-GIF_FPS="${GIF_FPS:-12}"
+GIF_FPS="${GIF_FPS:-15}"
 GIF_WIDTH="${GIF_WIDTH:-720}"
+# Cold cc replies leave 20-40s of identical frames -> the naive GIF freezes on
+# one frame. mpdecimate drops the duplicate runs (dead air); setpts=N/RATE/TB
+# then holds each surviving distinct state ~1/RATE s so the result flows and the
+# text stays readable. tpad holds the final frame before the loop restarts.
+GIF_RATE="${GIF_RATE:-2.0}"
+GIF_TAIL="${GIF_TAIL:-1.2}"
 
 command -v node >/dev/null   || { echo "node not found"; exit 1; }
 command -v ffmpeg >/dev/null || { echo "ffmpeg not found (brew install ffmpeg)"; exit 1; }
@@ -27,7 +33,7 @@ WEBM="$OUTDIR/demo.webm"
 
 echo "[record-scenario] converting to GIF + MP4…"
 ffmpeg -y -i "$WEBM" \
-  -vf "fps=${GIF_FPS},scale=${GIF_WIDTH}:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse" \
+  -vf "mpdecimate=hi=64*12:lo=64*5:frac=0.03,setpts=N/${GIF_RATE}/TB,fps=${GIF_FPS},tpad=stop_mode=clone:stop_duration=${GIF_TAIL},scale=${GIF_WIDTH}:-1:flags=lanczos,split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer" \
   "$OUTDIR/demo.gif" >/dev/null 2>&1
 ffmpeg -y -i "$WEBM" -movflags +faststart -pix_fmt yuv420p "$OUTDIR/demo.mp4" >/dev/null 2>&1
 
