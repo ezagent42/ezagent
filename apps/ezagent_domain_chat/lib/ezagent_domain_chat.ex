@@ -257,7 +257,8 @@ defmodule EzagentDomainChat do
                 session_uri,
                 workspace_uri,
                 effective_owner,
-                session_template_uri
+                session_template_uri,
+                template_content
               )
           end
         end
@@ -520,8 +521,15 @@ defmodule EzagentDomainChat do
         case orchestrator_template_uri do
           nil ->
             # Step 4 — plain session (no orchestrator). Join the creator
-            # only; skip 5-7.
-            with :ok <- join_session_members(session_uri, [effective_owner]) do
+            # only; skip 5-7. Then materialize the template team (PR-7).
+            with :ok <- join_session_members(session_uri, [effective_owner]),
+                 :ok <-
+                   materialize_template_team(
+                     session_uri,
+                     workspace_uri,
+                     effective_owner,
+                     template_content
+                   ) do
               {:ok, session_uri, plain_session_meta()}
             end
 
@@ -530,7 +538,8 @@ defmodule EzagentDomainChat do
               session_uri,
               workspace_uri,
               effective_owner,
-              session_template_uri
+              session_template_uri,
+              template_content
             )
         end
       end
@@ -559,7 +568,8 @@ defmodule EzagentDomainChat do
          session_uri,
          workspace_uri,
          effective_owner,
-         session_template_uri
+         session_template_uri,
+         template_content
        ) do
     # Step 5 — ensure orchestrator (2-way ownership; ensure failure →
     # rollback → {:error,_}).
@@ -601,7 +611,14 @@ defmodule EzagentDomainChat do
                  effective_owner,
                  session_template_uri
                ),
-             :ok <- join_session_members(session_uri, [effective_owner, orchestrator_uri]) do
+             :ok <- join_session_members(session_uri, [effective_owner, orchestrator_uri]),
+             :ok <-
+               materialize_template_team(
+                 session_uri,
+                 workspace_uri,
+                 orchestrator_uri,
+                 template_content
+               ) do
           {:ok, session_uri,
            ready_meta(orchestrator_uri, effective_owner, session_uri, degraded_meta)}
         else
@@ -1108,6 +1125,358 @@ defmodule EzagentDomainChat do
 
   # workspace://<name> → "<name>". Raises ArgumentError if the URI isn't a
   # bare workspace URI (helps catch passing entity / session URIs).
+  # ── PR-7 — SessionTemplate team materialization (spec §3.7) ──────────
+  #
+  # After the owner + orchestrator have joined (the pre-PR-7 contract),
+  # MATERIALIZE the rest of the template's team so an instantiated/forked
+  # template actually PRODUCES the working team (the load-bearing contract
+  # codex flagged). For the template content we:
+  #
+  #   1. recreate + join each `in_session_template: true` member —
+  #      a member with `source_template_uri` is a SPAWNED agent member
+  #      (recreated from that AgentTemplate via the unified `Agent.spawn/4`
+  #      path); a member without one is a plain invited member (its `uri`
+  #      is joined directly). Each is joined with its `role_name` +
+  #      `in_session_template: true` (+ the spawn-source facet so a future
+  #      respawn can rebuild it). provenance is DEFERRED (PR-5b/PR-8) —
+  #      we register role_name + in_session_template only.
+  #   2. install the named `prompt_templates` (§3.4) via the trusted
+  #      `system://session-internal` `chat.set_prompt_templates` path;
+  #   3. install the `legends` (§3.6) via `chat.set_legends`;
+  #   4. install the rule-set routing rules (§3.3) — resolving each rule's
+  #      role_name receivers to the just-materialized member URIs, then
+  #      writing the rows + reloading the live RoutingRegistry.
+  #
+  # `granted_by` is the principal that authorizes the spawned-member
+  # creation (the orchestrator for an orchestrated session; the owner for a
+  # plain one) — recorded in AgentLineage for `{:spawned_by, _}` caps.
+  #
+  # A template with none of these fields is a no-op `:ok` (behaviour-
+  # preserving for the boot `default` template + every pre-PR-7 template).
+  defp materialize_template_team(
+         %URI{} = session_uri,
+         %URI{} = workspace_uri,
+         %URI{} = granted_by,
+         template_content
+       )
+       when is_map(template_content) do
+    with {:ok, role_to_uri} <-
+           materialize_template_members(session_uri, workspace_uri, granted_by, template_content),
+         :ok <- install_template_prompt_templates(session_uri, template_content),
+         :ok <- install_template_legends(session_uri, template_content),
+         :ok <-
+           install_template_rule_sets(session_uri, workspace_uri, template_content, role_to_uri) do
+      :ok
+    end
+  end
+
+  # A non-map / nil content can't carry a team — nothing to materialize.
+  defp materialize_template_team(_session, _ws, _granted_by, _content), do: :ok
+
+  # Step 1 — recreate + join each `in_session_template: true` member.
+  # Returns `{:ok, role_to_uri}` where `role_to_uri` maps each member's
+  # `role_name` → its live member URI (used by the rule-set install to
+  # resolve role_name receivers). Owner/orchestrator joins already ran.
+  defp materialize_template_members(
+         %URI{} = session_uri,
+         %URI{} = workspace_uri,
+         %URI{} = granted_by,
+         template_content
+       ) do
+    members = template_members_of(template_content)
+
+    Enum.reduce_while(members, {:ok, %{}}, fn member, {:ok, acc} ->
+      case materialize_one_member(session_uri, workspace_uri, granted_by, member) do
+        {:ok, %URI{} = member_uri, role_name} ->
+          acc = if is_binary(role_name), do: Map.put(acc, role_name, member_uri), else: acc
+          {:cont, {:ok, acc}}
+
+        {:error, reason} ->
+          {:halt, {:error, {:member_materialize_failed, member, reason}}}
+      end
+    end)
+  end
+
+  # Recreate (if spawned) + join ONE template member. A spawned member
+  # (`source_template_uri` present) is rebuilt via the unified
+  # `Agent.spawn/4` path; a plain invited member uses its declared `uri`.
+  defp materialize_one_member(
+         %URI{} = session_uri,
+         %URI{} = workspace_uri,
+         %URI{} = granted_by,
+         member
+       )
+       when is_map(member) do
+    role_name = member_field(member, :role_name)
+    source_template_uri = member_uri_field(member, :source_template_uri)
+
+    with {:ok, %URI{} = member_uri} <-
+           ensure_member_present(member, workspace_uri, granted_by, source_template_uri, role_name) do
+      facets =
+        %{in_session_template: true}
+        |> maybe_put(:role_name, role_name)
+        |> maybe_put(:source_template_uri, source_template_uri)
+
+      case join_member_with_facets(session_uri, member_uri, facets) do
+        :ok -> {:ok, member_uri, role_name}
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  # SPAWNED member — recreate from its AgentTemplate via the unified spawn
+  # path (demand-spawn; idempotent if already live). The instance name is
+  # `<flavor>_<role_name|template_name>` so the spawned Agent URI resolves
+  # to the right flavor Kind module — the flavor is read from the source
+  # AgentTemplate's content (the same `flavor`-keyed field the orchestrator
+  # spawn path reads).
+  #
+  # PR-8 SEAM (clearly-marked): the FULL spawn model — flavor-class launch
+  # params, generation/live_worker_uri bookkeeping, repoint-on-update — is
+  # PR-8's. PR-7 uses the documented `Agent.spawn/4` primitive + the member
+  # `source_template_uri` facet so a materialized spawned member is a real,
+  # joinable Agent Kind recreated from its template; PR-8 completes the
+  # spawn/regeneration model on top of this facet.
+  defp ensure_member_present(
+         _member,
+         %URI{} = workspace_uri,
+         %URI{} = granted_by,
+         %URI{} = source_template_uri,
+         role_name
+       ) do
+    with {:ok, flavor} <- source_template_flavor(source_template_uri) do
+      instance_name = spawned_member_instance_name(flavor, source_template_uri, role_name)
+
+      case Ezagent.Entity.Agent.spawn(
+             source_template_uri,
+             instance_name,
+             workspace_uri,
+             granted_by
+           ) do
+        {:ok, %URI{} = agent_uri} -> {:ok, agent_uri}
+        {:error, {:already_started, _}} -> {:ok, derive_member_uri(workspace_uri, instance_name)}
+        {:error, _} = err -> err
+      end
+    end
+  end
+
+  # PLAIN invited member — no spawn source; use its declared `uri`,
+  # demand-spawning its Kind so `chat.join` finds it alive (idempotent).
+  defp ensure_member_present(member, _workspace_uri, _granted_by, nil, _role_name) do
+    case member_uri_field(member, :uri) do
+      %URI{} = member_uri ->
+        _ = Ezagent.SpawnRegistry.spawn(member_uri)
+        {:ok, member_uri}
+
+      _ ->
+        {:error, :member_missing_uri}
+    end
+  end
+
+  # Read the `flavor` field from a source AgentTemplate's `:template`
+  # content (demand-spawning the template Kind first). The flavor prefixes
+  # the spawned instance name so the Agent URI resolves to a flavor Kind.
+  defp source_template_flavor(%URI{} = source_template_uri) do
+    with {:ok, _pid} <- Session.ensure_template_alive(source_template_uri),
+         {:ok, content} <- Session.read_template_content(source_template_uri) do
+      case Map.get(content, :flavor) || Map.get(content, "flavor") do
+        flavor when is_binary(flavor) and flavor != "" -> {:ok, flavor}
+        _ -> {:error, {:source_template_missing_flavor, source_template_uri}}
+      end
+    end
+  end
+
+  defp spawned_member_instance_name(flavor, %URI{} = source_template_uri, role_name)
+       when is_binary(flavor) do
+    base =
+      if is_binary(role_name) and role_name != "" do
+        role_name
+      else
+        # `template://agent/<ws>/<name>` → `<name>`; fall back to a slug.
+        (source_template_uri.path
+         |> to_string()
+         |> String.split("/", trim: true)
+         |> List.last()) || "member"
+      end
+
+    # `<flavor>_<slug>` — the URI-name-safe instance name. The Agent URI is
+    # `entity://agent/<ws>/<instance_name>`; the flavor prefix is what the
+    # AgentFlavorRegistry parses to resolve the Kind module.
+    "#{flavor}_" <> String.replace(base, ~r/[^A-Za-z0-9_-]/, "_")
+  end
+
+  defp derive_member_uri(%URI{host: ws_name}, instance_name) when is_binary(ws_name) do
+    Ezagent.URI.new!("entity://agent/#{ws_name}/#{instance_name}")
+  end
+
+  # Dispatch a faceted `chat.join` under the trusted `system://session-internal`
+  # principal (same authority class `join_session_members/2` uses), carrying the
+  # PR-7 member facets (role_name / in_session_template / source_template_uri).
+  defp join_member_with_facets(%URI{} = session_uri, %URI{} = member_uri, facets)
+       when is_map(facets) do
+    target = Ezagent.URI.with_action(session_uri, :chat, :join)
+
+    result =
+      Invocation.dispatch(%Invocation{
+        target: target,
+        mode: :call,
+        args: Map.put(facets, :member, member_uri),
+        ctx: %{
+          caller: Ezagent.SystemPrincipal.uri("session-internal"),
+          caps: Ezagent.SystemPrincipal.caps("system://session-internal"),
+          reply: {:caller_inbox, self()}
+        }
+      })
+
+    case result do
+      :ok -> :ok
+      {:ok, _} -> :ok
+      {:error, reason} -> {:error, {:member_join_failed, member_uri, reason}}
+      other -> {:error, {:member_join_unexpected, member_uri, other}}
+    end
+  end
+
+  # Step 2 — install the template's named prompt-template map (§3.4).
+  defp install_template_prompt_templates(%URI{} = session_uri, template_content) do
+    case template_map_field(template_content, :prompt_templates) do
+      pts when map_size(pts) == 0 ->
+        :ok
+
+      pts ->
+        case Ezagent.Behavior.Chat.system_set_prompt_templates(session_uri, pts) do
+          {:ok, _} -> :ok
+          {:error, reason} -> {:error, {:install_prompt_templates_failed, reason}}
+        end
+    end
+  end
+
+  # Step 3 — install the template's legend registry (§3.6).
+  defp install_template_legends(%URI{} = session_uri, template_content) do
+    case template_map_field(template_content, :legends) do
+      legends when map_size(legends) == 0 ->
+        :ok
+
+      legends ->
+        case Ezagent.Behavior.Chat.system_set_legends(session_uri, legends) do
+          {:ok, _} -> :ok
+          {:error, reason} -> {:error, {:install_legends_failed, reason}}
+        end
+    end
+  end
+
+  # Step 4 — install the template's rule-set routing rules (§3.3). Each
+  # rule's `role_name` receivers are resolved to the just-materialized
+  # member URIs (a magic token / concrete URI string passes through). Rows
+  # are written workspace-scoped, then the live RoutingRegistry is
+  # reloaded so the rules fire immediately.
+  defp install_template_rule_sets(
+         %URI{} = _session_uri,
+         %URI{} = workspace_uri,
+         template_content,
+         role_to_uri
+       )
+       when is_map(role_to_uri) do
+    rules = template_routing_rules_of(template_content)
+
+    if rules == [] do
+      :ok
+    else
+      table = Ezagent.Routing.Resolver.default_routing_table()
+
+      result =
+        Enum.reduce_while(rules, :ok, fn rule, :ok ->
+          case install_one_rule(table, workspace_uri, role_to_uri, rule) do
+            {:ok, _} -> {:cont, :ok}
+            {:error, reason} -> {:halt, {:error, {:install_rule_failed, rule, reason}}}
+          end
+        end)
+
+      with :ok <- result do
+        :ok = Ezagent.Routing.RuleStore.load_into_registry(table)
+        :ok
+      end
+    end
+  end
+
+  defp install_one_rule(table, %URI{} = workspace_uri, role_to_uri, rule) when is_map(rule) do
+    matcher = Map.get(rule, :matcher) || Map.get(rule, "matcher")
+    receivers = resolve_rule_receivers(Map.get(rule, :receivers) || Map.get(rule, "receivers") || [], role_to_uri)
+
+    Ezagent.Routing.RuleStore.add(
+      table,
+      matcher,
+      receivers,
+      # created_by — the template materialization is system-originated.
+      Ezagent.SystemPrincipal.uri("session-internal"),
+      source: Ezagent.Routing.RuleStore.system_default_source(),
+      workspace_uri: workspace_uri,
+      rule_set: Map.get(rule, :rule_set) || Map.get(rule, "rule_set"),
+      position: Map.get(rule, :position) || Map.get(rule, "position") || 0,
+      prompt_template_ref:
+        Map.get(rule, :prompt_template_ref) || Map.get(rule, "prompt_template_ref")
+    )
+  end
+
+  # Resolve a rule's declared receivers to concrete receiver values:
+  # a `role_name` → its live member URI; a magic token / URI string /
+  # %URI{} passes through unchanged.
+  defp resolve_rule_receivers(receivers, role_to_uri) when is_list(receivers) do
+    Enum.map(receivers, fn
+      %URI{} = uri ->
+        uri
+
+      r when is_binary(r) ->
+        cond do
+          Ezagent.Routing.Resolver.magic_token?(r) -> r
+          Map.has_key?(role_to_uri, r) -> Map.fetch!(role_to_uri, r)
+          true -> r
+        end
+    end)
+  end
+
+  # ── PR-7 content-field accessors (tolerate atom/string keys) ─────────
+
+  defp template_members_of(content) when is_map(content) do
+    case Map.get(content, :members) || Map.get(content, "members") do
+      list when is_list(list) -> Enum.filter(list, &member_in_session_template?/1)
+      _ -> []
+    end
+  end
+
+  defp member_in_session_template?(member) when is_map(member),
+    do: member_field(member, :in_session_template) == true
+
+  defp member_in_session_template?(_), do: false
+
+  defp template_routing_rules_of(content) when is_map(content) do
+    case Map.get(content, :routing_rules) || Map.get(content, "routing_rules") do
+      list when is_list(list) -> list
+      _ -> []
+    end
+  end
+
+  defp template_map_field(content, key) when is_map(content) do
+    case Map.get(content, key) || Map.get(content, Atom.to_string(key)) do
+      m when is_map(m) -> m
+      _ -> %{}
+    end
+  end
+
+  defp member_field(member, key) when is_map(member) do
+    Map.get(member, key) || Map.get(member, Atom.to_string(key))
+  end
+
+  defp member_uri_field(member, key) when is_map(member) do
+    case member_field(member, key) do
+      %URI{} = uri -> uri
+      s when is_binary(s) and s != "" -> Ezagent.URI.new!(s)
+      _ -> nil
+    end
+  end
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
+
   defp workspace_name_of!(%URI{scheme: "workspace", host: name}) when is_binary(name),
     do: name
 

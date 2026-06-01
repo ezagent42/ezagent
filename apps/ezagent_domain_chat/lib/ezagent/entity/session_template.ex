@@ -31,19 +31,28 @@ defmodule Ezagent.Entity.SessionTemplate do
   **mutable** — they can be re-pointed at any existing hash for
   the same name. Like git: branches/tags move, commits don't.
 
-  ## Slice schema (per SPEC v3 §SessionTemplate)
+  ## Slice schema (per SPEC v3 §SessionTemplate + team-routing-unification §3.7)
 
       %{
         # metadata
         name:                       String.t(),
         description:                String.t(),
 
-        # team composition
-        agent_slots:                [{slot_name :: String.t(),
-                                     template_uri :: URI.t()}],
+        # team composition (team-routing-unification §3.7, PR-7)
+        # `members` — the members captured because `in_session_template: true`
+        #   (§3.1): each `%{uri, role_name, in_session_template, source_template_uri}`.
+        #   A spawned agent member carries `source_template_uri` (recreate-from);
+        #   a plain invited member carries its `uri`. (`agent_slots` REMOVED —
+        #   PR-8 removes the slot tools.)
+        members:                    [map()],
+        # `prompt_templates` — the named template map (§3.4): name => template str.
+        prompt_templates:           %{optional(String.t()) => String.t()},
+        # `legends` — the §3.6 legend defs: name => %{member_set, bound_rule_set, fold}.
+        legends:                    %{optional(String.t()) => map()},
         orchestrator_template_uri:  URI.t(),
-        routing_rules:              [{matcher_ast :: term(),
-                                      [receiver_slot_name :: String.t()]}],
+        # rule-set routing rules (§3.3): each
+        #   `%{matcher, receivers, rule_set, position, prompt_template_ref}`.
+        routing_rules:              [map()],
         default_workspace_uri:      URI.t(),
 
         # lineage (D7-7 fork model)
@@ -114,9 +123,19 @@ defmodule Ezagent.Entity.SessionTemplate do
   `orchestrator_template_uri`, and materializes the session's
   `template_working_copy` (OTU + `session_template_uri`) directly,
   then atomically ensures the orchestrator + grants caps + registers
-  the MCP context + joins members (SPEC §4). The orchestrator
-  dispatches workers dynamically at runtime — static agent_slots /
-  routing-rule reconcile were removed (SPEC §3).
+  the MCP context + joins `[owner, orchestrator]` (SPEC §4).
+
+  team-routing-unification §3.7 (PR-7) — `create_session/3` now also
+  MATERIALIZES the template's team after that join: it recreates +
+  joins each `in_session_template: true` member (spawned members via
+  the unified `Agent.spawn/4` path from their `source_template_uri`;
+  plain members via their `uri`), installs the template's
+  `prompt_templates` + `legends`, and installs the rule-set routing
+  rules — so an instantiated/forked template actually PRODUCES the
+  working team (the load-bearing contract codex flagged). The
+  orchestrator may still dispatch additional workers dynamically at
+  runtime; PR-8 removes the residual `template_working_copy.agent_slots`
+  slot tools.
   """
 
   @behaviour Ezagent.Kind
@@ -145,9 +164,14 @@ defmodule Ezagent.Entity.SessionTemplate do
   Compute the deterministic version hash for a slice content map.
 
   Excludes `created_at` + `created_by` + `version_hash` + `version_tag`
-  + **`name`** from the hash input (Phase 7 completion SPEC §1.3 — the
-  hash is over `{agent_slots, routing_rules, orchestrator_template_uri,
-  default_workspace_uri, description}` ONLY). Dropping `name` means two
+  + **`name`** from the hash input (Phase 7 completion SPEC §1.3). The
+  hash is `term_to_binary` over ALL OTHER content fields — so the
+  team-routing-unification §3.7 (PR-7) additions (`members`,
+  `prompt_templates`, `legends`) and `routing_rules` /
+  `orchestrator_template_uri` / `default_workspace_uri` / `description`
+  are ALL content-addressed: a change to any of them yields a new
+  version hash. (`agent_slots` is no longer a content field — PR-8
+  removes the slot tools.) Dropping `name` means two
   sessions with an identical team config produce the SAME content hash
   regardless of the template name they are saved under — the
   build-working-copy GATE (PR-2). The `name` is carried by the URI's
@@ -661,8 +685,14 @@ defmodule Ezagent.Entity.SessionTemplate do
   # Normalize a caller-supplied `config` map to atom keys for the known
   # SessionTemplate slice fields. String-keyed input (e.g. from a JSON
   # tool boundary) is coerced; unknown keys pass through untouched.
-  @config_atom_keys ~w(name description agent_slots orchestrator_template_uri
-                       routing_rules default_workspace_uri parent_template_uri
+  # team-routing-unification §3.7 (PR-7): SessionTemplate content carries
+  # `members` / `prompt_templates` / `legends`; `agent_slots` is NO LONGER a
+  # content key (PR-8 removes the slot tools). Dropping it here means a
+  # caller-supplied (string-keyed) `agent_slots` no longer atom-coerces into
+  # the persisted content — it is not a template content field.
+  @config_atom_keys ~w(name description members prompt_templates legends
+                       orchestrator_template_uri routing_rules
+                       default_workspace_uri parent_template_uri
                        version_tag created_by created_at)a
   defp normalize_config_keys(config) do
     Map.new(config, fn

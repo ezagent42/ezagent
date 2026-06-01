@@ -96,15 +96,27 @@ defmodule EzagentDomainChat.Integration.DefaultSessionTemplateSeedTest do
     # field would surface string keys — probe both shapes for
     # robustness across snapshot codec versions.
     name = Map.get(content, :name) || Map.get(content, "name")
-    agent_slots = Map.get(content, :agent_slots) || Map.get(content, "agent_slots")
     routing_rules = Map.get(content, :routing_rules) || Map.get(content, "routing_rules")
+
+    # team-routing-unification §3.7 (PR-7) — `agent_slots` is no longer a
+    # SessionTemplate content field (PR-8 removes the slot tools). The
+    # orchestrator-only default template now carries the PR-7 content shape:
+    # empty `members` / `prompt_templates` / `legends`.
+    members = Map.get(content, :members) || Map.get(content, "members")
+    prompt_templates = Map.get(content, :prompt_templates) || Map.get(content, "prompt_templates")
+    legends = Map.get(content, :legends) || Map.get(content, "legends")
 
     orchestrator_uri =
       Map.get(content, :orchestrator_template_uri) ||
         Map.get(content, "orchestrator_template_uri")
 
     assert name == "default"
-    assert agent_slots == []
+    refute Map.has_key?(content, :agent_slots) or Map.has_key?(content, "agent_slots"),
+           "PR-7: `agent_slots` must NOT be a SessionTemplate content field; got #{inspect(content)}"
+
+    assert members == []
+    assert prompt_templates == %{}
+    assert legends == %{}
     assert routing_rules == []
 
     # orchestrator_template_uri may serialize as either a `%URI{}` or a
