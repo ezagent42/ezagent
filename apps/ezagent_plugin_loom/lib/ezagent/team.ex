@@ -39,24 +39,45 @@ defmodule EzagentPluginLoom.Team do
   Ensure the team is alive + joined to `session_uri`. Returns
   `{:ok, %{orchestrator: URI.t(), workers: [URI.t()]}}` or `{:error, _}`.
   """
-  @spec ensure_team(URI.t()) ::
+  @spec ensure_team(URI.t(), keyword()) ::
           {:ok, %{orchestrator: URI.t(), workers: [URI.t()]}} | {:error, term()}
-  def ensure_team(%URI{scheme: "session"} = session_uri) do
+  def ensure_team(session_uri, opts \\ [])
+
+  def ensure_team(%URI{scheme: "session"} = session_uri, opts) do
+    # 2026-06-01 — 可变 worker 数组。`opts[:worker_themes]` 是字符串列表,
+    # 每个 theme 对应一个 `loomworker_<sid>_<theme>` URI;默认 `["policy",
+    # "company"]` 保留原行为。saved template 实例化时 LoomSession 从
+    # saved_state.workers 里抽 theme 列表传进来,实现"模板带 worker spec"。
+    worker_themes = Keyword.get(opts, :worker_themes, ["policy", "company"])
+
     with {:ok, ws, sid} <- session_parts(session_uri) do
-      orchestrator = URI.parse("entity://agent/#{ws}/loomorch_#{sid}")
-      policy = URI.parse("entity://agent/#{ws}/loomworker_#{sid}_policy")
-      company = URI.parse("entity://agent/#{ws}/loomworker_#{sid}_company")
-      v0 = URI.parse("entity://agent/#{ws}/loomv0_#{sid}")
-      members = [orchestrator, policy, company, v0]
+      # 2026-06-01 — 用 `Ezagent.URI.parse!`(走 `URI.new`,canonical 形:无
+      # `authority` 字段)代替 deprecated `URI.parse/1`(留 `authority: "agent"`)。
+      # canonicalize_uris/1 在 snapshot load 时把 chat.members 的 key 全 rewrite
+      # 到 canonical;若这里再用 URI.parse 加非 canonical key,Map.put 视为
+      # 两个不同 key → 同一 agent 出现两条成员行(2026-06-01 demo6 双倍 bug)。
+      orchestrator = Ezagent.URI.parse!("entity://agent/#{ws}/loomorch_#{sid}")
+
+      workers =
+        Enum.map(worker_themes, fn theme ->
+          Ezagent.URI.parse!("entity://agent/#{ws}/loomworker_#{sid}_#{theme}")
+        end)
+
+      v0 = Ezagent.URI.parse!("entity://agent/#{ws}/loomv0_#{sid}")
+      # 2026-06-01 — team manager,接收 @ 的自然语言加 / 删 worker 指令。
+      # 默认每个 loom session 都有。Behavior 是 mention-gated,不 @ 不动。
+      meta = Ezagent.URI.parse!("entity://agent/#{ws}/loommeta_#{sid}")
+
+      members = [orchestrator | workers] ++ [v0, meta]
 
       with :ok <- Enum.reduce_while(members, :ok, &spawn_step/2),
            :ok <- Enum.reduce_while(members, :ok, fn uri, _ -> join_step(session_uri, uri) end) do
-        {:ok, %{orchestrator: orchestrator, workers: [policy, company, v0]}}
+        {:ok, %{orchestrator: orchestrator, workers: workers ++ [v0, meta]}}
       end
     end
   end
 
-  def ensure_team(_), do: {:error, :not_a_session_uri}
+  def ensure_team(_, _), do: {:error, :not_a_session_uri}
 
   # `session://<template>/<workspace>/<short_name>` (SPEC v3 — 3-segment
   # authority) → {workspace, short_name}. Agents live in <workspace>;

@@ -49,7 +49,27 @@ defmodule EzagentPluginLoom.Application do
   # --- OTP Application -------------------------------------------------
 
   @impl Application
-  def start(_type, _args), do: Ezagent.Plugin.boot(__MODULE__)
+  def start(_type, _args) do
+    result = Ezagent.Plugin.boot(__MODULE__)
+    register_session_views()
+    result
+  end
+
+  # 2026-06-01 — view-switcher 的第 4 个 tab。`SessionViewRegistry` 是 ETS,
+  # `init/0` 幂等;`register/1` 覆盖同 id。boot 顺序:domain_ui 是本 plugin
+  # 的 dep,故 `Ezagent.UI.*` 一定先编译并 application_start,这里不需要
+  # `Code.ensure_loaded?` 兜底。注册失败不能影响 plugin boot — try/rescue。
+  defp register_session_views do
+    try do
+      :ok = Ezagent.UI.SessionViewRegistry.init()
+      :ok = Ezagent.UI.SessionViewRegistry.register(Ezagent.PluginLoom.View.LoomSessionView)
+    rescue
+      e ->
+        require Logger
+        Logger.warning("EzagentPluginLoom: LoomSessionView register failed: #{inspect(e)}")
+        :ok
+    end
+  end
 
   # --- Ezagent.Plugin contract ---------------------------------------
 
@@ -77,7 +97,10 @@ defmodule EzagentPluginLoom.Application do
       # 2026-06-01 redesign — v0worker: AI page generator, dispatched by the
       # orchestrator with current source + user request, replies with a
       # <span type="page_update"> body.
-      {Ezagent.Entity.LoomV0Worker, :receive, Ezagent.Behavior.LoomV0Worker}
+      {Ezagent.Entity.LoomV0Worker, :receive, Ezagent.Behavior.LoomV0Worker},
+      # 2026-06-01 — team manager: @-mention-driven add/remove worker agent.
+      # Uses DeepSeek NL parsing → spawn/terminate Kind + chat.join/leave.
+      {Ezagent.Entity.LoomMetaAgent, :receive, Ezagent.Behavior.LoomMetaAgent}
     ]
   end
 
@@ -90,8 +113,10 @@ defmodule EzagentPluginLoom.Application do
       # 2026-06-01 redesign — v0worker Template Class (flavor declaration
       # satisfies the :ezagent_plugin_check gate).
       Ezagent.PluginLoom.Template.LoomV0Worker,
+      # 2026-06-01 — team manager Template Class.
+      Ezagent.PluginLoom.Template.LoomMetaAgent,
       # Session template: "create a loom session" auto-assembles the team
-      # (orchestrator + 2 workers + v0worker) instead of a bare session.
+      # (orchestrator + 2 workers + v0worker + manager) instead of a bare session.
       Ezagent.PluginLoom.Template.LoomSession
     ]
 
@@ -121,6 +146,13 @@ defmodule EzagentPluginLoom.Application do
         flavor: "loomv0",
         kind: Ezagent.Entity.LoomV0Worker,
         template_class: Ezagent.PluginLoom.Template.LoomV0Worker
+      },
+      # 2026-06-01 — `entity://agent/<ws>/loommeta_<name>` (team manager;
+      # one per loom session, spawned by Team.ensure_team).
+      %{
+        flavor: "loommeta",
+        kind: Ezagent.Entity.LoomMetaAgent,
+        template_class: Ezagent.PluginLoom.Template.LoomMetaAgent
       }
     ]
   end
@@ -153,6 +185,15 @@ defmodule EzagentPluginLoom.Application do
 
         :ok
     end
+
+    # 2026-06-01 — Class-level "save as template":每个保存项都是一个 runtime
+    # 生成的 Template Class 模块,跟 `session.loom` 同级。`register_all_from_disk`
+    # 读 `~/.ezagent/<profile>/loom_saved_classes.json`,逐个 `Module.create` +
+    # `TemplateRegistry.register`。Phase 3 的 after_boot 比 Phase 2 publish 晚,
+    # 所以 TemplateRegistry 已就绪。
+    Ezagent.PluginLoom.SavedClasses.register_all_from_disk()
+
+    :ok
   end
 
   @doc "URI of the default Loom instance — seeded by `after_boot/0`."

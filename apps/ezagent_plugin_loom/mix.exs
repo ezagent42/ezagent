@@ -55,7 +55,11 @@ defmodule EzagentPluginLoom.MixProject do
       # loom 前端集成 (2026-05-29) — `EzagentPluginLoom.WebPlug` 用
       # `Plug.Router` 在 /loom 下提供 ai-ui-builder 静态产物 +
       # /loom/api/chat 代理。同飞书 WebhookPlug 的 `:plug` 声明。
-      {:plug, "~> 1.18"}
+      {:plug, "~> 1.18"},
+      # 2026-06-01 — `Ezagent.PluginLoom.View.LoomSessionView` registers
+      # into `Ezagent.UI.SessionViewRegistry` to add a "Loom" tab to the
+      # session view-switcher (in-page iframe of /loom/:ws/:name).
+      {:ezagent_domain_ui, in_umbrella: true}
     ]
   end
 end
