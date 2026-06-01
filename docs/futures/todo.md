@@ -477,7 +477,11 @@ From `docs/notes/2026-05-24-architecture-audit-v1.md` (5 LOW):
 5. **DONE** (PR-F #297) — `Registration.create_principal/3` "default"
    default arg removed.
 
-### ExternalMirrorWorker dedupe drops retry-send with reused msg.id (PR #420 codex r4 MED)
+### ✅ ExternalMirrorWorker dedupe drops retry-send with reused msg.id — RESOLVED 2026-06-01 (PR #516)
+
+> Dedupe key changed to composite `{msg.id, send_cursor}`; codex also caught
+> (HIGH) that the production Lifecycle `%{state: ...}` slice wasn't unwrapped —
+> fixed so dedupe works in the real path, with a wrapped-slice regression test.
 
 - **Where:** `apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror_worker.ex:469-486`
   (`invoke(:publish)` dedupes by `event_msg_id == slice.last_published_message_id`).
@@ -627,7 +631,7 @@ baseline worktree (`54df56c9`) chat run for apples-to-apples diff**.
   refreshes) rather than letting the agent run with a dead token. Until
   fixed, long-lived agents go mute a day after the last login.
 
-- **inbound feishu: disambiguate multi-session chat binding by @-mention (2026-06-01,
+- **✅ RESOLVED (PR #517) — inbound feishu: disambiguate multi-session chat binding by @-mention (2026-06-01,
   Allen Q "为什么不能绑定多session")**: the `external_mirror_bindings` data model ALLOWS a
   chat→N-sessions (intended for OUTBOUND fan-out). But INBOUND
   (`InboundChatLookup.resolve/1`) fails closed with `:ambiguous_chat_binding` when a
@@ -640,7 +644,7 @@ baseline worktree (`54df56c9`) chat run for apples-to-apples diff**.
   `external_mirror_bindings` rows; today it doesn't, which is how the orch5/orch14
   ambiguity arose).
 
-- **AgentTemplate.to_template_data/2 is cc-centric — blocks orchestrator-spawned
+- **✅ RESOLVED (PR #508) — AgentTemplate.to_template_data/2 is cc-centric — blocks orchestrator-spawned
   curl/codex workers (2026-06-01, scenario 33 live)**: the mapping only propagates
   `class`/`agent_uri`/`cwd` + the cc-specific optional set
   (`claude_config_dir`/`operator_settings_path`/`operator_mcp_config_path`/
@@ -656,15 +660,40 @@ baseline worktree (`54df56c9`) chat run for apples-to-apples diff**.
   thread, or thread all non-reserved content keys. This is THE blocker for live
   multi-flavor full-star (scenario 33 live tier); the deterministic scenario_33 test
   uses synthetic no-PTY flavors so it doesn't exercise this mapping.
-- **codex worker bridge fails to connect (2026-06-01)**: an orch-spawned codex
+- **✅ RESOLVED (PR #509 — root cause: app-server unix socket path exceeded SUN_LEN) — codex worker bridge fails to connect (2026-06-01)**: an orch-spawned codex
   worker spawns + the codex `app-server` procs start, but `codex_bridge.py` logs
   `bridge connection fail` / `codex_thread_id_file_timeout` — the worker never
   becomes reachable. codex CLI 0.134.0 + `~/.codex/auth.json` present. Separate from
   the to_template_data gap; a codex-plugin bridge bug to debug (thread_id file
   handshake / timeout).
-- **add_agent_slot is a synchronous 5s GenServer.call — too short for slow-spawning
+- **✅ RESOLVED (PR #518) — add_agent_slot is a synchronous 5s GenServer.call — too short for slow-spawning
   flavors (2026-06-01)**: spawning a codex worker (cold app-server start >5s) made
   `add_agent_slot` return `{:exit, {:timeout, GenServer.call}}` to the caller, even
   though the spawn continued async and the worker Kind was created. The slot-spawn
   should tolerate slow flavors (async spawn + readiness poll, or a longer/ configurable
   timeout) rather than surfacing a spurious timeout.
+
+- **⚠️ PARTIALLY RESOLVED (PR #519 — observability landed) — remove_agent_slot silently drops routing rules that point only to that slot —
+  no error, no recovery on re-add (2026-06-01, relay 传话游戏 debug; Allen flagged
+  as "又是静默失败")**: `Orchestrator.Tools.remove_agent_slot` GC's every routing rule
+  whose ONLY receiver is the removed slot (`RuleStore.delete(rule.id, force: true)`,
+  tools.ex ~1095). Defensible as GC, BUT: (a) re-adding the SAME slot name does NOT
+  recreate the rules, and nothing warns — so "remove + add" (the intuitive "restart
+  this worker") silently loses all routing to it; (b) a subsequent message that then
+  matches NO worker rule just falls through to the session default fan-out
+  (`$session_users`/`$mentions`) and goes nowhere — no "unroutable to any worker"
+  signal. Symptom seen: re-spawned a cc relay worker via remove+add, its `BATON->cc`
+  rule was gone, kickoff messages silently went unanswered (looked like the cc worker
+  was mute — it wasn't; it never received anything). Structural fixes (no workaround):
+  re-add restores the slot's rules, OR remove emits a warning naming the rules it
+  cascade-deletes, OR give "message matched no worker receiver" an observable signal
+  instead of a silent default fan-out. Also: prefer a non-destructive worker-restart
+  primitive (update_agent_template / PTY restart) over remove+add when only swapping
+  creds/config.
+  > **PR #519 landed the observability half**: each cascade force-delete now emits a
+  > `Logger.warning` (rule id + matcher + worker) AFTER the txn commits, and
+  > `remove_agent_slot` returns `{deleted_rules, repointed_rules}`. STILL OPEN:
+  > (a) re-add restoring a slot's dropped rules, (b) the "message matched no worker
+  > receiver" observable signal (the silent default-fan-out half), (c) the
+  > disable-not-delete GC option. Confirmed live 2026-06-01: an @-mention to a
+  > non-member slot worker silently goes nowhere — that's the (b) gap.
