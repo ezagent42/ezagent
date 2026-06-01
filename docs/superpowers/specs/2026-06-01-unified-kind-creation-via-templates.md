@@ -1,17 +1,23 @@
-# Unified Kind Creation via Templates — Design (rev 2)
+# Unified Kind Creation via Templates — Design (rev 3)
 
 **Date:** 2026-06-01
-**Status:** Draft rev 2 (codex adversarial review folded in; pending re-review + Allen approval)
+**Status:** Draft rev 3 (two codex adversarial rounds folded in; pending re-review + Allen approval)
 **Author:** Claude (with Allen)
 
-> **rev 2 changes** (codex review of rev 1): the unified authorized create entry
-> does **not** exist today and must be BUILT (B-1); freshness comes from the
-> CORE `ever_created` signal, not a Class's optional `fresh?` meta (A-1); the
-> manage-cap is `action: :any` scoped to `Behavior.Manage` + instance (C-1) with an
-> explicit Session caveat; `reconfigure` is a NEW per-Class hook, not "rerun
-> instantiate" (D-1); a per-Class teardown/rollback contract is defined (G-1); plus
-> bridge-join existence predicate (G-2), User create ordering (E-1), one-shot
-> migration (F-1).
+> **rev 3 changes** (codex review of rev 2 — closed B-1/C-1/E-1/G-2, fixed the 3
+> remaining mechanism gaps): freshness is a per-Kind **`exists_durably?(uri)`
+> predicate checked BEFORE spawn** (not a post-hoc `ever_created` transition, which
+> isn't observable; A-1) — this also covers the **ephemeral Workspace** (no snapshot
+> marker) by reading its domain table, and is the SAME predicate the bridge-join
+> existence check uses (G-2). `reconfigure/4` returns **dispatch effects** executed
+> by the Manage handler (a Template Class cannot write the live Kind's slices; D-1).
+> Class `teardown` undoes **durables only** and composes with Lifecycle `destroy/2`
+> (which owns termination + snapshot deletion; G-1).
+>
+> **rev 2 changes** (codex review of rev 1): unified authorized create entry must be
+> BUILT (B-1); manage-cap is `action: :any` on `Behavior.Manage` + instance, with a
+> Session caveat (C-1); `reconfigure` is a NEW hook (D-1); per-Class teardown (G-1);
+> User create ordering (E-1); one-shot migration (F-1).
 
 ## 1. Problem & context
 
@@ -76,19 +82,30 @@ the existing pattern.
 
 ## 3. Design
 
-### 3.1 Freshness is a CORE signal, not a Class return (A-1)
+### 3.1 Freshness = a per-Kind `exists_durably?` predicate, checked BEFORE spawn (A-1)
 
-`Ezagent.Kind.Template.instantiate/3` MAY return `{:ok, uris}` (2-tuple) or
-`{:ok, uris, %{fresh?: bool}}` — the 2-tuple is explicitly valid and
-`GenericSession.instantiate/3` (`generic_session.ex:99`) returns it with no signal. So
-the manage-cap grant must NOT depend on the Class's `fresh?`.
+`Ezagent.Kind.Template.instantiate/3` MAY return a bare 2-tuple (no `fresh?`;
+`GenericSession.instantiate/3` does, `generic_session.ex:99`), so the grant must NOT
+depend on the Class's return. And the core `ever_created` marker, while it exists, is
+only readable as a **current-state** predicate (`KindSnapshot.ever_created?/1`,
+`kind_snapshot.ex:182`) — *after* spawn it can't distinguish "fresh by THIS call" from
+"already existed" (the snapshot write returns only `:ok`, not a transition;
+`server.ex:185-221`). And `:ephemeral` Kinds (Workspace, `workspace.ex:55`) skip
+snapshot persistence entirely, so they have no `ever_created` marker at all.
 
-**Authoritative freshness lives in core:** `Kind.Server.init/1` + `Snapshot.load_or_init`
-already decide create-vs-rehydrate, and the Lifecycle `create/1` hook fires exactly once
-per URI, gated by the durable `ever_created` marker written atomically with the first
-snapshot (`server.ex:185-222`, `snapshot.ex:341-352`). The grant keys off **that** —
-i.e. the create entry asks core "was this instance freshly created in THIS call?" via
-the `ever_created` transition, independent of any Class return shape.
+**Resolution — a per-Kind `exists_durably?(uri)` predicate, checked by the create entry
+BEFORE it spawns:**
+
+- Snapshot-backed Kinds (Agent/Session/User/Templates): `KindSnapshot.ever_created?/1`
+  — an exported `Repo.get` read, no GenServer needed (`kind_snapshot.ex:182`).
+- Ephemeral Workspace: its durable domain row (`Workspace.Store` lookup).
+
+The create entry (§3.2) is the authoritative create path, so checking
+`exists_durably?(uri) == false` *immediately before* invoking the Class `instantiate/3`
+deterministically means "this call is the fresh create" → grant after instantiate
+succeeds. `true` → it's a rehydrate/adopt → no grant. This is the SAME predicate the
+bridge-join existence check uses (§3.8), so there is one notion of "durably exists" per
+Kind.
 
 ### 3.2 The unified authorized create entry (BUILD) (B-1)
 
@@ -116,8 +133,9 @@ the entry is a CI failure** (§6).
 
 ### 3.3 Manage-cap grant — CORE step, `:any` action, Session caveat (A-1, C-1)
 
-After a fresh create (§3.1 signal), the core handler grants, for each freshly created
-owned Kind URI:
+After a fresh create (the create entry observed `exists_durably?(uri) == false`
+pre-spawn, §3.1, and `instantiate/3` succeeded), the core handler grants, for each
+freshly created owned Kind URI:
 
 ```
 cap(kind_of(uri), Ezagent.Behavior.Manage, :any, instance: uri)  → granted to ctx.caller
@@ -164,35 +182,56 @@ adds the `owner_uri`/admin check (§3.3 caveat) until OQ-4 is decided.
 There is no existing "re-apply instantiate to a live Kind" capability — `instantiate/3`
 is a create/adopt procedure (spawns, starts sidecars, joins members;
 `cc_agent.ex:385`, `generic_session.ex:99`); re-running it against a live Kind is
-undefined and would hit `put_new` `{:already_started}`. So this spec **adds** an
-**optional** Template Class callback:
+undefined and would hit `put_new` `{:already_started}`.
 
-```
-@callback reconfigure(uri :: URI.t(), old_data :: map(), new_data :: map(), ctx) ::
-            {:ok, [effect]} | {:error, term()}
-```
+**Layering constraint (codex D-1):** a Template Class is NOT the Kind's running
+Behavior. Dispatch reduces effects into the **dispatched behavior's own slice** only
+(`runtime.ex:172-191`, `:993-999`); `{:set, key, v}` writes the current behavior's
+slice, not an arbitrary sibling slice (`behavior.ex:1091`). So a Class cannot directly
+write the live Kind's config slice.
 
-- `validate/1` runs on `new_data` first.
-- `reconfigure/4` returns **Lifecycle effects** (`{:set, :state_key, v}` for the durable
-  spec, `{:set_transient, …}`, dispatches for re-bind/re-grant/route reconcile) applied
-  to the LIVE Kind — same URI, same identity, runtime `transients` untouched except where
-  the Class explicitly restarts them.
-- Sidecar-bearing Classes (cc PTY, np) relaunch the subprocess against the new config via
-  the existing `ensure_subprocess_alive/2` hook (GLOSSARY §128), preserving conversation
-  state (durable `state` persists; `transients` rebuilt by `activate/2`).
+**Resolution:** `manage.reconfigure` is an action on **`Ezagent.Behavior.Manage`**
+(§3.4); the Manage behavior owns a small **`:spec` slice** recording the
+`template_data` the Kind was created/last-reconfigured with (present on every Kind via
+the Manage registration). The handler:
+
+1. Runs the Class `validate/1` on `new_data`; rejects immutable-identity changes
+   (username, workspace name — OQ-3).
+2. Writes `new_data` to its OWN `:spec` slice (`{:set, :spec, new_data}` — same-behavior
+   effect, legal).
+3. Executes the **dispatch effects** the Class's new optional callback returns:
+
+   ```
+   @callback reconfigure(uri, old_data, new_data, ctx) ::
+               {:ok, [dispatch_effect]} | {:error, term()}
+   ```
+
+   `reconfigure/4` returns `{:dispatch, target, action, args}` effects — re-bind /
+   re-grant / route-reconcile / **config-update via the Kind's OWN behaviors'
+   actions** / sidecar restart via `ensure_subprocess_alive/2` (GLOSSARY §128). The
+   effect pipeline already executes dispatch buckets, so these reach the right slices
+   through the normal dispatch path (no new cross-slice mechanism). Behaviors that need
+   the config read the Manage `:spec` slice via the existing `reads_sibling_slices`
+   mechanism.
+
+- Same URI, same identity; runtime `transients` untouched except where a returned
+  dispatch explicitly restarts a sidecar. Durable `state` persists; `transients` rebuilt
+  by `activate/2`.
 - A Class without `reconfigure/4` → `manage.reconfigure` returns
-  `{:error, :reconfigure_unsupported}` (immutable Kind). Immutable identity fields
-  (username, workspace name) are rejected by the Class `validate`/`reconfigure` (OQ-3).
+  `{:error, :reconfigure_unsupported}` (immutable Kind).
 
-This is a small, well-bounded Lifecycle addition — NOT "rerun instantiate".
+This is a bounded addition (one Manage slice + one optional Class callback returning
+dispatches) — NOT "rerun instantiate" and NOT a new cross-slice effect type.
 
 ### 3.6 Workspace Template Class (proposed)
 
 `Ezagent.Template.Workspace` (workspace domain). `template_data`: `name`, `owner`
 (defaults to `created_by`), `default_agent_template` (seeds `<username>-default`),
 optional `default_caps_policy`. `instantiate/3` = `Workspace.Store.create/2` +
-`Kind.spawn(Workspace)`; teardown = delete the workspace row + terminate the Kind.
-`Workspace.create/2` becomes a thin caller of the create entry (authorized).
+`Kind.spawn(Workspace)`. `exists_durably?` reads the `Workspace.Store` row (Workspace is
+`:ephemeral` — no snapshot marker; §3.1). `teardown` deletes the Store row + undoes
+bindings (NOT terminate — `destroy/2` owns that; §5). `Workspace.create/2` becomes a
+thin caller of the create entry (authorized).
 
 ### 3.7 User Template Class — explicit ordering + rollback (E-1)
 
@@ -221,7 +260,7 @@ the agent's `created_by` is the just-created user or the registrar). No bootstra
 
 | Path | After |
 |---|---|
-| agent-bridge join (`channel.ex:146`) | **Existence predicate before spawn**: if a durable snapshot/provenance row exists for the agent URI → rehydrate via `SpawnRegistry.spawn` (legitimate); if it was **never created** → `{:error, :agent_not_created}` (no silent fresh create). The predicate is "durable create marker exists" (the `ever_created`/snapshot row), NOT "currently live". |
+| agent-bridge join (`channel.ex:146`) | Call the **same `exists_durably?(uri)` predicate** (§3.1) before spawn: `true` (durable create marker / row exists, but not live) → rehydrate via `SpawnRegistry.spawn` (legitimate); `false` (never created) → `{:error, :agent_not_created}` (no silent fresh create). For Agents `exists_durably?` = `KindSnapshot.ever_created?/1` (a pre-spawn `Repo.get`, `kind_snapshot.ex:182`). Predicate is "durably exists", NOT "currently live". |
 | `Workspace.create/2` | dispatch the create entry (Workspace Template), authorized |
 | plugin Class `instantiate/3` | unchanged Class code; core grant via `ctx.caller` + `ever_created` |
 | `Agent.spawn_fresh` / `spawn_from_template_content` | route through the entry; lineage stays (orthogonal) |
@@ -231,7 +270,7 @@ the agent's `created_by` is the just-created user or the registrar). No bootstra
 ## 4. Data flow
 
 **Create:** caller → dispatch `kind.create` (CapBAC create cap) → resolve Class →
-`validate/1` → `instantiate/3` → core observes `ever_created` fresh transition → grant
+check `exists_durably?(uri) == false` (§3.1) → `validate/1` → `instantiate/3` → grant
 `cap(:<kind>, Manage, :any, uri)` to `ctx.caller` → return uris. On post-spawn failure →
 Class teardown (§5).
 
@@ -246,16 +285,23 @@ the live Kind → (if sidecar) `ensure_subprocess_alive/2`.
 ## 5. Teardown / rollback contract (G-1)
 
 Each Template Class declares a teardown — `@callback teardown(uri, data, ctx) :: :ok |
-{:error, term()}` — enumerating what its `instantiate` made durable (rows, snapshots,
-caps, bindings, sidecars) and how to undo it. Used by:
-- **Create-failure rollback** (after a fresh spawn, before/at grant): the create entry
-  calls the Class teardown (mirrors `rollback_session/3`'s explicit reversal,
-  `ezagent_domain_chat.ex:871`, generalized per-Class).
-- **`manage.delete`**: the same teardown, then Lifecycle `destroy/2`.
+{:error, term()}` — that undoes **only the durable side-effects its `instantiate` created
+OUTSIDE the engine's own boundary**: domain rows (`workspaces`/`users`), granted caps,
+workspace/MCP bindings, external sidecars. It MUST NOT terminate the Kind or delete the
+snapshot — those belong to the engine (codex G-1).
 
-Failures during teardown are best-effort + logged; the original create error surfaces
-(idempotent, double-teardown-safe). The grant itself is the LAST create step so a grant
-failure only has the spawn + Class durables to undo.
+Termination + snapshot deletion + the developer destroy hook drain are owned by
+Lifecycle `destroy/2` (`lifecycle.ex:554-570`, `server.ex:540-583`). Class teardown
+**composes** with it; it does not duplicate or bypass it. Used by:
+- **Create-failure rollback** (after a fresh spawn fails at/after grant): run the Class
+  teardown (undo durables) **then** `destroy/2` (terminate + delete snapshot). Mirrors
+  `rollback_session/3`'s explicit reversal (`ezagent_domain_chat.ex:871`), generalized
+  per-Class + delegating termination to the engine.
+- **`manage.delete`**: Class teardown (undo durables) **then** `destroy/2`.
+
+Teardown is best-effort + idempotent (double-teardown-safe); failures are logged and the
+original create error surfaces. The grant is the LAST create step, so a grant failure has
+only the spawn + Class durables to undo.
 
 ## 6. Testing / CI invariants
 
@@ -290,8 +336,8 @@ narrowing the default user `:session` cap (unless OQ-4 chooses it).
    `cap(:<kind>, Manage, :any, instance)` (`:any` action — C-1).
 4. **User manage-cap recipients:** user (self, in `caps_json` at row create) + creating
    admin/registrar.
-5. **Grant location:** core create-entry step keyed off the `ever_created` signal +
-   `ctx.caller` (plugin Classes unchanged).
+5. **Grant location:** core create-entry step, gated by `exists_durably?(uri) == false`
+   checked pre-spawn (§3.1) + `created_by` = `ctx.caller` (plugin Classes unchanged).
 
 ## 9. Open questions
 
