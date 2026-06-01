@@ -1,136 +1,152 @@
 # 团队路由统一 —— 规则集、Prompt 模板、Legend 与 Member-Provenance
 
 **日期**：2026-06-01
-**状态**：spec（设计原则上已由 Allen 在飞书确认；待书面 review + codex 对抗 review）
-**取代**：orchestrator 私有的 `agent_slot` 机制（见 §6 Slot 退休）
+**状态**：spec **rev 2** —— 纳入 codex 对抗 review（1 CRITICAL + 4 HIGH + 若干 MED）与 Allen 的设计决策。待最终 review → writing-plans。
+**取代**：orchestrator 私有的 `agent_slot` 机制（clean cutover，§3.8）。
 
 ## 1. 动机
 
-搭建实时 `传话游戏` relay（cc → codex → curl，每棒追加一句，镜像到飞书群）暴露了四个问题，最终发现它们其实是**同一个纠缠在一起的设计缺口**：
+搭建实时 `传话游戏` relay（cc → codex → curl，每棒追加一句，镜像到飞书群）暴露了四个问题，它们其实是**同一个纠缠的设计缺口**：
 
-1. **流程里的 agent 不知道自己在流程里。** 每个 worker 只看到上一棒的原始消息。cc 碰巧认出了触发词，codex/curl 只是"顺着聊"。让模型在消息体里自传播协议指令很脆弱——gpt-5.5 就把 剩余 的 pop 算错、跳过了一棒。角色上下文应该由**路由表**承载，而不是塞进消息让模型自己算。
-2. **没地方挂这个上下文。** 当前一条路由规则只有 `matcher` + `receivers` + `enabled`，没有"该告诉 receiver 什么"的字段。
-3. **`@`-mention 不对称。** `@` 一个普通 session **成员**会自动路由（系统默认规则 `always → [$session_users, $mentions]` + 成员过滤的 `$mentions` 魔法 token）。但 relay 的 worker 是 orchestrator 的 **slot worker**，故意不是成员，所以 `@` 根本到不了——消息没命中任何 worker 规则，静默消失。
-4. **两套并行机制**（"slot worker" vs "session member"）做的其实是同一件事——一个 agent 参与一个 session——却有不同的管理、命名、快照、路由语义。
+1. **流程里的 agent 不知道自己在流程里。** worker 只看到上一棒的原始消息。让模型在消息体里自传播协议很脆弱——gpt-5.5 把 pop 算错跳了一棒。角色上下文应由**路由表**承载，不是塞进消息。
+2. **没地方挂这个上下文**——规则只有 `matcher` + `receivers` + `enabled`，没有"该告诉 receiver 什么"。
+3. **`@`-mention 不对称**——对 session **成员**自动通（默认 `always → [$session_users, $mentions]` + 成员过滤的 `$mentions`），但 relay 的 **slot worker** 不是成员，`@` 静默消失。
+4. **两套并行机制**（"slot worker" vs "session member"）做同一件事。
 
-统一的洞察（Allen）：一个 "slot" 其实就是**带了三个额外 facet 的 member**；一个多 agent 流程其实就是**一组共享 prompt 模板的单 receiver 路由规则**，前面可以挂一个 **legend**（一个用户可见把手，折叠团队并触发其流程）。
+统一洞察（Allen）：一个 "slot" 就是**带额外 facet 的 member**；一个多 agent 流程就是**一组共享 prompt 模板的单 receiver 规则**，前面可挂一个 **legend**（折叠团队并触发其流程的用户把手）。
 
-## 2. 当前状态（基于代码，2026-06-01）
+## 2. 当前状态（基于代码，codex 已确认）
 
-- **路由规则**（`Ezagent.Routing.RuleStore`，表 `MentionRouting`）：扁平行 `{matcher_data, receivers :: [String.t()], enabled, workspace_uri, source, created_by, …}`。`receivers` 已经是**列表**（支持多 receiver）。**没有"规则集/分组"概念**——relay 是 3 条独立行，仅靠"同一 session scope"关联。
-- 规则上**没有 prompt/上下文字段**。
-- **Slot worker**：`Orchestrator.Tools.add_agent_slot/write_matcher` 在 `template_working_copy.agent_slots` 记录命名 slot，在 orchestrator lineage 下（cap #2 `{:spawned_by, orch}`）spawn worker，按 slot 名路由。Slot worker **不是** session 成员。
-- **Session 成员**：chat slice 的 `:members` 是 `{URI, %{online: bool}}`——**没有 provenance、没有 creator/owner、没有稳定 role-name 别名**。
-- **SessionTemplate** 内容 = `{agent_slots, routing_rules, orchestrator_template_uri, default_workspace_uri}`（version-hash）。**成员不进快照**——由 `create_session/3` 在运行时 join。
-
-所以今天"slot 的三个能力"（lineage 受限管理、稳定 name→URI、模板快照）只长在 slot 上；成员一个都没有。下面的设计把这些能力移到成员上，并让 slot 退休。
+- **路由规则**（`RuleStore`，表 `MentionRouting`）：扁平行 `{matcher_data, receivers :: [String.t()], enabled, workspace_uri, source, created_by, applies_to_users}`。**没有 `rule_set`/`position`/`prompt_template_ref`**、无分组。`Behavior.Routing.add_rule` 只收 `{table, matcher_json, receivers}`，**不** enforce 单 receiver。
+- **`Resolver.resolve/4` 只返回 `[URI.t()]`**（`resolver.ex:158/163/188`）；`query_table/3` 把 `{matcher, value}` 塌成 `receivers_of(value)`。**没有调用方知道命中了哪条规则**——prompt 注入的承重缺口。
+- **投递**：`Behavior.Chat.handle_send/2` 遍历 recipients；`dispatch_receive_call/3` 传未改的 `%Message{}`。agent 投递（`AgentBridge`）构造 payload 文本（天然注入点）；**user 收消息那条只存 message id**（`chat.ex:526/567/573/585`），可见正文是共享的持久化消息，**不是** per-recipient 渲染。
+- **Slot worker**：`template_working_copy.agent_slots` 存 `{slot_name, source_agent_template_uri, live_worker_uri, generation}`（`chat.ex:367/373`）。`update_agent_template`/回滚/重生依赖 **source-template URI + live-worker URI + generation 计数**（`tools.ex:192/647/747`、`agent.ex:272`）。Slot worker 不是成员。
+- **Session 成员**：`:members` = `{URI, %{online: bool}}`——无 provenance、无 creator/owner、无 role-name 别名。
+- **mention 是具体 URI**：`Matcher.mention/1` 匹配 `message.mentions` 里的字符串（`matcher.ex:142`）；LiveView/Feishu 裸 mention 对着活成员/agent URI 解析。**没有 session 内的符号把手**。
+- **SessionTemplate** 内容 = `{agent_slots, routing_rules, orchestrator_template_uri, default_workspace_uri}`（version-hash）。**成员不进模板**；`create_session/3` 只 join `[effective_owner, orchestrator_uri]`（`ezagent_domain_chat.ex:512/604`）。
+- **`Ezagent.Message` 是普通值 struct**——不是 Kind，无 lifecycle/hook。
+- **Capability action-axis 已实现合并**——`Capability` 有 `:action`（默认 `:any`），`matches?/2` 把它当第 5 维（PR #503/#426）。（rev-1 误写成 pending。）
 
 ## 3. 设计
 
-### 3.1 Member 长出三个 facet
+### 3.1 Member facet（吸收 slot）
 
-session 成员变成 `{URI, meta}`，`meta` 在现有 `online` 之外携带：
+成员变成 `{URI, meta}`，`meta` 除 `online` 外携带：
 
-- **`provenance`** —— 创建/拥有该成员的 principal 的 URI（一个用户，或一个 orchestrator agent）。**通用**，不限于 orchestrator。它的**单一职责是管理授权**：谁可以重配/删除这个成员，**以及编辑引用它的 routing rows**。一个 cap `{:manages, provenance_uri}`（泛化 slot 的 `{:spawned_by, orch}`）授权这两件事。orchestrator worker 就是 provenance 为该 orchestrator 的成员。
+- **`provenance`** —— 创建/拥有该成员的 principal URI（用户或 orchestrator agent）。通用。**单一职责：管理授权**——谁能重配/删除该成员，以及编辑引用它的 routing rows。cap `{:manages, provenance_uri}` 用 **action `:manage`**（用*现有*的 action-axis）授权。orchestrator worker = provenance 为该 orchestrator 的成员。
+  > "agent 回给谁"不是 facet，是路由："只回 owner" = 规则 `from(agent) → [owner]`；管理授权管住谁能编辑这些行。私有 agent 的默认 = 建时配一条 owner-only 路由规则。（动态情形如"回给刚 @ 我的人"用新的 `$sender` 变量——§3.2。）
+- **`role_name`**（可选）—— 稳定别名（如 `"relay-cc"`），与 URI 解耦。规则/legend 按 role_name 指向成员；`role_name → 当前 URI` 重启后保持。（slot 的稳定命名能力。）
+- **`in_session_template`**（bool，默认 false）—— 该成员是否进 **SessionTemplate** 快照（§3.7）。模板实例化/fork 时 `true` 的被重建，`false` 的只是运行时。（relay 团队 = true；临时访客 = false。）（rev-1 的 `in_template` 改名，更清楚是哪个 template。）
+- **Spawn-source 状态**（spawn/受管成员才有——codex HIGH）：`source_template_uri`、`live_worker_uri`、`generation`。这是旧 `agent_slots` tuple 携带的状态；member 模型**必须**携带它，否则 member 级的 `update_agent_template`（起新 generation、repoint 路由、终止旧 worker）、回滚、持久化、无冲突重生都做不了。普通用户邀请的成员这些为 nil。
 
-  > "一个 agent 回给谁" **不是** member facet，而是纯**路由**（Allen 2026-06-01）："只回 owner" = 一条规则 `from(agent) → [owner]`；"只处理 owner 的消息" = 该 agent 只在 matcher 为 `from(owner)` 的规则里当 receiver。上面的管理授权管住谁能编辑这些行，所以 owner 直接在路由表上控制 agent 的受众——**不需要单独的 audience 字段**（避免重复机制）。私有 agent "只回 owner" 的默认，也只是建 agent 时默认配一条 owner-only 路由规则，而不是一个字段。
+provenance 普通、无 role_name、无 spawn-state、`in_session_template: false` = 今天的普通成员。向后兼容。
 
-- **`role_name`**（可选）—— 一个稳定的、对人友好的别名（如 `"relay-cc"`），与 agent 的 URI 解耦。路由规则和 legend 可以按 `role_name` 指向成员；`role_name → 当前 URI` 的绑定在重启后保持（URI 可能变，role-name 不变）。这就是 slot 的稳定命名能力，挪到了成员上。
-- **`in_template`**（bool，默认 false）—— 该成员是否进 SessionTemplate 快照（见 §3.5）。让模板能携带"这个团队的成员"以及它的规则。
+### 3.2 动态 matcher / 模板变量（新增——Allen #1，codex MED）
 
-provenance 为某 principal、无 `role_name`/`in_template` = 一个普通成员（今天的行为）。完全向后兼容。
+matcher 代数（`from/text_contains/mention/in_session/and/or/not`）+ 收件魔法 token（`$session_members/$session_users/$mentions`）表达不了**动态受众**（"回给刚 @ 我的人"），也喂不了动态模板。新增：
 
-### 3.2 规则集 Rule-Set
+- **`$sender`** 收件 token —— 展开为命中消息的 sender（像其它魔法 token 一样成员过滤）。让"回给上一棒 sender"纯走路由。
+- **模板变量**，源自命中消息 + receiver：`{sender}`、`{flavor}`、`{body}`、`{session}`、`{sent_at}`。v1 变量集固定 + 有文档，后续可扩展。（无 `$self` 自环：`$sender` 排除 receiver 自身，fail-closed，避免 agent 回自己。）
 
-**规则集**是一组命名、有序的路由规则，构成一个逻辑流程。性质：
+### 3.3 规则集（schema + API 改动——codex HIGH）
 
-- 集内每条规则**恰好一个 receiver**（一个成员 URI 或 `role_name`）。（多 receiver 扇出用多条规则、或一条专门的广播规则表达——见 §3.4 (B)。）这消除了"一规则多 receiver"的歧义。
-- 集内规则可**共享一个命名 prompt 模板**（§3.3）——"多规则、一模板"取代"一规则、多 receiver + 一注入"。
-- 集有一个可选的 **entry** 规则（legend 的 `@`-触发所触发的规则）。
-- 机制上：在路由规则行加一个可空的 `rule_set`（名字）+ `position`，以及一个可空的 `prompt_template_ref`。"集"就是某 session scope 内共享同一 `rule_set` 名的行。（v1 不需要新表；若约定不够，后续可加 `rule_sets` 元数据行管 entry/排序。）
+**规则集**是一组命名、有序的单 receiver 规则，构成一个流程。在扁平 schema 上不是免费的，需要：
 
-### 3.3 Prompt 模板
+- `routing_rules` **新增列**：`rule_set`（名，可空）、`position`（int）、`prompt_template_ref`（名，可空）。
+- **`Behavior.Routing.add_rule` 增加** `rule_set`/`position`/`prompt_template_ref` 参数，且当 `rule_set` 设了时 **enforce 单 receiver**（多 receiver 扇出 = 显式广播规则，§3.6 B）。
+- **`RuleStore.load_into_registry/1` + `Resolver`** 发布并携带 `prompt_template_ref`（及规则身份）进 match 结果——见 §3.5。
+- 集的可选 **entry** 规则（legend `@`-触发所触发）。
+- 现有扁平规则新列全 nil → 行为不变。
 
-一个**命名、可复用**的模板，套用到投递给某规则 receiver 的消息上：
+### 3.4 Prompt 模板 + 投递变换 —— **路径 A**（Allen）
 
-- **模板化**（Allen ①+②）：支持占位符 `{sender}`、`{flavor}`、`{body}`、`{session}`（可扩展）。**v1 引擎刻意保持简单**——对一组固定、有文档的变量做扁平的 `String.replace/3` 式替换；**不**做条件/循环/partial 这类语言。`{body}` **必须**出现（在写模板时校验），保证原消息绝不被静默丢弃。
-- **命名 + 共享**：模板按名字被规则引用，所以整个规则集的各棒可复用同一个"你在 <flow> 里，追加一句简短的话"模板。（存储：session 的 working copy / template 里一个 `prompt_templates` map，按名字索引，session 内可复用。）
-- **作用域 = 所有 session 成员**（Allen ⑤）：注入作用于**每一个成员 receiver**——像邮件转发的页脚——不只 agent。（理由：人类队友也可能受益于"[经 <flow> 转发]"这种上下文；而且"只对 agent"是个不必要的特例。）Resolver/投递路径按 receiver 把命中规则的模板套到投递 payload 上。
+一个**命名、可复用**的模板，渲染到投递给某规则 receiver 的消息上。**v1 = 路径 A：零新抽象。** 在*现有的*逐 recipient 投递步上，投递代码用命中规则的模板调一个 render 函数（有就套）：
 
-### 3.4 Legend
+```
+render_for_recipient(message, recipient, matched_rule_ctx) :: rendered
+```
 
-**Legend** 是团队/流程的用户可见把手：
+- **模板化**（Allen ①+②）：占位符见 §3.2；引擎刻意简单（对固定变量集做扁平替换）；`{body}` 必须出现（写模板时校验）保证原文不丢。
+- **命名 + 共享**：规则按名引用模板（`prompt_template_ref`）；整个规则集复用一个模板。存储：session 内 `prompt_templates` map（open question §8.1：以后可上 workspace 级注册表）。
+- **两个投递站点、全体成员**（Allen ⑤）：agent 投递渲染进 payload 文本；**人类投递渲染成显示/渲染时的后缀**（不 per-recipient 入库——化解 codex MED-2）。所以"全体成员"成立、无需 per-recipient 存储。
+- **不是 hook 系统。** 一个可注册/排序/插拔的投递 hook 子系统（称 "B"）**是**新抽象，**显式推迟**（§7）。v1 把 render 写成**一个函数**放在接缝上，将来真出现第二种变换（页脚/脱敏）再上 B——YAGNI。
 
-- 形态：`{name, member_set（它折叠的 URI/role_name）, bound_rule_set, fold: bool}`。
-- **UI**：折叠 legend 下的成员在成员列表里收进单个 legend 条目（解决"100 个 agent 把列表搞乱"——Allen）。它们仍是一等成员（可单独 `@`、可快照、可被路由 scope）。
-- **`@legend` 语义**（Allen A/B —— 选定默认 A）：
-  - **(A) 默认** —— `@legend` 触发该 legend 的**绑定规则集**（触发其 entry 规则；如 `@传话游戏` → entry → 链式跑）。
-  - **(B) 特例** —— 一个规则集可以是纯广播（entry 规则扇出全体成员）；那只是规则集的一种，不是单独机制。
-- legend 本身是一个路由目标：`@legend` 通过规则 `mention(legend) → entry` 解析。legend 是 session 内的；v1 不支持嵌套。
+### 3.5 Matched-rule 穿透（CRITICAL——codex）
 
-### 3.5 模板快照纳入成员
+prompt 注入是 per-flow/per-rule 的（"你在传话游戏里"绑在命中规则上、不绑 receiver），所以投递变换**必须**知道命中了哪条规则。现在 `Resolver.resolve/4` 返回裸 `[URI]`、fan-out 丢了规则。需要改：
 
-`SessionTemplate` 内容新增一个 `members` 列表（`in_template: true` 的那些），与 `agent_slots`（移除——见 §6）、`routing_rules`（现含 `rule_set`/`prompt_template_ref` 字段）、一个 `prompt_templates` map、`legends` 并列。于是模板捕获整个团队：谁在里面、怎么路由、每棒拿什么角色上下文、前面挂哪个 legend——通过 fork/instantiate 复用。（version-hash 扩展覆盖新字段。）
+- `Resolver.resolve` 返回 **`[{recipient_uri, matched_rule_ctx}]`**（或 recipient→ctx map），`matched_rule_ctx` 至少带 `prompt_template_ref` + 规则 id。向后兼容：一个薄 helper 给不需要 ctx 的调用方返回旧的 `[URI]`。
+- `Behavior.Chat.handle_send/2` fan-out + `dispatch_receive_call/3` 把 `matched_rule_ctx` 穿到逐 recipient 投递，由它调 `render_for_recipient/3`（§3.4）。
+- 两条规则投同一 recipient：规则集/单 receiver 模型（§3.3）让这很少见；真发生时 `position` 高（或第一条）的模板胜（确定性、有文档）。v1 不拼接。
 
-## 4. 实例 —— 传话游戏在新模型里
+### 3.6 Legend + 单独解析层（codex HIGH）
 
-- 一个 **legend** `传话游戏`，`member_set = [relay-cc, relay-codex, relay-curl]`（按 `role_name`），`fold: true`，`bound_rule_set: "telephone"`。
-- 三个**成员**（relay agent），各自 `provenance = <创建者>`、一个 `role_name`、`in_template: true`。
-- 一个**规则集** `telephone`：
-  - entry：`mention(传话游戏) → relay-cc`
-  - `from(relay-cc) → relay-codex`
-  - `from(relay-codex) → relay-curl`
-  - 三条规则共享 **prompt 模板** `telephone_hop`：`"你在玩传话接龙。下面是目前的内容：\n{body}\n请只追加一句简短的话。"`
-- 用户 `@传话游戏`（默认 A）→ 触发 entry → cc 拿到消息 + `telephone_hop` 上下文 → 回复 → 路由给 codex → … → curl。每个 agent 也能单独 `@`（它们是成员）。整个 legend + 规则集 + 模板可快照成 SessionTemplate 复用。
+**Legend** = `{name, member_set（URI/role_name）, bound_rule_set, fold: bool}`。
 
-对比今天：3 个临时 slot worker + 3 条手写 sender 规则 + 一个模型自算的 baton 协议（在最弱的模型那里就崩了）。
+- **UI**：折叠 legend 的成员收进单个 legend 条目（去乱——Allen）。它们仍是一等成员（可单独 `@`、可快照）。
+- **`@legend` 语义**：**(A) 默认**——触发绑定规则集的 entry 规则。**(B)**——规则集可以是纯广播（entry 扇出全体）：只是规则集的一种，不是单独机制。
+- **解析层（非裸 mention）**：legend 是 session 内的*符号把手*、不是 member/agent URI，所以**不能**走 `Matcher.mention/1`（它匹配具体 URI），否则静默丢/投错。引入一个 **legend 注册表**（session 内 `name → {member_set, bound_rule_set}`）；mention 解析器（LiveView + Feishu）在走 URI-mention 路径**之前**，先把 legend 名解析成"触发它的 entry 规则"。legend 是 session 内的；不支持嵌套（v1）。
+
+### 3.7 SessionTemplate + create_session 物化（codex HIGH）
+
+`SessionTemplate` 内容新增 `members`（`in_session_template: true` 的）、`prompt_templates`（命名 map）、`legends`；`agent_slots` 移除（§3.8）。version-hash 扩展覆盖新字段（write-once/hash-checked 的 `Behavior.Template` 能容纳新字段）。**但实例化路径必须改**：现在 `create_session/3` 只 join `[owner, orchestrator]`——它**必须物化模板的 `members`**（从 `source_template_uri` 重建 spawn 成员、登记 provenance/role_name、装上规则集 + prompt_templates + legends），实例化/fork 出来的团队才真出现。这是 codex 指出的承重契约改动。
+
+### 3.8 Slot 退休——clean cutover（Allen：不做向后兼容）
+
+`Orchestrator.Tools` 的 `add_agent_slot`/`remove_agent_slot`/`update_agent_template`/`write_matcher(receiver_slot_names)` 及 slot 名路由**移除**，替换为：
+
+- **加成员** `provenance = <orchestrator>`（+ `role_name`、`in_session_template`、spawn-source 状态）——通过 `{:manages, provenance}`（action `:manage`）获得 lineage 受限授权。
+- **定义规则集规则**，按 `role_name` 指向成员，带 `prompt_template_ref`。
+
+orchestrator MCP 工具面**重写**成这些 member+规则集工具（clean cutover——现有 orchestrator 重新接线；这是有意的破坏性改动，不是 nil 默认）。现有 SessionTemplate 残留的 `agent_slots` 直接弃用（dev 环境，无生产模板要保）。退休的 `prompt_override` no-op 参数被 `prompt_template_ref` 取代。`remove_agent_slot` 静默删规则的坑（PR #519 可观测性）被吸收：规则集是显式增删单元，成员移除会报告其对规则集的影响。
+
+## 4. 实例 —— 传话游戏
+
+- **Legend** `传话游戏`：`member_set = [relay-cc, relay-codex, relay-curl]`（按 role_name），`fold: true`，`bound_rule_set: "telephone"`。
+- **成员**（relay agent）：`provenance = <创建者>`、role_name、spawn-source 状态（模板/generation）、`in_session_template: true`。
+- **规则集 `telephone`**（各单 receiver、共享模板 `telephone_hop`）：entry `mention(传话游戏) → relay-cc`；`from(relay-cc) → relay-codex`；`from(relay-codex) → relay-curl`。
+- `telephone_hop` = `"你在玩传话接龙。目前内容：\n{body}\n请只追加一句简短的话。"`。
+- 用户 `@传话游戏` → legend 注册表解析 → entry 规则触发 → cc 收到被 `telephone_hop` 渲染的消息 → 回复 → 路由给 codex → … → curl。agent 是成员（可单独 `@`）；legend+规则集+模板+成员可快照成 SessionTemplate 复用。
+- **user→user 页脚**（同一套机制）：规则 `always (from $user) → $session_users` + 模板 `"{body}\n\n（该消息由 {sender} 于 {sent_at} 发送）"`——agent 在 payload 里拿到、人类看到的是渲染时后缀。
 
 ## 5. 已定决策
 
 | # | 决策 | 选择 |
 |---|------|------|
-| ① / ② | 注入形态 + 静态/模板 | **模板化**，占位符 `{sender}/{flavor}/{body}/{session}`；v1 引擎刻意简单（扁平替换，`{body}` 必填） |
-| ③ / ④ | 多 receiver / 多规则 | **单 receiver 规则的规则集**；规则**共享命名模板**；无一规则多 receiver、无拼接歧义 |
-| ⑤ | 注入作用域 | **所有 session 成员**（邮件页脚模型），非仅 agent |
-| A/B | `@legend` 语义 | **A**（触发绑定规则集）为默认；**B**（广播）= 规则集的一种 |
-| — | provenance | **通用 member facet，单一职责**：对成员 + 其 routing rows 的管理授权；"回给谁"是纯路由（非 facet）；slot 的 `spawned_by` 是 orchestrator 特例 |
+| ①/② | 注入形态 + 静态/模板 | **模板化**，变量 `{sender}/{flavor}/{body}/{session}/{sent_at}`；v1 引擎扁平替换、`{body}` 必填 |
+| ③/④ | 多 receiver / 多规则 | **单 receiver 规则的规则集**，共享**命名**模板；需 schema/API 改动（§3.3） |
+| ⑤ | 注入作用域 | **全体成员**，两个投递站点（agent payload / 人类渲染后缀） |
+| A/B | `@legend` | **A**（触发规则集）默认；**B**（广播）= 规则集的一种 |
+| dyn | 动态受众/变量 | **加 `$sender` token + 模板变量**（§3.2） |
+| transform | 投递机制 | **路径 A**（现有投递接缝上 render、写成单函数）；**hook 子系统 B 推迟** |
+| provenance | 作用域 | **通用 member facet，单一职责** = 对成员 + 其 routing rows 的管理授权；用现有 action-axis（`:manage`） |
+| slots | 迁移 | **Clean cutover**，不做向后兼容；MCP 工具重写 |
 
-## 6. Slot 退休
+## 6. 迁移 / cutover
 
-`Orchestrator.Tools` 的 `add_agent_slot` / `remove_agent_slot` / `write_matcher` / slot 名路由 收敛为：
+Clean cutover（Allen）。新 member 字段默认 nil/false → 普通成员行为如今。现有扁平规则（新列 nil）不变。系统默认 `always → [$session_users, $mentions]` + `$mentions` 过滤不变。旧 SessionTemplate 加载时新字段为空；残留 `agent_slots` 弃用。orchestrator MCP 工具面被替换（有意破坏性改动——无生产 orchestrator 要保）。
 
-- **加一个 `provenance = <orchestrator>` 的成员**（+ 可选 `role_name`、`in_template`）——通过泛化的 `{:manages, provenance}` cap 获得同样的 lineage 受限授权。
-- **定义规则集规则**，按 `role_name` 指向成员。
+## 7. 不在本期范围（v2+）
 
-这去掉了 slot↔member 重复、以及 `@`-mention 不对称（orchestrator worker 现在是成员）。`remove_agent_slot` 静默删规则的坑（todo，已被 PR #519 部分缓解）被吸收：规则集给了一个明确的增删单元，成员移除对规则集的影响会被报告。
+- **投递 hook 子系统（B）**——可注册/排序/插拔的变换。v1 只在接缝上放一个 render 函数；B 是显式 future（Allen 的 Claude-Code-hooks 方向）。
+- 富模板语言（条件/循环/partial）——v1 扁平替换。
+- 嵌套 / 跨 session legend。
+- workspace 级共享模板注册表（v1 = session 内 map）。
+- 更广的"消息没命中 worker → 静默默认 fan-out"可观测性缺口（todo #9 第二层）——这里影响面缩小，单独追踪。
 
-注：`add_agent_slot` 现有的 `prompt_override` 参数（目前是 no-op 占位）被规则集 prompt 模板机制取代。
+## 8. 待 review 的 open question
 
-## 7. 迁移 / 向后兼容
+1. **模板存储**：session 内 `prompt_templates` map（建议）vs workspace 级注册表。v1 = session map；若要 workspace 复用请指出。
+2. **role_name 唯一性/作用域**：session 内（建议）？legend 内？
+3. **`{:manages, provenance}` 对 routing rows 的作用域**：确认 `:manage` cap 恰好授权编辑引用被管成员的那些 routing rows（"owner 在路由表上控制受众"的机制）。
+4. **Spawn-source 状态放哪**：作为 member `meta` 字段（建议）vs 按 member URI 索引的旁表——哪个让 chat slice 更瘦？
+5. **Resolver 返回形态改动**（§3.5）：`[{uri, ctx}]` vs recipient→ctx map——选对现有 `resolve/4` 调用方扰动最小的。
 
-- 成员默认 `provenance: nil`（或 session owner）、无 `role_name`、`in_template: false` → 与今天一致。
-- 现有扁平规则 `rule_set: nil`、`prompt_template_ref: nil` → 行为如今（不套模板）。
-- 系统默认 `always → [$session_users, $mentions]` 规则不变；`$mentions` 成员过滤不变。
-- 现有 SessionTemplate（无 `members`/`prompt_templates`/`legends` 键）加载时这些默认为空。
-- orchestrator slot：提供一次性 shim，在过渡期把现有 `agent_slots` 读成 members-with-provenance；或直接 clean cutover（长期不留 live slot）。在实现计划里定。
+## 9. 测试 / 验证
 
-## 8. 不在本期范围（v2+）
-
-- 富模板语言（条件/循环/partial）—— v1 是扁平替换。
-- 嵌套 legend；跨 session legend。
-- 专门的 `rule_sets` 表 + 一等 entry/排序元数据（v1 用 `rule_set` 名 + `position` 列 + 约定）。
-- 更广的"消息没命中任何 worker → 静默默认 fan-out"可观测性缺口（todo #9 第二层）——相关但单独追踪；本 spec 缩小了它的影响面（成员 + `$mentions` 覆盖常见情况）。
-
-## 9. 待 review 的 open question
-
-1. **模板存储**：session working copy/template 上的 `prompt_templates` map（建议）vs workspace 级命名模板注册表（复用更广、面更大）。v1 = session 内 map；若要 workspace 复用请指出。
-2. **role_name 唯一性/作用域**：session 内唯一？legend 内唯一？（建议：session 内。）
-3. **`{:manages, provenance}` 对 routing rows 的作用域**：确认管理 cap 恰好授权编辑引用被管成员的那些 routing rows——这是"owner 直接在路由表上控制 agent 受众"的机制。
-4. 现有 slot 的 **cutover vs shim**（§7）。
-5. **`{:manages, provenance}` 的 cap 形态** —— 是否与待办的 capability action-axis 工作组合（另一条 todo），还是先独立落？
-
-## 10. 测试 / 验证（实现计划里展开）
-
-- Resolver 单测：规则集单 receiver 路由；prompt 模板套用（占位符、`{body}` 必填校验）；legend `@`-触发 → entry。
-- Member-facet 测试：provenance 管理 cap 授权"成员 + 其 routing rows"（并拒绝非 owner）；"只回 owner"纯用路由规则表达、路由正确；role_name → URI 重启重绑；`in_template` 快照往返。
-- 不变量门（按 `feedback_completion_requires_invariant_test`）：一个测试，当 slot 式机制重新出现、或一个规则集流程需要模型自算路由时**失败**。**live 层**仍是绑定飞书群里的 传话游戏 往返（真 cc/codex/curl），现在纯用 legend + 规则集 + 模板表达（无 baton）。
+- **Resolver/matcher**：规则集单 receiver 路由；`$sender` 展开（排除自身、成员过滤）；matched-rule ctx 被返回 + 穿透。
+- **投递变换**：模板渲染（占位符、`{body}` 必填校验）；agent payload 站点；人类渲染后缀站点；两规则同 recipient 的确定性。
+- **Member facet**：`{:manages, provenance}`（action `:manage`）授权"成员 + 其 routing rows"、拒绝非 owner；"只回 owner"纯用路由规则表达、路由正确；role_name → URI 重启重绑；spawn-source/generation 在 update/回滚/重生的往返；`in_session_template` 快照 + **create_session 物化**往返（实例化模板 → 团队真出现）。
+- **Legend**：`@legend` 经注册表解析 → entry 规则触发；legend 名不会从 URI-mention 路径投错。
+- **不变量门**（`feedback_completion_requires_invariant_test`）：当 slot 式机制重现、或规则集流程需要模型自算路由时**失败**的测试。
+- **Scenario 34（Allen）**：live 层——绑定飞书群里的 传话游戏 往返（真 cc/codex/curl），纯用 legend + 规则集 + 模板表达（无 baton）——**必须 e2e 通过**，且全套必须**无功能回归**（cutover 动了 Resolver/Chat/RuleStore/templates/orchestrator-tools，现有 routing/mention/chat/orchestrator e2e 场景必须保持绿）。

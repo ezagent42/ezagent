@@ -1,256 +1,312 @@
 # Team Routing Unification — Rule-Sets, Prompt Templates, Legends, and Member-Provenance
 
 **Date**: 2026-06-01
-**Status**: spec (design approved in principle by Allen via Feishu; pending written review + codex adversarial review)
-**Supersedes the need for**: the orchestrator-private `agent_slot` mechanism (see §6 Slot Retirement)
+**Status**: spec **rev 2** — incorporates codex adversarial review (1 CRITICAL + 4 HIGH + MEDs) and Allen's design decisions. Pending final review → writing-plans.
+**Supersedes**: the orchestrator-private `agent_slot` mechanism (clean cutover, §3.8).
 
 ## 1. Motivation
 
 Building the live `传话游戏` relay (cc → codex → curl, each appending a line,
-mirrored to a Feishu group) surfaced four problems that turned out to be **one
+mirrored to a Feishu group) surfaced four problems that are really **one
 entangled design gap**:
 
-1. **Agents in a flow don't know they're in the flow.** A worker only ever sees
-   the previous hop's raw message. cc happened to recognise the trigger word;
-   codex/curl just "continued the conversation". Making models self-propagate
-   protocol instructions in the message body is fragile — gpt-5.5 botched an
-   off-by-one and skipped a hop. The routing table should carry the role context,
-   not the message.
-2. **There is no place to attach that context.** A routing rule today has
-   `matcher` + `receivers` + `enabled` — no field for "what to tell the receiver".
-3. **`@`-mention is asymmetric.** `@`-mentioning a normal session **member**
-   auto-routes (the system-default `always → [$session_users, $mentions]` rule +
-   the member-filtered `$mentions` magic token). But the relay workers are
-   orchestrator **slot workers**, deliberately *not* members, so `@`-mention never
-   reached them — the message matched no worker rule and silently went nowhere.
-4. **Two parallel mechanisms** ("slot worker" vs "session member") for what is
-   essentially the same thing — an agent participating in a session — with
-   different management, naming, snapshot, and routing semantics.
+1. **Agents in a flow don't know they're in the flow.** A worker only sees the
+   previous hop's raw message. Making models self-propagate protocol in the
+   message body is fragile — gpt-5.5 botched an off-by-one and skipped a hop.
+   The routing table should carry role context, not the message.
+2. **No place to attach that context** — a rule has `matcher` + `receivers` +
+   `enabled`, nothing for "what to tell the receiver".
+3. **`@`-mention is asymmetric** — works for session **members** (default
+   `always → [$session_users, $mentions]` rule + member-filtered `$mentions`),
+   but the relay's **slot workers** aren't members, so `@` silently went nowhere.
+4. **Two parallel mechanisms** ("slot worker" vs "session member") for the same
+   thing — an agent participating in a session.
 
-The unifying insight (Allen): a "slot" is just **a member with three extra
-facets**, and a multi-agent flow is just **a named set of single-receiver routing
-rules that share a prompt template**, optionally fronted by a **legend** (a
-user-facing handle that collapses the team and triggers its flow).
+The unifying insight (Allen): a "slot" is **a member with extra facets**; a
+multi-agent flow is **a named set of single-receiver routing rules sharing a
+prompt template**, optionally fronted by a **legend** (a user-facing handle that
+collapses the team and triggers its flow).
 
-## 2. Current state (code-grounded, 2026-06-01)
+## 2. Current state (code-grounded; confirmed by codex review)
 
-- **Routing rules** (`Ezagent.Routing.RuleStore`, table `MentionRouting`): flat
-  rows of `{matcher_data, receivers :: [String.t()], enabled, workspace_uri,
-  source, created_by, …}`. `receivers` is already a LIST (multi-receiver capable).
-  **No "rule set" / grouping concept** — the relay is 3 independent rows related
-  only by shared session scope.
-- **No prompt/context field** on a rule.
-- **Slot workers**: `Orchestrator.Tools.add_agent_slot/write_matcher` record named
-  slots in `template_working_copy.agent_slots`, spawn workers under the
-  orchestrator's lineage (cap #2 `{:spawned_by, orch}`), route by slot-name. Slot
-  workers are NOT session members.
-- **Session members**: the chat slice `:members` is `{URI, %{online: bool}}` —
-  **no provenance, no creator/owner, no stable role-name alias**.
+- **Routing rules** (`RuleStore`, table `MentionRouting`): flat rows
+  `{matcher_data, receivers :: [String.t()], enabled, workspace_uri, source,
+  created_by, applies_to_users}`. **No `rule_set` / `position` /
+  `prompt_template_ref`**, no rule grouping. `Behavior.Routing.add_rule` accepts
+  only `{table, matcher_json, receivers}` and does NOT enforce single-receiver.
+- **`Resolver.resolve/4` returns only `[URI.t()]`** (`resolver.ex:158/163/188`);
+  `query_table/3` collapses `{matcher, value}` → `receivers_of(value)`. **No
+  caller knows which rule matched** — the load-bearing gap for prompt injection.
+- **Delivery**: `Behavior.Chat.handle_send/2` iterates recipients;
+  `dispatch_receive_call/3` passes the unchanged `%Message{}`. Agent delivery
+  (`AgentBridge`) builds a payload text (a natural injection point); the
+  **user-receive branch stores only message ids** in `last_received` /
+  `recent_messages` (`chat.ex:526/567/573/585`) — the visible body is the shared
+  persisted message, NOT a per-recipient render.
+- **Slot workers**: `template_working_copy.agent_slots` stores
+  `{slot_name, source_agent_template_uri, live_worker_uri, generation}`
+  (`chat.ex:367/373`). `update_agent_template`/rollback/respawn depend on the
+  **source-template URI + live-worker URI + generation counter**
+  (`tools.ex:192/647/747`, `agent.ex:272`). Slot workers are NOT members.
+- **Session members**: chat slice `:members` = `{URI, %{online: bool}}` — no
+  provenance, no creator/owner, no role-name alias.
+- **Mentions are concrete URIs**: `Matcher.mention/1` matches strings present in
+  `message.mentions` (`matcher.ex:142`); LiveView/Feishu bare mentions resolve
+  against live member/agent URIs. **No session-scoped symbolic handle** exists.
 - **SessionTemplate** content = `{agent_slots, routing_rules,
   orchestrator_template_uri, default_workspace_uri}` (version-hashed). **Members
-  are NOT snapshotted** — they are joined at runtime by `create_session/3`.
-
-So today the three "slot powers" (lineage-bounded management, stable name→URI,
-template snapshot) exist ONLY on slots; members have none of them. The design
-below moves those powers onto members and retires slots.
+  are NOT in the template**; `create_session/3` joins only
+  `[effective_owner, orchestrator_uri]` (`ezagent_domain_chat.ex:512/604`).
+- **`Ezagent.Message` is a plain value struct** — NOT a Kind, no lifecycle/hooks.
+- **Capability action-axis is DONE/merged** — `Capability` has `:action`
+  (default `:any`), `matches?/2` treats it as a 5th dimension (PRs #503/#426).
+  (rev-1 wrongly called it pending.)
 
 ## 3. Design
 
-### 3.1 Member gains three facets
+### 3.1 Member facets (absorbing the slot)
 
-A session member becomes `{URI, meta}` where `meta` carries (in addition to the
-existing `online`):
+A member becomes `{URI, meta}`; `meta` carries (besides `online`):
 
-- **`provenance`** — the URI of the principal that created/owns this member
-  (a user, or an orchestrator agent). GENERAL, not orchestrator-specific. Its
-  single job is **management authority**: who may reconfigure/remove this member
-  AND edit the routing rows that reference it. A cap `{:manages, provenance_uri}`
-  (generalising the slot's `{:spawned_by, orch}`) authorises both. Orchestrator
-  workers are simply members whose provenance is the orchestrator.
+- **`provenance`** — URI of the creating/owning principal (user or orchestrator
+  agent). GENERAL. **Single job: management authority** — who may
+  reconfigure/remove this member AND edit the routing rows that reference it. Cap
+  `{:manages, provenance_uri}` with **action `:manage`** (using the *existing*
+  action-axis) authorises it. Orchestrator workers = members whose provenance is
+  the orchestrator.
+  > "Who an agent replies to" is NOT a facet — it is routing: "only reply to
+  > owner" = a rule `from(agent) → [owner]`; management authority gates who edits
+  > those rows. A private agent's default is just a default owner-only routing
+  > rule at creation. (Dynamic cases like "reply to whoever @'d me" use the new
+  > `$sender` variable — §3.2.)
+- **`role_name`** *(optional)* — stable human alias (e.g. `"relay-cc"`) decoupled
+  from URI. Rules/legends target a member by role_name; the binding
+  `role_name → current URI` survives respawn. (The slot's stable-naming power.)
+- **`in_session_template`** *(bool, default false)* — whether this member is
+  captured in the **SessionTemplate** snapshot (`Ezagent.Entity.SessionTemplate`,
+  §3.7). When the template is instantiated/forked, `true` members are recreated;
+  `false` members are runtime-only. (E.g. relay team = `true`; a transient guest
+  = `false`.) (Renamed from rev-1 `in_template` for clarity.)
+- **Spawn-source state** *(for spawned/managed members — codex HIGH)*:
+  `source_template_uri`, `live_worker_uri`, `generation`. This is the state the
+  old `agent_slots` tuple carried; the member model MUST carry it so the
+  member-level equivalents of `update_agent_template` (spawn a new generation,
+  repoint routes, terminate old worker), rollback, persistence, and collision-free
+  respawn keep working. A plain user-invited member (no spawn) leaves these nil.
 
-  > "Who an agent replies to" is NOT a member facet — it is pure routing
-  > (Allen 2026-06-01): "only reply to owner" = a rule `from(agent) → [owner]`;
-  > "only act on owner's messages" = the agent only appears as a receiver in
-  > rules whose matcher is `from(owner)`. Management authority (above) gates who
-  > may edit those rows, so the owner controls the agent's audience directly on
-  > the routing table — **no separate audience-scope field** (avoids a duplicate
-  > mechanism). A private agent's "only reply to owner" default is just a default
-  > owner-only routing rule created at agent-creation, not a field.
-- **`role_name`** *(optional)* — a stable, human-meaningful alias
-  (e.g. `"relay-cc"`) decoupled from the agent's URI. Routing rules and legends
-  may target a member by `role_name`; the binding `role_name → current URI`
-  survives respawn (the URI may change, the role-name does not). This is the
-  slot's stable-naming power, lifted onto members.
-- **`in_template`** *(bool, default false)* — whether this member is captured in
-  the SessionTemplate snapshot (see §3.5). Lets a template carry "this team's
-  members" as well as its rules.
+A member with provenance `:any`-equivalent, no role_name, no spawn-state,
+`in_session_template: false` = today's plain member. Backward-compatible.
 
-`provenance` with audience scope `:any` and no `role_name` / `in_template` = a
-plain member (today's behaviour). Fully backward-compatible.
+### 3.2 Dynamic matcher / template variables (NEW — Allen #1, codex MED)
 
-### 3.2 Rule-Set
+The matcher algebra (`from/text_contains/mention/in_session/and/or/not`) plus the
+receiver magic tokens (`$session_members/$session_users/$mentions`) cannot express
+**dynamic audience** ("reply to whoever addressed me") or feed dynamic templates.
+Add:
 
-A **Rule-Set** is a named, ordered group of routing rules that form one logical
-flow. Properties:
+- **`$sender`** receiver token — expands to the matched message's sender
+  (member-filtered like the other magic tokens). Enables "return to the prior
+  hop's sender" purely in routing.
+- **Template variables** sourced from the matched message + receiver:
+  `{sender}`, `{flavor}`, `{body}`, `{session}`, `{sent_at}`. v1 set is fixed +
+  documented; extensible later. (No `$self`-loop: `$sender` excludes the receiver
+  itself, fail-closed, to avoid an agent replying to itself.)
 
-- Each rule in a set has **exactly one receiver** (a member URI or `role_name`).
-  (Multi-receiver fan-out is expressed as multiple rules, or a dedicated
-  broadcast rule — see §3.4 (B).) This removes the "one rule, many receivers"
-  ambiguity.
-- Rules in a set may **share a named prompt template** (§3.3) — "multiple rules,
-  one template" replaces "one rule, multiple receivers + one injection".
-- A set has an optional **entry** rule (the rule a legend `@`-trigger fires).
-- Mechanically: add a nullable `rule_set` (name) + `position` to the routing-rule
-  row, and a nullable `prompt_template_ref`. A "set" is the rows sharing a
-  `rule_set` name within a session scope. (No new table required for v1; a
-  `rule_sets` metadata row may come later for entry/ordering if convention proves
-  insufficient.)
+### 3.3 Rule-Set (schema + API change — codex HIGH)
 
-### 3.3 Prompt Template
+A **Rule-Set** is a named, ordered group of single-receiver rules forming one
+flow. This is NOT free on the flat schema; it requires:
 
-A **named, reusable** template applied to the message delivered to a rule's
-receiver:
+- **New columns** on `routing_rules`: `rule_set` (name, nullable), `position`
+  (int), `prompt_template_ref` (name, nullable).
+- **`Behavior.Routing.add_rule` gains** `rule_set` / `position` /
+  `prompt_template_ref` params and **enforces single-receiver** when `rule_set`
+  is set (multi-receiver fan-out = an explicit broadcast rule, §3.6 B).
+- **`RuleStore.load_into_registry/1` + `Resolver`** publish + carry the
+  `prompt_template_ref` (and rule identity) into the match result — see §3.5.
+- A set's optional **entry** rule (fired by a legend `@`-trigger).
+- Existing flat rules have all-nil new columns → unchanged behaviour.
 
-- **Templated** *(Allen ①+②)*: supports placeholders `{sender}`, `{flavor}`,
-  `{body}`, `{session}` (extensible). **v1 keeps the engine deliberately simple** —
-  a flat `String.replace/3`-style substitution over a fixed, documented variable
-  set; NO conditionals/loops/partial language. `{body}` MUST appear (validated at
-  template-write time) so the original message is never silently dropped.
-- **Named + shared**: templates are referenced by name from rules, so a whole
-  rule-set's hops can reuse one "you are in <flow>, append one short line"
-  template. (Storage: a `prompt_templates` map in the session's working copy /
-  template, keyed by name. Reusable across rules in the session.)
-- **Scope = all session members** *(Allen ⑤)*: injection applies to every member
-  receiver — like an email-forward footer — not only agent receivers. (Rationale:
-  a human teammate may also benefit from "[forwarded via <flow>]" context; and
-  scoping to "agents only" was an unnecessary special case.) The Resolver/delivery
-  path applies the matched rule's template to the delivered payload per receiver.
+### 3.4 Prompt template + delivery transform — **path A** (Allen)
 
-### 3.4 Legend
+A **named, reusable** template rendered onto the message delivered to a rule's
+receiver. **v1 is path A: no new abstraction.** At the *existing* per-recipient
+delivery step, the delivery code calls one render function with the matched
+rule's template (if any):
 
-A **Legend** is the user-facing handle for a team/flow:
+```
+render_for_recipient(message, recipient, matched_rule_ctx) :: rendered
+```
 
-- Shape: `{name, member_set (URIs/role_names it collapses), bound_rule_set,
-  fold: bool}`.
-- **UI**: members under a folded legend are collapsed into the single legend
-  entry in the member list (solves "100 agents clutter the list" — Allen). They
-  remain first-class members (individually `@`-able, snapshot-able, scoped).
-- **`@legend` semantics** *(Allen A/B — A is the chosen default)*:
-  - **(A) default** — `@legend` triggers the legend's **bound rule-set** (fires
-    its entry rule; e.g. `@传话游戏` → entry → chain runs).
-  - **(B) special case** — a rule-set MAY be a pure broadcast (entry rule fans out
-    to all members); that is just one kind of rule-set, not a separate mechanism.
-- A legend is itself a routing target: `@legend` resolves via a rule
-  `mention(legend) → entry`. Legends are session-scoped; nesting is out of scope
-  for v1.
+- **Templated** (Allen ①+②): placeholders from §3.2; engine deliberately simple
+  (flat substitution over the fixed variable set); `{body}` MUST appear
+  (validated at template-write) so the original is never dropped.
+- **Named + shared**: rules reference a template by name (`prompt_template_ref`);
+  a whole rule-set reuses one template. Storage: a session-scoped
+  `prompt_templates` map (open question §8.1: workspace-level registry later).
+- **Two delivery sites, ALL members** (Allen ⑤): agent delivery renders into the
+  payload text; **human delivery renders a display/render-time suffix** (NOT
+  stored per-recipient — resolves codex MED-2). So "all members" holds without
+  per-recipient storage.
+- **NOT a hook system.** A registered/ordered/pluggable delivery-hook subsystem
+  (call it "B") IS a new abstraction and is **explicitly deferred** (§7). v1
+  writes the render as a *single function* at the seam so B can slot in later IF
+  a second transform (footer, redaction) ever appears — YAGNI.
 
-### 3.5 Template snapshot includes members
+### 3.5 Matched-rule threading (CRITICAL — codex)
 
-`SessionTemplate` content gains a `members` list (those with `in_template: true`)
-alongside `agent_slots` (which is removed — see §6) and `routing_rules` (now
-including `rule_set`/`prompt_template_ref` fields) + a `prompt_templates` map +
-`legends`. So a template captures the whole team: who's in it, how they route,
-what role context each hop gets, and the legend that fronts it — reusable via
-fork/instantiate. (Version-hash extended over the new fields.)
+Prompt injection is per-flow/per-rule (the "you are in 传话游戏" context is bound
+to the matched rule, not the receiver), so the delivery transform MUST know which
+rule matched. Today `Resolver.resolve/4` returns bare `[URI]` and the fan-out
+loses the rule. Required change:
 
-## 4. Worked example — 传话游戏 in the unified model
+- `Resolver.resolve` returns **`[{recipient_uri, matched_rule_ctx}]`** (or a
+  recipient→ctx map), where `matched_rule_ctx` carries at least
+  `prompt_template_ref` + rule id. Back-compat: a thin helper returns the old
+  `[URI]` for callers that don't need context.
+- `Behavior.Chat.handle_send/2` fan-out + `dispatch_receive_call/3` thread
+  `matched_rule_ctx` to the per-recipient delivery, which calls
+  `render_for_recipient/3` (§3.4).
+- When two rules deliver to the same recipient: the rule-set/single-receiver model
+  (§3.3) makes this rare; if it occurs, the higher-`position` (or first) rule's
+  template wins (deterministic; documented). No concat in v1.
 
-- A **legend** `传话游戏` with `member_set = [relay-cc, relay-codex, relay-curl]`
-  (by `role_name`), `fold: true`, `bound_rule_set: "telephone"`.
-- Three **members** (the relay agents), each with `provenance = <the creator>`,
-  a `role_name`, `in_template: true`.
-- A **rule-set** `telephone`:
-  - entry: `mention(传话游戏) → relay-cc`
-  - `from(relay-cc) → relay-codex`
-  - `from(relay-codex) → relay-curl`
-  - all three rules reference shared **prompt template** `telephone_hop`:
-    `"你在玩传话接龙。下面是目前的内容：\n{body}\n请只追加一句简短的话。"`
-- User `@传话游戏` (default A) → fires the entry rule → cc gets the message +
-  the `telephone_hop` template context → replies → routed to codex → … → curl.
-  Each agent is also individually `@`-able (they're members). The whole legend +
-  rule-set + templates snapshots into a SessionTemplate for reuse.
+### 3.6 Legend + dedicated resolution layer (codex HIGH)
 
-Compare to today: 3 ad-hoc slot workers + 3 hand-written sender rules + a
-model-computed baton protocol that broke at the weakest model.
+A **Legend** = `{name, member_set (URIs/role_names), bound_rule_set, fold: bool}`.
 
-## 5. Resolved decisions
+- **UI**: folded legend members collapse into one legend entry (declutter —
+  Allen). They remain first-class members (individually `@`-able, snapshot-able).
+- **`@legend` semantics**: **(A) default** — triggers the bound rule-set's entry
+  rule. **(B)** — a rule-set may be a pure broadcast (entry fans to all members):
+  just one kind of rule-set, not a separate mechanism.
+- **Resolution layer (NOT raw mentions)**: a legend is a session-scoped *symbolic
+  handle*, not a member/agent URI, so it CANNOT ride `Matcher.mention/1` (which
+  matches concrete URIs) without silent-drop/wrong-target risk. Introduce a
+  **legend registry** (session-scoped `name → {member_set, bound_rule_set}`); the
+  mention parsers (LiveView + Feishu) resolve a legend name to "trigger its entry
+  rule" via this registry BEFORE the URI-mention path. Legends are
+  session-scoped; nesting is out of scope (v1).
+
+### 3.7 SessionTemplate + create_session materialization (codex HIGH)
+
+`SessionTemplate` content gains `members` (those `in_session_template: true`),
+`prompt_templates` (the named map), and `legends`; `agent_slots` is removed
+(§3.8). Version-hash extends over the new fields (the write-once/hash-checked
+`Behavior.Template` accommodates extra fields). **But the live instantiate path
+must change**: today `create_session/3` joins only `[owner, orchestrator]` — it
+MUST materialize the template's `members` (recreate spawned members from their
+`source_template_uri`, register provenance/role_name, install rule-sets +
+prompt_templates + legends) so an instantiated/forked template actually produces
+the team. This is the load-bearing contract change codex flagged.
+
+### 3.8 Slot retirement — clean cutover (Allen: no backward-compat)
+
+`Orchestrator.Tools` `add_agent_slot` / `remove_agent_slot` /
+`update_agent_template` / `write_matcher(receiver_slot_names)` and slot-name
+routing are **removed** and replaced by:
+
+- **add member** with `provenance = <orchestrator>` (+ `role_name`,
+  `in_session_template`, spawn-source state) — lineage-bounded authority via
+  `{:manages, provenance}` (action `:manage`).
+- **define rule-set rules** targeting members by `role_name`, with
+  `prompt_template_ref`.
+
+The orchestrator MCP tool surface is **rewritten** to these member+rule-set tools
+(clean cutover — existing orchestrators are re-tooled; this is a deliberate
+breaking change, not a nil-default). Existing SessionTemplates' residual
+`agent_slots` are dropped (dev environment; no production templates to preserve).
+The retired `prompt_override` no-op param is superseded by `prompt_template_ref`.
+The `remove_agent_slot` silent-prune footgun (PR #519 observability) is subsumed:
+rule-sets are the explicit add/remove unit; member removal reports its rule-set
+impact.
+
+## 4. Worked example — 传话游戏
+
+- **Legend** `传话游戏`: `member_set = [relay-cc, relay-codex, relay-curl]` (by
+  role_name), `fold: true`, `bound_rule_set: "telephone"`.
+- **Members** (relay agents): `provenance = <creator>`, role_name set,
+  spawn-source state (template/generation), `in_session_template: true`.
+- **Rule-set `telephone`** (single-receiver each, shared template
+  `telephone_hop`): entry `mention(传话游戏) → relay-cc`; `from(relay-cc) →
+  relay-codex`; `from(relay-codex) → relay-curl`.
+- `telephone_hop` = `"你在玩传话接龙。目前内容：\n{body}\n请只追加一句简短的话。"`.
+- User `@传话游戏` → legend registry resolves → entry rule fires → cc receives msg
+  rendered with `telephone_hop` → replies → routed to codex → … → curl. Agents are
+  members (individually `@`-able); the legend+rule-set+template+members snapshot
+  into a SessionTemplate for reuse.
+- **User→user footer** (the same machinery): a rule `always (from $user) →
+  $session_users` with template `"{body}\n\n（该消息由 {sender} 于 {sent_at}
+  发送）"` — agents get it in payload, humans see it as a render-time suffix.
+
+## 5. Decisions
 
 | # | Decision | Choice |
 |---|----------|--------|
-| ① / ② | injection shape + static/templated | **Templated**, placeholders `{sender}/{flavor}/{body}/{session}`; v1 engine deliberately simple (flat substitution, `{body}` required) |
-| ③ / ④ | multi-receiver / multi-rule | **Rule-set of single-receiver rules**; rules **share a named template**; no multi-receiver-per-rule, no concat ambiguity |
-| ⑤ | injection scope | **All session members** (email-footer model), not agents-only |
-| A/B | `@legend` semantics | **A** (trigger bound rule-set) is default; **B** (broadcast) = a rule-set variant |
-| — | provenance | **General member facet, single job**: management authority over the member AND its routing rows; "who it replies to" is pure routing (not a facet); slot's `spawned_by` is the orchestrator special case |
+| ①/② | injection shape + static/templated | **Templated**, vars `{sender}/{flavor}/{body}/{session}/{sent_at}`; v1 engine flat-substitution, `{body}` required |
+| ③/④ | multi-receiver / multi-rule | **Rule-set of single-receiver rules**, shared **named** template; needs schema/API change (§3.3) |
+| ⑤ | injection scope | **All members**, two delivery sites (agent payload / human render-suffix) |
+| A/B | `@legend` | **A** (trigger rule-set) default; **B** (broadcast) = a rule-set variant |
+| dyn | dynamic audience/vars | **Add `$sender` token + template vars** (§3.2) |
+| transform | delivery mechanism | **Path A** (render at existing delivery seam, single function); **hook subsystem B deferred** |
+| provenance | scope | **General member facet, single job** = management authority over member + its routing rows; uses existing action-axis (`:manage`) |
+| slots | migration | **Clean cutover**, no backward-compat; MCP tools rewritten |
 
-## 6. Slot retirement
+## 6. Migration / cutover
 
-`Orchestrator.Tools` `add_agent_slot` / `remove_agent_slot` / `write_matcher` /
-slot-name routing collapse into:
+Clean cutover (Allen). New member fields default nil/false → plain members
+behave as today. Existing flat rules (nil new columns) unchanged. System-default
+`always → [$session_users, $mentions]` + `$mentions` filtering unchanged. Old
+SessionTemplates load with empty new fields; residual `agent_slots` dropped. The
+orchestrator MCP tool surface is replaced (deliberate breaking change — no live
+production orchestrators to preserve).
 
-- **add member with `provenance = <orchestrator>`** (+ optional `role_name`,
-  `in_template`) — same lineage-bounded authority via the generalised
-  `{:manages, provenance}` cap.
-- **define rule-set rules** targeting members by `role_name`.
+## 7. Out of scope (v2+)
 
-This removes the slot↔member duplication and the `@`-mention asymmetry (orchestrator
-workers are now members). The `remove_agent_slot` silent-rule-prune footgun
-(todo, partially addressed by PR #519) is subsumed: rule-sets give an explicit
-unit to add/remove, and member removal's effect on rule-sets is reported.
+- **Delivery-hook subsystem (B)** — registered/ordered/pluggable transforms. v1
+  ships one render function at the seam; B is the explicit future generalization
+  (Allen's Claude-Code-hooks direction).
+- Rich template language (conditionals/loops/partials) — v1 flat substitution.
+- Nested / cross-session legends.
+- Workspace-level shared template registry (v1 = session-scoped map).
+- The general "message matched no worker → silent default fan-out" observability
+  gap (todo #9 part b) — reduced in blast radius here, tracked separately.
 
-NOTE: the existing `prompt_override` parameter on `add_agent_slot` (currently a
-no-op placeholder) is superseded by the rule-set prompt-template mechanism.
+## 8. Open questions (for review)
 
-## 7. Migration / backward-compat
+1. **Template storage**: session-scoped `prompt_templates` map (proposed) vs a
+   workspace-level named-template registry. v1 = session map; flag if workspace
+   reuse is wanted.
+2. **role_name uniqueness/scope**: per session (proposed)? per legend?
+3. **`{:manages, provenance}` over routing rows**: confirm the `:manage` cap
+   authorises editing exactly the routing rows that reference the managed member
+   (the mechanism behind "owner controls audience on the routing table").
+4. **Spawn-source state placement**: as member `meta` fields (proposed) vs a
+   side table keyed by member URI — which keeps the chat slice lean?
+5. **Resolver return-shape change** (§3.5): `[{uri, ctx}]` vs a recipient→ctx map
+   — pick the shape that least disturbs existing `resolve/4` callers.
 
-- Members default to `provenance: nil` (or the session owner), audience `:any`,
-  no `role_name`, `in_template: false` → identical to today.
-- Existing flat rules have `rule_set: nil`, `prompt_template_ref: nil` → behave
-  exactly as now (no template applied).
-- The system-default `always → [$session_users, $mentions]` rule is unchanged;
-  `$mentions` member-filtering is unchanged.
-- Existing SessionTemplates (no `members`/`prompt_templates`/`legends` keys) load
-  with those defaulting empty.
-- Orchestrator-spawned slots: provide a one-time shim that reads existing
-  `agent_slots` as members-with-provenance during the transition, OR a clean
-  cutover (no live slots persist long-term). Decide in the implementation plan.
+## 9. Testing / verification
 
-## 8. Out of scope (v2+)
-
-- Rich template language (conditionals/loops/partials) — v1 is flat substitution.
-- Nested legends; cross-session legends.
-- A dedicated `rule_sets` table with first-class entry/ordering metadata (v1 uses
-  a `rule_set` name + `position` column + convention).
-- The broader "message matched no worker → silent default fan-out" observability
-  gap (todo #9 part b) — related but tracked separately; this spec reduces its
-  blast radius (members + `$mentions` cover the common case).
-
-## 9. Open questions (for review)
-
-1. **Template storage**: a `prompt_templates` map on the session working
-   copy/template (proposed) vs a workspace-level named-template registry (more
-   reuse, more surface). v1 = session-scoped map; flag if workspace reuse is wanted.
-2. **role_name uniqueness/scope**: unique per session? per legend? (proposed: per
-   session.)
-3. **`{:manages, provenance}` scope over routing rows**: confirm the management
-   cap authorises editing exactly the routing rows that reference the managed
-   member — this is the mechanism behind "the owner controls the agent's audience
-   directly on the routing table".
-4. **Cutover vs shim** for existing slots (§7).
-5. **Cap shape** for `{:manages, provenance}` — does it compose with the pending
-   capability action-axis work (separate todo), or stand alone first?
-
-## 10. Testing / verification (to expand in the plan)
-
-- Resolver unit tests: rule-set single-receiver routing; prompt-template
-  application (placeholders, `{body}`-required validation); legend `@`-trigger →
-  entry.
-- Member-facet tests: provenance management cap authorises member + its routing
-  rows (and denies non-owners); "only reply to owner" expressed purely as a
-  routing rule routes correctly; role_name → URI rebinding across respawn;
-  `in_template` snapshot round-trip.
-- The invariant gate (per `feedback_completion_requires_invariant_test`): a test
-  that FAILS if a slot-style mechanism reappears OR if a rule-set flow requires
-  model-computed routing. The **live tier** remains the 传话游戏 round-trip in the
-  bound Feishu group (real cc/codex/curl), now expressed purely via legend +
-  rule-set + templates (no baton).
+- **Resolver/matcher**: rule-set single-receiver routing; `$sender` expansion
+  (excludes self, member-filtered); matched-rule ctx is returned + threaded.
+- **Delivery transform**: template render (placeholders, `{body}`-required
+  validation); agent payload site; human render-suffix site; two-rules-same-
+  recipient determinism.
+- **Member facets**: `{:manages, provenance}` (action `:manage`) authorises member
+  + its routing rows, denies non-owners; "only reply to owner" expressed purely as
+  a routing rule routes correctly; role_name → URI rebinding across respawn;
+  spawn-source/generation round-trip for update/rollback/respawn;
+  `in_session_template` snapshot + **create_session materialization** round-trip
+  (instantiate a template → the team actually appears).
+- **Legend**: `@legend` resolves via the registry → entry rule fires; a legend
+  name does NOT mis-route through the URI-mention path.
+- **Invariant gate** (`feedback_completion_requires_invariant_test`): a test that
+  FAILS if a slot-style mechanism reappears OR if a rule-set flow requires
+  model-computed routing.
+- **Scenario 34 (Allen)**: the live tier — the 传话游戏 round-trip in the bound
+  Feishu group (real cc/codex/curl), expressed purely via legend + rule-set +
+  templates (no baton) — **must pass e2e**, AND the full suite must show **no
+  functional regression** (the cutover touches Resolver/Chat/RuleStore/templates/
+  orchestrator-tools, so the existing routing/mention/chat/orchestrator e2e
+  scenarios must stay green).
