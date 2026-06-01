@@ -38,8 +38,8 @@ defmodule Ezagent.Domain.Pty.Server.AutoPromptsTest do
   # 2.1.92. Each `\e[1C` (cursor-forward) strips to one space, so the prompt
   # line stays readable for substring matching.
   @theme_picker_buffer "Choose\e[1Cthe\e[1Ctext\e[1Cstyle\e[1Cthat\e[1Clooks\e[1Cbest\e[1Cwith\e[1Cyour\e[1Cterminal\e[22m\r\r\n" <>
-                          "\e[1C\e[38;5;246mTo\e[1Cchange\e[1Cthis\e[1Clater,\e[1Crun\e[1C/theme\e[39m\r\r\n" <>
-                          "\e[1C\x{276F}\e[1C1.\e[1CDark\e[1Cmode\r\r\n\e[3C2.\e[1CLight\e[1Cmode"
+                         "\e[1C\e[38;5;246mTo\e[1Cchange\e[1Cthis\e[1Clater,\e[1Crun\e[1C/theme\e[39m\r\r\n" <>
+                         "\e[1C\x{276F}\e[1C1.\e[1CDark\e[1Cmode\r\r\n\e[3C2.\e[1CLight\e[1Cmode"
 
   defp spec(name),
     do: Enum.find(PtyServer.default_auto_prompts(), &(&1.name == name))
@@ -86,6 +86,32 @@ defmodule Ezagent.Domain.Pty.Server.AutoPromptsTest do
     for p <- PtyServer.default_auto_prompts() do
       refute PtyServer.matches?(p.match, benign),
              "#{p.name} should not match a benign prompt buffer"
+    end
+  end
+
+  # --- OAuth screen detection (2026-06-01 regression) ---------------------
+
+  # Real OAuth login screen from claude 2.1.92 (fresh CLAUDE_CONFIG_DIR).
+  # Appears when the per-agent dir has no credentials — Keychain isolation
+  # changed in 2.1.92 so fresh dirs no longer inherit the host's entry.
+  @oauth_buffer "Browser\e[1Cdidn't\e[1Copen?\e[1CUse\e[1Cthe\e[1Curl\e[1Cbelow\e[1Cto\e[1Csign\e[1Cin\r\r\n" <>
+                  "https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a\r\r\n" <>
+                  "\e[1CPaste\e[1Ccode\e[1Chere\e[1Cif\e[1Cprompted\e[1C>"
+
+  test "OAuth login buffer contains the detection marker" do
+    stripped = AnsiStrip.strip(@oauth_buffer)
+
+    assert String.contains?(stripped, "Paste code here if prompted"),
+           "OAuth buffer must contain the detection marker that scan_auto_prompts checks"
+  end
+
+  test "OAuth login buffer does NOT match any auto-prompt (we must NOT respond to it)" do
+    stripped = AnsiStrip.strip(@oauth_buffer)
+
+    for p <- PtyServer.default_auto_prompts() do
+      refute PtyServer.matches?(p.match, stripped),
+             "#{p.name} matched the OAuth buffer — it would send keys into the OAuth prompt, " <>
+               "causing 'Invalid code' errors. OAuth detection must be handled separately."
     end
   end
 end
