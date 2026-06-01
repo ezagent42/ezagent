@@ -1,23 +1,22 @@
-# Unified Kind Creation via Templates — Design (rev 4)
+# Unified Kind Creation via Templates — Design (rev 5)
 
 **Date:** 2026-06-01
-**Status:** Draft rev 4 (three codex adversarial rounds folded in; pending re-review + Allen approval)
+**Status:** Draft rev 5 (four codex adversarial rounds folded in; pending re-review + Allen approval)
 **Author:** Claude (with Allen)
 
-> **rev 4 changes** (codex review of rev 3 — closed G-1; fixed the last two blockers):
-> the manage-cap grant keys off the **atomic `ever_created` false→true transition
-> SURFACED by the create path** (not a pre-spawn probe, which is a TOCTOU and can
-> mis-fire on an `:already_started` adopt; A-1), with `created_by` **threaded as a
-> create arg** into spawn→init so the grant fires inside the once-only atomic create
-> (generalizing the existing Session `owner_uri` pattern). For the ephemeral Workspace
-> the once-only signal is `Store.create` row-insert success. The `exists_durably?`
-> probe is retained ONLY for the bridge-join existence check (where a race is benign).
-> `reconfigure/4` returns `{:dispatch, %Ezagent.Cmd{}}` effects (the actual effect
-> grammar) and the inner config-update dispatches are **self-dispatches**
-> (caller = Kind `self_uri`; D-1 + authz).
+> **rev 5 changes** (codex review of rev 4 — D-1 + stale framing CLOSED; closed the last
+> A-1 gap): the grant keys off the **result of the atomic durable INSERT** (`:created`
+> vs `:existed`), NOT the `ever_created?` pre-read that gates `create/1` (which runs
+> before the upsert and isn't transition-guarded). The three required core return-shape
+> changes (`save_now` → `:created|:existed`; `Store.create` → `:created|:exists`;
+> `created_by` create-arg threading) are now ENUMERATED as explicit in-scope work (§3.10).
+> `KindRegistry.put_new` already serializes one process per URI; the grant additionally
+> keys off the atomic insert so it fires exactly once even under concurrent spawns.
 >
-> **rev 3** (codex of rev 2): closed B-1/C-1/E-1/G-2; per-Kind freshness; reconfigure
-> as Manage dispatches; teardown composes with `destroy/2` (G-1).
+> **rev 4** (codex of rev 3): `reconfigure/4` returns `{:dispatch, %Ezagent.Cmd{}}` +
+> self-dispatch authz (D-1); swept stale framing.
+> **rev 3** (codex of rev 2): closed B-1/C-1/E-1/G-2; reconfigure as Manage dispatches;
+> teardown composes with `destroy/2` (G-1).
 > **rev 2** (codex of rev 1): build the entry (B-1); `:any` manage-cap + Session caveat
 > (C-1); new reconfigure hook (D-1); per-Class teardown (G-1); User ordering (E-1).
 
@@ -84,7 +83,7 @@ the existing pattern.
 
 ## 3. Design
 
-### 3.1 Freshness = the ATOMIC `ever_created` transition, surfaced (A-1)
+### 3.1 Freshness = the result of the ATOMIC durable INSERT (A-1)
 
 The grant must fire **iff THIS call durably created the Kind** — race-free, not on an
 adopt/rehydrate. Two rejected approaches: (a) the Class's `instantiate/3` `fresh?` meta
@@ -94,25 +93,32 @@ path can create it, and a plugin `instantiate` can succeed by *adopting* an
 `:already_started` worker (`cc_agent.ex:~789`), so a stale pre-spawn `false` would
 mis-grant.
 
-**Resolution — key the grant off the atomic once-only create signal, surfaced from the
-create path, with `created_by` threaded in:**
+**Resolution — key the grant off the result of the ATOMIC durable INSERT, not a read.**
+The authoritative "did THIS call create the row" is the database's own atomic
+`INSERT … ON CONFLICT` decision, NOT the `ever_created?` pre-read that gates `create/1`
+(which, codex rev4 noted, runs *before* the upsert and is therefore not itself
+transition-guarded — `lifecycle.ex:350` reads, `module.create/1` runs, the upsert at
+`snapshot.ex:341` writes after). So the grant does not depend on `create/1` timing; it
+depends on the insert result:
 
-- **Snapshot-backed Kinds** (Agent/Session/User/Templates): the initial-snapshot upsert
-  that flips `ever_created` `false→true` is atomic and fires the Lifecycle `create/1`
-  hook exactly once (`lifecycle.ex:350`, `snapshot.ex:341`, `server.ex:193`). This work
-  **surfaces that transition** — `persist_initial_snapshot` / the upsert returns
-  `:created` vs `:existed` (today it returns only `:ok`, `kind_snapshot.ex:198-200`) —
-  so the create path knows authoritatively, with no TOCTOU, whether THIS call created it.
-- **Ephemeral Workspace** (no snapshot; `workspace.ex:55`): the once-only signal is
-  `Workspace.Store.create/2` row-insert success (a duplicate insert conflicts), `:created`
-  vs `:exists`.
+- **Snapshot-backed Kinds** (Agent/Session/User/Templates): the initial-snapshot write
+  (`save_now/4`, today `:ok | {:error}`, `kind_snapshot.ex` upsert) is changed to return
+  **`:created`** (this call inserted a fresh row) vs **`:existed`** (conflict — a row
+  already existed). `KindRegistry.put_new` (`kind_registry.ex:42`) already guarantees
+  exactly ONE live process per URI, so create-side effects are not double-run; the grant
+  additionally keys off the atomic insert result so it fires exactly once for the true
+  creator even under concurrent spawn attempts.
+- **Ephemeral Workspace** (no snapshot; `workspace.ex:55`): `Workspace.Store.create/2`
+  (today `{:ok, decoded} | {:error}`, forwards raw `Repo.insert` errors,
+  `store.ex:104`) is changed to distinguish **`:created`** vs **`:exists`** (unique
+  constraint conflict) — the same atomic-insert signal for the ephemeral path.
 - **`created_by` is threaded as a create arg** into `Kind.spawn` → `init` (exactly as
-  Session already threads `owner_uri`), so the grant — fired inside / immediately after
-  the atomic create-success — has the authenticated creator without re-reading any
-  racy state.
+  Session threads `owner_uri`, `ezagent_domain_chat.ex:314`), so the grant has the
+  authenticated creator without re-reading racy state.
 
-The grant therefore happens **as part of the atomic once-only create**, not a separate
-probe. A `:existed`/adopt result → no grant (the durable manage-cap is already present).
+These three are **explicit in-scope core changes** (§3.10). The grant fires iff the
+atomic insert returned `:created`; `:existed`/adopt → no grant (the durable manage-cap
+is already present).
 
 (The `exists_durably?(uri)` *probe* — `KindSnapshot.ever_created?/1`, an exported
 `Repo.get`, `kind_snapshot.ex:198-200`; or the `Workspace.Store` row — is retained ONLY
@@ -281,10 +287,26 @@ the agent's `created_by` is the just-created user or the registrar). No bootstra
 |---|---|
 | agent-bridge join (`channel.ex:146`) | Call the **same `exists_durably?(uri)` predicate** (§3.1) before spawn: `true` (durable create marker / row exists, but not live) → rehydrate via `SpawnRegistry.spawn` (legitimate); `false` (never created) → `{:error, :agent_not_created}` (no silent fresh create). For Agents `exists_durably?` = `KindSnapshot.ever_created?/1` (a pre-spawn `Repo.get`, `kind_snapshot.ex:182`). Predicate is "durably exists", NOT "currently live". |
 | `Workspace.create/2` | dispatch the create entry (Workspace Template), authorized |
-| plugin Class `instantiate/3` | unchanged Class code; core grant via `ctx.caller` + `ever_created` |
+| plugin Class `instantiate/3` | unchanged Class code; core grant via `ctx.caller` + the atomic `:created` insert result (§3.1) |
 | `Agent.spawn_fresh` / `spawn_from_template_content` | route through the entry; lineage stays (orthogonal) |
-| boot Loader / BootReconciler / login | rehydrate — unchanged, `ever_created` already set → no grant |
+| boot Loader / BootReconciler / login | rehydrate — unchanged, durable row already exists → insert returns `:existed` → no grant |
 | mix tasks / seeds | route through the entry (operator principal); low priority |
+
+### 3.10 In-scope CORE return-shape changes (codex rev4 Q4 — make explicit)
+
+The atomic-insert freshness signal (§3.1) requires three small, enumerated core changes
+— these are work items, not assumptions:
+
+1. **`Ezagent.Kind.Snapshot.save_now/4`** (+ the underlying `KindSnapshot` upsert): on
+   the *initial* persist, return **`:created`** (fresh `INSERT`) vs **`:existed`**
+   (`ON CONFLICT`), instead of collapsing both to `:ok` (`kind_snapshot.ex` upsert,
+   `snapshot.ex:341`). Existing `:ok` callers tolerate the richer return.
+2. **`Ezagent.Workspace.Store.create/2`**: distinguish **`:created`** vs **`:exists`**
+   (unique-constraint conflict) instead of forwarding the raw `Repo.insert` error
+   (`store.ex:104`).
+3. **`Kind.spawn/2` → `Kind.Server.init/1`**: thread an optional `created_by` create
+   arg into the initial slice / create context (the path `owner_uri` already takes for
+   Session, `kind.ex:293`, `server.ex:95`, `ezagent_domain_chat.ex:314`).
 
 ## 4. Data flow
 
@@ -333,6 +355,10 @@ only the spawn + Class durables to undo.
 - **Grant-at-create:** a freshly created Agent/Workspace/User carries
   `cap(:<kind>, Manage, :any, self)` for `created_by`; rehydrate does NOT re-grant or
   duplicate.
+- **Concurrent-create grants exactly once (A-1):** N concurrent `kind.create` attempts
+  for the SAME URI → exactly one returns the `:created` insert result and grants; the
+  rest get `:existed`/`{:already_started}` and grant nothing (no duplicate cap, no
+  missing cap).
 - **Template Class + Manage coverage:** every Kind type has a registered Template Class
   and `Behavior.Manage` registered (`CapabilityRegistry`).
 - **Reconfigure preserves identity + state:** `manage.reconfigure` keeps the URI and a
