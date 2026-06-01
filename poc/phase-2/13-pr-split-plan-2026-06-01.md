@@ -123,5 +123,20 @@ leftover glue) or closes. It is the PoC demonstration, **not** a merge target.
 - ✅ #512 eager-bridge: pushed the `all_fired?` repeat fix (`18d781fd`).
 - ✅ Divergence map + deep A-vs-B compare → **DECISION: B canonical**.
 - ✅ Deleted unusable demo assets from #446 (`docs/assets`, 17 files).
-- ⏭ Next: re-split #514 into Block 1 (AI CS) + Block 2 (operator); then Block 3
-  (soul-edit on B); classify poc docs by block.
+- ✅ **Re-split #514 → two compile-green stacked PRs** (#514 closed):
+  - **#525** Block 1 — AI customer service (autoservice plugin, customer side), base `feat/takeover-mode`, +1081/10f.
+  - **#526** Block 2 — human takeover operator console, base `feat/autoservice-cs`, +305/2f.
+  - #511 kept as the generic Mode+Chat primitive both build on.
+- ⏭ **Block 3 — soul-edit on B (NEW, design-first).** B changes the storage model
+  vs A: A = soul *file* resolved at spawn (`--append-system-prompt-file`); B's fast
+  agent = `system_prompt` *string* in the `curl.agent` template + slice, with a
+  runtime `configure` action for **hot update (no respawn)**. So the port = reuse
+  `ConfigLive` + `ConfigAuth` (agent-agnostic), rewrite the store backend
+  (file→template/slice), dispatch `configure` to live agents on Save. Needs a short
+  design pass (continues AE-BS brainstorm tasks). Optionally also feed the cc 'slow'
+  agent a `soul_path` (B currently gives it none).
+- ⏭ Classify poc docs by block (AI-CS / takeover / soul-edit).
+- ⏭ Independent cc-path generic PRs (not B blockers): NEW pty-theme-picker,
+  liveview URI fix, agent `soul_path` plumbing.
+- ⏭ Follow-up (any block): write B's missing test suite; tenant-parameterize
+  `customer_session.@fast_persona` (no hardcoded zh persona).
