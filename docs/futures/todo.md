@@ -639,3 +639,32 @@ baseline worktree (`54df56c9`) chat run for apples-to-apples diff**.
   bound session is destroyed — destroying a session should cascade-delete its
   `external_mirror_bindings` rows; today it doesn't, which is how the orch5/orch14
   ambiguity arose).
+
+- **AgentTemplate.to_template_data/2 is cc-centric — blocks orchestrator-spawned
+  curl/codex workers (2026-06-01, scenario 33 live)**: the mapping only propagates
+  `class`/`agent_uri`/`cwd` + the cc-specific optional set
+  (`claude_config_dir`/`operator_settings_path`/`operator_mcp_config_path`/
+  `api_key_helper`/`role`). It does NOT carry curl's `provider`/`api_url`/`model`
+  or codex's `model`/`approval_policy`/`sandbox`. So when the orchestrator's
+  `add_agent_slot` spawns a curl/codex worker, the worker's flavor slice gets those
+  fields as `nil` — verified live: an orch-spawned curl worker had `provider`/
+  `api_url`/`model` all nil (DeepSeek key WAS set on its `:api_keys` slice and
+  readable, but it couldn't call the API — didn't know the URL/model). cc workers
+  work only because their needed field (`claude_config_dir`) happens to be in the cc
+  allowlist. FIX (needs brainstorm + codex spec): make `to_template_data`
+  flavor-generic — e.g. the flavor's Template Class declares which content keys to
+  thread, or thread all non-reserved content keys. This is THE blocker for live
+  multi-flavor full-star (scenario 33 live tier); the deterministic scenario_33 test
+  uses synthetic no-PTY flavors so it doesn't exercise this mapping.
+- **codex worker bridge fails to connect (2026-06-01)**: an orch-spawned codex
+  worker spawns + the codex `app-server` procs start, but `codex_bridge.py` logs
+  `bridge connection fail` / `codex_thread_id_file_timeout` — the worker never
+  becomes reachable. codex CLI 0.134.0 + `~/.codex/auth.json` present. Separate from
+  the to_template_data gap; a codex-plugin bridge bug to debug (thread_id file
+  handshake / timeout).
+- **add_agent_slot is a synchronous 5s GenServer.call — too short for slow-spawning
+  flavors (2026-06-01)**: spawning a codex worker (cold app-server start >5s) made
+  `add_agent_slot` return `{:exit, {:timeout, GenServer.call}}` to the caller, even
+  though the spawn continued async and the worker Kind was created. The slot-spawn
+  should tolerate slow flavors (async spawn + readiness poll, or a longer/ configurable
+  timeout) rather than surfacing a spurious timeout.
