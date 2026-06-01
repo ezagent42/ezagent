@@ -337,6 +337,45 @@ defmodule Ezagent.Routing.RuleStore do
     end
   end
 
+  @doc """
+  Find a rule by its session-materialization identity:
+  `(table, created_by, rule_set, position)`.
+
+  team-routing-unification §3.7 / codex MAJOR #4 — SessionTemplate
+  materialization stamps each installed rule with `created_by =
+  <session_uri>` (the session whose materialization created it) so a
+  repeated repair / re-materialize of the SAME session can reconcile
+  (install only MISSING rules) rather than blind-`add` duplicates. The
+  `(created_by, rule_set, position)` triple is the per-session rule
+  identity. Returns the existing row or `nil`.
+  """
+  @spec find_by_identity(atom(), URI.t() | String.t() | nil, String.t() | nil, integer()) ::
+          t() | nil
+  def find_by_identity(table_name_atom, created_by, rule_set, position)
+      when is_atom(table_name_atom) and is_integer(position) do
+    table_str = Atom.to_string(table_name_atom)
+    created_by_str = uri_to_string_or_nil(created_by)
+
+    base =
+      from(r in __MODULE__,
+        where:
+          r.table_name == ^table_str and r.created_by == ^created_by_str and
+            r.position == ^position,
+        limit: 1
+      )
+
+    # SQL `= NULL` never matches — use `is_nil` for a nil rule_set so a
+    # standalone (rule_set-less) materialized rule still reconciles.
+    query =
+      if is_nil(rule_set) do
+        from(r in base, where: is_nil(r.rule_set))
+      else
+        from(r in base, where: r.rule_set == ^rule_set)
+      end
+
+    Repo.one(query)
+  end
+
   defp uri_to_string(%URI{} = u), do: URI.to_string(u)
   defp uri_to_string(s) when is_binary(s), do: s
 

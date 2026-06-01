@@ -482,6 +482,163 @@ defmodule EzagentDomainChat.Integration.SessionTemplateMaterializeTest do
     cleanup_session(URI.new!("session://#{template_name}/system/#{short}"))
   end
 
+  test "re-materializing an existing session twice does NOT duplicate rule rows (codex MAJOR #4)" do
+    n = uniq()
+    template_name = "idem-team-#{n}"
+    role_name = "worker-#{n}"
+    source_template_uri = seed_agent_template(n)
+    rule_set = "rs-#{n}"
+
+    content = %{
+      name: template_name,
+      description: "idempotent rules team",
+      orchestrator_template_uri: nil,
+      default_workspace_uri: URI.parse("workspace://system"),
+      parent_template_uri: nil,
+      version_tag: nil,
+      created_by: User.admin_uri(),
+      created_at: ~U[2026-06-01 00:00:00Z],
+      members: [
+        %{
+          uri: nil,
+          role_name: role_name,
+          in_session_template: true,
+          source_template_uri: source_template_uri
+        }
+      ],
+      prompt_templates: %{},
+      legends: %{},
+      routing_rules: [
+        %{
+          matcher: Matcher.mention("idem-#{n}"),
+          receivers: [role_name],
+          rule_set: rule_set,
+          position: 0,
+          prompt_template_ref: nil
+        }
+      ]
+    }
+
+    _template_uri = persist_template(content)
+
+    assert {:ok, session_uri, _} =
+             EzagentDomainChat.create_session("idem-sess-#{n}", User.admin_uri(),
+               template_name: template_name
+             )
+
+    cleanup_session(session_uri)
+    member = Chat.role_name_to_uri(chat_slice(session_uri).members, role_name)
+    cleanup_agent(member)
+
+    table = Resolver.default_routing_table()
+    session_str = URI.to_string(session_uri)
+
+    rows_for_session = fn ->
+      Ezagent.Routing.RuleStore.list(table)
+      |> Enum.filter(&(&1.created_by == session_str))
+    end
+
+    # The create installed exactly one rule for this session.
+    assert length(rows_for_session.()) == 1
+    member_count = map_size(chat_slice(session_uri).members)
+
+    # Re-materialize the SAME session twice (what repair_orchestrator does).
+    assert :ok =
+             EzagentDomainChat.materialize_template_team(
+               session_uri,
+               URI.new!("workspace://system"),
+               User.admin_uri(),
+               content
+             )
+
+    assert :ok =
+             EzagentDomainChat.materialize_template_team(
+               session_uri,
+               URI.new!("workspace://system"),
+               User.admin_uri(),
+               content
+             )
+
+    # No DUPLICATE rule rows — still exactly one for this session.
+    assert length(rows_for_session.()) == 1,
+           "repair/re-materialize must NOT duplicate rule rows; got #{inspect(rows_for_session.())}"
+
+    # And members were not double-spawned (the join + session-unique naming
+    # are idempotent within a session).
+    assert map_size(chat_slice(session_uri).members) == member_count
+  end
+
+  test "a materialization that fails on the Nth member rolls back earlier members + any rules (codex MAJOR #3)" do
+    n = uniq()
+    template_name = "rollback-team-#{n}"
+    good_role = "good-#{n}"
+    bad_role = "bad-#{n}"
+
+    good_source = seed_agent_template(n)
+    # A second AgentTemplate WITHOUT a `flavor` field → materializing this
+    # member fails with {:source_template_missing_flavor, _}. Placed AFTER
+    # the good member so the good one is spawned first, then the Nth fails.
+    bad_source = seed_agent_template_no_flavor(n)
+
+    content = %{
+      name: template_name,
+      description: "rollback team",
+      orchestrator_template_uri: nil,
+      default_workspace_uri: URI.parse("workspace://system"),
+      parent_template_uri: nil,
+      version_tag: nil,
+      created_by: User.admin_uri(),
+      created_at: ~U[2026-06-01 00:00:00Z],
+      members: [
+        %{uri: nil, role_name: good_role, in_session_template: true, source_template_uri: good_source},
+        %{uri: nil, role_name: bad_role, in_session_template: true, source_template_uri: bad_source}
+      ],
+      prompt_templates: %{},
+      legends: %{},
+      routing_rules: [
+        %{
+          matcher: Matcher.mention("rb-#{n}"),
+          receivers: [good_role],
+          rule_set: "rb-#{n}",
+          position: 0,
+          prompt_template_ref: nil
+        }
+      ]
+    }
+
+    _template_uri = persist_template(content)
+
+    # The good member's session-unique URI, computed the same way
+    # materialization does (so we can assert it was torn down).
+    short = "rollback-sess-#{n}"
+    session_uri = URI.new!("session://#{template_name}/system/#{short}")
+    good_instance = "echo_" <> Ezagent.Entity.Agent.session_instance_name(good_role, short)
+    good_member_uri = URI.new!("entity://agent/system/#{good_instance}")
+
+    assert {:error, reason} =
+             EzagentDomainChat.create_session(short, User.admin_uri(),
+               template_name: template_name
+             )
+
+    assert match?({:member_materialize_failed, _, _}, reason) or is_tuple(reason),
+           "expected a member_materialize_failed; got #{inspect(reason)}"
+
+    # The earlier (good) member Kind was torn down — NO orphan.
+    assert KindRegistry.lookup(good_member_uri) == :error,
+           "the earlier good member must be rolled back; it is still alive at #{URI.to_string(good_member_uri)}"
+
+    # No rules were inserted for this session (members fail BEFORE rule
+    # install, and the whole create rolled back).
+    table = Resolver.default_routing_table()
+    session_str = URI.to_string(session_uri)
+
+    assert Ezagent.Routing.RuleStore.list(table)
+           |> Enum.filter(&(&1.created_by == session_str)) == [],
+           "no orphan rule rows must remain after a failed materialization"
+
+    cleanup_session(session_uri)
+  end
+
   defp cleanup_session(session_uri) do
     on_exit(fn ->
       case KindRegistry.lookup(session_uri) do
@@ -509,6 +666,51 @@ defmodule EzagentDomainChat.Integration.SessionTemplateMaterializeTest do
   end
 
   defp cleanup_agent(_), do: :ok
+
+  # An AgentTemplate WITHOUT a `flavor` field — materializing a member from
+  # it fails with {:source_template_missing_flavor, _} (the failure the
+  # rollback test triggers on the Nth member).
+  defp seed_agent_template_no_flavor(n) do
+    name = "seed-noflavor-#{n}"
+    uri = Ezagent.URI.new!("template://agent/system/#{name}")
+    {:ok, _} = Ezagent.SpawnRegistry.spawn(uri)
+
+    {:ok, _} =
+      Invocation.dispatch(%Invocation{
+        target: URI.new!("#{URI.to_string(uri)}?action=template.write"),
+        mode: :call,
+        args: %{
+          content: %{
+            working_directory: "/tmp",
+            default_caps: [],
+            created_by: User.admin_uri(),
+            created_at: ~U[2026-06-01 00:00:00Z]
+          }
+        },
+        ctx: %{
+          caller: User.admin_uri(),
+          caps: Ezagent.SystemPrincipal.caps("system://bootstrap"),
+          reply: {:caller_inbox, self()}
+        }
+      })
+
+    on_exit(fn ->
+      case KindRegistry.lookup(uri) do
+        {:ok, pid} ->
+          if Process.alive?(pid),
+            do:
+              DynamicSupervisor.terminate_child(
+                EzagentDomainChat.AgentTemplateSupervisor,
+                pid
+              )
+
+        :error ->
+          :ok
+      end
+    end)
+
+    uri
+  end
 
   # Persist a minimal echo-flavor AgentTemplate Kind to spawn workers from.
   # The `echo` flavor is registered in the test boot (test_helper.exs), so a

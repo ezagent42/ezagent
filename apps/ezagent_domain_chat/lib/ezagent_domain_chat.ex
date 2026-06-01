@@ -943,12 +943,36 @@ defmodule EzagentDomainChat do
       safe(fn -> revoke_owner_orchestrator_admin_cap(session_uri, owner_uri, workspace_uri) end)
     end
 
-    # 3. Session Kind + its workspace binding + its snapshot row
+    # 3. Materialized template rule rows (codex MAJOR #3) — every rule
+    #    `materialize_template_team/4` installs is stamped `created_by =
+    #    session_uri`, so the create-rollback can sweep ALL of this
+    #    session's rule rows by identity. `materialize_template_team/4`
+    #    already self-compensates its own mid-batch failure; this is the
+    #    belt-and-braces sweep for any rule that outlived a partial create.
+    safe(fn -> delete_session_rule_rows(session_uri) end)
+
+    # 4. Session Kind + its workspace binding + its snapshot row
     #    (`Kind.Server.init/1` wrote it synchronously at spawn time —
     #    Session.persistence/0 = {:snapshot, :on_change}).
     _ = Ezagent.Kind.terminate(session_uri)
     safe(fn -> Ezagent.WorkspaceRegistry.unbind(session_uri) end)
     safe(fn -> Ezagent.Ecto.KindSnapshot.delete(URI.to_string(session_uri)) end)
+    :ok
+  end
+
+  # Delete ALL durable routing-rule rows this session's materialization
+  # created (keyed by `created_by = session_uri`). Force-deletes (they are
+  # `system_default` source). Best-effort + idempotent. Reloads the live
+  # RoutingRegistry so the swept rules also leave ETS.
+  defp delete_session_rule_rows(%URI{} = session_uri) do
+    table = Ezagent.Routing.Resolver.default_routing_table()
+    session_str = URI.to_string(session_uri)
+
+    Ezagent.Routing.RuleStore.list(table)
+    |> Enum.filter(fn row -> row.created_by == session_str end)
+    |> Enum.each(fn row -> safe(fn -> Ezagent.Routing.RuleStore.delete(row.id, force: true) end) end)
+
+    safe(fn -> Ezagent.Routing.RuleStore.load_into_registry(table) end)
     :ok
   end
 
@@ -1165,23 +1189,75 @@ defmodule EzagentDomainChat do
         template_content
       )
       when is_map(template_content) do
-    with {:ok, role_to_uri} <-
-           materialize_template_members(session_uri, workspace_uri, granted_by, template_content),
-         :ok <- install_template_prompt_templates(session_uri, template_content),
-         :ok <- install_template_legends(session_uri, template_content),
-         :ok <-
-           install_template_rule_sets(session_uri, workspace_uri, template_content, role_to_uri) do
-      :ok
+    # codex MAJOR #3 — materialization spawns members + inserts rule rows
+    # sequentially; a failure midway must NOT leave orphan Agent Kinds /
+    # lineage / bindings or inserted RuleStore rows. We TRACK the
+    # side-effects (the member URIs THIS call freshly spawned + the rule row
+    # ids it inserted) and COMPENSATE them on any failure before returning
+    # the error. The outer create-rollback (`rollback_session/3`) tears down
+    # the Session + orchestrator; this compensation owns the team residue
+    # the create-rollback never saw.
+    case materialize_template_members(session_uri, workspace_uri, granted_by, template_content) do
+      {:error, reason} ->
+        # Members reduce-while self-compensates the members IT spawned
+        # before the failing one (it carries the accumulator); nothing else
+        # was written yet.
+        {:error, reason}
+
+      {:ok, role_to_uri, spawned_uris} ->
+        result =
+          with :ok <- install_template_prompt_templates(session_uri, template_content),
+               :ok <- install_template_legends(session_uri, template_content),
+               {:ok, _rule_ids} <-
+                 install_template_rule_sets(
+                   session_uri,
+                   workspace_uri,
+                   template_content,
+                   role_to_uri
+                 ) do
+            :ok
+          end
+
+        case result do
+          :ok ->
+            :ok
+
+          {:error, reason} ->
+            # A post-member step failed. The rule-set install already
+            # self-compensated its own inserted rows on its internal halt;
+            # here we additionally tear down the spawned members (+ their
+            # lineage/bind/snapshot) this materialization created.
+            compensate_spawned_members(spawned_uris)
+            {:error, reason}
+        end
     end
   end
 
   # A non-map / nil content can't carry a team — nothing to materialize.
   def materialize_template_team(_session, _ws, _granted_by, _content), do: :ok
 
+  # Terminate + un-bind + forget-lineage + delete-snapshot for each member
+  # URI this materialization freshly spawned (codex MAJOR #3). Best-effort +
+  # idempotent — mirrors the orchestrator teardown in `rollback_session/3`.
+  defp compensate_spawned_members(spawned_uris) when is_list(spawned_uris) do
+    Enum.each(spawned_uris, fn %URI{} = uri ->
+      _ = Ezagent.Kind.terminate(uri)
+      safe(fn -> Ezagent.WorkspaceRegistry.unbind(uri) end)
+      forget_lineage(uri)
+      safe(fn -> Ezagent.Ecto.KindSnapshot.delete(URI.to_string(uri)) end)
+    end)
+
+    :ok
+  end
+
   # Step 1 — recreate + join each `in_session_template: true` member.
-  # Returns `{:ok, role_to_uri}` where `role_to_uri` maps each member's
-  # `role_name` → its live member URI (used by the rule-set install to
-  # resolve role_name receivers). Owner/orchestrator joins already ran.
+  # Returns `{:ok, role_to_uri, spawned_uris}` where `role_to_uri` maps each
+  # member's `role_name` → its live member URI (used by the rule-set install
+  # to resolve role_name receivers) and `spawned_uris` is the list of member
+  # URIs THIS call freshly spawned (codex MAJOR #3 — the rollback set). On a
+  # member failure mid-way it SELF-COMPENSATES the members spawned before
+  # the failing one (so the Nth-member-fails case leaves no orphans) and
+  # returns `{:error, _}`. Owner/orchestrator joins already ran.
   defp materialize_template_members(
          %URI{} = session_uri,
          %URI{} = workspace_uri,
@@ -1190,16 +1266,30 @@ defmodule EzagentDomainChat do
        ) do
     members = template_members_of(template_content)
 
-    Enum.reduce_while(members, {:ok, %{}}, fn member, {:ok, acc} ->
-      case materialize_one_member(session_uri, workspace_uri, granted_by, member) do
-        {:ok, %URI{} = member_uri, role_name} ->
-          acc = if is_binary(role_name), do: Map.put(acc, role_name, member_uri), else: acc
-          {:cont, {:ok, acc}}
+    result =
+      Enum.reduce_while(members, {:ok, %{}, []}, fn member, {:ok, acc, spawned} ->
+        case materialize_one_member(session_uri, workspace_uri, granted_by, member) do
+          {:ok, %URI{} = member_uri, role_name, fresh?} ->
+            acc = if is_binary(role_name), do: Map.put(acc, role_name, member_uri), else: acc
+            spawned = if fresh?, do: [member_uri | spawned], else: spawned
+            {:cont, {:ok, acc, spawned}}
 
-        {:error, reason} ->
-          {:halt, {:error, {:member_materialize_failed, member, reason}}}
-      end
-    end)
+          {:error, reason} ->
+            {:halt, {:error, {:member_materialize_failed, member, reason}, spawned}}
+        end
+      end)
+
+    case result do
+      {:ok, role_to_uri, spawned} ->
+        {:ok, role_to_uri, spawned}
+
+      {:error, reason, spawned} ->
+        # Tear down the members already spawned in THIS materialization
+        # before the failing member (codex MAJOR #3 — the Nth-member-fails
+        # rollback). No rules / prompt_templates / legends written yet.
+        compensate_spawned_members(spawned)
+        {:error, reason}
+    end
   end
 
   # Recreate (if spawned) + join ONE template member. A spawned member
@@ -1215,7 +1305,7 @@ defmodule EzagentDomainChat do
     role_name = member_field(member, :role_name)
     source_template_uri = member_uri_field(member, :source_template_uri)
 
-    with {:ok, %URI{} = member_uri} <-
+    with {:ok, %URI{} = member_uri, fresh?} <-
            ensure_member_present(
              member,
              workspace_uri,
@@ -1230,7 +1320,7 @@ defmodule EzagentDomainChat do
         |> maybe_put(:source_template_uri, source_template_uri)
 
       case join_member_with_facets(session_uri, member_uri, facets) do
-        :ok -> {:ok, member_uri, role_name}
+        :ok -> {:ok, member_uri, role_name, fresh?}
         {:error, reason} -> {:error, reason}
       end
     end
@@ -1261,26 +1351,31 @@ defmodule EzagentDomainChat do
       instance_name =
         spawned_member_instance_name(flavor, source_template_uri, role_name, session_uri)
 
-      case Ezagent.Entity.Agent.spawn(
+      # `spawn_fresh/4` (not the `spawn/4` shim) so we learn whether THIS
+      # call created the worker (`fresh?: true` → bind + lineage ran → it is
+      # in the rollback set) vs adopted a pre-existing one (`fresh?: false`
+      # → idempotent re-materialize, NOT torn down). codex MAJOR #3 + #4.
+      case Ezagent.Entity.Agent.spawn_fresh(
              source_template_uri,
              instance_name,
              workspace_uri,
              granted_by
            ) do
-        {:ok, %URI{} = agent_uri} -> {:ok, agent_uri}
-        {:error, {:already_started, _}} -> {:ok, derive_member_uri(workspace_uri, instance_name)}
+        {:ok, %{agent_uri: %URI{} = agent_uri, fresh?: fresh?}} -> {:ok, agent_uri, fresh?}
         {:error, _} = err -> err
       end
     end
   end
 
   # PLAIN invited member — no spawn source; use its declared `uri`,
-  # demand-spawning its Kind so `chat.join` finds it alive (idempotent).
+  # demand-spawning its Kind so `chat.join` finds it alive (idempotent). A
+  # plain member is a pre-declared Kind (not template-spawned by US), so it
+  # is NOT in the materialization rollback set — `fresh?: false`.
   defp ensure_member_present(member, _workspace_uri, _granted_by, nil, _role_name, _session_uri) do
     case member_uri_field(member, :uri) do
       %URI{} = member_uri ->
         _ = Ezagent.SpawnRegistry.spawn(member_uri)
-        {:ok, member_uri}
+        {:ok, member_uri, false}
 
       _ ->
         {:error, :member_missing_uri}
@@ -1358,10 +1453,6 @@ defmodule EzagentDomainChat do
     end
   end
 
-  defp derive_member_uri(%URI{host: ws_name}, instance_name) when is_binary(ws_name) do
-    Ezagent.URI.new!("entity://agent/#{ws_name}/#{instance_name}")
-  end
-
   # Dispatch a faceted `chat.join` under the trusted `system://session-internal`
   # principal (same authority class `join_session_members/2` uses), carrying the
   # PR-7 member facets (role_name / in_session_template / source_template_uri).
@@ -1420,10 +1511,18 @@ defmodule EzagentDomainChat do
   # Step 4 — install the template's rule-set routing rules (§3.3). Each
   # rule's `role_name` receivers are resolved to the just-materialized
   # member URIs (a magic token / concrete URI string passes through). Rows
-  # are written workspace-scoped, then the live RoutingRegistry is
-  # reloaded so the rules fire immediately.
+  # are written workspace-scoped + STAMPED `created_by = session_uri` (the
+  # per-session rule identity, codex MAJOR #4), then the live
+  # RoutingRegistry is reloaded so the rules fire immediately.
+  #
+  # codex MAJOR #4 — IDEMPOTENT per (session, rule_set, position): a rule
+  # that already exists for THIS session+rule_set+position is SKIPPED, so a
+  # repeated repair / re-materialize does NOT duplicate durable rule rows.
+  # codex MAJOR #3 — returns `{:ok, inserted_ids}` (the rows THIS call
+  # inserted) and SELF-COMPENSATES (deletes) them if a later rule in the
+  # batch fails, so a mid-batch failure leaves no orphan rows.
   defp install_template_rule_sets(
-         %URI{} = _session_uri,
+         %URI{} = session_uri,
          %URI{} = workspace_uri,
          template_content,
          role_to_uri
@@ -1432,47 +1531,87 @@ defmodule EzagentDomainChat do
     rules = template_routing_rules_of(template_content)
 
     if rules == [] do
-      :ok
+      {:ok, []}
     else
       table = Ezagent.Routing.Resolver.default_routing_table()
 
       result =
-        Enum.reduce_while(rules, :ok, fn rule, :ok ->
-          case install_one_rule(table, workspace_uri, role_to_uri, rule) do
-            {:ok, _} -> {:cont, :ok}
-            {:error, reason} -> {:halt, {:error, {:install_rule_failed, rule, reason}}}
+        Enum.reduce_while(rules, {:ok, []}, fn rule, {:ok, inserted_ids} ->
+          case install_one_rule(table, session_uri, workspace_uri, role_to_uri, rule) do
+            {:ok, :exists} ->
+              {:cont, {:ok, inserted_ids}}
+
+            {:ok, {:inserted, id}} ->
+              {:cont, {:ok, [id | inserted_ids]}}
+
+            {:error, reason} ->
+              # Self-compensate the rows inserted earlier in THIS batch
+              # before the failing rule (codex MAJOR #3).
+              delete_rule_rows(inserted_ids)
+              {:halt, {:error, {:install_rule_failed, rule, reason}}}
           end
         end)
 
-      with :ok <- result do
+      with {:ok, inserted_ids} <- result do
         :ok = Ezagent.Routing.RuleStore.load_into_registry(table)
-        :ok
+        {:ok, inserted_ids}
       end
     end
   end
 
-  defp install_one_rule(table, %URI{} = workspace_uri, role_to_uri, rule) when is_map(rule) do
+  defp install_one_rule(table, %URI{} = session_uri, %URI{} = workspace_uri, role_to_uri, rule)
+       when is_map(rule) do
     matcher = Map.get(rule, :matcher) || Map.get(rule, "matcher")
+    rule_set = Map.get(rule, :rule_set) || Map.get(rule, "rule_set")
+    position = Map.get(rule, :position) || Map.get(rule, "position") || 0
 
-    with {:ok, receivers} <-
-           resolve_rule_receivers(
-             Map.get(rule, :receivers) || Map.get(rule, "receivers") || [],
-             role_to_uri
-           ) do
-      Ezagent.Routing.RuleStore.add(
-        table,
-        matcher,
-        receivers,
-        # created_by — the template materialization is system-originated.
-        Ezagent.SystemPrincipal.uri("session-internal"),
-        source: Ezagent.Routing.RuleStore.system_default_source(),
-        workspace_uri: workspace_uri,
-        rule_set: Map.get(rule, :rule_set) || Map.get(rule, "rule_set"),
-        position: Map.get(rule, :position) || Map.get(rule, "position") || 0,
-        prompt_template_ref:
-          Map.get(rule, :prompt_template_ref) || Map.get(rule, "prompt_template_ref")
-      )
+    # codex MAJOR #4 — idempotency: skip if THIS session already installed a
+    # rule at this (rule_set, position). `created_by = session_uri` is the
+    # per-session identity the reconcile keys on.
+    case Ezagent.Routing.RuleStore.find_by_identity(table, session_uri, rule_set, position) do
+      %Ezagent.Routing.RuleStore{} ->
+        {:ok, :exists}
+
+      nil ->
+        with {:ok, receivers} <-
+               resolve_rule_receivers(
+                 Map.get(rule, :receivers) || Map.get(rule, "receivers") || [],
+                 role_to_uri
+               ) do
+          add_result =
+            Ezagent.Routing.RuleStore.add(
+              table,
+              matcher,
+              receivers,
+              # created_by — the SESSION whose materialization created this
+              # rule (the per-session identity for idempotent reconcile +
+              # rollback). Was `system://session-internal` pre-fix.
+              session_uri,
+              source: Ezagent.Routing.RuleStore.system_default_source(),
+              workspace_uri: workspace_uri,
+              rule_set: rule_set,
+              position: position,
+              prompt_template_ref:
+                Map.get(rule, :prompt_template_ref) || Map.get(rule, "prompt_template_ref")
+            )
+
+          case add_result do
+            {:ok, %Ezagent.Routing.RuleStore{id: id}} -> {:ok, {:inserted, id}}
+            {:error, _} = err -> err
+          end
+        end
     end
+  end
+
+  # Delete RuleStore rows by id — force-delete (the materialized rows are
+  # `system_default` source, protected from a plain `delete/1`). Best-effort
+  # + idempotent (codex MAJOR #3).
+  defp delete_rule_rows(ids) when is_list(ids) do
+    Enum.each(ids, fn id ->
+      safe(fn -> Ezagent.Routing.RuleStore.delete(id, force: true) end)
+    end)
+
+    :ok
   end
 
   # Resolve a rule's declared receivers to concrete receiver values. codex
