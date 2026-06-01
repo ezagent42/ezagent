@@ -764,7 +764,9 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
   # 0 when absent (a chat slice that predates the PR-EM-6-PRE
   # `:send_cursor` field) so the key is still a stable pair.
   defp extract_event_send_key(%Event{payload: %{} = payload, slice_key: :chat}) do
-    new_slice = Map.get(payload, :new_slice) || Map.get(payload, "new_slice")
+    new_slice =
+      (Map.get(payload, :new_slice) || Map.get(payload, "new_slice"))
+      |> unwrap_chat_slice()
 
     case new_slice do
       %{last_message: %Ezagent.Message{id: id}} = ns ->
@@ -779,6 +781,18 @@ defmodule Ezagent.Behavior.ExternalMirrorWorker do
   end
 
   defp extract_event_send_key(_), do: nil
+
+  # The publisher payload's `new_slice` is `strip_transients/1`'d
+  # (`SessionImpl.build_payload/2`), so a Lifecycle two-container slice
+  # arrives WRAPPED as `%{state: ...}` (or `%{"state" => ...}` post-JSON),
+  # NOT flat. Unwrap to the persistent view before reading
+  # `last_message`/`send_cursor` — otherwise the dedupe key is silently
+  # `nil` for every Lifecycle chat slice and true replays are NOT deduped
+  # (codex r-2026-06-01 HIGH). Mirrors `FeishuAdapter.slice_state/1`;
+  # legacy flat slices pass through unchanged.
+  defp unwrap_chat_slice(nil), do: nil
+  defp unwrap_chat_slice(%{"state" => %{} = inner}), do: Ezagent.Kind.normalize_slice_view(inner)
+  defp unwrap_chat_slice(other), do: Ezagent.Kind.normalize_slice_view(other)
 
   # Read `:send_cursor` from the chat new_slice (atom or string key),
   # defaulting to 0 when absent.

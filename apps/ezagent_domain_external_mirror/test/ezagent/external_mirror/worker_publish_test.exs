@@ -454,6 +454,23 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
       refute result[:skipped]
       assert {:set, :last_published_send_key, {"msg-first", 1}} in effects
     end
+
+    test "true replay delivered as a WRAPPED Lifecycle slice (%{state: ...}) still dedupes (codex 2026-06-01 HIGH)" do
+      # The production publisher payload's `new_slice` is strip_transients'd
+      # to `%{state: ...}` (SessionImpl.build_payload), NOT flat. The dedupe
+      # key must be extracted from the UNWRAPPED view, else send_key is nil
+      # and replays are never deduped in the real Lifecycle path.
+      msg = %Ezagent.Message{id: "msg-wrapped-replay"}
+      ctx = dedupe_ctx(last_published_send_key: {"msg-wrapped-replay", 7})
+
+      event = chat_event_wrapped(msg, send_cursor: 7, cursor: 99)
+
+      assert {:ok, %{ok: true}, effects} =
+               Ezagent.Behavior.ExternalMirrorWorker.handle_publish(%{event: event}, ctx)
+
+      assert {:set, :last_publish_result, :duplicate_skip} in effects
+      refute Enum.any?(effects, &match?({:set, :last_published_send_key, _}, &1))
+    end
   end
 
   # Build a `handle_publish/2` ctx: persistent fields via `read`, the live
@@ -499,6 +516,28 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
           last_message: msg,
           last_message_id: msg.id,
           send_cursor: Keyword.fetch!(opts, :send_cursor)
+        }
+      }
+    }
+  end
+
+  # A `:chat` event whose `new_slice` is a Lifecycle two-container slice
+  # AFTER strip_transients — i.e. WRAPPED as `%{state: ...}` (the real
+  # publisher payload shape), not flat. Pins the unwrap in
+  # `extract_event_send_key/1` (codex 2026-06-01 HIGH).
+  defp chat_event_wrapped(%Ezagent.Message{} = msg, opts) do
+    %Ezagent.Publisher.Event{
+      cursor: Keyword.fetch!(opts, :cursor),
+      publisher_uri: URI.parse("session://default/system/main"),
+      slice_key: :chat,
+      event_at: DateTime.utc_now(),
+      payload: %{
+        new_slice: %{
+          state: %{
+            last_message: msg,
+            last_message_id: msg.id,
+            send_cursor: Keyword.fetch!(opts, :send_cursor)
+          }
         }
       }
     }
