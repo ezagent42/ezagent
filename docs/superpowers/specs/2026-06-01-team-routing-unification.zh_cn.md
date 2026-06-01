@@ -41,12 +41,11 @@
 
 provenance 普通、无 role_name、无 spawn-state、`in_session_template: false` = 今天的普通成员。向后兼容。
 
-### 3.2 动态 matcher / 模板变量（新增——Allen #1，codex MED）
+### 3.2 模板变量（新增）；动态受众 **推迟**
 
-matcher 代数（`from/text_contains/mention/in_session/and/or/not`）+ 收件魔法 token（`$session_members/$session_users/$mentions`）表达不了**动态受众**（"回给刚 @ 我的人"），也喂不了动态模板。新增：
+- **模板变量**（§3.4 渲染用）：投递时从命中消息 + receiver 取——`{sender}`、`{flavor}`、`{body}`、`{session}`、`{sent_at}`。v1 固定 + 有文档、后续可扩展。它们在投递接缝（§3.4）提取，**不是路由概念**——在有消费者的 PR-4 实现。
 
-- **`$sender`** 收件 token —— 展开为命中消息的 sender（像其它魔法 token 一样成员过滤）。让"回给上一棒 sender"纯走路由。
-- **模板变量**，源自命中消息 + receiver：`{sender}`、`{flavor}`、`{body}`、`{session}`、`{sent_at}`。v1 变量集固定 + 有文档，后续可扩展。（无 `$self` 自环：`$sender` 排除 receiver 自身，fail-closed，避免 agent 回自己。）
+- **动态受众（"回给刚 @ 我的人"）—— 推迟到未来的 reply-context 特性，不进 v1。** 理由（codex 2026-06-01 + 分析）：一个展开为*消息自己 sender* 的 `$sender` 收件 token，既 (a) **会自环**——把消息路由回 sender，会自动回复的 agent（如 Echo）就 `发→收→发` 无限递归，那条投递路径上没有 send_cursor/idempotency 守卫；又 (b) **是错的原语**——agent B 回复时 B *就是* sender，`$sender`=B 不是原提问者 A。"回给提问者"真正需要的是 **reply-context**：消息带 in-reply-to/originator，用 `$reply_to` 展开成*对方*（天然无环）。那需要 `Message` 加字段 + reply 穿透，是单独的未来特性（§7）。v1 核心（规则集/模板/legend/member 统一）**不需要动态受众**：静态 `from(X) → [Y]` 规则就覆盖 relay + "只回 owner"。
 
 ### 3.3 规则集（schema + API 改动——codex HIGH）
 
@@ -117,7 +116,7 @@ orchestrator MCP 工具面**重写**成这些 member+规则集工具（clean cut
 | ③/④ | 多 receiver / 多规则 | **单 receiver 规则的规则集**，共享**命名**模板；需 schema/API 改动（§3.3） |
 | ⑤ | 注入作用域 | **全体成员**，两个投递站点（agent payload / 人类渲染后缀） |
 | A/B | `@legend` | **A**（触发规则集）默认；**B**（广播）= 规则集的一种 |
-| dyn | 动态受众/变量 | **加 `$sender` token + 模板变量**（§3.2） |
+| dyn | 动态受众 | **推迟**——`$sender`=自己 sender 会自环 + 是错原语（codex 2026-06-01）；未来用 `$reply_to` + reply-context（§7）。模板变量保留（§3.2 → PR-4）。 |
 | transform | 投递机制 | **路径 A**（现有投递接缝上 render、写成单函数）；**hook 子系统 B 推迟** |
 | provenance | 作用域 | **通用 member facet，单一职责** = 对成员 + 其 routing rows 的管理授权；用现有 action-axis（`:manage`） |
 | slots | 迁移 | **Clean cutover**，不做向后兼容；MCP 工具重写 |

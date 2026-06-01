@@ -97,20 +97,27 @@ A member becomes `{URI, meta}`; `meta` carries (besides `online`):
 A member with provenance `:any`-equivalent, no role_name, no spawn-state,
 `in_session_template: false` = today's plain member. Backward-compatible.
 
-### 3.2 Dynamic matcher / template variables (NEW — Allen #1, codex MED)
+### 3.2 Template variables (NEW); dynamic audience DEFERRED
 
-The matcher algebra (`from/text_contains/mention/in_session/and/or/not`) plus the
-receiver magic tokens (`$session_members/$session_users/$mentions`) cannot express
-**dynamic audience** ("reply to whoever addressed me") or feed dynamic templates.
-Add:
+- **Template variables** (used by §3.4 render): sourced from the matched
+  message + receiver at delivery time — `{sender}`, `{flavor}`, `{body}`,
+  `{session}`, `{sent_at}`. v1 set is fixed + documented; extensible later. These
+  are extracted at the delivery seam (§3.4), NOT a routing concern — implemented
+  in PR-4 where they have a consumer.
 
-- **`$sender`** receiver token — expands to the matched message's sender
-  (member-filtered like the other magic tokens). Enables "return to the prior
-  hop's sender" purely in routing.
-- **Template variables** sourced from the matched message + receiver:
-  `{sender}`, `{flavor}`, `{body}`, `{session}`, `{sent_at}`. v1 set is fixed +
-  documented; extensible later. (No `$self`-loop: `$sender` excludes the receiver
-  itself, fail-closed, to avoid an agent replying to itself.)
+- **Dynamic audience ("reply to whoever addressed me") — DEFERRED to a future
+  reply-context feature, NOT in v1.** Rationale (codex review 2026-06-01 +
+  analysis): a `$sender` receiver token that expands to *the message's own
+  sender* is BOTH (a) loop-prone — routing a message back to its sender makes an
+  auto-replying agent (e.g. Echo) recurse `send → receive → send` with no
+  send_cursor/idempotency guard on that path — AND (b) the WRONG primitive: when
+  agent B replies, B *is* the sender, so `$sender` = B, not the original asker A.
+  "Return to the asker" actually needs **reply-context**: the message carrying an
+  in-reply-to / originator, and a `$reply_to`-style token expanding to *the other
+  party* (loop-safe by construction). That requires a `Message` field + reply
+  threading — its own future feature (§7). The v1 core (rule-sets, templates,
+  legends, member-unification) does NOT need dynamic audience: static
+  `from(X) → [Y]` rules cover the relay + "only reply to owner" cases.
 
 ### 3.3 Rule-Set (schema + API change — codex HIGH)
 
@@ -247,7 +254,7 @@ impact.
 | ③/④ | multi-receiver / multi-rule | **Rule-set of single-receiver rules**, shared **named** template; needs schema/API change (§3.3) |
 | ⑤ | injection scope | **All members**, two delivery sites (agent payload / human render-suffix) |
 | A/B | `@legend` | **A** (trigger rule-set) default; **B** (broadcast) = a rule-set variant |
-| dyn | dynamic audience/vars | **Add `$sender` token + template vars** (§3.2) |
+| dyn | dynamic audience | **DEFERRED** — `$sender`-as-own-sender is loop-prone + the wrong primitive (codex 2026-06-01); future `$reply_to` + reply-context (§7). Template vars retained (§3.2 → PR-4). |
 | transform | delivery mechanism | **Path A** (render at existing delivery seam, single function); **hook subsystem B deferred** |
 | provenance | scope | **General member facet, single job** = management authority over member + its routing rows; uses existing action-axis (`:manage`) |
 | slots | migration | **Clean cutover**, no backward-compat; MCP tools rewritten |
@@ -266,6 +273,11 @@ production orchestrators to preserve).
 - **Delivery-hook subsystem (B)** — registered/ordered/pluggable transforms. v1
   ships one render function at the seam; B is the explicit future generalization
   (Allen's Claude-Code-hooks direction).
+- **Dynamic audience / "reply to whoever addressed me"** — needs a reply-context
+  primitive (a `Message` in-reply-to/originator field + a `$reply_to` receiver
+  token expanding to the *other party*, loop-safe by construction). NOT the
+  dropped `$sender`-as-own-sender token (loop-prone + doesn't serve the use case;
+  codex 2026-06-01). The v1 core uses static `from(X) → [Y]` rules instead.
 - Rich template language (conditionals/loops/partials) — v1 flat substitution.
 - Nested / cross-session legends.
 - Workspace-level shared template registry (v1 = session-scoped map).

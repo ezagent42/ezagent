@@ -32,18 +32,14 @@ The spec is multi-subsystem → decomposed into **9 dependency-ordered PRs**, ea
 
 ## PR sequence
 
-### PR-1 — Dynamic matcher + template variables  (spec §3.2)
-- **Scope:** add a `$sender` receiver magic token (expands to the matched message's sender, member-filtered, EXCLUDING the receiver itself — fail-closed, no self-loop); add a pure `message → vars` extractor producing `{sender, flavor, body, session, sent_at}` for later template use.
-- **Files:** `matcher.ex` (token const + `from_json`/`to_json` if needed), `resolver.ex` (expand `$sender` like the other magic tokens, in the member-filter path).
-- **Key interfaces:** `Resolver.sender_token() :: String.t()`; `$sender` handled in `expand_magic_token/…` alongside `$session_users`/`$mentions`.
-- **Deps:** none (foundation).
-- **Test gate:** `$sender` expands to the sender when a member, drops self, drops non-members; existing magic-token tests stay green.
+### PR-1 — DROPPED (2026-06-01, codex review)
+The original PR-1 added a `$sender` RECEIVER routing token (route a message back to its own sender). codex flagged it HIGH (loop: an auto-replying agent recurses `send→receive→send` with no guard on that path) and analysis showed it's the wrong primitive — "return to the asker" needs reply-context (the in-reply-to *other party*), not own-sender. **Dynamic audience is DEFERRED** to a future `$reply_to` + reply-context feature (spec §3.2/§7). The **template variables** (`{sender}`/`{flavor}`/`{body}`/`{session}`/`{sent_at}`) bundled here are RETAINED but move into **PR-4** (the render consumer). Implementation therefore STARTS at PR-2. (Note: `{sender}` the prompt-template VARIABLE is fine + kept; only `$sender` the routing TOKEN was dropped — different layers.)
 
 ### PR-2 — Resolver returns matched-rule context + delivery threading  (spec §3.5, CRITICAL)
 - **Scope:** change `Resolver.resolve/4` to return `[{recipient_uri, ctx}]` where `ctx` carries `%{rule_id, prompt_template_ref}` (nil ctx for the system-default rule); add a back-compat `resolve_uris/4` returning bare `[URI]`. Thread `ctx` through `Behavior.Chat.handle_send/2` fan-out → `dispatch_receive_call/3` to the per-recipient delivery. **No rendering yet** — ctx is carried but unused (behaviour-preserving plumbing).
 - **Files:** `resolver.ex`, `chat.ex` (fan-out + dispatch_receive_call), update all `resolve/4` callers (audit: grep) to `resolve_uris/4` except the chat fan-out which takes the ctx form.
 - **Key interfaces:** `Resolver.resolve/4 :: [{URI.t(), ctx :: map() | nil}]`; `Resolver.resolve_uris/4 :: [URI.t()]`.
-- **Deps:** none (can land before/after PR-1).
+- **Deps:** none — this is now the FIRST PR (PR-1 dropped).
 - **Test gate:** ctx returned + threaded to delivery; ALL existing routing/mention/chat tests green (behaviour-preserving — this is the riskiest plumbing change, so the no-regression bar is the gate).
 
 ### PR-3 — Rule-set schema + API  (spec §3.3)
@@ -54,10 +50,10 @@ The spec is multi-subsystem → decomposed into **9 dependency-ordered PRs**, ea
 - **Test gate:** rule-set rows persist + load; single-receiver enforced; existing flat rules (nil columns) behave unchanged.
 
 ### PR-4 — Prompt-template store + path-A delivery transform  (spec §3.4)
-- **Scope:** session-scoped `prompt_templates` map (name → template string); new `Ezagent.Routing.PromptTemplate.render/3` (flat `{var}` substitution over the fixed var set from PR-1; **validates `{body}` present at write time**); apply at the per-recipient delivery seam using PR-2's ctx: agent delivery renders into the payload text; **human delivery renders a display/render-time suffix** (not stored). Single function `render_for_recipient/3` (NOT a hook registry — B deferred).
+- **Scope:** session-scoped `prompt_templates` map (name → template string); new `Ezagent.Routing.PromptTemplate.render/3` (flat `{var}` substitution over the fixed var set `{sender}/{flavor}/{body}/{session}/{sent_at}` — the extractor lives HERE, moved from the dropped PR-1; **validates `{body}` present at write time**); apply at the per-recipient delivery seam using PR-2's ctx: agent delivery renders into the payload text; **human delivery renders a display/render-time suffix** (not stored). Single function `render_for_recipient/3` (NOT a hook registry — B deferred).
 - **Files:** new `prompt_template.ex`, `chat.ex` (call render at delivery for agent + human branches), flavor bridge adapters (agent payload), LiveView/Feishu render (human suffix).
 - **Key interfaces:** `PromptTemplate.render(template :: String.t(), vars :: map()) :: String.t()`; `render_for_recipient(message, recipient, ctx) :: rendered`.
-- **Deps:** PR-1 (vars), PR-2 (ctx), PR-3 (`prompt_template_ref`).
+- **Deps:** PR-2 (ctx), PR-3 (`prompt_template_ref`). Template-var extraction lives here (moved from the dropped PR-1).
 - **Test gate:** render placeholders + `{body}`-required validation; agent-payload site; human render-suffix site; two-rules-same-recipient determinism (higher `position` wins).
 
 ### PR-5 — Member facets + provenance + `:manage` cap  (spec §3.1, §8.3)
@@ -92,19 +88,18 @@ The spec is multi-subsystem → decomposed into **9 dependency-ordered PRs**, ea
 - **Scope:** express 传话游戏 purely via legend + rule-set + prompt-template (no baton tokens); deterministic Resolver-level invariant test of the chain topology; LIVE tier — real cc/codex/curl through the bound Feishu group (agent-browser screenshot per `feedback_esr_e2e_standards`); docs/scenarios/34 + index.
 - **Files:** `scenario_34_*.exs`, `docs/scenarios/34-sender-locked-relay/scenario.md` (+ `.zh_cn.md`), index.
 - **Key interfaces:** the scenario doc + test.
-- **Deps:** PR-1..PR-8.
+- **Deps:** PR-2..PR-8.
 - **Test gate (the headline):** scenario-34 e2e passes (live cc→codex→curl via legend/rule-set/template, mirrored to the Feishu group) **AND the full umbrella suite shows no functional regression** (the cutover touched Resolver/Chat/RuleStore/templates/orchestrator — existing routing/mention/chat/orchestrator e2e scenarios stay green).
 
 ## Dependency graph
 
 ```
-PR-1 ─┐
-PR-2 ─┼─→ PR-3 ─→ PR-4 ─┐
-                  │      ├─→ PR-7 ─→ PR-8 ─→ PR-9
-        PR-3 ─→ PR-5 ───┤
-        PR-5 ─→ PR-6 ───┘
+PR-2 ─→ PR-3 ─→ PR-4 ─┐
+                │      ├─→ PR-7 ─→ PR-8 ─→ PR-9
+      PR-3 ─→ PR-5 ───┤
+      PR-5 ─→ PR-6 ───┘
 ```
-(PR-1 and PR-2 are independent and can land first in either order; PR-3 needs PR-2's ctx plumbing for `prompt_template_ref`.)
+(PR-1 DROPPED; PR-2 is the first PR. PR-3 needs PR-2's ctx plumbing for `prompt_template_ref`. Template-var extraction folds into PR-4.)
 
 ## Per-PR discipline (every PR)
 1. Author its bite-sized task-plan (full TDD code) first.
@@ -114,5 +109,5 @@ PR-2 ─┼─→ PR-3 ─→ PR-4 ─┐
 5. NEVER run `mix test`/compile in the live-phx main tree — use a worktree (per `feedback_subagent_worktree_wrong_repo`).
 
 ## Self-review (spec coverage)
-- §3.1 member facets/provenance/spawn-state → PR-5. §3.2 dynamic vars → PR-1. §3.3 rule-set → PR-3. §3.4 prompt-template/path-A → PR-4. §3.5 matched-rule threading → PR-2. §3.6 legend → PR-6. §3.7 template+materialization → PR-7. §3.8 slot cutover → PR-8. §5 decisions → distributed. §8 resolved decisions → honored (existing CapabilityRegistry in PR-5; session-scoped templates PR-4; per-session role_name PR-5; meta spawn-state PR-5; Resolver shape PR-2). §9 testing + scenario-34 → PR-9 + per-PR gates. No spec section is unassigned.
+- §3.1 member facets/provenance/spawn-state → PR-5. §3.2 template vars → PR-4 (dynamic audience deferred, §7). §3.3 rule-set → PR-3. §3.4 prompt-template/path-A → PR-4. §3.5 matched-rule threading → PR-2. §3.6 legend → PR-6. §3.7 template+materialization → PR-7. §3.8 slot cutover → PR-8. §5 decisions → distributed. §8 resolved decisions → honored (existing CapabilityRegistry in PR-5; session-scoped templates PR-4; per-session role_name PR-5; meta spawn-state PR-5; Resolver shape PR-2). §9 testing + scenario-34 → PR-9 + per-PR gates. No spec section is unassigned.
 - Type consistency: `ctx` shape (`%{rule_id, prompt_template_ref}`) defined PR-2, consumed PR-4; `prompt_template_ref` column PR-3 feeds PR-2's ctx feeds PR-4's render; `role_name` defined PR-5, consumed PR-6 (member_set) + PR-7 (materialize). Consistent.
