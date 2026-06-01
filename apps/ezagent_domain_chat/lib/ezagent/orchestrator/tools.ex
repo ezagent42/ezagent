@@ -93,6 +93,20 @@ defmodule Ezagent.Orchestrator.Tools do
   alias Ezagent.Entity.SessionTemplate
   alias Ezagent.Invocation
 
+  # The slot-commit (`upsert_agent_slot`/`drop_agent_slot` →
+  # `write_working_copy`) dispatches `chat.set_working_copy` as a
+  # `mode: :call`, which resolves to a `GenServer.call` against the
+  # Session Kind (see `Ezagent.Invocation` deliver_to_ready/3). The
+  # default `deadline_ms` there is 5_000 — too tight for slow-cold-start
+  # flavors (codex: app-server + bridge sidecar + thread-id file
+  # handshake + PTY commonly exceed 5s). When the Session is mid-spawn,
+  # the 5s default surfaces a spurious `{:exit, {:timeout, GenServer.call}}`
+  # to the caller even though the worker Kind was created and the spawn
+  # continues — wrongly read as failure. A generous, named deadline keeps
+  # the slot-commit honest (still let-it-crash on a genuinely dead
+  # Session — we do NOT swallow the timeout, only lengthen it).
+  @slot_commit_timeout 30_000
+
   @doc "The 7 orchestration tool names. CI gate test pins this list at 7."
   @spec tool_names() :: [atom()]
   def tool_names do
@@ -1535,12 +1549,20 @@ defmodule Ezagent.Orchestrator.Tools do
 
   # === internals =========================================================
 
-  defp ctx(%URI{} = caller, caps) do
-    %{
+  defp ctx(%URI{} = caller, caps, opts \\ []) do
+    base = %{
       caller: caller,
       caps: to_cap_set(caps),
       reply: {:caller_inbox, self()}
     }
+
+    # `:deadline_ms` (when given) flows to `Ezagent.Invocation`'s
+    # `GenServer.call` timeout for `mode: :call` dispatches; absent, the
+    # Invocation layer falls back to its own 5s default.
+    case Keyword.get(opts, :deadline_ms) do
+      nil -> base
+      ms when is_integer(ms) and ms > 0 -> Map.put(base, :deadline_ms, ms)
+    end
   end
 
   defp to_cap_set(%MapSet{} = caps), do: caps
@@ -1698,11 +1720,14 @@ defmodule Ezagent.Orchestrator.Tools do
   defp write_working_copy(%URI{} = session_uri, working_copy, %URI{} = caller, caps) do
     target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=chat.set_working_copy")
 
+    # The slot-commit write against the Session Kind: use the generous,
+    # named deadline (NOT the implicit 5s) so slow-cold-start flavors
+    # don't trip a spurious `{:exit, {:timeout, GenServer.call}}`.
     case Invocation.dispatch(%Invocation{
            target: target,
            mode: :call,
            args: %{template_working_copy: working_copy},
-           ctx: ctx(caller, caps)
+           ctx: ctx(caller, caps, deadline_ms: @slot_commit_timeout)
          }) do
       {:ok, %{template_working_copy: _}} -> :ok
       {:error, _} = err -> err

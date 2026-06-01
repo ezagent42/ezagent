@@ -161,6 +161,61 @@ defmodule Ezagent.Orchestrator.ToolsTest do
                )
     end
 
+    test "slot-commit write uses a generous named deadline, not the implicit 5s (todo #8 regression)" do
+      # todo #8 — `add_agent_slot`'s step-3 slot commit dispatches
+      # `chat.set_working_copy` as a `mode: :call`, which resolves to a
+      # `GenServer.call` against the Session Kind. `Ezagent.Invocation`
+      # uses `ctx[:deadline_ms] || 5_000` as that call's timeout. Slow-
+      # cold-start flavors (codex: app-server + bridge sidecar +
+      # thread-id handshake + PTY) routinely exceed 5s, so the implicit
+      # default surfaced a spurious `{:exit, {:timeout, GenServer.call}}`
+      # to the caller even though the worker Kind WAS created and the
+      # spawn continued async — a false failure.
+      #
+      # A live timing test would need a deliberately slow Session
+      # GenServer plus full cap/workspace setup — flaky and heavy. Per
+      # the PR 48 precedent in this file, we instead pin the fix
+      # structurally at the call site: the slot-commit write must carry
+      # `deadline_ms: @slot_commit_timeout`, and that constant must be
+      # strictly greater than the Invocation layer's 5_000 default.
+      source = File.read!("lib/ezagent/orchestrator/tools.ex")
+
+      [_, timeout_str] =
+        Regex.run(~r/@slot_commit_timeout\s+(\d[\d_]*)/, source) ||
+          flunk("@slot_commit_timeout constant is missing — slot-commit fell back to implicit 5s")
+
+      slot_commit_timeout = timeout_str |> String.replace("_", "") |> String.to_integer()
+
+      assert slot_commit_timeout > 5_000,
+             "@slot_commit_timeout (#{slot_commit_timeout}) must exceed the Invocation " <>
+               "5_000 default, or slow-cold-start flavors still spuriously time out"
+
+      [write_block | _] =
+        Regex.scan(~r/defp write_working_copy.*?\n  end/s, source)
+        |> Enum.map(&hd/1)
+
+      assert String.contains?(write_block, "deadline_ms: @slot_commit_timeout"),
+             "write_working_copy (the slot-commit GenServer.call path) MUST pass " <>
+               "deadline_ms: @slot_commit_timeout to override the implicit 5s default — " <>
+               "todo #8 spurious-timeout regression"
+    end
+
+    test "ctx/3 threads :deadline_ms into the dispatch ctx (todo #8)" do
+      # The mechanism behind the slot-commit timeout fix: `ctx/3` must
+      # surface a positive `:deadline_ms` opt into the ctx map so
+      # `Ezagent.Invocation` uses it as the GenServer.call timeout.
+      source = File.read!("lib/ezagent/orchestrator/tools.ex")
+
+      [ctx_block | _] =
+        Regex.scan(~r/defp ctx\(.*?\n  end/s, source)
+        |> Enum.map(&hd/1)
+
+      assert String.contains?(ctx_block, ":deadline_ms") and
+               String.contains?(ctx_block, "Map.put(base, :deadline_ms"),
+             "ctx/3 must put a :deadline_ms opt into the ctx so the Invocation " <>
+               "layer can honor it as the GenServer.call timeout"
+    end
+
     test "save_template_as does NOT call check_parent_alive (design lock)" do
       # PR 48 design lock: save_template_as deliberately does NOT
       # check parent aliveness — saving as a NEW name should always
