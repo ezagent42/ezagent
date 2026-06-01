@@ -689,7 +689,12 @@ defmodule EzagentPluginLiveview.AdminLive do
 
   def handle_event("chat_compose", %{"chat" => %{"text" => text}}, socket)
       when is_binary(text) do
-    mentions = parse_mentions(text, socket.assigns[:member_options] || [])
+    mentions =
+      parse_mentions(
+        text,
+        socket.assigns[:member_options] || [],
+        socket.assigns[:session_legends] || %{}
+      )
 
     File.mkdir_p!(Ezagent.Home.path("uploads"))
 
@@ -2055,9 +2060,15 @@ defmodule EzagentPluginLiveview.AdminLive do
 
     {orchestrator_health, can_restart?} = compute_orchestrator_health(socket, session_uri)
 
+    # team-routing-unification §3.6 (PR-6) — the session legend registry, so
+    # the chat composer's `parse_mentions/3` can resolve a `@legend` to its
+    # symbolic token (precedence over the URI/bare-member path).
+    session_legends = read_session_legends(session_uri)
+
     socket
     |> assign(:session_members, members)
     |> assign(:member_options, member_options)
+    |> assign(:session_legends, session_legends)
     |> assign(:invite_options, invite_options)
     |> assign(:display_map, display_map)
     |> assign(:applicable_views, applicable)
@@ -2504,6 +2515,71 @@ defmodule EzagentPluginLiveview.AdminLive do
 
   def parse_mentions(_, _), do: []
 
+  # team-routing-unification §3.6 (PR-6) — legend-aware mention parsing.
+  # Consults the session legend registry BEFORE the URI/bare-member path: a
+  # typed `@<name>` that IS a registered legend is intercepted and resolved to
+  # its bound rule-set entry's CONCRETE receiver URIs (firing the flow's first
+  # hop) via `Ezagent.Routing.Legend.entry_receivers/3`. The legend NAME itself
+  # never lands as a mention (it is not URI-castable / persistence-safe). This
+  # prevents a legend name from silent-dropping or mis-routing through the
+  # concrete-URI resolution. `legends` is the session legend registry
+  # (`name => entry`); `%{}` is identical to parse_mentions/2.
+  @doc false
+  @spec parse_mentions(String.t(), [map()], map()) :: [URI.t()]
+  def parse_mentions(text, members, legends)
+      when is_binary(text) and is_list(members) and is_map(legends) do
+    if map_size(legends) == 0 do
+      parse_mentions(text, members)
+    else
+      legend_names =
+        legend_mention_tokens(text)
+        |> Enum.filter(fn name ->
+          match?({:legend, _}, Ezagent.Routing.Legend.mention_token(legends, name))
+        end)
+
+      legend_name_set = MapSet.new(legend_names)
+
+      # Each legend → its bound rule-set entry's concrete receiver URIs.
+      legend_uris =
+        legend_names
+        |> Enum.flat_map(fn name ->
+          case Ezagent.Routing.Legend.entry_receivers(
+                 legends,
+                 Ezagent.Routing.Resolver.default_routing_table(),
+                 name
+               ) do
+            {:ok, uris} -> uris
+            :error -> []
+          end
+        end)
+
+      # Concrete URI/bare resolution runs on the FULL text but drops any
+      # resolved mention whose source token was a legend (so a legend never
+      # ALSO lands as a colliding concrete URI — the legend's entry wins).
+      uri_bare =
+        parse_mentions(text, members)
+        |> Enum.reject(fn uri ->
+          MapSet.member?(legend_name_set, uri_path_segment(URI.to_string(uri)))
+        end)
+
+      (legend_uris ++ uri_bare)
+      |> Enum.uniq_by(&URI.to_string/1)
+    end
+  end
+
+  def parse_mentions(_, _, _), do: []
+
+  # Unicode-aware `@<token>` scan used ONLY for legend detection (the legend
+  # name may be CJK — e.g. `@传话游戏` — which the ASCII URI/bare regexes don't
+  # capture). Mirrors the bare-mention boundary rule (no letter/number/_ before
+  # `@`).
+  defp legend_mention_tokens(text) do
+    ~r/(?<![\p{L}\p{N}_])@([\p{L}\p{N}][\p{L}\p{N}._-]*)/u
+    |> Regex.scan(text, capture: :all_but_first)
+    |> List.flatten()
+    |> Enum.uniq()
+  end
+
   defp parse_uri_mentions(text) do
     ~r/@(entity:\/\/[^\s]+)/
     |> Regex.scan(text, capture: :all_but_first)
@@ -2836,6 +2912,18 @@ defmodule EzagentPluginLiveview.AdminLive do
 
       _ ->
         []
+    end
+  end
+
+  # team-routing-unification §3.6 (PR-6) — read the session-scoped legend
+  # registry off the `:chat` slice via the T3-normalized accessor (same path
+  # as `read_session_members/1`). Returns `%{}` when the session has none /
+  # isn't live; `Ezagent.Behavior.Chat.legends_of/1` defaults the legacy
+  # (key-absent) shape.
+  defp read_session_legends(%URI{} = session_uri) do
+    case Ezagent.Kind.get_slice(session_uri, :chat) do
+      {:ok, slice} when is_map(slice) -> Ezagent.Behavior.Chat.legends_of(slice)
+      _ -> %{}
     end
   end
 

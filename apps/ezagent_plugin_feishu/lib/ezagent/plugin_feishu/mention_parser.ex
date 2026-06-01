@@ -39,7 +39,11 @@ defmodule EzagentPluginFeishu.MentionParser do
 
   alias Ezagent.KindRegistry
 
-  @mention_re ~r/@([A-Za-z0-9_\-\.]+)/
+  # Unicode-aware (`u` flag + \p{L}\p{N}) so CJK legend names like `@传话游戏`
+  # are captured (team-routing-unification §3.6, PR-6) alongside the original
+  # ASCII agent handles. The `\p{L}\p{N}_.\-` class keeps `cc_e2e_final`,
+  # `e2e-final`, dotted names, AND any-script letters.
+  @mention_re ~r/@([\p{L}\p{N}_.\-]+)/u
 
   @doc """
   Extract live agent URIs from free text. Returns `[URI.t()]`.
@@ -69,6 +73,67 @@ defmodule EzagentPluginFeishu.MentionParser do
   end
 
   def extract_agent_mentions(_), do: []
+
+  @doc """
+  Like `extract_agent_mentions/1`, but consults the session's legend registry
+  FIRST (team-routing-unification §3.6, PR-6). Returns `[URI.t()]`:
+
+    * a typed `@<name>` that IS a registered legend is intercepted BEFORE the
+      URI-mention path and resolved to its bound rule-set's ENTRY RECEIVER URIs
+      (`Ezagent.Routing.Legend.entry_receivers/3`) — "firing the entry"
+      delivers to the flow's first hop, which then continues via the set's
+      `from(...)` rules. The legend NAME itself never enters
+      `message.mentions` (it is not URI-castable / persistence-safe).
+    * any other `@<name>` → resolved to live agent `%URI{}`s as before.
+
+  Legend precedence (GATE b) means a legend name can never silent-drop or
+  mis-route through the concrete-URI matcher: the resolution layer intercepts
+  it, and the typed token is removed from the URI-mention scan.
+
+  `legends` is the session-scoped legend registry (`name => entry`), read off
+  the Chat slice via `Ezagent.Behavior.Chat.legends_of/1` by the caller.
+  Passing `%{}` makes this behave exactly like `extract_agent_mentions/1`.
+  """
+  @spec extract_mentions(String.t(), map()) :: [URI.t()]
+  def extract_mentions(text, legends) when is_binary(text) and is_map(legends) do
+    typed_names =
+      @mention_re
+      |> Regex.scan(text, capture: :all_but_first)
+      |> List.flatten()
+      |> Enum.uniq()
+
+    {legend_names, non_legend_names} =
+      Enum.split_with(typed_names, fn name ->
+        match?({:legend, _}, Ezagent.Routing.Legend.mention_token(legends, name))
+      end)
+
+    # A legend resolves to its bound rule-set entry's CONCRETE receiver URIs
+    # (persistence-safe). Unresolvable legends (no entry) drop — surfaced to
+    # the user upstream via the no-recipient path, not silently mis-routed.
+    legend_uris =
+      legend_names
+      |> Enum.flat_map(fn name ->
+        table = Ezagent.Routing.Resolver.default_routing_table()
+
+        case Ezagent.Routing.Legend.entry_receivers(legends, table, name) do
+          {:ok, uris} -> uris
+          :error -> []
+        end
+      end)
+
+    # Concrete agents resolve only from the NON-legend tokens — a legend name
+    # is removed from the URI-mention path entirely (so it can't mis-route).
+    uri_mentions =
+      case non_legend_names do
+        [] -> []
+        names -> live_agent_uris() |> Enum.filter(&matches_any_typed_name?(&1, names))
+      end
+
+    (legend_uris ++ uri_mentions)
+    |> Enum.uniq_by(&URI.to_string/1)
+  end
+
+  def extract_mentions(_, _), do: []
 
   # All currently-live `entity://agent/<flavor>_<name>` URIs.
   defp live_agent_uris do
