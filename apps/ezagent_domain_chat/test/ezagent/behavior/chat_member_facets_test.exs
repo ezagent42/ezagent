@@ -6,15 +6,35 @@ defmodule Ezagent.Behavior.ChatMemberFacetsTest do
   uniqueness guard, and facet-preservation on rejoin are covered end-to-end in
   the integration suite (session_auto_join_test.exs).
 
-  NOTE: `:provenance` (management authority) is NOT a PR-5a facet — it lands in
-  PR-5b with its caller-derivation + authorization, so there is no
-  `member_provenance/2` accessor here yet.
+  PR-5b-i adds `:provenance` (management authority) — honored only from a
+  trusted `system://` caller and set first-non-nil; the read accessor
+  `member_provenance/2` is covered here, the trust/set-once threading in the
+  integration suite.
   """
   use ExUnit.Case, async: true
 
   alias Ezagent.Behavior.Chat
 
   defp uri(s), do: URI.new!(s)
+
+  describe "member_provenance/2" do
+    test "returns the provenance facet when present" do
+      builder = uri("entity://agent/team/builder")
+      owner = uri("entity://user/system/admin")
+      members = %{builder => %{online: true, provenance: owner}}
+
+      assert Chat.member_provenance(members, builder) == owner
+    end
+
+    test "returns nil for a member with no provenance facet" do
+      admin = uri("entity://user/system/admin")
+      assert Chat.member_provenance(%{admin => %{online: true}}, admin) == nil
+    end
+
+    test "returns nil for an absent member" do
+      assert Chat.member_provenance(%{}, uri("entity://user/system/ghost")) == nil
+    end
+  end
 
   describe "role_name_to_uri/2" do
     test "resolves a role_name to its member URI" do

@@ -659,17 +659,24 @@ defmodule Ezagent.Behavior.Chat do
     # SessionTemplate materialize, PR-7). Absent keys default to "no facet" so a
     # plain join keeps the minimal `%{online: true}` meta.
     #
-    # `:provenance` (management authority) is DELIBERATELY NOT accepted here:
-    # codex review of PR-5a flagged that an args-supplied provenance lets a
-    # join caller forge the authority PR-5b will trust ({:manages, provenance}).
-    # provenance is introduced in PR-5b together with its caller-derivation +
-    # authorization, as one reviewable security unit — never from raw args.
-    #
     # The `:join` action schema declares only `member`, so these facet args
     # pass through unvalidated by the runtime — sanitize_facets/1 drops any
     # malformed value (codex PR-5a #1 "type-check the facet args") so a bad
     # `role_name` can't crash the downstream `is_binary` guards.
     facets = args |> Map.take([:role_name, :in_session_template]) |> sanitize_facets()
+
+    # team-routing-unification §3.1 (PR-5b-i) — `:provenance` (management
+    # authority over this member + the routing rows that reference it). It is
+    # authority-bearing, so it is NEVER taken from an untrusted caller's args:
+    # the actual join caller cannot be `provenance`-derived (the unified join
+    # path dispatches as `system://session-internal`, not the real owner), so
+    # provenance must be PASSED explicitly — and is honored ONLY when the
+    # dispatching `ctx.caller` is a trusted `system://` principal vouching for
+    # the real owner (create_session / PR-7 materialization / orchestrator
+    # spawn). A Feishu user or agent dispatching `chat.join` directly carries an
+    # `entity://...` caller, so their `:provenance` arg is dropped — closing the
+    # forge-the-authority hole codex flagged on PR-5a.
+    facets = put_trusted_provenance(facets, args, ctx[:caller])
 
     case KindRegistry.lookup(member_uri) do
       {:ok, member_pid} ->
@@ -846,16 +853,58 @@ defmodule Ezagent.Behavior.Chat do
   # into a member's meta map. Only keys actually supplied (non-nil) are
   # written, so a plain join keeps `%{online: true}` and a rejoin overlays
   # only the deltas it carries (preserving prior facets — see do_join_apply).
-  # `:provenance` is intentionally NOT a facet here; it lands in PR-5b with its
-  # caller-derivation + authorization.
+  # `:provenance` (PR-5b-i) is set-once: see put_provenance_once/2.
   defp put_member_facets(meta, facets) when is_map(meta) and is_map(facets) do
     meta
+    |> put_provenance_once(Map.get(facets, :provenance))
     |> maybe_put_facet(:role_name, Map.get(facets, :role_name))
     |> maybe_put_facet(:in_session_template, Map.get(facets, :in_session_template))
   end
 
   defp maybe_put_facet(map, _key, nil), do: map
   defp maybe_put_facet(map, key, value), do: Map.put(map, key, value)
+
+  # team-routing-unification §3.1 (PR-5b-i) — provenance is set FIRST-NON-NIL:
+  # once a member is owned, the owner is immutable (no re-ownership via rejoin),
+  # but a member that joined unowned (nil) CAN have provenance set by a later
+  # trusted join (e.g. create_session joins the bare member, the orchestrator
+  # spawn path later vouches for the owner). Management transfer is a future
+  # explicit op, not a side effect of rejoin.
+  defp put_provenance_once(meta, nil), do: meta
+  defp put_provenance_once(%{provenance: existing} = meta, _new) when not is_nil(existing), do: meta
+  defp put_provenance_once(meta, new), do: Map.put(meta, :provenance, new)
+
+  # team-routing-unification §3.1 (PR-5b-i) — `:provenance` is authority-bearing,
+  # so it is honored ONLY from a trusted `system://` caller (the internal join
+  # path / materialization vouches for the real owner). An untrusted
+  # `entity://...` caller's `:provenance` arg is silently dropped.
+  defp put_trusted_provenance(facets, args, caller) do
+    case Map.get(args, :provenance) do
+      %URI{} = prov ->
+        if trusted_provenance_setter?(caller), do: Map.put(facets, :provenance, prov), else: facets
+
+      _ ->
+        facets
+    end
+  end
+
+  defp trusted_provenance_setter?(%URI{scheme: "system"}), do: true
+  defp trusted_provenance_setter?(_), do: false
+
+  @doc """
+  team-routing-unification §3.1 (PR-5b-i) — the `:provenance` facet of a member
+  (the authority that manages it + the routing rows that reference it), or `nil`
+  if the member has no provenance / is absent. `members` is a session's
+  member-meta map (`%{URI.t() => meta}`). PR-5b-ii gates routing-row edits on
+  `{:manages, provenance}` using this.
+  """
+  @spec member_provenance(map(), URI.t()) :: URI.t() | nil
+  def member_provenance(members, %URI{} = member_uri) when is_map(members) do
+    case Map.get(members, member_uri) do
+      %{provenance: provenance} -> provenance
+      _ -> nil
+    end
+  end
 
   # team-routing-unification §3.1 (codex PR-5a #1) — drop facet args that are
   # the wrong type, so malformed input is ignored rather than persisted /
