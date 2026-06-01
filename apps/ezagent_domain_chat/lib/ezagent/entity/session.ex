@@ -43,7 +43,8 @@ defmodule Ezagent.Entity.Session do
     do: [
       Ezagent.Behavior.Chat,
       Ezagent.Behavior.Publisher.SessionImpl,
-      Ezagent.Behavior.ExternalMirror
+      Ezagent.Behavior.ExternalMirror,
+      Ezagent.Behavior.Mode
     ]
 
   @impl Ezagent.Kind

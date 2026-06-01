@@ -109,6 +109,11 @@ defmodule Ezagent.Behavior.Chat do
   # sanctioned marker rather than relying on derivation.
   use Ezagent.Lifecycle, state_slice: :chat
 
+  # Takeover-mode gating: Chat reads the `:mode` sibling slice (owned by
+  # `Ezagent.Behavior.Mode`) to gate agent-sender fan-out in `handle_send/2`.
+  # Invariant #18 — sibling reads are opt-in via `reads_siblings/0`.
+  reads_siblings [:mode]
+
   require Logger
 
   alias Ezagent.{Cmd, KindRegistry, Message, MessageStore}
@@ -462,6 +467,21 @@ defmodule Ezagent.Behavior.Chat do
             workspace_uri: workspace_uri
           )
 
+        # Takeover-mode gating (PR-A feat/takeover-mode):
+        # When the session is in :takeover mode, agent-sourced messages
+        # are persisted + notified to session subscribers (so the session
+        # UI still records them) but are NOT fanned out to customer-tier
+        # recipients. This prevents the AI agent from sending messages
+        # to the customer while an operator has manually taken over.
+        #
+        # `ctx.siblings[:mode]` is injected by Kind.Runtime because of the
+        # `reads_siblings [:mode]` declaration above. Pre-Phase-2.6
+        # Sessions may have no `:mode` slice — `Map.get(..., :mode, :auto)`
+        # provides the safe `:auto` fallback.
+        mode_slice = ctx.siblings[:mode] || %{}
+        session_mode = Map.get(mode_slice, :mode, :auto)
+        suppress_agent_messages? = session_mode == :takeover
+
         # Allen 2026-05-26: surface "mention dropped — target not in
         # session" as a notification to the sender. Without this, the
         # operator types `@curl_test_alpha hello` and gets no feedback
@@ -473,18 +493,22 @@ defmodule Ezagent.Behavior.Chat do
         # the Resolver dropped (via `valid_member?` membership filter).
         # Random `@text` (no URI match) never enters `msg.mentions`
         # and is silent — exactly what users want for casual @ usage.
-        notify_dropped_mentions(msg, recipients, session_uri, ctx)
+        unless suppress_agent_messages? and agent_sender?(msg.sender) do
+          notify_dropped_mentions(msg, recipients, session_uri, ctx)
+        end
 
         # PR-3 of Read Receipts rollout: dispatch + (on success only)
         # mark `:delivered`. We need the dispatch result to gate the
         # mark, so this stays in-handler (effect grammar discards
         # dispatch return values). Cross-session forwarding does not
         # need a ReadMarker side effect.
-        for recipient <- recipients do
-          if recipient.scheme == "session" do
-            dispatch_cross_session_call(recipient, msg)
-          else
-            dispatch_receive_call(recipient, msg, session_uri)
+        unless suppress_agent_messages? and agent_sender?(msg.sender) do
+          for recipient <- recipients do
+            if recipient.scheme == "session" do
+              dispatch_cross_session_call(recipient, msg)
+            else
+              dispatch_receive_call(recipient, msg, session_uri)
+            end
           end
         end
 
@@ -1081,6 +1105,12 @@ defmodule Ezagent.Behavior.Chat do
 
   # Allen 2026-05-26: detect mentions that didn't make it to recipients
   # (because the mentioned URI isn't a session member) and emit a
+  # Takeover-mode gating helper: true iff the message sender is an agent
+  # Kind URI (`entity://<workspace>/agent/<name>`). Used by `handle_send/2`
+  # to suppress agent-sourced fan-out when the session is in :takeover.
+  defp agent_sender?(%URI{scheme: "entity", host: "agent"}), do: true
+  defp agent_sender?(_), do: false
+
   # `:mention_failed` notification to the sender. This closes the
   # silent-drop UX gap where `@curl_test_alpha hello` produced no
   # response and no error when curl_test_alpha was not a session

@@ -785,6 +785,15 @@ defmodule EzagentDomainChat.Application do
       :ok = CapabilityRegistry.register(Session, action, OrchAdminB)
     end)
 
+    # feat/takeover-mode — register Mode's :set/:get caps on the Session
+    # Kind so dispatch (CapBAC chokepoint) can route invocations to the
+    # Mode Behavior.
+    alias Ezagent.Behavior.Mode, as: ModeB
+
+    Enum.each(ModeB.actions(), fn action ->
+      :ok = CapabilityRegistry.register(Session, action, ModeB)
+    end)
+
     :ok
   end
 
