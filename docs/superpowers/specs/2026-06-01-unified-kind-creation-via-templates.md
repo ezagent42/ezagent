@@ -1,23 +1,25 @@
-# Unified Kind Creation via Templates — Design (rev 3)
+# Unified Kind Creation via Templates — Design (rev 4)
 
 **Date:** 2026-06-01
-**Status:** Draft rev 3 (two codex adversarial rounds folded in; pending re-review + Allen approval)
+**Status:** Draft rev 4 (three codex adversarial rounds folded in; pending re-review + Allen approval)
 **Author:** Claude (with Allen)
 
-> **rev 3 changes** (codex review of rev 2 — closed B-1/C-1/E-1/G-2, fixed the 3
-> remaining mechanism gaps): freshness is a per-Kind **`exists_durably?(uri)`
-> predicate checked BEFORE spawn** (not a post-hoc `ever_created` transition, which
-> isn't observable; A-1) — this also covers the **ephemeral Workspace** (no snapshot
-> marker) by reading its domain table, and is the SAME predicate the bridge-join
-> existence check uses (G-2). `reconfigure/4` returns **dispatch effects** executed
-> by the Manage handler (a Template Class cannot write the live Kind's slices; D-1).
-> Class `teardown` undoes **durables only** and composes with Lifecycle `destroy/2`
-> (which owns termination + snapshot deletion; G-1).
+> **rev 4 changes** (codex review of rev 3 — closed G-1; fixed the last two blockers):
+> the manage-cap grant keys off the **atomic `ever_created` false→true transition
+> SURFACED by the create path** (not a pre-spawn probe, which is a TOCTOU and can
+> mis-fire on an `:already_started` adopt; A-1), with `created_by` **threaded as a
+> create arg** into spawn→init so the grant fires inside the once-only atomic create
+> (generalizing the existing Session `owner_uri` pattern). For the ephemeral Workspace
+> the once-only signal is `Store.create` row-insert success. The `exists_durably?`
+> probe is retained ONLY for the bridge-join existence check (where a race is benign).
+> `reconfigure/4` returns `{:dispatch, %Ezagent.Cmd{}}` effects (the actual effect
+> grammar) and the inner config-update dispatches are **self-dispatches**
+> (caller = Kind `self_uri`; D-1 + authz).
 >
-> **rev 2 changes** (codex review of rev 1): unified authorized create entry must be
-> BUILT (B-1); manage-cap is `action: :any` on `Behavior.Manage` + instance, with a
-> Session caveat (C-1); `reconfigure` is a NEW hook (D-1); per-Class teardown (G-1);
-> User create ordering (E-1); one-shot migration (F-1).
+> **rev 3** (codex of rev 2): closed B-1/C-1/E-1/G-2; per-Kind freshness; reconfigure
+> as Manage dispatches; teardown composes with `destroy/2` (G-1).
+> **rev 2** (codex of rev 1): build the entry (B-1); `:any` manage-cap + Session caveat
+> (C-1); new reconfigure hook (D-1); per-Class teardown (G-1); User ordering (E-1).
 
 ## 1. Problem & context
 
@@ -82,30 +84,40 @@ the existing pattern.
 
 ## 3. Design
 
-### 3.1 Freshness = a per-Kind `exists_durably?` predicate, checked BEFORE spawn (A-1)
+### 3.1 Freshness = the ATOMIC `ever_created` transition, surfaced (A-1)
 
-`Ezagent.Kind.Template.instantiate/3` MAY return a bare 2-tuple (no `fresh?`;
-`GenericSession.instantiate/3` does, `generic_session.ex:99`), so the grant must NOT
-depend on the Class's return. And the core `ever_created` marker, while it exists, is
-only readable as a **current-state** predicate (`KindSnapshot.ever_created?/1`,
-`kind_snapshot.ex:182`) — *after* spawn it can't distinguish "fresh by THIS call" from
-"already existed" (the snapshot write returns only `:ok`, not a transition;
-`server.ex:185-221`). And `:ephemeral` Kinds (Workspace, `workspace.ex:55`) skip
-snapshot persistence entirely, so they have no `ever_created` marker at all.
+The grant must fire **iff THIS call durably created the Kind** — race-free, not on an
+adopt/rehydrate. Two rejected approaches: (a) the Class's `instantiate/3` `fresh?` meta
+is optional (`GenericSession` returns a bare 2-tuple, `generic_session.ex:99`); (b) a
+**pre-spawn** `exists_durably?` probe is a **TOCTOU** — between probe and spawn another
+path can create it, and a plugin `instantiate` can succeed by *adopting* an
+`:already_started` worker (`cc_agent.ex:~789`), so a stale pre-spawn `false` would
+mis-grant.
 
-**Resolution — a per-Kind `exists_durably?(uri)` predicate, checked by the create entry
-BEFORE it spawns:**
+**Resolution — key the grant off the atomic once-only create signal, surfaced from the
+create path, with `created_by` threaded in:**
 
-- Snapshot-backed Kinds (Agent/Session/User/Templates): `KindSnapshot.ever_created?/1`
-  — an exported `Repo.get` read, no GenServer needed (`kind_snapshot.ex:182`).
-- Ephemeral Workspace: its durable domain row (`Workspace.Store` lookup).
+- **Snapshot-backed Kinds** (Agent/Session/User/Templates): the initial-snapshot upsert
+  that flips `ever_created` `false→true` is atomic and fires the Lifecycle `create/1`
+  hook exactly once (`lifecycle.ex:350`, `snapshot.ex:341`, `server.ex:193`). This work
+  **surfaces that transition** — `persist_initial_snapshot` / the upsert returns
+  `:created` vs `:existed` (today it returns only `:ok`, `kind_snapshot.ex:198-200`) —
+  so the create path knows authoritatively, with no TOCTOU, whether THIS call created it.
+- **Ephemeral Workspace** (no snapshot; `workspace.ex:55`): the once-only signal is
+  `Workspace.Store.create/2` row-insert success (a duplicate insert conflicts), `:created`
+  vs `:exists`.
+- **`created_by` is threaded as a create arg** into `Kind.spawn` → `init` (exactly as
+  Session already threads `owner_uri`), so the grant — fired inside / immediately after
+  the atomic create-success — has the authenticated creator without re-reading any
+  racy state.
 
-The create entry (§3.2) is the authoritative create path, so checking
-`exists_durably?(uri) == false` *immediately before* invoking the Class `instantiate/3`
-deterministically means "this call is the fresh create" → grant after instantiate
-succeeds. `true` → it's a rehydrate/adopt → no grant. This is the SAME predicate the
-bridge-join existence check uses (§3.8), so there is one notion of "durably exists" per
-Kind.
+The grant therefore happens **as part of the atomic once-only create**, not a separate
+probe. A `:existed`/adopt result → no grant (the durable manage-cap is already present).
+
+(The `exists_durably?(uri)` *probe* — `KindSnapshot.ever_created?/1`, an exported
+`Repo.get`, `kind_snapshot.ex:198-200`; or the `Workspace.Store` row — is retained ONLY
+for the **bridge-join existence check** in §3.8, where "does it exist at all, to decide
+rehydrate-vs-refuse" tolerates a benign race.)
 
 ### 3.2 The unified authorized create entry (BUILD) (B-1)
 
@@ -118,9 +130,10 @@ Concretely:
   so `Kind.Runtime` step 5.5 CapBAC runs and `ctx.caller` is the authenticated
   `created_by`. Authorization reuses the existing per-scope create caps (OQ-1) — this
   work does not widen WHO may create, it makes the authz uniform + unavoidable.
-- The handler: resolve the target Template Class → `validate/1` → `instantiate/3` →
-  observe the CORE `ever_created` transition (§3.1) → on fresh, run the grant (§3.3);
-  on any failure after a fresh spawn, run the Class teardown (§5/G-1).
+- The handler: resolve the target Template Class → `validate/1` → `instantiate/3`
+  (threading `created_by`=`ctx.caller` as a create arg) → the atomic create surfaces
+  `:created` vs `:existed` (§3.1) → on `:created`, run the grant (§3.3); on any failure
+  after a fresh spawn, run the Class teardown then `destroy/2` (§5/G-1).
 - **Migration of existing create paths onto the entry** (the bulk of the work):
   `create_session/3`, `Workspace.create/2`, `create_user`, the Loader fresh-create
   branch, `Agent.spawn_fresh/4` / `spawn_from_template_content/4`, and the plugin Class
@@ -133,9 +146,9 @@ the entry is a CI failure** (§6).
 
 ### 3.3 Manage-cap grant — CORE step, `:any` action, Session caveat (A-1, C-1)
 
-After a fresh create (the create entry observed `exists_durably?(uri) == false`
-pre-spawn, §3.1, and `instantiate/3` succeeded), the core handler grants, for each
-freshly created owned Kind URI:
+After a fresh create (the atomic create path returned `:created`, §3.1, using the
+`created_by` threaded as a create arg), the core handler grants, for each freshly
+created owned Kind URI:
 
 ```
 cap(kind_of(uri), Ezagent.Behavior.Manage, :any, instance: uri)  → granted to ctx.caller
@@ -206,12 +219,18 @@ the Manage registration). The handler:
                {:ok, [dispatch_effect]} | {:error, term()}
    ```
 
-   `reconfigure/4` returns `{:dispatch, target, action, args}` effects — re-bind /
-   re-grant / route-reconcile / **config-update via the Kind's OWN behaviors'
-   actions** / sidecar restart via `ensure_subprocess_alive/2` (GLOSSARY §128). The
-   effect pipeline already executes dispatch buckets, so these reach the right slices
-   through the normal dispatch path (no new cross-slice mechanism). Behaviors that need
-   the config read the Manage `:spec` slice via the existing `reads_sibling_slices`
+   `reconfigure/4` returns `{:dispatch, %Ezagent.Cmd{}}` effects — the ACTUAL effect
+   grammar (`behavior.ex:893`; `{:dispatch, target, action, args}` is NOT a valid effect
+   shape) — for re-bind / re-grant / route-reconcile / **config-update via the Kind's
+   OWN behaviors' actions** / sidecar restart via `ensure_subprocess_alive/2` (GLOSSARY
+   §128). The effect pipeline already executes the dispatch buckets
+   (`runtime.ex` Dispatches/DispatchesReturning), so these reach the right slices through
+   the normal dispatch path (no new cross-slice mechanism). **Inner-dispatch authz:**
+   these are **self-dispatches** — the `%Cmd{}` carries `caller: self_uri` (the Kind
+   reconfiguring its OWN behaviors); the config-update actions authorize self-dispatch
+   (a Kind may update its own slices), so no external caller's caps are implicated.
+   Behaviors that need the config read the Manage `:spec` slice via the existing
+   `reads_sibling_slices`
    mechanism.
 
 - Same URI, same identity; runtime `transients` untouched except where a returned
@@ -270,8 +289,9 @@ the agent's `created_by` is the just-created user or the registrar). No bootstra
 ## 4. Data flow
 
 **Create:** caller → dispatch `kind.create` (CapBAC create cap) → resolve Class →
-check `exists_durably?(uri) == false` (§3.1) → `validate/1` → `instantiate/3` → grant
-`cap(:<kind>, Manage, :any, uri)` to `ctx.caller` → return uris. On post-spawn failure →
+`validate/1` → `instantiate/3` (threading `created_by`=`ctx.caller`) → if the atomic
+create returned `:created` (§3.1) grant `cap(:<kind>, Manage, :any, uri)` to `created_by`
+→ return uris. On post-spawn failure →
 Class teardown (§5).
 
 **Modify:** caller → dispatch `manage.reconfigure` (cap `cap(:<kind>, Manage, :any,
@@ -336,8 +356,9 @@ narrowing the default user `:session` cap (unless OQ-4 chooses it).
    `cap(:<kind>, Manage, :any, instance)` (`:any` action — C-1).
 4. **User manage-cap recipients:** user (self, in `caps_json` at row create) + creating
    admin/registrar.
-5. **Grant location:** core create-entry step, gated by `exists_durably?(uri) == false`
-   checked pre-spawn (§3.1) + `created_by` = `ctx.caller` (plugin Classes unchanged).
+5. **Grant location:** core create step, gated by the atomic `ever_created`
+   `false→true` (`:created`) transition surfaced from the create path (§3.1), using
+   `created_by` = `ctx.caller` threaded as a create arg (plugin Classes unchanged).
 
 ## 9. Open questions
 
