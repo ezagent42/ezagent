@@ -155,6 +155,10 @@ runbook 路径 + 至少一个 PR 证据截图时，才标 ✅。这是 2026-05-0
 | 28 | [派发审计行（invocations → EventLog）](./28-dispatch-audit/scenario.zh_cn.md) | 16 | ⏳ | `Audit.@events` 已覆盖；EventLog 迁移是 Phase 2+ |
 | 29 | [Admin LV smoke — registry / snapshots / templates / routing / cmdK](./29-admin-lv-smoke/scenario.zh_cn.md) | 17 | ⚠️ | per-LV 手动 smoke；`/admin/agents` 返回 404（gap）|
 | 30 | [插件作者 DX — 用 effects 写新 Behavior](./30-plugin-author-behavior/scenario.zh_cn.md) | 18 | ✅ | Phase 1-4 迁移完成（PR #451-#469）；E2E test #468 演练新合约下的绿地 Behavior 编写 |
+| 31 | [Home 备份 / 恢复 / 迁移](./31-home-backup-restore-migration/scenario.zh_cn.md) | 13 | 🚧 | 见场景文档 |
+| 32 | [Feishu @ 提及 → 编排器分发](./32-feishu-mention-orchestrator-dispatch/scenario.zh_cn.md) | 3 | 🚧 | `scenario_32_mention_orchestrator_dispatch_test.exs`（确定性）+ 实况 runbook |
+| 33 | [Full-star — 编排器分发全部风味（cc + codex + curl）](./33-full-star-orchestrator-all-flavors/scenario.zh_cn.md) | 3 | 🚧 | `scenario_33_full_star_test.exs`（确定性）+ 实况 runbook |
+| 34 | [发送者锁定的接力（传话游戏）— legend + 规则集 + 提示模板，无 baton](./34-sender-locked-relay/scenario.zh_cn.md) | 3 | 🚧 | `scenario_34_sender_locked_relay_test.exs`（确定性，8 测试通过）+ `scenario_34_*_live_test.exs`（实况 runbook，`@tag :live`） |
 
 ---
 
