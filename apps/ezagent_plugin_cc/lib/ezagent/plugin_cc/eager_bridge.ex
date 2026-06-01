@@ -135,7 +135,16 @@ defmodule EzagentPluginCc.EagerBridge do
   defp all_fired?([]), do: true
 
   defp all_fired?(prompts) when is_list(prompts) do
-    Enum.all?(prompts, fn p -> Map.get(p, :fired?, true) end)
+    Enum.all?(prompts, fn p ->
+      # `repeat?: true` prompts (e.g. the claude 2.1.92 theme picker) re-arm
+      # and NEVER latch `fired?: true` by design — and they may not even
+      # appear on a given spawn. They must NOT block this bridge-kick gate,
+      # or EagerBridge waits forever and the agent never binds (the
+      # 2026-06-01 regression: adding :theme_picker_dialog as a repeat prompt
+      # silently froze the gate for every agent). Only the one-shot mandatory
+      # dialogs (dev-channels / trust) gate the kick.
+      Map.get(p, :repeat?, false) or Map.get(p, :fired?, true)
+    end)
   end
 
   defp all_fired?(_), do: true
