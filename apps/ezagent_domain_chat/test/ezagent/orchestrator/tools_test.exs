@@ -144,6 +144,47 @@ defmodule Ezagent.Orchestrator.ToolsTest do
     end
   end
 
+  describe "codex M1 — define_rule_set_rule rejects a non-member role_name" do
+    # With no live session at this URI, `read_members` is empty, so any
+    # binary `receiver_role_name` that is NOT a magic token fails to resolve
+    # to a current member → `{:unknown_member_role, _}`. Pre-fix a
+    # URI-shaped string fell through to `Ezagent.URI.parse/1` and bound a
+    # NON-MEMBER receiver (the M1 bypass).
+    @ctx [
+      caller: URI.new!("entity://agent/system/cc_orch-m1"),
+      caps: MapSet.new(),
+      workspace_uri: URI.new!("workspace://system"),
+      session_uri: URI.new!("session://generic/system/no-such-m1")
+    ]
+
+    test "a dangling, URI-shaped role_name is rejected (not bound as a non-member)" do
+      assert {:error, {:unknown_member_role, "entity://agent/system/not-a-member"}} =
+               Tools.define_rule_set_rule(
+                 {:mention, "x"},
+                 "entity://agent/system/not-a-member",
+                 [rule_set: "rs"] ++ @ctx
+               )
+    end
+
+    test "a plain non-member role_name string is rejected" do
+      assert {:error, {:unknown_member_role, "ghost-role"}} =
+               Tools.define_rule_set_rule({:mention, "x"}, "ghost-role", [rule_set: "rs"] ++ @ctx)
+    end
+  end
+
+  describe "codex M3 — define_prompt_template enforces {body}" do
+    @ctx3 [
+      caller: URI.new!("entity://agent/system/cc_orch-m3"),
+      caps: MapSet.new(),
+      session_uri: URI.new!("session://generic/system/no-such-m3")
+    ]
+
+    test "a template missing {body} is rejected before install" do
+      assert {:error, :body_placeholder_required} =
+               Tools.define_prompt_template("greet", "hello there", @ctx3)
+    end
+  end
+
   describe "in-flight template deletion semantics" do
     test "update_template returns :parent_template_deleted when parent hash is gone" do
       parent_uri = URI.new!("template://session/pr48-test/never-registered@deadbeefdeadbeef")

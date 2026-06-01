@@ -556,6 +556,75 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpE2eTest do
       assert keep_b_worker in surviving.receivers
     end
 
+    test "codex B2 — remove_member prune is SCOPED to this session; a foreign session's rule naming the same member is UNTOUCHED",
+         ctx do
+      add =
+        McpServer.handle_tool_call(ctx.mcp, "add_managed_member", %{
+          "source_agent_template_uri" => URI.to_string(ctx.backend_uri),
+          "role_name" => "scoped-dev"
+        })
+
+      refute add["isError"]
+      member_uri_str = add["structuredContent"]
+
+      table = EzagentDomainChat.Routing.MentionRouting
+
+      # A FOREIGN session's rule that ALSO names this member URI as a
+      # receiver, created_by a DIFFERENT session. Pre-fix the unscoped prune
+      # (filter = "member string in receivers", no created_by check) would
+      # delete/mutate it out from under that other session.
+      foreign_session = URI.new!("session://default/team-alpha/foreign-#{uniq()}")
+
+      {:ok, foreign_row} =
+        Ezagent.Routing.RuleStore.add(
+          table,
+          {:text_contains, "foreign"},
+          [member_uri_str],
+          foreign_session,
+          workspace_uri: @workspace_uri,
+          rule_set: "foreign-rs",
+          position: 0
+        )
+
+      :ok = Ezagent.Routing.RuleStore.load_into_registry(table)
+
+      result = McpServer.handle_tool_call(ctx.mcp, "remove_member", %{"role_name" => "scoped-dev"})
+      refute result["isError"], "remove_member failed: #{inspect(result)}"
+
+      # The foreign session's rule SURVIVES with its receiver unchanged —
+      # only THIS session's rules (created_by == ctx.session_uri) are prunable.
+      surviving = Enum.find(Ezagent.Routing.RuleStore.list(table), &(&1.id == foreign_row.id))
+
+      assert surviving,
+             "B2: a foreign session's rule must NOT be deleted by remove_member's scoped prune"
+
+      assert member_uri_str in (surviving.receivers || []),
+             "B2: the foreign rule's receiver must be UNCHANGED — got #{inspect(surviving.receivers)}"
+    end
+
+    test "codex B2 — remove_member PROPAGATES a prune failure (no swallow into deleted_rules:0)" do
+      # No mocking library is available in this umbrella, so assert the
+      # propagation STRUCTURALLY over the source (mirrors the existing
+      # `save_template_as does NOT call check_parent_alive` design-lock test):
+      # the prune-result handling in `do_remove_member` must NOT convert an
+      # `{:error, _}` prune into a fabricated `%{deleted_rules: 0}` success.
+      source = File.read!(Path.join(__DIR__, "../../lib/ezagent/orchestrator/tools.ex"))
+
+      [remove_block | _] =
+        Regex.scan(~r/defp do_remove_member.*?\n  end/s, source) |> Enum.map(&hd/1)
+
+      refute String.contains?(remove_block, "{:error, _} -> %{deleted_rules: 0"),
+             "B2: do_remove_member must NOT swallow a prune {:error, _} into a fabricated " <>
+               "%{deleted_rules: 0} success — it must propagate the prune failure."
+
+      # And the prune call is in an explicit case that propagates the error arm.
+      assert String.contains?(remove_block, "prune_routing_rules_for(session_uri, member_uri)"),
+             "B2: prune must be scoped to the session (prune_routing_rules_for(session_uri, ...))"
+
+      assert Regex.match?(~r/\{:error,.*\} = err ->\s*\n.*err/s, remove_block),
+             "B2: do_remove_member must have an {:error, _} = err arm that returns the error"
+    end
+
     test "cap-#2 CONTROL — another orchestrator cannot remove this orchestrator's member", ctx do
       add =
         McpServer.handle_tool_call(ctx.mcp, "add_managed_member", %{
@@ -655,7 +724,7 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpE2eTest do
                Behavior.Chat.resolve_legend(chat_slice(ctx.session_uri), "team-x")
     end
 
-    test "define_rule_set_rule with an unknown receiver role → structured error", ctx do
+    test "define_rule_set_rule with an unknown receiver role → structured error (codex M1)", ctx do
       result =
         McpServer.handle_tool_call(ctx.mcp, "define_rule_set_rule", %{
           "matcher_ast" => %{"type" => "text_contains", "arg" => "x"},
@@ -664,7 +733,24 @@ defmodule EzagentDomainChat.Integration.OrchestratorMcpE2eTest do
         })
 
       assert result["isError"] == true
-      assert result["error"]["code"] == "unknown_rule_receiver"
+      # codex M1 — a dangling role_name is now rejected as a non-member role
+      # (it MUST resolve to a current session member), not parsed as a URI.
+      assert result["error"]["code"] == "unknown_member_role"
+    end
+
+    test "define_rule_set_rule with a URI-shaped non-member receiver is rejected (codex M1 bypass)",
+         ctx do
+      # Pre-fix this URI-shaped string fell through to URI parsing and bound
+      # a NON-MEMBER receiver. It must now be rejected as a non-member role.
+      result =
+        McpServer.handle_tool_call(ctx.mcp, "define_rule_set_rule", %{
+          "matcher_ast" => %{"type" => "text_contains", "arg" => "x"},
+          "receiver_role_name" => "entity://agent/team-alpha/not_a_member_#{uniq()}",
+          "rule_set" => "rs"
+        })
+
+      assert result["isError"] == true
+      assert result["error"]["code"] == "unknown_member_role"
     end
   end
 

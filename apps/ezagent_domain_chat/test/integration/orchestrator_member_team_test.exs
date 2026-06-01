@@ -238,6 +238,99 @@ defmodule EzagentDomainChat.Integration.OrchestratorMemberTeamTest do
     assert delivered.body.text == "接龙：山顶的雪化了（by #{URI.to_string(operator)}）"
   end
 
+  # ── codex PR-8 fix regressions ─────────────────────────────────────────
+
+  test "codex B1 — an orchestrator-defined rule is stamped created_by=session_uri and round-trips through save_template_as" do
+    n = uniq()
+    src = seed_agent_template(n)
+    role = "relay-cc-#{n}"
+    rule_set = "telephone-#{n}"
+
+    {mcp, session_uri, _ws, orch} = orchestrated_session(n)
+
+    {:ok, member_uri} = Tools.add_managed_member(src, role, true, McpServer.tool_opts(mcp))
+    on_exit(fn -> terminate_child(EzagentDomainChat.AgentSupervisor, member_uri) end)
+
+    assert {:ok, %{id: rule_id}} =
+             Tools.define_rule_set_rule(
+               Matcher.mention("legend-#{n}"),
+               role,
+               [rule_set: rule_set, position: 0] ++ McpServer.tool_opts(mcp)
+             )
+
+    # The persisted rule carries the per-session identity the snapshot keys on
+    # (pre-fix it was nil → silently dropped from the template).
+    table = Resolver.default_routing_table()
+    row = Enum.find(Ezagent.Routing.RuleStore.list(table), &(&1.id == rule_id))
+    assert row, "the defined rule must be persisted"
+
+    assert row.created_by == URI.to_string(session_uri),
+           "B1: orchestrator-defined rule must be stamped created_by=session_uri " <>
+             "(got #{inspect(row.created_by)}); otherwise session_rule_set_rules drops it"
+
+    # And it round-trips into a saved SessionTemplate (the snapshot captures it).
+    caps =
+      MapSet.put(
+        mcp.caps,
+        %Capability{
+          kind: :session_template,
+          behavior: Ezagent.Behavior.Template,
+          action: :any,
+          instance: {:within_workspace, @workspace_uri},
+          workspace_uri: @workspace_uri,
+          granted_by: User.admin_uri(),
+          granted_at: DateTime.utc_now()
+        }
+      )
+
+    save_opts = [
+      caller: orch,
+      caps: caps,
+      session_uri: session_uri,
+      workspace_uri: @workspace_uri
+    ]
+
+    assert {:ok, %URI{} = new_template_uri} =
+             Tools.save_template_as("pr8-b1-saved-#{n}", save_opts)
+
+    {:ok, content} = Ezagent.Entity.Session.read_template_content(new_template_uri)
+    rules = Map.get(content, :routing_rules) || Map.get(content, "routing_rules") || []
+
+    assert Enum.any?(rules, fn r ->
+             (Map.get(r, :rule_set) || Map.get(r, "rule_set")) == rule_set
+           end),
+           "B1: the orchestrator-defined rule-set rule must be captured in the saved " <>
+             "template's routing_rules; got #{inspect(rules)}"
+  end
+
+  test "codex M2 — an unauthorized add_managed_member does NOT spawn a worker" do
+    n = uniq()
+    src = seed_agent_template(n)
+    role = "relay-cc-#{n}"
+
+    {mcp, session_uri, _ws, _orch} = orchestrated_session(n)
+
+    # Strip the {:within_session, S} cap — the caller is now unauthorized.
+    no_session_caps =
+      mcp.caps
+      |> Enum.reject(fn
+        %Capability{kind: :session, instance: {:within_session, _}} -> true
+        _ -> false
+      end)
+      |> MapSet.new()
+
+    opts = Keyword.put(McpServer.tool_opts(mcp), :caps, no_session_caps)
+
+    assert {:error, :unauthorized} = Tools.add_managed_member(src, role, true, opts)
+
+    # No member was spawned + joined: the session's members slice has no
+    # member holding `role` (the preflight fails BEFORE spawn_member runs).
+    slice = chat_slice(session_uri)
+    assert Chat.role_name_to_uri(slice.members, role) == nil,
+           "M2: an unauthorized add_managed_member must not leave a spawned/joined member; " <>
+             "members=#{inspect(Map.keys(slice.members))}"
+  end
+
   test "the relay chain is expressible as {:from, role→uri} rules with NO baton token" do
     # A two-hop chain (cc → codex): the SECOND hop fires on {:from, cc_uri},
     # routes to codex. The model emits NOTHING — the routing table IS the
