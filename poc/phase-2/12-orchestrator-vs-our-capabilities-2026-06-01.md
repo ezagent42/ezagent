@@ -1,104 +1,88 @@
-# Task 4 — Can the (rebased) orchestrator replace our capabilities? (soul-edit / takeover)
+# 任务 4 —— (rebase 后的) orchestrator 能否替代我们的能力?(soul 编辑 / 接管)
 
-> 2026-06-01. Investigation against the post-merge `poc/phase-2-customer-service`
-> (HEAD b3c95bf0, ezagent main merged). Question from PR #446 planning: does the
-> latest orchestrator code already provide what we built/are-building, so that
-> **admin-edit-soul scope #1 should refactor onto orchestrator primitives**
-> instead of our file-based `SoulStore`?
+> 2026-06-01。针对合并后的 `poc/phase-2-customer-service`(HEAD b3c95bf0,已合入
+> ezagent main)调研。来自 PR #446 规划的问题:最新的 orchestrator 代码是否已经提供了
+> 我们已建 / 在建的东西,以至于 **admin-edit-soul 的 scope #1 应该重构到 orchestrator
+> 原语上**,而不是用我们基于文件的 `SoulStore`?
 >
-> **Verdict: NO.** Keep scope #1's `SoulStore` design as-is. The orchestrator
-> neither edits soul text nor handles takeover; it is a different (LLM-driven,
-> session-composition) abstraction, and it is not even on our soul/message path.
-> Details + the one genuine convergence point (deferred) below.
+> **结论:不能。** 保持 scope #1 的 `SoulStore` 设计不变。orchestrator 既不编辑 soul
+> 文本,也不处理接管;它是另一种(LLM 驱动的、做 session 组合的)抽象,而且根本不在我们的
+> soul / 消息路径上。细节 + 唯一一个真正的收敛点(已推迟)见下。
 
-## The two capabilities under question
-1. **Editable soul** (scope #1, `11-admin-edit-soul-design.md`): a human admin
-   edits a tenant's customer soul markdown in a UI → Save → new conversations use
-   it. Built as: `SoulStore` (file `edited→fixture→nil`, write/revert/reset) +
-   `ConfigLive` + `ConfigAuth` (workspace-admin cap). Take-effect: cc reads
-   `soul_path` at spawn → `--append-system-prompt-file`.
-2. **Takeover** (`Ezagent.Behavior.Mode`, this-session-migrated to Lifecycle):
-   operator replaces the AI; `:set`/`:get` on a session `:mode` slice; `Chat`
-   suppresses agent-sender fan-out when `:takeover`.
+## 被质疑的两个能力
+1. **可编辑 soul**(scope #1,`11-admin-edit-soul-design.md`):人类管理员在 UI 里编辑某租户
+   的客户 soul markdown → 保存 → 新会话使用它。实现为:`SoulStore`(文件
+   `edited→fixture→nil`,write/revert/reset)+ `ConfigLive` + `ConfigAuth`(workspace-admin
+   cap)。生效方式:cc 在 spawn 时读 `soul_path` → `--append-system-prompt-file`。
+2. **接管**(`Ezagent.Behavior.Mode`,本 session 已迁移到 Lifecycle):operator 替代 AI;
+   对 session `:mode` slice 做 `:set`/`:get`;`Chat` 在 `:takeover` 时抑制 agent-sender 的
+   fan-out。
 
-## What the orchestrator actually is
-A **subsystem** (`apps/ezagent_domain_chat/lib/ezagent/orchestrator/*`), not a
-single behavior. It is an **LLM-driven** engine: a per-session cc-orchestrator
-claude instance invokes **7 MCP tools** to compose + route *worker* agents:
+## orchestrator 究竟是什么
+一个**子系统**(`apps/ezagent_domain_chat/lib/ezagent/orchestrator/*`),不是单个 behavior。
+它是一个 **LLM 驱动**的引擎:每个 session 一个 cc-orchestrator claude 实例,调用 **7 个 MCP
+工具**来组合 + 路由 *worker* agent:
 
-| Tool | What it does |
+| 工具 | 作用 |
 |---|---|
-| `add_agent_slot(slot, template_uri, prompt_override?)` | spawn a worker at a slot from an AgentTemplate (reconciler, idempotent) |
-| `remove_agent_slot(slot)` | terminate worker + prune routing |
-| `update_agent_template(slot, new_template_uri)` | **swap** a slot to a *different existing* template |
-| `write_matcher(ast, receivers)` | add a session routing rule |
-| `update_template()` / `save_template_as(name)` | snapshot the **session composition** as a new/forked SessionTemplate version |
-| `list_templates(filter?)` | discover templates (CapBAC-filtered) |
+| `add_agent_slot(slot, template_uri, prompt_override?)` | 从 AgentTemplate 在某 slot 上 spawn 一个 worker(reconciler,幂等) |
+| `remove_agent_slot(slot)` | 终止 worker + 清理路由 |
+| `update_agent_template(slot, new_template_uri)` | 把一个 slot **换**到*另一个已存在*的模板 |
+| `write_matcher(ast, receivers)` | 加一条 session 路由规则 |
+| `update_template()` / `save_template_as(name)` | 把**当前 session 组合**快照为新的 / fork 的 SessionTemplate 版本 |
+| `list_templates(filter?)` | 发现模板(经 CapBAC 过滤) |
 
-Plus `Behavior.OrchestratorAdmin` = a **cap-only** gate (`:restart`) on session-owner
-authority. The orchestrator tools are **MCP-only / invisible to human operators**
-(see `docs/notes/agent-orchestrator-ui-audit-2026-05-23.md`).
+外加 `Behavior.OrchestratorAdmin` = 一个**仅 cap** 的门禁(`:restart`),基于 session-owner
+权限。orchestrator 工具是 **仅 MCP / 对人类 operator 不可见**的
+(见 `docs/notes/agent-orchestrator-ui-audit-2026-05-23.md`)。
 
-## Soul editing — orchestrator CANNOT (evidence)
-- `add_agent_slot`'s `prompt_override` is an **explicit no-op**: *"accepted for API
-  parity with the SPEC but is not consumed — the worker's prompt comes from its
-  AgentTemplate's `claude_config_dir/settings.json` (Decision #136)"*
-  (`orchestrator/tools.ex:155-163`).
-- **No orchestrator tool edits prompt TEXT.** `update_agent_template` only *points a
-  slot at a different existing template URI*; `update_template`/`save_template_as`
-  snapshot **session composition** (which slots + routing), not an agent's
-  system-prompt content.
-- The only thing that mutates an agent's behavior-text at all is **AgentTemplate
-  content** (`Behavior.Template :write`, whole-template replace) — a *separate*
-  behavior, coarse-grained, with none of scope #1's per-`(tenant,role)`
-  `edited/fixture/prev/reset` semantics or workspace-admin cap gate.
-- Our soul model is fundamentally different in *kind*: soul = a per-`(tenant,role)`
-  **markdown file** resolved `edited→fixture` at spawn and injected via
-  `--append-system-prompt-file` (`cc_agent.ex:1146`); the admin edits markdown in a
-  textarea. The orchestrator has no analog and no human-edit surface.
+## soul 编辑 —— orchestrator 做不到(证据)
+- `add_agent_slot` 的 `prompt_override` 是一个**显式 no-op**:*"为与 SPEC 的 API 对齐而接受,
+  但并不被消费 —— worker 的 prompt 来自它 AgentTemplate 的 `claude_config_dir/settings.json`
+  (Decision #136)"*(`orchestrator/tools.ex:155-163`)。
+- **没有任何 orchestrator 工具编辑 prompt 文本。** `update_agent_template` 只是*把一个 slot
+  指向另一个已存在的模板 URI*;`update_template`/`save_template_as` 快照的是 **session 组合**
+  (有哪些 slot + 路由),不是某个 agent 的 system-prompt 内容。
+- 唯一能改动 agent 行为文本的是 **AgentTemplate 内容**(`Behavior.Template :write`,整模板
+  替换)—— 这是一个*独立的*、粗粒度的 behavior,完全没有 scope #1 的
+  per-`(tenant,role)` `edited/fixture/prev/reset` 语义,也没有 workspace-admin cap 门禁。
+- 我们的 soul 模型在*类型*上根本不同:soul = 一个 per-`(tenant,role)` 的 **markdown 文件**,
+  在 spawn 时按 `edited→fixture` 解析并经 `--append-system-prompt-file` 注入
+  (`cc_agent.ex:1146`);管理员在 textarea 里编辑 markdown。orchestrator 没有对应物,也没有
+  人类编辑界面。
 
-**⇒ The orchestrator cannot do scope #1. Refactoring onto it would first require
-building the missing "edit prompt text" primitive anyway.**
+**⇒ orchestrator 做不了 scope #1。要重构到它上面,首先还得先把缺失的"编辑 prompt 文本"
+原语建出来。**
 
-## Takeover — orchestrator does NOT do it (orthogonal)
-Mode is a **session-level** behavior (`:mode` slice); the orchestrator is unaware
-of it and is not a "taken-over" participant. They already coexist correctly.
-No change; do **not** route takeover through the orchestrator.
+## 接管 —— orchestrator 不做这个(正交)
+Mode 是一个**session 级** behavior(`:mode` slice);orchestrator 对它无感知,也不是一个
+"被接管"的参与者。它们本就正确地共存。无需改动;**不要**把接管走 orchestrator。
 
-## Decisive architectural fact: the orchestrator isn't even on our path
-`bootstrap.ex:74-86`: our customer conversations call `EzagentDomainChat.create_session/3`,
-which **unconditionally spawns a per-session cc-orchestrator** (Phase-7
-"session-create-orchestrator-unified") — **but our code never drives it; the
-orchestrator sits idle (an extra claude PTY per session).** The actual customer
-cc agent is spawned by **our** `ensure_cc_for_conv → Workspace.create_agent(...,
-soul_path)` (`bootstrap.ex:114-167`), *not* by `add_agent_slot`. So the
-orchestrator is neither in our soul path nor our message path — it is idle
-dead-weight today (already tracked: REVISIT asking Allen for a
-`create_session(orchestrator: false)` opt-out).
+## 决定性的架构事实:orchestrator 根本不在我们的路径上
+`bootstrap.ex:74-86`:我们的客户会话调用 `EzagentDomainChat.create_session/3`,它
+**无条件为每个 session spawn 一个 cc-orchestrator**(Phase-7
+"session-create-orchestrator-unified")—— **但我们的代码从不驱动它;orchestrator 闲置在那
+(每个 session 多一个 claude PTY)。** 真正的客户 cc agent 是由**我们的**
+`ensure_cc_for_conv → Workspace.create_agent(..., soul_path)`(`bootstrap.ex:114-167`)
+spawn 的,*不是* `add_agent_slot`。所以 orchestrator 既不在我们的 soul 路径上,也不在我们的
+消息路径上 —— 今天它就是闲置的死重(已追踪:REVISIT,向 Allen 申请一个
+`create_session(orchestrator: false)` 的 opt-out)。
 
-## Verdict & implications for PR #446 / scope #1
-1. **Keep `SoulStore` (file-based) for scope #1.** The orchestrator provides no
-   soul-text edit, is LLM-/MCP-driven (not a human admin surface), and adopting it
-   would pull in the whole AgentTemplate/SessionTemplate **versioning** surface
-   that scope #1 §11 *explicitly defers* — i.e. exactly the cargo-culting the
-   design's incremental red line forbids. Wrong scope axis too (session-composition
-   vs tenant-level config).
-2. **Keep `Mode` for takeover.** Already migrated + correct; orthogonal to the
-   orchestrator.
-3. **The one genuine convergence point — deferred, not now.** *If/when* scope #2+
-   wants **versioned souls + A/B variants + swap-in-place**, ezagent's native
-   "change agent behavior by versioning" primitive is **AgentTemplate +
-   `update_agent_template`** — converge there rather than building a parallel
-   version store. Scope #1's `.prev` single-undo deliberately stays file-based; the
-   template path is the future home for full version history.
-4. **Independent cleanup worth filing (not soul-related):** the idle
-   per-CS-session orchestrator PTY waste — ask Allen for the `orchestrator: false`
-   opt-out. Matters extra given the boot-storm / bind pressure.
+## 结论与对 PR #446 / scope #1 的影响
+1. **scope #1 保持 `SoulStore`(基于文件)。** orchestrator 不提供 soul 文本编辑,是
+   LLM-/MCP-驱动的(不是人类管理界面),采用它会把整个 AgentTemplate/SessionTemplate 的
+   **版本化**界面拖进来,而那正是 scope #1 §11 *明确推迟*的 —— 也就是设计的"渐进式红线"
+   所禁止的 cargo-culting。轴也不对(session 组合 vs 租户级配置)。
+2. **接管保持 `Mode`。** 已迁移 + 正确;与 orchestrator 正交。
+3. **唯一真正的收敛点 —— 推迟,不是现在。** *如果 / 当* scope #2+ 想要**版本化 soul +
+   A/B 变体 + 原地切换**时,ezagent 原生的"通过版本化改变 agent 行为"原语是
+   **AgentTemplate + `update_agent_template`** —— 到那时收敛到这里,而不是另建一套平行的
+   版本存储。scope #1 的 `.prev` 单步撤销刻意保持基于文件;模板路径是完整版本历史的未来归宿。
+4. **值得单独立项的清理(与 soul 无关):** 每个客服 session 闲置的 orchestrator PTY 浪费 ——
+   向 Allen 申请 `orchestrator: false` opt-out。考虑到 boot 风暴 / 绑定压力,这点格外重要。
 
-## How this informs Task 3 (PR split)
-The soul-edit slice (`SoulStore`/`ConfigLive`/`ConfigAuth`) stands on its **own**
-ezagent primitives (cc `soul_path`, the capability model) and has **zero**
-dependency on the orchestrator. It can be split into its own reviewable PR without
-any orchestrator-coupling caveat. The takeover slice (`Mode` + `Chat` gating +
-operator dashboard) is likewise orchestrator-independent and splits cleanly on its
-own.
+## 这对任务 3(PR 拆分)的启示
+soul 编辑切片(`SoulStore`/`ConfigLive`/`ConfigAuth`)立足于它**自己的** ezagent 原语
+(cc `soul_path`、能力模型),对 orchestrator **零依赖**。它可以拆成自己独立的可 review PR,
+没有任何 orchestrator 耦合的附带说明。接管切片(`Mode` + `Chat` 门控 + operator dashboard)
+同样独立于 orchestrator,也能干净地单独拆出。
