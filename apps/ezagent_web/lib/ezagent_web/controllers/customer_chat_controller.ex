@@ -113,6 +113,10 @@ defmodule EzagentWeb.CustomerChatController do
     case Bootstrap.ensure_cc_for_conv(workspace, conv_id, session_uri) do
       {:ok, cc_agent_uri} ->
         cc_agent_uri_str = URI.to_string(cc_agent_uri)
+        # Install the explicit customer→cc routing rule (replaces the old
+        # mention-synthesis; `customer_message/3` no longer stamps a mention).
+        # Idempotent — safe to call on every inbound message.
+        :ok = Bootstrap.install_customer_routing(session_uri, customer_uri, cc_agent_uri)
         customer_msg = Bootstrap.customer_message(customer_uri, text, cc_agent_uri)
 
         {:ok, conn} =
