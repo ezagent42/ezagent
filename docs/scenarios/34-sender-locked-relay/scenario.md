@@ -114,8 +114,36 @@ cd apps/ezagent_core && MIX_ENV=test mix test \
 **Harness**:
 `apps/ezagent_domain_chat/test/e2e/scenario_34_sender_locked_relay_live_test.exs`
 — `@moduletag :live`, SKIPPED by default; un-gated only by `SCENARIO_34_LIVE=1`.
-It does NOT fake a live pass; it asserts the user-assist preconditions are wired
-and fails loudly with the precise missing step.
+It does NOT fake a live pass and it does NOT pass on env-vars-only. After Allen
+sends the real `@传话游戏 <word>`, the harness **polls the live session for the
+delivered + rendered relay** via the SAME production read path the system uses
+(`Ezagent.MessageStore.recent_in_session/2` — the query backing the LV chat
+slice `:last_message` and rejoin-replay), looking for a message whose body was
+rendered by the `telephone_hop` prompt template (i.e. carries the template's
+literal wrapper text — proof that `render_for_delivery/4` injected the template
+at the hop, so the chain reached a real templated delivery). If that evidence
+does not appear within the poll budget (default 45s, every 1.5s) it
+**`flunk/1`s** with what was expected vs. seen — it never `assert true`s. The
+agent-browser screenshot remains an inherently manual, agent-side step.
+
+**Programmatically-observable assertion vs. manual step**:
+
+- ASSERTED by the harness (read through the production path): a
+  `telephone_hop`-rendered `chat.receive` landed in `SCENARIO_34_SESSION_URI`.
+  Optionally tighten the gate to the codex→curl hop by exporting the resolved
+  member URIs (the sender of the final hop):
+  ```bash
+  export SCENARIO_34_RELAY_CODEX_URI=entity://agent/<ws>/<relay-codex>  # sender of final hop
+  export SCENARIO_34_RELAY_CURL_URI=entity://agent/<ws>/<relay-curl>    # optional hint
+  # override the marker if define_prompt_template used different text:
+  export SCENARIO_34_HOP_TEMPLATE_MARKER=你在玩传话接龙
+  # override the poll budget/cadence if needed:
+  export SCENARIO_34_OBSERVE_TIMEOUT_MS=45000
+  export SCENARIO_34_OBSERVE_INTERVAL_MS=1500
+  ```
+- MANUAL (NOT assertable from inside the test): the agent-browser screenshot of
+  the Feishu group thread (step 5 below) — Standard 3 mandatory evidence Allen
+  captures agent-side.
 
 **EXACT user-assist steps Allen must do** (these need Allen's environment —
 running services, real Feishu group, provider creds, agent-browser):
@@ -136,20 +164,25 @@ running services, real Feishu group, provider creds, agent-browser):
 4. **Send a REAL Feishu message** from the bound group: `@传话游戏 苹果`. (A
    programmatic dispatch / `send_cursor` read is NOT sufficient — Standard 3
    requires a real inbound Feishu message.)
-5. **Observe in the phx log**: relay-cc → relay-codex → relay-curl each emit a
-   `chat.receive` rendered with `telephone_hop`, and each reply mirrors OUT
-   (`FeishuClient.send_text OK (code=0)`); the user sees the appended chain.
-6. **agent-browser screenshot** of the group thread showing the full relay
-   round-trip (Standard 3 mandatory evidence):
-   ```bash
-   agent-browser open  http://100.64.0.27:10042     # or the Feishu web group
-   agent-browser screenshot  /tmp/scenario34-relay-roundtrip.png
-   ```
-7. **Run the gated harness** (asserts the bindings are present so the runbook is
-   reproducible):
+5. **Run the gated harness** — it polls the live session and ASSERTS the
+   delivered + `telephone_hop`-rendered relay round-trip (flunks if it never
+   arrives within the budget):
    ```bash
    SCENARIO_34_LIVE=1 MIX_ENV=test mix test \
      apps/ezagent_domain_chat/test/e2e/scenario_34_sender_locked_relay_live_test.exs
+   ```
+   It reads `MessageStore.recent_in_session/2` (production path) and watches for
+   a `telephone_hop`-rendered message. Optionally tighten the gate with
+   `SCENARIO_34_RELAY_CODEX_URI` (sender of the final codex→curl hop). Also
+   confirm in the phx log: relay-cc → relay-codex → relay-curl each emit a
+   `chat.receive` rendered with `telephone_hop`, and each reply mirrors OUT
+   (`FeishuClient.send_text OK (code=0)`).
+6. **agent-browser screenshot** of the group thread showing the full relay
+   round-trip — MANUAL, agent-side (Standard 3 mandatory evidence; the harness
+   cannot capture this from inside the test process):
+   ```bash
+   agent-browser open  http://100.64.0.27:10042     # or the Feishu web group
+   agent-browser screenshot  /tmp/scenario34-relay-roundtrip.png
    ```
 
 ## Failure modes

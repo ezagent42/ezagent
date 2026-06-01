@@ -103,7 +103,31 @@ cd apps/ezagent_core && MIX_ENV=test mix test \
 **Harness**：
 `apps/ezagent_domain_chat/test/e2e/scenario_34_sender_locked_relay_live_test.exs`
 —— `@moduletag :live`，默认 SKIPPED；仅由 `SCENARIO_34_LIVE=1` 解除。它不伪造
-实况通过；它断言用户协助的前置条件已就绪，缺哪一步就以精确信息大声失败。
+实况通过，也不会仅凭环境变量就通过。Allen 发出真实的 `@传话游戏 <词>` 后，harness
+**用系统自身的生产读取路径轮询实况会话里已投递+已渲染的接力**
+（`Ezagent.MessageStore.recent_in_session/2` —— 就是 LV 聊天切片 `:last_message`
+与重入回放所用的同一查询），寻找一条正文被 `telephone_hop` 提示模板渲染过的消息
+（即携带该模板字面包裹文本 —— 证明 `render_for_delivery/4` 在该跳注入了模板，链已
+到达一次真实的模板化投递）。若在轮询预算内（默认 45s，每 1.5s 一次）未观察到该证据，
+就 **`flunk/1`**，写明期望 vs. 实见 —— 绝不 `assert true`。agent-browser 截图仍是
+固有的手动、agent 侧步骤。
+
+**可程序化观察的断言 vs. 手动步骤**：
+
+- harness 断言（经生产路径读取）：`SCENARIO_34_SESSION_URI` 里落入一条经
+  `telephone_hop` 渲染的 `chat.receive`。可选地导出已解析的成员 URI（终跳发送者）把
+  闸门收紧到 codex→curl 跳：
+  ```bash
+  export SCENARIO_34_RELAY_CODEX_URI=entity://agent/<ws>/<relay-codex>  # 终跳发送者
+  export SCENARIO_34_RELAY_CURL_URI=entity://agent/<ws>/<relay-curl>    # 可选提示
+  # 若 define_prompt_template 用了不同文本，覆盖标记：
+  export SCENARIO_34_HOP_TEMPLATE_MARKER=你在玩传话接龙
+  # 如需调整轮询预算/节奏：
+  export SCENARIO_34_OBSERVE_TIMEOUT_MS=45000
+  export SCENARIO_34_OBSERVE_INTERVAL_MS=1500
+  ```
+- 手动（测试进程内无法断言）：Feishu 群会话线程的 agent-browser 截图（下面第 6 步）
+  —— Standard 3 强制证据，由 Allen 在 agent 侧捕获。
 
 **Allen 必须做的精确用户协助步骤**（这些需要 Allen 的环境 —— 运行中的服务、真实
 Feishu 群、provider 凭据、agent-browser）：
@@ -122,18 +146,21 @@ Feishu 群、provider 凭据、agent-browser）：
    （`feedback_esr_e2e_standards`）。
 4. **从绑定群发一条真实 Feishu 消息**：`@传话游戏 苹果`。（程序化 dispatch /
    `send_cursor` 读取都不够 —— Standard 3 要求真实的入站 Feishu 消息。）
-5. **在 phx 日志中观察**：relay-cc → relay-codex → relay-curl 各自发出经
-   `telephone_hop` 渲染的 `chat.receive`，每条回复向外镜像
-   （`FeishuClient.send_text OK (code=0)`）；用户看到逐句追加的链。
-6. **agent-browser 截图** 群会话，显示完整接力往返（Standard 3 强制证据）：
-   ```bash
-   agent-browser open  http://100.64.0.27:10042     # 或 Feishu 网页群
-   agent-browser screenshot  /tmp/scenario34-relay-roundtrip.png
-   ```
-7. **运行受控 harness**（断言绑定存在，使 runbook 可复现）：
+5. **运行受控 harness** —— 它轮询实况会话并断言已投递+经 `telephone_hop` 渲染的接力
+   往返（预算内未到达即 flunk）：
    ```bash
    SCENARIO_34_LIVE=1 MIX_ENV=test mix test \
      apps/ezagent_domain_chat/test/e2e/scenario_34_sender_locked_relay_live_test.exs
+   ```
+   它读 `MessageStore.recent_in_session/2`（生产路径），监视经 `telephone_hop` 渲染的
+   消息。可选地用 `SCENARIO_34_RELAY_CODEX_URI`（终跳 codex→curl 的发送者）收紧闸门。
+   同时在 phx 日志确认：relay-cc → relay-codex → relay-curl 各自发出经 `telephone_hop`
+   渲染的 `chat.receive`，每条回复向外镜像（`FeishuClient.send_text OK (code=0)`）。
+6. **agent-browser 截图** 群会话，显示完整接力往返 —— 手动、agent 侧（Standard 3
+   强制证据；harness 无法在测试进程内捕获）：
+   ```bash
+   agent-browser open  http://100.64.0.27:10042     # 或 Feishu 网页群
+   agent-browser screenshot  /tmp/scenario34-relay-roundtrip.png
    ```
 
 ## 失败模式
