@@ -62,19 +62,20 @@ A session member becomes `{URI, meta}` where `meta` carries (in addition to the
 existing `online`):
 
 - **`provenance`** — the URI of the principal that created/owns this member
-  (a user, or an orchestrator agent). GENERAL, not orchestrator-specific.
-  Provenance drives two independent policies:
-  - **(a) Management authority** — who may reconfigure/remove this member. A cap
-    `{:manages, provenance_uri}` (generalising the slot's `{:spawned_by, orch}`)
-    authorises management. Orchestrator workers are simply members whose
-    provenance is the orchestrator.
-  - **(b) Audience / reply scope** *(Allen 2026-06-01)* — an optional policy on
-    the member constraining whom it interacts with: `:any` (default — current
-    behaviour), `:owner_only` (only receives from / replies to its provenance
-    principal), or `{:allowlist, [uri]}`. Example: a user-created private agent
-    set to `:owner_only` replies only to its creator. Enforced at routing time
-    (the Resolver drops the member as a recipient when the sender is outside its
-    audience scope) — fail-closed, no silent broadening.
+  (a user, or an orchestrator agent). GENERAL, not orchestrator-specific. Its
+  single job is **management authority**: who may reconfigure/remove this member
+  AND edit the routing rows that reference it. A cap `{:manages, provenance_uri}`
+  (generalising the slot's `{:spawned_by, orch}`) authorises both. Orchestrator
+  workers are simply members whose provenance is the orchestrator.
+
+  > "Who an agent replies to" is NOT a member facet — it is pure routing
+  > (Allen 2026-06-01): "only reply to owner" = a rule `from(agent) → [owner]`;
+  > "only act on owner's messages" = the agent only appears as a receiver in
+  > rules whose matcher is `from(owner)`. Management authority (above) gates who
+  > may edit those rows, so the owner controls the agent's audience directly on
+  > the routing table — **no separate audience-scope field** (avoids a duplicate
+  > mechanism). A private agent's "only reply to owner" default is just a default
+  > owner-only routing rule created at agent-creation, not a field.
 - **`role_name`** *(optional)* — a stable, human-meaningful alias
   (e.g. `"relay-cc"`) decoupled from the agent's URI. Routing rules and legends
   may target a member by `role_name`; the binding `role_name → current URI`
@@ -157,7 +158,7 @@ fork/instantiate. (Version-hash extended over the new fields.)
 - A **legend** `传话游戏` with `member_set = [relay-cc, relay-codex, relay-curl]`
   (by `role_name`), `fold: true`, `bound_rule_set: "telephone"`.
 - Three **members** (the relay agents), each with `provenance = <the creator>`,
-  a `role_name`, audience scope `:any`, `in_template: true`.
+  a `role_name`, `in_template: true`.
 - A **rule-set** `telephone`:
   - entry: `mention(传话游戏) → relay-cc`
   - `from(relay-cc) → relay-codex`
@@ -180,7 +181,7 @@ model-computed baton protocol that broke at the weakest model.
 | ③ / ④ | multi-receiver / multi-rule | **Rule-set of single-receiver rules**; rules **share a named template**; no multi-receiver-per-rule, no concat ambiguity |
 | ⑤ | injection scope | **All session members** (email-footer model), not agents-only |
 | A/B | `@legend` semantics | **A** (trigger bound rule-set) is default; **B** (broadcast) = a rule-set variant |
-| — | provenance | **General member facet** → drives management authority AND audience/reply scope; slot's `spawned_by` is the orchestrator special case |
+| — | provenance | **General member facet, single job**: management authority over the member AND its routing rows; "who it replies to" is pure routing (not a facet); slot's `spawned_by` is the orchestrator special case |
 
 ## 6. Slot retirement
 
@@ -226,13 +227,15 @@ no-op placeholder) is superseded by the rule-set prompt-template mechanism.
 
 ## 9. Open questions (for review)
 
-1. **Audience-scope enforcement point**: Resolver-level recipient drop (proposed)
-   vs a member-side guard. Resolver keeps it declarative + central; confirm.
-2. **Template storage**: a `prompt_templates` map on the session working
+1. **Template storage**: a `prompt_templates` map on the session working
    copy/template (proposed) vs a workspace-level named-template registry (more
    reuse, more surface). v1 = session-scoped map; flag if workspace reuse is wanted.
-3. **role_name uniqueness/scope**: unique per session? per legend? (proposed: per
+2. **role_name uniqueness/scope**: unique per session? per legend? (proposed: per
    session.)
+3. **`{:manages, provenance}` scope over routing rows**: confirm the management
+   cap authorises editing exactly the routing rows that reference the managed
+   member — this is the mechanism behind "the owner controls the agent's audience
+   directly on the routing table".
 4. **Cutover vs shim** for existing slots (§7).
 5. **Cap shape** for `{:manages, provenance}` — does it compose with the pending
    capability action-axis work (separate todo), or stand alone first?
@@ -240,10 +243,12 @@ no-op placeholder) is superseded by the rule-set prompt-template mechanism.
 ## 10. Testing / verification (to expand in the plan)
 
 - Resolver unit tests: rule-set single-receiver routing; prompt-template
-  application (placeholders, `{body}`-required validation); audience-scope drop
-  (owner_only / allowlist fail-closed); legend `@`-trigger → entry.
-- Member-facet tests: provenance management cap; role_name → URI rebinding across
-  respawn; `in_template` snapshot round-trip.
+  application (placeholders, `{body}`-required validation); legend `@`-trigger →
+  entry.
+- Member-facet tests: provenance management cap authorises member + its routing
+  rows (and denies non-owners); "only reply to owner" expressed purely as a
+  routing rule routes correctly; role_name → URI rebinding across respawn;
+  `in_template` snapshot round-trip.
 - The invariant gate (per `feedback_completion_requires_invariant_test`): a test
   that FAILS if a slot-style mechanism reappears OR if a rule-set flow requires
   model-computed routing. The **live tier** remains the 传话游戏 round-trip in the
