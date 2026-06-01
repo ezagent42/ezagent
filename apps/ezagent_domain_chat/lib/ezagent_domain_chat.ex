@@ -1153,13 +1153,18 @@ defmodule EzagentDomainChat do
   #
   # A template with none of these fields is a no-op `:ok` (behaviour-
   # preserving for the boot `default` template + every pre-PR-7 template).
-  defp materialize_template_team(
-         %URI{} = session_uri,
-         %URI{} = workspace_uri,
-         %URI{} = granted_by,
-         template_content
-       )
-       when is_map(template_content) do
+  @doc false
+  # Public for the materialization idempotency test (codex BLOCKER #1) +
+  # the repair path — re-materializing the SAME session must be idempotent
+  # (same member URIs, no duplicate rule rows). NOT a stable external API.
+  @spec materialize_template_team(URI.t(), URI.t(), URI.t(), map()) :: :ok | {:error, term()}
+  def materialize_template_team(
+        %URI{} = session_uri,
+        %URI{} = workspace_uri,
+        %URI{} = granted_by,
+        template_content
+      )
+      when is_map(template_content) do
     with {:ok, role_to_uri} <-
            materialize_template_members(session_uri, workspace_uri, granted_by, template_content),
          :ok <- install_template_prompt_templates(session_uri, template_content),
@@ -1171,7 +1176,7 @@ defmodule EzagentDomainChat do
   end
 
   # A non-map / nil content can't carry a team — nothing to materialize.
-  defp materialize_template_team(_session, _ws, _granted_by, _content), do: :ok
+  def materialize_template_team(_session, _ws, _granted_by, _content), do: :ok
 
   # Step 1 — recreate + join each `in_session_template: true` member.
   # Returns `{:ok, role_to_uri}` where `role_to_uri` maps each member's
@@ -1211,7 +1216,14 @@ defmodule EzagentDomainChat do
     source_template_uri = member_uri_field(member, :source_template_uri)
 
     with {:ok, %URI{} = member_uri} <-
-           ensure_member_present(member, workspace_uri, granted_by, source_template_uri, role_name) do
+           ensure_member_present(
+             member,
+             workspace_uri,
+             granted_by,
+             source_template_uri,
+             role_name,
+             session_uri
+           ) do
       facets =
         %{in_session_template: true}
         |> maybe_put(:role_name, role_name)
@@ -1242,10 +1254,12 @@ defmodule EzagentDomainChat do
          %URI{} = workspace_uri,
          %URI{} = granted_by,
          %URI{} = source_template_uri,
-         role_name
+         role_name,
+         %URI{} = session_uri
        ) do
     with {:ok, flavor} <- source_template_flavor(source_template_uri) do
-      instance_name = spawned_member_instance_name(flavor, source_template_uri, role_name)
+      instance_name =
+        spawned_member_instance_name(flavor, source_template_uri, role_name, session_uri)
 
       case Ezagent.Entity.Agent.spawn(
              source_template_uri,
@@ -1262,7 +1276,7 @@ defmodule EzagentDomainChat do
 
   # PLAIN invited member — no spawn source; use its declared `uri`,
   # demand-spawning its Kind so `chat.join` finds it alive (idempotent).
-  defp ensure_member_present(member, _workspace_uri, _granted_by, nil, _role_name) do
+  defp ensure_member_present(member, _workspace_uri, _granted_by, nil, _role_name, _session_uri) do
     case member_uri_field(member, :uri) do
       %URI{} = member_uri ->
         _ = Ezagent.SpawnRegistry.spawn(member_uri)
@@ -1286,9 +1300,26 @@ defmodule EzagentDomainChat do
     end
   end
 
-  defp spawned_member_instance_name(flavor, %URI{} = source_template_uri, role_name)
+  # codex BLOCKER #1 — the spawned-member instance name MUST be unique per
+  # (session, role_name). The pre-fix `"#{flavor}_#{role_name}"` carried NO
+  # session discriminator, so two sessions materialized from the SAME
+  # template in the SAME workspace collided on the same
+  # `entity://agent/<ws>/<flavor>_<role>` URI — the exact isolation bug the
+  # Agent session-unique worker naming (`Ezagent.Entity.Agent.session_instance_name/3`,
+  # added for the Generator/slot path's CRITICAL+HIGH-6 finding) was built to
+  # fix. We REUSE that primitive: it folds the session discriminator (the
+  # session URI's name segment) + an injective slot hash into the name, so:
+  #   * two sessions from one template → DISTINCT member URIs (isolation);
+  #   * a respawn within the SAME session for the SAME role_name → the SAME
+  #     name (deterministic, generation 0), so re-materialization is
+  #     idempotent (the `{:already_started}` path re-derives the same URI).
+  # The flavor prefix (`<flavor>_…`) is preserved — the AgentFlavorRegistry
+  # parses it (`String.split(name, "_", parts: 2)`) to resolve the Kind
+  # module, so the prefix must stay first and the discriminator rides in the
+  # suffix.
+  defp spawned_member_instance_name(flavor, %URI{} = source_template_uri, role_name, %URI{} = session_uri)
        when is_binary(flavor) do
-    base =
+    slot =
       if is_binary(role_name) and role_name != "" do
         role_name
       else
@@ -1299,10 +1330,32 @@ defmodule EzagentDomainChat do
          |> List.last()) || "member"
       end
 
-    # `<flavor>_<slug>` — the URI-name-safe instance name. The Agent URI is
-    # `entity://agent/<ws>/<instance_name>`; the flavor prefix is what the
-    # AgentFlavorRegistry parses to resolve the Kind module.
-    "#{flavor}_" <> String.replace(base, ~r/[^A-Za-z0-9_-]/, "_")
+    session_unique =
+      Ezagent.Entity.Agent.session_instance_name(slot, session_discriminator(session_uri))
+
+    # `<flavor>_<session-unique-slot>` — flavor prefix first so the
+    # AgentFlavorRegistry resolves the Kind module; the session-unique
+    # suffix gives per-(session, role) isolation.
+    "#{flavor}_#{session_unique}"
+  end
+
+  # The session discriminator: the session URI's name segment
+  # (`session://<template>/<workspace>/<name>` → `<name>`). Mirrors
+  # `Ezagent.Entity.Session.session_discriminator/1` (private there) — the
+  # same value the orchestrator slot path folds into worker instance names,
+  # so a materialized member's uniqueness scope matches a dynamically-spawned
+  # worker's.
+  defp session_discriminator(%URI{} = session_uri) do
+    case session_uri.path do
+      "/" <> rest ->
+        case String.split(rest, "/", parts: 2) do
+          [_ws, name] when name != "" -> name
+          _ -> session_uri.host || "session"
+        end
+
+      _ ->
+        session_uri.host || "session"
+    end
   end
 
   defp derive_member_uri(%URI{host: ws_name}, instance_name) when is_binary(ws_name) do

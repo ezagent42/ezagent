@@ -348,6 +348,110 @@ defmodule EzagentDomainChat.Integration.SessionTemplateMaterializeTest do
     end)
   end
 
+  test "two sessions from ONE template get DISTINCT member URIs; re-materializing a session is idempotent (codex BLOCKER #1)" do
+    n = uniq()
+    template_name = "iso-team-#{n}"
+    role_name = "worker-#{n}"
+    source_template_uri = seed_agent_template(n)
+
+    content = %{
+      name: template_name,
+      description: "isolation team",
+      orchestrator_template_uri: nil,
+      default_workspace_uri: URI.parse("workspace://system"),
+      parent_template_uri: nil,
+      version_tag: nil,
+      created_by: User.admin_uri(),
+      created_at: ~U[2026-06-01 00:00:00Z],
+      members: [
+        %{
+          uri: nil,
+          role_name: role_name,
+          in_session_template: true,
+          source_template_uri: source_template_uri
+        }
+      ],
+      prompt_templates: %{},
+      legends: %{},
+      routing_rules: []
+    }
+
+    _template_uri = persist_template(content)
+
+    # ── two DISTINCT sessions from the SAME template in the SAME workspace ─
+    assert {:ok, session_a, _} =
+             EzagentDomainChat.create_session("iso-a-#{n}", User.admin_uri(),
+               template_name: template_name
+             )
+
+    assert {:ok, session_b, _} =
+             EzagentDomainChat.create_session("iso-b-#{n}", User.admin_uri(),
+               template_name: template_name
+             )
+
+    cleanup_session(session_a)
+    cleanup_session(session_b)
+
+    member_a = Chat.role_name_to_uri(chat_slice(session_a).members, role_name)
+    member_b = Chat.role_name_to_uri(chat_slice(session_b).members, role_name)
+
+    cleanup_agent(member_a)
+    cleanup_agent(member_b)
+
+    # The prior isolation bug: both sessions collided on the SAME
+    # entity://agent/<ws>/<flavor>_<role> URI. The session-discriminator
+    # in the instance name must make them DISTINCT.
+    assert %URI{scheme: "entity", host: "agent"} = member_a
+    assert %URI{scheme: "entity", host: "agent"} = member_b
+    refute member_a == member_b,
+           "two sessions from one template must NOT share a member URI; got #{URI.to_string(member_a)} for both"
+
+    # ── re-materializing the SAME session is idempotent (same URI) ────────
+    # A respawn within the SAME session for the SAME role_name must land on
+    # the SAME URI (deterministic from the session discriminator).
+    member_a_again =
+      EzagentDomainChat.materialize_template_team(
+        session_a,
+        URI.new!("workspace://system"),
+        User.admin_uri(),
+        content
+      )
+      |> case do
+        :ok -> Chat.role_name_to_uri(chat_slice(session_a).members, role_name)
+      end
+
+    assert member_a_again == member_a,
+           "re-materializing the same session for the same role must be idempotent (same URI)"
+  end
+
+  defp cleanup_session(session_uri) do
+    on_exit(fn ->
+      case KindRegistry.lookup(session_uri) do
+        {:ok, pid} ->
+          if Process.alive?(pid),
+            do: DynamicSupervisor.terminate_child(EzagentDomainChat.SessionSupervisor, pid)
+
+        :error ->
+          :ok
+      end
+    end)
+  end
+
+  defp cleanup_agent(%URI{} = agent_uri) do
+    on_exit(fn ->
+      case KindRegistry.lookup(agent_uri) do
+        {:ok, pid} ->
+          if Process.alive?(pid),
+            do: DynamicSupervisor.terminate_child(EzagentDomainChat.AgentSupervisor, pid)
+
+        :error ->
+          :ok
+      end
+    end)
+  end
+
+  defp cleanup_agent(_), do: :ok
+
   # Persist a minimal echo-flavor AgentTemplate Kind to spawn workers from.
   # The `echo` flavor is registered in the test boot (test_helper.exs), so a
   # spawned `entity://agent/<ws>/echo_<...>` resolves to a joinable Echo Kind.
