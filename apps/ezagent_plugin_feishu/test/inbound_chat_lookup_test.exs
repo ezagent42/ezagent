@@ -201,6 +201,120 @@ defmodule EzagentPluginFeishu.InboundChatLookupTest do
     defp set_members(map), do: :persistent_term.put({__MODULE__, :members}, map)
   end
 
+  # team-routing-unification §3.6 (PR-6, codex 2026-06-01 MED #3) — a shared
+  # Feishu chat bound to multiple sessions, with ONLY an `@<legend>` (no
+  # concrete agent mention), is narrowed by resolving the typed token against
+  # EACH candidate session's legend registry. Legends are session-scoped, so
+  # the same `@传话游戏` may name a legend in one bound session but not another.
+  describe "resolve/3 — @-legend disambiguation" do
+    setup do
+      :persistent_term.put({__MODULE__, :members}, %{})
+      :persistent_term.put({__MODULE__, :legends}, %{})
+
+      Application.put_env(
+        :ezagent_plugin_feishu,
+        :session_member_reader,
+        {__MODULE__, :stub_member_uris}
+      )
+
+      Application.put_env(
+        :ezagent_plugin_feishu,
+        :session_legends_reader,
+        {__MODULE__, :stub_legends}
+      )
+
+      on_exit(fn ->
+        Application.delete_env(:ezagent_plugin_feishu, :session_member_reader)
+        Application.delete_env(:ezagent_plugin_feishu, :session_legends_reader)
+        :persistent_term.erase({__MODULE__, :members})
+        :persistent_term.erase({__MODULE__, :legends})
+      end)
+
+      :ok
+    end
+
+    test "2 bindings + ONLY @legend that is registered in exactly ONE session → routes there" do
+      chat_id = "oc_legend_disambig_" <> uniq()
+      sess_a = "session://default/system/team_a_" <> uniq()
+      sess_b = "session://default/system/team_b_" <> uniq()
+
+      insert_row(sess_a, "feishu", chat_id)
+      insert_row(sess_b, "feishu", chat_id)
+
+      # `传话游戏` is a legend in session A only (no concrete agent mention,
+      # no members signal). The legend narrows the ambiguous set to A.
+      set_legends(%{
+        sess_a => Ezagent.Routing.Legend.put(%{}, "传话游戏", bound_rule_set: "telephone")
+      })
+
+      assert {:ok, %URI{} = parsed} =
+               InboundChatLookup.resolve(chat_id, [], "@传话游戏 开始")
+
+      assert URI.to_string(parsed) == sess_a
+    end
+
+    test "2 bindings + @legend registered in BOTH → fail closed" do
+      chat_id = "oc_legend_both_" <> uniq()
+      sess_a = "session://default/system/team_a_" <> uniq()
+      sess_b = "session://default/system/team_b_" <> uniq()
+
+      insert_row(sess_a, "feishu", chat_id)
+      insert_row(sess_b, "feishu", chat_id)
+
+      set_legends(%{
+        sess_a => Ezagent.Routing.Legend.put(%{}, "传话游戏", bound_rule_set: "telephone"),
+        sess_b => Ezagent.Routing.Legend.put(%{}, "传话游戏", bound_rule_set: "telephone")
+      })
+
+      assert {:error, :ambiguous_chat_binding} =
+               InboundChatLookup.resolve(chat_id, [], "@传话游戏 hi")
+    end
+
+    test "2 bindings + @legend registered in NEITHER → fail closed" do
+      chat_id = "oc_legend_neither_" <> uniq()
+      sess_a = "session://default/system/team_a_" <> uniq()
+      sess_b = "session://default/system/team_b_" <> uniq()
+
+      insert_row(sess_a, "feishu", chat_id)
+      insert_row(sess_b, "feishu", chat_id)
+
+      # No session registers `传话游戏`.
+      set_legends(%{})
+
+      assert {:error, :ambiguous_chat_binding} =
+               InboundChatLookup.resolve(chat_id, [], "@传话游戏 hi")
+    end
+
+    test "legend AND mention both narrow to the same single session → routes there" do
+      chat_id = "oc_legend_plus_mention_" <> uniq()
+      sess_a = "session://default/system/team_a_" <> uniq()
+      sess_b = "session://default/system/team_b_" <> uniq()
+
+      insert_row(sess_a, "feishu", chat_id)
+      insert_row(sess_b, "feishu", chat_id)
+
+      set_members(%{sess_a => ["entity://agent/default/cc_relay"]})
+      set_legends(%{sess_a => Ezagent.Routing.Legend.put(%{}, "传话游戏", bound_rule_set: "rs")})
+
+      mention = URI.parse("entity://agent/default/cc_relay")
+
+      assert {:ok, %URI{} = parsed} =
+               InboundChatLookup.resolve(chat_id, [mention], "@传话游戏 @cc_relay go")
+
+      assert URI.to_string(parsed) == sess_a
+    end
+
+    defp set_legends(map), do: :persistent_term.put({__MODULE__, :legends}, map)
+  end
+
+  # Stub legend-registry reader injected via :session_legends_reader. Keyed on
+  # canonical session URI string; returns the session's legend registry (`%{}`
+  # for an unregistered / non-live session, mirroring Session.session_legends/1).
+  def stub_legends(%URI{} = session_uri) do
+    :persistent_term.get({__MODULE__, :legends}, %{})
+    |> Map.get(URI.to_string(session_uri), %{})
+  end
+
   # Stub membership reader injected via :session_member_reader. Keyed on
   # the canonical session URI string; returns member URI structs (the
   # real reader returns URIs, and the lookup compares on canonical form).

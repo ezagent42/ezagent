@@ -69,36 +69,29 @@ defmodule EzagentPluginFeishu.MentionParserTest do
     assert [] = MentionParser.extract_agent_mentions(123)
   end
 
-  # team-routing-unification §3.6 (PR-6) — legend precedence at the parser.
-  # `extract_mentions/2` consults the session legend registry BEFORE the
-  # URI-mention path: a legend is intercepted and resolved to its bound
-  # rule-set entry's CONCRETE receiver URIs (firing the flow's first hop), so a
-  # legend NAME never mis-routes through the concrete-URI matcher AND never
-  # enters message.mentions as a non-castable string.
+  # team-routing-unification §3.6 (PR-6, codex-redesign) — legend precedence at
+  # the parser. `extract_mentions/2` consults the session legend registry
+  # BEFORE the URI-mention path and returns `{mentions, legend_triggers}`. A
+  # legend token is surfaced as a SYMBOLIC NAME in `legend_triggers` (NOT
+  # pre-canonicalized to concrete URIs — the send path fires the entry rule via
+  # the Resolver, carrying ctx + expanding magic receivers). The legend name
+  # never enters `mentions` (it is not a castable URI).
   describe "extract_mentions/2 — legend precedence (GATE b)" do
-    test "a legend resolves to its bound rule-set entry's concrete receiver URI" do
-      entry_receiver = "entity://agent/team-alpha/cc_relay#{System.unique_integer([:positive])}"
-      seed_entry!("telephone", entry_receiver)
-
+    test "a legend token surfaces as a SYMBOLIC name in legend_triggers, not in mentions" do
       legends =
         Ezagent.Routing.Legend.put(%{}, "传话游戏",
           member_set: ["relay-cc"],
           bound_rule_set: "telephone"
         )
 
-      # No live agent named 传话游戏 exists; without legend precedence the
-      # CJK token silent-drops. WITH precedence it fires the entry → its
-      # concrete receiver URI is emitted (persistence-safe).
-      assert [%URI{} = uri] = MentionParser.extract_mentions("@传话游戏 开始", legends)
-      assert URI.to_string(uri) == entry_receiver
+      # No live agent named 传话游戏 exists; without legend precedence the CJK
+      # token silent-drops. WITH precedence it surfaces as a legend trigger.
+      assert {[], ["传话游戏"]} = MentionParser.extract_mentions("@传话游戏 开始", legends)
     end
 
     test "a legend takes precedence even if a concrete agent shares the typed token" do
       name = unique_agent_name("collide")
       spawn_agent!(name)
-
-      entry_receiver = "entity://agent/team-alpha/cc_relay#{System.unique_integer([:positive])}"
-      seed_entry!("rs-#{name}", entry_receiver)
 
       # Register a legend whose NAME equals the typed token the live agent
       # would otherwise match (full entity name `cc_<name>`).
@@ -108,51 +101,46 @@ defmodule EzagentPluginFeishu.MentionParserTest do
           bound_rule_set: "rs-#{name}"
         )
 
-      # Legend wins: the legend's entry receiver, NOT the colliding agent URI.
-      assert [%URI{} = uri] = MentionParser.extract_mentions("@cc_#{name} go", legends)
-      assert URI.to_string(uri) == entry_receiver
+      # Legend wins: the token rides legend_triggers; the colliding agent URI is
+      # NOT in mentions (the legend token is removed from the URI-mention scan).
+      assert {[], ["cc_#{name}"]} == MentionParser.extract_mentions("@cc_#{name} go", legends)
     end
 
     test "non-legend mentions still resolve to concrete agent URIs (mixed)" do
       name = unique_agent_name("mixed")
       spawn_agent!(name)
 
-      entry_receiver = "entity://agent/team-alpha/cc_relay#{System.unique_integer([:positive])}"
-      seed_entry!("telephone", entry_receiver)
-
       legends =
         Ezagent.Routing.Legend.put(%{}, "传话游戏", member_set: [], bound_rule_set: "telephone")
 
-      out = MentionParser.extract_mentions("@传话游戏 and @#{name}", legends)
+      {mentions, legend_triggers} =
+        MentionParser.extract_mentions("@传话游戏 and @#{name}", legends)
 
-      assert Enum.any?(out, &(URI.to_string(&1) == entry_receiver))
-      assert Enum.any?(out, &(URI.to_string(&1) == "entity://agent/team-alpha/cc_#{name}"))
+      assert legend_triggers == ["传话游戏"]
+      assert Enum.any?(mentions, &(URI.to_string(&1) == "entity://agent/team-alpha/cc_#{name}"))
     end
 
-    test "empty legends → behaves like extract_agent_mentions (URI-only)" do
+    test "empty legends → {extract_agent_mentions, []}" do
       name = unique_agent_name("nolegend")
       spawn_agent!(name)
 
-      assert [%URI{} = uri] = MentionParser.extract_mentions("@#{name} hi", %{})
+      assert {[%URI{} = uri], []} = MentionParser.extract_mentions("@#{name} hi", %{})
       assert URI.to_string(uri) == "entity://agent/team-alpha/cc_#{name}"
     end
   end
 
-  # Seed a single-receiver rule-set entry (position 0) so a legend bound to
-  # `rule_set` resolves to `receiver`.
-  defp seed_entry!(rule_set, receiver) do
-    {:ok, _} =
-      Ezagent.Routing.RuleStore.add(
-        EzagentDomainChat.Routing.MentionRouting,
-        Ezagent.Routing.Matcher.mention(rule_set),
-        [receiver],
-        URI.new!("entity://user/system/admin"),
-        rule_set: rule_set,
-        position: 0,
-        prompt_template_ref: "telephone_hop"
-      )
+  # codex 2026-06-01 MED #5 — left-boundary: `foo@name` must NOT match.
+  describe "extract_agent_mentions/1 — left boundary" do
+    test "an @ glued to a preceding word char (email-like) does not mention" do
+      name = unique_agent_name("boundary")
+      spawn_agent!(name)
 
-    :ok
+      # Glued: `foo@<name>` — no left boundary, must NOT resolve.
+      assert [] = MentionParser.extract_agent_mentions("mail foo@#{name} now")
+
+      # Space-separated: `@<name>` — resolves as before.
+      assert [%URI{}] = MentionParser.extract_agent_mentions("ping @#{name} now")
+    end
   end
 
   defp unique_agent_name(prefix) do
