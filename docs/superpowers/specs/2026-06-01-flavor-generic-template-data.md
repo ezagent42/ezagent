@@ -57,18 +57,36 @@ NOT be returned by the callback (core ignores/overrides them if present).
 ### `to_template_data/2` change
 
 ```
-base = %{"class" => class, "agent_uri" => ..., "cwd" => cwd}
-extra =
-  case flavor_template_class(content) do
-    {:ok, tc} -> if function_exported?(tc, :template_data_extra, 1), do: tc.template_data_extra(content), else: %{}
-    _ -> %{}
-  end
-{:ok, merge_drop_nil_and_reserved(base, extra)}
+{:ok, tc}  = flavor_template_class(content)         # already resolved for `class`
+base       = %{"class" => tc.template_name(), "agent_uri" => ..., "cwd" => cwd}
+extra      = if function_exported?(tc, :template_data_extra, 1),
+               do: tc.template_data_extra(content), else: %{}
+data       = merge_drop_nil_and_reserved(base, extra)  # nil + reserved-key dropped
+# HIGH (codex review): fail-fast — a misconfigured flavor template must NOT
+# spawn a nil-config worker. Validate the assembled data against the flavor's
+# OWN validate/1 (it already encodes required-field rules, e.g. curl requires
+# non-empty provider/api_url/model) before returning.
+case (if function_exported?(tc, :validate, 1), do: tc.validate(data), else: :ok) do
+  :ok          -> {:ok, data}
+  {:error, e}  -> {:error, {:invalid_template_data, e}}
+end
 ```
 
-The hardcoded cc optional set is **removed from core** and moved into the cc
-Template Class's `template_data_extra/1`. The merge drops nil values (as today)
-and ignores any reserved key the callback returns (defensive).
+`flavor_template_class/1` resolves the module ONCE (replacing the separate
+`resolve_class_name/1` + base `class` string — codex review LOW: avoid the
+double registry lookup). The hardcoded cc optional set is **removed from core**
+and moved into the cc Template Class's `template_data_extra/1`. The merge drops
+nil values (as today) AND ignores any reserved key (`class`/`agent_uri`/`cwd`)
+the callback returns (defensive).
+
+**Fail-fast validation (codex review HIGH).** `Agent.spawn_from_template_content/4`
+→ `instantiate_workers/3` passes `to_template_data`'s map straight to
+`instantiate/3` WITHOUT calling the flavor `validate/1`. So a curl/codex template
+missing a required field (e.g. curl `provider`) would today spawn a worker whose
+flavor slice is nil — exactly the live failure mode. Running `tc.validate(data)`
+inside `to_template_data` (above) makes `add_agent_slot` / the create flow return
+`{:error, {:invalid_template_data, _}}` LOUDLY instead. `validate/1` is optional;
+flavors without it skip the check.
 
 ### Per-flavor `template_data_extra/1`
 
@@ -81,10 +99,33 @@ atom-or-string content keys. Each flavor returns ONLY non-nil extras:
   `"role"`. Identical output to today's hardcoded set → orchestrators + existing
   cc agents are byte-for-byte unaffected.
 - **curl** (`apps/ezagent_plugin_curl_agent/.../curl_agent.ex`):
-  `"provider"`, `"api_url"`, `"model"`, `"system_prompt"`, `"max_history"`.
+  `"provider"`, `"api_url"`, `"model"` (required — curl `validate/1` rejects
+  empty), `"system_prompt"`, `"max_history"`. `max_history` is threaded AS-IS
+  (int or string); curl's `instantiate/3` already coerces via `parse_int/2`
+  (default 20) — the callback does NOT coerce (codex review LOW).
 - **codex** (`apps/ezagent_plugin_codex/.../codex_agent.ex`):
   `"model"`, `"approval_policy"`, `"sandbox"`, and optional `"bridge_ws_url"`,
-  `"codex_path"` when present.
+  `"codex_path"`. **Only include a key when its content value is a NON-EMPTY
+  binary** (codex review MED: `bridge_ws_url`/`codex_path` feed sidecar/app-server
+  paths and outpace codex `validate/1`; emitting a stray empty/non-binary value
+  must not reach the runtime). nil/empty → omitted by the callback (the core
+  nil-drop is a backstop, not the only guard).
+
+### AgentTemplate content contract (codex review MED)
+
+The AgentTemplate `:template` slice `content` is redefined as **a universal base
++ flavor-owned extras**: `flavor` + `working_directory` are universal; the rest
+of the content is whatever THAT flavor's `template_data_extra/1` reads. Update
+the normative docs accordingly:
+- `Ezagent.Behavior.Template` moduledoc (currently lists a cc-only field set).
+- `Ezagent.Entity.AgentTemplate` moduledoc ("what is NOT in the slice" cc note).
+The surfaces that POPULATE content must supply the flavor's required fields:
+`Behavior.Template` `:write` (the `template.write` path used by seeds + the
+orchestrator's `save_template_as`), the LiveView template form, and any flavor
+seed. `handle_write/2` persists arbitrary maps today, so no writer code changes
+— but a curl/codex AgentTemplate created WITHOUT its required fields will now
+fail fast at `to_template_data` (the validate above), which is the intended
+loud behavior.
 
 ## Out of scope (separate todo items)
 
@@ -102,8 +143,12 @@ atom-or-string content keys. Each flavor returns ONLY non-nil extras:
   curl-flavored content yields `provider`/`api_url`/`model`; for a codex-flavored
   content yields `model`/`approval_policy`/`sandbox`. A flavor whose Class lacks
   the callback yields base-only.
+- **Fail-fast (codex review HIGH)**: a curl-flavored content MISSING `provider`
+  (or empty) → `to_template_data/2` returns `{:error, {:invalid_template_data,
+  _}}` (NOT a base-only map that would spawn a nil-config worker).
 - **Invariant**: the callback output never contains reserved keys
-  (`class`/`agent_uri`/`cwd`); nil extras are dropped.
+  (`class`/`agent_uri`/`cwd`); nil extras are dropped; codex optional
+  path-fields are omitted unless non-empty binaries.
 - **Live (the gate, after merge)**: orchestrator `add_agent_slot` a curl worker
   + `put_api_key` + `write_matcher` → the worker calls DeepSeek and replies,
   mirrored to the bound ESR Feishu group (`FeishuClient send_text code=0`). Same
