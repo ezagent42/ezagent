@@ -100,6 +100,22 @@ defmodule EzagentWeb.Router do
     end
   end
 
+  # Phase 2.8 (AutoService → ezagent migration) — operator console for
+  # live customer sessions, reachable at `/operator/:tenant` (tenant baked
+  # into the route) or `/operator` (no-tenant picker). Auth is a real
+  # workspace-scoped operator cap (`Mode.set`) via `OperatorAuth`; system
+  # members pass unconditionally. Separate scope so the
+  # EzagentPluginCustomerChat alias resolves correctly.
+  scope "/", EzagentPluginCustomerChat do
+    pipe_through [:browser, EzagentWeb.Plugs.RequireEntity]
+
+    live_session :operator_console, on_mount: {EzagentWeb.LiveAuth, :require_entity} do
+      live "/operator", DashboardLive
+      live "/operator/:tenant", DashboardLive
+      live "/operator/:tenant/:conv", SessionViewLive
+    end
+  end
+
   # /admin* requires login (Phase 4-completion Spec 05 §A.2.3 +
   # PR #123 hardening: live_session on_mount gates the WS reconnect
   # path that bypasses the HTTP Plug pipeline).
