@@ -15,6 +15,32 @@ core-team decision), one identity gap and one lifecycle gap are **documented, no
 fixed** (out of scope per the minimal-PoC principle), and one capability the
 orchestrator was hoped to provide it cannot.
 
+## ⭐ Meta-finding M1 — ezagent lacks a first-class "customer-service / simple-service session" profile
+**This is the PoC's most important strategic finding for the core team.** Three of
+the individual gaps below (G2, G6, G7) are not independent — they are **three facets
+of one root**: ezagent's session/template model is built for the
+**orchestrated, identified, multi-agent workspace app** shape. Customer service is a
+**different shape**: an **anonymous end-user** talks to a **single fixed answering
+agent** over a **short, often ephemeral conversation**. The framework has no
+first-class support for that shape, so a CS vertical must work around it on three
+separate axes:
+
+| Facet | Axis | CS needs | ezagent default | Our workaround |
+|---|---|---|---|---|
+| **G2** | session **lifecycle** | short / ephemeral per-conversation agent | boot-restore long-lived agents | `create_agent` + `remove_template` + GC (fights the framework) |
+| **G6** | customer **identity** | anonymous / guest end-user | identified principal (Identity/Capability) | synthesized `entity://user/<ws>/customer_<id>` URIs |
+| **G7** | agent **composition** | one declarative fixed agent | runtime LLM-orchestrator only (static slots removed) | plain orchestrator-less template + plugin-side `Routing.add_rule` |
+
+**Recommendation for Allen — bundle, don't patch.** Rather than four scattered
+point-fixes, consider a first-class **"service session" profile** that provides, as
+one coherent feature: (i) an **anonymous/guest principal** (G6); (ii) a
+**declarative fixed-agent + routing** template — restore static slots or an
+equivalent (G7); (iii) a **lightweight lifecycle** — no forced orchestrator, optional
+ephemeral cleanup (G2 + the `orchestrator: false` / non-fatal-readiness / per-ws
+default-seed items in G7). Then a vertical like customer service composes
+**natively** instead of working around three axes. (If a full profile is too big,
+each facet's narrower fix is listed under G2/G6/G7.)
+
 ## Findings
 
 ### G1 — cc bridge JOIN (claude 2.1.92) — BLOCK, FIXED
@@ -29,7 +55,7 @@ spinning 15 s); the dialog-gate timeout is now non-fatal so `kick_loop` always r
 in the template) or configure `api_key_helper`, else you hit the OAuth screen.
 Verify with `grep 'CONNECTED TO Ezagent.AgentBridge.Socket'` + `grep 'JOINED agent_bridge'`.
 
-### G2 — agent lifecycle for anonymous / per-conversation customers — GAP (documented)
+### G2 — agent lifecycle for anonymous / per-conversation customers — GAP (documented) · *facet of M1 (lifecycle axis)*
 A serves a fresh cc agent per conversation. ezagent's boot-restore would re-spawn
 all of them on restart, so A added a custom workaround: `create_agent` →
 `remove_template` (drop the boot-restore registration) → ephemeral GC. This is the
@@ -72,7 +98,7 @@ session is wasted — worth a `create_session(orchestrator: false)` opt-out.)
 - **Auth** uses the native capability model throughout (operator `Mode.set` cap,
   config workspace-admin cap). No core change.
 
-### G6 — anonymous / unauthenticated customers — GAP / DECISION → Allen
+### G6 — anonymous / unauthenticated customers — GAP / DECISION → Allen · *facet of M1 (identity axis)*
 ezagent's Identity/Capability model assumes **identified principals**. A serves
 public web chat by **synthesizing anonymous customer URIs**
 (`entity://user/<ws>/customer_<id>`); the customer route is public
@@ -80,7 +106,7 @@ public web chat by **synthesizing anonymous customer URIs**
 login. Works, but via a workaround. **Decision for Allen:** is synthetic-customer the
 blessed pattern, or should ezagent have a native anonymous/guest principal?
 
-### G7 — no native "fixed-agent team" / orchestrator-less composition path — GAP / DECISION → Allen
+### G7 — no native "fixed-agent team" / orchestrator-less composition path — GAP / DECISION → Allen · *facet of M1 (composition axis)*
 Surfaced while manually testing customer chat (first message got no reply). The
 full chain we had to face to get ONE fixed CS agent answering in a session:
 1. **A per-tenant workspace has no `"default"` session template** — boot seeds the
