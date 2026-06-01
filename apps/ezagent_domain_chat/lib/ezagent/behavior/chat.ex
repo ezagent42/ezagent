@@ -111,7 +111,7 @@ defmodule Ezagent.Behavior.Chat do
 
   require Logger
 
-  alias Ezagent.{Capability, Cmd, KindRegistry, Message, MessageStore}
+  alias Ezagent.{Cmd, KindRegistry, Message, MessageStore}
 
   # PR-N3 r4 (Allen 2026-05-25) — bounded cursor-indexed ring depth for
   # the User-branch `:receive` `:recent_messages` ring. SPEC-pinned (NOT
@@ -670,17 +670,20 @@ defmodule Ezagent.Behavior.Chat do
     # authority-bearing, so two concerns are kept SEPARATE (Allen 2026-06-01):
     #   * the VALUE — who the owner is — is PASSED explicitly here (a later tier,
     #     PR-7, may derive it from the member's creator/lineage where recorded);
-    #   * the AUTHORIZATION — who may set it — is a dedicated CAPABILITY, checked
-    #     through the same CapBAC machinery as every other action.
-    # The earlier "caller is a system:// principal" check was an unsound proxy:
-    # `ctx.caller` is an unauthenticated field (codex A1) and `system://` is far
-    # too broad (chat-router / chat-reply are system but only fan out messages —
-    # codex B1). So provenance is honored ONLY when the caller HOLDS the
-    # `Chat :set_member_provenance` cap. The allowlist principals
-    # (session-internal / template-materialize / orchestrator-tools) already hold
-    # an `:any`-action Chat cap that satisfies it — no new grant needed; a narrow
-    # `:join`-only user cap does NOT match, so a Feishu user / agent dispatching
-    # `chat.join` directly cannot forge management authority.
+    #   * the AUTHORIZATION — who may set it — is restricted to a small allowlist
+    #     of trusted internal principals (see `provenance_setter?/1`).
+    #
+    # Authorization history (codex rounds on this PR): a `system://`-scheme check
+    # was unsound (A1: too broad — B1: chat-router/chat-reply are system). A
+    # dedicated `:set_member_provenance` CAP check was then DEFEATED (N1) because
+    # every user holds a baseline `cap(:session, :any, :any)` whose `:any` axes
+    # match ANY session cap shape — so cap-matching cannot express "stricter than
+    # the default user" for a session-scoped op. The only sound gate is therefore
+    # an explicit trusted-principal allowlist on the AUTHENTICATED caller: on
+    # external paths `ctx.caller` is derived from token auth (a user can never
+    # appear as one of these system principals); in-VM callers are already
+    # trusted. A Feishu user / agent dispatching `chat.join` directly is not in
+    # the allowlist, so their `:provenance` arg is dropped.
     facets = put_authorized_provenance(facets, args, ctx)
 
     case KindRegistry.lookup(member_uri) do
@@ -879,52 +882,46 @@ defmodule Ezagent.Behavior.Chat do
   defp put_provenance_once(%{provenance: existing} = meta, _new) when not is_nil(existing), do: meta
   defp put_provenance_once(meta, new), do: Map.put(meta, :provenance, new)
 
-  @doc false
-  # The dedicated authorization action gating who may SET a member's provenance
-  # (team-routing-unification §3.1, PR-5b-i). This is NOT a dispatchable `:join`-
-  # style action — it is the action axis of the capability the setter must hold.
-  # A narrow `cap(_, Chat, :join)` does NOT match it; an `:any`-action Chat cap
-  # (held by the session-internal / template-materialize / orchestrator-tools
-  # allowlist) does. Exposed so tests + the catalog can reference one symbol.
-  def set_provenance_action, do: :set_member_provenance
+  # team-routing-unification §3.1 (PR-5b-i) — the closed allowlist of trusted
+  # internal principals authorized to SET a member's provenance. These are the
+  # only code paths that legitimately vouch for management authority:
+  # create_session / session bookkeeping (session-internal), SessionTemplate
+  # materialization (template-materialize), and orchestrator worker spawn
+  # (orchestrator-tools). Each is a registered `Ezagent.SystemPrincipal.Catalog`
+  # entry; an external (token-authenticated) caller can never present as one.
+  # This is an authorization chokepoint of the same shape as the Catalog itself
+  # — NOT a cap check, which cannot express this (see put_authorized_provenance).
+  @provenance_setters [
+    "system://session-internal",
+    "system://template-materialize",
+    "system://orchestrator-tools"
+  ]
 
-  # team-routing-unification §3.1 (PR-5b-i) — honor a supplied `:provenance`
-  # ONLY when the caller is AUTHORIZED to set it (holds the
-  # `Chat :set_member_provenance` cap). Authority is checked via the same CapBAC
-  # path used elsewhere — over `ctx.caps` (the system-principal-carried caps;
-  # ordinary user/agent callers carry no such cap, so theirs is dropped). The
-  # VALUE is whatever the trusted setter passes; set-once is enforced later by
+  # team-routing-unification §3.1 (PR-5b-i) — honor a supplied `:provenance` ONLY
+  # when (a) the caller is a trusted provenance-setter principal AND (b) the value
+  # is an `entity://` authority URI (a user or agent owner — the only valid
+  # management authorities per spec; codex N3 — a typed-but-malformed URI must not
+  # become durable policy input). set-once is enforced later by
   # put_provenance_once/2.
   defp put_authorized_provenance(facets, args, ctx) do
     case Map.get(args, :provenance) do
-      %URI{} = prov ->
-        if caller_may_set_provenance?(ctx), do: Map.put(facets, :provenance, prov), else: facets
+      %URI{scheme: "entity"} = prov ->
+        if provenance_setter?(ctx[:caller]), do: Map.put(facets, :provenance, prov), else: facets
 
       _ ->
         facets
     end
   end
 
-  # True iff one of the caller's caps satisfies a `Chat :set_member_provenance`
-  # cap on this session. Mirrors the `holds_admin_caps?`/`Capability.matches?`
-  # pattern (Ezagent.Behavior.Identity). Reads `ctx.caps` — the authenticated
-  # carrier for system principals; user/agent callers whose caps live only in an
-  # identity slice carry none here and are therefore (correctly) denied.
-  defp caller_may_set_provenance?(ctx) do
-    needed = %{
-      kind: :session,
-      behavior: __MODULE__,
-      action: set_provenance_action(),
-      instance: ctx[:self_uri],
-      workspace_uri: :any
-    }
-
-    # `ctx.caps` is a MapSet for system principals (SystemPrincipal.caps/1) and
-    # a plain list for other carriers — both are Enumerable, so iterate as-is;
-    # a missing key means no carried caps (→ denied).
-    (Map.get(ctx, :caps) || [])
-    |> Enum.any?(&Capability.matches?(&1, needed))
-  end
+  # True iff `caller` is on the trusted provenance-setter allowlist. `ctx.caller`
+  # is authenticated on external paths (derived from token auth, so a user URI
+  # can never match) and trusted in-VM — the same trust basis CapBAC's `ctx.caps`
+  # rests on. A CAP check is deliberately NOT used: every user holds a baseline
+  # `cap(:session, :any, :any)` whose wildcard axes satisfy any session cap
+  # shape, so a cap gate cannot exclude ordinary users (codex N1).
+  defp provenance_setter?(%URI{} = caller), do: URI.to_string(caller) in @provenance_setters
+  defp provenance_setter?(caller) when is_binary(caller), do: caller in @provenance_setters
+  defp provenance_setter?(_), do: false
 
   @doc """
   team-routing-unification §3.1 (PR-5b-i) — the `:provenance` facet of a member
