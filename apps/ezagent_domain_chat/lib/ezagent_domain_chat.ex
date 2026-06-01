@@ -253,12 +253,21 @@ defmodule EzagentDomainChat do
               {:ok, session_uri, plain_session_meta()}
 
             %URI{} ->
+              # REPAIR of an EXISTING live session — `new_session?: false`. A
+              # materialization failure here must compensate ONLY the
+              # materialization residue (newly-spawned members + newly-inserted
+              # rule rows, already self-swept by `materialize_template_team/4`)
+              # and LEAVE the pre-existing session Kind + its members alive
+              # (codex cycle-2 MAJOR #3). Full `rollback_session/3` (which
+              # terminates the Session Kind + deletes its snapshot) is RESERVED
+              # for the create-NEW path.
               ensure_orchestrated_session(
                 session_uri,
                 workspace_uri,
                 effective_owner,
                 session_template_uri,
-                template_content
+                template_content,
+                new_session?: false
               )
           end
         end
@@ -534,12 +543,16 @@ defmodule EzagentDomainChat do
             end
 
           %URI{} ->
+            # CREATE of a brand-NEW session — `new_session?: true`. A failure
+            # in steps 5-8 rolls the whole freshly-created session back
+            # (`rollback_session/3` terminates the Session Kind + snapshot).
             ensure_orchestrated_session(
               session_uri,
               workspace_uri,
               effective_owner,
               session_template_uri,
-              template_content
+              template_content,
+              new_session?: true
             )
         end
       end
@@ -564,26 +577,44 @@ defmodule EzagentDomainChat do
   end
 
   # Steps 5-8 for an orchestrator-bearing session.
+  #
+  # `new_session?` decides the failure-compensation policy (codex cycle-2
+  # MAJOR #3):
+  #   * `true`  (create a brand-NEW session) — a steps 5-8 failure rolls the
+  #     whole freshly-created session back via `rollback_session/3` (terminate
+  #     the Session Kind + snapshot + orchestrator + caps).
+  #   * `false` (repair / re-materialize an EXISTING live session) — a failure
+  #     must NEVER tear down the pre-existing session. `materialize_template_team/4`
+  #     already self-compensates the residue it created (newly-spawned members
+  #     + newly-inserted rule rows); we leave the live session + its members
+  #     intact and just surface the error.
   defp ensure_orchestrated_session(
          session_uri,
          workspace_uri,
          effective_owner,
          session_template_uri,
-         template_content
-       ) do
+         template_content,
+         opts
+       )
+       when is_list(opts) do
+    new_session? = Keyword.fetch!(opts, :new_session?)
+
     # Step 5 — ensure orchestrator (2-way ownership; ensure failure →
     # rollback → {:error,_}).
     case Session.ensure_orchestrator(session_uri, workspace_uri, effective_owner) do
       {:error, reason} ->
         # `ensure_orchestrator/3` self-cleans the orchestrator it spawned
         # on its own failure paths (Fix Q4 + `spawn_from_template_content`
-        # round-10), so the orchestrator URI is nil here. Still pass owner
-        # + workspace to revoke any owner cap (defensive — none granted
-        # yet at this point).
-        rollback_session(session_uri, nil,
-          owner_uri: effective_owner,
-          workspace_uri: workspace_uri
-        )
+        # round-10), so the orchestrator URI is nil here. On the create path
+        # roll the freshly-created session back (revoking any owner cap); on
+        # the repair path the pre-existing session stays alive — there is no
+        # residue to sweep (the orchestrator self-cleaned, no caps granted).
+        if new_session? do
+          rollback_session(session_uri, nil,
+            owner_uri: effective_owner,
+            workspace_uri: workspace_uri
+          )
+        end
 
         {:error, {:orchestrator_ensure_failed, reason}}
 
@@ -623,13 +654,30 @@ defmodule EzagentDomainChat do
            ready_meta(orchestrator_uri, effective_owner, session_uri, degraded_meta)}
         else
           {:error, reason} ->
-            # Step 9 — rollback including the spawned orchestrator Kind +
-            # its registry/lineage/bind/snapshot + the granted caps
-            # (owner restart cap + orchestrator scoped caps), reversed.
-            rollback_session(session_uri, orchestrator_uri,
-              owner_uri: effective_owner,
-              workspace_uri: workspace_uri
-            )
+            if new_session? do
+              # Step 9 (create-NEW only) — rollback including the spawned
+              # orchestrator Kind + its registry/lineage/bind/snapshot + the
+              # granted caps (owner restart cap + orchestrator scoped caps),
+              # reversed.
+              rollback_session(session_uri, orchestrator_uri,
+                owner_uri: effective_owner,
+                workspace_uri: workspace_uri
+              )
+            else
+              # REPAIR of an EXISTING live session (codex cycle-2 MAJOR #3) —
+              # do NOT tear the session/orchestrator down. The only residue a
+              # materialization failure creates (freshly-spawned members +
+              # newly-inserted rule rows) is ALREADY self-compensated inside
+              # `materialize_template_team/4` before it returns `{:error,_}`.
+              # The pre-existing session Kind + its members + snapshot stay
+              # alive; the caller (`repair_orchestrator/2`) surfaces the error.
+              Logger.warning(
+                "EzagentDomainChat.repair_orchestrator: re-materialization FAILED for " <>
+                  "EXISTING session=#{URI.to_string(session_uri)} reason=#{inspect(reason)} " <>
+                  "— the live session is LEFT INTACT (materialization residue self-swept); " <>
+                  "no Session-Kind teardown (codex cycle-2 MAJOR #3)."
+              )
+            end
 
             {:error, reason}
         end
