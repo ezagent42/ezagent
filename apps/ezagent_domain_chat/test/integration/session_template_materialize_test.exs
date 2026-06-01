@@ -424,6 +424,64 @@ defmodule EzagentDomainChat.Integration.SessionTemplateMaterializeTest do
            "re-materializing the same session for the same role must be idempotent (same URI)"
   end
 
+  test "a template with a DANGLING role_name receiver fails materialization cleanly (codex MAJOR #2)" do
+    n = uniq()
+    template_name = "dangle-team-#{n}"
+    role_name = "worker-#{n}"
+    source_template_uri = seed_agent_template(n)
+
+    content = %{
+      name: template_name,
+      description: "dangling-receiver team",
+      orchestrator_template_uri: nil,
+      default_workspace_uri: URI.parse("workspace://system"),
+      parent_template_uri: nil,
+      version_tag: nil,
+      created_by: User.admin_uri(),
+      created_at: ~U[2026-06-01 00:00:00Z],
+      members: [
+        %{
+          uri: nil,
+          role_name: role_name,
+          in_session_template: true,
+          source_template_uri: source_template_uri
+        }
+      ],
+      prompt_templates: %{},
+      legends: %{},
+      routing_rules: [
+        %{
+          matcher: Matcher.mention("trigger-#{n}"),
+          # `ghost-role` is NEITHER a materialized role_name NOR a magic
+          # token NOR a valid concrete URI — a dangling receiver that would
+          # otherwise pass through unchanged and crash Ezagent.URI.new!/1 at
+          # send-time. Materialization must fail loud HERE.
+          receivers: ["ghost-role-#{n}"],
+          rule_set: "rs-#{n}",
+          position: 0,
+          prompt_template_ref: nil
+        }
+      ]
+    }
+
+    _template_uri = persist_template(content)
+
+    short = "dangle-sess-#{n}"
+
+    assert {:error, reason} =
+             EzagentDomainChat.create_session(short, User.admin_uri(),
+               template_name: template_name
+             )
+
+    # The failure names the offending receiver and rolls the create back
+    # (no half-installed session, no orphan rule rows).
+    assert match?({:install_rule_failed, _rule, {:unknown_rule_receiver, _}}, reason) or
+             (is_tuple(reason) and elem(reason, 0) == :install_rule_failed),
+           "expected a clean {:unknown_rule_receiver, _} failure; got #{inspect(reason)}"
+
+    cleanup_session(URI.new!("session://#{template_name}/system/#{short}"))
+  end
+
   defp cleanup_session(session_uri) do
     on_exit(fn ->
       case KindRegistry.lookup(session_uri) do

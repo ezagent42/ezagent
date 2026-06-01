@@ -1453,39 +1453,70 @@ defmodule EzagentDomainChat do
 
   defp install_one_rule(table, %URI{} = workspace_uri, role_to_uri, rule) when is_map(rule) do
     matcher = Map.get(rule, :matcher) || Map.get(rule, "matcher")
-    receivers = resolve_rule_receivers(Map.get(rule, :receivers) || Map.get(rule, "receivers") || [], role_to_uri)
 
-    Ezagent.Routing.RuleStore.add(
-      table,
-      matcher,
-      receivers,
-      # created_by — the template materialization is system-originated.
-      Ezagent.SystemPrincipal.uri("session-internal"),
-      source: Ezagent.Routing.RuleStore.system_default_source(),
-      workspace_uri: workspace_uri,
-      rule_set: Map.get(rule, :rule_set) || Map.get(rule, "rule_set"),
-      position: Map.get(rule, :position) || Map.get(rule, "position") || 0,
-      prompt_template_ref:
-        Map.get(rule, :prompt_template_ref) || Map.get(rule, "prompt_template_ref")
-    )
+    with {:ok, receivers} <-
+           resolve_rule_receivers(
+             Map.get(rule, :receivers) || Map.get(rule, "receivers") || [],
+             role_to_uri
+           ) do
+      Ezagent.Routing.RuleStore.add(
+        table,
+        matcher,
+        receivers,
+        # created_by — the template materialization is system-originated.
+        Ezagent.SystemPrincipal.uri("session-internal"),
+        source: Ezagent.Routing.RuleStore.system_default_source(),
+        workspace_uri: workspace_uri,
+        rule_set: Map.get(rule, :rule_set) || Map.get(rule, "rule_set"),
+        position: Map.get(rule, :position) || Map.get(rule, "position") || 0,
+        prompt_template_ref:
+          Map.get(rule, :prompt_template_ref) || Map.get(rule, "prompt_template_ref")
+      )
+    end
   end
 
-  # Resolve a rule's declared receivers to concrete receiver values:
-  # a `role_name` → its live member URI; a magic token / URI string /
-  # %URI{} passes through unchanged.
+  # Resolve a rule's declared receivers to concrete receiver values. codex
+  # MAJOR #2 — a receiver that is NONE of {a magic token, a concrete
+  # `%URI{}`/valid URI-string, a `role_name` among the just-materialized
+  # members} is a DANGLING receiver: pre-fix it passed through unchanged,
+  # was stored, then `Ezagent.URI.new!/1` raised at send-time (a silent
+  # config bug surfacing as a runtime crash). Fail loud HERE instead, so the
+  # create rolls back with a clear `{:unknown_rule_receiver, r}` and no
+  # partial install. Returns `{:ok, [receiver]}` or
+  # `{:error, {:unknown_rule_receiver, r}}`.
   defp resolve_rule_receivers(receivers, role_to_uri) when is_list(receivers) do
-    Enum.map(receivers, fn
-      %URI{} = uri ->
-        uri
-
-      r when is_binary(r) ->
-        cond do
-          Ezagent.Routing.Resolver.magic_token?(r) -> r
-          Map.has_key?(role_to_uri, r) -> Map.fetch!(role_to_uri, r)
-          true -> r
-        end
+    Enum.reduce_while(receivers, {:ok, []}, fn receiver, {:ok, acc} ->
+      case resolve_one_receiver(receiver, role_to_uri) do
+        {:ok, resolved} -> {:cont, {:ok, acc ++ [resolved]}}
+        {:error, _} = err -> {:halt, err}
+      end
     end)
   end
+
+  defp resolve_one_receiver(%URI{} = uri, _role_to_uri), do: {:ok, uri}
+
+  defp resolve_one_receiver(r, role_to_uri) when is_binary(r) do
+    cond do
+      Ezagent.Routing.Resolver.magic_token?(r) ->
+        {:ok, r}
+
+      Map.has_key?(role_to_uri, r) ->
+        {:ok, Map.fetch!(role_to_uri, r)}
+
+      true ->
+        # Not a role_name + not a magic token — only valid if it is a
+        # concrete, well-formed Ezagent URI string. `parse/1` is the
+        # non-raising boundary constructor; an arbitrary label (e.g. a
+        # mis-typed role_name) fails it → dangling receiver.
+        case Ezagent.URI.parse(r) do
+          {:ok, %URI{} = uri} -> {:ok, uri}
+          {:error, _} -> {:error, {:unknown_rule_receiver, r}}
+        end
+    end
+  end
+
+  defp resolve_one_receiver(other, _role_to_uri),
+    do: {:error, {:unknown_rule_receiver, other}}
 
   # ── PR-7 content-field accessors (tolerate atom/string keys) ─────────
 
