@@ -206,27 +206,33 @@ async function driveOperator(browser, snap) {
   const conv = `op-demo-${TENANT}-${RUN}`;
   const opState = await loginState(browser);
   await prewarm(browser, conv);
-  // recording context = the CUSTOMER side (so the video shows the take-over land)
+
+  // BOTH sides are recorded (same viewport so they hstack cleanly) and opened
+  // up front, so the two videos span the SAME wall-clock window — the composite
+  // shows the operator clicking "Take over" + typing on the left WHILE the
+  // customer receives the notice + reply on the right.
   const custCtx = await browser.newContext({ viewport: { width: W, height: H }, recordVideo: { dir: OUT, size: { width: W, height: H } } });
   const cust = await custCtx.newPage();
   await cust.goto(`${ORIGIN}/chat/${TENANT}?conv=${conv}&cid=${conv}`, { waitUntil: 'domcontentloaded' });
   await waitComposer(cust, '(operator: customer)');
+
+  const opCtx = await browser.newContext({ storageState: opState, viewport: { width: W, height: H }, recordVideo: { dir: OUT, size: { width: W, height: H } } });
+  const op = await opCtx.newPage();
+  await op.goto(`${ORIGIN}/operator/${TENANT}/${conv}`, { waitUntil: 'domcontentloaded' });
+  // phx-click="take_over" is a no-op until the LiveView socket connects — clicking
+  // the static button before connect drops the event. Wait for connect first.
+  await op.waitForFunction(() => window.liveSocket && window.liveSocket.isConnected(), null, { timeout: 15000 })
+    .catch(() => log('WARN: operator liveSocket not connected within 15s'));
+  await op.locator('#take-over-button').waitFor({ state: 'visible', timeout: 20000 });
   await cust.waitForTimeout(800); await snap(cust, 'loaded');
-  // customer asks for a human
+
+  // 1) Customer asks for a human
   const input = cust.locator(COMPOSER);
   await input.click(); await input.fill(DEF.operatorAsk);
   await (cust.getByRole('button', { name: /send|发送/i }).first().click().catch(() => input.press('Enter')));
   await cust.waitForTimeout(2500); await snap(cust, 'customer-asked');
-  // operator (separate context, not recorded) takes over + replies
-  const opCtx = await browser.newContext({ storageState: opState, viewport: { width: 1100, height: 820 } });
-  const op = await opCtx.newPage();
-  await op.goto(`${ORIGIN}/operator/${TENANT}/${conv}`, { waitUntil: 'domcontentloaded' });
-  // CRITICAL: phx-click="take_over" is a no-op until the LiveView socket is
-  // connected. Clicking the (statically-rendered) button before connect drops
-  // the event -> mode never flips -> #chat_text never renders. Wait for connect.
-  await op.waitForFunction(() => window.liveSocket && window.liveSocket.isConnected(), null, { timeout: 15000 })
-    .catch(() => log('WARN: operator liveSocket not connected within 15s'));
-  await op.locator('#take-over-button').waitFor({ state: 'visible', timeout: 20000 });
+
+  // 2) Operator clicks "Take over" (visible on the left video)
   await op.click('#take-over-button');
   const opInput = op.locator('#chat_text');
   await opInput.waitFor({ state: 'visible', timeout: 10000 }).catch(async (e) => {
@@ -234,14 +240,30 @@ async function driveOperator(browser, snap) {
     log('take-over did not surface #chat_text; saved op-takeover-fail.png');
     throw e;
   });
-  await opInput.fill(DEF.operatorReply);
+  await op.waitForTimeout(1200); await snap(op, 'operator-took-over');
+
+  // 3) Operator types the reply slowly so the typing is visible, then sends
+  await opInput.click();
+  try { await opInput.pressSequentially(DEF.operatorReply, { delay: 35 }); }
+  catch { await opInput.type(DEF.operatorReply, { delay: 35 }).catch(() => opInput.fill(DEF.operatorReply)); }
+  await op.waitForTimeout(600);
   await op.getByRole('button', { name: /send/i }).first().click().catch(() => opInput.press('Enter'));
-  await opCtx.close();
-  // back on the customer side: the "客服已接管" badge + operator bubble land live
+  await op.waitForTimeout(1500);
+
+  // 4) Customer receives the "(客服已接管对话)" notice + operator bubble
   await cust.waitForFunction(() => document.body.innerText.includes('客服已接管'), null, { timeout: 20000 }).catch(() => log('takeover badge not seen'));
   await cust.waitForTimeout(2500); await snap(cust, 'taken-over');
-  await cust.waitForTimeout(1200);
-  return custCtx;
+  await cust.waitForTimeout(800);
+
+  // Finalize both videos to predictable names; record-scenario.sh composites
+  // them side-by-side into demo.webm. Returning null tells main() to skip its
+  // single-video rename.
+  const opVideo = op.video(), custVideo = cust.video();
+  await opCtx.close(); await custCtx.close();
+  fs.renameSync(await opVideo.path(), `${OUT}/op-side.webm`);
+  fs.renameSync(await custVideo.path(), `${OUT}/cust-side.webm`);
+  log('OPERATOR: op-side.webm + cust-side.webm (composited by record-scenario.sh)');
+  return null;
 }
 
 async function driveSoul(browser, snap) {
@@ -296,12 +318,16 @@ async function driveSoul(browser, snap) {
   else if (MODE === 'soul') recCtx = await driveSoul(browser, snap);
   else throw new Error(`unknown DEMO_MODE: ${MODE}`);
 
-  await recCtx.close(); // finalizes the webm
+  if (recCtx) await recCtx.close(); // finalizes the webm (operator handles its own)
   await browser.close();
 
-  const vids = fs.readdirSync(OUT).filter((f) => f.endsWith('.webm') && f !== 'demo.webm')
-    .map((f) => ({ f, m: fs.statSync(`${OUT}/${f}`).mtimeMs })).sort((a, b) => b.m - a.m);
-  if (vids.length) fs.renameSync(`${OUT}/${vids[0].f}`, `${OUT}/demo.webm`);
-  log('VIDEO:', fs.existsSync(`${OUT}/demo.webm`) ? `${OUT}/demo.webm` : '(none)');
+  // Single-video modes: rename the newest webm to demo.webm. Operator mode
+  // already produced op-side.webm + cust-side.webm (composited by the .sh).
+  if (recCtx) {
+    const vids = fs.readdirSync(OUT).filter((f) => f.endsWith('.webm') && f !== 'demo.webm')
+      .map((f) => ({ f, m: fs.statSync(`${OUT}/${f}`).mtimeMs })).sort((a, b) => b.m - a.m);
+    if (vids.length) fs.renameSync(`${OUT}/${vids[0].f}`, `${OUT}/demo.webm`);
+  }
+  log('VIDEO:', fs.existsSync(`${OUT}/demo.webm`) ? `${OUT}/demo.webm` : '(side videos -> composited in .sh)');
   log('SHOTS:', fs.readdirSync(OUT).filter((f) => f.endsWith('.png')).join(', '));
 })().catch((e) => { console.error('[record-scenario] FATAL', e); process.exit(1); });
