@@ -157,6 +157,33 @@ takeover hook (G3, flagged for Allen). The blocks were either fixed (G1) or are
 core-team decisions (G3), and the gaps (G2 lifecycle, G6 anonymous identity) are
 documented for ezagent's roadmap. **Migration is feasible.**
 
+## PR map & recommended review order (2026-06-02)
+Six open PRs deliver this PoC: the three-piece PoC stack plus the three framework
+changes it depends on. All have a Chinese-first consolidated description (English
+folded) + the same review-order block pinned at the top; demos (acme) are embedded
+in the PoC three.
+
+**Group 1 — framework basics (mutually independent, all → `main`, mergeable in parallel):**
+1. **#515** formatter DSL-macro registration — unblocks the `mix format --check-formatted`
+   commit gate (every fresh-checkout commit is blocked otherwise). Merge first; trivial.
+   Residual decision for Allen: toolchain version pin (`.tool-versions`/`mise.toml`).
+2. **#512** `EagerBridge` — the primitive that binds a cc agent's esr-bridge MCP before
+   the first customer message (fixes **G1**). **#529 depends on it.**
+3. **#511** `Behavior.Mode` + `Chat.handle_send` takeover gating — the Mode impl.
+   **#532 depends on it** (#532 currently bundles its files).
+
+**Group 2 — PoC three-piece stack:**
+4. **#529** PR-1 AI customer web chat (base, → `main`; conceptually builds on #512).
+5. **#530** PR-2 editable soul (stacked on #529). No core change (**G5**, no decision).
+6. **#532** PR-3 operator console + takeover (stacked on #529; after **#511** merges,
+   rebase to drop the bundled Mode). Carries the **G3** decision.
+
+Decisions for Allen, by PR: **#529** → whether to offer a first-class "service session"
+profile (bundles G2+G6+G7; options (a)–(d) in G7); **#532** → the G3 core `Chat`
+hook vs. zero-core pure-routing (pros/cons + the Copilot trade-off, see
+`14-takeover-routing-evolution`); **#515** → toolchain pin choice. #511/#512/#530 carry
+no independent decision.
+
 ## Open coordination
 - cc-agent bring-up consolidation PR ownership (theme-picker + OAuth + EagerBridge) —
   with hjj, per #510's 4-track plan (commented on #512).
