@@ -392,11 +392,24 @@ defmodule Ezagent.Domain.Pty.Server do
   # Phase 6 PR 19 — well-known prompts the spawned `claude` may pause
   # on. Each prompt fires once; the data-driven structure means new
   # prompts get added here without touching the dispatch loop.
-  defp default_auto_prompts do
+  @doc false
+  def default_auto_prompts do
     [
       %{
         name: :dev_channels_dialog,
-        match: ["Loading development channels", "I am using this for local development"],
+        # Anchor on the menu OPTION label, not the WARNING prose: claude's
+        # TUI animates/redraws the banner ("Loading…") with cursor-move
+        # escapes, so after ANSI-strip the word can fragment ("L ading"),
+        # breaking a literal "Loading development channels" match. The
+        # option-1 label is rendered atomically and is specific enough to
+        # this exact dialog to avoid false positives.
+        match: ["development channels", "I am using this for local development"],
+        send: "1\r",
+        fired?: false
+      },
+      %{
+        name: :trust_folder_dialog,
+        match: ["Is this a project you", "trust this folder"],
         send: "1\r",
         fired?: false
       }
@@ -458,6 +471,13 @@ defmodule Ezagent.Domain.Pty.Server do
     end
   end
 
+  # Backstop for the erlexec `{packet,2}` `:einval` crash: estimate the
+  # command size and fail THIS spawn alone with a clear error rather than
+  # letting an oversized command become a node-wide outage.
+  @packet2_limit 65_535
+  # Headroom for erlexec's own framing + the non-cmd/env run options.
+  @command_size_headroom 4_096
+
   # Spawns the configured child command under erlexec's PTY.
   #
   # Domain.Pty move (2026-05-21 SPEC v1, PR-A): the cmd string is
@@ -478,21 +498,40 @@ defmodule Ezagent.Domain.Pty.Server do
     exec_cmd = build_exec_cmd(state.cmd_override, state.agent_uri)
     env = build_env(state)
 
-    case :exec.run(exec_cmd, [
-           :pty,
-           :monitor,
-           # `:stdin` keeps the child's stdin pipe open so :exec.send/2
-           # can write to it (dev-channels auto-confirm "1\r"). Without
-           # this, child sees EOF on stdin → `read` fails → claude can't
-           # see operator input.
-           :stdin,
-           {:env, env},
-           {:cd, String.to_charlist(state.cwd)},
-           :stderr,
-           :stdout
-         ]) do
-      {:ok, exec_pid, os_pid} -> {:ok, exec_pid, os_pid}
-      err -> err
+    with :ok <- check_command_size(exec_cmd, env) do
+      case :exec.run(exec_cmd, [
+             :pty,
+             :monitor,
+             # `:stdin` keeps the child's stdin pipe open so :exec.send/2
+             # can write to it (dev-channels auto-confirm "1\r"). Without
+             # this, child sees EOF on stdin → `read` fails → claude can't
+             # see operator input.
+             :stdin,
+             {:env, env},
+             {:cd, String.to_charlist(state.cwd)},
+             :stderr,
+             :stdout
+           ]) do
+        {:ok, exec_pid, os_pid} -> {:ok, exec_pid, os_pid}
+        err -> err
+      end
+    end
+  end
+
+  @doc false
+  # Proxy for the size erlexec encodes for its {packet,2} port write.
+  # exec_cmd (argv) + the env list dominate; term_to_binary them together.
+  def estimated_command_size(exec_cmd, env) do
+    byte_size(:erlang.term_to_binary({exec_cmd, env}))
+  end
+
+  defp check_command_size(exec_cmd, env) do
+    size = estimated_command_size(exec_cmd, env)
+
+    if size <= @packet2_limit - @command_size_headroom do
+      :ok
+    else
+      {:error, {:command_too_large, size}}
     end
   end
 
@@ -536,43 +575,23 @@ defmodule Ezagent.Domain.Pty.Server do
             "cc plugin's Template.CcAgent does this via Ezagent.Domain.Pty.start/2."
   end
 
-  defp build_env(state) do
-    # Pass operator's existing env through (proxy / API key / etc) so
-    # operator-set vars from their shell where `mix phx.server` runs
-    # reach claude. The two we own are EZAGENT_AGENT_URI (informational)
-    # and EZAGENT_BRIDGE_URL (so the spawned MCP bridge knows where to announce).
-    base = :os.getenv() |> Enum.map(fn s ->
-      case :string.split(s, ~c"=") do
-        [k, v] -> {k, v}
-        _ -> {s, ~c""}
-      end
-    end)
-
-    # Caller-supplied extra env (e.g. cc plugin's CLAUDE_CONFIG_DIR).
-    # Passed as a structured `{name, value}` pair to `:exec.run/2` —
-    # NOT interpolated into any command line — so the value cannot be
-    # shell-interpreted (codex HIGH-2).
+  def build_env(state) do
+    # Pass ONLY the env vars ezagent adds or overrides — never the whole
+    # inherited OS environment. The child still receives the operator's
+    # ambient env via normal OS-process inheritance through erlexec's
+    # exec-port. Splatting :os.getenv() into {:env,...} inflated the
+    # erlexec {packet,2} command past its 65535-byte limit on hosts with
+    # large environments, crashing the :exec manager node-wide.
     cmd_env =
       (state.cmd_env || %{})
       |> Enum.map(fn {k, v} ->
         {String.to_charlist(to_string(k)), String.to_charlist(to_string(v))}
       end)
 
-    overrides =
-      [
-        {~c"EZAGENT_AGENT_URI", String.to_charlist(URI.to_string(state.agent_uri))},
-        # PTY-orphan-restart 2026-05-26 round-2 (codex finding #2) —
-        # tag the subprocess with THIS DEPLOYMENT's identity. The
-        # plugin's OrphanReaper compares against the same identity at
-        # boot: a subprocess whose tag differs belongs to a DIFFERENT
-        # deployment (parallel dev tree, another release path,
-        # different OS user's instance) and is NOT ours to reap, even
-        # though its URI is absent from this BEAM's local Pty registry.
-        # See `Ezagent.DeploymentId` for identity composition.
-        {~c"EZAGENT_DEPLOYMENT_ID", String.to_charlist(Ezagent.DeploymentId.deployment_id())}
-      ] ++ cmd_env
-
-    overrides ++ base
+    [
+      {~c"EZAGENT_AGENT_URI", String.to_charlist(URI.to_string(state.agent_uri))},
+      {~c"EZAGENT_DEPLOYMENT_ID", String.to_charlist(Ezagent.DeploymentId.deployment_id())}
+    ] ++ cmd_env
   end
 
   # --- erlexec messages -----------------------------------------------
@@ -592,9 +611,7 @@ defmodule Ezagent.Domain.Pty.Server do
       {:reply, :ok, state}
     catch
       kind, reason ->
-        Logger.warning(
-          "PtyServer.write_input failed (#{inspect(kind)}, #{inspect(reason)})"
-        )
+        Logger.warning("PtyServer.write_input failed (#{inspect(kind)}, #{inspect(reason)})")
 
         {:reply, {:error, {kind, reason}}, state}
     end
@@ -653,9 +670,7 @@ defmodule Ezagent.Domain.Pty.Server do
       :exec.winsz(os_pid, 40, 120)
     catch
       kind, why ->
-        Logger.warning(
-          "PtyServer: winsz send failed (#{inspect(kind)}, #{inspect(why)})"
-        )
+        Logger.warning("PtyServer: winsz send failed (#{inspect(kind)}, #{inspect(why)})")
     end
 
     {:noreply, state}
@@ -703,13 +718,14 @@ defmodule Ezagent.Domain.Pty.Server do
     end
   end
 
-  defp matches?(needle, stripped) when is_binary(needle),
+  @doc false
+  def matches?(needle, stripped) when is_binary(needle),
     do: String.contains?(stripped, needle)
 
-  defp matches?(needles, stripped) when is_list(needles),
+  def matches?(needles, stripped) when is_list(needles),
     do: Enum.all?(needles, &String.contains?(stripped, &1))
 
-  defp matches?(%Regex{} = re, stripped), do: Regex.match?(re, stripped)
+  def matches?(%Regex{} = re, stripped), do: Regex.match?(re, stripped)
 
   defp fire_prompt(prompt, state) do
     Logger.info(
