@@ -69,22 +69,25 @@ defmodule EzagentPluginCustomerChat.Bootstrap do
   @spec ensure_session(String.t(), String.t()) :: :ok
   def ensure_session(workspace, conv_id) do
     admin_uri = Ezagent.Entity.User.admin_uri()
+    ws_uri = URI.new!("workspace://#{workspace}")
 
-    # DEFERRED ARCHITECTURE DECISION (2026-05-30) — accepted for the PoC; do
-    # NOT change core now. `create_session/3` UNCONDITIONALLY spawns a
-    # per-session cc-orchestrator (Phase-7 "session-create-orchestrator-unified"
-    # SPEC — no opt-out). Customer-chat does NOT use it: the customer message is
+    # Customer-service sessions are orchestrator-LESS: the customer message is
     # mention-routed straight to the cc_cust agent (see `customer_message/3` +
-    # `dispatch_chat_send/2`); the orchestrator sits idle — an extra claude PTY
-    # + system prompt per conversation. We accept this for now because whether
-    # CS actually needs an orchestrator only becomes clear once the remaining
-    # AutoService features are migrated. NOTE: even AutoService's fast/slow
-    # agent pattern is just fan-out to 2 session members, NOT the LLM
-    # orchestrator. REVISIT after migration — if CS stays orchestrator-less,
-    # ask Allen for a `create_session(orchestrator: false)` opt-out. Tracked in
-    # HANDOFF-2026-05-30.md "Deferred decisions".
+    # `dispatch_chat_send/2`), so no LLM orchestrator is needed. The system
+    # "default" SessionTemplate (boot-seeded only under workspace://system)
+    # carries an orchestrator whose isolated CLAUDE_CONFIG_DIR hits the claude
+    # 2.1.92 OAuth screen → it never becomes ready → create_session fails with
+    # {:orchestrator_not_ready_within, _} and the session is never spawned
+    # (chat.send then fails :no_such_actor). So we ensure a PLAIN
+    # (orchestrator_template_uri: nil) "default" template for THIS workspace;
+    # `session_complete?` already treats a nil-orchestrator template as a
+    # complete plain session (bound + owner-member). This is the
+    # orchestrator-less path the "ask Allen for create_session(orchestrator:
+    # false)" note wanted — achieved at the template level, no core change.
+    :ok = ensure_plain_session_template(ws_uri)
+
     case EzagentDomainChat.create_session(conv_id, admin_uri,
-           workspace_uri: URI.new!("workspace://#{workspace}"),
+           workspace_uri: ws_uri,
            template_name: "default"
          ) do
       {:ok, _session_uri, _meta} ->
@@ -96,6 +99,40 @@ defmodule EzagentPluginCustomerChat.Bootstrap do
       {:error, reason} ->
         Logger.warning(
           "customer_chat ensure_session(#{workspace}, #{conv_id}) failed: #{inspect(reason)}"
+        )
+
+        :ok
+    end
+  end
+
+  # Idempotently persist a PLAIN (orchestrator-less) "default" SessionTemplate
+  # for the workspace. SessionTemplates are content-addressed, so re-persisting
+  # identical content yields the same URI — cheap + churn-free. On a clean
+  # workspace this is the only "default", so create_session resolves it.
+  defp ensure_plain_session_template(%URI{} = workspace_uri) do
+    content = %{
+      name: "default",
+      description:
+        "Customer-service default session template (orchestrator-less; the " <>
+          "cc_cust agent answers via mention routing).",
+      agent_slots: [],
+      orchestrator_template_uri: nil,
+      routing_rules: [],
+      default_workspace_uri: workspace_uri,
+      parent_template_uri: nil,
+      version_tag: nil,
+      created_by: nil,
+      created_at: nil
+    }
+
+    case Ezagent.Entity.SessionTemplate.persist_version_as_system(content, workspace_uri) do
+      {:ok, _uri} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "customer_chat ensure_plain_session_template(#{URI.to_string(workspace_uri)}) " <>
+            "failed: #{inspect(reason)}"
         )
 
         :ok
