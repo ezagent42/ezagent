@@ -134,13 +134,13 @@ Clean cutover（Allen）。新 member 字段默认 nil/false → 普通成员行
 - workspace 级共享模板注册表（v1 = session 内 map）。
 - 更广的"消息没命中 worker → 静默默认 fan-out"可观测性缺口（todo #9 第二层）——这里影响面缩小，单独追踪。
 
-## 8. 待 review 的 open question
+## 8. 已定决策（Allen 2026-06-01 确认按建议）
 
-1. **模板存储**：session 内 `prompt_templates` map（建议）vs workspace 级注册表。v1 = session map；若要 workspace 复用请指出。
-2. **role_name 唯一性/作用域**：session 内（建议）？legend 内？
-3. **`{:manages, provenance}` 对 routing rows 的作用域**：确认 `:manage` cap 恰好授权编辑引用被管成员的那些 routing rows（"owner 在路由表上控制受众"的机制）。
-4. **Spawn-source 状态放哪**：作为 member `meta` 字段（建议）vs 按 member URI 索引的旁表——哪个让 chat slice 更瘦？
-5. **Resolver 返回形态改动**（§3.5）：`[{uri, ctx}]` vs recipient→ctx map——选对现有 `resolve/4` 调用方扰动最小的。
+1. **模板存储** → v1 用 **session 内 `prompt_templates` map**。workspace 级共享注册表是 future（§7），不进 v1。
+2. **role_name 唯一性/作用域** → **session 内唯一**。
+3. **`{:manages, provenance}` 对 routing rows** → **复用现有 capability 机制**（`Ezagent.CapabilityRegistry` + `Kind.holds_cap?` → `Identity.list_caps_for/1` → `Capability.matches?/2`，带 action 维）。不新造机制。只新增：(a) 在相关 Behavior 上声明 `:manage` action；(b) routing-row 编辑 action 对 `{:manages, provenance}`（scoped 到受影响成员的 provenance）做 cap-check。
+4. **Spawn-source 状态放哪** → **member `meta` 字段**（provenance / role_name / in_session_template / source_template_uri / live_worker_uri / generation）。若实践中 chat slice 变重，旁表（按 member URI 索引）作为 fallback（plan 里按实测定）。
+5. **Resolver 返回形态**（§3.5）→ 实现计划里审计调用方后定；默认 **recipient→ctx map** + 一个向后兼容的 `[URI]` helper，取对现有 `resolve/4` 调用方扰动最小的。
 
 ## 9. 测试 / 验证
 

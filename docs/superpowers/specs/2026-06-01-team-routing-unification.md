@@ -272,19 +272,24 @@ production orchestrators to preserve).
 - The general "message matched no worker → silent default fan-out" observability
   gap (todo #9 part b) — reduced in blast radius here, tracked separately.
 
-## 8. Open questions (for review)
+## 8. Resolved decisions (Allen approved the recommendations 2026-06-01)
 
-1. **Template storage**: session-scoped `prompt_templates` map (proposed) vs a
-   workspace-level named-template registry. v1 = session map; flag if workspace
-   reuse is wanted.
-2. **role_name uniqueness/scope**: per session (proposed)? per legend?
-3. **`{:manages, provenance}` over routing rows**: confirm the `:manage` cap
-   authorises editing exactly the routing rows that reference the managed member
-   (the mechanism behind "owner controls audience on the routing table").
-4. **Spawn-source state placement**: as member `meta` fields (proposed) vs a
-   side table keyed by member URI — which keeps the chat slice lean?
-5. **Resolver return-shape change** (§3.5): `[{uri, ctx}]` vs a recipient→ctx map
-   — pick the shape that least disturbs existing `resolve/4` callers.
+1. **Template storage** → **session-scoped `prompt_templates` map** for v1. A
+   workspace-level shared registry is a future option (§7), not v1.
+2. **role_name uniqueness/scope** → **unique per session**.
+3. **`{:manages, provenance}` over routing rows** → **reuses the existing
+   capability machinery** (`Ezagent.CapabilityRegistry` + `Kind.holds_cap?` →
+   `Identity.list_caps_for/1` → `Capability.matches?/2`, with the action axis).
+   No new mechanism. Only additions: (a) declare a `:manage` action on the
+   relevant Behavior(s); (b) routing-row edit actions cap-check
+   `{:manages, provenance}` scoped to the affected member's provenance.
+4. **Spawn-source state placement** → **member `meta` fields** (provenance /
+   role_name / in_session_template / source_template_uri / live_worker_uri /
+   generation). If the chat slice grows heavy in practice, a side table keyed by
+   member URI is the fallback (decide in the plan if measured).
+5. **Resolver return-shape** (§3.5) → decided in the implementation plan after a
+   caller audit; default to a **recipient→ctx map** plus a back-compat `[URI]`
+   helper, choosing whichever least disturbs existing `resolve/4` callers.
 
 ## 9. Testing / verification
 
