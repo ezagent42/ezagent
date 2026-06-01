@@ -145,8 +145,8 @@ defmodule Ezagent.Routing.Legend do
   created) — deterministic. Returns `{:ok, rule}` (a `RuleStore.t()`) or
   `:error` when the rule-set has no rules.
 
-  This is the rule a legend `@`-trigger fires; its matcher is
-  `mention(<legend_name>)` and it carries the set's `prompt_template_ref`.
+  This is the rule a legend `@`-trigger fires; it carries the set's
+  `prompt_template_ref` and the receiver of the flow's first hop.
   """
   @spec entry_rule(atom(), String.t()) :: {:ok, RuleStore.t()} | :error
   def entry_rule(table_name_atom, name)
@@ -159,6 +159,63 @@ defmodule Ezagent.Routing.Legend do
       [] -> :error
     end
   end
+
+  @doc """
+  Resolve a legend NAME to the concrete recipient URIs that "firing its bound
+  rule-set's entry" delivers to — the entry rule's `receivers` (spec §3.6 A:
+  `@legend` triggers the entry, i.e. delivers to the flow's first hop). Used by
+  the mention parsers: a `@legend` yields these CONCRETE URIs as the message
+  mentions, NOT the legend name itself.
+
+  Why concrete URIs (not the symbolic legend name) ride `message.mentions`:
+  `message.mentions` is typed `[URI.t()]` and is persisted through
+  `Ezagent.Ecto.URI` — an arbitrary (esp. non-ASCII) legend NAME does NOT
+  round-trip (`URI.new/1` rejects it) and would crash `MessageStore.write`.
+  Delivering to the entry's receiver fires the flow (the chain then continues
+  via the set's `from(...)` rules) and is persistence-safe by construction.
+
+  `{:ok, [URI.t()]}` for a registered legend with a non-empty bound rule-set
+  whose entry resolves to canonical URIs; `:error` when the name is not a
+  legend, has no `bound_rule_set`, the set has no entry rule, or the entry
+  receivers are magic tokens / non-canonical (a legend entry MUST be concrete).
+  """
+  @spec entry_receivers(registry(), atom(), String.t()) :: {:ok, [URI.t()]} | :error
+  def entry_receivers(legends, table_name_atom, name)
+      when is_map(legends) and is_atom(table_name_atom) and is_binary(name) do
+    with {:ok, %{bound_rule_set: rs}} when is_binary(rs) <- get(legends, name),
+         {:ok, entry} <- entry_rule(table_name_atom, rs),
+         [_ | _] = uris <- canonical_receivers(entry.receivers) do
+      {:ok, uris}
+    else
+      _ -> :error
+    end
+  end
+
+  # The entry rule's receivers as canonical %URI{}s. A magic token
+  # ($session_members / etc) or a non-canonical string is dropped — a legend
+  # entry targets concrete members (the flow's first hop). Empty list if none
+  # qualify.
+  defp canonical_receivers(receivers) when is_list(receivers) do
+    receivers
+    |> Enum.flat_map(fn r ->
+      case r do
+        %URI{} = u ->
+          [u]
+
+        s when is_binary(s) ->
+          try do
+            [Ezagent.URI.new!(s)]
+          rescue
+            _ -> []
+          end
+
+        _ ->
+          []
+      end
+    end)
+  end
+
+  defp canonical_receivers(_), do: []
 
   @doc """
   Collapse folded-legend members into a single legend row for the member-list

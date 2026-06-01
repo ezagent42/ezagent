@@ -134,12 +134,12 @@ defmodule Ezagent.Routing.LegendTest do
 
   # GATE (b) — a legend name does NOT mis-route through the URI-mention path.
   describe "mention_token/2 — legend takes precedence over a URI mention (GATE b)" do
-    test "a legend name becomes the symbolic legend token, NOT a concrete URI" do
+    test "a legend name classifies as a legend token (NOT a concrete-URI mention)" do
       legends = Legend.put(%{}, "传话游戏", member_set: ["relay-cc"], bound_rule_set: "telephone")
 
-      # The parser asks: for this typed @name, is it a legend?  If so the
-      # mention token is the legend NAME (a string the entry rule matches via
-      # mention(name)) — explicitly NOT a concrete-URI resolution.
+      # The parser asks: for this typed @name, is it a legend?  If so it is
+      # intercepted BEFORE the URI-mention path (it never reaches the concrete-
+      # URI matcher → no silent-drop / mis-route).
       assert {:legend, "传话游戏"} = Legend.mention_token(legends, "传话游戏")
     end
 
@@ -147,6 +147,38 @@ defmodule Ezagent.Routing.LegendTest do
       legends = Legend.put(%{}, "传话游戏", member_set: [], bound_rule_set: "telephone")
       assert :not_a_legend = Legend.mention_token(legends, "architect")
       assert :not_a_legend = Legend.mention_token(%{}, "anything")
+    end
+
+    test "entry_receivers/3 resolves a legend to its bound rule-set entry's concrete URIs" do
+      table = EzagentDomainChat.Routing.MentionRouting
+      relay_cc = "entity://agent/team/cc_relay"
+
+      {:ok, _} =
+        RuleStore.add(
+          table,
+          Matcher.mention("传话游戏"),
+          [relay_cc],
+          URI.new!("entity://user/system/admin"),
+          rule_set: "telephone",
+          position: 0,
+          prompt_template_ref: "telephone_hop"
+        )
+
+      legends =
+        Legend.put(%{}, "传话游戏", member_set: ["relay-cc"], bound_rule_set: "telephone")
+
+      # The legend fires its entry → delivers to the entry's CONCRETE receiver
+      # (persistence-safe; the symbolic name never enters message.mentions).
+      assert {:ok, [%URI{} = uri]} = Legend.entry_receivers(legends, table, "传话游戏")
+      assert URI.to_string(uri) == relay_cc
+    end
+
+    test "entry_receivers/3 is :error for a non-legend / a set with no entry" do
+      table = EzagentDomainChat.Routing.MentionRouting
+      legends = Legend.put(%{}, "ghost", member_set: [], bound_rule_set: "no-rules")
+
+      assert :error = Legend.entry_receivers(legends, table, "ghost")
+      assert :error = Legend.entry_receivers(%{}, table, "nope")
     end
   end
 
