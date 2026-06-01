@@ -142,10 +142,17 @@ defmodule Ezagent.Behavior.Routing do
   def handle_add_rule(args, ctx) do
     %{table: table, matcher_json: matcher_json, receivers: receivers} = args
     opts = build_add_opts(args, ctx)
+    # `created_by` is the rule's per-scope owner identity (used by
+    # `find_by_identity/4` for idempotent reconcile + by per-session
+    # snapshot/prune scoping). A programmatic caller may stamp it via
+    # `args.opts[:created_by]` (e.g. the orchestrator tools stamp
+    # `created_by = session_uri`, matching PR-7 `install_one_rule`); when
+    # absent it stays `nil` (admin-LV / system-default rows).
+    created_by = Keyword.get(opts, :created_by)
     prev_calls = ctx.read.(:calls, 0)
 
     with {:ok, matcher} <- Matcher.from_json(matcher_json),
-         {:ok, row} <- RuleStore.add(table, matcher, receivers, nil, opts),
+         {:ok, row} <- RuleStore.add(table, matcher, receivers, created_by, opts),
          :ok <- RuleStore.load_into_registry(table) do
       {:ok, %{id: row.id}, [{:set, :calls, prev_calls + 1}]}
     else
