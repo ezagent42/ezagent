@@ -30,11 +30,19 @@ defmodule Ezagent.Behavior.Template do
   `init_slice/1` reads `args[:content]` (default `nil` — an unpopulated
   template Kind). The content map is the per-Kind schema:
 
-  - **AgentTemplate `:template` content** — `name`, `description`,
-    `flavor`, `working_directory`, `claude_config_dir`, `settings_path`,
-    `mcp_config_path`, `api_key_helper`, `default_caps`,
-    `parent_template_uri` (nil for roots; set to the source URI on fork —
-    PR1 2026-05-24), `created_by`, `created_at`.
+  - **AgentTemplate `:template` content** — a UNIVERSAL base + FLAVOR-OWNED
+    extras (SPEC 2026-06-01-flavor-generic-template-data, approach B).
+    Universal: `name`, `description`, `flavor`, `working_directory`,
+    `default_caps`, `parent_template_uri` (nil for roots; set to the source
+    URI on fork — PR1 2026-05-24), `created_by`, `created_at`. Flavor-owned:
+    each flavor's Template Class declares (via `template_data_extra/1`)
+    which content fields its `instantiate/3` reads — cc:
+    `claude_config_dir`/`settings_path`/`mcp_config_path`/`api_key_helper`/
+    `role`; curl: `provider`/`api_url`/`model`/`system_prompt`/`max_history`;
+    codex: `model`/`approval_policy`/`sandbox`/… Core
+    (`AgentTemplate.to_template_data/2`) is flavor-agnostic and validates the
+    assembled data against the flavor's own `validate/1` (a template missing a
+    required flavor field fails loud).
   - **SessionTemplate `:template` content** — `name`, `description`,
     `agent_slots`, `orchestrator_template_uri`, `routing_rules`,
     `default_workspace_uri`, `parent_template_uri`, `version_hash`,

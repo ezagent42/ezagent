@@ -105,4 +105,93 @@ defmodule Ezagent.Entity.AgentTemplateTest do
       assert :ok = Ezagent.PluginCc.Template.CcAgent.validate(data)
     end
   end
+
+  # SPEC 2026-06-01-flavor-generic-template-data (approach B): core no
+  # longer hardcodes cc's field set — each flavor's Template Class declares
+  # its content fields via template_data_extra/1, so orchestrator-spawned
+  # curl/codex workers carry their provider/model config (pre-fix dropped).
+  describe "to_template_data/2 is flavor-generic (SPEC 2026-06-01)" do
+    # The agent URI prefix must match the flavor (each flavor's validate/1
+    # enforces `<flavor>_<name>`).
+    @curl_uri URI.new!("entity://agent/team-alpha/curl_w-gen")
+    @codex_uri URI.new!("entity://agent/team-alpha/codex_w-gen")
+    @cc_uri URI.new!("entity://agent/team-alpha/cc_w-gen")
+
+    test "threads curl provider/api_url/model (pre-fix these were dropped)" do
+      content = %{
+        flavor: "curl",
+        working_directory: "/tmp/c",
+        provider: "deepseek",
+        api_url: "https://api.deepseek.com/chat/completions",
+        model: "deepseek-chat",
+        system_prompt: "",
+        max_history: 20
+      }
+
+      assert {:ok, data} = AgentTemplate.to_template_data(content, @curl_uri)
+      assert data["class"] == "curl.agent"
+      assert data["provider"] == "deepseek"
+      assert data["api_url"] == "https://api.deepseek.com/chat/completions"
+      assert data["model"] == "deepseek-chat"
+    end
+
+    test "threads codex model/approval/sandbox" do
+      content = %{
+        flavor: "codex",
+        working_directory: "/tmp/x",
+        model: "gpt-5-codex",
+        approval_policy: "never",
+        sandbox: "workspace-write"
+      }
+
+      assert {:ok, data} = AgentTemplate.to_template_data(content, @codex_uri)
+      assert data["class"] == "codex.agent"
+      assert data["model"] == "gpt-5-codex"
+      assert data["approval_policy"] == "never"
+      assert data["sandbox"] == "workspace-write"
+    end
+
+    test "fail-fast: curl content missing provider → {:error, {:invalid_template_data, _}}" do
+      content = %{
+        flavor: "curl",
+        working_directory: "/tmp/c",
+        api_url: "https://api.deepseek.com/chat/completions",
+        model: "deepseek-chat"
+      }
+
+      assert {:error, {:invalid_template_data, :missing_provider}} =
+               AgentTemplate.to_template_data(content, @curl_uri),
+             "a curl template missing the required provider must fail loud, NOT " <>
+               "spawn a nil-config worker"
+    end
+
+    test "string-keyed (post-JSON) curl content threads the same" do
+      content = %{
+        "flavor" => "curl",
+        "working_directory" => "/tmp/c",
+        "provider" => "deepseek",
+        "api_url" => "https://api.deepseek.com/chat/completions",
+        "model" => "deepseek-chat"
+      }
+
+      assert {:ok, data} = AgentTemplate.to_template_data(content, @curl_uri)
+      assert data["provider"] == "deepseek"
+      assert data["model"] == "deepseek-chat"
+    end
+
+    test "cc still threads its fields (regression) — flavor callback owns them now" do
+      content = %{
+        flavor: "cc",
+        working_directory: "/tmp/proj",
+        claude_config_dir: "/sandbox/.claude",
+        role: "orchestrator"
+      }
+
+      assert {:ok, data} = AgentTemplate.to_template_data(content, @cc_uri)
+      assert data["class"] == "cc.agent"
+      assert data["cwd"] == "/tmp/proj"
+      assert data["claude_config_dir"] == "/sandbox/.claude"
+      assert data["role"] == "orchestrator"
+    end
+  end
 end

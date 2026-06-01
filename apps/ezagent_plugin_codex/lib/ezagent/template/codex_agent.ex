@@ -19,6 +19,39 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
   @impl Ezagent.Kind.Template
   def template_name, do: "codex.agent"
 
+  # SPEC 2026-06-01-flavor-generic-template-data (approach B): codex's
+  # template_data fields, so an orchestrator-spawned codex worker carries
+  # its model/approval/sandbox (pre-fix dropped by core's cc-only mapping).
+  # `bridge_ws_url`/`codex_path` feed sidecar/app-server paths — emit them
+  # ONLY as non-empty binaries (codex review MED) so a stray empty value
+  # never reaches the runtime. nil values dropped by the caller.
+  @impl Ezagent.Kind.Template
+  def template_data_extra(content) when is_map(content) do
+    %{
+      "model" => content_field(content, :model),
+      "approval_policy" => content_field(content, :approval_policy),
+      "sandbox" => content_field(content, :sandbox)
+    }
+    |> maybe_put_binary(content, :bridge_ws_url, "bridge_ws_url")
+    |> maybe_put_binary(content, :codex_path, "codex_path")
+  end
+
+  def template_data_extra(_), do: %{}
+
+  defp maybe_put_binary(map, content, key, str_key) do
+    case content_field(content, key) do
+      v when is_binary(v) and v != "" -> Map.put(map, str_key, v)
+      _ -> map
+    end
+  end
+
+  defp content_field(content, key) when is_atom(key) do
+    case Map.get(content, key) do
+      nil -> Map.get(content, Atom.to_string(key))
+      v -> v
+    end
+  end
+
   @impl Ezagent.Kind.Template
   def validate(tmpl) when is_map(tmpl) do
     with :ok <- check_class(tmpl),
