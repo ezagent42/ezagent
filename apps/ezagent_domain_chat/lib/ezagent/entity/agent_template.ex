@@ -65,11 +65,25 @@ defmodule Ezagent.Entity.AgentTemplate do
         created_at:         DateTime.t()
       }
 
-  **What is NOT in the slice** (deliberately): prompt, model, effort,
-  tools whitelist, MCP servers. All of those live in the pointed-at
-  `claude_config_dir` (or the explicit `settings_path` override).
-  ESR doesn't re-model what CC already encodes — AgentTemplate is a
-  sandbox pointer + cap policy, not a full agent spec.
+  The shape above is the cc-flavor view. Since SPEC
+  2026-06-01-flavor-generic-template-data (approach B), the content is a
+  UNIVERSAL base (`flavor`, `working_directory`, `default_caps`,
+  `parent_template_uri`, `created_by`, `created_at`) + **flavor-owned
+  extras** declared by each flavor's Template Class via
+  `c:Ezagent.Kind.Template.template_data_extra/1`. `to_template_data/2`
+  stays flavor-agnostic: cc contributes
+  `claude_config_dir`/`settings_path`/`mcp_config_path`/`api_key_helper`/`role`;
+  curl contributes `provider`/`api_url`/`model`/`system_prompt`/`max_history`;
+  codex contributes `model`/`approval_policy`/`sandbox`/… A template missing a
+  required flavor field fails loud at `to_template_data/2` (it runs the
+  flavor's `validate/1`).
+
+  **What is NOT in a cc AgentTemplate slice** (deliberately): prompt, model,
+  effort, tools whitelist, MCP servers — for cc, those live in the pointed-at
+  `claude_config_dir` (or the explicit `settings_path` override); ESR doesn't
+  re-model what CC already encodes. Other flavors (curl/codex) DO carry their
+  provider/model in the slice (they have no external config dir to point at) —
+  hence the flavor-owned extras above.
 
   ## Persistence
 
